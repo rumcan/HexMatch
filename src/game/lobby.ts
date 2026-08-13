@@ -26,10 +26,26 @@ const h = (tag: string, cls?: string, html?: string): HTMLElement => {
   return e;
 };
 
-// Remember the last server address so you aren't retyping it every match.
+/**
+ * Where the room server lives.
+ *
+ * Public players never type this — it is baked in at build time. Set
+ * VITE_ROOM_SERVER in .env to point at your deployment; the fallback below
+ * covers `npm run dev` on your own machine.
+ *
+ * A page served over https:// may only open wss:// sockets, so the scheme is
+ * derived from how the page itself was loaded rather than hardcoded.
+ */
+const DEFAULT_SERVER: string =
+  (import.meta as any).env?.VITE_ROOM_SERVER ||
+  (location.protocol === "https:"
+    ? `wss://${location.hostname.replace(/^www\./, "")}`
+    : "ws://localhost:8787");
+
+// Advanced users can still override it; the field only shows when they ask.
 const LAST_URL = "hexmatch:lastServer";
 const lastServer = () => {
-  try { return localStorage.getItem(LAST_URL) || ""; } catch { return ""; }
+  try { return localStorage.getItem(LAST_URL) || DEFAULT_SERVER; } catch { return DEFAULT_SERVER; }
 };
 const rememberServer = (u: string) => {
   try { localStorage.setItem(LAST_URL, u); } catch { /* private mode */ }
@@ -117,14 +133,12 @@ function renderChoose(box: HTMLElement) {
 
   const host = h("button", "big-btn", "Host a Room");
   host.onclick = async () => {
-    const url = askServer();
-    if (!url) return;
+    const url = lastServer();
     state = "connecting"; render();
     try {
       await hostRoom(url, playerName());
-      rememberServer(url);
     } catch (err: any) {
-      errorMsg = err?.message || "Could not reach that server.";
+      errorMsg = err?.message || "Could not reach the game server. Try again shortly.";
       state = "choose"; render();
     }
   };
@@ -137,26 +151,17 @@ function renderChoose(box: HTMLElement) {
   if (errorMsg) box.appendChild(h("p", "lobby-error", errorMsg));
 }
 
-function askServer(): string {
-  const prev = lastServer() || "ws://localhost:8787";
-  const url = window.prompt(
-    "Server address\n\nRunning it on this PC? Keep the default.\nOthers on your network use your LAN address.",
-    prev);
-  return (url || "").trim();
-}
-
 function renderHost(box: HTMLElement) {
   box.appendChild(h("p", "sub", "Read this code out. Players enter it to take a seat."));
 
   const code = h("div", "room-code", Net.code.split("").map((c) => `<b>${c}</b>`).join(""));
   box.appendChild(code);
 
-  const copy = h("button", "mini", "Copy join details");
+  const copy = h("button", "mini", "Copy invite");
   copy.onclick = () => {
-    const url = lastServer() || "ws://localhost:8787";
-    navigator.clipboard?.writeText(`Hexmatch — server ${url}, room code ${Net.code}`);
+    navigator.clipboard?.writeText(`Join my Hexmatch game — room code ${Net.code}\n${location.origin}`);
     copy.textContent = "Copied";
-    setTimeout(() => { copy.textContent = "Copy join details"; }, 1500);
+    setTimeout(() => { copy.textContent = "Copy invite"; }, 1500);
   };
   box.appendChild(copy);
 
@@ -190,12 +195,6 @@ function renderJoin(box: HTMLElement) {
   box.appendChild(h("p", "sub", "Enter the code your host read out."));
   box.appendChild(nameField());
 
-  const f = h("div", "lobby-field");
-  f.innerHTML = `<label for="mpServer">Server</label>
-    <input id="mpServer" class="res-sel" placeholder="ws://192.168.0.2:8787"
-           value="${lastServer()}">`;
-  box.appendChild(f);
-
   const c = h("div", "lobby-field");
   c.innerHTML = `<label for="mpCode">Room code</label>
     <input id="mpCode" class="res-sel code-input" maxlength="4" autocomplete="off"
@@ -205,14 +204,14 @@ function renderJoin(box: HTMLElement) {
   const row = h("div", "lobby-actions");
   const go = h("button", "big-btn", "Join");
   go.onclick = async () => {
-    const url = (document.getElementById("mpServer") as HTMLInputElement).value.trim();
+    const override = (document.getElementById("mpServer") as HTMLInputElement)?.value.trim();
+    const url = override || DEFAULT_SERVER;
     const code = (document.getElementById("mpCode") as HTMLInputElement).value.trim().toUpperCase();
-    if (!url) { errorMsg = "Enter the server address."; render(); return; }
     if (code.length !== 4) { errorMsg = "Room codes are four characters."; render(); return; }
     state = "connecting"; render();
     try {
       await joinRoom(url, code, playerName());
-      rememberServer(url);
+      if (override) rememberServer(override);
     } catch (err: any) {
       errorMsg = err?.message || "Could not reach that server.";
       state = "join"; render();
@@ -224,6 +223,17 @@ function renderJoin(box: HTMLElement) {
   box.appendChild(row);
 
   if (errorMsg) box.appendChild(h("p", "lobby-error", errorMsg));
+
+  // server override, folded away — only needed when self-hosting on a LAN
+  const adv = h("details", "lobby-adv");
+  adv.innerHTML = `<summary>Using your own server?</summary>
+    <div class="lobby-field">
+      <label for="mpServer">Server address</label>
+      <input id="mpServer" class="res-sel" placeholder="${DEFAULT_SERVER}" value="${
+        (() => { try { return localStorage.getItem(LAST_URL) || ""; } catch { return ""; } })()
+      }">
+    </div>`;
+  box.appendChild(adv);
 
   setTimeout(() => (document.getElementById("mpCode") as HTMLInputElement)?.focus(), 30);
 }
