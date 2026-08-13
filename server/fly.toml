@@ -1,0 +1,38 @@
+# Fly.io config for the Hexmatch room server.
+# Rename `app` to something unique — it becomes your public hostname:
+#   wss://<app>.fly.dev
+app = "hexmatch-rooms"
+primary_region = "jnb"   # Johannesburg. See `fly platform regions` for others.
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+
+  # Rooms are long-lived WebSocket connections, so the machine must NOT be
+  # stopped while anyone is connected. auto_stop only fires once every
+  # connection has closed.
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  # A room is worthless if players land on different machines, so pin to one.
+  # (For more capacity you'd need shared room state — Redis or similar.)
+  [http_service.concurrency]
+    type = "connections"
+    hard_limit = 200
+    soft_limit = 150
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+  cpus = 1
