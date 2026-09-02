@@ -12,6 +12,8 @@ const __dirname = path.dirname(__filename);
 export default defineConfig({
   base: "/hexmatch/",
   plugins: [react(), tailwindcss()],
+  preview: { allowedHosts: true },
+  server: { allowedHosts: true },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "src"),
