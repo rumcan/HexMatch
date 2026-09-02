@@ -1,17 +1,12 @@
 {
-  "name": "hexmatch",
+  "name": "react-vite-tailwind",
   "private": true,
-  "version": "1.0.0",
+  "version": "0.0.0",
   "type": "module",
-  "description": "Hexmatch Industries — a 2:1 isometric (dimetric) canvas-2d industry-tycoon game with a WebSocket relay room server.",
   "scripts": {
     "dev": "vite",
-    "typecheck": "tsc --noEmit",
-    "build": "tsc --noEmit -p tsconfig.app.json && vite build",
-    "preview": "vite preview",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "slice-atlas": "node tools/slice-atlas.mjs"
+    "build": "vite build",
+    "preview": "vite preview"
   },
   "dependencies": {
     "@types/three": "^0.185.4",
@@ -30,6 +25,6 @@
     "tailwindcss": "4.1.17",
     "typescript": "5.9.3",
     "vite": "7.3.2",
-    "vitest": "^4.1.11"
+    "vite-plugin-singlefile": "2.3.0"
   }
 }
