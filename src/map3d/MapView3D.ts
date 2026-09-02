@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
-import { PLOT, TILES, TileKey, RES, TEX, GEM_SHEET, GEM_FRAME, GEM_FRAMES } from "../game/config";
+import { PLOT, TILES, TileKey, RES, TEX, GEM_SHEET, GEM_FRAME, GEM_FRAMES, mulberry32 } from "../game/config";
 import { HexMap, Tile, Edge, Pt, tileOutline } from "../game/hexmap";
 import { Player } from "../game/state";
 import { makeTerrainTexture, TerrainStyle } from "../lib/textures";
@@ -121,30 +121,6 @@ function banditTexture(): THREE.Texture {
   return t;
 }
 
-/* ---------------- ocean shader ---------------- */
-
-const WAVE_GLSL = /* glsl */ `
-uniform float uTime;
-varying vec3 vWorld;
-float waveH(vec2 p, out vec2 grad){
-  float h = 0.0; grad = vec2(0.0);
-  vec4 w[4];
-  w[0] = vec4( 1.0, 0.30, 6.0, 0.055);
-  w[1] = vec4(-0.60,1.00, 3.6, 0.034);
-  w[2] = vec4( 0.80,-0.55,2.1, 0.018);
-  w[3] = vec4(-0.20,-1.00,1.2, 0.009);
-  for(int i=0;i<4;i++){
-    vec2 d = normalize(w[i].xy);
-    float k = 6.28318 / w[i].z;
-    float a = w[i].w;
-    float sp = sqrt(9.8/k);
-    float ph = dot(d,p)*k + uTime*sp;
-    h += a*sin(ph);
-    grad += d*(k*a*cos(ph));
-  }
-  return h;
-}`;
-
 /* ---------------- MapView3D ---------------- */
 
 export class MapView3D {
@@ -217,8 +193,24 @@ export class MapView3D {
 
     this.resize();
     window.addEventListener("resize", () => this.resize());
+    window.addEventListener("orientationchange", () => this.resize());
+    const vv = window.visualViewport;
+    if (vv) {
+      vv.addEventListener("resize", () => this.resize());
+      vv.addEventListener("scroll", () => this.resize());
+    }
+    if (typeof ResizeObserver !== "undefined") {
+      new ResizeObserver(() => this.resize()).observe(canvas);
+    }
     this.bindInput();
     this.fit();
+  }
+
+  /** client size of the canvas CSS box, falling back to the window */
+  private clientSize(): [number, number] {
+    const w = this.canvas.clientWidth || window.innerWidth;
+    const h = this.canvas.clientHeight || window.innerHeight;
+    return [Math.max(1, w), Math.max(1, h)];
   }
 
   /* ---------- scene construction ---------- */
@@ -550,6 +542,14 @@ private buildShoreRings() {
     const decorSheep: THREE.Matrix4[] = [];
     const dummy = new THREE.Object3D();
 
+    // Decoration placement is seeded from the island geometry itself, so two
+    // browsers with the same map seed get the same trees/rocks/sheep (and e2e
+    // runs are reproducible — ticket #3).
+    const decoRng = mulberry32(
+      (Math.round(map.tiles[0]?.x ?? 0) * 73856093) ^
+      (Math.round(map.tiles[0]?.y ?? 0) * 19349663) ^
+      (map.tiles.length * 83492791) ^ 0xdec0);
+
     map.tiles.forEach((t) => {
       const outline = tileOutline(map, t);
       const h = HEIGHT[t.type];
@@ -606,13 +606,13 @@ private buildShoreRings() {
       const count = t.type === "forest" ? 16 : t.type === "mountain" ? 9 : t.type === "pasture" ? 8 : 0;
       let placed = 0, guard = 0;
       while (placed < count && guard++ < count * 12) {
-        const px = t.x + (Math.random() - 0.5) * PLOT * 1.4;
-        const py = t.y + (Math.random() - 0.5) * PLOT * 1.4;
+        const px = t.x + (decoRng() - 0.5) * PLOT * 1.4;
+        const py = t.y + (decoRng() - 0.5) * PLOT * 1.4;
         if (!pointInPoly(outline, px, py)) continue;
         placed++;
-        const s = 0.75 + Math.random() * 0.6;
+        const s = 0.75 + decoRng() * 0.6;
         dummy.position.set(px * K, h, -py * K);
-        dummy.rotation.set(0, Math.random() * 6.28, 0);
+        dummy.rotation.set(0, decoRng() * 6.28, 0);
         dummy.scale.setScalar(s);
         dummy.updateMatrix();
         const m = dummy.matrix.clone();
@@ -757,40 +757,83 @@ private buildShoreRings() {
     this.markerSig = sig;
     this.markers.clear();
 
-    const gold = new THREE.MeshStandardMaterial({
-      color: 0xffe27a, emissive: 0xffbe33, emissiveIntensity: 0.9,
-      roughness: 0.4, transparent: true, opacity: 0.92,
+    // Markers are UI, not scenery: unlit basic material, depthTest off and a
+    // high render order so they always read on top of terrain (ticket #2).
+    // A dark rim/halo behind each marker keeps gold legible on desert/goldmine.
+    const goldMat = new THREE.MeshBasicMaterial({
+      color: 0xffd23c, transparent: true, opacity: 0.97,
+      depthTest: false, depthWrite: false,
     });
-    const orange = new THREE.MeshStandardMaterial({
-      color: 0xff9a3c, emissive: 0xff7a10, emissiveIntensity: 0.9, roughness: 0.4,
+    const goldRim = new THREE.MeshBasicMaterial({
+      color: 0x1a1204, transparent: true, opacity: 0.85,
+      depthTest: false, depthWrite: false,
     });
+    const orangeMat = new THREE.MeshBasicMaterial({
+      color: 0xff8a2c, transparent: true, opacity: 0.97,
+      depthTest: false, depthWrite: false,
+    });
+    const orangeRim = new THREE.MeshBasicMaterial({
+      color: 0x220c02, transparent: true, opacity: 0.85,
+      depthTest: false, depthWrite: false,
+    });
+    const goldBeam = new THREE.MeshBasicMaterial({
+      color: 0xffd23c, transparent: true, opacity: 0.3,
+      depthTest: false, depthWrite: false,
+    });
+    const MARKER_ORDER = 50;
+    const tag = (m: THREE.Mesh, marker: "vert" | "edge", id: number) => {
+      m.renderOrder = MARKER_ORDER;
+      m.userData = { marker, id };
+      return m;
+    };
+
+    const MARKER_Y = 0.55;   // hover height shared by vert discs and edge dashes
 
     this.legalVerts.forEach((vi) => {
       const v = this.map.verts[vi];
-      const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.06, 20), gold);
-      disc.position.set(v.x * K, this.vertY(vi) + 0.16, -v.y * K);
-      disc.userData = { marker: "vert", id: vi };
-      this.markers.add(disc);
-      const beam = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.05, 0.05, 0.9, 8),
-        new THREE.MeshBasicMaterial({ color: 0xffe27a, transparent: true, opacity: 0.28 }),
-      );
-      beam.position.set(v.x * K, this.vertY(vi) + 0.6, -v.y * K);
+      const baseY = this.vertY(vi) + MARKER_Y;
+      // glow beam rising out of the node
+      const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.1, 8), goldBeam);
+      beam.position.set(v.x * K, this.vertY(vi) + 0.7, -v.y * K);
+      beam.renderOrder = MARKER_ORDER - 1;
       this.markers.add(beam);
+      // dark halo disc + bright disc on top (rim stays visible on any tile)
+      const halo = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.05, 20), goldRim);
+      halo.position.set(v.x * K, baseY - 0.02, -v.y * K);
+      halo.renderOrder = MARKER_ORDER - 1;
+      this.markers.add(halo);
+      const disc = tag(new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.23, 0.08, 20), goldMat), "vert", vi);
+      disc.position.set(v.x * K, baseY, -v.y * K);
+      this.markers.add(disc);
     });
 
     const isToll = this.mode === "toll";
+    const mat = isToll ? orangeMat : goldMat;
+    const rimMat = isToll ? orangeRim : goldRim;
     this.legalEdges.forEach((ei) => {
       const e = this.map.edges[ei];
-      const y = this.edgeY(e) + (isToll ? 0.16 : 0.07);
+      const y = this.edgeY(e) + MARKER_Y;   // raised up to node-marker height (was +0.07)
       const curve = this.edgePath(e, y);
+      // a thin vertical glow ribbon along the whole edge, like the node beams
+      const glow = new THREE.Mesh(
+        new THREE.TubeGeometry(curve, 14, 0.05, 6, false),
+        goldBeam,
+      );
+      glow.renderOrder = MARKER_ORDER - 1;
+      this.markers.add(glow);
       for (let i = 0; i < 7; i++) {
         const p = curve.getPointAt((i + 0.5) / 7);
         const tan = curve.getTangentAt((i + 0.5) / 7);
-        const dash = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.05, 0.24), isToll ? orange : gold);
+        const ang = Math.atan2(tan.x, tan.z);
+        // dark rim dash slightly larger/underneath for contrast on any terrain
+        const rim = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.09, 0.36), rimMat);
+        rim.position.copy(p).setY(p.y - 0.02);
+        rim.rotation.y = ang;
+        rim.renderOrder = MARKER_ORDER - 1;
+        this.markers.add(rim);
+        const dash = tag(new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.1, 0.28), mat), "edge", ei);
         dash.position.copy(p);
-        dash.rotation.y = Math.atan2(tan.x, tan.z);
-        dash.userData = { marker: "edge", id: ei };
+        dash.rotation.y = ang;
         this.markers.add(dash);
       }
     });
@@ -798,13 +841,27 @@ private buildShoreRings() {
 
   /* ---------- camera / input ---------- */
 
+  // screen dims + view-offset state, used by both resize() and project()/pickAt()
+  private viewW = 1;
+  private viewH = 1;
+  private viewOffX = 0;
+
   resize() {
-    const w = window.innerWidth, h = window.innerHeight;
+    // Size from the canvas's own CSS box, not window.innerWidth/Height: on
+    // mobile the collapsing URL bar and on-screen keyboard change the visual
+    // viewport without always firing a layout resize (ticket #8).
+    const [w, h] = this.clientSize();
+    if (w === this.viewW && h === this.viewH && this.renderer.domElement.width) return;
+    this.viewW = w; this.viewH = h;
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.leftPanel = w > 1200 ? 278 : 0;
     this.rightPanel = w > 1200 ? 480 : 0;
+    // Shift the frustum so the map is centred in the canvas area BETWEEN the
+    // side panels. setViewOffset shifts the rendered image toward (offX,offY);
+    // NDC (0,0) then maps to window pixel (w/2 - offX, h/2) — see project().
     const dx = (this.leftPanel - this.rightPanel) / 2;
+    this.viewOffX = -dx;
     this.camera.setViewOffset(w, h, -dx, 0, w, h);
     this.camera.updateProjectionMatrix();
   }
@@ -818,16 +875,54 @@ private buildShoreRings() {
     this.tPitch = 0.95;
   }
 
+  /** keep the camera target on/near the island (ticket #9) */
+  private clampTarget() {
+    const b = this.map.bounds;
+    const r = Math.max(b.maxX - b.minX, b.maxY - b.minY) * K;
+    const mx = r * 0.55, mz = r * 0.55;
+    const cx = ((b.minX + b.maxX) / 2) * K;
+    const cz = -((b.minY + b.maxY) / 2) * K;
+    this.tTarget.x = Math.max(cx - mx, Math.min(cx + mx, this.tTarget.x));
+    this.tTarget.z = Math.max(cz - mz, Math.min(cz + mz, this.tTarget.z));
+    this.tTarget.y = 0.4;
+  }
+
+  /** zoom `factor` while keeping the ground point under (sx, sy) anchored (ticket #6) */
+  private anchoredZoom(sx: number, sy: number, factor: number) {
+    const oldDist = this.tDist;
+    const ground = this.groundUnderScreen(sx, sy);
+    this.tDist = Math.max(3.2, Math.min(70, this.tDist * factor));
+    this.clampTarget();
+    if (!ground) return;
+    // Slide the target so the world point under the gesture stays under it:
+    // moving the camera toward the target by Δ along the view ray shifts the
+    // ground intersection proportionally — shift the target the same amount.
+    const t = 1 - this.tDist / oldDist;
+    if (t > 0) {
+      this.tTarget.x += (ground.x - this.tTarget.x) * t;
+      this.tTarget.z += (ground.z - this.tTarget.z) * t;
+    } else {
+      // zooming out: pull toward the anchor the other way so it still stays put
+      const t2 = 1 - oldDist / this.tDist;
+      this.tTarget.x -= (ground.x - this.tTarget.x) * t2;
+      this.tTarget.z -= (ground.z - this.tTarget.z) * t2;
+    }
+    this.clampTarget();
+  }
+
   private bindInput() {
     const c = this.canvas;
-    let mode: "none" | "pan" | "orbit" = "none";
+    type Mode = "none" | "pan" | "orbit";
+    let mode: Mode = "none";
     let px = 0, py = 0, sx = 0, sy = 0;
     let isTouch = false;
     let downAt = 0;
     let activeId = -1;
-    // two-finger pinch state (touch only)
+    // two-finger gesture state (touch only)
     const pointers = new Map<number, { x: number; y: number }>();
     let pinchDist = 0;
+    let pinchMx = 0, pinchMy = 0;   // last pinch midpoint (screen px)
+    let gestureTaps = false;        // a 2-finger gesture happened → no tap on lift
 
     c.style.touchAction = "none";
     c.addEventListener("contextmenu", (e) => e.preventDefault());
@@ -837,10 +932,12 @@ private buildShoreRings() {
       isTouch = e.pointerType !== "mouse";
 
       // second finger: pinch-zoom + orbit, abandon the pan
-      if (isTouch && pointers.size === 2) {
+      if (pointers.size === 2) {
         const [a, b] = [...pointers.values()];
         pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
+        pinchMx = (a.x + b.x) / 2; pinchMy = (a.y + b.y) / 2;
         mode = "orbit";
+        gestureTaps = true;
         return;
       }
       if (pointers.size > 1) return;
@@ -848,20 +945,36 @@ private buildShoreRings() {
       downAt = performance.now();
       activeId = e.pointerId;
       px = sx = e.clientX; py = sy = e.clientY;
-      // left drag pans; right / middle / shift+left orbits
-      mode = (e.button === 0 && !e.shiftKey) ? "pan" : "orbit";
+      // left drag (or one finger) pans; right / middle / shift+left orbits.
+      // Touch orbit is reached with two fingers (handled above).
+      mode = isTouch ? "pan" : (e.button === 0 && !e.shiftKey ? "pan" : "orbit");
+      gestureTaps = false;
       try { c.setPointerCapture(e.pointerId); } catch { /* capture is best-effort */ }
+
+      // ticket #12: on touch, immediately highlight what a tap would place,
+      // so the player gets press feedback before lifting the finger.
+      if (isTouch) this.hover = this.pickAt(e.clientX, e.clientY);
     });
 
     c.addEventListener("pointermove", (e) => {
       if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
-      // pinch to zoom
+      // ── two-finger gesture: pinch-zoom anchored to the midpoint, plus
+      //    orbit driven by the midpoint's movement (ticket #5) ──
       if (isTouch && pointers.size === 2) {
         const [a, b] = [...pointers.values()];
         const d = Math.hypot(a.x - b.x, a.y - b.y);
-        if (pinchDist > 0) this.tDist = Math.max(3.2, Math.min(70, this.tDist * (pinchDist / d)));
-        pinchDist = d;
+        const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+        const mmx = mx - pinchMx, mmy = my - pinchMy;
+        // pinch: seed lazily in case the second pointerdown was missed (#6)
+        if (pinchDist <= 0) pinchDist = d;
+        if (d > 0 && Math.abs(d - pinchDist) > 0.5) {
+          this.anchoredZoom(mx, my, pinchDist / d);
+        }
+        // twist/drag of the pinch midpoint rotates + pitches the camera
+        this.tYaw -= mmx * 0.008;
+        this.tPitch = Math.max(0.22, Math.min(1.42, this.tPitch - mmy * 0.006));
+        pinchDist = d; pinchMx = mx; pinchMy = my;
         return;
       }
 
@@ -885,11 +998,29 @@ private buildShoreRings() {
         const right = new THREE.Vector3(fwd.z, 0, -fwd.x);
         this.tTarget.addScaledVector(right, -dx * k);
         this.tTarget.addScaledVector(fwd, -dy * k);
+        this.clampTarget();
+        // ticket #12: keep the press target following a dragging finger
+        if (isTouch) this.hover = this.pickAt(e.clientX, e.clientY);
       }
     });
 
     const release = (e: PointerEvent) => {
+      const remaining = pointers.size - 1;
       pointers.delete(e.pointerId);
+
+      // ── lifting a finger mid-gesture: promote the other to a clean pan (#7) ──
+      if (isTouch && pointers.size === 1 && remaining === 1) {
+        const [id, p] = [...pointers.entries()][0];
+        activeId = id;
+        px = sx = p.x; py = sy = p.y;
+        mode = "pan";
+        pinchDist = 0;
+        downAt = performance.now();
+        gestureTaps = true;   // don't fire a tap for the in-progress gesture
+        this.hover = this.pickAt(p.x, p.y);
+        return;
+      }
+
       if (pointers.size < 2) pinchDist = 0;
       if (e.pointerId !== activeId) { if (!pointers.size) mode = "none"; return; }
 
@@ -897,33 +1028,55 @@ private buildShoreRings() {
       const held = performance.now() - downAt;
       // fingers wobble far more than a mouse, so taps need a looser threshold
       const slop = isTouch ? 18 : 6;
-      if (mode === "pan" && moved < slop && held < 700) {
-        this.onPick(this.pickAt(e.clientX, e.clientY));
+      const wasPan = mode === "pan";
+      if (wasPan && moved < slop && held < 700 && !gestureTaps) {
+        const hit = this.pickAt(e.clientX, e.clientY);
+        this.hover = hit;      // keep the pressed target lit for a beat
+        this.onPick(hit);
       }
       mode = "none";
       activeId = -1;
+      if (!isTouch) this.hover = null;
+      // clear touch press highlight shortly after release
+      if (isTouch) setTimeout(() => { if (mode === "none") this.hover = null; }, 350);
     };
     c.addEventListener("pointerup", release);
     c.addEventListener("pointercancel", (e) => {
       pointers.delete(e.pointerId);
-      if (e.pointerId === activeId) { mode = "none"; activeId = -1; }
-      if (!pointers.size) pinchDist = 0;
+      if (pointers.size === 1) {
+        const [id, p] = [...pointers.entries()][0];
+        activeId = id; px = sx = p.x; py = sy = p.y; mode = "pan"; pinchDist = 0;
+        return;
+      }
+      if (e.pointerId === activeId || !pointers.size) { mode = "none"; activeId = -1; pinchDist = 0; }
     });
     // releasing outside the window must not leave the camera stuck in a drag
     window.addEventListener("pointerup", (e) => {
       if (e.pointerId === activeId) { mode = "none"; activeId = -1; pointers.delete(e.pointerId); }
     });
 
+    // wheel zoom is anchored to the cursor so the map doesn't slide away (#6)
     c.addEventListener("wheel", (e) => {
       e.preventDefault();
-      this.tDist = Math.max(3.2, Math.min(70, this.tDist * (e.deltaY < 0 ? 0.9 : 1.111)));
+      this.anchoredZoom(e.clientX, e.clientY, e.deltaY < 0 ? 0.9 : 1.111);
     }, { passive: false });
   }
 
-  /** project a map point to screen pixels */
+  /** project a map point to screen pixels (accounts for the panel view-offset) */
   private project(x: number, y: number, h: number): [number, number] {
     const v = new THREE.Vector3(x * K, h, -y * K).project(this.camera);
-    return [((v.x + 1) / 2) * window.innerWidth, ((1 - v.y) / 2) * window.innerHeight];
+    return [
+      ((v.x + 1) / 2) * this.viewW + this.viewOffX,
+      ((1 - v.y) / 2) * this.viewH,
+    ];
+  }
+
+  /** inverse of project(): screen pixels → NDC for raycasting (ticket #8) */
+  private screenToNdc(sx: number, sy: number): THREE.Vector2 {
+    return new THREE.Vector2(
+      ((sx - this.viewOffX) / this.viewW) * 2 - 1,
+      -(sy / this.viewH) * 2 + 1,
+    );
   }
 
   pickAt(sx: number, sy: number): { kind: string; id: number } | null {
@@ -949,12 +1102,44 @@ private buildShoreRings() {
       });
       return best >= 0 ? { kind: "edge", id: best } : null;
     }
-    this.raycaster.setFromCamera(
-      new THREE.Vector2((sx / window.innerWidth) * 2 - 1, -(sy / window.innerHeight) * 2 + 1),
-      this.camera,
-    );
+    this.raycaster.setFromCamera(this.screenToNdc(sx, sy), this.camera);
     const hit = this.raycaster.intersectObjects(this.tileMeshes, false)[0];
     return hit ? { kind: "tile", id: (hit.object.userData as any).id } : null;
+  }
+
+  /**
+   * World-space point on the y≈0 ground plane under a screen pixel, using the
+   * TARGET camera state (tTarget/tDist/...). Returns null when the ray misses
+   * the ground (looking above the horizon). Used for gesture-anchored zoom.
+   */
+  private groundUnderScreen(sx: number, sy: number): THREE.Vector3 | null {
+    const pos = new THREE.Vector3(
+      Math.sin(this.tYaw) * Math.cos(this.tPitch),
+      Math.sin(this.tPitch),
+      Math.cos(this.tYaw) * Math.cos(this.tPitch),
+    ).multiplyScalar(this.tDist).add(this.tTarget);
+    const fwd = new THREE.Vector3().subVectors(this.tTarget, pos).normalize();
+    const ndc = this.screenToNdc(sx, sy);
+    const cam = new THREE.PerspectiveCamera(this.camera.fov, this.viewW / this.viewH, 0.5, 900);
+    cam.position.copy(pos);
+    const look = pos.clone().add(fwd);
+    cam.up.set(0, 1, 0);
+    cam.lookAt(look);
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(ndc, cam);
+    const t = ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), new THREE.Vector3());
+    return t;
+  }
+
+  /** test helper: current screen position of a legal marker (Playwright taps) */
+  screenPosOf(kind: "vertex" | "edge", id: number): [number, number] | null {
+    if (kind === "vertex") {
+      if (!this.legalVerts.has(id)) return null;
+      return this.project(this.map.verts[id].x, this.map.verts[id].y, this.vertY(id) + 0.6);
+    }
+    const e = this.map.edges[id];
+    if (!e || !this.legalEdges.has(id)) return null;
+    return this.project(e.x, e.y, this.edgeY(e) + 0.55);
   }
 
   /* ---------- frame ---------- */

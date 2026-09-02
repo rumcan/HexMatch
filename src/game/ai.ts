@@ -30,12 +30,12 @@ function aiIncome(p: Player, now: number) {
   const pool = playerResources(G.map, p, now);
   const keys = Object.keys(pool) as ResKey[];
   if (!keys.length) return;
-  const picks = 1 + (Math.random() < p.skill * 0.55 ? 1 : 0);
+  const picks = 1 + (rand() < p.skill * 0.55 ? 1 : 0);
   for (let i = 0; i < picks; i++) {
     const res = choice(keys);
-    if (Math.random() < 0.55 + p.skill * 0.3) gainRes(p, res, pool[res] as number);
+    if (rand() < 0.55 + p.skill * 0.3) gainRes(p, res, pool[res] as number);
   }
-  if (Math.random() < 0.16 + p.skill * 0.12) gainRes(p, "gold", 1);
+  if (rand() < 0.16 + p.skill * 0.12) gainRes(p, "gold", 1);
 }
 
 function aiBuild(p: Player) {
@@ -47,7 +47,7 @@ function aiBuild(p: Player) {
     const v = findLegalSettlement(p, false);
     if (v >= 0 && doSettlement(p, v)) { bus.emit("log", { who: p.i, text: `${p.name} built a Factory.` }); return; }
   }
-  if (Math.random() < 0.7 && p.roads.length < 12 && canAfford(p, COSTS.road.cost)) {
+  if (rand() < 0.7 && p.roads.length < 12 && canAfford(p, COSTS.road.cost)) {
     const e = findLegalRoad(p);
     if (e >= 0) doRoad(p, e);
   }
@@ -55,7 +55,7 @@ function aiBuild(p: Player) {
 
 function aiTrade(p: Player) {
   // try accept an existing offer that helps
-  if (Math.random() < 0.75) {
+  if (rand() < 0.75) {
     for (const o of G.offers as Offer[]) {
       if (o.from === p.i) continue;
       if (p.res[o.want] >= o.wantN && p.res[o.want] > o.wantN) {
@@ -86,7 +86,7 @@ function aiEvil(p: Player): number {
   const key = choice(bag);
   // victim: 60% human else leader
   let victim: Player;
-  if (Math.random() < 0.6) victim = G.players[0];
+  if (rand() < 0.6) victim = G.players[0];
   else victim = [...G.players].sort((a, b) => b.vp - a.vp)[0];
   if (victim.i === p.i) victim = G.players[0];
 

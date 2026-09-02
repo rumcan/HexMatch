@@ -1,6 +1,6 @@
 import {
   UPGRADE_EVERY, RAID_EVERY, TAX_EVERY_ROUNDS, RES, ResKey, RES_KEYS, SABOTAGE, SECURITY,
-  COSTS, REPAIR_COST, choice,
+  COSTS, REPAIR_COST, choice, setRng, mulberry32,
 } from "./config";
 import { G, bus, makePlayer, Player } from "./state";
 import {
@@ -28,10 +28,45 @@ let view: MapView;
 let board: Board;
 let raf = 0;
 
+// Ticket #10: legality only depends on (mode, map ownership/buildings), not on
+// the clock. We recompute only when something could have changed those inputs.
+let legalityDirty = true;
+export function markLegalityDirty() { legalityDirty = true; }
+
+// Test hook (ticket #3): expose live game state when the page is opened with
+// ?hexhook=1 (Playwright) or built under the test env flag. Lets e2e assert on
+// view.legalEdges / phase / resources without scraping pixels.
+function installTestHook() {
+  const on =
+    (typeof window !== "undefined" && new URLSearchParams(window.location.search).has("hexhook")) ||
+    (import.meta as any).env?.VITEST === true ||
+    (import.meta as any).env?.DEV;
+  if (!on || typeof window === "undefined") return;
+  (window as any).__hex = {
+    G,
+    get view() { return view; },
+    get board() { return board; },
+    // helpers for tests
+    setMode(m: string | null) { bus.emit("build:mode", m); },
+    pick(hit: { kind: string; id: number } | null) { handlePick(hit); },
+  };
+}
+
 export function startGame(container: HTMLElement) {
   // players
   G.players = PLAYER_DEFS.map((d, i) => makePlayer(i, d.name, d.human, d.color));
-  G.map = generateMap();
+  // A fixed seed (via ?seed=123) makes the whole run reproducible for tests.
+  const seedParam =
+    typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("seed")
+      : null;
+  const seed = seedParam ? (Number(seedParam) >>> 0) : undefined;
+  // Seed the game RNG too, so AI timing/decisions and board fills are
+  // reproducible in tests; normal play keeps a fresh random stream.
+  if (seed !== undefined) setRng(mulberry32(seed ^ 0x5eed5));
+  else setRng(Math.random);
+  G.map = generateMap(seed);
+  G.seed = seed ?? null;
   G.offers = []; G.offerSeq = 1; G.won = false; G.running = true;
   G.setupPhase = true; G.buildMode = null; G.pendingSabotage = null; G.upgradeTimer = 0;
   G.access = {};
@@ -66,10 +101,12 @@ export function startGame(container: HTMLElement) {
   }
 
   wireBus();
+  installTestHook();
 
   // human setup — place Capital, then pick 2 starting rails yourself
   G.setupPhase = true;
   G.setupStep = 0;   // 0 = capital, 1 = rail #1, 2 = rail #2
+  legalityDirty = true;
   updateSetupPrompt();
 
   UI.renderHUD();
@@ -107,18 +144,23 @@ export function startGame(container: HTMLElement) {
       acc += dt;
       if (acc > 1000) {
         acc = 0;
-        // if you can no longer afford the armed build, deselect it
-        const me = G.players[0] as Player;
-        if (G.buildMode && G.buildMode !== "toll" && G.buildMode !== "bandit"
-            && COSTS[G.buildMode] && !canAfford(me, COSTS[G.buildMode].cost)) {
-          clearMode();
+        // if you can no longer afford the armed build, deselect it.
+        // NEVER during setup: setup builds (capital, rails) are free and the
+        // player has 0 resources, so the affordability check would instantly
+        // strip the guided markers (ticket #1).
+        if (!G.setupPhase) {
+          const me = G.players[0] as Player;
+          if (G.buildMode && G.buildMode !== "toll" && G.buildMode !== "bandit"
+              && COSTS[G.buildMode] && !canAfford(me, COSTS[G.buildMode].cost)) {
+            clearMode();
+          }
         }
         UI.renderMarket(); UI.renderHUD(); UI.renderKingdoms(); UI.renderSabotage(); UI.renderBuild();
       }
     }
     UI.setUpgradeBar(G.setupPhase ? 0 : G.upgradeTimer / UPGRADE_EVERY);
     UI.renderQuarry(now);
-    computeLegality();
+    if (legalityDirty) { legalityDirty = false; computeLegality(); }
     view.draw(now, G.players);
     raf = requestAnimationFrame(frame);
   };
@@ -186,12 +228,14 @@ function updateSetupPrompt() {
     UI.showModeBar("road");
   }
   UI.renderBuild();
+  markLegalityDirty();
 }
 
 function endSetup() {
   G.setupPhase = false;
   G.buildMode = null;
   view.mode = null;
+  markLegalityDirty();
   UI.showBanner(null);
   UI.showModeBar(null);
   recomputePool();
@@ -204,9 +248,13 @@ function endSetup() {
 }
 
 function clearMode() {
+  // Setup is a guided flow: the mode is owned by updateSetupPrompt() and must
+  // never be cleared by Escape, auto-deselect, or a re-click (ticket #1).
+  if (G.setupPhase) return;
   G.buildMode = null;
   G.pendingSabotage = null;
   view.mode = null;
+  markLegalityDirty();
   UI.showModeBar(null);
   UI.renderBuild();
   UI.renderSabotage();
@@ -331,6 +379,7 @@ function wireBus() {
       return;
     }
     G.buildMode = mode; view.mode = mode;
+    markLegalityDirty();
     UI.showModeBar(mode); UI.renderBuild(); UI.renderSabotage(); UI.renderKingdoms();
   });
 
@@ -339,9 +388,11 @@ function wireBus() {
     if (p.res.gold < SABOTAGE[key].gold) { UI.toast(`Need ${SABOTAGE[key].gold} Gold.`, "danger"); return; }
     if (key === "bandit") {
       G.buildMode = "bandit"; G.pendingSabotage = null; view.mode = null;
+      markLegalityDirty();
       UI.showModeBar("bandit"); UI.renderSabotage();
     } else {
       G.pendingSabotage = key; G.buildMode = null; view.mode = null;
+      markLegalityDirty();
       UI.showModeBar(null);
       UI.toast(`${SABOTAGE[key].name} armed — click a rival kingdom to strike.`, "info");
       UI.renderSabotage(); UI.renderKingdoms();
@@ -413,6 +464,8 @@ function wireBus() {
 
   bus.on("build", (d: any) => {
     if (d?.p?.human) recomputePool();
+    // roads/capitals/factories change reachability and the legal sets
+    if (d?.kind !== "toll") markLegalityDirty();
     UI.renderHUD(); UI.renderKingdoms();
   });
   bus.on("sabotage", (d: any) => {

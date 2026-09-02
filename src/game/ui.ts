@@ -164,6 +164,13 @@ export function buildDOM(container: HTMLElement) {
     b.onclick = () => setMobileView(v);
     el.mobileNav.appendChild(b);
   }
+  // ticket #9: on-screen recentre for touch (the fit button in the top bar is
+  // easy to miss on phones)
+  const recentre = h("button", "recenter-btn", "🎯");
+  recentre.title = "Recentre map";
+  recentre.onclick = () => bus.emit("fit");
+  root.appendChild(recentre);
+
   root.appendChild(el.mobileNav);
   root.dataset.view = "map";
 

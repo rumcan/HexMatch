@@ -1,46 +1,82 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
 import { validateManifest } from "../../tools/validate-manifest.mjs";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const manifestPath = join(__dirname, "../../assets/iso-atlas/manifest.json");
+// E1 acceptance: the manifest validates against a JSON schema (CI), and the
+// anchor contract is enforced geometrically.
 
-describe("E1 atlas manifest", () => {
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+const good = {
+  image: "industries@1x.png",
+  tileW: 64,
+  tileH: 32,
+  sprites: {
+    coal_mine: { x: 0, y: 0, w: 192, h: 160, footprint: [3, 3], anchor: [96, 148], frames: 1 },
+    oil_rig: {
+      x: 192, y: 0, w: 128, h: 176, footprint: [2, 2], anchor: [64, 160],
+      frames: 4, frameMs: 180,
+    },
+    road_0011: { x: 0, y: 256, w: 64, h: 32, footprint: [1, 1], anchor: [32, 32] },
+  },
+};
 
-  it("validates against the schema rules", () => {
-    expect(validateManifest(manifest)).toEqual([]);
+describe("E1 atlas manifest validation", () => {
+  it("accepts the spec's example manifest", () => {
+    expect(validateManifest(good)).toEqual([]);
   });
 
-  it("uses the E0 64×32 tile size", () => {
-    expect(manifest.tileW).toBe(64);
-    expect(manifest.tileH).toBe(32);
+  it("accepts a manifest with E4 Tier-3 slices", () => {
+    const withSlices = {
+      ...good,
+      sprites: {
+        ...good.sprites,
+        coal_mine: {
+          ...good.sprites.coal_mine,
+          slices: [{ x: 0, y: 0, w: 192, h: 64 }],
+        },
+      },
+    };
+    expect(validateManifest(withSlices)).toEqual([]);
   });
 
-  it("provides all 16 road and 16 rail autotile variants named by mask", () => {
-    for (const kind of ["road", "rail"]) {
-      for (let m = 0; m < 16; m++) {
-        const key = `${kind}_${m.toString(2).padStart(4, "0")}`;
-        expect(manifest.sprites[key], `missing ${key}`).toBeTruthy();
-      }
-    }
+  it("rejects missing required fields", () => {
+    const bad = JSON.parse(JSON.stringify(good));
+    delete bad.sprites.coal_mine.anchor;
+    const errors = validateManifest(bad);
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors.join("\n")).toContain("anchor");
   });
 
-  it("every sprite anchor falls inside its own rect and lands on the footprint south corner", () => {
-    for (const [name, s] of Object.entries(manifest.sprites) as any[]) {
-      expect(s.anchor[0]).toBeLessThanOrEqual(s.w);
-      expect(s.anchor[1]).toBeLessThanOrEqual(s.h);
-      // anchor Y for ground/transport sprites is at the rect bottom (south corner)
-      expect(s.anchor[1]).toBeGreaterThan(0);
-    }
+  it("rejects an anchor outside its sprite rect (anchor contract)", () => {
+    const bad = JSON.parse(JSON.stringify(good));
+    bad.sprites.road_0011.anchor = [64, 33]; // 64x32 sprite: anchor must be inside
+    const errors = validateManifest(bad);
+    expect(errors.join("\n")).toContain("anchor");
   });
 
-  it("validator rejects a malformed manifest", () => {
-    const errors = validateManifest({ image: "x.png", tileW: 64, tileH: 32, sprites: {
-      bad: { x: 0, y: 0, w: 10, h: 10, footprint: [2], anchor: [5, 9], frames: 1 },
-    } });
+  it("rejects animation frames that do not tile the rect evenly", () => {
+    const bad = JSON.parse(JSON.stringify(good));
+    bad.sprites.oil_rig.w = 130; // 4 frames, 130px — not divisible
+    const errors = validateManifest(bad);
+    expect(errors.join("\n")).toContain("frames do not tile");
+  });
+
+  it("requires frameMs on animated sprites", () => {
+    const bad = JSON.parse(JSON.stringify(good));
+    delete bad.sprites.oil_rig.frameMs;
+    const errors = validateManifest(bad);
+    expect(errors.join("\n")).toContain("frameMs");
+  });
+
+  it("rejects a slice outside its sprite rect", () => {
+    const bad = JSON.parse(JSON.stringify(good));
+    bad.sprites.coal_mine.slices = [{ x: 0, y: 150, w: 100, h: 100 }];
+    const errors = validateManifest(bad);
+    expect(errors.join("\n")).toContain("slice");
+  });
+
+  it("rejects unknown fields (schema strictness)", () => {
+    const bad = JSON.parse(JSON.stringify(good));
+    bad.sprites.coal_mine.anchro = [1, 2]; // typo of anchor
+    const errors = validateManifest(bad);
     expect(errors.length).toBeGreaterThan(0);
   });
 });

@@ -1,45 +1,157 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Hexmatch Iso Atlas Manifest",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "hexmatch-atlas-manifest",
+  "title": "HexMatch isometric atlas manifest (E1)",
+  "description": "One shared manifest for all scale variants of the sprite atlas. `anchor` is the pixel inside the sprite that lands exactly on the screen position of the footprint's south corner (the bottom vertex of the diamond of the tile at (originX + w - 1, originY + h - 1)).",
   "type": "object",
-  "required": ["image", "tileW", "tileH", "sprites"],
+  "additionalProperties": false,
+  "required": [
+    "image",
+    "tileW",
+    "tileH",
+    "sprites"
+  ],
   "properties": {
-    "image": { "type": "string", "minLength": 1 },
-    "tileW": { "type": "integer", "minimum": 1 },
-    "tileH": { "type": "integer", "minimum": 1 },
+    "image": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tileW": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "tileH": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "license": {
+          "type": "string"
+        },
+        "credits": {
+          "type": "string"
+        }
+      }
+    },
     "sprites": {
       "type": "object",
-      "additionalProperties": { "$ref": "#/definitions/sprite" }
+      "additionalProperties": {
+        "$ref": "#/$defs/sprite"
+      },
+      "propertyNames": {
+        "pattern": "^[a-z0-9_]+$"
+      }
+    },
+    "images": {
+      "type": "object",
+      "description": "Atlas image per zoom level (0.5/1/2). Coordinates & anchors are at 1x.",
+      "additionalProperties": {
+        "type": "string"
+      }
     }
   },
-  "definitions": {
+  "$defs": {
     "sprite": {
       "type": "object",
-      "required": ["x", "y", "w", "h", "footprint", "anchor", "frames"],
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y",
+        "w",
+        "h",
+        "footprint",
+        "anchor"
+      ],
       "properties": {
-        "x": { "type": "integer", "minimum": 0 },
-        "y": { "type": "integer", "minimum": 0 },
-        "w": { "type": "integer", "minimum": 1 },
-        "h": { "type": "integer", "minimum": 1 },
+        "x": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "y": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "w": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "h": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "frames": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "frameMs": {
+          "type": "integer",
+          "minimum": 1
+        },
         "footprint": {
-          "type": "array", "items": { "type": "integer", "minimum": 1 },
-          "minItems": 2, "maxItems": 2
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "integer",
+              "minimum": 1
+            }
+          ],
+          "minItems": 2,
+          "maxItems": 2
         },
         "anchor": {
-          "type": "array", "items": { "type": "integer", "minimum": 0 },
-          "minItems": 2, "maxItems": 2
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ],
+          "minItems": 2,
+          "maxItems": 2
         },
-        "frames": { "type": "integer", "minimum": 1 },
-        "frameMs": { "type": "integer", "minimum": 1 },
         "slices": {
+          "description": "E4 Tier-3 escape hatch: optional per-tile strips for sprites that cannot be depth-sorted as a whole. A slice is an axis-aligned strip with its own sub-rect.",
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["x", "y", "w", "h"],
+            "additionalProperties": false,
+            "required": [
+              "x",
+              "y",
+              "w",
+              "h"
+            ],
             "properties": {
-              "x": { "type": "integer" }, "y": { "type": "integer" },
-              "w": { "type": "integer", "minimum": 1 },
-              "h": { "type": "integer", "minimum": 1 }
+              "x": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "y": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "w": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "h": {
+                "type": "integer",
+                "minimum": 1
+              }
             }
           }
         }

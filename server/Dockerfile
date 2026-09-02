@@ -3,9 +3,9 @@ FROM node:22-alpine
 
 WORKDIR /app
 
-# install deps first so Docker caches them between deploys
+# install deps from the lockfile (deterministic, no committed node_modules — ticket #13)
 COPY package.json package-lock.json* ./
-RUN npm install --omit=dev
+RUN npm ci --omit=dev
 
 COPY server.js ./
 

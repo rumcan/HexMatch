@@ -1,0 +1,10 @@
+# Keep the build context lean: the image only needs package.json, the
+# lockfile and server.js. Everything else must never be COPY'd in (K4).
+node_modules/
+**/node_modules/
+dist/
+dist-ssr/
+npm-debug.log*
+*.log
+.env*
+.git/
