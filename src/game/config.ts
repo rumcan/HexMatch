@@ -116,8 +116,12 @@ export const FOG_MS = 30000;
 export const BLOCK_MS = 120000;
 
 // ── RNG helpers ──
-export const rand = (n = 1) => Math.random() * n;
-export const randInt = (n: number) => Math.floor(Math.random() * n);
+// All game randomness funnels through one injectable RNG so a seeded run is
+// fully reproducible (deterministic grid, AI, board fill — T1 / E3).
+let _rng: () => number = Math.random;
+export function setRng(fn: () => number) { _rng = fn; }
+export const rand = (n = 1) => _rng() * n;
+export const randInt = (n: number) => Math.floor(_rng() * n);
 export const choice = <T,>(arr: T[]): T => arr[randInt(arr.length)];
 export function shuffle<T>(arr: T[]): T[] {
   const a = arr.slice();

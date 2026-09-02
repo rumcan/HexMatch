@@ -1,17 +1,6 @@
-import { useEffect, useRef } from "react";
-import "./game/styles.css";
-import { startGame } from "./game/main";
+import IsoApp from "./iso/IsoApp";
 
+// E11 cutover: the 3D hex view is replaced by the isometric canvas-2d game.
 export default function App() {
-  const ref = useRef<HTMLDivElement>(null);
-  const started = useRef(false);
-
-  useEffect(() => {
-    if (!ref.current || started.current) return;
-    started.current = true;
-    const cleanup = startGame(ref.current);
-    return () => { if (cleanup) cleanup(); };
-  }, []);
-
-  return <div ref={ref} className="game-root" />;
+  return <IsoApp />;
 }
