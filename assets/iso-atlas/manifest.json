@@ -1,0 +1,73 @@
+{
+  "image": "atlas@1x.png",
+  "images": {
+    "1": "atlas@1x.png",
+    "2": "atlas@2x.png",
+    "0.5": "atlas@0.5x.png"
+  },
+  "tileW": 64,
+  "tileH": 32,
+  "meta": {
+    "source": "OpenGFX (https://github.com/OpenTTD/OpenGFX), GPLv2",
+    "generatedBy": "tools/slice-atlas.mjs",
+    "note": "coordinates and anchors are at 1x; multiply by zoom for @2x/@0.5x"
+  },
+  "sprites": {
+    "terrain_grass_a": {
+      "x": 4,
+      "y": 4,
+      "h": 32,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        31
+      ],
+      "w": 64
+    },
+    "terrain_grass_b": {
+      "x": 72,
+      "y": 4,
+      "h": 32,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        31
+      ],
+      "w": 64
+    },
+    "terrain_rough": {
+      "x": 140,
+      "y": 4,
+      "h": 32,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        31
+      ],
+      "w": 64
+    },
+    "terrain_water": {
+      "x": 208,
+      "y": 4,
+      "h": 32,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        31
+      ],
+      "w": 64
+    }
+  }
+}

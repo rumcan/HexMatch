@@ -57,6 +57,10 @@ html, body, #root {
   background: var(--bg);
   user-select: none;
   -webkit-font-smoothing: antialiased;
+  /* ticket #11: stop pull-to-refresh / double-tap zoom from fighting the map */
+  overscroll-behavior: none;
+  touch-action: manipulation;
+  -webkit-text-size-adjust: 100%;
 }
 .game-root { position: fixed; inset: 0; overflow: hidden; }
 
@@ -103,7 +107,8 @@ html, body, #root {
 /* ── top bar ────────────────────────────────────────────────────── */
 .topbar {
   position: fixed; top: 0; left: 0; right: 0; height: 60px; z-index: 40;
-  display: flex; align-items: center; gap: 16px; padding: 0 14px;
+  display: flex; align-items: center; gap: 16px;
+  padding: calc(env(safe-area-inset-top, 0px)) 14px 0;
   background: linear-gradient(180deg, rgba(8,13,19,.88), rgba(8,13,19,.55));
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
@@ -1016,6 +1021,29 @@ html, body, #root {
 
 /* bottom nav — hidden entirely on desktop */
 .mnav { display: none; }
+
+/* floating recentre button — touch-only (ticket #9) */
+.recenter-btn { display: none; }
+@media (pointer: coarse), (max-width: 760px) {
+  .recenter-btn {
+    display: block;
+    position: fixed; right: 12px;
+    bottom: calc(70px + env(safe-area-inset-bottom, 0px));
+    z-index: 45;
+    width: 46px; height: 46px;
+    border-radius: 50%;
+    border: 1px solid var(--line);
+    background: rgba(8,14,20,.82);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    color: var(--gold2); font-size: 20px;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(0,0,0,.45);
+  }
+  .recenter-btn:active { transform: scale(.92); }
+}
+/* only relevant while the map tab is visible */
+.root:not([data-view="map"]) ~ .recenter-btn,
+.game-root:not([data-view="map"]) .recenter-btn { display: none; }
 
 @media (max-width: 760px) {
   .mnav {

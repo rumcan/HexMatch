@@ -1,0 +1,61 @@
+{
+  "comment": "E1 cell map: which OpenGFX source-sheet region becomes which atlas sprite. box = [x, y] top-left of the 64-wide blue tile box in the source sheet; the crop is 64 wide x 31 tall (the tile) and 1 extra bottom row (sheet row y+31 when it is not blue; the tile's own bottom row is cloned otherwise) so stacked tiles never leave a 1px hole under the diamond tip. anchor is measured automatically at slice time = the bottom-centre of the keyed content, snapped into the 64x32 cell.",
+  "tileW": 64,
+  "tileH": 32,
+  "sources": {
+    "grass": "src/assets/sprites/png/terrain/grass-temperate.gimp.png",
+    "rough": "src/assets/sprites/png/terrain/rough-temperate.png",
+    "sea": "src/assets/sprites/png/terrain/shoretiles.png"
+  },
+  "sprites": [
+    {
+      "name": "terrain_grass_a",
+      "source": "grass",
+      "box": [
+        1,
+        1
+      ],
+      "footprint": [
+        1,
+        1
+      ]
+    },
+    {
+      "name": "terrain_grass_b",
+      "source": "grass",
+      "box": [
+        81,
+        1
+      ],
+      "footprint": [
+        1,
+        1
+      ]
+    },
+    {
+      "name": "terrain_rough",
+      "source": "rough",
+      "box": [
+        1,
+        1
+      ],
+      "footprint": [
+        1,
+        1
+      ]
+    },
+    {
+      "name": "terrain_water",
+      "source": "sea",
+      "footprint": [
+        1,
+        1
+      ],
+      "box": [
+        1,
+        1
+      ],
+      "note": "static sea tile (OpenGFX stores one; wave animation is runtime recolor \u2014 no anim frames in source)"
+    }
+  ]
+}

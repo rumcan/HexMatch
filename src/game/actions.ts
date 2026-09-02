@@ -85,7 +85,7 @@ export function grantStartRails(p: Player, hops = 2) {
       return other !== prev;
     });
     if (!opts.length) break;
-    const edge = opts[Math.floor(Math.random() * opts.length)];
+    const edge = opts[randInt(opts.length)];
     doRoad(p, edge, true);
     const e2 = G.map.edges[edge];
     prev = cur;

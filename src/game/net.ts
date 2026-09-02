@@ -19,6 +19,7 @@ export const Net = {
   role: "solo" as Role,
   ws: null as WebSocket | null,
   code: "" as string,
+  hostToken: "" as string,   // rehost token issued by the server at room creation
   myIndex: 0,            // which G.players slot this browser controls
   guestSlots: new Map<string, number>(),   // guest id -> player index
   connected: false,
@@ -63,6 +64,15 @@ export async function hostRoom(url: string, name: string) {
   sendRaw({ type: "create", name });
 }
 
+/** Reattach to a room after a host page reload (ticket #16). */
+export async function rehostRoom(url: string, code: string, token: string, name: string) {
+  await connect(url);
+  Net.role = "host";
+  Net.myIndex = 0;
+  Net.code = code; Net.hostToken = token;
+  sendRaw({ type: "rehost", code: code.toUpperCase(), token, name });
+}
+
 export async function joinRoom(url: string, code: string, name: string) {
   await connect(url);
   Net.role = "guest";
@@ -76,7 +86,8 @@ function handle(m: any) {
     case "created":
       Net.code = m.code;
       Net.seed = m.seed;
-      bus.emit("net:created", { code: m.code, seed: m.seed });
+      if (m.token) Net.hostToken = m.token;
+      bus.emit("net:created", { code: m.code, seed: m.seed, rehosted: !!m.rehosted });
       break;
 
     case "joined":
@@ -137,13 +148,21 @@ function handle(m: any) {
       bus.emit("net:host-left", {});
       break;
 
+    case "host-back":
+      bus.emit("toast", { text: "Host reconnected.", kind: "success" });
+      break;
+
     case "error":
       bus.emit("net:error", { message: m.message });
       break;
 
     // ── host side: apply a guest's intent using the normal game rules ─
     case "intent":
-      if (Net.role === "host") applyIntent(m.from, m.action, m.payload);
+      if (Net.role !== "host") break;
+      // The server has already verified this guest owns `slot` (ticket #15);
+      // cross-check against our own guest→slot map before acting on it.
+      if (m.slot !== undefined && m.slot !== Net.guestSlots.get(m.from)) break;
+      applyIntent(m.from, m.action, m.payload);
       break;
   }
 }

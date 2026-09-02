@@ -1,4 +1,4 @@
-import { ResKey } from "./config";
+import { ResKey, rand } from "./config";
 
 // ── Event bus ──
 class Bus {
@@ -44,11 +44,11 @@ export function makePlayer(i: number, name: string, human: boolean, color: strin
     settlements: [], cities: [], roads: [],
     capital: -1, tollAccess: new Set<number>(),
     vp: 0,
-    skill: human ? 1 : 0.55 + Math.random() * 0.35,
-    nextIncome: 5000 + Math.random() * 4000,
-    nextBuild: 10000 + Math.random() * 6000,
-    nextTrade: 12000 + Math.random() * 15000,
-    nextEvil: 45000 + Math.random() * 30000,
+    skill: human ? 1 : 0.55 + rand(0.35),
+    nextIncome: 5000 + rand(4000),
+    nextBuild: 10000 + rand(6000),
+    nextTrade: 12000 + rand(15000),
+    nextEvil: 45000 + rand(30000),
     slowedUntil: 0,
     securedUntil: 0,
     lastGain: {},

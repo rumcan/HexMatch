@@ -1,6 +1,12 @@
 node_modules/
+**/node_modules/
 dist/
-dist/assets
+dist-ssr/
 *.local
 .DS_Store
 .vscode/
+.idea/
+coverage/
+playwright-report/
+test-results/
+*.log
