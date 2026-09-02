@@ -1,0 +1,43 @@
+/*
+ * This file is part of OpenGFX base graphics for OpenTTD.
+ * OpenGFX is free software; you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, version 2.
+ * OpenGFX is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ * See the GNU General Public License for more details. You should have received a copy of the GNU General Public License along with OpenGFX. If not, see <http://www.gnu.org/licenses/>.
+ */
+
+/* ******************************
+ * Locks
+ * *****************************/
+
+/* Water is defined in extra-canals.pnml as replacenew */
+
+spriteset (set_locks_normal) { tmpl_locks("sprites/png/infrastructure/locks_normal.gimp.png") }
+spriteset (set_locks_snow14) { tmpl_locks("sprites/png/infrastructure/locks_snow14.gimp.png") }
+spriteset (set_locks_snow24) { tmpl_locks("sprites/png/infrastructure/locks_snow24.gimp.png") }
+spriteset (set_locks_snow34) { tmpl_locks("sprites/png/infrastructure/locks_snow34.gimp.png") }
+spriteset (set_locks_snow44) { tmpl_locks("sprites/png/infrastructure/locks_snow44.gimp.png") }
+
+switch( FEAT_CANALS, SELF, switch_locks_arctic,
+		[
+			STORE_TEMP(                (tile_height > (snowline_height - 2)), 0),
+			STORE_TEMP( LOAD_TEMP(0) + (tile_height > (snowline_height - 1)), 0),
+			STORE_TEMP( LOAD_TEMP(0) + (tile_height > (snowline_height    )), 0),
+			STORE_TEMP( LOAD_TEMP(0) + (tile_height > (snowline_height + 1)), 0),
+			LOAD_TEMP(0)
+		] ) {
+	0: set_locks_normal;
+	1: set_locks_snow14;
+	2: set_locks_snow24;
+	3: set_locks_snow34;
+	set_locks_snow44;
+}
+switch( FEAT_CANALS, SELF, switch_locks_climate, climate) {
+	CLIMATE_ARCTIC:   switch_locks_arctic;
+	set_locks_normal;
+}
+
+item( FEAT_CANALS, locks, WF_LOCKS) {
+	graphics {
+		default: switch_locks_climate;
+	}
+}

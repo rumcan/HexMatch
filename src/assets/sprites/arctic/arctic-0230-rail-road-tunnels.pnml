@@ -1,0 +1,12 @@
+//230-237 arctic rail tunnel
+base_graphics spr230( 230, "sprites/png/infrastructure/infra06.png") { [ 674, 3800,  64,  39, -31,  -8] }
+base_graphics spr231( 231, "sprites/png/infrastructure/infra06.png") { [   2, 3864,  64,  39, -31, -38] }
+base_graphics spr232( 232, "sprites/png/infrastructure/infra06.png") { [  82, 3864,  64,  23, -31,   0] }
+base_graphics spr233( 233, "sprites/png/infrastructure/infra06.png") { [ 162, 3864,  64,  23, -31, -30] }
+base_graphics spr234( 234, "sprites/png/infrastructure/infra06.png") { [ 242, 3864,  64,  23, -31,   0] }
+base_graphics spr235( 235, "sprites/png/infrastructure/infra06.png") { [ 322, 3864,  64,  23, -31, -30] }
+base_graphics spr236( 236, "sprites/png/infrastructure/infra06.png") { [ 402, 3864,  64,  39, -31,  -8] }
+base_graphics spr237( 237, "sprites/png/infrastructure/infra06.png") { [ 482, 3864,  64,  39, -31, -38] }
+
+// arctic road tunnel 238 - 245
+base_graphics spr238( 238, "sprites/png/infrastructure/roadtunnel.png") { tmpl_road_tunnels(101) }

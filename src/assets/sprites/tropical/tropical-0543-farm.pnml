@@ -1,0 +1,3 @@
+
+
+base_graphics spr543( 543, "sprites/png/industries/farm_tropical.png") { tmpl_farm() }
