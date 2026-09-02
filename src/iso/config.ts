@@ -133,6 +133,24 @@ export const TRANSPORT: Record<Transport, TransportDef> = {
 // Starting free road budget for the guided setup (E8).
 export const START_ROAD_BUDGET = 12;
 
+// ── Quarry (match-3 board, E-loop) ──
+// The quarry is the harvest mini-game: gems fall from the network's connected
+// industries, and matching them mints cargo. Gems are keyed directly by Cargo
+// (six colours, gold wild); the board never imports the legacy hex tree.
+export const BOARD_W = 9, BOARD_H = 9;
+export const CELL = 46;
+
+// Inverse of CARGO_TO_RES: cargoes biject onto the six gem frames.
+export const RES_TO_CARGO: Record<ResKey, Cargo> = (() => {
+  const out = {} as Record<ResKey, Cargo>;
+  (Object.keys(CARGO_TO_RES) as Cargo[]).forEach((c) => { out[CARGO_TO_RES[c]] = c; });
+  return out;
+})();
+
+// Token spawn cadence: every SPROUT_EVERY ms, the connected network feeds the
+// quarry (connected industries mint tiered gems; see world.accessTiers).
+export const SPROUT_EVERY = 20000;
+
 // Direction bits for the per-tile 4-bit autotile mask (E5).
 export const NE = 1, SE = 2, SW = 4, NW = 8;
 export const DIR: Record<number, [number, number]> = {

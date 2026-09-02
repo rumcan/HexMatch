@@ -198,6 +198,31 @@ export class IsoWorld {
     }
     return out;
   }
+  /**
+   * Per-cargo access TIER for the quarry board's token spawn. A cargo is
+   * accessible when a connected (road/rail) harvester has it in catchment.
+   * Rail-connected harvesters give tier 2 gems, road tier 1; a cargo's tier is
+   * the best across all its harvesters. Blockaded industries are skipped.
+   * Returns the five production cargoes only — gold is handled separately.
+   */
+  accessTiers(player: number, now: number): Partial<Record<Cargo, 1 | 2>> {
+    const out = {} as Partial<Record<Cargo, 1 | 2>>;
+    for (let hi = 0; hi < this.harvesters.length; hi++) {
+      if (this.harvesterOwner[hi] !== player) continue;
+      const h = this.harvesters[hi];
+      const st = this.connState.get(h.id) ?? { road: false, rail: false };
+      const tier: 1 | 2 | 0 = st.rail ? 2 : st.road ? 1 : 0;
+      if (tier === 0) continue;
+      const t = tier as 1 | 2;
+      for (const ind of this.catchmentIndustries(h.tx, h.ty)) {
+        if (ind.banditUntil > now) continue;
+        const cargo = cargoOf(ind);
+        if (cargo === "gold") continue; // gold spawns via combo/mine access only
+        if (!out[cargo] || t > out[cargo]!) out[cargo] = t;
+      }
+    }
+    return out;
+  }
 }
 
 function oppositeBit(bit: number): number {

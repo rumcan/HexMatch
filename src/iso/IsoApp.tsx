@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createGame, BuildTool, SetupStep } from "./game";
 import { CARGO, Cargo, CARGO_KEYS, INDUSTRIES } from "./config";
 import { Industry as IndType } from "./grid";
+import QuarryPanel from "./QuarryPanel";
 
 const TOOL_LABEL: Record<BuildTool, string> = {
   road: "Road", rail: "Rail", harvester: "Harvester", demolish: "Demolish",
@@ -103,12 +104,15 @@ export default function IsoApp() {
         ))}
       </div>
 
-      {/* industry inspector (E9) */}
+      {/* match-3 quarry */}
+      <QuarryPanel game={g ?? null} />
+
+      {/* industry inspector (E9) — sits above the quarry panel */}
       {sel && (
-        <div style={{ position: "fixed", right: 12, bottom: 12, width: 240, background: "rgba(10,16,22,.92)",
-          color: "#fff", padding: 12, borderRadius: 8, border: "1px solid #334", zIndex: 10, fontSize: 13 }}>
+        <div style={{ position: "fixed", right: 12, bottom: 460, width: 240, background: "rgba(10,16,22,.92)",
+          color: "#fff", padding: 12, borderRadius: 8, border: "1px solid #334", zIndex: 11, fontSize: 13 }}>
           <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <b>{INDUSTRIES[sel.type] && sel.type.replace("_", " ")}</b>
+            <b>{sel.type.replace(/_/g, " ")}</b>
             <button onClick={() => setSel(null)} style={{ background: "none", border: "none", color: "#fff", cursor: "pointer" }}>×</button>
           </div>
           <div style={{ opacity: 0.85, marginTop: 6 }}>
