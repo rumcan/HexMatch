@@ -135,6 +135,20 @@ describe("G1/G2 atlas pixels", () => {
     }
   });
 
+  it("U2: highlight_soft is a fainter catchment tint than the solid highlight", async () => {
+    const sharp = (await import("sharp")).default;
+    const { data, info } = await sharp("assets/iso-atlas/atlas@1x.png").ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const alphaAt = (name: string, x = 32, y = 8) => {
+      const s = manifest.sprites[name];
+      const i = ((s.y + y) * info.width + (s.x + x)) * 4;
+      return data[i + 3];
+    };
+    expect(manifest.sprites.highlight_soft).toBeTruthy();
+    // At the NE arm midpoint both cells paint, but the soft catchment is
+    // deliberately less prominent than the solid placement tile.
+    expect(alphaAt("highlight")).toBeGreaterThan(alphaAt("highlight_soft"));
+  });
+
   it("depot sprites are at most 40px tall (G4)", () => {
     for (const name of ["depot_blue", "depot_red", "depot_purple", "depot_green"]) {
       expect(manifest.sprites[name].h).toBeLessThanOrEqual(40);

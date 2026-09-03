@@ -26,7 +26,7 @@
  *   anchor: [x,y]                   override the auto-measured anchor.
  *   compose: {...}                  build a multi-tile sprite from ground
  *                                   tile cells plus optional overlays.
- *   generator: "road" | "rail" | "highlight" | "crossing"
+ *   generator: "road" | "rail" | "highlight" | "highlight_soft" | "crossing"
  *                                   emit 16 road/rail bitmask variants from one
  *                                   OpenGFX half-piece, a legal-placement
  *                                   highlight, or a level-crossing overlay.
@@ -458,14 +458,23 @@ function inDiamondPixel(x, y) {
 }
 
 /** Generate 16 road/rail bitmask cells from one OpenGFX half-piece, one
- *  highlight cell, or one level-crossing overlay. */
+ *  highlight cell, or one level-crossing overlay.
+ *
+ * `highlight_soft` is U2's fainter catchment tint (informational); the plain
+ * `highlight` stays the solid "this is the tile you are about to place" glow.
+ */
 async function makeGenerated(s, gen) {
   const name = s.name;
-  if (gen === "highlight") {
+  if (gen === "highlight" || gen === "highlight_soft") {
     const out = [];
+    const soft = gen === "highlight_soft";
     const color = [255, 220, 40];
     const px = Buffer.alloc(CELL_W * CELL_H * 4);
     const cx = CELL_W / 2, cy = CELL_H / 2;
+    // Solid line vs soft fill alpha: the soft tile keeps the diamond edge and
+    // a translucent middle so the network reads as "area" not "building".
+    const lineAlpha = soft ? 70 : 170;
+    const fillAlpha = soft ? 32 : 80;
     for (const end of Object.values(ARM_ENDS)) {
       const [ex, ey] = end;
       for (let y = 0; y < CELL_H; y++) {
@@ -473,7 +482,7 @@ async function makeGenerated(s, gen) {
           const dist = pointSegDist(x + 0.5, y + 0.5, cx, cy, ex, ey);
           if (dist < 2) {
             const i = (y * CELL_W + x) * 4;
-            px[i] = color[0]; px[i + 1] = color[1]; px[i + 2] = color[2]; px[i + 3] = 170;
+            px[i] = color[0]; px[i + 1] = color[1]; px[i + 2] = color[2]; px[i + 3] = lineAlpha;
           }
         }
       }
@@ -484,10 +493,10 @@ async function makeGenerated(s, gen) {
         const edgeDist = Math.max(dx / 32 + dy / 16);
         if (Math.abs(edgeDist - 1) < 0.05) {
           const i = (y * CELL_W + x) * 4;
-          px[i] = 255; px[i + 1] = 0; px[i + 2] = 200; px[i + 3] = 255;
+          px[i] = soft ? 120 : 255; px[i + 1] = soft ? 180 : 0; px[i + 2] = soft ? 220 : 200; px[i + 3] = soft ? 110 : 255;
         } else if (edgeDist < 1) {
           const i = (y * CELL_W + x) * 4;
-          if (px[i + 3] === 0) { px[i] = color[0]; px[i + 1] = color[1]; px[i + 2] = color[2]; px[i + 3] = 80; }
+          if (px[i + 3] === 0) { px[i] = color[0]; px[i + 1] = color[1]; px[i + 2] = color[2]; px[i + 3] = fillAlpha; }
         }
       }
     }
@@ -586,7 +595,7 @@ async function buildSlot(s) {
     }
     return templates;
   }
-  if (s.generator === "highlight" || s.generator === "crossing") {
+  if (s.generator === "highlight" || s.generator === "highlight_soft" || s.generator === "crossing") {
     const generated = await makeGenerated(s, s.generator);
     return [{ name: s.name, cells: generated.cells, cellW: generated.cellW, cellH: generated.cellH, anchor: generated.anchor, footprint: [1, 1], frames: 1, frameMs: s.frameMs }];
   }

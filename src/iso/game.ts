@@ -32,7 +32,7 @@ import {
   type Camera, type GestureState,
 } from "./camera";
 import { IsoRenderer, type World } from "./renderer";
-import { generateMap, resolveMapSeed, type Grid, type Industry } from "./grid";
+import { generateMap, resolveMapSeed, industryAt, type Grid, type Industry } from "./grid";
 import {
   createTrack, drawBits, previewDrag, commitDrag, canBuildOn, hasTrack,
   demolishTile, addCost, tIdx, playerNetwork,
@@ -45,11 +45,12 @@ import {
 } from "./economy";
 import { aiBuildStep } from "./ai";
 import { CARGO, INDUSTRY_BY_KEY, TRANSPORT, VP_TARGET, type Cargo } from "./config";
-import { MAP_W, MAP_H, type ResKey } from "../game/config";
+import {
+  MAP_W, MAP_H, BANDIT_MS, BLOCK_MS, FOG_MS, SABOTAGE, SECURITY, type ResKey,
+} from "../game/config";
 import { createQuarry, GEM_TO_CARGO, type Quarry } from "./quarry";
 import { createIsoMarket, toBag, type CargoBag, type IsoMarket } from "./market";
-import { createBoardPanel, type BoardPanel } from "./board-panel";
-import { createTradePanel, type TradePanel } from "./trade-panel";
+import { createOriginalUi, type OriginalUi } from "../game/ui";
 import { joinFromSnapshot } from "./snapshot";
 export { joinFromSnapshot };
 
@@ -82,46 +83,12 @@ export interface Toast { text: string; kind: "good" | "bad" | "info"; until: num
 
 export function startIsoGame(root: HTMLElement) {
   // ── DOM ────────────────────────────────────────────────────────────────
+  // U1: the recovered UI owns the chrome. It is created once the trading
+  // state exists (below); the iso canvas layer stack is mounted into its
+  // original map-canvas slot. Keep `.iso-game` on the root for the boot test.
   root.innerHTML = "";
   root.classList.add("iso-game");
-  const stage = document.createElement("div");
-  stage.className = "iso-stage";
-  root.appendChild(stage);
-
-  const mk = (z: number) => {
-    const c = document.createElement("canvas");
-    c.className = "iso-layer";
-    c.style.zIndex = String(z);
-    stage.appendChild(c);
-    return c;
-  };
-  const canvases = { terrain: mk(1), structures: mk(2), overlay: mk(3) };
-
-  const ui = document.createElement("div");
-  ui.className = "iso-ui";
-  root.appendChild(ui);
-  ui.innerHTML = `
-    <div class="iso-top">
-      <div class="iso-res" id="iso-res"></div>
-      <div class="iso-vp" id="iso-vp"></div>
-    </div>
-    <div class="iso-banner" id="iso-banner"></div>
-    <div class="iso-toasts" id="iso-toasts"></div>
-    <div class="iso-inspect" id="iso-inspect"></div>
-    <div class="iso-tools" id="iso-tools">
-      <button data-tool="road">Road<small>1 stone · 1 VP</small></button>
-      <button data-tool="rail">Rail<small>2 ore + 1 stone · 3 VP</small></button>
-      <button data-tool="harvester">Harvester<small>free · on industry</small></button>
-      <button data-tool="demolish">Demolish<small>refund none</small></button>
-      <button data-panel="quarry" class="iso-alt">Quarry<small>match to harvest</small></button>
-      <button data-panel="trade" class="iso-alt">Trade<small>bank 4:1</small></button>
-      <button data-act="recenter" class="iso-alt">Recentre</button>
-    </div>
-    <div class="iso-cost" id="iso-cost"></div>`;
-
-  const $ = (id: string) => ui.querySelector(`#${id}`) as HTMLElement;
-  const elRes = $("iso-res"), elVp = $("iso-vp"), elBanner = $("iso-banner");
-  const elToasts = $("iso-toasts"), elCost = $("iso-cost"), elInspect = $("iso-inspect");
+  let ui: OriginalUi;
 
   // ── state ──────────────────────────────────────────────────────────────
   const seed = resolveMapSeed();
@@ -139,16 +106,17 @@ export function startIsoGame(root: HTMLElement) {
   let nextHarvesterId = 1;
   let phase: Phase = "setup-factory";
   let tool: Tool = "road";
-  let toasts: Toast[] = [];
   let winner: PlayerState | null = null;
+  /** U1: Blockade waits for the player to click an industry. */
+  let blackMode: string | null = null;
 
-  // ── J1: quarry + market + their panels ─────────────────────────────────
+  // ── J1: quarry + market + the restored UI ────────────────────────────────
   // Cargo has exactly one owner (the purse above). The board owns gems and the
   // market owns live offers; the gate between board and purse is `quarry.ts`.
-  let boardPanel: BoardPanel | null = null;
-  let tradePanel: TradePanel | null = null;
-  let tradeDirty = true;
-  let reachSig = "";
+  // U1: the board and trading tabs are rendered by the recovered `ui.ts`
+  // chrome, not by the old floating J1 panels.
+  let onBoardChange: () => void = () => {};
+  let reachSig = "\u0000";   // sentinel so the very first (empty) reach paints
 
   const gainText = (gains: Partial<Record<Cargo, number>>, label: string) =>
     (Object.entries(gains) as [Cargo, number][])
@@ -161,7 +129,7 @@ export function startIsoGame(root: HTMLElement) {
     onGains: (gains, label) => toast(gainText(gains, label), "good"),
     onTokens: (pool) => toast(`Tokens: ${(Object.keys(pool) as ResKey[])
       .map((r) => CARGO[GEM_TO_CARGO[r]].name).join(", ")}`, "info"),
-    onChange: () => boardPanel?.render(),
+    onChange: () => onBoardChange(),
   });
 
   const market: IsoMarket = createIsoMarket(players.map((p) => ({
@@ -169,16 +137,39 @@ export function startIsoGame(root: HTMLElement) {
   })));
   const meTrader = market.players[0];
 
-  boardPanel = createBoardPanel(quarry.board, {
+  // Original HUD (U1). It takes the live board + market + the player purse and
+  // wires the BUILD / BLACK MARKET / QUARRY / chips chrome to them.
+  ui = createOriginalUi(quarry.board, market, meTrader, {
+    onTool: (t) => { tool = t as Tool; },
+    onRecenter: () => {
+      const f = factoryOf("you") ?? focus;
+      cam = centerOnTile(cam, f.tx, f.ty);
+      renderer?.setCamera(cam);
+    },
     onSwap: (r1, c1, r2, c2) => {
       void quarry.board.trySwap(r1, c1, r2, c2, performance.now());
     },
+    onReset: () => {
+      quarry.board.resetNeutral();
+      toast("Quarry collapsed. Fresh neutral board.", "info");
+    },
+    onBlackAction: (key) => buyBlack(key),
+    onCancelModal: () => { blackMode = null; ui.setBanditMode(false); },
   });
-  tradePanel = createTradePanel(market, meTrader, {
-    onNotice: (text, kind) => toast(text, kind ?? "info"),
-    onChange: () => { tradeDirty = true; },
-  });
-  ui.append(boardPanel.el, tradePanel.el);
+  onBoardChange = () => ui.renderBoard();
+  root.appendChild(ui.el);
+
+  // U1: the iso layer stack stays the map; it is mounted inside the original
+  // map-canvas slot rather than a bespoke floating panel.
+  const mk = (z: number) => {
+    const c = document.createElement("canvas");
+    c.className = "iso-layer";
+    c.style.zIndex = String(z);
+    ui.mapHost.appendChild(c);
+    return c;
+  };
+  const canvases = { terrain: mk(1), structures: mk(2), overlay: mk(3) };
+  const stage = ui.mapHost;
 
   const world: World = {
     grid,
@@ -206,7 +197,8 @@ export function startIsoGame(root: HTMLElement) {
     // the board fires per-gem; collapse repeats so a match is one line
     if (text === lastToastText && now - lastToastAt < 1200) return;
     lastToastText = text; lastToastAt = now;
-    toasts.push({ text, kind, until: now + 3200 });
+    // U1: the restored HUD owns the toast DOM.
+    ui.toast(text, kind);
   };
 
   const spend = (p: PlayerState, cost: Purse) => {
@@ -348,6 +340,58 @@ export function startIsoGame(root: HTMLElement) {
     rescoreNow();
   }
 
+  // ── Black Market (U1 wiring over the restored board + industry blockade) ──
+  const REPAIR_ISO_COST: Purse = { wood: 1, stone: 1, grain: 1, ore: 1 };
+
+  function buyBlack(key: string) {
+    const now = performance.now();
+    const spendGold = (n: number) => {
+      if ((me.purse.gold ?? 0) < n) { toast(`Needs ${n} Gold.`, "bad"); return false; }
+      spend(me, { gold: n });
+      return true;
+    };
+    if (key === "bandit") {
+      if (!spendGold(SABOTAGE.bandit.gold)) return;
+      blackMode = "bandit";
+      ui.setBanditMode(true);
+      toast("Click an industry to place the Blockade (45s).", "info");
+      return;
+    }
+    if (key === "harden") {
+      if (!spendGold(SABOTAGE.harden.gold)) return;
+      quarry.board.harden();
+      toast("Frost Tiles: 7 gems frozen.", "good");
+      return;
+    }
+    if (key === "block") {
+      if (!spendGold(SABOTAGE.block.gold)) return;
+      quarry.board.dropBlocks(4, BLOCK_MS, now);
+      toast("Iron Girders dropped on the quarry.", "good");
+      return;
+    }
+    if (key === "fog") {
+      if (!spendGold(SABOTAGE.fog.gold)) return;
+      quarry.board.fog(FOG_MS, now);
+      toast("Smog Cloud: no swaps for 30s.", "good");
+      return;
+    }
+    if (key === "security") {
+      if (!spendGold(SECURITY.gold)) return;
+      toast("Security Forces hired (defensive in this build).", "info");
+      return;
+    }
+    if (key === "repair") {
+      const affordable = (Object.entries(REPAIR_ISO_COST) as [Cargo, number][])
+        .every(([k, v]) => (me.purse[k] ?? 0) >= v);
+      if (!affordable) { toast("Not enough materials for Repair Crew.", "bad"); return; }
+      spend(me, REPAIR_ISO_COST);
+      const n = quarry.board.smashBlocks();
+      toast(n ? `Repair Crew cleared ${n} obstacles.` : "Nothing to repair.", n ? "good" : "info");
+      return;
+    }
+    toast("Not available in this build.", "info");
+  }
+
   // ── economy + AI clocks ────────────────────────────────────────────────
   let lastHarvest = 0, lastAi = 0;
 
@@ -398,57 +442,57 @@ export function startIsoGame(root: HTMLElement) {
     if (preview) {
       for (const [x, y] of preview.tiles) items.push({ sprite: "highlight", tx: x, ty: y });
     } else if (hover) {
-      items.push({ sprite: "highlight", tx: hover.tx, ty: hover.ty });
-      // show the catchment when siting a harvester
-      if (tool === "harvester" || phase === "setup-harvester") {
-        const r = catchmentRect(hover.tx, hover.ty);
-        for (let y = r.y0; y <= r.y1; y++) for (let x = r.x0; x <= r.x1; x++) {
-          if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) continue;
-          if (x === hover.tx && y === hover.ty) continue;
-          items.push({ sprite: "highlight", tx: x, ty: y });
+      if (phase === "setup-factory") {
+        // U2: the factory is a 3×3 sprite. Highlight its real footprint so the
+        // build preview matches the building that gets placed.
+        for (let dy = 0; dy < 3; dy++) {
+          for (let dx = 0; dx < 3; dx++) {
+            const x = hover.tx + dx, y = hover.ty + dy;
+            if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) continue;
+            items.push({ sprite: "highlight", tx: x, ty: y });
+          }
         }
+      } else if (tool === "harvester" || phase === "setup-harvester") {
+        // U2: the harvester is a 1×1 building. Its 4×4 catchment is
+        // informational, so the placed tile is the solid glow and the
+        // catchment uses the fainter highlight_soft tint.
+        items.push({ sprite: "highlight", tx: hover.tx, ty: hover.ty });
+        const r = catchmentRect(hover.tx, hover.ty);
+        for (let y = r.y0; y <= r.y1; y++) {
+          for (let x = r.x0; x <= r.x1; x++) {
+            if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) continue;
+            if (x === hover.tx && y === hover.ty) continue;
+            items.push({ sprite: "highlight_soft", tx: x, ty: y });
+          }
+        }
+      } else {
+        items.push({ sprite: "highlight", tx: hover.tx, ty: hover.ty });
       }
     }
     return items;
   };
 
-  const cargoChip = (c: Cargo, n: number) =>
-    `<span class="chip" style="--c:${CARGO[c].c2}">${CARGO[c].icon}${n}</span>`;
-
-  function paintUi(now: number) {
-    elRes.innerHTML = (Object.keys(CARGO) as Cargo[])
-      .filter((c) => (me.purse[c] ?? 0) > 0 || ["stone", "ore"].includes(c))
-      .map((c) => cargoChip(c, me.purse[c] ?? 0)).join("");
-
-    const mine = vpFor(score, "you"), theirs = vpFor(score, "ai");
-    elVp.innerHTML =
-      `<b style="color:#5aa8ff">You ${mine}</b> / <b style="color:#ff7a5a">Rival ${theirs}</b>` +
-      `<small>first to ${VP_TARGET}</small>`;
-
-    let banner = "";
-    if (phase === "setup-factory") banner = "Click a tile to place your Factory";
-    else if (phase === "setup-harvester") banner = "Place your first Harvester — it needs an industry in its 4×4 catchment";
+  function paintUi(_now: number) {
+    let banner: string | null = null;
+    if (phase === "setup-factory") banner = "Place your Factory — click a buildable tile";
+    else if (phase === "setup-harvester") banner = "Place your Harvester — it needs an industry in its 4×4 catchment";
     else if (phase === "won") banner = `${winner?.name} wins with ${vpFor(score, winner?.id ?? "")} VP`;
     else if (me.freeTrack > 0) banner = `${me.freeTrack} free track tiles remaining — connect your harvester to your Factory`;
     else if (Object.keys(quarry.reach).length === 0) banner = "Nothing connected — the Quarry only pays cargo your network reaches";
     else banner = "Match the tokened gems in the Quarry to harvest";
-    elBanner.textContent = banner;
-    elBanner.style.display = banner ? "block" : "none";
 
-    toasts = toasts.filter((t) => t.until > now);
-    elToasts.innerHTML = toasts
-      .map((t) => `<div class="toast ${t.kind}">${t.text}</div>`).join("");
-
-    if (preview) {
+    let costInfo: string | null = null;
+    if (blackMode === "bandit") {
+      costInfo = `<span class="mb-txt">Click an industry to set the Blockade</span><span class="mb-cost">${SABOTAGE.bandit.gold}🪙</span>`;
+    } else if (preview) {
       const parts = Object.entries(preview.cost).map(([k, v]) => `${v} ${k}`);
       const n = preview.tiles.length;
       const freeN = Math.min(me.freeTrack, n);
       const label = freeN >= n ? "free (setup)" : (parts.join(" + ") || "free");
-      elCost.style.display = "block";
-      elCost.innerHTML = `<b>${n}</b> tiles · ${label}` +
+      costInfo = `<span class="mb-txt"><b>${n}</b> tiles · ${label}</span>` +
         (preview.truncated ? ` · <i>blocked</i>` : "") +
-        ` · would score <b>${TRANSPORT[tool === "rail" ? "rail" : "road"].vp} VP</b>`;
-    } else elCost.style.display = "none";
+        `<span class="mb-cost">${TRANSPORT[tool === "rail" ? "rail" : "road"].vp} VP</span>`;
+    }
 
     // industry / harvester inspector
     let info = "";
@@ -475,31 +519,27 @@ export function startIsoGame(root: HTMLElement) {
           `${servers.length} harvester${servers.length === 1 ? "" : "s"}`;
       }
     }
-    elInspect.innerHTML = info;
-    elInspect.style.display = info ? "block" : "none";
 
-    ui.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((b) => {
-      b.classList.toggle("on", b.dataset.tool === tool);
-    });
-    // panels: the buttons show what is open, the quarry only repaints its
-    // reach strip when the reachable set actually changed (per-frame diffs of
-    // 81 cells would be waste)
-    ui.querySelectorAll<HTMLButtonElement>("[data-panel]").forEach((b) => {
-      const open = b.dataset.panel === "quarry"
-        ? boardPanel?.isVisible() ?? false
-        : tradePanel?.isVisible() ?? false;
-      b.classList.toggle("on", open);
-    });
     const sig = (Object.entries(quarry.reach) as [Cargo, number][])
       .map(([c, v]) => `${c}:${v.toFixed(2)}`).join(",");
     if (sig !== reachSig) {
       reachSig = sig;
-      boardPanel?.setReach(quarry.reach);
+      ui.setReach(quarry.reach);
     }
-    if (tradeDirty && tradePanel?.isVisible()) {
-      tradePanel.render();
-      tradeDirty = false;
-    }
+
+    ui.paint({
+      players: players.map((p) => ({
+        id: p.id, name: p.name, colour: p.colour, vp: vpFor(score, p.id), human: p.human,
+      })),
+      purse: me.purse,
+      phase,
+      tool,
+      freeTrack: me.freeTrack,
+      banner,
+      costInfo,
+      inspect: info || null,
+      reach: quarry.reach,
+    });
   }
 
   // ── input ──────────────────────────────────────────────────────────────
@@ -562,8 +602,20 @@ export function startIsoGame(root: HTMLElement) {
     if (!moved) {
       const p = renderer?.pick(x, y);
       if (p) {
-        if (phase === "setup-factory") placeFactory(p.tx, p.ty);
-        else if (phase === "setup-harvester") {
+        if (phase === "play" && blackMode === "bandit") {
+          const ind = industryAt(grid, p.tx, p.ty);
+          if (ind) {
+            ind.banditUntil = performance.now() + BANDIT_MS;
+            blackMode = null;
+            ui.setBanditMode(false);
+            const def = INDUSTRY_BY_KEY[ind.type];
+            toast(`Blockade set on ${def?.name ?? ind.type} for ${BANDIT_MS / 1000}s.`, "good");
+          } else {
+            toast("Click an industry to place the Blockade.", "bad");
+          }
+        } else if (phase === "setup-factory") {
+          placeFactory(p.tx, p.ty);
+        } else if (phase === "setup-harvester") {
           if (placeHarvester(p.tx, p.ty, me, true)) {
             phase = "play";
             lastHarvest = performance.now();
@@ -589,19 +641,6 @@ export function startIsoGame(root: HTMLElement) {
     cam = zoomStepAt(cam, e.deltaY < 0 ? +1 : -1, x, y);
     renderer?.setCamera(cam);
   }, { passive: false });
-
-  ui.addEventListener("click", (e) => {
-    const b = (e.target as HTMLElement).closest("button") as HTMLButtonElement | null;
-    if (!b) return;
-    if (b.dataset.tool) { tool = b.dataset.tool as Tool; }
-    if (b.dataset.panel === "quarry") boardPanel?.setVisible(!boardPanel.isVisible());
-    if (b.dataset.panel === "trade") tradePanel?.setVisible(!tradePanel.isVisible());
-    if (b.dataset.act === "recenter") {
-      const f = factoryOf("you") ?? focus;
-      cam = centerOnTile(cam, f.tx, f.ty);
-      renderer?.setCamera(cam);
-    }
-  });
 
   window.addEventListener("keydown", (e) => {
     const map: Record<string, Tool> = { "1": "road", "2": "rail", "3": "harvester", "4": "demolish" };
@@ -654,8 +693,7 @@ export function startIsoGame(root: HTMLElement) {
     };
     raf = requestAnimationFrame(frame);
   })().catch((err) => {
-    elBanner.style.display = "block";
-    elBanner.textContent = `Failed to load art: ${err}`;
+    ui.toast(`Failed to load art: ${err}`, "bad");
   });
 
   // expose for e2e (mirrors the existing window.__hex hook)
