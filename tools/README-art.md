@@ -60,26 +60,44 @@ Sheets used so far (paths under `sprites/png/`):
   Cells verified by numeric content checks (diamond bounds, sea colour).
   `npm run slice-atlas` regenerates; the committed manifest validates in CI
   (`tests/unit/iso-manifest.test.ts` + `tools/validate-manifest.mjs`).
-- **R1: industry / depot / track atlas is now generated.** The cell map uses
-  `compose` to build 2×2 and 3×3 industry sprites on their footprints, direct
-  `crop` entries for the 1×1 depot variants, and `generator: "road"` /
-  `"rail"` to emit the 16 bitmask track pieces from one half-piece. The
-  `highlight` sprite is generated too. `probeExtra`/`cropDirect` key the blue
-  backing and clip page white/labels, and `contentBottomCentre` measures the
-  anchor that lands on the footprint's south corner. To re-run:
-  `npm run slice-atlas` then `node tools/validate-manifest.mjs
-  assets/iso-atlas/manifest.json`.
-- **Open item:** the composite sprites are composited from OpenGFX component
-  cells, so one visual QA pass against `assets/iso-atlas/contact-sheet.png`
-  (and the generated `docs/contact-sheet.png` at render time) is still the
-  intended gate before E4 ships. The atlas contains 51 sprites: 4 terrain,
-  7 industries (farm, forest, ore mine, quarry, 6-frame oil rig, gold mine),
-  4 factories, 4 depots, 32 road/rail variants, and the highlight.
-- Road/rail (G6): one OpenGFX half-piece per kind is sliced from
-  `infra06.png`, rotated/mirrored into four directions, and overlaid for all
-  16 bitmask variants. A `crossing` overlay is emitted for tiles that carry
-  both layers. The G1 pixel test (edge midpoints) is the load-bearing guard
-  that the new art did not move the connection points.
+- **Y3/Y4c/Y5/Y7: the atlas is fully declaration-driven.** The cell map
+  (`tools/iso-atlas.cells.json`) contains **no** `compose`/`box`/`crop`/`tiles`
+  arrays and no hand-authored anchors. Cell kinds:
+  - `sprite: <id>` — one declared OpenGFX ground tile (terrain).
+  - `layers: [{sprite, tint?}]` (+ optional `frames`) — a declared building on
+    its declared ground tile, each drawn at `tileOrigin + (xrel, yrel)`
+    (OpenTTD's own placement rule, Y7). `tint` multiplies opaque pixels
+    (player colours, the grey quarry). The oil rig declares its six animation
+    stages as per-frame layers.
+  - `trackset` — the 16 road/rail bitmask tiles from declared sprites only.
+    `mode: "flat"` indexes OpenGFX's finished flat road tiles (1332–1350) with
+    OpenTTD's flat selection table after `toOpenttdRoadBits`; `mode:
+    "overlays"` draws the declared grass ground plus the declared rail overlay
+    pieces (1005–1010) whose two directions are both set. The arm generator,
+    `clipArm` and `TRACK_HALF_W` are deleted (Y4c).
+  - `generator: "highlight" | "highlight_soft"` — the two procedural placement
+    glows; the only non-OpenGFX cells left.
+  Anchors are **derived** from the declared offsets
+  (`anchor = (-minX + 1, -minY + 31)`, the cell-local tile origin mapped onto
+  the renderer's south-corner contract), never measured or hand-tuned (Y5);
+  declared rects are trusted verbatim, which is what honouring `NOCROP` means
+  here. To re-run: `node tools/parse-pnml.mjs && npm run slice-atlas &&
+  node tools/validate-manifest.mjs assets/iso-atlas/manifest.json`.
+- **Y7 verification:** `node tools/footprint-check.mjs` renders every building
+  over the yellow footprint diamond grid (the overlay the bug was found with)
+  at four map quadrant offsets → `assets/iso-atlas/footprint-check.png`.
+  Acceptance: each base sits inside its footprint — no overhang past the
+  top-left edge, no bare bottom-right corner.
+- **Y6 invariants** live in `tests/unit/iso-manifest.test.ts`: no compose/crop
+  keys remain, every atlas sprite resolves to declared ids, no road/rail cell
+  uses the generator, width ≤ footprint_w × 64 + 32, and every manifest anchor
+  equals the declared derivation recomputed from the PNML.
+  `tests/unit/iso-atlas-pixels.test.ts` asserts each road mask is
+  pixel-identical to its declared tile and that adjacent declared road pieces
+  tile seamlessly (the rewritten X4 join test).
+- The atlas contains 52 sprites: 3 terrain, 6 industries (incl. the 6-frame
+  oil rig), 4 factories, 4 depots, 32 road/rail variants, crossing, and the
+  two highlights.
 
 ## Licence
 
