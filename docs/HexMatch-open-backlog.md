@@ -1,6 +1,6 @@
 # HexMatch — open backlog
 
-Supersedes v7. Audited against `main` @ `ea97e96` (PR #11 merged). J1/J2 shipped and the loop is playable — but J1 built a **new** UI instead of restoring the original one, which is the thing to correct now.
+Supersedes v8. Audited against `main` @ `ea97e96`. The original UI is now restored (U1 done). The live issue is that building sprites don't fill their isometric footprint — new ticket **Y7**, with Y3 tightened to cover the same root cause.
 
 **Read this first.** The direction for the rest of the project, stated plainly so it stops drifting:
 
@@ -8,7 +8,7 @@ Supersedes v7. Audited against `main` @ `ea97e96` (PR #11 merged). J1/J2 shipped
 
 Two new tickets capture what regressed against that principle (U1, U2). The sprite tickets (Y4c, Y3, Y5/Y6) are unchanged and still open.
 
-**Work order: U1 → U2 → Y4c → Y3 → Y5/Y6.**
+**Work order: Y4c → Y3 (+Y7) → Y5/Y6.** U1 (restore UI) is done. U2 (setup highlight) still open, do it any time.
 
 ---
 
@@ -111,6 +111,21 @@ Unchanged, still not started. All ten industry/factory cells are `compose` block
 
 **Acceptance:** every building is one contiguous structure; no `compose` remains; width ≤ footprint_w × 64 + 32; contact sheet confirms.
 
+## Y7. Buildings don't fit their isometric footprint
+`[bug] [assets] [renderer]`
+
+This is the "buildings aren't fitting into the isometric squares" you're seeing now. I rendered the ore mine over its reserved 3×3 footprint (the yellow diamond grid) and the sprite is a flat rectangle that overhangs the top-left edge and leaves the bottom-right corners of the footprint bare — the sprite's diamond and the tile footprint's diamond are different shapes and don't line up.
+
+Two things cause it, and both are fixed by the same move as terrain and roads:
+
+1. **The sprite isn't the right shape.** These are `compose` blocks stitched from OpenGFX *ground* boxes, and OpenGFX industry tiles were never laid out as a clean 3×3 of diamonds — so the assembled rectangle can't fill an isometric footprint. Y3 (single declared building sprite per industry) is the actual fix; a real declared building is drawn to sit on its tile correctly.
+
+2. **The anchor is hand-guessed on the wrong basis.** The atlas gives `ore_mine` a hand-authored anchor of `[96,176]` on a 192×192 canvas. The declared sprites carry their own placement offsets that are nothing like that — e.g. the coal-mine building sprite (id 2013) is 58×50 with `xrel −16, yrel −33`, and its ground tile (2022) is 64×31 with `xrel −31, yrel 0`. Drawing a declared sprite at `dest = tileOrigin + (xrel, yrel)` is what makes it sit flush; a hand-authored anchor guesses at that and lands the base in the wrong place, which is why the building floats off its squares.
+
+**Fix:** do Y3 (declared sprite, not composed) **and** Y5's anchor change together for buildings — they're the same bug seen from two angles. A single declared building on its declared ground tile, drawn with declared `xrel`/`yrel`, sits inside its footprint by construction. Keep the footprint value itself as the gameplay concept (catchment, occupancy); it does not need to equal the sprite's pixel bounds.
+
+**Acceptance:** rendered over its footprint diamond grid, each building's base sits within the footprint — no overhang past the top-left edge, no bare bottom-right corners. Verify with a debug overlay that draws the footprint outline under each placed building (the same yellow-grid check used to find this). Do the four map quadrants, since a projection/anchor error often only shows at offset.
+
 ## Y5 / Y6. Declared anchors + remaining invariants
 `[bug] [renderer] [testing]`
 
@@ -120,9 +135,9 @@ After Y4c and Y3: switch placement from hand-authored `anchor` to declared `xrel
 
 ## Sequencing
 
-**U1 → U2 → Y4c → Y3 → Y5/Y6.**
+**Y4c → Y3 + Y7 + Y5 (buildings, together) → Y6 → U2.**
 
-U1 first — it's the one you're reacting to most, and restoring the real interface makes everything else easier to judge in a running game that looks like the game. U2 is small and pairs naturally with it (both are the setup/UI experience). Then the three sprite tickets.
+U1 is done — the original interface is back. Y4c (roads) next, still the standing road bug. Then Y3, Y7 and Y5 for buildings are one job, not three: replacing a `compose` block with a declared sprite (Y3), making that sprite sit in its footprint (Y7), and drawing it with declared `xrel`/`yrel` (Y5) are the same edit to the same cell. Do all six industries/factory in that one pass, add the Y6 invariants, then U2 (the setup highlight) any time.
 
 ---
 
