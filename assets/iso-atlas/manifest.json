@@ -714,8 +714,22 @@
       ],
       "w": 64
     },
-    "highlight": {
+    "crossing": {
       "x": 140,
+      "y": 696,
+      "h": 32,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        31
+      ],
+      "w": 64
+    },
+    "highlight": {
+      "x": 208,
       "y": 696,
       "h": 32,
       "footprint": [

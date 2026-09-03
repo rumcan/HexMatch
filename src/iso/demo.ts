@@ -3,7 +3,7 @@
 //
 // Not part of the game bundle; this exists so the renderer's acceptance
 // criteria (depth sort, two-stage picking, anchored zoom, clamped pan) can be
-// eyeballed against real art before E11 cuts over from MapView3D.
+// eyeballed against real art.
 // ══════════════════════════════════════════════════════════════════════════
 import manifestJson from "../../assets/iso-atlas/manifest.json";
 import atlas05 from "../../assets/iso-atlas/atlas@0.5x.png";

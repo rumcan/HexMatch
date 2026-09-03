@@ -18,7 +18,9 @@
     "oil6": "src/assets/sprites/png/industries/oilwell/oilwell_anim6.gimp.png",
     "factory": "src/assets/sprites/png/industries/factory.png",
     "hq": "src/assets/sprites/png/miscellaneous/hq.png",
-    "depot": "src/assets/sprites/png/stations/RevStatBuilding_DanMacK.png"
+    "depot": "src/assets/sprites/png/stations/RevStatBuilding_DanMacK.png",
+    "infra": "src/assets/sprites/png/infrastructure/infra06.png",
+    "landscape": "src/assets/sprites/png/landscape/landscape031.png"
   },
   "sprites": [
     {
@@ -244,8 +246,21 @@
       "tint": [78, 196, 90]
     },
 
-    { "name": "road", "generator": "road", "namePrefix": "road", "footprint": [1, 1] },
-    { "name": "rail", "generator": "rail", "namePrefix": "rail", "footprint": [1, 1] },
+    {
+      "name": "road", "generator": "road", "namePrefix": "road", "footprint": [1, 1],
+      "source": "infra", "crop": [434, 2568, 64, 31],
+      "note": "G6: one OpenGFX temperate-grass road half-piece (spr1332 / NE-SW straight in infra06). Rotated/mirrored into 4 directions, overlaid for 16 masks. landscape031.png is kept as a source for the art pipeline but the connecting geometry lives in infra06 (base-1309-road-infra.pnml)."
+    },
+    {
+      "name": "rail", "generator": "rail", "namePrefix": "rail", "footprint": [1, 1],
+      "source": "infra", "crop": [162, 40, 64, 31],
+      "note": "G6: one OpenGFX temperate rail half-piece (spr1012 in base-1005-rail-infra.pnml → infra06.png). Same rotate/mirror/overlay as road."
+    },
+    {
+      "name": "crossing", "generator": "crossing", "footprint": [1, 1],
+      "source": "infra", "crop": [434, 3208, 64, 31],
+      "note": "G6: level-crossing overlay (spr1370). Drawn on tiles that carry both road and rail."
+    },
     { "name": "highlight", "generator": "highlight", "footprint": [1, 1] }
   ]
 }

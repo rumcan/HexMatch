@@ -1,19 +1,15 @@
 // ══════════════════════════════════════════════════════════════════════════
-// E11 (partial) — the playable isometric game.
+// E11 — the playable isometric game.
 //
 // Wires the E4–E7 modules into something you can actually sit down and play:
 //
 //   renderer (E4) + track (E5) + economy (E6) + ai (E7)
 //
-// This is the "vertical slice" cutover: it mounts the iso renderer as the real
-// map with a real build loop, setup phase, resource economy, AI opponent and
-// win condition. It deliberately does NOT yet delete hexmap.ts / MapView3D.ts
-// or rewrite the 861-line hex ui.ts — those are the destructive half of E11
-// and want their own pass once this has been played and the feel is agreed.
-//
-// E8's rule is honoured here: free setup builds are flagged `free` at the DATA
-// level (see `FreeBuild`), never inferred from the phase, so no timer can ever
-// claw them back. That is the K1 bug class and it does not recur.
+// The hex + three.js path (hexmap.ts, MapView3D.ts, main-legacy.ts) was
+// deleted in the E11 cutover. E8's rule is honoured here: free setup builds
+// are flagged `free` at the DATA level, never inferred from the phase, so no
+// timer can ever claw them back. That is the K1 bug class and it does not
+// recur.
 // ══════════════════════════════════════════════════════════════════════════
 import manifestJson from "../../assets/iso-atlas/manifest.json";
 import atlas05 from "../../assets/iso-atlas/atlas@0.5x.png";

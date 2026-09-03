@@ -44,8 +44,9 @@ Sheets used so far (paths under `sprites/png/`):
 | Gold mine | `industries/goldmine/goldmine_base.gimp.png` + `goldmine_anim2..3.gimp.png` |
 | Oil rig | `industries/oilwell/oilwell_anim1..6.gimp.png` (6-frame animation) |
 | Main Factory (HQ) | `industries/factory.png` |
-| Road half-piece | `landscape/landscape031.png` |
-| Rail half-piece | `infrastructure/rail/monorail_tracks_temperate.png` |
+| Road half-piece | `infrastructure/infra06.png` (spr1332; see `base-1309-road-infra.pnml`) |
+| Rail half-piece | `infrastructure/infra06.png` (spr1012; see `base-1005-rail-infra.pnml`) |
+| Level crossing | `infrastructure/infra06.png` (spr1370) |
 
 ## State of the work
 
@@ -74,9 +75,11 @@ Sheets used so far (paths under `sprites/png/`):
   intended gate before E4 ships. The atlas contains 51 sprites: 4 terrain,
   7 industries (farm, forest, ore mine, quarry, 6-frame oil rig, gold mine),
   4 factories, 4 depots, 32 road/rail variants, and the highlight.
-- Road/rail: per the E5 standing note, we extract one half-piece and
-  composite all 16 bitmask variants in the atlas packer; we do not source 16
-  separate sprites.
+- Road/rail (G6): one OpenGFX half-piece per kind is sliced from
+  `infra06.png`, rotated/mirrored into four directions, and overlaid for all
+  16 bitmask variants. A `crossing` overlay is emitted for tiles that carry
+  both layers. The G1 pixel test (edge midpoints) is the load-bearing guard
+  that the new art did not move the connection points.
 
 ## Licence
 

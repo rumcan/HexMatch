@@ -26,9 +26,10 @@
  *   anchor: [x,y]                   override the auto-measured anchor.
  *   compose: {...}                  build a multi-tile sprite from ground
  *                                   tile cells plus optional overlays.
- *   generator: "road" | "rail" | "highlight"
- *                                   emit 16 road/rail bitmask variants or one
- *                                   legal-placement highlight sprite.
+ *   generator: "road" | "rail" | "highlight" | "crossing"
+ *                                   emit 16 road/rail bitmask variants from one
+ *                                   OpenGFX half-piece, a legal-placement
+ *                                   highlight, or a level-crossing overlay.
  *   tint: [r,g,b]                   multiply opaque pixels toward a tint
  *                                   (used for the grey quarry reskin).
  *
@@ -257,51 +258,190 @@ async function makeComposite(s) {
   return { cells, cellW: W, cellH: H, anchor, footprint: s.footprint, frames: cells.length, frameMs: s.frameMs ?? 200 };
 }
 
-/** Generate 16 road/rail bitmask cells, or one highlight cell. */
-function makeGenerated(s, gen) {
+/** G1 arm endpoints — centre → diamond-edge midpoint. Do not half an a→b vector. */
+const ARM_ENDS = {
+  1: [48, 8],   // NE — midpoint of top-right edge    (32,0)-(64,16)
+  2: [48, 24],  // SE — midpoint of bottom-right edge (64,16)-(32,32)
+  4: [16, 24],  // SW — midpoint of bottom-left edge  (32,32)-(0,16)
+  8: [16, 8],   // NW — midpoint of top-left edge     (0,16)-(32,0)
+};
+
+/** Width of one half-piece. Wide enough to read as OpenGFX track, narrow
+ *  enough that G1's "unset arm is empty within r=6" still holds (max ~6.5). */
+const TRACK_HALF_W = 5.2;
+
+function isKeyColour(r, g, b, a) {
+  if (a < 8) return true;
+  if (r === 0 && g === 0 && b === 255) return true;
+  if (r > 250 && g > 250 && b > 250) return true;
+  return false;
+}
+function isGrassColour(r, g, b) {
+  return g > r + 8 && g > b + 8;
+}
+function isRoadColour(r, g, b, a) {
+  if (isKeyColour(r, g, b, a) || isGrassColour(r, g, b)) return false;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), lum = (r + g + b) / 3;
+  return (max - min) < 80 && lum > 45 && lum < 210 && !(g > r && g > b);
+}
+function isRailColour(r, g, b, a) {
+  if (isKeyColour(r, g, b, a) || isGrassColour(r, g, b)) return false;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), lum = (r + g + b) / 3;
+  const brown = r > g + 4 && r > b + 10 && r - b > 18;
+  const grey = (max - min) < 55 && lum > 40 && lum < 200;
+  return (brown && lum > 30 && lum < 180) || grey;
+}
+
+/** Lift a 64×31 (or 64×32) OpenGFX crop onto a 64×32 buffer, keeping only
+ *  track pixels so the result is a transparent overlay, not a grass tile. */
+function extractTrackOverlay(raw, kind) {
+  const pred = kind === "rail" ? isRailColour
+    : kind === "road" ? isRoadColour
+    : (r, g, b, a) => isRoadColour(r, g, b, a) || isRailColour(r, g, b, a);
+  const px = Buffer.alloc(CELL_W * CELL_H * 4);
+  for (let y = 0; y < raw.h && y < CELL_H; y++) {
+    for (let x = 0; x < raw.w && x < CELL_W; x++) {
+      const si = (y * raw.w + x) * 4;
+      const r = raw.px[si], g = raw.px[si + 1], b = raw.px[si + 2], a = raw.px[si + 3];
+      if (!pred(r, g, b, a)) continue;
+      const di = (y * CELL_W + x) * 4;
+      px[di] = r; px[di + 1] = g; px[di + 2] = b; px[di + 3] = 255;
+    }
+  }
+  return px;
+}
+
+function flipH(px) {
+  const out = Buffer.alloc(px.length);
+  for (let y = 0; y < CELL_H; y++) {
+    for (let x = 0; x < CELL_W; x++) {
+      const si = (y * CELL_W + (CELL_W - 1 - x)) * 4;
+      px.copy(out, (y * CELL_W + x) * 4, si, si + 4);
+    }
+  }
+  return out;
+}
+function flipV(px) {
+  const out = Buffer.alloc(px.length);
+  for (let y = 0; y < CELL_H; y++) {
+    px.copy(out, y * CELL_W * 4, (CELL_H - 1 - y) * CELL_W * 4, (CELL_H - y) * CELL_W * 4);
+  }
+  return out;
+}
+
+/** Keep pixels within `halfW` of the centre→endpoint segment for one arm. */
+function clipArm(px, bit, halfW = TRACK_HALF_W) {
+  const [ex, ey] = ARM_ENDS[bit];
+  const out = Buffer.alloc(px.length);
+  const cx = CELL_W / 2, cy = CELL_H / 2;
+  for (let y = 0; y < CELL_H; y++) {
+    for (let x = 0; x < CELL_W; x++) {
+      const i = (y * CELL_W + x) * 4;
+      if (px[i + 3] === 0) continue;
+      if (pointSegDist(x + 0.5, y + 0.5, cx, cy, ex, ey) < halfW) {
+        px.copy(out, i, i, i + 4);
+      }
+    }
+  }
+  return out;
+}
+
+function blitTrack(dst, src) {
+  for (let i = 0; i < src.length; i += 4) {
+    if (src[i + 3] === 0) continue;
+    dst[i] = src[i]; dst[i + 1] = src[i + 1]; dst[i + 2] = src[i + 2]; dst[i + 3] = 255;
+  }
+}
+
+function inDiamond(x, y) {
+  const dx = Math.abs(x + 0.5 - CELL_W / 2), dy = Math.abs(y + 0.5 - CELL_H / 2);
+  return dx / 32 + dy / 16 <= 1.02;
+}
+
+/** Generate 16 road/rail bitmask cells from one OpenGFX half-piece, one
+ *  highlight cell, or one level-crossing overlay. */
+async function makeGenerated(s, gen) {
   const name = s.name;
-  const n = gen === "highlight" ? 1 : 16;
-  const out = [];
-  const color = gen === "rail" ? [122, 82, 36] : gen === "road" ? [86, 86, 86] : [255, 220, 40];
-  // G1: draw centre → diamond-edge midpoint. Do not half an a→b vector.
-  const dirs = {
-    1: [48, 8],   // NE — midpoint of top-right edge    (32,0)-(64,16)
-    2: [48, 24],  // SE — midpoint of bottom-right edge (64,16)-(32,32)
-    4: [16, 24],  // SW — midpoint of bottom-left edge  (32,32)-(0,16)
-    8: [16, 8],   // NW — midpoint of top-left edge     (0,16)-(32,0)
-  };
-  for (let v = 0; v < n; v++) {
-    const bits = gen === "highlight" ? 0 : v;
+  if (gen === "highlight") {
+    const out = [];
+    const color = [255, 220, 40];
     const px = Buffer.alloc(CELL_W * CELL_H * 4);
     const cx = CELL_W / 2, cy = CELL_H / 2;
-    for (const [bit, end] of Object.entries(dirs)) {
-      if (!((bits & Number(bit)) !== 0)) continue;
+    for (const end of Object.values(ARM_ENDS)) {
       const [ex, ey] = end;
       for (let y = 0; y < CELL_H; y++) {
         for (let x = 0; x < CELL_W; x++) {
           const dist = pointSegDist(x + 0.5, y + 0.5, cx, cy, ex, ey);
-          if (dist < (gen === "highlight" ? 2 : 3.2)) {
+          if (dist < 2) {
             const i = (y * CELL_W + x) * 4;
-            px[i] = color[0]; px[i + 1] = color[1]; px[i + 2] = color[2]; px[i + 3] = gen === "highlight" ? 170 : 255;
+            px[i] = color[0]; px[i + 1] = color[1]; px[i + 2] = color[2]; px[i + 3] = 170;
           }
         }
       }
     }
-    if (gen === "highlight") {
-      // Add a translucent diamond wash + magenta outline.
-      for (let y = 0; y < CELL_H; y++) {
-        for (let x = 0; x < CELL_W; x++) {
-          const dx = Math.abs(x + 0.5 - cx), dy = Math.abs(y + 0.5 - cy);
-          const edgeDist = Math.max(dx / 32 + dy / 16);
-          if (Math.abs(edgeDist - 1) < 0.05) {
-            const i = (y * CELL_W + x) * 4;
-            px[i] = 255; px[i + 1] = 0; px[i + 2] = 200; px[i + 3] = 255;
-          } else if (edgeDist < 1) {
-            const i = (y * CELL_W + x) * 4;
-            if (px[i + 3] === 0) { px[i] = color[0]; px[i + 1] = color[1]; px[i + 2] = color[2]; px[i + 3] = 80; }
-          }
+    for (let y = 0; y < CELL_H; y++) {
+      for (let x = 0; x < CELL_W; x++) {
+        const dx = Math.abs(x + 0.5 - cx), dy = Math.abs(y + 0.5 - cy);
+        const edgeDist = Math.max(dx / 32 + dy / 16);
+        if (Math.abs(edgeDist - 1) < 0.05) {
+          const i = (y * CELL_W + x) * 4;
+          px[i] = 255; px[i + 1] = 0; px[i + 2] = 200; px[i + 3] = 255;
+        } else if (edgeDist < 1) {
+          const i = (y * CELL_W + x) * 4;
+          if (px[i + 3] === 0) { px[i] = color[0]; px[i + 1] = color[1]; px[i + 2] = color[2]; px[i + 3] = 80; }
         }
       }
+    }
+    out.push({ px, w: CELL_W, h: CELL_H });
+    return {
+      cells: out, cellW: CELL_W, cellH: CELL_H,
+      anchor: [CELL_W / 2, CELL_H - 1], footprint: [1, 1],
+      frames: 1, frameMs: s.frameMs, name,
+    };
+  }
+
+  const srcPath = join(ROOT, CELLS.sources[s.source]);
+  const [cx, cy, cw, ch] = s.crop;
+  const raw = await cropDirect(srcPath, { left: cx, top: cy, width: cw, height: ch });
+
+  if (gen === "crossing") {
+    const overlay = extractTrackOverlay(raw, "crossing");
+    // Keep the intersection (near the tile centre) so the overlay reads as
+    // boards/rails crossing, not a second copy of a full straight.
+    const px = Buffer.alloc(CELL_W * CELL_H * 4);
+    const midX = CELL_W / 2, midY = CELL_H / 2;
+    for (let y = 0; y < CELL_H; y++) {
+      for (let x = 0; x < CELL_W; x++) {
+        if (!inDiamond(x, y)) continue;
+        const i = (y * CELL_W + x) * 4;
+        if (overlay[i + 3] === 0) continue;
+        const d = Math.hypot(x + 0.5 - midX, y + 0.5 - midY);
+        if (d < 12) overlay.copy(px, i, i, i + 4);
+      }
+    }
+    return {
+      cells: [{ px, w: CELL_W, h: CELL_H }],
+      cellW: CELL_W, cellH: CELL_H,
+      anchor: [CELL_W / 2, CELL_H - 1], footprint: [1, 1],
+      frames: 1, frameMs: s.frameMs, name,
+    };
+  }
+
+  // G6: one half-piece (the NE arm), rotate/mirror into four directions,
+  // overlay for all 16 masks. Do not slice 16 separate crops.
+  const overlay = extractTrackOverlay(raw, gen);
+  const ne = clipArm(overlay, 1);
+  const halves = {
+    1: ne,                 // NE
+    2: flipV(ne),          // SE
+    4: flipV(flipH(ne)),   // SW
+    8: flipH(ne),          // NW
+  };
+  const out = [];
+  for (let v = 0; v < 16; v++) {
+    const px = Buffer.alloc(CELL_W * CELL_H * 4);
+    for (const bit of [1, 2, 4, 8]) {
+      if (v & bit) blitTrack(px, halves[bit]);
     }
     out.push({ px, w: CELL_W, h: CELL_H });
   }
@@ -325,7 +465,7 @@ function pointSegDist(px, py, ax, ay, bx, by) {
 
 async function buildSlot(s) {
   if (s.generator === "road" || s.generator === "rail") {
-    const generated = makeGenerated(s, s.generator);
+    const generated = await makeGenerated(s, s.generator);
     const templates = [];
     for (const maskName of [...Array(16).keys()].map((v) => v.toString(2).padStart(4, "0"))) {
       const idx2 = parseInt(maskName, 2);
@@ -339,8 +479,8 @@ async function buildSlot(s) {
     }
     return templates;
   }
-  if (s.generator === "highlight") {
-    const generated = makeGenerated(s, "highlight");
+  if (s.generator === "highlight" || s.generator === "crossing") {
+    const generated = await makeGenerated(s, s.generator);
     return [{ name: s.name, cells: generated.cells, cellW: generated.cellW, cellH: generated.cellH, anchor: generated.anchor, footprint: [1, 1], frames: 1, frameMs: s.frameMs }];
   }
   if (s.compose) {

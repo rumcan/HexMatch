@@ -1,4 +1,4 @@
-/* E11 (partial) — chrome for the playable isometric game. */
+/* E11 — chrome for the playable isometric game. */
 .iso-game { position: fixed; inset: 0; overflow: hidden; background: #0b1a26; }
 
 .iso-stage { position: absolute; inset: 0; overflow: hidden; }

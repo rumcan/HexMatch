@@ -26,6 +26,27 @@ export const chunksY = Math.ceil(MAP_H / CHUNK);
 export const chunkIndexOf = (tx: number, ty: number) =>
   ((ty / CHUNK) | 0) * chunksX + ((tx / CHUNK) | 0);
 
+/**
+ * G8: chunk canvas size. An 8×8 of diamonds spans 16*HW × 16*HH, but sprites
+ * are drawn at `+HW` in x (anchor) so the rightmost column used to clip 32px
+ * off every eastern chunk edge — dark wedges at 8-tile intervals against the
+ * `#0b1a26` stage background. Pad by a full tile on both axes.
+ */
+export function chunkSurfaceSize(z: number): { w: number; h: number } {
+  return {
+    w: Math.ceil((2 * CHUNK * HW + TILE_W) * z),
+    h: Math.ceil((2 * CHUNK * HH + TILE_H * 2) * z),
+  };
+}
+
+/** World-space top-left of a chunk's cache surface. */
+export function chunkWorldOrigin(cx: number, cy: number): [number, number] {
+  const x0 = cx * CHUNK, y0 = cy * CHUNK;
+  const ox = (x0 - (y0 + CHUNK - 1)) * HW - HW;
+  const oy = (x0 + y0) * HH;
+  return [ox, oy];
+}
+
 /** Terrain sprite for a tile. Grass alternates on a stable checker hash. */
 export function terrainSprite(grid: Grid, tx: number, ty: number): string {
   const v = grid.terrain[ty * MAP_W + tx];
@@ -57,9 +78,11 @@ export function buildDrawList(world: World, r: { x0: number; y0: number; x1: num
     for (let tx = r.x0; tx <= r.x1; tx++) {
       const i = ty * MAP_W + tx;
       const rb = world.roadBits?.[i] ?? 0;
-      if (rb) out.push({ sprite: bitName("road", rb), tx, ty });
       const kb = world.railBits?.[i] ?? 0;
+      if (rb) out.push({ sprite: bitName("road", rb), tx, ty });
       if (kb) out.push({ sprite: bitName("rail", kb), tx, ty });
+      // G6: a tile carrying both layers draws a third sprite on top.
+      if (rb && kb) out.push({ sprite: "crossing", tx, ty });
     }
   }
   // industries: emit once, keyed on their origin, when the footprint
@@ -163,8 +186,7 @@ export class IsoRenderer {
     const img = this.atlas.image(z);
     if (!img) return null;
 
-    const W = Math.ceil(2 * CHUNK * HW * z);
-    const H = Math.ceil((2 * CHUNK * HH + TILE_H) * z);
+    const { w: W, h: H } = chunkSurfaceSize(z);
     const surf = typeof OffscreenCanvas !== "undefined"
       ? new OffscreenCanvas(W, H)
       : Object.assign(document.createElement("canvas"), { width: W, height: H });
@@ -172,7 +194,7 @@ export class IsoRenderer {
     ctx.imageSmoothingEnabled = false;
 
     // Chunk-local origin: world position of the chunk's leftmost tile column.
-    const [ox, oy] = this.chunkWorldOrigin(cx, cy);
+    const [ox, oy] = chunkWorldOrigin(cx, cy);
     for (let ty = cy * CHUNK; ty < Math.min(MAP_H, (cy + 1) * CHUNK); ty++) {
       for (let tx = cx * CHUNK; tx < Math.min(MAP_W, (cx + 1) * CHUNK); tx++) {
         const name = terrainSprite(this.world.grid, tx, ty);
@@ -192,15 +214,6 @@ export class IsoRenderer {
     return surf;
   }
 
-  /** World-space top-left of a chunk's cache surface. */
-  chunkWorldOrigin(cx: number, cy: number): [number, number] {
-    const x0 = cx * CHUNK, y0 = cy * CHUNK;
-    // leftmost point = tile (x0, y0+CHUNK-1) left vertex; topmost = tile (x0,y0) top
-    const ox = (x0 - (y0 + CHUNK - 1)) * HW - HW;
-    const oy = (x0 + y0) * HH;
-    return [ox, oy];
-  }
-
   // ── layers ──────────────────────────────────────────────────────────────
   drawTerrain() {
     const ctx = this.ctxT, cam = this.cam;
@@ -212,7 +225,7 @@ export class IsoRenderer {
       for (let cx = cx0; cx <= cx1; cx++) {
         const surf = this.chunkCanvas(cx, cy);
         if (!surf) continue;
-        const [ox, oy] = this.chunkWorldOrigin(cx, cy);
+        const [ox, oy] = chunkWorldOrigin(cx, cy);
         const [sx, sy] = worldToScreen(cam, ox, oy);
         ctx.drawImage(surf as unknown as CanvasImageSource, Math.floor(sx), Math.floor(sy));
       }
