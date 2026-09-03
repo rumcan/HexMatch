@@ -54,6 +54,31 @@ const ZOOMS = [1, 2, 0.5];
 const CELL_W = 64, CELL_H = 32;
 const HW = CELL_W / 2, HH = CELL_H / 2;
 
+// ── Y1: declared sprite geometry ─────────────────────────────────────────
+// Ground + road/rail cells now reference an OpenGFX sprite id (`sprite`) and
+// the crop rect is taken from the declarations emitted by parse-pnml.mjs,
+// never hand-authored in the cells file. The JSON is a build artifact (it is
+// gitignored); generate it first:
+//     node tools/parse-pnml.mjs
+const OPENG = (() => {
+  const p = join(ROOT, "tools/opengfx-sprites.json");
+  try { return JSON.parse(readFileSync(p, "utf8")); }
+  catch { throw new Error(`missing ${p} — run \`node tools/parse-pnml.mjs\` first`); }
+})();
+
+/** Declared entry for a cell's `sprite` id, or null when the cell is legacy (source/box/crop). */
+function declaredOf(s) {
+  if (s.sprite == null) return null;
+  const d = OPENG[String(s.sprite)];
+  if (!d) throw new Error(`unknown declared sprite id ${s.sprite} (${s.name ?? "?"})`);
+  return d;
+}
+
+/** Map an OpenGFX file path (`sprites/png/…`) to its local mirror under src/assets/sprites/png. */
+function declaredLocalPath(file) {
+  return join(ROOT, "src/assets/sprites/png", file.replace(/^sprites\/png\//, ""));
+}
+
 /** Key #0000FF -> transparent; crop `box` 64x31 + overlap handling; returns RGBA buffer 64x32. */
 async function cropSprite(sourcePath, boxX, boxY, extraRows) {
   const img = sharp(sourcePath, { limitInputPixels: false })
@@ -474,9 +499,14 @@ async function makeGenerated(s, gen) {
     };
   }
 
-  const srcPath = join(ROOT, CELLS.sources[s.source]);
-  const [cx, cy, cw, ch] = s.crop;
-  const raw = await cropDirect(srcPath, { left: cx, top: cy, width: cw, height: ch });
+  // Y1: road/rail/crossing source their half-piece / overlay from a declared
+  // sprite id (road 1332, rail 1012, crossing 1370) rather than a hand box.
+  const declared = declaredOf(s);
+  const srcPath = declared ? declaredLocalPath(declared.file) : join(ROOT, CELLS.sources[s.source]);
+  const rect = declared
+    ? { left: declared.x, top: declared.y, width: declared.w, height: declared.h }
+    : { left: s.crop[0], top: s.crop[1], width: s.crop[2], height: s.crop[3] };
+  const raw = await cropDirect(srcPath, rect);
 
   if (gen === "crossing") {
     const overlay = extractTrackOverlay(raw, "crossing");
@@ -577,9 +607,12 @@ async function buildSlot(s) {
     const anchor = s.anchor ?? [Math.floor(w / 2), h - 1];
     return [{ name: s.name, cells, cellW: w, cellH: h, anchor, footprint: s.footprint, frames: cells.length, frameMs: s.frameMs ?? 200 }];
   }
-  // Classic 64x32 blue-box ground cells.
-  const path = join(ROOT, CELLS.sources[s.source]);
-  const boxes = s.boxes ?? [s.box];
+  // Classic 64x32 blue-box ground cells. The sheet rect now comes from the
+  // declared sprite id (Y1) when present, otherwise a hand source/box (kept
+  // only as the legacy path for compose ground tiles — Y3 territory).
+  const declared = declaredOf(s);
+  const path = declared ? declaredLocalPath(declared.file) : join(ROOT, CELLS.sources[s.source]);
+  const boxes = declared ? [[declared.x, declared.y]] : (s.boxes ?? [s.box]);
   const frames = boxes.length;
   const cells = [];
   for (const [bx, by] of boxes) {

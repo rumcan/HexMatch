@@ -20,7 +20,7 @@ const P = (sprite: string, tx: number, ty: number) => {
 
 describe("E4 anchor contract", () => {
   it("puts the anchor pixel on the footprint's south corner", () => {
-    for (const [name, tx, ty] of [["farm", 10, 12], ["ore_mine", 3, 40], ["terrain_grass_a", 0, 0]] as const) {
+    for (const [name, tx, ty] of [["farm", 10, 12], ["ore_mine", 3, 40], ["terrain_grass", 0, 0]] as const) {
       const def = atlas.get(name)!;
       const [ox, oy] = drawOrigin(def, tx, ty);
       const [fw, fh] = def.footprint;
