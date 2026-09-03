@@ -67,10 +67,23 @@ export function mulberry32(seed: number) {
 
 // ══════════════════════════════════════════════════════════════════════════
 // X1 recovery — classic match-3 board and trading constants. The E11 cutover
-// deleted hexmap/three/board-era code wholesale. The map-agnostic `board.ts`
-// and `trade.ts` (plus their tests) are restored. Assets that were pruned by
-// R9 are not pulled back into the iso bundle; these constants are the pure-logic
-// surface those modules actually require.
+// deleted the board-era code wholesale; the map-agnostic `board.ts` and
+// `trade.ts` (plus their tests) were restored, and J1 wired them into the iso
+// game: `src/iso/quarry.ts` maps the six gem colours onto the six cargoes and
+// gates the harvest on the road/rail network, `src/iso/market.ts` drives the
+// trading rules over the player purses.
+//
+// Live surface: ResKey/RES_KEYS/RES (colours + panel copy), BOARD_W/BOARD_H
+// (the quarry grid), UPGRADE_EVERY (token clock), OFFER_LIFE (market expiry)
+// and the RNG helpers above.
+//
+// NOT live, deliberately kept: the hex-era rule tables below (TileKey/TILES/
+// TILE_BAG, COSTS, SABOTAGE/SECURITY, VP, REPAIR_COST, the hex geometry
+// constants, the sabotage timers). Nothing references them since J2 deleted
+// `hexmap.ts`/`actions.ts`/`state.ts`. They stay because sabotage is still a
+// settled design decision (`src/iso/config.ts`, decision 5) and re-tabling it
+// from scratch would be worse than carrying the numbers. Prune with a ticket,
+// not in passing.
 // ══════════════════════════════════════════════════════════════════════════
 export type ResKey = "wood" | "brick" | "sheep" | "wheat" | "ore" | "gold";
 export const RES_KEYS: ResKey[] = ["wood", "brick", "sheep", "wheat", "ore", "gold"];

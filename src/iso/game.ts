@@ -10,10 +10,12 @@
 // gated by the same reachable-cargo set `economy.ts` already computes for
 // scoring. Cargo has ONE owner — the player purse. The board owns gems, the
 // market owns live offers (escrow), and neither keeps a balance. The old
-// dispatcher (`state.ts`/`actions.ts`) was deliberately NOT revived.
+// dispatcher was deliberately NOT revived — J2 deleted `hexmap.ts`,
+// `actions.ts` and `state.ts` once this file proved the iso grid feeds the
+// board, so `src/game/` is now board + trade + constants and nothing else.
 //
-// The hex + three.js path (hexmap.ts, MapView3D.ts, main-legacy.ts) was
-// deleted in the E11 cutover. E8's rule is honoured here: free setup builds
+// The hex + three.js view path (MapView3D.ts, main-legacy.ts) was deleted in
+// the E11 cutover. E8's rule is honoured here: free setup builds
 // are flagged `free` at the DATA level, never inferred from the phase, so no
 // timer can ever claw them back. That is the K1 bug class and it does not
 // recur.

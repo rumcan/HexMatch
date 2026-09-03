@@ -1,14 +1,12 @@
 // ══════════════════════════════════════════════════════════════════════════
-// Cargo trading — restored alongside the match-3 board (J1).
+// Cargo trading — restored alongside the match-3 board (J1), made stateless
+// about WHERE the state lives in J2.
 //
-// ONE implementation, two markets. The restored hex-era tests drive it through
-// the legacy global `G` in `state.ts`; the iso game passes its own market
-// record instead, so there is no second copy of these rules and no second
-// state system (J1's "reconcile state" requirement).
-//
-// Every function is generic over the resource key — `ResKey` for the legacy
-// map, `Cargo` for the iso economy — and takes the market record as its last
-// parameter, defaulting to the legacy global so the old call sites still work.
+// ONE implementation, and no hidden state. Every function takes the market
+// record and the player list explicitly, and is generic over the resource key
+// (`ResKey` in the restored tests, `Cargo` in the iso game), so there is no
+// second copy of these rules and no second state system. The old global `G`
+// singleton in `state.ts` is gone with the hex dispatcher it belonged to.
 //
 // Escrow is the market's only state: `postOffer` moves goods out of the
 // poster's record and into a live offer, `cancelOffer`/`tickMarket` refund it.
@@ -18,8 +16,7 @@
 // The old `market:changed` bus event went with the old UI — nothing listens to
 // it any more. Callers re-read the market record after a call returns.
 // ══════════════════════════════════════════════════════════════════════════
-import { OFFER_LIFE, ResKey } from "./config";
-import { G } from "./state";
+import { OFFER_LIFE } from "./config";
 
 /** The only thing the market needs from a player: their resource record. */
 export interface Trader<K extends string> { res: Record<K, number> }
@@ -48,12 +45,8 @@ export const MAX_OFFERS = 3;
 /** Bank exchange rate: give this many of one good, receive 1 of another. */
 export const BANK_RATE = 4;
 
-/** Legacy ResKey-specialised aliases — the hex-era market shape. */
-export type LegacyOffer = TradeOffer<ResKey>;
-export type LegacyMarket = Market<ResKey>;
-
 export function liveOffers<K extends string>(
-  p: MarketPlayer<K>, m: Market<K> = G,
+  p: MarketPlayer<K>, m: Market<K>,
 ): TradeOffer<K>[] {
   return m.offers.filter((o) => o.from === p.i);
 }
@@ -61,7 +54,7 @@ export function liveOffers<K extends string>(
 /** Escrow `giveN` of `give` and publish an offer asking for `want`. */
 export function postOffer<K extends string>(
   p: MarketPlayer<K>, give: K, giveN: number, want: K, wantN: number,
-  m: Market<K> = G,
+  m: Market<K>,
 ): boolean {
   if (give === want) return false;
   if (giveN <= 0 || wantN <= 0) return false;
@@ -80,8 +73,7 @@ export function postOffer<K extends string>(
  * released to the taker. `players` is indexed by `offer.from`.
  */
 export function acceptOffer<K extends string>(
-  taker: MarketPlayer<K>, id: number,
-  players: Trader<K>[] = G.players, m: Market<K> = G,
+  taker: MarketPlayer<K>, id: number, players: Trader<K>[], m: Market<K>,
 ): boolean {
   const idx = m.offers.findIndex((o) => o.id === id);
   if (idx < 0) return false;
@@ -100,7 +92,7 @@ export function acceptOffer<K extends string>(
 
 /** Withdraw your own offer and refund the escrow. */
 export function cancelOffer<K extends string>(
-  p: MarketPlayer<K>, id: number, m: Market<K> = G,
+  p: MarketPlayer<K>, id: number, m: Market<K>,
 ): boolean {
   const idx = m.offers.findIndex((o) => o.id === id);
   if (idx < 0) return false;
@@ -124,7 +116,7 @@ export function bankTrade<K extends string>(
 
 /** Expire offers older than OFFER_LIFE, refunding their escrow. */
 export function tickMarket<K extends string>(
-  now: number, players: Trader<K>[] = G.players, m: Market<K> = G,
+  now: number, players: Trader<K>[], m: Market<K>,
 ): void {
   for (let i = m.offers.length - 1; i >= 0; i--) {
     const o = m.offers[i];
