@@ -1,0 +1,101 @@
+/* E11 (partial) — chrome for the playable isometric game. */
+.iso-game { position: fixed; inset: 0; overflow: hidden; background: #0b1a26; }
+
+.iso-stage { position: absolute; inset: 0; overflow: hidden; }
+.iso-layer {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  touch-action: none;
+}
+.iso-layer:last-child { cursor: crosshair; }
+
+.iso-ui {
+  position: absolute; inset: 0; z-index: 10; pointer-events: none;
+  font: 13px/1.35 ui-sans-serif, system-ui, -apple-system, sans-serif;
+  color: #eaf2f8;
+}
+.iso-ui button { pointer-events: auto; }
+
+/* top bar */
+.iso-top {
+  position: absolute; top: 0; left: 0; right: 0;
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 8px; padding: calc(8px + env(safe-area-inset-top)) 10px 8px;
+  background: linear-gradient(#0b1a26e8, #0b1a2600);
+}
+.iso-res { display: flex; flex-wrap: wrap; gap: 5px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 3px;
+  background: #14283aee; border: 1px solid var(--c, #4a6a86);
+  border-radius: 999px; padding: 3px 9px; font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.iso-vp {
+  background: #14283aee; border: 1px solid #4a6a86; border-radius: 8px;
+  padding: 5px 10px; text-align: right; white-space: nowrap;
+}
+.iso-vp small { display: block; opacity: .6; font-weight: 400; }
+
+/* banner */
+.iso-banner {
+  position: absolute; top: 58px; left: 50%; transform: translateX(-50%);
+  background: #1d4e7cf2; border: 1px solid #5aa8ff; border-radius: 8px;
+  padding: 7px 14px; max-width: min(92vw, 560px); text-align: center;
+  box-shadow: 0 6px 20px #0008;
+}
+
+/* toasts */
+.iso-toasts {
+  position: absolute; top: 104px; left: 50%; transform: translateX(-50%);
+  display: flex; flex-direction: column; gap: 6px; align-items: center;
+  max-width: 92vw;
+}
+.toast {
+  background: #14283af2; border-left: 3px solid #7f9bb3; border-radius: 6px;
+  padding: 6px 12px; box-shadow: 0 4px 14px #0007;
+  animation: isoIn .18s ease-out;
+}
+.toast.good { border-left-color: #56d364; }
+.toast.bad { border-left-color: #ff7a5a; }
+@keyframes isoIn { from { opacity: 0; transform: translateY(-6px); } }
+
+/* inspector */
+.iso-inspect {
+  position: absolute; top: 58px; right: 10px;
+  background: #14283aee; border: 1px solid #4a6a86; border-radius: 8px;
+  padding: 8px 11px; max-width: 210px;
+}
+
+/* cost readout */
+.iso-cost {
+  position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%);
+  background: #14283af7; border: 1px solid #5aa8ff; border-radius: 8px;
+  padding: 6px 12px; white-space: nowrap;
+}
+
+/* tool bar */
+.iso-tools {
+  position: absolute; left: 0; right: 0;
+  bottom: calc(8px + env(safe-area-inset-bottom));
+  display: flex; gap: 6px; justify-content: center; flex-wrap: wrap;
+  padding: 0 8px;
+}
+.iso-tools button {
+  display: flex; flex-direction: column; align-items: center; gap: 1px;
+  background: #14283aee; color: #eaf2f8;
+  border: 1px solid #4a6a86; border-radius: 9px;
+  padding: 7px 13px; font: inherit; font-weight: 600; cursor: pointer;
+  min-width: 84px;
+}
+.iso-tools button small { font-weight: 400; opacity: .62; font-size: 10.5px; }
+.iso-tools button:hover { border-color: #7fc0ff; }
+.iso-tools button.on {
+  background: #1d4e7c; border-color: #5aa8ff;
+  box-shadow: 0 0 0 1px #5aa8ff inset;
+}
+.iso-tools .iso-alt { min-width: 0; opacity: .8; }
+
+@media (max-width: 620px) {
+  .iso-tools button { min-width: 0; padding: 7px 10px; }
+  .iso-tools button small { display: none; }
+  .iso-inspect { display: none !important; }
+}

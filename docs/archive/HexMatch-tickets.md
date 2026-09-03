@@ -63,8 +63,31 @@ Road and rail: extract **one half-piece each** and have the slicer composite all
 
 ---
 
-## R2. E4 — isometric renderer
+## R2. E4 — isometric renderer  ✅ LANDED
 `[renderer] [large]`
+
+**Done.** `src/iso/camera.ts`, `src/iso/atlas.ts`, `src/iso/depth.ts`,
+`src/iso/renderer.ts`, plus a visual harness at `iso-demo.html` →
+`src/iso/demo.ts` (`npm run dev`, then `/hexmatch/iso-demo.html`).
+Covered by 32 new unit tests in `tests/unit/iso-{camera,depth,renderer}.test.ts`
+(108 unit tests total, typecheck and lint clean).
+
+- Three stacked canvases; terrain and structures redraw only when dirty.
+- 8×8 chunk cache into `OffscreenCanvas`, keyed by zoom, invalidated per tile
+  and dropped wholesale on a zoom change.
+- Culling from the four screen corners, padded by `cullPad()` = largest
+  footprint + tallest sprite in tiles.
+- Tier-1 max-corner key + Tier-2 Kahn topological sort over only the
+  screen-overlapping subset; Tier-3 cycles are reported, not silently dropped.
+- Two-stage picking: flat `screenToTile`, then front-to-back alpha-mask pass.
+- Integer zoom steps 0.5/1/2 with pre-rendered atlases, `Math.floor` on every
+  draw coordinate, anchored pinch/wheel zoom, pointer promotion, camera clamp.
+
+Still open against E4: the committed reference-PNG fixture test and porting
+`touch-camera.spec.ts` onto the new view — both are blocked on E11 mounting the
+iso renderer as the game's actual map, so they land with the cutover.
+
+The original brief follows.
 
 The single biggest remaining piece. Full spec in `docs/HexMatch-isometric-spec.md` § E4. Summary of what must be built in `src/iso/renderer.ts`:
 
@@ -80,8 +103,31 @@ Camera acceptance criteria are listed in the spec and mirror what `touch-camera.
 
 ---
 
-## R3. E5 — track model and drag-to-build
+## R3. E5 — track model and drag-to-build  ✅ LANDED
 `[gameplay] [core]`
+
+**Done.** `src/iso/track.ts`, covered by 36 unit tests in
+`tests/unit/iso-track.test.ts` (144 unit tests total, typecheck and lint clean).
+Drag-to-build is wired into the E4 harness: shift+drag lays track, `r` toggles
+road/rail, `f` flips the L corner.
+
+- `road`/`rail` `Uint8Array(MAP_W*MAP_H)` layers, 4-bit masks `NE=1 SE=2 SW=4
+  NW=8`, sprite key built from the mask (`road_0011`), all 32 keys verified
+  present in the atlas.
+- A fifth `PRESENT` bit (0b10000) above the direction nibble, so a lone stub
+  with mask `0000` is still drawn — without it a freshly placed isolated tile
+  is invisible. The renderer masks the low nibble for the sprite name.
+- Incremental autotiling: a placement recomputes exactly 5 tiles (self + 4
+  neighbours, clipped at the map edge) and invalidates 1–4 chunks.
+- Connection bits are mutual — a bit is set only when the neighbour faces
+  back, which is precisely the invariant E6's flood fill needs.
+- L-shaped Manhattan drag with axis flip, obstacle truncation, free re-drags
+  over same-kind track, in-place road→rail upgrade charging only the
+  difference, and an affordable-prefix preview. No A* (reserved for E7).
+- `connectedTiles`/`areConnected` flood fill over mutual masks: the base E6
+  will hang catchment and connection scoring on.
+
+The original brief follows.
 
 Two `Uint8Array(MAP_W*MAP_H)` layers, `roadBits` and `railBits`, holding 4-bit direction masks (`NE=1, SE=2, SW=4, NW=8`). Sprite key by binary mask: `road_${bits.toString(2).padStart(4,'0')}`.
 
@@ -91,8 +137,37 @@ L-shaped Manhattan drag preview with live cost, truncating at obstacles. No A* f
 
 ---
 
-## R4. E6 — stations, catchment, connection scoring
+## R4. E6 — stations, catchment, connection scoring  ✅ LANDED
 `[gameplay] [core]`
+
+**Done.** `src/iso/economy.ts`, covered by 26 unit tests in
+`tests/unit/iso-economy.test.ts` (170 unit tests total, typecheck and lint
+clean). Every acceptance criterion in the spec has a named test.
+
+- `playerResources(state, owner, now)` rewritten: harvester → 4×4 catchment →
+  overlapping industries → output × the transport multiplier of the connection
+  to that player's Factory. Blockade (`banditUntil`) still zeroes an industry.
+- Harvesters must be orthogonally adjacent to road or rail to be serviced.
+- `buildComponents` caches a connected-component id per tile per layer in one
+  O(tiles) pass; a tile joins only when BOTH neighbours face each other, so a
+  forged one-sided bit can never merge two networks.
+- Rail beats road outright: its multiplier and its VP. Break the rail and the
+  harvester falls back to a surviving road path, emitting a `downgraded` event
+  (delta -2) so the UI can toast it and animate the counter.
+- `rescore()` diffs against the previous state and returns explicit
+  `awarded`/`revoked`/`upgraded`/`downgraded` events. Idempotent: rescoring an
+  unchanged world emits nothing. Call it on every build and demolish.
+- `ScoreState.owners` retains the owner of each scored harvester so a
+  DEMOLISHED harvester can still be debited from the right player — by then it
+  is gone from `state.harvesters`.
+- Overlapping catchments split output proportionally; unserviced rivals do not
+  dilute the yield; total output is conserved across the split.
+
+Not wired into `src/game/` yet — the hex `playerResources` in `hexmap.ts` is
+still what `main.ts`/`ui.ts`/`ai.ts` call. That swap belongs to E11's cutover,
+along with the harvester placement UI.
+
+The original brief follows.
 
 Rewrite `playerResources` to walk harvesters → 4×4 catchment → overlapping industries → output × transport multiplier. Flood fill over direction masks where a tile connects only if **both** neighbours set the facing bit.
 
@@ -102,7 +177,86 @@ VP awarded on connection completion, revoked on break, checked on every build an
 
 ## R5. E7–E11 — AI, rebalance, UI, netcode, cutover
 
-Per spec. E11 deletes `hexmap.ts`, `MapView3D.ts`, the terrain `.jpg` textures and the `three` dependency (~600KB), and regenerates the T2 snapshots.
+### E7 (AI) ✅ LANDED
+
+`src/iso/ai.ts`, covered by 31 unit tests in `tests/unit/iso-ai.test.ts`
+(201 unit tests total, typecheck and lint clean).
+
+- Candidates scored by (cargo scarcity in the AI's stock × output) ÷ path cost.
+- A* over the four diamond directions: 1 per flat tile, 3 per rough,
+  impassable for water and industry footprints, 0.3× on tiles already carrying
+  the AI's own network so it reuses trunk lines instead of laying parallel
+  spurs. `adjacentTo` lets it route to a tile beside an industry footprint it
+  cannot build on.
+- Builds rail when affordable, road otherwise; places the harvester only if
+  the laid track actually services it.
+- Deterministic: A* ties break by tile index and candidates break by industry
+  id, so identical states produce byte-identical builds. Verified against
+  `generateMap` fixtures.
+- Pacing is left alone — `aiBuildStep` is one decision, so the existing
+  `nextBuild`/`nextIncome`/`slowedUntil` scaffolding in `src/game/ai.ts` stays
+  in charge of when it fires.
+
+Not yet wired into `src/game/ai.ts`; that swap is part of E11's cutover.
+
+### E10 (multiplayer snapshot) ✅ LANDED
+
+`src/iso/snapshot.ts`, covered by 23 unit tests in
+`tests/unit/iso-snapshot.test.ts` (224 unit tests total, typecheck and lint
+clean).
+
+- Terrain, industries and occupancy are never sent — a test asserts the
+  serialised payload contains no `terrain` key at all, and that both sides
+  regenerate byte-identical maps from the seed alone.
+- `roadBits`/`railBits` travel as base64. **Correction to the spec:** it
+  claims ~10KB as JSON versus 2304 bytes raw; the measured JSON encoding is
+  4.6KB empty and 6.9KB saturated, so the real win is 1.5–2.25×, not 3×. The
+  better argument for base64 is that it is *flat* — 3072 chars whether the map
+  is empty or full, so host bandwidth never spikes as the game fills up. The
+  tests assert the measured numbers, not the spec's estimate.
+- `version` field with `SNAPSHOT_VERSION`; a mismatch is rejected with a
+  message a player can act on ("Reload the page to update") instead of the
+  silent desync we ship today.
+- Also rejects truncated layers, missing seeds and junk payloads, and throws
+  rather than half-applying — a partially applied snapshot is worse than a
+  rejected one. A seed-mismatch check catches a guest that already generated a
+  different map.
+
+Not yet wired into `src/game/net.ts`, which still sends hex `edges`/`verts`/
+`tiles`. That swap is part of E11's cutover.
+
+### E11 (partial) — the game is now playable ✅
+
+`src/iso/game.ts` + `src/iso/game.css`, mounted from `App.tsx`. The isometric
+game is the DEFAULT view; the old hex/3D game is still reachable at `?legacy=1`.
+Covered by 8 integration tests in `tests/unit/iso-game.test.ts` that boot the
+real module in jsdom and play a round (232 unit tests total).
+
+What is playable now:
+- Setup: place Factory → place first Harvester → 12 free track tiles.
+- Tools: Road / Rail / Harvester / Demolish (keys 1–4), drag-to-build with a
+  live cost + VP readout, industry and harvester inspector, recentre button.
+- Economy ticks every 3s; the E7 AI builds every 9s; first to 12 VP wins.
+- Toasts on every VP award/revoke/upgrade/downgrade, so a broken rail line is
+  visible rather than a silent counter change.
+
+**E8's rule is honoured**: the free-track allowance is a number on the player
+record (`freeTrack`), consumed by builds — never inferred from the phase. A
+regression test drains the purse to zero and asserts the allowance survives, so
+the K1 bug class (a timer clawing back a free build) cannot recur.
+
+### Still open
+
+- **E11 destructive half**: delete `hexmap.ts`, `MapView3D.ts`, the terrain
+  `.jpg`s and the `three` dependency (~600KB); regenerate T2 snapshots. Held
+  back deliberately until the new game has been played and the feel agreed.
+- **E9**: the hex `ui.ts` (861 lines) still drives the legacy view. The iso
+  game ships its own chrome instead of rewriting it.
+- **E8**: the rebalance pass proper (VP target, costs, sabotage prices). The
+  tuning constants are collected at the top of `game.ts` for that.
+- **E4 pixel fixtures**: the committed-reference-PNG depth-sort test and the
+  ported `touch-camera.spec.ts` both need a real browser. Playwright's browser
+  download is blocked in this sandbox, so they remain unrun here. E11 deletes `hexmap.ts`, `MapView3D.ts`, the terrain `.jpg` textures and the `three` dependency (~600KB), and regenerates the T2 snapshots.
 
 ---
 
@@ -146,6 +300,6 @@ Do this **after R1** so you don't delete a source the cell map turns out to need
 
 # Suggested order
 
-**R1 → R2 → R3 → R4 → R5.** R6 and R7 are five-minute fixes; do them now. R8 before R2. R9 after R1.
+**R1 ✅ → R2 ✅ → R3 ✅ → R4 ✅ → R5.** R6 and R7 are five-minute fixes; do them now. R8 before R2. R9 after R1.
 
 R1 is the real blocker: the renderer can't be meaningfully tested against four terrain tiles, and the depth-sort and picking acceptance criteria both require multi-tile sprites with real anchors to prove anything.
