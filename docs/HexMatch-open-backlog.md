@@ -8,7 +8,9 @@ Audited against `main` @ `7e56ea2`: `npm ci`, `tsc --noEmit` clean, **232 unit t
 
 **Work order: G1 → G2 → G7 → G3 → G5 → G4 → G8 → G6 → E8 → E11 → R9.**
 
-G1 and G2 are what make the map look broken, and both are small, precisely-located fixes.
+**Done this pass:** G1, G2, G3, G4 (depot re-sourced to ≤40px, four tints), G5, G7 (CI atlas dirty check), E8 (first pass: `VP_TARGET=12`, `START_PURSE` has no ore, quotas raised after G3), R6 (`resolveMapSeed` / `joinFromSnapshot`).
+
+**Still open / needs further consideration:** G6 (OpenGFX half-pieces), G8 (re-screenshot after G2; not isolated in this pass), E8 follow-up playtesting, E11 (hex cutover — after remaining G-series), R9 (prune OpenGFX after G6).
 
 ---
 

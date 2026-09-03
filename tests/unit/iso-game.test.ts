@@ -111,6 +111,8 @@ describe("E11 the game boots", () => {
     expect(h.grid.industries.length).toBeGreaterThan(0);
     expect(h.factories).toHaveLength(0);
     expect(h.freeTrack).toBe(12);
+    expect(h.purse.ore ?? 0).toBe(0);
+    expect(h.purse.stone ?? 0).toBeGreaterThan(0);
   });
 
   it("exposes a banner telling the player what to do", async () => {
@@ -171,9 +173,24 @@ describe("E11 a full round is playable", () => {
     const { buildTile, demolishTile } = await import("../../src/iso/track");
     const { playerResources } = await import("../../src/iso/economy");
 
-    const ind = h.grid.industries[0];
-    const hx = ind.tx, hy = ind.ty + ind.h;
-    const fy = hy + 6;
+    const { WATER } = await import("../../src/iso/grid");
+    const { MAP_W, MAP_H } = await import("../../src/iso/config");
+    const corridor = () => {
+      for (const ind of h.grid.industries) {
+        const hx = ind.tx, hy = ind.ty + ind.h;
+        const fy = hy + 6;
+        if (hy < 0 || fy >= MAP_H || hx < 0 || hx >= MAP_W) continue;
+        let ok = true;
+        for (let y = hy; y <= fy; y++) {
+          if (h.grid.terrain[y * MAP_W + hx] === WATER) { ok = false; break; }
+        }
+        if (ok) return { hx, hy, fy };
+      }
+      return null;
+    };
+    const c = corridor();
+    expect(c).toBeTruthy();
+    const { hx, hy, fy } = c!;
     h.eco.factories.push({ owner: "you", tx: hx, ty: fy });
     h.eco.harvesters.push({ id: 1, owner: "you", tx: hx, ty: hy });
     for (let y = hy + 1; y <= fy; y++) buildTile(h.track, "road", hx, y);

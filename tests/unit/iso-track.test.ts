@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import {
   NE, SE, SW, NW, DIRS, DIR, OPPOSITE, PRESENT,
-  createTrack, tIdx, spriteKey, isCrossing, hasTrack, bitsAt, canBuildOn,
+  createTrack, tIdx, spriteKey, isCrossing, hasTrack, bitsAt, canBuildOn, playerNetwork,
   recomputeMask, autotileAround, buildTile, demolishTile,
   tileCost, addCost, canAfford, lPath, previewDrag, commitDrag,
   connectedTiles, areConnected, drawBits, type Track,
@@ -181,6 +181,39 @@ describe("E5 buildability", () => {
     expect(TRANSPORT.rail.onRough).toBe(false);
     expect(canBuildOn(grid, "road", 8, 8)).toBe(true);
     expect(canBuildOn(grid, "rail", 8, 8)).toBe(false);
+  });
+
+  it("G5: with a network set, refuses tiles not adjacent to it", () => {
+    const grid = flatGrid();
+    const net = new Set<number>([tIdx(10, 10)]);
+    expect(canBuildOn(grid, "road", 10, 11, net)).toBe(true);
+    expect(canBuildOn(grid, "road", 20, 20, net)).toBe(false);
+    expect(canBuildOn(grid, "road", 20, 20)).toBe(true); // 3-arg form unchanged
+  });
+
+  it("G5: rival track is not a seed; demolish rebuilds the component", () => {
+    const t = createTrack();
+    build(t, "road", [[10, 10], [11, 10], [12, 10], [13, 10]]);
+    const factories = [{ owner: "you", tx: 10, ty: 10 }];
+    const harvesters: { owner: string; tx: number; ty: number }[] = [];
+    let net = playerNetwork(t, "you", factories, harvesters);
+    expect(net.has(tIdx(13, 10))).toBe(true);
+    demolishTile(t, "road", 11, 10);
+    net = playerNetwork(t, "you", factories, harvesters);
+    expect(net.has(tIdx(10, 10))).toBe(true);
+    expect(net.has(tIdx(13, 10))).toBe(false);
+    expect(canBuildOn(flatGrid(), "road", 13, 11, net)).toBe(false);
+  });
+
+  it("G5: previewDrag with network cannot jump a gap", () => {
+    const grid = flatGrid(), t = createTrack();
+    const net = new Set<number>([tIdx(5, 5)]);
+    const rich = { stone: 999, ore: 999 };
+    const fromSeed = previewDrag(grid, t, "road", rich, 5, 5, 8, 5, true, net);
+    expect(fromSeed.tiles.length).toBe(4);
+    const fromEmpty = previewDrag(grid, t, "road", rich, 20, 20, 24, 20, true, net);
+    expect(fromEmpty.tiles.length).toBe(0);
+    expect(fromEmpty.truncated).toBe(true);
   });
 
   it("refuses industry footprints and out-of-bounds", () => {

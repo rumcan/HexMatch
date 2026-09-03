@@ -51,7 +51,7 @@ function makeTerrain(rng: () => number): Uint8Array {
   const distEdge = (tx: number, ty: number) =>
     Math.min(tx, ty, MAP_W - 1 - tx, MAP_H - 1 - ty);
 
-  // ── water: ragged coastline ring + lakes ──
+  // ── water: ragged outer coastline only (G3 — no interior lakes) ──
   for (let tx = 0; tx < MAP_W; tx++) {
     for (let ty = 0; ty < MAP_H; ty++) {
       const d = distEdge(tx, ty);
@@ -59,18 +59,35 @@ function makeTerrain(rng: () => number): Uint8Array {
       if (d < jag) set(tx, ty, WATER);
     }
   }
-  const lakes = 9 + Math.floor(rng() * 7);
-  for (let i = 0; i < lakes; i++) {
-    const cx = 8 + rng() * (MAP_W - 16);
-    const cy = 8 + rng() * (MAP_H - 16);
-    const r = 2 + rng() * 3.6;
-    const r0 = 3 + rng() * 3;   // jagged edge
-    for (let tx = Math.max(1, Math.floor(cx - r - 2)); tx <= Math.min(MAP_W - 2, Math.ceil(cx + r + 2)); tx++) {
-      for (let ty = Math.max(1, Math.floor(cy - r - 2)); ty <= Math.min(MAP_H - 2, Math.ceil(cy + r + 2)); ty++) {
-        const d = Math.hypot(tx - cx, ty - cy) + (rng() - 0.5) * r0;
-        if (d < r) set(tx, ty, WATER);
+
+  // G3: ragged jag can isolate 1-tile islets in the ring. Keep only the
+  // largest 4-connected landmass so every remaining land tile is reachable.
+  {
+    const n = MAP_W * MAP_H;
+    const seen = new Uint8Array(n);
+    let best: number[] = [];
+    for (let i = 0; i < n; i++) {
+      if (seen[i] || t[i] === WATER) continue;
+      const comp: number[] = [];
+      const stack = [i];
+      seen[i] = 1;
+      while (stack.length) {
+        const cur = stack.pop()!;
+        comp.push(cur);
+        const x = cur % MAP_W, y = (cur / MAP_W) | 0;
+        for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]] as const) {
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+          const ni = ny * MAP_W + nx;
+          if (seen[ni] || t[ni] === WATER) continue;
+          seen[ni] = 1;
+          stack.push(ni);
+        }
       }
+      if (comp.length > best.length) best = comp;
     }
+    const keep = new Set(best);
+    for (let i = 0; i < n; i++) if (t[i] !== WATER && !keep.has(i)) t[i] = WATER;
   }
 
   // ── rough (rocky) terrain: blobs + mountain spine clumps ──
@@ -198,6 +215,19 @@ export function generateMap(seed: number): Grid {
  */
 export function randomSeed(): number {
   return Math.floor(Math.random() * 0xffffffff) >>> 0;
+}
+
+/** R6: parse `?seed=` or draw a random seed. Never call generateMap without this. */
+export function resolveMapSeed(search = typeof location !== "undefined" ? location.search : ""): number {
+  const rawSearch = search.startsWith("?") ? search.slice(1) : search;
+  const q = new URLSearchParams(rawSearch);
+  const raw = q.get("seed");
+  if (raw != null && raw !== "") {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) throw new Error(`Invalid map seed "${raw}".`);
+    return n >>> 0;
+  }
+  return randomSeed();
 }
 
 // ── helpers ──

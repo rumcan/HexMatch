@@ -7,6 +7,7 @@ import {
 import { createTrack, buildTile, hasTrack, bitsAt, tIdx } from "../../src/iso/track";
 import { createScoreState } from "../../src/iso/economy";
 import { generateMap } from "../../src/iso/grid";
+import { joinFromSnapshot } from "../../src/iso/snapshot";
 import { MAP_W, MAP_H } from "../../src/game/config";
 
 function source(): SnapshotSource {
@@ -145,6 +146,15 @@ describe("E10 round trip", () => {
     src.track.road[tIdx(6, 10)] = 0;
     expect(out.harvesters[0].tx).toBe(6);
     expect(hasTrack(out.track, "road", 6, 10)).toBe(true);
+  });
+
+  it("R6: a guest joining mid-session regenerates the host terrain and industries", () => {
+    const src = source();
+    const host = generateMap(src.seed);
+    const { applied, grid } = joinFromSnapshot(buildSnapshot(src));
+    expect(applied.seed).toBe(src.seed);
+    expect(grid.terrain).toEqual(host.terrain);
+    expect(grid.industries).toEqual(host.industries);
   });
 
   it("lets both sides regenerate the identical map from the seed alone", () => {
