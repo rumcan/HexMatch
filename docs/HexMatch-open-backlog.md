@@ -1,78 +1,184 @@
 # HexMatch — open backlog
 
-Supersedes the E13–R9 list. Audited against this cut: `tsc --noEmit` clean, unit suite green, G1 pixel test **unchanged** after the G6 art swap, G7 atlas gate (`npm run slice-atlas` then `git diff --exit-code assets/iso-atlas/`) is the CI check.
+Supersedes `HexMatch-open-backlog-v3.md`. Audited against `main` @ `3efbee1` (PR #7 merged): `tsc --noEmit` clean, 208 unit tests passing across 14 files.
 
-**Landed this pass (work order E13 → G6 → G8 → E8 pass 2 → E11 → R9, E14 anytime): E13, E14, G6, G8, E8 pass 2, E11, R9.**
+**Work order: X1 → X2 → X3 → X4 → X5 → E8a/b/c.**
 
----
-
-## Landed
-
-### E13. CI runs e2e
-`.github/workflows/ci.yml` has an `e2e` job: `npx playwright install --with-deps chromium` then `npx playwright test --project=desktop-chromium`, with the HTML report uploaded on failure. Desktop chromium is the PR check so the required job stays fast; `.github/workflows/e2e-nightly.yml` runs the full viewport matrix so G4/G5 mobile coverage is not dropped. Iso layout assertions run on every project (`iso-game.spec.ts` "iso layout on every viewport").
-
-Branch protection still has to mark the `e2e` job required — that is a GitHub setting, not a file.
-
-### E14. Tracked patch gone
-`01a0664c-881a-7e2d-a962-ae437c7347a9.patch` removed. `*.patch` is in `.gitignore`. `tools/peek.mjs` is documented in the README tooling section (kept: it is the headless sprite inspector).
-
-### G6. OpenGFX road/rail
-`makeGenerated()` slices **one** half-piece per kind from `infra06.png` (spr1332 road / spr1012 rail, indices from the OpenGFX pnml), rotate/mirrors into four directions, overlays for all 16 masks. Grass is keyed out so the result is a transparent overlay. Half-pieces are clipped to the G1 centre→edge-midpoint segments (`TRACK_HALF_W = 5.2`) so adjacent tiles meet at the exact midpoint at consistent width.
-
-A `crossing` sprite (spr1370, centre intersection) is emitted and `buildDrawList` draws it on tiles that carry both layers.
-
-The G1 pixel test in `tests/unit/iso-atlas-pixels.test.ts` passes **unchanged**. Contact sheet regenerated (52 sprites).
-
-### G8. Dark wedges
-Re-captured an 8×8 of `terrain_grass_a` at 1× into the old 512×288 chunk surface and the padded surface (`docs/g8-chunk-before.png`, `docs/g8-chunk-after.png`).
-
-Cause was (2), not (1) or (3): the easternmost tile of every chunk (`tx - ty` max) had its right 32px clipped because sprites are drawn at `+HW` relative to the origin while the canvas was exactly `16*HW` wide. Against `#0b1a26` that reads as a dark wedge at 8-tile intervals. `chunkSurfaceSize` now pads a full tile on both axes; the G8 unit test pins `drawX + 64 <= w`.
-
-`terrain_grass_b` is a real grass variant (full diamond), not a field tile. It is slightly more olive; that is colour variation, not the wedge.
-
-### E8 pass 2 — measurements, follow-ups filed
-Pass 1 structure is unchanged (`VP_TARGET = 12`, `START_PURSE = { stone: 12, ore: 0 }`, `ore_mine` quota 5, rail `2 ore + 1 stone`). Across 80 seeds, distance from the land centroid to the nearest ore mine:
-
-| | tiles |
-|---|---|
-| min | 0 |
-| p50 | 10 |
-| p90 | 17 |
-| max | 24 |
-| within 12 free setup tiles | 47 / 80 (59%) |
-
-Once the free road lands, harvest is ~1 ore / 3s, so the first rail tile is **6 seconds** later. That is under a couple of minutes on a majority of maps — the road-vs-rail decision collapses into a menu. Follow-ups below, one lever each.
-
-### E11. Hex path deleted
-Removed `src/game/hexmap.ts`, `src/map3d/MapView3D.ts`, `src/game/main-legacy.ts`, the `?legacy=1` branch, `three` / `@types/three`, the legacy `.jpg` terrain textures (they were imported from `src/game/config.ts` and leaked into the iso bundle), and the hex-only modules that only the legacy boot touched (`board.ts`, `actions.ts`, `ai.ts`, `ui.ts`, `net.ts`, `lobby.ts`, `state.ts`, `trade.ts`, `styles.css`). Legacy Playwright specs (`touch-camera.spec.ts`, `smoke.spec.ts`, `markers.spec.ts`, `mobile.spec.ts`, `helpers.ts`) went with it. Iso layout e2e covers the mobile viewports those T2 snapshots used to.
-
-### R9. OpenGFX tree pruned
-`src/assets/sprites/` 19 MB → 5.6 MB. Kept `png/terrain/`, `industries/`, `infrastructure/`, `landscape/`, `trees/temperate/`, `miscellaneous/`, `stations/`. Cross-checked against `tools/iso-atlas.cells.json`; `npm run slice-atlas` still reproduces the atlas.
-
-OpenGFX attribution remains in the README.
+X1 is a severe regression and everything else should wait on the decision it forces.
 
 ---
 
-# Open
+## X0. Your e2e run — just missing browser binaries
+`[support]` — not a bug
 
-## E8a. First rail arrives in six seconds — raise rail's ore cost
+```
+Executable doesn't exist at ...chromium_headless_shell-1234\chrome-headless-shell.exe
+```
+
+Playwright is installed but its browsers aren't. One command:
+
+```
+npx playwright install chromium
+```
+
+Then `npm run test:e2e` again. Nothing in the repo is wrong — the 6 failures and 6 skips are all this single cause.
+
+---
+
+## X1. E11 deleted the match-3 board, trading, multiplayer and the whole UI layer
+`[bug] [P0] [regression] [blocker]`
+
+**This is why "the original game interface with the match 3 isn't in this game at all."** It isn't hidden or unwired — the source files are gone.
+
+`src/game/` went from 12 files to 1. Deleted in the E11 commit:
+
+| File | What it was | Status in iso |
+|---|---|---|
+| `board.ts` (15 KB) | **the match-3 quarry board** — the core harvesting loop | no replacement |
+| `trade.ts` | player-to-player cargo trading | no replacement |
+| `net.ts` (10 KB) | multiplayer relay client | partial — `iso/snapshot.ts` only |
+| `lobby.ts` | room create/join UI | no replacement |
+| `ui.ts` | panels, banners, resource chips | partial — inline in `iso/game.ts` |
+| `actions.ts`, `state.ts` | action dispatch, game state | folded into `iso/game.ts` |
+
+The migration spec was explicit that these survive:
+
+> **Survives untouched:** `board.ts` (match-3 quarry), `trade.ts`, `net.ts`, `lobby.ts`, most of `ui.ts`, `state.ts` — roughly 40% of `src/game`.
+
+E11's scope was `hexmap.ts`, `MapView3D.ts`, the `.jpg` textures and `three`. It was executed as "delete everything hex-era" instead. **E9 (UI port) was never done**, so there was nothing on the iso side to receive the match-3 board when its source was removed.
+
+The unit count dropping 242 → 208 is the same event: 34 tests went with `board.test.ts` and `trade.test.ts`.
+
+Without the board there is no harvesting mechanic. The current build is a road-laying sandbox where cargo appears on a timer.
+
+**Recovery.** The files are in git history — nothing is lost. Restore from the commit before the E11 merge:
+
+```bash
+git log --oneline --all -- src/game/board.ts     # find last commit containing it
+git checkout <sha>^ -- src/game/board.ts src/game/trade.ts src/game/net.ts \
+                       src/game/lobby.ts src/game/ui.ts src/game/state.ts \
+                       src/game/actions.ts src/game/styles.css
+git checkout <sha>^ -- tests/unit/board.test.ts tests/unit/trade.test.ts
+```
+
+Restore `board.ts`, `trade.ts` and their tests **first and unmodified** — they were designed to be map-agnostic and should compile against the iso build with little or no change. `ui.ts`, `lobby.ts` and `net.ts` need review, since parts of them reference hex concepts.
+
+**Acceptance**
+- The match-3 quarry board renders and is playable in the iso game.
+- Matching gems credits the six iso cargoes (`grain, wood, ore, stone, oil, gold`), gated by which industries the player's network actually reaches — this is the E6 catchment wired to the board.
+- Trading panel works.
+- `board.test.ts` and `trade.test.ts` restored and green; unit count back above 240.
+
+**Do not attempt any further E11 cleanup until this is resolved.**
+
+---
+
+## X2. Grass variant hash produces diagonal stripes, not noise
+`[bug] [renderer]`
+
+**This is the "weird pattern" in the grass.** `src/iso/renderer.ts:55`:
+
+```ts
+return ((tx * 7 + ty * 13) & 3) === 0 ? "terrain_grass_b" : "terrain_grass_a";
+```
+
+Any linear function of `tx` and `ty` taken mod a small number produces a regular lattice, not noise. Printing it makes the failure obvious:
+
+```
+B...B...B...B...
+.B...B...B...B..
+..B...B...B...B.
+...B...B...B...B
+```
+
+Every `grass_b` tile sits on a perfect diagonal, period 4. In isometric projection a tile-space diagonal maps to a **straight vertical column on screen** — which is exactly the vertical banding running down the whole map in the wide screenshot. G8's chunk-clip fix was a real and separate bug; this one was never the chunk cache.
+
+**Fix:** use a proper integer hash so neighbouring tiles decorrelate:
+
+```ts
+function tileHash(tx: number, ty: number): number {
+  let h = (tx * 0x1f1f1f1f) ^ (ty * 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d);
+  h = Math.imul(h ^ (h >>> 13), 0x297a2d39);
+  return (h ^ (h >>> 16)) >>> 0;
+}
+// ...
+return (tileHash(tx, ty) & 7) === 0 ? "terrain_grass_b" : "terrain_grass_a";
+```
+
+Also consider whether `grass_b` should be used at all at its current frequency — it reads noticeably more olive than `grass_a`, so even randomly scattered it will look patchy. A ratio nearer 1-in-8 than 1-in-4 is a better starting point.
+
+**Acceptance**
+- Unit test: over a 48×48 grid, the set of `grass_b` tiles has no row, column or diagonal with more than a small multiple of the expected count. A lattice fails this; noise passes.
+- Screenshot at full map zoom shows no visible banding.
+
+---
+
+## X3. Factory and ore-mine crops span several unrelated source sprites
+`[bug] [P0] [assets]`
+
+**This is the "buildings are broken" complaint.** Rendering `factory_blue` straight from `atlas@1x.png` shows it is not one building: it's a chimney pair, a separate shed, a crane, a grey slab and a brick block, scattered with gaps — several distinct OpenGFX sprite boxes captured in one 192×192 crop.
+
+`ore_mine` has identical dimensions and anchor (`192×192`, anchor `[96,176]`), which strongly suggests the same wrong region, or a copy-paste of the same crop rectangle.
+
+The cell definitions in `tools/iso-atlas.cells.json` are grabbing a rectangle of the source *sheet* rather than a single sprite box within it.
+
+**Fix:** re-derive the crop for each from the blue-box bounds of the intended sprite, the same way the working sprites (`farm`, `depot`) were done. `tools/peek.mjs` exists precisely for this — use it to locate the correct box before editing the cell.
+
+**Also check `oil_rig`:** it is `768×160` for a 2×2 footprint. That is 6 × 128 px, i.e. the whole animation strip stored as one sprite. If the manifest doesn't carry `frames: 6` with a per-frame width, the renderer will draw all six frames at once as a 12-tile-wide smear.
+
+**Acceptance**
+- Every building sprite is one contiguous structure — verify on the contact sheet, and by rendering each over a flat green background to expose stray fragments.
+- No two different sprites share identical crop rectangles.
+- `oil_rig` either declares its frames properly or is cut to a single frame.
+- Sprite width ≤ footprint width × 64 plus a small overhang, asserted in the manifest test. A 2×2 sprite at 768px wide should have failed automatically.
+
+---
+
+## X4. Road arms stop 1px short of the tile edge
+`[bug] [assets]`
+
+**This is "the roads don't reach the end of the tile."** Measuring painted pixels in `road_1111`: the bounding box is x 14–49, y 8–23. The SE and SW arm endpoints are at y = 24, so the paint stops one row short, and the arms taper as they approach the edge because `clipArm()` uses a fixed `TRACK_HALF_W = 5.2` distance from the centre→endpoint segment, which rounds down at the extreme.
+
+Result is a visible gap at every tile join — the dashed, disconnected look in the close-up screenshot.
+
+Note the G1 pixel test still passes: it asserts paint exists *within 2px* of each midpoint, which a 1px shortfall satisfies. The test was written to catch wrong directions, and it did its job; it was never meant to catch short arms.
+
+**Fix:** extend each arm to the edge by clipping against the diamond boundary rather than stopping at the midpoint — run the segment 1–2px past the endpoint and let `inDiamond()` trim it. Confirm the arm's half-width is constant right up to the edge so two adjacent tiles present the same road width.
+
+**Acceptance**
+- New test: for each set bit, painted pixels exist **at** the exact edge midpoint, not merely near it.
+- New test: two adjacent tiles composited at their real screen offsets show a continuous run with no transparent column at the join. This is the assertion that actually encodes what the player sees.
+- Arm width at the edge is within 1px of arm width at the centre.
+
+---
+
+## X5. Manifest test should have caught X3 and X4
+`[testing]`
+
+Three of the four defects above were invisible to a green suite. Add cheap invariants to `tests/unit/iso-manifest.test.ts`:
+
+- Sprite width ≤ `footprint[0] * 64 + 32`, height ≤ `footprint[1] * 32 + 160`. Catches the 768px oil rig.
+- No two sprites share an identical `{x,y,w,h}` unless they're declared tints of one another. Catches duplicated crops.
+- For each generated road/rail mask, paint exists at the exact edge midpoint of every set bit (X4) and nowhere near unset bits (existing G1 check).
+- Terrain variant selection over a 48×48 grid has no axis-aligned or diagonal run longer than a threshold (X2).
+
+---
+
+## E8a / E8b / E8c — economy follow-ups
 `[design] [gameplay]`
 
-59% of maps put an ore mine inside the 12-tile free-setup allowance. Harvest then produces the 2 ore a rail tile costs in two 3s ticks. Raise `TRANSPORT.rail.cost.ore` from 2 to 4 (or 5) so the first rail is a stockpile decision, not an afterthought. Do not touch quota or `VP_TARGET` in this ticket.
+Filed from the pass-2 measurements (across 80 seeds: land-centroid → nearest ore p50 = 10 tiles, 59% within the 12 free-setup tiles, first rail ~6s after the free road lands). The data confirms the concern from the last review — rail is reachable almost immediately, so the road-vs-rail choice isn't currently a decision.
 
-**Acceptance:** time-to-first-rail-tile after connecting an ore mine is ≥ ~30s of harvest at 1.0×. Existing economy tests that hard-code `cost.ore === 2` are updated.
+- **E8a** — raise `TRANSPORT.rail.cost.ore` from 2 to 4 so first rail is a stockpiling decision.
+- **E8b** — give road a visible late-game niche beyond `onRough`.
+- **E8c** — re-time `VP_TARGET = 12` after E8a lands.
 
-## E8b. Give road a late-game niche besides `onRough`
-`[design] [gameplay]`
+Hold all three until X1 is resolved. Rebalancing an economy whose primary harvesting mechanic is missing will produce numbers you have to throw away.
 
-Rail's 1.6× throughput *and* 3 VP still make road strictly obsolete once ore flows. `onRough: true` is already the data lever — it is invisible. Either surface it in the drag cost readout ("rough: road only") or give road a second niche (cheaper repair, faster build, or a 1.0× that's enough for grain/wood while rail is reserved for ore/gold). One change, not both.
+---
 
-## E8c. Is `VP_TARGET = 12` the length you want?
-`[design] [gameplay]`
-
-Road connections are 1 VP, rail 3. Twelve points is four rail links or twelve road links. After E8a the game will run longer; re-time a 2p vs AI game and move the target in isolation (suggest 18 if a round is currently < 10 minutes, 9 if it drags past 25).
-
-## E13 follow-up. Mark the `e2e` CI job required
+## E13 follow-up — mark the e2e job required
 `[chore]`
 
-The job exists. GitHub branch protection on `main` still has to tick it as a required status check so a red e2e run blocks merge.
+The `e2e` workflow exists and runs on PRs, but branch protection has to mark it required. That's a GitHub repo setting, not a file — Settings → Branches → branch protection rule for `main` → Require status checks → select `e2e`.
