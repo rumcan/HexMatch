@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { toOpenttdRoadBits } from "../../src/iso/track";
+import { parsePnml } from "../../tools/parse-pnml.mjs";
 
 const manifest = JSON.parse(readFileSync("assets/iso-atlas/manifest.json", "utf8")) as {
   sprites: Record<string, { x: number; y: number; w: number; h: number; frames?: number }>;
@@ -20,6 +21,12 @@ const ARMS: Record<number, [number, number]> = {
   4: [16, 24],
   8: [16, 8],
 };
+
+/** Declared OpenGFX geometry, parsed straight from the PNML so the
+ * test never depends on the gitignored tools/opengfx-sprites.json artifact. */
+function declarations() {
+  return parsePnml() as unknown as Record<string, { file: string; x: number; y: number; w: number; h: number; xrel: number; yrel: number }>;
+}
 
 type Raw = { data: Buffer; info: { width: number; height: number } };
 let atlasRaw: Raw | null = null;
@@ -62,7 +69,7 @@ describe("G1/G2 atlas pixels", () => {
     // The generator is gone: road_<mask> must BE the declared sprite
     // 1332 + TABLE[toOpenttdRoadBits(mask)], keyed exactly as the slicer keys.
     const { data, info } = await atlas();
-    const decls = JSON.parse(readFileSync("tools/opengfx-sprites.json", "utf8")) as Record<string, { file: string; x: number; y: number; w: number; h: number }>;
+    const decls = declarations();
     const src = await sheet("infrastructure/infra06.png");
     for (let mask = 0; mask < 16; mask++) {
       const key = `road_${mask.toString(2).padStart(4, "0")}`;
@@ -190,7 +197,7 @@ describe("G1/G2 atlas pixels", () => {
 
   it("Y4c: rail masks are declared ground + declared overlay pieces (no generator)", async () => {
     const { data, info } = await atlas();
-    const decls = JSON.parse(readFileSync("tools/opengfx-sprites.json", "utf8")) as Record<string, { file: string; x: number; y: number; w: number; h: number; xrel: number; yrel: number }>;
+    const decls = declarations();
     const rail = cells.sprites.find((c) => c.name === "rail")!.trackset!;
     const src = await sheet(decls[String(rail.ground)].file.replace(/^sprites\/png\//, ""));
     const ovl = await sheet("infrastructure/infra06.png");
