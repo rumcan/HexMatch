@@ -48,6 +48,70 @@ describe("G1/G2 atlas pixels", () => {
     }
   });
 
+  it("X4: road/rail arms are painted at the exact edge midpoint", async () => {
+    const sharp = (await import("sharp")).default;
+    const { data, info } = await sharp("assets/iso-atlas/atlas@1x.png").ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const sample = (sx: number, sy: number, px: number, py: number) => {
+      const i = ((sy + py) * info.width + (sx + px)) * 4;
+      return data[i + 3];
+    };
+    for (const prefix of ["road", "rail"]) {
+      for (let mask = 0; mask < 16; mask++) {
+        const key = `${prefix}_${mask.toString(2).padStart(4, "0")}`;
+        const s = manifest.sprites[key];
+        expect(s, key).toBeTruthy();
+        for (const bit of [1, 2, 4, 8]) {
+          const [mx, my] = ARMS[bit];
+          if (mask & bit) {
+            // AT the midpoint, not merely within 2px (X4).
+            expect(sample(s.x, s.y, mx, my), `${key} arm ${bit} is 1px short`).toBeGreaterThan(0);
+          } else {
+            expect(sample(s.x, s.y, mx, my), `${key} stray arm ${bit}`).toBe(0);
+          }
+        }
+      }
+    }
+  });
+
+  it("X4: two adjacent road_1111 tiles composite with no transparent column at the join", async () => {
+    const sharp = (await import("sharp")).default;
+    const { data, info } = await sharp("assets/iso-atlas/atlas@1x.png").ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const s = manifest.sprites.road_1111;
+
+    // Real screen offsets: sprite draw position is topVertex + (HW-anchorX,
+    // TILE_H-anchorY). anchor [32,31], so tile A draws at (0,1) and tile B
+    // (the SE neighbour, top vertex at +HW/+HH) draws at (32,17).
+    const W = 96, H = 80;
+    const dst = Buffer.alloc(W * H * 4);
+    const blitAt = (sx: number, sy: number, dx: number, dy: number) => {
+      for (let y = 0; y < s.h; y++) {
+        for (let x = 0; x < s.w; x++) {
+          const dxx = dx + x, dyy = dy + y;
+          if (dxx < 0 || dyy < 0 || dxx >= W || dyy >= H) continue;
+          const si = ((s.y + y) * info.width + (s.x + x)) * 4;
+          const di = (dyy * W + dxx) * 4;
+          const a = data[si + 3] / 255;
+          dst[di] = dst[di] * (1 - a) + data[si] * a;
+          dst[di + 1] = dst[di + 1] * (1 - a) + data[si + 1] * a;
+          dst[di + 2] = dst[di + 2] * (1 - a) + data[si + 2] * a;
+          dst[di + 3] = Math.max(dst[di + 3], data[si + 3]);
+        }
+      }
+    };
+    blitAt(s.x, s.y, 0, 1);
+    blitAt(s.x, s.y, 32, 17);
+
+    // No single vertical column through the join may be fully transparent.
+    // (A 1px-short arm leaves exactly such a gap.)
+    for (let x = 44; x <= 52; x++) {
+      let painted = false;
+      for (let y = 0; y < H; y++) {
+        if (dst[(y * W + x) * 4 + 3] > 0) { painted = true; break; }
+      }
+      expect(painted, `transparent join column at x=${x}`).toBe(true);
+    }
+  });
+
   it("terrain sprites have no fully-opaque white bottom row", async () => {
     const sharp = (await import("sharp")).default;
     const { data, info } = await sharp("assets/iso-atlas/atlas@1x.png").ensureAlpha().raw().toBuffer({ resolveWithObject: true });

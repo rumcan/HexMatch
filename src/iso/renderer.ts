@@ -47,12 +47,26 @@ export function chunkWorldOrigin(cx: number, cy: number): [number, number] {
   return [ox, oy];
 }
 
-/** Terrain sprite for a tile. Grass alternates on a stable checker hash. */
+/**
+ * X2 — proper integer tile hash for grass variants. A linear combination of
+ * `tx`/`ty` mod a small power of two is a regular lattice: every `grass_b`
+ * sits on a perfect diagonal (period 4), which the 2:1 isometric projection
+ * turns into straight vertical screen banding. Murmur-style avalanche makes
+ * neighbouring tile hashes decorrelate while staying deterministic.
+ */
+export function tileHash(tx: number, ty: number): number {
+  let h = (tx * 0x1f1f1f1f) ^ (ty * 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d);
+  h = Math.imul(h ^ (h >>> 13), 0x297a2d39);
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
+/** Terrain sprite for a tile. Grass variant is a stable hash, ~1-in-8 `_b`. */
 export function terrainSprite(grid: Grid, tx: number, ty: number): string {
   const v = grid.terrain[ty * MAP_W + tx];
   if (v === WATER) return "terrain_water";
   if (v === ROUGH) return "terrain_rough";
-  return ((tx * 7 + ty * 13) & 3) === 0 ? "terrain_grass_b" : "terrain_grass_a";
+  return (tileHash(tx, ty) & 7) === 0 ? "terrain_grass_b" : "terrain_grass_a";
 }
 
 /** Structures currently on the map, as a draw list (pre-cull). */

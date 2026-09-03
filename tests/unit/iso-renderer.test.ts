@@ -57,6 +57,42 @@ describe("E4 terrain sprite selection", () => {
     expect(terrainSprite(g2, 20, 20)).toBe("terrain_rough");
     expect(terrainSprite(grid, 5, 6)).toBe(terrainSprite(grid, 5, 6));
   });
+
+  it("X2: grass variant hash has no axis-aligned or diagonal run", () => {
+    const flat = { ...grid, terrain: new Uint8Array(MAP_W * MAP_H) }; // all GRASS
+    const isB = (tx: number, ty: number) => terrainSprite(flat, tx, ty) === "terrain_grass_b";
+
+    // A lattice would have a single long run. For noise, no directional run
+    // (row, column, or the two 2:1 screen diagonals) exceeds a small bound.
+    const longest = (dir: [number, number]) => {
+      let best = 0;
+      for (let startY = 0; startY < MAP_H; startY++) {
+        for (let startX = 0; startX < MAP_W; startX++) {
+          let x = startX, y = startY, n = 0;
+          while (x < MAP_W && y < MAP_H) {
+            if (!isB(x, y)) break;
+            n++; x += dir[0]; y += dir[1];
+          }
+          if (n > best) best = n;
+        }
+      }
+      return best;
+    };
+
+    const r = 8;
+    expect(longest([1, 0])).toBeLessThanOrEqual(r);
+    expect(longest([0, 1])).toBeLessThanOrEqual(r);
+    expect(longest([1, 1])).toBeLessThanOrEqual(r);
+    expect(longest([1, -1])).toBeLessThanOrEqual(r);
+
+    // Approximately 1-in-8, not 1-in-4.
+    let n = 0;
+    for (let ty = 0; ty < MAP_H; ty++)
+      for (let tx = 0; tx < MAP_W; tx++) if (isB(tx, ty)) n++;
+    const frac = n / (MAP_W * MAP_H);
+    expect(frac).toBeGreaterThan(0.06);
+    expect(frac).toBeLessThan(0.19);
+  });
 });
 
 describe("E4 culling + draw list", () => {

@@ -80,12 +80,12 @@ export const TRANSPORT: Record<"road" | "rail", TransportDef> = {
   },
   rail: {
     key: "rail", name: "Rail",
-    cost: { ore: 2, stone: 1 },
+    cost: { ore: 4, stone: 1 },
     vp: 3, throughput: 1.6, onRough: false, label: "Rail",
   },
 };
 
 // Road→rail upgrade pays only the difference (settled: yes, upgrade in place).
-export const UPGRADE_COST: Partial<Record<Cargo, number>> = { ore: 2 };
+export const UPGRADE_COST: Partial<Record<Cargo, number>> = { ore: 4 };
 
 export const VP_TARGET = 12;

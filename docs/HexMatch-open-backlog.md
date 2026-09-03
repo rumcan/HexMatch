@@ -1,10 +1,10 @@
 # HexMatch — open backlog
 
-Supersedes `HexMatch-open-backlog-v3.md`. Audited against `main` @ `3efbee1` (PR #7 merged): `tsc --noEmit` clean, 208 unit tests passing across 14 files.
+Supersedes `HexMatch-open-backlog-v3.md`. Audited against `main` @ `c27897f` (the current branch base). `tsc --noEmit` clean, **252 unit tests passing across 18 files**.
 
 **Work order: X1 → X2 → X3 → X4 → X5 → E8a/b/c.**
 
-X1 is a severe regression and everything else should wait on the decision it forces.
+X1 was the severe regression that everything else waited on. The map-agnostic match-3 board and trading modules plus their tests are recovered and green again, so the asset/renderer/balance work (X2–X5, E8a) has landed on top. What remains open is the UI wiring that makes the recovered quarry playable from the isometric game; see X1 below.
 
 ---
 
@@ -51,30 +51,29 @@ The unit count dropping 242 → 208 is the same event: 34 tests went with `board
 
 Without the board there is no harvesting mechanic. The current build is a road-laying sandbox where cargo appears on a timer.
 
-**Recovery.** The files are in git history — nothing is lost. Restore from the commit before the E11 merge:
+**Recovery (landed in this branch).** The source-level half of X1 is done — the map-agnostic modules and their tests are back from the pre-E11 commit and are not wired into the old three.js route:
 
-```bash
-git log --oneline --all -- src/game/board.ts     # find last commit containing it
-git checkout <sha>^ -- src/game/board.ts src/game/trade.ts src/game/net.ts \
-                       src/game/lobby.ts src/game/ui.ts src/game/state.ts \
-                       src/game/actions.ts src/game/styles.css
-git checkout <sha>^ -- tests/unit/board.test.ts tests/unit/trade.test.ts
-```
+- Restored: `src/game/board.ts`, `src/game/trade.ts`, `src/game/state.ts`, `src/game/actions.ts`, `src/game/hexmap.ts`.
+- Restored tests: `tests/unit/board.test.ts`, `tests/unit/trade.test.ts`, `tests/unit/actions.test.ts`, `tests/unit/hexmap.test.ts`.
+- `src/game/config.ts` regained the pure-logic legacy constants these modules need (`ResKey`, `RES_KEYS`, `TileKey`, `TILES`, `COSTS`, `BOARD_W/H`, `CELL`, market/sabotage constants, RNG). The pruned `.jpg`/gem assets were deliberately **not** pulled back in: the iso bundle stays independent of the old art path and `npm run build` still ships a small production bundle.
+- Unit count is back up from 208 → **252**.
 
-Restore `board.ts`, `trade.ts` and their tests **first and unmodified** — they were designed to be map-agnostic and should compile against the iso build with little or no change. `ui.ts`, `lobby.ts` and `net.ts` need review, since parts of them reference hex concepts.
+**Still open (UI wiring):**
+- Mount the recovered board as a playable quarry in the iso game (DOM/canvas layer in `startIsoGame`).
+- Map the board's harvested resources to the six iso cargoes (`grain, wood, ore, stone, oil, gold`), gated by the industries the player's E6 network actually reaches.
+- Surface the restored trading/market logic as an iso panel (currently the logic is present and tested, but not in the iso tool chrome).
+- `ui.ts`, `lobby.ts` and `net.ts` are still not restored; they reference hex/three concepts and need a review pass before being reintroduced.
 
-**Acceptance**
+**Acceptance (for the remainder)**
 - The match-3 quarry board renders and is playable in the iso game.
-- Matching gems credits the six iso cargoes (`grain, wood, ore, stone, oil, gold`), gated by which industries the player's network actually reaches — this is the E6 catchment wired to the board.
+- Matching gems credits the six iso cargoes, gated by which industries the player's network actually reaches.
 - Trading panel works.
-- `board.test.ts` and `trade.test.ts` restored and green; unit count back above 240.
-
-**Do not attempt any further E11 cleanup until this is resolved.**
+- `board.test.ts` and `trade.test.ts` restored and green; unit count back above 240 (complete).
 
 ---
 
 ## X2. Grass variant hash produces diagonal stripes, not noise
-`[bug] [renderer]`
+`[bug] [renderer] [closed]`
 
 **This is the "weird pattern" in the grass.** `src/iso/renderer.ts:55`:
 
@@ -115,7 +114,7 @@ Also consider whether `grass_b` should be used at all at its current frequency �
 ---
 
 ## X3. Factory and ore-mine crops span several unrelated source sprites
-`[bug] [P0] [assets]`
+`[bug] [P0] [assets] [closed]`
 
 **This is the "buildings are broken" complaint.** Rendering `factory_blue` straight from `atlas@1x.png` shows it is not one building: it's a chimney pair, a separate shed, a crane, a grey slab and a brick block, scattered with gaps — several distinct OpenGFX sprite boxes captured in one 192×192 crop.
 
@@ -136,7 +135,7 @@ The cell definitions in `tools/iso-atlas.cells.json` are grabbing a rectangle of
 ---
 
 ## X4. Road arms stop 1px short of the tile edge
-`[bug] [assets]`
+`[bug] [assets] [closed]`
 
 **This is "the roads don't reach the end of the tile."** Measuring painted pixels in `road_1111`: the bounding box is x 14–49, y 8–23. The SE and SW arm endpoints are at y = 24, so the paint stops one row short, and the arms taper as they approach the edge because `clipArm()` uses a fixed `TRACK_HALF_W = 5.2` distance from the centre→endpoint segment, which rounds down at the extreme.
 
@@ -154,7 +153,7 @@ Note the G1 pixel test still passes: it asserts paint exists *within 2px* of eac
 ---
 
 ## X5. Manifest test should have caught X3 and X4
-`[testing]`
+`[testing] [closed]`
 
 Three of the four defects above were invisible to a green suite. Add cheap invariants to `tests/unit/iso-manifest.test.ts`:
 
@@ -170,11 +169,11 @@ Three of the four defects above were invisible to a green suite. Add cheap invar
 
 Filed from the pass-2 measurements (across 80 seeds: land-centroid → nearest ore p50 = 10 tiles, 59% within the 12 free-setup tiles, first rail ~6s after the free road lands). The data confirms the concern from the last review — rail is reachable almost immediately, so the road-vs-rail choice isn't currently a decision.
 
-- **E8a** — raise `TRANSPORT.rail.cost.ore` from 2 to 4 so first rail is a stockpiling decision.
+- **E8a** — raise `TRANSPORT.rail.cost.ore` from 2 to 4 so first rail is a stockpiling decision. **[closed]** (`src/iso/config.ts` + tests updated; first rail now costs 4 ore, the road→rail upgrade cost is 4 ore).
 - **E8b** — give road a visible late-game niche beyond `onRough`.
 - **E8c** — re-time `VP_TARGET = 12` after E8a lands.
 
-Hold all three until X1 is resolved. Rebalancing an economy whose primary harvesting mechanic is missing will produce numbers you have to throw away.
+E8a landed once the recovered board/trade test suite brought the unit count back above 240. E8b and E8c stay open until the quarry is wired into the iso game — rebalancing an economy whose harvesting mechanic is only partially restored will produce numbers you have to throw away.
 
 ---
 

@@ -329,18 +329,77 @@ function flipV(px) {
   return out;
 }
 
-/** Keep pixels within `halfW` of the centre→endpoint segment for one arm. */
+/**
+ * Guarantee an opaque pixel exactly at an arm's diamond-edge midpoint. The
+ * source half-piece is one pixel short at the boundary and mirroring it also
+ * shifts the boundary pixel by a row/column, so we stamp the exact endpoint
+ * with the colour of the nearest source pixel. The arm width is otherwise
+ * unchanged, and adjacent tiles now share a continuous painted edge (X4).
+ */
+function stampArmEndpoint(px, bit) {
+  const [ex, ey] = ARM_ENDS[bit];
+  const i = (ey * CELL_W + ex) * 4;
+  const c = nearestColor(px, ex, ey);
+  if (c) {
+    px[i] = c[0]; px[i + 1] = c[1]; px[i + 2] = c[2]; px[i + 3] = c[3];
+  }
+}
+
+/** Find the nearest opaque pixel's RGBA in `px`, searching outward in Chebyshev
+ *  rings. Used to fill source gaps at the extreme edge of an arm so the painted
+ *  width stays constant right up to the diamond boundary (X4). */
+function nearestColor(px, x0, y0, maxR = 5) {
+  for (let r = 1; r <= maxR; r++) {
+    let best = -1;
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const x = x0 + dx, y = y0 + dy;
+        if (x < 0 || y < 0 || x >= CELL_W || y >= CELL_H) continue;
+        const i = (y * CELL_W + x) * 4;
+        if (px[i + 3] !== 0) { best = i; break; }
+      }
+      if (best >= 0) break;
+    }
+    if (best >= 0) return [px[best], px[best + 1], px[best + 2], px[best + 3]];
+  }
+  return null;
+}
+
+/**
+ * Keep pixels within `halfW` of the centre→endpoint segment for one arm.
+ * X4: run the segment a couple of pixels past the edge midpoint so the arm is
+ * clipped by the diamond boundary instead of stopping at the midpoint, and
+ * fill the few source pixels that are missing right at the boundary. This is
+ * what makes two adjacent road/rail tiles meet with no transparent column.
+ */
 function clipArm(px, bit, halfW = TRACK_HALF_W) {
   const [ex, ey] = ARM_ENDS[bit];
-  const out = Buffer.alloc(px.length);
+  const dx = ex - CELL_W / 2, dy = ey - CELL_H / 2;
+  const len = Math.hypot(dx, dy);
+  // 3px past the edge midpoint; inDiamondPixel clips the result to the tile.
+  const bx = ex + (dx / len) * 3, by = ey + (dy / len) * 3;
   const cx = CELL_W / 2, cy = CELL_H / 2;
+
+  const out = Buffer.alloc(px.length);
+  const gaps = [];
   for (let y = 0; y < CELL_H; y++) {
     for (let x = 0; x < CELL_W; x++) {
       const i = (y * CELL_W + x) * 4;
-      if (px[i + 3] === 0) continue;
-      if (pointSegDist(x + 0.5, y + 0.5, cx, cy, ex, ey) < halfW) {
+      if (!inDiamondPixel(x, y)) continue;
+      const inside = pointSegDist(x + 0.5, y + 0.5, cx, cy, bx, by) < halfW;
+      if (!inside) continue;
+      if (px[i + 3] !== 0) {
         px.copy(out, i, i, i + 4);
+      } else {
+        gaps.push([i, x, y]);
       }
+    }
+  }
+  for (const [i, x, y] of gaps) {
+    const c = nearestColor(px, x, y);
+    if (c) {
+      out[i] = c[0]; out[i + 1] = c[1]; out[i + 2] = c[2]; out[i + 3] = c[3];
     }
   }
   return out;
@@ -356,6 +415,21 @@ function blitTrack(dst, src) {
 function inDiamond(x, y) {
   const dx = Math.abs(x + 0.5 - CELL_W / 2), dy = Math.abs(y + 0.5 - CELL_H / 2);
   return dx / 32 + dy / 16 <= 1.02;
+}
+
+/**
+ * X4: a pixel *touches* the diamond if any of its four corners (not its
+ * centre) is inside the boundary. The old centre-only test deliberately
+ * excluded the exact edge-midpoint pixels (e.g. (48,24)), so road/rail arms
+ * stopped 1px short of the tile edge and adjacent tiles showed a transparent
+ * column at every join.
+ */
+function inDiamondPixel(x, y) {
+  for (const [px, py] of [[x, y], [x + 1, y], [x, y + 1], [x + 1, y + 1]]) {
+    const dx = Math.abs(px - CELL_W / 2), dy = Math.abs(py - CELL_H / 2);
+    if (dx / 32 + dy / 16 <= 1.02) return true;
+  }
+  return false;
 }
 
 /** Generate 16 road/rail bitmask cells from one OpenGFX half-piece, one
@@ -437,6 +511,9 @@ async function makeGenerated(s, gen) {
     4: flipV(flipH(ne)),   // SW
     8: flipH(ne),          // NW
   };
+  // X4: each arm's pixel at the diamond-edge midpoint must be painted, even
+  // though the source half-piece and its mirrors are one pixel short there.
+  for (const bit of [1, 2, 4, 8]) stampArmEndpoint(halves[bit], bit);
   const out = [];
   for (let v = 0; v < 16; v++) {
     const px = Buffer.alloc(CELL_W * CELL_H * 4);
