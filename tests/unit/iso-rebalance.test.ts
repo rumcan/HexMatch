@@ -46,7 +46,7 @@ describe("E8 pass 2 — starting curve", () => {
     expect(START_PURSE.ore ?? 0).toBe(0);
     expect(START_PURSE.stone).toBe(12);
     expect(FREE_SETUP_TRACK).toBe(12);
-    expect(TRANSPORT.rail.cost.ore).toBe(2);
+    expect(TRANSPORT.rail.cost.ore).toBe(4);
     expect(TRANSPORT.rail.cost.stone).toBe(1);
     expect(TRANSPORT.road.cost.stone).toBe(1);
     expect(TRANSPORT.road.onRough).toBe(true);
@@ -69,8 +69,8 @@ describe("E8 pass 2 — starting curve", () => {
     const withinFree = dists.filter((d) => d <= FREE_SETUP_TRACK).length;
 
     // Harvest ticks 1 ore / HARVEST_MS once connected (output 0.8 rounds to 1).
-    // First rail tile costs 2 ore → two ticks after the road lands.
-    const msToFirstRailTile = 2 * HARVEST_MS;
+    // First rail tile costs 4 ore → four ticks after the road lands (E8a).
+    const msToFirstRailTile = 4 * HARVEST_MS;
 
     // Pin the distribution so E8a can decide whether to drop the quota.
     expect(p50).toBeGreaterThan(0);

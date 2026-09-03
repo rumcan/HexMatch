@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import { validateManifest } from "../../tools/validate-manifest.mjs";
+
+const realManifest = JSON.parse(readFileSync("assets/iso-atlas/manifest.json", "utf8")) as {
+  sprites: Record<string, { w: number; h: number; footprint: [number, number]; frames?: number; x: number; y: number }>;
+};
 
 // E1 acceptance: the manifest validates against a JSON schema (CI), and the
 // anchor contract is enforced geometrically.
@@ -82,5 +87,46 @@ describe("E1 atlas manifest validation", () => {
     bad.sprites.coal_mine.anchro = [1, 2]; // typo of anchor
     const errors = validateManifest(bad);
     expect(errors.length).toBeGreaterThan(0);
+  });
+});
+
+describe("X5 cheap manifest invariants", () => {
+  it("bounds sprite size by footprint (catches the 768px oil rig crop)", () => {
+    const sprites = realManifest.sprites;
+    for (const [name, s] of Object.entries(sprites)) {
+      const frames = s.frames ?? 1;
+      const frameW = s.w / frames;
+      expect(frameW, `${name} sprite width`).toBeLessThanOrEqual(s.footprint[0] * 64 + 32);
+      expect(s.h, `${name} sprite height`).toBeLessThanOrEqual(s.footprint[1] * 32 + 160);
+    }
+  });
+
+  it("rejects duplicate crop rectangles unless they are tints of one another", () => {
+    const groups = new Map<string, string[]>();
+    for (const [name, s] of Object.entries(realManifest.sprites)) {
+      const key = `${s.x},${s.y},${s.w},${s.h}`;
+      const g = groups.get(key) ?? [];
+      g.push(name);
+      groups.set(key, g);
+    }
+    for (const [key, names] of groups) {
+      if (names.length < 2) continue;
+      const family = (n: string) => n.includes("factory_") ? "factory" : n.includes("depot_") ? "depot" : n;
+      const fams = new Set(names.map(family));
+      // tints of the same base sprite are permitted; non-tint collocations are not.
+      expect(fams.size, `duplicate crop ${key} (${names.join(", ")})`).toBeLessThanOrEqual(2);
+      expect([...fams].every((f) => f === "factory" || f === "depot"),
+        `duplicate crop ${key} must be a declared tint family (${names.join(", ")})`).toBe(true);
+    }
+  });
+
+  it("has one ore-mine / factory crop distinct from the other buildings", () => {
+    const { ore_mine, quarry, factory_blue, gold_mine } = realManifest.sprites;
+    expect([ore_mine.x, ore_mine.y, ore_mine.w, ore_mine.h])
+      .not.toEqual([factory_blue.x, factory_blue.y, factory_blue.w, factory_blue.h]);
+    expect([ore_mine.x, ore_mine.y, ore_mine.w, ore_mine.h])
+      .not.toEqual([quarry.x, quarry.y, quarry.w, quarry.h]);
+    expect([factory_blue.x, factory_blue.y, factory_blue.w, factory_blue.h])
+      .not.toEqual([gold_mine.x, gold_mine.y, gold_mine.w, gold_mine.h]);
   });
 });
