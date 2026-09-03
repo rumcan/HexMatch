@@ -1,183 +1,214 @@
 # HexMatch — open backlog
 
-Supersedes `HexMatch-open-backlog-v3.md`. Audited against `main` @ `c27897f` (the current branch base). `tsc --noEmit` clean, **252 unit tests passing across 18 files**.
+Supersedes `HexMatch-open-backlog-v4.md`. Audited against `main` @ `248f78a` (PR #8 merged). The research brief is correct and its central recommendation should be adopted: **stop detecting sprites visually, parse the declarations.**
 
-**Work order: X1 → X2 → X3 → X4 → X5 → E8a/b/c.**
+I verified this end to end rather than taking it on faith. Findings below include the exact root cause of the triangles, the buildings and the roads — all three trace back to the same thing.
 
-X1 was the severe regression that everything else waited on. The map-agnostic match-3 board and trading modules plus their tests are recovered and green again, so the asset/renderer/balance work (X2–X5, E8a) has landed on top. What remains open is the UI wiring that makes the recovered quarry playable from the isometric game; see X1 below.
-
----
-
-## X0. Your e2e run — just missing browser binaries
-`[support]` — not a bug
-
-```
-Executable doesn't exist at ...chromium_headless_shell-1234\chrome-headless-shell.exe
-```
-
-Playwright is installed but its browsers aren't. One command:
-
-```
-npx playwright install chromium
-```
-
-Then `npm run test:e2e` again. Nothing in the repo is wrong — the 6 failures and 6 skips are all this single cause.
+**Work order: Y1 → Y2 → Y3 → Y4 → Y5 → X1b → E8b/c.**
 
 ---
 
-## X1. E11 deleted the match-3 board, trading, multiplayer and the whole UI layer
-`[bug] [P0] [regression] [blocker]`
+## Why the last three rounds of fixes didn't hold
 
-**This is why "the original game interface with the match 3 isn't in this game at all."** It isn't hidden or unwired — the source files are gone.
+Every sprite defect so far has been fixed by adjusting a hand-authored crop rectangle in `tools/iso-atlas.cells.json`. Those rectangles are guesses at where a sprite sits in a PNG. OpenGFX already states, for all 1973 sprites, exactly where each one is and how it must be positioned — and the slicer ignores that entirely.
 
-`src/game/` went from 12 files to 1. Deleted in the E11 commit:
+I parsed the whole catalog to confirm it's practical:
 
-| File | What it was | Status in iso |
+```
+parsed sprites: 1973
+1332 infra06.png            434,2568  64x31  xrel -31 yrel 0
+2011 coalmine_base.gimp.png  66,   8  37x26  xrel -17 yrel -8
+2013 coalmine_anim1.png     162,   8  58x50  xrel -16 yrel -33
+```
+
+That took a 20-line regex. Every crop box, every offset, every animation frame, machine-readable.
+
+**Blocker: R9 deleted the declarations.** `src/assets/sprites/` was pruned to `png/` only — zero `.pnml` files remain. The prune removed the source of truth and kept only the pixels, which is precisely backwards. That happened on my recommendation, and the ticket didn't flag the `.pnml` files as load-bearing. They are.
+
+---
+
+## Y1. Replace visual slicing with a declaration-driven extractor
+`[P0] [tooling] [blocker]`
+
+**Restore the declarations first:**
+
+```bash
+git clone --depth 1 https://github.com/OpenTTD/OpenGFX /tmp/ogfx
+mkdir -p src/assets/sprites/pnml
+cp -r /tmp/ogfx/sprites/base /tmp/ogfx/sprites/templates src/assets/sprites/pnml/
+```
+
+Keep `sprites/base/*.pnml` and `sprites/templates/*.pnml`. They're small text files.
+
+**Build `tools/parse-pnml.mjs`** emitting `tools/opengfx-sprites.json` keyed by sprite id:
+
+```json
+{ "2013": { "file": "industries/coalmine_anim1.gimp.png",
+            "x": 162, "y": 8, "w": 58, "h": 50,
+            "xrel": -16, "yrel": -33, "flags": ["ANIM"] } }
+```
+
+Two forms must be handled:
+- Direct: `base_graphics sprNNNN(NNNN, "file") { [x, y, w, h, xrel, yrel(, flags)] }`
+- **Templated**: `{ tmpl_groundtiles(1, 1) }` — expand templates from `sprites/templates/sprite_templates.pnml`. Terrain, roads and rail all use these, so a parser that only handles the direct form will silently miss most of what matters.
+
+`tools/iso-atlas.cells.json` then references **sprite ids**, not pixel rectangles:
+
+```json
+{ "name": "terrain_grass", "sprite": 3981, "footprint": [1,1] }
+```
+
+**Acceptance:** the cells file contains no hand-authored `crop`/`box` arrays; every sprite in the atlas traces to a declared id; the parser is unit-tested against three known declarations including one templated one.
+
+---
+
+## Y2. The "weird triangles" — `terrain_grass_b` is a slope sprite, not a grass variant
+`[bug] [P0] [assets]`
+
+This is the definitive answer, and it explains why the X2 hash fix didn't remove them. The hash fix was correct and necessary; the sprite it selects is wrong.
+
+`iso-atlas.cells.json` has:
+
+```json
+{ "name": "terrain_grass_a", "source": "grass", "box": [1, 1] }
+{ "name": "terrain_grass_b", "source": "grass", "box": [81, 1] }
+```
+
+From `sprites/templates/sprite_templates.pnml`, `tmpl_groundtiles(x, y)` declares **19 sprites — a slope set**, not variants of one flat tile:
+
+```
+[   0+x, y, 64, 31, -31,  0 ]   index 0  ← FLAT
+[  80+x, y, 64, 31, -31,  0 ]   index 1  ← slope
+[ 160+x, y, 64, 23, -31,  0 ]   index 2  ← slope (note height 23)
+[ 638+x, y, 64, 39, -31, -8 ]   index 8  ← slope (height 39, yrel -8)
+...
+```
+
+`box: [81, 1]` is `80 + 1` — **slope sprite index 1**. Every `terrain_grass_b` tile on the map is a hillside drawn on flat ground. Those are your triangles.
+
+Only index 0 is flat. `grass-temperate.gimp.png` contains **no second flat grass tile** — the sheet is one terrain type across 19 slopes.
+
+**Fix.** Use sprite `3981` (flat temperate grass) as the only grass tile. For variation, use the flat tile of the *grassiness* sheets, which are separate declarations:
+
+| Sprite | Sheet | Look |
 |---|---|---|
-| `board.ts` (15 KB) | **the match-3 quarry board** — the core harvesting loop | no replacement |
-| `trade.ts` | player-to-player cargo trading | no replacement |
-| `net.ts` (10 KB) | multiplayer relay client | partial — `iso/snapshot.ts` only |
-| `lobby.ts` | room create/join UI | no replacement |
-| `ui.ts` | panels, banners, resource chips | partial — inline in `iso/game.ts` |
-| `actions.ts`, `state.ts` | action dispatch, game state | folded into `iso/game.ts` |
+| 3924 | `bare-03-temperate.png` | bare earth |
+| 3943 | `bare-13-temperate.png` | 33% grassy |
+| 3962 | `bare-23-temperate.png` | 66% grassy |
+| **3981** | `grass-temperate.gimp.png` | **100% grassy — the default** |
+| 4000 | `rough-temperate.png` | rough |
+| 4023 | `rocks-temperate.png` | rocky |
 
-The migration spec was explicit that these survive:
+Use 3981 everywhere and mix in 3962 sparingly if you want texture. Never index into a sheet by pixel offset again — that's what Y1 prevents.
 
-> **Survives untouched:** `board.ts` (match-3 quarry), `trade.ts`, `net.ts`, `lobby.ts`, most of `ui.ts`, `state.ts` — roughly 40% of `src/game`.
-
-E11's scope was `hexmap.ts`, `MapView3D.ts`, the `.jpg` textures and `three`. It was executed as "delete everything hex-era" instead. **E9 (UI port) was never done**, so there was nothing on the iso side to receive the match-3 board when its source was removed.
-
-The unit count dropping 242 → 208 is the same event: 34 tests went with `board.test.ts` and `trade.test.ts`.
-
-Without the board there is no harvesting mechanic. The current build is a road-laying sandbox where cargo appears on a timer.
-
-**Recovery (landed in this branch).** The source-level half of X1 is done — the map-agnostic modules and their tests are back from the pre-E11 commit and are not wired into the old three.js route:
-
-- Restored: `src/game/board.ts`, `src/game/trade.ts`, `src/game/state.ts`, `src/game/actions.ts`, `src/game/hexmap.ts`.
-- Restored tests: `tests/unit/board.test.ts`, `tests/unit/trade.test.ts`, `tests/unit/actions.test.ts`, `tests/unit/hexmap.test.ts`.
-- `src/game/config.ts` regained the pure-logic legacy constants these modules need (`ResKey`, `RES_KEYS`, `TileKey`, `TILES`, `COSTS`, `BOARD_W/H`, `CELL`, market/sabotage constants, RNG). The pruned `.jpg`/gem assets were deliberately **not** pulled back in: the iso bundle stays independent of the old art path and `npm run build` still ships a small production bundle.
-- Unit count is back up from 208 → **252**.
-
-**Still open (UI wiring):**
-- Mount the recovered board as a playable quarry in the iso game (DOM/canvas layer in `startIsoGame`).
-- Map the board's harvested resources to the six iso cargoes (`grain, wood, ore, stone, oil, gold`), gated by the industries the player's E6 network actually reaches.
-- Surface the restored trading/market logic as an iso panel (currently the logic is present and tested, but not in the iso tool chrome).
-- `ui.ts`, `lobby.ts` and `net.ts` are still not restored; they reference hex/three concepts and need a review pass before being reintroduced.
-
-**Acceptance (for the remainder)**
-- The match-3 quarry board renders and is playable in the iso game.
-- Matching gems credits the six iso cargoes, gated by which industries the player's network actually reaches.
-- Trading panel works.
-- `board.test.ts` and `trade.test.ts` restored and green; unit count back above 240 (complete).
+**Acceptance:** every terrain sprite in the atlas is 64×31 with `yrel: 0`. Assert it in the manifest test — any ground tile with height 23, 39 or 47, or a non-zero `yrel`, is a slope and must fail.
 
 ---
 
-## X2. Grass variant hash produces diagonal stripes, not noise
-`[bug] [renderer] [closed]`
+## Y3. Buildings are invented compositions, not real industry layouts
+`[bug] [P0] [assets]`
 
-**This is the "weird pattern" in the grass.** `src/iso/renderer.ts:55`:
+The X3 fix replaced one bad crop with a `compose` block that is still guesswork:
+
+```json
+"factory_blue": { "compose": {
+  "tiles": [ {"dx":0,"dy":0,"box":[65,74]}, {"dx":1,"dy":0,"box":[145,74]}, ... ],
+  "overlays": [ {"source":"factory","crop":[284,174,109,78],"dx":1,"dy":1} ] }}
+```
+
+It tiles ground boxes in an arbitrary repeating pattern and pastes one hand-cropped overlay in the middle. `ore_mine` does the same, reusing coal-mine ground boxes. Neither corresponds to any real industry layout, which is why the buildings still look wrong.
+
+Real OpenTTD industries are **per-tile compositions defined in data**:
+- `src/table/build_industry.h` — `IndustryTileLayout`, the `(dx, dy, tile_gfx_id)` footprint.
+- `src/table/industry_land.h` — `_industry_draw_tile_data`, which ground + building sprite each tile gfx id draws, plus animation.
+
+Coal mine layout 0, for example, is `(1,1,gfx0) (1,2,gfx2) (0,0,gfx5) (1,0,gfx6) (2,0,gfx3) (2,2,gfx3)` — a specific, irregular arrangement, not a 3×3 tiling.
+
+**Two options. Pick one explicitly.**
+
+**(a) Port the layouts.** Transcribe the tile tables for your six industries into TS data, draw ground + building per tile using declared `xrel`/`yrel`. Faithful, and gives correct animation. Maybe a day's work.
+
+**(b) Single-sprite industries.** Give each industry one hand-picked declared building sprite on a plain ground tile, and treat the footprint as a gameplay concept only. Much less work, still looks coherent because every sprite is a real complete building rather than a fragment.
+
+**Recommend (b) for now.** The game doesn't simulate industry tiles individually, so faithful layouts buy appearance only. Option (a) can come later once the pipeline is trustworthy.
+
+Either way: **no more `compose` blocks with hand-typed pixel boxes.**
+
+**Also fix `oil_rig`** — it's `768×160` on a 2×2 footprint, the whole animation strip stored as one sprite. Declared frames are separate sprite ids (the coal hoist is 2013/2014/2015, same box, different files). Reference them individually.
+
+---
+
+## Y4. Use the real 19-piece road set instead of generating arms
+`[bug] [assets]`
+
+The generated-arm approach is why roads "don't look like roads" — they're procedurally drawn bands textured with a sampled strip, so joins, widths and curves never match OpenGFX's hand-drawn geometry. The X4 fix made them reach the edge; it can't make them look right.
+
+OpenGFX declares a complete road piece set. All eleven flat pieces are 64×31 at `xrel -31, yrel 0`, and **`infra06.png` is already in your repo**:
+
+| Sprite | Box in `infra06.png` |
+|---|---|
+| 1332 (Y) | 434, 2568 |
+| 1333 (X) | 514, 2568 |
+| 1334–1342 | 594,2568 … 482,2632 |
+
+Selection is a documented table. OpenTTD's `GetRoadSpriteOffset` for flat tiles:
+
+```js
+const ROAD_OFFSET = [0,18,17,7, 16,0,10,5, 15,8,1,4, 9,3,6,2];
+sprite = SPR_ROAD_BASE + ROAD_OFFSET[bits];
+```
+
+**Critical detail:** OpenTTD's `RoadBits` order is **NW=1, SW=2, SE=4, NE=8**. Your `track.ts` uses **NE=1, SE=2, SW=4, NW=8**. Do not assume they match — write an explicit remap from your mask to theirs, and unit-test all 16 values. Getting this wrong reproduces the original G1 bug with better art.
+
+Rail: the equivalent set is 1011+, laid out by `tmpl_rail_tracks`.
+
+**Acceptance:** the road generator is deleted; all 16 masks resolve to declared sprite ids via the remap; the existing X4 join test still passes unchanged (it's the guard that the swap didn't move connection points); level crossings use the real crossing sprites.
+
+---
+
+## Y5. Replace hand-authored anchors with declared `xrel`/`yrel`
+`[bug] [renderer]`
+
+`manifest.json` carries hand-computed `anchor` values. The declarations give the engine's own placement vector: `xrel`/`yrel` is the offset from the sprite's origin to its bitmap top-left, so the draw is simply
 
 ```ts
-return ((tx * 7 + ty * 13) & 3) === 0 ? "terrain_grass_b" : "terrain_grass_a";
+ctx.drawImage(sheet, sx, sy, sw, sh, ox + xrel, oy + yrel, sw, sh);
 ```
 
-Any linear function of `tx` and `ty` taken mod a small number produces a regular lattice, not noise. Printing it makes the failure obvious:
+where `(ox, oy)` is the tile's projected origin. Flat ground is always `xrel: -31, yrel: 0`; tall buildings carry large negative `yrel` (the coal hoist is `-33`), which is what makes them stand correctly instead of floating or sinking.
 
-```
-B...B...B...B...
-.B...B...B...B..
-..B...B...B...B.
-...B...B...B...B
-```
+Carry `xrel`/`yrel` through the manifest and drop `anchor`. This likely fixes building placement issues that haven't been noticed yet.
 
-Every `grass_b` tile sits on a perfect diagonal, period 4. In isometric projection a tile-space diagonal maps to a **straight vertical column on screen** — which is exactly the vertical banding running down the whole map in the wide screenshot. G8's chunk-clip fix was a real and separate bug; this one was never the chunk cache.
-
-**Fix:** use a proper integer hash so neighbouring tiles decorrelate:
-
-```ts
-function tileHash(tx: number, ty: number): number {
-  let h = (tx * 0x1f1f1f1f) ^ (ty * 0x85ebca6b);
-  h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d);
-  h = Math.imul(h ^ (h >>> 13), 0x297a2d39);
-  return (h ^ (h >>> 16)) >>> 0;
-}
-// ...
-return (tileHash(tx, ty) & 7) === 0 ? "terrain_grass_b" : "terrain_grass_a";
-```
-
-Also consider whether `grass_b` should be used at all at its current frequency — it reads noticeably more olive than `grass_a`, so even randomly scattered it will look patchy. A ratio nearer 1-in-8 than 1-in-4 is a better starting point.
-
-**Acceptance**
-- Unit test: over a 48×48 grid, the set of `grass_b` tiles has no row, column or diagonal with more than a small multiple of the expected count. A lattice fails this; noise passes.
-- Screenshot at full map zoom shows no visible banding.
+**Note:** honour the `NOCROP` flag. If a sprite declares it, do not trim transparent edges — offsets depend on the exact declared size.
 
 ---
 
-## X3. Factory and ore-mine crops span several unrelated source sprites
-`[bug] [P0] [assets] [closed]`
+## X1b. Mount the recovered quarry board in the iso UI
+`[P0] [gameplay]`
 
-**This is the "buildings are broken" complaint.** Rendering `factory_blue` straight from `atlas@1x.png` shows it is not one building: it's a chimney pair, a separate shed, a crane, a grey slab and a brick block, scattered with gaps — several distinct OpenGFX sprite boxes captured in one 192×192 crop.
+PR #8 restored `board.ts`, `trade.ts` and their tests (208 → 252 tests), which was the urgent half. The modules are still **not wired into the iso game** — there's no match-3 board on screen and no trading panel.
 
-`ore_mine` has identical dimensions and anchor (`192×192`, anchor `[96,176]`), which strongly suggests the same wrong region, or a copy-paste of the same crop rectangle.
+- Mount the quarry board in the iso layout.
+- Matching gems credits the six iso cargoes, gated by which industries the player's network reaches (E6 catchment → board).
+- Surface the trading panel.
 
-The cell definitions in `tools/iso-atlas.cells.json` are grabbing a rectangle of the source *sheet* rather than a single sprite box within it.
-
-**Fix:** re-derive the crop for each from the blue-box bounds of the intended sprite, the same way the working sprites (`farm`, `depot`) were done. `tools/peek.mjs` exists precisely for this — use it to locate the correct box before editing the cell.
-
-**Also check `oil_rig`:** it is `768×160` for a 2×2 footprint. That is 6 × 128 px, i.e. the whole animation strip stored as one sprite. If the manifest doesn't carry `frames: 6` with a per-frame width, the renderer will draw all six frames at once as a 12-tile-wide smear.
-
-**Acceptance**
-- Every building sprite is one contiguous structure — verify on the contact sheet, and by rendering each over a flat green background to expose stray fragments.
-- No two different sprites share identical crop rectangles.
-- `oil_rig` either declares its frames properly or is cut to a single frame.
-- Sprite width ≤ footprint width × 64 plus a small overhang, asserted in the manifest test. A 2×2 sprite at 768px wide should have failed automatically.
+Until this lands the game has no harvesting mechanic, and E8b/E8c stay held — rebalancing an economy whose primary loop isn't connected produces numbers you'll throw away.
 
 ---
 
-## X4. Road arms stop 1px short of the tile edge
-`[bug] [assets] [closed]`
+## Y6. Add the invariants that would have caught Y2 and Y3
+`[testing]`
 
-**This is "the roads don't reach the end of the tile."** Measuring painted pixels in `road_1111`: the bounding box is x 14–49, y 8–23. The SE and SW arm endpoints are at y = 24, so the paint stops one row short, and the arms taper as they approach the edge because `clipArm()` uses a fixed `TRACK_HALF_W = 5.2` distance from the centre→endpoint segment, which rounds down at the extreme.
-
-Result is a visible gap at every tile join — the dashed, disconnected look in the close-up screenshot.
-
-Note the G1 pixel test still passes: it asserts paint exists *within 2px* of each midpoint, which a 1px shortfall satisfies. The test was written to catch wrong directions, and it did its job; it was never meant to catch short arms.
-
-**Fix:** extend each arm to the edge by clipping against the diamond boundary rather than stopping at the midpoint — run the segment 1–2px past the endpoint and let `inDiamond()` trim it. Confirm the arm's half-width is constant right up to the edge so two adjacent tiles present the same road width.
-
-**Acceptance**
-- New test: for each set bit, painted pixels exist **at** the exact edge midpoint, not merely near it.
-- New test: two adjacent tiles composited at their real screen offsets show a continuous run with no transparent column at the join. This is the assertion that actually encodes what the player sees.
-- Arm width at the edge is within 1px of arm width at the centre.
+- Every ground/terrain sprite is exactly 64×31 with `yrel: 0`. Catches slope sprites used as flat tiles (Y2).
+- Every atlas sprite resolves to a declared OpenGFX sprite id. Catches invented crops (Y3).
+- Sprite width ≤ `footprint[0] * 64 + 32`. Catches the 768px oil rig.
+- Your bitmask → OpenTTD `RoadBits` remap is exhaustively tested across all 16 values (Y4).
 
 ---
 
-## X5. Manifest test should have caught X3 and X4
-`[testing] [closed]`
+## E8b / E8c — held
 
-Three of the four defects above were invisible to a green suite. Add cheap invariants to `tests/unit/iso-manifest.test.ts`:
+- **E8b** — give road a late-game niche beyond `onRough`.
+- **E8c** — re-time `VP_TARGET` after E8a's ore cost change settles.
 
-- Sprite width ≤ `footprint[0] * 64 + 32`, height ≤ `footprint[1] * 32 + 160`. Catches the 768px oil rig.
-- No two sprites share an identical `{x,y,w,h}` unless they're declared tints of one another. Catches duplicated crops.
-- For each generated road/rail mask, paint exists at the exact edge midpoint of every set bit (X4) and nowhere near unset bits (existing G1 check).
-- Terrain variant selection over a 48×48 grid has no axis-aligned or diagonal run longer than a threshold (X2).
-
----
-
-## E8a / E8b / E8c — economy follow-ups
-`[design] [gameplay]`
-
-Filed from the pass-2 measurements (across 80 seeds: land-centroid → nearest ore p50 = 10 tiles, 59% within the 12 free-setup tiles, first rail ~6s after the free road lands). The data confirms the concern from the last review — rail is reachable almost immediately, so the road-vs-rail choice isn't currently a decision.
-
-- **E8a** — raise `TRANSPORT.rail.cost.ore` from 2 to 4 so first rail is a stockpiling decision. **[closed]** (`src/iso/config.ts` + tests updated; first rail now costs 4 ore, the road→rail upgrade cost is 4 ore).
-- **E8b** — give road a visible late-game niche beyond `onRough`.
-- **E8c** — re-time `VP_TARGET = 12` after E8a lands.
-
-E8a landed once the recovered board/trade test suite brought the unit count back above 240. E8b and E8c stay open until the quarry is wired into the iso game — rebalancing an economy whose harvesting mechanic is only partially restored will produce numbers you have to throw away.
-
----
-
-## E13 follow-up — mark the e2e job required
-`[chore]`
-
-The `e2e` workflow exists and runs on PRs, but branch protection has to mark it required. That's a GitHub repo setting, not a file — Settings → Branches → branch protection rule for `main` → Require status checks → select `e2e`.
+Both wait on X1b.
