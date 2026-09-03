@@ -1,168 +1,135 @@
 # HexMatch — open backlog
 
-Supersedes v6. Audited against `main` after the Y1/Y2 terrain+road PR merged.
-**Updated after Part 1 landed: J1 and J2 are done, the game is playable, and
-the remaining work is Part 2 (sprites).**
+Supersedes v7. Audited against `main` @ `ea97e96` (PR #11 merged). J1/J2 shipped and the loop is playable — but J1 built a **new** UI instead of restoring the original one, which is the thing to correct now.
 
-Read this first — the plan is unchanged (put the map into the old game). Part 1
-is now history, kept below as a record of what actually shipped and where it
-deviated. Two of the Part 2 tickets still need correcting: one is done, and one
-was misdiagnosed.
+**Read this first.** The direction for the rest of the project, stated plainly so it stops drifting:
 
----
+> **The UI must be the original HexMatch interface, and the gameplay must stay essentially what it was.** This is not a redesign. The isometric map replaces the old hex map underneath a game that otherwise looks and plays the same. When a ticket and "what the old game did" disagree, the old game wins.
 
-## What changed since v6
+Two new tickets capture what regressed against that principle (U1, U2). The sprite tickets (Y4c, Y3, Y5/Y6) are unchanged and still open.
 
-| v6 ticket | Status now |
-|---|---|
-| **Y2b** terrain triangles | ✅ **Done.** `cells.json` has a single `terrain_grass` → declared sprite 3981; `terrain_grass_b` and the `tileHash` variant branch are gone. The manifest invariant (every terrain sprite flat 64×31, yrel 0) is in place, so slopes can't be used as flat tiles again. Triangles are gone in-game. Close it. |
-| **Y4b** roads 90° | ⚠️ **Partly — and the ticket was incomplete.** The 90° rotation is genuinely fixed: `track.ts` now has `toOpenttdRoadBits`/`fromOpenttdRoadBits`, tested across all 16 masks. But roads still don't look like roads (see Y4c below) — the remap was only half the problem. |
-| **Y3** buildings | ❌ Not started. All ten industry/factory cells are still `compose` blocks. |
-| **J1** mount the board | ✅ **Done.** `src/iso/game.ts` mounts `Board` as the Quarry panel, gates its harvest on the reachable-cargo set from `economy.ts`, and surfaces the trading panel. See the Part 1 record below. |
-| **J2** fate of `hexmap.ts` | ✅ **Done.** `hexmap.ts`, `actions.ts` and `state.ts` deleted; the restored tests rebased. `src/game/` is now `board.ts` + `trade.ts` + `config.ts`. |
-
-Grass was the only visible win when this was written. Now the board is on the
-map and the loop closes: factory → harvester → connect → match → cargo → trade.
-
-The core reframing from v6 was **you have a map with no game on it.** That is
-fixed. What is left is that some of the sprites on it are still generated
-rather than declared — Part 2.
+**Work order: U1 → U2 → Y4c → Y3 → Y5/Y6.**
 
 ---
 
-# Part 1 — Join the two halves ✅ DONE
+## What you're looking at, and why
 
-## J1. Mount the match-3 board and game UI in the iso app — done
+**"Why am I seeing a new UI?"** Because J1 wrote one from scratch. It mounted the match-3 board as a floating dark "Quarry" panel with its own styling, rather than restoring the original interface. The original still exists in git history and is fully recoverable — see U1. Your first screenshot from way back (left BUILD + BLACK MARKET panels, right YOUR QUARRY with MARKET/BANK/FEED tabs, resource chips along the bottom) is the target, not the floating panel you have now.
 
-`board.ts` is instantiated by `src/iso/game.ts` and rendered as the Quarry
-panel beside the map; the tool bar gained Quarry/Trade toggles without losing
-Road/Rail/Harvester/Demolish.
+**"The roads still look like crap."** Correct and unchanged — that's Y4c, still open, generator still running. Not touched by Part 1.
 
-**The join** lives in `src/iso/quarry.ts`:
+**"The build highlight is harvester-sized, then it builds the factory."** Real bug, confirmed in `game.ts`. That's U2.
 
-- `GEM_TO_CARGO` is a bijection from the six gem colours to the six cargoes
-  (wheat→grain, wood→wood, ore→ore, gold→gold; brick and sheep take the two
-  cargoes with no gem colour, stone and oil). Unit-tested as a bijection.
-- The gate is `economy.playerResources` — the reachable set scoring already
-  computes. It decides which colours carry harvest tokens, and it is re-read
-  **at match time**, not from the cached set the panel displays. A cached gate
-  is only as fresh as its last refresh, so "demolish the road, match the tokens
-  anyway" would have paid out. Cutting a line also demotes its tokens, so the
-  board shows the truth rather than a stale promise.
-- Tokens appear the moment a connection completes (`rescoreNow` →
-  `quarry.refresh`), not on the 20s clock.
-
-**Deviations worth knowing about:**
-
-1. **The human's passive cargo trickle is gone.** `economyTick` used to pay
-   every player for connected harvesters; now it pays only the rival, who has
-   no board. Two income systems would have made the quarry decorative, and the
-   spec's loop ("matching gems harvests from whatever your network reaches")
-   only works if matching is the harvest.
-2. **State has one owner: the player purse.** The board owns gems, the market
-   owns live offers (escrow), neither keeps a balance. `state.ts`/`actions.ts`
-   were not revived — see J2.
-3. **`trade.ts` is now generic** over the resource key and takes its market
-   record as a parameter, so the iso game and the restored tests share one
-   implementation instead of two.
-
-**Acceptance — all met:** map and board boot together; a match increases the
-correct cargo and nothing else; unreachable cargo pays nothing; cutting the
-line stops it; spending cargo still builds road/rail; trading works (4:1 bank
-plus escrowed offers the rival answers); `board.test.ts` and `trade.test.ts`
-green. The boot test asserts the board mounts and a gem match moves cargo, and
-both gates were mutation-checked — removing either one fails the suite.
-
-No sprite edits, as the ticket asked.
-
-## J2. Decide the fate of `hexmap.ts` — done: deleted
-
-J1 proved the iso grid feeds the board, and a grep confirmed the only importers
-left were `actions.ts` (itself dead once `trade.ts` stopped using `gainRes`) and
-three test files. Deleted: `hexmap.ts`, `actions.ts`, `state.ts`,
-`hexmap.test.ts`, `actions.test.ts`.
-
-`trade.test.ts` was rebased rather than deleted — same five tests, same
-assertions, but they build their own market record and traders instead of a hex
-map and the global `G`. Trading never touched the grid; that import was the last
-thread tying the suite to `hexmap.ts`. `src/game/` is now `board.ts`,
-`trade.ts`, `config.ts`.
-
-The hex-era rule tables in `config.ts` (TILES, COSTS, SABOTAGE/SECURITY, the
-hex geometry and sabotage timers) are unreferenced but deliberately kept, and
-labelled as such at the top of the file: sabotage is still a settled design
-decision, and re-tabling it from scratch would be worse than carrying the
-numbers.
+Nothing here is mysterious; J1 delivered the *mechanics* of the join correctly (the harvest gating is genuinely good work) but replaced the presentation instead of reinstating it.
 
 ---
 
-# Part 2 — Sprite fixes (after the game is playable)
+# Part A — Restore the original UI and feel
 
-## Y4c. Roads still render as the arm-generator's bars, not the real OpenGFX sprite
-`[bug] [assets]` — supersedes the "done" half of Y4b
+## U1. Bring back the original HexMatch interface
+`[P0] [ui] [regression]`
 
-The 90° fix was real, but roads still don't look like roads — they're thin diagonal bars with brown on **both** long edges and no centre lane marking. That's because the sprite is still being **generated**, not used.
+The original UI is not lost. It's in history at the commit before it was deleted:
 
-I compared the two directly. OpenGFX sprite 1332 (in `infra06.png`, already in the repo) is a full-width grey road surface filling the tile, with white dashed lane markings down the centre. What the atlas emits is a clipped bar textured from a sampled strip. The PR description gives it away:
+- `src/game/ui.ts` — **861 lines**, the full interface
+- `src/game/styles.css` — **1209 lines**, all of its styling
 
-> The 16 masks are still **generated from the declared straight half-piece, rotated/mirrored**…
+Recover both:
 
-So it changed where the half-piece is *sampled from* but kept `makeGenerated()` / `clipArm` / `TRACK_HALF_W` — the placeholder art path. Sampling real pixels through a procedural clipper still produces procedural bars.
+```bash
+git show 36413cf^:src/game/ui.ts    > src/game/ui.ts
+git show 36413cf^:src/game/styles.css > src/game/styles.css
+```
 
-**This is the third time roads have been reported fixed. Each time the generator was tweaked instead of removed. The generator is the bug.**
+The original layout (matches the earliest screenshots):
 
-**Fix — delete the road/rail generator, blit the declared sprites directly:**
+- **Left column — BUILD:** Rail, Factory, Foundry, Toll Pass, each with its cost pills.
+- **Left column — BLACK MARKET:** Blockade, Frost Tiles, Iron Girders, Smog Cloud, Security Forces.
+- **Right column — YOUR QUARRY:** the match-3 grid, with **MARKET / BANK / FEED** tabs and the offer composer beneath it.
+- **Top bar:** the four rival industry cards and the VP star counter.
+- **Bottom:** the six resource chips.
 
-- OpenGFX ships the complete flat road set at sprite ids **1332–1342** (rail at 1012+): straights, curves, T-junctions, crossroads, each a finished 64×31 tile. Nothing needs generating.
-- For each of the 16 masks: convert to OpenTTD bit order via the existing `toOpenttdRoadBits`, then index OpenTTD's sprite table — `GetRoadSpriteOffset` flat lookup is `[0,18,17,7, 16,0,10,5, 15,8,1,4, 9,3,6,2]` — and blit that declared sprite into the cell.
-- **Delete** the road/rail branch of `makeGenerated()`, plus `clipArm` and `TRACK_HALF_W`. They were always placeholder.
+**This is a reskin-in-place, not a rewrite.** The task is to make the recovered `ui.ts` drive the iso game:
+
+- Point its build buttons at the iso build tools (the iso game already has Road/Rail/Harvester/Demolish; map the panel's Rail/Factory/Foundry onto the iso equivalents, keeping the original labels and layout).
+- Feed its resource chips, VP counter and rival cards from the iso game state.
+- Mount the **existing** `board.ts` inside the original QUARRY panel markup rather than the new floating panel. J1's harvest-gating logic in `quarry.ts` is correct and stays — only the container changes from the new panel to the original one.
+- Wire the MARKET/BANK/FEED tabs to the trading that J1 already made work.
+
+**Delete the new UI** (`src/iso/game.css` and the bespoke panel markup in `game.ts`) once the original renders. Keep the iso *canvas* layer stack — that's the map, and it's fine. Only the chrome around it reverts.
+
+**Keep the good deviations from J1** (they don't change the UI, only the model):
+- The passive cargo trickle staying off for the human, so matching is the only harvest.
+- One state owner (the purse), board owns gems, market owns escrow.
 
 **Acceptance**
-- A straight road renders as a full-width grey surface with centre lane markings, visually matching sprite 1332 — not a brown-edged bar.
-- No road/rail cell passes through the generator; grep for `clipArm` returns nothing.
-- The 16-mask remap test still passes.
-- The old X4 join test was checking generated geometry — rewrite it to assert the **declared** pieces tile seamlessly (no transparent column at a straight join).
+- The game boots into the original BUILD / BLACK MARKET / QUARRY / chips layout, visually matching the early screenshots — not the floating dark panel.
+- Every control the original had is present and wired: build, black-market actions, quarry, market/bank/feed, resource chips, VP.
+- The J1 harvest gate still holds (unreachable cargo pays nothing; cutting a line stops it) — reuse `quarry.ts` unchanged.
+- Existing board/trade/quarry tests stay green.
+
+**Scope guard:** this is one session — recover the files, wire them to iso state, delete the new chrome, stop. No sprite work, no gameplay changes.
+
+## U2. Setup highlight shows the wrong footprint, and factory/harvester feel swapped
+`[bug] [ux]`
+
+Confirmed in `game.ts`. During `setup-factory` the overlay is a single hover tile (`items.push({ sprite: "highlight", tx: hover.tx, ty: hover.ty })`) — 1×1, the size of a harvester — but placing it builds the **3×3 factory**. Then during `setup-harvester` it draws the full 4×4 catchment grid, which reads as the *bigger* highlight even though it places the small harvester. So the two feel backwards.
+
+**Fix:**
+- In `setup-factory`, draw the highlight at the factory's real 3×3 footprint (offset from the hover origin the same way the factory sprite is placed), so what you see is what you'll build.
+- In `setup-harvester`, keep the catchment preview but visually distinguish the **harvester tile itself** (1×1, the thing being placed) from the catchment area (informational) — e.g. a solid highlight on the placed tile and a fainter tint on the catchment. Right now they're the same `highlight` sprite, which is what makes the harvester look factory-sized.
+- Confirm the banners match: "place your Factory" while the 3×3 shows, "place your Harvester" while the 1×1 + catchment shows.
+
+**Acceptance:** the highlight footprint always matches the building that will be placed; factory step shows 3×3, harvester step shows a clear 1×1 with a distinct catchment tint; a quick play-through reads correctly.
+
+---
+
+# Part B — Sprite fixes (unchanged from v7)
+
+## Y4c. Roads still render as the arm-generator's bars, not the real OpenGFX sprite
+`[bug] [assets]`
+
+Unchanged and still open. Roads are thin diagonal bars with brown on both long edges and no centre lane marking, because the sprite is still **generated**, not used. OpenGFX sprite 1332 (in `infra06.png`, in the repo) is a full-width grey road with dashed centre markings; the atlas emits a clipped bar textured from a sampled strip.
+
+**This is the third+ time roads have been reported fixed. The generator is the bug — remove it, don't tweak it.**
+
+- OpenGFX ships the complete flat road set at **1332–1342** (rail 1012+): straights, curves, T-junctions, crossroads, each a finished 64×31 tile. Nothing to generate.
+- For each of the 16 masks: convert to OpenTTD bit order via the existing `toOpenttdRoadBits`, index OpenTTD's flat table `[0,18,17,7, 16,0,10,5, 15,8,1,4, 9,3,6,2]`, blit that declared sprite.
+- **Delete** the road/rail branch of `makeGenerated()`, plus `clipArm` and `TRACK_HALF_W`.
+
+**Acceptance:** a straight road is a full-width grey surface with centre lane markings matching sprite 1332; grep for `clipArm` returns nothing; the 16-mask remap test still passes; rewrite the X4 join test to assert the declared pieces tile seamlessly.
 
 ## Y3. Buildings are hand-typed `compose` blocks, not real sprites
 `[bug] [assets]`
 
-Unchanged from v6, still not started. All ten industry/factory cells (`farm`, `forest`, `ore_mine`, `quarry`, `oil_rig`, `gold_mine`, `factory_×4`) are `compose` blocks stitching guessed pixel boxes. `oil_rig`/`ore_mine` look acceptable because their guesses happen to land on coherent regions; `farm`, `forest`, `gold_mine` and `factory` stitch fragments — the broken-looking ones.
+Unchanged, still not started. All ten industry/factory cells are `compose` blocks stitching guessed pixel boxes. `oil_rig`/`ore_mine` look acceptable by luck; `farm`, `forest`, `gold_mine`, `factory` stitch fragments.
 
-Same fix as terrain and (now) roads: use the declared sprite, don't assemble one.
+- Replace every `compose` block with **one declared building sprite per industry** (option b).
+- No `box`/`crop`/`tiles`/`compose` arrays left in the cells file.
+- `factory` uses one declared factory sprite with the player tint.
+- `oil_rig`: still 768×160 (the whole 6-frame strip). Reference one frame, or declare `frames` with per-frame width.
 
-- Replace every `compose` block with **one declared building sprite per industry** (option b). One real building on a plain ground tile.
-- No `box`/`crop`/`tiles`/`compose` arrays anywhere in the cells file after this.
-- `factory` uses one declared factory sprite with the player tint applied.
-- **`oil_rig`:** still 768×160 (the whole 6-frame animation strip as one sprite). Reference a single declared frame, or declare `frames` with per-frame width.
-
-**Acceptance:** every building is one contiguous structure; no `compose` blocks remain; sprite width ≤ footprint_w × 64 + 32 (kills the 768px rig); contact sheet confirms each reads as a complete building.
+**Acceptance:** every building is one contiguous structure; no `compose` remains; width ≤ footprint_w × 64 + 32; contact sheet confirms.
 
 ## Y5 / Y6. Declared anchors + remaining invariants
 `[bug] [renderer] [testing]`
 
-After Y4c and Y3 land: switch sprite placement from hand-authored `anchor` to declared `xrel`/`yrel` (`dest = tileOrigin + (xrel, yrel)`; honour `NOCROP`). Then the invariants that would have caught the sprite bugs before they shipped:
-
-- Every atlas sprite resolves to a declared OpenGFX id — i.e. **no `compose` blocks remain** (catches Y3).
-- Sprite width ≤ footprint_w × 64 + 32 (catches the 768px rig).
-- No road/rail cell references the generator (catches Y4c regressions).
-
-The terrain invariant (Y2b) and the 16-mask remap test (Y4b) are already in place.
+After Y4c and Y3: switch placement from hand-authored `anchor` to declared `xrel`/`yrel` (honour `NOCROP`). Add invariants: every atlas sprite resolves to a declared id (no `compose`); width ≤ footprint_w × 64 + 32; no road/rail cell references the generator. Terrain invariant and 16-mask remap test are already in place.
 
 ---
 
 ## Sequencing
 
-**~~J1 → J2~~ → Y4c → Y3 → Y5/Y6.**
+**U1 → U2 → Y4c → Y3 → Y5/Y6.**
 
-J1 and J2 are merged. Y4c is next.
-
-Y4c before Y3 only because it's smaller and proves the "delete the generator, use the declared sprite" pattern one more time; order between them doesn't much matter. Both are quick now that the parser exists and can be checked by eye in a running game — and there is now a running game to check them in.
+U1 first — it's the one you're reacting to most, and restoring the real interface makes everything else easier to judge in a running game that looks like the game. U2 is small and pairs naturally with it (both are the setup/UI experience). Then the three sprite tickets.
 
 ---
 
 ## Process note
 
-Two recurring failure modes on this project, worth guarding against directly:
+Same two failure modes, plus one new:
 
-1. **"Set up but not applied."** Terrain got the parser; roads got the remap; both stopped one step short of using the result. The Y5/Y6 invariants (no `compose`, no generator reference) turn "did you actually finish" into a red CI run instead of a screenshot review.
-2. **Scope timeouts.** The one big multi-part attempt crashed. Every ticket above is sized to one session; keep them that way and stop at each acceptance block rather than continuing into the next.
+1. **"Set up but not applied."** Terrain got the parser, roads got the remap, both stopped short of using the result. The Y5/Y6 invariants make "did you finish" a CI failure, not a screenshot review.
+2. **Scope timeouts.** Keep every ticket to one session; stop at each acceptance block.
+3. **New — "rebuilt instead of restored."** J1 wrote a new UI when the ticket meant *mount the existing board in the existing interface*. When a task involves an existing surface, the default is to recover and reuse it (it's in git history), not to author a replacement. U1 exists because that default wasn't followed.
