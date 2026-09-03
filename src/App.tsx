@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import "./iso/game.css";
+import "./game/styles.css";
 import { startIsoGame } from "./iso/game";
 
 /**

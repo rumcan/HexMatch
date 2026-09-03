@@ -259,6 +259,12 @@
       "sprite": 1370,
       "note": "Y1: declared level-crossing overlay 1370. Drawn on tiles that carry both road and rail."
     },
-    { "name": "highlight", "generator": "highlight", "footprint": [1, 1] }
+    { "name": "highlight", "generator": "highlight", "footprint": [1, 1] },
+    {
+      "name": "highlight_soft",
+      "generator": "highlight_soft",
+      "footprint": [1, 1],
+      "note": "U2: fainter catchment tint for the harvester's informational 4x4 area, distinct from the solid 1x1 placement tile."
+    }
   ]
 }
