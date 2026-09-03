@@ -59,21 +59,24 @@ Sheets used so far (paths under `sprites/png/`):
   Cells verified by numeric content checks (diamond bounds, sea colour).
   `npm run slice-atlas` regenerates; the committed manifest validates in CI
   (`tests/unit/iso-manifest.test.ts` + `tools/validate-manifest.mjs`).
-- **Open item:** every industry/farm sheet is a sheet of *components* (one
-  iso tile per cell: crop tiles, buildings on their own tile, fences, trees).
-  A final industry sprite for a 2×2 / 3×3 footprint must be composed from a
-  building cell + its surrounding ground tiles, and the sprite's `anchor`
-  (the pixel that lands on the footprint's south corner) measured from the
-  composition. This needs one pass of visual QA against
-  `docs/contact-sheet.png` before committing `assets/iso-atlas/manifest.json`
-  and the packed `@1x/@2x/@0.5x` sheets.
-- Farm cells worth reviewing first: the farm-house building cell, a clean
-  crop-tile cell and a fence cell (see `farm_*_cells.txt` once extracted).
-- Road/rail: per the E5 standing note, extract **one half-piece** from
-  `landscape031.png` / the monorail sheet and composite all 16 bitmask
-  variants in the atlas packer; do not source 16 separate sprites.
-- Until the atlas lands, the E4 renderer draws its terrain/buildings with
-  flat colors and keeps an `atlas.load()` drop-in — see `src/iso/renderer.ts`.
+- **R1: industry / depot / track atlas is now generated.** The cell map uses
+  `compose` to build 2×2 and 3×3 industry sprites on their footprints, direct
+  `crop` entries for the 1×1 depot variants, and `generator: "road"` /
+  `"rail"` to emit the 16 bitmask track pieces from one half-piece. The
+  `highlight` sprite is generated too. `probeExtra`/`cropDirect` key the blue
+  backing and clip page white/labels, and `contentBottomCentre` measures the
+  anchor that lands on the footprint's south corner. To re-run:
+  `npm run slice-atlas` then `node tools/validate-manifest.mjs
+  assets/iso-atlas/manifest.json`.
+- **Open item:** the composite sprites are composited from OpenGFX component
+  cells, so one visual QA pass against `assets/iso-atlas/contact-sheet.png`
+  (and the generated `docs/contact-sheet.png` at render time) is still the
+  intended gate before E4 ships. The atlas contains 51 sprites: 4 terrain,
+  7 industries (farm, forest, ore mine, quarry, 6-frame oil rig, gold mine),
+  4 factories, 4 depots, 32 road/rail variants, and the highlight.
+- Road/rail: per the E5 standing note, we extract one half-piece and
+  composite all 16 bitmask variants in the atlas packer; we do not source 16
+  separate sprites.
 
 ## Licence
 

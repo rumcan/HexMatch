@@ -174,14 +174,30 @@ function placeIndustries(terrain: Uint8Array, rng: () => number): { list: Indust
 /**
  * Generate a deterministic 48×48 iso grid. Same seed → byte-identical
  * `terrain`, `occupancy` and `industries` across contexts (T1 determinism).
- * `seed` omitted/undefined → random seed.
+ *
+ * R6: `seed` is required. Multiplayer (E10) must resolve and distribute a
+ * concrete seed before generating the map, so every client runs through this
+ * same typed path and no client can silently fall back to `Math.random()`.
+ * Callers that want a random game map should draw the seed themselves with the
+ * game RNG and pass it in (see `randomSeed`).
  */
-export function generateMap(seed?: number): Grid {
-  const s = (seed === undefined ? Math.floor(Math.random() * 0xffffffff) : seed) >>> 0;
+export function generateMap(seed: number): Grid {
+  const s = seed >>> 0;
   const rng = mulberry32(s);
   const terrain = makeTerrain(rng);
   const { list, occ } = placeIndustries(terrain, rng);
   return { w: MAP_W, h: MAP_H, terrain, industries: list, occupancy: occ, seed: s };
+}
+
+/**
+ * Generate a non-deterministic seed for a random game.
+ *
+ * Kept separate from `generateMap` so the fallback is explicit and testable
+ * (R6: two no-arg map generations must be different), while the map generator
+ * itself remains deterministic-by-value.
+ */
+export function randomSeed(): number {
+  return Math.floor(Math.random() * 0xffffffff) >>> 0;
 }
 
 // ── helpers ──

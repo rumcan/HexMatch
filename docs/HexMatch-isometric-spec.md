@@ -73,7 +73,7 @@ export const screenToTile = (sx: number, sy: number): [number, number] => {
 
 ```json
 {
-  "image": "industries@1x.png",
+  "images": { "0.5": "industries@0.5x.png", "1": "industries@1x.png", "2": "industries@2x.png" },
   "tileW": 64, "tileH": 32,
   "sprites": {
     "coal_mine":  { "x": 0,   "y": 0, "w": 192, "h": 160, "footprint": [3,3], "anchor": [96,148], "frames": 1 },

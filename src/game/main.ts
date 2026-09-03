@@ -65,8 +65,12 @@ export function startGame(container: HTMLElement) {
   // reproducible in tests; normal play keeps a fresh random stream.
   if (seed !== undefined) setRng(mulberry32(seed ^ 0x5eed5));
   else setRng(Math.random);
-  G.map = generateMap(seed);
-  G.seed = seed ?? null;
+  // R6: always resolve a concrete map seed before generating the map. Never
+  // call generateMap without one, or clients can silently end up with different
+  // geometry when the host/guest seed hand-off is missing.
+  const bootSeed = seed ?? (Math.floor(Math.random() * 0xffffffff) >>> 0);
+  G.map = generateMap(bootSeed);
+  G.seed = bootSeed;
   G.offers = []; G.offerSeq = 1; G.won = false; G.running = true;
   G.setupPhase = true; G.buildMode = null; G.pendingSabotage = null; G.upgradeTimer = 0;
   G.access = {};
