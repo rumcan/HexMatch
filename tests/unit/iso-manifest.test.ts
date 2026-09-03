@@ -1,9 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { validateManifest } from "../../tools/validate-manifest.mjs";
+import { parsePnml } from "../../tools/parse-pnml.mjs";
 
 const realManifest = JSON.parse(readFileSync("assets/iso-atlas/manifest.json", "utf8")) as {
   sprites: Record<string, { w: number; h: number; footprint: [number, number]; frames?: number; x: number; y: number }>;
+};
+
+const cells = JSON.parse(readFileSync("tools/iso-atlas.cells.json", "utf8")) as {
+  sprites: { name: string; sprite?: number; box?: unknown; crop?: unknown; boxes?: unknown; crops?: unknown; generator?: string }[];
 };
 
 // E1 acceptance: the manifest validates against a JSON schema (CI), and the
@@ -128,5 +133,50 @@ describe("X5 cheap manifest invariants", () => {
       .not.toEqual([quarry.x, quarry.y, quarry.w, quarry.h]);
     expect([factory_blue.x, factory_blue.y, factory_blue.w, factory_blue.h])
       .not.toEqual([gold_mine.x, gold_mine.y, gold_mine.w, gold_mine.h]);
+  });
+});
+
+describe("Y1/Y2 declaration invariants (ground + roads are declaration-driven)", () => {
+  // Y1 acceptance: the cells file contains no hand-authored crop/box arrays
+  // for ground/road sprites; every one of them traces to a declared id.
+
+  it("terrain cells reference a declared sprite id and carry no hand box/crop", () => {
+    const terrain = cells.sprites.filter((s) => s.name.startsWith("terrain_"));
+    expect(terrain.length).toBeGreaterThan(0);
+    for (const s of terrain) {
+      expect(typeof s.sprite, `${s.name} must reference a declared sprite id`).toBe("number");
+      expect(s.box ?? s.crop ?? s.boxes ?? s.crops, `${s.name} must not carry a hand rect`).toBeUndefined();
+    }
+  });
+
+  it("there is exactly one grass terrain tile and no slope `_b` variant", () => {
+    const grass = cells.sprites.filter((s) => s.name === "terrain_grass" || s.name.startsWith("terrain_grass"));
+    expect(grass.map((s) => s.name)).toEqual(["terrain_grass"]);
+    expect(cells.sprites.some((s) => s.name === "terrain_grass_b")).toBe(false);
+    expect(realManifest.sprites.terrain_grass_b).toBeUndefined();
+  });
+
+  it("road/rail/crossing resolve from a declared sprite id, not a hand crop", () => {
+    for (const name of ["road", "rail", "crossing"]) {
+      const s = cells.sprites.find((c) => c.name === name);
+      expect(s, name).toBeTruthy();
+      expect(typeof s!.sprite, `${name} must reference a declared sprite id`).toBe("number");
+      expect(s!.crop).toBeUndefined();
+    }
+  });
+
+  it("Y2: every terrain sprite declared for the atlas is a flat 64x31 tile with yrel 0", () => {
+    // A ground tile with height 23/39/47 or a non-zero yrel is a slope and must
+    // fail — this is what keeps slope sprites from being used as flat tiles.
+    const decls = parsePnml();
+    const terrainIds = cells.sprites
+      .filter((s) => s.name.startsWith("terrain_") && typeof s.sprite === "number")
+      .map((s) => s.sprite as number);
+    expect(terrainIds.length).toBeGreaterThan(0);
+    for (const id of terrainIds) {
+      const d = decls[String(id)];
+      expect(d, `declared sprite ${id} missing`).toBeTruthy();
+      expect([d!.w, d!.h, d!.yrel], `terrain sprite ${id}`).toEqual([64, 31, 0]);
+    }
   });
 });
