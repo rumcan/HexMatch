@@ -105,10 +105,14 @@ export function createBoardPanel(board: Board, hooks: BoardPanelHooks): BoardPan
         const sel = selected?.r === r && selected?.c === c;
         cell.classList.toggle("sel", sel);
         if (!g) {
+          // gravity refills every cell, so this is a transient state — but the
+          // classes must not survive it into the next gem drawn here
           cell.dataset.res = "";
           cell.dataset.tier = "0";
+          cell.classList.remove("token", "wild", "dead");
           cell.textContent = "";
           cell.style.background = "transparent";
+          cell.style.boxShadow = "";
           cell.setAttribute("aria-label", "empty");
           continue;
         }
@@ -147,10 +151,8 @@ export function createBoardPanel(board: Board, hooks: BoardPanelHooks): BoardPan
       : "Connect a harvester to your Factory: tokens only spawn on cargo you reach.";
   }
 
-  head.querySelector("[data-act=quarry-hide]")?.addEventListener("click", () => {
-    setVisible(false);
-    hooks.onToggle?.(false);
-  });
+  // setVisible already fires onToggle; do not fire it twice
+  head.querySelector("[data-act=quarry-hide]")?.addEventListener("click", () => setVisible(false));
 
   function setVisible(v: boolean) {
     visible = v;
