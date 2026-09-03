@@ -8,6 +8,8 @@
 // this verifies wiring and game logic, not pixels. Pixel correctness is what
 // the committed-reference-PNG fixture is for, and that still needs a browser.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { WATER } from "../../src/iso/grid";
+import { MAP_W, MAP_H } from "../../src/iso/config";
 
 // ── stub the art imports (vite handles these in the browser) ──────────────
 vi.mock("../../assets/iso-atlas/atlas@0.5x.png", () => ({ default: "a05.png" }));
@@ -132,6 +134,31 @@ describe("E11 the game boots", () => {
 // ── driving the game through its own module API ───────────────────────────
 // The pointer path is pixel-driven and needs a real renderer to pick tiles, so
 // these drive the same state the click handlers mutate, via the test hook.
+
+/**
+ * Find an industry whose SOUTH corridor is legal: the harvester tile just
+ * below its footprint plus 6 road tiles under it all stay inside the map and
+ * off water. The map is 48×48 and generated under a RANDOM seed each boot, so
+ * `industries[0]` alone is not safe — when it sits near the bottom edge the
+ * factory tile lands at fy ≥ MAP_H and the round can never score (a flaky
+ * failure that depends on the seed). Prefer a corridor like the cargo test:
+ * no single industry is special, so scanning is not a cheat.
+ */
+function findSouthCorridor(grid: import("../../src/iso/grid").Grid):
+  { hx: number; hy: number; fy: number } | null {
+  for (const ind of grid.industries) {
+    const hx = ind.tx, hy = ind.ty + ind.h;
+    const fy = hy + 6;
+    if (hy < 0 || fy >= MAP_H || hx < 0 || hx >= MAP_W) continue;
+    let ok = true;
+    for (let y = hy; y <= fy; y++) {
+      if (grid.terrain[y * MAP_W + hx] === WATER) { ok = false; break; }
+    }
+    if (ok) return { hx, hy, fy };
+  }
+  return null;
+}
+
 describe("E11 a full round is playable", () => {
   it("setup → connect → score, end to end", async () => {
     const h = await boot();
@@ -141,12 +168,12 @@ describe("E11 a full round is playable", () => {
     const { rescore, createScoreState, vpFor, isServiced, industriesInCatchment } =
       await import("../../src/iso/economy");
 
-    // pick a real industry and a legal harvester spot beside it
-    const ind = h.grid.industries[0];
-    const hx = ind.tx, hy = ind.ty + ind.h;      // just south of the footprint
-    const fx = hx, fy = hy + 6;
+    // a real industry with a legal harvester spot beside it
+    const c = findSouthCorridor(h.grid);
+    expect(c).toBeTruthy();
+    const { hx, hy, fy } = c!;
 
-    h.eco.factories.push({ owner: "you", tx: fx, ty: fy });
+    h.eco.factories.push({ owner: "you", tx: hx, ty: fy });
     const harv = { id: 1, owner: "you", tx: hx, ty: hy };
     h.eco.harvesters.push(harv);
 
@@ -173,22 +200,7 @@ describe("E11 a full round is playable", () => {
     const { buildTile, demolishTile } = await import("../../src/iso/track");
     const { playerResources } = await import("../../src/iso/economy");
 
-    const { WATER } = await import("../../src/iso/grid");
-    const { MAP_W, MAP_H } = await import("../../src/iso/config");
-    const corridor = () => {
-      for (const ind of h.grid.industries) {
-        const hx = ind.tx, hy = ind.ty + ind.h;
-        const fy = hy + 6;
-        if (hy < 0 || fy >= MAP_H || hx < 0 || hx >= MAP_W) continue;
-        let ok = true;
-        for (let y = hy; y <= fy; y++) {
-          if (h.grid.terrain[y * MAP_W + hx] === WATER) { ok = false; break; }
-        }
-        if (ok) return { hx, hy, fy };
-      }
-      return null;
-    };
-    const c = corridor();
+    const c = findSouthCorridor(h.grid);
     expect(c).toBeTruthy();
     const { hx, hy, fy } = c!;
     h.eco.factories.push({ owner: "you", tx: hx, ty: fy });
