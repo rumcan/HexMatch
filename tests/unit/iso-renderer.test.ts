@@ -76,7 +76,14 @@ describe("E4 terrain sprite selection", () => {
 describe("E4 culling + draw list", () => {
   it("pads by the largest footprint plus sprite height in tiles", () => {
     const pad = cullPad(atlas);
-    expect(pad).toBeGreaterThanOrEqual(3 + 6);   // 3×3 mine, ~192px tall
+    // Y3/Y7 shrank the buildings from stitched 192px compose blocks to single
+    // declared sprites, so the bound is computed from the manifest itself:
+    // largest footprint + tallest sprite in half-tile rows.
+    const sprites = Object.values(atlas.manifest.sprites);
+    const maxFoot = Math.max(...sprites.map((s) => Math.max(s.footprint[0], s.footprint[1])));
+    const maxH = Math.max(...sprites.map((s) => s.h));
+    expect(pad).toBe(maxFoot + Math.ceil(maxH / 16));
+    expect(pad).toBeGreaterThanOrEqual(3 + 3);  // 3×3 mine + declared building headroom
     expect(pad).toBeLessThan(40);
   });
 

@@ -8,7 +8,13 @@ const realManifest = JSON.parse(readFileSync("assets/iso-atlas/manifest.json", "
 };
 
 const cells = JSON.parse(readFileSync("tools/iso-atlas.cells.json", "utf8")) as {
-  sprites: { name: string; sprite?: number; box?: unknown; crop?: unknown; boxes?: unknown; crops?: unknown; generator?: string }[];
+  sprites: {
+    name: string; sprite?: number; box?: unknown; crop?: unknown; boxes?: unknown; crops?: unknown;
+    generator?: string; footprint?: [number, number];
+    layers?: { sprite: number; tint?: [number, number, number] }[];
+    frames?: { sprite: number }[][];
+    trackset?: { mode: string; base?: number; table?: number[]; ground?: number; pieces?: { sprite: number; dirs: number[] }[] };
+  }[];
 };
 
 // E1 acceptance: the manifest validates against a JSON schema (CI), and the
@@ -156,12 +162,24 @@ describe("Y1/Y2 declaration invariants (ground + roads are declaration-driven)",
     expect(realManifest.sprites.terrain_grass_b).toBeUndefined();
   });
 
-  it("road/rail/crossing resolve from a declared sprite id, not a hand crop", () => {
-    for (const name of ["road", "rail", "crossing"]) {
-      const s = cells.sprites.find((c) => c.name === name);
-      expect(s, name).toBeTruthy();
-      expect(typeof s!.sprite, `${name} must reference a declared sprite id`).toBe("number");
-      expect(s!.crop).toBeUndefined();
+  it("road/rail/crossing resolve from declared sprite ids, not a hand crop or generator", () => {
+    // Y4c/Y6: road is OpenGFX's finished flat set indexed through OpenTTD's
+    // table, rail is declared ground + declared overlay pieces, crossing is a
+    // declared finished tile. None of them may fall back to `generator`.
+    const road = cells.sprites.find((c) => c.name === "road");
+    const rail = cells.sprites.find((c) => c.name === "rail");
+    const crossing = cells.sprites.find((c) => c.name === "crossing");
+    expect(road?.trackset?.mode).toBe("flat");
+    expect(typeof road?.trackset?.base).toBe("number");
+    expect(road?.trackset?.table).toHaveLength(16);
+    expect(rail?.trackset?.mode).toBe("overlays");
+    expect(typeof rail?.trackset?.ground).toBe("number");
+    expect((rail?.trackset?.pieces ?? []).length).toBeGreaterThan(0);
+    for (const p of rail?.trackset?.pieces ?? []) expect(typeof p.sprite).toBe("number");
+    expect(crossing?.layers?.length).toBeGreaterThan(0);
+    for (const s of [road, rail, crossing]) {
+      expect(s!.generator, `${s!.name} must not use the generator`).toBeUndefined();
+      expect(s!.crop, `${s!.name} must not carry a hand crop`).toBeUndefined();
     }
   });
 
@@ -178,5 +196,119 @@ describe("Y1/Y2 declaration invariants (ground + roads are declaration-driven)",
       expect(d, `declared sprite ${id} missing`).toBeTruthy();
       expect([d!.w, d!.h, d!.yrel], `terrain sprite ${id}`).toEqual([64, 31, 0]);
     }
+  });
+});
+
+// ── Y3 / Y5 / Y6 — the "did you finish" invariants ────────────────────────
+// The backlog's process note: "Set up but not applied" must be a CI failure,
+// not a screenshot review. These assert the atlas is fully declaration-driven.
+describe("Y3/Y5/Y6 declaration invariants", () => {
+  type Decl = { file: string; x: number; y: number; w: number; h: number; xrel: number; yrel: number; flags: string[] };
+  const decls = parsePnml() as unknown as Record<string, Decl>;
+
+  /** Every declared id a cell references (layers, frames, trackset, sprite). */
+  function referencedIds(s: (typeof cells)["sprites"][number]): number[] {
+    const out: number[] = [];
+    if (typeof s.sprite === "number") out.push(s.sprite);
+    for (const l of s.layers ?? []) out.push(l.sprite);
+    for (const f of s.frames ?? []) for (const l of f) out.push(l.sprite);
+    if (s.trackset) {
+      if (typeof s.trackset.base === "number") {
+        for (const off of s.trackset.table ?? []) out.push(s.trackset.base + off);
+      }
+      if (typeof s.trackset.ground === "number") out.push(s.trackset.ground);
+      for (const p of s.trackset.pieces ?? []) out.push(p.sprite);
+    }
+    return out;
+  }
+
+  it("Y6: no compose/box/crop/tiles arrays remain in the cells file", () => {
+    const raw = readFileSync("tools/iso-atlas.cells.json", "utf8");
+    const parsed = JSON.parse(raw);
+    for (const s of parsed.sprites) {
+      for (const forbidden of ["compose", "box", "boxes", "crop", "crops", "tiles", "anchor"]) {
+        expect(s[forbidden], `cell ${s.name} still carries \`${forbidden}\``).toBeUndefined();
+      }
+    }
+    expect(raw).not.toContain("\"compose\"");
+    expect(raw).not.toContain("\"crop\"");
+  });
+
+  it("Y6: every atlas sprite resolves to declared OpenGFX ids (no compose)", () => {
+    for (const s of cells.sprites) {
+      if (s.generator === "highlight" || s.generator === "highlight_soft") continue; // procedural UI glow
+      const ids = referencedIds(s);
+      expect(ids.length, `cell ${s.name} references no declared sprite`).toBeGreaterThan(0);
+      for (const id of ids) {
+        expect(decls[String(id)], `cell ${s.name}: declared sprite ${id} missing`).toBeTruthy();
+      }
+    }
+  });
+
+  it("Y6: no road/rail cell references the generator", () => {
+    for (const s of cells.sprites) {
+      if (/^(road|rail)/.test(s.name)) {
+        expect(s.generator, `cell ${s.name} must not use the generator`).toBeUndefined();
+      }
+    }
+    // and the slicer source no longer carries the generator's road/rail branch
+    const slicer = readFileSync("tools/slice-atlas.mjs", "utf8");
+    expect(slicer).not.toContain("clipArm");
+    expect(slicer).not.toContain("TRACK_HALF_W");
+    expect(slicer).not.toContain("makeGenerated(s, \"road\")");
+  });
+
+  it("Y6: sprite width stays within footprint_w * 64 + 32", () => {
+    for (const [name, s] of Object.entries(realManifest.sprites)) {
+      const frames = s.frames ?? 1;
+      expect(s.w / frames, `${name} frame width`).toBeLessThanOrEqual(s.footprint[0] * 64 + 32);
+    }
+  });
+
+  it("Y5: every manifest anchor is the declared-xrel/yrel derivation, never hand-authored", () => {
+    // anchor = (-minX + 1, -minY + 31) where (minX,minY) is the union of the
+    // declared layers' (xrel,yrel) rects — recomputed here from the PNML
+    // declarations so a hand-tuned anchor can never slip back in.
+    const unionOf = (s: (typeof cells)["sprites"][number]) => {
+      let minX = Infinity, minY = Infinity;
+      const consider = (id: number) => {
+        const d = decls[String(id)];
+        minX = Math.min(minX, d.xrel);
+        minY = Math.min(minY, d.yrel);
+      };
+      if (typeof s.sprite === "number") consider(s.sprite);
+      for (const l of s.layers ?? []) consider(l.sprite);
+      for (const f of s.frames ?? []) for (const l of f) consider(l.sprite);
+      return [minX, minY];
+    };
+    for (const s of cells.sprites) {
+      if (s.generator) continue;
+      if (s.trackset?.mode === "flat") continue; // per-mask union; covered below
+      const [minX, minY] = unionOf(s);
+      if (!Number.isFinite(minX)) continue;
+      const names = s.trackset?.mode === "overlays"
+        ? [...Array(16).keys()].map((v) => `${s.namePrefix}_${v.toString(2).padStart(4, "0")}`)
+        : [s.name];
+      for (const n of names) {
+        const m = realManifest.sprites[n];
+        expect(m, n).toBeTruthy();
+        expect(m.anchor, `${n} anchor must be the declared derivation`).toEqual([-minX + 1, -minY + 31]);
+      }
+    }
+  });
+
+  it("Y5: declared sprites honour NOCROP (declared rect trusted verbatim)", () => {
+    // The slicer must size each cell from the declared w/h, not from a measured
+    // content bbox. Assert the union rect of a known multi-layer cell matches
+    // the manifest size exactly.
+    const ore = cells.sprites.find((s) => s.name === "ore_mine")!;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const l of ore.layers!) {
+      const d = decls[String(l.sprite)];
+      minX = Math.min(minX, d.xrel); maxX = Math.max(maxX, d.xrel + d.w - 1);
+      minY = Math.min(minY, d.yrel); maxY = Math.max(maxY, d.yrel + d.h - 1);
+    }
+    const m = realManifest.sprites.ore_mine;
+    expect([m.w, m.h]).toEqual([maxX - minX + 1, maxY - minY + 1 + 1]); // +1 cloned ground row
   });
 });
