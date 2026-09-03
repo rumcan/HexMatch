@@ -199,7 +199,33 @@ VP awarded on connection completion, revoked on break, checked on every build an
 
 Not yet wired into `src/game/ai.ts`; that swap is part of E11's cutover.
 
-### E8–E11 — still open
+### E10 (multiplayer snapshot) ✅ LANDED
+
+`src/iso/snapshot.ts`, covered by 23 unit tests in
+`tests/unit/iso-snapshot.test.ts` (224 unit tests total, typecheck and lint
+clean).
+
+- Terrain, industries and occupancy are never sent — a test asserts the
+  serialised payload contains no `terrain` key at all, and that both sides
+  regenerate byte-identical maps from the seed alone.
+- `roadBits`/`railBits` travel as base64. **Correction to the spec:** it
+  claims ~10KB as JSON versus 2304 bytes raw; the measured JSON encoding is
+  4.6KB empty and 6.9KB saturated, so the real win is 1.5–2.25×, not 3×. The
+  better argument for base64 is that it is *flat* — 3072 chars whether the map
+  is empty or full, so host bandwidth never spikes as the game fills up. The
+  tests assert the measured numbers, not the spec's estimate.
+- `version` field with `SNAPSHOT_VERSION`; a mismatch is rejected with a
+  message a player can act on ("Reload the page to update") instead of the
+  silent desync we ship today.
+- Also rejects truncated layers, missing seeds and junk payloads, and throws
+  rather than half-applying — a partially applied snapshot is worse than a
+  rejected one. A seed-mismatch check catches a guest that already generated a
+  different map.
+
+Not yet wired into `src/game/net.ts`, which still sends hex `edges`/`verts`/
+`tiles`. That swap is part of E11's cutover.
+
+### E8, E9, E11 — still open
 
 Per spec. E11 deletes `hexmap.ts`, `MapView3D.ts`, the terrain `.jpg` textures and the `three` dependency (~600KB), and regenerates the T2 snapshots.
 
