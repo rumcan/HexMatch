@@ -115,7 +115,7 @@ describe("G1/G2 atlas pixels", () => {
   it("terrain sprites have no fully-opaque white bottom row", async () => {
     const sharp = (await import("sharp")).default;
     const { data, info } = await sharp("assets/iso-atlas/atlas@1x.png").ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-    for (const name of ["terrain_grass_a", "terrain_grass_b", "terrain_rough", "terrain_water"]) {
+    for (const name of ["terrain_grass", "terrain_rough", "terrain_water"]) {
       const s = manifest.sprites[name];
       const y = s.y + s.h - 1;
       let whiteRow = true;
