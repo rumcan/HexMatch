@@ -42,6 +42,15 @@ async function pickCorridor(page: import("@playwright/test").Page): Promise<{
       const cx = dx / dpr, cy = dy / dpr;
       return cx >= -20 && cx <= window.innerWidth + 20 && cy >= -20 && cy <= window.innerHeight + 20;
     };
+    // J1: the Quarry/Market panels overlay the map and take pointer events, so
+    // a tile hidden behind one cannot be clicked. Never pick a corridor under
+    // a panel — otherwise this helper hands back a tile the mouse cannot reach.
+    const clickable = (tx: number, ty: number) => {
+      const [dx, dy] = h.tileScreenAt(tx, ty);
+      const cx = dx / dpr, cy = (dy + 16) / dpr;
+      return !document.elementsFromPoint(cx, cy)
+        .some((el) => !!(el as HTMLElement).closest?.(".iso-panel"));
+    };
     const legalColumn = (hx: number, hy: number, fy: number) => {
       if (hx < 0 || hx >= MAP_W || hy < 0 || fy >= MAP_H) return false;
       for (let y = hy; y <= fy; y++) {
@@ -49,6 +58,7 @@ async function pickCorridor(page: import("@playwright/test").Page): Promise<{
         if (grid.terrain[i] === WATER) return false;
         if (grid.occupancy[i] >= 0) return false;
         if (!inView(hx, y)) return false;
+        if (!clickable(hx, y)) return false;
       }
       return true;
     };
@@ -133,6 +143,17 @@ test.describe("iso game boots on the default route", () => {
       bs.map((b) => (b as HTMLElement).dataset.tool));
     expect(tools).toEqual(["road", "rail", "harvester", "demolish"]);
     await expect(root.locator("[data-act=recenter]")).toHaveCount(1);
+
+    // J1: the match-3 quarry is mounted NEXT TO the map, not instead of it,
+    // and its cells are real, pickable DOM.
+    await expect(root.locator("#iso-quarry")).toBeVisible();
+    await expect(root.locator("#iso-quarry .gem")).toHaveCount(81);
+    await expect(root.locator('[data-panel="quarry"]')).toHaveCount(1);
+    await expect(root.locator('[data-panel="trade"]')).toHaveCount(1);
+    const firstGem = root.locator('.gem[data-r="0"][data-c="0"]');
+    await expect(firstGem).toHaveAttribute("data-res", /^(wood|brick|sheep|wheat|ore|gold)$/);
+    await firstGem.click();
+    await expect(firstGem).toHaveClass(/sel/);
 
     // guided-setup banner + scoreboard + starting purse
     await expect(root.locator("#iso-banner")).toContainText(/place your factory/i);

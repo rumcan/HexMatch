@@ -10,6 +10,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { WATER } from "../../src/iso/grid";
 import { MAP_W, MAP_H } from "../../src/iso/config";
+import { setRng, mulberry32 } from "../../src/game/config";
 
 // ── stub the art imports (vite handles these in the browser) ──────────────
 vi.mock("../../assets/iso-atlas/atlas@0.5x.png", () => ({ default: "a05.png" }));
@@ -55,6 +56,12 @@ interface IsoHook {
   grid: import("../../src/iso/grid").Grid;
   track: import("../../src/iso/track").Track;
   eco: import("../../src/iso/economy").EconomyState;
+  /** J1: the mounted match-3 board and what the network lets it pay. */
+  board: import("../../src/game/board").Board;
+  reach: Record<string, number>;
+  quarry: import("../../src/iso/quarry").Quarry;
+  market: import("../../src/iso/market").IsoMarket;
+  refreshQuarry: (now?: number) => unknown;
   setTool: (t: string) => void;
 }
 
@@ -71,6 +78,12 @@ let dispose: (() => void) | undefined;
 beforeEach(() => {
   stubCanvas();
   stubImage();
+  // Pin the map seed and the game RNG. Without this the map is drawn fresh
+  // every boot, and on some seeds no industry has a legal south corridor, so
+  // `findSouthCorridor` returns null and the whole "full round" block fails —
+  // a flake that predates J1. Same seed the e2e suite boots with.
+  window.history.replaceState(null, "", "/?seed=1337");
+  setRng(mulberry32(1337));
   (globalThis as Record<string, unknown>).ResizeObserver = class {
     observe() {} unobserve() {} disconnect() {}
   };
@@ -247,5 +260,177 @@ describe("E11 free setup builds cannot be revoked (K1 regression)", () => {
     // ...and it survives arbitrary time passing (many frames)
     await settle(); await settle();
     expect(h.freeTrack).toBe(12);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// J1 — the join. This block is the reason the game can never again ship with a
+// map and no harvesting loop: it boots the real app and asserts the match-3
+// board is on screen AND that matching a gem moves cargo in the purse.
+//
+// Every board edit below moves whole gem objects between slots and keeps their
+// `r`/`c` fields in step, the way `trySwap` and `gravity` do. Aliasing one gem
+// into two slots would make a single token pay twice and the test would still
+// go green — that is a false pass, so the amount is asserted EXACTLY.
+// ══════════════════════════════════════════════════════════════════════════
+import { CARGO_TO_GEM, GEM_TO_CARGO } from "../../src/iso/quarry";
+import { CARGOES, type Cargo } from "../../src/iso/config";
+import { BOARD_H, BOARD_W, type ResKey } from "../../src/game/config";
+import type { Board, Gem } from "../../src/game/board";
+
+const ALT = (res: ResKey): ResKey => (res === "wood" ? "ore" : "wood");
+
+/** Move a gem between two slots the way the board itself does. */
+function moveGem(board: Board, a: Gem, r: number, c: number) {
+  const other = board.grid[r][c]!;
+  board.grid[a.r][a.c] = other; other.r = a.r; other.c = a.c;
+  board.grid[r][c] = a; a.r = r; a.c = c;
+}
+
+/** A row holding no token other than `except`, so a run there pays a known count. */
+function freeRow(board: Board, except?: Gem): number {
+  for (let r = 0; r < BOARD_H; r++) {
+    const tokens = board.grid[r].filter((g) => g && g.tier > 0 && g !== except);
+    if (!tokens.length) return r;
+  }
+  throw new Error("no token-free row");
+}
+
+/**
+ * Build a horizontal three of `res` centred on (r,c), optionally moving `token`
+ * into the middle first. The two cells beyond the run are forced to another
+ * colour so the match is exactly three long and pays a known amount.
+ */
+function makeRun(board: Board, res: ResKey, r: number, c: number, token?: Gem) {
+  if (token && (token.r !== r || token.c !== c)) moveGem(board, token, r, c);
+  for (const cc of [c - 1, c, c + 1]) board.grid[r][cc]!.res = res;
+  board.grid[r][c - 2]!.res = ALT(res);
+  board.grid[r][c + 2]!.res = ALT(res);
+}
+
+/** Connect a harvester to a factory with road, the way the pointer path does. */
+async function connectedBoot() {
+  const h = await boot();
+  const { buildTile } = await import("../../src/iso/track");
+  const c = findSouthCorridor(h.grid);
+  expect(c).toBeTruthy();
+  const { hx, hy, fy } = c!;
+  h.eco.factories.push({ owner: "you", tx: hx, ty: fy });
+  h.eco.harvesters.push({ id: 1, owner: "you", tx: hx, ty: hy });
+  for (let y = hy + 1; y <= fy; y++) buildTile(h.track, "road", hx, y);
+  h.refreshQuarry();      // the game runs this on every build and demolish
+  return { h, corridor: { hx, hy, fy } };
+}
+
+describe("J1 the quarry is mounted in the iso app", () => {
+  it("boots the map AND the match-3 board together", async () => {
+    const h = await boot();
+    expect(root.querySelector("#iso-quarry")).toBeTruthy();
+    expect(root.querySelectorAll("#iso-gems .gem")).toHaveLength(BOARD_W * BOARD_H);
+    expect(h.board.gems()).toHaveLength(BOARD_W * BOARD_H);
+    // the reach strip is honest before anything is connected
+    expect((root.querySelector("#iso-quarry-reach") as HTMLElement).textContent)
+      .toMatch(/nothing/i);
+  });
+
+  it("extends the tool bar instead of replacing it", async () => {
+    await boot();
+    const tools = [...root.querySelectorAll("[data-tool]")].map(
+      (b) => (b as HTMLElement).dataset.tool);
+    expect(tools).toEqual(["road", "rail", "harvester", "demolish"]);
+    const panels = [...root.querySelectorAll("[data-panel]")].map(
+      (b) => (b as HTMLElement).dataset.panel);
+    expect(panels).toEqual(["quarry", "trade"]);
+    expect(root.querySelector("[data-act=recenter]")).toBeTruthy();
+  });
+
+  it("selects a gem on click, ready to swap with its neighbour", async () => {
+    await boot();
+    const first = root.querySelector('.gem[data-r="0"][data-c="0"]') as HTMLElement;
+    first.click();
+    expect(first.classList.contains("sel")).toBe(true);
+  });
+
+  it("matching a connected industry's token harvests exactly its cargo", async () => {
+    const { h } = await connectedBoot();
+
+    // the network tokened every cargo it reaches, and only those colours
+    const reached = Object.keys(h.reach) as Cargo[];
+    expect(reached.length).toBeGreaterThan(0);
+    const tokens = h.board.gems().filter((g) => g.tier > 0);
+    expect(tokens.length).toBeGreaterThan(0);
+    expect(tokens.map((g) => GEM_TO_CARGO[g.res]).every((c) => reached.includes(c))).toBe(true);
+
+    const tok = tokens[0];
+    const cargo = GEM_TO_CARGO[tok.res];
+    const before = { ...h.purse };
+    makeRun(h.board, tok.res, freeRow(h.board, tok), 4, tok);
+    expect(h.board.findGroups().length).toBeGreaterThan(0);
+    await h.board.settle();          // what trySwap runs after a legal swap
+
+    // Matching the token harvested ITS cargo...
+    expect(h.purse[cargo]).toBeGreaterThan(before[cargo] ?? 0);
+    // ...and nothing the network cannot reach. The exact per-token amount is
+    // pinned in iso-quarry.test.ts, where the board is match-free so a cascade
+    // cannot add a second payout behind this assertion's back.
+    for (const c of CARGOES) {
+      if (reached.includes(c)) continue;
+      expect(h.purse[c] ?? 0, `${c} paid with no route`).toBe(before[c] ?? 0);
+    }
+  });
+
+  it("matching a colour the network cannot reach pays nothing", async () => {
+    const { h } = await connectedBoot();
+    const reached = Object.keys(h.reach) as Cargo[];
+    const dead = CARGOES.find((x) => !reached.includes(x))!;
+    expect(dead).toBeTruthy();
+    const deadGem = CARGO_TO_GEM[dead];
+
+    // no token of that colour exists: the gate never spawned one
+    expect(h.board.gems().some((g) => g.res === deadGem && g.tier > 0)).toBe(false);
+
+    const before = h.purse[dead] ?? 0;
+    const row = freeRow(h.board);                    // a row with no token in it
+    makeRun(h.board, deadGem, row, 4);
+    expect(h.board.findGroups().length).toBeGreaterThan(0);
+    await h.board.settle();
+
+    expect(h.purse[dead]).toBe(before);
+  });
+
+  it("cutting the line stops the harvest — tokens go dark at once", async () => {
+    const { h, corridor } = await connectedBoot();
+    const tokens = h.board.gems().filter((g) => g.tier > 0);
+    expect(tokens.length).toBeGreaterThan(0);
+    const tok = tokens[0];
+    const cargo = GEM_TO_CARGO[tok.res];
+
+    // demolish the road mid-corridor; the game rescores (and re-gates) on demolish
+    const { demolishTile } = await import("../../src/iso/track");
+    demolishTile(h.track, "road", corridor.hx, corridor.hy + 3);
+    h.refreshQuarry();
+
+    expect(h.reach).toEqual({});
+    expect(h.board.gems().filter((g) => g.tier > 0)).toHaveLength(0);
+
+    const before = h.purse[cargo] ?? 0;
+    makeRun(h.board, tok.res, freeRow(h.board, tok), 4, tok);
+    await h.board.settle();
+    expect(h.purse[cargo]).toBe(before);
+  });
+
+  it("surfaces trading, and a bank trade moves cargo in the same purse", async () => {
+    const h = await boot();
+    (root.querySelector('[data-panel="trade"]') as HTMLElement).click();
+    const panel = root.querySelector("#iso-trade") as HTMLElement;
+    expect(panel.style.display).not.toBe("none");
+
+    h.purse.stone = 4; h.purse.ore = 0;
+    (panel.querySelector('[data-f="bank-give"]') as HTMLSelectElement).value = "stone";
+    (panel.querySelector('[data-f="bank-want"]') as HTMLSelectElement).value = "ore";
+    (panel.querySelector('[data-act="bank"]') as HTMLElement).click();
+
+    expect(h.purse.stone).toBe(0);
+    expect(h.purse.ore).toBe(1);
   });
 });

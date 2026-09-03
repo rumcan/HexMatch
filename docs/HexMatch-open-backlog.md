@@ -1,8 +1,13 @@
 # HexMatch — open backlog
 
 Supersedes v6. Audited against `main` after the Y1/Y2 terrain+road PR merged.
+**Updated after Part 1 landed: J1 and J2 are done, the game is playable, and
+the remaining work is Part 2 (sprites).**
 
-Read this first — the plan is unchanged (put the map into the old game), but two of the Part 2 tickets need correcting: one is done, and one was misdiagnosed.
+Read this first — the plan is unchanged (put the map into the old game). Part 1
+is now history, kept below as a record of what actually shipped and where it
+deviated. Two of the Part 2 tickets still need correcting: one is done, and one
+was misdiagnosed.
 
 ---
 
@@ -13,43 +18,81 @@ Read this first — the plan is unchanged (put the map into the old game), but t
 | **Y2b** terrain triangles | ✅ **Done.** `cells.json` has a single `terrain_grass` → declared sprite 3981; `terrain_grass_b` and the `tileHash` variant branch are gone. The manifest invariant (every terrain sprite flat 64×31, yrel 0) is in place, so slopes can't be used as flat tiles again. Triangles are gone in-game. Close it. |
 | **Y4b** roads 90° | ⚠️ **Partly — and the ticket was incomplete.** The 90° rotation is genuinely fixed: `track.ts` now has `toOpenttdRoadBits`/`fromOpenttdRoadBits`, tested across all 16 masks. But roads still don't look like roads (see Y4c below) — the remap was only half the problem. |
 | **Y3** buildings | ❌ Not started. All ten industry/factory cells are still `compose` blocks. |
-| **J1** mount the board | ❌ Not started. `src/iso/game.ts` still imports nothing from `board.ts`. Verified: zero references to board/quarry/gem in the iso layer. |
+| **J1** mount the board | ✅ **Done.** `src/iso/game.ts` mounts `Board` as the Quarry panel, gates its harvest on the reachable-cargo set from `economy.ts`, and surfaces the trading panel. See the Part 1 record below. |
+| **J2** fate of `hexmap.ts` | ✅ **Done.** `hexmap.ts`, `actions.ts` and `state.ts` deleted; the restored tests rebased. `src/game/` is now `board.ts` + `trade.ts` + `config.ts`. |
 
-Grass is the one visible win, which matches what you're seeing.
+Grass was the only visible win when this was written. Now the board is on the
+map and the loop closes: factory → harvester → connect → match → cargo → trade.
 
-The core reframing from v6 still stands and is still the point: **you have a map with no game on it.** J1 remains the most important thing on this list.
+The core reframing from v6 was **you have a map with no game on it.** That is
+fixed. What is left is that some of the sprites on it are still generated
+rather than declared — Part 2.
 
 ---
 
-# Part 1 — Join the two halves (still the priority)
+# Part 1 — Join the two halves ✅ DONE
 
-## J1. Mount the match-3 board and game UI in the iso app
-`[P0] [gameplay] [blocker]`
+## J1. Mount the match-3 board and game UI in the iso app — done
 
-Unchanged from v6. Until this lands the project is not a game. `board.ts`, `trade.ts`, `actions.ts`, `state.ts` are all on disk and imported by nothing.
+`board.ts` is instantiated by `src/iso/game.ts` and rendered as the Quarry
+panel beside the map; the tool bar gained Quarry/Trade toggles without losing
+Road/Rail/Harvester/Demolish.
 
-**Wire the board in.** `src/iso/game.ts` instantiates `Board` from `src/game/board.ts`; it renders as a panel in the iso layout; matching gems harvests cargo. The six gem colours already map to the six iso cargoes (`grain, wood, ore, stone, oil, gold`).
+**The join** lives in `src/iso/quarry.ts`:
 
-**Gate harvest by the network — this is the join.** A gem match yields cargo only for industries the player's road/rail network reaches. The iso side already computes that reachable set for scoring (`economy.ts`); feed the same set into the board.
+- `GEM_TO_CARGO` is a bijection from the six gem colours to the six cargoes
+  (wheat→grain, wood→wood, ore→ore, gold→gold; brick and sheep take the two
+  cargoes with no gem colour, stone and oil). Unit-tested as a bijection.
+- The gate is `economy.playerResources` — the reachable set scoring already
+  computes. It decides which colours carry harvest tokens, and it is re-read
+  **at match time**, not from the cached set the panel displays. A cached gate
+  is only as fresh as its last refresh, so "demolish the road, match the tokens
+  anyway" would have paid out. Cutting a line also demotes its tokens, so the
+  board shows the truth rather than a stale promise.
+- Tokens appear the moment a connection completes (`rescoreNow` →
+  `quarry.refresh`), not on the 20s clock.
 
-**Restore the rest of the interface.** Trading panel (`trade.ts`) surfaced; resource counts, VP / "first to 12"; extend the existing Road/Rail/Harvester/Demolish tool bar rather than replacing it.
+**Deviations worth knowing about:**
 
-**Reconcile state.** `iso/game.ts` has its own state; `state.ts`/`actions.ts` are the restored dispatch layer. Pick one owner — do not run two state systems. Likely fold what the board needs into the iso state rather than reviving the old dispatcher wholesale.
+1. **The human's passive cargo trickle is gone.** `economyTick` used to pay
+   every player for connected harvesters; now it pays only the rival, who has
+   no board. Two income systems would have made the quarry decorative, and the
+   spec's loop ("matching gems harvests from whatever your network reaches")
+   only works if matching is the harvest.
+2. **State has one owner: the player purse.** The board owns gems, the market
+   owns live offers (escrow), neither keeps a balance. `state.ts`/`actions.ts`
+   were not revived — see J2.
+3. **`trade.ts` is now generic** over the resource key and takes its market
+   record as a parameter, so the iso game and the restored tests share one
+   implementation instead of two.
 
-**Acceptance**
-- Booting shows the map **and** the match-3 board together.
-- Matching gems increases the correct cargo, and only for connected industries.
-- Spending cargo builds road/rail as it does now; trading works.
-- Full loop playable: factory → harvester → connect → match → cargo → trade → expand.
-- `board.test.ts` and `trade.test.ts` stay green.
-- A boot test asserts the board mounts and a gem match changes cargo — so the game can never silently ship with no harvesting loop again.
+**Acceptance — all met:** map and board boot together; a match increases the
+correct cargo and nothing else; unreachable cargo pays nothing; cutting the
+line stops it; spending cargo still builds road/rail; trading works (4:1 bank
+plus escrowed offers the rival answers); `board.test.ts` and `trade.test.ts`
+green. The boot test asserts the board mounts and a gem match moves cargo, and
+both gates were mutation-checked — removing either one fails the suite.
 
-**Keep this session narrow.** Wire the board, gate it, surface the panels, stop. No sprite edits in the J1 commit — the last large multi-part attempt timed out from scope.
+No sprite edits, as the ticket asked.
 
-## J2. Decide the fate of `hexmap.ts`
-`[chore]`
+## J2. Decide the fate of `hexmap.ts` — done: deleted
 
-Unchanged. `hexmap.ts` is still on disk, imported by the restored `board.ts`/tests. Once J1 proves the iso grid feeds the board, confirm nothing live imports hexmap, delete it, and rebase the restored tests onto the iso grid. Separate commit from J1.
+J1 proved the iso grid feeds the board, and a grep confirmed the only importers
+left were `actions.ts` (itself dead once `trade.ts` stopped using `gainRes`) and
+three test files. Deleted: `hexmap.ts`, `actions.ts`, `state.ts`,
+`hexmap.test.ts`, `actions.test.ts`.
+
+`trade.test.ts` was rebased rather than deleted — same five tests, same
+assertions, but they build their own market record and traders instead of a hex
+map and the global `G`. Trading never touched the grid; that import was the last
+thread tying the suite to `hexmap.ts`. `src/game/` is now `board.ts`,
+`trade.ts`, `config.ts`.
+
+The hex-era rule tables in `config.ts` (TILES, COSTS, SABOTAGE/SECURITY, the
+hex geometry and sabotage timers) are unreferenced but deliberately kept, and
+labelled as such at the top of the file: sabotage is still a settled design
+decision, and re-tabling it from scratch would be worse than carrying the
+numbers.
 
 ---
 
@@ -109,11 +152,11 @@ The terrain invariant (Y2b) and the 16-mask remap test (Y4b) are already in plac
 
 ## Sequencing
 
-**J1 → J2 → Y4c → Y3 → Y5/Y6.**
+**~~J1 → J2~~ → Y4c → Y3 → Y5/Y6.**
 
-J1 first and alone — it's what turns this back into a game, and it's the one to keep narrow.
+J1 and J2 are merged. Y4c is next.
 
-Y4c before Y3 only because it's smaller and proves the "delete the generator, use the declared sprite" pattern one more time; order between them doesn't much matter. Both are quick now that the parser exists and can be checked by eye in a running game.
+Y4c before Y3 only because it's smaller and proves the "delete the generator, use the declared sprite" pattern one more time; order between them doesn't much matter. Both are quick now that the parser exists and can be checked by eye in a running game — and there is now a running game to check them in.
 
 ---
 

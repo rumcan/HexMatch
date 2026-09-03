@@ -5,8 +5,17 @@
 //
 //   renderer (E4) + track (E5) + economy (E6) + ai (E7)
 //
-// The hex + three.js path (hexmap.ts, MapView3D.ts, main-legacy.ts) was
-// deleted in the E11 cutover. E8's rule is honoured here: free setup builds
+// J1 joins the two halves of the project: the restored match-3 board
+// (`src/game/board.ts`) is mounted as the Quarry panel, and its harvest is
+// gated by the same reachable-cargo set `economy.ts` already computes for
+// scoring. Cargo has ONE owner — the player purse. The board owns gems, the
+// market owns live offers (escrow), and neither keeps a balance. The old
+// dispatcher was deliberately NOT revived — J2 deleted `hexmap.ts`,
+// `actions.ts` and `state.ts` once this file proved the iso grid feeds the
+// board, so `src/game/` is now board + trade + constants and nothing else.
+//
+// The hex + three.js view path (MapView3D.ts, main-legacy.ts) was deleted in
+// the E11 cutover. E8's rule is honoured here: free setup builds
 // are flagged `free` at the DATA level, never inferred from the phase, so no
 // timer can ever claw them back. That is the K1 bug class and it does not
 // recur.
@@ -36,7 +45,11 @@ import {
 } from "./economy";
 import { aiBuildStep } from "./ai";
 import { CARGO, INDUSTRY_BY_KEY, TRANSPORT, VP_TARGET, type Cargo } from "./config";
-import { MAP_W, MAP_H } from "../game/config";
+import { MAP_W, MAP_H, type ResKey } from "../game/config";
+import { createQuarry, GEM_TO_CARGO, type Quarry } from "./quarry";
+import { createIsoMarket, toBag, type CargoBag, type IsoMarket } from "./market";
+import { createBoardPanel, type BoardPanel } from "./board-panel";
+import { createTradePanel, type TradePanel } from "./trade-panel";
 import { joinFromSnapshot } from "./snapshot";
 export { joinFromSnapshot };
 
@@ -51,10 +64,13 @@ export { VP_TARGET };
 export type Tool = "road" | "rail" | "harvester" | "demolish";
 
 export interface PlayerState {
+  /** Stable market index — offers are routed by it (`trade.ts`). */
+  i: number;
   id: string;
   name: string;
   colour: string;
-  purse: Purse;
+  /** The single owner of this player's cargo. Every cargo key is present. */
+  purse: CargoBag;
   human: boolean;
   /** E8: free builds are DATA, not an inference from the phase. */
   freeTrack: number;
@@ -97,6 +113,8 @@ export function startIsoGame(root: HTMLElement) {
       <button data-tool="rail">Rail<small>2 ore + 1 stone · 3 VP</small></button>
       <button data-tool="harvester">Harvester<small>free · on industry</small></button>
       <button data-tool="demolish">Demolish<small>refund none</small></button>
+      <button data-panel="quarry" class="iso-alt">Quarry<small>match to harvest</small></button>
+      <button data-panel="trade" class="iso-alt">Trade<small>bank 4:1</small></button>
       <button data-act="recenter" class="iso-alt">Recentre</button>
     </div>
     <div class="iso-cost" id="iso-cost"></div>`;
@@ -112,8 +130,8 @@ export function startIsoGame(root: HTMLElement) {
   const score: ScoreState = createScoreState();
 
   const players: PlayerState[] = [
-    { id: "you", name: "You", colour: "#5aa8ff", purse: { ...START_PURSE }, human: true, freeTrack: FREE_SETUP_TRACK },
-    { id: "ai", name: "Rival", colour: "#ff7a5a", purse: { ...START_PURSE }, human: false, freeTrack: FREE_SETUP_TRACK },
+    { i: 0, id: "you", name: "You", colour: "#5aa8ff", purse: toBag(START_PURSE), human: true, freeTrack: FREE_SETUP_TRACK },
+    { i: 1, id: "ai", name: "Rival", colour: "#ff7a5a", purse: toBag(START_PURSE), human: false, freeTrack: FREE_SETUP_TRACK },
   ];
   const me = players[0], rival = players[1];
 
@@ -123,6 +141,44 @@ export function startIsoGame(root: HTMLElement) {
   let tool: Tool = "road";
   let toasts: Toast[] = [];
   let winner: PlayerState | null = null;
+
+  // ── J1: quarry + market + their panels ─────────────────────────────────
+  // Cargo has exactly one owner (the purse above). The board owns gems and the
+  // market owns live offers; the gate between board and purse is `quarry.ts`.
+  let boardPanel: BoardPanel | null = null;
+  let tradePanel: TradePanel | null = null;
+  let tradeDirty = true;
+  let reachSig = "";
+
+  const gainText = (gains: Partial<Record<Cargo, number>>, label: string) =>
+    (Object.entries(gains) as [Cargo, number][])
+      .map(([c, n]) => `+${n} ${CARGO[c].icon}`).join(" ") + (label ? ` · ${label}` : "");
+
+  const quarry: Quarry = createQuarry(eco, "you", {
+    onHarvest: (cargo, amount) => earn(me, { [cargo]: amount }),
+    onBlocked: (cargo, amount) =>
+      toast(`No route for ${CARGO[cargo].name} — ${amount} lost. Reconnect it.`, "bad"),
+    onGains: (gains, label) => toast(gainText(gains, label), "good"),
+    onTokens: (pool) => toast(`Tokens: ${(Object.keys(pool) as ResKey[])
+      .map((r) => CARGO[GEM_TO_CARGO[r]].name).join(", ")}`, "info"),
+    onChange: () => boardPanel?.render(),
+  });
+
+  const market: IsoMarket = createIsoMarket(players.map((p) => ({
+    i: p.i, id: p.id, name: p.name, human: p.human, purse: p.purse,
+  })));
+  const meTrader = market.players[0];
+
+  boardPanel = createBoardPanel(quarry.board, {
+    onSwap: (r1, c1, r2, c2) => {
+      void quarry.board.trySwap(r1, c1, r2, c2, performance.now());
+    },
+  });
+  tradePanel = createTradePanel(market, meTrader, {
+    onNotice: (text, kind) => toast(text, kind ?? "info"),
+    onChange: () => { tradeDirty = true; },
+  });
+  ui.append(boardPanel.el, tradePanel.el);
 
   const world: World = {
     grid,
@@ -144,8 +200,13 @@ export function startIsoGame(root: HTMLElement) {
   let preview: DragPreview | null = null;
 
   // ── helpers ────────────────────────────────────────────────────────────
+  let lastToastText = "", lastToastAt = -1e9;
   const toast = (text: string, kind: Toast["kind"] = "info") => {
-    toasts.push({ text, kind, until: performance.now() + 3200 });
+    const now = performance.now();
+    // the board fires per-gem; collapse repeats so a match is one line
+    if (text === lastToastText && now - lastToastAt < 1200) return;
+    lastToastText = text; lastToastAt = now;
+    toasts.push({ text, kind, until: now + 3200 });
   };
 
   const spend = (p: PlayerState, cost: Purse) => {
@@ -199,6 +260,11 @@ export function startIsoGame(root: HTMLElement) {
         }
       }
     }
+    // J1: the network just changed. Recompute what the quarry may pay and
+    // spawn tokens for cargo that became reachable — no waiting for the 20s
+    // clock, because "I connected it and nothing happened" is how this join
+    // would look broken.
+    quarry.refresh(performance.now());
   };
 
   // ── actions ────────────────────────────────────────────────────────────
@@ -290,16 +356,25 @@ export function startIsoGame(root: HTMLElement) {
     if (now - lastHarvest < HARVEST_MS) return;
     lastHarvest = now;
     const comp = buildAllComponents(track);
-    for (const p of players) {
-      const y = playerResources(eco, p.id, now, comp);
-      const gain: Purse = {};
-      let any = false;
-      for (const [cargo, v] of Object.entries(y) as [Cargo, number][]) {
-        const n = Math.max(0, Math.round(v));
-        if (n > 0) { gain[cargo] = n; any = true; }
-      }
-      if (any) earn(p, gain);
+    // J1: YOUR cargo comes from matching the quarry, not from a trickle — the
+    // connection decides what the board is allowed to pay. The rival has no
+    // board to play, so the passive yield stays as its income.
+    const y = playerResources(eco, rival.id, now, comp);
+    const gain: Purse = {};
+    for (const [cargo, v] of Object.entries(y) as [Cargo, number][]) {
+      const n = Math.max(0, Math.round(v));
+      if (n > 0) gain[cargo] = n;
     }
+    if (Object.keys(gain).length) earn(rival, gain);
+    // blockades expire on a clock, so the reachable set is re-read here too
+    quarry.refresh(now);
+  }
+
+  /** Per frame: board effects, the 20s token spawn, and the market clock. */
+  function quarryTick(now: number) {
+    market.tick(now);
+    if (phase !== "play") return;
+    quarry.tick(now);
   }
 
   function aiTick(now: number) {
@@ -355,6 +430,8 @@ export function startIsoGame(root: HTMLElement) {
     else if (phase === "setup-harvester") banner = "Place your first Harvester — it needs an industry in its 4×4 catchment";
     else if (phase === "won") banner = `${winner?.name} wins with ${vpFor(score, winner?.id ?? "")} VP`;
     else if (me.freeTrack > 0) banner = `${me.freeTrack} free track tiles remaining — connect your harvester to your Factory`;
+    else if (Object.keys(quarry.reach).length === 0) banner = "Nothing connected — the Quarry only pays cargo your network reaches";
+    else banner = "Match the tokened gems in the Quarry to harvest";
     elBanner.textContent = banner;
     elBanner.style.display = banner ? "block" : "none";
 
@@ -404,6 +481,25 @@ export function startIsoGame(root: HTMLElement) {
     ui.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((b) => {
       b.classList.toggle("on", b.dataset.tool === tool);
     });
+    // panels: the buttons show what is open, the quarry only repaints its
+    // reach strip when the reachable set actually changed (per-frame diffs of
+    // 81 cells would be waste)
+    ui.querySelectorAll<HTMLButtonElement>("[data-panel]").forEach((b) => {
+      const open = b.dataset.panel === "quarry"
+        ? boardPanel?.isVisible() ?? false
+        : tradePanel?.isVisible() ?? false;
+      b.classList.toggle("on", open);
+    });
+    const sig = (Object.entries(quarry.reach) as [Cargo, number][])
+      .map(([c, v]) => `${c}:${v.toFixed(2)}`).join(",");
+    if (sig !== reachSig) {
+      reachSig = sig;
+      boardPanel?.setReach(quarry.reach);
+    }
+    if (tradeDirty && tradePanel?.isVisible()) {
+      tradePanel.render();
+      tradeDirty = false;
+    }
   }
 
   // ── input ──────────────────────────────────────────────────────────────
@@ -472,7 +568,7 @@ export function startIsoGame(root: HTMLElement) {
             phase = "play";
             lastHarvest = performance.now();
             lastAi = performance.now();
-            toast("Now connect it to your Factory with road or rail.", "info");
+            toast("Now connect it to your Factory with road or rail — then match the tokened gems in the Quarry.", "info");
           }
         } else if (phase === "play") {
           if (tool === "harvester") placeHarvester(p.tx, p.ty, me, false);
@@ -498,6 +594,8 @@ export function startIsoGame(root: HTMLElement) {
     const b = (e.target as HTMLElement).closest("button") as HTMLButtonElement | null;
     if (!b) return;
     if (b.dataset.tool) { tool = b.dataset.tool as Tool; }
+    if (b.dataset.panel === "quarry") boardPanel?.setVisible(!boardPanel.isVisible());
+    if (b.dataset.panel === "trade") tradePanel?.setVisible(!tradePanel.isVisible());
     if (b.dataset.act === "recenter") {
       const f = factoryOf("you") ?? focus;
       cam = centerOnTile(cam, f.tx, f.ty);
@@ -548,6 +646,7 @@ export function startIsoGame(root: HTMLElement) {
     const frame = (t: number) => {
       if (disposed) return;
       economyTick(t);
+      quarryTick(t);
       aiTick(t);
       renderer!.render(t, overlayItems());
       paintUi(t);
@@ -569,6 +668,15 @@ export function startIsoGame(root: HTMLElement) {
     get factories() { return eco.factories; },
     get freeTrack() { return me.freeTrack; },
     grid, track, eco,
+    // ── J1: the quarry join, exposed so the boot test can prove the loop ──
+    get board() { return quarry.board; },
+    get reach() { return quarry.reach; },
+    quarry, market,
+    /** Refresh the reachable set now (spawn tokens for newly reached cargo). */
+    refreshQuarry: (now = performance.now()) => quarry.refresh(now),
+    /** The e2e twin of clicking two adjacent gems in the Quarry panel. */
+    swap: (r1: number, c1: number, r2: number, c2: number) =>
+      quarry.board.trySwap(r1, c1, r2, c2, performance.now()),
     setTool: (t: Tool) => { tool = t; },
     /** Screen position (device px, live camera) of a tile's top vertex — the
      *  e2e twin of __hex.view.screenPosOf. Read-only. */
