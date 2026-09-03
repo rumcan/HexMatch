@@ -177,6 +177,30 @@ VP awarded on connection completion, revoked on break, checked on every build an
 
 ## R5. E7–E11 — AI, rebalance, UI, netcode, cutover
 
+### E7 (AI) ✅ LANDED
+
+`src/iso/ai.ts`, covered by 31 unit tests in `tests/unit/iso-ai.test.ts`
+(201 unit tests total, typecheck and lint clean).
+
+- Candidates scored by (cargo scarcity in the AI's stock × output) ÷ path cost.
+- A* over the four diamond directions: 1 per flat tile, 3 per rough,
+  impassable for water and industry footprints, 0.3× on tiles already carrying
+  the AI's own network so it reuses trunk lines instead of laying parallel
+  spurs. `adjacentTo` lets it route to a tile beside an industry footprint it
+  cannot build on.
+- Builds rail when affordable, road otherwise; places the harvester only if
+  the laid track actually services it.
+- Deterministic: A* ties break by tile index and candidates break by industry
+  id, so identical states produce byte-identical builds. Verified against
+  `generateMap` fixtures.
+- Pacing is left alone — `aiBuildStep` is one decision, so the existing
+  `nextBuild`/`nextIncome`/`slowedUntil` scaffolding in `src/game/ai.ts` stays
+  in charge of when it fires.
+
+Not yet wired into `src/game/ai.ts`; that swap is part of E11's cutover.
+
+### E8–E11 — still open
+
 Per spec. E11 deletes `hexmap.ts`, `MapView3D.ts`, the terrain `.jpg` textures and the `three` dependency (~600KB), and regenerates the T2 snapshots.
 
 ---
