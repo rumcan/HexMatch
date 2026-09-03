@@ -58,7 +58,7 @@ export const INDUSTRY_BY_KEY: Record<string, IndustryDef> = Object.fromEntries(
 
 // Placement quota per industry type (E3): every cargo must be present.
 export const INDUSTRY_QUOTA: Record<string, number> = {
-  farm: 4, forest: 5, ore_mine: 4, quarry: 3, oil_rig: 3, gold_mine: 2,
+  farm: 5, forest: 6, ore_mine: 5, quarry: 4, oil_rig: 3, gold_mine: 2,
 };
 
 // ── Road vs rail (the core scoring split) ─────────────────────────────────
@@ -88,4 +88,4 @@ export const TRANSPORT: Record<"road" | "rail", TransportDef> = {
 // Road→rail upgrade pays only the difference (settled: yes, upgrade in place).
 export const UPGRADE_COST: Partial<Record<Cargo, number>> = { ore: 2 };
 
-export const VP_TARGET = 10; // rebalanced in E8
+export const VP_TARGET = 12;

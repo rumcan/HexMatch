@@ -263,24 +263,20 @@ function makeGenerated(s, gen) {
   const n = gen === "highlight" ? 1 : 16;
   const out = [];
   const color = gen === "rail" ? [122, 82, 36] : gen === "road" ? [86, 86, 86] : [255, 220, 40];
-  // Use the four face midpoints of the diamond for the four directions.
+  // G1: draw centre → diamond-edge midpoint. Do not half an a→b vector.
   const dirs = {
-    1: { a: [32, 16], b: [0, 0] },    // NE: top edge midpoint -> top vertex
-    2: { a: [32, 16], b: [64, 32] },  // SE: right edge midpoint -> right vertex
-    4: { a: [32, 16], b: [64, 64] },  // SW: bottom-right edge midpoint -> bottom vertex
-    8: { a: [32, 16], b: [0, 32] },   // NW: left edge midpoint -> left vertex
+    1: [48, 8],   // NE — midpoint of top-right edge    (32,0)-(64,16)
+    2: [48, 24],  // SE — midpoint of bottom-right edge (64,16)-(32,32)
+    4: [16, 24],  // SW — midpoint of bottom-left edge  (32,32)-(0,16)
+    8: [16, 8],   // NW — midpoint of top-left edge     (0,16)-(32,0)
   };
   for (let v = 0; v < n; v++) {
     const bits = gen === "highlight" ? 0 : v;
     const px = Buffer.alloc(CELL_W * CELL_H * 4);
     const cx = CELL_W / 2, cy = CELL_H / 2;
-    for (const [bit, d] of Object.entries(dirs)) {
+    for (const [bit, end] of Object.entries(dirs)) {
       if (!((bits & Number(bit)) !== 0)) continue;
-      // Draw a thick line from center to the edge midpoint along the edge.
-      const [ax, ay] = d.a, [bx, by] = d.b;
-      // We draw the "half piece" for the centre-to-edge length.
-      const ex = cx + (bx - ax) * 0.5;
-      const ey = cy + (by - ay) * 0.5;
+      const [ex, ey] = end;
       for (let y = 0; y < CELL_H; y++) {
         for (let x = 0; x < CELL_W; x++) {
           const dist = pointSegDist(x + 0.5, y + 0.5, cx, cy, ex, ey);
@@ -377,8 +373,14 @@ async function buildSlot(s) {
     let extra = 0;
     for (let x = 0; x < CELL_W; x++) {
       const i = x * 4;
-      if (!(probeBuf[i] === 0 && probeBuf[i + 1] === 0 && probeBuf[i + 2] === 255)) { extra = 1; break; }
+      const r = probeBuf[i], g = probeBuf[i + 1], b = probeBuf[i + 2];
+      const isBlue = r === 0 && g === 0 && b === 255;
+      const isWhite = r === 255 && g === 255 && b === 255;
+      // G2: page background is white; treat it like the blue key, not overlap content.
+      if (!isBlue && !isWhite) { extra = 1; break; }
     }
+    // 1×1 ground tiles never need a genuine overlap row — clone own last row.
+    if (s.footprint?.[0] === 1 && s.footprint?.[1] === 1 && s.name?.startsWith("terrain_")) extra = 0;
     const cell = await cropSprite(path, bx, by, extra);
     cells.push({ px: cell.px, w: CELL_W, h: CELL_H });
   }

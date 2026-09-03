@@ -27,27 +27,30 @@ import {
   type Camera, type GestureState,
 } from "./camera";
 import { IsoRenderer, type World } from "./renderer";
-import { generateMap, type Grid, type Industry } from "./grid";
+import { generateMap, resolveMapSeed, type Grid, type Industry } from "./grid";
 import {
   createTrack, drawBits, previewDrag, commitDrag, canBuildOn, hasTrack,
-  demolishTile, addCost, tIdx,
+  demolishTile, addCost, tIdx, playerNetwork,
   type Track, type TrackKind, type Purse, type DragPreview,
 } from "./track";
 import {
-  createScoreState, rescore, vpFor, isServiced, industriesInCatchment,
+  createScoreState, rescore, vpFor, industriesInCatchment,
   playerResources, buildAllComponents, resolveConnection, catchmentRect,
   type EconomyState, type Harvester, type ScoreState, type VpEvent,
 } from "./economy";
 import { aiBuildStep } from "./ai";
-import { CARGO, INDUSTRY_BY_KEY, TRANSPORT, type Cargo } from "./config";
+import { CARGO, INDUSTRY_BY_KEY, TRANSPORT, VP_TARGET, type Cargo } from "./config";
 import { MAP_W, MAP_H } from "../game/config";
+import { joinFromSnapshot } from "./snapshot";
+export { joinFromSnapshot };
 
 // ── tuning (E8's rebalance surface, all in one place) ─────────────────────
-export const VP_TARGET = 12;
 export const FREE_SETUP_TRACK = 12;
 export const HARVEST_MS = 3000;      // economy tick
 export const AI_BUILD_MS = 9000;
-export const START_PURSE: Purse = { stone: 10, ore: 6 };
+/** E8: start with stone for roads, no ore — rail is gated behind an ore mine. */
+export const START_PURSE: Purse = { stone: 12, ore: 0 };
+export { VP_TARGET };
 
 export type Tool = "road" | "rail" | "harvester" | "demolish";
 
@@ -107,7 +110,7 @@ export function startIsoGame(root: HTMLElement) {
   const elToasts = $("iso-toasts"), elCost = $("iso-cost"), elInspect = $("iso-inspect");
 
   // ── state ──────────────────────────────────────────────────────────────
-  const seed = (Math.random() * 0xffffffff) >>> 0;
+  const seed = resolveMapSeed();
   const grid: Grid = generateMap(seed);
   const track: Track = createTrack();
   const score: ScoreState = createScoreState();
@@ -222,7 +225,7 @@ export function startIsoGame(root: HTMLElement) {
     return true;
   }
 
-  function placeHarvester(tx: number, ty: number, p: PlayerState, free: boolean): boolean {
+  function placeHarvester(tx: number, ty: number, p: PlayerState, _free: boolean): boolean {
     if (!canBuildOn(grid, "road", tx, ty)) { toast("Can't build there.", "bad"); return false; }
     if (eco.harvesters.some((h) => h.tx === tx && h.ty === ty)) {
       toast("A harvester is already there.", "bad"); return false;
@@ -232,10 +235,7 @@ export function startIsoGame(root: HTMLElement) {
       toast("A harvester needs an industry in its 4×4 catchment.", "bad");
       return false;
     }
-    if (!free && !isServiced(track, h)) {
-      toast("A harvester must touch road or rail.", "bad");
-      return false;
-    }
+    // G5: harvesters seed the network; they no longer need existing track.
     eco.harvesters.push(h);
     syncWorld();
     rescoreNow();
@@ -427,10 +427,12 @@ export function startIsoGame(root: HTMLElement) {
     const p = renderer?.pick(x, y);
     if (!p) return;
     const isTrackTool = tool === "road" || tool === "rail";
-    if (phase === "play" && isTrackTool && e.isPrimary
-        && canBuildOn(grid, tool as TrackKind, p.tx, p.ty)) {
-      drag = { ax: p.tx, ay: p.ty };
-      return;
+    if (phase === "play" && isTrackTool && e.isPrimary) {
+      const net = playerNetwork(track, "you", eco.factories, eco.harvesters);
+      if (canBuildOn(grid, tool as TrackKind, p.tx, p.ty, net)) {
+        drag = { ax: p.tx, ay: p.ty };
+        return;
+      }
     }
     g = pointerDown(g, { id: e.pointerId, x, y });
   });
@@ -445,7 +447,8 @@ export function startIsoGame(root: HTMLElement) {
       // Free setup tiles make the whole drag affordable regardless of purse.
       const purse: Purse = me.freeTrack > 0
         ? { stone: 9999, ore: 9999 } : me.purse;
-      preview = previewDrag(grid, track, kind, purse, drag.ax, drag.ay, p.tx, p.ty, true);
+      const net = playerNetwork(track, "you", eco.factories, eco.harvesters);
+      preview = previewDrag(grid, track, kind, purse, drag.ax, drag.ay, p.tx, p.ty, true, net);
       return;
     }
     const out = pointerMove(g, { id: e.pointerId, x, y }, cam);
@@ -456,7 +459,8 @@ export function startIsoGame(root: HTMLElement) {
   const onUp = (e: PointerEvent) => {
     const [x, y] = pos(e);
     if (drag && preview) {
-      commitTrackDrag(me, preview, tool === "rail" ? "rail" : "road");
+      if (preview.tiles.length === 0) toast("Track must extend your network.", "bad");
+      else commitTrackDrag(me, preview, tool === "rail" ? "rail" : "road");
       drag = null; preview = null; downAt = null;
       g = pointerUp(g, e.pointerId);
       return;

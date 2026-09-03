@@ -15,6 +15,7 @@
 // happens today.
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_W, MAP_H } from "../game/config";
+import { generateMap } from "./grid";
 import type { Cargo } from "./config";
 import { createTrack, type Track } from "./track";
 import type { Harvester, Factory, ScoreState, ConnKind } from "./economy";
@@ -23,7 +24,7 @@ import type { Harvester, Factory, ScoreState, ConnKind } from "./economy";
  * Bump on ANY change to the snapshot shape or to seed-derived generation.
  * A guest whose version differs cannot be trusted to regenerate the same map.
  */
-export const SNAPSHOT_VERSION = 1;
+export const SNAPSHOT_VERSION = 2;
 
 export const EXPECTED_TRACK_BYTES = MAP_W * MAP_H;
 
@@ -195,3 +196,10 @@ export function applySnapshot(s: unknown, localSeed?: number): AppliedSnapshot {
 
 /** Rough wire size in bytes, for the bandwidth assertion in the tests. */
 export const snapshotBytes = (s: Snapshot): number => JSON.stringify(s).length;
+
+/** Guest join: apply snapshot then regenerate the host map from its seed (R6). */
+export function joinFromSnapshot(raw: unknown) {
+  const applied = applySnapshot(raw);
+  const grid = generateMap(applied.seed);
+  return { applied, grid };
+}

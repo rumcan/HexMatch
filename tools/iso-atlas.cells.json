@@ -17,7 +17,8 @@
     "oil5": "src/assets/sprites/png/industries/oilwell/oilwell_anim5.gimp.png",
     "oil6": "src/assets/sprites/png/industries/oilwell/oilwell_anim6.gimp.png",
     "factory": "src/assets/sprites/png/industries/factory.png",
-    "hq": "src/assets/sprites/png/miscellaneous/hq.png"
+    "hq": "src/assets/sprites/png/miscellaneous/hq.png",
+    "depot": "src/assets/sprites/png/stations/RevStatBuilding_DanMacK.png"
   },
   "sprites": [
     {
@@ -217,29 +218,29 @@
     {
       "name": "depot_blue",
       "footprint": [1, 1],
-      "crop": [162, 249, 65, 51],
-      "source": "hq",
+      "crop": [1, 1, 48, 36],
+      "source": "depot",
       "tint": [70, 130, 220]
     },
     {
       "name": "depot_red",
       "footprint": [1, 1],
-      "crop": [162, 249, 65, 51],
-      "source": "hq",
+      "crop": [1, 1, 48, 36],
+      "source": "depot",
       "tint": [224, 70, 70]
     },
     {
       "name": "depot_purple",
       "footprint": [1, 1],
-      "crop": [162, 249, 65, 51],
-      "source": "hq",
+      "crop": [1, 1, 48, 36],
+      "source": "depot",
       "tint": [190, 92, 255]
     },
     {
       "name": "depot_green",
       "footprint": [1, 1],
-      "crop": [162, 249, 65, 51],
-      "source": "hq",
+      "crop": [1, 1, 48, 36],
+      "source": "depot",
       "tint": [78, 196, 90]
     },
 

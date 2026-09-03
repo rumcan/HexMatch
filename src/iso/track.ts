@@ -77,14 +77,59 @@ export const bitsAt = (t: Track, kind: TrackKind, tx: number, ty: number): numbe
  * Can `kind` be built on this tile? Water never; rail additionally needs flat
  * ground (TRANSPORT.rail.onRough === false); industry footprints block both.
  */
-export function canBuildOn(grid: Grid, kind: TrackKind, tx: number, ty: number): boolean {
+export function canBuildOn(
+  grid: Grid, kind: TrackKind, tx: number, ty: number, network?: Set<number>,
+): boolean {
   if (!inMapT(tx, ty)) return false;
   const i = tIdx(tx, ty);
   const terrain = grid.terrain[i];
   if (terrain === WATER) return false;
   if (terrain === ROUGH && !TRANSPORT[kind].onRough) return false;
   if (grid.occupancy[i] >= 0) return false;
+  if (network) {
+    if (network.has(i)) return true;
+    let adj = false;
+    for (const d of DIRS) {
+      const nx = tx + DIR[d][0], ny = ty + DIR[d][1];
+      if (inMapT(nx, ny) && network.has(tIdx(nx, ny))) { adj = true; break; }
+    }
+    if (!adj) return false;
+  }
   return true;
+}
+
+export function playerNetwork(
+  track: Track,
+  owner: string,
+  factories: { owner: string; tx: number; ty: number }[],
+  harvesters: { owner: string; tx: number; ty: number }[],
+): Set<number> {
+  const seen = new Set<number>();
+  const stack: number[] = [];
+  const seed = (tx: number, ty: number) => {
+    if (!inMapT(tx, ty)) return;
+    const i = tIdx(tx, ty);
+    if (seen.has(i)) return;
+    seen.add(i);
+    stack.push(i);
+  };
+  for (const f of factories) if (f.owner === owner) seed(f.tx, f.ty);
+  for (const h of harvesters) if (h.owner === owner) seed(h.tx, h.ty);
+  while (stack.length) {
+    const i = stack.pop()!;
+    const x = i % MAP_W, y = (i / MAP_W) | 0;
+    for (const d of DIRS) {
+      const nx = x + DIR[d][0], ny = y + DIR[d][1];
+      if (!inMapT(nx, ny)) continue;
+      const ni = tIdx(nx, ny);
+      if (seen.has(ni)) continue;
+      if (hasTrack(track, "road", nx, ny) || hasTrack(track, "rail", nx, ny)) {
+        seen.add(ni);
+        stack.push(ni);
+      }
+    }
+  }
+  return seen;
 }
 
 // ── autotiling ────────────────────────────────────────────────────────────
@@ -214,29 +259,31 @@ export interface DragPreview {
 export function previewDrag(
   grid: Grid, t: Track, kind: TrackKind, purse: Purse,
   ax: number, ay: number, bx: number, by: number, xFirst = true,
+  network?: Set<number>,
 ): DragPreview {
   const path = lPath(ax, ay, bx, by, xFirst);
   const tiles: [number, number][] = [];
   const unaffordable: [number, number][] = [];
   let cost: Purse = {};
   let truncated = false;
+  const growing = network ? new Set(network) : undefined;
 
   for (let i = 0; i < path.length; i++) {
     const [x, y] = path[i];
-    if (!canBuildOn(grid, kind, x, y)) { truncated = true; break; }
+    if (!canBuildOn(grid, kind, x, y, growing)) { truncated = true; break; }
     const c = tileCost(t, kind, x, y);
     const next = addCost(cost, c);
     if (!canAfford(purse, next)) {
-      // affordable prefix only; the rest previews red
       for (let j = i; j < path.length; j++) {
         const [ux, uy] = path[j];
-        if (!canBuildOn(grid, kind, ux, uy)) { truncated = true; break; }
+        if (!canBuildOn(grid, kind, ux, uy, growing)) { truncated = true; break; }
         unaffordable.push([ux, uy]);
       }
       break;
     }
     cost = next;
     tiles.push([x, y]);
+    growing?.add(tIdx(x, y));
   }
   return { tiles, cost, unaffordable, truncated };
 }

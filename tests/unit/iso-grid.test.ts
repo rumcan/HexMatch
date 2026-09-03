@@ -14,6 +14,15 @@ function hashGrid(g: ReturnType<typeof generateMap>): string {
   ].join("|");
 }
 
+import { resolveMapSeed } from "../../src/iso/grid";
+
+describe("R6 resolveMapSeed", () => {
+  it("honours ?seed= and rejects junk", () => {
+    expect(resolveMapSeed("?seed=42")).toBe(42);
+    expect(() => resolveMapSeed("?seed=nope")).toThrow(/Invalid map seed/);
+  });
+});
+
 describe("R6 deterministic seed handling", () => {
   it("requires an explicit seed: no undefined-map fallback remains", () => {
     // This test is a type assertion at compile time; at runtime it simply
@@ -75,6 +84,49 @@ describe("E3 terrain", () => {
     expect(g.terrain.length).toBe(MAP_W * MAP_H);
     for (const v of g.terrain) {
       expect([GRASS, WATER, ROUGH]).toContain(v);
+    }
+  });
+
+  it("has no interior lakes — every land tile is 4-reachable from every other (G3)", () => {
+    for (const seed of [42, 1, 7, 123, 2026, 20260902]) {
+      const g = generateMap(seed);
+      const land: number[] = [];
+      for (let i = 0; i < g.terrain.length; i++) if (g.terrain[i] !== WATER) land.push(i);
+      expect(land.length).toBeGreaterThan(0);
+      const start = land[0];
+      const seen = new Set<number>([start]);
+      const stack = [start];
+      while (stack.length) {
+        const i = stack.pop()!;
+        const x = i % MAP_W, y = (i / MAP_W) | 0;
+        for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]] as const) {
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+          const ni = ny * MAP_W + nx;
+          if (seen.has(ni) || g.terrain[ni] === WATER) continue;
+          seen.add(ni);
+          stack.push(ni);
+        }
+      }
+      expect(seen.size, `seed ${seed}`).toBe(land.length);
+    }
+  });
+
+  it("gives every industry at least one adjacent land tile", () => {
+    const g = generateMap(42);
+    for (const ind of g.industries) {
+      let ok = false;
+      for (let y = ind.ty - 1; y <= ind.ty + ind.h && !ok; y++) {
+        for (let x = ind.tx - 1; x <= ind.tx + ind.w && !ok; x++) {
+          const insideX = x >= ind.tx && x < ind.tx + ind.w;
+          const insideY = y >= ind.ty && y < ind.ty + ind.h;
+          if (insideX && insideY) continue;
+          if (!insideX && !insideY) continue;
+          if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) continue;
+          if (g.terrain[y * MAP_W + x] !== WATER) ok = true;
+        }
+      }
+      expect(ok, JSON.stringify(ind)).toBe(true);
     }
   });
 
