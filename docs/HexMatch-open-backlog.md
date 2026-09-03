@@ -139,4 +139,4 @@ Hold until G6 and G8 are done; the legacy path is a useful comparison point whil
 
 Prune to `terrain/`, `industries/`, `infrastructure/`, `landscape/`, `trees/temperate/`, `miscellaneous/` and the `stations/` working files. Keep the OpenGFX attribution in the README.
 
-**Do this after G6**, which needs `landscape031.png` and the rail sheets. Cross-check against `tools/iso-atlas.cells.json` before deleting — and note the G7 atlas gate makes this safe: run `npm run slice-atlas` after pruning and CI tells you immediately if you cut too deep.
+**Do this after G6**, which needs `landscape031.png` and the rail sheets. Cross-check against `tools/iso-atlas.cells.json` before deleting — and note the G7 atlas gate makes this safe: run `npm run slice-atlas` after pruning and CI tells you immediately if you cut too deep. 
