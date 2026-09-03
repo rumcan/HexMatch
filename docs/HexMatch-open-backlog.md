@@ -1,92 +1,142 @@
-HexMatch — open backlog
+# HexMatch — open backlog
 
-Supersedes HexMatch-open-backlog.md. Audited against main @ fc4ebb4: npm ci, tsc --noEmit clean, 242 unit tests passing across 17 files.
+Supersedes `HexMatch-open-backlog-v2.md`. Audited against `main` @ `a265fc9` (PR #6 merged): `npm ci`, `tsc --noEmit` clean, **242 unit tests passing** across 17 files, **76 e2e tests registered** across 5 files.
 
-Work order: G6 → G8 → E8 (pass 2) → E11 → R9.
+**Work order: E13 → G6 → G8 → E8 (pass 2) → E11 → R9.** E14 any time.
 
-Verification of the last batch
+---
 
-Each claim was checked against source and against the rebuilt atlas, not taken on trust.
+## Landed in E12
 
-Ticket	Verified	Evidence
-G1 road/rail directions	✅	dirs table in slice-atlas.mjs now matches the four edge midpoints exactly. I re-derived it independently from the atlas: for all 16 masks, every set bit has pixels within 2px of its expected midpoint and every unset bit has none. road_1111 renders four arms.
-G2 white seam row	✅	Scanned every terrain_* sprite's bottom row in atlas@1x.png for opaque white — none found.
-G3 interior lakes	✅	Lake loop gone; comment documents keeping only the largest 4-connected landmass so ragged islets can't strand industries. Reachability test present in iso-grid.test.ts.
-G4 depot size	✅	depot_blue is now 48×36 (was 65×51), anchor [24,35], four tints. Within the ≤64×40 target.
-G5 network-grown track	✅	canBuildOn takes an optional network: Set<number>; previewDrag carries a growing set so a drag extends tile by tile without jumping gaps.
-G7 atlas CI	✅	.github/workflows/ci.yml runs slice-atlas then git diff --exit-code assets/iso-atlas/.
-E8 first pass	✅	VP_TARGET = 12, START_PURSE = { stone: 12, ore: 0 }, quotas raised (farm 5, forest 6, ore_mine 5, quarry 4). Rail gating is real — rail needs 2 ore and you start with none.
-R6 seed	✅	resolveMapSeed() and joinFromSnapshot() replace the bare Math.random() call in game.ts.
+Verified independently against the merged tree, not taken from the PR description.
 
-The road-direction fix is worth calling out: the independent pixel check across all 16 masks passed clean, which is the strongest possible confirmation that the geometry is right rather than merely different.
+| Item | Verified |
+|---|---|
+| Iso is the standalone default | `src/App.tsx` boots `startIsoGame` directly; legacy only at `?legacy=1`. |
+| Legacy behind a lazy import | `await import("./game/main-legacy")` inside the effect, with a comment explaining that a static import would defeat it. |
+| Bundle fence | Default chunk 234.6 kB with **zero** `MapView3D` / `THREE` / `BufferGeometry` references. Legacy chunk 640.3 kB carries them. Measured on a real build. |
+| Rename preserves history | Git records `main.ts` → `main-legacy.ts` at 95% similarity, not delete+add. |
+| E11 round-test flake fixed | `findSouthCorridor()` checks bounds, water and occupancy. **Reproduced the original defect independently**: a 2000-seed sweep against the old logic put the factory off-map on 198 seeds (9.9%), consistent with the reported 8.5%. This was a test betting on luck, not an engine bug. |
+| Suite stability | 8 consecutive `vitest run` invocations, 242/242 every time. |
+| Atlas gate | `npm run slice-atlas` reproduces `assets/iso-atlas/` byte-identically. |
+| New DOM e2e | `tests/e2e/iso-game.spec.ts` registers 8 tests; `window.__iso.tileScreenAt` added as the coordinate probe. |
 
-Open
-G6. Road/rail sprites are programmer-art lines, not OpenGFX track
+---
 
-[assets] [polish] — next up
+# Open
 
-makeGenerated() in tools/slice-atlas.mjs still draws road and rail as flat grey ([86,86,86]) and brown ([122,82,36]) line segments. The geometry is now correct, so this is purely a visual swap.
+## E13. CI does not run the e2e suite — 76 tests never execute automatically
+`[chore] [testing] [P0]` — do this first
 
-Replace the generated arms with real half-pieces sliced from OpenGFX:
+`.github/workflows/ci.yml` runs `npm ci`, `typecheck`, `npm test` and the atlas gate. There is **no e2e job**. All 76 Playwright tests across 5 files — including the new `iso-game.spec.ts` that exercises real pointer input, real rAF rendering and real canvas pixel assertions — run only when someone remembers to run them locally.
 
-Road: src/assets/sprites/png/landscape/landscape031.png
-Rail: src/assets/sprites/png/infrastructure/rail/, with base-1005-rail-infra.pnml for sprite indices
+This was flagged during the E12 review because the sandbox couldn't reach the Chrome-for-Testing CDN, so those 8 new tests are **currently unverified in a browser by anyone**. That's a gap in the merge, but the durable problem is the missing CI job: without it, T1 and T2 were only half-delivered, and the mobile viewport coverage from T2 has the same exposure.
 
-Keep the compositing approach — slice one half-piece per kind, rotate and mirror into the four directions, overlay to build all 16 masks. Do not slice 16 separate sprites; alignment won't hold across separate crops.
+**Fix**
 
-Acceptance
+```yaml
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22", cache: npm }
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+```
 
-The G1 pixel test still passes unchanged after the swap. This is the guard that matters — it proves the art change didn't move the connection points.
-Half-pieces meet the tile edge at the exact midpoint and at consistent width, so two adjacent tiles form one continuous run with no step or gap.
-Level crossing sprite added for tiles carrying both road and rail.
-Contact sheet regenerated; CI atlas check green.
-G8. Dark wedge artifacts scattered across grass tiles
+**Acceptance**
+- E2E job green on `main` and required on PRs.
+- The 8 `iso-game.spec.ts` tests pass in a real browser — this is the first actual confirmation they work.
+- Failure artifacts (report, traces, screenshots) uploaded so a red run is diagnosable without a local repro.
+- Someone runs `npm run test:e2e` locally once before this lands, so a failure is triaged as a genuine bug rather than a CI-config problem.
 
-[bug] [renderer] [investigate]
+If the full matrix of 5 viewport projects is too slow for every PR, run desktop chromium on PRs and the full matrix nightly. Don't drop the mobile projects entirely — G4 and G5 both changed things the mobile specs assert on.
 
-Blocked on fresh screenshots. G2 is fixed, so re-capture at the same zoom as the earlier close-up before doing anything else — the white-row bug may have been the whole cause.
+---
 
-If wedges persist, isolate in this order:
+## E14. Remove the tracked patch file
+`[chore]` — two minutes
 
-Render a full map of terrain_grass_a only, chunk caching disabled. If clean, the cache is at fault.
-Re-enable chunk caching. If wedges return at 8×8 tile intervals, it's a chunk-boundary seam.
-If they appear only where terrain_grass_b is placed, that variant is the problem — it renders noticeably more olive than grass_a and may be a field tile rather than grass.
+`01a0664c-881a-7e2d-a962-ae437c7347a9.patch` was committed at `67ba58b` and is still on `main` after the merge. It's now a duplicate of history that will confuse anyone browsing the root.
 
-Attach before/after captures to the ticket either way.
+`git rm 01a0664c-881a-7e2d-a962-ae437c7347a9.patch`. While there, add `*.patch` to `.gitignore` so the next one doesn't land the same way.
 
-E8. Economy rebalance — pass 2
+Also decide on `tools/peek.mjs` — its own header calls it a "scratch helper". Either document it in the README's tooling section as a kept debugging tool, or remove it. It's genuinely useful for headless sprite inspection, so documenting is probably right.
 
-[design] [gameplay]
+---
 
-Pass 1 landed the structure. What it can't tell you is whether the curve is any good; that needs play.
+## G6. Road/rail sprites are programmer-art lines, not OpenGFX track
+`[assets] [polish]`
 
-The gating now works as designed: START_PURSE gives 12 stone and zero ore, and rail costs 2 ore + 1 stone, so you must road out to an ore mine before rail becomes available. Verify in play that this ordering actually bites — with ore_mine quota raised to 5 on a now-larger landmass, an ore mine may sit close enough to the start that rail is reachable almost immediately, which collapses the risk/reward choice into a menu.
+`makeGenerated()` in `tools/slice-atlas.mjs` still draws road and rail as flat grey (`[86,86,86]`) and brown (`[122,82,36]`) segments. Geometry is correct as of G1, so this is purely a visual swap.
 
-Things to watch and tune:
+Slice real half-pieces from OpenGFX:
+- Road: `src/assets/sprites/png/landscape/landscape031.png`
+- Rail: `src/assets/sprites/png/infrastructure/rail/`, with `base-1005-rail-infra.pnml` for sprite indices
 
-Time-to-first-rail. If it's under a couple of minutes, either lower the ore quota or raise rail's cost.
-Whether 12 stone plus the free setup track is enough to reach a first industry on a sparse map roll.
-Whether VP_TARGET = 12 produces a game length you want, given road scores 1 and rail 3 per connection.
-Whether the 1.6× rail throughput multiplier plus 3 VP makes road strictly obsolete once ore flows. If so, road needs a niche — cheaper on rough terrain is one lever already in the data (onRough).
+Slice **one half-piece per kind**, rotate and mirror into four directions, overlay for all 16 masks. Do not slice 16 separate crops; alignment won't hold across them.
 
-File individual follow-ups per lever rather than one open-ended rebalance ticket.
+**Acceptance**
+- The G1 pixel test passes **unchanged** after the swap. This is the load-bearing guard — it proves the new art didn't move the connection points. Do not regenerate or relax that test as part of this ticket.
+- Half-pieces meet the tile edge at the exact midpoint at consistent width, so adjacent tiles form a continuous run with no step or gap.
+- Level-crossing sprite added for tiles carrying both road and rail.
+- Contact sheet regenerated; G7 atlas gate green.
 
-E11. Cutover — delete the hex path
+---
 
-[chore]
+## G8. Dark wedge artifacts scattered across grass tiles
+`[bug] [renderer] [investigate]`
 
-Still present: src/game/hexmap.ts, src/map3d/MapView3D.ts, "three": "^0.185.1", the terrain .jpg textures, and the ?legacy=1 branch in App.tsx.
+Still blocked on fresh screenshots. G2 fixed the white seam row, which may have been the entire cause — **re-capture at the same zoom as the original close-up before doing any work here.**
 
-Removing three drops roughly 600KB from the bundle. Regenerate the T2 Playwright snapshots afterwards — all of them will need rebaselining against the iso renderer.
+If wedges persist, isolate in order:
+1. Full map of `terrain_grass_a` only, chunk caching **disabled**. Clean → the cache is at fault.
+2. Re-enable chunk caching. Wedges returning at 8×8 tile intervals → chunk-boundary seam.
+3. Wedges only where `terrain_grass_b` sits → that variant is the problem. It renders noticeably more olive than `grass_a` and may be a field tile rather than grass.
 
-Hold until G6 and G8 are done. The legacy path is a useful comparison point while the iso renderer is still being corrected, and it costs nothing but bundle size to keep for now.
+Attach before/after captures either way.
 
-R9. Prune the OpenGFX asset tree
+---
 
-[chore] [repo-size]
+## E8. Economy rebalance — pass 2
+`[design] [gameplay]`
 
-src/assets/sprites/ is still 19MB — the whole OpenGFX tree including aircraft, ships, trains, toyland, arctic, tropical, African manager faces, .xcf/.psd sources and .pnml definitions. The game uses a small fraction.
+Pass 1 landed the structure: `VP_TARGET = 12`, `START_PURSE = { stone: 12, ore: 0 }`, quotas raised. The gating is real — rail costs `2 ore + 1 stone` and you start with no ore, so you must road out to an ore mine first.
 
-Prune to terrain/, industries/, infrastructure/, landscape/, trees/temperate/, miscellaneous/ and the stations/ working files. Keep the OpenGFX attribution in the README regardless.
+What pass 1 can't tell you is whether the curve is good. Watch:
 
-Do this after G6, which needs landscape031.png and the rail infrastructure sheets — and confirm the exact source list against tools/iso-atlas.cells.json before deleting, since the CI atlas check (G7) will now catch a missing source immediately. That's a nice property: run npm run slice-atlas after pruning and CI tells you if you cut too deep.
+- **Time-to-first-rail.** `ore_mine` quota is 5 on a landmass that grew when G3 removed the lakes. An ore mine may now sit close enough to the start that rail arrives almost immediately, collapsing the road-vs-rail decision into a menu. If it's under a couple of minutes, lower the quota or raise rail's cost.
+- Whether 12 stone plus the free setup track reliably reaches a first industry on a sparse map roll.
+- Whether `VP_TARGET = 12` gives the game length you want, with road at 1 VP and rail at 3.
+- Whether rail's 1.6× throughput *and* 3 VP makes road strictly obsolete once ore flows. If so road needs a niche — `onRough` is a lever already in the data.
+
+File one follow-up per lever rather than a single open-ended rebalance ticket.
+
+---
+
+## E11. Cutover — delete the hex path
+`[chore]`
+
+Still present: `src/game/hexmap.ts`, `src/map3d/MapView3D.ts`, `"three": "^0.185.1"`, the legacy `.jpg` terrain textures (824 kB, still emitted to `dist/`), `src/game/main-legacy.ts`, and the `?legacy=1` branch in `App.tsx`.
+
+E12 already achieved the important part — legacy costs the default bundle nothing. So this is now pure housekeeping rather than a performance fix, and the urgency has dropped accordingly.
+
+Hold until G6 and G8 are done; the legacy path is a useful comparison point while the iso renderer is still being corrected. When it goes, the legacy Playwright specs (`touch-camera.spec.ts` and the legacy boot tests) go with it, and the T2 snapshots need rebaselining.
+
+---
+
+## R9. Prune the OpenGFX asset tree
+`[chore] [repo-size]`
+
+`src/assets/sprites/` is **19 MB** — the whole OpenGFX tree including aircraft, ships, trains, toyland, arctic, tropical, manager faces, `.xcf`/`.psd` sources and `.pnml` definitions. The game uses a small fraction.
+
+Prune to `terrain/`, `industries/`, `infrastructure/`, `landscape/`, `trees/temperate/`, `miscellaneous/` and the `stations/` working files. Keep the OpenGFX attribution in the README.
+
+**Do this after G6**, which needs `landscape031.png` and the rail sheets. Cross-check against `tools/iso-atlas.cells.json` before deleting — and note the G7 atlas gate makes this safe: run `npm run slice-atlas` after pruning and CI tells you immediately if you cut too deep.
