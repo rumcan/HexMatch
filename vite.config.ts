@@ -11,6 +11,7 @@ const __dirname = path.dirname(__filename);
 // https://vite.dev/config/
 export default defineConfig({
   base: "/hexmatch/",
+  server: { host: true, allowedHosts: [".e2b.app"] },
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {

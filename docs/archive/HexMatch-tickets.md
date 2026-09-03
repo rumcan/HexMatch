@@ -63,8 +63,31 @@ Road and rail: extract **one half-piece each** and have the slicer composite all
 
 ---
 
-## R2. E4 — isometric renderer
+## R2. E4 — isometric renderer  ✅ LANDED
 `[renderer] [large]`
+
+**Done.** `src/iso/camera.ts`, `src/iso/atlas.ts`, `src/iso/depth.ts`,
+`src/iso/renderer.ts`, plus a visual harness at `iso-demo.html` →
+`src/iso/demo.ts` (`npm run dev`, then `/hexmatch/iso-demo.html`).
+Covered by 32 new unit tests in `tests/unit/iso-{camera,depth,renderer}.test.ts`
+(108 unit tests total, typecheck and lint clean).
+
+- Three stacked canvases; terrain and structures redraw only when dirty.
+- 8×8 chunk cache into `OffscreenCanvas`, keyed by zoom, invalidated per tile
+  and dropped wholesale on a zoom change.
+- Culling from the four screen corners, padded by `cullPad()` = largest
+  footprint + tallest sprite in tiles.
+- Tier-1 max-corner key + Tier-2 Kahn topological sort over only the
+  screen-overlapping subset; Tier-3 cycles are reported, not silently dropped.
+- Two-stage picking: flat `screenToTile`, then front-to-back alpha-mask pass.
+- Integer zoom steps 0.5/1/2 with pre-rendered atlases, `Math.floor` on every
+  draw coordinate, anchored pinch/wheel zoom, pointer promotion, camera clamp.
+
+Still open against E4: the committed reference-PNG fixture test and porting
+`touch-camera.spec.ts` onto the new view — both are blocked on E11 mounting the
+iso renderer as the game's actual map, so they land with the cutover.
+
+The original brief follows.
 
 The single biggest remaining piece. Full spec in `docs/HexMatch-isometric-spec.md` § E4. Summary of what must be built in `src/iso/renderer.ts`:
 
@@ -146,6 +169,6 @@ Do this **after R1** so you don't delete a source the cell map turns out to need
 
 # Suggested order
 
-**R1 → R2 → R3 → R4 → R5.** R6 and R7 are five-minute fixes; do them now. R8 before R2. R9 after R1.
+**R1 ✅ → R2 ✅ → R3 → R4 → R5.** R6 and R7 are five-minute fixes; do them now. R8 before R2. R9 after R1.
 
 R1 is the real blocker: the renderer can't be meaningfully tested against four terrain tiles, and the depth-sort and picking acceptance criteria both require multi-tile sprites with real anchors to prove anything.
