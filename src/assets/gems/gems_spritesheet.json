@@ -1,0 +1,55 @@
+{
+  "image": "gems_spritesheet.png",
+  "frameWidth": 128,
+  "frameHeight": 128,
+  "frames": [
+    {
+      "name": "cow",
+      "index": 0,
+      "x": 0,
+      "y": 0,
+      "w": 128,
+      "h": 128
+    },
+    {
+      "name": "tree",
+      "index": 1,
+      "x": 128,
+      "y": 0,
+      "w": 128,
+      "h": 128
+    },
+    {
+      "name": "brick",
+      "index": 2,
+      "x": 256,
+      "y": 0,
+      "w": 128,
+      "h": 128
+    },
+    {
+      "name": "wheat",
+      "index": 3,
+      "x": 384,
+      "y": 0,
+      "w": 128,
+      "h": 128
+    },
+    {
+      "name": "stone",
+      "index": 4,
+      "x": 512,
+      "y": 0,
+      "w": 128,
+      "h": 128
+    },
+    {
+      "name": "coin",
+      "index": 5,
+      "x": 640,
+      "y": 0,
+      "w": 128,
+      "h": 128
+    }
+  ]
+}
