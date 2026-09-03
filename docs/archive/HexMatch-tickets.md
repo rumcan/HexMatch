@@ -225,9 +225,38 @@ clean).
 Not yet wired into `src/game/net.ts`, which still sends hex `edges`/`verts`/
 `tiles`. That swap is part of E11's cutover.
 
-### E8, E9, E11 — still open
+### E11 (partial) — the game is now playable ✅
 
-Per spec. E11 deletes `hexmap.ts`, `MapView3D.ts`, the terrain `.jpg` textures and the `three` dependency (~600KB), and regenerates the T2 snapshots.
+`src/iso/game.ts` + `src/iso/game.css`, mounted from `App.tsx`. The isometric
+game is the DEFAULT view; the old hex/3D game is still reachable at `?legacy=1`.
+Covered by 8 integration tests in `tests/unit/iso-game.test.ts` that boot the
+real module in jsdom and play a round (232 unit tests total).
+
+What is playable now:
+- Setup: place Factory → place first Harvester → 12 free track tiles.
+- Tools: Road / Rail / Harvester / Demolish (keys 1–4), drag-to-build with a
+  live cost + VP readout, industry and harvester inspector, recentre button.
+- Economy ticks every 3s; the E7 AI builds every 9s; first to 12 VP wins.
+- Toasts on every VP award/revoke/upgrade/downgrade, so a broken rail line is
+  visible rather than a silent counter change.
+
+**E8's rule is honoured**: the free-track allowance is a number on the player
+record (`freeTrack`), consumed by builds — never inferred from the phase. A
+regression test drains the purse to zero and asserts the allowance survives, so
+the K1 bug class (a timer clawing back a free build) cannot recur.
+
+### Still open
+
+- **E11 destructive half**: delete `hexmap.ts`, `MapView3D.ts`, the terrain
+  `.jpg`s and the `three` dependency (~600KB); regenerate T2 snapshots. Held
+  back deliberately until the new game has been played and the feel agreed.
+- **E9**: the hex `ui.ts` (861 lines) still drives the legacy view. The iso
+  game ships its own chrome instead of rewriting it.
+- **E8**: the rebalance pass proper (VP target, costs, sabotage prices). The
+  tuning constants are collected at the top of `game.ts` for that.
+- **E4 pixel fixtures**: the committed-reference-PNG depth-sort test and the
+  ported `touch-camera.spec.ts` both need a real browser. Playwright's browser
+  download is blocked in this sandbox, so they remain unrun here. E11 deletes `hexmap.ts`, `MapView3D.ts`, the terrain `.jpg` textures and the `three` dependency (~600KB), and regenerates the T2 snapshots.
 
 ---
 
