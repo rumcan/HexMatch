@@ -103,8 +103,31 @@ Camera acceptance criteria are listed in the spec and mirror what `touch-camera.
 
 ---
 
-## R3. E5 — track model and drag-to-build
+## R3. E5 — track model and drag-to-build  ✅ LANDED
 `[gameplay] [core]`
+
+**Done.** `src/iso/track.ts`, covered by 36 unit tests in
+`tests/unit/iso-track.test.ts` (144 unit tests total, typecheck and lint clean).
+Drag-to-build is wired into the E4 harness: shift+drag lays track, `r` toggles
+road/rail, `f` flips the L corner.
+
+- `road`/`rail` `Uint8Array(MAP_W*MAP_H)` layers, 4-bit masks `NE=1 SE=2 SW=4
+  NW=8`, sprite key built from the mask (`road_0011`), all 32 keys verified
+  present in the atlas.
+- A fifth `PRESENT` bit (0b10000) above the direction nibble, so a lone stub
+  with mask `0000` is still drawn — without it a freshly placed isolated tile
+  is invisible. The renderer masks the low nibble for the sprite name.
+- Incremental autotiling: a placement recomputes exactly 5 tiles (self + 4
+  neighbours, clipped at the map edge) and invalidates 1–4 chunks.
+- Connection bits are mutual — a bit is set only when the neighbour faces
+  back, which is precisely the invariant E6's flood fill needs.
+- L-shaped Manhattan drag with axis flip, obstacle truncation, free re-drags
+  over same-kind track, in-place road→rail upgrade charging only the
+  difference, and an affordable-prefix preview. No A* (reserved for E7).
+- `connectedTiles`/`areConnected` flood fill over mutual masks: the base E6
+  will hang catchment and connection scoring on.
+
+The original brief follows.
 
 Two `Uint8Array(MAP_W*MAP_H)` layers, `roadBits` and `railBits`, holding 4-bit direction masks (`NE=1, SE=2, SW=4, NW=8`). Sprite key by binary mask: `road_${bits.toString(2).padStart(4,'0')}`.
 
@@ -169,6 +192,6 @@ Do this **after R1** so you don't delete a source the cell map turns out to need
 
 # Suggested order
 
-**R1 ✅ → R2 ✅ → R3 → R4 → R5.** R6 and R7 are five-minute fixes; do them now. R8 before R2. R9 after R1.
+**R1 ✅ → R2 ✅ → R3 ✅ → R4 → R5.** R6 and R7 are five-minute fixes; do them now. R8 before R2. R9 after R1.
 
 R1 is the real blocker: the renderer can't be meaningfully tested against four terrain tiles, and the depth-sort and picking acceptance criteria both require multi-tile sprites with real anchors to prove anything.

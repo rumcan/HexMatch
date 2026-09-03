@@ -17,6 +17,10 @@ import {
 } from "./camera";
 import { IsoRenderer, type World } from "./renderer";
 import { generateMap } from "./grid";
+import {
+  createTrack, drawBits, previewDrag, commitDrag, canBuildOn,
+  type DragPreview, type Purse, type TrackKind,
+} from "./track";
 import { MAP_W, MAP_H } from "../game/config";
 
 const load = (src: string) => new Promise<HTMLImageElement>((res, rej) => {
@@ -42,14 +46,16 @@ export async function startDemo(root: HTMLElement) {
   const canvases = { terrain: mk(1), structures: mk(2), overlay: mk(3) };
 
   const grid = generateMap(20260903);
-  // a straight road + rail run so the autotile masks are visible (E5 preview)
-  const roadBits = new Uint8Array(MAP_W * MAP_H);
-  const railBits = new Uint8Array(MAP_W * MAP_H);
-  for (let t = 8; t < 40; t++) {
-    roadBits[24 * MAP_W + t] = 0b0101;    // NE|SW
-    railBits[t * MAP_W + 24] = 0b1010;    // SE|NW
-  }
-  const world: World = { grid, roadBits, railBits };
+  const track = createTrack();
+  const world: World = {
+    grid,
+    roadBits: drawBits(track, "road"),
+    railBits: drawBits(track, "rail"),
+  };
+  // A generous purse so the harness exercises geometry, not economy.
+  const purse: Purse = { stone: 400, ore: 400 };
+  let kind: TrackKind = "road";
+  let xFirst = true;
 
   let cam: Camera = centerOnMap(createCamera(root.clientWidth, root.clientHeight));
   const r = new IsoRenderer(canvases, atlas, cam, world);
@@ -73,21 +79,55 @@ export async function startDemo(root: HTMLElement) {
     const b = root.getBoundingClientRect();
     return [(e.clientX - b.left) * dpr(), (e.clientY - b.top) * dpr()];
   };
+  // E5 drag-to-build: shift-drag lays track, plain drag pans the camera.
+  let drag: { ax: number; ay: number } | null = null;
+  let preview: DragPreview | null = null;
+
   canvases.overlay.addEventListener("pointerdown", (e) => {
     canvases.overlay.setPointerCapture(e.pointerId);
     const [x, y] = pos(e);
+    const p = r.pick(x, y);
+    if (e.shiftKey && canBuildOn(grid, kind, p.tx, p.ty)) {
+      drag = { ax: p.tx, ay: p.ty };
+      return;
+    }
     g = pointerDown(g, { id: e.pointerId, x, y });
   });
   canvases.overlay.addEventListener("pointermove", (e) => {
     const [x, y] = pos(e);
+    hover = r.pick(x, y);
+    if (drag) {
+      preview = previewDrag(
+        grid, track, kind, purse, drag.ax, drag.ay, hover.tx, hover.ty, xFirst,
+      );
+      return;
+    }
     const out = pointerMove(g, { id: e.pointerId, x, y }, cam);
     g = out.gesture;
     if (out.cam !== cam) { cam = out.cam; r.setCamera(cam); }
-    hover = r.pick(x, y);
   });
-  const up = (e: PointerEvent) => { g = pointerUp(g, e.pointerId); };
+  const up = (e: PointerEvent) => {
+    if (drag && preview) {
+      const res = commitDrag(track, kind, preview);
+      for (const [bx, by] of res.built) {
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          r.invalidateTile(Math.max(0, Math.min(MAP_W - 1, bx + dx)),
+                           Math.max(0, Math.min(MAP_H - 1, by + dy)));
+        }
+      }
+      world.roadBits = drawBits(track, "road");
+      world.railBits = drawBits(track, "rail");
+      r.setWorld(world);
+    }
+    drag = null; preview = null;
+    g = pointerUp(g, e.pointerId);
+  };
   canvases.overlay.addEventListener("pointerup", up);
   canvases.overlay.addEventListener("pointercancel", up);
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "r" || e.key === "R") kind = kind === "road" ? "rail" : "road";
+    if (e.key === "f" || e.key === "F") xFirst = !xFirst;
+  });
   canvases.overlay.addEventListener("wheel", (e) => {
     e.preventDefault();
     const [x, y] = pos(e as unknown as PointerEvent);
@@ -102,14 +142,22 @@ export async function startDemo(root: HTMLElement) {
   root.appendChild(hud);
 
   const frame = (t: number) => {
-    const overlay = hover && atlas.has("highlight")
-      ? [{ sprite: "highlight", tx: hover.tx, ty: hover.ty }]
-      : [];
+    const overlay: { sprite: string; tx: number; ty: number }[] = [];
+    if (preview) {
+      for (const [x, y] of preview.tiles) overlay.push({ sprite: "highlight", tx: x, ty: y });
+    } else if (hover && atlas.has("highlight")) {
+      overlay.push({ sprite: "highlight", tx: hover.tx, ty: hover.ty });
+    }
     r.render(t, overlay);
     const ref = hover?.ref as { type?: string } | null;
+    const cost = preview
+      ? Object.entries(preview.cost).map(([k, v]) => `${v} ${k}`).join(" + ") || "free"
+      : null;
     hud.textContent =
       `zoom ${cam.zoom}×  tile ${hover?.tx ?? "-"},${hover?.ty ?? "-"}  ` +
-      `pick ${ref?.type ?? hover?.sprite?.sprite ?? "terrain"}`;
+      `pick ${ref?.type ?? hover?.sprite?.sprite ?? "terrain"}  |  ` +
+      `[shift+drag] build ${kind}  [r] kind  [f] flip axis` +
+      (preview ? `  →  ${preview.tiles.length} tiles, ${cost}${preview.truncated ? " (truncated)" : ""}` : "");
     requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);

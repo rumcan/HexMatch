@@ -42,8 +42,11 @@ export interface World {
   extra?: DrawItem[];      // stations, previews owned by the caller
 }
 
-const bitName = (prefix: string, bits: number) =>
-  `${prefix}_${bits.toString(2).padStart(4, "0")}`;
+// Track layers carry a PRESENT bit (0b10000) above the 4 direction bits, so a
+// lone stub with no connections (mask 0000) is still drawn. Any non-zero byte
+// means "there is track here"; the low nibble names the sprite.
+const bitName = (prefix: string, cell: number) =>
+  `${prefix}_${(cell & 0b1111).toString(2).padStart(4, "0")}`;
 
 /** Build the structure draw list for a culled tile range. */
 export function buildDrawList(world: World, r: { x0: number; y0: number; x1: number; y1: number }): DrawItem[] {
