@@ -1,61 +1,250 @@
 {
-  "comment": "E1 cell map: which OpenGFX source-sheet region becomes which atlas sprite. box = [x, y] top-left of the 64-wide blue tile box in the source sheet; the crop is 64 wide x 31 tall (the tile) and 1 extra bottom row (sheet row y+31 when it is not blue; the tile's own bottom row is cloned otherwise) so stacked tiles never leave a 1px hole under the diamond tip. anchor is measured automatically at slice time = the bottom-centre of the keyed content, snapped into the 64x32 cell.",
+  "comment": "E1 cell map: which OpenGFX source-sheet region becomes which atlas sprite. box = [x, y] top-left of the 64-wide blue tile box in the source sheet; the crop is 64 wide x 31 tall (the tile) and 1 extra bottom row (sheet row y+31 when it is not blue; the tile's own bottom row is cloned otherwise) so stacked tiles never leave a 1px hole under the diamond tip. For multi-tile industry sprites a `compose` entry places several of those ground cells on a footprint and overlays a building/content crop at a tile's south corner. Overlay crops are content bounding boxes from tools/opengfx/extract2.py (cropDirect keys the blue backing to transparent).",
   "tileW": 64,
   "tileH": 32,
   "sources": {
     "grass": "src/assets/sprites/png/terrain/grass-temperate.gimp.png",
     "rough": "src/assets/sprites/png/terrain/rough-temperate.png",
-    "sea": "src/assets/sprites/png/terrain/shoretiles.png"
+    "sea": "src/assets/sprites/png/terrain/shoretiles.png",
+    "farm": "src/assets/sprites/png/industries/farm_temperate.png",
+    "forest": "src/assets/sprites/png/industries/lumbermill.png",
+    "coal": "src/assets/sprites/png/industries/coalmine_base.gimp.png",
+    "gold": "src/assets/sprites/png/industries/goldmine/goldmine_base.gimp.png",
+    "oil1": "src/assets/sprites/png/industries/oilwell/oilwell_anim1.gimp.png",
+    "oil2": "src/assets/sprites/png/industries/oilwell/oilwell_anim2.gimp.png",
+    "oil3": "src/assets/sprites/png/industries/oilwell/oilwell_anim3.gimp.png",
+    "oil4": "src/assets/sprites/png/industries/oilwell/oilwell_anim4.gimp.png",
+    "oil5": "src/assets/sprites/png/industries/oilwell/oilwell_anim5.gimp.png",
+    "oil6": "src/assets/sprites/png/industries/oilwell/oilwell_anim6.gimp.png",
+    "factory": "src/assets/sprites/png/industries/factory.png",
+    "hq": "src/assets/sprites/png/miscellaneous/hq.png"
   },
   "sprites": [
     {
       "name": "terrain_grass_a",
       "source": "grass",
-      "box": [
-        1,
-        1
-      ],
-      "footprint": [
-        1,
-        1
-      ]
+      "box": [1, 1],
+      "footprint": [1, 1]
     },
     {
       "name": "terrain_grass_b",
       "source": "grass",
-      "box": [
-        81,
-        1
-      ],
-      "footprint": [
-        1,
-        1
-      ]
+      "box": [81, 1],
+      "footprint": [1, 1]
     },
     {
       "name": "terrain_rough",
       "source": "rough",
-      "box": [
-        1,
-        1
-      ],
-      "footprint": [
-        1,
-        1
-      ]
+      "box": [1, 1],
+      "footprint": [1, 1]
     },
     {
       "name": "terrain_water",
       "source": "sea",
-      "footprint": [
-        1,
-        1
-      ],
-      "box": [
-        1,
-        1
-      ],
-      "note": "static sea tile (OpenGFX stores one; wave animation is runtime recolor \u2014 no anim frames in source)"
-    }
+      "footprint": [1, 1],
+      "box": [1, 1],
+      "note": "static sea tile (OpenGFX stores one; wave animation is runtime recolor — no anim frames in source)"
+    },
+
+    {
+      "name": "farm",
+      "footprint": [2, 2],
+      "compose": {
+        "base": { "source": "farm", "box": [10, 150] },
+        "tiles": [
+          { "dx": 0, "dy": 0, "box": [10, 150] },
+          { "dx": 1, "dy": 0, "box": [90, 150] },
+          { "dx": 0, "dy": 1, "box": [170, 150] },
+          { "dx": 1, "dy": 1, "box": [250, 150] }
+        ],
+        "overlays": [
+          { "source": "farm", "crop": [409, 48, 66, 43], "dx": 0, "dy": 0 }
+        ]
+      }
+    },
+    {
+      "name": "forest",
+      "footprint": [2, 2],
+      "compose": {
+        "base": { "source": "forest", "box": [626, 8] },
+        "tiles": [
+          { "dx": 0, "dy": 0, "box": [305, 8] },
+          { "dx": 1, "dy": 0, "box": [385, 8] },
+          { "dx": 0, "dy": 1, "box": [465, 8] },
+          { "dx": 1, "dy": 1, "box": [545, 8] }
+        ],
+        "overlays": [
+          { "source": "forest", "crop": [464, 7, 67, 61], "dx": 1, "dy": 1 }
+        ]
+      }
+    },
+    {
+      "name": "ore_mine",
+      "footprint": [3, 3],
+      "compose": {
+        "base": { "source": "coal", "box": [690, 8] },
+        "overlays": [
+          { "source": "coal", "crop": [416, 7, 51, 43], "dx": 1, "dy": 1 },
+          { "source": "coal", "crop": [487, 7, 44, 18], "dx": 0, "dy": 1 },
+          { "source": "coal", "crop": [545, 4, 38, 35], "dx": 2, "dy": 1 }
+        ]
+      }
+    },
+    {
+      "name": "quarry",
+      "footprint": [3, 3],
+      "compose": {
+        "base": { "source": "gold", "box": [161, 80] },
+        "overlays": [
+          { "source": "gold", "crop": [240, 248, 67, 104], "dx": 1, "dy": 1, "anchor": [33, 102], "tint": [138, 138, 138] },
+          { "source": "gold", "crop": [241, 77, 65, 34], "dx": 0, "dy": 0, "tint": [138, 138, 138] }
+        ]
+      }
+    },
+    {
+      "name": "oil_rig",
+      "footprint": [2, 2],
+      "frameMs": 180,
+      "compose": {
+        "base": { "source": "oil1", "box": [141, 3] },
+        "frames": [
+          { "overlays": [{ "source": "oil1", "crop": [12, 2, 34, 53], "dx": 0, "dy": 0 }] },
+          { "overlays": [{ "source": "oil2", "crop": [12, 2, 34, 53], "dx": 0, "dy": 0 }] },
+          { "overlays": [{ "source": "oil3", "crop": [12, 2, 34, 53], "dx": 0, "dy": 0 }] },
+          { "overlays": [{ "source": "oil4", "crop": [12, 2, 34, 53], "dx": 0, "dy": 0 }] },
+          { "overlays": [{ "source": "oil5", "crop": [12, 2, 34, 53], "dx": 0, "dy": 0 }] },
+          { "overlays": [{ "source": "oil6", "crop": [12, 2, 34, 53], "dx": 0, "dy": 0 }] }
+        ]
+      }
+    },
+    {
+      "name": "gold_mine",
+      "footprint": [2, 2],
+      "compose": {
+        "base": { "source": "gold", "box": [161, 80] },
+        "overlays": [
+          { "source": "gold", "crop": [240, 184, 67, 40], "dx": 0, "dy": 1 },
+          { "source": "gold", "crop": [480, 248, 67, 52], "dx": 1, "dy": 0 }
+        ]
+      }
+    },
+
+    {
+      "name": "factory_blue",
+      "footprint": [3, 3],
+      "compose": {
+        "base": { "source": "factory", "box": [1, 74] },
+        "tiles": [
+          { "dx": 0, "dy": 0, "box": [1, 74] },
+          { "dx": 1, "dy": 0, "box": [65, 74] },
+          { "dx": 2, "dy": 0, "box": [129, 74] },
+          { "dx": 0, "dy": 1, "box": [193, 74] },
+          { "dx": 1, "dy": 1, "box": [257, 74] },
+          { "dx": 2, "dy": 1, "box": [321, 74] },
+          { "dx": 0, "dy": 2, "box": [385, 74] },
+          { "dx": 1, "dy": 2, "box": [449, 74] },
+          { "dx": 2, "dy": 2, "box": [513, 74] }
+        ],
+        "overlays": [
+          { "source": "factory", "crop": [717, 89, 70, 93], "dx": 1, "dy": 1, "tint": [70, 130, 220] }
+        ]
+      }
+    },
+    {
+      "name": "factory_red",
+      "footprint": [3, 3],
+      "compose": {
+        "base": { "source": "factory", "box": [577, 74] },
+        "tiles": [
+          { "dx": 0, "dy": 0, "box": [1, 74] },
+          { "dx": 1, "dy": 0, "box": [65, 74] },
+          { "dx": 2, "dy": 0, "box": [129, 74] },
+          { "dx": 0, "dy": 1, "box": [193, 74] },
+          { "dx": 1, "dy": 1, "box": [257, 74] },
+          { "dx": 2, "dy": 1, "box": [321, 74] },
+          { "dx": 0, "dy": 2, "box": [385, 74] },
+          { "dx": 1, "dy": 2, "box": [449, 74] },
+          { "dx": 2, "dy": 2, "box": [513, 74] }
+        ],
+        "overlays": [
+          { "source": "factory", "crop": [717, 89, 70, 93], "dx": 1, "dy": 1, "tint": [224, 70, 70] }
+        ]
+      }
+    },
+    {
+      "name": "factory_purple",
+      "footprint": [3, 3],
+      "compose": {
+        "base": { "source": "factory", "box": [577, 74] },
+        "tiles": [
+          { "dx": 0, "dy": 0, "box": [1, 74] },
+          { "dx": 1, "dy": 0, "box": [65, 74] },
+          { "dx": 2, "dy": 0, "box": [129, 74] },
+          { "dx": 0, "dy": 1, "box": [193, 74] },
+          { "dx": 1, "dy": 1, "box": [257, 74] },
+          { "dx": 2, "dy": 1, "box": [321, 74] },
+          { "dx": 0, "dy": 2, "box": [385, 74] },
+          { "dx": 1, "dy": 2, "box": [449, 74] },
+          { "dx": 2, "dy": 2, "box": [513, 74] }
+        ],
+        "overlays": [
+          { "source": "factory", "crop": [717, 89, 70, 93], "dx": 1, "dy": 1, "tint": [190, 92, 255] }
+        ]
+      }
+    },
+    {
+      "name": "factory_green",
+      "footprint": [3, 3],
+      "compose": {
+        "base": { "source": "factory", "box": [577, 74] },
+        "tiles": [
+          { "dx": 0, "dy": 0, "box": [1, 74] },
+          { "dx": 1, "dy": 0, "box": [65, 74] },
+          { "dx": 2, "dy": 0, "box": [129, 74] },
+          { "dx": 0, "dy": 1, "box": [193, 74] },
+          { "dx": 1, "dy": 1, "box": [257, 74] },
+          { "dx": 2, "dy": 1, "box": [321, 74] },
+          { "dx": 0, "dy": 2, "box": [385, 74] },
+          { "dx": 1, "dy": 2, "box": [449, 74] },
+          { "dx": 2, "dy": 2, "box": [513, 74] }
+        ],
+        "overlays": [
+          { "source": "factory", "crop": [717, 89, 70, 93], "dx": 1, "dy": 1, "tint": [78, 196, 90] }
+        ]
+      }
+    },
+
+    {
+      "name": "depot_blue",
+      "footprint": [1, 1],
+      "crop": [162, 249, 65, 51],
+      "source": "hq",
+      "tint": [70, 130, 220]
+    },
+    {
+      "name": "depot_red",
+      "footprint": [1, 1],
+      "crop": [162, 249, 65, 51],
+      "source": "hq",
+      "tint": [224, 70, 70]
+    },
+    {
+      "name": "depot_purple",
+      "footprint": [1, 1],
+      "crop": [162, 249, 65, 51],
+      "source": "hq",
+      "tint": [190, 92, 255]
+    },
+    {
+      "name": "depot_green",
+      "footprint": [1, 1],
+      "crop": [162, 249, 65, 51],
+      "source": "hq",
+      "tint": [78, 196, 90]
+    },
+
+    { "name": "road", "generator": "road", "namePrefix": "road", "footprint": [1, 1] },
+    { "name": "rail", "generator": "rail", "namePrefix": "rail", "footprint": [1, 1] },
+    { "name": "highlight", "generator": "highlight", "footprint": [1, 1] }
   ]
 }

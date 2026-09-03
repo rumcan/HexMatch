@@ -5,7 +5,11 @@ import { validateManifest } from "../../tools/validate-manifest.mjs";
 // anchor contract is enforced geometrically.
 
 const good = {
-  image: "industries@1x.png",
+  images: {
+    "0.5": "industries@0.5x.png",
+    "1": "industries@1x.png",
+    "2": "industries@2x.png",
+  },
   tileW: 64,
   tileH: 32,
   sprites: {

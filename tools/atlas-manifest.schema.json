@@ -6,16 +6,12 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "image",
+    "images",
     "tileW",
     "tileH",
     "sprites"
   ],
   "properties": {
-    "image": {
-      "type": "string",
-      "minLength": 1
-    },
     "tileW": {
       "type": "integer",
       "minimum": 1

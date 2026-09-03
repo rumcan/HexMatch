@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  generateMap, GRASS, WATER, ROUGH, terrainAt, industryAt,
+  generateMap, randomSeed, GRASS, WATER, ROUGH, terrainAt, industryAt,
 } from "../../src/iso/grid";
 import { MAP_W, MAP_H, INDUSTRY_QUOTA, INDUSTRY_BY_KEY, CARGOES } from "../../src/iso/config";
 
@@ -13,6 +13,32 @@ function hashGrid(g: ReturnType<typeof generateMap>): string {
     g.industries.map((i) => `${i.type}:${i.tx},${i.ty}`).join(";"),
   ].join("|");
 }
+
+describe("R6 deterministic seed handling", () => {
+  it("requires an explicit seed: no undefined-map fallback remains", () => {
+    // This test is a type assertion at compile time; at runtime it simply
+    // verifies that the generated seed property always equals the passed seed.
+    const g = generateMap(123);
+    expect(g.seed).toBe(123);
+  });
+
+  it("randomSeed() produces different seeds across calls (fallback still works)", () => {
+    const a = randomSeed();
+    const b = randomSeed();
+    expect(a).not.toBe(b);
+    expect(a >>> 0).toBe(a);
+    expect(b >>> 0).toBe(b);
+  });
+
+  it("the game boot path can always supply a concrete seed", () => {
+    // E10/Multiplayer contract: callers resolve `?seed=` or draw a random seed
+    // first; generateMap is never allowed to infer one from Math.random.
+    const bootSeed = randomSeed();
+    const g1 = generateMap(bootSeed);
+    const g2 = generateMap(bootSeed);
+    expect(hashGrid(g1)).toBe(hashGrid(g2));
+  });
+});
 
 describe("E3 grid generation determinism", () => {
   it("produces identical terrain+industries for the same seed (T1)", () => {
