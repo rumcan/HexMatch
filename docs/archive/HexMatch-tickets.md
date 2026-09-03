@@ -137,8 +137,37 @@ L-shaped Manhattan drag preview with live cost, truncating at obstacles. No A* f
 
 ---
 
-## R4. E6 — stations, catchment, connection scoring
+## R4. E6 — stations, catchment, connection scoring  ✅ LANDED
 `[gameplay] [core]`
+
+**Done.** `src/iso/economy.ts`, covered by 26 unit tests in
+`tests/unit/iso-economy.test.ts` (170 unit tests total, typecheck and lint
+clean). Every acceptance criterion in the spec has a named test.
+
+- `playerResources(state, owner, now)` rewritten: harvester → 4×4 catchment →
+  overlapping industries → output × the transport multiplier of the connection
+  to that player's Factory. Blockade (`banditUntil`) still zeroes an industry.
+- Harvesters must be orthogonally adjacent to road or rail to be serviced.
+- `buildComponents` caches a connected-component id per tile per layer in one
+  O(tiles) pass; a tile joins only when BOTH neighbours face each other, so a
+  forged one-sided bit can never merge two networks.
+- Rail beats road outright: its multiplier and its VP. Break the rail and the
+  harvester falls back to a surviving road path, emitting a `downgraded` event
+  (delta -2) so the UI can toast it and animate the counter.
+- `rescore()` diffs against the previous state and returns explicit
+  `awarded`/`revoked`/`upgraded`/`downgraded` events. Idempotent: rescoring an
+  unchanged world emits nothing. Call it on every build and demolish.
+- `ScoreState.owners` retains the owner of each scored harvester so a
+  DEMOLISHED harvester can still be debited from the right player — by then it
+  is gone from `state.harvesters`.
+- Overlapping catchments split output proportionally; unserviced rivals do not
+  dilute the yield; total output is conserved across the split.
+
+Not wired into `src/game/` yet — the hex `playerResources` in `hexmap.ts` is
+still what `main.ts`/`ui.ts`/`ai.ts` call. That swap belongs to E11's cutover,
+along with the harvester placement UI.
+
+The original brief follows.
 
 Rewrite `playerResources` to walk harvesters → 4×4 catchment → overlapping industries → output × transport multiplier. Flood fill over direction masks where a tile connects only if **both** neighbours set the facing bit.
 
@@ -192,6 +221,6 @@ Do this **after R1** so you don't delete a source the cell map turns out to need
 
 # Suggested order
 
-**R1 ✅ → R2 ✅ → R3 ✅ → R4 → R5.** R6 and R7 are five-minute fixes; do them now. R8 before R2. R9 after R1.
+**R1 ✅ → R2 ✅ → R3 ✅ → R4 ✅ → R5.** R6 and R7 are five-minute fixes; do them now. R8 before R2. R9 after R1.
 
 R1 is the real blocker: the renderer can't be meaningfully tested against four terrain tiles, and the depth-sort and picking acceptance criteria both require multi-tile sprites with real anchors to prove anything.
