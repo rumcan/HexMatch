@@ -22,8 +22,8 @@ import atlas2 from "../../assets/iso-atlas/atlas@2x.png";
 
 import { Atlas, buildMasks, type Manifest, type AtlasImage } from "./atlas";
 import {
-  createCamera, centerOnTile, resizeCamera, zoomStepAt, createGesture,
-  pointerDown, pointerMove, pointerUp,
+  createCamera, centerOnTile, resizeCamera, zoomStepAt, tileToScreenAt,
+  createGesture, pointerDown, pointerMove, pointerUp,
   type Camera, type GestureState,
 } from "./camera";
 import { IsoRenderer, type World } from "./renderer";
@@ -574,6 +574,9 @@ export function startIsoGame(root: HTMLElement) {
     get freeTrack() { return me.freeTrack; },
     grid, track, eco,
     setTool: (t: Tool) => { tool = t; },
+    /** Screen position (device px, live camera) of a tile's top vertex — the
+     *  e2e twin of __hex.view.screenPosOf. Read-only. */
+    tileScreenAt: (tx: number, ty: number) => tileToScreenAt(cam, tx, ty),
   };
 
   return () => {

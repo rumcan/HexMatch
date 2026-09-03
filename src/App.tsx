@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import "./game/styles.css";
 import "./iso/game.css";
-import { startGame } from "./game/main";
 import { startIsoGame } from "./iso/game";
 
 /**
- * E11 (partial) cutover: the isometric game is now the default view. The old
- * hex/3D game is still reachable at `?legacy=1` until the destructive half of
- * E11 deletes hexmap.ts / MapView3D.ts and the `three` dependency.
+ * E12 — boot orchestrator. The isometric game is the standalone default;
+ * the legacy R1/R2 hex game is reachable at `?legacy=1` (the URL flag) and is
+ * imported lazily so the default bundle never contains it or its three.js
+ * dependency. The legacy module owns its own stylesheet; the iso stylesheet
+ * stays in the default bundle.
  */
 export default function App() {
   const ref = useRef<HTMLDivElement>(null);
@@ -17,8 +17,18 @@ export default function App() {
 
   useEffect(() => {
     if (!ref.current) return;
-    const cleanup = legacy ? startGame(ref.current) : startIsoGame(ref.current);
-    return () => { if (cleanup) cleanup(); };
+    let cancelled = false;
+    let cleanup: (() => void) | undefined;
+    (async () => {
+      // Keep the legacy branch lazy: importing src/game/main-legacy statically
+      // would pull MapView3D + three into every page load (R9/E12).
+      const boot = (legacy
+        ? (await import("./game/main-legacy")).startGame
+        : startIsoGame) as (el: HTMLElement) => unknown;
+      if (cancelled) return;
+      cleanup = boot(ref.current!) as (() => void) | undefined;
+    })();
+    return () => { cancelled = true; cleanup?.(); };
   }, [legacy]);
 
   return <div ref={ref} className="game-root" />;

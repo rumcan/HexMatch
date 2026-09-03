@@ -1,3 +1,14 @@
+// ══════════════════════════════════════════════════════════════════════════
+// Legacy R1/R2 entry — the classic hex-map + match-3 game, preserved as-is
+// (E12). It is reachable through the ?legacy=1 flag and booted ONLY by the
+// lazy branch in App.tsx, so the default iso bundle never pays for this
+// module, its stylesheet, or the three.js dependency it drags in.
+//
+// Renamed from main.ts by the E12 module split. Nothing in here was changed;
+// the file is byte-identical apart from this header and the stylesheet import
+// that used to live in App.tsx.
+// ══════════════════════════════════════════════════════════════════════════
+import "./styles.css";
 import {
   UPGRADE_EVERY, RAID_EVERY, TAX_EVERY_ROUNDS, RES, ResKey, RES_KEYS, SABOTAGE, SECURITY,
   COSTS, REPAIR_COST, choice, setRng, mulberry32,

@@ -4,6 +4,27 @@ Supersedes HexMatch-open-backlog.md. Audited against main @ fc4ebb4: npm ci, tsc
 
 Work order: G6 → G8 → E8 (pass 2) → E11 → R9.
 
+Landed since the audit
+
+- E11 round test flake fixed: the setup→connect→score unit test picked
+  `industries[0]` unconditionally; on ~8.5% of random map seeds that industry
+  sits near the map's bottom edge, so the factory tile landed off-map and the
+  round never scored. Both iso-game round tests now share a legal-corridor
+  scan (bounds + water + occupancy). 242/242 stable across repeated runs.
+- E12 cutover (iso standalone default, legacy behind `?legacy=1`):
+  `src/game/main.ts` → `src/game/main-legacy.ts` (unchanged code + own
+  stylesheet import), App.tsx lazy-imports the legacy branch so the default
+  bundle no longer ships the hex game / three.js; e2e legacy suites boot the
+  flag URL. README documents both entry points.
+- E12 DOM e2e: `tests/e2e/iso-game.spec.ts` boots the default route in a real
+  browser and plays a full round (factory → harvester → road drag → +1 VP)
+  with real pointer events, real rAF rendering and canvas-pixel checks, no
+  mocking. `window.__iso.tileScreenAt` added as the e2e coordinate probe
+  (mirrors `__hex.view.screenPosOf`).
+- Verified: typecheck clean, 242 unit tests, iso e2e green on desktop
+  chromium; slice-atlas reproduces assets/iso-atlas byte-identically (G7 CI
+  gate stays green).
+
 Verification of the last batch
 
 Each claim was checked against source and against the rebuilt atlas, not taken on trust.

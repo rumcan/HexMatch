@@ -13,7 +13,18 @@ npm run build        # typecheck (tsc) + production build
 npm test             # vitest unit suite (pure game logic)
 npm run typecheck    # tsc --noEmit
 npm run lint         # eslint
+npx playwright install chromium   # one-time, for the e2e suites
+npm run test:e2e     # real-browser e2e (builds + previews first)
 ```
+
+## Game entry points (E12)
+
+The isometric game is the standalone default at `/`. The classic hex +
+match-3 game is preserved unchanged and reachable behind the URL flag
+`?legacy=1` (e.g. `/hexmatch/?legacy=1`); it is imported lazily so the
+default bundle never includes it or its three.js dependency. e2e specs for
+the legacy game boot through the flag URL; the iso specs boot the default
+route with real DOM, real rendering and no mocking.
 
 ## Room server (multiplayer relay)
 
