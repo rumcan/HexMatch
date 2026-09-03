@@ -1,6 +1,6 @@
 import { Page, expect } from "@playwright/test";
 
-export const GAME_URL = "/hexmatch/?hexhook=1&seed=1337";
+export const GAME_URL = "/hexmatch/?legacy=1&hexhook=1&seed=1337";
 
 export async function bootGame(page: Page) {
   await page.goto(GAME_URL);
