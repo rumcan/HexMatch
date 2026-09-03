@@ -2,11 +2,12 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { Atlas, type Manifest } from "../../src/iso/atlas";
 import {
-  CHUNK, chunksX, chunkIndexOf, terrainSprite, buildDrawList, cullPad, flatPick,
+  CHUNK, chunksX, chunkIndexOf, chunkSurfaceSize, chunkWorldOrigin,
+  terrainSprite, buildDrawList, cullPad, flatPick,
 } from "../../src/iso/renderer";
 import { generateMap, WATER, ROUGH } from "../../src/iso/grid";
 import { createCamera, centerOnMap, visibleTileRange } from "../../src/iso/camera";
-import { MAP_W, MAP_H } from "../../src/game/config";
+import { MAP_W, MAP_H, HW, HH, TILE_H } from "../../src/game/config";
 
 const manifest: Manifest = JSON.parse(
   readFileSync("assets/iso-atlas/manifest.json", "utf8"),
@@ -22,6 +23,20 @@ describe("E4 chunking", () => {
     expect(chunkIndexOf(8, 0)).toBe(1);
     expect(chunkIndexOf(0, 8)).toBe(chunksX);
     expect(chunkIndexOf(MAP_W - 1, MAP_H - 1)).toBe(chunksX * Math.ceil(MAP_H / CHUNK) - 1);
+  });
+
+  it("G8: chunk surface is large enough that the rightmost tile sprite is not clipped", () => {
+    const z = 1;
+    const { w, h } = chunkSurfaceSize(z);
+    const [ox, oy] = chunkWorldOrigin(0, 0);
+    // rightmost tile in chunk (0,0) is (7, 0); 1×1 terrain anchor is [32, 31]
+    const wx = (7 - 0) * HW + HW - 32;
+    const wy = (7 + 0) * HH + TILE_H - 31;
+    const drawX = wx - ox, drawY = wy - oy;
+    expect(drawX + 64).toBeLessThanOrEqual(w);
+    expect(drawY + 32).toBeLessThanOrEqual(h);
+    // Old size was 16*HW = 512, which clipped the last 32px. Pin the pad.
+    expect(w).toBeGreaterThan(512);
   });
 });
 
@@ -81,7 +96,21 @@ describe("E4 culling + draw list", () => {
     const names = list.map((d) => d.sprite);
     expect(names).toContain("road_0011");
     expect(names).toContain("rail_1010");
+    expect(names).not.toContain("crossing");
     for (const n of names) expect(atlas.has(n)).toBe(true);
+  });
+
+  it("G6: a tile carrying both layers draws a crossing overlay", () => {
+    expect(atlas.has("crossing")).toBe(true);
+    const roadBits = new Uint8Array(MAP_W * MAP_H);
+    const railBits = new Uint8Array(MAP_W * MAP_H);
+    roadBits[12 * MAP_W + 12] = 0b0101;
+    railBits[12 * MAP_W + 12] = 0b1010;
+    const list = buildDrawList({ grid, roadBits, railBits }, { x0: 12, y0: 12, x1: 12, y1: 12 });
+    const names = list.map((d) => d.sprite);
+    expect(names).toContain("road_0101");
+    expect(names).toContain("rail_1010");
+    expect(names).toContain("crossing");
   });
 
   it("draw list stays small under a viewport cull", () => {

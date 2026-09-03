@@ -15,16 +15,24 @@ npm run typecheck    # tsc --noEmit
 npm run lint         # eslint
 npx playwright install chromium   # one-time, for the e2e suites
 npm run test:e2e     # real-browser e2e (builds + previews first)
+npm run slice-atlas  # rebuild assets/iso-atlas from tools/iso-atlas.cells.json
 ```
 
-## Game entry points (E12)
+## Tooling
 
-The isometric game is the standalone default at `/`. The classic hex +
-match-3 game is preserved unchanged and reachable behind the URL flag
-`?legacy=1` (e.g. `/hexmatch/?legacy=1`); it is imported lazily so the
-default bundle never includes it or its three.js dependency. e2e specs for
-the legacy game boot through the flag URL; the iso specs boot the default
-route with real DOM, real rendering and no mocking.
+Sprites are packed by `tools/slice-atlas.mjs` from `tools/iso-atlas.cells.json`
+(see `tools/README-art.md`). For headless sprite inspection — ASCII-preview a
+rectangular region of a PNG, with blue-key / page-white / id-label marked:
+
+```bash
+node tools/peek.mjs <file.png> <x> <y> <w> <h> [maxW] [maxH]
+```
+
+## Game entry
+
+The isometric canvas-2d game is the only boot path (`/`). The hex + three.js
+path (`?legacy=1`) was deleted in E11. e2e specs boot the default route with
+real DOM, real rendering and no mocking.
 
 ## Room server (multiplayer relay)
 

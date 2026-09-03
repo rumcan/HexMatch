@@ -18,3 +18,24 @@ jobs:
         run: |
           npm run slice-atlas
           git diff --exit-code assets/iso-atlas/
+
+  # E13: Playwright never ran in CI. Desktop chromium on every PR; full
+  # viewport matrix is the nightly workflow so G4/G5 mobile coverage is
+  # not dropped. Iso layout assertions run on every project.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test --project=desktop-chromium
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/

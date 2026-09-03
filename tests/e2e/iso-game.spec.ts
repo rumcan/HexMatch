@@ -96,6 +96,20 @@ async function opaqueNear(
   }, { canvasIndex, tx, ty, half });
 }
 
+test.describe("iso layout on every viewport", () => {
+  test("three canvas layers fill the stage without page overflow", async ({ page }) => {
+    await bootIso(page);
+    const root = page.locator(".game-root.iso-game");
+    await expect(root).toHaveCount(1);
+    await expect(root.locator("canvas.iso-layer")).toHaveCount(3);
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(1);
+    await expect(root.locator("[data-tool]")).toHaveCount(4);
+    await expect(root.locator("[data-act=recenter]")).toHaveCount(1);
+  });
+});
+
 test.describe("iso game boots on the default route", () => {
   test.skip(({ isMobile }) => !!isMobile, "real-pointer flow runs on desktop chromium");
 
