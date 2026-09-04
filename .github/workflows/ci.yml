@@ -28,6 +28,9 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -36,7 +39,25 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: npx playwright test --project=desktop-chromium
+      - name: run e2e (post failures to the PR on error)
+        run: |
+          set -o pipefail
+          npx playwright test --project=desktop-chromium 2>&1 | tee /tmp/pw.log || {
+            echo "PLAYWRIGHT_FAILED"
+            if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+              grep -aE "✘|✓|failed|passed|Error|expect|at .*spec" /tmp/pw.log \
+                | grep -av "npm warn" | tail -n 120 > /tmp/pw-fail.txt || true
+              BODY=$(jq -Rs --arg id "pw-${{ github.run_id }}" \
+                '{body: ("### e2e failure (run " + $id + ")\n```
+" + . + "
+```"}' /tmp/pw-fail.txt)
+              curl -sf -X POST -H "Authorization: Bearer ${{ github.token }}" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
+                -d "$BODY" || echo "(could not post comment)"
+            fi
+            exit 1
+          }
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
