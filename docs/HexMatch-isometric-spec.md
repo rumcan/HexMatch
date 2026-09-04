@@ -1,346 +1,151 @@
-# HexMatch — Isometric implementation spec (E-series, detailed)
+# HexMatch — Kenney art migration (K-series)
 
-Replaces the E-series summaries in `HexMatch-backlog.md`. The K- and T-tickets there are unchanged. This document is deliberately prescriptive: every ticket states the formula, the data layout, or the lookup table to implement, plus how to prove it works.
+A deliberate art-direction change for the game jam: replace the OpenGFX pixel-art tiles with Kenney's CC0 isometric 3D-rendered assets (`src/iso/kenny/{buildings,landscape,vehicles}`, confirmed present in the repo).
 
----
+**This is bigger than any sprite ticket so far — the tile geometry itself changes.** This doc gives the exact measured numbers so nothing is left to "figure out." Values derived from the actual assets are marked ✓measured; the few that need a human eye are marked ⚠human — those are the only judgment calls.
 
-## The gameplay loop this has to serve
-
-Unchanged from the hex version in shape, changed in mechanism:
-
-1. Place **one main Factory** (your HQ, the delivery destination).
-2. Place **one harvesting building** on an industry.
-3. You start with a small budget of **road** connecting the two.
-4. Connected industries feed the **match-3 quarry** — matching gems harvests from whatever your network reaches.
-5. **Trade** surplus cargo for cargo you don't produce.
-6. Spend cargo to **build road or rail out to a new industry**, place another harvester, repeat.
-
-The new axis: **road is cheap and scores few points, rail is expensive and scores many.** That's the whole risk/reward curve, so it has to be legible in the UI at the moment of building, not buried in a stats screen.
+Keep this **entirely separate from the TK gameplay tickets and the W-series bug fixes.** Order across tracks: fix W-series bugs → **this migration** → TK gameplay. Do not interleave; that is what timed out before. One ticket per session, stop at each acceptance block.
 
 ---
 
-## E0. Projection, grid and sprite constants
-`[design] [blocker]` — nothing else starts until this is merged.
+## The measured geometry (use these exact numbers)
 
-### Projection
+I measured every ground tile in `src/iso/kenny/landscape/PNG`. They are consistent:
 
-Use **2:1 dimetric**. <cite index="28-1">A true isometric projection at 30° is virtually impossible to draw cleanly on an LCD without severe aliasing, which is why the industry universally adopted the 2:1 pixel ratio — a tile exactly twice as wide as tall — because it allows clean stair-stepping pixel art.</cite>
-
-Grid → screen, the standard form <cite index="29-1">(`screen.x = (map.x - map.y) * TILE_WIDTH_HALF; screen.y = (map.x + map.y) * TILE_HEIGHT_HALF`)</cite>:
-
-```ts
-export const TILE_W = 64, TILE_H = 32;
-export const HW = TILE_W / 2, HH = TILE_H / 2;   // 32, 16
-
-export const tileToScreen = (tx: number, ty: number): [number, number] =>
-  [(tx - ty) * HW, (tx + ty) * HH];
+```
+Canvas per ground tile:    132 x 83 px            ✓measured
+Diamond top surface:       132 wide x 64 tall     (apex at y=0, widest row at y=32)   ✓measured
+  -> TILE_W = 132, TILE_H = 64   (was 64 x 31)
+Base block (skirt) height: 50 px below the diamond's widest row   ✓measured
+  -> every tile draws a 50px cube-side below its diamond top
 ```
 
-Screen → grid is the algebraic inverse <cite index="29-1">(`map.x = (screen.x / TILE_WIDTH_HALF + screen.y / TILE_HEIGHT_HALF) / 2`, `map.y = (screen.y / TILE_HEIGHT_HALF - screen.x / TILE_WIDTH_HALF) / 2`)</cite>:
-
+Projection (same form, new constants):
 ```ts
-export const screenToTile = (sx: number, sy: number): [number, number] => {
+export const TILE_W = 132, TILE_H = 64;
+export const HW = 66, HH = 32;          // half-width, half-height of the diamond
+export const BLOCK_H = 50;              // base-block skirt height
+
+export const tileToScreen = (tx, ty) => [(tx - ty) * HW, (tx + ty) * HH];
+export const screenToTile = (sx, sy) => {   // still Math.floor, not round
   const a = sx / HW, b = sy / HH;
   return [Math.floor((a + b) / 2), Math.floor((b - a) / 2)];
 };
 ```
 
-**Note the `Math.floor`, not `Math.round`.** Rounding gives you the nearest tile *centre*, which is wrong at diamond edges and produces an off-by-one band along every tile boundary. Flooring gives the tile whose diamond contains the point. This is the single most common isometric picking bug — write the test first (E4).
+**The anchor is now a formula, not a per-sprite guess.** Every Kenney ground tile is 132x83 with the diamond apex at top-centre. Draw a ground tile so its diamond top lands on the tile's screen position:
 
-### Constants to fix now
-
-| Constant | Value | Note |
-|---|---|---|
-| `TILE_W` × `TILE_H` | 64 × 32 | verify against the source art before slicing |
-| `MAP_W` × `MAP_H` | 48 × 48 | 2304 tiles; budget checked in E4 |
-| Terrain height | **flat** | see below |
-| Zoom range | 0.5× – 2.0× | integer steps only: 0.5, 1, 2 |
-
-**Flat terrain for v1, non-negotiable.** Stepped iso multiplies the tile-variant count by the corner-height combinations, and it breaks depth sorting outright — <cite index="2-1">the standard back-to-front, bottom-up per-level algorithm cuts off any object taller than one unit with objects at the higher level, and the workarounds ("draw the level above until everything behind the tall object is drawn, then return to the unfinished lower level") introduce their own problems, because it isn't clear which objects are "behind" a tall object transitioning between tiles</cite>. Ship flat. Revisit only if the game is otherwise finished.
-
-### Zoom must be integer-stepped
-
-<cite index="40-1">Scaling images inside `drawImage` is a documented canvas performance mistake; cache several sizes on an offscreen canvas at load time instead of constantly scaling in the draw call.</cite> With three fixed zoom levels you pre-render the atlas at 0.5×, 1× and 2× once, and every frame is a 1:1 blit. Free zoom would force per-frame scaling of every sprite.
-
-**Acceptance:** constants in `config.ts`; `tileToScreen`/`screenToTile` exported with unit tests asserting round-trip identity for all 2304 tiles and correct results at the four diamond corners of at least 20 sampled tiles.
-
----
-
-## E1. Atlas manifest + slicer
-`[tooling] [assets]` — depends on E0.
-
-### Manifest schema
-
-```json
-{
-  "images": { "0.5": "industries@0.5x.png", "1": "industries@1x.png", "2": "industries@2x.png" },
-  "tileW": 64, "tileH": 32,
-  "sprites": {
-    "coal_mine":  { "x": 0,   "y": 0, "w": 192, "h": 160, "footprint": [3,3], "anchor": [96,148], "frames": 1 },
-    "oil_rig":    { "x": 192, "y": 0, "w": 128, "h": 176, "footprint": [2,2], "anchor": [64,160], "frames": 4, "frameMs": 180 },
-    "road_0011":  { "x": 0, "y": 256, "w": 64, "h": 32, "footprint": [1,1], "anchor": [32,32], "frames": 1 }
-  }
-}
+```
+drawX = screenX(tx,ty) - HW      // left edge of the 132px canvas
+drawY = screenY(tx,ty) - HH      // apex sits HH above the tile centre-line
 ```
 
-**`anchor` is the contract that makes everything else work.** It is the pixel inside the sprite that lands exactly on the screen position of the footprint's **south corner** — the bottom vertex of the diamond of the tile at `(originX + w - 1, originY + h - 1)`. Draw position is then:
+Buildings share the same footprint but are taller canvases (e.g. `buildingTiles_036.png` is 133x127). They use the **bottom-centre** anchor: align the sprite's bottom-centre to the ground tile's bottom-centre and it stands on the tile, height rising up-screen. General rule for any sprite: `drawX = screenX - floor(spriteW/2)`, `drawY = screenY + HH - spriteH`. Compute once, reuse — no hand anchors anywhere.
 
-```ts
-const [sx, sy] = tileToScreen(o.tx + s.footprint[0] - 1, o.ty + s.footprint[1] - 1);
-ctx.drawImage(atlas, s.x, s.y, s.w, s.h,
-  Math.floor(sx + HW - s.anchor[0] + camX),   // integer — see below
-  Math.floor(sy + TILE_H - s.anchor[1] + camY),
-  s.w, s.h);
-```
-
-<cite index="40-1">Always round coordinates with `Math.floor` before `drawImage`; sub-pixel positions force the browser into extra anti-aliasing work.</cite> With pixel art it also visibly blurs the sprite.
-
-### Slicer (`tools/slice-atlas.mjs`, Node + sharp)
-
-- Input: source sheets plus a hand-written cell map.
-- Output: `@1x`, `@2x` (nearest-neighbour upscale) and `@0.5x` PNGs plus one shared manifest.
-- **Required: a debug contact sheet.** Every sprite drawn on a tile-grid background with its anchor pixel marked in magenta and its footprint diamond outlined. Anchor errors are then one glance away instead of being discovered after placing 400 buildings.
-
-**Acceptance:** contact sheet shows every sprite flush on its footprint at all three scales; manifest validates against a JSON schema in CI.
+⚠human: a few landscape tiles (e.g. `landscapeTiles_050`) have a **taller** diamond — those are slope/ramp tiles. **Do not use them.** Stay flat-topped. Filter by rejecting any tile whose widest opaque row is not at y≈32.
 
 ---
 
-## E2. Cargo, industries, and the road/rail scoring split
-`[design] [config]`
+## K0. Record constants; prove one tile + one building render correctly
+`[design] [blocker]`
 
-### Industries
+Everything downstream depends on this. Write the constants above into `config.ts`. Map size: Kenney tiles are ~2x the OpenGFX pixels, so keep the tile count **lower** — recommend **32x32** (was 48x48) so the map is not enormous; confirm draw count is fine.
 
-| Industry | Cargo | Footprint | Rel. output |
-|---|---|---|---|
-| Farm | Grain | 2×2 | 1.0 |
-| Forest | Wood | 2×2 | 1.0 |
-| Coal Mine | Coal | 3×3 | 0.8 |
-| Iron Mine | Iron | 3×3 | 0.8 |
-| Quarry | Stone | 3×3 | 0.7 |
-| Oil Rig | Oil | 2×2 | 0.4 |
-| Gold Mine | Gold | 2×2 | 0.3 |
+Stay flat-topped. Kenney has slopes/ramps; using them reopens every slope-sorting problem. Flat only.
 
-**Blocking constraint:** the match-3 board hard-codes six gem frames (`GEM_FRAMES = 6`, `GEM_FRAME`, and `gems_spritesheet.png` is exactly 6 × 128px). Seven cargoes needs new gem art. **Decide in this ticket:** commission a 7th frame, or cut to six by merging Iron and Coal into "Ore". Do not let this drift — `board.ts` will silently mis-index.
-
-### Road vs rail
-
-This is the core new mechanic. Both connect industries; they differ on cost, throughput and score.
-
-| | Road | Rail |
-|---|---|---|
-| Cost per tile | 1 Stone | 2 Iron + 1 Stone |
-| VP per completed connection | 1 | 3 |
-| Throughput multiplier | 1.0× | 1.6× |
-| Buildable on rough terrain | yes | no (needs flat) |
-| Can cross the other type | level crossing, free | level crossing, free |
-
-A "completed connection" = a contiguous path of one transport type linking a harvester to your main Factory. VP is awarded **on completion, once**, and revoked if the path is broken. That means `checkConnection()` runs on every build and every demolish, not on a timer.
-
-Rail being *strictly better per tile but worse per point of cargo* is what makes the choice interesting: early on you cannot afford Iron, so you road out to an Iron Mine, and rail becomes available as a consequence of your own expansion. Verify this ordering survives playtesting — if Iron is reachable at turn one the curve collapses.
-
-**Open design question to settle here:** can you upgrade a road to rail in place, paying the difference? Recommend yes — it gives a use for late-game surplus and avoids demolish-rebuild busywork.
+**Acceptance:** constants in `config.ts`; one flat grass tile and one building rendered at 132px via the bottom-centre anchor formula, sitting flush (building standing on the tile, not floating or sunk); committed reference screenshot; no hand-authored anchor anywhere.
 
 ---
 
-## E3. Grid generation
-`[feature] [map]`
+## K1. New atlas pipeline — one PNG per sprite, retire the pnml/blue-key path
+`[tooling] [assets]`
 
-`src/game/grid.ts` replaces `hexmap.ts`.
+Kenney assets are individual RGBA PNGs. The entire OpenGFX pipeline is obsolete: no sheet-slicing, no blue-key, no `.pnml` parsing, no generated masks.
 
-- `generateMap(seed)` keeps its signature and `mulberry32` seeding. **Multiplayer depends on this** — `net.ts` ships only the seed and every client regenerates identical geometry. Requires the RNG unification from T1, since `config.ts`'s `rand`/`randInt`/`choice`/`shuffle` currently use bare `Math.random()`.
-- Terrain: `Uint8Array(MAP_W * MAP_H)`, values `GRASS | WATER | ROUGH`. A flat typed array, not an array of objects — it's read every frame by the culler.
-- Industries: `Industry { id, type, tx, ty, w, h, output, banditUntil }` in a separate list, plus an occupancy `Int16Array` mapping tile index → industry id or -1.
-- Placement: Poisson-disc rejection sampling with a minimum separation of 6 tiles, no overlap, not on water, and a quota per industry type so no cargo is absent from the map.
+- New `iso-atlas.cells.json` maps each game concept -> a **Kenney PNG path** (not a sprite id, crop box, or compose block). Example: `{ "name": "terrain_grass", "png": "landscape/PNG/landscapeTiles_003.png" }`.
+- The slicer becomes a **packer**: load the listed PNGs, pack into one atlas or reference directly (with ~130 tiles, direct load is simpler — measure before over-engineering). Emit a manifest with each sprite's real `w`/`h` and the **computed** anchor from the formula above.
+- No `compose`, `box`, `crop`, `sprite`-id, `layers`, or `generator` fields. If any survive, the cell was not migrated.
+- Retire `parse-pnml.mjs`, the `.pnml` tree, `opengfx-sprites.json`, and the generator/blue-key slicer code — but **only in K6**, after K2–K4 confirm coverage. Prune last (the R9 lesson).
 
-**Acceptance:** same seed produces byte-identical `terrain` and `industries` across two browser contexts, asserted in the T1 suite by hashing both.
-
----
-
-## E4. Renderer core: culling, sorting, picking
-`[feature] [renderer] [large]`
-
-Replaces `MapView3D.ts`. Build as canvas2d first; the design below is the one that makes a WebGL upgrade a drop-in later.
-
-### Layering
-
-<cite index="47-1">Use stacked canvases: draw the static background once, the static objects once, and clear and redraw only the dynamic layer inside the animation loop.</cite> Three layers:
-
-1. **terrain** — redrawn only on camera move or zoom change
-2. **structures** — industries, road, rail, stations; redrawn only when the world changes
-3. **overlay** — build previews, legal-placement highlights, animated sprite frames, cursor; redrawn every frame
-
-Layer 1 and 2 are cheap because of chunk caching (below); only layer 3 runs at 60fps.
-
-### Chunk caching
-
-<cite index="40-1">Pre-render repeated drawing operations to an offscreen canvas and blit the result rather than repeating the work each frame.</cite>
-
-- Divide the map into 8×8-tile chunks. Each chunk renders its terrain once into an `OffscreenCanvas` and is blitted thereafter.
-- Invalidate a chunk when any tile in it changes; invalidate all on zoom change.
-- <cite index="48-1">Cache anything that doesn't change — terrain tiles, building sprites, UI backgrounds — and draw dynamic elements directly; the cached images are then just texture copies for the GPU. Main-thread rendering holds up well until roughly 1000 dynamic objects per frame.</cite> We are far under that: only animated industries and the overlay are dynamic.
-
-### Viewport culling
-
-Convert the four screen corners of the viewport to tile space with `screenToTile`, take the bounding box of the results, pad by the largest sprite footprint plus its height in tiles (a 3×3 mine 160px tall reaches ~5 tiles up the screen), and iterate only that range. Essential at 48×48 with tall sprites.
-
-### Depth sorting — read this carefully
-
-The naive key is `tx + ty`. **It is correct only for 1×1 objects of equal height.** With multi-tile footprints it produces visible errors, and the failure is not fixable by tweaking the key: <cite index="52-1">a valid depth order is a topological ordering of a directed acyclic graph of occlusions, and the algorithm fails outright on cyclic overlap, where three objects overlap such that no ordering is correct and the offending shapes must be cut.</cite>
-
-Ship this three-tier approach:
-
-**Tier 1 (default).** Sort by the footprint's **maximum** corner, `(tx + w - 1) + (ty + h - 1)`, tie-broken by `tx - ty` then by height. This is correct whenever no two footprints' screen bounding boxes overlap in a cycle — which, given the E3 minimum-separation-6 placement rule, is essentially always for industries.
-
-**Tier 2 (safety net).** Build an "is behind" DAG only over sprites whose screen bounding boxes actually intersect, and topologically sort that subset. <cite index="58-1">This is a real technique with real cost — an implementation profiled at 1–5ms for 100–200 iso sprites, which is O(n²) and degrades fast, and viewport culling was noted as a large win alongside it.</cite> Because Tier 2 runs only on the culled, overlapping subset, n stays in the low tens.
-
-**Tier 3 (escape hatch).** For any remaining cycle, split the offending multi-tile sprite into per-tile strips at slice time. Note this in the atlas manifest as an optional `slices` field so the slicer can emit it. You probably will not need this; specify it so nobody invents a hack under deadline.
-
-**Acceptance:** a deterministic fixture map with a 3×3 mine adjacent to a 2×2 farm and a station between them renders identically to a committed reference PNG at all three zoom levels, from all four map quadrants.
-
-### Picking
-
-Two-stage, and the order matters:
-
-1. **Flat pick.** `screenToTile` on the cursor. This is correct for terrain and road/rail, which are all flush to the ground.
-2. **Sprite pick.** Tall sprites overlap the tiles behind them, so a click on the *upper* half of a mine sprite flat-picks the tile *behind* the mine. Walk the culled draw list **front-to-back** (reverse of draw order), test the cursor against each sprite's bounding box, and confirm with an alpha test against a cached `ImageData` alpha mask for that sprite. First hit wins.
-
-Stage 2 overrides stage 1 whenever it hits. Build the alpha masks once at atlas load.
-
-**Acceptance:** clicking the chimney of a mine selects the mine, not the grass behind it; clicking a 1px gap between two buildings selects the terrain; tests assert this at all three zoom levels and at a non-zero camera offset.
-
-### Camera
-
-Carrying over the real problems from the closed mobile tickets — an iso camera is a translate plus a discrete scale, so all of these become tractable:
-
-- One-finger drag pans (translate `camX`/`camY` directly, no projection maths).
-- Pinch zoom steps between 0.5/1/2 and must be **anchored to the pinch midpoint**: convert the midpoint to tile space before the zoom change, and after changing zoom adjust `camX`/`camY` so that tile projects back to the same screen point. Same for cursor-anchored wheel zoom.
-- Lifting one finger of a pinch promotes the remaining pointer to the active pan pointer and re-seeds its last position — no snap, no dead finger.
-- Size the canvas from its own client rect (or a `ResizeObserver`), listening to `visualViewport.resize` and `orientationchange`, never `window.innerWidth`.
-- Clamp `camX`/`camY` so the map bounding diamond always intersects the viewport, plus a visible recentre button on mobile.
+**Acceptance:** atlas builds from Kenney PNGs; manifest carries real sizes and formula-computed anchors; contact sheet renders every mapped sprite flush; a test asserts no cell contains `compose`/`box`/`crop`/`generator`.
 
 ---
 
-## E5. Road and rail: the tile model
-`[feature] [gameplay] [core]`
+## K2. Map terrain and roads to Kenney landscape tiles
+`[assets]`
 
-### Data model
+The landscape set has **128 tiles** ✓measured (grass, water, shore, rough, trees, and a full road set). I auto-detected **42 road-surface tiles** — more than enough for all 16 masks plus curves and junctions.
 
-Each tile holds, per transport type, a **4-bit direction mask**. This is exactly OpenTTD's model — its `RoadBits` are per-tile direction bits with helpers like <cite index="32-1">`GetRoadBits`, `DiagDirToRoadBits` and `ConnectRoadToStructure`, which "connects a new structure to an existing road or tram by building the missing roadbit"</cite>.
+**Terrain (straightforward):** grass, water, rough — pick the flat-topped variants (reject slopes per the ⚠human note).
 
-In isometric space the four neighbours are the diamond's edge directions:
+**Roads — the one place to be careful, because this is the bug that keeps recurring.** Kenney roads are **pre-shaded finished 3D pieces**, so map each of the 16 direction masks to a specific PNG. Nothing to generate, nothing to rotate — the piece is drawn as-is.
 
-```ts
-export const NE = 1, SE = 2, SW = 4, NW = 8;
+⚠human: **the mask->PNG mapping needs a person to eyeball the pieces once.** The 42 candidates include straights (in both diagonal orientations), curves, T-junctions, crossroads, dead-ends. Lay them out and assign:
+- `road_0000` (isolated) -> a dead-end/stub
+- `road_0101` / `road_1010` (the two straights) -> the two straight PNGs. **This is where the 90-degree bug lived:** the NE-SW straight and the NW-SE straight are *different Kenney tiles*, so pick the one whose asphalt visually runs the right way for each mask. Verify with an in-game L-bend.
+- the four corner masks -> the four curve PNGs
+- the four T-masks -> the T-junction PNGs
+- `road_1111` -> the crossroads PNG
 
-// tile-space deltas
-const DIR: Record<number, [number, number]> = {
-  [NE]: [ 0, -1],
-  [SE]: [ 1,  0],
-  [SW]: [ 0,  1],
-  [NW]: [-1,  0],
-};
-export const OPPOSITE: Record<number, number> = { [NE]: SW, [SE]: NW, [SW]: NE, [NW]: SE };
-```
+Write it as an explicit 16-entry table in `cells.json`. Fill gaps with a tile you draw.
 
-Two parallel `Uint8Array(MAP_W * MAP_H)` layers, `roadBits` and `railBits`. A tile with both non-zero is a level crossing and draws a third sprite.
-
-### Autotiling
-
-This is a **4-bit / 16-variant** problem, not a 47-tile one. <cite index="12-1">A four-neighbour bitmask gives exactly 16 possible values, 0 through 15, one per combination, each mapping to a specific tile shape</cite> — and <cite index="18-1">the simplified 4-cardinal format ignores diagonals, producing 16 combinations that are far easier to draw; the tradeoff is no inner corners</cite>, which is irrelevant for road because road has no inner corners.
-
-Name sprites by their mask in binary so the lookup is a string build, not a 16-entry table nobody maintains: `road_${bits.toString(2).padStart(4,'0')}` → `road_0011`. Sixteen road sprites, sixteen rail, plus crossings.
-
-<cite index="12-1">Recompute bitmasks only when the grid changes, and only for the cells whose neighbours were modified, then cache the resulting tile indices — this makes autotiling essentially free at runtime.</cite> On placing at `(tx,ty)`: recompute that tile and its four neighbours, then invalidate the containing chunk(s). Never recompute the whole map.
-
-**Acceptance:** a unit test placing every one of the 16 neighbour configurations asserts the correct sprite key; a test that placing one tile touches exactly 5 tiles' masks and 1–4 chunks.
-
-### Drag-to-build
-
-Follow the OpenTTD interaction, which players already know: <cite index="38-1">put the cursor on the start tile, click and drag to the end tile with white lines previewing the future track, and release to build; a Remove tool drags along existing track to remove it.</cite>
-
-- **Pointer down** on a legal start tile arms the drag.
-- **Pointer move** recomputes a preview path and draws it on the overlay layer — legal tiles tinted, illegal tiles and unaffordable overruns tinted red, with a running cost readout pinned near the cursor.
-- **Pointer up** commits, charging for the tiles actually placed.
-
-Path shape: **L-shaped Manhattan** (all of one axis, then all of the other), with a modifier key / two-finger tap to flip which axis goes first. Do **not** ship A* auto-routing in v1 — it produces paths players didn't intend and hides cost. Reserve A* for the AI (E7), where nobody is surprised by it.
-
-Obstacles under the drag (water, an industry footprint) truncate the preview at the last legal tile rather than failing the whole drag.
-
-**Acceptance:** dragging across 10 tiles charges exactly 10× the per-tile cost; dragging into water truncates; dragging over existing road of the same type is free and does not double-charge; a drag that costs more than you hold previews the affordable prefix and builds only that.
+**Acceptance:** all 16 masks map to a named Kenney PNG; a straight road placed in each diagonal runs the right way (eyeball an L-bend); no generation/rotation path remains; missing pieces listed.
 
 ---
 
-## E6. Stations, catchment and connection scoring
-`[feature] [gameplay] [core]`
+## K3. Map industries, factory and depot to Kenney buildings
+`[assets]`
 
-Replaces vertex adjacency. This is the mechanic that makes the map matter.
+132 building tiles ✓measured — houses, shops, offices, industrial, varying heights. Each is **one coherent finished building**, which permanently ends the compose/fragment/too-small saga (V1/V2/W7 cannot recur — nothing to assemble).
 
-- A **harvester** is placed on an industry tile; it must be adjacent to at least one road or rail tile.
-- Its **catchment** is a 4×4 rectangle centred on it; any industry overlapping the catchment feeds it.
-- `playerResources(map, player, now)` is rewritten: for each harvester, union the industries in catchment, sum output, multiply by the transport multiplier of the *connection type* linking it to the main Factory (1.0 road / 1.6 rail). Blockade (`banditUntil`) still zeroes an industry — that logic carries over cleanly from the hex version.
+- Assign one distinct building per concept: factory (largest/most industrial), farm, forest, ore mine, quarry, oil rig, gold mine, plus player depot/terminal and the main factory in four colours.
+- **Match building height to footprint from the start** (K0 sets footprints). Big multi-storey for a 2x2; small single for 1x1. Because the anchor is bottom-centre and computed, a correctly-sized building sits in its footprint by construction — the V1 "too small" problem was an OpenGFX-era artifact of wrong footprints; set them to match the chosen Kenney art here.
+- **Player tinting:** Kenney buildings are flat solid colours, so a hue-shift or coloured multiply overlay should read cleanly. Test on the real art; if hue-shift muddies it, use a small coloured roof/flag marker per player instead.
 
-**Connection check.** A flood fill over `roadBits`/`railBits` respecting direction masks — a tile connects to its neighbour only if *both* set the facing bit, which is what makes `ConnectRoadToStructure`-style half-piece bugs impossible. Run on every build and demolish, not on a timer. Cache the connected-component id per tile; a rebuild is O(tiles) and happens rarely.
+⚠human: which building reads as "factory" vs "farm" is an aesthetic pick from the buildings contact sheet.
 
-If a harvester reaches the Factory by both road and rail, take the rail multiplier and the rail VP. If a rail path is broken, fall back to any surviving road path and **revoke the rail VP** — this must be visible, with a toast and the VP counter animating down, or players will not understand what happened.
-
-**Decide here:** what happens when two players' catchments overlap one industry. Recommend splitting output proportionally to the number of claimants, which avoids a first-mover lockout without needing a rating system.
-
-**Acceptance:** placing a harvester next to a farm starts grain; demolishing one road tile mid-path stops it and revokes VP within one frame; a blockaded industry produces nothing; a rail path scores 3 and its 1.6× multiplier applies.
+**Acceptance:** every industry, the factory (four tints), and the depot map to a coherent building sized to its footprint; each stands correctly on the map — no overhang, float, or fragment.
 
 ---
 
-## E7. AI
-`[feature] [ai]`
+## K4. Renderer updates for the taller, blocky tiles
+`[renderer]`
 
-`ai.ts`'s `findLegalSettlement` / `findLegalRoad` don't survive. New behaviour: score candidate industries by (cargo scarcity in the AI's stock × output ÷ path cost), A* a path from the nearest owned network tile, build road if it can't afford rail, place a harvester. Reuse the existing skill/timing scaffolding (`nextBuild`, `nextIncome`, `slowedUntil`).
+The 50px base block means the renderer changes beyond swapping images. These are the subtle bits — give this ticket room.
 
-A* here is fine — it's the AI's own path, and it's the natural place for the auto-routing that E5 deliberately keeps out of the player's hands. Cost function: 1 per flat tile, 3 per rough, impassable for water and industry footprints, and **0.3× for tiles already carrying the AI's own network** so it reuses trunk lines instead of building parallel spurs.
+- **Draw origin:** apply the K0 anchor formula. The diamond top is offset up-screen; the base block fills the 50px below. A tile now paints 132x83, not 64x31.
+- **Depth sort — re-baseline.** Taller tiles and standing buildings overlap more of the tiles behind them than flat diamonds did. Max-corner + topological sort is still right, but its fixtures assumed flat 64x31 — re-baseline the reference renders against Kenney geometry. Watch a tall building behind a short one on the next row.
+- **Picking — re-check.** The flat-then-sprite pick assumed a flat diamond. With a 50px block the clickable **top surface** is 50px above where the flat-diamond inverse lands. Adjust the flat pick to hit the diamond top; keep the sprite-alpha second pass for tall buildings. Test: click a roof -> selects that tile; click the block-side -> still that tile.
+- **Chunk cache:** cell size scales to 132px tiles; an 8x8 chunk is now ~1056px wide. Confirm memory or drop to smaller chunks.
 
-Must be deterministic under the seeded RNG so T1 can assert on it.
-
----
-
-## E8. Starting state and rebalance
-`[design] [gameplay]`
-
-Setup phase becomes: place main Factory (free) → place first harvester (free, must be on an industry) → receive a fixed budget of free road tiles (proposed 12) to connect them. If the player places them more than 12 road-tiles apart, top up rather than soft-locking.
-
-**This is where K1's bug class recurs.** The old setup broke because a once-per-second affordability check clawed back a free build. Free setup builds must be flagged as free at the data level (`{ free: true }` on the build action), not inferred from the phase, so no future timer can revoke them.
-
-Then rebalance `VP.target`, `COSTS`, `UPGRADE_EVERY` and sabotage prices against the road/rail curve. Expect several playtest passes; file follow-ups rather than trying to land it once.
+**Acceptance:** tiles and buildings sort correctly as the camera moves; clicking selects the tile whose top is under the cursor; no z-fighting at chunk seams; depth and pick tests re-baselined and green.
 
 ---
 
-## E9. UI
-`[feature] [ui]`
+## K5. Vehicles (art only; movement is TK-004)
+`[assets]`
 
-Build panel becomes Road / Rail / Harvester / Demolish. The road-vs-rail tradeoff must be visible **at the point of decision**: while dragging, show live cost, tiles used, and the VP the completed connection would award, for both types side by side. `tileInfo` becomes an industry inspector listing output, serving harvesters, and connection type. All `showBanner`/`showModeBar` strings change.
+553 vehicle PNGs ✓measured across Ambulance/Civilian/Garbage/Police/Taxi, each with **directional sprites** — `_N _NE _E _SE _SW _W _NW` plus `D` variants. The directional set is complete, so a moving vehicle just picks the frame matching its heading — no rotation maths, exactly what TK-004 needs.
 
----
+For this ticket: get the chosen vehicle (a bus/truck for cargo per TK-003/007) into the atlas with directional frames indexed by compass heading, and confirm the headings cover the road directions the track uses. Movement is TK-004.
 
-## E10. Multiplayer snapshot
-`[feature] [multiplayer]`
-
-`net.ts` snapshots change shape: terrain and industries are seed-derived and never sent; `roadBits`, `railBits` and the harvester list are. Send the two `Uint8Array`s as base64 rather than JSON arrays — 2304 bytes each, versus roughly 10KB as JSON. Add a `version` field and reject mismatched clients with a clear message; today a stale guest silently desyncs.
+**Acceptance:** chosen vehicle sprites in the atlas, frames indexed by heading; a static vehicle places on a road tile facing correctly; every road direction used has a matching frame.
 
 ---
 
-## E11. Cutover
+## K6. Prune OpenGFX and the old pipeline
 `[chore]`
 
-Delete `hexmap.ts`, `MapView3D.ts`, the terrain `.jpg` textures, and the `three` / `@types/three` dependencies (~600KB). Regenerate T2 snapshots. Close the obsoleted mobile camera tickets.
+Only after K2–K4 confirm coverage: delete `src/assets/sprites/` (OpenGFX PNGs + `.pnml`), `parse-pnml.mjs`, the slicer's blue-key/generator code, and `opengfx-sprites.json`. Update credits: OpenGFX (GPLv2) gone; Kenney is **CC0** — no obligations, credit optional. Drops the GPL entanglement, worth having clean for a jam entry.
+
+**Acceptance:** no OpenGFX asset or code remains in the active path; README credits Kenney (CC0); atlas still builds; bundle shrinks.
 
 ---
 
-## Test fixtures to build alongside (extends T1)
+## Sequencing
 
-These are cheap now and expensive later:
+**K0 -> K1 -> K2 -> K3 -> K4 -> K5 -> K6.**
 
-1. **Projection round-trip** — every tile, `screenToTile(tileToScreen(t)) === t`, plus the four diamond corners of 20 sampled tiles.
-2. **Autotile table** — all 16 neighbour configurations → expected sprite key.
-3. **Incremental autotile** — placing one tile dirties exactly 5 masks.
-4. **Depth-sort reference render** — fixture map, committed PNG, three zoom levels, four quadrants.
-5. **Pick accuracy** — chimney of a tall sprite, 1px gap between buildings, at three zooms and a non-zero camera offset.
-6. **Connection integrity** — build path, assert connected; remove one middle tile, assert disconnected and VP revoked.
-7. **Drag cost** — 10 tiles charges 10×; truncation at water; free re-drag over own road.
-8. **Determinism** — same seed, two contexts, hash terrain + industries.
+K0 first and alone (constants gate everything). K1 before any mapping. K2/K3 are the bulk, checkable by eye. K4 is riskiest — taller tiles touch depth-sort and picking, historically the two subtlest things here — so its own session, lean on re-baselined tests. K5 sets up TK-004. K6 strictly last.
+
+The only real judgment calls are the ⚠human ones: which building looks like a factory, and the 16-entry road mask->PNG table. Everything else is the measured numbers above — hand them over as-is.
