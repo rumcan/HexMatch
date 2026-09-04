@@ -18,9 +18,10 @@ import {
 import { IsoRenderer, type World } from "./renderer";
 import { generateMap } from "./grid";
 import {
-  createTrack, drawBits, previewDrag, commitDrag, canBuildOn,
+  createTrack, drawBits, previewDrag, commitDrag, canBuildOn, buildTile,
   type DragPreview, type Purse, type TrackKind,
 } from "./track";
+import { vehiclesForRoads } from "./vehicles";
 import { MAP_W, MAP_H } from "../game/config";
 
 const load = (src: string) => new Promise<HTMLImageElement>((res, rej) => {
@@ -52,11 +53,20 @@ export async function startDemo(root: HTMLElement) {
     roadBits: drawBits(track, "road"),
     railBits: drawBits(track, "rail"),
   };
+  // K5: a starter road so the parked truck has somewhere to sit — a short
+  // NE|SW straight near the map centre. (Movement itself is TK-004; the
+  // truck re-parks on whatever you draw, facing along the asphalt.)
+  const cx = MAP_W >> 1, cy = MAP_H >> 1;
+  for (let dy = -1; dy <= 1; dy++) {
+    if (canBuildOn(grid, "road", cx, cy + dy)) buildTile(track, "road", cx, cy + dy, 1);
+  }
+  world.roadBits = drawBits(track, "road");   // the starter road must show on boot
   // A generous purse so the harness exercises geometry, not economy.
   const purse: Purse = { stone: 400, ore: 400 };
   let kind: TrackKind = "road";
   let xFirst = true;
 
+  world.extra = vehiclesForRoads(drawBits(track, "road"), MAP_W, MAP_H);
   let cam: Camera = centerOnMap(createCamera(root.clientWidth, root.clientHeight));
   const r = new IsoRenderer(canvases, atlas, cam, world);
 
@@ -117,6 +127,7 @@ export async function startDemo(root: HTMLElement) {
       }
       world.roadBits = drawBits(track, "road");
       world.railBits = drawBits(track, "rail");
+      world.extra = vehiclesForRoads(drawBits(track, "road"), MAP_W, MAP_H);
       r.setWorld(world);
     }
     drag = null; preview = null;

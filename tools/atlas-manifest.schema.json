@@ -65,6 +65,11 @@
         "anchor"
       ],
       "properties": {
+        "kind": {
+          "description": "Anchor class: ground (flat block, widest-row anchor), standing (building, base-diamond anchor) or vehicle (bottom-centre anchor; intentionally smaller than its tile).",
+          "type": "string",
+          "enum": ["ground", "standing", "vehicle"]
+        },
         "x": {
           "type": "integer",
           "minimum": 0

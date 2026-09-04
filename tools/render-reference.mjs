@@ -16,7 +16,9 @@
  *                                 L-bend of straights+curve in each diagonal
  *                                 (the 90°-bug eyeball) and rail+crossing.
  *   docs/kenney-k3-scene.png      a small scene: terrain trio, every industry,
- *                                 tinted factories/depots, roads.
+ *                                 tinted factories/depots, roads. (same line kept)
+ *   docs/kenney-k5-vehicles.png   the truck's 8 compass frames parked on a
+ *                                 road + the 4 road-direction headings.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -158,4 +160,29 @@ const withOrigin = (ox, oy) => ({
   label(c, 20, 30, "K3 — every industry/depot/factory mapping (tints: blue/red),");
   label(c, 20, 48, "water + rough terrain, road T-junction and straights");
   await emit(c, "kenney-k3-scene.png");
+}
+
+// ── K5: the truck — 8 compass frames + the 4 road directions ───────────────
+{
+  const c = makeCanvas(1180, 760);
+  const o = withOrigin(560, 300);
+  const put = (name, tx, ty) => blit(c, name, ...o.tile(name, tx, ty));
+  // a garage apron of road straights/crossings to sit the frames on
+  const apron = [["road_0101", 0, 0], ["road_0101", 0, 1], ["crossing", 0, 2],
+                 ["road_1010", 1, 2], ["road_1010", 2, 2], ["road_1111", 1, 1]];
+  for (const [n, tx, ty] of apron) put(n, tx, ty);
+  for (let ty = 0; ty < 3; ty++) for (let tx = 0; tx < 3; tx++)
+    if (!apron.some(([, ax, ay]) => ax === tx && ay === ty)) put("terrain_grass", tx, ty);
+  // the eight frames fanned around the apron on grass diamonds
+  const spots = [["n", 3, 1], ["ne", 3, 0], ["e", 4, 0], ["se", 4, 1],
+                 ["s", 4, 2], ["sw", 3, 2], ["w", 2, 3], ["nw", 3, 3]];
+  for (const [h, tx, ty] of spots) {
+    put("terrain_grass", tx, ty);
+    put(`vehicle_truck_${h}`, tx, ty);
+    const [sx, sy] = o.tile("terrain_grass", tx, ty);
+    label(c, sx + 40, sy + 56, h, 12);
+  }
+  label(c, 20, 30, "K5 — garbage truck, Kenney's 8 compass frames (bottom-centre");
+  label(c, 20, 48, "anchors); road directions are ne/se/sw/nw — matches the mask bits");
+  await emit(c, "kenney-k5-vehicles.png");
 }

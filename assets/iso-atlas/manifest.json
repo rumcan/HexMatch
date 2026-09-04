@@ -25,7 +25,8 @@
       "anchor": [
         66,
         33
-      ]
+      ],
+      "kind": "ground"
     },
     "terrain_water": {
       "x": 148,
@@ -39,7 +40,8 @@
       "anchor": [
         66,
         33
-      ]
+      ],
+      "kind": "ground"
     },
     "terrain_rough": {
       "x": 288,
@@ -53,7 +55,8 @@
       "anchor": [
         66,
         34
-      ]
+      ],
+      "kind": "ground"
     },
     "road_0000": {
       "x": 428,
@@ -67,7 +70,8 @@
       "anchor": [
         66,
         33
-      ]
+      ],
+      "kind": "ground"
     },
     "road_0001": {
       "x": 568,
@@ -81,7 +85,8 @@
       "anchor": [
         66,
         33
-      ]
+      ],
+      "kind": "ground"
     },
     "road_0010": {
       "x": 708,
@@ -95,7 +100,8 @@
       "anchor": [
         66,
         36
-      ]
+      ],
+      "kind": "ground"
     },
     "road_0100": {
       "x": 848,
@@ -109,7 +115,8 @@
       "anchor": [
         66,
         33
-      ]
+      ],
+      "kind": "ground"
     },
     "road_1000": {
       "x": 988,
@@ -123,7 +130,8 @@
       "anchor": [
         66,
         33
-      ]
+      ],
+      "kind": "ground"
     },
     "road_0011": {
       "x": 1128,
@@ -137,7 +145,8 @@
       "anchor": [
         66,
         34
-      ]
+      ],
+      "kind": "ground"
     },
     "road_0110": {
       "x": 1268,
@@ -151,7 +160,8 @@
       "anchor": [
         66,
         34
-      ]
+      ],
+      "kind": "ground"
     },
     "road_1100": {
       "x": 1408,
@@ -165,7 +175,8 @@
       "anchor": [
         66,
         34
-      ]
+      ],
+      "kind": "ground"
     },
     "road_1001": {
       "x": 8,
@@ -179,7 +190,8 @@
       "anchor": [
         66,
         34
-      ]
+      ],
+      "kind": "ground"
     },
     "road_0101": {
       "x": 148,
@@ -193,7 +205,8 @@
       "anchor": [
         66,
         33
-      ]
+      ],
+      "kind": "ground"
     },
     "road_1010": {
       "x": 288,
@@ -207,7 +220,8 @@
       "anchor": [
         66,
         33
-      ]
+      ],
+      "kind": "ground"
     },
     "road_0111": {
       "x": 428,
@@ -221,7 +235,8 @@
       "anchor": [
         66,
         33
-      ]
+      ],
+      "kind": "ground"
     },
     "road_1110": {
       "x": 568,
@@ -235,7 +250,8 @@
       "anchor": [
         66,
         33
-      ]
+      ],
+      "kind": "ground"
     },
     "road_1101": {
       "x": 708,
@@ -249,7 +265,8 @@
       "anchor": [
         66,
         33
-      ]
+      ],
+      "kind": "ground"
     },
     "road_1011": {
       "x": 848,
@@ -263,7 +280,8 @@
       "anchor": [
         66,
         33
-      ]
+      ],
+      "kind": "ground"
     },
     "road_1111": {
       "x": 988,
@@ -277,7 +295,8 @@
       "anchor": [
         66,
         34
-      ]
+      ],
+      "kind": "ground"
     },
     "rail_0000": {
       "x": 1129,
@@ -291,7 +310,8 @@
       "anchor": [
         66,
         33
-      ]
+      ],
+      "kind": "ground"
     },
     "rail_0001": {
       "x": 1269,
@@ -305,7 +325,8 @@
       "anchor": [
         66,
         33
-      ]
+      ],
+      "kind": "ground"
     },
     "rail_0010": {
       "x": 1409,
@@ -319,7 +340,8 @@
       "anchor": [
         66,
         33
-      ]
+      ],
+      "kind": "ground"
     },
     "rail_0100": {
       "x": 8,
@@ -333,7 +355,8 @@
       "anchor": [
         66,
         33
-      ]
+      ],
+      "kind": "ground"
     },
     "rail_1000": {
       "x": 148,
@@ -347,7 +370,8 @@
       "anchor": [
         66,
         33
-      ]
+      ],
+      "kind": "ground"
     },
     "rail_0011": {
       "x": 288,
@@ -361,7 +385,8 @@
       "anchor": [
         66,
         33
-      ]
+      ],
+      "kind": "ground"
     },
     "rail_0110": {
       "x": 428,
@@ -375,7 +400,8 @@
       "anchor": [
         66,
         33
-      ]
+      ],
+      "kind": "ground"
     },
     "rail_1100": {
       "x": 568,
@@ -389,7 +415,8 @@
       "anchor": [
         66,
         33
-      ]
+      ],
+      "kind": "ground"
     },
     "rail_1001": {
       "x": 708,
@@ -403,7 +430,8 @@
       "anchor": [
         66,
         33
-      ]
+      ],
+      "kind": "ground"
     },
     "rail_0101": {
       "x": 848,
@@ -417,7 +445,8 @@
       "anchor": [
         66,
         33
-      ]
+      ],
+      "kind": "ground"
     },
     "rail_1010": {
       "x": 988,
@@ -431,7 +460,8 @@
       "anchor": [
         66,
         33
-      ]
+      ],
+      "kind": "ground"
     },
     "rail_0111": {
       "x": 1128,
@@ -445,7 +475,8 @@
       "anchor": [
         66,
         33
-      ]
+      ],
+      "kind": "ground"
     },
     "rail_1110": {
       "x": 1268,
@@ -459,7 +490,8 @@
       "anchor": [
         66,
         33
-      ]
+      ],
+      "kind": "ground"
     },
     "rail_1101": {
       "x": 1408,
@@ -473,7 +505,8 @@
       "anchor": [
         66,
         33
-      ]
+      ],
+      "kind": "ground"
     },
     "rail_1011": {
       "x": 8,
@@ -487,7 +520,8 @@
       "anchor": [
         66,
         33
-      ]
+      ],
+      "kind": "ground"
     },
     "rail_1111": {
       "x": 148,
@@ -501,7 +535,8 @@
       "anchor": [
         66,
         33
-      ]
+      ],
+      "kind": "ground"
     },
     "crossing": {
       "x": 288,
@@ -515,7 +550,8 @@
       "anchor": [
         66,
         34
-      ]
+      ],
+      "kind": "ground"
     },
     "farm": {
       "x": 429,
@@ -529,7 +565,8 @@
       "anchor": [
         49,
         30
-      ]
+      ],
+      "kind": "standing"
     },
     "forest": {
       "x": 536,
@@ -543,7 +580,8 @@
       "anchor": [
         66,
         33
-      ]
+      ],
+      "kind": "standing"
     },
     "ore_mine": {
       "x": 676,
@@ -557,7 +595,8 @@
       "anchor": [
         49,
         25
-      ]
+      ],
+      "kind": "standing"
     },
     "quarry": {
       "x": 783,
@@ -571,7 +610,8 @@
       "anchor": [
         49,
         30
-      ]
+      ],
+      "kind": "standing"
     },
     "oil_rig": {
       "x": 890,
@@ -585,7 +625,8 @@
       "anchor": [
         66,
         59
-      ]
+      ],
+      "kind": "standing"
     },
     "gold_mine": {
       "x": 1031,
@@ -599,7 +640,8 @@
       "anchor": [
         49,
         30
-      ]
+      ],
+      "kind": "standing"
     },
     "factory_blue": {
       "x": 1138,
@@ -613,7 +655,8 @@
       "anchor": [
         66,
         59
-      ]
+      ],
+      "kind": "standing"
     },
     "factory_red": {
       "x": 1279,
@@ -627,7 +670,8 @@
       "anchor": [
         66,
         59
-      ]
+      ],
+      "kind": "standing"
     },
     "factory_purple": {
       "x": 1420,
@@ -641,7 +685,8 @@
       "anchor": [
         66,
         59
-      ]
+      ],
+      "kind": "standing"
     },
     "factory_green": {
       "x": 8,
@@ -655,7 +700,8 @@
       "anchor": [
         66,
         59
-      ]
+      ],
+      "kind": "standing"
     },
     "depot_blue": {
       "x": 149,
@@ -669,7 +715,8 @@
       "anchor": [
         49,
         29
-      ]
+      ],
+      "kind": "standing"
     },
     "depot_red": {
       "x": 256,
@@ -683,7 +730,8 @@
       "anchor": [
         49,
         29
-      ]
+      ],
+      "kind": "standing"
     },
     "depot_purple": {
       "x": 363,
@@ -697,7 +745,8 @@
       "anchor": [
         49,
         29
-      ]
+      ],
+      "kind": "standing"
     },
     "depot_green": {
       "x": 470,
@@ -711,24 +760,131 @@
       "anchor": [
         49,
         29
-      ]
+      ],
+      "kind": "standing"
     },
-    "highlight": {
+    "vehicle_truck_n": {
       "x": 577,
       "y": 448,
-      "w": 132,
-      "h": 83,
+      "w": 19,
+      "h": 27,
       "footprint": [
         1,
         1
       ],
       "anchor": [
-        66,
-        32
-      ]
+        9,
+        27
+      ],
+      "kind": "vehicle"
     },
-    "highlight_soft": {
-      "x": 717,
+    "vehicle_truck_ne": {
+      "x": 604,
+      "y": 448,
+      "w": 35,
+      "h": 31,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        17,
+        31
+      ],
+      "kind": "vehicle"
+    },
+    "vehicle_truck_e": {
+      "x": 647,
+      "y": 448,
+      "w": 33,
+      "h": 29,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        16,
+        29
+      ],
+      "kind": "vehicle"
+    },
+    "vehicle_truck_se": {
+      "x": 688,
+      "y": 448,
+      "w": 35,
+      "h": 33,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        17,
+        33
+      ],
+      "kind": "vehicle"
+    },
+    "vehicle_truck_s": {
+      "x": 731,
+      "y": 448,
+      "w": 19,
+      "h": 30,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        9,
+        30
+      ],
+      "kind": "vehicle"
+    },
+    "vehicle_truck_sw": {
+      "x": 758,
+      "y": 448,
+      "w": 35,
+      "h": 33,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        17,
+        33
+      ],
+      "kind": "vehicle"
+    },
+    "vehicle_truck_w": {
+      "x": 801,
+      "y": 448,
+      "w": 33,
+      "h": 29,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        16,
+        29
+      ],
+      "kind": "vehicle"
+    },
+    "vehicle_truck_nw": {
+      "x": 842,
+      "y": 448,
+      "w": 35,
+      "h": 32,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        17,
+        32
+      ],
+      "kind": "vehicle"
+    },
+    "highlight": {
+      "x": 885,
       "y": 448,
       "w": 132,
       "h": 83,
@@ -739,7 +895,23 @@
       "anchor": [
         66,
         32
-      ]
+      ],
+      "kind": "ground"
+    },
+    "highlight_soft": {
+      "x": 1025,
+      "y": 448,
+      "w": 132,
+      "h": 83,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        66,
+        32
+      ],
+      "kind": "ground"
     }
   }
 }

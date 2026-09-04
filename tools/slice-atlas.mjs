@@ -142,6 +142,10 @@ async function run() {
     manifest.sprites[p.name] = {
       x: p.x, y: p.y, w: p.w, h: p.h,
       footprint: p.cell.footprint, anchor: p.anchor,
+      // ground | standing | vehicle — vehicles are deliberately smaller than
+      // their tile (a truck is ~35px on a 132px tile), so footprint-span
+      // invariants only apply to ground/standing art.
+      kind: p.cell.kind,
     };
   }
 
