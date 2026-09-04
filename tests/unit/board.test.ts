@@ -91,6 +91,22 @@ describe("settle / swap", () => {
     expect(combos[1][2]).toBe(true);
     expect(b.gems().some((g) => g.res === "gold")).toBe(true);
   });
+
+  // W5: the board must TELL the world when it banks a coin. The gold gem on
+  // the board is cosmetic; `onGold(1)` is the wire the purse (and therefore
+  // the Black Market) listens to. Without it "2 combos = 1 gold" is a lie.
+  it("fires onGold exactly once per banked coin", () => {
+    const b = freshBoard();
+    const gold: number[] = [];
+    b.onGold = (n) => gold.push(n);
+    b.registerCombo();
+    expect(gold).toEqual([]);
+    b.registerCombo();
+    expect(gold).toEqual([1]);
+    b.registerCombo();
+    b.registerCombo();
+    expect(gold).toEqual([1, 1]);
+  });
 });
 
 describe("obstacles", () => {

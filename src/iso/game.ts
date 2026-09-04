@@ -35,7 +35,7 @@ import { IsoRenderer, type World } from "./renderer";
 import { generateMap, resolveMapSeed, industryAt, type Grid, type Industry } from "./grid";
 import {
   createTrack, drawBits, previewDrag, commitDrag, canBuildOn, hasTrack,
-  demolishTile, addCost, tIdx, playerNetwork,
+  demolishTile, tIdx, playerNetwork, canAfford,
   type Track, type TrackKind, type Purse, type DragPreview,
 } from "./track";
 import {
@@ -126,15 +126,31 @@ export function startIsoGame(root: HTMLElement) {
     onHarvest: (cargo, amount) => earn(me, { [cargo]: amount }),
     onBlocked: (cargo, amount) =>
       toast(`No route for ${CARGO[cargo].name} — ${amount} lost. Reconnect it.`, "bad"),
+    // W5: the missing wire. The board banks a combo coin every 2 combos;
+    // this listener is what puts it in the purse (and keeps the Black Market
+    // affordable). The HUD chip refreshes on the next paint, which is every
+    // frame.
+    onGold: (n) => {
+      earn(me, { gold: n });
+      toast(`+${n} Gold from combos 🪙`, "good");
+    },
     onGains: (gains, label) => toast(gainText(gains, label), "good"),
     onTokens: (pool) => toast(`Tokens: ${(Object.keys(pool) as ResKey[])
       .map((r) => CARGO[GEM_TO_CARGO[r]].name).join(", ")}`, "info"),
     onChange: () => onBoardChange(),
   });
 
+  // W6: the rival's answers and expirations are trade events — surface them
+  // in the Feed so "the rival answered my offer" is visible, not silent.
   const market: IsoMarket = createIsoMarket(players.map((p) => ({
     i: p.i, id: p.id, name: p.name, human: p.human, purse: p.purse,
-  })));
+  })), {
+    onOfferClosed: (o, how) => {
+      const body = `${o.giveN} ${CARGO[o.give].name} → ${o.wantN} ${CARGO[o.want].name}`;
+      if (how === "accepted") ui.feed(`Rival took your offer: ${body}`, rival.name);
+      else ui.feed(`Your offer expired — escrow refunded (${body})`);
+    },
+  });
   const meTrader = market.players[0];
 
   // Original HUD (U1). It takes the live board + market + the player purse and
@@ -201,10 +217,18 @@ export function startIsoGame(root: HTMLElement) {
     ui.toast(text, kind);
   };
 
-  const spend = (p: PlayerState, cost: Purse) => {
+  /**
+   * W1: the affordability guard. `spend` can never take a purse below zero —
+   * the preview already refuses unaffordable tiles, so this is the safety net
+   * that makes "no purse value ever goes negative" true by construction
+   * rather than by every caller remembering to check.
+   */
+  const spend = (p: PlayerState, cost: Purse): boolean => {
+    if (!canAfford(p.purse, cost)) return false;
     for (const [k, v] of Object.entries(cost) as [Cargo, number][]) {
       p.purse[k] = (p.purse[k] ?? 0) - v;
     }
+    return true;
   };
   const earn = (p: PlayerState, gain: Purse) => {
     for (const [k, v] of Object.entries(gain) as [Cargo, number][]) {
@@ -262,7 +286,8 @@ export function startIsoGame(root: HTMLElement) {
   // ── actions ────────────────────────────────────────────────────────────
   function placeFactory(tx: number, ty: number): boolean {
     if (!canBuildOn(grid, "road", tx, ty)) { toast("Can't build there.", "bad"); return false; }
-    eco.factories.push({ owner: "you", tx, ty });
+    // W2: the factory carries its builder's track-owner id (player index + 1).
+    eco.factories.push({ owner: "you", ownerId: me.i + 1, tx, ty });
     // Give the rival a factory a good distance away, on legal ground.
     let best: [number, number] | null = null, bestD = -1;
     for (let y = 2; y < MAP_H - 2; y += 2) {
@@ -272,7 +297,7 @@ export function startIsoGame(root: HTMLElement) {
         if (d > bestD) { bestD = d; best = [x, y]; }
       }
     }
-    if (best) eco.factories.push({ owner: "ai", tx: best[0], ty: best[1] });
+    if (best) eco.factories.push({ owner: "ai", ownerId: rival.i + 1, tx: best[0], ty: best[1] });
     phase = "setup-harvester";
     syncWorld();
     toast("Factory placed. Now place your first harvester beside an industry.", "info");
@@ -284,7 +309,7 @@ export function startIsoGame(root: HTMLElement) {
     if (eco.harvesters.some((h) => h.tx === tx && h.ty === ty)) {
       toast("A harvester is already there.", "bad"); return false;
     }
-    const h: Harvester = { id: nextHarvesterId++, owner: p.id, tx, ty };
+    const h: Harvester = { id: nextHarvesterId++, owner: p.id, ownerId: p.i + 1, tx, ty };
     if (!industriesInCatchment(grid, h).length) {
       toast("A harvester needs an industry in its 4×4 catchment.", "bad");
       return false;
@@ -297,16 +322,19 @@ export function startIsoGame(root: HTMLElement) {
   }
 
   function commitTrackDrag(p: PlayerState, pv: DragPreview, kind: TrackKind) {
-    const res = commitDrag(track, kind, pv);
-    // Free setup tiles are consumed from the allowance first; only the
-    // remainder is charged. The allowance is data, so nothing can revoke it.
-    const n = res.built.length;
-    const free = Math.min(p.freeTrack, n);
-    p.freeTrack -= free;
-    if (n > free) {
-      let cost: Purse = {};
-      for (let i = 0; i < n - free; i++) cost = addCost(cost, TRANSPORT[kind].cost);
-      spend(p, cost);
+    // W2: every tile the drag lays is stamped with the builder's owner id,
+    // so the committed road is exactly the tiles that join `p`'s network.
+    const res = commitDrag(track, kind, pv, p.i + 1);
+    // W1: the commit spends EXACTLY what the preview charged. The free
+    // allowance and the per-tile costs were computed by `previewDrag` over
+    // the same cost model the preview drew, so "what you see" and "what you
+    // are charged" are one number. `spend` itself is affordability-guarded,
+    // so even a stale preview can never push a purse negative.
+    p.freeTrack = Math.max(0, p.freeTrack - pv.free);
+    if (Object.keys(pv.cost).length && !spend(p, pv.cost)) {
+      // Unreachable in practice (the preview refused unaffordable tiles);
+      // the guard is what makes the invariant hold regardless.
+      toast("Not enough materials.", "bad");
     }
     for (const [bx, by] of res.built) {
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
@@ -316,7 +344,7 @@ export function startIsoGame(root: HTMLElement) {
     }
     syncWorld();
     rescoreNow();
-    if (free > 0) toast(`${free} free setup tile${free > 1 ? "s" : ""} used.`, "info");
+    if (pv.free > 0) toast(`${pv.free} free setup tile${pv.free > 1 ? "s" : ""} used.`, "info");
   }
 
   function doDemolish(tx: number, ty: number) {
@@ -328,8 +356,12 @@ export function startIsoGame(root: HTMLElement) {
       return;
     }
     let removed = false;
+    // W2: the tool only tears down track YOU built. Your demolish can never
+    // cut the rival's line (and vice-versa) — "no implicit sharing" applies
+    // to destruction, not just travel.
+    const mine = track.owner[tIdx(tx, ty)] === me.i + 1;
     for (const kind of ["rail", "road"] as TrackKind[]) {
-      if (hasTrack(track, kind, tx, ty)) { demolishTile(track, kind, tx, ty); removed = true; break; }
+      if (mine && hasTrack(track, kind, tx, ty)) { demolishTile(track, kind, tx, ty); removed = true; break; }
     }
     if (!removed) { toast("Nothing to demolish there.", "bad"); return; }
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
@@ -399,11 +431,14 @@ export function startIsoGame(root: HTMLElement) {
     if (phase !== "play") return;
     if (now - lastHarvest < HARVEST_MS) return;
     lastHarvest = now;
-    const comp = buildAllComponents(track);
     // J1: YOUR cargo comes from matching the quarry, not from a trickle — the
     // connection decides what the board is allowed to pay. The rival has no
     // board to play, so the passive yield stays as its income.
-    const y = playerResources(eco, rival.id, now, comp);
+    // W3: the trickle is computed over the rival's OWN network (W2's
+    // owner-scoped components) and credited straight to its purse — this is
+    // the rival's only income, so once it connects an industry its stone/ore
+    // actually move over time.
+    const y = playerResources(eco, rival.id, now);
     const gain: Purse = {};
     for (const [cargo, v] of Object.entries(y) as [Cargo, number][]) {
       const n = Math.max(0, Math.round(v));
@@ -427,9 +462,15 @@ export function startIsoGame(root: HTMLElement) {
     lastAi = now;
     const f = factoryOf("ai");
     if (!f) return;
-    const out = aiBuildStep(eco, f, { stock: rival.purse, purse: rival.purse }, nextHarvesterId);
+    // W3: the rival plans with the SAME cost model as the player — its free
+    // setup allowance first, then its purse. (W2's ownership change is what
+    // un-sticks it: the rival no longer "sees" itself as connected across
+    // the player's road, so it actually decides to build.)
+    const out = aiBuildStep(eco, f,
+      { stock: rival.purse, purse: rival.purse, free: rival.freeTrack }, nextHarvesterId);
     if (!out) return;
     nextHarvesterId++;
+    rival.freeTrack = Math.max(0, rival.freeTrack - out.free);
     spend(rival, out.spent);
     for (const [bx, by] of out.built) renderer?.invalidateTile(bx, by);
     syncWorld();
@@ -486,10 +527,13 @@ export function startIsoGame(root: HTMLElement) {
     if (blackMode === "bandit") {
       costInfo = `<span class="mb-txt">Click an industry to set the Blockade</span><span class="mb-cost">${SABOTAGE.bandit.gold}🪙</span>`;
     } else if (preview) {
+      // W1: the label shows the preview's OWN numbers — the charge is
+      // `preview.cost` and the free count is `preview.free`, exactly what the
+      // commit will do.
       const parts = Object.entries(preview.cost).map(([k, v]) => `${v} ${k}`);
       const n = preview.tiles.length;
-      const freeN = Math.min(me.freeTrack, n);
-      const label = freeN >= n ? "free (setup)" : (parts.join(" + ") || "free");
+      const label = parts.length ? parts.join(" + ")
+        : (preview.free > 0 ? "free (setup)" : "free");
       costInfo = `<span class="mb-txt"><b>${n}</b> tiles · ${label}</span>` +
         (preview.truncated ? ` · <i>blocked</i>` : "") +
         `<span class="mb-cost">${TRANSPORT[tool === "rail" ? "rail" : "road"].vp} VP</span>`;
@@ -501,7 +545,9 @@ export function startIsoGame(root: HTMLElement) {
     if (ref && ref.kind === "harvester") {
       const h = eco.harvesters.find((x) => x.id === ref.id);
       if (h) {
-        const comp = buildAllComponents(track);
+        // W2: the inspector resolves the connection over THIS harvester's
+        // own network, not the merged graph.
+        const comp = buildAllComponents(track, h.ownerId);
         const conn = resolveConnection(eco, comp, h);
         const inds = industriesInCatchment(grid, h);
         info = `<b>Harvester</b> (${h.owner === "you" ? "yours" : "rival"})<br>` +
@@ -561,7 +607,9 @@ export function startIsoGame(root: HTMLElement) {
     if (!p) return;
     const isTrackTool = tool === "road" || tool === "rail";
     if (phase === "play" && isTrackTool && e.isPrimary) {
-      const net = playerNetwork(track, "you", eco.factories, eco.harvesters);
+      // W2: a drag extends YOUR network only — the rival's road is not a
+      // seed you can grow from.
+      const net = playerNetwork(track, me.i + 1, eco.factories, eco.harvesters);
       if (canBuildOn(grid, tool as TrackKind, p.tx, p.ty, net)) {
         drag = { ax: p.tx, ay: p.ty };
         return;
@@ -577,11 +625,14 @@ export function startIsoGame(root: HTMLElement) {
     if (p) hover = { tx: p.tx, ty: p.ty, ref: p.ref };
     if (drag && p) {
       const kind = tool === "rail" ? "rail" : "road";
-      // Free setup tiles make the whole drag affordable regardless of purse.
-      const purse: Purse = me.freeTrack > 0
-        ? { stone: 9999, ore: 9999 } : me.purse;
-      const net = playerNetwork(track, "you", eco.factories, eco.harvesters);
-      preview = previewDrag(grid, track, kind, purse, drag.ax, drag.ay, p.tx, p.ty, true, net);
+      const net = playerNetwork(track, me.i + 1, eco.factories, eco.harvesters);
+      // W1: the preview prices the drag with the REAL purse and the free
+      // allowance applied INSIDE the preview (last arg). The old
+      // "freeTrack > 0 → 9999 stone" trick priced the preview differently
+      // from the commit; now both share one cost model, so what you see is
+      // what you are charged.
+      preview = previewDrag(grid, track, kind, me.purse,
+        drag.ax, drag.ay, p.tx, p.ty, true, net, me.freeTrack);
       return;
     }
     const out = pointerMove(g, { id: e.pointerId, x, y }, cam);
@@ -723,6 +774,37 @@ export function startIsoGame(root: HTMLElement) {
     /** Screen position (device px, live camera) of a tile's top vertex — the
      *  e2e twin of __hex.view.screenPosOf. Read-only. */
     tileScreenAt: (tx: number, ty: number) => tileToScreenAt(cam, tx, ty),
+    /**
+     * W1/W2: the e2e/unit twin of a track drag — the exact pointer path
+     * (owned network check → preview with the free allowance → commit).
+     * Returns the committed preview, or null when the drag can't start.
+     */
+    dragBuild: (kind: TrackKind, ax: number, ay: number, bx: number, by: number, xFirst = true): DragPreview | null => {
+      if (phase !== "play") return null;
+      const net = playerNetwork(track, me.i + 1, eco.factories, eco.harvesters);
+      if (!canBuildOn(grid, kind, ax, ay, net)) return null;
+      const pv = previewDrag(grid, track, kind, me.purse, ax, ay, bx, by, xFirst, net, me.freeTrack);
+      if (pv.tiles.length === 0) return null;
+      commitTrackDrag(me, pv, kind);
+      return pv;
+    },
+    /** W3: the e2e/unit twin of the AI build clock, with an injectable now. */
+    aiTick: (now = performance.now()) => aiTick(now),
+    /** The per-frame harvest clock (the rival's passive income lives here). */
+    econTick: (now = performance.now()) => economyTick(now),
+    /**
+     * The test twin of finishing the setup clicks (factory + first
+     * harvester): it is what flips the game into `play`, which the AI and
+     * economy clocks refuse to run before.
+     */
+    finishSetup: () => {
+      phase = "play";
+      lastHarvest = performance.now();
+      lastAi = performance.now();
+    },
+    /** W6: the per-frame board+market clock, with an injectable now — the
+     *  twin the Feed assertions drive (the rival answers inside market.tick). */
+    tick: (now = performance.now()) => quarryTick(now),
   };
 
   return () => {

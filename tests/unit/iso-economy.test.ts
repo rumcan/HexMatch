@@ -34,12 +34,16 @@ const ind = (type: string, tx: number, ty: number, banditUntil = 0): Industry =>
   };
 };
 
-const H = (id: number, owner: string, tx: number, ty: number): Harvester =>
-  ({ id, owner, tx, ty });
+// W2: the numeric track-owner id follows the string identity the tests use
+// (p1 → 1, p2 → 2); anything else is the neutral, unowned world.
+const oid = (owner: string) => (owner === "p1" ? 1 : owner === "p2" ? 2 : 0);
 
-/** Lay a straight run of track along x at a fixed y. */
-const run = (t: Track, kind: "road" | "rail", x0: number, x1: number, y: number) => {
-  for (let x = x0; x <= x1; x++) buildTile(t, kind, x, y);
+const H = (id: number, owner: string, tx: number, ty: number): Harvester =>
+  ({ id, owner, ownerId: oid(owner), tx, ty });
+
+/** Lay a straight run of track along x at a fixed y, owned by `owner`. */
+const run = (t: Track, kind: "road" | "rail", x0: number, x1: number, y: number, owner: number = 0) => {
+  for (let x = x0; x <= x1; x++) buildTile(t, kind, x, y, owner);
 };
 
 describe("E6 catchment", () => {
@@ -72,7 +76,7 @@ describe("E6 servicing", () => {
     const t = createTrack();
     const h = H(0, "p1", 10, 10);
     expect(isServiced(t, h)).toBe(false);
-    buildTile(t, "road", 11, 10);
+    buildTile(t, "road", 11, 10, 1);
     expect(isServiced(t, h)).toBe(true);
   });
 
@@ -80,7 +84,16 @@ describe("E6 servicing", () => {
     const t = createTrack();
     buildTile(t, "rail", 11, 11);
     expect(isServiced(t, H(0, "p1", 10, 10))).toBe(false);
-    buildTile(t, "rail", 10, 11);
+    buildTile(t, "rail", 10, 11, 1);
+    expect(isServiced(t, H(0, "p1", 10, 10))).toBe(true);
+  });
+
+  // W2: a RIVAL's line beside your harvester does not service it.
+  it("does not count another player's adjacent track as service", () => {
+    const t = createTrack();
+    buildTile(t, "road", 11, 10, 2);            // the rival's road
+    expect(isServiced(t, H(0, "p1", 10, 10))).toBe(false);
+    buildTile(t, "road", 11, 10, 1);            // own the tile: now serviced
     expect(isServiced(t, H(0, "p1", 10, 10))).toBe(true);
   });
 });
@@ -90,7 +103,7 @@ describe("E6 connected components", () => {
     const t = createTrack();
     run(t, "road", 5, 9, 10);
     run(t, "road", 20, 24, 10);
-    const comp = buildComponents(t, "road");
+    const comp = buildComponents(t, "road", 0);
     expect(comp[tIdx(5, 10)]).toBe(comp[tIdx(9, 10)]);
     expect(comp[tIdx(20, 10)]).not.toBe(comp[tIdx(5, 10)]);
     expect(comp[tIdx(15, 10)]).toBe(-1);
@@ -100,7 +113,7 @@ describe("E6 connected components", () => {
     const t = createTrack();
     run(t, "road", 5, 6, 10);
     t.road[tIdx(6, 10)] |= 2;                 // forge SE toward an empty tile
-    const comp = buildComponents(t, "road");
+    const comp = buildComponents(t, "road", 0);
     expect(comp[tIdx(7, 10)]).toBe(-1);
   });
 
@@ -108,7 +121,7 @@ describe("E6 connected components", () => {
     const t = createTrack();
     run(t, "road", 5, 9, 10);
     for (let y = 8; y <= 12; y++) buildTile(t, "rail", 7, y);
-    const c = buildAllComponents(t);
+    const c = buildAllComponents(t, 0);
     expect(c.road[tIdx(5, 10)]).toBeGreaterThanOrEqual(0);
     expect(c.rail[tIdx(7, 8)]).toBeGreaterThanOrEqual(0);
     expect(c.road[tIdx(7, 8)]).toBe(-1);
@@ -117,23 +130,40 @@ describe("E6 connected components", () => {
   it("linkedBy joins two structures beside the same component", () => {
     const t = createTrack();
     run(t, "road", 5, 15, 10);
-    const comp = buildComponents(t, "road");
+    const comp = buildComponents(t, "road", 0);
     // both sit just above the road run
     expect(linkedBy(comp, 6, 9, 14, 9)).toBe(true);
     expect(linkedBy(comp, 6, 9, 40, 40)).toBe(false);
   });
+
+  // W2 acceptance: two players' lines that TOUCH each other are still two
+  // components — one per owner. The flood that scores connections can never
+  // run across the border.
+  it("never merges two players' touching lines (owner boundary)", () => {
+    const t = createTrack();
+    run(t, "road", 5, 9, 10, 1);              // p1's run
+    run(t, "road", 10, 14, 10, 2);            // p2's run, adjacent at x=9/10
+    const c1 = buildComponents(t, "road", 1);
+    const c2 = buildComponents(t, "road", 2);
+    // each player sees its own run, in its own component
+    expect(c1[tIdx(9, 10)]).toBeGreaterThanOrEqual(0);
+    expect(c2[tIdx(10, 10)]).toBeGreaterThanOrEqual(0);
+    // neither player's flood crosses into the other's tiles
+    expect(c1[tIdx(10, 10)]).toBe(-1);
+    expect(c2[tIdx(9, 10)]).toBe(-1);
+  });
 });
 
 describe("E6 acceptance", () => {
-  /** Farm + harvester + a road to the factory. */
+  /** Farm + harvester + a road to the factory — all p1's, all owned by p1. */
   function scenario(kind: "road" | "rail" = "road") {
     const farm = ind("farm", 12, 11);
     const grid = flatGrid([farm]);
     const track = createTrack();
-    run(track, kind, 6, 20, 10);              // the trunk line
+    run(track, kind, 6, 20, 10, 1);           // p1's trunk line
     const harv = H(1, "p1", 11, 11);          // below the trunk, beside it
-    buildTile(track, kind, 11, 10);           // already part of the run
-    const factory: Factory = { owner: "p1", tx: 20, ty: 11 };
+    buildTile(track, kind, 11, 10, 1);        // already part of the run
+    const factory: Factory = { owner: "p1", ownerId: 1, tx: 20, ty: 11 };
     const state: EconomyState = {
       grid, track, harvesters: [harv], factories: [factory],
     };
@@ -148,7 +178,7 @@ describe("E6 acceptance", () => {
 
   it("a rail path scores 3 VP and applies the 1.6× multiplier", () => {
     const { state } = scenario("rail");
-    const comp = buildAllComponents(state.track);
+    const comp = buildAllComponents(state.track, 1);
     const conn = resolveConnection(state, comp, state.harvesters[0]);
     expect(conn.kind).toBe("rail");
     expect(conn.vp).toBe(3);
@@ -159,7 +189,7 @@ describe("E6 acceptance", () => {
 
   it("a road path scores 1 VP at 1.0×", () => {
     const { state } = scenario("road");
-    const comp = buildAllComponents(state.track);
+    const comp = buildAllComponents(state.track, 1);
     const conn = resolveConnection(state, comp, state.harvesters[0]);
     expect(conn.kind).toBe("road");
     expect(conn.vp).toBe(1);
@@ -200,12 +230,82 @@ describe("E6 acceptance", () => {
     const state: EconomyState = {
       grid, track: createTrack(),
       harvesters: [H(1, "p1", 11, 11)],
-      factories: [{ owner: "p1", tx: 20, ty: 11 }],
+      factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }],
     };
     expect(playerResources(state, "p1", 0)).toEqual({});
     const score = createScoreState();
     expect(rescore(state, score)).toEqual([]);
     expect(vpFor(score, "p1")).toBe(0);
+  });
+
+  // W2 acceptance: "a player's network reaches an industry only over that
+  // player's own track; the rival must build its own road to connect."
+  it("reaches an industry only over its own track, never the rival's", () => {
+    const farm = ind("farm", 12, 11);
+    const grid = flatGrid([farm]);
+    const track = createTrack();
+    // p1's full line: harvester → farm → its factory.
+    run(track, "road", 6, 20, 10, 1);
+    const p1Harv = H(1, "p1", 11, 11);
+    const state: EconomyState = {
+      grid, track,
+      harvesters: [p1Harv],
+      factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }],
+    };
+    expect(playerResources(state, "p1", 0).grain).toBeGreaterThan(0);
+
+    // p2 puts a harvester beside the SAME farm, right next to p1's line —
+    // but p2 has built nothing. The rival's road must not count.
+    state.harvesters.push(H(2, "p2", 13, 11));
+    state.factories.push({ owner: "p2", ownerId: 2, tx: 40, ty: 11 });
+    expect(playerResources(state, "p2", 0)).toEqual({});
+    const score = createScoreState();
+    const events = rescore(state, score);
+    // only p1's connection is scored; p2's unserviced harvester earns no VP
+    expect(events.filter((e) => e.type === "awarded")).toHaveLength(1);
+    expect(vpFor(score, "p1")).toBe(1);
+    expect(vpFor(score, "p2")).toBe(0);
+
+    // The moment p2 lays its OWN road home, it connects on its own.
+    run(track, "road", 14, 40, 12, 2);
+    run(track, "road", 14, 14, 11, 2);   // up from its line to beside the farm
+    expect(playerResources(state, "p2", 0).grain).toBeGreaterThan(0);
+  });
+
+  // W2 acceptance: "demolishing your own road never disconnects the rival
+  // (and vice-versa)". Two players share one farm from adjacent lines; each
+  // tears down a tile of its OWN line and the other's connection survives.
+  it("cutting one player's line leaves the other's connection intact", () => {
+    const world = (): EconomyState => {
+      const grid = flatGrid([ind("farm", 12, 11)]);
+      const track = createTrack();
+      run(track, "road", 6, 12, 10, 1);   // p1's line (they meet at x=12…)
+      run(track, "road", 12, 20, 10, 2);  // …which p2 builds last and owns
+      return {
+        grid, track,
+        harvesters: [H(1, "p1", 11, 11), H(2, "p2", 13, 11)],
+        factories: [
+          { owner: "p1", ownerId: 1, tx: 6, ty: 11 },
+          { owner: "p2", ownerId: 2, tx: 20, ty: 11 },
+        ],
+      };
+    };
+
+    // both start connected, sharing the farm
+    let state = world();
+    expect(playerResources(state, "p1", 0).grain).toBeGreaterThan(0);
+    expect(playerResources(state, "p2", 0).grain).toBeGreaterThan(0);
+
+    // p1 demolishes its own tile — p1 goes dark, p2 is UNTOUCHED
+    demolishTile(state.track, "road", 10, 10);
+    expect(playerResources(state, "p1", 0)).toEqual({});
+    expect(playerResources(state, "p2", 0).grain).toBeGreaterThan(0);
+
+    // and vice-versa: p2's demolition cannot reach p1's connection
+    state = world();
+    demolishTile(state.track, "road", 14, 10);
+    expect(playerResources(state, "p2", 0)).toEqual({});
+    expect(playerResources(state, "p1", 0).grain).toBeGreaterThan(0);
   });
 });
 
@@ -214,14 +314,14 @@ describe("E6 rail beats road", () => {
     const farm = ind("farm", 12, 11);
     const grid = flatGrid([farm]);
     const track = createTrack();
-    run(track, "road", 6, 20, 10);
-    run(track, "rail", 6, 20, 12);
+    run(track, "road", 6, 20, 10, 1);
+    run(track, "rail", 6, 20, 12, 1);
     const state: EconomyState = {
       grid, track,
       harvesters: [H(1, "p1", 11, 11)],       // between both lines
-      factories: [{ owner: "p1", tx: 20, ty: 11 }],
+      factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }],
     };
-    const comp = buildAllComponents(track);
+    const comp = buildAllComponents(track, 1);
     expect(resolveConnection(state, comp, state.harvesters[0]).kind).toBe("rail");
     expect(playerResources(state, "p1", 0).grain)
       .toBeCloseTo(INDUSTRY_BY_KEY.farm.output * TRANSPORT.rail.throughput, 6);
@@ -230,12 +330,12 @@ describe("E6 rail beats road", () => {
   it("falls back to road and revokes the rail VP when the rail breaks", () => {
     const grid = flatGrid([ind("farm", 12, 11)]);
     const track = createTrack();
-    run(track, "road", 6, 20, 10);
-    run(track, "rail", 6, 20, 12);
+    run(track, "road", 6, 20, 10, 1);
+    run(track, "rail", 6, 20, 12, 1);
     const state: EconomyState = {
       grid, track,
       harvesters: [H(1, "p1", 11, 11)],
-      factories: [{ owner: "p1", tx: 20, ty: 11 }],
+      factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }],
     };
     const score = createScoreState();
     rescore(state, score);
@@ -252,16 +352,16 @@ describe("E6 rail beats road", () => {
   it("upgrading road to rail raises the VP", () => {
     const grid = flatGrid([ind("farm", 12, 11)]);
     const track = createTrack();
-    run(track, "road", 6, 20, 10);
+    run(track, "road", 6, 20, 10, 1);
     const state: EconomyState = {
       grid, track,
       harvesters: [H(1, "p1", 11, 11)],
-      factories: [{ owner: "p1", tx: 20, ty: 11 }],
+      factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }],
     };
     const score = createScoreState();
     rescore(state, score);
     expect(vpFor(score, "p1")).toBe(1);
-    run(track, "rail", 6, 20, 12);
+    run(track, "rail", 6, 20, 12, 1);
     const events = rescore(state, score);
     expect(events[0]).toMatchObject({ type: "upgraded", from: "road", to: "rail", delta: 2 });
     expect(vpFor(score, "p1")).toBe(3);
@@ -272,11 +372,16 @@ describe("E6 overlapping catchments split output proportionally", () => {
   function twoClaimants() {
     const grid = flatGrid([ind("farm", 12, 11)]);
     const track = createTrack();
-    run(track, "road", 6, 20, 10);
+    // W2: each player runs its OWN line to its OWN factory. They meet at
+    // (12,10); p2 builds it last and owns the shared tile, so p1's component
+    // stops at x=11 and p2's starts at x=12 — both harvesters stay serviced
+    // over their own track, which is exactly what the split presumes.
+    run(track, "road", 6, 12, 10, 1);
+    run(track, "road", 12, 20, 10, 2);
     const state: EconomyState = {
       grid, track,
       harvesters: [H(1, "p1", 11, 11), H(2, "p2", 13, 11)],
-      factories: [{ owner: "p1", tx: 20, ty: 11 }, { owner: "p2", tx: 19, ty: 11 }],
+      factories: [{ owner: "p1", ownerId: 1, tx: 6, ty: 11 }, { owner: "p2", ownerId: 2, tx: 20, ty: 11 }],
     };
     return state;
   }
@@ -310,11 +415,11 @@ describe("E6 scoring hygiene", () => {
   it("is idempotent — rescoring an unchanged world emits nothing", () => {
     const grid = flatGrid([ind("farm", 12, 11)]);
     const track = createTrack();
-    run(track, "road", 6, 20, 10);
+    run(track, "road", 6, 20, 10, 1);
     const state: EconomyState = {
       grid, track,
       harvesters: [H(1, "p1", 11, 11)],
-      factories: [{ owner: "p1", tx: 20, ty: 11 }],
+      factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }],
     };
     const score = createScoreState();
     expect(rescore(state, score)).toHaveLength(1);
@@ -326,11 +431,11 @@ describe("E6 scoring hygiene", () => {
   it("debits VP when the harvester itself is removed", () => {
     const grid = flatGrid([ind("farm", 12, 11)]);
     const track = createTrack();
-    run(track, "road", 6, 20, 10);
+    run(track, "road", 6, 20, 10, 1);
     const state: EconomyState = {
       grid, track,
       harvesters: [H(1, "p1", 11, 11)],
-      factories: [{ owner: "p1", tx: 20, ty: 11 }],
+      factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }],
     };
     const score = createScoreState();
     rescore(state, score);
@@ -346,11 +451,13 @@ describe("E6 scoring hygiene", () => {
   it("keeps players' VP separate", () => {
     const grid = flatGrid([ind("farm", 12, 11), ind("forest", 30, 11)]);
     const track = createTrack();
-    run(track, "road", 6, 40, 10);
+    // W2: two players on the same physical corridor, each over its OWN track.
+    run(track, "road", 6, 40, 10, 1);
+    run(track, "road", 30, 40, 10, 2);
     const state: EconomyState = {
       grid, track,
       harvesters: [H(1, "p1", 11, 11), H(2, "p2", 31, 11)],
-      factories: [{ owner: "p1", tx: 20, ty: 11 }, { owner: "p2", tx: 35, ty: 11 }],
+      factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }, { owner: "p2", ownerId: 2, tx: 35, ty: 11 }],
     };
     const score = createScoreState();
     rescore(state, score);
@@ -361,13 +468,13 @@ describe("E6 scoring hygiene", () => {
   it("does not connect a harvester to a rival's factory", () => {
     const grid = flatGrid([ind("farm", 12, 11)]);
     const track = createTrack();
-    run(track, "road", 6, 20, 10);
+    run(track, "road", 6, 20, 10, 1);
     const state: EconomyState = {
       grid, track,
       harvesters: [H(1, "p1", 11, 11)],
-      factories: [{ owner: "p2", tx: 20, ty: 11 }],   // rival's only
+      factories: [{ owner: "p2", ownerId: 2, tx: 20, ty: 11 }],   // rival's only
     };
-    const comp = buildAllComponents(track);
+    const comp = buildAllComponents(track, 1);
     expect(resolveConnection(state, comp, state.harvesters[0]).kind).toBeNull();
     expect(playerResources(state, "p1", 0)).toEqual({});
   });
@@ -375,14 +482,14 @@ describe("E6 scoring hygiene", () => {
   it("harvesterYield reports servicing and connection for the UI", () => {
     const grid = flatGrid([ind("farm", 12, 11)]);
     const track = createTrack();
-    run(track, "road", 6, 20, 10);
+    run(track, "road", 6, 20, 10, 1);
     const state: EconomyState = {
       grid, track,
       harvesters: [H(1, "p1", 11, 11)],
-      factories: [{ owner: "p1", tx: 20, ty: 11 }],
+      factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }],
     };
     const y = harvesterYield(
-      state, buildAllComponents(track), claimantCounts(state), state.harvesters[0], 0,
+      state, buildAllComponents(track, 1), claimantCounts(state), state.harvesters[0], 0,
     );
     expect(y.serviced).toBe(true);
     expect(y.connection.kind).toBe("road");

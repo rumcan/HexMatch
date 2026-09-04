@@ -44,22 +44,23 @@ const ind = (type: string, tx: number, ty: number): Industry => {
 };
 
 const H = (id: number, owner: string, tx: number, ty: number): Harvester =>
-  ({ id, owner, tx, ty });
+  ({ id, owner, ownerId: owner === "you" ? 1 : 0, tx, ty });
 
 const run = (t: Track, kind: "road" | "rail", x0: number, x1: number, y: number) => {
-  for (let x = x0; x <= x1; x++) buildTile(t, kind, x, y);
+  for (let x = x0; x <= x1; x++) buildTile(t, kind, x, y, 1);
 };
 
 /**
  * Farm (grain) at 11,11; harvester at 10,10 catches it; the factory sits at
- * 14,10, so road tiles 11..14 on row 10 complete the link.
+ * 14,10, so road tiles 11..14 on row 10 complete the link. W2: every tile is
+ * owned by "you" (ownerId 1) — the link only exists because the track is his.
  */
 function world() {
   const grid = flatGrid([ind("farm", 11, 11)]);
   const track = createTrack();
   const harvester = H(1, "you", 10, 10);
   const state: EconomyState = {
-    grid, track, harvesters: [harvester], factories: [{ owner: "you", tx: 14, ty: 10 }],
+    grid, track, harvesters: [harvester], factories: [{ owner: "you", ownerId: 1, tx: 14, ty: 10 }],
   };
   const connect = () => run(track, "road", 11, 14, 10);
   const cut = () => demolishTile(track, "road", 12, 10);
@@ -254,5 +255,40 @@ describe("J1 createQuarry", () => {
     expect(demoteTokens(q.board, ["brick"])).toBe(0);
     expect(demoteTokens(q.board, ["wood"])).toBe(1);
     expect(q.board.gems().filter((g) => g.tier > 0)).toHaveLength(0);
+  });
+});
+
+// W5 — gold coins must reach the purse. The board banks a coin every
+// COMBOS_PER_GOLD combos; the quarry's onGold hook is the wire that credits
+// the purse. Without it the coin dies on the board and the Black Market
+// (which spends gold) is silently unaffordable.
+describe("W5 the combo coin reaches the purse", () => {
+  it("credits onGold exactly once per banked coin (2 combos = 1)", () => {
+    const { state } = world();
+    const gold: number[] = [];
+    const q = createQuarry(state, "you", { onGold: (n) => gold.push(n) });
+    neutralise(q.board);
+
+    q.board.registerCombo();
+    expect(gold).toEqual([]);                 // one combo: no coin yet
+    q.board.registerCombo();
+    expect(gold).toEqual([1]);                // second combo: exactly one coin
+    q.board.registerCombo();
+    q.board.registerCombo();
+    expect(gold).toEqual([1, 1]);             // banks again, one at a time
+  });
+
+  it("a coin lands in the purse the hook is given (game-level shape)", () => {
+    const { state } = world();
+    const purse: Record<Cargo, number> = {
+      grain: 0, wood: 0, ore: 0, stone: 0, oil: 0, gold: 0,
+    };
+    const q = createQuarry(state, "you", {
+      onGold: (n) => { purse.gold += n; },
+    });
+    neutralise(q.board);
+    q.board.registerCombo();
+    q.board.registerCombo();
+    expect(purse.gold).toBe(1);
   });
 });

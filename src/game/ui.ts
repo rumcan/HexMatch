@@ -423,7 +423,11 @@ export function createOriginalUi(
     const wantN = Math.max(1, Math.floor(Number(postWantN.value) || 2));
     if ((me.res[give] ?? 0) < giveN) { toast(`Not enough ${CARGO[give].name}.`, "danger"); return; }
     if (market.live(me).length >= MAX_OFFERS) { toast("You already have 3 offers live. Cancel one first.", "danger"); return; }
-    if (market.post(me, give, giveN, want, wantN)) toast(`Offer posted: ${giveN} ${CARGO[give].name} → ${wantN} ${CARGO[want].name}.`, "info");
+    if (market.post(me, give, giveN, want, wantN)) {
+      toast(`Offer posted: ${giveN} ${CARGO[give].name} → ${wantN} ${CARGO[want].name}.`, "info");
+      // W6: the feed is the trade log — posting is a trade event.
+      feed(`Posted ${giveN} ${CARGO[give].name} → ${wantN} ${CARGO[want].name}`);
+    }
     renderMarket();
   }
 
@@ -431,7 +435,11 @@ export function createOriginalUi(
     const give = bankGive.value as Cargo;
     const want = bankWant.value as Cargo;
     if (give === want) { toast("Pick two different goods to trade.", "danger"); return; }
-    if (market.bank(me, give, want)) toast(`Bank: ${BANK_RATE} ${CARGO[give].name} → 1 ${CARGO[want].name}.`, "success");
+    if (market.bank(me, give, want)) {
+      toast(`Bank: ${BANK_RATE} ${CARGO[give].name} → 1 ${CARGO[want].name}.`, "success");
+      // W6: bank trades are trades — log them even with no rival around.
+      feed(`Bank: ${BANK_RATE} ${CARGO[give].name} → 1 ${CARGO[want].name}`);
+    }
     else toast(`The bank wants ${BANK_RATE} ${CARGO[give].name}.`, "danger");
     renderMarket();
   }
@@ -455,7 +463,10 @@ export function createOriginalUi(
       const b = h("button", "mini danger", "Cancel");
       b.dataset.cancel = String(o.id);
       b.onclick = () => {
-        if (market.cancel(me, o.id)) toast("Offer withdrawn, escrow refunded.", "info");
+        if (market.cancel(me, o.id)) {
+          toast("Offer withdrawn, escrow refunded.", "info");
+          feed(`Withdrew offer ${o.giveN} ${CARGO[o.give].name} → ${o.wantN} ${CARGO[o.want].name} (escrow refunded)`);
+        }
         renderMarket();
       };
       act.appendChild(b);
@@ -502,7 +513,10 @@ export function createOriginalUi(
     const b = h("button", "mini" + (can ? "" : " disabled"), "Take");
     b.onclick = (e) => {
       e.stopPropagation();
-      if (market.accept(me, o.id)) toast(`Took ${from.name}'s offer.`, "success");
+      if (market.accept(me, o.id)) {
+        toast(`Took ${from.name}'s offer.`, "success");
+        feed(`Took ${from.name}'s offer: ${o.giveN} ${CARGO[o.give].name} → ${o.wantN} ${CARGO[o.want].name}`);
+      }
       renderMarket();
     };
     row.appendChild(b);
@@ -538,17 +552,21 @@ export function createOriginalUi(
     if (v === "quarry") responsiveZoom();
   }
 
+  // W6: the panels toggle via the `hidden` CLASS, not an inline style —
+  // `.hidden { display: none !important }` in styles.css used to beat the
+  // inline `style.display = ""`, so the Market button "did nothing" while the
+  // (inline-style-only) test still passed. The class is the source of truth.
   function isQuarryOpen() {
-    return qp.style.display !== "none";
+    return !qp.classList.contains("hidden");
   }
   function setQuarryOpen(v: boolean) {
-    qp.style.display = v ? "" : "none";
+    qp.classList.toggle("hidden", !v);
   }
   function isTradeOpen() {
-    return tp.style.display !== "none";
+    return !tp.classList.contains("hidden");
   }
   function setTradeOpen(v: boolean) {
-    tp.style.display = v ? "" : "none";
+    tp.classList.toggle("hidden", !v);
     if (v) renderMarket();
   }
 

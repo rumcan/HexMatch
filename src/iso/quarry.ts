@@ -97,6 +97,12 @@ export interface QuarryHooks {
   onHarvest?: (cargo: Cargo, amount: number) => void;
   /** A token was matched but the line is down: refused, so the player learns. */
   onBlocked?: (cargo: Cargo, amount: number) => void;
+  /**
+   * W5: the board banked a combo coin. This is the wire the old game never
+   * connected — without a listener here the coin died on the board and the
+   * purse (and the whole Black Market) never saw it.
+   */
+  onGold?: (n: number) => void;
   /** Per-match summary, cargo-keyed, for the floating gain readout. */
   onGains?: (gains: Partial<Record<Cargo, number>>, label: string) => void;
   /** Tokens appeared/disappeared: the panel redraws. */
@@ -134,6 +140,8 @@ export function createQuarry(
     if ((reach[cargo] ?? 0) > 0) hooks.onHarvest?.(cargo, amount);
     else hooks.onBlocked?.(cargo, amount);
   };
+  // W5: the coin the board banks on a combo goes straight to the purse.
+  board.onGold = (n: number) => hooks.onGold?.(n);
   board.onPopup = (gains, label) => {
     const out: Partial<Record<Cargo, number>> = {};
     for (const [res, n] of Object.entries(gains) as [ResKey, number][]) {

@@ -11,6 +11,7 @@
 //   • offers — post to the rival, who accepts on its own clock when the deal
 //     is affordable and does not cost it units (see `rivalWouldAccept`).
 // ══════════════════════════════════════════════════════════════════════════
+import { OFFER_LIFE } from "../game/config";
 import {
   BANK_RATE, acceptOffer, bankTrade, cancelOffer, createMarket, liveOffers,
   postOffer, tickMarket,
@@ -36,6 +37,16 @@ export interface IsoMarketPlayer extends MarketPlayer<Cargo> {
 }
 
 export type Offer = TradeOffer<Cargo>;
+
+/**
+ * W6: the market tells the world when an offer leaves the board. The game
+ * wires this to the Feed tab so "a posted offer can be answered by the rival"
+ * is visible instead of silent — before, the rival's answers happened inside
+ * `tick` and nothing on screen ever said so.
+ */
+export interface IsoMarketEvents {
+  onOfferClosed?: (offer: Offer, how: "accepted" | "expired") => void;
+}
 
 export interface IsoMarket {
   /** The market record. Offers live here; balances never do. */
@@ -72,6 +83,7 @@ export function rivalWouldAccept(
  */
 export function createIsoMarket(
   players: { i: number; id: string; name: string; human: boolean; purse: CargoBag }[],
+  events: IsoMarketEvents = {},
 ): IsoMarket {
   const ctx = createMarket<Cargo>();
   const list: IsoMarketPlayer[] = players.map((p) => ({
@@ -89,15 +101,26 @@ export function createIsoMarket(
     accept: (p, id) => acceptOffer(p, id, list, ctx),
     bank: (p, give, want) => bankTrade(p, give, want, BANK_RATE),
     tick(now: number) {
+      // W6: remember what is live so we can report exactly which offers
+      // disappeared this tick (taken by the rival, or rotted out).
+      const before = new Map(ctx.offers.map((o) => [o.id, o]));
       tickMarket(now, list, ctx);
-      if (now - lastAiTrade < AI_TRADE_MS) return;
-      lastAiTrade = now;
-      const rivals = list.filter((p) => !p.human);
-      for (const o of [...ctx.offers]) {
-        const poster = at(o.from);
-        if (!poster || !poster.human) continue;          // rivals answer YOU
-        const taker = rivals.find((r) => rivalWouldAccept(r, o));
-        if (taker) acceptOffer(taker, o.id, list, ctx);
+      if (now - lastAiTrade >= AI_TRADE_MS) {
+        lastAiTrade = now;
+        const rivals = list.filter((p) => !p.human);
+        for (const o of [...ctx.offers]) {
+          const poster = at(o.from);
+          if (!poster || !poster.human) continue;          // rivals answer YOU
+          const taker = rivals.find((r) => rivalWouldAccept(r, o));
+          if (taker) acceptOffer(taker, o.id, list, ctx);
+        }
+      }
+      const nowLive = new Set(ctx.offers.map((o) => o.id));
+      for (const o of before.values()) {
+        if (nowLive.has(o.id)) continue;
+        // Expired iff it outlived its life; anything else was taken.
+        const how = now - o.born > OFFER_LIFE ? "expired" as const : "accepted" as const;
+        events.onOfferClosed?.(o, how);
       }
     },
   };

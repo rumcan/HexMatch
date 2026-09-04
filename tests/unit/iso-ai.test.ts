@@ -36,7 +36,9 @@ const ind = (type: string, tx: number, ty: number): Industry => {
 const state = (grid: Grid, track: Track = createTrack()): EconomyState =>
   ({ grid, track, harvesters: [], factories: [] });
 
-const F: Factory = { owner: "ai", tx: 5, ty: 5 };
+// ownerId 0 = the neutral, unowned world these unit tests use (no rival),
+// which also keeps the legacy "any track is the AI's trunk" discount.
+const F: Factory = { owner: "ai", ownerId: 0, tx: 5, ty: 5 };
 const rich = { stone: 9999, ore: 9999 };
 
 describe("E7 step cost", () => {
@@ -252,7 +254,7 @@ describe("E7 planning", () => {
     const s = state(grid);
     const before = planCandidates(s, F, { stock: {}, purse: rich });
     expect(before.some((c) => c.industry === farm)).toBe(true);
-    s.harvesters.push({ id: 1, owner: "ai", tx: 8, ty: 5 });
+    s.harvesters.push({ id: 1, owner: "ai", ownerId: 0, tx: 8, ty: 5 });
     const after = planCandidates(s, F, { stock: {}, purse: rich });
     expect(after.some((c) => c.industry === farm)).toBe(false);
   });
@@ -283,7 +285,7 @@ describe("E7 execution", () => {
     const grid = flatGrid([ind("farm", 12, 5)]);
     const s = state(grid);
     const c = bestCandidate(s, F, { stock: {}, purse: rich })!;
-    const out = executeCandidate(s, c, "ai", 1);
+    const out = executeCandidate(s, c, "ai", 0, 1);
     const perTile = TRANSPORT[c.kind].cost;
     for (const [cargo, v] of Object.entries(perTile)) {
       expect(out.spent[cargo as keyof typeof out.spent]).toBe(v * out.built.length);
@@ -299,6 +301,32 @@ describe("E7 execution", () => {
     // the second industry is close to the first, so the marginal build is small
     expect(second.built.length).toBeLessThan(laidFirst);
     expect(s.harvesters).toHaveLength(2);
+  });
+
+  it("W3: builds over its free allowance when the purse alone is short", () => {
+    const grid = flatGrid([ind("farm", 12, 5)]);
+    const s = state(grid);
+    // The path from F(5,5) to the harvester spot near the farm is longer
+    // than 5 tiles — 5 stone of road is not enough for the whole build...
+    const short = bestCandidate(s, F, { stock: {}, purse: { stone: 5 } });
+    expect(short).toBeNull();
+    // ...but the 12-tile free setup allowance covers it, exactly like the
+    // human's setup phase does.
+    const withFree = aiBuildStep(s, F, { stock: {}, purse: { stone: 5 }, free: 12 }, 1);
+    expect(withFree).toBeTruthy();
+    expect(withFree!.built.length).toBeGreaterThan(5);
+    expect(withFree!.free).toBe(withFree!.built.length);   // all free
+    expect(Object.keys(withFree!.spent).length).toBe(0);   // purse untouched
+    expect(s.harvesters).toHaveLength(1);
+  });
+
+  it("W3: charges only the tiles beyond the free allowance", () => {
+    const grid = flatGrid([ind("farm", 12, 5)]);
+    const s = state(grid);
+    const out = aiBuildStep(s, F, { stock: {}, purse: { stone: 99 }, free: 4 }, 1)!;
+    const charged = out.built.length - out.free;
+    expect(charged).toBeGreaterThan(0);
+    expect(out.spent.stone).toBe(charged);
   });
 
   it("returns null when there is nothing reachable", () => {

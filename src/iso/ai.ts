@@ -43,9 +43,14 @@ export const IMPASSABLE = Infinity;
 /**
  * Cost of routing `kind` across one tile. Water and industry footprints are
  * impassable; rail additionally cannot cross rough ground.
+ *
+ * W2: the trunk-line discount applies only to track the AI itself built
+ * (`owner`). Passing 0 keeps the legacy "any track is discounted" behaviour
+ * the unit tests use with unowned maps; the live game passes the AI's real
+ * id, so the AI can never cheat its routing across the player's road.
  */
 export function stepCost(
-  grid: Grid, track: Track, kind: TrackKind, tx: number, ty: number,
+  grid: Grid, track: Track, kind: TrackKind, tx: number, ty: number, owner: number = 0,
 ): number {
   if (!inMapT(tx, ty)) return IMPASSABLE;
   const i = tIdx(tx, ty);
@@ -55,7 +60,8 @@ export function stepCost(
   if (terrain === ROUGH && !TRANSPORT[kind].onRough) return IMPASSABLE;
   let c = terrain === ROUGH ? COST_ROUGH : COST_FLAT;
   // reuse our own trunk lines rather than building parallel spurs
-  if (hasTrack(track, kind, tx, ty)) c *= COST_OWNED;
+  const own = owner === 0 ? true : track.owner[i] === owner;
+  if (hasTrack(track, kind, tx, ty) && own) c *= COST_OWNED;
   return c;
 }
 
@@ -80,7 +86,7 @@ export interface Path {
 export function findPath(
   grid: Grid, track: Track, kind: TrackKind,
   ax: number, ay: number, bx: number, by: number,
-  adjacentTo = false,
+  adjacentTo = false, owner: number = 0,
 ): Path | null {
   if (!inMapT(ax, ay) || !inMapT(bx, by)) return null;
   const start = tIdx(ax, ay);
@@ -126,7 +132,7 @@ export function findPath(
       const ni = tIdx(nx, ny);
       if (closed.has(ni)) continue;
       // the goal itself may be unbuildable when we only need to reach beside it
-      const c = stepCost(grid, track, kind, nx, ny);
+      const c = stepCost(grid, track, kind, nx, ny, owner);
       if (!isFinite(c) && !(ni === goal && adjacentTo)) continue;
       const tentative = (gScore.get(cur) ?? Infinity) + (isFinite(c) ? c : 0);
       if (tentative >= (gScore.get(ni) ?? Infinity)) continue;
@@ -179,11 +185,22 @@ export function harvesterSpots(grid: Grid, ind: Industry): [number, number][] {
   return out;
 }
 
-/** Every tile of the AI's existing network, plus its factory, as path sources. */
+/**
+ * Every tile of the AI's existing network, plus its factory, as path sources.
+ * W2: only track the AI itself built counts as "its network" — the player's
+ * road no longer makes the AI believe it is already connected (the W3
+ * "rival never builds" deadlock), and the AI's routing starts from its own
+ * trunk lines, never from yours.
+ */
 export function networkTiles(track: Track, kind: TrackKind, factory: Factory): [number, number][] {
   const out: [number, number][] = [];
+  const owner = factory.ownerId;
   for (let y = 0; y < MAP_H; y++) {
-    for (let x = 0; x < MAP_W; x++) if (hasTrack(track, kind, x, y)) out.push([x, y]);
+    for (let x = 0; x < MAP_W; x++) {
+      if (!hasTrack(track, kind, x, y)) continue;
+      if (owner !== 0 && track.owner[tIdx(x, y)] !== owner) continue;
+      out.push([x, y]);
+    }
   }
   if (!out.length) out.push([factory.tx, factory.ty]);
   return out;
@@ -209,6 +226,14 @@ export interface PlanOptions {
   stock: Purse;
   /** What it can spend. */
   purse: Purse;
+  /**
+   * W3: free-track allowance (the AI's `freeTrack`), applied with the SAME
+   * cost model as the human's drag preview (`previewDrag`): the first
+   * `free` new tiles ride free, `cost` counts only the rest. Without this
+   * the AI "sees" a 12-tile build it can't pay for and stands still even
+   * though its setup allowance would cover it.
+   */
+  free?: number;
   /** Prefer rail when affordable (spec: build road if it can't afford rail). */
   preferRail?: boolean;
 }
@@ -223,6 +248,7 @@ export function planCandidates(
   const { grid, track } = state;
   const out: Candidate[] = [];
   const claimed = new Set(state.harvesters.map((h) => tIdx(h.tx, h.ty)));
+  const free = Math.max(0, opts.free ?? 0);
 
   for (const kindPref of [opts.preferRail === false ? "road" : "rail", "road"] as TrackKind[]) {
     const sources = networkTiles(track, kindPref, factory);
@@ -239,11 +265,20 @@ export function planCandidates(
         if (claimed.has(tIdx(hx, hy))) continue;
         const src = nearestSource(sources, hx, hy);
         if (!src) continue;
-        const path = findPath(grid, track, kindPref, src[0], src[1], hx, hy);
+        // W2: route with the AI's own trunk discount, not the player's road.
+        const path = findPath(grid, track, kindPref, src[0], src[1], hx, hy, false, factory.ownerId);
         if (!path) continue;
 
+        // W3: same cost model as the human preview — the allowance covers the
+        // first new tiles, the purse pays the rest.
         let cost: Purse = {};
-        for (const [x, y] of path.tiles) cost = addCost(cost, tileCost(track, kindPref, x, y));
+        let freeLeft = free;
+        for (const [x, y] of path.tiles) {
+          const c = tileCost(track, kindPref, x, y);
+          if (Object.keys(c).length === 0) continue;
+          if (freeLeft > 0) { freeLeft--; continue; }
+          cost = addCost(cost, c);
+        }
         if (!canAfford(opts.purse, cost)) continue;
 
         const score = scarcity(opts.stock, def.cargo) * (ind.output ?? def.output)
@@ -271,32 +306,46 @@ export interface BuildOutcome {
   built: [number, number][];
   harvester: Harvester | null;
   kind: TrackKind;
+  /** What the caller debits from the purse — free tiles already subtracted. */
   spent: Purse;
+  /** W3: how many tiles the free allowance covered (caller debits freeTrack). */
+  free: number;
 }
 
 /**
- * Commit a candidate: lay the path, then place the harvester. Tiles that turn
- * out to be unbuildable are skipped rather than aborting the whole plan.
+ * Commit a candidate: lay the path (stamping `ownerId`, W2), then place the
+ * harvester. Tiles that turn out to be unbuildable are skipped rather than
+ * aborting the whole plan. `free` is the same allowance `planCandidates`
+ * priced with, so `spent` is exactly what the plan said the purse would pay.
  */
 export function executeCandidate(
-  state: EconomyState, c: Candidate, owner: string, nextHarvesterId: number,
+  state: EconomyState, c: Candidate, owner: string, ownerId: number,
+  nextHarvesterId: number, free: number = 0,
 ): BuildOutcome {
   const built: [number, number][] = [];
   let spent: Purse = {};
+  let freeLeft = Math.max(0, free);
   for (const [x, y] of c.path.tiles) {
     if (!canBuildOn(state.grid, c.kind, x, y)) continue;
     if (hasTrack(state.track, c.kind, x, y)) continue;
-    spent = addCost(spent, tileCost(state.track, c.kind, x, y));
-    buildTile(state.track, c.kind, x, y);
+    const cCost = tileCost(state.track, c.kind, x, y);
+    if (Object.keys(cCost).length === 0) {
+      // already this kind — rebuild is free and consumes no allowance
+    } else if (freeLeft > 0) {
+      freeLeft--;
+    } else {
+      spent = addCost(spent, cCost);
+    }
+    buildTile(state.track, c.kind, x, y, ownerId);
     built.push([x, y]);
   }
   let harvester: Harvester | null = null;
-  const h: Harvester = { id: nextHarvesterId, owner, tx: c.hx, ty: c.hy };
+  const h: Harvester = { id: nextHarvesterId, owner, ownerId, tx: c.hx, ty: c.hy };
   if (isServiced(state.track, h)) {
     state.harvesters.push(h);
     harvester = h;
   }
-  return { built, harvester, kind: c.kind, spent };
+  return { built, harvester, kind: c.kind, spent, free: Math.max(0, free) - freeLeft };
 }
 
 /**
@@ -304,11 +353,16 @@ export function executeCandidate(
  * null when nothing is affordable or reachable, so the caller can keep the
  * existing skill/timing scaffolding (`nextBuild`, `nextIncome`, `slowedUntil`)
  * in charge of pacing.
+ *
+ * W2: the build is stamped with `factory.ownerId` — the rival's network is
+ * its own from the first tile. W3: `opts.free` prices the build the same way
+ * the player's drag preview does, so the AI can use its setup allowance
+ * instead of deadlocking on a purse it hasn't earned yet.
  */
 export function aiBuildStep(
   state: EconomyState, factory: Factory, opts: PlanOptions, nextHarvesterId: number,
 ): BuildOutcome | null {
   const c = bestCandidate(state, factory, opts);
   if (!c) return null;
-  return executeCandidate(state, c, factory.owner, nextHarvesterId);
+  return executeCandidate(state, c, factory.owner, factory.ownerId, nextHarvesterId, opts.free);
 }
