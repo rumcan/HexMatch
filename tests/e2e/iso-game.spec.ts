@@ -297,3 +297,54 @@ test.describe("iso game boots on the default route", () => {
     });
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// TK-001 — panning is middle-mouse; the left button is build/place ONLY.
+// Boot is still in `setup-factory`, which is the cleanest proof that a drag
+// can never be mistaken for panning: a left drag must neither move the camera
+// nor place the factory, while a middle drag pans the same camera.
+// ══════════════════════════════════════════════════════════════════════════
+test.describe("TK-001 mouse panning is middle-button only", () => {
+  test.skip(({ isMobile }) => !!isMobile, "mouse-button flow runs on desktop chromium");
+
+  test("left-drag never pans or places; middle-drag pans", async ({ page }) => {
+    await bootIso(page);
+    const screenAt = (tx: number, ty: number) => page.evaluate(({ tx, ty }) => {
+      const h = (window as any).__iso;
+      const dpr = window.devicePixelRatio || 1;
+      const [dx, dy] = h.tileScreenAt(tx, ty);
+      return { x: dx / dpr, y: dy / dpr };
+    }, { tx, ty });
+
+    // a fixed reference tile; the boot camera sits mid-map so it can pan
+    const ref = { tx: 12, ty: 12 };
+    const before = await screenAt(ref.tx, ref.ty);
+    // the corridor helper hands back a factory-legal tile to drag FROM
+    const c = await pickCorridor(page);
+    const factory = await tileCenter(page, c.fx, c.fy);
+    expect(factory.x).toBeGreaterThan(0);
+
+    // ── left-drag across the map: neither pan nor accidental placement ──
+    await page.mouse.move(factory.x, factory.y);
+    await page.mouse.down({ button: "left" });
+    await page.mouse.move(factory.x - 60, factory.y + 30, { steps: 8 });
+    await page.mouse.up({ button: "left" });
+    const afterLeftDrag = await screenAt(ref.tx, ref.ty);
+    expect(afterLeftDrag).toEqual(before);     // camera did NOT move
+    expect(await page.evaluate(() => (window as any).__iso.phase)).toBe("setup-factory");
+    expect(await page.evaluate(() => (window as any).__iso.factories.length)).toBe(0);
+
+    // ── middle-drag pans the same camera ─────────────────────────────────
+    await page.mouse.move(320, 260);
+    await page.mouse.down({ button: "middle" });
+    await page.mouse.move(260, 220, { steps: 8 });
+    await page.mouse.up({ button: "middle" });
+    const afterMiddleDrag = await screenAt(ref.tx, ref.ty);
+    expect(afterMiddleDrag).not.toEqual(before);
+    expect(await page.evaluate(() => (window as any).__iso.phase)).toBe("setup-factory");
+
+    // ── a left CLICK (no drag) still places — the acceptance boundary ────
+    await page.mouse.click(factory.x, factory.y);
+    await page.waitForFunction(() => (window as any).__iso.phase === "setup-harvester");
+  });
+});

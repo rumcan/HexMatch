@@ -9,7 +9,7 @@
 // the committed-reference-PNG fixture is for, and that still needs a browser.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { WATER } from "../../src/iso/grid";
-import { MAP_W, MAP_H, TRANSPORT } from "../../src/iso/config";
+import { MAP_W, MAP_H, TRANSPORT, INDUSTRY_BY_KEY } from "../../src/iso/config";
 import { setRng, mulberry32 } from "../../src/game/config";
 
 // ── stub the art imports (vite handles these in the browser) ──────────────
@@ -688,6 +688,61 @@ describe("W5 combos pay gold into the purse", () => {
     const bandit = root.querySelector('[data-black="bandit"]') as HTMLElement;
     expect(bandit).toBeTruthy();
     expect(bandit.classList.contains("disabled")).toBe(false);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// TK-008 — buying a Blockade auto-routes it to the rival. There is ONE rival,
+// so the old "click an industry" crosshair step is gone: the purchase itself
+// blockades the industry that costs the rival the most yield.
+// ══════════════════════════════════════════════════════════════════════════
+describe("TK-008 Blockade buys auto-target the rival (no targeting step)", () => {
+  it("spends the gold and blockades the rival's yielding industry in one click", async () => {
+    const h = await boot();
+    const { buildTile } = await import("../../src/iso/track");
+    const { playerResources } = await import("../../src/iso/economy");
+
+    // Give the rival a real corridor: harvester below an industry, road down
+    // to its factory (ownerId 2), so the industry is yielding for the rival.
+    const c = findSouthCorridor(h.grid);
+    expect(c).toBeTruthy();
+    const { hx, hy, fy } = c!;
+    const ind = h.grid.industries.find((i) => i.tx === hx && i.ty === hy - 1);
+    expect(ind).toBeTruthy();
+    h.eco.factories.push({ owner: "ai", ownerId: 2, tx: hx, ty: fy });
+    h.eco.harvesters.push({ id: 1, owner: "ai", ownerId: 2, tx: hx, ty: hy });
+    for (let y = hy + 1; y <= fy; y++) buildTile(h.track, "road", hx, y, 2);
+    const now0 = performance.now();
+    expect(Object.keys(playerResources(h.eco, "ai", now0)).length).toBeGreaterThan(0);
+
+    h.purse.gold = 5;
+    await settle();                              // paint enables the button
+    const bandit = root.querySelector('[data-black="bandit"]') as HTMLElement;
+    expect(bandit).toBeTruthy();
+    expect(bandit.classList.contains("disabled")).toBe(false);
+
+    const boughtAt = performance.now();
+    bandit.click();
+    await settle();
+
+    // gold was spent, and the purchase ITSELF placed the blockade — no map
+    // click, no crosshair mode, no "click an industry" prompt anywhere.
+    expect(h.purse.gold ?? 0).toBe(0);
+    expect(h.grid.industries[ind!.id].banditUntil).toBeGreaterThan(boughtAt);
+    const banditAfter = root.querySelector('[data-black="bandit"]') as HTMLElement;
+    expect(banditAfter.classList.contains("active")).toBe(false);   // not armed
+    expect(banditAfter.classList.contains("disabled")).toBe(true);  // 0 gold left
+    expect((root.querySelector(".modebar") as HTMLElement).textContent ?? "")
+      .not.toMatch(/click an industry/i);
+    expect((root.querySelector(".toasts") as HTMLElement).textContent ?? "")
+      .toMatch(/blockade set on/i);
+
+    // the rival's harvest FROM THAT INDUSTRY is stopped until it expires…
+    const blockedUntil = h.grid.industries[ind!.id].banditUntil;
+    const cargo = INDUSTRY_BY_KEY[ind!.type].cargo;
+    expect(playerResources(h.eco, "ai", blockedUntil - 1_000)[cargo]).toBeUndefined();
+    // …and resumes afterwards.
+    expect(playerResources(h.eco, "ai", blockedUntil + 1_000)[cargo]).toBeGreaterThan(0);
   });
 });
 

@@ -71,7 +71,6 @@ export interface UiHooks {
   onSwap: (r1: number, c1: number, r2: number, c2: number) => void;
   onReset: () => void;
   onBlackAction: (key: string) => void;
-  onCancelModal?: () => void;
 }
 
 export interface OriginalUi {
@@ -90,9 +89,6 @@ export interface OriginalUi {
   isTradeOpen: () => boolean;
   showModal: (html: string) => void;
   hideModal: () => void;
-  cancelBlackMode: () => void;
-  /** Toggles the blockade crosshair mode (Blockade waits for an industry). */
-  setBanditMode: (v: boolean) => void;
 }
 
 // ── gem face helper ─────────────────────────────────────────────────────────
@@ -275,7 +271,6 @@ export function createOriginalUi(
   let selected: { r: number; c: number } | null = null;
   let down: { r: number; c: number } | null = null;
   const feedEntries: { who: string; colour: string; text: string }[] = [];
-  let banditMode = false;
   // U1: the restored HUD paints on the game's rAF loop. Re-rendering the
   // Black-Market grid and the offer lists on every frame would detach a button
   // between its pointerdown and pointerup, so a real click could be lost.
@@ -320,8 +315,7 @@ export function createOriginalUi(
     for (const key of Object.keys(SABOTAGE)) {
       const s = SABOTAGE[key];
       const afford = (me.res.gold ?? 0) >= s.gold;
-      const armed = key === "bandit" && banditMode;
-      const b = h("button", "sab-btn sb-" + key + (afford ? "" : " disabled") + (armed ? " active" : ""));
+      const b = h("button", "sab-btn sb-" + key + (afford ? "" : " disabled"));
       b.innerHTML = `<div class="sab-top"><b>${s.name}</b><span class="sab-cost">${s.gold}🪙</span></div>` +
         `<div class="sab-desc">${s.desc}</div>`;
       b.dataset.black = key;
@@ -834,7 +828,7 @@ export function createOriginalUi(
   // ── paint ─────────────────────────────────────────────────────────────────
   function paint(state: UiState) {
     renderHUD(state.purse, state.players);
-    const sabKey = `${me.res.gold ?? 0}:${banditMode}`;
+    const sabKey = `${me.res.gold ?? 0}`;
     if (sabKey !== lastSabKey) {
       lastSabKey = sabKey;
       renderSabotage();
@@ -873,7 +867,7 @@ export function createOriginalUi(
     if (info) {
       modebar.innerHTML = info;
       const cancel = h("button", "mb-cancel", "Cancel ✕");
-      cancel.onclick = () => { banditMode = false; hooks.onCancelModal?.(); renderSabotage(); modebar.classList.add("hidden"); };
+      cancel.onclick = () => modebar.classList.add("hidden");
       modebar.appendChild(cancel);
     }
     if (state.inspect) {
@@ -920,7 +914,7 @@ export function createOriginalUi(
         <h2>⚙️ HEXMATCH INDUSTRIES</h2>
         <p class="sub">Two worlds, one empire. First to <b>${VP.target}★ Victory Points</b> wins.</p>
         <div class="help-cols">
-          <div class="help-col"><h3>🏙️ The Territory</h3><p>Build <b>Roads</b> & <b>Rails</b> between your Factory and Harvesters. The rail multiplier and VP are on the connection; a broken line revokes it.</p></div>
+          <div class="help-col"><h3>🏙️ The Territory</h3><p>Build <b>Roads</b> & <b>Rails</b> between your Factory and Harvesters. The rail multiplier and VP are on the connection; a broken line revokes it.</p><p>Pan with the <b>middle mouse button</b> (wheel zooms, touch drags pan). The left button only places or selects — dragging it never pans.</p></div>
           <div class="help-col"><h3>💎 The Quarry</h3><p>Match tokens to harvest. A colour only pays when your network reaches its industry. Match 4 doubles, match 5 makes a <b>bomb</b>. <b>Gold</b> 🌹 is wild.</p></div>
           <div class="help-col"><h3>🪙 Gold, Trade & Defence</h3><p>Earn <b>gold</b> from gold-mine access or combos. Buy Black Market actions, post offers or bank 4:1.</p></div>
         </div>
@@ -936,11 +930,6 @@ export function createOriginalUi(
     (modalRoot.querySelector(".modal-back") as HTMLElement).onclick = () => modalRoot.classList.add("hidden");
   }
   function hideModal() { modalRoot.classList.add("hidden"); }
-
-  function cancelBlackMode() {
-    banditMode = false;
-    modebar.classList.add("hidden");
-  }
 
   // ── boot ──────────────────────────────────────────────────────────────────
   renderSabotage();
@@ -965,7 +954,5 @@ export function createOriginalUi(
     isTradeOpen,
     showModal,
     hideModal,
-    cancelBlackMode,
-    setBanditMode(v: boolean) { banditMode = v; renderSabotage(); },
   };
 }

@@ -140,7 +140,7 @@ export const REPAIR_COST: Partial<Record<ResKey, number>> = { wood: 1, brick: 1,
 export const SABOTAGE: Record<string, {
   name: string; gold: number; target: "tile" | "player"; desc: string;
 }> = {
-  bandit: { name: "Blockade",     gold: 5, target: "tile",   desc: "Picket a district for 45s — no one adjacent may harvest it." },
+  bandit: { name: "Blockade",     gold: 5, target: "tile",   desc: "Auto-blockades the rival's busiest industry for 45s — no one may harvest it." },
   harden: { name: "Frost Tiles",  gold: 5, target: "player", desc: "Freeze 7 gems in ice (2 matches to shatter)." },
   block:  { name: "Iron Girders", gold: 9, target: "player", desc: "Drop 2 immovable girders for 2 minutes." },
   fog:    { name: "Smog Cloud",   gold: 7, target: "player", desc: "Choke a rival's board with smog for 30s (no swaps)." },
