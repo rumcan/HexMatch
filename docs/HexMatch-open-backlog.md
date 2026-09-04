@@ -29,6 +29,8 @@ Guard spend() (or the commit) with canAfford; never allow a purse below zero. If
 
 Acceptance: no purse value ever goes negative; the tiles charged equal the tiles previewed; a drag longer than you can afford builds the affordable prefix and charges exactly that.
 
+**Done.** `previewDrag` now takes the free allowance and prices tiles with the same `tileCost` model the commit uses (`preview.cost` / `preview.free` are the only numbers `commitTrackDrag` spends), `spend()` is `canAfford`-guarded, and the 9999-stone preview hack is gone. Tests: "W1 the drag charges exactly what it previewed" in `tests/unit/iso-game.test.ts`, plus the allowance cost model in `tests/unit/iso-track.test.ts`.
+
 W2. The rival uses your roads — track has no owner
 
 [bug] [P0] [gameplay] [core]
@@ -52,6 +54,8 @@ This also sets up the toll mechanic later (TRANSPORT/sabotage already reserve go
 
 Acceptance: a player's network reaches an industry only over that player's own track; the rival must build its own road to connect; demolishing your road never disconnects the rival and vice-versa; a unit test builds two disjoint networks and asserts neither sees the other's tiles.
 
+**Done.** `Track.owner: Uint8Array` (0 = unowned, 1/2 = the players, last real builder wins on rebuilds); `buildTile`/`commitDrag` stamp it, `demolishTile` clears it only when the last layer goes; `playerNetwork`, `isServiced`, `buildComponents`/`buildAllComponents`, `playerResources` and `rescore` are all owner-scoped; the demolish tool only tears down your own tiles; the snapshot carries the owner layer (v3). Tests: "W2" cases in `tests/unit/iso-track.test.ts`, `tests/unit/iso-economy.test.ts` (disjoint networks, own-track-only servicing, cut-one-line-leaves-the-other) and `tests/unit/iso-snapshot.test.ts`.
+
 W3. The rival never builds — aiBuildStep result likely rejected or deadlocked
 
 [bug] [P0] [ai]
@@ -64,6 +68,8 @@ Is the AI deadlocked on cost like the human (see W4)? The AI starts with the sam
 Also confirm the AI places harvesters and plays no quarry — by design it has no board, so its only income is the passive trickle (which J1 kept on only for the rival). Verify that trickle actually credits the rival's purse, or it can never afford anything after the free-setup tiles.
 
 Acceptance: within a minute of play the rival has built road from its own factory and connected at least one industry; the rival's stone/ore change over time (it's earning and spending); a headless test runs N AI ticks and asserts the rival's track tile count increases.
+
+**Done.** Two un-sticks: W2's ownership (the rival no longer "sees itself" connected over your road, so it actually plans a build) and `PlanOptions.free` — the rival prices builds with the same free-allowance model as the human's drag, so its 12 setup tiles stop deadlocking it on an empty ore purse. `aiTick` debits `rival.freeTrack` and `playerResources(eco, "ai")` is computed over the rival's own network, so its trickle credits its purse. Test: "W3 the rival actually plays (headless)" in `tests/unit/iso-game.test.ts` (3 `aiTick`s → rival track grows, VP > 0, stone spent, ore earned per `econTick`).
 
 W4. Rail is unbuildable — a bootstrap deadlock
 
@@ -86,6 +92,8 @@ If rail is still unreachable in practice, this is the E8a tuning showing its tee
 
 Acceptance: in a normal session a player can build road → connect an ore mine → harvest ore via matches → afford and build rail. If they can't, adjust the ore economy until they can, and document the numbers.
 
+**Done — no tuning needed once W1–W3 landed.** Documented numbers: ore_mine output 0.8 → a tier-1 token worth 1 ore every `UPGRADE_EVERY` (20s); rail = 4 ore + 1 stone per tile; start purse {stone 12, ore 0}. So ≈4 token matches (≈80s of play) buy the first rail tile — the road to the mine rides the free setup allowance, so the only gate is the match-3 clock. Test: "W4 a normal session earns the rail" in `tests/unit/iso-game.test.ts` (real game, forced token clock, harvest until `canAfford(purse, TRANSPORT.rail.cost)`, then lays the rail over the corridor).
+
 W5. Gold coins do nothing — board.onGold is never wired
 
 [bug] [P0] [economy]
@@ -97,6 +105,8 @@ Gold matters because it's the sabotage/black-market currency (Blockade, Security
 Fix: in quarry.ts, wire board.onGold = (n) => hooks.onGold?.(n), and in game.ts implement that hook to earn(me, { gold: n }) and refresh the HUD. Confirm the combo→coin path (2 combos = 1 coin) actually reaches the purse.
 
 Acceptance: banking 2 combos grants 1 gold in your purse; the gold chip increments; black-market actions become affordable once you have gold; a test asserts onGold credits the purse.
+
+**Done.** `registerCombo` now fires `onGold(1)` when it banks a coin, `createQuarry` forwards it to `QuarryHooks.onGold`, and `game.ts` earns it straight into the purse with a toast. Tests: "fires onGold exactly once per banked coin" in `tests/unit/board.test.ts`, the quarry wiring in `tests/unit/iso-quarry.test.ts`, and the game-level "W5 combos pay gold into the purse" (chip increments, Blockade button unlocks at 5 gold) in `tests/unit/iso-game.test.ts`.
 
 W6. The Market button does nothing — trading is dead
 
@@ -111,6 +121,8 @@ Does the rival ever answer offers? The original design had the rival respond on 
 Fix: wire the Market button to open the panel; ensure one IsoMarket instance is shared; add (or restore) the rival's trade response so posted offers can be taken. Bank trades (4:1) should work even without the rival, so get those working first as the simplest end-to-end check.
 
 Acceptance: clicking Market opens the trading panel; a bank trade (4:1) executes and changes the purse; a posted offer can be answered by the rival; the feed logs trades.
+
+**Done.** Root cause of "the button does nothing": the panels toggled an inline `style.display`, which the `.hidden { display: none !important }` rule in `styles.css` always beat — the Market button *looked* dead even though the handler ran. The panels now toggle the `hidden` class (the source of truth). `createIsoMarket` emits `onOfferClosed` (accepted vs expired) when an offer leaves the board, and the game wires it plus the post/bank/cancel/take events into the Feed tab. Tests: "W6 the market is visible and trades are logged" in `tests/unit/iso-game.test.ts` (button opens the panel, bank 4:1 moves the purse, posted offer taken by the rival on its 5s clock with the feed asserting both lines) and the escrow mechanics in `tests/unit/iso-market.test.ts`.
 
 W7. Buildings are single-tile sprites (accepted for now)
 

@@ -29,8 +29,8 @@ function flatGrid(): Grid {
   };
 }
 
-const build = (t: Track, kind: "road" | "rail", pts: [number, number][]) => {
-  for (const [x, y] of pts) buildTile(t, kind, x, y);
+const build = (t: Track, kind: "road" | "rail", pts: [number, number][], owner = 0) => {
+  for (const [x, y] of pts) buildTile(t, kind, x, y, owner);
 };
 
 describe("E5 direction model", () => {
@@ -194,16 +194,32 @@ describe("E5 buildability", () => {
 
   it("G5: rival track is not a seed; demolish rebuilds the component", () => {
     const t = createTrack();
-    build(t, "road", [[10, 10], [11, 10], [12, 10], [13, 10]]);
-    const factories = [{ owner: "you", tx: 10, ty: 10 }];
-    const harvesters: { owner: string; tx: number; ty: number }[] = [];
-    let net = playerNetwork(t, "you", factories, harvesters);
+    build(t, "road", [[10, 10], [11, 10], [12, 10], [13, 10]], 1);
+    const factories = [{ ownerId: 1, tx: 10, ty: 10 }];
+    const harvesters: { ownerId: number; tx: number; ty: number }[] = [];
+    let net = playerNetwork(t, 1, factories, harvesters);
     expect(net.has(tIdx(13, 10))).toBe(true);
     demolishTile(t, "road", 11, 10);
-    net = playerNetwork(t, "you", factories, harvesters);
+    net = playerNetwork(t, 1, factories, harvesters);
     expect(net.has(tIdx(10, 10))).toBe(true);
     expect(net.has(tIdx(13, 10))).toBe(false);
     expect(canBuildOn(flatGrid(), "road", 13, 11, net)).toBe(false);
+  });
+
+  it("W2: a rival's factory does not seed your network, and vice versa", () => {
+    const t = createTrack();
+    build(t, "road", [[10, 10], [11, 10]], 1);
+    build(t, "road", [[30, 30], [31, 30]], 2);
+    const you = playerNetwork(
+      t, 1, [{ ownerId: 1, tx: 10, ty: 10 }], [],
+    );
+    const ai = playerNetwork(
+      t, 2, [{ ownerId: 2, tx: 30, ty: 30 }], [],
+    );
+    expect(you.has(tIdx(11, 10))).toBe(true);
+    expect(you.has(tIdx(30, 30))).toBe(false);
+    expect(ai.has(tIdx(31, 30))).toBe(true);
+    expect(ai.has(tIdx(10, 10))).toBe(false);
   });
 
   it("G5: previewDrag with network cannot jump a gap", () => {

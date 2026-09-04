@@ -24,22 +24,29 @@ import { MAP_W, MAP_H } from "../game/config";
 import { TRANSPORT, INDUSTRY_BY_KEY, type Cargo } from "./config";
 import type { Grid, Industry } from "./grid";
 import {
-  DIRS, DIR, OPPOSITE, PRESENT, tIdx, inMapT, hasTrack, bitsAt,
+  DIRS, DIR, OPPOSITE, PRESENT, tIdx, inMapT, bitsAt, trackOwnedBy,
   type Track, type TrackKind,
 } from "./track";
 
 /** Catchment is a 4×4 rectangle centred on the harvester tile. */
 export const CATCHMENT = 4;
 
+/**
+ * W2: structures carry the numeric track-owner id of their builder (the
+ * game uses player index + 1). `owner` stays the display/VP identity;
+ * `ownerId` is what binds a harvester to the track IT may ride.
+ */
 export interface Harvester {
   id: number;
   owner: string;
+  ownerId: number;
   tx: number;
   ty: number;
 }
 
 export interface Factory {
   owner: string;
+  ownerId: number;
   tx: number;
   ty: number;
 }
@@ -80,11 +87,15 @@ export function industriesInCatchment(grid: Grid, h: Harvester): Industry[] {
   return out;
 }
 
-/** A harvester is only valid if it touches at least one road or rail tile. */
+/**
+ * A harvester is only valid if it touches at least one road or rail tile
+ * BUILT BY ITS OWN PLAYER (W2). The rival's road beside your harvester does
+ * not service it — your depot needs your own line.
+ */
 export function isServiced(track: Track, h: Harvester): boolean {
   for (const d of DIRS) {
     const nx = h.tx + DIR[d][0], ny = h.ty + DIR[d][1];
-    if (hasTrack(track, "road", nx, ny) || hasTrack(track, "rail", nx, ny)) return true;
+    if (trackOwnedBy(track, h.ownerId, nx, ny)) return true;
   }
   return false;
 }
@@ -95,14 +106,20 @@ export function isServiced(track: Track, h: Harvester): boolean {
  * pass and cached by the caller; a rebuild is cheap and happens only on build
  * or demolish. A tile joins its neighbour's component only when both face each
  * other, so a one-sided bit never merges two networks.
+ *
+ * W2: components are owner-scoped — the flood only crosses tiles owned by
+ * `owner`, so a connected run of YOUR road and a connected run of the RIVAL's
+ * road that touch each other are still two components, one per player. The
+ * old "two players' networks are one shared graph" bug lives and dies here.
  */
-export function buildComponents(track: Track, kind: TrackKind): Int32Array {
+export function buildComponents(track: Track, kind: TrackKind, owner: number): Int32Array {
   const comp = new Int32Array(MAP_W * MAP_H).fill(-1);
   const layer = kind === "road" ? track.road : track.rail;
   let next = 0;
   const stack: number[] = [];
   for (let start = 0; start < comp.length; start++) {
     if ((layer[start] & PRESENT) === 0 || comp[start] !== -1) continue;
+    if (track.owner[start] !== owner) continue;
     const id = next++;
     comp[start] = id;
     stack.push(start);
@@ -117,6 +134,7 @@ export function buildComponents(track: Track, kind: TrackKind): Int32Array {
         if (!(bitsAt(track, kind, nx, ny) & OPPOSITE[d])) continue;  // mutual only
         const ni = tIdx(nx, ny);
         if (comp[ni] !== -1) continue;
+        if (track.owner[ni] !== owner) continue;   // W2: never cross the rival's line
         comp[ni] = id;
         stack.push(ni);
       }
@@ -130,10 +148,22 @@ export interface Components {
   rail: Int32Array;
 }
 
-export const buildAllComponents = (track: Track): Components => ({
-  road: buildComponents(track, "road"),
-  rail: buildComponents(track, "rail"),
+/** Both layers, scoped to one owner's track. */
+export const buildAllComponents = (track: Track, owner: number): Components => ({
+  road: buildComponents(track, "road", owner),
+  rail: buildComponents(track, "rail", owner),
 });
+
+/**
+ * W2: resolve a player's numeric track-owner id from the string identity the
+ * economy scores by. Every structure a player builds carries the same id, so
+ * the first one found is enough; a player with no structures has none (and
+ * therefore no harvesters to score).
+ */
+export const ownerIdOf = (state: EconomyState, owner: string): number =>
+  state.harvesters.find((h) => h.owner === owner)?.ownerId
+  ?? state.factories.find((f) => f.owner === owner)?.ownerId
+  ?? 0;
 
 /** Component ids of the layer touching a tile from any of its 4 neighbours. */
 function adjacentComponents(comp: Int32Array, tx: number, ty: number): Set<number> {
@@ -178,6 +208,10 @@ export const NO_CONNECTION: Connection = {
 /**
  * Resolve a harvester's connection to its owner's Factory. Rail wins outright
  * when both exist — its multiplier and its VP.
+ *
+ * W2: `comp` must be the components for `h.ownerId` (build it with
+ * `buildAllComponents(track, h.ownerId)`) — a harvester may only ride its own
+ * player's track, and may only connect to its own player's Factory.
  */
 export function resolveConnection(
   state: EconomyState, comp: Components, h: Harvester,
@@ -231,7 +265,8 @@ export interface HarvesterYield {
 
 /**
  * Per-harvester output. A blockaded industry (`banditUntil > now`) produces
- * nothing — that rule carries over cleanly from the hex version.
+ * nothing — that rule carries over cleanly from the hex version. `comp` must
+ * be scoped to `h.ownerId` (W2).
  */
 export function harvesterYield(
   state: EconomyState, comp: Components, counts: Map<number, number>,
@@ -257,15 +292,22 @@ export function harvesterYield(
 /**
  * E6's replacement for `playerResources(map, player, now)`: walk every
  * harvester the player owns and sum the cargo it delivers.
+ *
+ * W2: the components default to THIS player's network (`ownerIdOf`), so the
+ * rival's road can no longer carry the rival's cargo across your board — or
+ * yours across theirs.
  */
 export function playerResources(
-  state: EconomyState, owner: string, now: number, comp = buildAllComponents(state.track),
+  state: EconomyState, owner: string, now: number, comp?: Components,
 ): Yield {
   const counts = claimantCounts(state);
   const out: Yield = {};
+  // All of one player's harvesters share a track-owner id, so one flood pair
+  // serves the whole loop.
+  const c = comp ?? buildAllComponents(state.track, ownerIdOf(state, owner));
   for (const h of state.harvesters) {
     if (h.owner !== owner) continue;
-    const y = harvesterYield(state, comp, counts, h, now);
+    const y = harvesterYield(state, c, counts, h, now);
     for (const [cargo, v] of Object.entries(y.yields) as [Cargo, number][]) {
       out[cargo] = (out[cargo] ?? 0) + v;
     }
@@ -305,16 +347,29 @@ const vpOf = (kind: ConnKind) => (kind === null ? 0 : TRANSPORT[kind].vp);
  * visible or players will not understand what happened.
  */
 export function rescore(
-  state: EconomyState, score: ScoreState, comp = buildAllComponents(state.track),
+  state: EconomyState, score: ScoreState,
 ): VpEvent[] {
   const events: VpEvent[] = [];
   const seen = new Set<number>();
+  // W2: components are per-owner, and rescore walks every player's harvesters
+  // in one pass — cache a component pair per track-owner id that shows up.
+  const compByOwner = new Map<number, Components>();
+  const compFor = (ownerId: number): Components => {
+    let c = compByOwner.get(ownerId);
+    if (!c) {
+      c = buildAllComponents(state.track, ownerId);
+      compByOwner.set(ownerId, c);
+    }
+    return c;
+  };
 
   for (const h of state.harvesters) {
     seen.add(h.id);
     score.owners.set(h.id, h.owner);
     const from = score.connections.get(h.id) ?? null;
-    const to = isServiced(state.track, h) ? resolveConnection(state, comp, h).kind : null;
+    const to = isServiced(state.track, h)
+      ? resolveConnection(state, compFor(h.ownerId), h).kind
+      : null;
     if (from === to) continue;
     const delta = vpOf(to) - vpOf(from);
     let type: VpEvent["type"];

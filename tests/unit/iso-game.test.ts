@@ -9,7 +9,7 @@
 // the committed-reference-PNG fixture is for, and that still needs a browser.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { WATER } from "../../src/iso/grid";
-import { MAP_W, MAP_H } from "../../src/iso/config";
+import { MAP_W, MAP_H, TRANSPORT } from "../../src/iso/config";
 import { setRng, mulberry32 } from "../../src/game/config";
 
 // ── stub the art imports (vite handles these in the browser) ──────────────
@@ -63,6 +63,14 @@ interface IsoHook {
   market: import("../../src/iso/market").IsoMarket;
   refreshQuarry: (now?: number) => unknown;
   setTool: (t: string) => void;
+  dragBuild: (
+    kind: "road" | "rail", ax: number, ay: number, bx: number, by: number,
+    xFirst?: boolean,
+  ) => import("../../src/iso/track").DragPreview | null;
+  aiTick: (now?: number) => void;
+  econTick: (now?: number) => void;
+  tick: (now?: number) => void;
+  finishSetup: () => void;
 }
 
 const hook = () => (window as unknown as { __iso: IsoHook }).__iso;
@@ -186,8 +194,8 @@ describe("E11 a full round is playable", () => {
     expect(c).toBeTruthy();
     const { hx, hy, fy } = c!;
 
-    h.eco.factories.push({ owner: "you", tx: hx, ty: fy });
-    const harv = { id: 1, owner: "you", tx: hx, ty: hy };
+    h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx, ty: fy });
+    const harv = { id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy };
     h.eco.harvesters.push(harv);
 
     // catchment must actually see the industry
@@ -198,8 +206,8 @@ describe("E11 a full round is playable", () => {
     expect(isServiced(h.track, harv)).toBe(false);
     expect(rescore(h.eco, score)).toEqual([]);
 
-    // lay a road from the harvester to the factory
-    for (let y = hy + 1; y <= fy; y++) buildTile(h.track, "road", hx, y);
+    // lay a road from the harvester to the factory (W2: owned by "you")
+    for (let y = hy + 1; y <= fy; y++) buildTile(h.track, "road", hx, y, 1);
     expect(isServiced(h.track, harv)).toBe(true);
 
     const events = rescore(h.eco, score);
@@ -216,9 +224,9 @@ describe("E11 a full round is playable", () => {
     const c = findSouthCorridor(h.grid);
     expect(c).toBeTruthy();
     const { hx, hy, fy } = c!;
-    h.eco.factories.push({ owner: "you", tx: hx, ty: fy });
-    h.eco.harvesters.push({ id: 1, owner: "you", tx: hx, ty: hy });
-    for (let y = hy + 1; y <= fy; y++) buildTile(h.track, "road", hx, y);
+    h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx, ty: fy });
+    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy });
+    for (let y = hy + 1; y <= fy; y++) buildTile(h.track, "road", hx, y, 1);
 
     const before = playerResources(h.eco, "you", 0);
     expect(Object.keys(before).length).toBeGreaterThan(0);
@@ -238,7 +246,7 @@ describe("E11 a full round is playable", () => {
         if (canBuildOn(h.grid, "road", x, y)) spot = [x, y];
     expect(spot).toBeTruthy();
 
-    const f = { owner: "ai", tx: spot![0], ty: spot![1] };
+    const f = { owner: "ai", ownerId: 2, tx: spot![0], ty: spot![1] };
     h.eco.factories.push(f);
     const out = aiBuildStep(
       h.eco, f, { stock: {}, purse: { stone: 9999, ore: 9999 } }, 99,
@@ -315,9 +323,9 @@ async function connectedBoot() {
   const c = findSouthCorridor(h.grid);
   expect(c).toBeTruthy();
   const { hx, hy, fy } = c!;
-  h.eco.factories.push({ owner: "you", tx: hx, ty: fy });
-  h.eco.harvesters.push({ id: 1, owner: "you", tx: hx, ty: hy });
-  for (let y = hy + 1; y <= fy; y++) buildTile(h.track, "road", hx, y);
+  h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx, ty: fy });
+  h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy });
+  for (let y = hy + 1; y <= fy; y++) buildTile(h.track, "road", hx, y, 1);
   h.refreshQuarry();      // the game runs this on every build and demolish
   return { h, corridor: { hx, hy, fy } };
 }
@@ -513,5 +521,218 @@ describe("V5 gems draw the restored sprite art", () => {
     const tools = [...root.querySelectorAll("[data-tool]")] as HTMLElement[];
     expect(tools).toHaveLength(4);
     for (const b of tools) expect(b.classList.contains(`bg-${b.dataset.tool}`)).toBe(true);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// W1–W6 — the open-backlog acceptance tests, run against the REAL game the
+// way a player experiences them (drag path, AI clock, economy clock, the
+// HUD). Seed 1337 is pinned in beforeEach, so the coordinates below are the
+// ones that seed grows — deterministic, no flakes.
+// ══════════════════════════════════════════════════════════════════════════
+import { AI_BUILD_MS, HARVEST_MS } from "../../src/iso/game";
+import { AI_TRADE_MS } from "../../src/iso/market";
+
+describe("W1 the drag charges exactly what it previewed", () => {
+  it("an unaffordable drag builds the affordable prefix; nothing goes negative", async () => {
+    const h = await boot();
+    const { hasTrack } = await import("../../src/iso/track");
+    // farm(4,8) on seed 1337: clean south corridor y=9..23
+    const farm = h.grid.industries.find((i) => i.type === "farm" && i.tx === 4 && i.ty === 8);
+    expect(farm).toBeTruthy();
+    const hx = 4, hy = 9, fy = hy + 6;
+    h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx, ty: fy });
+    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy });
+    h.finishSetup();
+
+    // Burn 11 of the 12 free setup tiles on one drag — the purse is untouched.
+    const pv1 = h.dragBuild("road", hx, hy + 1, hx, hy + 11);
+    expect(pv1).toBeTruthy();
+    expect(pv1!.free).toBe(11);
+    expect(h.freeTrack).toBe(1);
+    expect(h.purse.stone).toBe(12);
+    // and the tiles are MINE (W2's ownership rides on the same commit)
+    expect(h.track.owner[(hy + 1) * MAP_W + hx]).toBe(1);
+
+    // Now the purse pays. 1 free tile + 1 stone can buy 2 of the next 3 —
+    // the third tile is the unaffordable remainder, shown but never built.
+    h.purse.stone = 1;
+    const pv2 = h.dragBuild("road", hx, hy + 12, hx, hy + 14);
+    expect(pv2).toBeTruthy();
+    expect(pv2!.tiles).toHaveLength(2);
+    expect(pv2!.unaffordable).toEqual([[hx, hy + 14]]);   // the blocked tail
+    expect(pv2!.free).toBe(1);            // the last free tile went to the prefix
+    expect(pv2!.cost).toEqual({ stone: 1 });
+
+    // The commit charged EXACTLY the preview: nothing more, nothing less.
+    expect(h.purse.stone).toBe(0);
+    expect(h.freeTrack).toBe(0);
+    expect(hasTrack(h.track, "road", hx, hy + 12)).toBe(true);
+    expect(hasTrack(h.track, "road", hx, hy + 13)).toBe(true);
+    expect(hasTrack(h.track, "road", hx, hy + 14)).toBe(false);
+    // "no purse value ever negative" — every cargo key, checked, not inferred
+    for (const c of CARGOES) expect(h.purse[c] ?? 0, `${c} went negative`).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("W3 the rival actually plays (headless)", () => {
+  it("N aiTicks grow the rival's track, connect an industry, and move its cargo", async () => {
+    const h = await boot();
+    const { buildTile } = await import("../../src/iso/track");
+    // minimal player setup (the AI clocks only run in `play`)
+    const c = findSouthCorridor(h.grid);
+    expect(c).toBeTruthy();
+    h.eco.factories.push({ owner: "you", ownerId: 1, tx: c!.hx, ty: c!.fy });
+    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: c!.hx, ty: c!.hy });
+    for (let y = c!.hy + 1; y <= c!.fy; y++) buildTile(h.track, "road", c!.hx, y, 1);
+    h.finishSetup();
+
+    // seed 1337: the rival's factory sits above quarry(31,30) / ore_mine(27,20)
+    h.eco.factories.push({ owner: "ai", ownerId: 2, tx: 27, ty: 31 });
+    const rival = h.market.players[1];
+    const rivalTiles = () => [...h.track.owner].filter((o) => o === 2).length;
+    expect(rivalTiles()).toBe(0);
+    expect(h.vp.ai).toBe(0);
+
+    // three AI build ticks = 27s of game time (< the ticket's "within a minute")
+    const t0 = 1_000_000;
+    h.aiTick(t0);
+    h.aiTick(t0 + AI_BUILD_MS);
+    h.aiTick(t0 + 2 * AI_BUILD_MS);
+
+    // its track exists and is ITS OWN...
+    expect(rivalTiles()).toBeGreaterThan(0);
+    // ...and it connected at least one industry (VP is owner-scoped)
+    expect(h.vp.ai).toBeGreaterThan(0);
+    // and it SPENT: the rival started with 12 stone (START_PURSE); builds past
+    // the 12-tile free allowance come out of that purse, so the stone falls.
+    expect(rival.res.stone).toBeLessThan(12);
+
+    // and it EARNS: the connected mine's trickle lands in its purse each tick
+    const ore0 = rival.res.ore;
+    h.econTick(t0 + 3 * AI_BUILD_MS);
+    h.econTick(t0 + 3 * AI_BUILD_MS + HARVEST_MS);
+    h.econTick(t0 + 3 * AI_BUILD_MS + 2 * HARVEST_MS);
+    expect(rival.res.ore).toBeGreaterThan(ore0);
+    for (const c of CARGOES) expect(rival.res[c], `${c} negative`).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("W4 a normal session earns the rail", () => {
+  it("road → ore mine → harvest ore → the rail tile is affordable", async () => {
+    const h = await boot();
+    const { buildTile, hasTrack, canAfford } = await import("../../src/iso/track");
+    // seed 1337: ore_mine(18,13) with a clean south corridor (y=14..28)
+    const mine = h.grid.industries.find((i) => i.type === "ore_mine" && i.tx === 18 && i.ty === 13);
+    expect(mine).toBeTruthy();
+    const hx = 18, hy = 14, fy = hy + 6;   // factory (18,20)
+    h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx, ty: fy });
+    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy });
+    for (let y = hy + 1; y <= fy; y++) buildTile(h.track, "road", hx, y, 1);
+    h.finishSetup();
+    h.refreshQuarry();
+
+    // the network reaches ORE and only ore — the board tokened exactly that
+    expect(h.reach.ore).toBeGreaterThan(0);
+    expect(Object.keys(h.reach)).toEqual(["ore"]);
+    expect(h.board.gems().some((g) => g.res === "ore" && g.tier > 0)).toBe(true);
+
+    // harvest: force the 20s token clock and match the spawned tokens
+    // (the game's own `tick` twin — board effects + token spawn)
+    const t0 = 1_000_000;
+    for (let i = 0; i < 12 && (h.purse.ore ?? 0) < 4; i++) {
+      h.tick(t0 + (i + 1) * 20_000);
+      const tok = h.board.gems().find((g) => g.res === "ore" && g.tier > 0);
+      if (!tok) continue;
+      makeRun(h.board, "ore", freeRow(h.board, tok), 4, tok);
+      await h.board.settle();
+    }
+    // The W4 numbers (documented per the ticket): ore_mine output 0.8 → a
+    // tier-1 token worth 1 ore every UPGRADE_EVERY (20s); rail = 4 ore +
+    // 1 stone per tile; start purse {stone 12, ore 0}. So ~4 token matches
+    // (≈80s of play) buy the first rail tile — no economy adjustment needed.
+    expect(h.purse.ore ?? 0).toBeGreaterThanOrEqual(4);
+    expect(canAfford(h.purse, TRANSPORT.rail.cost)).toBe(true);
+
+    // and the game lets you lay it over the corridor
+    const pv = h.dragBuild("rail", hx, fy + 1, hx, fy + 1);
+    expect(pv).toBeTruthy();
+    expect(hasTrack(h.track, "rail", hx, fy + 1)).toBe(true);
+  });
+});
+
+describe("W5 combos pay gold into the purse", () => {
+  it("2 combos = 1 gold, the chip shows it, and the Black Market opens up", async () => {
+    const h = await boot();
+    expect(h.purse.gold ?? 0).toBe(0);
+
+    h.board.registerCombo();
+    expect(h.purse.gold ?? 0).toBe(0);        // one combo: no coin yet
+    h.board.registerCombo();
+    expect(h.purse.gold ?? 0).toBe(1);        // the coin went to the PURSE
+
+    await settle();                           // one paint cycle
+    const chips = [...root.querySelectorAll("#iso-res .chip .chip-n")].map((e) => e.textContent);
+    expect(chips[CARGOES.indexOf("gold")]).toBe("1");
+
+    // five gold (10 combos) makes the 5-coin Blockade affordable
+    for (let i = 0; i < 8; i++) h.board.registerCombo();
+    expect(h.purse.gold ?? 0).toBe(5);
+    await settle();
+    const bandit = root.querySelector('[data-black="bandit"]') as HTMLElement;
+    expect(bandit).toBeTruthy();
+    expect(bandit.classList.contains("disabled")).toBe(false);
+  });
+});
+
+describe("W6 the market is visible and trades are logged", () => {
+  it("the Market button opens the panel, and a bank trade 4:1 moves the purse", async () => {
+    const h = await boot();
+    const panel = root.querySelector("#iso-trade") as HTMLElement;
+    expect(panel).toBeTruthy();
+    expect(panel.classList.contains("hidden")).toBe(true);     // closed at boot
+
+    (root.querySelector('[data-panel="trade"]') as HTMLElement).click();
+    expect(panel.classList.contains("hidden")).toBe(false);    // OPEN
+
+    h.purse.stone = 4; h.purse.ore = 0;
+    (panel.querySelector('[data-f="bank-give"]') as HTMLSelectElement).value = "stone";
+    (panel.querySelector('[data-f="bank-want"]') as HTMLSelectElement).value = "ore";
+    (panel.querySelector('[data-act="bank"]') as HTMLElement).click();
+    expect(h.purse.stone).toBe(0);
+    expect(h.purse.ore).toBe(1);
+  });
+
+  it("a posted offer can be answered by the rival, and the feed logs it", async () => {
+    const h = await boot();
+    const panel = root.querySelector("#iso-trade") as HTMLElement;
+    (root.querySelector('[data-panel="trade"]') as HTMLElement).click();
+
+    const me = h.market.players[0];
+    const rival = h.market.players[1];
+    rival.res.ore = 5;                        // the rival can pay for what we want
+    me.res.stone = 12;
+
+    // post: 2 stone → 2 ore
+    (panel.querySelector('[data-f="give"]') as HTMLSelectElement).value = "stone";
+    (panel.querySelector('[data-f="want"]') as HTMLSelectElement).value = "ore";
+    (panel.querySelector('[data-f="give-n"]') as HTMLInputElement).value = "2";
+    (panel.querySelector('[data-f="want-n"]') as HTMLInputElement).value = "2";
+    (panel.querySelector('[data-act="post"]') as HTMLElement).click();
+    expect(h.market.live(me)).toHaveLength(1);
+    expect(me.res.stone).toBe(10);            // escrowed
+
+    // the rival answers on its 5s trading clock
+    h.market.tick(performance.now() + AI_TRADE_MS);
+    expect(h.market.live(me)).toHaveLength(0); // taken, not expired
+    expect(me.res.stone).toBe(10);            // escrow converted, not refunded
+    expect(me.res.ore).toBe(2);
+    expect(rival.res.ore).toBe(3);
+    expect(rival.res.stone).toBe(14);
+
+    // the Feed tab is the trade log: both the posting and the answer
+    const feedEl = root.querySelector("#iso-trade .feed-pane") as HTMLElement;
+    expect(feedEl.textContent).toMatch(/posted 2 stone/i);
+    expect(feedEl.textContent).toMatch(/rival took your offer/i);
   });
 });

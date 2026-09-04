@@ -306,6 +306,12 @@ export class Board {
   /**
    * Bank a combo. Every COMBOS_PER_GOLD combos converts one neutral gem into a
    * wild gold coin — this is the only way to earn gold without owning a mine.
+   *
+   * W5: banking a coin ALSO fires `onGold(1)`. The wild coin on the board is
+   * the visible reward, but the coin must reach the player's PURSE directly —
+   * matching the wild gem is gated on gold-mine reach, so wiring the purse
+   * through onGold is what makes "2 combos = 1 gold" actually pay out (and
+   * what makes the Black Market affordable).
    */
   registerCombo() {
     this.comboCount++;
@@ -313,6 +319,7 @@ export class Board {
     if (this.comboCount >= need) {
       this.comboCount -= need;
       this.spawnGold(1);
+      this.onGold(1);
       this.onCombo(this.comboCount, need, true);
       this.onChange();
     } else {

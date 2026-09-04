@@ -21,12 +21,12 @@ function source(): SnapshotSource {
     seed: 20260903,
     track,
     harvesters: [
-      { id: 1, owner: "p1", tx: 6, ty: 11 },
-      { id: 2, owner: "p2", tx: 13, ty: 9 },
+      { id: 1, owner: "p1", ownerId: 1, tx: 6, ty: 11 },
+      { id: 2, owner: "p2", ownerId: 2, tx: 13, ty: 9 },
     ],
     factories: [
-      { owner: "p1", tx: 30, ty: 11 },
-      { owner: "p2", tx: 12, ty: 30 },
+      { owner: "p1", ownerId: 1, tx: 30, ty: 11 },
+      { owner: "p2", ownerId: 2, tx: 12, ty: 30 },
     ],
     score,
     setupPhase: false,
@@ -92,7 +92,11 @@ describe("E10 snapshot shape", () => {
     const s = buildSnapshot(source());
     expect(typeof s.road).toBe("string");
     expect(typeof s.rail).toBe("string");
+    // W2: the owner layer travels too, otherwise a rejoined guest sees one
+    // shared graph instead of two players' networks.
+    expect(typeof s.owner).toBe("string");
     expect(base64ToBytes(s.road)).toHaveLength(EXPECTED_TRACK_BYTES);
+    expect(base64ToBytes(s.owner)).toHaveLength(EXPECTED_TRACK_BYTES);
   });
 
   it("is smaller on the wire than the JSON-array equivalent", () => {
@@ -102,19 +106,28 @@ describe("E10 snapshot shape", () => {
       ...s,
       road: Array.from(src.track.road),
       rail: Array.from(src.track.rail),
+      owner: Array.from(src.track.owner),
     }).length;
     expect(snapshotBytes(s)).toBeLessThan(asJsonArrays);
     // and the whole snapshot stays inside a single small frame
-    expect(snapshotBytes(s)).toBeLessThan(8_000);
+    expect(snapshotBytes(s)).toBeLessThan(12_000);
   });
 });
 
 describe("E10 round trip", () => {
-  it("restores both track layers byte-for-byte", () => {
+  it("restores all three track layers byte-for-byte", () => {
     const src = source();
     const out = applySnapshot(buildSnapshot(src));
     expect(out.track.road).toEqual(src.track.road);
     expect(out.track.rail).toEqual(src.track.rail);
+    expect(out.track.owner).toEqual(src.track.owner);
+  });
+
+  it("W2: an owned tile keeps its owner across the wire", () => {
+    const src = source();
+    src.track.owner[tIdx(10, 10)] = 1;
+    const out = applySnapshot(buildSnapshot(src));
+    expect(out.track.owner[tIdx(10, 10)]).toBe(1);
   });
 
   it("preserves direction masks, so autotiling survives the wire", () => {

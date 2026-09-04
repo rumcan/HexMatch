@@ -35,14 +35,25 @@ export const OPPOSITE: Record<number, number> = {
 
 export type TrackKind = "road" | "rail";
 
+/**
+ * W2 — per-tile track ownership. 0 = no owner; otherwise the builder's id
+ * (the game uses the player's index + 1, so the two players are 1 and 2).
+ * v1 rule: a tile is owned SOLELY by its builder — there is no implicit
+ * sharing, so one player's flood can never run over the other's road. A tile
+ * rebuilt by a second player (e.g. laying rail across a road tile) changes
+ * hands: the last real builder owns it.
+ */
 export interface Track {
   road: Uint8Array;
   rail: Uint8Array;
+  /** 0 = unowned, else the builder's id (see above). */
+  owner: Uint8Array;
 }
 
 export const createTrack = (): Track => ({
   road: new Uint8Array(MAP_W * MAP_H),
   rail: new Uint8Array(MAP_W * MAP_H),
+  owner: new Uint8Array(MAP_W * MAP_H),
 });
 
 export const tIdx = (tx: number, ty: number) => ty * MAP_W + tx;
@@ -141,11 +152,25 @@ export function canBuildOn(
   return true;
 }
 
+/** Who owns the track at (tx,ty)? 0 = no track owner. */
+export const ownerAt = (t: Track, tx: number, ty: number): number =>
+  inMapT(tx, ty) ? t.owner[tIdx(tx, ty)] : 0;
+
+/**
+ * W2: the owner-scoped presence test. A tile belongs to `owner`'s network
+ * only when it carries track AND its owner layer says `owner`. 0 is the
+ * "no owner" identity, so an owner-0 flood only crosses owner-0 tiles —
+ * two real players (1 and 2) can never see each other's road.
+ */
+export const trackOwnedBy = (t: Track, owner: number, tx: number, ty: number): boolean =>
+  inMapT(tx, ty) && t.owner[tIdx(tx, ty)] === owner
+  && (hasTrack(t, "road", tx, ty) || hasTrack(t, "rail", tx, ty));
+
 export function playerNetwork(
   track: Track,
-  owner: string,
-  factories: { owner: string; tx: number; ty: number }[],
-  harvesters: { owner: string; tx: number; ty: number }[],
+  owner: number,
+  factories: { ownerId: number; tx: number; ty: number }[],
+  harvesters: { ownerId: number; tx: number; ty: number }[],
 ): Set<number> {
   const seen = new Set<number>();
   const stack: number[] = [];
@@ -156,8 +181,8 @@ export function playerNetwork(
     seen.add(i);
     stack.push(i);
   };
-  for (const f of factories) if (f.owner === owner) seed(f.tx, f.ty);
-  for (const h of harvesters) if (h.owner === owner) seed(h.tx, h.ty);
+  for (const f of factories) if (f.ownerId === owner) seed(f.tx, f.ty);
+  for (const h of harvesters) if (h.ownerId === owner) seed(h.tx, h.ty);
   while (stack.length) {
     const i = stack.pop()!;
     const x = i % MAP_W, y = (i / MAP_W) | 0;
@@ -166,7 +191,8 @@ export function playerNetwork(
       if (!inMapT(nx, ny)) continue;
       const ni = tIdx(nx, ny);
       if (seen.has(ni)) continue;
-      if (hasTrack(track, "road", nx, ny) || hasTrack(track, "rail", nx, ny)) {
+      // W2: flood only over track THIS owner built — never the rival's.
+      if (trackOwnedBy(track, owner, nx, ny)) {
         seen.add(ni);
         stack.push(ni);
       }
@@ -220,15 +246,32 @@ export function autotileAround(t: Track, kind: TrackKind, tx: number, ty: number
 }
 
 // ── build / demolish ──────────────────────────────────────────────────────
-export function buildTile(t: Track, kind: TrackKind, tx: number, ty: number): AutotileResult | null {
+/**
+ * W2: `owner` is stamped on the tile so the network flood knows whose road
+ * this is. Passing 0 (the default) is a neutral placement — it does NOT
+ * strip ownership, so a second build on an owned tile keeps the existing
+ * owner unless the new builder is also a real owner (last real builder wins).
+ */
+export function buildTile(
+  t: Track, kind: TrackKind, tx: number, ty: number, owner: number = 0,
+): AutotileResult | null {
   if (!inMapT(tx, ty)) return null;
-  layerOf(t, kind)[tIdx(tx, ty)] |= PRESENT;
+  const i = tIdx(tx, ty);
+  layerOf(t, kind)[i] |= PRESENT;
+  if (owner !== 0) t.owner[i] = owner;
   return autotileAround(t, kind, tx, ty);
 }
 
+/**
+ * W2: demolition never touches ownership while any track remains on the tile
+ * (the other layer — possibly the rival's — is still standing). When the last
+ * layer goes down the tile is unowned again.
+ */
 export function demolishTile(t: Track, kind: TrackKind, tx: number, ty: number): AutotileResult | null {
   if (!inMapT(tx, ty)) return null;
-  layerOf(t, kind)[tIdx(tx, ty)] = 0;
+  const i = tIdx(tx, ty);
+  layerOf(t, kind)[i] = 0;
+  if (!hasTrack(t, "road", tx, ty) && !hasTrack(t, "rail", tx, ty)) t.owner[i] = 0;
   return autotileAround(t, kind, tx, ty);
 }
 
@@ -285,8 +328,14 @@ export function lPath(
 export interface DragPreview {
   /** Tiles that will actually be built, in order. */
   tiles: [number, number][];
-  /** Total cost of `tiles`. */
+  /**
+   * W1: what the purse will be charged — the sum of per-tile costs for the
+   * tiles NOT covered by the free allowance. This is the ONLY number the
+   * commit spends, so what you see is what you're charged.
+   */
   cost: Purse;
+  /** W1: how many of `tiles` the free allowance covers (commit debits this). */
+  free: number;
   /** Tiles previewed but unaffordable — drawn red, not built. */
   unaffordable: [number, number][];
   /** True when an obstacle cut the path short. */
@@ -298,23 +347,44 @@ export interface DragPreview {
  * footprints) truncate at the last legal tile rather than failing the drag,
  * and the preview stops charging once the purse runs out — the affordable
  * prefix is what gets built.
+ *
+ * W1: `freeTiles` is the caller's free-track allowance, applied INSIDE the
+ * preview: the first `freeTiles` new tiles (tiles that actually cost
+ * something) ride free, and `cost` counts only the rest. The commit spends
+ * exactly `cost`, so preview and charge can no longer disagree — the class of
+ * bug where a drag that "looked fine" charged the purse into the negative.
  */
 export function previewDrag(
   grid: Grid, t: Track, kind: TrackKind, purse: Purse,
   ax: number, ay: number, bx: number, by: number, xFirst = true,
-  network?: Set<number>,
+  network?: Set<number>, freeTiles = 0,
 ): DragPreview {
   const path = lPath(ax, ay, bx, by, xFirst);
   const tiles: [number, number][] = [];
   const unaffordable: [number, number][] = [];
   let cost: Purse = {};
   let truncated = false;
+  let freeLeft = Math.max(0, freeTiles);
   const growing = network ? new Set(network) : undefined;
 
   for (let i = 0; i < path.length; i++) {
     const [x, y] = path[i];
     if (!canBuildOn(grid, kind, x, y, growing)) { truncated = true; break; }
     const c = tileCost(t, kind, x, y);
+    // Free tiles are charged nothing; the allowance covers them first.
+    // A tile that costs nothing (dragging over your own track) consumes no
+    // allowance — free setup tiles are never wasted.
+    if (Object.keys(c).length === 0) {
+      tiles.push([x, y]);
+      growing?.add(tIdx(x, y));
+      continue;
+    }
+    if (freeLeft > 0) {
+      freeLeft--;
+      tiles.push([x, y]);
+      growing?.add(tIdx(x, y));
+      continue;
+    }
     const next = addCost(cost, c);
     if (!canAfford(purse, next)) {
       for (let j = i; j < path.length; j++) {
@@ -328,7 +398,7 @@ export function previewDrag(
     tiles.push([x, y]);
     growing?.add(tIdx(x, y));
   }
-  return { tiles, cost, unaffordable, truncated };
+  return { tiles, cost, free: freeTiles > 0 ? Math.max(0, freeTiles - freeLeft) : 0, unaffordable, truncated };
 }
 
 export interface CommitResult {
@@ -337,11 +407,18 @@ export interface CommitResult {
   chunks: number[];
 }
 
-/** Commit a previewed drag, charging only for the tiles actually placed. */
-export function commitDrag(t: Track, kind: TrackKind, preview: DragPreview): CommitResult {
+/**
+ * Commit a previewed drag, charging only for the tiles actually placed.
+ * W1: the cost is the preview's cost (per-tile `tileCost` model, free
+ * allowance already subtracted) — never a recomputation. Committing builds
+ * exactly `preview.tiles` and nothing more.
+ */
+export function commitDrag(t: Track, kind: TrackKind, preview: DragPreview, owner = 0): CommitResult {
   const chunks = new Set<number>();
   for (const [x, y] of preview.tiles) {
-    const r = buildTile(t, kind, x, y);
+    // W2: the builder's track-owner id is stamped on every tile laid — a
+    // drag built by player 1 is player 1's network, full stop.
+    const r = buildTile(t, kind, x, y, owner);
     if (r) for (const c of r.chunks) chunks.add(c);
   }
   return { built: preview.tiles, cost: preview.cost, chunks: [...chunks] };
