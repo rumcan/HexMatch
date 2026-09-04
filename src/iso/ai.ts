@@ -56,7 +56,7 @@ export function stepCost(
   const i = tIdx(tx, ty);
   const terrain = grid.terrain[i];
   if (terrain === WATER) return IMPASSABLE;
-  if (grid.occupancy[i] >= 0) return IMPASSABLE;
+  if (grid.occupancy[i] !== -1) return IMPASSABLE;
   if (terrain === ROUGH && !TRANSPORT[kind].onRough) return IMPASSABLE;
   let c = terrain === ROUGH ? COST_ROUGH : COST_FLAT;
   // reuse our own trunk lines rather than building parallel spurs
@@ -177,7 +177,7 @@ export function harvesterSpots(grid: Grid, ind: Industry): [number, number][] {
       if (!insideX && !insideY) continue;               // diagonal corner
       const i = tIdx(x, y);
       if (seen.has(i)) continue;
-      if (grid.terrain[i] === WATER || grid.occupancy[i] >= 0) continue;
+      if (grid.terrain[i] === WATER || grid.occupancy[i] !== -1) continue;
       seen.add(i);
       out.push([x, y]);
     }

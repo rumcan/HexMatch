@@ -9,12 +9,12 @@ import {
 // the tile whose diamond contains the point (E0 — floor, never round).
 
 describe("E0 projection constants", () => {
-  it("fixes the 2:1 dimetric tile and 48×48 map constants", () => {
+  it("fixes the 2:1 dimetric tile and 64×64 map constants", () => {
     expect(TILE_W).toBe(64);
     expect(TILE_H).toBe(32);
     expect(HW).toBe(32);
     expect(HH).toBe(16);
-    expect(MAP_W * MAP_H).toBe(2304);
+    expect(MAP_W * MAP_H).toBe(4096);
   });
 
   it("exposes integer-stepped zoom levels only", () => {
@@ -23,7 +23,7 @@ describe("E0 projection constants", () => {
 });
 
 describe("tileToScreen / screenToTile", () => {
-  it("round-trips every one of the 2304 tiles", () => {
+  it("round-trips every one of the 4096 tiles", () => {
     for (let tx = 0; tx < MAP_W; tx++) {
       for (let ty = 0; ty < MAP_H; ty++) {
         const [sx, sy] = tileToScreen(tx, ty);

@@ -52,7 +52,7 @@ describe("E8 pass 2 — starting curve", () => {
     expect(TRANSPORT.road.onRough).toBe(true);
     expect(TRANSPORT.rail.onRough).toBe(false);
     expect(VP_TARGET).toBe(12);
-    expect(INDUSTRY_QUOTA.ore_mine).toBe(5);
+    expect(INDUSTRY_QUOTA.ore_mine).toBe(2);   // TK-005 resource cap
   });
 
   it("records distance-to-nearest-ore from the land centroid across 40 seeds", () => {

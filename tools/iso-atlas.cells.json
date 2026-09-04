@@ -477,6 +477,38 @@
     1
    ],
    "note": "TK-004: bus, head-on view (OpenGFX road vehicle 3092) for travel along the other diagonal; same recolour map, centre anchor. Verified real-colour art in the sheet (blue livery, dark windows); the (0,0,255) sheet backing keys out in the normal crop. The slicer's declared `recolor` map support exists for palette-key sheets (1CC/2CC) that need it \u2014 this one does not. Centre anchor is DERIVED in the slicer ([ceil(w/2), ceil(h/2)]) \u2014 never hand-authored (Y5/Y6); drawOrigin lands the centre on the tile centre."
+  },
+  {
+   "name": "house_a",
+   "footprint": [
+    1,
+    1
+   ],
+   "layers": [
+    {
+     "sprite": 3981
+    },
+    {
+     "sprite": 1432
+    }
+   ],
+   "note": "TK-005: town house = grass ground 3981 + OpenGFX temperate house 1432 (66x87 rel -32,-56). Layered cell so the 87px building is not cropped by makeGround's fixed 64x32 cell; anchor/tile alignment follow the standard derived union convention (same construction as factory_*)."
+  },
+  {
+   "name": "house_b",
+   "footprint": [
+    1,
+    1
+   ],
+   "layers": [
+    {
+     "sprite": 3981
+    },
+    {
+     "sprite": 1519
+    }
+   ],
+   "note": "TK-005: town house variant = grass ground 3981 + OpenGFX small flat 1519."
   }
  ]
 }

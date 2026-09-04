@@ -24,6 +24,7 @@ function flatGrid(): Grid {
     w: MAP_W, h: MAP_H,
     terrain: new Uint8Array(MAP_W * MAP_H).fill(GRASS),
     industries: [],
+    towns: [],
     occupancy: new Int16Array(MAP_W * MAP_H).fill(-1),
     seed: 1,
   };

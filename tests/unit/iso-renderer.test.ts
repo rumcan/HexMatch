@@ -90,13 +90,17 @@ describe("E4 culling + draw list", () => {
   it("emits each industry exactly once, at its origin", () => {
     const full = { x0: 0, y0: 0, x1: MAP_W - 1, y1: MAP_H - 1 };
     const list = buildDrawList({ grid }, full);
-    const inds = list.filter((d) => d.ref);
+    const inds = list.filter((d) => d.ref && (d.ref as { kind?: string }).kind !== "town-house");
     expect(inds).toHaveLength(grid.industries.length);
     for (const d of inds) {
       const ind = d.ref as { tx: number; ty: number; type: string };
       expect([d.tx, d.ty, d.sprite]).toEqual([ind.tx, ind.ty, ind.type]);
       expect(atlas.has(d.sprite)).toBe(true);
     }
+    // TK-005: town houses are emitted too, on their own tiles
+    const houses = list.filter((d) => (d.ref as { kind?: string })?.kind === "town-house");
+    expect(houses).toHaveLength(grid.towns.reduce((a, t) => a + t.houses.length, 0));
+    for (const d of houses) expect(["house_a", "house_b"]).toContain(d.sprite);
   });
 
   it("culls industries outside the range but keeps footprint overlaps", () => {

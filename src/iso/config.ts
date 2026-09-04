@@ -67,10 +67,30 @@ export const INDUSTRY_BY_KEY: Record<string, IndustryDef> = Object.fromEntries(
   INDUSTRIES.map((d) => [d.key, d]),
 );
 
-// Placement quota per industry type (E3): every cargo must be present.
+// TK-005: natural resources are CAPPED at 2 nodes per resource type (was an
+// exact E3 quota of 2-6). Every cargo type is still guaranteed at least one
+// node (best-effort placement), but no type floods the map.
 export const INDUSTRY_QUOTA: Record<string, number> = {
-  farm: 5, forest: 6, ore_mine: 5, quarry: 4, oil_rig: 3, gold_mine: 2,
+  farm: 2, forest: 2, ore_mine: 2, quarry: 2, oil_rig: 2, gold_mine: 2,
 };
+
+// ── TK-005: towns ──────────────────────────────────────────────────────────
+// A few named settlements are generated with the map (deterministic under the
+// seed, like everything else). TK-006 gates the first building to a town's
+// radius; houses are decorative no-build tiles.
+export const TOWN_COUNT = 3;
+export const TOWN_RADIUS = 4;          // TK-006 placement radius, in tiles
+export const TOWN_MIN_SEP = 20;        // min Chebyshev distance between towns
+export const TOWN_EDGE_MARGIN = 8;     // towns stay this far inside the coast
+export const TOWN_HOUSES_MIN = 5;      // house count drawn per town
+export const TOWN_HOUSES_MAX = 8;
+export const TOWN_NAMES = [
+  "Ashford", "Brackenmoor", "Cinderhill", "Dunhaven", "Eastmere",
+  "Fennwick", "Goldshaw", "Hollowbrook", "Ironbridge", "Juniper Vale",
+  "Kestrel's Rest", "Lanternford", "Millbrook", "Netherby", "Oakhollow",
+  "Pinewatch", "Quarrymill", "Ravensford", "Stonebridge", "Thornbury",
+  "Umberdale", "Vinehollow", "Westharrow", "Yarrowfield",
+];
 
 // ── Road vs rail (the core scoring split) ─────────────────────────────────
 // TK-002: rail is NOT a road upgrade — it is an independent, expansive

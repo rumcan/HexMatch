@@ -14,7 +14,8 @@ function hashGrid(g: ReturnType<typeof generateMap>): string {
   ].join("|");
 }
 
-import { resolveMapSeed } from "../../src/iso/grid";
+import { resolveMapSeed, HOUSE, type Town } from "../../src/iso/grid";
+import { TOWN_COUNT, TOWN_RADIUS, TOWN_MIN_SEP } from "../../src/iso/config";
 
 describe("R6 resolveMapSeed", () => {
   it("honours ?seed= and rejects junk", () => {
@@ -140,17 +141,109 @@ describe("E3 terrain", () => {
   });
 });
 
+describe("TK-005 towns", () => {
+  const g = generateMap(42);
+
+  it("generates a few towns, deterministically", () => {
+    expect(g.towns.length).toBeGreaterThan(0);
+    expect(g.towns.length).toBeLessThanOrEqual(TOWN_COUNT);
+    const g2 = generateMap(42);
+    expect(JSON.stringify(g2.towns)).toBe(JSON.stringify(g.towns));
+    for (const seed of [1, 7, 123, 2026, 20260902]) {
+      const g3 = generateMap(seed);
+      expect(g3.towns.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("towns are named, inland, and mutually separated", () => {
+    for (const t of g.towns) {
+      expect(t.name.length).toBeGreaterThan(0);
+      expect(t.radius).toBe(TOWN_RADIUS);
+      expect(t.tx).toBeGreaterThanOrEqual(8);
+      expect(t.ty).toBeGreaterThanOrEqual(8);
+      expect(t.tx).toBeLessThanOrEqual(MAP_W - 9);
+      expect(t.ty).toBeLessThanOrEqual(MAP_H - 9);
+    }
+    for (let i = 0; i < g.towns.length; i++) {
+      for (let j = i + 1; j < g.towns.length; j++) {
+        const a = g.towns[i], b = g.towns[j];
+        const cheb = Math.max(Math.abs(a.tx - b.tx), Math.abs(a.ty - b.ty));
+        expect(cheb).toBeGreaterThanOrEqual(TOWN_MIN_SEP);
+      }
+    }
+  });
+
+  it("houses sit on grass inside the radius and never on the centre 3×3", () => {
+    for (const t of g.towns) {
+      expect(t.houses.length).toBeGreaterThanOrEqual(1);
+      for (const hse of t.houses) {
+        expect(Math.max(Math.abs(hse.tx - t.tx), Math.abs(hse.ty - t.ty)))
+          .toBeLessThanOrEqual(t.radius);
+        expect(terrainAt(g, hse.tx, hse.ty)).toBe(GRASS);
+        // never in the centre 3×3 (Chebyshev > 1)
+        expect(Math.max(Math.abs(hse.tx - t.tx), Math.abs(hse.ty - t.ty))).toBeGreaterThan(1);
+        expect(g.occupancy[hse.ty * MAP_W + hse.tx]).toBe(HOUSE);
+      }
+      // the centre 3×3 stays buildable (TK-006 relies on it)
+      for (let x = -1; x <= 1; x++) {
+        for (let y = -1; y <= 1; y++) {
+          const i = (t.ty + y) * MAP_W + (t.tx + x);
+          expect(g.occupancy[i], `centre 3x3 of ${t.name}`).toBe(-1);
+          expect(g.terrain[i]).toBe(GRASS);
+        }
+      }
+    }
+  });
+
+  it("houses never overlap industries or each other", () => {
+    const houseTiles = new Set<number>();
+    for (const t of g.towns) {
+      for (const hse of t.houses) {
+        const key = hse.ty * MAP_W + hse.tx;
+        expect(houseTiles.has(key)).toBe(false);
+        houseTiles.add(key);
+      }
+    }
+    for (const ind of g.industries) {
+      for (let x = 0; x < ind.w; x++) {
+        for (let y = 0; y < ind.h; y++) {
+          expect(houseTiles.has((ind.ty + y) * MAP_W + (ind.tx + x))).toBe(false);
+        }
+      }
+    }
+  });
+
+  it("each town keeps buildable space inside its radius", () => {
+    for (const t of g.towns as Town[]) {
+      let free = 0;
+      for (let x = -t.radius; x <= t.radius; x++) {
+        for (let y = -t.radius; y <= t.radius; y++) {
+          const tx = t.tx + x, ty = t.ty + y;
+          if (tx < 0 || ty < 0 || tx >= MAP_W || ty >= MAP_H) continue;
+          if (terrainAt(g, tx, ty) === GRASS && g.occupancy[ty * MAP_W + tx] === -1) free++;
+        }
+      }
+      expect(free, `buildable tiles in ${t.name}`).toBeGreaterThanOrEqual(12);
+    }
+  });
+});
+
 describe("E3 industry placement", () => {
   const g = generateMap(42);
 
-  it("meets the per-type quota so no cargo is absent from the map", () => {
-    const byType: Record<string, number> = {};
-    for (const ind of g.industries) byType[ind.type] = (byType[ind.type] ?? 0) + 1;
-    for (const [type, n] of Object.entries(INDUSTRY_QUOTA)) {
-      expect(byType[type] ?? 0, `quota for ${type}`).toBe(n);
+  it("TK-005: caps natural resources at ≤ 2 nodes per type, every cargo present", () => {
+    // across several seeds: the cap is a hard ceiling, and no cargo type
+    // disappears from the map entirely
+    for (const seed of [42, 1, 7, 123, 2026, 20260902]) {
+      const g = generateMap(seed);
+      const byType: Record<string, number> = {};
+      for (const ind of g.industries) byType[ind.type] = (byType[ind.type] ?? 0) + 1;
+      for (const [type, cap] of Object.entries(INDUSTRY_QUOTA)) {
+        expect(byType[type] ?? 0, `cap for ${type} (seed ${seed})`).toBeLessThanOrEqual(cap);
+      }
+      const cargos = new Set(g.industries.map((i) => INDUSTRY_BY_KEY[i.type].cargo));
+      for (const c of CARGOES) expect(cargos.has(c), `cargo ${c} present (seed ${seed})`).toBe(true);
     }
-    const cargos = new Set(g.industries.map((i) => INDUSTRY_BY_KEY[i.type].cargo));
-    for (const c of CARGOES) expect(cargos.has(c), `cargo ${c} present`).toBe(true);
   });
 
   it("places no industry on water", () => {
@@ -180,13 +273,18 @@ describe("E3 industry placement", () => {
     }
   });
 
-  it("matches the occupancy Int16Array to the industry list", () => {
+  it("matches the occupancy Int16Array to the industry list (+ town houses)", () => {
     const occ = new Int16Array(MAP_W * MAP_H).fill(-1);
+    for (const town of g.towns) {
+      for (const hse of town.houses) occ[hse.ty * MAP_W + hse.tx] = HOUSE;
+    }
     for (const ind of g.industries) {
       expect(ind.id).toBe(g.industries.indexOf(ind));
       for (let x = 0; x < ind.w; x++) {
         for (let y = 0; y < ind.h; y++) {
           const ti = (ind.ty + y) * MAP_W + (ind.tx + x);
+          expect(occ[ti], `industry ${ind.type}@(${ind.tx},${ind.ty}) overlaps a house`)
+            .toBe(-1);
           occ[ti] = ind.id;
         }
       }

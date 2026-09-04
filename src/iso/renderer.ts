@@ -97,6 +97,17 @@ export function buildDrawList(world: World, r: { x0: number; y0: number; x1: num
     if (ind.ty + ind.h - 1 < r.y0 || ind.ty > r.y1) continue;
     out.push({ sprite: ind.type, tx: ind.tx, ty: ind.ty, ref: ind });
   }
+  // TK-005: town houses are decorative 1×1 structures (occupancy HOUSE).
+  for (const town of grid.towns) {
+    for (const hse of town.houses) {
+      if (hse.tx < r.x0 || hse.tx > r.x1 || hse.ty < r.y0 || hse.ty > r.y1) continue;
+      out.push({
+        sprite: hse.v === 0 ? "house_a" : "house_b",
+        tx: hse.tx, ty: hse.ty,
+        ref: { kind: "town-house", town: town.id },
+      });
+    }
+  }
   if (world.extra) {
     for (const e of world.extra) {
       if (e.tx < r.x0 - 4 || e.tx > r.x1 + 4 || e.ty < r.y0 - 4 || e.ty > r.y1 + 4) continue;

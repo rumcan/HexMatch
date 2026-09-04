@@ -25,8 +25,10 @@ import type { Harvester, Factory, ScoreState, ConnKind } from "./economy";
  * A guest whose version differs cannot be trusted to regenerate the same map.
  * v3 (W2): the track's per-tile owner layer travels with the two bit layers —
  * without it a rejoined guest would see both networks as one shared graph.
+ * v4 (TK-005): the map is 64×64 (was 48×48) and generation now also places
+ * towns — a v3 guest would rebuild a different, smaller, townless map.
  */
-export const SNAPSHOT_VERSION = 3;
+export const SNAPSHOT_VERSION = 4;
 
 export const EXPECTED_TRACK_BYTES = MAP_W * MAP_H;
 

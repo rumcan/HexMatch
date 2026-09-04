@@ -13,11 +13,30 @@
 // ══════════════════════════════════════════════════════════════════════════
 import {
   MAP_W, MAP_H, mulberry32, INDUSTRIES, INDUSTRY_QUOTA, INDUSTRY_BY_KEY,
+  TOWN_COUNT, TOWN_RADIUS, TOWN_MIN_SEP, TOWN_EDGE_MARGIN,
+  TOWN_HOUSES_MIN, TOWN_HOUSES_MAX, TOWN_NAMES,
 } from "./config";
 
 export const GRASS = 0;
 export const WATER = 1;
 export const ROUGH = 2;
+
+/**
+ * TK-005: a generated town — the anchor for TK-006's "first building must be
+ * placed within radius of a town" rule and a visual landmark on the larger
+ * map. Fully seed-derived: multiplayer ships only the seed (E10).
+ */
+export interface Town {
+  id: number;
+  name: string;
+  tx: number;               // centre tile
+  ty: number;
+  radius: number;           // TK-006 placement radius (tiles, Chebyshev)
+  houses: { tx: number; ty: number; v: 0 | 1 }[];   // decorative no-build tiles
+}
+
+/** occupancy sentinel for a town house tile (no-build, no industry). */
+export const HOUSE = -2;
 
 export const idx = (tx: number, ty: number) => ty * MAP_W + tx;
 export const inBounds = (tx: number, ty: number) =>
@@ -39,7 +58,8 @@ export interface Grid {
   h: number;
   terrain: Uint8Array;        // MAP_W*MAP_H values GRASS | WATER | ROUGH
   industries: Industry[];
-  occupancy: Int16Array;      // per tile: industry list index or -1
+  occupancy: Int16Array;      // per tile: industry index, HOUSE (-2), or -1
+  towns: Town[];              // TK-005
   seed: number;
 }
 
@@ -107,8 +127,9 @@ function makeTerrain(rng: () => number): Uint8Array {
   return t;
 }
 
-function placeIndustries(terrain: Uint8Array, rng: () => number): { list: Industry[]; occ: Int16Array } {
-  const occ = new Int16Array(MAP_W * MAP_H).fill(-1);
+function placeIndustries(
+  terrain: Uint8Array, occ: Int16Array, rng: () => number,
+): { list: Industry[] } {
   const list: Industry[] = [];
   const idAt = (tx: number, ty: number) =>
     inBounds(tx, ty) ? occ[idx(tx, ty)] : -1;
@@ -122,7 +143,7 @@ function placeIndustries(terrain: Uint8Array, rng: () => number): { list: Indust
         if (!inBounds(gx, gy)) return false;
         const ti = idx(gx, gy);
         if (terrain[ti] === WATER) return false;
-        if (occ[ti] !== -1) return false;
+        if (occ[ti] !== -1) return false;   // industry or town house
       }
     }
     return true;
@@ -185,11 +206,75 @@ function placeIndustries(terrain: Uint8Array, rng: () => number): { list: Indust
   }
   // final pass: renumber ids to indices and order by id (stable)
   list.forEach((ind, i) => { ind.id = i; });
-  return { list, occ };
+  return { list };
 }
 
 /**
- * Generate a deterministic 48×48 iso grid. Same seed → byte-identical
+ * TK-005: place TOWN_COUNT towns on inland grass, mutual separation ≥
+ * TOWN_MIN_SEP (Chebyshev), each with TOWN_HOUSES_MIN..MAX decorative house
+ * tiles on free grass inside its radius. Houses mark their tiles HOUSE (-2)
+ * in `occ` so industries (placed next) and track (canBuildOn) avoid them.
+ * Deterministic: same rng stream position → same towns.
+ */
+function placeTowns(terrain: Uint8Array, occ: Int16Array, rng: () => number): Town[] {
+  const towns: Town[] = [];
+  const namePool = [...TOWN_NAMES];
+  // deterministic shuffle of the name pool (Fisher-Yates on the map rng)
+  for (let i = namePool.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [namePool[i], namePool[j]] = [namePool[j], namePool[i]];
+  }
+  const houseSprites = 2;   // atlas cells house_a / house_b
+  const centreOk = (tx: number, ty: number) => {
+    if (tx < TOWN_EDGE_MARGIN || ty < TOWN_EDGE_MARGIN) return false;
+    if (tx >= MAP_W - TOWN_EDGE_MARGIN || ty >= MAP_H - TOWN_EDGE_MARGIN) return false;
+    // the whole radius need not be land, but the centre 3×3 must be grass so
+    // a town is never visually stranded in rough/water
+    for (let x = -1; x <= 1; x++) {
+      for (let y = -1; y <= 1; y++) {
+        if (terrain[idx(tx + x, ty + y)] !== GRASS) return false;
+      }
+    }
+    return towns.every((t) =>
+      Math.max(Math.abs(t.tx - tx), Math.abs(t.ty - ty)) >= TOWN_MIN_SEP);
+  };
+  for (let n = 0; n < TOWN_COUNT; n++) {
+    let placed = false;
+    for (let attempt = 0; attempt < 200 && !placed; attempt++) {
+      const tx = TOWN_EDGE_MARGIN + Math.floor(rng() * (MAP_W - 2 * TOWN_EDGE_MARGIN));
+      const ty = TOWN_EDGE_MARGIN + Math.floor(rng() * (MAP_H - 2 * TOWN_EDGE_MARGIN));
+      if (!centreOk(tx, ty)) continue;
+      const houses: Town["houses"] = [];
+      const count = TOWN_HOUSES_MIN + Math.floor(rng() * (TOWN_HOUSES_MAX - TOWN_HOUSES_MIN + 1));
+      for (let h = 0; h < count; h++) {
+        for (let ha = 0; ha < 24; ha++) {
+          const hx = tx + Math.floor(rng() * (2 * TOWN_RADIUS + 1)) - TOWN_RADIUS;
+          const hy = ty + Math.floor(rng() * (2 * TOWN_RADIUS + 1)) - TOWN_RADIUS;
+          if (!inBounds(hx, hy)) continue;
+          const hi = idx(hx, hy);
+          if (terrain[hi] !== GRASS || occ[hi] !== -1) continue;
+          // keep the exact centre 3×3 clear (TK-006 guaranteed build space)
+          if (Math.abs(hx - tx) <= 1 && Math.abs(hy - ty) <= 1) continue;
+          occ[hi] = HOUSE;
+          houses.push({ tx: hx, ty: hy, v: Math.floor(rng() * houseSprites) as 0 | 1 });
+          break;
+        }
+      }
+      towns.push({
+        id: n, name: namePool[n % namePool.length],
+        tx, ty, radius: TOWN_RADIUS, houses,
+      });
+      placed = true;
+    }
+    // Land is guaranteed larger than the town footprint needs; if all 200
+    // attempts miss (pathological map), skip this town — the map stays valid,
+    // TK-006 just has one fewer anchor.
+  }
+  return towns;
+}
+
+/**
+ * Generate a deterministic 64×64 iso grid (TK-005; was 48×48). Same seed → byte-identical
  * `terrain`, `occupancy` and `industries` across contexts (T1 determinism).
  *
  * R6: `seed` is required. Multiplayer (E10) must resolve and distribute a
@@ -202,8 +287,10 @@ export function generateMap(seed: number): Grid {
   const s = seed >>> 0;
   const rng = mulberry32(s);
   const terrain = makeTerrain(rng);
-  const { list, occ } = placeIndustries(terrain, rng);
-  return { w: MAP_W, h: MAP_H, terrain, industries: list, occupancy: occ, seed: s };
+  const occ = new Int16Array(MAP_W * MAP_H).fill(-1);
+  const towns = placeTowns(terrain, occ, rng);
+  const { list } = placeIndustries(terrain, occ, rng);
+  return { w: MAP_W, h: MAP_H, terrain, industries: list, occupancy: occ, towns, seed: s };
 }
 
 /**

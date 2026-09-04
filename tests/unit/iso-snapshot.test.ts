@@ -53,15 +53,15 @@ describe("E10 base64 typed arrays", () => {
     expect(base64ToBytes(bytesToBase64(ones))).toEqual(ones);
   });
 
-  it("is a constant 3072 chars regardless of how much track exists", () => {
+  it("is a constant size regardless of how much track exists", () => {
     // The real value of base64 here is that it is FLAT: an empty map and a
     // saturated one cost the same, so the host's bandwidth never spikes as
     // the game fills up. (The spec's "~10KB as JSON" is optimistic — the
     // measured JSON encoding is 4.6KB empty and 6.9KB saturated.)
     const empty = new Uint8Array(EXPECTED_TRACK_BYTES);
     const full = new Uint8Array(EXPECTED_TRACK_BYTES).fill(31);
-    expect(bytesToBase64(empty)).toHaveLength(3072);
-    expect(bytesToBase64(full)).toHaveLength(3072);
+    expect(bytesToBase64(empty)).toHaveLength(((MAP_W * MAP_H) + 2) / 3 * 4);
+    expect(bytesToBase64(full)).toHaveLength(((MAP_W * MAP_H) + 2) / 3 * 4);
   });
 
   it("beats a JSON array, and by most where it matters — a busy map", () => {
@@ -110,7 +110,8 @@ describe("E10 snapshot shape", () => {
     }).length;
     expect(snapshotBytes(s)).toBeLessThan(asJsonArrays);
     // and the whole snapshot stays inside a single small frame
-    expect(snapshotBytes(s)).toBeLessThan(12_000);
+    // (TK-005: 3 layers × 4096 bytes → ~16.4 KB of base64)
+    expect(snapshotBytes(s)).toBeLessThan(20_000);
   });
 });
 
@@ -256,6 +257,6 @@ describe("E10 scale", () => {
 
   it("the track layers are exactly one byte per tile", () => {
     expect(EXPECTED_TRACK_BYTES).toBe(MAP_W * MAP_H);
-    expect(EXPECTED_TRACK_BYTES).toBe(2304);
+    expect(EXPECTED_TRACK_BYTES).toBe(4096);   // TK-005: 64×64 (was 48×48/2304)
   });
 });

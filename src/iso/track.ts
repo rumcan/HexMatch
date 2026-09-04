@@ -139,7 +139,7 @@ export function canBuildOn(
   const terrain = grid.terrain[i];
   if (terrain === WATER) return false;
   if (terrain === ROUGH && !TRANSPORT[kind].onRough) return false;
-  if (grid.occupancy[i] >= 0) return false;
+  if (grid.occupancy[i] !== -1) return false;   // industry or town house (TK-005)
   if (network) {
     if (network.has(i)) return true;
     let adj = false;

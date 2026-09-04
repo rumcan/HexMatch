@@ -19,7 +19,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 export const TILE_W = 64, TILE_H = 32;
 export const HW = TILE_W / 2, HH = TILE_H / 2;   // 32, 16
-export const MAP_W = 48, MAP_H = 48;             // 2304 tiles
+export const MAP_W = 64, MAP_H = 64;             // 4096 tiles (TK-005: larger map)
 // Fixed zoom levels only — the atlas is pre-rendered at each of these once,
 // so every frame is a 1:1 blit (E0: no per-frame drawImage scaling).
 export const ZOOM_STEPS = [0.5, 1, 2] as const;
