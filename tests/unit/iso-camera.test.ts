@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import {
+import { isPanButton,
+  
   createCamera, worldToScreen, screenToWorld, screenToTileAt, tileToScreenAt,
   stepZoom, zoomAt, zoomStepAt, clampCamera, panBy, centerOnTile, centerOnMap,
   resizeCamera, visibleTileRange, createGesture, pointerDown, pointerMove, pointerUp,
@@ -144,5 +145,28 @@ describe("E4 camera — gestures", () => {
     const r = pointerMove(g, { id: 2, x: 700, y: 300 }, cam);
     expect(r.cam.zoom).toBe(2);
     expect(screenToTileAt(r.cam, 500, 300)).toEqual(t0);
+  });
+});
+
+describe("TK-001 middle-button pan binding", () => {
+  it("mouse panning is the middle button only — left is placement-only", () => {
+    expect(isPanButton("mouse", 1)).toBe(true);    // middle pans
+    expect(isPanButton("mouse", 0)).toBe(false);   // left never pans
+    expect(isPanButton("mouse", 2)).toBe(false);   // right is the browser's
+  });
+
+  it("touch and pen keep the one-finger pan (no middle button there)", () => {
+    expect(isPanButton("touch", 0)).toBe(true);
+    expect(isPanButton("pen", 0)).toBe(true);
+  });
+
+  it("a mouse gesture that started on the middle button pans; the gesture machine itself is unchanged", () => {
+    // The binding lives at pointerdown (isPanButton gates who enters the
+    // gesture); once in, panning behaves exactly as before.
+    const cam = centerOnMap(createCamera(800, 600));
+    const g = pointerDown(createGesture(), { id: 7, x: 100, y: 100 });
+    const r = pointerMove(g, { id: 7, x: 140, y: 120 }, cam);
+    expect(r.cam.x).toBe(cam.x + 40);
+    expect(r.cam.y).toBe(cam.y + 20);
   });
 });

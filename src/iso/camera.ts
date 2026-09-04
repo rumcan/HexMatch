@@ -151,7 +151,25 @@ export function visibleTileRange(c: Camera, pad = 8): TileRange {
 // One finger pans; two fingers pinch-zoom anchored at the midpoint; lifting
 // one finger of a pinch PROMOTES the survivor to the pan pointer and re-seeds
 // its last position, so there is no snap and no dead finger.
+//
+// TK-001: on a MOUSE, panning is bound to the MIDDLE button only — the left
+// button is reserved exclusively for building placement (a left-drag must
+// never scroll the map out from under a placement). Touch and pen keep the
+// one-finger pan and the two-finger pinch: there is no middle button there.
 export interface Pointer { id: number; x: number; y: number; }
+
+/** Middle mouse button (the TK-001 pan binding). */
+export const PAN_BUTTON = 1;
+
+/**
+ * May this pointerdown start/hold the pan gesture?
+ *   mouse     — the middle button only (TK-001); left is placement-only.
+ *   touch/pen — always (one finger pans, two pinch).
+ */
+export function isPanButton(pointerType: string, button: number): boolean {
+  if (pointerType === "mouse") return button === PAN_BUTTON;
+  return true;
+}
 
 export interface GestureState {
   pointers: Pointer[];

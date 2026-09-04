@@ -28,7 +28,7 @@ import atlas2 from "../../assets/iso-atlas/atlas@2x.png";
 import { Atlas, buildMasks, type Manifest, type AtlasImage } from "./atlas";
 import {
   createCamera, centerOnTile, resizeCamera, zoomStepAt, tileToScreenAt,
-  createGesture, pointerDown, pointerMove, pointerUp,
+  createGesture, pointerDown, pointerMove, pointerUp, isPanButton,
   type Camera, type GestureState,
 } from "./camera";
 import { IsoRenderer, type World } from "./renderer";
@@ -590,6 +590,12 @@ export function startIsoGame(root: HTMLElement) {
   }
 
   // ── input ──────────────────────────────────────────────────────────────
+  // TK-001: the buttons have disjoint jobs. LEFT mouse = building placement
+  // (track drags, factory/harvester clicks, blockades, demolish) and nothing
+  // else; MIDDLE mouse = map panning; wheel = zoom. Touch/pen keep the
+  // one-finger pan + two-finger pinch (no middle button there). `downBtn`
+  // remembers which button went down so a stray middle CLICK can never place
+  // a building on pointerup.
   let g: GestureState = createGesture();
   const dpr = () => Math.min(2, window.devicePixelRatio || 1);
   const pos = (e: PointerEvent): [number, number] => {
@@ -597,25 +603,35 @@ export function startIsoGame(root: HTMLElement) {
     return [(e.clientX - b.left) * dpr(), (e.clientY - b.top) * dpr()];
   };
   let downAt: [number, number] | null = null;
+  let downBtn: number | null = null;
   let moved = false;
+
+  // Start/hold the pan gesture for panning pointers only (TK-001).
+  const beginPan = (e: PointerEvent, x: number, y: number) => {
+    if (!isPanButton(e.pointerType, e.button)) return;
+    // middle-click autoscroll is the browser's, not ours
+    e.preventDefault();
+    g = pointerDown(g, { id: e.pointerId, x, y });
+  };
 
   canvases.overlay.addEventListener("pointerdown", (e) => {
     canvases.overlay.setPointerCapture(e.pointerId);
     const [x, y] = pos(e);
-    downAt = [x, y]; moved = false;
+    downAt = [x, y]; downBtn = e.button; moved = false;
     const p = renderer?.pick(x, y);
-    if (!p) return;
+    if (!p) { beginPan(e, x, y); return; }
     const isTrackTool = tool === "road" || tool === "rail";
-    if (phase === "play" && isTrackTool && e.isPrimary) {
-      // W2: a drag extends YOUR network only — the rival's road is not a
-      // seed you can grow from.
+    // W2: a drag extends YOUR network only — the rival's road is not a
+    // seed you can grow from. TK-001: track drags are a LEFT-button
+    // building action; middle-drag must pan instead.
+    if (phase === "play" && isTrackTool && e.isPrimary && e.button === 0) {
       const net = playerNetwork(track, me.i + 1, eco.factories, eco.harvesters);
       if (canBuildOn(grid, tool as TrackKind, p.tx, p.ty, net)) {
         drag = { ax: p.tx, ay: p.ty };
         return;
       }
     }
-    g = pointerDown(g, { id: e.pointerId, x, y });
+    beginPan(e, x, y);
   });
 
   canvases.overlay.addEventListener("pointermove", (e) => {
@@ -651,7 +667,9 @@ export function startIsoGame(root: HTMLElement) {
     }
     drag = null; preview = null;
 
-    if (!moved) {
+    // TK-001: only a LEFT-button click places buildings — the middle button
+    // is the pan binding, so even a motionless middle click must not build.
+    if (!moved && downBtn === 0) {
       const p = renderer?.pick(x, y);
       if (p) {
         if (phase === "play" && blackMode === "bandit") {
@@ -681,11 +699,18 @@ export function startIsoGame(root: HTMLElement) {
       }
     }
     downAt = null;
+    downBtn = null;
     g = pointerUp(g, e.pointerId);
   };
   canvases.overlay.addEventListener("pointerup", onUp);
   canvases.overlay.addEventListener("pointercancel", (e) => {
-    drag = null; preview = null; downAt = null; g = pointerUp(g, e.pointerId);
+    drag = null; preview = null; downAt = null; downBtn = null; g = pointerUp(g, e.pointerId);
+  });
+  // TK-001: the overlay is not a scroll surface — kill middle-click autoscroll
+  // at the mouse-event layer too (a cancelled pointerdown already suppresses
+  // the compatibility mousedown in Chromium; this covers other engines).
+  canvases.overlay.addEventListener("mousedown", (e) => {
+    if (e.button === 1) e.preventDefault();
   });
   canvases.overlay.addEventListener("wheel", (e) => {
     e.preventDefault();
