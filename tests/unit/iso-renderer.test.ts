@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { Atlas, type Manifest } from "../../src/iso/atlas";
+import { Atlas, type AlphaMask, type Manifest } from "../../src/iso/atlas";
+import { depthSort, place, pickSprite, type DrawItem } from "../../src/iso/depth";
 import {
   CHUNK, chunksX, chunkIndexOf, chunkSurfaceSize, chunkWorldOrigin,
   terrainSprite, buildDrawList, cullPad, flatPick,
@@ -176,5 +177,99 @@ describe("K4 flat pick — hits the drawn diamond, not the pick lattice", () => 
     expect(flatPick(-1, 6 * HH)).toEqual([3, 3]);
     expect(flatPick(-65, 6 * HH)).toEqual([3, 3]);
     expect(flatPick(-66, 6 * HH)).toEqual([3, 4]);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// K4 picking acceptance: "click a roof → selects that tile; click the
+// block-side → still that tile." Built from synthetic sprites with the real
+// Kenney geometry (terrain 132×83 anchor [66,33]; factory 132×133 anchor
+// [66,59], base diamond at y≈93 with the block rising above it) so the maths
+// is exercised without decoding real images in jsdom.
+// ══════════════════════════════════════════════════════════════════════════
+describe("K4 two-stage picking: roof and block-side clicks", () => {
+  const HWt = 66, HHt = 32;
+  const mkMask = (w: number, h: number, opaque: (x: number, y: number) => boolean): AlphaMask => {
+    const bits = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++)
+      if (opaque(x, y)) bits[y * w + x] = 1;
+    return { w, h, bits };
+  };
+  // terrain: visible top diamond centred on the widest row (y=33)
+  const terrainOpaque = (x: number, y: number) =>
+    Math.abs(x - 66) / 2 + Math.abs(y - 33) <= 33;
+  // factory: the same base diamond at y=93 plus the block above it
+  const factoryOpaque = (x: number, y: number) =>
+    (Math.abs(x - 66) / 2 + Math.abs(y - 93) <= 33) || (y <= 93 && Math.abs(x - 66) <= 60);
+
+  const synth = new Atlas({
+    sprites: {
+      terrain_grass: { x: 0, y: 0, w: 132, h: 83, footprint: [1, 1], anchor: [66, 33] },
+      factory_blue: { x: 132, y: 0, w: 132, h: 133, footprint: [1, 1], anchor: [66, 59] },
+    },
+  } as unknown as Manifest);
+  synth.setMask("terrain_grass", mkMask(132, 83, terrainOpaque));
+  synth.setMask("factory_blue", mkMask(132, 133, factoryOpaque));
+
+  // factory at (5,4) one row behind terrain at (5,5) — painter order back→front
+  const items: DrawItem[] = [
+    { sprite: "factory_blue", tx: 5, ty: 4 },
+    { sprite: "terrain_grass", tx: 5, ty: 5 },
+  ];
+  const order = depthSort(items.map((i) => place(synth, i)!)).order;
+  expect(order.map((p) => [p.tx, p.ty])).toEqual([[5, 4], [5, 5]]);
+
+  // helper: click a sprite-LOCAL pixel of the factory (its placed origin)
+  const f = order[0];
+  const clickFactoryLocal = (lx: number, ly: number) => ({
+    wx: f.wx + lx, wy: f.wy + ly,
+    flat: flatPick(f.wx + lx, f.wy + ly),
+    hit: pickSprite(synth, order, f.wx + lx, f.wy + ly),
+  });
+
+  it("a roof click selects the factory's own tile (not the tile behind it)", () => {
+    // local (66,20): high on the block, far above the base diamond
+    const c = clickFactoryLocal(66, 20);
+    expect(synth.opaqueAt("factory_blue", 66, 20)).toBe(true);
+    // the flat pass alone mis-attributs the roof to a tile BEHIND the factory
+    expect(c.flat).not.toEqual([5, 4]);
+    // the alpha pass returns the factory's tile — the tile whose top is clicked
+    expect(c.hit?.tx).toBe(5);
+    expect(c.hit?.ty).toBe(4);
+    expect(c.hit?.sprite).toBe("factory_blue");
+  });
+
+  it("a block-side click overlapping the front tile still selects the factory", () => {
+    // local (66,110): on the factory's base-diamond skirt — front of its own
+    // pick cell, so the flat pass alone hands it to the tile in FRONT
+    const c = clickFactoryLocal(66, 110);
+    expect(synth.opaqueAt("factory_blue", 66, 110)).toBe(true);
+    expect(c.flat).not.toEqual([5, 4]);
+    expect(c.hit?.sprite).toBe("factory_blue");
+    expect([c.hit?.tx, c.hit?.ty]).toEqual([5, 4]);
+  });
+
+  it("a click on the visible terrain diamond in front selects the terrain", () => {
+    const t = order[1];
+    const wx = t.wx + 30, wy = t.wy + 30;
+    expect(synth.opaqueAt("terrain_grass", 30, 30)).toBe(true);
+    expect(flatPick(wx, wy)).toEqual([5, 5]);
+    const hit = pickSprite(synth, order, wx, wy);
+    expect(hit?.sprite).toBe("terrain_grass");
+    expect([hit?.tx, hit?.ty]).toEqual([5, 5]);
+  });
+
+  it("front-to-back order means the terrain occludes the factory's buried pixels", () => {
+    // factory-local (30,108) is on the factory's base-diamond front skirt AND
+    // inside the front tile's diamond — a pixel both sprites cover. The
+    // terrain is drawn in front, so it must win the pick.
+    const wx = f.wx + 30, wy = f.wy + 108;
+    expect(synth.opaqueAt("factory_blue", 30, 108)).toBe(true);
+    const t = order[1];
+    const tlx = Math.floor(wx - t.wx), tly = Math.floor(wy - t.wy);
+    expect(synth.opaqueAt("terrain_grass", tlx, tly)).toBe(true);
+    const hit = pickSprite(synth, order, wx, wy);
+    expect(hit?.sprite).toBe("terrain_grass");
+    expect([hit?.tx, hit?.ty]).toEqual([5, 5]);
   });
 });

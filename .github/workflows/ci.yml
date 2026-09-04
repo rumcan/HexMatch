@@ -14,14 +14,13 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
-      - name: atlas matches cells (G7)
+      - name: atlas matches cells (G7/K1)
         run: |
-          # slice-atlas reads tools/opengfx-sprites.json, a gitignored build
-          # artifact. Without this line the step dies on "missing ... run
-          # parse-pnml.mjs first" before it ever compares the atlas.
-          node tools/parse-pnml.mjs
+          # K1: the packer reads only git-tracked sources (Kenney PNGs +
+          # tools/iso-atlas.cells.json), so no pre-step is needed.
+          node tools/make-derived-art.mjs
           npm run slice-atlas
-          git diff --exit-code assets/iso-atlas/
+          git diff --exit-code assets/iso-atlas/ src/iso/kenny/derived/
 
   # E13: Playwright never ran in CI. Desktop chromium on every PR; full
   # viewport matrix is the nightly workflow so G4/G5 mobile coverage is
