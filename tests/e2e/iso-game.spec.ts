@@ -297,3 +297,90 @@ test.describe("iso game boots on the default route", () => {
     });
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// TK-001 — panning is middle-mouse; the left button is build/place ONLY.
+// Boot is still in `setup-factory`, which is the cleanest proof that a drag
+// can never be mistaken for panning: a left drag must neither move the camera
+// nor place the factory, while a middle drag pans the same camera.
+// ══════════════════════════════════════════════════════════════════════════
+test.describe("TK-001 mouse panning is middle-button only", () => {
+  test.skip(({ isMobile }) => !!isMobile, "mouse-button flow runs on desktop chromium");
+
+  test("left-drag never pans or places; middle-drag pans; left-click places", async ({ page }) => {
+    await bootIso(page);
+    const screenAt = (tx: number, ty: number) => page.evaluate(({ tx, ty }) => {
+      const h = (window as any).__iso;
+      const dpr = window.devicePixelRatio || 1;
+      const [dx, dy] = h.tileScreenAt(tx, ty);
+      return { x: dx / dpr, y: dy / dpr };
+    }, { tx, ty });
+
+    // A clickable GRASS tile the factory can legally occupy, in view at the
+    // boot camera. Unlike pickCorridor we do NOT need a whole road corridor
+    // on screen — this test is about mouse buttons, not about playing a round.
+    const spot = await page.evaluate(() => {
+      const h = (window as any).__iso;
+      const grid = h.grid;
+      const W = grid.w, H = grid.h;
+      const dpr = window.devicePixelRatio || 1;
+      const inView = (tx: number, ty: number) => {
+        const [dx, dy] = h.tileScreenAt(tx, ty);
+        const cx = dx / dpr, cy = dy / dpr;
+        return cx >= -20 && cx <= window.innerWidth + 20 && cy >= -20 && cy <= window.innerHeight + 20;
+      };
+      const clickable = (tx: number, ty: number) => {
+        const [dx, dy] = h.tileScreenAt(tx, ty);
+        return !document.elementsFromPoint(dx / dpr, dy / dpr)
+          .some((el) => !!(el as HTMLElement).closest?.(".iso-panel"));
+      };
+      const focus = grid.industries[0];
+      // spiral out from the on-screen focus industry until the first free,
+      // legal, clickable grass tile shows up (terrain GRASS === 0).
+      for (let r = 0; r < 14; r++) {
+        for (let dy = -r; dy <= r; dy++) {
+          for (let dx = -r; dx <= r; dx++) {
+            const tx = focus.tx + dx, ty = focus.ty + dy;
+            if (tx < 0 || ty < 0 || tx >= W || ty >= H) continue;
+            const i = ty * W + tx;
+            if (grid.terrain[i] !== 0 || grid.occupancy[i] >= 0) continue;
+            if (!inView(tx, ty) || !clickable(tx, ty)) continue;
+            return { tx, ty };
+          }
+        }
+      }
+      return null;
+    });
+    expect(spot).not.toBeNull();
+    const anchor = await tileCenter(page, spot!.tx, spot!.ty);
+    const before = await screenAt(spot!.tx, spot!.ty);
+    expect(before.x).toBeGreaterThan(0);
+
+    // ── left-drag: neither pan nor accidental placement ──────────────────
+    await page.mouse.move(anchor.x, anchor.y);
+    await page.mouse.down({ button: "left" });
+    await page.mouse.move(anchor.x - 60, anchor.y + 30, { steps: 8 });
+    await page.mouse.up({ button: "left" });
+    const afterLeftDrag = await screenAt(spot!.tx, spot!.ty);
+    expect(afterLeftDrag).toEqual(before);     // camera did NOT move
+    expect(await page.evaluate(() => (window as any).__iso.phase)).toBe("setup-factory");
+    expect(await page.evaluate(() => (window as any).__iso.factories.length)).toBe(0);
+
+    // ── middle-drag (started on the same tile) pans the camera ───────────
+    const midStart = await screenAt(spot!.tx, spot!.ty);
+    await page.mouse.move(midStart.x, midStart.y);
+    await page.mouse.down({ button: "middle" });
+    await page.mouse.move(midStart.x - 60, midStart.y - 40, { steps: 8 });
+    await page.mouse.up({ button: "middle" });
+    const afterMiddleDrag = await screenAt(spot!.tx, spot!.ty);
+    expect(afterMiddleDrag).not.toEqual(before);
+    expect(await page.evaluate(() => (window as any).__iso.phase)).toBe("setup-factory");
+    expect(await page.evaluate(() => (window as any).__iso.factories.length)).toBe(0);
+
+    // ── a left CLICK (no drag) still places — the acceptance boundary ────
+    const clickHere = await screenAt(spot!.tx, spot!.ty);
+    await page.mouse.click(clickHere.x, clickHere.y);
+    await page.waitForFunction(() => (window as any).__iso.phase === "setup-harvester");
+    expect(await page.evaluate(() => (window as any).__iso.factories.length)).toBeGreaterThanOrEqual(1);
+  });
+});

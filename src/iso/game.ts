@@ -32,7 +32,7 @@ import {
   type Camera, type GestureState,
 } from "./camera";
 import { IsoRenderer, type World } from "./renderer";
-import { generateMap, resolveMapSeed, industryAt, type Grid, type Industry } from "./grid";
+import { generateMap, resolveMapSeed, type Grid, type Industry } from "./grid";
 import {
   createTrack, drawBits, previewDrag, commitDrag, canBuildOn, hasTrack,
   demolishTile, tIdx, playerNetwork, canAfford,
@@ -41,6 +41,7 @@ import {
 import {
   createScoreState, rescore, vpFor, industriesInCatchment,
   playerResources, buildAllComponents, resolveConnection, catchmentRect,
+  pickBlockadeTarget,
   type EconomyState, type Harvester, type ScoreState, type VpEvent,
 } from "./economy";
 import { aiBuildStep } from "./ai";
@@ -107,8 +108,6 @@ export function startIsoGame(root: HTMLElement) {
   let phase: Phase = "setup-factory";
   let tool: Tool = "road";
   let winner: PlayerState | null = null;
-  /** U1: Blockade waits for the player to click an industry. */
-  let blackMode: string | null = null;
 
   // ── J1: quarry + market + the restored UI ────────────────────────────────
   // Cargo has exactly one owner (the purse above). The board owns gems and the
@@ -170,7 +169,6 @@ export function startIsoGame(root: HTMLElement) {
       toast("Quarry collapsed. Fresh neutral board.", "info");
     },
     onBlackAction: (key) => buyBlack(key),
-    onCancelModal: () => { blackMode = null; ui.setBanditMode(false); },
   });
   onBoardChange = () => ui.renderBoard();
   root.appendChild(ui.el);
@@ -384,9 +382,18 @@ export function startIsoGame(root: HTMLElement) {
     };
     if (key === "bandit") {
       if (!spendGold(SABOTAGE.bandit.gold)) return;
-      blackMode = "bandit";
-      ui.setBanditMode(true);
-      toast("Click an industry to place the Blockade (45s).", "info");
+      // TK-008: there is exactly ONE rival, so a Blockade needs no targeting
+      // step — auto-route it to the industry that currently costs the rival
+      // the most yield.
+      const target = pickBlockadeTarget(eco, rival.id, now);
+      if (!target) {
+        earn(me, { gold: SABOTAGE.bandit.gold });   // refund; nothing to hit
+        toast("No industry to blockade — gold refunded.", "bad");
+        return;
+      }
+      target.banditUntil = now + BANDIT_MS;
+      const def = INDUSTRY_BY_KEY[target.type];
+      toast(`Blockade set on ${def?.name ?? target.type} — the rival can't harvest it for ${BANDIT_MS / 1000}s.`, "good");
       return;
     }
     if (key === "harden") {
@@ -524,9 +531,7 @@ export function startIsoGame(root: HTMLElement) {
     else banner = "Match the tokened gems in the Quarry to harvest";
 
     let costInfo: string | null = null;
-    if (blackMode === "bandit") {
-      costInfo = `<span class="mb-txt">Click an industry to set the Blockade</span><span class="mb-cost">${SABOTAGE.bandit.gold}🪙</span>`;
-    } else if (preview) {
+    if (preview) {
       // W1: the label shows the preview's OWN numbers — the charge is
       // `preview.cost` and the free count is `preview.free`, exactly what the
       // commit will do.
@@ -605,8 +610,11 @@ export function startIsoGame(root: HTMLElement) {
     downAt = [x, y]; moved = false;
     const p = renderer?.pick(x, y);
     if (!p) return;
+    const isMouse = e.pointerType === "mouse";
     const isTrackTool = tool === "road" || tool === "rail";
-    if (phase === "play" && isTrackTool && e.isPrimary) {
+    // TK-001: left mouse (button 0) is build/place ONLY — it never starts a
+    // pan. Touch keeps its old behaviour (one finger pans, a quick tap places).
+    if (phase === "play" && isTrackTool && (!isMouse || e.button === 0) && e.isPrimary) {
       // W2: a drag extends YOUR network only — the rival's road is not a
       // seed you can grow from.
       const net = playerNetwork(track, me.i + 1, eco.factories, eco.harvesters);
@@ -615,6 +623,10 @@ export function startIsoGame(root: HTMLElement) {
         return;
       }
     }
+    // TK-001: mouse panning is the MIDDLE button (button === 1). Left and
+    // right mouse presses never enter the pan gesture — the right button has
+    // no map action at all (previously its isPrimary drag could even build).
+    if (isMouse && e.button !== 1) return;
     g = pointerDown(g, { id: e.pointerId, x, y });
   });
 
@@ -651,21 +663,13 @@ export function startIsoGame(root: HTMLElement) {
     }
     drag = null; preview = null;
 
-    if (!moved) {
+    // TK-001: a mouse click that places/builds is LEFT-button only. Middle
+    // clicks (pan) and right clicks never fall through to the place path.
+    const isMouse = e.pointerType === "mouse";
+    if (!moved && (!isMouse || e.button === 0)) {
       const p = renderer?.pick(x, y);
       if (p) {
-        if (phase === "play" && blackMode === "bandit") {
-          const ind = industryAt(grid, p.tx, p.ty);
-          if (ind) {
-            ind.banditUntil = performance.now() + BANDIT_MS;
-            blackMode = null;
-            ui.setBanditMode(false);
-            const def = INDUSTRY_BY_KEY[ind.type];
-            toast(`Blockade set on ${def?.name ?? ind.type} for ${BANDIT_MS / 1000}s.`, "good");
-          } else {
-            toast("Click an industry to place the Blockade.", "bad");
-          }
-        } else if (phase === "setup-factory") {
+        if (phase === "setup-factory") {
           placeFactory(p.tx, p.ty);
         } else if (phase === "setup-harvester") {
           if (placeHarvester(p.tx, p.ty, me, true)) {

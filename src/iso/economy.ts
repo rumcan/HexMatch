@@ -315,6 +315,93 @@ export function playerResources(
   return out;
 }
 
+// ── TK-008: auto-routed sabotage (no targeting step for a single rival) ───
+/**
+ * How much of `owner`'s CURRENT harvest each industry is responsible for
+ * (same share-based arithmetic `harvesterYield` uses, summed over the owner's
+ * serviced AND connected harvesters). A Blockade bought against this owner
+ * should land on the industry at the top of this map — that is the district
+ * whose loss hurts the rival most.
+ */
+export function industryClaimValues(
+  state: EconomyState, owner: string, now: number,
+): Map<number, number> {
+  const out = new Map<number, number>();
+  const ownerId = ownerIdOf(state, owner);
+  if (ownerId === 0) return out;              // nothing owned → nothing to lose
+  const counts = claimantCounts(state);
+  const comp = buildAllComponents(state.track, ownerId);
+  for (const h of state.harvesters) {
+    if (h.owner !== owner) continue;
+    const y = harvesterYield(state, comp, counts, h, now);
+    if (!y.serviced || y.connection.kind === null) continue;   // not paying yet
+    for (const ind of industriesInCatchment(state.grid, h)) {
+      if (ind.banditUntil > now) continue;    // already blockaded
+      const def = INDUSTRY_BY_KEY[ind.type];
+      if (!def) continue;
+      const share = counts.get(ind.id) ?? 1;
+      const v = (ind.output ?? def.output) * y.connection.multiplier / share;
+      out.set(ind.id, (out.get(ind.id) ?? 0) + v);
+    }
+  }
+  return out;
+}
+
+/**
+ * Where a Blockade bought against `owner` lands. Picks, in order:
+ *   1. the industry currently delivering the most yield to `owner` (the
+ *      block that hurts right now), ties broken by lowest industry id;
+ *   2. otherwise the highest-output industry inside one of `owner`'s
+ *      harvesters' catchments (the rival is about to connect it);
+ *   3. otherwise the unblockaded industry nearest `owner`'s factory.
+ * Returns null only when the map has no industry left to block.
+ */
+export function pickBlockadeTarget(
+  state: EconomyState, owner: string, now: number,
+): Industry | null {
+  const byYield = industryClaimValues(state, owner, now);
+  let target: Industry | null = null, bestV = -1;
+  for (const ind of state.grid.industries) {
+    if (ind.banditUntil > now) continue;
+    const v = byYield.get(ind.id);
+    if (v === undefined) continue;
+    if (v > bestV || (v === bestV && (target === null || ind.id < target.id))) {
+      bestV = v; target = ind;
+    }
+  }
+  if (target) return target;
+
+  const inReach = new Set<number>();
+  for (const h of state.harvesters) {
+    if (h.owner !== owner) continue;
+    for (const ind of industriesInCatchment(state.grid, h)) {
+      if (ind.banditUntil <= now) inReach.add(ind.id);
+    }
+  }
+  if (inReach.size) {
+    let best: Industry | null = null;
+    for (const ind of state.grid.industries) {
+      if (ind.banditUntil > now || !inReach.has(ind.id)) continue;
+      const def = INDUSTRY_BY_KEY[ind.type];
+      const out = ind.output ?? def?.output ?? 0;
+      if (!best || out > best.output || (out === best.output && ind.id < best.id)) best = ind;
+    }
+    if (best) return best;
+  }
+
+  const f = state.factories.find((x) => x.owner === owner);
+  if (!f) return null;
+  let near: Industry | null = null, bestD = Infinity;
+  for (const ind of state.grid.industries) {
+    if (ind.banditUntil > now) continue;
+    const d = Math.abs(ind.tx - f.tx) + Math.abs(ind.ty - f.ty);
+    if (d < bestD || (d === bestD && (near === null || ind.id < near.id))) {
+      bestD = d; near = ind;
+    }
+  }
+  return near;
+}
+
 // ── VP: award on completion, revoke on break ──────────────────────────────
 export interface VpEvent {
   harvester: number;

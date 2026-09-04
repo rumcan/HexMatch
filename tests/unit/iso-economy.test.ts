@@ -3,6 +3,7 @@ import {
   CATCHMENT, catchmentRect, industriesInCatchment, isServiced,
   buildComponents, buildAllComponents, linkedBy, resolveConnection,
   claimantCounts, harvesterYield, playerResources,
+  industryClaimValues, pickBlockadeTarget,
   createScoreState, rescore, vpFor,
   type EconomyState, type Harvester, type Factory,
 } from "../../src/iso/economy";
@@ -496,5 +497,94 @@ describe("E6 scoring hygiene", () => {
     expect(y.serviced).toBe(true);
     expect(y.connection.kind).toBe("road");
     expect(y.yields.grain).toBeGreaterThan(0);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// TK-008 — Blockade auto-routing. The game has exactly ONE rival, so buying a
+// Blockade must not wait for a map click: it lands on the industry that costs
+// the rival the most, computed with the same share arithmetic the economy
+// scores with. These tests pin the pick, not the UI wiring (the DOM test in
+// iso-game.test.ts covers the no-crosshair purchase flow).
+// ══════════════════════════════════════════════════════════════════════════
+describe("TK-008 Blockade auto-targeting", () => {
+  /** p2 owns two harvesters on one trunk line: a farm (output 1.0) and an ore
+   *  mine (0.8), each in exactly one harvester's catchment — clean split. */
+  function rivalState() {
+    const farm = ind("farm", 12, 11);          // output 1.0
+    const ore = ind("ore_mine", 15, 11);       // output 0.8
+    const grid = flatGrid([farm, ore]);
+    const track = createTrack();
+    run(track, "road", 6, 20, 10, 2);          // p2's trunk line
+    const harvesters = [H(1, "p2", 11, 11), H(2, "p2", 14, 11)];
+    const factories: Factory[] = [{ owner: "p2", ownerId: 2, tx: 20, ty: 11 }];
+    const state: EconomyState = { grid, track, harvesters, factories };
+    return { state, grid, farm, ore };
+  }
+
+  it("industryClaimValues reports each industry's share of the rival's harvest", () => {
+    const { state, grid, farm, ore } = rivalState();
+    const values = industryClaimValues(state, "p2", 0);
+    expect(values.get(farm.id)).toBeCloseTo(1.0, 6);
+    expect(values.get(ore.id)).toBeCloseTo(0.8, 6);
+    // the sum equals the rival's per-cargo yield
+    const res = playerResources(state, "p2", 0);
+    expect(res.grain).toBeCloseTo(1.0, 6);
+    expect(res.ore).toBeCloseTo(0.8, 6);
+    // and an unserviced owner gets nothing
+    expect(industryClaimValues(state, "nobody", 0).size).toBe(0);
+    void grid;
+  });
+
+  it("targets the rival's most valuable industry (farm beats ore mine)", () => {
+    const { state, farm } = rivalState();
+    expect(pickBlockadeTarget(state, "p2", 0)?.id).toBe(farm.id);
+  });
+
+  it("skips an already-blockaded industry and moves to the next", () => {
+    const { state, grid, ore } = rivalState();
+    grid.industries[0].banditUntil = 5_000;    // the farm is blockaded
+    expect(pickBlockadeTarget(state, "p2", 1_000)?.id).toBe(ore.id);
+  });
+
+  it("falls back to the best industry the rival is about to serve when nothing yields", () => {
+    const farm = ind("farm", 12, 11);
+    const ore = ind("ore_mine", 15, 11);
+    const grid = flatGrid([farm, ore]);
+    const state: EconomyState = {
+      grid, track: createTrack(),              // no track: nothing yields yet
+      harvesters: [H(1, "p2", 11, 11), H(2, "p2", 14, 11)],
+      factories: [],
+    };
+    expect(industryClaimValues(state, "p2", 0).size).toBe(0);
+    // highest output inside a catchment the rival already owns a harvester for
+    expect(pickBlockadeTarget(state, "p2", 0)?.id).toBe(farm.id);
+  });
+
+  it("falls back to the industry nearest the rival factory when it owns nothing", () => {
+    const near = ind("farm", 12, 11);
+    const far = ind("gold_mine", 28, 28);
+    const grid = flatGrid([near, far]);
+    const state: EconomyState = {
+      grid, track: createTrack(),
+      harvesters: [],
+      factories: [{ owner: "p2", ownerId: 2, tx: 13, ty: 11 }],
+    };
+    expect(pickBlockadeTarget(state, "p2", 0)?.id).toBe(near.id);
+  });
+
+  it("returns null when there is nothing left to block", () => {
+    const grid = flatGrid([ind("farm", 12, 11)]);
+    const state: EconomyState = {
+      grid, track: createTrack(), harvesters: [], factories: [],
+    };
+    expect(pickBlockadeTarget(state, "p2", 0)).toBeNull();
+    // an owner with factories but every industry already blockaded → null too
+    const allBlocked = flatGrid([ind("farm", 12, 11, 9_999)]);
+    const s2: EconomyState = {
+      grid: allBlocked, track: createTrack(), harvesters: [],
+      factories: [{ owner: "p2", ownerId: 2, tx: 13, ty: 11 }],
+    };
+    expect(pickBlockadeTarget(s2, "p2", 1_000)).toBeNull();
   });
 });

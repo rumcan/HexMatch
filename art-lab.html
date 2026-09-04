@@ -101,23 +101,72 @@ function load(png){
 const ready=new Map();
 async function warm(png){ const im=await load(png); if(im) ready.set(png,im); return im; }
 
-// representative fixed layout so every editable cell is visible at once
+// representative layout so every editable cell is visible at once.
+// Roads and rails are NOT hand-placed masks — that is how pieces used to sit
+// beside each other with their arms not lining up (the "disconnected road"
+// bug). Instead each network below is a set of PATH polylines, and every
+// tile's mask is computed from which of its four neighbours carries the same
+// kind, so a piece's arms always point at the tiles that continue the route
+// and adjacent pieces connect BY CONSTRUCTION.
 const W=11,H=9, LAYOUT=[];
+const key=(tx,ty)=>tx+"."+ty;
+const ROUGH=new Set(["4.1","7.3","3.7","9.6"]);   // rough patches under no track
 for(let ty=0;ty<H;ty++)for(let tx=0;tx<W;tx++){
   let g="terrain_grass";
   if(tx===0||ty===0||tx===W-1||ty===H-1) g="terrain_water";
-  else if((tx+ty)%7===0) g="terrain_rough";
+  else if(ROUGH.has(key(tx,ty))) g="terrain_rough";
   LAYOUT.push({tx,ty,ground:g});
 }
 const at=(tx,ty)=>LAYOUT.find(c=>c.tx===tx&&c.ty===ty);
-const set=(tx,ty,n)=>{const c=at(tx,ty);if(c)c.ground=n;};
-set(2,4,"road_0101");set(3,4,"road_0101");set(4,4,"road_1111");set(5,4,"road_0101");set(6,4,"road_0110");
-set(4,2,"road_1010");set(4,3,"road_1010");set(4,5,"road_1010");set(4,6,"road_1010");
-set(7,3,"rail_0101");set(8,3,"rail_0110");set(8,4,"rail_1010");
+const build=(tx,ty,n)=>{const c=at(tx,ty);if(c){c.ground="terrain_grass";c.build=n;}};
+
+// The game's bit convention (src/iso/track.ts): NE=1, SE=2, SW=4, NW=8 over
+// the tile-neighbour offsets below, and spriteKey pads the nibble MSB-left —
+// "1011" reads NW,SW,SE,NE. Compute masks from neighbours, never by hand.
+const TRACK_DIR={1:[0,-1],2:[1,0],4:[0,1],8:[-1,0]};
+const maskOf=(set,kind,tx,ty)=>{
+  let bits=0;
+  for(const b of [8,4,2,1]){
+    const [dx,dy]=TRACK_DIR[b];
+    if(set.has(key(tx+dx,ty+dy))) bits|=b;
+  }
+  return `${kind}_${bits.toString(2).padStart(4,"0")}`;
+};
+
+// ── the layout: contiguous tile walks (each run is one connected route) ───
+// avenue + corridor cross at (6,4) → road_1111; the S-bend gives curves and
+// a T off the avenue; the rail column crosses the avenue at (2,4) — a level
+// crossing where the road runs one diagonal (road_1010) and the rail the
+// other (rail_0101), drawn as road sprite + rail sprite + crossing overlay
+// exactly like the in-game renderer draws a tile carrying both layers.
+const ROADS=[
+  [[1,4],[2,4],[3,4],[4,4],[5,4],[6,4],[7,4],[8,4],[9,4]],  // avenue
+  [[6,1],[6,2],[6,3],[6,4],[6,5],[6,6],[6,7]],              // corridor
+  [[3,4],[3,5],[4,5],[4,6],[5,6],[5,7]],                    // S-bend
+];
+const RAILS=[
+  [[2,2],[2,3],[2,4],[2,5],[2,6]],                          // rail column
+];
+const roadSet=new Set(), railSet=new Set();
+for(const run of ROADS) for(const [tx,ty] of run) roadSet.add(key(tx,ty));
+for(const run of RAILS) for(const [tx,ty] of run) railSet.add(key(tx,ty));
+for(const k of roadSet){
+  const [tx,ty]=k.split(".").map(Number); const c=at(tx,ty); if(!c) continue;
+  c.ground=maskOf(roadSet,"road",tx,ty);
+  if(railSet.has(k)) c.rail=maskOf(railSet,"rail",tx,ty);   // level crossing tile
+}
+for(const k of railSet){
+  const [tx,ty]=k.split(".").map(Number); const c=at(tx,ty); if(!c||roadSet.has(k)) continue;
+  c.ground=maskOf(railSet,"rail",tx,ty);                    // rail-only tiles
+}
+for(const k of railSet) if(roadSet.has(k)){
+  const [tx,ty]=k.split(".").map(Number); const c=at(tx,ty); if(c) c.crossing=true;
+}
+
 const IND=["farm","forest","ore_mine","quarry","oil_rig","gold_mine"];
-const spots=[[2,2],[6,2],[9,2],[2,6],[6,6],[9,6]];
+const spots=[[2,1],[1,3],[1,6],[2,7],[9,3],[8,6]];
 IND.forEach((n,i)=>{const c=at(spots[i][0],spots[i][1]);if(c){c.ground="terrain_grass";c.build=n;}});
-const ff=at(5,2); if(ff)ff.build="factory_blue";
+const ff=at(8,1); if(ff)ff.build="factory_blue";
 
 let camX=0,camY=0,zoom=0.9;
 const map=document.getElementById("map");
@@ -128,7 +177,12 @@ function recenter(){ camX=innerWidth*0.42; camY=innerHeight*0.30; zoom=0.9; draw
 
 async function ensureLoaded(){
   const need=new Set();
-  for(const c of LAYOUT){ need.add(current.get(c.ground)); if(c.build) need.add(current.get(c.build)); }
+  for(const c of LAYOUT){
+    need.add(current.get(c.ground));
+    if(c.rail) need.add(current.get(c.rail));
+    if(c.crossing) need.add(current.get("crossing"));
+    if(c.build) need.add(current.get(c.build));
+  }
   await Promise.all([...need].filter(Boolean).map(warm));
 }
 
@@ -141,7 +195,14 @@ function draw(){
   const spr=(png,tx,ty)=>{ const im=ready.get(png); if(!im)return;
     const sx=camX+(tx-ty)*HW*k, sy=camY+(tx+ty)*HH*k, w=im.width*k, h=im.height*k;
     ctx.drawImage(im, sx-w/2, sy-h+HH*k, w, h); };
-  for(const c of items){ spr(current.get(c.ground),c.tx,c.ty); if(c.build) spr(current.get(c.build),c.tx,c.ty); }
+  for(const c of items){
+    spr(current.get(c.ground),c.tx,c.ty);
+    // a level-crossing tile draws road, then rail, then the crossing overlay
+    // on top — the same three sprites the in-game renderer draws.
+    if(c.crossing){ spr(current.get(c.rail),c.tx,c.ty); spr(current.get("crossing"),c.tx,c.ty); }
+    else if(c.rail) spr(current.get(c.rail),c.tx,c.ty);
+    if(c.build) spr(current.get(c.build),c.tx,c.ty);
+  }
 }
 
 map.addEventListener("pointerdown",e=>{ map.setPointerCapture(e.pointerId); map.classList.add("drag");

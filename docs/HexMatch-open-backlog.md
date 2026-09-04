@@ -126,3 +126,50 @@ The project now has three parallel bodies of work. Suggested global order:
 3. **TK gameplay** (this doc) — in this internal order: TK-001 (input, trivial) → TK-005/TK-006 (map + towns) → TK-002 (rail network, after W2) → TK-004 (vehicles, after K5) → TK-007 (plant + arrival, after TK-004) → TK-008 (sabotage, after W5). TK-003 folds into K3.
 
 Don't interleave the art migration and the gameplay changes in one session. Each ticket, one session, stop at its acceptance block.
+## Status — implemented in this PR (2026-09-04)
+
+The W-series bug fixes and the Kenney art migration (K0–K6) are already landed
+in the codebase (`src/iso/`, `src/game/`), so the tickets below were assessed
+against the live iso build and the ones marked ✅ were completed here.
+
+- ✅ **TK-001 — Rebind map panning to middle mouse; left-click is build-only.**
+  `src/iso/game.ts` input handlers: a mouse pans only on `pointerType ===
+  "mouse" && button === 1`; left button (0) only reaches the build-drag / click
+  paths and never seeds a pan; the right button no longer builds (its old
+  `isPrimary` drag could start a road). Touch gestures are unchanged. Coverage:
+  new e2e case (`tests/e2e/iso-game.spec.ts`) proving left-drag neither pans
+  nor places during setup while middle-drag pans and a plain left click still
+  places.
+
+- ✅ **TK-008 — Auto-route black-market sabotage to the single rival.**
+  The targeting crosshair is gone. Buying **Blockade** now spends the gold and
+  immediately blockades the industry that costs the rival the most current
+  yield — computed by the new pure helpers `industryClaimValues` /
+  `pickBlockadeTarget` in `src/iso/economy.ts` (fallbacks: the best industry
+  inside the rival's harvester catchments, then the industry nearest the rival
+  factory; refunded if there is nothing to block). All crosshair plumbing was
+  deleted: `blackMode` in `src/iso/game.ts` and `banditMode` /
+  `setBanditMode` / `cancelBlackMode` / `onCancelModal` in `src/game/ui.ts`.
+  Frost/Girders/Smog/Repair/Security already fire immediately (no targeting
+  step); Frost/Girders/Smog act on the shared quarry board as before. Unit
+  coverage in `tests/unit/iso-economy.test.ts` and a one-click DOM purchase
+  test in `tests/unit/iso-game.test.ts`.
+
+- 🚧 **TK-002 — Rail as an independent network.** Mostly landed already: rail
+  is its own layer with owner-scoped, per-layer component floods
+  (`buildComponents`), a tile carrying road+rail is a level crossing that
+  draws road + rail + `crossing` (`renderer.buildDrawList`), and all 16 rail
+  masks exist as derived sprites. Not changed here: the road→rail in-place
+  upgrade cost (`UPGRADE_COST`) and the shared *build* flood
+  (`playerNetwork` floods both layers) still treat a crossing as upgradeable
+  in place — revisit together with W2 ownership semantics.
+
+- 🚧 **TK-004 / TK-007** — vehicles are art-only (`src/iso/vehicles.ts`);
+  movement, arrival-triggered spawning and the Processing Plant rename are a
+  single dependent chunk and were not started.
+
+- 🚧 **TK-005 / TK-006** — map is 32×32 with no towns and `INDUSTRY_QUOTA` is
+  not capped at 2; towns + first-placement radius are a mapgen/economy chunk
+  and were not started.
+
+- **TK-003** — superseded by the landed K3 art migration.
