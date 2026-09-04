@@ -12,7 +12,7 @@ import { Atlas, type Manifest } from "../../src/iso/atlas";
 import { buildDrawList, CHUNK, chunksX } from "../../src/iso/renderer";
 import { generateMap, GRASS, WATER, ROUGH, type Grid } from "../../src/iso/grid";
 import { MAP_W, MAP_H } from "../../src/game/config";
-import { TRANSPORT, UPGRADE_COST } from "../../src/iso/config";
+import { TRANSPORT } from "../../src/iso/config";
 
 const atlas = new Atlas(
   JSON.parse(readFileSync("assets/iso-atlas/manifest.json", "utf8")) as Manifest,
@@ -255,10 +255,36 @@ describe("E5 costs", () => {
     expect(tileCost(t, "road", 1, 1)).toEqual({});
   });
 
-  it("charges only the difference to upgrade road → rail in place", () => {
+  it("TK-002: crossing the other layer pays the FULL cost — no upgrade pricing", () => {
     const t = createTrack();
     buildTile(t, "road", 1, 1);
-    expect(tileCost(t, "rail", 1, 1)).toEqual(UPGRADE_COST);
+    // Rail over an existing road tile is NOT an upgrade: it is an independent
+    // network laying its own layer across the road (a level crossing), priced
+    // at the full rail cost. Symmetrically, road over rail pays full road.
+    expect(tileCost(t, "rail", 1, 1)).toEqual(TRANSPORT.rail.cost);
+    buildTile(t, "rail", 1, 1);
+    const t2 = createTrack();
+    buildTile(t2, "rail", 1, 1);
+    expect(tileCost(t2, "road", 1, 1)).toEqual(TRANSPORT.road.cost);
+  });
+
+  it("TK-002: a crossing tile keeps both layers and is a real crossing", () => {
+    const t = createTrack();
+    buildTile(t, "road", 3, 3, 1);
+    buildTile(t, "rail", 3, 3, 1);
+    expect(hasTrack(t, "road", 3, 3)).toBe(true);
+    expect(hasTrack(t, "rail", 3, 3)).toBe(true);
+    expect(isCrossing(t, 3, 3)).toBe(true);
+    // each layer still autotiles on its own: a rail neighbour only lights the
+    // rail mask, never the road mask
+    buildTile(t, "rail", 3, 4, 1);
+    expect(bitsAt(t, "rail", 3, 3) & SW).toBeTruthy();
+    expect(bitsAt(t, "road", 3, 3)).toBe(0);
+    // demolishing one layer leaves the other standing
+    demolishTile(t, "road", 3, 3);
+    expect(hasTrack(t, "road", 3, 3)).toBe(false);
+    expect(hasTrack(t, "rail", 3, 3)).toBe(true);
+    expect(isCrossing(t, 3, 3)).toBe(false);
   });
 
   it("canAfford compares every cargo in the cost", () => {

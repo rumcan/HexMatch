@@ -332,9 +332,20 @@ async function makeLayers(s) {
  * Y4c trackset cell: 16 bitmask variants built purely from declared sprites.
  *   mode "flat"     — base + OpenTTD's flat table (road 1332–1350).
  *   mode "overlays" — declared ground + declared overlay pieces per mask.
+ *
+ * TK-002 stub rule: OpenGFX's rail set ships no single-end piece, so a tile
+ * with exactly ONE connected direction used to compose from the bare ground
+ * and rendered as plain grass — both ends of every freshly placed rail
+ * segment were invisible until a neighbour arrived ("wrong sprite
+ * orientation upon placement"). A one-direction mask now ALSO draws the
+ * straight overlay of that direction's axis, so a stub reads as "rail ends
+ * here" instead of vanishing. Piece `dirs` are in THIS PROJECT's bit order
+ * (NE=1 SE=2 SW=4 NW=8) — verified against the sheet pixels; see
+ * tools/iso-atlas.cells.json.
  */
 async function makeTrackset(s) {
   const ts = s.trackset;
+  const popcount = (n) => ((n & 1) + ((n >> 1) & 1) + ((n >> 2) & 1) + ((n >> 3) & 1));
   const out = [];
   for (let mask = 0; mask < 16; mask++) {
     const key = `${s.namePrefix ?? s.name}_${mask.toString(2).padStart(4, "0")}`;
@@ -351,11 +362,21 @@ async function makeTrackset(s) {
       continue;
     }
     // overlays: grass ground plus every declared piece fully contained in
-    // the mask. A lone stub (mask 0) is just the ground tile.
+    // the mask. A lone stub (mask 0) is just the ground tile; a ONE-direction
+    // mask borrows the axis straight (TK-002 stub rule above).
     const layers = [{ sprite: ts.ground }];
     for (const piece of ts.pieces) {
       const bits = piece.dirs.reduce((a, b) => a | b, 0);
       if (bits !== 0 && (mask & bits) === bits) layers.push({ sprite: piece.sprite });
+    }
+    if (popcount(mask) === 1) {
+      const stub = ts.pieces.find((p) => {
+        const bits = p.dirs.reduce((a, b) => a | b, 0);
+        return popcount(bits) === 2 && (mask & bits) !== 0;
+      });
+      if (stub && !layers.some((l) => l.sprite === stub.sprite)) {
+        layers.push({ sprite: stub.sprite });
+      }
     }
     const composed = await composeLayers(layers);
     out.push({

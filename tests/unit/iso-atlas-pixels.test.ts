@@ -238,6 +238,42 @@ describe("G1/G2 atlas pixels", () => {
     expect(overlayPixels, "declared rail overlay pixels present in rail_0101").toBeGreaterThan(200);
   });
 
+  it("TK-002: a one-direction rail stub draws its axis straight, not bare grass", async () => {
+    // Before the stub rule, masks with a single connected direction composed
+    // from the ground tile only — both ends of every placed rail segment were
+    // invisible on screen. The stub borrows the straight overlay of its axis,
+    // so a stub cell must be pixel-identical to that straight's cell.
+    const { data, info } = await atlas();
+    const rectOf = (name: string) => manifest.sprites[name];
+    const samePixels = (a: string, b: string) => {
+      const ra = rectOf(a), rb = rectOf(b);
+      expect([ra.w, ra.h], `${a} vs ${b} size`).toEqual([rb.w, rb.h]);
+      for (let y = 0; y < ra.h; y++) {
+        for (let x = 0; x < ra.w; x++) {
+          const ia = ((ra.y + y) * info.width + (ra.x + x)) * 4;
+          const ib = ((rb.y + y) * info.width + (rb.x + x)) * 4;
+          expect([data[ia], data[ia + 1], data[ia + 2], data[ia + 3]], `${a} (${x},${y})`)
+            .toEqual([data[ib], data[ib + 1], data[ib + 2], data[ib + 3]]);
+        }
+      }
+    };
+    // NE stub ⊂ NE|SW straight ("/" axis); SE stub ⊂ SE|NW straight ("\" axis).
+    samePixels("rail_0001", "rail_0101");
+    samePixels("rail_0100", "rail_0101");   // SW is the same "/" axis
+    samePixels("rail_0010", "rail_1010");
+    samePixels("rail_1000", "rail_1010");   // NW is the same "\" axis
+    // ...and a stub really does carry rail (not just ground): it must differ
+    // from the bare-ground rail_0000 somewhere in the track band.
+    const s1 = rectOf("rail_0001"), s0 = rectOf("rail_0000");
+    let diff = 0;
+    for (let i = 0; i < s1.w * s1.h; i++) {
+      const ia = ((s1.y + ((i / s1.w) | 0)) * info.width + (s1.x + (i % s1.w))) * 4;
+      const ib = ((s0.y + ((i / s0.w) | 0)) * info.width + (s0.x + (i % s0.w))) * 4;
+      if (data[ia + 3] !== data[ib + 3] || data[ia] !== data[ib] || data[ia + 1] !== data[ib + 1]) diff++;
+    }
+    expect(diff, "stub differs from bare ground").toBeGreaterThan(40);
+  });
+
   it("terrain sprites have no fully-opaque white bottom row", async () => {
     const { data, info } = await atlas();
     for (const name of ["terrain_grass", "terrain_rough", "terrain_water"]) {

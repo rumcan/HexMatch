@@ -7,7 +7,10 @@
 //     (6 × 128px frames) and no 7th gem frame exists.
 //  2. The match-3 board spawns cargo directly (it is NOT transport
 //     capacity); board.ts survives the migration untouched.
-//  3. Road→rail upgrade in place is allowed, paying the cost difference.
+//  3. TK-002 REVERSED the old "road→rail upgrade in place" decision: rail is
+//     a fully independent network. There is no upgrade pricing — laying rail
+//     on a tile that already carries road pays the FULL rail cost and the
+//     tile becomes a level crossing (both layers coexist), and vice versa.
 //  4. Overlapping catchments split output proportionally among claimants.
 //  5. `gold` stays the sabotage currency (SABOTAGE/SECURITY unchanged).
 // ══════════════════════════════════════════════════════════════════════════
@@ -70,6 +73,9 @@ export const INDUSTRY_QUOTA: Record<string, number> = {
 };
 
 // ── Road vs rail (the core scoring split) ─────────────────────────────────
+// TK-002: rail is NOT a road upgrade — it is an independent, expansive
+// network. A tile carrying both kinds is a level crossing; each kind is
+// priced and demolished on its own layer.
 export interface TransportDef {
   key: "road" | "rail";
   name: string;
@@ -92,9 +98,6 @@ export const TRANSPORT: Record<"road" | "rail", TransportDef> = {
     vp: 3, throughput: 1.6, onRough: false, label: "Rail",
   },
 };
-
-// Road→rail upgrade pays only the difference (settled: yes, upgrade in place).
-export const UPGRADE_COST: Partial<Record<Cargo, number>> = { ore: 4 };
 
 export const VP_TARGET = 12;
 

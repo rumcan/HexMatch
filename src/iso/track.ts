@@ -13,7 +13,7 @@
 // only the containing chunks are invalidated. The whole map is never rescanned.
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_W, MAP_H } from "../game/config";
-import { TRANSPORT, UPGRADE_COST, type Cargo } from "./config";
+import { TRANSPORT, type Cargo } from "./config";
 import { WATER, ROUGH, type Grid } from "./grid";
 import { CHUNK, chunksX } from "./renderer";
 
@@ -290,15 +290,18 @@ export const canAfford = (purse: Purse, cost: Purse): boolean =>
   (Object.entries(cost) as [Cargo, number][]).every(([k, v]) => (purse[k] ?? 0) >= v);
 
 /**
- * Cost of applying `kind` to a single tile:
- *   - already the same kind → free (dragging over your own road never
+ * Cost of applying `kind` to a single tile.
+ *
+ * TK-002: there is NO road→rail upgrade pricing any more — rail is an
+ * independent network, not a road reskin:
+ *   - already the same kind → free (dragging over your own track never
  *     double-charges)
- *   - road → rail upgrade in place → the difference only (UPGRADE_COST)
- *   - otherwise the full transport cost
+ *   - otherwise the FULL transport cost of `kind`. Crossing an existing
+ *     layer of the other kind (rail over road, road over rail) pays full
+ *     price and yields a level crossing — both layers coexist on the tile.
  */
 export function tileCost(t: Track, kind: TrackKind, tx: number, ty: number): Purse {
   if (hasTrack(t, kind, tx, ty)) return {};
-  if (kind === "rail" && hasTrack(t, "road", tx, ty)) return { ...UPGRADE_COST };
   return { ...TRANSPORT[kind].cost };
 }
 
