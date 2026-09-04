@@ -27,8 +27,20 @@ import {
 } from "./config";
 import { BANK_RATE, MAX_OFFERS } from "./trade";
 import { CARGO, CARGOES, type Cargo } from "../iso/config";
+import { GEM_TO_CARGO } from "../iso/quarry";
 import { Board, type Gem } from "./board";
 import type { IsoMarket, IsoMarketPlayer, Offer } from "../iso/market";
+
+// ── V5: the restored gem art ────────────────────────────────────────────────
+// One sprite per cargo in src/assets/gems/, mapped through the same gem→cargo
+// bijection quarry.ts uses, so a colour can never draw the wrong sprite. The
+// files are committed to the repo; drop a replacement PNG of the same name in
+// and it is picked up here.
+const GEM_ART: Record<Cargo, string> = Object.fromEntries(
+  Object.entries(
+    import.meta.glob<string>("../assets/gems/*.png", { eager: true, import: "default" }),
+  ).map(([path, url]) => [path.split("/").pop()!.replace(/\.png$/, ""), url]),
+) as Record<Cargo, string>;
 
 // ── tool + state shapes ─────────────────────────────────────────────────────
 export type UiTool = "road" | "rail" | "harvester" | "demolish";
@@ -83,9 +95,13 @@ export interface OriginalUi {
   setBanditMode: (v: boolean) => void;
 }
 
-// ── gem sprite helper (colours only; the old spritesheet was pruned) ────────
+// ── gem face helper ─────────────────────────────────────────────────────────
+// V5: gems draw the restored sprite art (src/assets/gems/<cargo>.png). The
+// radial gradient is only the fallback for a missing file, so a pruned assets
+// folder degrades to a coloured gem instead of a broken image.
 const gemFace = (res: ResKey) =>
   `radial-gradient(circle at 34% 28%, ${RES[res].c2}, ${RES[res].c1})`;
+const gemArtUrl = (res: ResKey): string | null => GEM_ART[GEM_TO_CARGO[res]] ?? null;
 
 const h = (tag: string, cls?: string, html?: string): HTMLElement => {
   const e = document.createElement(tag);
@@ -264,6 +280,10 @@ export function createOriginalUi(
   // Black-Market grid and the offer lists on every frame would detach a button
   // between its pointerdown and pointerup, so a real click could be lost.
   // Render those only when their visible content actually changed.
+  // V4: banner dismissal state — paint() runs every frame, so the banner is
+  // rebuilt only when its text changes and a dismissed text stays dismissed.
+  let lastBannerText: string | null = null;
+  let dismissedBanner: string | null = null;
   let lastSabKey = "\u0000";
   let lastMarketKey = "\u0000";
 
@@ -275,7 +295,9 @@ export function createOriginalUi(
     { key: "demolish", label: "Demolish", sub: "refund none" },
   ];
   for (const t of TOOLS) {
-    const b = h("button", "build-btn bg-rail");
+    // V5: each tool gets its own banner artwork class (bg-road / bg-rail /
+    // bg-harvester / bg-demolish) — they all shared bg-rail before.
+    const b = h("button", "build-btn bg-" + t.key);
     b.dataset.tool = t.key;
     b.innerHTML = `<div class="bb-mid"><b>${t.label}</b><small>${t.sub}</small></div>`;
     b.onclick = () => hooks.onTool(t.key);
@@ -590,7 +612,6 @@ export function createOriginalUi(
     elem.dataset.tier = String(g.tier);
     face.removeAttribute("style");
     face.className = "face";
-    face.style.background = gemFace(g.res);
     icon.className = "icon";
     icon.textContent = "";
     badge.className = "badge";
@@ -604,6 +625,15 @@ export function createOriginalUi(
       icon.textContent = "💣";
       icon.className = "icon bombic";
       return;
+    }
+    // V5: sprite art per cargo; the gradient only backs a missing file.
+    const url = gemArtUrl(g.res);
+    if (url) {
+      face.classList.add("sprite");
+      face.style.backgroundImage = `url("${url}")`;
+      face.style.backgroundSize = "100% 100%";
+    } else {
+      face.style.background = gemFace(g.res);
     }
     if (g.res === "gold") {
       elem.classList.add("wild");
@@ -679,10 +709,25 @@ export function createOriginalUi(
     const now = performance.now();
     if (lastToast[text] && now - lastToast[text] < 900) return;
     lastToast[text] = now;
-    const t = h("div", `toast ${kind === "danger" ? "danger" : kind}`, text);
+    // V4: the toast carries its own ✕ and the ✕ actually closes it — the
+    // auto-dismiss timer is cleared so a closed toast can never re-arm, and
+    // each toast owns its timer so closing one leaves the stack intact.
+    const t = h("div", `toast ${kind === "danger" ? "danger" : kind}`);
+    t.appendChild(h("span", "toast-msg", text));
+    const x = h("button", "toast-x", "✕");
+    (x as HTMLButtonElement).type = "button";
+    x.title = "Dismiss";
+    let timer = 0;
+    const close = () => {
+      window.clearTimeout(timer);
+      t.classList.remove("in");
+      setTimeout(() => t.remove(), 300);
+    };
+    x.onclick = (e) => { e.stopPropagation(); close(); };
+    t.appendChild(x);
     toasts.appendChild(t);
     requestAnimationFrame(() => t.classList.add("in"));
-    setTimeout(() => { t.classList.remove("in"); setTimeout(() => t.remove(), 300); }, 2400);
+    timer = window.setTimeout(close, 2400);
   }
 
   function feed(text: string, who?: string) {
@@ -708,8 +753,24 @@ export function createOriginalUi(
     } else {
       const vh = window.innerHeight;
       if (vh <= 720) z = 0.68; else if (vh <= 800) z = 0.8; else if (vh <= 900) z = 0.9;
+      // V3: the height-only rule could leave the board wider than the space
+      // the right column has on a narrow desktop window, and the panel edge
+      // cut the last columns off the quarry. Clamp by that width too.
+      const leftW = window.innerWidth <= 900 ? 0 : (window.innerWidth <= 1180 ? 262 : 300);
+      const availW = window.innerWidth - leftW - 64;
+      z = Math.max(0.4, Math.min(z, availW / (boardPx + 10)));
     }
     wrap.style.zoom = String(z);
+    // V3: publish the zoomed board width. The right aside and the quarry
+    // panel size themselves from it (styles.css), so the panel always fits
+    // all BOARD_W columns instead of a fixed width that assumes fewer.
+    const boardW = Math.ceil((boardPx + 10) * z);
+    root.style.setProperty("--board-px", `${boardW}px`);
+    root.style.setProperty("--tray-right", `${boardW + 52}px`);
+    // dataset twin of the custom properties (jsdom has no `zoom`/var support,
+    // and tests assert the published numbers through these).
+    boardWrap.dataset.zoom = String(z);
+    root.dataset.boardPx = String(boardW);
   }
   window.addEventListener("resize", responsiveZoom);
   window.addEventListener("orientationchange", responsiveZoom);
@@ -760,12 +821,24 @@ export function createOriginalUi(
       lastSabKey = sabKey;
       renderSabotage();
     }
-    banner.classList.toggle("hidden", !state.banner);
-    if (state.banner) {
-      banner.innerHTML = `<button class="banner-close" title="Hide">✕</button>` +
-        `<small>${state.banner}</small>`;
-      (banner.querySelector(".banner-close") as HTMLElement).onclick = () => banner.classList.add("hidden");
+    // V4: the banner's ✕ must stick. paint() runs every frame, so rebuilding
+    // the banner (and re-showing it) each frame undid the close click — the
+    // reported "click the X and it stays there". Rebuild only when the text
+    // changes, and remember a dismissed text until the message changes.
+    if (state.banner !== lastBannerText) {
+      lastBannerText = state.banner;
+      dismissedBanner = null;
+      if (state.banner) {
+        const text = state.banner;
+        banner.innerHTML = `<button class="banner-close" title="Hide">✕</button>` +
+          `<small>${text}</small>`;
+        (banner.querySelector(".banner-close") as HTMLElement).onclick = () => {
+          dismissedBanner = text;
+          banner.classList.add("hidden");
+        };
+      }
     }
+    banner.classList.toggle("hidden", !state.banner || dismissedBanner === state.banner);
     const toolState = state.tool;
     buildList.querySelectorAll<HTMLElement>("[data-tool]").forEach((b) => {
       b.classList.toggle("active", b.dataset.tool === toolState);

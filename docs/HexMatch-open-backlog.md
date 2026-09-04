@@ -148,3 +148,60 @@ Same two failure modes, plus one new:
 1. **"Set up but not applied."** Terrain got the parser, roads got the remap, both stopped short of using the result. The Y5/Y6 invariants make "did you finish" a CI failure, not a screenshot review.
 2. **Scope timeouts.** Keep every ticket to one session; stop at each acceptance block.
 3. **New — "rebuilt instead of restored."** J1 wrote a new UI when the ticket meant *mount the existing board in the existing interface*. When a task involves an existing surface, the default is to recover and reuse it (it's in git history), not to author a replacement. U1 exists because that default wasn't followed.
+---
+
+# V1–V5 — landed (branch `arena/01a06893-hexmatch`)
+
+Audited against `main` @ `41de9e9` (the v10 backlog above). Decisions taken,
+so the next audit starts from facts:
+
+## V1. Footprint = what the art covers — decided: option (a)
+Every industry is a single declared OpenGFX sprite whose ground tile is one
+diamond, so `INDUSTRIES[*].footprint` and the atlas cells are now `[1, 1]`
+across the board (farm, forest, ore_mine, quarry, oil_rig, gold_mine, and the
+player factory/depot). Occupancy, catchment and the AI all read those numbers,
+so placement now blocks exactly the tiles the sprite visibly covers.
+Tests re-anchored to 1×1 geometry: `iso-economy`, `iso-ai` (harvesterSpots is
+4 side tiles now), `iso-depth` (the multi-tile key math is exercised with
+explicit footprints), and the e2e corridor/helper.
+
+**New invariant (the process note's partner to Y6):** `validate-manifest.mjs`
+fails any sprite whose frame width covers less than half its footprint's pixel
+span (`(fw+fh) × 32`). "Building doesn't fill its tiles" is now a CI failure.
+`tests/unit/iso-manifest.test.ts` covers both directions.
+
+## V2. Factory = declared sprite 2169, not 2150
+2150 is one corner piece of OpenGFX's multi-tile factory; 2169
+(`industries_misc.png`, 64×77, brick works with two chimneys) is a complete
+building in one declared sprite, so the "one declared sprite" rule from Y3
+holds. Player tint is the new `tintLum` layer mode (luminance-preserving
+recolour) because plain multiply collapsed the brick shades to near-black.
+
+**Root cause found alongside:** the slicer's id-label key was a *hue* test
+(`b > 90 && b > r+30 && b > g+30`), and the factory's roof ramp lives in exactly
+those hues — the key ate the roof and left the chimneys floating. The key is
+now hue **and** margin-adjacency (navy text sits on the border-connected page
+white; game art sits on the blue backing). `tools/slice-atlas.mjs:marginMask`.
+
+## V3. Quarry panel sizes to the board
+`responsiveZoom()` clamps by horizontal space as well as height and publishes
+`--board-px` (board width at the live zoom); `.aside.right` derives its width
+from it on desktop, so all 9 columns always fit inside the panel. The offer
+tray and the inspector derive their offsets from the same variable.
+
+## V4. Toast ✕ and banner  both work
+Toasts build their own ✕ with a per-toast close handler that clears the
+auto-dismiss timer (stack intact, auto-dismiss unchanged). The banner is
+rebuilt only when its text changes and remembers a dismissed text until then —
+paint() runs every frame, which is what used to un-hide it mid-click.
+
+## V5. Gem + button art wired from `src/assets/gems` / `src/assets/ui`
+Neither folder existed anywhere on GitHub (checked `main` and every branch),
+so this branch ships generated stand-ins from `tools/make-ui-art.mjs`
+(48×48 pixel gems per cargo; 320×72 banner plates per button) at exactly those
+paths — drop the restored hand-authored PNGs in under the same names and they
+take over with no code change. `ui.ts` maps gem colour → cargo → sprite via
+`GEM_TO_CARGO` (the quarry bijection), draws them through the existing
+`.gem .face.sprite` rules, and falls back to the old gradient only if a file is
+missing. Build buttons finally get per-tool art classes (`bg-road/rail/
+harvester/demolish` — they all shared `bg-rail`).

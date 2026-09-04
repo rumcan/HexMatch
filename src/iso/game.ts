@@ -44,7 +44,7 @@ import {
   type EconomyState, type Harvester, type ScoreState, type VpEvent,
 } from "./economy";
 import { aiBuildStep } from "./ai";
-import { CARGO, INDUSTRY_BY_KEY, TRANSPORT, VP_TARGET, type Cargo } from "./config";
+import { CARGO, FACTORY_FOOTPRINT, INDUSTRY_BY_KEY, TRANSPORT, VP_TARGET, type Cargo } from "./config";
 import {
   MAP_W, MAP_H, BANDIT_MS, BLOCK_MS, FOG_MS, SABOTAGE, SECURITY, type ResKey,
 } from "../game/config";
@@ -443,10 +443,11 @@ export function startIsoGame(root: HTMLElement) {
       for (const [x, y] of preview.tiles) items.push({ sprite: "highlight", tx: x, ty: y });
     } else if (hover) {
       if (phase === "setup-factory") {
-        // U2: the factory is a 3×3 sprite. Highlight its real footprint so the
-        // build preview matches the building that gets placed.
-        for (let dy = 0; dy < 3; dy++) {
-          for (let dx = 0; dx < 3; dx++) {
+        // U2/V1: highlight the factory's REAL footprint (one diamond — the
+        // sprite is a single declared building, see FACTORY_FOOTPRINT) so the
+        // build preview matches exactly the tiles the building covers.
+        for (let dy = 0; dy < FACTORY_FOOTPRINT[1]; dy++) {
+          for (let dx = 0; dx < FACTORY_FOOTPRINT[0]; dx++) {
             const x = hover.tx + dx, y = hover.ty + dy;
             if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) continue;
             items.push({ sprite: "highlight", tx: x, ty: y });
@@ -716,6 +717,9 @@ export function startIsoGame(root: HTMLElement) {
     swap: (r1: number, c1: number, r2: number, c2: number) =>
       quarry.board.trySwap(r1, c1, r2, c2, performance.now()),
     setTool: (t: Tool) => { tool = t; },
+    /** V4: the e2e/unit twin of the HUD toast, so tests can drive the toast
+     *  stack (and its ✕) without playing a whole round. */
+    toast: (text: string, kind: Toast["kind"] = "info") => toast(text, kind),
     /** Screen position (device px, live camera) of a tile's top vertex — the
      *  e2e twin of __hex.view.screenPosOf. Read-only. */
     tileScreenAt: (tx: number, ty: number) => tileToScreenAt(cam, tx, ty),

@@ -35,6 +35,14 @@ export const CARGO: Record<Cargo, {
 // ── Industries ─────────────────────────────────────────────────────────────
 // footprint: [w, h] in tiles along the two diamond axes (w × h tiles).
 // output: relative harvest rate (1.0 = baseline farm).
+//
+// V1: the footprint is WHAT THE PLAYER SEES. Every industry is a single
+// declared OpenGFX sprite whose ground tile is exactly one diamond, so every
+// footprint is [1,1] — the old 2×2/3×3 reservations blocked tiles that looked
+// empty (backlog V1, option a). The atlas cells carry the same numbers
+// (tools/iso-atlas.cells.json) and `validate-manifest.mjs` fails a building
+// whose sprite is dramatically smaller than its footprint, so the art and the
+// reservation cannot drift apart again.
 export interface IndustryDef {
   key: string;
   name: string;
@@ -44,12 +52,12 @@ export interface IndustryDef {
 }
 
 export const INDUSTRIES: IndustryDef[] = [
-  { key: "farm",      name: "Farm",      cargo: "grain", footprint: [2, 2], output: 1.0 },
-  { key: "forest",    name: "Forest",    cargo: "wood",  footprint: [2, 2], output: 1.0 },
-  { key: "ore_mine",  name: "Ore Mine",  cargo: "ore",   footprint: [3, 3], output: 0.8 },
-  { key: "quarry",    name: "Quarry",    cargo: "stone", footprint: [3, 3], output: 0.7 },
-  { key: "oil_rig",   name: "Oil Rig",   cargo: "oil",   footprint: [2, 2], output: 0.4 },
-  { key: "gold_mine", name: "Gold Mine", cargo: "gold",  footprint: [2, 2], output: 0.3 },
+  { key: "farm",      name: "Farm",      cargo: "grain", footprint: [1, 1], output: 1.0 },
+  { key: "forest",    name: "Forest",    cargo: "wood",  footprint: [1, 1], output: 1.0 },
+  { key: "ore_mine",  name: "Ore Mine",  cargo: "ore",   footprint: [1, 1], output: 0.8 },
+  { key: "quarry",    name: "Quarry",    cargo: "stone", footprint: [1, 1], output: 0.7 },
+  { key: "oil_rig",   name: "Oil Rig",   cargo: "oil",   footprint: [1, 1], output: 0.4 },
+  { key: "gold_mine", name: "Gold Mine", cargo: "gold",  footprint: [1, 1], output: 0.3 },
 ];
 
 export const INDUSTRY_BY_KEY: Record<string, IndustryDef> = Object.fromEntries(
@@ -89,3 +97,11 @@ export const TRANSPORT: Record<"road" | "rail", TransportDef> = {
 export const UPGRADE_COST: Partial<Record<Cargo, number>> = { ore: 4 };
 
 export const VP_TARGET = 12;
+
+// ── Player buildings ───────────────────────────────────────────────────────
+// V1/V2: the Factory is one declared sprite (OpenGFX 2169, a complete works
+// with two chimneys) whose base covers a single diamond, so its placement
+// footprint — the highlight the player sees while placing, and the tiles the
+// building visibly occupies — is 1×1. The atlas cells for `factory_*` carry
+// the same footprint; U2's 3×3 preview was the old multi-tile factory's.
+export const FACTORY_FOOTPRINT: [number, number] = [1, 1];

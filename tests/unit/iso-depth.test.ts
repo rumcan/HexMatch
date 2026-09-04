@@ -33,9 +33,18 @@ describe("E4 anchor contract", () => {
 });
 
 describe("E4 Tier 1 — max-corner depth key", () => {
+  // V1: every shipped building is a single declared sprite on a 1×1 footprint,
+  // so the multi-tile key math is exercised with explicit footprints here —
+  // the formula is what matters, not which sprite carries it.
+  const withFootprint = (p: Placed, fp: [number, number]): Placed => ({
+    ...p,
+    def: { ...p.def, footprint: fp },
+    key: (p.tx + fp[0] - 1) + (p.ty + fp[1] - 1),
+  });
+
   it("uses (tx+w-1)+(ty+h-1), not tx+ty", () => {
-    const mine = P("ore_mine", 5, 5);   // 3×3 → key 7+7 = 14
-    const farm = P("farm", 8, 6);       // 2×2 → key 9+7 = 16
+    const mine = withFootprint(P("ore_mine", 5, 5), [3, 3]);  // key 7+7 = 14
+    const farm = withFootprint(P("farm", 8, 6), [2, 2]);      // key 9+7 = 16
     expect(mine.key).toBe(14);
     expect(farm.key).toBe(16);
     // tx+ty alone would order the farm (14) equal to the mine (10) wrongly
