@@ -189,13 +189,32 @@ function removeBorderWhite(px, w, h) {
   }
 }
 
-/** Direct crop of a declared rect: key the blue backing, remove page white and id-label glyphs. */
-async function cropDeclared(id) {
+/**
+ * Direct crop of a declared rect: key the blue backing, remove page white and
+ * id-label glyphs. `recolor` (TK-004) is an exact-match palette map applied
+ * to the RAW sheet pixels BEFORE keying — a recolour sprite's pure-white body
+ * would otherwise be flooded away as page white and be unrecoverable.
+ */
+async function cropDeclared(id, recolor) {
   const d = declaredOf(id);
   const img = sharp(declaredLocalPath(d.file), { limitInputPixels: false })
     .extract({ left: d.x, top: d.y, width: d.w, height: d.h })
     .ensureAlpha();
   const { data, info } = await img.raw().toBuffer({ resolveWithObject: true });
+  if (recolor) {
+    const keys = Object.keys(recolor).map((k) => {
+      const [r, g, b] = k.split(",").map(Number);
+      return { r, g, b, to: recolor[k] };
+    });
+    for (let i = 0; i < data.length; i += 4) {
+      for (const k of keys) {
+        if (data[i] === k.r && data[i + 1] === k.g && data[i + 2] === k.b && data[i + 3] !== 0) {
+          data[i] = k.to[0]; data[i + 1] = k.to[1]; data[i + 2] = k.to[2];
+          break;
+        }
+      }
+    }
+  }
   const n = info.width * info.height;
   const px = Buffer.alloc(n * 4);
   const margin = marginMask(data, info.width, info.height);
@@ -246,6 +265,28 @@ function tintPx(px, tint) {
     px[i + 1] = Math.round(px[i + 1] * tg);
     px[i + 2] = Math.round(px[i + 2] * tb);
   }
+}
+
+
+/**
+ * TK-004 `kind: "sprite"` cell: ONE declared sprite at its natural crop size
+ * - no ground tile underneath, no 64x32 normalisation. Vehicles are drawn at
+ * fractional world positions and must not carry baked-in terrain. The anchor
+ * is the DERIVED sprite centre (Y5/Y6: no declared anchors), so the renderer
+ * can pin the sprite centre to any interpolated world point.
+ */
+async function makeSprite(s) {
+  const c = await cropDeclared(s.sprite, s.recolor);
+  // Free sprites are NOT footprint-anchored: the anchor is the sprite's
+  // CENTRE (derived, never declared — Y5/Y6), so drawOrigin lands the sprite
+  // centre on the interpolated world point (the tile centre for a stationary
+  // check, the bus nose position while moving).
+  const anchor = [Math.ceil(c.w / 2), Math.ceil(c.h / 2)];
+  return {
+    cells: [{ px: c.px, w: c.w, h: c.h }], cellW: c.w, cellH: c.h,
+    anchor, footprint: s.footprint ?? [1, 1], frames: 1, frameMs: s.frameMs ?? 200,
+    free: true,
+  };
 }
 
 /**
@@ -470,6 +511,7 @@ async function buildSlot(s) {
   if (s.generator === "highlight" || s.generator === "highlight_soft") {
     return [makeHighlight(s, s.generator === "highlight_soft")];
   }
+  if (s.kind === "sprite") return [{ name: s.name, ...(await makeSprite(s)) }];
   if (typeof s.sprite === "number") return [{ name: s.name, ...(await makeGround(s)) }];
   throw new Error(`cell ${s.name ?? JSON.stringify(s)}: no declared source (Y3/Y6: compose/crop/generator cells are gone)`);
 }
@@ -516,6 +558,9 @@ async function run() {
     const f = p.frames > 1 ? { w: p.cellW * p.frames, frames: p.frames, frameMs: p.frameMs } : { w: p.cellW };
     manifest.sprites[p.name] = {
       x: p.x, y: p.y, h: p.cellH, footprint: p.footprint, anchor: p.anchor, ...f,
+      // TK-004: vehicles are free-floating — the footprint-span invariant
+      // ("covers < half") is a BUILDING reservation guard, not a vehicle one.
+      ...(p.free ? { free: true } : {}),
     };
   }
 

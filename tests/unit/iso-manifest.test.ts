@@ -301,6 +301,17 @@ describe("Y3/Y5/Y6 declaration invariants", () => {
     };
     for (const s of cells.sprites) {
       if (s.generator) continue;
+      // TK-004: free-floating sprites (vehicles) use the DERIVED CENTRE
+      // anchor ([ceil(w/2), ceil(h/2)]) instead of the south-corner
+      // derivation — still a derivation, just a different convention.
+      if (s.kind === "sprite") {
+        const m = realManifest.sprites[s.name];
+        expect(m, s.name).toBeTruthy();
+        const d = decls[String(s.sprite)];
+        expect(m.anchor, `${s.name} anchor must be the centre derivation`)
+          .toEqual([Math.ceil(d.w / 2), Math.ceil(d.h / 2)]);
+        continue;
+      }
       if (s.trackset?.mode === "flat") continue; // per-mask union; covered below
       const [minX, minY] = unionOf(s);
       if (!Number.isFinite(minX)) continue;

@@ -741,6 +741,36 @@
         31
       ],
       "w": 64
+    },
+    "vehicle_bus_side": {
+      "x": 820,
+      "y": 385,
+      "h": 12,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        14,
+        6
+      ],
+      "w": 28,
+      "free": true
+    },
+    "vehicle_bus_end": {
+      "x": 852,
+      "y": 385,
+      "h": 18,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        4,
+        9
+      ],
+      "w": 8,
+      "free": true
     }
   }
 }

@@ -48,6 +48,7 @@ Sheets used so far (paths under `sprites/png/`):
 | Rail half-piece | `infrastructure/infra06.png` (spr1012; see `base-1005-rail-infra.pnml`) |
 | Level crossing | `infrastructure/infra06.png` (spr1370) |
 | Harvester (bus terminal) | `infrastructure/infra08.png` (TK-003: declared bus stop 2693) |
+| Shuttle bus | `roadvehicles/vehiclesroad01.png` (TK-004: declared 3094 side view 28×12 + 3092 end view 8×18, `kind: "sprite"` free-floating cells, derived centre anchors) |
 
 ## State of the work
 

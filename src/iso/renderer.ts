@@ -265,11 +265,25 @@ export class IsoRenderer {
     const frame = p.frame ?? this.atlas.frameAt(p.def, timeMs);
     const rect = this.atlas.frameRect(p.def, frame);
     const [sx, sy] = worldToScreen(this.cam, p.wx, p.wy);
+    const dw = Math.floor(rect.w * z), dh = Math.floor(rect.h * z);
+    if (p.flipX) {
+      // mirror around the anchor column so the anchor stays put
+      const ax = Math.floor(p.def.anchor[0] * z);
+      ctx.save();
+      ctx.translate(Math.floor(sx) + 2 * ax, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(
+        img as unknown as CanvasImageSource,
+        rect.x * z, rect.y * z, rect.w * z, rect.h * z,
+        0, Math.floor(sy), dw, dh,
+      );
+      ctx.restore();
+      return;
+    }
     ctx.drawImage(
       img as unknown as CanvasImageSource,
       rect.x * z, rect.y * z, rect.w * z, rect.h * z,
-      Math.floor(sx), Math.floor(sy),
-      Math.floor(rect.w * z), Math.floor(rect.h * z),
+      Math.floor(sx), Math.floor(sy), dw, dh,
     );
   }
 
@@ -281,7 +295,10 @@ export class IsoRenderer {
   }
 
   private hasAnimation(): boolean {
-    return this.lastOrder.some((p) => (p.def.frames ?? 1) > 1);
+    // multi-frame sprites, and TK-004's free-floating vehicles (wx/wy set —
+    // they move every frame, so layer 2 must redraw)
+    return this.lastOrder.some((p) => (p.def.frames ?? 1) > 1)
+      || (this.world.extra?.some((e) => e.wx !== undefined) ?? false);
   }
 
   // ── picking ─────────────────────────────────────────────────────────────

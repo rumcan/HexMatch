@@ -150,6 +150,10 @@
               }
             }
           }
+        },
+        "free": {
+          "type": "boolean",
+          "description": "TK-004: free-floating sprite (vehicles). Not footprint-bound: exempt from the footprint-span invariant; drawn at fractional world positions."
         }
       }
     }

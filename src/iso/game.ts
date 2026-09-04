@@ -44,6 +44,7 @@ import {
   type EconomyState, type Harvester, type ScoreState, type VpEvent,
 } from "./economy";
 import { aiBuildStep } from "./ai";
+import { createVehicleSystem, vehiclePos, type VehicleSystem } from "./vehicles";
 import { CARGO, FACTORY_FOOTPRINT, INDUSTRY_BY_KEY, TRANSPORT, VP_TARGET, type Cargo } from "./config";
 import {
   MAP_W, MAP_H, BANDIT_MS, BLOCK_MS, FOG_MS, SABOTAGE, SECURITY, type ResKey,
@@ -103,6 +104,16 @@ export function startIsoGame(root: HTMLElement) {
   const me = players[0], rival = players[1];
 
   const eco: EconomyState = { grid, track, harvesters: [], factories: [] };
+  // ── TK-004: buses shuttle depot ↔ plant over the owner's own track. The
+  // hook here is the TK-007 seam — arrival AT THE PLANT is the physical event
+  // the Processing Plant's token spawn will hang off (W-tickets). Until then
+  // the counter is exposed on __iso for tests.
+  const vehicles: VehicleSystem = createVehicleSystem({
+    onArrival: (_v, now) => { vehicleArrivals++; lastArrivalAt = now; },
+  });
+  let vehicleArrivals = 0;
+  let lastArrivalAt = -1e9;
+  let staticExtra: NonNullable<typeof world.extra> = [];
   let nextHarvesterId = 1;
   let phase: Phase = "setup-factory";
   let tool: Tool = "road";
@@ -241,7 +252,7 @@ export function startIsoGame(root: HTMLElement) {
   const syncWorld = () => {
     world.roadBits = drawBits(track, "road");
     world.railBits = drawBits(track, "rail");
-    world.extra = [
+    staticExtra = [
       ...eco.factories.map((f) => ({
         sprite: f.owner === "you" ? "factory_blue" : "factory_red",
         tx: f.tx, ty: f.ty, ref: { kind: "factory", owner: f.owner },
@@ -251,6 +262,10 @@ export function startIsoGame(root: HTMLElement) {
         tx: h.tx, ty: h.ty, ref: { kind: "harvester", id: h.id, owner: h.owner },
       })),
     ];
+    // TK-004: routes are rebuilt here — exactly when the track changed — not
+    // per frame.
+    vehicles.sync(eco, "you");
+    world.extra = staticExtra;
     renderer?.setWorld(world);
   };
 
@@ -759,11 +774,33 @@ export function startIsoGame(root: HTMLElement) {
     resize();
     syncWorld();
 
+    let lastFrame = 0;
     const frame = (t: number) => {
       if (disposed) return;
+      const dt = lastFrame ? Math.min(100, t - lastFrame) : 0;
+      lastFrame = t;
       economyTick(t);
       quarryTick(t);
       aiTick(t);
+      // ── TK-004: advance + draw the shuttling buses (free-floating DrawItems
+      // with absolute world positions; the depth sort interleaves them with
+      // the buildings they drive past). Route sync happens in syncWorld().
+      if (vehicles.vehicles.length) {
+        vehicles.tick(t, dt);
+        const moving = vehicles.vehicles.map((v) => {
+          const { wx, wy, axis } = vehiclePos(v);
+          return {
+            sprite: axis === "/" ? "vehicle_bus_side" : "vehicle_bus_end",
+            tx: v.path[v.leg][0], ty: v.path[v.leg][1],
+            wx, wy,
+            // the sheet's side view faces the SW travel direction; mirror it
+            // for the NE leg so the bus never drives backwards
+            flipX: axis === "/" && v.dir === -1,
+            ref: { kind: "vehicle", id: v.id },
+          };
+        });
+        world.extra = [...staticExtra, ...moving];
+      }
       renderer!.render(t, overlayItems());
       paintUi(t);
       raf = requestAnimationFrame(frame);
@@ -782,6 +819,10 @@ export function startIsoGame(root: HTMLElement) {
     get harvesters() { return eco.harvesters; },
     get factories() { return eco.factories; },
     get freeTrack() { return me.freeTrack; },
+    /** TK-004: the bus fleet and cumulative plant arrivals (the TK-007 seam). */
+    get vehicles() { return vehicles; },
+    get vehicleArrivals() { return vehicleArrivals; },
+    get lastArrivalAt() { return lastArrivalAt; },
     grid, track, eco,
     // ── J1: the quarry join, exposed so the boot test can prove the loop ──
     get board() { return quarry.board; },

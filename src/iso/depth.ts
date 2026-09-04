@@ -26,6 +26,17 @@ export interface DrawItem {
   sprite: string;
   tx: number;             // footprint origin
   ty: number;
+  /**
+   * TK-004: absolute WORLD position (1× px) for free-floating sprites —
+   * vehicles move between tile centres, so their draw origin is interpolated
+   * rather than derived from the tile. When set it overrides the
+   * tile-derived origin; (tx, ty) remains the depth-sort anchor.
+   */
+  wx?: number;
+  wy?: number;
+  /** TK-004: mirror the sprite horizontally (vehicles keep a single side
+   *  view; the flip encodes the travel direction). */
+  flipX?: boolean;
   frame?: number;
   /** Opaque payload the picker returns (industry, station, …). */
   ref?: unknown;
@@ -57,10 +68,10 @@ export function place(atlas: Atlas, item: DrawItem): Placed | null {
   const def = atlas.get(item.sprite);
   if (!def) return null;
   const [fw, fh] = def.footprint;
-  const [wx, wy] = drawOrigin(def, item.tx, item.ty);
+  const [ox, oy] = drawOrigin(def, item.tx, item.ty);
   const w = def.w / (def.frames ?? 1);
   return {
-    ...item, def, wx, wy, w, h: def.h,
+    ...item, def, wx: item.wx ?? ox, wy: item.wy ?? oy, w, h: def.h,
     key: (item.tx + fw - 1) + (item.ty + fh - 1),
   };
 }

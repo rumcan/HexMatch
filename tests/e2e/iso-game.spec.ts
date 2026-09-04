@@ -295,4 +295,49 @@ test.describe("iso game boots on the default route", () => {
       contentType: "image/png",
     });
   });
+
+  // ── TK-004: the bus shuttles depot ↔ plant on the player's own track ──
+  // The spike is asserted through the same __iso seam it exposes: the fleet
+  // syncs after the road connects, the bus actually moves (position changes
+  // between two samples), and the plant-end arrival counter ticks up — the
+  // event TK-007's token spawn hangs off.
+  test("vehicles: a bus appears on the connected road and arrives at the plant", async ({ page }) => {
+    test.setTimeout(90_000);   // the corridor is ~7 tiles ≈ one leg every ~7 s
+    await bootIso(page);
+    const c = await pickCorridor(page);
+    const factory = await tileCenter(page, c.fx, c.fy);
+    const harvester = await tileCenter(page, c.hx, c.hy);
+
+    await page.mouse.click(factory.x, factory.y);
+    await page.waitForFunction(() => (window as any).__iso.phase === "setup-harvester");
+    await page.mouse.click(harvester.x, harvester.y);
+    await page.waitForFunction(() => (window as any).__iso.phase === "play");
+    await page.mouse.move(factory.x, factory.y);
+    await page.mouse.down();
+    const steps: { x: number; y: number }[] = [];
+    for (let y = c.fy - 1; y > c.hy; y--) steps.push(await tileCenter(page, c.hx, y));
+    steps.push(harvester);
+    for (const s of steps) await page.mouse.move(s.x, s.y);
+    await page.mouse.up();
+
+    // the fleet syncs on the track change, not on a timer
+    await page.waitForFunction(() => (window as any).__iso.vehicles.vehicles.length > 0,
+      null, { timeout: 10_000 });
+    expect(await page.evaluate(() => (window as any).__iso.vehicles.vehicles.length)).toBe(1);
+
+    // the bus really moves: sample its interpolated world position twice
+    const pos = () => page.evaluate(() => {
+      const v = (window as any).__iso.vehicles.vehicles[0];
+      return { leg: v.leg, progress: v.progress, dir: v.dir };
+    });
+    const a = await pos();
+    await page.waitForTimeout(1200);
+    const b = await pos();
+    expect(a.leg * 1e6 + a.progress).not.toBe(b.leg * 1e6 + b.progress);
+
+    // and it arrives at the plant end (TK-007's seam): within a full leg
+    await page.waitForFunction(() => (window as any).__iso.vehicleArrivals >= 1,
+      null, { timeout: 30_000 });
+    expect(await page.evaluate(() => (window as any).__iso.lastArrivalAt)).toBeGreaterThan(0);
+  });
 });

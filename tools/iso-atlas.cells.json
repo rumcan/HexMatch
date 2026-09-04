@@ -457,6 +457,26 @@
     1
    ],
    "note": "U2: fainter catchment tint for the harvester's informational 4x4 area, distinct from the solid 1x1 placement tile."
+  },
+  {
+   "name": "vehicle_bus_side",
+   "kind": "sprite",
+   "sprite": 3094,
+   "footprint": [
+    1,
+    1
+   ],
+   "note": "TK-004: bus, side view (OpenGFX road vehicle 3094, the widest of the eight views), recoloured from its 1CC/2CC palette keys. Verified real-colour art in the sheet (blue livery, dark windows); the (0,0,255) sheet backing keys out in the normal crop. The slicer's declared `recolor` map support exists for palette-key sheets (1CC/2CC) that need it \u2014 this one does not. Centre anchor is DERIVED in the slicer ([ceil(w/2), ceil(h/2)]) \u2014 never hand-authored (Y5/Y6); drawOrigin lands the centre on the tile centre."
+  },
+  {
+   "name": "vehicle_bus_end",
+   "kind": "sprite",
+   "sprite": 3092,
+   "footprint": [
+    1,
+    1
+   ],
+   "note": "TK-004: bus, head-on view (OpenGFX road vehicle 3092) for travel along the other diagonal; same recolour map, centre anchor. Verified real-colour art in the sheet (blue livery, dark windows); the (0,0,255) sheet backing keys out in the normal crop. The slicer's declared `recolor` map support exists for palette-key sheets (1CC/2CC) that need it \u2014 this one does not. Centre anchor is DERIVED in the slicer ([ceil(w/2), ceil(h/2)]) \u2014 never hand-authored (Y5/Y6); drawOrigin lands the centre on the tile centre."
   }
  ]
 }
