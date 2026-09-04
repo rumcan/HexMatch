@@ -1,27 +1,33 @@
 // ══════════════════════════════════════════════════════════════════════════
-// E0 — Projection, grid and sprite constants (isometric cutover)
+// K0 — Projection, grid and sprite constants (Kenney isometric cutover)
 //
-// 2:1 dimetric projection. Grid → screen:
-//   screen.x = (tx - ty) * TILE_W_HALF;  screen.y = (tx + ty) * TILE_H_HALF
-// tileToScreen(tx, ty) is the TOP VERTEX of tile (tx,ty)'s diamond — the
-// canonical iso tiling in which every tile's diamond corners sit at the top
-// vertices of its diagonal neighbours:
-//   top    corner = tileToScreen(tx,   ty)   (picks this tile)
-//   right  corner = tileToScreen(tx+1, ty)   (SE tile's top vertex)
-//   bottom corner = tileToScreen(tx+1, ty+1) (tile straight below)
-//   left   corner = tileToScreen(tx,   ty+1) (SW tile's top vertex)
+// 2:1 dimetric projection over Kenney's isometric blocks
+// (docs/HexMatch-isometric-spec.md — every value below is ✓measured from the
+// shipped assets):
+//
+//   Canvas per ground tile: 132 × 83 px — a 132×64 diamond top surface
+//   (apex at top-centre, widest row at y≈32) plus a 50px base-block skirt
+//   below the widest row.  TILE_W = 132, TILE_H = 64, BLOCK_H = 50.
+//
+//   tileToScreen(tx, ty) is the CENTRE of tile (tx,ty)'s diamond — the row
+//   through the left/right corners, where the sprite's widest row lands
+//   (K0 anchor: drawX = screenX − HW, drawY = screenY − widestRowY). It is
+//   also the top vertex of the tile's PICK cell: screenToTile's floor cells
+//   are the diamonds whose top vertex sits on the tileToScreen lattice, so
+//   a drawn diamond sits HH above its pick cell and the flat pick samples
+//   HH below the cursor to compensate (K4 — renderer.flatPick).
 // screenToTile uses Math.floor, never Math.round: flooring is the algebraic
 // inverse cell decomposition (the tile whose diamond contains the point);
 // rounding produces an off-by-one band along every diamond edge (E0).
 //
-// E11: hex/three.js constants and the bundled .jpg terrain textures lived
-// here and leaked into the iso bundle. They are gone.
+// Kenney tiles are ~2× the old OpenGFX pixels, so the map is 32×32 (was
+// 48×48) — a similar world size on screen at half the draw count (K0).
 // ══════════════════════════════════════════════════════════════════════════
-export const TILE_W = 64, TILE_H = 32;
-export const HW = TILE_W / 2, HH = TILE_H / 2;   // 32, 16
-export const MAP_W = 48, MAP_H = 48;             // 2304 tiles
-// Fixed zoom levels only — the atlas is pre-rendered at each of these once,
-// so every frame is a 1:1 blit (E0: no per-frame drawImage scaling).
+export const TILE_W = 132, TILE_H = 64;
+export const HW = TILE_W / 2, HH = TILE_H / 2;   // 66, 32
+/** Base-block skirt: px of cube side below a ground tile's widest row (K0). */
+export const BLOCK_H = 50;
+export const MAP_W = 32, MAP_H = 32;             // 1024 tiles
 export const ZOOM_STEPS = [0.5, 1, 2] as const;
 export type Zoom = (typeof ZOOM_STEPS)[number];
 

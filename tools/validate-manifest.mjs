@@ -29,6 +29,7 @@ export function validateManifest(manifest) {
     return (check.errors ?? []).map((e) => `schema: ${e.instancePath || "/"} ${e.message}`);
   }
   const errors = [];
+  const HW = (manifest.tileW ?? 132) / 2;
   for (const [name, s] of Object.entries(manifest.sprites)) {
     const frames = s.frames ?? 1;
     const frameW = s.w / frames;
@@ -51,9 +52,10 @@ export function validateManifest(manifest) {
     // dramatically SMALLER than the tiles it reserves ("the building is one
     // square but blocks nine"). The footprint's pixel span across the diamond
     // is (fw + fh) * HW; a sprite covering less than half of it is reserving
-    // tiles the player sees as empty.
-    const span = (s.footprint[0] + s.footprint[1]) * 32;
-    if (frameW < span / 2)
+    // tiles the player sees as empty. Vehicles are exempt — a truck IS much
+    // smaller than its tile and that is the correct art scale.
+    const span = (s.footprint[0] + s.footprint[1]) * HW;
+    if (s.kind !== "vehicle" && frameW < span / 2)
       errors.push(`sprite ${name}: frame width ${frameW}px covers < half of its ${s.footprint.join("x")} footprint (${span}px span) — shrink the footprint or use art that fills it`);
   }
   return errors;

@@ -133,7 +133,7 @@ describe("E6 connected components", () => {
     const comp = buildComponents(t, "road", 0);
     // both sit just above the road run
     expect(linkedBy(comp, 6, 9, 14, 9)).toBe(true);
-    expect(linkedBy(comp, 6, 9, 40, 40)).toBe(false);
+    expect(linkedBy(comp, 6, 9, 30, 30)).toBe(false);   // K0: 32×32 map
   });
 
   // W2 acceptance: two players' lines that TOUCH each other are still two
@@ -257,7 +257,7 @@ describe("E6 acceptance", () => {
     // p2 puts a harvester beside the SAME farm, right next to p1's line —
     // but p2 has built nothing. The rival's road must not count.
     state.harvesters.push(H(2, "p2", 13, 11));
-    state.factories.push({ owner: "p2", ownerId: 2, tx: 40, ty: 11 });
+    state.factories.push({ owner: "p2", ownerId: 2, tx: 28, ty: 11 });   // K0: ≤31
     expect(playerResources(state, "p2", 0)).toEqual({});
     const score = createScoreState();
     const events = rescore(state, score);
@@ -267,7 +267,7 @@ describe("E6 acceptance", () => {
     expect(vpFor(score, "p2")).toBe(0);
 
     // The moment p2 lays its OWN road home, it connects on its own.
-    run(track, "road", 14, 40, 12, 2);
+    run(track, "road", 14, 28, 12, 2);
     run(track, "road", 14, 14, 11, 2);   // up from its line to beside the farm
     expect(playerResources(state, "p2", 0).grain).toBeGreaterThan(0);
   });
@@ -449,15 +449,17 @@ describe("E6 scoring hygiene", () => {
   });
 
   it("keeps players' VP separate", () => {
-    const grid = flatGrid([ind("farm", 12, 11), ind("forest", 30, 11)]);
+    const grid = flatGrid([ind("farm", 12, 11), ind("forest", 26, 11)]);
     const track = createTrack();
     // W2: two players on the same physical corridor, each over its OWN track.
-    run(track, "road", 6, 40, 10, 1);
-    run(track, "road", 30, 40, 10, 2);
+    // (K0: coords kept inside the 32×32 map; p2's run re-owns the overlap
+    // 22..26 exactly as the old 30..40 overlap did on the 48×48 map.)
+    run(track, "road", 6, 26, 10, 1);
+    run(track, "road", 22, 30, 10, 2);
     const state: EconomyState = {
       grid, track,
-      harvesters: [H(1, "p1", 11, 11), H(2, "p2", 31, 11)],
-      factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }, { owner: "p2", ownerId: 2, tx: 35, ty: 11 }],
+      harvesters: [H(1, "p1", 11, 11), H(2, "p2", 25, 11)],
+      factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }, { owner: "p2", ownerId: 2, tx: 30, ty: 11 }],
     };
     const score = createScoreState();
     rescore(state, score);

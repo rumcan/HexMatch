@@ -77,12 +77,15 @@ export const zoomStepAt = (c: Camera, dir: number, sx: number, sy: number): Came
 // ── panning + clamping ────────────────────────────────────────────────────
 /** Axis-aligned bounds of the whole map diamond in world space. */
 export function mapWorldBounds(): { minX: number; minY: number; maxX: number; maxY: number } {
-  // corners: (0,0) top, (MAP_W,0) right, (MAP_W,MAP_H) bottom, (0,MAP_H) left
+  // corners: (0,0) top, (MAP_W,0) right, (MAP_W,MAP_H) bottom, (0,MAP_H) left.
+  // K4: tiles are centred on tileToScreen (diamond centre-line), so the map's
+  // visible top reaches HH above tile (0,0) and the front edge's block skirts
+  // reach HH below the last centre-line.
   return {
     minX: -MAP_H * HW,
     maxX: MAP_W * HW,
-    minY: 0,
-    maxY: (MAP_W + MAP_H) * HH,
+    minY: -HH,
+    maxY: (MAP_W + MAP_H) * HH + HH,
   };
 }
 

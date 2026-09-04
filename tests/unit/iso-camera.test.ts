@@ -3,6 +3,7 @@ import {
   createCamera, worldToScreen, screenToWorld, screenToTileAt, tileToScreenAt,
   stepZoom, zoomAt, zoomStepAt, clampCamera, panBy, centerOnTile, centerOnMap,
   resizeCamera, visibleTileRange, createGesture, pointerDown, pointerMove, pointerUp,
+  mapWorldBounds,
 } from "../../src/iso/camera";
 import { MAP_W, MAP_H, HW, HH, tileToScreen } from "../../src/game/config";
 
@@ -19,7 +20,7 @@ describe("E4 camera — space conversions", () => {
 
   it("tileToScreenAt is the inverse of screenToTileAt at lattice points", () => {
     const c = { ...createCamera(800, 600), zoom: 1 as const, x: 0, y: 0 };
-    for (const [tx, ty] of [[0, 0], [5, 9], [47, 47], [12, 30]]) {
+    for (const [tx, ty] of [[0, 0], [5, 9], [31, 31], [12, 20]]) {
       const [sx, sy] = tileToScreenAt(c, tx, ty);
       // nudge inside the diamond so we're unambiguously in this tile
       expect(screenToTileAt(c, sx, sy + 1)).toEqual([tx, ty]);
@@ -62,10 +63,14 @@ describe("E4 camera — clamping", () => {
     const base = centerOnMap(createCamera(800, 600));
     for (const [dx, dy] of [[1e6, 1e6], [-1e6, -1e6], [1e6, -1e6]]) {
       const c = panBy(base, dx, dy);
-      const left = -MAP_H * HW * c.zoom + c.x;
-      const right = MAP_W * HW * c.zoom + c.x;
-      const top = 0 + c.y;
-      const bottom = (MAP_W + MAP_H) * HH * c.zoom + c.y;
+      // K4: read the real world bounds (the diamond reaches HH above tile
+      // (0,0)'s centre-line and HH below the last skirt) instead of assuming
+      // minY = 0.
+      const b = mapWorldBounds();
+      const left = b.minX * c.zoom + c.x;
+      const right = b.maxX * c.zoom + c.x;
+      const top = b.minY * c.zoom + c.y;
+      const bottom = b.maxY * c.zoom + c.y;
       expect(left).toBeLessThanOrEqual(c.vw);
       expect(right).toBeGreaterThanOrEqual(0);
       expect(top).toBeLessThanOrEqual(c.vh);
@@ -73,7 +78,7 @@ describe("E4 camera — clamping", () => {
     }
   });
 
-  it("centreOnTile puts the tile's top vertex at the viewport centre", () => {
+  it("centreOnTile puts the tile's diamond centre at the viewport centre", () => {
     const c = centerOnTile(createCamera(800, 600), 24, 24);
     const [wx, wy] = tileToScreen(24, 24);
     expect(worldToScreen(c, wx, wy)).toEqual([400, 300]);

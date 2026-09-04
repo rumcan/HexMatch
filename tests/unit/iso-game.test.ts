@@ -159,7 +159,7 @@ describe("E11 the game boots", () => {
 /**
  * Find an industry whose SOUTH corridor is legal: the harvester tile just
  * below its footprint plus 6 road tiles under it all stay inside the map and
- * off water. The map is 48×48 and generated under a RANDOM seed each boot, so
+ * off water. The map is 32×32 and generated under a RANDOM seed each boot, so
  * `industries[0]` alone is not safe — when it sits near the bottom edge the
  * factory tile lands at fy ≥ MAP_H and the round can never score (a flaky
  * failure that depends on the seed). Prefer a corridor like the cargo test:
@@ -537,10 +537,11 @@ describe("W1 the drag charges exactly what it previewed", () => {
   it("an unaffordable drag builds the affordable prefix; nothing goes negative", async () => {
     const h = await boot();
     const { hasTrack } = await import("../../src/iso/track");
-    // farm(4,8) on seed 1337: clean south corridor y=9..23
-    const farm = h.grid.industries.find((i) => i.type === "farm" && i.tx === 4 && i.ty === 8);
-    expect(farm).toBeTruthy();
-    const hx = 4, hy = 9, fy = hy + 6;
+    // K0: the 32×32 seed-1337 map — ore_mine(12,4) has the clean south
+    // corridor (x=12, y=5..19 all land, no occupancy)
+    const mine = h.grid.industries.find((i) => i.type === "ore_mine" && i.tx === 12 && i.ty === 4);
+    expect(mine).toBeTruthy();
+    const hx = 12, hy = 5, fy = hy + 6;
     h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx, ty: fy });
     h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy });
     h.finishSetup();
@@ -587,8 +588,10 @@ describe("W3 the rival actually plays (headless)", () => {
     for (let y = c!.hy + 1; y <= c!.fy; y++) buildTile(h.track, "road", c!.hx, y, 1);
     h.finishSetup();
 
-    // seed 1337: the rival's factory sits above quarry(31,30) / ore_mine(27,20)
-    h.eco.factories.push({ owner: "ai", ownerId: 2, tx: 27, ty: 31 });
+    // K0/seed 1337 (32×32): the rival's factory sits below ore_mine(13,20)
+    // with the clean corridor x=13, y=21..27 (the player's corridor — the
+    // first legal one, forest(14,14) — is a column over and above it).
+    h.eco.factories.push({ owner: "ai", ownerId: 2, tx: 13, ty: 27 });
     const rival = h.market.players[1];
     const rivalTiles = () => [...h.track.owner].filter((o) => o === 2).length;
     expect(rivalTiles()).toBe(0);
@@ -622,10 +625,10 @@ describe("W4 a normal session earns the rail", () => {
   it("road → ore mine → harvest ore → the rail tile is affordable", async () => {
     const h = await boot();
     const { buildTile, hasTrack, canAfford } = await import("../../src/iso/track");
-    // seed 1337: ore_mine(18,13) with a clean south corridor (y=14..28)
-    const mine = h.grid.industries.find((i) => i.type === "ore_mine" && i.tx === 18 && i.ty === 13);
+    // K0/seed 1337 (32×32): ore_mine(12,4) with a clean south corridor (y=5..11)
+    const mine = h.grid.industries.find((i) => i.type === "ore_mine" && i.tx === 12 && i.ty === 4);
     expect(mine).toBeTruthy();
-    const hx = 18, hy = 14, fy = hy + 6;   // factory (18,20)
+    const hx = 12, hy = 5, fy = hy + 6;   // factory (12,11)
     h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx, ty: fy });
     h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy });
     for (let y = hy + 1; y <= fy; y++) buildTile(h.track, "road", hx, y, 1);
@@ -654,10 +657,13 @@ describe("W4 a normal session earns the rail", () => {
     expect(h.purse.ore ?? 0).toBeGreaterThanOrEqual(4);
     expect(canAfford(h.purse, TRANSPORT.rail.cost)).toBe(true);
 
-    // and the game lets you lay it over the corridor
-    const pv = h.dragBuild("rail", hx, fy + 1, hx, fy + 1);
+    // and the game lets you lay it over the corridor. (K0: on the 32×32 map
+    // the tile below the factory, (12,12), is ROUGH — rail needs flat ground —
+    // so the rail goes down as the settled in-place upgrade of a corridor
+    // road tile, which is exactly "laying it over the corridor".)
+    const pv = h.dragBuild("rail", hx, fy - 1, hx, fy - 1);
     expect(pv).toBeTruthy();
-    expect(hasTrack(h.track, "rail", hx, fy + 1)).toBe(true);
+    expect(hasTrack(h.track, "rail", hx, fy - 1)).toBe(true);
   });
 });
 

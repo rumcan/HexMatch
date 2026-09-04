@@ -4,17 +4,18 @@ import {
   tileToScreen, screenToTile,
 } from "../../src/game/config";
 
-// Test fixture #1 from the E-series: projection round-trip.
-// tileToScreen is the TOP VERTEX of a tile's diamond; screenToTile floors to
-// the tile whose diamond contains the point (E0 — floor, never round).
+// Test fixture #1 from the E-series: projection round-trip (K0 re-baseline).
+// tileToScreen is the diamond CENTRE (== the pick cell's top vertex);
+// screenToTile floors to the tile whose pick cell contains the point
+// (E0 — floor, never round).
 
-describe("E0 projection constants", () => {
-  it("fixes the 2:1 dimetric tile and 48×48 map constants", () => {
-    expect(TILE_W).toBe(64);
-    expect(TILE_H).toBe(32);
-    expect(HW).toBe(32);
-    expect(HH).toBe(16);
-    expect(MAP_W * MAP_H).toBe(2304);
+describe("K0 projection constants", () => {
+  it("fixes the 2:1 dimetric tile (Kenney 132×64 diamond + 50px skirt) and the 32×32 map", () => {
+    expect(TILE_W).toBe(132);
+    expect(TILE_H).toBe(64);
+    expect(HW).toBe(66);
+    expect(HH).toBe(32);
+    expect(MAP_W * MAP_H).toBe(1024);
   });
 
   it("exposes integer-stepped zoom levels only", () => {
@@ -23,7 +24,7 @@ describe("E0 projection constants", () => {
 });
 
 describe("tileToScreen / screenToTile", () => {
-  it("round-trips every one of the 2304 tiles", () => {
+  it("round-trips every one of the 1024 tiles", () => {
     for (let tx = 0; tx < MAP_W; tx++) {
       for (let ty = 0; ty < MAP_H; ty++) {
         const [sx, sy] = tileToScreen(tx, ty);
@@ -33,15 +34,15 @@ describe("tileToScreen / screenToTile", () => {
     }
   });
 
-  it("maps the four diamond corners of sampled tiles to the tiles whose top vertex sits there", () => {
+  it("maps the four pick-cell corners of sampled tiles to the tiles whose top vertex sits there", () => {
     // The diamond of tile (tx,ty) has its corners at the top vertices of the
     // diagonal neighbours: top = itself, right = SE (tx+1,ty), bottom = the
     // tile straight below (tx+1,ty+1), left = SW (tx,ty+1).
     const samples: [number, number][] = [
-      [0, 0], [47, 47], [47, 0], [0, 47],          // map corners
-      [10, 10], [23, 23], [3, 40], [40, 3],        // interior spread
+      [0, 0], [31, 31], [31, 0], [0, 31],          // map corners
+      [10, 10], [23, 23], [3, 28], [28, 3],        // interior spread
       [12, 5], [5, 12], [35, 20], [20, 35], [30, 30],
-      [1, 1], [46, 46], [1, 30], [30, 1], [16, 31], [31, 16], [22, 7],
+      [1, 1], [30, 30], [1, 20], [20, 1], [16, 31], [31, 16], [22, 7],
     ];
     expect(samples.length).toBeGreaterThanOrEqual(20);
     for (const [tx, ty] of samples) {
@@ -64,8 +65,8 @@ describe("tileToScreen / screenToTile", () => {
     // Math.round shifts this band by half a tile along every boundary — this
     // is the regression that pins E0's Math.floor.
     const samples: [number, number][] = [
-      [10, 10], [23, 23], [3, 40], [40, 3], [12, 5], [5, 12],
-      [35, 20], [30, 30], [16, 31], [31, 16], [0, 0], [47, 47],
+      [10, 10], [23, 23], [3, 28], [28, 3], [12, 5], [5, 12],
+      [25, 20], [30, 30], [16, 31], [31, 16], [0, 0], [31, 31],
     ];
     for (const [tx, ty] of samples) {
       const [cx, cy] = tileToScreen(tx, ty);
@@ -89,7 +90,7 @@ describe("tileToScreen / screenToTile", () => {
     // edge must land in the tile on the other side:
     //   top-left edge   → NW (tx-1,ty);  top-right edge → NE (tx,ty-1)
     //   bottom-right    → SE (tx+1,ty);  bottom-left    → SW (tx,ty+1)
-    const samples: [number, number][] = [[10, 10], [23, 17], [3, 40], [35, 6]];
+    const samples: [number, number][] = [[10, 10], [23, 17], [3, 28], [25, 6]];
     for (const [tx, ty] of samples) {
       const [cx, cy] = tileToScreen(tx, ty);
       const probes: [string, [number, number], [number, number]][] = [

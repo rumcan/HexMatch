@@ -46,8 +46,9 @@ async function pickCorridor(page: import("@playwright/test").Page): Promise<{
     // a tile hidden behind one cannot be clicked. Never pick a corridor under
     // a panel — otherwise this helper hands back a tile the mouse cannot reach.
     const clickable = (tx: number, ty: number) => {
+      // K0/K4: tileScreenAt returns the tile's diamond CENTRE now.
       const [dx, dy] = h.tileScreenAt(tx, ty);
-      const cx = dx / dpr, cy = (dy + 16) / dpr;
+      const cx = dx / dpr, cy = dy / dpr;
       return !document.elementsFromPoint(cx, cy)
         .some((el) => !!(el as HTMLElement).closest?.(".iso-panel"));
     };
@@ -105,7 +106,7 @@ async function opaqueNear(
     const h = (window as any).__iso;
     // canvas pixels are device pixels; tileScreenAt already returns device px
     const [dx, dy] = h.tileScreenAt(tx, ty);
-    const cx = Math.floor(dx + 16), cy = Math.floor(dy + 16);
+    const cx = Math.floor(dx), cy = Math.floor(dy);
     const c = document.querySelectorAll("canvas")[canvasIndex] as HTMLCanvasElement;
     const ctx = c.getContext("2d")!;
     const d = ctx.getImageData(cx - half, cy - half, half * 2 + 1, half * 2 + 1).data;

@@ -6,7 +6,6 @@ import {
   recomputeMask, autotileAround, buildTile, demolishTile,
   tileCost, addCost, canAfford, lPath, previewDrag, commitDrag,
   connectedTiles, areConnected, drawBits, type Track,
-  OTTD_ROADBIT, toOpenttdRoadBits, fromOpenttdRoadBits,
 } from "../../src/iso/track";
 import { Atlas, type Manifest } from "../../src/iso/atlas";
 import { buildDrawList, CHUNK, chunksX } from "../../src/iso/renderer";
@@ -108,7 +107,9 @@ describe("E5 incremental recompute", () => {
   });
 
   it("touches 1 chunk mid-chunk and more at a chunk corner", () => {
-    const mid = buildTile(createTrack(), "road", 4, 4)!;
+    // K4: chunks are 4×4 — (1,1) is interior to chunk 0, (CHUNK,CHUNK) the
+    // four-chunk meeting point.
+    const mid = buildTile(createTrack(), "road", 1, 1)!;
     expect(mid.chunks).toHaveLength(1);
     const corner = buildTile(createTrack(), "road", CHUNK, CHUNK)!;
     expect(corner.chunks.length).toBeGreaterThan(1);
@@ -121,7 +122,7 @@ describe("E5 incremental recompute", () => {
   });
 
   it("never rescans the whole map", () => {
-    const r = buildTile(createTrack(), "road", 24, 24)!;
+    const r = buildTile(createTrack(), "road", 20, 20)!;
     expect(r.tiles.length).toBeLessThan(MAP_W * MAP_H);
   });
 
@@ -402,47 +403,6 @@ describe("E5 connectivity (the base E6 scores on)", () => {
       [5, 7], [6, 7], [7, 7],
     ]);
     expect(connectedTiles(t, "road", 5, 5).size).toBe(8);
-  });
-});
-
-describe("Y4 RoadBits remap to OpenTTD (all 16 masks)", () => {
-  // Acceptance (Y4/Y6): "your bitmask → OpenTTD RoadBits remap is exhaustively
-  // tested across all 16 values." The remap must be a bijective relabelling of
-  // the SAME four compass directions, never a rotation.
-
-  it("single directions map to OpenTTD's reversed numbering", () => {
-    // our order NE=1, SE=2, SW=4, NW=8 → OpenTTD NE=8, SE=4, SW=2, NW=1
-    expect(OTTD_ROADBIT[NE]).toBe(8);
-    expect(OTTD_ROADBIT[SE]).toBe(4);
-    expect(OTTD_ROADBIT[SW]).toBe(2);
-    expect(OTTD_ROADBIT[NW]).toBe(1);
-  });
-
-  it("every one of the 16 masks survives the round trip unchanged", () => {
-    for (let mask = 0; mask < 16; mask++) {
-      expect(fromOpenttdRoadBits(toOpenttdRoadBits(mask)), `mask ${mask}`).toBe(mask);
-    }
-  });
-
-  it("the round trip preserves each piece's painted neighbours (no 90° rotation)", () => {
-    // Same four compass directions must be reached regardless of numbering.
-    const dirsOf = (bits: number) => DIRS.filter((d) => (bits & d) !== 0).sort((a, b) => a - b);
-    for (let mask = 0; mask < 16; mask++) {
-      const ottd = toOpenttdRoadBits(mask);
-      expect(dirsOf(fromOpenttdRoadBits(ottd)), `mask ${mask}`).toEqual(dirsOf(mask));
-    }
-  });
-
-  it("maps representative layouts to their OpenTTD RoadBits value", () => {
-    expect(toOpenttdRoadBits(0)).toBe(0);
-    expect(toOpenttdRoadBits(15)).toBe(15);          // full crossing: same numeric
-    expect(toOpenttdRoadBits(NE | SE)).toBe(8 | 4);  // our right-edge pair keeps both its edges
-    expect(toOpenttdRoadBits(SW | NW)).toBe(2 | 1);  // the left-edge mirror keeps both its edges
-    expect(toOpenttdRoadBits(NE | NW)).toBe(8 | 1);  // our north corner stays the north corner
-  });
-
-  it("never returns a bit above the low nibble", () => {
-    for (let mask = 0; mask < 16; mask++) expect(toOpenttdRoadBits(mask)).toBeLessThanOrEqual(15);
   });
 });
 

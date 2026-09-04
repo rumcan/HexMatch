@@ -14,14 +14,13 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
-      - name: atlas matches cells (G7)
+      - name: atlas matches cells (G7/K1)
         run: |
-          # slice-atlas reads tools/opengfx-sprites.json, a gitignored build
-          # artifact. Without this line the step dies on "missing ... run
-          # parse-pnml.mjs first" before it ever compares the atlas.
-          node tools/parse-pnml.mjs
+          # K1: the packer reads only git-tracked sources (Kenney PNGs +
+          # tools/iso-atlas.cells.json), so no pre-step is needed.
+          node tools/make-derived-art.mjs
           npm run slice-atlas
-          git diff --exit-code assets/iso-atlas/
+          git diff --exit-code assets/iso-atlas/ src/iso/kenny/derived/
 
   # E13: Playwright never ran in CI. Desktop chromium on every PR; full
   # viewport matrix is the nightly workflow so G4/G5 mobile coverage is
@@ -29,6 +28,9 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -37,7 +39,25 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: npx playwright test --project=desktop-chromium
+      - name: run e2e (post failures to the PR on error)
+        run: |
+          set -o pipefail
+          npx playwright test --project=desktop-chromium 2>&1 | tee /tmp/pw.log || {
+            echo "PLAYWRIGHT_FAILED"
+            if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+              grep -aE "✘|✓|failed|passed|Error|expect|at .*spec" /tmp/pw.log \
+                | grep -av "npm warn" | tail -n 120 > /tmp/pw-fail.txt || true
+              BODY=$(jq -Rs --arg id "pw-${{ github.run_id }}" \
+                '{body: ("### e2e failure (run " + $id + ")\n```
+" + . + "
+```"}' /tmp/pw-fail.txt)
+              curl -sf -X POST -H "Authorization: Bearer ${{ github.token }}" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
+                -d "$BODY" || echo "(could not post comment)"
+            fi
+            exit 1
+          }
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

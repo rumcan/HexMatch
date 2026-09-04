@@ -68,47 +68,11 @@ export const spriteKey = (kind: TrackKind, bits: number) =>
 
 // ── OpenTTD RoadBits interop (Y4 guard) ──────────────────────────────────
 // This project numbers directions NE=1, SE=2, SW=4, NW=8. OpenTTD's RoadBits
-// order is the reverse: NW=1, SW=2, SE=4, NE=8. The declared OpenGFX road
+// order is the reverse: NW=1, SW=2, SE=4, NE=8. The named Kenney road
 // piece set and OpenTTD's `GetRoadSpriteOffset` selection table are keyed by
 // OpenTTD RoadBits — index them with this project's mask directly and every
 // curve/corner points 90° off (the original G1-style bug resurfacing).
 //
-// Today the 16 road/rail masks are generated from the declared straight
-// half-piece (road 1332 / rail 1012) and mirrored by *this* project's own bit
-// order, so they are already self-consistent. These two helpers make the
-// conversion explicit and are exhaustively unit-tested across all 16 values so
-// an OpenTTD-indexed piece set can never be wired up identity-mapped by
-// mistake. OTTD bit value of each direction, in OpenTTD's numbering:
-//   NE = 8, SE = 4, SW = 2, NW = 1.
-export const OTTD_ROADBIT: Record<number, number> = {
-  [NE]: 8,  // our NE (bit 1) → OpenTTD NE = 8
-  [SE]: 4,  // our SE (bit 2) → OpenTTD SE = 4
-  [SW]: 2,  // our SW (bit 4) → OpenTTD SW = 2
-  [NW]: 1,  // our NW (bit 8) → OpenTTD NW = 1
-};
-export const OTTD_BIT_TO_DIR: Record<number, number> = {
-  8: NE, 4: SE, 2: SW, 1: NW,
-};
-
-/** Map this project's RoadBits mask (0..15) to OpenTTD RoadBits (NW=1 SW=2 SE=4 NE=8). */
-export const toOpenttdRoadBits = (bits: number): number => {
-  let out = 0;
-  for (const d of DIRS) if (bits & d) out |= OTTD_ROADBIT[d];
-  return out & 0b1111;
-};
-
-/** Map an OpenTTD RoadBits mask back to this project's numbering (NE=1 SE=2 SW=4 NW=8). */
-export const fromOpenttdRoadBits = (ottdBits: number): number => {
-  let out = 0;
-  let m = ottdBits & 0b1111;
-  while (m) {
-    const bit = m & -m;
-    out |= OTTD_BIT_TO_DIR[bit];
-    m ^= bit;
-  }
-  return out;
-};
-
 /** A tile carrying both layers is a level crossing. */
 export const isCrossing = (t: Track, tx: number, ty: number) => {
   const i = tIdx(tx, ty);
