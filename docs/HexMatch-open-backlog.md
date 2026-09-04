@@ -1,150 +1,61 @@
-HexMatch — open backlog
+The requested backlog tickets have been categorised and drafted for implementation.
 
-Supersedes v10. Audited against main @ 6d23143 (PR #14 merged). This round is almost all gameplay logic, not sprites — the map looks close to right now, but the game underneath has several broken rules. Every item below was traced to a specific line, not inferred from the screenshots.
+Controls & Input
 
-Standing principle: the UI is the original interface and the gameplay stays essentially what it was.
+TK-001: Update Map Panning Controls
 
-Work order: W1 → W2 → W3 → W4 → W5 → W6 → W7. W1–W4 are the "I can't actually play" bugs and come first.
+Description: Rebind map panning to the middle mouse button.
 
-W1. Building road puts you into negative stone — no affordability check at commit
+Acceptance Criteria: Left-click must be restricted entirely to building actions to prevent accidental placements; middle-click exclusively handles camera panning.
 
-[bug] [P0] [economy]
+Building & Infrastructure
 
-"I build a road and it fails, then I have minus stone." Confirmed in game.ts commitTrackDrag:
+TK-002: Overhaul Rail Building Logic
 
-ts
-const n = res.built.length;
-const free = Math.min(p.freeTrack, n);
-p.freeTrack -= free;
-if (n > free) { let cost = …; spend(p, cost); }   // spend() just subtracts — no guard
+Description: Separate rails from the road upgrade path to make them a standalone infrastructure type.
 
-spend() subtracts unconditionally: p.purse[k] = (p.purse[k] ?? 0) - v. There's no canAfford check at commit, so if the committed length costs more than you hold, your purse goes negative.
+Acceptance Criteria: Rails must function as an independent, expansive transport network rather than an upgrade to roads. Allow rails to cross over roads. Fix the current bug where rails default to the incorrect orientation when placed.
 
-There's also a mismatch between preview and commit. previewDrag computes cost with tileCost (full price, no free-tile accounting) and truncates when you can't afford it — but commitTrackDrag applies the free allowance after, using different arithmetic. So the preview and the charge disagree, which is how a drag that "looked fine" charges you into the negative, and how a drag can "fail for no reason" (the preview truncated on full-price cost while you actually had free tiles).
+Art & Assets
 
-Fix:
+TK-003: Update Industry and Factory Sprites
 
-Make previewDrag and commitTrackDrag use the same cost model — apply the free-tile allowance inside the preview so what you see is what you're charged.
-Guard spend() (or the commit) with canAfford; never allow a purse below zero. If a drag isn't fully affordable, build only the affordable prefix (the preview already computes unaffordable — commit exactly tiles, not more).
+Description: Replace existing industry sprites with better-matching alternatives from the TTD asset pool.
 
-Acceptance: no purse value ever goes negative; the tiles charged equal the tiles previewed; a drag longer than you can afford builds the affordable prefix and charges exactly that.
+Acceptance Criteria: Change the factory building to a larger, more realistic small factory sprite. Replace the 'harvester' sprite with an asset resembling a bus or train terminal.
 
-**Done.** `previewDrag` now takes the free allowance and prices tiles with the same `tileCost` model the commit uses (`preview.cost` / `preview.free` are the only numbers `commitTrackDrag` spends), `spend()` is `canAfford`-guarded, and the 9999-stone preview hack is gone. Tests: "W1 the drag charges exactly what it previewed" in `tests/unit/iso-game.test.ts`, plus the allowance cost model in `tests/unit/iso-track.test.ts`.
+Animation & Rendering
 
-W2. The rival uses your roads — track has no owner
+TK-004: Investigate Vehicle Animations
 
-[bug] [P0] [gameplay] [core]
+Description: Research the technical effort required to implement moving vehicles.
 
-"The rival doesn't build roads, uses my roads, has no roads connected to his factory." This is a real architectural gap, confirmed in track.ts:
+Acceptance Criteria: Provide a feasibility report on adding animated buses that move back and forth along the established road networks.
 
-Track is two Uint8Arrays of direction bits — road and rail — with no ownership. playerNetwork(track, owner, factories, harvesters) seeds from the owner's factory/harvesters, then floods over any track via hasTrack(...). Since track tiles aren't tagged by player, the flood runs over everyone's road indiscriminately. So:
+Map Generation & World Rules
 
-The rival's network reaches industries over your road, with no road of its own — exactly what you see.
-Toll-road revenue (a settled design point) can't work; there's no owner to charge.
-Two players' networks are effectively one shared graph.
+TK-005: Expand Map Generation Parameters
 
-Fix — give track an owner.
+Description: Adjust map generation to include towns, larger dimensions, and strict resource limits.
 
-Add a per-tile owner to the track model — either a third Uint8Array (0 = none, 1 = you, 2 = rival) parallel to the bit layers, or fold owner into the tile record.
-buildTile / commitDrag stamp the builder's id.
-playerNetwork's flood only traverses a neighbour tile if its owner matches (or is shared infrastructure you explicitly allow — e.g. a toll crossing).
-Level crossings and shared junctions need a rule; simplest for v1 is "track is owned solely by its builder; no implicit sharing."
+Acceptance Criteria: Increase the base map size. Generate a small number of towns across the map. Cap resource generation to a maximum of two nodes per resource type.
 
-This also sets up the toll mechanic later (TRANSPORT/sabotage already reserve gold for it).
+TK-006: Restrict Initial Factory Placement
 
-Acceptance: a player's network reaches an industry only over that player's own track; the rival must build its own road to connect; demolishing your road never disconnects the rival and vice-versa; a unit test builds two disjoint networks and asserts neither sees the other's tiles.
+Description: Enforce location constraints for the player's first building.
 
-**Done.** `Track.owner: Uint8Array` (0 = unowned, 1/2 = the players, last real builder wins on rebuilds); `buildTile`/`commitDrag` stamp it, `demolishTile` clears it only when the last layer goes; `playerNetwork`, `isServiced`, `buildComponents`/`buildAllComponents`, `playerResources` and `rescore` are all owner-scoped; the demolish tool only tears down your own tiles; the snapshot carries the owner layer (v3). Tests: "W2" cases in `tests/unit/iso-track.test.ts`, `tests/unit/iso-economy.test.ts` (disjoint networks, own-track-only servicing, cut-one-line-leaves-the-other) and `tests/unit/iso-snapshot.test.ts`.
+Acceptance Criteria: The player must be forced to build their initial factory strictly within the radius of a town or city.
 
-W3. The rival never builds — aiBuildStep result likely rejected or deadlocked
+Gameplay & Match-3 Mechanics
 
-[bug] [P0] [ai]
+TK-007: Overhaul Match-3 "Quarry" Mechanics
 
-"The rival doesn't build roads." aiTick calls aiBuildStep every AI_BUILD_MS and, on a result, spends and applies it. Two things to check, in order:
+Description: Rename the Match-3 interface and tie gem spawning to the physical transport network.
 
-Does aiBuildStep ever return a build? It A*-paths from the AI's network and returns tiles to build. If W2's ownership change isn't in yet, the AI may "already be connected" over your road and therefore never decide to build. Fixing W2 likely un-sticks this — the AI will see it has no network of its own and start building. Check this first; W3 may partly resolve as a side effect.
-Is the AI deadlocked on cost like the human (see W4)? The AI starts with the same START_PURSE of { stone: 12, ore: 0 }. If it wants rail it can't afford ore either. Make sure the AI falls back to road (its comment says it should: "build road if it cannot afford rail") and that road is actually reachable.
+Acceptance Criteria: Rename the interface from "Quarry" to "Processing Plant". Fix the bug causing bombs to spawn unintentionally over time. Resource numbers should only spawn on random gems in the match-3 table when a vehicle (bus/train) physically arrives at the plant, requiring the player to process them manually.
 
-Also confirm the AI places harvesters and plays no quarry — by design it has no board, so its only income is the passive trickle (which J1 kept on only for the rival). Verify that trickle actually credits the rival's purse, or it can never afford anything after the free-setup tiles.
+TK-008: Automate Rival Sabotage
 
-Acceptance: within a minute of play the rival has built road from its own factory and connected at least one industry; the rival's stone/ore change over time (it's earning and spending); a headless test runs N AI ticks and asserts the rival's track tile count increases.
+Description: Streamline the black market mechanics for single-rival gameplay.
 
-**Done.** Two un-sticks: W2's ownership (the rival no longer "sees itself" connected over your road, so it actually plans a build) and `PlanOptions.free` — the rival prices builds with the same free-allowance model as the human's drag, so its 12 setup tiles stop deadlocking it on an empty ore purse. `aiTick` debits `rival.freeTrack` and `playerResources(eco, "ai")` is computed over the rival's own network, so its trickle credits its purse. Test: "W3 the rival actually plays (headless)" in `tests/unit/iso-game.test.ts` (3 `aiTick`s → rival track grows, VP > 0, stone spent, ore earned per `econTick`).
-
-W4. Rail is unbuildable — a bootstrap deadlock
-
-[bug] [P0] [economy] [design]
-
-"I can't build any railways." The numbers deadlock:
-
-START_PURSE = { stone: 12, ore: 0 }.
-Rail costs { ore: 4, stone: 1 } per tile.
-Ore comes only from an ore mine.
-To reach an ore mine you build road (which you can afford: 1 stone) — good.
-But you get ore only once a harvester on an ore mine is connected and the quarry pays ore… and the quarry pays ore only if the network reaches an ore mine.
-
-So rail is reachable in principle, but only after a full road-to-ore-mine-plus-harvester-plus-quarry-matching loop. If any link in that chain is broken (W1 negative stone, W2 shared network masking real connection, gold/coin bugs in W5), you never accumulate ore and rail stays grey forever. Part of this is downstream of W1–W3; part is tuning.
-
-Fix:
-
-First fix W1–W3; then verify ore can actually be earned and rail becomes buildable in a real session.
-If rail is still unreachable in practice, this is the E8a tuning showing its teeth — ore: 4 per rail tile may be too steep given how slowly ore arrives. Consider a small starting ore stipend, or lowering rail's ore cost, so the first rail is reachable but still a real stockpiling decision. This is a playtest lever, not a fixed answer.
-
-Acceptance: in a normal session a player can build road → connect an ore mine → harvest ore via matches → afford and build rail. If they can't, adjust the ore economy until they can, and document the numbers.
-
-**Done — no tuning needed once W1–W3 landed.** Documented numbers: ore_mine output 0.8 → a tier-1 token worth 1 ore every `UPGRADE_EVERY` (20s); rail = 4 ore + 1 stone per tile; start purse {stone 12, ore 0}. So ≈4 token matches (≈80s of play) buy the first rail tile — the road to the mine rides the free setup allowance, so the only gate is the match-3 clock. Test: "W4 a normal session earns the rail" in `tests/unit/iso-game.test.ts` (real game, forced token clock, harvest until `canAfford(purse, TRANSPORT.rail.cost)`, then lays the rail over the corridor).
-
-W5. Gold coins do nothing — board.onGold is never wired
-
-[bug] [P0] [economy]
-
-"Gold doesn't work. Even if I get a coin and match it I don't get coins." Confirmed in quarry.ts: it wires board.onHarvest, onPopup, onChange, onTokens — but never board.onGold. The board banks combos (COMBOS_PER_GOLD = 2) and calls onGold(n) when it grants a coin, but nothing is listening, so the coin is never added to your purse. game.ts has no onGold reference at all.
-
-Gold matters because it's the sabotage/black-market currency (Blockade, Security, etc. all spend gold), so this also silently disables the entire Black Market.
-
-Fix: in quarry.ts, wire board.onGold = (n) => hooks.onGold?.(n), and in game.ts implement that hook to earn(me, { gold: n }) and refresh the HUD. Confirm the combo→coin path (2 combos = 1 coin) actually reaches the purse.
-
-Acceptance: banking 2 combos grants 1 gold in your purse; the gold chip increments; black-market actions become affordable once you have gold; a test asserts onGold credits the purse.
-
-**Done.** `registerCombo` now fires `onGold(1)` when it banks a coin, `createQuarry` forwards it to `QuarryHooks.onGold`, and `game.ts` earns it straight into the purse with a toast. Tests: "fires onGold exactly once per banked coin" in `tests/unit/board.test.ts`, the quarry wiring in `tests/unit/iso-quarry.test.ts`, and the game-level "W5 combos pay gold into the purse" (chip increments, Blockade button unlocks at 5 gold) in `tests/unit/iso-game.test.ts`.
-
-W6. The Market button does nothing — trading is dead
-
-[bug] [P0] [ui] [economy]
-
-"The market button does nothing, there's no trading between me and the rival." The restored ui.ts builds Market/Bank/Feed tabs and offer/bank handlers, but something between the tab and the trade isn't connected. Investigate in this order:
-
-Does the Market panel toggle open at all? (V-series added data-panel toggles; confirm the Market button's click actually shows the panel — the toast/panel wiring in game.ts may not be hooked to the restored button.)
-Do offers post? ui.ts calls market.post(...); confirm IsoMarket is instantiated and shared between the human and the rival.
-Does the rival ever answer offers? The original design had the rival respond on a clock. Confirm there's an AI trade tick; if J1 only ported building AI and not trading AI, the rival will never trade — matching your report.
-
-Fix: wire the Market button to open the panel; ensure one IsoMarket instance is shared; add (or restore) the rival's trade response so posted offers can be taken. Bank trades (4:1) should work even without the rival, so get those working first as the simplest end-to-end check.
-
-Acceptance: clicking Market opens the trading panel; a bank trade (4:1) executes and changes the purse; a posted offer can be answered by the rival; the feed logs trades.
-
-**Done.** Root cause of "the button does nothing": the panels toggled an inline `style.display`, which the `.hidden { display: none !important }` rule in `styles.css` always beat — the Market button *looked* dead even though the handler ran. The panels now toggle the `hidden` class (the source of truth). `createIsoMarket` emits `onOfferClosed` (accepted vs expired) when an offer leaves the board, and the game wires it plus the post/bank/cancel/take events into the Feed tab. Tests: "W6 the market is visible and trades are logged" in `tests/unit/iso-game.test.ts` (button opens the panel, bank 4:1 moves the purse, posted offer taken by the rival on its 5s clock with the feed asserting both lines) and the escrow mechanics in `tests/unit/iso-market.test.ts`.
-
-W7. Buildings are single-tile sprites (accepted for now)
-
-[known] [assets]
-
-"The factory is a 1-square cut of a larger factory; the others are one-square pictures but at least not broken." You've accepted these as good-enough, which is right — they read as coherent buildings now (the factory less so, being one piece of a multi-tile industry).
-
-Deferred, not urgent. Two things to keep on the list for when the game plays correctly:
-
-The factory specifically is one piece of a multi-tile OpenGFX industry; a single coherent factory/HQ sprite would read better (candidates were noted earlier: misc-industry buildings 2165/2167/2169). Low priority.
-If you ever want the big sprawling industries from the reference art, that's the multi-tile composition route — a real project, only worth it if the map feels too sparse.
-
-No action now. Listed so it isn't lost.
-
-Sequencing
-
-W1 → W2 → W3 → W4 → W5 → W6 → W7(defer).
-
-W1 (negative stone) and W2 (shared network) are the foundation — W3 (AI builds) and W4 (rail reachable) partly resolve once those land, so do them in order and re-test after each. W5 (gold) and W6 (market) are independent and can go in either order. W7 is deferred.
-
-Keep each to one session. W2 is the biggest — track ownership touches the model, the flood, commit, and demolish — so give it its own PR and lean on the two-disjoint-networks test as the guard.
-
-Process note
-
-This round is a useful signal: the sprite pipeline is basically fixed, and what's left is that the game rules were ported piecemeal and several wires were never connected — gold has no listener, track has no owner, the market button has no handler, affordability isn't checked at commit. These aren't hard problems; they're missing connections. A short integration checklist — every board.on* hook has a listener, every panel button has a handler, every spend path checks affordability, every player's network is its own — would catch this whole class in one pass. Worth adding as a boot-time assertion or a test that fails if any board.on* callback is still the default no-op.
+Acceptance Criteria: Automatically apply any purchased or acquired black market sabotage effects directly to the rival, bypassing any manual targeting steps.
