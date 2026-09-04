@@ -1,183 +1,138 @@
-# HexMatch — open backlog
+HexMatch — open backlog
 
-Supersedes v9. Audited against `main` @ `41de9e9` (PR #13 merged). Roads and grass are fixed and confirmed. Y3 landed — buildings are now single declared sprites, no `compose` blocks — but that fix overshot, so the buildings now sit too *small* in their footprints. Plus four separate issues from your latest screenshots.
+Supersedes v10. Audited against main @ 6d23143 (PR #14 merged). This round is almost all gameplay logic, not sprites — the map looks close to right now, but the game underneath has several broken rules. Every item below was traced to a specific line, not inferred from the screenshots.
 
-**Standing principle, still in force:** the UI is the original HexMatch interface and the gameplay stays essentially what it was.
+Standing principle: the UI is the original interface and the gameplay stays essentially what it was.
 
-**Work order: V1 → V2 → V3 → V4 → V5.** V1 and V2 are the visible building problems; V3/V4 are quick UI bugs; V5 is the asset wiring you set up.
+Work order: W1 → W2 → W3 → W4 → W5 → W6 → W7. W1–W4 are the "I can't actually play" bugs and come first.
 
----
+W1. Building road puts you into negative stone — no affordability check at commit
 
-## What's fixed (confirmed)
+[bug] [P0] [economy]
 
-- **Roads** — real OpenGFX road sprites now, full-width with centre markings. Y4c done.
-- **Grass** — flat, no triangles. Done.
-- **Buildings are single declared sprites** — no more `compose` stitching. The ore mine, farm, forest and gold mine now read as real, coherent buildings. That part of Y3 worked.
+"I build a road and it fails, then I have minus stone." Confirmed in game.ts commitTrackDrag:
 
----
+ts
+const n = res.built.length;
+const free = Math.min(p.freeTrack, n);
+p.freeTrack -= free;
+if (n > free) { let cost = …; spend(p, cost); }   // spend() just subtracts — no guard
 
-## V1. Buildings are drawn ~1 tile but reserve a 2×2 / 3×3 footprint
-`[bug] [P0] [renderer]`
+spend() subtracts unconditionally: p.purse[k] = (p.purse[k] ?? 0) - v. There's no canAfford check at commit, so if the committed length costs more than you hold, your purse goes negative.
 
-**This is "the industry buildings are visually only 1 square but take up multiple squares."** Confirmed by measuring the atlas:
+There's also a mismatch between preview and commit. previewDrag computes cost with tileCost (full price, no free-tile accounting) and truncates when you can't afford it — but commitTrackDrag applies the free allowance after, using different arithmetic. So the preview and the charge disagree, which is how a drag that "looked fine" charges you into the negative, and how a drag can "fail for no reason" (the preview truncated on full-price cost while you actually had free tiles).
 
-| Building | Sprite size | Footprint | Footprint should span |
-|---|---|---|---|
-| `factory_blue` | 64×69 | 3×3 | 192px wide |
-| `ore_mine` | 73×65 | 3×3 | 192px wide |
-| `farm` | 64×37 | 2×2 | 128px wide |
-| `gold_mine` | 64×… | 2×2 | 128px wide |
+Fix:
 
-Y3 swung the pendulum the other way. The old `compose` blocks were too big and stitched from fragments; the new single sprites are correct *buildings* but each is roughly one tile wide, sitting on a footprint that reserves four or nine. So the building floats in the top of a much larger reserved area, and placing one blocks tiles that look empty.
+Make previewDrag and commitTrackDrag use the same cost model — apply the free-tile allowance inside the preview so what you see is what you're charged.
+Guard spend() (or the commit) with canAfford; never allow a purse below zero. If a drag isn't fully affordable, build only the affordable prefix (the preview already computes unaffordable — commit exactly tiles, not more).
 
-Two ways to resolve it — **decide explicitly, don't split the difference:**
+Acceptance: no purse value ever goes negative; the tiles charged equal the tiles previewed; a drag longer than you can afford builds the affordable prefix and charges exactly that.
 
-**(a) Shrink the footprint to match the sprite (recommended, less work).**
-Most of these buildings genuinely are ~1–2 tiles of art. Set each industry's gameplay footprint to what the sprite actually covers: farm/forest/gold/ore → `[1,1]` or `[2,2]` as the art dictates; factory → `[2,2]`. The footprint drives catchment and occupancy, so this also makes placement feel honest — you block the tiles you visibly cover. Re-tune catchment radius if needed.
+W2. The rival uses your roads — track has no owner
 
-**(b) Use real multi-tile industry art to fill the 3×3.**
-Keep the big footprints and draw the industry as OpenTTD does — several per-tile sprites composed across the footprint via the `build_industry.h` layout. This is faithful but much more work and is the thing Y3 option (b) deliberately deferred. Only worth it if you want the big sprawling industries from the reference art.
+[bug] [P0] [gameplay] [core]
 
-Recommend (a) now, revisit (b) later if the map feels sparse. Either way the acceptance is the same: **the reserved footprint equals what the player sees.**
+"The rival doesn't build roads, uses my roads, has no roads connected to his factory." This is a real architectural gap, confirmed in track.ts:
 
-**Acceptance:** placing any building highlights and occupies exactly the tiles the sprite visibly covers; no empty-looking tiles are blocked; the debug footprint-outline overlay (from Y7) sits flush around the sprite base.
+Track is two Uint8Arrays of direction bits — road and rail — with no ownership. playerNetwork(track, owner, factories, harvesters) seeds from the owner's factory/harvesters, then floods over any track via hasTrack(...). Since track tiles aren't tagged by player, the flood runs over everyone's road indiscriminately. So:
 
----
+The rival's network reaches industries over your road, with no road of its own — exactly what you see.
+Toll-road revenue (a settled design point) can't work; there's no owner to charge.
+Two players' networks are effectively one shared graph.
 
-## V2. The factory sprite is broken — it's one corner-piece of a multi-tile industry
-`[bug] [P0] [assets]`
+Fix — give track an owner.
 
-**This is "the factory building is completely broken now."** In the screenshot it's a thin sliver of blue chimneys on a grey slab. Cause, confirmed from the sprite catalog:
+Add a per-tile owner to the track model — either a third Uint8Array (0 = none, 1 = you, 2 = rival) parallel to the bit layers, or fold owner into the tile record.
+buildTile / commitDrag stamp the builder's id.
+playerNetwork's flood only traverses a neighbour tile if its owner matches (or is shared infrastructure you explicitly allow — e.g. a toll crossing).
+Level crossings and shared junctions need a rule; simplest for v1 is "track is owned solely by its builder; no implicit sharing."
 
-The cells file picks sprite **2150** for the factory. But 2150 is only **57×62 — one building piece** of the factory. A factory in OpenGFX is a *multi-tile industry*: the full building is assembled from several sprites (2150, 2151, 2152, 2157–2160 …) laid across its tiles, plus ground pads (2148, 2153–2156). Picking one piece gives you one corner — the sliver you see.
+This also sets up the toll mechanic later (TRANSPORT/sabotage already reserve gold for it).
 
-The other industries got lucky: the coal/ore mine's building (2013) happens to be a mostly-complete structure in a single sprite, so it reads fine. The factory doesn't have that — its art is inherently multi-part.
+Acceptance: a player's network reaches an industry only over that player's own track; the rival must build its own road to connect; demolishing your road never disconnects the rival and vice-versa; a unit test builds two disjoint networks and asserts neither sees the other's tiles.
 
-**Fix — pick a factory that is one coherent sprite, or compose it correctly:**
+W3. The rival never builds — aiBuildStep result likely rejected or deadlocked
 
-1. **Simplest:** use a single-sprite building that reads as a factory/HQ from a different declaration. Candidates worth rendering: the misc-industry buildings 2165 (64×62), 2167 (64×57), 2169 (64×77) in `industries_misc.png` — taller single structures that look like a works. Pick one that reads as a main factory, apply the player tint, done. This keeps the "one declared sprite" rule from Y3.
+[bug] [P0] [ai]
 
-2. **Faithful:** compose the real factory from its declared pieces using the OpenTTD layout — but that's the multi-tile work from V1 option (b) and should only happen if you go that route for all industries.
+"The rival doesn't build roads." aiTick calls aiBuildStep every AI_BUILD_MS and, on a result, spends and applies it. Two things to check, in order:
 
-Do **not** hand-crop a rectangle out of `factory.png` — that's how it broke in the first place. Whatever sprite you choose must be a whole declared sprite id.
+Does aiBuildStep ever return a build? It A*-paths from the AI's network and returns tiles to build. If W2's ownership change isn't in yet, the AI may "already be connected" over your road and therefore never decide to build. Fixing W2 likely un-sticks this — the AI will see it has no network of its own and start building. Check this first; W3 may partly resolve as a side effect.
+Is the AI deadlocked on cost like the human (see W4)? The AI starts with the same START_PURSE of { stone: 12, ore: 0 }. If it wants rail it can't afford ore either. Make sure the AI falls back to road (its comment says it should: "build road if it cannot afford rail") and that road is actually reachable.
 
-**Acceptance:** the factory renders as one complete, recognisable building with its player tint; each of the four colours (blue/red/purple/green) renders correctly; no sliver, no floating slab.
+Also confirm the AI places harvesters and plays no quarry — by design it has no board, so its only income is the passive trickle (which J1 kept on only for the rival). Verify that trickle actually credits the rival's purse, or it can never afford anything after the free-setup tiles.
 
----
+Acceptance: within a minute of play the rival has built road from its own factory and connected at least one industry; the rival's stone/ore change over time (it's earning and spending); a headless test runs N AI ticks and asserts the rival's track tile count increases.
 
-## V3. The Quarry board is clipped — right 3 columns cut off
-`[bug] [ui]`
+W4. Rail is unbuildable — a bootstrap deadlock
 
-**This is "the match-3 table should have 3 more columns; those cols are missing."** The board data is fine — `BOARD_W = 9` in `config.ts` and the grid renders all 9 columns. The columns aren't missing; the **panel is too narrow and clips them.** In the screenshot the quarry panel's right edge cuts through the grid.
+[bug] [P0] [economy] [design]
 
-Likely one of:
-- The `responsiveZoom()` in `ui.ts` scales the board wrap by viewport *height* on desktop (`z = 0.8` etc.) but the panel's fixed width doesn't account for `9 × CELL` at that zoom, so the grid overflows its container and the container clips it.
-- The restored `styles.css` panel width was sized for a different `CELL` or `BOARD_W` than the iso build uses.
+"I can't build any railways." The numbers deadlock:
 
-**Fix:** make the quarry panel width derive from `BOARD_W × CELL × zoom` plus padding, so all 9 columns always fit, and let the panel size to its content rather than a fixed width that assumes fewer columns. Verify at the desktop zoom levels in `responsiveZoom` (0.68 / 0.8 / 0.9 / 1.0) and on a narrow window.
+START_PURSE = { stone: 12, ore: 0 }.
+Rail costs { ore: 4, stone: 1 } per tile.
+Ore comes only from an ore mine.
+To reach an ore mine you build road (which you can afford: 1 stone) — good.
+But you get ore only once a harvester on an ore mine is connected and the quarry pays ore… and the quarry pays ore only if the network reaches an ore mine.
 
-**Acceptance:** all 9 columns and 9 rows of the quarry are visible and un-clipped at every zoom level and at window widths from ~1000px up; the board is never cut by the panel edge.
+So rail is reachable in principle, but only after a full road-to-ore-mine-plus-harvester-plus-quarry-matching loop. If any link in that chain is broken (W1 negative stone, W2 shared network masking real connection, gold/coin bugs in W5), you never accumulate ore and rail stays grey forever. Part of this is downstream of W1–W3; part is tuning.
 
----
+Fix:
 
-## V4. Toast X button doesn't close the toast
-`[bug] [ui]`
+First fix W1–W3; then verify ore can actually be earned and rail becomes buildable in a real session.
+If rail is still unreachable in practice, this is the E8a tuning showing its teeth — ore: 4 per rail tile may be too steep given how slowly ore arrives. Consider a small starting ore stipend, or lowering rail's ore cost, so the first rail is reachable but still a real stockpiling decision. This is a playtest lever, not a fixed answer.
 
-**This is "toasts can't be closed — clicking the X leaves it there."** In `ui.ts` the `toast()` function builds the toast div and auto-removes it after 2400ms, but **there's no click handler on the X** — the X is drawn (from the restored markup) but wired to nothing, so clicking it does nothing and the toast only goes away on its own timer.
+Acceptance: in a normal session a player can build road → connect an ore mine → harvest ore via matches → afford and build rail. If they can't, adjust the ore economy until they can, and document the numbers.
 
-**Fix:** add a close handler. When building the toast, attach the X element's `onclick` to remove the toast immediately (`t.classList.remove("in")` then `t.remove()`), and clear its auto-dismiss timeout so it can't double-fire. If several toasts stack, each X closes only its own.
+W5. Gold coins do nothing — board.onGold is never wired
 
-**Acceptance:** clicking a toast's X removes that toast at once; other toasts are unaffected; the auto-dismiss still works for toasts left alone.
+[bug] [P0] [economy]
 
----
+"Gold doesn't work. Even if I get a coin and match it I don't get coins." Confirmed in quarry.ts: it wires board.onHarvest, onPopup, onChange, onTokens — but never board.onGold. The board banks combos (COMBOS_PER_GOLD = 2) and calls onGold(n) when it grants a coin, but nothing is listening, so the coin is never added to your purse. game.ts has no onGold reference at all.
 
-## V5. Wire in the restored gem and UI art assets
-`[assets] [ui]`
+Gold matters because it's the sabotage/black-market currency (Blockade, Security, etc. all spend gold), so this also silently disables the entire Black Market.
 
-You've put art back into `src/assets/ui/` and `src/assets/gems/` for the gems and button backgrounds. **Important: these are only in your local working copy — they are not on GitHub.** I checked the latest `main` and neither folder exists in the repo. So:
+Fix: in quarry.ts, wire board.onGold = (n) => hooks.onGold?.(n), and in game.ts implement that hook to earn(me, { gold: n }) and refresh the HUD. Confirm the combo→coin path (2 combos = 1 coin) actually reaches the purse.
 
-1. **Commit and push the assets first**, or the AI can't see them and will have nothing to wire. Confirm `src/assets/ui/` and `src/assets/gems/` show up in `git status` and get committed.
+Acceptance: banking 2 combos grants 1 gold in your purse; the gold chip increments; black-market actions become affordable once you have gold; a test asserts onGold credits the purse.
 
-2. Then replace the current gem rendering with the sprite art. Right now `ui.ts` draws gems as CSS radial-gradients — there's a comment, "the old spritesheet was pruned," and `gemFace()` returns a gradient per resource. Point that at the real gem sprites in `src/assets/gems/` instead (one image per cargo colour, or a spritesheet with an index per `ResKey`).
+W6. The Market button does nothing — trading is dead
 
-3. Use the button-background art from `src/assets/ui/` for the BUILD / BLACK MARKET / tab buttons, per the original interface's styling.
+[bug] [P0] [ui] [economy]
 
-**Map the six gem images to the six cargoes explicitly** (`grain, wood, ore, stone, oil, gold`) so there's no ambiguity about which sprite is which resource — the same bijection `quarry.ts` already relies on.
+"The market button does nothing, there's no trading between me and the rival." The restored ui.ts builds Market/Bank/Feed tabs and offer/bank handlers, but something between the tab and the trade isn't connected. Investigate in this order:
 
-**Acceptance:** gems render as the restored sprite art, not gradients; buttons use the restored backgrounds; the six gem sprites map one-to-one to the six cargoes; assets are committed to the repo, not just local.
+Does the Market panel toggle open at all? (V-series added data-panel toggles; confirm the Market button's click actually shows the panel — the toast/panel wiring in game.ts may not be hooked to the restored button.)
+Do offers post? ui.ts calls market.post(...); confirm IsoMarket is instantiated and shared between the human and the rival.
+Does the rival ever answer offers? The original design had the rival respond on a clock. Confirm there's an AI trade tick; if J1 only ported building AI and not trading AI, the rival will never trade — matching your report.
 
----
+Fix: wire the Market button to open the panel; ensure one IsoMarket instance is shared; add (or restore) the rival's trade response so posted offers can be taken. Bank trades (4:1) should work even without the rival, so get those working first as the simplest end-to-end check.
 
-## Sequencing
+Acceptance: clicking Market opens the trading panel; a bank trade (4:1) executes and changes the purse; a posted offer can be answered by the rival; the feed logs trades.
 
-**V1 → V2 → V3 → V4 → V5.**
+W7. Buildings are single-tile sprites (accepted for now)
 
-V1 and V2 are the building problems and are related — decide the footprint-vs-art question in V1 first, because V2's factory choice depends on it (if you go multi-tile in V1, the factory composes; if you shrink footprints, the factory is one sprite). V3 and V4 are small, independent UI fixes — either order. V5 last, and **push the assets before starting it.**
+[known] [assets]
 
----
+"The factory is a 1-square cut of a larger factory; the others are one-square pictures but at least not broken." You've accepted these as good-enough, which is right — they read as coherent buildings now (the factory less so, being one piece of a multi-tile industry).
 
-## Process note
+Deferred, not urgent. Two things to keep on the list for when the game plays correctly:
 
-Same two failure modes, plus one new:
+The factory specifically is one piece of a multi-tile OpenGFX industry; a single coherent factory/HQ sprite would read better (candidates were noted earlier: misc-industry buildings 2165/2167/2169). Low priority.
+If you ever want the big sprawling industries from the reference art, that's the multi-tile composition route — a real project, only worth it if the map feels too sparse.
 
-1. **"Set up but not applied."** Terrain got the parser, roads got the remap, both stopped short of using the result. The Y5/Y6 invariants make "did you finish" a CI failure, not a screenshot review.
-2. **Scope timeouts.** Keep every ticket to one session; stop at each acceptance block.
-3. **New — "rebuilt instead of restored."** J1 wrote a new UI when the ticket meant *mount the existing board in the existing interface*. When a task involves an existing surface, the default is to recover and reuse it (it's in git history), not to author a replacement. U1 exists because that default wasn't followed.
----
+No action now. Listed so it isn't lost.
 
-# V1–V5 — landed (branch `arena/01a06893-hexmatch`)
+Sequencing
 
-Audited against `main` @ `41de9e9` (the v10 backlog above). Decisions taken,
-so the next audit starts from facts:
+W1 → W2 → W3 → W4 → W5 → W6 → W7(defer).
 
-## V1. Footprint = what the art covers — decided: option (a)
-Every industry is a single declared OpenGFX sprite whose ground tile is one
-diamond, so `INDUSTRIES[*].footprint` and the atlas cells are now `[1, 1]`
-across the board (farm, forest, ore_mine, quarry, oil_rig, gold_mine, and the
-player factory/depot). Occupancy, catchment and the AI all read those numbers,
-so placement now blocks exactly the tiles the sprite visibly covers.
-Tests re-anchored to 1×1 geometry: `iso-economy`, `iso-ai` (harvesterSpots is
-4 side tiles now), `iso-depth` (the multi-tile key math is exercised with
-explicit footprints), and the e2e corridor/helper.
+W1 (negative stone) and W2 (shared network) are the foundation — W3 (AI builds) and W4 (rail reachable) partly resolve once those land, so do them in order and re-test after each. W5 (gold) and W6 (market) are independent and can go in either order. W7 is deferred.
 
-**New invariant (the process note's partner to Y6):** `validate-manifest.mjs`
-fails any sprite whose frame width covers less than half its footprint's pixel
-span (`(fw+fh) × 32`). "Building doesn't fill its tiles" is now a CI failure.
-`tests/unit/iso-manifest.test.ts` covers both directions.
+Keep each to one session. W2 is the biggest — track ownership touches the model, the flood, commit, and demolish — so give it its own PR and lean on the two-disjoint-networks test as the guard.
 
-## V2. Factory = declared sprite 2169, not 2150
-2150 is one corner piece of OpenGFX's multi-tile factory; 2169
-(`industries_misc.png`, 64×77, brick works with two chimneys) is a complete
-building in one declared sprite, so the "one declared sprite" rule from Y3
-holds. Player tint is the new `tintLum` layer mode (luminance-preserving
-recolour) because plain multiply collapsed the brick shades to near-black.
+Process note
 
-**Root cause found alongside:** the slicer's id-label key was a *hue* test
-(`b > 90 && b > r+30 && b > g+30`), and the factory's roof ramp lives in exactly
-those hues — the key ate the roof and left the chimneys floating. The key is
-now hue **and** margin-adjacency (navy text sits on the border-connected page
-white; game art sits on the blue backing). `tools/slice-atlas.mjs:marginMask`.
-
-## V3. Quarry panel sizes to the board
-`responsiveZoom()` clamps by horizontal space as well as height and publishes
-`--board-px` (board width at the live zoom); `.aside.right` derives its width
-from it on desktop, so all 9 columns always fit inside the panel. The offer
-tray and the inspector derive their offsets from the same variable.
-
-## V4. Toast ✕ and banner  both work
-Toasts build their own ✕ with a per-toast close handler that clears the
-auto-dismiss timer (stack intact, auto-dismiss unchanged). The banner is
-rebuilt only when its text changes and remembers a dismissed text until then —
-paint() runs every frame, which is what used to un-hide it mid-click.
-
-## V5. Gem + button art wired from `src/assets/gems` / `src/assets/ui`
-Neither folder existed anywhere on GitHub (checked `main` and every branch),
-so this branch ships generated stand-ins from `tools/make-ui-art.mjs`
-(48×48 pixel gems per cargo; 320×72 banner plates per button) at exactly those
-paths — drop the restored hand-authored PNGs in under the same names and they
-take over with no code change. `ui.ts` maps gem colour → cargo → sprite via
-`GEM_TO_CARGO` (the quarry bijection), draws them through the existing
-`.gem .face.sprite` rules, and falls back to the old gradient only if a file is
-missing. Build buttons finally get per-tool art classes (`bg-road/rail/
-harvester/demolish` — they all shared `bg-rail`).
-The building sizing is a fresh instance of a familiar pattern: a fix (Y3, single sprites) that corrected one failure mode (stitched fragments) and created its mirror (sprites too small for the footprint) because the footprint side wasn't adjusted with it. The Y6 invariant "sprite width ≤ footprint_w × 64 + 32" catches *too big*; add its partner — flag when a building sprite is dramatically *smaller* than its footprint (say, < half the footprint's pixel span) — so "building doesn't fill its tiles" becomes a test failure rather than a screenshot catch.
+This round is a useful signal: the sprite pipeline is basically fixed, and what's left is that the game rules were ported piecemeal and several wires were never connected — gold has no listener, track has no owner, the market button has no handler, affordability isn't checked at commit. These aren't hard problems; they're missing connections. A short integration checklist — every board.on* hook has a listener, every panel button has a handler, every spend path checks affordability, every player's network is its own — would catch this whole class in one pass. Worth adding as a boot-time assertion or a test that fails if any board.on* callback is still the default no-op.
