@@ -31,6 +31,7 @@ export function validateManifest(manifest) {
   const errors = [];
   for (const [name, s] of Object.entries(manifest.sprites)) {
     const frames = s.frames ?? 1;
+    const frameW = s.w / frames;
     if (frames > 1) {
       if (s.w % frames !== 0)
         errors.push(`sprite ${name}: ${frames} frames do not tile ${s.w}px width evenly`);
@@ -45,6 +46,15 @@ export function validateManifest(manifest) {
     }
     if ((s.footprint[0] > 1 || s.footprint[1] > 1) && !Array.isArray(s.slices) && s.h > 200)
       errors.push(`sprite ${name}: multi-tile footprint with h=${s.h} — verify against the contact sheet`);
+    // V1 partner invariant: Y6 bounds sprites that are too BIG for their
+    // footprint; this bounds the mirror failure — a building sprite that is
+    // dramatically SMALLER than the tiles it reserves ("the building is one
+    // square but blocks nine"). The footprint's pixel span across the diamond
+    // is (fw + fh) * HW; a sprite covering less than half of it is reserving
+    // tiles the player sees as empty.
+    const span = (s.footprint[0] + s.footprint[1]) * 32;
+    if (frameW < span / 2)
+      errors.push(`sprite ${name}: frame width ${frameW}px covers < half of its ${s.footprint.join("x")} footprint (${span}px span) — shrink the footprint or use art that fills it`);
   }
   return errors;
 }

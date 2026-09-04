@@ -434,3 +434,84 @@ describe("J1 the quarry is mounted in the iso app", () => {
     expect(h.purse.ore).toBe(1);
   });
 });
+
+// ── V3 / V4 / V5 — the chrome fixes from the v10 backlog ──────────────────
+describe("V3 the quarry panel fits the whole board", () => {
+  it("publishes a board width the nine columns fit inside", async () => {
+    await boot();
+    const gridEl = root.querySelector("#iso-gems") as HTMLElement;
+    // the grid itself is always the full 9×9 board…
+    expect(gridEl.style.width).toBe(`${54 * 9}px`);
+    expect(gridEl.style.height).toBe(`${54 * 9}px`);
+    // …and the published panel width is the board at the live zoom, so the
+    // aside/panel can size to it instead of clipping the right columns.
+    const uiRoot = root.querySelector(".ui-root") as HTMLElement;
+    const boardPx = Number(uiRoot.dataset.boardPx);
+    const z = Number((root.querySelector("#iso-quarry .board-wrap:last-child") as HTMLElement).dataset.zoom);
+    expect(boardPx).toBe(Math.ceil((54 * 9 + 10) * z));
+    // and at that zoom the column plus the left panel fits the window
+    const leftW = window.innerWidth <= 900 ? 0 : (window.innerWidth <= 1180 ? 262 : 300);
+    expect(boardPx + 30 + leftW + 64).toBeLessThanOrEqual(window.innerWidth + 1);
+  });
+});
+
+describe("V4 toasts and the banner close", () => {
+  it("a toast's X removes that toast and leaves the rest of the stack", async () => {
+    const h = await boot();
+    h.toast("first message", "info");
+    h.toast("second message", "info");
+    await settle();
+    const toasts = [...root.querySelectorAll(".toast")] as HTMLElement[];
+    expect(toasts).toHaveLength(2);
+    (toasts[0].querySelector(".toast-x") as HTMLElement).click();
+    await new Promise((r) => setTimeout(r, 400));   // the 300ms fade-out
+    const left = [...root.querySelectorAll(".toast")] as HTMLElement[];
+    expect(left).toHaveLength(1);
+    expect(left[0].textContent).toContain("second message");
+  });
+
+  it("an untouched toast still auto-dismisses", async () => {
+    const h = await boot();
+    h.toast("auto dismiss me", "info");
+    await settle();
+    expect(root.querySelectorAll(".toast")).toHaveLength(1);
+    await new Promise((r) => setTimeout(r, 2900));
+    expect(root.querySelectorAll(".toast")).toHaveLength(0);
+  }, 8000);
+
+  it("the banner X stays dismissed while the same message repeats", async () => {
+    await boot();
+    const banner = root.querySelector("#iso-banner") as HTMLElement;
+    expect(banner.classList.contains("hidden")).toBe(false);
+    (banner.querySelector(".banner-close") as HTMLElement).click();
+    expect(banner.classList.contains("hidden")).toBe(true);
+    // paint() runs every frame — the dismissal must survive it
+    await settle();
+    await settle();
+    expect(banner.classList.contains("hidden")).toBe(true);
+  });
+});
+
+describe("V5 gems draw the restored sprite art", () => {
+  it("every gem face is a sprite from src/assets/gems, mapped by cargo", async () => {
+    await boot();
+    const faces = [...root.querySelectorAll("#iso-gems .gem .face")] as HTMLElement[];
+    expect(faces).toHaveLength(81);
+    const seen = new Set<string>();
+    for (const f of faces) {
+      expect(f.classList.contains("sprite")).toBe(true);
+      const m = f.style.backgroundImage.match(/\/gems\/([a-z]+)\.png/);
+      expect(m, f.style.backgroundImage).toBeTruthy();
+      seen.add(m![1]);
+    }
+    // the neutral board spawns the five non-gold cargoes
+    expect([...seen].sort()).toEqual(["grain", "oil", "ore", "stone", "wood"]);
+  });
+
+  it("the build buttons carry per-tool banner art classes", async () => {
+    await boot();
+    const tools = [...root.querySelectorAll("[data-tool]")] as HTMLElement[];
+    expect(tools).toHaveLength(4);
+    for (const b of tools) expect(b.classList.contains(`bg-${b.dataset.tool}`)).toBe(true);
+  });
+});

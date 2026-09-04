@@ -114,10 +114,53 @@ function toOpenttdRoadBits(bits) {
 /** True for the id-label blue/dark pixels (labelled text in OpenGFX sheets). */
 function isLabelPixel(r, g, b, a) {
   if (a === 0) return false;
-  // The sheet id labels are rendered as far more blue than the game art:
-  // pure blue backing is keyed separately; label glyphs are ~(20,52,124).
-  // White page pixels are handled by removeBorderWhite.
+  // The sheet id labels are rendered as far more blue than the page: pure blue
+  // backing is keyed separately; label glyphs are ~(20,52,124). White page
+  // pixels are handled by removeBorderWhite.
   return b > 90 && b > r + 30 && b > g + 30;
+}
+
+/**
+ * V2: the navy heuristic above is a *hue* test, and game art owns the same
+ * hues — the factory's roof ramp and trim are (12,36,104)…(56,120,188), so a
+ * hue-only key ate the roof and left the chimneys floating (the "completely
+ * broken factory" screenshot). What actually distinguishes an id label is
+ * WHERE it sits: labels are navy text on the page margin, i.e. navy pixels
+ * touching the border-connected white. Blue content sits on the blue backing
+ * instead. So the key is hue AND margin-adjacency.
+ */
+function marginMask(data, w, h) {
+  const isWhite = (i) =>
+    data[i] === 255 && data[i + 1] === 255 && data[i + 2] === 255 && data[i + 3] === 255;
+  const margin = new Uint8Array(w * h);
+  const stack = [];
+  const push = (x, y) => {
+    const i = y * w + x;
+    if (!margin[i] && isWhite(i * 4)) { margin[i] = 1; stack.push(i); }
+  };
+  for (let x = 0; x < w; x++) { push(x, 0); push(x, h - 1); }
+  for (let y = 0; y < h; y++) { push(0, y); push(w - 1, y); }
+  while (stack.length) {
+    const i = stack.pop();
+    const x = i % w, y = (i / w) | 0;
+    if (x > 0) push(x - 1, y);
+    if (x + 1 < w) push(x + 1, y);
+    if (y > 0) push(x, y - 1);
+    if (y + 1 < h) push(x, y + 1);
+  }
+  return margin;
+}
+
+function touchesMargin(margin, w, h, i) {
+  const x = i % w, y = (i / w) | 0;
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+      if (margin[ny * w + nx]) return true;
+    }
+  }
+  return false;
 }
 
 /** Remove white pixels connected to a crop border (page background, id labels), leaving interior white content intact. */
@@ -153,12 +196,22 @@ async function cropDeclared(id) {
     .extract({ left: d.x, top: d.y, width: d.w, height: d.h })
     .ensureAlpha();
   const { data, info } = await img.raw().toBuffer({ resolveWithObject: true });
-  const px = Buffer.alloc(info.width * info.height * 4);
-  for (let i = 0; i < data.length; i += 4) {
-    if (data[i] === 0 && data[i + 1] === 0 && data[i + 2] === 255 || isLabelPixel(data[i], data[i + 1], data[i + 2], data[i + 3])) {
-      px[i] = px[i + 1] = px[i + 2] = 0; px[i + 3] = 0;
+  const n = info.width * info.height;
+  const px = Buffer.alloc(n * 4);
+  const margin = marginMask(data, info.width, info.height);
+  for (let i = 0; i < n; i++) {
+    const o = i * 4;
+    const a = data[o + 3];
+    const blueKey = a !== 0 && data[o] === 0 && data[o + 1] === 0 && data[o + 2] === 255;
+    // V2: navy hue alone is not a label — only navy touching the page margin
+    // is. Blue roofs/trim/water sit on the blue backing and must survive.
+    const label = a !== 0 && !blueKey &&
+      isLabelPixel(data[o], data[o + 1], data[o + 2], a) &&
+      touchesMargin(margin, info.width, info.height, i);
+    if (a === 0 || blueKey || label) {
+      px[o] = px[o + 1] = px[o + 2] = 0; px[o + 3] = 0;
     } else {
-      px[i] = data[i]; px[i + 1] = data[i + 1]; px[i + 2] = data[i + 2]; px[i + 3] = 255;
+      px[o] = data[o]; px[o + 1] = data[o + 1]; px[o + 2] = data[o + 2]; px[o + 3] = 255;
     }
   }
   removeBorderWhite(px, info.width, info.height);
@@ -196,6 +249,25 @@ function tintPx(px, tint) {
 }
 
 /**
+ * V2: luminance-preserving player tint. `tintPx` multiplies, which on a dark
+ * brick building collapses every shade into near-black and leaves only the
+ * bright trim reading as the player colour. Recolouring by luminance keeps the
+ * art's shading and puts the player hue on all of it, so a tinted factory
+ * still reads as a building at map zoom.
+ */
+function tintLumPx(px, tint, keep = 0.28) {
+  const tr = tint[0] / 255, tg = tint[1] / 255, tb = tint[2] / 255;
+  for (let i = 0; i < px.length; i += 4) {
+    if (px[i + 3] === 0) continue;
+    const lum = (0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2]) / 255;
+    const v = Math.min(1.2, lum * 1.45 + 0.10);
+    px[i] = Math.min(255, Math.round(255 * v * (keep + (1 - keep) * tr)));
+    px[i + 1] = Math.min(255, Math.round(255 * v * (keep + (1 - keep) * tg)));
+    px[i + 2] = Math.min(255, Math.round(255 * v * (keep + (1 - keep) * tb)));
+  }
+}
+
+/**
  * Y5 derived anchor: the cell-local position of the tile origin, offset to
  * the renderer's south-corner convention (see file header).
  */
@@ -212,6 +284,7 @@ async function composeLayers(layers) {
   for (const layer of layers) {
     const c = await cropDeclared(layer.sprite);
     if (layer.tint) tintPx(c.px, layer.tint);
+    else if (layer.tintLum) tintLumPx(c.px, layer.tintLum);
     const d = c.d;
     // OpenTTD placement: sprite top-left = tile origin + (xrel, yrel).
     const ox = d.xrel, oy = d.yrel;

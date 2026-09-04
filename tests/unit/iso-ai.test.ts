@@ -175,11 +175,11 @@ describe("E7 scoring", () => {
   });
 
   it("harvesterSpots hugs the footprint without corners or overlap", () => {
-    const farm = ind("farm", 10, 10);      // 2×2
+    const farm = ind("farm", 10, 10);      // 1×1 (V1: footprint = the art)
     const spots = harvesterSpots(flatGrid([farm]), farm);
-    expect(spots).toHaveLength(8);         // 2 per side, no diagonals
+    expect(spots).toEqual([[10, 9], [9, 10], [11, 10], [10, 11]]);  // 4 sides, no diagonals
     for (const [x, y] of spots) {
-      const insideX = x >= 10 && x < 12, insideY = y >= 10 && y < 12;
+      const insideX = x >= 10 && x < 11, insideY = y >= 10 && y < 11;
       expect(insideX && insideY).toBe(false);
       expect(insideX || insideY).toBe(true);
     }

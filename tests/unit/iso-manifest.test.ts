@@ -31,7 +31,7 @@ const good = {
   sprites: {
     coal_mine: { x: 0, y: 0, w: 192, h: 160, footprint: [3, 3], anchor: [96, 148], frames: 1 },
     oil_rig: {
-      x: 192, y: 0, w: 128, h: 176, footprint: [2, 2], anchor: [64, 160],
+      x: 192, y: 0, w: 128, h: 176, footprint: [1, 1], anchor: [32, 160],
       frames: 4, frameMs: 180,
     },
     road_0011: { x: 0, y: 256, w: 64, h: 32, footprint: [1, 1], anchor: [32, 32] },
@@ -102,6 +102,24 @@ describe("E1 atlas manifest validation", () => {
 });
 
 describe("X5 cheap manifest invariants", () => {
+  it("the shipped manifest validates clean (schema + geometry)", () => {
+    expect(validateManifest(realManifest)).toEqual([]);
+  });
+
+  it("V1: rejects a building sprite dramatically smaller than its footprint", () => {
+    // The mirror of the Y6 "too big" bound: a 64px sprite reserving a 3×3
+    // footprint blocks tiles the player sees as empty (backlog V1).
+    const bad = {
+      ...good,
+      sprites: {
+        ...good.sprites,
+        factory_blue: { x: 0, y: 400, w: 64, h: 69, footprint: [3, 3], anchor: [32, 68] },
+      },
+    };
+    const errors = validateManifest(bad);
+    expect(errors.join("\n")).toContain("covers < half");
+  });
+
   it("bounds sprite size by footprint (catches the 768px oil rig crop)", () => {
     const sprites = realManifest.sprites;
     for (const [name, s] of Object.entries(sprites)) {

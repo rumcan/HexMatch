@@ -53,7 +53,7 @@ describe("E6 catchment", () => {
   });
 
   it("catches an industry whose footprint merely overlaps", () => {
-    const farm = ind("farm", 11, 11);          // 2×2 at 11,11
+    const farm = ind("farm", 11, 11);          // 1×1 at 11,11
     const grid = flatGrid([farm]);
     // catchment of (10,10) is 9..12 — overlaps the farm's top corner
     expect(industriesInCatchment(grid, H(0, "p1", 10, 10))).toHaveLength(1);
@@ -127,7 +127,7 @@ describe("E6 connected components", () => {
 describe("E6 acceptance", () => {
   /** Farm + harvester + a road to the factory. */
   function scenario(kind: "road" | "rail" = "road") {
-    const farm = ind("farm", 11, 9);
+    const farm = ind("farm", 12, 11);
     const grid = flatGrid([farm]);
     const track = createTrack();
     run(track, kind, 6, 20, 10);              // the trunk line
@@ -196,7 +196,7 @@ describe("E6 acceptance", () => {
   });
 
   it("an unserviced harvester yields nothing and holds no VP", () => {
-    const grid = flatGrid([ind("farm", 11, 9)]);
+    const grid = flatGrid([ind("farm", 12, 11)]);
     const state: EconomyState = {
       grid, track: createTrack(),
       harvesters: [H(1, "p1", 11, 11)],
@@ -211,7 +211,7 @@ describe("E6 acceptance", () => {
 
 describe("E6 rail beats road", () => {
   it("takes the rail multiplier and VP when both paths exist", () => {
-    const farm = ind("farm", 11, 9);
+    const farm = ind("farm", 12, 11);
     const grid = flatGrid([farm]);
     const track = createTrack();
     run(track, "road", 6, 20, 10);
@@ -228,7 +228,7 @@ describe("E6 rail beats road", () => {
   });
 
   it("falls back to road and revokes the rail VP when the rail breaks", () => {
-    const grid = flatGrid([ind("farm", 11, 9)]);
+    const grid = flatGrid([ind("farm", 12, 11)]);
     const track = createTrack();
     run(track, "road", 6, 20, 10);
     run(track, "rail", 6, 20, 12);
@@ -250,7 +250,7 @@ describe("E6 rail beats road", () => {
   });
 
   it("upgrading road to rail raises the VP", () => {
-    const grid = flatGrid([ind("farm", 11, 9)]);
+    const grid = flatGrid([ind("farm", 12, 11)]);
     const track = createTrack();
     run(track, "road", 6, 20, 10);
     const state: EconomyState = {
@@ -270,12 +270,12 @@ describe("E6 rail beats road", () => {
 
 describe("E6 overlapping catchments split output proportionally", () => {
   function twoClaimants() {
-    const grid = flatGrid([ind("farm", 11, 9)]);
+    const grid = flatGrid([ind("farm", 12, 11)]);
     const track = createTrack();
     run(track, "road", 6, 20, 10);
     const state: EconomyState = {
       grid, track,
-      harvesters: [H(1, "p1", 11, 11), H(2, "p2", 12, 11)],
+      harvesters: [H(1, "p1", 11, 11), H(2, "p2", 13, 11)],
       factories: [{ owner: "p1", tx: 20, ty: 11 }, { owner: "p2", tx: 19, ty: 11 }],
     };
     return state;
@@ -308,7 +308,7 @@ describe("E6 overlapping catchments split output proportionally", () => {
 
 describe("E6 scoring hygiene", () => {
   it("is idempotent — rescoring an unchanged world emits nothing", () => {
-    const grid = flatGrid([ind("farm", 11, 9)]);
+    const grid = flatGrid([ind("farm", 12, 11)]);
     const track = createTrack();
     run(track, "road", 6, 20, 10);
     const state: EconomyState = {
@@ -324,7 +324,7 @@ describe("E6 scoring hygiene", () => {
   });
 
   it("debits VP when the harvester itself is removed", () => {
-    const grid = flatGrid([ind("farm", 11, 9)]);
+    const grid = flatGrid([ind("farm", 12, 11)]);
     const track = createTrack();
     run(track, "road", 6, 20, 10);
     const state: EconomyState = {
@@ -344,7 +344,7 @@ describe("E6 scoring hygiene", () => {
   });
 
   it("keeps players' VP separate", () => {
-    const grid = flatGrid([ind("farm", 11, 9), ind("forest", 30, 9)]);
+    const grid = flatGrid([ind("farm", 12, 11), ind("forest", 30, 11)]);
     const track = createTrack();
     run(track, "road", 6, 40, 10);
     const state: EconomyState = {
@@ -359,7 +359,7 @@ describe("E6 scoring hygiene", () => {
   });
 
   it("does not connect a harvester to a rival's factory", () => {
-    const grid = flatGrid([ind("farm", 11, 9)]);
+    const grid = flatGrid([ind("farm", 12, 11)]);
     const track = createTrack();
     run(track, "road", 6, 20, 10);
     const state: EconomyState = {
@@ -373,7 +373,7 @@ describe("E6 scoring hygiene", () => {
   });
 
   it("harvesterYield reports servicing and connection for the UI", () => {
-    const grid = flatGrid([ind("farm", 11, 9)]);
+    const grid = flatGrid([ind("farm", 12, 11)]);
     const track = createTrack();
     run(track, "road", 6, 20, 10);
     const state: EconomyState = {

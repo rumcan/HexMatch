@@ -51,18 +51,13 @@ async function pickCorridor(page: import("@playwright/test").Page): Promise<{
       return !document.elementsFromPoint(cx, cy)
         .some((el) => !!(el as HTMLElement).closest?.(".iso-panel"));
     };
-    // U2: the factory is a 3×3 footprint, so its highlight (and the future
-    // building) must be fully in-bounds and on screen before we hand back a
-    // corridor — otherwise the overlay-pixel sample below cannot see the far
-    // corner of the footprint.
+    // V1: the factory is a 1×1 footprint (one declared sprite, one diamond),
+    // so its highlight must be in-bounds and on screen before we hand back a
+    // corridor — and the tile diagonally behind it must stay clear, which is
+    // what the overlay-pixel sample below asserts.
     const legalFactory = (hx: number, fy: number) => {
-      if (hx + 2 >= MAP_W || fy + 2 >= MAP_H) return false;
-      for (let dy = 0; dy < 3; dy++) {
-        for (let dx = 0; dx < 3; dx++) {
-          if (!inView(hx + dx, fy + dy)) return false;
-        }
-      }
-      return true;
+      if (hx + 1 >= MAP_W || fy + 1 >= MAP_H) return false;
+      return inView(hx, fy) && inView(hx + 1, fy + 1);
     };
     const legalColumn = (hx: number, hy: number, fy: number) => {
       if (hx < 0 || hx >= MAP_W || hy < 0 || fy >= MAP_H) return false;
@@ -220,17 +215,18 @@ test.describe("iso game boots on the default route", () => {
     const harvester = await tileCenter(page, c.hx, c.hy);
 
     // ── setup round 1 of 2: click the tile for your Factory ─────────────
-    // U2: before placing, hover the factory footprint and prove the overlay
-    // paints the whole 3×3 real footprint, not just the anchor tile.
+    // V1 acceptance: the placement highlight covers EXACTLY the footprint the
+    // building will visibly occupy — the anchor tile glows and the tile
+    // diagonally behind it (old 3×3 corner) stays unpainted.
     await page.mouse.move(factory.x, factory.y);
     await expect.poll(() => opaqueNear(page, 2, c.fx, c.fy), { timeout: 5000 }).toBeGreaterThan(10);
-    await expect.poll(() => opaqueNear(page, 2, c.fx + 2, c.fy + 2), { timeout: 5000 }).toBeGreaterThan(10);
+    await expect.poll(() => opaqueNear(page, 2, c.fx + 1, c.fy + 1), { timeout: 5000 }).toBe(0);
     await page.mouse.click(factory.x, factory.y);
     await page.waitForFunction(() => (window as any).__iso.phase === "setup-harvester");
     expect((await page.evaluate(() => (window as any).__iso.factories.length))).toBeGreaterThanOrEqual(1);
     // U2: the guide banner must re-word to the Harvester once the Factory is
-    // placed, and the factory highlight footprint is a 3×3 (asserted below in
-    // the pixel sample, not here — the banner is the user-facing cue).
+    // placed (the banner is the user-facing cue; the footprint itself is
+    // asserted in the pixel sample above).
     await expect(page.locator("#iso-banner")).toContainText(/place your harvester/i);
 
     // ── setup round 2 of 2: click the harvester spot beside the industry ─
