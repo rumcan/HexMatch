@@ -47,14 +47,13 @@ jobs:
             if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
               grep -aE "✘|✓|failed|passed|Error|expect|at .*spec" /tmp/pw.log \
                 | grep -av "npm warn" | tail -n 120 > /tmp/pw-fail.txt || true
-              BODY=$(jq -Rs --arg id "pw-${{ github.run_id }}" \
-                '{body: ("### e2e failure (run " + $id + ")\n```
-" + . + "
-```"}' /tmp/pw-fail.txt)
+              jq -Rs --arg id "pw-${{ github.run_id }}" \
+                '{body: ("### e2e failure (run " + $id + ")\n```\n" + . + "\n```")}' \
+                /tmp/pw-fail.txt > /tmp/pw-body.json
               curl -sf -X POST -H "Authorization: Bearer ${{ github.token }}" \
                 -H "Accept: application/vnd.github+json" \
                 "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
-                -d "$BODY" || echo "(could not post comment)"
+                -d @/tmp/pw-body.json || echo "(could not post comment)"
             fi
             exit 1
           }
