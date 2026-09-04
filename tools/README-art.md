@@ -43,10 +43,11 @@ Sheets used so far (paths under `sprites/png/`):
 | Quarry (Stone) | `industries/goldmine/*` (reskin grey at pack time) |
 | Gold mine | `industries/goldmine/goldmine_base.gimp.png` + `goldmine_anim2..3.gimp.png` |
 | Oil rig | `industries/oilwell/oilwell_anim1..6.gimp.png` (6-frame animation) |
-| Main Factory (HQ) | `industries/factory.png` |
+| Main Factory (HQ) | `industries/food_factory/foodfactory_stage2.png` (TK-003: declared food-processing plant 2189, a larger realistic small factory) |
 | Road half-piece | `infrastructure/infra06.png` (spr1332; see `base-1309-road-infra.pnml`) |
 | Rail half-piece | `infrastructure/infra06.png` (spr1012; see `base-1005-rail-infra.pnml`) |
 | Level crossing | `infrastructure/infra06.png` (spr1370) |
+| Harvester (bus terminal) | `infrastructure/infra08.png` (TK-003: declared bus stop 2693) |
 
 ## State of the work
 

@@ -173,13 +173,13 @@
      "note": "declared factory ground tile (clean concrete pad)"
     },
     {
-     "sprite": 2169,
+     "sprite": 2189,
      "tintLum": [
       70,
       130,
       220
      ],
-     "note": "V2: declared complete works building (brick + two chimneys, 64x77), luminance-preserving player tint"
+     "note": "TK-003: the factory is now the declared food-processing plant (2189, 64x80) \u2014 a larger, realistic small factory replacing the old complete-works sprite 2169; luminance-preserving player tint kept."
     }
    ],
    "note": "V2: the factory is one declared sprite that is a COMPLETE building (2169). 2150 was one corner piece of OpenGFX's multi-tile factory and rendered as a sliver of chimneys; footprint is what the art covers (V1)."
@@ -195,12 +195,13 @@
      "sprite": 2156
     },
     {
-     "sprite": 2169,
+     "sprite": 2189,
      "tintLum": [
       224,
       70,
       70
-     ]
+     ],
+     "note": "TK-003: the factory is now the declared food-processing plant (2189, 64x80) \u2014 a larger, realistic small factory replacing the old complete-works sprite 2169; luminance-preserving player tint kept."
     }
    ]
   },
@@ -215,12 +216,13 @@
      "sprite": 2156
     },
     {
-     "sprite": 2169,
+     "sprite": 2189,
      "tintLum": [
       190,
       92,
       255
-     ]
+     ],
+     "note": "TK-003: the factory is now the declared food-processing plant (2189, 64x80) \u2014 a larger, realistic small factory replacing the old complete-works sprite 2169; luminance-preserving player tint kept."
     }
    ]
   },
@@ -235,12 +237,13 @@
      "sprite": 2156
     },
     {
-     "sprite": 2169,
+     "sprite": 2189,
      "tintLum": [
       78,
       196,
       90
-     ]
+     ],
+     "note": "TK-003: the factory is now the declared food-processing plant (2189, 64x80) \u2014 a larger, realistic small factory replacing the old complete-works sprite 2169; luminance-preserving player tint kept."
     }
    ]
   },
@@ -256,13 +259,13 @@
      "note": "declared grass ground so the 1x1 harvester sits flush on its tile (and the derived anchor stays inside the rect)"
     },
     {
-     "sprite": 2019,
+     "sprite": 2693,
      "tint": [
       70,
       130,
       220
      ],
-     "note": "declared small shed building, player tint"
+     "note": "TK-003: the harvester is now the declared bus/road stop terminal (2693, infrastructure/infra08.png) \u2014 fits the TTD aesthetic, player tint kept."
     }
    ]
   },
@@ -277,12 +280,13 @@
      "sprite": 3981
     },
     {
-     "sprite": 2019,
+     "sprite": 2693,
      "tint": [
       224,
       70,
       70
-     ]
+     ],
+     "note": "TK-003: the harvester is now the declared bus/road stop terminal (2693, infrastructure/infra08.png) \u2014 fits the TTD aesthetic, player tint kept."
     }
    ]
   },
@@ -297,12 +301,13 @@
      "sprite": 3981
     },
     {
-     "sprite": 2019,
+     "sprite": 2693,
      "tint": [
       190,
       92,
       255
-     ]
+     ],
+     "note": "TK-003: the harvester is now the declared bus/road stop terminal (2693, infrastructure/infra08.png) \u2014 fits the TTD aesthetic, player tint kept."
     }
    ]
   },
@@ -317,12 +322,13 @@
      "sprite": 3981
     },
     {
-     "sprite": 2019,
+     "sprite": 2693,
      "tint": [
       78,
       196,
       90
-     ]
+     ],
+     "note": "TK-003: the harvester is now the declared bus/road stop terminal (2693, infrastructure/infra08.png) \u2014 fits the TTD aesthetic, player tint kept."
     }
    ]
   },
