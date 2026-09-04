@@ -1,41 +1,46 @@
 // ══════════════════════════════════════════════════════════════════════════
-// E4 — Isometric renderer core.
+// E4 — Isometric renderer core (K4 — Kenney block geometry).
 //
 // Three stacked canvases:
 //   1. terrain     — chunk-cached, redrawn only on camera move / zoom change
 //   2. structures  — industries, road, rail, stations; redrawn on world change
 //   3. overlay     — previews, highlights, animated frames, cursor; 60fps
 //
-// Terrain is cached in 8×8-tile chunks rendered once into an OffscreenCanvas
+// Terrain is cached in 4×4-tile chunks rendered once into an OffscreenCanvas
 // and blitted thereafter; a chunk is invalidated per changed tile and all
 // chunks are dropped on a zoom change. Only the culled tile range is touched.
+// (K4: chunks shrank 8→4 — a 132px tile makes an 8×8 chunk ~1188px wide, and
+// the cached-surface memory at 2× zoom stops being cheap; 4×4 keeps the same
+// coverage in half the wasted area.)
 //
 // Every draw coordinate goes through Math.floor, and nothing is ever scaled
 // inside drawImage — the atlas ships pre-rendered at 0.5×/1×/2×.
 // ══════════════════════════════════════════════════════════════════════════
-import { HW, HH, TILE_W, TILE_H, MAP_W, MAP_H } from "../game/config";
+import { HW, HH, TILE_W, TILE_H, BLOCK_H, MAP_W, MAP_H } from "../game/config";
 import type { Camera } from "./camera";
 import { visibleTileRange, screenToWorld, worldToScreen } from "./camera";
 import type { Atlas } from "./atlas";
 import { depthSort, place, pickSprite, type DrawItem, type Placed } from "./depth";
 import { GRASS, WATER, ROUGH, type Grid } from "./grid";
 
-export const CHUNK = 8;
+export const CHUNK = 4;
 export const chunksX = Math.ceil(MAP_W / CHUNK);
 export const chunksY = Math.ceil(MAP_H / CHUNK);
 export const chunkIndexOf = (tx: number, ty: number) =>
   ((ty / CHUNK) | 0) * chunksX + ((tx / CHUNK) | 0);
 
 /**
- * G8: chunk canvas size. An 8×8 of diamonds spans 16*HW × 16*HH, but sprites
- * are drawn at `+HW` in x (anchor) so the rightmost column used to clip 32px
- * off every eastern chunk edge — dark wedges at 8-tile intervals against the
- * `#0b1a26` stage background. Pad by a full tile on both axes.
+ * G8/K4: chunk canvas size. A CHUNK×CHUNK span of diamonds covers
+ * 2*CHUNK*HW × 2*CHUNK*HH between its extreme centre-lines, plus one full
+ * tile of width on the east (the rightmost tile's sprite extends HW past its
+ * centre-line on both sides) and TILE_H + BLOCK_H of height (the tallest
+ * sprite half above the top centre-line, plus the 50px block skirt below the
+ * bottom one) so no pixel of any chunk tile clips.
  */
 export function chunkSurfaceSize(z: number): { w: number; h: number } {
   return {
     w: Math.ceil((2 * CHUNK * HW + TILE_W) * z),
-    h: Math.ceil((2 * CHUNK * HH + TILE_H * 2) * z),
+    h: Math.ceil((2 * CHUNK * HH + TILE_H + BLOCK_H) * z),
   };
 }
 
@@ -43,15 +48,15 @@ export function chunkSurfaceSize(z: number): { w: number; h: number } {
 export function chunkWorldOrigin(cx: number, cy: number): [number, number] {
   const x0 = cx * CHUNK, y0 = cy * CHUNK;
   const ox = (x0 - (y0 + CHUNK - 1)) * HW - HW;
-  const oy = (x0 + y0) * HH;
+  const oy = (x0 + y0) * HH - HH;
   return [ox, oy];
 }
 
 /**
- * Terrain sprite for a tile. There is exactly one flat grass tile (declared
- * sprite 3981) — the grass sheet is one terrain type across a 19-sprite slope
- * set, so what used to be `terrain_grass_b` was a hillside drawn on flat
- * ground (the source of the "weird triangles"). Nothing to vary with now.
+ * Terrain sprite for a tile. One flat tile per terrain type (K2): the Kenney
+ * landscape set has many grass variants, but a single flat block per type
+ * keeps the terrain uniform — and the packer's flat-only filter (widest row
+ * at y≈32) is what keeps slope/ramp tiles out (the old "weird triangles").
  */
 export function terrainSprite(grid: Grid, tx: number, ty: number): string {
   const v = grid.terrain[ty * MAP_W + tx];
@@ -205,8 +210,10 @@ export class IsoRenderer {
         const name = terrainSprite(this.world.grid, tx, ty);
         const s = this.atlas.get(name);
         if (!s) continue;
-        const wx = (tx - ty) * HW + HW - s.anchor[0];
-        const wy = (tx + ty) * HH + TILE_H - s.anchor[1];
+        // K0 anchor: the sprite's widest-row pixel lands on the tile's
+        // centre-line — drawX = screenX − HW, drawY = screenY − widestRow.
+        const wx = (tx - ty) * HW - s.anchor[0];
+        const wy = (tx + ty) * HH - s.anchor[1];
         ctx.drawImage(
           img as unknown as CanvasImageSource,
           s.x * z, s.y * z, s.w * z, s.h * z,
@@ -302,7 +309,12 @@ export class IsoRenderer {
 }
 
 export const flatPick = (wx: number, wy: number): [number, number] => {
-  const a = wx / HW, b = wy / HH;
+  // K4: the pick lattice's cells have their top vertex at tileToScreen, but a
+  // DRAWN diamond is centred on tileToScreen — its top surface sits HH above
+  // its pick cell. Sampling HH BELOW the cursor before the inverse lands the
+  // query inside the pick cell of the tile whose visible diamond is under the
+  // cursor (click a roof/block-top → the tile you see).
+  const a = wx / HW, b = (wy + HH) / HH;
   return [Math.floor((a + b) / 2), Math.floor((b - a) / 2)];
 };
 

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "hexmatch-atlas-manifest",
   "title": "HexMatch isometric atlas manifest (E1)",
-  "description": "One shared manifest for all scale variants of the sprite atlas. `anchor` is the pixel inside the sprite that lands exactly on the screen position of the footprint's south corner (the bottom vertex of the diamond of the tile at (originX + w - 1, originY + h - 1)).",
+  "description": "One shared manifest for all scale variants of the sprite atlas (K1 Kenney edition). `anchor` is the pixel inside the sprite that lands exactly on the screen position of the footprint's diamond CENTRE — for ground/standing sprites the measured widest row of the base diamond, for vehicles the bottom-centre. Computed by the packer; never hand-authored.",
   "type": "object",
   "additionalProperties": false,
   "required": [

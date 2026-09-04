@@ -5,8 +5,8 @@
  * Renders every building cell over the yellow footprint diamond grid the Y7
  * bug was found with, once per map quadrant (a projection/anchor error often
  * only shows at offset), using the exact draw math of src/iso/depth.ts
- * (`drawOrigin`: anchor lands on the south corner of the footprint) against
- * the built atlas.
+ * (K4 `drawOrigin`: the anchor pixel lands on the footprint diamond's CENTRE)
+ * against the built atlas.
  *
  * Usage:
  *   node tools/footprint-check.mjs [out.png]
@@ -26,7 +26,7 @@ const OUT = process.argv[2] ?? join(ROOT, "assets/iso-atlas/footprint-check.png"
 const manifest = JSON.parse(readFileSync(join(ROOT, "assets/iso-atlas/manifest.json"), "utf8"));
 const atlas = await sharp(join(ROOT, "assets/iso-atlas/atlas@1x.png")).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
 
-const HW = 32, HH = 16, TILE_H = 32;
+const HW = 66, HH = 32;               // K0 — measured Kenney geometry
 const tileToScreen = (tx, ty) => [(tx - ty) * HW, (tx + ty) * HH];
 
 /** The buildings Y7 covers. Player tints share one geometry, so one tint per
@@ -35,9 +35,9 @@ const NAMES = Object.keys(manifest.sprites).filter((n) =>
   /^(farm|forest|ore_mine|quarry|oil_rig|gold_mine|factory_blue|depot_blue)$/.test(n));
 
 // Quadrant offsets: the footprint origin placed in each map quadrant.
-const QUADRANTS = [[2, 2], [20, 3], [3, 22], [21, 21]];
+const QUADRANTS = [[2, 2], [16, 3], [3, 16], [16, 16]];   // inside the 32×32 map
 
-const CELL_W = 260, CELL_H = 210;
+const CELL_W = 420, CELL_H = 330;
 const cols = QUADRANTS.length, rows = NAMES.length;
 const W = cols * CELL_W, H = rows * CELL_H;
 const dst = Buffer.alloc(W * H * 4);
@@ -90,23 +90,26 @@ NAMES.forEach((name, r) => {
     const ox = c * CELL_W + CELL_W / 2;
     const oy = r * CELL_H + 46;
     const [bx, by] = tileToScreen(qx, qy);
-    const drawnTop = (tx, ty) => {
+    const drawnCentre = (tx, ty) => {
       const [sx, sy] = tileToScreen(tx, ty);
-      return [ox + (sx - bx) + HW, oy + (sy - by) + 1];
+      return [ox + (sx - bx), oy + (sy - by)];
     };
     // terrain underlay for each footprint tile (terrain anchor contract)
     for (let ty = 0; ty < fh; ty++) {
       for (let tx = 0; tx < fw; tx++) {
         const t = manifest.sprites.terrain_grass;
         const [sx, sy] = tileToScreen(qx + tx, qy + ty);
-        blitAt("terrain_grass", ox + (sx - bx) + HW - t.anchor[0], oy + (sy - by) + TILE_H - t.anchor[1]);
+        blitAt("terrain_grass", ox + (sx - bx) - t.anchor[0], oy + (sy - by) - t.anchor[1]);
       }
     }
-    // the building, via drawOrigin: anchor on the footprint's south corner
-    const [sx, sy] = tileToScreen(qx + fw - 1, qy + fh - 1);
+    // the building, via drawOrigin (K4): anchor on the footprint's centre
     const s = manifest.sprites[name];
-    blitAt(name, ox + (sx - bx) + HW - s.anchor[0], oy + (sy - by) + TILE_H - s.anchor[1]);
-    const [gx, gy] = drawnTop(qx, qy);
+    const cx = qx + (fw - 1) / 2, cy = qy + (fh - 1) / 2;
+    const [sx, sy] = tileToScreen(cx, cy);
+    blitAt(name, ox + (sx - bx) - s.anchor[0], oy + (sy - by) - s.anchor[1]);
+    // footprint grid drawn on the tile-centre lattice (top vertex = centre - HH)
+    const [ccx, ccy] = drawnCentre(qx, qy);
+    const gx = ccx, gy = ccy - HH;
     svgParts.push(`<g>${footprintSvg(fw, fh, gx, gy)}</g>`);
     svgParts.push(`<text x="${c * CELL_W + 6}" y="${r * CELL_H + 16}" font-family="monospace" font-size="11" fill="#333">${name} @(${qx},${qy})</text>`);
   });

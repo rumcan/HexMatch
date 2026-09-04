@@ -5,7 +5,7 @@ import {
   place, depthSort, tier1Compare, boxesIntersect, isBehind, pickSprite, drawOrigin,
   type Placed,
 } from "../../src/iso/depth";
-import { HW, TILE_H, tileToScreen } from "../../src/game/config";
+import { tileToScreen } from "../../src/game/config";
 
 const manifest: Manifest = JSON.parse(
   readFileSync("assets/iso-atlas/manifest.json", "utf8"),
@@ -18,16 +18,18 @@ const P = (sprite: string, tx: number, ty: number) => {
   return p as Placed;
 };
 
-describe("E4 anchor contract", () => {
-  it("puts the anchor pixel on the footprint's south corner", () => {
-    for (const [name, tx, ty] of [["farm", 10, 12], ["ore_mine", 3, 40], ["terrain_grass", 0, 0]] as const) {
+describe("K4 anchor contract", () => {
+  it("puts the anchor pixel on the footprint diamond's centre", () => {
+    // K0/K1: the anchor (the sprite's measured base-diamond widest row for
+    // ground/standing art, bottom-centre for vehicles) lands on the tile's
+    // centre-line, so a building's base diamond coincides with its tile.
+    for (const [name, tx, ty] of [["farm", 10, 12], ["ore_mine", 3, 20], ["terrain_grass", 0, 0], ["factory_blue", 5, 5], ["road_1111", 7, 9]] as const) {
       const def = atlas.get(name)!;
       const [ox, oy] = drawOrigin(def, tx, ty);
       const [fw, fh] = def.footprint;
-      const [sx, sy] = tileToScreen(tx + fw - 1, ty + fh - 1);
-      // south corner of the last tile's diamond
-      expect(ox + def.anchor[0]).toBe(sx + HW);
-      expect(oy + def.anchor[1]).toBe(sy + TILE_H);
+      const [cx, cy] = tileToScreen(tx + (fw - 1) / 2, ty + (fh - 1) / 2);
+      expect(ox + def.anchor[0]).toBe(cx);
+      expect(oy + def.anchor[1]).toBe(cy);
     }
   });
 });

@@ -18,7 +18,7 @@
 // here we do the front-to-back sprite pass with alpha masks, which overrides
 // the flat pick whenever it hits.
 // ══════════════════════════════════════════════════════════════════════════
-import { HW, TILE_H, tileToScreen } from "../game/config";
+import { tileToScreen } from "../game/config";
 import type { Atlas, SpriteDef } from "./atlas";
 
 /** One thing to draw: a sprite placed at a footprint origin. */
@@ -43,14 +43,17 @@ export interface Placed extends DrawItem {
 }
 
 /**
- * World-space draw origin for a placement. The anchor pixel lands on the
- * SOUTH corner of the footprint — the bottom vertex of the diamond of tile
- * (tx + fw - 1, ty + fh - 1).
+ * World-space draw origin for a placement (K0/K4). The anchor pixel lands on
+ * the CENTRE of the footprint's ground diamond — for a 1×1 footprint that is
+ * tileToScreen(tx,ty), the row through the diamond's left/right corners.
+ * The atlas packs anchors so that a sprite's base-diamond widest row (or, for
+ * vehicles, its bottom-centre) lands exactly there, which is what makes every
+ * building stand flush on its tile by construction.
  */
 export function drawOrigin(def: SpriteDef, tx: number, ty: number): [number, number] {
   const [fw, fh] = def.footprint;
-  const [sx, sy] = tileToScreen(tx + fw - 1, ty + fh - 1);
-  return [sx + HW - def.anchor[0], sy + TILE_H - def.anchor[1]];
+  const [cx, cy] = tileToScreen(tx + (fw - 1) / 2, ty + (fh - 1) / 2);
+  return [cx - def.anchor[0], cy - def.anchor[1]];
 }
 
 export function place(atlas: Atlas, item: DrawItem): Placed | null {

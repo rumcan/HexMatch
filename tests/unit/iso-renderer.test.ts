@@ -7,7 +7,7 @@ import {
 } from "../../src/iso/renderer";
 import { generateMap, WATER, ROUGH } from "../../src/iso/grid";
 import { createCamera, centerOnMap, visibleTileRange } from "../../src/iso/camera";
-import { MAP_W, MAP_H, HW, HH, TILE_H } from "../../src/game/config";
+import { MAP_W, MAP_H, HW, HH, TILE_H, TILE_W, BLOCK_H } from "../../src/game/config";
 
 const manifest: Manifest = JSON.parse(
   readFileSync("assets/iso-atlas/manifest.json", "utf8"),
@@ -15,28 +15,35 @@ const manifest: Manifest = JSON.parse(
 const atlas = new Atlas(manifest);
 const grid = generateMap(1234);
 
-describe("E4 chunking", () => {
-  it("maps tiles to 8×8 chunks", () => {
-    expect(CHUNK).toBe(8);
+describe("K4 chunking (4×4 — 132px tiles make 8×8 chunks expensive)", () => {
+  it("maps tiles to 4×4 chunks", () => {
+    expect(CHUNK).toBe(4);
     expect(chunkIndexOf(0, 0)).toBe(0);
-    expect(chunkIndexOf(7, 7)).toBe(0);
-    expect(chunkIndexOf(8, 0)).toBe(1);
-    expect(chunkIndexOf(0, 8)).toBe(chunksX);
+    expect(chunkIndexOf(3, 3)).toBe(0);
+    expect(chunkIndexOf(4, 0)).toBe(1);
+    expect(chunkIndexOf(0, 4)).toBe(chunksX);
     expect(chunkIndexOf(MAP_W - 1, MAP_H - 1)).toBe(chunksX * Math.ceil(MAP_H / CHUNK) - 1);
   });
 
-  it("G8: chunk surface is large enough that the rightmost tile sprite is not clipped", () => {
+  it("G8/K4: chunk surface is large enough that no tile sprite clips", () => {
     const z = 1;
     const { w, h } = chunkSurfaceSize(z);
     const [ox, oy] = chunkWorldOrigin(0, 0);
-    // rightmost tile in chunk (0,0) is (7, 0); 1×1 terrain anchor is [32, 31]
-    const wx = (7 - 0) * HW + HW - 32;
-    const wy = (7 + 0) * HH + TILE_H - 31;
-    const drawX = wx - ox, drawY = wy - oy;
-    expect(drawX + 64).toBeLessThanOrEqual(w);
-    expect(drawY + 32).toBeLessThanOrEqual(h);
-    // Old size was 16*HW = 512, which clipped the last 32px. Pin the pad.
-    expect(w).toBeGreaterThan(512);
+    // every tile of chunk (0,0): sprite spans (sx − 66, sy − anchorY) …
+    // (sx + 66, sy − anchorY + 83) — check the extremes land inside.
+    for (let ty = 0; ty < CHUNK; ty++) {
+      for (let tx = 0; tx < CHUNK; tx++) {
+        const sx = (tx - ty) * HW, sy = (tx + ty) * HH;
+        expect(sx + HW - ox, `right edge of (${tx},${ty})`).toBeLessThanOrEqual(w - HW);
+        expect(sy + BLOCK_H + HH - oy, `bottom edge of (${tx},${ty})`)
+          .toBeLessThanOrEqual(h - 1);
+        expect(sx - HW - ox, `left edge of (${tx},${ty})`).toBeGreaterThanOrEqual(0);
+      }
+    }
+    // Old flat-diamond size was 16*HW wide; the block geometry needs the
+    // skirt too — pin the K4 pad.
+    expect(w).toBe(2 * CHUNK * HW + TILE_W);
+    expect(h).toBe(2 * CHUNK * HH + TILE_H + BLOCK_H);
   });
 });
 
@@ -76,14 +83,13 @@ describe("E4 terrain sprite selection", () => {
 describe("E4 culling + draw list", () => {
   it("pads by the largest footprint plus sprite height in tiles", () => {
     const pad = cullPad(atlas);
-    // Y3/Y7 shrank the buildings from stitched 192px compose blocks to single
-    // declared sprites, so the bound is computed from the manifest itself:
-    // largest footprint + tallest sprite in half-tile rows.
+    // The bound is computed from the manifest itself: largest footprint plus
+    // the tallest sprite in half-tile rows (HH = 32 under Kenney geometry).
     const sprites = Object.values(atlas.manifest.sprites);
     const maxFoot = Math.max(...sprites.map((s) => Math.max(s.footprint[0], s.footprint[1])));
     const maxH = Math.max(...sprites.map((s) => s.h));
-    expect(pad).toBe(maxFoot + Math.ceil(maxH / 16));
-    expect(pad).toBeGreaterThanOrEqual(3 + 3);  // 3×3 mine + declared building headroom
+    expect(pad).toBe(maxFoot + Math.ceil(maxH / HH));
+    expect(pad).toBeGreaterThanOrEqual(1 + Math.ceil(127 / HH));  // big factory
     expect(pad).toBeLessThan(40);
   });
 
@@ -144,14 +150,31 @@ describe("E4 culling + draw list", () => {
   });
 });
 
-describe("E4 flat pick", () => {
+describe("K4 flat pick — hits the drawn diamond, not the pick lattice", () => {
+  // tileToScreen is the diamond CENTRE; the pick lattice cell has its top
+  // vertex there, so the drawn top surface is HH ABOVE the lattice cell and
+  // flatPick samples HH below the cursor to compensate.
+  it("picks the tile whose visible diamond contains the point", () => {
+    // tile (3,3): centre (0, 6*HH); drawn diamond spans y 6*HH−HH … 6*HH+HH
+    expect(flatPick(0, 6 * HH)).toEqual([3, 3]);          // exact centre
+    expect(flatPick(0, 6 * HH - HH + 1)).toEqual([3, 3]); // 1px inside the apex
+    expect(flatPick(0, 6 * HH - HH - 1)).toEqual([2, 2]); // 1px above → tile behind
+    expect(flatPick(0, 6 * HH + HH - 1)).toEqual([3, 3]); // 1px inside the S vertex
+    expect(flatPick(0, 6 * HH + HH + 1)).toEqual([4, 4]); // 1px below → tile in front
+  });
+
   it("floors, never rounds — no off-by-one band at diamond edges", () => {
-    // x=0 on the vertical axis at y just past tile (3,3)'s top vertex
-    expect(flatPick(0, 32 * 3 + 1)).toEqual([3, 3]);
-    // a hair to the left of that axis falls in the SW neighbour, not (3,3)
-    expect(flatPick(-1, 32 * 3 + 1)).toEqual([3, 3]);
-    expect(flatPick(-31, 32 * 3 + 1)).toEqual([2, 3]);
+    // near the top vertex of tile (0,0)'s drawn diamond (cursor y≈0 samples
+    // the lattice at y≈HH, the centre row of pick cell (0,0))
     expect(flatPick(0.001, 0.001)).toEqual([0, 0]);
-    expect(flatPick(-1, 0.001)).toEqual([-1, 0]);
+    expect(flatPick(-1, 0.001)).toEqual([0, 0]);
+    // past the west edge of (0,0)'s diamond: lands in (0,1)'s pick cell
+    expect(flatPick(-66, 0.001)).toEqual([0, 1]);
+    // a hair left of tile (3,3)'s centre axis still picks (3,3); exactly on
+    // its west vertex (shared with (3,4)'s apex and (2,3)'s south vertex) the
+    // floor semantics assign the tile whose drawn top it is — (3,4).
+    expect(flatPick(-1, 6 * HH)).toEqual([3, 3]);
+    expect(flatPick(-65, 6 * HH)).toEqual([3, 3]);
+    expect(flatPick(-66, 6 * HH)).toEqual([3, 4]);
   });
 });

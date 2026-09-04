@@ -11,9 +11,9 @@
 //  4. Overlapping catchments split output proportionally among claimants.
 //  5. `gold` stays the sabotage currency (SABOTAGE/SECURITY unchanged).
 // ══════════════════════════════════════════════════════════════════════════
-import { TILE_W, TILE_H, MAP_W, MAP_H, HW, HH } from "../game/config";
+import { TILE_W, TILE_H, MAP_W, MAP_H, HW, HH, BLOCK_H } from "../game/config";
 
-export { TILE_W, TILE_H, MAP_W, MAP_H, HW, HH };
+export { TILE_W, TILE_H, MAP_W, MAP_H, HW, HH, BLOCK_H };
 export { tileToScreen, screenToTile, tileIndex, inMap, mulberry32 } from "../game/config";
 
 // ── Cargoes (also the six match-3 colours) ────────────────────────────────
@@ -36,13 +36,11 @@ export const CARGO: Record<Cargo, {
 // footprint: [w, h] in tiles along the two diamond axes (w × h tiles).
 // output: relative harvest rate (1.0 = baseline farm).
 //
-// V1: the footprint is WHAT THE PLAYER SEES. Every industry is a single
-// declared OpenGFX sprite whose ground tile is exactly one diamond, so every
-// footprint is [1,1] — the old 2×2/3×3 reservations blocked tiles that looked
-// empty (backlog V1, option a). The atlas cells carry the same numbers
-// (tools/iso-atlas.cells.json) and `validate-manifest.mjs` fails a building
-// whose sprite is dramatically smaller than its footprint, so the art and the
-// reservation cannot drift apart again.
+// K3: every industry is ONE coherent Kenney building (or the landscape tree
+// block, for the forest) anchored bottom-centre on a 1×1 footprint — its base
+// diamond is measured at pack time and lands on the tile diamond by
+// construction, so footprint and art can never disagree again (the V1/V2
+// compose-era failure mode is structurally gone).
 export interface IndustryDef {
   key: string;
   name: string;
@@ -99,9 +97,8 @@ export const UPGRADE_COST: Partial<Record<Cargo, number>> = { ore: 4 };
 export const VP_TARGET = 12;
 
 // ── Player buildings ───────────────────────────────────────────────────────
-// V1/V2: the Factory is one declared sprite (OpenGFX 2169, a complete works
-// with two chimneys) whose base covers a single diamond, so its placement
-// footprint — the highlight the player sees while placing, and the tiles the
-// building visibly occupies — is 1×1. The atlas cells for `factory_*` carry
-// the same footprint; U2's 3×3 preview was the old multi-tile factory's.
+// K3: the Factory is the big Kenney industrial block (buildingTiles_085,
+// player-tinted four ways at pack time). Its base diamond spans the full
+// 132px tile, so the placement footprint — the highlight the player sees
+// while placing — is the single diamond the building visibly covers.
 export const FACTORY_FOOTPRINT: [number, number] = [1, 1];

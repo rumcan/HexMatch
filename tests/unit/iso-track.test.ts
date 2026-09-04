@@ -108,7 +108,9 @@ describe("E5 incremental recompute", () => {
   });
 
   it("touches 1 chunk mid-chunk and more at a chunk corner", () => {
-    const mid = buildTile(createTrack(), "road", 4, 4)!;
+    // K4: chunks are 4×4 — (1,1) is interior to chunk 0, (CHUNK,CHUNK) the
+    // four-chunk meeting point.
+    const mid = buildTile(createTrack(), "road", 1, 1)!;
     expect(mid.chunks).toHaveLength(1);
     const corner = buildTile(createTrack(), "road", CHUNK, CHUNK)!;
     expect(corner.chunks.length).toBeGreaterThan(1);
@@ -121,7 +123,7 @@ describe("E5 incremental recompute", () => {
   });
 
   it("never rescans the whole map", () => {
-    const r = buildTile(createTrack(), "road", 24, 24)!;
+    const r = buildTile(createTrack(), "road", 20, 20)!;
     expect(r.tiles.length).toBeLessThan(MAP_W * MAP_H);
   });
 
