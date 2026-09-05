@@ -17,6 +17,13 @@ export interface SpriteDef {
   frames?: number;
   frameMs?: number;
   slices?: { x: number; y: number; w: number; h: number }[];
+  /**
+   * MB1 multi-storey stack: when present this sprite is a COMPOSITE — x/y are
+   * unused, w/h are its union bounding box, and it is drawn (and alpha-tested)
+   * by blitting each part at a (dx, dy) world-1x offset from the box's top-left,
+   * sourced from the part's own packed layer sprite. Bottom-to-top order.
+   */
+  parts?: { sprite: string; dx: number; dy: number }[];
 }
 
 export interface Manifest {
@@ -125,10 +132,33 @@ export function buildMasks(atlas: Atlas): void {
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) return;
   ctx.drawImage(img as unknown as CanvasImageSource, 0, 0);
+  // Pass 1: real packed sprites (composites carry no atlas region of their own).
+  const compositeNames: string[] = [];
   for (const [name, s] of Object.entries(atlas.manifest.sprites)) {
+    if (s.parts) { compositeNames.push(name); continue; }
     const r = atlas.frameRect(s, 0);
     if (r.w <= 0 || r.h <= 0) continue;
     const d = ctx.getImageData(r.x, r.y, r.w, r.h);
     atlas.setMask(name, maskFromRGBA(d.data, r.w, r.h));
+  }
+  // Pass 2: a composite's mask is the union of its parts' masks at their
+  // (dx, dy) offsets — clicking any floor of the tower selects the building.
+  for (const name of compositeNames) {
+    const s = atlas.get(name)!;
+    const bits = new Uint8Array(s.w * s.h);
+    for (const p of s.parts!) {
+      const part = atlas.get(p.sprite);
+      const pm = part ? atlas.mask(p.sprite) : undefined;
+      if (!part || !pm) continue;
+      for (let ly = 0; ly < pm.h; ly++) {
+        for (let lx = 0; lx < pm.w; lx++) {
+          if (pm.bits[ly * pm.w + lx] === 0) continue;
+          const x = p.dx + lx, y = p.dy + ly;
+          if (x < 0 || y < 0 || x >= s.w || y >= s.h) continue;
+          bits[y * s.w + x] = 1;
+        }
+      }
+    }
+    atlas.setMask(name, { w: s.w, h: s.h, bits });
   }
 }

@@ -1,5 +1,5 @@
 {
-  "comment": "K1 atlas cell map, Kenney edition: every cell resolves to ONE PNG file under src/iso/kenny (individual RGBA PNGs \u2014 no sheets, no blue key, no PNML, no crops). Each cell carries: name, png (repo path relative to src/iso/kenny), kind, footprint. kind: 'ground' = a flat Kenney block (132x64 diamond + 50px skirt) \u2014 the packer anchors it by its measured widest row and REJECTS it unless that row sits at y~32 with ~full width (the spec's flat-only filter: slope/ramp tiles fail); 'standing' = a building, anchored by the widest row of its base diamond so it stands flush on the tile; 'vehicle' = anchored bottom-centre on the tile surface. Anchors are always COMPUTED by the packer from the pixels \u2014 there is no hand-authored anchor, box, crop, compose, sprite-id, layer or generator field anywhere in this file. Derived art (rail set, crossing, placement glows) is pre-drawn by tools/make-derived-art.mjs into src/iso/kenny/derived and referenced like any Kenney PNG.",
+  "comment": "K1 atlas cell map, Kenney edition: every cell is either ONE PNG file under src/iso/kenny OR an ordered multi-storey 'stack' of layer PNGs. Each single cell carries: name, png (repo path relative to src/iso/kenny), kind, footprint. A stacked 'standing' building replaces png with 'stack': a bottom-to-top array of layer descriptors ({ png }) \u2014 base first, middle floors, roof on top (2-6 layers). The packer resolves each distinct (png, tint) layer once into a shared packed sprite and emits a composite manifest entry whose 'parts' tell the renderer how to draw the stack bottom-to-top; depth-sort and picking treat the whole stack as ONE object on its footprint. Single-png cells (terrain, roads, the one-piece industries) are unchanged and additive with stacks. kind: 'ground' = a flat Kenney block (132x64 diamond + 50px skirt) \u2014 the packer anchors it by its measured widest row and REJECTS it unless that row sits at y~32 with ~full width (the spec's flat-only filter: slope/ramp tiles fail); 'standing' = a building, anchored by the widest row of its base diamond so it stands flush on the tile; 'vehicle' = anchored bottom-centre on the tile surface. Anchors are always COMPUTED by the packer from the pixels \u2014 there is no hand-authored anchor, box, crop, compose, sprite-id or generator field anywhere in this file. Derived art (rail set, crossing, placement glows) is pre-drawn by tools/make-derived-art.mjs into src/iso/kenny/derived and referenced like any Kenney PNG.",
   "tileW": 132,
   "tileH": 64,
   "blockH": 50,
@@ -546,7 +546,6 @@
     },
     {
       "name": "factory_blue",
-      "png": "buildings/PNG/buildingTiles_085.png",
       "kind": "standing",
       "footprint": [
         1,
@@ -557,11 +556,27 @@
         130,
         220
       ],
-      "note": "K3: the main factory \u2014 a big white/grey industrial block (full 132px base diamond = flush on a 1x1 footprint), luminance-preserving player tint."
+      "stack": [
+        {
+          "png": "buildings/PNG/buildingTiles_044.png"
+        },
+        {
+          "png": "buildings/PNG/buildingTiles_044.png"
+        },
+        {
+          "png": "buildings/PNG/buildingTiles_044.png"
+        },
+        {
+          "png": "buildings/PNG/buildingTiles_044.png"
+        },
+        {
+          "png": "buildings/PNG/buildingTiles_057.png"
+        }
+      ],
+      "note": "MB1: the main factory as a stacked multi-storey tower \u2014 four 044 storeys (base + 3 middle floors) under the 057 roof, each layer player-tinted. Layers are shared per (png, tint), so this 5-layer stack reuses the same packed sprites as depot_blue and differs only by composition."
     },
     {
       "name": "factory_red",
-      "png": "buildings/PNG/buildingTiles_085.png",
       "kind": "standing",
       "footprint": [
         1,
@@ -571,11 +586,27 @@
         224,
         70,
         70
+      ],
+      "stack": [
+        {
+          "png": "buildings/PNG/buildingTiles_044.png"
+        },
+        {
+          "png": "buildings/PNG/buildingTiles_044.png"
+        },
+        {
+          "png": "buildings/PNG/buildingTiles_044.png"
+        },
+        {
+          "png": "buildings/PNG/buildingTiles_044.png"
+        },
+        {
+          "png": "buildings/PNG/buildingTiles_057.png"
+        }
       ]
     },
     {
       "name": "factory_purple",
-      "png": "buildings/PNG/buildingTiles_085.png",
       "kind": "standing",
       "footprint": [
         1,
@@ -585,11 +616,27 @@
         190,
         92,
         255
+      ],
+      "stack": [
+        {
+          "png": "buildings/PNG/buildingTiles_044.png"
+        },
+        {
+          "png": "buildings/PNG/buildingTiles_044.png"
+        },
+        {
+          "png": "buildings/PNG/buildingTiles_044.png"
+        },
+        {
+          "png": "buildings/PNG/buildingTiles_044.png"
+        },
+        {
+          "png": "buildings/PNG/buildingTiles_057.png"
+        }
       ]
     },
     {
       "name": "factory_green",
-      "png": "buildings/PNG/buildingTiles_085.png",
       "kind": "standing",
       "footprint": [
         1,
@@ -599,11 +646,27 @@
         78,
         196,
         90
+      ],
+      "stack": [
+        {
+          "png": "buildings/PNG/buildingTiles_044.png"
+        },
+        {
+          "png": "buildings/PNG/buildingTiles_044.png"
+        },
+        {
+          "png": "buildings/PNG/buildingTiles_044.png"
+        },
+        {
+          "png": "buildings/PNG/buildingTiles_044.png"
+        },
+        {
+          "png": "buildings/PNG/buildingTiles_057.png"
+        }
       ]
     },
     {
       "name": "depot_blue",
-      "png": "buildings/PNG/buildingTiles_089.png",
       "kind": "standing",
       "footprint": [
         1,
@@ -614,11 +677,21 @@
         130,
         220
       ],
-      "note": "K3: the harvester depot \u2014 a compact grey shed, player-tinted."
+      "stack": [
+        {
+          "png": "buildings/PNG/buildingTiles_044.png"
+        },
+        {
+          "png": "buildings/PNG/buildingTiles_044.png"
+        },
+        {
+          "png": "buildings/PNG/buildingTiles_057.png"
+        }
+      ],
+      "note": "MB1: the harvester depot fixed \u2014 the old 089 was a roof-only piece (99x60 cap that rendered flat). Now a proper 2-storey stack: base 044 + one 044 floor under the 057 roof, player-tinted."
     },
     {
       "name": "depot_red",
-      "png": "buildings/PNG/buildingTiles_089.png",
       "kind": "standing",
       "footprint": [
         1,
@@ -628,11 +701,21 @@
         224,
         70,
         70
+      ],
+      "stack": [
+        {
+          "png": "buildings/PNG/buildingTiles_044.png"
+        },
+        {
+          "png": "buildings/PNG/buildingTiles_044.png"
+        },
+        {
+          "png": "buildings/PNG/buildingTiles_057.png"
+        }
       ]
     },
     {
       "name": "depot_purple",
-      "png": "buildings/PNG/buildingTiles_089.png",
       "kind": "standing",
       "footprint": [
         1,
@@ -642,11 +725,21 @@
         190,
         92,
         255
+      ],
+      "stack": [
+        {
+          "png": "buildings/PNG/buildingTiles_044.png"
+        },
+        {
+          "png": "buildings/PNG/buildingTiles_044.png"
+        },
+        {
+          "png": "buildings/PNG/buildingTiles_057.png"
+        }
       ]
     },
     {
       "name": "depot_green",
-      "png": "buildings/PNG/buildingTiles_089.png",
       "kind": "standing",
       "footprint": [
         1,
@@ -656,6 +749,17 @@
         78,
         196,
         90
+      ],
+      "stack": [
+        {
+          "png": "buildings/PNG/buildingTiles_044.png"
+        },
+        {
+          "png": "buildings/PNG/buildingTiles_044.png"
+        },
+        {
+          "png": "buildings/PNG/buildingTiles_057.png"
+        }
       ]
     },
     {

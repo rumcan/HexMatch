@@ -14,6 +14,19 @@ A feature ticket, plus two Art Lab fixes that already shipped in `art-lab.html`.
 ## MB1. Stacked multi-storey buildings
 `[feature] [assets] [renderer]`
 
+> **Status — renderer core DONE.** The data model + packer + renderer side of MB1
+> shipped on branch `arena/01a07021-hexmatch` (PR): a `standing` cell now takes
+> either `png` (single piece) **or** an ordered `stack` of layer `{ png }`
+> descriptors; the packer resolves each distinct (png, tint) layer once into a
+> shared packed sprite and emits a **composite** manifest entry whose `parts`
+> draw bottom→top (base → floors → roof). Depth-sort and picking treat the whole
+> stack as ONE object on its footprint; player tint covers every layer (baked at
+> pack time); single-`png` cells are unchanged. `factory_*` are wired as 5-layer
+> towers (4× 044 + 057 roof), `depot_*` as 2-storey 3-layer stacks (fixing the
+> old roof-only 089 depot). The **Art Lab stack editor UI is still a follow-up
+> pass** (per the sequencing note below) — the storey mixes above are an initial
+> composition to fine-tune there once the tool can compose/export live.
+
 **What we want:** buildings 3–6 storeys tall, built by stacking Kenney's modular floor pieces (base → middle floors → roof), instead of the current single squat floor.
 
 **Confirmed feasible.** Kenney's building set is modular by design:

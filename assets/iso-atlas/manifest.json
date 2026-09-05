@@ -9,8 +9,8 @@
   "meta": {
     "source": "Kenney (kenney.nl) isometric assets (src/iso/kenny)",
     "license": "CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/)",
-    "generatedBy": "tools/slice-atlas.mjs (K1 packer)",
-    "note": "coordinates and anchors are at 1x; multiply by zoom for @2x/@0.5x. anchor = the sprite pixel that lands on the tile's diamond centre (measured widest base-diamond row; bottom-centre for vehicles)."
+    "generatedBy": "tools/slice-atlas.mjs (K1 packer, MB1 multi-storey)",
+    "note": "coordinates and anchors are at 1x; multiply by zoom for @2x/@0.5x. anchor = the sprite pixel that lands on the tile's diamond centre (measured widest base-diamond row; bottom-centre for vehicles). A sprite with `parts` is a multi-storey STACK: x/y/w/h describe its union bounding box (x/y unused) and each part is drawn at (dx,dy) from the box's top-left, sourced from its own packed sprite."
   },
   "sprites": {
     "terrain_grass": {
@@ -643,129 +643,9 @@
       ],
       "kind": "standing"
     },
-    "factory_blue": {
+    "vehicle_truck_n": {
       "x": 1138,
       "y": 313,
-      "w": 133,
-      "h": 127,
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        66,
-        59
-      ],
-      "kind": "standing"
-    },
-    "factory_red": {
-      "x": 1279,
-      "y": 313,
-      "w": 133,
-      "h": 127,
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        66,
-        59
-      ],
-      "kind": "standing"
-    },
-    "factory_purple": {
-      "x": 1420,
-      "y": 313,
-      "w": 133,
-      "h": 127,
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        66,
-        59
-      ],
-      "kind": "standing"
-    },
-    "factory_green": {
-      "x": 8,
-      "y": 448,
-      "w": 133,
-      "h": 127,
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        66,
-        59
-      ],
-      "kind": "standing"
-    },
-    "depot_blue": {
-      "x": 149,
-      "y": 448,
-      "w": 99,
-      "h": 60,
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        49,
-        29
-      ],
-      "kind": "standing"
-    },
-    "depot_red": {
-      "x": 256,
-      "y": 448,
-      "w": 99,
-      "h": 60,
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        49,
-        29
-      ],
-      "kind": "standing"
-    },
-    "depot_purple": {
-      "x": 363,
-      "y": 448,
-      "w": 99,
-      "h": 60,
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        49,
-        29
-      ],
-      "kind": "standing"
-    },
-    "depot_green": {
-      "x": 470,
-      "y": 448,
-      "w": 99,
-      "h": 60,
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        49,
-        29
-      ],
-      "kind": "standing"
-    },
-    "vehicle_truck_n": {
-      "x": 577,
-      "y": 448,
       "w": 19,
       "h": 27,
       "footprint": [
@@ -779,8 +659,8 @@
       "kind": "vehicle"
     },
     "vehicle_truck_ne": {
-      "x": 604,
-      "y": 448,
+      "x": 1165,
+      "y": 313,
       "w": 35,
       "h": 31,
       "footprint": [
@@ -794,8 +674,8 @@
       "kind": "vehicle"
     },
     "vehicle_truck_e": {
-      "x": 647,
-      "y": 448,
+      "x": 1208,
+      "y": 313,
       "w": 33,
       "h": 29,
       "footprint": [
@@ -809,8 +689,8 @@
       "kind": "vehicle"
     },
     "vehicle_truck_se": {
-      "x": 688,
-      "y": 448,
+      "x": 1249,
+      "y": 313,
       "w": 35,
       "h": 33,
       "footprint": [
@@ -824,8 +704,8 @@
       "kind": "vehicle"
     },
     "vehicle_truck_s": {
-      "x": 731,
-      "y": 448,
+      "x": 1292,
+      "y": 313,
       "w": 19,
       "h": 30,
       "footprint": [
@@ -839,8 +719,8 @@
       "kind": "vehicle"
     },
     "vehicle_truck_sw": {
-      "x": 758,
-      "y": 448,
+      "x": 1319,
+      "y": 313,
       "w": 35,
       "h": 33,
       "footprint": [
@@ -854,8 +734,8 @@
       "kind": "vehicle"
     },
     "vehicle_truck_w": {
-      "x": 801,
-      "y": 448,
+      "x": 1362,
+      "y": 313,
       "w": 33,
       "h": 29,
       "footprint": [
@@ -869,8 +749,8 @@
       "kind": "vehicle"
     },
     "vehicle_truck_nw": {
-      "x": 842,
-      "y": 448,
+      "x": 1403,
+      "y": 313,
       "w": 35,
       "h": 32,
       "footprint": [
@@ -884,8 +764,8 @@
       "kind": "vehicle"
     },
     "highlight": {
-      "x": 885,
-      "y": 448,
+      "x": 1446,
+      "y": 313,
       "w": 132,
       "h": 83,
       "footprint": [
@@ -899,7 +779,7 @@
       "kind": "ground"
     },
     "highlight_soft": {
-      "x": 1025,
+      "x": 8,
       "y": 448,
       "w": 132,
       "h": 83,
@@ -912,6 +792,422 @@
         32
       ],
       "kind": "ground"
+    },
+    "layer_buildingtiles_044_70_130_220": {
+      "x": 148,
+      "y": 448,
+      "w": 100,
+      "h": 85,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        50,
+        25
+      ],
+      "kind": "standing"
+    },
+    "layer_buildingtiles_057_70_130_220": {
+      "x": 256,
+      "y": 448,
+      "w": 99,
+      "h": 60,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        49,
+        30
+      ],
+      "kind": "standing"
+    },
+    "layer_buildingtiles_044_224_70_70": {
+      "x": 363,
+      "y": 448,
+      "w": 100,
+      "h": 85,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        50,
+        25
+      ],
+      "kind": "standing"
+    },
+    "layer_buildingtiles_057_224_70_70": {
+      "x": 471,
+      "y": 448,
+      "w": 99,
+      "h": 60,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        49,
+        30
+      ],
+      "kind": "standing"
+    },
+    "layer_buildingtiles_044_190_92_255": {
+      "x": 578,
+      "y": 448,
+      "w": 100,
+      "h": 85,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        50,
+        25
+      ],
+      "kind": "standing"
+    },
+    "layer_buildingtiles_057_190_92_255": {
+      "x": 686,
+      "y": 448,
+      "w": 99,
+      "h": 60,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        49,
+        30
+      ],
+      "kind": "standing"
+    },
+    "layer_buildingtiles_044_78_196_90": {
+      "x": 793,
+      "y": 448,
+      "w": 100,
+      "h": 85,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        50,
+        25
+      ],
+      "kind": "standing"
+    },
+    "layer_buildingtiles_057_78_196_90": {
+      "x": 901,
+      "y": 448,
+      "w": 99,
+      "h": 60,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        49,
+        30
+      ],
+      "kind": "standing"
+    },
+    "factory_blue": {
+      "x": 0,
+      "y": 0,
+      "w": 100,
+      "h": 234,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        50,
+        174
+      ],
+      "kind": "standing",
+      "parts": [
+        {
+          "sprite": "layer_buildingtiles_044_70_130_220",
+          "dx": 0,
+          "dy": 149
+        },
+        {
+          "sprite": "layer_buildingtiles_044_70_130_220",
+          "dx": 0,
+          "dy": 113
+        },
+        {
+          "sprite": "layer_buildingtiles_044_70_130_220",
+          "dx": 0,
+          "dy": 77
+        },
+        {
+          "sprite": "layer_buildingtiles_044_70_130_220",
+          "dx": 0,
+          "dy": 41
+        },
+        {
+          "sprite": "layer_buildingtiles_057_70_130_220",
+          "dx": 0,
+          "dy": 0
+        }
+      ]
+    },
+    "factory_red": {
+      "x": 0,
+      "y": 0,
+      "w": 100,
+      "h": 234,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        50,
+        174
+      ],
+      "kind": "standing",
+      "parts": [
+        {
+          "sprite": "layer_buildingtiles_044_224_70_70",
+          "dx": 0,
+          "dy": 149
+        },
+        {
+          "sprite": "layer_buildingtiles_044_224_70_70",
+          "dx": 0,
+          "dy": 113
+        },
+        {
+          "sprite": "layer_buildingtiles_044_224_70_70",
+          "dx": 0,
+          "dy": 77
+        },
+        {
+          "sprite": "layer_buildingtiles_044_224_70_70",
+          "dx": 0,
+          "dy": 41
+        },
+        {
+          "sprite": "layer_buildingtiles_057_224_70_70",
+          "dx": 0,
+          "dy": 0
+        }
+      ]
+    },
+    "factory_purple": {
+      "x": 0,
+      "y": 0,
+      "w": 100,
+      "h": 234,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        50,
+        174
+      ],
+      "kind": "standing",
+      "parts": [
+        {
+          "sprite": "layer_buildingtiles_044_190_92_255",
+          "dx": 0,
+          "dy": 149
+        },
+        {
+          "sprite": "layer_buildingtiles_044_190_92_255",
+          "dx": 0,
+          "dy": 113
+        },
+        {
+          "sprite": "layer_buildingtiles_044_190_92_255",
+          "dx": 0,
+          "dy": 77
+        },
+        {
+          "sprite": "layer_buildingtiles_044_190_92_255",
+          "dx": 0,
+          "dy": 41
+        },
+        {
+          "sprite": "layer_buildingtiles_057_190_92_255",
+          "dx": 0,
+          "dy": 0
+        }
+      ]
+    },
+    "factory_green": {
+      "x": 0,
+      "y": 0,
+      "w": 100,
+      "h": 234,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        50,
+        174
+      ],
+      "kind": "standing",
+      "parts": [
+        {
+          "sprite": "layer_buildingtiles_044_78_196_90",
+          "dx": 0,
+          "dy": 149
+        },
+        {
+          "sprite": "layer_buildingtiles_044_78_196_90",
+          "dx": 0,
+          "dy": 113
+        },
+        {
+          "sprite": "layer_buildingtiles_044_78_196_90",
+          "dx": 0,
+          "dy": 77
+        },
+        {
+          "sprite": "layer_buildingtiles_044_78_196_90",
+          "dx": 0,
+          "dy": 41
+        },
+        {
+          "sprite": "layer_buildingtiles_057_78_196_90",
+          "dx": 0,
+          "dy": 0
+        }
+      ]
+    },
+    "depot_blue": {
+      "x": 0,
+      "y": 0,
+      "w": 100,
+      "h": 162,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        50,
+        102
+      ],
+      "kind": "standing",
+      "parts": [
+        {
+          "sprite": "layer_buildingtiles_044_70_130_220",
+          "dx": 0,
+          "dy": 77
+        },
+        {
+          "sprite": "layer_buildingtiles_044_70_130_220",
+          "dx": 0,
+          "dy": 41
+        },
+        {
+          "sprite": "layer_buildingtiles_057_70_130_220",
+          "dx": 0,
+          "dy": 0
+        }
+      ]
+    },
+    "depot_red": {
+      "x": 0,
+      "y": 0,
+      "w": 100,
+      "h": 162,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        50,
+        102
+      ],
+      "kind": "standing",
+      "parts": [
+        {
+          "sprite": "layer_buildingtiles_044_224_70_70",
+          "dx": 0,
+          "dy": 77
+        },
+        {
+          "sprite": "layer_buildingtiles_044_224_70_70",
+          "dx": 0,
+          "dy": 41
+        },
+        {
+          "sprite": "layer_buildingtiles_057_224_70_70",
+          "dx": 0,
+          "dy": 0
+        }
+      ]
+    },
+    "depot_purple": {
+      "x": 0,
+      "y": 0,
+      "w": 100,
+      "h": 162,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        50,
+        102
+      ],
+      "kind": "standing",
+      "parts": [
+        {
+          "sprite": "layer_buildingtiles_044_190_92_255",
+          "dx": 0,
+          "dy": 77
+        },
+        {
+          "sprite": "layer_buildingtiles_044_190_92_255",
+          "dx": 0,
+          "dy": 41
+        },
+        {
+          "sprite": "layer_buildingtiles_057_190_92_255",
+          "dx": 0,
+          "dy": 0
+        }
+      ]
+    },
+    "depot_green": {
+      "x": 0,
+      "y": 0,
+      "w": 100,
+      "h": 162,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        50,
+        102
+      ],
+      "kind": "standing",
+      "parts": [
+        {
+          "sprite": "layer_buildingtiles_044_78_196_90",
+          "dx": 0,
+          "dy": 77
+        },
+        {
+          "sprite": "layer_buildingtiles_044_78_196_90",
+          "dx": 0,
+          "dy": 41
+        },
+        {
+          "sprite": "layer_buildingtiles_057_78_196_90",
+          "dx": 0,
+          "dy": 0
+        }
+      ]
     }
   }
 }

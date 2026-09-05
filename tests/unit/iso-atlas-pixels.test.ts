@@ -15,14 +15,26 @@ import sharp from "sharp";
 
 const manifest = JSON.parse(readFileSync("assets/iso-atlas/manifest.json", "utf8")) as {
   tileW: number; tileH: number;
-  sprites: Record<string, { x: number; y: number; w: number; h: number; anchor: [number, number] }>;
+  sprites: Record<string, {
+    x: number; y: number; w: number; h: number; anchor: [number, number];
+    parts?: { sprite: string; dx: number; dy: number }[];
+  }>;
 };
 const cells = JSON.parse(readFileSync("tools/iso-atlas.cells.json", "utf8")) as {
   source: { root: string };
-  sprites: { name: string; png: string; kind: string; mask?: [number, number] }[];
+  sprites: {
+    name: string; png?: string; kind: string; mask?: [number, number];
+    tintLum?: [number, number, number]; stack?: { png: string }[];
+  }[];
 };
 const cell = (name: string) => cells.sprites.find((s) => s.name === name)!;
-const srcPath = (name: string) => join(cells.source.root, cell(name).png);
+const srcPath = (name: string) => join(cells.source.root, cell(name).png!);
+/** MB1: the packer's deterministic layer-sprite name for a (png, tint) layer. */
+const layerName = (png: string, tint: [number, number, number]) => {
+  const stem = png.slice(png.lastIndexOf("/") + 1).replace(/\.png$/i, "")
+    .toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return `layer_${stem}_${tint.join("_")}`;
+};
 
 type Raw = { data: Buffer; info: { width: number; height: number } };
 const cache = new Map<string, Raw>();
@@ -156,7 +168,10 @@ describe("K2/K3 atlas cells match their sources and their claimed terrain", () =
     expect(rr, "rough differs from grass").toBeGreaterThan(gr + 25);
   });
 
-  it("the four factory/depot tints carry their player hue", async () => {
+  it("the four factory/depot tints carry their player hue on the shared layer sprites", async () => {
+    // MB1: factory/depot are now composite STACKS (no atlas region of their
+    // own) — the tint lives on their shared (png, tint) layer sprites. Each
+    // factory/depot cell is therefore verified against its tinted layer.
     const mean = async (name: string) => {
       const { data, info } = await img("assets/iso-atlas/atlas@1x.png");
       const s = manifest.sprites[name];
@@ -170,51 +185,87 @@ describe("K2/K3 atlas cells match their sources and their claimed terrain", () =
       }
       return [r / n, g / n, b / n] as const;
     };
-    const [br, bg, bb] = await mean("factory_blue");
+    const layerMean = async (cellName: string) => {
+      const s = cell(cellName);
+      const tint = s.tintLum!;
+      return mean(layerName(s.stack![0].png, tint));
+    };
+    const [br, , bb] = await layerMean("factory_blue");
     expect(bb, "blue factory leans blue").toBeGreaterThan(br + 12);
-    const [rr, , rb] = await mean("factory_red");
+    const [rr, , rb] = await layerMean("factory_red");
     expect(rr, "red factory leans red").toBeGreaterThan(rb + 12);
-    const [pr, pg, pb] = await mean("factory_purple");
+    const [pr, pg, pb] = await layerMean("factory_purple");
     expect(pr + pb, "purple factory leans purple").toBeGreaterThan(pg + 12);
-    const [gr, gg, gb] = await mean("factory_green");
+    const [gr, gg, gb] = await layerMean("factory_green");
     expect(gg, "green factory leans green").toBeGreaterThan(Math.max(gr, gb) + 8);
-    const [dr, , db] = await mean("depot_red");
+    const [dr, , db] = await layerMean("depot_red");
     expect(dr, "red depot leans red").toBeGreaterThan(db + 12);
+    expect(manifest.sprites[layerName("buildings/PNG/buildingTiles_044.png", [70, 130, 220])])
+      .toBeTruthy();  // factory_blue + depot_blue share the tinted storey layer
   });
 
-  it("tint families share one geometry: identical size and anchor", () => {
+  it("tint families share one stack geometry: identical size and anchor", () => {
     const fam = ["factory_blue", "factory_red", "factory_purple", "factory_green"];
     const base = manifest.sprites[fam[0]];
     for (const n of fam.slice(1)) {
       const s = manifest.sprites[n];
       expect([s.w, s.h, s.anchor]).toEqual([base.w, base.h, base.anchor]);
+      expect(s.parts?.length).toBe(base.parts?.length);
     }
     const depots = ["depot_blue", "depot_red", "depot_purple", "depot_green"];
     const db = manifest.sprites[depots[0]];
     for (const n of depots.slice(1)) {
       const s = manifest.sprites[n];
       expect([s.w, s.h, s.anchor]).toEqual([db.w, db.h, db.anchor]);
+      expect(s.parts?.length).toBe(db.parts?.length);
     }
   });
 });
 
 describe("K3 industries are distinct coherent buildings", () => {
-  it("each industry maps to a different source PNG", () => {
+  it("each industry maps to a different single source PNG", () => {
     const pngs = new Set(["farm", "forest", "ore_mine", "quarry", "oil_rig", "gold_mine"]
       .map((n) => cell(n).png));
     expect(pngs.size).toBe(6);
-    expect(cell("factory_blue").png).not.toEqual(cell("depot_blue").png);
-    // factories and depots do not double as industries
+    // factories/depots are now STACKED composites, not single png cells
+    expect(cell("factory_blue").stack).toBeTruthy();
+    expect(cell("depot_blue").stack).toBeTruthy();
+    expect(cell("factory_blue").png).toBeUndefined();
+    // industries stay one-piece and never borrow a stack layer tile
     for (const n of ["farm", "forest", "ore_mine", "quarry", "oil_rig", "gold_mine"]) {
-      expect(cell(n).png).not.toEqual(cell("factory_blue").png);
-      expect(cell(n).png).not.toEqual(cell("depot_blue").png);
+      for (const b of ["factory_blue", "depot_blue"]) {
+        const layers = cell(b).stack!.map((l) => l.png);
+        expect(layers, `${b} shares a tile with ${n}`).not.toContain(cell(n).png);
+      }
     }
   });
 
-  it("the factory's base diamond spans the full tile (flush on 1×1)", () => {
+  it("factories stack taller than depots (MB1 storey mix)", () => {
+    expect(cell("factory_blue").stack!.length).toBe(5);   // base + 3 floors + roof
+    expect(cell("depot_blue").stack!.length).toBe(3);     // base + 1 floor + roof
+    // every factory/depot layer resolves to a packed layer sprite in the manifest
+    for (const b of ["factory_blue", "factory_red", "factory_purple", "factory_green",
+      "depot_blue", "depot_red", "depot_purple", "depot_green"]) {
+      const s = cell(b);
+      for (const l of s.stack!) {
+        expect(manifest.sprites[layerName(l.png, s.tintLum!)], `${b} layer ${l.png}`)
+          .toBeTruthy();
+      }
+      expect(manifest.sprites[b].parts?.length).toBe(s.stack!.length);
+    }
+  });
+
+  it("the composite stands flush: base layer's widest row is the ground anchor", () => {
     const f = manifest.sprites.factory_blue;
-    // 133px-wide sprite whose anchor x is 66: base diamond = the tile diamond
-    expect(f.w).toBeGreaterThanOrEqual(132);
-    expect(f.anchor[0]).toBe(66);
+    // composite anchor x is centred; w/h form the union bounding box (taller than
+    // any single layer), and the base layer is the first part at dy such that its
+    // own widest row lands on the tile ground line.
+    expect(f.parts).toBeTruthy();
+    expect(f.w).toBeGreaterThanOrEqual(90);
+    expect(f.h).toBeGreaterThan(manifest.sprites.farm.h);
+    expect(f.anchor[0]).toBe(Math.floor(f.w / 2));
+    // building rises out of the ground, roof far above the base row
+    expect(f.parts![0].dy).toBeGreaterThan(0);
+    expect(f.parts![f.parts!.length - 1].dy).toBe(0);      // roof caps the top
   });
 });

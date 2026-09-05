@@ -155,6 +155,32 @@
               }
             }
           }
+        },
+        "parts": {
+          "description": "MB1 multi-storey stack: present only on a composite 'standing' building sprite. The sprite's x/y/w/h are its UNION bounding box (x/y unused); each part names a packed layer sprite (a storey/base/roof tile, tinted at pack time) drawn at a (dx,dy) offset from the box's top-left, bottom-to-top order. A composite is ONE draw/order/pick object on its footprint.",
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "sprite",
+              "dx",
+              "dy"
+            ],
+            "properties": {
+              "sprite": {
+                "type": "string",
+                "pattern": "^[a-z0-9_]+$"
+              },
+              "dx": {
+                "type": "integer"
+              },
+              "dy": {
+                "type": "integer"
+              }
+            }
+          }
         }
       }
     }

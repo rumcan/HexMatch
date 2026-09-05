@@ -269,6 +269,23 @@ export class IsoRenderer {
     const z = this.cam.zoom;
     const img = this.atlas.image(z);
     if (!img) return;
+    // MB1: a composite (stacked) building is drawn part-by-part — each layer
+    // is a packed sprite sourced from its own atlas rect, offset by (dx, dy)
+    // from the stack's top-left (bottom-to-top so upper storeys paint over).
+    if (p.def.parts) {
+      for (const part of p.def.parts) {
+        const def = this.atlas.get(part.sprite);
+        if (!def) continue;
+        const [sx, sy] = worldToScreen(this.cam, p.wx + part.dx, p.wy + part.dy);
+        ctx.drawImage(
+          img as unknown as CanvasImageSource,
+          def.x * z, def.y * z, def.w * z, def.h * z,
+          Math.floor(sx), Math.floor(sy),
+          Math.floor(def.w * z), Math.floor(def.h * z),
+        );
+      }
+      return;
+    }
     const frame = p.frame ?? this.atlas.frameAt(p.def, timeMs);
     const rect = this.atlas.frameRect(p.def, frame);
     const [sx, sy] = worldToScreen(this.cam, p.wx, p.wy);

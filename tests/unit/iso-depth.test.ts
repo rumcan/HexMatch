@@ -144,3 +144,39 @@ describe("E4 picking — stage 2 alpha test", () => {
     expect(Array.from(m.bits)).toEqual([0, 1]);
   });
 });
+
+describe("MB1 stacked composites are ONE object on their footprint", () => {
+  it("a stacked building places as its union bounding box, taller than any layer", () => {
+    const f = P("factory_blue", 5, 5);
+    expect(f.def.parts).toBeTruthy();
+    expect(f.def.parts!.length).toBeGreaterThanOrEqual(2);
+    // union w/h come straight off the manifest composite
+    expect(f.w).toBe(f.def.w);
+    expect(f.h).toBe(f.def.h);
+    // a stack must be strictly taller than a single-piece industry next door
+    expect(f.h).toBeGreaterThan(P("farm", 5, 5).h);
+  });
+
+  it("depth-sorts by its 1×1 footprint (one entry, painter-ordered with neighbours)", () => {
+    const factory = P("factory_blue", 5, 4);
+    const farm = P("farm", 5, 5);            // one row in front
+    const { order, cycles } = depthSort([farm, factory]);
+    expect(cycles).toEqual([]);
+    // two distinct objects → two entries, back (factory) then front (farm)
+    expect(order.map((p) => p.sprite)).toEqual(["factory_blue", "farm"]);
+    expect(factory.key).toBe((5) + (4));     // [1,1] footprint → tx+ty
+  });
+
+  it("its top is high enough that a click on the tower above a single storey hits it", () => {
+    const f = P("factory_blue", 20, 20);
+    const farm = P("farm", 20, 20);
+    // high on the tower: above where a single-storey building's art reaches,
+    // but inside the stack's union box → still the factory (union alpha).
+    const highY = farm.wy;                     // top row of a single building
+    const pt = { x: f.wx + f.w / 2, y: f.wy + Math.floor(f.h / 4) };
+    expect(pt.y).toBeLessThan(farm.wy + 1);    // sanity: really up in the tower
+    // (no canvas in node → no masks; a composite without a mask tests opaque on
+    // its union box, matching the pre-mask contract.)
+    expect(pickSprite(atlas, [farm, f], pt.x, pt.y)).toBe(f);
+  });
+});
