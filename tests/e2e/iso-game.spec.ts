@@ -109,10 +109,13 @@ async function tileCenter(page: import("@playwright/test").Page, tx: number, ty:
   return page.evaluate(({ tx, ty }) => {
     const h = (window as any).__iso;
     const dpr = window.devicePixelRatio || 1;
-    // K0/K4: tileScreenAt already returns the diamond centre. Do not add the
-    // old fixed 16px half-height: besides being stale, it ignored camera zoom.
+    // Aim halfway down the tile surface. Derive that offset from projected
+    // geometry so it follows both camera zoom and device pixel ratio; the old
+    // helper hard-coded 16 device pixels and missed at 0.5x.
     const [dx, dy] = h.tileScreenAt(tx, ty);
-    return { x: dx / dpr, y: dy / dpr };
+    const [, nextY] = h.tileScreenAt(tx, ty + 1);
+    const surfaceOffset = Math.abs(nextY - dy) / 2;
+    return { x: dx / dpr, y: (dy + surfaceOffset) / dpr };
   }, { tx, ty });
 }
 
