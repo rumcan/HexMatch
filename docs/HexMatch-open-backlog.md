@@ -104,13 +104,24 @@ section stands — MB1 is done and the art pipeline was not touched.
 
 ### Still open
 
-Nothing in `docs/tickets/` is open. Next up is Priority 2 — the remaining TK
-gameplay tickets (TK-002, TK-004 → TK-007, TK-005 → TK-006), one PR each.
-TK-002's dependency (track ownership, W2) is in place, and TK-004's art (K5
-vehicles, directional frames) is already in the atlas.
+One ticket is open: **E14** (`docs/tickets/E14-e2e-corridor-picker-returns-null.md`)
+— the CI `e2e` job's gameplay spec. It is **not** a regression from W8/W9/G9;
+it has been red since the Kenney art cutover doubled the tile geometry
+(`TILE_W 64 → 132`), and PR #18 worked around it for the TK-001 test only
+without ticketing it. E14 has the provenance, the arithmetic and the fix
+candidates. Fixing it matters beyond the one red job: while `e2e` is red it
+blocks nothing, which is how G9's red unit suite reached `main`.
+
+Otherwise nothing in `docs/tickets/` is open. Next up is Priority 2 — the
+remaining TK gameplay tickets (TK-002, TK-004 → TK-007, TK-005 → TK-006), one
+PR each. TK-002's dependency (track ownership, W2) is in place, and TK-004's
+art (K5 vehicles, directional frames) is already in the atlas.
 
 One caveat carried over from the play-test, unchanged by these fixes: the
 sandbox has no browser, so `npm run test:e2e` (real chromium, CSS-occlusion
-assertions) was **not** run for W8/W9/G9. Worth a pass in a real browser before
-the play-test report is closed out — `npm run dev`, then the five core-loop
-steps, with step 5 (the rival builds its own road) now expected to pass.
+assertions) was **not** run for W8/W9/G9 — CI ran it instead, and reports the
+pre-existing E14 failure (3 passed, 1 failed at the corridor picker) while the
+`test` job is green for the first time since the cutover. Worth a pass in a real
+browser before the play-test report is closed out — `npm run dev`, then the five
+core-loop steps, with step 5 (the rival builds its own road) now expected to
+pass.
