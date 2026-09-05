@@ -36,6 +36,25 @@
   button:hover{border-color:var(--accent)}
   button.on{background:var(--accent);border-color:var(--accent);color:#06121f;font-weight:600}
   button.primary{background:var(--accent);border-color:var(--accent);color:#06121f;font-weight:600}
+  button.small{padding:3px 8px}
+  /* MB1 stack composer */
+  .stackbar{display:flex;gap:6px;align-items:center;padding:8px 14px;border-bottom:1px solid var(--line);
+            background:#0f151c;flex-wrap:wrap}
+  .stackbar .seg{display:inline-flex;gap:4px}
+  .stackbar .lbl{color:var(--muted);font-size:11px}
+  .stackbar .count{display:inline-flex;gap:6px;align-items:center}
+  .stackbar .count b{min-width:2ch;text-align:center;font-size:13px}
+  .previewbox{display:flex;gap:16px;align-items:flex-end;justify-content:center;
+              padding:10px;background:#0b1118;border-bottom:1px solid var(--line);min-height:220px}
+  .previewbox .stage{background:#12202e;border:1px solid var(--line);border-radius:8px;
+                     display:flex;align-items:flex-end;justify-content:center;overflow:hidden;
+                     padding:6px;position:relative;width:200px;height:220px}
+  .previewbox canvas.pv{image-rendering:auto;display:block;margin:auto}
+  .previewbox .readout{flex:1;min-width:180px;font-size:12px;color:var(--muted);line-height:1.6}
+  .previewbox .readout b{color:var(--ink)}
+  .previewbox .readout .t{color:var(--accent)}
+  .pnl{padding:7px 14px;font-size:11px;letter-spacing:.05em;text-transform:uppercase;
+       color:var(--accent);background:#0f151c;border-bottom:1px solid var(--line)}
   .grid{flex:1;overflow:auto;padding:12px;display:grid;
         grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;align-content:start}
   .opt{background:#0f151c;border:1px solid var(--line);border-radius:8px;padding:6px;cursor:pointer;text-align:center;position:relative}
@@ -43,6 +62,11 @@
   .opt.cur{border-color:var(--good);box-shadow:0 0 0 2px var(--good) inset}
   .opt canvas{display:block;margin:0 auto}
   .opt .lbl{font-size:10px;color:var(--muted);margin-top:3px}
+  .opt .role{position:absolute;top:4px;left:5px;font-size:9px;padding:1px 5px;border-radius:9px;
+             background:#0e141b;border:1px solid var(--line);color:var(--muted)}
+  .opt .role.b{color:#ffd166;border-color:#7a5c1a}
+  .opt .role.m{color:#7ff1ff;border-color:#177380}
+  .opt .role.r{color:#c7f9cc;border-color:#2a7a3c}
   .foot{padding:9px 14px;border-top:1px solid var(--line);display:flex;gap:8px;background:#101820}
   #err{position:fixed;top:0;left:0;right:0;background:#5a1d1d;color:#fff;padding:10px 16px;z-index:20;display:none}
   #tip{position:fixed;pointer-events:none;background:#000d;color:#fff;padding:6px 9px;border-radius:6px;
@@ -67,7 +91,7 @@
       <button data-src="rail" id="bR">Rail (derived)</button>
       <button data-src="vehicles" id="bV">Vehicles</button>
     </div>
-    <div class="grid" id="grid"></div>
+    <div id="body" style="flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0"></div>
     <div class="foot">
       <span id="count" style="flex:1;color:var(--muted);align-self:center"></span>
       <button id="reset">Revert all</button>
@@ -104,11 +128,11 @@ const SPEC = {
        {"name":"rail_0011","want":"Rail curve."},
        {"name":"rail_1111","want":"Rail crossroads."}
      ]},
-    {"title":"Buildings — one each, must read as its industry",
-     "note":"Factory and depot are tinted 4 ways from ONE building each — just pick the base building.",
+    {"title":"Buildings — MB1: factory/depot are multi-storey STACKS",
+     "note":"factory_* and depot_* are tinted 4 ways (per player) from ONE composed multi-storey building — click factory or depot to open the stack editor (pick base / middle floors / roof). The other industries are single Kenney tiles, picked as before.",
      "slots":[
-       {"name":"factory_blue","want":"The main factory / HQ — the biggest, most industrial building. This one gets tinted per player."},
-       {"name":"depot_blue","want":"A small loading depot / terminal / truck stop — compact, clearly a utility building. Tinted per player."},
+       {"name":"factory_blue","want":"The factory TOWER: a tall stack — a ground base + several window storeys + a roof. Pick the tallest, most industrial look. Tinted per player. (Same composition auto-applies to factory_red/purple/green.)"},
+       {"name":"depot_blue","want":"The depot: a compact stack — base + 1–2 storeys + roof. Reads as a small utility/loading building. Tinted per player."},
        {"name":"farm","want":"A farm or barn — grain industry."},
        {"name":"forest","want":"Trees or a lumber camp — wood industry. (Can be a landscape tree tile.)"},
        {"name":"ore_mine","want":"A mine or heavy-industry building — ore."},
@@ -132,10 +156,39 @@ let cellsDoc=null;
 for(const u of CELLS){try{const r=await fetch(u);if(r.ok){cellsDoc=await r.json();break;}}catch{}}
 if(!cellsDoc){fail("Could not load <code>tools/iso-atlas.cells.json</code>. Put art-lab.html in the repo root and run the dev server.");throw new Error("no cells");}
 
+const STOREY = 36;             // MB1: per-storey rise (px, 1x) — matches the packer
 const byName=new Map(cellsDoc.sprites.map(s=>[s.name,s]));
-const original=new Map(cellsDoc.sprites.map(s=>[s.name,s.png]));
-const current=new Map(original);
-// build the want-lookup from SPEC
+
+// ── single-piece cells (png) vs stacked cells ─────────────────────────────
+// A stack cell carries an ordered `stack` array. factory_*/depot_* are the
+// tinted members of a shared FAMILY, edited as ONE representative composition.
+const FAMILY = {factory_blue:["factory_blue","factory_red","factory_purple","factory_green"],
+                depot_blue:["depot_blue","depot_red","depot_purple","depot_green"]};
+/** Which editable family representative a sprite name belongs to (any tinted member). */
+const repName = n => {
+  for (const rep of Object.keys(FAMILY)) if (FAMILY[rep].includes(n)) return rep;
+  return null;
+};
+const stackOf = cell => (cell && Array.isArray(cell.stack)) ? cell.stack.map(l=>l.png) : null;
+
+const originalPng=new Map();   // name -> png   (single-piece cells)
+for(const s of cellsDoc.sprites) if(s.png!==undefined) originalPng.set(s.name,s.png);
+const current=new Map(originalPng);
+// representative -> {base, floor, roof, floors} composition for stack families
+const origComp=new Map();
+const curComp=new Map();
+for(const rep of Object.keys(FAMILY)){
+  const src=stackOf(byName.get(rep));
+  if(!src){ // no stack in source — fall back to single-png pick if one exists
+    if(byName.get(rep)?.png!==undefined){ originalPng.set(rep, byName.get(rep).png); current.set(rep, byName.get(rep).png); }
+    continue;
+  }
+  const floors=src.length-2;
+  origComp.set(rep, JSON.stringify(src));
+  curComp.set(rep,{base:src[0], floor:(src.length>2?src[1]:src[0]), roof:src[src.length-1], floors:Math.max(0,floors)});
+}
+const buildStack=c=>[c.base, ...Array.from({length:c.floors},()=>c.floor), c.roof];
+
 const WANT=new Map();
 for(const g of SPEC.groups)for(const s of g.slots)WANT.set(s.name,s.want);
 
@@ -159,7 +212,46 @@ async function thumb(cv,png,sc){const im=await load(png);const c=cv.getContext("
   const w=im.width*sc,h=im.height*sc;c.imageSmoothingEnabled=true;
   c.drawImage(im,(cv.width-w)/2,cv.height-h-2,w,h);}
 
-let selected=SPEC.groups[0].slots[0].name, src="landscape", q="";
+// MB1 faithful assembly: same geometry as tools/slice-atlas.mjs (each layer's
+// base-diamond widest row sits STOREY above the one below), so the preview
+// equals what the game renders. Returns {canvas,W,H} at 1x or null.
+async function assemble(pngs){
+  const parts=[];
+  for(const png of pngs){
+    const im=await load(png); if(!im) return null;
+    const c=document.createElement("canvas"); c.width=im.width;c.height=im.height;
+    c.getContext("2d").drawImage(im,0,0);
+    const d=c.getContext("2d").getImageData(0,0,im.width,im.height).data;
+    let wr=-1,wn=-1;
+    for(let y=0;y<im.height;y++){let n=0;for(let x=0;x<im.width;x++)if(d[(y*im.width+x)*4+3]>10)n++;if(n>wn){wn=n;wr=y;}}
+    parts.push({im,w:im.width,h:im.height,wr});
+  }
+  if(!parts.length) return null;
+  const n=parts.length;
+  const tops=parts.map((p,i)=>({p,i,top:-i*STOREY-p.wr}));
+  const minTop=Math.min(...tops.map(t=>t.top));
+  const W=Math.max(...parts.map(p=>p.w));
+  let H=0; for(const t of tops)H=Math.max(H,t.top-minTop+t.p.h);
+  const cv=document.createElement("canvas"); cv.width=W;cv.height=H;
+  const g=cv.getContext("2d");
+  for(const t of tops){const dx=Math.max(0,Math.floor((W-t.p.w)/2));const dy=t.top-minTop;g.drawImage(t.p.im,dx,dy);}
+  return {canvas:cv,W,H};
+}
+// draw an assembled 1x canvas scaled to fit a target canvas (bottom-aligned)
+async function fitDraw(cv, pngs){
+  const c=cv.getContext("2d");c.clearRect(0,0,cv.width,cv.height);
+  const A=await assemble(pngs);
+  if(!A){c.fillStyle="#803";c.fillRect(0,0,cv.width,cv.height);return;}
+  const s=Math.min(cv.width/A.W, (cv.height-2)/A.H);
+  const w=A.W*s,h=A.H*s;c.imageSmoothingEnabled=true;
+  c.drawImage(A.canvas,(cv.width-w)/2,cv.height-h-2,w,h);
+}
+
+let selected=SPEC.groups[0].slots[0].name, src="landscape", q="", mode="base"; // mode: base|floor|roof (stack composer)
+
+const body=document.getElementById("body");
+function currentStack(rep){return curComp.has(rep)?buildStack(curComp.get(rep)):null;}
+function repChanged(rep){return curComp.has(rep) && JSON.stringify(buildStack(curComp.get(rep)))!==origComp.get(rep);}
 
 function renderLeft(){
   const host=document.getElementById("left");host.innerHTML="";
@@ -169,69 +261,177 @@ function renderLeft(){
     host.appendChild(h);
     for(const slot of g.slots){
       if(!byName.has(slot.name))continue;
+      const rep=repName(slot.name);
       const row=document.createElement("div");
-      const changed=current.get(slot.name)!==original.get(slot.name);
+      const changed=rep? repChanged(rep) : (current.get(slot.name)!==originalPng.get(slot.name));
       row.className="slot"+(slot.name===selected?" sel":"")+(changed?" done":"");
       const cv=document.createElement("canvas");cv.width=52;cv.height=42;
       const t=document.createElement("div");
-      t.innerHTML=`<div class="n">${slot.name}</div><div class="w">${slot.want}</div>`;
+      const tag=rep?" (stack) ":"";
+      t.innerHTML=`<div class="n">${slot.name}${rep?`<span style="color:var(--good)">${tag}</span>`:""}</div><div class="w">${slot.want}</div>`;
       row.append(cv,t);
       row.onclick=()=>{selected=slot.name;
-        // jump to the most likely source tab for this slot
-        if(slot.name.startsWith("rail")) src="rail";
+        if(rep){ src="buildings"; mode="base"; }
+        else if(slot.name.startsWith("rail")) src="rail";
         else if(slot.name.startsWith("terrain")||slot.name.startsWith("road")) src="landscape";
         else if(slot.name.startsWith("vehicle")) src="vehicles";
         else src="buildings";
         for(const x of document.querySelectorAll("[data-src]"))x.classList.toggle("on",x.dataset.src===src);
-        renderLeft();renderHead();renderGrid();};
+        renderLeft();renderHead();renderBody();};
       host.appendChild(row);
-      thumb(cv,current.get(slot.name),0.33);
+      if(rep){ const st=currentStack(rep); if(st) fitDraw(cv,st); else thumb(cv,current.get(slot.name),0.33); }
+      else thumb(cv,current.get(slot.name),0.33);
     }
   }
-  const n=[...current].filter(([k,v])=>v!==original.get(k)).length;
+  let n=0;
+  for(const[k,v]of current) if(originalPng.has(k) && v!==originalPng.get(k)) n++;
+  for(const rep of curComp.keys()) if(repChanged(rep)) n++;
   document.getElementById("count").textContent=n?`${n} changed`:"no changes yet";
 }
 
 async function renderHead(){
-  const png=current.get(selected);const im=await load(png);
-  document.getElementById("hName").textContent=selected;
-  document.getElementById("hWant").textContent="Should look like: "+(WANT.get(selected)||"");
-  document.getElementById("hCur").textContent=`current: ${png.split("/").pop()} ${im?`(${im.width}×${im.height})`:"— missing"}`;
+  const rep=repName(selected);
+  const hName=document.getElementById("hName"),hWant=document.getElementById("hWant"),hCur=document.getElementById("hCur");
+  hName.textContent=selected;
+  hWant.textContent="Should look like: "+(WANT.get(selected)||"");
+  if(rep){
+    const c=curComp.get(selected);
+    const total=(c?c.floors:0)+2;
+    hCur.innerHTML=`<span style="color:var(--good)">multi-storey stack</span> — `+
+      `${c?`base ${c.base.split("/").pop()} · ${c.floors} floor${c.floors===1?"":"s"} of ${c.floor.split("/").pop()} · roof ${c.roof.split("/").pop()}`:"(single tile)"}`+
+      ` → ${total} layer${total===1?"":"s"} on export`;
+  } else {
+    const png=current.get(selected);const im=await load(png);
+    hCur.textContent=`current: ${(png||"").split("/").pop()} ${im?`(${im.width}×${im.height})`:"— missing"}`;
+  }
 }
 
-function renderGrid(){
-  const host=document.getElementById("grid");host.innerHTML="";
-  const list=CAND[src].filter(p=>!q||p.toLowerCase().includes(q.toLowerCase()));
+// ── right panel: single-piece picker OR stack composer ─────────────────────
+async function renderBody(){
+  const rep=repName(selected);
+  body.innerHTML="";
+  const gwrap=document.createElement("div");   // the scrollable tile grid area
+  gwrap.className="grid";
+  const srcs=document.querySelectorAll("[data-src]");
+  for(const b of srcs)b.style.display=rep?"none":"";   // hide source tabs while composing
+  if(rep){
+    if(!curComp.has(selected)){ // degraded: not a stack cell
+      renderGrid(gwrap,false); body.appendChild(gwrap); return;
+    }
+    body.appendChild(compBar());
+    body.appendChild(await previewBox(selected));
+    const pnl=document.createElement("div");pnl.className="pnl";
+    pnl.textContent=mode==="base"?"Pick the BASE / ground piece (bottom, sits on the tile)":
+                   mode==="floor"?"Pick the MIDDLE storey tile (repeated between base and roof)":
+                   "Pick the ROOF / cap piece (top)";
+    body.appendChild(pnl);
+    renderGrid(gwrap,true);
+    body.appendChild(gwrap);
+    return;
+  }
+  renderGrid(gwrap,false);
+  body.appendChild(gwrap);
+}
+
+function compBar(){
+  const bar=document.createElement("div");bar.className="stackbar";
+  const seg=document.createElement("span");seg.className="seg";
+  for(const[m,label]of [["base","Base"],["floor","Floor tile"],["roof","Roof"]]){
+    const b=document.createElement("button");b.className="small"+(mode===m?" on":"");b.textContent=label;
+    b.onclick=()=>{mode=m;for(const x of seg.children)x.classList.toggle("on",x.getAttribute("data-m")===m);renderBody();};
+    b.setAttribute("data-m",m);seg.appendChild(b);
+  }
+  bar.appendChild(seg);
+  const c=curComp.get(selected);
+  const cnt=document.createElement("span");cnt.className="count";
+  cnt.appendChild(Object.assign(document.createElement("span"),{className:"lbl",textContent:"middle floors"}));
+  const minus=document.createElement("button");minus.className="small";minus.textContent="−";
+  minus.onclick=()=>{if(c.floors>0){c.floors--;renderBody();renderLeft();renderHead();}};
+  const num=document.createElement("b");num.textContent=String(c?c.floors:0);
+  const plus=document.createElement("button");plus.className="small";plus.textContent="+";
+  plus.onclick=()=>{if((c?c.floors:0)<4){c.floors++;renderBody();renderLeft();renderHead();}};
+  cnt.append(minus,num,plus);bar.appendChild(cnt);
+  const note=document.createElement("span");note.className="lbl";
+  note.style.marginLeft="auto";note.textContent="Total layers on export: "+(c?c.floors+2:2)+" (2–6). This one composition is shared by the whole "+selected+" tint family.";
+  bar.appendChild(note);
+  return bar;
+}
+async function previewBox(rep){
+  const box=document.createElement("div");box.className="previewbox";
+  const stage=document.createElement("div");stage.className="stage";
+  const cv=document.createElement("canvas");cv.className="pv";stage.appendChild(cv);
+  const ro=document.createElement("div");ro.className="readout";
+  box.append(stage,ro);
+  const c=curComp.get(rep);
+  const pngs=buildStack(c);
+  const A=await assemble(pngs);
+  if(A){ const s=Math.min(190/A.W,(208)/A.H,3); cv.width=Math.max(1,Math.round(A.W*s)); cv.height=Math.max(1,Math.round(A.H*s));
+    const g=cv.getContext("2d"); g.imageSmoothingEnabled=true; g.drawImage(A.canvas,0,0,cv.width,cv.height);
+  } else { cv.width=120;cv.height=120; }
+  const r=(s)=>s.split("/").pop().replace(".png","");
+  ro.innerHTML=`<div class="t">Assembled tower (faithful preview)</div>
+    <div><b>Base:</b> <code>${r(c.base)}</code> — sits on the tile, foundation down.</div>
+    <div><b>Middle:</b> ${c.floors}× <code>${r(c.floor)}</code>${c.floors?` (repeatable storey)`:``}</div>
+    <div><b>Roof:</b> <code>${r(c.roof)}</code> — caps the top.</div>
+    <div>Layers on export: <b>${pngs.length}</b>. Each storey rises 36px (STOREY), so more floors = a taller tower.</div>
+    <div style="color:var(--muted);margin-top:4px">Toggle the role (Base / Floor / Roof) above, then click tiles in the grid. Composition auto-applies to ${FAMILY[rep].filter(x=>x!==rep).join(", ")} (they share this look; only tint differs).</div>`;
+  return box;
+}
+function renderGrid(host,stackMode){
+  host.innerHTML="";
+  const list=(stackMode?CAND.buildings:CAND[src]).filter(p=>!q||p.toLowerCase().includes(q.toLowerCase()));
+  const rep=repName(selected);
+  const cur=(stackMode && rep && curComp.has(rep))?curComp.get(rep)[mode==="base"?"base":mode==="roof"?"roof":"floor"]:current.get(selected);
   for(const png of list){
-    const d=document.createElement("div");d.className="opt"+(current.get(selected)===png?" cur":"");
+    const d=document.createElement("div");d.className="opt"+(cur===png?" cur":"");
     const cv=document.createElement("canvas");cv.width=108;cv.height=88;
     const lbl=document.createElement("div");lbl.className="lbl";
     lbl.textContent=png.split("/").pop().replace(".png","")
       .replace(/^(landscapeTiles_|buildingTiles_)/,"");
     d.append(cv,lbl);
-    d.onclick=()=>{current.set(selected,png);renderLeft();renderHead();renderGrid();};
+    d.onclick=()=>{
+      if(stackMode){
+        const c=curComp.get(selected);if(!c)return;
+        if(mode==="base")c.base=png; else if(mode==="roof")c.roof=png; else c.floor=png;
+      } else current.set(selected,png);
+      renderLeft();renderHead();renderBody();
+    };
     d.onmousemove=e=>{const t=document.getElementById("tip");t.style.display="block";
       t.style.left=(e.clientX+14)+"px";t.style.top=(e.clientY+14)+"px";
-      t.textContent="Assign to "+selected+" — "+(WANT.get(selected)||"");};
+      const role=stackMode?`as ${mode}`:"to "+selected;
+      t.textContent=role+" — "+(WANT.get(selected)||"");};
     d.onmouseleave=()=>document.getElementById("tip").style.display="none";
     host.appendChild(d);thumb(cv,png,0.7);
   }
 }
-document.getElementById("q").oninput=e=>{q=e.target.value;renderGrid();};
+
+document.getElementById("q").oninput=e=>{q=e.target.value;renderBody();};
 for(const b of document.querySelectorAll("[data-src]"))b.onclick=()=>{
+  if(repName(selected))return;                 // composing — ignore source tabs
   src=b.dataset.src;
   for(const x of document.querySelectorAll("[data-src]"))x.classList.toggle("on",x.dataset.src===src);
-  renderGrid();};
+  renderBody();};
 
-document.getElementById("reset").onclick=()=>{for(const[k,v]of original)current.set(k,v);renderLeft();renderHead();renderGrid();};
+document.getElementById("reset").onclick=()=>{for(const[k,v]of originalPng)current.set(k,v);
+  for(const[rep,orig]of origComp){ const o=JSON.parse(orig); curComp.set(rep,{base:o[0],floor:(o.length>2?o[1]:o[0]),roof:o[o.length-1],floors:Math.max(0,o.length-2)}); }
+  renderLeft();renderHead();renderBody();};
 document.getElementById("export").onclick=()=>{
   const out=structuredClone(cellsDoc);
-  for(const s of out.sprites)s.png=current.get(s.name);
+  for(const s of out.sprites){
+    if(originalPng.has(s.name)){
+      s.png=current.get(s.name);delete s.stack;
+    } else {
+      const rep=repName(s.name);
+      const comp=rep&&curComp.has(rep)?buildStack(curComp.get(rep)):(origComp.has(rep)?JSON.parse(origComp.get(rep)):null);
+      if(comp){s.stack=comp.map(p=>({png:p}));delete s.png;}
+      else if(s.png!==undefined){delete s.stack;}   // single fallback
+    }
+  }
   const b=new Blob([JSON.stringify(out,null,2)],{type:"application/json"});
   const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="iso-atlas.cells.json";a.click();
 };
 
-renderLeft();renderHead();renderGrid();
+renderLeft();renderHead();renderBody();
 </script>
 </body>
 </html>

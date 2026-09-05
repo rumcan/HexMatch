@@ -23,9 +23,16 @@ A feature ticket, plus two Art Lab fixes that already shipped in `art-lab.html`.
 > stack as ONE object on its footprint; player tint covers every layer (baked at
 > pack time); single-`png` cells are unchanged. `factory_*` are wired as 5-layer
 > towers (4× 044 + 057 roof), `depot_*` as 2-storey 3-layer stacks (fixing the
-> old roof-only 089 depot). The **Art Lab stack editor UI is still a follow-up
-> pass** (per the sequencing note below) — the storey mixes above are an initial
-> composition to fine-tune there once the tool can compose/export live.
+> old roof-only 089 depot).
+>
+> **Status — Art Lab stack editor DONE.** `art-lab.html` now opens a composer
+> for the factory/depot stack families: pick the **base**, choose how many
+> **middle floors** (−/+, 0–4), and pick a **roof**, with a **live assembled
+> preview** built from the same STOREY geometry as the packer so it matches the
+> in-game render. Export writes the ordered `stack` array; the tinted colour
+> variants of a family share the representative's composition (only tint
+> differs). The storey mixes in cells.json are the working default — retune them
+> freely here.
 
 **What we want:** buildings 3–6 storeys tall, built by stacking Kenney's modular floor pieces (base → middle floors → roof), instead of the current single squat floor.
 
