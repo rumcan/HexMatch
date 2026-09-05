@@ -535,3 +535,57 @@ describe("W8 the rival's factory is placed where it can build", () => {
     expect(canBuildOn(grid, "road", spot![0], spot![1])).toBe(true);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// W9 — the AI shares the player's cost model, including the road-only
+// allowance. W3 made the rival plan with the same free-track budget the human
+// drag preview uses; before this, that meant free rail for the rival too.
+// ══════════════════════════════════════════════════════════════════════════
+describe("W9 the rival's setup allowance buys road only", () => {
+  it("offers no rail plan while rail still has to be paid for in ore", () => {
+    const grid = flatGrid([ind("farm", 12, 5)]);
+    const s = state(grid);
+    // the rival's opening purse: 12 stone, no ore, 12 free tiles
+    const plan = planCandidates(s, F, { stock: {}, purse: { stone: 12, ore: 0 }, free: 12 });
+    expect(plan.length).toBeGreaterThan(0);
+    expect(plan.every((c) => c.kind === "road"), "free rail is the W9 bug").toBe(true);
+
+    // with ore it prefers rail again — and now prices every tile of it
+    const paid = planCandidates(s, F, { stock: {}, purse: { stone: 12, ore: 9999 }, free: 12 });
+    expect(paid[0].kind).toBe("rail");
+    expect(paid[0].cost.ore).toBe(TRANSPORT.rail.cost.ore! * paid[0].path.tiles.length);
+  });
+
+  it("a rail build consumes no allowance, so the rival keeps its road budget", () => {
+    const grid = flatGrid([ind("farm", 12, 5)]);
+    const s = state(grid);
+    const rail = aiBuildStep(s, F, { stock: {}, purse: { stone: 12, ore: 9999 }, free: 12 }, 1)!;
+    expect(rail).toBeTruthy();
+    expect(rail.kind).toBe("rail");
+    expect(rail.free).toBe(0);
+    expect(rail.spent.ore).toBe(TRANSPORT.rail.cost.ore! * rail.built.length);
+    expect(rail.harvester).toBeTruthy();
+
+    // the road build the same allowance WAS for still rides it, unchanged (W3)
+    const s2 = state(grid);
+    const road = aiBuildStep(s2, F, { stock: {}, purse: { stone: 12, ore: 0 }, free: 12 }, 1)!;
+    expect(road.kind).toBe("road");
+    expect(road.free).toBe(road.built.length);
+    expect(Object.keys(road.spent).length).toBe(0);
+  });
+
+  it("prices a rail plan the same way the human drag preview does", () => {
+    const grid = flatGrid([ind("farm", 12, 5)]);
+    const s = state(grid);
+    const purse = { stone: 12, ore: 8 };         // two rail tiles' worth of ore
+    const plan = planCandidates(s, F, { stock: {}, purse, free: 12 });
+    const rail = plan.filter((c) => c.kind === "rail");
+    // every rail candidate must fit the purse: 8 ore = at most 2 tiles
+    for (const c of rail) expect(c.cost.ore ?? 0).toBeLessThanOrEqual(8);
+    const out = aiBuildStep(s, F, { stock: {}, purse, free: 12 }, 1);
+    if (out?.kind === "rail") {
+      expect(out.spent.ore).toBeLessThanOrEqual(8);
+      expect(out.free).toBe(0);
+    }
+  });
+});

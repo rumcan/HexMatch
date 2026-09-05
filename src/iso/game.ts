@@ -56,6 +56,18 @@ import { joinFromSnapshot } from "./snapshot";
 export { joinFromSnapshot };
 
 // ── tuning (E8's rebalance surface, all in one place) ─────────────────────
+/**
+ * E8: the opening track allowance, as DATA on the player record (`freeTrack`)
+ * so no phase inference or timer can ever claw it back (the K1 bug class).
+ *
+ * W9: it buys ROAD only. A rail tile — new, or an in-place upgrade of a road —
+ * always pays `TRANSPORT.rail.cost` / `UPGRADE_COST`, which keeps E8's gate
+ * honest ("start with stone for roads, no ore — rail is gated behind an ore
+ * mine"): ore is the first real objective after the opening road, and the
+ * connection cannot skip straight to rail VP and ×1.6 throughput for free.
+ * The rule itself lives in `freeAllowanceCovers` (`track.ts`) so the human
+ * drag and the AI share one cost model (W3).
+ */
 export const FREE_SETUP_TRACK = 12;
 export const HARVEST_MS = 3000;      // economy tick
 export const AI_BUILD_MS = 9000;
@@ -655,8 +667,18 @@ export function startIsoGame(root: HTMLElement) {
   const onUp = (e: PointerEvent) => {
     const [x, y] = pos(e);
     if (drag && preview) {
-      if (preview.tiles.length === 0) toast("Track must extend your network.", "bad");
-      else commitTrackDrag(me, preview, tool === "rail" ? "rail" : "road");
+      if (preview.tiles.length === 0) {
+        // W9: the allowance buys road only, so a rail drag with no ore previews
+        // nothing at all. Say that, rather than the generic "must extend your
+        // network" — which is not why it refused, and reads as a bug.
+        if (tool === "rail" && (me.purse.ore ?? 0) < (TRANSPORT.rail.cost.ore ?? 0)) {
+          toast(me.freeTrack > 0
+            ? "Rail costs ore — free setup tiles only cover road."
+            : "Rail needs ore — connect an ore mine first.", "bad");
+        } else {
+          toast("Track must extend your network.", "bad");
+        }
+      } else commitTrackDrag(me, preview, tool === "rail" ? "rail" : "road");
       drag = null; preview = null; downAt = null;
       g = pointerUp(g, e.pointerId);
       return;

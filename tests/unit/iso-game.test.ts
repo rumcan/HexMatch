@@ -663,6 +663,55 @@ describe("W8 the rival is placed where it can build — and builds", () => {
   });
 });
 
+describe("W9 the free setup allowance buys road, not rail", () => {
+  it("a rail drag with 12 free tiles and no ore lays nothing and burns no allowance", async () => {
+    const h = await boot();
+    const { canBuildOn, hasTrack } = await import("../../src/iso/track");
+    // five consecutive rail-legal tiles to drag along (rail needs flat ground)
+    let line: [number, number] | null = null;
+    for (let y = 6; y < 26 && !line; y++) {
+      for (let x = 6; x < 22 && !line; x++) {
+        let ok = true;
+        for (let k = 0; k < 5; k++) if (!canBuildOn(h.grid, "rail", x + k, y)) ok = false;
+        if (ok) line = [x, y];
+      }
+    }
+    expect(line).toBeTruthy();
+    const [fx, fy] = line!;
+    expect(h.placeFactory(fx, fy)).toBe(true);
+    h.finishSetup();
+    expect(h.freeTrack).toBe(12);
+    expect(h.purse.ore ?? 0).toBe(0);
+
+    // rail with the full allowance and no ore: refused, allowance untouched.
+    // This is the W9 bug — it used to lay all 5 tiles for free.
+    const rail = h.dragBuild("rail", fx, fy, fx + 4, fy);
+    expect(rail === null || rail.tiles.length === 0).toBe(true);
+    expect(h.freeTrack).toBe(12);
+    expect(h.purse.ore ?? 0).toBe(0);
+    expect(hasTrack(h.track, "rail", fx, fy)).toBe(false);
+
+    // road from the same tile still rides the allowance exactly as before
+    const road = h.dragBuild("road", fx, fy, fx + 4, fy);
+    expect(road).toBeTruthy();
+    expect(road!.tiles).toHaveLength(5);
+    expect(road!.free).toBe(5);
+    expect(h.purse.stone).toBe(12);              // nothing charged
+    expect(h.freeTrack).toBe(7);
+
+    // and rail becomes buildable the moment ore exists — charged, never free
+    h.purse.ore = 40;
+    const up = h.dragBuild("rail", fx, fy, fx + 4, fy);
+    expect(up).toBeTruthy();
+    expect(up!.tiles).toHaveLength(5);
+    expect(up!.free).toBe(0);
+    expect(up!.cost).toEqual({ ore: 20 });       // 5 in-place upgrades × 4 ore
+    expect(h.purse.ore).toBe(20);
+    expect(h.freeTrack).toBe(7);                 // rail ate no allowance
+    for (let k = 0; k < 5; k++) expect(hasTrack(h.track, "rail", fx + k, fy)).toBe(true);
+  });
+});
+
 describe("W4 a normal session earns the rail", () => {
   it("road → ore mine → harvest ore → the rail tile is affordable", async () => {
     const h = await boot();

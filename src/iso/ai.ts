@@ -35,7 +35,7 @@ import { TRANSPORT, INDUSTRY_BY_KEY, type Cargo } from "./config";
 import { WATER, ROUGH, type Grid, type Industry } from "./grid";
 import {
   DIRS, DIR, tIdx, inMapT, hasTrack, canBuildOn, tileCost, addCost, canAfford,
-  buildTile, trackOwnedBy, type Track, type TrackKind, type Purse,
+  buildTile, trackOwnedBy, freeAllowanceCovers, type Track, type TrackKind, type Purse,
 } from "./track";
 import {
   catchmentRect, rectContains, isServiced,
@@ -311,6 +311,9 @@ export interface PlanOptions {
    * `free` new tiles ride free, `cost` counts only the rest. Without this
    * the AI "sees" a 12-tile build it can't pay for and stands still even
    * though its setup allowance would cover it.
+   *
+   * W9: the allowance buys ROAD only, here exactly as in `previewDrag` — the
+   * rival is gated behind an ore mine for rail just like the player is (E8).
    */
   free?: number;
   /** Prefer rail when affordable (spec: build road if it can't afford rail). */
@@ -362,9 +365,10 @@ export function planCandidates(
         if (!planFeasibility(state, kindPref, path, hx, hy, factory.ownerId).viable) continue;
 
         // W3: same cost model as the human preview — the allowance covers the
-        // first new tiles, the purse pays the rest.
+        // first new tiles, the purse pays the rest. W9: …and only for road; a
+        // rail plan prices every tile, so the rival needs real ore for rail.
         let cost: Purse = {};
-        let freeLeft = free;
+        let freeLeft = freeAllowanceCovers(kindPref) ? free : 0;
         for (const [x, y] of path.tiles) {
           const c = tileCost(track, kindPref, x, y);
           if (Object.keys(c).length === 0) continue;
@@ -470,7 +474,10 @@ export interface BuildOutcome {
   kind: TrackKind;
   /** What the caller debits from the purse — free tiles already subtracted. */
   spent: Purse;
-  /** W3: how many tiles the free allowance covered (caller debits freeTrack). */
+  /**
+   * W3: how many tiles the free allowance covered (caller debits freeTrack).
+   * W9: always 0 for a rail build — the allowance buys road only.
+   */
   free: number;
 }
 
@@ -489,7 +496,10 @@ export function executeCandidate(
 ): BuildOutcome {
   const built: [number, number][] = [];
   let spent: Purse = {};
-  let freeLeft = Math.max(0, free);
+  // W9: a rail build consumes no setup allowance, so `free` in the outcome is
+  // 0 and the caller leaves `freeTrack` alone — the rival keeps its road budget.
+  const allowance = freeAllowanceCovers(c.kind) ? Math.max(0, free) : 0;
+  let freeLeft = allowance;
   for (const [x, y] of c.path.tiles) {
     if (!canBuildOn(state.grid, c.kind, x, y)) continue;
     if (hasTrack(state.track, c.kind, x, y)) continue;
@@ -510,7 +520,7 @@ export function executeCandidate(
     state.harvesters.push(h);
     harvester = h;
   }
-  return { built, harvester, kind: c.kind, spent, free: Math.max(0, free) - freeLeft };
+  return { built, harvester, kind: c.kind, spent, free: allowance - freeLeft };
 }
 
 /**
