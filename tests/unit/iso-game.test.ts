@@ -63,6 +63,8 @@ interface IsoHook {
   market: import("../../src/iso/market").IsoMarket;
   refreshQuarry: (now?: number) => unknown;
   setTool: (t: string) => void;
+  /** W8: the twin of the setup click that places your factory (and seeds the rival's). */
+  placeFactory: (tx: number, ty: number) => boolean;
   dragBuild: (
     kind: "road" | "rail", ax: number, ay: number, bx: number, by: number,
     xFirst?: boolean,
@@ -618,6 +620,46 @@ describe("W3 the rival actually plays (headless)", () => {
     h.econTick(t0 + 3 * AI_BUILD_MS + 2 * HARVEST_MS);
     expect(rival.res.ore).toBeGreaterThan(ore0);
     for (const c of CARGOES) expect(rival.res[c], `${c} negative`).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("W8 the rival is placed where it can build — and builds", () => {
+  it("the real setup click hands the rival a rail-legal tile with a viable plan", async () => {
+    const h = await boot();
+    const { canBuildOn } = await import("../../src/iso/track");
+    const { canReachASpot } = await import("./helpers/rival-map");
+    // The ticket's repro: a player factory at (23,22) on seed 1337 used to hand
+    // the rival (2,2) — rough ground, water on three sides and the oil_rig
+    // footprint on the fourth, so no track could ever leave the tile.
+    expect(canBuildOn(h.grid, "road", 23, 22)).toBe(true);
+    expect(canReachASpot(h.grid, 2, 2)).toBe(false);
+    expect(h.placeFactory(23, 22)).toBe(true);
+
+    const rival = h.factories.find((f) => f.owner === "ai");
+    expect(rival).toBeTruthy();
+    // rail-legal (flat, off water, off any footprint) and NOT an enclave…
+    expect(canBuildOn(h.grid, "rail", rival!.tx, rival!.ty)).toBe(true);
+    expect(canReachASpot(h.grid, rival!.tx, rival!.ty)).toBe(true);
+    expect([rival!.tx, rival!.ty]).not.toEqual([2, 2]);
+    // …and still a good distance from the player, as before
+    expect(Math.abs(rival!.tx - 23) + Math.abs(rival!.ty - 22)).toBeGreaterThan(10);
+  });
+
+  it("four aiTicks from that real placement build track, a harvester, and VP", async () => {
+    const h = await boot();
+    expect(h.placeFactory(23, 22)).toBe(true);
+    h.finishSetup();                     // the AI clock only runs in `play`
+    const rivalTiles = () => [...h.track.owner].filter((o) => o === 2).length;
+    expect(rivalTiles()).toBe(0);
+    expect(h.vp.ai).toBe(0);
+
+    const t0 = 1_000_000;
+    for (let i = 0; i < 4; i++) h.aiTick(t0 + i * AI_BUILD_MS);
+
+    // the rival is no longer a scoreboard entry with 0 VP for the whole match
+    expect(rivalTiles()).toBeGreaterThan(0);
+    expect(h.harvesters.some((x) => x.owner === "ai")).toBe(true);
+    expect(h.vp.ai).toBeGreaterThan(0);
   });
 });
 

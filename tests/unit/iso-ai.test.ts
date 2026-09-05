@@ -2,13 +2,16 @@ import { describe, it, expect } from "vitest";
 import {
   COST_FLAT, COST_ROUGH, COST_OWNED, stepCost, findPath, scarcity,
   harvesterSpots, networkTiles, nearestSource, planCandidates, bestCandidate,
-  executeCandidate, aiBuildStep,
+  executeCandidate, aiBuildStep, planFeasibility, chooseRivalFactorySpot,
 } from "../../src/iso/ai";
-import { createTrack, buildTile, hasTrack, tIdx, type Track } from "../../src/iso/track";
+import {
+  createTrack, buildTile, hasTrack, tIdx, canBuildOn, type Track,
+} from "../../src/iso/track";
 import { isServiced, type EconomyState, type Factory } from "../../src/iso/economy";
 import { generateMap, GRASS, WATER, ROUGH, type Grid, type Industry } from "../../src/iso/grid";
 import { MAP_W, MAP_H } from "../../src/game/config";
 import { INDUSTRY_BY_KEY, TRANSPORT } from "../../src/iso/config";
+import { canReachASpot } from "./helpers/rival-map";
 
 function flatGrid(industries: Industry[] = []): Grid {
   const occupancy = new Int16Array(MAP_W * MAP_H).fill(-1);
@@ -343,5 +346,192 @@ describe("E7 execution", () => {
     const rb = aiBuildStep(b, F, { stock: {}, purse: rich }, 1);
     expect(ra?.built).toEqual(rb?.built);
     expect(ra?.harvester).toEqual(rb?.harvester);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// W8 — the rival never builds a single tile (AI deadlock).
+//
+// Three faults compounded: a one-tile "path" with cost 0 outranked every real
+// build (÷ the 0.3 floor), the rail-first pass never fell through to road when
+// rail was impossible, and the resulting no-op turn was reported as a real one
+// — so the rival re-picked the same doomed candidate every 9 s forever.
+//
+// The whole-map sweep over every legal rival tile lives in
+// `iso-ai-sweep.test.ts` (it is slow); these are the focused regressions.
+// ══════════════════════════════════════════════════════════════════════════
+
+/** The rival's opening purse and setup allowance, exactly as `game.ts` gives it. */
+const rivalOpts = () => ({ stock: { stone: 12, ore: 0 }, purse: { stone: 12, ore: 0 }, free: 12 });
+
+/** Seed-1337 repro state: the rival's factory on the rough tile at (2,2). */
+function roughRival(): { eco: EconomyState; f: Factory } {
+  const grid = generateMap(1337);
+  const eco: EconomyState = {
+    grid, track: createTrack(), harvesters: [],
+    factories: [{ owner: "ai", ownerId: 2, tx: 2, ty: 2 }],
+  };
+  return { eco, f: eco.factories[0] };
+}
+
+describe("W8 plan feasibility", () => {
+  it("flags a rail path over rough ground as not executable", () => {
+    const grid = flatGrid([ind("farm", 5, 9)]);
+    grid.terrain[tIdx(5, 5)] = ROUGH;         // the factory stands on rough
+    const s = state(grid);
+    const path = findPath(grid, s.track, "road", 5, 5, 5, 8, false, 0)!;
+    expect(path).toBeTruthy();
+    // the same tiles are illegal for rail: TRANSPORT.rail.onRough === false
+    const rail = planFeasibility(s, "rail", { tiles: path.tiles, cost: path.cost }, 5, 8, 0);
+    expect(TRANSPORT.rail.onRough).toBe(false);
+    expect(rail.executable).toBe(false);
+    expect(rail.viable).toBe(false);
+    const road = planFeasibility(s, "road", path, 5, 8, 0);
+    expect(road.executable).toBe(true);
+    expect(road.serviced).toBe(true);          // the path's penultimate tile
+    expect(road.viable).toBe(true);
+    expect(road.fresh.length).toBe(path.tiles.length);
+  });
+
+  it("refuses the one-tile path under the depot: laid track there services nothing", () => {
+    // `isServiced` looks at the harvester's four NEIGHBOURS, so track laid on
+    // the tile the depot stands on does not service it.
+    const grid = flatGrid([ind("oil_rig", 5, 6)]);
+    const s = state(grid);
+    const one: [number, number][] = [[5, 5]];  // F's own tile, a harvester spot
+    const f = planFeasibility(s, "road", { tiles: one, cost: 0 }, 5, 5, 0);
+    expect(f.fresh).toEqual([[5, 5]]);
+    expect(f.serviced).toBe(false);
+    expect(f.viable).toBe(false);
+    // once a neighbour carries our track the same spot IS viable, for free
+    buildTile(s.track, "road", 4, 5, 0);
+    expect(planFeasibility(s, "road", { tiles: one, cost: 0 }, 5, 5, 0).viable).toBe(true);
+  });
+
+  it("counts only track owned by the AI as servicing (W2)", () => {
+    const grid = flatGrid([ind("oil_rig", 5, 6)]);
+    const s = state(grid);
+    buildTile(s.track, "road", 4, 5, 7);       // somebody else's road
+    const f = planFeasibility(s, "road", { tiles: [[5, 5]], cost: 0 }, 5, 5, 2);
+    expect(f.serviced).toBe(false);
+    buildTile(s.track, "road", 6, 5, 2);       // ours
+    expect(planFeasibility(s, "road", { tiles: [[5, 5]], cost: 0 }, 5, 5, 2).serviced).toBe(true);
+  });
+});
+
+describe("W8 the degenerate candidate no longer wins the ranking", () => {
+  it("never offers a path that lays nothing and lands nothing", () => {
+    // The industry sits directly below the factory, so the factory's own tile
+    // is a harvester spot: the old scorer divided by the 0.3 floor and put a
+    // one-tile, zero-cost "path" first, every turn, forever.
+    const grid = flatGrid([ind("oil_rig", 5, 6)]);
+    grid.terrain[tIdx(5, 5)] = ROUGH;          // and it is rough: rail is out
+    const s = state(grid);
+    const cands = planCandidates(s, F, { stock: {}, purse: rich });
+    expect(cands.length).toBeGreaterThan(0);
+    for (const c of cands) {
+      const f = planFeasibility(s, c.kind, c.path, c.hx, c.hy, F.ownerId);
+      expect(f.viable, `${c.kind} to (${c.hx},${c.hy})`).toBe(true);
+      const out = executeCandidate(state(s.grid), c, "ai", 0, 1);
+      expect(out.built.length > 0 || out.harvester !== null).toBe(true);
+    }
+    // the degenerate shape is gone: no one-tile path ending on the factory
+    expect(cands.some((c) => c.path.tiles.length === 1 && c.hx === F.tx && c.hy === F.ty)).toBe(false);
+    // …and the rival reaches a REAL spot instead (road, since rail needs flat)
+    const out = aiBuildStep(s, F, { stock: {}, purse: rich }, 1)!;
+    expect(out).toBeTruthy();
+    expect(out.kind).toBe("road");
+    expect(out.built.length).toBeGreaterThan(1);
+    expect(out.harvester).toBeTruthy();
+    expect(isServiced(s.track, out.harvester!)).toBe(true);
+  });
+
+  it("falls through to road when the rail plan cannot be built", () => {
+    const { eco, f } = roughRival();
+    expect(canBuildOn(eco.grid, "road", f.tx, f.ty)).toBe(true);
+    expect(canBuildOn(eco.grid, "rail", f.tx, f.ty)).toBe(false);
+    // no candidate may claim a kind it cannot lay
+    for (const c of planCandidates(eco, f, rivalOpts())) {
+      expect(c.path.tiles.every(([x, y]) => canBuildOn(eco.grid, c.kind, x, y))).toBe(true);
+    }
+  });
+});
+
+describe("W8 a no-op turn is reported as no turn", () => {
+  it("aiBuildStep returns null instead of a truthy empty outcome", () => {
+    // (2,2) on seed 1337 is worse than rough: water on three sides and the
+    // oil_rig footprint at (2,3) on the fourth, so no track can leave the tile
+    // at all. Nothing the AI does can build from there — the honest answer is
+    // `null` every turn, never a truthy outcome the caller spends a turn on.
+    const { eco, f } = roughRival();
+    expect(canReachASpot(eco.grid, f.tx, f.ty)).toBe(false);   // an enclave
+    for (let i = 0; i < 6; i++) {
+      const out = aiBuildStep(eco, f, rivalOpts(), i + 1);
+      expect(out === null || out.built.length > 0 || out.harvester !== null).toBe(true);
+      if (out) expect(out.harvester, "a build with no harvester is waste").toBeTruthy();
+    }
+    expect(eco.harvesters).toHaveLength(0);
+  });
+
+  it("walks past a candidate that cannot be executed to the next one", () => {
+    const grid = flatGrid([ind("farm", 5, 9), ind("forest", 9, 5)]);
+    const s = state(grid);
+    const cands = planCandidates(s, F, { stock: {}, purse: rich });
+    expect(cands.length).toBeGreaterThan(1);
+    const out = aiBuildStep(s, F, { stock: {}, purse: rich }, 1)!;
+    expect(out.built.length).toBeGreaterThan(0);
+    expect(out.harvester).toBeTruthy();
+    expect(s.harvesters).toHaveLength(1);
+  });
+});
+
+describe("W8 the rival's factory is placed where it can build", () => {
+  it("picks a rail-legal tile with a real plan, not the farthest road-only one", () => {
+    const grid = generateMap(1337);
+    const player: [number, number] = [23, 22];
+    const spot = chooseRivalFactorySpot(grid, createTrack(), player, {
+      purse: { stone: 12, ore: 0 }, free: 12, ownerId: 2,
+    });
+    expect(spot).toBeTruthy();
+    const [x, y] = spot!;
+    expect(canBuildOn(grid, "rail", x, y), "rail must be legal on the rival's tile").toBe(true);
+    // the old road-only search handed back the (2,2) enclave for this player
+    expect(spot).not.toEqual([2, 2]);
+    expect(canReachASpot(grid, x, y)).toBe(true);
+    // and a real build exists from it, first turn
+    const eco: EconomyState = {
+      grid, track: createTrack(), harvesters: [],
+      factories: [{ owner: "ai", ownerId: 2, tx: x, ty: y }],
+    };
+    const out = aiBuildStep(eco, eco.factories[0], rivalOpts(), 1)!;
+    expect(out).toBeTruthy();
+    expect(out.built.length).toBeGreaterThan(0);
+    expect(out.harvester).toBeTruthy();
+    expect(isServiced(eco.track, out.harvester!)).toBe(true);
+  });
+
+  it("is deterministic, and never returns an enclave for any player tile", () => {
+    const grid = generateMap(1337);
+    const opts = { purse: { stone: 12, ore: 0 }, free: 12, ownerId: 2 };
+    const a = chooseRivalFactorySpot(grid, createTrack(), [23, 22], opts);
+    const b = chooseRivalFactorySpot(grid, createTrack(), [23, 22], opts);
+    expect(a).toEqual(b);
+    // a spread of player placements across the map
+    for (const [px, py] of [[4, 4], [16, 16], [27, 6], [6, 27], [23, 22], [12, 12]] as [number, number][]) {
+      const s = chooseRivalFactorySpot(grid, createTrack(), [px, py], opts);
+      expect(s, `player at ${px},${py}`).toBeTruthy();
+      expect(canBuildOn(grid, "road", s![0], s![1])).toBe(true);
+      expect(canReachASpot(grid, s![0], s![1]), `enclave for player ${px},${py}`).toBe(true);
+      expect(s).not.toEqual([px, py]);
+    }
+  });
+
+  it("still returns a tile when nothing is affordable (the rival exists)", () => {
+    const grid = generateMap(1337);
+    const spot = chooseRivalFactorySpot(grid, createTrack(), [23, 22], {
+      purse: {}, free: 0, ownerId: 2,
+    });
+    expect(spot).toBeTruthy();
+    expect(canBuildOn(grid, "road", spot![0], spot![1])).toBe(true);
   });
 });

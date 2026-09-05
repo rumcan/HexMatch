@@ -44,7 +44,7 @@ import {
   pickBlockadeTarget,
   type EconomyState, type Harvester, type ScoreState, type VpEvent,
 } from "./economy";
-import { aiBuildStep } from "./ai";
+import { aiBuildStep, chooseRivalFactorySpot } from "./ai";
 import { CARGO, FACTORY_FOOTPRINT, INDUSTRY_BY_KEY, TRANSPORT, VP_TARGET, type Cargo } from "./config";
 import {
   MAP_W, MAP_H, BANDIT_MS, BLOCK_MS, FOG_MS, SABOTAGE, SECURITY, type ResKey,
@@ -286,16 +286,16 @@ export function startIsoGame(root: HTMLElement) {
     if (!canBuildOn(grid, "road", tx, ty)) { toast("Can't build there.", "bad"); return false; }
     // W2: the factory carries its builder's track-owner id (player index + 1).
     eco.factories.push({ owner: "you", ownerId: me.i + 1, tx, ty });
-    // Give the rival a factory a good distance away, on legal ground.
-    let best: [number, number] | null = null, bestD = -1;
-    for (let y = 2; y < MAP_H - 2; y += 2) {
-      for (let x = 2; x < MAP_W - 2; x += 2) {
-        if (!canBuildOn(grid, "road", x, y)) continue;
-        const d = Math.abs(x - tx) + Math.abs(y - ty);
-        if (d > bestD) { bestD = d; best = [x, y]; }
-      }
-    }
-    if (best) eco.factories.push({ owner: "ai", ownerId: rival.i + 1, tx: best[0], ty: best[1] });
+    // Give the rival a factory a good distance away, on legal ground it can
+    // actually build from. W8: the farthest road-legal tile was often ROUGH,
+    // where rail is illegal, and the rival's rail-first plan then had nothing
+    // to lay — it "played" every 9 s and never built a tile. `ai.ts` ranks
+    // rail-legal tiles first and probes the top of the ranking for a real
+    // plan before the tile is committed.
+    const spot = chooseRivalFactorySpot(grid, track, [tx, ty], {
+      purse: rival.purse, free: rival.freeTrack, ownerId: rival.i + 1, owner: rival.id,
+    });
+    if (spot) eco.factories.push({ owner: "ai", ownerId: rival.i + 1, tx: spot[0], ty: spot[1] });
     phase = "setup-harvester";
     syncWorld();
     toast("Factory placed. Now place your first harvester beside an industry.", "info");
@@ -772,6 +772,14 @@ export function startIsoGame(root: HTMLElement) {
     swap: (r1: number, c1: number, r2: number, c2: number) =>
       quarry.board.trySwap(r1, c1, r2, c2, performance.now()),
     setTool: (t: Tool) => { tool = t; },
+    /**
+     * W8: the test twin of the setup click that places YOUR factory. It runs
+     * the real `placeFactory`, including the rival-placement search, so the
+     * tile the rival is handed can be asserted (and its builds driven) without
+     * a pixel-driven pointer path. Returns false on illegal ground, exactly
+     * like the click does.
+     */
+    placeFactory: (tx: number, ty: number) => placeFactory(tx, ty),
     /** V4: the e2e/unit twin of the HUD toast, so tests can drive the toast
      *  stack (and its ✕) without playing a whole round. */
     toast: (text: string, kind: Toast["kind"] = "info") => toast(text, kind),
