@@ -76,7 +76,7 @@ async function pickCorridor(page: import("@playwright/test").Page): Promise<{
     const ranked = [...grid.industries].sort((a, b) =>
       Math.abs(a.tx - focus.tx) + Math.abs(a.ty - focus.ty)
       - (Math.abs(b.tx - focus.tx) + Math.abs(b.ty - focus.ty)));
-    const corridorTiles = 7;
+    const corridorTiles = 4;
     const panels = [...document.querySelectorAll<HTMLElement>(".iso-panel")]
       .map((panel) => panel.getBoundingClientRect());
     const clearLeft = Math.max(0, ...panels.filter((r) => r.left < innerWidth / 2).map((r) => r.right));
@@ -295,9 +295,9 @@ test.describe("iso game boots on the default route", () => {
     steps.push(harvester);
     for (const s of steps) await page.mouse.move(s.x, s.y);
 
-    // free setup allowance covers the whole 7-tile column: no purse charge
+    // free setup allowance covers the whole 4-tile column: no purse charge
     await page.mouse.up();
-    await page.waitForFunction(() => (window as any).__iso.freeTrack === 5);
+    await page.waitForFunction(() => (window as any).__iso.freeTrack === 8);
 
     const after = await page.evaluate(() => {
       const h = (window as any).__iso;
@@ -306,16 +306,16 @@ test.describe("iso game boots on the default route", () => {
       for (let i = 0; i < t.road.length; i++) if (t.road[i] & 16) road++;
       return { free: h.freeTrack, vp: h.vp, stone: h.purse.stone, ore: h.purse.ore ?? 0, road };
     });
-    expect(after.free).toBe(5);                      // 12 − 7 free tiles used
+    expect(after.free).toBe(8);                      // 12 − 4 free tiles used
     expect(after.vp.you).toBe(1);                    // connection scored
     expect(after.vp.ai).toBe(0);
     expect(after.stone).toBe(12);                    // allowance, not purse
     expect(after.ore).toBe(0);
-    expect(after.road).toBe(7);
+    expect(after.road).toBe(4);
 
     // the structures canvas really painted the road column
     await expect.poll(
-      () => opaqueNear(page, 1, c.hx, c.hy + 3),
+      () => opaqueNear(page, 1, c.hx, c.hy + 1),
       { timeout: 5000 },
     ).toBeGreaterThan(10);
 
