@@ -1,127 +1,100 @@
-# HexMatch — instructions for the coding agent (updated after MB1)
+# HexMatch — open tickets (after PR #21)
 
-**Status check first.** I audited `main` @ `dddf568` (PR #19). MB1 — stacked multi-storey buildings — is **fully merged and working**. Both pieces of the previous instruction are done:
+Audited against `main` @ `08230e3`. Verified independently: **362/362 unit tests pass** (G9 fixed the honesty problem — the suite no longer lies), typecheck clean. PR #21 landed W8, W9, G9 and filed E14. Good work — the W8 rival-deadlock fix took idle placements from 51/160 → 0/160 on seed 1337.
 
-- Factory (`factory_*`) renders as 5-layer towers; depot (`depot_*`) as proper base+floor+roof stacks — the roof-only depot bug is fixed.
-- Industries (farm, forest, ore_mine, quarry, oil_rig, gold_mine) stayed single-`png`, correctly scoped.
-- Verified: typecheck clean, **333 unit tests pass**, `slice-atlas` reproduces the atlas byte-identically (G7 gate green), and the composite `parts` geometry is exactly the 36px-per-storey offset (factory parts at dy 149/113/77/41/0).
-- The rail-pixel test the PR flagged as failing now **passes** (12/12) — no longer an issue.
+**But one P0 from the last doc was skipped, and it's the one you keep seeing on screen.**
 
-**So there is no outstanding art/renderer work to finish.** Don't re-do MB1. Below is what's actually left, in priority order. Each is its own PR; stop at each acceptance block.
+Ordered by priority. One ticket per PR, stop at each acceptance block, verify before reporting done, keep the G7 atlas gate green.
 
 ---
 
-## Where things stand
+## B1. Apply the Art Lab tile config — STILL not done, startup map still uses old tiles
+`[P0] [assets]`
 
-The **art pipeline is complete**: Kenney tiles mapped, roads connecting, terrain flat, buildings coherent and now multi-storey. What remains is **gameplay**, not art. The biggest items are still the logic bugs from the W-series (`docs/HexMatch-open-backlog.md` earlier revisions), most of which predate the art work and are still open.
+This was A1 in the previous doc and it was **not addressed in PR #21** (that PR did the three logic tickets instead). Confirmed against `main`:
 
-If any of these were closed in a PR I haven't seen, skip them — check the ticket status in `docs/` before starting.
+```
+terrain_grass -> landscape/PNG/landscapeTiles_010.png   ← still the ramp tile
+```
+
+`010` is the sloped block that causes the sloped-grass bug. The human's Art Lab config chose `067` (flat) and picked correct tiles for water, rough, and every industry. That config was never applied — the live cells file still has the original programmatic picks.
+
+Full correction table (live → should be):
+
+| Slot | LIVE (wrong) | Art Lab config |
+|---|---|---|
+| terrain_grass | landscapeTiles_010 (ramp) | landscapeTiles_067 |
+| terrain_water | landscapeTiles_037 | landscapeTiles_066 |
+| terrain_rough | landscapeTiles_073 | landscapeTiles_059 |
+| farm | buildingTiles_083 | buildingTiles_026 |
+| forest | landscapeTiles_028 | buildingTiles_034 |
+| ore_mine | buildingTiles_007 | buildingTiles_036 |
+| quarry | buildingTiles_081 | buildingTiles_093 |
+| gold_mine | buildingTiles_058 | buildingTiles_042 |
+
+**Apply the human's exported `iso-atlas.cells.json` verbatim.** Do NOT re-pick tiles by script — the flat-vs-slope difference is not measurable in pixels (010 and 067 both measure a widest row at y≈33; the difference is only visible to the eye), which is exactly why three prior programmatic attempts picked wrong. Keep the file's `stack` entries — MB1 supports them.
+
+```
+cp <human's exported file> tools/iso-atlas.cells.json
+node tools/make-derived-art.mjs && node tools/parse-pnml.mjs && npm run slice-atlas
+git diff --exit-code assets/iso-atlas/   # commit the regenerated atlas
+npm run typecheck && npm test
+```
+
+**Acceptance:** `terrain_grass` renders flat, no sloped triangles; all slots match the table; atlas regenerated and committed; G7 gate green; tests pass. Verify by rendering the map, not just running tests.
+
+**If you don't have the human's file:** ask for it. Do not reconstruct it from this table alone — get the real export, because it also contains the correct road/rail and building-stack entries this table doesn't fully list.
 
 ---
 
-## Priority 1 — verify the game is actually playable end to end
-`[testing]`
+## B2. E14 — the e2e gameplay spec can't pick a corridor (tile geometry doubled)
+`[testing] [P1]`
 
-Before new features, confirm the core loop works with the current build, because a lot has changed underneath it. Run through, in a real browser:
+Already filed and well-diagnosed at `docs/tickets/E14-e2e-corridor-picker-returns-null.md`. I verified the diagnosis: `TILE_W/TILE_H` are now `132/64` (were `64/32` at the last green nightly `1170d64`), so the test's 7-tile due-south corridor spans 396×256 CSS px instead of 192×128, and the start window between the two fixed side panels collapsed to ~3 lattice positions — none of which coincide with a fully-buildable industry column at seed 1337. The picker returns null before any pointer event fires. Tests 1/2/4 pass; test 3 dies in the helper.
 
-1. Place factory → place harvester → connect them with road.
-2. Match gems in the Processing Plant / Quarry → confirm cargo increases, and only for connected industries.
-3. Spend cargo to build more road/rail.
-4. Confirm gold from combos reaches the purse (this was broken — `board.onGold` wiring).
-5. Confirm the rival builds its own road and doesn't ride yours (track ownership).
+This has been red since the Kenney cutover and, because it's a non-required job, **has silently blocked nothing** through PRs #18–#20 — every "e2e fails, pre-existing" note traces here.
 
-Whatever fails here is the real top priority. File one ticket per broken step. Don't assume the W-series fixes all landed — verify.
+The ticket lists four fix candidates; **(a) is right**: zoom out with a real wheel gesture before picking (`page.mouse.wheel`), which respects the spec's no-mocking rule and makes the corridor fit. (b) shortening the corridor to 4 tiles also works and is simpler. Avoid weakening the picker's filters — that hides real bugs.
+
+**Needs a browser to verify** — can't be confirmed in a headless-only sandbox. Do this where Playwright can actually run, or the fix is unverifiable.
+
+**Acceptance:** the gameplay e2e test picks a corridor and completes the factory→harvester→road→+1 VP flow at seed 1337 / 1280×720; the fix uses a real gesture, not a mocked camera or a relaxed filter; e2e job green.
 
 ---
 
-## Priority 2 — remaining TK gameplay tickets
+## B3. Make the e2e job required once it's green
+`[ci]`
 
-From `docs/HexMatch-tk-gameplay.md`, the ones not yet done (check status first):
+The root cause behind E14 hiding so long: the e2e job isn't a required check, so a red e2e has never blocked a merge. Once B2 turns it green, mark it required in branch protection (Settings → Branches → require the `e2e` status check). Otherwise the next geometry change silently breaks it again.
 
-- **TK-002** — rail as an independent network that crosses roads. Depends on track ownership (W2) being in place first.
-- **TK-004** — vehicles moving along roads. The Kenney vehicle art and directional frames are already in the atlas (K5 done), so this is movement logic, not art. Ties into TK-007.
+**Acceptance:** e2e is a required check on `main`; a PR with a failing e2e cannot merge.
+
+---
+
+## B4+. Remaining gameplay — Priority 2 TK tickets
+`[gameplay]`
+
+With the Priority-1 bugs closed and the map fixed (B1), the next body of work is the TK gameplay tickets from `docs/HexMatch-tk-gameplay.md`, each its own PR:
+
+- **TK-002** — rail as an independent network that crosses roads (track ownership from W2 is in place, so this is now unblocked).
+- **TK-004** — vehicles moving along roads. Art + directional frames already in the atlas (K5), so this is movement logic.
 - **TK-005** — bigger map + towns + cap resources at 2 nodes each.
-- **TK-006** — first building must be placed in a town radius (needs TK-005 towns).
-- **TK-007** — rename Quarry → Processing Plant, remove timed bomb spawns, tie resource spawns to vehicle arrival (needs TK-004).
+- **TK-006** — first building must be placed in a town radius (needs TK-005).
+- **TK-007** — rename Quarry → Processing Plant, remove timed bomb spawns, tie spawns to vehicle arrival (needs TK-004).
 
-Each is one PR. TK-004 → TK-007 is the natural pair (vehicles must move before arrival can trigger spawns).
-
----
-
-## Priority 3 — polish
-
-- **Map scale / terrain tuning** (`docs/HexMatch-art-polish.md`, M-series): if the map still feels sparse or too brown after TK-005, retune. Coordinate with TK-005 — same change.
-- **Art Lab stack editor**: per the repo docs this already shipped. If the human wants to re-theme buildings, it's the tool for it — no code work needed.
+Natural order: TK-005 → TK-002 → TK-004 → TK-007 → TK-006. Each is one PR.
 
 ---
 
-## Rules for every PR here
+## Sequencing
 
-1. **One ticket per PR.** No bundling. This project has repeatedly shipped half-done or timed out from over-scoping.
-2. **Stop at the acceptance block.** Don't continue into the next ticket.
-3. **Verify claims before reporting done** — run typecheck, tests, and for anything visual, actually render it. Several past "done"s were set-up-but-not-wired.
-4. **Check `docs/` ticket status first** — don't re-do finished work.
-5. Keep the G7 atlas gate green: after any `cells.json` change, run `npm run slice-atlas` and commit the regenerated atlas.
+**B1 → B2 → B3 → B4+.**
 
----
+- **B1** is the one you keep looking at — do it first, it makes the map finally correct. Highest visible impact, and it's data-only + low risk.
+- **B2** needs a browser environment; schedule it where Playwright runs.
+- **B3** locks the e2e gate so B2 doesn't silently regress.
+- **B4+** is the feature backlog, after the foundation is solid.
 
-## What NOT to do
+## Note on the branch/PR constraint
 
-- Don't touch the art pipeline, the Kenney mapping, or MB1 stacking — it's done and verified.
-- Don't reconstruct or hand-edit `iso-atlas.cells.json` from memory — edit the real file, run the packer, check the diff.
-- Don't start a second big change while one is in review.
-
----
-
-## Tickets filed 2026-09-05 (Priority 1 play-test)
-
-Priority 1 is done: the core loop was played end to end and one ticket was
-filed per broken step. Full evidence in
-`docs/playtest-reports/2026-09-05-priority-1.md`.
-
-| ticket | file | state |
-|--------|------|-------|
-| **W8** — the rival never builds a single tile (AI deadlock) | `docs/tickets/W8-rival-never-builds.md` | **FIXED 2026-09-05** — step 5 of the core loop works: 0 deadlocked rival tiles on seeds 1337/7/2024 (was 51/37/0), and the rival is never placed on a tile it cannot build from |
-| **W9** — free setup track pays for rail, bypassing the ore gate | `docs/tickets/W9-free-setup-track-pays-for-rail.md` | **FIXED 2026-09-05** — option (a): the allowance buys road only, for the player and the rival; E8's ore gate holds |
-| **G9** — committed derived rail art is stale; the suite is red | `docs/tickets/G9-stale-derived-rail-art.md` | **FIXED 2026-09-05** — art regenerated, and `make-derived-art.mjs --check` (run by `npm test`) now fails on drift |
-
-Steps 1–4 of the core loop verified **working** (place → connect → match →
-spend → combo gold all land correctly; W5's `board.onGold` wire is good).
-Step 5 works as of the W8 fix.
-
-Each ticket file carries a **Resolution** section: what changed, the acceptance
-list ticked item by item, and what was measured. All three landed on
-`arena/01a0717e-hexmatch` — one commit per ticket, in the order the backlog
-asks for (G9 first, because a red suite hides everything else; then W8; then
-W9, whose numbers are easiest to read on a rival that actually builds).
-
-The "333 unit tests pass" and "rail-pixel test now passes" claims at the top of
-this file were **false** on `main` when the play-test measured them (see G9).
-They are true again now, with new numbers: **362 unit tests pass**, typecheck
-clean, lint 0 errors, `slice-atlas` reproduces `assets/iso-atlas` byte for byte
-and `make-derived-art.mjs --check` reports no drift. The rest of the top
-section stands — MB1 is done and the art pipeline was not touched.
-
-### Still open
-
-One ticket is open: **E14** (`docs/tickets/E14-e2e-corridor-picker-returns-null.md`)
-— the CI `e2e` job's gameplay spec. It is **not** a regression from W8/W9/G9;
-it has been red since the Kenney art cutover doubled the tile geometry
-(`TILE_W 64 → 132`), and PR #18 worked around it for the TK-001 test only
-without ticketing it. E14 has the provenance, the arithmetic and the fix
-candidates. Fixing it matters beyond the one red job: while `e2e` is red it
-blocks nothing, which is how G9's red unit suite reached `main`.
-
-Otherwise nothing in `docs/tickets/` is open. Next up is Priority 2 — the
-remaining TK gameplay tickets (TK-002, TK-004 → TK-007, TK-005 → TK-006), one
-PR each. TK-002's dependency (track ownership, W2) is in place, and TK-004's
-art (K5 vehicles, directional frames) is already in the atlas.
-
-One caveat carried over from the play-test, unchanged by these fixes: the
-sandbox has no browser, so `npm run test:e2e` (real chromium, CSS-occlusion
-assertions) was **not** run for W8/W9/G9 — CI ran it instead, and reports the
-pre-existing E14 failure (3 passed, 1 failed at the corridor picker) while the
-`test` job is green for the first time since the cutover. Worth a pass in a real
-browser before the play-test report is closed out — `npm run dev`, then the five
-core-loop steps, with step 5 (the rival builds its own road) now expected to
-pass.
+PR #21 bundled three tickets because the session was pinned to one branch, breaking the one-ticket-per-PR rule. That's a workflow limitation, not a process failure — the agent flagged it and offered to split. If the arena can start each ticket on its own branch, keep one-per-PR. If it can't, group only tightly-related tickets (e.g. B1+B2 are unrelated — don't bundle those) and list them explicitly in the PR body.
