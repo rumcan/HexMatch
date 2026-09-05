@@ -29,6 +29,12 @@ For headless sprite inspection — ASCII-preview a rectangular region of a PNG:
 node tools/peek.mjs <file.png> <x> <y> <w> <h> [maxW] [maxH]
 ```
 
+To trace a screenshot back to game state (C5), the running game exposes a
+debug console on `window.__iso` — `dumpTile`, `dumpAt`, `dumpBuilding`,
+`dumpNetwork`, `config`, `probe` and on-map `overlay` marks. Dev builds always
+have it; a production build only with `?iso-debug=1`. See
+[`docs/iso-debug-console.md`](docs/iso-debug-console.md).
+
 ## Game entry
 
 The isometric canvas-2d game is the only boot path (`/`). The hex + three.js

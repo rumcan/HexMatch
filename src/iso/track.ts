@@ -92,28 +92,46 @@ export const bitsAt = (t: Track, kind: TrackKind, tx: number, ty: number): numbe
   inMapT(tx, ty) ? layerOf(t, kind)[tIdx(tx, ty)] & 0b1111 : 0;
 
 /**
- * Can `kind` be built on this tile? Water never; rail additionally needs flat
- * ground (TRANSPORT.rail.onRough === false); industry footprints block both.
+ * E14: the ONE place that knows why a build is refused. `canBuildOn` is this
+ * function's boolean projection, so a test hook, a debug dump and a refusal
+ * toast can never disagree with the rule that actually gates the build — the
+ * corridor picker in `tests/e2e/corridor-picker.ts` filters tiles through it
+ * instead of re-deriving water/occupancy constants from the outside.
+ *
+ * Returns null when `kind` may be laid at (tx,ty) (within `network`, when one
+ * is given), else the reason tag: "out-of-bounds" | "water" | "rough" |
+ * "occupied" | "not-adjacent".
  */
-export function canBuildOn(
+export function buildRefusal(
   grid: Grid, kind: TrackKind, tx: number, ty: number, network?: Set<number>,
-): boolean {
-  if (!inMapT(tx, ty)) return false;
+): string | null {
+  if (!inMapT(tx, ty)) return "out-of-bounds";
   const i = tIdx(tx, ty);
   const terrain = grid.terrain[i];
-  if (terrain === WATER) return false;
-  if (terrain === ROUGH && !TRANSPORT[kind].onRough) return false;
-  if (grid.occupancy[i] >= 0) return false;
+  if (terrain === WATER) return "water";
+  // Water never; rail additionally needs flat ground (TRANSPORT.rail.onRough).
+  if (terrain === ROUGH && !TRANSPORT[kind].onRough) return "rough";
+  // Industry footprints block both kinds.
+  if (grid.occupancy[i] >= 0) return "occupied";
   if (network) {
-    if (network.has(i)) return true;
+    if (network.has(i)) return null;
     let adj = false;
     for (const d of DIRS) {
       const nx = tx + DIR[d][0], ny = ty + DIR[d][1];
       if (inMapT(nx, ny) && network.has(tIdx(nx, ny))) { adj = true; break; }
     }
-    if (!adj) return false;
+    if (!adj) return "not-adjacent";
   }
-  return true;
+  return null;
+}
+
+/**
+ * Can `kind` be built on this tile? See `buildRefusal` for the rule.
+ */
+export function canBuildOn(
+  grid: Grid, kind: TrackKind, tx: number, ty: number, network?: Set<number>,
+): boolean {
+  return buildRefusal(grid, kind, tx, ty, network) === null;
 }
 
 /** Who owns the track at (tx,ty)? 0 = no track owner. */

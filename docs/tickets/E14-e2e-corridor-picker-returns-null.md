@@ -1,7 +1,9 @@
 # E14 — The e2e gameplay spec cannot pick a corridor: the tile geometry doubled and the picker never followed
 
-**Status:** OPEN — filed 2026-09-05 while landing W8/W9/G9 on
-`arena/01a0717e-hexmatch`.
+**Status:** FIXED — 2026-09-05, on `arena/01a072d3-hexmatch` (this PR). The
+picker now measures the map instead of assuming it, and says why when it fails.
+See [Resolution](#resolution-2026-09-05).
+**Filed:** 2026-09-05 while landing W8/W9/G9 on `arena/01a0717e-hexmatch`.
 **Severity:** HIGH for the project, none proven for the game. The only
 real-browser gate this repo has has been red since the Kenney art cutover, so it
 gates nothing — which is how a red unit suite (G9) and the W-series logic bugs
@@ -188,3 +190,122 @@ Keep the J1 "never under a panel" rule — it is correct and load-bearing.
 - Do not revert or re-tune the Kenney tile geometry (`TILE_W 132 / TILE_H 64`,
   `MAP 32×32`) — that is the shipped art direction; the spec is what is stale.
 - Not a W8/W9/G9 regression: see the provenance table.
+
+---
+
+## Resolution (2026-09-05)
+
+**Fix candidates (a) + (b) + (c) together, plus the diagnostic the ticket asked
+for.** The picker no longer knows what a tile is: it measures the screen step
+of one step along a track direction, measures the clear band from the HUD's own
+boxes, derives the longest corridor that can fit, and searches four directions
+for the widest-clearance column inside `[minTiles, maxTiles]`. `(d)` (pan per
+candidate) was not needed once `(a)`+`(b)`+`(c)` were combined, and `(e)`
+(driving the drag through `__iso.dragBuild`) was not needed at all — the round
+is still played with real pointer events.
+
+### What changed
+
+| file | change |
+|------|--------|
+| `tests/e2e/corridor-picker.ts` | **new.** `findIsoCorridor(opts)` — the geometry-relative search — and `isoTileOcclusion({tiles, aim})`, the spec's independent re-check. Both are deliberately self-contained (no imports, no module scope) because `page.evaluate` ships `fn.toString()` into the page, and that contract is pinned by a test |
+| `tests/e2e/iso-game.spec.ts` | `pickCorridor` is now a 1-line `page.evaluate` of that module; the wheel zoom-out became a named `zoomStep()` helper with a **second real gesture** as a retry; the free-allowance, road-tile and painted-pixel assertions are derived from `corridor.tiles` / `corridor.col` instead of the constants 4, 5 and `hy + 1`; a new `isoTileOcclusion` assertion covers **every** tile of the column plus the tile diagonally behind the factory |
+| `src/iso/track.ts` | `canBuildOn` is now the boolean projection of a new `buildRefusal(grid, kind, tx, ty, network)` returning the *reason* (`water` / `rough` / `occupied` / `not-adjacent` / `out-of-bounds`). One rule, so the helper can filter on legality without re-deriving `WATER = 1` and drifting from the game |
+| `src/iso/game.ts` | the `__iso` hook gains three read-only surfaces: `tileProbe(kind,tx,ty)` (the game's own build + harvester verdict, via `buildRefusal` and the `placeHarvester` checks), `pickAt(sx,sy)` (literally `renderer.pick`, the two-stage hit-test a click goes through) and `camera` (so a report can name the zoom it used) |
+| `tests/unit/iso-corridor-picker.test.ts` | **new, 8 tests** — the same module run headlessly against the real map generator, the real camera maths and the CSS-derived HUD boxes |
+
+### The click point is now part of the proof
+
+The ticket's own C3 hypothesis — *the pick lands on the tile behind the one you
+clicked* — was a real risk for any corridor picked by geometry alone, so
+`findIsoCorridor` does not just filter tiles, it **chooses where to click**:
+for every candidate it tries five aim points (fractions of a tile step from the
+diamond centre) and accepts the column only where, at one aim, every tile is
+(i) in view, (ii) legal for a road, (iii) `pickAt`-correct — the game agrees the
+pixel resolves back to that tile — (iv) not covered by HUD chrome, and (v)
+inside the panel-free band by ≥ 4 px. The corridor is returned **with** that
+aim (`corridor.aim`) and the spec clicks at it.
+
+The occlusion rule is J1's, kept and generalised: `elementsFromPoint(…)
+[0]` must be one of the `.iso-layer` canvases. Because `elementsFromPoint`
+honours `pointer-events`, that subsumes "never under an `.iso-panel`" and also
+refuses tiles under the topbar, the resbar and the guide banner — which sits at
+`top: 104px`, centred, `max-width: 400px`, i.e. inside the "clear" band the old
+helper trusted.
+
+### Numbers measured headlessly (no browser in the sandbox)
+
+`npx playwright install chromium` cannot reach its CDN here, exactly as this
+ticket noted, so the geometry was verified the way the ticket's confirming
+experiment describes — by the arithmetic, in a test:
+
+* `tests/unit/iso-corridor-picker.test.ts` replays the boot state with the real
+  modules (`generateMap(1337)`, `centerOnTile(createCamera(1280,720), …)`, the
+  same `zoomStepAt(cam, -1, 640, 360)` the spec's wheel produces) and the HUD
+  boxes straight out of `styles.css` / `ui.ts:responsiveZoom` — band 592 px
+  (x 310…902), tile step 66×32 px at 1× and 33×16 px at 0.5×.
+* **The picker finds a corridor:** seed 1337 at the zoomed-out camera →
+  `4 tiles SW, (24,7)…(24,10), industry 0, 198 px clear of the HUD, aim (0, 0.5)`.
+  It also finds one on seeds 7 and 2024, and at 1× — i.e. it is no longer
+  seed-luck, which is what acceptance 4 was really about.
+* **The old assumption is reproduced and pinned:** the pre-fix filter (exactly 7
+  tiles due south, `fy = hy + 6`) finds **nothing** in that same state — a test
+  asserts `null` there while asserting a corridor here. The suite bites.
+* **The corridor is playable:** the test then runs the real
+  `previewDrag(grid, track, "road", {stone:12}, factory…harvester, net, 12)`
+  and asserts `truncated === false`, `tiles.length === corridor.tiles`,
+  `cost = {}`, `free = corridor.tiles` — the whole column lays for free, which
+  is what the spec's purse/allowance assertions then expect.
+* **It fails loudly:** with the banner grown over the map the error is
+  `no 4–7-tile corridor … 500 columns searched (25 industries × 4 directions ×
+  5 click points). band 592px (x 310..902) · tile step 33×16px · zoom 0.5 ·
+  dpr 1 · viewport 1280×720. Closest: industry "oil_rig" along SW, click offset
+  (0,0.5) — 1 tile(s) passed, then tile (2,5) was rejected by `off-screen`.
+  Rejections: {"covered":210,…}; examples: {"covered":"covered:div#iso-banner.banner"},…`
+* **The guard fires:** `minTiles` above what the band can hold throws
+  `the corridor cannot fit between the HUD panels. A 20-tile column needs 627px
+  of clear map; … This is a LAYOUT/CAMERA problem, not a search problem`.
+* `String(findIsoCorridor)` revived through `new Function` returns the identical
+  corridor — the serialization path `page.evaluate` uses is tested, not trusted.
+
+### Acceptance
+
+1. 🚧 `npx playwright test --project=desktop-chromium` — see the `e2e` job on
+   this PR for the browser verdict. The filters were kept (and strengthened,
+   above); nothing was relaxed to make the spec pass. Locally: `npm test` is
+   green at **380** (363 before this PR, +8 corridor-picker, +9 C5 debug
+   console), `npm run typecheck` clean, `npm run lint` 0 errors and one fewer
+   warning than `main`.
+2. ✅ Every tile of the column is re-checked by the spec's own
+   `isoTileOcclusion` assertion, at the aim the helper chose, using the same
+   real hit-test it filtered on — reported as
+   `coveredBy: <element>` when it fails.
+3. ✅ On `null` the picker throws with the closest candidate, the rejecting
+   tile, the filter, a rejection histogram, one concrete example per category
+   and the measured band/step/zoom/dpr/viewport.
+4. ✅ The corridor is geometry-relative: length is derived from the measured
+   tile step and the measured clear band (`fit = floor(band / stepX) + 1`), the
+   test derives its expectations from the returned `tiles`, and a band too
+   narrow for `minTiles` fails with a message that names both numbers instead
+   of quietly passing on a 1-tile "corridor".
+5. ✅ The other three e2e tests are untouched in behaviour — the layout test and
+   TK-001 do not use the picker, and the mobile projects still skip the pointer
+   flow while running the layout test. (The mobile viewport matrix is
+   `e2e-nightly.yml`; nothing in this change is viewport-specific beyond the
+   band measurement, which is now read from the DOM rather than assumed.)
+6. ⏭️ Branch protection is a repo setting, not a commit — left to the owner.
+   The check is named `e2e` on `.github/workflows/ci.yml`; once this PR is
+   green it can be marked required.
+
+### Out of scope, honoured
+
+No panel was shrunk, the map was not moved, the camera defaults are unchanged,
+and `TILE_W 132 / TILE_H 64 / MAP 32×32` are untouched. The only src changes
+are the shared legality rule and three read-only additions to the test hook.
+
+### Not covered
+
+* A real browser, in this sandbox or in the unit tests: CSS layout,
+  `elementsFromPoint`, and the atlas alpha masks (stage 2 of `pick`) are only
+  available in CI. The headless harness covers stage 1 plus the CSS geometry.
+* The mobile projects' pointer flow, which the suite skips by design.

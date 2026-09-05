@@ -88,6 +88,20 @@ Two separate issues:
 ## C5. Add console commands for visual debugging
 `[tooling]` — the human's suggestion, and a good one
 
+> **✅ DONE 2026-09-05** (`arena/01a072d3-hexmatch`). All six suggested
+> commands landed on `window.__iso` (`dumpTile`, `dumpAt`, `dumpBuilding`,
+> `dumpNetwork`, `overlay`, `config`) plus a `probe` for the "why was my click
+> refused" case; the overlay toggles paint on the map; the whole console is
+> gated behind `import.meta.env.DEV || ?iso-debug=1` so a production build
+> installs nothing; and it is documented in
+> [`docs/iso-debug-console.md`](./iso-debug-console.md) with the
+> screenshot→state workflow. It is pinned by `tests/unit/iso-debug.test.ts`
+> (9 tests) against the real booted game.
+> C1's premise is now *measurable* rather than arguable: `dumpTile().skirtDriftPx`
+> is the per-tile block-depth drift (grass 067 measures **+16 px** against the
+> canonical 50, water 066 measures 0), and `dumpBuilding().gapPx` is the hover
+> in pixels — which is exactly what this ticket asked the tooling to produce.
+
 So screenshots can be traced to state, add debug console commands exposed on `window.__iso` (the test hook already exists). When you paste a screenshot, these let the state behind it be dumped and compared.
 
 Suggested commands:
