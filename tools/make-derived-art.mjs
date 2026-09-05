@@ -2,7 +2,15 @@
 /**
  * K2/K1 — derived iso art: the pieces the Kenney landscape set does not ship.
  *
- *   node tools/make-derived-art.mjs
+ *   node tools/make-derived-art.mjs              # rewrite the committed PNGs
+ *   node tools/make-derived-art.mjs --check      # exit 1 if they are stale
+ *   node tools/make-derived-art.mjs --out DIR    # write somewhere else
+ *
+ * `--check` regenerates into a temp directory and compares byte-for-byte with
+ * what is committed, so drift between this generator and the PNGs in the repo
+ * fails loudly instead of surfacing later as a red pixel test (ticket G9:
+ * `rail_0101.png`/`rail_1010.png` were committed from an older revision of
+ * this script and the atlas test caught it by accident, not by design).
  *
  * Output (committed to the repo under src/iso/kenny/derived/, referenced by
  * tools/iso-atlas.cells.json exactly like Kenney's own PNGs):
@@ -28,13 +36,32 @@
  * sits at (66, 32) — the same geometry the packer measures anchors from, so
  * these sprites anchor like any ground tile.
  */
-import { mkdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import {
+  mkdirSync, readFileSync, readdirSync, existsSync, rmSync, mkdtempSync,
+} from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const OUT = join(ROOT, "src/iso/kenny/derived");
+/** Where the committed derived art lives — the source of truth for --check. */
+const COMMITTED = join(ROOT, "src/iso/kenny/derived");
+
+const argv = process.argv.slice(2);
+const CHECK = argv.includes("--check");
+const outAt = argv.indexOf("--out");
+if (CHECK && outAt >= 0) {
+  console.error("--check and --out are mutually exclusive");
+  process.exit(2);
+}
+const OUT = CHECK
+  ? mkdtempSync(join(tmpdir(), "hexmatch-derived-"))
+  : outAt >= 0 ? resolve(argv[outAt + 1] ?? "") : COMMITTED;
+if (!OUT) {
+  console.error("--out needs a directory");
+  process.exit(2);
+}
 mkdirSync(OUT, { recursive: true });
 
 // ── measured geometry (K0 — keep in sync with src/game/config.ts) ─────────
@@ -150,10 +177,14 @@ function railArm(c, bit, opts = {}) {
 
 const maskBits = (mask) => [1, 2, 4, 8].filter((b) => mask & b);
 
+/** Every PNG this script produced, in order — `--check` compares this list. */
+const emitted = [];
+
 async function emit(name, c) {
   await sharp(Buffer.from(c.px), { raw: { width: c.w, height: c.h, channels: 4 } })
     .png().toFile(join(OUT, name));
-  console.log("derived", name);
+  emitted.push(name);
+  if (!CHECK) console.log("derived", name);
 }
 
 // ── the 16 rail autotiles ──────────────────────────────────────────────────
@@ -196,6 +227,37 @@ for (let mask = 0; mask < 16; mask++) {
 
 // sanity: nothing generated outside the canonical geometry
 if (PAL.ballast.length !== 3) throw new Error("palette shape");
-console.log(`derived art written to ${OUT} (rail ×16, crossing, highlight ×2)`);
-// keep readFileSync import honest for future palette re-sampling hooks
-void readFileSync;
+
+if (!CHECK) {
+  console.log(`derived art written to ${OUT} (rail ×16, crossing, highlight ×2)`);
+  process.exit(0);
+}
+
+// ── --check: the committed PNGs must be exactly what this script produces ──
+const drift = [];
+for (const name of emitted) {
+  const committedPath = join(COMMITTED, name);
+  if (!existsSync(committedPath)) {
+    drift.push(`${name}: generated but NOT committed`);
+    continue;
+  }
+  const a = readFileSync(join(OUT, name));
+  const b = readFileSync(committedPath);
+  if (!a.equals(b)) {
+    drift.push(`${name}: committed ${b.length} B ≠ regenerated ${a.length} B`);
+  }
+}
+if (existsSync(COMMITTED)) {
+  for (const f of readdirSync(COMMITTED)) {
+    if (!f.endsWith(".png")) continue;
+    if (!emitted.includes(f)) drift.push(`${f}: committed but no longer generated`);
+  }
+}
+rmSync(OUT, { recursive: true, force: true });
+
+if (drift.length) {
+  console.error(`derived art is STALE (${drift.length} file(s)) — run \`node tools/make-derived-art.mjs\` and commit:`);
+  for (const d of drift) console.error(`  ${d}`);
+  process.exit(1);
+}
+console.log(`derived art in sync with its generator (${emitted.length} PNGs)`);
