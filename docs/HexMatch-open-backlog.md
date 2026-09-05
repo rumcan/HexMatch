@@ -1,100 +1,119 @@
-# HexMatch — open tickets (after PR #21)
+# HexMatch — tile geometry, config, and debug tooling
 
-Audited against `main` @ `08230e3`. Verified independently: **362/362 unit tests pass** (G9 fixed the honesty problem — the suite no longer lies), typecheck clean. PR #21 landed W8, W9, G9 and filed E14. Good work — the W8 rival-deadlock fix took idle placements from 51/160 → 0/160 on seed 1337.
-
-**But one P0 from the last doc was skipped, and it's the one you keep seeing on screen.**
-
-Ordered by priority. One ticket per PR, stop at each acceptance block, verify before reporting done, keep the G7 atlas gate green.
+Audited against `main` @ `08230e3`. Root-caused from the three screenshots plus the code. There are **four distinct bugs** and one tooling request. Ordered by priority.
 
 ---
 
-## B1. Apply the Art Lab tile config — STILL not done, startup map still uses old tiles
+## The core discovery: Kenney tiles have variable skirt height, the renderer assumes one
+
+Every Kenney tile is a **two-level block**: a flat diamond TOP (where things sit) and a vertical SKIRT below it (the brown/side block). The renderer treats the skirt as a single constant `BLOCK_H = 50`. **It isn't constant.** Measured:
+
+| tile | top-surface | skirt |
+|---|---|---|
+| grass 010 (live) | 33px | **49px** |
+| grass 067 (your config) | 33px | **65px** |
+| water 066 | 33px | 49px |
+
+Buildings anchor to their **widest row** and are drawn at `sy − anchor`, where `sy = (tx+ty)·HH` is the diamond *centre*. That math is only correct if every tile's top-to-widest distance matches. Because terrain skirts vary (and differ from what buildings assume), a building placed on a taller-skirt tile **floats above the ground** — exactly screenshot 3, where the house hovers over a visible gap, and screenshot 2, where the highlight diamond sits below the building.
+
+This single geometry gap explains the "two levels — the game doesn't know" observation. It's real, and it's the root cause of the hovering.
+
+---
+
+## C1. Buildings hover above their tile — skirt height isn't modelled
+`[P0] [renderer]`
+
+**Symptom:** buildings float above the ground surface; the placement highlight sits at a different level than the building (screenshots 2 & 3).
+
+**Cause:** the renderer positions every sprite by its widest row against the diamond centre-line, ignoring that a tile's *ground surface* is `skirt` pixels below its widest row, and that skirt varies per tile. A building's foot must land on the ground tile's TOP surface, not float at the diamond centre.
+
+**Fix direction:**
+- The ground surface of a tile is at `screenY(tx,ty) + (skirt of that tile)` — not at the diamond centre. Buildings must anchor their foot to that surface.
+- Either: (a) normalise all terrain tiles to one skirt height at pack time (reject/crop tiles whose skirt ≠ the canonical value — the flat-only filter already rejects slopes, extend it to skirt height), or (b) carry each tile's skirt in the manifest and offset buildings by the skirt of the tile they sit on.
+- (a) is simpler and matches the "flat uniform terrain" intent. Pick one canonical skirt (49px, the common value) and only use terrain tiles with that skirt. **Your config's grass 067 has a 65px skirt — that's why it would sit differently from the buildings.** Prefer a 49px-skirt flat grass instead.
+
+**Acceptance:** buildings sit flush on the ground with no gap; the placement highlight is at the same level as the building base; verified by screenshot at 2–3 map positions.
+
+**This interacts with C2** — don't pick terrain tiles until the skirt rule is decided, or you'll pick a good-looking tile with the wrong skirt and reintroduce the hover.
+
+---
+
+## C2. The tile config STILL isn't applied — and the export only half-landed
 `[P0] [assets]`
 
-This was A1 in the previous doc and it was **not addressed in PR #21** (that PR did the three logic tickets instead). Confirmed against `main`:
+Confirmed on `main`: `terrain_grass` is still `landscapeTiles_010`, `farm` still `buildingTiles_083`, `forest` still `landscapeTiles_028` — the **original programmatic picks**. Meanwhile the depots carry MB1 *stacks*. So the live config is a contradictory mix: the stacking work from PR #19 landed, but **your Art Lab terrain/road/industry choices never did.**
 
-```
-terrain_grass -> landscape/PNG/landscapeTiles_010.png   ← still the ramp tile
-```
+That's why "even after the CSV export the tiles are wrong" — the export didn't reach `tools/iso-atlas.cells.json`. Either it wasn't committed, or a later PR overwrote it with the old picks.
 
-`010` is the sloped block that causes the sloped-grass bug. The human's Art Lab config chose `067` (flat) and picked correct tiles for water, rough, and every industry. That config was never applied — the live cells file still has the original programmatic picks.
+**Fix:**
+1. Get your real exported `iso-atlas.cells.json` (the actual file, not a paste).
+2. Merge it correctly: keep the MB1 `stack` entries for factory/depot, apply your terrain/road/industry `png` choices. Someone has to reconcile the two — they're both wanted.
+3. **Respect C1's skirt rule** when choosing terrain — don't pick a 65px-skirt tile if the canonical is 49px.
+4. `make-derived-art.mjs && parse-pnml.mjs && slice-atlas`, commit the atlas, G7 gate green.
 
-Full correction table (live → should be):
-
-| Slot | LIVE (wrong) | Art Lab config |
-|---|---|---|
-| terrain_grass | landscapeTiles_010 (ramp) | landscapeTiles_067 |
-| terrain_water | landscapeTiles_037 | landscapeTiles_066 |
-| terrain_rough | landscapeTiles_073 | landscapeTiles_059 |
-| farm | buildingTiles_083 | buildingTiles_026 |
-| forest | landscapeTiles_028 | buildingTiles_034 |
-| ore_mine | buildingTiles_007 | buildingTiles_036 |
-| quarry | buildingTiles_081 | buildingTiles_093 |
-| gold_mine | buildingTiles_058 | buildingTiles_042 |
-
-**Apply the human's exported `iso-atlas.cells.json` verbatim.** Do NOT re-pick tiles by script — the flat-vs-slope difference is not measurable in pixels (010 and 067 both measure a widest row at y≈33; the difference is only visible to the eye), which is exactly why three prior programmatic attempts picked wrong. Keep the file's `stack` entries — MB1 supports them.
-
-```
-cp <human's exported file> tools/iso-atlas.cells.json
-node tools/make-derived-art.mjs && node tools/parse-pnml.mjs && npm run slice-atlas
-git diff --exit-code assets/iso-atlas/   # commit the regenerated atlas
-npm run typecheck && npm test
-```
-
-**Acceptance:** `terrain_grass` renders flat, no sloped triangles; all slots match the table; atlas regenerated and committed; G7 gate green; tests pass. Verify by rendering the map, not just running tests.
-
-**If you don't have the human's file:** ask for it. Do not reconstruct it from this table alone — get the real export, because it also contains the correct road/rail and building-stack entries this table doesn't fully list.
+**Acceptance:** every terrain/road/industry tile matches your Art Lab choices AND satisfies C1's skirt constraint; factory/depot stacks preserved; map renders flat with buildings flush.
 
 ---
 
-## B2. E14 — the e2e gameplay spec can't pick a corridor (tile geometry doubled)
-`[testing] [P1]`
+## C3. Can't build roads
+`[P0] [gameplay]`
 
-Already filed and well-diagnosed at `docs/tickets/E14-e2e-corridor-picker-returns-null.md`. I verified the diagnosis: `TILE_W/TILE_H` are now `132/64` (were `64/32` at the last green nightly `1170d64`), so the test's 7-tile due-south corridor spans 396×256 CSS px instead of 192×128, and the start window between the two fixed side panels collapsed to ~3 lattice positions — none of which coincide with a fully-buildable industry column at seed 1337. The picker returns null before any pointer event fires. Tests 1/2/4 pass; test 3 dies in the helper.
+**Symptom:** "I could not make any roads myself."
 
-This has been red since the Kenney cutover and, because it's a non-required job, **has silently blocked nothing** through PRs #18–#20 — every "e2e fails, pre-existing" note traces here.
+**Likely cause (needs the console tooling in C5 to confirm):** road build only starts if `canBuildOn(grid, tool, p.tx, p.ty, net)` passes, where `net` is your network (must be adjacent to your factory/harvester). Two candidates:
+- The **pick is landing on the wrong tile** because of the C1 geometry bug — you click a buildable tile but `pick()` returns the tile behind/below it, which isn't network-adjacent, so the build is silently refused.
+- Or the network seeding is wrong and no tile ever reads as adjacent.
 
-The ticket lists four fix candidates; **(a) is right**: zoom out with a real wheel gesture before picking (`page.mouse.wheel`), which respects the spec's no-mocking rule and makes the corridor fit. (b) shortening the corridor to 4 tiles also works and is simpler. Avoid weakening the picker's filters — that hides real bugs.
+The C1 fix may resolve this for free (correct geometry → correct pick → correct adjacency). Verify after C1: if picking is fixed and roads still can't be built, it's a network-adjacency bug and needs its own dig.
 
-**Needs a browser to verify** — can't be confirmed in a headless-only sandbox. Do this where Playwright can actually run, or the fix is unverifiable.
-
-**Acceptance:** the gameplay e2e test picks a corridor and completes the factory→harvester→road→+1 VP flow at seed 1337 / 1280×720; the fix uses a real gesture, not a mocked camera or a relaxed filter; e2e job green.
-
----
-
-## B3. Make the e2e job required once it's green
-`[ci]`
-
-The root cause behind E14 hiding so long: the e2e job isn't a required check, so a red e2e has never blocked a merge. Once B2 turns it green, mark it required in branch protection (Settings → Branches → require the `e2e` status check). Otherwise the next geometry change silently breaks it again.
-
-**Acceptance:** e2e is a required check on `main`; a PR with a failing e2e cannot merge.
+**Acceptance:** dragging from a tile adjacent to your factory/harvester builds road; the preview shows the affordable path; a toast explains any refusal (not silent).
 
 ---
 
-## B4+. Remaining gameplay — Priority 2 TK tickets
-`[gameplay]`
+## C4. Art Lab has missing/wrong images — slots you didn't choose
+`[tooling] [assets]`
 
-With the Priority-1 bugs closed and the map fixed (B1), the next body of work is the TK gameplay tickets from `docs/HexMatch-tk-gameplay.md`, each its own PR:
+**Symptom:** "the art lab had a lot of missing things in the image list, like that harvester I did not choose."
 
-- **TK-002** — rail as an independent network that crosses roads (track ownership from W2 is in place, so this is now unblocked).
-- **TK-004** — vehicles moving along roads. Art + directional frames already in the atlas (K5), so this is movement logic.
-- **TK-005** — bigger map + towns + cap resources at 2 nodes each.
-- **TK-006** — first building must be placed in a town radius (needs TK-005).
-- **TK-007** — rename Quarry → Processing Plant, remove timed bomb spawns, tie spawns to vehicle arrival (needs TK-004).
+Two separate issues:
+- **Missing candidates:** the Art Lab's candidate grid is generated from a fixed count per folder. If a folder's real file count differs, some tiles are missing or some indices 404 (the earlier red-tile bug was this). Re-verify the exact file lists.
+- **The harvester/depot you didn't choose:** the depot is a *stack* now (MB1), and the Art Lab's single-png picker can't represent or edit stacks — so it shows whatever the stack's base layer is, which looks like a choice you didn't make. The Art Lab needs the stack-editor follow-up (from the MB1 ticket) to handle depot/factory properly.
 
-Natural order: TK-005 → TK-002 → TK-004 → TK-007 → TK-006. Each is one PR.
+**Fix:** regenerate the Art Lab candidate lists from the actual folder contents (glob, don't assume counts); and either hide stacked slots from the single-png picker or build the stack editor so they're editable.
+
+**Acceptance:** every candidate thumbnail loads (no missing/broken images); stacked building slots are either editable via a stack UI or clearly marked as stack-managed, not shown as a wrong single pick.
+
+---
+
+## C5. Add console commands for visual debugging
+`[tooling]` — the human's suggestion, and a good one
+
+So screenshots can be traced to state, add debug console commands exposed on `window.__iso` (the test hook already exists). When you paste a screenshot, these let the state behind it be dumped and compared.
+
+Suggested commands:
+- `__iso.dumpTile(tx, ty)` → the tile's terrain cell, sprite name, computed skirt, anchor, screen position, and what `pick()` returns for its centre. **Directly diagnoses C1/C3.**
+- `__iso.dumpAt(screenX, screenY)` → which tile the picker resolves a screen point to (catches the wrong-tile-picked bug).
+- `__iso.dumpBuilding(tx, ty)` → the building's stack layers, each layer's draw offset, and the gap (if any) between its foot and the tile surface. **Directly shows the hover.**
+- `__iso.dumpNetwork(player)` → the set of tiles counted as that player's network (diagnoses C3's adjacency).
+- `__iso.overlay('skirt'|'anchor'|'network'|'pick')` → toggle a debug overlay drawing these on the map, so a screenshot shows them.
+- `__iso.config()` → dump the resolved cells.json entry for every on-screen sprite, so a screenshot can be matched to exactly which tiles are mapped.
+
+Wire them behind the existing debug/env flag so they don't ship in production. Then a screenshot plus `__iso.dumpBuilding(tx,ty)` output tells us exactly where the geometry breaks, instead of guessing from pixels.
+
+**Acceptance:** the commands exist on `window.__iso`, each returns/logs structured data, and the overlay toggles render on the map. Document them in `docs/` so the workflow is repeatable.
 
 ---
 
 ## Sequencing
 
-**B1 → B2 → B3 → B4+.**
+**C1 → C5 → C2 → C3 → C4.**
 
-- **B1** is the one you keep looking at — do it first, it makes the map finally correct. Highest visible impact, and it's data-only + low risk.
-- **B2** needs a browser environment; schedule it where Playwright runs.
-- **B3** locks the e2e gate so B2 doesn't silently regress.
-- **B4+** is the feature backlog, after the foundation is solid.
+- **C1** (skirt geometry) is the root cause of the hovering and probably the road-build failure. Fix it first.
+- **C5** (console tools) right after — cheap, and it makes C2/C3 verifiable from screenshots instead of guesswork. Arguably do C5 *first* so C1 can be confirmed with the overlay.
+- **C2** (apply config) once the skirt rule is settled, so terrain picks satisfy it.
+- **C3** (roads) — retest after C1; may be fixed, may need a network dig.
+- **C4** (Art Lab) — tooling cleanup, lower urgency.
 
-## Note on the branch/PR constraint
+## Note
 
-PR #21 bundled three tickets because the session was pinned to one branch, breaking the one-ticket-per-PR rule. That's a workflow limitation, not a process failure — the agent flagged it and offered to split. If the arena can start each ticket on its own branch, keep one-per-PR. If it can't, group only tightly-related tickets (e.g. B1+B2 are unrelated — don't bundle those) and list them explicitly in the PR body.
+C1 and C3 are likely the same root cause seen twice (bad geometry → bad picking → can't build). Fix C1, add C5's overlay, re-screenshot, and C3 may resolve. Don't fix them as separate blind changes — confirm with the console tools first.
