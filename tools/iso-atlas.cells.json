@@ -688,7 +688,31 @@
           "png": "buildings/PNG/buildingTiles_057.png"
         }
       ],
-      "note": "MB1: the harvester depot fixed \u2014 the old 089 was a roof-only piece (99x60 cap that rendered flat). Now a proper 2-storey stack: base 044 + one 044 floor under the 057 roof, player-tinted."
+      "note": "MB1: the harvester depot fixed \u2014 the old 089 was a roof-only piece (99x60 cap that rendered flat). Now a proper 2-storey stack: base 044 + one 044 floor under the 057 roof, player-tinted.",
+      "stackVariants": [
+        [
+          {
+            "png": "buildings/PNG/buildingTiles_044.png"
+          },
+          {
+            "png": "buildings/PNG/buildingTiles_044.png"
+          },
+          {
+            "png": "buildings/PNG/buildingTiles_044.png"
+          },
+          {
+            "png": "buildings/PNG/buildingTiles_057.png"
+          }
+        ],
+        [
+          {
+            "png": "buildings/PNG/buildingTiles_044.png"
+          },
+          {
+            "png": "buildings/PNG/buildingTiles_057.png"
+          }
+        ]
+      ]
     },
     {
       "name": "depot_red",
@@ -712,6 +736,30 @@
         {
           "png": "buildings/PNG/buildingTiles_057.png"
         }
+      ],
+      "stackVariants": [
+        [
+          {
+            "png": "buildings/PNG/buildingTiles_044.png"
+          },
+          {
+            "png": "buildings/PNG/buildingTiles_044.png"
+          },
+          {
+            "png": "buildings/PNG/buildingTiles_044.png"
+          },
+          {
+            "png": "buildings/PNG/buildingTiles_057.png"
+          }
+        ],
+        [
+          {
+            "png": "buildings/PNG/buildingTiles_044.png"
+          },
+          {
+            "png": "buildings/PNG/buildingTiles_057.png"
+          }
+        ]
       ]
     },
     {
@@ -736,6 +784,30 @@
         {
           "png": "buildings/PNG/buildingTiles_057.png"
         }
+      ],
+      "stackVariants": [
+        [
+          {
+            "png": "buildings/PNG/buildingTiles_044.png"
+          },
+          {
+            "png": "buildings/PNG/buildingTiles_044.png"
+          },
+          {
+            "png": "buildings/PNG/buildingTiles_044.png"
+          },
+          {
+            "png": "buildings/PNG/buildingTiles_057.png"
+          }
+        ],
+        [
+          {
+            "png": "buildings/PNG/buildingTiles_044.png"
+          },
+          {
+            "png": "buildings/PNG/buildingTiles_057.png"
+          }
+        ]
       ]
     },
     {
@@ -760,6 +832,30 @@
         {
           "png": "buildings/PNG/buildingTiles_057.png"
         }
+      ],
+      "stackVariants": [
+        [
+          {
+            "png": "buildings/PNG/buildingTiles_044.png"
+          },
+          {
+            "png": "buildings/PNG/buildingTiles_044.png"
+          },
+          {
+            "png": "buildings/PNG/buildingTiles_044.png"
+          },
+          {
+            "png": "buildings/PNG/buildingTiles_057.png"
+          }
+        ],
+        [
+          {
+            "png": "buildings/PNG/buildingTiles_044.png"
+          },
+          {
+            "png": "buildings/PNG/buildingTiles_057.png"
+          }
+        ]
       ]
     },
     {

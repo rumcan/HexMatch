@@ -181,6 +181,15 @@
               }
             }
           }
+        },
+        "variants": {
+          "description": "MB2 per-instance variants: optional ordered pick-set on the canonical sprite (variants[0] === this sprite's own name). Each entry names another manifest sprite (usually another composite) the renderer may draw instead, one per instance by a stable tile seed, so repeated buildings aren't identical. Every entry must share the footprint and be player-tinted.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]+$"
+          }
         }
       }
     }

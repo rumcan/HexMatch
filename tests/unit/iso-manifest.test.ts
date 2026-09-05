@@ -10,6 +10,7 @@ const realManifest = JSON.parse(readFileSync("assets/iso-atlas/manifest.json", "
     x: number; y: number; w: number; h: number;
     footprint: [number, number]; anchor: [number, number];
     parts?: { sprite: string; dx: number; dy: number }[];
+    variants?: string[];
   }>;
 };
 
@@ -19,7 +20,7 @@ const cells = JSON.parse(readFileSync("tools/iso-atlas.cells.json", "utf8")) as 
   sprites: {
     name: string; png?: string; kind?: string; footprint?: [number, number];
     tintLum?: [number, number, number]; mask?: [number, number];
-    stack?: { png: string }[];
+    stack?: { png: string }[]; stackVariants?: { png: string }[][];
     compose?: unknown; box?: unknown; crop?: unknown; generator?: unknown;
     layers?: unknown; trackset?: unknown; sprite?: unknown;
   }[];
@@ -245,6 +246,45 @@ describe("MB1 stacked-building composites", () => {
         const layerSprite = realManifest.sprites[ln];
         expect(layerSprite, `${ln} must be packed`).toBeTruthy();
         expect(layerSprite.parts, `${ln} must not itself be a composite`).toBeUndefined();
+      });
+    }
+  });
+});
+
+// ── MB2 per-instance variants ─────────────────────────────────────────────
+describe("MB2 per-instance variants", () => {
+  it("depot cells declare extra variant stacks that all exist", () => {
+    for (const b of ["depot_blue", "depot_red", "depot_purple", "depot_green"]) {
+      const s = cells.sprites.find((x) => x.name === b)!;
+      expect(s.stackVariants, `${b} must declare variant stacks`).toBeTruthy();
+      expect(s.stackVariants!.length, `${b}`).toBeGreaterThanOrEqual(1);
+      for (const variant of s.stackVariants!) {
+        expect(variant.length).toBeGreaterThanOrEqual(2);
+        expect(variant.length).toBeLessThanOrEqual(6);
+        for (const l of variant) expect(existsSync(join(cells.source.root, l.png)), l.png).toBe(true);
+      }
+    }
+    // factories stay single-composition (no variant presets)
+    expect(cells.sprites.find((x) => x.name === "factory_blue")!.stackVariants).toBeUndefined();
+  });
+
+  it("the canonical manifest sprite carries the ordered pick-set", () => {
+    const d = realManifest.sprites["depot_blue"];
+    expect(d.variants).toEqual(["depot_blue", "depot_blue_v1", "depot_blue_v2"]);
+    // factories have no pick-set
+    expect(realManifest.sprites["factory_blue"].variants).toBeUndefined();
+  });
+
+  it("every variant resolves to a same-footprint composite with its own parts", () => {
+    for (const b of ["depot_blue", "depot_red", "depot_purple", "depot_green"]) {
+      const cellStack = cells.sprites.find((x) => x.name === b)!.stack!;
+      const canon = realManifest.sprites[b];
+      const full = [cellStack, ...cells.sprites.find((x) => x.name === b)!.stackVariants!];
+      canon.variants!.forEach((v, i) => {
+        const m = realManifest.sprites[v];
+        expect(m, `${b} variant ${v}`).toBeTruthy();
+        expect(m.footprint).toEqual([1, 1]);
+        expect(m.parts!.length, `${b} variant ${v} layers`).toBe(full[i].length);
       });
     }
   });

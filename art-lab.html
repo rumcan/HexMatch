@@ -128,11 +128,11 @@ const SPEC = {
        {"name":"rail_0011","want":"Rail curve."},
        {"name":"rail_1111","want":"Rail crossroads."}
      ]},
-    {"title":"Buildings — MB1: factory/depot are multi-storey STACKS",
-     "note":"factory_* and depot_* are tinted 4 ways (per player) from ONE composed multi-storey building — click factory or depot to open the stack editor (pick base / middle floors / roof). The other industries are single Kenney tiles, picked as before.",
+    {"title":"Buildings — multi-storey STACKS (+ MB2 variants)",
+     "note":"factory_* is a multi-storey stack tinted 4 ways (per player) from ONE composition — click it to open the stack editor. depot_* is an MB2 VARIANT GROUP: the game picks per-instance among several preset stacks, so it's read-only here (authoring is a follow-up). The other industries are single Kenney tiles, picked as before.",
      "slots":[
        {"name":"factory_blue","want":"The factory TOWER: a tall stack — a ground base + several window storeys + a roof. Pick the tallest, most industrial look. Tinted per player. (Same composition auto-applies to factory_red/purple/green.)"},
-       {"name":"depot_blue","want":"The depot: a compact stack — base + 1–2 storeys + roof. Reads as a small utility/loading building. Tinted per player."},
+       {"name":"depot_blue","want":"The depot — an MB2 variant group: several small preset stacks (1–3 storeys) that the renderer varies per instance so a player's depots aren't identical. Colour still carries ownership. Presets are authored in cells.json for now."},
        {"name":"farm","want":"A farm or barn — grain industry."},
        {"name":"forest","want":"Trees or a lumber camp — wood industry. (Can be a landscape tree tile.)"},
        {"name":"ore_mine","want":"A mine or heavy-industry building — ore."},
@@ -164,12 +164,37 @@ const byName=new Map(cellsDoc.sprites.map(s=>[s.name,s]));
 // tinted members of a shared FAMILY, edited as ONE representative composition.
 const FAMILY = {factory_blue:["factory_blue","factory_red","factory_purple","factory_green"],
                 depot_blue:["depot_blue","depot_red","depot_purple","depot_green"]};
-/** Which editable family representative a sprite name belongs to (any tinted member). */
+/** Which family representative a sprite name belongs to (any tinted member). */
 const repName = n => {
   for (const rep of Object.keys(FAMILY)) if (FAMILY[rep].includes(n)) return rep;
   return null;
 };
 const stackOf = cell => (cell && Array.isArray(cell.stack)) ? cell.stack.map(l=>l.png) : null;
+/**
+ * MB2: a cell with `stackVariants` is a preset VARIANT GROUP — several curated
+ * per-instance compositions that the game picks among at draw time. Authoring
+ * those is a follow-up; here they are read-only and preserved on export so a
+ * designer can't clobber the variant set by editing just the canonical stack.
+ */
+const isVariantGroup = n => {
+  const c = byName.get(n); const r = repName(n) ?? n;
+  const cc = r ? byName.get(r) : null;
+  const cell = cc || c;
+  return !!(cell && Array.isArray(cell.stackVariants) && cell.stackVariants.length);
+};
+/** A family rep that is safe to compose here (single-composition, no variants). */
+const editableRep = n => {
+  const r = repName(n);
+  return r && !isVariantGroup(r) ? r : null;
+};
+/** Total presets (canonical + stackVariants) a building renders with per instance. */
+const presetCount = n => {
+  const cell = byName.get(repName(n) ?? n) || byName.get(n);
+  if (!cell) return 0;
+  return 1 + (Array.isArray(cell.stackVariants) ? cell.stackVariants.length : 0);
+};
+/** Canonical stack PNGs of a building (variant groups show their default look). */
+const groupStack = n => stackOf(byName.get(repName(n) ?? n) || byName.get(n));
 
 const originalPng=new Map();   // name -> png   (single-piece cells)
 for(const s of cellsDoc.sprites) if(s.png!==undefined) originalPng.set(s.name,s.png);
@@ -178,6 +203,7 @@ const current=new Map(originalPng);
 const origComp=new Map();
 const curComp=new Map();
 for(const rep of Object.keys(FAMILY)){
+  if(isVariantGroup(rep)) continue;   // MB2 preset groups are read-only here
   const src=stackOf(byName.get(rep));
   if(!src){ // no stack in source — fall back to single-png pick if one exists
     if(byName.get(rep)?.png!==undefined){ originalPng.set(rep, byName.get(rep).png); current.set(rep, byName.get(rep).png); }
@@ -261,14 +287,19 @@ function renderLeft(){
     host.appendChild(h);
     for(const slot of g.slots){
       if(!byName.has(slot.name))continue;
-      const rep=repName(slot.name);
+      const rep=repName(slot.name);                 // family rep, if any
+      const vg=isVariantGroup(slot.name);           // MB2 read-only preset group
+      const edrep=editableRep(slot.name);           // compose-able rep, if any
       const row=document.createElement("div");
-      const changed=rep? repChanged(rep) : (current.get(slot.name)!==originalPng.get(slot.name));
+      const changed=edrep? repChanged(edrep)
+        : (vg? false : (current.get(slot.name)!==originalPng.get(slot.name)));
       row.className="slot"+(slot.name===selected?" sel":"")+(changed?" done":"");
       const cv=document.createElement("canvas");cv.width=52;cv.height=42;
       const t=document.createElement("div");
-      const tag=rep?" (stack) ":"";
-      t.innerHTML=`<div class="n">${slot.name}${rep?`<span style="color:var(--good)">${tag}</span>`:""}</div><div class="w">${slot.want}</div>`;
+      let badge="";
+      if(edrep) badge=`<span style="color:var(--good)"> (stack)</span>`;
+      else if(vg) badge=`<span style="color:var(--warn)"> (${presetCount(slot.name)} presets · locked)</span>`;
+      t.innerHTML=`<div class="n">${slot.name}${badge}</div><div class="w">${slot.want}</div>`;
       row.append(cv,t);
       row.onclick=()=>{selected=slot.name;
         if(rep){ src="buildings"; mode="base"; }
@@ -279,7 +310,8 @@ function renderLeft(){
         for(const x of document.querySelectorAll("[data-src]"))x.classList.toggle("on",x.dataset.src===src);
         renderLeft();renderHead();renderBody();};
       host.appendChild(row);
-      if(rep){ const st=currentStack(rep); if(st) fitDraw(cv,st); else thumb(cv,current.get(slot.name),0.33); }
+      if(edrep){ const st=currentStack(edrep); if(st) fitDraw(cv,st); else thumb(cv,current.get(slot.name),0.33); }
+      else if(vg){ const gs=groupStack(slot.name); if(gs) fitDraw(cv,gs); else thumb(cv,current.get(slot.name),0.33); }
       else thumb(cv,current.get(slot.name),0.33);
     }
   }
@@ -290,16 +322,22 @@ function renderLeft(){
 }
 
 async function renderHead(){
-  const rep=repName(selected);
+  const rep=repName(selected), vg=isVariantGroup(selected), edrep=editableRep(selected);
   const hName=document.getElementById("hName"),hWant=document.getElementById("hWant"),hCur=document.getElementById("hCur");
   hName.textContent=selected;
   hWant.textContent="Should look like: "+(WANT.get(selected)||"");
-  if(rep){
+  if(edrep){
     const c=curComp.get(selected);
     const total=(c?c.floors:0)+2;
     hCur.innerHTML=`<span style="color:var(--good)">multi-storey stack</span> — `+
       `${c?`base ${c.base.split("/").pop()} · ${c.floors} floor${c.floors===1?"":"s"} of ${c.floor.split("/").pop()} · roof ${c.roof.split("/").pop()}`:"(single tile)"}`+
       ` → ${total} layer${total===1?"":"s"} on export`;
+  } else if(vg){
+    const cell=byName.get(rep)||byName.get(selected);
+    const canon=groupStack(selected);
+    hCur.innerHTML=`<span style="color:var(--warn)">MB2 variant group</span> — `+
+      `${presetCount(selected)} preset stacks (${canon?canon.length:0}… layers) the renderer varies per instance. `+
+      `Read-only here so the presets can't be clobbered; author them in <code>tools/iso-atlas.cells.json</code> (or a variant-composer follow-up).`;
   } else {
     const png=current.get(selected);const im=await load(png);
     hCur.textContent=`current: ${(png||"").split("/").pop()} ${im?`(${im.width}×${im.height})`:"— missing"}`;
@@ -308,16 +346,15 @@ async function renderHead(){
 
 // ── right panel: single-piece picker OR stack composer ─────────────────────
 async function renderBody(){
-  const rep=repName(selected);
+  const rep=repName(selected), vg=isVariantGroup(selected), edrep=editableRep(selected);
   body.innerHTML="";
   const gwrap=document.createElement("div");   // the scrollable tile grid area
   gwrap.className="grid";
   const srcs=document.querySelectorAll("[data-src]");
-  for(const b of srcs)b.style.display=rep?"none":"";   // hide source tabs while composing
-  if(rep){
-    if(!curComp.has(selected)){ // degraded: not a stack cell
-      renderGrid(gwrap,false); body.appendChild(gwrap); return;
-    }
+  const hideTabs=rep?true:false;              // composing / group view hides source tabs
+  for(const b of srcs)b.style.display=hideTabs?"none":"";
+  if(vg){ renderVariantGroupPanel(); return; }
+  if(edrep){
     body.appendChild(compBar());
     body.appendChild(await previewBox(selected));
     const pnl=document.createElement("div");pnl.className="pnl";
@@ -331,6 +368,34 @@ async function renderBody(){
   }
   renderGrid(gwrap,false);
   body.appendChild(gwrap);
+}
+
+// MB2 variant groups: read-only so per-instance presets can't be clobbered by
+// editing just the canonical stack. (An authoring UI for variants is a follow-up.)
+function renderVariantGroupPanel(){
+  const rep=repName(selected)||selected;
+  const cell=byName.get(rep)||byName.get(selected);
+  const canon=groupStack(selected);
+  const p=document.createElement("div");
+  p.className="previewbox";
+  const stage=document.createElement("div");stage.className="stage";
+  const cv=document.createElement("canvas");cv.className="pv";stage.appendChild(cv);
+  const ro=document.createElement("div");ro.className="readout";
+  p.append(stage,ro);
+  const r=s=>s.split("/").pop().replace(".png","");
+  let rows="";
+  const all=[cell&&cell.stack, ...(Array.isArray(cell&&cell.stackVariants)?cell.stackVariants:[])]
+    .filter(Boolean);
+  all.forEach((preset,i)=>{
+    const names=preset.map(l=>r(l.png));
+    rows+=`<div><b>preset ${i}:</b> ${names.length} layers — ${names[0]}…${names[names.length-1]}</div>`;
+  });
+  ro.innerHTML=`<div class="t">Variant group — ${presetCount(selected)} presets, drawn per instance</div>`+
+    `<div>${rows}</div>`+
+    `<div style="color:var(--warn);margin-top:4px">Read-only: the game picks among these by tile seed so repeated ${selected} aren't identical. `+
+    `Edit them in tools/iso-atlas.cells.json for now.</div>`;
+  body.appendChild(p);
+  if(canon) fitDraw(cv,canon);
 }
 
 function compBar(){
@@ -418,6 +483,7 @@ document.getElementById("reset").onclick=()=>{for(const[k,v]of originalPng)curre
 document.getElementById("export").onclick=()=>{
   const out=structuredClone(cellsDoc);
   for(const s of out.sprites){
+    if(isVariantGroup(s.name)) continue;   // MB2 presets are preserved untouched
     if(originalPng.has(s.name)){
       s.png=current.get(s.name);delete s.stack;
     } else {

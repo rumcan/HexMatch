@@ -4,7 +4,7 @@ import { Atlas, type AlphaMask, type Manifest } from "../../src/iso/atlas";
 import { depthSort, place, pickSprite, type DrawItem } from "../../src/iso/depth";
 import {
   CHUNK, chunksX, chunkIndexOf, chunkSurfaceSize, chunkWorldOrigin,
-  terrainSprite, buildDrawList, cullPad, flatPick,
+  terrainSprite, buildDrawList, cullPad, flatPick, resolveVariantSprite, variantSeed,
 } from "../../src/iso/renderer";
 import { generateMap, WATER, ROUGH } from "../../src/iso/grid";
 import { createCamera, centerOnMap, visibleTileRange } from "../../src/iso/camera";
@@ -148,6 +148,37 @@ describe("E4 culling + draw list", () => {
     const culled = buildDrawList({ grid, roadBits }, r);
     const full = buildDrawList({ grid, roadBits }, { x0: 0, y0: 0, x1: MAP_W - 1, y1: MAP_H - 1 });
     expect(culled.length).toBeLessThan(full.length);
+  });
+});
+
+describe("MB2 per-instance variants pick a stable preset per tile", () => {
+  const variants = atlas.get("depot_blue")!.variants!;
+  it("depot_blue carries a multi-entry pick-set in the shipped manifest", () => {
+    expect(variants.length).toBeGreaterThan(1);
+    for (const v of variants) expect(atlas.has(v), `${v} missing`).toBe(true);
+  });
+
+  it("the same tile always resolves to the same preset (no flicker)", () => {
+    const a = resolveVariantSprite(atlas, "depot_blue", 7, 9);
+    const b = resolveVariantSprite(atlas, "depot_blue", 7, 9);
+    expect(a).toBe(b);
+    expect(variants).toContain(a);
+  });
+
+  it("spreads across distinct presets over many tiles", () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 60; i++) seen.add(resolveVariantSprite(atlas, "depot_blue", i, i * 2 + 1));
+    expect(seen.size).toBeGreaterThan(1);
+  });
+
+  it("single-piece / single-composition sprites resolve to themselves", () => {
+    expect(resolveVariantSprite(atlas, "farm", 3, 3)).toBe("farm");
+    expect(resolveVariantSprite(atlas, "factory_blue", 3, 3)).toBe("factory_blue");
+  });
+
+  it("variantSeed is deterministic and small", () => {
+    expect(variantSeed(3, 5)).toBe(variantSeed(3, 5));
+    expect(variantSeed(0, 0)).toBeGreaterThanOrEqual(0);
   });
 });
 

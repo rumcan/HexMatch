@@ -18,6 +18,7 @@ const manifest = JSON.parse(readFileSync("assets/iso-atlas/manifest.json", "utf8
   sprites: Record<string, {
     x: number; y: number; w: number; h: number; anchor: [number, number];
     parts?: { sprite: string; dx: number; dy: number }[];
+    variants?: string[];
   }>;
 };
 const cells = JSON.parse(readFileSync("tools/iso-atlas.cells.json", "utf8")) as {
@@ -267,5 +268,30 @@ describe("K3 industries are distinct coherent buildings", () => {
     // building rises out of the ground, roof far above the base row
     expect(f.parts![0].dy).toBeGreaterThan(0);
     expect(f.parts![f.parts!.length - 1].dy).toBe(0);      // roof caps the top
+  });
+});
+
+describe("MB2 depot variants are real composites with varied heights", () => {
+  it("each depot preset is a taller composite as its storey count grows", () => {
+    const d = manifest.sprites.depot_blue;
+    expect(d.variants).toEqual(["depot_blue", "depot_blue_v1", "depot_blue_v2"]);
+    const h = d.variants!.map((v) => manifest.sprites[v].h);
+    // one-storey (v2) < two-storey (canonical) < three-storey (v1)
+    expect(h[2]).toBeLessThan(h[0]);
+    expect(h[0]).toBeLessThan(h[1]);
+    // every preset is flush: same width & ground anchor x
+    for (const v of d.variants!) {
+      const s = manifest.sprites[v];
+      expect(s.w).toBe(d.w);
+      expect(s.anchor[0]).toBe(Math.floor(s.w / 2));
+    }
+  });
+
+  it("every colour family mirrors the same variant heights (tint only differs)", () => {
+    const hb = manifest.sprites.depot_blue.variants!.map((v) => manifest.sprites[v].h);
+    for (const c of ["depot_red", "depot_purple", "depot_green"]) {
+      const hc = manifest.sprites[c].variants!.map((v) => manifest.sprites[v].h);
+      expect(hc).toEqual(hb);
+    }
   });
 });

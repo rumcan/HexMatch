@@ -1111,6 +1111,75 @@
           "dx": 0,
           "dy": 0
         }
+      ],
+      "variants": [
+        "depot_blue",
+        "depot_blue_v1",
+        "depot_blue_v2"
+      ]
+    },
+    "depot_blue_v1": {
+      "x": 0,
+      "y": 0,
+      "w": 100,
+      "h": 198,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        50,
+        138
+      ],
+      "kind": "standing",
+      "parts": [
+        {
+          "sprite": "layer_buildingtiles_044_70_130_220",
+          "dx": 0,
+          "dy": 113
+        },
+        {
+          "sprite": "layer_buildingtiles_044_70_130_220",
+          "dx": 0,
+          "dy": 77
+        },
+        {
+          "sprite": "layer_buildingtiles_044_70_130_220",
+          "dx": 0,
+          "dy": 41
+        },
+        {
+          "sprite": "layer_buildingtiles_057_70_130_220",
+          "dx": 0,
+          "dy": 0
+        }
+      ]
+    },
+    "depot_blue_v2": {
+      "x": 0,
+      "y": 0,
+      "w": 100,
+      "h": 126,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        50,
+        66
+      ],
+      "kind": "standing",
+      "parts": [
+        {
+          "sprite": "layer_buildingtiles_044_70_130_220",
+          "dx": 0,
+          "dy": 41
+        },
+        {
+          "sprite": "layer_buildingtiles_057_70_130_220",
+          "dx": 0,
+          "dy": 0
+        }
       ]
     },
     "depot_red": {
@@ -1133,6 +1202,75 @@
           "dx": 0,
           "dy": 77
         },
+        {
+          "sprite": "layer_buildingtiles_044_224_70_70",
+          "dx": 0,
+          "dy": 41
+        },
+        {
+          "sprite": "layer_buildingtiles_057_224_70_70",
+          "dx": 0,
+          "dy": 0
+        }
+      ],
+      "variants": [
+        "depot_red",
+        "depot_red_v1",
+        "depot_red_v2"
+      ]
+    },
+    "depot_red_v1": {
+      "x": 0,
+      "y": 0,
+      "w": 100,
+      "h": 198,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        50,
+        138
+      ],
+      "kind": "standing",
+      "parts": [
+        {
+          "sprite": "layer_buildingtiles_044_224_70_70",
+          "dx": 0,
+          "dy": 113
+        },
+        {
+          "sprite": "layer_buildingtiles_044_224_70_70",
+          "dx": 0,
+          "dy": 77
+        },
+        {
+          "sprite": "layer_buildingtiles_044_224_70_70",
+          "dx": 0,
+          "dy": 41
+        },
+        {
+          "sprite": "layer_buildingtiles_057_224_70_70",
+          "dx": 0,
+          "dy": 0
+        }
+      ]
+    },
+    "depot_red_v2": {
+      "x": 0,
+      "y": 0,
+      "w": 100,
+      "h": 126,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        50,
+        66
+      ],
+      "kind": "standing",
+      "parts": [
         {
           "sprite": "layer_buildingtiles_044_224_70_70",
           "dx": 0,
@@ -1175,6 +1313,75 @@
           "dx": 0,
           "dy": 0
         }
+      ],
+      "variants": [
+        "depot_purple",
+        "depot_purple_v1",
+        "depot_purple_v2"
+      ]
+    },
+    "depot_purple_v1": {
+      "x": 0,
+      "y": 0,
+      "w": 100,
+      "h": 198,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        50,
+        138
+      ],
+      "kind": "standing",
+      "parts": [
+        {
+          "sprite": "layer_buildingtiles_044_190_92_255",
+          "dx": 0,
+          "dy": 113
+        },
+        {
+          "sprite": "layer_buildingtiles_044_190_92_255",
+          "dx": 0,
+          "dy": 77
+        },
+        {
+          "sprite": "layer_buildingtiles_044_190_92_255",
+          "dx": 0,
+          "dy": 41
+        },
+        {
+          "sprite": "layer_buildingtiles_057_190_92_255",
+          "dx": 0,
+          "dy": 0
+        }
+      ]
+    },
+    "depot_purple_v2": {
+      "x": 0,
+      "y": 0,
+      "w": 100,
+      "h": 126,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        50,
+        66
+      ],
+      "kind": "standing",
+      "parts": [
+        {
+          "sprite": "layer_buildingtiles_044_190_92_255",
+          "dx": 0,
+          "dy": 41
+        },
+        {
+          "sprite": "layer_buildingtiles_057_190_92_255",
+          "dx": 0,
+          "dy": 0
+        }
       ]
     },
     "depot_green": {
@@ -1197,6 +1404,75 @@
           "dx": 0,
           "dy": 77
         },
+        {
+          "sprite": "layer_buildingtiles_044_78_196_90",
+          "dx": 0,
+          "dy": 41
+        },
+        {
+          "sprite": "layer_buildingtiles_057_78_196_90",
+          "dx": 0,
+          "dy": 0
+        }
+      ],
+      "variants": [
+        "depot_green",
+        "depot_green_v1",
+        "depot_green_v2"
+      ]
+    },
+    "depot_green_v1": {
+      "x": 0,
+      "y": 0,
+      "w": 100,
+      "h": 198,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        50,
+        138
+      ],
+      "kind": "standing",
+      "parts": [
+        {
+          "sprite": "layer_buildingtiles_044_78_196_90",
+          "dx": 0,
+          "dy": 113
+        },
+        {
+          "sprite": "layer_buildingtiles_044_78_196_90",
+          "dx": 0,
+          "dy": 77
+        },
+        {
+          "sprite": "layer_buildingtiles_044_78_196_90",
+          "dx": 0,
+          "dy": 41
+        },
+        {
+          "sprite": "layer_buildingtiles_057_78_196_90",
+          "dx": 0,
+          "dy": 0
+        }
+      ]
+    },
+    "depot_green_v2": {
+      "x": 0,
+      "y": 0,
+      "w": 100,
+      "h": 126,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        50,
+        66
+      ],
+      "kind": "standing",
+      "parts": [
         {
           "sprite": "layer_buildingtiles_044_78_196_90",
           "dx": 0,

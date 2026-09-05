@@ -91,6 +91,93 @@ Renderer support first (so a hand-written `stack` in cells.json renders), then t
 
 ---
 
+## MB2. Per-instance building variants
+`[feature] [assets] [renderer]`
+
+**Status — DONE (data + packer + renderer + depot wiring + tests).** This is the
+"mix and match so a town looks like it has many different buildings" ticket: a
+**repeated** building no longer has to be a single composition. A stacked cell
+may declare extra preset compositions with `stackVariants`; the packer emits one
+composite sprite per preset (`name`, `name_v1`, …) and records the full pick-set
+on the canonical sprite's manifest `variants` list. At draw time the renderer
+picks **one preset per instance** with a deterministic seed from the footprint
+origin, so repeated buildings stop being carbon copies. Depth-sort and picking
+stay "one object per footprint"; pick-set membership is purely visual, never
+gameplay (every instance still reports the same building `ref`).
+
+`depot_*` are wired with **three presets** (1-, 2- and 3-storey, all in the
+tinted 044/057 modular family), so a player's depots vary in height while colour
+still carries ownership. Factories stay a single tall tower and the industries
+stay single-piece (readability); the same mechanism can extend them later. The
+Art Lab shows depot as a read-only variant group this pass (export preserves the
+preset set untouched); an **authoring UI for variants is a follow-up**.
+
+**What we want / why:** MB1 gave one composition per building slot. On a
+populated map a player owns many depots and each industry type repeats, so the
+skyline is repetitive. MB2 lets a type carry several preset stacks and vary them
+per instance.
+
+### Data model change (`tools/iso-atlas.cells.json`)
+
+Additive on a stacked cell — the canonical `stack` stays the default/first look,
+and `stackVariants` lists the other presets (each is the same `{ png }`-layer
+array shape as `stack`):
+
+```json
+{
+  "name": "depot_blue", "kind": "standing", "footprint": [1,1],
+  "stack": [ { "png": "...044.png" }, { "png": "...044.png" }, { "png": "...057.png" } ],
+  "stackVariants": [
+    [ { "png": "...044.png" }, { "png": "...044.png" }, { "png": "...044.png" }, { "png": "...057.png" } ],
+    [ { "png": "...044.png" }, { "png": "...057.png" } ]
+  ]
+}
+```
+
+Single-`png` cells and stacks with no `stackVariants` are unaffected. Tint still
+covers every layer of every preset.
+
+### Packer change (`tools/slice-atlas.mjs`)
+
+- Emit a composite sprite per preset: the canonical under the cell name, extras
+  under deterministic names (`<name>_v1`, `<name>_v2`, …), all sharing layer
+  sprites (so one tinted storey/roof tile is packed once per (png, tint)).
+- Record the ordered pick-set on the canonical sprite: `variants: [name, name_v1, …]`.
+
+### Renderer change (`src/iso/renderer.ts`)
+
+When building the structure draw list, a sprite whose manifest def has
+`variants` (length > 1) resolves to one of them by a **stable hash of (tx, ty)**,
+so the same tile always draws the same preset (culling/picking can't flicker).
+Selection is applied only to the structures layer — terrain and overlay glows
+never vary.
+
+### Acceptance
+
+- A stacked cell with `stackVariants` produces one manifest sprite per preset,
+  each a real composite, all sharing the footprint and player tint.
+- The canonical sprite's `variants` list resolves and is schema/validator-clean.
+- The renderer draws a consistent preset per instance and returns the building's
+  real `ref` on pick regardless of which preset was drawn.
+- Factory (single tower) and single-`png` industry cells render unchanged.
+
+### Wiring
+
+`depot_*` (the repeated player/harvester building) gets three presets — a
+2-storey, 3-storey and 1-storey depot — all in the tinted 044/057 modular
+family, so a player's depots vary in height/look while colour still carries
+ownership. Factories stay unique (they already differ by player colour); the
+industries are left single for readability — the same mechanism can add them
+later from the Art Lab.
+
+### Art Lab note
+
+The stack composer edits the *canonical* preset. Variant groups are locked in
+the editor this pass and exported untouched (the clone round-trips the
+`stackVariants` field); an authoring UI for variants is its own follow-up.
+
+---
+
 ## Current cells.json (baseline — the single-piece config to extend)
 
 This is the working Kenney mapping as of the K-series completion. Multi-storey (MB1) extends the `standing` building cells with a `stack` array; everything else stays as-is. Every building below is currently ONE `png`; the stack version replaces `png` with an ordered `stack` for the buildings you want tall.

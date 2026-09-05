@@ -111,6 +111,23 @@ export function buildDrawList(world: World, r: { x0: number; y0: number; x1: num
   return out;
 }
 
+/**
+ * MB2 per-instance variant selection. A canonical sprite whose manifest def
+ * carries a `variants` pick-set (length > 1) draws a DIFFERENT preset on every
+ * instance, so repeated buildings aren't identical. The choice is a stable
+ * hash of the footprint origin — the same tile always picks the same preset, so
+ * culling, chunk invalidation and picking can never flicker. Terrain and the
+ * single preset (length 1) resolve to the given sprite unchanged.
+ */
+export const variantSeed = (tx: number, ty: number): number =>
+  (((tx * 0x9E3779B1) ^ (ty * 0x85EBCA77)) >>> 0) % 0x7fffffff;
+
+export function resolveVariantSprite(atlas: Atlas, sprite: string, tx: number, ty: number): string {
+  const def = atlas.get(sprite);
+  if (!def || !def.variants || def.variants.length < 2) return sprite;
+  return def.variants[variantSeed(tx, ty) % def.variants.length];
+}
+
 /** Culling pad: largest footprint plus the tallest sprite expressed in tiles. */
 export function cullPad(atlas: Atlas): number {
   let maxFoot = 1, maxH = TILE_H;
@@ -249,7 +266,10 @@ export class IsoRenderer {
     const ctx = this.ctxS, cam = this.cam;
     ctx.clearRect(0, 0, cam.vw, cam.vh);
     const r = visibleTileRange(cam, this.pad);
-    const items = buildDrawList(this.world, r);
+    // MB2: resolve per-instance variant presets (stable per tile) before placing,
+    // so depth-sort and picking operate on the exact sprite that gets drawn.
+    const items = buildDrawList(this.world, r)
+      .map((i) => ({ ...i, sprite: resolveVariantSprite(this.atlas, i.sprite, i.tx, i.ty) }));
     const placed = items.map((i) => place(this.atlas, i)).filter(Boolean) as Placed[];
     const { order } = depthSort(placed);
     this.lastOrder = order;

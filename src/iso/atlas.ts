@@ -24,6 +24,14 @@ export interface SpriteDef {
    * sourced from the part's own packed layer sprite. Bottom-to-top order.
    */
   parts?: { sprite: string; dx: number; dy: number }[];
+  /**
+   * MB2 per-instance variants: when present this canonical sprite is the first
+   * of a pick-set of visually-different presets (`variants[0] === this name`).
+   * The renderer draws ONE preset per instance, chosen by a stable seed from
+   * the footprint origin, so repeated buildings aren't identical. Every preset
+   * shares the footprint, is player-tinted, and still reads as this building.
+   */
+  variants?: string[];
 }
 
 export interface Manifest {

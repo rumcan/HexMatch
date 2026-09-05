@@ -156,15 +156,26 @@ async function run() {
   for (const cell of CELLS.sprites) {
     const tint = cell.tintLum;
     if (Array.isArray(cell.stack)) {
-      if (!cell.stack.length || cell.stack.length > 6)
-        throw new Error(`cell ${cell.name}: a stack must have 2–6 layers`);
-      const parts = [];
-      for (const l of cell.stack) {
-        if (typeof l?.png !== "string")
-          throw new Error(`cell ${cell.name}: each stack layer must name a png`);
-        parts.push(await layer(l.png, tint));
+      // MB2: compositions = canonical `stack` + any `stackVariants` presets.
+      // The canonical is emitted under the cell name; each extra preset becomes
+      // `<name>_v<i>`. All share the layer pool (one sprite per (png, tint)).
+      const variants = Array.isArray(cell.stackVariants) ? cell.stackVariants : [];
+      const comps = [cell.stack, ...variants];
+      for (let i = 0; i < comps.length; i++) {
+        const stackArr = comps[i];
+        if (!Array.isArray(stackArr) || stackArr.length < 2 || stackArr.length > 6)
+          throw new Error(`cell ${cell.name}: every stack (canonical or variant) must have 2–6 layers`);
+        const parts = [];
+        for (const l of stackArr) {
+          if (typeof l?.png !== "string")
+            throw new Error(`cell ${cell.name}: each stack layer must name a png`);
+          parts.push(await layer(l.png, tint));
+        }
+        composites.push({
+          name: i === 0 ? cell.name : `${cell.name}_v${i}`,
+          cell, parts, variantOf: i === 0 ? null : cell.name,
+        });
       }
-      composites.push({ name: cell.name, cell, parts });
     } else if (typeof cell.png === "string") {
       const c = await loadPng(cell.png);
       if (tint) tintLumPx(c.px, tint);
@@ -204,7 +215,15 @@ async function run() {
     const anchor = [Math.floor(W / 2), -minTop];   // base layer's widest row = tile ground
     const src = { x: 0, y: 0, w: W, h: H, footprint: comp.cell.footprint ?? [1, 1], anchor, kind: "standing" };
     compositeSprites[comp.name] = { ...src, parts };
-    console.log(`${comp.name.padEnd(16)} ${String(W).padStart(3)}x${String(H).padEnd(4)} anchor=[${anchor}] stack(${n})  ${comp.parts.map((p) => p.rel.replace(/^buildings\/PNG\//, "")).join(" + ")}`);
+    if (!comp.variantOf)
+      console.log(`${comp.name.padEnd(16)} ${String(W).padStart(3)}x${String(H).padEnd(4)} anchor=[${anchor}] stack(${n})  ${comp.parts.map((p) => p.rel.replace(/^buildings\/PNG\//, "")).join(" + ")}`);
+  }
+
+  // MB2: group variant presets under their canonical (cell-named) sprite so the
+  // renderer knows the full pick-set. Extras were emitted as <name>_v<i>.
+  const variantLists = {};
+  for (const comp of composites) {
+    if (comp.variantOf) (variantLists[comp.variantOf] ??= [comp.variantOf]).push(comp.name);
   }
 
   // ── shelf pack at 1x ────────────────────────────────────────────────────
@@ -245,6 +264,9 @@ async function run() {
   }
   // composite stack sprites reference the shared layer sprites above
   for (const [name, comp] of Object.entries(compositeSprites)) manifest.sprites[name] = comp;
+  // MB2: canonical sprite carries its ordered variant pick-set
+  for (const [name, list] of Object.entries(variantLists))
+    if (manifest.sprites[name]) manifest.sprites[name].variants = list;
 
   // ── one atlas per zoom: cells resampled individually (smooth art → lanczos3)
   for (const z of ZOOMS) {
@@ -319,8 +341,10 @@ async function run() {
   await sharp({ create: { width: sheetW, height: sheetH, channels: 4, background: { r: 0xf2, g: 0xf0, b: 0xe8, alpha: 255 } } })
     .composite(layers).png().toFile(join(OUT, "contact-sheet.png"));
   console.log("contact-sheet.png", sheetW, "x", sheetH);
+  const canon = composites.filter((c) => !c.variantOf).length;
+  const extras = composites.length - canon;
   console.log("manifest.json", Object.keys(manifest.sprites).length, "sprites",
-    `(${placements.length} packed, ${composites.length} composite stacks)`);
+    `(${placements.length} packed, ${canon} composite stacks, ${extras} variant presets)`);
 }
 
 run().catch((e) => { console.error(e); process.exit(1); });
