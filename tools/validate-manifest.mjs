@@ -41,6 +41,32 @@ export function validateManifest(manifest) {
     }
     if (s.anchor[0] < 0 || s.anchor[1] < 0 || s.anchor[0] > s.w || s.anchor[1] > s.h)
       errors.push(`sprite ${name}: anchor (${s.anchor}) outside rect ${s.w}x${s.h}`);
+    // MB1: every composite stack part must reference a real, non-composite
+    // packed layer sprite (a composite cannot nest inside another composite).
+    for (const part of s.parts ?? []) {
+      const ref = manifest.sprites[part.sprite];
+      if (!ref)
+        errors.push(`sprite ${name}: part references unknown layer sprite ${part.sprite}`);
+      else if (ref.parts)
+        errors.push(`sprite ${name}: part ${part.sprite} is itself a composite (stacks cannot nest)`);
+    }
+    if (s.parts && s.parts.length > 0 && s.frames)
+      errors.push(`sprite ${name}: composite stacks cannot be animated (no frames)`);
+    // MB2: a `variants` pick-set must lead with its own name and reference real,
+    // same-footprint manifest sprites.
+    if (s.variants && s.variants.length) {
+      if (s.variants[0] !== name)
+        errors.push(`sprite ${name}: variants[0] must be the sprite's own name (got ${s.variants[0]})`);
+      for (const v of s.variants) {
+        const ref = manifest.sprites[v];
+        if (!ref)
+          errors.push(`sprite ${name}: variant references unknown sprite ${v}`);
+        else if (JSON.stringify(ref.footprint) !== JSON.stringify(s.footprint))
+          errors.push(`sprite ${name}: variant ${v} footprint ${ref.footprint} != ${s.footprint}`);
+        else if (ref === manifest.sprites[name] && s.variants.length < 2)
+          errors.push(`sprite ${name}: variants with one entry is pointless`);
+      }
+    }
     for (const sl of s.slices ?? []) {
       if (sl.x + sl.w > s.w || sl.y + sl.h > s.h)
         errors.push(`sprite ${name}: slice (${sl.x},${sl.y},${sl.w}x${sl.h}) outside rect`);

@@ -2,15 +2,32 @@
 /**
  * K1 atlas packer — Kenney edition. The OpenGFX pipeline (sheet slicing,
  * blue-key, PNML declarations, compose blocks, road/rail generators) is gone:
- * every cell in tools/iso-atlas.cells.json names ONE finished RGBA PNG under
+ * every cell in tools/iso-atlas.cells.json names finished RGBA PNGs under
  * src/iso/kenny and this tool only measures, (optionally) tints, packs and
- * re-scales it.
+ * re-scales them.
+ *
+ * MB1 (multi-storey stacked buildings): a 'standing' building cell now carries
+ * EITHER a single `png` (one-piece terrain/industry — unchanged) OR a `stack`
+ * — a bottom→top array of layer `{ png }` descriptors (base → middle floors →
+ * roof). The packer resolves each distinct (png, tint) layer once into a
+ * shared packed sprite (so depot_blue and factory_blue reuse the same tinted
+ * storey/roof sprites and differ only by how many storeys they stack), then
+ * emits a COMPOSITE manifest entry whose `parts` tell the renderer to draw the
+ * stack bottom→top at per-layer world offsets. Depth-sort and picking treat
+ * the whole composite as ONE object on its footprint; the player tint is
+ * applied to every layer at pack time.
+ *
+ * Storey geometry: consecutive layers are placed so their measured base-diamond
+ * widest rows are STOREY = 36px apart (at 1x), the offset the ticket verified
+ * gives a clean flush tower. The renderer never re-derives this — the packer
+ * bakes each part's (dx, dy) in world-1x pixels into the manifest, which the
+ * renderer scales by zoom like every other coordinate.
  *
  * Usage:
  *   node tools/make-derived-art.mjs   # once, after changing derived art
  *   node tools/slice-atlas.mjs
  *
- * Input : tools/iso-atlas.cells.json   (concept -> PNG path + kind)
+ * Input : tools/iso-atlas.cells.json   (concept -> PNG path(s) + kind)
  * Output: assets/iso-atlas/atlas@1x.png | @2x | @0.5x
  *         assets/iso-atlas/manifest.json
  *         assets/iso-atlas/contact-sheet.png
@@ -26,6 +43,10 @@
  *                            is a slope/ramp and FAILS the build (flat only).
  *     kind vehicle         : [floor(w/2), h]          — bottom-centre rests
  *                            on the tile surface.
+ *   A COMPOSITE (stacked) sprite is anchored the same way on its BASE layer's
+ *   widest row, so the whole tower stands flush on the tile. Its (w, h) is the
+ *   union bounding box of all parts; x/y are unused (parts carry their own
+ *   packed rects).
  *   The renderer draws at (sx − anchor[0], sy − anchor[1]); buildings' base
  *   diamonds coincide with the tile diamond by construction, so nothing can
  *   float or sink (the K3 end of the compose/fragment saga).
@@ -46,6 +67,7 @@ const ZOOMS = [1, 2, 0.5];
 const TILE_W = CELLS.tileW, TILE_H = CELLS.tileH;      // 132 x 64
 const HW = TILE_W / 2;                                  // 66
 const PACK_W = 1600, GAP = 8;
+const STOREY = 36;          // MB1: per-storey rise in screen px at 1x
 
 /** Load one source PNG as raw RGBA at 1x. */
 async function loadPng(rel) {
@@ -82,6 +104,7 @@ function tintLumPx(px, tint, keep = 0.28) {
  * K1/K2 flat-only filter: a `ground` cell must be a flat-topped block — its
  * widest opaque row sits at y≈TILE_H/2 and spans (nearly) the full tile width.
  * Slope/ramp tiles have their widest row well below y≈32 and fail here.
+ * Stack layer fragments are `standing` and never pass through this filter.
  */
 function anchorFor(cell, c) {
   const cx = Math.floor(c.w / 2);
@@ -100,22 +123,113 @@ function anchorFor(cell, c) {
   return { anchor: [cx, m.y], widest: m };
 }
 
+/** Deterministic, lowercase, schema-safe sprite name for a packed layer. */
+function layerNameFor(rel, tint) {
+  const stem = rel.slice(rel.lastIndexOf("/") + 1).replace(/\.png$/i, "")
+    .toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return tint ? `layer_${stem}_${tint.join("_")}` : `layer_${stem}`;
+}
+
 async function run() {
-  const slots = [];
+  // Every sprite that occupies atlas pixels: single-png cells (name = cell.name)
+  // plus one packed sprite per distinct (png, tint) stack layer.
+  const packed = [];
+  // Keyed `(png rel | tint)` -> layer resource; composite cells only reference it.
+  const layerPool = new Map();
+  // Composite (stacked) building definitions: name -> parts (bottom→top).
+  const composites = [];
+
+  const layer = async (rel, tint) => {
+    const key = `${rel}|${tint ? tint.join(",") : ""}`;
+    let r = layerPool.get(key);
+    if (!r) {
+      const c = await loadPng(rel);
+      if (tint) tintLumPx(c.px, tint);
+      const m = widestRow(c);
+      const name = layerNameFor(rel, tint);
+      r = { name, rel, tint, px: c.px, w: c.w, h: c.h, wr: m.y };
+      layerPool.set(key, r);
+    }
+    return r;
+  };
+
   for (const cell of CELLS.sprites) {
-    if (typeof cell.png !== "string")
-      throw new Error(`cell ${cell.name}: no png (K1 — every cell names one Kenney PNG)`);
-    const c = await loadPng(cell.png);
-    if (cell.tintLum) tintLumPx(c.px, cell.tintLum);
-    const { anchor } = anchorFor(cell, c);
-    slots.push({ name: cell.name, cell, px: c.px, w: c.w, h: c.h, anchor });
-    console.log(`${cell.name.padEnd(16)} ${String(c.w).padStart(3)}x${String(c.h).padEnd(4)} anchor=${anchor}  <- ${cell.png}`);
+    const tint = cell.tintLum;
+    if (Array.isArray(cell.stack)) {
+      // MB2: compositions = canonical `stack` + any `stackVariants` presets.
+      // The canonical is emitted under the cell name; each extra preset becomes
+      // `<name>_v<i>`. All share the layer pool (one sprite per (png, tint)).
+      const variants = Array.isArray(cell.stackVariants) ? cell.stackVariants : [];
+      const comps = [cell.stack, ...variants];
+      for (let i = 0; i < comps.length; i++) {
+        const stackArr = comps[i];
+        if (!Array.isArray(stackArr) || stackArr.length < 2 || stackArr.length > 6)
+          throw new Error(`cell ${cell.name}: every stack (canonical or variant) must have 2–6 layers`);
+        const parts = [];
+        for (const l of stackArr) {
+          if (typeof l?.png !== "string")
+            throw new Error(`cell ${cell.name}: each stack layer must name a png`);
+          parts.push(await layer(l.png, tint));
+        }
+        composites.push({
+          name: i === 0 ? cell.name : `${cell.name}_v${i}`,
+          cell, parts, variantOf: i === 0 ? null : cell.name,
+        });
+      }
+    } else if (typeof cell.png === "string") {
+      const c = await loadPng(cell.png);
+      if (tint) tintLumPx(c.px, tint);
+      const { anchor } = anchorFor(cell, c);
+      packed.push({ name: cell.name, cell, px: c.px, w: c.w, h: c.h, anchor });
+      console.log(`${cell.name.padEnd(16)} ${String(c.w).padStart(3)}x${String(c.h).padEnd(4)} anchor=${anchor}  <- ${cell.png}`);
+    } else {
+      throw new Error(`cell ${cell.name}: must have a single \`png\` or a \`stack\` array`);
+    }
+  }
+
+  // Pack each shared layer as a normal standing sprite so the renderer can
+  // source its rect and build its alpha mask.
+  for (const r of layerPool.values()) {
+    packed.push({
+      name: r.name, cell: { name: r.name, kind: "standing", footprint: [1, 1] },
+      px: r.px, w: r.w, h: r.h, anchor: [Math.floor(r.w / 2), r.wr],
+    });
+  }
+
+  // Resolve each composite's part geometry (union bbox + per-part dx/dy).
+  const compositeSprites = {};
+  for (const comp of composites) {
+    const n = comp.parts.length;
+    // widest-row world line of part i: A_i = −i·STOREY (relative; ground = 0).
+    // part top (screen y) = A_i − wr_i. Shift so the topmost part starts at 0.
+    const tops = comp.parts.map((p, i) => ({ part: p, i, top: -i * STOREY - p.wr }));
+    const minTop = Math.min(...tops.map((t) => t.top));
+    const W = Math.max(...comp.parts.map((p) => p.w));
+    let H = 0;
+    const parts = tops.map((t) => {
+      const dx = Math.max(0, Math.floor((W - t.part.w) / 2));
+      const dy = t.top - minTop;
+      H = Math.max(H, dy + t.part.h);
+      return { sprite: t.part.name, dx, dy };
+    });
+    const anchor = [Math.floor(W / 2), -minTop];   // base layer's widest row = tile ground
+    const src = { x: 0, y: 0, w: W, h: H, footprint: comp.cell.footprint ?? [1, 1], anchor, kind: "standing" };
+    compositeSprites[comp.name] = { ...src, parts };
+    if (!comp.variantOf)
+      console.log(`${comp.name.padEnd(16)} ${String(W).padStart(3)}x${String(H).padEnd(4)} anchor=[${anchor}] stack(${n})  ${comp.parts.map((p) => p.rel.replace(/^buildings\/PNG\//, "")).join(" + ")}`);
+  }
+
+  // MB2: group variant presets under their canonical (cell-named) sprite so the
+  // renderer knows the full pick-set. Extras were emitted as <name>_v<i>.
+  const variantLists = {};
+  for (const comp of composites) {
+    if (comp.variantOf) (variantLists[comp.variantOf] ??= [comp.variantOf]).push(comp.name);
   }
 
   // ── shelf pack at 1x ────────────────────────────────────────────────────
   let x = GAP, y = GAP, rowH = 0;
   const placements = [];
-  for (const s of slots) {
+  for (const s of packed) {
     if (x + s.w + GAP > PACK_W) { x = GAP; y += rowH + GAP; rowH = 0; }
     placements.push({ ...s, x, y });
     x += s.w + GAP;
@@ -131,10 +245,13 @@ async function run() {
     meta: {
       source: `${CELLS.source.author} isometric assets (${CELLS.source.root})`,
       license: CELLS.source.license,
-      generatedBy: "tools/slice-atlas.mjs (K1 packer)",
+      generatedBy: "tools/slice-atlas.mjs (K1 packer, MB1 multi-storey)",
       note: "coordinates and anchors are at 1x; multiply by zoom for @2x/@0.5x. " +
         "anchor = the sprite pixel that lands on the tile's diamond centre " +
-        "(measured widest base-diamond row; bottom-centre for vehicles).",
+        "(measured widest base-diamond row; bottom-centre for vehicles). " +
+        "A sprite with `parts` is a multi-storey STACK: x/y/w/h describe its " +
+        "union bounding box (x/y unused) and each part is drawn at (dx,dy) " +
+        "from the box's top-left, sourced from its own packed sprite.",
     },
     sprites: {},
   };
@@ -142,12 +259,14 @@ async function run() {
     manifest.sprites[p.name] = {
       x: p.x, y: p.y, w: p.w, h: p.h,
       footprint: p.cell.footprint, anchor: p.anchor,
-      // ground | standing | vehicle — vehicles are deliberately smaller than
-      // their tile (a truck is ~35px on a 132px tile), so footprint-span
-      // invariants only apply to ground/standing art.
       kind: p.cell.kind,
     };
   }
+  // composite stack sprites reference the shared layer sprites above
+  for (const [name, comp] of Object.entries(compositeSprites)) manifest.sprites[name] = comp;
+  // MB2: canonical sprite carries its ordered variant pick-set
+  for (const [name, list] of Object.entries(variantLists))
+    if (manifest.sprites[name]) manifest.sprites[name].variants = list;
 
   // ── one atlas per zoom: cells resampled individually (smooth art → lanczos3)
   for (const z of ZOOMS) {
@@ -169,11 +288,13 @@ async function run() {
   }
   writeFileSync(join(OUT, "manifest.json"), JSON.stringify(manifest, null, 2));
 
-  // ── contact sheet: every sprite flush on its footprint diamond ──────────
+  // ── contact sheet: every packed sprite flush on its footprint diamond ───
   // Grid of 1x1 footprint diamonds (TILE_W x TILE_H) drawn at their screen
   // positions; the sprite is composited with its anchor pixel exactly on the
   // diamond centre — the same math as renderer.drawOrigin — and a magenta dot
   // marks the anchor. A mis-anchored sprite visibly floats or sinks.
+  // (Composites are not packed so they don't appear here; the game/demo render
+  // them by parts.)
   const COLS = 6;
   const colStep = TILE_W + 70;
   const rowStep = TILE_H + 140;
@@ -220,7 +341,10 @@ async function run() {
   await sharp({ create: { width: sheetW, height: sheetH, channels: 4, background: { r: 0xf2, g: 0xf0, b: 0xe8, alpha: 255 } } })
     .composite(layers).png().toFile(join(OUT, "contact-sheet.png"));
   console.log("contact-sheet.png", sheetW, "x", sheetH);
-  console.log("manifest.json", Object.keys(manifest.sprites).length, "sprites");
+  const canon = composites.filter((c) => !c.variantOf).length;
+  const extras = composites.length - canon;
+  console.log("manifest.json", Object.keys(manifest.sprites).length, "sprites",
+    `(${placements.length} packed, ${canon} composite stacks, ${extras} variant presets)`);
 }
 
 run().catch((e) => { console.error(e); process.exit(1); });

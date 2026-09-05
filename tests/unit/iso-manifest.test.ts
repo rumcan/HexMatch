@@ -9,6 +9,8 @@ const realManifest = JSON.parse(readFileSync("assets/iso-atlas/manifest.json", "
   sprites: Record<string, {
     x: number; y: number; w: number; h: number;
     footprint: [number, number]; anchor: [number, number];
+    parts?: { sprite: string; dx: number; dy: number }[];
+    variants?: string[];
   }>;
 };
 
@@ -18,6 +20,7 @@ const cells = JSON.parse(readFileSync("tools/iso-atlas.cells.json", "utf8")) as 
   sprites: {
     name: string; png?: string; kind?: string; footprint?: [number, number];
     tintLum?: [number, number, number]; mask?: [number, number];
+    stack?: { png: string }[]; stackVariants?: { png: string }[][];
     compose?: unknown; box?: unknown; crop?: unknown; generator?: unknown;
     layers?: unknown; trackset?: unknown; sprite?: unknown;
   }[];
@@ -80,11 +83,20 @@ describe("K1 cells are bare PNG references (no OpenGFX pipeline survives)", () =
     }
   });
 
-  it("every cell names exactly one PNG that exists under the source root", () => {
+  it("every cell is either one PNG or an ordered stack whose layers all exist", () => {
     expect(cells.sprites.length).toBeGreaterThan(30);
     for (const s of cells.sprites) {
-      expect(typeof s.png, `${s.name}.png`).toBe("string");
-      expect(existsSync(join(cells.source.root, s.png!)), `${s.png} missing`).toBe(true);
+      if (s.stack) {
+        expect(s.png, `${s.name} must not mix stack and png`).toBeUndefined();
+        expect(s.stack.length, `${s.name} stack size`).toBeGreaterThanOrEqual(2);
+        expect(s.stack.length, `${s.name} stack size`).toBeLessThanOrEqual(6);
+        for (const l of s.stack) {
+          expect(existsSync(join(cells.source.root, l.png)), `${s.name} layer ${l.png} missing`).toBe(true);
+        }
+      } else {
+        expect(typeof s.png, `${s.name}.png`).toBe("string");
+        expect(existsSync(join(cells.source.root, s.png!)), `${s.png} missing`).toBe(true);
+      }
     }
   });
 
@@ -152,6 +164,8 @@ describe("K1/K4 anchors are pixel-measured, not hand-authored", () => {
 
   it("ground/standing anchors equal the source PNG's widest base row", async () => {
     for (const s of cells.sprites) {
+      // MB1 stacked cells are composites anchored on their stack, not a single PNG.
+      if (s.stack) continue;
       if (s.kind !== "ground" && s.kind !== "standing") continue;
       const m = realManifest.sprites[s.name];
       const { data, info } = await sharp(join(cells.source.root, s.png!))
@@ -199,5 +213,79 @@ describe("K1/K4 anchors are pixel-measured, not hand-authored", () => {
       expect(m.anchor.length).toBe(2);
     }
     expect(kinds.get("factory_blue")!.tintLum).toEqual([70, 130, 220]);
+  });
+});
+
+// ── MB1 composite stacks: a `stack` cell → one composite manifest sprite ──
+describe("MB1 stacked-building composites", () => {
+  const stackCells = cells.sprites.filter((s) => s.stack);
+  const layerName = (png: string, tint?: [number, number, number]) => {
+    const stem = png.slice(png.lastIndexOf("/") + 1).replace(/\.png$/i, "")
+      .toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+    return tint ? `layer_${stem}_${tint.join("_")}` : `layer_${stem}`;
+  };
+
+  it("only stack cells are composites (single-png cells never gain parts)", () => {
+    for (const s of cells.sprites) {
+      const m = realManifest.sprites[s.name];
+      if (s.stack) {
+        expect(m.parts, `${s.name} must be a composite`).toBeTruthy();
+      } else {
+        expect(m.parts, `${s.name} must stay single-piece`).toBeUndefined();
+      }
+    }
+  });
+
+  it("each stack's parts resolve to real packed layer sprites in order", () => {
+    for (const s of stackCells) {
+      const m = realManifest.sprites[s.name];
+      expect(m.parts!.length).toBe(s.stack!.length);
+      s.stack!.forEach((l, i) => {
+        const ln = layerName(l.png, s.tintLum);
+        expect(m.parts![i].sprite, `${s.name} part ${i}`).toBe(ln);
+        const layerSprite = realManifest.sprites[ln];
+        expect(layerSprite, `${ln} must be packed`).toBeTruthy();
+        expect(layerSprite.parts, `${ln} must not itself be a composite`).toBeUndefined();
+      });
+    }
+  });
+});
+
+// ── MB2 per-instance variants ─────────────────────────────────────────────
+describe("MB2 per-instance variants", () => {
+  it("depot cells declare extra variant stacks that all exist", () => {
+    for (const b of ["depot_blue", "depot_red", "depot_purple", "depot_green"]) {
+      const s = cells.sprites.find((x) => x.name === b)!;
+      expect(s.stackVariants, `${b} must declare variant stacks`).toBeTruthy();
+      expect(s.stackVariants!.length, `${b}`).toBeGreaterThanOrEqual(1);
+      for (const variant of s.stackVariants!) {
+        expect(variant.length).toBeGreaterThanOrEqual(2);
+        expect(variant.length).toBeLessThanOrEqual(6);
+        for (const l of variant) expect(existsSync(join(cells.source.root, l.png)), l.png).toBe(true);
+      }
+    }
+    // factories stay single-composition (no variant presets)
+    expect(cells.sprites.find((x) => x.name === "factory_blue")!.stackVariants).toBeUndefined();
+  });
+
+  it("the canonical manifest sprite carries the ordered pick-set", () => {
+    const d = realManifest.sprites["depot_blue"];
+    expect(d.variants).toEqual(["depot_blue", "depot_blue_v1", "depot_blue_v2"]);
+    // factories have no pick-set
+    expect(realManifest.sprites["factory_blue"].variants).toBeUndefined();
+  });
+
+  it("every variant resolves to a same-footprint composite with its own parts", () => {
+    for (const b of ["depot_blue", "depot_red", "depot_purple", "depot_green"]) {
+      const cellStack = cells.sprites.find((x) => x.name === b)!.stack!;
+      const canon = realManifest.sprites[b];
+      const full = [cellStack, ...cells.sprites.find((x) => x.name === b)!.stackVariants!];
+      canon.variants!.forEach((v, i) => {
+        const m = realManifest.sprites[v];
+        expect(m, `${b} variant ${v}`).toBeTruthy();
+        expect(m.footprint).toEqual([1, 1]);
+        expect(m.parts!.length, `${b} variant ${v} layers`).toBe(full[i].length);
+      });
+    }
   });
 });
