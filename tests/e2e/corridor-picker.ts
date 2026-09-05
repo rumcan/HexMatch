@@ -27,6 +27,10 @@
 //    canvas", which also covers the topbar, the resbar and the guide banner —
 //    and the pick check is what catches the C1/C3 "the click landed on the
 //    tile behind the one I saw" bug class instead of tripping over it.
+//  * ONE CLICK COORDINATE (`isoTileClickPoint`): the corridor search, the
+//    occlusion re-check and the spec's actual `page.mouse` clicks all derive
+//    the pixel from the same measured step, and the point is refused unless
+//    the game's own pick resolves it back to the tile it names.
 //  * THE GAME ANSWERS LEGALITY: tile legality comes from `__iso.tileProbe`
 //    (`buildRefusal` in track.ts + the harvester catchment rule), so the
 //    helper can never drift from the rules the click handlers enforce.
@@ -128,6 +132,12 @@ export function findIsoCorridor(opts?: CorridorOptions): Corridor {
   // speak CSS px. At dpr 1 the division is a no-op; every Playwright project
   // that runs this helper is dpr 1 except the mobile ones (which skip it).
   const devAt = (tx: number, ty: number): [number, number] => h.tileScreenAt(tx, ty);
+  const mapOrigin = (): [number, number] => {
+    const el = document.querySelector("canvas.iso-layer") as HTMLElement | null;
+    const b = el?.getBoundingClientRect?.();
+    return b && Number.isFinite(b.left) ? [b.left, b.top] : [0, 0];
+  };
+  const origin = mapOrigin();
   const inView = (x: number, y: number) =>
     x >= -20 && x <= window.innerWidth + 20 && y >= -20 && y <= window.innerHeight + 20;
 
@@ -274,7 +284,7 @@ export function findIsoCorridor(opts?: CorridorOptions): Corridor {
           const dev = devAt(tx, ty);
           const px = dev[0] + aim.x * stepDev[0];
           const py = dev[1] + aim.y * stepDev[1];
-          const [cx, cy] = [px / dpr, py / dpr];
+          const [cx, cy] = [px / dpr + origin[0], py / dpr + origin[1]];
           if (!inView(cx, cy)) why = "off-screen";
           else if (j === 0) why = harvesterWhy(tx, ty) ?? buildWhy(tx, ty);
           else why = buildWhy(tx, ty);
@@ -288,7 +298,7 @@ export function findIsoCorridor(opts?: CorridorOptions): Corridor {
             if (tx + 1 >= MAP_W || ty + 1 >= MAP_H) why = "factory-diagonal-off-map";
             else {
               const b = devAt(tx + 1, ty + 1);
-              if (!inView(b[0] / dpr, b[1] / dpr)) why = "factory-diagonal-off-screen";
+              if (!inView(b[0] / dpr + origin[0], b[1] / dpr + origin[1])) why = "factory-diagonal-off-screen";
             }
           }
           if (why !== null) {
@@ -349,11 +359,19 @@ export function isoTileOcclusion(sel: { tiles: CorridorTile[]; aim?: CorridorAim
   const d1 = h.tileScreenAt(0, 1);
   const step: [number, number] = [Math.abs(d1[0] - d0[0]), Math.abs(d1[1] - d0[1])];
   const aim = sel.aim ?? { x: 0, y: 0.5 };
+  // the canvas' own origin: the game reads pointer events relative to its
+  // stage box, `elementsFromPoint` and `page.mouse` relative to the viewport
+  const mapOrigin = (): [number, number] => {
+    const el = document.querySelector("canvas.iso-layer") as HTMLElement | null;
+    const r = el?.getBoundingClientRect?.();
+    return r && Number.isFinite(r.left) ? [r.left, r.top] : [0, 0];
+  };
+  const origin = mapOrigin();
   const out: OcclusionHit[] = [];
   for (const t of sel.tiles) {
     const d = h.tileScreenAt(t.tx, t.ty);
-    const x = (d[0] + aim.x * step[0]) / dpr;
-    const y = (d[1] + aim.y * step[1]) / dpr;
+    const x = (d[0] + aim.x * step[0]) / dpr + origin[0];
+    const y = (d[1] + aim.y * step[1]) / dpr + origin[1];
     const top = (document.elementsFromPoint(x, y) || [])[0] as HTMLElement | undefined;
     if (!top || !top.closest?.(".iso-layer")) {
       const cls = top && top.className ? "." + String(top.className).trim().split(/\s+/).join(".") : "";
@@ -361,6 +379,91 @@ export function isoTileOcclusion(sel: { tiles: CorridorTile[]; aim?: CorridorAim
         tx: t.tx, ty: t.ty,
         coveredBy: top ? `${top.tagName.toLowerCase()}${top.id ? "#" + top.id : ""}${cls}` : "nothing",
       });
+    }
+  }
+  return out;
+}
+
+/** Argument form of `isoTileClickPoint`. */
+export interface ClickPointSel extends CorridorTile { aim?: CorridorAim }
+
+/** CSS px viewport point, plus the tile the game says is actually there. */
+export interface ClickPoint extends CorridorTile {
+  x: number;
+  y: number;
+  /** `__iso.pickAt` at this pixel — the point is only returned if it agrees. */
+  pickedTx: number;
+  pickedTy: number;
+}
+
+/**
+ * THE ONE PLACE A CLICK COORDINATE IS COMPUTED (E14). The spec clicks every
+ * tile of the corridor through this function, so a click can never disagree
+ * with the pixel the corridor was chosen on.
+ *
+ * `aim` is a fraction of ONE TILE STEP away from the diamond centre, and the
+ * step is measured the only way that is correct: `tileScreenAt(0,0)` →
+ * `tileScreenAt(0,1)`. This is not pedantry — the first CI run of the E14 spec
+ * derived the step as `tileScreenAt(0,1)` minus *the target tile*, which at
+ * tile (24,10) is fifteen tiles, so `aim.y = 0.5` shoved every click 16 tiles
+ * down the map. The corridor search, the occlusion re-check and the pixel
+ * samples all agreed with each other and none of them was where the mouse
+ * went; the test then failed on "the highlight is not painted" with a
+ * completely innocent helper. Deriving the click somewhere else is exactly the
+ * drift this function exists to make impossible, and the check below is what
+ * makes it loud: the point is refused unless the GAME'S OWN two-stage pick
+ * resolves it back to the tile that was asked for.
+ *
+ * @throws when `__iso` is missing, when a tile step is not measurable, or when
+ *   the point would land on another tile (the message names that tile).
+ */
+export function isoTileClickPoint(sel: ClickPointSel): ClickPoint {
+  const h = (window as unknown as { __iso?: IsoHookLite }).__iso;
+  if (!h) throw new Error("isoTileClickPoint: window.__iso is not mounted");
+  const dpr = window.devicePixelRatio || 1;
+  const d0 = h.tileScreenAt(0, 0);
+  const d1 = h.tileScreenAt(0, 1);
+  const step: [number, number] = [Math.abs(d1[0] - d0[0]), Math.abs(d1[1] - d0[1])];
+  const zoom = h.camera ? h.camera.zoom : 0;
+  if (!(step[0] > 0) || !(step[1] > 0)) {
+    throw new Error(
+      `isoTileClickPoint: one tile step measures ${step[0]}×${step[1]} device px `
+      + `at zoom ${zoom}, so a click point cannot be derived from it.`,
+    );
+  }
+  const aim = sel.aim ?? { x: 0, y: 0.5 };
+  const d = h.tileScreenAt(sel.tx, sel.ty);
+  // device px for the pick (the hook speaks device px, relative to the map's
+  // own box), CSS viewport px for `page.mouse`. `#map` is `position:absolute;
+  // inset:0` inside a `fixed; inset:0` `.ui-root`, so the two origins agree
+  // today — measured rather than assumed, because an inset map would otherwise
+  // put every click of the round a fixed offset away from its tile.
+  const layer = document.querySelector("canvas.iso-layer") as HTMLElement | null;
+  const b = layer?.getBoundingClientRect?.();
+  const ox = b && Number.isFinite(b.left) ? b.left : 0;
+  const oy = b && Number.isFinite(b.top) ? b.top : 0;
+  const px = d[0] + aim.x * step[0];
+  const py = d[1] + aim.y * step[1];
+  const out: ClickPoint = {
+    x: px / dpr + ox, y: py / dpr + oy,
+    tx: sel.tx, ty: sel.ty, pickedTx: -1, pickedTy: -1,
+  };
+  if (h.pickAt) {
+    const p = h.pickAt(px, py);
+    const where = `tile (${sel.tx},${sel.ty}) at click offset (${aim.x}, ${aim.y}) `
+      + `= pixel (${Math.round(px)}, ${Math.round(py)}) device px`;
+    if (!p) {
+      throw new Error(`isoTileClickPoint: __iso.pickAt finds nothing at ${where}; a click there cannot reach that tile.`);
+    }
+    out.pickedTx = p.tx;
+    out.pickedTy = p.ty;
+    if (p.tx !== sel.tx || p.ty !== sel.ty) {
+      throw new Error(
+        `isoTileClickPoint: ${where} resolves to tile (${p.tx},${p.ty})`
+        + `${p.sprite ? ` — sprite \`${p.sprite}\`` : ""}, not the requested tile. A click there would `
+        + `build on the wrong tile (aim fractions are of ONE measured tile step: `
+        + `${step[0]}×${step[1]} device px at zoom ${zoom}).`,
+      );
     }
   }
   return out;

@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import {
-  findIsoCorridor, isoTileOcclusion, type Corridor,
+  findIsoCorridor, isoTileOcclusion, isoTileClickPoint, type Corridor,
 } from "./corridor-picker";
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -76,30 +76,22 @@ function describeCorridorError(err: unknown) {
 }
 
 /**
- * The CSS-pixel point to click for a tile, given an aim expressed as a
- * fraction of one tile step from the diamond centre (E14: the corridor picker
- * returns the aim it *verified* — that a click there is unoccluded AND that
- * the game's own pick resolves it back to this tile).
+ * The CSS-pixel point to click for a tile — i.e. the page-side
+ * `isoTileClickPoint` from tests/e2e/corridor-picker.ts, run in the browser.
  *
- * The offset is derived from projected geometry, so it follows camera zoom and
- * device pixel ratio; the pre-E14 helper hard-coded 16 device pixels and missed
- * at 0.5x. `aim` defaults to the conventional halfway-down-the-surface point.
+ * This used to derive its own offset (centre + aim × a step measured from the
+ * target tile rather than from tile (0,0)→(0,1)), which at tile (24,10) made a
+ * tile step fifteen tiles long and put every click of the round 16 tiles away
+ * from the tile it claimed to be clicking. The picker and the occlusion
+ * re-check were right; the mouse was not. So the spec no longer does this
+ * arithmetic at all: one function owns it, and it refuses a point that the
+ * game's own pick resolves to any other tile.
  */
 async function tileCenter(
   page: import("@playwright/test").Page, tx: number, ty: number,
   aim: { x: number; y: number } = { x: 0, y: 0.5 },
 ) {
-  return page.evaluate(({ tx, ty, aim }) => {
-    const h = (window as any).__iso;
-    const dpr = window.devicePixelRatio || 1;
-    const [dx, dy] = h.tileScreenAt(tx, ty);
-    const [nx, ny] = h.tileScreenAt(0, 1);
-    const stepX = Math.abs(nx - dx), stepY = Math.abs(ny - dy);
-    return {
-      x: (dx + aim.x * stepX) / dpr,
-      y: (dy + aim.y * stepY) / dpr,
-    };
-  }, { tx, ty, aim });
+  return page.evaluate(isoTileClickPoint, { tx, ty, aim });
 }
 
 /** Count opaque pixels in a square around a tile centre on a given canvas. */

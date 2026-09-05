@@ -27,7 +27,7 @@ import {
 } from "../../src/iso/track";
 import { industriesInCatchment } from "../../src/iso/economy";
 import {
-  findIsoCorridor, isoTileOcclusion, type Corridor,
+  findIsoCorridor, isoTileOcclusion, isoTileClickPoint, type Corridor,
 } from "../../tests/e2e/corridor-picker";
 
 const VIEW_W = 1280, VIEW_H = 720;   // devices["Desktop Chrome"] at dpr 1
@@ -380,5 +380,78 @@ describe("E14 the old 7-tile south column is the thing that broke", () => {
     const { grid } = scene(1337, 1);
     expect(oldFindSouthColumn(grid)).toBeNull();
     expect(findIsoCorridor()).not.toBeNull();
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// The click point the SPEC uses is the point the corridor was CHOSEN on.
+// The first CI run of the E14 spec failed here, not in the picker: the spec
+// derived its own tile step from the target tile instead of (0,0)→(0,1), so
+// `aim.y = 0.5` moved the mouse sixteen tiles while the corridor search, the
+// occlusion re-check and the pixel samples all stayed on the right tile. Both
+// halves are pinned below: the shared helper agrees with an independent
+// measurement, and a mis-scaled offset is refused by name instead of clicking
+// somewhere else silently.
+// ══════════════════════════════════════════════════════════════════════════
+describe("E14 the click point is measured once, and verified before it is used", () => {
+  const revive = <A, R>(fn: (a: A) => R) =>
+    new Function(`return (${fn.toString()});`)() as (a: A) => R;
+
+  it("isoTileClickPoint matches an independent measurement, in both call forms", () => {
+    scene(1337, 1);
+    const c = findIsoCorridor({ minTiles: 4, maxTiles: 7 });
+    const inPage = revive(isoTileClickPoint);
+    // the revived source must stand alone, like the other two
+    expect(isoTileClickPoint.toString()).not.toMatch(/__name\(|require\(|__vi_esm/);
+
+    let tightest = Infinity;
+    for (const t of c.col) {
+      for (const run of [isoTileClickPoint, inPage]) {
+        const p = run({ tx: t.tx, ty: t.ty, aim: c.aim });
+        const want = aimPoint(c.aim, t.tx, t.ty);
+        expect(p.x).toBeCloseTo(want.x, 6);
+        expect(p.y).toBeCloseTo(want.y, 6);
+        // the game's own pick (stage 1 here, both stages in the browser)
+        // resolves the point back to the tile it was asked for
+        expect([p.pickedTx, p.pickedTy]).toEqual([t.tx, t.ty]);
+      }
+      const p = isoTileClickPoint({ tx: t.tx, ty: t.ty, aim: c.aim });
+      // A2 again, from the CSS rects rather than from any helper
+      expect(topAt(p.x, p.y).kind).toBe("canvas");
+      expect(flatPick(...screenToWorld(cam, p.x * DPR, p.y * DPR))).toEqual([t.tx, t.ty]);
+      tightest = Math.min(tightest, p.x - boxes.left.right, boxes.right.left - p.x);
+    }
+    // the clearance the picker reported IS the clearance of the point the spec
+    // clicks: one measurement, two consumers, no drift possible.
+    expect(Math.abs(tightest - c.margin)).toBeLessThan(1);
+  });
+
+  it("refuses an offset scaled the way the spec once scaled it", () => {
+    scene(1337, 1);
+    const c = findIsoCorridor({ minTiles: 4, maxTiles: 7 });
+    const t = c.col[c.tiles - 1];                 // the factory tile, (24,10)-ish
+    const [dx, dy] = tileToScreenAt(cam, t.tx, t.ty);
+    const [, sy0] = tileToScreenAt(cam, 0, 0);
+    const [nx, ny] = tileToScreenAt(cam, 0, 1);
+    const stepY = Math.abs(ny - sy0);             // the step as it should be measured
+    // the pre-fix step: measured against the target tile, so ~tiles long
+    const badStepY = Math.abs(ny - dy);
+    const badDevice: [number, number] = [dx, dy + 0.5 * badStepY];
+    const landed = flatPick(...screenToWorld(cam, badDevice[0], badDevice[1]));
+    // the bug is real in this geometry: the click was on another tile
+    expect([landed[0], landed[1]]).not.toEqual([t.tx, t.ty]);
+    expect(badStepY / stepY).toBeGreaterThan(1);
+
+    // and the guard says so, naming the tile the old formula landed on
+    const aimY = (0.5 * badStepY) / stepY;
+    expect(() => isoTileClickPoint({ tx: t.tx, ty: t.ty, aim: { x: 0, y: aimY } }))
+      .toThrow(new RegExp(`\\(${landed[0]},${landed[1]}\\)`));
+    try {
+      isoTileClickPoint({ tx: t.tx, ty: t.ty, aim: { x: 0, y: aimY } });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      expect(msg).toContain("not the requested tile");
+      expect(msg).toContain("ONE measured tile step");
+    }
   });
 });

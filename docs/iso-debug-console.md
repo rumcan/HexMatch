@@ -152,9 +152,17 @@ to, so a probe can never disagree with the rule that gates the build.
    overlay is drawn from the live camera, so the marks line up with the pixels
    in the screenshot.
 3. Read the tile off the screenshot: measure the point in the image, then
-   `__iso.dumpAt(x/dpr, y/dpr)` — the screenshot is in CSS px (×dpr if you
-   measured on a retina capture). `resolvesTo` is the tile you are actually
-   pointing at.
+   `__iso.dumpAt(x, y)` — the numbers are **CSS px by default** (`dumpAt`
+   multiplies by dpr itself, and echoes `input.unit` so a paste says which unit
+   it read). Measuring on a device-pixel crop instead? `__iso.dumpAt(x, y,
+   {device: true})`. `resolvesTo` is the tile you are actually pointing at.
+   The point is read relative to the map's own canvas box, which today starts at
+   the viewport origin (`#map` is `position:absolute; inset:0` inside a
+   `position:fixed; inset:0` `.ui-root`) — so viewport px and canvas px are the
+   same number. If that layout ever gains an inset, subtract it:
+   `dumpAt(x - map.getBoundingClientRect().left, …)`, which is what
+   `isoTileClickPoint` in `tests/e2e/corridor-picker.ts` measures rather than
+   assumes.
 4. Dump it: `__iso.dumpBuilding(tx, ty)` for a building complaint (read
    `gapPx`, then `ground.driftPx`), `__iso.dumpTile(tx, ty)` for anything
    terrain-shaped, `copy(__iso.config())` to attach the resolved cells.
