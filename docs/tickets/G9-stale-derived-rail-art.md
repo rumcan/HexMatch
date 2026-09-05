@@ -1,6 +1,8 @@
 # G9 — Committed derived rail art is stale: the G7 atlas gate is red
 
-**Status:** OPEN — found by the Priority-1 play-test, 2026-09-05.
+**Status:** FIXED — 2026-09-05, on `arena/01a0717e-hexmatch`. See
+[Resolution](#resolution-2026-09-05) at the bottom.
+**Filed:** OPEN — found by the Priority-1 play-test, 2026-09-05.
 **Severity:** MEDIUM. `main` does not pass its own test suite.
 **Area:** `src/iso/kenny/derived/`, `tools/make-derived-art.mjs`.
 
@@ -78,3 +80,40 @@ and its "don't touch the art pipeline" instruction.
 
 - Do NOT hand-edit any PNG, and do not hand-edit `tools/iso-atlas.cells.json`.
 - Do NOT re-do MB1 stacking or the Kenney mapping.
+
+---
+
+## Resolution (2026-09-05)
+
+Fixed exactly as prescribed, plus the recommended drift gate (acceptance 4).
+
+**What changed**
+
+| file | change |
+|------|--------|
+| `src/iso/kenny/derived/rail_0101.png` | regenerated — 12 791 B → **2 272 B** |
+| `src/iso/kenny/derived/rail_1010.png` | regenerated — 12 662 B → **2 284 B** |
+| `tools/make-derived-art.mjs` | new `--check` (regenerate into a temp dir, compare byte-for-byte with what is committed, exit 1 on drift) and `--out DIR`; the default write path is unchanged |
+| `tests/unit/iso-derived-art.test.ts` | new — runs `--check` from `npm test`, so the drift is caught locally and not only by the CI atlas gate |
+
+No PNG was hand-edited and `tools/iso-atlas.cells.json` was not touched.
+
+**Acceptance**
+
+1. ✅ `node tools/make-derived-art.mjs` produces no diff against the committed
+   `src/iso/kenny/derived/*.png` — and `--check` says
+   `derived art in sync with its generator (19 PNGs)`, exit 0.
+2. ✅ `npm test` → **352/352** (was 332/333), including
+   `K2 road masks > rail masks carry rails on their set arms`.
+3. ✅ `npm run slice-atlas` → `git status assets/iso-atlas/` empty. The packed
+   atlas was already correct; the staleness was confined to the two source
+   PNGs, exactly as this ticket predicted.
+4. ✅ Added — `tools/make-derived-art.mjs --check` +
+   `tests/unit/iso-derived-art.test.ts`. Verified the gate actually bites:
+   with the two stale PNGs restored from `HEAD` it exits 1 and names them
+   (`rail_0101.png: committed 12791 B ≠ regenerated 2272 B`). The existing CI
+   step (`make-derived-art` + `slice-atlas` + `git diff --exit-code`) is
+   unchanged and still covers the packed atlas too.
+
+The false "333 unit tests pass" / "rail-pixel test passes" claims at the top of
+`docs/HexMatch-open-backlog.md` are corrected there in the same PR.

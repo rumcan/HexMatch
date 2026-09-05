@@ -63,6 +63,8 @@ interface IsoHook {
   market: import("../../src/iso/market").IsoMarket;
   refreshQuarry: (now?: number) => unknown;
   setTool: (t: string) => void;
+  /** W8: the twin of the setup click that places your factory (and seeds the rival's). */
+  placeFactory: (tx: number, ty: number) => boolean;
   dragBuild: (
     kind: "road" | "rail", ax: number, ay: number, bx: number, by: number,
     xFirst?: boolean,
@@ -618,6 +620,95 @@ describe("W3 the rival actually plays (headless)", () => {
     h.econTick(t0 + 3 * AI_BUILD_MS + 2 * HARVEST_MS);
     expect(rival.res.ore).toBeGreaterThan(ore0);
     for (const c of CARGOES) expect(rival.res[c], `${c} negative`).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("W8 the rival is placed where it can build — and builds", () => {
+  it("the real setup click hands the rival a rail-legal tile with a viable plan", async () => {
+    const h = await boot();
+    const { canBuildOn } = await import("../../src/iso/track");
+    const { canReachASpot } = await import("./helpers/rival-map");
+    // The ticket's repro: a player factory at (23,22) on seed 1337 used to hand
+    // the rival (2,2) — rough ground, water on three sides and the oil_rig
+    // footprint on the fourth, so no track could ever leave the tile.
+    expect(canBuildOn(h.grid, "road", 23, 22)).toBe(true);
+    expect(canReachASpot(h.grid, 2, 2)).toBe(false);
+    expect(h.placeFactory(23, 22)).toBe(true);
+
+    const rival = h.factories.find((f) => f.owner === "ai");
+    expect(rival).toBeTruthy();
+    // rail-legal (flat, off water, off any footprint) and NOT an enclave…
+    expect(canBuildOn(h.grid, "rail", rival!.tx, rival!.ty)).toBe(true);
+    expect(canReachASpot(h.grid, rival!.tx, rival!.ty)).toBe(true);
+    expect([rival!.tx, rival!.ty]).not.toEqual([2, 2]);
+    // …and still a good distance from the player, as before
+    expect(Math.abs(rival!.tx - 23) + Math.abs(rival!.ty - 22)).toBeGreaterThan(10);
+  });
+
+  it("four aiTicks from that real placement build track, a harvester, and VP", async () => {
+    const h = await boot();
+    expect(h.placeFactory(23, 22)).toBe(true);
+    h.finishSetup();                     // the AI clock only runs in `play`
+    const rivalTiles = () => [...h.track.owner].filter((o) => o === 2).length;
+    expect(rivalTiles()).toBe(0);
+    expect(h.vp.ai).toBe(0);
+
+    const t0 = 1_000_000;
+    for (let i = 0; i < 4; i++) h.aiTick(t0 + i * AI_BUILD_MS);
+
+    // the rival is no longer a scoreboard entry with 0 VP for the whole match
+    expect(rivalTiles()).toBeGreaterThan(0);
+    expect(h.harvesters.some((x) => x.owner === "ai")).toBe(true);
+    expect(h.vp.ai).toBeGreaterThan(0);
+  });
+});
+
+describe("W9 the free setup allowance buys road, not rail", () => {
+  it("a rail drag with 12 free tiles and no ore lays nothing and burns no allowance", async () => {
+    const h = await boot();
+    const { canBuildOn, hasTrack } = await import("../../src/iso/track");
+    // five consecutive rail-legal tiles to drag along (rail needs flat ground)
+    let line: [number, number] | null = null;
+    for (let y = 6; y < 26 && !line; y++) {
+      for (let x = 6; x < 22 && !line; x++) {
+        let ok = true;
+        for (let k = 0; k < 5; k++) if (!canBuildOn(h.grid, "rail", x + k, y)) ok = false;
+        if (ok) line = [x, y];
+      }
+    }
+    expect(line).toBeTruthy();
+    const [fx, fy] = line!;
+    expect(h.placeFactory(fx, fy)).toBe(true);
+    h.finishSetup();
+    expect(h.freeTrack).toBe(12);
+    expect(h.purse.ore ?? 0).toBe(0);
+
+    // rail with the full allowance and no ore: refused, allowance untouched.
+    // This is the W9 bug — it used to lay all 5 tiles for free.
+    const rail = h.dragBuild("rail", fx, fy, fx + 4, fy);
+    expect(rail === null || rail.tiles.length === 0).toBe(true);
+    expect(h.freeTrack).toBe(12);
+    expect(h.purse.ore ?? 0).toBe(0);
+    expect(hasTrack(h.track, "rail", fx, fy)).toBe(false);
+
+    // road from the same tile still rides the allowance exactly as before
+    const road = h.dragBuild("road", fx, fy, fx + 4, fy);
+    expect(road).toBeTruthy();
+    expect(road!.tiles).toHaveLength(5);
+    expect(road!.free).toBe(5);
+    expect(h.purse.stone).toBe(12);              // nothing charged
+    expect(h.freeTrack).toBe(7);
+
+    // and rail becomes buildable the moment ore exists — charged, never free
+    h.purse.ore = 40;
+    const up = h.dragBuild("rail", fx, fy, fx + 4, fy);
+    expect(up).toBeTruthy();
+    expect(up!.tiles).toHaveLength(5);
+    expect(up!.free).toBe(0);
+    expect(up!.cost).toEqual({ ore: 20 });       // 5 in-place upgrades × 4 ore
+    expect(h.purse.ore).toBe(20);
+    expect(h.freeTrack).toBe(7);                 // rail ate no allowance
+    for (let k = 0; k < 5; k++) expect(hasTrack(h.track, "rail", fx + k, fy)).toBe(true);
   });
 });
 

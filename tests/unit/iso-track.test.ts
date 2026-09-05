@@ -5,7 +5,7 @@ import {
   createTrack, tIdx, spriteKey, isCrossing, hasTrack, bitsAt, canBuildOn, playerNetwork,
   recomputeMask, autotileAround, buildTile, demolishTile,
   tileCost, addCost, canAfford, lPath, previewDrag, commitDrag,
-  connectedTiles, areConnected, drawBits, type Track,
+  connectedTiles, areConnected, drawBits, freeAllowanceCovers, type Track,
 } from "../../src/iso/track";
 import { Atlas, type Manifest } from "../../src/iso/atlas";
 import { buildDrawList, CHUNK, chunksX } from "../../src/iso/renderer";
@@ -422,5 +422,93 @@ describe("E5 renderer integration", () => {
     const track = list.filter((d) => /^(road|rail)_/.test(d.sprite));
     expect(track.length).toBeGreaterThan(20);
     for (const d of track) expect(atlas.has(d.sprite), d.sprite).toBe(true);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// W9 — the free setup allowance buys ROAD, never rail.
+//
+// `previewDrag` used to spend the allowance on any tile with a non-empty cost,
+// so the first FREE_SETUP_TRACK (12) tiles of a rail drag were free: the ore
+// gate E8 settled ("start with stone for roads, no ore — rail is gated behind
+// an ore mine") was bypassed and the connection jumped straight to rail VP
+// (3/tile) and rail throughput (×1.6) with 0 ore in the purse.
+// ══════════════════════════════════════════════════════════════════════════
+describe("W9 the free setup allowance buys road, never rail", () => {
+  /** START_PURSE: 12 stone for the opening road, and no ore at all. */
+  const setup = { stone: 12, ore: 0 };
+
+  it("the rule lives in one place, and it says road only", () => {
+    expect(freeAllowanceCovers("road")).toBe(true);
+    expect(freeAllowanceCovers("rail")).toBe(false);
+  });
+
+  it("a rail drag with 12 free tiles and no ore lays 0 tiles (was 12)", () => {
+    const grid = flatGrid(), t = createTrack();
+    const p = previewDrag(grid, t, "rail", setup, 5, 5, 16, 5, true, undefined, 12);
+    expect(p.tiles).toHaveLength(0);
+    expect(p.cost).toEqual({});                 // nothing to charge
+    expect(p.free).toBe(0);                     // and no allowance burned on it
+    expect(p.unaffordable).toHaveLength(12);    // drawn red, never built
+    const c = commitDrag(t, "rail", p, 1);
+    expect(c.built).toHaveLength(0);
+    expect(hasTrack(t, "rail", 5, 5)).toBe(false);
+  });
+
+  it("the same drag with ore in the purse lays rail and debits it per tile", () => {
+    const grid = flatGrid(), t = createTrack();
+    // exactly 4 ore = exactly one new rail tile ({ore 4, stone 1})
+    const p = previewDrag(grid, t, "rail", { stone: 12, ore: 4 }, 5, 5, 16, 5, true, undefined, 12);
+    expect(p.tiles).toHaveLength(1);
+    expect(p.cost).toEqual(TRANSPORT.rail.cost);
+    expect(p.cost.ore).toBe(4);
+    expect(p.free).toBe(0);
+    commitDrag(t, "rail", p, 1);
+    expect(hasTrack(t, "rail", 5, 5)).toBe(true);
+    expect(hasTrack(t, "rail", 6, 5)).toBe(false);
+
+    // a purse that can pay lays the whole line, charging every tile
+    const grid2 = flatGrid(), t2 = createTrack();
+    const q = previewDrag(grid2, t2, "rail", { stone: 99, ore: 99 }, 5, 5, 16, 5, true, undefined, 12);
+    expect(q.tiles).toHaveLength(12);
+    expect(q.cost).toEqual({ ore: 4 * 12, stone: 12 });
+    expect(q.free).toBe(0);
+  });
+
+  it("an in-place road→rail upgrade is never free either", () => {
+    const grid = flatGrid(), t = createTrack();
+    build(t, "road", [[5, 5], [6, 5], [7, 5], [8, 5]], 1);
+    const broke = previewDrag(grid, t, "rail", setup, 5, 5, 8, 5, true, undefined, 12);
+    expect(broke.tiles).toHaveLength(0);
+    expect(broke.free).toBe(0);
+    // 8 ore = two upgrades at UPGRADE_COST (4) each
+    const paid = previewDrag(grid, t, "rail", { stone: 12, ore: 8 }, 5, 5, 8, 5, true, undefined, 12);
+    expect(paid.tiles).toHaveLength(2);
+    expect(paid.cost).toEqual({ ore: 2 * UPGRADE_COST.ore! });
+    expect(paid.free).toBe(0);
+  });
+
+  it("road still rides the allowance exactly as W1 established", () => {
+    const grid = flatGrid(), t = createTrack();
+    const free = previewDrag(grid, t, "road", { stone: 0, ore: 0 }, 5, 5, 16, 5, true, undefined, 12);
+    expect(free.tiles).toHaveLength(12);
+    expect(free.cost).toEqual({});
+    expect(free.free).toBe(12);
+
+    // past the allowance the purse pays, and the preview truncates there
+    const grid2 = flatGrid(), t2 = createTrack();
+    const mixed = previewDrag(grid2, t2, "road", { stone: 5, ore: 0 }, 5, 5, 21, 5, true, undefined, 12);
+    expect(mixed.tiles).toHaveLength(17);        // 12 free + 5 paid
+    expect(mixed.cost).toEqual({ stone: 5 });
+    expect(mixed.free).toBe(12);
+  });
+
+  it("a road drag over your own track still wastes no allowance", () => {
+    const grid = flatGrid(), t = createTrack();
+    build(t, "road", [[5, 5], [6, 5], [7, 5]], 1);
+    const p = previewDrag(grid, t, "road", { stone: 0, ore: 0 }, 5, 5, 9, 5, true, undefined, 12);
+    expect(p.tiles).toHaveLength(5);
+    expect(p.free).toBe(2);                      // only the two new tiles
+    expect(p.cost).toEqual({});
   });
 });

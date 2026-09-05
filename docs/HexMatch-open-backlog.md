@@ -81,12 +81,47 @@ filed per broken step. Full evidence in
 
 | ticket | file | state |
 |--------|------|-------|
-| **W8** — the rival never builds a single tile (AI deadlock) | `docs/tickets/W8-rival-never-builds.md` | OPEN — **top priority**, step 5 of the core loop |
-| **W9** — free setup track pays for rail, bypassing the ore gate | `docs/tickets/W9-free-setup-track-pays-for-rail.md` | OPEN — balance, step 3 |
-| **G9** — committed derived rail art is stale; the suite is red | `docs/tickets/G9-stale-derived-rail-art.md` | OPEN — `main` fails 1 of 333 tests |
+| **W8** — the rival never builds a single tile (AI deadlock) | `docs/tickets/W8-rival-never-builds.md` | **FIXED 2026-09-05** — step 5 of the core loop works: 0 deadlocked rival tiles on seeds 1337/7/2024 (was 51/37/0), and the rival is never placed on a tile it cannot build from |
+| **W9** — free setup track pays for rail, bypassing the ore gate | `docs/tickets/W9-free-setup-track-pays-for-rail.md` | **FIXED 2026-09-05** — option (a): the allowance buys road only, for the player and the rival; E8's ore gate holds |
+| **G9** — committed derived rail art is stale; the suite is red | `docs/tickets/G9-stale-derived-rail-art.md` | **FIXED 2026-09-05** — art regenerated, and `make-derived-art.mjs --check` (run by `npm test`) now fails on drift |
 
 Steps 1–4 of the core loop verified **working** (place → connect → match →
 spend → combo gold all land correctly; W5's `board.onGold` wire is good).
+Step 5 works as of the W8 fix.
 
-Also note: the "333 unit tests pass" and "rail-pixel test now passes" claims
-at the top of this file are both **false** on `main` — see G9.
+Each ticket file carries a **Resolution** section: what changed, the acceptance
+list ticked item by item, and what was measured. All three landed on
+`arena/01a0717e-hexmatch` — one commit per ticket, in the order the backlog
+asks for (G9 first, because a red suite hides everything else; then W8; then
+W9, whose numbers are easiest to read on a rival that actually builds).
+
+The "333 unit tests pass" and "rail-pixel test now passes" claims at the top of
+this file were **false** on `main` when the play-test measured them (see G9).
+They are true again now, with new numbers: **362 unit tests pass**, typecheck
+clean, lint 0 errors, `slice-atlas` reproduces `assets/iso-atlas` byte for byte
+and `make-derived-art.mjs --check` reports no drift. The rest of the top
+section stands — MB1 is done and the art pipeline was not touched.
+
+### Still open
+
+One ticket is open: **E14** (`docs/tickets/E14-e2e-corridor-picker-returns-null.md`)
+— the CI `e2e` job's gameplay spec. It is **not** a regression from W8/W9/G9;
+it has been red since the Kenney art cutover doubled the tile geometry
+(`TILE_W 64 → 132`), and PR #18 worked around it for the TK-001 test only
+without ticketing it. E14 has the provenance, the arithmetic and the fix
+candidates. Fixing it matters beyond the one red job: while `e2e` is red it
+blocks nothing, which is how G9's red unit suite reached `main`.
+
+Otherwise nothing in `docs/tickets/` is open. Next up is Priority 2 — the
+remaining TK gameplay tickets (TK-002, TK-004 → TK-007, TK-005 → TK-006), one
+PR each. TK-002's dependency (track ownership, W2) is in place, and TK-004's
+art (K5 vehicles, directional frames) is already in the atlas.
+
+One caveat carried over from the play-test, unchanged by these fixes: the
+sandbox has no browser, so `npm run test:e2e` (real chromium, CSS-occlusion
+assertions) was **not** run for W8/W9/G9 — CI ran it instead, and reports the
+pre-existing E14 failure (3 passed, 1 failed at the corridor picker) while the
+`test` job is green for the first time since the cutover. Worth a pass in a real
+browser before the play-test report is closed out — `npm run dev`, then the five
+core-loop steps, with step 5 (the rival builds its own road) now expected to
+pass.

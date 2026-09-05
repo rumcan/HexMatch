@@ -92,6 +92,16 @@ export const TRANSPORT: Record<"road" | "rail", TransportDef> = {
 };
 
 // Road→rail upgrade pays only the difference (settled: yes, upgrade in place).
+//
+// W9: neither this nor TRANSPORT.rail.cost can ever be paid with the free
+// setup allowance. That allowance (FREE_SETUP_TRACK — it lives in `game.ts`
+// with the rest of the E8 tuning surface, not here) buys ROAD ONLY; the single
+// implementation of the rule is `freeAllowanceCovers` in `track.ts`, which
+// `previewDrag` (the human drag) and `planCandidates`/`executeCandidate` (the
+// rival) all consult. Rail therefore stays gated behind an ore mine exactly as
+// E8 settled it — "start with stone for roads, no ore — rail is gated behind
+// an ore mine" — instead of arriving free with the opening 12 tiles, at rail VP
+// (3/tile) and rail throughput (×1.6).
 export const UPGRADE_COST: Partial<Record<Cargo, number>> = { ore: 4 };
 
 export const VP_TARGET = 12;

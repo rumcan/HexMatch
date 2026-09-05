@@ -254,6 +254,23 @@ export const canAfford = (purse: Purse, cost: Purse): boolean =>
   (Object.entries(cost) as [Cargo, number][]).every(([k, v]) => (purse[k] ?? 0) >= v);
 
 /**
+ * W9: what the free setup allowance (`FREE_SETUP_TRACK` in `game.ts`) may buy.
+ *
+ * Option (a) from the ticket — ROAD ONLY. Rail, laid new or upgraded in place
+ * over a road, always pays `TRANSPORT.rail.cost` / `UPGRADE_COST`. E8's design
+ * note is "start with stone for roads, no ore — rail is gated behind an ore
+ * mine", and before this the allowance ignored the gate: `previewDrag` spent it
+ * on ANY tile with a non-empty cost, so the first 12 tiles of a rail drag were
+ * free and the connection jumped straight to rail VP (3/tile) and rail
+ * throughput (×1.6) with 0 ore in the purse.
+ *
+ * One rule, one place: `previewDrag` (the human drag), `planCandidates` and
+ * `executeCandidate` (the AI, W3's "same cost model as the player") all ask
+ * this function, so the two can never disagree about what "free" means.
+ */
+export const freeAllowanceCovers = (kind: TrackKind): boolean => kind === "road";
+
+/**
  * Cost of applying `kind` to a single tile:
  *   - already the same kind → free (dragging over your own road never
  *     double-charges)
@@ -317,6 +334,11 @@ export interface DragPreview {
  * something) ride free, and `cost` counts only the rest. The commit spends
  * exactly `cost`, so preview and charge can no longer disagree — the class of
  * bug where a drag that "looked fine" charged the purse into the negative.
+ *
+ * W9: the allowance only covers ROAD (`freeAllowanceCovers`). A rail drag
+ * prices every tile from tile one, so with no ore in the purse it previews
+ * nothing, spends no allowance, and leaves the setup budget intact for the
+ * road the player still has to build.
  */
 export function previewDrag(
   grid: Grid, t: Track, kind: TrackKind, purse: Purse,
@@ -328,7 +350,10 @@ export function previewDrag(
   const unaffordable: [number, number][] = [];
   let cost: Purse = {};
   let truncated = false;
-  let freeLeft = Math.max(0, freeTiles);
+  // W9: rail never rides the setup allowance, so for rail there is no
+  // allowance to spend and `free` in the result stays 0.
+  const allowance = freeAllowanceCovers(kind) ? Math.max(0, freeTiles) : 0;
+  let freeLeft = allowance;
   const growing = network ? new Set(network) : undefined;
 
   for (let i = 0; i < path.length; i++) {
@@ -338,6 +363,8 @@ export function previewDrag(
     // Free tiles are charged nothing; the allowance covers them first.
     // A tile that costs nothing (dragging over your own track) consumes no
     // allowance — free setup tiles are never wasted.
+    // W9: for rail `freeLeft` starts at 0, so this branch is road-only and a
+    // rail tile always reaches the affordability test below.
     if (Object.keys(c).length === 0) {
       tiles.push([x, y]);
       growing?.add(tIdx(x, y));
@@ -362,7 +389,7 @@ export function previewDrag(
     tiles.push([x, y]);
     growing?.add(tIdx(x, y));
   }
-  return { tiles, cost, free: freeTiles > 0 ? Math.max(0, freeTiles - freeLeft) : 0, unaffordable, truncated };
+  return { tiles, cost, free: allowance - freeLeft, unaffordable, truncated };
 }
 
 export interface CommitResult {
