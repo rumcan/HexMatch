@@ -70,3 +70,23 @@ Each is one PR. TK-004 → TK-007 is the natural pair (vehicles must move before
 - Don't touch the art pipeline, the Kenney mapping, or MB1 stacking — it's done and verified.
 - Don't reconstruct or hand-edit `iso-atlas.cells.json` from memory — edit the real file, run the packer, check the diff.
 - Don't start a second big change while one is in review.
+
+---
+
+## Tickets filed 2026-09-05 (Priority 1 play-test)
+
+Priority 1 is done: the core loop was played end to end and one ticket was
+filed per broken step. Full evidence in
+`docs/playtest-reports/2026-09-05-priority-1.md`.
+
+| ticket | file | state |
+|--------|------|-------|
+| **W8** — the rival never builds a single tile (AI deadlock) | `docs/tickets/W8-rival-never-builds.md` | OPEN — **top priority**, step 5 of the core loop |
+| **W9** — free setup track pays for rail, bypassing the ore gate | `docs/tickets/W9-free-setup-track-pays-for-rail.md` | OPEN — balance, step 3 |
+| **G9** — committed derived rail art is stale; the suite is red | `docs/tickets/G9-stale-derived-rail-art.md` | OPEN — `main` fails 1 of 333 tests |
+
+Steps 1–4 of the core loop verified **working** (place → connect → match →
+spend → combo gold all land correctly; W5's `board.onGold` wire is good).
+
+Also note: the "333 unit tests pass" and "rail-pixel test now passes" claims
+at the top of this file are both **false** on `main` — see G9.
