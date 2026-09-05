@@ -27,7 +27,8 @@ import {
 } from "../../src/iso/track";
 import { industriesInCatchment } from "../../src/iso/economy";
 import {
-  findIsoCorridor, isoTileOcclusion, isoTileClickPoint, type Corridor,
+  findIsoCorridor, isoTileOcclusion, isoTileClickPoint, isoClickableTile,
+  AIM_CANDIDATES, type Corridor,
 } from "../../tests/e2e/corridor-picker";
 
 const VIEW_W = 1280, VIEW_H = 720;   // devices["Desktop Chrome"] at dpr 1
@@ -452,6 +453,85 @@ describe("E14 the click point is measured once, and verified before it is used",
       const msg = err instanceof Error ? err.message : String(err);
       expect(msg).toContain("not the requested tile");
       expect(msg).toContain("ONE measured tile step");
+    }
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// The click point is resolved at click time, and searches when the game
+// disagrees. Run 2 of the E14 spec caught the second half of this: the
+// corridor's aim was chosen before anything was built, and by the time the
+// road was dragged the industry standing on the tile to the lower-right of the
+// Harvester owned that pixel (`resolves to tile (23,6) — sprite
+// depot_blue_v1`). The picker cannot foresee that, so the click helper re-
+// solves it, and when no point on the tile works it stops rather than aiming
+// somewhere merely less-bad.
+// ══════════════════════════════════════════════════════════════════════════
+describe("E14 a tile is clicked wherever the game will actually take the click", () => {
+  const hook = () => (window as unknown as {
+    __iso: { pickAt?: (x: number, y: number) => { tx: number; ty: number; sprite: string | null } | null };
+  }).__iso;
+
+  it("keeps every copy of the aim list identical", () => {
+    const parse = (src: string) => [...src.matchAll(/\{ x: (-?[\d.]+), y: (-?[\d.]+) \}/g)]
+      .map((m) => `${m[1]},${m[2]}`);
+    const want = AIM_CANDIDATES.map((a) => `${a.x},${a.y}`);
+    expect(parse(String(findIsoCorridor))).toEqual(want);
+    expect(parse(String(isoClickableTile))).toEqual(want);
+  });
+
+  it("moves to another point on the same tile when a neighbour steals one", () => {
+    scene(1337, 1);
+    const c = findIsoCorridor({ minTiles: 4, maxTiles: 7 });
+    const t = c.col[0];                               // the harvester end
+    const [cx] = tileToScreenAt(cam, t.tx, t.ty);
+    const [sx] = tileToScreenAt(cam, 0, 0);
+    const [nx] = tileToScreenAt(cam, 0, 1);
+    const stepX = Math.abs(nx - sx);
+    // a fake stage-2 pass: everything right of the tile's left quarter belongs
+    // to the tall sprite standing on the tile to the lower-right — exactly the
+    // `depot_blue_v1` answer that stopped CI run 2.
+    const real = hook().pickAt!;
+    hook().pickAt = (x: number) => (x < cx - stepX * 0.1
+      ? { tx: t.tx, ty: t.ty, sprite: null }
+      : { tx: t.tx + 1, ty: t.ty, sprite: "depot_blue_v1" });
+    try {
+      const p = isoClickableTile({ tx: t.tx, ty: t.ty, aim: c.aim });
+      expect([p.tx, p.ty]).toEqual([t.tx, t.ty]);
+      expect(p.pickedTx).toBe(t.tx);
+      expect(p.x * DPR).toBeLessThan(cx - stepX * 0.1);   // still on the tile
+      expect(p.aim.x).toBeLessThan(0);                     // and it moved to get there
+      expect(p.sprite).toBe("");
+      // the point is inside the tile's own pick cell, per the flat maths
+      expect(flatPick(...screenToWorld(cam, p.x * DPR, p.y * DPR))).toEqual([t.tx, t.ty]);
+    } finally {
+      hook().pickAt = real;
+    }
+    // the un-tampered hook still agrees with the helper on this point
+    expect(isoTileClickPoint({ tx: t.tx, ty: t.ty, aim: c.aim }).pickedTx).toBe(t.tx);
+  });
+
+  it("refuses the tile, loudly, when no point on it lands on it", () => {
+    scene(1337, 1);
+    const c = findIsoCorridor({ minTiles: 4, maxTiles: 7 });
+    const t = c.col[1];
+    const real = hook().pickAt!;
+    hook().pickAt = () => ({ tx: 99, ty: 99, sprite: "depot_blue_v1" });
+    try {
+      expect(() => isoClickableTile({ tx: t.tx, ty: t.ty, aim: c.aim }))
+        .toThrow(new RegExp(`no click point on tile \\(${t.tx},${t.ty}\\) lands on it`));
+      const msg = (() => {
+        try { isoClickableTile({ tx: t.tx, ty: t.ty, aim: c.aim }); }
+        catch (e) { return (e as Error).message; }
+        return "";
+      })();
+      expect(msg).toContain(`picks (99,99) via \`depot_blue_v1\``.replace("\`", "`").replace("\`", "`"));
+      expect(msg).toContain(`One tile step is ${(33).toFixed(0)}×`);
+      // every aim in the list was tried and each one is reported
+      expect(AIM_CANDIDATES.length).toBeGreaterThan(6);
+      for (const a of AIM_CANDIDATES) expect(msg).toContain(`(${a.x}, ${a.y}) →`);
+    } finally {
+      hook().pickAt = real;
     }
   });
 });

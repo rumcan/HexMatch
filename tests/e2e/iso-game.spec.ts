@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import {
-  findIsoCorridor, isoTileOcclusion, isoTileClickPoint, type Corridor,
+  findIsoCorridor, isoTileOcclusion, isoClickableTile, type Corridor,
 } from "./corridor-picker";
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -76,22 +76,25 @@ function describeCorridorError(err: unknown) {
 }
 
 /**
- * The CSS-pixel point to click for a tile — i.e. the page-side
- * `isoTileClickPoint` from tests/e2e/corridor-picker.ts, run in the browser.
+ * The viewport point to click to reach a tile — the page-side
+ * `isoClickableTile` from tests/e2e/corridor-picker.ts, so every click of the
+ * round is resolved against the LIVE state: on screen, not swallowed by HUD
+ * chrome, and answered by the game's own pick with the tile it names.
  *
- * This used to derive its own offset (centre + aim × a step measured from the
- * target tile rather than from tile (0,0)→(0,1)), which at tile (24,10) made a
- * tile step fifteen tiles long and put every click of the round 16 tiles away
- * from the tile it claimed to be clicking. The picker and the occlusion
- * re-check were right; the mouse was not. So the spec no longer does this
- * arithmetic at all: one function owns it, and it refuses a point that the
- * game's own pick resolves to any other tile.
+ * The spec deliberately does no geometry of its own here. It used to: it
+ * derived its aim offset from `tileScreenAt(0,1)` minus *the target tile*
+ * instead of `tileScreenAt(0,0)` → `tileScreenAt(0,1)`, which at tile (24,10)
+ * made a tile step fifteen tiles long and put the whole round's mouse 16 tiles
+ * away from the tiles it claimed. And a point verified once up front is not
+ * enough either — placing the Factory and the Harvester changes what the
+ * stage-2 sprite pick answers, which is what the second CI run caught. Both
+ * failure modes are now the helper's problem, and it fails loudly.
  */
-async function tileCenter(
+async function clickPointFor(
   page: import("@playwright/test").Page, tx: number, ty: number,
-  aim: { x: number; y: number } = { x: 0, y: 0.5 },
+  prefer?: { x: number; y: number },
 ) {
-  return page.evaluate(isoTileClickPoint, { tx, ty, aim });
+  return page.evaluate(isoClickableTile, { tx, ty, aim: prefer });
 }
 
 /** Count opaque pixels in a square around a tile centre on a given canvas. */
@@ -240,16 +243,26 @@ test.describe("iso game boots on the default route", () => {
     });
     const n = c.tiles;
     const aim = c.aim;
-    const at = (tx: number, ty: number) => tileCenter(page, tx, ty, aim);
+    const at = (tx: number, ty: number) => clickPointFor(page, tx, ty, aim);
     const factory = await at(c.fx, c.fy);
     const harvester = await at(c.hx, c.hy);
 
     // A2: every tile a pointer event is about to land on is reachable —
     // re-checked here, independently of the filter that chose them, because a
     // corridor under a panel is exactly the failure this suite exists to catch.
+    // The points asserted on are the points the round is about to click (the
+    // same resolution the clicks themselves go through), not a re-derivation.
     // (The tile diagonally behind the factory is only *sampled* for pixels, so
     // it is deliberately not part of the clickability claim.)
-    expect(await page.evaluate(isoTileOcclusion, { tiles: c.col, aim })).toEqual([]);
+    const planned = await Promise.all(
+      c.col.map(async (t) => ({ ...t, ...(await at(t.tx, t.ty)) })),
+    );
+    expect(await page.evaluate(isoTileOcclusion, { tiles: planned, aim })).toEqual([]);
+    test.info().annotations.push({
+      type: "click-points",
+      description: planned.map((p) =>
+        `(${p.tx},${p.ty})→aim(${p.aim.x}, ${p.aim.y})`).join(" "),
+    });
 
     // ── setup round 1 of 2: click the tile for your Factory ─────────────
     // V1 acceptance: the placement highlight covers EXACTLY the footprint the

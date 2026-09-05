@@ -48,6 +48,30 @@
 // the real camera maths, so the constraint is enforced by a test, not a comment.
 // ══════════════════════════════════════════════════════════════════════════
 
+/**
+ * The click points a tile offers, in preference order, as fractions of ONE
+ * measured tile step from the diamond centre.
+ *
+ * Both bounds of every entry are chosen so the point stays inside the tile's
+ * OWN pick cell: `renderer.pick`'s flat stage resolves a point at (ax, ay) to
+ * the same tile iff −1 ≤ ax+ay < 1 and −1 ≤ ay−ax < 1, and the drawn diamond
+ * contains it iff |ax|+|ay| ≤ 1. `isoTileClickPoint` re-checks that against the
+ * game itself, so a candidate that stops being true (a tall neighbour's sprite
+ * taking the pixel — the reason the list is a LIST) costs a retry, not a wrong
+ * click. The ±0.5 x entries exist because a building standing on the tile to the
+ * lower-right covers this tile's centre and its right half, and nothing else in
+ * the list escapes it.
+ */
+export const AIM_CANDIDATES: CorridorAim[] = [
+  { x: 0, y: 0.5 },      // the convention: halfway down the surface
+  { x: 0, y: 0 },        // the exact centre
+  { x: 0, y: -0.5 },     // halfway up
+  { x: -0.5, y: 0 }, { x: 0.5, y: 0 },
+  { x: -0.25, y: 0.25 }, { x: 0.25, y: 0.25 },
+  { x: -0.25, y: -0.25 }, { x: 0.25, y: -0.25 },
+  { x: -0.25, y: 0 }, { x: 0.25, y: 0 },
+];
+
 /** The read-only slice of `window.__iso` this helper is allowed to touch. */
 interface IsoHookLite {
   grid: {
@@ -236,9 +260,15 @@ export function findIsoCorridor(opts?: CorridorOptions): Corridor {
   // down the tile surface, past the K4 pick-cell offset); the others are there
   // so a sprite or a HUD box that clips the conventional point cannot make the
   // whole test unrunnable when a perfectly clickable tile is two pixels away.
+  // Repeated verbatim from `AIM_CANDIDATES` (module scope does not survive
+  // `page.evaluate`); the copy inside `isoClickableTile` and both lists are
+  // pinned against `AIM_CANDIDATES` by tests/unit/iso-corridor-picker.test.ts.
   const AIMS: CorridorAim[] = [
     { x: 0, y: 0.5 }, { x: 0, y: 0 }, { x: 0, y: -0.5 },
+    { x: -0.5, y: 0 }, { x: 0.5, y: 0 },
     { x: -0.25, y: 0.25 }, { x: 0.25, y: 0.25 },
+    { x: -0.25, y: -0.25 }, { x: 0.25, y: -0.25 },
+    { x: -0.25, y: 0 }, { x: 0.25, y: 0 },
   ];
 
   // Rank industries by distance from the boot camera's focus (industries[0] is
@@ -342,6 +372,10 @@ export function findIsoCorridor(opts?: CorridorOptions): Corridor {
   return best;
 }
 
+/** A tile to test; `x`/`y` are the viewport point to test instead of deriving
+ *  one from `aim` — the spec passes the points it is actually going to click. */
+export interface OcclusionProbe extends CorridorTile { x?: number; y?: number }
+
 /**
  * Which of these tiles are NOT clickable right now (A2), i.e. the element a
  * real pointer event would hit is not the map.
@@ -351,7 +385,7 @@ export function findIsoCorridor(opts?: CorridorOptions): Corridor {
  * very rule to choose the corridor. Same self-containment rule as
  * `findIsoCorridor` — the click point is recomputed here from the same inputs.
  */
-export function isoTileOcclusion(sel: { tiles: CorridorTile[]; aim?: CorridorAim }): OcclusionHit[] {
+export function isoTileOcclusion(sel: { tiles: OcclusionProbe[]; aim?: CorridorAim }): OcclusionHit[] {
   const h = (window as unknown as { __iso?: IsoHookLite }).__iso;
   if (!h) throw new Error("isoTileOcclusion: window.__iso is not mounted");
   const dpr = window.devicePixelRatio || 1;
@@ -370,8 +404,8 @@ export function isoTileOcclusion(sel: { tiles: CorridorTile[]; aim?: CorridorAim
   const out: OcclusionHit[] = [];
   for (const t of sel.tiles) {
     const d = h.tileScreenAt(t.tx, t.ty);
-    const x = (d[0] + aim.x * step[0]) / dpr + origin[0];
-    const y = (d[1] + aim.y * step[1]) / dpr + origin[1];
+    const x = t.x ?? (d[0] + aim.x * step[0]) / dpr + origin[0];
+    const y = t.y ?? (d[1] + aim.y * step[1]) / dpr + origin[1];
     const top = (document.elementsFromPoint(x, y) || [])[0] as HTMLElement | undefined;
     if (!top || !top.closest?.(".iso-layer")) {
       const cls = top && top.className ? "." + String(top.className).trim().split(/\s+/).join(".") : "";
@@ -397,9 +431,10 @@ export interface ClickPoint extends CorridorTile {
 }
 
 /**
- * THE ONE PLACE A CLICK COORDINATE IS COMPUTED (E14). The spec clicks every
- * tile of the corridor through this function, so a click can never disagree
- * with the pixel the corridor was chosen on.
+ * THE GEOMETRY BEHIND A CLICK COORDINATE (E14). `isoClickableTile` below is
+ * what the spec actually calls — it wraps this maths in the aim search and the
+ * hit-test — but the measurement (step, dpr, map origin, the pick check) lives
+ * here in one place, and the unit tests assert both forms against it.
  *
  * `aim` is a fraction of ONE TILE STEP away from the diamond centre, and the
  * step is measured the only way that is correct: `tileScreenAt(0,0)` →
@@ -467,4 +502,116 @@ export function isoTileClickPoint(sel: ClickPointSel): ClickPoint {
     }
   }
   return out;
+}
+
+/** Argument form of `isoClickableTile`. */
+export interface ClickableSel extends CorridorTile {
+  /** Preferred aim — the corridor's — tried first before the rest of the list. */
+  aim?: CorridorAim;
+}
+
+/** A tile plus the point to click it with, chosen against the LIVE state. */
+export interface ClickableTile extends ClickPoint {
+  aim: CorridorAim;
+  /** the sprite that answered the pick, when one did ("" = bare ground) */
+  sprite: string;
+}
+
+/**
+ * THE POINT TO CLICK A TILE WITH *RIGHT NOW* (E14).
+ *
+ * `findIsoCorridor` chooses one aim for a whole corridor, judged on the map as
+ * it is when the search runs. That is not enough for the round itself: by the
+ * time the spec drags the road, it has placed a Factory and a Harvester, the
+ * structures list has changed, and `renderer.pick`'s stage-2 alpha pass can
+ * hand a pixel to a taller neighbour's sprite. The first run this guard was in
+ * place said so precisely:
+ *
+ *   tile (22,6) at click offset (0.25, 0.25) = pixel (582, 332) device px
+ *   resolves to tile (23,6) — sprite `depot_blue_v1`
+ *
+ * i.e. the industry standing on the tile to the lower-right of the Harvester
+ * owns that pixel, and clicking it would have extended the road from the
+ * industry instead — a "the game refused my drag" bug report with no obvious
+ * cause. So the click point is not inherited from the search: it is *resolved*
+ * per click, over the aim list, against three checks that all have to agree at
+ * once — the point is on screen, the element under it is a map canvas, and the
+ * game's own two-stage pick resolves it back to this tile.
+ *
+ * This is not a workaround for the test's benefit: it is the same measurement
+ * a player's click gets, and when no point on a tile satisfies it, that is a
+ * real bug in picking or layout worth stopping for. Which is why it throws with
+ * every aim it tried and what each one answered, rather than quietly clicking
+ * the least-bad option.
+ *
+ * @throws when no aim in `AIM_CANDIDATES` is clickable on this tile, with one
+ *   `<aim> → <reason>` clause per attempt plus the measured step/zoom/dpr.
+ */
+export function isoClickableTile(sel: ClickableSel): ClickableTile {
+  const h = (window as unknown as { __iso?: IsoHookLite }).__iso;
+  if (!h) throw new Error("isoClickableTile: window.__iso is not mounted");
+  const dpr = window.devicePixelRatio || 1;
+  const d0 = h.tileScreenAt(0, 0);
+  const d1 = h.tileScreenAt(0, 1);
+  const step: [number, number] = [Math.abs(d1[0] - d0[0]), Math.abs(d1[1] - d0[1])];
+  const zoom = h.camera ? h.camera.zoom : 0;
+  const layer = document.querySelector("canvas.iso-layer") as HTMLElement | null;
+  const b = layer?.getBoundingClientRect?.();
+  const ox = b && Number.isFinite(b.left) ? b.left : 0;
+  const oy = b && Number.isFinite(b.top) ? b.top : 0;
+
+  // The canonical `AIM_CANDIDATES` list, repeated because module scope does not
+  // survive `page.evaluate`, with the caller's preferred aim tried first.
+  const LIST: CorridorAim[] = [
+    { x: 0, y: 0.5 }, { x: 0, y: 0 }, { x: 0, y: -0.5 },
+    { x: -0.5, y: 0 }, { x: 0.5, y: 0 },
+    { x: -0.25, y: 0.25 }, { x: 0.25, y: 0.25 },
+    { x: -0.25, y: -0.25 }, { x: 0.25, y: -0.25 },
+    { x: -0.25, y: 0 }, { x: 0.25, y: 0 },
+  ];
+  const aims: CorridorAim[] = sel.aim
+    ? [sel.aim, ...LIST.filter((a) => a.x !== sel.aim!.x || a.y !== sel.aim!.y)]
+    : LIST;
+
+  const d = h.tileScreenAt(sel.tx, sel.ty);
+  const tried: string[] = [];
+  for (const aim of aims) {
+    const px = d[0] + aim.x * step[0];
+    const py = d[1] + aim.y * step[1];
+    const x = px / dpr + ox, y = py / dpr + oy;
+    const tag = `(${aim.x}, ${aim.y})`;
+    if (!(x > -20 && y > -20 && x <= window.innerWidth + 20 && y <= window.innerHeight + 20)) {
+      tried.push(`${tag} → off-screen`);
+      continue;
+    }
+    const top = (document.elementsFromPoint(x, y) || [])[0] as HTMLElement | undefined;
+    if (!top || !top.closest?.(".iso-layer")) {
+      const nm = top
+        ? `${top.tagName.toLowerCase()}${top.id ? "#" + top.id : ""}`
+          + (top.className ? "." + String(top.className).trim().split(/\s+/).join(".") : "")
+        : "nothing";
+      tried.push(`${tag} → covered:${nm}`);
+      continue;
+    }
+    if (!h.pickAt) {
+      // No pick surface to ask (an older hook): the hit-test is all we can
+      // prove, so take the point and say the check was unavailable.
+      return { x, y, tx: sel.tx, ty: sel.ty, pickedTx: sel.tx, pickedTy: sel.ty, aim, sprite: "" };
+    }
+    const p = h.pickAt(px, py);
+    if (!p) { tried.push(`${tag} → pickAt found nothing`); continue; }
+    if (p.tx === sel.tx && p.ty === sel.ty) {
+      return { x, y, tx: sel.tx, ty: sel.ty, pickedTx: p.tx, pickedTy: p.ty, aim, sprite: p.sprite ?? "" };
+    }
+    tried.push(`${tag} → picks (${p.tx},${p.ty})${p.sprite ? ` via \`${p.sprite}\`` : ""}`);
+  }
+  throw new Error(
+    `isoClickableTile: no click point on tile (${sel.tx},${sel.ty}) lands on it. `
+    + `Tried ${tried.length}: ${tried.join("; ")}. `
+    + `One tile step is ${step[0]}×${step[1]} device px at zoom ${zoom}, dpr ${dpr}, `
+    + `map origin (${ox}, ${oy}). Every aim in the list is inside this tile's own pick `
+    + `cell, so a "picks (x,y)" answer means another sprite is covering this tile — a `
+    + `picking/anchoring problem (C1/C3), not a test problem. `
+    + `The click itself is never moved off the tile to make it pass.`,
+  );
 }

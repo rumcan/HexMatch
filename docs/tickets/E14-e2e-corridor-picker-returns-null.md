@@ -208,12 +208,12 @@ is still played with real pointer events.
 
 | file | change |
 |------|--------|
-| `tests/e2e/corridor-picker.ts` | **new.** `findIsoCorridor(opts)` — the geometry-relative search — `isoTileOcclusion({tiles, aim})`, the spec's independent re-check, and `isoTileClickPoint({tx,ty,aim})`, the one place a click coordinate is derived (see *CI round 1*). All three are deliberately self-contained (no imports, no module scope) because `page.evaluate` ships `fn.toString()` into the page, and that contract is pinned by a test |
+| `tests/e2e/corridor-picker.ts` | **new.** `findIsoCorridor(opts)` — the geometry-relative search — `isoTileOcclusion({tiles, aim})`, the spec's independent re-check — `isoTileClickPoint({tx,ty,aim})`, the click geometry in one place — and `isoClickableTile({tx,ty,aim})`, which the spec clicks through: it re-solves the point per click against the aim list, the hit-test and the game's pick (see *CI rounds 1–2*). All four are deliberately self-contained (no imports, no module scope) because `page.evaluate` ships `fn.toString()` into the page, and that contract is pinned by a test |
 | `tests/e2e/iso-game.spec.ts` | `pickCorridor` is now a 1-line `page.evaluate` of that module; the wheel zoom-out became a named `zoomStep()` helper with a **second real gesture** as a retry; the free-allowance, road-tile and painted-pixel assertions are derived from `corridor.tiles` / `corridor.col` instead of the constants 4, 5 and `hy + 1`; a new `isoTileOcclusion` assertion covers **every** tile of the column plus the tile diagonally behind the factory |
 | `src/iso/track.ts` | `canBuildOn` is now the boolean projection of a new `buildRefusal(grid, kind, tx, ty, network)` returning the *reason* (`water` / `rough` / `occupied` / `not-adjacent` / `out-of-bounds`). One rule, so the helper can filter on legality without re-deriving `WATER = 1` and drifting from the game |
 | `src/iso/game.ts` | the `__iso` hook gains three read-only surfaces: `tileProbe(kind,tx,ty)` (the game's own build + harvester verdict, via `buildRefusal` and the `placeHarvester` checks), `pickAt(sx,sy)` (literally `renderer.pick`, the two-stage hit-test a click goes through) and `camera` (so a report can name the zoom it used) |
-| `tests/e2e/iso-game.spec.ts` (`tileCenter`) | no longer does its own arithmetic: every click of the round goes through `isoTileClickPoint` |
-| `tests/unit/iso-corridor-picker.test.ts` | **new, 10 tests** — the same module run headlessly against the real map generator, the real camera maths and the CSS-derived HUD boxes, including the click-point contract the spec depends on |
+| `tests/e2e/iso-game.spec.ts` (`clickPointFor`) | does no arithmetic of its own at all: every click of the round, and the points the A2 assertion checks, come from `isoClickableTile` |
+| `tests/unit/iso-corridor-picker.test.ts` | **new, 13 tests** — the same module run headlessly against the real map generator, the real camera maths and the CSS-derived HUD boxes, including the click-point contract the spec depends on |
 
 ### The click point is now part of the proof
 
@@ -314,16 +314,57 @@ none of them was where the click landed — which is why the fix is structural:
   the other reproduces the round-1 mis-scaling and asserts the guard rejects it
   *naming the tile the old formula clicked*.
 
+### CI round 2: the guard caught a second, real bug — neighbour sprites steal pixels
+
+Round 2 was again 3 passed / 1 failed, and the failure was the new guard doing
+its job, mid-drag:
+
+```
+isoTileClickPoint: tile (22,6) at click offset (0.25, 0.25) = pixel (582, 332)
+device px resolves to tile (23,6) — sprite `depot_blue_v1`, not the requested tile
+```
+
+The click point was correct *for the state the corridor was searched in*. It was
+wrong by the time the road was dragged, because by then the Harvester sat on
+(22,6): the structures list changed, and `renderer.pick`'s stage-2 alpha pass
+gave that pixel to `depot_blue_v1`, the industry one tile to the right — whose
+132×83 sprite covers the right half of its left neighbour's diamond. The game
+would have refused the drag there with `occupied`, and the test would have
+timed out waiting for a road that was never laid. That is the C1/C3 bug class
+this repo's backlog already suspects, now caught with the pixel, the tile and
+the sprite named instead of inferred from a timeout.
+
+What follows from it, for the test:
+
+* an aim is not a property of a corridor, it is a property of a *click*.
+  `isoClickableTile({tx, ty, aim})` resolves each click against the live state:
+  the aim the corridor was chosen on first, then the rest of
+  `AIM_CANDIDATES` (now 11 points, all inside the tile's own pick cell —
+  `|ax| + |ay| ≤ 1`, `−1 ≤ ax+ay < 1`, `−1 ≤ ay−ax < 1`), accepting only a
+  point that is on screen, whose topmost element is a map canvas, **and** that
+  `pickAt` resolves back to the tile. `isoTileOcclusion` is asserted on those
+  very points, so the A2 claim is about the clicks that actually happen.
+* when nothing on a tile qualifies it throws with one clause per aim tried
+  (`(0.5, 0) → picks (23,6) via \`depot_blue_v1\``) plus the measured step,
+  zoom, dpr and map origin. It does not "pick the least-bad point": a tile no
+  click can reach is a picking bug, and this suite's job is to say so.
+* `tests/unit/iso-corridor-picker.test.ts` covers the search with a stage-2
+  stand-in that reproduces exactly this stealing (accepting only the left of the
+  tile — the helper must move to a negative-x aim and stay pick-correct per the
+  flat maths), the all-rejected case, and that every copy of the aim list
+  (module constant, `findIsoCorridor`, `isoClickableTile`) is identical, since
+  self-containment forces the duplication.
+
 ### Acceptance
 
 1. 🚧 `npx playwright test --project=desktop-chromium` in CI: round 1 was
-   **3/4 green with the corridor found by real geometry**; the one red was the
-   spec's own click arithmetic, fixed above — see the `e2e` job on this PR for
-   the current verdict. The filters were kept (and strengthened, above); nothing
-   was relaxed to make the spec pass. Locally: `npm test` is green at **382**
-   (363 before this PR, +10 corridor-picker, +9 C5 debug console),
-   `npm run typecheck` clean, `npm run lint` 0 errors and one fewer warning than
-   `main`.
+   3/4 green with the corridor found by real geometry (the red was the spec's
+   own click maths), round 2 fixed that and got further before its new guard
+   stopped a click the game would have refused — see *CI round 2*. The filters
+   were kept and strengthened; nothing was relaxed to make the spec pass.
+   Locally: `npm test` is green at **385** (363 before this PR, +13 corridor
+   picker, +9 C5 debug console), `npm run typecheck` clean, `npm run lint` 0
+   errors and one fewer warning than `main`.
 2. ✅ Every tile of the column is re-checked by the spec's own
    `isoTileOcclusion` assertion, at the aim the helper chose, using the same
    real hit-test it filtered on — reported as
