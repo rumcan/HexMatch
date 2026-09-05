@@ -402,7 +402,10 @@ test.describe("TK-001 mouse panning is middle-button only", () => {
       return null;
     });
     expect(spot).not.toBeNull();
-    const anchor = await tileCenter(page, spot!.tx, spot!.ty);
+    // E14: the anchor goes through the same resolver the gameplay round clicks
+    // with, so "a left click here places" is asserted against a point the
+    // game's own pick hands back to this tile — not a re-derivation of it.
+    const anchor = await clickPointFor(page, spot!.tx, spot!.ty);
     const before = await screenAt(spot!.tx, spot!.ty);
     expect(before.x).toBeGreaterThan(0);
 

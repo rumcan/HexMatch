@@ -213,6 +213,7 @@ is still played with real pointer events.
 | `src/iso/track.ts` | `canBuildOn` is now the boolean projection of a new `buildRefusal(grid, kind, tx, ty, network)` returning the *reason* (`water` / `rough` / `occupied` / `not-adjacent` / `out-of-bounds`). One rule, so the helper can filter on legality without re-deriving `WATER = 1` and drifting from the game |
 | `src/iso/game.ts` | the `__iso` hook gains three read-only surfaces: `tileProbe(kind,tx,ty)` (the game's own build + harvester verdict, via `buildRefusal` and the `placeHarvester` checks), `pickAt(sx,sy)` (literally `renderer.pick`, the two-stage hit-test a click goes through) and `camera` (so a report can name the zoom it used) |
 | `tests/e2e/iso-game.spec.ts` (`clickPointFor`) | does no arithmetic of its own at all: every click of the round, and the points the A2 assertion checks, come from `isoClickableTile` |
+| `tsconfig.e2e.json` + `package.json` | `npm run typecheck` now also checks `tests/e2e` (strict, repo options) — the specs used to be lint-only, which is how a renamed helper reached CI |
 | `tests/unit/iso-corridor-picker.test.ts` | **new, 13 tests** — the same module run headlessly against the real map generator, the real camera maths and the CSS-derived HUD boxes, including the click-point contract the spec depends on |
 
 ### The click point is now part of the proof
@@ -354,6 +355,23 @@ What follows from it, for the test:
   flat maths), the all-rejected case, and that every copy of the aim list
   (module constant, `findIsoCorridor`, `isoClickableTile`) is identical, since
   self-containment forces the duplication.
+
+### CI round 3: the round passes; a rename in the spec did not
+
+Round 3 is the run that made the change real — and it is the run that shows why
+the browser gate matters. **The gameplay test passed** (`✓ 3 … gameplay: factory
+→ harvester → road drag → +1 VP, all real pointer events (9.7s)`): corridor found
+by geometry, every click accepted by the game's own pick, the round played, the
+VP scored. Test 4 then died on `ReferenceError: tileCenter is not defined` — the
+TK-001 spec still called the helper this ticket had renamed, and *no local gate
+could see it*: `tsconfig.json` includes `src` and `vite.config.ts` only, so the
+specs are linted but never type-checked, and `playwright test --list` does not
+execute bodies.
+
+`npm run typecheck` now also runs `tsc -p tsconfig.e2e.json` (a 4-line config
+that inherits the repo's strict options over `tests/e2e`), which is exactly the
+check that would have caught it, and CI's existing `npm run typecheck` step
+covers it with no workflow change.
 
 ### Acceptance
 
