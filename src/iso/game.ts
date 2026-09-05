@@ -35,7 +35,7 @@ import { IsoRenderer, type World } from "./renderer";
 import { generateMap, resolveMapSeed, type Grid, type Industry } from "./grid";
 import {
   createTrack, drawBits, previewDrag, commitDrag, canBuildOn, hasTrack,
-  demolishTile, tIdx, playerNetwork, canAfford,
+  demolishTile, tIdx, playerNetwork, canAfford, buildRefusal,
   type Track, type TrackKind, type Purse, type DragPreview,
 } from "./track";
 import {
@@ -52,6 +52,7 @@ import {
 import { createQuarry, GEM_TO_CARGO, type Quarry } from "./quarry";
 import { createIsoMarket, toBag, type CargoBag, type IsoMarket } from "./market";
 import { createOriginalUi, type OriginalUi } from "../game/ui";
+import { createIsoDebug, shouldInstallDebugConsole } from "./debug";
 import { joinFromSnapshot } from "./snapshot";
 export { joinFromSnapshot };
 
@@ -212,6 +213,8 @@ export function startIsoGame(root: HTMLElement) {
   );
 
   let renderer: IsoRenderer | null = null;
+  /** C5: the atlas instance lives in the async boot; the debug console reads it here. */
+  let atlasRef: Atlas | null = null;
   let hover: { tx: number; ty: number; ref: unknown } | null = null;
   let drag: { ax: number; ay: number } | null = null;
   let preview: DragPreview | null = null;
@@ -739,6 +742,30 @@ export function startIsoGame(root: HTMLElement) {
   window.visualViewport?.addEventListener("resize", resize);
   window.addEventListener("orientationchange", resize);
 
+  // ── C5: the visual-debug console ───────────────────────────────────────
+  // Installed only in a dev build or when the URL asks for it (`?iso-debug`),
+  // so a shipped build never creates the dumps and never sets the renderer's
+  // debugPainter. Every command reads live state through the getters below,
+  // which is the whole point: a screenshot can be traced to the exact numbers
+  // the renderer used. See docs/iso-debug-console.md.
+  const debug = shouldInstallDebugConsole({
+    dev: import.meta.env.DEV,
+    search: typeof location !== "undefined" ? location.search : "",
+  }) ? createIsoDebug({
+    grid, track, eco, players,
+    get camera() { return cam; },
+    get renderer() { return renderer; },
+    get atlas() { return atlasRef; },
+    get hover() { return hover; },
+    get tool() { return tool; },
+    get phase() { return phase; },
+    ownerOf: (who: string) => {
+      const p = players.find((q) => q.id === who);
+      return p ? p.i + 1 : null;
+    },
+    dpr,
+  }) : null;
+
   // ── boot ───────────────────────────────────────────────────────────────
   let raf = 0;
   let disposed = false;
@@ -756,7 +783,9 @@ export function startIsoGame(root: HTMLElement) {
     buildMasks(atlas);
     if (disposed) return;
 
+    atlasRef = atlas;
     renderer = new IsoRenderer(canvases, atlas, cam, world);
+    debug?.attachRenderer();
     resize();
     syncWorld();
 
@@ -809,6 +838,47 @@ export function startIsoGame(root: HTMLElement) {
      *  e2e twin of __hex.view.screenPosOf. Read-only. */
     tileScreenAt: (tx: number, ty: number) => tileToScreenAt(cam, tx, ty),
     /**
+     * E14: the live camera, so a test can report the zoom it picked a corridor
+     * at instead of assuming the boot value.
+     */
+    get camera() { return cam; },
+    /**
+     * E14: what a pointer event at a CANVAS point (device px, the same space
+     * `pos()` hands the click handlers) resolves to — literally
+     * `renderer.pick(...)`, the two-stage hit-test a click goes through. The
+     * corridor picker uses it to prove the tile it names is the tile a click at
+     * that pixel selects, which is the only way to catch the "I clicked the
+     * tile I could see and built on the one behind it" class of bug from a
+     * screenshot. Returns null before the atlas/renderer exist.
+     */
+    pickAt: (sx: number, sy: number) => {
+      const p = renderer?.pick(sx, sy);
+      return p ? { tx: p.tx, ty: p.ty, sprite: p.sprite?.sprite ?? null } : null;
+    },
+    /**
+     * E14/C5: the read-only legality answer for a tile, built from the SAME
+     * rules the click handlers run (`buildRefusal` in track.ts, the harvester
+     * checks in `placeHarvester`) — and with the REASON, so "I clicked and
+     * nothing happened" is a one-call diagnosis instead of a read of game.ts.
+     * The e2e corridor picker filters through this rather than re-deriving
+     * WATER=1 from the outside.
+     */
+    tileProbe: (kind: TrackKind, tx: number, ty: number) => {
+      const why = buildRefusal(grid, kind, tx, ty);
+      const taken = eco.harvesters.some((x) => x.tx === tx && x.ty === ty);
+      const served = why === null && !taken
+        ? industriesInCatchment(grid, { id: -1, owner: "you", ownerId: 0, tx, ty })
+        : [];
+      return {
+        build: { ok: why === null, why },
+        harvester: {
+          ok: why === null && !taken && served.length > 0,
+          why: why ?? (taken ? "harvester-taken" : served.length ? null : "no-industry-in-catchment"),
+          industries: served.map((x) => x.id),
+        },
+      };
+    },
+    /**
      * W1/W2: the e2e/unit twin of a track drag — the exact pointer path
      * (owned network check → preview with the free allowance → commit).
      * Returns the committed preview, or null when the drag can't start.
@@ -839,6 +909,10 @@ export function startIsoGame(root: HTMLElement) {
     /** W6: the per-frame board+market clock, with an injectable now — the
      *  twin the Feed assertions drive (the rival answers inside market.tick). */
     tick: (now = performance.now()) => quarryTick(now),
+    // C5: the visual-debug console — dumpTile / dumpAt / dumpBuilding /
+    // dumpNetwork / overlay / config / probe. Spread only when the gate is on,
+    // so a production build exposes nothing (see src/iso/debug.ts).
+    ...(debug ? debug.commands : {}),
   };
 
   return () => {
