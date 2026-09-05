@@ -1,5 +1,5 @@
 {
-  "comment": "K1 atlas cell map, Kenney edition: every cell is either ONE PNG file under src/iso/kenny OR an ordered multi-storey 'stack' of layer PNGs. Each single cell carries: name, png (repo path relative to src/iso/kenny), kind, footprint. A stacked 'standing' building replaces png with 'stack': a bottom-to-top array of layer descriptors ({ png }) \u2014 base first, middle floors, roof on top (2-6 layers). The packer resolves each distinct (png, tint) layer once into a shared packed sprite and emits a composite manifest entry whose 'parts' tell the renderer how to draw the stack bottom-to-top; depth-sort and picking treat the whole stack as ONE object on its footprint. Single-png cells (terrain, roads, the one-piece industries) are unchanged and additive with stacks. kind: 'ground' = a flat Kenney block (132x64 diamond + 50px skirt) \u2014 the packer anchors it by its measured widest row and REJECTS it unless that row sits at y~32 with ~full width (the spec's flat-only filter: slope/ramp tiles fail); 'standing' = a building, anchored by the widest row of its base diamond so it stands flush on the tile; 'vehicle' = anchored bottom-centre on the tile surface. Anchors are always COMPUTED by the packer from the pixels \u2014 there is no hand-authored anchor, box, crop, compose, sprite-id or generator field anywhere in this file. Derived art (rail set, crossing, placement glows) is pre-drawn by tools/make-derived-art.mjs into src/iso/kenny/derived and referenced like any Kenney PNG.",
+  "comment": "K1 atlas cell map, Kenney edition: every cell is either ONE PNG file under src/iso/kenny OR an ordered multi-storey 'stack' of layer PNGs. Each single cell carries: name, png (repo path relative to src/iso/kenny), kind, footprint. A stacked 'standing' building replaces png with 'stack': a bottom-to-top array of layer descriptors ({ png }) — base first, middle floors, roof on top (2-6 layers). The packer resolves each distinct (png, tint) layer once into a shared packed sprite and emits a composite manifest entry whose 'parts' tell the renderer how to draw the stack bottom-to-top; depth-sort and picking treat the whole stack as ONE object on its footprint. Single-png cells (terrain, roads, the one-piece industries) are unchanged and additive with stacks. kind: 'ground' = a flat Kenney block (132x64 diamond + 50px skirt) — the packer anchors it by its measured widest row and REJECTS it unless that row sits at y~32 with ~full width (the spec's flat-only filter: slope/ramp tiles fail); 'standing' = a building, anchored by the widest row of its base diamond so it stands flush on the tile; 'vehicle' = anchored bottom-centre on the tile surface. Anchors are always COMPUTED by the packer from the pixels — there is no hand-authored anchor, box, crop, compose, sprite-id or generator field anywhere in this file. Derived art (rail set, crossing, placement glows) is pre-drawn by tools/make-derived-art.mjs into src/iso/kenny/derived and referenced like any Kenney PNG.",
   "tileW": 132,
   "tileH": 64,
   "blockH": 50,
@@ -11,7 +11,7 @@
   "sprites": [
     {
       "name": "terrain_grass",
-      "png": "landscape/PNG/landscapeTiles_010.png",
+      "png": "landscape/PNG/landscapeTiles_067.png",
       "kind": "ground",
       "footprint": [
         1,
@@ -21,7 +21,7 @@
     },
     {
       "name": "terrain_water",
-      "png": "landscape/PNG/landscapeTiles_037.png",
+      "png": "landscape/PNG/landscapeTiles_066.png",
       "kind": "ground",
       "footprint": [
         1,
@@ -31,7 +31,7 @@
     },
     {
       "name": "terrain_rough",
-      "png": "landscape/PNG/landscapeTiles_073.png",
+      "png": "landscape/PNG/landscapeTiles_059.png",
       "kind": "ground",
       "footprint": [
         1,
@@ -41,7 +41,7 @@
     },
     {
       "name": "road_0000",
-      "png": "landscape/PNG/landscapeTiles_018.png",
+      "png": "landscape/PNG/landscapeTiles_081.png",
       "kind": "ground",
       "footprint": [
         1,
@@ -55,7 +55,7 @@
     },
     {
       "name": "road_0001",
-      "png": "landscape/PNG/landscapeTiles_018.png",
+      "png": "landscape/PNG/landscapeTiles_105.png",
       "kind": "ground",
       "footprint": [
         1,
@@ -177,7 +177,7 @@
         0,
         5
       ],
-      "note": "K2: NE|SW straight \u2014 the asphalt band runs upper-right <-> lower-left (arm-verified; this is where the 90-degree bug lived: the two straights are DIFFERENT Kenney tiles)."
+      "note": "K2: NE|SW straight — the asphalt band runs upper-right <-> lower-left (arm-verified; this is where the 90-degree bug lived: the two straights are DIFFERENT Kenney tiles)."
     },
     {
       "name": "road_1010",
@@ -191,11 +191,11 @@
         0,
         10
       ],
-      "note": "K2: SE|NW straight \u2014 the band runs lower-right <-> upper-left (arm-verified)."
+      "note": "K2: SE|NW straight — the band runs lower-right <-> upper-left (arm-verified)."
     },
     {
       "name": "road_0111",
-      "png": "landscape/PNG/landscapeTiles_030.png",
+      "png": "landscape/PNG/landscapeTiles_089.png",
       "kind": "ground",
       "footprint": [
         1,
@@ -251,7 +251,7 @@
     },
     {
       "name": "road_1111",
-      "png": "landscape/PNG/landscapeTiles_102.png",
+      "png": "landscape/PNG/landscapeTiles_090.png",
       "kind": "ground",
       "footprint": [
         1,
@@ -275,7 +275,7 @@
         0,
         0
       ],
-      "note": "K2: Kenney ships roads only \u2014 the 16 rail masks are drawn once by tools/make-derived-art.mjs on the measured block geometry (gravel ballast + rails along each set arm) and referenced like any other PNG."
+      "note": "K2: Kenney ships roads only — the 16 rail masks are drawn once by tools/make-derived-art.mjs on the measured block geometry (gravel ballast + rails along each set arm) and referenced like any other PNG."
     },
     {
       "name": "rail_0001",
@@ -486,27 +486,27 @@
     },
     {
       "name": "farm",
-      "png": "buildings/PNG/buildingTiles_083.png",
+      "png": "buildings/PNG/buildingTiles_022.png",
       "kind": "standing",
       "footprint": [
         1,
         1
       ],
-      "note": "K3: red barn (red roof+walls) \u2014 grain farm."
+      "note": "K3: red barn (red roof+walls) — grain farm."
     },
     {
       "name": "forest",
-      "png": "landscape/PNG/landscapeTiles_028.png",
+      "png": "buildings/PNG/buildingTiles_020.png",
       "kind": "standing",
       "footprint": [
         1,
         1
       ],
-      "note": "K3: the dense tree stand from the landscape set \u2014 a ground block whose base diamond anchors like a building, so no compose is needed."
+      "note": "K3: the dense tree stand from the landscape set — a ground block whose base diamond anchors like a building, so no compose is needed."
     },
     {
       "name": "ore_mine",
-      "png": "buildings/PNG/buildingTiles_007.png",
+      "png": "buildings/PNG/buildingTiles_034.png",
       "kind": "standing",
       "footprint": [
         1,
@@ -516,7 +516,7 @@
     },
     {
       "name": "quarry",
-      "png": "buildings/PNG/buildingTiles_081.png",
+      "png": "buildings/PNG/buildingTiles_004.png",
       "kind": "standing",
       "footprint": [
         1,
@@ -526,7 +526,7 @@
     },
     {
       "name": "oil_rig",
-      "png": "buildings/PNG/buildingTiles_099.png",
+      "png": "buildings/PNG/buildingTiles_030.png",
       "kind": "standing",
       "footprint": [
         1,
@@ -536,13 +536,13 @@
     },
     {
       "name": "gold_mine",
-      "png": "buildings/PNG/buildingTiles_058.png",
+      "png": "buildings/PNG/buildingTiles_003.png",
       "kind": "standing",
       "footprint": [
         1,
         1
       ],
-      "note": "K3: yellow-roofed hut \u2014 gold reads yellow."
+      "note": "K3: yellow-roofed hut — gold reads yellow."
     },
     {
       "name": "factory_blue",
@@ -558,22 +558,22 @@
       ],
       "stack": [
         {
-          "png": "buildings/PNG/buildingTiles_044.png"
+          "png": "buildings/PNG/buildingTiles_015.png"
         },
         {
-          "png": "buildings/PNG/buildingTiles_044.png"
+          "png": "buildings/PNG/buildingTiles_055.png"
         },
         {
-          "png": "buildings/PNG/buildingTiles_044.png"
+          "png": "buildings/PNG/buildingTiles_055.png"
         },
         {
-          "png": "buildings/PNG/buildingTiles_044.png"
+          "png": "buildings/PNG/buildingTiles_055.png"
         },
         {
-          "png": "buildings/PNG/buildingTiles_057.png"
+          "png": "buildings/PNG/buildingTiles_024.png"
         }
       ],
-      "note": "MB1: the main factory as a stacked multi-storey tower \u2014 four 044 storeys (base + 3 middle floors) under the 057 roof, each layer player-tinted. Layers are shared per (png, tint), so this 5-layer stack reuses the same packed sprites as depot_blue and differs only by composition."
+      "note": "MB1: the main factory as a stacked multi-storey tower — four 044 storeys (base + 3 middle floors) under the 057 roof, each layer player-tinted. Layers are shared per (png, tint), so this 5-layer stack reuses the same packed sprites as depot_blue and differs only by composition."
     },
     {
       "name": "factory_red",
@@ -589,19 +589,19 @@
       ],
       "stack": [
         {
-          "png": "buildings/PNG/buildingTiles_044.png"
+          "png": "buildings/PNG/buildingTiles_015.png"
         },
         {
-          "png": "buildings/PNG/buildingTiles_044.png"
+          "png": "buildings/PNG/buildingTiles_055.png"
         },
         {
-          "png": "buildings/PNG/buildingTiles_044.png"
+          "png": "buildings/PNG/buildingTiles_055.png"
         },
         {
-          "png": "buildings/PNG/buildingTiles_044.png"
+          "png": "buildings/PNG/buildingTiles_055.png"
         },
         {
-          "png": "buildings/PNG/buildingTiles_057.png"
+          "png": "buildings/PNG/buildingTiles_024.png"
         }
       ]
     },
@@ -619,19 +619,19 @@
       ],
       "stack": [
         {
-          "png": "buildings/PNG/buildingTiles_044.png"
+          "png": "buildings/PNG/buildingTiles_015.png"
         },
         {
-          "png": "buildings/PNG/buildingTiles_044.png"
+          "png": "buildings/PNG/buildingTiles_055.png"
         },
         {
-          "png": "buildings/PNG/buildingTiles_044.png"
+          "png": "buildings/PNG/buildingTiles_055.png"
         },
         {
-          "png": "buildings/PNG/buildingTiles_044.png"
+          "png": "buildings/PNG/buildingTiles_055.png"
         },
         {
-          "png": "buildings/PNG/buildingTiles_057.png"
+          "png": "buildings/PNG/buildingTiles_024.png"
         }
       ]
     },
@@ -649,19 +649,19 @@
       ],
       "stack": [
         {
-          "png": "buildings/PNG/buildingTiles_044.png"
+          "png": "buildings/PNG/buildingTiles_015.png"
         },
         {
-          "png": "buildings/PNG/buildingTiles_044.png"
+          "png": "buildings/PNG/buildingTiles_055.png"
         },
         {
-          "png": "buildings/PNG/buildingTiles_044.png"
+          "png": "buildings/PNG/buildingTiles_055.png"
         },
         {
-          "png": "buildings/PNG/buildingTiles_044.png"
+          "png": "buildings/PNG/buildingTiles_055.png"
         },
         {
-          "png": "buildings/PNG/buildingTiles_057.png"
+          "png": "buildings/PNG/buildingTiles_024.png"
         }
       ]
     },
@@ -688,7 +688,7 @@
           "png": "buildings/PNG/buildingTiles_057.png"
         }
       ],
-      "note": "MB1: the harvester depot fixed \u2014 the old 089 was a roof-only piece (99x60 cap that rendered flat). Now a proper 2-storey stack: base 044 + one 044 floor under the 057 roof, player-tinted.",
+      "note": "MB1: the harvester depot fixed — the old 089 was a roof-only piece (99x60 cap that rendered flat). Now a proper 2-storey stack: base 044 + one 044 floor under the 057 roof, player-tinted.",
       "stackVariants": [
         [
           {
@@ -867,7 +867,7 @@
         1
       ],
       "heading": "n",
-      "note": "K5: cargo truck (garbage set) \u2014 8 compass frames; this one faces up-screen."
+      "note": "K5: cargo truck (garbage set) — 8 compass frames; this one faces up-screen."
     },
     {
       "name": "vehicle_truck_ne",
@@ -878,7 +878,7 @@
         1
       ],
       "heading": "ne",
-      "note": "K5: NE frame \u2014 the arm toward the (tx,ty-1) neighbour (up-right on screen); one of the four road directions."
+      "note": "K5: NE frame — the arm toward the (tx,ty-1) neighbour (up-right on screen); one of the four road directions."
     },
     {
       "name": "vehicle_truck_e",
@@ -900,7 +900,7 @@
         1
       ],
       "heading": "se",
-      "note": "K5: SE frame \u2014 road direction toward (tx+1,ty) (down-right on screen)."
+      "note": "K5: SE frame — road direction toward (tx+1,ty) (down-right on screen)."
     },
     {
       "name": "vehicle_truck_s",
@@ -922,7 +922,7 @@
         1
       ],
       "heading": "sw",
-      "note": "K5: SW frame \u2014 road direction toward (tx,ty+1) (down-left on screen)."
+      "note": "K5: SW frame — road direction toward (tx,ty+1) (down-left on screen)."
     },
     {
       "name": "vehicle_truck_w",
@@ -944,7 +944,7 @@
         1
       ],
       "heading": "nw",
-      "note": "K5: NW frame \u2014 road direction toward (tx-1,ty) (up-left on screen)."
+      "note": "K5: NW frame — road direction toward (tx-1,ty) (up-left on screen)."
     },
     {
       "name": "highlight",

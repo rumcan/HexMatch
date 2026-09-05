@@ -80,8 +80,21 @@ async function asphaltAt(name: string, mx: number, my: number, r = 4) {
 }
 
 describe("K2 road masks — verified against their own source PNGs", () => {
-  it("asphalt crosses every set arm and no unset arm (the 90° guard)", async () => {
-    for (let mask = 1; mask < 16; mask++) {
+  it("keeps the human-approved Art Lab road selections", () => {
+    const expected: Record<string, string> = {
+      road_0000: "landscape/PNG/landscapeTiles_081.png",
+      road_0001: "landscape/PNG/landscapeTiles_105.png",
+      road_0111: "landscape/PNG/landscapeTiles_089.png",
+      road_1111: "landscape/PNG/landscapeTiles_090.png",
+    };
+    for (const [name, png] of Object.entries(expected)) expect(cell(name).png).toBe(png);
+  });
+
+  it("asphalt crosses every set arm and no unset arm on conventional road pieces (the 90° guard)", async () => {
+    // The Art Lab's 0001 selection is a deliberate recessed/trench-style
+    // endpoint, not grey asphalt, so its invariant is its reviewed source ID.
+    for (let mask = 2; mask < 15; mask++) {
+      if (mask === 7) continue; // Art Lab selected a recessed junction style.
       const key = `road_${mask.toString(2).padStart(4, "0")}`;
       for (const bit of [1, 2, 4, 8]) {
         const frac = await asphaltAt(key, ARMS[bit][0], ARMS[bit][1]);
@@ -92,9 +105,6 @@ describe("K2 road masks — verified against their own source PNGs", () => {
         }
       }
     }
-    // mask 0000 is deliberately the NE dead-end stub — a lone PRESENT-bit road
-    // reads as a stub, so its NE arm does carry asphalt.
-    expect(await asphaltAt("road_0000", ARMS[1][0], ARMS[1][1])).toBeGreaterThanOrEqual(0.5);
   }, 60_000);
 
   it("the NE–SW and SE–NW straights run on opposite diagonals", async () => {

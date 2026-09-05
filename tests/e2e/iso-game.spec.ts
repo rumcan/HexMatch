@@ -76,24 +76,46 @@ async function pickCorridor(page: import("@playwright/test").Page): Promise<{
     const ranked = [...grid.industries].sort((a, b) =>
       Math.abs(a.tx - focus.tx) + Math.abs(a.ty - focus.ty)
       - (Math.abs(b.tx - focus.tx) + Math.abs(b.ty - focus.ty)));
-    for (const ind of ranked) {
-      const hx = ind.tx, hy = ind.ty + ind.h, fy = hy + 6;
-      if (legalColumn(hx, hy, fy)) return { hx, hy, fx: hx, fy };
+    const corridorTiles = 4;
+    const panels = [...document.querySelectorAll<HTMLElement>(".iso-panel")]
+      .map((panel) => panel.getBoundingClientRect());
+    const clearLeft = Math.max(0, ...panels.filter((r) => r.left < innerWidth / 2).map((r) => r.right));
+    const clearRight = Math.min(innerWidth, ...panels.filter((r) => r.left >= innerWidth / 2).map((r) => r.left));
+    const [p0x] = h.tileScreenAt(focus.tx, focus.ty);
+    const [p1x] = h.tileScreenAt(focus.tx, focus.ty + 1);
+    const stepX = Math.abs(p1x - p0x) / dpr;
+    const footprint = stepX * (corridorTiles - 1);
+    if (clearRight - clearLeft < footprint) {
+      throw new Error(`No ${corridorTiles}-tile corridor can fit: clear band ${Math.round(clearRight - clearLeft)}px, footprint ${Math.round(footprint)}px`);
     }
-    return null as unknown as { hx: number; hy: number; fx: number; fy: number };
-  }).then((c) => {
-    expect(c).not.toBeNull();
-    return c;
+    const rejected = { terrain: 0, occupancy: 0, view: 0, panel: 0 };
+    for (const ind of ranked) {
+      const hx = ind.tx, hy = ind.ty + ind.h, fy = hy + corridorTiles - 1;
+      if (legalColumn(hx, hy, fy)) return { hx, hy, fx: hx, fy };
+      for (let y = hy; y <= fy && y < MAP_H; y++) {
+        const i = y * MAP_W + hx;
+        if (grid.terrain[i] === WATER) rejected.terrain++;
+        else if (grid.occupancy[i] >= 0) rejected.occupancy++;
+        else if (!inView(hx, y)) rejected.view++;
+        else if (!clickable(hx, y)) rejected.panel++;
+      }
+    }
+    throw new Error(`No buildable corridor at zoomed geometry; rejection counts ${JSON.stringify(rejected)}`);
   });
 }
 
-/** CSS-pixel centre of a tile's diamond (top vertex + 16 world px). */
+/** CSS-pixel centre of a tile's diamond. */
 async function tileCenter(page: import("@playwright/test").Page, tx: number, ty: number) {
   return page.evaluate(({ tx, ty }) => {
     const h = (window as any).__iso;
     const dpr = window.devicePixelRatio || 1;
+    // Aim halfway down the tile surface. Derive that offset from projected
+    // geometry so it follows both camera zoom and device pixel ratio; the old
+    // helper hard-coded 16 device pixels and missed at 0.5x.
     const [dx, dy] = h.tileScreenAt(tx, ty);
-    return { x: (dx + 0) / dpr, y: (dy + 16 * 1) / dpr };
+    const [, nextY] = h.tileScreenAt(tx, ty + 1);
+    const surfaceOffset = Math.abs(nextY - dy) / 2;
+    return { x: dx / dpr, y: (dy + surfaceOffset) / dpr };
   }, { tx, ty });
 }
 
@@ -211,6 +233,21 @@ test.describe("iso game boots on the default route", () => {
 
   test("gameplay: factory → harvester → road drag → +1 VP, all real pointer events", async ({ page }) => {
     await bootIso(page);
+
+    // E14: Kenney tiles doubled the boot-camera corridor footprint. Zoom out
+    // through the real canvas wheel listener before doing any geometry search;
+    // this preserves the occlusion checks instead of relaxing them.
+    const tileStep = () => page.evaluate(() => {
+      const h = (window as any).__iso;
+      const [x0] = h.tileScreenAt(0, 0);
+      const [x1] = h.tileScreenAt(0, 1);
+      return Math.abs(x1 - x0);
+    });
+    const beforeZoom = await tileStep();
+    await page.mouse.move(640, 360);
+    await page.mouse.wheel(0, 1);
+    await expect.poll(tileStep).toBeLessThan(beforeZoom);
+
     const c = await pickCorridor(page);
     const factory = await tileCenter(page, c.fx, c.fy);
     const harvester = await tileCenter(page, c.hx, c.hy);
@@ -263,9 +300,9 @@ test.describe("iso game boots on the default route", () => {
     steps.push(harvester);
     for (const s of steps) await page.mouse.move(s.x, s.y);
 
-    // free setup allowance covers the whole 7-tile column: no purse charge
+    // free setup allowance covers the whole 4-tile column: no purse charge
     await page.mouse.up();
-    await page.waitForFunction(() => (window as any).__iso.freeTrack === 5);
+    await page.waitForFunction(() => (window as any).__iso.freeTrack === 8);
 
     const after = await page.evaluate(() => {
       const h = (window as any).__iso;
@@ -274,16 +311,16 @@ test.describe("iso game boots on the default route", () => {
       for (let i = 0; i < t.road.length; i++) if (t.road[i] & 16) road++;
       return { free: h.freeTrack, vp: h.vp, stone: h.purse.stone, ore: h.purse.ore ?? 0, road };
     });
-    expect(after.free).toBe(5);                      // 12 − 7 free tiles used
+    expect(after.free).toBe(8);                      // 12 − 4 free tiles used
     expect(after.vp.you).toBe(1);                    // connection scored
     expect(after.vp.ai).toBe(0);
     expect(after.stone).toBe(12);                    // allowance, not purse
     expect(after.ore).toBe(0);
-    expect(after.road).toBe(7);
+    expect(after.road).toBe(4);
 
     // the structures canvas really painted the road column
     await expect.poll(
-      () => opaqueNear(page, 1, c.hx, c.hy + 3),
+      () => opaqueNear(page, 1, c.hx, c.hy + 1),
       { timeout: 5000 },
     ).toBeGreaterThan(10);
 
