@@ -154,6 +154,10 @@ describe("W8 sweep — the rival is never placed on a tile it cannot build from"
         if (!canBuildOn(grid, "road", x, y)) continue;
         const spot = chooseRivalFactorySpot(grid, createTrack(), [x, y], opts);
         expect(spot, `player at ${x},${y}`).toBeTruthy();
+        // two factories never share a tile — and the player's tile IS in this
+        // search space, so the explicit exclusion is what keeps them apart
+        // (distance is only the second sort key now that rail-legality leads).
+        expect(spot, `rival on the player's own tile ${x},${y}`).not.toEqual([x, y]);
         expect(canBuildOn(grid, "rail", spot![0], spot![1]), `rail illegal at ${spot}`).toBe(true);
         expect(canReachASpot(grid, spot![0], spot![1]), `enclave at ${spot}`).toBe(true);
         checked++;

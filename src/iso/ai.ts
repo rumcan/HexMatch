@@ -448,14 +448,20 @@ export function chooseRivalFactorySpot(
     }
   }
   if (!spots.length) return null;
-  spots.sort((a, b) =>
+  // Two factories never share a tile. Distance is only the SECOND sort key now
+  // (rail-legality leads), so the player's own tile — distance 0 — is no longer
+  // structurally excluded by "farthest wins"; drop it explicitly. Keep it when
+  // it is the only legal ground there is, so the rival still exists.
+  const apart = spots.filter((s) => s.x !== awayFrom[0] || s.y !== awayFrom[1]);
+  const ranked = apart.length ? apart : spots;
+  ranked.sort((a, b) =>
     Number(b.rail) - Number(a.rail) || b.d - a.d || tIdx(a.x, a.y) - tIdx(b.x, b.y));
 
   const state: EconomyState = { grid, track, harvesters: [], factories: [] };
   const probe: Factory = { owner: opts.owner ?? "ai", ownerId: opts.ownerId, tx: 0, ty: 0 };
-  const tries = Math.max(1, Math.min(opts.probes ?? RIVAL_SPOT_PROBES, spots.length));
+  const tries = Math.max(1, Math.min(opts.probes ?? RIVAL_SPOT_PROBES, ranked.length));
   for (let i = 0; i < tries; i++) {
-    const s = spots[i];
+    const s = ranked[i];
     probe.tx = s.x; probe.ty = s.y;
     const plan = bestCandidate(state, probe, {
       stock: opts.purse, purse: opts.purse, free: opts.free ?? 0,
@@ -464,7 +470,7 @@ export function chooseRivalFactorySpot(
   }
   // No probe found a plan (nothing affordable from anywhere): fall back to the
   // best-ranked tile so the rival still exists on the board.
-  return [spots[0].x, spots[0].y];
+  return [ranked[0].x, ranked[0].y];
 }
 
 // ── execution ─────────────────────────────────────────────────────────────
