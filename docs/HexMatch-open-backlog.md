@@ -1,5 +1,31 @@
 # HexMatch — brown only at the map edge (the real geometry rule)
 
+> **STATUS — resolved 2026-09-06 on `arena/01a07734-hexmatch`** (this repo's
+> open-backlog file, kept as the specification the fixes were audited
+> against):
+>
+> - **N1** (brown only at the coastline) — FIXED, Approach A:
+>   [`docs/tickets/N1-brown-only-at-coastline.md`](tickets/N1-brown-only-at-coastline.md).
+>   Acceptance render: `docs/kenney-n1-skirt.png`.
+> - **N2** (hovering building / elevated road) — FIXED with N1 (same root
+>   cause), resolved in the same ticket.
+> - **N4** (the building sits ON the highlighted diamond) — FIXED, one
+>   tile→screen convention, the `+HH` fudge deleted:
+>   [`docs/tickets/N4-building-on-highlighted-diamond.md`](tickets/N4-building-on-highlighted-diamond.md).
+> - **N3** (gold its own colour, mine-gated spawn) — FIXED, as its own change
+>   within the same PR as the backlog sequenced it ("Board logic — its own
+>   PR, after the rendering fix" — the rendering fix landed first in the
+>   stack):
+>   [`docs/tickets/N3-gold-own-colour-mine-gated.md`](tickets/N3-gold-own-colour-mine-gated.md).
+>
+> One measured correction is recorded in the N1 ticket: on the current
+> K-FIX-1 art the interior terrain no longer leaks (painter coverage covers
+> interior skirts); the visible brown at road/building bases came from the
+> STRUCTURES layer painting full blocks over the finished terrain plane. The
+> rule implemented is exactly the one-line rule below, applied to both
+> layers. R1 (tall-stack anchor) was already fixed by K-FIX-1
+> (`docs/tickets/K-FIX-1-bottom-anchor-placement.md`).
+
 Audited against `main` @ `e5f3b8e`. Your spec — **"never see brown at the base of any road or building; brown only at the very edge of the map"** — is exactly the correct isometric look, and it pinpoints the real bug. This supersedes the anchor tickets: the anchor is a symptom, this is the cause.
 
 ---

@@ -34,6 +34,15 @@ export class Board {
   onPopup: (gains: Partial<Record<ResKey, number>>, label: string) => void = () => {};
   // fired when a combo is banked: (bankedNow, needed, grantedCoin)
   onCombo: (count: number, needed: number, granted: boolean) => void = () => {};
+  /**
+   * N3: the live gold-mine gate. A gold GEM may only appear on the board while
+   * a harvester is connected to a gold mine — the same network-reach rule that
+   * spawns the other tokens (quarry.tokenPool). The quarry wires this to a
+   * match-time flood fill; the default denies, so a bare Board (no map) never
+   * mints board gold. The combo's PURSE payout (onGold) is unconditional —
+   * banking the coin always pays; only the board gem is gated.
+   */
+  goldReachable: () => boolean = () => false;
 
   constructor() {
     this.initFill();
@@ -74,12 +83,10 @@ export class Board {
   private matchable(g: Gem | null): g is Gem {
     return !!g && !g.block && g.special !== "bomb";
   }
-  // Gold gems are WILD — they substitute for any colour to complete a match.
-  private isWild(g: Gem | null): boolean {
-    return !!g && g.res === "gold" && !g.block && g.special !== "bomb";
-  }
 
-  // scan one line (row or col) for runs of >=3, allowing gold wilds
+  // scan one line (row or col) for runs of >=3 of one colour.
+  // N3: gold is NOT wild any more — it is its own colour and matches only
+  // itself, so this scan needs no wild branching at all.
   private lineRuns(cells: (Gem | null)[]): Gem[][] {
     const runs: Gem[][] = [];
     const n = cells.length;
@@ -87,23 +94,18 @@ export class Board {
     while (i < n) {
       const g = cells[i];
       if (!this.matchable(g)) { i++; continue; }
-      let color: ResKey | null = this.isWild(g) ? null : g!.res;
+      const color: ResKey = g!.res;
       const run: Gem[] = [g!];
       let j = i + 1;
       while (j < n) {
         const h = cells[j];
-        if (!this.matchable(h)) break;
-        if (this.isWild(h)) { run.push(h); j++; continue; }
-        if (color === null) { color = h!.res; run.push(h!); j++; continue; }
-        if (h!.res === color) { run.push(h!); j++; continue; }
-        break;
+        if (!this.matchable(h) || h!.res !== color) break;
+        run.push(h!);
+        j++;
       }
-      const matched = run.length >= 3 && color !== null;
+      const matched = run.length >= 3;
       if (matched) runs.push(run);
-      // let trailing wilds be reusable by the next run
-      let trailing = 0, k = run.length - 1;
-      while (k >= 0 && this.isWild(run[k])) { trailing++; k--; }
-      i = matched ? Math.max(i + 1, j - trailing) : i + 1;
+      i = matched ? j : i + 1;
     }
     return runs;
   }
@@ -128,11 +130,11 @@ export class Board {
 
     for (const grp of groups) {
       const size = grp.length;
-      // anchor colour = first non-gold in the group (gold is wild)
-      const anchor = (grp.find((g) => g.res !== "gold") ?? grp[0]).res;
+      // runs are single-colour (no wilds since N3) — the anchor is the colour
+      const anchor = grp[0].res;
       const tokenPresent = grp.some((g) => g.tier > 0);
       const mult = size >= 4 ? 2 : 1;
-      // pay each token by its OWN resource (gold wilds pay gold)
+      // pay each token by its OWN resource (a matched gold token pays gold)
       for (const g of grp) {
         if (g.hard > 0) { crackIds.add(g.id); continue; }
         removeIds.add(g.id);
@@ -293,9 +295,9 @@ export class Board {
         this.onFx("up", g.r, g.c);
       }
     }
-    // Gold coins only appear if you actually have gold-mine access. Without a
-    // building next to a goldmine there is no `pool.gold`, so no coin spawns —
-    // the only other source is the combo reward (see registerCombo).
+    // N3: Gold gems only appear if you actually have gold-mine access. Without
+    // a connected gold mine there is no `pool.gold`, so no gem spawns — and
+    // the combo reward is gated on the same reach (see registerCombo).
     if (pool.gold !== undefined) {
       const goldTier = (pool.gold as number) >= 2 ? 2 : 1;
       this.spawnGold(goldTier as 1 | 2);
@@ -304,21 +306,22 @@ export class Board {
   }
 
   /**
-   * Bank a combo. Every COMBOS_PER_GOLD combos converts one neutral gem into a
-   * wild gold coin — this is the only way to earn gold without owning a mine.
+   * Bank a combo. Every COMBOS_PER_GOLD combos pays one gold into the purse.
    *
-   * W5: banking a coin ALSO fires `onGold(1)`. The wild coin on the board is
-   * the visible reward, but the coin must reach the player's PURSE directly —
-   * matching the wild gem is gated on gold-mine reach, so wiring the purse
-   * through onGold is what makes "2 combos = 1 gold" actually pay out (and
-   * what makes the Black Market affordable).
+   * W5: the coin reaches the player's PURSE directly via `onGold(1)` — that
+   * is what makes "2 combos = 1 gold" actually pay out (and what makes the
+   * Black Market affordable).
+   *
+   * N3: the board GEM this used to mint unconditionally is gated on
+   * `goldReachable` — a gold gem only appears while a harvester is connected
+   * to a gold mine, same as every other token colour.
    */
   registerCombo() {
     this.comboCount++;
     const need = Board.COMBOS_PER_GOLD;
     if (this.comboCount >= need) {
       this.comboCount -= need;
-      this.spawnGold(1);
+      if (this.goldReachable()) this.spawnGold(1);
       this.onGold(1);
       this.onCombo(this.comboCount, need, true);
       this.onChange();
@@ -327,7 +330,10 @@ export class Board {
     }
   }
 
-  // convert ONE random neutral gem into a wild gold coin with a number
+  // N3: convert ONE random neutral gem into a gold gem with a token number —
+  // the spawn mechanic is unchanged (replace in place); the callers gate it
+  // on gold-mine reach (spawnTokens via pool.gold, registerCombo via
+  // goldReachable).
   spawnGold(tier: 1 | 2) {
     const eligible = this.gems().filter((g) =>
       g.res !== "gold" && g.tier === 0 && !g.special && !g.block && g.hard === 0);
