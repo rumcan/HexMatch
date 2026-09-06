@@ -15,7 +15,7 @@ const realManifest = JSON.parse(readFileSync("assets/iso-atlas/manifest.json", "
 };
 
 const cells = JSON.parse(readFileSync("tools/iso-atlas.cells.json", "utf8")) as {
-  tileW: number; tileH: number; blockH: number;
+  tileW: number; tileH: number; blockH?: number;
   source: { root: string; license: string };
   sprites: {
     name: string; png?: string; kind?: string; footprint?: [number, number];
@@ -108,9 +108,17 @@ describe("K1 cells are bare PNG references (no OpenGFX pipeline survives)", () =
   it("declares the measured Kenney geometry", () => {
     expect(cells.tileW).toBe(132);
     expect(cells.tileH).toBe(64);
-    expect(cells.blockH).toBe(50);
     expect(realManifest.tileW).toBe(132);
     expect(realManifest.tileH).toBe(64);
+  });
+
+  // K-FIX-1: the cells file must not re-acquire a canonical block height —
+  // that field only existed to drive the skirt normalisation this ticket
+  // removed. Kenney tiles are meant to be different heights.
+  it("declares NO canonical block height (skirt normalisation is gone)", () => {
+    expect(cells.blockH, "`blockH` is the skirt-normalisation knob").toBeUndefined();
+    const packer = readFileSync("tools/slice-atlas.mjs", "utf8");
+    expect(packer, "the packer still normalises skirts").not.toContain("normaliseSkirt");
   });
 });
 

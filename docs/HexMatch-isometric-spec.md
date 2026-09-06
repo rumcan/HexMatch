@@ -16,7 +16,9 @@ I measured every ground tile in `src/iso/kenny/landscape/PNG`. They are consiste
 Canvas per ground tile:    132 x 83 px            ✓measured
 Diamond top surface:       132 wide x 64 tall     (apex at y=0, widest row at y=32)   ✓measured
   -> TILE_W = 132, TILE_H = 64   (was 64 x 31)
-Base block (skirt) height: 50 px below the diamond's widest row   ✓measured
+Base block (skirt) height: VARIES per tile (50-66 px below the ground row)   ✓measured
+                           K-FIX-1: sprites keep their native height and are
+                           anchored at their shared ground line, never cropped.
   -> every tile draws a 50px cube-side below its diamond top
 ```
 
@@ -24,7 +26,7 @@ Projection (same form, new constants):
 ```ts
 export const TILE_W = 132, TILE_H = 64;
 export const HW = 66, HH = 32;          // half-width, half-height of the diamond
-export const BLOCK_H = 50;              // base-block skirt height
+export const BLOCK_H = 66;              // DEEPEST base-block skirt (K-FIX-1: skirts vary per tile)
 
 export const tileToScreen = (tx, ty) => [(tx - ty) * HW, (tx + ty) * HH];
 export const screenToTile = (sx, sy) => {   // still Math.floor, not round

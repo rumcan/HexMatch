@@ -5,9 +5,17 @@
 // (docs/HexMatch-isometric-spec.md — every value below is ✓measured from the
 // shipped assets):
 //
-//   Canvas per ground tile: 132 × 83 px — a 132×64 diamond top surface
-//   (apex at top-centre, widest row at y≈32) plus a 50px base-block skirt
-//   below the widest row.  TILE_W = 132, TILE_H = 64, BLOCK_H = 50.
+//   Ground tile: a 132×64 diamond top surface (apex at top-centre, corner
+//   row at y≈32) over a base-block skirt.  TILE_W = 132, TILE_H = 64.
+//
+//   K-FIX-1: sprite CANVASES are NOT one size. Kenney's iso tiles are designed
+//   to be different heights, anchored at their shared ground line and grown
+//   upward into their transparent margin (kenney.nl 3D-import docs; the PIXI
+//   /Kenney tutorial names drawing-from-the-top as the cause of the classic
+//   floating-tile bug). The packer therefore keeps every source PNG at native
+//   size and never normalises a skirt. BLOCK_H below is the DEEPEST skirt in
+//   the set — a budget for culling and chunk-surface sizing, not a promise
+//   that every tile has it.
 //
 //   tileToScreen(tx, ty) is the CENTRE of tile (tx,ty)'s diamond — the row
 //   through the left/right corners, where the sprite's widest row lands
@@ -25,8 +33,14 @@
 // ══════════════════════════════════════════════════════════════════════════
 export const TILE_W = 132, TILE_H = 64;
 export const HW = TILE_W / 2, HH = TILE_H / 2;   // 66, 32
-/** Base-block skirt: px of cube side below a ground tile's widest row (K0). */
-export const BLOCK_H = 50;
+/**
+ * Deepest base-block skirt in the set: px of cube side below a ground tile's
+ * ground row (measured: Kenney's landscape blocks bottom out 66px below their
+ * corner row). Individual tiles are SHALLOWER — water is 50 — and that is
+ * fine: they share the ground line, so only the silhouette below it differs
+ * (K-FIX-1). Used to size chunk cache surfaces and cull padding.
+ */
+export const BLOCK_H = 66;
 export const MAP_W = 32, MAP_H = 32;             // 1024 tiles
 export const ZOOM_STEPS = [0.5, 1, 2] as const;
 export type Zoom = (typeof ZOOM_STEPS)[number];

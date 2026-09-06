@@ -147,7 +147,7 @@ describe("C5 the debug console is gated, not shipped", () => {
 });
 
 describe("C5 the dumps report the geometry the renderer used", () => {
-  it("dumpTile names the terrain sprite and its MEASURED skirt, with the drift", async () => {
+  it("dumpTile names the terrain sprite, its NATIVE skirt and its surface drift", async () => {
     const h = await boot();
     const g = h.grid;
     const find = (want: number) => {
@@ -158,10 +158,14 @@ describe("C5 the dumps report the geometry the renderer used", () => {
     const grass = h.dumpTile(gx, gy);
     expect(grass.terrainName).toBe("grass");
     expect(grass.sprite).toBe("terrain_grass");
-    // D1: normalised to canonical BLOCK_H (50px) at pack time
-    expect(grass.skirtPx).toBe(50);
-    expect(grass.canonicalSkirtPx).toBe(50);
-    expect(grass.skirtDriftPx).toBe(0);     // ← D1 normalised: 0 drift
+    // K-FIX-1: sprites keep their NATIVE height — grass is a deep Kenney
+    // block (66px of skirt), water a shallow one (50px), and both are
+    // coplanar because they share a bottom-measured ground line, not because
+    // their heights were forced equal.
+    expect(grass.skirtPx).toBe(66);
+    expect(grass.maxSkirtPx).toBe(66);
+    expect(grass.surfaceDriftPx).toBe(0);   // ← coplanar with every other tile
+    expect(grass.skirtDriftPx).toBe(0);
     expect(grass.cell.footprint).toEqual([1, 1]);
     expect(grass.screen[0]).toBeCloseTo(grass.css[0], 0);   // dpr 1 in jsdom
     expect(grass.build.ok).toBe(true);       // grass takes a road
@@ -169,8 +173,10 @@ describe("C5 the dumps report the geometry the renderer used", () => {
     const [wx, wy] = find(WATER);
     const water = h.dumpTile(wx, wy);
     expect(water.terrainName).toBe("water");
-    expect(water.skirtPx).toBe(50);
-    expect(water.skirtDriftPx).toBe(0);      // the canonical block
+    expect(water.skirtPx).toBe(50);          // a genuinely shallower tile…
+    expect(water.skirtPx).not.toBe(grass.skirtPx);
+    expect(water.surfaceDriftPx).toBe(0);    // …yet still exactly coplanar
+    expect(water.skirtDriftPx).toBe(0);
     expect(water.build.ok).toBe(false);
     expect(water.build.why).toBe("water");
   });
@@ -237,7 +243,7 @@ describe("C5 the dumps report the geometry the renderer used", () => {
     const h = await boot();
     const c = h.config();
     expect(c.camera.zoom).toBe(1);
-    expect(c.geometry).toMatchObject({ tileW: 132, tileH: 64, blockH: 50 });
+    expect(c.geometry).toMatchObject({ tileW: 132, tileH: 64, blockH: 66 });
     expect(c.visibleTiles.x0).toBeLessThanOrEqual(c.visibleTiles.x1);
     const grass = c.sprites.terrain_grass;
     expect(grass).toMatchObject({ anchor: [66, 33], footprint: [1, 1], kind: "ground" });
@@ -276,18 +282,26 @@ describe("C5 the overlay toggles paint on the map", () => {
     expect(marks).toEqual([]);
   });
 
-  it("the skirt overlay draws the surface and skirt lines, with zero drift on all tiles", async () => {
+  it("the skirt overlay draws the surface and skirt lines; every tile is coplanar", async () => {
     const h = await boot();
     h.overlay("skirt");
     await settle();
     const strokes = ops.filter((o) => o.op === "stroke");
     expect(strokes.length).toBeGreaterThan(0);
-    // D1: on a normalised map, all tiles have skirtDriftPx === 0 and gapPx === 0
+    // K-FIX-1: every tile's ground line lands on the shared surface, so the
+    // map cannot step — even though the tiles are NOT all the same height.
+    const skirts = new Set<number>();
     for (let ty = 0; ty < h.grid.h; ty++) {
       for (let tx = 0; tx < h.grid.w; tx++) {
-        expect(h.dumpTile(tx, ty).skirtDriftPx).toBe(0);
+        const t = h.dumpTile(tx, ty);
+        expect(t.surfaceDriftPx, `tile (${tx},${ty}) is off the ground line`).toBe(0);
         expect(h.dumpBuilding(tx, ty).ground.driftPx).toBe(0);
+        skirts.add(t.skirtPx as number);
       }
     }
+    // and the guard against a silent return to height-normalisation: the map
+    // really does mix native tile heights.
+    expect(skirts.size, "terrain skirts should differ (native heights kept)")
+      .toBeGreaterThan(1);
   });
 });

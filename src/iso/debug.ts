@@ -108,6 +108,13 @@ function cellOf(atlas: Atlas | null, name: string) {
     parts: def.parts ?? null,
     /** px of block below the sprite's anchor row — for a flat tile, its skirt. */
     belowAnchorPx: def.h - def.anchor[1],
+    /**
+     * K-FIX-1: the sprite's ground row IS its anchor row — the packer measures
+     * the base diamond's corner row and anchors there, so a ground tile's
+     * anchor must land on the canonical diamond centre (HH) no matter how tall
+     * or short its own canvas is.
+     */
+    groundRow: def.anchor[1],
   };
 }
 
@@ -117,6 +124,16 @@ function cellOf(atlas: Atlas | null, name: string) {
  */
 export function createIsoDebug(ctx: DebugContext) {
   const overlays = new Set<DebugOverlayName>();
+
+  /**
+   * K-FIX-1: the ONE ground line every sprite is anchored to. Terrain is the
+   * floor by definition, so `terrain_grass`'s measured ground row IS the
+   * reference; every other tile's drift from it is what would make the map
+   * step. (It is 33 for Kenney's blocks — the diamond spans rows 1..65 — not
+   * HH=32, which is the half-height of the diamond, a different quantity.)
+   */
+  const groundReference = (): number =>
+    ctx.atlas?.get("terrain_grass")?.anchor[1] ?? HH;
 
   /** World (1×, camera-free) position of a tile's diamond centre-line. */
   const surfaceWorld = (tx: number, ty: number, fw = 1, fh = 1): [number, number] =>
@@ -150,12 +167,21 @@ export function createIsoDebug(ctx: DebugContext) {
       index: i,
       sprite,
       cell,
-      /** px of block below the tile's widest row; BLOCK_H (50) is canonical. */
+      /** px of block drawn BELOW this tile's ground row (its skirt depth).
+       *  K-FIX-1: skirts legitimately differ between Kenney tiles — this is
+       *  reported, not policed. */
       skirtPx: cell ? cell.belowAnchorPx : null,
-      canonicalSkirtPx: BLOCK_H,
-      /** ≠ 0 means this tile's block is shallower/deeper than the canonical —
-       *  the C1 hover class of bug, in one number. */
-      skirtDriftPx: cell ? cell.belowAnchorPx - BLOCK_H : null,
+      /** The deepest skirt in the set — a budget, not a target. */
+      maxSkirtPx: BLOCK_H,
+      /**
+       * The number that settles a "terrain is stepping" report (K-FIX-1):
+       * how far this tile's ground line sits from the tile's own screen
+       * surface. Bottom-anchored terrain is coplanar by construction, so this
+       * is 0 for every flat tile; ≠ 0 means the anchor is wrong.
+       */
+      surfaceDriftPx: cell ? cell.groundRow - groundReference() : null,
+      /** Back-compat alias of surfaceDriftPx (was: skirt-vs-canonical drift). */
+      skirtDriftPx: cell ? cell.groundRow - groundReference() : null,
       world: [r(wx), r(wy)] as [number, number],
       /** live camera, DEVICE px (what the canvas and pick() speak). */
       screen: [r(sx), r(sy)] as [number, number],
@@ -271,12 +297,16 @@ export function createIsoDebug(ctx: DebugContext) {
     const out = {
       tile: [tx, ty] as [number, number],
       surfaceWorld: [r(swx), r(swy)] as [number, number],
-      ground: { sprite: tileTerrain, skirtPx: tileCell?.belowAnchorPx ?? null, driftPx: tileCell ? tileCell.belowAnchorPx - BLOCK_H : null },
+      ground: {
+        sprite: tileTerrain,
+        skirtPx: tileCell?.belowAnchorPx ?? null,
+        /** K-FIX-1: the tile's ground line vs the canonical diamond centre. */
+        driftPx: tileCell ? tileCell.groundRow - groundReference() : null,
+      },
       structures: items,
-      /** the ground's own drift is what makes a flush building LOOK wrong (C1). */
-      note: tileCell && tileCell.belowAnchorPx !== BLOCK_H
-        ? "this tile's block depth differs from the canonical skirt — buildings are flush with the SURFACE, but the block silhouette is offset"
-        : "tile geometry matches the canonical block",
+      note: tileCell && tileCell.groundRow !== groundReference()
+        ? "this tile's ground row is not the canonical diamond centre — the sprite is mis-anchored and the terrain will step"
+        : "tile is bottom-anchored on the shared ground line (K-FIX-1)",
     };
     console.log("[iso] dumpBuilding", tx, ty, out);
     return out;
@@ -386,11 +416,13 @@ export function createIsoDebug(ctx: DebugContext) {
           const cell = cellOf(atlas, terrainSprite(ctx.grid, tx, ty));
           if (!cell) continue;
           const [sx, sy] = screenOf(tx, ty);
-          // the surface line (cyan) and the block bottom (amber): a tile whose
-          // skirt ≠ BLOCK_H shows a different gap between the two.
+          // the surface line (cyan) and the block bottom (amber). K-FIX-1: the
+          // gap between them is each tile's own native skirt and legitimately
+          // varies; what must never vary is the SURFACE line, so a tile is
+          // flagged red only when its ground row is off the shared line.
           c.strokeStyle = "#37e0ff";
           c.beginPath(); c.moveTo(sx - hw, sy); c.lineTo(sx + hw, sy); c.stroke();
-          const drift = cell.belowAnchorPx - BLOCK_H;
+          const drift = cell.groundRow - groundReference();
           c.strokeStyle = drift === 0 ? "#ffb01f" : "#ff2d55";
           const by = sy + cell.belowAnchorPx * z;
           c.beginPath(); c.moveTo(sx - hw, by); c.lineTo(sx + hw, by); c.stroke();

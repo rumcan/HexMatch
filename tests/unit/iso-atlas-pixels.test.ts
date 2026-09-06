@@ -80,14 +80,76 @@ async function asphaltAt(name: string, mx: number, my: number, r = 4) {
 }
 
 describe("K2 road masks — verified against their own source PNGs", () => {
-  it("keeps the human-approved Art Lab road selections", () => {
+  // K-FIX-2: the 16 flat-street picks. The previous set (082/074/125/090 and
+  // friends) were embankment pieces with retaining walls baked in, so roads
+  // read as raised even once the geometry was right. These are all flush
+  // streets — asphalt level with the grass, kerb line only.
+  it("uses the flat-street road selections (K-FIX-2)", () => {
     const expected: Record<string, string> = {
       road_0000: "landscape/PNG/landscapeTiles_081.png",
-      road_0001: "landscape/PNG/landscapeTiles_105.png",
-      road_0111: "landscape/PNG/landscapeTiles_089.png",
+      road_0001: "landscape/PNG/landscapeTiles_117.png",
+      road_0010: "landscape/PNG/landscapeTiles_105.png",
+      road_0100: "landscape/PNG/landscapeTiles_111.png",
+      road_1000: "landscape/PNG/landscapeTiles_112.png",
+      road_0011: "landscape/PNG/landscapeTiles_118.png",
+      road_0110: "landscape/PNG/landscapeTiles_114.png",
+      road_1100: "landscape/PNG/landscapeTiles_119.png",
+      road_1001: "landscape/PNG/landscapeTiles_122.png",
+      road_0101: "landscape/PNG/landscapeTiles_082.png",
+      road_1010: "landscape/PNG/landscapeTiles_074.png",
+      road_0111: "landscape/PNG/landscapeTiles_096.png",
+      road_1110: "landscape/PNG/landscapeTiles_097.png",
+      road_1101: "landscape/PNG/landscapeTiles_089.png",
+      road_1011: "landscape/PNG/landscapeTiles_104.png",
       road_1111: "landscape/PNG/landscapeTiles_090.png",
     };
     for (const [name, png] of Object.entries(expected)) expect(cell(name).png).toBe(png);
+    // every mask is a distinct piece except where the geometry genuinely
+    // repeats — no mask silently falls back to the crossroads
+    expect(new Set(Object.values(expected)).size).toBe(16);
+  });
+
+  /**
+   * K-FIX-2's real acceptance, measured rather than asserted by file name: an
+   * embankment tile has structure ABOVE the ground diamond's top plane (the
+   * retaining wall rises off the surface). A flat street has none. This is
+   * what made roads read as raised next to grass.
+   */
+  it("no road tile has raised sidewalls / embankment walls", async () => {
+    for (let mask = 0; mask < 16; mask++) {
+      const key = `road_${mask.toString(2).padStart(4, "0")}`;
+      const { data, info } = await img(srcPath(key));
+      // the ground plane at column x is y = 33 − 32·(1 − |x−cx|/66)
+      const cx = (info.width - 1) / 2;
+      let raised = 0;
+      for (let x = 0; x < info.width; x++) {
+        const plane = 33 - 32 * (1 - Math.abs(x - cx) / 66);
+        for (let y = 0; y < Math.floor(plane) - 2; y++)
+          if (data[(y * info.width + x) * 4 + 3] > 60) raised++;
+      }
+      // a handful of antialiased pixels along the apex is the tile's own edge;
+      // a retaining wall is hundreds.
+      expect(raised, `${key} (${cell(key).png}) rises above the ground plane`)
+        .toBeLessThan(30);
+    }
+  }, 60_000);
+
+  it("every road tile is a flat block sharing the terrain's ground line", async () => {
+    const grass = manifest.sprites.terrain_grass;
+    for (let mask = 0; mask < 16; mask++) {
+      const key = `road_${mask.toString(2).padStart(4, "0")}`;
+      const s = manifest.sprites[key];
+      // K-FIX-1: coplanar because the anchor IS the measured ground row, not
+      // because the tiles were cropped to one height. A few Kenney pieces are
+      // 133px wide and their corner row rounds a pixel differently — 1px is
+      // the antialiasing floor, anything more is a real step.
+      expect(Math.abs(s.anchor[1] - grass.anchor[1]),
+        `${key} ground line differs from grass by more than a pixel`)
+        .toBeLessThanOrEqual(1);
+      // and its skirt is NOT normalised away — it keeps its native depth
+      expect(s.h - s.anchor[1], `${key} lost its native block skirt`)
+        .toBeGreaterThan(40);
+    }
   });
 
   it("asphalt crosses every set arm and no unset arm on conventional road pieces (the 90° guard)", async () => {
