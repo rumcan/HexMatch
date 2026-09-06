@@ -888,3 +888,34 @@ describe("W6 the market is visible and trades are logged", () => {
     expect(feedEl.textContent).toMatch(/rival took your offer/i);
   });
 });
+
+describe("D2/D3 road building feedback and debug overlay toggle", () => {
+  it("shows a toast explaining why a road click/drag is refused on non-adjacent ground", async () => {
+    const h = await boot();
+    h.finishSetup();
+    h.setTool("road");
+
+    const canvas = root.querySelectorAll("canvas.iso-layer")[2] as HTMLCanvasElement;
+    expect(canvas).toBeTruthy();
+    const evtDown = new PointerEvent("pointerdown", { clientX: 200, clientY: 200, isPrimary: true, button: 0 });
+    const evtUp = new PointerEvent("pointerup", { clientX: 200, clientY: 200, isPrimary: true, button: 0 });
+    canvas.dispatchEvent(evtDown);
+    canvas.dispatchEvent(evtUp);
+    await settle();
+
+    const toastEl = root.querySelector(".toasts") as HTMLElement;
+    expect(toastEl.textContent).toMatch(/Track must extend your network|Can't build/);
+  });
+
+  it("pressing backtick toggles the debug overlay", async () => {
+    await boot();
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "`" }));
+    await settle();
+    const toastEl = root.querySelector(".toasts") as HTMLElement;
+    expect(toastEl.textContent).toMatch(/Debug overlay: ON/);
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "`" }));
+    await settle();
+    expect(toastEl.textContent).toMatch(/Debug overlay: OFF/);
+  });
+});

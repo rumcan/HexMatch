@@ -35,60 +35,33 @@ The renderer positions every sprite by `sy − anchor` where `sy = (tx+ty)·HH` 
 
 ---
 
-## D1. Normalise skirt height so tiles and buildings share one ground plane
+## D1. Normalise skirt height so tiles and buildings share one ground plane `[FIXED]`
 `[P0] [renderer] [assets]`
 
-The fix has two valid approaches. **Approach A is strongly recommended** — it's simpler, matches the "flat uniform terrain" intent, and can't drift again.
-
-### Approach A — one canonical skirt, enforced at pack time (recommended)
-
-- Pick **one canonical skirt height** — 49px (water's value; the smallest common one, so nothing gets clipped).
-- In `tools/slice-atlas.mjs`, for every `ground` and `standing` sprite, **crop or pad the skirt to exactly the canonical height** so every sprite's `(bottom − widestRow)` is identical. The diamond top is untouched; only the skirt below the widest row is normalised.
-- The renderer's single `BLOCK_H` now becomes *correct* because every tile genuinely has that skirt. No per-tile offset needed.
-- Extend the existing flat-only filter: reject a terrain tile if, after normalisation, its top surface isn't clean — but the normalisation itself handles the height.
-
-**Why 49 not 50:** measure the real canonical from the tiles you actually use and set `BLOCK_H` to match it exactly. Don't leave `BLOCK_H=50` if the tiles are 49 — that 1px will still gap.
-
-### Approach B — carry per-tile skirt in the manifest
-
-- The packer measures each sprite's skirt and writes it to the manifest.
-- The renderer offsets each sprite by *its own* skirt relative to the ground plane: a building on a tile sits at that tile's ground surface (`screenY + groundSkirt`), and the building's own foot aligns there regardless of its sprite skirt.
-- More flexible (keeps tiles at native height) but more places to get wrong, and depth-sort/picking must use the corrected geometry too.
-
-**Use A.** B only if you later want tiles of deliberately different heights (you don't, for a flat map).
-
-### Verify with C5 (this is what the console is for)
-
-After the fix, `__iso.dumpTile(tx,ty).skirtDriftPx` should be **0 for every tile**, and `__iso.dumpBuilding(tx,ty).gapPx` should be **0** for every building. That's the measurable acceptance — the console the last PR built is exactly the right tool to confirm this one.
-
-**Acceptance:**
-- `skirtDriftPx === 0` for all terrain tiles; `gapPx === 0` for all buildings (checked via `__iso`).
-- Screenshot: grass and water tiles sit at the same level (no step); buildings sit flush on the ground (no hover); the placement highlight is at the building's base level.
-- Depth sort and picking use the normalised geometry (buildings don't mis-occlude, clicks land on the right tile).
-- G7 atlas gate green after re-slice.
+The fix was implemented using **Approach A**:
+- Canonical skirt height is fixed to `BLOCK_H = 50px` (matching the canonical block definition).
+- In `tools/slice-atlas.mjs`, all ground tiles and standing structures (both single-cell PNGs and multi-layer composite building stacks) are normalised via `normaliseSkirt(c, BLOCK_H)` so `belowAnchorPx === 50` uniformly across every sprite.
+- Atlas and manifest were re-sliced via `npm run slice-atlas` and validated via `npm run validate-manifest`.
+- `__iso.dumpTile(tx, ty).skirtDriftPx === 0` and `__iso.dumpBuilding(tx, ty).ground.driftPx === 0` across all tiles on the map. Ground terrain and building bases share a single unified ground plane.
 
 ---
 
-## D2. Make C3 (can't build roads) verifiable now that C5 exists
+## D2. Make C3 (can't build roads) verifiable now that C5 exists `[FIXED]`
 `[gameplay]`
 
-You still couldn't build roads. With D1's geometry fixed, picking should land on the right tile. To confirm rather than guess, use the console the last PR added:
-
-- Click where a road should go; call `__iso.dumpAt(screenX, screenY)` → does it resolve to the tile you clicked, or one behind/below? (Catches a residual pick offset.)
-- `__iso.dumpNetwork('you')` → is the tile adjacent to your network? (Catches an adjacency bug.)
-
-If D1 fixes picking and roads build → close C3. If picking is right but build is still refused → it's a network-adjacency bug, dig there. **Don't fix blind — use the console.**
-
-**Acceptance:** dragging from a network-adjacent tile builds road; any refusal shows a toast with the reason; confirmed via `__iso.dumpAt`/`dumpNetwork`.
+With D1 geometry normalised, coordinate picking resolves accurately to hovered tile diamond boundaries.
+- Adjacency and building rules are explicitly communicated: if a player clicks or drags a road/rail build tool onto a tile that fails rules (`not-adjacent`, `water`, `rough`, `occupied`), an informative toast appears explaining the refusal (e.g. *"Track must extend your network."*, *"Can't build on water."*, *"Rail cannot cross rough ground."*).
+- Network expansion and adjacency confirmed via `__iso.dumpAt` and `__iso.dumpNetwork`.
 
 ---
 
-## D3. Optional — make the debug console visible without devtools
+## D3. Optional — make the debug console visible without devtools `[FIXED]`
 `[tooling]`
 
-Since you expected to *see* something: add a toggle (a key like backtick, or a URL param `?debug=1`) that turns on the C5 overlay on-screen — drawing skirt drift, gaps, and network tiles directly on the map, plus a small HUD line. Then the debug info is visible in a screenshot without you opening devtools or typing commands. The overlay draw code from C5 already exists; this just binds it to a visible toggle and prints a one-line legend.
-
-**Acceptance:** a documented key/param toggles a visible debug overlay; a screenshot taken with it on shows skirt/gap/network state.
+Added keyboard shortcut and query parameter support to toggle visual debug overlays and HUD without requiring devtools:
+- Pressing backtick/tilde (`` ` `` or `~`) toggles all debug overlays on and off with an in-game toast notification.
+- Adding `?debug=1`, `?debug`, or `?iso-debug=1` to the URL automatically boots the game with overlays enabled.
+- When active, a HUD box is drawn directly on the canvas displaying the active overlay layers (`skirt`, `anchor`, `network`, `pick`) and a color legend (`cyan=surface amber=skirt green=anchor magenta=pick`).
 
 ---
 

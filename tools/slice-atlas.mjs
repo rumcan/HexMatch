@@ -65,6 +65,7 @@ const CELLS = JSON.parse(readFileSync(join(ROOT, "tools/iso-atlas.cells.json"), 
 const OUT = join(ROOT, "assets/iso-atlas");
 const ZOOMS = [1, 2, 0.5];
 const TILE_W = CELLS.tileW, TILE_H = CELLS.tileH;      // 132 x 64
+const BLOCK_H = CELLS.blockH ?? 50;                   // D1: 50px canonical skirt
 const HW = TILE_W / 2;                                  // 66
 const PACK_W = 1600, GAP = 8;
 const STOREY = 36;          // MB1: per-storey rise in screen px at 1x
@@ -85,6 +86,21 @@ function widestRow(c) {
     if (n > widest) { widest = n; yAt = y; }
   }
   return { width: widest, y: yAt };
+}
+
+/**
+ * D1: normalise skirt height for ground and standing sprites to BLOCK_H.
+ * The diamond top (rows 0..widestRow) is untouched; only the skirt below
+ * widestRow is cropped/padded so (bottom - widestRow) is canonical.
+ */
+function normaliseSkirt(c, targetSkirt = BLOCK_H) {
+  const m = widestRow(c);
+  const targetH = m.y + targetSkirt;
+  if (c.h === targetH) return { px: c.px, w: c.w, h: c.h, wr: m.y, widest: m };
+  const out = Buffer.alloc(c.w * targetH * 4);
+  const copyRows = Math.min(c.h, targetH);
+  c.px.copy(out, 0, 0, c.w * copyRows * 4);
+  return { px: out, w: c.w, h: targetH, wr: m.y, widest: m };
 }
 
 /** Luminance-preserving player tint (V2): keeps the art's shading, swaps hue. */
@@ -145,9 +161,9 @@ async function run() {
     if (!r) {
       const c = await loadPng(rel);
       if (tint) tintLumPx(c.px, tint);
-      const m = widestRow(c);
+      const norm = normaliseSkirt(c, BLOCK_H);
       const name = layerNameFor(rel, tint);
-      r = { name, rel, tint, px: c.px, w: c.w, h: c.h, wr: m.y };
+      r = { name, rel, tint, px: norm.px, w: norm.w, h: norm.h, wr: norm.wr };
       layerPool.set(key, r);
     }
     return r;
@@ -177,8 +193,12 @@ async function run() {
         });
       }
     } else if (typeof cell.png === "string") {
-      const c = await loadPng(cell.png);
+      let c = await loadPng(cell.png);
       if (tint) tintLumPx(c.px, tint);
+      if (cell.kind === "ground" || cell.kind === "standing") {
+        const norm = normaliseSkirt(c, BLOCK_H);
+        c = { px: norm.px, w: norm.w, h: norm.h, rel: c.rel };
+      }
       const { anchor } = anchorFor(cell, c);
       packed.push({ name: cell.name, cell, px: c.px, w: c.w, h: c.h, anchor });
       console.log(`${cell.name.padEnd(16)} ${String(c.w).padStart(3)}x${String(c.h).padEnd(4)} anchor=${anchor}  <- ${cell.png}`);

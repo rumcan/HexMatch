@@ -73,8 +73,20 @@ export function shouldInstallDebugConsole(env: { dev: boolean; search: string })
   const qi = env.search.indexOf("?");
   const raw = qi >= 0 ? env.search.slice(qi + 1) : env.search;
   const q = new URLSearchParams(raw);
-  const v = q.get("iso-debug");
+  const v = q.get("iso-debug") ?? q.get("debug");
   return v !== null && v !== "0" && v !== "false";
+}
+
+/**
+ * D3: URL parameter gate to auto-enable debug overlays on startup (?debug=1 or ?debug or ?iso-debug=1).
+ */
+export function shouldAutoEnableDebugOverlays(env: { search: string }): boolean {
+  const qi = env.search.indexOf("?");
+  const raw = qi >= 0 ? env.search.slice(qi + 1) : env.search;
+  const q = new URLSearchParams(raw);
+  const debug = q.get("debug");
+  const isoDebug = q.get("iso-debug");
+  return debug === "1" || debug === "true" || (debug === "" && q.has("debug")) || isoDebug === "1" || isoDebug === "true";
 }
 
 const r = (n: number): number => Math.round(n * 100) / 100;
@@ -430,6 +442,18 @@ export function createIsoDebug(ctx: DebugContext) {
       c.moveTo(mx - 4, my); c.lineTo(mx + 4, my);
       c.moveTo(mx, my - 4); c.lineTo(mx, my + 4);
       c.stroke();
+    }
+    // D3: HUD line / legend when debug overlays are active
+    if (overlays.size > 0) {
+      const activeList = [...overlays].join("+");
+      const legend = `DEBUG: [${activeList}] cyan=surface amber=skirt green=anchor magenta=pick (~ toggle)`;
+      c.fillStyle = "rgba(0, 0, 0, 0.75)";
+      c.fillRect(8, 8, 490, 20);
+      c.strokeStyle = "#ffb01f";
+      c.strokeRect(8, 8, 490, 20);
+      c.fillStyle = "#ffffff";
+      c.font = "11px monospace";
+      c.fillText(legend, 14, 22);
     }
   };
 
