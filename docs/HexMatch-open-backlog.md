@@ -1,76 +1,82 @@
-# HexMatch — the skirt-height fix (this is THE bug)
+# HexMatch — the documented Kenney isometric method (this replaces the skirt-normalisation approach)
 
-Audited against `main` @ `a04d5a2` (PR #23). You are exactly right: **the Kenney tiles are different heights and the renderer thinks they're all the same.** PR #23 measured the problem but did not fix it. This doc is the fix.
+I researched how Kenney's isometric tiles are *meant* to be placed. The sources below show the current approach (normalising skirt heights) is **fighting the format**. Kenney tiles are designed to be different heights — you anchor them at the **bottom** and let them grow upward. That's the whole trick, and it's what every hovering/slicing/stepping bug has been working around instead of using.
 
----
+## Sources
 
-## What PR #23 actually did (and didn't)
+1. **Kenney's official documentation** — "Importing 3D models into game engines" (kenney.nl/knowledge-base/game-assets-3d), the *Isometric renders* section, gives the exact placement rule:
+   > A flat single tile is `128 × 64`. The transparent pixels around each tile are **margin for larger tiles, or tiles that don't fit within the usual tile size.** Set the drawing **offset to X: -192, Y: 170**; set tile width/height to `128 × 64`.
 
-- ✅ **E14** (e2e corridor picker) — fixed, gameplay test green in a real browser.
-- ✅ **C5 console** — landed, but **passive**: `__iso.dumpTile()` etc. only output when you type them in the browser devtools console. Nothing logs on startup and nothing changes visually. That's why "I don't see any console logs or improvements" — there's nothing to see unless you open devtools and call the commands by hand. The agent even measured the bug (`skirtDriftPx +16px on grass 067`) — but measuring ≠ fixing.
-- ❌ **C1 (the skirt geometry)** — NOT fixed. The renderer still imports and uses a single `BLOCK_H` constant. This is the bug you're looking at.
-- ❌ C2, C3, C4 — still open.
+   The key idea: every tile sits in a larger transparent canvas, and a **single fixed drawing offset** positions them all. Taller tiles occupy more of the canvas upward; the offset is constant. You do **not** resize or crop tiles to match.
 
----
+2. **PIXI isometric tutorial using Kenney road tiles** (peepsquest/tutorials) — describes *your exact bug* and its fix:
+   > "Tiles with height (z-direction) seem to **float** as they are drawn from the top instead of the bottom. Ooops! The fix is to draw tiles from the **bottom-left**."
 
-## The bug, in exact numbers
+   It sets the sprite anchor to bottom (`anchor.y = 1`) so a tile of any height sits correctly on the ground. Flat and tall tiles share one bottom anchor line.
 
-Every Kenney tile is a diamond TOP (where things sit) plus a vertical SKIRT below. The skirt height is **different per tile**, but the renderer anchors everything against one constant `BLOCK_H = 50`. Measured on the live config:
+3. **Unity isometric tilemap docs** — confirms the projection: dimetric, cell `(1, 0.5, 1)`, and "Isometric Z as Y" — a tile's height is added to its Y so taller tiles offset upward from the same base cell. Same principle: height grows up from a fixed floor.
 
-| sprite | skirt (px) |
-|---|---|
-| terrain_grass (067) | **65** |
-| terrain_water (066) | **49** |
-| terrain_rough (059) | **65** |
-| farm base (022) | **67** |
-| depot base (044) | **59** |
-| the renderer's assumption | **50** |
+## What this means for HexMatch
 
-Two consequences, both visible in your screenshots:
+**The skirt-normalisation in PR #24 was the wrong fix.** Cropping every tile's skirt to 50px forces all tiles to one height — which fights Kenney's design (tiles are *meant* to vary) and broke the stacked-building anchors (PR #24's regression). The documented method is the opposite: **keep every tile its native height, anchor them all at the bottom.**
 
-1. **Grass (65) and water (49) differ by 16px.** Adjacent grass and water tiles sit at different heights → the "two levels" stepped look across the map.
-2. **Building skirts (59–67) don't match the ground skirt (65), and none match the assumed 50.** A building's foot is positioned as if the ground skirt were 50, so it floats 9–17px above the actual surface → the hovering houses and the highlight-below-building gap.
+### The correct rule
 
-The renderer positions every sprite by `sy − anchor` where `sy = (tx+ty)·HH` is the diamond centre. That's only correct if `(bottom − widestRow)` is identical for every sprite. It isn't. That mismatch **is** the bug.
+- Every sprite is positioned so its **bottom-centre** lands on the tile's screen position (the diamond's south point on the ground plane).
+- A flat tile and a tall building share the **same bottom anchor** — the building simply extends further up the screen. No height normalisation, no per-tile skirt offset.
+- In HexMatch's terms: `anchor` should be the **bottom-centre pixel** of the sprite (`[floor(w/2), h-1]` region, at the tile's south point), NOT the widest row. The renderer draws at `screenY - (h - bottomAnchorOffset)`.
+
+This is why a stacked building broke: normalisation moved the widest row but the composite anchor still pointed at the old spot. If the anchor were **bottom-based**, stacking would just work — each layer's bottom sits on the layer below, and the whole stack's bottom sits on the tile.
 
 ---
 
-## D1. Normalise skirt height so tiles and buildings share one ground plane `[FIXED]`
+## K-FIX-1. Switch to bottom-anchor placement; remove skirt normalisation
 `[P0] [renderer] [assets]`
 
-The fix was implemented using **Approach A**:
-- Canonical skirt height is fixed to `BLOCK_H = 50px` (matching the canonical block definition).
-- In `tools/slice-atlas.mjs`, all ground tiles and standing structures (both single-cell PNGs and multi-layer composite building stacks) are normalised via `normaliseSkirt(c, BLOCK_H)` so `belowAnchorPx === 50` uniformly across every sprite.
-- Atlas and manifest were re-sliced via `npm run slice-atlas` and validated via `npm run validate-manifest`.
-- `__iso.dumpTile(tx, ty).skirtDriftPx === 0` and `__iso.dumpBuilding(tx, ty).ground.driftPx === 0` across all tiles on the map. Ground terrain and building bases share a single unified ground plane.
+**Replace the skirt-normalisation approach with Kenney's documented bottom-anchor method.**
+
+1. **Stop normalising skirts.** Remove `normaliseSkirt` from `tools/slice-atlas.mjs`. Keep every Kenney tile its native size — the transparent margin around each tile is intentional (Kenney's docs: "margin for larger tiles").
+
+2. **Anchor every sprite at bottom-centre.** In the packer, compute each sprite's anchor as the point that sits on the tile's ground position — the **bottom-centre of the diamond**, not the widest row. For a flat tile that's near the bottom of the canvas; for a tall building it's the same relative point on its base. Concretely: the anchor is where the tile's south corner (the bottom vertex of the ground diamond) sits in the sprite's pixels.
+
+3. **One consistent ground reference.** Kenney tiles all share the same diamond footprint (128×64 canonical; 132×66 here) at a **fixed position within their canvas** — the bottom. Find that shared bottom line once; every sprite anchors to it. A flat grass tile and a 6-storey tower both have their diamond base at that line.
+
+4. **Verify with the C5 console** (already built): `dumpTile().skirtDriftPx` and `dumpBuilding().gapPx` should be 0 — but now because everything shares a bottom anchor, not because heights were forced equal.
+
+**Acceptance:**
+- No `normaliseSkirt` / height-forcing in the pipeline; tiles keep native size.
+- Flat terrain (grass, water, rough) sits coplanar — adjacent tiles share the ground line, no stepping.
+- Single AND stacked buildings sit flush on their tile, base not clipped (`gapPx === 0` for factory and depot).
+- The manifest invariant: every sprite's anchor is its bottom-centre ground point; stacked composite anchor = base layer's bottom, same as a single tile.
+- Screenshot confirms: grass/water flush, buildings seated, no slicing.
+
+**Reference the sources above in the PR** so the reviewer can confirm the method matches Kenney's own docs.
 
 ---
 
-## D2. Make C3 (can't build roads) verifiable now that C5 exists `[FIXED]`
-`[gameplay]`
+## K-FIX-2. Re-pick road tiles as FLAT roads, not embankment pieces
+`[P0] [assets]`
 
-With D1 geometry normalised, coordinate picking resolves accurately to hovered tile diamond boundaries.
-- Adjacency and building rules are explicitly communicated: if a player clicks or drags a road/rail build tool onto a tile that fails rules (`not-adjacent`, `water`, `rough`, `occupied`), an informative toast appears explaining the refusal (e.g. *"Track must extend your network."*, *"Can't build on water."*, *"Rail cannot cross rough ground."*).
-- Network expansion and adjacency confirmed via `__iso.dumpAt` and `__iso.dumpNetwork`.
+Independent of the anchor fix. The current road tiles (`082/074/125/090`) are Kenney pieces with **raised retaining walls baked in** — roads on embankments. Kenney's set also has flat street tiles. Apply the human's Art Lab road choices (flat streets), and when picking, use the road preview to reject any tile with raised sidewalls — pick tiles whose asphalt is flush with the ground surface.
 
----
+Once K-FIX-1 lands (bottom anchor), a flat road tile will sit correctly coplanar with grass. An embankment tile will still look raised because it *is* — so this is a tile-choice fix, not a geometry one.
 
-## D3. Optional — make the debug console visible without devtools `[FIXED]`
-`[tooling]`
-
-Added keyboard shortcut and query parameter support to toggle visual debug overlays and HUD without requiring devtools:
-- Pressing backtick/tilde (`` ` `` or `~`) toggles all debug overlays on and off with an in-game toast notification.
-- Adding `?debug=1`, `?debug`, or `?iso-debug=1` to the URL automatically boots the game with overlays enabled.
-- When active, a HUD box is drawn directly on the canvas displaying the active overlay layers (`skirt`, `anchor`, `network`, `pick`) and a color legend (`cyan=surface amber=skirt green=anchor magenta=pick`).
+**Acceptance:** roads render flush with terrain, no embankment walls; road tiles match the human's flat-road Art Lab picks; straight + corner + crossroads all sit flat and connect.
 
 ---
 
-## Sequencing
+## Why this is the right fix and normalisation wasn't
 
-**D1 → D2 → D3.**
+| | Skirt normalisation (PR #24) | Bottom anchor (Kenney's docs) |
+|---|---|---|
+| Tile heights | forced equal (crop skirts) | kept native (as designed) |
+| Stacked buildings | broke (anchor not recomputed) | work naturally (bottom stacks on bottom) |
+| Matches Kenney docs | no — fights the margin design | yes — "draw from the bottom" |
+| Tall buildings | must special-case | just extend upward, same anchor |
+| Future tiles | must be re-normalised | drop in, anchored at bottom |
 
-D1 is the fix for everything you're seeing — the stepped terrain and the hovering buildings are one bug (variable skirt vs assumed constant). Do it, verify `skirtDriftPx`/`gapPx` are zero with the console, screenshot. D2 confirms roads with the same console. D3 makes future screenshots self-diagnosing.
+The documented method is less code and can't produce the hovering/slicing class of bug, because a bottom-anchored sprite of any height always sits on the floor by construction.
 
-## The one-line summary for the agent
+## One-line summary for the agent
 
-> The renderer assumes every Kenney tile has a 50px skirt. They don't (grass 65, water 49, buildings 59–67). Normalise every sprite's skirt to one canonical height at pack time so the single `BLOCK_H` is actually true. Confirm with `__iso.dumpTile().skirtDriftPx === 0` and `__iso.dumpBuilding().gapPx === 0`. This is C1, which PR #23 measured but did not fix.
+> Research shows Kenney iso tiles are designed to be different heights and anchored at the BOTTOM (kenney.nl 3D-import docs: fixed drawing offset, tiles grow upward into transparent margin; PIXI/Kenney tutorial: "tiles float because drawn from the top — fix is draw from the bottom"). Remove PR #24's skirt normalisation, anchor every sprite (flat, tall, stacked) at its bottom-centre ground point instead of its widest row. Separately, re-pick the road tiles as flat streets, not embankment pieces.
