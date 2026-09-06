@@ -1,4 +1,7 @@
 import { test, expect } from "@playwright/test";
+import {
+  findIsoCorridor, isoTileOcclusion, isoClickableTile, type Corridor,
+} from "./corridor-picker";
 
 // ══════════════════════════════════════════════════════════════════════════
 // E12 — iso game DOM e2e, against the REAL built app (vite preview).
@@ -22,101 +25,76 @@ async function bootIso(page: import("@playwright/test").Page) {
   }, null, { timeout: 20000 });
 }
 
-/**
- * Pick a legal south corridor to play the round on, in-page: harvester tile
- * just below an industry, factory 6 tiles further south, all in-bounds, no
- * water, no industry footprint on the column (roads cannot cross occupancy),
- * and the whole column on screen at the current camera.
- */
-async function pickCorridor(page: import("@playwright/test").Page): Promise<{
-  hx: number; hy: number; fx: number; fy: number;
-}> {
-  return page.evaluate(() => {
-    const h = (window as any).__iso;
-    const grid = h.grid;
-    const MAP_W = grid.w, MAP_H = grid.h;
-    const WATER = 1;
-    const dpr = window.devicePixelRatio || 1;
-    const inView = (tx: number, ty: number) => {
-      const [dx, dy] = h.tileScreenAt(tx, ty);
-      const cx = dx / dpr, cy = dy / dpr;
-      return cx >= -20 && cx <= window.innerWidth + 20 && cy >= -20 && cy <= window.innerHeight + 20;
-    };
-    // J1: the Quarry/Market panels overlay the map and take pointer events, so
-    // a tile hidden behind one cannot be clicked. Never pick a corridor under
-    // a panel — otherwise this helper hands back a tile the mouse cannot reach.
-    const clickable = (tx: number, ty: number) => {
-      // K0/K4: tileScreenAt returns the tile's diamond CENTRE now.
-      const [dx, dy] = h.tileScreenAt(tx, ty);
-      const cx = dx / dpr, cy = dy / dpr;
-      return !document.elementsFromPoint(cx, cy)
-        .some((el) => !!(el as HTMLElement).closest?.(".iso-panel"));
-    };
-    // V1: the factory is a 1×1 footprint (one declared sprite, one diamond),
-    // so its highlight must be in-bounds and on screen before we hand back a
-    // corridor — and the tile diagonally behind it must stay clear, which is
-    // what the overlay-pixel sample below asserts.
-    const legalFactory = (hx: number, fy: number) => {
-      if (hx + 1 >= MAP_W || fy + 1 >= MAP_H) return false;
-      return inView(hx, fy) && inView(hx + 1, fy + 1);
-    };
-    const legalColumn = (hx: number, hy: number, fy: number) => {
-      if (hx < 0 || hx >= MAP_W || hy < 0 || fy >= MAP_H) return false;
-      if (!legalFactory(hx, fy)) return false;
-      for (let y = hy; y <= fy; y++) {
-        const i = y * MAP_W + hx;
-        if (grid.terrain[i] === WATER) return false;
-        if (grid.occupancy[i] >= 0) return false;
-        if (!inView(hx, y)) return false;
-        if (!clickable(hx, y)) return false;
-      }
-      return true;
-    };
-    const focus = grid.industries[0];
-    const ranked = [...grid.industries].sort((a, b) =>
-      Math.abs(a.tx - focus.tx) + Math.abs(a.ty - focus.ty)
-      - (Math.abs(b.tx - focus.tx) + Math.abs(b.ty - focus.ty)));
-    const corridorTiles = 4;
-    const panels = [...document.querySelectorAll<HTMLElement>(".iso-panel")]
-      .map((panel) => panel.getBoundingClientRect());
-    const clearLeft = Math.max(0, ...panels.filter((r) => r.left < innerWidth / 2).map((r) => r.right));
-    const clearRight = Math.min(innerWidth, ...panels.filter((r) => r.left >= innerWidth / 2).map((r) => r.left));
-    const [p0x] = h.tileScreenAt(focus.tx, focus.ty);
-    const [p1x] = h.tileScreenAt(focus.tx, focus.ty + 1);
-    const stepX = Math.abs(p1x - p0x) / dpr;
-    const footprint = stepX * (corridorTiles - 1);
-    if (clearRight - clearLeft < footprint) {
-      throw new Error(`No ${corridorTiles}-tile corridor can fit: clear band ${Math.round(clearRight - clearLeft)}px, footprint ${Math.round(footprint)}px`);
-    }
-    const rejected = { terrain: 0, occupancy: 0, view: 0, panel: 0 };
-    for (const ind of ranked) {
-      const hx = ind.tx, hy = ind.ty + ind.h, fy = hy + corridorTiles - 1;
-      if (legalColumn(hx, hy, fy)) return { hx, hy, fx: hx, fy };
-      for (let y = hy; y <= fy && y < MAP_H; y++) {
-        const i = y * MAP_W + hx;
-        if (grid.terrain[i] === WATER) rejected.terrain++;
-        else if (grid.occupancy[i] >= 0) rejected.occupancy++;
-        else if (!inView(hx, y)) rejected.view++;
-        else if (!clickable(hx, y)) rejected.panel++;
-      }
-    }
-    throw new Error(`No buildable corridor at zoomed geometry; rejection counts ${JSON.stringify(rejected)}`);
-  });
+// E14 — the corridor the gameplay round is played on is chosen by
+// `findIsoCorridor` (tests/e2e/corridor-picker.ts): it measures the tile step
+// and the clear band between the HUD panels instead of assuming a fixed 7-tile
+// south column that only ever fitted at the pre-Kenney 64px tile, it searches
+// all four track directions, it filters tiles through the GAME's own legality
+// rule (`__iso.tileProbe`, i.e. `buildRefusal`), and it throws with the closest
+// candidate plus the filter that rejected it rather than returning `null`.
+// It is passed to `page.evaluate` as a function reference: Playwright ships its
+// source into the page, which is why it is self-contained — and why
+// tests/unit/iso-corridor-picker.test.ts runs `String(fn)` as well as the
+// import, so that contract is tested, not trusted.
+async function pickCorridor(
+  page: import("@playwright/test").Page,
+  opts?: { minTiles?: number; maxTiles?: number },
+): Promise<Corridor> {
+  return page.evaluate(findIsoCorridor, opts ?? { minTiles: 4, maxTiles: 7 });
 }
 
-/** CSS-pixel centre of a tile's diamond. */
-async function tileCenter(page: import("@playwright/test").Page, tx: number, ty: number) {
-  return page.evaluate(({ tx, ty }) => {
+/**
+ * One real wheel step over the map (E14 fix candidate (a)). ZOOM_STEPS are
+ * 0.5/1/2 and `canvases.overlay` owns the wheel listener, so this is a genuine
+ * user gesture — no camera API is poked. Returns the CSS px a single tile step
+ * now covers, so a caller can assert the zoom actually moved.
+ */
+async function zoomStep(page: import("@playwright/test").Page, dir: "out" | "in") {
+  const tileStepPx = () => page.evaluate(() => {
     const h = (window as any).__iso;
     const dpr = window.devicePixelRatio || 1;
-    // Aim halfway down the tile surface. Derive that offset from projected
-    // geometry so it follows both camera zoom and device pixel ratio; the old
-    // helper hard-coded 16 device pixels and missed at 0.5x.
-    const [dx, dy] = h.tileScreenAt(tx, ty);
-    const [, nextY] = h.tileScreenAt(tx, ty + 1);
-    const surfaceOffset = Math.abs(nextY - dy) / 2;
-    return { x: dx / dpr, y: (dy + surfaceOffset) / dpr };
-  }, { tx, ty });
+    const [x0] = h.tileScreenAt(0, 0);
+    const [x1] = h.tileScreenAt(0, 1);
+    return Math.round((Math.abs(x1 - x0) / dpr) * 100) / 100;
+  });
+  const before = await tileStepPx();
+  await page.mouse.move(640, 360);
+  await page.mouse.wheel(0, dir === "out" ? 1 : -1);
+  await expect
+    .poll(tileStepPx, {
+      timeout: 5000,
+      message: "the wheel gesture did not change the camera's tile step — either the step is clamped "
+        + "(ZOOM_STEPS is 0.5/1/2) or the overlay canvas did not receive the event",
+    })
+    .not.toBe(before);      // fails loudly if the camera is clamped at the step
+  return { before, after: await tileStepPx() };
+}
+
+/** E14/A3: the picker's own failure text is part of the assertion trail. */
+function describeCorridorError(err: unknown) {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * The viewport point to click to reach a tile — the page-side
+ * `isoClickableTile` from tests/e2e/corridor-picker.ts, so every click of the
+ * round is resolved against the LIVE state: on screen, not swallowed by HUD
+ * chrome, and answered by the game's own pick with the tile it names.
+ *
+ * The spec deliberately does no geometry of its own here. It used to: it
+ * derived its aim offset from `tileScreenAt(0,1)` minus *the target tile*
+ * instead of `tileScreenAt(0,0)` → `tileScreenAt(0,1)`, which at tile (24,10)
+ * made a tile step fifteen tiles long and put the whole round's mouse 16 tiles
+ * away from the tiles it claimed. And a point verified once up front is not
+ * enough either — placing the Factory and the Harvester changes what the
+ * stage-2 sprite pick answers, which is what the second CI run caught. Both
+ * failure modes are now the helper's problem, and it fails loudly.
+ */
+async function clickPointFor(
+  page: import("@playwright/test").Page, tx: number, ty: number,
+  prefer?: { x: number; y: number },
+) {
+  return page.evaluate(isoClickableTile, { tx, ty, aim: prefer });
 }
 
 /** Count opaque pixels in a square around a tile centre on a given canvas. */
@@ -234,23 +212,57 @@ test.describe("iso game boots on the default route", () => {
   test("gameplay: factory → harvester → road drag → +1 VP, all real pointer events", async ({ page }) => {
     await bootIso(page);
 
-    // E14: Kenney tiles doubled the boot-camera corridor footprint. Zoom out
-    // through the real canvas wheel listener before doing any geometry search;
-    // this preserves the occlusion checks instead of relaxing them.
-    const tileStep = () => page.evaluate(() => {
-      const h = (window as any).__iso;
-      const [x0] = h.tileScreenAt(0, 0);
-      const [x1] = h.tileScreenAt(0, 1);
-      return Math.abs(x1 - x0);
+    // E14 fix candidate (a): the Kenney tiles doubled every footprint, so the
+    // corridor the round is played on has to be searched at a camera that can
+    // actually frame one. The wheel is a real gesture on the real listener —
+    // the camera is never poked, and the occlusion filters are kept, not
+    // relaxed. If 0.5x frames nothing, 1x is the only other geometry worth
+    // asking, so the search is retried once after a second real gesture.
+    await zoomStep(page, "out");
+    let c: Corridor;
+    try {
+      c = await pickCorridor(page);
+    } catch (err) {
+      const first = describeCorridorError(err);
+      await zoomStep(page, "in");
+      try {
+        c = await pickCorridor(page);
+      } catch (err2) {
+        throw new Error(
+          `pickCorridor found no playable corridor at either zoom.\n`
+          + `  at 0.5x — ${first}\n  at 1x  — ${describeCorridorError(err2)}`,
+        );
+      }
+    }
+    // E14/A2: the helper picked the corridor by geometry, so the geometry the
+    // rest of the test relies on is reported with it.
+    test.info().annotations.push({
+      type: "corridor",
+      description: `${c.tiles} tiles ${c.dir} from (${c.hx},${c.hy}) to (${c.fx},${c.fy}), `
+        + `click offset (${c.aim.x}, ${c.aim.y}), ${Math.round(c.margin)}px clear of the HUD`,
     });
-    const beforeZoom = await tileStep();
-    await page.mouse.move(640, 360);
-    await page.mouse.wheel(0, 1);
-    await expect.poll(tileStep).toBeLessThan(beforeZoom);
+    const n = c.tiles;
+    const aim = c.aim;
+    const at = (tx: number, ty: number) => clickPointFor(page, tx, ty, aim);
+    const factory = await at(c.fx, c.fy);
+    const harvester = await at(c.hx, c.hy);
 
-    const c = await pickCorridor(page);
-    const factory = await tileCenter(page, c.fx, c.fy);
-    const harvester = await tileCenter(page, c.hx, c.hy);
+    // A2: every tile a pointer event is about to land on is reachable —
+    // re-checked here, independently of the filter that chose them, because a
+    // corridor under a panel is exactly the failure this suite exists to catch.
+    // The points asserted on are the points the round is about to click (the
+    // same resolution the clicks themselves go through), not a re-derivation.
+    // (The tile diagonally behind the factory is only *sampled* for pixels, so
+    // it is deliberately not part of the clickability claim.)
+    const planned = await Promise.all(
+      c.col.map(async (t) => ({ ...t, ...(await at(t.tx, t.ty)) })),
+    );
+    expect(await page.evaluate(isoTileOcclusion, { tiles: planned, aim })).toEqual([]);
+    test.info().annotations.push({
+      type: "click-points",
+      description: planned.map((p) =>
+        `(${p.tx},${p.ty})→aim(${p.aim.x}, ${p.aim.y})`).join(" "),
+    });
 
     // ── setup round 1 of 2: click the tile for your Factory ─────────────
     // V1 acceptance: the placement highlight covers EXACTLY the footprint the
@@ -281,28 +293,29 @@ test.describe("iso game boots on the default route", () => {
       stone: (window as any).__iso.purse.stone,
       ore: (window as any).__iso.purse.ore ?? 0,
     }));
-    expect(h0.free).toBe(12);
+    expect(h0.free).toBe(12);                       // FREE_SETUP_TRACK (E8)
     expect(h0.vp).toEqual({ you: 0, ai: 0 });
     expect(h0.stone).toBe(12);
     expect(h0.ore).toBe(0);
 
-    // ── build phase: drag a road from the Factory down to the harvester ──
+    // ── build phase: drag a road from the Factory to the harvester ───────
     // real pointer stream: move → down on the factory → step tile by tile
-    // along the column → up on the harvester.
+    // along the picked column → up on the harvester. The path is the
+    // corridor itself, so the drag length is whatever the geometry yielded —
+    // no tile count is baked into this test any more (E14/A4).
+    const path = [...c.col].reverse();              // factory → harvester
     await page.mouse.move(factory.x, factory.y);
     await page.mouse.down();
-    // walk up the column, tile by tile, from just above the factory to the
-    // harvester (the pointerup commits the last hovered tile's preview)
-    const steps: { x: number; y: number }[] = [];
-    for (let y = c.fy - 1; y > c.hy; y--) {
-      steps.push(await tileCenter(page, c.hx, y));
+    for (const t of path.slice(1)) {
+      const p = t.tx === c.hx && t.ty === c.hy ? harvester : await at(t.tx, t.ty);
+      await page.mouse.move(p.x, p.y);
     }
-    steps.push(harvester);
-    for (const s of steps) await page.mouse.move(s.x, s.y);
-
-    // free setup allowance covers the whole 4-tile column: no purse charge
     await page.mouse.up();
-    await page.waitForFunction(() => (window as any).__iso.freeTrack === 8);
+    await page.waitForFunction(
+      ({ free, used }) => (window as any).__iso.freeTrack === free - used,
+      { free: h0.free, used: n },
+      { timeout: 5000 },
+    );
 
     const after = await page.evaluate(() => {
       const h = (window as any).__iso;
@@ -311,16 +324,16 @@ test.describe("iso game boots on the default route", () => {
       for (let i = 0; i < t.road.length; i++) if (t.road[i] & 16) road++;
       return { free: h.freeTrack, vp: h.vp, stone: h.purse.stone, ore: h.purse.ore ?? 0, road };
     });
-    expect(after.free).toBe(8);                      // 12 − 4 free tiles used
+    expect(after.free).toBe(h0.free - n);            // the allowance paid for exactly the column
     expect(after.vp.you).toBe(1);                    // connection scored
     expect(after.vp.ai).toBe(0);
     expect(after.stone).toBe(12);                    // allowance, not purse
     expect(after.ore).toBe(0);
-    expect(after.road).toBe(4);
+    expect(after.road).toBe(n);
 
     // the structures canvas really painted the road column
     await expect.poll(
-      () => opaqueNear(page, 1, c.hx, c.hy + 1),
+      () => opaqueNear(page, 1, c.col[1].tx, c.col[1].ty),
       { timeout: 5000 },
     ).toBeGreaterThan(10);
 
@@ -389,7 +402,10 @@ test.describe("TK-001 mouse panning is middle-button only", () => {
       return null;
     });
     expect(spot).not.toBeNull();
-    const anchor = await tileCenter(page, spot!.tx, spot!.ty);
+    // E14: the anchor goes through the same resolver the gameplay round clicks
+    // with, so "a left click here places" is asserted against a point the
+    // game's own pick hands back to this tile — not a re-derivation of it.
+    const anchor = await clickPointFor(page, spot!.tx, spot!.ty);
     const before = await screenAt(spot!.tx, spot!.ty);
     expect(before.x).toBeGreaterThan(0);
 

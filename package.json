@@ -6,7 +6,8 @@
   "description": "Hexmatch Industries \u2014 a 3D island strategy / match-3 tycoon game with a WebSocket relay room server.",
   "scripts": {
     "dev": "vite",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.e2e.json",
+    "typecheck:e2e": "tsc --noEmit -p tsconfig.e2e.json",
     "lint": "eslint .",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",

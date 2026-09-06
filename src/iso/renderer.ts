@@ -151,6 +151,15 @@ export class IsoRenderer {
   cam: Camera;
   world: World;
 
+  /**
+   * C5: an optional hook the OVERLAY layer calls after its own items are
+   * blitted, with the raw 2D context and the live camera. It is how the debug
+   * console draws skirt/anchor/network/pick marks on the map so a screenshot
+   * carries the state behind it (`installIsoDebug` in `debug.ts`). Left null
+   * in production — nothing else ever writes to the overlay context.
+   */
+  debugPainter: ((ctx: CanvasRenderingContext2D, cam: Camera) => void) | null = null;
+
   readonly canvases: RendererCanvases;
   private ctxT: Ctx2D; private ctxS: Ctx2D; private ctxO: Ctx2D;
   private chunkCache = new Map<string, HTMLCanvasElement | OffscreenCanvas>();
@@ -158,6 +167,9 @@ export class IsoRenderer {
   private structuresDirty = true;
   private lastOrder: Placed[] = [];
   private pad: number;
+
+  /** The last depth-sorted structure order actually drawn (C5 dumps/picking). */
+  get drawOrder(): Placed[] { return this.lastOrder; }
 
   constructor(canvases: RendererCanvases, atlas: Atlas, cam: Camera, world: World) {
     this.canvases = canvases;
@@ -283,6 +295,8 @@ export class IsoRenderer {
     ctx.clearRect(0, 0, cam.vw, cam.vh);
     const placed = items.map((i) => place(this.atlas, i)).filter(Boolean) as Placed[];
     for (const p of depthSort(placed).order) this.blit(ctx, p, timeMs);
+    // C5: the debug marks are drawn last so they sit above every preview glow.
+    if (this.debugPainter) this.debugPainter(ctx, cam);
   }
 
   private blit(ctx: Ctx2D, p: Placed, timeMs: number) {
