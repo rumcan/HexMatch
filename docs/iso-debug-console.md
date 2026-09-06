@@ -126,7 +126,7 @@ after the normal overlay items, into the overlay canvas.
 | `skirt` | per visible tile: a cyan line at the shared surface (the tile's ground row / centre-line) and an amber line at that tile's own block bottom. K-FIX-1: the gap between them is the tile's **native** skirt and varies by design; a tile is flagged **red** with a `+16`-style label only when its ground row leaves the shared surface line |
 | `anchor` | a green crosshair at every structure's contact point, and `sprite ±gap px` next to any that is not flush |
 | `network` | the network tiles of both players filled — green for you, red for the rival |
-| `pick` | the hovered tile's **drawn** diamond in white and its **pick cell** in magenta (the K4 half-tile offset, visible at last) plus a crosshair at the viewport centre |
+| `pick` | the hovered tile's **drawn** diamond in white and its **pick cell** as a dashed magenta outline on the SAME spot (N4: one convention — any visible offset between them is a bug; before N4 they sat a half-tile apart) plus a crosshair at the viewport centre |
 
 ```js
 __iso.overlay("skirt")          // on

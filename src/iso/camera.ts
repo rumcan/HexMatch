@@ -44,7 +44,7 @@ export function screenToTileAt(c: Camera, sx: number, sy: number): [number, numb
   return screenToTile(wx, wy);
 }
 
-/** Screen position of the TOP vertex of tile (tx,ty). */
+/** Screen position of tile (tx,ty)'s lattice point — its drawn diamond's CENTRE. */
 export function tileToScreenAt(c: Camera, tx: number, ty: number): [number, number] {
   const [wx, wy] = tileToScreen(tx, ty);
   return worldToScreen(c, wx, wy);

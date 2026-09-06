@@ -456,17 +456,21 @@ export function createIsoDebug(ctx: DebugContext) {
     if (overlays.has("pick")) {
       const hov = ctx.hover;
       if (hov) {
-        // drawn diamond (what you SEE under the cursor) vs the pick cell (the
-        // lattice floor() resolves to) — the K4 HH offset, visible at last.
+        // N4: ONE convention — the pick cell IS the drawn diamond. The white
+        // outline is the hovered tile's drawn diamond; the dashed magenta one
+        // is its pick cell on the SAME spot. A visible offset between them is
+        // a bug (pre-N4 they sat HH apart — that half-tile gap is gone).
         const [sx, sy] = screenOf(hov.tx, hov.ty);
         c.strokeStyle = "#ffffff";
         diamondPath(c, sx, sy, hw, hh);
         c.stroke();
         c.strokeStyle = "#ff5af0";
-        diamondPath(c, sx, sy + hh, hw, hh);
+        c.setLineDash([4, 3]);
+        diamondPath(c, sx, sy, hw, hh);
         c.stroke();
+        c.setLineDash([]);
         c.fillStyle = "#ff5af0";
-        c.fillRect(sx - 1, sy + hh - 1, 3, 3);
+        c.fillRect(sx - 1, sy - 1, 3, 3);
       }
       const [mx, my] = [ctx.camera.vw / 2, ctx.camera.vh / 2];
       c.strokeStyle = "#ffffff";

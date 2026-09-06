@@ -864,8 +864,8 @@ export function startIsoGame(root: HTMLElement) {
     /** V4: the e2e/unit twin of the HUD toast, so tests can drive the toast
      *  stack (and its ✕) without playing a whole round. */
     toast: (text: string, kind: Toast["kind"] = "info") => toast(text, kind),
-    /** Screen position (device px, live camera) of a tile's top vertex — the
-     *  e2e twin of __hex.view.screenPosOf. Read-only. */
+    /** Screen position (device px, live camera) of a tile's drawn diamond
+     *  centre — clicking it hits that tile (renderer.flatPick, N4). */
     tileScreenAt: (tx: number, ty: number) => tileToScreenAt(cam, tx, ty),
     /**
      * E14: the live camera, so a test can report the zoom it picked a corridor
