@@ -23,7 +23,7 @@ describe("K4 anchor contract", () => {
     // K0/K1: the anchor (the sprite's measured base-diamond widest row for
     // ground/standing art, bottom-centre for vehicles) lands on the tile's
     // centre-line, so a building's base diamond coincides with its tile.
-    for (const [name, tx, ty] of [["farm", 10, 12], ["ore_mine", 3, 20], ["terrain_grass", 0, 0], ["factory_blue", 5, 5], ["road_1111", 7, 9]] as const) {
+    for (const [name, tx, ty] of [["farm", 10, 12], ["ore_mine", 3, 20], ["terrain_grass", 0, 0], ["factory_blue", 5, 5], ["depot_blue", 9, 7], ["road_1111", 7, 9]] as const) {
       const def = atlas.get(name)!;
       const [ox, oy] = drawOrigin(def, tx, ty);
       const [fw, fh] = def.footprint;

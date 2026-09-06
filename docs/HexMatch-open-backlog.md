@@ -1,10 +1,14 @@
 # HexMatch — isometric rendering, rebuilt to spec (I-series)
 
+**Status: FIXED — 2026-09-06, on `arena/01a07788-hexmatch`.** All six
+I-series tickets are implemented and guarded by the committed three-zoom
+golden scene. See [Resolution](#resolution-2026-09-06).
+
 Every ticket below carries a **SPEC** section quoting the authoritative principle it enforces (from `HexMatch-iso-research.md`), the **exact current-code violation** (verified against `main` @ `0bec138` / PR #26), the **fix**, and a **pixel-level acceptance test**. The rule from the research holds throughout:
 
 > Ground tiles tessellate into a plane and only the island's rim shows a block side. Buildings are positioned whole on that plane by ONE bottom-anchor and are NEVER clipped. ONE coordinate transform (no fudge) drives draw, highlight and pick. Elevation is −z·TILE_H up and +z depth.
 
-**Verified current state on `main` (so tickets target reality, not a stale audit):**
+**State verified when these tickets were filed (historical baseline):**
 - P4 (pick fudge): the `+HH` in `flatPick` is **already removed** — good, don't reintroduce it. (I2 guards it.)
 - P1 (building clip): `skirtCovered` **is still applied to buildings** at `renderer.ts:382` — this is the live regression. **I1 fixes it.**
 - P5 (stacking): composites now measure per-layer rise — closer to correct; I3 verifies against the formula.
@@ -14,6 +18,9 @@ Every ticket below carries a **SPEC** section quoting the authoritative principl
 ---
 
 ## I0. Golden-image render tests at every zoom (build this FIRST)
+
+**Status: FIXED — 2026-09-06.**
+
 `[P0] [testing] [infra]`
 
 ### SPEC
@@ -38,6 +45,9 @@ Every visual regression in this project shipped with green tests. The root cause
 ---
 
 ## I1. Never clip buildings — the N1 skirt rule is ground-tiles ONLY
+
+**Status: FIXED — 2026-09-06.**
+
 `[P0] [renderer]`
 
 ### SPEC
@@ -65,6 +75,9 @@ this.blit(ctx, p, timeMs, covered);
 ---
 
 ## I2. One coordinate transform for draw, highlight and pick — no fudge
+
+**Status: FIXED — 2026-09-06.**
+
 `[P0] [renderer]`
 
 ### SPEC
@@ -86,6 +99,9 @@ The `+HH` fudge in `flatPick` is **already removed** on `main` @ 0bec138 (0 matc
 ---
 
 ## I3. Stacked buildings anchor at base bottom; elevation is a formula
+
+**Status: FIXED — 2026-09-06.**
+
 `[P0] [renderer] [assets]`
 
 ### SPEC
@@ -108,6 +124,9 @@ Composites now measure per-layer rise (`slice-atlas.mjs` — "the rise is MEASUR
 ---
 
 ## I4. Ground-tile skirt: flat interior, block only at the island rim
+
+**Status: FIXED — 2026-09-06.**
+
 `[P0] [renderer] [assets]`
 
 ### SPEC
@@ -131,6 +150,9 @@ Composites now measure per-layer rise (`slice-atlas.mjs` — "the rise is MEASUR
 ---
 
 ## I5. Fix grass seams and repick flush road tiles
+
+**Status: FIXED — 2026-09-06.**
+
 `[P1] [assets]`
 
 ### SPEC
@@ -158,3 +180,25 @@ Composites now measure per-layer rise (`slice-atlas.mjs` — "the rise is MEASUR
 I0 (golden-image) first — it is the test that proves every subsequent fix and would have caught every past regression. Then I1 (stop clipping buildings — the live regression), I2 (guard the pick fix), I3 (stack anchors), I4 (ground skirt = rim only), I5 (seams + road art).
 
 **The meta-rule for whoever implements these** (from the research): *ground tiles and buildings are different.* Ground tiles tessellate into a plane and only the rim shows a block side (I4). Buildings are positioned whole on that plane and never clipped (I1). Every past round broke because it tried to fix a ground-tile problem by cutting up buildings. Do not repeat it — and let I0's building-intact test stop you if you do.
+
+---
+
+## Resolution (2026-09-06)
+
+| ticket | delivered |
+|---|---|
+| **I0** | `tests/unit/iso-golden.test.ts` renders one deterministic full scene through the real atlas, anchor/depth, skirt and pick math at 0.5×/1×/2×. Three reference PNGs are committed under `tests/fixtures/iso-golden/`; named assertions cover building integrity, inland brown, transform agreement and hard seams. `npm test` runs this gate on every CI/PR. |
+| **I1** | `shouldClipGroundSkirt` is now the renderer's single boundary: inland `ground` art is clipped, while every `standing` sprite (single-piece and composite) is drawn whole and remains wholly pickable. |
+| **I2** | `screenToTile` is the one centred-diamond inverse shared by camera, renderer (`flatPick` is an alias), input and highlights. Round trips are pinned for every map tile at every zoom with a non-zero camera offset. |
+| **I3** | Composite manifest parts retain their measured `groundRow` and `rise`. The packer defines `anchorY` as `base.dy + base.groundRow`; schema validation and unit tests enforce the base-contact and every consecutive-rise equation for factory/depot variants. |
+| **I4** | Terrain and flush ground overlays clip their block side inland and keep it at the SE/SW water or map rim. Structure clip coordinates now scale once—not twice—at 0.5× and 2×. |
+| **I5** | Roads remain on the reviewed flat K-FIX-2 mask set. Grass now uses a generated straight-alpha top with one logical pixel of 1:1 overflow (`derived/terrain_grass.png`), removing the dark interior grid without runtime image scaling; chunk bounds include the overflow. |
+
+### Verification
+
+- Golden scene contains a grass field, straight road, corner road, single-piece
+  industry, five-layer factory, placement highlight and coastline in every PNG.
+- The derived-art reproducibility gate regenerates the new grass source as well
+  as rail/crossing/highlights.
+- `npm test`, `npm run typecheck`, `npm run lint`, and the atlas regeneration
+  diff gate are the completion gates for this resolution.

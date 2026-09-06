@@ -166,7 +166,9 @@
             "required": [
               "sprite",
               "dx",
-              "dy"
+              "dy",
+              "groundRow",
+              "rise"
             ],
             "properties": {
               "sprite": {
@@ -178,6 +180,16 @@
               },
               "dy": {
                 "type": "integer"
+              },
+              "groundRow": {
+                "description": "Measured contact row in the referenced layer sprite.",
+                "type": "integer",
+                "minimum": 0
+              },
+              "rise": {
+                "description": "Measured upward contact-line offset for the next layer.",
+                "type": "integer",
+                "minimum": 0
               }
             }
           }

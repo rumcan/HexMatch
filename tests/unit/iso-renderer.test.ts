@@ -5,6 +5,7 @@ import { depthSort, place, pickSprite, type DrawItem } from "../../src/iso/depth
 import {
   CHUNK, chunksX, chunkIndexOf, chunkSurfaceSize, chunkWorldOrigin,
   terrainSprite, buildDrawList, cullPad, flatPick, resolveVariantSprite, variantSeed,
+  GROUND_OVERLAP, shouldClipGroundSkirt, structureSkirtPoly,
 } from "../../src/iso/renderer";
 import { generateMap, WATER, ROUGH } from "../../src/iso/grid";
 import { createCamera, centerOnMap, visibleTileRange } from "../../src/iso/camera";
@@ -30,21 +31,25 @@ describe("K4 chunking (4×4 — 132px tiles make 8×8 chunks expensive)", () => 
     const z = 1;
     const { w, h } = chunkSurfaceSize(z);
     const [ox, oy] = chunkWorldOrigin(0, 0);
-    // every tile of chunk (0,0): sprite spans (sx − 66, sy − anchorY) …
-    // (sx + 66, sy − anchorY + 83) — check the extremes land inside.
+    // Check the real overflow grass rect, not an assumed 132px tile. I5's
+    // seam-safe sprite is deliberately 134px wide and must not be clipped by
+    // the cache surface at either side.
+    const grass = atlas.get("terrain_grass")!;
     for (let ty = 0; ty < CHUNK; ty++) {
       for (let tx = 0; tx < CHUNK; tx++) {
         const sx = (tx - ty) * HW, sy = (tx + ty) * HH;
-        expect(sx + HW - ox, `right edge of (${tx},${ty})`).toBeLessThanOrEqual(w - HW);
-        expect(sy + BLOCK_H + HH - oy, `bottom edge of (${tx},${ty})`)
-          .toBeLessThanOrEqual(h - 1);
-        expect(sx - HW - ox, `left edge of (${tx},${ty})`).toBeGreaterThanOrEqual(0);
+        const left = sx - grass.anchor[0] - ox;
+        const top = sy - grass.anchor[1] - oy;
+        expect(left, `left edge of (${tx},${ty})`).toBeGreaterThanOrEqual(0);
+        expect(left + grass.w, `right edge of (${tx},${ty})`).toBeLessThanOrEqual(w);
+        expect(top, `top edge of (${tx},${ty})`).toBeGreaterThanOrEqual(0);
+        expect(top + grass.h, `bottom edge of (${tx},${ty})`).toBeLessThanOrEqual(h);
       }
     }
     // Old flat-diamond size was 16*HW wide; the block geometry needs the
     // skirt too — pin the K4 pad.
-    expect(w).toBe(2 * CHUNK * HW + TILE_W);
-    expect(h).toBe(2 * CHUNK * HH + TILE_H + BLOCK_H);
+    expect(w).toBe(2 * CHUNK * HW + TILE_W + 2 * GROUND_OVERLAP);
+    expect(h).toBe(2 * CHUNK * HH + TILE_H + BLOCK_H + 2 * GROUND_OVERLAP);
   });
 });
 
@@ -151,6 +156,43 @@ describe("E4 culling + draw list", () => {
   });
 });
 
+describe("I1 standing sprites are positioned, never clipped", () => {
+  const inland = {
+    ...grid,
+    terrain: new Uint8Array(MAP_W * MAP_H),
+  };
+
+  it("clips inland ground overlays but never a standing sprite", () => {
+    expect(shouldClipGroundSkirt(inland, atlas.get("road_0101")!, 10, 10)).toBe(true);
+    expect(shouldClipGroundSkirt(inland, atlas.get("farm")!, 10, 10)).toBe(false);
+    expect(shouldClipGroundSkirt(inland, atlas.get("factory_blue")!, 10, 10)).toBe(false);
+  });
+
+  it("the rule covers every shipped standing sprite, including composites", () => {
+    const standing = Object.entries(manifest.sprites).filter(([, def]) => def.kind === "standing");
+    expect(standing.length).toBeGreaterThan(10);
+    for (const [name, def] of standing) {
+      expect(shouldClipGroundSkirt(inland, def, 12, 12), name).toBe(false);
+    }
+  });
+
+  it("I4 scales a ground clip once at every zoom and non-zero camera offset", () => {
+    const p = place(atlas, { sprite: "road_0101", tx: 5, ty: 6 })!;
+    const [wx, wy] = [
+      (p.tx - p.ty) * HW,
+      (p.tx + p.ty) * HH,
+    ];
+    for (const zoom of [0.5, 1, 2] as const) {
+      const cam = { x: 137, y: -42, zoom, vw: 800, vh: 600 };
+      const poly = structureSkirtPoly(p, cam);
+      const cx = wx * zoom + cam.x, cy = wy * zoom + cam.y;
+      expect(poly[2]).toEqual([Math.round(cx), Math.round(cy + HH * zoom)]);
+      expect(poly[0][0]).toBe(Math.round(cx - HW * zoom));
+      expect(poly[4][0]).toBe(Math.round(cx + HW * zoom));
+    }
+  });
+});
+
 describe("MB2 per-instance variants pick a stable preset per tile", () => {
   const variants = atlas.get("depot_blue")!.variants!;
   it("depot_blue carries a multi-entry pick-set in the shipped manifest", () => {
@@ -182,10 +224,9 @@ describe("MB2 per-instance variants pick a stable preset per tile", () => {
   });
 });
 
-describe("K4 flat pick — hits the drawn diamond, not the pick lattice", () => {
-  // tileToScreen is the diamond CENTRE; the pick lattice cell has its top
-  // vertex there, so the drawn top surface is HH ABOVE the lattice cell and
-  // flatPick samples HH below the cursor to compensate.
+describe("I2 flat pick — the exact inverse of the drawn diamond lattice", () => {
+  // tileToScreen is the diamond CENTRE and flatPick directly inverts it. There
+  // is no second top-vertex lattice and no HH cursor compensation.
   it("picks the tile whose visible diamond contains the point", () => {
     // tile (3,3): centre (0, 6*HH); drawn diamond spans y 6*HH−HH … 6*HH+HH
     expect(flatPick(0, 6 * HH)).toEqual([3, 3]);          // exact centre

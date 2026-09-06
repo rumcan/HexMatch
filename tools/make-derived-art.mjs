@@ -27,14 +27,17 @@
  *   crossing.png                    rail straight (NE–SW) drawn OVER the
  *                                   Kenney crossroads road tile, for tiles
  *                                   that carry both layers (G6).
+ *   terrain_grass.png               I5 flat, straight-alpha grass top with
+ *                                   brown block sides only for coastline use.
  *   highlight.png / highlight_soft.png
  *                                   the two placement glows (solid 1×1 build
  *                                   tile; fainter catchment area) as 132×64
  *                                   diamond PNGs.
  *
- * Everything is rasterised on the canonical 132×83 grid whose diamond centre
- * sits at (66, 32) — the same geometry the packer measures anchors from, so
- * these sprites anchor like any ground tile.
+ * Everything uses the canonical 132px/64px diamond whose centre sits on the
+ * measured contact row. Rail uses the full 132×99 block; glows use 132×83;
+ * I5 grass is 134×99 because it carries one straight-alpha overflow pixel on
+ * each horizontal side. The packer measures that x=67 anchor automatically.
  */
 import {
   mkdirSync, readFileSync, readdirSync, existsSync, rmSync, mkdtempSync,
@@ -87,8 +90,11 @@ const ARMS = {
 // ── palette, median-sampled from the real Kenney tiles so the derived art
 //    blends with the set (grass_010 / sand_073 / road_082) ─────────────────
 const PAL = {
+  grassTop: [138, 181, 73],        // median of Kenney's clean flat grass
   grassEdge: [137, 163, 65],       // grass lip hanging over the block side
   earth: [139, 125, 68],           // block side, deeper earth
+  earthLight: [167, 125, 83],
+  earthRight: [129, 96, 62],
   earthDark: [104, 88, 48],
   ballast: [148, 140, 124],        // gravel deck
   ballastDark: [122, 115, 100],
@@ -136,6 +142,47 @@ const inBlock = (x, y) => {
 };
 const inDiamond = (x, y) =>
   y >= 0 && y <= 64 && Math.abs(x - CX) / 66 + Math.abs(y - CY) / 32 <= 1;
+
+/**
+ * I5 seamless grass block. The top is one fully-opaque straight-alpha colour
+ * all the way through the mathematical diamond boundary: adjacent copies
+ * overlap rather than exposing a dark baked bevel or transparent background.
+ * Brown begins strictly outside the top diamond, so I4's inland clip removes
+ * it while a coastline tile still has visible island thickness.
+ */
+function grassBlock() {
+  // One transparent-overflow pixel on each horizontal side. The sprite is
+  // deliberately 134px (not 132px) wide and remains a 1:1 blit; its measured
+  // anchor is x=67. Renderer clipping allows the same one logical pixel, so
+  // adjacent floored draws overlap without scaling or exposing background.
+  const GW = W + 2, GCX = CX + 1;
+  const c = { px: Buffer.alloc(GW * H * 4), w: GW, h: H };
+  const inGrassBlock = (x, y) => {
+    if (y <= CY) { const hw = 67 * (y + 1) / 34; return Math.abs(x - GCX) <= hw; }
+    if (y <= CY + PLATEAU) return Math.abs(x - GCX) <= 67;
+    const hw = 67 - (y - (CY + PLATEAU)) * 2;
+    return hw > 0 && Math.abs(x - GCX) <= hw;
+  };
+  // The measured ground contact/anchor is source row 33. The renderer puts
+  // that row at the diamond centre and allows ±(HW/HH + 1px).
+  const inSeamlessTop = (x, y) =>
+    Math.abs(x - GCX) / 67 + Math.abs(y - 33) / 33 <= 1;
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < GW; x++) {
+      if (!inGrassBlock(x, y)) continue;
+      if (y <= 33 || inSeamlessTop(x, y)) {
+        // Above the contact row the block silhouette IS the upper half of the
+        // top face. Keeping its one-pixel overflow green is essential because
+        // the skirt clip intentionally admits everything above the diamond.
+        put(c, x, y, ...PAL.grassTop);
+      } else {
+        const side = x < GCX ? PAL.earthLight : PAL.earthRight;
+        put(c, x, y, ...(y > CY + PLATEAU ? PAL.earthDark : side));
+      }
+    }
+  }
+  return c;
+}
 
 /** Gravel-ballast ground block in the Kenney silhouette. */
 function ballastBlock() {
@@ -195,6 +242,9 @@ async function emit(name, c) {
   if (!CHECK) console.log("derived", name);
 }
 
+// ── I5 flat grass terrain ──────────────────────────────────────────────────
+await emit("terrain_grass.png", grassBlock());
+
 // ── the 16 rail autotiles ──────────────────────────────────────────────────
 for (let mask = 0; mask < 16; mask++) {
   const c = ballastBlock();
@@ -240,7 +290,7 @@ for (let mask = 0; mask < 16; mask++) {
 if (PAL.ballast.length !== 3) throw new Error("palette shape");
 
 if (!CHECK) {
-  console.log(`derived art written to ${OUT} (rail ×16, crossing, highlight ×2)`);
+  console.log(`derived art written to ${OUT} (grass, rail ×16, crossing, highlight ×2)`);
   process.exit(0);
 }
 

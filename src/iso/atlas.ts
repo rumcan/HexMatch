@@ -10,10 +10,14 @@
 // the cursor position divided by the zoom.
 // ══════════════════════════════════════════════════════════════════════════
 
+export type SpriteKind = "ground" | "standing" | "vehicle";
+
 export interface SpriteDef {
   x: number; y: number; w: number; h: number;
   footprint: [number, number];
   anchor: [number, number];
+  /** Ground tiles may have their skirt clipped inland; standing art never is. */
+  kind?: SpriteKind;
   frames?: number;
   frameMs?: number;
   slices?: { x: number; y: number; w: number; h: number }[];
@@ -23,7 +27,15 @@ export interface SpriteDef {
    * by blitting each part at a (dx, dy) world-1x offset from the box's top-left,
    * sourced from the part's own packed layer sprite. Bottom-to-top order.
    */
-  parts?: { sprite: string; dx: number; dy: number }[];
+  parts?: {
+    sprite: string;
+    dx: number;
+    dy: number;
+    /** Measured contact row in this layer's own sprite. */
+    groundRow?: number;
+    /** Measured rise from this contact row to the next layer's contact row. */
+    rise?: number;
+  }[];
   /**
    * MB2 per-instance variants: when present this canonical sprite is the first
    * of a pick-set of visually-different presets (`variants[0] === this name`).

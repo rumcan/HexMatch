@@ -21,16 +21,12 @@
 //   through the left/right corners, where the sprite's widest row lands
 //   (K0 anchor: drawX = screenX − HW, drawY = screenY − widestRowY).
 //
-//   N4: ONE tile→screen convention. Drawing centres the diamond on
-//   tileToScreen and picking inverts that same lattice
-//   (renderer.flatPick) — the old second convention (a pick cell whose TOP
-//   VERTEX sat on tileToScreen, an HH off from the drawn diamond, papered
-//   over by sampling HH below the cursor) is gone. screenToTile below keeps
-//   the lattice-cell decomposition for camera culling bounds only; it is
-//   not the picking path.
-// screenToTile uses Math.floor, never Math.round: flooring is the algebraic
-// inverse cell decomposition (the tile whose diamond contains the point);
-// rounding produces an off-by-one band along every diamond edge (E0).
+//   I2/N4: ONE tile→screen convention. Drawing centres the diamond on
+//   tileToScreen and screenToTile is the exact inverse used by renderer input,
+//   highlights and camera culling. The old second convention (a pick cell
+//   whose TOP VERTEX sat on tileToScreen, papered over by sampling HH below
+//   the cursor) is gone. Math.floor gives deterministic ownership to shared
+//   edges; there is no additive cursor compensation anywhere.
 //
 // Kenney tiles are ~2× the old OpenGFX pixels, so the map is 32×32 (was
 // 48×48) — a similar world size on screen at half the draw count (K0).
@@ -52,13 +48,14 @@ export type Zoom = (typeof ZOOM_STEPS)[number];
 export const tileToScreen = (tx: number, ty: number): [number, number] =>
   [(tx - ty) * HW, (tx + ty) * HH];
 
-// Lattice-cell decomposition of the plane (floor, never round — E0): the
-// diamonds whose TOP VERTEX sits on the tileToScreen lattice. Used for
-// camera culling bounds, NOT for picking — the picking inverse of the drawn
-// lattice is renderer.flatPick (N4: one convention, no HH fudge).
+/**
+ * Exact inverse cell decomposition for diamonds CENTRED on tileToScreen.
+ * The +1 is part of assigning the centred diamond's shared boundaries before
+ * flooring; it is not a screen-pixel offset or pick fudge.
+ */
 export const screenToTile = (sx: number, sy: number): [number, number] => {
   const a = sx / HW, b = sy / HH;
-  return [Math.floor((a + b) / 2), Math.floor((b - a) / 2)];
+  return [Math.floor((a + b + 1) / 2), Math.floor((b - a + 1) / 2)];
 };
 
 export const tileIndex = (tx: number, ty: number) => ty * MAP_W + tx;

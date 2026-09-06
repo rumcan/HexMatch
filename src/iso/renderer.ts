@@ -17,11 +17,11 @@
 // inside drawImage — the atlas ships pre-rendered at 0.5×/1×/2×.
 // ══════════════════════════════════════════════════════════════════════════
 import {
-  HW, HH, TILE_W, TILE_H, BLOCK_H, MAP_W, MAP_H, tileToScreen,
+  HW, HH, TILE_W, TILE_H, BLOCK_H, MAP_W, MAP_H, tileToScreen, screenToTile,
 } from "../game/config";
 import type { Camera } from "./camera";
 import { visibleTileRange, screenToWorld, worldToScreen } from "./camera";
-import type { Atlas } from "./atlas";
+import type { Atlas, SpriteDef } from "./atlas";
 import { depthSort, place, pickSprite, type DrawItem, type Placed } from "./depth";
 import { GRASS, WATER, ROUGH, inBounds, idx, type Grid } from "./grid";
 
@@ -39,9 +39,11 @@ import { GRASS, WATER, ROUGH, inBounds, idx, type Grid } from "./grid";
 // water or off the map. That is the coastline, and it is the only place
 // brown belongs. Interior tiles draw just their above-ground region (the
 // diamond top plus anything standing on it), which tessellates into a
-// seamless flat ground plane; roads and buildings ride that plane with no
-// skirt of their own. `skirtCovered` is the predicate, `aboveGroundPoly` the
-// clip region, both pure and unit-tested against real atlas pixels.
+// seamless flat ground plane; flush ground overlays (roads/rail) use the same
+// treatment. Standing sprites are different: a building is bottom-anchored
+// and always drawn whole — clipping its walls to solve a terrain problem was
+// the I1 regression. `skirtCovered` classifies the tile, while
+// `shouldClipGroundSkirt` enforces that the clip is ground-art only.
 // ══════════════════════════════════════════════════════════════════════════
 
 /**
@@ -71,6 +73,19 @@ export function skirtCovered(grid: Grid, tx: number, ty: number, fw = 1, fh = 1)
 }
 
 /**
+ * I1/I4 boundary: only ground art participates in the island-skirt rule.
+ * Roads, rail and crossings are ground overlays, so clipping their inland
+ * block side keeps them flush. A standing sprite is positioned by its bottom
+ * anchor and must be painted whole, regardless of whether its tile is inland.
+ */
+export function shouldClipGroundSkirt(
+  grid: Grid, def: SpriteDef, tx: number, ty: number,
+): boolean {
+  return def.kind === "ground" &&
+    skirtCovered(grid, tx, ty, def.footprint[0], def.footprint[1]);
+}
+
+/**
  * The clip region an interior tile may paint: its ground diamond PLUS
  * everything above it (a building's tower, a rock on rough ground), and
  * NOTHING below the diamond's two lower edges — the skirt. (lx, ly) is the
@@ -91,6 +106,18 @@ export function aboveGroundPoly(
   ].map(([x, y]) => [Math.round(x * z), Math.round(y * z)] as [number, number]);
 }
 
+/** I4 screen-space clip for a placed ground overlay at any camera/zoom. */
+export function structureSkirtPoly(p: Placed, cam: Camera): [number, number][] {
+  const [fw, fh] = p.def.footprint;
+  const [fcx, fcy] = tileToScreen(p.tx + (fw - 1) / 2, p.ty + (fh - 1) / 2);
+  const [lx, ly] = worldToScreen(cam, fcx, fcy);
+  const half = (fw + fh) / 2;
+  return aboveGroundPoly(
+    lx, ly, half * HW * cam.zoom, half * HH * cam.zoom,
+    (p.def.h + TILE_H + BLOCK_H) * cam.zoom,
+  );
+}
+
 /** Apply `aboveGroundPoly` as a canvas clip. Caller draws, then restore()s. */
 function clipAboveGround(ctx: Ctx2D, poly: [number, number][]): void {
   ctx.save();
@@ -100,6 +127,9 @@ function clipAboveGround(ctx: Ctx2D, poly: [number, number][]): void {
   ctx.closePath();
   ctx.clip();
 }
+
+/** I5: one logical pixel of straight-alpha overlap hides floored tile seams. */
+export const GROUND_OVERLAP = 1;
 
 export const CHUNK = 4;
 export const chunksX = Math.ceil(MAP_W / CHUNK);
@@ -117,16 +147,16 @@ export const chunkIndexOf = (tx: number, ty: number) =>
  */
 export function chunkSurfaceSize(z: number): { w: number; h: number } {
   return {
-    w: Math.ceil((2 * CHUNK * HW + TILE_W) * z),
-    h: Math.ceil((2 * CHUNK * HH + TILE_H + BLOCK_H) * z),
+    w: Math.ceil((2 * CHUNK * HW + TILE_W + 2 * GROUND_OVERLAP) * z),
+    h: Math.ceil((2 * CHUNK * HH + TILE_H + BLOCK_H + 2 * GROUND_OVERLAP) * z),
   };
 }
 
 /** World-space top-left of a chunk's cache surface. */
 export function chunkWorldOrigin(cx: number, cy: number): [number, number] {
   const x0 = cx * CHUNK, y0 = cy * CHUNK;
-  const ox = (x0 - (y0 + CHUNK - 1)) * HW - HW;
-  const oy = (x0 + y0) * HH - HH;
+  const ox = (x0 - (y0 + CHUNK - 1)) * HW - HW - GROUND_OVERLAP;
+  const oy = (x0 + y0) * HH - HH - GROUND_OVERLAP;
   return [ox, oy];
 }
 
@@ -328,7 +358,9 @@ export class IsoRenderer {
         const covered = skirtCovered(this.world.grid, tx, ty);
         if (covered) {
           clipAboveGround(ctx, aboveGroundPoly(
-            (tx - ty) * HW - ox, (tx + ty) * HH - oy, HW, HH, TILE_H + BLOCK_H, z,
+            (tx - ty) * HW - ox, (tx + ty) * HH - oy,
+            HW + GROUND_OVERLAP, HH + GROUND_OVERLAP,
+            TILE_H + BLOCK_H, z,
           ));
         }
         ctx.drawImage(
@@ -375,13 +407,13 @@ export class IsoRenderer {
     const { order } = depthSort(placed);
     this.lastOrder = order;
     for (const p of order) {
-      // N1: structures obey the same skirt rule as terrain — an interior
-      // road/building draws no skirt (it stands on the flat ground plane the
-      // terrain diamonds make), a coast one keeps its block side. The flag
-      // also feeds stage-2 picking (N4): never pick an undrawn skirt.
-      const covered = skirtCovered(this.world.grid, p.tx, p.ty, p.def.footprint[0], p.def.footprint[1]);
-      p.clipped = covered;
-      this.blit(ctx, p, timeMs, covered);
+      // I1/I4: the coastline clip belongs to GROUND art only. Roads/rail are
+      // flush ground overlays and lose their inland block side; buildings are
+      // standing sprites and are always bottom-anchored and painted whole.
+      // The flag also keeps stage-2 picking identical to what was painted.
+      const clipSkirt = shouldClipGroundSkirt(this.world.grid, p.def, p.tx, p.ty);
+      p.clipped = clipSkirt;
+      this.blit(ctx, p, timeMs, clipSkirt);
     }
     this.structuresDirty = false;
   }
@@ -401,18 +433,9 @@ export class IsoRenderer {
     const img = this.atlas.image(z);
     if (!img) return;
     if (clipSkirt) {
-      // N1: restrict this sprite to its above-ground region — the footprint's
-      // ground diamond plus everything above it. The lattice point the anchor
-      // lands on is the footprint centre (depth.drawOrigin), so the clip is
-      // expressed directly in screen space around it and is exact at any zoom.
-      const [fcx, fcy] = tileToScreen(
-        p.tx + (p.def.footprint[0] - 1) / 2, p.ty + (p.def.footprint[1] - 1) / 2,
-      );
-      const [lx, ly] = worldToScreen(this.cam, fcx, fcy);
-      const half = (p.def.footprint[0] + p.def.footprint[1]) / 2;
-      clipAboveGround(ctx, aboveGroundPoly(
-        lx, ly, half * HW, half * HH, p.def.h + TILE_H + BLOCK_H, z,
-      ));
+      // I4: structureSkirtPoly receives SCREEN space and scales dimensions
+      // once; camera translation is never multiplied a second time.
+      clipAboveGround(ctx, structureSkirtPoly(p, this.cam));
     }
     // MB1: a composite (stacked) building is drawn part-by-part — each layer
     // is a packed sprite sourced from its own atlas rect, offset by (dx, dy)
@@ -429,7 +452,7 @@ export class IsoRenderer {
           Math.floor(def.w * z), Math.floor(def.h * z),
         );
       }
-      ctx.restore();
+      if (clipSkirt) ctx.restore();
       return;
     }
     const frame = p.frame ?? this.atlas.frameAt(p.def, timeMs);
@@ -472,18 +495,12 @@ export class IsoRenderer {
   }
 }
 
-export const flatPick = (wx: number, wy: number): [number, number] => {
-  // N4: ONE convention, no compensation. The drawn diamond of tile (tx,ty) is
-  // CENTRED on tileToScreen(tx,ty) (the anchor row lands there by
-  // construction), and this is its exact closed-form inverse: with a =
-  // wx/HW and b = wy/HH, the point lies in the drawn diamond of (i,j) iff
-  // |a−(i−j)| + |b−(i+j)| ≤ 1, and flooring the half-sums below returns that
-  // tile. The old pick lattice put the cell's TOP VERTEX on tileToScreen —
-  // HH away from the drawn diamond — and sampled HH below the cursor to
-  // paper over the gap; that fudge is gone. The highlight, the building base
-  // and pick() now speak the same tile by construction.
-  const a = wx / HW, b = wy / HH;
-  return [Math.floor((a + b + 1) / 2), Math.floor((b - a + 1) / 2)];
-};
+/**
+ * I2: the renderer, camera and input code share this one inverse. Keeping the
+ * public name avoids churn for debug/tests while the implementation is the
+ * exact `tileToScreen` inverse exported from config — no HH compensation and
+ * no second pick lattice.
+ */
+export const flatPick = screenToTile;
 
 export { GRASS, WATER, ROUGH, TILE_W, TILE_H, HW, HH };
