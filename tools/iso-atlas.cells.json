@@ -10,13 +10,13 @@
   "sprites": [
     {
       "name": "terrain_grass",
-      "png": "landscape/PNG/landscapeTiles_067.png",
+      "png": "derived/terrain_grass.png",
       "kind": "ground",
       "footprint": [
         1,
         1
       ],
-      "note": "K2: flat grass block, measured clean green (64% top surface), 132x83 with the widest row at y=33."
+      "note": "I5/K2: clean flat grass block, 134x99 with the widest row at y=33; one straight-alpha overflow pixel per side and no dark bevel, so interior diamonds tessellate without a black grid."
     },
     {
       "name": "terrain_water",

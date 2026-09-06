@@ -38,7 +38,7 @@ export const worldToScreen = (c: Camera, wx: number, wy: number): [number, numbe
 export const screenToWorld = (c: Camera, sx: number, sy: number): [number, number] =>
   [(sx - c.x) / c.zoom, (sy - c.y) / c.zoom];
 
-/** Flat pick (stage 1): screen pixel → tile. Fractional tiles are floored. */
+/** Flat pick (stage 1): screen pixel → the centred diamond containing it. */
 export function screenToTileAt(c: Camera, sx: number, sy: number): [number, number] {
   const [wx, wy] = screenToWorld(c, sx, sy);
   return screenToTile(wx, wy);

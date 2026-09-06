@@ -9,7 +9,7 @@ const realManifest = JSON.parse(readFileSync("assets/iso-atlas/manifest.json", "
   sprites: Record<string, {
     x: number; y: number; w: number; h: number;
     footprint: [number, number]; anchor: [number, number];
-    parts?: { sprite: string; dx: number; dy: number }[];
+    parts?: { sprite: string; dx: number; dy: number; groundRow: number; rise: number }[];
     variants?: string[];
   }>;
 };
@@ -255,6 +255,25 @@ describe("MB1 stacked-building composites", () => {
         expect(layerSprite, `${ln} must be packed`).toBeTruthy();
         expect(layerSprite.parts, `${ln} must not itself be a composite`).toBeUndefined();
       });
+    }
+  });
+
+  it("I3 anchors every composite on its base contact and stacks measured rises", () => {
+    for (const [name, m] of Object.entries(realManifest.sprites)) {
+      if (!m.parts) continue;
+      const base = m.parts[0];
+      expect(m.anchor[1], `${name} base contact`).toBe(base.dy + base.groundRow);
+      for (let i = 0; i < m.parts.length; i++) {
+        const p = m.parts[i];
+        expect(p.groundRow, `${name} part ${i} ground row`).toBe(
+          realManifest.sprites[p.sprite].anchor[1],
+        );
+        if (i === 0) continue;
+        const below = m.parts[i - 1];
+        expect(p.dy + p.groundRow, `${name} part ${i} contact`).toBe(
+          below.dy + below.groundRow - below.rise,
+        );
+      }
     }
   });
 });

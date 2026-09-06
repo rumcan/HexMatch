@@ -246,7 +246,7 @@ describe("C5 the dumps report the geometry the renderer used", () => {
     expect(c.geometry).toMatchObject({ tileW: 132, tileH: 64, blockH: 66 });
     expect(c.visibleTiles.x0).toBeLessThanOrEqual(c.visibleTiles.x1);
     const grass = c.sprites.terrain_grass;
-    expect(grass).toMatchObject({ anchor: [66, 33], footprint: [1, 1], kind: "ground" });
+    expect(grass).toMatchObject({ anchor: [67, 33], footprint: [1, 1], kind: "ground" });
     // the meta travels with the dump, so a report says which atlas it came from
     expect(c.manifestMeta.generatedBy).toMatch(/slice-atlas/);
     expect(Object.keys(c.sprites).length).toBeGreaterThan(0);

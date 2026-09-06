@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { BOARD_H, BOARD_W } from "../../src/game/config";
 import {
   findIsoCorridor, isoTileOcclusion, isoClickableTile, type Corridor,
 } from "./corridor-picker";
@@ -170,7 +171,7 @@ test.describe("iso game boots on the default route", () => {
     // J1: the match-3 quarry is mounted NEXT TO the map, not instead of it,
     // and its cells are real, pickable DOM.
     await expect(root.locator("#iso-quarry")).toBeVisible();
-    await expect(root.locator("#iso-quarry .gem")).toHaveCount(81);
+    await expect(root.locator("#iso-quarry .gem")).toHaveCount(BOARD_W * BOARD_H);
     await expect(root.locator('[data-panel="quarry"]')).toHaveCount(1);
     await expect(root.locator('[data-panel="trade"]')).toHaveCount(1);
     const firstGem = root.locator('.gem[data-r="0"][data-c="0"]');

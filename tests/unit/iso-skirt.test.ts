@@ -12,7 +12,9 @@
 import { describe, it, expect } from "vitest";
 import sharp from "sharp";
 import { readFileSync } from "node:fs";
-import { skirtCovered, aboveGroundPoly, flatPick } from "../../src/iso/renderer";
+import {
+  skirtCovered, shouldClipGroundSkirt, aboveGroundPoly, flatPick,
+} from "../../src/iso/renderer";
 import { pickSprite, place, type Placed } from "../../src/iso/depth";
 import { Atlas, type Manifest } from "../../src/iso/atlas";
 import { generateMap, WATER, GRASS, type Grid } from "../../src/iso/grid";
@@ -71,7 +73,7 @@ async function drawSprite(
   const [lx, ly] = tileToScreen(tx, ty);
   const X0 = Math.round(lx + dxL - s.anchor[0]);
   const Y0 = Math.round(ly + dyL - s.anchor[1]);
-  const covered = applyRule && grid ? skirtCovered(grid, tx, ty) : false;
+  const covered = applyRule && grid ? shouldClipGroundSkirt(grid, s, tx, ty) : false;
   const poly = covered ? aboveGroundPoly(lx + dxL, ly + dyL, HW, HH, 132 + 66, 1) : null;
   for (let y = 0; y < s.h; y++) {
     const Y = Y0 + y;
@@ -247,14 +249,22 @@ describe("N1 pixel acceptance — brown only at the coast", () => {
     expect(asphalt).toBeGreaterThan(300);
   });
 
-  it("BITE — an interior building on the structures layer leaks brown without the rule", async () => {
-    const { c, cy } = await drawPatch(SIZE, GRASS, true, "farm", false);
-    const brown = countIn(c, c.w / 2 - W, cy + HH - 8, c.w / 2 + W, cy + HH + W, isBrown);
-    expect(brown, "the pre-fix farm's block side covers the tile in front")
-      .toBeGreaterThan(100);
-    // with the rule the farm paints only its above-ground region — no brown
-    const { c: c2, cy: cy2 } = await drawPatch(SIZE, GRASS, true, "farm", true);
-    expect(countIn(c2, c2.w / 2 - W, cy2 + HH - 8, c2.w / 2 + W, cy2 + HH + W, isBrown)).toBe(0);
+  it("I1 — an interior building is byte-identical to its unclipped sprite", async () => {
+    const withoutRule = await drawPatch(SIZE, GRASS, true, "farm", false);
+    const withRule = await drawPatch(SIZE, GRASS, true, "farm", true);
+    // This is intentionally stronger than counting one wall region: every
+    // painted channel must survive. Reintroducing the old universal skirt
+    // clip changes hundreds of pixels here.
+    let drift = 0;
+    for (let i = 0; i < withRule.c.px.length; i++) {
+      if (withRule.c.px[i] !== withoutRule.c.px[i]) drift++;
+    }
+    expect(drift).toBe(0);
+    expect(shouldClipGroundSkirt(
+      { w: MAP_W, h: MAP_H, terrain: new Uint8Array(MAP_W * MAP_H).fill(GRASS),
+        industries: [], occupancy: new Int16Array(MAP_W * MAP_H).fill(-1), seed: 1 },
+      manifest.sprites.farm, 10, 10,
+    )).toBe(false);
   });
 
   it("a coast tile keeps its skirt — the island edge still shows its block side", async () => {
@@ -330,7 +340,7 @@ describe("N4 flatPick is the exact inverse of the drawn lattice", () => {
   });
 });
 
-describe("N4 stage-2 pick never hits an undrawn skirt", () => {
+describe("I1/I4 stage-2 pick matches the ground-only clip", () => {
   const grid = {
     w: MAP_W, h: MAP_H,
     terrain: new Uint8Array(MAP_W * MAP_H).fill(GRASS),
@@ -343,26 +353,24 @@ describe("N4 stage-2 pick never hits an undrawn skirt", () => {
     return p;
   };
 
-  it("a clipped (interior) building is not picked in its skirt region", () => {
-    // the farm's skirt reaches ~68px below its anchor row; the tile in front
-    // covers it — the eye sees grass there, so the pick must return nothing.
-    const p = placed("farm", 10, 10, true);
+  it("an inland ground overlay is not picked in its undrawn skirt", () => {
+    const p = placed("road_0101", 10, 10, true);
     const [cx, cy] = tileToScreen(10, 10);
     const px = cx, py = cy + HH + 12; // below the S vertex, inside the sprite
-    expect(atlas.opaqueAt("farm", px - p.wx, py - p.wy)).toBe(true);
+    expect(atlas.opaqueAt("road_0101", px - p.wx, py - p.wy)).toBe(true);
     expect(pickSprite(atlas, [p], px, py)).toBeNull();
   });
 
-  it("the same point on an edge (unclipped) building still picks the building", () => {
-    const p = placed("farm", 10, 10, false);
+  it("the same point on a coastal ground overlay remains pickable", () => {
+    const p = placed("road_0101", 10, 10, false);
     const [cx, cy] = tileToScreen(10, 10);
     expect(pickSprite(atlas, [p], cx, cy + HH + 12)).toBe(p);
   });
 
-  it("a clipped building still picks on its top face and its tower", () => {
-    const p = placed("farm", 10, 10, true);
+  it("a standing building is never marked clipped and remains pickable whole", () => {
+    const p = placed("farm", 10, 10, false);
     const [cx, cy] = tileToScreen(10, 10);
-    expect(pickSprite(atlas, [p], cx, cy)).toBe(p);          // centre of the base
-    expect(pickSprite(atlas, [p], cx, cy - 49)).toBe(p);     // up on the tower
+    expect(pickSprite(atlas, [p], cx, cy + HH + 12)).toBe(p); // complete base/wall
+    expect(pickSprite(atlas, [p], cx, cy - 49)).toBe(p);      // tower
   });
 });

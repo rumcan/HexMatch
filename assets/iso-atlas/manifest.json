@@ -16,20 +16,20 @@
     "terrain_grass": {
       "x": 8,
       "y": 8,
-      "w": 132,
+      "w": 134,
       "h": 99,
       "footprint": [
         1,
         1
       ],
       "anchor": [
-        66,
+        67,
         33
       ],
       "kind": "ground"
     },
     "terrain_water": {
-      "x": 148,
+      "x": 150,
       "y": 8,
       "w": 132,
       "h": 83,
@@ -44,7 +44,7 @@
       "kind": "ground"
     },
     "terrain_rough": {
-      "x": 288,
+      "x": 290,
       "y": 8,
       "w": 132,
       "h": 99,
@@ -59,7 +59,7 @@
       "kind": "ground"
     },
     "road_0000": {
-      "x": 428,
+      "x": 430,
       "y": 8,
       "w": 132,
       "h": 99,
@@ -74,7 +74,7 @@
       "kind": "ground"
     },
     "road_0001": {
-      "x": 568,
+      "x": 570,
       "y": 8,
       "w": 132,
       "h": 99,
@@ -89,7 +89,7 @@
       "kind": "ground"
     },
     "road_0010": {
-      "x": 708,
+      "x": 710,
       "y": 8,
       "w": 132,
       "h": 99,
@@ -104,7 +104,7 @@
       "kind": "ground"
     },
     "road_0100": {
-      "x": 848,
+      "x": 850,
       "y": 8,
       "w": 132,
       "h": 99,
@@ -119,7 +119,7 @@
       "kind": "ground"
     },
     "road_1000": {
-      "x": 988,
+      "x": 990,
       "y": 8,
       "w": 132,
       "h": 99,
@@ -134,7 +134,7 @@
       "kind": "ground"
     },
     "road_0011": {
-      "x": 1128,
+      "x": 1130,
       "y": 8,
       "w": 133,
       "h": 99,
@@ -149,7 +149,7 @@
       "kind": "ground"
     },
     "road_0110": {
-      "x": 1269,
+      "x": 1271,
       "y": 8,
       "w": 133,
       "h": 99,
@@ -164,7 +164,7 @@
       "kind": "ground"
     },
     "road_1100": {
-      "x": 1410,
+      "x": 1412,
       "y": 8,
       "w": 132,
       "h": 99,
@@ -1111,27 +1111,37 @@
         {
           "sprite": "layer_buildingtiles_015_70_130_220",
           "dx": 0,
-          "dy": 140
+          "dy": 140,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_055_70_130_220",
           "dx": 0,
-          "dy": 105
+          "dy": 105,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_055_70_130_220",
           "dx": 0,
-          "dy": 70
+          "dy": 70,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_055_70_130_220",
           "dx": 0,
-          "dy": 35
+          "dy": 35,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_024_70_130_220",
           "dx": 0,
-          "dy": 0
+          "dy": 0,
+          "groundRow": 25,
+          "rise": 35
         }
       ]
     },
@@ -1153,27 +1163,37 @@
         {
           "sprite": "layer_buildingtiles_015_224_70_70",
           "dx": 0,
-          "dy": 140
+          "dy": 140,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_055_224_70_70",
           "dx": 0,
-          "dy": 105
+          "dy": 105,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_055_224_70_70",
           "dx": 0,
-          "dy": 70
+          "dy": 70,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_055_224_70_70",
           "dx": 0,
-          "dy": 35
+          "dy": 35,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_024_224_70_70",
           "dx": 0,
-          "dy": 0
+          "dy": 0,
+          "groundRow": 25,
+          "rise": 35
         }
       ]
     },
@@ -1195,27 +1215,37 @@
         {
           "sprite": "layer_buildingtiles_015_190_92_255",
           "dx": 0,
-          "dy": 140
+          "dy": 140,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_055_190_92_255",
           "dx": 0,
-          "dy": 105
+          "dy": 105,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_055_190_92_255",
           "dx": 0,
-          "dy": 70
+          "dy": 70,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_055_190_92_255",
           "dx": 0,
-          "dy": 35
+          "dy": 35,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_024_190_92_255",
           "dx": 0,
-          "dy": 0
+          "dy": 0,
+          "groundRow": 25,
+          "rise": 35
         }
       ]
     },
@@ -1237,27 +1267,37 @@
         {
           "sprite": "layer_buildingtiles_015_78_196_90",
           "dx": 0,
-          "dy": 140
+          "dy": 140,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_055_78_196_90",
           "dx": 0,
-          "dy": 105
+          "dy": 105,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_055_78_196_90",
           "dx": 0,
-          "dy": 70
+          "dy": 70,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_055_78_196_90",
           "dx": 0,
-          "dy": 35
+          "dy": 35,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_024_78_196_90",
           "dx": 0,
-          "dy": 0
+          "dy": 0,
+          "groundRow": 25,
+          "rise": 35
         }
       ]
     },
@@ -1279,17 +1319,23 @@
         {
           "sprite": "layer_buildingtiles_044_70_130_220",
           "dx": 0,
-          "dy": 75
+          "dy": 75,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_044_70_130_220",
           "dx": 0,
-          "dy": 40
+          "dy": 40,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_057_70_130_220",
           "dx": 0,
-          "dy": 0
+          "dy": 0,
+          "groundRow": 30,
+          "rise": 5
         }
       ],
       "variants": [
@@ -1316,22 +1362,30 @@
         {
           "sprite": "layer_buildingtiles_044_70_130_220",
           "dx": 0,
-          "dy": 110
+          "dy": 110,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_044_70_130_220",
           "dx": 0,
-          "dy": 75
+          "dy": 75,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_044_70_130_220",
           "dx": 0,
-          "dy": 40
+          "dy": 40,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_057_70_130_220",
           "dx": 0,
-          "dy": 0
+          "dy": 0,
+          "groundRow": 30,
+          "rise": 5
         }
       ]
     },
@@ -1353,12 +1407,16 @@
         {
           "sprite": "layer_buildingtiles_044_70_130_220",
           "dx": 0,
-          "dy": 40
+          "dy": 40,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_057_70_130_220",
           "dx": 0,
-          "dy": 0
+          "dy": 0,
+          "groundRow": 30,
+          "rise": 5
         }
       ]
     },
@@ -1380,17 +1438,23 @@
         {
           "sprite": "layer_buildingtiles_044_224_70_70",
           "dx": 0,
-          "dy": 75
+          "dy": 75,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_044_224_70_70",
           "dx": 0,
-          "dy": 40
+          "dy": 40,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_057_224_70_70",
           "dx": 0,
-          "dy": 0
+          "dy": 0,
+          "groundRow": 30,
+          "rise": 5
         }
       ],
       "variants": [
@@ -1417,22 +1481,30 @@
         {
           "sprite": "layer_buildingtiles_044_224_70_70",
           "dx": 0,
-          "dy": 110
+          "dy": 110,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_044_224_70_70",
           "dx": 0,
-          "dy": 75
+          "dy": 75,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_044_224_70_70",
           "dx": 0,
-          "dy": 40
+          "dy": 40,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_057_224_70_70",
           "dx": 0,
-          "dy": 0
+          "dy": 0,
+          "groundRow": 30,
+          "rise": 5
         }
       ]
     },
@@ -1454,12 +1526,16 @@
         {
           "sprite": "layer_buildingtiles_044_224_70_70",
           "dx": 0,
-          "dy": 40
+          "dy": 40,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_057_224_70_70",
           "dx": 0,
-          "dy": 0
+          "dy": 0,
+          "groundRow": 30,
+          "rise": 5
         }
       ]
     },
@@ -1481,17 +1557,23 @@
         {
           "sprite": "layer_buildingtiles_044_190_92_255",
           "dx": 0,
-          "dy": 75
+          "dy": 75,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_044_190_92_255",
           "dx": 0,
-          "dy": 40
+          "dy": 40,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_057_190_92_255",
           "dx": 0,
-          "dy": 0
+          "dy": 0,
+          "groundRow": 30,
+          "rise": 5
         }
       ],
       "variants": [
@@ -1518,22 +1600,30 @@
         {
           "sprite": "layer_buildingtiles_044_190_92_255",
           "dx": 0,
-          "dy": 110
+          "dy": 110,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_044_190_92_255",
           "dx": 0,
-          "dy": 75
+          "dy": 75,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_044_190_92_255",
           "dx": 0,
-          "dy": 40
+          "dy": 40,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_057_190_92_255",
           "dx": 0,
-          "dy": 0
+          "dy": 0,
+          "groundRow": 30,
+          "rise": 5
         }
       ]
     },
@@ -1555,12 +1645,16 @@
         {
           "sprite": "layer_buildingtiles_044_190_92_255",
           "dx": 0,
-          "dy": 40
+          "dy": 40,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_057_190_92_255",
           "dx": 0,
-          "dy": 0
+          "dy": 0,
+          "groundRow": 30,
+          "rise": 5
         }
       ]
     },
@@ -1582,17 +1676,23 @@
         {
           "sprite": "layer_buildingtiles_044_78_196_90",
           "dx": 0,
-          "dy": 75
+          "dy": 75,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_044_78_196_90",
           "dx": 0,
-          "dy": 40
+          "dy": 40,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_057_78_196_90",
           "dx": 0,
-          "dy": 0
+          "dy": 0,
+          "groundRow": 30,
+          "rise": 5
         }
       ],
       "variants": [
@@ -1619,22 +1719,30 @@
         {
           "sprite": "layer_buildingtiles_044_78_196_90",
           "dx": 0,
-          "dy": 110
+          "dy": 110,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_044_78_196_90",
           "dx": 0,
-          "dy": 75
+          "dy": 75,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_044_78_196_90",
           "dx": 0,
-          "dy": 40
+          "dy": 40,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_057_78_196_90",
           "dx": 0,
-          "dy": 0
+          "dy": 0,
+          "groundRow": 30,
+          "rise": 5
         }
       ]
     },
@@ -1656,12 +1764,16 @@
         {
           "sprite": "layer_buildingtiles_044_78_196_90",
           "dx": 0,
-          "dy": 40
+          "dy": 40,
+          "groundRow": 25,
+          "rise": 35
         },
         {
           "sprite": "layer_buildingtiles_057_78_196_90",
           "dx": 0,
-          "dy": 0
+          "dy": 0,
+          "groundRow": 30,
+          "rise": 5
         }
       ]
     }

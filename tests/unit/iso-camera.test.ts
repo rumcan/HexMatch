@@ -5,7 +5,7 @@ import {
   resizeCamera, visibleTileRange, createGesture, pointerDown, pointerMove, pointerUp,
   mapWorldBounds,
 } from "../../src/iso/camera";
-import { MAP_W, MAP_H, HW, HH, tileToScreen } from "../../src/game/config";
+import { MAP_W, MAP_H, tileToScreen } from "../../src/game/config";
 
 describe("E4 camera — space conversions", () => {
   it("world→screen→world round-trips at every zoom", () => {
@@ -18,12 +18,15 @@ describe("E4 camera — space conversions", () => {
     }
   });
 
-  it("tileToScreenAt is the inverse of screenToTileAt at lattice points", () => {
-    const c = { ...createCamera(800, 600), zoom: 1 as const, x: 0, y: 0 };
-    for (const [tx, ty] of [[0, 0], [5, 9], [31, 31], [12, 20]]) {
-      const [sx, sy] = tileToScreenAt(c, tx, ty);
-      // nudge inside the diamond so we're unambiguously in this tile
-      expect(screenToTileAt(c, sx, sy + 1)).toEqual([tx, ty]);
+  it("I2 round-trips every tile at every zoom and a non-zero camera offset", () => {
+    for (const zoom of [0.5, 1, 2] as const) {
+      const c = { ...createCamera(800, 600), zoom, x: 137, y: -42 };
+      for (let tx = 0; tx < MAP_W; tx++) {
+        for (let ty = 0; ty < MAP_H; ty++) {
+          const [sx, sy] = tileToScreenAt(c, tx, ty);
+          expect(screenToTileAt(c, sx, sy), `${zoom}× (${tx},${ty})`).toEqual([tx, ty]);
+        }
+      }
     }
   });
 });

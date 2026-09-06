@@ -49,6 +49,23 @@ export function validateManifest(manifest) {
         errors.push(`sprite ${name}: part references unknown layer sprite ${part.sprite}`);
       else if (ref.parts)
         errors.push(`sprite ${name}: part ${part.sprite} is itself a composite (stacks cannot nest)`);
+      else if (part.groundRow !== ref.anchor[1])
+        errors.push(`sprite ${name}: part ${part.sprite} groundRow ${part.groundRow} != layer anchor ${ref.anchor[1]}`);
+    }
+    // I3: a stack is anchored by the base part's measured contact row, not by
+    // the union box top. Consecutive contact rows then rise by the measured
+    // amount carried by the preceding layer.
+    if (s.parts?.length) {
+      const base = s.parts[0];
+      if (s.anchor[1] !== base.dy + base.groundRow)
+        errors.push(`sprite ${name}: anchorY ${s.anchor[1]} != base contact ${base.dy + base.groundRow}`);
+      for (let i = 1; i < s.parts.length; i++) {
+        const below = s.parts[i - 1], current = s.parts[i];
+        const want = below.dy + below.groundRow - below.rise;
+        const got = current.dy + current.groundRow;
+        if (got !== want)
+          errors.push(`sprite ${name}: part ${i} contact ${got} != measured stack contact ${want}`);
+      }
     }
     if (s.parts && s.parts.length > 0 && s.frames)
       errors.push(`sprite ${name}: composite stacks cannot be animated (no frames)`);

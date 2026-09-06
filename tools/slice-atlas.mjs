@@ -296,9 +296,18 @@ async function run() {
       const dx = Math.max(0, Math.floor((W - t.part.w) / 2));
       const dy = t.top - minTop;
       H = Math.max(H, dy + t.part.h);
-      return { sprite: t.part.name, dx, dy };
+      return {
+        sprite: t.part.name, dx, dy,
+        // I3: retain the measurements in the manifest so the stack formula is
+        // inspectable and testable rather than hidden in this build script.
+        groundRow: t.part.gr,
+        rise: t.part.rise,
+      };
     });
-    const anchor = [Math.floor(W / 2), -minTop];   // base layer's ground row = tile ground
+    // I3: the whole stack's ONE bottom anchor is the base layer's contact row
+    // expressed in assembled-sprite coordinates. This is algebraically
+    // equivalent to -minTop, but names the invariant directly.
+    const anchor = [Math.floor(W / 2), parts[0].dy + parts[0].groundRow];
     const src = { x: 0, y: 0, w: W, h: H, footprint: comp.cell.footprint ?? [1, 1], anchor, kind: "standing" };
     compositeSprites[comp.name] = { ...src, parts };
     if (!comp.variantOf)
