@@ -163,8 +163,8 @@ export const SABOTAGE: Record<string, {
 export const SECURITY = { gold: 6, ms: 90000, name: "Security Forces", desc: "Hire guards for 90s — immune to Blockade & Smog Cloud." };
 export const TAX_EVERY_ROUNDS = 6;
 
-export const BOARD_W = 9, BOARD_H = 9;
-export const CELL = 54;
+export const BOARD_W = 7, BOARD_H = 8;
+export const CELL = 80;
 export const UPGRADE_EVERY = 20000;
 export const OFFER_LIFE = 40000;
 export const HEX_SIZE = 100;

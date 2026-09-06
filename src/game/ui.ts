@@ -211,6 +211,7 @@ export function createOriginalUi(
   grid.id = "iso-gems";
   grid.style.width = CELL * BOARD_W + "px";
   grid.style.height = CELL * BOARD_H + "px";
+  grid.style.setProperty("--gem", (CELL - 6) + "px");
   boardWrap.appendChild(grid);
   qp.appendChild(boardWrap);
   rightAside.appendChild(qp);
@@ -649,7 +650,7 @@ export function createOriginalUi(
     }
     if (g.res === "gold") {
       elem.classList.add("wild");
-      icon.textContent = "🪙";
+   
     }
     if (g.tier > 0) {
       elem.classList.add("token");
