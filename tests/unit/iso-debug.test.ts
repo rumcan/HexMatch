@@ -20,7 +20,10 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { setRng, mulberry32 } from "../../src/game/config";
-import { shouldInstallDebugConsole, shouldAutoEnableDebugOverlays, DEBUG_OVERLAYS } from "../../src/iso/debug";
+import {
+  shouldInstallDebugConsole, shouldAutoEnableDebugOverlays,
+  shouldAutoEnableRenderLog, DEBUG_OVERLAYS,
+} from "../../src/iso/debug";
 import { WATER, GRASS } from "../../src/iso/grid";
 
 vi.mock("../../assets/iso-atlas/atlas@0.5x.png", () => ({ default: "a05.png" }));
@@ -112,6 +115,8 @@ type DebugIso = {
   overlay: (name?: string, on?: boolean) => { active: string[]; drawn: boolean };
   config: () => any;
   probe: (tx: number, ty: number) => any;
+  rendering: () => any;
+  renderLog: (on?: boolean) => { on: boolean };
   placeFactory: (tx: number, ty: number) => boolean;
 };
 
@@ -135,14 +140,39 @@ describe("C5 the debug console is gated, not shipped", () => {
     expect(shouldAutoEnableDebugOverlays({ search: "" })).toBe(false);
     expect(shouldAutoEnableDebugOverlays({ search: "?debug=1" })).toBe(true);
     expect(shouldAutoEnableDebugOverlays({ search: "?iso-debug=1" })).toBe(true);
+
+    // render log boot flag: quiet by default, opt-in via ?render-log=1 (and
+    // never enabled by the generic `?debug=1` alone, which only overlays).
+    expect(shouldAutoEnableRenderLog({ search: "" })).toBe(false);
+    expect(shouldAutoEnableRenderLog({ search: "?render-log=1" })).toBe(true);
+    expect(shouldAutoEnableRenderLog({ search: "?render-log=0" })).toBe(false);
+    expect(shouldAutoEnableRenderLog({ search: "?debug=1" })).toBe(false);
+    expect(shouldAutoEnableRenderLog({ search: "?debug=1&render-log=1" })).toBe(true);
   });
 
   it("boots the real game with the console mounted on __iso", async () => {
     const h = await boot();
-    for (const cmd of ["dumpTile", "dumpAt", "dumpBuilding", "dumpNetwork", "overlay", "config", "probe"]) {
+    for (const cmd of ["dumpTile", "dumpAt", "dumpBuilding", "dumpNetwork", "overlay", "config", "probe", "rendering", "renderLog"]) {
       expect(typeof (h as any)[cmd], cmd).toBe("function");
     }
     expect(h.camera).toMatchObject({ zoom: 1, vw: 1280, vh: 720 });
+  });
+
+  it("rendering() and renderLog() expose the renderer's draw facts", async () => {
+    const h = await boot();
+    const d = h.rendering();
+    expect(d.camera).toMatchObject({ zoom: 1, vw: 1280, vh: 720 });
+    expect(d.cull.pad).toBeGreaterThan(0);
+    expect(d.groundAnchorReference).toBe(33);          // shared Kenney ground line
+    expect(Array.isArray(d.structures)).toBe(true);
+    expect(Array.isArray(d.sourceRect)).toBe(true);
+    expect(Array.isArray(d.depthCycles)).toBe(true);
+    expect(Array.isArray(d.warnings)).toBe(true);
+    // The real boot scene has industries in the draw list.
+    expect(d.structures.length).toBeGreaterThan(0);
+    // renderLog defaults off, and toggles the renderer's trace flag.
+    expect(h.renderLog(false)).toEqual({ on: false });
+    expect(h.renderLog(true)).toEqual({ on: true });
   });
 });
 

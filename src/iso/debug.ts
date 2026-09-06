@@ -89,6 +89,14 @@ export function shouldAutoEnableDebugOverlays(env: { search: string }): boolean 
   return debug === "1" || debug === "true" || (debug === "" && q.has("debug")) || isoDebug === "1" || isoDebug === "true";
 }
 
+/** `?render-log=1` turns on the per-blit `[render]` console.debug trace. */
+export function shouldAutoEnableRenderLog(env: { search: string }): boolean {
+  const qi = env.search.indexOf("?");
+  const raw = qi >= 0 ? env.search.slice(qi + 1) : env.search;
+  const q = new URLSearchParams(raw);
+  return q.get("render-log") === "1" || q.get("render-log") === "true";
+}
+
 const r = (n: number): number => Math.round(n * 100) / 100;
 const TERRAIN_NAME = ["grass", "water", "rough"] as const;
 const terrainName = (v: number) => TERRAIN_NAME[v] ?? `#${v}`;
@@ -520,6 +528,24 @@ export function createIsoDebug(ctx: DebugContext) {
 
   const commands: Record<string, unknown> = {
     dumpTile, dumpAt, dumpBuilding, dumpNetwork, overlay, config,
+    /**
+     * Render-debug surface: the exact rects/clip/depth numbers the renderer
+     * used on the last frame, plus warnings for known bug classes (anchor
+     * drift, standing sprite clipped, fractional zoom source rect, depth
+     * cycles). `__iso.rendering()` returns the same object.
+     */
+    rendering: () => {
+      const out = ctx.renderer ? ctx.renderer.renderDiagnostics() : null;
+      console.log("[iso] rendering", out);
+      return out;
+    },
+    /** `__iso.renderLog(true)` toggles the per-blit `[render]` console trace. */
+    renderLog: (on = true) => {
+      ctx.renderer?.setRenderLog(!!on);
+      const out = { on: !!on };
+      console.log("[iso] renderLog", out);
+      return out;
+    },
     /** C5: the harvester catchment + build legality for a tile, in one call. */
     probe: (tx: number, ty: number) => {
       const kind: TrackKind = ctx.tool === "rail" ? "rail" : "road";

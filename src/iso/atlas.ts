@@ -87,11 +87,42 @@ export class Atlas {
     return this.images.get(zoom);
   }
 
-  /** Source rect of animation frame `i` (frames tile horizontally). */
+  /** Source rect of animation frame `i` (frames tile horizontally), at 1×. */
   frameRect(s: SpriteDef, frame = 0): { x: number; y: number; w: number; h: number } {
     const n = s.frames ?? 1;
     const fw = s.w / n;
     return { x: s.x + fw * (frame % n), y: s.y, w: fw, h: s.h };
+  }
+
+  /**
+   * Source rect in the zoomed atlas image. The packer (tools/slice-atlas.mjs)
+   * resizes each sprite to `Math.round(w * z) × Math.round(h * z)` and places
+   * it at `Math.round(x * z), Math.round(y * z)`, but the manifest only stores
+   * 1× coordinates. Multiplying naively (`s.w * z`) produces fractional
+   * source widths (e.g. a 133px sprite at 0.5× → 66.5px) that miss the real
+   * 67px packed column, which crops and shifts art per zoom. This returns the
+   * *actual* packed integer rect.
+   */
+  zoomRect(s: SpriteDef, z: number): { x: number; y: number; w: number; h: number } {
+    return {
+      x: Math.round(s.x * z),
+      y: Math.round(s.y * z),
+      w: Math.round(s.w * z),
+      h: Math.round(s.h * z),
+    };
+  }
+
+  /** `zoomRect` for a single animation frame (frames tile horizontally). */
+  zoomFrameRect(s: SpriteDef, frame: number, z: number): { x: number; y: number; w: number; h: number } {
+    const n = s.frames ?? 1;
+    const fw = s.w / n;
+    const x = s.x + fw * (frame % n);
+    return {
+      x: Math.round(x * z),
+      y: Math.round(s.y * z),
+      w: Math.round(fw * z),
+      h: Math.round(s.h * z),
+    };
   }
 
   /** Frame index for a sprite at time `t` ms. */

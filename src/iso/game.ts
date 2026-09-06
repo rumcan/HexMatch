@@ -52,7 +52,10 @@ import {
 import { createQuarry, GEM_TO_CARGO, type Quarry } from "./quarry";
 import { createIsoMarket, toBag, type CargoBag, type IsoMarket } from "./market";
 import { createOriginalUi, type OriginalUi } from "../game/ui";
-import { createIsoDebug, shouldInstallDebugConsole, shouldAutoEnableDebugOverlays } from "./debug";
+import {
+  createIsoDebug, shouldInstallDebugConsole, shouldAutoEnableDebugOverlays,
+  shouldAutoEnableRenderLog,
+} from "./debug";
 import { joinFromSnapshot } from "./snapshot";
 export { joinFromSnapshot };
 
@@ -795,6 +798,12 @@ export function startIsoGame(root: HTMLElement) {
   if (debug && shouldAutoEnableDebugOverlays({ search: searchStr })) {
     debug.overlay("all");
   }
+  // `?render-log=1`: per-blit renderer trace (source/dest rect, clip, depth
+  // key) so a live session can be diagnosed without reading debug.ts.
+  const autoRenderLog = shouldAutoEnableRenderLog({ search: searchStr });
+  const enableRenderLogOnBoot = () => {
+    if (debug && autoRenderLog) (debug.commands.renderLog as (on: boolean) => unknown)(true);
+  };
 
   // ── boot ───────────────────────────────────────────────────────────────
   let raf = 0;
@@ -816,6 +825,7 @@ export function startIsoGame(root: HTMLElement) {
     atlasRef = atlas;
     renderer = new IsoRenderer(canvases, atlas, cam, world);
     debug?.attachRenderer();
+    enableRenderLogOnBoot();
     resize();
     syncWorld();
 

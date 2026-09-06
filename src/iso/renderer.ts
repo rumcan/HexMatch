@@ -254,6 +254,40 @@ export interface RendererCanvases {
   overlay: HTMLCanvasElement;
 }
 
+/**
+ * Structured render trace. Gate with `renderer.setRenderLog(true)` (the debug
+ * console exposes `__iso.renderLog(true)` and auto-enables it with
+ * `?render-log=1`). Two consumers:
+ *   1. live console debugging — `console.debug("[render] …")` per blit/chunk
+ *      so a running game can be traced to the exact source/dest rect and clip
+ *      decision the renderer used;
+ *   2. a `renderer.renderDiagnostics()` snapshot returned by `__iso.rendering()`
+ *      so a screenshot can be matched to state without reading the renderer.
+ */
+export interface RenderDiagnostics {
+  camera: { zoom: number; vw: number; vh: number; x: number; y: number };
+  cull: { pad: number; x0: number; y0: number; x1: number; y1: number };
+  chunkCacheEntries: number;
+  groundAnchorReference: number | null;
+  depthCycles: string[][];
+  structures: {
+    sprite: string;
+    tx: number;
+    ty: number;
+    footprint: [number, number];
+    kind: string | null;
+    anchor: [number, number];
+    box: [number, number];
+    world: [number, number];
+    screen: [number, number];
+    depthKey: number;
+    clipped: boolean;
+    parts: { sprite: string; dx: number; dy: number }[] | null;
+  }[];
+  sourceRect: { sprite: string; frames: number; raw: [number, number, number, number]; packed: [number, number, number, number] }[];
+  warnings: string[];
+}
+
 export class IsoRenderer {
   readonly atlas: Atlas;
   cam: Camera;
@@ -274,10 +308,24 @@ export class IsoRenderer {
   private terrainDirty = true;
   private structuresDirty = true;
   private lastOrder: Placed[] = [];
+  private lastCycles: string[][] = [];
   private pad: number;
+  private logRender = false;
 
   /** The last depth-sorted structure order actually drawn (C5 dumps/picking). */
   get drawOrder(): Placed[] { return this.lastOrder; }
+
+  /**
+   * Turn on/off the `[render]` console.debug trace. Off by default so a normal
+   * dev build is not flooded; the debug console exposes `logRender(true)` and
+   * `?render-log=1` auto-enables it at boot.
+   */
+  setRenderLog(on: boolean): void { this.logRender = on; }
+  get renderLogging(): boolean { return this.logRender; }
+
+  private trace(...args: unknown[]): void {
+    if (this.logRender) console.debug("[render]", ...args);
+  }
 
   constructor(canvases: RendererCanvases, atlas: Atlas, cam: Camera, world: World) {
     this.canvases = canvases;
@@ -342,11 +390,13 @@ export class IsoRenderer {
 
     // Chunk-local origin: world position of the chunk's leftmost tile column.
     const [ox, oy] = chunkWorldOrigin(cx, cy);
+    let sprites = 0;
     for (let ty = cy * CHUNK; ty < Math.min(MAP_H, (cy + 1) * CHUNK); ty++) {
       for (let tx = cx * CHUNK; tx < Math.min(MAP_W, (cx + 1) * CHUNK); tx++) {
         const name = terrainSprite(this.world.grid, tx, ty);
         const s = this.atlas.get(name);
         if (!s) continue;
+        sprites++;
         // K0 anchor: the sprite's widest-row pixel lands on the tile's
         // centre-line — drawX = screenX − HW, drawY = screenY − widestRow.
         const wx = (tx - ty) * HW - s.anchor[0];
@@ -363,16 +413,26 @@ export class IsoRenderer {
             TILE_H + BLOCK_H, z,
           ));
         }
+        // The zoomed atlas is packed at INTEGER source coords
+        // (`Math.round(x*z)` / `Math.round(w*z)` in slice-atlas.mjs), so use
+        // the real packed rect rather than the fractional `s.x*z…s.w*z`.
+        const src = this.atlas.zoomRect(s, z);
+        const dx = Math.floor((wx - ox) * z), dy = Math.floor((wy - oy) * z);
         ctx.drawImage(
           img as unknown as CanvasImageSource,
-          s.x * z, s.y * z, s.w * z, s.h * z,
-          Math.floor((wx - ox) * z), Math.floor((wy - oy) * z),
-          Math.floor(s.w * z), Math.floor(s.h * z),
+          src.x, src.y, src.w, src.h,
+          dx, dy, src.w, src.h,
         );
+        this.trace("terrain", {
+          chunk: [cx, cy], key, tile: [tx, ty], sprite: name,
+          anchor: s.anchor, world: [wx, wy], dest: [dx, dy, src.w, src.h],
+          src, clip: covered ? "above-ground" : "full-block", z,
+        });
         if (covered) ctx.restore();
       }
     }
     this.chunkCache.set(key, surf);
+    this.trace("chunk-built", { key, chunk: [cx, cy], origin: [ox, oy], surface: [W, H], sprites, z });
     return surf;
   }
 
@@ -383,6 +443,7 @@ export class IsoRenderer {
     const r = visibleTileRange(cam, this.pad);
     const cx0 = (r.x0 / CHUNK) | 0, cx1 = (r.x1 / CHUNK) | 0;
     const cy0 = (r.y0 / CHUNK) | 0, cy1 = (r.y1 / CHUNK) | 0;
+    let blits = 0;
     for (let cy = cy0; cy <= cy1; cy++) {
       for (let cx = cx0; cx <= cx1; cx++) {
         const surf = this.chunkCanvas(cx, cy);
@@ -390,8 +451,11 @@ export class IsoRenderer {
         const [ox, oy] = chunkWorldOrigin(cx, cy);
         const [sx, sy] = worldToScreen(cam, ox, oy);
         ctx.drawImage(surf as unknown as CanvasImageSource, Math.floor(sx), Math.floor(sy));
+        blits++;
+        this.trace("terrain-blit", { chunk: [cx, cy], origin: [ox, oy], screen: [Math.floor(sx), Math.floor(sy)], z: cam.zoom });
       }
     }
+    this.trace("terrain-pass", { range: [r.x0, r.y0, r.x1, r.y1], blits, z: cam.zoom });
     this.terrainDirty = false;
   }
 
@@ -404,8 +468,10 @@ export class IsoRenderer {
     const items = buildDrawList(this.world, r)
       .map((i) => ({ ...i, sprite: resolveVariantSprite(this.atlas, i.sprite, i.tx, i.ty) }));
     const placed = items.map((i) => place(this.atlas, i)).filter(Boolean) as Placed[];
-    const { order } = depthSort(placed);
+    const sorted = depthSort(placed);
+    const { order } = sorted;
     this.lastOrder = order;
+    this.lastCycles = sorted.cycles;
     for (const p of order) {
       // I1/I4: the coastline clip belongs to GROUND art only. Roads/rail are
       // flush ground overlays and lose their inland block side; buildings are
@@ -415,6 +481,11 @@ export class IsoRenderer {
       p.clipped = clipSkirt;
       this.blit(ctx, p, timeMs, clipSkirt);
     }
+    this.trace("structures-pass", {
+      z: cam.zoom, range: [r.x0, r.y0, r.x1, r.y1],
+      items: items.length, placed: placed.length, cycles: sorted.cycles,
+      order: order.map((p) => ({ sprite: p.sprite, tile: [p.tx, p.ty], key: p.key, clip: p.clipped })),
+    });
     this.structuresDirty = false;
   }
 
@@ -445,25 +516,39 @@ export class IsoRenderer {
         const def = this.atlas.get(part.sprite);
         if (!def) continue;
         const [sx, sy] = worldToScreen(this.cam, p.wx + part.dx, p.wy + part.dy);
+        const src = this.atlas.zoomRect(def, z);
         ctx.drawImage(
           img as unknown as CanvasImageSource,
-          def.x * z, def.y * z, def.w * z, def.h * z,
-          Math.floor(sx), Math.floor(sy),
-          Math.floor(def.w * z), Math.floor(def.h * z),
+          src.x, src.y, src.w, src.h,
+          Math.floor(sx), Math.floor(sy), src.w, src.h,
         );
+        this.trace("blit-part", {
+          stack: p.sprite, tile: [p.tx, p.ty], part: part.sprite,
+          offset: [part.dx, part.dy], world: [p.wx + part.dx, p.wy + part.dy],
+          screen: [Math.floor(sx), Math.floor(sy)], src, z,
+        });
       }
       if (clipSkirt) ctx.restore();
       return;
     }
     const frame = p.frame ?? this.atlas.frameAt(p.def, timeMs);
-    const rect = this.atlas.frameRect(p.def, frame);
+    // Source rect in the ZOOMED atlas — never the raw 1× rect scaled with a
+    // multiplication (the packer rounds both position and size at each zoom).
+    const src = this.atlas.zoomFrameRect(p.def, frame, z);
     const [sx, sy] = worldToScreen(this.cam, p.wx, p.wy);
     ctx.drawImage(
       img as unknown as CanvasImageSource,
-      rect.x * z, rect.y * z, rect.w * z, rect.h * z,
-      Math.floor(sx), Math.floor(sy),
-      Math.floor(rect.w * z), Math.floor(rect.h * z),
+      src.x, src.y, src.w, src.h,
+      Math.floor(sx), Math.floor(sy), src.w, src.h,
     );
+    this.trace("blit", {
+      sprite: p.sprite, tile: [p.tx, p.ty], def: p.def,
+      clipped: clipSkirt, z, context: p.ref != null ? "world" : "overlay",
+      anchor: p.def.anchor, world: [p.wx, p.wy],
+      screen: [Math.floor(sx), Math.floor(sy)],
+      src, dest: [Math.floor(sx), Math.floor(sy), src.w, src.h],
+      depthKey: p.key,
+    });
     if (clipSkirt) ctx.restore();
   }
 
@@ -490,8 +575,93 @@ export class IsoRenderer {
     const flat = flatPick(wx, wy);
     if (!this.lastOrder.length) this.drawStructures(0);
     const hit = pickSprite(this.atlas, this.lastOrder, wx, wy);
-    if (hit) return { tx: hit.tx, ty: hit.ty, sprite: hit, ref: hit.ref };
-    return { tx: flat[0], ty: flat[1], sprite: null, ref: null };
+    const out = hit
+      ? { tx: hit.tx, ty: hit.ty, sprite: hit, ref: hit.ref }
+      : { tx: flat[0], ty: flat[1], sprite: null, ref: null };
+    this.trace("pick", {
+      input: [screenX, screenY], world: [wx, wy], flat,
+      sprite: hit ? hit.sprite : null,
+      result: [out.tx, out.ty], z: this.cam.zoom,
+    });
+    return out;
+  }
+
+  /**
+   * C5/render-debug snapshot: the exact numbers the renderer used on the last
+   * frame — geometry, each structure's draw rect at the live zoom, source-rect
+   * rounding and a list of warnings for known bug classes (anchor drift off
+   * the shared ground line, standing sprite accidentally clipped, zoom rect
+   * mismatches, depth-sort cycles). Surfaces `__iso.rendering()`.
+   */
+  renderDiagnostics(): RenderDiagnostics {
+    const z = this.cam.zoom;
+    const range = visibleTileRange(this.cam, this.pad);
+    const grass = this.atlas.get("terrain_grass");
+    const groundAnchorReference = grass?.anchor[1] ?? null;
+    const warnings: string[] = [];
+    const structures = this.lastOrder.map((p) => {
+      const [sx, sy] = worldToScreen(this.cam, p.wx, p.wy);
+      if (p.clipped && p.def.kind !== "ground") {
+        warnings.push(`${p.sprite} at (${p.tx},${p.ty}) is a STANDING sprite but it was clipped to its above-ground polygon`);
+      }
+      if (p.def.kind === "ground" && groundAnchorReference !== null) {
+        const drift = p.def.anchor[1] - groundAnchorReference;
+        if (Math.abs(drift) > 1) {
+          warnings.push(`ground ${p.sprite} anchor.y ${p.def.anchor[1]} drifts ${drift}px from the ${groundAnchorReference}px shared ground line`);
+        }
+      }
+      return {
+        sprite: p.sprite,
+        tx: p.tx,
+        ty: p.ty,
+        footprint: p.def.footprint,
+        kind: p.def.kind ?? null,
+        anchor: p.def.anchor,
+        box: [p.w, p.h] as [number, number],
+        world: [p.wx, p.wy] as [number, number],
+        screen: [Math.floor(sx), Math.floor(sy)] as [number, number],
+        depthKey: p.key,
+        clipped: p.clipped ?? false,
+        parts: p.def.parts
+          ? p.def.parts.map((part) => ({ sprite: part.sprite, dx: part.dx, dy: part.dy }))
+          : null,
+      };
+    });
+    const seen = new Set<string>();
+    const sourceRect: RenderDiagnostics["sourceRect"] = [];
+    for (const p of this.lastOrder) {
+      if (seen.has(p.sprite)) continue;
+      seen.add(p.sprite);
+      if (p.def.parts) continue;   // a stack has no zoom rect of its own
+      const s = p.def;
+      const raw: [number, number, number, number] = [s.x * z, s.y * z, s.w * z, s.h * z];
+      const packed: [number, number, number, number] = [
+        Math.round(s.x * z), Math.round(s.y * z), Math.round(s.w * z), Math.round(s.h * z),
+      ];
+      sourceRect.push({ sprite: p.sprite, frames: s.frames ?? 1, raw, packed });
+      if (raw.some((v, i) => Math.abs(v - packed[i]) > 0.001)) {
+        warnings.push(`zoom source rect for ${p.sprite} is fractional (${raw.map((v) => v.toFixed(2)).join(", ")}); packed atlas uses ${packed.join(", ")}`);
+      }
+    }
+    // The placement glow is a ground-kind cell in the atlas; flag a 1px anchor
+    // drift against the terrain reference (the known highlight/base mismatch).
+    const hl = this.atlas.get("highlight");
+    if (hl && groundAnchorReference !== null && hl.anchor[1] !== groundAnchorReference) {
+      warnings.push(`highlight anchor.y ${hl.anchor[1]} differs from the ${groundAnchorReference}px shared ground line`);
+    }
+    if (this.lastCycles.length) {
+      warnings.push(`depth sort hit ${this.lastCycles.length} occlusion cycle(s): ${this.lastCycles.map((c) => c.join(" > ")).join("; ")}`);
+    }
+    return {
+      camera: { zoom: this.cam.zoom, vw: this.cam.vw, vh: this.cam.vh, x: this.cam.x, y: this.cam.y },
+      cull: { pad: this.pad, x0: range.x0, y0: range.y0, x1: range.x1, y1: range.y1 },
+      chunkCacheEntries: this.chunkCache.size,
+      groundAnchorReference,
+      depthCycles: this.lastCycles,
+      structures,
+      sourceRect,
+      warnings,
+    };
   }
 }
 

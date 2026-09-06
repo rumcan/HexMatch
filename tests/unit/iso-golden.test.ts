@@ -69,14 +69,22 @@ function blendPixel(dst: Uint8ClampedArray, di: number, src: Buffer, si: number)
   dst[di + 3] = Math.round(oa * 255);
 }
 
-/** Nearest-neighbour drawImage twin over the already-resampled zoom atlas. */
+/**
+ * Nearest-neighbour drawImage twin over the already-resampled zoom atlas.
+ *
+ * `Math.round(def.* * zoom)` matches `tools/slice-atlas.mjs`: at each zoom the
+ * packer resizes each sprite to `Math.round(w*z) × Math.round(h*z)` and places
+ * it at `Math.round(x*z), Math.round(y*z)`. The real renderer sources those
+ * integer rects (`Atlas.zoomRect`); this twin must do the same or the golden
+ * images would encode the old fractional-rect behavior that crops art at 0.5×.
+ */
 function drawDef(
   target: Surface, pixels: AtlasPixels, def: SpriteDef, zoom: Zoom,
   dx: number, dy: number, clip: Poly | null = null,
 ): void {
-  const dw = Math.floor(def.w * zoom), dh = Math.floor(def.h * zoom);
-  const sx = def.x * zoom, sy = def.y * zoom;
-  const sw = def.w * zoom, sh = def.h * zoom;
+  const dw = Math.round(def.w * zoom), dh = Math.round(def.h * zoom);
+  const sx = Math.round(def.x * zoom), sy = Math.round(def.y * zoom);
+  const sw = dw, sh = dh;
   for (let y = 0; y < dh; y++) {
     const yy = dy + y;
     if (yy < 0 || yy >= target.height) continue;
