@@ -199,6 +199,7 @@ I0 (golden-image) first — it is the test that proves every subsequent fix and 
 - Golden scene contains a grass field, straight road, corner road, single-piece
   industry, five-layer factory, placement highlight and coastline in every PNG.
 - The derived-art reproducibility gate regenerates the new grass source as well
-  as rail/crossing/highlights.
-- `npm test`, `npm run typecheck`, `npm run lint`, and the atlas regeneration
-  diff gate are the completion gates for this resolution.
+  as rail/crossing/highlights; a second atlas build was byte-identical.
+- `npm test`: 419 passed. `npm run typecheck`, `npm run build`, manifest
+  validation and the atlas regeneration gate also passed. `npm run lint`
+  completed with no errors (33 pre-existing warnings).
