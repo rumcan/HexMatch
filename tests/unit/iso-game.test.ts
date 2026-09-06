@@ -285,7 +285,7 @@ describe("E11 free setup builds cannot be revoked (K1 regression)", () => {
 // ══════════════════════════════════════════════════════════════════════════
 import { CARGO_TO_GEM, GEM_TO_CARGO } from "../../src/iso/quarry";
 import { CARGOES, type Cargo } from "../../src/iso/config";
-import { BOARD_H, BOARD_W, type ResKey } from "../../src/game/config";
+import { BOARD_H, BOARD_W, CELL, type ResKey } from "../../src/game/config";
 import type { Board, Gem } from "../../src/game/board";
 
 const ALT = (res: ResKey): ResKey => (res === "wood" ? "ore" : "wood");
@@ -450,15 +450,16 @@ describe("V3 the quarry panel fits the whole board", () => {
   it("publishes a board width the nine columns fit inside", async () => {
     await boot();
     const gridEl = root.querySelector("#iso-gems") as HTMLElement;
-    // the grid itself is always the full 9×9 board…
-    expect(gridEl.style.width).toBe(`${54 * 9}px`);
-    expect(gridEl.style.height).toBe(`${54 * 9}px`);
+    // the grid itself is always the full BOARD_W×BOARD_H board (sizes derived
+    // from config — the old 9×9/54px hardcodes desynced from the live board)
+    expect(gridEl.style.width).toBe(`${CELL * BOARD_W}px`);
+    expect(gridEl.style.height).toBe(`${CELL * BOARD_H}px`);
     // …and the published panel width is the board at the live zoom, so the
     // aside/panel can size to it instead of clipping the right columns.
     const uiRoot = root.querySelector(".ui-root") as HTMLElement;
     const boardPx = Number(uiRoot.dataset.boardPx);
     const z = Number((root.querySelector("#iso-quarry .board-wrap:last-child") as HTMLElement).dataset.zoom);
-    expect(boardPx).toBe(Math.ceil((54 * 9 + 10) * z));
+    expect(boardPx).toBe(Math.ceil((CELL * BOARD_W + 10) * z));
     // and at that zoom the column plus the left panel fits the window
     const leftW = window.innerWidth <= 900 ? 0 : (window.innerWidth <= 1180 ? 262 : 300);
     expect(boardPx + 30 + leftW + 64).toBeLessThanOrEqual(window.innerWidth + 1);
@@ -506,7 +507,7 @@ describe("V5 gems draw the restored sprite art", () => {
   it("every gem face is a sprite from src/assets/gems, mapped by cargo", async () => {
     await boot();
     const faces = [...root.querySelectorAll("#iso-gems .gem .face")] as HTMLElement[];
-    expect(faces).toHaveLength(81);
+    expect(faces).toHaveLength(BOARD_W * BOARD_H);
     const seen = new Set<string>();
     for (const f of faces) {
       expect(f.classList.contains("sprite")).toBe(true);
@@ -767,6 +768,9 @@ describe("W5 combos pay gold into the purse", () => {
     expect(h.purse.gold ?? 0).toBe(0);        // one combo: no coin yet
     h.board.registerCombo();
     expect(h.purse.gold ?? 0).toBe(1);        // the coin went to the PURSE
+    // N3: no gold GEM without a connected mine — the gate is wired through
+    // the real game's quarry, and this boot has no gold mine linked yet.
+    expect(h.board.gems().some((g) => g.res === "gold")).toBe(false);
 
     await settle();                           // one paint cycle
     const chips = [...root.querySelectorAll("#iso-res .chip .chip-n")].map((e) => e.textContent);

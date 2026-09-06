@@ -649,8 +649,9 @@ export function createOriginalUi(
       face.style.background = gemFace(g.res);
     }
     if (g.res === "gold") {
-      elem.classList.add("wild");
-   
+      // N3: gold is its own colour now (not a wild) — keep the coin face,
+      // drop the misleading "wild" class.
+      elem.classList.add("gold");
     }
     if (g.tier > 0) {
       elem.classList.add("token");
@@ -916,7 +917,7 @@ export function createOriginalUi(
         <p class="sub">Two worlds, one empire. First to <b>${VP.target}★ Victory Points</b> wins.</p>
         <div class="help-cols">
           <div class="help-col"><h3>🏙️ The Territory</h3><p>Build <b>Roads</b> & <b>Rails</b> between your Factory and Harvesters. The rail multiplier and VP are on the connection; a broken line revokes it.</p><p>Pan with the <b>middle mouse button</b> (wheel zooms, touch drags pan). The left button only places or selects — dragging it never pans.</p></div>
-          <div class="help-col"><h3>💎 The Quarry</h3><p>Match tokens to harvest. A colour only pays when your network reaches its industry. Match 4 doubles, match 5 makes a <b>bomb</b>. <b>Gold</b> 🌹 is wild.</p></div>
+          <div class="help-col"><h3>💎 The Quarry</h3><p>Match tokens to harvest. A colour only pays when your network reaches its industry. Match 4 doubles, match 5 makes a <b>bomb</b>. <b>Gold</b> 🪙 is its own colour — it spawns only while a harvester is connected to a gold mine.</p></div>
           <div class="help-col"><h3>🪙 Gold, Trade & Defence</h3><p>Earn <b>gold</b> from gold-mine access or combos. Buy Black Market actions, post offers or bank 4:1.</p></div>
         </div>
         <button class="big-btn" id="startBtn">Start Production ⚙️</button>

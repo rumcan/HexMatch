@@ -33,13 +33,22 @@ describe("match detection", () => {
     expect(groups.length).toBe(2);
   });
 
-  it("treats gold gems as wildcards", () => {
+  // N3: gold is no longer a wildcard. It is its own colour — it completes
+  // only runs of gold, and never finishes another colour's run.
+  it("N3: gold is its own colour — it matches only gold", () => {
     const b = freshBoard();
+    // gold between two woods must NOT complete a wood match any more
     b.grid[4][4]!.res = "wood";
     b.grid[4][5]!.res = "gold";
     b.grid[4][6]!.res = "wood";
+    expect(b.findGroups().some((g) => g.length >= 3)).toBe(false);
+    // …but three golds in a row are a plain gold match
+    b.grid[2][2]!.res = "gold";
+    b.grid[2][3]!.res = "gold";
+    b.grid[2][4]!.res = "gold";
     const groups = b.findGroups();
-    expect(groups.some((g) => g.length >= 3)).toBe(true);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].every((g) => g.res === "gold")).toBe(true);
   });
 
   it("ignores blocked gems", () => {
@@ -81,8 +90,9 @@ describe("settle / swap", () => {
     expect(reverted).toBe(true);
   });
 
-  it("banks combos and mints a gold coin every two", () => {
+  it("banks combos and mints a gold coin every two — when a mine is connected (N3)", () => {
     const b = freshBoard();
+    b.goldReachable = () => true;             // the quarry wires this to the network
     const combos: [number, number, boolean][] = [];
     b.onCombo = (count, need, granted) => combos.push([count, need, granted]);
     b.registerCombo();
@@ -90,6 +100,19 @@ describe("settle / swap", () => {
     b.registerCombo();
     expect(combos[1][2]).toBe(true);
     expect(b.gems().some((g) => g.res === "gold")).toBe(true);
+  });
+
+  // N3: a gold GEM only appears while a harvester is connected to a gold
+  // mine. The combo's PURSE payout (onGold) is unconditional — banking a
+  // combo always pays — but without mine reach no gold gem is placed.
+  it("N3: without gold-mine reach a combo pays the purse but places no gold gem", () => {
+    const b = freshBoard();
+    const gold: number[] = [];
+    b.onGold = (n) => gold.push(n);
+    b.registerCombo();
+    b.registerCombo();
+    expect(gold).toEqual([1]);                              // the purse was paid…
+    expect(b.gems().some((g) => g.res === "gold")).toBe(false); // …no board gem
   });
 
   // W5: the board must TELL the world when it banks a coin. The gold gem on

@@ -291,4 +291,35 @@ describe("W5 the combo coin reaches the purse", () => {
     q.board.registerCombo();
     expect(purse.gold).toBe(1);
   });
+
+  // N3 — a gold GEM only appears while the network reaches a gold mine. The
+  // quarry wires Board.goldReachable to the live reach, so the same network
+  // that gates the tokens gates the combo coin's board gem. The purse payout
+  // itself stays unconditional (W5 is untouched).
+  it("N3: the combo coin's board gem obeys the mine gate — the purse does not", () => {
+    const grid = flatGrid([ind("gold_mine", 11, 11)]);
+    const track = createTrack();
+    const state: EconomyState = {
+      grid, track, harvesters: [H(1, "you", 10, 10)],
+      factories: [{ owner: "you", ownerId: 1, tx: 14, ty: 10 }],
+    };
+    const purse: Record<Cargo, number> = {
+      grain: 0, wood: 0, ore: 0, stone: 0, oil: 0, gold: 0,
+    };
+    const q = createQuarry(state, "you", { onGold: (n) => { purse.gold += n; } });
+    neutralise(q.board);
+
+    // no road yet: the gate is closed
+    q.board.registerCombo();
+    q.board.registerCombo();
+    expect(purse.gold).toBe(1);                                     // purse paid…
+    expect(q.board.gems().some((g) => g.res === "gold")).toBe(false); // …no board gem
+
+    // connect the harvester to the gold mine → the next coin places a gem
+    run(track, "road", 11, 14, 10);
+    q.board.registerCombo();
+    q.board.registerCombo();
+    expect(purse.gold).toBe(2);
+    expect(q.board.gems().some((g) => g.res === "gold")).toBe(true);
+  });
 });
