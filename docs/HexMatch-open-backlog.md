@@ -1,152 +1,160 @@
-# HexMatch — brown only at the map edge (the real geometry rule)
+# HexMatch — isometric rendering, rebuilt to spec (I-series)
 
-> **STATUS — resolved 2026-09-06 on `arena/01a07734-hexmatch`** (this repo's
-> open-backlog file, kept as the specification the fixes were audited
-> against):
->
-> - **N1** (brown only at the coastline) — FIXED, Approach A:
->   [`docs/tickets/N1-brown-only-at-coastline.md`](tickets/N1-brown-only-at-coastline.md).
->   Acceptance render: `docs/kenney-n1-skirt.png`.
-> - **N2** (hovering building / elevated road) — FIXED with N1 (same root
->   cause), resolved in the same ticket.
-> - **N4** (the building sits ON the highlighted diamond) — FIXED, one
->   tile→screen convention, the `+HH` fudge deleted:
->   [`docs/tickets/N4-building-on-highlighted-diamond.md`](tickets/N4-building-on-highlighted-diamond.md).
-> - **N3** (gold its own colour, mine-gated spawn) — FIXED, as its own change
->   within the same PR as the backlog sequenced it ("Board logic — its own
->   PR, after the rendering fix" — the rendering fix landed first in the
->   stack):
->   [`docs/tickets/N3-gold-own-colour-mine-gated.md`](tickets/N3-gold-own-colour-mine-gated.md).
->
-> One measured correction is recorded in the N1 ticket: on the current
-> K-FIX-1 art the interior terrain no longer leaks (painter coverage covers
-> interior skirts); the visible brown at road/building bases came from the
-> STRUCTURES layer painting full blocks over the finished terrain plane. The
-> rule implemented is exactly the one-line rule below, applied to both
-> layers. R1 (tall-stack anchor) was already fixed by K-FIX-1
-> (`docs/tickets/K-FIX-1-bottom-anchor-placement.md`).
+Every ticket below carries a **SPEC** section quoting the authoritative principle it enforces (from `HexMatch-iso-research.md`), the **exact current-code violation** (verified against `main` @ `0bec138` / PR #26), the **fix**, and a **pixel-level acceptance test**. The rule from the research holds throughout:
 
-Audited against `main` @ `e5f3b8e`. Your spec — **"never see brown at the base of any road or building; brown only at the very edge of the map"** — is exactly the correct isometric look, and it pinpoints the real bug. This supersedes the anchor tickets: the anchor is a symptom, this is the cause.
+> Ground tiles tessellate into a plane and only the island's rim shows a block side. Buildings are positioned whole on that plane by ONE bottom-anchor and are NEVER clipped. ONE coordinate transform (no fudge) drives draw, highlight and pick. Elevation is −z·TILE_H up and +z depth.
+
+**Verified current state on `main` (so tickets target reality, not a stale audit):**
+- P4 (pick fudge): the `+HH` in `flatPick` is **already removed** — good, don't reintroduce it. (I2 guards it.)
+- P1 (building clip): `skirtCovered` **is still applied to buildings** at `renderer.ts:382` — this is the live regression. **I1 fixes it.**
+- P5 (stacking): composites now measure per-layer rise — closer to correct; I3 verifies against the formula.
+
+**Order: I0 (golden-image test) → I1 → I2 → I3 → I4 → I5.** I0 first on purpose — it's the safety net every prior round lacked.
 
 ---
 
-## What the brown is, and why it shows everywhere
+## I0. Golden-image render tests at every zoom (build this FIRST)
+`[P0] [testing] [infra]`
 
-Every Kenney tile is a diamond **top** plus a cube **skirt** below it. The skirt's bottom band is brown dirt (measured: grass tile is green to y≈60, shaded green to y≈80, then **brown `rgb(128,95,62)` at y90–97**). That brown is the bottom of every tile's block.
+### SPEC
+> Research Part 5: "The project's tests kept passing while the game broke because they tested the *stated* fix, not the *rendered result*. … Without a real-browser golden-image test, the human is the regression test — which is exactly the loop this project has been stuck in."
 
-The map is drawn back-to-front, so each tile covers the one behind it — but the geometry doesn't line up:
+Every visual regression in this project shipped with green tests. The root cause is the absence of a test that looks at pixels the way the player does. This ticket builds that test. **It must exist before the other fixes, so each fix is proven by a reference image, not by a unit test of its own internals.**
 
-```
-Adjacent tiles are HH = 32px apart vertically on screen.
-Each tile's skirt is BLOCK_H = 50px tall.
-→ 50 − 32 = 18px of skirt pokes out below the covering tile.
-```
+### What to build
+- A deterministic fixture scene (seed-fixed): a grass field, one straight road, one corner road, one single-piece industry, one stacked building (factory), and a coastline edge — all visible at once.
+- Render it through the **real renderer** (`drawStructures` + terrain) at zoom **0.5, 1, 2** into an offscreen canvas.
+- Commit the three outputs as reference PNGs. The test re-renders and compares pixel-for-pixel (with a tiny tolerance for AA).
+- If no browser/canvas in CI: use the same software rasteriser approach as `iso-skirt.test.ts` (it already rasterises real atlas pixels with the renderer's draw math) — extend it to a full scene, not just a skirt check.
 
-So **every interior tile leaks 18px of brown skirt** below the tile in front of it. That's the brown at the base of every road and building. It's not an anchor bug — it's that the skirt is taller than the vertical gap between tiles, so it can never be fully hidden by the neighbour.
+### Acceptance
+- Three committed reference renders; the test fails if any pixel drifts beyond tolerance.
+- Three named assertions the render must satisfy, each a separate test so a failure is specific:
+  1. **building-intact**: the stacked building's opaque pixel count at each zoom is within 2% of its unclipped sprite (catches I1 clipping).
+  2. **no-interior-brown**: zero brown-range pixels below any non-edge tile (catches skirt leaks).
+  3. **highlight==base**: the hover highlight diamond, `pick()`, and the placed building's base tile are the identical tile (catches I2).
+- CI runs it on every PR. A red golden-image test blocks merge.
 
 ---
 
-## N1. Interior tiles show no skirt; only map-edge tiles draw the full block
+## I1. Never clip buildings — the N1 skirt rule is ground-tiles ONLY
 `[P0] [renderer]`
 
-**The rule:** a tile's brown skirt should only be visible where there is **no tile in front of it** — i.e. the front/outer edge of the island. Every interior tile's skirt must be fully covered.
+### SPEC
+> **P1 — Objects are POSITIONED, never CLIPPED.** [Bellanger; Phaser] "A tall sprite is placed by its anchor and drawn **whole**. Its height is handled by *where you put it* and *what order you draw it*, never by cutting pixels off it." No isometric tutorial clips a sprite, ever.
+> **P2 — Ground tiles form a continuous plane; only the rim shows a block side.** The brown-skirt problem is a *ground-tile* problem, solved by tile treatment, not by clipping the things standing on the ground.
 
-Two ways to achieve it. **Approach A is cleaner and matches how flat iso maps normally work.**
+### Current violation (verified)
+`src/iso/renderer.ts:382` in `drawStructures`:
+```js
+const covered = skirtCovered(this.world.grid, p.tx, p.ty, p.def.footprint[0], p.def.footprint[1]);
+p.clipped = covered;                       // ← applied to ALL structures incl. buildings
+this.blit(ctx, p, timeMs, covered);
+```
+`aboveGroundPoly` is a flat-tile clip shape (footprint diamond + straight up, nothing below/outside). On a building — which is wider than its footprint and whose walls descend to/below the diamond — it slices the walls off. Rounded by zoom, it cuts differently per zoom → buildings hover/vanish (your three screenshots).
 
-### Approach A — draw the ground as a flat surface, skirt only on the border
+### Fix
+- In `drawStructures`, apply the skirt clip **only when `p.def.kind === "ground"`** (roads/rail). For `kind === "standing"` (buildings, composites) draw the sprite **whole, unclipped**.
+- The building doesn't need clipping: once interior ground tiles are handled (I4), the building stands on a skirtless plane and has no brown to hide.
 
-- Render interior tiles as **just the diamond top** (no skirt) — a flat tessellating surface with zero brown. Since every tile's top diamond exactly abuts its neighbours, a field of tops is a seamless ground plane.
-- For **edge tiles** (a tile with water or empty in front of it, toward the bottom of the screen), draw the full block including the brown skirt, so the island has a visible thickness at its coastline.
-- "Edge" = any tile whose SE and/or SW neighbour (the two that would cover its skirt) is water or off-map. Those are the only tiles that should show brown.
-
-This needs the packer to keep the diamond-top and the skirt as separable, OR the renderer to clip interior tiles to their diamond top (draw only y ≤ groundRow + a hair) and draw edge tiles in full.
-
-### Approach B — shrink the skirt to the vertical gap
-
-- Crop every tile's skirt to exactly `HH = 32px` (the tile spacing) instead of 50px. Then a tile's skirt reaches precisely to the next tile's top and is fully covered — no leak. Edge tiles still show their (now 32px) skirt as the island thickness.
-- Simpler (one crop in the packer), but the island's edge is thinner and every tile still carries a skirt; if the vertical spacing ever changes, the leak returns. Approach A is more robust.
-
-**Recommend A.** It gives a clean flat ground and a proper thick coastline, and it's the standard isometric approach (flat tiles interior, blocks at the rim).
-
-### Buildings and roads
-
-Same rule applies. A building/road tile's own skirt must not show — the building sits on the flat ground plane, and the ground tile under/around it provides the (hidden) thickness. Once interior ground tiles stop leaking skirt, roads and buildings won't have brown at their base either, because there's no exposed skirt anywhere except the coast.
-
-**Acceptance:**
-- No brown anywhere on the interior of the map — grass/road/building bases all sit on a flat continuous surface.
-- Brown (island thickness) appears **only** at the outer edge, where tiles face water or the void.
-- Screenshot: a road crossing the interior shows no brown at its edges; the island's coastline shows the brown block side.
-- A test: for a fully-interior tile (all four neighbours land), the rendered output has zero brown-range pixels below its diamond.
+### Acceptance
+- `drawStructures` never passes a clip to a `standing` sprite (assert in a unit test + the I0 building-intact render).
+- Buildings render identically and completely at 0.5/1/2× — none clipped, none missing, verified by I0 at all three zooms and while panning.
+- Roads (ground kind) keep their working clip.
 
 ---
 
-## N2. This also fixes the "hovering building" and "elevated road"
-`[P0]` — folds in the prior anchor/road tickets
-
-The hover gap and the elevated-looking roads are the **same brown-skirt problem** seen differently:
-
-- **Hovering building:** you see the tile's diamond "under" the building because the building's skirt (brown) is leaking below where the ground tile covers it — the diamond peeking out is the exposed skirt band. Fix N1 and there's no exposed skirt to see.
-- **Elevated road:** the road looks raised because its brown skirt shows on all sides, reading as a kerb/embankment. With N1 (no interior skirt), the road surface sits flush on the flat ground.
-
-So N1 is the root fix for all three complaints (brown, hover, elevation). The separate anchor ticket (R1) is still worth doing for correctness of *tall stacked* buildings — a 5-storey factory's base must still land on the right tile — but N1 is what removes the brown.
-
-**Verify all three in one screenshot:** interior road with no brown and flush surface; building sitting flush with no diamond peeking under it; coastline showing brown thickness.
-
----
-
-## N3. Gold match-3 change (unchanged from prior ticket, separate PR)
-`[feature]`
-
-Restating so it's not lost: gold becomes its own colour matching only gold (remove wild behaviour); gold gems spawn only when a harvester is connected to a gold mine (join the existing network-reach gate in `quarry.ts`); spawn mechanic (replacing other gems) unchanged. Board logic — its own PR, after the rendering fix.
-
----
-
-## Sequencing
-
-**N1 → N2 verify → R1 (tall-stack anchor) → N3 (gold).**
-
-N1 is the one fix that resolves the brown, the hover, and the elevation together — because they're all the exposed-skirt problem. Do it, screenshot the interior (no brown) and the coast (brown), and the visual complaints that have dogged this for many rounds are finally closed. R1 remains only for tall stacked buildings landing on the correct tile. N3 is the separate gold feature.
-
-## The one-line rule for the agent
-
-> A tile's brown skirt is 50px but tiles are only 32px apart on screen, so every interior tile leaks 18px of brown below its neighbour. Fix: interior tiles render as flat diamond tops only (no skirt); draw the full brown block ONLY on tiles at the island edge (SE/SW neighbour is water or off-map). Brown appears only at the coastline, never under a road or building.
-
----
-
-# ADDENDUM — the building must sit ON the highlighted diamond (explicit)
-
-Your screenshot shows a **second, distinct bug** the tickets above did NOT state clearly. This is not the brown skirt — even with N1's brown gone, this would remain.
-
-## The bug: draw and pick use two different tile conventions
-
-There are two conflicting tile→screen conventions in the codebase (confirmed in code):
-
-- **Drawing** (`renderer.ts` ~line 244): a tile's diamond is **centred** on `tileToScreen(tx,ty)`.
-- **Picking** (`flatPick`, `renderer.ts` line 362): the pick cell's **top vertex** is at `tileToScreen(tx,ty)` — offset by `HH` (32px) from the draw convention.
-
-`flatPick` patches over the gap with a `+HH` fudge (`b = (wy + HH) / HH`). That fudge is tuned for flat ground, so it does not hold for a building's placement highlight. Result, exactly as in your screenshot: **the yellow highlight diamond is one tile away from where the building's base is drawn.** The cursor lights up one diamond; the building sits on a different one.
-
-## N4. The building base must occupy the exact tile the cursor highlights
+## I2. One coordinate transform for draw, highlight and pick — no fudge
 `[P0] [renderer]`
 
-**Acceptance — state it exactly like this, because it's what the screenshot shows:**
+### SPEC
+> **P4 — ONE coordinate convention for draw AND pick.** [Phaser] "`isoToCart` is the exact inverse of `cartToIso`. No `+HH` fudge anywhere." The highlight is placed with the *same* transform that draws tiles, so it is always on the tile the math picks.
 
-- When the cursor is over tile (tx,ty), the placement highlight diamond, the building's base footprint, and `pick()`'s returned tile must all be the **same** (tx,ty). No HH offset between any of them.
-- Concretely: the base of a placed building sits **on the highlighted diamond** — the diamond the mouse lights up is the diamond the building's foot occupies, not the tile behind or in front of it.
-- The real fix is to make drawing and picking use **one** tile→screen convention, and delete the `+HH` compensation in `flatPick`. Either the diamond is centred on the lattice point and picking matches that, or the diamond's top vertex is the lattice point and drawing matches that — but both must agree, with no fudge factor.
+### Current state (verified)
+The `+HH` fudge in `flatPick` is **already removed** on `main` @ 0bec138 (0 matches for `wy + HH`). Good. **This ticket is a guard, not a fix:** ensure it never returns, and prove draw/highlight/pick agree.
 
-**Verify (the screenshot test):** hover a tile, note the highlighted diamond, place the building — its base covers that exact diamond. Then hover a placed building: the highlight under the cursor is the same diamond the building stands on. If the highlight and the base are ever a tile apart, it's not fixed.
+### Fix / guard
+- Confirm `flatPick` is the exact algebraic inverse of the draw transform (`wx=(tx-ty)·HW − anchorX`, `wy=(tx+ty)·HH − anchorY`), with **no additive compensation term**.
+- The hover highlight must be positioned with `tileToScreen(hoverTx,hoverTy)` — the identical transform used to draw a tile — not a separate path.
+- Delete any stale comments referencing the old "pick cell top vertex / sample HH below" model so nobody reintroduces the fudge.
 
-**Why this matters beyond looks:** if the highlight and the real placement tile differ, the player builds on the wrong tile — roads connect to the wrong place, harvesters land off the industry. This is a gameplay-correctness bug, not just visual.
+### Acceptance
+- Grep: zero additive `+ HH` / `- HH` compensation terms in `flatPick` or the highlight placement.
+- I0 **highlight==base** test passes: for any hovered tile, the highlight diamond, `pick()`, and a building placed there occupy the same tile — at every zoom and at non-zero camera offset.
+- A unit test round-trips `screenToTile(tileToScreen(t)) === t` for all tiles (already the K0 intent — assert it explicitly).
 
-## Relationship to the other fixes
+---
 
-- **N1** removes the brown skirt.
-- **N4** puts the building on the correct (highlighted) tile.
-- **R1** makes tall stacked buildings anchor on their base tile.
+## I3. Stacked buildings anchor at base bottom; elevation is a formula
+`[P0] [renderer] [assets]`
 
-All three must hold together for the final result: a building with no brown, sitting flush **on the diamond the cursor highlights**. Verify all three in one hover-and-place screenshot.
+### SPEC
+> **P3 — Anchor is the single source of truth; for blocky tiles it's the BOTTOM.** [Unity: "Tile Pivot Y … maximum at your Tile Height"] Single, composite, terrain — all use the same bottom-anchor rule.
+> **P5 — Elevation offsets UP and adds depth; never changes the sprite.** [Phaser] `isoY = (cartX+cartY)·TH/2 − z·TILE_H`; `depth = cartX+cartY+z`. A multi-storey building IS this: each storey `z` higher, offset up `z·TILE_H`, depth `+z`.
 
-## One-line rule for the agent
+### Current state (verified)
+Composites now measure per-layer rise (`slice-atlas.mjs` — "the rise is MEASURED per layer, BOTTOM face on the layer below's TOP face"). This is closer to correct than the old `STOREY=36` constant. But earlier audits showed the composite **anchor** landing off its base ground row. Verify against the formula and fix if drift remains.
 
-> Drawing centres a tile's diamond on tileToScreen; picking puts the diamond's top vertex there — a 32px (HH) mismatch that flatPick papers over with +HH. Unify them to ONE convention and delete the fudge, so the highlighted diamond, the building's base, and pick() are always the same tile. The building must sit ON the diamond the cursor lights up.
+### Fix
+- The composite's anchor Y = the **base layer's** ground-contact row expressed in the assembled sprite's coordinates (`basePart.dy + basePart.groundRow`). Not the union bbox top, not `-minTop`.
+- Each stacked layer sits at `−(cumulative rise)` above the base; the rise per layer = the measured gap from a layer's ground row to the top face of the layer below (matches P5's `z·TILE_H` generalised to real art heights).
+- Depth: the whole stack sorts as one object on its **base** footprint tile (P6), drawn in front of that tile.
+
+### Acceptance
+- Manifest invariant (unit test): for every composite, `anchor[1] === basePart.dy + basePart.groundRow`.
+- `__iso.dumpBuilding(tx,ty).gapPx === 0` for factory and depot.
+- I0 render: the 5-storey factory sits flush on its tile, floors flush, roof on top, no gap under the base — at all zooms.
+
+---
+
+## I4. Ground-tile skirt: flat interior, block only at the island rim
+`[P0] [renderer] [assets]`
+
+### SPEC
+> **P2** — interior ground tiles tessellate into a plane; **K-c** — "you only want that [cube] side at the island's edge; interior tiles' sides are covered by the tile in front, *provided the vertical spacing ≥ the exposed side height*. If the art's side is taller than the spacing, either (i) pick/author tiles whose side ≤ spacing, or (ii) draw interior tiles as flat tops and the block only at the rim."
+> **P8** — "prevent seams by tile OVERFLOW, never gaps; use straight alpha."
+
+### Current state
+`BLOCK_H = 66` but tile vertical spacing is `HH = 32`. So each tile's 66px side exceeds the 32px spacing by 34px → interior sides leak (the brown). This is the ground-tile half of the brown problem (buildings are I1).
+
+### Fix (choose per K-c, recommend option ii)
+- **Interior ground/road tile** (all four neighbours are land): draw only its diamond top (flat), no block side.
+- **Edge tile** (a neighbour toward the viewer is water/off-map): draw the full block including the brown side — this is the island's visible thickness.
+- "Edge" = SE and/or SW neighbour is water or off-map (those are the tiles whose side would otherwise be exposed).
+- This is the ONLY place skirt/block logic lives. Buildings (I1) are never involved.
+
+### Acceptance
+- I0 **no-interior-brown**: zero brown below any interior tile; the interior reads as a continuous flat plane.
+- The coastline shows the brown block side (island thickness).
+- A built road on the interior is flush with the grass, no brown kerb.
+
+---
+
+## I5. Fix grass seams and repick flush road tiles
+`[P1] [assets]`
+
+### SPEC
+> **P8 — seams:** "it's better for the tile to overflow slightly than to be too small … use straight alpha, or translucent edges take the sky/background colour (visible seams)."
+> **K-c / P2 — roads:** the "elevated road" look is a road *tile with a raised side baked in*; interior roads must be flush ground tiles.
+
+### Current violations
+1. Hard dark lines at every grass seam (your screenshots) — either sub-pixel gaps from `Math.floor` draw positions exposing the darker background, or the grass tile's own dark bottom-edge lip tiling.
+2. Road tiles picked for connection geometry but with raised sides → "elevated road."
+
+### Fix
+- **Seams:** ensure adjacent tiles' floored draw positions abut with no 1px gap at any zoom (draw tiles to slightly overflow, per P8); if the grass art has a baked dark edge lip, repick a cleaner flat grass tile via the Art Lab, or once I4 draws interior tiles as flat tops the lip is hidden anyway — verify after I4.
+- **Roads:** repick the flat/flush road tiles in the Art Lab (asphalt at ground level, no raised concrete side), keeping the connection masks. Verify a road tile sits level with adjacent grass.
+
+### Acceptance
+- Interior grass reads as a continuous field — no hard dark grid between tiles, at all zooms.
+- Roads are flush with terrain; screenshot of a road beside grass shows no kerb/step.
+
+---
+
+## Sequencing & the meta-rule
+
+**I0 → I1 → I2 → I3 → I4 → I5.**
+
+I0 (golden-image) first — it is the test that proves every subsequent fix and would have caught every past regression. Then I1 (stop clipping buildings — the live regression), I2 (guard the pick fix), I3 (stack anchors), I4 (ground skirt = rim only), I5 (seams + road art).
+
+**The meta-rule for whoever implements these** (from the research): *ground tiles and buildings are different.* Ground tiles tessellate into a plane and only the rim shows a block side (I4). Buildings are positioned whole on that plane and never clipped (I1). Every past round broke because it tried to fix a ground-tile problem by cutting up buildings. Do not repeat it — and let I0's building-intact test stop you if you do.
