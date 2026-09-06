@@ -1,5 +1,10 @@
 # HexMatch — the documented Kenney isometric method (this replaces the skirt-normalisation approach)
 
+> **Status: both tickets below are CLOSED (2026-09-06).** The backlog is empty.
+> The research and rationale are kept here as the standing reference for how
+> Kenney art is placed in this repo; the implementation notes, acceptance and
+> test-bite evidence live in `docs/tickets/K-FIX-1-*.md` and `K-FIX-2-*.md`.
+
 I researched how Kenney's isometric tiles are *meant* to be placed. The sources below show the current approach (normalising skirt heights) is **fighting the format**. Kenney tiles are designed to be different heights — you anchor them at the **bottom** and let them grow upward. That's the whole trick, and it's what every hovering/slicing/stepping bug has been working around instead of using.
 
 ## Sources
@@ -31,7 +36,8 @@ This is why a stacked building broke: normalisation moved the widest row but the
 ---
 
 ## K-FIX-1. Switch to bottom-anchor placement; remove skirt normalisation
-`[P0] [renderer] [assets]`
+`[P0] [renderer] [assets]` — **DONE 2026-09-06** (`arena/01a076ea-hexmatch`).
+See [docs/tickets/K-FIX-1-bottom-anchor-placement.md](tickets/K-FIX-1-bottom-anchor-placement.md).
 
 **Replace the skirt-normalisation approach with Kenney's documented bottom-anchor method.**
 
@@ -55,7 +61,8 @@ This is why a stacked building broke: normalisation moved the widest row but the
 ---
 
 ## K-FIX-2. Re-pick road tiles as FLAT roads, not embankment pieces
-`[P0] [assets]`
+`[P0] [assets]` — **DONE 2026-09-06** (`arena/01a076ea-hexmatch`).
+See [docs/tickets/K-FIX-2-flat-road-tiles.md](tickets/K-FIX-2-flat-road-tiles.md).
 
 Independent of the anchor fix. The current road tiles (`082/074/125/090`) are Kenney pieces with **raised retaining walls baked in** — roads on embankments. Kenney's set also has flat street tiles. Apply the human's Art Lab road choices (flat streets), and when picking, use the road preview to reject any tile with raised sidewalls — pick tiles whose asphalt is flush with the ground surface.
 

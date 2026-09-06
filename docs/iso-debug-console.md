@@ -44,9 +44,10 @@ Everything that decides how one tile looks:
 terrain / terrainName / index      which cell of the grid this is
 sprite                             terrain_grass | terrain_water | terrain_rough
 cell                               the resolved atlas entry: rect, footprint, anchor, kind, parts
-skirtPx                            px of block BELOW the sprite's widest row
-canonicalSkirtPx                   BLOCK_H (50)
-skirtDriftPx                       skirtPx − 50  ← a non-zero drift is the C1 bug class, one number
+skirtPx                            px of block BELOW the sprite's ground row (its NATIVE skirt)
+maxSkirtPx                         BLOCK_H (66) — the deepest skirt in the set, a budget not a target
+surfaceDriftPx                     this tile's ground row − the shared ground line
+skirtDriftPx                       alias of surfaceDriftPx (kept for older reports)
 world / screen / css / halfDiamond where the tile's centre-line projects at the live camera
 occupancy / industry               what stands on it
 track                              roadBits, railBits, owner id
@@ -57,6 +58,13 @@ pickAtCentre                       what `renderer.pick` says about this tile's o
 `skirtPx` is measured from the packed sprite, not declared anywhere — the
 packer (`tools/slice-atlas.mjs`) computes the anchor from the pixels, so this is
 the ground truth for "do the terrain tiles and the buildings agree".
+
+**K-FIX-1:** `skirtPx` legitimately **differs between tiles** (grass 66, water
+50) — Kenney tiles are designed to be different heights and are anchored at
+their shared bottom, so a varying skirt is correct and is not a bug. The
+number that settles a *"the terrain is stepping"* report is
+**`surfaceDriftPx`**: it is 0 on every correctly-anchored tile no matter its
+height. A non-zero `surfaceDriftPx` is the real bug class.
 
 ### `__iso.dumpAt(x, y[, { device: true }])`
 
@@ -115,7 +123,7 @@ after the normal overlay items, into the overlay canvas.
 
 | name | what it paints |
 |---|---|
-| `skirt` | per visible tile: a cyan line at the surface (the widest row / centre-line) and an amber line one canonical block lower; a tile whose block depth drifts gets a **red** diamond and a `+16`-style label |
+| `skirt` | per visible tile: a cyan line at the shared surface (the tile's ground row / centre-line) and an amber line at that tile's own block bottom. K-FIX-1: the gap between them is the tile's **native** skirt and varies by design; a tile is flagged **red** with a `+16`-style label only when its ground row leaves the shared surface line |
 | `anchor` | a green crosshair at every structure's contact point, and `sprite ±gap px` next to any that is not flush |
 | `network` | the network tiles of both players filled — green for you, red for the rival |
 | `pick` | the hovered tile's **drawn** diamond in white and its **pick cell** in magenta (the K4 half-tile offset, visible at last) plus a crosshair at the viewport centre |

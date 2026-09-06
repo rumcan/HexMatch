@@ -65,8 +65,16 @@ if (!OUT) {
 mkdirSync(OUT, { recursive: true });
 
 // ── measured geometry (K0 — keep in sync with src/game/config.ts) ─────────
-const W = 132, H = 83;
+// K-FIX-1: the derived ground tiles now match the Kenney landscape blocks
+// they sit beside EXACTLY — measured from landscapeTiles_067: a 132x64
+// diamond whose corner row is y=33, a full-width plateau down to y=65, then a
+// 2px-per-row taper to the bottom vertex at y=98. (The old 83px canvas gave
+// the rail a shallower skirt than the roads it connects to, which was hidden
+// while the packer normalised every skirt to 50px and became visible the
+// moment sprites kept their native height.)
+const W = 132, H = 99;
 const CX = 66, CY = 32;            // diamond centre = tile centre-line
+const PLATEAU = 33;                // rows of full-width block below CY
 // Arm directions: game bits NE=1 SE=2 SW=4 NW=8 → edge midpoints of the
 // diamond (NE exits through the upper-right edge, etc.).
 const ARMS = {
@@ -90,7 +98,7 @@ const PAL = {
   railTop: [158, 158, 166],
 };
 
-const canvas = () => ({ px: Buffer.alloc(W * H * 4), w: W, h: H });
+const canvas = (h = H) => ({ px: Buffer.alloc(W * h * 4), w: W, h });
 const put = (c, x, y, r, g, b, a = 255) => {
   x |= 0; y |= 0;
   if (x < 0 || y < 0 || x >= c.w || y >= c.h) return;
@@ -122,8 +130,8 @@ const speck = () => (speckState = (speckState * 1103515245 + 12345) & 0x7fffffff
 /** The measured Kenney flat-block silhouette: diamond + plateau + wedge skirt. */
 const inBlock = (x, y) => {
   if (y <= CY) { const hw = 66 * (y + 1) / 34; return Math.abs(x - CX) <= hw; }
-  if (y <= CY + 17) return Math.abs(x - CX) <= 66;
-  const hw = 66 - (y - (CY + 17)) * 2;
+  if (y <= CY + PLATEAU) return Math.abs(x - CX) <= 66;
+  const hw = 66 - (y - (CY + PLATEAU)) * 2;
   return hw > 0 && Math.abs(x - CX) <= hw;
 };
 const inDiamond = (x, y) =>
@@ -143,7 +151,7 @@ function ballastBlock() {
         if (!inDiamond(x, y - 1) && !inDiamond(x, y + 1)) col = PAL.ballastDark;
       } else if (y <= CY + 6) {
         col = PAL.grassEdge;               // grass lip overhanging the side
-      } else if (y > H - 10) {
+      } else if (y > CY + PLATEAU) {
         col = PAL.earthDark;
       } else {
         const s = speck();
@@ -199,7 +207,7 @@ for (let mask = 0; mask < 16; mask++) {
 
 // ── crossing: rails over the real Kenney crossroads road tile ──────────────
 {
-  const src = join(ROOT, "src/iso/kenny/landscape/PNG/landscapeTiles_102.png");
+  const src = join(ROOT, "src/iso/kenny/landscape/PNG/landscapeTiles_090.png");   // K-FIX-2: the flat crossroads
   const { data, info } = await sharp(src).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   const c = { px: Buffer.from(data), w: info.width, h: info.height };
   // rail straight NE–SW over the asphalt (road keeps the other diagonal)
@@ -209,9 +217,12 @@ for (let mask = 0; mask < 16; mask++) {
 
 // ── the two placement glows (132×64 diamonds, UI not world art) ────────────
 {
+  // The glows are pure UI diamonds, not blocks — they only need the 64px
+  // diamond, so they keep their own compact canvas.
+  const GLOW_H = 83;
   const glow = (lineAlpha, fillAlpha, edge) => {
-    const c = canvas();
-    for (let y = 0; y < H; y++) {
+    const c = canvas(GLOW_H);
+    for (let y = 0; y < GLOW_H; y++) {
       for (let x = 0; x < W; x++) {
         const d = Math.abs(x - CX) / 66 + Math.abs(y - CY) / 32;
         if (d > 1) continue;

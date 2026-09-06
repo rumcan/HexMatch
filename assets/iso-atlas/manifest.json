@@ -9,15 +9,15 @@
   "meta": {
     "source": "Kenney (kenney.nl) isometric assets (src/iso/kenny)",
     "license": "CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/)",
-    "generatedBy": "tools/slice-atlas.mjs (K1 packer, MB1 multi-storey)",
-    "note": "coordinates and anchors are at 1x; multiply by zoom for @2x/@0.5x. anchor = the sprite pixel that lands on the tile's diamond centre (measured widest base-diamond row; bottom-centre for vehicles). A sprite with `parts` is a multi-storey STACK: x/y/w/h describe its union bounding box (x/y unused) and each part is drawn at (dx,dy) from the box's top-left, sourced from its own packed sprite."
+    "generatedBy": "tools/slice-atlas.mjs (K1 packer, MB1 multi-storey, K-FIX-1 ground anchor)",
+    "note": "coordinates and anchors are at 1x; multiply by zoom for @2x/@0.5x. Sprites keep their NATIVE size — no skirt normalisation (Kenney tiles are designed to be different heights and grow upward into their transparent margin). anchor = the sprite pixel that lands on the tile's diamond centre: the measured base-diamond ground row (bottom-centre for vehicles). A sprite with `parts` is a multi-storey STACK: x/y/w/h describe its union bounding box (x/y unused) and each part is drawn at (dx,dy) from the box's top-left, sourced from its own packed sprite."
   },
   "sprites": {
     "terrain_grass": {
       "x": 8,
       "y": 8,
       "w": 132,
-      "h": 83,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -47,7 +47,7 @@
       "x": 288,
       "y": 8,
       "w": 132,
-      "h": 83,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -62,7 +62,7 @@
       "x": 428,
       "y": 8,
       "w": 132,
-      "h": 83,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -77,7 +77,7 @@
       "x": 568,
       "y": 8,
       "w": 132,
-      "h": 83,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -92,14 +92,14 @@
       "x": 708,
       "y": 8,
       "w": 132,
-      "h": 86,
+      "h": 99,
       "footprint": [
         1,
         1
       ],
       "anchor": [
         66,
-        36
+        33
       ],
       "kind": "ground"
     },
@@ -107,7 +107,7 @@
       "x": 848,
       "y": 8,
       "w": 132,
-      "h": 83,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -122,7 +122,7 @@
       "x": 988,
       "y": 8,
       "w": 132,
-      "h": 83,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -136,8 +136,8 @@
     "road_0011": {
       "x": 1128,
       "y": 8,
-      "w": 132,
-      "h": 84,
+      "w": 133,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -149,10 +149,10 @@
       "kind": "ground"
     },
     "road_0110": {
-      "x": 1268,
+      "x": 1269,
       "y": 8,
-      "w": 132,
-      "h": 84,
+      "w": 133,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -164,10 +164,10 @@
       "kind": "ground"
     },
     "road_1100": {
-      "x": 1408,
+      "x": 1410,
       "y": 8,
       "w": 132,
-      "h": 84,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -180,9 +180,9 @@
     },
     "road_1001": {
       "x": 8,
-      "y": 102,
-      "w": 132,
-      "h": 84,
+      "y": 115,
+      "w": 133,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -194,10 +194,10 @@
       "kind": "ground"
     },
     "road_0101": {
-      "x": 148,
-      "y": 102,
+      "x": 149,
+      "y": 115,
       "w": 132,
-      "h": 83,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -209,10 +209,10 @@
       "kind": "ground"
     },
     "road_1010": {
-      "x": 288,
-      "y": 102,
+      "x": 289,
+      "y": 115,
       "w": 132,
-      "h": 83,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -224,10 +224,10 @@
       "kind": "ground"
     },
     "road_0111": {
-      "x": 428,
-      "y": 102,
+      "x": 429,
+      "y": 115,
       "w": 132,
-      "h": 83,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -239,10 +239,10 @@
       "kind": "ground"
     },
     "road_1110": {
-      "x": 568,
-      "y": 102,
+      "x": 569,
+      "y": 115,
       "w": 132,
-      "h": 83,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -254,10 +254,10 @@
       "kind": "ground"
     },
     "road_1101": {
-      "x": 708,
-      "y": 102,
+      "x": 709,
+      "y": 115,
       "w": 132,
-      "h": 83,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -269,10 +269,10 @@
       "kind": "ground"
     },
     "road_1011": {
-      "x": 848,
-      "y": 102,
+      "x": 849,
+      "y": 115,
       "w": 132,
-      "h": 83,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -284,10 +284,10 @@
       "kind": "ground"
     },
     "road_1111": {
-      "x": 988,
-      "y": 102,
+      "x": 989,
+      "y": 115,
       "w": 132,
-      "h": 83,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -299,10 +299,10 @@
       "kind": "ground"
     },
     "rail_0000": {
-      "x": 1128,
-      "y": 102,
+      "x": 1129,
+      "y": 115,
       "w": 132,
-      "h": 83,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -314,10 +314,10 @@
       "kind": "ground"
     },
     "rail_0001": {
-      "x": 1268,
-      "y": 102,
+      "x": 1269,
+      "y": 115,
       "w": 132,
-      "h": 83,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -329,10 +329,10 @@
       "kind": "ground"
     },
     "rail_0010": {
-      "x": 1408,
-      "y": 102,
+      "x": 1409,
+      "y": 115,
       "w": 132,
-      "h": 83,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -345,9 +345,9 @@
     },
     "rail_0100": {
       "x": 8,
-      "y": 194,
+      "y": 222,
       "w": 132,
-      "h": 83,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -360,9 +360,9 @@
     },
     "rail_1000": {
       "x": 148,
-      "y": 194,
+      "y": 222,
       "w": 132,
-      "h": 83,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -375,9 +375,9 @@
     },
     "rail_0011": {
       "x": 288,
-      "y": 194,
+      "y": 222,
       "w": 132,
-      "h": 83,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -390,9 +390,9 @@
     },
     "rail_0110": {
       "x": 428,
-      "y": 194,
+      "y": 222,
       "w": 132,
-      "h": 83,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -405,9 +405,9 @@
     },
     "rail_1100": {
       "x": 568,
-      "y": 194,
+      "y": 222,
       "w": 132,
-      "h": 83,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -420,9 +420,9 @@
     },
     "rail_1001": {
       "x": 708,
-      "y": 194,
+      "y": 222,
       "w": 132,
-      "h": 83,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -435,9 +435,9 @@
     },
     "rail_0101": {
       "x": 848,
-      "y": 194,
+      "y": 222,
       "w": 132,
-      "h": 83,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -450,9 +450,9 @@
     },
     "rail_1010": {
       "x": 988,
-      "y": 194,
+      "y": 222,
       "w": 132,
-      "h": 83,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -465,9 +465,9 @@
     },
     "rail_0111": {
       "x": 1128,
-      "y": 194,
+      "y": 222,
       "w": 132,
-      "h": 83,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -480,9 +480,9 @@
     },
     "rail_1110": {
       "x": 1268,
-      "y": 194,
+      "y": 222,
       "w": 132,
-      "h": 83,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -495,9 +495,9 @@
     },
     "rail_1101": {
       "x": 1408,
-      "y": 194,
+      "y": 222,
       "w": 132,
-      "h": 83,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -510,9 +510,9 @@
     },
     "rail_1011": {
       "x": 8,
-      "y": 285,
+      "y": 329,
       "w": 132,
-      "h": 83,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -525,9 +525,9 @@
     },
     "rail_1111": {
       "x": 148,
-      "y": 285,
+      "y": 329,
       "w": 132,
-      "h": 83,
+      "h": 99,
       "footprint": [
         1,
         1
@@ -540,24 +540,24 @@
     },
     "crossing": {
       "x": 288,
-      "y": 285,
-      "w": 133,
-      "h": 84,
+      "y": 329,
+      "w": 132,
+      "h": 99,
       "footprint": [
         1,
         1
       ],
       "anchor": [
         66,
-        34
+        33
       ],
       "kind": "ground"
     },
     "farm": {
-      "x": 429,
-      "y": 285,
+      "x": 428,
+      "y": 329,
       "w": 133,
-      "h": 109,
+      "h": 127,
       "footprint": [
         1,
         1
@@ -569,10 +569,10 @@
       "kind": "standing"
     },
     "forest": {
-      "x": 570,
-      "y": 285,
+      "x": 569,
+      "y": 329,
       "w": 132,
-      "h": 109,
+      "h": 127,
       "footprint": [
         1,
         1
@@ -584,10 +584,10 @@
       "kind": "standing"
     },
     "ore_mine": {
-      "x": 710,
-      "y": 285,
+      "x": 709,
+      "y": 329,
       "w": 132,
-      "h": 109,
+      "h": 127,
       "footprint": [
         1,
         1
@@ -599,10 +599,10 @@
       "kind": "standing"
     },
     "quarry": {
-      "x": 850,
-      "y": 285,
+      "x": 849,
+      "y": 329,
       "w": 132,
-      "h": 109,
+      "h": 127,
       "footprint": [
         1,
         1
@@ -614,10 +614,10 @@
       "kind": "standing"
     },
     "oil_rig": {
-      "x": 990,
-      "y": 285,
+      "x": 989,
+      "y": 329,
       "w": 133,
-      "h": 109,
+      "h": 127,
       "footprint": [
         1,
         1
@@ -629,10 +629,10 @@
       "kind": "standing"
     },
     "gold_mine": {
-      "x": 1131,
-      "y": 285,
+      "x": 1130,
+      "y": 329,
       "w": 132,
-      "h": 109,
+      "h": 127,
       "footprint": [
         1,
         1
@@ -644,8 +644,8 @@
       "kind": "standing"
     },
     "vehicle_truck_n": {
-      "x": 1271,
-      "y": 285,
+      "x": 1270,
+      "y": 329,
       "w": 19,
       "h": 27,
       "footprint": [
@@ -659,8 +659,8 @@
       "kind": "vehicle"
     },
     "vehicle_truck_ne": {
-      "x": 1298,
-      "y": 285,
+      "x": 1297,
+      "y": 329,
       "w": 35,
       "h": 31,
       "footprint": [
@@ -674,8 +674,8 @@
       "kind": "vehicle"
     },
     "vehicle_truck_e": {
-      "x": 1341,
-      "y": 285,
+      "x": 1340,
+      "y": 329,
       "w": 33,
       "h": 29,
       "footprint": [
@@ -689,8 +689,8 @@
       "kind": "vehicle"
     },
     "vehicle_truck_se": {
-      "x": 1382,
-      "y": 285,
+      "x": 1381,
+      "y": 329,
       "w": 35,
       "h": 33,
       "footprint": [
@@ -704,8 +704,8 @@
       "kind": "vehicle"
     },
     "vehicle_truck_s": {
-      "x": 1425,
-      "y": 285,
+      "x": 1424,
+      "y": 329,
       "w": 19,
       "h": 30,
       "footprint": [
@@ -719,8 +719,8 @@
       "kind": "vehicle"
     },
     "vehicle_truck_sw": {
-      "x": 1452,
-      "y": 285,
+      "x": 1451,
+      "y": 329,
       "w": 35,
       "h": 33,
       "footprint": [
@@ -734,8 +734,8 @@
       "kind": "vehicle"
     },
     "vehicle_truck_w": {
-      "x": 1495,
-      "y": 285,
+      "x": 1494,
+      "y": 329,
       "w": 33,
       "h": 29,
       "footprint": [
@@ -749,8 +749,8 @@
       "kind": "vehicle"
     },
     "vehicle_truck_nw": {
-      "x": 1536,
-      "y": 285,
+      "x": 1535,
+      "y": 329,
       "w": 35,
       "h": 32,
       "footprint": [
@@ -765,9 +765,9 @@
     },
     "highlight": {
       "x": 8,
-      "y": 402,
+      "y": 464,
       "w": 132,
-      "h": 82,
+      "h": 83,
       "footprint": [
         1,
         1
@@ -780,9 +780,9 @@
     },
     "highlight_soft": {
       "x": 148,
-      "y": 402,
+      "y": 464,
       "w": 132,
-      "h": 82,
+      "h": 83,
       "footprint": [
         1,
         1
@@ -795,9 +795,9 @@
     },
     "layer_buildingtiles_015_70_130_220": {
       "x": 288,
-      "y": 402,
+      "y": 464,
       "w": 99,
-      "h": 75,
+      "h": 85,
       "footprint": [
         1,
         1
@@ -810,9 +810,9 @@
     },
     "layer_buildingtiles_055_70_130_220": {
       "x": 395,
-      "y": 402,
+      "y": 464,
       "w": 99,
-      "h": 75,
+      "h": 85,
       "footprint": [
         1,
         1
@@ -825,9 +825,9 @@
     },
     "layer_buildingtiles_024_70_130_220": {
       "x": 502,
-      "y": 402,
+      "y": 464,
       "w": 99,
-      "h": 75,
+      "h": 85,
       "footprint": [
         1,
         1
@@ -840,9 +840,9 @@
     },
     "layer_buildingtiles_015_224_70_70": {
       "x": 609,
-      "y": 402,
+      "y": 464,
       "w": 99,
-      "h": 75,
+      "h": 85,
       "footprint": [
         1,
         1
@@ -855,9 +855,9 @@
     },
     "layer_buildingtiles_055_224_70_70": {
       "x": 716,
-      "y": 402,
+      "y": 464,
       "w": 99,
-      "h": 75,
+      "h": 85,
       "footprint": [
         1,
         1
@@ -870,9 +870,9 @@
     },
     "layer_buildingtiles_024_224_70_70": {
       "x": 823,
-      "y": 402,
+      "y": 464,
       "w": 99,
-      "h": 75,
+      "h": 85,
       "footprint": [
         1,
         1
@@ -885,9 +885,9 @@
     },
     "layer_buildingtiles_015_190_92_255": {
       "x": 930,
-      "y": 402,
+      "y": 464,
       "w": 99,
-      "h": 75,
+      "h": 85,
       "footprint": [
         1,
         1
@@ -900,9 +900,9 @@
     },
     "layer_buildingtiles_055_190_92_255": {
       "x": 1037,
-      "y": 402,
+      "y": 464,
       "w": 99,
-      "h": 75,
+      "h": 85,
       "footprint": [
         1,
         1
@@ -915,9 +915,9 @@
     },
     "layer_buildingtiles_024_190_92_255": {
       "x": 1144,
-      "y": 402,
+      "y": 464,
       "w": 99,
-      "h": 75,
+      "h": 85,
       "footprint": [
         1,
         1
@@ -930,9 +930,9 @@
     },
     "layer_buildingtiles_015_78_196_90": {
       "x": 1251,
-      "y": 402,
+      "y": 464,
       "w": 99,
-      "h": 75,
+      "h": 85,
       "footprint": [
         1,
         1
@@ -945,9 +945,9 @@
     },
     "layer_buildingtiles_055_78_196_90": {
       "x": 1358,
-      "y": 402,
+      "y": 464,
       "w": 99,
-      "h": 75,
+      "h": 85,
       "footprint": [
         1,
         1
@@ -960,9 +960,9 @@
     },
     "layer_buildingtiles_024_78_196_90": {
       "x": 1465,
-      "y": 402,
+      "y": 464,
       "w": 99,
-      "h": 75,
+      "h": 85,
       "footprint": [
         1,
         1
@@ -975,9 +975,9 @@
     },
     "layer_buildingtiles_044_70_130_220": {
       "x": 8,
-      "y": 492,
+      "y": 557,
       "w": 100,
-      "h": 75,
+      "h": 85,
       "footprint": [
         1,
         1
@@ -990,9 +990,9 @@
     },
     "layer_buildingtiles_057_70_130_220": {
       "x": 116,
-      "y": 492,
+      "y": 557,
       "w": 99,
-      "h": 80,
+      "h": 60,
       "footprint": [
         1,
         1
@@ -1005,9 +1005,9 @@
     },
     "layer_buildingtiles_044_224_70_70": {
       "x": 223,
-      "y": 492,
+      "y": 557,
       "w": 100,
-      "h": 75,
+      "h": 85,
       "footprint": [
         1,
         1
@@ -1020,9 +1020,9 @@
     },
     "layer_buildingtiles_057_224_70_70": {
       "x": 331,
-      "y": 492,
+      "y": 557,
       "w": 99,
-      "h": 80,
+      "h": 60,
       "footprint": [
         1,
         1
@@ -1035,9 +1035,9 @@
     },
     "layer_buildingtiles_044_190_92_255": {
       "x": 438,
-      "y": 492,
+      "y": 557,
       "w": 100,
-      "h": 75,
+      "h": 85,
       "footprint": [
         1,
         1
@@ -1050,9 +1050,9 @@
     },
     "layer_buildingtiles_057_190_92_255": {
       "x": 546,
-      "y": 492,
+      "y": 557,
       "w": 99,
-      "h": 80,
+      "h": 60,
       "footprint": [
         1,
         1
@@ -1065,9 +1065,9 @@
     },
     "layer_buildingtiles_044_78_196_90": {
       "x": 653,
-      "y": 492,
+      "y": 557,
       "w": 100,
-      "h": 75,
+      "h": 85,
       "footprint": [
         1,
         1
@@ -1080,9 +1080,9 @@
     },
     "layer_buildingtiles_057_78_196_90": {
       "x": 761,
-      "y": 492,
+      "y": 557,
       "w": 99,
-      "h": 80,
+      "h": 60,
       "footprint": [
         1,
         1
@@ -1097,36 +1097,36 @@
       "x": 0,
       "y": 0,
       "w": 99,
-      "h": 219,
+      "h": 225,
       "footprint": [
         1,
         1
       ],
       "anchor": [
         49,
-        169
+        165
       ],
       "kind": "standing",
       "parts": [
         {
           "sprite": "layer_buildingtiles_015_70_130_220",
           "dx": 0,
-          "dy": 144
+          "dy": 140
         },
         {
           "sprite": "layer_buildingtiles_055_70_130_220",
           "dx": 0,
-          "dy": 108
+          "dy": 105
         },
         {
           "sprite": "layer_buildingtiles_055_70_130_220",
           "dx": 0,
-          "dy": 72
+          "dy": 70
         },
         {
           "sprite": "layer_buildingtiles_055_70_130_220",
           "dx": 0,
-          "dy": 36
+          "dy": 35
         },
         {
           "sprite": "layer_buildingtiles_024_70_130_220",
@@ -1139,36 +1139,36 @@
       "x": 0,
       "y": 0,
       "w": 99,
-      "h": 219,
+      "h": 225,
       "footprint": [
         1,
         1
       ],
       "anchor": [
         49,
-        169
+        165
       ],
       "kind": "standing",
       "parts": [
         {
           "sprite": "layer_buildingtiles_015_224_70_70",
           "dx": 0,
-          "dy": 144
+          "dy": 140
         },
         {
           "sprite": "layer_buildingtiles_055_224_70_70",
           "dx": 0,
-          "dy": 108
+          "dy": 105
         },
         {
           "sprite": "layer_buildingtiles_055_224_70_70",
           "dx": 0,
-          "dy": 72
+          "dy": 70
         },
         {
           "sprite": "layer_buildingtiles_055_224_70_70",
           "dx": 0,
-          "dy": 36
+          "dy": 35
         },
         {
           "sprite": "layer_buildingtiles_024_224_70_70",
@@ -1181,36 +1181,36 @@
       "x": 0,
       "y": 0,
       "w": 99,
-      "h": 219,
+      "h": 225,
       "footprint": [
         1,
         1
       ],
       "anchor": [
         49,
-        169
+        165
       ],
       "kind": "standing",
       "parts": [
         {
           "sprite": "layer_buildingtiles_015_190_92_255",
           "dx": 0,
-          "dy": 144
+          "dy": 140
         },
         {
           "sprite": "layer_buildingtiles_055_190_92_255",
           "dx": 0,
-          "dy": 108
+          "dy": 105
         },
         {
           "sprite": "layer_buildingtiles_055_190_92_255",
           "dx": 0,
-          "dy": 72
+          "dy": 70
         },
         {
           "sprite": "layer_buildingtiles_055_190_92_255",
           "dx": 0,
-          "dy": 36
+          "dy": 35
         },
         {
           "sprite": "layer_buildingtiles_024_190_92_255",
@@ -1223,36 +1223,36 @@
       "x": 0,
       "y": 0,
       "w": 99,
-      "h": 219,
+      "h": 225,
       "footprint": [
         1,
         1
       ],
       "anchor": [
         49,
-        169
+        165
       ],
       "kind": "standing",
       "parts": [
         {
           "sprite": "layer_buildingtiles_015_78_196_90",
           "dx": 0,
-          "dy": 144
+          "dy": 140
         },
         {
           "sprite": "layer_buildingtiles_055_78_196_90",
           "dx": 0,
-          "dy": 108
+          "dy": 105
         },
         {
           "sprite": "layer_buildingtiles_055_78_196_90",
           "dx": 0,
-          "dy": 72
+          "dy": 70
         },
         {
           "sprite": "layer_buildingtiles_055_78_196_90",
           "dx": 0,
-          "dy": 36
+          "dy": 35
         },
         {
           "sprite": "layer_buildingtiles_024_78_196_90",
@@ -1265,26 +1265,26 @@
       "x": 0,
       "y": 0,
       "w": 100,
-      "h": 152,
+      "h": 160,
       "footprint": [
         1,
         1
       ],
       "anchor": [
         50,
-        102
+        100
       ],
       "kind": "standing",
       "parts": [
         {
           "sprite": "layer_buildingtiles_044_70_130_220",
           "dx": 0,
-          "dy": 77
+          "dy": 75
         },
         {
           "sprite": "layer_buildingtiles_044_70_130_220",
           "dx": 0,
-          "dy": 41
+          "dy": 40
         },
         {
           "sprite": "layer_buildingtiles_057_70_130_220",
@@ -1302,31 +1302,31 @@
       "x": 0,
       "y": 0,
       "w": 100,
-      "h": 188,
+      "h": 195,
       "footprint": [
         1,
         1
       ],
       "anchor": [
         50,
-        138
+        135
       ],
       "kind": "standing",
       "parts": [
         {
           "sprite": "layer_buildingtiles_044_70_130_220",
           "dx": 0,
-          "dy": 113
+          "dy": 110
         },
         {
           "sprite": "layer_buildingtiles_044_70_130_220",
           "dx": 0,
-          "dy": 77
+          "dy": 75
         },
         {
           "sprite": "layer_buildingtiles_044_70_130_220",
           "dx": 0,
-          "dy": 41
+          "dy": 40
         },
         {
           "sprite": "layer_buildingtiles_057_70_130_220",
@@ -1339,21 +1339,21 @@
       "x": 0,
       "y": 0,
       "w": 100,
-      "h": 116,
+      "h": 125,
       "footprint": [
         1,
         1
       ],
       "anchor": [
         50,
-        66
+        65
       ],
       "kind": "standing",
       "parts": [
         {
           "sprite": "layer_buildingtiles_044_70_130_220",
           "dx": 0,
-          "dy": 41
+          "dy": 40
         },
         {
           "sprite": "layer_buildingtiles_057_70_130_220",
@@ -1366,26 +1366,26 @@
       "x": 0,
       "y": 0,
       "w": 100,
-      "h": 152,
+      "h": 160,
       "footprint": [
         1,
         1
       ],
       "anchor": [
         50,
-        102
+        100
       ],
       "kind": "standing",
       "parts": [
         {
           "sprite": "layer_buildingtiles_044_224_70_70",
           "dx": 0,
-          "dy": 77
+          "dy": 75
         },
         {
           "sprite": "layer_buildingtiles_044_224_70_70",
           "dx": 0,
-          "dy": 41
+          "dy": 40
         },
         {
           "sprite": "layer_buildingtiles_057_224_70_70",
@@ -1403,31 +1403,31 @@
       "x": 0,
       "y": 0,
       "w": 100,
-      "h": 188,
+      "h": 195,
       "footprint": [
         1,
         1
       ],
       "anchor": [
         50,
-        138
+        135
       ],
       "kind": "standing",
       "parts": [
         {
           "sprite": "layer_buildingtiles_044_224_70_70",
           "dx": 0,
-          "dy": 113
+          "dy": 110
         },
         {
           "sprite": "layer_buildingtiles_044_224_70_70",
           "dx": 0,
-          "dy": 77
+          "dy": 75
         },
         {
           "sprite": "layer_buildingtiles_044_224_70_70",
           "dx": 0,
-          "dy": 41
+          "dy": 40
         },
         {
           "sprite": "layer_buildingtiles_057_224_70_70",
@@ -1440,21 +1440,21 @@
       "x": 0,
       "y": 0,
       "w": 100,
-      "h": 116,
+      "h": 125,
       "footprint": [
         1,
         1
       ],
       "anchor": [
         50,
-        66
+        65
       ],
       "kind": "standing",
       "parts": [
         {
           "sprite": "layer_buildingtiles_044_224_70_70",
           "dx": 0,
-          "dy": 41
+          "dy": 40
         },
         {
           "sprite": "layer_buildingtiles_057_224_70_70",
@@ -1467,26 +1467,26 @@
       "x": 0,
       "y": 0,
       "w": 100,
-      "h": 152,
+      "h": 160,
       "footprint": [
         1,
         1
       ],
       "anchor": [
         50,
-        102
+        100
       ],
       "kind": "standing",
       "parts": [
         {
           "sprite": "layer_buildingtiles_044_190_92_255",
           "dx": 0,
-          "dy": 77
+          "dy": 75
         },
         {
           "sprite": "layer_buildingtiles_044_190_92_255",
           "dx": 0,
-          "dy": 41
+          "dy": 40
         },
         {
           "sprite": "layer_buildingtiles_057_190_92_255",
@@ -1504,31 +1504,31 @@
       "x": 0,
       "y": 0,
       "w": 100,
-      "h": 188,
+      "h": 195,
       "footprint": [
         1,
         1
       ],
       "anchor": [
         50,
-        138
+        135
       ],
       "kind": "standing",
       "parts": [
         {
           "sprite": "layer_buildingtiles_044_190_92_255",
           "dx": 0,
-          "dy": 113
+          "dy": 110
         },
         {
           "sprite": "layer_buildingtiles_044_190_92_255",
           "dx": 0,
-          "dy": 77
+          "dy": 75
         },
         {
           "sprite": "layer_buildingtiles_044_190_92_255",
           "dx": 0,
-          "dy": 41
+          "dy": 40
         },
         {
           "sprite": "layer_buildingtiles_057_190_92_255",
@@ -1541,21 +1541,21 @@
       "x": 0,
       "y": 0,
       "w": 100,
-      "h": 116,
+      "h": 125,
       "footprint": [
         1,
         1
       ],
       "anchor": [
         50,
-        66
+        65
       ],
       "kind": "standing",
       "parts": [
         {
           "sprite": "layer_buildingtiles_044_190_92_255",
           "dx": 0,
-          "dy": 41
+          "dy": 40
         },
         {
           "sprite": "layer_buildingtiles_057_190_92_255",
@@ -1568,26 +1568,26 @@
       "x": 0,
       "y": 0,
       "w": 100,
-      "h": 152,
+      "h": 160,
       "footprint": [
         1,
         1
       ],
       "anchor": [
         50,
-        102
+        100
       ],
       "kind": "standing",
       "parts": [
         {
           "sprite": "layer_buildingtiles_044_78_196_90",
           "dx": 0,
-          "dy": 77
+          "dy": 75
         },
         {
           "sprite": "layer_buildingtiles_044_78_196_90",
           "dx": 0,
-          "dy": 41
+          "dy": 40
         },
         {
           "sprite": "layer_buildingtiles_057_78_196_90",
@@ -1605,31 +1605,31 @@
       "x": 0,
       "y": 0,
       "w": 100,
-      "h": 188,
+      "h": 195,
       "footprint": [
         1,
         1
       ],
       "anchor": [
         50,
-        138
+        135
       ],
       "kind": "standing",
       "parts": [
         {
           "sprite": "layer_buildingtiles_044_78_196_90",
           "dx": 0,
-          "dy": 113
+          "dy": 110
         },
         {
           "sprite": "layer_buildingtiles_044_78_196_90",
           "dx": 0,
-          "dy": 77
+          "dy": 75
         },
         {
           "sprite": "layer_buildingtiles_044_78_196_90",
           "dx": 0,
-          "dy": 41
+          "dy": 40
         },
         {
           "sprite": "layer_buildingtiles_057_78_196_90",
@@ -1642,21 +1642,21 @@
       "x": 0,
       "y": 0,
       "w": 100,
-      "h": 116,
+      "h": 125,
       "footprint": [
         1,
         1
       ],
       "anchor": [
         50,
-        66
+        65
       ],
       "kind": "standing",
       "parts": [
         {
           "sprite": "layer_buildingtiles_044_78_196_90",
           "dx": 0,
-          "dy": 41
+          "dy": 40
         },
         {
           "sprite": "layer_buildingtiles_057_78_196_90",

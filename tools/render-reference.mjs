@@ -41,6 +41,12 @@ function blit(c, name, dx, dy) {
   const s = manifest.sprites[name];
   if (!s) throw new Error(`no sprite ${name}`);
   dx |= 0; dy |= 0;
+  // MB1: a composite has no atlas rect of its own — draw its layers bottom→top
+  // at their baked (dx, dy) offsets, exactly as IsoRenderer.blit does.
+  if (s.parts) {
+    for (const part of s.parts) blit(c, part.sprite, dx + part.dx, dy + part.dy);
+    return;
+  }
   for (let y = 0; y < s.h; y++) {
     const Y = dy + y;
     if (Y < 0 || Y >= c.h) continue;

@@ -1,8 +1,7 @@
 {
-  "comment": "K1 atlas cell map, Kenney edition: every cell is either ONE PNG file under src/iso/kenny OR an ordered multi-storey 'stack' of layer PNGs. Each single cell carries: name, png (repo path relative to src/iso/kenny), kind, footprint. A stacked 'standing' building replaces png with 'stack': a bottom-to-top array of layer descriptors ({ png }) — base first, middle floors, roof on top (2-6 layers). The packer resolves each distinct (png, tint) layer once into a shared packed sprite and emits a composite manifest entry whose 'parts' tell the renderer how to draw the stack bottom-to-top; depth-sort and picking treat the whole stack as ONE object on its footprint. Single-png cells (terrain, roads, the one-piece industries) are unchanged and additive with stacks. kind: 'ground' = a flat Kenney block (132x64 diamond + 50px skirt) — the packer anchors it by its measured widest row and REJECTS it unless that row sits at y~32 with ~full width (the spec's flat-only filter: slope/ramp tiles fail); 'standing' = a building, anchored by the widest row of its base diamond so it stands flush on the tile; 'vehicle' = anchored bottom-centre on the tile surface. Anchors are always COMPUTED by the packer from the pixels — there is no hand-authored anchor, box, crop, compose, sprite-id or generator field anywhere in this file. Derived art (rail set, crossing, placement glows) is pre-drawn by tools/make-derived-art.mjs into src/iso/kenny/derived and referenced like any Kenney PNG.",
+  "comment": "K1 atlas cell map, Kenney edition: every cell is either ONE PNG file under src/iso/kenny OR an ordered multi-storey 'stack' of layer PNGs. Each single cell carries: name, png (repo path relative to src/iso/kenny), kind, footprint. A stacked 'standing' building replaces png with 'stack': a bottom-to-top array of layer descriptors ({ png }) \u2014 base first, middle floors, roof on top (2-6 layers). The packer resolves each distinct (png, tint) layer once into a shared packed sprite and emits a composite manifest entry whose 'parts' tell the renderer how to draw the stack bottom-to-top; depth-sort and picking treat the whole stack as ONE object on its footprint. Single-png cells (terrain, roads, the one-piece industries) are unchanged and additive with stacks. kind: 'ground' = a flat Kenney block (132x64 diamond over a base skirt of whatever depth the source PNG has) \u2014 the packer anchors it by its measured GROUND ROW (the base diamond's left/right corner row) and REJECTS it unless that row sits at y~32 with ~full width (the spec's flat-only filter: slope/ramp tiles fail). K-FIX-1: sprites are never cropped or height-normalised; Kenney tiles are designed to be different heights and are anchored at their shared ground line; 'standing' = a building, anchored by the ground row of its base diamond so it stands flush on the tile; 'vehicle' = anchored bottom-centre on the tile surface. Anchors are always COMPUTED by the packer from the pixels \u2014 there is no hand-authored anchor, box, crop, compose, sprite-id or generator field anywhere in this file. Derived art (rail set, crossing, placement glows) is pre-drawn by tools/make-derived-art.mjs into src/iso/kenny/derived and referenced like any Kenney PNG.",
   "tileW": 132,
   "tileH": 64,
-  "blockH": 50,
   "source": {
     "root": "src/iso/kenny",
     "author": "Kenney (kenney.nl)",
@@ -51,11 +50,11 @@
         0,
         0
       ],
-      "note": "K2: isolated stub -> the NE dead-end piece (a lone PRESENT-bit road reads as a stub)."
+      "note": "K-FIX-2: flat full-asphalt paving square, no kerbs, no embankment \u2014 the isolated stub."
     },
     {
       "name": "road_0001",
-      "png": "landscape/PNG/landscapeTiles_105.png",
+      "png": "landscape/PNG/landscapeTiles_117.png",
       "kind": "ground",
       "footprint": [
         1,
@@ -65,11 +64,11 @@
         0,
         1
       ],
-      "note": "K2: NE dead-end stub. Arm verified: asphalt crosses the NE edge midpoint, nowhere else."
+      "note": "K-FIX-2: NE dead-end. Flat street: asphalt flush with the grass, kerb line only, no retaining wall."
     },
     {
       "name": "road_0010",
-      "png": "landscape/PNG/landscapeTiles_039.png",
+      "png": "landscape/PNG/landscapeTiles_105.png",
       "kind": "ground",
       "footprint": [
         1,
@@ -79,11 +78,11 @@
         0,
         2
       ],
-      "note": "K2: SE dead-end stub."
+      "note": "K-FIX-2: SE dead-end, flat street."
     },
     {
       "name": "road_0100",
-      "png": "landscape/PNG/landscapeTiles_047.png",
+      "png": "landscape/PNG/landscapeTiles_111.png",
       "kind": "ground",
       "footprint": [
         1,
@@ -93,11 +92,11 @@
         0,
         4
       ],
-      "note": "K2: SW dead-end stub."
+      "note": "K-FIX-2: SW dead-end, flat street."
     },
     {
       "name": "road_1000",
-      "png": "landscape/PNG/landscapeTiles_024.png",
+      "png": "landscape/PNG/landscapeTiles_112.png",
       "kind": "ground",
       "footprint": [
         1,
@@ -107,11 +106,11 @@
         0,
         8
       ],
-      "note": "K2: NW dead-end stub."
+      "note": "K-FIX-2: NW dead-end, flat street."
     },
     {
       "name": "road_0011",
-      "png": "landscape/PNG/landscapeTiles_125.png",
+      "png": "landscape/PNG/landscapeTiles_118.png",
       "kind": "ground",
       "footprint": [
         1,
@@ -121,11 +120,11 @@
         0,
         3
       ],
-      "note": "K2: NE+SE corner."
+      "note": "K-FIX-2: NE+SE corner, flat street."
     },
     {
       "name": "road_0110",
-      "png": "landscape/PNG/landscapeTiles_123.png",
+      "png": "landscape/PNG/landscapeTiles_114.png",
       "kind": "ground",
       "footprint": [
         1,
@@ -135,11 +134,11 @@
         0,
         6
       ],
-      "note": "K2: SE+SW corner."
+      "note": "K-FIX-2: SE+SW corner, flat street."
     },
     {
       "name": "road_1100",
-      "png": "landscape/PNG/landscapeTiles_126.png",
+      "png": "landscape/PNG/landscapeTiles_119.png",
       "kind": "ground",
       "footprint": [
         1,
@@ -149,11 +148,11 @@
         0,
         12
       ],
-      "note": "K2: SW+NW corner."
+      "note": "K-FIX-2: SW+NW corner, flat street."
     },
     {
       "name": "road_1001",
-      "png": "landscape/PNG/landscapeTiles_110.png",
+      "png": "landscape/PNG/landscapeTiles_122.png",
       "kind": "ground",
       "footprint": [
         1,
@@ -163,7 +162,7 @@
         0,
         9
       ],
-      "note": "K2: NW+NE corner."
+      "note": "K-FIX-2: NW+NE corner, flat street."
     },
     {
       "name": "road_0101",
@@ -177,7 +176,7 @@
         0,
         5
       ],
-      "note": "K2: NE|SW straight — the asphalt band runs upper-right <-> lower-left (arm-verified; this is where the 90-degree bug lived: the two straights are DIFFERENT Kenney tiles)."
+      "note": "K-FIX-2: NE|SW straight \u2014 the asphalt band runs upper-right <-> lower-left (arm-verified; this is where the 90-degree bug lived: the two straights are DIFFERENT Kenney tiles)."
     },
     {
       "name": "road_1010",
@@ -191,11 +190,11 @@
         0,
         10
       ],
-      "note": "K2: SE|NW straight — the band runs lower-right <-> upper-left (arm-verified)."
+      "note": "K-FIX-2: SE|NW straight \u2014 the band runs lower-right <-> upper-left (arm-verified)."
     },
     {
       "name": "road_0111",
-      "png": "landscape/PNG/landscapeTiles_089.png",
+      "png": "landscape/PNG/landscapeTiles_096.png",
       "kind": "ground",
       "footprint": [
         1,
@@ -205,11 +204,11 @@
         0,
         7
       ],
-      "note": "K2: T-junction NE+SE+SW."
+      "note": "K-FIX-2: T-junction NE+SE+SW, flat street."
     },
     {
       "name": "road_1110",
-      "png": "landscape/PNG/landscapeTiles_038.png",
+      "png": "landscape/PNG/landscapeTiles_097.png",
       "kind": "ground",
       "footprint": [
         1,
@@ -219,11 +218,11 @@
         0,
         14
       ],
-      "note": "K2: T-junction SE+SW+NW."
+      "note": "K-FIX-2: T-junction SE+SW+NW, flat street."
     },
     {
       "name": "road_1101",
-      "png": "landscape/PNG/landscapeTiles_121.png",
+      "png": "landscape/PNG/landscapeTiles_089.png",
       "kind": "ground",
       "footprint": [
         1,
@@ -233,11 +232,11 @@
         0,
         13
       ],
-      "note": "K2: T-junction SW+NW+NE."
+      "note": "K-FIX-2: T-junction SW+NW+NE, flat street."
     },
     {
       "name": "road_1011",
-      "png": "landscape/PNG/landscapeTiles_116.png",
+      "png": "landscape/PNG/landscapeTiles_104.png",
       "kind": "ground",
       "footprint": [
         1,
@@ -247,7 +246,7 @@
         0,
         11
       ],
-      "note": "K2: T-junction NW+NE+SE."
+      "note": "K-FIX-2: T-junction NW+NE+SE, flat street."
     },
     {
       "name": "road_1111",
@@ -261,7 +260,7 @@
         0,
         15
       ],
-      "note": "K2: crossroads."
+      "note": "K-FIX-2: crossroads, flat street."
     },
     {
       "name": "rail_0000",
@@ -275,7 +274,7 @@
         0,
         0
       ],
-      "note": "K2: Kenney ships roads only — the 16 rail masks are drawn once by tools/make-derived-art.mjs on the measured block geometry (gravel ballast + rails along each set arm) and referenced like any other PNG."
+      "note": "K2: Kenney ships roads only \u2014 the 16 rail masks are drawn once by tools/make-derived-art.mjs on the measured block geometry (gravel ballast + rails along each set arm) and referenced like any other PNG."
     },
     {
       "name": "rail_0001",
@@ -492,7 +491,7 @@
         1,
         1
       ],
-      "note": "K3: red barn (red roof+walls) — grain farm."
+      "note": "K3: red barn (red roof+walls) \u2014 grain farm."
     },
     {
       "name": "forest",
@@ -502,7 +501,7 @@
         1,
         1
       ],
-      "note": "K3: the dense tree stand from the landscape set — a ground block whose base diamond anchors like a building, so no compose is needed."
+      "note": "K3: the dense tree stand from the landscape set \u2014 a ground block whose base diamond anchors like a building, so no compose is needed."
     },
     {
       "name": "ore_mine",
@@ -542,7 +541,7 @@
         1,
         1
       ],
-      "note": "K3: yellow-roofed hut — gold reads yellow."
+      "note": "K3: yellow-roofed hut \u2014 gold reads yellow."
     },
     {
       "name": "factory_blue",
@@ -573,7 +572,7 @@
           "png": "buildings/PNG/buildingTiles_024.png"
         }
       ],
-      "note": "MB1: the main factory as a stacked multi-storey tower — four 044 storeys (base + 3 middle floors) under the 057 roof, each layer player-tinted. Layers are shared per (png, tint), so this 5-layer stack reuses the same packed sprites as depot_blue and differs only by composition."
+      "note": "MB1: the main factory as a stacked multi-storey tower \u2014 four 044 storeys (base + 3 middle floors) under the 057 roof, each layer player-tinted. Layers are shared per (png, tint), so this 5-layer stack reuses the same packed sprites as depot_blue and differs only by composition."
     },
     {
       "name": "factory_red",
@@ -688,7 +687,7 @@
           "png": "buildings/PNG/buildingTiles_057.png"
         }
       ],
-      "note": "MB1: the harvester depot fixed — the old 089 was a roof-only piece (99x60 cap that rendered flat). Now a proper 2-storey stack: base 044 + one 044 floor under the 057 roof, player-tinted.",
+      "note": "MB1: the harvester depot fixed \u2014 the old 089 was a roof-only piece (99x60 cap that rendered flat). Now a proper 2-storey stack: base 044 + one 044 floor under the 057 roof, player-tinted.",
       "stackVariants": [
         [
           {
@@ -867,7 +866,7 @@
         1
       ],
       "heading": "n",
-      "note": "K5: cargo truck (garbage set) — 8 compass frames; this one faces up-screen."
+      "note": "K5: cargo truck (garbage set) \u2014 8 compass frames; this one faces up-screen."
     },
     {
       "name": "vehicle_truck_ne",
@@ -878,7 +877,7 @@
         1
       ],
       "heading": "ne",
-      "note": "K5: NE frame — the arm toward the (tx,ty-1) neighbour (up-right on screen); one of the four road directions."
+      "note": "K5: NE frame \u2014 the arm toward the (tx,ty-1) neighbour (up-right on screen); one of the four road directions."
     },
     {
       "name": "vehicle_truck_e",
@@ -900,7 +899,7 @@
         1
       ],
       "heading": "se",
-      "note": "K5: SE frame — road direction toward (tx+1,ty) (down-right on screen)."
+      "note": "K5: SE frame \u2014 road direction toward (tx+1,ty) (down-right on screen)."
     },
     {
       "name": "vehicle_truck_s",
@@ -922,7 +921,7 @@
         1
       ],
       "heading": "sw",
-      "note": "K5: SW frame — road direction toward (tx,ty+1) (down-left on screen)."
+      "note": "K5: SW frame \u2014 road direction toward (tx,ty+1) (down-left on screen)."
     },
     {
       "name": "vehicle_truck_w",
@@ -944,7 +943,7 @@
         1
       ],
       "heading": "nw",
-      "note": "K5: NW frame — road direction toward (tx-1,ty) (up-left on screen)."
+      "note": "K5: NW frame \u2014 road direction toward (tx-1,ty) (up-left on screen)."
     },
     {
       "name": "highlight",

@@ -17,11 +17,12 @@
  * the whole composite as ONE object on its footprint; the player tint is
  * applied to every layer at pack time.
  *
- * Storey geometry: consecutive layers are placed so their measured base-diamond
- * widest rows are STOREY = 36px apart (at 1x), the offset the ticket verified
- * gives a clean flush tower. The renderer never re-derives this — the packer
- * bakes each part's (dx, dy) in world-1x pixels into the manifest, which the
- * renderer scales by zoom like every other coordinate.
+ * Storey geometry (K-FIX-1): consecutive layers are placed so each layer's
+ * BOTTOM face sits on the layer below's TOP face — the rise is MEASURED per
+ * layer (bottomFaceRow − topFaceRow), never a magic constant. The renderer
+ * never re-derives this: the packer bakes each part's (dx, dy) in world-1x
+ * pixels into the manifest, which the renderer scales by zoom like every other
+ * coordinate.
  *
  * Usage:
  *   node tools/make-derived-art.mjs   # once, after changing derived art
@@ -32,24 +33,44 @@
  *         assets/iso-atlas/manifest.json
  *         assets/iso-atlas/contact-sheet.png
  *
- * Anchor contract (K0/K1 — computed, never hand-authored):
- *   tileToScreen(tx,ty) is the centre of the tile's diamond (the widest-row
- *   line). Every sprite carries `anchor` = the pixel that lands exactly on
- *   that centre point:
- *     kind ground/standing : [floor(w/2), widestRow]  — the widest opaque row
- *                            IS the base diamond's widest row, measured from
- *                            the pixels at pack time. A ground cell whose
- *                            widest row is not at y≈32 with near-full width
- *                            is a slope/ramp and FAILS the build (flat only).
- *     kind vehicle         : [floor(w/2), h]          — bottom-centre rests
+ * ── Anchor contract (K-FIX-1 — Kenney's documented BOTTOM-ANCHOR method) ──
+ *
+ * Kenney's own 3D-import docs describe iso tiles as being drawn with ONE fixed
+ * drawing offset into a transparent margin: tiles are *meant* to be different
+ * heights and they grow UPWARD from a shared floor. The PIXI/Kenney tutorial
+ * names the failure mode of ignoring that: "tiles with height seem to float as
+ * they are drawn from the top instead of the bottom — the fix is to draw from
+ * the bottom." So: NOTHING is normalised or cropped here. Every source PNG is
+ * packed at its native size, and every sprite is anchored on the SAME ground
+ * reference line, measured from its own pixels:
+ *
+ *   groundRow(c)   the tile's south/ground contact row = the row of the base
+ *                  diamond's LEFT and RIGHT corners (the widest span of the
+ *                  block's top face). Measured, not assumed. From it the
+ *                  ground plane's bottom vertex is groundRow + HH.
+ *
+ *     kind ground/standing : anchor = [floor(w/2), groundRow] — the base
+ *                            diamond's centre lands on tileToScreen(tx,ty).
+ *                            A ground cell whose ground row is not at y≈32
+ *                            spanning ~the full tile width is a slope/ramp
+ *                            and FAILS the build (flat only, K2).
+ *     kind vehicle         : anchor = [floor(w/2), h] — bottom-centre rests
  *                            on the tile surface.
- *   A COMPOSITE (stacked) sprite is anchored the same way on its BASE layer's
- *   widest row, so the whole tower stands flush on the tile. Its (w, h) is the
- *   union bounding box of all parts; x/y are unused (parts carry their own
- *   packed rects).
- *   The renderer draws at (sx − anchor[0], sy − anchor[1]); buildings' base
- *   diamonds coincide with the tile diamond by construction, so nothing can
- *   float or sink (the K3 end of the compose/fragment saga).
+ *
+ * Because the anchor is the tile's ground contact point and NOT a normalised
+ * height, a 83px-tall water tile, a 99px grass block and a 127px industry all
+ * share one ground line and differ only in how far they extend upward — which
+ * is exactly Kenney's design. Terrain skirts may differ in depth; they are
+ * drawn below the shared surface and cannot cause stepping.
+ *
+ * A COMPOSITE (stacked) sprite is anchored the same way on its BASE layer's
+ * ground row, so the whole tower stands flush on the tile; each layer above
+ * sits on the measured top face of the one below. Its (w, h) is the union
+ * bounding box of all parts; x/y are unused (parts carry their own packed
+ * rects).
+ * The renderer draws at (sx − anchor[0], sy − anchor[1]); buildings' base
+ * diamonds coincide with the tile diamond by construction, so nothing can
+ * float or sink (the K3 end of the compose/fragment saga).
  *
  * Kenney art is smooth 3D rendering, so the @0.5x/@2x variants are resampled
  * with lanczos3 (the old nearest-neighbour scaling was for pixel art). The
@@ -65,10 +86,8 @@ const CELLS = JSON.parse(readFileSync(join(ROOT, "tools/iso-atlas.cells.json"), 
 const OUT = join(ROOT, "assets/iso-atlas");
 const ZOOMS = [1, 2, 0.5];
 const TILE_W = CELLS.tileW, TILE_H = CELLS.tileH;      // 132 x 64
-const BLOCK_H = CELLS.blockH ?? 50;                   // D1: 50px canonical skirt
 const HW = TILE_W / 2;                                  // 66
 const PACK_W = 1600, GAP = 8;
-const STOREY = 36;          // MB1: per-storey rise in screen px at 1x
 
 /** Load one source PNG as raw RGBA at 1x. */
 async function loadPng(rel) {
@@ -88,19 +107,53 @@ function widestRow(c) {
   return { width: widest, y: yAt };
 }
 
+/** Topmost opaque row of a column (-1 when the column is entirely clear). */
+function columnTop(c, x) {
+  for (let y = 0; y < c.h; y++) if (c.px[(y * c.w + x) * 4 + 3] > 10) return y;
+  return -1;
+}
+
 /**
- * D1: normalise skirt height for ground and standing sprites to BLOCK_H.
- * The diamond top (rows 0..widestRow) is untouched; only the skirt below
- * widestRow is cropped/padded so (bottom - widestRow) is canonical.
+ * K-FIX-1 ground reference: the row on which the sprite's base diamond touches
+ * the ground — the row of the diamond's LEFT and RIGHT corners. Both corners
+ * are the topmost opaque pixel of the leftmost / rightmost opaque column, so
+ * this is measured straight from the alpha and works for a flat 83px water
+ * tile, a 99px grass block, a 127px industry and a 60px roof cap alike.
+ *
+ * Tiles whose left/right silhouette is not the base diamond (a Kenney tile with
+ * an object overhanging one side) would skew one corner; we take the LOWER of
+ * the two, which is always the true base-diamond corner (an overhang can only
+ * raise a column's top, never lower it).
+ *
+ * `bottomFaceRow` is the ground plane's bottom vertex (groundRow + HH) — where
+ * the block's *bottom* face would sit if it were one tile thick. It is what a
+ * stacked layer above rests on.
  */
-function normaliseSkirt(c, targetSkirt = BLOCK_H) {
-  const m = widestRow(c);
-  const targetH = m.y + targetSkirt;
-  if (c.h === targetH) return { px: c.px, w: c.w, h: c.h, wr: m.y, widest: m };
-  const out = Buffer.alloc(c.w * targetH * 4);
-  const copyRows = Math.min(c.h, targetH);
-  c.px.copy(out, 0, 0, c.w * copyRows * 4);
-  return { px: out, w: c.w, h: targetH, wr: m.y, widest: m };
+function groundRow(c) {
+  let lx = -1, rx = -1;
+  for (let x = 0; x < c.w && lx < 0; x++) if (columnTop(c, x) >= 0) lx = x;
+  for (let x = c.w - 1; x >= 0 && rx < 0; x--) if (columnTop(c, x) >= 0) rx = x;
+  if (lx < 0) throw new Error("sprite is fully transparent");
+  return Math.max(columnTop(c, lx), columnTop(c, rx));
+}
+
+/** Lowest opaque row (the sprite's true bottom, ignoring transparent margin). */
+function bottomRow(c) {
+  for (let y = c.h - 1; y >= 0; y--)
+    for (let x = 0; x < c.w; x++) if (c.px[(y * c.w + x) * 4 + 3] > 10) return y;
+  return -1;
+}
+
+/**
+ * MB1/K-FIX-1: how far the NEXT layer up must be raised so its base diamond
+ * sits on this layer's top face. Measured per layer, not a magic constant: the
+ * layer's bottom-face CENTRE is its lowest opaque row minus that face's own
+ * half-diamond height (a 2:1 dimetric diamond `w` wide is `w/2` tall, so its
+ * half-height is `w/4`), and the rise is the distance from the layer's ground
+ * row down to it. Returns screen px at 1×.
+ */
+function layerRise(c) {
+  return (bottomRow(c) + 1 - Math.round(c.w / 4)) - groundRow(c);
 }
 
 /** Luminance-preserving player tint (V2): keeps the art's shading, swaps hue. */
@@ -117,26 +170,28 @@ function tintLumPx(px, tint, keep = 0.28) {
 }
 
 /**
- * K1/K2 flat-only filter: a `ground` cell must be a flat-topped block — its
- * widest opaque row sits at y≈TILE_H/2 and spans (nearly) the full tile width.
- * Slope/ramp tiles have their widest row well below y≈32 and fail here.
- * Stack layer fragments are `standing` and never pass through this filter.
+ * K1/K2 flat-only filter + K-FIX-1 ground anchor. A `ground` cell must be a
+ * flat-topped block: its measured ground row sits at y≈TILE_H/2 and its widest
+ * opaque row spans (nearly) the full tile width. Slope/ramp tiles have their
+ * corners at different heights and fail here. Stack layer fragments are
+ * `standing` and never pass through the flatness filter.
  */
 function anchorFor(cell, c) {
   const cx = Math.floor(c.w / 2);
-  if (cell.kind === "vehicle") return { anchor: [cx, c.h], widest: null };
-  const m = widestRow(c);
+  if (cell.kind === "vehicle") return { anchor: [cx, c.h], ground: null };
+  if (cell.kind !== "ground" && cell.kind !== "standing")
+    throw new Error(`${cell.name}: unknown kind ${cell.kind}`);
+  const g = groundRow(c);
   if (cell.kind === "ground") {
-    if (Math.abs(m.y - TILE_H / 2) > 4)
+    const m = widestRow(c);
+    if (Math.abs(g - TILE_H / 2) > 4)
       throw new Error(
-        `${cell.name}: widest row at y=${m.y}, expected ≈${TILE_H / 2} — ` +
+        `${cell.name}: ground row at y=${g}, expected ≈${TILE_H / 2} — ` +
         `slope/ramp tiles are rejected (flat only, K2)`);
     if (m.width < TILE_W - 10)
       throw new Error(`${cell.name}: widest row ${m.width}px < ${TILE_W - 10} — not a ground block`);
-  } else if (cell.kind !== "standing") {
-    throw new Error(`${cell.name}: unknown kind ${cell.kind}`);
   }
-  return { anchor: [cx, m.y], widest: m };
+  return { anchor: [cx, g], ground: g };
 }
 
 /** Deterministic, lowercase, schema-safe sprite name for a packed layer. */
@@ -161,9 +216,13 @@ async function run() {
     if (!r) {
       const c = await loadPng(rel);
       if (tint) tintLumPx(c.px, tint);
-      const norm = normaliseSkirt(c, BLOCK_H);
+      // K-FIX-1: native size, no skirt normalisation — the layer carries its
+      // own measured ground row and its own rise to the layer above it.
       const name = layerNameFor(rel, tint);
-      r = { name, rel, tint, px: norm.px, w: norm.w, h: norm.h, wr: norm.wr };
+      r = {
+        name, rel, tint, px: c.px, w: c.w, h: c.h,
+        gr: groundRow(c), rise: layerRise(c),
+      };
       layerPool.set(key, r);
     }
     return r;
@@ -193,12 +252,11 @@ async function run() {
         });
       }
     } else if (typeof cell.png === "string") {
-      let c = await loadPng(cell.png);
+      // K-FIX-1: the PNG is packed at its NATIVE size. Kenney's transparent
+      // margin is intentional ("margin for larger tiles") and the anchor —
+      // not a crop — is what puts the tile on the ground.
+      const c = await loadPng(cell.png);
       if (tint) tintLumPx(c.px, tint);
-      if (cell.kind === "ground" || cell.kind === "standing") {
-        const norm = normaliseSkirt(c, BLOCK_H);
-        c = { px: norm.px, w: norm.w, h: norm.h, rel: c.rel };
-      }
       const { anchor } = anchorFor(cell, c);
       packed.push({ name: cell.name, cell, px: c.px, w: c.w, h: c.h, anchor });
       console.log(`${cell.name.padEnd(16)} ${String(c.w).padStart(3)}x${String(c.h).padEnd(4)} anchor=${anchor}  <- ${cell.png}`);
@@ -212,7 +270,7 @@ async function run() {
   for (const r of layerPool.values()) {
     packed.push({
       name: r.name, cell: { name: r.name, kind: "standing", footprint: [1, 1] },
-      px: r.px, w: r.w, h: r.h, anchor: [Math.floor(r.w / 2), r.wr],
+      px: r.px, w: r.w, h: r.h, anchor: [Math.floor(r.w / 2), r.gr],
     });
   }
 
@@ -220,9 +278,17 @@ async function run() {
   const compositeSprites = {};
   for (const comp of composites) {
     const n = comp.parts.length;
-    // widest-row world line of part i: A_i = −i·STOREY (relative; ground = 0).
-    // part top (screen y) = A_i − wr_i. Shift so the topmost part starts at 0.
-    const tops = comp.parts.map((p, i) => ({ part: p, i, top: -i * STOREY - p.wr }));
+    // K-FIX-1: layer i's ground line A_i is the top face of layer i-1 — the
+    // rise is MEASURED from that layer's own pixels, so a short roof cap and a
+    // full storey stack correctly without a per-storey magic constant. The
+    // base layer sits on the tile itself (A_0 = 0). Part top (screen y) is
+    // A_i − groundRow_i; shift so the topmost part starts at 0.
+    let a = 0;
+    const tops = comp.parts.map((p, i) => {
+      const at = a;
+      a -= p.rise;
+      return { part: p, i, top: at - p.gr };
+    });
     const minTop = Math.min(...tops.map((t) => t.top));
     const W = Math.max(...comp.parts.map((p) => p.w));
     let H = 0;
@@ -232,7 +298,7 @@ async function run() {
       H = Math.max(H, dy + t.part.h);
       return { sprite: t.part.name, dx, dy };
     });
-    const anchor = [Math.floor(W / 2), -minTop];   // base layer's widest row = tile ground
+    const anchor = [Math.floor(W / 2), -minTop];   // base layer's ground row = tile ground
     const src = { x: 0, y: 0, w: W, h: H, footprint: comp.cell.footprint ?? [1, 1], anchor, kind: "standing" };
     compositeSprites[comp.name] = { ...src, parts };
     if (!comp.variantOf)
@@ -265,10 +331,13 @@ async function run() {
     meta: {
       source: `${CELLS.source.author} isometric assets (${CELLS.source.root})`,
       license: CELLS.source.license,
-      generatedBy: "tools/slice-atlas.mjs (K1 packer, MB1 multi-storey)",
+      generatedBy: "tools/slice-atlas.mjs (K1 packer, MB1 multi-storey, K-FIX-1 ground anchor)",
       note: "coordinates and anchors are at 1x; multiply by zoom for @2x/@0.5x. " +
-        "anchor = the sprite pixel that lands on the tile's diamond centre " +
-        "(measured widest base-diamond row; bottom-centre for vehicles). " +
+        "Sprites keep their NATIVE size — no skirt normalisation (Kenney tiles " +
+        "are designed to be different heights and grow upward into their " +
+        "transparent margin). anchor = the sprite pixel that lands on the " +
+        "tile's diamond centre: the measured base-diamond ground row " +
+        "(bottom-centre for vehicles). " +
         "A sprite with `parts` is a multi-storey STACK: x/y/w/h describe its " +
         "union bounding box (x/y unused) and each part is drawn at (dx,dy) " +
         "from the box's top-left, sourced from its own packed sprite.",
