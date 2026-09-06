@@ -20,7 +20,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { setRng, mulberry32 } from "../../src/game/config";
-import { shouldInstallDebugConsole, DEBUG_OVERLAYS } from "../../src/iso/debug";
+import { shouldInstallDebugConsole, shouldAutoEnableDebugOverlays, DEBUG_OVERLAYS } from "../../src/iso/debug";
 import { WATER, GRASS } from "../../src/iso/grid";
 
 vi.mock("../../assets/iso-atlas/atlas@0.5x.png", () => ({ default: "a05.png" }));
@@ -129,7 +129,12 @@ describe("C5 the debug console is gated, not shipped", () => {
     expect(shouldInstallDebugConsole({ dev: false, search: "?seed=1337" })).toBe(false);
     expect(shouldInstallDebugConsole({ dev: false, search: "/hexmatch/?iso-debug=1" })).toBe(true);
     expect(shouldInstallDebugConsole({ dev: false, search: "?seed=1&iso-debug" })).toBe(true);
+    expect(shouldInstallDebugConsole({ dev: false, search: "?debug=1" })).toBe(true);
     expect(shouldInstallDebugConsole({ dev: false, search: "?iso-debug=0" })).toBe(false);
+
+    expect(shouldAutoEnableDebugOverlays({ search: "" })).toBe(false);
+    expect(shouldAutoEnableDebugOverlays({ search: "?debug=1" })).toBe(true);
+    expect(shouldAutoEnableDebugOverlays({ search: "?iso-debug=1" })).toBe(true);
   });
 
   it("boots the real game with the console mounted on __iso", async () => {
@@ -153,10 +158,10 @@ describe("C5 the dumps report the geometry the renderer used", () => {
     const grass = h.dumpTile(gx, gy);
     expect(grass.terrainName).toBe("grass");
     expect(grass.sprite).toBe("terrain_grass");
-    // landscapeTiles_067: h 99 − anchor 33 = a 66px block below the widest row
-    expect(grass.skirtPx).toBe(66);
+    // D1: normalised to canonical BLOCK_H (50px) at pack time
+    expect(grass.skirtPx).toBe(50);
     expect(grass.canonicalSkirtPx).toBe(50);
-    expect(grass.skirtDriftPx).toBe(16);     // ← the C1 hover source, in one number
+    expect(grass.skirtDriftPx).toBe(0);     // ← D1 normalised: 0 drift
     expect(grass.cell.footprint).toEqual([1, 1]);
     expect(grass.screen[0]).toBeCloseTo(grass.css[0], 0);   // dpr 1 in jsdom
     expect(grass.build.ok).toBe(true);       // grass takes a road
@@ -271,14 +276,18 @@ describe("C5 the overlay toggles paint on the map", () => {
     expect(marks).toEqual([]);
   });
 
-  it("the skirt overlay marks the tiles whose block depth drifts", async () => {
+  it("the skirt overlay draws the surface and skirt lines, with zero drift on all tiles", async () => {
     const h = await boot();
     h.overlay("skirt");
     await settle();
-    const labels = ops.filter((o) => o.op === "fillText").map((o) => String(o.args[0]));
-    expect(labels.length).toBeGreaterThan(0);
-    // grass drifts +16 on this map, water does not — so the labels are drifts
-    expect(labels.every((l) => /^[+-]\d+$/.test(l))).toBe(true);
-    expect(labels).toContain("+16");
+    const strokes = ops.filter((o) => o.op === "stroke");
+    expect(strokes.length).toBeGreaterThan(0);
+    // D1: on a normalised map, all tiles have skirtDriftPx === 0 and gapPx === 0
+    for (let ty = 0; ty < h.grid.h; ty++) {
+      for (let tx = 0; tx < h.grid.w; tx++) {
+        expect(h.dumpTile(tx, ty).skirtDriftPx).toBe(0);
+        expect(h.dumpBuilding(tx, ty).ground.driftPx).toBe(0);
+      }
+    }
   });
 });

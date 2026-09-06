@@ -17,11 +17,17 @@ It is **not** in a shipped build by default:
 | context | available when |
 |---|---|
 | `npm run dev` (Vite dev server) | always — `import.meta.env.DEV` |
-| `npm run build && npm run preview`, prod hosting | only with **`?iso-debug=1`** on the URL, e.g. `/hexmatch/?seed=1337&iso-debug=1` (`?iso-debug=0` = off) |
+| `npm run build && npm run preview`, prod hosting | with **`?iso-debug=1`** or **`?debug=1`** on the URL, e.g. `/hexmatch/?seed=1337&debug=1` (`?iso-debug=0` = off) |
 
 The gate is `shouldInstallDebugConsole({ dev, search })`, and when it says no,
 `game.ts` installs nothing and the renderer's `debugPainter` stays `null` — no
 dump code runs at all, so there is nothing to strip later.
+
+Passing `?debug=1`, `?debug`, or `?iso-debug=1` also automatically activates the
+debug overlays on boot. In any session where the debug console is installed, pressing
+the **backtick / tilde** key (`` ` `` or `~`) toggles all visual debug overlays on and off.
+When overlays are active, an on-screen HUD box renders at the top-left of the canvas
+with an active overlay summary and color legend.
 
 ## The commands
 

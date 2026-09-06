@@ -52,7 +52,7 @@ import {
 import { createQuarry, GEM_TO_CARGO, type Quarry } from "./quarry";
 import { createIsoMarket, toBag, type CargoBag, type IsoMarket } from "./market";
 import { createOriginalUi, type OriginalUi } from "../game/ui";
-import { createIsoDebug, shouldInstallDebugConsole } from "./debug";
+import { createIsoDebug, shouldInstallDebugConsole, shouldAutoEnableDebugOverlays } from "./debug";
 import { joinFromSnapshot } from "./snapshot";
 export { joinFromSnapshot };
 
@@ -620,7 +620,9 @@ export function startIsoGame(root: HTMLElement) {
   let moved = false;
 
   canvases.overlay.addEventListener("pointerdown", (e) => {
-    canvases.overlay.setPointerCapture(e.pointerId);
+    if (typeof canvases.overlay.setPointerCapture === "function") {
+      canvases.overlay.setPointerCapture(e.pointerId);
+    }
     const [x, y] = pos(e);
     downAt = [x, y]; moved = false;
     const p = renderer?.pick(x, y);
@@ -706,6 +708,17 @@ export function startIsoGame(root: HTMLElement) {
         } else if (phase === "play") {
           if (tool === "harvester") placeHarvester(p.tx, p.ty, me, false);
           else if (tool === "demolish") doDemolish(p.tx, p.ty);
+          else if (tool === "road" || tool === "rail") {
+            const net = playerNetwork(track, me.i + 1, eco.factories, eco.harvesters);
+            const refusal = buildRefusal(grid, tool as TrackKind, p.tx, p.ty, net);
+            if (refusal !== null) {
+              if (refusal === "not-adjacent") toast("Track must extend your network.", "bad");
+              else if (refusal === "water") toast("Can't build on water.", "bad");
+              else if (refusal === "rough") toast("Rail cannot cross rough ground.", "bad");
+              else if (refusal === "occupied") toast("Tile is occupied.", "bad");
+              else toast("Can't build there.", "bad");
+            }
+          }
         }
       }
     }
@@ -726,6 +739,18 @@ export function startIsoGame(root: HTMLElement) {
   window.addEventListener("keydown", (e) => {
     const map: Record<string, Tool> = { "1": "road", "2": "rail", "3": "harvester", "4": "demolish" };
     if (map[e.key]) tool = map[e.key];
+    if (e.key === "`" || e.key === "~") {
+      if (debug) {
+        const active = debug.activeOverlays();
+        if (active.length > 0) {
+          debug.overlay("none");
+          toast("Debug overlay: OFF", "info");
+        } else {
+          debug.overlay("all");
+          toast("Debug overlay: ON", "info");
+        }
+      }
+    }
   });
 
   // ── resize ─────────────────────────────────────────────────────────────
@@ -743,14 +768,15 @@ export function startIsoGame(root: HTMLElement) {
   window.addEventListener("orientationchange", resize);
 
   // ── C5: the visual-debug console ───────────────────────────────────────
-  // Installed only in a dev build or when the URL asks for it (`?iso-debug`),
+  // Installed only in a dev build or when the URL asks for it (`?iso-debug` or `?debug`),
   // so a shipped build never creates the dumps and never sets the renderer's
   // debugPainter. Every command reads live state through the getters below,
   // which is the whole point: a screenshot can be traced to the exact numbers
   // the renderer used. See docs/iso-debug-console.md.
+  const searchStr = typeof location !== "undefined" ? location.search : "";
   const debug = shouldInstallDebugConsole({
     dev: import.meta.env.DEV,
-    search: typeof location !== "undefined" ? location.search : "",
+    search: searchStr,
   }) ? createIsoDebug({
     grid, track, eco, players,
     get camera() { return cam; },
@@ -765,6 +791,10 @@ export function startIsoGame(root: HTMLElement) {
     },
     dpr,
   }) : null;
+
+  if (debug && shouldAutoEnableDebugOverlays({ search: searchStr })) {
+    debug.overlay("all");
+  }
 
   // ── boot ───────────────────────────────────────────────────────────────
   let raf = 0;
