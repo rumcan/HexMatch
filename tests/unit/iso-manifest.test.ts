@@ -149,14 +149,17 @@ describe("X5 cheap manifest invariants", () => {
     }
   });
 
-  it("has one ore-mine / factory crop distinct from the other buildings", () => {
-    const { ore_mine, quarry, factory_blue, gold_mine } = realManifest.sprites;
-    expect([ore_mine.x, ore_mine.y, ore_mine.w, ore_mine.h])
+  it("has one ore-mine / factory / gold-mine crop distinct from the others", () => {
+    const { ore_mine_t0, quarry_t72, factory_blue, gold_mine_t72, farm_t33 } = realManifest.sprites;
+    expect([ore_mine_t0.x, ore_mine_t0.y, ore_mine_t0.w, ore_mine_t0.h])
       .not.toEqual([factory_blue.x, factory_blue.y, factory_blue.w, factory_blue.h]);
-    expect([ore_mine.x, ore_mine.y, ore_mine.w, ore_mine.h])
-      .not.toEqual([quarry.x, quarry.y, quarry.w, quarry.h]);
+    expect([ore_mine_t0.x, ore_mine_t0.y, ore_mine_t0.w, ore_mine_t0.h])
+      .not.toEqual([gold_mine_t72.x, gold_mine_t72.y, gold_mine_t72.w, gold_mine_t72.h]);
     expect([factory_blue.x, factory_blue.y, factory_blue.w, factory_blue.h])
-      .not.toEqual([gold_mine.x, gold_mine.y, gold_mine.w, gold_mine.h]);
+      .not.toEqual([farm_t33.x, farm_t33.y, farm_t33.w, farm_t33.h]);
+    // the quarry IS the gold mine grey-tinted: same composed cell size, its own
+    // atlas slot.
+    expect([quarry_t72.w, quarry_t72.h]).toEqual([gold_mine_t72.w, gold_mine_t72.h]);
   });
 });
 
@@ -319,14 +322,14 @@ describe("Y3/Y5/Y6 declaration invariants", () => {
     // The slicer must size each cell from the declared w/h, not from a measured
     // content bbox. Assert the union rect of a known multi-layer cell matches
     // the manifest size exactly.
-    const ore = cells.sprites.find((s) => s.name === "ore_mine")!;
+    const ore = cells.sprites.find((s) => s.name === "ore_mine_t0")!;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const l of ore.layers!) {
       const d = decls[String(l.sprite)];
       minX = Math.min(minX, d.xrel); maxX = Math.max(maxX, d.xrel + d.w - 1);
       minY = Math.min(minY, d.yrel); maxY = Math.max(maxY, d.yrel + d.h - 1);
     }
-    const m = realManifest.sprites.ore_mine;
+    const m = realManifest.sprites.ore_mine_t0;
     expect([m.w, m.h]).toEqual([maxX - minX + 1, maxY - minY + 1 + 1]); // +1 cloned ground row
   });
 });

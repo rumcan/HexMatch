@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  generateMap, randomSeed, GRASS, WATER, ROUGH, terrainAt, industryAt,
+  generateMap, randomSeed, GRASS, WATER, ROUGH, terrainAt, industryAt, TOWN_OCC,
 } from "../../src/iso/grid";
 import { MAP_W, MAP_H, INDUSTRY_QUOTA, INDUSTRY_BY_KEY, CARGOES } from "../../src/iso/config";
 
@@ -180,7 +180,7 @@ describe("E3 industry placement", () => {
     }
   });
 
-  it("matches the occupancy Int16Array to the industry list", () => {
+  it("matches the occupancy Int16Array to the industry list and towns", () => {
     const occ = new Int16Array(MAP_W * MAP_H).fill(-1);
     for (const ind of g.industries) {
       expect(ind.id).toBe(g.industries.indexOf(ind));
@@ -190,6 +190,10 @@ describe("E3 industry placement", () => {
           occ[ti] = ind.id;
         }
       }
+    }
+    // TOWN-1: town house tiles are stamped with TOWN_OCC.
+    for (const t of g.towns) {
+      for (const [hx, hy] of t.houses) occ[hy * MAP_W + hx] = TOWN_OCC;
     }
     expect(g.occupancy).toEqual(occ);
     // spot check via industryAt / industryAt miss on grass
@@ -228,5 +232,78 @@ describe("E3 industry placement", () => {
       }
     }
     expect(strict / total).toBeGreaterThanOrEqual(0.9);
+  });
+});
+
+// ── F1: towns ────────────────────────────────────────────────────────────
+// F1 was a self-blocking reachability bug: `placeTowns` put every occupied
+// industry tile into `blocked`, then `allIndustriesReachable` started its
+// flood from an industry tile and bailed on `blocked.has(start)` — so no town
+// was ever placed. The fix keeps only the PROPOSED town tiles in `blocked`.
+describe("F1 towns place and never strand an industry", () => {
+  it("places exactly 4 towns on the known-zero seeds (and generally)", () => {
+    for (const seed of [1337, 7, 42, 100, 1, 123, 2026, 0]) {
+      const g = generateMap(seed);
+      expect(g.towns.length, `seed ${seed}`).toBe(4);
+    }
+  });
+
+  it("is deterministic: same seed → identical town tiles", () => {
+    const a = generateMap(1337);
+    const b = generateMap(1337);
+    expect(a.towns).toEqual(b.towns);
+    expect(a.occupancy).toEqual(b.occupancy);
+  });
+
+  it("marks every town house with TOWN_OCC and keeps them inside bounds", () => {
+    for (const seed of [1337, 7, 42, 100]) {
+      const g = generateMap(seed);
+      for (const t of g.towns) {
+        expect(t.houses.length).toBeGreaterThanOrEqual(6);
+        for (const [hx, hy] of t.houses) {
+          expect(hx).toBeGreaterThanOrEqual(0);
+          expect(hy).toBeGreaterThanOrEqual(0);
+          expect(hx).toBeLessThan(MAP_W);
+          expect(hy).toBeLessThan(MAP_H);
+          expect(g.occupancy[hy * MAP_W + hx]).toBe(TOWN_OCC);
+          expect(g.terrain[hy * MAP_W + hx]).not.toBe(WATER);
+        }
+      }
+    }
+  });
+
+  it("leaves every industry tile land-reachable after towns are placed", () => {
+    // The reachability guarantee the F1 check exists for: the town tiles are
+    // impassable, and the flood that starts from an industry tile must still
+    // reach EVERY industry tile (water excluded, as in placeTowns).
+    for (const seed of [1337, 7, 42, 100, 1, 123]) {
+      const g = generateMap(seed);
+      const n = MAP_W * MAP_H;
+      const blocked = new Uint8Array(n);
+      for (const t of g.towns) for (const [hx, hy] of t.houses) blocked[hy * MAP_W + hx] = 1;
+      const first = g.industries[0];
+      const seen = new Uint8Array(n);
+      const stack = [first.ty * MAP_W + first.tx];
+      seen[stack[0]] = 1;
+      while (stack.length) {
+        const cur = stack.pop()!;
+        const x = cur % MAP_W, y = (cur / MAP_W) | 0;
+        for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]] as const) {
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+          const ni = ny * MAP_W + nx;
+          if (seen[ni] || blocked[ni] || g.terrain[ni] === WATER) continue;
+          seen[ni] = 1;
+          stack.push(ni);
+        }
+      }
+      for (const ind of g.industries) {
+        for (let x = ind.tx; x < ind.tx + ind.w; x++) {
+          for (let y = ind.ty; y < ind.ty + ind.h; y++) {
+            expect(seen[y * MAP_W + x], `seed ${seed} strands ${ind.type}@(${ind.tx},${ind.ty})`).toBe(1);
+          }
+        }
+      }
+    }
   });
 });

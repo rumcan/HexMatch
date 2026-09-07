@@ -146,10 +146,18 @@ async function renderFixture(zoom: Zoom): Promise<FixtureResult> {
     blendPixel(scene.data, i, terrainBuffer, i);
   }
 
+  // MT-2: a real multi-tile farm (the OpenTTD `_tile_table_farm_0` 3×3
+  // layout), drawn as one item per tile — the golden exercises per-tile
+  // placement + depth around a multi-tile industry.
+  const farmTiles: DrawItem[] = [
+    { sprite: "farm_t37", tx: 11, ty: 13 }, { sprite: "farm_t33", tx: 12, ty: 13 }, { sprite: "farm_t35", tx: 13, ty: 13 },
+    { sprite: "farm_t37", tx: 11, ty: 14 }, { sprite: "farm_t34", tx: 12, ty: 14 }, { sprite: "farm_t38", tx: 13, ty: 14 },
+    { sprite: "farm_t36", tx: 11, ty: 15 }, { sprite: "farm_t36", tx: 12, ty: 15 }, { sprite: "farm_t38", tx: 13, ty: 15 },
+  ];
   const structures: DrawItem[] = [
     { sprite: "road_0101", tx: 13, ty: 11 },       // straight, inland
     { sprite: "road_0011", tx: 14, ty: 11 },       // corner, inland
-    { sprite: "farm", tx: 11, ty: 14 },            // one-piece industry
+    ...farmTiles,
     { sprite: "factory_blue", tx: 14, ty: 14 },    // tall single-sprite works
   ];
   const placed = structures.map((item) => place(atlas, item)!).filter(Boolean);
