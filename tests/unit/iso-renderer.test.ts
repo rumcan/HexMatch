@@ -53,6 +53,49 @@ describe("K4 chunking (4×4 — 132px tiles make 8×8 chunks expensive)", () => 
   });
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// Zoom source rects. The packer packs each sprite at `Math.round(w*z) ×
+// Math.round(h*z)` placed at `Math.round(x*z), Math.round(y*z)`; the renderer
+// must source those integer rects (via `Atlas.zoomRect`), not the raw 1× rect
+// multiplied by z, or odd-sized sprites crop/shift at 0.5×.
+// ══════════════════════════════════════════════════════════════════════════
+describe("E4 zoomed atlas source rects", () => {
+  it("zoomRect is the packer's integer rect, not the fractional 1× × z", () => {
+    const farm = atlas.get("farm")!;
+    const zr = atlas.zoomRect(farm, 0.5);
+    expect(zr).toEqual({
+      x: Math.round(farm.x * 0.5),
+      y: Math.round(farm.y * 0.5),
+      w: Math.round(farm.w * 0.5),
+      h: Math.round(farm.h * 0.5),
+    });
+    // 133×127 at 0.5× would be 66.5×63.5 naively; the packed atlas holds
+    // 67×64. The old fractional source rect dropped a half column/row.
+    expect(zr.w).toBe(67);
+    expect(zr.h).toBe(64);
+    expect(farm.w * 0.5).toBe(66.5);
+  });
+
+  it("zoomRect round-trips integer dimensions at every shipped zoom", () => {
+    for (const z of [0.5, 1, 2] as const) {
+      for (const name of ["terrain_grass", "terrain_water", "road_0011", "farm", "highlight"]) {
+        const s = atlas.get(name)!;
+        const r = atlas.zoomRect(s, z);
+        expect(Number.isInteger(r.x) && Number.isInteger(r.y) && Number.isInteger(r.w) && Number.isInteger(r.h), `${name}@${z}`)
+          .toBe(true);
+        // The actual zoomed atlas image contains the sprite at this rect.
+        expect(r.w).toBe(Math.round(s.w * z));
+        expect(r.h).toBe(Math.round(s.h * z));
+      }
+    }
+  });
+
+  it("zoomFrameRect(…, 0) equals zoomRect for single-frame sprites", () => {
+    const farm = atlas.get("farm")!;
+    expect(atlas.zoomFrameRect(farm, 0, 0.5)).toEqual(atlas.zoomRect(farm, 0.5));
+  });
+});
+
 describe("E4 terrain sprite selection", () => {
   it("uses a sprite that exists for every tile of a generated map", () => {
     const seen = new Set<string>();

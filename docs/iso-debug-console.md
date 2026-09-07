@@ -148,6 +148,55 @@ footprint, measured anchor, `kind`, stack `parts`, `variants`, plus
 > `tools/iso-atlas.cells.json` — or re-run `npm run slice-atlas`, which prints
 > `name  WxH  anchor=[x,y]  <- path/to.png` for every cell.
 
+### `__iso.rendering()`
+
+The renderer's own snapshot of the **last frame's draw facts** — not a
+re-derivation, the values `IsoRenderer` actually used:
+
+```
+camera                 zoom / viewport / translation (device px)
+cull                   the cull pad and the padded visible tile range
+chunkCacheEntries      how many terrain chunk surfaces are cached
+groundAnchorReference  terrain_grass anchor.y (the shared Kenney ground line)
+depthCycles            occlusion cycles the depth sort had to break
+structures[]           per drawn sprite: resolved name, tile, footprint, kind,
+                       anchor, world/screen draw origin, depth key, clipped,
+                       and composite `parts` (dx/dy)
+sourceRect[]           for each on-screen single-layer sprite: the 1× manifest
+                       rect scaled naively (`raw`) and the actual integer rect
+                       the packer put in the zoomed atlas (`packed`).
+                       Composite stacks are excluded — a stack has no packed
+                       rect of its own; its layers are listed in the
+                       structure's `parts` instead.
+warnings[]             known bug classes it detected: a STANDING sprite that
+                       was clipped, ground-anchor drift >1px off the shared
+                       line, fractional zoom source rects (the 0.5× crop
+                       class), depth cycles, and the highlight anchor drift
+```
+
+`__iso.rendering()` is the first call after a screenshot: it names the sprite,
+the source/dest rect at the live zoom and every warning, so a render issue is
+traced to a number instead of re-derived from pixels.
+
+### `__iso.renderLog(on = true)`
+
+Toggles the per-blit `[render]` **console.debug** trace inside the renderer.
+With it on, every terrain tile, chunk build/blit, structure blit, composite
+part and `pick()` emits one structured line:
+
+```
+[render] terrain    { chunk, tile, sprite, anchor, dest, src, clip, z }
+[render] chunk-built { key, chunk, origin, surface, sprites, z }
+[render] blit       { sprite, tile, clipped, z, anchor, world, screen, src, dest, depthKey }
+[render] pick       { input, world, flat, sprite, result, z }
+```
+
+It is off by default even in a dev build so a normal session is not flooded.
+Turn it on with `__iso.renderLog(true)` in the console, or boot with
+**`?render-log=1`** (the app auto-enables it once the renderer is created).
+In the standalone `iso-demo` page (`src/iso/demo.ts`, a bare renderer with no
+game console), press **`L`** to toggle the same trace.
+
 ### `__iso.probe(tx, ty)`
 
 The small one that pays for itself: the game's own verdict for the tile under

@@ -138,6 +138,12 @@ export async function startDemo(root: HTMLElement) {
   window.addEventListener("keydown", (e) => {
     if (e.key === "r" || e.key === "R") kind = kind === "road" ? "rail" : "road";
     if (e.key === "f" || e.key === "F") xFirst = !xFirst;
+    // [l] toggles the per-blit `[render]` console.debug trace (same surface the
+    // game exposes through `__iso.renderLog`, without needing the game console).
+    if (e.key === "l" || e.key === "L") {
+      r.setRenderLog(!r.renderLogging);
+      console.log("[iso-demo] render log", r.renderLogging ? "ON" : "OFF");
+    }
   });
   canvases.overlay.addEventListener("wheel", (e) => {
     e.preventDefault();

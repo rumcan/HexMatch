@@ -31,8 +31,11 @@ node tools/peek.mjs <file.png> <x> <y> <w> <h> [maxW] [maxH]
 
 To trace a screenshot back to game state (C5), the running game exposes a
 debug console on `window.__iso` — `dumpTile`, `dumpAt`, `dumpBuilding`,
-`dumpNetwork`, `config`, `probe` and on-map `overlay` marks. Dev builds always
-have it; a production build only with `?iso-debug=1`. See
+`dumpNetwork`, `config`, `probe`, `rendering`, `renderLog` and on-map
+`overlay` marks. Dev builds always have it; a production build only with
+`?iso-debug=1`. `__iso.rendering()` returns the renderer's last-frame draw
+facts and warnings; `__iso.renderLog(true)` (or the URL flag `?render-log=1`)
+turns on the per-blit `[render]` console trace. See
 [`docs/iso-debug-console.md`](docs/iso-debug-console.md).
 
 ## Game entry

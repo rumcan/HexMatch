@@ -270,11 +270,17 @@ for (let mask = 0; mask < 16; mask++) {
   // The glows are pure UI diamonds, not blocks — they only need the 64px
   // diamond, so they keep their own compact canvas.
   const GLOW_H = 83;
+  // Kenney's landscape blocks are anchored on their measured ground row 33,
+  // not the mathematical diamond centre CY=32 (diamond spans rows 1..65). The
+  // placement glow must share that ground line or it sits 1px above/below the
+  // tile it previews — the highlight/base drift class the render diagnostics
+  // already flags (P3/P4). Regenerate the atlas if this constant changes.
+  const GLOW_CY = CY + 1;
   const glow = (lineAlpha, fillAlpha, edge) => {
     const c = canvas(GLOW_H);
     for (let y = 0; y < GLOW_H; y++) {
       for (let x = 0; x < W; x++) {
-        const d = Math.abs(x - CX) / 66 + Math.abs(y - CY) / 32;
+        const d = Math.abs(x - CX) / 66 + Math.abs(y - GLOW_CY) / 32;
         if (d > 1) continue;
         if (d > 1 - edge) put(c, x, y, 255, 214, 40, lineAlpha);
         else put(c, x, y, 255, 214, 40, fillAlpha);
