@@ -31,7 +31,7 @@
 // Everything is deterministic under an injected RNG so T1 can assert on it.
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_W, MAP_H } from "../game/config";
-import { TRANSPORT, INDUSTRY_BY_KEY, type Cargo } from "./config";
+import { TRANSPORT, INDUSTRY_BY_KEY, FACTORY_FOOTPRINT, type Cargo } from "./config";
 import { WATER, ROUGH, type Grid, type Industry } from "./grid";
 import {
   DIRS, DIR, tIdx, inMapT, hasTrack, canBuildOn, tileCost, addCost, canAfford,
@@ -436,13 +436,22 @@ export interface RivalSpotOptions {
 export function chooseRivalFactorySpot(
   grid: Grid, track: Track, awayFrom: [number, number], opts: RivalSpotOptions,
 ): [number, number] | null {
+  const [fw, fh] = FACTORY_FOOTPRINT;
   const spots: { x: number; y: number; rail: boolean; d: number }[] = [];
-  for (let y = 2; y < MAP_H - 2; y += 2) {
-    for (let x = 2; x < MAP_W - 2; x += 2) {
-      if (!canBuildOn(grid, "road", x, y)) continue;
+  for (let y = 2; y < MAP_H - 2 - fh; y += 2) {
+    for (let x = 2; x < MAP_W - 2 - fw; x += 2) {
+      // MT-1: check all tiles of the 2×2 factory footprint
+      let allRoad = true, allRail = true;
+      for (let dy = 0; dy < fh; dy++) {
+        for (let dx = 0; dx < fw; dx++) {
+          if (!canBuildOn(grid, "road", x + dx, y + dy)) allRoad = false;
+          if (!canBuildOn(grid, "rail", x + dx, y + dy)) allRail = false;
+        }
+      }
+      if (!allRoad) continue;
       spots.push({
         x, y,
-        rail: canBuildOn(grid, "rail", x, y),
+        rail: allRail,
         d: Math.abs(x - awayFrom[0]) + Math.abs(y - awayFrom[1]),
       });
     }
