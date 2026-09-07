@@ -98,16 +98,21 @@ async function clickPointFor(
   return page.evaluate(isoClickableTile, { tx, ty, aim: prefer });
 }
 
-/** Count opaque pixels in a square around a tile centre on a given canvas. */
+/** Count opaque pixels in a square around a tile's diamond centre on a given canvas. */
 async function opaqueNear(
   page: import("@playwright/test").Page, canvasIndex: number,
   tx: number, ty: number, half = 6,
 ) {
   return page.evaluate(({ canvasIndex, tx, ty, half }) => {
     const h = (window as any).__iso;
-    // canvas pixels are device pixels; tileScreenAt already returns device px
-    const [dx, dy] = h.tileScreenAt(tx, ty);
-    const cx = Math.floor(dx), cy = Math.floor(dy);
+    // `tileScreenAt` returns the diamond's TOP vertex. Sample the CENTRE —
+    // the midpoint of the top vertex and the south vertex (which is the top
+    // vertex of (tx+1, ty+1)) — so the box sits inside this tile instead of
+    // straddling the edge shared with the neighbour's diamond, where a
+    // neighbour's highlight ends exactly on the boundary.
+    const [x0, y0] = h.tileScreenAt(tx, ty);
+    const [x1, y1] = h.tileScreenAt(tx + 1, ty + 1);
+    const cx = Math.floor((x0 + x1) / 2), cy = Math.floor((y0 + y1) / 2);
     const c = document.querySelectorAll("canvas")[canvasIndex] as HTMLCanvasElement;
     const ctx = c.getContext("2d")!;
     const d = ctx.getImageData(cx - half, cy - half, half * 2 + 1, half * 2 + 1).data;
