@@ -1,23 +1,22 @@
 // I0 — deterministic, pixel-level renderer fixture at all shipped zooms.
 //
-// CI has no browser canvas, so this extends the software-rasteriser approach
-// from iso-skirt.test.ts to a complete scene. It consumes the real zoom atlas,
-// real manifest, real anchor/depth math and the renderer's real skirt/pick
-// predicates. The committed PNGs make visual drift reviewable and block it in
-// `npm test`; set UPDATE_ISO_GOLDENS=1 to intentionally refresh them.
+// CI has no browser canvas, so this extends a software rasteriser to a complete
+// scene. It consumes the real zoom atlas, real manifest, real anchor/depth math
+// and the real flat draw path (declared xrel/yrel anchor on the footprint's
+// SOUTH corner; terrain chunk origin + integer-packed zoom source rects; 1:1
+// blits — the flat renderer never scales inside drawImage). The committed PNGs
+// make visual drift reviewable and block it in `npm test`; set
+// UPDATE_ISO_GOLDENS=1 to intentionally refresh them.
 import { beforeAll, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import sharp from "sharp";
 import { Atlas, type Manifest, type SpriteDef } from "../../src/iso/atlas";
 import { depthSort, place, type DrawItem, type Placed } from "../../src/iso/depth";
-import {
-  aboveGroundPoly, flatPick, GROUND_OVERLAP, shouldClipGroundSkirt, skirtCovered,
-  structureSkirtPoly,
-} from "../../src/iso/renderer";
 import { screenToWorld, worldToScreen, type Camera } from "../../src/iso/camera";
+import { flatPick, chunkWorldOrigin, CHUNK } from "../../src/iso/renderer";
 import { GRASS, WATER, type Grid } from "../../src/iso/grid";
-import { BLOCK_H, HH, HW, MAP_H, MAP_W, TILE_H, tileToScreen, type Zoom } from "../../src/game/config";
+import { HH, HW, MAP_H, MAP_W, TILE_H, tileToScreen, type Zoom } from "../../src/game/config";
 
 const manifest: Manifest = JSON.parse(readFileSync("assets/iso-atlas/manifest.json", "utf8"));
 const atlas = new Atlas(manifest);
@@ -27,7 +26,6 @@ const BG = [11, 26, 38, 255] as const;
 const GOLDEN_DIR = "tests/fixtures/iso-golden";
 
 type Surface = { data: Uint8ClampedArray; width: number; height: number };
-type Poly = [number, number][];
 type AtlasPixels = { data: Buffer; width: number; height: number };
 type FixtureResult = {
   scene: Surface;
@@ -48,15 +46,6 @@ function surface(transparent = false): Surface {
   return { data, width: WIDTH, height: HEIGHT };
 }
 
-function inPoly(x: number, y: number, poly: Poly): boolean {
-  let inside = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const [xi, yi] = poly[i], [xj, yj] = poly[j];
-    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
-  }
-  return inside;
-}
-
 function blendPixel(dst: Uint8ClampedArray, di: number, src: Buffer, si: number): void {
   const sa = src[si + 3] / 255;
   if (sa <= 0) return;
@@ -70,49 +59,38 @@ function blendPixel(dst: Uint8ClampedArray, di: number, src: Buffer, si: number)
 }
 
 /**
- * Nearest-neighbour drawImage twin over the already-resampled zoom atlas.
- *
- * `Math.round(def.* * zoom)` matches `tools/slice-atlas.mjs`: at each zoom the
- * packer resizes each sprite to `Math.round(w*z) × Math.round(h*z)` and places
- * it at `Math.round(x*z), Math.round(y*z)`. The real renderer sources those
- * integer rects (`Atlas.zoomRect`); this twin must do the same or the golden
- * images would encode the old fractional-rect behavior that crops art at 0.5×.
+ * 1:1 blit of the integer-packed zoomed source rect. The flat renderer never
+ * scales inside drawImage: `tools/slice-atlas.mjs` resizes each sprite to
+ * `Math.round(w*z) × Math.round(h*z)` and places it at
+ * `Math.round(x*z), Math.round(y*z)`, and the renderer blits that rect 1:1.
  */
 function drawDef(
   target: Surface, pixels: AtlasPixels, def: SpriteDef, zoom: Zoom,
-  dx: number, dy: number, clip: Poly | null = null,
+  dx: number, dy: number,
 ): void {
-  const dw = Math.round(def.w * zoom), dh = Math.round(def.h * zoom);
+  const sw = Math.round(def.w * zoom), sh = Math.round(def.h * zoom);
   const sx = Math.round(def.x * zoom), sy = Math.round(def.y * zoom);
-  const sw = dw, sh = dh;
-  for (let y = 0; y < dh; y++) {
+  for (let y = 0; y < sh; y++) {
     const yy = dy + y;
     if (yy < 0 || yy >= target.height) continue;
-    const ay = Math.min(pixels.height - 1, Math.floor(sy + (y + 0.5) * sh / dh));
-    for (let x = 0; x < dw; x++) {
+    const ay = sy + y;
+    if (ay < 0 || ay >= pixels.height) continue;
+    for (let x = 0; x < sw; x++) {
       const xx = dx + x;
       if (xx < 0 || xx >= target.width) continue;
-      if (clip && !inPoly(xx + 0.5, yy + 0.5, clip)) continue;
-      const ax = Math.min(pixels.width - 1, Math.floor(sx + (x + 0.5) * sw / dw));
-      blendPixel(target.data, (yy * target.width + xx) * 4, pixels.data, (ay * pixels.width + ax) * 4);
+      const ax = sx + x;
+      if (ax < 0 || ax >= pixels.width) continue;
+      blendPixel(
+        target.data, (yy * target.width + xx) * 4,
+        pixels.data, (ay * pixels.width + ax) * 4,
+      );
     }
   }
 }
 
-function drawPlaced(
-  target: Surface, pixels: AtlasPixels, p: Placed, cam: Camera, clipSkirt: boolean,
-): void {
-  const clip = clipSkirt ? structureSkirtPoly(p, cam) : null;
-  if (p.def.parts) {
-    for (const part of p.def.parts) {
-      const def = atlas.get(part.sprite)!;
-      const [sx, sy] = worldToScreen(cam, p.wx + part.dx, p.wy + part.dy);
-      drawDef(target, pixels, def, cam.zoom, Math.floor(sx), Math.floor(sy), clip);
-    }
-    return;
-  }
+function drawPlaced(target: Surface, pixels: AtlasPixels, p: Placed, cam: Camera): void {
   const [sx, sy] = worldToScreen(cam, p.wx, p.wy);
-  drawDef(target, pixels, p.def, cam.zoom, Math.floor(sx), Math.floor(sy), clip);
+  drawDef(target, pixels, p.def, cam.zoom, Math.floor(sx), Math.floor(sy));
 }
 
 function fixtureGrid(): Grid {
@@ -139,24 +117,24 @@ async function renderFixture(zoom: Zoom): Promise<FixtureResult> {
   };
   const terrain = surface(true);
 
-  // Same terrain placement and clip math as renderer.chunkCanvas. The range
-  // includes one water ring so the coastline is visible against the sea.
+  // Terrain, exactly as renderer.chunkCanvas blits it: per-chunk surface at
+  // chunkWorldOrigin, each tile drawn at (wx, wy) − chunk origin, then the
+  // chunk blitted at floor(worldToScreen(origin)). Replicated rather than
+  // re-derived so a chunk-offset drift shows up here as a pixel drift.
   const terrainTiles: [number, number][] = [];
   for (let ty = 10; ty <= 16; ty++) for (let tx = 10; tx <= 16; tx++) terrainTiles.push([tx, ty]);
   terrainTiles.sort(([ax, ay], [bx, by]) => (ax + ay) - (bx + by) || (ax - ay) - (bx - by));
   for (const [tx, ty] of terrainTiles) {
     const name = grid.terrain[ty * MAP_W + tx] === WATER ? "terrain_water" : "terrain_grass";
     const def = atlas.get(name)!;
-    const [wx, wy] = tileToScreen(tx, ty);
-    const [sx, sy] = worldToScreen(cam, wx - def.anchor[0], wy - def.anchor[1]);
-    const [cx, cy] = worldToScreen(cam, wx, wy);
-    const clip = skirtCovered(grid, tx, ty)
-      ? aboveGroundPoly(
-        cx, cy, (HW + GROUND_OVERLAP) * zoom,
-        (HH + GROUND_OVERLAP) * zoom, (TILE_H + BLOCK_H) * zoom,
-      )
-      : null;
-    drawDef(terrain, pixels, def, zoom, Math.floor(sx), Math.floor(sy), clip);
+    const cx = (tx / CHUNK) | 0, cy = (ty / CHUNK) | 0;
+    const [ox, oy] = chunkWorldOrigin(cx, cy);
+    const wx = (tx - ty) * HW + HW - def.anchor[0];
+    const wy = (tx + ty) * HH + TILE_H - def.anchor[1];
+    const [bx, by] = worldToScreen(cam, ox, oy);
+    const dx = Math.floor((wx - ox) * zoom) + Math.floor(bx);
+    const dy = Math.floor((wy - oy) * zoom) + Math.floor(by);
+    drawDef(terrain, pixels, def, zoom, dx, dy);
   }
 
   const scene = surface();
@@ -172,37 +150,22 @@ async function renderFixture(zoom: Zoom): Promise<FixtureResult> {
     { sprite: "road_0101", tx: 13, ty: 11 },       // straight, inland
     { sprite: "road_0011", tx: 14, ty: 11 },       // corner, inland
     { sprite: "farm", tx: 11, ty: 14 },            // one-piece industry
-    { sprite: "factory_blue", tx: 14, ty: 14 },    // five-layer stack
+    { sprite: "factory_blue", tx: 14, ty: 14 },    // tall single-sprite works
   ];
   const placed = structures.map((item) => place(atlas, item)!).filter(Boolean);
   for (const p of depthSort(placed).order) {
-    drawPlaced(scene, pixels, p, cam, shouldClipGroundSkirt(grid, p.def, p.tx, p.ty));
+    drawPlaced(scene, pixels, p, cam);
   }
 
-  // The real overlay path does not skirt-clip placement highlights.
+  // The placement highlight is drawn on the overlay, whole (no clip).
   const hover: [number, number] = [11, 11];
-  drawPlaced(scene, pixels, place(atlas, { sprite: "highlight", tx: hover[0], ty: hover[1] })!, cam, false);
+  drawPlaced(scene, pixels, place(atlas, { sprite: "highlight", tx: hover[0], ty: hover[1] })!, cam);
   return { scene, terrain, grid, cam, hover };
 }
 
 function countOpaque(s: Surface): number {
   let n = 0;
   for (let i = 3; i < s.data.length; i += 4) if (s.data[i] > 8) n++;
-  return n;
-}
-
-function isBrown(r: number, g: number, b: number): boolean {
-  return r > 95 && r < 205 && g > 65 && g < 165 && b < 115 && r - b > 35 && r > g && g > b;
-}
-
-function countBrown(s: Surface, x0: number, y0: number, x1: number, y1: number): number {
-  let n = 0;
-  for (let y = Math.max(0, Math.floor(y0)); y < Math.min(s.height, Math.ceil(y1)); y++) {
-    for (let x = Math.max(0, Math.floor(x0)); x < Math.min(s.width, Math.ceil(x1)); x++) {
-      const i = (y * s.width + x) * 4;
-      if (isBrown(s.data[i], s.data[i + 1], s.data[i + 2])) n++;
-    }
-  }
   return n;
 }
 
@@ -241,34 +204,30 @@ describe("I0 golden-image scene", () => {
     });
   }
 
-  it("building-intact: the stacked factory keeps at least 98% of its unclipped pixels", () => {
+  it("building-intact: a single-sprite works draws whole at every zoom (flat tiles never clip)", () => {
     for (const zoom of ZOOMS) {
       const pixels = atlasPixels.get(zoom)!;
-      const grid = fixtureGrid();
-      const cam: Camera = { x: 400, y: 350, zoom, vw: WIDTH, vh: HEIGHT };
+      // place far inside so the sprite (up to 128×156 at 2×) cannot hit an edge
+      const cam: Camera = { x: 100, y: 200, zoom, vw: WIDTH, vh: HEIGHT };
       const p = place(atlas, { sprite: "factory_blue", tx: 0, ty: 0 })!;
-      const expected = surface(true), actual = surface(true);
-      drawPlaced(expected, pixels, p, cam, false);
-      drawPlaced(actual, pixels, p, cam, shouldClipGroundSkirt(grid, p.def, 12, 12));
-      const ratio = countOpaque(actual) / countOpaque(expected);
-      expect(ratio, `${zoom}× opaque ratio`).toBeGreaterThanOrEqual(0.98);
-      expect(shouldClipGroundSkirt(grid, p.def, 12, 12)).toBe(false);
-    }
-  });
-
-  it("no-interior-brown: empty inland ground has no skirt below its diamond", () => {
-    for (const zoom of ZOOMS) {
-      const { terrain, cam } = results.get(zoom)!;
-      for (const [tx, ty] of [[12, 13], [13, 13]] as [number, number][]) {
-        const [wx, wy] = tileToScreen(tx, ty);
-        const [cx, cy] = worldToScreen(cam, wx, wy);
-        const brown = countBrown(
-          terrain,
-          cx - 24 * zoom, cy + (HH + 2) * zoom,
-          cx + 24 * zoom, cy + (HH + 24) * zoom,
-        );
-        expect(brown, `${zoom}× inland tile (${tx},${ty})`).toBe(0);
-      }
+      const drawn = surface(true);
+      drawPlaced(drawn, pixels, p, cam);
+      // no skirt/clip machinery exists, so every opaque pixel of the sprite's
+      // frame-0 rect lands — the flat renderer cannot lop the tower off.
+      const frameW = Math.round((p.def.w / (p.def.frames ?? 1)) * zoom);
+      const frameH = Math.round(p.def.h * zoom);
+      const sx = Math.round(p.def.x * zoom), sy = Math.round(p.def.y * zoom);
+      const srcOpaque = (() => {
+        let n = 0;
+        for (let y = 0; y < frameH; y++) for (let x = 0; x < frameW; x++) {
+          const ax = sx + x, ay = sy + y;
+          if (ax >= pixels.width || ay >= pixels.height) continue;
+          if (pixels.data[(ay * pixels.width + ax) * 4 + 3] > 8) n++;
+        }
+        return n;
+      })();
+      expect(srcOpaque, "factory_blue has no opaque pixels").toBeGreaterThan(0);
+      expect(countOpaque(drawn), `${zoom}× opaque pixels`).toBe(srcOpaque);
     }
   });
 
@@ -281,8 +240,10 @@ describe("I0 golden-image scene", () => {
       const h = place(atlas, { sprite: "highlight", tx: hover[0], ty: hover[1] })!;
       const b = place(atlas, { sprite: "factory_blue", tx: hover[0], ty: hover[1] })!;
       expect(picked).toEqual(hover);
-      expect([h.wx + h.def.anchor[0], h.wy + h.def.anchor[1]]).toEqual([wx, wy]);
-      expect([b.wx + b.def.anchor[0], b.wy + b.def.anchor[1]]).toEqual([wx, wy]);
+      // flat anchor: the declared anchor lands on the SOUTH corner, i.e. the
+      // top vertex shifted by (+HW, +TILE_H).
+      expect([h.wx + h.def.anchor[0], h.wy + h.def.anchor[1]]).toEqual([wx + HW, wy + TILE_H]);
+      expect([b.wx + b.def.anchor[0], b.wy + b.def.anchor[1]]).toEqual([wx + HW, wy + TILE_H]);
     }
   });
 

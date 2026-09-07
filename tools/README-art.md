@@ -1,112 +1,105 @@
-# Art pipeline — Kenney isometric packs (K1–K5)
+# Isometric art pipeline (E1)
 
-All game art comes from Kenney's isometric sets (CC0 1.0 — public domain):
+Sources are the **OpenGFX** free base-graphics set for OpenTTD
+(https://github.com/OpenTTD/OpenGFX), GPL-2.0. Ground tiles measure
+64×31 drawn px (+1px row overlap) which locks `TILE_W = 64, TILE_H = 32`
+exactly — no rescaling, no reprojection (see `docs/README.md`).
 
-| Pack | Path | Used for |
-| --- | --- | --- |
-| Isometric Miniatures | `src/iso/kenny/miniatures/PNG` | terrain blocks, road tiles |
-| Isometric Landscape | `src/iso/kenny/landscape/PNG` | terrain alternates, industries |
-| Isometric Buildings | `src/iso/kenny/buildings/PNG` | factories, depots |
-| Isometric Vehicles | `src/iso/kenny/vehicles/PNG` | the cargo truck (8 compass frames) |
+## Sheet format
 
-Kenney's ground tiles are **132×64 block diamonds** over a dirt skirt whose
-depth **varies by tile** (66px for the landscape blocks, 50px for water) — the
-K0 constants in `src/game/config.ts` (`TILE_W=132`, `TILE_H=64`) were measured
-from them, and the map is 32×32 at that scale. `BLOCK_H=66` is the *deepest*
-skirt, used only to size caches; it is not a height every tile is forced to.
+Sheets are laid out as blue-backed (`#0000FF`) boxes on a white page with a
+numeric id label above each box. `tools/opengfx/extract2.py` finds each cell
+by its blue backing (labels have <12% blue and are excluded), crops the
+content with a 1px margin and writes RGBA PNGs plus a `*_cells.txt` log.
 
-### K-FIX-1 — the bottom-anchor rule (read this before touching the packer)
-
-Kenney's own [3D-import
-docs](https://kenney.nl/knowledge-base/game-assets-3d) place iso tiles with
-**one fixed drawing offset**: tiles are *meant* to be different heights and
-grow **upward** into the transparent margin around them ("margin for larger
-tiles, or tiles that don't fit within the usual tile size"). The
-[PIXI/Kenney road tutorial](https://github.com/peepsquest/tutorials) names the
-failure mode of ignoring this: *"tiles with height seem to float as they are
-drawn from the top instead of the bottom — the fix is to draw from the
-bottom."* Unity's isometric tilemap docs describe the same projection
-(dimetric, "Isometric Z as Y": height is added upward from a fixed floor).
-
-So the packer **never crops, pads or height-normalises a sprite**. Every PNG
-is packed at native size and anchored on its measured *ground row* — the row
-of its base diamond's left/right corners. A flat 83px water tile, a 99px
-grass block, a 127px industry and a five-storey composite all share one ground
-line and differ only in how far they extend above it. This replaces the PR #24
-skirt normalisation, which forced every tile to 50px, fought the format, and
-broke stacked-building anchors.
-
-## The three tools
+`tools/opengfx/preview.py` renders any extracted PNG as ASCII art so a
+headless operator can pick sprites without a viewer:
 
 ```bash
-node tools/make-derived-art.mjs   # 1. draw what Kenney doesn't ship
-npm run slice-atlas               # 2. pack assets/iso-atlas/* + measure anchors
-node tools/render-reference.mjs   # 3. render docs/kenney-*.png acceptance shots
+python3 tools/opengfx/extract2.py sheets/industries/farm_temperate.png cells/farm --prefix farm
+python3 tools/opengfx/preview.py cells/farm/farm_005.png        # one cell
+python3 tools/opengfx/preview.py cells/farm/                     # whole folder
 ```
 
-**`tools/iso-atlas.cells.json`** is the authoritative sprite table. Each cell
-is a bare PNG reference plus what the packer needs to know:
+## Getting the sheets
 
-```jsonc
-{ "name": "road_0110", "png": "landscapeTiles_123.png",
-  "kind": "ground", "footprint": [1, 1],
-  "mask": "0110",                       // road/rail cells: NE=1 SE=2 SW=4 NW=8
-  "note": "NE|SW bend" },
+`raw.githubusercontent.com` may be blocked in some sandboxes; the GitHub API
+works and returns the raw bytes:
 
-{ "name": "factory_blue", "png": "building_085.png",
-  "kind": "standing", "footprint": [1, 1],
-  "tintLum": [70, 130, 220] },          // luminance-preserving player tint
-
-{ "name": "vehicle_truck_ne", "png": "garbage_NE.png",
-  "kind": "vehicle", "footprint": [1, 1], "heading": "ne" }
+```bash
+gh api -H "Accept: application/vnd.github.raw+json" \
+  "repos/OpenTTD/OpenGFX/contents/sprites/png/industries/farm_temperate.png?ref=master" \
+  > sheets/farm_temperate.png
 ```
 
-No compose/box/crop/sprite-id/layers/generator fields — the OpenGFX pipeline
-is gone. `tests/unit/iso-manifest.test.ts` enforces this schema.
+Sheets used so far (paths under `sprites/png/`):
 
-**`tools/slice-atlas.mjs`** (the packer) measures each PNG to find its base
-diamond's **ground row** — the row where its left and right corners sit — and
-derives the anchor from it, so nothing is hand-authored:
+| Purpose | Sheet |
+|---|---|
+| Terrain grass / rough / rocks | `terrain/grass-temperate.gimp.png`, `terrain/rough-temperate.png`, `terrain/rocks-temperate.png` |
+| Farm (Grain) components | `industries/farm_temperate.png` (fields, farm house, fences, trees) |
+| Forest (Wood) | `industries/lumbermill.png`, `trees/temperate/*` |
+| Ore mine (Coal+Iron merged) | `industries/coalmine_base.gimp.png` + `coalmine_anim1..3.gimp.png` (4-frame animation) |
+| Quarry (Stone) | `industries/goldmine/*` (reskin grey at pack time) |
+| Gold mine | `industries/goldmine/goldmine_base.gimp.png` + `goldmine_anim2..3.gimp.png` |
+| Oil rig | `industries/oilwell/oilwell_anim1..6.gimp.png` (6-frame animation) |
+| Main Factory (HQ) | `industries/factory.png` |
+| Road half-piece | `infrastructure/infra06.png` (spr1332; see `base-1309-road-infra.pnml`) |
+| Rail half-piece | `infrastructure/infra06.png` (spr1012; see `base-1005-rail-infra.pnml`) |
+| Level crossing | `infrastructure/infra06.png` (spr1370) |
 
-- `ground` cells (terrain/road/rail): anchor = centre of the ground row;
-  cells whose ground row is not at y≈32, or whose widest row does not span
-  the tile, are REJECTED (slopes stay out — the grid is flat-only).
-- `standing` cells (buildings/industries): anchor = centre of the base
-  diamond's ground row, so the base sits on the tile diamond.
-- composite `stack` cells: anchored on the **base layer's** ground row, and
-  each layer above rests on the measured top face of the one below (the rise
-  is measured per layer, not a per-storey constant).
-- `vehicle` cells: bottom-centre, so the sprite rests on the road surface.
-- `tintLum` tints are applied to the source PNG once at pack time
-  (luminance-preserving), not per-frame in the game.
+## State of the work
 
-The packer emits `assets/iso-atlas/{manifest.json, atlas@{0.5,1,2}x.png,
-contact-sheet.png, footprint-check.png}` and validates against
-`tools/atlas-manifest.schema.json` (`node tools/validate-manifest.mjs`).
+- `extract2.py` / `preview.py` are committed and validated against the farm,
+  factory, coalmine, lumbermill, goldmine, oilwell, grass, rough and rocks
+  sheets.
+- **Terrain atlas is built**: `node tools/slice-atlas.mjs` reads
+  `tools/iso-atlas.cells.json` (source-sheet regions) and packs
+  `assets/iso-atlas/atlas@1x/@2x/@0.5x.png` + `manifest.json` +
+  `contact-sheet.png` (tile-grid background, magenta anchor, flush diamonds).
+  Cells verified by numeric content checks (diamond bounds, sea colour).
+  `npm run slice-atlas` regenerates; the committed manifest validates in CI
+  (`tests/unit/iso-manifest.test.ts` + `tools/validate-manifest.mjs`).
+- **Y3/Y4c/Y5/Y7: the atlas is fully declaration-driven.** The cell map
+  (`tools/iso-atlas.cells.json`) contains **no** `compose`/`box`/`crop`/`tiles`
+  arrays and no hand-authored anchors. Cell kinds:
+  - `sprite: <id>` — one declared OpenGFX ground tile (terrain).
+  - `layers: [{sprite, tint?}]` (+ optional `frames`) — a declared building on
+    its declared ground tile, each drawn at `tileOrigin + (xrel, yrel)`
+    (OpenTTD's own placement rule, Y7). `tint` multiplies opaque pixels
+    (player colours, the grey quarry). The oil rig declares its six animation
+    stages as per-frame layers.
+  - `trackset` — the 16 road/rail bitmask tiles from declared sprites only.
+    `mode: "flat"` indexes OpenGFX's finished flat road tiles (1332–1350) with
+    OpenTTD's flat selection table after `toOpenttdRoadBits`; `mode:
+    "overlays"` draws the declared grass ground plus the declared rail overlay
+    pieces (1005–1010) whose two directions are both set. The arm generator,
+    `clipArm` and `TRACK_HALF_W` are deleted (Y4c).
+  - `generator: "highlight" | "highlight_soft"` — the two procedural placement
+    glows; the only non-OpenGFX cells left.
+  Anchors are **derived** from the declared offsets
+  (`anchor = (-minX + 1, -minY + 31)`, the cell-local tile origin mapped onto
+  the renderer's south-corner contract), never measured or hand-tuned (Y5);
+  declared rects are trusted verbatim, which is what honouring `NOCROP` means
+  here. To re-run: `node tools/parse-pnml.mjs && npm run slice-atlas &&
+  node tools/validate-manifest.mjs assets/iso-atlas/manifest.json`.
+- **Y7 verification:** `node tools/footprint-check.mjs` renders every building
+  over the yellow footprint diamond grid (the overlay the bug was found with)
+  at four map quadrant offsets → `assets/iso-atlas/footprint-check.png`.
+  Acceptance: each base sits inside its footprint — no overhang past the
+  top-left edge, no bare bottom-right corner.
+- **Y6 invariants** live in `tests/unit/iso-manifest.test.ts`: no compose/crop
+  keys remain, every atlas sprite resolves to declared ids, no road/rail cell
+  uses the generator, width ≤ footprint_w × 64 + 32, and every manifest anchor
+  equals the declared derivation recomputed from the PNML.
+  `tests/unit/iso-atlas-pixels.test.ts` asserts each road mask is
+  pixel-identical to its declared tile and that adjacent declared road pieces
+  tile seamlessly (the rewritten X4 join test).
+- The atlas contains 52 sprites: 3 terrain, 6 industries (incl. the 6-frame
+  oil rig), 4 factories, 4 depots, 32 road/rail variants, crossing, and the
+  two highlights.
 
-**`tools/make-derived-art.mjs`** draws the pieces Kenney does not ship into
-`src/iso/kenny/derived/`: the 16 rail masks (dark-steel rails + sleepers only
-on set arms, from the widest-row geometry of the road set), the level
-crossing, and the `highlight`/`highlight_soft` placement glows. Derived PNGs
-are committed and referenced by `cells.json` like any other source.
+## Licence
 
-## Roads: masks → PNGs (the 90° bug)
-
-Our mask convention is **NE=1, SE=2, SW=4, NW=8** (compass around the tile).
-Each of the 16 masks names one Kenney road tile, and the two straight
-diagonals are *different tiles* (`landscapeTiles_082` vs `_074`).
-`tests/unit/iso-atlas-pixels.test.ts` probes asphalt at each diamond edge
-midpoint of the source PNGs, so a 90° rotation cannot slip in unnoticed.
-
-## Heads-up
-
-- Kenney's file names are irregular (`landscapeTiles_018.png`,
-  `building_085.png`, spaces in the vehicle colour dirs); the cells table is
-  the spelling authority.
-- The vehicle packs also carry `_D`/`_U` slope frames — unused (flat grid).
-- For headless inspection: `node tools/peek.mjs <file.png> <x> <y> <w> <h>`.
-
-## Credit
-
-Art by Kenney — https://kenney.nl — isometric packs, licensed CC0 1.0
-(public domain): https://creativecommons.org/publicdomain/zero/1.0/
+Graphics derived from OpenGFX (https://github.com/OpenTTD/OpenGFX),
+© 2007–2016 the OpenGFX team, licensed GPLv2 — see `LICENSE`.

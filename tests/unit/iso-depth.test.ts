@@ -5,7 +5,7 @@ import {
   place, depthSort, tier1Compare, boxesIntersect, isBehind, pickSprite, drawOrigin,
   type Placed,
 } from "../../src/iso/depth";
-import { tileToScreen } from "../../src/game/config";
+import { HW, TILE_H, tileToScreen } from "../../src/game/config";
 
 const manifest: Manifest = JSON.parse(
   readFileSync("assets/iso-atlas/manifest.json", "utf8"),
@@ -19,17 +19,18 @@ const P = (sprite: string, tx: number, ty: number) => {
 };
 
 describe("K4 anchor contract", () => {
-  it("puts the anchor pixel on the footprint diamond's centre", () => {
-    // K0/K1: the anchor (the sprite's measured base-diamond widest row for
-    // ground/standing art, bottom-centre for vehicles) lands on the tile's
-    // centre-line, so a building's base diamond coincides with its tile.
+  it("puts the anchor pixel on the footprint diamond's SOUTH corner", () => {
+    // OpenGFX sprites anchor by their declared xrel/yrel: the anchor pixel
+    // lands on the bottom vertex of the footprint diamond — tileToScreen of
+    // (tx+fw-1, ty+fh-1) shifted by (+HW, +TILE_H). A building's base diamond
+    // therefore coincides with its tile's south corner.
     for (const [name, tx, ty] of [["farm", 10, 12], ["ore_mine", 3, 20], ["terrain_grass", 0, 0], ["factory_blue", 5, 5], ["depot_blue", 9, 7], ["road_1111", 7, 9]] as const) {
       const def = atlas.get(name)!;
       const [ox, oy] = drawOrigin(def, tx, ty);
       const [fw, fh] = def.footprint;
-      const [cx, cy] = tileToScreen(tx + (fw - 1) / 2, ty + (fh - 1) / 2);
-      expect(ox + def.anchor[0]).toBe(cx);
-      expect(oy + def.anchor[1]).toBe(cy);
+      const [sx, sy] = tileToScreen(tx + fw - 1, ty + fh - 1);
+      expect(ox + def.anchor[0]).toBe(sx + HW);
+      expect(oy + def.anchor[1]).toBe(sy + TILE_H);
     }
   });
 });
@@ -145,15 +146,14 @@ describe("E4 picking — stage 2 alpha test", () => {
   });
 });
 
-describe("MB1 stacked composites are ONE object on their footprint", () => {
-  it("a stacked building places as its union bounding box, taller than any layer", () => {
+describe("V1 single-sprite buildings are ONE object on their footprint", () => {
+  it("the factory is a single declared sprite, taller than a single-piece industry", () => {
     const f = P("factory_blue", 5, 5);
-    expect(f.def.parts).toBeTruthy();
-    expect(f.def.parts!.length).toBeGreaterThanOrEqual(2);
-    // union w/h come straight off the manifest composite
+    // Flat OpenGFX: no `parts`/stack — one sprite, one footprint.
+    expect(f.def.parts).toBeUndefined();
     expect(f.w).toBe(f.def.w);
     expect(f.h).toBe(f.def.h);
-    // a stack must be strictly taller than a single-piece industry next door
+    // a multi-storey works must be strictly taller than a single-piece industry
     expect(f.h).toBeGreaterThan(P("farm", 5, 5).h);
   });
 
@@ -171,12 +171,11 @@ describe("MB1 stacked composites are ONE object on their footprint", () => {
     const f = P("factory_blue", 20, 20);
     const farm = P("farm", 20, 20);
     // high on the tower: above where a single-storey building's art reaches,
-    // but inside the stack's union box → still the factory (union alpha).
-    const highY = farm.wy;                     // top row of a single building
+    // but inside the factory's own sprite box → still the factory.
     const pt = { x: f.wx + f.w / 2, y: f.wy + Math.floor(f.h / 4) };
     expect(pt.y).toBeLessThan(farm.wy + 1);    // sanity: really up in the tower
-    // (no canvas in node → no masks; a composite without a mask tests opaque on
-    // its union box, matching the pre-mask contract.)
+    // (no canvas in node → no masks; a sprite without a mask tests opaque on
+    // its box, matching the pre-mask contract.)
     expect(pickSprite(atlas, [farm, f], pt.x, pt.y)).toBe(f);
   });
 });

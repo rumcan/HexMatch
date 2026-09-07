@@ -1,170 +1,61 @@
 // ══════════════════════════════════════════════════════════════════════════
-// E4 — Isometric renderer core (K4 — Kenney block geometry).
+// E4 — Isometric renderer core (flat OpenGFX tiles).
 //
 // Three stacked canvases:
 //   1. terrain     — chunk-cached, redrawn only on camera move / zoom change
 //   2. structures  — industries, road, rail, stations; redrawn on world change
 //   3. overlay     — previews, highlights, animated frames, cursor; 60fps
 //
-// Terrain is cached in 4×4-tile chunks rendered once into an OffscreenCanvas
+// Terrain is cached in 8×8-tile chunks rendered once into an OffscreenCanvas
 // and blitted thereafter; a chunk is invalidated per changed tile and all
 // chunks are dropped on a zoom change. Only the culled tile range is touched.
-// (K4: chunks shrank 8→4 — a 132px tile makes an 8×8 chunk ~1188px wide, and
-// the cached-surface memory at 2× zoom stops being cheap; 4×4 keeps the same
-// coverage in half the wasted area.)
+//
+// OpenGFX tiles are FLAT pixel diamonds (64×31 drawn, declared xrel/yrel) with
+// no cube skirt, so a tile is drawn whole by its declared anchor and there is
+// nothing to clip, no skirt to hide and no per-tile height to model.
 //
 // Every draw coordinate goes through Math.floor, and nothing is ever scaled
 // inside drawImage — the atlas ships pre-rendered at 0.5×/1×/2×.
 // ══════════════════════════════════════════════════════════════════════════
-import {
-  HW, HH, TILE_W, TILE_H, BLOCK_H, MAP_W, MAP_H, tileToScreen, screenToTile,
-} from "../game/config";
+import { HW, HH, TILE_W, TILE_H, MAP_W, MAP_H } from "../game/config";
 import type { Camera } from "./camera";
 import { visibleTileRange, screenToWorld, worldToScreen } from "./camera";
-import type { Atlas, SpriteDef } from "./atlas";
+import type { Atlas } from "./atlas";
 import { depthSort, place, pickSprite, type DrawItem, type Placed } from "./depth";
-import { GRASS, WATER, ROUGH, inBounds, idx, type Grid } from "./grid";
+import { GRASS, WATER, ROUGH, type Grid } from "./grid";
 
-// ══════════════════════════════════════════════════════════════════════════
-// N1 — brown only at the map edge (the real geometry rule).
-//
-// Every Kenney tile is a diamond top plus a block skirt below it, and the
-// skirt is TALLER than the vertical gap between tiles (grass: 66px of block
-// below the corner row vs HH = 32px of screen per tile row), so a fully
-// drawn interior tile can never be fully covered by the neighbour in front
-// of it — brown leaked under every road and building.
-//
-// The rule (backlog N1, Approach A): a tile draws its skirt ONLY where no
-// tile in front of it covers the skirt — i.e. where a SE or SW neighbour is
-// water or off the map. That is the coastline, and it is the only place
-// brown belongs. Interior tiles draw just their above-ground region (the
-// diamond top plus anything standing on it), which tessellates into a
-// seamless flat ground plane; flush ground overlays (roads/rail) use the same
-// treatment. Standing sprites are different: a building is bottom-anchored
-// and always drawn whole — clipping its walls to solve a terrain problem was
-// the I1 regression. `skirtCovered` classifies the tile, while
-// `shouldClipGroundSkirt` enforces that the clip is ground-art only.
-// ══════════════════════════════════════════════════════════════════════════
-
-/**
- * True when every pixel of the sprite's skirt would be covered by tiles
- * drawn in front of it — i.e. the sprite is an INTERIOR tile and must not
- * draw its skirt at all. False = coast/edge: draw the full block.
- *
- * The covering tiles are the footprint's exterior SE neighbours (x+1 along
- * the footprint's east edge) and SW neighbours (y+1 along its south edge) —
- * exactly the tiles drawn after it that overlap its skirt. A neighbour that
- * is water or off the map covers nothing, so the tile is a coast tile.
- */
-export function skirtCovered(grid: Grid, tx: number, ty: number, fw = 1, fh = 1): boolean {
-  for (let x = tx; x < tx + fw; x++) {
-    for (let y = ty; y < ty + fh; y++) {
-      if (x === tx + fw - 1) {
-        const nx = x + 1, ny = y;
-        if (!inBounds(nx, ny) || grid.terrain[idx(nx, ny)] === WATER) return false;
-      }
-      if (y === ty + fh - 1) {
-        const nx = x, ny = y + 1;
-        if (!inBounds(nx, ny) || grid.terrain[idx(nx, ny)] === WATER) return false;
-      }
-    }
-  }
-  return true;
-}
-
-/**
- * I1/I4 boundary: only ground art participates in the island-skirt rule.
- * Roads, rail and crossings are ground overlays, so clipping their inland
- * block side keeps them flush. A standing sprite is positioned by its bottom
- * anchor and must be painted whole, regardless of whether its tile is inland.
- */
-export function shouldClipGroundSkirt(
-  grid: Grid, def: SpriteDef, tx: number, ty: number,
-): boolean {
-  return def.kind === "ground" &&
-    skirtCovered(grid, tx, ty, def.footprint[0], def.footprint[1]);
-}
-
-/**
- * The clip region an interior tile may paint: its ground diamond PLUS
- * everything above it (a building's tower, a rock on rough ground), and
- * NOTHING below the diamond's two lower edges — the skirt. (lx, ly) is the
- * footprint ground diamond's centre in canvas coordinates, hw/hh its
- * half-width/height ((fw+fh)/2 · HW/HH for an fw×fh footprint), `up` reaches
- * above the sprite's tallest pixel, and z scales everything for the zoomed
- * atlas. Returned as canvas-space vertices for `clipAboveGround`.
- */
-export function aboveGroundPoly(
-  lx: number, ly: number, hw: number, hh: number, up: number, z = 1,
-): [number, number][] {
-  return [
-    [lx - hw, ly - up],
-    [lx - hw, ly],
-    [lx, ly + hh],
-    [lx + hw, ly],
-    [lx + hw, ly - up],
-  ].map(([x, y]) => [Math.round(x * z), Math.round(y * z)] as [number, number]);
-}
-
-/** I4 screen-space clip for a placed ground overlay at any camera/zoom. */
-export function structureSkirtPoly(p: Placed, cam: Camera): [number, number][] {
-  const [fw, fh] = p.def.footprint;
-  const [fcx, fcy] = tileToScreen(p.tx + (fw - 1) / 2, p.ty + (fh - 1) / 2);
-  const [lx, ly] = worldToScreen(cam, fcx, fcy);
-  const half = (fw + fh) / 2;
-  return aboveGroundPoly(
-    lx, ly, half * HW * cam.zoom, half * HH * cam.zoom,
-    (p.def.h + TILE_H + BLOCK_H) * cam.zoom,
-  );
-}
-
-/** Apply `aboveGroundPoly` as a canvas clip. Caller draws, then restore()s. */
-function clipAboveGround(ctx: Ctx2D, poly: [number, number][]): void {
-  ctx.save();
-  ctx.beginPath();
-  ctx.moveTo(poly[0][0], poly[0][1]);
-  for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i][0], poly[i][1]);
-  ctx.closePath();
-  ctx.clip();
-}
-
-/** I5: one logical pixel of straight-alpha overlap hides floored tile seams. */
-export const GROUND_OVERLAP = 1;
-
-export const CHUNK = 4;
+export const CHUNK = 8;
 export const chunksX = Math.ceil(MAP_W / CHUNK);
 export const chunksY = Math.ceil(MAP_H / CHUNK);
 export const chunkIndexOf = (tx: number, ty: number) =>
   ((ty / CHUNK) | 0) * chunksX + ((tx / CHUNK) | 0);
 
 /**
- * G8/K4: chunk canvas size. A CHUNK×CHUNK span of diamonds covers
- * 2*CHUNK*HW × 2*CHUNK*HH between its extreme centre-lines, plus one full
- * tile of width on the east (the rightmost tile's sprite extends HW past its
- * centre-line on both sides) and TILE_H + BLOCK_H of height (the tallest
- * sprite half above the top centre-line, plus the 50px block skirt below the
- * bottom one) so no pixel of any chunk tile clips.
+ * G8: chunk canvas size. An 8×8 of diamonds spans 16*HW × 16*HH, but sprites
+ * are drawn at `+HW` in x (anchor) so the rightmost column used to clip 32px
+ * off every eastern chunk edge — dark wedges at 8-tile intervals against the
+ * `#0b1a26` stage background. Pad by a full tile on both axes.
  */
 export function chunkSurfaceSize(z: number): { w: number; h: number } {
   return {
-    w: Math.ceil((2 * CHUNK * HW + TILE_W + 2 * GROUND_OVERLAP) * z),
-    h: Math.ceil((2 * CHUNK * HH + TILE_H + BLOCK_H + 2 * GROUND_OVERLAP) * z),
+    w: Math.ceil((2 * CHUNK * HW + TILE_W) * z),
+    h: Math.ceil((2 * CHUNK * HH + TILE_H * 2) * z),
   };
 }
 
 /** World-space top-left of a chunk's cache surface. */
 export function chunkWorldOrigin(cx: number, cy: number): [number, number] {
   const x0 = cx * CHUNK, y0 = cy * CHUNK;
-  const ox = (x0 - (y0 + CHUNK - 1)) * HW - HW - GROUND_OVERLAP;
-  const oy = (x0 + y0) * HH - HH - GROUND_OVERLAP;
+  const ox = (x0 - (y0 + CHUNK - 1)) * HW - HW;
+  const oy = (x0 + y0) * HH;
   return [ox, oy];
 }
 
 /**
- * Terrain sprite for a tile. One flat tile per terrain type (K2): the Kenney
- * landscape set has many grass variants, but a single flat block per type
- * keeps the terrain uniform — and the packer's flat-only filter (widest row
- * at y≈32) is what keeps slope/ramp tiles out (the old "weird triangles").
+ * Terrain sprite for a tile. There is exactly one flat grass tile (declared
+ * sprite 3981) — the grass sheet is one terrain type across a 19-sprite slope
+ * set, so what used to be `terrain_grass_b` was a hillside drawn on flat
+ * ground (the source of the "weird triangles"). Nothing to vary with now.
  */
 export function terrainSprite(grid: Grid, tx: number, ty: number): string {
   const v = grid.terrain[ty * MAP_W + tx];
@@ -219,23 +110,6 @@ export function buildDrawList(world: World, r: { x0: number; y0: number; x1: num
   return out;
 }
 
-/**
- * MB2 per-instance variant selection. A canonical sprite whose manifest def
- * carries a `variants` pick-set (length > 1) draws a DIFFERENT preset on every
- * instance, so repeated buildings aren't identical. The choice is a stable
- * hash of the footprint origin — the same tile always picks the same preset, so
- * culling, chunk invalidation and picking can never flicker. Terrain and the
- * single preset (length 1) resolve to the given sprite unchanged.
- */
-export const variantSeed = (tx: number, ty: number): number =>
-  (((tx * 0x9E3779B1) ^ (ty * 0x85EBCA77)) >>> 0) % 0x7fffffff;
-
-export function resolveVariantSprite(atlas: Atlas, sprite: string, tx: number, ty: number): string {
-  const def = atlas.get(sprite);
-  if (!def || !def.variants || def.variants.length < 2) return sprite;
-  return def.variants[variantSeed(tx, ty) % def.variants.length];
-}
-
 /** Culling pad: largest footprint plus the tallest sprite expressed in tiles. */
 export function cullPad(atlas: Atlas): number {
   let maxFoot = 1, maxH = TILE_H;
@@ -259,8 +133,8 @@ export interface RendererCanvases {
  * console exposes `__iso.renderLog(true)` and auto-enables it with
  * `?render-log=1`). Two consumers:
  *   1. live console debugging — `console.debug("[render] …")` per blit/chunk
- *      so a running game can be traced to the exact source/dest rect and clip
- *      decision the renderer used;
+ *      so a running game can be traced to the exact source/dest rect the
+ *      renderer used;
  *   2. a `renderer.renderDiagnostics()` snapshot returned by `__iso.rendering()`
  *      so a screenshot can be matched to state without reading the renderer.
  */
@@ -275,14 +149,11 @@ export interface RenderDiagnostics {
     tx: number;
     ty: number;
     footprint: [number, number];
-    kind: string | null;
     anchor: [number, number];
     box: [number, number];
     world: [number, number];
     screen: [number, number];
     depthKey: number;
-    clipped: boolean;
-    parts: { sprite: string; dx: number; dy: number }[] | null;
   }[];
   sourceRect: { sprite: string; frames: number; raw: [number, number, number, number]; packed: [number, number, number, number] }[];
   warnings: string[];
@@ -296,9 +167,9 @@ export class IsoRenderer {
   /**
    * C5: an optional hook the OVERLAY layer calls after its own items are
    * blitted, with the raw 2D context and the live camera. It is how the debug
-   * console draws skirt/anchor/network/pick marks on the map so a screenshot
-   * carries the state behind it (`installIsoDebug` in `debug.ts`). Left null
-   * in production — nothing else ever writes to the overlay context.
+   * console draws anchor/network/pick marks on the map so a screenshot carries
+   * the state behind it (`installIsoDebug` in `debug.ts`). Left null in
+   * production — nothing else ever writes to the overlay context.
    */
   debugPainter: ((ctx: CanvasRenderingContext2D, cam: Camera) => void) | null = null;
 
@@ -369,10 +240,6 @@ export class IsoRenderer {
   }
 
   // ── chunk cache ─────────────────────────────────────────────────────────
-  /**
-   * Chunk canvas size: an 8×8 chunk of diamonds spans 8+8 tiles wide and
-   * 8+8 tall in half-units, so 16*HW × 16*HH at 1×, scaled by zoom.
-   */
   private chunkCanvas(cx: number, cy: number): HTMLCanvasElement | OffscreenCanvas | null {
     const z = this.cam.zoom;
     const key = `${z}:${cy * chunksX + cx}`;
@@ -397,22 +264,11 @@ export class IsoRenderer {
         const s = this.atlas.get(name);
         if (!s) continue;
         sprites++;
-        // K0 anchor: the sprite's widest-row pixel lands on the tile's
-        // centre-line — drawX = screenX − HW, drawY = screenY − widestRow.
-        const wx = (tx - ty) * HW - s.anchor[0];
-        const wy = (tx + ty) * HH - s.anchor[1];
-        // N1: interior tiles paint only their above-ground region — the
-        // diamond top tessellates into the flat ground plane and the skirt
-        // (which the tiles in front can never fully cover) is simply not
-        // drawn. Edge tiles keep the full block: that IS the coastline.
-        const covered = skirtCovered(this.world.grid, tx, ty);
-        if (covered) {
-          clipAboveGround(ctx, aboveGroundPoly(
-            (tx - ty) * HW - ox, (tx + ty) * HH - oy,
-            HW + GROUND_OVERLAP, HH + GROUND_OVERLAP,
-            TILE_H + BLOCK_H, z,
-          ));
-        }
+        // Y5 anchor: the declared xrel/yrel pixel lands on the SOUTH corner of
+        // the footprint diamond — drawOrigin in depth.ts places the same pixel
+        // at (sx + HW, sy + TILE_H), i.e. the bottom vertex of the diamond.
+        const wx = (tx - ty) * HW + HW - s.anchor[0];
+        const wy = (tx + ty) * HH + TILE_H - s.anchor[1];
         // The zoomed atlas is packed at INTEGER source coords
         // (`Math.round(x*z)` / `Math.round(w*z)` in slice-atlas.mjs), so use
         // the real packed rect rather than the fractional `s.x*z…s.w*z`.
@@ -425,10 +281,8 @@ export class IsoRenderer {
         );
         this.trace("terrain", {
           chunk: [cx, cy], key, tile: [tx, ty], sprite: name,
-          anchor: s.anchor, world: [wx, wy], dest: [dx, dy, src.w, src.h],
-          src, clip: covered ? "above-ground" : "full-block", z,
+          anchor: s.anchor, world: [wx, wy], dest: [dx, dy, src.w, src.h], src, z,
         });
-        if (covered) ctx.restore();
       }
     }
     this.chunkCache.set(key, surf);
@@ -463,28 +317,17 @@ export class IsoRenderer {
     const ctx = this.ctxS, cam = this.cam;
     ctx.clearRect(0, 0, cam.vw, cam.vh);
     const r = visibleTileRange(cam, this.pad);
-    // MB2: resolve per-instance variant presets (stable per tile) before placing,
-    // so depth-sort and picking operate on the exact sprite that gets drawn.
-    const items = buildDrawList(this.world, r)
-      .map((i) => ({ ...i, sprite: resolveVariantSprite(this.atlas, i.sprite, i.tx, i.ty) }));
+    const items = buildDrawList(this.world, r);
     const placed = items.map((i) => place(this.atlas, i)).filter(Boolean) as Placed[];
     const sorted = depthSort(placed);
     const { order } = sorted;
     this.lastOrder = order;
     this.lastCycles = sorted.cycles;
-    for (const p of order) {
-      // I1/I4: the coastline clip belongs to GROUND art only. Roads/rail are
-      // flush ground overlays and lose their inland block side; buildings are
-      // standing sprites and are always bottom-anchored and painted whole.
-      // The flag also keeps stage-2 picking identical to what was painted.
-      const clipSkirt = shouldClipGroundSkirt(this.world.grid, p.def, p.tx, p.ty);
-      p.clipped = clipSkirt;
-      this.blit(ctx, p, timeMs, clipSkirt);
-    }
+    for (const p of order) this.blit(ctx, p, timeMs);
     this.trace("structures-pass", {
       z: cam.zoom, range: [r.x0, r.y0, r.x1, r.y1],
       items: items.length, placed: placed.length, cycles: sorted.cycles,
-      order: order.map((p) => ({ sprite: p.sprite, tile: [p.tx, p.ty], key: p.key, clip: p.clipped })),
+      order: order.map((p) => ({ sprite: p.sprite, tile: [p.tx, p.ty], key: p.key })),
     });
     this.structuresDirty = false;
   }
@@ -499,38 +342,10 @@ export class IsoRenderer {
     if (this.debugPainter) this.debugPainter(ctx, cam);
   }
 
-  private blit(ctx: Ctx2D, p: Placed, timeMs: number, clipSkirt = false) {
+  private blit(ctx: Ctx2D, p: Placed, timeMs: number) {
     const z = this.cam.zoom;
     const img = this.atlas.image(z);
     if (!img) return;
-    if (clipSkirt) {
-      // I4: structureSkirtPoly receives SCREEN space and scales dimensions
-      // once; camera translation is never multiplied a second time.
-      clipAboveGround(ctx, structureSkirtPoly(p, this.cam));
-    }
-    // MB1: a composite (stacked) building is drawn part-by-part — each layer
-    // is a packed sprite sourced from its own atlas rect, offset by (dx, dy)
-    // from the stack's top-left (bottom-to-top so upper storeys paint over).
-    if (p.def.parts) {
-      for (const part of p.def.parts) {
-        const def = this.atlas.get(part.sprite);
-        if (!def) continue;
-        const [sx, sy] = worldToScreen(this.cam, p.wx + part.dx, p.wy + part.dy);
-        const src = this.atlas.zoomRect(def, z);
-        ctx.drawImage(
-          img as unknown as CanvasImageSource,
-          src.x, src.y, src.w, src.h,
-          Math.floor(sx), Math.floor(sy), src.w, src.h,
-        );
-        this.trace("blit-part", {
-          stack: p.sprite, tile: [p.tx, p.ty], part: part.sprite,
-          offset: [part.dx, part.dy], world: [p.wx + part.dx, p.wy + part.dy],
-          screen: [Math.floor(sx), Math.floor(sy)], src, z,
-        });
-      }
-      if (clipSkirt) ctx.restore();
-      return;
-    }
     const frame = p.frame ?? this.atlas.frameAt(p.def, timeMs);
     // Source rect in the ZOOMED atlas — never the raw 1× rect scaled with a
     // multiplication (the packer rounds both position and size at each zoom).
@@ -543,13 +358,12 @@ export class IsoRenderer {
     );
     this.trace("blit", {
       sprite: p.sprite, tile: [p.tx, p.ty], def: p.def,
-      clipped: clipSkirt, z, context: p.ref != null ? "world" : "overlay",
+      z, context: p.ref != null ? "world" : "overlay",
       anchor: p.def.anchor, world: [p.wx, p.wy],
       screen: [Math.floor(sx), Math.floor(sy)],
       src, dest: [Math.floor(sx), Math.floor(sy), src.w, src.h],
       depthKey: p.key,
     });
-    if (clipSkirt) ctx.restore();
   }
 
   /** One frame. Layers 1 and 2 redraw only when dirty. */
@@ -575,23 +389,15 @@ export class IsoRenderer {
     const flat = flatPick(wx, wy);
     if (!this.lastOrder.length) this.drawStructures(0);
     const hit = pickSprite(this.atlas, this.lastOrder, wx, wy);
-    const out = hit
-      ? { tx: hit.tx, ty: hit.ty, sprite: hit, ref: hit.ref }
-      : { tx: flat[0], ty: flat[1], sprite: null, ref: null };
-    this.trace("pick", {
-      input: [screenX, screenY], world: [wx, wy], flat,
-      sprite: hit ? hit.sprite : null,
-      result: [out.tx, out.ty], z: this.cam.zoom,
-    });
-    return out;
+    if (hit) return { tx: hit.tx, ty: hit.ty, sprite: hit, ref: hit.ref };
+    return { tx: flat[0], ty: flat[1], sprite: null, ref: null };
   }
 
   /**
    * C5/render-debug snapshot: the exact numbers the renderer used on the last
    * frame — geometry, each structure's draw rect at the live zoom, source-rect
-   * rounding and a list of warnings for known bug classes (anchor drift off
-   * the shared ground line, standing sprite accidentally clipped, zoom rect
-   * mismatches, depth-sort cycles). Surfaces `__iso.rendering()`.
+   * rounding and a list of warnings for known bug classes (fractional zoom
+   * source rect, depth-sort cycles). Surfaces `__iso.rendering()`.
    */
   renderDiagnostics(): RenderDiagnostics {
     const z = this.cam.zoom;
@@ -601,30 +407,16 @@ export class IsoRenderer {
     const warnings: string[] = [];
     const structures = this.lastOrder.map((p) => {
       const [sx, sy] = worldToScreen(this.cam, p.wx, p.wy);
-      if (p.clipped && p.def.kind !== "ground") {
-        warnings.push(`${p.sprite} at (${p.tx},${p.ty}) is a STANDING sprite but it was clipped to its above-ground polygon`);
-      }
-      if (p.def.kind === "ground" && groundAnchorReference !== null) {
-        const drift = p.def.anchor[1] - groundAnchorReference;
-        if (Math.abs(drift) > 1) {
-          warnings.push(`ground ${p.sprite} anchor.y ${p.def.anchor[1]} drifts ${drift}px from the ${groundAnchorReference}px shared ground line`);
-        }
-      }
       return {
         sprite: p.sprite,
         tx: p.tx,
         ty: p.ty,
         footprint: p.def.footprint,
-        kind: p.def.kind ?? null,
         anchor: p.def.anchor,
         box: [p.w, p.h] as [number, number],
         world: [p.wx, p.wy] as [number, number],
         screen: [Math.floor(sx), Math.floor(sy)] as [number, number],
         depthKey: p.key,
-        clipped: p.clipped ?? false,
-        parts: p.def.parts
-          ? p.def.parts.map((part) => ({ sprite: part.sprite, dx: part.dx, dy: part.dy }))
-          : null,
       };
     });
     const seen = new Set<string>();
@@ -632,7 +424,6 @@ export class IsoRenderer {
     for (const p of this.lastOrder) {
       if (seen.has(p.sprite)) continue;
       seen.add(p.sprite);
-      if (p.def.parts) continue;   // a stack has no zoom rect of its own
       const s = p.def;
       const raw: [number, number, number, number] = [s.x * z, s.y * z, s.w * z, s.h * z];
       const packed: [number, number, number, number] = [
@@ -642,12 +433,6 @@ export class IsoRenderer {
       if (raw.some((v, i) => Math.abs(v - packed[i]) > 0.001)) {
         warnings.push(`zoom source rect for ${p.sprite} is fractional (${raw.map((v) => v.toFixed(2)).join(", ")}); packed atlas uses ${packed.join(", ")}`);
       }
-    }
-    // The placement glow is a ground-kind cell in the atlas; flag a 1px anchor
-    // drift against the terrain reference (the known highlight/base mismatch).
-    const hl = this.atlas.get("highlight");
-    if (hl && groundAnchorReference !== null && hl.anchor[1] !== groundAnchorReference) {
-      warnings.push(`highlight anchor.y ${hl.anchor[1]} differs from the ${groundAnchorReference}px shared ground line`);
     }
     if (this.lastCycles.length) {
       warnings.push(`depth sort hit ${this.lastCycles.length} occlusion cycle(s): ${this.lastCycles.map((c) => c.join(" > ")).join("; ")}`);
@@ -666,11 +451,12 @@ export class IsoRenderer {
 }
 
 /**
- * I2: the renderer, camera and input code share this one inverse. Keeping the
- * public name avoids churn for debug/tests while the implementation is the
- * exact `tileToScreen` inverse exported from config — no HH compensation and
- * no second pick lattice.
+ * I2: the renderer, camera and input code share this one inverse — the exact
+ * `tileToScreen` inverse, no HH compensation and no second pick lattice.
  */
-export const flatPick = screenToTile;
+export const flatPick = (wx: number, wy: number): [number, number] => {
+  const a = wx / HW, b = wy / HH;
+  return [Math.floor((a + b) / 2), Math.floor((b - a) / 2)];
+};
 
 export { GRASS, WATER, ROUGH, TILE_W, TILE_H, HW, HH };

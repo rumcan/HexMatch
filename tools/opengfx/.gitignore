@@ -1,0 +1,5 @@
+# OpenGFX source sheets + intermediate extraction output — working files, not
+# tracked. Run extract2.py yourself after downloading sheets from
+# https://github.com/OpenTTD/OpenGFX (sprites/png/...) — see ../README-art.md
+sheets/
+cells/

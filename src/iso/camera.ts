@@ -38,13 +38,13 @@ export const worldToScreen = (c: Camera, wx: number, wy: number): [number, numbe
 export const screenToWorld = (c: Camera, sx: number, sy: number): [number, number] =>
   [(sx - c.x) / c.zoom, (sy - c.y) / c.zoom];
 
-/** Flat pick (stage 1): screen pixel → the centred diamond containing it. */
+/** Flat pick (stage 1): screen pixel → tile. Fractional tiles are floored. */
 export function screenToTileAt(c: Camera, sx: number, sy: number): [number, number] {
   const [wx, wy] = screenToWorld(c, sx, sy);
   return screenToTile(wx, wy);
 }
 
-/** Screen position of tile (tx,ty)'s lattice point — its drawn diamond's CENTRE. */
+/** Screen position of the TOP vertex of tile (tx,ty). */
 export function tileToScreenAt(c: Camera, tx: number, ty: number): [number, number] {
   const [wx, wy] = tileToScreen(tx, ty);
   return worldToScreen(c, wx, wy);
@@ -77,15 +77,12 @@ export const zoomStepAt = (c: Camera, dir: number, sx: number, sy: number): Came
 // ── panning + clamping ────────────────────────────────────────────────────
 /** Axis-aligned bounds of the whole map diamond in world space. */
 export function mapWorldBounds(): { minX: number; minY: number; maxX: number; maxY: number } {
-  // corners: (0,0) top, (MAP_W,0) right, (MAP_W,MAP_H) bottom, (0,MAP_H) left.
-  // K4: tiles are centred on tileToScreen (diamond centre-line), so the map's
-  // visible top reaches HH above tile (0,0) and the front edge's block skirts
-  // reach HH below the last centre-line.
+  // corners: (0,0) top, (MAP_W,0) right, (MAP_W,MAP_H) bottom, (0,MAP_H) left
   return {
     minX: -MAP_H * HW,
     maxX: MAP_W * HW,
-    minY: -HH,
-    maxY: (MAP_W + MAP_H) * HH + HH,
+    minY: 0,
+    maxY: (MAP_W + MAP_H) * HH,
   };
 }
 

@@ -43,28 +43,26 @@ Everything that decides how one tile looks:
 ```
 terrain / terrainName / index      which cell of the grid this is
 sprite                             terrain_grass | terrain_water | terrain_rough
-cell                               the resolved atlas entry: rect, footprint, anchor, kind, parts
-skirtPx                            px of block BELOW the sprite's ground row (its NATIVE skirt)
-maxSkirtPx                         BLOCK_H (66) — the deepest skirt in the set, a budget not a target
-surfaceDriftPx                     this tile's ground row − the shared ground line
-skirtDriftPx                       alias of surfaceDriftPx (kept for older reports)
-world / screen / css / halfDiamond where the tile's centre-line projects at the live camera
+cell                               the resolved atlas entry: rect, footprint, anchor, frames
+surfaceDriftPx                     this tile's anchor row − the shared ground line
+world / anchorWorld                the top vertex (pick lattice) and the south corner (where
+                                   the sprite's anchor lands), in world space
+screen / anchorScreen / css        the same points at the live camera (device px) and in CSS px
+halfDiamond                        the on-screen diamond half-extents at the live zoom
 occupancy / industry               what stands on it
 track                              roadBits, railBits, owner id
 build { ok, why }                  would the CURRENT tool's build be refused here, and why
 pickAtCentre                       what `renderer.pick` says about this tile's own centre
 ```
 
-`skirtPx` is measured from the packed sprite, not declared anywhere — the
-packer (`tools/slice-atlas.mjs`) computes the anchor from the pixels, so this is
-the ground truth for "do the terrain tiles and the buildings agree".
+The anchor is **derived from the declared `.pnml` offsets** — the packer
+(`tools/slice-atlas.mjs`) never measures pixels to place a tile, so this is the
+ground truth for "do the terrain tiles and the buildings agree".
 
-**K-FIX-1:** `skirtPx` legitimately **differs between tiles** (grass 66, water
-50) — Kenney tiles are designed to be different heights and are anchored at
-their shared bottom, so a varying skirt is correct and is not a bug. The
-number that settles a *"the terrain is stepping"* report is
-**`surfaceDriftPx`**: it is 0 on every correctly-anchored tile no matter its
-height. A non-zero `surfaceDriftPx` is the real bug class.
+OpenGFX tiles are **flat** pixel diamonds with no skirt. The number that
+settles a *"the terrain is stepping"* report is **`surfaceDriftPx`**: it is 0
+on every correctly-anchored tile. A non-zero `surfaceDriftPx` is the real bug
+class.
 
 ### `__iso.dumpAt(x, y[, { device: true }])`
 
@@ -89,17 +87,15 @@ Every structure drawn on that tile — with the one number that settles a hover
 report:
 
 ```
-structures[].gapPx      the sprite's contact row (its anchor) minus the tile surface
+structures[].gapPx      the sprite's anchor row minus the footprint's south corner
                         0 = flush, > 0 = floating, < 0 = sunk
 structures[].footWorldY / footScreenY / drawWorld / drawScreen
-structures[].belowFootPx  how much block is painted under the contact row
-structures[].parts        MB1 stacks: each layer's sprite, its (dx, dy) offset
-                          inside the box, its own anchor and foot line
-ground                    the terrain under it: sprite, skirtPx, driftPx
+structures[].surfaceWorldY  world y of the footprint's south corner
+ground                    the terrain under it: sprite, driftPx
 ```
 
 A `gapPx` of 0 with a visibly floating building means the building is flush and
-the **terrain block** is the thing that is off — read `ground.driftPx`.
+the **terrain sprite** is the thing that is off — read `ground.driftPx`.
 
 ### `__iso.dumpNetwork(player)`
 
@@ -123,14 +119,13 @@ after the normal overlay items, into the overlay canvas.
 
 | name | what it paints |
 |---|---|
-| `skirt` | per visible tile: a cyan line at the shared surface (the tile's ground row / centre-line) and an amber line at that tile's own block bottom. K-FIX-1: the gap between them is the tile's **native** skirt and varies by design; a tile is flagged **red** with a `+16`-style label only when its ground row leaves the shared surface line |
-| `anchor` | a green crosshair at every structure's contact point, and `sprite ±gap px` next to any that is not flush |
+| `anchor` | a green crosshair at every structure's contact point (its anchor on the footprint's south corner), and `sprite ±gap px` next to any that is not flush |
 | `network` | the network tiles of both players filled — green for you, red for the rival |
-| `pick` | the hovered tile's **drawn** diamond in white and its **pick cell** as a dashed magenta outline on the SAME spot (N4: one convention — any visible offset between them is a bug; before N4 they sat a half-tile apart) plus a crosshair at the viewport centre |
+| `pick` | the hovered tile's **drawn** diamond in white and its **pick cell** as a dashed magenta outline on the SAME spot (one convention — any visible offset between them is a bug) plus a crosshair at the viewport centre |
 
 ```js
-__iso.overlay("skirt")          // on
-__iso.overlay("skirt", false)   // off
+__iso.overlay("anchor")         // on
+__iso.overlay("anchor", false)  // off
 __iso.overlay("all")
 __iso.overlay("none")
 __iso.overlay()                 // { active: ["network"], drawn: true }
@@ -139,12 +134,11 @@ __iso.overlay()                 // { active: ["network"], drawn: true }
 ### `__iso.config()`
 
 The resolved cell of **every sprite on screen right now**: atlas rect,
-footprint, measured anchor, `kind`, stack `parts`, `variants`, plus
-`frames`, so "which PNG is that?" is one call. It also returns `camera`,
-`geometry` (tileW/tileH/blockH/HW/HH/map) and `manifestMeta`.
+footprint, anchor, plus `frames`, so "which PNG is that?" is one call. It
+also returns `camera`, `geometry` (tileW/tileH/HW/HH/map) and `manifestMeta`.
 
 > The manifest deliberately carries no source-PNG paths (the packer owns those;
-> nothing else may). To go from a sprite back to its Kenney file, read
+> nothing else may). To go from a sprite back to its OpenGFX file, read
 > `tools/iso-atlas.cells.json` — or re-run `npm run slice-atlas`, which prints
 > `name  WxH  anchor=[x,y]  <- path/to.png` for every cell.
 
@@ -157,21 +151,17 @@ re-derivation, the values `IsoRenderer` actually used:
 camera                 zoom / viewport / translation (device px)
 cull                   the cull pad and the padded visible tile range
 chunkCacheEntries      how many terrain chunk surfaces are cached
-groundAnchorReference  terrain_grass anchor.y (the shared Kenney ground line)
+groundAnchorReference  terrain_grass anchor.y (the shared OpenGFX ground line)
 depthCycles            occlusion cycles the depth sort had to break
-structures[]           per drawn sprite: resolved name, tile, footprint, kind,
-                       anchor, world/screen draw origin, depth key, clipped,
-                       and composite `parts` (dx/dy)
-sourceRect[]           for each on-screen single-layer sprite: the 1× manifest
-                       rect scaled naively (`raw`) and the actual integer rect
-                       the packer put in the zoomed atlas (`packed`).
-                       Composite stacks are excluded — a stack has no packed
-                       rect of its own; its layers are listed in the
-                       structure's `parts` instead.
-warnings[]             known bug classes it detected: a STANDING sprite that
-                       was clipped, ground-anchor drift >1px off the shared
-                       line, fractional zoom source rects (the 0.5× crop
-                       class), depth cycles, and the highlight anchor drift
+structures[]           per drawn sprite: resolved name, tile, footprint,
+                       anchor, world/screen draw origin, depth key
+sourceRect[]           for each on-screen sprite: the 1× manifest rect scaled
+                       naively (`raw`) and the actual integer rect the packer
+                       put in the zoomed atlas (`packed`)
+warnings[]             known bug classes it detected: ground-anchor drift >1px
+                       off the shared line, fractional zoom source rects (the
+                       0.5× crop class), depth cycles, and the highlight
+                       anchor drift
 ```
 
 `__iso.rendering()` is the first call after a screenshot: it names the sprite,
@@ -181,8 +171,8 @@ traced to a number instead of re-derived from pixels.
 ### `__iso.renderLog(on = true)`
 
 Toggles the per-blit `[render]` **console.debug** trace inside the renderer.
-With it on, every terrain tile, chunk build/blit, structure blit, composite
-part and `pick()` emits one structured line:
+With it on, every terrain tile, chunk build/blit, structure blit and `pick()`
+emits one structured line:
 
 ```
 [render] terrain    { chunk, tile, sprite, anchor, dest, src, clip, z }
@@ -209,7 +199,7 @@ to, so a probe can never disagree with the rule that gates the build.
 
 1. Boot with the flag on and the map pinned:
    `npm run dev` → `http://localhost:5173/hexmatch/?seed=1337&iso-debug=1` (the app is served under `base: "/hexmatch/"`).
-2. Turn on what the report is about — `__iso.overlay("skirt")` for a floating
+2. Turn on what the report is about — `__iso.overlay("anchor")` for a floating
    building, `overlay("network")` for a refused road, `overlay("pick")` for a
    click that landed elsewhere — and screenshot **with the overlay on**. The
    overlay is drawn from the live camera, so the marks line up with the pixels
@@ -230,7 +220,7 @@ to, so a probe can never disagree with the rule that gates the build.
    `gapPx`, then `ground.driftPx`), `__iso.dumpTile(tx, ty)` for anything
    terrain-shaped, `copy(__iso.config())` to attach the resolved cells.
 5. Paste the numbers with the screenshot. `gapPx ≠ 0` is an anchoring bug;
-   `gapPx = 0` with `ground.driftPx ≠ 0` is a terrain-block bug (the C1 class);
+   `gapPx = 0` with `ground.driftPx ≠ 0` is a terrain-sprite bug;
    `build.ok = false` is a rules answer, not a bug — `why` says which.
 
 The e2e suite uses the same surfaces the console exposes:
