@@ -1,80 +1,61 @@
 #!/usr/bin/env node
 /**
- * K1 atlas packer — Kenney edition. The OpenGFX pipeline (sheet slicing,
- * blue-key, PNML declarations, compose blocks, road/rail generators) is gone:
- * every cell in tools/iso-atlas.cells.json names finished RGBA PNGs under
- * src/iso/kenny and this tool only measures, (optionally) tints, packs and
- * re-scales them.
- *
- * MB1 (multi-storey stacked buildings): a 'standing' building cell now carries
- * EITHER a single `png` (one-piece terrain/industry — unchanged) OR a `stack`
- * — a bottom→top array of layer `{ png }` descriptors (base → middle floors →
- * roof). The packer resolves each distinct (png, tint) layer once into a
- * shared packed sprite (so depot_blue and factory_blue reuse the same tinted
- * storey/roof sprites and differ only by how many storeys they stack), then
- * emits a COMPOSITE manifest entry whose `parts` tell the renderer to draw the
- * stack bottom→top at per-layer world offsets. Depth-sort and picking treat
- * the whole composite as ONE object on its footprint; the player tint is
- * applied to every layer at pack time.
- *
- * Storey geometry (K-FIX-1): consecutive layers are placed so each layer's
- * BOTTOM face sits on the layer below's TOP face — the rise is MEASURED per
- * layer (bottomFaceRow − topFaceRow), never a magic constant. The renderer
- * never re-derives this: the packer bakes each part's (dx, dy) in world-1x
- * pixels into the manifest, which the renderer scales by zoom like every other
- * coordinate.
+ * E1 atlas slicer — packs OpenGFX cell crops into @1x/@2x/@0.5x atlases,
+ * a shared manifest and a debug contact sheet.
  *
  * Usage:
- *   node tools/make-derived-art.mjs   # once, after changing derived art
  *   node tools/slice-atlas.mjs
  *
- * Input : tools/iso-atlas.cells.json   (concept -> PNG path(s) + kind)
- * Output: assets/iso-atlas/atlas@1x.png | @2x | @0.5x
+ * Input : tools/iso-atlas.cells.json
+ * Output: assets/iso-atlas/atlas@1x.png | atlas@2x.png | atlas@0.5x.png
  *         assets/iso-atlas/manifest.json
  *         assets/iso-atlas/contact-sheet.png
  *
- * ── Anchor contract (K-FIX-1 — Kenney's documented BOTTOM-ANCHOR method) ──
+ * Cell semantics (see tools/iso-atlas.cells.json):
+ *   sprite { name, source?, sprite?, footprint:[w,h], frames?, frameMs? }
  *
- * Kenney's own 3D-import docs describe iso tiles as being drawn with ONE fixed
- * drawing offset into a transparent margin: tiles are *meant* to be different
- * heights and they grow UPWARD from a shared floor. The PIXI/Kenney tutorial
- * names the failure mode of ignoring that: "tiles with height seem to float as
- * they are drawn from the top instead of the bottom — the fix is to draw from
- * the bottom." So: NOTHING is normalised or cropped here. Every source PNG is
- * packed at its native size, and every sprite is anchored on the SAME ground
- * reference line, measured from its own pixels:
+ * Y4c/Y3/Y7/Y5 — every cell is now *declaration-driven*. There is no
+ * generator left for road/rail and no `compose`/`box`/`crop`/`tiles` arrays:
  *
- *   groundRow(c)   the tile's south/ground contact row = the row of the base
- *                  diamond's LEFT and RIGHT corners (the widest span of the
- *                  block's top face). Measured, not assumed. From it the
- *                  ground plane's bottom vertex is groundRow + HH.
+ *   layers:   [{ sprite, tint? }, …] plus optional `frames: [[{sprite,tint?}…], …]`
+ *             Each layer is a declared OpenGFX sprite drawn at
+ *             `dest = tileOrigin + (xrel, yrel)` — OpenTTD's own placement
+ *             rule — onto one shared canvas (Y7). The first layer is
+ *             conventionally the declared ground tile so the cell always
+ *             spans its tile diamond; extra layers are the building(s).
+ *             `tint` multiplies opaque pixels toward a colour (player
+ *             colours, the grey quarry reskin).
+ *   trackset: { mode: "flat" | "overlays", … }
+ *             "flat"     — the 16 road masks are OpenGFX's *finished* flat
+ *                          road tiles (1332–1350). The mask is converted to
+ *                          OpenTTD RoadBits (see toOpenttdRoadBits in
+ *                          src/iso/track.ts) and indexes OpenTTD's flat
+ *                          selection table; the declared sprite is blitted
+ *                          verbatim. Nothing is generated.
+ *             "overlays" — OpenGFX's rail set is ground + per-piece overlays
+ *                          rather than 16 finished tiles, so a rail mask
+ *                          draws the declared grass ground plus every
+ *                          declared overlay piece whose two directions are
+ *                          both set in the mask.
+ *   generator: "highlight" | "highlight_soft"
+ *             The two placement-glow cells are the only procedural sprites
+ *             left (they are UI, not OpenGFX art).
  *
- *     kind ground/standing : anchor = [floor(w/2), groundRow] — the base
- *                            diamond's centre lands on tileToScreen(tx,ty).
- *                            A ground cell whose ground row is not at y≈32
- *                            spanning ~the full tile width is a slope/ramp
- *                            and FAILS the build (flat only, K2).
- *     kind vehicle         : anchor = [floor(w/2), h] — bottom-centre rests
- *                            on the tile surface.
+ * Anchor contract (Y5): `anchor` is never hand-authored. It is DERIVED from
+ * the declared offsets: the pixel of the cell that must land on the south
+ * corner of the footprint is the cell-local position of the cell's tile
+ * origin (the top vertex of the tile the declared ground sits on), which the
+ * renderer's `drawOrigin` places at (sx + HW, sy + TILE_H). With the origin
+ * at cell-local (-minX, -minY):
+ *     anchor = (-minX + 1, -minY + 31)
+ * For a lone 64x31 ground tile this yields (32, 31) — the value terrain has
+ * always had — so the derivation is a generalisation, not a change, of the
+ * existing contract. Declared sprites carry NOCROP to mean "trust the
+ * declared rect"; this slicer never trims a declared rect nor re-measures a
+ * content bbox to move the anchor, which is what honouring NOCROP means here.
  *
- * Because the anchor is the tile's ground contact point and NOT a normalised
- * height, a 83px-tall water tile, a 99px grass block and a 127px industry all
- * share one ground line and differ only in how far they extend upward — which
- * is exactly Kenney's design. Terrain skirts may differ in depth; they are
- * drawn below the shared surface and cannot cause stepping.
- *
- * A COMPOSITE (stacked) sprite is anchored the same way on its BASE layer's
- * ground row, so the whole tower stands flush on the tile; each layer above
- * sits on the measured top face of the one below. Its (w, h) is the union
- * bounding box of all parts; x/y are unused (parts carry their own packed
- * rects).
- * The renderer draws at (sx − anchor[0], sy − anchor[1]); buildings' base
- * diamonds coincide with the tile diamond by construction, so nothing can
- * float or sink (the K3 end of the compose/fragment saga).
- *
- * Kenney art is smooth 3D rendering, so the @0.5x/@2x variants are resampled
- * with lanczos3 (the old nearest-neighbour scaling was for pixel art). The
- * renderer still never scales inside drawImage — 1:1 blits only (E0).
+ * The manifest stores 1x coordinates + anchors; renderers scale coordinates
+ * by the active zoom and pick the matching atlas image from `images`.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -85,78 +66,195 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const CELLS = JSON.parse(readFileSync(join(ROOT, "tools/iso-atlas.cells.json"), "utf8"));
 const OUT = join(ROOT, "assets/iso-atlas");
 const ZOOMS = [1, 2, 0.5];
-const TILE_W = CELLS.tileW, TILE_H = CELLS.tileH;      // 132 x 64
-const HW = TILE_W / 2;                                  // 66
-const PACK_W = 1600, GAP = 8;
+const CELL_W = 64, CELL_H = 32;
+const HW = CELL_W / 2, HH = CELL_H / 2;
 
-/** Load one source PNG as raw RGBA at 1x. */
-async function loadPng(rel) {
-  const { data, info } = await sharp(join(ROOT, CELLS.source.root, rel))
-    .ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-  return { px: Buffer.from(data), w: info.width, h: info.height, rel };
+// ── Y1: declared sprite geometry ─────────────────────────────────────────
+// Every cell references an OpenGFX sprite id (`sprite`, `layers[].sprite`,
+// `trackset.base/ground/pieces[].sprite`) and the crop rect is taken from the
+// declarations emitted by parse-pnml.mjs, never hand-authored in the cells
+// file. The JSON is a build artifact (it is gitignored); generate it first:
+//     node tools/parse-pnml.mjs
+const OPENG = (() => {
+  const p = join(ROOT, "tools/opengfx-sprites.json");
+  try { return JSON.parse(readFileSync(p, "utf8")); }
+  catch { throw new Error(`missing ${p} — run \`node tools/parse-pnml.mjs\` first`); }
+})();
+
+/** Declared entry for a sprite id. */
+function declaredOf(id) {
+  const d = OPENG[String(id)];
+  if (!d) throw new Error(`unknown declared sprite id ${id}`);
+  return d;
 }
 
-/** Widest opaque row (alpha > 10): the base diamond's widest row. */
-function widestRow(c) {
-  let widest = -1, yAt = -1;
-  for (let y = 0; y < c.h; y++) {
-    let n = 0;
-    for (let x = 0; x < c.w; x++) if (c.px[(y * c.w + x) * 4 + 3] > 10) n++;
-    if (n > widest) { widest = n; yAt = y; }
+/** Map an OpenGFX file path (`sprites/png/…`) to its local mirror under src/assets/sprites/png. */
+function declaredLocalPath(file) {
+  return join(ROOT, "src/assets/sprites/png", file.replace(/^sprites\/png\//, ""));
+}
+
+// ── Y4c: OpenTTD's flat road selection table ──────────────────────────────
+// Indexed by OpenTTD RoadBits (NW=1 SW=2 SE=4 NE=8 — see toOpenttdRoadBits in
+// src/iso/track.ts), the value is the offset from the set's base sprite id
+// (road 1332). OpenGFX ships the finished flat tiles; this table is OpenTTD's
+// own GetRoadSpriteOffset-style selection order, so mask → declared sprite
+// with nothing generated in between.
+const OPENTTD_FLAT_TRACK_TABLE = [0, 18, 17, 7, 16, 0, 10, 5, 15, 8, 1, 4, 9, 3, 6, 2];
+
+/** This project's direction bits (NE=1 SE=2 SW=4 NW=8) → OpenTTD RoadBits. */
+function toOpenttdRoadBits(bits) {
+  let out = 0;
+  if (bits & 1) out |= 8;   // NE
+  if (bits & 2) out |= 4;   // SE
+  if (bits & 4) out |= 2;   // SW
+  if (bits & 8) out |= 1;   // NW
+  return out & 0b1111;
+}
+
+/** True for the id-label blue/dark pixels (labelled text in OpenGFX sheets). */
+function isLabelPixel(r, g, b, a) {
+  if (a === 0) return false;
+  // The sheet id labels are rendered as far more blue than the page: pure blue
+  // backing is keyed separately; label glyphs are ~(20,52,124). White page
+  // pixels are handled by removeBorderWhite.
+  return b > 90 && b > r + 30 && b > g + 30;
+}
+
+/**
+ * V2: the navy heuristic above is a *hue* test, and game art owns the same
+ * hues — the factory's roof ramp and trim are (12,36,104)…(56,120,188), so a
+ * hue-only key ate the roof and left the chimneys floating (the "completely
+ * broken factory" screenshot). What actually distinguishes an id label is
+ * WHERE it sits: labels are navy text on the page margin, i.e. navy pixels
+ * touching the border-connected white. Blue content sits on the blue backing
+ * instead. So the key is hue AND margin-adjacency.
+ */
+function marginMask(data, w, h) {
+  const isWhite = (i) =>
+    data[i] === 255 && data[i + 1] === 255 && data[i + 2] === 255 && data[i + 3] === 255;
+  const margin = new Uint8Array(w * h);
+  const stack = [];
+  const push = (x, y) => {
+    const i = y * w + x;
+    if (!margin[i] && isWhite(i * 4)) { margin[i] = 1; stack.push(i); }
+  };
+  for (let x = 0; x < w; x++) { push(x, 0); push(x, h - 1); }
+  for (let y = 0; y < h; y++) { push(0, y); push(w - 1, y); }
+  while (stack.length) {
+    const i = stack.pop();
+    const x = i % w, y = (i / w) | 0;
+    if (x > 0) push(x - 1, y);
+    if (x + 1 < w) push(x + 1, y);
+    if (y > 0) push(x, y - 1);
+    if (y + 1 < h) push(x, y + 1);
   }
-  return { width: widest, y: yAt };
+  return margin;
 }
 
-/** Topmost opaque row of a column (-1 when the column is entirely clear). */
-function columnTop(c, x) {
-  for (let y = 0; y < c.h; y++) if (c.px[(y * c.w + x) * 4 + 3] > 10) return y;
-  return -1;
+function touchesMargin(margin, w, h, i) {
+  const x = i % w, y = (i / w) | 0;
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+      if (margin[ny * w + nx]) return true;
+    }
+  }
+  return false;
+}
+
+/** Remove white pixels connected to a crop border (page background, id labels), leaving interior white content intact. */
+function removeBorderWhite(px, w, h) {
+  const seen = new Uint8Array(w * h);
+  const stack = [];
+  const push = (x, y) => {
+    const i = y * w + x;
+    if (seen[i]) return;
+    const pi = i * 4;
+    if (px[pi] === 255 && px[pi + 1] === 255 && px[pi + 2] === 255 && px[pi + 3] === 255) {
+      seen[i] = 1;
+      stack.push(i);
+    }
+  };
+  for (let x = 0; x < w; x++) { push(x, 0); push(x, h - 1); }
+  for (let y = 0; y < h; y++) { push(0, y); push(w - 1, y); }
+  while (stack.length) {
+    const i = stack.pop();
+    const x = i % w, y = (i / w) | 0;
+    px[i * 4 + 3] = 0;
+    if (x > 0) push(x - 1, y);
+    if (x + 1 < w) push(x + 1, y);
+    if (y > 0) push(x, y - 1);
+    if (y + 1 < h) push(x, y + 1);
+  }
+}
+
+/** Direct crop of a declared rect: key the blue backing, remove page white and id-label glyphs. */
+async function cropDeclared(id) {
+  const d = declaredOf(id);
+  const img = sharp(declaredLocalPath(d.file), { limitInputPixels: false })
+    .extract({ left: d.x, top: d.y, width: d.w, height: d.h })
+    .ensureAlpha();
+  const { data, info } = await img.raw().toBuffer({ resolveWithObject: true });
+  const n = info.width * info.height;
+  const px = Buffer.alloc(n * 4);
+  const margin = marginMask(data, info.width, info.height);
+  for (let i = 0; i < n; i++) {
+    const o = i * 4;
+    const a = data[o + 3];
+    const blueKey = a !== 0 && data[o] === 0 && data[o + 1] === 0 && data[o + 2] === 255;
+    // V2: navy hue alone is not a label — only navy touching the page margin
+    // is. Blue roofs/trim/water sit on the blue backing and must survive.
+    const label = a !== 0 && !blueKey &&
+      isLabelPixel(data[o], data[o + 1], data[o + 2], a) &&
+      touchesMargin(margin, info.width, info.height, i);
+    if (a === 0 || blueKey || label) {
+      px[o] = px[o + 1] = px[o + 2] = 0; px[o + 3] = 0;
+    } else {
+      px[o] = data[o]; px[o + 1] = data[o + 1]; px[o + 2] = data[o + 2]; px[o + 3] = 255;
+    }
+  }
+  removeBorderWhite(px, info.width, info.height);
+  return { px, w: info.width, h: info.height, d };
+}
+
+/** Layer an RGBA buffer onto a larger RGBA canvas. */
+function blit(dst, src, dx, dy) {
+  for (let y = 0; y < src.h; y++) {
+    const sy = y + dy;
+    if (sy < 0 || sy >= dst.h) continue;
+    for (let x = 0; x < src.w; x++) {
+      const sx = x + dx;
+      if (sx < 0 || sx >= dst.w) continue;
+      const si = (y * src.w + x) * 4;
+      const di = (sy * dst.w + sx) * 4;
+      const a = src.px[si + 3] / 255;
+      dst.px[di] = Math.round(dst.px[di] * (1 - a) + src.px[si] * a);
+      dst.px[di + 1] = Math.round(dst.px[di + 1] * (1 - a) + src.px[si + 1] * a);
+      dst.px[di + 2] = Math.round(dst.px[di + 2] * (1 - a) + src.px[si + 2] * a);
+      dst.px[di + 3] = Math.max(dst.px[di + 3], src.px[si + 3]);
+    }
+  }
+}
+
+/** Multiply opaque pixels toward a tint (RGB 0..255). */
+function tintPx(px, tint) {
+  const tr = tint[0] / 255, tg = tint[1] / 255, tb = tint[2] / 255;
+  for (let i = 0; i < px.length; i += 4) {
+    if (px[i + 3] === 0) continue;
+    px[i] = Math.round(px[i] * tr);
+    px[i + 1] = Math.round(px[i + 1] * tg);
+    px[i + 2] = Math.round(px[i + 2] * tb);
+  }
 }
 
 /**
- * K-FIX-1 ground reference: the row on which the sprite's base diamond touches
- * the ground — the row of the diamond's LEFT and RIGHT corners. Both corners
- * are the topmost opaque pixel of the leftmost / rightmost opaque column, so
- * this is measured straight from the alpha and works for a flat 83px water
- * tile, a 99px grass block, a 127px industry and a 60px roof cap alike.
- *
- * Tiles whose left/right silhouette is not the base diamond (a Kenney tile with
- * an object overhanging one side) would skew one corner; we take the LOWER of
- * the two, which is always the true base-diamond corner (an overhang can only
- * raise a column's top, never lower it).
- *
- * `bottomFaceRow` is the ground plane's bottom vertex (groundRow + HH) — where
- * the block's *bottom* face would sit if it were one tile thick. It is what a
- * stacked layer above rests on.
+ * V2: luminance-preserving player tint. `tintPx` multiplies, which on a dark
+ * brick building collapses every shade into near-black and leaves only the
+ * bright trim reading as the player colour. Recolouring by luminance keeps the
+ * art's shading and puts the player hue on all of it, so a tinted factory
+ * still reads as a building at map zoom.
  */
-function groundRow(c) {
-  let lx = -1, rx = -1;
-  for (let x = 0; x < c.w && lx < 0; x++) if (columnTop(c, x) >= 0) lx = x;
-  for (let x = c.w - 1; x >= 0 && rx < 0; x--) if (columnTop(c, x) >= 0) rx = x;
-  if (lx < 0) throw new Error("sprite is fully transparent");
-  return Math.max(columnTop(c, lx), columnTop(c, rx));
-}
-
-/** Lowest opaque row (the sprite's true bottom, ignoring transparent margin). */
-function bottomRow(c) {
-  for (let y = c.h - 1; y >= 0; y--)
-    for (let x = 0; x < c.w; x++) if (c.px[(y * c.w + x) * 4 + 3] > 10) return y;
-  return -1;
-}
-
-/**
- * MB1/K-FIX-1: how far the NEXT layer up must be raised so its base diamond
- * sits on this layer's top face. Measured per layer, not a magic constant: the
- * layer's bottom-face CENTRE is its lowest opaque row minus that face's own
- * half-diamond height (a 2:1 dimetric diamond `w` wide is `w/2` tall, so its
- * half-height is `w/4`), and the rise is the distance from the layer's ground
- * row down to it. Returns screen px at 1×.
- */
-function layerRise(c) {
-  return (bottomRow(c) + 1 - Math.round(c.w / 4)) - groundRow(c);
-}
-
-/** Luminance-preserving player tint (V2): keeps the art's shading, swaps hue. */
 function tintLumPx(px, tint, keep = 0.28) {
   const tr = tint[0] / 255, tg = tint[1] / 255, tb = tint[2] / 255;
   for (let i = 0; i < px.length; i += 4) {
@@ -170,279 +268,323 @@ function tintLumPx(px, tint, keep = 0.28) {
 }
 
 /**
- * K1/K2 flat-only filter + K-FIX-1 ground anchor. A `ground` cell must be a
- * flat-topped block: its measured ground row sits at y≈TILE_H/2 and its widest
- * opaque row spans (nearly) the full tile width. Slope/ramp tiles have their
- * corners at different heights and fail here. Stack layer fragments are
- * `standing` and never pass through the flatness filter.
+ * Y5 derived anchor: the cell-local position of the tile origin, offset to
+ * the renderer's south-corner convention (see file header).
  */
-function anchorFor(cell, c) {
-  const cx = Math.floor(c.w / 2);
-  if (cell.kind === "vehicle") return { anchor: [cx, c.h], ground: null };
-  if (cell.kind !== "ground" && cell.kind !== "standing")
-    throw new Error(`${cell.name}: unknown kind ${cell.kind}`);
-  const g = groundRow(c);
-  if (cell.kind === "ground") {
-    const m = widestRow(c);
-    if (Math.abs(g - TILE_H / 2) > 4)
-      throw new Error(
-        `${cell.name}: ground row at y=${g}, expected ≈${TILE_H / 2} — ` +
-        `slope/ramp tiles are rejected (flat only, K2)`);
-    if (m.width < TILE_W - 10)
-      throw new Error(`${cell.name}: widest row ${m.width}px < ${TILE_W - 10} — not a ground block`);
+const derivedAnchor = (minX, minY) => [-minX + 1, -minY + 31];
+
+/**
+ * Compose one frame from declared layers. Each layer is drawn at
+ * `tileOrigin + (xrel, yrel)`; the canvas is the union of the declared rects
+ * (NOCROP: rects are trusted verbatim, never trimmed to content).
+ */
+async function composeLayers(layers) {
+  const crops = [];
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const layer of layers) {
+    const c = await cropDeclared(layer.sprite);
+    if (layer.tint) tintPx(c.px, layer.tint);
+    else if (layer.tintLum) tintLumPx(c.px, layer.tintLum);
+    const d = c.d;
+    // OpenTTD placement: sprite top-left = tile origin + (xrel, yrel).
+    const ox = d.xrel, oy = d.yrel;
+    crops.push({ ...c, ox, oy });
+    minX = Math.min(minX, ox); maxX = Math.max(maxX, ox + d.w - 1);
+    minY = Math.min(minY, oy); maxY = Math.max(maxY, oy + d.h - 1);
   }
-  return { anchor: [cx, g], ground: g };
+  let W = maxX - minX + 1, H = maxY - minY + 1;
+  // A declared 64x31 ground tile ends at origin row 30, but the renderer's
+  // tile diamond is 32 rows (row 31 repeats the bottom vertex row, exactly as
+  // the terrain cells have always done). Grow + clone so the anchor lands
+  // inside the rect and stacked tiles never leave a 1px hole.
+  const hasGround = layers.some((l) => {
+    const d = declaredOf(l.sprite);
+    return d.w === CELL_W && d.h === 31 && d.yrel === 0;
+  });
+  const needH = -minY + CELL_H;
+  const grow = hasGround && H < needH ? needH - H : 0;
+  const dst = { px: Buffer.alloc(W * (H + grow) * 4), w: W, h: H + grow };
+  for (const c of crops) blit(dst, c, c.ox - minX, c.oy - minY);
+  if (grow) dst.px.copy(dst.px, H * W * 4, (H - 1) * W * 4, H * W * 4);
+  return { px: dst.px, w: W, h: H + grow, minX, minY };
 }
 
-/** Deterministic, lowercase, schema-safe sprite name for a packed layer. */
-function layerNameFor(rel, tint) {
-  const stem = rel.slice(rel.lastIndexOf("/") + 1).replace(/\.png$/i, "")
-    .toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-  return tint ? `layer_${stem}_${tint.join("_")}` : `layer_${stem}`;
+/** `layers` cell: one declared building on its declared ground tile (Y3/Y7). */
+async function makeLayers(s) {
+  const base = s.layers ?? [];
+  const frames = s.frames?.length ? s.frames : [base];
+  const cells = [];
+  let geom = null;
+  for (const extra of frames) {
+    const composed = await composeLayers([...base, ...extra]);
+    geom = composed;
+    cells.push({ px: composed.px, w: composed.w, h: composed.h });
+  }
+  const [minX, minY] = [geom.minX, geom.minY];
+  return {
+    cells, cellW: cells[0].w, cellH: cells[0].h,
+    anchor: derivedAnchor(minX, minY),
+    footprint: s.footprint, frames: cells.length, frameMs: s.frameMs ?? 200,
+  };
+}
+
+/**
+ * Y4c trackset cell: 16 bitmask variants built purely from declared sprites.
+ *   mode "flat"     — base + OpenTTD's flat table (road 1332–1350).
+ *   mode "overlays" — declared ground + declared overlay pieces per mask.
+ */
+async function makeTrackset(s) {
+  const ts = s.trackset;
+  const out = [];
+  for (let mask = 0; mask < 16; mask++) {
+    const key = `${s.namePrefix ?? s.name}_${mask.toString(2).padStart(4, "0")}`;
+    if (ts.mode === "flat") {
+      const id = ts.base + OPENTTD_FLAT_TRACK_TABLE[toOpenttdRoadBits(mask)];
+      const composed = await composeLayers([{ sprite: id }]);
+      out.push({
+        name: key,
+        cells: [{ px: composed.px, w: composed.w, h: composed.h }],
+        cellW: composed.w, cellH: composed.h,
+        anchor: derivedAnchor(composed.minX, composed.minY),
+        footprint: s.footprint, frames: 1, frameMs: s.frameMs,
+      });
+      continue;
+    }
+    // overlays: grass ground plus every declared piece fully contained in
+    // the mask. A lone stub (mask 0) is just the ground tile.
+    const layers = [{ sprite: ts.ground }];
+    for (const piece of ts.pieces) {
+      const bits = piece.dirs.reduce((a, b) => a | b, 0);
+      if (bits !== 0 && (mask & bits) === bits) layers.push({ sprite: piece.sprite });
+    }
+    const composed = await composeLayers(layers);
+    out.push({
+      name: key,
+      cells: [{ px: composed.px, w: composed.w, h: composed.h }],
+      cellW: composed.w, cellH: composed.h,
+      anchor: derivedAnchor(composed.minX, composed.minY),
+      footprint: s.footprint, frames: 1, frameMs: s.frameMs,
+    });
+  }
+  return out;
+}
+
+/** G1 arm endpoints — centre → diamond-edge midpoint (highlight glow only). */
+const ARM_ENDS = {
+  1: [48, 8],   // NE — midpoint of top-right edge    (32,0)-(64,16)
+  2: [48, 24],  // SE — midpoint of bottom-right edge (64,16)-(32,32)
+  4: [16, 24],  // SW — midpoint of bottom-left edge  (32,32)-(0,16)
+  8: [16, 8],   // NW — midpoint of top-left edge     (0,16)-(32,0)
+};
+
+function pointSegDist(px, py, ax, ay, bx, by) {
+  const abx = bx - ax, aby = by - ay;
+  const apx = px - ax, apy = py - ay;
+  const t = Math.max(0, Math.min(1, (apx * abx + apy * aby) / (abx * abx + aby * aby)));
+  const dx = px - (ax + abx * t), dy = py - (ay + aby * t);
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+/** The two placement-glow cells (UI, not OpenGFX art).
+ *  `highlight_soft` is U2's fainter catchment tint (informational); the plain
+ *  `highlight` stays the solid "this is the tile you are about to place" glow. */
+function makeHighlight(s, soft) {
+  const color = [255, 220, 40];
+  const px = Buffer.alloc(CELL_W * CELL_H * 4);
+  const cx = CELL_W / 2, cy = CELL_H / 2;
+  // Solid line vs soft fill alpha: the soft tile keeps the diamond edge and
+  // a translucent middle so the network reads as "area" not "building".
+  const lineAlpha = soft ? 70 : 170;
+  const fillAlpha = soft ? 32 : 80;
+  for (const end of Object.values(ARM_ENDS)) {
+    const [ex, ey] = end;
+    for (let y = 0; y < CELL_H; y++) {
+      for (let x = 0; x < CELL_W; x++) {
+        const dist = pointSegDist(x + 0.5, y + 0.5, cx, cy, ex, ey);
+        if (dist < 2) {
+          const i = (y * CELL_W + x) * 4;
+          px[i] = color[0]; px[i + 1] = color[1]; px[i + 2] = color[2]; px[i + 3] = lineAlpha;
+        }
+      }
+    }
+  }
+  for (let y = 0; y < CELL_H; y++) {
+    for (let x = 0; x < CELL_W; x++) {
+      const dx = Math.abs(x + 0.5 - cx), dy = Math.abs(y + 0.5 - cy);
+      const edgeDist = Math.max(dx / 32 + dy / 16);
+      if (Math.abs(edgeDist - 1) < 0.05) {
+        const i = (y * CELL_W + x) * 4;
+        px[i] = soft ? 120 : 255; px[i + 1] = soft ? 180 : 0; px[i + 2] = soft ? 220 : 200; px[i + 3] = soft ? 110 : 255;
+      } else if (edgeDist < 1) {
+        const i = (y * CELL_W + x) * 4;
+        if (px[i + 3] === 0) { px[i] = color[0]; px[i + 1] = color[1]; px[i + 2] = color[2]; px[i + 3] = fillAlpha; }
+      }
+    }
+  }
+  return {
+    cells: [{ px, w: CELL_W, h: CELL_H }], cellW: CELL_W, cellH: CELL_H,
+    anchor: derivedAnchor(-(HW - 1), 0), footprint: [1, 1],
+    frames: 1, frameMs: s.frameMs, name: s.name,
+  };
+}
+
+/** Classic 64x32 blue-box ground cell (terrain): crop the declared tile and
+ *  clone its bottom row so stacked tiles never leave a hole under the tip. */
+async function makeGround(s) {
+  const d = declaredOf(s.sprite);
+  const c = await cropDeclared(s.sprite);
+  const px = Buffer.alloc(CELL_W * CELL_H * 4);
+  c.px.copy(px, 0, 0, Math.min(c.px.length, px.length));
+  if (d.h === 31) px.copy(px, 31 * CELL_W * 4, 30 * CELL_W * 4, 32 * CELL_W * 4);
+  return {
+    cells: [{ px, w: CELL_W, h: CELL_H }], cellW: CELL_W, cellH: CELL_H,
+    anchor: derivedAnchor(d.xrel, d.yrel),
+    footprint: s.footprint, frames: 1, frameMs: s.frameMs ?? 200,
+  };
+}
+
+async function buildSlot(s) {
+  if (s.trackset) return makeTrackset(s);
+  if (s.layers) return [{ name: s.name, ...(await makeLayers(s)) }];
+  if (s.generator === "highlight" || s.generator === "highlight_soft") {
+    return [makeHighlight(s, s.generator === "highlight_soft")];
+  }
+  if (typeof s.sprite === "number") return [{ name: s.name, ...(await makeGround(s)) }];
+  throw new Error(`cell ${s.name ?? JSON.stringify(s)}: no declared source (Y3/Y6: compose/crop/generator cells are gone)`);
 }
 
 async function run() {
-  // Every sprite that occupies atlas pixels: single-png cells (name = cell.name)
-  // plus one packed sprite per distinct (png, tint) stack layer.
-  const packed = [];
-  // Keyed `(png rel | tint)` -> layer resource; composite cells only reference it.
-  const layerPool = new Map();
-  // Composite (stacked) building definitions: name -> parts (bottom→top).
-  const composites = [];
-
-  const layer = async (rel, tint) => {
-    const key = `${rel}|${tint ? tint.join(",") : ""}`;
-    let r = layerPool.get(key);
-    if (!r) {
-      const c = await loadPng(rel);
-      if (tint) tintLumPx(c.px, tint);
-      // K-FIX-1: native size, no skirt normalisation — the layer carries its
-      // own measured ground row and its own rise to the layer above it.
-      const name = layerNameFor(rel, tint);
-      r = {
-        name, rel, tint, px: c.px, w: c.w, h: c.h,
-        gr: groundRow(c), rise: layerRise(c),
-      };
-      layerPool.set(key, r);
-    }
-    return r;
-  };
-
-  for (const cell of CELLS.sprites) {
-    const tint = cell.tintLum;
-    if (Array.isArray(cell.stack)) {
-      // MB2: compositions = canonical `stack` + any `stackVariants` presets.
-      // The canonical is emitted under the cell name; each extra preset becomes
-      // `<name>_v<i>`. All share the layer pool (one sprite per (png, tint)).
-      const variants = Array.isArray(cell.stackVariants) ? cell.stackVariants : [];
-      const comps = [cell.stack, ...variants];
-      for (let i = 0; i < comps.length; i++) {
-        const stackArr = comps[i];
-        if (!Array.isArray(stackArr) || stackArr.length < 2 || stackArr.length > 6)
-          throw new Error(`cell ${cell.name}: every stack (canonical or variant) must have 2–6 layers`);
-        const parts = [];
-        for (const l of stackArr) {
-          if (typeof l?.png !== "string")
-            throw new Error(`cell ${cell.name}: each stack layer must name a png`);
-          parts.push(await layer(l.png, tint));
-        }
-        composites.push({
-          name: i === 0 ? cell.name : `${cell.name}_v${i}`,
-          cell, parts, variantOf: i === 0 ? null : cell.name,
-        });
-      }
-    } else if (typeof cell.png === "string") {
-      // K-FIX-1: the PNG is packed at its NATIVE size. Kenney's transparent
-      // margin is intentional ("margin for larger tiles") and the anchor —
-      // not a crop — is what puts the tile on the ground.
-      const c = await loadPng(cell.png);
-      if (tint) tintLumPx(c.px, tint);
-      const { anchor } = anchorFor(cell, c);
-      packed.push({ name: cell.name, cell, px: c.px, w: c.w, h: c.h, anchor });
-      console.log(`${cell.name.padEnd(16)} ${String(c.w).padStart(3)}x${String(c.h).padEnd(4)} anchor=${anchor}  <- ${cell.png}`);
-    } else {
-      throw new Error(`cell ${cell.name}: must have a single \`png\` or a \`stack\` array`);
-    }
+  // resolve all sprite frames' raw cells at 1x
+  const slots = [];
+  for (const s of CELLS.sprites) {
+    const built = await buildSlot(s);
+    slots.push(...built);
   }
 
-  // Pack each shared layer as a normal standing sprite so the renderer can
-  // source its rect and build its alpha mask.
-  for (const r of layerPool.values()) {
-    packed.push({
-      name: r.name, cell: { name: r.name, kind: "standing", footprint: [1, 1] },
-      px: r.px, w: r.w, h: r.h, anchor: [Math.floor(r.w / 2), r.gr],
-    });
-  }
-
-  // Resolve each composite's part geometry (union bbox + per-part dx/dy).
-  const compositeSprites = {};
-  for (const comp of composites) {
-    const n = comp.parts.length;
-    // K-FIX-1: layer i's ground line A_i is the top face of layer i-1 — the
-    // rise is MEASURED from that layer's own pixels, so a short roof cap and a
-    // full storey stack correctly without a per-storey magic constant. The
-    // base layer sits on the tile itself (A_0 = 0). Part top (screen y) is
-    // A_i − groundRow_i; shift so the topmost part starts at 0.
-    let a = 0;
-    const tops = comp.parts.map((p, i) => {
-      const at = a;
-      a -= p.rise;
-      return { part: p, i, top: at - p.gr };
-    });
-    const minTop = Math.min(...tops.map((t) => t.top));
-    const W = Math.max(...comp.parts.map((p) => p.w));
-    let H = 0;
-    const parts = tops.map((t) => {
-      const dx = Math.max(0, Math.floor((W - t.part.w) / 2));
-      const dy = t.top - minTop;
-      H = Math.max(H, dy + t.part.h);
-      return {
-        sprite: t.part.name, dx, dy,
-        // I3: retain the measurements in the manifest so the stack formula is
-        // inspectable and testable rather than hidden in this build script.
-        groundRow: t.part.gr,
-        rise: t.part.rise,
-      };
-    });
-    // I3: the whole stack's ONE bottom anchor is the base layer's contact row
-    // expressed in assembled-sprite coordinates. This is algebraically
-    // equivalent to -minTop, but names the invariant directly.
-    const anchor = [Math.floor(W / 2), parts[0].dy + parts[0].groundRow];
-    const src = { x: 0, y: 0, w: W, h: H, footprint: comp.cell.footprint ?? [1, 1], anchor, kind: "standing" };
-    compositeSprites[comp.name] = { ...src, parts };
-    if (!comp.variantOf)
-      console.log(`${comp.name.padEnd(16)} ${String(W).padStart(3)}x${String(H).padEnd(4)} anchor=[${anchor}] stack(${n})  ${comp.parts.map((p) => p.rel.replace(/^buildings\/PNG\//, "")).join(" + ")}`);
-  }
-
-  // MB2: group variant presets under their canonical (cell-named) sprite so the
-  // renderer knows the full pick-set. Extras were emitted as <name>_v<i>.
-  const variantLists = {};
-  for (const comp of composites) {
-    if (comp.variantOf) (variantLists[comp.variantOf] ??= [comp.variantOf]).push(comp.name);
-  }
-
-  // ── shelf pack at 1x ────────────────────────────────────────────────────
-  let x = GAP, y = GAP, rowH = 0;
+  // atlas layout: pack slot rects row-major
+  const gap = 4;
+  const packW = 1024;
+  let atlasW = gap, atlasH = gap + 256;
   const placements = [];
-  for (const s of packed) {
-    if (x + s.w + GAP > PACK_W) { x = GAP; y += rowH + GAP; rowH = 0; }
-    placements.push({ ...s, x, y });
-    x += s.w + GAP;
-    rowH = Math.max(rowH, s.h);
+  {
+    let x = gap, y = gap, maxY = gap + 256, rowMaxX = gap;
+    for (const s of slots) {
+      const w = s.cellW * s.frames;
+      const h = s.cellH;
+      if (x + w + gap > packW) { x = gap; y = maxY + gap; maxY = y + h; rowMaxX = gap; }
+      placements.push({ ...s, x, y });
+      x += w + gap;
+      if (x > rowMaxX) rowMaxX = x;
+      atlasW = Math.max(atlasW, rowMaxX + gap);
+      atlasH = Math.max(atlasH, maxY + gap);
+      maxY = Math.max(maxY, y + h);
+    }
   }
-  const atlasW = Math.max(...placements.map((p) => p.x + p.w)) + GAP;
-  const atlasH = y + rowH + GAP;
 
   const manifest = {
     images: { "0.5": "atlas@0.5x.png", "1": "atlas@1x.png", "2": "atlas@2x.png" },
-    tileW: CELLS.tileW,
-    tileH: CELLS.tileH,
+    tileW: CELLS.tileW, tileH: CELLS.tileH,
     meta: {
-      source: `${CELLS.source.author} isometric assets (${CELLS.source.root})`,
-      license: CELLS.source.license,
-      generatedBy: "tools/slice-atlas.mjs (K1 packer, MB1 multi-storey, K-FIX-1 ground anchor)",
-      note: "coordinates and anchors are at 1x; multiply by zoom for @2x/@0.5x. " +
-        "Sprites keep their NATIVE size — no skirt normalisation (Kenney tiles " +
-        "are designed to be different heights and grow upward into their " +
-        "transparent margin). anchor = the sprite pixel that lands on the " +
-        "tile's diamond centre: the measured base-diamond ground row " +
-        "(bottom-centre for vehicles). " +
-        "A sprite with `parts` is a multi-storey STACK: x/y/w/h describe its " +
-        "union bounding box (x/y unused) and each part is drawn at (dx,dy) " +
-        "from the box's top-left, sourced from its own packed sprite.",
+      source: "OpenGFX (https://github.com/OpenTTD/OpenGFX), GPLv2",
+      generatedBy: "tools/slice-atlas.mjs",
+      note: "coordinates and anchors are at 1x; multiply by zoom for @2x/@0.5x",
     },
     sprites: {},
   };
   for (const p of placements) {
+    const f = p.frames > 1 ? { w: p.cellW * p.frames, frames: p.frames, frameMs: p.frameMs } : { w: p.cellW };
     manifest.sprites[p.name] = {
-      x: p.x, y: p.y, w: p.w, h: p.h,
-      footprint: p.cell.footprint, anchor: p.anchor,
-      kind: p.cell.kind,
+      x: p.x, y: p.y, h: p.cellH, footprint: p.footprint, anchor: p.anchor, ...f,
     };
   }
-  // composite stack sprites reference the shared layer sprites above
-  for (const [name, comp] of Object.entries(compositeSprites)) manifest.sprites[name] = comp;
-  // MB2: canonical sprite carries its ordered variant pick-set
-  for (const [name, list] of Object.entries(variantLists))
-    if (manifest.sprites[name]) manifest.sprites[name].variants = list;
 
-  // ── one atlas per zoom: cells resampled individually (smooth art → lanczos3)
+  // build each scale
   for (const z of ZOOMS) {
-    const W = Math.round(atlasW * z), H = Math.round(atlasH * z);
+    const w = Math.round(atlasW * z), h = Math.round(atlasH * z);
+    const canvas = sharp({ create: { width: w, height: h, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } });
     const layers = [];
     for (const p of placements) {
-      let img = sharp(Buffer.from(p.px), { raw: { width: p.w, height: p.h, channels: 4 } }).ensureAlpha();
-      if (z !== 1) img = img.resize(Math.round(p.w * z), Math.round(p.h * z), { kernel: "lanczos3" });
-      const { data, info } = await img.raw().toBuffer({ resolveWithObject: true });
-      layers.push({
-        input: Buffer.from(data),
-        raw: { width: info.width, height: info.height, channels: 4 },
-        left: Math.round(p.x * z), top: Math.round(p.y * z),
-      });
+      for (let fi = 0; fi < p.cells.length; fi++) {
+        const c = p.cells[fi];
+        let img = sharp(Buffer.from(c.px), { raw: { width: c.w, height: c.h, channels: 4 } }).ensureAlpha();
+        if (z !== 1) img = img.resize(Math.round(c.w * z), Math.round(c.h * z), { kernel: "nearest" });
+        const { data, info } = await img.raw().toBuffer({ resolveWithObject: true });
+        const frameOff = fi * Math.round(p.cellW * z);
+        layers.push({
+          input: Buffer.from(data),
+          raw: { width: info.width, height: info.height, channels: 4 },
+          left: Math.round(p.x * z) + frameOff,
+          top: Math.round(p.y * z),
+        });
+      }
     }
-    const base = sharp({ create: { width: W, height: H, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } });
-    await base.composite(layers).png().toFile(join(OUT, `atlas@${z}x.png`));
-    console.log(`atlas@${z}x.png ${W}x${H}`);
+    const comp = layers.length ? canvas.composite(layers) : canvas;
+    await comp.png().toFile(join(OUT, `atlas@${z}x.png`));
+    console.log(`atlas@${z}x.png ${w}x${h}`);
   }
   writeFileSync(join(OUT, "manifest.json"), JSON.stringify(manifest, null, 2));
 
-  // ── contact sheet: every packed sprite flush on its footprint diamond ───
-  // Grid of 1x1 footprint diamonds (TILE_W x TILE_H) drawn at their screen
-  // positions; the sprite is composited with its anchor pixel exactly on the
-  // diamond centre — the same math as renderer.drawOrigin — and a magenta dot
-  // marks the anchor. A mis-anchored sprite visibly floats or sinks.
-  // (Composites are not packed so they don't appear here; the game/demo render
-  // them by parts.)
-  const COLS = 6;
-  const colStep = TILE_W + 70;
-  const rowStep = TILE_H + 140;
-  const rows = Math.ceil(placements.length / COLS);
-  const sheetW = COLS * colStep + 40;
-  const sheetH = rows * rowStep + 60;
-  const layers = [];
+  // ── contact sheet: footprint diamond grid, sprite flush on its footprint,
+  //    magenta anchor — the Y7 debug overlay (footprint outline under each
+  //    placed building), one cell per atlas sprite. ──
+  const gridW = 900, minH = 620;
+  const bgLayers = [];
   {
-    const paths = [];
-    for (let i = 0; i < placements.length; i++) {
-      const col = i % COLS, row = Math.floor(i / COLS);
-      const cx = 40 + col * colStep + TILE_W / 2;   // diamond centre
-      const cy = 40 + row * rowStep + TILE_H / 2;
-      const [fw, fh] = placements[i].cell.footprint;
-      // outline every tile diamond of the footprint (all cells are 1x1 today)
-      for (let ty = 0; ty < fh; ty++) for (let tx = 0; tx < fw; tx++) {
-        const ox = cx + (tx - ty) * HW, oy = cy - TILE_H / 2 + (tx + ty) * (TILE_H / 2);
-        paths.push(
-          `M${ox} ${oy} L${ox + HW} ${oy + TILE_H / 2} L${ox} ${oy + TILE_H} L${ox - HW} ${oy + TILE_H / 2} Z`);
+    const svg = `<svg width="${gridW}" height="${minH}" xmlns="http://www.w3.org/2000/svg">
+      <rect width="100%" height="100%" fill="#f2f0e8"/>
+    </svg>`;
+    bgLayers.push({ input: Buffer.from(svg), top: 0, left: 0 });
+  }
+  const sheetLayers = [];
+  const cellPx = 64; // nominal screen cell for spacing; sprites may be wider
+  const margin = 48;
+  const perCol = Math.floor((gridW - margin) / (cellPx + 14));
+  const N = placements.length;
+  const nCols = Math.min(perCol, N);
+  const nRows = Math.ceil(N / nCols);
+  const rowH = 180 + 34;
+  const totalH = Math.max(minH, nRows * rowH + 48);
+  let labelIdx = 0;
+  for (const p of placements) {
+    const col = labelIdx % nCols, row = Math.floor(labelIdx / nCols);
+    const ox = margin + col * (cellPx + 14) + cellPx / 2;   // footprint top-vertex x
+    const oy = 30 + row * rowH;                              // footprint top-vertex y
+    const [fw, fh] = p.footprint;
+    // per-tile footprint grid (Y7): every tile diamond of the footprint plus
+    // the outer outline, so an overhanging or mis-anchored base is visible.
+    let paths = "";
+    const top = [ox, oy];
+    const right = [ox + fw * HW, oy + fw * HH];
+    const bottom = [ox + (fw - fh) * HW, oy + (fw + fh) * HH];
+    const left = [ox - fh * HW, oy + fh * HH];
+    paths += `<path d="M${top[0]} ${top[1]} L${right[0]} ${right[1]} L${bottom[0]} ${bottom[1]} L${left[0]} ${left[1]} Z" fill="none" stroke="#d8c020" stroke-width="1.5"/>`;
+    for (let ty = 0; ty < fh; ty++) {
+      for (let tx = 0; tx < fw; tx++) {
+        const tx0 = ox + (tx - ty) * HW, ty0 = oy + (tx + ty) * HH;
+        paths += `<path d="M${tx0} ${ty0} L${tx0 + HW} ${ty0 + HH} L${tx0} ${ty0 + 2 * HH} L${tx0 - HW} ${ty0 + HH} Z" fill="none" stroke="#d8c020" stroke-width="0.75"/>`;
       }
-      const label = placements[i].name.replace(/&/g, "&amp;").replace(/</g, "&lt;");
-      paths.push(
-        `<rect x="${cx - 2}" y="${cy - 2}" width="4" height="4" fill="magenta"/>` +
-        `<text x="${cx}" y="${cy + TILE_H / 2 + 26}" font-family="monospace" font-size="12" ` +
-        `text-anchor="middle" fill="#333">${label}</text>`);
     }
-    const svg = `<svg width="${sheetW}" height="${sheetH}" xmlns="http://www.w3.org/2000/svg">` +
-      `<rect width="100%" height="100%" fill="#f2f0e8"/>` +
-      `<g fill="none" stroke="#d8c020" stroke-width="1.5">${paths.filter((p) => p.startsWith("M")).map((d) => `<path d="${d}"/>`).join("")}</g>` +
-      paths.filter((p) => !p.startsWith("M")).join("") + `</svg>`;
-    layers.push({ input: Buffer.from(svg), top: 0, left: 0 });
-  }
-  for (let i = 0; i < placements.length; i++) {
-    const p = placements[i];
-    const col = i % COLS, row = Math.floor(i / COLS);
-    const cx = 40 + col * colStep + TILE_W / 2;
-    const cy = 40 + row * rowStep + TILE_H / 2;
-    layers.push({
-      input: Buffer.from(p.px), raw: { width: p.w, height: p.h, channels: 4 },
-      left: Math.max(0, Math.round(cx - p.anchor[0])),
-      top: Math.max(0, Math.round(cy - p.anchor[1])),
+    // anchor should land at the south corner of the footprint's bottom tile.
+    const anchorScreen = [ox + (fw - fh) * HW, oy + (fw + fh - 1) * HH];
+    const drawX = Math.round(anchorScreen[0] - p.anchor[0]);
+    const drawY = Math.round(anchorScreen[1] - p.anchor[1]);
+    const svg = `<svg width="${gridW}" height="${totalH}" xmlns="http://www.w3.org/2000/svg">
+      ${paths}
+      <rect x="${Math.round(anchorScreen[0] - 2)}" y="${Math.round(anchorScreen[1] - 2)}" width="4" height="4" fill="magenta"/>
+      <text x="${ox}" y="${oy + (fw + fh) * HH + 24}" font-family="monospace" font-size="10" text-anchor="middle" fill="#333">${p.name}</text>
+    </svg>`;
+    sheetLayers.push({ input: Buffer.from(svg), top: 0, left: 0 });
+    const c0 = p.cells[0];
+    sheetLayers.push({
+      input: Buffer.from(c0.px), raw: { width: c0.w, height: c0.h, channels: 4 },
+      left: Math.max(0, drawX), top: Math.max(0, drawY),
     });
+    labelIdx++;
   }
-  await sharp({ create: { width: sheetW, height: sheetH, channels: 4, background: { r: 0xf2, g: 0xf0, b: 0xe8, alpha: 255 } } })
-    .composite(layers).png().toFile(join(OUT, "contact-sheet.png"));
-  console.log("contact-sheet.png", sheetW, "x", sheetH);
-  const canon = composites.filter((c) => !c.variantOf).length;
-  const extras = composites.length - canon;
-  console.log("manifest.json", Object.keys(manifest.sprites).length, "sprites",
-    `(${placements.length} packed, ${canon} composite stacks, ${extras} variant presets)`);
+  const base = sharp({ create: { width: gridW, height: totalH, channels: 4, background: { r: 0xf2, g: 0xf0, b: 0xe8, alpha: 255 } } });
+  await base.composite([...bgLayers, ...sheetLayers]).png().toFile(join(OUT, "contact-sheet.png"));
+  console.log("contact-sheet.png", gridW, "x", totalH);
+  console.log("manifest.json", Object.keys(manifest.sprites).length, "sprites");
 }
 
 run().catch((e) => { console.error(e); process.exit(1); });

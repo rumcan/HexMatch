@@ -1,61 +1,38 @@
 // ══════════════════════════════════════════════════════════════════════════
-// K0 — Projection, grid and sprite constants (Kenney isometric cutover)
+// E0 — Projection, grid and sprite constants (isometric cutover)
 //
-// 2:1 dimetric projection over Kenney's isometric blocks
-// (docs/HexMatch-isometric-spec.md — every value below is ✓measured from the
-// shipped assets):
+// 2:1 dimetric projection. Grid → screen:
+//   screen.x = (tx - ty) * TILE_W_HALF;  screen.y = (tx + ty) * TILE_H_HALF
+// tileToScreen(tx, ty) is the TOP VERTEX of tile (tx,ty)'s diamond — the
+// canonical iso tiling in which every tile's diamond corners sit at the top
+// vertices of its diagonal neighbours:
+//   top    corner = tileToScreen(tx,   ty)   (picks this tile)
+//   right  corner = tileToScreen(tx+1, ty)   (SE tile's top vertex)
+//   bottom corner = tileToScreen(tx+1, ty+1) (tile straight below)
+//   left   corner = tileToScreen(tx,   ty+1) (SW tile's top vertex)
+// screenToTile uses Math.floor, never Math.round: flooring is the algebraic
+// inverse cell decomposition (the tile whose diamond contains the point);
+// rounding produces an off-by-one band along every diamond edge (E0).
 //
-//   Ground tile: a 132×64 diamond top surface (apex at top-centre, corner
-//   row at y≈32) over a base-block skirt.  TILE_W = 132, TILE_H = 64.
-//
-//   K-FIX-1: sprite CANVASES are NOT one size. Kenney's iso tiles are designed
-//   to be different heights, anchored at their shared ground line and grown
-//   upward into their transparent margin (kenney.nl 3D-import docs; the PIXI
-//   /Kenney tutorial names drawing-from-the-top as the cause of the classic
-//   floating-tile bug). The packer therefore keeps every source PNG at native
-//   size and never normalises a skirt. BLOCK_H below is the DEEPEST skirt in
-//   the set — a budget for culling and chunk-surface sizing, not a promise
-//   that every tile has it.
-//
-//   tileToScreen(tx, ty) is the CENTRE of tile (tx,ty)'s diamond — the row
-//   through the left/right corners, where the sprite's widest row lands
-//   (K0 anchor: drawX = screenX − HW, drawY = screenY − widestRowY).
-//
-//   I2/N4: ONE tile→screen convention. Drawing centres the diamond on
-//   tileToScreen and screenToTile is the exact inverse used by renderer input,
-//   highlights and camera culling. The old second convention (a pick cell
-//   whose TOP VERTEX sat on tileToScreen, papered over by sampling HH below
-//   the cursor) is gone. Math.floor gives deterministic ownership to shared
-//   edges; there is no additive cursor compensation anywhere.
-//
-// Kenney tiles are ~2× the old OpenGFX pixels, so the map is 32×32 (was
-// 48×48) — a similar world size on screen at half the draw count (K0).
+// E11: hex/three.js constants and the bundled .jpg terrain textures lived
+// here and leaked into the iso bundle. They are gone.
 // ══════════════════════════════════════════════════════════════════════════
-export const TILE_W = 132, TILE_H = 64;
-export const HW = TILE_W / 2, HH = TILE_H / 2;   // 66, 32
-/**
- * Deepest base-block skirt in the set: px of cube side below a ground tile's
- * ground row (measured: Kenney's landscape blocks bottom out 66px below their
- * corner row). Individual tiles are SHALLOWER — water is 50 — and that is
- * fine: they share the ground line, so only the silhouette below it differs
- * (K-FIX-1). Used to size chunk cache surfaces and cull padding.
- */
-export const BLOCK_H = 66;
-export const MAP_W = 32, MAP_H = 32;             // 1024 tiles
+export const TILE_W = 64, TILE_H = 32;
+export const HW = TILE_W / 2, HH = TILE_H / 2;   // 32, 16
+export const MAP_W = 48, MAP_H = 48;             // 2304 tiles
+// Fixed zoom levels only — the atlas is pre-rendered at each of these once,
+// so every frame is a 1:1 blit (E0: no per-frame drawImage scaling).
 export const ZOOM_STEPS = [0.5, 1, 2] as const;
 export type Zoom = (typeof ZOOM_STEPS)[number];
 
 export const tileToScreen = (tx: number, ty: number): [number, number] =>
   [(tx - ty) * HW, (tx + ty) * HH];
 
-/**
- * Exact inverse cell decomposition for diamonds CENTRED on tileToScreen.
- * The +1 is part of assigning the centred diamond's shared boundaries before
- * flooring; it is not a screen-pixel offset or pick fudge.
- */
+// Flat pick: screen → grid. The tile whose diamond contains the point. Exact
+// integer math at every tileToScreen lattice point; floor is deliberate (E0).
 export const screenToTile = (sx: number, sy: number): [number, number] => {
   const a = sx / HW, b = sy / HH;
-  return [Math.floor((a + b + 1) / 2), Math.floor((b - a + 1) / 2)];
+  return [Math.floor((a + b) / 2), Math.floor((b - a) / 2)];
 };
 
 export const tileIndex = (tx: number, ty: number) => ty * MAP_W + tx;

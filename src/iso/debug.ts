@@ -10,18 +10,17 @@
 // same rule functions the game itself uses, so the numbers in a report are the
 // numbers the renderer used.
 //
-//   __iso.dumpTile(tx, ty)      terrain cell, sprite, measured skirt, anchor,
-//                               screen position, and what pick() says about it
+//   __iso.dumpTile(tx, ty)      terrain cell, sprite, anchor, screen position,
+//                               and what pick() says about it
 //   __iso.dumpAt(x, y)          which tile a SCREEN point resolves to (both the
 //                               flat pick and the stage-2 sprite pick)
-//   __iso.dumpBuilding(tx, ty)  every structure on the tile: its stack parts,
-//                               their draw offsets, and the gap between its
-//                               foot and the tile surface (the hover, in px)
+//   __iso.dumpBuilding(tx, ty)  every structure on the tile and the gap between
+//                               its foot and the tile surface (the hover, in px)
 //   __iso.dumpNetwork(player)   exactly which tiles count as that player's
 //                               network — the adjacency answer for "why was my
 //                               road refused"
-//   __iso.overlay(name)         draw skirt / anchor / network / pick marks on
-//                               the map, so a screenshot SHOWS them
+//   __iso.overlay(name)         draw anchor / network / pick marks on the map,
+//                               so a screenshot SHOWS them
 //   __iso.config()              the resolved atlas entry (the packer's output
 //                               for each cells.json cell) of every sprite on
 //                               screen right now
@@ -31,7 +30,7 @@
 // and the renderer's `debugPainter` stays null, so no dump code runs at all.
 // Docs: docs/iso-debug-console.md.
 // ══════════════════════════════════════════════════════════════════════════
-import { BLOCK_H, HH, HW, MAP_W, MAP_H, tileToScreen } from "../game/config";
+import { HH, HW, MAP_W, MAP_H, TILE_H, tileToScreen } from "../game/config";
 import { screenToWorld, visibleTileRange, worldToScreen, type Camera } from "./camera";
 import { flatPick, terrainSprite, type IsoRenderer } from "./renderer";
 import { WATER, ROUGH, industryAt, type Grid } from "./grid";
@@ -42,8 +41,8 @@ import { catchmentRect, industriesInCatchment, type EconomyState } from "./econo
 import type { Atlas, SpriteDef } from "./atlas";
 import type { Placed } from "./depth";
 
-export type DebugOverlayName = "skirt" | "anchor" | "network" | "pick";
-export const DEBUG_OVERLAYS: DebugOverlayName[] = ["skirt", "anchor", "network", "pick"];
+export type DebugOverlayName = "anchor" | "network" | "pick";
+export const DEBUG_OVERLAYS: DebugOverlayName[] = ["anchor", "network", "pick"];
 
 /** Everything the console needs from the running game, via getters (live). */
 export interface DebugContext {
@@ -110,19 +109,7 @@ function cellOf(atlas: Atlas | null, name: string) {
     atlasRect: [def.x, def.y, def.w, def.h],
     footprint: def.footprint,
     anchor: def.anchor,
-    kind: (def as SpriteDef & { kind?: string }).kind ?? null,
     frames: def.frames ?? 1,
-    variants: def.variants ?? null,
-    parts: def.parts ?? null,
-    /** px of block below the sprite's anchor row — for a flat tile, its skirt. */
-    belowAnchorPx: def.h - def.anchor[1],
-    /**
-     * K-FIX-1: the sprite's ground row IS its anchor row — the packer measures
-     * the base diamond's corner row and anchors there, so a ground tile's
-     * anchor must land on the canonical diamond centre (HH) no matter how tall
-     * or short its own canvas is.
-     */
-    groundRow: def.anchor[1],
   };
 }
 
@@ -134,21 +121,31 @@ export function createIsoDebug(ctx: DebugContext) {
   const overlays = new Set<DebugOverlayName>();
 
   /**
-   * K-FIX-1: the ONE ground line every sprite is anchored to. Terrain is the
-   * floor by definition, so `terrain_grass`'s measured ground row IS the
-   * reference; every other tile's drift from it is what would make the map
-   * step. (It is 33 for Kenney's blocks — the diamond spans rows 1..65 — not
-   * HH=32, which is the half-height of the diamond, a different quantity.)
+   * The ONE ground line every sprite is anchored to. Terrain is the floor by
+   * definition, so `terrain_grass`'s declared anchor row IS the reference;
+   * every other tile's drift from it is what would make the map step. For the
+   * flat OpenGFX set this is the declared yrel of the ground tile (31), not
+   * HH — the anchor is the pixel of the sprite that lands on the footprint's
+   * south corner (a different quantity from the diamond's half-height).
    */
   const groundReference = (): number =>
-    ctx.atlas?.get("terrain_grass")?.anchor[1] ?? HH;
+    ctx.atlas?.get("terrain_grass")?.anchor[1] ?? TILE_H;
 
-  /** World (1×, camera-free) position of a tile's diamond centre-line. */
-  const surfaceWorld = (tx: number, ty: number, fw = 1, fh = 1): [number, number] =>
-    tileToScreen(tx + (fw - 1) / 2, ty + (fh - 1) / 2);
+  /** World (1×, camera-free) position of the TOP vertex of tile (tx,ty) —
+   *  the flat pick lattice point (tileToScreen). */
+  const topVertex = (tx: number, ty: number): [number, number] =>
+    tileToScreen(tx, ty);
+
+  /** World position where a sprite's anchor lands: the SOUTH corner (bottom
+   *  vertex) of its footprint diamond — drawOrigin places the declared anchor
+   *  pixel at tileToScreen(tx + fw - 1, ty + fh - 1) + (HW, TILE_H). */
+  const footCorner = (tx: number, ty: number, fw = 1, fh = 1): [number, number] => {
+    const [sx, sy] = tileToScreen(tx + fw - 1, ty + fh - 1);
+    return [sx + HW, sy + TILE_H];
+  };
 
   const screenOf = (tx: number, ty: number): [number, number] => {
-    const [wx, wy] = tileToScreen(tx, ty);
+    const [wx, wy] = topVertex(tx, ty);
     return worldToScreen(ctx.camera, wx, wy);
   };
 
@@ -159,8 +156,10 @@ export function createIsoDebug(ctx: DebugContext) {
     const terrain = inMap ? ctx.grid.terrain[i] : WATER;
     const sprite = inMap ? terrainSprite(ctx.grid, tx, ty) : null;
     const cell = sprite ? cellOf(ctx.atlas, sprite) : null;
-    const [wx, wy] = surfaceWorld(tx, ty);
+    const [wx, wy] = topVertex(tx, ty);
+    const [fx, fy] = footCorner(tx, ty);
     const [sx, sy] = screenOf(tx, ty);
+    const [ax, ay] = worldToScreen(ctx.camera, fx, fy);
     const ind = inMap ? industryAt(ctx.grid, tx, ty) : null;
     const renderer = ctx.renderer;
     // What a click HERE resolves to. `pick` takes device px, exactly like the
@@ -175,24 +174,18 @@ export function createIsoDebug(ctx: DebugContext) {
       index: i,
       sprite,
       cell,
-      /** px of block drawn BELOW this tile's ground row (its skirt depth).
-       *  K-FIX-1: skirts legitimately differ between Kenney tiles — this is
-       *  reported, not policed. */
-      skirtPx: cell ? cell.belowAnchorPx : null,
-      /** The deepest skirt in the set — a budget, not a target. */
-      maxSkirtPx: BLOCK_H,
       /**
-       * The number that settles a "terrain is stepping" report (K-FIX-1):
-       * how far this tile's ground line sits from the tile's own screen
-       * surface. Bottom-anchored terrain is coplanar by construction, so this
-       * is 0 for every flat tile; ≠ 0 means the anchor is wrong.
+       * The number that settles a "terrain is stepping" report: how far this
+       * tile's anchor row sits from the shared ground line. Flat OpenGFX tiles
+       * all declare the same yrel, so this is 0 for every terrain tile; ≠ 0
+       * means the anchor is wrong.
        */
-      surfaceDriftPx: cell ? cell.groundRow - groundReference() : null,
-      /** Back-compat alias of surfaceDriftPx (was: skirt-vs-canonical drift). */
-      skirtDriftPx: cell ? cell.groundRow - groundReference() : null,
-      world: [r(wx), r(wy)] as [number, number],
+      surfaceDriftPx: cell ? cell.anchor[1] - groundReference() : null,
+      world: [r(wx), r(wy)] as [number, number],           // top vertex (pick lattice)
+      anchorWorld: [r(fx), r(fy)] as [number, number],     // south corner (anchor lands here)
       /** live camera, DEVICE px (what the canvas and pick() speak). */
       screen: [r(sx), r(sy)] as [number, number],
+      anchorScreen: [r(ax), r(ay)] as [number, number],
       /** the same point in CSS px (what a screenshot and page.mouse speak). */
       css: [r(sx / ctx.dpr()), r(sy / ctx.dpr())] as [number, number],
       /** on-screen diamond half-extents at the live zoom, for hit-box maths. */
@@ -250,9 +243,9 @@ export function createIsoDebug(ctx: DebugContext) {
 
   /**
    * Every structure drawn on a tile, with the ONE number that settles a hover
-   * report: `gapPx` is the distance between the sprite's contact row (its
-   * anchor, where the base diamond's widest row is painted) and the tile
-   * surface it should stand on. 0 = flush; > 0 = floating; < 0 = sunk.
+   * report: `gapPx` is the distance between the sprite's anchor row (where the
+   * declared base is painted) and the footprint's south corner it should stand
+   * on. 0 = flush; > 0 = floating; < 0 = sunk.
    */
   const dumpBuilding = (tx: number, ty: number) => {
     const renderer = ctx.renderer;
@@ -262,23 +255,13 @@ export function createIsoDebug(ctx: DebugContext) {
       const [fw, fh] = p.def.footprint;
       return tx >= p.tx && tx < p.tx + fw && ty >= p.ty && ty < p.ty + fh;
     });
-    const [swx, swy] = surfaceWorld(tx, ty);
+    const [swx, swy] = topVertex(tx, ty);
     const items = hits.map((p) => {
       const [fw, fh] = p.def.footprint;
-      const [cx, cy] = surfaceWorld(p.tx, p.ty, fw, fh);
+      const [fx, fy] = footCorner(p.tx, p.ty, fw, fh);
       const footWorldY = p.wy + p.def.anchor[1];
-      const [, footScreenY] = worldToScreen(ctx.camera, cx, footWorldY);
+      const [, footScreenY] = worldToScreen(ctx.camera, fx, footWorldY);
       const pds = worldToScreen(ctx.camera, p.wx, p.wy);
-      const parts = p.def.parts?.map((part) => {
-        const def = atlas?.get(part.sprite);
-        return {
-          sprite: part.sprite,
-          offset: [part.dx, part.dy] as [number, number],
-          anchor: def?.anchor ?? null,
-          /** this layer's own contact row, relative to the stack box */
-          layerFootY: def ? part.dy + def.anchor[1] : null,
-        };
-      }) ?? null;
       return {
         sprite: p.sprite,
         footprint: p.def.footprint,
@@ -286,35 +269,31 @@ export function createIsoDebug(ctx: DebugContext) {
         box: [r(p.w), r(p.h)] as [number, number],
         drawWorld: [r(p.wx), r(p.wy)] as [number, number],
         drawScreen: [r(pds[0]), r(pds[1])] as [number, number],
-        /** world y of the tile surface vs of the sprite's contact row */
-        surfaceWorldY: r(cy),
+        /** world y of the footprint's south corner vs of the sprite's anchor row */
+        surfaceWorldY: r(fy),
         footWorldY: r(footWorldY),
         footScreenY: r(footScreenY),
-        gapPx: r(footWorldY - cy),
-        /** the standing block drawn BELOW the contact row (terrain skirt depth). */
-        belowFootPx: r(p.wy + p.def.h - footWorldY),
+        gapPx: r(footWorldY - fy),
         /** the footprint origin this sprite is anchored to (may not be the
          *  tile asked about — a 2×2 building is drawn from its origin). */
         origin: [p.tx, p.ty] as [number, number],
         isIndustry: p.ref != null,
-        parts,
       };
     });
     const tileTerrain = terrainSprite(ctx.grid, tx, ty);
     const tileCell = cellOf(atlas, tileTerrain);
     const out = {
       tile: [tx, ty] as [number, number],
-      surfaceWorld: [r(swx), r(swy)] as [number, number],
+      topVertexWorld: [r(swx), r(swy)] as [number, number],
       ground: {
         sprite: tileTerrain,
-        skirtPx: tileCell?.belowAnchorPx ?? null,
-        /** K-FIX-1: the tile's ground line vs the canonical diamond centre. */
-        driftPx: tileCell ? tileCell.groundRow - groundReference() : null,
+        /** the tile's anchor row vs the shared ground line. */
+        driftPx: tileCell ? tileCell.anchor[1] - groundReference() : null,
       },
       structures: items,
-      note: tileCell && tileCell.groundRow !== groundReference()
-        ? "this tile's ground row is not the canonical diamond centre — the sprite is mis-anchored and the terrain will step"
-        : "tile is bottom-anchored on the shared ground line (K-FIX-1)",
+      note: tileCell && tileCell.anchor[1] !== groundReference()
+        ? "this tile's anchor row is off the shared ground line — the sprite is mis-anchored and the terrain will step"
+        : "tile is anchored on the shared ground line (flat OpenGFX tile)",
     };
     console.log("[iso] dumpBuilding", tx, ty, out);
     return out;
@@ -375,7 +354,7 @@ export function createIsoDebug(ctx: DebugContext) {
     }
     const out = {
       camera: { zoom: cam.zoom, vw: cam.vw, vh: cam.vh, x: r(cam.x), y: r(cam.y) },
-      geometry: { tileW: ctx.atlas?.manifest.tileW ?? null, tileH: ctx.atlas?.manifest.tileH ?? null, blockH: BLOCK_H, HW, HH, map: [MAP_W, MAP_H] },
+      geometry: { tileW: ctx.atlas?.manifest.tileW ?? null, tileH: ctx.atlas?.manifest.tileH ?? null, HW, HH, map: [MAP_W, MAP_H] },
       visibleTiles: { x0: range.x0, y0: range.y0, x1: range.x1, y1: range.y1 },
       /** `assets/iso-atlas/manifest.json` entries — the packer's resolved
        *  output for each cell of `tools/iso-atlas.cells.json` (the manifest
@@ -401,7 +380,12 @@ export function createIsoDebug(ctx: DebugContext) {
   const paint = (c: CanvasRenderingContext2D, cam: Camera) => {
     const z = cam.zoom;
     const hw = HW * z, hh = HH * z;
-    const atlas = ctx.atlas;
+    // The drawn tile diamond has its TOP vertex at the pick lattice point
+    // (tileToScreen), so its centre sits HH below that point on screen.
+    const diamondCentre = (tx: number, ty: number): [number, number] => {
+      const [sx, sy] = screenOf(tx, ty);
+      return [sx, sy + hh];
+    };
     if (overlays.has("network")) {
       const you = ctx.ownerOf("you"), ai = ctx.ownerOf("ai");
       for (const [owner, colour] of [[you, "rgba(80,220,120,0.45)"], [ai, "rgba(255,110,80,0.45)"]] as const) {
@@ -410,38 +394,9 @@ export function createIsoDebug(ctx: DebugContext) {
         c.fillStyle = colour;
         for (const i of net) {
           const [tx, ty] = [i % MAP_W, (i / MAP_W) | 0];
-          const [sx, sy] = screenOf(tx, ty);
-          diamondPath(c, sx, sy, hw, hh);
+          const [cx, cy] = diamondCentre(tx, ty);
+          diamondPath(c, cx, cy, hw, hh);
           c.fill();
-        }
-      }
-    }
-    if (overlays.has("skirt") && atlas) {
-      const range = visibleTileRange(cam, 0);
-      c.lineWidth = 1;
-      for (let ty = Math.max(0, range.y0); ty <= Math.min(MAP_H - 1, range.y1); ty++) {
-        for (let tx = Math.max(0, range.x0); tx <= Math.min(MAP_W - 1, range.x1); tx++) {
-          const cell = cellOf(atlas, terrainSprite(ctx.grid, tx, ty));
-          if (!cell) continue;
-          const [sx, sy] = screenOf(tx, ty);
-          // the surface line (cyan) and the block bottom (amber). K-FIX-1: the
-          // gap between them is each tile's own native skirt and legitimately
-          // varies; what must never vary is the SURFACE line, so a tile is
-          // flagged red only when its ground row is off the shared line.
-          c.strokeStyle = "#37e0ff";
-          c.beginPath(); c.moveTo(sx - hw, sy); c.lineTo(sx + hw, sy); c.stroke();
-          const drift = cell.groundRow - groundReference();
-          c.strokeStyle = drift === 0 ? "#ffb01f" : "#ff2d55";
-          const by = sy + cell.belowAnchorPx * z;
-          c.beginPath(); c.moveTo(sx - hw, by); c.lineTo(sx + hw, by); c.stroke();
-          if (drift !== 0) {
-            c.strokeStyle = "#ff2d55";
-            diamondPath(c, sx, sy, hw, hh);
-            c.stroke();
-            c.fillStyle = "#ff2d55";
-            c.font = `${Math.max(9, Math.round(9 * z))}px monospace`;
-            c.fillText(`${drift > 0 ? "+" : ""}${drift}`, sx - 6, sy - hh - 2);
-          }
         }
       }
     }
@@ -450,35 +405,34 @@ export function createIsoDebug(ctx: DebugContext) {
       c.fillStyle = "#7cff5a";
       c.font = `${Math.max(9, Math.round(9 * z))}px monospace`;
       for (const p of ctx.renderer.drawOrder) {
-        const [cx, cy] = surfaceWorld(p.tx, p.ty, p.def.footprint[0], p.def.footprint[1]);
+        const [fx, fy] = footCorner(p.tx, p.ty, p.def.footprint[0], p.def.footprint[1]);
         const footY = p.wy + p.def.anchor[1];
-        const [sx, sy] = worldToScreen(cam, cx, footY);
+        const [sx, sy] = worldToScreen(cam, fx, footY);
         c.beginPath();
         c.moveTo(sx - 6, sy); c.lineTo(sx + 6, sy);
         c.moveTo(sx, sy - 6); c.lineTo(sx, sy + 6);
         c.stroke();
-        const gap = footY - cy;
+        const gap = footY - fy;
         if (Math.abs(gap) > 0.5) c.fillText(`${p.sprite} ${r(gap)}px`, sx + 8, sy - 2);
       }
     }
     if (overlays.has("pick")) {
       const hov = ctx.hover;
       if (hov) {
-        // N4: ONE convention — the pick cell IS the drawn diamond. The white
-        // outline is the hovered tile's drawn diamond; the dashed magenta one
-        // is its pick cell on the SAME spot. A visible offset between them is
-        // a bug (pre-N4 they sat HH apart — that half-tile gap is gone).
-        const [sx, sy] = screenOf(hov.tx, hov.ty);
+        // ONE convention: the pick cell IS the drawn diamond — the diamond's
+        // top vertex sits on tileToScreen and its body is what the flat pick
+        // resolves. A visible offset between the two outlines is a bug.
+        const [cx, cy] = diamondCentre(hov.tx, hov.ty);
         c.strokeStyle = "#ffffff";
-        diamondPath(c, sx, sy, hw, hh);
+        diamondPath(c, cx, cy, hw, hh);
         c.stroke();
         c.strokeStyle = "#ff5af0";
         c.setLineDash([4, 3]);
-        diamondPath(c, sx, sy, hw, hh);
+        diamondPath(c, cx, cy, hw, hh);
         c.stroke();
         c.setLineDash([]);
         c.fillStyle = "#ff5af0";
-        c.fillRect(sx - 1, sy - 1, 3, 3);
+        c.fillRect(cx - 1, cy - 1, 3, 3);
       }
       const [mx, my] = [ctx.camera.vw / 2, ctx.camera.vh / 2];
       c.strokeStyle = "#ffffff";
@@ -490,7 +444,7 @@ export function createIsoDebug(ctx: DebugContext) {
     // D3: HUD line / legend when debug overlays are active
     if (overlays.size > 0) {
       const activeList = [...overlays].join("+");
-      const legend = `DEBUG: [${activeList}] cyan=surface amber=skirt green=anchor magenta=pick (~ toggle)`;
+      const legend = `DEBUG: [${activeList}] green=anchor magenta=pick (~ toggle)`;
       c.fillStyle = "rgba(0, 0, 0, 0.75)";
       c.fillRect(8, 8, 490, 20);
       c.strokeStyle = "#ffb01f";

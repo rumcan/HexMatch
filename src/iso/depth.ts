@@ -18,7 +18,7 @@
 // here we do the front-to-back sprite pass with alpha masks, which overrides
 // the flat pick whenever it hits.
 // ══════════════════════════════════════════════════════════════════════════
-import { HW, HH, tileToScreen } from "../game/config";
+import { HW, TILE_H, tileToScreen } from "../game/config";
 import type { Atlas, SpriteDef } from "./atlas";
 
 /** One thing to draw: a sprite placed at a footprint origin. */
@@ -40,27 +40,17 @@ export interface Placed extends DrawItem {
   w: number;              // frame width
   h: number;
   key: number;            // Tier-1 depth key
-  /**
-   * N1: set by the renderer when the sprite is an INTERIOR tile drawn
-   * without its skirt. The picker must agree with the brush (N4): an
-   * undrawn skirt is not pickable, so hovering where the skirt would have
-   * been lands on the ground tile in front, exactly as the eye expects.
-   */
-  clipped?: boolean;
 }
 
 /**
- * World-space draw origin for a placement (K0/K4). The anchor pixel lands on
- * the CENTRE of the footprint's ground diamond — for a 1×1 footprint that is
- * tileToScreen(tx,ty), the row through the diamond's left/right corners.
- * The atlas packs anchors so that a sprite's base-diamond widest row (or, for
- * vehicles, its bottom-centre) lands exactly there, which is what makes every
- * building stand flush on its tile by construction.
+ * World-space draw origin for a placement. The anchor pixel lands on the
+ * SOUTH corner of the footprint — the bottom vertex of the diamond of tile
+ * (tx + fw - 1, ty + fh - 1).
  */
 export function drawOrigin(def: SpriteDef, tx: number, ty: number): [number, number] {
   const [fw, fh] = def.footprint;
-  const [cx, cy] = tileToScreen(tx + (fw - 1) / 2, ty + (fh - 1) / 2);
-  return [cx - def.anchor[0], cy - def.anchor[1]];
+  const [sx, sy] = tileToScreen(tx + fw - 1, ty + fh - 1);
+  return [sx + HW - def.anchor[0], sy + TILE_H - def.anchor[1]];
 }
 
 export function place(atlas: Atlas, item: DrawItem): Placed | null {
@@ -165,27 +155,8 @@ export function depthSort(items: Placed[]): SortResult {
 
 // ── Picking (stage 2) ─────────────────────────────────────────────────────
 /**
- * N4 twin of the renderer's skirt clip: is this sprite-local pixel in the
- * region an INTERIOR sprite may paint (its footprint's ground diamond plus
- * everything above it)? Pixels below the diamond's lower edges are the
- * never-drawn skirt. Mirrors `aboveGroundPoly` in renderer.ts exactly:
- * ground(x) is the diamond's lower-edge height at column x, 0 beyond the
- * corners (the clip's vertical sides).
- */
-export function aboveGroundAt(def: SpriteDef, lx: number, ly: number): boolean {
-  const [fw, fh] = def.footprint;
-  const half = (fw + fh) / 2;
-  const hw = half * HW, hh = half * HH;
-  const dx = Math.abs(lx - def.anchor[0]);
-  const ground = def.anchor[1] + (dx <= hw ? hh * (1 - dx / hw) : 0);
-  return ly <= ground;
-}
-
-/**
  * Front-to-back sprite pick with an alpha test. `wx`/`wy` are WORLD (1×,
  * camera-removed) coordinates of the cursor. Returns the first opaque hit.
- * A clipped (interior) sprite is only hit where it actually paints — its
- * skirt is never drawn, so it is never picked (N1/N4).
  */
 export function pickSprite(
   atlas: Atlas, order: Placed[], wx: number, wy: number,
@@ -194,7 +165,6 @@ export function pickSprite(
     const p = order[i];
     const lx = wx - p.wx, ly = wy - p.wy;
     if (lx < 0 || ly < 0 || lx >= p.w || ly >= p.h) continue;
-    if (p.clipped && !aboveGroundAt(p.def, lx, ly)) continue;
     if (atlas.opaqueAt(p.sprite, Math.floor(lx), Math.floor(ly))) return p;
   }
   return null;

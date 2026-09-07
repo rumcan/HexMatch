@@ -29,7 +29,6 @@ export function validateManifest(manifest) {
     return (check.errors ?? []).map((e) => `schema: ${e.instancePath || "/"} ${e.message}`);
   }
   const errors = [];
-  const HW = (manifest.tileW ?? 132) / 2;
   for (const [name, s] of Object.entries(manifest.sprites)) {
     const frames = s.frames ?? 1;
     const frameW = s.w / frames;
@@ -41,49 +40,6 @@ export function validateManifest(manifest) {
     }
     if (s.anchor[0] < 0 || s.anchor[1] < 0 || s.anchor[0] > s.w || s.anchor[1] > s.h)
       errors.push(`sprite ${name}: anchor (${s.anchor}) outside rect ${s.w}x${s.h}`);
-    // MB1: every composite stack part must reference a real, non-composite
-    // packed layer sprite (a composite cannot nest inside another composite).
-    for (const part of s.parts ?? []) {
-      const ref = manifest.sprites[part.sprite];
-      if (!ref)
-        errors.push(`sprite ${name}: part references unknown layer sprite ${part.sprite}`);
-      else if (ref.parts)
-        errors.push(`sprite ${name}: part ${part.sprite} is itself a composite (stacks cannot nest)`);
-      else if (part.groundRow !== ref.anchor[1])
-        errors.push(`sprite ${name}: part ${part.sprite} groundRow ${part.groundRow} != layer anchor ${ref.anchor[1]}`);
-    }
-    // I3: a stack is anchored by the base part's measured contact row, not by
-    // the union box top. Consecutive contact rows then rise by the measured
-    // amount carried by the preceding layer.
-    if (s.parts?.length) {
-      const base = s.parts[0];
-      if (s.anchor[1] !== base.dy + base.groundRow)
-        errors.push(`sprite ${name}: anchorY ${s.anchor[1]} != base contact ${base.dy + base.groundRow}`);
-      for (let i = 1; i < s.parts.length; i++) {
-        const below = s.parts[i - 1], current = s.parts[i];
-        const want = below.dy + below.groundRow - below.rise;
-        const got = current.dy + current.groundRow;
-        if (got !== want)
-          errors.push(`sprite ${name}: part ${i} contact ${got} != measured stack contact ${want}`);
-      }
-    }
-    if (s.parts && s.parts.length > 0 && s.frames)
-      errors.push(`sprite ${name}: composite stacks cannot be animated (no frames)`);
-    // MB2: a `variants` pick-set must lead with its own name and reference real,
-    // same-footprint manifest sprites.
-    if (s.variants && s.variants.length) {
-      if (s.variants[0] !== name)
-        errors.push(`sprite ${name}: variants[0] must be the sprite's own name (got ${s.variants[0]})`);
-      for (const v of s.variants) {
-        const ref = manifest.sprites[v];
-        if (!ref)
-          errors.push(`sprite ${name}: variant references unknown sprite ${v}`);
-        else if (JSON.stringify(ref.footprint) !== JSON.stringify(s.footprint))
-          errors.push(`sprite ${name}: variant ${v} footprint ${ref.footprint} != ${s.footprint}`);
-        else if (ref === manifest.sprites[name] && s.variants.length < 2)
-          errors.push(`sprite ${name}: variants with one entry is pointless`);
-      }
-    }
     for (const sl of s.slices ?? []) {
       if (sl.x + sl.w > s.w || sl.y + sl.h > s.h)
         errors.push(`sprite ${name}: slice (${sl.x},${sl.y},${sl.w}x${sl.h}) outside rect`);
@@ -95,10 +51,9 @@ export function validateManifest(manifest) {
     // dramatically SMALLER than the tiles it reserves ("the building is one
     // square but blocks nine"). The footprint's pixel span across the diamond
     // is (fw + fh) * HW; a sprite covering less than half of it is reserving
-    // tiles the player sees as empty. Vehicles are exempt — a truck IS much
-    // smaller than its tile and that is the correct art scale.
-    const span = (s.footprint[0] + s.footprint[1]) * HW;
-    if (s.kind !== "vehicle" && frameW < span / 2)
+    // tiles the player sees as empty.
+    const span = (s.footprint[0] + s.footprint[1]) * 32;
+    if (frameW < span / 2)
       errors.push(`sprite ${name}: frame width ${frameW}px covers < half of its ${s.footprint.join("x")} footprint (${span}px span) — shrink the footprint or use art that fills it`);
   }
   return errors;
