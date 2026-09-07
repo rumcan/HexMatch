@@ -364,12 +364,15 @@ describe("E7 execution", () => {
 /** The rival's opening purse and setup allowance, exactly as `game.ts` gives it. */
 const rivalOpts = () => ({ stock: { stone: 12, ore: 0 }, purse: { stone: 12, ore: 0 }, free: 12 });
 
-/** Seed-1337 repro state: the rival's factory on the rough tile at (2,2). */
-function roughRival(): { eco: EconomyState; f: Factory } {
+/**
+ * Seed-1337 repro state: the rival's factory on a rough, road-buildable,
+ * reachable tile (default (38,4)); callers needing a dead tile pass (0,0).
+ */
+function roughRival(tx = 38, ty = 4): { eco: EconomyState; f: Factory } {
   const grid = generateMap(1337);
   const eco: EconomyState = {
     grid, track: createTrack(), harvesters: [],
-    factories: [{ owner: "ai", ownerId: 2, tx: 2, ty: 2 }],
+    factories: [{ owner: "ai", ownerId: 2, tx, ty }],
   };
   return { eco, f: eco.factories[0] };
 }
@@ -459,11 +462,11 @@ describe("W8 the degenerate candidate no longer wins the ranking", () => {
 
 describe("W8 a no-op turn is reported as no turn", () => {
   it("aiBuildStep returns null instead of a truthy empty outcome", () => {
-    // (2,2) on seed 1337 is worse than rough: water on three sides and the
-    // oil_rig footprint at (2,3) on the fourth, so no track can leave the tile
-    // at all. Nothing the AI does can build from there — the honest answer is
-    // `null` every turn, never a truthy outcome the caller spends a turn on.
-    const { eco, f } = roughRival();
+    // (0,0) on seed 1337 is the water corner: no track can leave the tile at
+    // all, and its road-legal component reaches no harvester. Nothing the AI
+    // does can build from there — the honest answer is `null` every turn,
+    // never a truthy outcome the caller spends a turn on.
+    const { eco, f } = roughRival(0, 0);
     expect(canReachASpot(eco.grid, f.tx, f.ty)).toBe(false);   // an enclave
     for (let i = 0; i < 6; i++) {
       const out = aiBuildStep(eco, f, rivalOpts(), i + 1);

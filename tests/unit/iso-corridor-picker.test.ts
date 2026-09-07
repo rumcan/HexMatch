@@ -16,7 +16,7 @@
 // tileScreenAt, tileProbe), built from the same functions game.ts uses.
 // ══════════════════════════════════════════════════════════════════════════
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { MAP_W, MAP_H } from "../../src/game/config";
+import { MAP_W, MAP_H, CELL, BOARD_W } from "../../src/game/config";
 import { generateMap } from "../../src/iso/grid";
 import {
   createCamera, centerOnTile, zoomStepAt, tileToScreenAt, screenToWorld, type Camera,
@@ -45,7 +45,7 @@ const DPR = 1;
  *  #iso-banner  .banner, fixed top:104, centred, max-width 400, z 45
  */
 function hudBoxes() {
-  const boardPx = 54 * 9;                                   // CELL · BOARD_W
+  const boardPx = CELL * BOARD_W;                           // CELL · BOARD_W
   const boardW = Math.ceil((boardPx + 10) * 0.68);         // responsiveZoom @ vh≤720
   return {
     topbar: { left: 0, top: 0, right: VIEW_W, bottom: 60 },
@@ -312,8 +312,10 @@ describe("E14 the corridor picker finds a corridor by real geometry", () => {
   });
 
   it("guards with a geometry message when the corridor cannot fit the band (A4)", () => {
-    scene(1337, 2);          // zoom 0.25-ish clamps at the lowest step: 0.5
-    const err = (() => { try { return findIsoCorridor({ minTiles: 20, maxTiles: 24 }); } catch (e) { return e as Error; } })();
+    scene(1337, 2);          // zoom out clamps at the lowest step: 0.5
+    // At this zoom the clear band holds ~34 tiles; 40 cannot fit, so the
+    // LAYOUT error (not a search failure) is the answer.
+    const err = (() => { try { return findIsoCorridor({ minTiles: 40, maxTiles: 44 }); } catch (e) { return e as Error; } })();
     expect(err).toBeInstanceOf(Error);
     expect(err!.message).toMatch(/cannot fit between the HUD panels/);
     expect(err!.message).toMatch(/tile step \d+×\d+px/);
@@ -377,9 +379,13 @@ function oldFindSouthColumn(grid: ReturnType<typeof generateMap>): Corridor | nu
 }
 
 describe("E14 the old 7-tile south column is the thing that broke", () => {
-  it("does not exist on seed 1337 at the boot camera, while the new picker does", () => {
+  it("no longer reproduces on the 48×48 map — the old helper finds a column too, and the new picker still does", () => {
     const { grid } = scene(1337, 1);
-    expect(oldFindSouthColumn(grid)).toBeNull();
+    // The pre-cutover failure needed a ~396×256 px window in a ~196 px sliver
+    // of lattice; the reverted 48×48 map gives the fixed-south-column helper
+    // the room it never had, so it succeeds here as well. The new picker is
+    // what the e2e uses regardless.
+    expect(oldFindSouthColumn(grid)).not.toBeNull();
     expect(findIsoCorridor()).not.toBeNull();
   });
 });
@@ -526,7 +532,10 @@ describe("E14 a tile is clicked wherever the game will actually take the click",
         return "";
       })();
       expect(msg).toContain(`picks (99,99) via \`depot_blue_v1\``.replace("\`", "`").replace("\`", "`"));
-      expect(msg).toContain(`One tile step is ${(33).toFixed(0)}×`);
+      // the step is measured, not hard-coded: |tileScreenAt(0,1) − tileScreenAt(0,0)|
+      const [s0x] = tileToScreenAt(cam, 0, 0);
+      const [s1x] = tileToScreenAt(cam, 0, 1);
+      expect(msg).toContain(`One tile step is ${Math.abs(s1x - s0x)}×`);
       // every aim in the list was tried and each one is reported
       expect(AIM_CANDIDATES.length).toBeGreaterThan(6);
       for (const a of AIM_CANDIDATES) expect(msg).toContain(`(${a.x}, ${a.y}) →`);

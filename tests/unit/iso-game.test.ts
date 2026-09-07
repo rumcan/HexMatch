@@ -540,11 +540,11 @@ describe("W1 the drag charges exactly what it previewed", () => {
   it("an unaffordable drag builds the affordable prefix; nothing goes negative", async () => {
     const h = await boot();
     const { hasTrack } = await import("../../src/iso/track");
-    // K0: the 32×32 seed-1337 map — ore_mine(12,4) has the clean south
-    // corridor (x=12, y=5..19 all land, no occupancy)
-    const mine = h.grid.industries.find((i) => i.type === "ore_mine" && i.tx === 12 && i.ty === 4);
+    // seed 1337 (48×48): ore_mine(18,13) has the clean south corridor
+    // (x=18, y=14..28 all land, no occupancy)
+    const mine = h.grid.industries.find((i) => i.type === "ore_mine" && i.tx === 18 && i.ty === 13);
     expect(mine).toBeTruthy();
-    const hx = 12, hy = 5, fy = hy + 6;
+    const hx = 18, hy = 14, fy = hy + 6;
     h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx, ty: fy });
     h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy });
     h.finishSetup();
@@ -629,11 +629,11 @@ describe("W8 the rival is placed where it can build — and builds", () => {
     const h = await boot();
     const { canBuildOn } = await import("../../src/iso/track");
     const { canReachASpot } = await import("./helpers/rival-map");
-    // The ticket's repro: a player factory at (23,22) on seed 1337 used to hand
-    // the rival (2,2) — rough ground, water on three sides and the oil_rig
-    // footprint on the fourth, so no track could ever leave the tile.
+    // The ticket's regression guard: the rival must never be handed a tile no
+    // track can leave. On the 48×48 seed-1337 map the (0,0) water corner is
+    // such an unreachable tile (its road-legal component reaches no harvester).
     expect(canBuildOn(h.grid, "road", 23, 22)).toBe(true);
-    expect(canReachASpot(h.grid, 2, 2)).toBe(false);
+    expect(canReachASpot(h.grid, 0, 0)).toBe(false);
     expect(h.placeFactory(23, 22)).toBe(true);
 
     const rival = h.factories.find((f) => f.owner === "ai");
@@ -641,7 +641,7 @@ describe("W8 the rival is placed where it can build — and builds", () => {
     // rail-legal (flat, off water, off any footprint) and NOT an enclave…
     expect(canBuildOn(h.grid, "rail", rival!.tx, rival!.ty)).toBe(true);
     expect(canReachASpot(h.grid, rival!.tx, rival!.ty)).toBe(true);
-    expect([rival!.tx, rival!.ty]).not.toEqual([2, 2]);
+    expect([rival!.tx, rival!.ty]).not.toEqual([0, 0]);
     // …and still a good distance from the player, as before
     expect(Math.abs(rival!.tx - 23) + Math.abs(rival!.ty - 22)).toBeGreaterThan(10);
   });
@@ -717,10 +717,10 @@ describe("W4 a normal session earns the rail", () => {
   it("road → ore mine → harvest ore → the rail tile is affordable", async () => {
     const h = await boot();
     const { buildTile, hasTrack, canAfford } = await import("../../src/iso/track");
-    // K0/seed 1337 (32×32): ore_mine(12,4) with a clean south corridor (y=5..11)
-    const mine = h.grid.industries.find((i) => i.type === "ore_mine" && i.tx === 12 && i.ty === 4);
+    // seed 1337 (48×48): ore_mine(18,13) with a clean south corridor (y=14..20)
+    const mine = h.grid.industries.find((i) => i.type === "ore_mine" && i.tx === 18 && i.ty === 13);
     expect(mine).toBeTruthy();
-    const hx = 12, hy = 5, fy = hy + 6;   // factory (12,11)
+    const hx = 18, hy = 14, fy = hy + 6;   // factory (18,20)
     h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx, ty: fy });
     h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy });
     for (let y = hy + 1; y <= fy; y++) buildTile(h.track, "road", hx, y, 1);
@@ -749,10 +749,9 @@ describe("W4 a normal session earns the rail", () => {
     expect(h.purse.ore ?? 0).toBeGreaterThanOrEqual(4);
     expect(canAfford(h.purse, TRANSPORT.rail.cost)).toBe(true);
 
-    // and the game lets you lay it over the corridor. (K0: on the 32×32 map
-    // the tile below the factory, (12,12), is ROUGH — rail needs flat ground —
-    // so the rail goes down as the settled in-place upgrade of a corridor
-    // road tile, which is exactly "laying it over the corridor".)
+    // and the game lets you lay it over the corridor: the rail goes down as
+    // the settled in-place upgrade of a corridor road tile, which is exactly
+    // "laying it over the corridor".
     const pv = h.dragBuild("rail", hx, fy - 1, hx, fy - 1);
     expect(pv).toBeTruthy();
     expect(hasTrack(h.track, "rail", hx, fy - 1)).toBe(true);

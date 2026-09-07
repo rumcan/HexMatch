@@ -11,10 +11,9 @@
 // pin:
 //   * the gate — a production build without `?iso-debug` installs nothing;
 //   * every command returns the structured data a screenshot gets traced with;
-//   * the numbers are the renderer's own: the measured skirt per terrain cell
-//     (66px grass / 50px water against the 50px canonical block — the exact
-//     drift `docs/HexMatch-open-backlog.md` C1 is about), and the flush/hover
-//     gap of a building foot on its tile;
+//   * the numbers are the renderer's own: the shared OpenGFX ground line
+//     (terrain anchor yrel 31) and the flush/hover gap of a building foot on
+//     its tile's south corner;
 //   * toggling an overlay actually puts paint on the overlay canvas, and
 //     turning it off leaves the renderer with no debug painter at all.
 // ══════════════════════════════════════════════════════════════════════════
@@ -163,7 +162,7 @@ describe("C5 the debug console is gated, not shipped", () => {
     const d = h.rendering();
     expect(d.camera).toMatchObject({ zoom: 1, vw: 1280, vh: 720 });
     expect(d.cull.pad).toBeGreaterThan(0);
-    expect(d.groundAnchorReference).toBe(33);          // shared Kenney ground line
+    expect(d.groundAnchorReference).toBe(31);          // terrain_grass anchor yrel (OpenGFX)
     expect(Array.isArray(d.structures)).toBe(true);
     expect(Array.isArray(d.sourceRect)).toBe(true);
     expect(Array.isArray(d.depthCycles)).toBe(true);
@@ -177,7 +176,7 @@ describe("C5 the debug console is gated, not shipped", () => {
 });
 
 describe("C5 the dumps report the geometry the renderer used", () => {
-  it("dumpTile names the terrain sprite, its NATIVE skirt and its surface drift", async () => {
+  it("dumpTile names the terrain sprite, its anchor and its surface drift", async () => {
     const h = await boot();
     const g = h.grid;
     const find = (want: number) => {
@@ -188,25 +187,18 @@ describe("C5 the dumps report the geometry the renderer used", () => {
     const grass = h.dumpTile(gx, gy);
     expect(grass.terrainName).toBe("grass");
     expect(grass.sprite).toBe("terrain_grass");
-    // K-FIX-1: sprites keep their NATIVE height — grass is a deep Kenney
-    // block (66px of skirt), water a shallow one (50px), and both are
-    // coplanar because they share a bottom-measured ground line, not because
-    // their heights were forced equal.
-    expect(grass.skirtPx).toBe(66);
-    expect(grass.maxSkirtPx).toBe(66);
-    expect(grass.surfaceDriftPx).toBe(0);   // ← coplanar with every other tile
-    expect(grass.skirtDriftPx).toBe(0);
+    // Flat OpenGFX: every terrain tile declares the same yrel (31), so its
+    // anchor row sits on the shared ground line — 0 drift = coplanar.
+    expect(grass.surfaceDriftPx).toBe(0);
     expect(grass.cell.footprint).toEqual([1, 1]);
+    expect(grass.anchorWorld[1]).toBeCloseTo(grass.world[1] + 32, 0); // south corner
     expect(grass.screen[0]).toBeCloseTo(grass.css[0], 0);   // dpr 1 in jsdom
     expect(grass.build.ok).toBe(true);       // grass takes a road
 
     const [wx, wy] = find(WATER);
     const water = h.dumpTile(wx, wy);
     expect(water.terrainName).toBe("water");
-    expect(water.skirtPx).toBe(50);          // a genuinely shallower tile…
-    expect(water.skirtPx).not.toBe(grass.skirtPx);
-    expect(water.surfaceDriftPx).toBe(0);    // …yet still exactly coplanar
-    expect(water.skirtDriftPx).toBe(0);
+    expect(water.surfaceDriftPx).toBe(0);    // coplanar with every other tile
     expect(water.build.ok).toBe(false);
     expect(water.build.why).toBe("water");
   });
@@ -231,14 +223,14 @@ describe("C5 the dumps report the geometry the renderer used", () => {
     const ind = h.grid.industries[0];
     const d = h.dumpBuilding(ind.tx, ind.ty);
     expect(d.ground.sprite).toMatch(/^terrain_(grass|water|rough)$/);
-    expect(d.ground.skirtPx).toBeGreaterThan(0);
+    expect(d.ground.driftPx).toBe(0);
     expect(d.tile).toEqual([ind.tx, ind.ty]);
     expect(d.structures.length).toBeGreaterThan(0);
     const built = d.structures.find((x: any) => x.isIndustry);
     expect(built).toBeTruthy();
     expect(built.sprite).toBe(ind.type);
-    // K0 anchoring: the base diamond's widest row lands ON the tile centre
-    // line, so a flush building has a zero gap. A non-zero one is the hover.
+    // Flat anchor: the sprite's anchor row lands on the footprint's south
+    // corner, so a flush building has a zero gap. A non-zero one is the hover.
     expect(built.gapPx).toBe(0);
     expect(built.footprint).toEqual([1, 1]);
     // an empty tile reports no structures rather than guessing
@@ -273,10 +265,10 @@ describe("C5 the dumps report the geometry the renderer used", () => {
     const h = await boot();
     const c = h.config();
     expect(c.camera.zoom).toBe(1);
-    expect(c.geometry).toMatchObject({ tileW: 132, tileH: 64, blockH: 66 });
+    expect(c.geometry).toMatchObject({ tileW: 64, tileH: 32 });
     expect(c.visibleTiles.x0).toBeLessThanOrEqual(c.visibleTiles.x1);
     const grass = c.sprites.terrain_grass;
-    expect(grass).toMatchObject({ anchor: [67, 33], footprint: [1, 1], kind: "ground" });
+    expect(grass).toMatchObject({ anchor: [32, 31], footprint: [1, 1] });
     // the meta travels with the dump, so a report says which atlas it came from
     expect(c.manifestMeta.generatedBy).toMatch(/slice-atlas/);
     expect(Object.keys(c.sprites).length).toBeGreaterThan(0);
@@ -312,26 +304,19 @@ describe("C5 the overlay toggles paint on the map", () => {
     expect(marks).toEqual([]);
   });
 
-  it("the skirt overlay draws the surface and skirt lines; every tile is coplanar", async () => {
+  it("every terrain tile is coplanar (flat tiles share one ground line)", async () => {
     const h = await boot();
-    h.overlay("skirt");
-    await settle();
-    const strokes = ops.filter((o) => o.op === "stroke");
-    expect(strokes.length).toBeGreaterThan(0);
-    // K-FIX-1: every tile's ground line lands on the shared surface, so the
-    // map cannot step — even though the tiles are NOT all the same height.
     const skirts = new Set<number>();
     for (let ty = 0; ty < h.grid.h; ty++) {
       for (let tx = 0; tx < h.grid.w; tx++) {
         const t = h.dumpTile(tx, ty);
         expect(t.surfaceDriftPx, `tile (${tx},${ty}) is off the ground line`).toBe(0);
         expect(h.dumpBuilding(tx, ty).ground.driftPx).toBe(0);
-        skirts.add(t.skirtPx as number);
+        skirts.add(t.surfaceDriftPx as number);
       }
     }
-    // and the guard against a silent return to height-normalisation: the map
-    // really does mix native tile heights.
-    expect(skirts.size, "terrain skirts should differ (native heights kept)")
-      .toBeGreaterThan(1);
+    // Flat OpenGFX tiles all declare the same yrel, so there is exactly ONE
+    // ground line — no skirt, nothing to step.
+    expect([...skirts], "every tile shares the same ground line").toEqual([0]);
   });
 });

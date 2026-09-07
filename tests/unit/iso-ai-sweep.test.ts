@@ -66,7 +66,9 @@ describe("W8 sweep — every legal rival tile is playable", () => {
   it("seed 1337: four turns from any non-enclave tile lay track and land a harvester", () => {
     const grid = generateMap(1337);
     const tiles = rivalSearchTiles(grid);
-    expect(tiles.length).toBeGreaterThan(100);       // the ticket counted 160
+    // The ticket counted 160 on the old 32×32 map; the reverted 48×48 map
+    // roughly triples the search space.
+    expect(tiles.length).toBeGreaterThan(100);
 
     let enclaves = 0;
     const bad: string[] = [];
@@ -77,11 +79,14 @@ describe("W8 sweep — every legal rival tile is playable", () => {
       if (r.tiles === 0) bad.push(`${x},${y} laid nothing`);
       else if (r.serviced === 0) bad.push(`${x},${y} no serviced harvester`);
     }
-    // (2,2) is the documented enclave — the tile the ticket repro used.
-    expect(canReachASpot(grid, 2, 2)).toBe(false);
-    expect(enclaves).toBeGreaterThan(0);
+    // The old "rough (2,2) enclave" repro is gone on the reverted map: (2,2)
+    // is open WATER, so `rivalSearchTiles` never even considers it, and no
+    // road-buildable tile is walled off from a harvester spot on this seed —
+    // the sweep above therefore exercises every legal rival tile.
+    expect(canBuildOn(grid, "road", 2, 2)).toBe(false);
+    expect(enclaves).toBe(0);
     expect(bad, `deadlocked tiles: ${bad.join(" | ")}`).toEqual([]);
-  }, 180_000);
+  }, 600_000);
 
   it("seed 7: the first turn is never a no-op, and builds wherever it can", () => {
     // sampled (step 4): the ticket measured 37/157 deadlocks on this seed, so a
@@ -165,8 +170,9 @@ describe("W8 sweep — the rival is never placed on a tile it cannot build from"
     }
     expect(checked).toBeGreaterThan(20);
     // The ticket's repro: a player factory at (23,22) used to hand the rival
-    // the rough (2,2) enclave. The ranking alone (before any plan probe) puts
-    // rail-legal tiles first, so that tile can never be committed again.
+    // the rough (2,2) enclave. On the reverted map (2,2) is water and can
+    // never be committed anyway; keep the guard so a future ranking change
+    // cannot regress onto that tile.
     const spot = chooseRivalFactorySpot(grid, createTrack(), [23, 22], opts);
     expect(tIdx(spot![0], spot![1])).not.toBe(tIdx(2, 2));
   }, 180_000);

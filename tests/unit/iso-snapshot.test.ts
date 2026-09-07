@@ -60,8 +60,8 @@ describe("E10 base64 typed arrays", () => {
     // measured JSON encoding is 4.6KB empty and 6.9KB saturated.)
     const empty = new Uint8Array(EXPECTED_TRACK_BYTES);
     const full = new Uint8Array(EXPECTED_TRACK_BYTES).fill(31);
-    expect(bytesToBase64(empty)).toHaveLength(1368);   // 4·⌈1024/3⌉
-    expect(bytesToBase64(full)).toHaveLength(1368);
+    expect(bytesToBase64(empty)).toHaveLength(3072);   // 4·⌈2304/3⌉
+    expect(bytesToBase64(full)).toHaveLength(3072);
   });
 
   it("beats a JSON array, and by most where it matters — a busy map", () => {
@@ -256,6 +256,6 @@ describe("E10 scale", () => {
 
   it("the track layers are exactly one byte per tile", () => {
     expect(EXPECTED_TRACK_BYTES).toBe(MAP_W * MAP_H);
-    expect(EXPECTED_TRACK_BYTES).toBe(1024);   // K0: the map is 32×32
+    expect(EXPECTED_TRACK_BYTES).toBe(2304);   // OpenGFX map is 48×48
   });
 });
