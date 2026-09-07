@@ -1,369 +1,284 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import sharp from "sharp";
-
-// ══════════════════════════════════════════════════════════════════════════
-// K2 — atlas pixel invariants over the Kenney sources.
-//
-// The road mask→PNG table is the one place the old 90-degree bug lived, so
-// every road cell is verified against ITS OWN source PNG here: asphalt must
-// cross the diamond edge midpoints of the set arms and be absent at the
-// unset ones. Tinted cells must actually carry their player hue. Terrain
-// cells must be the terrain they claim.
-// ══════════════════════════════════════════════════════════════════════════
+import { toOpenttdRoadBits } from "../../src/iso/track";
+import { parsePnml } from "../../tools/parse-pnml.mjs";
 
 const manifest = JSON.parse(readFileSync("assets/iso-atlas/manifest.json", "utf8")) as {
-  tileW: number; tileH: number;
-  sprites: Record<string, {
-    x: number; y: number; w: number; h: number; anchor: [number, number];
-    parts?: { sprite: string; dx: number; dy: number }[];
-    variants?: string[];
-  }>;
+  sprites: Record<string, { x: number; y: number; w: number; h: number; frames?: number }>;
 };
 const cells = JSON.parse(readFileSync("tools/iso-atlas.cells.json", "utf8")) as {
-  source: { root: string };
-  sprites: {
-    name: string; png?: string; kind: string; mask?: [number, number];
-    tintLum?: [number, number, number]; stack?: { png: string }[];
-  }[];
+  sprites: { name: string; namePrefix?: string; trackset?: { mode: string; base?: number; table?: number[]; ground?: number; pieces?: { sprite: number; dirs: number[] }[] } }[];
 };
-const cell = (name: string) => cells.sprites.find((s) => s.name === name)!;
-const srcPath = (name: string) => join(cells.source.root, cell(name).png!);
-/** MB1: the packer's deterministic layer-sprite name for a (png, tint) layer. */
-const layerName = (png: string, tint: [number, number, number]) => {
-  const stem = png.slice(png.lastIndexOf("/") + 1).replace(/\.png$/i, "")
-    .toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-  return `layer_${stem}_${tint.join("_")}`;
+
+/** OpenTTD's flat road selection table, as declared in the cells file. */
+const roadCell = cells.sprites.find((c) => c.name === "road")!;
+const ROAD_BASE = roadCell.trackset!.base!;
+const ROAD_TABLE = roadCell.trackset!.table!;
+
+const ARMS: Record<number, [number, number]> = {
+  1: [48, 8],
+  2: [48, 24],
+  4: [16, 24],
+  8: [16, 8],
 };
+
+/** Declared OpenGFX geometry, parsed straight from the PNML so the
+ * test never depends on the gitignored tools/opengfx-sprites.json artifact. */
+function declarations() {
+  return parsePnml() as unknown as Record<string, { file: string; x: number; y: number; w: number; h: number; xrel: number; yrel: number }>;
+}
 
 type Raw = { data: Buffer; info: { width: number; height: number } };
-const cache = new Map<string, Raw>();
-async function img(path: string): Promise<Raw> {
-  if (!cache.has(path)) {
-    cache.set(path, await sharp(path).ensureAlpha().raw().toBuffer({ resolveWithObject: true }) as unknown as Raw);
+let atlasRaw: Raw | null = null;
+async function atlas(): Promise<Raw> {
+  if (!atlasRaw) {
+    const sharp = (await import("sharp")).default;
+    atlasRaw = await sharp("assets/iso-atlas/atlas@1x.png").ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   }
-  return cache.get(path)!;
+  return atlasRaw;
+}
+const sheetCache = new Map<string, Raw>();
+async function sheet(file: string): Promise<Raw> {
+  if (!sheetCache.has(file)) {
+    const sharp = (await import("sharp")).default;
+    sheetCache.set(file, await sharp(`src/assets/sprites/png/${file}`).ensureAlpha().raw().toBuffer({ resolveWithObject: true }));
+  }
+  return sheetCache.get(file)!;
 }
 
-// Kenney diamond geometry: centre (66,32); edge midpoints of the four arms.
-// Game direction bits: NE=1 SE=2 SW=4 NW=8 (NE exits through the upper-right
-// edge — up-right on screen — matching tileToScreen steps of (+HW,−HH)).
-const ARMS: Record<number, [number, number]> = {
-  1: [99, 16],   // NE — upper-right edge midpoint
-  2: [99, 48],   // SE — lower-right edge midpoint
-  4: [33, 48],   // SW — lower-left edge midpoint
-  8: [33, 16],   // NW — upper-left edge midpoint
-};
-
-const isGreyAsphalt = (r: number, g: number, b: number) => {
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
-  const lum = (r + g + b) / 3;
-  return max - min < 45 && lum > 70 && lum < 190;
-};
-
-/** Fraction of grey-asphalt pixels in a window around a point (0..1). */
-async function asphaltAt(name: string, mx: number, my: number, r = 4) {
-  const { data, info } = await img(srcPath(name));
-  let grey = 0, tot = 0;
-  for (let dy = -r; dy <= r; dy++) {
-    for (let dx = -8; dx <= 8; dx++) {
-      const x = mx + dx, y = my + dy;
-      if (x < 0 || y < 0 || x >= info.width || y >= info.height) continue;
-      const i = (y * info.width + x) * 4;
-      if (data[i + 3] < 200) continue;
-      tot++;
-      if (isGreyAsphalt(data[i], data[i + 1], data[i + 2])) grey++;
-    }
-  }
-  return tot === 0 ? 0 : grey / tot;
+/** The slicer's keying: blue backing + id-label glyphs + border white → transparent. */
+function keyed(r: number, g: number, b: number, a: number): boolean {
+  if (a === 0) return true;
+  if (r === 0 && g === 0 && b === 255) return true;
+  if (b > 90 && b > r + 30 && b > g + 30) return true;
+  return false;
 }
 
-describe("K2 road masks — verified against their own source PNGs", () => {
-  // K-FIX-2: the 16 flat-street picks. The previous set (082/074/125/090 and
-  // friends) were embankment pieces with retaining walls baked in, so roads
-  // read as raised even once the geometry was right. These are all flush
-  // streets — asphalt level with the grass, kerb line only.
-  it("uses the flat-street road selections (K-FIX-2)", () => {
-    const expected: Record<string, string> = {
-      road_0000: "landscape/PNG/landscapeTiles_081.png",
-      road_0001: "landscape/PNG/landscapeTiles_117.png",
-      road_0010: "landscape/PNG/landscapeTiles_105.png",
-      road_0100: "landscape/PNG/landscapeTiles_111.png",
-      road_1000: "landscape/PNG/landscapeTiles_112.png",
-      road_0011: "landscape/PNG/landscapeTiles_118.png",
-      road_0110: "landscape/PNG/landscapeTiles_114.png",
-      road_1100: "landscape/PNG/landscapeTiles_119.png",
-      road_1001: "landscape/PNG/landscapeTiles_122.png",
-      road_0101: "landscape/PNG/landscapeTiles_082.png",
-      road_1010: "landscape/PNG/landscapeTiles_074.png",
-      road_0111: "landscape/PNG/landscapeTiles_096.png",
-      road_1110: "landscape/PNG/landscapeTiles_097.png",
-      road_1101: "landscape/PNG/landscapeTiles_089.png",
-      road_1011: "landscape/PNG/landscapeTiles_104.png",
-      road_1111: "landscape/PNG/landscapeTiles_090.png",
-    };
-    for (const [name, png] of Object.entries(expected)) expect(cell(name).png).toBe(png);
-    // every mask is a distinct piece except where the geometry genuinely
-    // repeats — no mask silently falls back to the crossroads
-    expect(new Set(Object.values(expected)).size).toBe(16);
-  });
+/** Grey road surface / dashed lane marking (not grass, not key). */
+function isRoadColour(r: number, g: number, b: number, a: number): boolean {
+  if (a === 0) return false;
+  if (keyed(r, g, b, a)) return false;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), lum = (r + g + b) / 3;
+  if (max - min >= 60) return false;
+  if (g > r + 6 && g > b + 6) return false;
+  return lum > 40 && lum < 215;
+}
 
-  /**
-   * K-FIX-2's real acceptance, measured rather than asserted by file name: an
-   * embankment tile has structure ABOVE the ground diamond's top plane (the
-   * retaining wall rises off the surface). A flat street has none. This is
-   * what made roads read as raised next to grass.
-   */
-  it("no road tile has raised sidewalls / embankment walls", async () => {
-    for (let mask = 0; mask < 16; mask++) {
-      const key = `road_${mask.toString(2).padStart(4, "0")}`;
-      const { data, info } = await img(srcPath(key));
-      // the ground plane at column x is y = 33 − 32·(1 − |x−cx|/66)
-      const cx = (info.width - 1) / 2;
-      let raised = 0;
-      for (let x = 0; x < info.width; x++) {
-        const plane = 33 - 32 * (1 - Math.abs(x - cx) / 66);
-        for (let y = 0; y < Math.floor(plane) - 2; y++)
-          if (data[(y * info.width + x) * 4 + 3] > 60) raised++;
-      }
-      // a handful of antialiased pixels along the apex is the tile's own edge;
-      // a retaining wall is hundreds.
-      expect(raised, `${key} (${cell(key).png}) rises above the ground plane`)
-        .toBeLessThan(30);
-    }
-  }, 60_000);
-
-  it("every road tile is a flat block sharing the terrain's ground line", async () => {
-    const grass = manifest.sprites.terrain_grass;
+describe("G1/G2 atlas pixels", () => {
+  it("Y4c: every road mask is pixel-identical to its declared OpenGFX tile", async () => {
+    // The generator is gone: road_<mask> must BE the declared sprite
+    // 1332 + TABLE[toOpenttdRoadBits(mask)], keyed exactly as the slicer keys.
+    const { data, info } = await atlas();
+    const decls = declarations();
+    const src = await sheet("infrastructure/infra06.png");
     for (let mask = 0; mask < 16; mask++) {
       const key = `road_${mask.toString(2).padStart(4, "0")}`;
       const s = manifest.sprites[key];
-      // K-FIX-1: coplanar because the anchor IS the measured ground row, not
-      // because the tiles were cropped to one height. A few Kenney pieces are
-      // 133px wide and their corner row rounds a pixel differently — 1px is
-      // the antialiasing floor, anything more is a real step.
-      expect(Math.abs(s.anchor[1] - grass.anchor[1]),
-        `${key} ground line differs from grass by more than a pixel`)
-        .toBeLessThanOrEqual(1);
-      // and its skirt is NOT normalised away — it keeps its native depth
-      expect(s.h - s.anchor[1], `${key} lost its native block skirt`)
-        .toBeGreaterThan(40);
+      expect(s, key).toBeTruthy();
+      const id = ROAD_BASE + ROAD_TABLE[toOpenttdRoadBits(mask)];
+      const d = decls[String(id)];
+      expect(d, `declared road sprite ${id}`).toBeTruthy();
+      expect([s.w, s.h], `${key} size vs declared ${id}`).toEqual([d.w, d.h === 31 ? 32 : d.h]);
+      for (let y = 0; y < d.h; y++) {
+        for (let x = 0; x < d.w; x++) {
+          const si = ((d.y + y) * src.info.width + (d.x + x)) * 4;
+          const ai = ((s.y + y) * info.width + (s.x + x)) * 4;
+          const transparent = keyed(src.data[si], src.data[si + 1], src.data[si + 2], src.data[si + 3]);
+          expect(data[ai + 3] === 0, `${key} (${x},${y}) alpha mismatch vs declared ${id}`).toBe(transparent);
+          if (!transparent) {
+            expect([data[ai], data[ai + 1], data[ai + 2]], `${key} (${x},${y}) colour vs declared ${id}`)
+              .toEqual([src.data[si], src.data[si + 1], src.data[si + 2]]);
+          }
+        }
+      }
     }
   });
 
-  it("asphalt crosses every set arm and no unset arm on conventional road pieces (the 90° guard)", async () => {
-    // The Art Lab's 0001 selection is a deliberate recessed/trench-style
-    // endpoint, not grey asphalt, so its invariant is its reviewed source ID.
-    for (let mask = 2; mask < 15; mask++) {
-      if (mask === 7) continue; // Art Lab selected a recessed junction style.
+  it("Y4c: road arms carry road surface at set edge midpoints and none at unset ones", async () => {
+    const { data, info } = await atlas();
+    const sample = (sx: number, sy: number, px: number, py: number) => {
+      const i = ((sy + py) * info.width + (sx + px)) * 4;
+      return [data[i], data[i + 1], data[i + 2], data[i + 3]] as const;
+    };
+    // Count road-surface pixels in a window around an edge midpoint: a real
+    // arm crosses the window in a broad band, grass speckle contributes at
+    // most a pixel or two.
+    const roadCount = (sx: number, sy: number, mx: number, my: number, r: number) => {
+      let n = 0;
+      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+        const [rr, gg, bb, aa] = sample(sx, sy, mx + dx, my + dy);
+        if (isRoadColour(rr, gg, bb, aa)) n++;
+      }
+      return n;
+    };
+    for (let mask = 1; mask < 16; mask++) {
       const key = `road_${mask.toString(2).padStart(4, "0")}`;
+      const s = manifest.sprites[key];
       for (const bit of [1, 2, 4, 8]) {
-        const frac = await asphaltAt(key, ARMS[bit][0], ARMS[bit][1]);
+        const [mx, my] = ARMS[bit];
         if (mask & bit) {
-          expect(frac, `${key}: arm ${bit} must carry road surface`).toBeGreaterThanOrEqual(0.5);
+          expect(roadCount(s.x, s.y, mx, my, 3), `${key} missing arm ${bit}`).toBeGreaterThanOrEqual(10);
         } else {
-          expect(frac, `${key}: arm ${bit} must NOT carry road surface`).toBeLessThanOrEqual(0.15);
+          expect(roadCount(s.x, s.y, mx, my, 3), `${key} stray arm ${bit}`).toBeLessThanOrEqual(2);
         }
       }
     }
-  }, 60_000);
-
-  it("the NE–SW and SE–NW straights run on opposite diagonals", async () => {
-    // road_0101 = NE+SW: band through the centre from (99,16) to (33,48).
-    const centre = async (name: string) => asphaltAt(name, 66, 32, 3);
-    expect(await centre("road_0101")).toBeGreaterThanOrEqual(0.5);
-    expect(await centre("road_1010")).toBeGreaterThanOrEqual(0.5);
-    // and each straight is quiet on the other's diagonal endpoints
-    expect(await asphaltAt("road_0101", 99, 48)).toBeLessThanOrEqual(0.15);
-    expect(await asphaltAt("road_1010", 99, 16)).toBeLessThanOrEqual(0.15);
   });
 
-  it("rail masks carry rails on their set arms (derived art honours the table)", async () => {
-    // dark steel (<95 lum) in a window at the arm midpoints
-    const railAt = async (name: string, mx: number, my: number) => {
-      const { data, info } = await img(srcPath(name));
-      let dark = 0;
-      for (let dy = -5; dy <= 5; dy++) {
-        for (let dx = -10; dx <= 10; dx++) {
-          const x = mx + dx, y = my + dy;
-          if (x < 0 || y < 0 || x >= info.width || y >= info.height) continue;
-          const i = (y * info.width + x) * 4;
-          if (data[i + 3] < 200) continue;
-          if ((data[i] + data[i + 1] + data[i + 2]) / 3 < 95) dark++;
+  it("Y4c: a straight road is a full-width grey surface with centre lane markings (sprite 1332)", async () => {
+    const { data, info } = await atlas();
+    // OpenTTD's table maps the SE|NW straight (our mask SE|NW = 2|8) to offset
+    // 0 — declared sprite 1332, the one the ticket names.
+    expect(ROAD_BASE + ROAD_TABLE[toOpenttdRoadBits(2 | 8)]).toBe(1332);
+    const s = manifest.sprites.road_1010;
+    // The dashed centre line: white-ish lane markings plus a broad grey road
+    // surface across the whole declared tile.
+    let markings = 0, grey = 0, opaque = 0;
+    for (let y = 0; y < s.h; y++) {
+      for (let x = 0; x < s.w; x++) {
+        const i = ((s.y + y) * info.width + (s.x + x)) * 4;
+        const [r, g, b, a] = [data[i], data[i + 1], data[i + 2], data[i + 3]];
+        if (a === 0) continue;
+        opaque++;
+        const lum = (r + g + b) / 3;
+        if (lum > 215 && Math.max(r, g, b) - Math.min(r, g, b) < 40) markings++;
+        else if (isRoadColour(r, g, b, a)) grey++;
+      }
+    }
+    expect(opaque, "full-width tile surface").toBeGreaterThan(900);
+    expect(markings, "dashed centre markings").toBeGreaterThan(3);
+    expect(grey, "grey road surface").toBeGreaterThan(200);
+  });
+
+  it("X4: two adjacent declared road pieces tile seamlessly (no gap at the join)", async () => {
+    // Rewritten for Y4c: the pieces are now finished declared tiles, so the
+    // join test asserts the road *surface* is continuous across the shared
+    // edge rather than asserting stamped arm endpoints.
+    const { data, info } = await atlas();
+    const s = manifest.sprites.road_0101; // NE|SW straight
+    // Real screen offsets: draw position is topVertex + (HW-anchorX, TILE_H-anchorY).
+    const draw = (tx: number, ty: number): [number, number] =>
+      [(tx - ty) * 32 + 32 - s.w / 2 + 0, (tx + ty) * 16 + 32 - s.h + 1];
+    const W = 128, H = 96;
+    const dst = Buffer.alloc(W * H * 4);
+    const blitAt = (dx: number, dy: number) => {
+      for (let y = 0; y < s.h; y++) {
+        for (let x = 0; x < s.w; x++) {
+          const X = dx + x, Y = dy + y;
+          if (X < 0 || Y < 0 || X >= W || Y >= H) continue;
+          const si = ((s.y + y) * info.width + (s.x + x)) * 4;
+          const di = (Y * W + X) * 4;
+          const a = data[si + 3] / 255;
+          if (a === 0) continue;
+          dst[di] = data[si]; dst[di + 1] = data[si + 1]; dst[di + 2] = data[si + 2]; dst[di + 3] = 255;
         }
       }
-      return dark;
     };
-    expect(await railAt("rail_0101", 99, 16)).toBeGreaterThan(10);   // NE rail
-    expect(await railAt("rail_0101", 33, 48)).toBeGreaterThan(10);   // SW rail
-    expect(await railAt("rail_0101", 99, 48)).toBe(0);               // SE: no rail
-    expect(await railAt("rail_1010", 99, 48)).toBeGreaterThan(10);   // SE rail
-    expect(await railAt("rail_1010", 33, 16)).toBeGreaterThan(10);   // NW rail
+    const [ax, ay] = draw(0, 0);
+    const [bx, by] = draw(0, 1); // SW neighbour
+    blitAt(ax, ay);
+    blitAt(bx, by);
+    // Walk the road centre line from tile A's centre to tile B's centre: the
+    // declared pieces must hand over with no unpainted gap at the join.
+    const ca = [ax + 32, ay + 16], cb = [bx + 32, by + 16];
+    let gaps = 0;
+    for (let t = 0; t <= 1.0001; t += 0.02) {
+      const x = Math.round(ca[0] + (cb[0] - ca[0]) * t);
+      const y = Math.round(ca[1] + (cb[1] - ca[1]) * t);
+      let road = false;
+      for (let dy = -1; dy <= 1 && !road; dy++) for (let dx = -1; dx <= 1 && !road; dx++) {
+        const i = ((y + dy) * W + (x + dx)) * 4;
+        if (dst[i + 3] > 0 && isRoadColour(dst[i], dst[i + 1], dst[i + 2], dst[i + 3])) road = true;
+      }
+      if (!road) gaps++;
+    }
+    expect(gaps, "unpainted samples along the road centre line across the join").toBe(0);
   });
-});
 
-describe("K2/K3 atlas cells match their sources and their claimed terrain", () => {
-  it("untinted atlas cells are pixel-identical to their source PNGs at 1x", async () => {
-    const atlasRaw = await img("assets/iso-atlas/atlas@1x.png");
-    for (const name of ["terrain_grass", "road_0101", "rail_0111", "crossing", "farm", "oil_rig"]) {
-      const src = await img(srcPath(name));
+  it("Y4c: rail masks are declared ground + declared overlay pieces (no generator)", async () => {
+    const { data, info } = await atlas();
+    const decls = declarations();
+    const rail = cells.sprites.find((c) => c.name === "rail")!.trackset!;
+    const src = await sheet(decls[String(rail.ground)].file.replace(/^sprites\/png\//, ""));
+    const ovl = await sheet("infrastructure/infra06.png");
+    const px = (raw: Raw, x: number, y: number) => {
+      const i = (y * raw.info.width + x) * 4;
+      return [raw.data[i], raw.data[i + 1], raw.data[i + 2], raw.data[i + 3]] as const;
+    };
+    // rail_0000 is exactly the declared grass ground tile. The grass sheet's
+    // page background is white (removed by the slicer's border-white flood),
+    // so white counts as transparent here too.
+    const g = decls[String(rail.ground)];
+    const s0 = manifest.sprites.rail_0000;
+    const gone = (r: number, gg: number, b: number, a: number) =>
+      keyed(r, gg, b, a) || (r > 250 && gg > 250 && b > 250);
+    for (let y = 0; y < g.h; y++) {
+      for (let x = 0; x < g.w; x++) {
+        const [r, gg, b, a] = px(src, g.x + x, g.y + y);
+        const ai = ((s0.y + y) * info.width + (s0.x + x)) * 4;
+        expect(data[ai + 3] === 0, `rail_0000 (${x},${y})`).toBe(gone(r, gg, b, a));
+      }
+    }
+    // rail_0101 (NE|SW) carries the declared 1005 overlay at its declared offset.
+    const piece = rail.pieces!.find((p) => p.sprite === 1005)!;
+    const d = decls["1005"];
+    const s = manifest.sprites.rail_0101;
+    let overlayPixels = 0;
+    for (let y = 0; y < d.h; y++) {
+      for (let x = 0; x < d.w; x++) {
+        const [r, gg, b, a] = px(ovl, d.x + x, d.y + y);
+        if (keyed(r, gg, b, a)) continue;
+        // overlay pixel lands at cell (xrel+x, yrel+y) shifted by the cell origin
+        const cx = d.xrel + x + 31, cy = d.yrel + y;
+        const ai = ((s.y + cy) * info.width + (s.x + cx)) * 4;
+        if (data[ai + 3] > 0 && data[ai] === r && data[ai + 1] === gg && data[ai + 2] === b) overlayPixels++;
+      }
+    }
+    expect(piece).toBeTruthy();
+    expect(overlayPixels, "declared rail overlay pixels present in rail_0101").toBeGreaterThan(200);
+  });
+
+  it("terrain sprites have no fully-opaque white bottom row", async () => {
+    const { data, info } = await atlas();
+    for (const name of ["terrain_grass", "terrain_rough", "terrain_water"]) {
       const s = manifest.sprites[name];
-      for (const [x, y] of [[0, 0], [s.w - 1, 0], [Math.floor(s.w / 2), s.anchor[1]], [3, 7], [s.w - 4, s.h - 4]] as const) {
-        const si = (y * src.info.width + x) * 4;
-        const ai = ((s.y + y) * atlasRaw.info.width + (s.x + x)) * 4;
-        expect([atlasRaw.data[ai], atlasRaw.data[ai + 1], atlasRaw.data[ai + 2], atlasRaw.data[ai + 3]],
-          `${name} (${x},${y}) differs from ${cell(name).png}`).toEqual(
-          [src.data[si], src.data[si + 1], src.data[si + 2], src.data[si + 3]]);
+      const y = s.y + s.h - 1;
+      let whiteRow = true;
+      for (let x = 0; x < s.w; x++) {
+        const i = (y * info.width + (s.x + x)) * 4;
+        if (!(data[i] === 255 && data[i + 1] === 255 && data[i + 2] === 255 && data[i + 3] === 255)) {
+          whiteRow = false;
+          break;
+        }
+      }
+      expect(whiteRow, name).toBe(false);
+      for (let x = 0; x < s.w; x++) {
+        const i = (y * info.width + (s.x + x)) * 4;
+        const opaqueWhite = data[i] === 255 && data[i + 1] === 255 && data[i + 2] === 255 && data[i + 3] === 255;
+        expect(opaqueWhite, `${name} x=${x}`).toBe(false);
       }
     }
   });
 
-  it("terrain cells are the terrain they claim", async () => {
-    const avg = async (name: string) => {
-      const { data, info } = await img(srcPath(name));
-      let r = 0, g = 0, b = 0, n = 0;
-      for (let y = 8; y < 40; y++) {
-        for (let x = 40; x < 92; x++) {
-          const i = (y * info.width + x) * 4;
-          if (data[i + 3] < 200) continue;
-          r += data[i]; g += data[i + 1]; b += data[i + 2]; n++;
-        }
-      }
-      return [r / n, g / n, b / n];
-    };
-    const [gr, gg, gb] = await avg("terrain_grass");
-    expect(gg, "grass is green").toBeGreaterThan(gr + 20);
-    const [wr, wg, wb] = await avg("terrain_water");
-    expect(wb, "water is blue").toBeGreaterThan(wr + 20);
-    const [rr, rg2, rb] = await avg("terrain_rough");
-    expect(rr, "rough is sand/tan").toBeGreaterThan(rb + 20);
-    expect(rr, "rough differs from grass").toBeGreaterThan(gr + 25);
-  });
-
-  it("the four factory/depot tints carry their player hue on the shared layer sprites", async () => {
-    // MB1: factory/depot are now composite STACKS (no atlas region of their
-    // own) — the tint lives on their shared (png, tint) layer sprites. Each
-    // factory/depot cell is therefore verified against its tinted layer.
-    const mean = async (name: string) => {
-      const { data, info } = await img("assets/iso-atlas/atlas@1x.png");
+  it("U2: highlight_soft is a fainter catchment tint than the solid highlight", async () => {
+    const { data, info } = await atlas();
+    const alphaAt = (name: string, x = 32, y = 8) => {
       const s = manifest.sprites[name];
-      let r = 0, g = 0, b = 0, n = 0;
-      for (let y = 0; y < s.h; y += 2) {
-        for (let x = 0; x < s.w; x += 2) {
-          const i = ((s.y + y) * info.width + (s.x + x)) * 4;
-          if (data[i + 3] < 200) continue;
-          r += data[i]; g += data[i + 1]; b += data[i + 2]; n++;
-        }
-      }
-      return [r / n, g / n, b / n] as const;
+      const i = ((s.y + y) * info.width + (s.x + x)) * 4;
+      return data[i + 3];
     };
-    const layerMean = async (cellName: string) => {
-      const s = cell(cellName);
-      const tint = s.tintLum!;
-      return mean(layerName(s.stack![0].png, tint));
-    };
-    const [br, , bb] = await layerMean("factory_blue");
-    expect(bb, "blue factory leans blue").toBeGreaterThan(br + 12);
-    const [rr, , rb] = await layerMean("factory_red");
-    expect(rr, "red factory leans red").toBeGreaterThan(rb + 12);
-    const [pr, pg, pb] = await layerMean("factory_purple");
-    expect(pr + pb, "purple factory leans purple").toBeGreaterThan(pg + 12);
-    const [gr, gg, gb] = await layerMean("factory_green");
-    expect(gg, "green factory leans green").toBeGreaterThan(Math.max(gr, gb) + 8);
-    const [dr, , db] = await layerMean("depot_red");
-    expect(dr, "red depot leans red").toBeGreaterThan(db + 12);
-    expect(manifest.sprites[layerName("buildings/PNG/buildingTiles_044.png", [70, 130, 220])])
-      .toBeTruthy();  // factory_blue + depot_blue share the tinted storey layer
+    expect(manifest.sprites.highlight_soft).toBeTruthy();
+    // At the NE arm midpoint both cells paint, but the soft catchment is
+    // deliberately less prominent than the solid placement tile.
+    expect(alphaAt("highlight")).toBeGreaterThan(alphaAt("highlight_soft"));
   });
 
-  it("tint families share one stack geometry: identical size and anchor", () => {
-    const fam = ["factory_blue", "factory_red", "factory_purple", "factory_green"];
-    const base = manifest.sprites[fam[0]];
-    for (const n of fam.slice(1)) {
-      const s = manifest.sprites[n];
-      expect([s.w, s.h, s.anchor]).toEqual([base.w, base.h, base.anchor]);
-      expect(s.parts?.length).toBe(base.parts?.length);
-    }
-    const depots = ["depot_blue", "depot_red", "depot_purple", "depot_green"];
-    const db = manifest.sprites[depots[0]];
-    for (const n of depots.slice(1)) {
-      const s = manifest.sprites[n];
-      expect([s.w, s.h, s.anchor]).toEqual([db.w, db.h, db.anchor]);
-      expect(s.parts?.length).toBe(db.parts?.length);
-    }
-  });
-});
-
-describe("K3 industries are distinct coherent buildings", () => {
-  it("each industry maps to a different single source PNG", () => {
-    const pngs = new Set(["farm", "forest", "ore_mine", "quarry", "oil_rig", "gold_mine"]
-      .map((n) => cell(n).png));
-    expect(pngs.size).toBe(6);
-    // factories/depots are now STACKED composites, not single png cells
-    expect(cell("factory_blue").stack).toBeTruthy();
-    expect(cell("depot_blue").stack).toBeTruthy();
-    expect(cell("factory_blue").png).toBeUndefined();
-    // industries stay one-piece and never borrow a stack layer tile
-    for (const n of ["farm", "forest", "ore_mine", "quarry", "oil_rig", "gold_mine"]) {
-      for (const b of ["factory_blue", "depot_blue"]) {
-        const layers = cell(b).stack!.map((l) => l.png);
-        expect(layers, `${b} shares a tile with ${n}`).not.toContain(cell(n).png);
-      }
-    }
-  });
-
-  it("factories stack taller than depots (MB1 storey mix)", () => {
-    expect(cell("factory_blue").stack!.length).toBe(5);   // base + 3 floors + roof
-    expect(cell("depot_blue").stack!.length).toBe(3);     // base + 1 floor + roof
-    // every factory/depot layer resolves to a packed layer sprite in the manifest
-    for (const b of ["factory_blue", "factory_red", "factory_purple", "factory_green",
-      "depot_blue", "depot_red", "depot_purple", "depot_green"]) {
-      const s = cell(b);
-      for (const l of s.stack!) {
-        expect(manifest.sprites[layerName(l.png, s.tintLum!)], `${b} layer ${l.png}`)
-          .toBeTruthy();
-      }
-      expect(manifest.sprites[b].parts?.length).toBe(s.stack!.length);
-    }
-  });
-
-  it("the composite stands flush: base layer's widest row is the ground anchor", () => {
-    const f = manifest.sprites.factory_blue;
-    // composite anchor x is centred; w/h form the union bounding box (taller than
-    // any single layer), and the base layer is the first part at dy such that its
-    // own widest row lands on the tile ground line.
-    expect(f.parts).toBeTruthy();
-    expect(f.w).toBeGreaterThanOrEqual(90);
-    expect(f.h).toBeGreaterThan(manifest.sprites.farm.h);
-    expect(f.anchor[0]).toBe(Math.floor(f.w / 2));
-    // building rises out of the ground, roof far above the base row
-    expect(f.parts![0].dy).toBeGreaterThan(0);
-    expect(f.parts![f.parts!.length - 1].dy).toBe(0);      // roof caps the top
-  });
-});
-
-describe("MB2 depot variants are real composites with varied heights", () => {
-  it("each depot preset is a taller composite as its storey count grows", () => {
-    const d = manifest.sprites.depot_blue;
-    expect(d.variants).toEqual(["depot_blue", "depot_blue_v1", "depot_blue_v2"]);
-    const h = d.variants!.map((v) => manifest.sprites[v].h);
-    // one-storey (v2) < two-storey (canonical) < three-storey (v1)
-    expect(h[2]).toBeLessThan(h[0]);
-    expect(h[0]).toBeLessThan(h[1]);
-    // every preset is flush: same width & ground anchor x
-    for (const v of d.variants!) {
-      const s = manifest.sprites[v];
-      expect(s.w).toBe(d.w);
-      expect(s.anchor[0]).toBe(Math.floor(s.w / 2));
-    }
-  });
-
-  it("every colour family mirrors the same variant heights (tint only differs)", () => {
-    const hb = manifest.sprites.depot_blue.variants!.map((v) => manifest.sprites[v].h);
-    for (const c of ["depot_red", "depot_purple", "depot_green"]) {
-      const hc = manifest.sprites[c].variants!.map((v) => manifest.sprites[v].h);
-      expect(hc).toEqual(hb);
+  it("G4: depot buildings stay small — at most 40px of building above the declared ground tile", () => {
+    // Y3 put a declared ground tile under every building cell, so the cell
+    // now spans the 32 ground rows plus the building's headroom; G4's bound
+    // applies to the building part (the old hand crop was 36px tall).
+    for (const name of ["depot_blue", "depot_red", "depot_purple", "depot_green"]) {
+      expect(manifest.sprites[name].h - 32).toBeLessThanOrEqual(40);
     }
   });
 });
