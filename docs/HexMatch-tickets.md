@@ -1,145 +1,104 @@
-# HexMatch — multi-tile industries + four towns (OpenGFX)
+# HexMatch — fix towns (0 spawning) + extend multi-tile to all industries
 
-Two features for the coding agent, each with research, the exact OpenGFX data, and acceptance criteria. Now that the flat OpenGFX renderer works, multi-tile industries are finally viable — OpenGFX industries were *designed* as multi-tile, and the data to place them is in the repo.
+Audited against `main` @ `49662ba` (PR #30). Two findings, both verified by running the code:
 
----
-
-## Background research: how OpenGFX industries actually work
-
-OpenGFX industries are **not single sprites** — they're several per-tile sprites composed across a footprint, exactly as OpenTTD draws them. Verified in the repo's own declarations (`src/assets/sprites/pnml/base/base-2011-industries.pnml`):
-
-The **factory** is sprites **2146–2160**:
-- **2146, 2147, 2148, 2149** — four **ground tiles** (each `64×31`, `xrel −31, yrel 0`) — the concrete pads, one per footprint tile.
-- **2150, 2151, 2152, …** — **building pieces** with tall offsets (e.g. 2150 is `57×62` at `xrel −28, yrel −37`) — the brick halls and chimneys that sit up above the ground.
-
-So a factory is a **2×2 footprint**: four tiles, each drawn as `ground sprite` + (on some tiles) a `building piece` at its declared `xrel/yrel`. The current cell uses just **one** building sprite (2169) on a **1×1** footprint — that's the "1-tile slice" you see.
-
-This is the same pattern the research doc (`docs/HexMatch-iso-research.md`, P7) describes: *multi-tile sprites are anchored by their footprint, composed per-tile.* And critically — because OpenGFX tiles are **flat** (no skirt), composing them is straightforward: each tile's ground + building draws at its own screen position, depth-sorted, with the declared offsets. No block-height math.
-
-The layout (which tile gets which piece) is defined in OpenTTD's `src/table/build_industry.h` as `_industry_tile_table_*`. For the base factory it's roughly a 2×2 block with the ground on all four and building pieces on the back tiles. The agent should transcribe the real table (see R-MT-2).
+1. **Towns: ZERO spawn on every seed** — a self-blocking bug in the reachability check rejects every candidate. That's why you see no towns.
+2. **Multi-tile: only the factory got it.** The factory is a correct 2×2, but all six industries (farm/forest/ore/quarry/oil/gold) are still single 1×1 tiles. And each industry's real tile count must come from OpenTTD's tables, not a guess.
 
 ---
 
-## MT-1. Model multi-tile industries in the data + renderer
+## F1. Towns place zero because the reachability check blocks the tile it starts from
+`[P0] [map] [bug]`
+
+### The bug (verified — ran generateMap on 4 seeds, all returned towns=0)
+In `placeTowns` (`src/iso/grid.ts` ~line 333), the reachability guard builds its `blocked` set from **every occupied tile including all industries**:
+```js
+for (let i = 0; i < MAP_W * MAP_H; i++) {
+  if (occ[i] !== -1) blocked.add(i);   // ← adds ALL industry tiles
+}
+for (const [hx, hy] of houses) blocked.add(idx(hx, hy));
+if (!allIndustriesReachable(blocked)) continue;
+```
+Then `allIndustriesReachable` starts its flood **from an industry tile** and immediately bails:
+```js
+if (blocked.has(start)) return false;   // start IS an industry tile → always false
+```
+So every town candidate fails the check → `placed` never becomes true → **0 towns, every seed.** The reachability check is meant to verify that *town* tiles don't wall off industries — it should block only the proposed **town** tiles, not the industries themselves.
+
+### Fix
+- `blocked` should contain **only the proposed town house tiles** (and water is already handled inside the flood). Do not add industry tiles to `blocked`.
+- The flood then starts from an industry tile (not blocked) and checks that **every** industry tile is still reachable across land that excludes the town footprint. That's the correct question: "do these houses strand an industry?"
+- Keep water excluded in the flood (already done).
+
+### Acceptance
+- `generateMap(seed)` returns **exactly 4 towns** for seeds 1337, 7, 42, 100 (and generally). Add a unit test asserting `towns.length === 4` across several seeds.
+- Towns are visible on the map as building clusters.
+- The reachability guarantee still holds: add a test that every industry tile is land-reachable after towns are placed.
+- Determinism: same seed → identical towns.
+
+### Watch out
+- Don't "fix" this by deleting the reachability check — that reintroduces the stranding risk the check exists for. Fix the `blocked` set to contain only town tiles.
+
+---
+
+## F2. Give each industry its correct multi-tile footprint from the OpenTTD tables
 `[P0] [assets] [renderer]`
 
-### Spec
-An industry cell gains a **footprint** larger than 1×1 and a **per-tile layer list**: for each `(dx, dy)` in the footprint, the ground sprite and any building sprite drawn there, each by its declared `xrel/yrel`.
+### Current state (verified)
+- Factory: correct 2×2 (`FACTORY_TILES`, sprites 2146–2149 ground + 2150–2152 buildings). Good — this is the pattern to follow.
+- farm, forest, ore_mine, quarry, oil_rig, gold_mine: **all still `footprint: [1,1]`**, single sprite. MT-1 was only applied to the factory.
 
-Proposed cells.json shape (additive — single-tile industries keep their current form):
-```json
-{
-  "name": "factory",
-  "footprint": [2, 2],
-  "tiles": [
-    { "dx": 0, "dy": 0, "ground": 2146, "building": 2151 },
-    { "dx": 1, "dy": 0, "ground": 2147, "building": 2150 },
-    { "dx": 0, "dy": 1, "ground": 2148 },
-    { "dx": 1, "dy": 1, "ground": 2149, "building": 2152 }
-  ]
-}
-```
-(exact sprite→tile assignment comes from the OpenTTD table in MT-2.)
+### The rule: each industry's tile count is DATA, not a choice
+Every OpenGFX industry has a specific footprint defined by its `_tile_table_*` in OpenTTD's `src/table/build_industry.h`, and its sprites are declared in `src/assets/sprites/pnml/base/base-2011-industries.pnml`. **Transcribe each one; do not assume a size.** For reference, the base-set footprints are roughly:
+- **Coal mine / ore (steel mill)** — 3×3 (mine has a headframe + conveyor spanning tiles).
+- **Farm** — 2×2 (barn + silo + field tiles).
+- **Oil wells / rig** — multi-tile with derricks on some tiles.
+- **Forest** — 2×2 (tree tiles + lumber camp) — or keep as a cluster.
+- **Gold mine, quarry** — check the table; some are 2×2.
 
-### Renderer
-- Each footprint tile draws its ground sprite at that tile's screen position, then its building piece at the same position offset by the piece's `xrel/yrel`.
-- **Depth:** each tile of the industry sorts individually by `(tx+dx)+(ty+dy)` — the industry is NOT one sprite, it's N tiles that interleave correctly with roads/other buildings by the normal painter order (research P6). This is why a multi-tile industry can have a road pass in front of its front tiles and behind its back tiles correctly.
-- Because tiles are flat, there is **no clipping and no skirt** — reuse the working flat draw path.
+The agent must read the actual `_tile_table_*` for each industry the game uses and transcribe: for each `(dx,dy)`, the ground sprite id and any building sprite id (with the sprite's declared `xrel/yrel` from the `.pnml`).
 
-### Occupancy
-- The industry occupies all footprint tiles in `grid.occupancy` (a harvester's 4×4 catchment already handles multi-tile industries — confirm it counts an industry once even if several of its tiles fall in range).
+### Fix
+- Generalise the factory's `FACTORY_TILES` approach into a per-industry `tiles` layout (reuse the same data shape and the same per-tile draw path — each tile: ground sprite + optional building piece at its `xrel/yrel`).
+- Set each industry's `footprint` to its real size from the table.
+- Update placement/occupancy so an industry occupies all its footprint tiles (the factory already does this — extend it).
+- Depth: each industry tile sorts individually by `(tx+dx)+(ty+dy)`, exactly like the factory — so roads interleave correctly.
+
+### Watch out (all have bitten this project)
+- **Transcribe, don't measure.** The tile→sprite mapping is authoritative data in `build_industry.h`. Do not infer footprints from pixel dimensions — that's produced wrong picks every time.
+- **Use declared `xrel/yrel`** from the `.pnml` for each building piece, never a hand-authored anchor.
+- **Flat tiles, no clipping.** Reuse the working flat multi-tile draw path from the factory; do not add any skirt/block/clip logic.
+- **Catchment counts an industry once** even though it now covers several tiles — verify a harvester's 4×4 catchment credits a 3×3 mine a single time, not nine times.
+- **Placement spacing:** bigger footprints need the industry-placement Poisson-disc spacing re-checked so 3×3 industries don't overlap or crowd the coast.
 
 ### Acceptance
-- The factory renders as a full 2×2 building (four tiles: concrete pads + brick halls + chimneys), not a 1-tile slice.
-- A road drawn past the factory sorts correctly per-tile (in front of front tiles, behind back tiles) — no z-fighting.
-- All four footprint tiles are unbuildable/occupied; the catchment still credits the industry once.
-- Single-tile industries (farm, mine, etc.) are unchanged.
+- Each industry renders at its correct OpenTTD footprint (e.g. ore mine 3×3, farm 2×2), composed from its real ground + building sprites — matching a screenshot of that industry in OpenTTD/OpenGFX.
+- Every referenced sprite id exists in the `.pnml`.
+- Roads sort correctly per-tile around each multi-tile industry.
+- Catchment credits each industry once; all footprint tiles are unbuildable.
+- Determinism and reachability (with the bigger footprints) still hold.
 
 ---
 
-## MT-2. Transcribe the OpenTTD factory layout (and pick multi-tile for the others)
+## F3. Verify the factory layout is the REAL OpenTTD table, not a plausible guess
 `[assets]`
 
-### Spec
-Get the exact tile→sprite assignment from OpenTTD's `src/table/build_industry.h`, `_industry_tile_table_factory` (and the industry draw table `industry_land.h` for which sprite each tile-gfx-id draws). Transcribe it into the `tiles` array for the factory. The sprite ids are already declared in the repo's `.pnml` (2146–2160), so this is mapping the layout, not measuring pixels.
-
-For the other industries, decide per-industry whether multi-tile is worth it:
-- **Factory** — yes, 2×2, it's the showcase building and currently looks worst.
-- **Steel mill / ore, oil rig** — OpenGFX has multi-tile versions (steelmill.png, oilwell) — do these if the factory pattern proves out.
-- **Farm, forest, gold mine, quarry** — the single-tile versions already read fine; leave them 1×1 unless they look small next to a 2×2 factory.
-
-### Watch out (this caught us before)
-- **Do NOT measure/guess the layout.** The tile→sprite mapping is authoritative data in `build_industry.h`. Transcribe it; don't infer it from pixels. (Every past "measure it" attempt picked wrong.)
-- The `.pnml` gives each sprite's exact box and `xrel/yrel` — use those, never a hand-authored anchor.
+While extending to other industries, double-check the factory itself. The current `FACTORY_TILES` comment says "OpenTTD layout (tile indices 39–42) maps to ground tiles 2146–2149" — confirm that mapping against the actual `_tile_table_factory_0` in `build_industry.h`, including **which** tiles carry buildings (2150/2151/2152) and which is the empty yard (currently (0,1)). The screenshot shows the factory reading a bit lopsided — that may be a wrong piece-to-tile assignment.
 
 ### Acceptance
-- The factory layout matches OpenTTD's real table (same tiles get the same pieces).
-- Every referenced sprite id exists in the `.pnml` declarations.
-- Contact-sheet/golden render shows a coherent factory.
-
----
-
-## TOWN-1. Generate four towns on the map
-`[P0] [map] [gameplay]`
-
-### Research: what a "town" needs
-- **Sprites:** ⚠ **the restored OpenGFX tree has NO house/town sprites** — the earlier R9 prune kept only `industries/ infrastructure/ landscape/ miscellaneous/ stations/ terrain/ trees/`. So towns need art first (TOWN-2). Flag this before starting: you cannot place houses that aren't in the atlas.
-- **Placement:** towns are clusters of building tiles, generated deterministically like industries (`grid.ts` already does Poisson-disc industry placement with a seed — towns follow the same pattern).
-
-### Spec
-- In `src/iso/grid.ts`, after industry placement, generate **exactly 4 towns**.
-- Each town: a cluster of N house tiles (say 6–12) around a town centre, placed on land, not on water, not overlapping industries or each other, spaced apart (reuse the Poisson-disc/min-distance logic already there for industries).
-- Deterministic under the map seed (same seed → same 4 towns), because `net.ts` ships only the seed (multiplayer determinism — the existing E10 constraint).
-- Towns occupy their tiles in `grid.occupancy` so you can't build on houses; roads may route around/between them.
-
-### Watch out
-- **Determinism:** towns must generate from the same seeded RNG as everything else. A `Math.random()` fallback here silently desyncs multiplayer — this exact bug (R6) bit us before. Route through the injected `mulberry32` RNG.
-- **Reachability:** don't let a town wall off part of the map. After placing towns, the existing reachability check (every industry reachable by land) must still pass — add towns to that flood-fill as impassable and confirm no industry is stranded.
-- **Don't block the coast-only-water rule:** towns are land features; keep water at the map edge only (the earlier G3 fix).
-
-### Acceptance
-- Exactly 4 towns spawn, as visible building clusters, on every seed.
-- Towns never overlap industries, water, or each other; every industry remains reachable by land.
-- Same seed → identical towns in two browsers (determinism test).
-- Town tiles are unbuildable; roads route around them.
-
----
-
-## TOWN-2. Source town/house art (blocker for TOWN-1 visuals)
-`[assets]`
-
-### The problem
-The OpenGFX house sprites were pruned. Options, in order of preference:
-1. **Restore OpenGFX houses from upstream.** The OpenGFX repo has a `houses/` sprite set with `.pnml` declarations. `git`-fetch them from the OpenGFX source (same place the industries came from) into `src/assets/sprites/png/houses/` + the matching `.pnml`, and regenerate the atlas. This keeps one consistent art style.
-2. **Use station/misc buildings as stand-in town buildings** (`stations/RevStatBuilding_DanMacK.png`, misc industry buildings) — fewer, less varied, but already present.
-3. **Simple town-centre marker** — one distinct building per town (a church/townhall sprite) plus generic house tiles, if full variety isn't needed for the jam.
-
-Recommend option 1 if the OpenGFX house set is accessible; it's the consistent choice. Confirm the sprites exist and declare them in `.pnml` before TOWN-1 tries to place them.
-
-### Watch out
-- **Prune lesson (R9):** whatever you restore, keep the `.pnml` declarations — they're the sprite-offset source of truth, not disposable. Don't restore PNGs without their declarations.
-- Match the OpenGFX flat-tile convention (64×31 ground + building pieces with `xrel/yrel`), same as industries — so houses drop into the same flat renderer with no special casing.
-
-### Acceptance
-- A set of house/town-centre sprites is in the atlas with `.pnml` declarations.
-- They render flush on flat tiles like every other OpenGFX building.
-- TOWN-1 can reference them by sprite id.
+- `FACTORY_TILES` matches `_tile_table_factory_0` exactly (tile positions and which sprite each carries).
+- The rendered factory matches the OpenTTD factory's appearance.
 
 ---
 
 ## Sequencing
 
-**MT-1 → MT-2 → TOWN-2 → TOWN-1.**
+**F1 → F3 → F2.**
 
-- Multi-tile factory first (MT-1/MT-2) — it's the visible win and proves the flat multi-tile compose works.
-- **TOWN-2 before TOWN-1** — you can't place town buildings that aren't in the atlas. Source the art, then generate the towns.
+- **F1 (towns)** first — it's a one-spot bug fix (the `blocked` set) and gets towns visible immediately, which is what you're missing.
+- **F3** verify the factory layout is real before copying its pattern.
+- **F2** extend the verified multi-tile pattern to all industries, each at its real footprint.
 
-## Watch-outs carried from this project's history (all have bitten us)
+## The through-line for the agent
 
-1. **Don't measure/guess layouts or tile picks** — use the authoritative `build_industry.h` table and the `.pnml` offsets. Every "I'll infer it from pixels" attempt was wrong.
-2. **Determinism** — all town/industry randomness through the seeded `mulberry32`, never `Math.random()`. A fallback desyncs multiplayer silently.
-3. **Reachability** — after adding towns, re-run the land-reachability check; a town must not strand an industry.
-4. **Keep the `.pnml` when restoring art** — offsets live there; PNGs alone are useless.
-5. **Flat tiles, no clipping** — reuse the working OpenGFX flat draw path; do not reintroduce skirt/block/clip logic. Multi-tile industries compose by per-tile depth-sort, not by one big clipped sprite.
-6. **Verify by render, not by green tests** — "tests pass" has repeatedly hidden broken visuals. State explicitly what still needs a real-browser check.
-7. **One ticket per PR**, stop at each acceptance block.
+Every industry's footprint and tile layout is **authoritative data** in OpenTTD's `build_industry.h` + the repo's `.pnml` declarations. Transcribe it exactly — do not guess a size or measure it from pixels (that has produced wrong results every time in this project). Reuse the factory's flat multi-tile draw path; add no clipping. And verify by rendering each industry, not by a green test suite — the towns "passed" their unit tests while generating zero on every seed.
