@@ -1,0 +1,3089 @@
+diff --git a/assets/iso-atlas/atlas@0.5x.png b/assets/iso-atlas/atlas@0.5x.png
+index 561c294..b86c5e4 100644
+Binary files a/assets/iso-atlas/atlas@0.5x.png and b/assets/iso-atlas/atlas@0.5x.png differ
+diff --git a/assets/iso-atlas/atlas@1x.png b/assets/iso-atlas/atlas@1x.png
+index 95a3add..07340ba 100644
+Binary files a/assets/iso-atlas/atlas@1x.png and b/assets/iso-atlas/atlas@1x.png differ
+diff --git a/assets/iso-atlas/atlas@2x.png b/assets/iso-atlas/atlas@2x.png
+index 57294b8..714c17c 100644
+Binary files a/assets/iso-atlas/atlas@2x.png and b/assets/iso-atlas/atlas@2x.png differ
+diff --git a/assets/iso-atlas/contact-sheet.png b/assets/iso-atlas/contact-sheet.png
+index 98d1958..96649d7 100644
+Binary files a/assets/iso-atlas/contact-sheet.png and b/assets/iso-atlas/contact-sheet.png differ
+diff --git a/assets/iso-atlas/manifest.json b/assets/iso-atlas/manifest.json
+index a5d66dd..454affa 100644
+--- a/assets/iso-atlas/manifest.json
++++ b/assets/iso-atlas/manifest.json
+@@ -54,65 +54,177 @@
+       ],
+       "w": 64
+     },
+-    "farm": {
++    "ore_mine_t0": {
+       "x": 208,
+       "y": 4,
+-      "h": 37,
++      "h": 65,
+       "footprint": [
+         1,
+         1
+       ],
+       "anchor": [
+         32,
+-        36
++        64
+       ],
+-      "w": 64
++      "w": 73
+     },
+-    "forest": {
+-      "x": 276,
++    "ore_mine_t2": {
++      "x": 285,
+       "y": 4,
+-      "h": 71,
++      "h": 50,
+       "footprint": [
+         1,
+         1
+       ],
+       "anchor": [
+         32,
+-        70
++        49
+       ],
+       "w": 64
+     },
+-    "ore_mine": {
+-      "x": 344,
++    "ore_mine_t3": {
++      "x": 353,
+       "y": 4,
+-      "h": 65,
++      "h": 57,
+       "footprint": [
+         1,
+         1
+       ],
+       "anchor": [
+         32,
+-        64
++        56
+       ],
+-      "w": 73
++      "w": 64
+     },
+-    "quarry": {
++    "ore_mine_t5": {
+       "x": 421,
+       "y": 4,
+-      "h": 52,
++      "h": 32,
+       "footprint": [
+         1,
+         1
+       ],
+       "anchor": [
+         32,
+-        52
++        31
+       ],
+       "w": 64
+     },
+-    "oil_rig": {
++    "ore_mine_t6": {
+       "x": 489,
+       "y": 4,
++      "h": 32,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        31
++      ],
++      "w": 64
++    },
++    "farm_t33": {
++      "x": 557,
++      "y": 4,
++      "h": 64,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        59
++      ],
++      "w": 64
++    },
++    "farm_t34": {
++      "x": 625,
++      "y": 4,
++      "h": 49,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        48
++      ],
++      "w": 64
++    },
++    "farm_t35": {
++      "x": 693,
++      "y": 4,
++      "h": 37,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        36
++      ],
++      "w": 64
++    },
++    "farm_t36": {
++      "x": 761,
++      "y": 4,
++      "h": 44,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        43
++      ],
++      "w": 64
++    },
++    "farm_t37": {
++      "x": 829,
++      "y": 4,
++      "h": 66,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        65
++      ],
++      "w": 70
++    },
++    "farm_t38": {
++      "x": 903,
++      "y": 4,
++      "h": 33,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        32
++      ],
++      "w": 64
++    },
++    "forest_t16": {
++      "x": 4,
++      "y": 264,
++      "h": 71,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        70
++      ],
++      "w": 64
++    },
++    "oil_rig_t29": {
++      "x": 72,
++      "y": 264,
+       "h": 61,
+       "footprint": [
+         1,
+@@ -126,10 +238,52 @@
+       "frames": 6,
+       "frameMs": 180
+     },
+-    "gold_mine": {
+-      "x": 877,
+-      "y": 4,
+-      "h": 43,
++    "gold_mine_t72": {
++      "x": 460,
++      "y": 264,
++      "h": 53,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        52
++      ],
++      "w": 64
++    },
++    "gold_mine_t73": {
++      "x": 528,
++      "y": 264,
++      "h": 32,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        32
++      ],
++      "w": 64
++    },
++    "gold_mine_t74": {
++      "x": 596,
++      "y": 264,
++      "h": 33,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        32
++      ],
++      "w": 64
++    },
++    "gold_mine_t75": {
++      "x": 664,
++      "y": 264,
++      "h": 44,
+       "footprint": [
+         1,
+         1
+@@ -140,9 +294,405 @@
+       ],
+       "w": 64
+     },
++    "gold_mine_t76": {
++      "x": 732,
++      "y": 264,
++      "h": 32,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        31
++      ],
++      "w": 64
++    },
++    "gold_mine_t77": {
++      "x": 800,
++      "y": 264,
++      "h": 32,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        31
++      ],
++      "w": 64
++    },
++    "gold_mine_t78": {
++      "x": 868,
++      "y": 264,
++      "h": 32,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        31
++      ],
++      "w": 64
++    },
++    "gold_mine_t79": {
++      "x": 4,
++      "y": 339,
++      "h": 59,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        58
++      ],
++      "w": 192,
++      "frames": 3,
++      "frameMs": 200
++    },
++    "gold_mine_t80": {
++      "x": 200,
++      "y": 339,
++      "h": 32,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        31
++      ],
++      "w": 64
++    },
++    "gold_mine_t81": {
++      "x": 268,
++      "y": 339,
++      "h": 32,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        31
++      ],
++      "w": 64
++    },
++    "gold_mine_t82": {
++      "x": 336,
++      "y": 339,
++      "h": 32,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        31
++      ],
++      "w": 64
++    },
++    "gold_mine_t83": {
++      "x": 404,
++      "y": 339,
++      "h": 32,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        31
++      ],
++      "w": 64
++    },
++    "gold_mine_t84": {
++      "x": 472,
++      "y": 339,
++      "h": 32,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        31
++      ],
++      "w": 64
++    },
++    "gold_mine_t85": {
++      "x": 540,
++      "y": 339,
++      "h": 32,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        31
++      ],
++      "w": 64
++    },
++    "gold_mine_t86": {
++      "x": 608,
++      "y": 339,
++      "h": 32,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        31
++      ],
++      "w": 64
++    },
++    "gold_mine_t87": {
++      "x": 676,
++      "y": 339,
++      "h": 32,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        31
++      ],
++      "w": 64
++    },
++    "quarry_t72": {
++      "x": 744,
++      "y": 339,
++      "h": 53,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        52
++      ],
++      "w": 64
++    },
++    "quarry_t73": {
++      "x": 812,
++      "y": 339,
++      "h": 32,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        32
++      ],
++      "w": 64
++    },
++    "quarry_t74": {
++      "x": 880,
++      "y": 339,
++      "h": 33,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        32
++      ],
++      "w": 64
++    },
++    "quarry_t75": {
++      "x": 948,
++      "y": 339,
++      "h": 44,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        43
++      ],
++      "w": 64
++    },
++    "quarry_t76": {
++      "x": 4,
++      "y": 402,
++      "h": 32,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        31
++      ],
++      "w": 64
++    },
++    "quarry_t77": {
++      "x": 72,
++      "y": 402,
++      "h": 32,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        31
++      ],
++      "w": 64
++    },
++    "quarry_t78": {
++      "x": 140,
++      "y": 402,
++      "h": 32,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        31
++      ],
++      "w": 64
++    },
++    "quarry_t79": {
++      "x": 208,
++      "y": 402,
++      "h": 59,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        58
++      ],
++      "w": 192,
++      "frames": 3,
++      "frameMs": 200
++    },
++    "quarry_t80": {
++      "x": 404,
++      "y": 402,
++      "h": 32,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        31
++      ],
++      "w": 64
++    },
++    "quarry_t81": {
++      "x": 472,
++      "y": 402,
++      "h": 32,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        31
++      ],
++      "w": 64
++    },
++    "quarry_t82": {
++      "x": 540,
++      "y": 402,
++      "h": 32,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        31
++      ],
++      "w": 64
++    },
++    "quarry_t83": {
++      "x": 608,
++      "y": 402,
++      "h": 32,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        31
++      ],
++      "w": 64
++    },
++    "quarry_t84": {
++      "x": 676,
++      "y": 402,
++      "h": 32,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        31
++      ],
++      "w": 64
++    },
++    "quarry_t85": {
++      "x": 744,
++      "y": 402,
++      "h": 32,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        31
++      ],
++      "w": 64
++    },
++    "quarry_t86": {
++      "x": 812,
++      "y": 402,
++      "h": 32,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        31
++      ],
++      "w": 64
++    },
++    "quarry_t87": {
++      "x": 880,
++      "y": 402,
++      "h": 32,
++      "footprint": [
++        1,
++        1
++      ],
++      "anchor": [
++        32,
++        31
++      ],
++      "w": 64
++    },
+     "factory_blue": {
+-      "x": 945,
+-      "y": 4,
++      "x": 948,
++      "y": 402,
+       "h": 78,
+       "footprint": [
+         1,
+@@ -156,7 +706,7 @@
+     },
+     "factory_red": {
+       "x": 4,
+-      "y": 264,
++      "y": 484,
+       "h": 78,
+       "footprint": [
+         1,
+@@ -170,7 +720,7 @@
+     },
+     "factory_purple": {
+       "x": 72,
+-      "y": 264,
++      "y": 484,
+       "h": 78,
+       "footprint": [
+         1,
+@@ -184,7 +734,7 @@
+     },
+     "factory_green": {
+       "x": 140,
+-      "y": 264,
++      "y": 484,
+       "h": 78,
+       "footprint": [
+         1,
+@@ -198,119 +748,119 @@
+     },
+     "factory_mt_blue_0": {
+       "x": 208,
+-      "y": 264,
+-      "h": 71,
++      "y": 484,
++      "h": 69,
+       "footprint": [
+         1,
+         1
+       ],
+       "anchor": [
+         32,
+-        70
++        68
+       ],
+       "w": 64
+     },
+     "factory_mt_blue_1": {
+       "x": 276,
+-      "y": 264,
+-      "h": 69,
++      "y": 484,
++      "h": 61,
+       "footprint": [
+         1,
+         1
+       ],
+       "anchor": [
+         32,
+-        68
++        60
+       ],
+       "w": 64
+     },
+     "factory_mt_blue_2": {
+       "x": 344,
+-      "y": 264,
+-      "h": 32,
++      "y": 484,
++      "h": 71,
+       "footprint": [
+         1,
+         1
+       ],
+       "anchor": [
+         32,
+-        31
++        70
+       ],
+       "w": 64
+     },
+     "factory_mt_blue_3": {
+       "x": 412,
+-      "y": 264,
+-      "h": 61,
++      "y": 484,
++      "h": 32,
+       "footprint": [
+         1,
+         1
+       ],
+       "anchor": [
+         32,
+-        60
++        31
+       ],
+       "w": 64
+     },
+     "factory_mt_red_0": {
+       "x": 480,
+-      "y": 264,
+-      "h": 71,
++      "y": 484,
++      "h": 69,
+       "footprint": [
+         1,
+         1
+       ],
+       "anchor": [
+         32,
+-        70
++        68
+       ],
+       "w": 64
+     },
+     "factory_mt_red_1": {
+       "x": 548,
+-      "y": 264,
+-      "h": 69,
++      "y": 484,
++      "h": 61,
+       "footprint": [
+         1,
+         1
+       ],
+       "anchor": [
+         32,
+-        68
++        60
+       ],
+       "w": 64
+     },
+     "factory_mt_red_2": {
+       "x": 616,
+-      "y": 264,
+-      "h": 32,
++      "y": 484,
++      "h": 71,
+       "footprint": [
+         1,
+         1
+       ],
+       "anchor": [
+         32,
+-        31
++        70
+       ],
+       "w": 64
+     },
+     "factory_mt_red_3": {
+       "x": 684,
+-      "y": 264,
+-      "h": 61,
++      "y": 484,
++      "h": 32,
+       "footprint": [
+         1,
+         1
+       ],
+       "anchor": [
+         32,
+-        60
++        31
+       ],
+       "w": 64
+     },
+     "depot_blue": {
+       "x": 752,
+-      "y": 264,
++      "y": 484,
+       "h": 44,
+       "footprint": [
+         1,
+@@ -324,7 +874,7 @@
+     },
+     "depot_red": {
+       "x": 820,
+-      "y": 264,
++      "y": 484,
+       "h": 44,
+       "footprint": [
+         1,
+@@ -338,7 +888,7 @@
+     },
+     "depot_purple": {
+       "x": 888,
+-      "y": 264,
++      "y": 484,
+       "h": 44,
+       "footprint": [
+         1,
+@@ -352,7 +902,7 @@
+     },
+     "depot_green": {
+       "x": 956,
+-      "y": 264,
++      "y": 484,
+       "h": 44,
+       "footprint": [
+         1,
+@@ -366,7 +916,7 @@
+     },
+     "road_0000": {
+       "x": 4,
+-      "y": 346,
++      "y": 566,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -380,7 +930,7 @@
+     },
+     "road_0001": {
+       "x": 72,
+-      "y": 346,
++      "y": 566,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -394,7 +944,7 @@
+     },
+     "road_0010": {
+       "x": 140,
+-      "y": 346,
++      "y": 566,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -408,7 +958,7 @@
+     },
+     "road_0011": {
+       "x": 208,
+-      "y": 346,
++      "y": 566,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -422,7 +972,7 @@
+     },
+     "road_0100": {
+       "x": 276,
+-      "y": 346,
++      "y": 566,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -436,7 +986,7 @@
+     },
+     "road_0101": {
+       "x": 344,
+-      "y": 346,
++      "y": 566,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -450,7 +1000,7 @@
+     },
+     "road_0110": {
+       "x": 412,
+-      "y": 346,
++      "y": 566,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -464,7 +1014,7 @@
+     },
+     "road_0111": {
+       "x": 480,
+-      "y": 346,
++      "y": 566,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -478,7 +1028,7 @@
+     },
+     "road_1000": {
+       "x": 548,
+-      "y": 346,
++      "y": 566,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -492,7 +1042,7 @@
+     },
+     "road_1001": {
+       "x": 616,
+-      "y": 346,
++      "y": 566,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -506,7 +1056,7 @@
+     },
+     "road_1010": {
+       "x": 684,
+-      "y": 346,
++      "y": 566,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -520,7 +1070,7 @@
+     },
+     "road_1011": {
+       "x": 752,
+-      "y": 346,
++      "y": 566,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -534,7 +1084,7 @@
+     },
+     "road_1100": {
+       "x": 820,
+-      "y": 346,
++      "y": 566,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -548,7 +1098,7 @@
+     },
+     "road_1101": {
+       "x": 888,
+-      "y": 346,
++      "y": 566,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -562,7 +1112,7 @@
+     },
+     "road_1110": {
+       "x": 956,
+-      "y": 346,
++      "y": 566,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -576,7 +1126,7 @@
+     },
+     "road_1111": {
+       "x": 4,
+-      "y": 382,
++      "y": 602,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -590,7 +1140,7 @@
+     },
+     "rail_0000": {
+       "x": 72,
+-      "y": 382,
++      "y": 602,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -604,7 +1154,7 @@
+     },
+     "rail_0001": {
+       "x": 140,
+-      "y": 382,
++      "y": 602,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -618,7 +1168,7 @@
+     },
+     "rail_0010": {
+       "x": 208,
+-      "y": 382,
++      "y": 602,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -632,7 +1182,7 @@
+     },
+     "rail_0011": {
+       "x": 276,
+-      "y": 382,
++      "y": 602,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -646,7 +1196,7 @@
+     },
+     "rail_0100": {
+       "x": 344,
+-      "y": 382,
++      "y": 602,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -660,7 +1210,7 @@
+     },
+     "rail_0101": {
+       "x": 412,
+-      "y": 382,
++      "y": 602,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -674,7 +1224,7 @@
+     },
+     "rail_0110": {
+       "x": 480,
+-      "y": 382,
++      "y": 602,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -688,7 +1238,7 @@
+     },
+     "rail_0111": {
+       "x": 548,
+-      "y": 382,
++      "y": 602,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -702,7 +1252,7 @@
+     },
+     "rail_1000": {
+       "x": 616,
+-      "y": 382,
++      "y": 602,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -716,7 +1266,7 @@
+     },
+     "rail_1001": {
+       "x": 684,
+-      "y": 382,
++      "y": 602,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -730,7 +1280,7 @@
+     },
+     "rail_1010": {
+       "x": 752,
+-      "y": 382,
++      "y": 602,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -744,7 +1294,7 @@
+     },
+     "rail_1011": {
+       "x": 820,
+-      "y": 382,
++      "y": 602,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -758,7 +1308,7 @@
+     },
+     "rail_1100": {
+       "x": 888,
+-      "y": 382,
++      "y": 602,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -772,7 +1322,7 @@
+     },
+     "rail_1101": {
+       "x": 956,
+-      "y": 382,
++      "y": 602,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -786,7 +1336,7 @@
+     },
+     "rail_1110": {
+       "x": 4,
+-      "y": 418,
++      "y": 638,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -800,7 +1350,7 @@
+     },
+     "rail_1111": {
+       "x": 72,
+-      "y": 418,
++      "y": 638,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -814,7 +1364,7 @@
+     },
+     "crossing": {
+       "x": 140,
+-      "y": 418,
++      "y": 638,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -828,7 +1378,7 @@
+     },
+     "highlight": {
+       "x": 208,
+-      "y": 418,
++      "y": 638,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -842,7 +1392,7 @@
+     },
+     "highlight_soft": {
+       "x": 276,
+-      "y": 418,
++      "y": 638,
+       "h": 32,
+       "footprint": [
+         1,
+@@ -856,7 +1406,7 @@
+     },
+     "town_center": {
+       "x": 344,
+-      "y": 418,
++      "y": 638,
+       "h": 48,
+       "footprint": [
+         1,
+@@ -870,7 +1420,7 @@
+     },
+     "town_house": {
+       "x": 412,
+-      "y": 418,
++      "y": 638,
+       "h": 44,
+       "footprint": [
+         1,
+diff --git a/tests/unit/iso-ai.test.ts b/tests/unit/iso-ai.test.ts
+index bea5fb5..f1306d6 100644
+--- a/tests/unit/iso-ai.test.ts
++++ b/tests/unit/iso-ai.test.ts
+@@ -180,11 +180,19 @@ describe("E7 scoring", () => {
+   });
+ 
+   it("harvesterSpots hugs the footprint without corners or overlap", () => {
+-    const farm = ind("farm", 10, 10);      // 1×1 (V1: footprint = the art)
++    const farm = ind("farm", 10, 10);      // 3×3 (MT-2: footprint = the OpenTTD layout)
+     const spots = harvesterSpots(flatGrid([farm]), farm);
+-    expect(spots).toEqual([[10, 9], [9, 10], [11, 10], [10, 11]]);  // 4 sides, no diagonals
++    // the 12 orthogonally-adjacent ring tiles of a 3×3 footprint, in the
++    // stable y-major order harvesterSpots walks (no diagonal corners).
++    expect(spots).toEqual([
++      [10, 9], [11, 9], [12, 9],
++      [9, 10], [13, 10],
++      [9, 11], [13, 11],
++      [9, 12], [13, 12],
++      [10, 13], [11, 13], [12, 13],
++    ]);
+     for (const [x, y] of spots) {
+-      const insideX = x >= 10 && x < 11, insideY = y >= 10 && y < 11;
++      const insideX = x >= 10 && x < 13, insideY = y >= 10 && y < 13;
+       expect(insideX && insideY).toBe(false);
+       expect(insideX || insideY).toBe(true);
+     }
+diff --git a/tests/unit/iso-depth.test.ts b/tests/unit/iso-depth.test.ts
+index 1a314e7..75a3b4d 100644
+--- a/tests/unit/iso-depth.test.ts
++++ b/tests/unit/iso-depth.test.ts
+@@ -24,7 +24,7 @@ describe("K4 anchor contract", () => {
+     // lands on the bottom vertex of the footprint diamond — tileToScreen of
+     // (tx+fw-1, ty+fh-1) shifted by (+HW, +TILE_H). A building's base diamond
+     // therefore coincides with its tile's south corner.
+-    for (const [name, tx, ty] of [["farm", 10, 12], ["ore_mine", 3, 20], ["terrain_grass", 0, 0], ["factory_blue", 5, 5], ["depot_blue", 9, 7], ["road_1111", 7, 9]] as const) {
++    for (const [name, tx, ty] of [["farm_t33", 10, 12], ["ore_mine_t0", 3, 20], ["terrain_grass", 0, 0], ["factory_blue", 5, 5], ["depot_blue", 9, 7], ["road_1111", 7, 9]] as const) {
+       const def = atlas.get(name)!;
+       const [ox, oy] = drawOrigin(def, tx, ty);
+       const [fw, fh] = def.footprint;
+@@ -46,8 +46,8 @@ describe("E4 Tier 1 — max-corner depth key", () => {
+   });
+ 
+   it("uses (tx+w-1)+(ty+h-1), not tx+ty", () => {
+-    const mine = withFootprint(P("ore_mine", 5, 5), [3, 3]);  // key 7+7 = 14
+-    const farm = withFootprint(P("farm", 8, 6), [2, 2]);      // key 9+7 = 16
++    const mine = withFootprint(P("ore_mine_t0", 5, 5), [3, 3]);  // key 7+7 = 14
++    const farm = withFootprint(P("farm_t33", 8, 6), [2, 2]);      // key 9+7 = 16
+     expect(mine.key).toBe(14);
+     expect(farm.key).toBe(16);
+     // tx+ty alone would order the farm (14) equal to the mine (10) wrongly
+@@ -56,14 +56,14 @@ describe("E4 Tier 1 — max-corner depth key", () => {
+ 
+   it("draws a small object in front of a big one it overlaps forward of", () => {
+     // depot at the mine's south-east: must be drawn after the mine
+-    const mine = P("ore_mine", 10, 10);
++    const mine = P("ore_mine_t0", 10, 10);
+     const depot = P("depot_blue", 13, 12);
+     const { order } = depthSort([depot, mine]);
+-    expect(order.map((p) => p.sprite)).toEqual(["ore_mine", "depot_blue"]);
++    expect(order.map((p) => p.sprite)).toEqual(["ore_mine_t0", "depot_blue"]);
+   });
+ 
+   it("is a stable total order (sorting twice is idempotent)", () => {
+-    const items = [P("farm", 4, 4), P("ore_mine", 8, 3), P("depot_red", 6, 9), P("quarry", 1, 1)];
++    const items = [P("farm_t33", 4, 4), P("ore_mine_t0", 8, 3), P("depot_red", 6, 9), P("quarry_t72", 1, 1)];
+     const a = depthSort(items).order.map((p) => p.sprite);
+     const b = depthSort(depthSort(items).order).order.map((p) => p.sprite);
+     expect(b).toEqual(a);
+@@ -72,8 +72,8 @@ describe("E4 Tier 1 — max-corner depth key", () => {
+ 
+ describe("E4 Tier 2 — topological pass over overlapping sprites", () => {
+   it("only relates sprites whose screen boxes intersect", () => {
+-    const a = P("farm", 0, 0);
+-    const b = P("farm", 30, 30);
++    const a = P("farm_t33", 0, 0);
++    const b = P("farm_t33", 30, 30);
+     expect(boxesIntersect(a, b)).toBe(false);
+     const { order, cycles } = depthSort([b, a]);
+     expect(cycles).toEqual([]);
+@@ -82,24 +82,24 @@ describe("E4 Tier 2 — topological pass over overlapping sprites", () => {
+ 
+   it("orders a mine, a farm and a station between them back-to-front", () => {
+     // the E4 acceptance fixture: 3×3 mine, 2×2 farm, depot between them
+-    const mine = P("ore_mine", 6, 6);
++    const mine = P("ore_mine_t0", 6, 6);
+     const depot = P("depot_green", 9, 8);
+-    const farm = P("farm", 10, 10);
++    const farm = P("farm_t33", 10, 10);
+     const names = depthSort([farm, depot, mine]).order.map((p) => p.sprite);
+-    expect(names.indexOf("ore_mine")).toBeLessThan(names.indexOf("depot_green"));
+-    expect(names.indexOf("depot_green")).toBeLessThan(names.indexOf("farm"));
++    expect(names.indexOf("ore_mine_t0")).toBeLessThan(names.indexOf("depot_green"));
++    expect(names.indexOf("depot_green")).toBeLessThan(names.indexOf("farm_t33"));
+   });
+ 
+   it("isBehind is antisymmetric for separated footprints", () => {
+-    const a = P("farm", 2, 2), b = P("farm", 6, 2);
++    const a = P("farm_t33", 2, 2), b = P("farm_t33", 6, 2);
+     expect(isBehind(a, b)).toBe(true);
+     expect(isBehind(b, a)).toBe(false);
+   });
+ 
+   it("never drops a sprite, even under contrived overlap", () => {
+     const items = [
+-      P("ore_mine", 5, 5), P("farm", 6, 5), P("farm", 5, 7),
+-      P("depot_blue", 7, 6), P("quarry", 4, 4),
++      P("ore_mine_t0", 5, 5), P("farm_t33", 6, 5), P("farm_t33", 5, 7),
++      P("depot_blue", 7, 6), P("quarry_t72", 4, 4),
+     ];
+     const { order } = depthSort(items);
+     expect(order).toHaveLength(items.length);
+@@ -109,14 +109,14 @@ describe("E4 Tier 2 — topological pass over overlapping sprites", () => {
+ 
+ describe("E4 picking — stage 2 alpha test", () => {
+   it("hits the sprite's opaque pixels and misses transparent corners", () => {
+-    const mine = P("ore_mine", 20, 20);
++    const mine = P("ore_mine_t0", 20, 20);
+     // give the mine a mask that is opaque only in a central column (a chimney)
+     const w = mine.w, h = mine.h;
+     const bits = new Uint8Array(w * h);
+     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+       if (Math.abs(x - w / 2) < 6) bits[y * w + x] = 1;
+     }
+-    atlas.setMask("ore_mine", { w, h, bits });
++    atlas.setMask("ore_mine_t0", { w, h, bits });
+ 
+     const chimneyX = mine.wx + w / 2, chimneyY = mine.wy + 4;
+     expect(pickSprite(atlas, [mine], chimneyX, chimneyY)).toBe(mine);
+@@ -126,10 +126,10 @@ describe("E4 picking — stage 2 alpha test", () => {
+   });
+ 
+   it("returns the front-most sprite when two overlap", () => {
+-    const back = P("ore_mine", 10, 10);
+-    const front = P("farm", 12, 12);
+-    atlas.setMask("ore_mine", { w: back.w, h: back.h, bits: new Uint8Array(back.w * back.h).fill(1) });
+-    atlas.setMask("farm", { w: front.w, h: front.h, bits: new Uint8Array(front.w * front.h).fill(1) });
++    const back = P("ore_mine_t0", 10, 10);
++    const front = P("farm_t33", 12, 12);
++    atlas.setMask("ore_mine_t0", { w: back.w, h: back.h, bits: new Uint8Array(back.w * back.h).fill(1) });
++    atlas.setMask("farm_t33", { w: front.w, h: front.h, bits: new Uint8Array(front.w * front.h).fill(1) });
+     const { order } = depthSort([back, front]);
+     // a point inside both boxes
+     const px = Math.max(back.wx, front.wx) + 2;
+@@ -154,22 +154,22 @@ describe("V1 single-sprite buildings are ONE object on their footprint", () => {
+     expect(f.w).toBe(f.def.w);
+     expect(f.h).toBe(f.def.h);
+     // a multi-storey works must be strictly taller than a single-piece industry
+-    expect(f.h).toBeGreaterThan(P("farm", 5, 5).h);
++    expect(f.h).toBeGreaterThan(P("farm_t33", 5, 5).h);
+   });
+ 
+   it("depth-sorts by its 1×1 footprint (one entry, painter-ordered with neighbours)", () => {
+     const factory = P("factory_blue", 5, 4);
+-    const farm = P("farm", 5, 5);            // one row in front
++    const farm = P("farm_t33", 5, 5);            // one row in front
+     const { order, cycles } = depthSort([farm, factory]);
+     expect(cycles).toEqual([]);
+     // two distinct objects → two entries, back (factory) then front (farm)
+-    expect(order.map((p) => p.sprite)).toEqual(["factory_blue", "farm"]);
++    expect(order.map((p) => p.sprite)).toEqual(["factory_blue", "farm_t33"]);
+     expect(factory.key).toBe((5) + (4));     // [1,1] footprint → tx+ty
+   });
+ 
+   it("its top is high enough that a click on the tower above a single storey hits it", () => {
+     const f = P("factory_blue", 20, 20);
+-    const farm = P("farm", 20, 20);
++    const farm = P("farm_t35", 20, 20);   // the low barn shed — a single storey
+     // high on the tower: above where a single-storey building's art reaches,
+     // but inside the factory's own sprite box → still the factory.
+     const pt = { x: f.wx + f.w / 2, y: f.wy + Math.floor(f.h / 4) };
+diff --git a/tests/unit/iso-golden.test.ts b/tests/unit/iso-golden.test.ts
+index a951f88..750f9ff 100644
+--- a/tests/unit/iso-golden.test.ts
++++ b/tests/unit/iso-golden.test.ts
+@@ -146,10 +146,18 @@ async function renderFixture(zoom: Zoom): Promise<FixtureResult> {
+     blendPixel(scene.data, i, terrainBuffer, i);
+   }
+ 
++  // MT-2: a real multi-tile farm (the OpenTTD `_tile_table_farm_0` 3×3
++  // layout), drawn as one item per tile — the golden exercises per-tile
++  // placement + depth around a multi-tile industry.
++  const farmTiles: DrawItem[] = [
++    { sprite: "farm_t37", tx: 11, ty: 13 }, { sprite: "farm_t33", tx: 12, ty: 13 }, { sprite: "farm_t35", tx: 13, ty: 13 },
++    { sprite: "farm_t37", tx: 11, ty: 14 }, { sprite: "farm_t34", tx: 12, ty: 14 }, { sprite: "farm_t38", tx: 13, ty: 14 },
++    { sprite: "farm_t36", tx: 11, ty: 15 }, { sprite: "farm_t36", tx: 12, ty: 15 }, { sprite: "farm_t38", tx: 13, ty: 15 },
++  ];
+   const structures: DrawItem[] = [
+     { sprite: "road_0101", tx: 13, ty: 11 },       // straight, inland
+     { sprite: "road_0011", tx: 14, ty: 11 },       // corner, inland
+-    { sprite: "farm", tx: 11, ty: 14 },            // one-piece industry
++    ...farmTiles,
+     { sprite: "factory_blue", tx: 14, ty: 14 },    // tall single-sprite works
+   ];
+   const placed = structures.map((item) => place(atlas, item)!).filter(Boolean);
+diff --git a/tests/unit/iso-grid.test.ts b/tests/unit/iso-grid.test.ts
+index 873ed19..d0ceccb 100644
+--- a/tests/unit/iso-grid.test.ts
++++ b/tests/unit/iso-grid.test.ts
+@@ -1,6 +1,6 @@
+ import { describe, it, expect } from "vitest";
+ import {
+-  generateMap, randomSeed, GRASS, WATER, ROUGH, terrainAt, industryAt,
++  generateMap, randomSeed, GRASS, WATER, ROUGH, terrainAt, industryAt, TOWN_OCC,
+ } from "../../src/iso/grid";
+ import { MAP_W, MAP_H, INDUSTRY_QUOTA, INDUSTRY_BY_KEY, CARGOES } from "../../src/iso/config";
+ 
+@@ -180,7 +180,7 @@ describe("E3 industry placement", () => {
+     }
+   });
+ 
+-  it("matches the occupancy Int16Array to the industry list", () => {
++  it("matches the occupancy Int16Array to the industry list and towns", () => {
+     const occ = new Int16Array(MAP_W * MAP_H).fill(-1);
+     for (const ind of g.industries) {
+       expect(ind.id).toBe(g.industries.indexOf(ind));
+@@ -191,6 +191,10 @@ describe("E3 industry placement", () => {
+         }
+       }
+     }
++    // TOWN-1: town house tiles are stamped with TOWN_OCC.
++    for (const t of g.towns) {
++      for (const [hx, hy] of t.houses) occ[hy * MAP_W + hx] = TOWN_OCC;
++    }
+     expect(g.occupancy).toEqual(occ);
+     // spot check via industryAt / industryAt miss on grass
+     const ind = g.industries[0];
+@@ -230,3 +234,76 @@ describe("E3 industry placement", () => {
+     expect(strict / total).toBeGreaterThanOrEqual(0.9);
+   });
+ });
++
++// ── F1: towns ────────────────────────────────────────────────────────────
++// F1 was a self-blocking reachability bug: `placeTowns` put every occupied
++// industry tile into `blocked`, then `allIndustriesReachable` started its
++// flood from an industry tile and bailed on `blocked.has(start)` — so no town
++// was ever placed. The fix keeps only the PROPOSED town tiles in `blocked`.
++describe("F1 towns place and never strand an industry", () => {
++  it("places exactly 4 towns on the known-zero seeds (and generally)", () => {
++    for (const seed of [1337, 7, 42, 100, 1, 123, 2026, 0]) {
++      const g = generateMap(seed);
++      expect(g.towns.length, `seed ${seed}`).toBe(4);
++    }
++  });
++
++  it("is deterministic: same seed → identical town tiles", () => {
++    const a = generateMap(1337);
++    const b = generateMap(1337);
++    expect(a.towns).toEqual(b.towns);
++    expect(a.occupancy).toEqual(b.occupancy);
++  });
++
++  it("marks every town house with TOWN_OCC and keeps them inside bounds", () => {
++    for (const seed of [1337, 7, 42, 100]) {
++      const g = generateMap(seed);
++      for (const t of g.towns) {
++        expect(t.houses.length).toBeGreaterThanOrEqual(6);
++        for (const [hx, hy] of t.houses) {
++          expect(hx).toBeGreaterThanOrEqual(0);
++          expect(hy).toBeGreaterThanOrEqual(0);
++          expect(hx).toBeLessThan(MAP_W);
++          expect(hy).toBeLessThan(MAP_H);
++          expect(g.occupancy[hy * MAP_W + hx]).toBe(TOWN_OCC);
++          expect(g.terrain[hy * MAP_W + hx]).not.toBe(WATER);
++        }
++      }
++    }
++  });
++
++  it("leaves every industry tile land-reachable after towns are placed", () => {
++    // The reachability guarantee the F1 check exists for: the town tiles are
++    // impassable, and the flood that starts from an industry tile must still
++    // reach EVERY industry tile (water excluded, as in placeTowns).
++    for (const seed of [1337, 7, 42, 100, 1, 123]) {
++      const g = generateMap(seed);
++      const n = MAP_W * MAP_H;
++      const blocked = new Uint8Array(n);
++      for (const t of g.towns) for (const [hx, hy] of t.houses) blocked[hy * MAP_W + hx] = 1;
++      const first = g.industries[0];
++      const seen = new Uint8Array(n);
++      const stack = [first.ty * MAP_W + first.tx];
++      seen[stack[0]] = 1;
++      while (stack.length) {
++        const cur = stack.pop()!;
++        const x = cur % MAP_W, y = (cur / MAP_W) | 0;
++        for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]] as const) {
++          const nx = x + dx, ny = y + dy;
++          if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
++          const ni = ny * MAP_W + nx;
++          if (seen[ni] || blocked[ni] || g.terrain[ni] === WATER) continue;
++          seen[ni] = 1;
++          stack.push(ni);
++        }
++      }
++      for (const ind of g.industries) {
++        for (let x = ind.tx; x < ind.tx + ind.w; x++) {
++          for (let y = ind.ty; y < ind.ty + ind.h; y++) {
++            expect(seen[y * MAP_W + x], `seed ${seed} strands ${ind.type}@(${ind.tx},${ind.ty})`).toBe(1);
++          }
++        }
++      }
++    }
++  });
++});
+diff --git a/tests/unit/iso-manifest.test.ts b/tests/unit/iso-manifest.test.ts
+index 29d5124..721aa4f 100644
+--- a/tests/unit/iso-manifest.test.ts
++++ b/tests/unit/iso-manifest.test.ts
+@@ -149,14 +149,17 @@ describe("X5 cheap manifest invariants", () => {
+     }
+   });
+ 
+-  it("has one ore-mine / factory crop distinct from the other buildings", () => {
+-    const { ore_mine, quarry, factory_blue, gold_mine } = realManifest.sprites;
+-    expect([ore_mine.x, ore_mine.y, ore_mine.w, ore_mine.h])
++  it("has one ore-mine / factory / gold-mine crop distinct from the others", () => {
++    const { ore_mine_t0, quarry_t72, factory_blue, gold_mine_t72, farm_t33 } = realManifest.sprites;
++    expect([ore_mine_t0.x, ore_mine_t0.y, ore_mine_t0.w, ore_mine_t0.h])
+       .not.toEqual([factory_blue.x, factory_blue.y, factory_blue.w, factory_blue.h]);
+-    expect([ore_mine.x, ore_mine.y, ore_mine.w, ore_mine.h])
+-      .not.toEqual([quarry.x, quarry.y, quarry.w, quarry.h]);
++    expect([ore_mine_t0.x, ore_mine_t0.y, ore_mine_t0.w, ore_mine_t0.h])
++      .not.toEqual([gold_mine_t72.x, gold_mine_t72.y, gold_mine_t72.w, gold_mine_t72.h]);
+     expect([factory_blue.x, factory_blue.y, factory_blue.w, factory_blue.h])
+-      .not.toEqual([gold_mine.x, gold_mine.y, gold_mine.w, gold_mine.h]);
++      .not.toEqual([farm_t33.x, farm_t33.y, farm_t33.w, farm_t33.h]);
++    // the quarry IS the gold mine grey-tinted: same composed cell size, its own
++    // atlas slot.
++    expect([quarry_t72.w, quarry_t72.h]).toEqual([gold_mine_t72.w, gold_mine_t72.h]);
+   });
+ });
+ 
+@@ -319,14 +322,14 @@ describe("Y3/Y5/Y6 declaration invariants", () => {
+     // The slicer must size each cell from the declared w/h, not from a measured
+     // content bbox. Assert the union rect of a known multi-layer cell matches
+     // the manifest size exactly.
+-    const ore = cells.sprites.find((s) => s.name === "ore_mine")!;
++    const ore = cells.sprites.find((s) => s.name === "ore_mine_t0")!;
+     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+     for (const l of ore.layers!) {
+       const d = decls[String(l.sprite)];
+       minX = Math.min(minX, d.xrel); maxX = Math.max(maxX, d.xrel + d.w - 1);
+       minY = Math.min(minY, d.yrel); maxY = Math.max(maxY, d.yrel + d.h - 1);
+     }
+-    const m = realManifest.sprites.ore_mine;
++    const m = realManifest.sprites.ore_mine_t0;
+     expect([m.w, m.h]).toEqual([maxX - minX + 1, maxY - minY + 1 + 1]); // +1 cloned ground row
+   });
+ });
+diff --git a/tests/unit/iso-renderer.test.ts b/tests/unit/iso-renderer.test.ts
+index 22653e1..9cfd054 100644
+--- a/tests/unit/iso-renderer.test.ts
++++ b/tests/unit/iso-renderer.test.ts
+@@ -8,6 +8,7 @@ import {
+ import { generateMap, WATER, ROUGH } from "../../src/iso/grid";
+ import { createCamera, centerOnMap, visibleTileRange } from "../../src/iso/camera";
+ import { MAP_W, MAP_H, HW, HH, TILE_H } from "../../src/game/config";
++import { INDUSTRY_BY_KEY } from "../../src/iso/config";
+ 
+ const manifest: Manifest = JSON.parse(
+   readFileSync("assets/iso-atlas/manifest.json", "utf8"),
+@@ -87,21 +88,28 @@ describe("E4 culling + draw list", () => {
+     expect(pad).toBeLessThan(40);
+   });
+ 
+-  it("emits each industry exactly once, at its origin", () => {
++  it("emits one item per footprint tile of every industry (MT-2)", () => {
+     const full = { x0: 0, y0: 0, x1: MAP_W - 1, y1: MAP_H - 1 };
+     const list = buildDrawList({ grid }, full);
+     const inds = list.filter((d) => d.ref);
+-    expect(inds).toHaveLength(grid.industries.length);
+-    for (const d of inds) {
+-      const ind = d.ref as { tx: number; ty: number; type: string };
+-      expect([d.tx, d.ty, d.sprite]).toEqual([ind.tx, ind.ty, ind.type]);
+-      expect(atlas.has(d.sprite)).toBe(true);
++    // every industry contributes exactly one item per tile in its layout
++    for (const ind of grid.industries) {
++      const tiles = INDUSTRY_BY_KEY[ind.type].tiles!;
++      const mine = inds.filter((d) => d.ref === ind);
++      expect(mine.length, ind.type).toBe(tiles.length);
++      for (const t of tiles) {
++        const item = mine.find((d) => d.tx === ind.tx + t.dx && d.ty === ind.ty + t.dy);
++        expect(item, `${ind.type} tile ${t.m} at (${t.dx},${t.dy})`).toBeTruthy();
++        expect(item!.sprite).toBe(`${ind.type}_t${t.m}`);
++        expect(atlas.has(item!.sprite)).toBe(true);
++      }
+     }
+   });
+ 
+   it("culls industries outside the range but keeps footprint overlaps", () => {
+     const ind = grid.industries[0];
+-    const tight = { x0: ind.tx + ind.w - 1, y0: ind.ty + ind.h - 1, x1: ind.tx + ind.w - 1, y1: ind.ty + ind.h - 1 };
++    const t = INDUSTRY_BY_KEY[ind.type].tiles![0];
++    const tight = { x0: ind.tx + t.dx, y0: ind.ty + t.dy, x1: ind.tx + t.dx, y1: ind.ty + t.dy };
+     expect(buildDrawList({ grid }, tight).some((d) => d.ref === ind)).toBe(true);
+     const far = { x0: 0, y0: 0, x1: 0, y1: 0 };
+     const list = buildDrawList({ grid }, far);
+diff --git a/tools/iso-atlas.cells.json b/tools/iso-atlas.cells.json
+index 34c5a44..3e1c73c 100644
+--- a/tools/iso-atlas.cells.json
++++ b/tools/iso-atlas.cells.json
+@@ -1,279 +1,1358 @@
+ {
+-  "comment": "E1 cell map, Y3/Y4c/Y5/Y7 edition: every cell resolves to declared OpenGFX sprite ids (tools/opengfx-sprites.json, regenerated by `node tools/parse-pnml.mjs`) and every anchor is DERIVED from the declared xrel/yrel by the slicer — there are no hand-authored boxes, crops, tiles, compose blocks or anchors left in this file. Cell kinds: (a) plain declared ground tile (`sprite`, terrain_*); (b) `layers` — declared ground tile + declared building sprite(s) drawn at tileOrigin+(xrel,yrel), optional per-layer `tint` and `frames` for animation; (c) `trackset` — the 16 road/rail bitmask tiles built only from declared sprites (road = OpenGFX's finished flat tiles indexed through OpenTTD's flat table; rail = declared grass ground + declared rail overlay pieces); (d) `generator: highlight|highlight_soft` — the two procedural placement glows (UI, not OpenGFX art). Building cells keep the gameplay footprint (catchment/occupancy); the sprite sits on the footprint's south tile by construction, which is what makes its base land inside the footprint diamond (Y7). V1: the footprint is WHAT THE ART COVERS — every industry here is a single declared sprite whose ground tile is one diamond, so every footprint is [1,1]; validate-manifest.mjs now fails a building whose sprite is dramatically smaller than its footprint, so the two can never drift apart again.",
++  "comment": "E1 cell map, Y3/Y4c/Y5/Y7 edition: every cell resolves to declared OpenGFX sprite ids (tools/opengfx-sprites.json, regenerated by `node tools/parse-pnml.mjs`) and every anchor is DERIVED from the declared xrel/yrel by the slicer \u2014 there are no hand-authored boxes, crops, tiles, compose blocks or anchors left in this file. Cell kinds: (a) plain declared ground tile (`sprite`, terrain_*); (b) `layers` \u2014 declared ground tile + declared building sprite(s) drawn at tileOrigin+(xrel,yrel), optional per-layer `tint` and `frames` for animation; (c) `trackset` \u2014 the 16 road/rail bitmask tiles built only from declared sprites (road = OpenGFX's finished flat tiles indexed through OpenTTD's flat table; rail = declared grass ground + declared rail overlay pieces); (d) `generator: highlight|highlight_soft` \u2014 the two procedural placement glows (UI, not OpenGFX art). Building cells keep the gameplay footprint (catchment/occupancy); the sprite sits on the footprint's south tile by construction, which is what makes its base land inside the footprint diamond (Y7). MT-2: every industry is multi-tile \u2014 one cell per OpenTTD industry-tile type `m` (name `<key>_t<m>`), each drawing its declared ground + optional building at the declared xrel/yrel; the renderer emits one item per footprint tile (src/iso/renderer.ts) and src/iso/config.ts carries the same transcribed layout (the footprint stays the gameplay footprint). validate-manifest.mjs still fails a building sprite dramatically smaller than its footprint.",
+   "tileW": 64,
+   "tileH": 32,
+   "sprites": [
+     {
+       "name": "terrain_grass",
+       "sprite": 3981,
+-      "footprint": [1, 1],
+-      "note": "Y1: declared flat temperate grass (64x31, yrel 0). Single grass tile — the grass sheet is one type across a 19-sprite slope set, so there is no second flat variant (Y2)."
++      "footprint": [
++        1,
++        1
++      ],
++      "note": "Y1: declared flat temperate grass (64x31, yrel 0). Single grass tile \u2014 the grass sheet is one type across a 19-sprite slope set, so there is no second flat variant (Y2)."
+     },
+     {
+       "name": "terrain_rough",
+       "sprite": 4000,
+-      "footprint": [1, 1],
++      "footprint": [
++        1,
++        1
++      ],
+       "note": "Y1: declared flat rough/rocky temperate tile."
+     },
+     {
+       "name": "terrain_water",
+       "sprite": 4061,
+-      "footprint": [1, 1],
+-      "note": "Y1: declared water tile (4061, first frame used statically — OpenGFX animates water by runtime recolor)."
++      "footprint": [
++        1,
++        1
++      ],
++      "note": "Y1: declared water tile (4061, first frame used statically \u2014 OpenGFX animates water by runtime recolor)."
+     },
+-
+     {
+-      "name": "farm",
+-      "footprint": [1, 1],
++      "name": "ore_mine_t0",
++      "footprint": [
++        1,
++        1
++      ],
+       "layers": [
+-        { "sprite": 2110, "note": "declared farm ground tile (temperate field)" },
+-        { "sprite": 2111, "note": "declared farm buildings (two barns)" }
++        {
++          "sprite": 2022,
++          "tint": "coal-mine ground"
++        },
++        {
++          "sprite": 2013,
++          "note": "headgear + conveyor (complete stage)"
++        }
+       ],
+-      "note": "Y3: one declared building on its declared ground tile, placed by declared xrel/yrel (Y5/Y7)."
++      "note": "MT-2: _tile_table_coal_mine_0 tile 0 \u2014 headgear"
+     },
+     {
+-      "name": "forest",
+-      "footprint": [1, 1],
++      "name": "ore_mine_t2",
++      "footprint": [
++        1,
++        1
++      ],
+       "layers": [
+-        { "sprite": 2077, "note": "declared forest ground tile" },
+-        { "sprite": 2074, "note": "declared tree stand" }
+-      ]
++        {
++          "sprite": 2022
++        },
++        {
++          "sprite": 2018,
++          "note": "conveyor"
++        }
++      ],
++      "note": "MT-2: coal mine tile 2 \u2014 conveyor"
++    },
++    {
++      "name": "ore_mine_t3",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2022
++        },
++        {
++          "sprite": 2021,
++          "note": "conveyor"
++        }
++      ],
++      "note": "MT-2: coal mine tile 3 \u2014 conveyor"
+     },
+     {
+-      "name": "ore_mine",
+-      "footprint": [1, 1],
++      "name": "ore_mine_t5",
++      "footprint": [
++        1,
++        1
++      ],
+       "layers": [
+-        { "sprite": 2022, "note": "declared coal-mine ground tile (the one OpenGFX reuses for gold mine / factory stages)" },
+-        { "sprite": 2013, "note": "declared coal-mine building (headgear + conveyor), 58x50 xrel -16 yrel -33" }
++        {
++          "sprite": 2023,
++          "note": "spoil mound"
++        }
+       ],
+-      "note": "Y7: the ticket's own example pair — declared building on its declared ground tile sits flush on the footprint's south tile."
++      "note": "MT-2: coal mine tile 5 \u2014 spoil mound"
+     },
+     {
+-      "name": "quarry",
+-      "footprint": [1, 1],
++      "name": "ore_mine_t6",
++      "footprint": [
++        1,
++        1
++      ],
+       "layers": [
+-        { "sprite": 2247, "tint": [138, 138, 138], "note": "declared gold-mine ground+conveyor tile, grey-tinted into a stone quarry" }
+-      ]
++        {
++          "sprite": 2024,
++          "note": "spoil mound"
++        }
++      ],
++      "note": "MT-2: coal mine tile 6 \u2014 spoil mound"
+     },
+     {
+-      "name": "oil_rig",
+-      "footprint": [1, 1],
++      "name": "farm_t33",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2106
++        },
++        {
++          "sprite": 2108,
++          "note": "barn (first half)"
++        }
++      ],
++      "note": "MT-2: _tile_table_farm_0 tile 33 \u2014 barn"
++    },
++    {
++      "name": "farm_t34",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2107
++        },
++        {
++          "sprite": 2109,
++          "note": "barn (second half)"
++        }
++      ],
++      "note": "MT-2: farm tile 34 \u2014 barn"
++    },
++    {
++      "name": "farm_t35",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2110
++        },
++        {
++          "sprite": 2111,
++          "note": "barn (shed)"
++        }
++      ],
++      "note": "MT-2: farm tile 35 \u2014 barn shed"
++    },
++    {
++      "name": "farm_t36",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2112
++        },
++        {
++          "sprite": 2113,
++          "note": "barn (garage)"
++        }
++      ],
++      "note": "MT-2: farm tile 36 \u2014 barn garage"
++    },
++    {
++      "name": "farm_t37",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2114
++        },
++        {
++          "sprite": 2115,
++          "note": "silo"
++        }
++      ],
++      "note": "MT-2: farm tile 37 \u2014 silo"
++    },
++    {
++      "name": "farm_t38",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2116
++        },
++        {
++          "sprite": 2117,
++          "note": "pigsty"
++        }
++      ],
++      "note": "MT-2: farm tile 38 \u2014 pigsty"
++    },
++    {
++      "name": "forest_t16",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2077,
++          "tint": "forest ground"
++        },
++        {
++          "sprite": 2075,
++          "note": "mature tree"
++        }
++      ],
++      "note": "MT-2: _tile_table_forest_0 tile 16 \u2014 forest ground + tree"
++    },
++    {
++      "name": "oil_rig_t29",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2173,
++          "note": "derrick base plate"
++        }
++      ],
++      "frames": [
++        [
++          {
++            "sprite": 2174
++          }
++        ],
++        [
++          {
++            "sprite": 2175
++          }
++        ],
++        [
++          {
++            "sprite": 2176
++          }
++        ],
++        [
++          {
++            "sprite": 2177
++          }
++        ],
++        [
++          {
++            "sprite": 2178
++          }
++        ],
++        [
++          {
++            "sprite": 2179
++          }
++        ]
++      ],
+       "frameMs": 180,
++      "note": "MT-2: _tile_table_oil_well_0 tile 29 \u2014 six declared pump frames (2174-2179) over the base plate"
++    },
++    {
++      "name": "gold_mine_t72",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2022
++        },
++        {
++          "sprite": 2247,
++          "note": "headframe"
++        }
++      ],
++      "note": "MT-2: _tile_table_gold_mine_0 tile 72 \u2014 headframe"
++    },
++    {
++      "name": "gold_mine_t73",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2248,
++          "note": "pit"
++        }
++      ],
++      "note": "MT-2: _tile_table_gold_mine_0 tile 73 \u2014 pit"
++    },
++    {
++      "name": "gold_mine_t74",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2022
++        },
++        {
++          "sprite": 2249,
++          "note": "works"
++        }
++      ],
++      "note": "MT-2: _tile_table_gold_mine_0 tile 74 \u2014 works"
++    },
++    {
++      "name": "gold_mine_t75",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2022
++        },
++        {
++          "sprite": 2250,
++          "note": "hut"
++        }
++      ],
++      "note": "MT-2: _tile_table_gold_mine_0 tile 75 \u2014 hut"
++    },
++    {
++      "name": "gold_mine_t76",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2251
++        }
++      ],
++      "note": "MT-2: _tile_table_gold_mine_0 tile 76 \u2014 pit"
++    },
++    {
++      "name": "gold_mine_t77",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2252
++        }
++      ],
++      "note": "MT-2: _tile_table_gold_mine_0 tile 77 \u2014 pit"
++    },
++    {
++      "name": "gold_mine_t78",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2253
++        }
++      ],
++      "note": "MT-2: _tile_table_gold_mine_0 tile 78 \u2014 pit"
++    },
++    {
++      "name": "gold_mine_t79",
++      "footprint": [
++        1,
++        1
++      ],
+       "layers": [
+-        { "sprite": 2173, "note": "declared oil-derrick base plate (ground tile)" }
++        {
++          "sprite": 2254
++        },
++        {
++          "sprite": 2263,
++          "note": "shaft tower"
++        }
+       ],
+       "frames": [
+-        [{ "sprite": 2174 }],
+-        [{ "sprite": 2175 }],
+-        [{ "sprite": 2176 }],
+-        [{ "sprite": 2177 }],
+-        [{ "sprite": 2178 }],
+-        [{ "sprite": 2179 }]
++        [
++          {
++            "sprite": 2263
++          }
++        ],
++        [
++          {
++            "sprite": 2264
++          }
++        ],
++        [
++          {
++            "sprite": 2265
++          }
++        ]
+       ],
+-      "note": "Y3: six declared animation stages as per-frame layers (one declared sprite per frame, per-frame width = the cell width) instead of the old 768x160 strip."
++      "frameMs": 200,
++      "note": "MT-2: _tile_table_gold_mine_0 tile 79 \u2014 shaft tower (animated)"
+     },
+     {
+-      "name": "gold_mine",
+-      "footprint": [1, 1],
++      "name": "gold_mine_t80",
++      "footprint": [
++        1,
++        1
++      ],
+       "layers": [
+-        { "sprite": 2250, "note": "declared gold-mine tile (ground + hut in one declared sprite)" }
+-      ]
++        {
++          "sprite": 2255
++        }
++      ],
++      "note": "MT-2: _tile_table_gold_mine_0 tile 80 \u2014 pit"
++    },
++    {
++      "name": "gold_mine_t81",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2256
++        }
++      ],
++      "note": "MT-2: _tile_table_gold_mine_0 tile 81 \u2014 pit"
++    },
++    {
++      "name": "gold_mine_t82",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2257
++        }
++      ],
++      "note": "MT-2: _tile_table_gold_mine_0 tile 82 \u2014 pit"
++    },
++    {
++      "name": "gold_mine_t83",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2258
++        }
++      ],
++      "note": "MT-2: _tile_table_gold_mine_0 tile 83 \u2014 pit"
++    },
++    {
++      "name": "gold_mine_t84",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2259
++        }
++      ],
++      "note": "MT-2: _tile_table_gold_mine_0 tile 84 \u2014 pit"
++    },
++    {
++      "name": "gold_mine_t85",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2260
++        }
++      ],
++      "note": "MT-2: _tile_table_gold_mine_0 tile 85 \u2014 pit"
++    },
++    {
++      "name": "gold_mine_t86",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2261
++        }
++      ],
++      "note": "MT-2: _tile_table_gold_mine_0 tile 86 \u2014 pit"
++    },
++    {
++      "name": "gold_mine_t87",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2262
++        }
++      ],
++      "note": "MT-2: _tile_table_gold_mine_0 tile 87 \u2014 pit"
++    },
++    {
++      "name": "quarry_t72",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2022,
++          "tint": [
++            138,
++            138,
++            138
++          ]
++        },
++        {
++          "sprite": 2247,
++          "tint": [
++            138,
++            138,
++            138
++          ],
++          "note": "headframe"
++        }
++      ],
++      "note": "MT-2: gold mine tile 72 grey-tinted into a stone quarry \u2014 headframe"
++    },
++    {
++      "name": "quarry_t73",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2248,
++          "tint": [
++            138,
++            138,
++            138
++          ],
++          "note": "pit"
++        }
++      ],
++      "note": "MT-2: gold mine tile 73 grey-tinted into a stone quarry \u2014 pit"
++    },
++    {
++      "name": "quarry_t74",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2022,
++          "tint": [
++            138,
++            138,
++            138
++          ]
++        },
++        {
++          "sprite": 2249,
++          "tint": [
++            138,
++            138,
++            138
++          ],
++          "note": "works"
++        }
++      ],
++      "note": "MT-2: gold mine tile 74 grey-tinted into a stone quarry \u2014 works"
++    },
++    {
++      "name": "quarry_t75",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2022,
++          "tint": [
++            138,
++            138,
++            138
++          ]
++        },
++        {
++          "sprite": 2250,
++          "tint": [
++            138,
++            138,
++            138
++          ],
++          "note": "hut"
++        }
++      ],
++      "note": "MT-2: gold mine tile 75 grey-tinted into a stone quarry \u2014 hut"
++    },
++    {
++      "name": "quarry_t76",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2251,
++          "tint": [
++            138,
++            138,
++            138
++          ]
++        }
++      ],
++      "note": "MT-2: gold mine tile 76 grey-tinted into a stone quarry \u2014 pit"
++    },
++    {
++      "name": "quarry_t77",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2252,
++          "tint": [
++            138,
++            138,
++            138
++          ]
++        }
++      ],
++      "note": "MT-2: gold mine tile 77 grey-tinted into a stone quarry \u2014 pit"
++    },
++    {
++      "name": "quarry_t78",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2253,
++          "tint": [
++            138,
++            138,
++            138
++          ]
++        }
++      ],
++      "note": "MT-2: gold mine tile 78 grey-tinted into a stone quarry \u2014 pit"
++    },
++    {
++      "name": "quarry_t79",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2254,
++          "tint": [
++            138,
++            138,
++            138
++          ]
++        },
++        {
++          "sprite": 2263,
++          "tint": [
++            138,
++            138,
++            138
++          ],
++          "note": "shaft tower"
++        }
++      ],
++      "frames": [
++        [
++          {
++            "sprite": 2263,
++            "tint": [
++              138,
++              138,
++              138
++            ]
++          }
++        ],
++        [
++          {
++            "sprite": 2264,
++            "tint": [
++              138,
++              138,
++              138
++            ]
++          }
++        ],
++        [
++          {
++            "sprite": 2265,
++            "tint": [
++              138,
++              138,
++              138
++            ]
++          }
++        ]
++      ],
++      "frameMs": 200,
++      "note": "MT-2: gold mine tile 79 grey-tinted into a stone quarry \u2014 shaft tower (animated)"
++    },
++    {
++      "name": "quarry_t80",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2255,
++          "tint": [
++            138,
++            138,
++            138
++          ]
++        }
++      ],
++      "note": "MT-2: gold mine tile 80 grey-tinted into a stone quarry \u2014 pit"
++    },
++    {
++      "name": "quarry_t81",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2256,
++          "tint": [
++            138,
++            138,
++            138
++          ]
++        }
++      ],
++      "note": "MT-2: gold mine tile 81 grey-tinted into a stone quarry \u2014 pit"
++    },
++    {
++      "name": "quarry_t82",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2257,
++          "tint": [
++            138,
++            138,
++            138
++          ]
++        }
++      ],
++      "note": "MT-2: gold mine tile 82 grey-tinted into a stone quarry \u2014 pit"
++    },
++    {
++      "name": "quarry_t83",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2258,
++          "tint": [
++            138,
++            138,
++            138
++          ]
++        }
++      ],
++      "note": "MT-2: gold mine tile 83 grey-tinted into a stone quarry \u2014 pit"
++    },
++    {
++      "name": "quarry_t84",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2259,
++          "tint": [
++            138,
++            138,
++            138
++          ]
++        }
++      ],
++      "note": "MT-2: gold mine tile 84 grey-tinted into a stone quarry \u2014 pit"
++    },
++    {
++      "name": "quarry_t85",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2260,
++          "tint": [
++            138,
++            138,
++            138
++          ]
++        }
++      ],
++      "note": "MT-2: gold mine tile 85 grey-tinted into a stone quarry \u2014 pit"
++    },
++    {
++      "name": "quarry_t86",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2261,
++          "tint": [
++            138,
++            138,
++            138
++          ]
++        }
++      ],
++      "note": "MT-2: gold mine tile 86 grey-tinted into a stone quarry \u2014 pit"
++    },
++    {
++      "name": "quarry_t87",
++      "footprint": [
++        1,
++        1
++      ],
++      "layers": [
++        {
++          "sprite": 2262,
++          "tint": [
++            138,
++            138,
++            138
++          ]
++        }
++      ],
++      "note": "MT-2: gold mine tile 87 grey-tinted into a stone quarry \u2014 pit"
+     },
+-
+     {
+       "name": "factory_blue",
+-      "footprint": [1, 1],
++      "footprint": [
++        1,
++        1
++      ],
+       "layers": [
+-        { "sprite": 2156, "note": "declared factory ground tile (clean concrete pad)" },
+-        { "sprite": 2169, "tintLum": [70, 130, 220], "note": "V2: declared complete works building (brick + two chimneys, 64x77), luminance-preserving player tint" }
++        {
++          "sprite": 2156,
++          "note": "declared factory ground tile (clean concrete pad)"
++        },
++        {
++          "sprite": 2169,
++          "tintLum": [
++            70,
++            130,
++            220
++          ],
++          "note": "V2: declared complete works building (brick + two chimneys, 64x77), luminance-preserving player tint"
++        }
+       ],
+       "note": "V2: the factory is one declared sprite that is a COMPLETE building (2169). 2150 was one corner piece of OpenGFX's multi-tile factory and rendered as a sliver of chimneys; footprint is what the art covers (V1)."
+     },
+     {
+       "name": "factory_red",
+-      "footprint": [1, 1],
++      "footprint": [
++        1,
++        1
++      ],
+       "layers": [
+-        { "sprite": 2156 },
+-        { "sprite": 2169, "tintLum": [224, 70, 70] }
++        {
++          "sprite": 2156
++        },
++        {
++          "sprite": 2169,
++          "tintLum": [
++            224,
++            70,
++            70
++          ]
++        }
+       ]
+     },
+     {
+       "name": "factory_purple",
+-      "footprint": [1, 1],
++      "footprint": [
++        1,
++        1
++      ],
+       "layers": [
+-        { "sprite": 2156 },
+-        { "sprite": 2169, "tintLum": [190, 92, 255] }
++        {
++          "sprite": 2156
++        },
++        {
++          "sprite": 2169,
++          "tintLum": [
++            190,
++            92,
++            255
++          ]
++        }
+       ]
+     },
+     {
+       "name": "factory_green",
+-      "footprint": [1, 1],
++      "footprint": [
++        1,
++        1
++      ],
+       "layers": [
+-        { "sprite": 2156 },
+-        { "sprite": 2169, "tintLum": [78, 196, 90] }
++        {
++          "sprite": 2156
++        },
++        {
++          "sprite": 2169,
++          "tintLum": [
++            78,
++            196,
++            90
++          ]
++        }
+       ]
+     },
+-
+     {
+       "name": "factory_mt_blue_0",
+-      "footprint": [1, 1],
++      "footprint": [
++        1,
++        1
++      ],
+       "layers": [
+-        { "sprite": 2146, "note": "MT-1/MT-2: factory ground tile (0,0)" },
+-        { "sprite": 2151, "tintLum": [70, 130, 220], "note": "factory building piece for tile (0,0)" }
++        {
++          "sprite": 2146
++        },
++        {
++          "sprite": 2150,
++          "tintLum": [
++            70,
++            130,
++            220
++          ]
++        }
+       ],
+-      "note": "MT-1: multi-tile factory tile (0,0) — north tile with building"
++      "note": "MT-1/MT-2/F3: factory tile (0,0) = _tile_table_factory_0 MK(0,0,39): ground 2146 + building 2150"
+     },
+     {
+       "name": "factory_mt_blue_1",
+-      "footprint": [1, 1],
++      "footprint": [
++        1,
++        1
++      ],
+       "layers": [
+-        { "sprite": 2147, "note": "factory ground tile (1,0)" },
+-        { "sprite": 2150, "tintLum": [70, 130, 220], "note": "factory building piece for tile (1,0)" }
++        {
++          "sprite": 2148
++        },
++        {
++          "sprite": 2152,
++          "tintLum": [
++            70,
++            130,
++            220
++          ]
++        }
+       ],
+-      "note": "MT-1: multi-tile factory tile (1,0) — east tile with building"
++      "note": "MT-1/MT-2/F3: factory tile (1,0) = MK(1,0,41): ground 2148 + building 2152"
+     },
+     {
+       "name": "factory_mt_blue_2",
+-      "footprint": [1, 1],
++      "footprint": [
++        1,
++        1
++      ],
+       "layers": [
+-        { "sprite": 2148, "note": "factory ground tile (0,1) — no building" }
++        {
++          "sprite": 2147
++        },
++        {
++          "sprite": 2151,
++          "tintLum": [
++            70,
++            130,
++            220
++          ]
++        }
+       ],
+-      "note": "MT-1: multi-tile factory tile (0,1) — west tile, ground only"
++      "note": "MT-1/MT-2/F3: factory tile (0,1) = MK(0,1,40): ground 2147 + building 2151"
+     },
+     {
+       "name": "factory_mt_blue_3",
+-      "footprint": [1, 1],
++      "footprint": [
++        1,
++        1
++      ],
+       "layers": [
+-        { "sprite": 2149, "note": "factory ground tile (1,1)" },
+-        { "sprite": 2152, "tintLum": [70, 130, 220], "note": "factory building piece for tile (1,1)" }
++        {
++          "sprite": 2149
++        }
+       ],
+-      "note": "MT-1: multi-tile factory tile (1,1) — south tile with building"
++      "note": "MT-1/MT-2/F3: factory tile (1,1) = MK(1,1,42): ground 2149, the empty yard (no building)"
+     },
+     {
+       "name": "factory_mt_red_0",
+-      "footprint": [1, 1],
++      "footprint": [
++        1,
++        1
++      ],
+       "layers": [
+-        { "sprite": 2146 },
+-        { "sprite": 2151, "tintLum": [224, 70, 70] }
+-      ]
++        {
++          "sprite": 2146
++        },
++        {
++          "sprite": 2150,
++          "tintLum": [
++            224,
++            70,
++            70
++          ]
++        }
++      ],
++      "note": "MT-1/MT-2/F3: factory tile (0,0) = _tile_table_factory_0 MK(0,0,39): ground 2146 + building 2150"
+     },
+     {
+       "name": "factory_mt_red_1",
+-      "footprint": [1, 1],
++      "footprint": [
++        1,
++        1
++      ],
+       "layers": [
+-        { "sprite": 2147 },
+-        { "sprite": 2150, "tintLum": [224, 70, 70] }
+-      ]
++        {
++          "sprite": 2148
++        },
++        {
++          "sprite": 2152,
++          "tintLum": [
++            224,
++            70,
++            70
++          ]
++        }
++      ],
++      "note": "MT-1/MT-2/F3: factory tile (1,0) = MK(1,0,41): ground 2148 + building 2152"
+     },
+     {
+       "name": "factory_mt_red_2",
+-      "footprint": [1, 1],
++      "footprint": [
++        1,
++        1
++      ],
+       "layers": [
+-        { "sprite": 2148 }
+-      ]
++        {
++          "sprite": 2147
++        },
++        {
++          "sprite": 2151,
++          "tintLum": [
++            224,
++            70,
++            70
++          ]
++        }
++      ],
++      "note": "MT-1/MT-2/F3: factory tile (0,1) = MK(0,1,40): ground 2147 + building 2151"
+     },
+     {
+       "name": "factory_mt_red_3",
+-      "footprint": [1, 1],
++      "footprint": [
++        1,
++        1
++      ],
+       "layers": [
+-        { "sprite": 2149 },
+-        { "sprite": 2152, "tintLum": [224, 70, 70] }
+-      ]
++        {
++          "sprite": 2149
++        }
++      ],
++      "note": "MT-1/MT-2/F3: factory tile (1,1) = MK(1,1,42): ground 2149, the empty yard (no building)"
+     },
+-
+     {
+       "name": "depot_blue",
+-      "footprint": [1, 1],
++      "footprint": [
++        1,
++        1
++      ],
+       "layers": [
+-        { "sprite": 3981, "note": "declared grass ground so the 1x1 harvester sits flush on its tile (and the derived anchor stays inside the rect)" },
+-        { "sprite": 2019, "tint": [70, 130, 220], "note": "declared small shed building, player tint" }
++        {
++          "sprite": 3981,
++          "note": "declared grass ground so the 1x1 harvester sits flush on its tile (and the derived anchor stays inside the rect)"
++        },
++        {
++          "sprite": 2019,
++          "tint": [
++            70,
++            130,
++            220
++          ],
++          "note": "declared small shed building, player tint"
++        }
+       ]
+     },
+     {
+       "name": "depot_red",
+-      "footprint": [1, 1],
++      "footprint": [
++        1,
++        1
++      ],
+       "layers": [
+-        { "sprite": 3981 },
+-        { "sprite": 2019, "tint": [224, 70, 70] }
++        {
++          "sprite": 3981
++        },
++        {
++          "sprite": 2019,
++          "tint": [
++            224,
++            70,
++            70
++          ]
++        }
+       ]
+     },
+     {
+       "name": "depot_purple",
+-      "footprint": [1, 1],
++      "footprint": [
++        1,
++        1
++      ],
+       "layers": [
+-        { "sprite": 3981 },
+-        { "sprite": 2019, "tint": [190, 92, 255] }
++        {
++          "sprite": 3981
++        },
++        {
++          "sprite": 2019,
++          "tint": [
++            190,
++            92,
++            255
++          ]
++        }
+       ]
+     },
+     {
+       "name": "depot_green",
+-      "footprint": [1, 1],
++      "footprint": [
++        1,
++        1
++      ],
+       "layers": [
+-        { "sprite": 3981 },
+-        { "sprite": 2019, "tint": [78, 196, 90] }
++        {
++          "sprite": 3981
++        },
++        {
++          "sprite": 2019,
++          "tint": [
++            78,
++            196,
++            90
++          ]
++        }
+       ]
+     },
+-
+     {
+       "name": "road",
+       "namePrefix": "road",
+-      "footprint": [1, 1],
++      "footprint": [
++        1,
++        1
++      ],
+       "trackset": {
+         "mode": "flat",
+         "base": 1332,
+-        "table": [0, 18, 17, 7, 16, 0, 10, 5, 15, 8, 1, 4, 9, 3, 6, 2]
++        "table": [
++          0,
++          18,
++          17,
++          7,
++          16,
++          0,
++          10,
++          5,
++          15,
++          8,
++          1,
++          4,
++          9,
++          3,
++          6,
++          2
++        ]
+       },
+-      "note": "Y4c: OpenGFX ships the complete flat road set at 1332-1350 (straights, curves, T-junctions, crossroads — finished 64x31 tiles). Each of the 16 masks is converted to OpenTTD RoadBits (toOpenttdRoadBits, src/iso/track.ts) and indexes OpenTTD's flat selection table; the declared sprite is blitted verbatim. The generator is gone."
++      "note": "Y4c: OpenGFX ships the complete flat road set at 1332-1350 (straights, curves, T-junctions, crossroads \u2014 finished 64x31 tiles). Each of the 16 masks is converted to OpenTTD RoadBits (toOpenttdRoadBits, src/iso/track.ts) and indexes OpenTTD's flat selection table; the declared sprite is blitted verbatim. The generator is gone."
+     },
+     {
+       "name": "rail",
+       "namePrefix": "rail",
+-      "footprint": [1, 1],
++      "footprint": [
++        1,
++        1
++      ],
+       "trackset": {
+         "mode": "overlays",
+         "ground": 3981,
+         "pieces": [
+-          { "sprite": 1005, "dirs": [1, 4], "note": "NE|SW straight overlay" },
+-          { "sprite": 1006, "dirs": [8, 2], "note": "NW|SE straight overlay" },
+-          { "sprite": 1007, "dirs": [8, 1], "note": "NW|NE curve overlay" },
+-          { "sprite": 1008, "dirs": [4, 2], "note": "SW|SE curve overlay" },
+-          { "sprite": 1009, "dirs": [1, 2], "note": "NE|SE curve overlay" },
+-          { "sprite": 1010, "dirs": [8, 4], "note": "NW|SW curve overlay" }
++          {
++            "sprite": 1005,
++            "dirs": [
++              1,
++              4
++            ],
++            "note": "NE|SW straight overlay"
++          },
++          {
++            "sprite": 1006,
++            "dirs": [
++              8,
++              2
++            ],
++            "note": "NW|SE straight overlay"
++          },
++          {
++            "sprite": 1007,
++            "dirs": [
++              8,
++              1
++            ],
++            "note": "NW|NE curve overlay"
++          },
++          {
++            "sprite": 1008,
++            "dirs": [
++              4,
++              2
++            ],
++            "note": "SW|SE curve overlay"
++          },
++          {
++            "sprite": 1009,
++            "dirs": [
++              1,
++              2
++            ],
++            "note": "NE|SE curve overlay"
++          },
++          {
++            "sprite": 1010,
++            "dirs": [
++              8,
++              4
++            ],
++            "note": "NW|SW curve overlay"
++          }
+         ]
+       },
+-      "note": "Y4c: OpenGFX's rail set is ground + per-piece overlays (1005-1010), not 16 finished tiles, so a mask draws the declared grass ground plus every declared overlay whose two directions are both set. Still fully declared — no generator, no mirroring."
++      "note": "Y4c: OpenGFX's rail set is ground + per-piece overlays (1005-1010), not 16 finished tiles, so a mask draws the declared grass ground plus every declared overlay whose two directions are both set. Still fully declared \u2014 no generator, no mirroring."
+     },
+     {
+       "name": "crossing",
+-      "footprint": [1, 1],
++      "footprint": [
++        1,
++        1
++      ],
+       "layers": [
+-        { "sprite": 1370, "note": "declared level-crossing tile (road+rail painted), drawn on tiles carrying both layers" }
++        {
++          "sprite": 1370,
++          "note": "declared level-crossing tile (road+rail painted), drawn on tiles carrying both layers"
++        }
+       ],
+       "note": "Y4c: the crossing is the declared finished tile, not a centre-clipped extraction."
+     },
+-    { "name": "highlight", "generator": "highlight", "footprint": [1, 1] },
++    {
++      "name": "highlight",
++      "generator": "highlight",
++      "footprint": [
++        1,
++        1
++      ]
++    },
+     {
+       "name": "highlight_soft",
+       "generator": "highlight_soft",
+-      "footprint": [1, 1],
++      "footprint": [
++        1,
++        1
++      ],
+       "note": "U2: fainter catchment tint for the harvester's informational 4x4 area, distinct from the solid 1x1 placement tile."
+     },
+-
+     {
+       "name": "town_center",
+-      "footprint": [1, 1],
++      "footprint": [
++        1,
++        1
++      ],
+       "layers": [
+-        { "sprite": 3981, "note": "grass ground tile" },
+-        { "sprite": 2180, "note": "TOWN-2: bank building used as town center (58×44)" }
++        {
++          "sprite": 3981,
++          "note": "grass ground tile"
++        },
++        {
++          "sprite": 2180,
++          "note": "TOWN-2: bank building used as town center (58\u00d744)"
++        }
+       ],
+-      "note": "TOWN-2: town center marker — one per town cluster"
++      "note": "TOWN-2: town center marker \u2014 one per town cluster"
+     },
+     {
+       "name": "town_house",
+-      "footprint": [1, 1],
++      "footprint": [
++        1,
++        1
++      ],
+       "layers": [
+-        { "sprite": 3981, "note": "grass ground tile" },
+-        { "sprite": 2019, "note": "TOWN-2: small shed used as generic house" }
++        {
++          "sprite": 3981,
++          "note": "grass ground tile"
++        },
++        {
++          "sprite": 2019,
++          "note": "TOWN-2: small shed used as generic house"
++        }
+       ],
+       "note": "TOWN-2: generic house tile for town clusters"
+     }
