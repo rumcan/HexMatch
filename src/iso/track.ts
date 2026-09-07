@@ -14,7 +14,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_W, MAP_H } from "../game/config";
 import { TRANSPORT, UPGRADE_COST, type Cargo } from "./config";
-import { WATER, ROUGH, type Grid } from "./grid";
+import { WATER, ROUGH, TOWN_OCC, type Grid } from "./grid";
 import { CHUNK, chunksX } from "./renderer";
 
 // ── directions ────────────────────────────────────────────────────────────
@@ -147,8 +147,8 @@ export function buildRefusal(
   if (terrain === WATER) return "water";
   // Water never; rail additionally needs flat ground (TRANSPORT.rail.onRough).
   if (terrain === ROUGH && !TRANSPORT[kind].onRough) return "rough";
-  // Industry footprints block both kinds.
-  if (grid.occupancy[i] >= 0) return "occupied";
+  // Industry footprints and town tiles (TOWN-1) both block building.
+  if (grid.occupancy[i] >= 0 || grid.occupancy[i] === TOWN_OCC) return "occupied";
   if (network) {
     if (network.has(i)) return null;
     let adj = false;

@@ -115,6 +115,73 @@
     },
 
     {
+      "name": "factory_mt_blue_0",
+      "footprint": [1, 1],
+      "layers": [
+        { "sprite": 2146, "note": "MT-1/MT-2: factory ground tile (0,0)" },
+        { "sprite": 2151, "tintLum": [70, 130, 220], "note": "factory building piece for tile (0,0)" }
+      ],
+      "note": "MT-1: multi-tile factory tile (0,0) — north tile with building"
+    },
+    {
+      "name": "factory_mt_blue_1",
+      "footprint": [1, 1],
+      "layers": [
+        { "sprite": 2147, "note": "factory ground tile (1,0)" },
+        { "sprite": 2150, "tintLum": [70, 130, 220], "note": "factory building piece for tile (1,0)" }
+      ],
+      "note": "MT-1: multi-tile factory tile (1,0) — east tile with building"
+    },
+    {
+      "name": "factory_mt_blue_2",
+      "footprint": [1, 1],
+      "layers": [
+        { "sprite": 2148, "note": "factory ground tile (0,1) — no building" }
+      ],
+      "note": "MT-1: multi-tile factory tile (0,1) — west tile, ground only"
+    },
+    {
+      "name": "factory_mt_blue_3",
+      "footprint": [1, 1],
+      "layers": [
+        { "sprite": 2149, "note": "factory ground tile (1,1)" },
+        { "sprite": 2152, "tintLum": [70, 130, 220], "note": "factory building piece for tile (1,1)" }
+      ],
+      "note": "MT-1: multi-tile factory tile (1,1) — south tile with building"
+    },
+    {
+      "name": "factory_mt_red_0",
+      "footprint": [1, 1],
+      "layers": [
+        { "sprite": 2146 },
+        { "sprite": 2151, "tintLum": [224, 70, 70] }
+      ]
+    },
+    {
+      "name": "factory_mt_red_1",
+      "footprint": [1, 1],
+      "layers": [
+        { "sprite": 2147 },
+        { "sprite": 2150, "tintLum": [224, 70, 70] }
+      ]
+    },
+    {
+      "name": "factory_mt_red_2",
+      "footprint": [1, 1],
+      "layers": [
+        { "sprite": 2148 }
+      ]
+    },
+    {
+      "name": "factory_mt_red_3",
+      "footprint": [1, 1],
+      "layers": [
+        { "sprite": 2149 },
+        { "sprite": 2152, "tintLum": [224, 70, 70] }
+      ]
+    },
+
+    {
       "name": "depot_blue",
       "footprint": [1, 1],
       "layers": [
@@ -190,6 +257,25 @@
       "generator": "highlight_soft",
       "footprint": [1, 1],
       "note": "U2: fainter catchment tint for the harvester's informational 4x4 area, distinct from the solid 1x1 placement tile."
+    },
+
+    {
+      "name": "town_center",
+      "footprint": [1, 1],
+      "layers": [
+        { "sprite": 3981, "note": "grass ground tile" },
+        { "sprite": 2180, "note": "TOWN-2: bank building used as town center (58×44)" }
+      ],
+      "note": "TOWN-2: town center marker — one per town cluster"
+    },
+    {
+      "name": "town_house",
+      "footprint": [1, 1],
+      "layers": [
+        { "sprite": 3981, "note": "grass ground tile" },
+        { "sprite": 2019, "note": "TOWN-2: small shed used as generic house" }
+      ],
+      "note": "TOWN-2: generic house tile for town clusters"
     }
   ]
 }

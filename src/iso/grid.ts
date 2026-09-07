@@ -34,12 +34,21 @@ export interface Industry {
   banditUntil: number;    // blockade expiry (0 = none) — legacy carry-over
 }
 
+/** TOWN-1: a town is a cluster of house tiles around a center. */
+export interface Town {
+  id: number;
+  tx: number;             // center tile
+  ty: number;
+  houses: [number, number][];  // list of house tile positions
+}
+
 export interface Grid {
   w: number;
   h: number;
   terrain: Uint8Array;        // MAP_W*MAP_H values GRASS | WATER | ROUGH
   industries: Industry[];
-  occupancy: Int16Array;      // per tile: industry list index or -1
+  towns: Town[];              // TOWN-1: four towns per map
+  occupancy: Int16Array;      // per tile: industry list index or -1 (towns use -2)
   seed: number;
 }
 
@@ -188,6 +197,152 @@ function placeIndustries(terrain: Uint8Array, rng: () => number): { list: Indust
   return { list, occ };
 }
 
+/** TOWN-1: number of towns per map. */
+const TOWN_COUNT = 4;
+/** TOWN-1: houses per town (min..max inclusive). */
+const TOWN_HOUSES_MIN = 6;
+const TOWN_HOUSES_MAX = 12;
+/** TOWN-1: minimum Chebyshev distance between town centres and any industry tile. */
+const TOWN_INDUSTRY_SEP = 6;
+/** TOWN-1: minimum Chebyshev distance between two town centres. */
+const TOWN_TOWN_SEP = 10;
+/** TOWN-1: occupancy sentinel for town tiles (distinct from industry indices ≥ 0). */
+export const TOWN_OCC = -2;
+
+function placeTowns(
+  terrain: Uint8Array, occ: Int16Array, industries: Industry[], rng: () => number,
+): Town[] {
+  const towns: Town[] = [];
+
+  const tileFree = (tx: number, ty: number) => {
+    if (!inBounds(tx, ty)) return false;
+    if (terrain[idx(tx, ty)] === WATER) return false;
+    if (occ[idx(tx, ty)] !== -1) return false;   // occupied by an industry or another town house
+    return true;
+  };
+
+  /** Chebyshev distance from (tx,ty) to the nearest tile of any industry. */
+  const industrySep = (tx: number, ty: number) => {
+    let best = Infinity;
+    for (const ind of industries) {
+      // distance from point to rect [ind.tx, ind.tx+w) × [ind.ty, ind.ty+h)
+      const dx = Math.max(ind.tx - tx, 0, tx - (ind.tx + ind.w - 1));
+      const dy = Math.max(ind.ty - ty, 0, ty - (ind.ty + ind.h - 1));
+      best = Math.min(best, Math.max(dx, dy));
+    }
+    return best;
+  };
+
+  const townSep = (tx: number, ty: number) => {
+    let best = Infinity;
+    for (const t of towns) best = Math.min(best, Math.max(Math.abs(t.tx - tx), Math.abs(t.ty - ty)));
+    return best;
+  };
+
+  /**
+   * TOWN-1: reachability check. With the proposed town tiles marked as
+   * impassable, every industry must still be land-reachable from every other.
+   * Cheap 4-connected flood from the first non-water, non-blocked tile.
+   */
+  const allIndustriesReachable = (blocked: Set<number>) => {
+    let start = -1;
+    for (const ind of industries) {
+      if (start === -1) start = idx(ind.tx, ind.ty);
+    }
+    if (start === -1) return true;
+    if (blocked.has(start)) return false;
+    const seen = new Uint8Array(MAP_W * MAP_H);
+    const stack = [start];
+    seen[start] = 1;
+    while (stack.length) {
+      const cur = stack.pop()!;
+      const x = cur % MAP_W, y = (cur / MAP_W) | 0;
+      for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]] as const) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+        const ni = ny * MAP_W + nx;
+        if (seen[ni]) continue;
+        if (terrain[ni] === WATER) continue;
+        if (blocked.has(ni)) continue;
+        seen[ni] = 1;
+        stack.push(ni);
+      }
+    }
+    for (const ind of industries) {
+      for (let x = ind.tx; x < ind.tx + ind.w; x++) {
+        for (let y = ind.ty; y < ind.ty + ind.h; y++) {
+          if (!seen[idx(x, y)]) return false;
+        }
+      }
+    }
+    return true;
+  };
+
+  for (let t = 0; t < TOWN_COUNT; t++) {
+    let placed = false;
+    // try candidate centres at relaxing separation
+    for (const sep of [TOWN_TOWN_SEP, 6, 4, 2]) {
+      for (let attempt = 0; attempt < 120 && !placed; attempt++) {
+        const cx = 4 + Math.floor(rng() * (MAP_W - 8));
+        const cy = 4 + Math.floor(rng() * (MAP_H - 8));
+        if (!tileFree(cx, cy)) continue;
+        if (industrySep(cx, cy) < TOWN_INDUSTRY_SEP) continue;
+        if (sep > 0 && townSep(cx, cy) < sep) continue;
+
+        // Build a cluster of houses around (cx, cy) by BFS growth.
+        const nHouses = TOWN_HOUSES_MIN + Math.floor(rng() * (TOWN_HOUSES_MAX - TOWN_HOUSES_MIN + 1));
+        const houses: [number, number][] = [[cx, cy]];
+        const houseSet = new Set<number>([idx(cx, cy)]);
+        let frontier: [number, number][] = [[cx, cy]];
+        while (houses.length < nHouses && frontier.length) {
+          // shuffle frontier so growth isn't biased to one direction
+          for (let i = frontier.length - 1; i > 0; i--) {
+            const j = Math.floor(rng() * (i + 1));
+            [frontier[i], frontier[j]] = [frontier[j], frontier[i]];
+          }
+          const next: [number, number][] = [];
+          for (const [fx, fy] of frontier) {
+            if (houses.length >= nHouses) break;
+            const dirs: [number, number][] = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+            // shuffle directions
+            for (let i = dirs.length - 1; i > 0; i--) {
+              const j = Math.floor(rng() * (i + 1));
+              [dirs[i], dirs[j]] = [dirs[j], dirs[i]];
+            }
+            for (const [dx, dy] of dirs) {
+              const nx = fx + dx, ny = fy + dy;
+              if (!tileFree(nx, ny)) continue;
+              if (houseSet.has(idx(nx, ny))) continue;
+              if (industrySep(nx, ny) < TOWN_INDUSTRY_SEP) continue;
+              houses.push([nx, ny]);
+              houseSet.add(idx(nx, ny));
+              next.push([nx, ny]);
+              if (houses.length >= nHouses) break;
+            }
+          }
+          frontier = next;
+        }
+        if (houses.length < TOWN_HOUSES_MIN) continue;
+
+        // Reachability check: town tiles must not strand any industry.
+        const blocked = new Set<number>();
+        for (let i = 0; i < MAP_W * MAP_H; i++) {
+          if (occ[i] !== -1) blocked.add(i);   // already-occupied industry tiles
+        }
+        for (const [hx, hy] of houses) blocked.add(idx(hx, hy));
+        if (!allIndustriesReachable(blocked)) continue;
+
+        // Commit: mark tiles with TOWN_OCC so later towns/industries avoid them.
+        for (const [hx, hy] of houses) occ[idx(hx, hy)] = TOWN_OCC;
+        towns.push({ id: towns.length, tx: cx, ty: cy, houses });
+        placed = true;
+      }
+      if (placed) break;
+    }
+  }
+  return towns;
+}
+
 /**
  * Generate a deterministic 48×48 iso grid. Same seed → byte-identical
  * `terrain`, `occupancy` and `industries` across contexts (T1 determinism).
@@ -203,7 +358,11 @@ export function generateMap(seed: number): Grid {
   const rng = mulberry32(s);
   const terrain = makeTerrain(rng);
   const { list, occ } = placeIndustries(terrain, rng);
-  return { w: MAP_W, h: MAP_H, terrain, industries: list, occupancy: occ, seed: s };
+  // TOWN-1: towns are placed AFTER industries (sequencing), using the same
+  // seeded RNG so the map stays deterministic. Town tiles are stamped with
+  // TOWN_OCC in the occupancy array so roads/other structures route around.
+  const towns = placeTowns(terrain, occ, list, rng);
+  return { w: MAP_W, h: MAP_H, terrain, industries: list, towns, occupancy: occ, seed: s };
 }
 
 /**

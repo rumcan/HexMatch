@@ -43,12 +43,22 @@ export const CARGO: Record<Cargo, {
 // (tools/iso-atlas.cells.json) and `validate-manifest.mjs` fails a building
 // whose sprite is dramatically smaller than its footprint, so the art and the
 // reservation cannot drift apart again.
+/** Per-tile sprite data for multi-tile industries (MT-1/MT-2). */
+export interface IndustryTileDef {
+  dx: number;
+  dy: number;
+  ground: number;
+  building?: number;
+}
+
 export interface IndustryDef {
   key: string;
   name: string;
   cargo: Cargo;
   footprint: [number, number];
   output: number;
+  /** MT-1: per-tile sprite layout for multi-tile industries. Single-tile industries leave this undefined. */
+  tiles?: IndustryTileDef[];
 }
 
 export const INDUSTRIES: IndustryDef[] = [
@@ -109,9 +119,23 @@ export const UPGRADE_COST: Partial<Record<Cargo, number>> = { ore: 4 };
 export const VP_TARGET = 12;
 
 // ── Player buildings ───────────────────────────────────────────────────────
-// V1/V2: the Factory is one declared sprite (OpenGFX 2169, a complete works
-// with two chimneys) whose base covers a single diamond, so its placement
-// footprint — the highlight the player sees while placing, and the tiles the
-// building visibly occupies — is 1×1. The atlas cells for `factory_*` carry
-// the same footprint; U2's 3×3 preview was the old multi-tile factory's.
-export const FACTORY_FOOTPRINT: [number, number] = [1, 1];
+// MT-1/MT-2: the Factory is a 2×2 multi-tile building composed of four
+// OpenGFX factory tiles (2146–2152). Each footprint tile draws its own
+// ground sprite plus (on three of the four) a building piece at the
+// declared xrel/yrel, and each tile sorts individually in the depth pass
+// so roads pass in front of the front tiles and behind the back tiles.
+export const FACTORY_FOOTPRINT: [number, number] = [2, 2];
+
+/**
+ * MT-2: per-tile sprite layout for the 2×2 factory, transcribed from
+ * OpenTTD's `_tile_table_factory_0` (build_industry.h) and the declared
+ * sprite rects in base-2011-industries.pnml. The 2×2 sub-unit of the
+ * OpenTTD layout (tile indices 39–42) maps to ground tiles 2146–2149
+ * and building pieces 2150–2152 (the 4th tile has no building piece).
+ */
+export const FACTORY_TILES = [
+  { dx: 0, dy: 0, ground: 2146, building: 2151 },
+  { dx: 1, dy: 0, ground: 2147, building: 2150 },
+  { dx: 0, dy: 1, ground: 2148 },
+  { dx: 1, dy: 1, ground: 2149, building: 2152 },
+] as const;

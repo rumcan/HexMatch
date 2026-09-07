@@ -257,11 +257,39 @@ export function startIsoGame(root: HTMLElement) {
   const syncWorld = () => {
     world.roadBits = drawBits(track, "road");
     world.railBits = drawBits(track, "rail");
+    // MT-1: emit multi-tile factory draw items (4 tiles per factory)
+    const factoryItems = eco.factories.flatMap((f) => {
+      const color = f.owner === "you" ? "blue" : "red";
+      return [0, 1, 2, 3].map((i) => ({
+        sprite: `factory_mt_${color}_${i}`,
+        tx: f.tx + (i % 2),
+        ty: f.ty + Math.floor(i / 2),
+        ref: { kind: "factory", owner: f.owner },
+      }));
+    });
+    // TOWN-1: emit town house and center draw items
+    const townItems = grid.towns.flatMap((t) => {
+      const items: { sprite: string; tx: number; ty: number; ref: unknown }[] = [];
+      // Town center marker at the center tile
+      items.push({
+        sprite: "town_center",
+        tx: t.tx, ty: t.ty,
+        ref: { kind: "town", id: t.id },
+      });
+      // Houses at all non-center tiles
+      for (const [hx, hy] of t.houses) {
+        if (hx === t.tx && hy === t.ty) continue; // skip center, already drawn
+        items.push({
+          sprite: "town_house",
+          tx: hx, ty: hy,
+          ref: { kind: "town", id: t.id },
+        });
+      }
+      return items;
+    });
     world.extra = [
-      ...eco.factories.map((f) => ({
-        sprite: f.owner === "you" ? "factory_blue" : "factory_red",
-        tx: f.tx, ty: f.ty, ref: { kind: "factory", owner: f.owner },
-      })),
+      ...townItems,
+      ...factoryItems,
       ...eco.harvesters.map((h) => ({
         sprite: h.owner === "you" ? "depot_blue" : "depot_red",
         tx: h.tx, ty: h.ty, ref: { kind: "harvester", id: h.id, owner: h.owner },
@@ -301,7 +329,15 @@ export function startIsoGame(root: HTMLElement) {
 
   // ── actions ────────────────────────────────────────────────────────────
   function placeFactory(tx: number, ty: number): boolean {
-    if (!canBuildOn(grid, "road", tx, ty)) { toast("Can't build there.", "bad"); return false; }
+    // MT-1: check all tiles of the 2×2 factory footprint
+    for (let dy = 0; dy < FACTORY_FOOTPRINT[1]; dy++) {
+      for (let dx = 0; dx < FACTORY_FOOTPRINT[0]; dx++) {
+        if (!canBuildOn(grid, "road", tx + dx, ty + dy)) {
+          toast("Can't build there.", "bad");
+          return false;
+        }
+      }
+    }
     // W2: the factory carries its builder's track-owner id (player index + 1).
     eco.factories.push({ owner: "you", ownerId: me.i + 1, tx, ty });
     // Give the rival a factory a good distance away, on legal ground it can
