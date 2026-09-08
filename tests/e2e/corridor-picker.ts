@@ -205,6 +205,7 @@ export function findIsoCorridor(opts?: CorridorOptions): Corridor {
     if (tx < 0 || ty < 0 || tx >= MAP_W || ty >= MAP_H) return "out-of-bounds";
     const i = ty * MAP_W + tx;
     if (grid.terrain[i] === 1 /* WATER */) return "water";
+    if (grid.occupancy[i] === -2) return "town";
     if (grid.occupancy[i] >= 0) return "occupied";
     return null;
   });
