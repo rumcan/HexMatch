@@ -29,7 +29,7 @@ import {
 import { industriesInCatchment } from "../../src/iso/economy";
 import {
   findIsoCorridor, isoTileOcclusion, isoTileClickPoint, isoClickableTile,
-  exposedDragTiles, AIM_CANDIDATES, type Corridor,
+  classifyDragTiles, AIM_CANDIDATES, type Corridor,
 } from "../../tests/e2e/corridor-picker";
 
 const VIEW_W = 1280, VIEW_H = 720;   // devices["Desktop Chrome"] at dpr 1
@@ -578,67 +578,90 @@ describe("E14 a tile is clicked wherever the game will actually take the click",
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// PP-13 — the road drag must not aim at a tile the Factory itself covers.
+// PP-13 — the road drag must not aim at a tile the placed Factory covers.
 //
 // The corridor's factory end is a column tile, and the building placed there is
-// drawn over its whole footprint — so the column tiles underneath it are not
-// clickable: `isoClickableTile` reports every aim on them picking `factory`,
-// and rightly refuses to move the click somewhere else to make the test pass.
-// The spec used to skip a hard-coded 2×2 window around the anchor; PP-12
-// doubled every footprint to 3×3, so a WESTWARD corridor (seed 79: factory at
-// (28,135), column running east to (33,135)) left tile (30,135) = fx+2 in the
-// pointer stream, and the e2e suite failed in CI on exactly that tile.
-//
-// These run in the browser-free `test` job, so the shape that broke the browser
-// suite is pinned where it is cheap to catch. The footprint is read from the
-// game's own `planFactoryPlacement` — the same twin `window.__iso.placementPlan`
-// serves — never assumed to be 3×3.
+// drawn over the tiles around it — so those column tiles are not clickable:
+// `isoClickableTile` reports every aim on them picking `factory`, and rightly
+// refuses to move the click somewhere else to make the test pass. The spec used
+// to skip a hard-coded 2×2 window around the anchor. Seed 79 (factory at
+// (28,135), column running east to (33,135)) broke that in CI on (30,135); the
+// 3×3 footprint-shaped window that replaced it broke on (31,135), one tile
+// PAST the footprint — the sprite's reach is decided by the atlas's stage-2
+// alpha, which no headless run has. So the decision now belongs to the game's
+// own pick, and what is pinned here is the RULE, against an injected probe:
+// only tiles the pick refuses are skipped, in drag order, ending on the
+// harvester. The browser supplies the probe; the caller asserts the reason.
 // ══════════════════════════════════════════════════════════════════════════
-describe("PP-13 the road drag steps over the Factory's own footprint", () => {
-  it("aims at every exposed corridor tile and at none under the Factory", () => {
+describe("PP-13 the road drag steps over the tiles the Factory covers", () => {
+  /** The shape CI actually reported: the Factory covers fx+1, fx+2 AND fx+3. */
+  const coveredByFactory = (c: Corridor) => {
+    const under = new Set([1, 2, 3].map((k) => `${c.fx + k},${c.fy}`));
+    return (tx: number, ty: number) =>
+      under.has(`${tx},${ty}`) ? "picks (28,135) via `factory`" : null;
+  };
+
+  it("skips exactly the tiles the pick refuses, in drag order", async () => {
     for (const [seed, wheelOut] of [[79, 0], [79, 1], [106, 1]] as const) {
-      const { grid } = scene(seed, wheelOut);
+      scene(seed, wheelOut);
       const c = findIsoCorridor();
       expect(c, `seed ${seed} at wheelOut ${wheelOut} found no corridor`).not.toBeNull();
-      const plan = planFactoryPlacement(grid, c!.fx, c!.fy, { requireTown: true });
-      expect(plan.valid, "the picker already guaranteed this endpoint").toBe(true);
 
-      const under = new Set(plan.footprint.map((t) => `${t.tx},${t.ty}`));
-      const aimed = exposedDragTiles(c!, plan.footprint);
-      const aimedKeys = new Set(aimed.map((t) => `${t.tx},${t.ty}`));
+      const probe = coveredByFactory(c!);
+      const { drag, refused } = await classifyDragTiles(c!, probe);
 
-      for (const t of aimed) {
-        expect(under.has(`${t.tx},${t.ty}`),
-          `seed ${seed}: aimed at (${t.tx},${t.ty}) which the Factory covers`).toBe(false);
-      }
-      // …and nothing outside the footprint is skipped, so the drag still lays
-      // the whole corridor.
+      // every skipped tile is one the probe refused, and vice versa
+      const refusedKeys = new Set(refused.map((r) => `${r.tile.tx},${r.tile.ty}`));
+      const dragKeys = new Set(drag.map((t) => `${t.tx},${t.ty}`));
       for (const t of c!.col) {
-        if (t.tx === c!.fx && t.ty === c!.fy) continue;   // the anchor tile
+        if (t.tx === c!.fx && t.ty === c!.fy) continue;      // the anchor tile
         const k = `${t.tx},${t.ty}`;
-        expect(aimedKeys.has(k), `seed ${seed}: (${t.tx},${t.ty}) skipped but exposed`)
-          .toBe(!under.has(k));
+        expect(dragKeys.has(k), `seed ${seed}: (${t.tx},${t.ty}) misclassified`)
+          .toBe(probe(t.tx, t.ty) === null);
+        expect(dragKeys.has(k) || refusedKeys.has(k),
+          `seed ${seed}: (${t.tx},${t.ty}) vanished from the drag`).toBe(true);
       }
-      // the last tile aimed at is the harvester, so the drag actually completes
-      const last = aimed[aimed.length - 1];
+      // the anchor tile is never re-aimed at — the pointer is already down there
+      expect(dragKeys.has(`${c!.fx},${c!.fy}`)).toBe(false);
+      // order is factory → harvester, and the drag still COMPLETES
+      expect(drag.map((t) => `${t.tx},${t.ty}`))
+        .toEqual([...c!.col].reverse().slice(1)
+          .filter((t) => probe(t.tx, t.ty) === null)
+          .map((t) => `${t.tx},${t.ty}`));
+      const last = drag[drag.length - 1];
       expect([last.tx, last.ty], `seed ${seed}: drag never reaches the harvester`)
         .toEqual([c!.hx, c!.hy]);
+      // the refusal reason travels with the tile, so the caller can assert on it
+      for (const r of refused) expect(r.why).toMatch(/via `factory`/);
     }
   });
 
-  it("regression: seed 79 runs west, so fx+2 sits under the Factory", () => {
-    const { grid } = scene(79, 0);
+  it("regression: seed 79 runs west, and the Factory covers fx+1..fx+3", async () => {
+    scene(79, 0);
     const c = findIsoCorridor()!;
     expect(c.dir).toBe("NW");
     expect([c.fx, c.fy]).toEqual([28, 135]);
-    const plan = planFactoryPlacement(grid, c.fx, c.fy, { requireTown: true });
-    // bigger than the 2×2 window the spec used to assume — read, not hard-coded
-    expect(plan.footprint.length).toBeGreaterThan(4);
-    expect(plan.footprint.some((t) => t.tx === c.fx + 2 && t.ty === c.fy),
-      "the footprint must reach fx+2 for this to be the shape that broke").toBe(true);
+    expect(c.col.map((t) => `${t.tx},${t.ty}`))
+      .toEqual(["33,135", "32,135", "31,135", "30,135", "29,135", "28,135"]);
 
-    const aimed = new Set(exposedDragTiles(c, plan.footprint).map((t) => `${t.tx},${t.ty}`));
-    for (const t of plan.footprint) expect(aimed.has(`${t.tx},${t.ty}`)).toBe(false);
-    expect(aimed.has(`${c.fx + 2},${c.fy}`), "(30,135) must not be aimed at").toBe(false);
+    const { drag, refused } = await classifyDragTiles(c, coveredByFactory(c));
+    // the two tiles the old 2×2 window let through, plus the one the 3×3
+    // footprint-shaped window let through — all three are gone now
+    const aimed = new Set(drag.map((t) => `${t.tx},${t.ty}`));
+    for (const k of ["29,135", "30,135", "31,135"]) {
+      expect(aimed.has(k), `${k} must not be aimed at`).toBe(false);
+    }
+    expect(refused.map((r) => `${r.tile.tx},${r.tile.ty}`).sort())
+      .toEqual(["29,135", "30,135", "31,135"]);
+    // …and the drag still runs the rest of the corridor to the harvester
+    expect(drag.map((t) => `${t.tx},${t.ty}`)).toEqual(["32,135", "33,135"]);
+  });
+
+  it("skips nothing when the pick refuses nothing", async () => {
+    scene(79, 0);
+    const c = findIsoCorridor()!;
+    const { drag, refused } = await classifyDragTiles(c, () => null);
+    expect(refused).toEqual([]);
+    expect(drag).toHaveLength(c.tiles - 1);   // the column minus the anchor
   });
 });

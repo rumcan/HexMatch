@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { BOARD_H, BOARD_W, MAP_W, MAP_H } from "../../src/game/config";
 import {
-  findIsoCorridor, isoTileOcclusion, isoClickableTile, exposedDragTiles,
+  findIsoCorridor, isoTileOcclusion, isoClickableTile, classifyDragTiles,
   type Corridor,
 } from "./corridor-picker";
 
@@ -314,23 +314,6 @@ test.describe("iso game boots on the default route", () => {
     const factory = await at(c.fx, c.fy);
     const harvester = await at(c.hx, c.hy);
 
-    // The Factory's sprite is drawn over its whole footprint, so the corridor
-    // tiles underneath it are not clickable — the drag steps over them (see
-    // `exposedDragTiles`). Read the footprint from the game rather than
-    // assuming a size: PP-12 doubled every footprint once already, and a
-    // hard-coded window is what let this suite aim at a covered tile.
-    const footprint = await page.evaluate(
-      (t: [number, number]) => (window as unknown as {
-        __iso: {
-          placementPlan(kind: "factory", tx: number, ty: number):
-            { footprint: { tx: number; ty: number }[] };
-        };
-      }).__iso.placementPlan("factory", t[0], t[1]).footprint,
-      [c.fx, c.fy] as [number, number],
-    );
-    expect(footprint.length, "the Factory must report its own footprint")
-      .toBeGreaterThan(0);
-
     // A2: every tile a pointer event is about to land on is reachable —
     // re-checked here, independently of the filter that chose them, because a
     // corridor under a panel is exactly the failure this suite exists to catch.
@@ -360,6 +343,39 @@ test.describe("iso game boots on the default route", () => {
     await expect.poll(() => strongGlowNear(page, 2, c.fx + 3, c.fy + 3), { timeout: 5000 }).toBe(0);
     await page.mouse.click(factory.x, factory.y);
     await page.waitForFunction(() => (window as any).__iso.phase === "setup-harvester");
+    // The Factory now covers part of the corridor, and a covered tile is not
+    // clickable — our own building, not a picking bug. Ask the game's own pick
+    // which tiles those are: the atlas's stage-2 alpha decides it, and seed 79
+    // showed a footprint-shaped window is wrong (the sprite reaches one tile
+    // past the 3×3). Then require the Factory to be the ONLY reason any
+    // corridor tile is skipped, so a tile eaten by a map sprite or by HUD
+    // chrome still fails here instead of being quietly stepped over.
+    const { drag: dragTiles, refused } = await classifyDragTiles(c, async (tx, ty) => {
+      try {
+        await clickPointFor(page, tx, ty, aim);
+        return null;
+      } catch (err) {
+        return String(err instanceof Error ? err.message : err);
+      }
+    });
+    for (const r of refused) {
+      expect(
+        r.why,
+        `corridor tile (${r.tile.tx},${r.tile.ty}) is unclickable for a reason `
+        + `that is not the Factory we just placed`,
+      ).toMatch(/via `factory`/);
+    }
+    expect(dragTiles.length, "the drag has no exposed tile left to lay")
+      .toBeGreaterThan(0);
+    const dragEnd = dragTiles[dragTiles.length - 1];
+    expect([dragEnd.tx, dragEnd.ty], "the drag no longer ends on the harvester")
+      .toEqual([c.hx, c.hy]);
+    test.info().annotations.push({
+      type: "drag-stepped-over",
+      description: refused.length
+        ? refused.map((r) => `(${r.tile.tx},${r.tile.ty})`).join(" ")
+        : "none",
+    });
     expect((await page.evaluate(() => (window as any).__iso.factories.length))).toBeGreaterThanOrEqual(1);
     // U2: the guide banner must re-word to the Depot once the Factory is
     // placed (the banner is the user-facing cue; the footprint itself is
@@ -403,11 +419,10 @@ test.describe("iso game boots on the default route", () => {
     const dragStart = await at(c.fx, c.fy);
     await page.mouse.move(dragStart.x, dragStart.y);
     await page.mouse.down();
-    // Interior factory pieces all select the same factory anchor in track
-    // mode, so the pointer steps straight over them to the first exposed
-    // corridor tile. `previewDrag` fills the L-path in between, so the road
-    // still lands on every one of the corridor's `n` tiles (asserted below).
-    for (const t of exposedDragTiles(c, footprint)) {
+    // The pointer only visits the tiles the pick says are clickable; the road
+    // still lands on all `n` of them because `previewDrag` fills the L-path in
+    // between (asserted below).
+    for (const t of dragTiles) {
       const p = t.tx === c.hx && t.ty === c.hy ? harvester : await at(t.tx, t.ty);
       await page.mouse.move(p.x, p.y);
     }
