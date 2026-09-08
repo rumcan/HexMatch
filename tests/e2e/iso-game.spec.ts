@@ -160,7 +160,9 @@ test.describe("iso layout on every viewport", () => {
     const overflow = await page.evaluate(
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(overflow).toBeLessThanOrEqual(1);
-    await expect(root.locator("[data-tool]")).toHaveCount(4);
+    // PP-06 added the "plant" tool (an additional processing plant), so the
+    // build chrome is five buttons: road, rail, harvester, plant, demolish.
+    await expect(root.locator("[data-tool]")).toHaveCount(5);
     await expect(root.locator("[data-act=recenter]")).toHaveCount(1);
     const scene = await page.evaluate(() => {
       const h = (window as unknown as { __iso: {
@@ -213,10 +215,11 @@ test.describe("iso game boots on the default route", () => {
       cs.map((c) => ({ w: (c as HTMLCanvasElement).width, h: (c as HTMLCanvasElement).height })));
     for (const s of sizes) { expect(s.w).toBeGreaterThan(0); expect(s.h).toBeGreaterThan(0); }
 
-    // tool chrome with all four tools + recentre
+    // tool chrome with all five tools (PP-06's plant between harvester and
+    // demolish) + recentre
     const tools = await root.locator("[data-tool]").evaluateAll((bs) =>
       bs.map((b) => (b as HTMLElement).dataset.tool));
-    expect(tools).toEqual(["road", "rail", "harvester", "demolish"]);
+    expect(tools).toEqual(["road", "rail", "harvester", "plant", "demolish"]);
     await expect(root.locator("[data-act=recenter]")).toHaveCount(1);
 
     // J1: the match-3 quarry is mounted NEXT TO the map, not instead of it,
