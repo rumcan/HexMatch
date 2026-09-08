@@ -257,7 +257,9 @@ describe("Y3/Y5/Y6 declaration invariants", () => {
 
   it("Y6: every atlas sprite resolves to declared OpenGFX ids (no compose)", () => {
     for (const s of cells.sprites) {
-      if (s.generator === "highlight" || s.generator === "highlight_soft") continue; // procedural UI glow
+      // Procedural placement glows (highlight / highlight_soft / the PP-03
+      // highlight_bad + node_mark cells) carry no OpenGFX ids by design.
+      if (s.generator) continue;
       const ids = referencedIds(s);
       expect(ids.length, `cell ${s.name} references no declared sprite`).toBeGreaterThan(0);
       for (const id of ids) {

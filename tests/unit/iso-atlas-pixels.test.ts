@@ -4,10 +4,16 @@ import { toOpenttdRoadBits } from "../../src/iso/track";
 import { parsePnml } from "../../tools/parse-pnml.mjs";
 
 const manifest = JSON.parse(readFileSync("assets/iso-atlas/manifest.json", "utf8")) as {
-  sprites: Record<string, { x: number; y: number; w: number; h: number; frames?: number }>;
+  sprites: Record<string, {
+    x: number; y: number; w: number; h: number;
+    frames?: number; footprint?: [number, number];
+  }>;
 };
 const cells = JSON.parse(readFileSync("tools/iso-atlas.cells.json", "utf8")) as {
-  sprites: { name: string; namePrefix?: string; trackset?: { mode: string; base?: number; table?: number[]; ground?: number; pieces?: { sprite: number; dirs: number[] }[] } }[];
+  sprites: {
+    name: string; namePrefix?: string; generator?: string; footprint?: [number, number];
+    trackset?: { mode: string; base?: number; table?: number[]; ground?: number; pieces?: { sprite: number; dirs: number[] }[] };
+  }[];
 };
 
 /** OpenTTD's flat road selection table, as declared in the cells file. */
@@ -271,6 +277,46 @@ describe("G1/G2 atlas pixels", () => {
     // At the NE arm midpoint both cells paint, but the soft catchment is
     // deliberately less prominent than the solid placement tile.
     expect(alphaAt("highlight")).toBeGreaterThan(alphaAt("highlight_soft"));
+  });
+
+  it("PP-03: highlight_bad is a red, hue-distinct twin of the solid placement glow", async () => {
+    const { data, info } = await atlas();
+    const rgb = (name: string, x: number, y: number) => {
+      const s = manifest.sprites[name];
+      const i = ((s.y + y) * info.width + (s.x + x)) * 4;
+      return [data[i], data[i + 1], data[i + 2]] as const;
+    };
+    for (const name of ["highlight_bad", "node_mark"]) {
+      expect(manifest.sprites[name], name).toBeTruthy();
+      expect(manifest.sprites[name].footprint).toEqual([1, 1]);
+    }
+    // Interior diamond point, off the arm lines: the valid fill is yellow
+    // (green channel leads), the invalid fill is red (green collapses).
+    const [, vg, vb] = rgb("highlight", 24, 22);
+    const [ir, ig] = rgb("highlight_bad", 24, 22);
+    expect(vg).toBeGreaterThan(180);
+    expect(ig).toBeLessThan(120);
+    expect(ir).toBeGreaterThan(ig);
+    expect(vb).toBeLessThan(vg);
+    // the bad cell shares the highlight geometry (diamond edge present)
+    const [er, eg, eb] = rgb("highlight_bad", 32, 0);
+    expect(er > 150 && eg < 90 && eb < 90 && er > eg).toBe(true);
+  });
+
+  it("PP-03: node_mark is a no-fill diamond outline — it tags, never reads as a build tile", async () => {
+    const { data, info } = await atlas();
+    const at = (name: string, x: number, y: number) => {
+      const s = manifest.sprites[name];
+      const i = ((s.y + y) * info.width + (s.x + x)) * 4;
+      return [data[i], data[i + 1], data[i + 2], data[i + 3]] as const;
+    };
+    // centre and inner area: fully transparent (no fill, building stays readable)
+    expect(at("node_mark", 32, 16)[3]).toBe(0);
+    expect(at("node_mark", 24, 22)[3]).toBe(0);
+    // the diamond boundary is a bright, high-alpha outline
+    const edge = at("node_mark", 32, 0);
+    expect(edge[3]).toBeGreaterThan(200);
+    expect(edge[0] > 230 && edge[1] > 230 && edge[2] > 230).toBe(true);
   });
 
   it("G4: depot buildings stay small — at most 40px of building above the declared ground tile", () => {

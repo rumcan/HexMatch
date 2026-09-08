@@ -111,3 +111,57 @@ describe("tickMarket", () => {
     expect(p.res.wood).toBe(5);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// PP-08 — a market can declare goods it will never trade. The iso game blocks
+// `gold` (reserved for Black Market sabotage); the default stays permissive so
+// legacy callers are unaffected.
+// ══════════════════════════════════════════════════════════════════════════
+describe("blocked goods (PP-08)", () => {
+  it("defaults to trading everything", () => {
+    expect(market.blocked.size).toBe(0);
+  });
+
+  it("refuses a blocked good in offers, both directions, without escrowing", () => {
+    const p = players[0];
+    const goldMarket = createMarket<ResKey>(["gold"]);
+    gainRes(p, "gold", 10); gainRes(p, "wood", 10); gainRes(p, "ore", 10);
+
+    expect(postOffer(p, "gold", 2, "ore", 1, goldMarket)).toBe(false);  // giving gold
+    expect(postOffer(p, "wood", 1, "gold", 2, goldMarket)).toBe(false); // wanting gold
+    expect(goldMarket.offers.length).toBe(0);
+    expect(p.res.gold).toBe(10);                   // nothing left the purse
+    expect(p.res.wood).toBe(10);
+
+    // the default market still trades the same goods (opt-in, not global)
+    expect(postOffer(p, "gold", 2, "ore", 1, market)).toBe(true);
+  });
+
+  it("refuses a blocked good at the bank, both directions", () => {
+    const p = players[0];
+    const goldMarket = createMarket<ResKey>(["gold"]);
+    gainRes(p, "gold", 8); gainRes(p, "ore", 4);
+
+    expect(bankTrade(p, "gold", "ore", BANK_RATE, goldMarket.blocked)).toBe(false);
+    expect(bankTrade(p, "ore", "gold", BANK_RATE, goldMarket.blocked)).toBe(false);
+    expect(p.res.gold).toBe(8);
+    expect(p.res.ore).toBe(4);
+    // a tradeable pair still converts at the same market
+    expect(bankTrade(p, "ore", "wood", BANK_RATE, goldMarket.blocked)).toBe(true);
+  });
+
+  it("acceptOffer refuses a blocked offer even when it is already on the board", () => {
+    const [p, rival] = players;
+    const goldMarket = createMarket<ResKey>(["gold"]);
+    gainRes(p, "gold", 5); gainRes(rival, "wood", 5);
+    // inject past postOffer to prove the TAKER side enforces the rule — this
+    // is the path the rival's answering clock (and a rogue client) drives.
+    goldMarket.offers.unshift({
+      id: 1, from: 0, give: "gold", giveN: 1, want: "wood", wantN: 1, born: 0,
+    });
+    expect(acceptOffer(rival, 1, players, goldMarket)).toBe(false);
+    expect(rival.res.gold).toBe(0);                // gold never moved
+    expect(rival.res.wood).toBe(5);                // nothing was paid
+    expect(goldMarket.offers.length).toBe(1);      // the offer just sits there
+  });
+});

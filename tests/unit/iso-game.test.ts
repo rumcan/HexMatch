@@ -73,6 +73,12 @@ interface IsoHook {
   econTick: (now?: number) => void;
   tick: (now?: number) => void;
   finishSetup: () => void;
+  /** PP-03: the twin of the placement overlay's plan for a hover tile. */
+  placementPlan: (
+    kind: "factory" | "depot", tx: number, ty: number,
+  ) => import("../../src/iso/placement").PlacementPlan;
+  /** PP-03: the exact overlay items painted for a placement hover at (tx,ty). */
+  overlayItemsFor: (tx: number, ty: number) => { sprite: string; tx: number; ty: number }[];
 }
 
 const hook = () => (window as unknown as { __iso: IsoHook }).__iso;
@@ -127,7 +133,8 @@ describe("E11 the game boots", () => {
     expect(root.querySelectorAll("canvas")).toHaveLength(3);
     const tools = [...root.querySelectorAll("[data-tool]")].map(
       (b) => (b as HTMLElement).dataset.tool);
-    expect(tools).toEqual(["road", "rail", "harvester", "demolish"]);
+    // PP-06 added the "plant" tool (an additional processing plant).
+    expect(tools).toEqual(["road", "rail", "harvester", "plant", "demolish"]);
   });
 
   it("starts in the factory-placement phase with a real map", async () => {
@@ -313,8 +320,10 @@ describe("E11 a full round is playable", () => {
 
     const f = { owner: "ai", ownerId: 2, tx: spot![0], ty: spot![1] };
     h.eco.factories.push(f);
+    // PP-05: Oil joins the unlimited purse — the turn ends at a Depot, and a
+    // paid Depot costs Oil (`DEPOT_COST` in construction.ts).
     const out = aiBuildStep(
-      h.eco, f, { stock: {}, purse: { stone: 9999, ore: 9999 } }, 99,
+      h.eco, f, { stock: {}, purse: { stone: 9999, ore: 9999, oil: 9999 } }, 99,
     );
     expect(out).toBeTruthy();
     expect(out!.built.length).toBeGreaterThan(0);
@@ -410,7 +419,8 @@ describe("J1 the quarry is mounted in the iso app", () => {
     await boot();
     const tools = [...root.querySelectorAll("[data-tool]")].map(
       (b) => (b as HTMLElement).dataset.tool);
-    expect(tools).toEqual(["road", "rail", "harvester", "demolish"]);
+    // PP-06 added the "plant" tool (an additional processing plant).
+    expect(tools).toEqual(["road", "rail", "harvester", "plant", "demolish"]);
     const panels = [...root.querySelectorAll("[data-panel]")].map(
       (b) => (b as HTMLElement).dataset.panel);
     expect(panels).toEqual(["quarry", "trade"]);
@@ -585,7 +595,7 @@ describe("V5 gems draw the restored sprite art", () => {
   it("the build buttons carry per-tool banner art classes", async () => {
     await boot();
     const tools = [...root.querySelectorAll("[data-tool]")] as HTMLElement[];
-    expect(tools).toHaveLength(4);
+    expect(tools).toHaveLength(5);
     for (const b of tools) expect(b.classList.contains(`bg-${b.dataset.tool}`)).toBe(true);
   });
 });
@@ -670,6 +680,14 @@ describe("W3 the rival actually plays (headless)", () => {
     expect(rivalTiles()).toBe(0);
     expect(h.vp.ai).toBe(0);
 
+    // PP-05: the rival's FIRST Depot rides its free allowance, so an opening
+    // turn needs no Oil — but every Depot after it pays `DEPOT_COST`, and this
+    // rival has never matched an Oil gem. Give it Oil the way a connected Oil
+    // Rig would, or the three later turns are (correctly) refused and the
+    // "it SPENT stone past its free allowance" assertion has nothing to spend.
+    // `res` IS the rival's purse object (market.ts builds over the same record).
+    rival.res.oil = 5;
+
     // Four build ticks = 36s of game time, still within the one-minute goal.
     const t0 = 1_000_000;
     for (let i = 0; i < 4; i++) h.aiTick(t0 + i * AI_BUILD_MS);
@@ -681,6 +699,9 @@ describe("W3 the rival actually plays (headless)", () => {
     // and it SPENT: the rival started with 12 stone (START_PURSE); builds past
     // the 12-tile free allowance come out of that purse, so the stone falls.
     expect(rival.res.stone).toBeLessThan(12);
+    // PP-05: …and the paid Depots cost Oil — the rival is down from the 5 it
+    // was given, proving the AI pays the same `DEPOT_COST` the player does.
+    expect(rival.res.oil).toBeLessThan(5);
 
     // and it EARNS: the connected mine's trickle lands in its purse each tick
     const ore0 = rival.res.ore;
@@ -916,6 +937,85 @@ describe("TK-008 Blockade buys auto-target the rival (no targeting step)", () =>
   });
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// PP-08 — Gold is reserved for Black Market sabotage.
+//   • the four SABOTAGE actions keep their Gold price, and insufficient Gold
+//     refuses the purchase without touching any other resource;
+//   • Security Forces (defensive, NOT sabotage) are repriced to materials,
+//     so every non-sabotage action completes without Gold;
+//   • the trade composer never offers Gold, and the market refuses it anyway.
+// ══════════════════════════════════════════════════════════════════════════
+describe("PP-08 gold is reserved for Black Market sabotage", () => {
+  it("insufficient gold blocks a sabotage and consumes nothing else", async () => {
+    const h = await boot();
+    h.purse.stone = 12;
+    h.purse.gold = 0;
+    await settle();
+    const harden = root.querySelector('[data-black="harden"]') as HTMLElement;
+    expect(harden.classList.contains("disabled")).toBe(true);
+    harden.click();
+    await settle();
+    expect(h.purse.gold ?? 0).toBe(0);
+    expect(h.purse.stone).toBe(12);             // no material was touched
+    expect((root.querySelector(".toasts") as HTMLElement).textContent ?? "")
+      .toMatch(/needs 5 gold/i);
+  });
+
+  it("sabotage with enough gold deducts ONLY gold", async () => {
+    const h = await boot();
+    h.purse.gold = 5;
+    h.purse.stone = 12;
+    await settle();
+    (root.querySelector('[data-black="harden"]') as HTMLElement).click();
+    await settle();
+    expect(h.purse.gold).toBe(0);
+    expect(h.purse.stone).toBe(12);             // construction stock untouched
+  });
+
+  it("Security Forces are hired with materials — Gold stays in the purse", async () => {
+    const h = await boot();
+    h.purse.gold = 6;             // the OLD price, deliberately affordable
+    h.purse.grain = 2;
+    h.purse.stone = 1;
+    await settle();
+    const sec = root.querySelector('[data-black="security"]') as HTMLElement;
+    expect(sec.classList.contains("disabled")).toBe(false);
+    expect(sec.textContent).toMatch(/2🌾/);      // the cost is shown in materials
+    sec.click();
+    await settle();
+    expect(h.purse.grain).toBe(0);
+    expect(h.purse.stone).toBe(0);
+    expect(h.purse.gold).toBe(6);               // gold was NOT the price
+  });
+
+  it("Security Forces without materials are refused and consume nothing", async () => {
+    const h = await boot();
+    h.purse.gold = 6;
+    h.purse.grain = 1;            // short of the 2 grain the hire needs
+    h.purse.stone = 1;
+    await settle();
+    const sec = root.querySelector('[data-black="security"]') as HTMLElement;
+    expect(sec.classList.contains("disabled")).toBe(true);
+    sec.click();
+    await settle();
+    expect(h.purse.grain).toBe(1);
+    expect(h.purse.stone).toBe(1);
+    expect(h.purse.gold).toBe(6);               // nothing was consumed at all
+  });
+
+  it("the trade composer never offers gold, and the market refuses it anyway", async () => {
+    const h = await boot();
+    (root.querySelector('[data-panel="trade"]') as HTMLElement).click();
+    const panel = root.querySelector("#iso-trade") as HTMLElement;
+    for (const sel of [...panel.querySelectorAll("select")]) {
+      const values = [...(sel as HTMLSelectElement).options].map((o) => o.value);
+      expect(values).not.toContain("gold");
+    }
+    // belt and braces: the market record itself carries the rule
+    expect([...h.market.ctx.blocked]).toEqual(["gold"]);
+  });
+});
+
 describe("W6 the market is visible and trades are logged", () => {
   it("the Market button opens the panel, and a bank trade 4:1 moves the purse", async () => {
     const h = await boot();
@@ -1047,5 +1147,78 @@ describe("PP-01 terminology: Processing Plant + Depot", () => {
     // the snapshot/eco shape the save format depends on
     expect(Array.isArray(h.eco.harvesters)).toBe(true);
     expect(Array.isArray(h.eco.factories)).toBe(true);
+  });
+});
+
+// ── PP-03: the real game paints its placement overlay from the same plan the
+// click handlers validate with — strong footprint, light reach, node marks,
+// red + readable reason for invalid tiles (AC1–AC4 of the ticket). The plans
+// are exercised through the __iso twins so no pixel path is needed here;
+// the sprites themselves are pinned in iso-atlas-pixels.test.ts.
+describe("PP-03 footprint vs reach placement feedback (wired game)", () => {
+  const sorted = (ts: [number, number][]) =>
+    [...ts].map(([x, y]) => [x, y] as [number, number]).sort((a, b) =>
+      a[0] - b[0] || a[1] - b[1]);
+
+  it("factory: legal site paints exactly the 2×2 footprint + soft adjacency band + town marks", async () => {
+    const h = await boot();
+    const spot = findFactorySpot(h.grid)!;
+    const plan = h.placementPlan("factory", spot[0], spot[1]);
+    expect(plan.valid).toBe(true);
+    const items = h.overlayItemsFor(spot[0], spot[1]);
+    const tiles = (sprite: string) => sorted(
+      items.filter((i) => i.sprite === sprite).map((i) => [i.tx, i.ty] as [number, number]));
+    expect(items.some((i) => i.sprite === "highlight_bad")).toBe(false);
+    expect(tiles("highlight")).toEqual(sorted(
+      plan.footprint.filter((t) => t.ok).map((t) => [t.tx, t.ty] as [number, number])));
+    expect(tiles("highlight_soft")).toEqual(sorted(plan.reach));
+    expect(tiles("node_mark")).toEqual(sorted(plan.nodes));
+  });
+
+  it("factory: an occupied footprint tile turns red and carries a readable reason", async () => {
+    const h = await boot();
+    const ind = h.grid.industries.find((i) => i.type === "farm")!;
+    const plan = h.placementPlan("factory", ind.tx, ind.ty);
+    expect(plan.valid).toBe(false);
+    expect(plan.why).toMatch(/industry|overlaps/);
+    const items = h.overlayItemsFor(ind.tx, ind.ty);
+    // every footprint tile that refused the build is painted red
+    const bad = items.filter((i) => i.sprite === "highlight_bad");
+    expect(bad.length).toBeGreaterThan(0);
+    for (const t of plan.footprint.filter((t) => !t.ok)) {
+      expect(bad).toContainEqual({ sprite: "highlight_bad", tx: t.tx, ty: t.ty });
+    }
+  });
+
+  it("depot: 1×1 footprint solid, 4×4 catchment soft, served resource nodes marked", async () => {
+    const h = await boot();
+    const spot = findFactorySpot(h.grid)!;
+    expect(h.placeFactory(spot[0], spot[1])).toBe(true);   // phase → setup-harvester
+    const c = findSouthCorridor(h.grid)!;
+    const plan = h.placementPlan("depot", c.hx, c.hy);
+    expect(plan.valid).toBe(true);
+    expect(plan.served.length).toBeGreaterThan(0);
+    const items = h.overlayItemsFor(c.hx, c.hy);
+    expect(items.filter((i) => i.sprite === "highlight"))
+      .toEqual([{ sprite: "highlight", tx: c.hx, ty: c.hy }]);
+    const soft = sorted(items.filter((i) => i.sprite === "highlight_soft")
+      .map((i) => [i.tx, i.ty] as [number, number]));
+    expect(soft).toEqual(sorted(plan.reach));
+    const marks = sorted(items.filter((i) => i.sprite === "node_mark")
+      .map((i) => [i.tx, i.ty] as [number, number]));
+    expect(marks.length).toBeGreaterThan(0);
+    expect(marks).toEqual(sorted(plan.nodes));
+  });
+
+  it("depot: an occupied/water hover is painted red with the reason readable", async () => {
+    const h = await boot();
+    const spot = findFactorySpot(h.grid)!;
+    expect(h.placeFactory(spot[0], spot[1])).toBe(true);
+    const ind = h.grid.industries[0];
+    const plan = h.placementPlan("depot", ind.tx, ind.ty);
+    expect(plan.valid).toBe(false);
+    expect(plan.why).toMatch(/overlaps an industry/);
+    expect(h.overlayItemsFor(ind.tx, ind.ty))
+      .toContainEqual({ sprite: "highlight_bad", tx: ind.tx, ty: ind.ty });
   });
 });

@@ -23,7 +23,9 @@
 import { Board, type Gem } from "../game/board";
 import { RES_KEYS, UPGRADE_EVERY, type ResKey } from "../game/config";
 import { CARGOES, type Cargo } from "./config";
-import { playerResources, type Components, type EconomyState } from "./economy";
+import {
+  playerResources, industriesInCatchment, type Components, type EconomyState,
+} from "./economy";
 
 // ── the bijection ──────────────────────────────────────────────────────────
 /**
@@ -63,6 +65,23 @@ export function reachableCargo(
 
 /** A cargo delivering at least this much per tick upgrades its token to tier 2. */
 export const TIER2_YIELD = 2;
+
+/**
+ * PP-09: does `owner` have a depot whose 4×4 catchment covers a Gold Mine?
+ *
+ * This is the DROP gate for gold gems, and it is placement-based, not
+ * connection-based: the moment a depot is built beside a gold mine, gold
+ * joins the board's gravity pool and starts dropping like the other resource
+ * types — the road/rail link is not required for the gems to appear. (The
+ * PAYOUT is still connection-gated: only a tokened gold gem credits the
+ * purse, and tokens spawn through the normal reach machinery.)
+ */
+export function hasGoldMineDepot(state: EconomyState, owner: string): boolean {
+  return state.harvesters.some((h) =>
+    h.owner === owner &&
+    industriesInCatchment(state.grid, h).some((i) => i.type === "gold_mine"),
+  );
+}
 
 /**
  * The pool `Board.spawnTokens` wants: one entry per reachable cargo, keyed by
@@ -153,7 +172,15 @@ export function createQuarry(
   };
   board.onChange = () => hooks.onChange?.();
 
+  // PP-09: gold gems drop (join the board's gravity pool) the moment a depot
+  // sits beside a gold mine. Apply the gate up front in case the state is
+  // created with a depot already there, and re-apply it on every refresh.
+  board.setGoldEnabled(hasGoldMineDepot(state, owner));
+
   const refresh = (now: number) => {
+    // PP-09: placement-gated gold drops — recompute alongside the reachable
+    // set, since every build/demolish already funnels through refresh.
+    board.setGoldEnabled(hasGoldMineDepot(state, owner));
     reach = reachableCargo(state, owner, now);
     const pool = tokenPool(reach);
     const gained: Partial<Record<ResKey, number>> = {};
