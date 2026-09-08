@@ -37,9 +37,13 @@
  *                          draws the declared grass ground plus every
  *                          declared overlay piece whose two directions are
  *                          both set in the mask.
- *   generator: "highlight" | "highlight_soft"
- *             The two placement-glow cells are the only procedural sprites
- *             left (they are UI, not OpenGFX art).
+ *   generator: "highlight" | "highlight_soft" | "highlight_bad" | "node_mark"
+ *             The placement-glow cells are the only procedural sprites left
+ *             (they are UI, not OpenGFX art): "highlight" is the solid
+ *             "tile you are about to place" glow, "highlight_soft" the
+ *             fainter reach/catchment tint, "highlight_bad" the red invalid
+ *             twin, and "node_mark" a thin neutral outline that tags the
+ *             tiles a placement qualifies or catches (PP-03).
  *
  * Anchor contract (Y5): `anchor` is never hand-authored. It is DERIVED from
  * the declared offsets: the pixel of the cell that must land on the south
@@ -387,7 +391,9 @@ function pointSegDist(px, py, ax, ay, bx, by) {
 
 /** The two placement-glow cells (UI, not OpenGFX art).
  *  `highlight_soft` is U2's fainter catchment tint (informational); the plain
- *  `highlight` stays the solid "this is the tile you are about to place" glow. */
+ *  `highlight` stays the solid "this is the tile you are about to place" glow.
+ *  `highlight_bad` is PP-03's red twin of the solid glow, so an invalid
+ *  placement reads differently from a legal one at a glance. */
 function makeHighlight(s, soft) {
   const color = [255, 220, 40];
   const px = Buffer.alloc(CELL_W * CELL_H * 4);
@@ -428,6 +434,78 @@ function makeHighlight(s, soft) {
   };
 }
 
+/**
+ * PP-03: the red "invalid placement" twin of the solid highlight. Same
+ * geometry as `makeHighlight(s, false)` — same diamond, arms and fill areas —
+ * but in red, so only the hue (yellow = legal, red = refused) tells the
+ * player apart and every other property (size, shape, placement) is shared.
+ */
+function makeHighlightBad(s) {
+  const color = [255, 70, 54];
+  const edge = [214, 28, 22];
+  const px = Buffer.alloc(CELL_W * CELL_H * 4);
+  const cx = CELL_W / 2, cy = CELL_H / 2;
+  for (const end of Object.values(ARM_ENDS)) {
+    const [ex, ey] = end;
+    for (let y = 0; y < CELL_H; y++) {
+      for (let x = 0; x < CELL_W; x++) {
+        if (pointSegDist(x + 0.5, y + 0.5, cx, cy, ex, ey) < 2) {
+          const i = (y * CELL_W + x) * 4;
+          px[i] = color[0]; px[i + 1] = color[1]; px[i + 2] = color[2]; px[i + 3] = 190;
+        }
+      }
+    }
+  }
+  for (let y = 0; y < CELL_H; y++) {
+    for (let x = 0; x < CELL_W; x++) {
+      const dx = Math.abs(x + 0.5 - cx), dy = Math.abs(y + 0.5 - cy);
+      const edgeDist = Math.max(dx / 32 + dy / 16);
+      if (Math.abs(edgeDist - 1) < 0.05) {
+        const i = (y * CELL_W + x) * 4;
+        px[i] = edge[0]; px[i + 1] = edge[1]; px[i + 2] = edge[2]; px[i + 3] = 255;
+      } else if (edgeDist < 1) {
+        const i = (y * CELL_W + x) * 4;
+        if (px[i + 3] === 0) {
+          px[i] = color[0]; px[i + 1] = color[1]; px[i + 2] = color[2]; px[i + 3] = 84;
+        }
+      }
+    }
+  }
+  return {
+    cells: [{ px, w: CELL_W, h: CELL_H }], cellW: CELL_W, cellH: CELL_H,
+    anchor: derivedAnchor(-(HW - 1), 0), footprint: [1, 1],
+    frames: 1, frameMs: s.frameMs, name: s.name,
+  };
+}
+
+/**
+ * PP-03: a thin neutral diamond outline with NO fill. Drawn on top of a
+ * reach tint, it tags the tiles a placement qualifies or catches without
+ * ever looking like a tile about to be built on — a Depot's resource nodes
+ * inside its catchment, or the town tiles a Factory footprint touches.
+ */
+function makeNodeMark(s) {
+  const px = Buffer.alloc(CELL_W * CELL_H * 4);
+  const cx = CELL_W / 2, cy = CELL_H / 2;
+  // Two concentric outlines make the tag readable over any terrain; the fill
+  // in between stays fully transparent so the building below is not hidden.
+  for (let y = 0; y < CELL_H; y++) {
+    for (let x = 0; x < CELL_W; x++) {
+      const dx = Math.abs(x + 0.5 - cx), dy = Math.abs(y + 0.5 - cy);
+      const edgeDist = Math.max(dx / 32 + dy / 16);
+      if (Math.abs(edgeDist - 1) < 0.055 || Math.abs(edgeDist - 0.84) < 0.05) {
+        const i = (y * CELL_W + x) * 4;
+        px[i] = 246; px[i + 1] = 248; px[i + 2] = 242; px[i + 3] = 235;
+      }
+    }
+  }
+  return {
+    cells: [{ px, w: CELL_W, h: CELL_H }], cellW: CELL_W, cellH: CELL_H,
+    anchor: derivedAnchor(-(HW - 1), 0), footprint: [1, 1],
+    frames: 1, frameMs: s.frameMs, name: s.name,
+  };
+}
+
 /** Classic 64x32 blue-box ground cell (terrain): crop the declared tile and
  *  clone its bottom row so stacked tiles never leave a hole under the tip. */
 async function makeGround(s) {
@@ -449,6 +527,8 @@ async function buildSlot(s) {
   if (s.generator === "highlight" || s.generator === "highlight_soft") {
     return [makeHighlight(s, s.generator === "highlight_soft")];
   }
+  if (s.generator === "highlight_bad") return [makeHighlightBad(s)];
+  if (s.generator === "node_mark") return [makeNodeMark(s)];
   if (typeof s.sprite === "number") return [{ name: s.name, ...(await makeGround(s)) }];
   throw new Error(`cell ${s.name ?? JSON.stringify(s)}: no declared source (Y3/Y6: compose/crop/generator cells are gone)`);
 }

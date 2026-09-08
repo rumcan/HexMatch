@@ -40,11 +40,12 @@ import {
 } from "./track";
 import {
   createScoreState, rescore, vpFor, industriesInCatchment,
-  playerResources, buildAllComponents, resolveConnection, catchmentRect,
+  playerResources, buildAllComponents, resolveConnection,
   pickBlockadeTarget,
   type EconomyState, type Harvester, type ScoreState, type VpEvent,
 } from "./economy";
 import { aiBuildStep, chooseRivalFactorySpot } from "./ai";
+import { planDepotPlacement, planFactoryPlacement, type PlacementPlan } from "./placement";
 import {
   CARGO, FACTORY_FOOTPRINT, INDUSTRY_BY_KEY, TRANSPORT, VP_TARGET, townHouseSprite, type Cargo,
 } from "./config";
@@ -543,39 +544,44 @@ export function startIsoGame(root: HTMLElement) {
   }
 
   // ── rendering ──────────────────────────────────────────────────────────
-  const overlayItems = () => {
-    const items: { sprite: string; tx: number; ty: number }[] = [];
-    if (preview) {
-      for (const [x, y] of preview.tiles) items.push({ sprite: "highlight", tx: x, ty: y });
-    } else if (hover) {
-      if (phase === "setup-factory") {
-        // Highlight all four tiles of the real factory footprint, so the
-        // build preview matches exactly the tiles the building covers.
-        for (let dy = 0; dy < FACTORY_FOOTPRINT[1]; dy++) {
-          for (let dx = 0; dx < FACTORY_FOOTPRINT[0]; dx++) {
-            const x = hover.tx + dx, y = hover.ty + dy;
-            if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) continue;
-            items.push({ sprite: "highlight", tx: x, ty: y });
-          }
-        }
-      } else if (tool === "harvester" || phase === "setup-harvester") {
-        // U2: the harvester is a 1×1 building. Its 4×4 catchment is
-        // informational, so the placed tile is the solid glow and the
-        // catchment uses the fainter highlight_soft tint.
-        items.push({ sprite: "highlight", tx: hover.tx, ty: hover.ty });
-        const r = catchmentRect(hover.tx, hover.ty);
-        for (let y = r.y0; y <= r.y1; y++) {
-          for (let x = r.x0; x <= r.x1; x++) {
-            if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) continue;
-            if (x === hover.tx && y === hover.ty) continue;
-            items.push({ sprite: "highlight_soft", tx: x, ty: y });
-          }
-        }
-      } else {
-        items.push({ sprite: "highlight", tx: hover.tx, ty: hover.ty });
-      }
+  // PP-03: while a Factory or a Depot is being placed, the overlay is built
+  // from the SAME placement plans the click handlers validate with
+  // (`planFactoryPlacement` / `planDepotPlacement`), so the preview can never
+  // disagree with the final placement:
+  //   footprint tiles → solid "highlight", or "highlight_bad" when that tile
+  //                     alone refuses the build;
+  //   reach tiles     → fainter "highlight_soft" (the Depot's 4×4 catchment;
+  //                     the Factory's town-adjacency band);
+  //   qualifying or caught tiles → thin "node_mark" outlines (a Depot's
+  //                     resource nodes in catchment; the town tiles a Factory
+  //                     footprint touches).
+  type OverlayItem = { sprite: string; tx: number; ty: number };
+  const pushPlan = (items: OverlayItem[], plan: PlacementPlan) => {
+    for (const [x, y] of plan.reach) items.push({ sprite: "highlight_soft", tx: x, ty: y });
+    for (const t of plan.footprint) {
+      items.push({ sprite: t.ok ? "highlight" : "highlight_bad", tx: t.tx, ty: t.ty });
+    }
+    for (const [x, y] of plan.nodes) items.push({ sprite: "node_mark", tx: x, ty: y });
+  };
+  /** The placement overlay for a hover at (tx,ty), whatever the input device —
+   *  mouse and touch both arrive here through `hover`, so the preview is
+   *  identical at every zoom for both. */
+  const overlayItemsAt = (tx: number, ty: number): OverlayItem[] => {
+    const items: OverlayItem[] = [];
+    if (phase === "setup-factory") {
+      pushPlan(items, planFactoryPlacement(grid, tx, ty));
+    } else if (tool === "harvester" || phase === "setup-harvester") {
+      pushPlan(items, planDepotPlacement(grid, eco.harvesters, tx, ty));
+    } else {
+      items.push({ sprite: "highlight", tx, ty });
     }
     return items;
+  };
+  const overlayItems = () => {
+    if (preview) {
+      return preview.tiles.map(([x, y]) => ({ sprite: "highlight", tx: x, ty: y }));
+    }
+    return hover ? overlayItemsAt(hover.tx, hover.ty) : [];
   };
 
   function paintUi(_now: number) {
@@ -601,31 +607,50 @@ export function startIsoGame(root: HTMLElement) {
         `<span class="mb-cost">${TRANSPORT[tool === "rail" ? "rail" : "road"].vp} VP</span>`;
     }
 
+    // PP-03: while a Factory or a Depot is being placed, an INVALID hover
+    // answers with its readable reason (distinct red appearance is painted on
+    // the overlay). A valid hover falls through to the normal inspector so a
+    // node can still be read while you aim at it.
+    const placingFactory = phase === "setup-factory" && hover !== null;
+    const placingDepot = (phase === "setup-harvester" || tool === "harvester") && hover !== null;
+    const plan: PlacementPlan | null = placingFactory
+      ? planFactoryPlacement(grid, hover!.tx, hover!.ty)
+      : placingDepot
+        ? planDepotPlacement(grid, eco.harvesters, hover!.tx, hover!.ty)
+        : null;
+    let infoTone: "bad" | null = null;
+
     // industry / harvester inspector
     let info = "";
-    const ref = hover?.ref as { kind?: string; id?: number } | null;
-    if (ref && ref.kind === "harvester") {
-      const h = eco.harvesters.find((x) => x.id === ref.id);
-      if (h) {
-        // W2: the inspector resolves the connection over THIS harvester's
-        // own network, not the merged graph.
-        const comp = buildAllComponents(track, h.ownerId);
-        const conn = resolveConnection(eco, comp, h);
-        const inds = industriesInCatchment(grid, h);
-        info = `<b>Depot</b> (${h.owner === "you" ? "yours" : "rival"})<br>` +
-          `serving ${inds.length} industr${inds.length === 1 ? "y" : "ies"}<br>` +
-          `link: ${conn.kind ?? "<i>none</i>"} ×${conn.multiplier || 0}`;
-      }
-    } else if (hover) {
-      const occ = grid.occupancy[tIdx(hover.tx, hover.ty)];
-      if (occ >= 0) {
-        const ind: Industry = grid.industries[occ];
-        const def = INDUSTRY_BY_KEY[ind.type];
-        const servers = eco.harvesters.filter((h) =>
-          industriesInCatchment(grid, h).some((i) => i.id === ind.id));
-        info = `<b>${def?.name ?? ind.type}</b><br>` +
-          `${CARGO[def.cargo].icon} ${CARGO[def.cargo].name} · output ${ind.output}<br>` +
-          `${servers.length} depot${servers.length === 1 ? "" : "s"}`;
+    if (plan && !plan.valid) {
+      const label = plan.kind === "factory" ? "Factory" : "Depot";
+      info = `<b>${label}</b> can't go here — <i>${plan.why ?? "not buildable"}</i>.`;
+      infoTone = "bad";
+    } else {
+      const ref = hover?.ref as { kind?: string; id?: number } | null;
+      if (ref && ref.kind === "harvester") {
+        const h = eco.harvesters.find((x) => x.id === ref.id);
+        if (h) {
+          // W2: the inspector resolves the connection over THIS harvester's
+          // own network, not the merged graph.
+          const comp = buildAllComponents(track, h.ownerId);
+          const conn = resolveConnection(eco, comp, h);
+          const inds = industriesInCatchment(grid, h);
+          info = `<b>Depot</b> (${h.owner === "you" ? "yours" : "rival"})<br>` +
+            `serving ${inds.length} industr${inds.length === 1 ? "y" : "ies"}<br>` +
+            `link: ${conn.kind ?? "<i>none</i>"} ×${conn.multiplier || 0}`;
+        }
+      } else if (hover) {
+        const occ = grid.occupancy[tIdx(hover.tx, hover.ty)];
+        if (occ >= 0) {
+          const ind: Industry = grid.industries[occ];
+          const def = INDUSTRY_BY_KEY[ind.type];
+          const servers = eco.harvesters.filter((h) =>
+            industriesInCatchment(grid, h).some((i) => i.id === ind.id));
+          info = `<b>${def?.name ?? ind.type}</b><br>` +
+            `${CARGO[def.cargo].icon} ${CARGO[def.cargo].name} · output ${ind.output}<br>` +
+            `${servers.length} depot${servers.length === 1 ? "" : "s"}`;
+        }
       }
     }
 
@@ -647,6 +672,7 @@ export function startIsoGame(root: HTMLElement) {
       banner,
       costInfo,
       inspect: info || null,
+      inspectTone: infoTone,
       reach: quarry.reach,
     });
   }
@@ -971,6 +997,23 @@ export function startIsoGame(root: HTMLElement) {
         },
       };
     },
+    /**
+     * PP-03: the e2e/unit twin of the placement overlay — the full
+     * footprint/reach/validity plan for a Factory or Depot hover at (tx,ty),
+     * built by the SAME module the frame overlay paints from (and the same
+     * rules the click handlers run), so a test can assert the preview without
+     * a pixel path.
+     */
+    placementPlan: (kind: "factory" | "depot", tx: number, ty: number): PlacementPlan =>
+      kind === "factory"
+        ? planFactoryPlacement(grid, tx, ty)
+        : planDepotPlacement(grid, eco.harvesters, tx, ty),
+    /**
+     * PP-03: the exact overlay items `renderer.drawOverlay` paints for a
+     * placement hover at (tx,ty) under the live phase/tool — the tile list the
+     * preview draws, ready to be diffed against the plan above.
+     */
+    overlayItemsFor: (tx: number, ty: number) => overlayItemsAt(tx, ty),
     /**
      * W1/W2: the e2e/unit twin of a track drag — the exact pointer path
      * (owned network check → preview with the free allowance → commit).
