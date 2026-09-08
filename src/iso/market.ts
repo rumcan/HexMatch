@@ -10,6 +10,12 @@
 //   • bank exchange — 4 of one cargo for 1 of another, always available;
 //   • offers — post to the rival, who accepts on its own clock when the deal
 //     is affordable and does not cost it units (see `rivalWouldAccept`).
+//
+// PP-08: NEITHER path touches Gold. Gold is reserved for Black Market
+// sabotage, so the market is created with `gold` on its blocked list and
+// every route in — human post, human bank, human accept, and the rival's
+// own answering clock — refuses it in both directions (the rule lives once,
+// in `trade.ts`, and every player runs the same market record).
 // ══════════════════════════════════════════════════════════════════════════
 import { OFFER_LIFE } from "../game/config";
 import {
@@ -65,6 +71,13 @@ export interface IsoMarket {
 export const AI_TRADE_MS = 5000;
 
 /**
+ * PP-08: the one cargo the market never trades. Gold is earned by processing
+ * (gold mines, combo coins) and spent ONLY on Black Market sabotage — never
+ * converted into construction stock at the bank or through offers.
+ */
+export const SABOTAGE_ONLY: readonly Cargo[] = ["gold"];
+
+/**
  * The rival's whole trading policy: take an offer it can afford when it does
  * not lose units doing so. Deliberately dumb — the point of the market is the
  * 4:1 bank rate, and a 1:1 (or better) deal with the rival beats the bank.
@@ -85,7 +98,7 @@ export function createIsoMarket(
   players: { i: number; id: string; name: string; human: boolean; purse: CargoBag }[],
   events: IsoMarketEvents = {},
 ): IsoMarket {
-  const ctx = createMarket<Cargo>();
+  const ctx = createMarket<Cargo>(SABOTAGE_ONLY);   // PP-08: gold never trades
   const list: IsoMarketPlayer[] = players.map((p) => ({
     i: p.i, id: p.id, name: p.name, human: p.human, res: p.purse,
   }));
@@ -99,7 +112,7 @@ export function createIsoMarket(
     post: (p, give, giveN, want, wantN) => postOffer(p, give, giveN, want, wantN, ctx),
     cancel: (p, id) => cancelOffer(p, id, ctx),
     accept: (p, id) => acceptOffer(p, id, list, ctx),
-    bank: (p, give, want) => bankTrade(p, give, want, BANK_RATE),
+    bank: (p, give, want) => bankTrade(p, give, want, BANK_RATE, ctx.blocked),
     tick(now: number) {
       // W6: remember what is live so we can report exactly which offers
       // disappeared this tick (taken by the rival, or rotted out).

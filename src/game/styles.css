@@ -881,6 +881,15 @@ html, body, #root {
   font-size: 11px; color: var(--txt-mute); line-height: 1.5;
   padding: 8px 2px;
 }
+/* PP-08: the standing "Gold is reserved for Black Market sabotage" rule,
+   shown at the top of the Black Market panel. */
+.gold-rule {
+  color: var(--gold2, #ffb01f);
+  opacity: .85;
+  border-left: 2px solid var(--gold2, #ffb01f);
+  padding-left: 6px;
+  margin: 4px 2px 2px;
+}
 
 /* the quarry shrinks with viewport height (responsiveZoom), so the tray
    offset follows it — see the zoom steps in ui.ts */

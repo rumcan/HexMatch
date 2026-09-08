@@ -918,6 +918,85 @@ describe("TK-008 Blockade buys auto-target the rival (no targeting step)", () =>
   });
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// PP-08 — Gold is reserved for Black Market sabotage.
+//   • the four SABOTAGE actions keep their Gold price, and insufficient Gold
+//     refuses the purchase without touching any other resource;
+//   • Security Forces (defensive, NOT sabotage) are repriced to materials,
+//     so every non-sabotage action completes without Gold;
+//   • the trade composer never offers Gold, and the market refuses it anyway.
+// ══════════════════════════════════════════════════════════════════════════
+describe("PP-08 gold is reserved for Black Market sabotage", () => {
+  it("insufficient gold blocks a sabotage and consumes nothing else", async () => {
+    const h = await boot();
+    h.purse.stone = 12;
+    h.purse.gold = 0;
+    await settle();
+    const harden = root.querySelector('[data-black="harden"]') as HTMLElement;
+    expect(harden.classList.contains("disabled")).toBe(true);
+    harden.click();
+    await settle();
+    expect(h.purse.gold ?? 0).toBe(0);
+    expect(h.purse.stone).toBe(12);             // no material was touched
+    expect((root.querySelector(".toasts") as HTMLElement).textContent ?? "")
+      .toMatch(/needs 5 gold/i);
+  });
+
+  it("sabotage with enough gold deducts ONLY gold", async () => {
+    const h = await boot();
+    h.purse.gold = 5;
+    h.purse.stone = 12;
+    await settle();
+    (root.querySelector('[data-black="harden"]') as HTMLElement).click();
+    await settle();
+    expect(h.purse.gold).toBe(0);
+    expect(h.purse.stone).toBe(12);             // construction stock untouched
+  });
+
+  it("Security Forces are hired with materials — Gold stays in the purse", async () => {
+    const h = await boot();
+    h.purse.gold = 6;             // the OLD price, deliberately affordable
+    h.purse.grain = 2;
+    h.purse.stone = 1;
+    await settle();
+    const sec = root.querySelector('[data-black="security"]') as HTMLElement;
+    expect(sec.classList.contains("disabled")).toBe(false);
+    expect(sec.textContent).toMatch(/2🌾/);      // the cost is shown in materials
+    sec.click();
+    await settle();
+    expect(h.purse.grain).toBe(0);
+    expect(h.purse.stone).toBe(0);
+    expect(h.purse.gold).toBe(6);               // gold was NOT the price
+  });
+
+  it("Security Forces without materials are refused and consume nothing", async () => {
+    const h = await boot();
+    h.purse.gold = 6;
+    h.purse.grain = 1;            // short of the 2 grain the hire needs
+    h.purse.stone = 1;
+    await settle();
+    const sec = root.querySelector('[data-black="security"]') as HTMLElement;
+    expect(sec.classList.contains("disabled")).toBe(true);
+    sec.click();
+    await settle();
+    expect(h.purse.grain).toBe(1);
+    expect(h.purse.stone).toBe(1);
+    expect(h.purse.gold).toBe(6);               // nothing was consumed at all
+  });
+
+  it("the trade composer never offers gold, and the market refuses it anyway", async () => {
+    const h = await boot();
+    (root.querySelector('[data-panel="trade"]') as HTMLElement).click();
+    const panel = root.querySelector("#iso-trade") as HTMLElement;
+    for (const sel of [...panel.querySelectorAll("select")]) {
+      const values = [...(sel as HTMLSelectElement).options].map((o) => o.value);
+      expect(values).not.toContain("gold");
+    }
+    // belt and braces: the market record itself carries the rule
+    expect([...h.market.ctx.blocked]).toEqual(["gold"]);
+  });
+});
+
 describe("W6 the market is visible and trades are logged", () => {
   it("the Market button opens the panel, and a bank trade 4:1 moves the purse", async () => {
     const h = await boot();

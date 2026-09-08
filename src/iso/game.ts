@@ -498,6 +498,18 @@ export function startIsoGame(root: HTMLElement) {
 
   // ── Black Market (U1 wiring over the restored board + industry blockade) ──
   const REPAIR_ISO_COST: Purse = { wood: 1, stone: 1, grain: 1, ore: 1 };
+  /**
+   * PP-08: Security Forces are defensive, not sabotage, so they no longer cost
+   * Gold. `SECURITY.cost` is declared in the legacy ResKey table
+   * (`game/config.ts`); GEM_TO_CARGO is the one ResKey→Cargo bijection, so the
+   * same mapping the board uses moves the price into purse space
+   * (`wheat`→grain, `brick`→stone). Only the four SABOTAGE actions above keep
+   * a Gold price — Gold is reserved for Black Market sabotage.
+   */
+  const SECURITY_ISO_COST: Purse = Object.fromEntries(
+    (Object.entries(SECURITY.cost ?? {}) as [ResKey, number][])
+      .map(([r, n]) => [GEM_TO_CARGO[r], n]),
+  ) as Purse;
 
   function buyBlack(key: string) {
     const now = performance.now();
@@ -541,7 +553,13 @@ export function startIsoGame(root: HTMLElement) {
       return;
     }
     if (key === "security") {
-      if (!spendGold(SECURITY.gold)) return;
+      // PP-08: this is a defensive action, so it is bought with MATERIALS —
+      // never with Gold. Insufficient materials refuse the hire and consume
+      // nothing (the affordability check runs before any deduction).
+      const affordable = (Object.entries(SECURITY_ISO_COST) as [Cargo, number][])
+        .every(([k, v]) => (me.purse[k] ?? 0) >= v);
+      if (!affordable) { toast("Not enough materials for Security Forces.", "bad"); return; }
+      spend(me, SECURITY_ISO_COST);
       toast("Security Forces hired (defensive in this build).", "info");
       return;
     }
