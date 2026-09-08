@@ -321,9 +321,10 @@ describe("E11 a full round is playable", () => {
     const f = { owner: "ai", ownerId: 2, tx: spot![0], ty: spot![1] };
     h.eco.factories.push(f);
     // PP-05: Oil joins the unlimited purse — the turn ends at a Depot, and a
-    // paid Depot costs Oil (`DEPOT_COST` in construction.ts).
+    // paid Depot costs Oil (`DEPOT_COST` in construction.ts). PP-07: the Depot
+    // costs Wood/Stone/Grain beside the Oil, and track costs Wood too.
     const out = aiBuildStep(
-      h.eco, f, { stock: {}, purse: { stone: 9999, ore: 9999, oil: 9999 } }, 99,
+      h.eco, f, { stock: {}, purse: { wood: 9999, stone: 9999, grain: 9999, ore: 9999, oil: 9999 } }, 99,
     );
     expect(out).toBeTruthy();
     expect(out!.built.length).toBeGreaterThan(0);
@@ -631,18 +632,21 @@ describe("W1 the drag charges exactly what it previewed", () => {
     // and the tiles are MINE (W2's ownership rides on the same commit)
     expect(h.track.owner[(hy + 1) * MAP_W + hx]).toBe(1);
 
-    // Now the purse pays. 1 free tile + 1 stone can buy 2 of the next 3 —
-    // the third tile is the unaffordable remainder, shown but never built.
+    // Now the purse pays. 1 free tile + 1 wood + 1 stone can buy 2 of the
+    // next 3 — the third tile is the unaffordable remainder, shown but never
+    // built. (PP-07: a road tile costs wood AND stone; the wood rides the
+    // starting stock, the stone is the binding constraint.)
     h.purse.stone = 1;
     const pv2 = h.dragBuild("road", hx, hy + 12, hx, hy + 14);
     expect(pv2).toBeTruthy();
     expect(pv2!.tiles).toHaveLength(2);
     expect(pv2!.unaffordable).toEqual([[hx, hy + 14]]);   // the blocked tail
     expect(pv2!.free).toBe(1);            // the last free tile went to the prefix
-    expect(pv2!.cost).toEqual({ stone: 1 });
+    expect(pv2!.cost).toEqual({ wood: 1, stone: 1 });
 
     // The commit charged EXACTLY the preview: nothing more, nothing less.
     expect(h.purse.stone).toBe(0);
+    expect(h.purse.wood).toBe(11);        // 12 starting wood, 1 tile charged
     expect(h.freeTrack).toBe(0);
     expect(hasTrack(h.track, "road", hx, hy + 12)).toBe(true);
     expect(hasTrack(h.track, "road", hx, hy + 13)).toBe(true);
@@ -686,7 +690,10 @@ describe("W3 the rival actually plays (headless)", () => {
     // Rig would, or the three later turns are (correctly) refused and the
     // "it SPENT stone past its free allowance" assertion has nothing to spend.
     // `res` IS the rival's purse object (market.ts builds over the same record).
+    // PP-07: the paid Depot costs Grain beside the Oil, so both are granted
+    // the way a connected farm / oil rig would stock them.
     rival.res.oil = 5;
+    rival.res.grain = 5;
 
     // Four build ticks = 36s of game time, still within the one-minute goal.
     const t0 = 1_000_000;
@@ -701,7 +708,9 @@ describe("W3 the rival actually plays (headless)", () => {
     expect(rival.res.stone).toBeLessThan(12);
     // PP-05: …and the paid Depots cost Oil — the rival is down from the 5 it
     // was given, proving the AI pays the same `DEPOT_COST` the player does.
+    // PP-07: …and Grain beside it.
     expect(rival.res.oil).toBeLessThan(5);
+    expect(rival.res.grain).toBeLessThan(5);
 
     // and it EARNS: the connected mine's trickle lands in its purse each tick
     const ore0 = rival.res.ore;
@@ -838,9 +847,10 @@ describe("W4 a normal session earns the rail", () => {
       await h.board.settle();
     }
     // The W4 numbers (documented per the ticket): ore_mine output 0.8 → a
-    // tier-1 token worth 1 ore every UPGRADE_EVERY (20s); rail = 4 ore +
-    // 1 stone per tile; start purse {stone 12, ore 0}. So ~4 token matches
-    // (≈80s of play) buy the first rail tile — no economy adjustment needed.
+    // tier-1 token worth 1 ore every UPGRADE_EVERY (20s); rail = 1 wood +
+    // 1 stone + 4 ore per tile; start purse {wood 12, stone 12, ore 0}.
+    // So ~4 token matches (≈80s of play) buy the first rail tile's ore —
+    // the wood/stone ride the starting stock. No economy adjustment needed.
     expect(h.purse.ore ?? 0).toBeGreaterThanOrEqual(4);
     expect(canAfford(h.purse, TRANSPORT.rail.cost)).toBe(true);
 

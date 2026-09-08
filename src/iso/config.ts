@@ -183,15 +183,48 @@ export interface TransportDef {
   label: string;
 }
 
+/**
+ * PP-07 — THE authoritative construction-cost table (Catan-style roles).
+ *
+ * Every buildable in the game is priced here, and ONLY here:
+ *
+ *   road    1 Wood + 1 Stone                       basic infrastructure
+ *   rail    1 Wood + 1 Stone + 4 Ore               industrial investment, better transport
+ *   upgrade 4 Ore                                  road -> rail in place (the difference only)
+ *   depot   1 Wood + 1 Stone + 1 Grain + 1 Oil     workforce (grain) + depot expansion (oil)
+ *   plant   2 Wood + 2 Stone + 2 Grain + 3 Ore     the second processing plant
+ *
+ * Gold is deliberately absent: it is reserved for Black Market sabotage
+ * (PP-08) and pays for nothing here.
+ *
+ * The table lives in this module — the lowest import layer — so every surface
+ * can read it without an import cycle: TRANSPORT / UPGRADE_COST below alias
+ * into it, construction.ts re-exports it for the Depot price (DEPOT_COST),
+ * and plants.ts reads the plant entry (PLANT_COST). The UI labels, the
+ * placement charges, the AI plans and the multiplayer host authority all
+ * resolve through these aliases, so "what you see" and "what you are
+ * charged" are one number.
+ */
+export const BUILD_COSTS: Readonly<Record<
+  "road" | "rail" | "upgrade" | "depot" | "plant",
+  Partial<Record<Cargo, number>>
+>> = {
+  road: { wood: 1, stone: 1 },
+  rail: { wood: 1, stone: 1, ore: 4 },
+  upgrade: { ore: 4 },
+  depot: { wood: 1, stone: 1, grain: 1, oil: 1 },
+  plant: { wood: 2, stone: 2, grain: 2, ore: 3 },
+};
+
 export const TRANSPORT: Record<"road" | "rail", TransportDef> = {
   road: {
     key: "road", name: "Road",
-    cost: { stone: 1 },
+    cost: BUILD_COSTS.road,
     vp: 1, throughput: 1.0, onRough: true, label: "Road",
   },
   rail: {
     key: "rail", name: "Rail",
-    cost: { ore: 4, stone: 1 },
+    cost: BUILD_COSTS.rail,
     vp: 3, throughput: 1.6, onRough: false, label: "Rail",
   },
 };
@@ -204,10 +237,10 @@ export const TRANSPORT: Record<"road" | "rail", TransportDef> = {
 // implementation of the rule is `freeAllowanceCovers` in `track.ts`, which
 // `previewDrag` (the human drag) and `planCandidates`/`executeCandidate` (the
 // rival) all consult. Rail therefore stays gated behind an ore mine exactly as
-// E8 settled it — "start with stone for roads, no ore — rail is gated behind
-// an ore mine" — instead of arriving free with the opening 12 tiles, at rail VP
-// (3/tile) and rail throughput (×1.6).
-export const UPGRADE_COST: Partial<Record<Cargo, number>> = { ore: 4 };
+// E8/PP-07 settled it — "wood and stone for roads, no ore — rail is gated
+// behind an ore mine" — instead of arriving free with the opening 12 tiles,
+// at rail VP (3/tile) and rail throughput (×1.6).
+export const UPGRADE_COST: Partial<Record<Cargo, number>> = BUILD_COSTS.upgrade;
 
 export const VP_TARGET = 12;
 

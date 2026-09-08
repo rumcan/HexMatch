@@ -60,7 +60,7 @@ export async function startDemo(root: HTMLElement) {
   }
   world.roadBits = drawBits(track, "road");   // the starter road must show on boot
   // A generous purse so the harness exercises geometry, not economy.
-  const purse: Purse = { stone: 400, ore: 400 };
+  const purse: Purse = { wood: 400, stone: 400, ore: 400 };
   let kind: TrackKind = "road";
   let xFirst = true;
 

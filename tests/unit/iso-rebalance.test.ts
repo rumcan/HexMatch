@@ -4,7 +4,9 @@ import { MAP_W, MAP_H, INDUSTRY_QUOTA, TRANSPORT, VP_TARGET } from "../../src/is
 
 // Mirrored from src/iso/game.ts — do not import the boot module (it pulls
 // atlas PNGs and the DOM). Pass 1 pinned these; pass 2 measures against them.
-const START_PURSE = { stone: 12, ore: 0 };
+// PP-07 retuned the purse: a road tile costs Wood + Stone now, so the opening
+// grants both (12 paid tiles — the same E8 curve), still with no ore.
+const START_PURSE = { wood: 12, stone: 12, ore: 0 };
 const FREE_SETUP_TRACK = 12;
 const HARVEST_MS = 3000;
 
@@ -42,13 +44,16 @@ function nearestOre(g: ReturnType<typeof generateMap>, tx: number, ty: number) {
 }
 
 describe("E8 pass 2 — starting curve", () => {
-  it("still gates rail behind an ore mine (pass 1 structure)", () => {
+  it("still gates rail behind an ore mine (pass 1 structure, PP-07 prices)", () => {
     expect(START_PURSE.ore ?? 0).toBe(0);
     expect(START_PURSE.stone).toBe(12);
+    expect(START_PURSE.wood).toBe(12);
     expect(FREE_SETUP_TRACK).toBe(12);
     expect(TRANSPORT.rail.cost.ore).toBe(4);
     expect(TRANSPORT.rail.cost.stone).toBe(1);
+    expect(TRANSPORT.rail.cost.wood).toBe(1);
     expect(TRANSPORT.road.cost.stone).toBe(1);
+    expect(TRANSPORT.road.cost.wood).toBe(1);
     expect(TRANSPORT.road.onRough).toBe(true);
     expect(TRANSPORT.rail.onRough).toBe(false);
     expect(VP_TARGET).toBe(12);

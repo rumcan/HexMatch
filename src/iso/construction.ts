@@ -31,27 +31,23 @@
 // against (`earn` in game.ts writes `purse.oil`), so processed Oil is valid
 // construction stock — no separate "delivered" balance exists.
 //
-// PP-07's rebalance extends THIS table (it asks for "one authoritative table
-// used by the UI, gameplay and AI"); nothing else in the codebase prices a
-// building, so the rebalance is a one-line change here.
+// PP-07's rebalance landed here: BUILD_COSTS is declared once in config.ts
+// (the lowest import layer, so track/config/plants can all read it without a
+// cycle) and re-exported above, so this module is still the import every
+// caller already uses. Nothing else in the codebase prices a building.
 // ══════════════════════════════════════════════════════════════════════════
-import { CARGO, CARGOES, type Cargo } from "./config";
+import { BUILD_COSTS, CARGO, CARGOES, type Cargo } from "./config";
 import { type Purse } from "./track";
 
-/**
- * The authoritative construction-cost table.
- *
- * PP-05 puts Oil on the Depot. It deliberately changes no other entry: the
- * Depot previously cost nothing, so "alongside its other construction
- * materials" is satisfied by Oil being the material a paid Depot requires.
- * PP-07 (the Catan-style rebalance) owns the wider numbers — add its proposed
- * Wood/Stone/Grain here and every surface below follows automatically.
- */
-export const BUILD_COSTS: Readonly<Record<"depot", Purse>> = {
-  depot: { oil: 1 },
-};
+export { BUILD_COSTS };
 
-/** What a PAID Depot costs — the single source of the Depot's price. */
+/**
+ * What a PAID Depot costs — PP-07's Catan-style price (1 Wood + 1 Stone +
+ * 1 Grain + 1 Oil), read from the one authoritative table in config.ts.
+ * PP-05 put Oil on the Depot; PP-07 added Wood/Stone/Grain beside it, so
+ * every normal resource has a construction role. Every surface below prices
+ * from this alias, which is why a rebalance stays a one-table change.
+ */
 export const DEPOT_COST: Purse = BUILD_COSTS.depot;
 
 /**

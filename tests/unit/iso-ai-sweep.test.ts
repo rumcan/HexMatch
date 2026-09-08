@@ -10,7 +10,7 @@ import { canReachASpot, rivalSearchTiles } from "./helpers/rival-map";
 // W8/T4: cheap structural reachability covers the full even-step search
 // space; expensive real planning uses a bounded, deterministic spatial sample.
 // With 25 industries spread over 144×144, not every legal tile can reach one
-// on the opening 12 stone + 12 free road tiles. The structural build sweep
+// on the opening 12 wood + 12 stone + 12 free road tiles. The structural build sweep
 // therefore removes the purse limit. Rival placement is tested SEPARATELY
 // below with the unchanged opening purse, and must return a viable first turn.
 
@@ -21,7 +21,7 @@ const SAMPLE_STEP = 2 * Math.ceil(Math.max(MAP_W, MAP_H) / 10);
  *  opening turn prices the Depot at nothing — and a later turn must have earned
  *  the Oil `DEPOT_COST` asks for. */
 const rivalOpts = () => ({
-  stock: { stone: 12, ore: 0 }, purse: { stone: 12, ore: 0 },
+  stock: { wood: 12, stone: 12, ore: 0 }, purse: { wood: 12, stone: 12, ore: 0 },
   free: 12, freeDepots: FREE_SETUP_DEPOTS,
 });
 
@@ -49,8 +49,11 @@ function play(grid: Grid, x: number, y: number, turns: number): SweepRow {
     // PP-05: Oil joins the unlimited funds. Four turns place up to four
     // Depots, and only the first rides the free allowance — the rest are paid,
     // so a purse this test calls "sufficient" has to cover `DEPOT_COST` too.
+    // PP-07: road costs Wood and the Depot costs Grain as well, so both join
+    // the unlimited funds — "sufficient" stays "able to finish any turn".
     const out = aiBuildStep(eco, f, {
-      ...rivalOpts(), purse: { stone: MAP_W * MAP_H, ore: 0, oil: MAP_W * MAP_H },
+      ...rivalOpts(),
+      purse: { wood: MAP_W * MAP_H, stone: MAP_W * MAP_H, grain: MAP_W * MAP_H, ore: 0, oil: MAP_W * MAP_H },
     }, 100 + i);
     // a truthy outcome that achieved nothing is the W8 bug: `aiTick` would
     // have spent the rival's 9 s clock on it and reported progress.
@@ -149,7 +152,7 @@ describe("W8 sweep — every candidate returned is executable and viable", () =>
 describe("W8 sweep — the rival is never placed on a tile it cannot build from", () => {
   it("every player placement yields a rail-legal, reachable rival tile", () => {
     const grid = generateMap(1337);
-    const opts = { purse: { stone: 12, ore: 0 }, free: 12, ownerId: 2 };
+    const opts = { purse: { wood: 12, stone: 12, ore: 0 }, free: 12, ownerId: 2 };
     let checked = 0;
     // Placement uses the real opening purse, unlike the funded route sweep.
     for (let y = 2; y < MAP_H - 2; y += SAMPLE_STEP) {
