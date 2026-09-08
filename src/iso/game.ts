@@ -35,7 +35,7 @@ import { IsoRenderer, type World } from "./renderer";
 import { generateMap, resolveMapSeed, type Grid, type Industry } from "./grid";
 import {
   createTrack, drawBits, previewDrag, commitDrag, canBuildOn, hasTrack,
-  demolishTile, tIdx, playerNetwork, canAfford, buildRefusal,
+  demolishTile, tIdx, playerNetwork, canAfford, buildRefusal, seedTownRoads,
   type Track, type TrackKind, type Purse, type DragPreview,
 } from "./track";
 import {
@@ -119,6 +119,11 @@ export function startIsoGame(root: HTMLElement) {
   const seed = resolveMapSeed();
   const grid: Grid = generateMap(seed);
   const track: Track = createTrack();
+  // PP-10: every town's seed-generated ring road is stamped onto the road
+  // layer BEFORE the world exists (world.roadBits is a live reference to
+  // track.road), so the first frame already shows settled towns with roads.
+  // Neutral ownership: the town roads are never part of a player's network.
+  seedTownRoads(track, grid);
   const score: ScoreState = createScoreState();
 
   const players: PlayerState[] = [

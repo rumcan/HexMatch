@@ -56,6 +56,27 @@ export const createTrack = (): Track => ({
   owner: new Uint8Array(MAP_W * MAP_H),
 });
 
+/**
+ * PP-10: stamp the towns' seed-generated ring roads into a fresh track.
+ *
+ * Town roads are MAP FURNITURE, not a player's network: every tile is built
+ * with owner 0 (neutral), so none of the owner-scoped floods — `playerNetwork`,
+ * `buildComponents`, `isServiced`, `trackOwnedBy` — ever cross them. A town
+ * road therefore can never hand a player a free connection, service a depot,
+ * or count toward the rival's trunk discount; the town's ring is purely the
+ * settlement's own road network, exactly as `grid.towns[i].roads` derives it.
+ *
+ * They ride the snapshot's track bytes like any other track, so a rejoined
+ * guest renders them without regenerating anything (E10).
+ */
+export function seedTownRoads(t: Track, grid: Grid): void {
+  for (const town of grid.towns) {
+    for (const [tx, ty] of town.roads) {
+      buildTile(t, "road", tx, ty, 0);
+    }
+  }
+}
+
 export const tIdx = (tx: number, ty: number) => ty * MAP_W + tx;
 export const inMapT = (tx: number, ty: number) =>
   tx >= 0 && tx < MAP_W && ty >= 0 && ty < MAP_H;
