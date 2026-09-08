@@ -54,10 +54,10 @@ import {
   CARGO, CARGOES, FACTORY_FOOTPRINT, INDUSTRY_BY_KEY, TRANSPORT, VP_TARGET,
   townHouseSprite, type Cargo,
 } from "./config";
-import { bankTrade } from "../game/trade";
 import {
-  BUILD_COSTS, DEPOT_COST, FREE_SETUP_DEPOTS, costLabel, priceDepot, shortfallLabel,
+  DEPOT_COST, FREE_SETUP_DEPOTS, costLabel, priceDepot, shortfallLabel,
 } from "./construction";
+import { bankTrade } from "../game/trade";
 import {
   MAP_W, MAP_H, BANDIT_MS, BLOCK_MS, FOG_MS, SABOTAGE, SECURITY, type ResKey,
 } from "../game/config";
@@ -77,9 +77,8 @@ export { joinFromSnapshot };
  * so no phase inference or timer can ever claw it back (the K1 bug class).
  *
  * W9: it buys ROAD only. A rail tile — new, or an in-place upgrade of a road —
- * always pays the rail price / the upgrade difference from the one table
- * (`construction.ts`), which keeps E8's gate
- * honest ("start with stone for roads, no ore — rail is gated behind an ore
+ * always pays `TRANSPORT.rail.cost` / `UPGRADE_COST`, which keeps the gate
+ * honest ("wood and stone for roads, no ore — rail is gated behind an ore
  * mine"): ore is the first real objective after the opening road, and the
  * connection cannot skip straight to rail VP and ×1.6 throughput for free.
  * The rule itself lives in `freeAllowanceCovers` (`track.ts`) so the human
@@ -89,14 +88,11 @@ export const FREE_SETUP_TRACK = 12;
 export const HARVEST_MS = 3000;      // economy tick
 export const AI_BUILD_MS = 9000;
 /**
- * E8: start with stone for roads, no ore — rail is gated behind an ore mine.
- *
- * PP-07 retune: road now costs Wood + Stone, so the opening stock carries
- * BOTH base materials. The 12 free road tiles still buy the first connection;
- * the stock then covers the first paid extensions — 12 wood + 12 stone is
- * exactly the SAME 12-tile paid-road capacity the old 12-stone purse bought,
- * now split across the two infrastructure cargoes so each keeps a role from
- * tile one. Still no ore — the rail gate stays honest.
+ * PP-07: start with wood + stone for roads (12 paid tiles — the E8 opening
+ * curve, now that a road tile costs 1 Wood + 1 Stone), and no ore: rail stays
+ * gated behind an ore mine. Grain and oil are earned, never granted — depot
+ * expansion (grain + oil) and the second plant (grain + ore) are what
+ * processing and trade are for.
  */
 export const START_PURSE: Purse = { wood: 12, stone: 12, ore: 0 };
 /**
@@ -315,10 +311,6 @@ export function startIsoGame(root: HTMLElement) {
   const plantCostLabel = () => (Object.entries(PLANT_COST) as [Cargo, number][])
     .map(([k, v]) => `${v} ${CARGO[k].icon}`).join(" ");
 
-  /** PP-07: the Depot price, rendered from the one authoritative table. */
-  const depotCostLabel = () => (Object.entries(DEPOT_COST) as [Cargo, number][])
-    .map(([k, v]) => `${v} ${CARGO[k].icon}`).join(" ");
-
   const syncWorld = () => {
     world.roadBits = drawBits(track, "road");
     world.railBits = drawBits(track, "rail");
@@ -396,14 +388,16 @@ export function startIsoGame(root: HTMLElement) {
 
   // ── actions ────────────────────────────────────────────────────────────
   function placeFactory(tx: number, ty: number): boolean {
-    // MT-1: check all tiles of the 2×2 factory footprint
-    for (let dy = 0; dy < FACTORY_FOOTPRINT[1]; dy++) {
-      for (let dx = 0; dx < FACTORY_FOOTPRINT[0]; dx++) {
-        if (!canBuildOn(grid, "road", tx + dx, ty + dy)) {
-          toast("Can't build there.", "bad");
-          return false;
-        }
-      }
+    // MT-1 + PP-02: the whole 2×2 footprint must be legal ground AND touch a
+    // town by an edge. `planFactoryPlacement` with `requireTown` is the same
+    // rule the placement preview paints from, so the click and the hover can
+    // never disagree about what "next to a town" means.
+    const plan = planFactoryPlacement(grid, tx, ty, { requireTown: true });
+    if (!plan.valid) {
+      toast(plan.code === "not-near-town"
+        ? "The Factory must be placed next to a town — its footprint must share an edge with a town tile."
+        : `Can't build there — ${plan.why ?? "not buildable"}.`, "bad");
+      return false;
     }
     // W2: the factory carries its builder's track-owner id (player index + 1).
     // PP-06: the starting Factory is plant #0 — same building, same record.
@@ -451,8 +445,7 @@ export function startIsoGame(root: HTMLElement) {
    *
    * The first Depot each player builds rides on `freeDepots` (DATA, E8's K1
    * rule) rather than on the setup phase, which is what stops the opening from
-   * deadlocking: Oil production itself needs a Depot. PP-07 sets that paid
-   * price in the one authoritative table (`construction.ts`).
+   * deadlocking: Oil production itself needs a Depot.
    */
   function placeHarvester(tx: number, ty: number, p: PlayerState): boolean {
     if (!canBuildOn(grid, "road", tx, ty)) { toast("Can't build there.", "bad"); return false; }
@@ -466,8 +459,7 @@ export function startIsoGame(root: HTMLElement) {
     }
     // PP-05: priced only now that the site is legal, and spent only when the
     // whole cost is covered. Oil earned in the Processing Plant is in this same
-    // purse, so processed Oil builds Depots with no special case. PP-07 sets
-    // that price in the one authoritative table (`construction.ts`).
+    // purse, so processed Oil builds Depots with no special case.
     const price = priceDepot(p.purse, p.freeDepots);
     if (!price.affordable) {
       toast(`A Depot costs ${costLabel(DEPOT_COST)} — you need ${shortfallLabel(price.missing)}.`, "bad");
@@ -664,8 +656,11 @@ export function startIsoGame(root: HTMLElement) {
 
   // ── economy + AI clocks ────────────────────────────────────────────────
   let lastHarvest = 0, lastAi = 0;
-  /** PP-07: fractional trickle carry, so sub-1.0 yields still pay over time
-   *  (see `economyTick`). Keyed by cargo for the rival's passive income. */
+  /**
+   * PP-07: the fractional remainder of the rival's trickle yield, carried
+   * across ticks so sub-1 rates (Oil Rig 0.4/tick, Gold Mine 0.3/tick) still
+   * pay out over time instead of rounding to zero forever.
+   */
   const trickleCarry: Partial<Record<Cargo, number>> = {};
 
   function economyTick(now: number) {
@@ -832,7 +827,8 @@ export function startIsoGame(root: HTMLElement) {
   const overlayItemsAt = (tx: number, ty: number): OverlayItem[] => {
     const items: OverlayItem[] = [];
     if (phase === "setup-factory") {
-      pushPlan(items, planFactoryPlacement(grid, tx, ty));
+      // PP-02: the preview enforces the same town-adjacency rule as the click.
+      pushPlan(items, planFactoryPlacement(grid, tx, ty, { requireTown: true }));
     } else if (tool === "harvester" || phase === "setup-harvester") {
       pushPlan(items, planDepotPlacement(grid, eco.harvesters, tx, ty));
     } else {
@@ -873,7 +869,7 @@ export function startIsoGame(root: HTMLElement) {
 
   function paintUi(_now: number) {
     let banner: string | null = null;
-    if (phase === "setup-factory") banner = "Place your Factory — click a buildable tile";
+    if (phase === "setup-factory") banner = "Place your Factory next to a town — click a buildable tile";
     // PP-05: the setup banner states the price too — the first Depot is free
     // on the allowance, and the player should know the second one is not.
     else if (phase === "setup-harvester") banner = "Place your Depot — it needs an industry in its 4×4 catchment" +
@@ -882,7 +878,6 @@ export function startIsoGame(root: HTMLElement) {
     else if (me.freeTrack > 0) banner = `${me.freeTrack} free track tiles remaining — connect your depot to your Factory`;
     else if (Object.keys(quarry.reach).length === 0) banner = "Nothing connected — the Processing Plant only pays cargo your network reaches";
     else if (tool === "plant") banner = `Raise another processing plant next to a town — ${plantCostLabel()}`;
-    else if (tool === "harvester") banner = `Place a Depot beside an industry — ${depotCostLabel()}`;
     else banner = "Match the tokened gems in the Processing Plant to process";
 
     let costInfo: string | null = null;
@@ -910,8 +905,6 @@ export function startIsoGame(root: HTMLElement) {
       // PP-05: "show the complete cost before placement" — the Depot tool
       // prices itself from the same `priceDepot` the click will charge, so the
       // modebar and the debit can never disagree (W1, applied to buildings).
-      // PP-07: that price is the Wood + Stone + Grain + Oil entry of the one
-      // authoritative table (`construction.ts`).
       const price = priceDepot(me.purse, me.freeDepots);
       const label = price.free ? "free (setup)" : costLabel(price.cost);
       costInfo = `<span class="mb-txt"><b>Depot</b> · ${label}</span>` +
@@ -928,7 +921,10 @@ export function startIsoGame(root: HTMLElement) {
     const placingFactory = phase === "setup-factory" && hover !== null;
     const placingDepot = (phase === "setup-harvester" || tool === "harvester") && hover !== null;
     const plan: PlacementPlan | null = placingFactory
-      ? planFactoryPlacement(grid, hover!.tx, hover!.ty)
+      // PP-02: the inspector's verdict follows the same town-adjacency rule
+      // the click and the overlay enforce ("can't go here — its footprint must
+      // share an edge with a town").
+      ? planFactoryPlacement(grid, hover!.tx, hover!.ty, { requireTown: true })
       : placingDepot
         ? planDepotPlacement(grid, eco.harvesters, hover!.tx, hover!.ty)
         : null;
@@ -1084,7 +1080,7 @@ export function startIsoGame(root: HTMLElement) {
         // W9: the allowance buys road only, so a rail drag with no ore previews
         // nothing at all. Say that, rather than the generic "must extend your
         // network" — which is not why it refused, and reads as a bug.
-        if (tool === "rail" && (me.purse.ore ?? 0) < (BUILD_COSTS.rail.ore ?? 0)) {
+        if (tool === "rail" && (me.purse.ore ?? 0) < (TRANSPORT.rail.cost.ore ?? 0)) {
           toast(me.freeTrack > 0
             ? "Rail costs ore — free setup tiles only cover road."
             : "Rail needs ore — connect an ore mine first.", "bad");
@@ -1275,8 +1271,6 @@ export function startIsoGame(root: HTMLElement) {
     /** PP-06: the test twin of clicking with the Processing Plant tool. */
     placePlant: (tx: number, ty: number, who: "you" | "ai" = "you") =>
       placePlant(tx, ty, who === "ai" ? rival : me),
-    /** PP-07: the Depot price from the authoritative table (`construction.ts`). */
-    get depotCost() { return { ...BUILD_COSTS.depot }; },
     /** PP-06: every processing plant a player owns (starting Factory first). */
     plantsOf: (who: string) => plantsOf(eco, who),
     get plantCost() { return { ...PLANT_COST }; },
@@ -1290,13 +1284,11 @@ export function startIsoGame(root: HTMLElement) {
     placeFactory: (tx: number, ty: number) => placeFactory(tx, ty),
     /**
      * PP-05: the test twin of the Depot placement click — the real
-     * `placeHarvester`, including the PP-07 table price, the free-setup
-     * allowance and the "a refusal consumes nothing" ordering. Returns false
-     * when the site is illegal OR the purse is short, exactly like the click
-     * does. PP-07: `who` lets a test drive the rival through the same click.
+     * `placeHarvester`, including the Oil cost, the free-setup allowance and
+     * the "a refusal consumes nothing" ordering. Returns false when the site is
+     * illegal OR the purse is short, exactly like the click does.
      */
-    placeDepot: (tx: number, ty: number, who: "you" | "ai" = "you") =>
-      placeHarvester(tx, ty, who === "ai" ? rival : me),
+    placeDepot: (tx: number, ty: number) => placeHarvester(tx, ty, me),
     /** PP-05: the live free-Depot allowance, so a test can watch it burn. */
     get freeDepots() { return me.freeDepots; },
     /** PP-05: what the next Depot placement will charge THIS purse — the same
@@ -1369,7 +1361,9 @@ export function startIsoGame(root: HTMLElement) {
      */
     placementPlan: (kind: "factory" | "depot", tx: number, ty: number): PlacementPlan =>
       kind === "factory"
-        ? planFactoryPlacement(grid, tx, ty)
+        // PP-02: the twin mirrors the live overlay — factory plans enforce the
+        // town-adjacency rule exactly like the click handler.
+        ? planFactoryPlacement(grid, tx, ty, { requireTown: true })
         : planDepotPlacement(grid, eco.harvesters, tx, ty),
     /**
      * PP-03: the exact overlay items `renderer.drawOverlay` paints for a

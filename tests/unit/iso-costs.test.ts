@@ -28,14 +28,14 @@ describe("PP-07 the ticket's suggested first playtest costs", () => {
   it("prices the five purchases exactly as the table proposes", () => {
     expect(BUILD_COSTS.road).toEqual({ wood: 1, stone: 1 });
     expect(BUILD_COSTS.rail).toEqual({ wood: 1, stone: 1, ore: 4 });
-    expect(BUILD_COSTS.upgradeRoadToRail).toEqual({ ore: 4 });
+    expect(BUILD_COSTS.upgrade).toEqual({ ore: 4 });
     expect(BUILD_COSTS.depot).toEqual({ wood: 1, stone: 1, grain: 1, oil: 1 });
     expect(BUILD_COSTS.plant).toEqual({ wood: 2, stone: 2, grain: 2, ore: 3 });
   });
 
   it("the in-place upgrade is the difference, so upgrading never double-pays", () => {
     // rail = road + the upgrade difference (wood/stone already in the ground)
-    for (const [cargo, v] of Object.entries(BUILD_COSTS.upgradeRoadToRail)) {
+    for (const [cargo, v] of Object.entries(BUILD_COSTS.upgrade)) {
       expect(BUILD_COSTS.rail[cargo as keyof typeof BUILD_COSTS.rail]).toBe(v);
     }
   });

@@ -24,19 +24,17 @@
 // Everything here is pure: it reads the grid/economy and answers questions.
 // `game.ts` owns the purse, the toast and the render sync.
 // ══════════════════════════════════════════════════════════════════════════
-import { FACTORY_FOOTPRINT, type Cargo } from "./config";
-import { BUILD_COSTS } from "./construction";
+import { BUILD_COSTS, FACTORY_FOOTPRINT, type Cargo } from "./config";
 import { TOWN_OCC, WATER, idx, inBounds, type Grid, type Town } from "./grid";
 import { hasTrack, type Purse, type Track } from "./track";
 import type { EconomyState, Factory } from "./economy";
 
 /**
- * PP-06 / PP-07: the cost of an ADDITIONAL processing plant. PP-07 landed:
- * the number now comes from the one authoritative cost table
- * (`construction.ts BUILD_COSTS.plant` — 2 Wood + 2 Stone + 2 Grain + 3 Ore), so
- * the UI preview, the charge and the AI all read the same constant.
+ * PP-06 / PP-07: the cost of an ADDITIONAL processing plant — an alias into
+ * the one authoritative table (BUILD_COSTS.plant), so the UI preview, the
+ * charge and the AI all read the same number.
  */
-export const PLANT_COST: Purse = { ...BUILD_COSTS.plant };
+export const PLANT_COST: Purse = BUILD_COSTS.plant;
 
 /** Why a plant may not be raised here. `null` = the placement is legal. */
 export type PlantRefusal =
@@ -65,13 +63,7 @@ export function footprintTiles(tx: number, ty: number): [number, number][] {
   return out;
 }
 
-/** Is (tx,ty) a tile of this town? Houses AND the town's own roads (PP-10):
- *  grid.ts stamps them TOWN_OCC precisely because "a town's roads belong to
- *  the town, exactly like its houses". Counting them here keeps the plant
- *  adjacency rule working on real maps — the ring road surrounds the houses,
- *  so without it every footprint next to a house overlaps the ring
- *  ("occupied") and every footprint next to the ring alone was "no-town":
- *  no plant could ever be raised beside a town. */
+/** Is (tx,ty) a tile of this town (a house, the centre, or a PP-10 town road)? */
 const townHasTile = (t: Town, tx: number, ty: number) =>
   t.houses.some(([hx, hy]) => hx === tx && hy === ty)
   || (t.roads ?? []).some(([rx, ry]) => rx === tx && ry === ty)
@@ -82,8 +74,11 @@ const townHasTile = (t: Town, tx: number, ty: number) =>
  *
  * "Next to" is defined exactly once, here, and it is EDGE contact: at least
  * one footprint tile must share an edge with a town tile. Diagonal-only
- * contact does not qualify. Ties (two towns touching one footprint) resolve
- * to the lowest town id so the answer is deterministic.
+ * contact does not qualify. A town's PP-10 roads are town tiles exactly like
+ * its houses (both are stamped TOWN_OCC), so touching the ring road counts —
+ * this is the SAME rule the starting Factory obeys (PP-02,
+ * `factoryTouchesTown` in grid.ts). Ties (two towns touching one footprint)
+ * resolve to the lowest town id so the answer is deterministic.
  */
 export function adjacentTown(grid: Grid, tx: number, ty: number): Town | null {
   const EDGES: [number, number][] = [[0, -1], [1, 0], [0, 1], [-1, 0]];
@@ -91,7 +86,11 @@ export function adjacentTown(grid: Grid, tx: number, ty: number): Town | null {
   for (const [fx, fy] of footprintTiles(tx, ty)) {
     for (const [dx, dy] of EDGES) {
       const nx = fx + dx, ny = fy + dy;
+      // A "town tile" is one the map actually stamped TOWN_OCC — a house, the
+      // centre or a PP-10 road. Unstamped tiles never qualify, even if a Town
+      // record lists them (keeps synthetic grids honest).
       if (!inBounds(nx, ny)) continue;
+      if (grid.occupancy[idx(nx, ny)] !== TOWN_OCC) continue;
       for (const t of grid.towns) {
         if (!townHasTile(t, nx, ny)) continue;
         if (!best || t.id < best.id) best = t;
@@ -185,11 +184,12 @@ export function chooseAiPlantSpot(
   for (const town of grid.towns) {
     if (used.has(town.id)) continue;
     for (const [hx, hy] of town.houses) {
-      // PP-10's ring road sits one tile outside the house box, so a legal
-      // footprint can start two tiles past an edge house — scan -3..+2 on
-      // both axes (tiles up to hx+3), not just footprint-adjacent offsets.
-      for (let dy = -(FACTORY_FOOTPRINT[1] + 1); dy <= 2; dy++) {
-        for (let dx = -(FACTORY_FOOTPRINT[0] + 1); dx <= 2; dx++) {
+      // PP-10/PP-02: a town's ring road surrounds its houses one tile out, so
+      // the legal footprints that touch the town stand just OUTSIDE that road
+      // (their origin up to 3 tiles from a box-edge house). Scan wide enough
+      // to see them; `canPlacePlant` is the one rule that decides.
+      for (let dy = -3; dy <= 2; dy++) {
+        for (let dx = -3; dx <= 2; dx++) {
           const tx = hx + dx, ty = hy + dy;
           if (!canPlacePlant(grid, track, state, tx, ty)) continue;
           const d = Math.abs(tx - anchor.tx) + Math.abs(ty - anchor.ty);

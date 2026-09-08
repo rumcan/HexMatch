@@ -1,5 +1,5 @@
 // ══════════════════════════════════════════════════════════════════════════
-// PP-05 + PP-07 — Construction costs: ONE authoritative table.
+// PP-05 — Construction costs: ONE authoritative table for buildings.
 //
 // The ticket: "Every paid, newly built Depot must require Oil alongside its
 // other construction materials. Show the complete cost before placement.
@@ -31,40 +31,23 @@
 // against (`earn` in game.ts writes `purse.oil`), so processed Oil is valid
 // construction stock — no separate "delivered" balance exists.
 //
-// PP-07's rebalance extends THIS table (it asks for "one authoritative table
-// used by the UI, gameplay and AI"); nothing else in the codebase prices a
-// building, so the rebalance is a one-line change here.
+// PP-07's rebalance landed here: BUILD_COSTS is declared once in config.ts
+// (the lowest import layer, so track/config/plants can all read it without a
+// cycle) and re-exported above, so this module is still the import every
+// caller already uses. Nothing else in the codebase prices a building.
 // ══════════════════════════════════════════════════════════════════════════
-import { CARGO, CARGOES, type Cargo } from "./config";
+import { BUILD_COSTS, CARGO, CARGOES, type Cargo } from "./config";
 import { type Purse } from "./track";
 
-/**
- * The authoritative construction-cost table — ONE source for every build
- * price, consumed by the UI (Build-panel labels, modebar), the placement
- * rules (track.ts tile costs via config's TRANSPORT projection, plants.ts),
- * the AI planner (ai.ts) and the test suite.
- *
- * PP-05 put Oil on the Depot. PP-07 (the Catan-style rebalance) owns the
- * full numbers, with each normal resource in a distinct role:
- *   Wood + Stone — basic infrastructure (both track kinds, both buildings)
- *   Grain        — the workforce: every Depot and Plant expansion
- *   Ore          — industrial investment: Rail, upgrades, Plants
- *   Oil          — Depot expansion only, at a fractional trickle rate
- *   Gold         — never a construction cost (Black Market sabotage only)
- * The first Depot stays free (FREE_SETUP_DEPOTS below) so Oil production —
- * which itself needs a Depot — can open the game.
- */
-export const BUILD_COSTS: Readonly<Record<
-  "road" | "rail" | "upgradeRoadToRail" | "depot" | "plant", Purse
->> = {
-  road: { wood: 1, stone: 1 },
-  rail: { wood: 1, stone: 1, ore: 4 },
-  upgradeRoadToRail: { ore: 4 },
-  depot: { wood: 1, stone: 1, grain: 1, oil: 1 },
-  plant: { wood: 2, stone: 2, grain: 2, ore: 3 },
-};
+export { BUILD_COSTS };
 
-/** What a PAID Depot costs — the single source of the Depot's price. */
+/**
+ * What a PAID Depot costs — PP-07's Catan-style price (1 Wood + 1 Stone +
+ * 1 Grain + 1 Oil), read from the one authoritative table in config.ts.
+ * PP-05 put Oil on the Depot; PP-07 added Wood/Stone/Grain beside it, so
+ * every normal resource has a construction role. Every surface below prices
+ * from this alias, which is why a rebalance stays a one-table change.
+ */
 export const DEPOT_COST: Purse = BUILD_COSTS.depot;
 
 /**

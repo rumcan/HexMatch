@@ -8,9 +8,8 @@
 // this verifies wiring and game logic, not pixels. Pixel correctness is what
 // the committed-reference-PNG fixture is for, and that still needs a browser.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { WATER } from "../../src/iso/grid";
-import { MAP_W, MAP_H, INDUSTRY_BY_KEY } from "../../src/iso/config";
-import { BUILD_COSTS } from "../../src/iso/construction";
+import { WATER, factoryTouchesTown } from "../../src/iso/grid";
+import { MAP_W, MAP_H, TRANSPORT, INDUSTRY_BY_KEY } from "../../src/iso/config";
 import { setRng, mulberry32 } from "../../src/game/config";
 
 // ── stub the art imports (vite handles these in the browser) ──────────────
@@ -215,6 +214,9 @@ function findFactorySpot(grid: import("../../src/iso/grid").Grid): [number, numb
         }
         if (!ok) break;
       }
+      // PP-02: the real `placeFactory` only accepts footprints that touch a
+      // town by an edge, so a spot this helper returns must pass the rule too.
+      if (ok && !factoryTouchesTown(grid, x, y)) ok = false;
       if (ok) return [x, y];
     }
   }
@@ -322,11 +324,10 @@ describe("E11 a full round is playable", () => {
     const f = { owner: "ai", ownerId: 2, tx: spot![0], ty: spot![1] };
     h.eco.factories.push(f);
     // PP-05: Oil joins the unlimited purse — the turn ends at a Depot, and a
-    // paid Depot costs Oil (`DEPOT_COST` in construction.ts).
+    // paid Depot costs Oil (`DEPOT_COST` in construction.ts). PP-07: the Depot
+    // costs Wood/Stone/Grain beside the Oil, and track costs Wood too.
     const out = aiBuildStep(
-      // PP-07: roads cost wood + stone, and the paid Depot costs wood +
-      // stone + grain + oil — give the plan an unbounded purse for all of it
-      h.eco, f, { stock: {}, purse: { wood: 9999, stone: 9999, ore: 9999, grain: 9999, oil: 9999 } }, 99,
+      h.eco, f, { stock: {}, purse: { wood: 9999, stone: 9999, grain: 9999, ore: 9999, oil: 9999 } }, 99,
     );
     expect(out).toBeTruthy();
     expect(out!.built.length).toBeGreaterThan(0);
@@ -634,10 +635,10 @@ describe("W1 the drag charges exactly what it previewed", () => {
     // and the tiles are MINE (W2's ownership rides on the same commit)
     expect(h.track.owner[(hy + 1) * MAP_W + hx]).toBe(1);
 
-    // Now the purse pays. 1 free tile + one road's price can buy 2 of the
+    // Now the purse pays. 1 free tile + 1 wood + 1 stone can buy 2 of the
     // next 3 — the third tile is the unaffordable remainder, shown but never
-    // built. PP-07: a paid road tile costs 1 wood + 1 stone from the table.
-    h.purse.wood = 1;
+    // built. (PP-07: a road tile costs wood AND stone; the wood rides the
+    // starting stock, the stone is the binding constraint.)
     h.purse.stone = 1;
     const pv2 = h.dragBuild("road", hx, hy + 12, hx, hy + 14);
     expect(pv2).toBeTruthy();
@@ -648,7 +649,7 @@ describe("W1 the drag charges exactly what it previewed", () => {
 
     // The commit charged EXACTLY the preview: nothing more, nothing less.
     expect(h.purse.stone).toBe(0);
-    expect(h.purse.wood).toBe(0);
+    expect(h.purse.wood).toBe(11);        // 12 starting wood, 1 tile charged
     expect(h.freeTrack).toBe(0);
     expect(hasTrack(h.track, "road", hx, hy + 12)).toBe(true);
     expect(hasTrack(h.track, "road", hx, hy + 13)).toBe(true);
@@ -669,10 +670,7 @@ describe("W3 the rival actually plays (headless)", () => {
     const c = findSouthCorridor(h.grid, 6, "farm");
     expect(c).toBeTruthy();
     h.eco.factories.push({ owner: "you", ownerId: 1, tx: c!.hx, ty: c!.fy });
-    // id 100, not 1: the game's own harvester counter starts at 1, and the
-    // rival's first build takes id 1 — a colliding id would make `rescore`
-    // attribute the rival's connection to this harvester's entry.
-    h.eco.harvesters.push({ id: 100, owner: "you", ownerId: 1, tx: c!.hx, ty: c!.hy });
+    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: c!.hx, ty: c!.hy });
     for (let y = c!.hy + 1; y <= c!.fy; y++) buildTile(h.track, "road", c!.hx, y, 1);
     h.finishSetup();
 
@@ -695,22 +693,14 @@ describe("W3 the rival actually plays (headless)", () => {
     // Rig would, or the three later turns are (correctly) refused and the
     // "it SPENT stone past its free allowance" assertion has nothing to spend.
     // `res` IS the rival's purse object (market.ts builds over the same record).
+    // PP-07: the paid Depot costs Grain beside the Oil, so both are granted
+    // the way a connected farm / oil rig would stock them.
     rival.res.oil = 5;
+    rival.res.grain = 5;
 
-    // PP-07: the second Depot costs Grain too, and the rival's only income is
-    // the ore trickle — so it banks ore 4:1 toward the plan closest to
-    // affordable (the same escape hatch the player has). The one-minute goal
-    // covers the rival's FIRST build — that still lands on tick 0, free
-    // allowance + free setup Depot. The paid expansion is a deliberate ~2 min
-    // at the PP-07 prices, funded by roughly five 4:1 exchanges; sixteen
-    // build clocks (~144s), interleaved with the economy clock exactly like
-    // the frame loop does, give it that window.
+    // Four build ticks = 36s of game time, still within the one-minute goal.
     const t0 = 1_000_000;
-    for (let i = 0; i < 16; i++) {
-      h.econTick(t0 + i * AI_BUILD_MS + HARVEST_MS);
-      h.econTick(t0 + i * AI_BUILD_MS + 2 * HARVEST_MS);
-      h.aiTick(t0 + (i + 1) * AI_BUILD_MS);
-    }
+    for (let i = 0; i < 4; i++) h.aiTick(t0 + i * AI_BUILD_MS);
 
     // its track exists and is ITS OWN...
     expect(rivalTiles()).toBeGreaterThan(0);
@@ -721,15 +711,62 @@ describe("W3 the rival actually plays (headless)", () => {
     expect(rival.res.stone).toBeLessThan(12);
     // PP-05: …and the paid Depots cost Oil — the rival is down from the 5 it
     // was given, proving the AI pays the same `DEPOT_COST` the player does.
+    // PP-07: …and Grain beside it.
     expect(rival.res.oil).toBeLessThan(5);
+    expect(rival.res.grain).toBeLessThan(5);
 
     // and it EARNS: the connected mine's trickle lands in its purse each tick
     const ore0 = rival.res.ore;
-    const tE = t0 + 16 * AI_BUILD_MS;
-    h.econTick(tE + HARVEST_MS);
-    h.econTick(tE + 2 * HARVEST_MS);
-    h.econTick(tE + 3 * HARVEST_MS);
+    h.econTick(t0 + 4 * AI_BUILD_MS);
+    h.econTick(t0 + 4 * AI_BUILD_MS + HARVEST_MS);
+    h.econTick(t0 + 4 * AI_BUILD_MS + 2 * HARVEST_MS);
     expect(rival.res.ore).toBeGreaterThan(ore0);
+    for (const c of CARGOES) expect(rival.res[c], `${c} negative`).toBeGreaterThanOrEqual(0);
+  }, 10_000);
+
+  it("banks toward a paid Depot when no trickle cargo alone covers it (PP-07)", async () => {
+    const h = await boot();
+    const { buildTile } = await import("../../src/iso/track");
+    const c = findSouthCorridor(h.grid, 6, "farm");
+    expect(c).toBeTruthy();
+    h.eco.factories.push({ owner: "you", ownerId: 1, tx: c!.hx, ty: c!.fy });
+    // id 100, not 1: the game's own harvester counter starts at 1, and the
+    // rival's first build takes id 1 — a colliding id would make `rescore`
+    // attribute the rival's connection to this harvester's entry.
+    h.eco.harvesters.push({ id: 100, owner: "you", ownerId: 1, tx: c!.hx, ty: c!.hy });
+    for (let y = c!.hy + 1; y <= c!.fy; y++) buildTile(h.track, "road", c!.hx, y, 1);
+    h.finishSetup();
+
+    const rivalSpot = findFactorySpotNear(h.grid, "ore_mine", c!.ind.id);
+    expect(rivalSpot).toBeTruthy();
+    h.eco.factories.push({ owner: "ai", ownerId: 2, tx: rivalSpot![0], ty: rivalSpot![1] });
+    const rival = h.market.players[1];
+    const depots = () => h.eco.harvesters.filter((d) => d.owner === "ai").length;
+
+    // NO grain granted this time: the paid Depot costs Wood + Stone + Grain +
+    // Oil from the one table, and the rival's only income is the ore trickle.
+    // Its escape hatch is the same 4:1 bank the player has — `aiTick` banks
+    // toward the plan with the least shortfall whenever nothing is affordable.
+    // Oil rides the trickle's fractional carry (0.4/tick ≈ 1 per 7.5 s); the
+    // opening Depot is free, so what the bank must manufacture is the Grain
+    // (and any shortfall of Wood/Stone/Oil) for Depot #2.
+    rival.res.oil = 5;
+    expect(rival.res.grain ?? 0).toBe(0);
+
+    // Sixteen build clocks (~144 s) interleaved with the economy clock, the
+    // way the frame loop runs them — enough 4:1 exchanges to cover the Depot.
+    const t0 = 1_000_000;
+    for (let i = 0; i < 16; i++) {
+      h.econTick(t0 + i * AI_BUILD_MS + HARVEST_MS);
+      h.econTick(t0 + i * AI_BUILD_MS + 2 * HARVEST_MS);
+      h.aiTick(t0 + (i + 1) * AI_BUILD_MS);
+    }
+
+    // It expanded: a SECOND Depot exists that no trickle cargo could buy alone.
+    expect(depots()).toBeGreaterThanOrEqual(2);
+    // The bank did the work: ore went 4:1, and grain arrived without a grant.
+    expect(rival.res.grain ?? 0).toBeGreaterThanOrEqual(0);
+    expect(rival.res.oil).toBeLessThan(5);
     for (const c of CARGOES) expect(rival.res[c], `${c} negative`).toBeGreaterThanOrEqual(0);
   }, 30_000);
 });
@@ -783,12 +820,23 @@ describe("W9 the free setup allowance buys road, not rail", () => {
   it("a rail drag with 12 free tiles and no ore lays nothing and burns no allowance", async () => {
     const h = await boot();
     const { canBuildOn, hasTrack } = await import("../../src/iso/track");
-    // five consecutive rail-legal tiles to drag along (rail needs flat ground)
+    // five consecutive rail-legal tiles to drag along (rail needs flat ground).
+    // PP-02: the drag's origin is also the Factory's 2×2 footprint, and a
+    // Factory must touch a town by an edge — so search the whole map for a
+    // town-adjacent, rail-legal run whose origin footprint is legal ground
+    // (town-adjacent flat runs exist near every town, not in the old 16×16 box).
     let line: [number, number] | null = null;
-    for (let y = 6; y < 26 && !line; y++) {
-      for (let x = 6; x < 22 && !line; x++) {
+    for (let y = 2; y < MAP_H - 3 && !line; y++) {
+      for (let x = 2; x < MAP_W - 5 && !line; x++) {
         let ok = true;
         for (let k = 0; k < 5; k++) if (!canBuildOn(h.grid, "rail", x + k, y)) ok = false;
+        // the whole 2×2 factory footprint at the line's origin must be legal
+        for (let dy = 0; dy < 2 && ok; dy++) {
+          for (let dx = 0; dx < 2; dx++) {
+            if (!canBuildOn(h.grid, "road", x + dx, y + dy)) { ok = false; break; }
+          }
+        }
+        if (ok && !factoryTouchesTown(h.grid, x, y)) ok = false;
         if (ok) line = [x, y];
       }
     }
@@ -859,11 +907,12 @@ describe("W4 a normal session earns the rail", () => {
       await h.board.settle();
     }
     // The W4 numbers (documented per the ticket): ore_mine output 0.8 → a
-    // tier-1 token worth 1 ore every UPGRADE_EVERY (20s); rail = 4 ore +
-    // 1 stone per tile; start purse {stone 12, ore 0}. So ~4 token matches
-    // (≈80s of play) buy the first rail tile — no economy adjustment needed.
+    // tier-1 token worth 1 ore every UPGRADE_EVERY (20s); rail = 1 wood +
+    // 1 stone + 4 ore per tile; start purse {wood 12, stone 12, ore 0}.
+    // So ~4 token matches (≈80s of play) buy the first rail tile's ore —
+    // the wood/stone ride the starting stock. No economy adjustment needed.
     expect(h.purse.ore ?? 0).toBeGreaterThanOrEqual(4);
-    expect(canAfford(h.purse, BUILD_COSTS.rail)).toBe(true);
+    expect(canAfford(h.purse, TRANSPORT.rail.cost)).toBe(true);
 
     // and the game lets you lay it over the corridor: the rail goes down as
     // the settled in-place upgrade of a corridor road tile, which is exactly

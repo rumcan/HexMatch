@@ -41,7 +41,10 @@ async function pickCorridor(
   page: import("@playwright/test").Page,
   opts?: { minTiles?: number; maxTiles?: number },
 ): Promise<Corridor> {
-  return page.evaluate(findIsoCorridor, opts ?? { minTiles: 4, maxTiles: 7 });
+  // PP-02: the corridor must end at a town-ring factory, and towns sit ≥8
+  // tiles from industries (T4's TOWN_INDUSTRY_SEP) — so the picker's own
+  // defaults (4..12, the setup free-track allowance) are the ones that work.
+  return page.evaluate(findIsoCorridor, opts);
 }
 
 /**
@@ -435,6 +438,12 @@ test.describe("TK-001 mouse panning is middle-button only", () => {
 
   test("left-drag never pans or places; middle-drag pans; left-click places", async ({ page }) => {
     await bootIso(page);
+    // PP-02: the Factory must touch a town by an edge, and towns sit ≥8 tiles
+    // from the industries the boot camera frames (T4's TOWN_INDUSTRY_SEP) — so
+    // the zoom-1 boot frame holds no town-ring Factory site at all (the 
+    // gameplay test hits the same wall and searches at 0.5x). One real wheel
+    // gesture puts a town's ring in the clear band; no camera API is poked.
+    await zoomStep(page, "out");
     const screenAt = (tx: number, ty: number) => page.evaluate(({ tx, ty }) => {
       const h = (window as any).__iso;
       const dpr = window.devicePixelRatio || 1;
@@ -460,25 +469,40 @@ test.describe("TK-001 mouse panning is middle-button only", () => {
         return !document.elementsFromPoint(dx / dpr, dy / dpr)
           .some((el) => !!(el as HTMLElement).closest?.(".iso-panel"));
       };
-      const focus = grid.industries[0];
-      // spiral out from the on-screen focus industry until the first free,
-      // legal, clickable grass tile shows up (terrain GRASS === 0).
-      for (let r = 0; r < 14; r++) {
-        for (let dy = -r; dy <= r; dy++) {
-          for (let dx = -r; dx <= r; dx++) {
-            const tx = focus.tx + dx, ty = focus.ty + dy;
-            if (tx < 0 || ty < 0 || tx >= W || ty >= H) continue;
-            const i = ty * W + tx;
-            if (grid.terrain[i] !== 0) continue;
-            // Factory legality is the WHOLE 2×2 footprint, not one free tile.
-            if (![[0, 0], [1, 0], [0, 1], [1, 1]].every(([ox, oy]) =>
-              h.tileProbe("road", tx + ox, ty + oy).build.ok)) continue;
-            if (!inView(tx, ty) || !clickable(tx, ty)) continue;
-            return { tx, ty };
-          }
+      // PP-02: the factory must touch a town by an edge. A town tile is stamped
+      // TOWN_OCC (-2) in the occupancy grid (houses AND PP-10 town roads).
+      const TOWN_OCC = -2;
+      const isTown = (x: number, y: number) =>
+        x >= 0 && y >= 0 && x < W && y < H && grid.occupancy[y * W + x] === TOWN_OCC;
+      const touchesTown = (tx: number, ty: number) => {
+        for (let ox = 0; ox < 2; ox++) for (let oy = 0; oy < 2; oy++) {
+          const x = tx + ox, y = ty + oy;
+          if (isTown(x, y - 1) || isTown(x, y + 1) || isTown(x - 1, y) || isTown(x + 1, y)) return true;
+        }
+        return false;
+      };
+      // PP-02: the factory must sit next to a town (by an edge), so scan the
+      // whole map for the free, legal, town-adjacent, clickable tile that sits
+      // closest to the viewport centre. Centre-most matters: the middle-drag
+      // below pans the camera before the final click, and a tile near the
+      // centre survives a ±60 px nudge without drifting under HUD chrome.
+      const centreX = window.innerWidth / 2, centreY = window.innerHeight / 2;
+      let best: { tx: number; ty: number; d: number } | null = null;
+      for (let ty = 0; ty < H - 1; ty++) {
+        for (let tx = 0; tx < W - 1; tx++) {
+          const i = ty * W + tx;
+          if (grid.terrain[i] !== 0) continue;
+          // Factory legality is the WHOLE 2×2 footprint, not one free tile.
+          if (![[0, 0], [1, 0], [0, 1], [1, 1]].every(([ox, oy]) =>
+            h.tileProbe("road", tx + ox, ty + oy).build.ok)) continue;
+          if (!touchesTown(tx, ty)) continue;   // next to a town
+          if (!inView(tx, ty) || !clickable(tx, ty)) continue;
+          const [dx, dy] = h.tileScreenAt(tx, ty);
+          const d = Math.abs(dx / dpr - centreX) + Math.abs(dy / dpr - centreY);
+          if (!best || d < best.d) best = { tx, ty, d };
         }
       }
-      return null;
+      return best ? { tx: best.tx, ty: best.ty } : null;
     });
     expect(spot).not.toBeNull();
     // E14: the anchor goes through the same resolver the gameplay round clicks

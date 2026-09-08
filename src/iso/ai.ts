@@ -31,9 +31,9 @@
 // Everything is deterministic under an injected RNG so T1 can assert on it.
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_W, MAP_H } from "../game/config";
-import { INDUSTRY_BY_KEY, FACTORY_FOOTPRINT, type Cargo } from "./config";
-import { BUILD_COSTS, DEPOT_COST, FREE_SETUP_DEPOTS, priceDepot } from "./construction";
-import { ROUGH, type Grid, type Industry } from "./grid";
+import { TRANSPORT, UPGRADE_COST, INDUSTRY_BY_KEY, FACTORY_FOOTPRINT, type Cargo } from "./config";
+import { DEPOT_COST, FREE_SETUP_DEPOTS, priceDepot } from "./construction";
+import { ROUGH, factoryTouchesTown, type Grid, type Industry } from "./grid";
 import {
   DIRS, DIR, tIdx, inMapT, hasTrack, canBuildOn, tileCost, addCost, canAfford,
   buildTile, trackOwnedBy, freeAllowanceCovers, type Track, type TrackKind, type Purse,
@@ -382,9 +382,9 @@ export interface PlanOptions {
 /** Optimistic new-tile allowance; exact mixed upgrade prices are checked after A*. */
 function affordableNewTiles(kind: TrackKind, purse: Purse, free: number): number {
   let n = Infinity;
-  for (const [cargo, amount] of Object.entries(BUILD_COSTS[kind])) {
+  for (const [cargo, amount] of Object.entries(TRANSPORT[kind].cost)) {
     // An upgrade may omit a resource (stone); never overestimate that cost.
-    const unit = kind === "rail" ? Math.min(amount, BUILD_COSTS.upgradeRoadToRail[cargo as Cargo] ?? 0) : amount;
+    const unit = kind === "rail" ? Math.min(amount, UPGRADE_COST[cargo as Cargo] ?? 0) : amount;
     if (unit > 0) n = Math.min(n, Math.floor((purse[cargo as Cargo] ?? 0) / unit));
   }
   return n + (freeAllowanceCovers(kind) ? Math.ceil(Math.max(0, free)) : 0);
@@ -465,11 +465,8 @@ export function planCandidates(
           if (freeLeft > 0) { freeLeft--; continue; }
           cost = addCost(cost, c);
         }
-        // PP-05 + PP-07: track + Depot, or the plan is not a plan — a
-        // candidate the purse cannot finish would place a Depot its caller
-        // cannot pay for. `depotCost` comes from `priceDepot` on the
-        // authoritative table: free while `freeDepots` lasts, then the full
-        // Wood + Stone + Grain + Oil price.
+        // PP-05: track + Depot, or the plan is not a plan — a candidate the
+        // purse cannot finish would place a Depot its caller cannot pay for.
         if (!canAfford(opts.purse, addCost(cost, depotCost))) continue;
 
         const score = scarcity(opts.stock, def.cargo) * (ind.output ?? def.output)
@@ -537,7 +534,7 @@ export function chooseRivalFactorySpot(
   grid: Grid, track: Track, awayFrom: [number, number], opts: RivalSpotOptions,
 ): [number, number] | null {
   const [fw, fh] = FACTORY_FOOTPRINT;
-  const spots: { x: number; y: number; rail: boolean; d: number }[] = [];
+  const spots: { x: number; y: number; rail: boolean; town: boolean; d: number }[] = [];
   for (let y = 2; y < MAP_H - 2 - fh; y += 2) {
     for (let x = 2; x < MAP_W - 2 - fw; x += 2) {
       // MT-1: check all tiles of the 2×2 factory footprint
@@ -549,19 +546,30 @@ export function chooseRivalFactorySpot(
         }
       }
       if (!allRoad) continue;
+      // PP-02: only 2×2 footprints that touch a town (by an edge) are legal
+      // Factory sites. The pool is restricted to these so the rival can never
+      // be handed a tile far from a town — even through the fallback below.
+      const town = factoryTouchesTown(grid, x, y);
       spots.push({
         x, y,
         rail: allRail,
+        town,
         d: Math.abs(x - awayFrom[0]) + Math.abs(y - awayFrom[1]),
       });
     }
   }
   if (!spots.length) return null;
+  // PP-02: legal Factory sites are town-adjacent, full stop. The generator
+  // guarantees the map offers enough of these for every player, so if none
+  // exist the map itself is malformed; in that degenerate case refuse rather
+  // than strand the rival on a tile away from any town.
+  const townSpots = spots.filter((s) => s.town);
+  if (!townSpots.length) return null;
   // Reserve the player's whole 2×2 footprint, not just its origin tile.
-  const apart = spots.filter((s) =>
+  const apart = townSpots.filter((s) =>
     s.x + fw <= awayFrom[0] || awayFrom[0] + fw <= s.x
     || s.y + fh <= awayFrom[1] || awayFrom[1] + fh <= s.y);
-  const ranked = apart.length ? apart : spots;
+  const ranked = apart.length ? apart : townSpots;
   ranked.sort((a, b) =>
     Number(b.rail) - Number(a.rail) || b.d - a.d || tIdx(a.x, a.y) - tIdx(b.x, b.y));
 
@@ -601,9 +609,7 @@ export interface BuildOutcome {
   built: [number, number][];
   harvester: Harvester | null;
   kind: TrackKind;
-  /** What the caller debits from the purse — free tiles already subtracted.
-   *  PP-07: includes the Depot's price from the authoritative table when the
-   *  Depot is a paid one (the player's first Depot is free). */
+  /** What the caller debits from the purse — free tiles already subtracted. */
   spent: Purse;
   /**
    * W3: how many tiles the free allowance covered (caller debits freeTrack).

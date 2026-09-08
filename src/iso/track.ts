@@ -13,8 +13,7 @@
 // only the containing chunks are invalidated. The whole map is never rescanned.
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_W, MAP_H } from "../game/config";
-import { TRANSPORT, type Cargo } from "./config";
-import { BUILD_COSTS } from "./construction";
+import { TRANSPORT, UPGRADE_COST, type Cargo } from "./config";
 import { WATER, ROUGH, TOWN_OCC, type Grid } from "./grid";
 import { CHUNK, chunksX } from "./renderer";
 
@@ -333,9 +332,8 @@ export const canAfford = (purse: Purse, cost: Purse): boolean =>
  * W9: what the free setup allowance (`FREE_SETUP_TRACK` in `game.ts`) may buy.
  *
  * Option (a) from the ticket — ROAD ONLY. Rail, laid new or upgraded in place
- * over a road, always pays the rail price / the upgrade difference from the
- * one table (`construction.ts`). E8's design
- * note is "start with stone for roads, no ore — rail is gated behind an ore
+ * over a road, always pays `TRANSPORT.rail.cost` / `UPGRADE_COST`. E8's design
+ * note is "wood and stone for roads, no ore — rail is gated behind an ore
  * mine", and before this the allowance ignored the gate: `previewDrag` spent it
  * on ANY tile with a non-empty cost, so the first 12 tiles of a rail drag were
  * free and the connection jumped straight to rail VP (3/tile) and rail
@@ -351,13 +349,13 @@ export const freeAllowanceCovers = (kind: TrackKind): boolean => kind === "road"
  * Cost of applying `kind` to a single tile:
  *   - already the same kind → free (dragging over your own road never
  *     double-charges)
- *   - road → rail upgrade in place → the difference only (BUILD_COSTS.upgradeRoadToRail)
+ *   - road → rail upgrade in place → the difference only (UPGRADE_COST)
  *   - otherwise the full transport cost
  */
 export function tileCost(t: Track, kind: TrackKind, tx: number, ty: number): Purse {
   if (hasTrack(t, kind, tx, ty)) return {};
-  if (kind === "rail" && hasTrack(t, "road", tx, ty)) return { ...BUILD_COSTS.upgradeRoadToRail };
-  return { ...BUILD_COSTS[kind] };
+  if (kind === "rail" && hasTrack(t, "road", tx, ty)) return { ...UPGRADE_COST };
+  return { ...TRANSPORT[kind].cost };
 }
 
 // ── drag-to-build ─────────────────────────────────────────────────────────

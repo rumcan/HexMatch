@@ -17,13 +17,11 @@ import { canReachASpot, rivalSearchTiles } from "./helpers/rival-map";
 const SAMPLE_STEP = 2 * Math.ceil(Math.max(MAP_W, MAP_H) / 10);
 
 /** The rival's opening purse + setup allowances, exactly as `game.ts` gives
- *  it. PP-07 retuned the stock to wood + stone for the opening roads (no
- *  ore). PP-05 added the second allowance: the rival's FIRST Depot is free,
- *  so an opening turn prices the Depot at nothing — and a later turn must
- *  have earned what `DEPOT_COST` asks for. */
+ *  it. PP-05 added the second allowance: the rival's FIRST Depot is free, so an
+ *  opening turn prices the Depot at nothing — and a later turn must have earned
+ *  the Oil `DEPOT_COST` asks for. */
 const rivalOpts = () => ({
-  stock: { wood: 12, stone: 12, ore: 0 },
-  purse: { wood: 12, stone: 12, ore: 0 },
+  stock: { wood: 12, stone: 12, ore: 0 }, purse: { wood: 12, stone: 12, ore: 0 },
   free: 12, freeDepots: FREE_SETUP_DEPOTS,
 });
 
@@ -48,11 +46,11 @@ function play(grid: Grid, x: number, y: number, turns: number): SweepRow {
   const eco: EconomyState = { grid, track, harvesters: [], factories: [f] };
   let noops = 0;
   for (let i = 0; i < turns; i++) {
-    // PP-07: funded roads need wood + stone, and the SECOND and later Depots
-    // cost grain + oil too, so the unlimited-funds purse carries every cargo
-    // but ore (the rail gate stays closed, as W9 settled). Four turns place up
-    // to four Depots; only the first rides the free allowance, the rest are
-    // paid, so a purse this test calls "sufficient" must cover `DEPOT_COST`.
+    // PP-05: Oil joins the unlimited funds. Four turns place up to four
+    // Depots, and only the first rides the free allowance — the rest are paid,
+    // so a purse this test calls "sufficient" has to cover `DEPOT_COST` too.
+    // PP-07: road costs Wood and the Depot costs Grain as well, so both join
+    // the unlimited funds — "sufficient" stays "able to finish any turn".
     const out = aiBuildStep(eco, f, {
       ...rivalOpts(),
       purse: { wood: MAP_W * MAP_H, stone: MAP_W * MAP_H, grain: MAP_W * MAP_H, ore: 0, oil: MAP_W * MAP_H },

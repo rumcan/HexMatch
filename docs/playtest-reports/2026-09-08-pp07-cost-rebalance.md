@@ -1,8 +1,12 @@
-# PP-07 playtest — construction cost rebalance on the real 144×144 map
+# PP-07 playtest — extended progression measurements (6 seeds, real 144×144 map)
 
 **Date:** 2026-09-08
 **Ticket:** `docs/HexMatch-tickets.md` → *PP-07 — Rebalance construction and
 expansion using Catan-style resource roles*
+**Companion report:** `2026-09-08-pp07.md` (the rebalance's own playtest:
+3 seeds + the structural no-loop proof). This report extends it with two
+stress seeds the first pass did not cover — an **Oil Rig opening** and a
+far-ore opening — and with the two fixes those seeds forced.
 
 The ticket requires: *"Test opening progression and expansion on the actual
 144×144 map, not just short synthetic routes"* and *"Record time to first
@@ -14,10 +18,10 @@ Headless sessions, one per map seed, driving the **real modules** — no game
 code mocked:
 
 - opening Factory: a human-style choice (beside the industry nearest the land
-  centroid, footprint on legal ground),
+  centroid, footprint on legal ground, town-adjacent per PP-02),
 - builds: `aiBuildStep` (A* planning + the authoritative cost table
-  `src/iso/construction.ts`, including the paid-Depot charge resolved by
-  `priceDepot` against the player's `freeDepots` allowance),
+  `BUILD_COSTS` in `src/iso/config.ts`, including the paid-Depot charge
+  resolved by `priceDepot` against the player's `freeDepots` allowance),
 - income: the `playerResources` trickle + the PP-07 fractional carry,
 - trading: the real `bankTrade` 4:1 bank, Gold blocked (PP-08), max two
   exchanges per economy tick, banking toward the plan the session actually
@@ -25,10 +29,9 @@ code mocked:
 - plants: `canAffordPlant` → `chooseAiPlantSpot` → `addPlant`, charged once.
 
 The match-3 Processing Plant is deliberately **not** simulated. Trickle +
-bank is the *conservative* income model: a human actively matching tokened
-gems earns faster and can manufacture cargo the network does not reach
-(PP-04), so anything achievable headless is also achievable in hand — and
-usually sooner.
+bank is the *conservative* income model (the wired game pays the player from
+matching, J1): anything achievable headless on trickle is also achievable in
+hand — and usually sooner.
 
 Runs live in `tests/unit/iso-progression.test.ts` (`npm test` →
 *iso-progression*); the table below is printed by that suite.
@@ -55,19 +58,19 @@ Reading:
   4:1 banking — **no endless dependency loop** — in roughly 5–10 minutes for
   favourable openings.
 - **Seed 99** is the stress case: the central industry is an **Oil Rig**
-  (0.4/tick). Its trickle pays 1 Oil every ~7.5 s via the PP-07 fractional
-  carry, and everything else must be banked from Oil at 4:1 — expansion is
-  slow (≈26 min) but never dead. A human on the same opening would match
-  Oil tokens on the board instead and do much better.
+  (0.4/tick). Its trickle pays 1 Oil every ~7.5 s via the fractional carry,
+  and everything else must be banked from Oil at 4:1 — expansion is slow
+  (≈26 min) but never dead. A human on the same opening would match Oil
+  tokens on the board instead and do much better.
 - **Second plant** (2 Wood + 2 Stone + 2 Grain + 3 Ore, town-adjacent)
   follows the second Depot closely; Ore is the binding cargo and every seed's
   network reaches Ore within the cap.
 
-## Defects the playtest found (fixed in this change)
+## Defects the extended playtest found (fixed in this change)
 
 1. **Fractional trickle rounded to zero.** Per-tick `Math.round` paid nothing
    for Oil (0.4/tick) and Gold (0.3/tick), so an oil-only network was dead
-   income — and every paid Depot now costs Oil. `economyTick` accumulates the
+   income — and every paid Depot costs Oil. `economyTick` accumulates the
    fraction instead (`src/iso/game.ts`): 0.4/tick → 1 Oil every ~7.5 s.
 2. **The rival could never afford a second Depot.** Its only income is the
    trickle, and no single trickle cargo pays a second Depot plus the track to
@@ -75,22 +78,20 @@ Reading:
    candidate with the least shortfall, priced with a hypothetical deep purse
    since `planCandidates` drops unaffordable plans — two 4:1 exchanges per
    build clock, Gold never touched (PP-08). Same escape hatch the player has.
-3. **No plant could be raised beside a town on real maps** (PP-10 ↔ PP-06
-   interaction). PP-10's ring road surrounds every house with `TOWN_OCC`
-   tiles, but `adjacentTown` only counted houses: every footprint next to a
-   house overlapped the ring ("occupied") and every footprint next to the
-   ring alone was "no-town". Town roads are part of the town (grid.ts stamps
-   them `TOWN_OCC` for exactly that reason), so `townHasTile` now counts them
-   — and `chooseAiPlantSpot` scans far enough past the ring to find the
-   legal sites.
-4. **Bank deadlocks in the headless session** (simulation-level, same class
+   Covered in `iso-game.test.ts` → *"banks toward a paid Depot when no
+   trickle cargo alone covers it (PP-07)"*.
+3. **Bank deadlocks in the headless session** (simulation-level, same class
    as defect 2): pricing the whole milestone into the bank target forbade
    trading the very cargo the target needed; banking the purchase alone
    ping-ponged Oil forever; and buying Wood up to a target then selling it
    for Stone oscillated at the boundary. The shipped model banks toward the
-   chosen plan and only ever sells a cargo the purse holds strictly more of
-   than the milestone needs, with the Depot purchase kept as an unsellable
+   chosen road plan and only ever sells a cargo the purse holds strictly more
+   of than the milestone needs, with the Depot purchase kept as an unsellable
    reserve.
+
+(The plant-site regression the first playtest pass surfaced — PP-10's ring
+roads making every town-adjacent plant site illegal — was fixed alongside
+the rebalance itself; see `2026-09-08-pp10-town-roads.md`.)
 
 ## Balance notes for the next pass
 
@@ -106,4 +107,4 @@ Reading:
   `iso-rebalance.test.ts`.
 - Candidate levers if expansion feels slow: Depot price, `HARVEST_MS`, or a
   slightly richer opening stock — all single constants in one table
-  (`src/iso/construction.ts`) plus `START_PURSE`.
+  (`BUILD_COSTS` in `src/iso/config.ts`) plus `START_PURSE`.

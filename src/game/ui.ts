@@ -27,7 +27,8 @@ import {
 } from "./config";
 import { BANK_RATE, MAX_OFFERS } from "./trade";
 import { CARGO, CARGOES, TRANSPORT, type Cargo } from "../iso/config";
-import { BUILD_COSTS, DEPOT_COST, costCompact, depotButtonLabel } from "../iso/construction";
+import { DEPOT_COST, costCompact, depotButtonLabel } from "../iso/construction";
+import { PLANT_COST } from "../iso/plants";
 import { GEM_TO_CARGO } from "../iso/quarry";
 import { Board, type Gem } from "./board";
 import type { IsoMarket, IsoMarketPlayer, Offer } from "../iso/market";
@@ -308,23 +309,19 @@ export function createOriginalUi(
   let lastMarketKey = "\u0000";
 
   // ── build list: the iso tools, keeping the original Build panel layout ────
-  // PP-07: every price shown here is rendered from the ONE authoritative
-  // table (`src/iso/construction.ts`) — the same numbers the click charges and the
-  // rival plans with, so the button, the charge and the AI never drift apart.
+  // PP-07: every price line is READ from the one authoritative cost table
+  // (BUILD_COSTS, via the TRANSPORT / DEPOT_COST / PLANT_COST aliases), never
+  // typed here — the buttons state the complete cost before the first click
+  // and can never drift from what the placement actually charges.
   const TOOLS: { key: UiTool; label: string; sub: string }[] = [
-    // PP-07: road and rail prices come from the authoritative table — the
-    // same numbers the drag charges and the rival plans with.
-    { key: "road", label: "Road", sub: `${costStr(BUILD_COSTS.road)} · ${TRANSPORT.road.vp} VP` },
-    { key: "rail", label: "Rail", sub: `${costStr(BUILD_COSTS.rail)} · ${TRANSPORT.rail.vp} VP` },
-    // PP-05: the Depot's price is READ from the authoritative cost table, not
-    // typed here — "show the complete cost before placement" means the button
-    // states it before the first click, and it can never drift from what the
-    // placement actually charges. `depotSub` refreshes it as the free-setup
+    { key: "road", label: "Road", sub: `${costCompact(TRANSPORT.road.cost)} · ${TRANSPORT.road.vp} VP` },
+    { key: "rail", label: "Rail", sub: `${costCompact(TRANSPORT.rail.cost)} · ${TRANSPORT.rail.vp} VP` },
+    // PP-05: `depotSub` refreshes the Depot line below as the free-setup
     // allowance burns down.
     { key: "harvester", label: "Depot", sub: depotButtonLabel(0) },
     // PP-06: another instance of the SAME processing building, raised beside
-    // another town. Cost is the `plant` entry of the authoritative table.
-    { key: "plant", label: "Processing Plant", sub: `${costStr(BUILD_COSTS.plant)} · next to a town` },
+    // another town.
+    { key: "plant", label: "Processing Plant", sub: `${costCompact(PLANT_COST)} · next to a town` },
     { key: "demolish", label: "Demolish", sub: "refund none" },
   ];
   let depotSub: HTMLElement | null = null;
@@ -993,7 +990,7 @@ export function createOriginalUi(
         <h2>⚙️ HEXMATCH INDUSTRIES</h2>
         <p class="sub">Two worlds, one empire: <b>resource node → Depot → transport network → Factory → processing → resources available for construction</b>. First to <b>${VP.target}★ Victory Points</b> wins.</p>
         <div class="help-cols">
-          <div class="help-col"><h3>🏙️ The Territory</h3><p>Place <b>Depots</b> beside resource nodes to collect their output, then build <b>Roads</b> & <b>Rails</b> to carry it to your Factory. The rail multiplier and VP are on the connection; a broken line revokes it.</p><p>Your <b>first Depot is free</b>; every Depot after it costs <b>${costCompact(DEPOT_COST)}</b>, so reaching an Oil Rig (or matching Oil in the Processing Plant) is what buys expansion. A Depot you cannot pay for is refused and consumes nothing.</p><p>Pan with the <b>middle mouse button</b> (wheel zooms, touch drags pan). The left button only places or selects — dragging it never pans.</p></div>
+          <div class="help-col"><h3>🏙️ The Territory</h3><p>Place <b>Depots</b> beside resource nodes to collect their output, then build <b>Roads</b> & <b>Rails</b> to carry it to your Factory. The rail multiplier and VP are on the connection; a broken line revokes it.</p><p>Your <b>first Depot is free</b>; every Depot after it costs <b>${costCompact(DEPOT_COST)}</b>, so reaching new industries (or manufacturing in the Processing Plant) is what buys expansion. A Depot you cannot pay for is refused and consumes nothing.</p><p>Pan with the <b>middle mouse button</b> (wheel zooms, touch drags pan). The left button only places or selects — dragging it never pans.</p></div>
           <div class="help-col"><h3>💎 The Processing Plant</h3><p>Where your Factory turns delivered cargo into resources available for construction. Match tokens to process: a colour only pays when your network reaches its industry. Match 4 doubles, match 5 makes a <b>bomb</b>. <b>Gold</b> 🪙 is its own colour — its gems drop only while a depot sits beside a gold mine (and pay once it's connected).</p></div>
           <div class="help-col"><h3>🪙 Gold, Trade & Defence</h3><p>Earn <b>gold</b> from gold-mine access or combos. <b>Gold is reserved for Black Market sabotage</b> — it never buys construction, cannot substitute for missing materials, and is refused by every market exchange. Security Forces and Repair Crew are hired with ordinary materials.</p></div>
         </div>
