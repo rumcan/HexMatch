@@ -180,11 +180,19 @@ describe("E7 scoring", () => {
   });
 
   it("harvesterSpots hugs the footprint without corners or overlap", () => {
-    const farm = ind("farm", 10, 10);      // 1×1 (V1: footprint = the art)
+    const farm = ind("farm", 10, 10);      // 3×3 (MT-2: footprint = the OpenTTD layout)
     const spots = harvesterSpots(flatGrid([farm]), farm);
-    expect(spots).toEqual([[10, 9], [9, 10], [11, 10], [10, 11]]);  // 4 sides, no diagonals
+    // the 12 orthogonally-adjacent ring tiles of a 3×3 footprint, in the
+    // stable y-major order harvesterSpots walks (no diagonal corners).
+    expect(spots).toEqual([
+      [10, 9], [11, 9], [12, 9],
+      [9, 10], [13, 10],
+      [9, 11], [13, 11],
+      [9, 12], [13, 12],
+      [10, 13], [11, 13], [12, 13],
+    ]);
     for (const [x, y] of spots) {
-      const insideX = x >= 10 && x < 11, insideY = y >= 10 && y < 11;
+      const insideX = x >= 10 && x < 13, insideY = y >= 10 && y < 13;
       expect(insideX && insideY).toBe(false);
       expect(insideX || insideY).toBe(true);
     }

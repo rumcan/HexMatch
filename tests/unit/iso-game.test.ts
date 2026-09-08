@@ -167,17 +167,72 @@ describe("E11 the game boots", () => {
  * failure that depends on the seed). Prefer a corridor like the cargo test:
  * no single industry is special, so scanning is not a cheat.
  */
-function findSouthCorridor(grid: import("../../src/iso/grid").Grid):
-  { hx: number; hy: number; fy: number } | null {
+function findSouthCorridor(
+  grid: import("../../src/iso/grid").Grid, len = 6, type?: string,
+): { hx: number; hy: number; fy: number; ind: import("../../src/iso/grid").Industry } | null {
   for (const ind of grid.industries) {
-    const hx = ind.tx, hy = ind.ty + ind.h;
-    const fy = hy + 6;
-    if (hy < 0 || fy >= MAP_H || hx < 0 || hx >= MAP_W) continue;
-    let ok = true;
-    for (let y = hy; y <= fy; y++) {
-      if (grid.terrain[y * MAP_W + hx] === WATER) { ok = false; break; }
+    if (type && ind.type !== type) continue;
+    // MT-2: the harvester stands below the footprint's south edge, so try
+    // every column the footprint spans — the origin column alone can be
+    // blocked (a pond, a town) while a neighbour column is clear.
+    for (let x = ind.tx; x < ind.tx + ind.w; x++) {
+      const hx = x, hy = ind.ty + ind.h;
+      const fy = hy + len;
+      if (hy < 0 || fy >= MAP_H || hx < 0 || hx >= MAP_W) continue;
+      let ok = true;
+      for (let y = hy; y <= fy; y++) {
+        const i = y * MAP_W + hx;
+        if (grid.terrain[i] === WATER || grid.occupancy[i] !== -1) { ok = false; break; }
+      }
+      if (ok) return { hx, hy, fy, ind };
     }
-    if (ok) return { hx, hy, fy };
+  }
+  return null;
+}
+
+/**
+ * A 2×2 road-legal spot (the factory footprint) scanning from the map's
+ * interior outward. MT-2 moved every industry, so the old hard-coded factory
+ * tiles (e.g. (23,22)) can now sit inside a mine's footprint — find one that
+ * the real `placeFactory` will accept instead.
+ */
+function findFactorySpot(grid: import("../../src/iso/grid").Grid): [number, number] | null {
+  for (let y = 6; y < MAP_H - 6; y++) {
+    for (let x = 6; x < MAP_W - 6; x++) {
+      let ok = true;
+      for (let dy = 0; dy < 2; dy++) {
+        for (let dx = 0; dx < 2; dx++) {
+          const i = (y + dy) * MAP_W + (x + dx);
+          if (grid.terrain[i] === WATER || grid.occupancy[i] !== -1) { ok = false; break; }
+        }
+        if (!ok) break;
+      }
+      if (ok) return [x, y];
+    }
+  }
+  return null;
+}
+
+/** A 2×2 road-legal factory spot within a small ring of an industry of `type`. */
+function findFactorySpotNear(
+  grid: import("../../src/iso/grid").Grid, type: string,
+): [number, number] | null {
+  for (const ind of grid.industries) {
+    if (ind.type !== type) continue;
+    for (let y = Math.max(0, ind.ty - 8); y < Math.min(MAP_H, ind.ty + ind.h + 8); y++) {
+      for (let x = Math.max(0, ind.tx - 8); x < Math.min(MAP_W, ind.tx + ind.w + 8); x++) {
+        let ok = true;
+        for (let dy = 0; dy < 2; dy++) {
+          for (let dx = 0; dx < 2; dx++) {
+            if (x + dx >= MAP_W || y + dy >= MAP_H) { ok = false; break; }
+            const i = (y + dy) * MAP_W + (x + dx);
+            if (grid.terrain[i] === WATER || grid.occupancy[i] !== -1) { ok = false; break; }
+          }
+          if (!ok) break;
+        }
+        if (ok) return [x, y];
+      }
+    }
   }
   return null;
 }
@@ -540,12 +595,12 @@ describe("W1 the drag charges exactly what it previewed", () => {
   it("an unaffordable drag builds the affordable prefix; nothing goes negative", async () => {
     const h = await boot();
     const { hasTrack } = await import("../../src/iso/track");
-    // seed 1337 (48×48): ore_mine(18,13) has the clean south corridor
-    // (x=18, y=14..28 all land, no occupancy)
-    const mine = h.grid.industries.find((i) => i.type === "ore_mine" && i.tx === 18 && i.ty === 13);
-    expect(mine).toBeTruthy();
-    const hx = 18, hy = 14, fy = hy + 6;
-    h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx, ty: fy });
+    // a clear south column of 15 tiles (harvester + 14 road tiles) below an
+    // industry — found, not hard-coded, since MT-2 reshaped the map.
+    const c = findSouthCorridor(h.grid, 14);
+    expect(c).toBeTruthy();
+    const { hx, hy } = c!;
+    h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx, ty: hy + 6 });
     h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy });
     h.finishSetup();
 
@@ -591,10 +646,12 @@ describe("W3 the rival actually plays (headless)", () => {
     for (let y = c!.hy + 1; y <= c!.fy; y++) buildTile(h.track, "road", c!.hx, y, 1);
     h.finishSetup();
 
-    // K0/seed 1337 (32×32): the rival's factory sits below ore_mine(13,20)
-    // with the clean corridor x=13, y=21..27 (the player's corridor — the
-    // first legal one, forest(14,14) — is a column over and above it).
-    h.eco.factories.push({ owner: "ai", ownerId: 2, tx: 13, ty: 27 });
+    // The rival's factory goes next to an ORE mine (its ore trickle is what the
+    // second half asserts). MT-2 moved every mine, so the spot is found from
+    // the live grid rather than hard-coded.
+    const rivalSpot = findFactorySpotNear(h.grid, "ore_mine");
+    expect(rivalSpot).toBeTruthy();
+    h.eco.factories.push({ owner: "ai", ownerId: 2, tx: rivalSpot![0], ty: rivalSpot![1] });
     const rival = h.market.players[1];
     const rivalTiles = () => [...h.track.owner].filter((o) => o === 2).length;
     expect(rivalTiles()).toBe(0);
@@ -630,11 +687,14 @@ describe("W8 the rival is placed where it can build — and builds", () => {
     const { canBuildOn } = await import("../../src/iso/track");
     const { canReachASpot } = await import("./helpers/rival-map");
     // The ticket's regression guard: the rival must never be handed a tile no
-    // track can leave. On the 48×48 seed-1337 map the (0,0) water corner is
-    // such an unreachable tile (its road-legal component reaches no harvester).
-    expect(canBuildOn(h.grid, "road", 23, 22)).toBe(true);
+    // track can leave. On the seed-1337 map the (0,0) water corner is such an
+    // unreachable tile (its road-legal component reaches no harvester).
+    const spot = findFactorySpot(h.grid);
+    expect(spot).toBeTruthy();
+    const [fx, fy] = spot!;
+    expect(canBuildOn(h.grid, "road", fx, fy)).toBe(true);
     expect(canReachASpot(h.grid, 0, 0)).toBe(false);
-    expect(h.placeFactory(23, 22)).toBe(true);
+    expect(h.placeFactory(fx, fy)).toBe(true);
 
     const rival = h.factories.find((f) => f.owner === "ai");
     expect(rival).toBeTruthy();
@@ -643,12 +703,14 @@ describe("W8 the rival is placed where it can build — and builds", () => {
     expect(canReachASpot(h.grid, rival!.tx, rival!.ty)).toBe(true);
     expect([rival!.tx, rival!.ty]).not.toEqual([0, 0]);
     // …and still a good distance from the player, as before
-    expect(Math.abs(rival!.tx - 23) + Math.abs(rival!.ty - 22)).toBeGreaterThan(10);
+    expect(Math.abs(rival!.tx - fx) + Math.abs(rival!.ty - fy)).toBeGreaterThan(10);
   });
 
   it("four aiTicks from that real placement build track, a harvester, and VP", async () => {
     const h = await boot();
-    expect(h.placeFactory(23, 22)).toBe(true);
+    const spot = findFactorySpot(h.grid);
+    expect(spot).toBeTruthy();
+    expect(h.placeFactory(spot![0], spot![1])).toBe(true);
     h.finishSetup();                     // the AI clock only runs in `play`
     const rivalTiles = () => [...h.track.owner].filter((o) => o === 2).length;
     expect(rivalTiles()).toBe(0);
@@ -717,10 +779,11 @@ describe("W4 a normal session earns the rail", () => {
   it("road → ore mine → harvest ore → the rail tile is affordable", async () => {
     const h = await boot();
     const { buildTile, hasTrack, canAfford } = await import("../../src/iso/track");
-    // seed 1337 (48×48): ore_mine(18,13) with a clean south corridor (y=14..20)
-    const mine = h.grid.industries.find((i) => i.type === "ore_mine" && i.tx === 18 && i.ty === 13);
-    expect(mine).toBeTruthy();
-    const hx = 18, hy = 14, fy = hy + 6;   // factory (18,20)
+    // an ore mine with a clean south corridor, found on the live grid (MT-2
+    // moved every mine, so the old hard-coded (18,13) is gone).
+    const c = findSouthCorridor(h.grid, 6, "ore_mine");
+    expect(c).toBeTruthy();
+    const { hx, hy, fy } = c!;
     h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx, ty: fy });
     h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy });
     for (let y = hy + 1; y <= fy; y++) buildTile(h.track, "road", hx, y, 1);
@@ -800,8 +863,7 @@ describe("TK-008 Blockade buys auto-target the rival (no targeting step)", () =>
     // to its factory (ownerId 2), so the industry is yielding for the rival.
     const c = findSouthCorridor(h.grid);
     expect(c).toBeTruthy();
-    const { hx, hy, fy } = c!;
-    const ind = h.grid.industries.find((i) => i.tx === hx && i.ty === hy - 1);
+    const { hx, hy, fy, ind } = c!;
     expect(ind).toBeTruthy();
     h.eco.factories.push({ owner: "ai", ownerId: 2, tx: hx, ty: fy });
     h.eco.harvesters.push({ id: 1, owner: "ai", ownerId: 2, tx: hx, ty: hy });
@@ -822,7 +884,6 @@ describe("TK-008 Blockade buys auto-target the rival (no targeting step)", () =>
     // gold was spent, and the purchase ITSELF placed the blockade — no map
     // click, no crosshair mode, no "click an industry" prompt anywhere.
     expect(h.purse.gold ?? 0).toBe(0);
-    expect(h.grid.industries[ind!.id].banditUntil).toBeGreaterThan(boughtAt);
     const banditAfter = root.querySelector('[data-black="bandit"]') as HTMLElement;
     expect(banditAfter.classList.contains("active")).toBe(false);   // not armed
     expect(banditAfter.classList.contains("disabled")).toBe(true);  // 0 gold left
@@ -831,12 +892,16 @@ describe("TK-008 Blockade buys auto-target the rival (no targeting step)", () =>
     expect((root.querySelector(".toasts") as HTMLElement).textContent ?? "")
       .toMatch(/blockade set on/i);
 
-    // the rival's harvest FROM THAT INDUSTRY is stopped until it expires…
-    const blockedUntil = h.grid.industries[ind!.id].banditUntil;
-    const cargo = INDUSTRY_BY_KEY[ind!.type].cargo;
-    expect(playerResources(h.eco, "ai", blockedUntil - 1_000)[cargo]).toBeUndefined();
+    // the industry the rival actually yields from is the one that got blockaded
+    // (MT-2: a 4×4 catchment can now touch more than one footprint, so the
+    // target is found by the game's own rule rather than assumed to be `ind`).
+    const blocked = h.grid.industries.find((i) => i.banditUntil > boughtAt);
+    expect(blocked).toBeTruthy();
+    const cargo = INDUSTRY_BY_KEY[blocked!.type].cargo;
+    // …its harvest is stopped until it expires…
+    expect(playerResources(h.eco, "ai", blocked!.banditUntil - 1_000)[cargo]).toBeUndefined();
     // …and resumes afterwards.
-    expect(playerResources(h.eco, "ai", blockedUntil + 1_000)[cargo]).toBeGreaterThan(0);
+    expect(playerResources(h.eco, "ai", blocked!.banditUntil + 1_000)[cargo]).toBeGreaterThan(0);
   });
 });
 

@@ -8,6 +8,7 @@ import {
 import { generateMap, WATER, ROUGH } from "../../src/iso/grid";
 import { createCamera, centerOnMap, visibleTileRange } from "../../src/iso/camera";
 import { MAP_W, MAP_H, HW, HH, TILE_H } from "../../src/game/config";
+import { INDUSTRY_BY_KEY } from "../../src/iso/config";
 
 const manifest: Manifest = JSON.parse(
   readFileSync("assets/iso-atlas/manifest.json", "utf8"),
@@ -87,21 +88,28 @@ describe("E4 culling + draw list", () => {
     expect(pad).toBeLessThan(40);
   });
 
-  it("emits each industry exactly once, at its origin", () => {
+  it("emits one item per footprint tile of every industry (MT-2)", () => {
     const full = { x0: 0, y0: 0, x1: MAP_W - 1, y1: MAP_H - 1 };
     const list = buildDrawList({ grid }, full);
     const inds = list.filter((d) => d.ref);
-    expect(inds).toHaveLength(grid.industries.length);
-    for (const d of inds) {
-      const ind = d.ref as { tx: number; ty: number; type: string };
-      expect([d.tx, d.ty, d.sprite]).toEqual([ind.tx, ind.ty, ind.type]);
-      expect(atlas.has(d.sprite)).toBe(true);
+    // every industry contributes exactly one item per tile in its layout
+    for (const ind of grid.industries) {
+      const tiles = INDUSTRY_BY_KEY[ind.type].tiles!;
+      const mine = inds.filter((d) => d.ref === ind);
+      expect(mine.length, ind.type).toBe(tiles.length);
+      for (const t of tiles) {
+        const item = mine.find((d) => d.tx === ind.tx + t.dx && d.ty === ind.ty + t.dy);
+        expect(item, `${ind.type} tile ${t.m} at (${t.dx},${t.dy})`).toBeTruthy();
+        expect(item!.sprite).toBe(`${ind.type}_t${t.m}`);
+        expect(atlas.has(item!.sprite)).toBe(true);
+      }
     }
   });
 
   it("culls industries outside the range but keeps footprint overlaps", () => {
     const ind = grid.industries[0];
-    const tight = { x0: ind.tx + ind.w - 1, y0: ind.ty + ind.h - 1, x1: ind.tx + ind.w - 1, y1: ind.ty + ind.h - 1 };
+    const t = INDUSTRY_BY_KEY[ind.type].tiles![0];
+    const tight = { x0: ind.tx + t.dx, y0: ind.ty + t.dy, x1: ind.tx + t.dx, y1: ind.ty + t.dy };
     expect(buildDrawList({ grid }, tight).some((d) => d.ref === ind)).toBe(true);
     const far = { x0: 0, y0: 0, x1: 0, y1: 0 };
     const list = buildDrawList({ grid }, far);

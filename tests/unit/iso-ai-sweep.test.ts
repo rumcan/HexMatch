@@ -70,23 +70,28 @@ describe("W8 sweep — every legal rival tile is playable", () => {
     // roughly triples the search space.
     expect(tiles.length).toBeGreaterThan(100);
 
-    let enclaves = 0;
+    const enclaves: string[] = [];
     const bad: string[] = [];
     for (const [x, y] of tiles) {
-      if (!canReachASpot(grid, x, y)) { enclaves++; continue; }
+      if (!canReachASpot(grid, x, y)) { enclaves.push(`${x},${y}`); continue; }
       const r = play(grid, x, y, 4);
       expect(r.noops, `no-op turn at ${x},${y}`).toBe(0);
       if (r.tiles === 0) bad.push(`${x},${y} laid nothing`);
       else if (r.serviced === 0) bad.push(`${x},${y} no serviced harvester`);
     }
     // The old "rough (2,2) enclave" repro is gone on the reverted map: (2,2)
-    // is open WATER, so `rivalSearchTiles` never even considers it, and no
-    // road-buildable tile is walled off from a harvester spot on this seed —
-    // the sweep above therefore exercises every legal rival tile.
+    // is open WATER, so `rivalSearchTiles` never even considers it.
     expect(canBuildOn(grid, "road", 2, 2)).toBe(false);
-    expect(enclaves).toBe(0);
+    // MT-2's real footprints wall off exactly one road-buildable tile on this
+    // seed: (44,8), a single grass tile with water on three sides and an
+    // industry footprint on the fourth. No plan can ever leave it, so it is a
+    // legitimate ENCLAVE — excluded from the sweep above and refused by
+    // `chooseRivalFactorySpot` (the placement test below proves it). The
+    // assertion pins that set so a footprint/terrain change can only add an
+    // enclave (or a deadlock in `bad`) by failing here first.
+    expect(enclaves, `enclave tiles: ${enclaves.join(" | ")}`).toEqual(["44,8"]);
     expect(bad, `deadlocked tiles: ${bad.join(" | ")}`).toEqual([]);
-  }, 600_000);
+  }, 1200_000);
 
   it("seed 7: the first turn is never a no-op, and builds wherever it can", () => {
     // sampled (step 4): the ticket measured 37/157 deadlocks on this seed, so a

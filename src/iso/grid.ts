@@ -202,8 +202,11 @@ const TOWN_COUNT = 4;
 /** TOWN-1: houses per town (min..max inclusive). */
 const TOWN_HOUSES_MIN = 6;
 const TOWN_HOUSES_MAX = 12;
-/** TOWN-1: minimum Chebyshev distance between town centres and any industry tile. */
-const TOWN_INDUSTRY_SEP = 6;
+/** TOWN-1: minimum Chebyshev distance between town centres and any industry tile.
+ *  Re-tuned for MT-2's multi-tile footprints (6 → 3): with 3×3–4×5 industries
+ *  the old 6-tile keep-out ring left only a handful of legal centres on some
+ *  seeds (0 towns), and a 3-tile gap still reads as clear space on screen. */
+const TOWN_INDUSTRY_SEP = 3;
 /** TOWN-1: minimum Chebyshev distance between two town centres. */
 const TOWN_TOWN_SEP = 10;
 /** TOWN-1: occupancy sentinel for town tiles (distinct from industry indices ≥ 0). */
@@ -324,11 +327,16 @@ function placeTowns(
         }
         if (houses.length < TOWN_HOUSES_MIN) continue;
 
-        // Reachability check: town tiles must not strand any industry.
+        // Reachability check: the PROPOSED TOWN tiles must not strand any
+        // industry. F1 fix: `blocked` holds only the town's house tiles.
+        // Adding every occupied industry tile to `blocked` made
+        // `allIndustriesReachable` start its flood from an industry tile
+        // (`blocked.has(start)` → false), so every candidate failed and no
+        // town was ever placed. Industries must stay passable for the flood
+        // — the question is "do these houses wall off an industry?", and the
+        // flood starts from an industry tile and walks land that excludes
+        // only the town footprint (water is already excluded inside).
         const blocked = new Set<number>();
-        for (let i = 0; i < MAP_W * MAP_H; i++) {
-          if (occ[i] !== -1) blocked.add(i);   // already-occupied industry tiles
-        }
         for (const [hx, hy] of houses) blocked.add(idx(hx, hy));
         if (!allIndustriesReachable(blocked)) continue;
 

@@ -24,6 +24,7 @@ import {
   shouldAutoEnableRenderLog, DEBUG_OVERLAYS,
 } from "../../src/iso/debug";
 import { WATER, GRASS } from "../../src/iso/grid";
+import { INDUSTRY_BY_KEY } from "../../src/iso/config";
 
 vi.mock("../../assets/iso-atlas/atlas@0.5x.png", () => ({ default: "a05.png" }));
 vi.mock("../../assets/iso-atlas/atlas@1x.png", () => ({ default: "a1.png" }));
@@ -228,10 +229,16 @@ describe("C5 the dumps report the geometry the renderer used", () => {
     expect(d.structures.length).toBeGreaterThan(0);
     const built = d.structures.find((x: any) => x.isIndustry);
     expect(built).toBeTruthy();
-    expect(built.sprite).toBe(ind.type);
+    // MT-2: an industry is now one draw item per tile, each named `<key>_t<m>`
+    // after its OpenTTD tile index. The origin tile carries the layout entry at
+    // (dx 0, dy 0).
+    const tiles = INDUSTRY_BY_KEY[ind.type].tiles!;
+    const origin = tiles.find((t) => t.dx === 0 && t.dy === 0) ?? tiles[0];
+    expect(built.sprite).toBe(`${ind.type}_t${origin.m}`);
     // Flat anchor: the sprite's anchor row lands on the footprint's south
     // corner, so a flush building has a zero gap. A non-zero one is the hover.
     expect(built.gapPx).toBe(0);
+    // a multi-tile industry is composed of 1×1 tile sprites, not one big sprite
     expect(built.footprint).toEqual([1, 1]);
     // an empty tile reports no structures rather than guessing
     expect(h.dumpBuilding(0, 0).structures).toEqual([]);

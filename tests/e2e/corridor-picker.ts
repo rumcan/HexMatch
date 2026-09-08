@@ -50,26 +50,29 @@
 
 /**
  * The click points a tile offers, in preference order, as fractions of ONE
- * measured tile step from the diamond centre.
+ * measured tile step from the diamond's TOP vertex (`tileScreenAt`).
  *
- * Both bounds of every entry are chosen so the point stays inside the tile's
- * OWN pick cell: `renderer.pick`'s flat stage resolves a point at (ax, ay) to
- * the same tile iff −1 ≤ ax+ay < 1 and −1 ≤ ay−ax < 1, and the drawn diamond
- * contains it iff |ax|+|ay| ≤ 1. `isoTileClickPoint` re-checks that against the
- * game itself, so a candidate that stops being true (a tall neighbour's sprite
- * taking the pixel — the reason the list is a LIST) costs a retry, not a wrong
- * click. The ±0.5 x entries exist because a building standing on the tile to the
- * lower-right covers this tile's centre and its right half, and nothing else in
- * the list escapes it.
+ * Every entry stays inside the tile's OWN flat pick cell: with the point
+ * `(ax, ay)` measured from the top vertex, `flatPick` resolves it back to the
+ * same tile iff 0 ≤ ax+ay < 2 and 0 ≤ ay−ax < 2 (equivalently it stays inside
+ * the drawn diamond |ax| + |ay−1| ≤ 1, whose centre is one step below the top
+ * vertex). `isoTileClickPoint` re-checks that against the game itself, so a
+ * candidate that stops being true (a tall neighbour's sprite taking the pixel
+ * — the reason the list is a LIST) costs a retry, not a wrong click. The
+ * negative-x entries exist because a building standing on the tile to the
+ * lower-right covers this tile's centre and its right half, and nothing else
+ * in the list escapes it.
  */
 export const AIM_CANDIDATES: CorridorAim[] = [
-  { x: 0, y: 0.5 },      // the convention: halfway down the surface
-  { x: 0, y: 0 },        // the exact centre
-  { x: 0, y: -0.5 },     // halfway up
-  { x: -0.5, y: 0 }, { x: 0.5, y: 0 },
-  { x: -0.25, y: 0.25 }, { x: 0.25, y: 0.25 },
-  { x: -0.25, y: -0.25 }, { x: 0.25, y: -0.25 },
-  { x: -0.25, y: 0 }, { x: 0.25, y: 0 },
+  { x: 0, y: 0.5 },      // the convention: half a step down the surface
+  { x: 0, y: 0 },        // the top vertex
+  { x: 0, y: 0.25 },     // a quarter-step down
+  { x: -0.25, y: 0.5 },  // quarter-left, at the convention depth
+  { x: 0.25, y: 0.5 },   // quarter-right, at the convention depth
+  { x: -0.25, y: 0.25 }, // upper-left diagonal
+  { x: 0.25, y: 0.25 },  // upper-right diagonal
+  { x: -0.5, y: 0.5 },   // left edge — escapes the lower-right neighbour
+  { x: 0.5, y: 0.5 },    // right edge
 ];
 
 /** The read-only slice of `window.__iso` this helper is allowed to touch. */
@@ -256,19 +259,19 @@ export function findIsoCorridor(opts?: CorridorOptions): Corridor {
     { name: "SE", dx: 1, dy: 0 },   // down-RIGHT
   ];
   // Where inside the diamond to click, as multiples of a tile step from the
-  // centre. [0, 0.5] is the convention the rest of the spec uses (half a step
-  // down the tile surface, past the K4 pick-cell offset); the others are there
-  // so a sprite or a HUD box that clips the conventional point cannot make the
-  // whole test unrunnable when a perfectly clickable tile is two pixels away.
+  // TOP vertex (the `tileScreenAt` reference). [0, 0.5] is the convention the
+  // rest of the spec uses (half a step down the tile surface, past the K4
+  // pick-cell offset); the others are there so a sprite or a HUD box that
+  // clips the conventional point cannot make the whole test unrunnable when a
+  // perfectly clickable tile is two pixels away.
   // Repeated verbatim from `AIM_CANDIDATES` (module scope does not survive
   // `page.evaluate`); the copy inside `isoClickableTile` and both lists are
   // pinned against `AIM_CANDIDATES` by tests/unit/iso-corridor-picker.test.ts.
   const AIMS: CorridorAim[] = [
-    { x: 0, y: 0.5 }, { x: 0, y: 0 }, { x: 0, y: -0.5 },
-    { x: -0.5, y: 0 }, { x: 0.5, y: 0 },
+    { x: 0, y: 0.5 }, { x: 0, y: 0 }, { x: 0, y: 0.25 },
+    { x: -0.25, y: 0.5 }, { x: 0.25, y: 0.5 },
     { x: -0.25, y: 0.25 }, { x: 0.25, y: 0.25 },
-    { x: -0.25, y: -0.25 }, { x: 0.25, y: -0.25 },
-    { x: -0.25, y: 0 }, { x: 0.25, y: 0 },
+    { x: -0.5, y: 0.5 }, { x: 0.5, y: 0.5 },
   ];
 
   // Rank industries by distance from the boot camera's focus (industries[0] is
@@ -436,7 +439,8 @@ export interface ClickPoint extends CorridorTile {
  * hit-test — but the measurement (step, dpr, map origin, the pick check) lives
  * here in one place, and the unit tests assert both forms against it.
  *
- * `aim` is a fraction of ONE TILE STEP away from the diamond centre, and the
+ * `aim` is a fraction of ONE TILE STEP away from the diamond's TOP vertex (the
+ * `tileScreenAt` reference), and the
  * step is measured the only way that is correct: `tileScreenAt(0,0)` →
  * `tileScreenAt(0,1)`. This is not pedantry — the first CI run of the E14 spec
  * derived the step as `tileScreenAt(0,1)` minus *the target tile*, which at
@@ -563,11 +567,10 @@ export function isoClickableTile(sel: ClickableSel): ClickableTile {
   // The canonical `AIM_CANDIDATES` list, repeated because module scope does not
   // survive `page.evaluate`, with the caller's preferred aim tried first.
   const LIST: CorridorAim[] = [
-    { x: 0, y: 0.5 }, { x: 0, y: 0 }, { x: 0, y: -0.5 },
-    { x: -0.5, y: 0 }, { x: 0.5, y: 0 },
+    { x: 0, y: 0.5 }, { x: 0, y: 0 }, { x: 0, y: 0.25 },
+    { x: -0.25, y: 0.5 }, { x: 0.25, y: 0.5 },
     { x: -0.25, y: 0.25 }, { x: 0.25, y: 0.25 },
-    { x: -0.25, y: -0.25 }, { x: 0.25, y: -0.25 },
-    { x: -0.25, y: 0 }, { x: 0.25, y: 0 },
+    { x: -0.5, y: 0.5 }, { x: 0.5, y: 0.5 },
   ];
   const aims: CorridorAim[] = sel.aim
     ? [sel.aim, ...LIST.filter((a) => a.x !== sel.aim!.x || a.y !== sel.aim!.y)]

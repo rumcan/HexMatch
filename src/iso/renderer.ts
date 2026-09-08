@@ -23,6 +23,7 @@ import { visibleTileRange, screenToWorld, worldToScreen } from "./camera";
 import type { Atlas } from "./atlas";
 import { depthSort, place, pickSprite, type DrawItem, type Placed } from "./depth";
 import { GRASS, WATER, ROUGH, type Grid } from "./grid";
+import { INDUSTRY_BY_KEY } from "./config";
 
 export const CHUNK = 8;
 export const chunksX = Math.ceil(MAP_W / CHUNK);
@@ -94,12 +95,26 @@ export function buildDrawList(world: World, r: { x0: number; y0: number; x1: num
       if (rb && kb) out.push({ sprite: "crossing", tx, ty });
     }
   }
-  // industries: emit once, keyed on their origin, when the footprint
-  // intersects the culled range.
+  // industries: emit ONE ITEM PER TILE (MT-1/MT-2), so each tile draws its own
+  // ground + building at its own origin and depth-sorts on (tx+dx)+(ty+dy) —
+  // roads interleave correctly around a multi-tile industry. `tiles` is the
+  // OpenTTD layout (`_tile_table_*`); positions the table leaves unlisted are
+  // reserved via `footprint` but draw nothing (open ground, exactly like
+  // OpenTTD's sparse layouts).
   for (const ind of grid.industries) {
     if (ind.tx + ind.w - 1 < r.x0 || ind.tx > r.x1) continue;
     if (ind.ty + ind.h - 1 < r.y0 || ind.ty > r.y1) continue;
-    out.push({ sprite: ind.type, tx: ind.tx, ty: ind.ty, ref: ind });
+    const def = INDUSTRY_BY_KEY[ind.type];
+    const tiles = def?.tiles;
+    if (tiles?.length) {
+      for (const t of tiles) {
+        const tx = ind.tx + t.dx, ty = ind.ty + t.dy;
+        if (tx < r.x0 || tx > r.x1 || ty < r.y0 || ty > r.y1) continue;
+        out.push({ sprite: `${ind.type}_t${t.m}`, tx, ty, ref: ind });
+      }
+    } else {
+      out.push({ sprite: ind.type, tx: ind.tx, ty: ind.ty, ref: ind });
+    }
   }
   if (world.extra) {
     for (const e of world.extra) {

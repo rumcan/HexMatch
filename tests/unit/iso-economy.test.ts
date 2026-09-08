@@ -57,10 +57,11 @@ describe("E6 catchment", () => {
     expect(r.x1).toBeGreaterThanOrEqual(10);
   });
 
-  it("catches an industry whose footprint merely overlaps", () => {
-    const farm = ind("farm", 11, 11);          // 1×1 at 11,11
+  it("catches an industry whose footprint merely overlaps — credited once, not per tile", () => {
+    const farm = ind("farm", 11, 11);          // 3×3 (MT-2: footprint = the OpenTTD layout)
     const grid = flatGrid([farm]);
-    // catchment of (10,10) is 9..12 — overlaps the farm's top corner
+    // catchment of (10,10) is 9..12 — overlaps the farm's top-left corner only,
+    // yet the 3×3 farm is credited a single time (not once per overlapped tile).
     expect(industriesInCatchment(grid, H(0, "p1", 10, 10))).toHaveLength(1);
     // far away catches nothing
     expect(industriesInCatchment(grid, H(0, "p1", 30, 30))).toHaveLength(0);
