@@ -660,7 +660,10 @@ export function startIsoGame(root: HTMLElement) {
   const overlayItemsAt = (tx: number, ty: number): OverlayItem[] => {
     const items: OverlayItem[] = [];
     if (phase === "setup-factory") {
-      pushPlan(items, planFactoryPlacement(grid, tx, ty));
+      // PP-02: the preview rejects sites that are not next to a town by an edge,
+      // so the glow and the click validate with the SAME rule (`canPlaceFactory`
+      // and `planFactoryPlacement(requireTown)` agree on validity).
+      pushPlan(items, planFactoryPlacement(grid, tx, ty, { requireTown: true }));
     } else if (tool === "harvester" || phase === "setup-harvester") {
       pushPlan(items, planDepotPlacement(grid, eco.harvesters, tx, ty));
     } else {
@@ -670,60 +673,33 @@ export function startIsoGame(root: HTMLElement) {
   };
   const overlayItems = () => {
     if (preview) {
-      for (const [x, y] of preview.tiles) items.push({ sprite: "highlight", tx: x, ty: y });
-    } else if (hover) {
-      if (phase === "setup-factory") {
-        // Highlight all four tiles of the real factory footprint, so the
-        // build preview matches exactly the tiles the building covers. PP-02:
-        // the SAME rule the click enforces (`canPlaceFactory`) decides whether
-        // the hovered footprint glows solid (buildable, town-adjacent) or soft
-        // (rejected — no town contact, water, or overlap), so the preview and
-        // the actual placement can never disagree about what "legal" means.
-        const ok = canPlaceFactory(grid, hover.tx, hover.ty).ok;
-        for (let dy = 0; dy < FACTORY_FOOTPRINT[1]; dy++) {
-          for (let dx = 0; dx < FACTORY_FOOTPRINT[0]; dx++) {
-            const x = hover.tx + dx, y = hover.ty + dy;
-            if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) continue;
-            items.push({ sprite: ok ? "highlight" : "highlight_soft", tx: x, ty: y });
-          }
-        }
-      } else if (tool === "plant") {
-        // PP-06/PP-03: the 2×2 footprint is the strong overlay; the qualifying
-        // town is the soft one, so "footprint" and "reach/qualifier" never
-        // read as the same thing. Both come from the SAME rule the click runs.
-        const ok = plantRefusal(grid, track, eco, hover.tx, hover.ty) === null;
-        for (const [x, y] of footprintTiles(hover.tx, hover.ty)) {
-          if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) continue;
-          // No dedicated invalid sprite in the atlas: a legal footprint is the
-          // strong glow, an illegal one only the faint tint (plus the refusal
-          // reason in the HUD line below).
-          items.push({ sprite: ok ? "highlight" : "highlight_soft", tx: x, ty: y });
-        }
-        const town = adjacentTown(grid, hover.tx, hover.ty);
-        if (town) {
-          for (const [hx, hy] of town.houses) {
-            items.push({ sprite: "highlight_soft", tx: hx, ty: hy });
-          }
-        }
-      } else if (tool === "harvester" || phase === "setup-harvester") {
-        // U2: the harvester is a 1×1 building. Its 4×4 catchment is
-        // informational, so the placed tile is the solid glow and the
-        // catchment uses the fainter highlight_soft tint.
-        items.push({ sprite: "highlight", tx: hover.tx, ty: hover.ty });
-        const r = catchmentRect(hover.tx, hover.ty);
-        for (let y = r.y0; y <= r.y1; y++) {
-          for (let x = r.x0; x <= r.x1; x++) {
-            if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) continue;
-            if (x === hover.tx && y === hover.ty) continue;
-            items.push({ sprite: "highlight_soft", tx: x, ty: y });
-          }
-        }
-      } else {
-        items.push({ sprite: "highlight", tx: hover.tx, ty: hover.ty });
-      }
       return preview.tiles.map(([x, y]) => ({ sprite: "highlight", tx: x, ty: y }));
     }
-    return hover ? overlayItemsAt(hover.tx, hover.ty) : [];
+    if (!hover) return [];
+    if (phase === "setup-factory") return overlayItemsAt(hover.tx, hover.ty);
+    // PP-06: the plant tool keeps its own overlay — the 2×2 footprint is the
+    // strong layer, the qualifying town the soft one — because the placement
+    // plans model factories and depots only. Both come from the SAME rule the
+    // click runs.
+    if (tool === "plant") {
+      const items: OverlayItem[] = [];
+      const ok = plantRefusal(grid, track, eco, hover.tx, hover.ty) === null;
+      for (const [x, y] of footprintTiles(hover.tx, hover.ty)) {
+        if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) continue;
+        // No dedicated invalid sprite in the atlas: a legal footprint is the
+        // strong glow, an illegal one only the faint tint (plus the refusal
+        // reason in the HUD line below).
+        items.push({ sprite: ok ? "highlight" : "highlight_soft", tx: x, ty: y });
+      }
+      const town = adjacentTown(grid, hover.tx, hover.ty);
+      if (town) {
+        for (const [hx, hy] of town.houses) {
+          items.push({ sprite: "highlight_soft", tx: hx, ty: hy });
+        }
+      }
+      return items;
+    }
+    return overlayItemsAt(hover.tx, hover.ty);
   };
 
   function paintUi(_now: number) {
@@ -766,7 +742,7 @@ export function startIsoGame(root: HTMLElement) {
     const placingFactory = phase === "setup-factory" && hover !== null;
     const placingDepot = (phase === "setup-harvester" || tool === "harvester") && hover !== null;
     const plan: PlacementPlan | null = placingFactory
-      ? planFactoryPlacement(grid, hover!.tx, hover!.ty)
+      ? planFactoryPlacement(grid, hover!.tx, hover!.ty, { requireTown: true })
       : placingDepot
         ? planDepotPlacement(grid, eco.harvesters, hover!.tx, hover!.ty)
         : null;
@@ -774,41 +750,6 @@ export function startIsoGame(root: HTMLElement) {
 
     // industry / harvester inspector
     let info = "";
-    const ref = hover?.ref as { kind?: string; id?: number } | null;
-    if (ref && ref.kind === "harvester") {
-      const h = eco.harvesters.find((x) => x.id === ref.id);
-      if (h) {
-        // W2: the inspector resolves the connection over THIS harvester's
-        // own network, not the merged graph.
-        const comp = buildAllComponents(track, h.ownerId);
-        const conn = resolveConnection(eco, comp, h);
-        const inds = industriesInCatchment(grid, h);
-        info = `<b>Depot</b> (${h.owner === "you" ? "yours" : "rival"})<br>` +
-          `serving ${inds.length} industr${inds.length === 1 ? "y" : "ies"}<br>` +
-          `link: ${conn.kind ?? "<i>none</i>"} ×${conn.multiplier || 0}`;
-      }
-    } else if (ref && ref.kind === "factory") {
-      const owner = (hover?.ref as { owner?: string } | null)?.owner ?? "";
-      const list = plantsOf(eco, owner);
-      const f = list.find((x) => hover
-        && hover.tx >= x.tx && hover.tx < x.tx + FACTORY_FOOTPRINT[0]
-        && hover.ty >= x.ty && hover.ty < x.ty + FACTORY_FOOTPRINT[1]);
-      const served = eco.harvesters.filter((h) => h.owner === owner
-        && resolveConnection(eco, buildAllComponents(track, h.ownerId), h).factory === f).length;
-      info = `<b>Processing Plant</b> (${owner === "you" ? "yours" : "rival"})<br>` +
-        `plant ${(f?.id ?? 0) + 1} of ${list.length}` +
-        (f?.townId != null ? ` · town ${f.townId + 1}` : "") + `<br>` +
-        `${served} depot${served === 1 ? "" : "s"} delivering here`;
-    } else if (hover) {
-      const occ = grid.occupancy[tIdx(hover.tx, hover.ty)];
-      if (occ >= 0) {
-        const ind: Industry = grid.industries[occ];
-        const def = INDUSTRY_BY_KEY[ind.type];
-        const servers = eco.harvesters.filter((h) =>
-          industriesInCatchment(grid, h).some((i) => i.id === ind.id));
-        info = `<b>${def?.name ?? ind.type}</b><br>` +
-          `${CARGO[def.cargo].icon} ${CARGO[def.cargo].name} · output ${ind.output}<br>` +
-          `${servers.length} depot${servers.length === 1 ? "" : "s"}`;
     if (plan && !plan.valid) {
       const label = plan.kind === "factory" ? "Factory" : "Depot";
       info = `<b>${label}</b> can't go here — <i>${plan.why ?? "not buildable"}</i>.`;
@@ -827,6 +768,18 @@ export function startIsoGame(root: HTMLElement) {
             `serving ${inds.length} industr${inds.length === 1 ? "y" : "ies"}<br>` +
             `link: ${conn.kind ?? "<i>none</i>"} ×${conn.multiplier || 0}`;
         }
+      } else if (ref && ref.kind === "factory") {
+        const owner = (hover?.ref as { owner?: string } | null)?.owner ?? "";
+        const list = plantsOf(eco, owner);
+        const f = list.find((x) => hover
+          && hover.tx >= x.tx && hover.tx < x.tx + FACTORY_FOOTPRINT[0]
+          && hover.ty >= x.ty && hover.ty < x.ty + FACTORY_FOOTPRINT[1]);
+        const served = eco.harvesters.filter((h) => h.owner === owner
+          && resolveConnection(eco, buildAllComponents(track, h.ownerId), h).factory === f).length;
+        info = `<b>Processing Plant</b> (${owner === "you" ? "yours" : "rival"})<br>` +
+          `plant ${(f?.id ?? 0) + 1} of ${list.length}` +
+          (f?.townId != null ? ` · town ${f.townId + 1}` : "") + `<br>` +
+          `${served} depot${served === 1 ? "" : "s"} delivering here`;
       } else if (hover) {
         const occ = grid.occupancy[tIdx(hover.tx, hover.ty)];
         if (occ >= 0) {
@@ -1200,7 +1153,7 @@ export function startIsoGame(root: HTMLElement) {
      */
     placementPlan: (kind: "factory" | "depot", tx: number, ty: number): PlacementPlan =>
       kind === "factory"
-        ? planFactoryPlacement(grid, tx, ty)
+        ? planFactoryPlacement(grid, tx, ty, { requireTown: true })
         : planDepotPlacement(grid, eco.harvesters, tx, ty),
     /**
      * PP-03: the exact overlay items `renderer.drawOverlay` paints for a

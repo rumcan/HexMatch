@@ -122,6 +122,35 @@ async function opaqueNear(
   }, { canvasIndex, tx, ty, half });
 }
 
+/**
+ * Count pixels in the same window whose ALPHA is high enough to be a strong
+ * placement glow. PP-03 layered a faint reach band (highlight_soft: α ≤ 110)
+ * AROUND the Factory's footprint, and at 0.5× zoom the tips of those band
+ * diamonds can bleed a few pixels into a neighbouring tile's sample window —
+ * that faint bleed must not read as a build tile. The solid placement glow
+ * (highlight: fill α 170 / edge α 255), the red invalid twin (α 190/255) and
+ * the node tag (α 235) all clear the 130 threshold, so a zero count here is
+ * exactly "no strong/placement glow on this tile" at any zoom.
+ */
+async function strongGlowNear(
+  page: import("@playwright/test").Page, canvasIndex: number,
+  tx: number, ty: number, half = 6, alpha = 130,
+) {
+  return page.evaluate(({ canvasIndex, tx, ty, half, alpha }) => {
+    const h = (window as any).__iso;
+    const [x0, y0] = h.tileScreenAt(tx, ty);
+    const [, y1] = h.tileScreenAt(tx + 1, ty + 1);
+    const [ax] = h.tileScreenAt(0, 0), [bx] = h.tileScreenAt(1, 0);
+    const cx = Math.floor(x0 + Math.abs(bx - ax)), cy = Math.floor((y0 + y1) / 2);
+    const c = document.querySelectorAll("canvas")[canvasIndex] as HTMLCanvasElement;
+    const ctx = c.getContext("2d")!;
+    const d = ctx.getImageData(cx - half, cy - half, half * 2 + 1, half * 2 + 1).data;
+    let n = 0;
+    for (let i = 3; i < d.length; i += 4) if (d[i] > alpha) n++;
+    return n;
+  }, { canvasIndex, tx, ty, half, alpha });
+}
+
 test.describe("iso layout on every viewport", () => {
   test("three canvas layers fill the stage without page overflow", async ({ page }) => {
     await bootIso(page);
@@ -131,7 +160,9 @@ test.describe("iso layout on every viewport", () => {
     const overflow = await page.evaluate(
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(overflow).toBeLessThanOrEqual(1);
-    await expect(root.locator("[data-tool]")).toHaveCount(4);
+    // PP-06 added the "plant" tool (an additional processing plant), so the
+    // build chrome is five buttons: road, rail, harvester, plant, demolish.
+    await expect(root.locator("[data-tool]")).toHaveCount(5);
     await expect(root.locator("[data-act=recenter]")).toHaveCount(1);
     const scene = await page.evaluate(() => {
       const h = (window as unknown as { __iso: {
@@ -184,10 +215,11 @@ test.describe("iso game boots on the default route", () => {
       cs.map((c) => ({ w: (c as HTMLCanvasElement).width, h: (c as HTMLCanvasElement).height })));
     for (const s of sizes) { expect(s.w).toBeGreaterThan(0); expect(s.h).toBeGreaterThan(0); }
 
-    // tool chrome with all four tools + recentre
+    // tool chrome with all five tools (PP-06's plant between harvester and
+    // demolish) + recentre
     const tools = await root.locator("[data-tool]").evaluateAll((bs) =>
       bs.map((b) => (b as HTMLElement).dataset.tool));
-    expect(tools).toEqual(["road", "rail", "harvester", "demolish"]);
+    expect(tools).toEqual(["road", "rail", "harvester", "plant", "demolish"]);
     await expect(root.locator("[data-act=recenter]")).toHaveCount(1);
 
     // J1: the match-3 quarry is mounted NEXT TO the map, not instead of it,
@@ -264,11 +296,58 @@ test.describe("iso game boots on the default route", () => {
       description: `${c.tiles} tiles ${c.dir} from (${c.hx},${c.hy}) to (${c.fx},${c.fy}), `
         + `click offset (${c.aim.x}, ${c.aim.y}), ${Math.round(c.margin)}px clear of the HUD`,
     });
-    const n = c.tiles;
     const aim = c.aim;
     const at = (tx: number, ty: number) => clickPointFor(page, tx, ty, aim);
-    const factory = await at(c.fx, c.fy);
     const harvester = await at(c.hx, c.hy);
+
+    // PP-02: a Factory must sit next to a town (by an edge). The corridor above
+    // only guarantees the harvester is industry-adjacent; the factory is found
+    // separately as a town-adjacent, in-view, clickable 2×2 — and (to keep the
+    // connecting road inside the free setup allowance) the one closest to the
+    // harvester.
+    const factorySpot = await page.evaluate(({ hx, hy }) => {
+      const h = (window as any).__iso;
+      const grid = h.grid;
+      const W = grid.w, H = grid.h;
+      const dpr = window.devicePixelRatio || 1;
+      const TOWN_OCC = -2;
+      const isTown = (x: number, y: number) =>
+        x >= 0 && y >= 0 && x < W && y < H && grid.occupancy[y * W + x] === TOWN_OCC;
+      const touchesTown = (tx: number, ty: number) => {
+        for (let ox = 0; ox < 2; ox++) for (let oy = 0; oy < 2; oy++) {
+          const x = tx + ox, y = ty + oy;
+          if (isTown(x, y - 1) || isTown(x, y + 1) || isTown(x - 1, y) || isTown(x + 1, y)) return true;
+        }
+        return false;
+      };
+      const inView = (tx: number, ty: number) => {
+        const [dx, dy] = h.tileScreenAt(tx, ty); const cx = dx / dpr, cy = dy / dpr;
+        return cx >= -20 && cx <= window.innerWidth + 20 && cy >= -20 && cy <= window.innerHeight + 20;
+      };
+      const clickable = (tx: number, ty: number) => {
+        const [dx, dy] = h.tileScreenAt(tx, ty);
+        return !document.elementsFromPoint(dx / dpr, dy / dpr)
+          .some((el: Element) => !!(el as HTMLElement).closest?.(".iso-panel"));
+      };
+      let best: { tx: number; ty: number } | null = null, bestD = Infinity;
+      for (let ty = 0; ty < H - 1; ty++) for (let tx = 0; tx < W - 1; tx++) {
+        const i = ty * W + tx;
+        if (grid.terrain[i] !== 0) continue;
+        if (![[0, 0], [1, 0], [0, 1], [1, 1]].every(([ox, oy]) =>
+          h.tileProbe("road", tx + ox, ty + oy).build.ok)) continue;
+        if (!touchesTown(tx, ty)) continue;
+        if (!inView(tx, ty) || !clickable(tx, ty)) continue;
+        const d = Math.abs(tx - hx) + Math.abs(ty - hy);
+        if (d < bestD) { bestD = d; best = { tx, ty }; }
+      }
+      return best;
+    }, { hx: c.hx, hy: c.hy });
+    expect(factorySpot).not.toBeNull();
+    const factory = await clickPointFor(page, factorySpot!.tx, factorySpot!.ty);
+    // The drag length is the Manhattan distance factory → harvester (the xFirst
+    // drag the game performs on a straight pointer move). Derived from geometry,
+    // never a constant.
+    const n = Math.abs(factorySpot!.tx - c.hx) + Math.abs(factorySpot!.ty - c.hy);
 
     // A2: every tile a pointer event is about to land on is reachable —
     // re-checked here, independently of the filter that chose them, because a
@@ -278,7 +357,7 @@ test.describe("iso game boots on the default route", () => {
     // (The tile diagonally behind the factory is only *sampled* for pixels, so
     // it is deliberately not part of the clickability claim.)
     const planned = await Promise.all(
-      c.col.map(async (t) => ({ ...t, ...(await at(t.tx, t.ty)) })),
+      [factorySpot!, { tx: c.hx, ty: c.hy }].map(async (t) => ({ ...t, ...(await at(t.tx, t.ty)) })),
     );
     expect(await page.evaluate(isoTileOcclusion, { tiles: planned, aim })).toEqual([]);
     test.info().annotations.push({
@@ -288,12 +367,16 @@ test.describe("iso game boots on the default route", () => {
     });
 
     // ── setup round 1 of 2: click the tile for your Factory ─────────────
-    // MT/T4: the factory occupies 2×2 tiles. Both corners glow; the old
-    // 3×3 outer corner stays unpainted.
+    // MT/T4 + PP-03: the factory occupies 2×2 tiles and both corners get the
+    // SOLID placement glow. The old 3×3 outer corner never gets a solid glow;
+    // PP-03's fainter reach band may legitimately reach that tile's sample
+    // window at low zoom, so the anti-3×3 guard probes the strong layer only.
+    // PP-02: the spot chosen above is already town-adjacent, so this click is
+    // accepted by `canPlaceFactory` (no separate rule lives in the picker).
     await page.mouse.move(factory.x, factory.y);
-    await expect.poll(() => opaqueNear(page, 2, c.fx, c.fy), { timeout: 5000 }).toBeGreaterThan(10);
-    await expect.poll(() => opaqueNear(page, 2, c.fx + 1, c.fy + 1), { timeout: 5000 }).toBeGreaterThan(10);
-    await expect.poll(() => opaqueNear(page, 2, c.fx + 2, c.fy + 2), { timeout: 5000 }).toBe(0);
+    await expect.poll(() => opaqueNear(page, 2, factorySpot!.tx, factorySpot!.ty), { timeout: 5000 }).toBeGreaterThan(10);
+    await expect.poll(() => opaqueNear(page, 2, factorySpot!.tx + 1, factorySpot!.ty + 1), { timeout: 5000 }).toBeGreaterThan(10);
+    await expect.poll(() => strongGlowNear(page, 2, factorySpot!.tx + 2, factorySpot!.ty + 2), { timeout: 5000 }).toBe(0);
     await page.mouse.click(factory.x, factory.y);
     await page.waitForFunction(() => (window as any).__iso.phase === "setup-harvester");
     expect((await page.evaluate(() => (window as any).__iso.factories.length))).toBeGreaterThanOrEqual(1);
@@ -322,19 +405,26 @@ test.describe("iso game boots on the default route", () => {
     expect(h0.ore).toBe(0);
 
     // ── build phase: drag a road from the Factory to the harvester ───────
-    // real pointer stream: move → down on the factory → step tile by tile
-    // along the picked column → up on the harvester. The path is the
-    // corridor itself, so the drag length is whatever the geometry yielded —
-    // no tile count is baked into this test any more (E14/A4).
-    const path = [...c.col].reverse();              // factory → harvester
-    const dragStart = await at(c.fx, c.fy);
+    // real pointer stream: move → down on the factory's anchor → step tile by
+    // tile along the xFirst Manhattan path to the harvester → up. The path is
+    // derived from the two placed buildings (not the corridor column), so the
+    // drag length is whatever the geometry yielded — no tile count is baked
+    // into this test any more (E14/A4).
+    const fx = factorySpot!.tx, fy = factorySpot!.ty, hx = c.hx, hy = c.hy;
+    const stepX = Math.sign(hx - fx), stepY = Math.sign(hy - fy);
+    const pathTiles: { tx: number; ty: number }[] = [];
+    let px = fx, py = fy;
+    while (px !== hx) { px += stepX; pathTiles.push({ tx: px, ty: py }); }
+    while (py !== hy) { py += stepY; pathTiles.push({ tx: px, ty: py }); }
+    const midTile = pathTiles[Math.floor(pathTiles.length / 2)] ?? { tx: hx, ty: hy };
+    const dragStart = await at(fx, fy);
     await page.mouse.move(dragStart.x, dragStart.y);
     await page.mouse.down();
     // Interior factory pieces all select the same factory anchor in track
-    // mode; move straight to the first exposed corridor tile outside it.
-    for (const t of path.slice(1).filter((t) =>
-      t.tx < c.fx || t.tx >= c.fx + 2 || t.ty < c.fy || t.ty >= c.fy + 2)) {
-      const p = t.tx === c.hx && t.ty === c.hy ? harvester : await at(t.tx, t.ty);
+    // mode; skip the 2×2 footprint and only re-visit tiles outside it.
+    for (const t of pathTiles.filter((t) =>
+      t.tx < fx || t.tx >= fx + 2 || t.ty < fy || t.ty >= fy + 2)) {
+      const p = t.tx === hx && t.ty === hy ? harvester : await at(t.tx, t.ty);
       await page.mouse.move(p.x, p.y);
     }
     await page.mouse.up();
@@ -365,7 +455,7 @@ test.describe("iso game boots on the default route", () => {
     // The two frames above guarantee the draw. A software-GPU readback can
     // itself exceed expect.poll's 5s deadline, so assert the actual result
     // rather than timing out an otherwise-correct pixel read.
-    expect(await opaqueNear(page, 1, c.col[1].tx, c.col[1].ty)).toBeGreaterThan(10);
+    expect(await opaqueNear(page, 1, midTile.tx, midTile.ty)).toBeGreaterThan(10);
 
     // UI reflects the scored connection
     await expect(page.locator("#iso-vp")).toContainText("You 1");

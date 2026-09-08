@@ -169,6 +169,7 @@ UI copy clearly explains: “Gold is reserved for Black Market sabotage.”
 Player, AI and multiplayer rules enforce the same restriction.
 
 PP-09 — Enable Gold Gem Spawning
+Status: DONE
 Type: Bug fix / processing rule
 
 Requirements

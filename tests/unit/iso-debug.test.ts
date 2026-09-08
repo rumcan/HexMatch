@@ -23,7 +23,7 @@ import {
   shouldInstallDebugConsole, shouldAutoEnableDebugOverlays,
   shouldAutoEnableRenderLog, DEBUG_OVERLAYS,
 } from "../../src/iso/debug";
-import { WATER, GRASS } from "../../src/iso/grid";
+import { WATER, GRASS, factoryTouchesTown } from "../../src/iso/grid";
 import { INDUSTRY_BY_KEY } from "../../src/iso/config";
 
 vi.mock("../../assets/iso-atlas/atlas@0.5x.png", () => ({ default: "a05.png" }));
@@ -254,12 +254,16 @@ describe("C5 the dumps report the geometry the renderer used", () => {
 
     // place the factory through the game's own setup twin, then ask again
     const spot = (() => {
-      for (let ty = 6; ty < 22; ty++) {
-        for (let tx = 10; tx < 24; tx++) {
-          if (h.probe(tx, ty).build.ok) return { tx, ty };
+      const g = h.grid;
+      for (let ty = 2; ty < g.h - 2; ty++) {
+        for (let tx = 2; tx < g.w - 2; tx++) {
+          if (!h.probe(tx, ty).build.ok) continue;
+          // PP-02: the factory must be placed next to a town.
+          if (!factoryTouchesTown(g, tx, ty)) continue;
+          return { tx, ty };
         }
       }
-      throw new Error("no buildable tile on this map");
+      throw new Error("no town-adjacent buildable tile on this map");
     })();
     expect(h.placeFactory(spot.tx, spot.ty)).toBe(true);
     const net = h.dumpNetwork("you");
