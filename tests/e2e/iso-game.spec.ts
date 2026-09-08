@@ -247,7 +247,11 @@ test.describe("iso game boots on the default route", () => {
       description: `${c.tiles} tiles ${c.dir} from (${c.hx},${c.hy}) to (${c.fx},${c.fy}), `
         + `click offset (${c.aim.x}, ${c.aim.y}), ${Math.round(c.margin)}px clear of the HUD`,
     });
-    const n = c.tiles;
+    // The corridor `col` runs harvester→factory inclusive, but the Factory (2×2)
+    // and the Harvester (1×1) occupy its two endpoint tiles, so the drag only
+    // lays road on the interior `c.tiles - 2` tiles. Count those, not the full
+    // corridor length (the endpoints are buildings, not track).
+    const n = c.tiles - 2;
     const aim = c.aim;
     const at = (tx: number, ty: number) => clickPointFor(page, tx, ty, aim);
     const factory = await at(c.fx, c.fy);
