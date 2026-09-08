@@ -14,20 +14,24 @@ import { GRASS, WATER, TOWN_OCC, type Grid, type Industry, type Town } from "../
 import { MAP_W, MAP_H } from "../../src/game/config";
 import { INDUSTRY_BY_KEY, FACTORY_FOOTPRINT } from "../../src/iso/config";
 
-const town = (id: number, tx: number, ty: number, n = 4): Town => {
+const town = (id: number, tx: number, ty: number, n = 4, roads: [number, number][] = []): Town => {
   const houses: [number, number][] = [];
   for (let i = 0; i < n; i++) houses.push([tx + i, ty]);
-  return { id, tx, ty, houses };
+  return { id, tx, ty, houses, roads };
 };
 
-function flatGrid(towns: Town[] = [], industries: Industry[] = []): Grid {
+function flatGrid(towns: Town[] = [], industries: Industry[] = [], stampRoads = true): Grid {
   const occupancy = new Int16Array(MAP_W * MAP_H).fill(-1);
   industries.forEach((ind, i) => {
     ind.id = i;
     for (let y = ind.ty; y < ind.ty + ind.h; y++)
       for (let x = ind.tx; x < ind.tx + ind.w; x++) occupancy[tIdx(x, y)] = i;
   });
-  for (const t of towns) for (const [hx, hy] of t.houses) occupancy[tIdx(hx, hy)] = TOWN_OCC;
+  // houses AND PP-10 roads are both town tiles (TOWN_OCC) on a real grid
+  for (const t of towns) {
+    for (const [hx, hy] of t.houses) occupancy[tIdx(hx, hy)] = TOWN_OCC;
+    if (stampRoads) for (const [rx, ry] of t.roads ?? []) occupancy[tIdx(rx, ry)] = TOWN_OCC;
+  }
   return {
     w: MAP_W, h: MAP_H,
     terrain: new Uint8Array(MAP_W * MAP_H).fill(GRASS),
@@ -61,6 +65,20 @@ describe("PP-06 town adjacency", () => {
     const track = createTrack();
     // footprint (21,21)-(22,22): only touches (20,20) diagonally
     expect(plantRefusal(grid, track, state(grid, track), 21, 21)).toBe("no-town");
+  });
+
+  it("PP-02/PP-10: a town's road is a town tile — touching the ring road qualifies", () => {
+    // single house (20,20) with a PP-10-style road tile at (20,19) above it
+    const grid = flatGrid([town(0, 20, 20, 1, [[20, 19]])]);
+    const track = createTrack();
+    // footprint (20,17)-(21,18): tile (20,18)'s down-neighbour is the road —
+    // the same edge-contact rule as the starting Factory (factoryTouchesTown)
+    expect(plantRefusal(grid, track, state(grid, track), 20, 17)).toBeNull();
+    expect(adjacentTown(grid, 20, 17)?.id).toBe(0);
+    // an unstamped road on the Town record never qualifies (synthetic honesty)
+    const ghost = flatGrid([town(1, 60, 60, 1, [[60, 59]])], [], false); // road NOT stamped
+    expect(plantRefusal(ghost, createTrack(), state(ghost, createTrack()), 60, 57))
+      .toBe("no-town");
   });
 
   it("rejects a site far from any town", () => {
@@ -197,6 +215,25 @@ describe("PP-06 AI expansion", () => {
     const st = state(grid, track);
     addPlant(grid, track, st, "ai", 2, 20, 21);
     expect(chooseAiPlantSpot(grid, track, st, "ai")).toBeNull();
+  });
+
+  it("PP-02/PP-10: still proposes sites when a town is ring-road-enclosed", () => {
+    // house at (40,20) fully ringed by town roads (like PP-10 towns): legal
+    // footprints now stand OUTSIDE the ring, touching a road by an edge.
+    const ring: [number, number][] = [];
+    for (const [rx, ry] of [[39, 19], [40, 19], [41, 19], [39, 20], [41, 20],
+      [39, 21], [40, 21], [41, 21]] as const) ring.push([rx, ry]);
+    const grid = flatGrid([
+      town(0, 40, 20, 1, ring),
+      town(1, 60, 60),
+    ]);
+    const track = createTrack();
+    const st = state(grid, track);
+    addPlant(grid, track, st, "ai", 2, 60, 61);   // plant #0 beside town 1
+    const spot = chooseAiPlantSpot(grid, track, st, "ai");
+    expect(spot).not.toBeNull();
+    expect(adjacentTown(grid, spot![0], spot![1])!.id).toBe(0);  // town 0's ring
+    expect(canPlacePlant(grid, track, st, spot![0], spot![1])).toBe(true);
   });
 });
 
