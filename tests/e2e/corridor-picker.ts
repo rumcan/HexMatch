@@ -208,6 +208,23 @@ export function findIsoCorridor(opts?: CorridorOptions): Corridor {
     if (grid.occupancy[i] !== -1) return "occupied";
     return null;
   });
+  // PP-02: a Factory must touch a town by an edge. The game enforces this on
+  // the click (`canPlaceFactory`), so the picker must only offer a corridor
+  // whose factory endpoint is a legal, town-adjacent 2×2 — otherwise the
+  // gameplay round's factory click would be refused and the test would hang in
+  // `setup-factory`. A town tile is stamped `TOWN_OCC` (-2) in the occupancy.
+  const TOWN_OCC = -2;
+  const isTown = (tx: number, ty: number) =>
+    tx >= 0 && ty >= 0 && tx < MAP_W && ty < MAP_H && grid.occupancy[ty * MAP_W + tx] === TOWN_OCC;
+  const factoryTouchesTown = (fx: number, fy: number) => {
+    for (let ox = 0; ox < 2; ox++) {
+      for (let oy = 0; oy < 2; oy++) {
+        const x = fx + ox, y = fy + oy;
+        if (isTown(x, y - 1) || isTown(x, y + 1) || isTown(x - 1, y) || isTown(x + 1, y)) return true;
+      }
+    }
+    return false;
+  };
   const harvesterWhy = (tx: number, ty: number) => memo(`h${tx},${ty}`, () => {
     if (!h.tileProbe) return null;
     const p = h.tileProbe("road", tx, ty);
@@ -330,6 +347,8 @@ export function findIsoCorridor(opts?: CorridorOptions): Corridor {
               const refusal = buildWhy(tx + ox, ty + oy);
               if (refusal) { why = `factory-footprint-${refusal}`; break; }
             }
+            // PP-02: the factory endpoint must touch a town by an edge.
+            if (why === null && !factoryTouchesTown(tx, ty)) why = "factory-not-near-town";
             if (why === null) {
               if (tx + 2 >= MAP_W || ty + 2 >= MAP_H) why = "factory-diagonal-off-map";
               else {

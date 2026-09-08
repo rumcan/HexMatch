@@ -32,7 +32,7 @@ import {
   type Camera, type GestureState,
 } from "./camera";
 import { IsoRenderer, type World } from "./renderer";
-import { generateMap, resolveMapSeed, type Grid, type Industry } from "./grid";
+import { generateMap, resolveMapSeed, canPlaceFactory, type Grid, type Industry } from "./grid";
 import {
   createTrack, drawBits, previewDrag, commitDrag, canBuildOn, hasTrack,
   demolishTile, tIdx, playerNetwork, canAfford, buildRefusal,
@@ -333,14 +333,13 @@ export function startIsoGame(root: HTMLElement) {
 
   // ── actions ────────────────────────────────────────────────────────────
   function placeFactory(tx: number, ty: number): boolean {
-    // MT-1: check all tiles of the 2×2 factory footprint
-    for (let dy = 0; dy < FACTORY_FOOTPRINT[1]; dy++) {
-      for (let dx = 0; dx < FACTORY_FOOTPRINT[0]; dx++) {
-        if (!canBuildOn(grid, "road", tx + dx, ty + dy)) {
-          toast("Can't build there.", "bad");
-          return false;
-        }
-      }
+    // PP-02: the whole 2×2 footprint must be legal ground AND touch a town by
+    // an edge. `canPlaceFactory` is the single source of truth shared with the
+    // placement preview, so the click and the hover can never disagree.
+    const result = canPlaceFactory(grid, tx, ty);
+    if (!result.ok) {
+      toast(result.reason ?? "Can't build there.", "bad");
+      return false;
     }
     // W2: the factory carries its builder's track-owner id (player index + 1).
     eco.factories.push({ owner: "you", ownerId: me.i + 1, tx, ty });
@@ -550,12 +549,17 @@ export function startIsoGame(root: HTMLElement) {
     } else if (hover) {
       if (phase === "setup-factory") {
         // Highlight all four tiles of the real factory footprint, so the
-        // build preview matches exactly the tiles the building covers.
+        // build preview matches exactly the tiles the building covers. PP-02:
+        // the SAME rule the click enforces (`canPlaceFactory`) decides whether
+        // the hovered footprint glows solid (buildable, town-adjacent) or soft
+        // (rejected — no town contact, water, or overlap), so the preview and
+        // the actual placement can never disagree about what "legal" means.
+        const ok = canPlaceFactory(grid, hover.tx, hover.ty).ok;
         for (let dy = 0; dy < FACTORY_FOOTPRINT[1]; dy++) {
           for (let dx = 0; dx < FACTORY_FOOTPRINT[0]; dx++) {
             const x = hover.tx + dx, y = hover.ty + dy;
             if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) continue;
-            items.push({ sprite: "highlight", tx: x, ty: y });
+            items.push({ sprite: ok ? "highlight" : "highlight_soft", tx: x, ty: y });
           }
         }
       } else if (tool === "harvester" || phase === "setup-harvester") {
@@ -580,7 +584,7 @@ export function startIsoGame(root: HTMLElement) {
 
   function paintUi(_now: number) {
     let banner: string | null = null;
-    if (phase === "setup-factory") banner = "Place your Factory — click a buildable tile";
+    if (phase === "setup-factory") banner = "Place your Factory next to a town — click a buildable tile";
     else if (phase === "setup-harvester") banner = "Place your Depot — it needs an industry in its 4×4 catchment";
     else if (phase === "won") banner = `${winner?.name} wins with ${vpFor(score, winner?.id ?? "")} VP`;
     else if (me.freeTrack > 0) banner = `${me.freeTrack} free track tiles remaining — connect your depot to your Factory`;

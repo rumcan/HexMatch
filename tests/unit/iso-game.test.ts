@@ -8,7 +8,7 @@
 // this verifies wiring and game logic, not pixels. Pixel correctness is what
 // the committed-reference-PNG fixture is for, and that still needs a browser.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { WATER } from "../../src/iso/grid";
+import { WATER, factoryTouchesTown, canPlaceFactory } from "../../src/iso/grid";
 import { MAP_W, MAP_H, TRANSPORT, INDUSTRY_BY_KEY } from "../../src/iso/config";
 import { setRng, mulberry32 } from "../../src/game/config";
 
@@ -207,6 +207,8 @@ function findFactorySpot(grid: import("../../src/iso/grid").Grid): [number, numb
         }
         if (!ok) break;
       }
+      // PP-02: the Factory must sit next to a town (by an edge).
+      if (ok && !factoryTouchesTown(grid, x, y)) ok = false;
       if (ok) return [x, y];
     }
   }
@@ -743,10 +745,15 @@ describe("W9 the free setup allowance buys road, not rail", () => {
     const { canBuildOn, hasTrack } = await import("../../src/iso/track");
     // five consecutive rail-legal tiles to drag along (rail needs flat ground)
     let line: [number, number] | null = null;
-    for (let y = 6; y < 26 && !line; y++) {
-      for (let x = 6; x < 22 && !line; x++) {
+    // PP-02: the Factory (the 2×2 footprint from this line's start) must touch
+    // a town by an edge, so the drag's origin is a legal site. Search the whole
+    // map for such a spot — town-adjacent, rail-legal runs exist near every town
+    // (the generator flattens rough around towns), but not in the old 16×16 box.
+    for (let y = 2; y < MAP_H - 2 && !line; y++) {
+      for (let x = 2; x < MAP_W - 5 && !line; x++) {
         let ok = true;
         for (let k = 0; k < 5; k++) if (!canBuildOn(h.grid, "rail", x + k, y)) ok = false;
+        if (ok && !factoryTouchesTown(h.grid, x, y)) ok = false;
         if (ok) line = [x, y];
       }
     }
@@ -1047,5 +1054,80 @@ describe("PP-01 terminology: Processing Plant + Depot", () => {
     // the snapshot/eco shape the save format depends on
     expect(Array.isArray(h.eco.harvesters)).toBe(true);
     expect(Array.isArray(h.eco.factories)).toBe(true);
+  });
+});
+
+// ── PP-02: the Factory must be placed next to a town ──────────────────────
+// The whole 2×2 footprint must be legal ground AND at least one of its tiles
+// must share an edge with a town tile. Diagonal-only contact does not qualify.
+// The human click and the AI use ONE rule (`canPlaceFactory`), so the preview
+// and the actual placement can never disagree.
+describe("PP-02 Factory placement must be next to a town", () => {
+  /** A 2×2 road-legal footprint that does NOT touch any town (by an edge). */
+  function findFactorySpotAwayFromTown(
+    grid: import("../../src/iso/grid").Grid,
+  ): [number, number] | null {
+    for (let y = 6; y < MAP_H - 6; y++) {
+      for (let x = 6; x < MAP_W - 6; x++) {
+        let ok = true;
+        for (let dy = 0; dy < 2; dy++) {
+          for (let dx = 0; dx < 2; dx++) {
+            const i = (y + dy) * MAP_W + (x + dx);
+            if (grid.terrain[i] === WATER || grid.occupancy[i] !== -1) { ok = false; break; }
+          }
+          if (!ok) break;
+        }
+        if (ok && !factoryTouchesTown(grid, x, y)) return [x, y];
+      }
+    }
+    return null;
+  }
+
+  it("rejects a placement that is not next to a town, with a clear reason", async () => {
+    const h = await boot();
+    const bad = findFactorySpotAwayFromTown(h.grid);
+    expect(bad).toBeTruthy();
+    const [bx, by] = bad!;
+    // the rule and the rejection agree
+    expect(canPlaceFactory(h.grid, bx, by).ok).toBe(false);
+    expect(h.placeFactory(bx, by)).toBe(false);
+    expect(h.factories).toHaveLength(0);   // neither your nor the rival's factory
+    // the reason is a readable explanation, surfaced as a toast
+    expect(canPlaceFactory(h.grid, bx, by).reason).toMatch(/town/i);
+  });
+
+  it("accepts a town-adjacent placement and seeds the rival next to a town too", async () => {
+    const h = await boot();
+    const spot = findFactorySpot(h.grid);
+    expect(spot).toBeTruthy();
+    const [fx, fy] = spot!;
+    expect(canPlaceFactory(h.grid, fx, fy).ok).toBe(true);
+    expect(h.placeFactory(fx, fy)).toBe(true);
+    // your factory is town-adjacent…
+    const mine = h.factories.find((f) => f.owner === "you");
+    expect(mine).toBeTruthy();
+    expect(canPlaceFactory(h.grid, mine!.tx, mine!.ty).ok).toBe(true);
+    // …and so is the rival's, computed by the same rule (no fallback bypass)
+    const rival = h.factories.find((f) => f.owner === "ai");
+    expect(rival).toBeTruthy();
+    expect(canPlaceFactory(h.grid, rival!.tx, rival!.ty).ok).toBe(true);
+    expect(factoryTouchesTown(h.grid, rival!.tx, rival!.ty)).toBe(true);
+  });
+
+  it("guides the player with a banner that names the town requirement", async () => {
+    await boot();
+    const banner = root.querySelector("#iso-banner") as HTMLElement;
+    expect(banner.textContent).toMatch(/place your factory next to a town/i);
+  });
+
+  it("uses the identical rule for the hover preview and the click", async () => {
+    const h = await boot();
+    const good = findFactorySpot(h.grid);
+    const bad = findFactorySpotAwayFromTown(h.grid);
+    expect(good).toBeTruthy();
+    expect(bad).toBeTruthy();
+    // whatever the preview rule says about a tile, the click agrees
+    expect(canPlaceFactory(h.grid, good![0], good![1]).ok).toBe(true);
+    expect(canPlaceFactory(h.grid, bad![0], bad![1]).ok).toBe(false);
   });
 });

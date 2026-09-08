@@ -404,6 +404,18 @@ test.describe("TK-001 mouse panning is middle-button only", () => {
       const grid = h.grid;
       const W = grid.w, H = grid.h;
       const dpr = window.devicePixelRatio || 1;
+      // PP-02: the factory must touch a town by an edge. A town tile is stamped
+      // TOWN_OCC (-2) in the occupancy grid.
+      const TOWN_OCC = -2;
+      const isTown = (x: number, y: number) =>
+        x >= 0 && y >= 0 && x < W && y < H && grid.occupancy[y * W + x] === TOWN_OCC;
+      const touchesTown = (tx: number, ty: number) => {
+        for (let ox = 0; ox < 2; ox++) for (let oy = 0; oy < 2; oy++) {
+          const x = tx + ox, y = ty + oy;
+          if (isTown(x, y - 1) || isTown(x, y + 1) || isTown(x - 1, y) || isTown(x + 1, y)) return true;
+        }
+        return false;
+      };
       const inView = (tx: number, ty: number) => {
         const [dx, dy] = h.tileScreenAt(tx, ty);
         const cx = dx / dpr, cy = dy / dpr;
@@ -414,22 +426,18 @@ test.describe("TK-001 mouse panning is middle-button only", () => {
         return !document.elementsFromPoint(dx / dpr, dy / dpr)
           .some((el) => !!(el as HTMLElement).closest?.(".iso-panel"));
       };
-      const focus = grid.industries[0];
-      // spiral out from the on-screen focus industry until the first free,
-      // legal, clickable grass tile shows up (terrain GRASS === 0).
-      for (let r = 0; r < 14; r++) {
-        for (let dy = -r; dy <= r; dy++) {
-          for (let dx = -r; dx <= r; dx++) {
-            const tx = focus.tx + dx, ty = focus.ty + dy;
-            if (tx < 0 || ty < 0 || tx >= W || ty >= H) continue;
-            const i = ty * W + tx;
-            if (grid.terrain[i] !== 0) continue;
-            // Factory legality is the WHOLE 2×2 footprint, not one free tile.
-            if (![[0, 0], [1, 0], [0, 1], [1, 1]].every(([ox, oy]) =>
-              h.tileProbe("road", tx + ox, ty + oy).build.ok)) continue;
-            if (!inView(tx, ty) || !clickable(tx, ty)) continue;
-            return { tx, ty };
-          }
+      // PP-02: the factory must sit next to a town (by an edge), so scan the
+      // whole map for the first free, legal, town-adjacent, clickable tile.
+      for (let ty = 0; ty < H - 1; ty++) {
+        for (let tx = 0; tx < W - 1; tx++) {
+          const i = ty * W + tx;
+          if (grid.terrain[i] !== 0) continue;
+          // Factory legality is the WHOLE 2×2 footprint, not one free tile.
+          if (![[0, 0], [1, 0], [0, 1], [1, 1]].every(([ox, oy]) =>
+            h.tileProbe("road", tx + ox, ty + oy).build.ok)) continue;
+          if (!touchesTown(tx, ty)) continue;   // next to a town
+          if (!inView(tx, ty) || !clickable(tx, ty)) continue;
+          return { tx, ty };
         }
       }
       return null;
