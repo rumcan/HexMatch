@@ -24,7 +24,7 @@ describe("K4 anchor contract", () => {
     // lands on the bottom vertex of the footprint diamond — tileToScreen of
     // (tx+fw-1, ty+fh-1) shifted by (+HW, +TILE_H). A building's base diamond
     // therefore coincides with its tile's south corner.
-    for (const [name, tx, ty] of [["farm", 10, 12], ["ore_mine", 3, 20], ["terrain_grass", 0, 0], ["factory_blue", 5, 5], ["depot_blue", 9, 7], ["road_1111", 7, 9]] as const) {
+    for (const [name, tx, ty] of [["farm_t33", 10, 12], ["ore_mine_t0", 3, 20], ["terrain_grass", 0, 0], ["factory_blue", 5, 5], ["depot_blue", 9, 7], ["road_1111", 7, 9]] as const) {
       const def = atlas.get(name)!;
       const [ox, oy] = drawOrigin(def, tx, ty);
       const [fw, fh] = def.footprint;
@@ -46,8 +46,8 @@ describe("E4 Tier 1 — max-corner depth key", () => {
   });
 
   it("uses (tx+w-1)+(ty+h-1), not tx+ty", () => {
-    const mine = withFootprint(P("ore_mine", 5, 5), [3, 3]);  // key 7+7 = 14
-    const farm = withFootprint(P("farm", 8, 6), [2, 2]);      // key 9+7 = 16
+    const mine = withFootprint(P("ore_mine_t0", 5, 5), [3, 3]);  // key 7+7 = 14
+    const farm = withFootprint(P("farm_t33", 8, 6), [2, 2]);      // key 9+7 = 16
     expect(mine.key).toBe(14);
     expect(farm.key).toBe(16);
     // tx+ty alone would order the farm (14) equal to the mine (10) wrongly
@@ -56,14 +56,14 @@ describe("E4 Tier 1 — max-corner depth key", () => {
 
   it("draws a small object in front of a big one it overlaps forward of", () => {
     // depot at the mine's south-east: must be drawn after the mine
-    const mine = P("ore_mine", 10, 10);
+    const mine = P("ore_mine_t0", 10, 10);
     const depot = P("depot_blue", 13, 12);
     const { order } = depthSort([depot, mine]);
-    expect(order.map((p) => p.sprite)).toEqual(["ore_mine", "depot_blue"]);
+    expect(order.map((p) => p.sprite)).toEqual(["ore_mine_t0", "depot_blue"]);
   });
 
   it("is a stable total order (sorting twice is idempotent)", () => {
-    const items = [P("farm", 4, 4), P("ore_mine", 8, 3), P("depot_red", 6, 9), P("quarry", 1, 1)];
+    const items = [P("farm_t33", 4, 4), P("ore_mine_t0", 8, 3), P("depot_red", 6, 9), P("quarry_t72", 1, 1)];
     const a = depthSort(items).order.map((p) => p.sprite);
     const b = depthSort(depthSort(items).order).order.map((p) => p.sprite);
     expect(b).toEqual(a);
@@ -72,8 +72,8 @@ describe("E4 Tier 1 — max-corner depth key", () => {
 
 describe("E4 Tier 2 — topological pass over overlapping sprites", () => {
   it("only relates sprites whose screen boxes intersect", () => {
-    const a = P("farm", 0, 0);
-    const b = P("farm", 30, 30);
+    const a = P("farm_t33", 0, 0);
+    const b = P("farm_t33", 30, 30);
     expect(boxesIntersect(a, b)).toBe(false);
     const { order, cycles } = depthSort([b, a]);
     expect(cycles).toEqual([]);
@@ -82,24 +82,24 @@ describe("E4 Tier 2 — topological pass over overlapping sprites", () => {
 
   it("orders a mine, a farm and a station between them back-to-front", () => {
     // the E4 acceptance fixture: 3×3 mine, 2×2 farm, depot between them
-    const mine = P("ore_mine", 6, 6);
+    const mine = P("ore_mine_t0", 6, 6);
     const depot = P("depot_green", 9, 8);
-    const farm = P("farm", 10, 10);
+    const farm = P("farm_t33", 10, 10);
     const names = depthSort([farm, depot, mine]).order.map((p) => p.sprite);
-    expect(names.indexOf("ore_mine")).toBeLessThan(names.indexOf("depot_green"));
-    expect(names.indexOf("depot_green")).toBeLessThan(names.indexOf("farm"));
+    expect(names.indexOf("ore_mine_t0")).toBeLessThan(names.indexOf("depot_green"));
+    expect(names.indexOf("depot_green")).toBeLessThan(names.indexOf("farm_t33"));
   });
 
   it("isBehind is antisymmetric for separated footprints", () => {
-    const a = P("farm", 2, 2), b = P("farm", 6, 2);
+    const a = P("farm_t33", 2, 2), b = P("farm_t33", 6, 2);
     expect(isBehind(a, b)).toBe(true);
     expect(isBehind(b, a)).toBe(false);
   });
 
   it("never drops a sprite, even under contrived overlap", () => {
     const items = [
-      P("ore_mine", 5, 5), P("farm", 6, 5), P("farm", 5, 7),
-      P("depot_blue", 7, 6), P("quarry", 4, 4),
+      P("ore_mine_t0", 5, 5), P("farm_t33", 6, 5), P("farm_t33", 5, 7),
+      P("depot_blue", 7, 6), P("quarry_t72", 4, 4),
     ];
     const { order } = depthSort(items);
     expect(order).toHaveLength(items.length);
@@ -109,14 +109,14 @@ describe("E4 Tier 2 — topological pass over overlapping sprites", () => {
 
 describe("E4 picking — stage 2 alpha test", () => {
   it("hits the sprite's opaque pixels and misses transparent corners", () => {
-    const mine = P("ore_mine", 20, 20);
+    const mine = P("ore_mine_t0", 20, 20);
     // give the mine a mask that is opaque only in a central column (a chimney)
     const w = mine.w, h = mine.h;
     const bits = new Uint8Array(w * h);
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
       if (Math.abs(x - w / 2) < 6) bits[y * w + x] = 1;
     }
-    atlas.setMask("ore_mine", { w, h, bits });
+    atlas.setMask("ore_mine_t0", { w, h, bits });
 
     const chimneyX = mine.wx + w / 2, chimneyY = mine.wy + 4;
     expect(pickSprite(atlas, [mine], chimneyX, chimneyY)).toBe(mine);
@@ -126,10 +126,10 @@ describe("E4 picking — stage 2 alpha test", () => {
   });
 
   it("returns the front-most sprite when two overlap", () => {
-    const back = P("ore_mine", 10, 10);
-    const front = P("farm", 12, 12);
-    atlas.setMask("ore_mine", { w: back.w, h: back.h, bits: new Uint8Array(back.w * back.h).fill(1) });
-    atlas.setMask("farm", { w: front.w, h: front.h, bits: new Uint8Array(front.w * front.h).fill(1) });
+    const back = P("ore_mine_t0", 10, 10);
+    const front = P("farm_t33", 12, 12);
+    atlas.setMask("ore_mine_t0", { w: back.w, h: back.h, bits: new Uint8Array(back.w * back.h).fill(1) });
+    atlas.setMask("farm_t33", { w: front.w, h: front.h, bits: new Uint8Array(front.w * front.h).fill(1) });
     const { order } = depthSort([back, front]);
     // a point inside both boxes
     const px = Math.max(back.wx, front.wx) + 2;
@@ -154,22 +154,22 @@ describe("V1 single-sprite buildings are ONE object on their footprint", () => {
     expect(f.w).toBe(f.def.w);
     expect(f.h).toBe(f.def.h);
     // a multi-storey works must be strictly taller than a single-piece industry
-    expect(f.h).toBeGreaterThan(P("farm", 5, 5).h);
+    expect(f.h).toBeGreaterThan(P("farm_t33", 5, 5).h);
   });
 
   it("depth-sorts by its 1×1 footprint (one entry, painter-ordered with neighbours)", () => {
     const factory = P("factory_blue", 5, 4);
-    const farm = P("farm", 5, 5);            // one row in front
+    const farm = P("farm_t33", 5, 5);            // one row in front
     const { order, cycles } = depthSort([farm, factory]);
     expect(cycles).toEqual([]);
     // two distinct objects → two entries, back (factory) then front (farm)
-    expect(order.map((p) => p.sprite)).toEqual(["factory_blue", "farm"]);
+    expect(order.map((p) => p.sprite)).toEqual(["factory_blue", "farm_t33"]);
     expect(factory.key).toBe((5) + (4));     // [1,1] footprint → tx+ty
   });
 
   it("its top is high enough that a click on the tower above a single storey hits it", () => {
     const f = P("factory_blue", 20, 20);
-    const farm = P("farm", 20, 20);
+    const farm = P("farm_t35", 20, 20);   // the low barn shed — a single storey
     // high on the tower: above where a single-storey building's art reaches,
     // but inside the factory's own sprite box → still the factory.
     const pt = { x: f.wx + f.w / 2, y: f.wy + Math.floor(f.h / 4) };

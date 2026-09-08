@@ -47,6 +47,10 @@ export const CARGO: Record<Cargo, {
 export interface IndustryTileDef {
   dx: number;
   dy: number;
+  /** OpenTTD industry-tile index `m` — the third argument of `MK(x, y, m)` in
+   *  `_tile_table_*` (build_industry.h). It names the atlas cell (`<key>_t<m>`)
+   *  and de-duplicates tiles that share one sprite (e.g. a field of trees). */
+  m: number;
   ground: number;
   building?: number;
 }
@@ -57,17 +61,93 @@ export interface IndustryDef {
   cargo: Cargo;
   footprint: [number, number];
   output: number;
-  /** MT-1: per-tile sprite layout for multi-tile industries. Single-tile industries leave this undefined. */
+  /** MT-1/MT-2: per-tile sprite layout transcribed from OpenTTD's
+   *  `_tile_table_*` (variant `_0`) — each entry is one `MK(x, y, m)` with the
+   *  ground sprite and optional building sprite declared for tile `m` in
+   *  `industry_land.h` / `base-2011-industries.pnml`. Positions NOT listed in
+   *  the table are left as open ground (the industry reserves them via
+   *  `footprint`, but draws nothing there) — exactly like OpenTTD. */
   tiles?: IndustryTileDef[];
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// MT-1/MT-2: every industry's tile layout is DATA, transcribed from OpenTTD's
+// `src/table/build_industry.h` `_tile_table_*` (variant `_0`) and the sprite
+// ids from `src/table/industry_land.h` `_industry_draw_tile_data` (the stage-3
+// "complete" entry, `gfx*4+3`). Ground/buildings below are the declared
+// OpenGFX ids; the atlas cells (tools/iso-atlas.cells.json) carry the same
+// ids, and the slicer places each layer at its declared xrel/yrel.
+// ══════════════════════════════════════════════════════════════════════════
+
+/** `_tile_table_coal_mine_0` — 3×3 (6 tiles: headgear, conveyor, spoil mounds). */
+const COAL_MINE_TILES: IndustryTileDef[] = [
+  { dx: 0, dy: 0, m: 5,  ground: 2023 },                 // spoil mound
+  { dx: 1, dy: 0, m: 6,  ground: 2024 },                 // spoil mound
+  { dx: 2, dy: 0, m: 3,  ground: 2022, building: 2021 }, // conveyor
+  { dx: 1, dy: 1, m: 0,  ground: 2022, building: 2013 }, // headgear
+  { dx: 1, dy: 2, m: 2,  ground: 2022, building: 2018 }, // conveyor
+  { dx: 2, dy: 2, m: 3,  ground: 2022, building: 2021 }, // conveyor
+];
+
+/** `_tile_table_farm_0` — 3×3 (9 tiles: barns, silo, pigsty, fields). */
+const FARM_TILES: IndustryTileDef[] = [
+  { dx: 0, dy: 0, m: 37, ground: 2114, building: 2115 }, // silo
+  { dx: 1, dy: 0, m: 33, ground: 2106, building: 2108 }, // barn (first half)
+  { dx: 2, dy: 0, m: 35, ground: 2110, building: 2111 }, // barn (shed)
+  { dx: 0, dy: 1, m: 37, ground: 2114, building: 2115 }, // silo
+  { dx: 1, dy: 1, m: 34, ground: 2107, building: 2109 }, // barn (second half)
+  { dx: 2, dy: 1, m: 38, ground: 2116, building: 2117 }, // pigsty
+  { dx: 0, dy: 2, m: 36, ground: 2112, building: 2113 }, // barn (garage)
+  { dx: 1, dy: 2, m: 36, ground: 2112, building: 2113 }, // barn (garage)
+  { dx: 2, dy: 2, m: 38, ground: 2116, building: 2117 }, // pigsty
+];
+
+/** `_tile_table_forest_0` — 4×5 clump of 18 tree tiles (all tile 16). */
+const FOREST_TILES: IndustryTileDef[] = [];
+for (let dy = 0; dy <= 3; dy++) {
+  for (let dx = 0; dx <= 3; dx++) {
+    FOREST_TILES.push({ dx, dy, m: 16, ground: 2077, building: 2075 });
+  }
+}
+FOREST_TILES.push({ dx: 1, dy: 4, m: 16, ground: 2077, building: 2075 });
+FOREST_TILES.push({ dx: 2, dy: 4, m: 16, ground: 2077, building: 2075 });
+
+/** `_tile_table_oil_well_0` — 3×3 with 5 derricks (all tile 29, animated). */
+const OIL_WELL_TILES: IndustryTileDef[] = [
+  { dx: 0, dy: 0, m: 29, ground: 2173, building: 2174 },
+  { dx: 1, dy: 0, m: 29, ground: 2173, building: 2174 },
+  { dx: 2, dy: 0, m: 29, ground: 2173, building: 2174 },
+  { dx: 0, dy: 1, m: 29, ground: 2173, building: 2174 },
+  { dx: 0, dy: 2, m: 29, ground: 2173, building: 2174 },
+];
+
+/** `_tile_table_gold_mine_0` — 4×4 (16 tiles). Quarry is the grey-tinted twin. */
+const GOLD_MINE_TILES: IndustryTileDef[] = [
+  { dx: 0, dy: 0, m: 72, ground: 2022, building: 2247 }, // headframe
+  { dx: 0, dy: 1, m: 73, ground: 2248 },                 // pit
+  { dx: 0, dy: 2, m: 74, ground: 2022, building: 2249 }, // works
+  { dx: 0, dy: 3, m: 75, ground: 2022, building: 2250 }, // hut
+  { dx: 1, dy: 0, m: 76, ground: 2251 },
+  { dx: 1, dy: 1, m: 77, ground: 2252 },
+  { dx: 1, dy: 2, m: 78, ground: 2253 },
+  { dx: 1, dy: 3, m: 79, ground: 2254, building: 2263 }, // shaft tower (animated)
+  { dx: 2, dy: 0, m: 80, ground: 2255 },
+  { dx: 2, dy: 1, m: 81, ground: 2256 },
+  { dx: 2, dy: 2, m: 82, ground: 2257 },
+  { dx: 2, dy: 3, m: 83, ground: 2258 },
+  { dx: 3, dy: 0, m: 84, ground: 2259 },
+  { dx: 3, dy: 1, m: 85, ground: 2260 },
+  { dx: 3, dy: 2, m: 86, ground: 2261 },
+  { dx: 3, dy: 3, m: 87, ground: 2262 },
+];
+
 export const INDUSTRIES: IndustryDef[] = [
-  { key: "farm",      name: "Farm",      cargo: "grain", footprint: [1, 1], output: 1.0 },
-  { key: "forest",    name: "Forest",    cargo: "wood",  footprint: [1, 1], output: 1.0 },
-  { key: "ore_mine",  name: "Ore Mine",  cargo: "ore",   footprint: [1, 1], output: 0.8 },
-  { key: "quarry",    name: "Quarry",    cargo: "stone", footprint: [1, 1], output: 0.7 },
-  { key: "oil_rig",   name: "Oil Rig",   cargo: "oil",   footprint: [1, 1], output: 0.4 },
-  { key: "gold_mine", name: "Gold Mine", cargo: "gold",  footprint: [1, 1], output: 0.3 },
+  { key: "farm",      name: "Farm",      cargo: "grain", footprint: [3, 3], output: 1.0, tiles: FARM_TILES },
+  { key: "forest",    name: "Forest",    cargo: "wood",  footprint: [4, 5], output: 1.0, tiles: FOREST_TILES },
+  { key: "ore_mine",  name: "Ore Mine",  cargo: "ore",   footprint: [3, 3], output: 0.8, tiles: COAL_MINE_TILES },
+  { key: "quarry",    name: "Quarry",    cargo: "stone", footprint: [4, 4], output: 0.7, tiles: GOLD_MINE_TILES },
+  { key: "oil_rig",   name: "Oil Rig",   cargo: "oil",   footprint: [3, 3], output: 0.4, tiles: OIL_WELL_TILES },
+  { key: "gold_mine", name: "Gold Mine", cargo: "gold",  footprint: [4, 4], output: 0.3, tiles: GOLD_MINE_TILES },
 ];
 
 export const INDUSTRY_BY_KEY: Record<string, IndustryDef> = Object.fromEntries(
@@ -129,13 +209,25 @@ export const FACTORY_FOOTPRINT: [number, number] = [2, 2];
 /**
  * MT-2: per-tile sprite layout for the 2×2 factory, transcribed from
  * OpenTTD's `_tile_table_factory_0` (build_industry.h) and the declared
- * sprite rects in base-2011-industries.pnml. The 2×2 sub-unit of the
- * OpenTTD layout (tile indices 39–42) maps to ground tiles 2146–2149
- * and building pieces 2150–2152 (the 4th tile has no building piece).
+ * sprite rects in base-2011-industries.pnml.
+ *
+ * F3: the factory is the 2×2 sub-unit (tile indices 39–42) of the 12-tile
+ * OpenTTD layout, repeated to form the full building. `_industry_draw_tile_data`
+ * (industry_land.h, stage-3 "complete" entry `gfx*4+3`) assigns:
+ *
+ *     MK(0,0,39)  ground 2146 + building 2150   ← chimney corner
+ *     MK(0,1,40)  ground 2147 + building 2151
+ *     MK(1,0,41)  ground 2148 + building 2152
+ *     MK(1,1,42)  ground 2149, no building      ← the empty yard
+ *
+ * The old mapping had building 2151 on (0,0), 2150 on (1,0), left (0,1) bare
+ * and put 2152 on (1,1) — a scrambled piece-to-tile assignment that read
+ * lopsided. It now matches the table exactly (only the empty yard (1,1) has
+ * no building piece).
  */
 export const FACTORY_TILES = [
-  { dx: 0, dy: 0, ground: 2146, building: 2151 },
-  { dx: 1, dy: 0, ground: 2147, building: 2150 },
-  { dx: 0, dy: 1, ground: 2148 },
-  { dx: 1, dy: 1, ground: 2149, building: 2152 },
+  { dx: 0, dy: 0, m: 39, ground: 2146, building: 2150 },
+  { dx: 0, dy: 1, m: 40, ground: 2147, building: 2151 },
+  { dx: 1, dy: 0, m: 41, ground: 2148, building: 2152 },
+  { dx: 1, dy: 1, m: 42, ground: 2149 },
 ] as const;
