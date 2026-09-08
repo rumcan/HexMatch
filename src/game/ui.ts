@@ -27,6 +27,7 @@ import {
 } from "./config";
 import { BANK_RATE, MAX_OFFERS } from "./trade";
 import { CARGO, CARGOES, type Cargo } from "../iso/config";
+import { DEPOT_COST, costCompact, depotButtonLabel } from "../iso/construction";
 import { GEM_TO_CARGO } from "../iso/quarry";
 import { Board, type Gem } from "./board";
 import type { IsoMarket, IsoMarketPlayer, Offer } from "../iso/market";
@@ -60,6 +61,9 @@ export interface UiState {
   phase: string;
   tool: UiTool;
   freeTrack: number;
+  /** PP-05: Depots left on the free-setup allowance — the Build button reads
+   *  "free setup" while it lasts and the full Oil cost afterwards. */
+  freeDepots: number;
   banner: string | null;
   costInfo: string | null;
   inspect: string | null;
@@ -307,12 +311,19 @@ export function createOriginalUi(
   const TOOLS: { key: UiTool; label: string; sub: string }[] = [
     { key: "road", label: "Road", sub: "1 stone · 1 VP" },
     { key: "rail", label: "Rail", sub: "4 ore + 1 stone · 3 VP" },
-    { key: "harvester", label: "Depot", sub: "free · on industry" },
+    // PP-05: the Depot's price is READ from the authoritative cost table, not
+    // typed here — "show the complete cost before placement" means the button
+    // states it before the first click, and it can never drift from what the
+    // placement actually charges. `depotSub` refreshes it as the free-setup
+    // allowance burns down.
+    { key: "harvester", label: "Depot", sub: depotButtonLabel(0) },
     // PP-06: another instance of the SAME processing building, raised beside
     // another town. Cost text mirrors PLANT_COST in src/iso/plants.ts.
     { key: "plant", label: "Processing Plant", sub: "2🪵 2🪨 2🌾 3⛏️ · next to a town" },
     { key: "demolish", label: "Demolish", sub: "refund none" },
   ];
+  let depotSub: HTMLElement | null = null;
+  let lastDepotSub = "\u0000";
   for (const t of TOOLS) {
     // V5: each tool gets its own banner artwork class (bg-road / bg-rail /
     // bg-harvester / bg-demolish) — they all shared bg-rail before.
@@ -320,6 +331,7 @@ export function createOriginalUi(
     b.dataset.tool = t.key;
     b.innerHTML = `<div class="bb-mid"><b>${t.label}</b><small>${t.sub}</small></div>`;
     b.onclick = () => hooks.onTool(t.key);
+    if (t.key === "harvester") depotSub = b.querySelector("small");
     buildList.appendChild(b);
   }
   // Quarry / Market panel toggles live at the bottom of the build column so
@@ -900,6 +912,20 @@ export function createOriginalUi(
     buildList.querySelectorAll<HTMLElement>("[data-tool]").forEach((b) => {
       b.classList.toggle("active", b.dataset.tool === toolState);
     });
+    // PP-05: keep the Depot's price line honest without rebuilding the button
+    // (a rebuilt button drops a click mid-gesture, the reason `renderSabotage`
+    // is change-gated too). The cost text comes from the same table the
+    // placement charges; `disabled` mirrors the affordability the click checks.
+    const sub = depotButtonLabel(state.freeDepots);   // allowance first, then Oil
+    if (sub !== lastDepotSub) {
+      lastDepotSub = sub;
+      if (depotSub) depotSub.textContent = sub;
+    }
+    const depotBtn = buildList.querySelector<HTMLElement>('[data-tool="harvester"]');
+    const canDepot = state.freeDepots > 0
+      || (Object.keys(DEPOT_COST) as Cargo[])
+        .every((k) => (state.purse[k] ?? 0) >= (DEPOT_COST[k] ?? 0));
+    depotBtn?.classList.toggle("disabled", !canDepot);
     buildList.querySelectorAll<HTMLElement>("[data-panel]").forEach((b) => {
       const open = b.dataset.panel === "quarry" ? isQuarryOpen() : isTradeOpen();
       b.classList.toggle("active", open);
@@ -962,7 +988,7 @@ export function createOriginalUi(
         <h2>⚙️ HEXMATCH INDUSTRIES</h2>
         <p class="sub">Two worlds, one empire: <b>resource node → Depot → transport network → Factory → processing → resources available for construction</b>. First to <b>${VP.target}★ Victory Points</b> wins.</p>
         <div class="help-cols">
-          <div class="help-col"><h3>🏙️ The Territory</h3><p>Place <b>Depots</b> beside resource nodes to collect their output, then build <b>Roads</b> & <b>Rails</b> to carry it to your Factory. The rail multiplier and VP are on the connection; a broken line revokes it.</p><p>Pan with the <b>middle mouse button</b> (wheel zooms, touch drags pan). The left button only places or selects — dragging it never pans.</p></div>
+          <div class="help-col"><h3>🏙️ The Territory</h3><p>Place <b>Depots</b> beside resource nodes to collect their output, then build <b>Roads</b> & <b>Rails</b> to carry it to your Factory. The rail multiplier and VP are on the connection; a broken line revokes it.</p><p>Your <b>first Depot is free</b>; every Depot after it costs <b>${costCompact(DEPOT_COST)} Oil</b>, so reaching an Oil Rig (or matching Oil in the Processing Plant) is what buys expansion. A Depot you cannot pay for is refused and consumes nothing.</p><p>Pan with the <b>middle mouse button</b> (wheel zooms, touch drags pan). The left button only places or selects — dragging it never pans.</p></div>
           <div class="help-col"><h3>💎 The Processing Plant</h3><p>Where your Factory turns delivered cargo into resources available for construction. Match tokens to process: a colour only pays when your network reaches its industry. Match 4 doubles, match 5 makes a <b>bomb</b>. <b>Gold</b> 🪙 is its own colour — it spawns only while a depot is connected to a gold mine.</p></div>
           <div class="help-col"><h3>🪙 Gold, Trade & Defence</h3><p>Earn <b>gold</b> from gold-mine access or combos. <b>Gold is reserved for Black Market sabotage</b> — it never buys construction, cannot substitute for missing materials, and is refused by every market exchange. Security Forces and Repair Crew are hired with ordinary materials.</p></div>
         </div>

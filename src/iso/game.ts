@@ -54,6 +54,9 @@ import {
   CARGO, FACTORY_FOOTPRINT, INDUSTRY_BY_KEY, TRANSPORT, VP_TARGET, townHouseSprite, type Cargo,
 } from "./config";
 import {
+  DEPOT_COST, FREE_SETUP_DEPOTS, costLabel, priceDepot, shortfallLabel,
+} from "./construction";
+import {
   MAP_W, MAP_H, BANDIT_MS, BLOCK_MS, FOG_MS, SABOTAGE, SECURITY, type ResKey,
 } from "../game/config";
 import { createQuarry, GEM_TO_CARGO, type Quarry } from "./quarry";
@@ -84,7 +87,15 @@ export const HARVEST_MS = 3000;      // economy tick
 export const AI_BUILD_MS = 9000;
 /** E8: start with stone for roads, no ore — rail is gated behind an ore mine. */
 export const START_PURSE: Purse = { stone: 12, ore: 0 };
-export { VP_TARGET };
+/**
+ * PP-05: re-exported from `construction.ts` (the authoritative cost module) so
+ * the whole E8 tuning surface is reachable from this file, the way
+ * `FREE_SETUP_TRACK` is. It is DATA on the player record (`freeDepots`) for the
+ * same reason `freeTrack` is — a phase flag can be clawed back, a number
+ * cannot — and it is what keeps the opening solvable: Oil needs a Depot, so
+ * charging Oil for the FIRST Depot would deadlock the setup.
+ */
+export { VP_TARGET, FREE_SETUP_DEPOTS };
 
 /** PP-06: `plant` raises an ADDITIONAL processing plant beside another town. */
 export type Tool = "road" | "rail" | "harvester" | "plant" | "demolish";
@@ -100,6 +111,12 @@ export interface PlayerState {
   human: boolean;
   /** E8: free builds are DATA, not an inference from the phase. */
   freeTrack: number;
+  /**
+   * PP-05: how many more Depots this player may build for free. Every Depot
+   * after the allowance runs out pays `DEPOT_COST` (`construction.ts`) — Oil
+   * included — and a refused placement leaves the count untouched.
+   */
+  freeDepots: number;
 }
 
 type Phase = "setup-factory" | "setup-harvester" | "play" | "won";
@@ -127,13 +144,28 @@ export function startIsoGame(root: HTMLElement) {
   const score: ScoreState = createScoreState();
 
   const players: PlayerState[] = [
-    { i: 0, id: "you", name: "You", colour: "#5aa8ff", purse: toBag(START_PURSE), human: true, freeTrack: FREE_SETUP_TRACK },
-    { i: 1, id: "ai", name: "Rival", colour: "#ff7a5a", purse: toBag(START_PURSE), human: false, freeTrack: FREE_SETUP_TRACK },
+    { i: 0, id: "you", name: "You", colour: "#5aa8ff", purse: toBag(START_PURSE), human: true, freeTrack: FREE_SETUP_TRACK, freeDepots: FREE_SETUP_DEPOTS },
+    { i: 1, id: "ai", name: "Rival", colour: "#ff7a5a", purse: toBag(START_PURSE), human: false, freeTrack: FREE_SETUP_TRACK, freeDepots: FREE_SETUP_DEPOTS },
   ];
   const me = players[0], rival = players[1];
 
   const eco: EconomyState = { grid, track, harvesters: [], factories: [] };
   let nextHarvesterId = 1;
+  /**
+   * PP-05: the next Depot id, skipping ids already on the board. The game's own
+   * placements never collide, but structures can arrive from elsewhere (a
+   * joined snapshot, a test that pushes one straight into `eco.harvesters`),
+   * and `rescore` keys its connection/VP maps BY ID: a duplicate merges two
+   * players' connections, the second one reads `from === to`, and that player
+   * silently scores no VP for a Depot that is plainly connected. Before PP-05
+   * the rival out-built the collision (its second Depot got a fresh id and
+   * scored); once a Depot costs Oil it builds only the free one, so the clash
+   * became visible. One allocator that cannot repeat removes the class.
+   */
+  const allocHarvesterId = (): number => {
+    while (eco.harvesters.some((h) => h.id === nextHarvesterId)) nextHarvesterId++;
+    return nextHarvesterId++;
+  };
   let phase: Phase = "setup-factory";
   let tool: Tool = "road";
   let winner: PlayerState | null = null;
@@ -371,6 +403,9 @@ export function startIsoGame(root: HTMLElement) {
     // plan before the tile is committed.
     const spot = chooseRivalFactorySpot(grid, track, [tx, ty], {
       purse: rival.purse, free: rival.freeTrack, ownerId: rival.i + 1, owner: rival.id,
+      // PP-05: the probe prices the rival's opening Depot on the same free
+      // allowance the human's setup Depot rides on.
+      freeDepots: rival.freeDepots,
     });
     if (spot) {
       eco.factories.push({
@@ -384,16 +419,44 @@ export function startIsoGame(root: HTMLElement) {
     return true;
   }
 
-  function placeHarvester(tx: number, ty: number, p: PlayerState, _free: boolean): boolean {
+  /**
+   * Place a Depot (internally still `harvester` — PP-01 kept the identifiers so
+   * saves and snapshots keep working).
+   *
+   * PP-05: a PAID Depot costs `DEPOT_COST` — Oil included — and the price is
+   * resolved by `priceDepot` against this player's purse and free allowance,
+   * the same call the HUD label and the AI plan use. Two ordering rules make
+   * the ticket's acceptance criteria true by construction:
+   *   1. every legality check runs BEFORE the cost is priced, so a refused
+   *      placement (water, occupied tile, empty catchment, short purse) has
+   *      consumed nothing at all — no partial debit is reachable;
+   *   2. the debit is `spend`, which is affordability-guarded and all-or-nothing,
+   *      so a successful placement charges the complete cost exactly once.
+   *
+   * The first Depot each player builds rides on `freeDepots` (DATA, E8's K1
+   * rule) rather than on the setup phase, which is what stops the opening from
+   * deadlocking: Oil production itself needs a Depot.
+   */
+  function placeHarvester(tx: number, ty: number, p: PlayerState): boolean {
     if (!canBuildOn(grid, "road", tx, ty)) { toast("Can't build there.", "bad"); return false; }
     if (eco.harvesters.some((h) => h.tx === tx && h.ty === ty)) {
       toast("A depot is already there.", "bad"); return false;
     }
-    const h: Harvester = { id: nextHarvesterId++, owner: p.id, ownerId: p.i + 1, tx, ty };
+    const h: Harvester = { id: allocHarvesterId(), owner: p.id, ownerId: p.i + 1, tx, ty };
     if (!industriesInCatchment(grid, h).length) {
       toast("A depot needs an industry in its 4×4 catchment.", "bad");
       return false;
     }
+    // PP-05: priced only now that the site is legal, and spent only when the
+    // whole cost is covered. Oil earned in the Processing Plant is in this same
+    // purse, so processed Oil builds Depots with no special case.
+    const price = priceDepot(p.purse, p.freeDepots);
+    if (!price.affordable) {
+      toast(`A Depot costs ${costLabel(DEPOT_COST)} — you need ${shortfallLabel(price.missing)}.`, "bad");
+      return false;
+    }
+    if (!spend(p, price.cost)) return false;      // guard; `price.affordable` holds
+    p.freeDepots = price.freeLeft;
     // G5: harvesters seed the network; they no longer need existing track.
     eco.harvesters.push(h);
     syncWorld();
@@ -629,11 +692,15 @@ export function startIsoGame(root: HTMLElement) {
     // setup allowance first, then its purse. (W2's ownership change is what
     // un-sticks it: the rival no longer "sees" itself as connected across
     // the player's road, so it actually decides to build.)
+    // PP-05: `freeDepots` rides along with `free`, so the rival prices its
+    // Depot with the same table the player pays — its opening Depot is free on
+    // the same allowance, and every later one needs Oil it has to have earned.
     const out = aiBuildStep(eco, f,
-      { stock: rival.purse, purse: rival.purse, free: rival.freeTrack }, nextHarvesterId);
+      { stock: rival.purse, purse: rival.purse, free: rival.freeTrack, freeDepots: rival.freeDepots },
+      allocHarvesterId());
     if (!out) return;
-    nextHarvesterId++;
     rival.freeTrack = Math.max(0, rival.freeTrack - out.free);
+    rival.freeDepots = Math.max(0, rival.freeDepots - out.freeDepots);
     spend(rival, out.spent);
     for (const [bx, by] of out.built) renderer?.invalidateTile(bx, by);
     syncWorld();
@@ -708,7 +775,10 @@ export function startIsoGame(root: HTMLElement) {
   function paintUi(_now: number) {
     let banner: string | null = null;
     if (phase === "setup-factory") banner = "Place your Factory — click a buildable tile";
-    else if (phase === "setup-harvester") banner = "Place your Depot — it needs an industry in its 4×4 catchment";
+    // PP-05: the setup banner states the price too — the first Depot is free
+    // on the allowance, and the player should know the second one is not.
+    else if (phase === "setup-harvester") banner = "Place your Depot — it needs an industry in its 4×4 catchment" +
+      (me.freeDepots > 0 ? ` (this one is free; later Depots cost ${costLabel(DEPOT_COST)})` : "");
     else if (phase === "won") banner = `${winner?.name} wins with ${vpFor(score, winner?.id ?? "")} VP`;
     else if (me.freeTrack > 0) banner = `${me.freeTrack} free track tiles remaining — connect your depot to your Factory`;
     else if (Object.keys(quarry.reach).length === 0) banner = "Nothing connected — the Processing Plant only pays cargo your network reaches";
@@ -736,6 +806,17 @@ export function startIsoGame(root: HTMLElement) {
         : afford ? "ready" : "not enough materials";
       costInfo = `<span class="mb-txt"><b>Processing plant</b> · ${note}</span>` +
         `<span class="mb-cost">${plantCostLabel()}</span>`;
+    } else if (tool === "harvester" || phase === "setup-harvester") {
+      // PP-05: "show the complete cost before placement" — the Depot tool
+      // prices itself from the same `priceDepot` the click will charge, so the
+      // modebar and the debit can never disagree (W1, applied to buildings).
+      const price = priceDepot(me.purse, me.freeDepots);
+      const label = price.free ? "free (setup)" : costLabel(price.cost);
+      costInfo = `<span class="mb-txt"><b>Depot</b> · ${label}</span>` +
+        (price.affordable
+          ? ""
+          : ` · <i>needs ${shortfallLabel(price.missing)}</i>`) +
+        `<span class="mb-cost">1×1 · industry in catchment</span>`;
     }
 
     // PP-03: while a Factory or a Depot is being placed, an INVALID hover
@@ -812,6 +893,7 @@ export function startIsoGame(root: HTMLElement) {
       phase,
       tool,
       freeTrack: me.freeTrack,
+      freeDepots: me.freeDepots,
       banner,
       costInfo,
       inspect: info || null,
@@ -923,14 +1005,17 @@ export function startIsoGame(root: HTMLElement) {
         if (phase === "setup-factory") {
           placeFactory(p.tx, p.ty);
         } else if (phase === "setup-harvester") {
-          if (placeHarvester(p.tx, p.ty, me, true)) {
+          // PP-05: the setup Depot is free because `me.freeDepots` is still 1 —
+          // the allowance is data on the player record, not this phase.
+          if (placeHarvester(p.tx, p.ty, me)) {
             phase = "play";
             lastHarvest = performance.now();
             lastAi = performance.now();
             toast("Now connect it to your Factory with road or rail — then match the tokened gems in the Processing Plant.", "info");
           }
         } else if (phase === "play") {
-          if (tool === "harvester") placeHarvester(p.tx, p.ty, me, false);
+          // PP-05: every Depot after the setup allowance pays DEPOT_COST.
+          if (tool === "harvester") placeHarvester(p.tx, p.ty, me);
           else if (tool === "plant") placePlant(p.tx, p.ty, me);
           else if (tool === "demolish") doDemolish(p.tx, p.ty);
           else if (tool === "road" || tool === "rail") {
@@ -1099,6 +1184,18 @@ export function startIsoGame(root: HTMLElement) {
      * like the click does.
      */
     placeFactory: (tx: number, ty: number) => placeFactory(tx, ty),
+    /**
+     * PP-05: the test twin of the Depot placement click — the real
+     * `placeHarvester`, including the Oil cost, the free-setup allowance and
+     * the "a refusal consumes nothing" ordering. Returns false when the site is
+     * illegal OR the purse is short, exactly like the click does.
+     */
+    placeDepot: (tx: number, ty: number) => placeHarvester(tx, ty, me),
+    /** PP-05: the live free-Depot allowance, so a test can watch it burn. */
+    get freeDepots() { return me.freeDepots; },
+    /** PP-05: what the next Depot placement will charge THIS purse — the same
+     *  `priceDepot` the click, the HUD and the AI all read. */
+    depotPrice: () => priceDepot(me.purse, me.freeDepots),
     /** V4: the e2e/unit twin of the HUD toast, so tests can drive the toast
      *  stack (and its ✕) without playing a whole round. */
     toast: (text: string, kind: Toast["kind"] = "info") => toast(text, kind),
@@ -1138,12 +1235,22 @@ export function startIsoGame(root: HTMLElement) {
       const served = why === null && !taken
         ? industriesInCatchment(grid, { id: -1, owner: "you", ownerId: 0, tx, ty })
         : [];
+      // PP-05: the probe also reports what the Depot would COST, priced by the
+      // same `priceDepot` the click runs — so "is this tile usable" and "can I
+      // pay for it" come from one module instead of the e2e tooling guessing.
+      // `ok` stays a SITE-legality answer (the corridor picker filters on it
+      // during setup, when the allowance covers the Depot); affordability is
+      // reported alongside, never folded into it.
+      const price = priceDepot(me.purse, me.freeDepots);
       return {
         build: { ok: why === null, why },
         harvester: {
           ok: why === null && !taken && served.length > 0,
           why: why ?? (taken ? "harvester-taken" : served.length ? null : "no-industry-in-catchment"),
           industries: served.map((x) => x.id),
+          cost: { ...price.cost },
+          free: price.free,
+          affordable: price.affordable,
         },
       };
     },
