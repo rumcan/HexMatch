@@ -60,8 +60,9 @@ describe("E10 base64 typed arrays", () => {
     // measured JSON encoding is 4.6KB empty and 6.9KB saturated.)
     const empty = new Uint8Array(EXPECTED_TRACK_BYTES);
     const full = new Uint8Array(EXPECTED_TRACK_BYTES).fill(31);
-    expect(bytesToBase64(empty)).toHaveLength(3072);   // 4·⌈2304/3⌉
-    expect(bytesToBase64(full)).toHaveLength(3072);
+    // base64 of one full layer is 4·⌈bytes/3⌉, whatever the map size (T4).
+    expect(bytesToBase64(empty)).toHaveLength(Math.ceil(EXPECTED_TRACK_BYTES / 3) * 4);
+    expect(bytesToBase64(full)).toHaveLength(Math.ceil(EXPECTED_TRACK_BYTES / 3) * 4);
   });
 
   it("beats a JSON array, and by most where it matters — a busy map", () => {
@@ -109,8 +110,9 @@ describe("E10 snapshot shape", () => {
       owner: Array.from(src.track.owner),
     }).length;
     expect(snapshotBytes(s)).toBeLessThan(asJsonArrays);
-    // and the whole snapshot stays inside a single small frame
-    expect(snapshotBytes(s)).toBeLessThan(12_000);
+    // and the whole snapshot stays small on the wire: the track payload is
+    // 3 layers of base64 (≈4 B/tile), so budget ~6 B/tile with headroom (T4).
+    expect(snapshotBytes(s)).toBeLessThan(6 * EXPECTED_TRACK_BYTES);
   });
 });
 
@@ -249,13 +251,13 @@ describe("E10 scale", () => {
     src.track.road.fill(31);
     src.track.rail.fill(31);
     const s = buildSnapshot(src);
-    expect(snapshotBytes(s)).toBeLessThan(20_000);
+    expect(snapshotBytes(s)).toBeLessThan(10 * EXPECTED_TRACK_BYTES);
     const out = applySnapshot(s);
     expect(out.track.road).toEqual(src.track.road);
   });
 
   it("the track layers are exactly one byte per tile", () => {
     expect(EXPECTED_TRACK_BYTES).toBe(MAP_W * MAP_H);
-    expect(EXPECTED_TRACK_BYTES).toBe(2304);   // OpenGFX map is 48×48
+    expect(EXPECTED_TRACK_BYTES).toBe(144 * 144);   // T4: tripled per dimension
   });
 });

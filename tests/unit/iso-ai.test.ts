@@ -376,8 +376,17 @@ const rivalOpts = () => ({ stock: { stone: 12, ore: 0 }, purse: { stone: 12, ore
  * Seed-1337 repro state: the rival's factory on a rough, road-buildable,
  * reachable tile (default (38,4)); callers needing a dead tile pass (0,0).
  */
-function roughRival(tx = 38, ty = 4): { eco: EconomyState; f: Factory } {
+function roughRival(tx?: number, ty?: number): { eco: EconomyState; f: Factory } {
   const grid = generateMap(1337);
+  // T4: (38,4) was a rough, road-legal/rail-illegal tile on the 48×48 map.
+  // Scan for one instead so the fixture is map-size agnostic: the factory must
+  // stand on rough ground (rail can't lay there, road can).
+  if (tx === undefined || ty === undefined) {
+    outer: for (let y = 0; y < MAP_H; y++) for (let x = 0; x < MAP_W; x++) {
+      const i = y * MAP_W + x;
+      if (grid.terrain[i] === ROUGH && grid.occupancy[i] === -1) { tx = x; ty = y; break outer; }
+    }
+  }
   const eco: EconomyState = {
     grid, track: createTrack(), harvesters: [],
     factories: [{ owner: "ai", ownerId: 2, tx, ty }],
@@ -519,7 +528,7 @@ describe("W8 the rival's factory is placed where it can build", () => {
     expect(out.built.length).toBeGreaterThan(0);
     expect(out.harvester).toBeTruthy();
     expect(isServiced(eco.track, out.harvester!)).toBe(true);
-  });
+  }, 120_000);   // T4: rival placement is an order of magnitude heavier at 144×144
 
   it("is deterministic, and never returns an enclave for any player tile", () => {
     const grid = generateMap(1337);
@@ -535,7 +544,7 @@ describe("W8 the rival's factory is placed where it can build", () => {
       expect(canReachASpot(grid, s![0], s![1]), `enclave for player ${px},${py}`).toBe(true);
       expect(s).not.toEqual([px, py]);
     }
-  });
+  }, 120_000);   // T4
 
   it("still returns a tile when nothing is affordable (the rival exists)", () => {
     const grid = generateMap(1337);
@@ -544,7 +553,7 @@ describe("W8 the rival's factory is placed where it can build", () => {
     });
     expect(spot).toBeTruthy();
     expect(canBuildOn(grid, "road", spot![0], spot![1])).toBe(true);
-  });
+  }, 120_000);   // T4
 });
 
 // ══════════════════════════════════════════════════════════════════════════

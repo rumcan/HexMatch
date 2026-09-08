@@ -83,14 +83,37 @@ function topAt(x: number, y: number): { kind: "canvas" | string; id?: string } {
   return { kind: "canvas" };
 }
 
-/** Boot the same state the e2e boots: seeded map, camera centred on the
- *  first industry, then the spec's real wheel gesture (deltaY > 0 = out). */
+/** Does a 7-tile road-legal south column hang off `ind`, wholly in `c`'s view?
+ *  Terrain + projection only (no HUD hook), so it can pick a boot focus. */
+function hasInViewSouthCorridor(grid: ReturnType<typeof generateMap>, c: Camera, ind: { tx: number; ty: number; h: number }): boolean {
+  const hx = ind.tx, hy = ind.ty + ind.h, fy = hy + 6;
+  if (hy < 0 || fy >= MAP_H || hx < 0 || hx >= MAP_W) return false;
+  const inView = (tx: number, ty: number) => {
+    const [x, y] = tileToScreenAt(c, tx, ty);
+    const px = x / DPR, py = y / DPR;
+    return px >= 0 && px <= VIEW_W && py >= 0 && py <= VIEW_H;
+  };
+  if (!inView(hx, hy) || !inView(hx, fy)) return false;
+  for (let y = hy; y <= fy; y++) if (buildRefusal(grid, "road", hx, y) !== null) return false;
+  return true;
+}
+
+/** Boot the same state the e2e boots: seeded map, camera centred on an
+ *  industry, then the spec's real wheel gesture (deltaY > 0 = out). T4: on the
+ *  144×144 map the first industry is usually far outside a zoomed-out view, so
+ *  centre on the first industry that actually has a corridor in view — the
+ *  focus is derived, not hard-coded, keeping the picker test size-agnostic. */
 function bootCamera(seed: number, wheelOut: number) {
   const grid = generateMap(seed);
-  const focus = grid.industries[0];
-  let c = centerOnTile(createCamera(VIEW_W * DPR, VIEW_H * DPR), focus.tx, focus.ty);
-  for (let i = 0; i < wheelOut; i++) c = zoomStepAt(c, -1, (VIEW_W / 2) * DPR, (VIEW_H / 2) * DPR);
-  return { grid, cam: c };
+  const make = (focus: { tx: number; ty: number; h: number }) => {
+    let c = centerOnTile(createCamera(VIEW_W * DPR, VIEW_H * DPR), focus.tx, focus.ty);
+    for (let i = 0; i < wheelOut; i++) c = zoomStepAt(c, -1, (VIEW_W / 2) * DPR, (VIEW_H / 2) * DPR);
+    return c;
+  };
+  let cam = make(grid.industries[0]);
+  const focus = grid.industries.find((ind) => hasInViewSouthCorridor(grid, make(ind), ind)) ?? grid.industries[0];
+  cam = make(focus);
+  return { grid, cam };
 }
 
 function installHook(grid: ReturnType<typeof generateMap>, onCamera: () => Camera) {
@@ -306,8 +329,12 @@ describe("E14 the corridor picker finds a corridor by real geometry", () => {
     expect(err!.message).toMatch(/no \d+–\d+-tile corridor/);
     expect(err!.message).toMatch(/covered:div#iso-banner/);
     expect(err!.message).toMatch(/Closest: industry/);
-    expect(err!.message).toMatch(/Rejections: \{"covered":\d+/);
-    expect(err!.message).toMatch(/examples: \{"covered":"covered:div#iso-banner/);
+    // T4: on the 144×144 map the zoomed-out boot view shows one industry, so
+    // most searched columns are legitimately off-screen and "covered" is no
+    // longer the first rejection key — the guarantee this test exists for is
+    // that the banner is still NAMED as a coverer, not that it leads the count.
+    expect(err!.message).toMatch(/"covered":\d+/);
+    expect(err!.message).toMatch(/covered:div#iso-banner/);
     expect(err!.message).toMatch(/band \d+px/);
   });
 

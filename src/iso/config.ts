@@ -121,12 +121,21 @@ const OIL_WELL_TILES: IndustryTileDef[] = [
   { dx: 0, dy: 2, m: 29, ground: 2173, building: 2174 },
 ];
 
-/** `_tile_table_gold_mine_0` — 4×4 (16 tiles). Quarry is the grey-tinted twin. */
+/** `_tile_table_gold_mine_0` — 4×4 (16 tiles). Quarry is the grey-tinted twin.
+ *
+ *  Y8: sprites 2247–2262 are the FINISHED GOLD-MINE GROUND TILES themselves —
+ *  the headframe, pit, works and hut are baked into the ground-tile art (each
+ *  is a full 64×31 tile; the raised ones are taller: 2247 is 64×52 yrel −21,
+ *  2250 is 64×43 yrel −12, both declared xrel −31 like every other ground
+ *  tile). Only 2263/2264/2265 are a separate building piece (the animated
+ *  shaft tower, 45×54 xrel −23 yrel −27). Treating 2247/2249/2250 as
+ *  buildings over the generic coal-dirt ground 2022 stacked a second full
+ *  ground tile on the first and read lopsided. */
 const GOLD_MINE_TILES: IndustryTileDef[] = [
-  { dx: 0, dy: 0, m: 72, ground: 2022, building: 2247 }, // headframe
+  { dx: 0, dy: 0, m: 72, ground: 2247 },                 // headframe (64×52, yrel −21)
   { dx: 0, dy: 1, m: 73, ground: 2248 },                 // pit
-  { dx: 0, dy: 2, m: 74, ground: 2022, building: 2249 }, // works
-  { dx: 0, dy: 3, m: 75, ground: 2022, building: 2250 }, // hut
+  { dx: 0, dy: 2, m: 74, ground: 2249 },                 // works
+  { dx: 0, dy: 3, m: 75, ground: 2250 },                 // hut (64×43, yrel −12)
   { dx: 1, dy: 0, m: 76, ground: 2251 },
   { dx: 1, dy: 1, m: 77, ground: 2252 },
   { dx: 1, dy: 2, m: 78, ground: 2253 },
@@ -231,3 +240,29 @@ export const FACTORY_TILES = [
   { dx: 1, dy: 0, m: 41, ground: 2148, building: 2152 },
   { dx: 1, dy: 1, m: 42, ground: 2149 },
 ] as const;
+
+/**
+ * TOWN-3/Y8: the town's house art. Every pair is a complete-stage
+ * (`gfx*4+3`) row of OpenTTD's `_town_draw_tile_data` (src/table/town_land.h),
+ * transcribed — ground + building, no measured pixels:
+ *
+ *     town_house_a  ground 1447 + building 1446   M(0x5a7, 0x5a6)
+ *     town_house_b  ground 1420 + building 1460   M(SPR_CONCRETE_GROUND, 0x5b4)
+ *     town_house_c  ground 1424 + building 1423   M(0x590, 0x58f)
+ *     town_center   ground 1420 + building 1450   M(SPR_CONCRETE_GROUND, 0x5aa)
+ *
+ * (SPR_CONCRETE_GROUND = 1420, src/table/sprites.h.) The cells live in
+ * `tools/iso-atlas.cells.json`; before this the town stamped sprite 2019 — a
+ * coal-mine conveyor shed — on every house tile and 2180, an industries_misc
+ * building, on the centre, which is why settlements read as industrial junk.
+ */
+export const TOWN_HOUSE_VARIANTS = ["town_house_a", "town_house_b", "town_house_c"] as const;
+
+/** The atlas cell a town tile draws.
+ *  A spatial hash rather than `(x + y) % n`, which bands a settlement into
+ *  diagonal stripes; deterministic, so a re-render always puts the same
+ *  building on the same tile. */
+export function townHouseSprite(tx: number, ty: number): string {
+  const h = ((tx * 73856093) ^ (ty * 19349663)) >>> 0;
+  return TOWN_HOUSE_VARIANTS[h % TOWN_HOUSE_VARIANTS.length];
+}

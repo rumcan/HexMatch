@@ -156,8 +156,11 @@ function placeIndustries(terrain: Uint8Array, rng: () => number): { list: Indust
   };
 
   const defs = INDUSTRIES.map((d) => ({ d, n: INDUSTRY_QUOTA[d.key] ?? 0 }));
-  // try to guarantee the quota: relax separation 6 → 4 → 2 → 1 (overlap-only)
-  for (const sep of [6, 4, 2, 1]) {
+  // try to guarantee the quota: relax separation 12 → … → 1 (overlap-only).
+  // T4: on the 144×144 map the same INDUSTRY_QUOTA has 9× the room, so start
+  // from a much wider target sep (was 6) and let the fallback converge; this
+  // spreads industries instead of letting them clump as the old sep would.
+  for (const sep of [12, 8, 6, 4, 2, 1]) {
     let placedAny = true;
     while (placedAny) {
       placedAny = false;
@@ -206,9 +209,12 @@ const TOWN_HOUSES_MAX = 12;
  *  Re-tuned for MT-2's multi-tile footprints (6 → 3): with 3×3–4×5 industries
  *  the old 6-tile keep-out ring left only a handful of legal centres on some
  *  seeds (0 towns), and a 3-tile gap still reads as clear space on screen. */
-const TOWN_INDUSTRY_SEP = 3;
+// T4: with 9× the map area the whole point of the bigger map is visible
+// separation, so widen both rings (industry 3 → 8, town-town 10 → 28). The
+// placement loop relaxes the town-town sep below if a seed gets unlucky.
+const TOWN_INDUSTRY_SEP = 8;
 /** TOWN-1: minimum Chebyshev distance between two town centres. */
-const TOWN_TOWN_SEP = 10;
+const TOWN_TOWN_SEP = 28;
 /** TOWN-1: occupancy sentinel for town tiles (distinct from industry indices ≥ 0). */
 export const TOWN_OCC = -2;
 
@@ -352,7 +358,7 @@ function placeTowns(
 }
 
 /**
- * Generate a deterministic 48×48 iso grid. Same seed → byte-identical
+ * Generate a deterministic 144×144 iso grid. Same seed → byte-identical
  * `terrain`, `occupancy` and `industries` across contexts (T1 determinism).
  *
  * R6: `seed` is required. Multiplayer (E10) must resolve and distribute a

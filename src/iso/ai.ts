@@ -102,9 +102,13 @@ export function findPath(
 
   const gScore = new Map<number, number>([[start, 0]]);
   const cameFrom = new Map<number, number>();
-  // Small maps (2304 tiles) — a sorted array beats a binary heap's constant.
-  const open: number[] = [start];
+  // T4: on 48×48 a linearly scanned open array was fine, but A* is O(V²) with
+  // it and the 144×144 map made every rival turn take ~15 s. A binary heap
+  // ordered (lowest f, ties by lowest tile index) reproduces the exact pop
+  // order of that scan, so paths are byte-identical, in O(V log V).
+  const open = new OpenHeap();
   const fScore = new Map<number, number>([[start, heuristic(ax, ay, bx, by)]]);
+  open.push(start, fScore.get(start)!);
   const closed = new Set<number>();
 
   const isGoal = (i: number) => {
@@ -114,14 +118,19 @@ export function findPath(
     return Math.abs(x - bx) + Math.abs(y - by) === 1;
   };
 
-  while (open.length) {
-    // deterministic pop: lowest f, ties by lowest tile index
-    let bi = 0;
-    for (let k = 1; k < open.length; k++) {
-      const a = fScore.get(open[k]) ?? Infinity, b = fScore.get(open[bi]) ?? Infinity;
-      if (a < b || (a === b && open[k] < open[bi])) bi = k;
+  while (open.size) {
+    // deterministic pop: lowest f, ties by lowest tile index; skip entries
+    // left behind when a node's f was later improved, or already closed.
+    let cur = -1;
+    for (;;) {
+      if (!open.size) break;
+      const e = open.pop();
+      if (closed.has(e.i)) continue;
+      if (e.f !== (fScore.get(e.i) ?? Infinity)) continue;   // stale
+      cur = e.i;
+      break;
     }
-    const cur = open.splice(bi, 1)[0];
+    if (cur === -1) break;
     if (isGoal(cur)) {
       const tiles: [number, number][] = [];
       let n: number | undefined = cur;
@@ -146,11 +155,55 @@ export function findPath(
       if (tentative >= (gScore.get(ni) ?? Infinity)) continue;
       cameFrom.set(ni, cur);
       gScore.set(ni, tentative);
-      fScore.set(ni, tentative + heuristic(nx, ny, bx, by));
-      if (!open.includes(ni)) open.push(ni);
+      const nf = tentative + heuristic(nx, ny, bx, by);
+      fScore.set(ni, nf);
+      open.push(ni, nf);
     }
   }
   return null;
+}
+
+/**
+ * Min-heap of tile indices ordered by (f, index) so `pop` yields the same node
+ * the old linear "lowest f, ties lowest index" scan did. `stale(i)` reports
+ * whether the heap's top entry for `i` predates a later f-improvement; callers
+ * skip those. Kept deliberately tiny — it only backs `findPath`.
+ */
+interface OpenEntry { i: number; f: number }
+class OpenHeap {
+  private a: OpenEntry[] = [];   // heap-ordered by (f, then tile index)
+  get size(): number { return this.a.length; }
+  private less(x: OpenEntry, y: OpenEntry): boolean {
+    return x.f < y.f || (x.f === y.f && x.i < y.i);
+  }
+  push(i: number, f: number): void {
+    const a = this.a;
+    a.push({ i, f });
+    let c = a.length - 1;
+    while (c > 0) {
+      const p = (c - 1) >> 1;
+      if (this.less(a[c], a[p])) { [a[c], a[p]] = [a[p], a[c]]; c = p; } else break;
+    }
+  }
+  pop(): OpenEntry {
+    const a = this.a;
+    const top = a[0];
+    const last = a.pop()!;
+    if (a.length) {
+      a[0] = last;
+      let p = 0;
+      for (;;) {
+        const l = 2 * p + 1, r = l + 1;
+        let m = p;
+        if (l < a.length && this.less(a[l], a[m])) m = l;
+        if (r < a.length && this.less(a[r], a[m])) m = r;
+        if (m === p) break;
+        [a[p], a[m]] = [a[m], a[p]];
+        p = m;
+      }
+    }
+    return top;
+  }
 }
 
 // ── candidate scoring ─────────────────────────────────────────────────────

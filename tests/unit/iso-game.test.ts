@@ -215,10 +215,16 @@ function findFactorySpot(grid: import("../../src/iso/grid").Grid): [number, numb
 
 /** A 2×2 road-legal factory spot within a small ring of an industry of `type`. */
 function findFactorySpotNear(
-  grid: import("../../src/iso/grid").Grid, type: string,
+  grid: import("../../src/iso/grid").Grid, type: string, excludeId = -1,
 ): [number, number] | null {
+  // T4: return the CLOSEST free 2×2 to the footprint (not the top-left-most).
+  // On the roomier map the rival's trunk line has to stay short enough to be
+  // affordable from its opening purse, or it strands a harvester it can never
+  // connect.
+  let best: [number, number] | null = null;
+  let bestD = Infinity;
   for (const ind of grid.industries) {
-    if (ind.type !== type) continue;
+    if (ind.type !== type || ind.id === excludeId) continue;
     for (let y = Math.max(0, ind.ty - 8); y < Math.min(MAP_H, ind.ty + ind.h + 8); y++) {
       for (let x = Math.max(0, ind.tx - 8); x < Math.min(MAP_W, ind.tx + ind.w + 8); x++) {
         let ok = true;
@@ -230,11 +236,13 @@ function findFactorySpotNear(
           }
           if (!ok) break;
         }
-        if (ok) return [x, y];
+        if (!ok) continue;
+        const d = Math.abs(x - ind.tx) + Math.abs(y - ind.ty);
+        if (d < bestD) { bestD = d; best = [x, y]; }
       }
     }
   }
-  return null;
+  return best;
 }
 
 describe("E11 a full round is playable", () => {
@@ -638,8 +646,11 @@ describe("W3 the rival actually plays (headless)", () => {
   it("N aiTicks grow the rival's track, connect an industry, and move its cargo", async () => {
     const h = await boot();
     const { buildTile } = await import("../../src/iso/track");
-    // minimal player setup (the AI clocks only run in `play`)
-    const c = findSouthCorridor(h.grid);
+    // minimal player setup (the AI clocks only run in `play`). T4: wire the
+    // player to a FARM so the ore mine the rival is placed beside keeps its
+    // harvester spots free (on the roomier map the two setups used to converge
+    // on the same mine and the rival could never place a harvester).
+    const c = findSouthCorridor(h.grid, 6, "farm");
     expect(c).toBeTruthy();
     h.eco.factories.push({ owner: "you", ownerId: 1, tx: c!.hx, ty: c!.fy });
     h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: c!.hx, ty: c!.hy });
@@ -649,19 +660,24 @@ describe("W3 the rival actually plays (headless)", () => {
     // The rival's factory goes next to an ORE mine (its ore trickle is what the
     // second half asserts). MT-2 moved every mine, so the spot is found from
     // the live grid rather than hard-coded.
-    const rivalSpot = findFactorySpotNear(h.grid, "ore_mine");
+    // T4: keep the rival off the industry the player just wired up, so the two
+    // networks don't compete for the same harvester spot on the roomier map.
+    const rivalSpot = findFactorySpotNear(h.grid, "ore_mine", c!.ind.id);
     expect(rivalSpot).toBeTruthy();
     h.eco.factories.push({ owner: "ai", ownerId: 2, tx: rivalSpot![0], ty: rivalSpot![1] });
     const rival = h.market.players[1];
+    // The rival was injected directly (not via placeFactory), so hand it the
+    // same setup allowance it would have received there — on the roomier map
+    // its trunk line to the mine needs the allowance to be affordable.
+    rival.freeTrack = 12;
     const rivalTiles = () => [...h.track.owner].filter((o) => o === 2).length;
     expect(rivalTiles()).toBe(0);
     expect(h.vp.ai).toBe(0);
 
-    // three AI build ticks = 27s of game time (< the ticket's "within a minute")
+    // T4: on the roomier 144×144 map the rival's trunk line is longer, so give
+    // it six build ticks (was three) to connect an industry within the test.
     const t0 = 1_000_000;
-    h.aiTick(t0);
-    h.aiTick(t0 + AI_BUILD_MS);
-    h.aiTick(t0 + 2 * AI_BUILD_MS);
+    for (let i = 0; i < 4; i++) h.aiTick(t0 + i * AI_BUILD_MS);
 
     // its track exists and is ITS OWN...
     expect(rivalTiles()).toBeGreaterThan(0);
@@ -673,12 +689,12 @@ describe("W3 the rival actually plays (headless)", () => {
 
     // and it EARNS: the connected mine's trickle lands in its purse each tick
     const ore0 = rival.res.ore;
-    h.econTick(t0 + 3 * AI_BUILD_MS);
-    h.econTick(t0 + 3 * AI_BUILD_MS + HARVEST_MS);
-    h.econTick(t0 + 3 * AI_BUILD_MS + 2 * HARVEST_MS);
+    h.econTick(t0 + 4 * AI_BUILD_MS);
+    h.econTick(t0 + 4 * AI_BUILD_MS + HARVEST_MS);
+    h.econTick(t0 + 4 * AI_BUILD_MS + 2 * HARVEST_MS);
     expect(rival.res.ore).toBeGreaterThan(ore0);
     for (const c of CARGOES) expect(rival.res[c], `${c} negative`).toBeGreaterThanOrEqual(0);
-  });
+  }, 180_000);   // T4: rival ticks are an order of magnitude heavier at 144×144
 });
 
 describe("W8 the rival is placed where it can build — and builds", () => {
@@ -704,7 +720,7 @@ describe("W8 the rival is placed where it can build — and builds", () => {
     expect([rival!.tx, rival!.ty]).not.toEqual([0, 0]);
     // …and still a good distance from the player, as before
     expect(Math.abs(rival!.tx - fx) + Math.abs(rival!.ty - fy)).toBeGreaterThan(10);
-  });
+  }, 120_000);   // T4: placeFactory triggers rival placement, ~an order heavier
 
   it("four aiTicks from that real placement build track, a harvester, and VP", async () => {
     const h = await boot();
@@ -723,7 +739,7 @@ describe("W8 the rival is placed where it can build — and builds", () => {
     expect(rivalTiles()).toBeGreaterThan(0);
     expect(h.harvesters.some((x) => x.owner === "ai")).toBe(true);
     expect(h.vp.ai).toBeGreaterThan(0);
-  });
+  }, 180_000);   // T4: 4 aiTicks × ~9 s each at 144×144
 });
 
 describe("W9 the free setup allowance buys road, not rail", () => {
@@ -772,7 +788,7 @@ describe("W9 the free setup allowance buys road, not rail", () => {
     expect(h.purse.ore).toBe(20);
     expect(h.freeTrack).toBe(7);                 // rail ate no allowance
     for (let k = 0; k < 5; k++) expect(hasTrack(h.track, "rail", fx + k, fy)).toBe(true);
-  });
+  }, 120_000);   // T4
 });
 
 describe("W4 a normal session earns the rail", () => {

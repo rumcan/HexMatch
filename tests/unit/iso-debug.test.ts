@@ -266,7 +266,7 @@ describe("C5 the dumps report the geometry the renderer used", () => {
     expect(net.seeds.factories.length).toBe(1);
     expect(net.tiles).toBeGreaterThanOrEqual(1);   // the factory tile itself
     expect(net.list[0]).toEqual([spot.tx, spot.ty]);
-  });
+  }, 120_000);   // T4: placeFactory triggers rival placement, ~an order heavier at 144×144
 
   it("config() returns the resolved cell of every sprite on screen", async () => {
     const h = await boot();

@@ -45,7 +45,9 @@ import {
   type EconomyState, type Harvester, type ScoreState, type VpEvent,
 } from "./economy";
 import { aiBuildStep, chooseRivalFactorySpot } from "./ai";
-import { CARGO, FACTORY_FOOTPRINT, INDUSTRY_BY_KEY, TRANSPORT, VP_TARGET, type Cargo } from "./config";
+import {
+  CARGO, FACTORY_FOOTPRINT, INDUSTRY_BY_KEY, TRANSPORT, VP_TARGET, townHouseSprite, type Cargo,
+} from "./config";
 import {
   MAP_W, MAP_H, BANDIT_MS, BLOCK_MS, FOG_MS, SABOTAGE, SECURITY, type ResKey,
 } from "../game/config";
@@ -276,11 +278,13 @@ export function startIsoGame(root: HTMLElement) {
         tx: t.tx, ty: t.ty,
         ref: { kind: "town", id: t.id },
       });
-      // Houses at all non-center tiles
+      // Houses at all non-center tiles. TOWN-3/Y8: one of three declared house
+      // cells, chosen by `townHouseSprite` so a settlement mixes a house, a
+      // small office and a taller office block instead of stamping one sprite.
       for (const [hx, hy] of t.houses) {
         if (hx === t.tx && hy === t.ty) continue; // skip center, already drawn
         items.push({
-          sprite: "town_house",
+          sprite: townHouseSprite(hx, hy),
           tx: hx, ty: hy,
           ref: { kind: "town", id: t.id },
         });
