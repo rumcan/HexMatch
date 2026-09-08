@@ -211,12 +211,6 @@ export function createQuarry(
 
   // `reach` is reassigned on every refresh, so expose it through a getter —
   // a plain property would freeze the empty set the quarry booted with.
-  //
-  // N3: the combo coin's board gem obeys the same gate as the tokens. It
-  // recomputes reach live (match-time philosophy — one flood fill is cheap),
-  // so banking a combo the moment the mine is disconnected mints no gem.
-  board.goldReachable = () => (reachableCargo(state, owner, performance.now())["gold"] ?? 0) > 0;
-
   return {
     board,
     get reach() { return reach; },
