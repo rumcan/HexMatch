@@ -42,7 +42,9 @@ const state = (grid: Grid, track: Track = createTrack()): EconomyState =>
 // ownerId 0 = the neutral, unowned world these unit tests use (no rival),
 // which also keeps the legacy "any track is the AI's trunk" discount.
 const F: Factory = { owner: "ai", ownerId: 0, tx: 5, ty: 5 };
-const rich = { stone: 9999, ore: 9999 };
+// PP-07: "rich" now covers every cargo a build can ask for — road/rail cost
+// Wood, and a paid Depot (a player's second and later) costs Grain + Oil.
+const rich = { wood: 9999, stone: 9999, grain: 9999, ore: 9999, oil: 9999 };
 
 describe("E7 step cost", () => {
   it("charges 1 for flat and 3 for rough", () => {
@@ -240,8 +242,8 @@ describe("E7 planning", () => {
 
   it("builds road when it cannot afford rail", () => {
     const grid = flatGrid([ind("farm", 10, 5)]);
-    // enough stone for road, no ore at all → rail is unaffordable
-    const plan = planCandidates(state(grid), F, { stock: {}, purse: { stone: 50 } });
+    // enough wood + stone for road (PP-07), no ore at all → rail is unaffordable
+    const plan = planCandidates(state(grid), F, { stock: {}, purse: { wood: 50, stone: 50 } });
     expect(plan.length).toBeGreaterThan(0);
     expect(plan.every((c) => c.kind === "road")).toBe(true);
     expect(TRANSPORT.rail.cost.ore).toBeGreaterThan(0);
@@ -334,10 +336,12 @@ describe("E7 execution", () => {
   it("W3: charges only the tiles beyond the free allowance", () => {
     const grid = flatGrid([ind("farm", 12, 5)]);
     const s = state(grid);
-    const out = aiBuildStep(s, F, { stock: {}, purse: { stone: 99 }, free: 4 }, 1)!;
+    const out = aiBuildStep(s, F, { stock: {}, purse: { wood: 99, stone: 99 }, free: 4 }, 1)!;
     const charged = out.built.length - out.free;
     expect(charged).toBeGreaterThan(0);
+    // PP-07: a paid road tile costs 1 wood + 1 stone from the one table
     expect(out.spent.stone).toBe(charged);
+    expect(out.spent.wood).toBe(charged);
   });
 
   it("returns null when there is nothing reachable", () => {
@@ -369,8 +373,13 @@ describe("E7 execution", () => {
 // `iso-ai-sweep.test.ts` (it is slow); these are the focused regressions.
 // ══════════════════════════════════════════════════════════════════════════
 
-/** The rival's opening purse and setup allowance, exactly as `game.ts` gives it. */
-const rivalOpts = () => ({ stock: { stone: 12, ore: 0 }, purse: { stone: 12, ore: 0 }, free: 12 });
+/** The rival's opening purse and setup allowance, exactly as `game.ts` gives
+ *  it (PP-07 retune: wood + stone for the opening roads, no ore). */
+const rivalOpts = () => ({
+  stock: { wood: 12, stone: 12, ore: 0 },
+  purse: { wood: 12, stone: 12, ore: 0 },
+  free: 12,
+});
 
 /**
  * Seed-1337 repro state: the rival's factory on a rough, road-buildable,
@@ -511,7 +520,7 @@ describe("W8 the rival's factory is placed where it can build", () => {
     const grid = generateMap(1337);
     const player: [number, number] = [23, 22];
     const spot = chooseRivalFactorySpot(grid, createTrack(), player, {
-      purse: { stone: 12, ore: 0 }, free: 12, ownerId: 2,
+      purse: { wood: 12, stone: 12, ore: 0 }, free: 12, ownerId: 2,
     });
     expect(spot).toBeTruthy();
     const [x, y] = spot!;
@@ -533,7 +542,7 @@ describe("W8 the rival's factory is placed where it can build", () => {
 
   it("is deterministic, and never returns an enclave for any player tile", () => {
     const grid = generateMap(1337);
-    const opts = { purse: { stone: 12, ore: 0 }, free: 12, ownerId: 2 };
+    const opts = { purse: { wood: 12, stone: 12, ore: 0 }, free: 12, ownerId: 2 };
     const a = chooseRivalFactorySpot(grid, createTrack(), [23, 22], opts);
     const b = chooseRivalFactorySpot(grid, createTrack(), [23, 22], opts);
     expect(a).toEqual(b);
@@ -566,13 +575,13 @@ describe("W9 the rival's setup allowance buys road only", () => {
   it("offers no rail plan while rail still has to be paid for in ore", () => {
     const grid = flatGrid([ind("farm", 12, 5)]);
     const s = state(grid);
-    // the rival's opening purse: 12 stone, no ore, 12 free tiles
-    const plan = planCandidates(s, F, { stock: {}, purse: { stone: 12, ore: 0 }, free: 12 });
+    // the rival's opening purse (PP-07): wood + stone, no ore, 12 free tiles
+    const plan = planCandidates(s, F, { stock: {}, purse: { wood: 12, stone: 12, ore: 0 }, free: 12 });
     expect(plan.length).toBeGreaterThan(0);
     expect(plan.every((c) => c.kind === "road"), "free rail is the W9 bug").toBe(true);
 
     // with ore it prefers rail again — and now prices every tile of it
-    const paid = planCandidates(s, F, { stock: {}, purse: { stone: 12, ore: 9999 }, free: 12 });
+    const paid = planCandidates(s, F, { stock: {}, purse: { wood: 99, stone: 12, ore: 9999 }, free: 12 });
     expect(paid[0].kind).toBe("rail");
     expect(paid[0].cost.ore).toBe(TRANSPORT.rail.cost.ore! * paid[0].path.tiles.length);
   });
@@ -580,7 +589,7 @@ describe("W9 the rival's setup allowance buys road only", () => {
   it("a rail build consumes no allowance, so the rival keeps its road budget", () => {
     const grid = flatGrid([ind("farm", 12, 5)]);
     const s = state(grid);
-    const rail = aiBuildStep(s, F, { stock: {}, purse: { stone: 12, ore: 9999 }, free: 12 }, 1)!;
+    const rail = aiBuildStep(s, F, { stock: {}, purse: { wood: 99, stone: 12, ore: 9999 }, free: 12 }, 1)!;
     expect(rail).toBeTruthy();
     expect(rail.kind).toBe("rail");
     expect(rail.free).toBe(0);
@@ -589,7 +598,7 @@ describe("W9 the rival's setup allowance buys road only", () => {
 
     // the road build the same allowance WAS for still rides it, unchanged (W3)
     const s2 = state(grid);
-    const road = aiBuildStep(s2, F, { stock: {}, purse: { stone: 12, ore: 0 }, free: 12 }, 1)!;
+    const road = aiBuildStep(s2, F, { stock: {}, purse: { wood: 12, stone: 12, ore: 0 }, free: 12 }, 1)!;
     expect(road.kind).toBe("road");
     expect(road.free).toBe(road.built.length);
     expect(Object.keys(road.spent).length).toBe(0);
@@ -598,7 +607,7 @@ describe("W9 the rival's setup allowance buys road only", () => {
   it("prices a rail plan the same way the human drag preview does", () => {
     const grid = flatGrid([ind("farm", 12, 5)]);
     const s = state(grid);
-    const purse = { stone: 12, ore: 8 };         // two rail tiles' worth of ore
+    const purse = { wood: 12, stone: 12, ore: 8 };   // two rail tiles' worth of ore
     const plan = planCandidates(s, F, { stock: {}, purse, free: 12 });
     const rail = plan.filter((c) => c.kind === "rail");
     // every rail candidate must fit the purse: 8 ore = at most 2 tiles
@@ -633,7 +642,8 @@ describe("T4 routing regressions", () => {
   it("does not prune affordable extensions of a long existing trunk", () => {
     const grid = flatGrid([ind("farm", 65, 5)]), track = createTrack();
     for (let x = 5; x <= 60; x++) buildTile(track, "road", x, 5);
-    const candidate = bestCandidate(state(grid, track), F, { stock: {}, purse: { stone: 4 }, preferRail: false });
+    // PP-07: paid road tiles cost wood + stone, so the bound carries both
+    const candidate = bestCandidate(state(grid, track), F, { stock: {}, purse: { wood: 4, stone: 4 }, preferRail: false });
     expect(candidate).toBeTruthy();
     expect(candidate!.cost.stone).toBeLessThanOrEqual(4);
     expect(candidate!.path.tiles[0]).toEqual([60, 5]);
@@ -649,9 +659,9 @@ describe("T4 routing regressions", () => {
 
   it("finds an affordable rival opening beyond the old eight far-corner probes", () => {
     const grid = flatGrid([ind("farm", MAP_W / 2, MAP_H / 2)]), track = createTrack();
-    const spot = chooseRivalFactorySpot(grid, track, [4, 4], { purse: { stone: 12 }, free: 12, ownerId: 2 })!;
+    const spot = chooseRivalFactorySpot(grid, track, [4, 4], { purse: { wood: 12, stone: 12 }, free: 12, ownerId: 2 })!;
     const factory: Factory = { owner: "ai", ownerId: 2, tx: spot[0], ty: spot[1] };
-    const out = aiBuildStep(state(grid, track), factory, { stock: {}, purse: { stone: 12 }, free: 12 }, 1);
+    const out = aiBuildStep(state(grid, track), factory, { stock: {}, purse: { wood: 12, stone: 12 }, free: 12 }, 1);
     expect(out?.harvester).toBeTruthy();
     expect(out!.spent.stone ?? 0).toBeLessThanOrEqual(12);
   });
@@ -659,7 +669,7 @@ describe("T4 routing regressions", () => {
   it("keeps an opening placement well below the old multi-second UI stall", () => {
     const grid = generateMap(1337);
     const start = performance.now();
-    const spot = chooseRivalFactorySpot(grid, createTrack(), [92, 32], { purse: { stone: 12 }, free: 12, ownerId: 2 });
+    const spot = chooseRivalFactorySpot(grid, createTrack(), [92, 32], { purse: { wood: 12, stone: 12 }, free: 12, ownerId: 2 });
     expect(spot).toBeTruthy();
     // The unpruned patch took ~9s locally. Generous CI margin over a <100ms
     // normal opening, without disguising the stall with a 120s test timeout.

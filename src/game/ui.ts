@@ -26,7 +26,8 @@ import {
   SABOTAGE, SECURITY, REPAIR_COST, type ResKey,
 } from "./config";
 import { BANK_RATE, MAX_OFFERS } from "./trade";
-import { CARGO, CARGOES, type Cargo } from "../iso/config";
+import { CARGO, CARGOES, TRANSPORT, type Cargo } from "../iso/config";
+import { BUILD_COSTS } from "../iso/costs";
 import { GEM_TO_CARGO } from "../iso/quarry";
 import { Board, type Gem } from "./board";
 import type { IsoMarket, IsoMarketPlayer, Offer } from "../iso/market";
@@ -304,13 +305,17 @@ export function createOriginalUi(
   let lastMarketKey = "\u0000";
 
   // ── build list: the iso tools, keeping the original Build panel layout ────
+  // PP-07: every price shown here is rendered from the ONE authoritative
+  // table (`src/iso/costs.ts`) — the same numbers the click charges and the
+  // rival plans with, so the button, the charge and the AI never drift apart.
   const TOOLS: { key: UiTool; label: string; sub: string }[] = [
-    { key: "road", label: "Road", sub: "1 stone · 1 VP" },
-    { key: "rail", label: "Rail", sub: "4 ore + 1 stone · 3 VP" },
-    { key: "harvester", label: "Depot", sub: "free · on industry" },
+    { key: "road", label: "Road", sub: `${costStr(BUILD_COSTS.road)} · ${TRANSPORT.road.vp} VP` },
+    { key: "rail", label: "Rail", sub: `${costStr(BUILD_COSTS.rail)} · ${TRANSPORT.rail.vp} VP` },
+    // PP-07: Depots are paid buildings now — the setup (first) Depot is free.
+    { key: "harvester", label: "Depot", sub: `${costStr(BUILD_COSTS.depot)} · first free` },
     // PP-06: another instance of the SAME processing building, raised beside
-    // another town. Cost text mirrors PLANT_COST in src/iso/plants.ts.
-    { key: "plant", label: "Processing Plant", sub: "2🪵 2🪨 2🌾 3⛏️ · next to a town" },
+    // another town. Cost is the `plant` entry of the authoritative table.
+    { key: "plant", label: "Processing Plant", sub: `${costStr(BUILD_COSTS.plant)} · next to a town` },
     { key: "demolish", label: "Demolish", sub: "refund none" },
   ];
   for (const t of TOOLS) {

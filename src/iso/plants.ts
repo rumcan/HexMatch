@@ -25,17 +25,18 @@
 // `game.ts` owns the purse, the toast and the render sync.
 // ══════════════════════════════════════════════════════════════════════════
 import { FACTORY_FOOTPRINT, type Cargo } from "./config";
+import { BUILD_COSTS } from "./costs";
 import { TOWN_OCC, WATER, idx, inBounds, type Grid, type Town } from "./grid";
 import { hasTrack, type Purse, type Track } from "./track";
 import type { EconomyState, Factory } from "./economy";
 
 /**
- * PP-06 / PP-07: the cost of an ADDITIONAL processing plant, in one place so
- * the UI preview, the charge and the AI all read the same number. (PP-07 owns
- * the authoritative cost table; when it lands this constant is the entry it
- * should adopt for "Additional Processing Plant".)
+ * PP-06 / PP-07: the cost of an ADDITIONAL processing plant. PP-07 landed:
+ * the number now comes from the one authoritative cost table
+ * (`costs.ts BUILD_COSTS.plant` — 2 Wood + 2 Stone + 2 Grain + 3 Ore), so
+ * the UI preview, the charge and the AI all read the same constant.
  */
-export const PLANT_COST: Purse = { wood: 2, stone: 2, grain: 2, ore: 3 };
+export const PLANT_COST: Purse = { ...BUILD_COSTS.plant };
 
 /** Why a plant may not be raised here. `null` = the placement is legal. */
 export type PlantRefusal =

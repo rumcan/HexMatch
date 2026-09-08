@@ -32,6 +32,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_W, MAP_H } from "../game/config";
 import { TRANSPORT, UPGRADE_COST, INDUSTRY_BY_KEY, FACTORY_FOOTPRINT, type Cargo } from "./config";
+import { depotCharge } from "./costs";
 import { ROUGH, type Grid, type Industry } from "./grid";
 import {
   DIRS, DIR, tIdx, inMapT, hasTrack, canBuildOn, tileCost, addCost, canAfford,
@@ -452,6 +453,14 @@ export function planCandidates(
           if (freeLeft > 0) { freeLeft--; continue; }
           cost = addCost(cost, c);
         }
+        // PP-07: every plan ends by placing a Depot, and Depots now come from
+        // the one authoritative cost table too. The first Depot stays free
+        // (`depotCharge` — the setup exception), every later one is priced
+        // into the candidate, and a plan that cannot afford its Depot is
+        // rejected HERE rather than laid as track with no Depot at the end.
+        cost = addCost(cost, depotCharge(
+          state.harvesters.filter((h) => h.owner === factory.owner).length,
+        ));
         if (!canAfford(opts.purse, cost)) continue;
 
         const score = scarcity(opts.stock, def.cargo) * (ind.output ?? def.output)
@@ -571,7 +580,9 @@ export interface BuildOutcome {
   built: [number, number][];
   harvester: Harvester | null;
   kind: TrackKind;
-  /** What the caller debits from the purse — free tiles already subtracted. */
+  /** What the caller debits from the purse — free tiles already subtracted.
+   *  PP-07: includes the Depot's price from the authoritative table when the
+   *  Depot is a paid one (the player's first Depot is free). */
   spent: Purse;
   /**
    * W3: how many tiles the free allowance covered (caller debits freeTrack).
@@ -616,6 +627,14 @@ export function executeCandidate(
   let harvester: Harvester | null = null;
   const h: Harvester = { id: nextHarvesterId, owner, ownerId, tx: c.hx, ty: c.hy };
   if (isServiced(state.track, h)) {
+    // PP-07: the Depot itself is charged from the authoritative table — the
+    // owner's FIRST Depot is free (the setup exception), every later one is
+    // paid. Count BEFORE the push: `h` is not standing yet. `planCandidates`
+    // priced exactly this charge into the candidate and refused unaffordable
+    // plans, so `spent` stays what the plan promised.
+    spent = addCost(spent, depotCharge(
+      state.harvesters.filter((x) => x.owner === owner).length,
+    ));
     state.harvesters.push(h);
     harvester = h;
   }

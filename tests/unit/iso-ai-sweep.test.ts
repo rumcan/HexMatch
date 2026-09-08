@@ -15,8 +15,13 @@ import { canReachASpot, rivalSearchTiles } from "./helpers/rival-map";
 
 const SAMPLE_STEP = 2 * Math.ceil(Math.max(MAP_W, MAP_H) / 10);
 
-/** The rival's opening purse + setup allowance, exactly as `game.ts` gives it. */
-const rivalOpts = () => ({ stock: { stone: 12, ore: 0 }, purse: { stone: 12, ore: 0 }, free: 12 });
+/** The rival's opening purse + setup allowance, exactly as `game.ts` gives
+ *  it (PP-07 retune: wood + stone for the opening roads, no ore). */
+const rivalOpts = () => ({
+  stock: { wood: 12, stone: 12, ore: 0 },
+  purse: { wood: 12, stone: 12, ore: 0 },
+  free: 12,
+});
 
 const ownedBy = (track: { owner: Uint8Array }, ownerId: number) => {
   let n = 0;
@@ -39,8 +44,12 @@ function play(grid: Grid, x: number, y: number, turns: number): SweepRow {
   const eco: EconomyState = { grid, track, harvesters: [], factories: [f] };
   let noops = 0;
   for (let i = 0; i < turns; i++) {
+    // PP-07: funded roads need wood + stone; the SECOND and later Depots cost
+    // grain + oil too, so the unlimited-funds purse carries every cargo but
+    // ore (the rail gate stays closed, as W9 settled).
     const out = aiBuildStep(eco, f, {
-      ...rivalOpts(), purse: { stone: MAP_W * MAP_H, ore: 0 },
+      ...rivalOpts(),
+      purse: { wood: MAP_W * MAP_H, stone: MAP_W * MAP_H, grain: MAP_W * MAP_H, ore: 0, oil: MAP_W * MAP_H },
     }, 100 + i);
     // a truthy outcome that achieved nothing is the W8 bug: `aiTick` would
     // have spent the rival's 9 s clock on it and reported progress.
@@ -139,7 +148,7 @@ describe("W8 sweep — every candidate returned is executable and viable", () =>
 describe("W8 sweep — the rival is never placed on a tile it cannot build from", () => {
   it("every player placement yields a rail-legal, reachable rival tile", () => {
     const grid = generateMap(1337);
-    const opts = { purse: { stone: 12, ore: 0 }, free: 12, ownerId: 2 };
+    const opts = { purse: { wood: 12, stone: 12, ore: 0 }, free: 12, ownerId: 2 };
     let checked = 0;
     // Placement uses the real opening purse, unlike the funded route sweep.
     for (let y = 2; y < MAP_H - 2; y += SAMPLE_STEP) {

@@ -51,8 +51,11 @@ import {
   chooseAiPlantSpot, footprintTiles, plantRefusal, plantsOf,
 } from "./plants";
 import {
-  CARGO, FACTORY_FOOTPRINT, INDUSTRY_BY_KEY, TRANSPORT, VP_TARGET, townHouseSprite, type Cargo,
+  CARGO, CARGOES, FACTORY_FOOTPRINT, INDUSTRY_BY_KEY, TRANSPORT, VP_TARGET,
+  townHouseSprite, type Cargo,
 } from "./config";
+import { BUILD_COSTS, depotCharge } from "./costs";
+import { bankTrade } from "../game/trade";
 import {
   MAP_W, MAP_H, BANDIT_MS, BLOCK_MS, FOG_MS, SABOTAGE, SECURITY, type ResKey,
 } from "../game/config";
@@ -82,8 +85,17 @@ export { joinFromSnapshot };
 export const FREE_SETUP_TRACK = 12;
 export const HARVEST_MS = 3000;      // economy tick
 export const AI_BUILD_MS = 9000;
-/** E8: start with stone for roads, no ore — rail is gated behind an ore mine. */
-export const START_PURSE: Purse = { stone: 12, ore: 0 };
+/**
+ * E8: start with stone for roads, no ore — rail is gated behind an ore mine.
+ *
+ * PP-07 retune: road now costs Wood + Stone, so the opening stock carries
+ * BOTH base materials. The 12 free road tiles still buy the first connection;
+ * the stock then covers the first paid extensions — 12 wood + 12 stone is
+ * exactly the SAME 12-tile paid-road capacity the old 12-stone purse bought,
+ * now split across the two infrastructure cargoes so each keeps a role from
+ * tile one. Still no ore — the rail gate stays honest.
+ */
+export const START_PURSE: Purse = { wood: 12, stone: 12, ore: 0 };
 export { VP_TARGET };
 
 /** PP-06: `plant` raises an ADDITIONAL processing plant beside another town. */
@@ -266,6 +278,10 @@ export function startIsoGame(root: HTMLElement) {
   const plantCostLabel = () => (Object.entries(PLANT_COST) as [Cargo, number][])
     .map(([k, v]) => `${v} ${CARGO[k].icon}`).join(" ");
 
+  /** PP-07: the Depot price, rendered from the one authoritative table. */
+  const depotCostLabel = () => (Object.entries(BUILD_COSTS.depot) as [Cargo, number][])
+    .map(([k, v]) => `${v} ${CARGO[k].icon}`).join(" ");
+
   const syncWorld = () => {
     world.roadBits = drawBits(track, "road");
     world.railBits = drawBits(track, "rail");
@@ -379,7 +395,7 @@ export function startIsoGame(root: HTMLElement) {
     return true;
   }
 
-  function placeHarvester(tx: number, ty: number, p: PlayerState, _free: boolean): boolean {
+  function placeHarvester(tx: number, ty: number, p: PlayerState, free: boolean): boolean {
     if (!canBuildOn(grid, "road", tx, ty)) { toast("Can't build there.", "bad"); return false; }
     if (eco.harvesters.some((h) => h.tx === tx && h.ty === ty)) {
       toast("A depot is already there.", "bad"); return false;
@@ -389,6 +405,21 @@ export function startIsoGame(root: HTMLElement) {
       toast("A depot needs an industry in its 4×4 catchment.", "bad");
       return false;
     }
+    // PP-07: Depots cost materials now — from the ONE authoritative table
+    // (`costs.ts`). The setup Depot (the player's first) stays free
+    // (`depotCharge`): Oil production itself needs a Depot, so charging Oil
+    // for the very first one would make the opening impossible. Every Depot
+    // after it pays the full price. All legality checks ran BEFORE the
+    // charge, and `spend` is affordability-guarded, so a refused placement
+    // consumes nothing and a successful one is charged exactly once.
+    const charge = free
+      ? {}
+      : depotCharge(eco.harvesters.filter((x) => x.owner === p.id).length);
+    if (!canAfford(p.purse, charge)) {
+      if (p.human) toast(`Not enough materials — a Depot costs ${depotCostLabel()}.`, "bad");
+      return false;
+    }
+    if (!spend(p, charge)) return false;                 // charged exactly once
     // G5: harvesters seed the network; they no longer need existing track.
     eco.harvesters.push(h);
     syncWorld();
@@ -578,6 +609,9 @@ export function startIsoGame(root: HTMLElement) {
 
   // ── economy + AI clocks ────────────────────────────────────────────────
   let lastHarvest = 0, lastAi = 0;
+  /** PP-07: fractional trickle carry, so sub-1.0 yields still pay over time
+   *  (see `economyTick`). Keyed by cargo for the rival's passive income. */
+  const trickleCarry: Partial<Record<Cargo, number>> = {};
 
   function economyTick(now: number) {
     if (phase !== "play") return;
@@ -590,10 +624,17 @@ export function startIsoGame(root: HTMLElement) {
     // owner-scoped components) and credited straight to its purse — this is
     // the rival's only income, so once it connects an industry its stone/ore
     // actually move over time.
+    // PP-07: fractional yields ACCUMULATE across ticks instead of rounding
+    // each tick. Per-tick rounding paid 0 forever for an Oil Rig (0.4/tick)
+    // or a Gold Mine (0.3/tick), so an oil-only network was dead income —
+    // and with every paid Depot now costing Oil, that was an opening
+    // deadlock. The carry turns 0.4/tick into 1 oil every ~7.5 s.
     const y = playerResources(eco, rival.id, now);
     const gain: Purse = {};
     for (const [cargo, v] of Object.entries(y) as [Cargo, number][]) {
-      const n = Math.max(0, Math.round(v));
+      const acc = (trickleCarry[cargo] ?? 0) + Math.max(0, v);
+      const n = Math.floor(acc);
+      trickleCarry[cargo] = acc - n;
       if (n > 0) gain[cargo] = n;
     }
     if (Object.keys(gain).length) earn(rival, gain);
@@ -608,12 +649,43 @@ export function startIsoGame(root: HTMLElement) {
     quarry.tick(now);
   }
 
+  /**
+   * PP-07: the rival resolves missing construction materials the same way
+   * the player can — the 4:1 bank. Its only income is the trickle, and NO
+   * trickle cargo pays for everything a second Depot costs (Grain + Oil +
+   * Wood + Stone from the one table): without this the AI deadlocks on its
+   * first paid expansion, the exact endless-dependency loop the ticket
+   * forbids. Two exchanges per build clock, giving from the cargo it holds
+   * most; Gold is never touched (PP-08).
+   */
+  const rivalBankTowardDepot = () => {
+    const target = depotCharge(
+      eco.harvesters.filter((x) => x.owner === rival.id).length,
+    );
+    if (Object.keys(target).length === 0) return;   // the first Depot is free
+    const trader = { res: rival.purse };
+    let trades = 0;
+    for (const [cargo, need] of Object.entries(target) as [Cargo, number][]) {
+      if (trades >= 2) break;
+      while ((rival.purse[cargo] ?? 0) < need && trades < 2) {
+        const surplus = (CARGOES as Cargo[])
+          .filter((c) => c !== "gold" && c !== cargo && (rival.purse[c] ?? 0) >= 4)
+          .filter((c) => (target[c] ?? 0) <= (rival.purse[c] ?? 0) - 4)
+          .sort((a, b) => (rival.purse[b] ?? 0) - (rival.purse[a] ?? 0))[0];
+        if (!surplus) break;
+        bankTrade(trader, surplus, cargo);
+        trades++;
+      }
+    }
+  };
+
   function aiTick(now: number) {
     if (phase !== "play") return;
     if (now - lastAi < AI_BUILD_MS) return;
     lastAi = now;
     const f = factoryOf("ai");
     if (!f) return;
+    rivalBankTowardDepot();
     // PP-06: the rival expands too, through the SAME rule + cost path — no
     // AI-only fallback that skips town adjacency or the charge.
     if (canAffordPlant(rival.purse)) {
@@ -708,6 +780,7 @@ export function startIsoGame(root: HTMLElement) {
     else if (me.freeTrack > 0) banner = `${me.freeTrack} free track tiles remaining — connect your depot to your Factory`;
     else if (Object.keys(quarry.reach).length === 0) banner = "Nothing connected — the Processing Plant only pays cargo your network reaches";
     else if (tool === "plant") banner = `Raise another processing plant next to a town — ${plantCostLabel()}`;
+    else if (tool === "harvester") banner = `Place a Depot beside an industry — ${depotCostLabel()}`;
     else banner = "Match the tokened gems in the Processing Plant to process";
 
     let costInfo: string | null = null;
@@ -731,6 +804,14 @@ export function startIsoGame(root: HTMLElement) {
         : afford ? "ready" : "not enough materials";
       costInfo = `<span class="mb-txt"><b>Processing plant</b> · ${note}</span>` +
         `<span class="mb-cost">${plantCostLabel()}</span>`;
+    } else if (tool === "harvester" && hover && phase === "play") {
+      // PP-07: the Depot price previewed from the SAME table `placeHarvester`
+      // charges, so a click is never a surprise. The first Depot is free (the
+      // setup exception); every Depot after it pays the full price.
+      const owned = eco.harvesters.filter((x) => x.owner === me.id).length;
+      const afford = canAfford(me.purse, depotCharge(owned));
+      costInfo = `<span class="mb-txt"><b>Depot</b> · ${afford ? "ready" : "not enough materials"}</span>` +
+        `<span class="mb-cost">${depotCostLabel()}</span>`;
     }
 
     // PP-03: while a Factory or a Depot is being placed, an INVALID hover
@@ -1083,6 +1164,12 @@ export function startIsoGame(root: HTMLElement) {
     /** PP-06: the test twin of clicking with the Processing Plant tool. */
     placePlant: (tx: number, ty: number, who: "you" | "ai" = "you") =>
       placePlant(tx, ty, who === "ai" ? rival : me),
+    /** PP-07: the test twin of clicking with the Depot tool — the PAID path
+     *  (the free setup Depot is the `setup-harvester` click). */
+    placeDepot: (tx: number, ty: number, who: "you" | "ai" = "you") =>
+      placeHarvester(tx, ty, who === "ai" ? rival : me, false),
+    /** PP-07: the Depot price from the authoritative table (`costs.ts`). */
+    get depotCost() { return { ...BUILD_COSTS.depot }; },
     /** PP-06: every processing plant a player owns (starting Factory first). */
     plantsOf: (who: string) => plantsOf(eco, who),
     get plantCost() { return { ...PLANT_COST }; },

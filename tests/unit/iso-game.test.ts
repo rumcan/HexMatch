@@ -321,7 +321,8 @@ describe("E11 a full round is playable", () => {
     const f = { owner: "ai", ownerId: 2, tx: spot![0], ty: spot![1] };
     h.eco.factories.push(f);
     const out = aiBuildStep(
-      h.eco, f, { stock: {}, purse: { stone: 9999, ore: 9999 } }, 99,
+      // PP-07: roads cost wood + stone from the one table
+      h.eco, f, { stock: {}, purse: { wood: 9999, stone: 9999, ore: 9999 } }, 99,
     );
     expect(out).toBeTruthy();
     expect(out!.built.length).toBeGreaterThan(0);
@@ -629,18 +630,21 @@ describe("W1 the drag charges exactly what it previewed", () => {
     // and the tiles are MINE (W2's ownership rides on the same commit)
     expect(h.track.owner[(hy + 1) * MAP_W + hx]).toBe(1);
 
-    // Now the purse pays. 1 free tile + 1 stone can buy 2 of the next 3 —
-    // the third tile is the unaffordable remainder, shown but never built.
+    // Now the purse pays. 1 free tile + one road's price can buy 2 of the
+    // next 3 — the third tile is the unaffordable remainder, shown but never
+    // built. PP-07: a paid road tile costs 1 wood + 1 stone from the table.
+    h.purse.wood = 1;
     h.purse.stone = 1;
     const pv2 = h.dragBuild("road", hx, hy + 12, hx, hy + 14);
     expect(pv2).toBeTruthy();
     expect(pv2!.tiles).toHaveLength(2);
     expect(pv2!.unaffordable).toEqual([[hx, hy + 14]]);   // the blocked tail
     expect(pv2!.free).toBe(1);            // the last free tile went to the prefix
-    expect(pv2!.cost).toEqual({ stone: 1 });
+    expect(pv2!.cost).toEqual({ wood: 1, stone: 1 });
 
     // The commit charged EXACTLY the preview: nothing more, nothing less.
     expect(h.purse.stone).toBe(0);
+    expect(h.purse.wood).toBe(0);
     expect(h.freeTrack).toBe(0);
     expect(hasTrack(h.track, "road", hx, hy + 12)).toBe(true);
     expect(hasTrack(h.track, "road", hx, hy + 13)).toBe(true);
@@ -661,7 +665,10 @@ describe("W3 the rival actually plays (headless)", () => {
     const c = findSouthCorridor(h.grid, 6, "farm");
     expect(c).toBeTruthy();
     h.eco.factories.push({ owner: "you", ownerId: 1, tx: c!.hx, ty: c!.fy });
-    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: c!.hx, ty: c!.hy });
+    // id 100, not 1: the game's own harvester counter starts at 1, and the
+    // rival's first build takes id 1 — a colliding id would make `rescore`
+    // attribute the rival's connection to this harvester's entry.
+    h.eco.harvesters.push({ id: 100, owner: "you", ownerId: 1, tx: c!.hx, ty: c!.hy });
     for (let y = c!.hy + 1; y <= c!.fy; y++) buildTile(h.track, "road", c!.hx, y, 1);
     h.finishSetup();
 
@@ -678,9 +685,18 @@ describe("W3 the rival actually plays (headless)", () => {
     expect(rivalTiles()).toBe(0);
     expect(h.vp.ai).toBe(0);
 
-    // Four build ticks = 36s of game time, still within the one-minute goal.
+    // Eight build clocks (~72s of game time), interleaved with the economy
+    // clock exactly like the frame loop does. PP-07 changed what the rival
+    // must pay: its SECOND Depot costs Grain + Oil from the one table, and
+    // the rival's only income is the ore trickle — so it banks ore 4:1 for
+    // the missing cargoes (the same escape hatch the player has), which takes
+    // a few harvest ticks to fund.
     const t0 = 1_000_000;
-    for (let i = 0; i < 4; i++) h.aiTick(t0 + i * AI_BUILD_MS);
+    for (let i = 0; i < 8; i++) {
+      h.econTick(t0 + i * AI_BUILD_MS + HARVEST_MS);
+      h.econTick(t0 + i * AI_BUILD_MS + 2 * HARVEST_MS);
+      h.aiTick(t0 + (i + 1) * AI_BUILD_MS);
+    }
 
     // its track exists and is ITS OWN...
     expect(rivalTiles()).toBeGreaterThan(0);
@@ -692,9 +708,10 @@ describe("W3 the rival actually plays (headless)", () => {
 
     // and it EARNS: the connected mine's trickle lands in its purse each tick
     const ore0 = rival.res.ore;
-    h.econTick(t0 + 4 * AI_BUILD_MS);
-    h.econTick(t0 + 4 * AI_BUILD_MS + HARVEST_MS);
-    h.econTick(t0 + 4 * AI_BUILD_MS + 2 * HARVEST_MS);
+    const tE = t0 + 8 * AI_BUILD_MS;
+    h.econTick(tE + HARVEST_MS);
+    h.econTick(tE + 2 * HARVEST_MS);
+    h.econTick(tE + 3 * HARVEST_MS);
     expect(rival.res.ore).toBeGreaterThan(ore0);
     for (const c of CARGOES) expect(rival.res[c], `${c} negative`).toBeGreaterThanOrEqual(0);
   }, 10_000);
