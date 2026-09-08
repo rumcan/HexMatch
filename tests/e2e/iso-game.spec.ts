@@ -400,12 +400,18 @@ test.describe("TK-001 mouse panning is middle-button only", () => {
           for (let dx = -r; dx <= r; dx++) {
             const tx = focus.tx + dx, ty = focus.ty + dy;
             if (tx < 0 || ty < 0 || tx >= W || ty >= H) continue;
-            const i = ty * W + tx;
-            // T4: require a genuinely free tile — skip water/rough, industry
-            // (occupancy >= 0) AND town tiles (occupancy -2), which placeFactory
-            // refuses even though their terrain is grass.
-            if (grid.terrain[i] !== 0 || grid.occupancy[i] !== -1) continue;
-            if (!inView(tx, ty) || !clickable(tx, ty)) continue;
+            // T4: placeFactory needs the WHOLE 2×2 footprint buildable, not just
+            // the anchor — every tile must be free grass (terrain 0, occupancy
+            // -1; industry >= 0 and town -2 both refuse). The anchor must also be
+            // on-screen and clickable.
+            let ok = tx + 1 < W && ty + 1 < H && inView(tx, ty) && clickable(tx, ty);
+            for (let fy = 0; ok && fy < 2; fy++) {
+              for (let fx = 0; ok && fx < 2; fx++) {
+                const j = (ty + fy) * W + (tx + fx);
+                if (grid.terrain[j] !== 0 || grid.occupancy[j] !== -1) ok = false;
+              }
+            }
+            if (!ok) continue;
             return { tx, ty };
           }
         }
