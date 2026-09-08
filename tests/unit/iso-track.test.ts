@@ -11,7 +11,8 @@ import { Atlas, type Manifest } from "../../src/iso/atlas";
 import { buildDrawList, CHUNK, chunksX } from "../../src/iso/renderer";
 import { generateMap, GRASS, WATER, ROUGH, type Grid } from "../../src/iso/grid";
 import { MAP_W, MAP_H } from "../../src/game/config";
-import { TRANSPORT, UPGRADE_COST } from "../../src/iso/config";
+import { TRANSPORT } from "../../src/iso/config";
+import { BUILD_COSTS } from "../../src/iso/construction";
 
 /** PP-07: scale a per-tile transport cost to `n` tiles — the authoritative
  *  table now prices several cargoes per tile, so assertions scale the real
@@ -252,8 +253,8 @@ describe("E5 buildability", () => {
 describe("E5 costs", () => {
   it("charges the transport cost on virgin ground", () => {
     const t = createTrack();
-    expect(tileCost(t, "road", 1, 1)).toEqual(TRANSPORT.road.cost);
-    expect(tileCost(t, "rail", 1, 1)).toEqual(TRANSPORT.rail.cost);
+    expect(tileCost(t, "road", 1, 1)).toEqual(BUILD_COSTS.road);
+    expect(tileCost(t, "rail", 1, 1)).toEqual(BUILD_COSTS.rail);
   });
 
   it("is free over existing track of the same kind", () => {
@@ -265,7 +266,7 @@ describe("E5 costs", () => {
   it("charges only the difference to upgrade road → rail in place", () => {
     const t = createTrack();
     buildTile(t, "road", 1, 1);
-    expect(tileCost(t, "rail", 1, 1)).toEqual(UPGRADE_COST);
+    expect(tileCost(t, "rail", 1, 1)).toEqual(BUILD_COSTS.upgradeRoadToRail);
   });
 
   it("canAfford compares every cargo in the cost", () => {
@@ -299,7 +300,7 @@ describe("E5 drag-to-build acceptance", () => {
     const grid = flatGrid(), t = createTrack();
     const p = previewDrag(grid, t, "road", rich, 5, 5, 14, 5);
     expect(p.tiles).toHaveLength(10);
-    expect(p.cost).toEqual(times(TRANSPORT.road.cost, 10));
+    expect(p.cost).toEqual(times(BUILD_COSTS.road, 10));
     expect(p.truncated).toBe(false);
   });
 
@@ -317,7 +318,7 @@ describe("E5 drag-to-build acceptance", () => {
     build(t, "road", [[5, 5], [6, 5], [7, 5]]);
     const p = previewDrag(grid, t, "road", rich, 5, 5, 9, 5);
     expect(p.tiles).toHaveLength(5);
-    expect(p.cost).toEqual(times(TRANSPORT.road.cost, 2));   // only 8,5 and 9,5 are new
+    expect(p.cost).toEqual(times(BUILD_COSTS.road, 2));   // only 8,5 and 9,5 are new
   });
 
   it("an unaffordable drag previews and builds only the affordable prefix", () => {
@@ -325,7 +326,7 @@ describe("E5 drag-to-build acceptance", () => {
     const purse = { wood: 3, stone: 3 };        // PP-07: road costs wood + stone
     const p = previewDrag(grid, t, "road", purse, 5, 5, 14, 5);
     expect(p.tiles).toHaveLength(3);
-    expect(p.cost).toEqual(times(TRANSPORT.road.cost, 3));
+    expect(p.cost).toEqual(times(BUILD_COSTS.road, 3));
     expect(p.unaffordable.length).toBeGreaterThan(0);
     const c = commitDrag(t, "road", p);
     expect(c.built).toHaveLength(3);
@@ -359,7 +360,7 @@ describe("E5 drag-to-build acceptance", () => {
     const p = previewDrag(grid, t, "road", rich, 5, 5, 8, 8);
     expect(p.tiles).toHaveLength(7);            // 4 across + 3 down, corner once
     expect(new Set(p.tiles.map(([x, y]) => `${x},${y}`)).size).toBe(7);
-    expect(p.cost).toEqual(times(TRANSPORT.road.cost, 7));
+    expect(p.cost).toEqual(times(BUILD_COSTS.road, 7));
   });
 });
 
@@ -467,7 +468,7 @@ describe("W9 the free setup allowance buys road, never rail", () => {
     // exactly 4 ore = exactly one new rail tile (PP-07: {1 wood, 1 stone, 4 ore})
     const p = previewDrag(grid, t, "rail", { wood: 12, stone: 12, ore: 4 }, 5, 5, 16, 5, true, undefined, 12);
     expect(p.tiles).toHaveLength(1);
-    expect(p.cost).toEqual(TRANSPORT.rail.cost);
+    expect(p.cost).toEqual(BUILD_COSTS.rail);
     expect(p.cost.ore).toBe(4);
     expect(p.free).toBe(0);
     commitDrag(t, "rail", p, 1);
@@ -478,7 +479,7 @@ describe("W9 the free setup allowance buys road, never rail", () => {
     const grid2 = flatGrid(), t2 = createTrack();
     const q = previewDrag(grid2, t2, "rail", { wood: 99, stone: 99, ore: 99 }, 5, 5, 16, 5, true, undefined, 12);
     expect(q.tiles).toHaveLength(12);
-    expect(q.cost).toEqual(times(TRANSPORT.rail.cost, 12));
+    expect(q.cost).toEqual(times(BUILD_COSTS.rail, 12));
     expect(q.free).toBe(0);
   });
 
@@ -488,10 +489,10 @@ describe("W9 the free setup allowance buys road, never rail", () => {
     const broke = previewDrag(grid, t, "rail", setup, 5, 5, 8, 5, true, undefined, 12);
     expect(broke.tiles).toHaveLength(0);
     expect(broke.free).toBe(0);
-    // 8 ore = two upgrades at UPGRADE_COST (4) each
+    // 8 ore = two upgrades at the table difference (4 ore) each
     const paid = previewDrag(grid, t, "rail", { stone: 12, ore: 8 }, 5, 5, 8, 5, true, undefined, 12);
     expect(paid.tiles).toHaveLength(2);
-    expect(paid.cost).toEqual({ ore: 2 * UPGRADE_COST.ore! });
+    expect(paid.cost).toEqual({ ore: 2 * BUILD_COSTS.upgradeRoadToRail.ore! });
     expect(paid.free).toBe(0);
   });
 
@@ -507,7 +508,7 @@ describe("W9 the free setup allowance buys road, never rail", () => {
     const grid2 = flatGrid(), t2 = createTrack();
     const mixed = previewDrag(grid2, t2, "road", { wood: 5, stone: 5, ore: 0 }, 5, 5, 21, 5, true, undefined, 12);
     expect(mixed.tiles).toHaveLength(17);        // 12 free + 5 paid
-    expect(mixed.cost).toEqual(times(TRANSPORT.road.cost, 5));
+    expect(mixed.cost).toEqual(times(BUILD_COSTS.road, 5));
     expect(mixed.free).toBe(12);
   });
 

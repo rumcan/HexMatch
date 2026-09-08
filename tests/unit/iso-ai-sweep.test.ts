@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { aiBuildStep, chooseRivalFactorySpot, planCandidates, planFeasibility } from "../../src/iso/ai";
+import { FREE_SETUP_DEPOTS } from "../../src/iso/construction";
 import { createTrack, canBuildOn, tIdx } from "../../src/iso/track";
 import { isServiced, type EconomyState, type Factory } from "../../src/iso/economy";
 import { generateMap, type Grid } from "../../src/iso/grid";
@@ -9,18 +10,21 @@ import { canReachASpot, rivalSearchTiles } from "./helpers/rival-map";
 // W8/T4: cheap structural reachability covers the full even-step search
 // space; expensive real planning uses a bounded, deterministic spatial sample.
 // With 25 industries spread over 144×144, not every legal tile can reach one
-// on the opening 12 stone + 12 free road tiles. The structural build sweep
+// on the opening 12 wood + 12 stone + 12 free road tiles. The structural build sweep
 // therefore removes the purse limit. Rival placement is tested SEPARATELY
 // below with the unchanged opening purse, and must return a viable first turn.
 
 const SAMPLE_STEP = 2 * Math.ceil(Math.max(MAP_W, MAP_H) / 10);
 
-/** The rival's opening purse + setup allowance, exactly as `game.ts` gives
- *  it (PP-07 retune: wood + stone for the opening roads, no ore). */
+/** The rival's opening purse + setup allowances, exactly as `game.ts` gives
+ *  it. PP-07 retuned the stock to wood + stone for the opening roads (no
+ *  ore). PP-05 added the second allowance: the rival's FIRST Depot is free,
+ *  so an opening turn prices the Depot at nothing — and a later turn must
+ *  have earned what `DEPOT_COST` asks for. */
 const rivalOpts = () => ({
   stock: { wood: 12, stone: 12, ore: 0 },
   purse: { wood: 12, stone: 12, ore: 0 },
-  free: 12,
+  free: 12, freeDepots: FREE_SETUP_DEPOTS,
 });
 
 const ownedBy = (track: { owner: Uint8Array }, ownerId: number) => {
@@ -44,9 +48,11 @@ function play(grid: Grid, x: number, y: number, turns: number): SweepRow {
   const eco: EconomyState = { grid, track, harvesters: [], factories: [f] };
   let noops = 0;
   for (let i = 0; i < turns; i++) {
-    // PP-07: funded roads need wood + stone; the SECOND and later Depots cost
-    // grain + oil too, so the unlimited-funds purse carries every cargo but
-    // ore (the rail gate stays closed, as W9 settled).
+    // PP-07: funded roads need wood + stone, and the SECOND and later Depots
+    // cost grain + oil too, so the unlimited-funds purse carries every cargo
+    // but ore (the rail gate stays closed, as W9 settled). Four turns place up
+    // to four Depots; only the first rides the free allowance, the rest are
+    // paid, so a purse this test calls "sufficient" must cover `DEPOT_COST`.
     const out = aiBuildStep(eco, f, {
       ...rivalOpts(),
       purse: { wood: MAP_W * MAP_H, stone: MAP_W * MAP_H, grain: MAP_W * MAP_H, ore: 0, oil: MAP_W * MAP_H },

@@ -9,7 +9,8 @@
 // the committed-reference-PNG fixture is for, and that still needs a browser.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { WATER } from "../../src/iso/grid";
-import { MAP_W, MAP_H, TRANSPORT, INDUSTRY_BY_KEY } from "../../src/iso/config";
+import { MAP_W, MAP_H, INDUSTRY_BY_KEY } from "../../src/iso/config";
+import { BUILD_COSTS } from "../../src/iso/construction";
 import { setRng, mulberry32 } from "../../src/game/config";
 
 // ── stub the art imports (vite handles these in the browser) ──────────────
@@ -320,9 +321,12 @@ describe("E11 a full round is playable", () => {
 
     const f = { owner: "ai", ownerId: 2, tx: spot![0], ty: spot![1] };
     h.eco.factories.push(f);
+    // PP-05: Oil joins the unlimited purse — the turn ends at a Depot, and a
+    // paid Depot costs Oil (`DEPOT_COST` in construction.ts).
     const out = aiBuildStep(
-      // PP-07: roads cost wood + stone from the one table
-      h.eco, f, { stock: {}, purse: { wood: 9999, stone: 9999, ore: 9999 } }, 99,
+      // PP-07: roads cost wood + stone, and the paid Depot costs wood +
+      // stone + grain + oil — give the plan an unbounded purse for all of it
+      h.eco, f, { stock: {}, purse: { wood: 9999, stone: 9999, ore: 9999, grain: 9999, oil: 9999 } }, 99,
     );
     expect(out).toBeTruthy();
     expect(out!.built.length).toBeGreaterThan(0);
@@ -685,14 +689,24 @@ describe("W3 the rival actually plays (headless)", () => {
     expect(rivalTiles()).toBe(0);
     expect(h.vp.ai).toBe(0);
 
-    // Eight build clocks (~72s of game time), interleaved with the economy
-    // clock exactly like the frame loop does. PP-07 changed what the rival
-    // must pay: its SECOND Depot costs Grain + Oil from the one table, and
-    // the rival's only income is the ore trickle — so it banks ore 4:1 for
-    // the missing cargoes (the same escape hatch the player has), which takes
-    // a few harvest ticks to fund.
+    // PP-05: the rival's FIRST Depot rides its free allowance, so an opening
+    // turn needs no Oil — but every Depot after it pays `DEPOT_COST`, and this
+    // rival has never matched an Oil gem. Give it Oil the way a connected Oil
+    // Rig would, or the three later turns are (correctly) refused and the
+    // "it SPENT stone past its free allowance" assertion has nothing to spend.
+    // `res` IS the rival's purse object (market.ts builds over the same record).
+    rival.res.oil = 5;
+
+    // PP-07: the second Depot costs Grain too, and the rival's only income is
+    // the ore trickle — so it banks ore 4:1 toward the plan closest to
+    // affordable (the same escape hatch the player has). The one-minute goal
+    // covers the rival's FIRST build — that still lands on tick 0, free
+    // allowance + free setup Depot. The paid expansion is a deliberate ~2 min
+    // at the PP-07 prices, funded by roughly five 4:1 exchanges; sixteen
+    // build clocks (~144s), interleaved with the economy clock exactly like
+    // the frame loop does, give it that window.
     const t0 = 1_000_000;
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 16; i++) {
       h.econTick(t0 + i * AI_BUILD_MS + HARVEST_MS);
       h.econTick(t0 + i * AI_BUILD_MS + 2 * HARVEST_MS);
       h.aiTick(t0 + (i + 1) * AI_BUILD_MS);
@@ -705,16 +719,19 @@ describe("W3 the rival actually plays (headless)", () => {
     // and it SPENT: the rival started with 12 stone (START_PURSE); builds past
     // the 12-tile free allowance come out of that purse, so the stone falls.
     expect(rival.res.stone).toBeLessThan(12);
+    // PP-05: …and the paid Depots cost Oil — the rival is down from the 5 it
+    // was given, proving the AI pays the same `DEPOT_COST` the player does.
+    expect(rival.res.oil).toBeLessThan(5);
 
     // and it EARNS: the connected mine's trickle lands in its purse each tick
     const ore0 = rival.res.ore;
-    const tE = t0 + 8 * AI_BUILD_MS;
+    const tE = t0 + 16 * AI_BUILD_MS;
     h.econTick(tE + HARVEST_MS);
     h.econTick(tE + 2 * HARVEST_MS);
     h.econTick(tE + 3 * HARVEST_MS);
     expect(rival.res.ore).toBeGreaterThan(ore0);
     for (const c of CARGOES) expect(rival.res[c], `${c} negative`).toBeGreaterThanOrEqual(0);
-  }, 10_000);
+  }, 30_000);
 });
 
 describe("W8 the rival is placed where it can build — and builds", () => {
@@ -846,7 +863,7 @@ describe("W4 a normal session earns the rail", () => {
     // 1 stone per tile; start purse {stone 12, ore 0}. So ~4 token matches
     // (≈80s of play) buy the first rail tile — no economy adjustment needed.
     expect(h.purse.ore ?? 0).toBeGreaterThanOrEqual(4);
-    expect(canAfford(h.purse, TRANSPORT.rail.cost)).toBe(true);
+    expect(canAfford(h.purse, BUILD_COSTS.rail)).toBe(true);
 
     // and the game lets you lay it over the corridor: the rail goes down as
     // the settled in-place upgrade of a corridor road tile, which is exactly

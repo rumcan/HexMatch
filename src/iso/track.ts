@@ -13,7 +13,8 @@
 // only the containing chunks are invalidated. The whole map is never rescanned.
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_W, MAP_H } from "../game/config";
-import { TRANSPORT, UPGRADE_COST, type Cargo } from "./config";
+import { TRANSPORT, type Cargo } from "./config";
+import { BUILD_COSTS } from "./construction";
 import { WATER, ROUGH, TOWN_OCC, type Grid } from "./grid";
 import { CHUNK, chunksX } from "./renderer";
 
@@ -55,6 +56,27 @@ export const createTrack = (): Track => ({
   rail: new Uint8Array(MAP_W * MAP_H),
   owner: new Uint8Array(MAP_W * MAP_H),
 });
+
+/**
+ * PP-10: stamp the towns' seed-generated ring roads into a fresh track.
+ *
+ * Town roads are MAP FURNITURE, not a player's network: every tile is built
+ * with owner 0 (neutral), so none of the owner-scoped floods — `playerNetwork`,
+ * `buildComponents`, `isServiced`, `trackOwnedBy` — ever cross them. A town
+ * road therefore can never hand a player a free connection, service a depot,
+ * or count toward the rival's trunk discount; the town's ring is purely the
+ * settlement's own road network, exactly as `grid.towns[i].roads` derives it.
+ *
+ * They ride the snapshot's track bytes like any other track, so a rejoined
+ * guest renders them without regenerating anything (E10).
+ */
+export function seedTownRoads(t: Track, grid: Grid): void {
+  for (const town of grid.towns) {
+    for (const [tx, ty] of town.roads) {
+      buildTile(t, "road", tx, ty, 0);
+    }
+  }
+}
 
 export const tIdx = (tx: number, ty: number) => ty * MAP_W + tx;
 export const inMapT = (tx: number, ty: number) =>
@@ -311,7 +333,8 @@ export const canAfford = (purse: Purse, cost: Purse): boolean =>
  * W9: what the free setup allowance (`FREE_SETUP_TRACK` in `game.ts`) may buy.
  *
  * Option (a) from the ticket — ROAD ONLY. Rail, laid new or upgraded in place
- * over a road, always pays `TRANSPORT.rail.cost` / `UPGRADE_COST`. E8's design
+ * over a road, always pays the rail price / the upgrade difference from the
+ * one table (`construction.ts`). E8's design
  * note is "start with stone for roads, no ore — rail is gated behind an ore
  * mine", and before this the allowance ignored the gate: `previewDrag` spent it
  * on ANY tile with a non-empty cost, so the first 12 tiles of a rail drag were
@@ -328,13 +351,13 @@ export const freeAllowanceCovers = (kind: TrackKind): boolean => kind === "road"
  * Cost of applying `kind` to a single tile:
  *   - already the same kind → free (dragging over your own road never
  *     double-charges)
- *   - road → rail upgrade in place → the difference only (UPGRADE_COST)
+ *   - road → rail upgrade in place → the difference only (BUILD_COSTS.upgradeRoadToRail)
  *   - otherwise the full transport cost
  */
 export function tileCost(t: Track, kind: TrackKind, tx: number, ty: number): Purse {
   if (hasTrack(t, kind, tx, ty)) return {};
-  if (kind === "rail" && hasTrack(t, "road", tx, ty)) return { ...UPGRADE_COST };
-  return { ...TRANSPORT[kind].cost };
+  if (kind === "rail" && hasTrack(t, "road", tx, ty)) return { ...BUILD_COSTS.upgradeRoadToRail };
+  return { ...BUILD_COSTS[kind] };
 }
 
 // ── drag-to-build ─────────────────────────────────────────────────────────

@@ -3,10 +3,10 @@
 ## What was locked
 
 Every normal resource now has a construction role, and **every** build price
-lives in ONE authoritative table — `src/iso/costs.ts` — consumed by the UI
-(Build-panel price labels), the gameplay placement rules, the AI planner and
-the test suite. The economy, plants and config modules no longer carry their
-own private copies.
+lives in ONE authoritative table — `BUILD_COSTS` in `src/iso/construction.ts`
+(the module PP-05 created for the Depot; PP-07 extends it, as PP-05's own
+header anticipated). UI labels, placement rules, the AI planner and the test
+suite all read that table; nothing else in the codebase prices a build.
 
 | Action                  | Cost                                   | Role model |
 | ----------------------- | -------------------------------------- | ---------- |
@@ -30,10 +30,27 @@ The ticket's proposed starting numbers are shipped as-is; the playtest
 the game on every seed sampled. They are the tuning baseline, not the final
 curve.
 
+## How the pieces fit
+
+- `construction.ts` — the table plus PP-05's pricing helpers (`priceDepot`,
+  `costLabel`, `depotButtonLabel`, `FREE_SETUP_DEPOTS`). `DEPOT_COST` is the
+  table's depot entry.
+- `track.ts` — `tileCost` (the single function the human drag AND the rival's
+  planner ask) reads `BUILD_COSTS` at call time. `TRANSPORT` in `config.ts`
+  keeps only the scoring split (VP, throughput, terrain), so the two modules
+  never import each other at init.
+- `plants.ts` — `PLANT_COST` is the table's plant entry, re-exported.
+- `game.ts` — `placeHarvester` charges via `priceDepot(p.purse, p.freeDepots)`;
+  `aiTick` plans via `aiBuildStep` on the same table and banks toward the
+  plan it wants when nothing is affordable yet (see below).
+- `ui.ts` — Build-panel prices rendered from the table; the Depot button
+  refreshes from `depotButtonLabel` as the allowance burns down.
+
 ## Setup exceptions (deliberate, and the only ones)
 
-The first Factory is free, and the first Depot is free
-(`depotCharge(0) = {}`). The 12-tile free allowance buys **road only**,
+The first Factory is free, and the first Depot rides the `freeDepots` setup
+allowance (DATA on the player record, E8's K1 rule — a refused placement can
+never silently burn it). The 12-tile free allowance buys **road only**,
 unchanged. The opening turn therefore needs no cargo at all; the first real
 spend is the second Depot.
 
@@ -61,16 +78,24 @@ Oil 0.4/tick → 1 Oil every ~7.5 s. Identical rule for the player and the rival
 ## The rival uses the same escape hatch
 
 The rival's only income is the trickle, and no single trickle cargo buys a
-second Depot (Grain + Oil + Wood + Stone). `aiTick` therefore banks surplus
-cargo 4:1 toward the next Depot charge — two exchanges per build clock, Gold
-never touched — which is exactly the loop players break by trading or by
-matching missing cargo on the board. The rival otherwise plans and pays
-through the identical `planCandidates`/`BUILD_COSTS`/`depotCharge` path.
+second Depot plus the track to reach it. When `aiBuildStep` finds nothing
+affordable, `aiTick` banks at 4:1 toward the plan with the **least
+shortfall** — priced with a hypothetical deep purse, because
+`planCandidates` drops unaffordable plans — then retries once. Two exchanges
+per build clock, Gold never touched. The rival otherwise plans and pays
+through the identical `planCandidates`/`BUILD_COSTS`/`priceDepot` path.
+
+## Map fix the playtest surfaced
+
+PP-10's town ring roads made every town-adjacent plant site illegal on real
+maps (the ring is `TOWN_OCC`, but `adjacentTown` counted houses only). Town
+roads are part of the town, so `townHasTile` counts them now, and
+`chooseAiPlantSpot` scans one ring further out. See the playtest report.
 
 ## Where to tune
 
-All of PP-07 lives in two places: the price table (`src/iso/costs.ts`) and
-the opening stock (`START_PURSE` in `src/iso/game.ts`). Yields stay in
+All of PP-07 lives in two places: the price table (`src/iso/construction.ts`)
+and the opening stock (`START_PURSE` in `src/iso/game.ts`). Yields stay in
 `INDUSTRY_BY_KEY.output` (`src/iso/config.ts`). The progression harness
 (`tests/unit/iso-progression.test.ts`) re-measures time-to-first-connection,
 second Depot and second plant whenever any of them moves.

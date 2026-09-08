@@ -15,11 +15,13 @@ code mocked:
 
 - opening Factory: a human-style choice (beside the industry nearest the land
   centroid, footprint on legal ground),
-- builds: `aiBuildStep` (A* planning + the authoritative cost table, including
-  the new paid-Depot charge),
+- builds: `aiBuildStep` (A* planning + the authoritative cost table
+  `src/iso/construction.ts`, including the paid-Depot charge resolved by
+  `priceDepot` against the player's `freeDepots` allowance),
 - income: the `playerResources` trickle + the PP-07 fractional carry,
 - trading: the real `bankTrade` 4:1 bank, Gold blocked (PP-08), max two
-  exchanges per economy tick,
+  exchanges per economy tick, banking toward the plan the session actually
+  wants (least shortfall, road legs),
 - plants: `canAffordPlant` → `chooseAiPlantSpot` → `addPlant`, charged once.
 
 The match-3 Processing Plant is deliberately **not** simulated. Trickle +
@@ -35,12 +37,12 @@ Runs live in `tests/unit/iso-progression.test.ts` (`npm test` →
 
 | seed  | first connection | second Depot | second plant | paid opening tiles |
 | ----- | ---------------: | -----------: | -----------: | -----------------: |
-| 1337  | 0.0 m            | 8.1 m        | 8.8 m        | 0                  |
-| 7     | 0.0 m            | 11.1 m       | 11.3 m       | 0                  |
-| 2024  | 0.0 m            | 8.7 m        | 8.8 m        | 0                  |
-| 42    | 0.0 m            | 8.1 m        | 8.4 m        | 0                  |
-| 99    | 0.0 m            | 33.8 m       | 33.9 m       | 12                 |
-| 31337 | 0.0 m            | 21.8 m       | 22.9 m       | 0                  |
+| 1337  | 0.0 m            | 5.1 m        | 5.7 m        | 0                  |
+| 7     | 0.0 m            | 7.0 m        | 7.7 m        | 0                  |
+| 2024  | 0.0 m            | 5.5 m        | 6.0 m        | 0                  |
+| 42    | 0.0 m            | 5.1 m        | 6.2 m        | 0                  |
+| 99    | 0.0 m            | 25.6 m       | 26.3 m       | 12                 |
+| 31337 | 0.0 m            | 10.2 m       | 11.3 m       | 0                  |
 
 Reading:
 
@@ -50,12 +52,12 @@ Reading:
   scored connection; 0–12 across the sample).
 - **Second Depot** (1 Wood + 1 Stone + 1 Grain + 1 Oil + the track leg to an
   uncovered industry) is reached on every seed through trickle income plus
-  4:1 banking — **no endless dependency loop** — in roughly 8–11 minutes for
+  4:1 banking — **no endless dependency loop** — in roughly 5–10 minutes for
   favourable openings.
 - **Seed 99** is the stress case: the central industry is an **Oil Rig**
   (0.4/tick). Its trickle pays 1 Oil every ~7.5 s via the PP-07 fractional
   carry, and everything else must be banked from Oil at 4:1 — expansion is
-  slow (≈34 min) but never dead. A human on the same opening would match
+  slow (≈26 min) but never dead. A human on the same opening would match
   Oil tokens on the board instead and do much better.
 - **Second plant** (2 Wood + 2 Stone + 2 Grain + 3 Ore, town-adjacent)
   follows the second Depot closely; Ore is the binding cargo and every seed's
@@ -66,15 +68,29 @@ Reading:
 1. **Fractional trickle rounded to zero.** Per-tick `Math.round` paid nothing
    for Oil (0.4/tick) and Gold (0.3/tick), so an oil-only network was dead
    income — and every paid Depot now costs Oil. `economyTick` accumulates the
-   fraction instead (`src/iso/game.ts`): 0.4/tick → 1 Oil per ~7.5 s.
+   fraction instead (`src/iso/game.ts`): 0.4/tick → 1 Oil every ~7.5 s.
 2. **The rival could never afford a second Depot.** Its only income is the
-   trickle, and no single trickle cargo pays Grain + Oil + Wood + Stone. The
-   rival now uses the same escape hatch the player has — the 4:1 bank, two
-   exchanges per build clock, never touching Gold (PP-08) — in `aiTick`.
-3. **Test-harness id collision** (not shipped logic): the W3 test pushed a
-   player harvester with id 1, the same id the game's counter hands the
-   rival's first build, which made `rescore` attribute the rival's connection
-   to the player's entry. The test now uses id 100.
+   trickle, and no single trickle cargo pays a second Depot plus the track to
+   reach it. `aiTick` therefore banks toward the plan it wants — the
+   candidate with the least shortfall, priced with a hypothetical deep purse
+   since `planCandidates` drops unaffordable plans — two 4:1 exchanges per
+   build clock, Gold never touched (PP-08). Same escape hatch the player has.
+3. **No plant could be raised beside a town on real maps** (PP-10 ↔ PP-06
+   interaction). PP-10's ring road surrounds every house with `TOWN_OCC`
+   tiles, but `adjacentTown` only counted houses: every footprint next to a
+   house overlapped the ring ("occupied") and every footprint next to the
+   ring alone was "no-town". Town roads are part of the town (grid.ts stamps
+   them `TOWN_OCC` for exactly that reason), so `townHasTile` now counts them
+   — and `chooseAiPlantSpot` scans far enough past the ring to find the
+   legal sites.
+4. **Bank deadlocks in the headless session** (simulation-level, same class
+   as defect 2): pricing the whole milestone into the bank target forbade
+   trading the very cargo the target needed; banking the purchase alone
+   ping-ponged Oil forever; and buying Wood up to a target then selling it
+   for Stone oscillated at the boundary. The shipped model banks toward the
+   chosen plan and only ever sells a cargo the purse holds strictly more of
+   than the milestone needs, with the Depot purchase kept as an unsellable
+   reserve.
 
 ## Balance notes for the next pass
 
@@ -82,11 +98,12 @@ Reading:
   on every seed tested. Treat them as the playtest baseline, not the final
   curve.
 - Oil gating every paid Depot makes Oil Rigs strategically valuable early;
-  watch whether a forest/quarry-free opening feels starved once humans (not
-  the conservative sim) play it.
+  an oil-only opening still expands (seed 99) but ~5× slower than a
+  Wood/Stone opening — watch that once humans (not the conservative sim)
+  play it.
 - Rail is still gated behind an Ore mine (Wood + Stone + 4 Ore, allowance
   buys road only) — the E8/W9 gate is intact and re-pinned in
   `iso-rebalance.test.ts`.
 - Candidate levers if expansion feels slow: Depot price, `HARVEST_MS`, or a
   slightly richer opening stock — all single constants in one table
-  (`src/iso/costs.ts`) plus `START_PURSE`.
+  (`src/iso/construction.ts`) plus `START_PURSE`.

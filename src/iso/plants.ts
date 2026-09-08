@@ -25,7 +25,7 @@
 // `game.ts` owns the purse, the toast and the render sync.
 // ══════════════════════════════════════════════════════════════════════════
 import { FACTORY_FOOTPRINT, type Cargo } from "./config";
-import { BUILD_COSTS } from "./costs";
+import { BUILD_COSTS } from "./construction";
 import { TOWN_OCC, WATER, idx, inBounds, type Grid, type Town } from "./grid";
 import { hasTrack, type Purse, type Track } from "./track";
 import type { EconomyState, Factory } from "./economy";
@@ -33,7 +33,7 @@ import type { EconomyState, Factory } from "./economy";
 /**
  * PP-06 / PP-07: the cost of an ADDITIONAL processing plant. PP-07 landed:
  * the number now comes from the one authoritative cost table
- * (`costs.ts BUILD_COSTS.plant` — 2 Wood + 2 Stone + 2 Grain + 3 Ore), so
+ * (`construction.ts BUILD_COSTS.plant` — 2 Wood + 2 Stone + 2 Grain + 3 Ore), so
  * the UI preview, the charge and the AI all read the same constant.
  */
 export const PLANT_COST: Purse = { ...BUILD_COSTS.plant };
@@ -65,9 +65,17 @@ export function footprintTiles(tx: number, ty: number): [number, number][] {
   return out;
 }
 
-/** Is (tx,ty) a tile of this town? */
+/** Is (tx,ty) a tile of this town? Houses AND the town's own roads (PP-10):
+ *  grid.ts stamps them TOWN_OCC precisely because "a town's roads belong to
+ *  the town, exactly like its houses". Counting them here keeps the plant
+ *  adjacency rule working on real maps — the ring road surrounds the houses,
+ *  so without it every footprint next to a house overlaps the ring
+ *  ("occupied") and every footprint next to the ring alone was "no-town":
+ *  no plant could ever be raised beside a town. */
 const townHasTile = (t: Town, tx: number, ty: number) =>
-  t.houses.some(([hx, hy]) => hx === tx && hy === ty) || (t.tx === tx && t.ty === ty);
+  t.houses.some(([hx, hy]) => hx === tx && hy === ty)
+  || (t.roads ?? []).some(([rx, ry]) => rx === tx && ry === ty)
+  || (t.tx === tx && t.ty === ty);
 
 /**
  * The town a footprint at (tx,ty) is "next to", or null.
@@ -177,8 +185,11 @@ export function chooseAiPlantSpot(
   for (const town of grid.towns) {
     if (used.has(town.id)) continue;
     for (const [hx, hy] of town.houses) {
-      for (let dy = -FACTORY_FOOTPRINT[1]; dy <= 1; dy++) {
-        for (let dx = -FACTORY_FOOTPRINT[0]; dx <= 1; dx++) {
+      // PP-10's ring road sits one tile outside the house box, so a legal
+      // footprint can start two tiles past an edge house — scan -3..+2 on
+      // both axes (tiles up to hx+3), not just footprint-adjacent offsets.
+      for (let dy = -(FACTORY_FOOTPRINT[1] + 1); dy <= 2; dy++) {
+        for (let dx = -(FACTORY_FOOTPRINT[0] + 1); dx <= 2; dx++) {
           const tx = hx + dx, ty = hy + dy;
           if (!canPlacePlant(grid, track, state, tx, ty)) continue;
           const d = Math.abs(tx - anchor.tx) + Math.abs(ty - anchor.ty);

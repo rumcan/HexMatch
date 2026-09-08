@@ -16,13 +16,13 @@
 //     and the market refuses gold in every exchange — bank and offers, both
 //     directions (`trade.ts` blocked set, wired in iso/market.ts).
 //  6. PP-07: construction prices come from ONE authoritative table
-//     (`costs.ts BUILD_COSTS`) — Wood+Stone for basic infrastructure, Grain
-//     for expansion, Ore for rail, Oil for paid Depots. TRANSPORT costs and
-//     UPGRADE_COST below are projections of that table, never separate
-//     numbers.
+//     (`construction.ts BUILD_COSTS`) — Wood+Stone for basic infrastructure,
+//     Grain for expansion, Ore for rail, Oil for paid Depots. This file keeps
+//     the SCORING split (VP, throughput, terrain) only; `tileCost` in track.ts
+//     reads the prices from that table at call time, so the two modules never
+//     import each other at init.
 // ══════════════════════════════════════════════════════════════════════════
 import { TILE_W, TILE_H, MAP_W, MAP_H, HW, HH } from "../game/config";
-import { BUILD_COSTS } from "./costs";
 
 export { TILE_W, TILE_H, MAP_W, MAP_H, HW, HH };
 export { tileToScreen, screenToTile, tileIndex, inMap, mulberry32 } from "../game/config";
@@ -182,45 +182,27 @@ export const INDUSTRY_QUOTA: Record<string, number> = {
 export interface TransportDef {
   key: "road" | "rail";
   name: string;
-  cost: Partial<Record<Cargo, number>>;
   vp: number;                 // VP per completed connection, awarded once
   throughput: number;         // multiplier applied to connected harvesters
   onRough: boolean;           // buildable on rough terrain
   label: string;
 }
 
-// PP-07: the PRICES live in the one authoritative table (`costs.ts`) — the
+// PP-07: the PRICES live in the one authoritative table (`construction.ts`) — the
 // Catan-style resource-role rebalance. Road is now Wood + Stone (basic
 // infrastructure), rail adds 4 Ore (industrial investment). VP, throughput
 // and terrain rules stay here: they are the scoring split, not the price.
 export const TRANSPORT: Record<"road" | "rail", TransportDef> = {
   road: {
     key: "road", name: "Road",
-    cost: { ...BUILD_COSTS.road },
     vp: 1, throughput: 1.0, onRough: true, label: "Road",
   },
   rail: {
     key: "rail", name: "Rail",
-    cost: { ...BUILD_COSTS.rail },
     vp: 3, throughput: 1.6, onRough: false, label: "Rail",
   },
 };
 
-// Road→rail upgrade pays only the difference (settled: yes, upgrade in place).
-// PP-07: the difference comes from the authoritative table too.
-//
-// W9: neither this nor TRANSPORT.rail.cost can ever be paid with the free
-// setup allowance. That allowance (FREE_SETUP_TRACK — it lives in `game.ts`
-// with the rest of the E8 tuning surface, not here) buys ROAD ONLY; the single
-// implementation of the rule is `freeAllowanceCovers` in `track.ts`, which
-// `previewDrag` (the human drag) and `planCandidates`/`executeCandidate` (the
-// rival) all consult. Rail therefore stays gated behind an ore mine exactly as
-// E8 settled it — "start with stone for roads, no ore — rail is gated behind
-// an ore mine" — instead of arriving free with the opening 12 tiles, at rail VP
-// (3/tile) and rail throughput (×1.6).
-export const UPGRADE_COST: Partial<Record<Cargo, number>> = {
-  ...BUILD_COSTS.upgradeRoadToRail,
-};
 
 export const VP_TARGET = 12;
 

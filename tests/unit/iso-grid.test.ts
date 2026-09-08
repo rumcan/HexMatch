@@ -192,8 +192,10 @@ describe("E3 industry placement", () => {
       }
     }
     // TOWN-1: town house tiles are stamped with TOWN_OCC.
+    // PP-10: town road tiles are town too — stamped with the same sentinel.
     for (const t of g.towns) {
       for (const [hx, hy] of t.houses) occ[hy * MAP_W + hx] = TOWN_OCC;
+      for (const [rx, ry] of t.roads) occ[ry * MAP_W + rx] = TOWN_OCC;
     }
     expect(g.occupancy).toEqual(occ);
     // spot check via industryAt / industryAt miss on grass

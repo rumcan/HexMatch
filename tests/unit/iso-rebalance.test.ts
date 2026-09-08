@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { generateMap, WATER } from "../../src/iso/grid";
-import { MAP_W, MAP_H, INDUSTRY_QUOTA, TRANSPORT, UPGRADE_COST, VP_TARGET } from "../../src/iso/config";
-import { BUILD_COSTS } from "../../src/iso/costs";
+import { MAP_W, MAP_H, INDUSTRY_QUOTA, TRANSPORT, VP_TARGET } from "../../src/iso/config";
+import { BUILD_COSTS } from "../../src/iso/construction";
 
 // Mirrored from src/iso/game.ts — do not import the boot module (it pulls
 // atlas PNGs and the DOM). E8 pass 1 pinned the stone-only numbers; PP-07
@@ -51,21 +51,16 @@ describe("E8 pass 2 — starting curve (PP-07 baseline)", () => {
     expect(START_PURSE.stone).toBe(12);
     expect(START_PURSE.wood).toBe(12);       // PP-07: wood joins the opening
     expect(FREE_SETUP_TRACK).toBe(12);
-    expect(TRANSPORT.rail.cost.ore).toBe(4);
-    expect(TRANSPORT.rail.cost.stone).toBe(1);
-    expect(TRANSPORT.rail.cost.wood).toBe(1);    // PP-07
-    expect(TRANSPORT.road.cost.stone).toBe(1);
-    expect(TRANSPORT.road.cost.wood).toBe(1);    // PP-07
-    expect(UPGRADE_COST.ore).toBe(4);            // the in-place difference
+    expect(BUILD_COSTS.rail.ore).toBe(4);
+    expect(BUILD_COSTS.rail.stone).toBe(1);
+    expect(BUILD_COSTS.rail.wood).toBe(1);    // PP-07
+    expect(BUILD_COSTS.road.stone).toBe(1);
+    expect(BUILD_COSTS.road.wood).toBe(1);    // PP-07
+    expect(BUILD_COSTS.upgradeRoadToRail.ore).toBe(4);  // the in-place difference
     expect(TRANSPORT.road.onRough).toBe(true);
     expect(TRANSPORT.rail.onRough).toBe(false);
     expect(VP_TARGET).toBe(12);
     expect(INDUSTRY_QUOTA.ore_mine).toBe(5);
-    // PP-07: the transport prices are projections of the one authoritative
-    // table, never separate numbers.
-    expect(TRANSPORT.road.cost).toEqual(BUILD_COSTS.road);
-    expect(TRANSPORT.rail.cost).toEqual(BUILD_COSTS.rail);
-    expect(UPGRADE_COST).toEqual(BUILD_COSTS.upgradeRoadToRail);
   });
 
   it("records distance-to-nearest-ore from the land centroid across 40 seeds", () => {
