@@ -1,104 +1,156 @@
-# HexMatch — fix towns (0 spawning) + extend multi-tile to all industries
+Ticket pack: Processing Plants, Depots and resource economy
+Terminology: The Factory is the physical processing site. Its match-3 interface is the Processing Plant. A Depot collects resources from nearby nodes and supplies a Factory through the transport network.
 
-Audited against `main` @ `49662ba` (PR #30). Two findings, both verified by running the code:
+PP-01 — Rename Quarry and Harvester in the UI
+Type: UI / terminology
 
-1. **Towns: ZERO spawn on every seed** — a self-blocking bug in the reachability check rejects every candidate. That's why you see no towns.
-2. **Multi-tile: only the factory got it.** The factory is a correct 2×2, but all six industries (farm/forest/ore/quarry/oil/gold) are still single 1×1 tiles. And each industry's real tile count must come from OpenTTD's tables, not a guess.
+Requirements
+Rename the match-3 Quarry interface to Processing Plant.
+Rename Harvester / Harvesters to Depot / Depots.
+Update buttons, headings, tooltips, placement instructions, inspectors, notifications and accessibility labels.
+Explain the gameplay loop clearly:
+Resource node → Depot → transport network → Factory → processing → resources available for construction.
 
----
+Acceptance criteria
+No player-facing references to “Harvester” remain.
+The match-3 interface is consistently called “Processing Plant.”
+Stone-producing quarry resource nodes keep their existing name; this is not a global replacement of every occurrence of “quarry.”
+These renames alone do not change gameplay, building footprints or saved-game compatibility.
+PP-02 — Require Factory placement next to a town
+Type: Gameplay rule
 
-## F1. Towns place zero because the reachability check blocks the tile it starts from
-`[P0] [map] [bug]`
+Requirements
+Starting Factories and additional processing sites must be built next to a town.
+Define “next to” consistently: at least one tile of the Factory’s footprint must share an edge with a town tile. Diagonal-only contact does not qualify.
+The entire Factory footprint must remain on legal ground without overlapping the town or another building.
+Apply the same rule to human players and the AI.
+Acceptance criteria
+Placement away from a town is rejected with a clear explanation.
+The preview and actual placement use identical rules.
+The AI cannot bypass town adjacency through a fallback placement.
+Generated maps provide enough valid starting sites for all players.
+Starting resources and transport allowances allow a town-adjacent Factory to establish its first working Depot connection without becoming stuck.
+PP-03 — Clearly distinguish building footprint from reach
+Type: UI / placement feedback
 
-### The bug (verified — ran generateMap on 4 seeds, all returned towns=0)
-In `placeTowns` (`src/iso/grid.ts` ~line 333), the reachability guard builds its `blocked` set from **every occupied tile including all industries**:
-```js
-for (let i = 0; i < MAP_W * MAP_H; i++) {
-  if (occ[i] !== -1) blocked.add(i);   // ← adds ALL industry tiles
-}
-for (const [hx, hy] of houses) blocked.add(idx(hx, hy));
-if (!allIndustriesReachable(blocked)) continue;
-```
-Then `allIndustriesReachable` starts its flood **from an industry tile** and immediately bails:
-```js
-if (blocked.has(start)) return false;   // start IS an industry tile → always false
-```
-So every town candidate fails the check → `placed` never becomes true → **0 towns, every seed.** The reachability check is meant to verify that *town* tiles don't wall off industries — it should block only the proposed **town** tiles, not the industries themselves.
+Requirements
+Show two clearly different overlays while placing Factories and Depots:
 
-### Fix
-- `blocked` should contain **only the proposed town house tiles** (and water is already handled inside the flood). Do not add industry tiles to `blocked`.
-- The flood then starts from an industry tile (not blocked) and checks that **every** industry tile is still reachable across land that excludes the town footprint. That's the correct question: "do these houses strand an industry?"
-- Keep water excluded in the flood (already done).
+Building footprint: a strong outline or solid translucent fill showing exactly which tiles the building occupies.
+Reach: a lighter overlay showing the building’s actual collection or connection area.
+For each building:
 
-### Acceptance
-- `generateMap(seed)` returns **exactly 4 towns** for seeds 1337, 7, 42, 100 (and generally). Add a unit test asserting `towns.length === 4` across several seeds.
-- Towns are visible on the map as building clusters.
-- The reachability guarantee still holds: add a test that every industry tile is land-reachable after towns are placed.
-- Determinism: same seed → identical towns.
+Factory: show its 2×2 footprint, qualifying town and town-adjacency area. Do not suggest that it harvests surrounding resource nodes.
+Depot: show its 1×1 footprint separately from its resource catchment.
+Acceptance criteria
+Players can immediately distinguish placement tiles from reach tiles.
+Resource nodes within a Depot’s catchment are visibly identified.
+Invalid placement has a distinct appearance and a readable reason.
+Overlays use the same footprint and reach calculations as gameplay.
+The preview matches the final placement at every zoom level, using both mouse and touch.
+PP-04 — Award manufactured resources without requiring a matching Depot
+Type: Bug fix / processing rule
+Priority: High
 
-### Watch out
-- Don't "fix" this by deleting the reachability check — that reintroduces the stranding risk the check exists for. Fix the `blocked` set to contain only town tiles.
+Reproduction
+Have no Depot supplying Oil.
+Match four Oil gems in the Processing Plant.
+A numbered Oil token is created.
+Clear that token.
+Currently, the player receives no Oil.
+Required behaviour
+A numbered resource legitimately created in the Processing Plant must award its resource when cleared—even when the player has no Depot supplying that resource.
 
----
+Special matches therefore provide a way to manufacture resources that the player cannot currently harvest.
 
-## F2. Give each industry its correct multi-tile footprint from the OpenTTD tables
-`[P0] [assets] [renderer]`
+Acceptance criteria
+Clearing a tier-1 token in an ordinary match awards its base resource amount.
+Existing tier and match bonuses still apply correctly.
+Payout works for every resource type, including Oil.
+Each token pays exactly once, including when cleared through special effects or cascades.
+Reach refreshes or route disconnections do not erase already-created numbered output.
+Inventory changes, gain notifications and displayed amounts agree.
+Ordinary, unnumbered matches do not suddenly award resources.
+Important distinction: Depots and transport connections still control the arrival of new delivered inputs. They must not block collection of output already created on the processing board.
 
-### Current state (verified)
-- Factory: correct 2×2 (`FACTORY_TILES`, sprites 2146–2149 ground + 2150–2152 buildings). Good — this is the pattern to follow.
-- farm, forest, ore_mine, quarry, oil_rig, gold_mine: **all still `footprint: [1,1]`**, single sprite. MT-1 was only applied to the factory.
+Update tests that currently treat every disconnected-resource payout as invalid.
 
-### The rule: each industry's tile count is DATA, not a choice
-Every OpenGFX industry has a specific footprint defined by its `_tile_table_*` in OpenTTD's `src/table/build_industry.h`, and its sprites are declared in `src/assets/sprites/pnml/base/base-2011-industries.pnml`. **Transcribe each one; do not assume a size.** For reference, the base-set footprints are roughly:
-- **Coal mine / ore (steel mill)** — 3×3 (mine has a headframe + conveyor spanning tiles).
-- **Farm** — 2×2 (barn + silo + field tiles).
-- **Oil wells / rig** — multi-tile with derricks on some tiles.
-- **Forest** — 2×2 (tree tiles + lumber camp) — or keep as a cluster.
-- **Gold mine, quarry** — check the table; some are 2×2.
+PP-05 — Require Oil when building additional Depots
+Type: Economy / construction costs
 
-The agent must read the actual `_tile_table_*` for each industry the game uses and transcribe: for each `(dx,dy)`, the ground sprite id and any building sprite id (with the sprite's declared `xrel/yrel` from the `.pnml`).
+Requirements
+Every paid, newly built Depot must require Oil alongside its other construction materials.
+Show the complete cost before placement.
+Apply the same cost to player actions, AI decisions and multiplayer validation.
+Acceptance criteria
+A player with sufficient other materials but insufficient Oil cannot build a paid Depot.
+Failed placement consumes nothing.
+Successful placement deducts the complete cost exactly once.
+Oil obtained through Processing Plant matches is valid construction stock.
+The opening cannot become impossible because Oil production itself requires a Depot.
+Proposed setup exception: Keep the first setup Depot free; require Oil for every subsequent Depot.
 
-### Fix
-- Generalise the factory's `FACTORY_TILES` approach into a per-industry `tiles` layout (reuse the same data shape and the same per-tile draw path — each tile: ground sprite + optional building piece at its `xrel/yrel`).
-- Set each industry's `footprint` to its real size from the table.
-- Update placement/occupancy so an industry occupies all its footprint tiles (the factory already does this — extend it).
-- Depth: each industry tile sorts individually by `(tx+dx)+(ty+dy)`, exactly like the factory — so roads interleave correctly.
+Dependency: PP-04 must work before this cost change is enabled.
 
-### Watch out (all have bitten this project)
-- **Transcribe, don't measure.** The tile→sprite mapping is authoritative data in `build_industry.h`. Do not infer footprints from pixel dimensions — that's produced wrong picks every time.
-- **Use declared `xrel/yrel`** from the `.pnml` for each building piece, never a hand-authored anchor.
-- **Flat tiles, no clipping.** Reuse the working flat multi-tile draw path from the factory; do not add any skirt/block/clip logic.
-- **Catchment counts an industry once** even though it now covers several tiles — verify a harvester's 4×4 catchment credits a 3×3 mine a single time, not nine times.
-- **Placement spacing:** bigger footprints need the industry-placement Poisson-disc spacing re-checked so 3×3 industries don't overlap or crowd the coast.
+PP-06 — Allow additional processing plants at other towns
+Type: Gameplay expansion
 
-### Acceptance
-- Each industry renders at its correct OpenTTD footprint (e.g. ore mine 3×3, farm 2×2), composed from its real ground + building sprites — matching a screenshot of that industry in OpenTTD/OpenGFX.
-- Every referenced sprite id exists in the `.pnml`.
-- Roads sort correctly per-tile around each multi-tile industry.
-- Catchment credits each industry once; all footprint tiles are unbuildable.
-- Determinism and reachability (with the bigger footprints) still hold.
+Requirements
+After setup, players can spend resources to build additional Factory/processing-plant sites near other towns.
+These are additional instances of the same processing-site building, not a separate building type with conflicting rules.
+Each site must have ownership, a town association and a valid footprint.
+Each site acts as a delivery destination for the player’s connected Depots.
+Processed resources contribute to the player’s construction inventory.
+Acceptance criteria
+Additional plants obey the same town-adjacency rule as the starting Factory.
+Costs are previewed and charged exactly once.
+Routing, processing, scoring and AI no longer assume that a player has only one Factory.
+Connecting a Depot to multiple plants cannot duplicate its production or repeatedly award the same VP.
+Selecting or switching plants cannot reset progress or reroll a board for free.
+Save/load and multiplayer preserve all plants and their state.
+Design decision to lock before implementation: Does each plant have its own persistent processing board, or do all plants share one board? Define input allocation and sabotage targeting alongside that decision.
 
----
+PP-07 — Rebalance construction and expansion using Catan-style resource roles
+Type: Economy / balancing
 
-## F3. Verify the factory layout is the REAL OpenTTD table, not a plausible guess
-`[assets]`
+Goal
+Make resource combinations drive meaningful choices:
 
-While extending to other industries, double-check the factory itself. The current `FACTORY_TILES` comment says "OpenTTD layout (tile indices 39–42) maps to ground tiles 2146–2149" — confirm that mapping against the actual `_tile_table_factory_0` in `build_industry.h`, including **which** tiles carry buildings (2150/2151/2152) and which is the empty yard (currently (0,1)). The screenshot shows the factory reading a bit lopsided — that may be a wrong piece-to-tile assignment.
+Wood and Stone: basic infrastructure.
+Grain: workforce and expansion.
+Ore: industrial investment and better transport.
+Oil: Depot expansion.
+Gold: Black Market sabotage only.
+Suggested first playtest costs
+These are starting proposals, not final balanced values.
 
-### Acceptance
-- `FACTORY_TILES` matches `_tile_table_factory_0` exactly (tile positions and which sprite each carries).
-- The rendered factory matches the OpenTTD factory's appearance.
+Purchase	Proposed cost
+Road tile	1 Wood + 1 Stone
+Rail tile	1 Wood + 1 Stone + 4 Ore
+Upgrade Road to Rail	4 Ore
+Additional Depot	1 Wood + 1 Stone + 1 Grain + 1 Oil
+Additional Processing Plant	2 Wood + 2 Stone + 2 Grain + 3 Ore
+Acceptance criteria
+Every normal resource has a useful construction role.
+All costs come from one authoritative table used by the UI, gameplay and AI.
+Starting stock and free transport are retuned if necessary for the new prices.
+Test opening progression and expansion on the actual 144×144 map, not just short synthetic routes.
+Players can manufacture a missing resource without entering an endless dependency loop.
+Record time to first connection, second Depot and second processing plant during playtesting.
+Tune costs and processing yields together; do not assume the proposed numbers are balanced without testing.
+PP-08 — Reserve Gold exclusively for Black Market sabotage
+Type: Economy rule
 
----
-
-## Sequencing
-
-**F1 → F3 → F2.**
-
-- **F1 (towns)** first — it's a one-spot bug fix (the `blocked` set) and gets towns visible immediately, which is what you're missing.
-- **F3** verify the factory layout is real before copying its pattern.
-- **F2** extend the verified multi-tile pattern to all industries, each at its real footprint.
-
-## The through-line for the agent
-
-Every industry's footprint and tile layout is **authoritative data** in OpenTTD's `build_industry.h` + the repo's `.pnml` declarations. Transcribe it exactly — do not guess a size or measure it from pixels (that has produced wrong results every time in this project). Reuse the factory's flat multi-tile draw path; add no clipping. And verify by rendering each industry, not by a green test suite — the towns "passed" their unit tests while generating zero on every seed.
+Requirements
+Gold is used only to purchase Black Market actions that sabotage opponents.
+Remove Gold from ordinary construction, Depot costs, processing plants, transport, upgrades and repairs.
+Gold cannot substitute for missing construction materials.
+Ordinary market exchanges must not turn Gold into a general-purpose construction currency.
+Audit existing non-sabotage Gold purchases, including security/defensive actions, and reprice them without Gold.
+Acceptance criteria
+Every normal construction action can be completed without Gold.
+Black Market sabotage displays and deducts its Gold cost correctly.
+Insufficient Gold prevents sabotage without consuming other resources.
+Gold earned through processing or bonuses reaches the Gold balance.
+UI copy clearly explains: “Gold is reserved for Black Market sabotage.”
+Player, AI and multiplayer rules enforce the same restriction.
