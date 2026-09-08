@@ -36,9 +36,22 @@ export interface TradeOffer<K extends string> {
 export interface Market<K extends string> {
   offers: TradeOffer<K>[];
   offerSeq: number;
+  /**
+   * PP-08: goods the market will not trade AT ALL, in any direction, at the
+   * bank or between players. The iso game blocks `gold`: Gold is reserved for
+   * Black Market sabotage, so no ordinary exchange may turn it into a
+   * general-purpose construction currency. Empty by default.
+   */
+  blocked: ReadonlySet<K>;
 }
 
-export const createMarket = <K extends string>(): Market<K> => ({ offers: [], offerSeq: 1 });
+export const createMarket = <K extends string>(
+  blocked: readonly K[] = [],
+): Market<K> => ({ offers: [], offerSeq: 1, blocked: new Set(blocked) });
+
+/** PP-08: does any of these goods sit on the market's do-not-trade list? */
+const tradeBlocked = <K extends string>(m: Market<K>, goods: K[]): boolean =>
+  goods.some((g) => m.blocked.has(g));
 
 /** A player may have at most this many live offers at once. */
 export const MAX_OFFERS = 3;
@@ -57,6 +70,7 @@ export function postOffer<K extends string>(
   m: Market<K>,
 ): boolean {
   if (give === want) return false;
+  if (tradeBlocked(m, [give, want])) return false;   // PP-08: gold never trades
   if (giveN <= 0 || wantN <= 0) return false;
   if ((p.res[give] ?? 0) < giveN) return false;
   if (liveOffers(p, m).length >= MAX_OFFERS) return false;
@@ -79,6 +93,7 @@ export function acceptOffer<K extends string>(
   if (idx < 0) return false;
   const o = m.offers[idx];
   if (o.from === taker.i) return false;
+  if (tradeBlocked(m, [o.give, o.want])) return false;   // PP-08: covers the AI taker too
   if ((taker.res[o.want] ?? 0) < o.wantN) return false;
   const poster = players[o.from];
   if (!poster) return false;
@@ -106,8 +121,10 @@ export function cancelOffer<K extends string>(
 /** Bank exchange: give BANK_RATE of one good, get 1 of another (no rival). */
 export function bankTrade<K extends string>(
   p: Trader<K>, give: K, want: K, rate = BANK_RATE,
+  blocked?: ReadonlySet<K>,
 ): boolean {
   if (give === want) return false;
+  if (blocked?.has(give) || blocked?.has(want)) return false;   // PP-08
   if ((p.res[give] ?? 0) < rate) return false;
   p.res[give] = (p.res[give] ?? 0) - rate;
   p.res[want] = (p.res[want] ?? 0) + 1;

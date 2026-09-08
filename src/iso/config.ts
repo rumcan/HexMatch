@@ -9,7 +9,12 @@
 //     capacity); board.ts survives the migration untouched.
 //  3. Road→rail upgrade in place is allowed, paying the cost difference.
 //  4. Overlapping catchments split output proportionally among claimants.
-//  5. `gold` stays the sabotage currency (SABOTAGE/SECURITY unchanged).
+//  5. `gold` stays the sabotage currency (SABOTAGE unchanged).
+//     PP-08 tightens that to a hard rule: Gold is reserved for Black Market
+//     sabotage and pays for NOTHING else. Security Forces (defensive, not
+//     sabotage) were repriced to materials (game/config.ts SECURITY.cost),
+//     and the market refuses gold in every exchange — bank and offers, both
+//     directions (`trade.ts` blocked set, wired in iso/market.ts).
 // ══════════════════════════════════════════════════════════════════════════
 import { TILE_W, TILE_H, MAP_W, MAP_H, HW, HH } from "../game/config";
 
