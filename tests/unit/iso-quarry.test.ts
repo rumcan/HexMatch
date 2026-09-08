@@ -292,11 +292,12 @@ describe("W5 the combo coin reaches the purse", () => {
     expect(purse.gold).toBe(1);
   });
 
-  // N3 — a gold GEM only appears while the network reaches a gold mine. The
-  // quarry wires Board.goldReachable to the live reach, so the same network
-  // that gates the tokens gates the combo coin's board gem. The purse payout
-  // itself stays unconditional (W5 is untouched).
-  it("N3: the combo coin's board gem obeys the mine gate — the purse does not", () => {
+  // Combos never mint a gold GEM on the board — that old mechanic rewrote an
+  // existing resource gem into gold (spawnGold). A banked coin goes only to
+  // the purse, unconditionally (W5). Gold gems appear on the board only by
+  // dropping in from the top while a depot sits beside a gold mine (see the
+  // PP-09 tests in iso-gold-spawn.test.ts).
+  it("a banked combo pays the purse but never places a gold gem on the board", () => {
     const grid = flatGrid([ind("gold_mine", 11, 11)]);
     const track = createTrack();
     const state: EconomyState = {
@@ -309,17 +310,17 @@ describe("W5 the combo coin reaches the purse", () => {
     const q = createQuarry(state, "you", { onGold: (n) => { purse.gold += n; } });
     neutralise(q.board);
 
-    // no road yet: the gate is closed
+    // no road yet
     q.board.registerCombo();
     q.board.registerCombo();
-    expect(purse.gold).toBe(1);                                     // purse paid…
-    expect(q.board.gems().some((g) => g.res === "gold")).toBe(false); // …no board gem
+    expect(purse.gold).toBe(1);                                      // purse paid…
+    expect(q.board.gems().some((g) => g.res === "gold")).toBe(false);  // …no board gem
 
-    // connect the harvester to the gold mine → the next coin places a gem
+    // even once the mine is connected, a combo never converts a gem to gold
     run(track, "road", 11, 14, 10);
     q.board.registerCombo();
     q.board.registerCombo();
     expect(purse.gold).toBe(2);
-    expect(q.board.gems().some((g) => g.res === "gold")).toBe(true);
+    expect(q.board.gems().some((g) => g.res === "gold")).toBe(false);
   });
 });

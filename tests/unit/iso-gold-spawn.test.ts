@@ -5,8 +5,9 @@
 // resource types the moment a Depot is built beside a Gold Mine. The gate is
 // PLACEMENT-based (depot in catchment), not connection-based: no road is
 // required for the gems to start dropping. The payout stays connection-gated —
-// only a tokened gold gem credits the purse (see the N3 tests in
-// iso-quarry.test.ts for that half of the rule).
+// only a tokened gold gem credits the purse. Gold gems never replace an
+// existing resource gem in place: they reach the board only by falling in
+// from the top (see src/game/board.ts).
 // ══════════════════════════════════════════════════════════════════════════
 import { describe, it, expect, beforeEach } from "vitest";
 import { Board } from "../../src/game/board";

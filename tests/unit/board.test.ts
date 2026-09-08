@@ -90,45 +90,49 @@ describe("settle / swap", () => {
     expect(reverted).toBe(true);
   });
 
-  it("banks combos and mints a gold coin every two — when a mine is connected (N3)", () => {
+  // Combos bank a coin every two and hand it straight to the purse via
+  // `onGold(1)` (W5). A combo never mints a gold GEM on the board — the old
+  // in-place `spawnGold` conversion (turn a random resource gem into gold) is
+  // gone, so a banked coin must not rewrite an existing lumber/ore gem.
+  it("combos pay the purse every two and never convert a resource gem into a gold gem", () => {
     const b = freshBoard();
-    b.goldReachable = () => true;             // the quarry wires this to the network
+    const gold: number[] = [];
+    b.onGold = (n) => gold.push(n);
     const combos: [number, number, boolean][] = [];
     b.onCombo = (count, need, granted) => combos.push([count, need, granted]);
     b.registerCombo();
     expect(combos[0]).toEqual([1, 2, false]);
-    b.registerCombo();
-    expect(combos[1][2]).toBe(true);
-    expect(b.gems().some((g) => g.res === "gold")).toBe(true);
-  });
-
-  // N3: a gold GEM only appears while a harvester is connected to a gold
-  // mine. The combo's PURSE payout (onGold) is unconditional — banking a
-  // combo always pays — but without mine reach no gold gem is placed.
-  it("N3: without gold-mine reach a combo pays the purse but places no gold gem", () => {
-    const b = freshBoard();
-    const gold: number[] = [];
-    b.onGold = (n) => gold.push(n);
-    b.registerCombo();
-    b.registerCombo();
-    expect(gold).toEqual([1]);                              // the purse was paid…
-    expect(b.gems().some((g) => g.res === "gold")).toBe(false); // …no board gem
-  });
-
-  // W5: the board must TELL the world when it banks a coin. The gold gem on
-  // the board is cosmetic; `onGold(1)` is the wire the purse (and therefore
-  // the Black Market) listens to. Without it "2 combos = 1 gold" is a lie.
-  it("fires onGold exactly once per banked coin", () => {
-    const b = freshBoard();
-    const gold: number[] = [];
-    b.onGold = (n) => gold.push(n);
-    b.registerCombo();
     expect(gold).toEqual([]);
     b.registerCombo();
-    expect(gold).toEqual([1]);
-    b.registerCombo();
-    b.registerCombo();
-    expect(gold).toEqual([1, 1]);
+    expect(combos[1][2]).toBe(true);
+    expect(gold).toEqual([1]);                                   // the purse was paid…
+    expect(b.gems().some((g) => g.res === "gold")).toBe(false);  // …no board gem minted
+  });
+});
+
+// Gold reaches the Processing Plant board ONLY by dropping in from the top
+// (setGoldEnabled → the gravity pool). It is never created by rewriting an
+// existing resource gem in place.
+describe("gold gems only fall in from the top — never replace a resource gem", () => {
+  it("spawnTokens upgrades an existing gold gem, not a different-colour gem", () => {
+    const b = freshBoard();
+    b.setGoldEnabled(true);          // a depot sits beside a gold mine
+    b.resetNeutral();                // refill draws gold from the pool
+    const goldCount = b.gems().filter((g) => g.res === "gold").length;
+    expect(goldCount).toBeGreaterThan(0);
+
+    // reachable gold → the 20s spawn upgrades one gold gem in place (tier 1)
+    b.spawnTokens({ gold: 1 });
+    expect(b.gems().filter((g) => g.res === "gold")).toHaveLength(goldCount); // no new gold
+    expect(b.gems().filter((g) => g.res === "gold" && g.tier === 1)).toHaveLength(1);
+  });
+
+  it("spawnTokens never turns a non-gold gem into gold when no gold gem exists", () => {
+    const b = freshBoard();               // base pool has no gold
+    expect(b.gems().some((g) => g.res === "gold")).toBe(false);
+    // pretend gold is reachable but no gold gem has fallen in yet
+    b.spawnTokens({ gold: 1 });
+    expect(b.gems().some((g) => g.res === "gold")).toBe(false);   // wood/ore stay put
   });
 });
 
