@@ -380,14 +380,16 @@ export function startIsoGame(root: HTMLElement) {
 
   // ── actions ────────────────────────────────────────────────────────────
   function placeFactory(tx: number, ty: number): boolean {
-    // MT-1: check all tiles of the 2×2 factory footprint
-    for (let dy = 0; dy < FACTORY_FOOTPRINT[1]; dy++) {
-      for (let dx = 0; dx < FACTORY_FOOTPRINT[0]; dx++) {
-        if (!canBuildOn(grid, "road", tx + dx, ty + dy)) {
-          toast("Can't build there.", "bad");
-          return false;
-        }
-      }
+    // MT-1 + PP-02: the whole 2×2 footprint must be legal ground AND touch a
+    // town by an edge. `planFactoryPlacement` with `requireTown` is the same
+    // rule the placement preview paints from, so the click and the hover can
+    // never disagree about what "next to a town" means.
+    const plan = planFactoryPlacement(grid, tx, ty, { requireTown: true });
+    if (!plan.valid) {
+      toast(plan.code === "not-near-town"
+        ? "The Factory must be placed next to a town — its footprint must share an edge with a town tile."
+        : `Can't build there — ${plan.why ?? "not buildable"}.`, "bad");
+      return false;
     }
     // W2: the factory carries its builder's track-owner id (player index + 1).
     // PP-06: the starting Factory is plant #0 — same building, same record.
@@ -733,7 +735,8 @@ export function startIsoGame(root: HTMLElement) {
   const overlayItemsAt = (tx: number, ty: number): OverlayItem[] => {
     const items: OverlayItem[] = [];
     if (phase === "setup-factory") {
-      pushPlan(items, planFactoryPlacement(grid, tx, ty));
+      // PP-02: the preview enforces the same town-adjacency rule as the click.
+      pushPlan(items, planFactoryPlacement(grid, tx, ty, { requireTown: true }));
     } else if (tool === "harvester" || phase === "setup-harvester") {
       pushPlan(items, planDepotPlacement(grid, eco.harvesters, tx, ty));
     } else {
@@ -774,7 +777,7 @@ export function startIsoGame(root: HTMLElement) {
 
   function paintUi(_now: number) {
     let banner: string | null = null;
-    if (phase === "setup-factory") banner = "Place your Factory — click a buildable tile";
+    if (phase === "setup-factory") banner = "Place your Factory next to a town — click a buildable tile";
     // PP-05: the setup banner states the price too — the first Depot is free
     // on the allowance, and the player should know the second one is not.
     else if (phase === "setup-harvester") banner = "Place your Depot — it needs an industry in its 4×4 catchment" +
@@ -826,7 +829,10 @@ export function startIsoGame(root: HTMLElement) {
     const placingFactory = phase === "setup-factory" && hover !== null;
     const placingDepot = (phase === "setup-harvester" || tool === "harvester") && hover !== null;
     const plan: PlacementPlan | null = placingFactory
-      ? planFactoryPlacement(grid, hover!.tx, hover!.ty)
+      // PP-02: the inspector's verdict follows the same town-adjacency rule
+      // the click and the overlay enforce ("can't go here — its footprint must
+      // share an edge with a town").
+      ? planFactoryPlacement(grid, hover!.tx, hover!.ty, { requireTown: true })
       : placingDepot
         ? planDepotPlacement(grid, eco.harvesters, hover!.tx, hover!.ty)
         : null;
@@ -1263,7 +1269,9 @@ export function startIsoGame(root: HTMLElement) {
      */
     placementPlan: (kind: "factory" | "depot", tx: number, ty: number): PlacementPlan =>
       kind === "factory"
-        ? planFactoryPlacement(grid, tx, ty)
+        // PP-02: the twin mirrors the live overlay — factory plans enforce the
+        // town-adjacency rule exactly like the click handler.
+        ? planFactoryPlacement(grid, tx, ty, { requireTown: true })
         : planDepotPlacement(grid, eco.harvesters, tx, ty),
     /**
      * PP-03: the exact overlay items `renderer.drawOverlay` paints for a

@@ -33,7 +33,7 @@
 import { MAP_W, MAP_H } from "../game/config";
 import { TRANSPORT, UPGRADE_COST, INDUSTRY_BY_KEY, FACTORY_FOOTPRINT, type Cargo } from "./config";
 import { DEPOT_COST, FREE_SETUP_DEPOTS, priceDepot } from "./construction";
-import { ROUGH, type Grid, type Industry } from "./grid";
+import { ROUGH, factoryTouchesTown, type Grid, type Industry } from "./grid";
 import {
   DIRS, DIR, tIdx, inMapT, hasTrack, canBuildOn, tileCost, addCost, canAfford,
   buildTile, trackOwnedBy, freeAllowanceCovers, type Track, type TrackKind, type Purse,
@@ -534,7 +534,7 @@ export function chooseRivalFactorySpot(
   grid: Grid, track: Track, awayFrom: [number, number], opts: RivalSpotOptions,
 ): [number, number] | null {
   const [fw, fh] = FACTORY_FOOTPRINT;
-  const spots: { x: number; y: number; rail: boolean; d: number }[] = [];
+  const spots: { x: number; y: number; rail: boolean; town: boolean; d: number }[] = [];
   for (let y = 2; y < MAP_H - 2 - fh; y += 2) {
     for (let x = 2; x < MAP_W - 2 - fw; x += 2) {
       // MT-1: check all tiles of the 2×2 factory footprint
@@ -546,19 +546,30 @@ export function chooseRivalFactorySpot(
         }
       }
       if (!allRoad) continue;
+      // PP-02: only 2×2 footprints that touch a town (by an edge) are legal
+      // Factory sites. The pool is restricted to these so the rival can never
+      // be handed a tile far from a town — even through the fallback below.
+      const town = factoryTouchesTown(grid, x, y);
       spots.push({
         x, y,
         rail: allRail,
+        town,
         d: Math.abs(x - awayFrom[0]) + Math.abs(y - awayFrom[1]),
       });
     }
   }
   if (!spots.length) return null;
+  // PP-02: legal Factory sites are town-adjacent, full stop. The generator
+  // guarantees the map offers enough of these for every player, so if none
+  // exist the map itself is malformed; in that degenerate case refuse rather
+  // than strand the rival on a tile away from any town.
+  const townSpots = spots.filter((s) => s.town);
+  if (!townSpots.length) return null;
   // Reserve the player's whole 2×2 footprint, not just its origin tile.
-  const apart = spots.filter((s) =>
+  const apart = townSpots.filter((s) =>
     s.x + fw <= awayFrom[0] || awayFrom[0] + fw <= s.x
     || s.y + fh <= awayFrom[1] || awayFrom[1] + fh <= s.y);
-  const ranked = apart.length ? apart : spots;
+  const ranked = apart.length ? apart : townSpots;
   ranked.sort((a, b) =>
     Number(b.rail) - Number(a.rail) || b.d - a.d || tIdx(a.x, a.y) - tIdx(b.x, b.y));
 
