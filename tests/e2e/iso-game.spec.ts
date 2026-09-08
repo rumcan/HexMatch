@@ -272,11 +272,13 @@ test.describe("iso game boots on the default route", () => {
 
     // ── setup round 1 of 2: click the tile for your Factory ─────────────
     // V1 acceptance: the placement highlight covers EXACTLY the footprint the
-    // building will visibly occupy — the anchor tile glows and the tile
-    // diagonally behind it (old 3×3 corner) stays unpainted.
+    // building will visibly occupy — the anchor glows and the tile diagonally
+    // BEHIND the 2×2 footprint (NW, away from the viewer) stays unpainted.
+    // (The old 3×3-corner sample at fx+1,fy+1 is inside the 2×2 footprint now,
+    // so it is legitimately highlighted and cannot be the "unpainted" probe.)
     await page.mouse.move(factory.x, factory.y);
     await expect.poll(() => opaqueNear(page, 2, c.fx, c.fy), { timeout: 5000 }).toBeGreaterThan(10);
-    await expect.poll(() => opaqueNear(page, 2, c.fx + 1, c.fy + 1), { timeout: 5000 }).toBe(0);
+    await expect.poll(() => opaqueNear(page, 2, c.fx - 1, c.fy - 1), { timeout: 5000 }).toBe(0);
     await page.mouse.click(factory.x, factory.y);
     await page.waitForFunction(() => (window as any).__iso.phase === "setup-harvester");
     expect((await page.evaluate(() => (window as any).__iso.factories.length))).toBeGreaterThanOrEqual(1);
@@ -399,7 +401,10 @@ test.describe("TK-001 mouse panning is middle-button only", () => {
             const tx = focus.tx + dx, ty = focus.ty + dy;
             if (tx < 0 || ty < 0 || tx >= W || ty >= H) continue;
             const i = ty * W + tx;
-            if (grid.terrain[i] !== 0 || grid.occupancy[i] >= 0) continue;
+            // T4: require a genuinely free tile — skip water/rough, industry
+            // (occupancy >= 0) AND town tiles (occupancy -2), which placeFactory
+            // refuses even though their terrain is grass.
+            if (grid.terrain[i] !== 0 || grid.occupancy[i] !== -1) continue;
             if (!inView(tx, ty) || !clickable(tx, ty)) continue;
             return { tx, ty };
           }
