@@ -64,6 +64,15 @@ function chooseOpeningFactorySpot(grid: Grid): [number, number] | null {
   const cx = sx / n, cy = sy / n;
   let best: { hx: number; hy: number; d: number } | null = null;
   for (const ind of grid.industries) {
+    // PP-12: gold mines are out of scope for the opener. Gold pays for no
+    // track and no Depot, and PP-08 blocks it at the bank in both
+    // directions — so a gold-first opening bootstraps ONLY through the
+    // match-3 board, which this conservative sim deliberately does not
+    // model. (Oil openings stay in: oil banks 4:1, so seed 99's stress case
+    // still expands on trickle alone.) A gold opening is a live-game choice
+    // with a match-3 rescue, not a trickle+bank bootstrap, so the harness
+    // measures the nearest industry a trickle CAN open.
+    if (ind.type === "gold_mine") continue;
     for (const [hx, hy] of harvesterSpots(grid, ind)) {
       const d = Math.abs(hx - cx) + Math.abs(hy - cy);
       if (!best || d < best.d) best = { hx, hy, d };

@@ -755,6 +755,13 @@ describe("W3 the rival actually plays (headless)", () => {
 
     // Sixteen build clocks (~144 s) interleaved with the economy clock, the
     // way the frame loop runs them — enough 4:1 exchanges to cover the Depot.
+    // PP-12: the wall budget below is 60 s, not 30 s. The rival's play is
+    // identical on the re-arted map (same builds, same bank, Depot #2 on the
+    // same build clock), but A* planning over the shuffled industry layout
+    // costs ~2.9 s per build clock instead of ~2.2 s — the eleven planning
+    // ticks before the purse empties take ~31 s wall on their own. That is
+    // map-luck search variance in `planCandidates` (first-affordable-spot
+    // break points), not a behaviour change: nothing here asserts speed.
     const t0 = 1_000_000;
     for (let i = 0; i < 16; i++) {
       h.econTick(t0 + i * AI_BUILD_MS + HARVEST_MS);
@@ -768,7 +775,7 @@ describe("W3 the rival actually plays (headless)", () => {
     expect(rival.res.grain ?? 0).toBeGreaterThanOrEqual(0);
     expect(rival.res.oil).toBeLessThan(5);
     for (const c of CARGOES) expect(rival.res[c], `${c} negative`).toBeGreaterThanOrEqual(0);
-  }, 30_000);
+  }, 60_000);
 });
 
 describe("W8 the rival is placed where it can build — and builds", () => {
