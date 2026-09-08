@@ -24,7 +24,7 @@ import { MAP_W, MAP_H } from "../game/config";
 import { TRANSPORT, INDUSTRY_BY_KEY, type Cargo } from "./config";
 import type { Grid, Industry } from "./grid";
 import {
-  DIRS, DIR, OPPOSITE, PRESENT, tIdx, inMapT, bitsAt, trackOwnedBy,
+  DIRS, DIR, OPPOSITE, PRESENT, tIdx, inMapT, bitsAt, trackOpenTo, PUBLIC_OWNER,
   type Track, type TrackKind,
 } from "./track";
 
@@ -104,11 +104,15 @@ export function industriesInCatchment(grid: Grid, h: Harvester): Industry[] {
  * A harvester is only valid if it touches at least one road or rail tile
  * BUILT BY ITS OWN PLAYER (W2). The rival's road beside your harvester does
  * not service it — your depot needs your own line.
+ *
+ * PP-13: one exception — a PUBLIC highway tile counts, because those roads
+ * are every player's to use. Parking a Depot beside the inter-town highway is
+ * a legitimate opening, exactly as it would be beside your own road.
  */
 export function isServiced(track: Track, h: Harvester): boolean {
   for (const d of DIRS) {
     const nx = h.tx + DIR[d][0], ny = h.ty + DIR[d][1];
-    if (trackOwnedBy(track, h.ownerId, nx, ny)) return true;
+    if (trackOpenTo(track, h.ownerId, nx, ny)) return true;
   }
   return false;
 }
@@ -124,15 +128,24 @@ export function isServiced(track: Track, h: Harvester): boolean {
  * `owner`, so a connected run of YOUR road and a connected run of the RIVAL's
  * road that touch each other are still two components, one per player. The
  * old "two players' networks are one shared graph" bug lives and dies here.
+ *
+ * PP-13: the map's PUBLIC highways are the one shared ground — a highway tile
+ * joins every real player's components, so a route may run over it. Owner 0
+ * (a town's ring road) still matches only owner-0 tiles.
  */
 export function buildComponents(track: Track, kind: TrackKind, owner: number): Int32Array {
   const comp = new Int32Array(MAP_W * MAP_H).fill(-1);
   const layer = kind === "road" ? track.road : track.rail;
+  // The same rule `trackOpenTo` applies, inlined over the raw owner layer
+  // because this flood works on flat indices, not tile coords.
+  const usable = (i: number): boolean => (owner === 0
+    ? track.owner[i] === 0
+    : track.owner[i] === owner || track.owner[i] === PUBLIC_OWNER);
   let next = 0;
   const stack: number[] = [];
   for (let start = 0; start < comp.length; start++) {
     if ((layer[start] & PRESENT) === 0 || comp[start] !== -1) continue;
-    if (track.owner[start] !== owner) continue;
+    if (!usable(start)) continue;
     const id = next++;
     comp[start] = id;
     stack.push(start);
@@ -147,7 +160,8 @@ export function buildComponents(track: Track, kind: TrackKind, owner: number): I
         if (!(bitsAt(track, kind, nx, ny) & OPPOSITE[d])) continue;  // mutual only
         const ni = tIdx(nx, ny);
         if (comp[ni] !== -1) continue;
-        if (track.owner[ni] !== owner) continue;   // W2: never cross the rival's line
+        // W2: never cross the rival's line. PP-13: a public highway is fine.
+        if (!usable(ni)) continue;
         comp[ni] = id;
         stack.push(ni);
       }

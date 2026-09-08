@@ -10,6 +10,19 @@ export interface Gem {
   r: number; c: number;
   isNew?: boolean;
   dead?: boolean;
+  /**
+   * PP-13: this gem's token was FORGED by the player's own long match (4 in a
+   * row mints a tier-1 token of that colour, 5+ mints a tier-2 one) instead of
+   * being dropped by the network's token spawner (`spawnTokens`).
+   *
+   * The distinction is what makes the quarry gate correct: a network token
+   * only exists because a depot reaches that cargo's industry, so refusing it
+   * when the line is cut is right — but a forged token was PAID FOR by the
+   * match that created it. Matching a forged wood token next to a wood industry
+   * you have no depot on must still hand you the wood; before this flag the
+   * gate refused it and the 4-match reward was silently worthless.
+   */
+  forged?: boolean;
 }
 
 const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
@@ -35,7 +48,17 @@ export class Board {
   static COMBOS_PER_GOLD = 2;
 
   // callbacks (wired by game)
-  onHarvest: (res: ResKey, amount: number) => void = () => {};
+  /**
+   * A tokened gem was matched. `forged` is true when the token came from the
+   * player's own long match rather than from the network spawner.
+   *
+   * Return `false` to REFUSE the payout: the board then keeps that amount out
+   * of the match's gain popup, so the "+2 🪵" readout can only ever show what
+   * actually reached the purse. Any other return — including `undefined`, for
+   * a handler that does not care — counts as paid, which keeps every existing
+   * fire-and-forget listener working unchanged.
+   */
+  onHarvest: (res: ResKey, amount: number, forged: boolean) => boolean | void = () => true;
   onGold: (n: number) => void = () => {};
   onFx: (type: string, r: number, c: number, text?: string) => void = () => {};
   onChange: () => void = () => {};
@@ -155,11 +178,20 @@ export class Board {
         removeIds.add(g.id);
         if (g.tier > 0) {
           const amt = g.tier * mult;
-          this.onHarvest(g.res, amt);
-          gains[g.res] = (gains[g.res] ?? 0) + amt;
+          // PP-13: the listener decides whether this token pays (the quarry
+          // gate refuses a NETWORK token whose line is cut, but always pays a
+          // FORGED one). `gains` only accumulates what was actually credited,
+          // so the popup can never advertise a harvest the purse never saw.
+          if (this.onHarvest(g.res, amt, g.forged === true) !== false) {
+            gains[g.res] = (gains[g.res] ?? 0) + amt;
+          }
         }
       }
       const mid = grp[Math.floor(size / 2)];
+      // A long match MINTS a token of its own colour: 4 in a row leaves a
+      // tier-1 token behind, 5+ leaves a tier-2 one plus a bomb. These are the
+      // board's own reward, and they carry `forged` (see the forge loop below)
+      // so the quarry pays them even where no depot reaches that cargo.
       if (size === 4 && !tokenPresent) forge.push({ r: mid.r, c: mid.c, res: anchor, tier: 1 });
       if (size >= 5) {
         bombs.push({ r: mid.r, c: mid.c, res: anchor });
@@ -187,6 +219,9 @@ export class Board {
     for (const f of forge) {
       const g = this.newGem(f.res, f.r, f.c);
       g.tier = f.tier;
+      // PP-13: this token was minted by the match itself, so it pays even
+      // where the network reaches nothing — mark it for the quarry gate.
+      g.forged = true;
       this.grid[f.r][f.c] = g;
       this.onFx("up", f.r, f.c);
     }
@@ -283,7 +318,11 @@ export class Board {
       const g = this.grid[r][c];
       if (!g || g.block || g.res !== colorRes) continue;
       if (g.hard > 0) { g.hard = (g.hard - 1) as 0 | 1 | 2; this.onFx("crack", r, c); continue; }
-      if (g.tier > 0) { this.onHarvest(g.res, g.tier); gains[g.res] = (gains[g.res] ?? 0) + g.tier; }
+      if (g.tier > 0) {
+        if (this.onHarvest(g.res, g.tier, g.forged === true) !== false) {
+          gains[g.res] = (gains[g.res] ?? 0) + g.tier;
+        }
+      }
       g.dead = true; this.grid[r][c] = null; this.onFx("pop", r, c); }
     if (Object.keys(gains).length) this.onPopup(gains, "COLOUR PURGE");
     this.onChange();
@@ -311,6 +350,10 @@ export class Board {
       if (eligible.length) {
         const g = choice(eligible);
         g.tier = tier;
+        // PP-13: this token came from the network, so it is network-gated —
+        // clear any stale forge mark (a forged token can reach tier 0 again
+        // if it was ever stripped) so the two kinds never get confused.
+        g.forged = false;
         this.onFx("up", g.r, g.c);
       }
     }

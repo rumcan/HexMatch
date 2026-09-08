@@ -23,9 +23,9 @@ import {
 import { MAP_W, MAP_H } from "../../src/iso/config";
 import {
   createTrack, seedTownRoads, hasTrack, bitsAt, buildRefusal, DIRS, DIR,
-  OPPOSITE, tIdx, type Track,
+  OPPOSITE, PUBLIC_OWNER, playerNetwork, tIdx, type Track,
 } from "../../src/iso/track";
-import { playerNetwork, isServiced } from "../../src/iso/economy";
+import { isServiced } from "../../src/iso/economy";
 import { rivalSearchTiles, canReachASpot } from "./helpers/rival-map";
 
 const SEEDS = [1337, 7, 42, 100, 1, 123, 2026, 0];
@@ -260,19 +260,33 @@ describe("PP-10 seedTownRoads (track wiring)", () => {
   it("never services a depot or joins a player network (owner scoping)", () => {
     const track = createTrack();
     seedTownRoads(track, g);
-    // find a town road tile and stand a fake depot + factory right beside it
-    const [tx, ty] = g.towns[0].roads[0];
-    for (const [dx, dy] of DIR4) {
-      const hx = tx + dx, hy = ty + dy;
-      if (buildRefusal(g, "road", hx, hy) !== null) continue;
-      expect(
-        isServiced(track, { id: 99, owner: "you", ownerId: 1, tx: hx, ty: hy }),
-        "a neutral town road must not service a depot",
-      ).toBe(false);
-      const net = playerNetwork(track, 1, [{ ownerId: 1, tx: hx, ty: hy }], []);
-      expect(net.has(tIdx(tx, ty)), "a neutral town road must not join the player network").toBe(false);
-      break;
+    // Stand a fake depot beside a town road and check the road gives it
+    // nothing. PP-13 note: this used to probe only the four neighbours of
+    // `towns[0].roads[0]`, and with 3× towns every one of those is town
+    // furniture — so the loop ran zero assertions and a stale import of
+    // `playerNetwork` from economy.ts (which has never exported it) went
+    // unnoticed. Walk the ring until a buildable neighbour turns up, and fail
+    // loudly if none ever does.
+    let probed = 0;
+    for (const t of g.towns) {
+      for (const [tx, ty] of t.roads) {
+        for (const [dx, dy] of DIR4) {
+          const hx = tx + dx, hy = ty + dy;
+          if (buildRefusal(g, "road", hx, hy) !== null) continue;
+          expect(
+            isServiced(track, { id: 99, owner: "you", ownerId: 1, tx: hx, ty: hy }),
+            `a neutral town road must not service a depot at (${hx},${hy})`,
+          ).toBe(false);
+          const net = playerNetwork(track, 1, [{ ownerId: 1, tx: hx, ty: hy }], []);
+          expect(
+            net.has(tIdx(tx, ty)),
+            `a neutral town road must not join the player network at (${tx},${ty})`,
+          ).toBe(false);
+          probed++;
+        }
+      }
     }
+    expect(probed, "no town road had a buildable neighbour to probe").toBeGreaterThan(0);
   });
 });
 
@@ -337,10 +351,21 @@ describe("PP-10 game boot stamps the town roads", () => {
         count++;
       }
     }
-    // nothing besides the town roads may be on the road layer at boot
+    // PP-13: the inter-town highways stand at boot too — stamped PUBLIC_OWNER,
+    // never the town's neutral 0, so the two kinds of map furniture stay
+    // distinguishable on the wire.
+    let pub = 0;
+    for (const [rx, ry] of h.grid.publicRoads ?? []) {
+      expect(hasTrack(h.track, "road", rx, ry), `boot miss highway (${rx},${ry})`).toBe(true);
+      expect(h.track.owner[tIdx(rx, ry)], `highway (${rx},${ry}) not public`).toBe(PUBLIC_OWNER);
+      pub++;
+    }
+    // nothing besides the town roads and the public highways may be on the
+    // road layer at boot
     let onLayer = 0;
     for (let i = 0; i < h.track.road.length; i++) if (h.track.road[i] !== 0) onLayer++;
-    expect(onLayer).toBe(count);
+    expect(onLayer).toBe(count + pub);
     expect(count).toBeGreaterThan(0);
+    expect(pub).toBeGreaterThan(0);
   }, 20000);
 });

@@ -69,6 +69,8 @@ interface IsoHook {
     kind: "road" | "rail", ax: number, ay: number, bx: number, by: number,
     xFirst?: boolean,
   ) => import("../../src/iso/track").DragPreview | null;
+  /** PP-13: the twin of a demolish click (road salvage, public-road refusal). */
+  demolish: (tx: number, ty: number) => void;
   aiTick: (now?: number) => void;
   econTick: (now?: number) => void;
   tick: (now?: number) => void;
@@ -755,13 +757,20 @@ describe("W3 the rival actually plays (headless)", () => {
 
     // Sixteen build clocks (~144 s) interleaved with the economy clock, the
     // way the frame loop runs them — enough 4:1 exchanges to cover the Depot.
-    // PP-12: the wall budget below is 60 s, not 30 s. The rival's play is
+    // PP-12: the wall budget below was 60 s, not 30 s. The rival's play is
     // identical on the re-arted map (same builds, same bank, Depot #2 on the
     // same build clock), but A* planning over the shuffled industry layout
     // costs ~2.9 s per build clock instead of ~2.2 s — the eleven planning
     // ticks before the purse empties take ~31 s wall on their own. That is
     // map-luck search variance in `planCandidates` (first-affordable-spot
     // break points), not a behaviour change: nothing here asserts speed.
+    // PP-13: 60 s → 150 s, for the same reason again. Measured on this
+    // machine: 32 s before, 68 s after — the towns tripled in size, so A*
+    // routes around ~3× more TOWN_OCC tiles and this scenario's helper-picked
+    // factory/corridor spots land farther apart (62 s of the 68 s is the
+    // bigger towns alone; the inter-town highways add the other 6 s). Every
+    // assertion below still holds unchanged — the rival expands, banks 4:1 and
+    // buys Depot #2 — this budget is wall-clock headroom, not a behaviour.
     const t0 = 1_000_000;
     for (let i = 0; i < 16; i++) {
       h.econTick(t0 + i * AI_BUILD_MS + HARVEST_MS);
@@ -775,7 +784,7 @@ describe("W3 the rival actually plays (headless)", () => {
     expect(rival.res.grain ?? 0).toBeGreaterThanOrEqual(0);
     expect(rival.res.oil).toBeLessThan(5);
     for (const c of CARGOES) expect(rival.res[c], `${c} negative`).toBeGreaterThanOrEqual(0);
-  }, 60_000);
+  }, 150_000);
 });
 
 describe("W8 the rival is placed where it can build — and builds", () => {
@@ -1298,4 +1307,79 @@ describe("PP-03 footprint vs reach placement feedback (wired game)", () => {
     expect(h.overlayItemsFor(ind.tx, ind.ty))
       .toContainEqual({ sprite: "highlight_bad", tx: ind.tx, ty: ind.ty });
   });
+});
+
+// ── PP-13: demolishing a road salvages one of the two materials it cost ────
+describe("PP-13 road demolition refunds", () => {
+  /** A bare stretch of the player's own road, away from any structure. */
+  async function ownRoadTile(h: IsoHook): Promise<[number, number]> {
+    const { buildTile } = await import("../../src/iso/track");
+    for (let ty = 10; ty < MAP_H - 10; ty++) {
+      for (let tx = 10; tx < MAP_W - 10; tx++) {
+        if (h.grid.occupancy[ty * MAP_W + tx] !== -1) continue;
+        if (h.grid.terrain[ty * MAP_W + tx] === WATER) continue;
+        if (h.eco.harvesters.some((d) => d.tx === tx && d.ty === ty)) continue;
+        buildTile(h.track, "road", tx, ty, 1);
+        return [tx, ty];
+      }
+    }
+    throw new Error("no free tile for a road");
+  }
+
+  it("hands back exactly 1 Wood or 1 Stone — never both, never nothing", async () => {
+    const h = await boot();
+    const [tx, ty] = await ownRoadTile(h);
+    const { hasTrack } = await import("../../src/iso/track");
+
+    // rng → 0 picks ROAD_DEMOLISH_REFUND[0] (wood); → 0.99 picks [1] (stone).
+    setRng(() => 0);
+    const w0 = h.purse.wood ?? 0, s0 = h.purse.stone ?? 0;
+    h.demolish(tx, ty);
+    expect(hasTrack(h.track, "road", tx, ty)).toBe(false);
+    expect((h.purse.wood ?? 0) - w0).toBe(1);
+    expect((h.purse.stone ?? 0) - s0).toBe(0);
+
+    // and the other draw pays stone instead — one unit either way
+    const [tx2, ty2] = await ownRoadTile(h);
+    setRng(() => 0.99);
+    const w1 = h.purse.wood ?? 0, s1 = h.purse.stone ?? 0;
+    h.demolish(tx2, ty2);
+    expect((h.purse.stone ?? 0) - s1).toBe(1);
+    expect((h.purse.wood ?? 0) - w1).toBe(0);
+  }, 20_000);
+
+  it("pays nothing for rail, and nothing when there is no track to lift", async () => {
+    const h = await boot();
+    const { buildTile, hasTrack } = await import("../../src/iso/track");
+    const [tx, ty] = await ownRoadTile(h);
+    buildTile(h.track, "rail", tx, ty, 1);      // rail over the road: rail wins
+
+    const before = { ...h.purse };
+    h.demolish(tx, ty);
+    expect(hasTrack(h.track, "rail", tx, ty)).toBe(false);
+    expect(h.purse.wood).toBe(before.wood);
+    expect(h.purse.stone).toBe(before.stone);
+
+    // the road underneath is still the player's, so a second click lifts it —
+    // and THAT one does refund, which is the rule, not a leak.
+    setRng(() => 0);
+    h.demolish(tx, ty);
+    expect((h.purse.wood ?? 0) - (before.wood ?? 0)).toBe(1);
+  }, 20_000);
+
+  it("refuses to demolish a public highway, and refunds nothing for it", async () => {
+    const h = await boot();
+    const { PUBLIC_OWNER, hasTrack } = await import("../../src/iso/track");
+    const roads = h.grid.publicRoads ?? [];
+    expect(roads.length).toBeGreaterThan(0);
+    const [tx, ty] = roads[0];
+    expect(h.track.owner[ty * MAP_W + tx]).toBe(PUBLIC_OWNER);
+
+    const before = { ...h.purse };
+    h.demolish(tx, ty);
+    expect(hasTrack(h.track, "road", tx, ty), "a public road must survive").toBe(true);
+    expect(h.track.owner[ty * MAP_W + tx]).toBe(PUBLIC_OWNER);
+    expect(h.purse.wood).toBe(before.wood);
+    expect(h.purse.stone).toBe(before.stone);
+  }, 20_000);
 });

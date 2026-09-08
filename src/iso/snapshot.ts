@@ -30,8 +30,13 @@ import type { Harvester, Factory, ScoreState, ConnKind } from "./economy";
  * the host's road layer; it travels inside the existing track bytes. The
  * wire shape is unchanged — bump so mixed-version rooms refuse instead of
  * showing a half-consistent map.
+ * v6 (PP-13): seed-derived generation changed twice over — towns are three
+ * times bigger (18–36 houses) and the map grows public highways between the
+ * towns, stamped owner `PUBLIC_OWNER` (3) onto the road layer. The wire shape
+ * is still unchanged, but a v5 guest would regenerate a DIFFERENT map from
+ * the same seed, so mixed-version rooms must refuse.
  */
-export const SNAPSHOT_VERSION = 5;
+export const SNAPSHOT_VERSION = 6;
 
 export const EXPECTED_TRACK_BYTES = MAP_W * MAP_H;
 

@@ -12,13 +12,17 @@
 //      colours carry harvest tokens, so a colour your network cannot reach
 //      simply never pays. A harvest that lands while the line is cut is
 //      refused at harvest time, not merely never spawned.
+//      PP-13 exception: a token the BOARD itself forged (the tier-1 gem a
+//      4-in-a-row leaves behind, tier-2 for 5+) is not the network's token —
+//      the match that minted it already paid for it, so it pays whatever
+//      cargo it shows, depot or no depot. See `Gem.forged`.
 //   2. MAP. The six gem colours are the six iso cargoes, one-to-one
 //      (`GEM_TO_CARGO`), so a matched token credits the cargo the connected
 //      industry produces.
 //
-// The board's own rule does the rest: only TOKENED gems pay out, and tokens
-// only exist where the network reaches. Match a plain gem and you clear space;
-// match a token and you harvest.
+// The board's own rule does the rest: only TOKENED gems pay out, and network
+// tokens only exist where the network reaches. Match a plain gem and you clear
+// space; match a token and you harvest.
 // ══════════════════════════════════════════════════════════════════════════
 import { Board, type Gem } from "../game/board";
 import { RES_KEYS, UPGRADE_EVERY, type ResKey } from "../game/config";
@@ -100,21 +104,31 @@ export function tokenPool(
   return pool;
 }
 
-/** Strip the tokens from cargo the network no longer reaches. */
+/**
+ * Strip the tokens from cargo the network no longer reaches.
+ *
+ * PP-13: FORGED tokens survive. They were minted by the player's own 4+ match
+ * and are not the network's to revoke — stripping one the moment the line
+ * dropped would put the 4-match reward right back behind the gate this
+ * function exists to open.
+ */
 export function demoteTokens(board: Board, resList: ResKey[]): number {
   let n = 0;
   const drop = new Set(resList);
   for (const g of board.gems()) {
-    if (g.tier > 0 && drop.has(g.res)) { g.tier = 0; n++; }
+    if (g.tier > 0 && g.forged !== true && drop.has(g.res)) { g.tier = 0; n++; }
   }
   return n;
 }
 
 // ── the quarry ─────────────────────────────────────────────────────────────
 export interface QuarryHooks {
-  /** A token was matched and the cargo IS reachable: credit it. */
+  /** A token was matched and paid: a reachable cargo, or a forged token. */
   onHarvest?: (cargo: Cargo, amount: number) => void;
-  /** A token was matched but the line is down: refused, so the player learns. */
+  /**
+   * A NETWORK token was matched but the line is down: refused, so the player
+   * learns. A forged token never arrives here (PP-13) — it always pays.
+   */
   onBlocked?: (cargo: Cargo, amount: number) => void;
   /**
    * W5: the board banked a combo coin. This is the wire the old game never
@@ -153,20 +167,33 @@ export function createQuarry(
   // means "demolish the road, match the tokens anyway" would pay out — the
   // exact bug this ticket exists to prevent. Recomputing the reachable set is
   // one flood fill over the two track layers, so paying it per token is free.
-  board.onHarvest = (res: ResKey, amount: number) => {
+  board.onHarvest = (res: ResKey, amount: number, forged: boolean) => {
     const cargo = GEM_TO_CARGO[res];
     reach = reachableCargo(state, owner, performance.now());
-    if ((reach[cargo] ?? 0) > 0) hooks.onHarvest?.(cargo, amount);
-    else hooks.onBlocked?.(cargo, amount);
+    // PP-13: a FORGED token — the tier-1 gem a 4-in-a-row mints (tier-2 for
+    // 5+) — pays no matter what the network reaches. It is the board's own
+    // reward for the long match, and gating it meant "match four wood, then
+    // match the token it left you with two more wood" paid nothing at all
+    // unless a depot already sat on a forest. Network-spawned tokens stay
+    // gated: that refusal is the whole J1 rule and it still fires.
+    if (forged || (reach[cargo] ?? 0) > 0) {
+      hooks.onHarvest?.(cargo, amount);
+      return true;
+    }
+    hooks.onBlocked?.(cargo, amount);
+    return false;
   };
   // W5: the coin the board banks on a combo goes straight to the purse.
   board.onGold = (n: number) => hooks.onGold?.(n);
   board.onPopup = (gains, label) => {
+    // PP-13: the board accumulates a gain ONLY for a harvest `onHarvest` said
+    // was paid, so this is exactly what reached the purse — re-gating it here
+    // on `reach` is what used to swallow a forged token's payout from the
+    // floating readout even when the purse had been credited.
     const out: Partial<Record<Cargo, number>> = {};
     for (const [res, n] of Object.entries(gains) as [ResKey, number][]) {
       const cargo = GEM_TO_CARGO[res];
-      // only what the gate actually credited belongs in the readout
-      if ((reach[cargo] ?? 0) > 0) out[cargo] = (out[cargo] ?? 0) + n;
+      out[cargo] = (out[cargo] ?? 0) + n;
     }
     if (Object.keys(out).length) hooks.onGains?.(out, label);
   };

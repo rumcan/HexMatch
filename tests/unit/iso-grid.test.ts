@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   generateMap, randomSeed, GRASS, WATER, ROUGH, terrainAt, industryAt, TOWN_OCC,
+  TOWN_HOUSES_MIN, TOWN_HOUSES_MAX,
 } from "../../src/iso/grid";
 import { MAP_W, MAP_H, INDUSTRY_QUOTA, INDUSTRY_BY_KEY, CARGOES } from "../../src/iso/config";
 
@@ -247,6 +248,32 @@ describe("F1 towns place and never strand an industry", () => {
     for (const seed of [1337, 7, 42, 100, 1, 123, 2026, 0]) {
       const g = generateMap(seed);
       expect(g.towns.length, `seed ${seed}`).toBe(4);
+    }
+  });
+
+  // PP-13: "make the towns 3 times bigger". Town footprint is derived from the
+  // house bounding box (streets + ring road all key off it), so house COUNT is
+  // the knob that scales the town — and it is the only one, so asserting the
+  // count asserts the size.
+  it("PP-13: every town is a full town — 3× the PP-10 house count", () => {
+    expect([TOWN_HOUSES_MIN, TOWN_HOUSES_MAX]).toEqual([18, 36]);
+    for (const seed of [1337, 7, 42, 100, 1, 123, 2026, 0, 79, 2024]) {
+      const g = generateMap(seed);
+      for (const t of g.towns) {
+        expect(t.houses.length, `seed ${seed} town ${t.id} house count`)
+          .toBeGreaterThanOrEqual(TOWN_HOUSES_MIN);
+        expect(t.houses.length, `seed ${seed} town ${t.id} house count`)
+          .toBeLessThanOrEqual(TOWN_HOUSES_MAX);
+        // a town this size spans at least 5×5 — three times the ~3×3 a
+        // 6-12 house town covered, which is the growth the player should see
+        const xs = t.houses.map(([x]) => x), ys = t.houses.map(([, y]) => y);
+        expect(Math.max(...xs) - Math.min(...xs) + 1, `seed ${seed} town ${t.id} width`)
+          .toBeGreaterThanOrEqual(5);
+        expect(Math.max(...ys) - Math.min(...ys) + 1, `seed ${seed} town ${t.id} height`)
+          .toBeGreaterThanOrEqual(5);
+        // and the ring road grew with it
+        expect(t.roads.length, `seed ${seed} town ${t.id} ring`).toBeGreaterThan(12);
+      }
     }
   });
 

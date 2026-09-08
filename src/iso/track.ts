@@ -77,6 +77,37 @@ export function seedTownRoads(t: Track, grid: Grid): void {
   }
 }
 
+/**
+ * PP-13: the owner id the map's PUBLIC ROADS carry.
+ *
+ * Players are 1 and 2 (player index + 1) and a town's own furniture is 0, so
+ * 3 is free and unambiguous. Public roads are the seed-generated highways
+ * between the towns (`grid.publicRoads`): unlike town roads they are NOT
+ * neutral — `trackOpenTo` lets every player's network run over them, which is
+ * what "roads players can use" means here.
+ */
+export const PUBLIC_OWNER = 3;
+
+/**
+ * PP-13: stamp the inter-town highways onto a fresh track.
+ *
+ * Call this AFTER `seedTownRoads`: a highway tile a town already paves is
+ * skipped, so the settlement keeps its neutral ring road and the highway
+ * simply meets it. Everything else is built with owner `PUBLIC_OWNER`, so the
+ * owner-scoped floods can tell a highway from town furniture — and from a
+ * player's own line, which is what keeps a public road demolish-proof
+ * (`game.ts` only tears down track whose owner is the player clicking).
+ *
+ * Like the town roads, these ride the snapshot's track bytes to a rejoined
+ * guest, so no client has to regenerate them (E10).
+ */
+export function seedPublicRoads(t: Track, grid: Grid): void {
+  for (const [tx, ty] of grid.publicRoads ?? []) {
+    if (hasTrack(t, "road", tx, ty)) continue;      // a town road already paves it
+    buildTile(t, "road", tx, ty, PUBLIC_OWNER);
+  }
+}
+
 export const tIdx = (tx: number, ty: number) => ty * MAP_W + tx;
 export const inMapT = (tx: number, ty: number) =>
   tx >= 0 && tx < MAP_W && ty >= 0 && ty < MAP_H;
@@ -202,10 +233,41 @@ export const ownerAt = (t: Track, tx: number, ty: number): number =>
  * only when it carries track AND its owner layer says `owner`. 0 is the
  * "no owner" identity, so an owner-0 flood only crosses owner-0 tiles —
  * two real players (1 and 2) can never see each other's road.
+ *
+ * PP-13: this is the STRICT test ("whose road is this?"). For "may this
+ * player's network run over the tile?" use `trackOpenTo`, which also admits
+ * the map's public highways.
  */
 export const trackOwnedBy = (t: Track, owner: number, tx: number, ty: number): boolean =>
   inMapT(tx, ty) && t.owner[tIdx(tx, ty)] === owner
   && (hasTrack(t, "road", tx, ty) || hasTrack(t, "rail", tx, ty));
+
+/** Is (tx,ty) one of the map's public highway tiles? */
+export const isPublicRoad = (t: Track, tx: number, ty: number): boolean =>
+  inMapT(tx, ty) && t.owner[tIdx(tx, ty)] === PUBLIC_OWNER
+  && (hasTrack(t, "road", tx, ty) || hasTrack(t, "rail", tx, ty));
+
+/**
+ * PP-13: may `owner`'s network run over this tile?
+ *
+ * A tile carries `owner`'s traffic when it holds track and either
+ *   (a) `owner` built it — the W2 rule, unchanged — or
+ *   (b) it is one of the map's PUBLIC roads: the seed-generated highways
+ *       between the towns, which belong to nobody and are everybody's to
+ *       drive on. That is the whole feature: hook a Depot or a Factory onto a
+ *       highway and the rest of the highway network is yours to route over,
+ *       including the stretches the rival is also using.
+ *
+ * Two things this deliberately does NOT do:
+ *   - it never lets one player cross the OTHER player's track (W2 stands);
+ *   - it never changes the owner-0 answer. 0 is the neutral identity a town's
+ *     ring road is stamped with, so `trackOpenTo(t, 0, …)` stays exactly
+ *     `trackOwnedBy(t, 0, …)`: town furniture never becomes a network, and a
+ *     public highway is never adopted by the neutral owner. Only a REAL owner
+ *     (a player, id ≥ 1) may drive on the highways.
+ */
+export const trackOpenTo = (t: Track, owner: number, tx: number, ty: number): boolean =>
+  trackOwnedBy(t, owner, tx, ty) || (owner !== 0 && isPublicRoad(t, tx, ty));
 
 export function playerNetwork(
   track: Track,
@@ -233,7 +295,8 @@ export function playerNetwork(
       const ni = tIdx(nx, ny);
       if (seen.has(ni)) continue;
       // W2: flood only over track THIS owner built — never the rival's.
-      if (trackOwnedBy(track, owner, nx, ny)) {
+      // PP-13: …or over the map's public highways, which are everybody's.
+      if (trackOpenTo(track, owner, nx, ny)) {
         seen.add(ni);
         stack.push(ni);
       }
@@ -292,6 +355,18 @@ export function autotileAround(t: Track, kind: TrackKind, tx: number, ty: number
  * this is. Passing 0 (the default) is a neutral placement — it does NOT
  * strip ownership, so a second build on an owned tile keeps the existing
  * owner unless the new builder is also a real owner (last real builder wins).
+ *
+ * PP-13, the one exception to "last real builder wins": a PUBLIC highway tile
+ * keeps owner `PUBLIC_OWNER` no matter who builds on it. Both players may drag
+ * a road straight over a highway — it is already paved, so `tileCost` charges
+ * nothing and the route connects — and without this the drag would silently
+ * re-stamp every tile it crossed into that player's private network, for free,
+ * taking the shared road away from the rival and from the map. Enforcing it
+ * here rather than at each call site is deliberate: `commitDrag`, the AI's
+ * builder and the demo all reach a public tile, and the invariant should not
+ * depend on any of them remembering. The build itself is still applied (the
+ * track bit is idempotent, and the autotile result is returned as usual), so
+ * a route through a highway still connects and still renders.
  */
 export function buildTile(
   t: Track, kind: TrackKind, tx: number, ty: number, owner: number = 0,
@@ -299,7 +374,7 @@ export function buildTile(
   if (!inMapT(tx, ty)) return null;
   const i = tIdx(tx, ty);
   layerOf(t, kind)[i] |= PRESENT;
-  if (owner !== 0) t.owner[i] = owner;
+  if (owner !== 0 && t.owner[i] !== PUBLIC_OWNER) t.owner[i] = owner;
   return autotileAround(t, kind, tx, ty);
 }
 

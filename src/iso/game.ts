@@ -36,6 +36,7 @@ import { generateMap, resolveMapSeed, type Grid, type Industry } from "./grid";
 import {
   createTrack, drawBits, previewDrag, commitDrag, canBuildOn, hasTrack,
   demolishTile, tIdx, playerNetwork, canAfford, buildRefusal, seedTownRoads,
+  seedPublicRoads, isPublicRoad,
   type Track, type TrackKind, type Purse, type DragPreview,
 } from "./track";
 import {
@@ -59,7 +60,7 @@ import {
 } from "./construction";
 import { bankTrade } from "../game/trade";
 import {
-  MAP_W, MAP_H, BANDIT_MS, BLOCK_MS, FOG_MS, SABOTAGE, SECURITY, type ResKey,
+  MAP_W, MAP_H, BANDIT_MS, BLOCK_MS, FOG_MS, SABOTAGE, SECURITY, choice, type ResKey,
 } from "../game/config";
 import { createQuarry, GEM_TO_CARGO, type Quarry } from "./quarry";
 import { createIsoMarket, toBag, type CargoBag, type IsoMarket } from "./market";
@@ -95,6 +96,17 @@ export const AI_BUILD_MS = 9000;
  * processing and trade are for.
  */
 export const START_PURSE: Purse = { wood: 12, stone: 12, ore: 0 };
+/**
+ * PP-13: what tearing up a ROAD tile salvages — exactly ONE unit, drawn at
+ * random from this list (so: 1 Wood, or 1 Stone).
+ *
+ * A road tile costs `BUILD_COSTS.road` = 1 Wood + 1 Stone, so this is a
+ * half-refund: re-routing a mistake costs one material per tile instead of
+ * two, but demolition is never free and never profitable. Rail is excluded on
+ * purpose — its price is dominated by 4 Ore and the road→rail upgrade exists
+ * precisely so rail does not have to be torn up.
+ */
+export const ROAD_DEMOLISH_REFUND: Cargo[] = ["wood", "stone"];
 /**
  * PP-05: re-exported from `construction.ts` (the authoritative cost module) so
  * the whole E8 tuning surface is reachable from this file, the way
@@ -149,6 +161,11 @@ export function startIsoGame(root: HTMLElement) {
   // track.road), so the first frame already shows settled towns with roads.
   // Neutral ownership: the town roads are never part of a player's network.
   seedTownRoads(track, grid);
+  // PP-13: the inter-town highways go on next, stamped PUBLIC_OWNER — every
+  // player's network may route over them, which is what makes them worth
+  // having on the map at all. Order matters: a highway tile a town already
+  // paved is skipped, so the town keeps its neutral ring.
+  seedPublicRoads(track, grid);
   const score: ScoreState = createScoreState();
 
   const players: PlayerState[] = [
@@ -568,15 +585,39 @@ export function startIsoGame(root: HTMLElement) {
       toast("Processing plant demolished.", "info");
       return;
     }
-    let removed = false;
+    let removedKind: TrackKind | null = null;
     // W2: the tool only tears down track YOU built. Your demolish can never
     // cut the rival's line (and vice-versa) — "no implicit sharing" applies
-    // to destruction, not just travel.
+    // to destruction, not just travel. PP-13: that also protects the map's
+    // PUBLIC highways, which carry owner `PUBLIC_OWNER` and are nobody's to
+    // demolish.
     const mine = track.owner[tIdx(tx, ty)] === me.i + 1;
     for (const kind of ["rail", "road"] as TrackKind[]) {
-      if (mine && hasTrack(track, kind, tx, ty)) { demolishTile(track, kind, tx, ty); removed = true; break; }
+      if (mine && hasTrack(track, kind, tx, ty)) {
+        demolishTile(track, kind, tx, ty); removedKind = kind; break;
+      }
     }
-    if (!removed) { toast("Nothing to demolish there.", "bad"); return; }
+    if (!removedKind) {
+      // PP-13: a public highway is track you may USE but never tear up — say
+      // so, rather than reporting an empty tile.
+      toast(
+        isPublicRoad(track, tx, ty)
+          ? "That's a public road — it isn't yours to demolish."
+          : "Nothing to demolish there.",
+        "bad",
+      );
+      return;
+    }
+    // PP-13: tearing up a ROAD salvages one of the two materials it cost
+    // (`BUILD_COSTS.road` is 1 Wood + 1 Stone). WHICH one comes back is the
+    // random part, so demolition is a partial refund rather than free
+    // re-routing. Rail pays nothing back: its price is dominated by 4 Ore,
+    // and the upgrade path is what rail is for.
+    if (removedKind === "road") {
+      const back = choice(ROAD_DEMOLISH_REFUND);
+      earn(me, { [back]: 1 });
+      toast(`Road cleared — salvaged 1 ${CARGO[back].icon} ${CARGO[back].name}.`, "good");
+    }
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
       const x = tx + dx, y = ty + dy;
       if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) renderer?.invalidateTile(x, y);
@@ -1395,6 +1436,12 @@ export function startIsoGame(root: HTMLElement) {
       commitTrackDrag(me, pv, kind);
       return pv;
     },
+    /**
+     * PP-13: the e2e/unit twin of a demolish click — the same `doDemolish`
+     * the pointer handler runs, so the road-salvage refund and the "that's a
+     * public road" refusal are reachable from a test without a pixel path.
+     */
+    demolish: (tx: number, ty: number) => doDemolish(tx, ty),
     /** W3: the e2e/unit twin of the AI build clock, with an injectable now. */
     aiTick: (now = performance.now()) => aiTick(now),
     /** The per-frame harvest clock (the rival's passive income lives here). */
