@@ -297,10 +297,10 @@ test.describe("iso game boots on the default route", () => {
     await page.mouse.click(factory.x, factory.y);
     await page.waitForFunction(() => (window as any).__iso.phase === "setup-harvester");
     expect((await page.evaluate(() => (window as any).__iso.factories.length))).toBeGreaterThanOrEqual(1);
-    // U2: the guide banner must re-word to the Harvester once the Factory is
+    // U2: the guide banner must re-word to the Depot once the Factory is
     // placed (the banner is the user-facing cue; the footprint itself is
     // asserted in the pixel sample above).
-    await expect(page.locator("#iso-banner")).toContainText(/place your harvester/i);
+    await expect(page.locator("#iso-banner")).toContainText(/place your depot/i);
 
     // ── setup round 2 of 2: click the harvester spot beside the industry ─
     // U2: the harvester is a 1×1 building, so its placement glow is the solid

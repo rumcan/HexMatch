@@ -184,7 +184,7 @@ export function startIsoGame(root: HTMLElement) {
     },
     onReset: () => {
       quarry.board.resetNeutral();
-      toast("Quarry collapsed. Fresh neutral board.", "info");
+      toast("Processing Plant collapsed. Fresh neutral board.", "info");
     },
     onBlackAction: (key) => buyBlack(key),
   });
@@ -356,18 +356,18 @@ export function startIsoGame(root: HTMLElement) {
     if (spot) eco.factories.push({ owner: "ai", ownerId: rival.i + 1, tx: spot[0], ty: spot[1] });
     phase = "setup-harvester";
     syncWorld();
-    toast("Factory placed. Now place your first harvester beside an industry.", "info");
+    toast("Factory placed. Now place your first depot beside an industry.", "info");
     return true;
   }
 
   function placeHarvester(tx: number, ty: number, p: PlayerState, _free: boolean): boolean {
     if (!canBuildOn(grid, "road", tx, ty)) { toast("Can't build there.", "bad"); return false; }
     if (eco.harvesters.some((h) => h.tx === tx && h.ty === ty)) {
-      toast("A harvester is already there.", "bad"); return false;
+      toast("A depot is already there.", "bad"); return false;
     }
     const h: Harvester = { id: nextHarvesterId++, owner: p.id, ownerId: p.i + 1, tx, ty };
     if (!industriesInCatchment(grid, h).length) {
-      toast("A harvester needs an industry in its 4×4 catchment.", "bad");
+      toast("A depot needs an industry in its 4×4 catchment.", "bad");
       return false;
     }
     // G5: harvesters seed the network; they no longer need existing track.
@@ -408,7 +408,7 @@ export function startIsoGame(root: HTMLElement) {
     if (hi >= 0) {
       eco.harvesters.splice(hi, 1);
       syncWorld(); rescoreNow();
-      toast("Harvester removed.", "info");
+      toast("Depot removed.", "info");
       return;
     }
     let removed = false;
@@ -463,7 +463,7 @@ export function startIsoGame(root: HTMLElement) {
     if (key === "block") {
       if (!spendGold(SABOTAGE.block.gold)) return;
       quarry.board.dropBlocks(4, BLOCK_MS, now);
-      toast("Iron Girders dropped on the quarry.", "good");
+      toast("Iron Girders dropped on the Processing Plant.", "good");
       return;
     }
     if (key === "fog") {
@@ -581,11 +581,11 @@ export function startIsoGame(root: HTMLElement) {
   function paintUi(_now: number) {
     let banner: string | null = null;
     if (phase === "setup-factory") banner = "Place your Factory — click a buildable tile";
-    else if (phase === "setup-harvester") banner = "Place your Harvester — it needs an industry in its 4×4 catchment";
+    else if (phase === "setup-harvester") banner = "Place your Depot — it needs an industry in its 4×4 catchment";
     else if (phase === "won") banner = `${winner?.name} wins with ${vpFor(score, winner?.id ?? "")} VP`;
-    else if (me.freeTrack > 0) banner = `${me.freeTrack} free track tiles remaining — connect your harvester to your Factory`;
-    else if (Object.keys(quarry.reach).length === 0) banner = "Nothing connected — the Quarry only pays cargo your network reaches";
-    else banner = "Match the tokened gems in the Quarry to harvest";
+    else if (me.freeTrack > 0) banner = `${me.freeTrack} free track tiles remaining — connect your depot to your Factory`;
+    else if (Object.keys(quarry.reach).length === 0) banner = "Nothing connected — the Processing Plant only pays cargo your network reaches";
+    else banner = "Match the tokened gems in the Processing Plant to process";
 
     let costInfo: string | null = null;
     if (preview) {
@@ -612,7 +612,7 @@ export function startIsoGame(root: HTMLElement) {
         const comp = buildAllComponents(track, h.ownerId);
         const conn = resolveConnection(eco, comp, h);
         const inds = industriesInCatchment(grid, h);
-        info = `<b>Harvester</b> (${h.owner === "you" ? "yours" : "rival"})<br>` +
+        info = `<b>Depot</b> (${h.owner === "you" ? "yours" : "rival"})<br>` +
           `serving ${inds.length} industr${inds.length === 1 ? "y" : "ies"}<br>` +
           `link: ${conn.kind ?? "<i>none</i>"} ×${conn.multiplier || 0}`;
       }
@@ -625,7 +625,7 @@ export function startIsoGame(root: HTMLElement) {
           industriesInCatchment(grid, h).some((i) => i.id === ind.id));
         info = `<b>${def?.name ?? ind.type}</b><br>` +
           `${CARGO[def.cargo].icon} ${CARGO[def.cargo].name} · output ${ind.output}<br>` +
-          `${servers.length} harvester${servers.length === 1 ? "" : "s"}`;
+          `${servers.length} depot${servers.length === 1 ? "" : "s"}`;
       }
     }
 
@@ -758,7 +758,7 @@ export function startIsoGame(root: HTMLElement) {
             phase = "play";
             lastHarvest = performance.now();
             lastAi = performance.now();
-            toast("Now connect it to your Factory with road or rail — then match the tokened gems in the Quarry.", "info");
+            toast("Now connect it to your Factory with road or rail — then match the tokened gems in the Processing Plant.", "info");
           }
         } else if (phase === "play") {
           if (tool === "harvester") placeHarvester(p.tx, p.ty, me, false);

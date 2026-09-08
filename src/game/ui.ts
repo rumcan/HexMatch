@@ -185,13 +185,13 @@ export function createOriginalUi(
   const qp = h("div", "panel");
   qp.id = "iso-quarry";
   const qh = h("div", "quarry-head");
-  qh.appendChild(h("div", "panel-title", "💎 Your Quarry"));
+  qh.appendChild(h("div", "panel-title", "💎 Your Processing Plant"));
   const quarryStatus = h("div", "quarry-status");
   qh.appendChild(quarryStatus);
   const comboBank = h("div", "combo-bank");
   qh.appendChild(comboBank);
   const resetBtn = h("button", "reset-btn", "♻ Reset");
-  resetBtn.title = "Collapse the quarry: lose ALL resources, get a fresh neutral board";
+  resetBtn.title = "Collapse the Processing Plant: lose ALL resources, get a fresh neutral board";
   resetBtn.onclick = () => hooks.onReset();
   qh.appendChild(resetBtn);
   qp.appendChild(qh);
@@ -256,7 +256,7 @@ export function createOriginalUi(
   // ── mobile bottom nav ─────────────────────────────────────────────────────
   const mobileNav = h("nav", "mnav");
   const views: [string, string, string][] = [
-    ["map", "🗺", "Map"], ["quarry", "💎", "Quarry"], ["build", "🏗", "Build"], ["trade", "⇄", "Trade"],
+    ["map", "🗺", "Map"], ["quarry", "💎", "Processing Plant"], ["build", "🏗", "Build"], ["trade", "⇄", "Trade"],
   ];
   for (const [v, ic, label] of views) {
     const b = h("button", "mnav-btn" + (v === "map" ? " active" : ""));
@@ -287,7 +287,7 @@ export function createOriginalUi(
   const TOOLS: { key: UiTool; label: string; sub: string }[] = [
     { key: "road", label: "Road", sub: "1 stone · 1 VP" },
     { key: "rail", label: "Rail", sub: "4 ore + 1 stone · 3 VP" },
-    { key: "harvester", label: "Harvester", sub: "free · on industry" },
+    { key: "harvester", label: "Depot", sub: "free · on industry" },
     { key: "demolish", label: "Demolish", sub: "refund none" },
   ];
   for (const t of TOOLS) {
@@ -301,7 +301,7 @@ export function createOriginalUi(
   }
   // Quarry / Market panel toggles live at the bottom of the build column so
   // the original controls remain one list and the e2e selectors stay stable.
-  const quarryBtn = h("button", "build-btn bg-factory", `<div class="bb-mid"><b>Quarry</b><small>match to harvest</small></div>`);
+  const quarryBtn = h("button", "build-btn bg-factory", `<div class="bb-mid"><b>Processing Plant</b><small>match to process</small></div>`);
   quarryBtn.dataset.panel = "quarry";
   quarryBtn.onclick = () => setQuarryOpen(!isQuarryOpen());
   buildList.appendChild(quarryBtn);
@@ -899,11 +899,11 @@ export function createOriginalUi(
       .map((c) => `<span class="chip" style="--c:${CARGO[c].c2}">${CARGO[c].icon}${CARGO[c].name}</span>`).join("");
     reachEl.innerHTML = chipsHtml
       ? `<b>Network reaches</b>${chipsHtml}`
-      : "<b>Network reaches</b><i>nothing — connect a harvester</i>";
+      : "<b>Network reaches</b><i>nothing — connect a depot</i>";
     const hint = h("div", "iso-hint");
     hint.textContent = chipsHtml
-      ? "Match 3+ gems. Only tokened gems (numbered) harvest the cargo above."
-      : "Connect a harvester to your Factory: tokens only spawn on cargo you reach.";
+      ? "Match 3+ gems. Only tokened gems (numbered) process the cargo above."
+      : "Connect a depot to your Factory: tokens only spawn on cargo you reach.";
     reachEl.appendChild(hint);
   }
 
@@ -914,10 +914,10 @@ export function createOriginalUi(
       <div class="modal-back"></div>
       <div class="modal box">
         <h2>⚙️ HEXMATCH INDUSTRIES</h2>
-        <p class="sub">Two worlds, one empire. First to <b>${VP.target}★ Victory Points</b> wins.</p>
+        <p class="sub">Two worlds, one empire: <b>resource node → Depot → transport network → Factory → processing → resources available for construction</b>. First to <b>${VP.target}★ Victory Points</b> wins.</p>
         <div class="help-cols">
-          <div class="help-col"><h3>🏙️ The Territory</h3><p>Build <b>Roads</b> & <b>Rails</b> between your Factory and Harvesters. The rail multiplier and VP are on the connection; a broken line revokes it.</p><p>Pan with the <b>middle mouse button</b> (wheel zooms, touch drags pan). The left button only places or selects — dragging it never pans.</p></div>
-          <div class="help-col"><h3>💎 The Quarry</h3><p>Match tokens to harvest. A colour only pays when your network reaches its industry. Match 4 doubles, match 5 makes a <b>bomb</b>. <b>Gold</b> 🪙 is its own colour — it spawns only while a harvester is connected to a gold mine.</p></div>
+          <div class="help-col"><h3>🏙️ The Territory</h3><p>Place <b>Depots</b> beside resource nodes to collect their output, then build <b>Roads</b> & <b>Rails</b> to carry it to your Factory. The rail multiplier and VP are on the connection; a broken line revokes it.</p><p>Pan with the <b>middle mouse button</b> (wheel zooms, touch drags pan). The left button only places or selects — dragging it never pans.</p></div>
+          <div class="help-col"><h3>💎 The Processing Plant</h3><p>Where your Factory turns delivered cargo into resources available for construction. Match tokens to process: a colour only pays when your network reaches its industry. Match 4 doubles, match 5 makes a <b>bomb</b>. <b>Gold</b> 🪙 is its own colour — it spawns only while a depot is connected to a gold mine.</p></div>
           <div class="help-col"><h3>🪙 Gold, Trade & Defence</h3><p>Earn <b>gold</b> from gold-mine access or combos. Buy Black Market actions, post offers or bank 4:1.</p></div>
         </div>
         <button class="big-btn" id="startBtn">Start Production ⚙️</button>

@@ -998,3 +998,54 @@ describe("D2/D3 road building feedback and debug overlay toggle", () => {
     expect(toastEl.textContent).toMatch(/Debug overlay: OFF/);
   });
 });
+
+// ── PP-01: terminology — the match-3 interface is the Processing Plant, ──
+// the collector building is a Depot. UI-only: internal identifiers (tool
+// keys, phase names, snapshot shapes) stay untouched so saved games keep
+// working, and the stone node keeps its "Quarry" name.
+describe("PP-01 terminology: Processing Plant + Depot", () => {
+  it("labels the collector tool 'Depot' and shows no player-facing 'Harvester'", async () => {
+    await boot();
+    const depot = [...root.querySelectorAll<HTMLElement>("[data-tool]")]
+      .find((b) => b.dataset.tool === "harvester");
+    expect(depot?.textContent).toContain("Depot");
+    // nothing the player can READ on the booted screen says "harvester"
+    expect(root.textContent).not.toMatch(/harvester/i);
+  });
+
+  it("calls the match-3 panel, its build toggle and the mobile nav 'Processing Plant'", async () => {
+    await boot();
+    expect(root.querySelector("#iso-quarry .panel-title")?.textContent).toContain("Processing Plant");
+    expect(root.querySelector('[data-panel="quarry"]')?.textContent).toContain("Processing Plant");
+    const nav = [...root.querySelectorAll<HTMLElement>(".mnav-btn")]
+      .find((b) => b.dataset.view === "quarry");
+    expect(nav?.textContent).toContain("Processing Plant");
+  });
+
+  it("explains the loop in the help and keeps the stone node's Quarry name", async () => {
+    await boot();
+    // the stone-producing resource node keeps its existing name
+    expect(INDUSTRY_BY_KEY["quarry"].name).toBe("Quarry");
+    const helpBtn = [...root.querySelectorAll<HTMLElement>(".icon-btn")]
+      .find((b) => b.title === "How to play");
+    helpBtn?.click();
+    await settle();
+    const modal = root.querySelector(".modal") as HTMLElement;
+    expect(modal.textContent).toContain(
+      "resource node → Depot → transport network → Factory → processing → resources available for construction",
+    );
+    expect(modal.textContent).toContain("The Processing Plant");
+    expect(modal.textContent).not.toMatch(/harvester/i);
+  });
+
+  it("leaves the internal identifiers (save compatibility) unchanged", async () => {
+    const h = await boot();
+    expect(h.phase).toBe("setup-factory");
+    expect(h.tool).toBe("road");
+    h.finishSetup();
+    expect(h.phase).toBe("play");
+    // the snapshot/eco shape the save format depends on
+    expect(Array.isArray(h.eco.harvesters)).toBe(true);
+    expect(Array.isArray(h.eco.factories)).toBe(true);
+  });
+});
