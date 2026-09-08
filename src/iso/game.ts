@@ -47,6 +47,10 @@ import {
 import { aiBuildStep, chooseRivalFactorySpot } from "./ai";
 import { planDepotPlacement, planFactoryPlacement, type PlacementPlan } from "./placement";
 import {
+  PLANT_COST, PLANT_REFUSAL_TEXT, addPlant, adjacentTown, canAffordPlant,
+  chooseAiPlantSpot, footprintTiles, plantRefusal, plantsOf,
+} from "./plants";
+import {
   CARGO, FACTORY_FOOTPRINT, INDUSTRY_BY_KEY, TRANSPORT, VP_TARGET, townHouseSprite, type Cargo,
 } from "./config";
 import {
@@ -82,7 +86,8 @@ export const AI_BUILD_MS = 9000;
 export const START_PURSE: Purse = { stone: 12, ore: 0 };
 export { VP_TARGET };
 
-export type Tool = "road" | "rail" | "harvester" | "demolish";
+/** PP-06: `plant` raises an ADDITIONAL processing plant beside another town. */
+export type Tool = "road" | "rail" | "harvester" | "plant" | "demolish";
 
 export interface PlayerState {
   /** Stable market index — offers are routed by it (`trade.ts`). */
@@ -257,6 +262,10 @@ export function startIsoGame(root: HTMLElement) {
 
   const factoryOf = (id: string) => eco.factories.find((f) => f.owner === id) ?? null;
 
+  /** PP-06: the plant price, rendered from the one authoritative constant. */
+  const plantCostLabel = () => (Object.entries(PLANT_COST) as [Cargo, number][])
+    .map(([k, v]) => `${v} ${CARGO[k].icon}`).join(" ");
+
   const syncWorld = () => {
     world.roadBits = drawBits(track, "road");
     world.railBits = drawBits(track, "rail");
@@ -344,7 +353,11 @@ export function startIsoGame(root: HTMLElement) {
       }
     }
     // W2: the factory carries its builder's track-owner id (player index + 1).
-    eco.factories.push({ owner: "you", ownerId: me.i + 1, tx, ty });
+    // PP-06: the starting Factory is plant #0 — same building, same record.
+    eco.factories.push({
+      owner: "you", ownerId: me.i + 1, tx, ty,
+      id: 0, townId: adjacentTown(grid, tx, ty)?.id ?? null,
+    });
     // Give the rival a factory a good distance away, on legal ground it can
     // actually build from. W8: the farthest road-legal tile was often ROUGH,
     // where rail is illegal, and the rival's rail-first plan then had nothing
@@ -354,7 +367,12 @@ export function startIsoGame(root: HTMLElement) {
     const spot = chooseRivalFactorySpot(grid, track, [tx, ty], {
       purse: rival.purse, free: rival.freeTrack, ownerId: rival.i + 1, owner: rival.id,
     });
-    if (spot) eco.factories.push({ owner: "ai", ownerId: rival.i + 1, tx: spot[0], ty: spot[1] });
+    if (spot) {
+      eco.factories.push({
+        owner: "ai", ownerId: rival.i + 1, tx: spot[0], ty: spot[1],
+        id: 0, townId: adjacentTown(grid, spot[0], spot[1])?.id ?? null,
+      });
+    }
     phase = "setup-harvester";
     syncWorld();
     toast("Factory placed. Now place your first depot beside an industry.", "info");
@@ -375,6 +393,41 @@ export function startIsoGame(root: HTMLElement) {
     eco.harvesters.push(h);
     syncWorld();
     rescoreNow();
+    return true;
+  }
+
+  /**
+   * PP-06: raise an ADDITIONAL processing plant beside another town.
+   *
+   * One rule function (`plantRefusal`) gates the preview, this click and the
+   * AI, so the town-adjacency requirement has no bypass. The cost is checked
+   * BEFORE the site exists and charged exactly once, on the single success
+   * path — a refused placement can never take resources.
+   */
+  function placePlant(tx: number, ty: number, p: PlayerState): boolean {
+    const why = plantRefusal(grid, track, eco, tx, ty);
+    if (why !== null) {
+      if (p.human) toast(PLANT_REFUSAL_TEXT[why], "bad");
+      return false;
+    }
+    if (!canAffordPlant(p.purse)) {
+      if (p.human) {
+        toast(`Not enough materials — a processing plant costs ${plantCostLabel()}.`, "bad");
+      }
+      return false;
+    }
+    if (!spend(p, PLANT_COST)) return false;            // charged exactly once
+    const plant = addPlant(grid, track, eco, p.id, p.i + 1, tx, ty);
+    if (!plant) {                                        // unreachable; refund
+      earn(p, PLANT_COST);
+      return false;
+    }
+    syncWorld();
+    rescoreNow();
+    if (p.human) {
+      const n = plantsOf(eco, p.id).length;
+      toast(`Processing plant #${n} raised beside the town. Connect depots to it — they all feed the same board.`, "good");
+    }
     return true;
   }
 
@@ -412,6 +465,21 @@ export function startIsoGame(root: HTMLElement) {
       toast("Depot removed.", "info");
       return;
     }
+    // PP-06: a plant is demolishable like any other building — but never the
+    // last one, or the player would have nowhere to deliver.
+    const pi = eco.factories.findIndex((f) => f.owner === me.id
+      && tx >= f.tx && tx < f.tx + FACTORY_FOOTPRINT[0]
+      && ty >= f.ty && ty < f.ty + FACTORY_FOOTPRINT[1]);
+    if (pi >= 0) {
+      if (plantsOf(eco, me.id).length <= 1) {
+        toast("You can't demolish your only processing plant.", "bad");
+        return;
+      }
+      eco.factories.splice(pi, 1);
+      syncWorld(); rescoreNow();
+      toast("Processing plant demolished.", "info");
+      return;
+    }
     let removed = false;
     // W2: the tool only tears down track YOU built. Your demolish can never
     // cut the rival's line (and vice-versa) — "no implicit sharing" applies
@@ -431,6 +499,18 @@ export function startIsoGame(root: HTMLElement) {
 
   // ── Black Market (U1 wiring over the restored board + industry blockade) ──
   const REPAIR_ISO_COST: Purse = { wood: 1, stone: 1, grain: 1, ore: 1 };
+  /**
+   * PP-08: Security Forces are defensive, not sabotage, so they no longer cost
+   * Gold. `SECURITY.cost` is declared in the legacy ResKey table
+   * (`game/config.ts`); GEM_TO_CARGO is the one ResKey→Cargo bijection, so the
+   * same mapping the board uses moves the price into purse space
+   * (`wheat`→grain, `brick`→stone). Only the four SABOTAGE actions above keep
+   * a Gold price — Gold is reserved for Black Market sabotage.
+   */
+  const SECURITY_ISO_COST: Purse = Object.fromEntries(
+    (Object.entries(SECURITY.cost ?? {}) as [ResKey, number][])
+      .map(([r, n]) => [GEM_TO_CARGO[r], n]),
+  ) as Purse;
 
   function buyBlack(key: string) {
     const now = performance.now();
@@ -474,7 +554,13 @@ export function startIsoGame(root: HTMLElement) {
       return;
     }
     if (key === "security") {
-      if (!spendGold(SECURITY.gold)) return;
+      // PP-08: this is a defensive action, so it is bought with MATERIALS —
+      // never with Gold. Insufficient materials refuse the hire and consume
+      // nothing (the affordability check runs before any deduction).
+      const affordable = (Object.entries(SECURITY_ISO_COST) as [Cargo, number][])
+        .every(([k, v]) => (me.purse[k] ?? 0) >= v);
+      if (!affordable) { toast("Not enough materials for Security Forces.", "bad"); return; }
+      spend(me, SECURITY_ISO_COST);
       toast("Security Forces hired (defensive in this build).", "info");
       return;
     }
@@ -528,6 +614,12 @@ export function startIsoGame(root: HTMLElement) {
     lastAi = now;
     const f = factoryOf("ai");
     if (!f) return;
+    // PP-06: the rival expands too, through the SAME rule + cost path — no
+    // AI-only fallback that skips town adjacency or the charge.
+    if (canAffordPlant(rival.purse)) {
+      const spot = chooseAiPlantSpot(grid, track, eco, rival.id);
+      if (spot && placePlant(spot[0], spot[1], rival)) return;
+    }
     // W3: the rival plans with the SAME cost model as the player — its free
     // setup allowance first, then its purse. (W2's ownership change is what
     // un-sticks it: the rival no longer "sees" itself as connected across
@@ -579,6 +671,52 @@ export function startIsoGame(root: HTMLElement) {
   };
   const overlayItems = () => {
     if (preview) {
+      for (const [x, y] of preview.tiles) items.push({ sprite: "highlight", tx: x, ty: y });
+    } else if (hover) {
+      if (phase === "setup-factory") {
+        // Highlight all four tiles of the real factory footprint, so the
+        // build preview matches exactly the tiles the building covers.
+        for (let dy = 0; dy < FACTORY_FOOTPRINT[1]; dy++) {
+          for (let dx = 0; dx < FACTORY_FOOTPRINT[0]; dx++) {
+            const x = hover.tx + dx, y = hover.ty + dy;
+            if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) continue;
+            items.push({ sprite: "highlight", tx: x, ty: y });
+          }
+        }
+      } else if (tool === "plant") {
+        // PP-06/PP-03: the 2×2 footprint is the strong overlay; the qualifying
+        // town is the soft one, so "footprint" and "reach/qualifier" never
+        // read as the same thing. Both come from the SAME rule the click runs.
+        const ok = plantRefusal(grid, track, eco, hover.tx, hover.ty) === null;
+        for (const [x, y] of footprintTiles(hover.tx, hover.ty)) {
+          if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) continue;
+          // No dedicated invalid sprite in the atlas: a legal footprint is the
+          // strong glow, an illegal one only the faint tint (plus the refusal
+          // reason in the HUD line below).
+          items.push({ sprite: ok ? "highlight" : "highlight_soft", tx: x, ty: y });
+        }
+        const town = adjacentTown(grid, hover.tx, hover.ty);
+        if (town) {
+          for (const [hx, hy] of town.houses) {
+            items.push({ sprite: "highlight_soft", tx: hx, ty: hy });
+          }
+        }
+      } else if (tool === "harvester" || phase === "setup-harvester") {
+        // U2: the harvester is a 1×1 building. Its 4×4 catchment is
+        // informational, so the placed tile is the solid glow and the
+        // catchment uses the fainter highlight_soft tint.
+        items.push({ sprite: "highlight", tx: hover.tx, ty: hover.ty });
+        const r = catchmentRect(hover.tx, hover.ty);
+        for (let y = r.y0; y <= r.y1; y++) {
+          for (let x = r.x0; x <= r.x1; x++) {
+            if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) continue;
+            if (x === hover.tx && y === hover.ty) continue;
+            items.push({ sprite: "highlight_soft", tx: x, ty: y });
+          }
+        }
+      } else {
+        items.push({ sprite: "highlight", tx: hover.tx, ty: hover.ty });
+      }
       return preview.tiles.map(([x, y]) => ({ sprite: "highlight", tx: x, ty: y }));
     }
     return hover ? overlayItemsAt(hover.tx, hover.ty) : [];
@@ -591,6 +729,7 @@ export function startIsoGame(root: HTMLElement) {
     else if (phase === "won") banner = `${winner?.name} wins with ${vpFor(score, winner?.id ?? "")} VP`;
     else if (me.freeTrack > 0) banner = `${me.freeTrack} free track tiles remaining — connect your depot to your Factory`;
     else if (Object.keys(quarry.reach).length === 0) banner = "Nothing connected — the Processing Plant only pays cargo your network reaches";
+    else if (tool === "plant") banner = `Raise another processing plant next to a town — ${plantCostLabel()}`;
     else banner = "Match the tokened gems in the Processing Plant to process";
 
     let costInfo: string | null = null;
@@ -605,6 +744,15 @@ export function startIsoGame(root: HTMLElement) {
       costInfo = `<span class="mb-txt"><b>${n}</b> tiles · ${label}</span>` +
         (preview.truncated ? ` · <i>blocked</i>` : "") +
         `<span class="mb-cost">${TRANSPORT[tool === "rail" ? "rail" : "road"].vp} VP</span>`;
+    } else if (tool === "plant" && hover) {
+      // PP-06: the cost is PREVIEWED from the same constant the charge uses,
+      // together with the refusal reason, so a click is never a surprise.
+      const why = plantRefusal(grid, track, eco, hover.tx, hover.ty);
+      const afford = canAffordPlant(me.purse);
+      const note = why !== null ? PLANT_REFUSAL_TEXT[why]
+        : afford ? "ready" : "not enough materials";
+      costInfo = `<span class="mb-txt"><b>Processing plant</b> · ${note}</span>` +
+        `<span class="mb-cost">${plantCostLabel()}</span>`;
     }
 
     // PP-03: while a Factory or a Depot is being placed, an INVALID hover
@@ -622,6 +770,41 @@ export function startIsoGame(root: HTMLElement) {
 
     // industry / harvester inspector
     let info = "";
+    const ref = hover?.ref as { kind?: string; id?: number } | null;
+    if (ref && ref.kind === "harvester") {
+      const h = eco.harvesters.find((x) => x.id === ref.id);
+      if (h) {
+        // W2: the inspector resolves the connection over THIS harvester's
+        // own network, not the merged graph.
+        const comp = buildAllComponents(track, h.ownerId);
+        const conn = resolveConnection(eco, comp, h);
+        const inds = industriesInCatchment(grid, h);
+        info = `<b>Depot</b> (${h.owner === "you" ? "yours" : "rival"})<br>` +
+          `serving ${inds.length} industr${inds.length === 1 ? "y" : "ies"}<br>` +
+          `link: ${conn.kind ?? "<i>none</i>"} ×${conn.multiplier || 0}`;
+      }
+    } else if (ref && ref.kind === "factory") {
+      const owner = (hover?.ref as { owner?: string } | null)?.owner ?? "";
+      const list = plantsOf(eco, owner);
+      const f = list.find((x) => hover
+        && hover.tx >= x.tx && hover.tx < x.tx + FACTORY_FOOTPRINT[0]
+        && hover.ty >= x.ty && hover.ty < x.ty + FACTORY_FOOTPRINT[1]);
+      const served = eco.harvesters.filter((h) => h.owner === owner
+        && resolveConnection(eco, buildAllComponents(track, h.ownerId), h).factory === f).length;
+      info = `<b>Processing Plant</b> (${owner === "you" ? "yours" : "rival"})<br>` +
+        `plant ${(f?.id ?? 0) + 1} of ${list.length}` +
+        (f?.townId != null ? ` · town ${f.townId + 1}` : "") + `<br>` +
+        `${served} depot${served === 1 ? "" : "s"} delivering here`;
+    } else if (hover) {
+      const occ = grid.occupancy[tIdx(hover.tx, hover.ty)];
+      if (occ >= 0) {
+        const ind: Industry = grid.industries[occ];
+        const def = INDUSTRY_BY_KEY[ind.type];
+        const servers = eco.harvesters.filter((h) =>
+          industriesInCatchment(grid, h).some((i) => i.id === ind.id));
+        info = `<b>${def?.name ?? ind.type}</b><br>` +
+          `${CARGO[def.cargo].icon} ${CARGO[def.cargo].name} · output ${ind.output}<br>` +
+          `${servers.length} depot${servers.length === 1 ? "" : "s"}`;
     if (plan && !plan.valid) {
       const label = plan.kind === "factory" ? "Factory" : "Depot";
       info = `<b>${label}</b> can't go here — <i>${plan.why ?? "not buildable"}</i>.`;
@@ -788,6 +971,7 @@ export function startIsoGame(root: HTMLElement) {
           }
         } else if (phase === "play") {
           if (tool === "harvester") placeHarvester(p.tx, p.ty, me, false);
+          else if (tool === "plant") placePlant(p.tx, p.ty, me);
           else if (tool === "demolish") doDemolish(p.tx, p.ty);
           else if (tool === "road" || tool === "rail") {
             const net = playerNetwork(track, me.i + 1, eco.factories, eco.harvesters);
@@ -818,7 +1002,7 @@ export function startIsoGame(root: HTMLElement) {
   }, { passive: false });
 
   window.addEventListener("keydown", (e) => {
-    const map: Record<string, Tool> = { "1": "road", "2": "rail", "3": "harvester", "4": "demolish" };
+    const map: Record<string, Tool> = { "1": "road", "2": "rail", "3": "harvester", "4": "plant", "5": "demolish" };
     if (map[e.key]) tool = map[e.key];
     if (e.key === "`" || e.key === "~") {
       if (debug) {
@@ -941,6 +1125,12 @@ export function startIsoGame(root: HTMLElement) {
     swap: (r1: number, c1: number, r2: number, c2: number) =>
       quarry.board.trySwap(r1, c1, r2, c2, performance.now()),
     setTool: (t: Tool) => { tool = t; },
+    /** PP-06: the test twin of clicking with the Processing Plant tool. */
+    placePlant: (tx: number, ty: number, who: "you" | "ai" = "you") =>
+      placePlant(tx, ty, who === "ai" ? rival : me),
+    /** PP-06: every processing plant a player owns (starting Factory first). */
+    plantsOf: (who: string) => plantsOf(eco, who),
+    get plantCost() { return { ...PLANT_COST }; },
     /**
      * W8: the test twin of the setup click that places YOUR factory. It runs
      * the real `placeFactory`, including the rival-placement search, so the

@@ -43,7 +43,8 @@ const GEM_ART: Record<Cargo, string> = Object.fromEntries(
 ) as Record<Cargo, string>;
 
 // ── tool + state shapes ─────────────────────────────────────────────────────
-export type UiTool = "road" | "rail" | "harvester" | "demolish";
+/** PP-06: `plant` raises an additional processing plant beside another town. */
+export type UiTool = "road" | "rail" | "harvester" | "plant" | "demolish";
 
 export interface UiPlayer {
   id: string;
@@ -120,6 +121,20 @@ const REPAIR_ISO: Partial<Record<Cargo, number>> = {
   ore: REPAIR_COST.ore ?? 0,
 };
 
+/**
+ * PP-08: Security Forces are DEFENSIVE, not sabotage, so they were repriced
+ * from Gold to materials (`SECURITY.cost`, legacy ResKey table — same shape
+ * as REPAIR_COST). `wheat`→grain, `brick`→stone, the same mapping Repair Crew
+ * uses. Gold is reserved for Black Market sabotage and pays for nothing else.
+ */
+const SECURITY_ISO: Partial<Record<Cargo, number>> = {
+  grain: SECURITY.cost?.wheat ?? 0,
+  stone: SECURITY.cost?.brick ?? 0,
+};
+
+/** PP-08: the standing rule, shown wherever Gold is displayed or traded. */
+const GOLD_RULE = "Gold is reserved for Black Market sabotage.";
+
 export function createOriginalUi(
   board: Board,
   market: IsoMarket,
@@ -174,6 +189,8 @@ export function createOriginalUi(
 
   const sp = h("div", "panel grow");
   sp.appendChild(h("div", "panel-title", "🕵️ Black Market"));
+  // PP-08: the standing currency rule, stated right where Gold is spent.
+  sp.appendChild(h("div", "pane-note gold-rule", `🪙 ${GOLD_RULE} Construction and trade never touch it.`));
   const sabList = h("div", "sab-list");
   sp.appendChild(sabList);
   left.appendChild(sp);
@@ -291,6 +308,9 @@ export function createOriginalUi(
     { key: "road", label: "Road", sub: "1 stone · 1 VP" },
     { key: "rail", label: "Rail", sub: "4 ore + 1 stone · 3 VP" },
     { key: "harvester", label: "Depot", sub: "free · on industry" },
+    // PP-06: another instance of the SAME processing building, raised beside
+    // another town. Cost text mirrors PLANT_COST in src/iso/plants.ts.
+    { key: "plant", label: "Processing Plant", sub: "2🪵 2🪨 2🌾 3⛏️ · next to a town" },
     { key: "demolish", label: "Demolish", sub: "refund none" },
   ];
   for (const t of TOOLS) {
@@ -327,9 +347,12 @@ export function createOriginalUi(
       sabList.appendChild(b);
     }
     const secOn = false;
-    const secAfford = (me.res.gold ?? 0) >= SECURITY.gold;
+    // PP-08: Security Forces are bought with MATERIALS now, so their
+    // affordability reads the purse, not the Gold balance.
+    const secAfford = (Object.entries(SECURITY_ISO) as [Cargo, number][])
+      .every(([k, v]) => (me.res[k] ?? 0) >= v);
     const sb = h("button", "sab-btn secure-btn" + (secOn ? " active" : secAfford ? "" : " disabled"));
-    sb.innerHTML = `<div class="sab-top"><b>🛡️ ${SECURITY.name}</b><span class="sab-cost">${SECURITY.gold}🪙</span></div>` +
+    sb.innerHTML = `<div class="sab-top"><b>🛡️ ${SECURITY.name}</b><span class="sab-cost">${costStr(SECURITY_ISO)}</span></div>` +
       `<div class="sab-desc">${SECURITY.desc}</div>`;
     sb.dataset.black = "security";
     sb.onclick = () => hooks.onBlackAction("security");
@@ -346,15 +369,19 @@ export function createOriginalUi(
   }
 
   // ── market composer ───────────────────────────────────────────────────────
+  // PP-08: Gold is not a trading good, so it never appears in either select —
+  // it cannot be given, wanted, or banked. The handlers below still guard the
+  // rule in case a stale option value survives in the DOM.
+  const TRADEABLE = CARGOES.filter((k) => k !== "gold");
   const mkSel = (value: Cargo) => {
     const s = h("select", "res-sel") as HTMLSelectElement;
-    for (const k of CARGOES) {
+    for (const k of TRADEABLE) {
       const o = document.createElement("option");
       o.value = k;
       o.text = CARGO[k].name;
       s.appendChild(o);
     }
-    s.value = value;
+    s.value = value === "gold" ? "stone" : value;
     return s;
   };
   const mkNum = (def: number) => {
@@ -411,12 +438,15 @@ export function createOriginalUi(
   bform.appendChild(bGive); bform.appendChild(bWant); bform.appendChild(bankBtn);
   bankPane.appendChild(bform);
   bankPane.appendChild(h("div", "pane-note",
-    "The bank always trades four of one good for one of another. No rival required, no waiting."));
+    `The bank always trades four of one good for one of another. No rival required, no waiting. 🪙 ${GOLD_RULE}`));
 
   function postOffer() {
     const give = postGive.value as Cargo;
     const want = postWant.value as Cargo;
     if (give === want) { toast("Pick two different goods to trade.", "danger"); return; }
+    // PP-08: defence in depth — the market refuses gold anyway, and the select
+    // never offers it, but say WHY if a stale value ever gets here.
+    if (give === "gold" || want === "gold") { toast(`🪙 ${GOLD_RULE}`, "danger"); return; }
     const giveN = Math.max(1, Math.floor(Number(postGiveN.value) || 2));
     const wantN = Math.max(1, Math.floor(Number(postWantN.value) || 2));
     if ((me.res[give] ?? 0) < giveN) { toast(`Not enough ${CARGO[give].name}.`, "danger"); return; }
@@ -433,6 +463,8 @@ export function createOriginalUi(
     const give = bankGive.value as Cargo;
     const want = bankWant.value as Cargo;
     if (give === want) { toast("Pick two different goods to trade.", "danger"); return; }
+    // PP-08: the bank never turns Gold into construction stock (or back).
+    if (give === "gold" || want === "gold") { toast(`🪙 ${GOLD_RULE}`, "danger"); return; }
     if (market.bank(me, give, want)) {
       toast(`Bank: ${BANK_RATE} ${CARGO[give].name} → 1 ${CARGO[want].name}.`, "success");
       // W6: bank trades are trades — log them even with no rival around.
@@ -800,6 +832,9 @@ export function createOriginalUi(
       chip.style.setProperty("--c1", CARGO[k].c1);
       chip.style.setProperty("--c2", CARGO[k].c2);
       chip.innerHTML = `<span class="chip-ic"><i class="gem-ic">${CARGO[k].icon}</i></span><span class="chip-n">${purse[k] ?? 0}</span>`;
+      // PP-08: the Gold chip states what the currency is for, so a player
+      // holding coins never mistakes them for construction stock.
+      if (k === "gold") chip.title = GOLD_RULE;
       chips.appendChild(chip);
     }
     const meP = players.find((p) => p.human);
@@ -833,7 +868,12 @@ export function createOriginalUi(
   // ── paint ─────────────────────────────────────────────────────────────────
   function paint(state: UiState) {
     renderHUD(state.purse, state.players);
-    const sabKey = `${me.res.gold ?? 0}`;
+    // PP-08: the panel re-renders when Gold changes OR when the material
+    // affordability of a non-gold action (Security, Repair) flips — otherwise
+    // a purse that only gained/lost materials would show a stale button.
+    const matAfford = (cost: Partial<Record<Cargo, number>>) =>
+      (Object.entries(cost) as [Cargo, number][]).every(([k, v]) => (me.res[k] ?? 0) >= v);
+    const sabKey = `${me.res.gold ?? 0}:${matAfford(SECURITY_ISO)}:${matAfford(REPAIR_ISO)}`;
     if (sabKey !== lastSabKey) {
       lastSabKey = sabKey;
       renderSabotage();
@@ -924,7 +964,7 @@ export function createOriginalUi(
         <div class="help-cols">
           <div class="help-col"><h3>🏙️ The Territory</h3><p>Place <b>Depots</b> beside resource nodes to collect their output, then build <b>Roads</b> & <b>Rails</b> to carry it to your Factory. The rail multiplier and VP are on the connection; a broken line revokes it.</p><p>Pan with the <b>middle mouse button</b> (wheel zooms, touch drags pan). The left button only places or selects — dragging it never pans.</p></div>
           <div class="help-col"><h3>💎 The Processing Plant</h3><p>Where your Factory turns delivered cargo into resources available for construction. Match tokens to process: a colour only pays when your network reaches its industry. Match 4 doubles, match 5 makes a <b>bomb</b>. <b>Gold</b> 🪙 is its own colour — it spawns only while a depot is connected to a gold mine.</p></div>
-          <div class="help-col"><h3>🪙 Gold, Trade & Defence</h3><p>Earn <b>gold</b> from gold-mine access or combos. Buy Black Market actions, post offers or bank 4:1.</p></div>
+          <div class="help-col"><h3>🪙 Gold, Trade & Defence</h3><p>Earn <b>gold</b> from gold-mine access or combos. <b>Gold is reserved for Black Market sabotage</b> — it never buys construction, cannot substitute for missing materials, and is refused by every market exchange. Security Forces and Repair Crew are hired with ordinary materials.</p></div>
         </div>
         <button class="big-btn" id="startBtn">Start Production ⚙️</button>
       </div>`;

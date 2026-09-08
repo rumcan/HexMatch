@@ -143,7 +143,17 @@ export const SABOTAGE: Record<string, {
   fog:    { name: "Smog Cloud",   gold: 7, target: "player", desc: "Choke a rival's board with smog for 30s (no swaps)." },
 };
 
-export const SECURITY = { gold: 6, ms: 90000, name: "Security Forces", desc: "Hire guards for 90s — immune to Blockade & Smog Cloud." };
+/**
+ * SECURITY — PP-08: Security Forces are a DEFENSIVE action, not sabotage, so
+ * they are repriced from Gold to ordinary materials (Grain = workforce,
+ * Stone = basic infrastructure). Declared in the legacy ResKey table like
+ * REPAIR_COST (`wheat` maps to the grain cargo, `brick` to stone); Gold is
+ * reserved for Black Market sabotage and pays for nothing else.
+ */
+export const SECURITY = {
+  cost: { wheat: 2, brick: 1 } as Partial<Record<ResKey, number>>,
+  ms: 90000, name: "Security Forces", desc: "Hire guards for 90s — immune to Blockade & Smog Cloud.",
+};
 export const TAX_EVERY_ROUNDS = 6;
 
 export const BOARD_W = 7, BOARD_H = 8;

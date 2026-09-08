@@ -68,7 +68,7 @@ describe("J1 offers", () => {
   });
 
   it("cannot post what you do not have", () => {
-    expect(s.market.post(s.me, "gold", 1, "ore", 1)).toBe(false);
+    expect(s.market.post(s.me, "oil", 1, "ore", 1)).toBe(false);
     expect(s.market.ctx.offers).toHaveLength(0);
   });
 });
@@ -107,14 +107,62 @@ describe("J1 the rival answers", () => {
 
   it("refunds escrow when an offer expires untaken", () => {
     s = setup({ ore: 2 });
-    // the rival holds no gold, so it can never pay `want` — the offer must rot
-    expect(s.market.post(s.me, "ore", 2, "gold", 1)).toBe(true);
+    // the rival holds no oil, so it can never pay `want` — the offer must rot
+    expect(s.market.post(s.me, "ore", 2, "oil", 1)).toBe(true);
     expect(s.me.res.ore).toBe(0);
 
     s.market.tick(performance.now() + 60_000);      // past OFFER_LIFE
 
     expect(s.market.ctx.offers).toHaveLength(0);
     expect(s.me.res.ore).toBe(2);                   // escrow refunded
-    expect(s.rival.res.gold).toBe(0);               // nothing was traded
+    expect(s.rival.res.oil).toBe(0);                // nothing was traded
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// PP-08 — Gold is reserved for Black Market sabotage. The market never
+// converts it: not at the bank (4:1 would mint construction stock from
+// coins), not through offers in either direction, and not through the
+// rival's answering clock. Gold is earned by processing and spent only on
+// the sabotage actions.
+// ══════════════════════════════════════════════════════════════════════════
+describe("PP-08 gold never trades", () => {
+  it("creates the market with gold on the blocked list", () => {
+    expect([...s.market.ctx.blocked]).toEqual(["gold"]);
+  });
+
+  it("the bank refuses gold in either direction, even with coins in the purse", () => {
+    s.me.res.gold = 20;
+    expect(s.market.bank(s.me, "gold", "stone")).toBe(false);   // gold → stock
+    expect(s.market.bank(s.me, "stone", "gold")).toBe(false);   // stock → gold
+    expect(s.me.res.gold).toBe(20);                 // nothing moved
+    expect(s.me.res.stone).toBe(12);
+  });
+
+  it("offers involving gold are refused even with gold in the purse", () => {
+    s.me.res.gold = 9;
+    expect(s.market.post(s.me, "gold", 1, "ore", 1)).toBe(false);   // giving gold
+    expect(s.market.post(s.me, "ore", 1, "gold", 1)).toBe(false);   // wanting gold
+    expect(s.me.res.gold).toBe(9);                  // nothing escrowed
+    expect(s.me.res.ore).toBe(0);
+    expect(s.market.ctx.offers).toHaveLength(0);
+  });
+
+  it("the AI taker refuses a gold offer even if one lands on the board", () => {
+    // Inject past the composer (postOffer would refuse it) to prove the
+    // ACCEPT side enforces the rule too — that is the path the rival's
+    // answering clock drives, and the path a rogue multiplayer guest would hit.
+    s.market.ctx.offers.unshift({
+      id: 999, from: 0, give: "gold", giveN: 1, want: "stone", wantN: 1,
+      born: performance.now(),
+    });
+    s.me.res.gold = 1;
+
+    s.market.tick(performance.now() + AI_TRADE_MS);
+
+    expect(s.rival.res.gold).toBe(0);               // rival never gained gold
+    expect(s.rival.res.stone).toBe(4);              // rival never paid
+    expect(s.me.res.gold).toBe(1);
+    expect(s.market.ctx.offers).toHaveLength(1);    // the offer just sits there
   });
 });

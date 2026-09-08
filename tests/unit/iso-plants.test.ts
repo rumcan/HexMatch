@@ -1,0 +1,220 @@
+// PP-06 — additional processing plants at other towns.
+import { describe, it, expect } from "vitest";
+import {
+  PLANT_COST, addPlant, adjacentTown, canAffordPlant, canPlacePlant,
+  chooseAiPlantSpot, footprintTiles, nextPlantId, plantRefusal, plantsOf,
+} from "../../src/iso/plants";
+import {
+  buildAllComponents, resolveConnection, claimantCounts, harvesterYield,
+  createScoreState, rescore, vpFor, playerResources,
+  type EconomyState, type Harvester,
+} from "../../src/iso/economy";
+import { createTrack, buildTile, tIdx, type Track } from "../../src/iso/track";
+import { GRASS, WATER, TOWN_OCC, type Grid, type Industry, type Town } from "../../src/iso/grid";
+import { MAP_W, MAP_H } from "../../src/game/config";
+import { INDUSTRY_BY_KEY, FACTORY_FOOTPRINT } from "../../src/iso/config";
+
+const town = (id: number, tx: number, ty: number, n = 4): Town => {
+  const houses: [number, number][] = [];
+  for (let i = 0; i < n; i++) houses.push([tx + i, ty]);
+  return { id, tx, ty, houses };
+};
+
+function flatGrid(towns: Town[] = [], industries: Industry[] = []): Grid {
+  const occupancy = new Int16Array(MAP_W * MAP_H).fill(-1);
+  industries.forEach((ind, i) => {
+    ind.id = i;
+    for (let y = ind.ty; y < ind.ty + ind.h; y++)
+      for (let x = ind.tx; x < ind.tx + ind.w; x++) occupancy[tIdx(x, y)] = i;
+  });
+  for (const t of towns) for (const [hx, hy] of t.houses) occupancy[tIdx(hx, hy)] = TOWN_OCC;
+  return {
+    w: MAP_W, h: MAP_H,
+    terrain: new Uint8Array(MAP_W * MAP_H).fill(GRASS),
+    industries, towns, occupancy, seed: 1,
+  };
+}
+
+const ind = (type: string, tx: number, ty: number): Industry => {
+  const def = INDUSTRY_BY_KEY[type];
+  return { id: 0, type, tx, ty, w: def.footprint[0], h: def.footprint[1], output: def.output, banditUntil: 0 };
+};
+
+const state = (grid: Grid, track: Track): EconomyState =>
+  ({ grid, track, harvesters: [], factories: [] });
+
+const run = (t: Track, x0: number, x1: number, y: number, owner: number) => {
+  for (let x = x0; x <= x1; x++) buildTile(t, "road", x, y, owner);
+};
+
+describe("PP-06 town adjacency", () => {
+  it("accepts a footprint sharing an edge with a town tile", () => {
+    const grid = flatGrid([town(0, 20, 20)]);
+    const track = createTrack();
+    // footprint (20,21)-(21,22): (20,21) shares an edge with house (20,20)
+    expect(plantRefusal(grid, track, state(grid, track), 20, 21)).toBeNull();
+    expect(adjacentTown(grid, 20, 21)?.id).toBe(0);
+  });
+
+  it("rejects diagonal-only contact", () => {
+    const grid = flatGrid([town(0, 20, 20, 1)]);
+    const track = createTrack();
+    // footprint (21,21)-(22,22): only touches (20,20) diagonally
+    expect(plantRefusal(grid, track, state(grid, track), 21, 21)).toBe("no-town");
+  });
+
+  it("rejects a site far from any town", () => {
+    const grid = flatGrid([town(0, 20, 20)]);
+    const track = createTrack();
+    expect(plantRefusal(grid, track, state(grid, track), 60, 60)).toBe("no-town");
+  });
+
+  it("rejects water, town/industry ground, other buildings and track", () => {
+    const grid = flatGrid([town(0, 20, 20)], [ind("farm", 24, 21)]);
+    const track = createTrack();
+    const st = state(grid, track);
+
+    grid.terrain[tIdx(20, 21)] = WATER;
+    expect(plantRefusal(grid, track, st, 20, 21)).toBe("water");
+    grid.terrain[tIdx(20, 21)] = GRASS;
+
+    // straddling town tiles themselves
+    expect(plantRefusal(grid, track, st, 20, 20)).toBe("occupied");
+
+    st.factories.push({ owner: "p1", ownerId: 1, tx: 20, ty: 21, id: 0, townId: 0 });
+    expect(plantRefusal(grid, track, st, 20, 21)).toBe("building");
+    st.factories.length = 0;
+
+    buildTile(track, "road", 21, 22, 1);
+    expect(plantRefusal(grid, track, st, 20, 21)).toBe("track");
+  });
+
+  it("uses one 2×2 footprint for the preview and the placement", () => {
+    expect(footprintTiles(5, 7)).toHaveLength(FACTORY_FOOTPRINT[0] * FACTORY_FOOTPRINT[1]);
+    const grid = flatGrid([town(0, 20, 20)]);
+    const track = createTrack();
+    const st = state(grid, track);
+    for (let tx = 15; tx < 30; tx++) {
+      for (let ty = 15; ty < 30; ty++) {
+        // the boolean preview and the placement agree, always
+        expect(canPlacePlant(grid, track, st, tx, ty))
+          .toBe(addPlant(grid, track, { ...st, factories: [] }, "p1", 1, tx, ty) !== null);
+      }
+    }
+  });
+});
+
+describe("PP-06 plant records", () => {
+  it("gives each plant ownership, a town association and a stable id", () => {
+    const grid = flatGrid([town(0, 20, 20), town(1, 60, 60)]);
+    const track = createTrack();
+    const st = state(grid, track);
+    const a = addPlant(grid, track, st, "p1", 1, 20, 21)!;
+    const b = addPlant(grid, track, st, "p1", 1, 60, 61)!;
+    expect(a.owner).toBe("p1");
+    expect(a.ownerId).toBe(1);
+    expect(a.id).toBe(0);
+    expect(a.townId).toBe(0);
+    expect(b.id).toBe(1);
+    expect(b.townId).toBe(1);
+    expect(nextPlantId(st, "p1")).toBe(2);
+    expect(plantsOf(st, "p1")).toHaveLength(2);
+    expect(plantsOf(st, "p2")).toHaveLength(0);
+  });
+
+  it("prices a plant from one authoritative constant", () => {
+    expect(canAffordPlant({ wood: 2, stone: 2, grain: 2, ore: 3 })).toBe(true);
+    expect(canAffordPlant({ wood: 2, stone: 2, grain: 2, ore: 2 })).toBe(false);
+    expect(canAffordPlant({})).toBe(false);
+    expect(Object.values(PLANT_COST).every((v) => v > 0)).toBe(true);
+  });
+});
+
+describe("PP-06 routing, scoring and yield with several plants", () => {
+  /**
+   * Depot at (24,24) with a farm in catchment, roads reaching BOTH of the
+   * player's plants. It must yield once and score once.
+   */
+  const twoPlantWorld = () => {
+    const grid = flatGrid([town(0, 10, 24), town(1, 40, 24)], [ind("farm", 25, 25)]);
+    const track = createTrack();
+    const st = state(grid, track);
+    addPlant(grid, track, st, "p1", 1, 10, 25);
+    addPlant(grid, track, st, "p1", 1, 40, 25);
+    const h: Harvester = { id: 1, owner: "p1", ownerId: 1, tx: 24, ty: 26 };
+    st.harvesters.push(h);
+    run(track, 10, 41, 26, 1);     // one road passing both plants and the depot
+    return { grid, track, st, h };
+  };
+
+  it("connects a depot to a plant and picks exactly one", () => {
+    const { st, track, h } = twoPlantWorld();
+    const conn = resolveConnection(st, buildAllComponents(track, 1), h);
+    expect(conn.kind).toBe("road");
+    expect(conn.factory).not.toBeNull();
+    expect(plantsOf(st, "p1")).toHaveLength(2);
+  });
+
+  it("does not duplicate production when a depot reaches several plants", () => {
+    const { st, track, h } = twoPlantWorld();
+    const counts = claimantCounts(st);
+    const y = harvesterYield(st, buildAllComponents(track, 1), counts, h, 0);
+    const def = INDUSTRY_BY_KEY["farm"];
+    expect(y.yields[def.cargo]).toBeCloseTo(def.output, 6);
+    const total = playerResources(st, "p1", 0);
+    expect(total[def.cargo]).toBeCloseTo(def.output, 6);
+  });
+
+  it("awards the connection VP once, not once per plant", () => {
+    const { st } = twoPlantWorld();
+    const score = createScoreState();
+    const events = rescore(st, score);
+    expect(events.filter((e) => e.type === "awarded")).toHaveLength(1);
+    const first = vpFor(score, "p1");
+    // rescoring with an extra plant must not re-award anything
+    const { grid, track } = st as unknown as { grid: Grid; track: Track };
+    addPlant(grid, track, st, "p1", 1, 41, 25);
+    expect(rescore(st, score)).toHaveLength(0);
+    expect(vpFor(score, "p1")).toBe(first);
+  });
+});
+
+describe("PP-06 AI expansion", () => {
+  it("only ever proposes a town-adjacent, legal site", () => {
+    const grid = flatGrid([town(0, 20, 20), town(1, 60, 60)]);
+    const track = createTrack();
+    const st = state(grid, track);
+    addPlant(grid, track, st, "ai", 2, 20, 21);
+    const spot = chooseAiPlantSpot(grid, track, st, "ai");
+    expect(spot).not.toBeNull();
+    expect(canPlacePlant(grid, track, st, spot![0], spot![1])).toBe(true);
+    expect(adjacentTown(grid, spot![0], spot![1])!.id).toBe(1);   // a DIFFERENT town
+  });
+
+  it("has no fallback: no towns left means no spot", () => {
+    const grid = flatGrid([town(0, 20, 20)]);
+    const track = createTrack();
+    const st = state(grid, track);
+    addPlant(grid, track, st, "ai", 2, 20, 21);
+    expect(chooseAiPlantSpot(grid, track, st, "ai")).toBeNull();
+  });
+});
+
+describe("PP-06 save/load and multiplayer", () => {
+  it("round-trips every plant with its id and town through a snapshot", async () => {
+    const { buildSnapshot, applySnapshot } = await import("../../src/iso/snapshot");
+    const grid = flatGrid([town(0, 20, 20), town(1, 60, 60)]);
+    const track = createTrack();
+    const st = state(grid, track);
+    addPlant(grid, track, st, "p1", 1, 20, 21);
+    addPlant(grid, track, st, "p1", 1, 60, 61);
+    const snap = buildSnapshot({
+      seed: 1, track, harvesters: [], factories: st.factories,
+      score: createScoreState(), setupPhase: false, won: false, players: [],
+    });
+    const back = applySnapshot(JSON.parse(JSON.stringify(snap)), 1);
+    expect(back.factories).toHaveLength(2);
+    expect(back.factories.map((f) => f.id)).toEqual([0, 1]);
+    expect(back.factories.map((f) => f.townId)).toEqual([0, 1]);
+  });
+});
