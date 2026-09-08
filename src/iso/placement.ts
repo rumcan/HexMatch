@@ -105,13 +105,15 @@ export function factoryFootprintTiles(tx: number, ty: number): [number, number][
 }
 
 /**
- * The tiles sharing an EDGE with the Factory's 2×2 footprint — the
- * town-adjacency area. A tile is included when it is an orthogonal neighbour
- * of any footprint tile, so diagonal-only contact stays out by construction.
+ * The tiles OUTSIDE the Factory's 2×2 footprint that share an EDGE with it —
+ * the town-adjacency area. A tile is included when it is an orthogonal
+ * neighbour of any footprint tile, so diagonal-only contact stays out by
+ * construction and the footprint's own tiles are never part of their own ring.
  */
 export function factoryAdjacencyRing(grid: Grid, tx: number, ty: number): [number, number][] {
   const out: [number, number][] = [];
   const seen = new Set<number>();
+  for (const [x, y] of factoryFootprintTiles(tx, ty)) seen.add(tIdx(x, y));  // never the footprint
   for (const [x, y] of factoryFootprintTiles(tx, ty)) {
     for (const [dx, dy] of DIR4) {
       const nx = x + dx, ny = y + dy;
