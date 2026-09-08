@@ -144,6 +144,34 @@ export interface OcclusionHit extends CorridorTile {
 }
 
 /**
+ * The corridor tiles the drag's real pointer stream has to LAND on, in drag
+ * order (factory → harvester).
+ *
+ * Two tiles of the column are not aimed at:
+ *   * the anchor tile the pointer is already down on (`col`'s factory end), and
+ *   * every tile the Factory's own footprint covers. The building's sprite is
+ *     drawn over its whole footprint, so a pointer aimed at one of those tiles
+ *     picks the FACTORY, not the road tile underneath — `isoClickableTile`
+ *     rightly refuses to move the click somewhere else to make it pass.
+ *
+ * Skipping them costs nothing: the game's `previewDrag` lays an L-path between
+ * the pointer's down tile and wherever it last hovered, so the road still lands
+ * on every column tile. The corridor's tiles are never stamped into
+ * `grid.occupancy` by placing a Factory, so all of them remain buildable.
+ *
+ * The footprint is an ARGUMENT, read from the game's own `placementPlan`, and
+ * never assumed to be 3×3 — PP-12 doubled every footprint once already, and the
+ * hard-coded 2×2 window this replaced is exactly what a westward corridor on
+ * seed 79 tripped over (tile `fx+2` passed the filter and picked as `factory`).
+ */
+export function exposedDragTiles(
+  c: Corridor, footprint: { tx: number; ty: number }[],
+): CorridorTile[] {
+  const under = new Set(footprint.map((t) => `${t.tx},${t.ty}`));
+  return [...c.col].reverse().slice(1).filter((t) => !under.has(`${t.tx},${t.ty}`));
+}
+
+/**
  * Find a legal, on-screen, clickable corridor to play the round on.
  *
  * Runs IN THE PAGE (passed to `page.evaluate`) and headlessly in the unit test,

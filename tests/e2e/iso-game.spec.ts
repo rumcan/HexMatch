@@ -1,7 +1,8 @@
 import { test, expect } from "@playwright/test";
 import { BOARD_H, BOARD_W, MAP_W, MAP_H } from "../../src/game/config";
 import {
-  findIsoCorridor, isoTileOcclusion, isoClickableTile, type Corridor,
+  findIsoCorridor, isoTileOcclusion, isoClickableTile, exposedDragTiles,
+  type Corridor,
 } from "./corridor-picker";
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -313,6 +314,23 @@ test.describe("iso game boots on the default route", () => {
     const factory = await at(c.fx, c.fy);
     const harvester = await at(c.hx, c.hy);
 
+    // The Factory's sprite is drawn over its whole footprint, so the corridor
+    // tiles underneath it are not clickable — the drag steps over them (see
+    // `exposedDragTiles`). Read the footprint from the game rather than
+    // assuming a size: PP-12 doubled every footprint once already, and a
+    // hard-coded window is what let this suite aim at a covered tile.
+    const footprint = await page.evaluate(
+      (t: [number, number]) => (window as unknown as {
+        __iso: {
+          placementPlan(kind: "factory", tx: number, ty: number):
+            { footprint: { tx: number; ty: number }[] };
+        };
+      }).__iso.placementPlan("factory", t[0], t[1]).footprint,
+      [c.fx, c.fy] as [number, number],
+    );
+    expect(footprint.length, "the Factory must report its own footprint")
+      .toBeGreaterThan(0);
+
     // A2: every tile a pointer event is about to land on is reachable —
     // re-checked here, independently of the filter that chose them, because a
     // corridor under a panel is exactly the failure this suite exists to catch.
@@ -382,14 +400,14 @@ test.describe("iso game boots on the default route", () => {
     // along the picked column → up on the harvester. The path is the
     // corridor itself, so the drag length is whatever the geometry yielded —
     // no tile count is baked into this test any more (E14/A4).
-    const path = [...c.col].reverse();              // factory → harvester
     const dragStart = await at(c.fx, c.fy);
     await page.mouse.move(dragStart.x, dragStart.y);
     await page.mouse.down();
     // Interior factory pieces all select the same factory anchor in track
-    // mode; move straight to the first exposed corridor tile outside it.
-    for (const t of path.slice(1).filter((t) =>
-      t.tx < c.fx || t.tx >= c.fx + 2 || t.ty < c.fy || t.ty >= c.fy + 2)) {
+    // mode, so the pointer steps straight over them to the first exposed
+    // corridor tile. `previewDrag` fills the L-path in between, so the road
+    // still lands on every one of the corridor's `n` tiles (asserted below).
+    for (const t of exposedDragTiles(c, footprint)) {
       const p = t.tx === c.hx && t.ty === c.hy ? harvester : await at(t.tx, t.ty);
       await page.mouse.move(p.x, p.y);
     }

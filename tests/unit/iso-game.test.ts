@@ -724,7 +724,12 @@ describe("W3 the rival actually plays (headless)", () => {
     h.econTick(t0 + 4 * AI_BUILD_MS + 2 * HARVEST_MS);
     expect(rival.res.ore).toBeGreaterThan(ore0);
     for (const c of CARGOES) expect(rival.res[c], `${c} negative`).toBeGreaterThanOrEqual(0);
-  }, 10_000);
+    // PP-13: 10s -> 30s. This boots the live game and runs four rival turns of
+    // A* over a map whose towns are now three times bigger (3639ms -> 6143ms
+    // locally, under full-suite contention); 10s was enough on a dev box and
+    // not on a shared CI runner, where the same test timed out. No assertion
+    // changed.
+  }, 30_000);
 
   it("banks toward a paid Depot when no trickle cargo alone covers it (PP-07)", async () => {
     const h = await boot();

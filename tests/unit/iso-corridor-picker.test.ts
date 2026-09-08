@@ -29,7 +29,7 @@ import {
 import { industriesInCatchment } from "../../src/iso/economy";
 import {
   findIsoCorridor, isoTileOcclusion, isoTileClickPoint, isoClickableTile,
-  AIM_CANDIDATES, type Corridor,
+  exposedDragTiles, AIM_CANDIDATES, type Corridor,
 } from "../../tests/e2e/corridor-picker";
 
 const VIEW_W = 1280, VIEW_H = 720;   // devices["Desktop Chrome"] at dpr 1
@@ -574,5 +574,71 @@ describe("E14 a tile is clicked wherever the game will actually take the click",
     } finally {
       hook().pickAt = real;
     }
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// PP-13 — the road drag must not aim at a tile the Factory itself covers.
+//
+// The corridor's factory end is a column tile, and the building placed there is
+// drawn over its whole footprint — so the column tiles underneath it are not
+// clickable: `isoClickableTile` reports every aim on them picking `factory`,
+// and rightly refuses to move the click somewhere else to make the test pass.
+// The spec used to skip a hard-coded 2×2 window around the anchor; PP-12
+// doubled every footprint to 3×3, so a WESTWARD corridor (seed 79: factory at
+// (28,135), column running east to (33,135)) left tile (30,135) = fx+2 in the
+// pointer stream, and the e2e suite failed in CI on exactly that tile.
+//
+// These run in the browser-free `test` job, so the shape that broke the browser
+// suite is pinned where it is cheap to catch. The footprint is read from the
+// game's own `planFactoryPlacement` — the same twin `window.__iso.placementPlan`
+// serves — never assumed to be 3×3.
+// ══════════════════════════════════════════════════════════════════════════
+describe("PP-13 the road drag steps over the Factory's own footprint", () => {
+  it("aims at every exposed corridor tile and at none under the Factory", () => {
+    for (const [seed, wheelOut] of [[79, 0], [79, 1], [106, 1]] as const) {
+      const { grid } = scene(seed, wheelOut);
+      const c = findIsoCorridor();
+      expect(c, `seed ${seed} at wheelOut ${wheelOut} found no corridor`).not.toBeNull();
+      const plan = planFactoryPlacement(grid, c!.fx, c!.fy, { requireTown: true });
+      expect(plan.valid, "the picker already guaranteed this endpoint").toBe(true);
+
+      const under = new Set(plan.footprint.map((t) => `${t.tx},${t.ty}`));
+      const aimed = exposedDragTiles(c!, plan.footprint);
+      const aimedKeys = new Set(aimed.map((t) => `${t.tx},${t.ty}`));
+
+      for (const t of aimed) {
+        expect(under.has(`${t.tx},${t.ty}`),
+          `seed ${seed}: aimed at (${t.tx},${t.ty}) which the Factory covers`).toBe(false);
+      }
+      // …and nothing outside the footprint is skipped, so the drag still lays
+      // the whole corridor.
+      for (const t of c!.col) {
+        if (t.tx === c!.fx && t.ty === c!.fy) continue;   // the anchor tile
+        const k = `${t.tx},${t.ty}`;
+        expect(aimedKeys.has(k), `seed ${seed}: (${t.tx},${t.ty}) skipped but exposed`)
+          .toBe(!under.has(k));
+      }
+      // the last tile aimed at is the harvester, so the drag actually completes
+      const last = aimed[aimed.length - 1];
+      expect([last.tx, last.ty], `seed ${seed}: drag never reaches the harvester`)
+        .toEqual([c!.hx, c!.hy]);
+    }
+  });
+
+  it("regression: seed 79 runs west, so fx+2 sits under the Factory", () => {
+    const { grid } = scene(79, 0);
+    const c = findIsoCorridor()!;
+    expect(c.dir).toBe("NW");
+    expect([c.fx, c.fy]).toEqual([28, 135]);
+    const plan = planFactoryPlacement(grid, c.fx, c.fy, { requireTown: true });
+    // bigger than the 2×2 window the spec used to assume — read, not hard-coded
+    expect(plan.footprint.length).toBeGreaterThan(4);
+    expect(plan.footprint.some((t) => t.tx === c.fx + 2 && t.ty === c.fy),
+      "the footprint must reach fx+2 for this to be the shape that broke").toBe(true);
+
+    const aimed = new Set(exposedDragTiles(c, plan.footprint).map((t) => `${t.tx},${t.ty}`));
+    for (const t of plan.footprint) expect(aimed.has(`${t.tx},${t.ty}`)).toBe(false);
+    expect(aimed.has(`${c.fx + 2},${c.fy}`), "(30,135) must not be aimed at").toBe(false);
   });
 });
