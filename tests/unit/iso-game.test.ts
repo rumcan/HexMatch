@@ -73,6 +73,12 @@ interface IsoHook {
   econTick: (now?: number) => void;
   tick: (now?: number) => void;
   finishSetup: () => void;
+  /** PP-03: the twin of the placement overlay's plan for a hover tile. */
+  placementPlan: (
+    kind: "factory" | "depot", tx: number, ty: number,
+  ) => import("../../src/iso/placement").PlacementPlan;
+  /** PP-03: the exact overlay items painted for a placement hover at (tx,ty). */
+  overlayItemsFor: (tx: number, ty: number) => { sprite: string; tx: number; ty: number }[];
 }
 
 const hook = () => (window as unknown as { __iso: IsoHook }).__iso;
@@ -1128,5 +1134,78 @@ describe("PP-01 terminology: Processing Plant + Depot", () => {
     // the snapshot/eco shape the save format depends on
     expect(Array.isArray(h.eco.harvesters)).toBe(true);
     expect(Array.isArray(h.eco.factories)).toBe(true);
+  });
+});
+
+// ── PP-03: the real game paints its placement overlay from the same plan the
+// click handlers validate with — strong footprint, light reach, node marks,
+// red + readable reason for invalid tiles (AC1–AC4 of the ticket). The plans
+// are exercised through the __iso twins so no pixel path is needed here;
+// the sprites themselves are pinned in iso-atlas-pixels.test.ts.
+describe("PP-03 footprint vs reach placement feedback (wired game)", () => {
+  const sorted = (ts: [number, number][]) =>
+    [...ts].map(([x, y]) => [x, y] as [number, number]).sort((a, b) =>
+      a[0] - b[0] || a[1] - b[1]);
+
+  it("factory: legal site paints exactly the 2×2 footprint + soft adjacency band + town marks", async () => {
+    const h = await boot();
+    const spot = findFactorySpot(h.grid)!;
+    const plan = h.placementPlan("factory", spot[0], spot[1]);
+    expect(plan.valid).toBe(true);
+    const items = h.overlayItemsFor(spot[0], spot[1]);
+    const tiles = (sprite: string) => sorted(
+      items.filter((i) => i.sprite === sprite).map((i) => [i.tx, i.ty] as [number, number]));
+    expect(items.some((i) => i.sprite === "highlight_bad")).toBe(false);
+    expect(tiles("highlight")).toEqual(sorted(
+      plan.footprint.filter((t) => t.ok).map((t) => [t.tx, t.ty] as [number, number])));
+    expect(tiles("highlight_soft")).toEqual(sorted(plan.reach));
+    expect(tiles("node_mark")).toEqual(sorted(plan.nodes));
+  });
+
+  it("factory: an occupied footprint tile turns red and carries a readable reason", async () => {
+    const h = await boot();
+    const ind = h.grid.industries.find((i) => i.type === "farm")!;
+    const plan = h.placementPlan("factory", ind.tx, ind.ty);
+    expect(plan.valid).toBe(false);
+    expect(plan.why).toMatch(/industry|overlaps/);
+    const items = h.overlayItemsFor(ind.tx, ind.ty);
+    // every footprint tile that refused the build is painted red
+    const bad = items.filter((i) => i.sprite === "highlight_bad");
+    expect(bad.length).toBeGreaterThan(0);
+    for (const t of plan.footprint.filter((t) => !t.ok)) {
+      expect(bad).toContainEqual({ sprite: "highlight_bad", tx: t.tx, ty: t.ty });
+    }
+  });
+
+  it("depot: 1×1 footprint solid, 4×4 catchment soft, served resource nodes marked", async () => {
+    const h = await boot();
+    const spot = findFactorySpot(h.grid)!;
+    expect(h.placeFactory(spot[0], spot[1])).toBe(true);   // phase → setup-harvester
+    const c = findSouthCorridor(h.grid)!;
+    const plan = h.placementPlan("depot", c.hx, c.hy);
+    expect(plan.valid).toBe(true);
+    expect(plan.served.length).toBeGreaterThan(0);
+    const items = h.overlayItemsFor(c.hx, c.hy);
+    expect(items.filter((i) => i.sprite === "highlight"))
+      .toEqual([{ sprite: "highlight", tx: c.hx, ty: c.hy }]);
+    const soft = sorted(items.filter((i) => i.sprite === "highlight_soft")
+      .map((i) => [i.tx, i.ty] as [number, number]));
+    expect(soft).toEqual(sorted(plan.reach));
+    const marks = sorted(items.filter((i) => i.sprite === "node_mark")
+      .map((i) => [i.tx, i.ty] as [number, number]));
+    expect(marks.length).toBeGreaterThan(0);
+    expect(marks).toEqual(sorted(plan.nodes));
+  });
+
+  it("depot: an occupied/water hover is painted red with the reason readable", async () => {
+    const h = await boot();
+    const spot = findFactorySpot(h.grid)!;
+    expect(h.placeFactory(spot[0], spot[1])).toBe(true);
+    const ind = h.grid.industries[0];
+    const plan = h.placementPlan("depot", ind.tx, ind.ty);
+    expect(plan.valid).toBe(false);
+    expect(plan.why).toMatch(/overlaps an industry/);
+    expect(h.overlayItemsFor(ind.tx, ind.ty))
+      .toContainEqual({ sprite: "highlight_bad", tx: ind.tx, ty: ind.ty });
   });
 });

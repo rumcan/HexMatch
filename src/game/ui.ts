@@ -63,6 +63,9 @@ export interface UiState {
   banner: string | null;
   costInfo: string | null;
   inspect: string | null;
+  /** PP-03: tones the inspector when it is a placement verdict (e.g. the red
+   *  "can't go here — …" reason for an invalid Factory/Depot hover). */
+  inspectTone?: "good" | "bad" | null;
   reach: Partial<Record<Cargo, number>>;
 }
 
@@ -914,9 +917,12 @@ export function createOriginalUi(
     }
     if (state.inspect) {
       inspectEl.innerHTML = state.inspect;
+      inspectEl.classList.toggle("bad", state.inspectTone === "bad");
+      inspectEl.classList.toggle("good", state.inspectTone === "good");
       inspectEl.style.display = "block";
     } else {
       inspectEl.innerHTML = "";
+      inspectEl.classList.remove("bad", "good");
       inspectEl.style.display = "none";
     }
     const now = performance.now();

@@ -81,6 +81,10 @@ html, body, #root {
   background: rgba(14,21,29,.88); border: 1px solid var(--line);
   border-left: 2px solid var(--info); padding: 8px 11px; max-width: 230px;
 }
+/* PP-03: the inspector doubles as the "readable reason" for an invalid
+   Factory/Depot placement — red verdict, matching the red overlay. */
+.iso-inspect.bad { border-left-color: var(--danger2); }
+.iso-inspect.bad i { color: var(--danger2); font-style: normal; }
 .iso-reach {
   display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
   margin-bottom: 7px; font-size: 11px;
