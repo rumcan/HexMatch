@@ -127,11 +127,20 @@ export function factoryAdjacencyRing(grid: Grid, tx: number, ty: number): [numbe
   return out;
 }
 
-/** A town's tiles (the centre is also a house tile in grid generation). */
+/**
+ * A town's tiles (the centre is also a house tile in grid generation).
+ *
+ * PP-02: a town's PP-10 ring road / interior streets belong to the town
+ * exactly like its houses — they are stamped `TOWN_OCC` in the occupancy and
+ * are town tiles for the adjacency rule, so a factory footprint touching the
+ * ring road counts as "next to the town". Both houses and roads are returned
+ * (deduplicated), matching the occupancy-based `factoryTouchesTown` in
+ * `grid.ts` tile-for-tile.
+ */
 export function townTilesOf(t: Town): [number, number][] {
   const seen = new Set<string>();
   const out: [number, number][] = [];
-  for (const [hx, hy] of t.houses) {
+  for (const [hx, hy] of [...t.houses, ...(t.roads ?? [])]) {
     const k = `${hx},${hy}`;
     if (seen.has(k)) continue;
     seen.add(k);

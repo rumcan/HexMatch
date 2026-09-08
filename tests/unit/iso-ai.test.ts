@@ -667,13 +667,18 @@ describe("T4 routing regressions", () => {
   });
 
   it("finds an affordable rival opening beyond the old eight far-corner probes", () => {
-    const grid = flatGrid([ind("farm", MAP_W / 2, MAP_H / 2)]), track = createTrack();
-    const spot = chooseRivalFactorySpot(grid, track, [4, 4], { purse: { wood: 12, stone: 12 }, free: 12, ownerId: 2 })!;
+    // PP-02: the rival's Factory must sit next to a town, so the search runs
+    // on a REAL generated map (which has towns + industries), not a town-less
+    // flat grid. The opening must still be affordable from the rival's
+    // 12 wood + 12 stone of PP-07 starting stock.
+    const grid = generateMap(1337);
+    const spot = chooseRivalFactorySpot(grid, createTrack(), [4, 4], { purse: { wood: 12, stone: 12 }, free: 12, ownerId: 2 })!;
+    expect(spot).toBeTruthy();
     const factory: Factory = { owner: "ai", ownerId: 2, tx: spot[0], ty: spot[1] };
-    const out = aiBuildStep(state(grid, track), factory, { stock: {}, purse: { wood: 12, stone: 12 }, free: 12, freeDepots: 1 }, 1);
+    const out = aiBuildStep(state(grid), factory, { stock: {}, purse: { wood: 12, stone: 12 }, free: 12, freeDepots: 1 }, 1);
     expect(out?.harvester).toBeTruthy();
     expect(out!.spent.stone ?? 0).toBeLessThanOrEqual(12);
-  });
+  }, 30_000);
 
   it("keeps an opening placement well below the old multi-second UI stall", () => {
     const grid = generateMap(1337);

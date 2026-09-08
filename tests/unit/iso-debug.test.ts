@@ -23,7 +23,7 @@ import {
   shouldInstallDebugConsole, shouldAutoEnableDebugOverlays,
   shouldAutoEnableRenderLog, DEBUG_OVERLAYS,
 } from "../../src/iso/debug";
-import { WATER, GRASS } from "../../src/iso/grid";
+import { WATER, GRASS, factoryTouchesTown } from "../../src/iso/grid";
 import { INDUSTRY_BY_KEY } from "../../src/iso/config";
 
 vi.mock("../../assets/iso-atlas/atlas@0.5x.png", () => ({ default: "a05.png" }));
@@ -252,14 +252,27 @@ describe("C5 the dumps report the geometry the renderer used", () => {
     expect(empty.tiles).toBe(0);
     expect(h.dumpNetwork("rival-not-here").error).toMatch(/unknown player/);
 
-    // place the factory through the game's own setup twin, then ask again
+    // place the factory through the game's own setup twin, then ask again.
+    // PP-02: the spot must be a whole buildable 2×2 footprint that touches a
+    // town by an edge — `h.probe().build.ok` is single-tile road legality, so
+    // the search adds `factoryTouchesTown` over the game's own TOWN_OCC
+    // stamps (the same predicate the click handler enforces).
     const spot = (() => {
-      for (let ty = 6; ty < 22; ty++) {
-        for (let tx = 10; tx < 24; tx++) {
-          if (h.probe(tx, ty).build.ok) return { tx, ty };
+      const g = h.grid;
+      const legal = (tx: number, ty: number) => {
+        for (let oy = 0; oy < 2; oy++) {
+          for (let ox = 0; ox < 2; ox++) {
+            if (!h.probe(tx + ox, ty + oy).build.ok) return false;
+          }
+        }
+        return factoryTouchesTown(g, tx, ty);
+      };
+      for (let ty = 0; ty < g.h; ty++) {
+        for (let tx = 0; tx < g.w; tx++) {
+          if (legal(tx, ty)) return { tx, ty };
         }
       }
-      throw new Error("no buildable tile on this map");
+      throw new Error("no PP-02-legal factory site on this map");
     })();
     expect(h.placeFactory(spot.tx, spot.ty)).toBe(true);
     const net = h.dumpNetwork("you");

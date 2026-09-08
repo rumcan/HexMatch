@@ -17,7 +17,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { MAP_W, MAP_H, CELL, BOARD_W } from "../../src/game/config";
-import { generateMap } from "../../src/iso/grid";
+import { generateMap, TOWN_OCC } from "../../src/iso/grid";
 import {
   createCamera, centerOnTile, zoomStepAt, tileToScreenAt, screenToWorld, type Camera,
 } from "../../src/iso/camera";
@@ -208,13 +208,18 @@ function scene(seed: number, wheelOut: number) {
 }
 
 describe("E14 the corridor picker finds a corridor by real geometry", () => {
-  it("plays a whole 4–7 tile corridor inside the clear band at the zoomed-out boot camera", () => {
+  it("plays a whole 4–12 tile corridor from a town-ring factory inside the clear band at the zoomed-out boot camera", () => {
     const { grid } = scene(1337, 1);
-    const c = findIsoCorridor({ minTiles: 4, maxTiles: 7 });
+    // PP-02: a factory must touch a town, and towns sit ≥8 tiles from the
+    // industries (T4's TOWN_INDUSTRY_SEP), so the corridor is longer than the
+    // pre-PP-02 4–7 tile rows. Defaults let it run up to the 12-tile setup
+    // free-track allowance; the assertions below follow c.tiles, never a
+    // constant, so a future map change cannot silently shorten the proof.
+    const c = findIsoCorridor();
 
     // the shape is what the test needs: a contiguous single-axis column
     expect(c.tiles).toBeGreaterThanOrEqual(4);
-    expect(c.tiles).toBeLessThanOrEqual(7);
+    expect(c.tiles).toBeLessThanOrEqual(12);
     expect(c.col).toHaveLength(c.tiles);
     expect(c.col[0]).toEqual({ tx: c.hx, ty: c.hy });
     expect(c.col[c.tiles - 1]).toEqual({ tx: c.fx, ty: c.fy });
@@ -258,6 +263,23 @@ describe("E14 the corridor picker finds a corridor by real geometry", () => {
       expect(p.x).toBeGreaterThan(boxes.left.right);
       expect(p.x).toBeLessThan(boxes.right.left);
     }
+    // PP-02: the corridor's factory end is a 2×2 sharing an edge with a real
+    // TOWN_OCC stamp (house or town road) — the round's factory click cannot
+    // be refused by the game's own placement rule. This is what forces the
+    // corridor to reach all the way to a town ring instead of stopping at the
+    // first free tile beside the industry.
+    let townContact = false;
+    for (let oy = 0; oy < 2 && !townContact; oy++) {
+      for (let ox = 0; ox < 2 && !townContact; ox++) {
+        const x = c.fx + ox, y = c.fy + oy;
+        townContact = [[0, -1], [1, 0], [0, 1], [-1, 0]].some(([dx, dy]) => {
+          const nx = x + dx, ny = y + dy;
+          return nx >= 0 && ny >= 0 && nx < grid.w && ny < grid.h
+            && grid.occupancy[ny * grid.w + nx] === TOWN_OCC;
+        });
+      }
+    }
+    expect(townContact).toBe(true);
   });
 
   it("the picked corridor is a drag the game actually lays, for free, untruncated", () => {
@@ -278,9 +300,12 @@ describe("E14 the corridor picker finds a corridor by real geometry", () => {
   });
 
   it("is not seed-luck: the same search works on the other swept seeds and at zoom 1", () => {
-    for (const [seed, wheelOut] of [[1337, 0], [7, 1], [2024, 1], [1337, 1]] as const) {
+    // PP-02 swept pairs with a town-ring factory reachable from a boot-camera
+    // industry: 22@zoom1, 74@zoom-out, 139@zoom1 and 1337@zoom-out all have a
+    // PP-02-legal corridor in the boot frame (verified by this very search).
+    for (const [seed, wheelOut] of [[22, 0], [74, 1], [139, 0], [1337, 1]] as const) {
       scene(seed, wheelOut);
-      const c = findIsoCorridor({ minTiles: 3, maxTiles: 7 });
+      const c = findIsoCorridor({ minTiles: 3, maxTiles: 12 });
       expect(c.tiles).toBeGreaterThanOrEqual(3);
     }
   });
@@ -408,7 +433,7 @@ describe("E14 the click point is measured once, and verified before it is used",
 
   it("isoTileClickPoint matches an independent measurement, in both call forms", () => {
     scene(1337, 1);
-    const c = findIsoCorridor({ minTiles: 4, maxTiles: 7 });
+    const c = findIsoCorridor();
     const inPage = revive(isoTileClickPoint);
     // the revived source must stand alone, like the other two
     expect(isoTileClickPoint.toString()).not.toMatch(/__name\(|require\(|__vi_esm/);
@@ -437,8 +462,8 @@ describe("E14 the click point is measured once, and verified before it is used",
 
   it("refuses an offset scaled the way the spec once scaled it", () => {
     scene(1337, 1);
-    const c = findIsoCorridor({ minTiles: 4, maxTiles: 7 });
-    const t = c.col[c.tiles - 1];                 // the factory tile, (24,10)-ish
+    const c = findIsoCorridor();
+    const t = c.col[c.tiles - 1];                 // the factory tile (town-ring end)
     const [dx, dy] = tileToScreenAt(cam, t.tx, t.ty);
     const [, sy0] = tileToScreenAt(cam, 0, 0);
     const [, ny] = tileToScreenAt(cam, 0, 1);
@@ -490,7 +515,7 @@ describe("E14 a tile is clicked wherever the game will actually take the click",
 
   it("moves to another point on the same tile when a neighbour steals one", () => {
     scene(1337, 1);
-    const c = findIsoCorridor({ minTiles: 4, maxTiles: 7 });
+    const c = findIsoCorridor();
     const t = c.col[0];                               // the harvester end
     const [cx] = tileToScreenAt(cam, t.tx, t.ty);
     const [sx] = tileToScreenAt(cam, 0, 0);
@@ -521,7 +546,7 @@ describe("E14 a tile is clicked wherever the game will actually take the click",
 
   it("refuses the tile, loudly, when no point on it lands on it", () => {
     scene(1337, 1);
-    const c = findIsoCorridor({ minTiles: 4, maxTiles: 7 });
+    const c = findIsoCorridor();
     const t = c.col[1];
     const real = hook().pickAt!;
     hook().pickAt = () => ({ tx: 99, ty: 99, sprite: "depot_blue_v1" });

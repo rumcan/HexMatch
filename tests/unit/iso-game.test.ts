@@ -8,7 +8,7 @@
 // this verifies wiring and game logic, not pixels. Pixel correctness is what
 // the committed-reference-PNG fixture is for, and that still needs a browser.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { WATER } from "../../src/iso/grid";
+import { WATER, factoryTouchesTown } from "../../src/iso/grid";
 import { MAP_W, MAP_H, TRANSPORT, INDUSTRY_BY_KEY } from "../../src/iso/config";
 import { setRng, mulberry32 } from "../../src/game/config";
 
@@ -214,6 +214,9 @@ function findFactorySpot(grid: import("../../src/iso/grid").Grid): [number, numb
         }
         if (!ok) break;
       }
+      // PP-02: the real `placeFactory` only accepts footprints that touch a
+      // town by an edge, so a spot this helper returns must pass the rule too.
+      if (ok && !factoryTouchesTown(grid, x, y)) ok = false;
       if (ok) return [x, y];
     }
   }
@@ -771,12 +774,23 @@ describe("W9 the free setup allowance buys road, not rail", () => {
   it("a rail drag with 12 free tiles and no ore lays nothing and burns no allowance", async () => {
     const h = await boot();
     const { canBuildOn, hasTrack } = await import("../../src/iso/track");
-    // five consecutive rail-legal tiles to drag along (rail needs flat ground)
+    // five consecutive rail-legal tiles to drag along (rail needs flat ground).
+    // PP-02: the drag's origin is also the Factory's 2×2 footprint, and a
+    // Factory must touch a town by an edge — so search the whole map for a
+    // town-adjacent, rail-legal run whose origin footprint is legal ground
+    // (town-adjacent flat runs exist near every town, not in the old 16×16 box).
     let line: [number, number] | null = null;
-    for (let y = 6; y < 26 && !line; y++) {
-      for (let x = 6; x < 22 && !line; x++) {
+    for (let y = 2; y < MAP_H - 3 && !line; y++) {
+      for (let x = 2; x < MAP_W - 5 && !line; x++) {
         let ok = true;
         for (let k = 0; k < 5; k++) if (!canBuildOn(h.grid, "rail", x + k, y)) ok = false;
+        // the whole 2×2 factory footprint at the line's origin must be legal
+        for (let dy = 0; dy < 2 && ok; dy++) {
+          for (let dx = 0; dx < 2; dx++) {
+            if (!canBuildOn(h.grid, "road", x + dx, y + dy)) { ok = false; break; }
+          }
+        }
+        if (ok && !factoryTouchesTown(h.grid, x, y)) ok = false;
         if (ok) line = [x, y];
       }
     }

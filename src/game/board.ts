@@ -42,15 +42,6 @@ export class Board {
   onPopup: (gains: Partial<Record<ResKey, number>>, label: string) => void = () => {};
   // fired when a combo is banked: (bankedNow, needed, grantedCoin)
   onCombo: (count: number, needed: number, granted: boolean) => void = () => {};
-  /**
-   * N3: the live gold-mine gate. A gold GEM may only appear on the board while
-   * a harvester is connected to a gold mine — the same network-reach rule that
-   * spawns the other tokens (quarry.tokenPool). The quarry wires this to a
-   * match-time flood fill; the default denies, so a bare Board (no map) never
-   * mints board gold. The combo's PURSE payout (onGold) is unconditional —
-   * banking the coin always pays; only the board gem is gated.
-   */
-  goldReachable: () => boolean = () => false;
 
   constructor() {
     this.initFill();
@@ -70,8 +61,9 @@ export class Board {
    * (`randRes` → `initFill` / `gravity`) — but only while a depot sits beside
    * a gold mine. The quarry recomputes this on every refresh (build /
    * demolish), so building the depot turns gold drops on and demolishing it
-   * turns them off. The token spawn (`spawnGold`, gated on a CONNECTED mine)
-   * is unchanged: a plain gold gem pays nothing, a tokened one pays gold.
+   * turns them off. Gold gems never overwrite an existing gem in place: the
+   * only way a gold gem reaches the board is by falling in from the top. A
+   * plain gold gem pays nothing, a tokened one pays gold.
    */
   setGoldEnabled(enabled: boolean) {
     const has = this.pool.includes("gold");
@@ -302,10 +294,14 @@ export class Board {
     await this.settle(2);
   }
 
-  // 20s token spawn: pool = { res: accessTier }
+  // 20s token spawn: pool = { res: accessTier }. Every reachable colour,
+  // INCLUDING gold, upgrades an existing gem of that colour in place. Gold is
+  // never minted by converting a different-colour gem — gold gems reach the
+  // board only by dropping in from the top via the gravity pool (see
+  // setGoldEnabled). A tokened gold gem pays gold when matched; a plain one
+  // pays nothing.
   spawnTokens(pool: Partial<Record<ResKey, number>>) {
     for (const res of Object.keys(pool) as ResKey[]) {
-      if (res === "gold") continue;   // gold never upgrades in place — see spawnGold
       const tier = pool[res] as 1 | 2;
       const eligible: Gem[] = [];
       for (let r = 0; r < H; r++) for (let c = 0; c < W; c++) {
@@ -318,13 +314,6 @@ export class Board {
         this.onFx("up", g.r, g.c);
       }
     }
-    // N3: Gold gems only appear if you actually have gold-mine access. Without
-    // a connected gold mine there is no `pool.gold`, so no gem spawns — and
-    // the combo reward is gated on the same reach (see registerCombo).
-    if (pool.gold !== undefined) {
-      const goldTier = (pool.gold as number) >= 2 ? 2 : 1;
-      this.spawnGold(goldTier as 1 | 2);
-    }
     this.onChange();
   }
 
@@ -334,36 +323,18 @@ export class Board {
    * W5: the coin reaches the player's PURSE directly via `onGold(1)` — that
    * is what makes "2 combos = 1 gold" actually pay out (and what makes the
    * Black Market affordable).
-   *
-   * N3: the board GEM this used to mint unconditionally is gated on
-   * `goldReachable` — a gold gem only appears while a harvester is connected
-   * to a gold mine, same as every other token colour.
    */
   registerCombo() {
     this.comboCount++;
     const need = Board.COMBOS_PER_GOLD;
     if (this.comboCount >= need) {
       this.comboCount -= need;
-      if (this.goldReachable()) this.spawnGold(1);
       this.onGold(1);
       this.onCombo(this.comboCount, need, true);
       this.onChange();
     } else {
       this.onCombo(this.comboCount, need, false);
     }
-  }
-
-  // N3: convert ONE random neutral gem into a gold gem with a token number —
-  // the spawn mechanic is unchanged (replace in place); the callers gate it
-  // on gold-mine reach (spawnTokens via pool.gold, registerCombo via
-  // goldReachable).
-  spawnGold(tier: 1 | 2) {
-    const eligible = this.gems().filter((g) =>
-      g.res !== "gold" && g.tier === 0 && !g.special && !g.block && g.hard === 0);
-    if (!eligible.length) return;
-    const g = choice(eligible);
-    g.res = "gold"; g.tier = tier;
-    this.onFx("up", g.r, g.c);
   }
 
   harden(n = 7) {

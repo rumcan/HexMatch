@@ -98,7 +98,10 @@ interface IsoHookLite {
 export interface CorridorOptions {
   /** Shortest corridor worth playing — it must prove a MULTI-tile drag (default 4). */
   minTiles?: number;
-  /** Longest corridor to try; 7 is the pre-cutover length (default 7). */
+  /** Longest corridor to try. PP-02: the factory end must touch a town and
+   *  towns sit ≥8 tiles from industries (T4's TOWN_INDUSTRY_SEP), so a legal
+   *  corridor is longer than the old 4–7 tile rows. 12 is the setup free-track
+   *  allowance — the whole corridor must ride it, free and untruncated. */
   maxTiles?: number;
 }
 
@@ -145,7 +148,7 @@ export interface OcclusionHit extends CorridorTile {
 export function findIsoCorridor(opts?: CorridorOptions): Corridor {
   const want = opts || {};
   const minTiles = want.minTiles ?? 4;
-  const maxTiles = want.maxTiles ?? 7;
+  const maxTiles = want.maxTiles ?? 12;
 
   const h = (window as unknown as { __iso?: IsoHookLite }).__iso;
   if (!h || !h.grid || typeof h.tileScreenAt !== "function") {
@@ -208,6 +211,24 @@ export function findIsoCorridor(opts?: CorridorOptions): Corridor {
     if (grid.occupancy[i] !== -1) return "occupied";
     return null;
   });
+  // PP-02: a Factory must touch a town by an edge. The game enforces this on
+  // the click (`canPlaceFactory`), so the picker must only offer a corridor
+  // whose factory endpoint is a legal, town-adjacent 2×2 — otherwise the
+  // gameplay round's factory click would be refused and the test would hang in
+  // `setup-factory`. A town tile is stamped `TOWN_OCC` (-2) in the occupancy —
+  // houses AND PP-10 town roads carry it, so touching the ring road counts.
+  const TOWN_OCC = -2;
+  const isTown = (tx: number, ty: number) =>
+    tx >= 0 && ty >= 0 && tx < MAP_W && ty < MAP_H && grid.occupancy[ty * MAP_W + tx] === TOWN_OCC;
+  const factoryTouchesTown = (fx: number, fy: number) => {
+    for (let ox = 0; ox < 2; ox++) {
+      for (let oy = 0; oy < 2; oy++) {
+        const x = fx + ox, y = fy + oy;
+        if (isTown(x, y - 1) || isTown(x, y + 1) || isTown(x - 1, y) || isTown(x + 1, y)) return true;
+      }
+    }
+    return false;
+  };
   const harvesterWhy = (tx: number, ty: number) => memo(`h${tx},${ty}`, () => {
     if (!h.tileProbe) return null;
     const p = h.tileProbe("road", tx, ty);
@@ -307,8 +328,18 @@ export function findIsoCorridor(opts?: CorridorOptions): Corridor {
       const hy = d.dy === 1 ? ind.ty + ind.h : d.dy === -1 ? ind.ty - 1 : ind.ty;
       for (const aim of AIMS) {
         tried++;
-        // Extend the column one tile at a time: the first tile a filter
-        // refuses caps the length, because every longer column shares it.
+        // Extend the column one tile at a time. TWO different rules decide a
+        // column's fate:
+        //   * The ROAD tile at (tx,ty) is the column itself: if it is illegal,
+        //     off-screen, covered or pick-wrong, every longer column shares it,
+        //     so that failure caps the column.
+        //   * The FACTORY endpoint is a property of ONE tile, not of the column.
+        //     PP-02 makes this matter: a factory must touch a town, and towns
+        //     sit ≥8 tiles from industries (T4's TOWN_INDUSTRY_SEP), so the
+        //     first few endpoint positions along a column are legitimately
+        //     NOT near a town while a longer column reaches one. An endpoint
+        //     rejection therefore never caps the column — it only disqualifies
+        //     that length, and the search carries on towards the town.
         let margin = Infinity;
         let j = 0;
         for (; j < lenMax; j++) {
@@ -323,38 +354,51 @@ export function findIsoCorridor(opts?: CorridorOptions): Corridor {
           else why = buildWhy(tx, ty);
           if (why === null) why = pickOk(px, py, tx, ty);
           if (why === null) why = coverAt(cx, cy);   // "covered:<element>" — who ate the click
-          // The factory endpoint reserves all four tiles. The pixel guard
-          // samples (+2,+2), OUTSIDE that 2×2 footprint, so it must be in view.
-          if (why === null && j >= minTiles - 1) {
-            for (const [ox, oy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
-              const refusal = buildWhy(tx + ox, ty + oy);
-              if (refusal) { why = `factory-footprint-${refusal}`; break; }
-            }
-            if (why === null) {
-              if (tx + 2 >= MAP_W || ty + 2 >= MAP_H) why = "factory-diagonal-off-map";
-              else {
-                const b = devAt(tx + 2, ty + 2);
-                if (!inView(b[0] / dpr + origin[0], b[1] / dpr + origin[1])) why = "factory-diagonal-off-screen";
-              }
-            }
-          }
           if (why !== null) {
             bump(why);
             if (!near || near.ok < j) near = { ok: j, why, tx, ty, ind: ind.type, dir: d.name, aim: `${aim.x},${aim.y}` };
-            break;
+            break;   // the ROAD is refused: every longer column shares this tile
           }
           margin = Math.min(margin, cx - clearLeft, clearRight - cx);
-          if (j >= minTiles - 1 && margin > 4) {
-            const col: CorridorTile[] = [];
-            for (let k = 0; k <= j; k++) col.push({ tx: hx + d.dx * k, ty: hy + d.dy * k });
-            const cand: Corridor = {
-              hx, hy, fx: tx, fy: ty, dir: d.name, tiles: col.length,
-              margin, industry: ind.id, col, aim,
-            };
-            // widest clearance first; a shorter corridor breaks ties (less can
-            // drift between the search and the real click).
-            if (!best || cand.margin > best.margin + 0.5
-              || (Math.abs(cand.margin - best.margin) <= 0.5 && cand.tiles < best.tiles)) best = cand;
+          if (j >= minTiles - 1) {
+            // This tile could end the corridor — but only if a factory on it
+            // is legal AND town-adjacent. None of these refusals stop the
+            // column (PP-02: keep walking until a town ring is reached); they
+            // just record why THIS length was not a candidate.
+            let endWhy: string | null = null;
+            // The factory endpoint reserves all four tiles.
+            for (const [ox, oy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+              const refusal = buildWhy(tx + ox, ty + oy);
+              if (refusal) { endWhy = `factory-footprint-${refusal}`; break; }
+            }
+            // PP-02: the factory endpoint must touch a town by an edge.
+            if (endWhy === null && !factoryTouchesTown(tx, ty)) endWhy = "factory-not-near-town";
+            if (endWhy === null) {
+              // The pixel guard samples (+2,+2), OUTSIDE that 2×2 footprint,
+              // so it must be in view.
+              if (tx + 2 >= MAP_W || ty + 2 >= MAP_H) endWhy = "factory-diagonal-off-map";
+              else {
+                const b = devAt(tx + 2, ty + 2);
+                if (!inView(b[0] / dpr + origin[0], b[1] / dpr + origin[1])) endWhy = "factory-diagonal-off-screen";
+              }
+            }
+            if (endWhy !== null) {
+              bump(endWhy);
+              // ok = j + 1: every column tile up to and including this one is
+              // a legal, clickable ROAD tile; only the factory end failed.
+              if (!near || near.ok < j + 1) near = { ok: j + 1, why: endWhy, tx, ty, ind: ind.type, dir: d.name, aim: `${aim.x},${aim.y}` };
+            } else if (margin > 4) {
+              const col: CorridorTile[] = [];
+              for (let k = 0; k <= j; k++) col.push({ tx: hx + d.dx * k, ty: hy + d.dy * k });
+              const cand: Corridor = {
+                hx, hy, fx: tx, fy: ty, dir: d.name, tiles: col.length,
+                margin, industry: ind.id, col, aim,
+              };
+              // widest clearance first; a shorter corridor breaks ties (less can
+              // drift between the search and the real click).
+              if (!best || cand.margin > best.margin + 0.5
+                || (Math.abs(cand.margin - best.margin) <= 0.5 && cand.tiles < best.tiles)) best = cand;
+            }
           }
         }
       }
