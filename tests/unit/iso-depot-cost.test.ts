@@ -214,24 +214,26 @@ describe("PP-05 the Depot cost is one authoritative rule", () => {
     expect(second.affordable).toBe(false);
   });
 
-  it("accepts Oil in any amount that covers the cost, and never goes partial", () => {
-    // PP-07: the Depot costs Wood/Stone/Grain beside the Oil, so "exact"
-    // covers the whole ticket — and one Oil short of it is still refused.
+  it("accepts a purse covering the complete table cost, and never goes partial", () => {
+    // PP-07: the price is the whole table entry — Wood + Stone + Grain + Oil
     const exact = priceDepot({ ...DEPOT_COST }, 0);
     expect(exact.affordable).toBe(true);
     expect(exact.cost).toEqual(DEPOT_COST);
-    const short = priceDepot({ ...DEPOT_COST, oil: DEPOT_COST.oil! - 1 }, 0);
-    expect(short.affordable).toBe(false);
-    expect(short.missing).toEqual(["oil"]);
+    // one cargo short by one → refused outright, and named in `missing`
+    for (const cargo of Object.keys(DEPOT_COST) as Cargo[]) {
+      const short = { ...DEPOT_COST, [cargo]: DEPOT_COST[cargo]! - 1 };
+      expect(priceDepot(short, 0).affordable, `short of ${cargo}`).toBe(false);
+      expect(priceDepot(short, 0).missing).toContain(cargo);
+    }
   });
 
   it("renders the COMPLETE cost for the HUD before any placement", () => {
-    // PP-07: 1 Wood + 1 Stone + 1 Grain + 1 Oil, in the fixed display order.
+    // PP-07: the complete price names every cargo the table asks for
     expect(costLabel(DEPOT_COST)).toBe("1 🌾 Grain + 1 🪵 Wood + 1 🪨 Stone + 1 🛢️ Oil");
     expect(costCompact(DEPOT_COST)).toBe("1🌾 1🪵 1🪨 1🛢️");
     expect(depotButtonLabel(FREE_SETUP_DEPOTS)).toMatch(/free setup/);
-    expect(depotButtonLabel(FREE_SETUP_DEPOTS)).toContain(costCompact(DEPOT_COST));
-    expect(depotButtonLabel(0)).toContain(costCompact(DEPOT_COST));
+    expect(depotButtonLabel(FREE_SETUP_DEPOTS)).toContain("1🛢️");
+    expect(depotButtonLabel(0)).toContain("1🛢️");
   });
 });
 
@@ -346,10 +348,14 @@ describe("PP-05 placing a Depot in the live game", () => {
     const oilEarned = h.purse.oil ?? 0;
     expect(oilEarned, "matching the Oil token must bank Oil").toBeGreaterThan(0);
 
-    // …and that Oil builds the next Depot (PP-07: the Depot also costs
-    // Wood/Stone/Grain — granted here, since the earned Oil is the part
-    // under test; wood/stone ride the new starting stock).
-    h.purse.grain = 5;
+    // PP-07: the Depot price grew beyond Oil — top up the rest of the table
+    // cost directly. The Oil matched above stays the ONLY Oil in the purse,
+    // so the spend assertion below still proves processed Oil builds Depots.
+    h.purse.wood = DEPOT_COST.wood;
+    h.purse.stone = DEPOT_COST.stone;
+    h.purse.grain = DEPOT_COST.grain;
+
+    // …and that Oil builds the next Depot
     const next = findSouthCorridor(h.grid, 6, "quarry")!;
     expect(h.depotPrice().affordable).toBe(true);
     expect(h.placeDepot(next.hx, next.hy)).toBe(true);
@@ -376,11 +382,10 @@ describe("PP-05 the cost is visible before the click", () => {
     h.purse.oil = 0;
     await settle();
     // …and once it is spent, the button shows the real price and greys out
-    expect(depotBtn().querySelector("small")!.textContent).toContain(costCompact(DEPOT_COST));
+    expect(depotBtn().querySelector("small")!.textContent).toContain("1🛢️");
     expect(depotBtn().classList.contains("disabled")).toBe(true);
-    // PP-07: the full ticket (Oil + Grain; wood/stone ride the starting stock)
     h.purse.oil = 1;
-    h.purse.grain = 1;
+    h.purse.grain = 1;        // PP-07: the price asks Grain as well as Oil
     await settle();
     expect(depotBtn().classList.contains("disabled")).toBe(false);
   });
@@ -461,15 +466,21 @@ describe("PP-05 the rival pays the same Depot cost", () => {
     expect(paid.harvester).toBeTruthy();
     expect(paid.freeDepots).toBe(0);
     expect(paid.spent.oil).toBe(DEPOT_COST.oil);
+    // PP-07: the paid Depot charges the WHOLE table entry, not Oil alone.
+    // Grain and Oil never appear in a track cost, so their exact amounts
+    // prove the Depot itself was charged; Wood/Stone also carry the paid
+    // track tiles beyond the allowance.
+    expect(paid.spent.grain).toBe(DEPOT_COST.grain);
+    expect(paid.spent.wood).toBeGreaterThanOrEqual(DEPOT_COST.wood!);
+    expect(paid.spent.stone).toBeGreaterThanOrEqual(DEPOT_COST.stone!);
   });
 
   it("offers no plan at all when the purse cannot pay the Depot's Oil", async () => {
     const { planCandidates, aiBuildStep } = await import("../../src/iso/ai");
     const { eco } = await flat([{ type: "farm", tx: 12, ty: 5 }]);
     const F = { owner: "ai", ownerId: 2, tx: 5, ty: 5 };
-    // plenty for the track, nothing for the Depot — Oil is the ONLY thing
-    // missing, so the refusal names it (PP-07: wood/grain granted).
-    const broke = { wood: 9999, stone: 9999, grain: 9999, ore: 9999, oil: 0 };
+    // plenty for the track, nothing for the Depot
+    const broke = { stone: 9999, ore: 9999, oil: 0 };
     expect(planCandidates(eco, F, { stock: {}, purse: broke, free: 12, freeDepots: 0 })).toEqual([]);
     expect(aiBuildStep(eco, F, { stock: {}, purse: broke, free: 12, freeDepots: 0 }, 1)).toBeNull();
     // …and the map proves it: no track, no Depot, nothing spent
@@ -483,7 +494,7 @@ describe("PP-05 the rival pays the same Depot cost", () => {
     const { createTrack } = await import("../../src/iso/track");
     const grid = generateMap(1337);
     // START_PURSE has no Oil at all; the opening must still build a Depot
-    const purse = { wood: 12, stone: 12, ore: 0 };
+    const purse = { stone: 12, ore: 0 };
     const spot = chooseRivalFactorySpot(grid, createTrack(), [23, 22], {
       purse, free: 12, ownerId: 2, freeDepots: FREE_SETUP_DEPOTS,
     });

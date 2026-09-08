@@ -42,20 +42,22 @@ import {
   createScoreState, rescore, vpFor, industriesInCatchment,
   playerResources, buildAllComponents, resolveConnection,
   pickBlockadeTarget,
-  type EconomyState, type Harvester, type ScoreState, type VpEvent,
+  type EconomyState, type Factory, type Harvester, type ScoreState, type VpEvent,
 } from "./economy";
-import { aiBuildStep, chooseRivalFactorySpot } from "./ai";
+import { aiBuildStep, chooseRivalFactorySpot, planCandidates } from "./ai";
 import { planDepotPlacement, planFactoryPlacement, type PlacementPlan } from "./placement";
 import {
   PLANT_COST, PLANT_REFUSAL_TEXT, addPlant, adjacentTown, canAffordPlant,
   chooseAiPlantSpot, footprintTiles, plantRefusal, plantsOf,
 } from "./plants";
 import {
-  CARGO, FACTORY_FOOTPRINT, INDUSTRY_BY_KEY, TRANSPORT, VP_TARGET, townHouseSprite, type Cargo,
+  CARGO, CARGOES, FACTORY_FOOTPRINT, INDUSTRY_BY_KEY, TRANSPORT, VP_TARGET,
+  townHouseSprite, type Cargo,
 } from "./config";
 import {
   DEPOT_COST, FREE_SETUP_DEPOTS, costLabel, priceDepot, shortfallLabel,
 } from "./construction";
+import { bankTrade } from "../game/trade";
 import {
   MAP_W, MAP_H, BANDIT_MS, BLOCK_MS, FOG_MS, SABOTAGE, SECURITY, type ResKey,
 } from "../game/config";
@@ -654,6 +656,12 @@ export function startIsoGame(root: HTMLElement) {
 
   // ── economy + AI clocks ────────────────────────────────────────────────
   let lastHarvest = 0, lastAi = 0;
+  /**
+   * PP-07: the fractional remainder of the rival's trickle yield, carried
+   * across ticks so sub-1 rates (Oil Rig 0.4/tick, Gold Mine 0.3/tick) still
+   * pay out over time instead of rounding to zero forever.
+   */
+  const trickleCarry: Partial<Record<Cargo, number>> = {};
 
   function economyTick(now: number) {
     if (phase !== "play") return;
@@ -666,10 +674,17 @@ export function startIsoGame(root: HTMLElement) {
     // owner-scoped components) and credited straight to its purse — this is
     // the rival's only income, so once it connects an industry its stone/ore
     // actually move over time.
+    // PP-07: fractional yields ACCUMULATE across ticks instead of rounding
+    // each tick. Per-tick rounding paid 0 forever for an Oil Rig (0.4/tick)
+    // or a Gold Mine (0.3/tick), so an oil-only network was dead income —
+    // and with every paid Depot now costing Oil, that was an opening
+    // deadlock. The carry turns 0.4/tick into 1 oil every ~7.5 s.
     const y = playerResources(eco, rival.id, now);
     const gain: Purse = {};
     for (const [cargo, v] of Object.entries(y) as [Cargo, number][]) {
-      const n = Math.max(0, Math.round(v));
+      const acc = (trickleCarry[cargo] ?? 0) + Math.max(0, v);
+      const n = Math.floor(acc);
+      trickleCarry[cargo] = acc - n;
       if (n > 0) gain[cargo] = n;
     }
     if (Object.keys(gain).length) earn(rival, gain);
@@ -683,6 +698,68 @@ export function startIsoGame(root: HTMLElement) {
     if (phase !== "play") return;
     quarry.tick(now);
   }
+
+  /**
+   * PP-07: the rival resolves missing construction materials the same way
+   * the player can — the 4:1 bank. Its only income is the trickle, and NO
+   * trickle cargo pays for everything a second Depot costs (Grain + Oil +
+   * Wood + Stone from the one table, plus the track leg to reach it):
+   * without this the AI deadlocks on its first paid expansion, the exact
+   * endless-dependency loop the ticket forbids. Two exchanges per build
+   * clock, giving from the cargo it holds most; Gold is never touched
+   * (PP-08). The target is the FULL price of the plan it wants — the
+   * track leg and the Depot together — so it never trades away a cargo
+   * that plan still needs.
+   */
+  const rivalBankTowardPlan = (f: Factory) => {
+    // Price with a HYPOTHETICAL deep purse: `planCandidates` drops plans the
+    // purse cannot finish, and the plan to bank toward is exactly one of
+    // those. Scarcity ranking still reads the REAL stock; only affordability
+    // is lifted.
+    const deep: Purse = { ...rival.purse };
+    for (const c of CARGOES) deep[c] = (deep[c] ?? 0) + MAP_W * MAP_H;
+    const cands = planCandidates(eco, f, {
+      stock: rival.purse, purse: deep,
+      free: rival.freeTrack, freeDepots: rival.freeDepots,
+    });
+    if (!cands.length) return;
+    const depot = priceDepot(rival.purse, rival.freeDepots).cost;
+    // Bank toward the plan CLOSEST to affordable — fewest missing units,
+    // ties broken by the planner's own score. The top-scored candidate can
+    // swing with every trickle of income; "least shortfall" is stable, so
+    // the rival works one plan to completion instead of chasing a moving
+    // target (and re-rolling its bank trades forever).
+    const shortfall = (c: (typeof cands)[number]): number => {
+      let missing = 0;
+      for (const [k, v] of Object.entries(c.cost)) {
+        missing += Math.max(0, v - (rival.purse[k as Cargo] ?? 0));
+      }
+      for (const [k, v] of Object.entries(depot)) {
+        missing += Math.max(0, v - (rival.purse[k as Cargo] ?? 0));
+      }
+      return missing;
+    };
+    const chosen = [...cands].sort(
+      (a, b) => shortfall(a) - shortfall(b) || b.score - a.score,
+    )[0];
+    const target: Purse = {};
+    for (const [k, v] of Object.entries(chosen.cost)) target[k as Cargo] = v;
+    for (const [k, v] of Object.entries(depot)) target[k as Cargo] = (target[k as Cargo] ?? 0) + v;
+    const trader = { res: rival.purse };
+    let trades = 0;
+    for (const [cargo, need] of Object.entries(target) as [Cargo, number][]) {
+      if (trades >= 2) break;
+      while ((rival.purse[cargo] ?? 0) < need && trades < 2) {
+        const surplus = (CARGOES as Cargo[])
+          .filter((c) => c !== "gold" && c !== cargo && (rival.purse[c] ?? 0) >= 4)
+          .filter((c) => (target[c] ?? 0) <= (rival.purse[c] ?? 0) - 4)
+          .sort((a, b) => (rival.purse[b] ?? 0) - (rival.purse[a] ?? 0))[0];
+        if (!surplus) break;
+        bankTrade(trader, surplus, cargo);
+        trades++;
+      }
+    }
+  };
 
   function aiTick(now: number) {
     if (phase !== "play") return;
@@ -703,9 +780,18 @@ export function startIsoGame(root: HTMLElement) {
     // PP-05: `freeDepots` rides along with `free`, so the rival prices its
     // Depot with the same table the player pays — its opening Depot is free on
     // the same allowance, and every later one needs Oil it has to have earned.
-    const out = aiBuildStep(eco, f,
-      { stock: rival.purse, purse: rival.purse, free: rival.freeTrack, freeDepots: rival.freeDepots },
-      allocHarvesterId());
+    const opts = {
+      stock: rival.purse, purse: rival.purse,
+      free: rival.freeTrack, freeDepots: rival.freeDepots,
+    };
+    const harvesterId = allocHarvesterId();
+    let out = aiBuildStep(eco, f, opts, harvesterId);
+    if (!out) {
+      // PP-07: nothing affordable yet — bank toward the plan it wants and
+      // retry once, the way a player trades for a missing material.
+      rivalBankTowardPlan(f);
+      out = aiBuildStep(eco, f, opts, harvesterId);
+    }
     if (!out) return;
     rival.freeTrack = Math.max(0, rival.freeTrack - out.free);
     rival.freeDepots = Math.max(0, rival.freeDepots - out.freeDepots);

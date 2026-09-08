@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { generateMap, WATER } from "../../src/iso/grid";
-import { MAP_W, MAP_H, INDUSTRY_QUOTA, TRANSPORT, VP_TARGET } from "../../src/iso/config";
+import { MAP_W, MAP_H, INDUSTRY_QUOTA, TRANSPORT, UPGRADE_COST, VP_TARGET } from "../../src/iso/config";
 
 // Mirrored from src/iso/game.ts — do not import the boot module (it pulls
 // atlas PNGs and the DOM). Pass 1 pinned these; pass 2 measures against them.
@@ -54,6 +54,7 @@ describe("E8 pass 2 — starting curve", () => {
     expect(TRANSPORT.rail.cost.wood).toBe(1);
     expect(TRANSPORT.road.cost.stone).toBe(1);
     expect(TRANSPORT.road.cost.wood).toBe(1);
+    expect(UPGRADE_COST.ore).toBe(4);  // road→rail pays the difference only
     expect(TRANSPORT.road.onRough).toBe(true);
     expect(TRANSPORT.rail.onRough).toBe(false);
     expect(VP_TARGET).toBe(12);

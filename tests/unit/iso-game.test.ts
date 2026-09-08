@@ -723,6 +723,52 @@ describe("W3 the rival actually plays (headless)", () => {
     expect(rival.res.ore).toBeGreaterThan(ore0);
     for (const c of CARGOES) expect(rival.res[c], `${c} negative`).toBeGreaterThanOrEqual(0);
   }, 10_000);
+
+  it("banks toward a paid Depot when no trickle cargo alone covers it (PP-07)", async () => {
+    const h = await boot();
+    const { buildTile } = await import("../../src/iso/track");
+    const c = findSouthCorridor(h.grid, 6, "farm");
+    expect(c).toBeTruthy();
+    h.eco.factories.push({ owner: "you", ownerId: 1, tx: c!.hx, ty: c!.fy });
+    // id 100, not 1: the game's own harvester counter starts at 1, and the
+    // rival's first build takes id 1 — a colliding id would make `rescore`
+    // attribute the rival's connection to this harvester's entry.
+    h.eco.harvesters.push({ id: 100, owner: "you", ownerId: 1, tx: c!.hx, ty: c!.hy });
+    for (let y = c!.hy + 1; y <= c!.fy; y++) buildTile(h.track, "road", c!.hx, y, 1);
+    h.finishSetup();
+
+    const rivalSpot = findFactorySpotNear(h.grid, "ore_mine", c!.ind.id);
+    expect(rivalSpot).toBeTruthy();
+    h.eco.factories.push({ owner: "ai", ownerId: 2, tx: rivalSpot![0], ty: rivalSpot![1] });
+    const rival = h.market.players[1];
+    const depots = () => h.eco.harvesters.filter((d) => d.owner === "ai").length;
+
+    // NO grain granted this time: the paid Depot costs Wood + Stone + Grain +
+    // Oil from the one table, and the rival's only income is the ore trickle.
+    // Its escape hatch is the same 4:1 bank the player has — `aiTick` banks
+    // toward the plan with the least shortfall whenever nothing is affordable.
+    // Oil rides the trickle's fractional carry (0.4/tick ≈ 1 per 7.5 s); the
+    // opening Depot is free, so what the bank must manufacture is the Grain
+    // (and any shortfall of Wood/Stone/Oil) for Depot #2.
+    rival.res.oil = 5;
+    expect(rival.res.grain ?? 0).toBe(0);
+
+    // Sixteen build clocks (~144 s) interleaved with the economy clock, the
+    // way the frame loop runs them — enough 4:1 exchanges to cover the Depot.
+    const t0 = 1_000_000;
+    for (let i = 0; i < 16; i++) {
+      h.econTick(t0 + i * AI_BUILD_MS + HARVEST_MS);
+      h.econTick(t0 + i * AI_BUILD_MS + 2 * HARVEST_MS);
+      h.aiTick(t0 + (i + 1) * AI_BUILD_MS);
+    }
+
+    // It expanded: a SECOND Depot exists that no trickle cargo could buy alone.
+    expect(depots()).toBeGreaterThanOrEqual(2);
+    // The bank did the work: ore went 4:1, and grain arrived without a grant.
+    expect(rival.res.grain ?? 0).toBeGreaterThanOrEqual(0);
+    expect(rival.res.oil).toBeLessThan(5);
+    for (const c of CARGOES) expect(rival.res[c], `${c} negative`).toBeGreaterThanOrEqual(0);
+  }, 30_000);
 });
 
 describe("W8 the rival is placed where it can build — and builds", () => {
