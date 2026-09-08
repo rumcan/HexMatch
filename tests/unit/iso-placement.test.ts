@@ -33,7 +33,7 @@ describe("PP-03 factory footprint vs town-adjacency band", () => {
   it("the reach band is EDGE-adjacent only — diagonals never qualify", () => {
     const g = grid();
     const ring = factoryAdjacencyRing(g, 60, 60);
-    // every ring tile is an orthogonal neighbour of some footprint tile
+    // every ring tile is an orthogonal neighbour of some footprint tile…
     for (const [x, y] of ring) {
       const d = (dx: number, dy: number) => Math.abs(x - (60 + dx)) + Math.abs(y - (60 + dy));
       expect(
@@ -41,7 +41,12 @@ describe("PP-03 factory footprint vs town-adjacency band", () => {
         `${x},${y} is not edge-adjacent to the 2×2 footprint`,
       ).toBe(true);
     }
+    // …and the footprint's own tiles are never part of their own ring
     const keys = new Set(ring.map(([x, y]) => `${x},${y}`));
+    expect(ring).toHaveLength(8);
+    for (const [x, y] of [[60, 60], [61, 60], [60, 61], [61, 61]]) {
+      expect(keys.has(`${x},${y}`)).toBe(false);
+    }
     // the four diagonals are exactly the excluded tiles
     for (const [x, y] of [[59, 59], [62, 59], [59, 62], [62, 62]]) {
       expect(keys.has(`${x},${y}`)).toBe(false);

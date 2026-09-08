@@ -122,6 +122,35 @@ async function opaqueNear(
   }, { canvasIndex, tx, ty, half });
 }
 
+/**
+ * Count pixels in the same window whose ALPHA is high enough to be a strong
+ * placement glow. PP-03 layered a faint reach band (highlight_soft: α ≤ 110)
+ * AROUND the Factory's footprint, and at 0.5× zoom the tips of those band
+ * diamonds can bleed a few pixels into a neighbouring tile's sample window —
+ * that faint bleed must not read as a build tile. The solid placement glow
+ * (highlight: fill α 170 / edge α 255), the red invalid twin (α 190/255) and
+ * the node tag (α 235) all clear the 130 threshold, so a zero count here is
+ * exactly "no strong/placement glow on this tile" at any zoom.
+ */
+async function strongGlowNear(
+  page: import("@playwright/test").Page, canvasIndex: number,
+  tx: number, ty: number, half = 6, alpha = 130,
+) {
+  return page.evaluate(({ canvasIndex, tx, ty, half, alpha }) => {
+    const h = (window as any).__iso;
+    const [x0, y0] = h.tileScreenAt(tx, ty);
+    const [, y1] = h.tileScreenAt(tx + 1, ty + 1);
+    const [ax] = h.tileScreenAt(0, 0), [bx] = h.tileScreenAt(1, 0);
+    const cx = Math.floor(x0 + Math.abs(bx - ax)), cy = Math.floor((y0 + y1) / 2);
+    const c = document.querySelectorAll("canvas")[canvasIndex] as HTMLCanvasElement;
+    const ctx = c.getContext("2d")!;
+    const d = ctx.getImageData(cx - half, cy - half, half * 2 + 1, half * 2 + 1).data;
+    let n = 0;
+    for (let i = 3; i < d.length; i += 4) if (d[i] > alpha) n++;
+    return n;
+  }, { canvasIndex, tx, ty, half, alpha });
+}
+
 test.describe("iso layout on every viewport", () => {
   test("three canvas layers fill the stage without page overflow", async ({ page }) => {
     await bootIso(page);
@@ -288,12 +317,14 @@ test.describe("iso game boots on the default route", () => {
     });
 
     // ── setup round 1 of 2: click the tile for your Factory ─────────────
-    // MT/T4: the factory occupies 2×2 tiles. Both corners glow; the old
-    // 3×3 outer corner stays unpainted.
+    // MT/T4 + PP-03: the factory occupies 2×2 tiles and both corners get the
+    // SOLID placement glow. The old 3×3 outer corner never gets a solid glow;
+    // PP-03's fainter reach band may legitimately reach that tile's sample
+    // window at low zoom, so the anti-3×3 guard probes the strong layer only.
     await page.mouse.move(factory.x, factory.y);
     await expect.poll(() => opaqueNear(page, 2, c.fx, c.fy), { timeout: 5000 }).toBeGreaterThan(10);
     await expect.poll(() => opaqueNear(page, 2, c.fx + 1, c.fy + 1), { timeout: 5000 }).toBeGreaterThan(10);
-    await expect.poll(() => opaqueNear(page, 2, c.fx + 2, c.fy + 2), { timeout: 5000 }).toBe(0);
+    await expect.poll(() => strongGlowNear(page, 2, c.fx + 2, c.fy + 2), { timeout: 5000 }).toBe(0);
     await page.mouse.click(factory.x, factory.y);
     await page.waitForFunction(() => (window as any).__iso.phase === "setup-harvester");
     expect((await page.evaluate(() => (window as any).__iso.factories.length))).toBeGreaterThanOrEqual(1);
