@@ -127,7 +127,8 @@ describe("E11 the game boots", () => {
     expect(root.querySelectorAll("canvas")).toHaveLength(3);
     const tools = [...root.querySelectorAll("[data-tool]")].map(
       (b) => (b as HTMLElement).dataset.tool);
-    expect(tools).toEqual(["road", "rail", "harvester", "demolish"]);
+    // PP-06 added the "plant" tool (an additional processing plant).
+    expect(tools).toEqual(["road", "rail", "harvester", "plant", "demolish"]);
   });
 
   it("starts in the factory-placement phase with a real map", async () => {
@@ -410,7 +411,8 @@ describe("J1 the quarry is mounted in the iso app", () => {
     await boot();
     const tools = [...root.querySelectorAll("[data-tool]")].map(
       (b) => (b as HTMLElement).dataset.tool);
-    expect(tools).toEqual(["road", "rail", "harvester", "demolish"]);
+    // PP-06 added the "plant" tool (an additional processing plant).
+    expect(tools).toEqual(["road", "rail", "harvester", "plant", "demolish"]);
     const panels = [...root.querySelectorAll("[data-panel]")].map(
       (b) => (b as HTMLElement).dataset.panel);
     expect(panels).toEqual(["quarry", "trade"]);
@@ -585,7 +587,7 @@ describe("V5 gems draw the restored sprite art", () => {
   it("the build buttons carry per-tool banner art classes", async () => {
     await boot();
     const tools = [...root.querySelectorAll("[data-tool]")] as HTMLElement[];
-    expect(tools).toHaveLength(4);
+    expect(tools).toHaveLength(5);
     for (const b of tools) expect(b.classList.contains(`bg-${b.dataset.tool}`)).toBe(true);
   });
 });

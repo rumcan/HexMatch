@@ -317,6 +317,8 @@ html, body, #root {
 .build-btn.bg-rail      { background-image: url("../assets/ui/build-rail.png"); }
 .build-btn.bg-harvester { background-image: url("../assets/ui/build-harvester.png"); }
 .build-btn.bg-demolish  { background-image: url("../assets/ui/build-demolish.png"); }
+/* PP-06: the additional-processing-plant tool reuses the factory banner art. */
+.build-btn.bg-plant     { background-image: url("../assets/ui/build-quarry.png"); }
 .build-btn.bg-factory   { background-image: url("../assets/ui/build-quarry.png"); }
 .build-btn.bg-foundry   { background-image: url("../assets/ui/build-market.png"); }
 

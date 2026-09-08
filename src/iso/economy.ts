@@ -44,11 +44,24 @@ export interface Harvester {
   ty: number;
 }
 
+/**
+ * A processing site (the "Factory"/Processing Plant building).
+ *
+ * PP-06: a player may own MORE THAN ONE. Nothing in this module assumed a
+ * single site — `resolveConnection` already walks every factory the owner has
+ * and returns the ONE best connection for a depot, so a depot linked to two
+ * plants still yields once and still scores its VP once. `id` and `townId`
+ * are optional so the starting Factory (and old snapshots) stay valid.
+ */
 export interface Factory {
   owner: string;
   ownerId: number;
   tx: number;
   ty: number;
+  /** PP-06: stable per-player plant id. 0 = the starting Factory. */
+  id?: number;
+  /** PP-06: the town this plant was raised beside (null = unknown/legacy). */
+  townId?: number | null;
 }
 
 export interface EconomyState {

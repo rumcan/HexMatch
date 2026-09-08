@@ -43,7 +43,8 @@ const GEM_ART: Record<Cargo, string> = Object.fromEntries(
 ) as Record<Cargo, string>;
 
 // ── tool + state shapes ─────────────────────────────────────────────────────
-export type UiTool = "road" | "rail" | "harvester" | "demolish";
+/** PP-06: `plant` raises an additional processing plant beside another town. */
+export type UiTool = "road" | "rail" | "harvester" | "plant" | "demolish";
 
 export interface UiPlayer {
   id: string;
@@ -288,6 +289,9 @@ export function createOriginalUi(
     { key: "road", label: "Road", sub: "1 stone · 1 VP" },
     { key: "rail", label: "Rail", sub: "4 ore + 1 stone · 3 VP" },
     { key: "harvester", label: "Depot", sub: "free · on industry" },
+    // PP-06: another instance of the SAME processing building, raised beside
+    // another town. Cost text mirrors PLANT_COST in src/iso/plants.ts.
+    { key: "plant", label: "Processing Plant", sub: "2🪵 2🪨 2🌾 3⛏️ · next to a town" },
     { key: "demolish", label: "Demolish", sub: "refund none" },
   ];
   for (const t of TOOLS) {
