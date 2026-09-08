@@ -475,10 +475,24 @@ async function run() {
       placements.push({ ...s, x, y });
       x += w + gap;
       if (x > rowMaxX) rowMaxX = x;
+      // Grow the row's bottom edge BEFORE measuring the canvas: the old order
+      // computed atlasH from a maxY that did not yet include this slot, so the
+      // last slot of the last row was packed past the bottom of the atlas
+      // (silently — nothing in the manifest is out of its own rect, the crop
+      // just landed outside the image). Surfaced by the 66x87 town offices.
+      maxY = Math.max(maxY, y + h);
       atlasW = Math.max(atlasW, rowMaxX + gap);
       atlasH = Math.max(atlasH, maxY + gap);
-      maxY = Math.max(maxY, y + h);
     }
+  }
+  // Every rect must lie inside the canvas. Cheap, and it is the only thing
+  // that catches a placement outside the image: a sprite packed past the edge
+  // still has a valid rect and anchor in the manifest, so nothing downstream
+  // complains — the art is simply not there.
+  for (const p of placements) {
+    const w = p.cellW * p.frames;
+    if (p.x + w > atlasW || p.y + p.cellH > atlasH)
+      throw new Error(`atlas overflow: ${p.name} at (${p.x},${p.y}) ${w}x${p.cellH} exceeds ${atlasW}x${atlasH}`);
   }
 
   const manifest = {

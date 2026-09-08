@@ -6,9 +6,9 @@
 // actually travels is the mutable world — the two track layers, the harvester
 // list, the factories, and per-player score.
 //
-// The track layers go over the wire as base64, not JSON arrays: 2304 bytes
-// each becomes ~3KB of base64 versus roughly 10KB as `[0,0,17,0,...]`. At the
-// host's snapshot rate that difference is the whole bandwidth budget.
+// The three track layers go over the wire as base64, not JSON arrays:
+// 20,736 bytes each on the 144×144 map become 27,648 base64 characters.
+// Terrain, towns and industries remain seed-derived rather than transmitted.
 //
 // Every snapshot carries a `version`. A guest on a different version is
 // rejected with a clear message rather than silently desyncing, which is what
@@ -25,8 +25,9 @@ import type { Harvester, Factory, ScoreState, ConnKind } from "./economy";
  * A guest whose version differs cannot be trusted to regenerate the same map.
  * v3 (W2): the track's per-tile owner layer travels with the two bit layers —
  * without it a rejoined guest would see both networks as one shared graph.
+ * v4 (T4): 144×144 map and wider seed-derived industry/town separation.
  */
-export const SNAPSHOT_VERSION = 3;
+export const SNAPSHOT_VERSION = 4;
 
 export const EXPECTED_TRACK_BYTES = MAP_W * MAP_H;
 
@@ -36,7 +37,7 @@ export const EXPECTED_TRACK_BYTES = MAP_W * MAP_H;
 export function bytesToBase64(bytes: Uint8Array): string {
   if (typeof Buffer !== "undefined") return Buffer.from(bytes).toString("base64");
   let s = "";
-  const CHUNK = 0x8000;   // avoid blowing the argument limit on 2304+ bytes
+  const CHUNK = 0x8000;   // bound the argument count independently of map size
   for (let i = 0; i < bytes.length; i += CHUNK) {
     s += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
   }

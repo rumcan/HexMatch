@@ -34,6 +34,7 @@ export function harvesterSpotIndex(grid: Grid): Set<number> {
 /** The road-legal 4-connected component containing (x,y), as a tile mask. */
 export function roadComponent(grid: Grid, x: number, y: number): Uint8Array {
   const seen = new Uint8Array(MAP_W * MAP_H);
+  if (!canBuildOn(grid, "road", x, y)) return seen;
   const start = tIdx(x, y);
   const stack = [start];
   seen[start] = 1;
@@ -52,16 +53,43 @@ export function roadComponent(grid: Grid, x: number, y: number): Uint8Array {
   return seen;
 }
 
+const reachCache = new WeakMap<Grid, Uint8Array>();
+
 /**
- * Can track laid from (x,y) reach a harvester spot OTHER than (x,y) itself?
- * False means the tile is an enclave — the only "plan" it can ever have is the
- * degenerate one-tile build under its own depot.
+ * Can road reach a harvester spot other than the starting tile? Compute each
+ * component once per immutable grid, so the full-map check remains O(tiles),
+ * rather than flooding the same 20,736 tiles for every placement.
  */
 export function canReachASpot(grid: Grid, x: number, y: number): boolean {
-  const start = tIdx(x, y);
-  const seen = roadComponent(grid, x, y);
-  for (const s of harvesterSpotIndex(grid)) if (s !== start && seen[s]) return true;
-  return false;
+  if (!canBuildOn(grid, "road", x, y)) return false;
+  let reachable = reachCache.get(grid);
+  if (!reachable) {
+    reachable = new Uint8Array(MAP_W * MAP_H);
+    const seen = new Uint8Array(reachable.length);
+    const spots = harvesterSpotIndex(grid);
+    for (let start = 0; start < seen.length; start++) {
+      if (seen[start] || !canBuildOn(grid, "road", start % MAP_W, Math.floor(start / MAP_W))) continue;
+      const component = [start];
+      seen[start] = 1;
+      let nSpots = 0;
+      for (let head = 0; head < component.length; head++) {
+        const cur = component[head];
+        if (spots.has(cur)) nSpots++;
+        const cx = cur % MAP_W, cy = Math.floor(cur / MAP_W);
+        for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
+          const nx = cx + dx, ny = cy + dy;
+          if (!canBuildOn(grid, "road", nx, ny)) continue;
+          const ni = tIdx(nx, ny);
+          if (seen[ni]) continue;
+          seen[ni] = 1;
+          component.push(ni);
+        }
+      }
+      for (const i of component) reachable[i] = Number(nSpots > Number(spots.has(i)));
+    }
+    reachCache.set(grid, reachable);
+  }
+  return reachable[tIdx(x, y)] !== 0;
 }
 
 /**

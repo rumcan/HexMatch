@@ -83,8 +83,8 @@ function topAt(x: number, y: number): { kind: "canvas" | string; id?: string } {
   return { kind: "canvas" };
 }
 
-/** Boot the same state the e2e boots: seeded map, camera centred on the
- *  first industry, then the spec's real wheel gesture (deltaY > 0 = out). */
+/** Match the real boot: focus industries[0], then apply the wheel gesture.
+ * Never move to a different industry just to make a test corridor fit. */
 function bootCamera(seed: number, wheelOut: number) {
   const grid = generateMap(seed);
   const focus = grid.industries[0];
@@ -306,8 +306,12 @@ describe("E14 the corridor picker finds a corridor by real geometry", () => {
     expect(err!.message).toMatch(/no \d+–\d+-tile corridor/);
     expect(err!.message).toMatch(/covered:div#iso-banner/);
     expect(err!.message).toMatch(/Closest: industry/);
-    expect(err!.message).toMatch(/Rejections: \{"covered":\d+/);
-    expect(err!.message).toMatch(/examples: \{"covered":"covered:div#iso-banner/);
+    // T4: on the 144×144 map the zoomed-out boot view shows one industry, so
+    // most searched columns are legitimately off-screen and "covered" is no
+    // longer the first rejection key — the guarantee this test exists for is
+    // that the banner is still NAMED as a coverer, not that it leads the count.
+    expect(err!.message).toMatch(/"covered":\d+/);
+    expect(err!.message).toMatch(/covered:div#iso-banner/);
     expect(err!.message).toMatch(/band \d+px/);
   });
 
@@ -379,13 +383,11 @@ function oldFindSouthColumn(grid: ReturnType<typeof generateMap>): Corridor | nu
 }
 
 describe("E14 the old 7-tile south column is the thing that broke", () => {
-  it("no longer reproduces on the 48×48 map — the old helper finds a column too, and the new picker still does", () => {
+  it("finds a general corridor even when the boot industry has no legacy south column", () => {
     const { grid } = scene(1337, 1);
-    // The pre-cutover failure needed a ~396×256 px window in a ~196 px sliver
-    // of lattice; the reverted 48×48 map gives the fixed-south-column helper
-    // the room it never had, so it succeeds here as well. The new picker is
-    // what the e2e uses regardless.
-    expect(oldFindSouthColumn(grid)).not.toBeNull();
+    // On the expanded seed-1337 map the first farm is near the south coast;
+    // a hard-coded south column cannot fit, but another direction can.
+    expect(oldFindSouthColumn(grid)).toBeNull();
     expect(findIsoCorridor()).not.toBeNull();
   });
 });
@@ -439,7 +441,7 @@ describe("E14 the click point is measured once, and verified before it is used",
     const t = c.col[c.tiles - 1];                 // the factory tile, (24,10)-ish
     const [dx, dy] = tileToScreenAt(cam, t.tx, t.ty);
     const [, sy0] = tileToScreenAt(cam, 0, 0);
-    const [nx, ny] = tileToScreenAt(cam, 0, 1);
+    const [, ny] = tileToScreenAt(cam, 0, 1);
     const stepY = Math.abs(ny - sy0);             // the step as it should be measured
     // the pre-fix step: measured against the target tile, so ~tiles long
     const badStepY = Math.abs(ny - dy);

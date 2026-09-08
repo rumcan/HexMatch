@@ -19,7 +19,10 @@
 // ══════════════════════════════════════════════════════════════════════════
 export const TILE_W = 64, TILE_H = 32;
 export const HW = TILE_W / 2, HH = TILE_H / 2;   // 32, 16
-export const MAP_W = 48, MAP_H = 48;             // 2304 tiles
+// T4: tripled per dimension (48 → 144) = 9× the tiles for breathing room
+// between industries and towns. Counts (INDUSTRY_QUOTA, TOWN_COUNT) stay
+// fixed; the extra space goes to separation, not density.
+export const MAP_W = 144, MAP_H = 144;
 // Fixed zoom levels only — the atlas is pre-rendered at each of these once,
 // so every frame is a 1:1 blit (E0: no per-frame drawImage scaling).
 export const ZOOM_STEPS = [0.5, 1, 2] as const;

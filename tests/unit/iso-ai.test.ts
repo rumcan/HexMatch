@@ -8,7 +8,7 @@ import {
   createTrack, buildTile, hasTrack, tIdx, canBuildOn, type Track,
 } from "../../src/iso/track";
 import { isServiced, type EconomyState, type Factory } from "../../src/iso/economy";
-import { generateMap, GRASS, WATER, ROUGH, type Grid, type Industry } from "../../src/iso/grid";
+import { generateMap, GRASS, WATER, ROUGH, TOWN_OCC, type Grid, type Industry } from "../../src/iso/grid";
 import { MAP_W, MAP_H } from "../../src/game/config";
 import { INDUSTRY_BY_KEY, TRANSPORT } from "../../src/iso/config";
 import { canReachASpot } from "./helpers/rival-map";
@@ -23,7 +23,7 @@ function flatGrid(industries: Industry[] = []): Grid {
   return {
     w: MAP_W, h: MAP_H,
     terrain: new Uint8Array(MAP_W * MAP_H).fill(GRASS),
-    industries, occupancy, seed: 7,
+    industries, towns: [], occupancy, seed: 7,
   };
 }
 
@@ -374,10 +374,20 @@ const rivalOpts = () => ({ stock: { stone: 12, ore: 0 }, purse: { stone: 12, ore
 
 /**
  * Seed-1337 repro state: the rival's factory on a rough, road-buildable,
- * reachable tile (default (38,4)); callers needing a dead tile pass (0,0).
+ * reachable tile (found from the map); callers needing a dead tile pass (0,0).
  */
-function roughRival(tx = 38, ty = 4): { eco: EconomyState; f: Factory } {
+function roughRival(tx?: number, ty?: number): { eco: EconomyState; f: Factory } {
   const grid = generateMap(1337);
+  // T4: (38,4) was a rough, road-legal/rail-illegal tile on the 48×48 map.
+  // Scan for one instead so the fixture is map-size agnostic: the factory must
+  // stand on rough ground (rail can't lay there, road can).
+  if (tx === undefined || ty === undefined) {
+    outer: for (let y = 0; y < MAP_H; y++) for (let x = 0; x < MAP_W; x++) {
+      const i = y * MAP_W + x;
+      if (grid.terrain[i] === ROUGH && grid.occupancy[i] === -1) { tx = x; ty = y; break outer; }
+    }
+  }
+  if (tx === undefined || ty === undefined) throw new Error("seed has no road-legal rough tile");
   const eco: EconomyState = {
     grid, track: createTrack(), harvesters: [],
     factories: [{ owner: "ai", ownerId: 2, tx, ty }],
@@ -519,7 +529,7 @@ describe("W8 the rival's factory is placed where it can build", () => {
     expect(out.built.length).toBeGreaterThan(0);
     expect(out.harvester).toBeTruthy();
     expect(isServiced(eco.track, out.harvester!)).toBe(true);
-  });
+  }, 10_000);
 
   it("is deterministic, and never returns an enclave for any player tile", () => {
     const grid = generateMap(1337);
@@ -535,7 +545,7 @@ describe("W8 the rival's factory is placed where it can build", () => {
       expect(canReachASpot(grid, s![0], s![1]), `enclave for player ${px},${py}`).toBe(true);
       expect(s).not.toEqual([px, py]);
     }
-  });
+  }, 10_000);
 
   it("still returns a tile when nothing is affordable (the rival exists)", () => {
     const grid = generateMap(1337);
@@ -544,7 +554,7 @@ describe("W8 the rival's factory is placed where it can build", () => {
     });
     expect(spot).toBeTruthy();
     expect(canBuildOn(grid, "road", spot![0], spot![1])).toBe(true);
-  });
+  }, 10_000);
 });
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -598,5 +608,61 @@ describe("W9 the rival's setup allowance buys road only", () => {
       expect(out.spent.ore).toBeLessThanOrEqual(8);
       expect(out.free).toBe(0);
     }
+  });
+});
+
+
+describe("T4 routing regressions", () => {
+  it("routes around town tiles instead of proposing an unbuildable shortcut", () => {
+    const grid = flatGrid([ind("farm", 10, 10)]);
+    grid.occupancy[tIdx(6, 5)] = TOWN_OCC;
+    grid.occupancy[tIdx(10, 9)] = TOWN_OCC;
+    expect(stepCost(grid, createTrack(), "road", 6, 5)).toBe(Infinity);
+    const path = findPath(grid, createTrack(), "road", 5, 5, 7, 5)!;
+    expect(path.tiles).not.toContainEqual([6, 5]);
+    expect(path.tiles.every(([x, y]) => canBuildOn(grid, "road", x, y))).toBe(true);
+    expect(harvesterSpots(grid, grid.industries[0])).not.toContainEqual([10, 9]);
+  });
+
+  it("preserves the heap's lowest-index tie break", () => {
+    expect(findPath(flatGrid(), createTrack(), "road", 5, 5, 7, 7)?.tiles).toEqual([
+      [5, 5], [6, 5], [7, 5], [7, 6], [7, 7],
+    ]);
+  });
+
+  it("does not prune affordable extensions of a long existing trunk", () => {
+    const grid = flatGrid([ind("farm", 65, 5)]), track = createTrack();
+    for (let x = 5; x <= 60; x++) buildTile(track, "road", x, 5);
+    const candidate = bestCandidate(state(grid, track), F, { stock: {}, purse: { stone: 4 }, preferRail: false });
+    expect(candidate).toBeTruthy();
+    expect(candidate!.cost.stone).toBeLessThanOrEqual(4);
+    expect(candidate!.path.tiles[0]).toEqual([60, 5]);
+  });
+
+  it("does not charge stone in the affordability bound for road-to-rail upgrades", () => {
+    const grid = flatGrid([ind("farm", 15, 5)]), track = createTrack();
+    for (let x = 5; x <= 14; x++) buildTile(track, "road", x, 5);
+    const candidate = bestCandidate(state(grid, track), F, { stock: {}, purse: { ore: 40 } });
+    expect(candidate?.kind).toBe("rail");
+    expect(candidate?.cost).toEqual({ ore: 40 });
+  });
+
+  it("finds an affordable rival opening beyond the old eight far-corner probes", () => {
+    const grid = flatGrid([ind("farm", MAP_W / 2, MAP_H / 2)]), track = createTrack();
+    const spot = chooseRivalFactorySpot(grid, track, [4, 4], { purse: { stone: 12 }, free: 12, ownerId: 2 })!;
+    const factory: Factory = { owner: "ai", ownerId: 2, tx: spot[0], ty: spot[1] };
+    const out = aiBuildStep(state(grid, track), factory, { stock: {}, purse: { stone: 12 }, free: 12 }, 1);
+    expect(out?.harvester).toBeTruthy();
+    expect(out!.spent.stone ?? 0).toBeLessThanOrEqual(12);
+  });
+
+  it("keeps an opening placement well below the old multi-second UI stall", () => {
+    const grid = generateMap(1337);
+    const start = performance.now();
+    const spot = chooseRivalFactorySpot(grid, createTrack(), [92, 32], { purse: { stone: 12 }, free: 12, ownerId: 2 });
+    expect(spot).toBeTruthy();
+    // The unpruned patch took ~9s locally. Generous CI margin over a <100ms
+    // normal opening, without disguising the stall with a 120s test timeout.
+    expect(performance.now() - start).toBeLessThan(2000);
   });
 });

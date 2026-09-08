@@ -266,7 +266,7 @@ describe("C5 the dumps report the geometry the renderer used", () => {
     expect(net.seeds.factories.length).toBe(1);
     expect(net.tiles).toBeGreaterThanOrEqual(1);   // the factory tile itself
     expect(net.list[0]).toEqual([spot.tx, spot.ty]);
-  });
+  }, 10_000);
 
   it("config() returns the resolved cell of every sprite on screen", async () => {
     const h = await boot();

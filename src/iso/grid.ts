@@ -8,7 +8,7 @@
 // Terrain is a flat Uint8Array (read every frame by the culler — no object
 // arrays). Industries live in a separate list with an occupancy Int16Array
 // mapping tile index → industry list index (or -1). Placement is Poisson-disc
-// style rejection sampling: minimum separation 6 tiles, no overlap, not on
+// style rejection sampling: target separation 12 tiles, no overlap, not on
 // water, quota per industry type so no cargo is absent from the map.
 // ══════════════════════════════════════════════════════════════════════════
 import {
@@ -156,8 +156,11 @@ function placeIndustries(terrain: Uint8Array, rng: () => number): { list: Indust
   };
 
   const defs = INDUSTRIES.map((d) => ({ d, n: INDUSTRY_QUOTA[d.key] ?? 0 }));
-  // try to guarantee the quota: relax separation 6 → 4 → 2 → 1 (overlap-only)
-  for (const sep of [6, 4, 2, 1]) {
+  // try to guarantee the quota: relax separation 12 → … → 1 (overlap-only).
+  // T4: on the 144×144 map the same INDUSTRY_QUOTA has 9× the room, so start
+  // from a much wider target sep (was 6) and let the fallback converge; this
+  // spreads industries instead of letting them clump as the old sep would.
+  for (const sep of [12, 8, 6, 4, 2, 1]) {
     let placedAny = true;
     while (placedAny) {
       placedAny = false;
@@ -202,13 +205,11 @@ const TOWN_COUNT = 4;
 /** TOWN-1: houses per town (min..max inclusive). */
 const TOWN_HOUSES_MIN = 6;
 const TOWN_HOUSES_MAX = 12;
-/** TOWN-1: minimum Chebyshev distance between town centres and any industry tile.
- *  Re-tuned for MT-2's multi-tile footprints (6 → 3): with 3×3–4×5 industries
- *  the old 6-tile keep-out ring left only a handful of legal centres on some
- *  seeds (0 towns), and a 3-tile gap still reads as clear space on screen. */
-const TOWN_INDUSTRY_SEP = 3;
+/** Minimum Chebyshev distance from EVERY town tile to any industry tile.
+ * T4 widens the former 3-tile ring to 8 on the roomier map. */
+const TOWN_INDUSTRY_SEP = 8;
 /** TOWN-1: minimum Chebyshev distance between two town centres. */
-const TOWN_TOWN_SEP = 10;
+const TOWN_TOWN_SEP = 28;
 /** TOWN-1: occupancy sentinel for town tiles (distinct from industry indices ≥ 0). */
 export const TOWN_OCC = -2;
 
@@ -352,7 +353,7 @@ function placeTowns(
 }
 
 /**
- * Generate a deterministic 48×48 iso grid. Same seed → byte-identical
+ * Generate a deterministic 144×144 iso grid. Same seed → byte-identical
  * `terrain`, `occupancy` and `industries` across contexts (T1 determinism).
  *
  * R6: `seed` is required. Multiplayer (E10) must resolve and distribute a

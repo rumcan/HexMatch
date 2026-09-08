@@ -31,8 +31,8 @@
 // Everything is deterministic under an injected RNG so T1 can assert on it.
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_W, MAP_H } from "../game/config";
-import { TRANSPORT, INDUSTRY_BY_KEY, FACTORY_FOOTPRINT, type Cargo } from "./config";
-import { WATER, ROUGH, type Grid, type Industry } from "./grid";
+import { TRANSPORT, UPGRADE_COST, INDUSTRY_BY_KEY, FACTORY_FOOTPRINT, type Cargo } from "./config";
+import { ROUGH, type Grid, type Industry } from "./grid";
 import {
   DIRS, DIR, tIdx, inMapT, hasTrack, canBuildOn, tileCost, addCost, canAfford,
   buildTile, trackOwnedBy, freeAllowanceCovers, type Track, type TrackKind, type Purse,
@@ -60,12 +60,10 @@ export const IMPASSABLE = Infinity;
 export function stepCost(
   grid: Grid, track: Track, kind: TrackKind, tx: number, ty: number, owner: number = 0,
 ): number {
-  if (!inMapT(tx, ty)) return IMPASSABLE;
+  // Use the build rule itself: town tiles (TOWN_OCC = -2) block routes too.
+  if (!canBuildOn(grid, kind, tx, ty)) return IMPASSABLE;
   const i = tIdx(tx, ty);
   const terrain = grid.terrain[i];
-  if (terrain === WATER) return IMPASSABLE;
-  if (grid.occupancy[i] >= 0) return IMPASSABLE;
-  if (terrain === ROUGH && !TRANSPORT[kind].onRough) return IMPASSABLE;
   let c = terrain === ROUGH ? COST_ROUGH : COST_FLAT;
   // reuse our own trunk lines rather than building parallel spurs
   const own = owner === 0 ? true : track.owner[i] === owner;
@@ -102,9 +100,13 @@ export function findPath(
 
   const gScore = new Map<number, number>([[start, 0]]);
   const cameFrom = new Map<number, number>();
-  // Small maps (2304 tiles) — a sorted array beats a binary heap's constant.
-  const open: number[] = [start];
+  // T4: on 48×48 a linearly scanned open array was fine, but A* is O(V²) with
+  // it and the 144×144 map made every rival turn take ~15 s. A binary heap
+  // ordered (lowest f, ties by lowest tile index) reproduces the exact pop
+  // order of that scan, so paths are byte-identical, in O(V log V).
+  const open = new OpenHeap();
   const fScore = new Map<number, number>([[start, heuristic(ax, ay, bx, by)]]);
+  open.push(start, fScore.get(start)!);
   const closed = new Set<number>();
 
   const isGoal = (i: number) => {
@@ -114,14 +116,19 @@ export function findPath(
     return Math.abs(x - bx) + Math.abs(y - by) === 1;
   };
 
-  while (open.length) {
-    // deterministic pop: lowest f, ties by lowest tile index
-    let bi = 0;
-    for (let k = 1; k < open.length; k++) {
-      const a = fScore.get(open[k]) ?? Infinity, b = fScore.get(open[bi]) ?? Infinity;
-      if (a < b || (a === b && open[k] < open[bi])) bi = k;
+  while (open.size) {
+    // deterministic pop: lowest f, ties by lowest tile index; skip entries
+    // left behind when a node's f was later improved, or already closed.
+    let cur = -1;
+    for (;;) {
+      if (!open.size) break;
+      const e = open.pop();
+      if (closed.has(e.i)) continue;
+      if (e.f !== (fScore.get(e.i) ?? Infinity)) continue;   // stale
+      cur = e.i;
+      break;
     }
-    const cur = open.splice(bi, 1)[0];
+    if (cur === -1) break;
     if (isGoal(cur)) {
       const tiles: [number, number][] = [];
       let n: number | undefined = cur;
@@ -146,11 +153,54 @@ export function findPath(
       if (tentative >= (gScore.get(ni) ?? Infinity)) continue;
       cameFrom.set(ni, cur);
       gScore.set(ni, tentative);
-      fScore.set(ni, tentative + heuristic(nx, ny, bx, by));
-      if (!open.includes(ni)) open.push(ni);
+      const nf = tentative + heuristic(nx, ny, bx, by);
+      fScore.set(ni, nf);
+      open.push(ni, nf);
     }
   }
   return null;
+}
+
+/**
+ * Min-heap of tile indices ordered by (f, index) so `pop` yields the same node
+ * the old linear "lowest f, ties lowest index" scan did. The caller discards
+ * stale entries after an f-improvement. Only backs `findPath`.
+ */
+interface OpenEntry { i: number; f: number }
+class OpenHeap {
+  private a: OpenEntry[] = [];   // heap-ordered by (f, then tile index)
+  get size(): number { return this.a.length; }
+  private less(x: OpenEntry, y: OpenEntry): boolean {
+    return x.f < y.f || (x.f === y.f && x.i < y.i);
+  }
+  push(i: number, f: number): void {
+    const a = this.a;
+    a.push({ i, f });
+    let c = a.length - 1;
+    while (c > 0) {
+      const p = (c - 1) >> 1;
+      if (this.less(a[c], a[p])) { [a[c], a[p]] = [a[p], a[c]]; c = p; } else break;
+    }
+  }
+  pop(): OpenEntry {
+    const a = this.a;
+    const top = a[0];
+    const last = a.pop()!;
+    if (a.length) {
+      a[0] = last;
+      let p = 0;
+      for (;;) {
+        const l = 2 * p + 1, r = l + 1;
+        let m = p;
+        if (l < a.length && this.less(a[l], a[m])) m = l;
+        if (r < a.length && this.less(a[r], a[m])) m = r;
+        if (m === p) break;
+        [a[p], a[m]] = [a[m], a[p]];
+        p = m;
+      }
+    }
+    return top;
+  }
 }
 
 // ── candidate scoring ─────────────────────────────────────────────────────
@@ -185,7 +235,7 @@ export function harvesterSpots(grid: Grid, ind: Industry): [number, number][] {
       if (!insideX && !insideY) continue;               // diagonal corner
       const i = tIdx(x, y);
       if (seen.has(i)) continue;
-      if (grid.terrain[i] === WATER || grid.occupancy[i] >= 0) continue;
+      if (!canBuildOn(grid, "road", x, y)) continue;
       seen.add(i);
       out.push([x, y]);
     }
@@ -320,6 +370,17 @@ export interface PlanOptions {
   preferRail?: boolean;
 }
 
+/** Optimistic new-tile allowance; exact mixed upgrade prices are checked after A*. */
+function affordableNewTiles(kind: TrackKind, purse: Purse, free: number): number {
+  let n = Infinity;
+  for (const [cargo, amount] of Object.entries(TRANSPORT[kind].cost)) {
+    // An upgrade may omit a resource (stone); never overestimate that cost.
+    const unit = kind === "rail" ? Math.min(amount, UPGRADE_COST[cargo as Cargo] ?? 0) : amount;
+    if (unit > 0) n = Math.min(n, Math.floor((purse[cargo as Cargo] ?? 0) / unit));
+  }
+  return n + (freeAllowanceCovers(kind) ? Math.ceil(Math.max(0, free)) : 0);
+}
+
 /**
  * Score every reachable industry and return the candidates best first.
  * Deterministic: equal scores break by industry id.
@@ -340,8 +401,18 @@ export function planCandidates(
   const claimed = new Set(state.harvesters.map((h) => tIdx(h.tx, h.ty)));
   const free = Math.max(0, opts.free ?? 0);
 
-  for (const kindPref of [opts.preferRail === false ? "road" : "rail", "road"] as TrackKind[]) {
+  const kinds: TrackKind[] = opts.preferRail === false ? ["road"] : ["rail", "road"];
+  for (const kindPref of kinds) {
     const sources = networkTiles(track, kindPref, factory);
+    // T4: reject provably unaffordable destinations BEFORE running A*. On
+    // the larger map, searching hundreds of long rail routes with zero ore
+    // blocked the UI for seconds. This is only a lower bound; the real path
+    // and tileCost check below still decide which candidates are affordable.
+    // A path's final segment starts at its last existing track tile (of ANY
+    // owner, since tileCost charges neither), or at the factory with no track.
+    // Its Manhattan length is a lower bound on the number of new tiles.
+    const existing = networkTiles(track, kindPref, { ...factory, ownerId: 0 });
+    const maxFresh = affordableNewTiles(kindPref, opts.purse, free);
     for (const ind of grid.industries) {
       const def = INDUSTRY_BY_KEY[ind.type];
       if (!def) continue;
@@ -354,7 +425,13 @@ export function planCandidates(
       for (const [hx, hy] of harvesterSpots(grid, ind)) {
         if (claimed.has(tIdx(hx, hy))) continue;
         const src = nearestSource(sources, hx, hy);
-        if (!src) continue;
+        if (!src || !canBuildOn(grid, kindPref, src[0], src[1]) || !canBuildOn(grid, kindPref, hx, hy)) continue;
+        const last = nearestSource(existing, hx, hy)!;
+        const minFresh = Math.min(
+          Math.abs(factory.tx - hx) + Math.abs(factory.ty - hy) + 1,
+          Math.abs(last[0] - hx) + Math.abs(last[1] - hy) + (hasTrack(track, kindPref, last[0], last[1]) ? 0 : 1),
+        );
+        if (minFresh > maxFresh) continue;
         // W2: route with the AI's own trunk discount, not the player's road.
         const path = findPath(grid, track, kindPref, src[0], src[1], hx, hy, false, factory.ownerId);
         if (!path) continue;
@@ -402,9 +479,6 @@ export const bestCandidate = (
 ): Candidate | null => planCandidates(state, factory, opts)[0] ?? null;
 
 // ── W8: where the rival's factory goes ────────────────────────────────────
-/** How many of the ranked tiles are probed for a real plan before giving up. */
-export const RIVAL_SPOT_PROBES = 8;
-
 export interface RivalSpotOptions {
   /** What the rival can spend on its first build — prices the probe plan. */
   purse: Purse;
@@ -414,7 +488,7 @@ export interface RivalSpotOptions {
   ownerId: number;
   /** Display identity of the rival. Default `"ai"`. */
   owner?: string;
-  /** Override {@link RIVAL_SPOT_PROBES}. */
+  /** Optional diagnostic cap on real plan probes; default searches all candidates. */
   probes?: number;
 }
 
@@ -457,20 +531,30 @@ export function chooseRivalFactorySpot(
     }
   }
   if (!spots.length) return null;
-  // Two factories never share a tile. Distance is only the SECOND sort key now
-  // (rail-legality leads), so the player's own tile — distance 0 — is no longer
-  // structurally excluded by "farthest wins"; drop it explicitly. Keep it when
-  // it is the only legal ground there is, so the rival still exists.
-  const apart = spots.filter((s) => s.x !== awayFrom[0] || s.y !== awayFrom[1]);
+  // Reserve the player's whole 2×2 footprint, not just its origin tile.
+  const apart = spots.filter((s) =>
+    s.x + fw <= awayFrom[0] || awayFrom[0] + fw <= s.x
+    || s.y + fh <= awayFrom[1] || awayFrom[1] + fh <= s.y);
   const ranked = apart.length ? apart : spots;
   ranked.sort((a, b) =>
     Number(b.rail) - Number(a.rail) || b.d - a.d || tIdx(a.x, a.y) - tIdx(b.x, b.y));
 
   const state: EconomyState = { grid, track, harvesters: [], factories: [] };
   const probe: Factory = { owner: opts.owner ?? "ai", ownerId: opts.ownerId, tx: 0, ty: 0 };
-  const tries = Math.max(1, Math.min(opts.probes ?? RIVAL_SPOT_PROBES, ranked.length));
-  for (let i = 0; i < tries; i++) {
-    const s = ranked[i];
+  // T4: eight far-corner probes are no longer enough on a sparse 144×144
+  // map. Skip geometrically unaffordable starts, then keep searching until a
+  // real opening plan exists. Do not silently strand the rival on probe #1.
+  const emptyTrack = !track.road.some((v) => v !== 0) && !track.rail.some((v) => v !== 0);
+  const maxOpening = Math.max(
+    affordableNewTiles("road", opts.purse, opts.free ?? 0),
+    affordableNewTiles("rail", opts.purse, opts.free ?? 0),
+  );
+  const targets = grid.industries.flatMap((ind) => harvesterSpots(grid, ind));
+  const tries = Math.max(1, opts.probes ?? ranked.length);
+  let probed = 0;
+  for (const s of ranked) {
+    if (emptyTrack && !targets.some(([x, y]) => Math.abs(x - s.x) + Math.abs(y - s.y) + 1 <= maxOpening)) continue;
+    if (probed++ >= tries) break;
     probe.tx = s.x; probe.ty = s.y;
     const plan = bestCandidate(state, probe, {
       stock: opts.purse, purse: opts.purse, free: opts.free ?? 0,

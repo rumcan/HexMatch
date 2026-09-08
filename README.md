@@ -4,6 +4,11 @@ A hex/isometric industry-tycoon + match-3 game. The current E-series work
 converts the game to a 2:1 dimetric (isometric) canvas-2d renderer with
 road/rail transport — see `docs/HexMatch-isometric-spec.md` (E0–E11).
 
+The map is **144×144** (three times each old dimension, nine times the area),
+with **25 industries and four towns**. Counts stay fixed so the larger map
+provides more separation. The T1–T4 handover fixes and rendered review are in
+[`docs/playtest-reports/2026-09-08-handover.md`](docs/playtest-reports/2026-09-08-handover.md).
+
 ## Develop
 
 ```bash

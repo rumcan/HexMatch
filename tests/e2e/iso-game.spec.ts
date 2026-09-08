@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { BOARD_H, BOARD_W } from "../../src/game/config";
+import { BOARD_H, BOARD_W, MAP_W, MAP_H } from "../../src/game/config";
 import {
   findIsoCorridor, isoTileOcclusion, isoClickableTile, type Corridor,
 } from "./corridor-picker";
@@ -105,14 +105,14 @@ async function opaqueNear(
 ) {
   return page.evaluate(({ canvasIndex, tx, ty, half }) => {
     const h = (window as any).__iso;
-    // `tileScreenAt` returns the diamond's TOP vertex. Sample the CENTRE —
-    // the midpoint of the top vertex and the south vertex (which is the top
-    // vertex of (tx+1, ty+1)) — so the box sits inside this tile instead of
-    // straddling the edge shared with the neighbour's diamond, where a
-    // neighbour's highlight ends exactly on the boundary.
+    // Sample the DRAWN diamond centre. drawOrigin anchors at
+    // tileToScreen + (HW, TILE_H), so its centre is one HW to the right of
+    // the projection origin. Sampling x0 alone samples the left edge (and
+    // often the neighbouring empty tile), not the visible road.
     const [x0, y0] = h.tileScreenAt(tx, ty);
-    const [x1, y1] = h.tileScreenAt(tx + 1, ty + 1);
-    const cx = Math.floor((x0 + x1) / 2), cy = Math.floor((y0 + y1) / 2);
+    const [, y1] = h.tileScreenAt(tx + 1, ty + 1);
+    const [ax] = h.tileScreenAt(0, 0), [bx] = h.tileScreenAt(1, 0);
+    const cx = Math.floor(x0 + Math.abs(bx - ax)), cy = Math.floor((y0 + y1) / 2);
     const c = document.querySelectorAll("canvas")[canvasIndex] as HTMLCanvasElement;
     const ctx = c.getContext("2d")!;
     const d = ctx.getImageData(cx - half, cy - half, half * 2 + 1, half * 2 + 1).data;
@@ -133,6 +133,23 @@ test.describe("iso layout on every viewport", () => {
     expect(overflow).toBeLessThanOrEqual(1);
     await expect(root.locator("[data-tool]")).toHaveCount(4);
     await expect(root.locator("[data-act=recenter]")).toHaveCount(1);
+    const scene = await page.evaluate(() => {
+      const h = (window as unknown as { __iso: {
+        grid: { w: number; h: number; industries: { tx: number; ty: number }[]; towns: unknown[] };
+        camera: { vw: number; vh: number };
+        tileScreenAt: (x: number, y: number) => [number, number];
+      } }).__iso;
+      const focus = h.grid.industries[0];
+      return {
+        size: [h.grid.w, h.grid.h], counts: [h.grid.industries.length, h.grid.towns.length],
+        focus: h.tileScreenAt(focus.tx, focus.ty), centre: [h.camera.vw / 2, h.camera.vh / 2],
+      };
+    });
+    expect(scene.size).toEqual([MAP_W, MAP_H]);
+    expect(scene.counts).toEqual([25, 4]);
+    // The first CSS→device-pixel resize must not push the focus off centre
+    // on DPR 2/3 phones, even with the expanded map's distant coordinates.
+    expect(scene.focus).toEqual(scene.centre);
   });
 });
 
@@ -271,12 +288,12 @@ test.describe("iso game boots on the default route", () => {
     });
 
     // ── setup round 1 of 2: click the tile for your Factory ─────────────
-    // V1 acceptance: the placement highlight covers EXACTLY the footprint the
-    // building will visibly occupy — the anchor tile glows and the tile
-    // diagonally behind it (old 3×3 corner) stays unpainted.
+    // MT/T4: the factory occupies 2×2 tiles. Both corners glow; the old
+    // 3×3 outer corner stays unpainted.
     await page.mouse.move(factory.x, factory.y);
     await expect.poll(() => opaqueNear(page, 2, c.fx, c.fy), { timeout: 5000 }).toBeGreaterThan(10);
-    await expect.poll(() => opaqueNear(page, 2, c.fx + 1, c.fy + 1), { timeout: 5000 }).toBe(0);
+    await expect.poll(() => opaqueNear(page, 2, c.fx + 1, c.fy + 1), { timeout: 5000 }).toBeGreaterThan(10);
+    await expect.poll(() => opaqueNear(page, 2, c.fx + 2, c.fy + 2), { timeout: 5000 }).toBe(0);
     await page.mouse.click(factory.x, factory.y);
     await page.waitForFunction(() => (window as any).__iso.phase === "setup-harvester");
     expect((await page.evaluate(() => (window as any).__iso.factories.length))).toBeGreaterThanOrEqual(1);
@@ -310,9 +327,13 @@ test.describe("iso game boots on the default route", () => {
     // corridor itself, so the drag length is whatever the geometry yielded —
     // no tile count is baked into this test any more (E14/A4).
     const path = [...c.col].reverse();              // factory → harvester
-    await page.mouse.move(factory.x, factory.y);
+    const dragStart = await at(c.fx, c.fy);
+    await page.mouse.move(dragStart.x, dragStart.y);
     await page.mouse.down();
-    for (const t of path.slice(1)) {
+    // Interior factory pieces all select the same factory anchor in track
+    // mode; move straight to the first exposed corridor tile outside it.
+    for (const t of path.slice(1).filter((t) =>
+      t.tx < c.fx || t.tx >= c.fx + 2 || t.ty < c.fy || t.ty >= c.fy + 2)) {
       const p = t.tx === c.hx && t.ty === c.hy ? harvester : await at(t.tx, t.ty);
       await page.mouse.move(p.x, p.y);
     }
@@ -337,11 +358,14 @@ test.describe("iso game boots on the default route", () => {
     expect(after.ore).toBe(0);
     expect(after.road).toBe(n);
 
+    // Track state changes synchronously; the canvas paints on the next RAF.
+    await page.evaluate(() => new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     // the structures canvas really painted the road column
-    await expect.poll(
-      () => opaqueNear(page, 1, c.col[1].tx, c.col[1].ty),
-      { timeout: 5000 },
-    ).toBeGreaterThan(10);
+    // The two frames above guarantee the draw. A software-GPU readback can
+    // itself exceed expect.poll's 5s deadline, so assert the actual result
+    // rather than timing out an otherwise-correct pixel read.
+    expect(await opaqueNear(page, 1, c.col[1].tx, c.col[1].ty)).toBeGreaterThan(10);
 
     // UI reflects the scored connection
     await expect(page.locator("#iso-vp")).toContainText("You 1");
@@ -399,7 +423,10 @@ test.describe("TK-001 mouse panning is middle-button only", () => {
             const tx = focus.tx + dx, ty = focus.ty + dy;
             if (tx < 0 || ty < 0 || tx >= W || ty >= H) continue;
             const i = ty * W + tx;
-            if (grid.terrain[i] !== 0 || grid.occupancy[i] >= 0) continue;
+            if (grid.terrain[i] !== 0) continue;
+            // Factory legality is the WHOLE 2×2 footprint, not one free tile.
+            if (![[0, 0], [1, 0], [0, 1], [1, 1]].every(([ox, oy]) =>
+              h.tileProbe("road", tx + ox, ty + oy).build.ok)) continue;
             if (!inView(tx, ty) || !clickable(tx, ty)) continue;
             return { tx, ty };
           }
@@ -426,7 +453,7 @@ test.describe("TK-001 mouse panning is middle-button only", () => {
     expect(await page.evaluate(() => (window as any).__iso.factories.length)).toBe(0);
 
     // ── middle-drag (started on the same tile) pans the camera ───────────
-    const midStart = await screenAt(spot!.tx, spot!.ty);
+    const midStart = await clickPointFor(page, spot!.tx, spot!.ty);
     await page.mouse.move(midStart.x, midStart.y);
     await page.mouse.down({ button: "middle" });
     await page.mouse.move(midStart.x - 60, midStart.y - 40, { steps: 8 });
@@ -437,7 +464,7 @@ test.describe("TK-001 mouse panning is middle-button only", () => {
     expect(await page.evaluate(() => (window as any).__iso.factories.length)).toBe(0);
 
     // ── a left CLICK (no drag) still places — the acceptance boundary ────
-    const clickHere = await screenAt(spot!.tx, spot!.ty);
+    const clickHere = await clickPointFor(page, spot!.tx, spot!.ty);
     await page.mouse.click(clickHere.x, clickHere.y);
     await page.waitForFunction(() => (window as any).__iso.phase === "setup-harvester");
     expect(await page.evaluate(() => (window as any).__iso.factories.length)).toBeGreaterThanOrEqual(1);
