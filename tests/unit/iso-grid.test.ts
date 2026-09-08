@@ -214,10 +214,10 @@ describe("E3 industry placement", () => {
     }
   });
 
-  it("keeps the large majority of placements at the full 6-tile separation", () => {
+  it("keeps the large majority of placements at the full 12-tile separation", () => {
     // Poisson-disc separation is best-effort: on awkward seeds a few
     // industries must relax to fit the quota (see grid.ts). The bulk of
-    // pairs must still hold the 6-tile disc (E4's depth-sort rationale).
+    // pairs must still hold the 12-tile disc (E4's depth-sort rationale).
     let strict = 0, total = 0;
     for (const seed of [42, 1, 7, 123, 2026]) {
       const g = generateMap(seed);
@@ -226,7 +226,7 @@ describe("E3 industry placement", () => {
           const a = g.industries[i], b = g.industries[j];
           const dx = Math.max(a.tx - (b.tx + b.w - 1), b.tx - (a.tx + a.w - 1));
           const dy = Math.max(a.ty - (b.ty + b.h - 1), b.ty - (a.ty + a.h - 1));
-          if (Math.max(dx, dy) >= 6) strict++;
+          if (Math.max(dx, dy) >= 12) strict++;
           total++;
         }
       }
@@ -302,6 +302,32 @@ describe("F1 towns place and never strand an industry", () => {
           for (let y = ind.ty; y < ind.ty + ind.h; y++) {
             expect(seen[y * MAP_W + x], `seed ${seed} strands ${ind.type}@(${ind.tx},${ind.ty})`).toBe(1);
           }
+        }
+      }
+    }
+  });
+});
+
+
+describe("T4 roomier map", () => {
+  it("triples both dimensions while keeping 25 industries and four towns", () => {
+    for (const seed of [0, 1, 7, 42, 100, 123, 1337, 2026]) {
+      const g = generateMap(seed);
+      expect([g.w, g.h]).toEqual([144, 144]);
+      expect(g.industries).toHaveLength(25);
+      expect(g.towns).toHaveLength(4);
+      for (const [type, count] of Object.entries(INDUSTRY_QUOTA)) {
+        expect(g.industries.filter((i) => i.type === type)).toHaveLength(count);
+      }
+      for (const [ti, town] of g.towns.entries()) {
+        for (const other of g.towns.slice(ti + 1)) {
+          expect(Math.max(Math.abs(town.tx - other.tx), Math.abs(town.ty - other.ty)), `town gap, seed ${seed}`)
+            .toBeGreaterThanOrEqual(28);
+        }
+        for (const [x, y] of town.houses) for (const ind of g.industries) {
+          const dx = Math.max(ind.tx - x, 0, x - (ind.tx + ind.w - 1));
+          const dy = Math.max(ind.ty - y, 0, y - (ind.ty + ind.h - 1));
+          expect(Math.max(dx, dy), `house/industry gap, seed ${seed}`).toBeGreaterThanOrEqual(8);
         }
       }
     }

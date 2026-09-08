@@ -43,6 +43,7 @@ Sheets used so far (paths under `sprites/png/`):
 | Quarry (Stone) | `industries/goldmine/*` (reskin grey at pack time) |
 | Gold mine | `industries/goldmine/goldmine_base.gimp.png` + `goldmine_anim2..3.gimp.png` |
 | Oil rig | `industries/oilwell/oilwell_anim1..6.gimp.png` (6-frame animation) |
+| Towns | `houses/buildings.png`, `houses/temprtbuilds.png`, `houses/base-1421.1425.1424-offices.png` |
 | Main Factory (HQ) | `industries/factory.png` |
 | Road half-piece | `infrastructure/infra06.png` (spr1332; see `base-1309-road-infra.pnml`) |
 | Rail half-piece | `infrastructure/infra06.png` (spr1012; see `base-1005-rail-infra.pnml`) |
@@ -64,10 +65,12 @@ Sheets used so far (paths under `sprites/png/`):
   (`tools/iso-atlas.cells.json`) contains **no** `compose`/`box`/`crop`/`tiles`
   arrays and no hand-authored anchors. Cell kinds:
   - `sprite: <id>` — one declared OpenGFX ground tile (terrain).
-  - `layers: [{sprite, tint?}]` (+ optional `frames`) — a declared building on
+  - `layers: [{sprite, tint?, tintLum?}]` (+ optional `frames`) — a declared building on
     its declared ground tile, each drawn at `tileOrigin + (xrel, yrel)`
     (OpenTTD's own placement rule, Y7). `tint` multiplies opaque pixels
-    (player colours, the grey quarry). The oil rig declares its six animation
+    (multiplicative recolouring); `tintLum` preserves luminance/shading for
+    player-coloured factories and the genuinely grey quarry. A shared base
+    must not also contain the building supplied by `frames`. The oil rig declares its six animation
     stages as per-frame layers.
   - `trackset` — the 16 road/rail bitmask tiles from declared sprites only.
     `mode: "flat"` indexes OpenGFX's finished flat road tiles (1332–1350) with
@@ -95,9 +98,35 @@ Sheets used so far (paths under `sprites/png/`):
   `tests/unit/iso-atlas-pixels.test.ts` asserts each road mask is
   pixel-identical to its declared tile and that adjacent declared road pieces
   tile seamlessly (the rewritten X4 join test).
-- The atlas contains 52 sprites: 3 terrain, 6 industries (incl. the 6-frame
-  oil rig), 4 factories, 4 depots, 32 road/rail variants, crossing, and the
-  two highlights.
+- The atlas currently contains **103 packed sprites** from 73 source cells,
+  including per-tile multi-tile industries/factories, four town cells, 32
+  road/rail variants, crossing and the two highlights.
+
+## T1–T4 reproducible visual review
+
+The three house sheets above are mirrored from OpenGFX commit
+`c51c904f4f6e7466ee73f907520ef7ea9a53bcbb`; their Git blob hashes match the
+incoming patch. The patch's misspelled `temperptbuilds.png` was an HTTP 404
+JSON response, not an image, and is intentionally not included.
+
+```bash
+node tools/parse-pnml.mjs
+npm run slice-atlas
+node tools/validate-manifest.mjs assets/iso-atlas/manifest.json
+npm run dev -- --port 5173
+# In another terminal (requires Playwright Chromium):
+node tools/capture-iso-review.mjs
+```
+
+The capture tool uses the real browser renderer, fixed seed 1337 and animation
+phase 0. It writes close-ups at 2× and the full 144×144 map at native 0.5× to
+`test-results/iso-review/` (ignored). `ISO_REVIEW_URL` and
+`CHROMIUM_EXECUTABLE` are optional environment overrides. Reviewed evidence is
+linked from `docs/playtest-reports/2026-09-08-handover.md`.
+
+Gold/quarry grounds 2256, 2257 and 2260 have OpenGFX palette shimmer, not
+separate building frames. They remain static until palette cycling is
+supported; only the shaft tower uses the three explicit 2263–2265 frames.
 
 ## Licence
 

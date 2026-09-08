@@ -1,5 +1,11 @@
 # Implementation Summary: MT-1/MT-2 and TOWN-1/TOWN-2
 
+> **Historical implementation notes (2026-09-07).** The initial factory
+> mapping and town-art choices below were subsequently corrected. For the
+> shipped mappings, 144×144 spacing, validation and screenshots, use the
+> [T1–T4 completion report](playtest-reports/2026-09-08-handover.md) and
+> `src/iso/config.ts`, not the original tables/checklist below.
+
 ## Overview
 
 This implementation addresses four tickets from the HexMatch roadmap:

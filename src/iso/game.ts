@@ -45,7 +45,9 @@ import {
   type EconomyState, type Harvester, type ScoreState, type VpEvent,
 } from "./economy";
 import { aiBuildStep, chooseRivalFactorySpot } from "./ai";
-import { CARGO, FACTORY_FOOTPRINT, INDUSTRY_BY_KEY, TRANSPORT, VP_TARGET, type Cargo } from "./config";
+import {
+  CARGO, FACTORY_FOOTPRINT, INDUSTRY_BY_KEY, TRANSPORT, VP_TARGET, townHouseSprite, type Cargo,
+} from "./config";
 import {
   MAP_W, MAP_H, BANDIT_MS, BLOCK_MS, FOG_MS, SABOTAGE, SECURITY, type ResKey,
 } from "../game/config";
@@ -276,11 +278,13 @@ export function startIsoGame(root: HTMLElement) {
         tx: t.tx, ty: t.ty,
         ref: { kind: "town", id: t.id },
       });
-      // Houses at all non-center tiles
+      // Houses at all non-center tiles. TOWN-3/Y8: one of three declared house
+      // cells, chosen by `townHouseSprite` so a settlement mixes a house, a
+      // small office and a taller office block instead of stamping one sprite.
       for (const [hx, hy] of t.houses) {
         if (hx === t.tx && hy === t.ty) continue; // skip center, already drawn
         items.push({
-          sprite: "town_house",
+          sprite: townHouseSprite(hx, hy),
           tx: hx, ty: hy,
           ref: { kind: "town", id: t.id },
         });
@@ -545,8 +549,7 @@ export function startIsoGame(root: HTMLElement) {
       for (const [x, y] of preview.tiles) items.push({ sprite: "highlight", tx: x, ty: y });
     } else if (hover) {
       if (phase === "setup-factory") {
-        // U2/V1: highlight the factory's REAL footprint (one diamond — the
-        // sprite is a single declared building, see FACTORY_FOOTPRINT) so the
+        // Highlight all four tiles of the real factory footprint, so the
         // build preview matches exactly the tiles the building covers.
         for (let dy = 0; dy < FACTORY_FOOTPRINT[1]; dy++) {
           for (let dx = 0; dx < FACTORY_FOOTPRINT[0]; dx++) {
@@ -648,6 +651,19 @@ export function startIsoGame(root: HTMLElement) {
     });
   }
 
+  // A 2×2 factory is four independently depth-sorted sprites, but has one
+  // network anchor. In track mode a click on ANY of our factory's pieces must
+  // start at that anchor; otherwise the front pieces hide the only tile a
+  // road can connect from. Keep raw tile picking for other tools/structures.
+  const pickForAction = (x: number, y: number) => {
+    const p = renderer?.pick(x, y);
+    if (!p || phase !== "play" || (tool !== "road" && tool !== "rail")) return p;
+    const ref = p.ref as { kind?: string; owner?: string } | null;
+    if (ref?.kind !== "factory" || ref.owner !== me.id) return p;
+    const f = factoryOf(me.id);
+    return f ? { ...p, tx: f.tx, ty: f.ty } : p;
+  };
+
   // ── input ──────────────────────────────────────────────────────────────
   let g: GestureState = createGesture();
   const dpr = () => Math.min(2, window.devicePixelRatio || 1);
@@ -664,7 +680,7 @@ export function startIsoGame(root: HTMLElement) {
     }
     const [x, y] = pos(e);
     downAt = [x, y]; moved = false;
-    const p = renderer?.pick(x, y);
+    const p = pickForAction(x, y);
     if (!p) return;
     const isMouse = e.pointerType === "mouse";
     const isTrackTool = tool === "road" || tool === "rail";
@@ -689,7 +705,7 @@ export function startIsoGame(root: HTMLElement) {
   canvases.overlay.addEventListener("pointermove", (e) => {
     const [x, y] = pos(e);
     if (downAt && (Math.abs(x - downAt[0]) > 4 || Math.abs(y - downAt[1]) > 4)) moved = true;
-    const p = renderer?.pick(x, y);
+    const p = pickForAction(x, y);
     if (p) hover = { tx: p.tx, ty: p.ty, ref: p.ref };
     if (drag && p) {
       const kind = tool === "rail" ? "rail" : "road";
@@ -733,7 +749,7 @@ export function startIsoGame(root: HTMLElement) {
     // clicks (pan) and right clicks never fall through to the place path.
     const isMouse = e.pointerType === "mouse";
     if (!moved && (!isMouse || e.button === 0)) {
-      const p = renderer?.pick(x, y);
+      const p = pickForAction(x, y);
       if (p) {
         if (phase === "setup-factory") {
           placeFactory(p.tx, p.ty);
@@ -921,14 +937,15 @@ export function startIsoGame(root: HTMLElement) {
     /**
      * E14: what a pointer event at a CANVAS point (device px, the same space
      * `pos()` hands the click handlers) resolves to — literally
-     * `renderer.pick(...)`, the two-stage hit-test a click goes through. The
+     * the two-stage hit-test plus the own-factory anchor normalisation a
+     * track click goes through. The
      * corridor picker uses it to prove the tile it names is the tile a click at
      * that pixel selects, which is the only way to catch the "I clicked the
      * tile I could see and built on the one behind it" class of bug from a
      * screenshot. Returns null before the atlas/renderer exist.
      */
     pickAt: (sx: number, sy: number) => {
-      const p = renderer?.pick(sx, sy);
+      const p = pickForAction(sx, sy);
       return p ? { tx: p.tx, ty: p.ty, sprite: p.sprite?.sprite ?? null } : null;
     },
     /**

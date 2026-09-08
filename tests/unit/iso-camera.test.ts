@@ -87,6 +87,13 @@ describe("E4 camera — clamping", () => {
     expect(worldToScreen(c, wx, wy)).toEqual([400, 300]);
   });
 
+  it("resize keeps the same world point centred, including high-DPI boot", () => {
+    const c = centerOnMap(createCamera(390, 844));
+    const before = screenToWorld(c, c.vw / 2, c.vh / 2);
+    const resized = resizeCamera(c, 780, 1688);
+    expect(screenToWorld(resized, resized.vw / 2, resized.vh / 2)).toEqual(before);
+  });
+
   it("resize re-clamps", () => {
     const c = resizeCamera(centerOnMap(createCamera(800, 600)), 360, 640);
     expect(clampCamera(c)).toEqual(c);

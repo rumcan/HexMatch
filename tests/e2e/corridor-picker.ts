@@ -205,7 +205,7 @@ export function findIsoCorridor(opts?: CorridorOptions): Corridor {
     if (tx < 0 || ty < 0 || tx >= MAP_W || ty >= MAP_H) return "out-of-bounds";
     const i = ty * MAP_W + tx;
     if (grid.terrain[i] === 1 /* WATER */) return "water";
-    if (grid.occupancy[i] >= 0) return "occupied";
+    if (grid.occupancy[i] !== -1) return "occupied";
     return null;
   });
   const harvesterWhy = (tx: number, ty: number) => memo(`h${tx},${ty}`, () => {
@@ -323,15 +323,19 @@ export function findIsoCorridor(opts?: CorridorOptions): Corridor {
           else why = buildWhy(tx, ty);
           if (why === null) why = pickOk(px, py, tx, ty);
           if (why === null) why = coverAt(cx, cy);   // "covered:<element>" — who ate the click
-          // V1: the factory highlight is a single diamond and the test samples
-          // the tile diagonally BELOW it on screen (+tx +ty) to prove no 3×3
-          // ghost is painted. The sample is only meaningful if that tile is on
-          // screen, so a candidate must end where it can be checked.
+          // The factory endpoint reserves all four tiles. The pixel guard
+          // samples (+2,+2), OUTSIDE that 2×2 footprint, so it must be in view.
           if (why === null && j >= minTiles - 1) {
-            if (tx + 1 >= MAP_W || ty + 1 >= MAP_H) why = "factory-diagonal-off-map";
-            else {
-              const b = devAt(tx + 1, ty + 1);
-              if (!inView(b[0] / dpr + origin[0], b[1] / dpr + origin[1])) why = "factory-diagonal-off-screen";
+            for (const [ox, oy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+              const refusal = buildWhy(tx + ox, ty + oy);
+              if (refusal) { why = `factory-footprint-${refusal}`; break; }
+            }
+            if (why === null) {
+              if (tx + 2 >= MAP_W || ty + 2 >= MAP_H) why = "factory-diagonal-off-map";
+              else {
+                const b = devAt(tx + 2, ty + 2);
+                if (!inView(b[0] / dpr + origin[0], b[1] / dpr + origin[1])) why = "factory-diagonal-off-screen";
+              }
             }
           }
           if (why !== null) {

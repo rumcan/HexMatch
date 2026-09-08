@@ -115,7 +115,9 @@ export const centerOnMap = (c: Camera): Camera =>
   centerOnTile(c, MAP_W / 2, MAP_H / 2);
 
 export function resizeCamera(c: Camera, vw: number, vh: number): Camera {
-  return clampCamera({ ...c, vw, vh });
+  // Preserve the world point at the viewport centre (including the initial
+  // CSS-pixel → device-pixel resize on high-DPI phones).
+  return clampCamera({ ...c, x: c.x + (vw - c.vw) / 2, y: c.y + (vh - c.vh) / 2, vw, vh });
 }
 
 // ── viewport culling ──────────────────────────────────────────────────────

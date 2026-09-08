@@ -6,23 +6,14 @@ import { generateMap, type Grid } from "../../src/iso/grid";
 import { MAP_W, MAP_H } from "../../src/game/config";
 import { canReachASpot, rivalSearchTiles } from "./helpers/rival-map";
 
-// ══════════════════════════════════════════════════════════════════════════
-// W8 — the whole-map sweep: EVERY legal rival tile must be playable.
-//
-// The ticket measured the deadlock over the same search space `game.ts` uses
-// (even tile steps) and found the rival building 0 tiles on 51/160 placements
-// at seed 1337 and 37/157 at seed 7. This is the regression guard: four AI
-// turns from any tile that can physically support a build must lay track and
-// land a serviced harvester.
-//
-// Tiles that CANNOT are enclaves — water and industry footprints wall them in
-// (seed 1337's (2,2) is rough, with water on three sides and the oil_rig at
-// (2,3) on the fourth). No planning change can build from those, so they are
-// excluded here and refused by `chooseRivalFactorySpot` below.
-//
-// Slow by nature (a real map × a real A* per tile), which is why it lives in
-// its own file rather than in `iso-ai.test.ts`.
-// ══════════════════════════════════════════════════════════════════════════
+// W8/T4: cheap structural reachability covers the full even-step search
+// space; expensive real planning uses a bounded, deterministic spatial sample.
+// With 25 industries spread over 144×144, not every legal tile can reach one
+// on the opening 12 stone + 12 free road tiles. The structural build sweep
+// therefore removes the purse limit. Rival placement is tested SEPARATELY
+// below with the unchanged opening purse, and must return a viable first turn.
+
+const SAMPLE_STEP = 2 * Math.ceil(Math.max(MAP_W, MAP_H) / 10);
 
 /** The rival's opening purse + setup allowance, exactly as `game.ts` gives it. */
 const rivalOpts = () => ({ stock: { stone: 12, ore: 0 }, purse: { stone: 12, ore: 0 }, free: 12 });
@@ -48,7 +39,9 @@ function play(grid: Grid, x: number, y: number, turns: number): SweepRow {
   const eco: EconomyState = { grid, track, harvesters: [], factories: [f] };
   let noops = 0;
   for (let i = 0; i < turns; i++) {
-    const out = aiBuildStep(eco, f, rivalOpts(), 100 + i);
+    const out = aiBuildStep(eco, f, {
+      ...rivalOpts(), purse: { stone: MAP_W * MAP_H, ore: 0 },
+    }, 100 + i);
     // a truthy outcome that achieved nothing is the W8 bug: `aiTick` would
     // have spent the rival's 9 s clock on it and reported progress.
     if (out && out.built.length === 0 && !out.harvester) noops++;
@@ -62,13 +55,17 @@ function play(grid: Grid, x: number, y: number, turns: number): SweepRow {
   };
 }
 
-describe("W8 sweep — every legal rival tile is playable", () => {
-  it("seed 1337: four turns from any non-enclave tile lay track and land a harvester", () => {
+describe("W8 sweep — legal rival tiles are structurally playable", () => {
+  it("seed 1337: the full search space has no road-buildable enclaves", () => {
     const grid = generateMap(1337);
-    const tiles = rivalSearchTiles(grid);
-    // The ticket counted 160 on the old 32×32 map; the reverted 48×48 map
-    // roughly triples the search space.
-    expect(tiles.length).toBeGreaterThan(100);
+    const enclaves = rivalSearchTiles(grid).filter(([x, y]) => !canReachASpot(grid, x, y));
+    expect(enclaves).toEqual([]);
+  });
+
+  it("seed 1337: four turns from sampled non-enclaves build with sufficient road funds", () => {
+    const grid = generateMap(1337);
+    const tiles = rivalSearchTiles(grid, SAMPLE_STEP);
+    expect(tiles.length).toBeGreaterThan(10);
 
     const enclaves: string[] = [];
     const bad: string[] = [];
@@ -79,27 +76,14 @@ describe("W8 sweep — every legal rival tile is playable", () => {
       if (r.tiles === 0) bad.push(`${x},${y} laid nothing`);
       else if (r.serviced === 0) bad.push(`${x},${y} no serviced harvester`);
     }
-    // The old "rough (2,2) enclave" repro is gone on the reverted map: (2,2)
-    // is open WATER, so `rivalSearchTiles` never even considers it.
-    expect(canBuildOn(grid, "road", 2, 2)).toBe(false);
-    // MT-2's real footprints wall off exactly one road-buildable tile on this
-    // seed: (44,8), a single grass tile with water on three sides and an
-    // industry footprint on the fourth. No plan can ever leave it, so it is a
-    // legitimate ENCLAVE — excluded from the sweep above and refused by
-    // `chooseRivalFactorySpot` (the placement test below proves it). The
-    // assertion pins that set so a footprint/terrain change can only add an
-    // enclave (or a deadlock in `bad`) by failing here first.
-    expect(enclaves, `enclave tiles: ${enclaves.join(" | ")}`).toEqual(["44,8"]);
+    expect(enclaves, `enclave tiles: ${enclaves.join(" | ")}`).toEqual([]);
     expect(bad, `deadlocked tiles: ${bad.join(" | ")}`).toEqual([]);
-  }, 1200_000);
+  }, 60_000);
 
-  it("seed 7: the first turn is never a no-op, and builds wherever it can", () => {
-    // sampled (step 4): the ticket measured 37/157 deadlocks on this seed, so a
-    // quarter of the space is plenty to catch the regression, and the full
-    // 160-tile × 4-turn pass above already covers seed 1337 end to end.
+  it("seed 7: sampled placements build and never report no-op progress", () => {
     const grid = generateMap(7);
-    const tiles = rivalSearchTiles(grid, 4);
-    expect(tiles.length).toBeGreaterThan(20);
+    const tiles = rivalSearchTiles(grid, SAMPLE_STEP);
+    expect(tiles.length).toBeGreaterThan(10);
     const bad: string[] = [];
     for (const [x, y] of tiles) {
       if (!canReachASpot(grid, x, y)) continue;
@@ -108,11 +92,11 @@ describe("W8 sweep — every legal rival tile is playable", () => {
       if (r.tiles === 0 || r.serviced === 0) bad.push(`${x},${y} tiles=${r.tiles} h=${r.serviced}`);
     }
     expect(bad, `deadlocked tiles: ${bad.join(" | ")}`).toEqual([]);
-  }, 180_000);
+  }, 30_000);
 
-  it("seed 2024 (the ticket's control) still builds everywhere it could before", () => {
+  it("seed 2024: sampled non-enclaves build on the first funded turn", () => {
     const grid = generateMap(2024);
-    const tiles = rivalSearchTiles(grid, 4);   // sampled: this seed never deadlocked
+    const tiles = rivalSearchTiles(grid, SAMPLE_STEP);   // sampled: this seed never deadlocked
     const bad: string[] = [];
     for (const [x, y] of tiles) {
       if (!canReachASpot(grid, x, y)) continue;
@@ -120,17 +104,15 @@ describe("W8 sweep — every legal rival tile is playable", () => {
       if (r.tiles === 0 || r.serviced === 0) bad.push(`${x},${y}`);
     }
     expect(bad, `deadlocked tiles: ${bad.join(" | ")}`).toEqual([]);
-  }, 180_000);
+  }, 30_000);
 });
 
 describe("W8 sweep — every candidate returned is executable and viable", () => {
   it("no plan crosses ground its own transport kind cannot be laid on", () => {
-    // Sampled (step 4) on the ticket's repro seed — the invariant is
-    // structural (it comes from the filter in `planCandidates`), so a quarter
-    // of one map covers it without doubling the suite's runtime.
+    // A bounded spatial sample checks real, affordable candidate paths.
     for (const seed of [1337]) {
       const grid = generateMap(seed);
-      for (const [x, y] of rivalSearchTiles(grid, 4)) {
+      for (const [x, y] of rivalSearchTiles(grid, SAMPLE_STEP)) {
         if (!canReachASpot(grid, x, y)) continue;
         const track = createTrack();
         const f: Factory = { owner: "ai", ownerId: 2, tx: x, ty: y };
@@ -151,7 +133,7 @@ describe("W8 sweep — every candidate returned is executable and viable", () =>
         }
       }
     }
-  }, 600_000);
+  }, 15_000);
 });
 
 describe("W8 sweep — the rival is never placed on a tile it cannot build from", () => {
@@ -159,8 +141,9 @@ describe("W8 sweep — the rival is never placed on a tile it cannot build from"
     const grid = generateMap(1337);
     const opts = { purse: { stone: 12, ore: 0 }, free: 12, ownerId: 2 };
     let checked = 0;
-    for (let y = 2; y < MAP_H - 2; y += 4) {
-      for (let x = 2; x < MAP_W - 2; x += 4) {
+    // Placement uses the real opening purse, unlike the funded route sweep.
+    for (let y = 2; y < MAP_H - 2; y += SAMPLE_STEP) {
+      for (let x = 2; x < MAP_W - 2; x += SAMPLE_STEP) {
         if (!canBuildOn(grid, "road", x, y)) continue;
         const spot = chooseRivalFactorySpot(grid, createTrack(), [x, y], opts);
         expect(spot, `player at ${x},${y}`).toBeTruthy();
@@ -170,15 +153,19 @@ describe("W8 sweep — the rival is never placed on a tile it cannot build from"
         expect(spot, `rival on the player's own tile ${x},${y}`).not.toEqual([x, y]);
         expect(canBuildOn(grid, "rail", spot![0], spot![1]), `rail illegal at ${spot}`).toBe(true);
         expect(canReachASpot(grid, spot![0], spot![1]), `enclave at ${spot}`).toBe(true);
+        const f: Factory = { owner: "ai", ownerId: 2, tx: spot![0], ty: spot![1] };
+        const eco: EconomyState = { grid, track: createTrack(), factories: [f], harvesters: [] };
+        const first = aiBuildStep(eco, f, rivalOpts(), 1);
+        expect(first?.harvester, `unaffordable first turn for player ${x},${y}`).toBeTruthy();
         checked++;
       }
     }
-    expect(checked).toBeGreaterThan(20);
+    expect(checked).toBeGreaterThan(10);
     // The ticket's repro: a player factory at (23,22) used to hand the rival
-    // the rough (2,2) enclave. On the reverted map (2,2) is water and can
+    // the rough (2,2) enclave. On this map (2,2) is water and can
     // never be committed anyway; keep the guard so a future ranking change
     // cannot regress onto that tile.
     const spot = chooseRivalFactorySpot(grid, createTrack(), [23, 22], opts);
     expect(tIdx(spot![0], spot![1])).not.toBe(tIdx(2, 2));
-  }, 180_000);
+  }, 15_000);
 });

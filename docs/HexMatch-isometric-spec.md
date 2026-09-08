@@ -52,7 +52,7 @@ export const screenToTile = (sx: number, sy: number): [number, number] => {
 | Constant | Value | Note |
 |---|---|---|
 | `TILE_W` × `TILE_H` | 64 × 32 | verify against the source art before slicing |
-| `MAP_W` × `MAP_H` | 48 × 48 | 2304 tiles; budget checked in E4 |
+| `MAP_W` × `MAP_H` | 144 × 144 | 20,736 tiles; T4 triples each dimension, keeping industry/town counts fixed |
 | Terrain height | **flat** | see below |
 | Zoom range | 0.5× – 2.0× | integer steps only: 0.5, 1, 2 |
 
@@ -62,7 +62,7 @@ export const screenToTile = (sx: number, sy: number): [number, number] => {
 
 <cite index="40-1">Scaling images inside `drawImage` is a documented canvas performance mistake; cache several sizes on an offscreen canvas at load time instead of constantly scaling in the draw call.</cite> With three fixed zoom levels you pre-render the atlas at 0.5×, 1× and 2× once, and every frame is a 1:1 blit. Free zoom would force per-frame scaling of every sprite.
 
-**Acceptance:** constants in `config.ts`; `tileToScreen`/`screenToTile` exported with unit tests asserting round-trip identity for all 2304 tiles and correct results at the four diamond corners of at least 20 sampled tiles.
+**Acceptance:** constants in `config.ts`; `tileToScreen`/`screenToTile` exported with unit tests asserting round-trip identity for all 20,736 tiles and correct results at the four diamond corners of at least 20 sampled tiles.
 
 ---
 
@@ -181,7 +181,7 @@ Layer 1 and 2 are cheap because of chunk caching (below); only layer 3 runs at 6
 
 ### Viewport culling
 
-Convert the four screen corners of the viewport to tile space with `screenToTile`, take the bounding box of the results, pad by the largest sprite footprint plus its height in tiles (a 3×3 mine 160px tall reaches ~5 tiles up the screen), and iterate only that range. Essential at 48×48 with tall sprites.
+Convert the four screen corners of the viewport to tile space with `screenToTile`, take the bounding box of the results, pad by the largest sprite footprint plus its height in tiles (a 3×3 mine 160px tall reaches ~5 tiles up the screen), and iterate only that range. Essential at 144×144 with tall sprites.
 
 ### Depth sorting — read this carefully
 
@@ -321,7 +321,7 @@ Build panel becomes Road / Rail / Harvester / Demolish. The road-vs-rail tradeof
 ## E10. Multiplayer snapshot
 `[feature] [multiplayer]`
 
-`net.ts` snapshots change shape: terrain and industries are seed-derived and never sent; `roadBits`, `railBits` and the harvester list are. Send the two `Uint8Array`s as base64 rather than JSON arrays — 2304 bytes each, versus roughly 10KB as JSON. Add a `version` field and reject mismatched clients with a clear message; today a stale guest silently desyncs.
+`src/iso/snapshot.ts` sends mutable track, structures and score; terrain, industries and towns remain seed-derived. Road, rail and owner `Uint8Array`s are base64 — 20,736 bytes / 27,648 base64 characters per layer on the 144×144 map. Snapshot version 4 rejects pre-expansion clients before validating the new layer sizes.
 
 ---
 

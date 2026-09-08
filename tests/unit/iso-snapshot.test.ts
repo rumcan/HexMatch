@@ -53,15 +53,15 @@ describe("E10 base64 typed arrays", () => {
     expect(base64ToBytes(bytesToBase64(ones))).toEqual(ones);
   });
 
-  it("is a constant 1368 chars regardless of how much track exists", () => {
+  it("has a fixed base64 length regardless of how much track exists", () => {
     // The real value of base64 here is that it is FLAT: an empty map and a
     // saturated one cost the same, so the host's bandwidth never spikes as
-    // the game fills up. (The spec's "~10KB as JSON" is optimistic — the
-    // measured JSON encoding is 4.6KB empty and 6.9KB saturated.)
+    // the game fills up.
     const empty = new Uint8Array(EXPECTED_TRACK_BYTES);
     const full = new Uint8Array(EXPECTED_TRACK_BYTES).fill(31);
-    expect(bytesToBase64(empty)).toHaveLength(3072);   // 4·⌈2304/3⌉
-    expect(bytesToBase64(full)).toHaveLength(3072);
+    // base64 of one full layer is 4·⌈bytes/3⌉, whatever the map size (T4).
+    expect(bytesToBase64(empty)).toHaveLength(Math.ceil(EXPECTED_TRACK_BYTES / 3) * 4);
+    expect(bytesToBase64(full)).toHaveLength(Math.ceil(EXPECTED_TRACK_BYTES / 3) * 4);
   });
 
   it("beats a JSON array, and by most where it matters — a busy map", () => {
@@ -109,8 +109,9 @@ describe("E10 snapshot shape", () => {
       owner: Array.from(src.track.owner),
     }).length;
     expect(snapshotBytes(s)).toBeLessThan(asJsonArrays);
-    // and the whole snapshot stays inside a single small frame
-    expect(snapshotBytes(s)).toBeLessThan(12_000);
+    // and the whole snapshot stays small on the wire: the track payload is
+    // 3 layers of base64 (≈4 B/tile), so budget ~6 B/tile with headroom (T4).
+    expect(snapshotBytes(s)).toBeLessThan(6 * EXPECTED_TRACK_BYTES);
   });
 });
 
@@ -211,6 +212,13 @@ describe("E10 version gating", () => {
 });
 
 describe("E10 malformed payloads", () => {
+  it("rejects pre-expansion v3 clients with a version message before checking layer sizes", () => {
+    const old = { ...buildSnapshot(source()), version: 3, road: bytesToBase64(new Uint8Array(48 * 48)) };
+    expect(SNAPSHOT_VERSION).toBe(4);
+    expect(validateSnapshot(old)?.code).toBe("version");
+    expect(() => applySnapshot(old)).toThrow(/incompatible version/i);
+  });
+
   it("rejects a truncated track layer instead of half-applying it", () => {
     const s = { ...buildSnapshot(source()), road: bytesToBase64(new Uint8Array(10)) };
     const err = validateSnapshot(s)!;
@@ -249,13 +257,13 @@ describe("E10 scale", () => {
     src.track.road.fill(31);
     src.track.rail.fill(31);
     const s = buildSnapshot(src);
-    expect(snapshotBytes(s)).toBeLessThan(20_000);
+    expect(snapshotBytes(s)).toBeLessThan(10 * EXPECTED_TRACK_BYTES);
     const out = applySnapshot(s);
     expect(out.track.road).toEqual(src.track.road);
   });
 
   it("the track layers are exactly one byte per tile", () => {
     expect(EXPECTED_TRACK_BYTES).toBe(MAP_W * MAP_H);
-    expect(EXPECTED_TRACK_BYTES).toBe(2304);   // OpenGFX map is 48×48
+    expect(EXPECTED_TRACK_BYTES).toBe(144 * 144);   // T4: tripled per dimension
   });
 });
