@@ -333,7 +333,7 @@ export const canAfford = (purse: Purse, cost: Purse): boolean =>
  *
  * Option (a) from the ticket — ROAD ONLY. Rail, laid new or upgraded in place
  * over a road, always pays `TRANSPORT.rail.cost` / `UPGRADE_COST`. E8's design
- * note is "start with stone for roads, no ore — rail is gated behind an ore
+ * note is "wood and stone for roads, no ore — rail is gated behind an ore
  * mine", and before this the allowance ignored the gate: `previewDrag` spent it
  * on ANY tile with a non-empty cost, so the first 12 tiles of a rail drag were
  * free and the connection jumped straight to rail VP (3/tile) and rail

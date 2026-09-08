@@ -75,8 +75,8 @@ export { joinFromSnapshot };
  * so no phase inference or timer can ever claw it back (the K1 bug class).
  *
  * W9: it buys ROAD only. A rail tile — new, or an in-place upgrade of a road —
- * always pays `TRANSPORT.rail.cost` / `UPGRADE_COST`, which keeps E8's gate
- * honest ("start with stone for roads, no ore — rail is gated behind an ore
+ * always pays `TRANSPORT.rail.cost` / `UPGRADE_COST`, which keeps the gate
+ * honest ("wood and stone for roads, no ore — rail is gated behind an ore
  * mine"): ore is the first real objective after the opening road, and the
  * connection cannot skip straight to rail VP and ×1.6 throughput for free.
  * The rule itself lives in `freeAllowanceCovers` (`track.ts`) so the human
@@ -85,8 +85,14 @@ export { joinFromSnapshot };
 export const FREE_SETUP_TRACK = 12;
 export const HARVEST_MS = 3000;      // economy tick
 export const AI_BUILD_MS = 9000;
-/** E8: start with stone for roads, no ore — rail is gated behind an ore mine. */
-export const START_PURSE: Purse = { stone: 12, ore: 0 };
+/**
+ * PP-07: start with wood + stone for roads (12 paid tiles — the E8 opening
+ * curve, now that a road tile costs 1 Wood + 1 Stone), and no ore: rail stays
+ * gated behind an ore mine. Grain and oil are earned, never granted — depot
+ * expansion (grain + oil) and the second plant (grain + ore) are what
+ * processing and trade are for.
+ */
+export const START_PURSE: Purse = { wood: 12, stone: 12, ore: 0 };
 /**
  * PP-05: re-exported from `construction.ts` (the authoritative cost module) so
  * the whole E8 tuning surface is reachable from this file, the way
