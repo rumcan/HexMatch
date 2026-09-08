@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { aiBuildStep, chooseRivalFactorySpot, planCandidates, planFeasibility } from "../../src/iso/ai";
+import { FREE_SETUP_DEPOTS } from "../../src/iso/construction";
 import { createTrack, canBuildOn, tIdx } from "../../src/iso/track";
 import { isServiced, type EconomyState, type Factory } from "../../src/iso/economy";
 import { generateMap, type Grid } from "../../src/iso/grid";
@@ -15,8 +16,14 @@ import { canReachASpot, rivalSearchTiles } from "./helpers/rival-map";
 
 const SAMPLE_STEP = 2 * Math.ceil(Math.max(MAP_W, MAP_H) / 10);
 
-/** The rival's opening purse + setup allowance, exactly as `game.ts` gives it. */
-const rivalOpts = () => ({ stock: { stone: 12, ore: 0 }, purse: { stone: 12, ore: 0 }, free: 12 });
+/** The rival's opening purse + setup allowances, exactly as `game.ts` gives
+ *  it. PP-05 added the second allowance: the rival's FIRST Depot is free, so an
+ *  opening turn prices the Depot at nothing — and a later turn must have earned
+ *  the Oil `DEPOT_COST` asks for. */
+const rivalOpts = () => ({
+  stock: { stone: 12, ore: 0 }, purse: { stone: 12, ore: 0 },
+  free: 12, freeDepots: FREE_SETUP_DEPOTS,
+});
 
 const ownedBy = (track: { owner: Uint8Array }, ownerId: number) => {
   let n = 0;
@@ -39,8 +46,11 @@ function play(grid: Grid, x: number, y: number, turns: number): SweepRow {
   const eco: EconomyState = { grid, track, harvesters: [], factories: [f] };
   let noops = 0;
   for (let i = 0; i < turns; i++) {
+    // PP-05: Oil joins the unlimited funds. Four turns place up to four
+    // Depots, and only the first rides the free allowance — the rest are paid,
+    // so a purse this test calls "sufficient" has to cover `DEPOT_COST` too.
     const out = aiBuildStep(eco, f, {
-      ...rivalOpts(), purse: { stone: MAP_W * MAP_H, ore: 0 },
+      ...rivalOpts(), purse: { stone: MAP_W * MAP_H, ore: 0, oil: MAP_W * MAP_H },
     }, 100 + i);
     // a truthy outcome that achieved nothing is the W8 bug: `aiTick` would
     // have spent the rival's 9 s clock on it and reported progress.

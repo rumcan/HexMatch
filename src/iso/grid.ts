@@ -40,6 +40,14 @@ export interface Town {
   tx: number;             // center tile
   ty: number;
   houses: [number, number][];  // list of house tile positions
+  /** PP-10: the town's simple ring road — the perimeter of the house
+   *  bounding box expanded by one tile, kept on free land only. The tiles
+   *  are stamped TOWN_OCC in `occupancy` (a town's roads belong to the
+   *  town, exactly like its houses: nobody may build on them), and the game
+   *  copies them onto the track layer at boot (`seedTownRoads` in track.ts).
+   *  A pure function of the houses plus the terrain/occupancy at placement
+   *  time, so the map stays deterministic under the seed. */
+  roads: [number, number][];
 }
 
 export interface Grid {
@@ -213,6 +221,62 @@ const TOWN_TOWN_SEP = 28;
 /** TOWN-1: occupancy sentinel for town tiles (distinct from industry indices ≥ 0). */
 export const TOWN_OCC = -2;
 
+/**
+ * PP-10: a simple road network for a settlement.
+ *
+ * Two pieces, both "simple" on purpose:
+ *   1. the RING — the perimeter of the house bounding box expanded by one
+ *      tile: a ring road the settlement sits inside;
+ *   2. the INTERIOR streets — every free tile INSIDE the box (the gaps the
+ *      BFS-grown cluster leaves between houses along its edge, ~5 per town;
+ *      the strict interior is solid, ~0.01 empty tile).
+ *
+ * Piece 2 is load-bearing, not decoration: the ring is a closed loop of
+ * TOWN_OCC tiles, and any free tile it encloses would become a road-buildable
+ * ENCLAVE — a pocket the W8 sweep proves the rival's factory search must
+ * never commit to. Paving the box's free tiles removes the pockets by
+ * construction, and every box-edge street touches the ring, so the network
+ * is one connected piece wherever the ring is unbroken.
+ *
+ * Only free land becomes road: in-bounds, not water, occupancy -1. Rough is
+ * legal (roads build on rough). A water tile or an earlier town's tile
+ * simply leaves a gap — the autotile masks render the break naturally.
+ * Deterministic: same houses + terrain + occupancy → same roads.
+ */
+export function townRoadTiles(
+  houses: [number, number][], terrain: Uint8Array, occ: Int16Array,
+): [number, number][] {
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const [hx, hy] of houses) {
+    x0 = Math.min(x0, hx); x1 = Math.max(x1, hx);
+    y0 = Math.min(y0, hy); y1 = Math.max(y1, hy);
+  }
+  // The candidate's own houses are not stamped in `occ` yet (the town
+  // commits them after this returns), so exclude them explicitly — a road
+  // under a house would be drawn, and the house is the tile's owner anyway.
+  const houseSet = new Set<number>(houses.map(([hx, hy]) => idx(hx, hy)));
+  const free = (tx: number, ty: number): boolean => {
+    if (!inBounds(tx, ty)) return false;
+    const i = idx(tx, ty);
+    return terrain[i] !== WATER && occ[i] === -1 && !houseSet.has(i);
+  };
+  const out: [number, number][] = [];
+  // Interior streets: the free tiles inside the box (scan order = stable).
+  for (let ty = y0; ty <= y1; ty++) {
+    for (let tx = x0; tx <= x1; tx++) {
+      if (free(tx, ty)) out.push([tx, ty]);
+    }
+  }
+  // Ring road: the perimeter of the box expanded by one tile.
+  for (let ty = y0 - 1; ty <= y1 + 1; ty++) {
+    for (let tx = x0 - 1; tx <= x1 + 1; tx++) {
+      const onRing = tx === x0 - 1 || tx === x1 + 1 || ty === y0 - 1 || ty === y1 + 1;
+      if (onRing && free(tx, ty)) out.push([tx, ty]);
+    }
+  }
+  return out;
+}
+
 function placeTowns(
   terrain: Uint8Array, occ: Int16Array, industries: Industry[], rng: () => number,
 ): Town[] {
@@ -328,6 +392,13 @@ function placeTowns(
         }
         if (houses.length < TOWN_HOUSES_MIN) continue;
 
+        // PP-10: the proposed town's ring road. Computed from the candidate
+        // houses against the CURRENT occupancy, so it never overlaps an
+        // industry or an earlier town (both are stamped in `occ` already),
+        // and it is part of the proposed tiles for the reachability check
+        // below — a closed road loop must never wall off an industry either.
+        const roads = townRoadTiles(houses, terrain, occ);
+
         // Reachability check: the PROPOSED TOWN tiles must not strand any
         // industry. F1 fix: `blocked` holds only the town's house tiles.
         // Adding every occupied industry tile to `blocked` made
@@ -337,13 +408,21 @@ function placeTowns(
         // — the question is "do these houses wall off an industry?", and the
         // flood starts from an industry tile and walks land that excludes
         // only the town footprint (water is already excluded inside).
+        // PP-10: the ring road is part of the proposed town, so it is
+        // blocked for the flood too (a closed loop could in principle enclose
+        // an industry; the 8-tile industry ring makes it impossible in
+        // practice, but the check must not rely on that).
         const blocked = new Set<number>();
         for (const [hx, hy] of houses) blocked.add(idx(hx, hy));
+        for (const [rx, ry] of roads) blocked.add(idx(rx, ry));
         if (!allIndustriesReachable(blocked)) continue;
 
         // Commit: mark tiles with TOWN_OCC so later towns/industries avoid them.
+        // PP-10: the road tiles are stamped too — a later town's houses AND
+        // ring road both treat them as occupied, so towns never overlap.
         for (const [hx, hy] of houses) occ[idx(hx, hy)] = TOWN_OCC;
-        towns.push({ id: towns.length, tx: cx, ty: cy, houses });
+        for (const [rx, ry] of roads) occ[idx(rx, ry)] = TOWN_OCC;
+        towns.push({ id: towns.length, tx: cx, ty: cy, houses, roads });
         placed = true;
       }
       if (placed) break;

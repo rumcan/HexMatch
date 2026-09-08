@@ -344,16 +344,26 @@ test.describe("iso game boots on the default route", () => {
     await page.mouse.click(harvester.x, harvester.y);
     await page.waitForFunction(() => (window as any).__iso.phase === "play");
     await page.waitForFunction(() => (window as any).__iso.harvesters.length >= 1);
-    const h0 = await page.evaluate(() => ({
-      free: (window as any).__iso.freeTrack,
-      vp: (window as any).__iso.vp,
-      stone: (window as any).__iso.purse.stone,
-      ore: (window as any).__iso.purse.ore ?? 0,
-    }));
+    const h0 = await page.evaluate(() => {
+      const h = (window as any).__iso;
+      let road = 0;
+      for (let i = 0; i < h.track.road.length; i++) if (h.track.road[i] & 16) road++;
+      return {
+        free: h.freeTrack,
+        vp: h.vp,
+        stone: h.purse.stone,
+        ore: h.purse.ore ?? 0,
+        // PP-10: the towns' seed-generated ring roads stand at boot, so the
+        // drag's footprint is measured RELATIVE to this baseline.
+        road,
+      };
+    });
     expect(h0.free).toBe(12);                       // FREE_SETUP_TRACK (E8)
     expect(h0.vp).toEqual({ you: 0, ai: 0 });
     expect(h0.stone).toBe(12);
     expect(h0.ore).toBe(0);
+    // PP-10: the four towns' seed-generated ring roads are already standing.
+    expect(h0.road).toBeGreaterThan(0);
 
     // ── build phase: drag a road from the Factory to the harvester ───────
     // real pointer stream: move → down on the factory → step tile by tile
@@ -390,7 +400,9 @@ test.describe("iso game boots on the default route", () => {
     expect(after.vp.ai).toBe(0);
     expect(after.stone).toBe(12);                    // allowance, not purse
     expect(after.ore).toBe(0);
-    expect(after.road).toBe(n);
+    // PP-10: the towns' seed-generated ring roads are already on the track,
+    // so the drag adds exactly `n` to the boot baseline, not `n` in absolute.
+    expect(after.road).toBe(h0.road + n);
 
     // Track state changes synchronously; the canvas paints on the next RAF.
     await page.evaluate(() => new Promise<void>((resolve) =>

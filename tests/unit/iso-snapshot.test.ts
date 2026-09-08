@@ -212,9 +212,9 @@ describe("E10 version gating", () => {
 });
 
 describe("E10 malformed payloads", () => {
-  it("rejects pre-expansion v3 clients with a version message before checking layer sizes", () => {
-    const old = { ...buildSnapshot(source()), version: 3, road: bytesToBase64(new Uint8Array(48 * 48)) };
-    expect(SNAPSHOT_VERSION).toBe(4);
+  it("rejects pre-town-road v4 clients with a version message before checking layer sizes", () => {
+    const old = { ...buildSnapshot(source()), version: 4, road: bytesToBase64(new Uint8Array(48 * 48)) };
+    expect(SNAPSHOT_VERSION).toBe(5);
     expect(validateSnapshot(old)?.code).toBe("version");
     expect(() => applySnapshot(old)).toThrow(/incompatible version/i);
   });

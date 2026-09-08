@@ -320,8 +320,10 @@ describe("E11 a full round is playable", () => {
 
     const f = { owner: "ai", ownerId: 2, tx: spot![0], ty: spot![1] };
     h.eco.factories.push(f);
+    // PP-05: Oil joins the unlimited purse — the turn ends at a Depot, and a
+    // paid Depot costs Oil (`DEPOT_COST` in construction.ts).
     const out = aiBuildStep(
-      h.eco, f, { stock: {}, purse: { stone: 9999, ore: 9999 } }, 99,
+      h.eco, f, { stock: {}, purse: { stone: 9999, ore: 9999, oil: 9999 } }, 99,
     );
     expect(out).toBeTruthy();
     expect(out!.built.length).toBeGreaterThan(0);
@@ -678,6 +680,14 @@ describe("W3 the rival actually plays (headless)", () => {
     expect(rivalTiles()).toBe(0);
     expect(h.vp.ai).toBe(0);
 
+    // PP-05: the rival's FIRST Depot rides its free allowance, so an opening
+    // turn needs no Oil — but every Depot after it pays `DEPOT_COST`, and this
+    // rival has never matched an Oil gem. Give it Oil the way a connected Oil
+    // Rig would, or the three later turns are (correctly) refused and the
+    // "it SPENT stone past its free allowance" assertion has nothing to spend.
+    // `res` IS the rival's purse object (market.ts builds over the same record).
+    rival.res.oil = 5;
+
     // Four build ticks = 36s of game time, still within the one-minute goal.
     const t0 = 1_000_000;
     for (let i = 0; i < 4; i++) h.aiTick(t0 + i * AI_BUILD_MS);
@@ -689,6 +699,9 @@ describe("W3 the rival actually plays (headless)", () => {
     // and it SPENT: the rival started with 12 stone (START_PURSE); builds past
     // the 12-tile free allowance come out of that purse, so the stone falls.
     expect(rival.res.stone).toBeLessThan(12);
+    // PP-05: …and the paid Depots cost Oil — the rival is down from the 5 it
+    // was given, proving the AI pays the same `DEPOT_COST` the player does.
+    expect(rival.res.oil).toBeLessThan(5);
 
     // and it EARNS: the connected mine's trickle lands in its purse each tick
     const ore0 = rival.res.ore;

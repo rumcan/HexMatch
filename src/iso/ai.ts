@@ -32,6 +32,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_W, MAP_H } from "../game/config";
 import { TRANSPORT, UPGRADE_COST, INDUSTRY_BY_KEY, FACTORY_FOOTPRINT, type Cargo } from "./config";
+import { DEPOT_COST, FREE_SETUP_DEPOTS, priceDepot } from "./construction";
 import { ROUGH, type Grid, type Industry } from "./grid";
 import {
   DIRS, DIR, tIdx, inMapT, hasTrack, canBuildOn, tileCost, addCost, canAfford,
@@ -366,6 +367,14 @@ export interface PlanOptions {
    * rival is gated behind an ore mine for rail just like the player is (E8).
    */
   free?: number;
+  /**
+   * PP-05: the AI's remaining free-DEPOT allowance (`freeDepots` in game.ts) —
+   * the building twin of `free`. While it lasts the Depot the plan ends at is
+   * free; once it is gone the plan must afford `DEPOT_COST` (Oil included) on
+   * top of its track, exactly as the human's click must. Omitted means 0, i.e.
+   * a paid Depot: the allowance is data the caller owns, never a guess here.
+   */
+  freeDepots?: number;
   /** Prefer rail when affordable (spec: build road if it can't afford rail). */
   preferRail?: boolean;
 }
@@ -400,6 +409,10 @@ export function planCandidates(
   const out: Candidate[] = [];
   const claimed = new Set(state.harvesters.map((h) => tIdx(h.tx, h.ty)));
   const free = Math.max(0, opts.free ?? 0);
+  // PP-05: every candidate ends at a NEW Depot, so the Depot's own price is
+  // part of what the plan must afford. Priced by the same `priceDepot` the
+  // human click and the HUD use — one table, one rule, no rival-only discount.
+  const depotCost = priceDepot(opts.purse, opts.freeDepots ?? 0).cost;
 
   const kinds: TrackKind[] = opts.preferRail === false ? ["road"] : ["rail", "road"];
   for (const kindPref of kinds) {
@@ -452,7 +465,9 @@ export function planCandidates(
           if (freeLeft > 0) { freeLeft--; continue; }
           cost = addCost(cost, c);
         }
-        if (!canAfford(opts.purse, cost)) continue;
+        // PP-05: track + Depot, or the plan is not a plan — a candidate the
+        // purse cannot finish would place a Depot its caller cannot pay for.
+        if (!canAfford(opts.purse, addCost(cost, depotCost))) continue;
 
         const score = scarcity(opts.stock, def.cargo) * (ind.output ?? def.output)
           / Math.max(0.3, path.cost);
@@ -484,6 +499,14 @@ export interface RivalSpotOptions {
   purse: Purse;
   /** Its free setup allowance, priced the same way `planCandidates` does. */
   free?: number;
+  /**
+   * PP-05: its free-DEPOT allowance. The probe below prices the rival's
+   * OPENING plan — a state with no harvesters at all — so this defaults to
+   * `FREE_SETUP_DEPOTS`: without it every probe would demand Oil the opening
+   * purse cannot have (Oil needs a Depot), no spot would qualify, and the
+   * rival would fall back to an unranked tile it cannot build from.
+   */
+  freeDepots?: number;
   /** The rival's numeric track-owner id (the game uses player index + 1). */
   ownerId: number;
   /** Display identity of the rival. Default `"ai"`. */
@@ -556,8 +579,12 @@ export function chooseRivalFactorySpot(
     if (emptyTrack && !targets.some(([x, y]) => Math.abs(x - s.x) + Math.abs(y - s.y) + 1 <= maxOpening)) continue;
     if (probed++ >= tries) break;
     probe.tx = s.x; probe.ty = s.y;
+    // PP-05: the probe models the rival's OPENING turn — no harvesters yet —
+    // so the Depot it would place rides on the free allowance, exactly as the
+    // human's setup Depot does.
     const plan = bestCandidate(state, probe, {
       stock: opts.purse, purse: opts.purse, free: opts.free ?? 0,
+      freeDepots: opts.freeDepots ?? FREE_SETUP_DEPOTS,
     });
     if (plan) return [s.x, s.y];
   }
@@ -578,6 +605,12 @@ export interface BuildOutcome {
    * W9: always 0 for a rail build — the allowance buys road only.
    */
   free: number;
+  /**
+   * PP-05: 1 when this turn's Depot rode on the free-Depot allowance, else 0
+   * (the caller debits `freeDepots`). The Depot's cost — when it is not free —
+   * is already inside `spent`.
+   */
+  freeDepots: number;
 }
 
 /**
@@ -591,7 +624,7 @@ export interface BuildOutcome {
  */
 export function executeCandidate(
   state: EconomyState, c: Candidate, owner: string, ownerId: number,
-  nextHarvesterId: number, free: number = 0,
+  nextHarvesterId: number, free: number = 0, freeDepots: number = 0,
 ): BuildOutcome {
   const built: [number, number][] = [];
   let spent: Purse = {};
@@ -615,11 +648,21 @@ export function executeCandidate(
   }
   let harvester: Harvester | null = null;
   const h: Harvester = { id: nextHarvesterId, owner, ownerId, tx: c.hx, ty: c.hy };
+  // PP-05: the Depot itself is charged here, once, and only when the Depot
+  // actually lands (`isServiced`). A plan that lays track but places nothing
+  // charges no Depot — the same "a refused build consumes nothing" rule the
+  // human click follows.
+  let depotsUsed = 0;
   if (isServiced(state.track, h)) {
     state.harvesters.push(h);
     harvester = h;
+    if (freeDepots > 0) depotsUsed = 1;
+    else spent = addCost(spent, DEPOT_COST);
   }
-  return { built, harvester, kind: c.kind, spent, free: allowance - freeLeft };
+  return {
+    built, harvester, kind: c.kind, spent,
+    free: allowance - freeLeft, freeDepots: depotsUsed,
+  };
 }
 
 /**
@@ -644,9 +687,17 @@ export function executeCandidate(
 export function aiBuildStep(
   state: EconomyState, factory: Factory, opts: PlanOptions, nextHarvesterId: number,
 ): BuildOutcome | null {
+  const freeDepots = Math.max(0, opts.freeDepots ?? 0);
+  // PP-05: `planCandidates` already refused plans whose track + Depot the purse
+  // cannot cover; this is the belt-and-braces half (same shape as W8's), because
+  // `executeCandidate` mutates the map as it goes and a Depot it places for a
+  // purse that cannot pay would be a free Depot. `c.cost` is the plan's priced
+  // track total, an upper bound on what `executeCandidate` charges.
+  const depotCost = priceDepot(opts.purse, freeDepots).cost;
   for (const c of planCandidates(state, factory, opts)) {
+    if (!canAfford(opts.purse, addCost(c.cost, depotCost))) continue;
     const out = executeCandidate(
-      state, c, factory.owner, factory.ownerId, nextHarvesterId, opts.free,
+      state, c, factory.owner, factory.ownerId, nextHarvesterId, opts.free, freeDepots,
     );
     if (out.built.length > 0 || out.harvester) return out;
   }

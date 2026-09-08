@@ -26,8 +26,12 @@ import type { Harvester, Factory, ScoreState, ConnKind } from "./economy";
  * v3 (W2): the track's per-tile owner layer travels with the two bit layers —
  * without it a rejoined guest would see both networks as one shared graph.
  * v4 (T4): 144×144 map and wider seed-derived industry/town separation.
+ * v5 (PP-10): towns generate a seed-derived ring road that is stamped onto
+ * the host's road layer; it travels inside the existing track bytes. The
+ * wire shape is unchanged — bump so mixed-version rooms refuse instead of
+ * showing a half-consistent map.
  */
-export const SNAPSHOT_VERSION = 4;
+export const SNAPSHOT_VERSION = 5;
 
 export const EXPECTED_TRACK_BYTES = MAP_W * MAP_H;
 
