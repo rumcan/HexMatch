@@ -45,6 +45,31 @@
  *             twin, and "node_mark" a thin neutral outline that tags the
  *             tiles a placement qualifies or catches (PP-03).
  *
+ * PP-12 — `file` cells pack standalone Transport Tycoon Deluxe building art
+ * verbatim (the former `assets/iso-ttd/` PNGs, now categorised under
+ * `src/assets/sprites/png/{industries,houses}/ttd/`):
+ *
+ *   file: "industries/ttd/factory.png" plus `footprint: "auto" | [w, h]`
+ *             The PNG is trimmed to its opaque bbox and packed as one frame.
+ *             An optional `scale` (nearest-neighbour, applied BEFORE the trim)
+ *             renders the art smaller: Depots are 1x1 outposts, so their cells
+ *             carry `"scale": 0.5` — the full 256px food plant would otherwise
+ *             bury the roads around its tile. Anchor and (usually) footprint
+ *             are DERIVED from the art, never hand-authored — the PP-12 twin
+ *             of the Y5 rule:
+ *               anchor    = [floor(w / 2), h - 1]  (bottom-centre: the south
+ *                           corner of the baked ground diamond; for a 64x32
+ *                           tile this is (32, 31), the value terrain has
+ *                           always had)
+ *               footprint = "auto" → footprintForFileArt(w) — the square tile
+ *                           count whose diamond span covers the art width
+ *                           (see below; mirrored by `footprintForArt` in
+ *                           src/iso/config.ts, which the game reads so the
+ *                           Factory footprint follows its sprite). Cells whose
+ *                           gameplay footprint is fixed (1x1 town houses and
+ *                           Depots) carry an explicit [w, h] instead and the
+ *                           art overhangs it by design.
+ *
  * Anchor contract (Y5): `anchor` is never hand-authored. It is DERIVED from
  * the declared offsets: the pixel of the cell that must land on the south
  * corner of the footprint is the cell-local position of the cell's tile
@@ -521,7 +546,84 @@ async function makeGround(s) {
   };
 }
 
+/**
+ * PP-12: tile footprint derived from file-art width. A square [n, n]
+ * footprint's diamond spans n*64 + 32 px before the Y6 overhang allowance,
+ * so n = ceil((w - 32) / 64) is the smallest square whose span covers the
+ * art (64→1, 96→1, 115→2, 224→3, 256→4). Height is deliberately ignored:
+ * TTD building height includes vertical structure, not footprint depth.
+ * Mirrored EXACTLY by `footprintForArt` in src/iso/config.ts — the game and
+ * the packer must agree, and tests/unit/iso-pp12-assets.test.ts pins that.
+ */
+function footprintForFileArt(w) {
+  const n = Math.max(1, Math.ceil((w - 32) / CELL_W));
+  return [n, n];
+}
+
+/** Opaque bbox (alpha > 8) of a raw RGBA buffer, or null when fully transparent. */
+function opaqueBbox(data, w, h) {
+  let minX = w, minY = h, maxX = -1, maxY = -1;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (data[(y * w + x) * 4 + 3] > 8) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  return maxX < 0 ? null : { minX, minY, maxX, maxY };
+}
+
+/**
+ * PP-12 `file` cell: trim one standalone PNG to its opaque bbox and pack it
+ * as a single frame. Fails loudly on a missing file, a fully transparent
+ * image, or a path escaping `src/assets/sprites/png`.
+ */
+async function makeFile(s) {
+  if (typeof s.file !== "string" || s.file.includes("..") || !/^[A-Za-z0-9_\-./]+\.png$/.test(s.file)) {
+    throw new Error(`cell ${s.name}: bad file path ${JSON.stringify(s.file)}`);
+  }
+  if (s.scale !== undefined && (typeof s.scale !== "number" || !(s.scale > 0))) {
+    throw new Error(`cell ${s.name}: bad scale ${JSON.stringify(s.scale)}`);
+  }
+  const src = join(ROOT, "src/assets/sprites/png", s.file);
+  let data, info;
+  try {
+    let img = sharp(src, { limitInputPixels: false });
+    if (typeof s.scale === "number" && s.scale !== 1) {
+      const meta = await img.metadata();
+      img = img.resize(Math.max(1, Math.round(meta.width * s.scale)),
+        Math.max(1, Math.round(meta.height * s.scale)), { kernel: "nearest" });
+    }
+    ({ data, info } = await img.ensureAlpha().raw().toBuffer({ resolveWithObject: true }));
+  } catch (e) {
+    throw new Error(`cell ${s.name}: cannot read ${s.file}: ${e.message}`);
+  }
+  const bb = opaqueBbox(data, info.width, info.height);
+  if (!bb) throw new Error(`cell ${s.name}: ${s.file} is fully transparent`);
+  const W = bb.maxX - bb.minX + 1, H = bb.maxY - bb.minY + 1;
+  const px = Buffer.alloc(W * H * 4);
+  for (let y = 0; y < H; y++) {
+    const so = ((bb.minY + y) * info.width + bb.minX) * 4;
+    data.copy(px, y * W * 4, so, so + W * 4);
+  }
+  let footprint = s.footprint;
+  if (footprint === "auto") footprint = footprintForFileArt(W);
+  if (!Array.isArray(footprint) || footprint.length !== 2
+    || !footprint.every((v) => Number.isInteger(v) && v >= 1)) {
+    throw new Error(`cell ${s.name}: footprint must be \"auto\" or [w, h], got ${JSON.stringify(s.footprint)}`);
+  }
+  return {
+    cells: [{ px, w: W, h: H }], cellW: W, cellH: H,
+    anchor: [Math.floor(W / 2), H - 1],
+    footprint, frames: 1, frameMs: s.frameMs ?? 200,
+  };
+}
+
 async function buildSlot(s) {
+  if (typeof s.file === "string") return [{ name: s.name, ...(await makeFile(s)) }];
   if (s.trackset) return makeTrackset(s);
   if (s.layers) return [{ name: s.name, ...(await makeLayers(s)) }];
   if (s.generator === "highlight" || s.generator === "highlight_soft") {
@@ -579,7 +681,7 @@ async function run() {
     images: { "0.5": "atlas@0.5x.png", "1": "atlas@1x.png", "2": "atlas@2x.png" },
     tileW: CELLS.tileW, tileH: CELLS.tileH,
     meta: {
-      source: "OpenGFX (https://github.com/OpenTTD/OpenGFX), GPLv2",
+      source: "OpenGFX (https://github.com/OpenTTD/OpenGFX), GPLv2; PP-12 standalone TTD-style buildings (src/assets/sprites/png/*/ttd/)",
       generatedBy: "tools/slice-atlas.mjs",
       note: "coordinates and anchors are at 1x; multiply by zoom for @2x/@0.5x",
     },

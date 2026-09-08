@@ -223,17 +223,19 @@ export const TOWN_OCC = -2;
 
 /**
  * PP-02: how far (Chebyshev) around each town tile we flatten rocky terrain so
- * the generator can always offer a buildable, town-adjacent 2×2 Factory
- * footprint per town (and, with it, flat ground for the opening Depot line —
- * rail needs flat land, W8). A factory footprint that touches a town by an
- * EDGE extends at most two tiles from the touched town tile (see
+ * the generator can always offer a buildable, town-adjacent Factory footprint
+ * per town (and, with it, flat ground for the opening Depot line — rail needs
+ * flat land, W8). A factory footprint that touches a town by an EDGE extends
+ * at most max(fw, fh) tiles from the touched town tile (see
  * `factoryTouchesTown`), so a ring of this radius guarantees at least one
- * legal, town-adjacent site per town. Industries are ≥8 tiles from any town
- * tile (TOWN_INDUSTRY_SEP), so this never touches an industry footprint.
+ * legal, town-adjacent site per town — and PP-12 derives it from the same
+ * FACTORY_FOOTPRINT the rules use, so re-arting the factory keeps the
+ * guarantee. Industries are ≥8 tiles from any town tile (TOWN_INDUSTRY_SEP),
+ * so this never touches an industry footprint.
  * Only FREE tiles are converted — town houses and PP-10 town roads (stamped
  * TOWN_OCC) keep their ground — and the map stays a pure function of `seed`.
  */
-export const TOWN_FACTORY_RING = 2;
+export const TOWN_FACTORY_RING = Math.max(...FACTORY_FOOTPRINT);
 
 /**
  * PP-10: a simple road network for a settlement.
@@ -465,7 +467,7 @@ export function generateMap(seed: number): Grid {
   // TOWN_OCC in the occupancy array so roads/other structures route around.
   const towns = placeTowns(terrain, occ, list, rng);
   // PP-02: guarantee every town can host a Factory. The only thing that could
-  // wall a town off from a legal 2×2 Factory site is ROUGH terrain around it,
+  // wall a town off from a legal Factory site is ROUGH terrain around it,
   // so flatten the rough in a small ring around every town tile. A town tile
   // here means a house OR a PP-10 town road (both stamped TOWN_OCC), so the
   // ring covers the land just outside the town's ring road where a footprint
@@ -538,7 +540,7 @@ export const isTownTile = (g: Grid, tx: number, ty: number): boolean =>
   inBounds(tx, ty) && g.occupancy[idx(tx, ty)] === TOWN_OCC;
 
 /**
- * PP-02 — does a 2×2 factory footprint whose top-left tile is (tx,ty) touch a
+ * PP-02 — does a Factory footprint whose top-left tile is (tx,ty) touch a
  * town tile by an EDGE (share a side)? At least one footprint tile must be
  * orthogonally adjacent to a town tile. Diagonal-only contact does NOT qualify
  * (a footprint sitting kitty-corner to a town tile, touching it only at the
@@ -561,7 +563,7 @@ export function factoryTouchesTown(grid: Grid, tx: number, ty: number): boolean 
 }
 
 export interface FactoryPlacement {
-  /** True when a 2×2 Factory may legally occupy the footprint from (tx,ty). */
+  /** True when a Factory may legally occupy the footprint from (tx,ty). */
   ok: boolean;
   /**
    * The human-readable reason placement is refused (the message the UI shows),
@@ -574,7 +576,7 @@ export interface FactoryPlacement {
 
 /**
  * PP-02 — the single source of truth for whether a Factory may be placed at
- * the 2×2 footprint whose top-left tile is (tx,ty). Both the human placement
+ * the Factory footprint whose top-left tile is (tx,ty). Both the human placement
  * (`placeFactory` in `game.ts`) and the AI's factory search use this, so the
  * AI cannot bypass town adjacency through a fallback placement.
  */

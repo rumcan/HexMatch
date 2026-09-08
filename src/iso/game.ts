@@ -51,8 +51,8 @@ import {
   chooseAiPlantSpot, footprintTiles, plantRefusal, plantsOf,
 } from "./plants";
 import {
-  CARGO, CARGOES, FACTORY_FOOTPRINT, INDUSTRY_BY_KEY, TRANSPORT, VP_TARGET,
-  townHouseSprite, type Cargo,
+  CARGO, CARGOES, FACTORY_FOOTPRINT, FACTORY_SPRITE, INDUSTRY_BY_KEY, TRANSPORT, VP_TARGET,
+  depotSpriteForCargo, townHouseSprite, type Cargo,
 } from "./config";
 import {
   DEPOT_COST, FREE_SETUP_DEPOTS, costLabel, priceDepot, shortfallLabel,
@@ -314,16 +314,16 @@ export function startIsoGame(root: HTMLElement) {
   const syncWorld = () => {
     world.roadBits = drawBits(track, "road");
     world.railBits = drawBits(track, "rail");
-    // MT-1: emit multi-tile factory draw items (4 tiles per factory)
-    const factoryItems = eco.factories.flatMap((f) => {
-      const color = f.owner === "you" ? "blue" : "red";
-      return [0, 1, 2, 3].map((i) => ({
-        sprite: `factory_mt_${color}_${i}`,
-        tx: f.tx + (i % 2),
-        ty: f.ty + Math.floor(i / 2),
-        ref: { kind: "factory", owner: f.owner },
-      }));
-    });
+    // PP-12: one draw item per factory — the single TTD complex, drawn at the
+    // footprint origin. The manifest footprint matches FACTORY_FOOTPRINT (both
+    // derive from the art), so the anchor lands on the footprint's south
+    // corner exactly like any other multi-tile building.
+    const factoryItems = eco.factories.map((f) => ({
+      sprite: FACTORY_SPRITE,
+      tx: f.tx,
+      ty: f.ty,
+      ref: { kind: "factory", owner: f.owner },
+    }));
     // TOWN-1: emit town house and center draw items
     const townItems = grid.towns.flatMap((t) => {
       const items: { sprite: string; tx: number; ty: number; ref: unknown }[] = [];
@@ -333,9 +333,10 @@ export function startIsoGame(root: HTMLElement) {
         tx: t.tx, ty: t.ty,
         ref: { kind: "town", id: t.id },
       });
-      // Houses at all non-center tiles. TOWN-3/Y8: one of three declared house
-      // cells, chosen by `townHouseSprite` so a settlement mixes a house, a
-      // small office and a taller office block instead of stamping one sprite.
+      // Houses at all non-center tiles. PP-12: one of 43 verbatim TTD house
+      // cells, chosen by `townHouseSprite` so every settlement mixes homes,
+      // shops, flats and the occasional tall block instead of stamping one
+      // sprite. The centre is the TTD church (`town_center` cell).
       for (const [hx, hy] of t.houses) {
         if (hx === t.tx && hy === t.ty) continue; // skip center, already drawn
         items.push({
@@ -349,10 +350,19 @@ export function startIsoGame(root: HTMLElement) {
     world.extra = [
       ...townItems,
       ...factoryItems,
-      ...eco.harvesters.map((h) => ({
-        sprite: h.owner === "you" ? "depot_blue" : "depot_red",
-        tx: h.tx, ty: h.ty, ref: { kind: "harvester", id: h.id, owner: h.owner },
-      })),
+      // PP-12: resource-specific Depot art — the outpost reads as what it
+      // harvests (a lumber mill at a forest, a rig at an oil field, …). The
+      // first served industry names the cargo; placement always requires one,
+      // so the fallback below only serves foreign snapshots. Ownership still
+      // shows in the inspector, the catchment overlays and the ref payload.
+      ...eco.harvesters.map((h) => {
+        const served = industriesInCatchment(grid, h);
+        const cargo = served.length ? INDUSTRY_BY_KEY[served[0].type].cargo : "grain";
+        return {
+          sprite: depotSpriteForCargo(cargo),
+          tx: h.tx, ty: h.ty, ref: { kind: "harvester", id: h.id, owner: h.owner },
+        };
+      }),
     ];
     renderer?.setWorld(world);
   };
@@ -388,7 +398,7 @@ export function startIsoGame(root: HTMLElement) {
 
   // ── actions ────────────────────────────────────────────────────────────
   function placeFactory(tx: number, ty: number): boolean {
-    // MT-1 + PP-02: the whole 2×2 footprint must be legal ground AND touch a
+    // PP-02: the whole Factory footprint (FACTORY_FOOTPRINT) must be legal ground AND touch a
     // town by an edge. `planFactoryPlacement` with `requireTown` is the same
     // rule the placement preview paints from, so the click and the hover can
     // never disagree about what "next to a town" means.
@@ -842,7 +852,7 @@ export function startIsoGame(root: HTMLElement) {
     }
     if (!hover) return [];
     if (phase === "setup-factory") return overlayItemsAt(hover.tx, hover.ty);
-    // PP-06: the plant tool keeps its own overlay — the 2×2 footprint is the
+    // PP-06: the plant tool keeps its own overlay — the Factory footprint is the
     // strong layer, the qualifying town the soft one — because the placement
     // plans model factories and depots only. Both come from the SAME rule the
     // click runs.
@@ -1000,10 +1010,10 @@ export function startIsoGame(root: HTMLElement) {
     });
   }
 
-  // A 2×2 factory is four independently depth-sorted sprites, but has one
-  // network anchor. In track mode a click on ANY of our factory's pieces must
-  // start at that anchor; otherwise the front pieces hide the only tile a
-  // road can connect from. Keep raw tile picking for other tools/structures.
+  // A factory is one multi-tile sprite, but has one network anchor: its
+  // origin tile. In track mode a click ANYWHERE on our factory must start at
+  // that anchor; otherwise a click on its far tiles would start a road the
+  // network cannot reach. Keep raw tile picking for other tools/structures.
   const pickForAction = (x: number, y: number) => {
     const p = renderer?.pick(x, y);
     if (!p || phase !== "play" || (tool !== "road" && tool !== "rail")) return p;

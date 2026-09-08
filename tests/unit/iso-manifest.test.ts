@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { validateManifest } from "../../tools/validate-manifest.mjs";
 import { parsePnml } from "../../tools/parse-pnml.mjs";
 
@@ -10,7 +10,7 @@ const realManifest = JSON.parse(readFileSync("assets/iso-atlas/manifest.json", "
 const cells = JSON.parse(readFileSync("tools/iso-atlas.cells.json", "utf8")) as {
   sprites: {
     name: string; sprite?: number; box?: unknown; crop?: unknown; boxes?: unknown; crops?: unknown;
-    generator?: string; footprint?: [number, number];
+    generator?: string; file?: string; footprint?: [number, number] | "auto";
     layers?: { sprite: number; tint?: [number, number, number] }[];
     frames?: { sprite: number }[][];
     trackset?: { mode: string; base?: number; table?: number[]; ground?: number; pieces?: { sprite: number; dirs: number[] }[] };
@@ -125,7 +125,11 @@ describe("X5 cheap manifest invariants", () => {
     for (const [name, s] of Object.entries(sprites)) {
       const frames = s.frames ?? 1;
       const frameW = s.w / frames;
-      expect(frameW, `${name} sprite width`).toBeLessThanOrEqual(s.footprint[0] * 64 + 32);
+      // PP-12: verbatim TTD file art overhangs its tile by design — the
+      // half-scale depot outposts are up to 126px wide on a 64px tile. The
+      // +96 slack admits TTD-authentic overhang while still catching rect
+      // blowups (the 768px oil rig is 8× this bound on a 1×1).
+      expect(frameW, `${name} sprite width`).toBeLessThanOrEqual(s.footprint[0] * 64 + 96);
       expect(s.h, `${name} sprite height`).toBeLessThanOrEqual(s.footprint[1] * 32 + 160);
     }
   });
@@ -255,11 +259,20 @@ describe("Y3/Y5/Y6 declaration invariants", () => {
     expect(raw).not.toContain("\"crop\"");
   });
 
-  it("Y6: every atlas sprite resolves to declared OpenGFX ids (no compose)", () => {
+  it("Y6: every atlas sprite resolves to declared OpenGFX ids or a source file (no compose)", () => {
     for (const s of cells.sprites) {
       // Procedural placement glows (highlight / highlight_soft / the PP-03
       // highlight_bad + node_mark cells) carry no OpenGFX ids by design.
       if (s.generator) continue;
+      // PP-12 file cells trace to a source PNG under src/assets/sprites/png/
+      // instead of PNML declarations — the file must exist and be a real PNG.
+      if (s.file) {
+        const p = `src/assets/sprites/png/${s.file}`;
+        expect(existsSync(p), `cell ${s.name}: source file ${s.file} missing`).toBe(true);
+        const magic = readFileSync(p).subarray(0, 4);
+        expect([...magic], `cell ${s.name}: ${s.file} is not a PNG`).toEqual([0x89, 0x50, 0x4e, 0x47]);
+        continue;
+      }
       const ids = referencedIds(s);
       expect(ids.length, `cell ${s.name} references no declared sprite`).toBeGreaterThan(0);
       for (const id of ids) {
@@ -281,10 +294,12 @@ describe("Y3/Y5/Y6 declaration invariants", () => {
     expect(slicer).not.toContain("makeGenerated(s, \"road\")");
   });
 
-  it("Y6: sprite width stays within footprint_w * 64 + 32", () => {
+  it("Y6: sprite width stays within footprint_w * 64 + 96", () => {
+    // PP-12: the slack is 96, not 32 — see the X5 bound above for why
+    // verbatim TTD file art (126px depot outposts on 1×1) needs the room.
     for (const [name, s] of Object.entries(realManifest.sprites)) {
       const frames = s.frames ?? 1;
-      expect(s.w / frames, `${name} frame width`).toBeLessThanOrEqual(s.footprint[0] * 64 + 32);
+      expect(s.w / frames, `${name} frame width`).toBeLessThanOrEqual(s.footprint[0] * 64 + 96);
     }
   });
 

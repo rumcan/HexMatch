@@ -32,8 +32,10 @@
 //    the pixel from the same measured step, and the point is refused unless
 //    the game's own pick resolves it back to the tile it names.
 //  * THE GAME ANSWERS LEGALITY: tile legality comes from `__iso.tileProbe`
-//    (`buildRefusal` in track.ts + the harvester catchment rule), so the
-//    helper can never drift from the rules the click handlers enforce.
+//    (`buildRefusal` in track.ts + the harvester catchment rule) and factory
+//    legality from `__iso.placementPlan` (the whole footprint + the PP-02
+//    town rule), so the helper can never drift from the rules the click
+//    handlers enforce.
 //  * LOUD FAILURE (A3): when nothing qualifies it throws with the closest
 //    candidate, the exact tile that rejected it, the filter that rejected it,
 //    the rejection histogram and the measured band/step — instead of leaving
@@ -92,6 +94,12 @@ interface IsoHookLite {
   };
   /** E14: what `renderer.pick` says about a canvas point (device px). */
   pickAt?: (sx: number, sy: number) => { tx: number; ty: number; sprite: string | null } | null;
+  /** PP-12: the game's own placement verdict for a factory/depot origin —
+   *  whole-footprint legality plus the PP-02 town rule, exactly what the
+   *  click handler enforces (`placementPlan` in game.ts). */
+  placementPlan?: (kind: string, tx: number, ty: number) => {
+    valid: boolean; code: string | null; footprint: { tx: number; ty: number }[];
+  };
   camera?: { zoom: number };
 }
 
@@ -154,6 +162,12 @@ export function findIsoCorridor(opts?: CorridorOptions): Corridor {
   if (!h || !h.grid || typeof h.tileScreenAt !== "function") {
     throw new Error("findIsoCorridor: window.__iso (grid + tileScreenAt) is not mounted — did bootIso() resolve?");
   }
+  if (typeof h.placementPlan !== "function") {
+    throw new Error(
+      "findIsoCorridor: window.__iso.placementPlan is not mounted — the factory endpoint "
+      + "needs the game's own placement verdict (whole footprint + town rule).",
+    );
+  }
   const grid = h.grid;
   const MAP_W = grid.w, MAP_H = grid.h;
   const dpr = window.devicePixelRatio || 1;
@@ -211,24 +225,12 @@ export function findIsoCorridor(opts?: CorridorOptions): Corridor {
     if (grid.occupancy[i] !== -1) return "occupied";
     return null;
   });
-  // PP-02: a Factory must touch a town by an edge. The game enforces this on
-  // the click (`canPlaceFactory`), so the picker must only offer a corridor
-  // whose factory endpoint is a legal, town-adjacent 2×2 — otherwise the
-  // gameplay round's factory click would be refused and the test would hang in
-  // `setup-factory`. A town tile is stamped `TOWN_OCC` (-2) in the occupancy —
-  // houses AND PP-10 town roads carry it, so touching the ring road counts.
-  const TOWN_OCC = -2;
-  const isTown = (tx: number, ty: number) =>
-    tx >= 0 && ty >= 0 && tx < MAP_W && ty < MAP_H && grid.occupancy[ty * MAP_W + tx] === TOWN_OCC;
-  const factoryTouchesTown = (fx: number, fy: number) => {
-    for (let ox = 0; ox < 2; ox++) {
-      for (let oy = 0; oy < 2; oy++) {
-        const x = fx + ox, y = fy + oy;
-        if (isTown(x, y - 1) || isTown(x, y + 1) || isTown(x - 1, y) || isTown(x + 1, y)) return true;
-      }
-    }
-    return false;
-  };
+  // PP-02/PP-12: a corridor's factory endpoint must be a legal, town-adjacent
+  // factory site — otherwise the gameplay round's factory click would be
+  // refused and the test would hang in `setup-factory`. That verdict comes
+  // from the game (`placementPlan`, checked above), never from a re-derived
+  // footprint here: PP-12 sizes the factory from its art, so a hand-rolled
+  // copy would silently go stale the next time the sprite changes.
   const harvesterWhy = (tx: number, ty: number) => memo(`h${tx},${ty}`, () => {
     if (!h.tileProbe) return null;
     const p = h.tileProbe("road", tx, ty);
@@ -366,19 +368,19 @@ export function findIsoCorridor(opts?: CorridorOptions): Corridor {
             // column (PP-02: keep walking until a town ring is reached); they
             // just record why THIS length was not a candidate.
             let endWhy: string | null = null;
-            // The factory endpoint reserves all four tiles.
-            for (const [ox, oy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
-              const refusal = buildWhy(tx + ox, ty + oy);
-              if (refusal) { endWhy = `factory-footprint-${refusal}`; break; }
-            }
-            // PP-02: the factory endpoint must touch a town by an edge.
-            if (endWhy === null && !factoryTouchesTown(tx, ty)) endWhy = "factory-not-near-town";
+            // The game answers factory legality: the whole footprint on legal
+            // ground plus the town-adjacency rule, in one verdict. The
+            // footprint's size is read from the plan, never assumed (PP-12).
+            const plan = h.placementPlan("factory", tx, ty);
+            if (!plan.valid) endWhy = `factory-${plan.code ?? "refused"}`;
             if (endWhy === null) {
-              // The pixel guard samples (+2,+2), OUTSIDE that 2×2 footprint,
-              // so it must be in view.
-              if (tx + 2 >= MAP_W || ty + 2 >= MAP_H) endWhy = "factory-diagonal-off-map";
+              // The pixel guard samples one step past the footprint's far
+              // corner, OUTSIDE the factory — so that tile must be in view.
+              const gx = Math.max(...plan.footprint.map((t) => t.tx)) + 1;
+              const gy = Math.max(...plan.footprint.map((t) => t.ty)) + 1;
+              if (gx >= MAP_W || gy >= MAP_H) endWhy = "factory-diagonal-off-map";
               else {
-                const b = devAt(tx + 2, ty + 2);
+                const b = devAt(gx, gy);
                 if (!inView(b[0] / dpr + origin[0], b[1] / dpr + origin[1])) endWhy = "factory-diagonal-off-screen";
               }
             }

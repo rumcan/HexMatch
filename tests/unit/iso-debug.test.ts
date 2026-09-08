@@ -24,7 +24,7 @@ import {
   shouldAutoEnableRenderLog, DEBUG_OVERLAYS,
 } from "../../src/iso/debug";
 import { WATER, GRASS, factoryTouchesTown } from "../../src/iso/grid";
-import { INDUSTRY_BY_KEY } from "../../src/iso/config";
+import { FACTORY_FOOTPRINT } from "../../src/iso/config";
 
 vi.mock("../../assets/iso-atlas/atlas@0.5x.png", () => ({ default: "a05.png" }));
 vi.mock("../../assets/iso-atlas/atlas@1x.png", () => ({ default: "a1.png" }));
@@ -229,17 +229,15 @@ describe("C5 the dumps report the geometry the renderer used", () => {
     expect(d.structures.length).toBeGreaterThan(0);
     const built = d.structures.find((x: any) => x.isIndustry);
     expect(built).toBeTruthy();
-    // MT-2: an industry is now one draw item per tile, each named `<key>_t<m>`
-    // after its OpenTTD tile index. The origin tile carries the layout entry at
-    // (dx 0, dy 0).
-    const tiles = INDUSTRY_BY_KEY[ind.type].tiles!;
-    const origin = tiles.find((t) => t.dx === 0 && t.dy === 0) ?? tiles[0];
-    expect(built.sprite).toBe(`${ind.type}_t${origin.m}`);
+    // PP-12: an industry is one draw item named after its own key, drawn at
+    // the footprint origin with the art-derived multi-tile footprint.
+    expect(built.sprite).toBe(ind.type);
+    expect(built.origin).toEqual([ind.tx, ind.ty]);
     // Flat anchor: the sprite's anchor row lands on the footprint's south
     // corner, so a flush building has a zero gap. A non-zero one is the hover.
     expect(built.gapPx).toBe(0);
-    // a multi-tile industry is composed of 1×1 tile sprites, not one big sprite
-    expect(built.footprint).toEqual([1, 1]);
+    // the reported footprint is the industry's own w×h from the art
+    expect(built.footprint).toEqual([ind.w, ind.h]);
     // an empty tile reports no structures rather than guessing
     expect(h.dumpBuilding(0, 0).structures).toEqual([]);
   });
@@ -253,15 +251,17 @@ describe("C5 the dumps report the geometry the renderer used", () => {
     expect(h.dumpNetwork("rival-not-here").error).toMatch(/unknown player/);
 
     // place the factory through the game's own setup twin, then ask again.
-    // PP-02: the spot must be a whole buildable 2×2 footprint that touches a
-    // town by an edge — `h.probe().build.ok` is single-tile road legality, so
-    // the search adds `factoryTouchesTown` over the game's own TOWN_OCC
-    // stamps (the same predicate the click handler enforces).
+    // PP-02: the spot must be a whole buildable footprint (PP-12: the art's
+    // FACTORY_FOOTPRINT) that touches a town by an edge — `h.probe().build.ok`
+    // is single-tile road legality, so the search adds `factoryTouchesTown`
+    // over the game's own TOWN_OCC stamps (the same predicate the click
+    // handler enforces).
     const spot = (() => {
       const g = h.grid;
+      const [FW, FH] = FACTORY_FOOTPRINT;
       const legal = (tx: number, ty: number) => {
-        for (let oy = 0; oy < 2; oy++) {
-          for (let ox = 0; ox < 2; ox++) {
+        for (let oy = 0; oy < FH; oy++) {
+          for (let ox = 0; ox < FW; ox++) {
             if (!h.probe(tx + ox, ty + oy).build.ok) return false;
           }
         }

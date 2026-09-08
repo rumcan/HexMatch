@@ -8,6 +8,7 @@ import { generateMap } from "../../src/iso/grid";
 import { canBuildOn, tIdx } from "../../src/iso/track";
 import { catchmentRect, industriesInCatchment, type Harvester } from "../../src/iso/economy";
 import { TOWN_OCC, GRASS, ROUGH, type Grid } from "../../src/iso/grid";
+import { FACTORY_FOOTPRINT } from "../../src/iso/config";
 import {
   DEPOT_FOOTPRINT,
   depotCatchmentNodeTiles,
@@ -24,31 +25,40 @@ import {
 const grid = (seed = 1337): Grid => generateMap(seed);
 
 describe("PP-03 factory footprint vs town-adjacency band", () => {
-  it("footprint is exactly the 2×2 tiles the building occupies", () => {
-    expect(factoryFootprintTiles(30, 40)).toEqual([
-      [30, 40], [31, 40], [30, 41], [31, 41],
-    ]);
+  // PP-12: the footprint follows the art (FACTORY_FOOTPRINT), so these pin
+  // the geometry against the constant — never a hardcoded 2×2.
+  const [FW, FH] = FACTORY_FOOTPRINT;
+
+  it("footprint is exactly the tiles the building occupies", () => {
+    const expected: [number, number][] = [];
+    for (let dy = 0; dy < FH; dy++) {
+      for (let dx = 0; dx < FW; dx++) expected.push([30 + dx, 40 + dy]);
+    }
+    expect(factoryFootprintTiles(30, 40)).toEqual(expected);
   });
 
   it("the reach band is EDGE-adjacent only — diagonals never qualify", () => {
     const g = grid();
     const ring = factoryAdjacencyRing(g, 60, 60);
+    const foot: [number, number][] = [];
+    for (let dy = 0; dy < FH; dy++) {
+      for (let dx = 0; dx < FW; dx++) foot.push([60 + dx, 60 + dy]);
+    }
     // every ring tile is an orthogonal neighbour of some footprint tile…
     for (const [x, y] of ring) {
-      const d = (dx: number, dy: number) => Math.abs(x - (60 + dx)) + Math.abs(y - (60 + dy));
       expect(
-        [0, 1, 2, 3].some((i) => d(i % 2, Math.floor(i / 2)) === 1),
-        `${x},${y} is not edge-adjacent to the 2×2 footprint`,
+        foot.some(([fx, fy]) => Math.abs(x - fx) + Math.abs(y - fy) === 1),
+        `${x},${y} is not edge-adjacent to the footprint`,
       ).toBe(true);
     }
     // …and the footprint's own tiles are never part of their own ring
     const keys = new Set(ring.map(([x, y]) => `${x},${y}`));
-    expect(ring).toHaveLength(8);
-    for (const [x, y] of [[60, 60], [61, 60], [60, 61], [61, 61]]) {
+    expect(ring).toHaveLength(2 * (FW + FH));
+    for (const [x, y] of foot) {
       expect(keys.has(`${x},${y}`)).toBe(false);
     }
     // the four diagonals are exactly the excluded tiles
-    for (const [x, y] of [[59, 59], [62, 59], [59, 62], [62, 62]]) {
+    for (const [x, y] of [[59, 59], [60 + FW, 59], [59, 60 + FH], [60 + FW, 60 + FH]]) {
       expect(keys.has(`${x},${y}`)).toBe(false);
     }
   });
@@ -120,7 +130,7 @@ describe("PP-03 depot footprint vs catchment reach", () => {
 });
 
 describe("PP-03 plan validity is the placement rule, not a copy", () => {
-  it("factory plan validity == canBuildOn over the whole 2×2 footprint", () => {
+  it("factory plan validity == canBuildOn over the whole footprint", () => {
     const g = grid();
     let compared = 0;
     for (let ty = 4; ty < g.h - 4; ty += 7) {
@@ -174,7 +184,7 @@ describe("PP-03 plan validity is the placement rule, not a copy", () => {
   it("out-of-map factory footprints are refused with a readable out-of-bounds reason", () => {
     const g = grid();
     // a footprint origin fully off the eastern edge (e.g. an edge hover after
-    // panning): the whole 2×2 is out of bounds — no paint target, clear reason
+    // panning): the whole footprint is out of bounds — no paint target, clear reason
     const plan = planFactoryPlacement(g, g.w, 40);
     expect(plan.valid).toBe(false);
     expect(plan.code).toBe("out-of-bounds");

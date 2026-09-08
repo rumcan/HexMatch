@@ -156,8 +156,8 @@ export const bitsAt = (t: Track, kind: TrackKind, tx: number, ty: number): numbe
  * instead of re-deriving water/occupancy constants from the outside.
  *
  * Returns null when `kind` may be laid at (tx,ty) (within `network`, when one
- * is given), else the reason tag: "out-of-bounds" | "water" | "rough" |
- * "occupied" | "not-adjacent".
+ * is given), else the reason tag: "out-of-bounds" | "water" | "occupied" |
+ * "rough" | "not-adjacent".
  */
 export function buildRefusal(
   grid: Grid, kind: TrackKind, tx: number, ty: number, network?: Set<number>,
@@ -166,10 +166,12 @@ export function buildRefusal(
   const i = tIdx(tx, ty);
   const terrain = grid.terrain[i];
   if (terrain === WATER) return "water";
-  // Water never; rail additionally needs flat ground (TRANSPORT.rail.onRough).
-  if (terrain === ROUGH && !TRANSPORT[kind].onRough) return "rough";
-  // Industry footprints and town tiles (TOWN-1) both block building.
+  // Industry footprints and town tiles (TOWN_OCC) block building outright —
+  // checked before the terrain kind, so a town road on rough ground reports
+  // "occupied" (the permanent blocker) rather than "rough".
   if (grid.occupancy[i] >= 0 || grid.occupancy[i] === TOWN_OCC) return "occupied";
+  // Rail additionally needs flat ground (TRANSPORT.rail.onRough).
+  if (terrain === ROUGH && !TRANSPORT[kind].onRough) return "rough";
   if (network) {
     if (network.has(i)) return null;
     let adj = false;

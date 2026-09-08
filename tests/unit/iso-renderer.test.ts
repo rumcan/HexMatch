@@ -88,29 +88,36 @@ describe("E4 culling + draw list", () => {
     expect(pad).toBeLessThan(40);
   });
 
-  it("emits one item per footprint tile of every industry (MT-2)", () => {
+  it("emits one single-sprite item per industry (PP-12)", () => {
     const full = { x0: 0, y0: 0, x1: MAP_W - 1, y1: MAP_H - 1 };
     const list = buildDrawList({ grid }, full);
     const inds = list.filter((d) => d.ref);
-    // every industry contributes exactly one item per tile in its layout
+    // every industry contributes exactly one item: its own key as the sprite,
+    // drawn at the footprint origin, with the manifest footprint matching the
+    // industry footprint (both derive from the art).
     for (const ind of grid.industries) {
-      const tiles = INDUSTRY_BY_KEY[ind.type].tiles!;
       const mine = inds.filter((d) => d.ref === ind);
-      expect(mine.length, ind.type).toBe(tiles.length);
-      for (const t of tiles) {
-        const item = mine.find((d) => d.tx === ind.tx + t.dx && d.ty === ind.ty + t.dy);
-        expect(item, `${ind.type} tile ${t.m} at (${t.dx},${t.dy})`).toBeTruthy();
-        expect(item!.sprite).toBe(`${ind.type}_t${t.m}`);
-        expect(atlas.has(item!.sprite)).toBe(true);
-      }
+      expect(mine.length, ind.type).toBe(1);
+      expect(mine[0].sprite, ind.type).toBe(ind.type);
+      expect([mine[0].tx, mine[0].ty], ind.type).toEqual([ind.tx, ind.ty]);
+      expect(atlas.has(mine[0].sprite)).toBe(true);
+      expect(atlas.get(mine[0].sprite)!.footprint, ind.type).toEqual([ind.w, ind.h]);
+      expect([ind.w, ind.h], ind.type).toEqual(INDUSTRY_BY_KEY[ind.type].footprint);
     }
   });
 
   it("culls industries outside the range but keeps footprint overlaps", () => {
     const ind = grid.industries[0];
-    const t = INDUSTRY_BY_KEY[ind.type].tiles![0];
-    const tight = { x0: ind.tx + t.dx, y0: ind.ty + t.dy, x1: ind.tx + t.dx, y1: ind.ty + t.dy };
+    // a range covering only the origin tile still draws the whole complex…
+    const tight = { x0: ind.tx, y0: ind.ty, x1: ind.tx, y1: ind.ty };
     expect(buildDrawList({ grid }, tight).some((d) => d.ref === ind)).toBe(true);
+    // …as does a range covering only the far corner of its footprint…
+    const corner = {
+      x0: ind.tx + ind.w - 1, y0: ind.ty + ind.h - 1,
+      x1: ind.tx + ind.w - 1, y1: ind.ty + ind.h - 1,
+    };
+    expect(buildDrawList({ grid }, corner).some((d) => d.ref === ind)).toBe(true);
+    // …while a far-away tile draws none of it.
     const far = { x0: 0, y0: 0, x1: 0, y1: 0 };
     const list = buildDrawList({ grid }, far);
     expect(list.length).toBeLessThan(grid.industries.length);

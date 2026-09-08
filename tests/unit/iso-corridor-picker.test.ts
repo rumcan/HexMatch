@@ -12,12 +12,13 @@
 // `src/game/styles.css` arithmetic (same numbers the ticket derived).
 //
 // What is NOT mocked: anything about the game. `window.__iso` is a thin shim
-// over the same three fields game.ts exposes to the browser (grid,
-// tileScreenAt, tileProbe), built from the same functions game.ts uses.
+// over the same fields game.ts exposes to the browser (grid, tileScreenAt,
+// tileProbe, placementPlan), built from the same functions game.ts uses.
 // ══════════════════════════════════════════════════════════════════════════
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { MAP_W, MAP_H, CELL, BOARD_W } from "../../src/game/config";
-import { generateMap, TOWN_OCC } from "../../src/iso/grid";
+import { canPlaceFactory, factoryTouchesTown, generateMap } from "../../src/iso/grid";
+import { planDepotPlacement, planFactoryPlacement } from "../../src/iso/placement";
 import {
   createCamera, centerOnTile, zoomStepAt, tileToScreenAt, screenToWorld, type Camera,
 } from "../../src/iso/camera";
@@ -124,6 +125,13 @@ function installHook(grid: ReturnType<typeof generateMap>, onCamera: () => Camer
         },
       };
     },
+    // The game's own factory/depot placement verdict — the same twin the
+    // browser hook serves, so the picker filters endpoints on exactly what
+    // the round's factory click will be judged by.
+    placementPlan: (kind: "factory" | "depot", tx: number, ty: number) =>
+      kind === "factory"
+        ? planFactoryPlacement(grid, tx, ty, { requireTown: true })
+        : planDepotPlacement(grid, eco.harvesters, tx, ty),
   };
   Object.defineProperty(window, "__iso", { value: hook, configurable: true, writable: true });
 
@@ -209,7 +217,7 @@ function scene(seed: number, wheelOut: number) {
 
 describe("E14 the corridor picker finds a corridor by real geometry", () => {
   it("plays a whole 4–12 tile corridor from a town-ring factory inside the clear band at the zoomed-out boot camera", () => {
-    const { grid } = scene(1337, 1);
+    const { grid } = scene(74, 1);
     // PP-02: a factory must touch a town, and towns sit ≥8 tiles from the
     // industries (T4's TOWN_INDUSTRY_SEP), so the corridor is longer than the
     // pre-PP-02 4–7 tile rows. Defaults let it run up to the 12-tile setup
@@ -263,27 +271,18 @@ describe("E14 the corridor picker finds a corridor by real geometry", () => {
       expect(p.x).toBeGreaterThan(boxes.left.right);
       expect(p.x).toBeLessThan(boxes.right.left);
     }
-    // PP-02: the corridor's factory end is a 2×2 sharing an edge with a real
-    // TOWN_OCC stamp (house or town road) — the round's factory click cannot
-    // be refused by the game's own placement rule. This is what forces the
-    // corridor to reach all the way to a town ring instead of stopping at the
-    // first free tile beside the industry.
-    let townContact = false;
-    for (let oy = 0; oy < 2 && !townContact; oy++) {
-      for (let ox = 0; ox < 2 && !townContact; ox++) {
-        const x = c.fx + ox, y = c.fy + oy;
-        townContact = [[0, -1], [1, 0], [0, 1], [-1, 0]].some(([dx, dy]) => {
-          const nx = x + dx, ny = y + dy;
-          return nx >= 0 && ny >= 0 && nx < grid.w && ny < grid.h
-            && grid.occupancy[ny * grid.w + nx] === TOWN_OCC;
-        });
-      }
-    }
-    expect(townContact).toBe(true);
+    // PP-02: the corridor's factory end shares an edge with a real town tile
+    // (house or town road) — the round's factory click cannot be refused by
+    // the game's own placement rule. This is what forces the corridor to
+    // reach all the way to a town ring instead of stopping at the first free
+    // tile beside the industry. Asserted through the game's own predicates,
+    // so the footprint size (PP-12: the art's) is never re-derived here.
+    expect(factoryTouchesTown(grid, c.fx, c.fy)).toBe(true);
+    expect(canPlaceFactory(grid, c.fx, c.fy).ok).toBe(true);
   });
 
   it("the picked corridor is a drag the game actually lays, for free, untruncated", () => {
-    const { grid } = scene(1337, 1);
+    const { grid } = scene(74, 1);
     if (!track) throw new Error("hook not installed");
     const c = findIsoCorridor() as Corridor;
     // the same setup state the spec's two clicks leave behind, then the same
@@ -300,10 +299,11 @@ describe("E14 the corridor picker finds a corridor by real geometry", () => {
   });
 
   it("is not seed-luck: the same search works on the other swept seeds and at zoom 1", () => {
-    // PP-02 swept pairs with a town-ring factory reachable from a boot-camera
-    // industry: 22@zoom1, 74@zoom-out, 139@zoom1 and 1337@zoom-out all have a
-    // PP-02-legal corridor in the boot frame (verified by this very search).
-    for (const [seed, wheelOut] of [[22, 0], [74, 1], [139, 0], [1337, 1]] as const) {
+    // PP-02/PP-12 swept pairs with a town-ring factory reachable from a
+    // boot-camera industry: 0@zoom1, 22@zoom-out, 74@zoom1 and 123@zoom-out
+    // all have a PP-02-legal corridor in the boot frame (verified by this
+    // very search; re-swept when PP-12's bigger art re-flowed the map).
+    for (const [seed, wheelOut] of [[0, 0], [22, 1], [74, 0], [123, 1]] as const) {
       scene(seed, wheelOut);
       const c = findIsoCorridor({ minTiles: 3, maxTiles: 12 });
       expect(c.tiles).toBeGreaterThanOrEqual(3);
@@ -311,7 +311,7 @@ describe("E14 the corridor picker finds a corridor by real geometry", () => {
   });
 
   it("survives the serialization page.evaluate does (self-contained source)", () => {
-    scene(1337, 1);
+    scene(74, 1);
     const direct = findIsoCorridor();
     // exactly what Playwright ships into the browser: the function's source,
     // revived with no module scope around it.
@@ -323,7 +323,7 @@ describe("E14 the corridor picker finds a corridor by real geometry", () => {
   });
 
   it("fails LOUDLY when HUD chrome covers the map, naming the coverer", () => {
-    scene(1337, 1);
+    scene(74, 1);
     // the banner grows to swallow the map — a plausible layout regression
     boxes.banner = { left: 0, top: 0, right: VIEW_W, bottom: VIEW_H };
     const err = (() => { try { findIsoCorridor(); return null; } catch (e) { return e as Error; } })();
@@ -341,7 +341,7 @@ describe("E14 the corridor picker finds a corridor by real geometry", () => {
   });
 
   it("guards with a geometry message when the corridor cannot fit the band (A4)", () => {
-    scene(1337, 2);          // zoom out clamps at the lowest step: 0.5
+    scene(74, 2);          // zoom out clamps at the lowest step: 0.5
     // At this zoom the clear band holds ~34 tiles; 40 cannot fit, so the
     // LAYOUT error (not a search failure) is the answer.
     const err = (() => { try { return findIsoCorridor({ minTiles: 40, maxTiles: 44 }); } catch (e) { return e as Error; } })();
@@ -352,7 +352,7 @@ describe("E14 the corridor picker finds a corridor by real geometry", () => {
   });
 
   it("isoTileOcclusion (the spec's own A2 check) agrees with the picker", () => {
-    scene(1337, 1);
+    scene(74, 1);
     const c = findIsoCorridor() as Corridor;
     expect(isoTileOcclusion({ tiles: c.col, aim: c.aim })).toEqual([]);
     // and it does report a genuinely covered tile: aim at the panel strip
@@ -409,9 +409,10 @@ function oldFindSouthColumn(grid: ReturnType<typeof generateMap>): Corridor | nu
 
 describe("E14 the old 7-tile south column is the thing that broke", () => {
   it("finds a general corridor even when the boot industry has no legacy south column", () => {
-    const { grid } = scene(1337, 1);
-    // On the expanded seed-1337 map the first farm is near the south coast;
-    // a hard-coded south column cannot fit, but another direction can.
+    // Seed 33's corridor runs east (SE), off the boot frame's industry: no
+    // hard-coded 7-tile SOUTH column fits anywhere in view, but the general
+    // search still finds a town-ring corridor in another direction.
+    const { grid } = scene(33, 1);
     expect(oldFindSouthColumn(grid)).toBeNull();
     expect(findIsoCorridor()).not.toBeNull();
   });
@@ -432,7 +433,7 @@ describe("E14 the click point is measured once, and verified before it is used",
     new Function(`return (${fn.toString()});`)() as (a: A) => R;
 
   it("isoTileClickPoint matches an independent measurement, in both call forms", () => {
-    scene(1337, 1);
+    scene(74, 1);
     const c = findIsoCorridor();
     const inPage = revive(isoTileClickPoint);
     // the revived source must stand alone, like the other two
@@ -461,7 +462,7 @@ describe("E14 the click point is measured once, and verified before it is used",
   });
 
   it("refuses an offset scaled the way the spec once scaled it", () => {
-    scene(1337, 1);
+    scene(74, 1);
     const c = findIsoCorridor();
     const t = c.col[c.tiles - 1];                 // the factory tile (town-ring end)
     const [dx, dy] = tileToScreenAt(cam, t.tx, t.ty);
@@ -514,7 +515,7 @@ describe("E14 a tile is clicked wherever the game will actually take the click",
   });
 
   it("moves to another point on the same tile when a neighbour steals one", () => {
-    scene(1337, 1);
+    scene(74, 1);
     const c = findIsoCorridor();
     const t = c.col[0];                               // the harvester end
     const [cx] = tileToScreenAt(cam, t.tx, t.ty);
@@ -545,7 +546,7 @@ describe("E14 a tile is clicked wherever the game will actually take the click",
   });
 
   it("refuses the tile, loudly, when no point on it lands on it", () => {
-    scene(1337, 1);
+    scene(74, 1);
     const c = findIsoCorridor();
     const t = c.col[1];
     const real = hook().pickAt!;

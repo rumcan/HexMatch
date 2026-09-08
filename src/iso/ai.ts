@@ -537,7 +537,7 @@ export function chooseRivalFactorySpot(
   const spots: { x: number; y: number; rail: boolean; town: boolean; d: number }[] = [];
   for (let y = 2; y < MAP_H - 2 - fh; y += 2) {
     for (let x = 2; x < MAP_W - 2 - fw; x += 2) {
-      // MT-1: check all tiles of the 2×2 factory footprint
+      // check all tiles of the Factory footprint (FACTORY_FOOTPRINT)
       let allRoad = true, allRail = true;
       for (let dy = 0; dy < fh; dy++) {
         for (let dx = 0; dx < fw; dx++) {
@@ -546,7 +546,7 @@ export function chooseRivalFactorySpot(
         }
       }
       if (!allRoad) continue;
-      // PP-02: only 2×2 footprints that touch a town (by an edge) are legal
+      // PP-02: only footprints that touch a town (by an edge) are legal
       // Factory sites. The pool is restricted to these so the rival can never
       // be handed a tile far from a town — even through the fallback below.
       const town = factoryTouchesTown(grid, x, y);
@@ -565,7 +565,7 @@ export function chooseRivalFactorySpot(
   // than strand the rival on a tile away from any town.
   const townSpots = spots.filter((s) => s.town);
   if (!townSpots.length) return null;
-  // Reserve the player's whole 2×2 footprint, not just its origin tile.
+  // Reserve the player's whole Factory footprint, not just its origin tile.
   const apart = townSpots.filter((s) =>
     s.x + fw <= awayFrom[0] || awayFrom[0] + fw <= s.x
     || s.y + fh <= awayFrom[1] || awayFrom[1] + fh <= s.y);

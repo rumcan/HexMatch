@@ -23,7 +23,6 @@ import { visibleTileRange, screenToWorld, worldToScreen } from "./camera";
 import type { Atlas } from "./atlas";
 import { depthSort, place, pickSprite, type DrawItem, type Placed } from "./depth";
 import { GRASS, WATER, ROUGH, type Grid } from "./grid";
-import { INDUSTRY_BY_KEY } from "./config";
 
 export const CHUNK = 8;
 export const chunksX = Math.ceil(MAP_W / CHUNK);
@@ -95,26 +94,16 @@ export function buildDrawList(world: World, r: { x0: number; y0: number; x1: num
       if (rb && kb) out.push({ sprite: "crossing", tx, ty });
     }
   }
-  // industries: emit ONE ITEM PER TILE (MT-1/MT-2), so each tile draws its own
-  // ground + building at its own origin and depth-sorts on (tx+dx)+(ty+dy) —
-  // roads interleave correctly around a multi-tile industry. `tiles` is the
-  // OpenTTD layout (`_tile_table_*`); positions the table leaves unlisted are
-  // reserved via `footprint` but draw nothing (open ground, exactly like
-  // OpenTTD's sparse layouts).
+  // PP-12: each industry is ONE verbatim TTD building sprite, drawn as a single
+  // item at the footprint origin — `ind.type` names the atlas cell directly
+  // (`farm`, `forest`, …). The manifest footprint equals the industry
+  // footprint (both derive from the art via `footprintForArt`), so the
+  // anchor lands on the footprint's south corner and depth sorting treats
+  // the whole complex as one multi-tile building.
   for (const ind of grid.industries) {
     if (ind.tx + ind.w - 1 < r.x0 || ind.tx > r.x1) continue;
     if (ind.ty + ind.h - 1 < r.y0 || ind.ty > r.y1) continue;
-    const def = INDUSTRY_BY_KEY[ind.type];
-    const tiles = def?.tiles;
-    if (tiles?.length) {
-      for (const t of tiles) {
-        const tx = ind.tx + t.dx, ty = ind.ty + t.dy;
-        if (tx < r.x0 || tx > r.x1 || ty < r.y0 || ty > r.y1) continue;
-        out.push({ sprite: `${ind.type}_t${t.m}`, tx, ty, ref: ind });
-      }
-    } else {
-      out.push({ sprite: ind.type, tx: ind.tx, ty: ind.ty, ref: ind });
-    }
+    out.push({ sprite: ind.type, tx: ind.tx, ty: ind.ty, ref: ind });
   }
   if (world.extra) {
     for (const e of world.extra) {

@@ -54,7 +54,7 @@ export const PLANT_REFUSAL_TEXT: Record<PlantRefusal, string> = {
   "no-town": "A processing plant must be built next to a town.",
 };
 
-/** Every tile of the 2×2 footprint anchored at (tx,ty). */
+/** Every tile of the Factory footprint anchored at (tx,ty). */
 export function footprintTiles(tx: number, ty: number): [number, number][] {
   const out: [number, number][] = [];
   for (let dy = 0; dy < FACTORY_FOOTPRINT[1]; dy++) {
@@ -167,7 +167,7 @@ export const canAffordPlant = (purse: Partial<Record<Cargo, number>>): boolean =
     .every(([k, v]) => (purse[k] ?? 0) >= v);
 
 /**
- * Where the AI would raise its next plant: a legal 2×2 beside a town it does
+ * Where the AI would raise its next plant: a legal footprint beside a town it does
  * not already have a plant at, nearest to its existing network. Same rule
  * function as the human path, so the AI has no adjacency-free fallback.
  * Returns null when there is nowhere legal (the AI then simply doesn't build).
