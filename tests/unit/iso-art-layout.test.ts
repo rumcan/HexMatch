@@ -1,39 +1,45 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import sharp from "sharp";
-import { parsePnml } from "../../tools/parse-pnml.mjs";
-import { FACTORY_TILES, INDUSTRY_BY_KEY, TOWN_HOUSE_VARIANTS, townHouseSprite } from "../../src/iso/config";
+import {
+  FACTORY_FOOTPRINT, FACTORY_SPRITE, INDUSTRY_BY_KEY, TOWN_HOUSE_VARIANTS,
+  townHouseSprite,
+} from "../../src/iso/config";
 import type { Manifest } from "../../src/iso/atlas";
 
 type RGB = [number, number, number];
 type Layer = { sprite: number; tint?: RGB; tintLum?: RGB };
-type Cell = { name: string; footprint: [number, number]; layers: Layer[]; frames?: Layer[][]; frameMs?: number };
+type Cell = {
+  name: string; footprint?: [number, number] | "auto"; file?: string; scale?: number;
+  layers?: Layer[]; frames?: Layer[][]; frameMs?: number;
+};
 const cells = (JSON.parse(readFileSync("tools/iso-atlas.cells.json", "utf8")) as { sprites: Cell[] }).sprites;
 const manifest: Manifest = JSON.parse(readFileSync("assets/iso-atlas/manifest.json", "utf8"));
 const cell = (name: string) => cells.find((c) => c.name === name)!;
 
-// These pin the handover's actual art mappings, not just the existence of a
-// valid manifest: coal-mine sheds previously passed the generic atlas tests.
+// These pin the actual art mappings, not just the existence of a valid
+// manifest: coal-mine sheds previously passed the generic atlas tests.
+// PP-12: industries are single verbatim-TTD file sprites, so these pin the
+// file each node maps to and the footprint the game plays it with.
 describe("T1 finished gold-mine grounds and quarry reskin", () => {
-  it("uses the 16 finished grounds once each, with only the shaft tower animated", () => {
-    for (const type of ["gold_mine", "quarry"]) {
-      const tiles = INDUSTRY_BY_KEY[type].tiles!;
-      expect(tiles).toHaveLength(16);
-      for (const t of tiles) {
-        expect(t.m).toBe(72 + 4 * t.dx + t.dy);
-        expect(t.ground).toBe(2247 + t.m - 72);
-        const c = cell(`${type}_t${t.m}`);
-        expect(c.footprint).toEqual([1, 1]);
-        expect(c.layers.map((l) => l.sprite)).toEqual([t.ground]);
-        if (t.m === 79) {
-          expect(t.building).toBe(2263);
-          expect(c.frames?.map((f) => f.map((l) => l.sprite))).toEqual([[2263], [2264], [2265]]);
-          expect(c.frameMs).toBe(200);
-        } else {
-          expect(t.building).toBeUndefined();
-          expect(c.frames).toBeUndefined(); // palette shimmer is intentionally static
-        }
-      }
+  it("maps each node to its verbatim TTD file sprite with the art's footprint", () => {
+    const files: Record<string, string> = {
+      farm: "industries/ttd/farm.png",
+      forest: "industries/ttd/forest.png",
+      ore_mine: "industries/ttd/coal_mine.png",
+      quarry: "industries/ttd/steel_mill.png",
+      oil_rig: "industries/ttd/oil_wells.png",
+      gold_mine: "industries/ttd/gold_mine.png",
+    };
+    expect(Object.keys(files).sort()).toEqual(Object.keys(INDUSTRY_BY_KEY).sort());
+    for (const [type, file] of Object.entries(files)) {
+      const c = cell(type);
+      expect(c.file, `${type} must be a file cell`).toBe(file);
+      expect(c.layers, `${type} must not compose layers`).toBeUndefined();
+      const m = manifest.sprites[type];
+      expect(m, `${type} manifest sprite`).toBeTruthy();
+      // the game plays the node on exactly the tiles its art spans
+      expect(INDUSTRY_BY_KEY[type].footprint, type).toEqual(m.footprint);
     }
   });
 
@@ -62,59 +68,50 @@ describe("T1 finished gold-mine grounds and quarry reskin", () => {
 });
 
 describe("T2 real town buildings", () => {
-  it("uses complete-stage house/office pairs and a hotel landmark", () => {
-    const pairs: Record<string, number[]> = {
-      town_center: [1420, 1450], town_house_a: [1447, 1446],
-      town_house_b: [1420, 1460], town_house_c: [1424, 1423],
-    };
-    const decls = parsePnml();
-    for (const [name, ids] of Object.entries(pairs)) {
-      expect(cell(name).layers.map((l) => l.sprite)).toEqual(ids);
-      expect(cell(name).footprint).toEqual([1, 1]);
-      for (const id of ids) {
-        const decl = decls[String(id)];
-        expect(decl, `${name}: declaration ${id}`).toBeTruthy();
-        const path = `src/assets/sprites/png/${decl.file.replace(/^sprites\/png\//, "")}`;
-        // Catch the patch's accidental JSON 404 response masquerading as PNG.
-        expect(readFileSync(path).subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
-      }
-      expect(decls[String(ids[1])].file).toContain("/houses/");
-      expect(manifest.sprites[name]).toBeTruthy();
+  it("uses the TTD church as the town centre and one file sprite per house variant", () => {
+    // the landmark: verbatim TTD church, 1×1, bottom-centre anchored
+    const centre = cell("town_center");
+    expect(centre.file).toBe("houses/ttd/church.png");
+    expect(manifest.sprites.town_center.footprint).toEqual([1, 1]);
+    // every variant is a packed TTD house file on its own 1×1 tile
+    expect(TOWN_HOUSE_VARIANTS).toHaveLength(43);
+    for (const name of TOWN_HOUSE_VARIANTS) {
+      expect(name).toMatch(/^town_/);
+      expect(cell(name).file, `${name} must be a file cell`).toMatch(/^houses\/ttd\/.*\.png$/);
+      const m = manifest.sprites[name];
+      expect(m, `${name} manifest sprite`).toBeTruthy();
+      expect(m.footprint, name).toEqual([1, 1]);
     }
     expect(manifest.sprites.town_house).toBeUndefined();
   });
 
-  it("deterministically mixes mostly small homes with occasional taller offices", () => {
+  it("deterministically deals every variant with no weighting", () => {
     const counts = new Map<string, number>();
-    for (let y = 0; y < 40; y++) for (let x = 0; x < 40; x++) {
+    for (let y = 0; y < 60; y++) for (let x = 0; x < 60; x++) {
       const name = townHouseSprite(x, y);
       expect(TOWN_HOUSE_VARIANTS).toContain(name);
       expect(townHouseSprite(x, y)).toBe(name);
       counts.set(name, (counts.get(name) ?? 0) + 1);
     }
-    expect(counts.get("town_house_a")! / 1600).toBeGreaterThan(0.55);
-    expect(counts.get("town_house_b")! / 1600).toBeGreaterThan(0.15);
-    expect(counts.get("town_house_c")! / 1600).toBeLessThan(0.18);
-    expect(counts.get("town_house_c")).toBeGreaterThan(0);
+    // a uniform pick over 43 variants: every variant appears across a town's
+    // worth of tiles, and none dominates (a stuck/mod-biased hash would).
+    expect(counts.size).toBe(TOWN_HOUSE_VARIANTS.length);
+    const vals = [...counts.values()];
+    expect(Math.min(...vals)).toBeGreaterThan(0);
+    expect(Math.max(...vals) / Math.min(...vals)).toBeLessThan(3);
   });
 });
 
 describe("T3 factory mapping and uniform tint", () => {
-  it("keeps the authoritative chimney/yard positions and tints ground AND buildings", () => {
-    expect(FACTORY_TILES).toEqual([
-      { dx: 0, dy: 0, m: 39, ground: 2146, building: 2150 },
-      { dx: 0, dy: 1, m: 40, ground: 2147, building: 2151 },
-      { dx: 1, dy: 0, m: 41, ground: 2148, building: 2152 },
-      { dx: 1, dy: 1, m: 42, ground: 2149 },
-    ]);
-    for (const [colour, tint] of [["blue", [70, 130, 220]], ["red", [224, 70, 70]]] as const) {
-      for (const tile of FACTORY_TILES) {
-        const c = cell(`factory_mt_${colour}_${tile.dy * 2 + tile.dx}`);
-        const ids = [tile.ground, ...("building" in tile ? [tile.building] : [])];
-        expect(c.layers.map((l) => l.sprite)).toEqual(ids);
-        for (const l of c.layers) expect(l.tintLum, c.name).toEqual(tint);
-      }
-    }
+  it("draws the factory as one verbatim TTD complex on the art's footprint", () => {
+    const c = cell(FACTORY_SPRITE);
+    expect(c.file).toBe("industries/ttd/factory.png");
+    expect(c.footprint).toBe("auto");
+    expect(c.layers, "the factory must not compose layers").toBeUndefined();
+    const m = manifest.sprites[FACTORY_SPRITE];
+    expect(m).toBeTruthy();
+    // the game plays the factory on exactly the tiles its art spans
+    expect(FACTORY_FOOTPRINT).toEqual(m.footprint);
   });
 });
 

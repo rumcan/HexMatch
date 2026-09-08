@@ -7,9 +7,10 @@ import { planFactoryPlacement } from "../../src/iso/placement";
 import { MAP_W, MAP_H } from "../../src/game/config";
 
 // ── PP-02: a Factory must be built next to a town ──────────────────────────
-// "Next to" = at least one tile of the 2×2 footprint shares an EDGE with a
-// town tile. Diagonal-only contact does not qualify. The whole footprint must
-// stay on legal ground without overlapping the town or another building.
+// "Next to" = at least one tile of the footprint (PP-12: the art's
+// FACTORY_FOOTPRINT) shares an EDGE with a town tile. Diagonal-only contact
+// does not qualify. The whole footprint must stay on legal ground without
+// overlapping the town or another building.
 // Town tiles include PP-10 town roads (both houses and roads are stamped
 // TOWN_OCC), so touching the ring road counts exactly like touching a house.
 
@@ -71,17 +72,16 @@ describe("PP-02 town roads are town tiles for the adjacency rule", () => {
     const g = singleTownGrid();
     g.towns[0].roads = [[10, 9]];
     g.occupancy[9 * MAP_W + 10] = TOWN_OCC;
-    // footprint directly ABOVE the road: (10,7)'s down-neighbour (10,8) is
-    // free, so use a footprint whose tile neighbours the road tile itself:
-    // footprint at (10, 7) spans (10,7),(11,7),(10,8),(11,8); the road at
-    // (10,9) is edge-adjacent to footprint tile (10,8).
-    expect(factoryTouchesTown(g, 10, 7)).toBe(true);
-    expect(canPlaceFactory(g, 10, 7).ok).toBe(true);
+    // footprint directly ABOVE the road: the 3×3 footprint at (10, 6) spans
+    // x 10..12, y 6..8 — clear of the road — and the road at (10,9) is
+    // edge-adjacent to footprint tile (10,8).
+    expect(factoryTouchesTown(g, 10, 6)).toBe(true);
+    expect(canPlaceFactory(g, 10, 6).ok).toBe(true);
   });
 });
 
 describe("PP-02 generated maps offer enough town-adjacent Factory sites", () => {
-  it("every town has at least one legal, town-adjacent 2×2 footprint", () => {
+  it("every town has at least one legal, town-adjacent footprint", () => {
     for (const seed of [1337, 7, 42, 100, 1, 123, 2026, 20240902]) {
       const g = generateMap(seed);
       // count legal, town-adjacent footprints on the whole map

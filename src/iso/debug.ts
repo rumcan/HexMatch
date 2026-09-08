@@ -275,7 +275,7 @@ export function createIsoDebug(ctx: DebugContext) {
         footScreenY: r(footScreenY),
         gapPx: r(footWorldY - fy),
         /** the footprint origin this sprite is anchored to (may not be the
-         *  tile asked about — a 2×2 building is drawn from its origin). */
+         *  tile asked about — a multi-tile building is drawn from its origin). */
         origin: [p.tx, p.ty] as [number, number],
         isIndustry: p.ref != null,
       };

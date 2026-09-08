@@ -9,7 +9,7 @@
 // run (`FACTORY_FOOTPRINT`, `buildRefusal`/`canBuildOn`, `catchmentRect`,
 // `industriesInCatchment`) — never re-derived on the UI side:
 //
-//   Factory  footprint  the 2×2 tiles it occupies (FACTORY_FOOTPRINT), one
+//   Factory  footprint  the tiles it occupies (FACTORY_FOOTPRINT, derived
 //                        `PlanFootprintTile` per tile so a blocking tile can
 //                        be shown red while the rest stays valid.
 //            reach      the tiles EDGE-adjacent to that footprint — the
@@ -43,7 +43,7 @@ import {
 /** Orthogonal (edge-sharing) neighbour offsets — diagonals never qualify. */
 const DIR4 = [[0, -1], [1, 0], [0, 1], [-1, 0]] as const;
 
-/** A Factory occupies a 2×2 footprint; a Depot a 1×1 tile. */
+/** A Factory occupies FACTORY_FOOTPRINT; a Depot a 1×1 tile. */
 export const DEPOT_FOOTPRINT: [number, number] = [1, 1];
 
 export interface PlanFootprintTile {
@@ -105,7 +105,7 @@ export function factoryFootprintTiles(tx: number, ty: number): [number, number][
 }
 
 /**
- * The tiles OUTSIDE the Factory's 2×2 footprint that share an EDGE with it —
+ * The tiles OUTSIDE the Factory's footprint that share an EDGE with it —
  * the town-adjacency area. A tile is included when it is an orthogonal
  * neighbour of any footprint tile, so diagonal-only contact stays out by
  * construction and the footprint's own tiles are never part of their own ring.

@@ -108,3 +108,46 @@ the rebalance itself; see `2026-09-08-pp10-town-roads.md`.)
 - Candidate levers if expansion feels slow: Depot price, `HARVEST_MS`, or a
   slightly richer opening stock — all single constants in one table
   (`BUILD_COSTS` in `src/iso/config.ts`) plus `START_PURSE`.
+
+## Addendum — PP-12 re-measurement (2026-09-08)
+
+PP-12 re-arted the industries (farm 3×3→4×4, forest 4×5→4×4, quarry 4×4→3×3,
+factory 2×2→3×3), which shuffles industry positions on every seed. The
+economy is untouched — outputs, costs, and the bank are identical — so this
+pass re-runs the same harness on the new map to confirm the PP-07
+guarantees still hold. One harness change was required (see below); the
+milestone table was re-printed by the suite:
+
+| seed  | first connection | second Depot | second plant | paid opening tiles |
+| ----- | ---------------: | -----------: | -----------: | -----------------: |
+| 1337  | 0.0 m            | 5.1 m        | 5.7 m        | 0                  |
+| 7     | 0.0 m            | 7.0 m        | 7.7 m        | 0                  |
+| 2024  | 0.0 m            | 5.5 m        | 6.0 m        | 0                  |
+| 42    | 0.0 m            | 5.5 m        | 6.3 m        | 0                  |
+| 99    | 0.0 m            | 25.6 m       | 26.3 m       | 12                 |
+| 31337 | 0.0 m            | 7.0 m        | 7.8 m        | 0                  |
+
+Reading:
+
+- Four seeds (1337, 7, 2024, 99) measure **identical** times on the new map;
+  seed 42 is within half a minute (5.1→5.5 m). The rebalance numbers open
+  the game on the re-arted map exactly as before.
+- **Seed 31337 changed openings.** Its centroid industry is now a Gold Mine,
+  and a gold-first opening cannot bootstrap on trickle + bank at all: Gold
+  pays for no track and no Depot, and PP-08 blocks it at the bank in both
+  directions — the session sat 90 minutes on 540 unspendable Gold with Grain
+  and Oil permanently at zero. That is a live-game choice with a match-3
+  rescue (the starting Processing Plant manufactures the missing Grain/Oil
+  from gems), not a trickle+bank bootstrap — and the harness deliberately
+  does not model match-3. The opener now skips Gold Mines
+  (`chooseOpeningFactorySpot`), so 31337 measures its nearest openable
+  industry (7.0 m to the second Depot). The other five seeds' openings are
+  unaffected (proven by their unchanged times).
+- The sister guard in `iso-game.test.ts` (*"banks toward a paid Depot…"*)
+  needed no logic change but a larger wall budget (30→60 s): the rival's
+  play is tick-for-tick identical on the new map, while A* planning over
+  the shuffled layout costs ~2.9 s per build clock instead of ~2.2 s.
+- Follow-up (pre-existing, not a PP-12 regression): the **rival** also
+  bootstraps on trickle + bank and cannot match-3, so a rival that opens
+  beside a Gold Mine stalls the same way. Seed-luck decides today; the AI
+  should eventually deprioritise Gold while it holds fewer than two Depots.

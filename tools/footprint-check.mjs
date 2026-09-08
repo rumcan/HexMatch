@@ -29,10 +29,12 @@ const atlas = await sharp(join(ROOT, "assets/iso-atlas/atlas@1x.png")).ensureAlp
 const HW = 32, HH = 16, TILE_H = 32;
 const tileToScreen = (tx, ty) => [(tx - ty) * HW, (tx + ty) * HH];
 
-/** The buildings Y7 covers. Player tints share one geometry, so one tint per
- *  family stands in for the rest (the invariant test covers all of them). */
+/** The buildings Y7 covers: the six single-sprite PP-12 industry nodes, the
+ *  single-sprite PP-12 factory, and one PP-12 depot per cargo (each cargo has
+ *  its own geometry, so all six are covered — unlike the old player tints,
+ *  which shared one geometry each). Legacy per-tile cells are not covered. */
 const NAMES = Object.keys(manifest.sprites).filter((n) =>
-  /^(farm|forest|ore_mine|quarry|oil_rig|gold_mine|factory_blue|depot_blue)$/.test(n));
+  /^(farm|forest|ore_mine|quarry|oil_rig|gold_mine|factory|depot_(grain|wood|ore|stone|oil|gold))$/.test(n));
 
 // Quadrant offsets: the footprint origin placed in each map quadrant.
 const QUADRANTS = [[2, 2], [20, 3], [3, 22], [21, 21]];

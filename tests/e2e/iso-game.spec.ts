@@ -15,8 +15,12 @@ import {
 // "the screen is actually painting" cannot pass by accident.
 // ══════════════════════════════════════════════════════════════════════════
 
-/** The default route: iso is the standalone default (E12); seed pins the map. */
-const ISO_URL = "/hexmatch/?seed=1337";
+/** The default route: iso is the standalone default (E12); seed pins the map.
+ *  PP-12: seed 74 — its boot frame holds a town-ring corridor at both zooms
+ *  (re-swept when the bigger art re-flowed the map; seed 1337's boot industry
+ *  now sits 60+ tiles from the nearest town ring). See the E14 swept pairs in
+ *  tests/unit/iso-corridor-picker.test.ts. */
+const ISO_URL = "/hexmatch/?seed=74";
 
 async function bootIso(page: import("@playwright/test").Page) {
   await page.goto(ISO_URL);
@@ -259,7 +263,7 @@ test.describe("iso game boots on the default route", () => {
       seed: (window as any).__iso.grid.seed,
     }));
     expect(stats.industries).toBeGreaterThan(0);
-    expect(stats.seed).toBe(1337);
+    expect(stats.seed).toBe(74);
 
     await test.info().attach("iso-boot-layout", {
       body: await page.screenshot(),
@@ -323,14 +327,15 @@ test.describe("iso game boots on the default route", () => {
     });
 
     // ── setup round 1 of 2: click the tile for your Factory ─────────────
-    // MT/T4 + PP-03: the factory occupies 2×2 tiles and both corners get the
-    // SOLID placement glow. The old 3×3 outer corner never gets a solid glow;
-    // PP-03's fainter reach band may legitimately reach that tile's sample
-    // window at low zoom, so the anti-3×3 guard probes the strong layer only.
+    // PP-12 + PP-03: the factory occupies a 3×3 (the TTD art's footprint) and
+    // both corners get the SOLID placement glow. The tile past the far corner
+    // never gets a solid glow; PP-03's fainter reach band may legitimately
+    // reach that tile's sample window at low zoom, so the anti-outer guard
+    // probes the strong layer only.
     await page.mouse.move(factory.x, factory.y);
     await expect.poll(() => opaqueNear(page, 2, c.fx, c.fy), { timeout: 5000 }).toBeGreaterThan(10);
-    await expect.poll(() => opaqueNear(page, 2, c.fx + 1, c.fy + 1), { timeout: 5000 }).toBeGreaterThan(10);
-    await expect.poll(() => strongGlowNear(page, 2, c.fx + 2, c.fy + 2), { timeout: 5000 }).toBe(0);
+    await expect.poll(() => opaqueNear(page, 2, c.fx + 2, c.fy + 2), { timeout: 5000 }).toBeGreaterThan(10);
+    await expect.poll(() => strongGlowNear(page, 2, c.fx + 3, c.fy + 3), { timeout: 5000 }).toBe(0);
     await page.mouse.click(factory.x, factory.y);
     await page.waitForFunction(() => (window as any).__iso.phase === "setup-harvester");
     expect((await page.evaluate(() => (window as any).__iso.factories.length))).toBeGreaterThanOrEqual(1);
@@ -469,33 +474,17 @@ test.describe("TK-001 mouse panning is middle-button only", () => {
         return !document.elementsFromPoint(dx / dpr, dy / dpr)
           .some((el) => !!(el as HTMLElement).closest?.(".iso-panel"));
       };
-      // PP-02: the factory must touch a town by an edge. A town tile is stamped
-      // TOWN_OCC (-2) in the occupancy grid (houses AND PP-10 town roads).
-      const TOWN_OCC = -2;
-      const isTown = (x: number, y: number) =>
-        x >= 0 && y >= 0 && x < W && y < H && grid.occupancy[y * W + x] === TOWN_OCC;
-      const touchesTown = (tx: number, ty: number) => {
-        for (let ox = 0; ox < 2; ox++) for (let oy = 0; oy < 2; oy++) {
-          const x = tx + ox, y = ty + oy;
-          if (isTown(x, y - 1) || isTown(x, y + 1) || isTown(x - 1, y) || isTown(x + 1, y)) return true;
-        }
-        return false;
-      };
-      // PP-02: the factory must sit next to a town (by an edge), so scan the
-      // whole map for the free, legal, town-adjacent, clickable tile that sits
-      // closest to the viewport centre. Centre-most matters: the middle-drag
-      // below pans the camera before the final click, and a tile near the
-      // centre survives a ±60 px nudge without drifting under HUD chrome.
+      // PP-02/PP-12: factory legality is the game's own placement verdict —
+      // the whole art-sized footprint on legal ground plus the town-edge
+      // rule — exactly what the final click below will be judged by.
+      // Centre-most matters: the middle-drag below pans the camera before
+      // the final click, and a tile near the centre survives a ±60 px nudge
+      // without drifting under HUD chrome.
       const centreX = window.innerWidth / 2, centreY = window.innerHeight / 2;
       let best: { tx: number; ty: number; d: number } | null = null;
-      for (let ty = 0; ty < H - 1; ty++) {
-        for (let tx = 0; tx < W - 1; tx++) {
-          const i = ty * W + tx;
-          if (grid.terrain[i] !== 0) continue;
-          // Factory legality is the WHOLE 2×2 footprint, not one free tile.
-          if (![[0, 0], [1, 0], [0, 1], [1, 1]].every(([ox, oy]) =>
-            h.tileProbe("road", tx + ox, ty + oy).build.ok)) continue;
-          if (!touchesTown(tx, ty)) continue;   // next to a town
+      for (let ty = 0; ty < H; ty++) {
+        for (let tx = 0; tx < W; tx++) {
+          if (!h.placementPlan("factory", tx, ty).valid) continue;
           if (!inView(tx, ty) || !clickable(tx, ty)) continue;
           const [dx, dy] = h.tileScreenAt(tx, ty);
           const d = Math.abs(dx / dpr - centreX) + Math.abs(dy / dpr - centreY);

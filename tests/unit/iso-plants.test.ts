@@ -55,7 +55,7 @@ describe("PP-06 town adjacency", () => {
   it("accepts a footprint sharing an edge with a town tile", () => {
     const grid = flatGrid([town(0, 20, 20)]);
     const track = createTrack();
-    // footprint (20,21)-(21,22): (20,21) shares an edge with house (20,20)
+    // footprint (20,21)-(22,23): (20,21) shares an edge with house (20,20)
     expect(plantRefusal(grid, track, state(grid, track), 20, 21)).toBeNull();
     expect(adjacentTown(grid, 20, 21)?.id).toBe(0);
   });
@@ -63,7 +63,7 @@ describe("PP-06 town adjacency", () => {
   it("rejects diagonal-only contact", () => {
     const grid = flatGrid([town(0, 20, 20, 1)]);
     const track = createTrack();
-    // footprint (21,21)-(22,22): only touches (20,20) diagonally
+    // footprint (21,21)-(23,23): only touches (20,20) diagonally
     expect(plantRefusal(grid, track, state(grid, track), 21, 21)).toBe("no-town");
   });
 
@@ -71,13 +71,13 @@ describe("PP-06 town adjacency", () => {
     // single house (20,20) with a PP-10-style road tile at (20,19) above it
     const grid = flatGrid([town(0, 20, 20, 1, [[20, 19]])]);
     const track = createTrack();
-    // footprint (20,17)-(21,18): tile (20,18)'s down-neighbour is the road —
+    // footprint (20,16)-(22,18): tile (20,18)'s down-neighbour is the road —
     // the same edge-contact rule as the starting Factory (factoryTouchesTown)
-    expect(plantRefusal(grid, track, state(grid, track), 20, 17)).toBeNull();
-    expect(adjacentTown(grid, 20, 17)?.id).toBe(0);
+    expect(plantRefusal(grid, track, state(grid, track), 20, 16)).toBeNull();
+    expect(adjacentTown(grid, 20, 16)?.id).toBe(0);
     // an unstamped road on the Town record never qualifies (synthetic honesty)
     const ghost = flatGrid([town(1, 60, 60, 1, [[60, 59]])], [], false); // road NOT stamped
-    expect(plantRefusal(ghost, createTrack(), state(ghost, createTrack()), 60, 57))
+    expect(plantRefusal(ghost, createTrack(), state(ghost, createTrack()), 60, 56))
       .toBe("no-town");
   });
 
@@ -107,7 +107,7 @@ describe("PP-06 town adjacency", () => {
     expect(plantRefusal(grid, track, st, 20, 21)).toBe("track");
   });
 
-  it("uses one 2×2 footprint for the preview and the placement", () => {
+  it("uses one shared footprint for the preview and the placement", () => {
     expect(footprintTiles(5, 7)).toHaveLength(FACTORY_FOOTPRINT[0] * FACTORY_FOOTPRINT[1]);
     const grid = flatGrid([town(0, 20, 20)]);
     const track = createTrack();
