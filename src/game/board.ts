@@ -14,12 +14,20 @@ export interface Gem {
 
 const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
+/**
+ * PP-09: the five gem colours that always populate and refill the board.
+ * Gold is deliberately absent — gold gems only drop once a depot sits beside
+ * a gold mine, and the quarry flips them on via `setGoldEnabled`.
+ */
+const BASE_POOL: ResKey[] = ["wood", "brick", "sheep", "wheat", "ore"];
+
 export class Board {
   grid: (Gem | null)[][] = [];
   seq = 1;
   busy = false;
-  // Gold is NOT in the base pool — gold coins only appear as spawned wild tokens.
-  pool: ResKey[] = ["wood", "brick", "sheep", "wheat", "ore"];
+  // Gold is NOT in the base pool at boot — gold gems only drop (join the
+  // gravity pool) once a depot sits beside a gold mine. See setGoldEnabled.
+  pool: ResKey[] = [...BASE_POOL];
   fogUntil = 0;
   blockUntil = 0;
   // combos banked toward the next gold coin (2 combos = 1 coin)
@@ -54,6 +62,21 @@ export class Board {
 
   private randRes(): ResKey {
     return choice(this.pool.length ? this.pool : RES_KEYS.slice(0, 4));
+  }
+
+  /**
+   * PP-09: add or remove gold from the gravity pool. Gold gems must "drop
+   * like the other resource types" — appearing in the normal refill path
+   * (`randRes` → `initFill` / `gravity`) — but only while a depot sits beside
+   * a gold mine. The quarry recomputes this on every refresh (build /
+   * demolish), so building the depot turns gold drops on and demolishing it
+   * turns them off. The token spawn (`spawnGold`, gated on a CONNECTED mine)
+   * is unchanged: a plain gold gem pays nothing, a tokened one pays gold.
+   */
+  setGoldEnabled(enabled: boolean) {
+    const has = this.pool.includes("gold");
+    if (enabled === has) return;
+    this.pool = enabled ? [...this.pool, "gold"] : this.pool.filter((r) => r !== "gold");
   }
 
   initFill() {
