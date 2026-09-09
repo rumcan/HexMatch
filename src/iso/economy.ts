@@ -7,16 +7,21 @@
 //   harvester → 4×4 catchment → overlapping industries → output
 //               × the transport multiplier of the connection to the Factory
 //
-// A harvester must be adjacent to at least one road or rail tile. Connection
-// is a flood fill over the direction masks where a tile connects only if BOTH
+// A harvester must be adjacent to at least one road tile. Connection is a
+// flood fill over the direction masks where a tile connects only if BOTH
 // neighbours set the facing bit (E5's invariant), so half-piece bugs are
 // impossible by construction.
 //
-// Rail beats road: if a harvester reaches the Factory by both, take the rail
-// multiplier AND the rail VP. If the rail path breaks, fall back to a
-// surviving road path and REVOKE the rail VP — the caller gets an explicit
-// event list so the UI can toast it and animate the counter down, because a
-// silent VP drop is the single most confusing thing this system can do.
+// The two road tiers (gravel `dirt` and paved `road`) are ONE road surface:
+// components are flooded over the merged masks, so a Dirt Road that reaches a
+// paved tile — a built Road or a map highway/town road — is the same network.
+// The paved tier beats dirt: any depot→factory connection whose component
+// touches a paved tile the owner may drive takes the road multiplier AND the
+// road VP; a pure-gravel connection scores the basic tier. If a paved
+// connection breaks, fall back to a surviving dirt one and REVOKE the road VP
+// — the caller gets an explicit event list so the UI can toast it and animate
+// the counter down, because a silent VP drop is the single most confusing
+// thing this system can do.
 //
 // Scoring runs on every build and demolish, never on a timer.
 // ══════════════════════════════════════════════════════════════════════════
@@ -25,7 +30,7 @@ import { MAP_W, MAP_H } from "../game/config";
 import { TRANSPORT, INDUSTRY_BY_KEY, type Cargo } from "./config";
 import type { Grid, Industry } from "./grid";
 import {
-  DIRS, DIR, OPPOSITE, PRESENT, tIdx, inMapT, bitsAt, trackOpenTo, PUBLIC_OWNER,
+  DIRS, DIR, OPPOSITE, PRESENT, tIdx, inMapT, trackOpenTo, PUBLIC_OWNER,
   type Track, type TrackKind,
 } from "./track";
 
@@ -120,10 +125,18 @@ export function isServiced(track: Track, h: Harvester): boolean {
 
 // ── connected components ──────────────────────────────────────────────────
 /**
- * Component id per tile for one transport layer, or -1. Built in one O(tiles)
- * pass and cached by the caller; a rebuild is cheap and happens only on build
- * or demolish. A tile joins its neighbour's component only when both face each
- * other, so a one-sided bit never merges two networks.
+ * Component id per tile over the MERGED road surface, or -1, plus a per-id
+ * "touches pavement" marker. Built in one O(tiles) pass and cached by the
+ * caller; a rebuild is cheap and happens only on build or demolish. A tile
+ * joins its neighbour's component only when both face each other, so a
+ * one-sided bit never merges two networks.
+ *
+ * Gravel and tar are one road (`track.ts` autotiles the union mask): the
+ * flood crosses whichever tier a tile carries, so a Dirt Road that reaches a
+ * paved tile is the same component as the pavement — a Depot hooked to a
+ * gravel feeder onto a highway is one network with the highway. `roadComp`
+ * marks the components that contain at least one PAVED tile, which is what
+ * the best-tier-on-path scoring reads (`resolveConnection`).
  *
  * W2: components are owner-scoped — the flood only crosses tiles owned by
  * `owner`, so a connected run of YOUR road and a connected run of the RIVAL's
@@ -135,9 +148,20 @@ export function isServiced(track: Track, h: Harvester): boolean {
  * real player's components and a route may run over it. Owner 0 matches only
  * owner-0 tiles, which is nobody's network.
  */
-export function buildComponents(track: Track, kind: TrackKind, owner: number): Int32Array {
+export interface Components {
+  /** Component id per tile over the merged road surface, -1 = no component. */
+  comp: Int32Array;
+  /**
+   * Per component id: 1 when that component contains at least one PAVED tile
+   * `owner` may drive (a built Road, or a map highway/town road). A pure
+   * gravel component stays 0.
+   */
+  roadComp: Uint8Array;
+}
+
+export function buildComponents(track: Track, owner: number): Components {
   const comp = new Int32Array(MAP_W * MAP_H).fill(-1);
-  const layer = kind === "road" ? track.road : track.dirt;
+  const byte = (i: number) => track.dirt[i] | track.road[i];
   // The same rule `trackOpenTo` applies, inlined over the raw owner layer
   // because this flood works on flat indices, not tile coords.
   const usable = (i: number): boolean => (owner === 0
@@ -146,7 +170,7 @@ export function buildComponents(track: Track, kind: TrackKind, owner: number): I
   let next = 0;
   const stack: number[] = [];
   for (let start = 0; start < comp.length; start++) {
-    if ((layer[start] & PRESENT) === 0 || comp[start] !== -1) continue;
+    if ((byte(start) & PRESENT) === 0 || comp[start] !== -1) continue;
     if (!usable(start)) continue;
     const id = next++;
     comp[start] = id;
@@ -154,12 +178,12 @@ export function buildComponents(track: Track, kind: TrackKind, owner: number): I
     while (stack.length) {
       const i = stack.pop()!;
       const x = i % MAP_W, y = (i / MAP_W) | 0;
-      const bits = bitsAt(track, kind, x, y);
+      const bits = byte(i) & 0b1111;
       for (const d of DIRS) {
         if (!(bits & d)) continue;
         const nx = x + DIR[d][0], ny = y + DIR[d][1];
         if (!inMapT(nx, ny)) continue;
-        if (!(bitsAt(track, kind, nx, ny) & OPPOSITE[d])) continue;  // mutual only
+        if (!((byte(tIdx(nx, ny)) & OPPOSITE[d]) !== 0)) continue;  // mutual only
         const ni = tIdx(nx, ny);
         if (comp[ni] !== -1) continue;
         // W2: never cross the rival's line. PP-13: a public highway is fine.
@@ -169,21 +193,17 @@ export function buildComponents(track: Track, kind: TrackKind, owner: number): I
       }
     }
   }
-  return comp;
+  const roadComp = new Uint8Array(next);
+  for (let i = 0; i < comp.length; i++) {
+    const c = comp[i];
+    if (c >= 0 && (track.road[i] & PRESENT) !== 0) roadComp[c] = 1;
+  }
+  return { comp, roadComp };
 }
 
-export interface Components {
-  /** Components over the premium paved tier (includes the map's public/town roads). */
-  road: Int32Array;
-  /** Components over the basic gravel (Dirt Road) tier. */
-  dirt: Int32Array;
-}
-
-/** Both road tiers, scoped to one owner's track. */
-export const buildAllComponents = (track: Track, owner: number): Components => ({
-  road: buildComponents(track, "road", owner),
-  dirt: buildComponents(track, "dirt", owner),
-});
+/** The merged owner-scoped components (`buildComponents`). */
+export const buildAllComponents = (track: Track, owner: number): Components =>
+  buildComponents(track, owner);
 
 /**
  * W2: resolve a player's numeric track-owner id from the string identity the
@@ -209,17 +229,26 @@ function adjacentComponents(comp: Int32Array, tx: number, ty: number): Set<numbe
 }
 
 /**
- * Is `a` linked to `b` on this layer? Both must sit beside the SAME connected
- * component. Structures are not themselves track, so we compare the components
- * adjacent to each.
+ * The component ids both structures sit beside. Structures are not themselves
+ * track, so we compare the components adjacent to each of the two tiles.
+ */
+function sharedComponents(
+  comp: Int32Array, ax: number, ay: number, bx: number, by: number,
+): Set<number> {
+  const A = adjacentComponents(comp, ax, ay);
+  const out = new Set<number>();
+  for (const c of adjacentComponents(comp, bx, by)) if (A.has(c)) out.add(c);
+  return out;
+}
+
+/**
+ * Is `a` linked to `b` on the merged surface? Both must sit beside the SAME
+ * connected component.
  */
 export function linkedBy(
   comp: Int32Array, ax: number, ay: number, bx: number, by: number,
 ): boolean {
-  const A = adjacentComponents(comp, ax, ay);
-  if (!A.size) return false;
-  for (const c of adjacentComponents(comp, bx, by)) if (A.has(c)) return true;
-  return false;
+  return sharedComponents(comp, ax, ay, bx, by).size > 0;
 }
 
 // ── connection resolution ─────────────────────────────────────────────────
@@ -237,11 +266,14 @@ export const NO_CONNECTION: Connection = {
 };
 
 /**
- * Resolve a harvester's connection to its owner's Factory. The paved `road`
- * tier wins outright when it reaches both — its multiplier and its VP. (The
- * map's public/town roads live on that tier, so a Depot hooked onto a town
- * ring road or a highway is a paved connection.) Otherwise a pure Dirt Road
- * link scores the basic tier.
+ * Resolve a harvester's connection to its owner's Factory over the MERGED
+ * surface. Best tier on path wins: when a depot and a Factory both sit beside
+ * the same component and that component touches ANY paved tile `owner` may
+ * drive (a built Road, or the map's public/town roads), the connection is the
+ * paved tier — its multiplier and its VP. That is the Dirt-Road-feeder rule:
+ * hooking gravel onto a highway deliberately becomes a premium connection.
+ * Only when no shared component contains pavement does a pure-gravel link
+ * score the basic tier.
  *
  * W2: `comp` must be the components for `h.ownerId` (build it with
  * `buildAllComponents(track, h.ownerId)`) — a harvester may only ride its own
@@ -254,23 +286,25 @@ export function resolveConnection(
   let best: Connection = NO_CONNECTION;
   let shortest = Infinity;
   for (const f of mine) {
-    if (linkedBy(comp.road, h.tx, h.ty, f.tx, f.ty)) {
-      // the paved tier is the ceiling — nothing beats it, stop looking
-      return {
-        kind: "road", multiplier: TRANSPORT.road.throughput, vp: TRANSPORT.road.vp, factory: f,
-      };
+    const shared = sharedComponents(comp.comp, h.tx, h.ty, f.tx, f.ty);
+    if (shared.size === 0) continue;
+    for (const c of shared) {
+      if (comp.roadComp[c]) {
+        // a paved component is the ceiling — nothing beats it, stop looking
+        return {
+          kind: "road", multiplier: TRANSPORT.road.throughput, vp: TRANSPORT.road.vp, factory: f,
+        };
+      }
     }
-    if (linkedBy(comp.dirt, h.tx, h.ty, f.tx, f.ty)) {
-      const route = roadPath(state.track, h.ownerId,
-        shoulders(state.track, h.ownerId, h.tx, h.ty),
-        new Set(shoulders(state.track, h.ownerId, f.tx, f.ty).map(([x, y]) => tIdx(x, y))),
-        "dirt");
-      if (!route || route.length >= shortest) continue;
-      shortest = route.length;
-      best = {
-        kind: "dirt", multiplier: TRANSPORT.dirt.throughput, vp: TRANSPORT.dirt.vp, factory: f,
-      };
-    }
+    // pure-gravel component: keep the old dirt tier's shortest-factory tie-break
+    const route = roadPath(state.track, h.ownerId,
+      shoulders(state.track, h.ownerId, h.tx, h.ty),
+      new Set(shoulders(state.track, h.ownerId, f.tx, f.ty).map(([x, y]) => tIdx(x, y))));
+    if (!route || route.length >= shortest) continue;
+    shortest = route.length;
+    best = {
+      kind: "dirt", multiplier: TRANSPORT.dirt.throughput, vp: TRANSPORT.dirt.vp, factory: f,
+    };
   }
   return best;
 }

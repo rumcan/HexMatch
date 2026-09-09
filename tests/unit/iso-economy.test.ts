@@ -7,7 +7,9 @@ import {
   createScoreState, rescore, vpFor,
   type EconomyState, type Harvester, type Factory,
 } from "../../src/iso/economy";
-import { createTrack, buildTile, demolishTile, tIdx, type Track } from "../../src/iso/track";
+import {
+  createTrack, buildTile, demolishTile, tIdx, PUBLIC_OWNER, type Track,
+} from "../../src/iso/track";
 import { GRASS, type Grid, type Industry } from "../../src/iso/grid";
 import { MAP_W, MAP_H } from "../../src/game/config";
 import { TRANSPORT, INDUSTRY_BY_KEY } from "../../src/iso/config";
@@ -100,12 +102,12 @@ describe("E6 servicing", () => {
   });
 });
 
-describe("E6 connected components", () => {
+describe("E6 connected components (merged surface)", () => {
   it("gives one id to a contiguous run and different ids to separate ones", () => {
     const t = createTrack();
     run(t, "dirt", 5, 9, 10);
     run(t, "dirt", 20, 24, 10);
-    const comp = buildComponents(t, "dirt", 0);
+    const { comp } = buildComponents(t, 0);
     expect(comp[tIdx(5, 10)]).toBe(comp[tIdx(9, 10)]);
     expect(comp[tIdx(20, 10)]).not.toBe(comp[tIdx(5, 10)]);
     expect(comp[tIdx(15, 10)]).toBe(-1);
@@ -115,26 +117,44 @@ describe("E6 connected components", () => {
     const t = createTrack();
     run(t, "dirt", 5, 6, 10);
     t.dirt[tIdx(6, 10)] |= 2;                 // forge SE toward an empty tile
-    const comp = buildComponents(t, "dirt", 0);
+    const { comp } = buildComponents(t, 0);
     expect(comp[tIdx(7, 10)]).toBe(-1);
   });
 
-  it("keeps dirt and road tiers independent — paving never stacks the two", () => {
-    // A tile holds ONE tier: paving a Road over the dirt at (7,10) clears it,
-    // so the dirt flood and the paved-road flood stay fully separate.
+  it("marks only components that contain pavement, and floods across the seam", () => {
+    // Gravel and tar are ONE surface: a gravel run and a separate paved run
+    // are two components, and only the paved one carries the road marker.
+    const t = createTrack();
+    run(t, "dirt", 5, 9, 10);                 // pure gravel run
+    run(t, "road", 20, 24, 10);               // separate paved run
+    const c = buildAllComponents(t, 0);
+    const dirtId = c.comp[tIdx(5, 10)];
+    expect(dirtId).toBeGreaterThanOrEqual(0);
+    expect(c.comp[tIdx(9, 10)]).toBe(dirtId);
+    expect(c.roadComp[dirtId]).toBe(0);       // pure gravel: no paved marker
+    const roadId = c.comp[tIdx(20, 10)];
+    expect(roadId).not.toBe(dirtId);
+    expect(c.roadComp[roadId]).toBe(1);       // paved run IS marked
+  });
+
+  it("paving over the middle of a gravel run keeps it ONE merged component", () => {
+    // A tile holds ONE tier (paving replaces the gravel), yet the surface is
+    // continuous: the two gravel stubs both face the paved centre, so the
+    // whole dirt—road—dirt line is one component — now a PAVED one.
     const t = createTrack();
     run(t, "dirt", 5, 9, 10);
-    for (let y = 8; y <= 12; y++) buildTile(t, "road", 7, y);
+    buildTile(t, "road", 7, 10);              // pave over the junction
     const c = buildAllComponents(t, 0);
-    expect(c.dirt[tIdx(5, 10)]).toBeGreaterThanOrEqual(0);
-    expect(c.road[tIdx(7, 8)]).toBeGreaterThanOrEqual(0);
-    expect(c.dirt[tIdx(7, 8)]).toBe(-1);
+    const id = c.comp[tIdx(5, 10)];
+    expect(c.comp[tIdx(9, 10)]).toBe(id);
+    expect(c.comp[tIdx(7, 10)]).toBe(id);
+    expect(c.roadComp[id]).toBe(1);
   });
 
   it("linkedBy joins two structures beside the same component", () => {
     const t = createTrack();
     run(t, "dirt", 5, 15, 10);
-    const comp = buildComponents(t, "dirt", 0);
+    const { comp } = buildComponents(t, 0);
     // both sit just above the dirt run
     expect(linkedBy(comp, 6, 9, 14, 9)).toBe(true);
     expect(linkedBy(comp, 6, 9, 30, 30)).toBe(false);   // K0: 32×32 map
@@ -147,14 +167,30 @@ describe("E6 connected components", () => {
     const t = createTrack();
     run(t, "dirt", 5, 9, 10, 1);              // p1's run
     run(t, "dirt", 10, 14, 10, 2);            // p2's run, adjacent at x=9/10
-    const c1 = buildComponents(t, "dirt", 1);
-    const c2 = buildComponents(t, "dirt", 2);
+    const c1 = buildComponents(t, 1);
+    const c2 = buildComponents(t, 2);
     // each player sees its own run, in its own component
-    expect(c1[tIdx(9, 10)]).toBeGreaterThanOrEqual(0);
-    expect(c2[tIdx(10, 10)]).toBeGreaterThanOrEqual(0);
+    expect(c1.comp[tIdx(9, 10)]).toBeGreaterThanOrEqual(0);
+    expect(c2.comp[tIdx(10, 10)]).toBeGreaterThanOrEqual(0);
     // neither player's flood crosses into the other's tiles
-    expect(c1[tIdx(10, 10)]).toBe(-1);
-    expect(c2[tIdx(9, 10)]).toBe(-1);
+    expect(c1.comp[tIdx(10, 10)]).toBe(-1);
+    expect(c2.comp[tIdx(9, 10)]).toBe(-1);
+  });
+
+  it("W2: a rival's PAVED tile beside your dirt is not part of your component", () => {
+    // The masks face across the tier boundary, but the merged flood is still
+    // owner-scoped: p1's dirt never joins p2's adjacent pavement, so p1's
+    // connection can never ride the rival's paving (or score its VP).
+    const t = createTrack();
+    run(t, "dirt", 5, 9, 10, 1);              // p1's gravel run
+    run(t, "road", 10, 14, 10, 2);            // p2's paved run, touching at x=9/10
+    const mine = buildComponents(t, 1);
+    expect(mine.comp[tIdx(9, 10)]).toBeGreaterThanOrEqual(0);
+    expect(mine.comp[tIdx(10, 10)]).toBe(-1); // rival paving excluded
+    // and the rival, on its own flood, sees only its own paving
+    const theirs = buildComponents(t, 2);
+    expect(theirs.comp[tIdx(10, 10)]).toBeGreaterThanOrEqual(0);
+    expect(theirs.comp[tIdx(9, 10)]).toBe(-1);
   });
 });
 
@@ -369,6 +405,88 @@ describe("E6 road beats dirt", () => {
     const events = rescore(state, score);
     expect(events[0]).toMatchObject({ type: "upgraded", from: "dirt", to: "road", delta: 2 });
     expect(vpFor(score, "p1")).toBe(3);
+  });
+});
+
+describe("E6 best tier on path across the dirt↔paved seam", () => {
+  it("a dirt feeder onto a public highway scores the road tier (intended reward)", () => {
+    const grid = flatGrid([ind("farm", 12, 11)]);
+    const track = createTrack();
+    run(track, "road", 14, 20, 10, PUBLIC_OWNER);  // the shared highway
+    run(track, "dirt", 6, 13, 10, 1);              // p1's gravel feeder to it
+    const state: EconomyState = {
+      grid, track,
+      harvesters: [H(1, "p1", 11, 11)],
+      factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }],  // beside the highway
+    };
+    const comp = buildAllComponents(track, 1);
+    const conn = resolveConnection(state, comp, state.harvesters[0]);
+    expect(conn.kind).toBe("road");                // gravel + pavement on the path
+    expect(conn.vp).toBe(TRANSPORT.road.vp);
+    expect(conn.multiplier).toBe(TRANSPORT.road.throughput);
+    expect(playerResources(state, "p1", 0).grain)
+      .toBeCloseTo(INDUSTRY_BY_KEY.farm.output * TRANSPORT.road.throughput, 6);
+    const score = createScoreState();
+    expect(rescore(state, score)).toEqual([
+      { harvester: 1, type: "awarded", from: null, to: "road", delta: 3 },
+    ]);
+  });
+
+  it("a dirt feeder onto your OWN pavement is premium too", () => {
+    const grid = flatGrid([ind("farm", 12, 11)]);
+    const track = createTrack();
+    run(track, "dirt", 6, 13, 10, 1);
+    run(track, "road", 14, 20, 10, 1);             // p1 paves the far end itself
+    const state: EconomyState = {
+      grid, track,
+      harvesters: [H(1, "p1", 11, 11)],
+      factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }],
+    };
+    const comp = buildAllComponents(track, 1);
+    expect(resolveConnection(state, comp, state.harvesters[0]).kind).toBe("road");
+    expect(playerResources(state, "p1", 0).grain)
+      .toBeCloseTo(INDUSTRY_BY_KEY.farm.output * TRANSPORT.road.throughput, 6);
+  });
+
+  it("paved track elsewhere on the map does not upgrade a pure-dirt route", () => {
+    const grid = flatGrid([ind("farm", 12, 11)]);
+    const track = createTrack();
+    run(track, "dirt", 6, 20, 10, 1);              // p1's pure gravel line
+    run(track, "road", 14, 20, 14, 1);             // paved — but off the route
+    const state: EconomyState = {
+      grid, track,
+      harvesters: [H(1, "p1", 11, 11)],
+      factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }],
+    };
+    const comp = buildAllComponents(track, 1);
+    expect(resolveConnection(state, comp, state.harvesters[0]).kind).toBe("dirt");
+    const score = createScoreState();
+    expect(rescore(state, score)).toEqual([
+      { harvester: 1, type: "awarded", from: null, to: "dirt", delta: 1 },
+    ]);
+  });
+
+  it("cutting the feeder off the highway revokes the road VP", () => {
+    const grid = flatGrid([ind("farm", 12, 11)]);
+    const track = createTrack();
+    run(track, "road", 14, 20, 10, PUBLIC_OWNER);
+    run(track, "dirt", 6, 13, 10, 1);
+    const state: EconomyState = {
+      grid, track,
+      harvesters: [H(1, "p1", 11, 11)],
+      factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }],
+    };
+    const score = createScoreState();
+    rescore(state, score);
+    expect(vpFor(score, "p1")).toBe(3);
+
+    demolishTile(track, "dirt", 13, 10);           // the tile that touches tar
+    const events = rescore(state, score);
+    expect(events).toEqual([
+      { harvester: 1, type: "revoked", from: "road", to: null, delta: -3 },
+    ]);
+    expect(vpFor(score, "p1")).toBe(0);
+    expect(playerResources(state, "p1", 0).grain).toBeUndefined();
   });
 });
 

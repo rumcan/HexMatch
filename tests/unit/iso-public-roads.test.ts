@@ -287,11 +287,11 @@ describe("PP-13 public roads are every player's to drive on", () => {
     expect(a && b, "the highway needs two usable ends").toBeTruthy();
 
     const comp = buildAllComponents(track, 1);
-    expect(linkedBy(comp.road, a![0], a![1], b![0], b![1]),
+    expect(linkedBy(comp.comp, a![0], a![1], b![0], b![1]),
       "a player must be able to route over the public highway").toBe(true);
     // and the rival can do exactly the same on the same tiles
     const rival = buildAllComponents(track, 2);
-    expect(linkedBy(rival.road, a![0], a![1], b![0], b![1])).toBe(true);
+    expect(linkedBy(rival.comp, a![0], a![1], b![0], b![1])).toBe(true);
   });
 
   it("cannot be claimed: paving over a highway connects it but leaves it public", () => {
