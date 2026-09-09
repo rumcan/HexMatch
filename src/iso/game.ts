@@ -63,6 +63,9 @@ import {
   MAP_W, MAP_H, BANDIT_MS, BLOCK_MS, FOG_MS, SABOTAGE, SECURITY, choice, type ResKey,
 } from "../game/config";
 import { createQuarry, GEM_TO_CARGO, type Quarry } from "./quarry";
+import {
+  createTruckState, planTrucks, tickTrucks, truckItems,
+} from "./vehicles";
 import { createIsoMarket, toBag, type CargoBag, type IsoMarket } from "./market";
 import { createOriginalUi, type OriginalUi } from "../game/ui";
 import {
@@ -176,6 +179,14 @@ export function startIsoGame(root: HTMLElement) {
 
   const eco: EconomyState = { grid, track, harvesters: [], factories: [] };
   let nextHarvesterId = 1;
+  /**
+   * RV-01: road traffic. One lorry per player once a Depot reaches a Factory
+   * by road — over private track AND the public highways (PP-13). Replanned
+   * only when the economy changes (every build/demolish funnels through
+   * `rescoreNow`); the frame loop just advances and draws them.
+   */
+  const trucks = createTruckState();
+  let trucksDirty = true;
   /**
    * PP-05: the next Depot id, skipping ids already on the board. The game's own
    * placements never collide, but structures can arrive from elsewhere (a
@@ -398,6 +409,7 @@ export function startIsoGame(root: HTMLElement) {
 
   const rescoreNow = () => {
     applyVpEvents(rescore(eco, score));
+    trucksDirty = true;   // RV-01: the network changed — replan the lorries
     if (phase === "play") {
       for (const p of players) {
         if (vpFor(score, p.id) >= VP_TARGET) {
@@ -1285,11 +1297,24 @@ export function startIsoGame(root: HTMLElement) {
     resize();
     syncWorld();
 
+    let lastFrameT = 0;
     const frame = (t: number) => {
       if (disposed) return;
+      // RV-01: the lorries move in TILE units per millisecond, so the frame
+      // needs a real dt (capped — a background tab must not teleport them).
+      const dt = Math.min(100, Math.max(0, t - lastFrameT));
+      lastFrameT = t;
       economyTick(t);
       quarryTick(t);
       aiTick(t);
+      if (trucksDirty) {
+        trucks.trucks = planTrucks(eco);
+        trucksDirty = false;
+        // a vanished truck must not linger as a ghost on the structures layer
+        renderer?.setWorld(world);
+      }
+      tickTrucks(trucks, dt);
+      world.vehicles = truckItems(trucks);
       renderer!.render(t, overlayItems());
       paintUi(t);
       raf = requestAnimationFrame(frame);

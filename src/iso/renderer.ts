@@ -70,6 +70,12 @@ export interface World {
   roadBits?: Uint8Array;   // E5 — optional until the track model lands
   railBits?: Uint8Array;
   extra?: DrawItem[];      // stations, previews owned by the caller
+  /**
+   * RV-01: moving sprites (trucks), refreshed by the game every frame.
+   * Depth-sorted WITH the structures so buildings properly occlude a truck
+   * passing behind them; culling keeps them while they are near the view.
+   */
+  vehicles?: DrawItem[];
 }
 
 // Track layers carry a PRESENT bit (0b10000) above the 4 direction bits, so a
@@ -109,6 +115,14 @@ export function buildDrawList(world: World, r: { x0: number; y0: number; x1: num
     for (const e of world.extra) {
       if (e.tx < r.x0 - 4 || e.tx > r.x1 + 4 || e.ty < r.y0 - 4 || e.ty > r.y1 + 4) continue;
       out.push(e);
+    }
+  }
+  // RV-01: trucks drive BETWEEN tiles, so the cull test uses the rounded
+  // tile with the same generous pad the extras get.
+  if (world.vehicles) {
+    for (const v of world.vehicles) {
+      if (v.tx < r.x0 - 4 || v.tx > r.x1 + 4 || v.ty < r.y0 - 4 || v.ty > r.y1 + 4) continue;
+      out.push(v);
     }
   }
   return out;
@@ -378,6 +392,9 @@ export class IsoRenderer {
   }
 
   private hasAnimation(): boolean {
+    // RV-01: a truck somewhere on the map moves every frame, so the sorted
+    // structures pass (which depth-sorts it among the buildings) must run.
+    if ((this.world.vehicles?.length ?? 0) > 0) return true;
     return this.lastOrder.some((p) => (p.def.frames ?? 1) > 1);
   }
 

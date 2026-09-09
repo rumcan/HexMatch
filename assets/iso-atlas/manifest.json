@@ -2411,6 +2411,66 @@
         71
       ],
       "w": 128
+    },
+    "truck_goods_ne": {
+      "x": 528,
+      "y": 1822,
+      "h": 16,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        10,
+        15
+      ],
+      "w": 20,
+      "moving": true
+    },
+    "truck_goods_se": {
+      "x": 552,
+      "y": 1822,
+      "h": 15,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        10,
+        14
+      ],
+      "w": 20,
+      "moving": true
+    },
+    "truck_goods_sw": {
+      "x": 576,
+      "y": 1822,
+      "h": 15,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        10,
+        14
+      ],
+      "w": 20,
+      "moving": true
+    },
+    "truck_goods_nw": {
+      "x": 600,
+      "y": 1822,
+      "h": 16,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        10,
+        15
+      ],
+      "w": 20,
+      "moving": true
     }
   }
 }
