@@ -108,7 +108,7 @@ const gemFace = (res: ResKey) =>
   `radial-gradient(circle at 34% 28%, ${RES[res].c2}, ${RES[res].c1})`;
 const gemArtUrl = (res: ResKey): string | null => GEM_ART[GEM_TO_CARGO[res]] ?? null;
 
-const h = (tag: string, cls?: string, html?: string): HTMLElement => {
+const h = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, html?: string): HTMLElementTagNameMap[K] => {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
   if (html !== undefined) e.innerHTML = html;
@@ -184,7 +184,7 @@ export function createOriginalUi(
   footer.appendChild(chips);
   root.appendChild(footer);
 
-  // ── left: BUILD + BLACK MARKET ────────────────────────────────────────────
+  // ── left: BUILD ────────────────────────────────────────────
   const left = h("aside", "aside left iso-panel");
   const bp = h("div", "panel");
   bp.appendChild(h("div", "panel-title", "🏗️ Build"));
@@ -198,14 +198,14 @@ export function createOriginalUi(
   sp.appendChild(h("div", "pane-note gold-rule", `🪙 ${GOLD_RULE} Construction and trade never touch it.`));
   const sabList = h("div", "sab-list");
   sp.appendChild(sabList);
-  left.appendChild(sp);
+
   root.appendChild(left);
 
   // ── rival offer tray (floats left of the Quarry) ─────────────────────────
   const offerTray = h("div", "offer-tray hidden");
   root.appendChild(offerTray);
 
-  // ── right: YOUR QUARRY + MARKET / BANK / FEED ────────────────────────────
+  // ── right: shared economy window ────────────────────────────
   const rightAside = h("aside", "aside right iso-panel");
   const qp = h("div", "panel");
   qp.id = "iso-quarry";
@@ -239,10 +239,10 @@ export function createOriginalUi(
   grid.style.setProperty("--gem", (CELL - 6) + "px");
   boardWrap.appendChild(grid);
   qp.appendChild(boardWrap);
-  rightAside.appendChild(qp);
 
-  // tabs panel (Market / Bank / Feed)
-  const tp = h("div", "panel grow hidden");
+
+  // Shared tabs; keep the existing board mounted while switching panes.
+  const tp = h("div", "panel grow");
   tp.id = "iso-trade";
   const tabs = h("div", "tabs");
   const tabMarket = h("button", "tab active", "Market");
@@ -251,12 +251,18 @@ export function createOriginalUi(
   tabMarket.onclick = () => setTab("market");
   tabBank.onclick = () => setTab("bank");
   tabFeed.onclick = () => setTab("feed");
-  tabs.appendChild(tabMarket); tabs.appendChild(tabBank); tabs.appendChild(tabFeed);
+  const tabPlant = h("button", "tab", "Processing Plant");
+  tabPlant.onclick = () => setTab("plant");
+  tabs.append(tabBank, tabMarket, tabPlant, tabFeed);
   tp.appendChild(tabs);
+  [tabBank, tabMarket, tabPlant, tabFeed].forEach((tab, i) => {
+    tab.dataset.tab = ["bank", "market", "plant", "feed"][i];
+  });
   const marketPane = h("div", "pane market-pane");
   const bankPane = h("div", "pane bank-pane hidden");
   const feedPane = h("div", "pane feed-pane hidden");
   tp.appendChild(marketPane); tp.appendChild(bankPane); tp.appendChild(feedPane);
+  tp.appendChild(qp);
   rightAside.appendChild(tp);
   root.appendChild(rightAside);
 
@@ -281,7 +287,7 @@ export function createOriginalUi(
   // ── mobile bottom nav ─────────────────────────────────────────────────────
   const mobileNav = h("nav", "mnav");
   const views: [string, string, string][] = [
-    ["map", "🗺", "Map"], ["quarry", "💎", "Processing Plant"], ["build", "🏗", "Build"], ["trade", "⇄", "Trade"],
+    ["map", "🗺", "Map"], ["build", "🏗", "Build"], ["trade", "⇄", "Economy"],
   ];
   for (const [v, ic, label] of views) {
     const b = h("button", "mnav-btn" + (v === "map" ? " active" : ""));
@@ -322,7 +328,7 @@ export function createOriginalUi(
     // PP-06: another instance of the SAME processing building, raised beside
     // another town.
     { key: "plant", label: "Processing Plant", sub: `${costCompact(PLANT_COST)} · next to a town` },
-    { key: "demolish", label: "Demolish", sub: "refund none" },
+    { key: "demolish", label: "Demolish", sub: "Refund 50%" },
   ];
   let depotSub: HTMLElement | null = null;
   let lastDepotSub = "\u0000";
@@ -336,17 +342,6 @@ export function createOriginalUi(
     if (t.key === "harvester") depotSub = b.querySelector("small");
     buildList.appendChild(b);
   }
-  // Quarry / Market panel toggles live at the bottom of the build column so
-  // the original controls remain one list and the e2e selectors stay stable.
-  const quarryBtn = h("button", "build-btn bg-factory", `<div class="bb-mid"><b>Processing Plant</b><small>match to process</small></div>`);
-  quarryBtn.dataset.panel = "quarry";
-  quarryBtn.onclick = () => setQuarryOpen(!isQuarryOpen());
-  buildList.appendChild(quarryBtn);
-  const tradeBtn = h("button", "build-btn bg-foundry", `<div class="bb-mid"><b>Market</b><small>bank 4:1</small></div>`);
-  tradeBtn.dataset.panel = "trade";
-  tradeBtn.onclick = () => setTradeOpen(!isTradeOpen());
-  buildList.appendChild(tradeBtn);
-
   // ── Black Market ──────────────────────────────────────────────────────────
   function renderSabotage() {
     sabList.innerHTML = "";
@@ -356,6 +351,7 @@ export function createOriginalUi(
       const b = h("button", "sab-btn sb-" + key + (afford ? "" : " disabled"));
       b.innerHTML = `<div class="sab-top"><b>${s.name}</b><span class="sab-cost">${s.gold}🪙</span></div>` +
         `<div class="sab-desc">${s.desc}</div>`;
+      b.disabled = !afford;
       b.dataset.black = key;
       b.onclick = () => hooks.onBlackAction(key);
       sabList.appendChild(b);
@@ -368,6 +364,7 @@ export function createOriginalUi(
     const sb = h("button", "sab-btn secure-btn" + (secOn ? " active" : secAfford ? "" : " disabled"));
     sb.innerHTML = `<div class="sab-top"><b>🛡️ ${SECURITY.name}</b><span class="sab-cost">${costStr(SECURITY_ISO)}</span></div>` +
       `<div class="sab-desc">${SECURITY.desc}</div>`;
+    sb.disabled = !secAfford;
     sb.dataset.black = "security";
     sb.onclick = () => hooks.onBlackAction("security");
     sabList.appendChild(sb);
@@ -377,6 +374,7 @@ export function createOriginalUi(
     const rb = h("button", "sab-btn repair-btn" + (afford ? "" : " disabled"));
     rb.innerHTML = `<div class="sab-top"><b>🔧 Repair Crew</b><span class="sab-cost">${costStr(REPAIR_ISO)}</span></div>` +
       `<div class="sab-desc">Clear all Iron Girders & thaw all Frost tiles instantly.</div>`;
+    rb.disabled = !afford;
     rb.dataset.black = "repair";
     rb.onclick = () => hooks.onBlackAction("repair");
     sabList.appendChild(rb);
@@ -417,7 +415,7 @@ export function createOriginalUi(
   bankGive.dataset.f = "bank-give";
   bankWant.dataset.f = "bank-want";
 
-  let postBtn: HTMLElement;
+  let postBtn: HTMLButtonElement;
   const form = h("div", "trade-form");
   const giveRow = h("div", "trade-row");
   giveRow.appendChild(h("span", "trade-lbl", "Give"));
@@ -453,6 +451,18 @@ export function createOriginalUi(
   bankPane.appendChild(bform);
   bankPane.appendChild(h("div", "pane-note",
     `The bank always trades four of one good for one of another. No rival required, no waiting. 🪙 ${GOLD_RULE}`));
+
+  bankPane.appendChild(sp);
+
+  function updateTradeButtons() {
+    postBtn.disabled = market.live(me).length >= MAX_OFFERS || postGive.value === postWant.value
+      || (me.res[postGive.value as Cargo] ?? 0) < Math.max(1, Math.floor(Number(postGiveN.value) || 2));
+    bankBtn.disabled = bankGive.value === bankWant.value || (me.res[bankGive.value as Cargo] ?? 0) < BANK_RATE;
+  }
+  for (const input of [postGive, postWant, postGiveN, postWantN, bankGive, bankWant]) {
+    input.addEventListener("input", updateTradeButtons);
+    input.addEventListener("change", updateTradeButtons);
+  }
 
   function postOffer() {
     const give = postGive.value as Cargo;
@@ -492,7 +502,7 @@ export function createOriginalUi(
   function renderMarket(now: number = performance.now()) {
     const mine = market.live(me);
     mineHead.innerHTML = `<span>Your offers</span><span class="slot-count${mine.length >= MAX_OFFERS ? " full" : ""}">${mine.length}/${MAX_OFFERS}</span>`;
-    postBtn.classList.toggle("disabled", mine.length >= MAX_OFFERS);
+    updateTradeButtons();
     postBtn.textContent = mine.length >= MAX_OFFERS ? "Cancel an offer first" : "Post Offer";
     mineList.innerHTML = "";
     if (!mine.length) mineList.appendChild(h("div", "empty", "No offers posted. Rivals can't see you yet."));
@@ -555,6 +565,7 @@ export function createOriginalUi(
       <span class="tray-t">${secs}s</span>
       <span class="tray-body">${o.giveN}${CARGO[o.give].icon}<i class="arrow">➜</i>${o.wantN}${CARGO[o.want].icon}</span>`;
     const b = h("button", "mini" + (can ? "" : " disabled"), "Take");
+    b.disabled = !can;
     b.onclick = (e) => {
       e.stopPropagation();
       if (market.accept(me, o.id)) {
@@ -579,7 +590,12 @@ export function createOriginalUi(
   }
 
   // ── tabs / mobile ─────────────────────────────────────────────────────────
-  function setTab(t: "market" | "bank" | "feed") {
+  function setTab(t: "market" | "bank" | "plant" | "feed") {
+    tabs.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((tab) => {
+      tab.setAttribute("aria-pressed", String(tab.dataset.tab === t));
+    });
+    tabPlant.classList.toggle("active", t === "plant");
+    qp.classList.toggle("hidden", t !== "plant");
     tabMarket.classList.toggle("active", t === "market");
     tabBank.classList.toggle("active", t === "bank");
     tabFeed.classList.toggle("active", t === "feed");
@@ -593,25 +609,7 @@ export function createOriginalUi(
     mobileNav.querySelectorAll(".mnav-btn").forEach((b: Element) => {
       (b as HTMLElement).classList.toggle("active", (b as HTMLElement).dataset.view === v);
     });
-    if (v === "quarry") responsiveZoom();
-  }
-
-  // W6: the panels toggle via the `hidden` CLASS, not an inline style —
-  // `.hidden { display: none !important }` in styles.css used to beat the
-  // inline `style.display = ""`, so the Market button "did nothing" while the
-  // (inline-style-only) test still passed. The class is the source of truth.
-  function isQuarryOpen() {
-    return !qp.classList.contains("hidden");
-  }
-  function setQuarryOpen(v: boolean) {
-    qp.classList.toggle("hidden", !v);
-  }
-  function isTradeOpen() {
-    return !tp.classList.contains("hidden");
-  }
-  function setTradeOpen(v: boolean) {
-    tp.classList.toggle("hidden", !v);
-    if (v) renderMarket();
+    if (v === "trade") responsiveZoom();
   }
 
   // ── board interactions ────────────────────────────────────────────────────
@@ -951,15 +949,16 @@ export function createOriginalUi(
       lastDepotSub = sub;
       if (depotSub) depotSub.textContent = sub;
     }
-    const depotBtn = buildList.querySelector<HTMLElement>('[data-tool="harvester"]');
-    const canDepot = state.freeDepots > 0
-      || (Object.keys(DEPOT_COST) as Cargo[])
-        .every((k) => (state.purse[k] ?? 0) >= (DEPOT_COST[k] ?? 0));
-    depotBtn?.classList.toggle("disabled", !canDepot);
-    buildList.querySelectorAll<HTMLElement>("[data-panel]").forEach((b) => {
-      const open = b.dataset.panel === "quarry" ? isQuarryOpen() : isTradeOpen();
-      b.classList.toggle("active", open);
+    buildList.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((button) => {
+      const tool = button.dataset.tool as UiTool;
+      const cost = tool === "plant" ? PLANT_COST : tool === "harvester" ? DEPOT_COST
+        : tool === "road" || tool === "rail" ? TRANSPORT[tool].cost : {};
+      const free = tool === "harvester" ? state.freeDepots > 0
+        : (tool === "road" || tool === "rail") && state.freeTrack > 0;
+      button.disabled = !free && !Object.entries(cost).every(([k, v]) => (state.purse[k as Cargo] ?? 0) >= v);
+      button.classList.toggle("disabled", button.disabled);
     });
+    updateTradeButtons();
     buildList.querySelectorAll<HTMLElement>("[data-act]").forEach((b) => {
       b.classList.toggle("active", b.dataset.act === "recenter");
     });
@@ -1040,8 +1039,7 @@ export function createOriginalUi(
   renderBoard();
   renderMarket();
   responsiveZoom();
-  setQuarryOpen(true);
-  setTradeOpen(false);
+  setTab("plant");
 
   return {
     el: root,
@@ -1054,8 +1052,8 @@ export function createOriginalUi(
     toast,
     fx,
     popup,
-    isQuarryOpen,
-    isTradeOpen,
+    isQuarryOpen: () => !qp.classList.contains("hidden"),
+    isTradeOpen: () => !marketPane.classList.contains("hidden") || !bankPane.classList.contains("hidden"),
     showModal,
     hideModal,
   };

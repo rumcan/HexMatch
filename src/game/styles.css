@@ -1238,18 +1238,12 @@ html, body, #root {
     -webkit-overflow-scrolling: touch;
     display: none;
   }
-  /* the quarry view never scrolls — the board is sized to fit */
-  [data-view="quarry"] .aside.right { overflow: hidden; }
   .aside.left { left: 8px; width: auto; }
   .aside.right { right: 8px; }
 
   [data-view="build"]  .aside.left  { display: flex; }
-  [data-view="quarry"] .aside.right { display: flex; }
   [data-view="trade"]  .aside.right { display: flex; }
-  /* quarry view shows the board; trade view shows the market tabs */
-  [data-view="quarry"] .aside.right > .panel:last-child { display: none; }
-  [data-view="trade"]  .aside.right > .panel:first-child { display: none; }
-  [data-view="trade"]  .aside.right > .panel:last-child { flex: 1; }
+  /* One economy sheet contains all four tabs. */
 
   /* map view: nothing but the map */
   [data-view="map"] .aside { display: none; }
@@ -1355,3 +1349,10 @@ html, body, #root {
   color: var(--txt-dim);
 }
 .seat.filled .seat-status { color: var(--good); }
+/* Native disabled states prevent activation by pointer and keyboard. */
+.build-btn:disabled, .sab-btn:disabled, .post-btn:disabled, .mini:disabled {
+  filter: grayscale(1); opacity: .42; cursor: not-allowed;
+}
+#iso-trade > .tabs { flex-shrink: 0; }
+#iso-trade > #iso-quarry { border: 0; margin: 0; }
+#iso-trade .bank-pane > .panel { margin-top: 16px; }

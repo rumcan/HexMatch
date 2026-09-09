@@ -623,3 +623,24 @@ describe("A1 lorry deliveries", () => {
     expect(truck.deliveries).toBe(0);
   });
 });
+
+describe("new factories reassign depot routes", () => {
+  it("chooses the shortest connected owned factory, falling back after removal", () => {
+    const track = createTrack();
+    pave(track, 1, Array.from({ length: 20 }, (_, i) => [10 + i, 10] as [number, number]));
+    const far: Factory = { owner: "you", ownerId: 1, tx: 29, ty: 11 };
+    const near: Factory = { owner: "you", ownerId: 1, tx: 14, ty: 11 };
+    const eco: EconomyState = { grid: generateMap(79), track,
+      harvesters: [{ id: 1, owner: "you", ownerId: 1, tx: 10, ty: 11 }], factories: [far] };
+    expect(planTrucks(eco)[0].factory).toEqual([29, 11]);
+    eco.factories.push({ ...near, owner: "ai", ownerId: 2 });
+    expect(planTrucks(eco)[0].factory).toEqual([29, 11]);
+    eco.factories.push(near);
+    expect(planTrucks(eco)[0].factory).toEqual([14, 11]);
+    expect(planTrucks(eco)[0].depotId).toBe(1);
+    eco.factories.push({ ...near, ty: 9 }); // equally short: earlier plant wins
+    expect(planTrucks(eco)[0].factory).toEqual([14, 11]);
+    eco.factories.splice(2);
+    expect(planTrucks(eco)[0].factory).toEqual([29, 11]);
+  });
+});

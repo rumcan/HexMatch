@@ -238,8 +238,8 @@ test.describe("iso game boots on the default route", () => {
     // and its cells are real, pickable DOM.
     await expect(root.locator("#iso-quarry")).toBeVisible();
     await expect(root.locator("#iso-quarry .gem")).toHaveCount(BOARD_W * BOARD_H);
-    await expect(root.locator('[data-panel="quarry"]')).toHaveCount(1);
-    await expect(root.locator('[data-panel="trade"]')).toHaveCount(1);
+    await expect(root.locator('[data-tab="plant"]')).toHaveCount(1);
+    await expect(root.locator('[data-tab="market"]')).toHaveCount(1);
     const firstGem = root.locator('.gem[data-r="0"][data-c="0"]');
     await expect(firstGem).toHaveAttribute("data-res", /^(wood|brick|sheep|wheat|ore|gold)$/);
     await firstGem.click();
@@ -565,4 +565,26 @@ test.describe("TK-001 mouse panning is middle-button only", () => {
     await page.waitForFunction(() => (window as any).__iso.phase === "setup-harvester");
     expect(await page.evaluate(() => (window as any).__iso.factories.length)).toBeGreaterThanOrEqual(1);
   });
+});
+
+test("consolidated economy tabs and disabled purchases", async ({ page }) => {
+  await bootIso(page);
+  if ((page.viewportSize()?.width ?? 1280) <= 760) {
+    await page.locator('.mnav-btn[data-view="trade"]').click();
+  }
+  await expect(page.locator('[data-panel]')).toHaveCount(0);
+  for (const tab of ["bank", "market", "plant", "feed"]) {
+    await page.locator(`[data-tab="${tab}"]`).click();
+    await expect(page.locator('#iso-trade > .pane:not(.hidden), #iso-trade > #iso-quarry:not(.hidden)')).toHaveCount(1);
+    await expect(page.locator(`[data-tab="${tab}"]`)).toBeInViewport();
+  }
+  await page.locator('[data-tab="bank"]').click();
+  await expect(page.locator('.bank-pane .sab-list')).toBeVisible();
+  await page.evaluate(() => {
+    const game = (window as unknown as { __iso: { purse: Record<string, number> } }).__iso;
+    for (const key of Object.keys(game.purse)) game.purse[key] = 0;
+  });
+  await expect(page.locator('[data-tool="plant"]')).toBeDisabled();
+  await expect(page.locator('[data-act="bank"]')).toBeDisabled();
+  await expect(page.locator('[data-black="harden"]')).toBeDisabled();
 });
