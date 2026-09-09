@@ -4,7 +4,7 @@ import { MAP_W, MAP_H, INDUSTRY_QUOTA, TRANSPORT, UPGRADE_COST, VP_TARGET } from
 
 // Mirrored from src/iso/game.ts — do not import the boot module (it pulls
 // atlas PNGs and the DOM). Pass 1 pinned these; pass 2 measures against them.
-// PP-07 retuned the purse: a road tile costs Wood + Stone now, so the opening
+// PP-07 retuned the purse: a dirt tile costs Wood + Stone now, so the opening
 // grants both (12 paid tiles — the same E8 curve), still with no ore.
 const START_PURSE = { wood: 12, stone: 12, ore: 0 };
 const FREE_SETUP_TRACK = 12;
@@ -13,7 +13,7 @@ const HARVEST_MS = 3000;
 // E8 pass 2 — measure the curve pass 1 left us, then file one follow-up per
 // lever. These assertions pin the *current* numbers so a later rebalance
 // ticket has a baseline, and they record the distance-to-ore distribution
-// that decides whether rail arrives too fast.
+// that decides whether road arrives too fast.
 
 function manhattan(ax: number, ay: number, bx: number, by: number) {
   return Math.abs(ax - bx) + Math.abs(ay - by);
@@ -44,19 +44,19 @@ function nearestOre(g: ReturnType<typeof generateMap>, tx: number, ty: number) {
 }
 
 describe("E8 pass 2 — starting curve", () => {
-  it("still gates rail behind an ore mine (pass 1 structure, PP-07 prices)", () => {
+  it("still gates road behind an ore mine (pass 1 structure, PP-07 prices)", () => {
     expect(START_PURSE.ore ?? 0).toBe(0);
     expect(START_PURSE.stone).toBe(12);
     expect(START_PURSE.wood).toBe(12);
     expect(FREE_SETUP_TRACK).toBe(12);
-    expect(TRANSPORT.rail.cost.ore).toBe(4);
-    expect(TRANSPORT.rail.cost.stone).toBe(1);
-    expect(TRANSPORT.rail.cost.wood).toBe(1);
+    expect(TRANSPORT.road.cost.ore).toBe(4);
     expect(TRANSPORT.road.cost.stone).toBe(1);
     expect(TRANSPORT.road.cost.wood).toBe(1);
-    expect(UPGRADE_COST.ore).toBe(4);  // road→rail pays the difference only
-    expect(TRANSPORT.road.onRough).toBe(true);
-    expect(TRANSPORT.rail.onRough).toBe(false);
+    expect(TRANSPORT.dirt.cost.stone).toBe(1);
+    expect(TRANSPORT.dirt.cost.wood).toBe(1);
+    expect(UPGRADE_COST.ore).toBe(4);  // dirt→road pays the difference only
+    expect(TRANSPORT.dirt.onRough).toBe(true);
+    expect(TRANSPORT.road.onRough).toBe(false);
     expect(VP_TARGET).toBe(12);
     expect(INDUSTRY_QUOTA.ore_mine).toBe(5);
   });
@@ -75,7 +75,7 @@ describe("E8 pass 2 — starting curve", () => {
     const withinFree = dists.filter((d) => d <= FREE_SETUP_TRACK).length;
 
     // Harvest ticks 1 ore / HARVEST_MS once connected (output 0.8 rounds to 1).
-    // First rail tile costs 4 ore → four ticks after the road lands (E8a).
+    // First road tile costs 4 ore → four ticks after the dirt lands (E8a).
     const msToFirstRailTile = 4 * HARVEST_MS;
 
     // Pin the distribution so E8a can decide whether to drop the quota.

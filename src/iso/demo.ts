@@ -50,18 +50,18 @@ export async function startDemo(root: HTMLElement) {
   const world: World = {
     grid,
     roadBits: drawBits(track, "road"),
-    railBits: drawBits(track, "rail"),
+    dirtBits: drawBits(track, "dirt"),
   };
   // A short NE|SW starter road near the map centre so the demo boots with
   // something to look at.
   const cx = MAP_W >> 1, cy = MAP_H >> 1;
   for (let dy = -1; dy <= 1; dy++) {
-    if (canBuildOn(grid, "road", cx, cy + dy)) buildTile(track, "road", cx, cy + dy, 1);
+    if (canBuildOn(grid, "dirt", cx, cy + dy)) buildTile(track, "dirt", cx, cy + dy, 1);
   }
-  world.roadBits = drawBits(track, "road");   // the starter road must show on boot
+  world.dirtBits = drawBits(track, "dirt");   // the starter road must show on boot
   // A generous purse so the harness exercises geometry, not economy.
   const purse: Purse = { wood: 400, stone: 400, ore: 400 };
-  let kind: TrackKind = "road";
+  let kind: TrackKind = "dirt";
   let xFirst = true;
 
   let cam: Camera = centerOnMap(createCamera(root.clientWidth, root.clientHeight));
@@ -123,7 +123,7 @@ export async function startDemo(root: HTMLElement) {
         }
       }
       world.roadBits = drawBits(track, "road");
-      world.railBits = drawBits(track, "rail");
+      world.dirtBits = drawBits(track, "dirt");
       r.setWorld(world);
     }
     drag = null; preview = null;
@@ -132,7 +132,7 @@ export async function startDemo(root: HTMLElement) {
   canvases.overlay.addEventListener("pointerup", up);
   canvases.overlay.addEventListener("pointercancel", up);
   window.addEventListener("keydown", (e) => {
-    if (e.key === "r" || e.key === "R") kind = kind === "road" ? "rail" : "road";
+    if (e.key === "r" || e.key === "R") kind = kind === "road" ? "dirt" : "road";
     if (e.key === "f" || e.key === "F") xFirst = !xFirst;
     // [l] toggles the per-blit `[render]` console.debug trace (same surface the
     // game exposes through `__iso.renderLog`, without needing the game console).

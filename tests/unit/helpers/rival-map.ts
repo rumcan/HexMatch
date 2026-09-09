@@ -8,8 +8,9 @@
 // footprints wall it in, so no planning fix can ever build from it — which is
 // exactly the tile `chooseRivalFactorySpot` must refuse to commit.
 //
-// Road is legal on every non-water, unoccupied tile (rough included), so one
-// BFS over `canBuildOn(grid, "road", …)` is both cheap and exact.
+// A rival reaches its harvesters over the BASIC Dirt Road tier, which is
+// legal on every non-water, unoccupied tile (rough included), so one BFS over
+// `canBuildOn(grid, "dirt", …)` is both cheap and exact.
 // ─────────────────────────────────────────────────────────────────────────────
 import { harvesterSpots } from "../../../src/iso/ai";
 import { canBuildOn, tIdx } from "../../../src/iso/track";
@@ -31,10 +32,10 @@ export function harvesterSpotIndex(grid: Grid): Set<number> {
   return spots;
 }
 
-/** The road-legal 4-connected component containing (x,y), as a tile mask. */
+/** The dirt-legal 4-connected component containing (x,y), as a tile mask. */
 export function roadComponent(grid: Grid, x: number, y: number): Uint8Array {
   const seen = new Uint8Array(MAP_W * MAP_H);
-  if (!canBuildOn(grid, "road", x, y)) return seen;
+  if (!canBuildOn(grid, "dirt", x, y)) return seen;
   const start = tIdx(x, y);
   const stack = [start];
   seen[start] = 1;
@@ -45,7 +46,7 @@ export function roadComponent(grid: Grid, x: number, y: number): Uint8Array {
       const nx = cx + dx, ny = cy + dy;
       if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
       const ni = tIdx(nx, ny);
-      if (seen[ni] || !canBuildOn(grid, "road", nx, ny)) continue;
+      if (seen[ni] || !canBuildOn(grid, "dirt", nx, ny)) continue;
       seen[ni] = 1;
       stack.push(ni);
     }
@@ -61,14 +62,14 @@ const reachCache = new WeakMap<Grid, Uint8Array>();
  * rather than flooding the same 20,736 tiles for every placement.
  */
 export function canReachASpot(grid: Grid, x: number, y: number): boolean {
-  if (!canBuildOn(grid, "road", x, y)) return false;
+  if (!canBuildOn(grid, "dirt", x, y)) return false;
   let reachable = reachCache.get(grid);
   if (!reachable) {
     reachable = new Uint8Array(MAP_W * MAP_H);
     const seen = new Uint8Array(reachable.length);
     const spots = harvesterSpotIndex(grid);
     for (let start = 0; start < seen.length; start++) {
-      if (seen[start] || !canBuildOn(grid, "road", start % MAP_W, Math.floor(start / MAP_W))) continue;
+      if (seen[start] || !canBuildOn(grid, "dirt", start % MAP_W, Math.floor(start / MAP_W))) continue;
       const component = [start];
       seen[start] = 1;
       let nSpots = 0;
@@ -78,7 +79,7 @@ export function canReachASpot(grid: Grid, x: number, y: number): boolean {
         const cx = cur % MAP_W, cy = Math.floor(cur / MAP_W);
         for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
           const nx = cx + dx, ny = cy + dy;
-          if (!canBuildOn(grid, "road", nx, ny)) continue;
+          if (!canBuildOn(grid, "dirt", nx, ny)) continue;
           const ni = tIdx(nx, ny);
           if (seen[ni]) continue;
           seen[ni] = 1;
@@ -101,7 +102,7 @@ export function rivalSearchTiles(grid: Grid, step = 2): [number, number][] {
   const out: [number, number][] = [];
   for (let y = 2; y < MAP_H - 2; y += step) {
     for (let x = 2; x < MAP_W - 2; x += step) {
-      if (canBuildOn(grid, "road", x, y)) out.push([x, y]);
+      if (canBuildOn(grid, "dirt", x, y)) out.push([x, y]);
     }
   }
   return out;

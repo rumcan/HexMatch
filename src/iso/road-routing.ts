@@ -1,18 +1,29 @@
 import { MAP_W } from "../game/config";
-import { DIR, DIRS, OPPOSITE, bitsAt, tIdx, inMapT, trackOpenTo, type Track } from "./track";
+import { DIR, DIRS, OPPOSITE, bitsAt, tIdx, inMapT, trackOpenTo, type Track, type TrackKind } from "./track";
 
 // ── the route finder ──────────────────────────────────────────────────────
 /**
- * Shortest road route from any tile in `from` to any tile index in `goals`,
+ * Shortest ROAD route from any tile in `from` to any tile index in `goals`,
  * over the tiles `owner` may drive, crossing only mutually facing bits.
  * Multi-source BFS with parents — the same graph the economy's component
  * flood walks, but returning the actual tiles. Null when no route exists.
+ *
+ * Both road tiers are drivable (a paved Road and a Dirt Road alike), so by
+ * default the route runs over whichever tier the tile carries. Pass a
+ * specific `kind` to restrict the flood to that one tier (the economy's
+ * dirt-only fallback does this, since a dirt component must be measured over
+ * dirt tiles). A tile never carries both tiers (`track.ts` replaces on pave),
+ * so the two can never cross-connect a route.
  */
 export function roadPath(
   track: Track, owner: number,
   from: [number, number][], goals: Set<number>,
+  kind?: TrackKind,
 ): [number, number][] | null {
   if (goals.size === 0 || from.length === 0) return null;
+  const bitsOf = (x: number, y: number): number =>
+    kind !== undefined ? bitsAt(track, kind, x, y)
+      : (bitsAt(track, "dirt", x, y) || bitsAt(track, "road", x, y));
   const parent = new Map<number, number>();   // tile index → previous index (-1 = source)
   const queue: number[] = [];
   for (const [x, y] of from) {
@@ -32,13 +43,13 @@ export function roadPath(
     }
     const x = cur % MAP_W, y = (cur / MAP_W) | 0;
     for (const d of DIRS) {
-      if (!(bitsAt(track, "road", x, y) & d)) continue;      // we face it
+      if (!(bitsOf(x, y) & d)) continue;                       // we face it
       const nx = x + DIR[d][0], ny = y + DIR[d][1];
       if (!inMapT(nx, ny)) continue;
-      if (!(bitsAt(track, "road", nx, ny) & OPPOSITE[d])) continue;  // it faces back
+      if (!(bitsOf(nx, ny) & OPPOSITE[d])) continue;           // it faces back
       const ni = tIdx(nx, ny);
       if (parent.has(ni)) continue;
-      if (!trackOpenTo(track, owner, nx, ny)) continue;      // W2 + PP-13
+      if (!trackOpenTo(track, owner, nx, ny)) continue;        // W2 + PP-13
       parent.set(ni, cur);
       queue.push(ni);
     }
@@ -56,4 +67,3 @@ export const shoulders = (track: Track, owner: number, tx: number, ty: number) =
   }
   return out;
 };
-

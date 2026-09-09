@@ -201,47 +201,35 @@ describe("G1/G2 atlas pixels", () => {
     expect(gaps, "unpainted samples along the road centre line across the join").toBe(0);
   });
 
-  it("Y4c: rail masks are declared ground + declared overlay pieces (no generator)", async () => {
+  it("dirt masks are the gravel recolor of the paved road tiles, sliced from the sheet", async () => {
+    // The game is de-railwayed into two road tiers. The basic Dirt (gravel)
+    // tier is a bespoke recolor of OpenGFX's finished flat road tiles, so
+    // every dirt_<mask> must be pixel-identical in *shape* to the paved
+    // road_<mask> it upgrades to (a tile never visually changes footprint when
+    // you pave over it), while differing in colour so a dirt road reads as
+    // gravel, not tar.
     const { data, info } = await atlas();
-    const decls = declarations();
-    const rail = cells.sprites.find((c) => c.name === "rail")!.trackset!;
-    const src = await sheet(decls[String(rail.ground)].file.replace(/^sprites\/png\//, ""));
-    const ovl = await sheet("infrastructure/infra06.png");
-    const px = (raw: Raw, x: number, y: number) => {
-      const i = (y * raw.info.width + x) * 4;
-      return [raw.data[i], raw.data[i + 1], raw.data[i + 2], raw.data[i + 3]] as const;
-    };
-    // rail_0000 is exactly the declared grass ground tile. The grass sheet's
-    // page background is white (removed by the slicer's border-white flood),
-    // so white counts as transparent here too.
-    const g = decls[String(rail.ground)];
-    const s0 = manifest.sprites.rail_0000;
-    const gone = (r: number, gg: number, b: number, a: number) =>
-      keyed(r, gg, b, a) || (r > 250 && gg > 250 && b > 250);
-    for (let y = 0; y < g.h; y++) {
-      for (let x = 0; x < g.w; x++) {
-        const [r, gg, b, a] = px(src, g.x + x, g.y + y);
-        const ai = ((s0.y + y) * info.width + (s0.x + x)) * 4;
-        expect(data[ai + 3] === 0, `rail_0000 (${x},${y})`).toBe(gone(r, gg, b, a));
+    for (let mask = 1; mask < 16; mask++) {
+      const key = `dirt_${mask.toString(2).padStart(4, "0")}`;
+      const road = manifest.sprites[`road_${mask.toString(2).padStart(4, "0")}`];
+      const d = manifest.sprites[key];
+      expect(d, key).toBeTruthy();
+      expect([d.w, d.h], key).toEqual([road.w, road.h]);
+      let colourDiffer = 0;
+      for (let y = 0; y < d.h; y++) {
+        for (let x = 0; x < d.w; x++) {
+          const ri = ((road.y + y) * info.width + (road.x + x)) * 4;
+          const di = ((d.y + y) * info.width + (d.x + x)) * 4;
+          const roadOpaque = data[ri + 3] > 0;
+          const dirtOpaque = data[di + 3] > 0;
+          expect(dirtOpaque, `${key} alpha vs road at (${x},${y})`).toBe(roadOpaque);
+          if (roadOpaque && (data[ri] !== data[di] || data[ri + 1] !== data[di + 1] || data[ri + 2] !== data[di + 2])) {
+            colourDiffer++;
+          }
+        }
       }
+      expect(colourDiffer, `${key} must be a gravel recolor, not the tar road`).toBeGreaterThan(50);
     }
-    // rail_0101 (NE|SW) carries the declared 1005 overlay at its declared offset.
-    const piece = rail.pieces!.find((p) => p.sprite === 1005)!;
-    const d = decls["1005"];
-    const s = manifest.sprites.rail_0101;
-    let overlayPixels = 0;
-    for (let y = 0; y < d.h; y++) {
-      for (let x = 0; x < d.w; x++) {
-        const [r, gg, b, a] = px(ovl, d.x + x, d.y + y);
-        if (keyed(r, gg, b, a)) continue;
-        // overlay pixel lands at cell (xrel+x, yrel+y) shifted by the cell origin
-        const cx = d.xrel + x + 31, cy = d.yrel + y;
-        const ai = ((s.y + cy) * info.width + (s.x + cx)) * 4;
-        if (data[ai + 3] > 0 && data[ai] === r && data[ai + 1] === gg && data[ai + 2] === b) overlayPixels++;
-      }
-    }
-    expect(piece).toBeTruthy();
-    expect(overlayPixels, "declared rail overlay pixels present in rail_0101").toBeGreaterThan(200);
   });
 
   it("terrain sprites have no fully-opaque white bottom row", async () => {

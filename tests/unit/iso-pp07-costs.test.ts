@@ -38,8 +38,8 @@ const AI_BUILD_MS = 9000;
 // ══════════════════════════════════════════════════════════════════════════
 describe("PP-07 one authoritative cost table", () => {
   it("prices every buildable exactly as the ticket proposes", () => {
-    expect(BUILD_COSTS.road).toEqual({ wood: 1, stone: 1 });
-    expect(BUILD_COSTS.rail).toEqual({ wood: 1, stone: 1, ore: 4 });
+    expect(BUILD_COSTS.dirt).toEqual({ wood: 1, stone: 1 });
+    expect(BUILD_COSTS.road).toEqual({ wood: 1, stone: 1, ore: 4 });
     expect(BUILD_COSTS.upgrade).toEqual({ ore: 4 });
     expect(BUILD_COSTS.depot).toEqual({ wood: 1, stone: 1, grain: 1, oil: 1 });
     expect(BUILD_COSTS.plant).toEqual({ wood: 2, stone: 2, grain: 2, ore: 3 });
@@ -47,8 +47,8 @@ describe("PP-07 one authoritative cost table", () => {
 
   it("is the SAME object every surface reads — no copies to drift", () => {
     // track pricing (gameplay: previewDrag/tileCost; AI: planCandidates)
+    expect(TRANSPORT.dirt.cost).toBe(BUILD_COSTS.dirt);
     expect(TRANSPORT.road.cost).toBe(BUILD_COSTS.road);
-    expect(TRANSPORT.rail.cost).toBe(BUILD_COSTS.rail);
     expect(UPGRADE_COST).toBe(BUILD_COSTS.upgrade);
     // the Depot price (placement, HUD, AI, tile probe)
     expect(DEPOT_COST).toBe(BUILD_COSTS.depot);
@@ -83,12 +83,12 @@ describe("PP-07 Catan-style resource roles", () => {
 
   it("gives wood, stone, grain, ore and oil each a useful role", () => {
     // basic infrastructure
-    expect(usedBy("wood")).toEqual(expect.arrayContaining(["road", "depot", "plant"]));
-    expect(usedBy("stone")).toEqual(expect.arrayContaining(["road", "depot", "plant"]));
+    expect(usedBy("wood")).toEqual(expect.arrayContaining(["dirt", "depot", "plant"]));
+    expect(usedBy("stone")).toEqual(expect.arrayContaining(["dirt", "depot", "plant"]));
     // workforce and expansion
     expect(usedBy("grain")).toEqual(expect.arrayContaining(["depot", "plant"]));
     // industrial investment and better transport
-    expect(usedBy("ore")).toEqual(expect.arrayContaining(["rail", "upgrade", "plant"]));
+    expect(usedBy("ore")).toEqual(expect.arrayContaining(["road", "upgrade", "plant"]));
     // depot expansion
     expect(usedBy("oil")).toEqual(["depot"]);
   });
@@ -97,13 +97,13 @@ describe("PP-07 Catan-style resource roles", () => {
     expect(usedBy("gold")).toEqual([]);
   });
 
-  it("keeps rail an upgrade over road, not a side-grade", () => {
-    // rail costs everything road does, plus ore
-    for (const [c, n] of Object.entries(BUILD_COSTS.road) as [Cargo, number][]) {
-      expect(BUILD_COSTS.rail[c] ?? 0).toBeGreaterThanOrEqual(n);
+  it("keeps road an upgrade over dirt, not a side-grade", () => {
+    // road costs everything dirt does, plus ore
+    for (const [c, n] of Object.entries(BUILD_COSTS.dirt) as [Cargo, number][]) {
+      expect(BUILD_COSTS.road[c] ?? 0).toBeGreaterThanOrEqual(n);
     }
-    expect(BUILD_COSTS.rail.ore ?? 0).toBeGreaterThan(0);
-    expect(BUILD_COSTS.road.ore ?? 0).toBe(0);
+    expect(BUILD_COSTS.road.ore ?? 0).toBeGreaterThan(0);
+    expect(BUILD_COSTS.dirt.ore ?? 0).toBe(0);
     // and the in-place upgrade is exactly the difference
     expect(BUILD_COSTS.upgrade).toEqual({ ore: 4 });
   });
@@ -123,7 +123,7 @@ describe("PP-07 opening progression on the real map", () => {
 
   /**
    * Play the opening on a real generated map: a factory with a viable first
-   * plan, the free depot + free road connection, then processing income until
+   * plan, the free depot + free dirt connection, then processing income until
    * the second depot and the second plant are affordable.
    *
    * Income model (the floor, not the ceiling): each round banks +1 per cargo
@@ -147,7 +147,7 @@ describe("PP-07 opening progression on the real map", () => {
     const purse: Record<string, number> = { ...START_PURSE };
     let free = FREE_SETUP_TRACK, freeDepots = FREE_SETUP_DEPOTS;
 
-    // first connection: the free depot + (mostly free) road, one AI tick
+    // first connection: the free depot + (mostly free) dirt, one AI tick
     const out1 = aiBuildStep(
       eco, f, { stock: { ...purse }, purse, free, freeDepots }, 1,
     );

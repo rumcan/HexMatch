@@ -290,7 +290,7 @@ describe("E14 the corridor picker finds a corridor by real geometry", () => {
     eco.factories.push({ owner: "you", ownerId: 1, tx: c.fx, ty: c.fy });
     eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: c.hx, ty: c.hy });
     const net = playerNetwork(track, 1, eco.factories, eco.harvesters);
-    const pv = previewDrag(grid, track, "road", { stone: 12 }, c.fx, c.fy, c.hx, c.hy, true, net, 12);
+    const pv = previewDrag(grid, track, "dirt", { stone: 12 }, c.fx, c.fy, c.hx, c.hy, true, net, 12);
     expect(pv.truncated).toBe(false);
     expect(pv.tiles).toHaveLength(c.tiles);
     expect(pv.cost).toEqual({});

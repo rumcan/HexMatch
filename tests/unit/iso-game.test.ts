@@ -67,10 +67,10 @@ interface IsoHook {
   /** W8: the twin of the setup click that places your factory (and seeds the rival's). */
   placeFactory: (tx: number, ty: number) => boolean;
   dragBuild: (
-    kind: "road" | "rail", ax: number, ay: number, bx: number, by: number,
+    kind: "dirt" | "road", ax: number, ay: number, bx: number, by: number,
     xFirst?: boolean,
   ) => import("../../src/iso/track").DragPreview | null;
-  /** PP-13: the twin of a demolish click (road salvage, public-road refusal). */
+  /** PP-13: the twin of a demolish click (dirt salvage, public-dirt refusal). */
   demolish: (tx: number, ty: number) => void;
   aiTick: (now?: number) => void;
   econTick: (now?: number) => void;
@@ -139,7 +139,7 @@ describe("E11 the game boots", () => {
     const tools = [...root.querySelectorAll("[data-tool]")].map(
       (b) => (b as HTMLElement).dataset.tool);
     // PP-06 added the "plant" tool (an additional processing plant).
-    expect(tools).toEqual(["road", "rail", "harvester", "plant", "demolish"]);
+    expect(tools).toEqual(["dirt", "road", "harvester", "plant", "demolish"]);
   });
 
   it("starts in the factory-placement phase with a real map", async () => {
@@ -172,7 +172,7 @@ describe("E11 the game boots", () => {
 
 /**
  * Find an industry whose SOUTH corridor is legal: the harvester tile just
- * below its footprint plus 6 road tiles under it all stay inside the map and
+ * below its footprint plus 6 dirt tiles under it all stay inside the map and
  * off water. The map is 32×32 and generated under a RANDOM seed each boot, so
  * `industries[0]` alone is not safe — when it sits near the bottom edge the
  * factory tile lands at fy ≥ MAP_H and the round can never score (a flaky
@@ -203,7 +203,7 @@ function findSouthCorridor(
 }
 
 /**
- * A 2×2 road-legal spot (the factory footprint) scanning from the map's
+ * A 2×2 dirt-legal spot (the factory footprint) scanning from the map's
  * interior outward. MT-2 moved every industry, so the old hard-coded factory
  * tiles (e.g. (23,22)) can now sit inside a mine's footprint — find one that
  * the real `placeFactory` will accept instead.
@@ -228,7 +228,7 @@ function findFactorySpot(grid: import("../../src/iso/grid").Grid): [number, numb
   return null;
 }
 
-/** A 2×2 road-legal factory spot within a small ring of an industry of `type`. */
+/** A 2×2 dirt-legal factory spot within a small ring of an industry of `type`. */
 function findFactorySpotNear(
   grid: import("../../src/iso/grid").Grid, type: string, excludeId = -1,
 ): [number, number] | null {
@@ -286,13 +286,13 @@ describe("E11 a full round is playable", () => {
     expect(isServiced(h.track, harv)).toBe(false);
     expect(rescore(h.eco, score)).toEqual([]);
 
-    // lay a road from the harvester to the factory (W2: owned by "you")
-    for (let y = hy + 1; y <= fy; y++) buildTile(h.track, "road", hx, y, 1);
+    // lay a dirt from the harvester to the factory (W2: owned by "you")
+    for (let y = hy + 1; y <= fy; y++) buildTile(h.track, "dirt", hx, y, 1);
     expect(isServiced(h.track, harv)).toBe(true);
 
     const events = rescore(h.eco, score);
     expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({ type: "awarded", to: "road", delta: 1 });
+    expect(events[0]).toMatchObject({ type: "awarded", to: "dirt", delta: 1 });
     expect(vpFor(score, "you")).toBe(1);
   });
 
@@ -306,12 +306,12 @@ describe("E11 a full round is playable", () => {
     const { hx, hy, fy } = c!;
     h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx, ty: fy });
     h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy });
-    for (let y = hy + 1; y <= fy; y++) buildTile(h.track, "road", hx, y, 1);
+    for (let y = hy + 1; y <= fy; y++) buildTile(h.track, "dirt", hx, y, 1);
 
     const before = playerResources(h.eco, "you", 0);
     expect(Object.keys(before).length).toBeGreaterThan(0);
 
-    demolishTile(h.track, "road", hx, hy + 3);   // cut it mid-path
+    demolishTile(h.track, "dirt", hx, hy + 3);   // cut it mid-path
     expect(playerResources(h.eco, "you", 0)).toEqual({});
   });
 
@@ -323,7 +323,7 @@ describe("E11 a full round is playable", () => {
     let spot: [number, number] | null = null;
     for (let y = 10; y < 38 && !spot; y++)
       for (let x = 10; x < 38 && !spot; x++)
-        if (canBuildOn(h.grid, "road", x, y)) spot = [x, y];
+        if (canBuildOn(h.grid, "dirt", x, y)) spot = [x, y];
     expect(spot).toBeTruthy();
 
     const f = { owner: "ai", ownerId: 2, tx: spot![0], ty: spot![1] };
@@ -399,7 +399,7 @@ function makeRun(board: Board, res: ResKey, r: number, c: number, token?: Gem) {
   board.grid[r][c + 2]!.res = ALT(res);
 }
 
-/** Connect a harvester to a factory with road, the way the pointer path does. */
+/** Connect a harvester to a factory with dirt, the way the pointer path does. */
 async function connectedBoot() {
   const h = await boot();
   const { buildTile } = await import("../../src/iso/track");
@@ -408,7 +408,7 @@ async function connectedBoot() {
   const { hx, hy, fy } = c!;
   h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx, ty: fy });
   h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy });
-  for (let y = hy + 1; y <= fy; y++) buildTile(h.track, "road", hx, y, 1);
+  for (let y = hy + 1; y <= fy; y++) buildTile(h.track, "dirt", hx, y, 1);
   h.refreshQuarry();      // the game runs this on every build and demolish
   return { h, corridor: { hx, hy, fy } };
 }
@@ -429,7 +429,7 @@ describe("J1 the quarry is mounted in the iso app", () => {
     const tools = [...root.querySelectorAll("[data-tool]")].map(
       (b) => (b as HTMLElement).dataset.tool);
     // PP-06 added the "plant" tool (an additional processing plant).
-    expect(tools).toEqual(["road", "rail", "harvester", "plant", "demolish"]);
+    expect(tools).toEqual(["dirt", "road", "harvester", "plant", "demolish"]);
     const panels = [...root.querySelectorAll("[data-panel]")].map(
       (b) => (b as HTMLElement).dataset.panel);
     expect(panels).toEqual([]);
@@ -497,9 +497,9 @@ describe("J1 the quarry is mounted in the iso app", () => {
     const tok = tokens[0];
     const cargo = GEM_TO_CARGO[tok.res];
 
-    // demolish the road mid-corridor; the game rescores (and re-gates) on demolish
+    // demolish the dirt mid-corridor; the game rescores (and re-gates) on demolish
     const { demolishTile } = await import("../../src/iso/track");
-    demolishTile(h.track, "road", corridor.hx, corridor.hy + 3);
+    demolishTile(h.track, "dirt", corridor.hx, corridor.hy + 3);
     h.refreshQuarry();
 
     expect(h.reach).toEqual({});
@@ -623,7 +623,7 @@ describe("W1 the drag charges exactly what it previewed", () => {
   it("an unaffordable drag builds the affordable prefix; nothing goes negative", async () => {
     const h = await boot();
     const { hasTrack } = await import("../../src/iso/track");
-    // a clear south column of 15 tiles (harvester + 14 road tiles) below an
+    // a clear south column of 15 tiles (harvester + 14 dirt tiles) below an
     // industry — found, not hard-coded, since MT-2 reshaped the map.
     const c = findSouthCorridor(h.grid, 14);
     expect(c).toBeTruthy();
@@ -633,7 +633,7 @@ describe("W1 the drag charges exactly what it previewed", () => {
     h.finishSetup();
 
     // Burn 11 of the 12 free setup tiles on one drag — the purse is untouched.
-    const pv1 = h.dragBuild("road", hx, hy + 1, hx, hy + 11);
+    const pv1 = h.dragBuild("dirt", hx, hy + 1, hx, hy + 11);
     expect(pv1).toBeTruthy();
     expect(pv1!.free).toBe(11);
     expect(h.freeTrack).toBe(1);
@@ -643,10 +643,10 @@ describe("W1 the drag charges exactly what it previewed", () => {
 
     // Now the purse pays. 1 free tile + 1 wood + 1 stone can buy 2 of the
     // next 3 — the third tile is the unaffordable remainder, shown but never
-    // built. (PP-07: a road tile costs wood AND stone; the wood rides the
+    // built. (PP-07: a dirt tile costs wood AND stone; the wood rides the
     // starting stock, the stone is the binding constraint.)
     h.purse.stone = 1;
-    const pv2 = h.dragBuild("road", hx, hy + 12, hx, hy + 14);
+    const pv2 = h.dragBuild("dirt", hx, hy + 12, hx, hy + 14);
     expect(pv2).toBeTruthy();
     expect(pv2!.tiles).toHaveLength(2);
     expect(pv2!.unaffordable).toEqual([[hx, hy + 14]]);   // the blocked tail
@@ -657,9 +657,9 @@ describe("W1 the drag charges exactly what it previewed", () => {
     expect(h.purse.stone).toBe(0);
     expect(h.purse.wood).toBe(11);        // 12 starting wood, 1 tile charged
     expect(h.freeTrack).toBe(0);
-    expect(hasTrack(h.track, "road", hx, hy + 12)).toBe(true);
-    expect(hasTrack(h.track, "road", hx, hy + 13)).toBe(true);
-    expect(hasTrack(h.track, "road", hx, hy + 14)).toBe(false);
+    expect(hasTrack(h.track, "dirt", hx, hy + 12)).toBe(true);
+    expect(hasTrack(h.track, "dirt", hx, hy + 13)).toBe(true);
+    expect(hasTrack(h.track, "dirt", hx, hy + 14)).toBe(false);
     // "no purse value ever negative" — every cargo key, checked, not inferred
     for (const c of CARGOES) expect(h.purse[c] ?? 0, `${c} went negative`).toBeGreaterThanOrEqual(0);
   });
@@ -677,7 +677,7 @@ describe("W3 the rival actually plays (headless)", () => {
     expect(c).toBeTruthy();
     h.eco.factories.push({ owner: "you", ownerId: 1, tx: c!.hx, ty: c!.fy });
     h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: c!.hx, ty: c!.hy });
-    for (let y = c!.hy + 1; y <= c!.fy; y++) buildTile(h.track, "road", c!.hx, y, 1);
+    for (let y = c!.hy + 1; y <= c!.fy; y++) buildTile(h.track, "dirt", c!.hx, y, 1);
     h.finishSetup();
 
     // The rival's factory goes next to an ORE mine (its ore trickle is what the
@@ -745,7 +745,7 @@ describe("W3 the rival actually plays (headless)", () => {
     // rival's first build takes id 1 — a colliding id would make `rescore`
     // attribute the rival's connection to this harvester's entry.
     h.eco.harvesters.push({ id: 100, owner: "you", ownerId: 1, tx: c!.hx, ty: c!.hy });
-    for (let y = c!.hy + 1; y <= c!.fy; y++) buildTile(h.track, "road", c!.hx, y, 1);
+    for (let y = c!.hy + 1; y <= c!.fy; y++) buildTile(h.track, "dirt", c!.hx, y, 1);
     h.finishSetup();
 
     const rivalSpot = findFactorySpotNear(h.grid, "ore_mine", c!.ind.id);
@@ -797,24 +797,24 @@ describe("W3 the rival actually plays (headless)", () => {
 });
 
 describe("W8 the rival is placed where it can build — and builds", () => {
-  it("the real setup click hands the rival a rail-legal tile with a viable plan", async () => {
+  it("the real setup click hands the rival a road-legal tile with a viable plan", async () => {
     const h = await boot();
     const { canBuildOn } = await import("../../src/iso/track");
     const { canReachASpot } = await import("./helpers/rival-map");
     // The ticket's regression guard: the rival must never be handed a tile no
     // track can leave. On the seed-1337 map the (0,0) water corner is such an
-    // unreachable tile (its road-legal component reaches no harvester).
+    // unreachable tile (its dirt-legal component reaches no harvester).
     const spot = findFactorySpot(h.grid);
     expect(spot).toBeTruthy();
     const [fx, fy] = spot!;
-    expect(canBuildOn(h.grid, "road", fx, fy)).toBe(true);
+    expect(canBuildOn(h.grid, "dirt", fx, fy)).toBe(true);
     expect(canReachASpot(h.grid, 0, 0)).toBe(false);
     expect(h.placeFactory(fx, fy)).toBe(true);
 
     const rival = h.factories.find((f) => f.owner === "ai");
     expect(rival).toBeTruthy();
-    // rail-legal (flat, off water, off any footprint) and NOT an enclave…
-    expect(canBuildOn(h.grid, "rail", rival!.tx, rival!.ty)).toBe(true);
+    // road-legal (flat, off water, off any footprint) and NOT an enclave…
+    expect(canBuildOn(h.grid, "road", rival!.tx, rival!.ty)).toBe(true);
     expect(canReachASpot(h.grid, rival!.tx, rival!.ty)).toBe(true);
     expect([rival!.tx, rival!.ty]).not.toEqual([0, 0]);
     // …and still a good distance from the player, as before
@@ -841,24 +841,24 @@ describe("W8 the rival is placed where it can build — and builds", () => {
   }, 10_000);
 });
 
-describe("W9 the free setup allowance buys road, not rail", () => {
-  it("a rail drag with 12 free tiles and no ore lays nothing and burns no allowance", async () => {
+describe("W9 the free setup allowance buys dirt, not road", () => {
+  it("a road drag with 12 free tiles and no ore lays nothing and burns no allowance", async () => {
     const h = await boot();
     const { canBuildOn, hasTrack } = await import("../../src/iso/track");
-    // five consecutive rail-legal tiles to drag along (rail needs flat ground).
+    // five consecutive road-legal tiles to drag along (road needs flat ground).
     // PP-02: the drag's origin is also the Factory's 2×2 footprint, and a
     // Factory must touch a town by an edge — so search the whole map for a
-    // town-adjacent, rail-legal run whose origin footprint is legal ground
+    // town-adjacent, road-legal run whose origin footprint is legal ground
     // (town-adjacent flat runs exist near every town, not in the old 16×16 box).
     let line: [number, number] | null = null;
     for (let y = 2; y < MAP_H - 3 && !line; y++) {
       for (let x = 2; x < MAP_W - 5 && !line; x++) {
         let ok = true;
-        for (let k = 0; k < 5; k++) if (!canBuildOn(h.grid, "rail", x + k, y)) ok = false;
+        for (let k = 0; k < 5; k++) if (!canBuildOn(h.grid, "road", x + k, y)) ok = false;
         // the whole 2×2 factory footprint at the line's origin must be legal
         for (let dy = 0; dy < 2 && ok; dy++) {
           for (let dx = 0; dx < 2; dx++) {
-            if (!canBuildOn(h.grid, "road", x + dx, y + dy)) { ok = false; break; }
+            if (!canBuildOn(h.grid, "dirt", x + dx, y + dy)) { ok = false; break; }
           }
         }
         if (ok && !factoryTouchesTown(h.grid, x, y)) ok = false;
@@ -872,37 +872,37 @@ describe("W9 the free setup allowance buys road, not rail", () => {
     expect(h.freeTrack).toBe(12);
     expect(h.purse.ore ?? 0).toBe(0);
 
-    // rail with the full allowance and no ore: refused, allowance untouched.
+    // road with the full allowance and no ore: refused, allowance untouched.
     // This is the W9 bug — it used to lay all 5 tiles for free.
-    const rail = h.dragBuild("rail", fx, fy, fx + 4, fy);
-    expect(rail === null || rail.tiles.length === 0).toBe(true);
+    const road = h.dragBuild("road", fx, fy, fx + 4, fy);
+    expect(road === null || road.tiles.length === 0).toBe(true);
     expect(h.freeTrack).toBe(12);
     expect(h.purse.ore ?? 0).toBe(0);
-    expect(hasTrack(h.track, "rail", fx, fy)).toBe(false);
+    expect(hasTrack(h.track, "road", fx, fy)).toBe(false);
 
-    // road from the same tile still rides the allowance exactly as before
-    const road = h.dragBuild("road", fx, fy, fx + 4, fy);
-    expect(road).toBeTruthy();
-    expect(road!.tiles).toHaveLength(5);
-    expect(road!.free).toBe(5);
+    // dirt from the same tile still rides the allowance exactly as before
+    const dirt = h.dragBuild("dirt", fx, fy, fx + 4, fy);
+    expect(dirt).toBeTruthy();
+    expect(dirt!.tiles).toHaveLength(5);
+    expect(dirt!.free).toBe(5);
     expect(h.purse.stone).toBe(12);              // nothing charged
     expect(h.freeTrack).toBe(7);
 
-    // and rail becomes buildable the moment ore exists — charged, never free
+    // and road becomes buildable the moment ore exists — charged, never free
     h.purse.ore = 40;
-    const up = h.dragBuild("rail", fx, fy, fx + 4, fy);
+    const up = h.dragBuild("road", fx, fy, fx + 4, fy);
     expect(up).toBeTruthy();
     expect(up!.tiles).toHaveLength(5);
     expect(up!.free).toBe(0);
     expect(up!.cost).toEqual({ ore: 20 });       // 5 in-place upgrades × 4 ore
     expect(h.purse.ore).toBe(20);
-    expect(h.freeTrack).toBe(7);                 // rail ate no allowance
-    for (let k = 0; k < 5; k++) expect(hasTrack(h.track, "rail", fx + k, fy)).toBe(true);
+    expect(h.freeTrack).toBe(7);                 // road ate no allowance
+    for (let k = 0; k < 5; k++) expect(hasTrack(h.track, "road", fx + k, fy)).toBe(true);
   }, 10_000);
 });
 
-describe("W4 a normal session earns the rail", () => {
-  it("road → ore mine → harvest ore → the rail tile is affordable", async () => {
+describe("W4 a normal session earns the road", () => {
+  it("dirt → ore mine → harvest ore → the road tile is affordable", async () => {
     const h = await boot();
     const { buildTile, hasTrack, canAfford } = await import("../../src/iso/track");
     // an ore mine with a clean south corridor, found on the live grid (MT-2
@@ -912,7 +912,7 @@ describe("W4 a normal session earns the rail", () => {
     const { hx, hy, fy } = c!;
     h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx, ty: fy });
     h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy });
-    for (let y = hy + 1; y <= fy; y++) buildTile(h.track, "road", hx, y, 1);
+    for (let y = hy + 1; y <= fy; y++) buildTile(h.track, "dirt", hx, y, 1);
     h.finishSetup();
     h.refreshQuarry();
 
@@ -932,19 +932,19 @@ describe("W4 a normal session earns the rail", () => {
       await h.board.settle();
     }
     // The W4 numbers (documented per the ticket): ore_mine output 0.8 → a
-    // tier-1 token worth 1 ore every UPGRADE_EVERY (20s); rail = 1 wood +
+    // tier-1 token worth 1 ore every UPGRADE_EVERY (20s); road = 1 wood +
     // 1 stone + 4 ore per tile; start purse {wood 12, stone 12, ore 0}.
-    // So ~4 token matches (≈80s of play) buy the first rail tile's ore —
+    // So ~4 token matches (≈80s of play) buy the first road tile's ore —
     // the wood/stone ride the starting stock. No economy adjustment needed.
     expect(h.purse.ore ?? 0).toBeGreaterThanOrEqual(4);
-    expect(canAfford(h.purse, TRANSPORT.rail.cost)).toBe(true);
+    expect(canAfford(h.purse, TRANSPORT.road.cost)).toBe(true);
 
-    // and the game lets you lay it over the corridor: the rail goes down as
-    // the settled in-place upgrade of a corridor road tile, which is exactly
+    // and the game lets you lay it over the corridor: the road goes down as
+    // the settled in-place upgrade of a corridor dirt tile, which is exactly
     // "laying it over the corridor".
-    const pv = h.dragBuild("rail", hx, fy - 1, hx, fy - 1);
+    const pv = h.dragBuild("road", hx, fy - 1, hx, fy - 1);
     expect(pv).toBeTruthy();
-    expect(hasTrack(h.track, "rail", hx, fy - 1)).toBe(true);
+    expect(hasTrack(h.track, "road", hx, fy - 1)).toBe(true);
   });
 });
 
@@ -986,7 +986,7 @@ describe("TK-008 Blockade buys auto-target the rival (no targeting step)", () =>
     const { buildTile } = await import("../../src/iso/track");
     const { playerResources } = await import("../../src/iso/economy");
 
-    // Give the rival a real corridor: harvester below an industry, road down
+    // Give the rival a real corridor: harvester below an industry, dirt down
     // to its factory (ownerId 2), so the industry is yielding for the rival.
     const c = findSouthCorridor(h.grid);
     expect(c).toBeTruthy();
@@ -994,7 +994,7 @@ describe("TK-008 Blockade buys auto-target the rival (no targeting step)", () =>
     expect(ind).toBeTruthy();
     h.eco.factories.push({ owner: "ai", ownerId: 2, tx: hx, ty: fy });
     h.eco.harvesters.push({ id: 1, owner: "ai", ownerId: 2, tx: hx, ty: hy });
-    for (let y = hy + 1; y <= fy; y++) buildTile(h.track, "road", hx, y, 2);
+    for (let y = hy + 1; y <= fy; y++) buildTile(h.track, "dirt", hx, y, 2);
     const now0 = performance.now();
     expect(Object.keys(playerResources(h.eco, "ai", now0)).length).toBeGreaterThan(0);
 
@@ -1164,11 +1164,11 @@ describe("W6 the market is visible and trades are logged", () => {
   });
 });
 
-describe("D2/D3 road building feedback and debug overlay toggle", () => {
-  it("shows a toast explaining why a road click/drag is refused on non-adjacent ground", async () => {
+describe("D2/D3 dirt building feedback and debug overlay toggle", () => {
+  it("shows a toast explaining why a dirt click/drag is refused on non-adjacent ground", async () => {
     const h = await boot();
     h.finishSetup();
-    h.setTool("road");
+    h.setTool("dirt");
 
     const canvas = root.querySelectorAll("canvas.iso-layer")[2] as HTMLCanvasElement;
     expect(canvas).toBeTruthy();
@@ -1237,7 +1237,7 @@ describe("PP-01 terminology: Processing Plant + Depot", () => {
   it("leaves the internal identifiers (save compatibility) unchanged", async () => {
     const h = await boot();
     expect(h.phase).toBe("setup-factory");
-    expect(h.tool).toBe("road");
+    expect(h.tool).toBe("dirt");
     h.finishSetup();
     expect(h.phase).toBe("play");
     // the snapshot/eco shape the save format depends on
@@ -1319,9 +1319,9 @@ describe("PP-03 footprint vs reach placement feedback (wired game)", () => {
   });
 });
 
-// ── PP-13: demolishing a road salvages one of the two materials it cost ────
-describe("PP-13 road demolition refunds", () => {
-  /** A bare stretch of the player's own road, away from any structure. */
+// ── PP-13: demolishing a dirt salvages one of the two materials it cost ────
+describe("PP-13 dirt demolition refunds", () => {
+  /** A bare stretch of the player's own dirt, away from any structure. */
   async function ownRoadTile(h: IsoHook): Promise<[number, number]> {
     const { buildTile } = await import("../../src/iso/track");
     for (let ty = 10; ty < MAP_H - 10; ty++) {
@@ -1329,11 +1329,11 @@ describe("PP-13 road demolition refunds", () => {
         if (h.grid.occupancy[ty * MAP_W + tx] !== -1) continue;
         if (h.grid.terrain[ty * MAP_W + tx] === WATER) continue;
         if (h.eco.harvesters.some((d) => d.tx === tx && d.ty === ty)) continue;
-        buildTile(h.track, "road", tx, ty, 1);
+        buildTile(h.track, "dirt", tx, ty, 1);
         return [tx, ty];
       }
     }
-    throw new Error("no free tile for a road");
+    throw new Error("no free tile for a dirt");
   }
 
   it("hands back exactly 1 Wood or 1 Stone — never both, never nothing", async () => {
@@ -1345,7 +1345,7 @@ describe("PP-13 road demolition refunds", () => {
     setRng(() => 0);
     const w0 = h.purse.wood ?? 0, s0 = h.purse.stone ?? 0;
     h.demolish(tx, ty);
-    expect(hasTrack(h.track, "road", tx, ty)).toBe(false);
+    expect(hasTrack(h.track, "dirt", tx, ty)).toBe(false);
     expect((h.purse.wood ?? 0) - w0).toBe(1);
     expect((h.purse.stone ?? 0) - s0).toBe(0);
 
@@ -1358,55 +1358,65 @@ describe("PP-13 road demolition refunds", () => {
     expect((h.purse.wood ?? 0) - w1).toBe(0);
   }, 20_000);
 
-  it("pays nothing for rail, and nothing when there is no track to lift", async () => {
+  it("pays nothing for a paved Road, and refunds one material for a Dirt Road", async () => {
     const h = await boot();
     const { buildTile, hasTrack } = await import("../../src/iso/track");
-    const [tx, ty] = await ownRoadTile(h);
-    buildTile(h.track, "rail", tx, ty, 1);      // rail over the road: rail wins
+    // Paving a Road CLEARS the Dirt Road beneath it (a tile holds one tier),
+    // so lay a paved Road on its own: demolishing it refunds nothing — its
+    // price is dominated by 4 Ore, and the dirt→road pave is what upgrades
+    // are for.
+    const [rx, ry] = await ownRoadTile(h);
+    buildTile(h.track, "road", rx, ry, 1);
 
     const before = { ...h.purse };
-    h.demolish(tx, ty);
-    expect(hasTrack(h.track, "rail", tx, ty)).toBe(false);
+    h.demolish(rx, ry);
+    expect(hasTrack(h.track, "road", rx, ry)).toBe(false);
     expect(h.purse.wood).toBe(before.wood);
     expect(h.purse.stone).toBe(before.stone);
 
-    // the road underneath is still the player's, so a second click lifts it —
-    // and THAT one does refund, which is the rule, not a leak.
+    // a Dirt Road, in contrast, salvages one of its two materials — and once
+    // the ground is empty a further click refunds nothing at all.
+    const [dx, dy] = await ownRoadTile(h);
     setRng(() => 0);
-    h.demolish(tx, ty);
+    h.demolish(dx, dy);
     expect((h.purse.wood ?? 0) - (before.wood ?? 0)).toBe(1);
+    const w = h.purse.wood ?? 0;
+    setRng(() => 0);
+    h.demolish(dx, dy);                 // nothing left to lift
+    expect((h.purse.wood ?? 0) - w).toBe(0);
   }, 20_000);
 
   it("refuses to demolish a public highway, and refunds nothing for it", async () => {
     const h = await boot();
     const { PUBLIC_OWNER, hasTrack } = await import("../../src/iso/track");
-    const roads = h.grid.publicRoads ?? [];
-    expect(roads.length).toBeGreaterThan(0);
-    const [tx, ty] = roads[0];
+    const dirts = h.grid.publicRoads ?? [];
+    expect(dirts.length).toBeGreaterThan(0);
+    const [tx, ty] = dirts[0];
     expect(h.track.owner[ty * MAP_W + tx]).toBe(PUBLIC_OWNER);
 
     const before = { ...h.purse };
     h.demolish(tx, ty);
-    expect(hasTrack(h.track, "road", tx, ty), "a public road must survive").toBe(true);
+    // the highways live on the paved `road` tier; it must survive untouched.
+    expect(hasTrack(h.track, "road", tx, ty), "a public paved road must survive").toBe(true);
     expect(h.track.owner[ty * MAP_W + tx]).toBe(PUBLIC_OWNER);
     expect(h.purse.wood).toBe(before.wood);
     expect(h.purse.stone).toBe(before.stone);
   }, 20_000);
 });
 
-// ── RV-03: town roads are public, so the depot→factory truck route can run ──
-// over a settlement, and the depot-hover draws the CLOSEST road route the truck
+// ── RV-03: town dirts are public, so the depot→factory truck route can run ──
+// over a settlement, and the depot-hover draws the CLOSEST dirt route the truck
 // will actually drive (re-checked after every build/demolish).
-describe("RV-03 town roads and the closest truck route", () => {
+describe("RV-03 town dirts and the closest truck route", () => {
   const sorted = (ts: [number, number][]) =>
     [...ts].map(([x, y]) => [x, y] as [number, number]).sort((a, b) =>
       a[0] - b[0] || a[1] - b[1]);
 
-  /** A depot and factory beside ONE town ring road, with a road corridor laid. */
+  /** A depot and factory beside ONE town ring dirt, with a dirt corridor laid. */
   async function depotOnTownRoad(): Promise<IsoHook> {
     const h = await boot();
     const { buildTile } = await import("../../src/iso/track");
-    // free buildable neighbour of a town road tile
+    // free buildable neighbour of a town dirt tile
     const free = (nx: number, ny: number) =>
       nx >= 0 && ny >= 0 && nx < MAP_W && ny < MAP_H
       && h.grid.terrain[ny * MAP_W + nx] !== WATER
@@ -1424,17 +1434,17 @@ describe("RV-03 town roads and the closest truck route", () => {
       }
       if (found) break;
     }
-    expect(found, "a town road needs two free neighbours").toBe(true);
+    expect(found, "a town dirt needs two free neighbours").toBe(true);
     h.eco.factories.push({ owner: "you", ownerId: 1, tx: fx, ty: fy });
     h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy });
     return h;
   }
 
-  it("a depot beside a TOWN road is serviced, and its truck routes over the town", async () => {
+  it("a depot beside a TOWN ring road is serviced, and its truck routes over the town", async () => {
     const h = await depotOnTownRoad();
     const { isServiced } = await import("../../src/iso/economy");
     const dep = h.eco.harvesters[0];
-    // no player road laid yet — the depot must already be serviced purely
+    // no player dirt laid yet — the depot must already be serviced purely
     // because the town ring beside it is public (RV-03).
     expect(isServiced(h.track, dep)).toBe(true);
     // ...and the game exposes a real truck route for it, over public tiles.
@@ -1457,14 +1467,14 @@ describe("RV-03 town roads and the closest truck route", () => {
     expect(h.overlayItemsFor(5, 5).filter((i) => i.sprite === "highlight_soft")).toHaveLength(0);
   });
 
-  it("re-checks the route on build: empty before a road, then the closest route", async () => {
+  it("re-checks the route on build: empty before a dirt, then the closest route", async () => {
     const h = await boot();
     const { canBuildOn } = await import("../../src/iso/track");
     // a real industry with a legal south corridor (depot above, factory below)
     const c = findSouthCorridor(h.grid);
     expect(c).toBeTruthy();
     const { hx, hy, fy } = c!;
-    expect(canBuildOn(h.grid, "road", hx, hy)).toBe(true);
+    expect(canBuildOn(h.grid, "dirt", hx, hy)).toBe(true);
     h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx, ty: fy });
     h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy });
     h.finishSetup();
@@ -1473,10 +1483,10 @@ describe("RV-03 town roads and the closest truck route", () => {
     expect(h.routeForDepot(hx, hy)).toBeNull();
     expect(h.overlayItemsFor(hx, hy).filter((i) => i.sprite === "highlight_soft")).toHaveLength(0);
 
-    // build the road corridor depot → factory through the GAME's commit path
+    // build the dirt corridor depot → factory through the GAME's commit path
     // (drive the real drag so `rescoreNow` bumps `netVersion` and the hover
     // route cache is dropped — the re-check the ticket asks for).
-    const d = h.dragBuild("road", hx, hy + 1, hx, fy);
+    const d = h.dragBuild("dirt", hx, hy + 1, hx, fy);
     expect(d).toBeTruthy();
     expect(d!.tiles.length).toBe(fy - hy);
 
@@ -1488,7 +1498,7 @@ describe("RV-03 town roads and the closest truck route", () => {
     expect(route).toBeTruthy();
     expect(route.length).toBe(fy - hy - 1);
     for (const [x, y] of route) {
-      expect(h.track.owner[y * MAP_W + x]).toBe(1);   // the player's own road
+      expect(h.track.owner[y * MAP_W + x]).toBe(1);   // the player's own dirt
     }
     const soft = h.overlayItemsFor(hx, hy).filter((i) => i.sprite === "highlight_soft");
     expect(sorted(soft.map((i) => [i.tx, i.ty] as [number, number])))
@@ -1603,7 +1613,7 @@ describe("A1 Black Market sabotage lands on the rival", () => {
 describe("A1 a lorry arrival is a delivery", () => {
   it("mints a token on a gem and pops +N over the Factory, in the same moment", async () => {
     const h = await boot();
-    // the shortest corridor that still connects: depot → 2 road tiles → factory.
+    // the shortest corridor that still connects: depot → 2 dirt tiles → factory.
     // A short route keeps the wait real but small (TRUCK_SPEED is 1 tile / 300ms).
     const c = findSouthCorridor(h.grid, 3);
     expect(c).toBeTruthy();
@@ -1612,7 +1622,7 @@ describe("A1 a lorry arrival is a delivery", () => {
     h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy });
     h.finishSetup();                                  // the delivery clock only runs in play
     // the REAL build path: it rescores, which is what replans the lorries
-    expect(h.dragBuild("road", hx, hy + 1, hx, fy - 1)).toBeTruthy();
+    expect(h.dragBuild("dirt", hx, hy + 1, hx, fy - 1)).toBeTruthy();
     h.refreshQuarry(performance.now());
 
     const tokens = () => h.board.gems().filter((g) => g.tier > 0).length;

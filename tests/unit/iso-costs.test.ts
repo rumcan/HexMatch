@@ -26,17 +26,19 @@ import { canAfford, createTrack, tileCost } from "../../src/iso/track";
 
 describe("PP-07 the ticket's suggested first playtest costs", () => {
   it("prices the five purchases exactly as the table proposes", () => {
-    expect(BUILD_COSTS.road).toEqual({ wood: 1, stone: 1 });
-    expect(BUILD_COSTS.rail).toEqual({ wood: 1, stone: 1, ore: 4 });
+    // The game is de-railwayed into two road tiers: `dirt` (basic gravel) and
+    // `road` (premium paved). dirt = 1 Wood + 1 Stone; road = + 4 Ore.
+    expect(BUILD_COSTS.dirt).toEqual({ wood: 1, stone: 1 });
+    expect(BUILD_COSTS.road).toEqual({ wood: 1, stone: 1, ore: 4 });
     expect(BUILD_COSTS.upgrade).toEqual({ ore: 4 });
     expect(BUILD_COSTS.depot).toEqual({ wood: 1, stone: 1, grain: 1, oil: 1 });
     expect(BUILD_COSTS.plant).toEqual({ wood: 2, stone: 2, grain: 2, ore: 3 });
   });
 
   it("the in-place upgrade is the difference, so upgrading never double-pays", () => {
-    // rail = road + the upgrade difference (wood/stone already in the ground)
+    // road (paved) = dirt + the upgrade difference (wood/stone already laid)
     for (const [cargo, v] of Object.entries(BUILD_COSTS.upgrade)) {
-      expect(BUILD_COSTS.rail[cargo as keyof typeof BUILD_COSTS.rail]).toBe(v);
+      expect(BUILD_COSTS.road[cargo as keyof typeof BUILD_COSTS.road]).toBe(v);
     }
   });
 });
@@ -47,9 +49,9 @@ describe("PP-07 one table feeds every consumer", () => {
     // `planCandidates`/`executeCandidate` (the rival) both ask — and it reads
     // the table at call time, so there is no second number to drift.
     const t = createTrack();
+    expect(tileCost(t, "dirt", 3, 3)).toEqual(BUILD_COSTS.dirt);
     expect(tileCost(t, "road", 3, 3)).toEqual(BUILD_COSTS.road);
-    expect(tileCost(t, "rail", 3, 3)).toEqual(BUILD_COSTS.rail);
-    expect(tileCost(t, "rail", 3, 3).ore).toBe(4);
+    expect(tileCost(t, "road", 3, 3).ore).toBe(4);
   });
 
   it("PLANT_COST is the table's plant entry", () => {
@@ -110,8 +112,9 @@ describe("PP-07 the opening can never deadlock on its own costs", () => {
 
   it("the setup allowance still rides road only, and covers the first connection", () => {
     expect(FREE_SETUP_TRACK).toBeGreaterThanOrEqual(12);
-    // road is the only transport the allowance may buy (W9 gate, unchanged)
-    expect(canAfford(START_PURSE, BUILD_COSTS.rail)).toBe(false); // no ore at spawn
+    // dirt is the only transport the allowance may buy (W9 gate, unchanged);
+    // a paved Road needs ore the opening purse cannot have
+    expect(canAfford(START_PURSE, BUILD_COSTS.road)).toBe(false); // no ore at spawn
     expect(START_PURSE.ore ?? 0).toBe(0);
   });
 

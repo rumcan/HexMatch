@@ -1,5 +1,5 @@
 // ══════════════════════════════════════════════════════════════════════════
-// RV-01 — road vehicles: the little TTD goods lorry that proves a network.
+// RV-01 — dirt vehicles: the little TTD goods lorry that proves a network.
 //
 // When a Depot reaches a Factory by ROAD the game now sends a truck down the
 // exact tile route the connection flood found — and drives it up and down,
@@ -12,15 +12,15 @@
 //   * `roadPath` walks the same graph `economy.buildComponents` floods —
 //     trackOpenTo tiles (own + public, never the rival's), mutual direction
 //     bits only — but returns the actual tile route;
-//   * `planTrucks` turns each serviced depot's road connection into one truck
-//     PER DEPOT (bound to its depot, never switching), and refuses rail-only
+//   * `planTrucks` turns each serviced depot's dirt connection into one truck
+//     PER DEPOT (bound to its depot, never switching), and refuses road-only
 //     connections and unserviced depots;
 //   * `tickTrucks` drives the route and reflects at both ends (ping-pong);
 //   * the draw item carries a FRACTIONAL tile position and the right
 //     directional TTD sprite, depth-sorts by the rounded tile, and is never
 //     pickable (a truck is not a clickable thing);
 //   * the atlas ships the four OpenGFX lorry views (2nd-gen goods truck,
-//     spr3132 in base-3092-road-vehicles.pnml).
+//     spr3132 in base-3092-dirt-vehicles.pnml).
 // ══════════════════════════════════════════════════════════════════════════
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
@@ -54,9 +54,9 @@ const DIR4: [number, number][] = [[0, -1], [1, 0], [0, 1], [-1, 0]];
 /** A 1-tile-every-600ms lorry: easy numbers to tick against. */
 const TICK = 1 / TRUCK_SPEED; // ms per tile (300)
 
-/** Lay a run of road tiles, each stamped `owner`, autotiled. */
+/** Lay a run of dirt tiles, each stamped `owner`, autotiled. */
 function pave(t: Track, owner: number, tiles: [number, number][]) {
-  for (const [x, y] of tiles) buildTile(t, "road", x, y, owner);
+  for (const [x, y] of tiles) buildTile(t, "dirt", x, y, owner);
 }
 
 // ── the atlas ships the truck ─────────────────────────────────────────────
@@ -114,10 +114,10 @@ describe("RV-01 roadPath", () => {
     ]);
   });
 
-  it("respects mutual direction bits (a half-connected tile is not a road)", () => {
+  it("respects mutual direction bits (a half-connected tile is not a dirt)", () => {
     const t = highwayFixture(1, PUBLIC_OWNER, 1);
     // cut P1's facing bit: present, but it no longer agrees with A
-    t.road[tIdx(3, 10)] = PRESENT;
+    t.dirt[tIdx(3, 10)] = PRESENT;
     expect(roadPath(t, 1, [[2, 10]], new Set([idx(5, 10)]))).toBeNull();
   });
 
@@ -132,28 +132,28 @@ describe("RV-01 roadPath", () => {
 describe("RV-01 planTrucks", () => {
   /**
    * seed 1337: two far-apart highway shoulders on the SAME player-drivable
-   * component. The highway chains meet only through town ring roads, which
+   * component. The highway chains meet only through town ring dirts, which
    * are furniture (owner 0) a player cannot drive — so the fixture floods
    * the drivable graph exactly like the economy does and picks one chain.
    */
   function highwayEnds(g: Grid, track: Track): {
     depot: [number, number]; factory: [number, number];
-    roadA: [number, number]; roadB: [number, number];
+    dirtA: [number, number]; dirtB: [number, number];
   } {
-    const roads = g.publicRoads ?? [];
+    const dirts = g.publicRoads ?? [];
     const free = (tx: number, ty: number) =>
       inBounds(tx, ty) && g.terrain[idx(tx, ty)] !== WATER
       && g.occupancy[idx(tx, ty)] === -1
-      && !hasTrack(track, "road", tx, ty) && !hasTrack(track, "rail", tx, ty);
+      && !hasTrack(track, "dirt", tx, ty) && !hasTrack(track, "road", tx, ty);
     // flood one drivable public component (mutual bits, owner 1's eyes)
     const seen = new Set<number>();
-    const start = tIdx(roads[0][0], roads[0][1]);
+    const start = tIdx(dirts[0][0], dirts[0][1]);
     seen.add(start);
     for (const queue = [start]; queue.length;) {
       const i = queue.pop()!;
       const x = i % 144, y = (i / 144) | 0;
       for (const d of DIRS) {
-        if (!(bitsAt(track, "road", x, y) & d)) continue;
+        if (!(bitsAt(track, "road", x, y) & d)) continue;   // public roads are paved
         const nx = x + DIR[d][0], ny = y + DIR[d][1];
         if (!(bitsAt(track, "road", nx, ny) & OPPOSITE[d])) continue;
         const ni = tIdx(nx, ny);
@@ -178,8 +178,8 @@ describe("RV-01 planTrucks", () => {
         > Math.abs(b[0] - a[0]) + Math.abs(b[1] - a[1])) b = s;
     }
     return {
-      roadA: [a[0], a[1]], depot: [a[2], a[3]],
-      roadB: [b[0], b[1]], factory: [b[2], b[3]],
+      dirtA: [a[0], a[1]], depot: [a[2], a[3]],
+      dirtB: [b[0], b[1]], factory: [b[2], b[3]],
     };
   }
 
@@ -189,7 +189,7 @@ describe("RV-01 planTrucks", () => {
     return { grid: g, track, harvesters, factories };
   }
 
-  it("drives depot → factory with NO player road at all — the highway is the route", () => {
+  it("drives depot → factory with NO player dirt at all — the highway is the route", () => {
     const g = generateMap(1337);
     const track = createTrack();
     seedTownRoads(track, g);
@@ -212,7 +212,7 @@ describe("RV-01 planTrucks", () => {
     expect(manh(route[route.length - 1], factory)).toBe(1);
 
     // every tile is drivable by owner 1, mutually connected, and at least one
-    // tile is a PUBLIC highway — the shared road is doing the joining
+    // tile is a PUBLIC highway — the shared paved road is doing the joining
     let publicTiles = 0;
     for (let k = 0; k < route.length; k++) {
       const [x, y] = route[k];
@@ -254,7 +254,7 @@ describe("RV-01 planTrucks", () => {
     expect(trucks[1].route.some(([x, y]) => mine.has(tIdx(x, y)))).toBe(true);
   });
 
-  it("drives the player's OWN road when that is the connection", () => {
+  it("drives the player's OWN dirt when that is the connection", () => {
     const g = generateMap(1337);
     const track = createTrack();
     seedTownRoads(track, g);
@@ -269,14 +269,14 @@ describe("RV-01 planTrucks", () => {
     expect(trucks[0].route).toEqual([[10, 10], [10, 11], [10, 12]]);
   });
 
-  it("sends no truck to an unserviced depot or a rail-only connection", () => {
+  it("sends no truck to an unserviced depot, but serves both Dirt and paved Roads", () => {
     const g = generateMap(1337);
     const track = createTrack();
     seedTownRoads(track, g);
     seedPublicRoads(track, g);
 
-    // a land tile none of whose neighbours carry drivable road for owner 1
-    const roadless = (): [number, number] => {
+    // a land tile none of whose neighbours carry drivable dirt for owner 1
+    const dirtless = (): [number, number] => {
       for (let y = 0; y < MAP_H; y++) {
         for (let x = 0; x < MAP_W; x++) {
           if (g.terrain[idx(x, y)] === WATER || g.occupancy[idx(x, y)] !== -1) continue;
@@ -285,25 +285,27 @@ describe("RV-01 planTrucks", () => {
           }
         }
       }
-      throw new Error("no roadless tile");
+      throw new Error("no dirtless tile");
     };
-    const [dx0, dy0] = roadless();
-    const [fx0, fy0] = roadless();
+    const [dx0, dy0] = dirtless();
+    const [fx0, fy0] = dirtless();
     expect(planTrucks(eco(g, track,
       [{ id: 1, owner: "you", ownerId: 1, tx: dx0, ty: dy0 }],
       [{ owner: "you", ownerId: 1, tx: fx0, ty: fy0 }],
     ))).toEqual([]);
 
-    // rail-connected: trains are not this ticket. Same corridor, both layers,
-    // so `resolveConnection` answers "rail" and the lorry stays in the depot.
-    pave(track, 1, [[10, 10], [10, 11], [10, 12]]);
+    // both tiers are served: a depot connected by a PAVED Road gets its lorry
+    // just like one on a Dirt Road (de-railwayed: no tier is "trains only").
+    pave(track, 1, [[10, 10], [10, 11], [10, 12]]);    // dirt corridor first
     for (const [x, y] of [[10, 10], [10, 11], [10, 12]] as [number, number][]) {
-      buildTile(track, "rail", x, y, 1);
+      buildTile(track, "road", x, y, 1);               // pave it in place
     }
-    expect(planTrucks(eco(g, track,
+    const trucks = planTrucks(eco(g, track,
       [{ id: 1, owner: "you", ownerId: 1, tx: 10, ty: 9 }],
       [{ owner: "you", ownerId: 1, tx: 10, ty: 13 }],
-    ))).toEqual([]);
+    ));
+    expect(trucks).toHaveLength(1);
+    expect(trucks[0].route).toEqual([[10, 10], [10, 11], [10, 12]]);
   });
 
   it("gives EVERY serviced depot its own truck (never a single shared one)", () => {
@@ -334,18 +336,18 @@ describe("RV-01 planTrucks", () => {
     expect(byStart.get("20,10")).toBeTruthy();
   });
 
-  it("routes a truck over a town's ring road (public now, RV-03)", () => {
+  it("routes a truck over a town's ring dirt (public now, RV-03)", () => {
     const g = generateMap(1337);
     const track = createTrack();
     seedTownRoads(track, g);          // town rings are PUBLIC_OWNER now
-    // find a town road tile with TWO free, buildable neighbours, one for the
+    // find a town dirt tile with TWO free, buildable neighbours, one for the
     // depot and one for the factory — so the route runs over the settlement's
-    // own ring road.
+    // own ring dirt.
     const free = (nx: number, ny: number) =>
       inBounds(nx, ny)
       && g.terrain[(ny * MAP_W) + nx] !== WATER
       && g.occupancy[(ny * MAP_W) + nx] === -1
-      && !hasTrack(track, "road", nx, ny);
+      && !hasTrack(track, "dirt", nx, ny);
     let hx = 0, hy = 0, fx = 0, fy = 0, found = false;
     for (const t of g.towns) {
       for (const [tx, ty] of t.roads) {
@@ -363,7 +365,7 @@ describe("RV-01 planTrucks", () => {
       }
       if (found) break;
     }
-    expect(found, "a town road needs two free neighbours").toBe(true);
+    expect(found, "a town dirt needs two free neighbours").toBe(true);
     const trucks = planTrucks(eco(g, track,
       [{ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy }],
       [{ owner: "you", ownerId: 1, tx: fx, ty: fy }],
@@ -371,12 +373,12 @@ describe("RV-01 planTrucks", () => {
     expect(trucks.length).toBe(1);
     const route = trucks[0].route;
     expect(route.length).toBeGreaterThan(0);
-    // every tile of the route is drivable by owner 1 (the town road is public)
+    // every tile of the route is drivable by owner 1 (the town dirt is public)
     for (const [x, y] of route) expect(trackOpenTo(track, 1, x, y)).toBe(true);
     expect(route.some(([x, y]) => isPublicRoad(track, x, y))).toBe(true);
   });
 
-  it("roadRouteForHarvester returns the route for a depot, null for rail/unserviced", () => {
+  it("roadRouteForHarvester serves both tiers and returns null only when unserviced", () => {
     const g = generateMap(1337);
     const track = createTrack();
     seedTownRoads(track, g);
@@ -386,15 +388,20 @@ describe("RV-01 planTrucks", () => {
       [{ id: 1, owner: "you", ownerId: 1, tx: 10, ty: 9 }],
       [{ owner: "you", ownerId: 1, tx: 10, ty: 13 }],
     );
-    // road route exists
+    // Dirt Road route exists
     expect(roadRouteForHarvester(state, state.harvesters[0])).toEqual([
       [10, 10], [10, 11], [10, 12],
     ]);
-    // rail-only (road removed → rail over the same corridor): no road truck
-    pave(track, 1, [[10, 10], [10, 11], [10, 12]]);
+    // paving that corridor to a Road keeps it serviced — a paved connection
+    // is still a served road (no tier is "trains only")
     for (const [x, y] of [[10, 10], [10, 11], [10, 12]] as [number, number][]) {
-      buildTile(track, "rail", x, y, 1);
+      buildTile(track, "road", x, y, 1);
     }
+    expect(roadRouteForHarvester(state, state.harvesters[0])).toEqual([
+      [10, 10], [10, 11], [10, 12],
+    ]);
+    // an unserviced depot (factory torn down) still yields null
+    state.factories = [];
     expect(roadRouteForHarvester(state, state.harvesters[0])).toBeNull();
   });
 });
@@ -511,26 +518,26 @@ describe("RV-01 truck draw items", () => {
     expect(after.key).toBe(4 + 10 + 0.5);
   });
 
-  it("sorts ABOVE the road tiles it drives over, at every phase of a leg", () => {
-    // The RV-02 flash: the moving key tied with the road tile's integer key
-    // and the height tie-break let the road paint OVER the lorry for most of
+  it("sorts ABOVE the dirt tiles it drives over, at every phase of a leg", () => {
+    // The RV-02 flash: the moving key tied with the dirt tile's integer key
+    // and the height tie-break let the dirt paint OVER the lorry for most of
     // every leg. The +0.5 bias must make the truck strictly later than the
-    // road it is mostly on, and later than BOTH end roads once past the
+    // dirt it is mostly on, and later than BOTH end dirts once past the
     // midpoint of the leg.
-    const roadA = place(atlas, { sprite: "road_0011", tx: 3, ty: 10 })!;
-    const roadB = place(atlas, { sprite: "road_0011", tx: 4, ty: 10 })!;
-    expect(roadA.key).toBe(13);
-    expect(roadB.key).toBe(14);
+    const dirtA = place(atlas, { sprite: "dirt_0011", tx: 3, ty: 10 })!;
+    const dirtB = place(atlas, { sprite: "dirt_0011", tx: 4, ty: 10 })!;
+    expect(dirtA.key).toBe(13);
+    expect(dirtB.key).toBe(14);
     for (const [fx, afterBoth] of [[3.2, false], [3.7, true], [4.1, true], [4.6, true]] as const) {
       const truck = place(atlas, {
         sprite: "truck_goods_se", tx: 3, ty: 10, fx, fy: 10,
       })!;
       expect(truck.key, `fx=${fx}`).toBe(Math.round(fx) + 10 + 0.5);
-      // later than the road it is leaving, always
-      expect(tier1Compare(truck, roadA), `fx=${fx} vs source road`).toBeGreaterThan(0);
-      // later than the destination road too, once mostly onto it
+      // later than the dirt it is leaving, always
+      expect(tier1Compare(truck, dirtA), `fx=${fx} vs source dirt`).toBeGreaterThan(0);
+      // later than the destination dirt too, once mostly onto it
       if (afterBoth) {
-        expect(tier1Compare(truck, roadB), `fx=${fx} vs destination road`).toBeGreaterThan(0);
+        expect(tier1Compare(truck, dirtB), `fx=${fx} vs destination dirt`).toBeGreaterThan(0);
       }
     }
   });

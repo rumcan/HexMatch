@@ -10,7 +10,7 @@ import { canReachASpot, rivalSearchTiles } from "./helpers/rival-map";
 // W8/T4: cheap structural reachability covers the full even-step search
 // space; expensive real planning uses a bounded, deterministic spatial sample.
 // With 25 industries spread over 144×144, not every legal tile can reach one
-// on the opening 12 wood + 12 stone + 12 free road tiles. The structural build sweep
+// on the opening 12 wood + 12 stone + 12 free dirt tiles. The structural build sweep
 // therefore removes the purse limit. Rival placement is tested SEPARATELY
 // below with the unchanged opening purse, and must return a viable first turn.
 
@@ -49,7 +49,7 @@ function play(grid: Grid, x: number, y: number, turns: number): SweepRow {
     // PP-05: Oil joins the unlimited funds. Four turns place up to four
     // Depots, and only the first rides the free allowance — the rest are paid,
     // so a purse this test calls "sufficient" has to cover `DEPOT_COST` too.
-    // PP-07: road costs Wood and the Depot costs Grain as well, so both join
+    // PP-07: dirt costs Wood and the Depot costs Grain as well, so both join
     // the unlimited funds — "sufficient" stays "able to finish any turn".
     const out = aiBuildStep(eco, f, {
       ...rivalOpts(),
@@ -69,13 +69,13 @@ function play(grid: Grid, x: number, y: number, turns: number): SweepRow {
 }
 
 describe("W8 sweep — legal rival tiles are structurally playable", () => {
-  it("seed 1337: the full search space has no road-buildable enclaves", () => {
+  it("seed 1337: the full search space has no dirt-buildable enclaves", () => {
     const grid = generateMap(1337);
     const enclaves = rivalSearchTiles(grid).filter(([x, y]) => !canReachASpot(grid, x, y));
     expect(enclaves).toEqual([]);
   });
 
-  it("seed 1337: four turns from sampled non-enclaves build with sufficient road funds", () => {
+  it("seed 1337: four turns from sampled non-enclaves build with sufficient dirt funds", () => {
     const grid = generateMap(1337);
     const tiles = rivalSearchTiles(grid, SAMPLE_STEP);
     expect(tiles.length).toBeGreaterThan(10);
@@ -150,21 +150,21 @@ describe("W8 sweep — every candidate returned is executable and viable", () =>
 });
 
 describe("W8 sweep — the rival is never placed on a tile it cannot build from", () => {
-  it("every player placement yields a rail-legal, reachable rival tile", () => {
+  it("every player placement yields a road-legal, reachable rival tile", () => {
     const grid = generateMap(1337);
     const opts = { purse: { wood: 12, stone: 12, ore: 0 }, free: 12, ownerId: 2 };
     let checked = 0;
     // Placement uses the real opening purse, unlike the funded route sweep.
     for (let y = 2; y < MAP_H - 2; y += SAMPLE_STEP) {
       for (let x = 2; x < MAP_W - 2; x += SAMPLE_STEP) {
-        if (!canBuildOn(grid, "road", x, y)) continue;
+        if (!canBuildOn(grid, "dirt", x, y)) continue;
         const spot = chooseRivalFactorySpot(grid, createTrack(), [x, y], opts);
         expect(spot, `player at ${x},${y}`).toBeTruthy();
         // two factories never share a tile — and the player's tile IS in this
         // search space, so the explicit exclusion is what keeps them apart
-        // (distance is only the second sort key now that rail-legality leads).
+        // (distance is only the second sort key now that road-legality leads).
         expect(spot, `rival on the player's own tile ${x},${y}`).not.toEqual([x, y]);
-        expect(canBuildOn(grid, "rail", spot![0], spot![1]), `rail illegal at ${spot}`).toBe(true);
+        expect(canBuildOn(grid, "road", spot![0], spot![1]), `road illegal at ${spot}`).toBe(true);
         expect(canReachASpot(grid, spot![0], spot![1]), `enclave at ${spot}`).toBe(true);
         const f: Factory = { owner: "ai", ownerId: 2, tx: spot![0], ty: spot![1] };
         const eco: EconomyState = { grid, track: createTrack(), factories: [f], harvesters: [] };

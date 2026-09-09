@@ -67,8 +67,8 @@ export function terrainSprite(grid: Grid, tx: number, ty: number): string {
 /** Structures currently on the map, as a draw list (pre-cull). */
 export interface World {
   grid: Grid;
-  roadBits?: Uint8Array;   // E5 — optional until the track model lands
-  railBits?: Uint8Array;
+  roadBits?: Uint8Array;   // E5 — the premium paved layer (drawn with road_XXXX tar)
+  dirtBits?: Uint8Array;   // E5 — the basic gravel layer (drawn with dirt_XXXX)
   extra?: DrawItem[];      // stations, previews owned by the caller
   /**
    * RV-01: moving sprites (trucks), refreshed by the game every frame.
@@ -88,16 +88,16 @@ const bitName = (prefix: string, cell: number) =>
 export function buildDrawList(world: World, r: { x0: number; y0: number; x1: number; y1: number }): DrawItem[] {
   const out: DrawItem[] = [];
   const { grid } = world;
-  // road/rail are flush to the ground and 1×1 — they sort naturally.
+  // Both road tiers are flush to the ground and 1×1 — they sort naturally.
+  // A tile carries at most ONE tier (paving replaces dirt), so nothing here
+  // needs a crossing overlay — the old road+rail "crossing" is gone.
   for (let ty = r.y0; ty <= r.y1; ty++) {
     for (let tx = r.x0; tx <= r.x1; tx++) {
       const i = ty * MAP_W + tx;
-      const rb = world.roadBits?.[i] ?? 0;
-      const kb = world.railBits?.[i] ?? 0;
+      const rb = world.roadBits?.[i] ?? 0;    // premium paved → road_XXXX (tar)
+      const db = world.dirtBits?.[i] ?? 0;    // basic gravel   → dirt_XXXX
+      if (db) out.push({ sprite: bitName("dirt", db), tx, ty });
       if (rb) out.push({ sprite: bitName("road", rb), tx, ty });
-      if (kb) out.push({ sprite: bitName("rail", kb), tx, ty });
-      // G6: a tile carrying both layers draws a third sprite on top.
-      if (rb && kb) out.push({ sprite: "crossing", tx, ty });
     }
   }
   // PP-12: each industry is ONE verbatim TTD building sprite, drawn as a single

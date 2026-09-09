@@ -45,7 +45,7 @@ const state = (grid: Grid, track: Track = createTrack()): EconomyState =>
 const F: Factory = { owner: "ai", ownerId: 0, tx: 5, ty: 5 };
 // PP-05: "rich" means able to finish a turn, and a turn now ends at a Depot
 // that costs Oil — so Oil belongs in the unlimited purse with stone and ore.
-// PP-07: road/rail cost Wood too and the Depot costs Grain as well, so both
+// PP-07: dirt/road cost Wood too and the Depot costs Grain as well, so both
 // join the unlimited purse — "rich" stays "able to finish any turn".
 const rich = { wood: 9999, stone: 9999, grain: 9999, ore: 9999, oil: 9999 };
 
@@ -54,8 +54,8 @@ describe("E7 step cost", () => {
     const grid = flatGrid();
     grid.terrain[tIdx(4, 4)] = ROUGH;
     const t = createTrack();
-    expect(stepCost(grid, t, "road", 3, 3)).toBe(COST_FLAT);
-    expect(stepCost(grid, t, "road", 4, 4)).toBe(COST_ROUGH);
+    expect(stepCost(grid, t, "dirt", 3, 3)).toBe(COST_FLAT);
+    expect(stepCost(grid, t, "dirt", 4, 4)).toBe(COST_ROUGH);
   });
 
   it("makes water and industry footprints impassable", () => {
@@ -63,33 +63,33 @@ describe("E7 step cost", () => {
     const grid = flatGrid([farm]);
     grid.terrain[tIdx(3, 3)] = WATER;
     const t = createTrack();
-    expect(stepCost(grid, t, "road", 3, 3)).toBe(Infinity);
-    expect(stepCost(grid, t, "road", 10, 10)).toBe(Infinity);
-    expect(stepCost(grid, t, "road", -1, 0)).toBe(Infinity);
+    expect(stepCost(grid, t, "dirt", 3, 3)).toBe(Infinity);
+    expect(stepCost(grid, t, "dirt", 10, 10)).toBe(Infinity);
+    expect(stepCost(grid, t, "dirt", -1, 0)).toBe(Infinity);
   });
 
-  it("blocks rail on rough where road passes", () => {
+  it("blocks road on rough where dirt passes", () => {
     const grid = flatGrid();
     grid.terrain[tIdx(4, 4)] = ROUGH;
     const t = createTrack();
-    expect(stepCost(grid, t, "rail", 4, 4)).toBe(Infinity);
-    expect(stepCost(grid, t, "road", 4, 4)).toBe(COST_ROUGH);
+    expect(stepCost(grid, t, "road", 4, 4)).toBe(Infinity);
+    expect(stepCost(grid, t, "dirt", 4, 4)).toBe(COST_ROUGH);
   });
 
   it("discounts tiles already carrying the AI's own network by 0.3×", () => {
     const grid = flatGrid();
     const t = createTrack();
-    buildTile(t, "road", 6, 6);
-    expect(stepCost(grid, t, "road", 6, 6)).toBeCloseTo(COST_FLAT * COST_OWNED, 6);
+    buildTile(t, "dirt", 6, 6);
+    expect(stepCost(grid, t, "dirt", 6, 6)).toBeCloseTo(COST_FLAT * COST_OWNED, 6);
     // ...and the discount is layer-specific
-    expect(stepCost(grid, t, "rail", 6, 6)).toBe(COST_FLAT);
+    expect(stepCost(grid, t, "road", 6, 6)).toBe(COST_FLAT);
   });
 });
 
 describe("E7 A*", () => {
   it("finds the shortest straight path and reports its cost", () => {
     const grid = flatGrid();
-    const p = findPath(grid, createTrack(), "road", 5, 5, 10, 5)!;
+    const p = findPath(grid, createTrack(), "dirt", 5, 5, 10, 5)!;
     expect(p).toBeTruthy();
     expect(p.tiles[0]).toEqual([5, 5]);
     expect(p.tiles.at(-1)).toEqual([10, 5]);
@@ -100,7 +100,7 @@ describe("E7 A*", () => {
   it("routes around water rather than failing", () => {
     const grid = flatGrid();
     for (let y = 0; y <= 6; y++) grid.terrain[tIdx(8, y)] = WATER;
-    const p = findPath(grid, createTrack(), "road", 5, 5, 12, 5)!;
+    const p = findPath(grid, createTrack(), "dirt", 5, 5, 12, 5)!;
     expect(p).toBeTruthy();
     for (const [x, y] of p.tiles) expect(grid.terrain[tIdx(x, y)]).not.toBe(WATER);
     expect(p.tiles.at(-1)).toEqual([12, 5]);
@@ -109,7 +109,7 @@ describe("E7 A*", () => {
   it("returns null when the target is walled off entirely", () => {
     const grid = flatGrid();
     for (let y = 0; y < MAP_H; y++) grid.terrain[tIdx(8, y)] = WATER;
-    expect(findPath(grid, createTrack(), "road", 5, 5, 12, 5)).toBeNull();
+    expect(findPath(grid, createTrack(), "dirt", 5, 5, 12, 5)).toBeNull();
   });
 
   it("detours around rough when the detour is genuinely cheaper", () => {
@@ -118,7 +118,7 @@ describe("E7 A*", () => {
     // costs 1+1+1 = 3 for the same net progress, so the detour must not be
     // MORE expensive — assert on cost, not on which tiles were chosen.
     grid.terrain[tIdx(7, 5)] = ROUGH;
-    const p = findPath(grid, createTrack(), "road", 5, 5, 9, 5)!;
+    const p = findPath(grid, createTrack(), "dirt", 5, 5, 9, 5)!;
     expect(p.cost).toBeLessThanOrEqual(3 * COST_FLAT + COST_ROUGH);
   });
 
@@ -127,7 +127,7 @@ describe("E7 A*", () => {
     // Detouring around a 3-tall wall costs 4 extra steps; crossing one rough
     // tile costs 2 extra. Crossing is correct and A* must find it.
     for (const y of [4, 5, 6]) grid.terrain[tIdx(7, y)] = ROUGH;
-    const p = findPath(grid, createTrack(), "road", 5, 5, 9, 5)!;
+    const p = findPath(grid, createTrack(), "dirt", 5, 5, 9, 5)!;
     expect(p.cost).toBe(3 * COST_FLAT + COST_ROUGH);
     expect(p.tiles.some(([x, y]) => grid.terrain[tIdx(x, y)] === ROUGH)).toBe(true);
   });
@@ -136,7 +136,7 @@ describe("E7 A*", () => {
     const grid = flatGrid();
     // one rough tile with clear flat ground either side of a 2-wide corridor
     grid.terrain[tIdx(6, 5)] = ROUGH;
-    const p = findPath(grid, createTrack(), "road", 5, 5, 7, 5)!;
+    const p = findPath(grid, createTrack(), "dirt", 5, 5, 7, 5)!;
     // straight through costs 1+3=4; around via y=4 costs 1+1+1+1=4 — either
     // is optimal, but the path must never cost more than the cheapest option
     expect(p.cost).toBeLessThanOrEqual(4);
@@ -145,9 +145,9 @@ describe("E7 A*", () => {
   it("reuses an existing trunk line thanks to the 0.3× discount", () => {
     const grid = flatGrid();
     const t = createTrack();
-    // an existing road along y=8 ; a detour onto it should beat a straight run
-    for (let x = 5; x <= 20; x++) buildTile(t, "road", x, 8);
-    const p = findPath(grid, t, "road", 5, 8, 20, 8)!;
+    // an existing dirt along y=8 ; a detour onto it should beat a straight run
+    for (let x = 5; x <= 20; x++) buildTile(t, "dirt", x, 8);
+    const p = findPath(grid, t, "dirt", 5, 8, 20, 8)!;
     // the whole path is on the trunk, so it costs 15 * 0.3, not 15
     expect(p.cost).toBeCloseTo(15 * COST_FLAT * COST_OWNED, 6);
   });
@@ -155,8 +155,8 @@ describe("E7 A*", () => {
   it("can stop beside an impassable goal with adjacentTo", () => {
     const farm = ind("farm", 10, 10);
     const grid = flatGrid([farm]);
-    expect(findPath(grid, createTrack(), "road", 5, 10, 10, 10)).toBeNull();
-    const p = findPath(grid, createTrack(), "road", 5, 10, 10, 10, true)!;
+    expect(findPath(grid, createTrack(), "dirt", 5, 10, 10, 10)).toBeNull();
+    const p = findPath(grid, createTrack(), "dirt", 5, 10, 10, 10, true)!;
     expect(p).toBeTruthy();
     const [lx, ly] = p.tiles.at(-1)!;
     expect(Math.abs(lx - 10) + Math.abs(ly - 10)).toBe(1);
@@ -164,14 +164,14 @@ describe("E7 A*", () => {
 
   it("is deterministic — identical inputs give an identical path", () => {
     const grid = generateMap(31337);
-    const a = findPath(grid, createTrack(), "road", 4, 4, 40, 40);
-    const b = findPath(grid, createTrack(), "road", 4, 4, 40, 40);
+    const a = findPath(grid, createTrack(), "dirt", 4, 4, 40, 40);
+    const b = findPath(grid, createTrack(), "dirt", 4, 4, 40, 40);
     expect(a?.tiles).toEqual(b?.tiles);
     expect(a?.cost).toBe(b?.cost);
   });
 
   it("handles the degenerate same-tile path", () => {
-    const p = findPath(flatGrid(), createTrack(), "road", 5, 5, 5, 5)!;
+    const p = findPath(flatGrid(), createTrack(), "dirt", 5, 5, 5, 5)!;
     expect(p.tiles).toEqual([[5, 5]]);
     expect(p.cost).toBe(0);
   });
@@ -214,7 +214,7 @@ describe("E7 scoring", () => {
   });
 
   it("falls back to the factory when the network is empty", () => {
-    expect(networkTiles(createTrack(), "road", F)).toEqual([[5, 5]]);
+    expect(networkTiles(createTrack(), "dirt", F)).toEqual([[5, 5]]);
   });
 
   it("nearestSource picks by Manhattan distance, deterministically", () => {
@@ -245,22 +245,22 @@ describe("E7 planning", () => {
     expect(plan[0].industry).toBe(near);
   });
 
-  it("builds road when it cannot afford rail", () => {
+  it("builds dirt when it cannot afford road", () => {
     const grid = flatGrid([ind("farm", 10, 5)]);
-    // enough wood/stone for road, no ore at all → rail is unaffordable.
+    // enough wood/stone for dirt, no ore at all → road is unaffordable.
     // PP-05/PP-07: the Depot's own cost (1 grain + 1 oil alongside wood/stone)
     // is covered, so the Depot is affordable and the transport choice stays
     // the thing under test.
     const plan = planCandidates(state(grid), F, { stock: {}, purse: { wood: 50, stone: 50, grain: 1, oil: 1 } });
     expect(plan.length).toBeGreaterThan(0);
-    expect(plan.every((c) => c.kind === "road")).toBe(true);
-    expect(TRANSPORT.rail.cost.ore).toBeGreaterThan(0);
+    expect(plan.every((c) => c.kind === "dirt")).toBe(true);
+    expect(TRANSPORT.road.cost.ore).toBeGreaterThan(0);
   });
 
-  it("uses rail when it can afford it", () => {
+  it("uses road when it can afford it", () => {
     const grid = flatGrid([ind("farm", 10, 5)]);
     const plan = planCandidates(state(grid), F, { stock: {}, purse: rich });
-    expect(plan[0].kind).toBe("rail");
+    expect(plan[0].kind).toBe("road");
   });
 
   it("returns nothing when it can afford nothing", () => {
@@ -332,7 +332,7 @@ describe("E7 execution", () => {
     const grid = flatGrid([ind("farm", 12, 5)]);
     const s = state(grid);
     // The path from F(5,5) to the harvester spot near the farm is longer
-    // than 5 tiles — 5 stone of road is not enough for the whole build...
+    // than 5 tiles — 5 stone of dirt is not enough for the whole build...
     const short = bestCandidate(s, F, { stock: {}, purse: { stone: 5 } });
     expect(short).toBeNull();
     // ...but the 12-tile free setup allowance covers it, exactly like the
@@ -377,8 +377,8 @@ describe("E7 execution", () => {
 // W8 — the rival never builds a single tile (AI deadlock).
 //
 // Three faults compounded: a one-tile "path" with cost 0 outranked every real
-// build (÷ the 0.3 floor), the rail-first pass never fell through to road when
-// rail was impossible, and the resulting no-op turn was reported as a real one
+// build (÷ the 0.3 floor), the road-first pass never fell through to dirt when
+// road was impossible, and the resulting no-op turn was reported as a real one
 // — so the rival re-picked the same doomed candidate every 9 s forever.
 //
 // The whole-map sweep over every legal rival tile lives in
@@ -394,21 +394,21 @@ const rivalOpts = () => ({
 });
 
 /**
- * Seed-1337 repro state: the rival's factory on a rough, road-buildable,
+ * Seed-1337 repro state: the rival's factory on a rough, dirt-buildable,
  * reachable tile (found from the map); callers needing a dead tile pass (0,0).
  */
 function roughRival(tx?: number, ty?: number): { eco: EconomyState; f: Factory } {
   const grid = generateMap(1337);
-  // T4: (38,4) was a rough, road-legal/rail-illegal tile on the 48×48 map.
+  // T4: (38,4) was a rough, dirt-legal/road-illegal tile on the 48×48 map.
   // Scan for one instead so the fixture is map-size agnostic: the factory must
-  // stand on rough ground (rail can't lay there, road can).
+  // stand on rough ground (road can't lay there, dirt can).
   if (tx === undefined || ty === undefined) {
     outer: for (let y = 0; y < MAP_H; y++) for (let x = 0; x < MAP_W; x++) {
       const i = y * MAP_W + x;
       if (grid.terrain[i] === ROUGH && grid.occupancy[i] === -1) { tx = x; ty = y; break outer; }
     }
   }
-  if (tx === undefined || ty === undefined) throw new Error("seed has no road-legal rough tile");
+  if (tx === undefined || ty === undefined) throw new Error("seed has no dirt-legal rough tile");
   const eco: EconomyState = {
     grid, track: createTrack(), harvesters: [],
     factories: [{ owner: "ai", ownerId: 2, tx, ty }],
@@ -417,22 +417,22 @@ function roughRival(tx?: number, ty?: number): { eco: EconomyState; f: Factory }
 }
 
 describe("W8 plan feasibility", () => {
-  it("flags a rail path over rough ground as not executable", () => {
+  it("flags a road path over rough ground as not executable", () => {
     const grid = flatGrid([ind("farm", 5, 9)]);
     grid.terrain[tIdx(5, 5)] = ROUGH;         // the factory stands on rough
     const s = state(grid);
-    const path = findPath(grid, s.track, "road", 5, 5, 5, 8, false, 0)!;
+    const path = findPath(grid, s.track, "dirt", 5, 5, 5, 8, false, 0)!;
     expect(path).toBeTruthy();
-    // the same tiles are illegal for rail: TRANSPORT.rail.onRough === false
-    const rail = planFeasibility(s, "rail", { tiles: path.tiles, cost: path.cost }, 5, 8, 0);
-    expect(TRANSPORT.rail.onRough).toBe(false);
-    expect(rail.executable).toBe(false);
-    expect(rail.viable).toBe(false);
-    const road = planFeasibility(s, "road", path, 5, 8, 0);
-    expect(road.executable).toBe(true);
-    expect(road.serviced).toBe(true);          // the path's penultimate tile
-    expect(road.viable).toBe(true);
-    expect(road.fresh.length).toBe(path.tiles.length);
+    // the same tiles are illegal for road: TRANSPORT.road.onRough === false
+    const road = planFeasibility(s, "road", { tiles: path.tiles, cost: path.cost }, 5, 8, 0);
+    expect(TRANSPORT.road.onRough).toBe(false);
+    expect(road.executable).toBe(false);
+    expect(road.viable).toBe(false);
+    const dirt = planFeasibility(s, "dirt", path, 5, 8, 0);
+    expect(dirt.executable).toBe(true);
+    expect(dirt.serviced).toBe(true);          // the path's penultimate tile
+    expect(dirt.viable).toBe(true);
+    expect(dirt.fresh.length).toBe(path.tiles.length);
   });
 
   it("refuses the one-tile path under the depot: laid track there services nothing", () => {
@@ -441,23 +441,23 @@ describe("W8 plan feasibility", () => {
     const grid = flatGrid([ind("oil_rig", 5, 6)]);
     const s = state(grid);
     const one: [number, number][] = [[5, 5]];  // F's own tile, a harvester spot
-    const f = planFeasibility(s, "road", { tiles: one, cost: 0 }, 5, 5, 0);
+    const f = planFeasibility(s, "dirt", { tiles: one, cost: 0 }, 5, 5, 0);
     expect(f.fresh).toEqual([[5, 5]]);
     expect(f.serviced).toBe(false);
     expect(f.viable).toBe(false);
     // once a neighbour carries our track the same spot IS viable, for free
-    buildTile(s.track, "road", 4, 5, 0);
-    expect(planFeasibility(s, "road", { tiles: one, cost: 0 }, 5, 5, 0).viable).toBe(true);
+    buildTile(s.track, "dirt", 4, 5, 0);
+    expect(planFeasibility(s, "dirt", { tiles: one, cost: 0 }, 5, 5, 0).viable).toBe(true);
   });
 
   it("counts only track owned by the AI as servicing (W2)", () => {
     const grid = flatGrid([ind("oil_rig", 5, 6)]);
     const s = state(grid);
-    buildTile(s.track, "road", 4, 5, 7);       // somebody else's road
-    const f = planFeasibility(s, "road", { tiles: [[5, 5]], cost: 0 }, 5, 5, 2);
+    buildTile(s.track, "dirt", 4, 5, 7);       // somebody else's dirt
+    const f = planFeasibility(s, "dirt", { tiles: [[5, 5]], cost: 0 }, 5, 5, 2);
     expect(f.serviced).toBe(false);
-    buildTile(s.track, "road", 6, 5, 2);       // ours
-    expect(planFeasibility(s, "road", { tiles: [[5, 5]], cost: 0 }, 5, 5, 2).serviced).toBe(true);
+    buildTile(s.track, "dirt", 6, 5, 2);       // ours
+    expect(planFeasibility(s, "dirt", { tiles: [[5, 5]], cost: 0 }, 5, 5, 2).serviced).toBe(true);
   });
 });
 
@@ -467,7 +467,7 @@ describe("W8 the degenerate candidate no longer wins the ranking", () => {
     // is a harvester spot: the old scorer divided by the 0.3 floor and put a
     // one-tile, zero-cost "path" first, every turn, forever.
     const grid = flatGrid([ind("oil_rig", 5, 6)]);
-    grid.terrain[tIdx(5, 5)] = ROUGH;          // and it is rough: rail is out
+    grid.terrain[tIdx(5, 5)] = ROUGH;          // and it is rough: road is out
     const s = state(grid);
     const cands = planCandidates(s, F, { stock: {}, purse: rich });
     expect(cands.length).toBeGreaterThan(0);
@@ -479,19 +479,19 @@ describe("W8 the degenerate candidate no longer wins the ranking", () => {
     }
     // the degenerate shape is gone: no one-tile path ending on the factory
     expect(cands.some((c) => c.path.tiles.length === 1 && c.hx === F.tx && c.hy === F.ty)).toBe(false);
-    // …and the rival reaches a REAL spot instead (road, since rail needs flat)
+    // …and the rival reaches a REAL spot instead (dirt, since road needs flat)
     const out = aiBuildStep(s, F, { stock: {}, purse: rich }, 1)!;
     expect(out).toBeTruthy();
-    expect(out.kind).toBe("road");
+    expect(out.kind).toBe("dirt");
     expect(out.built.length).toBeGreaterThan(1);
     expect(out.harvester).toBeTruthy();
     expect(isServiced(s.track, out.harvester!)).toBe(true);
   });
 
-  it("falls through to road when the rail plan cannot be built", () => {
+  it("falls through to dirt when the road plan cannot be built", () => {
     const { eco, f } = roughRival();
-    expect(canBuildOn(eco.grid, "road", f.tx, f.ty)).toBe(true);
-    expect(canBuildOn(eco.grid, "rail", f.tx, f.ty)).toBe(false);
+    expect(canBuildOn(eco.grid, "dirt", f.tx, f.ty)).toBe(true);
+    expect(canBuildOn(eco.grid, "road", f.tx, f.ty)).toBe(false);
     // no candidate may claim a kind it cannot lay
     for (const c of planCandidates(eco, f, rivalOpts())) {
       expect(c.path.tiles.every(([x, y]) => canBuildOn(eco.grid, c.kind, x, y))).toBe(true);
@@ -502,7 +502,7 @@ describe("W8 the degenerate candidate no longer wins the ranking", () => {
 describe("W8 a no-op turn is reported as no turn", () => {
   it("aiBuildStep returns null instead of a truthy empty outcome", () => {
     // (0,0) on seed 1337 is the water corner: no track can leave the tile at
-    // all, and its road-legal component reaches no harvester. Nothing the AI
+    // all, and its dirt-legal component reaches no harvester. Nothing the AI
     // does can build from there — the honest answer is `null` every turn,
     // never a truthy outcome the caller spends a turn on.
     const { eco, f } = roughRival(0, 0);
@@ -528,7 +528,7 @@ describe("W8 a no-op turn is reported as no turn", () => {
 });
 
 describe("W8 the rival's factory is placed where it can build", () => {
-  it("picks a rail-legal tile with a real plan, not the farthest road-only one", () => {
+  it("picks a road-legal tile with a real plan, not the farthest dirt-only one", () => {
     const grid = generateMap(1337);
     const player: [number, number] = [23, 22];
     const spot = chooseRivalFactorySpot(grid, createTrack(), player, {
@@ -536,8 +536,8 @@ describe("W8 the rival's factory is placed where it can build", () => {
     });
     expect(spot).toBeTruthy();
     const [x, y] = spot!;
-    expect(canBuildOn(grid, "rail", x, y), "rail must be legal on the rival's tile").toBe(true);
-    // the old road-only search handed back the (2,2) enclave for this player
+    expect(canBuildOn(grid, "road", x, y), "road must be legal on the rival's tile").toBe(true);
+    // the old dirt-only search handed back the (2,2) enclave for this player
     expect(spot).not.toEqual([2, 2]);
     expect(canReachASpot(grid, x, y)).toBe(true);
     // and a real build exists from it, first turn
@@ -562,7 +562,7 @@ describe("W8 the rival's factory is placed where it can build", () => {
     for (const [px, py] of [[4, 4], [16, 16], [27, 6], [6, 27], [23, 22], [12, 12]] as [number, number][]) {
       const s = chooseRivalFactorySpot(grid, createTrack(), [px, py], opts);
       expect(s, `player at ${px},${py}`).toBeTruthy();
-      expect(canBuildOn(grid, "road", s![0], s![1])).toBe(true);
+      expect(canBuildOn(grid, "dirt", s![0], s![1])).toBe(true);
       expect(canReachASpot(grid, s![0], s![1]), `enclave for player ${px},${py}`).toBe(true);
       expect(s).not.toEqual([px, py]);
     }
@@ -574,58 +574,58 @@ describe("W8 the rival's factory is placed where it can build", () => {
       purse: {}, free: 0, ownerId: 2,
     });
     expect(spot).toBeTruthy();
-    expect(canBuildOn(grid, "road", spot![0], spot![1])).toBe(true);
+    expect(canBuildOn(grid, "dirt", spot![0], spot![1])).toBe(true);
   }, 10_000);
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// W9 — the AI shares the player's cost model, including the road-only
+// W9 — the AI shares the player's cost model, including the dirt-only
 // allowance. W3 made the rival plan with the same free-track budget the human
-// drag preview uses; before this, that meant free rail for the rival too.
+// drag preview uses; before this, that meant free road for the rival too.
 // ══════════════════════════════════════════════════════════════════════════
-describe("W9 the rival's setup allowance buys road only", () => {
-  it("offers no rail plan while rail still has to be paid for in ore", () => {
+describe("W9 the rival's setup allowance buys dirt only", () => {
+  it("offers no road plan while road still has to be paid for in ore", () => {
     const grid = flatGrid([ind("farm", 12, 5)]);
     const s = state(grid);
     // the rival's opening purse: 12 wood + 12 stone, no ore, 12 free tiles
     const plan = planCandidates(s, F, { stock: {}, purse: { wood: 12, stone: 12, ore: 0 }, free: 12, freeDepots: 1 });
     expect(plan.length).toBeGreaterThan(0);
-    expect(plan.every((c) => c.kind === "road"), "free rail is the W9 bug").toBe(true);
+    expect(plan.every((c) => c.kind === "dirt"), "free road is the W9 bug").toBe(true);
 
-    // with ore it prefers rail again — and now prices every tile of it
+    // with ore it prefers road again — and now prices every tile of it
     const paid = planCandidates(s, F, { stock: {}, purse: { wood: 12, stone: 12, ore: 9999 }, free: 12, freeDepots: 1 });
-    expect(paid[0].kind).toBe("rail");
-    expect(paid[0].cost.ore).toBe(TRANSPORT.rail.cost.ore! * paid[0].path.tiles.length);
+    expect(paid[0].kind).toBe("road");
+    expect(paid[0].cost.ore).toBe(TRANSPORT.road.cost.ore! * paid[0].path.tiles.length);
   });
 
-  it("a rail build consumes no allowance, so the rival keeps its road budget", () => {
+  it("a road build consumes no allowance, so the rival keeps its dirt budget", () => {
     const grid = flatGrid([ind("farm", 12, 5)]);
     const s = state(grid);
-    const rail = aiBuildStep(s, F, { stock: {}, purse: { wood: 12, stone: 12, ore: 9999 }, free: 12, freeDepots: 1 }, 1)!;
-    expect(rail).toBeTruthy();
-    expect(rail.kind).toBe("rail");
-    expect(rail.free).toBe(0);
-    expect(rail.spent.ore).toBe(TRANSPORT.rail.cost.ore! * rail.built.length);
-    expect(rail.harvester).toBeTruthy();
-
-    // the road build the same allowance WAS for still rides it, unchanged (W3)
-    const s2 = state(grid);
-    const road = aiBuildStep(s2, F, { stock: {}, purse: { wood: 12, stone: 12, ore: 0 }, free: 12, freeDepots: 1 }, 1)!;
+    const road = aiBuildStep(s, F, { stock: {}, purse: { wood: 12, stone: 12, ore: 9999 }, free: 12, freeDepots: 1 }, 1)!;
+    expect(road).toBeTruthy();
     expect(road.kind).toBe("road");
-    expect(road.free).toBe(road.built.length);
-    expect(Object.keys(road.spent).length).toBe(0);
+    expect(road.free).toBe(0);
+    expect(road.spent.ore).toBe(TRANSPORT.road.cost.ore! * road.built.length);
+    expect(road.harvester).toBeTruthy();
+
+    // the dirt build the same allowance WAS for still rides it, unchanged (W3)
+    const s2 = state(grid);
+    const dirt = aiBuildStep(s2, F, { stock: {}, purse: { wood: 12, stone: 12, ore: 0 }, free: 12, freeDepots: 1 }, 1)!;
+    expect(dirt.kind).toBe("dirt");
+    expect(dirt.free).toBe(dirt.built.length);
+    expect(Object.keys(dirt.spent).length).toBe(0);
   });
 
-  it("prices a rail plan the same way the human drag preview does", () => {
+  it("prices a road plan the same way the human drag preview does", () => {
     const grid = flatGrid([ind("farm", 12, 5)]);
     const s = state(grid);
-    const purse = { wood: 12, stone: 12, ore: 8 };   // two rail tiles' worth of ore
+    const purse = { wood: 12, stone: 12, ore: 8 };   // two road tiles' worth of ore
     const plan = planCandidates(s, F, { stock: {}, purse, free: 12, freeDepots: 1 });
-    const rail = plan.filter((c) => c.kind === "rail");
-    // every rail candidate must fit the purse: 8 ore = at most 2 tiles
-    for (const c of rail) expect(c.cost.ore ?? 0).toBeLessThanOrEqual(8);
+    const road = plan.filter((c) => c.kind === "road");
+    // every road candidate must fit the purse: 8 ore = at most 2 tiles
+    for (const c of road) expect(c.cost.ore ?? 0).toBeLessThanOrEqual(8);
     const out = aiBuildStep(s, F, { stock: {}, purse, free: 12, freeDepots: 1 }, 1);
-    if (out?.kind === "rail") {
+    if (out?.kind === "road") {
       expect(out.spent.ore).toBeLessThanOrEqual(8);
       expect(out.free).toBe(0);
     }
@@ -638,33 +638,33 @@ describe("T4 routing regressions", () => {
     const grid = flatGrid([ind("farm", 10, 10)]);
     grid.occupancy[tIdx(6, 5)] = TOWN_OCC;
     grid.occupancy[tIdx(10, 9)] = TOWN_OCC;
-    expect(stepCost(grid, createTrack(), "road", 6, 5)).toBe(Infinity);
-    const path = findPath(grid, createTrack(), "road", 5, 5, 7, 5)!;
+    expect(stepCost(grid, createTrack(), "dirt", 6, 5)).toBe(Infinity);
+    const path = findPath(grid, createTrack(), "dirt", 5, 5, 7, 5)!;
     expect(path.tiles).not.toContainEqual([6, 5]);
-    expect(path.tiles.every(([x, y]) => canBuildOn(grid, "road", x, y))).toBe(true);
+    expect(path.tiles.every(([x, y]) => canBuildOn(grid, "dirt", x, y))).toBe(true);
     expect(harvesterSpots(grid, grid.industries[0])).not.toContainEqual([10, 9]);
   });
 
   it("preserves the heap's lowest-index tie break", () => {
-    expect(findPath(flatGrid(), createTrack(), "road", 5, 5, 7, 7)?.tiles).toEqual([
+    expect(findPath(flatGrid(), createTrack(), "dirt", 5, 5, 7, 7)?.tiles).toEqual([
       [5, 5], [6, 5], [7, 5], [7, 6], [7, 7],
     ]);
   });
 
   it("does not prune affordable extensions of a long existing trunk", () => {
     const grid = flatGrid([ind("farm", 65, 5)]), track = createTrack();
-    for (let x = 5; x <= 60; x++) buildTile(track, "road", x, 5);
+    for (let x = 5; x <= 60; x++) buildTile(track, "dirt", x, 5);
     const candidate = bestCandidate(state(grid, track), F, { stock: {}, purse: { wood: 4, stone: 4 }, preferRail: false, freeDepots: 1 });
     expect(candidate).toBeTruthy();
     expect(candidate!.cost.stone).toBeLessThanOrEqual(4);
     expect(candidate!.path.tiles[0]).toEqual([60, 5]);
   });
 
-  it("does not charge stone in the affordability bound for road-to-rail upgrades", () => {
+  it("does not charge stone in the affordability bound for dirt-to-road upgrades", () => {
     const grid = flatGrid([ind("farm", 15, 5)]), track = createTrack();
-    for (let x = 5; x <= 14; x++) buildTile(track, "road", x, 5);
+    for (let x = 5; x <= 14; x++) buildTile(track, "dirt", x, 5);
     const candidate = bestCandidate(state(grid, track), F, { stock: {}, purse: { ore: 40 }, freeDepots: 1 });
-    expect(candidate?.kind).toBe("rail");
+    expect(candidate?.kind).toBe("road");
     expect(candidate?.cost).toEqual({ ore: 40 });
   });
 

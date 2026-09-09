@@ -40,8 +40,13 @@ import type { Harvester, Factory, ScoreState, ConnKind } from "./economy";
  * ring road is serviced and the route may run over it. The wire shape is
  * still unchanged (the owner byte travels as-is), but a v6 guest would seed a
  * different owner layer from the same seed, so mixed-version rooms must refuse.
+ * v8 (de-railway): the game is two tiers of ROAD — the basic `dirt` layer
+ * (was the old "road") and the premium paved `road` layer (was "rail", which
+ * is gone). The map's public/town roads now live on the paved `road` layer.
+ * The two wire layers are renamed `dirt`/`road` to match, so a v7 guest would
+ * read the bytes into the wrong layers and must refuse.
  */
-export const SNAPSHOT_VERSION = 7;
+export const SNAPSHOT_VERSION = 8;
 
 export const EXPECTED_TRACK_BYTES = MAP_W * MAP_H;
 
@@ -84,9 +89,10 @@ export interface Snapshot {
   t: number;
   setupPhase: boolean;
   won: boolean;
-  /** base64 Uint8Array(MAP_W*MAP_H) — direction masks plus the PRESENT bit. */
+  /** base64 Uint8Array(MAP_W*MAP_H) — direction masks plus the PRESENT bit.
+   *  `dirt` = the basic gravel layer, `road` = the premium paved layer. */
+  dirt: string;
   road: string;
-  rail: string;
   /** base64 Uint8Array(MAP_W*MAP_H) — per-tile owner (W2). */
   owner: string;
   harvesters: WireHarvester[];
@@ -115,8 +121,8 @@ export function buildSnapshot(src: SnapshotSource): Snapshot {
     t: src.t ?? 0,
     setupPhase: src.setupPhase,
     won: src.won,
+    dirt: bytesToBase64(src.track.dirt),
     road: bytesToBase64(src.track.road),
-    rail: bytesToBase64(src.track.rail),
     owner: bytesToBase64(src.track.owner),
     harvesters: src.harvesters.map((h) => ({ id: h.id, owner: h.owner, ownerId: h.ownerId, tx: h.tx, ty: h.ty })),
     factories: src.factories.map((f) => ({ ...f })),
@@ -155,13 +161,13 @@ export function validateSnapshot(s: unknown, localSeed?: number): SnapshotError 
   if (typeof o.seed !== "number" || !Number.isFinite(o.seed)) {
     return new SnapshotError("malformed", "Snapshot has no map seed.");
   }
-  if (typeof o.road !== "string" || typeof o.rail !== "string" || typeof o.owner !== "string") {
+  if (typeof o.dirt !== "string" || typeof o.road !== "string" || typeof o.owner !== "string") {
     return new SnapshotError("malformed", "Snapshot is missing its track layers.");
   }
   if (!Array.isArray(o.harvesters) || !Array.isArray(o.factories)) {
     return new SnapshotError("malformed", "Snapshot is missing its structure lists.");
   }
-  for (const [name, b64] of [["road", o.road], ["rail", o.rail], ["owner", o.owner]] as const) {
+  for (const [name, b64] of [["dirt", o.dirt], ["road", o.road], ["owner", o.owner]] as const) {
     if (base64ToBytes(b64).length !== EXPECTED_TRACK_BYTES) {
       return new SnapshotError(
         "malformed",
@@ -199,8 +205,8 @@ export function applySnapshot(s: unknown, localSeed?: number): AppliedSnapshot {
   if (err) throw err;
   const o = s as Snapshot;
   const track = createTrack();
+  track.dirt.set(base64ToBytes(o.dirt));
   track.road.set(base64ToBytes(o.road));
-  track.rail.set(base64ToBytes(o.rail));
   track.owner.set(base64ToBytes(o.owner));
   return {
     seed: o.seed >>> 0,

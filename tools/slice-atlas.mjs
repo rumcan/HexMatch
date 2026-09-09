@@ -398,6 +398,63 @@ async function makeTrackset(s) {
   return out;
 }
 
+// ── dirt: the basic gravel road tier ─────────────────────────────────────
+// The gravel art is NOT an OpenGFX declaration — it is a bespoke recolor of
+// OpenGFX's finished flat road tiles that the player supplies as a single
+// sheet (src/assets/sprites/png/infrastructure/gravelroads.png). The sheet
+// is the 16 finished flat road tiles, in the SAME mask order the `road`
+// trackset above produces (0..14 across the top row at 128px pitch, the 4-way
+// 1111 tile bottom-left), each painted 2x (128x64) so a 64x32 tile is a
+// straight nearest-neighbour downscale. The 16 `dirt_XXXX` cells are sliced
+// out of it exactly like `road` slices the declared finished set, so dirt
+// tiles line up pixel-for-pixel with the paved Road tiles they upgrade to.
+const DIRT_SHEET_SCALE = 2;          // source tiles are 2x
+const DIRT_SOURCE_TILE = [128, 64];  // source px per finished tile at 2x
+// Pixel origin (2x sheet coords) of each finished-tile index (0..15).
+function dirtTileOrigin(index) {
+  if (index < 15) return [index * (DIRT_SOURCE_TILE[0] + 8), 0];
+  return [0, 72];                    // 1111 sits bottom-left, below tile 0000
+}
+async function makeGravelStrip(s) {
+  if (typeof s.gravel !== "string" || s.gravel.includes("..") || !/^[A-Za-z0-9_\-./]+\.png$/.test(s.gravel)) {
+    throw new Error(`cell ${s.name}: bad gravel path ${JSON.stringify(s.gravel)}`);
+  }
+  const src = join(ROOT, "src/assets/sprites/png", s.gravel);
+  let sheet;
+  try {
+    sheet = await sharp(src, { limitInputPixels: false }).ensureAlpha().raw()
+      .toBuffer({ resolveWithObject: true });
+  } catch (e) {
+    throw new Error(`cell ${s.name}: cannot read ${s.gravel}: ${e.message}`);
+  }
+  const { data, info } = sheet;
+  const out = [];
+  for (let mask = 0; mask < 16; mask++) {
+    const key = `${s.namePrefix ?? s.name}_${mask.toString(2).padStart(4, "0")}`;
+    const [ox, oy] = dirtTileOrigin(mask);
+    const SW = DIRT_SOURCE_TILE[0], SH = DIRT_SOURCE_TILE[1];
+    // Pull the 2x tile, drop to 1x (64x32). Downscaling must round-trip so the
+    // packed dirt_XXXX cells sit on the same grid as every other tile.
+    const px = Buffer.alloc(CELL_W * CELL_H * 4);
+    for (let y = 0; y < CELL_H; y++) {
+      for (let x = 0; x < CELL_W; x++) {
+        const sx = ox + x * DIRT_SHEET_SCALE, sy = oy + y * DIRT_SHEET_SCALE;
+        const so = (sy * info.width + sx) * 4;
+        const di = (y * CELL_W + x) * 4;
+        px[di] = data[so]; px[di + 1] = data[so + 1];
+        px[di + 2] = data[so + 2]; px[di + 3] = data[so + 3];
+      }
+    }
+    out.push({
+      name: key,
+      cells: [{ px, w: CELL_W, h: CELL_H }], cellW: CELL_W, cellH: CELL_H,
+      anchor: derivedAnchor(-(HW - 1), 0),
+      footprint: s.footprint, frames: 1, frameMs: s.frameMs,
+    });
+  }
+  return out;
+}
+
 /** G1 arm endpoints — centre → diamond-edge midpoint (highlight glow only). */
 const ARM_ENDS = {
   1: [48, 8],   // NE — midpoint of top-right edge    (32,0)-(64,16)
@@ -624,6 +681,7 @@ async function makeFile(s) {
 
 async function buildSlot(s) {
   if (typeof s.file === "string") return [{ name: s.name, ...(await makeFile(s)) }];
+  if (s.gravel) return makeGravelStrip(s);
   if (s.trackset) return makeTrackset(s);
   if (s.layers) return [{ name: s.name, ...(await makeLayers(s)) }];
   if (s.generator === "highlight" || s.generator === "highlight_soft") {

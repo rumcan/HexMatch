@@ -187,25 +187,23 @@ describe("Y1/Y2 declaration invariants (ground + roads are declaration-driven)",
     expect(realManifest.sprites.terrain_grass_b).toBeUndefined();
   });
 
-  it("road/rail/crossing resolve from declared sprite ids, not a hand crop or generator", () => {
-    // Y4c/Y6: road is OpenGFX's finished flat set indexed through OpenTTD's
-    // table, rail is declared ground + declared overlay pieces, crossing is a
-    // declared finished tile. None of them may fall back to `generator`.
+  it("road/dirt resolve from declared sprite ids or a source sheet, not a hand crop or generator", () => {
+    // Y4c/Y6: the paved Road is OpenGFX's finished flat set indexed through
+    // OpenTTD's table; the basic Dirt Road (gravel) is that same set recoloured
+    // by the player and shipped as a sheet (s.gravel). Neither may fall back to
+    // `generator`, and the old rail overlays + level-crossing cells are gone.
     const road = cells.sprites.find((c) => c.name === "road");
-    const rail = cells.sprites.find((c) => c.name === "rail");
-    const crossing = cells.sprites.find((c) => c.name === "crossing");
+    const dirt = cells.sprites.find((c) => c.name === "dirt");
     expect(road?.trackset?.mode).toBe("flat");
     expect(typeof road?.trackset?.base).toBe("number");
     expect(road?.trackset?.table).toHaveLength(16);
-    expect(rail?.trackset?.mode).toBe("overlays");
-    expect(typeof rail?.trackset?.ground).toBe("number");
-    expect((rail?.trackset?.pieces ?? []).length).toBeGreaterThan(0);
-    for (const p of rail?.trackset?.pieces ?? []) expect(typeof p.sprite).toBe("number");
-    expect(crossing?.layers?.length).toBeGreaterThan(0);
-    for (const s of [road, rail, crossing]) {
+    expect(typeof dirt?.gravel).toBe("string");
+    for (const s of [road, dirt]) {
       expect(s!.generator, `${s!.name} must not use the generator`).toBeUndefined();
       expect(s!.crop, `${s!.name} must not carry a hand crop`).toBeUndefined();
     }
+    // the bespoke rail-overlay and crossing cells no longer exist
+    expect(cells.sprites.some((c) => c.name === "rail" || c.name === "crossing")).toBe(false);
   });
 
   it("Y2: every terrain sprite declared for the atlas is a flat 64x31 tile with yrel 0", () => {
@@ -271,6 +269,15 @@ describe("Y3/Y5/Y6 declaration invariants", () => {
         expect(existsSync(p), `cell ${s.name}: source file ${s.file} missing`).toBe(true);
         const magic = readFileSync(p).subarray(0, 4);
         expect([...magic], `cell ${s.name}: ${s.file} is not a PNG`).toEqual([0x89, 0x50, 0x4e, 0x47]);
+        continue;
+      }
+      // The gravel (Dirt Road) sheet is the same kind of local source: it is
+      // not an OpenGFX declaration, so it must exist and be a real PNG.
+      if (s.gravel) {
+        const p = `src/assets/sprites/png/${s.gravel}`;
+        expect(existsSync(p), `cell ${s.name}: gravel sheet ${s.gravel} missing`).toBe(true);
+        const magic = readFileSync(p).subarray(0, 4);
+        expect([...magic], `cell ${s.name}: ${s.gravel} is not a PNG`).toEqual([0x89, 0x50, 0x4e, 0x47]);
         continue;
       }
       const ids = referencedIds(s);

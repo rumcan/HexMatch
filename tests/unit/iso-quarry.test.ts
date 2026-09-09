@@ -46,7 +46,7 @@ const ind = (type: string, tx: number, ty: number): Industry => {
 const H = (id: number, owner: string, tx: number, ty: number): Harvester =>
   ({ id, owner, ownerId: owner === "you" ? 1 : 0, tx, ty });
 
-const run = (t: Track, kind: "road" | "rail", x0: number, x1: number, y: number) => {
+const run = (t: Track, kind: "dirt" | "road", x0: number, x1: number, y: number) => {
   for (let x = x0; x <= x1; x++) buildTile(t, kind, x, y, 1);
 };
 

@@ -111,7 +111,10 @@ export function roadDeliveryForHarvester(
   const c = comp ?? buildAllComponents(eco.track, h.ownerId);
   if (!isServiced(eco.track, h)) return null;
   const conn = resolveConnection(eco, c, h);
-  if (conn.kind !== "road" || !conn.factory) return null;
+  if (conn.kind === null || !conn.factory) return null;
+  // The lorry drives on whichever tier the connection used — a Dirt Road or a
+  // paved Road (public roads included). `roadPath` with no kind routes over
+  // the tier each tile actually carries.
   const route = roadPath(
     eco.track, h.ownerId,
     shoulders(eco.track, h.ownerId, h.tx, h.ty),

@@ -6,15 +6,16 @@
 //
 // Behaviour: score candidate industries by
 //     (cargo scarcity in the AI's stock × output) ÷ path cost
-// A* a path from the nearest owned network tile, build road if it cannot
-// afford rail, then place a harvester.
+// A* a path from the nearest owned network tile, then place a harvester. The
+// rival prefers the premium paved `road` tier and falls back to a basic
+// `dirt` road when paving is impossible or unaffordable.
 //
 // W8: a plan is only ever offered when it can be CARRIED OUT — every tile of
 // the path is legal ground for its transport kind, and the harvester it ends
-// at is serviced once that track is laid (`planFeasibility`). Rail therefore
-// falls through to road when rail is impossible rather than deadlocking on it,
-// a turn that would achieve nothing is reported as no turn at all, and the
-// rival's factory is placed on ground it can build from
+// at is serviced once that track is laid (`planFeasibility`). The paved Road
+// therefore falls through to Dirt when paving is impossible rather than
+// deadlocking on it, a turn that would achieve nothing is reported as no turn
+// at all, and the rival's factory is placed on ground it can build from
 // (`chooseRivalFactorySpot`).
 //
 // A* is deliberate HERE and nowhere else. E5 keeps auto-routing out of the
@@ -51,7 +52,7 @@ export const IMPASSABLE = Infinity;
 
 /**
  * Cost of routing `kind` across one tile. Water and industry footprints are
- * impassable; rail additionally cannot cross rough ground.
+ * impassable; the premium paved Road additionally cannot cross rough ground.
  *
  * W2: the trunk-line discount applies only to track the AI itself built
  * (`owner`). Passing 0 keeps the legacy "any track is discounted" behaviour
@@ -236,7 +237,7 @@ export function harvesterSpots(grid: Grid, ind: Industry): [number, number][] {
       if (!insideX && !insideY) continue;               // diagonal corner
       const i = tIdx(x, y);
       if (seen.has(i)) continue;
-      if (!canBuildOn(grid, "road", x, y)) continue;
+      if (!canBuildOn(grid, "dirt", x, y)) continue;   // basic road: legal land incl. rough
       seen.add(i);
       out.push([x, y]);
     }
@@ -289,17 +290,18 @@ export function nearestSource(
  * that lays nothing and services nothing is a silent no-op the caller cannot
  * tell from a real turn. That was the W8 deadlock: a rival whose factory stood
  * on rough ground was handed a one-tile "path" (its own factory tile) by the
- * rail-first pass, `path.cost` 0 divided by the 0.3 floor made it outrank
- * every real build, rail is illegal on rough so nothing was laid, and the
+ * paved-first pass, `path.cost` 0 divided by the 0.3 floor made it outrank
+ * every real build, paving is illegal on rough so nothing was laid, and the
  * outcome object was still truthy — so `aiTick` spent the turn and re-picked
  * the same doomed candidate every 9 s for the rest of the match.
  *
  * Two properties make a candidate worth returning:
- *   executable — every tile of the path is legal ground for `kind`. Rail
- *                cannot cross rough (`TRANSPORT.rail.onRough === false`), so a
- *                rail plan from a factory standing on rough is not a plan at
- *                all; rejecting it is what lets the caller fall through to
- *                road instead of stalling on rail.
+ *   executable — every tile of the path is legal ground for `kind`. The
+ *                premium paved Road cannot cross rough
+ *                (`TRANSPORT.road.onRough === false`), so a paved plan from a
+ *                factory standing on rough is not a plan at all; rejecting it
+ *                is what lets the caller fall through to dirt instead of
+ *                stalling on paving.
  *   serviced   — once the path is laid, the harvester touches track owned by
  *                `ownerId`, either already standing or laid by this plan.
  *                `isServiced` only looks at the harvester's four NEIGHBOURS,
@@ -365,8 +367,9 @@ export interface PlanOptions {
    * the AI "sees" a 12-tile build it can't pay for and stands still even
    * though its setup allowance would cover it.
    *
-   * W9: the allowance buys ROAD only, here exactly as in `previewDrag` — the
-   * rival is gated behind an ore mine for rail just like the player is (E8).
+   * W9: the allowance buys DIRT (basic) only, here exactly as in `previewDrag` —
+   * the rival is gated behind an ore mine before it can pave premium Road
+   * just like the player is (E8).
    */
   free?: number;
   /**
@@ -377,16 +380,17 @@ export interface PlanOptions {
    * a paid Depot: the allowance is data the caller owns, never a guess here.
    */
   freeDepots?: number;
-  /** Prefer rail when affordable (spec: build road if it can't afford rail). */
-  preferRail?: boolean;
+  /** Prefer the premium paved Road tier when affordable (spec: fall back to Dirt). */
+  preferPaved?: boolean;
 }
 
 /** Optimistic new-tile allowance; exact mixed upgrade prices are checked after A*. */
 function affordableNewTiles(kind: TrackKind, purse: Purse, free: number): number {
   let n = Infinity;
   for (const [cargo, amount] of Object.entries(TRANSPORT[kind].cost)) {
-    // An upgrade may omit a resource (stone); never overestimate that cost.
-    const unit = kind === "rail" ? Math.min(amount, UPGRADE_COST[cargo as Cargo] ?? 0) : amount;
+    // An in-place pave (paved Road over dirt) may omit a resource (stone) the
+    // plan would otherwise demand; never overestimate that cost for the paved tier.
+    const unit = kind === "road" ? Math.min(amount, UPGRADE_COST[cargo as Cargo] ?? 0) : amount;
     if (unit > 0) n = Math.min(n, Math.floor((purse[cargo as Cargo] ?? 0) / unit));
   }
   return n + (freeAllowanceCovers(kind) ? Math.ceil(Math.max(0, free)) : 0);
@@ -399,8 +403,8 @@ function affordableNewTiles(kind: TrackKind, purse: Purse, free: number): number
  * W8: a candidate is only returned when its plan is VIABLE — every path tile
  * is legal ground for the transport kind, and the harvester the path ends at
  * is serviced once that track is laid (see `planFeasibility`). Because
- * unbuildable rail plans are rejected here rather than ranked, the `rail`-first
- * preference now genuinely falls through to `road` when rail is impossible —
+ * unbuildable paved plans are rejected here rather than ranked, the paved-first
+ * preference now genuinely falls through to dirt when paving is impossible —
  * not only when it produces nothing at all — and a turn is never spent on a
  * plan that builds nothing.
  */
@@ -416,11 +420,11 @@ export function planCandidates(
   // human click and the HUD use — one table, one rule, no rival-only discount.
   const depotCost = priceDepot(opts.purse, opts.freeDepots ?? 0).cost;
 
-  const kinds: TrackKind[] = opts.preferRail === false ? ["road"] : ["rail", "road"];
+  const kinds: TrackKind[] = opts.preferPaved === false ? ["dirt"] : ["road", "dirt"];
   for (const kindPref of kinds) {
     const sources = networkTiles(track, kindPref, factory);
     // T4: reject provably unaffordable destinations BEFORE running A*. On
-    // the larger map, searching hundreds of long rail routes with zero ore
+    // the larger map, searching hundreds of long paved routes with zero ore
     // blocked the UI for seconds. This is only a lower bound; the real path
     // and tileCost check below still decide which candidates are affordable.
     // A path's final segment starts at its last existing track tile (of ANY
@@ -451,14 +455,14 @@ export function planCandidates(
         const path = findPath(grid, track, kindPref, src[0], src[1], hx, hy, false, factory.ownerId);
         if (!path) continue;
         // W8: refuse plans `executeCandidate` could not carry out as priced —
-        // rail over rough, or a one-tile "path" that lays track under the
+        // paving over rough, or a one-tile "path" that lays track under the
         // depot and leaves it unserviced. The next spot / the next kind is
-        // tried, so a rail plan that cannot be built falls through to road.
+        // tried, so a paved plan that cannot be built falls through to dirt.
         if (!planFeasibility(state, kindPref, path, hx, hy, factory.ownerId).viable) continue;
 
         // W3: same cost model as the human preview — the allowance covers the
-        // first new tiles, the purse pays the rest. W9: …and only for road; a
-        // rail plan prices every tile, so the rival needs real ore for rail.
+        // first new tiles, the purse pays the rest. W9: …and only for dirt; a
+        // paved plan prices every tile, so the rival needs real ore to pave.
         let cost: Purse = {};
         let freeLeft = freeAllowanceCovers(kindPref) ? free : 0;
         for (const [x, y] of path.tiles) {
@@ -536,25 +540,25 @@ export function chooseRivalFactorySpot(
   grid: Grid, track: Track, awayFrom: [number, number], opts: RivalSpotOptions,
 ): [number, number] | null {
   const [fw, fh] = FACTORY_FOOTPRINT;
-  const spots: { x: number; y: number; rail: boolean; town: boolean; d: number }[] = [];
+  const spots: { x: number; y: number; paved: boolean; town: boolean; d: number }[] = [];
   for (let y = 2; y < MAP_H - 2 - fh; y += 2) {
     for (let x = 2; x < MAP_W - 2 - fw; x += 2) {
       // check all tiles of the Factory footprint (FACTORY_FOOTPRINT)
-      let allRoad = true, allRail = true;
+      let allDirt = true, allPaved = true;
       for (let dy = 0; dy < fh; dy++) {
         for (let dx = 0; dx < fw; dx++) {
-          if (!canBuildOn(grid, "road", x + dx, y + dy)) allRoad = false;
-          if (!canBuildOn(grid, "rail", x + dx, y + dy)) allRail = false;
+          if (!canBuildOn(grid, "dirt", x + dx, y + dy)) allDirt = false;
+          if (!canBuildOn(grid, "road", x + dx, y + dy)) allPaved = false;
         }
       }
-      if (!allRoad) continue;
+      if (!allDirt) continue;
       // PP-02: only footprints that touch a town (by an edge) are legal
       // Factory sites. The pool is restricted to these so the rival can never
       // be handed a tile far from a town — even through the fallback below.
       const town = factoryTouchesTown(grid, x, y);
       spots.push({
         x, y,
-        rail: allRail,
+        paved: allPaved,
         town,
         d: Math.abs(x - awayFrom[0]) + Math.abs(y - awayFrom[1]),
       });
@@ -573,17 +577,17 @@ export function chooseRivalFactorySpot(
     || s.y + fh <= awayFrom[1] || awayFrom[1] + fh <= s.y);
   const ranked = apart.length ? apart : townSpots;
   ranked.sort((a, b) =>
-    Number(b.rail) - Number(a.rail) || b.d - a.d || tIdx(a.x, a.y) - tIdx(b.x, b.y));
+    Number(b.paved) - Number(a.paved) || b.d - a.d || tIdx(a.x, a.y) - tIdx(b.x, b.y));
 
   const state: EconomyState = { grid, track, harvesters: [], factories: [] };
   const probe: Factory = { owner: opts.owner ?? "ai", ownerId: opts.ownerId, tx: 0, ty: 0 };
   // T4: eight far-corner probes are no longer enough on a sparse 144×144
   // map. Skip geometrically unaffordable starts, then keep searching until a
   // real opening plan exists. Do not silently strand the rival on probe #1.
-  const emptyTrack = !track.road.some((v) => v !== 0) && !track.rail.some((v) => v !== 0);
+  const emptyTrack = !track.dirt.some((v) => v !== 0) && !track.road.some((v) => v !== 0);
   const maxOpening = Math.max(
+    affordableNewTiles("dirt", opts.purse, opts.free ?? 0),
     affordableNewTiles("road", opts.purse, opts.free ?? 0),
-    affordableNewTiles("rail", opts.purse, opts.free ?? 0),
   );
   const targets = grid.industries.flatMap((ind) => harvesterSpots(grid, ind));
   const tries = Math.max(1, opts.probes ?? ranked.length);

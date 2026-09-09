@@ -318,7 +318,8 @@ html, body, #root {
    (regenerate with `node tools/make-ui-art.mjs`; drop hand-authored PNGs of
    the same names in to replace them). The scrim below keeps labels legible. */
 .build-btn.bg-road      { background-image: url("../assets/ui/build-road.png"); }
-.build-btn.bg-rail      { background-image: url("../assets/ui/build-rail.png"); }
+/* de-railwayed: the basic tier is a Dirt Road (gravel) — its own plate. */
+.build-btn.bg-dirt      { background-image: url("../assets/ui/build-dirt.png"); }
 .build-btn.bg-harvester { background-image: url("../assets/ui/build-harvester.png"); }
 .build-btn.bg-demolish  { background-image: url("../assets/ui/build-demolish.png"); }
 /* PP-06: the additional-processing-plant tool reuses the factory banner art. */
