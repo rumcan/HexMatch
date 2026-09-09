@@ -175,8 +175,8 @@ describe("J1 createQuarry", () => {
     expect(q.board.findGroups().length).toBeGreaterThan(0);
     await q.board.settle();
 
-    expect(harvested).toEqual([["grain", 1]]);
-    expect(purse.grain).toBe(1);
+    expect(harvested).toEqual([["grain", 2]]);
+    expect(purse.grain).toBe(2);
     expect(blocked).toEqual([]);
   });
 

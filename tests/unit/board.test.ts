@@ -94,6 +94,39 @@ describe("settle / swap", () => {
   // `onGold(1)` (W5). A combo never mints a gold GEM on the board — the old
   // in-place `spawnGold` conversion (turn a random resource gem into gold) is
   // gone, so a banked coin must not rewrite an existing lumber/ore gem.
+  it("match 5 in a line grants two random materials", async () => {
+    const b = freshBoard();
+    const bonus: string[] = [];
+    b.onBonus = (res, n, why) => bonus.push(`${why}:${res}:${n}`);
+    const harvests: [string, number][] = [];
+    b.onHarvest = (res, amt) => { harvests.push([res, amt]); };
+    for (let c = 0; c < 5; c++) b.grid[0][c]!.res = "wood";
+    b.grid[0][5]!.res = "ore";
+    b.grid[0][6]!.res = "brick";
+    await b.settle();
+    expect(bonus.some((s) => s.startsWith("MATCH 5:"))).toBe(true);
+    expect(bonus).toHaveLength(2);
+  });
+
+  it("an L of five grants two random materials", async () => {
+    const b = freshBoard();
+    const bonus: string[] = [];
+    b.onBonus = (_r, _n, why) => bonus.push(why);
+    // 3 across + 3 down sharing corner = 5 unique
+    b.grid[1][1]!.res = "sheep";
+    b.grid[1][2]!.res = "sheep";
+    b.grid[1][3]!.res = "sheep";
+    b.grid[2][1]!.res = "sheep";
+    b.grid[3][1]!.res = "sheep";
+    // break other accidental matches
+    b.grid[0][1]!.res = "ore";
+    b.grid[1][0]!.res = "ore";
+    b.grid[1][4]!.res = "ore";
+    b.grid[4][1]!.res = "ore";
+    await b.settle();
+    expect(bonus.filter((w) => w === "L-SHAPE").length).toBeGreaterThanOrEqual(2);
+  });
+
   it("combos pay the purse every two and never convert a resource gem into a gold gem", () => {
     const b = freshBoard();
     const gold: number[] = [];

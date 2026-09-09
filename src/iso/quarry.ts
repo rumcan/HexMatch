@@ -177,7 +177,10 @@ export function createQuarry(
     // unless a depot already sat on a forest. Network-spawned tokens stay
     // gated: that refusal is the whole J1 rule and it still fires.
     if (forged || (reach[cargo] ?? 0) > 0) {
-      hooks.onHarvest?.(cargo, amount);
+      // Depot-fed tokens pay more than match-3 bonuses so the plant never
+      // outpaces a connected depot. Forged / match-5 extras stay at face value.
+      const paid = forged ? amount : amount * 2;
+      hooks.onHarvest?.(cargo, paid);
       return true;
     }
     hooks.onBlocked?.(cargo, amount);
