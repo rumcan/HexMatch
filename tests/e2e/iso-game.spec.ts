@@ -173,7 +173,7 @@ test.describe("iso layout on every viewport", () => {
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(overflow).toBeLessThanOrEqual(1);
     // PP-06 added the "plant" tool (an additional processing plant), so the
-    // build chrome is five buttons: road, rail, harvester, plant, demolish.
+    // build chrome is five buttons: Dirt Road, Road, harvester, plant, demolish.
     await expect(root.locator("[data-tool]")).toHaveCount(5);
     await expect(root.locator("[data-act=recenter]")).toHaveCount(1);
     const scene = await page.evaluate(() => {
@@ -231,7 +231,7 @@ test.describe("iso game boots on the default route", () => {
     // demolish) + recentre
     const tools = await root.locator("[data-tool]").evaluateAll((bs) =>
       bs.map((b) => (b as HTMLElement).dataset.tool));
-    expect(tools).toEqual(["road", "rail", "harvester", "plant", "demolish"]);
+    expect(tools).toEqual(["dirt", "road", "harvester", "plant", "demolish"]);
     await expect(root.locator("[data-act=recenter]")).toHaveCount(1);
 
     // J1: the match-3 quarry is mounted NEXT TO the map, not instead of it,
@@ -276,7 +276,7 @@ test.describe("iso game boots on the default route", () => {
     });
   });
 
-  test("gameplay: factory → harvester → road drag → +1 VP, all real pointer events", async ({ page }) => {
+  test("gameplay: factory → harvester → Dirt Road drag → +1 VP, all real pointer events", async ({ page }) => {
     await bootIso(page);
 
     // E14 fix candidate (a): the Kenney tiles doubled every footprint, so the
@@ -392,16 +392,17 @@ test.describe("iso game boots on the default route", () => {
     await page.waitForFunction(() => (window as any).__iso.harvesters.length >= 1);
     const h0 = await page.evaluate(() => {
       const h = (window as any).__iso;
-      let road = 0;
-      for (let i = 0; i < h.track.road.length; i++) if (h.track.road[i] & 16) road++;
+      let dirt = 0;
+      for (let i = 0; i < h.track.dirt.length; i++) if (h.track.dirt[i] & 16) dirt++;
       return {
         free: h.freeTrack,
         vp: h.vp,
         stone: h.purse.stone,
         ore: h.purse.ore ?? 0,
-        // PP-10: the towns' seed-generated ring roads stand at boot, so the
-        // drag's footprint is measured RELATIVE to this baseline.
-        road,
+        // PP-10: the towns' seed-generated ring roads stand at boot (they are
+        // paved `road` tiles), while no player Dirt Road exists yet, so the
+        // drag's footprint is measured against this (zero) dirt baseline.
+        dirt,
       };
     });
     expect(h0.free).toBe(12);                       // FREE_SETUP_TRACK (E8)
@@ -409,9 +410,9 @@ test.describe("iso game boots on the default route", () => {
     expect(h0.stone).toBe(12);
     expect(h0.ore).toBe(0);
     // PP-10: the four towns' seed-generated ring roads are already standing.
-    expect(h0.road).toBeGreaterThan(0);
+    expect(h0.dirt).toBe(0);   // no player Dirt Road yet — allowance untouched
 
-    // ── build phase: drag a road from the Factory to the harvester ───────
+    // ── build phase: drag the free Dirt Road corridor from Factory to harvester ─
     // real pointer stream: move → down on the factory → step tile by tile
     // along the picked column → up on the harvester. The path is the
     // corridor itself, so the drag length is whatever the geometry yielded —
@@ -436,23 +437,23 @@ test.describe("iso game boots on the default route", () => {
     const after = await page.evaluate(() => {
       const h = (window as any).__iso;
       const t = h.track;
-      let road = 0;
-      for (let i = 0; i < t.road.length; i++) if (t.road[i] & 16) road++;
-      return { free: h.freeTrack, vp: h.vp, stone: h.purse.stone, ore: h.purse.ore ?? 0, road };
+      let dirt = 0;
+      for (let i = 0; i < t.dirt.length; i++) if (t.dirt[i] & 16) dirt++;
+      return { free: h.freeTrack, vp: h.vp, stone: h.purse.stone, ore: h.purse.ore ?? 0, dirt };
     });
     expect(after.free).toBe(h0.free - n);            // the allowance paid for exactly the column
     expect(after.vp.you).toBe(1);                    // connection scored
     expect(after.vp.ai).toBe(0);
     expect(after.stone).toBe(12);                    // allowance, not purse
     expect(after.ore).toBe(0);
-    // PP-10: the towns' seed-generated ring roads are already on the track,
-    // so the drag adds exactly `n` to the boot baseline, not `n` in absolute.
-    expect(after.road).toBe(h0.road + n);
+    // the free opening corridor is DIRT (the allowance buys Dirt Roads only),
+    // so the drag lays exactly `n` new Dirt Road tiles from a zero baseline.
+    expect(after.dirt).toBe(h0.dirt + n);            // h0.dirt === 0
 
     // Track state changes synchronously; the canvas paints on the next RAF.
     await page.evaluate(() => new Promise<void>((resolve) =>
       requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
-    // the structures canvas really painted the road column
+    // the structures canvas really painted the dirt column
     // The two frames above guarantee the draw. A software-GPU readback can
     // itself exceed expect.poll's 5s deadline, so assert the actual result
     // rather than timing out an otherwise-correct pixel read.

@@ -1,13 +1,15 @@
 // ══════════════════════════════════════════════════════════════════════════
-// E5 — Road and rail: the tile model, autotiling, and drag-to-build.
+// E5 — Road tiers (dirt & paved): the tile model, autotiling, drag-to-build.
 //
 // Two parallel Uint8Array(MAP_W*MAP_H) layers hold a 4-bit direction mask per
-// tile (OpenTTD's RoadBits model). A tile with both layers non-zero is a level
-// crossing and draws a third sprite.
+// tile (OpenTTD's RoadBits model). The two tiers are `dirt` (basic gravel) and
+// `road` (premium paved, which also carries the map's paved public/town
+// roads). Paving a Road over a Dirt Road replaces it — a tile carries at most
+// ONE layer, so there is no level-crossing overlay any more.
 //
 // Autotiling is a 4-bit / 16-variant problem, so the sprite key is built from
 // the mask rather than looked up in a table nobody maintains:
-//   `road_${bits.toString(2).padStart(4,'0')}` → "road_0011"
+//   `${kind}_${bits.toString(2).padStart(4,'0')}` → "dirt_0011" / "road_0011"
 //
 // Masks are recomputed ONLY for the tile placed plus its four neighbours, and
 // only the containing chunks are invalidated. The whole map is never rescanned.
@@ -33,26 +35,33 @@ export const OPPOSITE: Record<number, number> = {
   [NE]: SW, [SE]: NW, [SW]: NE, [NW]: SE,
 };
 
-export type TrackKind = "road" | "rail";
+export type TrackKind = "dirt" | "road";
 
 /**
+ * Two tiers of ROAD (the game is de-railwayed — no literal tracks remain):
+ *   `dirt` = the cheap basic gravel road (player-built "Dirt Road");
+ *   `road` = the premium paved road (player-built "Road", and the map's
+ *            paved public/town roads — both render as tar).
+ *
  * W2 — per-tile track ownership. 0 = no owner; otherwise the builder's id
  * (the game uses the player's index + 1, so the two players are 1 and 2).
  * v1 rule: a tile is owned SOLELY by its builder — there is no implicit
  * sharing, so one player's flood can never run over the other's road. A tile
- * rebuilt by a second player (e.g. laying rail across a road tile) changes
- * hands: the last real builder owns it.
+ * rebuilt by a second player (e.g. paving a Road over a Dirt Road tile)
+ * changes hands: the last real builder owns it.
  */
 export interface Track {
+  /** Basic gravel roads (player-built). */
+  dirt: Uint8Array;
+  /** Premium paved roads — player Roads AND the map's public/town roads. */
   road: Uint8Array;
-  rail: Uint8Array;
   /** 0 = unowned, else the builder's id (see above). */
   owner: Uint8Array;
 }
 
 export const createTrack = (): Track => ({
+  dirt: new Uint8Array(MAP_W * MAP_H),
   road: new Uint8Array(MAP_W * MAP_H),
-  rail: new Uint8Array(MAP_W * MAP_H),
   owner: new Uint8Array(MAP_W * MAP_H),
 });
 
@@ -120,7 +129,7 @@ export const tIdx = (tx: number, ty: number) => ty * MAP_W + tx;
 export const inMapT = (tx: number, ty: number) =>
   tx >= 0 && tx < MAP_W && ty >= 0 && ty < MAP_H;
 
-export const layerOf = (t: Track, kind: TrackKind) => (kind === "road" ? t.road : t.rail);
+export const layerOf = (t: Track, kind: TrackKind) => (kind === "road" ? t.road : t.dirt);
 
 /** Sprite key for a mask. `road_0000` is a lone stub with no connections. */
 export const spriteKey = (kind: TrackKind, bits: number) =>
@@ -169,12 +178,6 @@ export const fromOpenttdRoadBits = (ottdBits: number): number => {
   return out;
 };
 
-/** A tile carrying both layers is a level crossing. */
-export const isCrossing = (t: Track, tx: number, ty: number) => {
-  const i = tIdx(tx, ty);
-  return t.road[i] !== 0 && t.rail[i] !== 0;
-};
-
 // ── presence + legality ───────────────────────────────────────────────────
 // Presence is tracked in a separate bit so a lone tile (mask 0) still counts
 // as built. Bit 4 (0b10000) = "this tile has track of this kind".
@@ -209,7 +212,8 @@ export function buildRefusal(
   // checked before the terrain kind, so a town road on rough ground reports
   // "occupied" (the permanent blocker) rather than "rough".
   if (grid.occupancy[i] >= 0 || grid.occupancy[i] === TOWN_OCC) return "occupied";
-  // Rail additionally needs flat ground (TRANSPORT.rail.onRough).
+  // The premium paved Road additionally needs flat ground (TRANSPORT.onRough);
+  // the basic Dirt Road builds on rough.
   if (terrain === ROUGH && !TRANSPORT[kind].onRough) return "rough";
   if (network) {
     if (network.has(i)) return null;
@@ -248,12 +252,12 @@ export const ownerAt = (t: Track, tx: number, ty: number): number =>
  */
 export const trackOwnedBy = (t: Track, owner: number, tx: number, ty: number): boolean =>
   inMapT(tx, ty) && t.owner[tIdx(tx, ty)] === owner
-  && (hasTrack(t, "road", tx, ty) || hasTrack(t, "rail", tx, ty));
+  && (hasTrack(t, "road", tx, ty) || hasTrack(t, "dirt", tx, ty));
 
 /** Is (tx,ty) one of the map's public highway tiles? */
 export const isPublicRoad = (t: Track, tx: number, ty: number): boolean =>
   inMapT(tx, ty) && t.owner[tIdx(tx, ty)] === PUBLIC_OWNER
-  && (hasTrack(t, "road", tx, ty) || hasTrack(t, "rail", tx, ty));
+  && (hasTrack(t, "road", tx, ty) || hasTrack(t, "dirt", tx, ty));
 
 /**
  * PP-13/RV-03: may `owner`'s network run over this tile?
@@ -375,12 +379,34 @@ export function autotileAround(t: Track, kind: TrackKind, tx: number, ty: number
  * depend on any of them remembering. The build itself is still applied (the
  * track bit is idempotent, and the autotile result is returned as usual), so
  * a route through a highway still connects and still renders.
+ *
+ * The two tiers never stack on one tile: paving a `road` over a `dirt` tile
+ * REPLACES the dirt (the upgraded tile is a plain paved Road — no overlay),
+ * and a `dirt` drag over an already-`road` tile is a no-op (a paved road is
+ * strictly better; you never downgrade it by dragging gravel across it).
+ * Keeping a tile single-layer is what lets the renderer drop the old
+ * road+rail "crossing" sprite entirely.
  */
 export function buildTile(
   t: Track, kind: TrackKind, tx: number, ty: number, owner: number = 0,
 ): AutotileResult | null {
   if (!inMapT(tx, ty)) return null;
   const i = tIdx(tx, ty);
+  const dirt = t.dirt, road = t.road;
+  if (kind === "road" && (dirt[i] & PRESENT) !== 0) {
+    // Paving over a Dirt Road: clear the gravel so the tile becomes road only.
+    dirt[i] = 0;
+    layerOf(t, kind)[i] |= PRESENT;
+    if (owner !== 0 && t.owner[i] !== PUBLIC_OWNER) t.owner[i] = owner;
+    // Recompute both layers around the tile (dirt lost this tile, road gained).
+    const r1 = autotileAround(t, "dirt", tx, ty);
+    const r2 = autotileAround(t, "road", tx, ty);
+    return { tiles: [...r1.tiles, ...r2.tiles], chunks: [...new Set([...r1.chunks, ...r2.chunks])] };
+  }
+  if (kind === "dirt" && (road[i] & PRESENT) !== 0) {
+    // Already a paved road here — laying dirt changes nothing (no downgrade).
+    return null;
+  }
   layerOf(t, kind)[i] |= PRESENT;
   if (owner !== 0 && t.owner[i] !== PUBLIC_OWNER) t.owner[i] = owner;
   return autotileAround(t, kind, tx, ty);
@@ -388,14 +414,14 @@ export function buildTile(
 
 /**
  * W2: demolition never touches ownership while any track remains on the tile
- * (the other layer — possibly the rival's — is still standing). When the last
+ * (the other tier — possibly the rival's — is still standing). When the last
  * layer goes down the tile is unowned again.
  */
 export function demolishTile(t: Track, kind: TrackKind, tx: number, ty: number): AutotileResult | null {
   if (!inMapT(tx, ty)) return null;
   const i = tIdx(tx, ty);
   layerOf(t, kind)[i] = 0;
-  if (!hasTrack(t, "road", tx, ty) && !hasTrack(t, "rail", tx, ty)) t.owner[i] = 0;
+  if (!hasTrack(t, "road", tx, ty) && !hasTrack(t, "dirt", tx, ty)) t.owner[i] = 0;
   return autotileAround(t, kind, tx, ty);
 }
 
@@ -428,18 +454,22 @@ export const canAfford = (purse: Purse, cost: Purse): boolean =>
  * `executeCandidate` (the AI, W3's "same cost model as the player") all ask
  * this function, so the two can never disagree about what "free" means.
  */
-export const freeAllowanceCovers = (kind: TrackKind): boolean => kind === "road";
+export const freeAllowanceCovers = (kind: TrackKind): boolean => kind === "dirt";
 
 /**
  * Cost of applying `kind` to a single tile:
  *   - already the same kind → free (dragging over your own road never
  *     double-charges)
- *   - road → rail upgrade in place → the difference only (UPGRADE_COST)
+ *   - a `road` (paved) over an existing `dirt` tile → the upgrade difference
+ *     only (UPGRADE_COST); the dirt is replaced, not kept underneath
+ *   - a `dirt` over an existing `road` tile → free (a paved road is already
+ *     there and is never downgraded)
  *   - otherwise the full transport cost
  */
 export function tileCost(t: Track, kind: TrackKind, tx: number, ty: number): Purse {
   if (hasTrack(t, kind, tx, ty)) return {};
-  if (kind === "rail" && hasTrack(t, "road", tx, ty)) return { ...UPGRADE_COST };
+  if (kind === "dirt" && hasTrack(t, "road", tx, ty)) return {};  // already paved
+  if (kind === "road" && hasTrack(t, "dirt", tx, ty)) return { ...UPGRADE_COST };
   return { ...TRANSPORT[kind].cost };
 }
 

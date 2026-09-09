@@ -123,38 +123,43 @@ describe("E4 culling + draw list", () => {
     expect(list.length).toBeLessThan(grid.industries.length);
   });
 
-  it("emits road/rail bitmask sprites that exist in the atlas", () => {
+  it("emits dirt/road bitmask sprites that exist in the atlas", () => {
+    const dirtBits = new Uint8Array(MAP_W * MAP_H);
     const roadBits = new Uint8Array(MAP_W * MAP_H);
-    const railBits = new Uint8Array(MAP_W * MAP_H);
-    roadBits[10 * MAP_W + 10] = 0b0011;
-    railBits[10 * MAP_W + 11] = 0b1010;
-    const list = buildDrawList({ grid, roadBits, railBits }, { x0: 8, y0: 8, x1: 14, y1: 14 });
+    dirtBits[10 * MAP_W + 10] = 0b0011;
+    roadBits[10 * MAP_W + 11] = 0b1010;
+    const list = buildDrawList({ grid, dirtBits, roadBits }, { x0: 8, y0: 8, x1: 14, y1: 14 });
     const names = list.map((d) => d.sprite);
-    expect(names).toContain("road_0011");
-    expect(names).toContain("rail_1010");
-    expect(names).not.toContain("crossing");
+    expect(names).toContain("dirt_0011");
+    expect(names).toContain("road_1010");
     for (const n of names) expect(atlas.has(n)).toBe(true);
   });
 
-  it("G6: a tile carrying both layers draws a crossing overlay", () => {
-    expect(atlas.has("crossing")).toBe(true);
+  it("G6: a tile never draws both tiers — paving replaces, not overlays", () => {
+    // The old level-crossing overlay is gone: dirt and road are two tiers of
+    // the SAME kind, so one tile carries exactly one of them. If a renderer
+    // call ever receives both bits set on one tile (a bug — paving clears the
+    // gravel layer) we must NOT emit two sprites or any `crossing` overlay.
+    expect(atlas.has("crossing")).toBe(false);
+    const dirtBits = new Uint8Array(MAP_W * MAP_H);
     const roadBits = new Uint8Array(MAP_W * MAP_H);
-    const railBits = new Uint8Array(MAP_W * MAP_H);
-    roadBits[12 * MAP_W + 12] = 0b0101;
-    railBits[12 * MAP_W + 12] = 0b1010;
-    const list = buildDrawList({ grid, roadBits, railBits }, { x0: 12, y0: 12, x1: 12, y1: 12 });
+    // A correct map never sets both, so two adjacent single-tier tiles render
+    // their own tier and nothing else.
+    dirtBits[12 * MAP_W + 12] = 0b0101;
+    roadBits[12 * MAP_W + 11] = 0b1010;
+    const list = buildDrawList({ grid, dirtBits, roadBits }, { x0: 11, y0: 12, x1: 12, y1: 12 });
     const names = list.map((d) => d.sprite);
-    expect(names).toContain("road_0101");
-    expect(names).toContain("rail_1010");
-    expect(names).toContain("crossing");
+    expect(names).toContain("dirt_0101");
+    expect(names).toContain("road_1010");
+    expect(names).not.toContain("crossing");
   });
 
   it("draw list stays small under a viewport cull", () => {
     const cam = { ...centerOnMap(createCamera(800, 600)), zoom: 2 as const };
     const r = visibleTileRange(cam, cullPad(atlas));
-    const roadBits = new Uint8Array(MAP_W * MAP_H).fill(0b1111);
-    const culled = buildDrawList({ grid, roadBits }, r);
-    const full = buildDrawList({ grid, roadBits }, { x0: 0, y0: 0, x1: MAP_W - 1, y1: MAP_H - 1 });
+    const dirtBits = new Uint8Array(MAP_W * MAP_H).fill(0b1111);
+    const culled = buildDrawList({ grid, dirtBits }, r);
+    const full = buildDrawList({ grid, dirtBits }, { x0: 0, y0: 0, x1: MAP_W - 1, y1: MAP_H - 1 });
     expect(culled.length).toBeLessThan(full.length);
   });
 });

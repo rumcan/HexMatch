@@ -167,7 +167,8 @@ export function createIsoDebug(ctx: DebugContext) {
     // pointer handler (`pos()` in game.ts), so the numbers are comparable with
     // a screenshot scaled by dpr.
     const picked = renderer ? renderer.pick(sx, sy) : null;
-    const refusal = inMap ? buildRefusal(ctx.grid, (ctx.tool === "rail" ? "rail" : "road") as TrackKind, tx, ty) : "out-of-bounds";
+    const buildKind: TrackKind = ctx.tool === "road" ? "road" : "dirt";
+    const refusal = inMap ? buildRefusal(ctx.grid, buildKind, tx, ty) : "out-of-bounds";
     const out = {
       tile: [tx, ty] as [number, number],
       terrain,
@@ -194,16 +195,16 @@ export function createIsoDebug(ctx: DebugContext) {
       occupancy: ind ? ind.id : -1,
       industry: ind ? { id: ind.id, type: ind.type, tx: ind.tx, ty: ind.ty, w: ind.w, h: ind.h } : null,
       track: inMap ? {
+        dirtBits: bitsAt(ctx.track, "dirt", tx, ty),
         roadBits: bitsAt(ctx.track, "road", tx, ty),
-        railBits: bitsAt(ctx.track, "rail", tx, ty),
+        dirtPresent: hasTrack(ctx.track, "dirt", tx, ty),
         roadPresent: hasTrack(ctx.track, "road", tx, ty),
-        railPresent: hasTrack(ctx.track, "rail", tx, ty),
         owner: ownerAt(ctx.track, tx, ty),
         /** PP-13: one of the map's public highways (owner PUBLIC_OWNER). */
         publicRoad: isPublicRoad(ctx.track, tx, ty),
       } : null,
       /** Would a build with the CURRENT tool be refused here, and why? */
-      build: { kind: ctx.tool === "rail" ? "rail" : "road", ok: refusal === null, why: refusal },
+      build: { kind: buildKind, ok: refusal === null, why: refusal },
       pickAtCentre: picked
         ? { tx: picked.tx, ty: picked.ty, sprite: picked.sprite?.sprite ?? null, hit: !!picked.sprite }
         : null,
@@ -312,8 +313,8 @@ export function createIsoDebug(ctx: DebugContext) {
     }
     const net = playerNetwork(ctx.track, owner, ctx.eco.factories, ctx.eco.harvesters);
     const tiles = [...net].sort((a, b) => a - b).map((i) => [i % MAP_W, (i / MAP_W) | 0] as [number, number]);
+    const dirt = tiles.filter(([x, y]) => hasTrack(ctx.track, "dirt", x, y)).length;
     const road = tiles.filter(([x, y]) => hasTrack(ctx.track, "road", x, y)).length;
-    const rail = tiles.filter(([x, y]) => hasTrack(ctx.track, "rail", x, y)).length;
     const out = {
       player,
       ownerId: owner,
@@ -322,8 +323,8 @@ export function createIsoDebug(ctx: DebugContext) {
         harvesters: ctx.eco.harvesters.filter((x) => x.ownerId === owner).map((x) => [x.tx, x.ty]),
       },
       tiles: tiles.length,
+      dirtTiles: dirt,
       roadTiles: road,
-      railTiles: rail,
       /** capped so the console stays readable; the count above is exact. */
       list: tiles.slice(0, 256),
       truncated: tiles.length > 256,
@@ -346,7 +347,7 @@ export function createIsoDebug(ctx: DebugContext) {
       for (let tx = range.x0; tx <= range.x1; tx++) {
         names.add(terrainSprite(ctx.grid, tx, ty));
         if (hasTrack(ctx.track, "road", tx, ty)) names.add(`road_${bitsAt(ctx.track, "road", tx, ty).toString(2).padStart(4, "0")}`);
-        if (hasTrack(ctx.track, "rail", tx, ty)) names.add(`rail_${bitsAt(ctx.track, "rail", tx, ty).toString(2).padStart(4, "0")}`);
+        if (hasTrack(ctx.track, "dirt", tx, ty)) names.add(`dirt_${bitsAt(ctx.track, "dirt", tx, ty).toString(2).padStart(4, "0")}`);
       }
     }
     for (const p of ctx.renderer?.drawOrder ?? []) names.add(p.sprite);
@@ -505,7 +506,7 @@ export function createIsoDebug(ctx: DebugContext) {
     },
     /** C5: the harvester catchment + build legality for a tile, in one call. */
     probe: (tx: number, ty: number) => {
-      const kind: TrackKind = ctx.tool === "rail" ? "rail" : "road";
+      const kind: TrackKind = ctx.tool === "road" ? "road" : "dirt";
       const why = buildRefusal(ctx.grid, kind, tx, ty);
       const taken = ctx.eco.harvesters.some((x) => x.tx === tx && x.ty === ty);
       const cat = catchmentOf(tx, ty);

@@ -84,36 +84,37 @@ export { joinFromSnapshot };
  * E8: the opening track allowance, as DATA on the player record (`freeTrack`)
  * so no phase inference or timer can ever claw it back (the K1 bug class).
  *
- * W9: it buys ROAD only. A rail tile — new, or an in-place upgrade of a road —
- * always pays `TRANSPORT.rail.cost` / `UPGRADE_COST`, which keeps the gate
- * honest ("wood and stone for roads, no ore — rail is gated behind an ore
- * mine"): ore is the first real objective after the opening road, and the
- * connection cannot skip straight to rail VP and ×1.6 throughput for free.
- * The rule itself lives in `freeAllowanceCovers` (`track.ts`) so the human
- * drag and the AI share one cost model (W3).
+ * W9: it buys DIRT only. A paved Road tile — new, or an in-place upgrade of a
+ * Dirt Road — always pays `TRANSPORT.road.cost` / `UPGRADE_COST`, which keeps
+ * the gate honest ("wood and stone for the basic Dirt Road, no ore — the paved
+ * Road is gated behind an ore mine"): ore is the first real objective after
+ * the opening Dirt Road, and the connection cannot skip straight to road VP
+ * (3) and ×1.6 throughput for free. The rule itself lives in
+ * `freeAllowanceCovers` (`track.ts`) so the human drag and the AI share one
+ * cost model (W3).
  */
 export const FREE_SETUP_TRACK = 12;
 export const HARVEST_MS = 3000;      // economy tick
 export const AI_BUILD_MS = 9000;
 /**
- * PP-07: start with wood + stone for roads (12 paid tiles — the E8 opening
- * curve, now that a road tile costs 1 Wood + 1 Stone), and no ore: rail stays
- * gated behind an ore mine. Grain and oil are earned, never granted — depot
- * expansion (grain + oil) and the second plant (grain + ore) are what
- * processing and trade are for.
+ * PP-07: start with wood + stone for the basic Dirt Road (12 paid tiles — the
+ * E8 opening curve, now that a Dirt Road tile costs 1 Wood + 1 Stone), and no
+ * ore: the paved Road stays gated behind an ore mine. Grain and oil are
+ * earned, never granted — depot expansion (grain + oil) and the second plant
+ * (grain + ore) are what processing and trade are for.
  */
 export const START_PURSE: Purse = { wood: 12, stone: 12, ore: 0 };
 /**
- * PP-13: what tearing up a ROAD tile salvages — exactly ONE unit, drawn at
- * random from this list (so: 1 Wood, or 1 Stone).
+ * PP-13: what tearing up a DIRT ROAD tile salvages — exactly ONE unit, drawn
+ * at random from this list (so: 1 Wood, or 1 Stone).
  *
- * A road tile costs `BUILD_COSTS.road` = 1 Wood + 1 Stone, so this is a
+ * A Dirt Road tile costs `BUILD_COSTS.dirt` = 1 Wood + 1 Stone, so this is a
  * half-refund: re-routing a mistake costs one material per tile instead of
- * two, but demolition is never free and never profitable. Rail is excluded on
- * purpose — its price is dominated by 4 Ore and the road→rail upgrade exists
- * precisely so rail does not have to be torn up.
+ * two, but demolition is never free and never profitable. The paved Road is
+ * excluded on purpose — its price is dominated by 4 Ore and the dirt→road pave
+ * exists precisely so a paved Road does not have to be torn up.
  */
-export const ROAD_DEMOLISH_REFUND: Cargo[] = ["wood", "stone"];
+export const DIRT_DEMOLISH_REFUND: Cargo[] = ["wood", "stone"];
 /**
  * PP-05: re-exported from `construction.ts` (the authoritative cost module) so
  * the whole E8 tuning surface is reachable from this file, the way
@@ -125,7 +126,7 @@ export const ROAD_DEMOLISH_REFUND: Cargo[] = ["wood", "stone"];
 export { VP_TARGET, FREE_SETUP_DEPOTS };
 
 /** PP-06: `plant` raises an ADDITIONAL processing plant beside another town. */
-export type Tool = "road" | "rail" | "harvester" | "plant" | "demolish";
+export type Tool = "dirt" | "road" | "harvester" | "plant" | "demolish";
 
 export interface PlayerState {
   /** Stable market index — offers are routed by it (`trade.ts`). */
@@ -211,7 +212,7 @@ export function startIsoGame(root: HTMLElement) {
     return nextHarvesterId++;
   };
   let phase: Phase = "setup-factory";
-  let tool: Tool = "road";
+  let tool: Tool = "dirt";
   let winner: PlayerState | null = null;
 
   // ── J1: quarry + market + the restored UI ────────────────────────────────
@@ -317,7 +318,7 @@ export function startIsoGame(root: HTMLElement) {
   const world: World = {
     grid,
     roadBits: drawBits(track, "road"),
-    railBits: drawBits(track, "rail"),
+    dirtBits: drawBits(track, "dirt"),
     extra: [],
   };
 
@@ -373,7 +374,7 @@ export function startIsoGame(root: HTMLElement) {
 
   const syncWorld = () => {
     world.roadBits = drawBits(track, "road");
-    world.railBits = drawBits(track, "rail");
+    world.dirtBits = drawBits(track, "dirt");
     // PP-12: one draw item per factory — the single TTD complex, drawn at the
     // footprint origin. The manifest footprint matches FACTORY_FOOTPRINT (both
     // derive from the art), so the anchor lands on the footprint's south
@@ -434,8 +435,8 @@ export function startIsoGame(root: HTMLElement) {
       if (owner !== "you") continue;
       if (e.type === "awarded") toast(`Connected by ${e.to} — +${e.delta} VP`, "good");
       else if (e.type === "revoked") toast(`Connection broken — ${e.delta} VP`, "bad");
-      else if (e.type === "upgraded") toast(`Upgraded to rail — +${e.delta} VP`, "good");
-      else if (e.type === "downgraded") toast(`Rail broken, fell back to road — ${e.delta} VP`, "bad");
+      else if (e.type === "upgraded") toast(`Paved over — upgraded to Road, +${e.delta} VP`, "good");
+      else if (e.type === "downgraded") toast(`Paved Road broken, fell back to Dirt Road — ${e.delta} VP`, "bad");
     }
   };
 
@@ -478,11 +479,11 @@ export function startIsoGame(root: HTMLElement) {
       id: 0, townId: adjacentTown(grid, tx, ty)?.id ?? null,
     });
     // Give the rival a factory a good distance away, on legal ground it can
-    // actually build from. W8: the farthest road-legal tile was often ROUGH,
-    // where rail is illegal, and the rival's rail-first plan then had nothing
-    // to lay — it "played" every 9 s and never built a tile. `ai.ts` ranks
-    // rail-legal tiles first and probes the top of the ranking for a real
-    // plan before the tile is committed.
+    // actually build from. W8: the farthest dirt-legal tile was often ROUGH,
+    // where a paved Road is illegal, and the rival's paved-first plan then had
+    // nothing to lay — it "played" every 9 s and never built a tile. `ai.ts`
+    // ranks paved-legal tiles first and probes the top of the ranking for a
+    // real plan before the tile is committed.
     const spot = chooseRivalFactorySpot(grid, track, [tx, ty], {
       purse: rival.purse, free: rival.freeTrack, ownerId: rival.i + 1, owner: rival.id,
       // PP-05: the probe prices the rival's opening Depot on the same free
@@ -520,7 +521,7 @@ export function startIsoGame(root: HTMLElement) {
    * deadlocking: Oil production itself needs a Depot.
    */
   function placeHarvester(tx: number, ty: number, p: PlayerState): boolean {
-    if (!canBuildOn(grid, "road", tx, ty)) { toast("Can't build there.", "bad"); return false; }
+    if (!canBuildOn(grid, "dirt", tx, ty)) { toast("Can't build there.", "bad"); return false; }
     if (eco.harvesters.some((h) => h.tx === tx && h.ty === ty)) {
       toast("A depot is already there.", "bad"); return false;
     }
@@ -637,7 +638,7 @@ export function startIsoGame(root: HTMLElement) {
     // PUBLIC highways, which carry owner `PUBLIC_OWNER` and are nobody's to
     // demolish.
     const mine = track.owner[tIdx(tx, ty)] === me.i + 1;
-    for (const kind of ["rail", "road"] as TrackKind[]) {
+    for (const kind of ["road", "dirt"] as TrackKind[]) {
       if (mine && hasTrack(track, kind, tx, ty)) {
         demolishTile(track, kind, tx, ty); removedKind = kind; break;
       }
@@ -653,15 +654,15 @@ export function startIsoGame(root: HTMLElement) {
       );
       return;
     }
-    // PP-13: tearing up a ROAD salvages one of the two materials it cost
-    // (`BUILD_COSTS.road` is 1 Wood + 1 Stone). WHICH one comes back is the
+    // PP-13: tearing up a DIRT ROAD salvages one of the two materials it cost
+    // (`BUILD_COSTS.dirt` is 1 Wood + 1 Stone). WHICH one comes back is the
     // random part, so demolition is a partial refund rather than free
-    // re-routing. Rail pays nothing back: its price is dominated by 4 Ore,
-    // and the upgrade path is what rail is for.
-    if (removedKind === "road") {
-      const back = choice(ROAD_DEMOLISH_REFUND);
+    // re-routing. The paved Road pays nothing back: its price is dominated by
+    // 4 Ore, and the dirt→road pave is what upgrades are for.
+    if (removedKind === "dirt") {
+      const back = choice(DIRT_DEMOLISH_REFUND);
       earn(me, { [back]: 1 });
-      toast(`Road cleared — salvaged 1 ${CARGO[back].icon} ${CARGO[back].name}.`, "good");
+      toast(`Dirt Road cleared — salvaged 1 ${CARGO[back].icon} ${CARGO[back].name}.`, "good");
     }
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
       const x = tx + dx, y = ty + dy;
@@ -1084,7 +1085,7 @@ export function startIsoGame(root: HTMLElement) {
         : (preview.free > 0 ? "free (setup)" : "free");
       costInfo = `<span class="mb-txt"><b>${n}</b> tiles · ${label}</span>` +
         (preview.truncated ? ` · <i>blocked</i>` : "") +
-        `<span class="mb-cost">${TRANSPORT[tool === "rail" ? "rail" : "road"].vp} VP</span>`;
+        `<span class="mb-cost">${(tool === "dirt" || tool === "road") ? TRANSPORT[tool].vp : 0} VP</span>`;
     } else if (tool === "plant" && hover) {
       // PP-06: the cost is PREVIEWED from the same constant the charge uses,
       // together with the refusal reason, so a click is never a surprise.
@@ -1199,7 +1200,7 @@ export function startIsoGame(root: HTMLElement) {
   // network cannot reach. Keep raw tile picking for other tools/structures.
   const pickForAction = (x: number, y: number) => {
     const p = renderer?.pick(x, y);
-    if (!p || phase !== "play" || (tool !== "road" && tool !== "rail")) return p;
+    if (!p || phase !== "play" || (tool !== "road" && tool !== "dirt")) return p;
     const ref = p.ref as { kind?: string; owner?: string } | null;
     if (ref?.kind !== "factory" || ref.owner !== me.id) return p;
     const f = factoryOf(me.id);
@@ -1225,7 +1226,7 @@ export function startIsoGame(root: HTMLElement) {
     const p = pickForAction(x, y);
     if (!p) return;
     const isMouse = e.pointerType === "mouse";
-    const isTrackTool = tool === "road" || tool === "rail";
+    const isTrackTool = tool === "road" || tool === "dirt";
     // TK-001: left mouse (button 0) is build/place ONLY — it never starts a
     // pan. Touch keeps its old behaviour (one finger pans, a quick tap places).
     if (phase === "play" && isTrackTool && (!isMouse || e.button === 0) && e.isPrimary) {
@@ -1250,7 +1251,7 @@ export function startIsoGame(root: HTMLElement) {
     const p = pickForAction(x, y);
     if (p) hover = { tx: p.tx, ty: p.ty, ref: p.ref };
     if (drag && p) {
-      const kind = tool === "rail" ? "rail" : "road";
+      const kind = tool as TrackKind;   // build-track tools are dirt | road
       const net = playerNetwork(track, me.i + 1, eco.factories, eco.harvesters);
       // W1: the preview prices the drag with the REAL purse and the free
       // allowance applied INSIDE the preview (last arg). The old
@@ -1270,17 +1271,18 @@ export function startIsoGame(root: HTMLElement) {
     const [x, y] = pos(e);
     if (drag && preview) {
       if (preview.tiles.length === 0) {
-        // W9: the allowance buys road only, so a rail drag with no ore previews
-        // nothing at all. Say that, rather than the generic "must extend your
-        // network" — which is not why it refused, and reads as a bug.
-        if (tool === "rail" && (me.purse.ore ?? 0) < (TRANSPORT.rail.cost.ore ?? 0)) {
+        // W9: the allowance buys Dirt only, so a paved Road drag with no ore
+        // previews nothing at all. Say that, rather than the generic "must
+        // extend your network" — which is not why it refused, and reads as a
+        // bug.
+        if (tool === "road" && (me.purse.ore ?? 0) < (TRANSPORT.road.cost.ore ?? 0)) {
           toast(me.freeTrack > 0
-            ? "Rail costs ore — free setup tiles only cover road."
-            : "Rail needs ore — connect an ore mine first.", "bad");
+            ? "A paved Road costs ore — free setup tiles only cover Dirt Roads."
+            : "A paved Road needs ore — connect an ore mine first.", "bad");
         } else {
           toast("Track must extend your network.", "bad");
         }
-      } else commitTrackDrag(me, preview, tool === "rail" ? "rail" : "road");
+      } else commitTrackDrag(me, preview, tool as TrackKind);
       drag = null; preview = null; downAt = null;
       g = pointerUp(g, e.pointerId);
       return;
@@ -1302,20 +1304,20 @@ export function startIsoGame(root: HTMLElement) {
             phase = "play";
             lastHarvest = performance.now();
             lastAi = performance.now();
-            toast("Now connect it to your Factory with road or rail — then match the tokened gems in the Processing Plant.", "info");
+            toast("Now connect it to your Factory with a Dirt Road or a paved Road — then match the tokened gems in the Processing Plant.", "info");
           }
         } else if (phase === "play") {
           // PP-05: every Depot after the setup allowance pays DEPOT_COST.
           if (tool === "harvester") placeHarvester(p.tx, p.ty, me);
           else if (tool === "plant") placePlant(p.tx, p.ty, me);
           else if (tool === "demolish") doDemolish(p.tx, p.ty);
-          else if (tool === "road" || tool === "rail") {
+          else if (tool === "road" || tool === "dirt") {
             const net = playerNetwork(track, me.i + 1, eco.factories, eco.harvesters);
             const refusal = buildRefusal(grid, tool as TrackKind, p.tx, p.ty, net);
             if (refusal !== null) {
               if (refusal === "not-adjacent") toast("Track must extend your network.", "bad");
               else if (refusal === "water") toast("Can't build on water.", "bad");
-              else if (refusal === "rough") toast("Rail cannot cross rough ground.", "bad");
+              else if (refusal === "rough") toast("A paved Road can't cross rough ground — use a Dirt Road.", "bad");
               else if (refusal === "occupied") toast("Tile is occupied.", "bad");
               else toast("Can't build there.", "bad");
             }
@@ -1338,7 +1340,7 @@ export function startIsoGame(root: HTMLElement) {
   }, { passive: false });
 
   window.addEventListener("keydown", (e) => {
-    const map: Record<string, Tool> = { "1": "road", "2": "rail", "3": "harvester", "4": "plant", "5": "demolish" };
+    const map: Record<string, Tool> = { "1": "dirt", "2": "road", "3": "harvester", "4": "plant", "5": "demolish" };
     if (map[e.key]) tool = map[e.key];
     if (e.key === "`" || e.key === "~") {
       if (debug) {

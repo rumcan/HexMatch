@@ -137,7 +137,7 @@ export function isServiced(track: Track, h: Harvester): boolean {
  */
 export function buildComponents(track: Track, kind: TrackKind, owner: number): Int32Array {
   const comp = new Int32Array(MAP_W * MAP_H).fill(-1);
-  const layer = kind === "road" ? track.road : track.rail;
+  const layer = kind === "road" ? track.road : track.dirt;
   // The same rule `trackOpenTo` applies, inlined over the raw owner layer
   // because this flood works on flat indices, not tile coords.
   const usable = (i: number): boolean => (owner === 0
@@ -173,14 +173,16 @@ export function buildComponents(track: Track, kind: TrackKind, owner: number): I
 }
 
 export interface Components {
+  /** Components over the premium paved tier (includes the map's public/town roads). */
   road: Int32Array;
-  rail: Int32Array;
+  /** Components over the basic gravel (Dirt Road) tier. */
+  dirt: Int32Array;
 }
 
-/** Both layers, scoped to one owner's track. */
+/** Both road tiers, scoped to one owner's track. */
 export const buildAllComponents = (track: Track, owner: number): Components => ({
   road: buildComponents(track, "road", owner),
-  rail: buildComponents(track, "rail", owner),
+  dirt: buildComponents(track, "dirt", owner),
 });
 
 /**
@@ -225,7 +227,7 @@ export type ConnKind = TrackKind | null;
 
 export interface Connection {
   kind: ConnKind;        // null = not connected to any factory
-  multiplier: number;    // 1.0 road / 1.6 rail / 0 unconnected
+  multiplier: number;    // 1.0 dirt / 1.6 paved road / 0 unconnected
   vp: number;            // VP this connection is worth
   factory: Factory | null;
 }
@@ -235,8 +237,11 @@ export const NO_CONNECTION: Connection = {
 };
 
 /**
- * Resolve a harvester's connection to its owner's Factory. Rail wins outright
- * when both exist — its multiplier and its VP.
+ * Resolve a harvester's connection to its owner's Factory. The paved `road`
+ * tier wins outright when it reaches both — its multiplier and its VP. (The
+ * map's public/town roads live on that tier, so a Depot hooked onto a town
+ * ring road or a highway is a paved connection.) Otherwise a pure Dirt Road
+ * link scores the basic tier.
  *
  * W2: `comp` must be the components for `h.ownerId` (build it with
  * `buildAllComponents(track, h.ownerId)`) — a harvester may only ride its own
@@ -249,19 +254,21 @@ export function resolveConnection(
   let best: Connection = NO_CONNECTION;
   let shortest = Infinity;
   for (const f of mine) {
-    if (linkedBy(comp.rail, h.tx, h.ty, f.tx, f.ty)) {
-      // rail is the ceiling — nothing beats it, stop looking
+    if (linkedBy(comp.road, h.tx, h.ty, f.tx, f.ty)) {
+      // the paved tier is the ceiling — nothing beats it, stop looking
       return {
-        kind: "rail", multiplier: TRANSPORT.rail.throughput, vp: TRANSPORT.rail.vp, factory: f,
+        kind: "road", multiplier: TRANSPORT.road.throughput, vp: TRANSPORT.road.vp, factory: f,
       };
     }
-    if (linkedBy(comp.road, h.tx, h.ty, f.tx, f.ty)) {
-      const route = roadPath(state.track, h.ownerId, shoulders(state.track, h.ownerId, h.tx, h.ty),
-        new Set(shoulders(state.track, h.ownerId, f.tx, f.ty).map(([x, y]) => tIdx(x, y))));
+    if (linkedBy(comp.dirt, h.tx, h.ty, f.tx, f.ty)) {
+      const route = roadPath(state.track, h.ownerId,
+        shoulders(state.track, h.ownerId, h.tx, h.ty),
+        new Set(shoulders(state.track, h.ownerId, f.tx, f.ty).map(([x, y]) => tIdx(x, y))),
+        "dirt");
       if (!route || route.length >= shortest) continue;
       shortest = route.length;
       best = {
-        kind: "road", multiplier: TRANSPORT.road.throughput, vp: TRANSPORT.road.vp, factory: f,
+        kind: "dirt", multiplier: TRANSPORT.dirt.throughput, vp: TRANSPORT.dirt.vp, factory: f,
       };
     }
   }

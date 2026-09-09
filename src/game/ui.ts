@@ -6,7 +6,7 @@
 // the ORIGINAL HUD:
 //
 //   Left column   BUILD   Rail / Factory / Foundry controls (mapped onto the
-//                         iso Road / Rail / Harvester / Demolish tools)
+//                         iso Dirt Road / Road / Depot / Demolish tools)
 //   Left column   BLACK MARKET  Blockade, Frost, Girders, Smog, Security,
 //                         Repair — wired to the quarry board + industry
 //                         blockades the iso economy already honours.
@@ -46,7 +46,7 @@ const GEM_ART: Record<Cargo, string> = Object.fromEntries(
 
 // ── tool + state shapes ─────────────────────────────────────────────────────
 /** PP-06: `plant` raises an additional processing plant beside another town. */
-export type UiTool = "road" | "rail" | "harvester" | "plant" | "demolish";
+export type UiTool = "dirt" | "road" | "harvester" | "plant" | "demolish";
 
 export interface UiPlayer {
   id: string;
@@ -320,8 +320,8 @@ export function createOriginalUi(
   // typed here — the buttons state the complete cost before the first click
   // and can never drift from what the placement actually charges.
   const TOOLS: { key: UiTool; label: string; sub: string }[] = [
+    { key: "dirt", label: "Dirt Road", sub: `${costCompact(TRANSPORT.dirt.cost)} · ${TRANSPORT.dirt.vp} VP` },
     { key: "road", label: "Road", sub: `${costCompact(TRANSPORT.road.cost)} · ${TRANSPORT.road.vp} VP` },
-    { key: "rail", label: "Rail", sub: `${costCompact(TRANSPORT.rail.cost)} · ${TRANSPORT.rail.vp} VP` },
     // PP-05: `depotSub` refreshes the Depot line below as the free-setup
     // allowance burns down.
     { key: "harvester", label: "Depot", sub: depotButtonLabel(0) },
@@ -333,7 +333,7 @@ export function createOriginalUi(
   let depotSub: HTMLElement | null = null;
   let lastDepotSub = "\u0000";
   for (const t of TOOLS) {
-    // V5: each tool gets its own banner artwork class (bg-road / bg-rail /
+    // V5: each tool gets its own banner artwork class (bg-dirt / bg-road /
     // bg-harvester / bg-demolish) — they all shared bg-rail before.
     const b = h("button", "build-btn bg-" + t.key);
     b.dataset.tool = t.key;
@@ -952,9 +952,10 @@ export function createOriginalUi(
     buildList.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((button) => {
       const tool = button.dataset.tool as UiTool;
       const cost = tool === "plant" ? PLANT_COST : tool === "harvester" ? DEPOT_COST
-        : tool === "road" || tool === "rail" ? TRANSPORT[tool].cost : {};
+        : tool === "road" || tool === "dirt" ? TRANSPORT[tool].cost : {};
+      // W9: the free setup allowance buys Dirt Roads only.
       const free = tool === "harvester" ? state.freeDepots > 0
-        : (tool === "road" || tool === "rail") && state.freeTrack > 0;
+        : (tool === "dirt") && state.freeTrack > 0;
       button.disabled = !free && !Object.entries(cost).every(([k, v]) => (state.purse[k as Cargo] ?? 0) >= v);
       button.classList.toggle("disabled", button.disabled);
     });
@@ -1017,7 +1018,7 @@ export function createOriginalUi(
         <h2>⚙️ HEXMATCH INDUSTRIES</h2>
         <p class="sub">Two worlds, one empire: <b>resource node → Depot → transport network → Factory → processing → resources available for construction</b>. First to <b>${VP.target}★ Victory Points</b> wins.</p>
         <div class="help-cols">
-          <div class="help-col"><h3>🏙️ The Territory</h3><p>Place <b>Depots</b> beside resource nodes to collect their output, then build <b>Roads</b> & <b>Rails</b> to carry it to your Factory. The rail multiplier and VP are on the connection; a broken line revokes it.</p><p>Your <b>first Depot is free</b>; every Depot after it costs <b>${costCompact(DEPOT_COST)}</b>, so reaching new industries (or manufacturing in the Processing Plant) is what buys expansion. A Depot you cannot pay for is refused and consumes nothing.</p><p>Pan with the <b>middle mouse button</b> (wheel zooms, touch drags pan). The left button only places or selects — dragging it never pans.</p></div>
+          <div class="help-col"><h3>🏙️ The Territory</h3><p>Place <b>Depots</b> beside resource nodes to collect their output, then build <b>Dirt Roads</b> & <b>Roads</b> (paved) to carry it to your Factory. The Road multiplier and VP ride on the connection; a broken line revokes it.</p><p>Your <b>first Depot is free</b>; every Depot after it costs <b>${costCompact(DEPOT_COST)}</b>, so reaching new industries (or manufacturing in the Processing Plant) is what buys expansion. A Depot you cannot pay for is refused and consumes nothing.</p><p>Pan with the <b>middle mouse button</b> (wheel zooms, touch drags pan). The left button only places or selects — dragging it never pans.</p></div>
           <div class="help-col"><h3>💎 The Processing Plant</h3><p>Where your Factory turns delivered cargo into resources available for construction. Match tokens to process: a colour only pays when your network reaches its industry. Match 4 doubles, match 5 makes a <b>bomb</b>. <b>Gold</b> 🪙 is its own colour — its gems drop only while a depot sits beside a gold mine (and pay once it's connected).</p></div>
           <div class="help-col"><h3>🪙 Gold, Trade & Defence</h3><p>Earn <b>gold</b> from gold-mine access or combos. <b>Gold is reserved for Black Market sabotage</b> — it never buys construction, cannot substitute for missing materials, and is refused by every market exchange. Security Forces and Repair Crew are hired with ordinary materials.</p></div>
         </div>

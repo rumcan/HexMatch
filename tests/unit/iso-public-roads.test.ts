@@ -225,7 +225,7 @@ describe("PP-13 public roads are every player's to drive on", () => {
         if (!inBounds(hx, hy)) continue;
         const i = idx(hx, hy);
         if (g.terrain[i] === WATER || g.occupancy[i] !== -1) continue;
-        if (hasTrack(track, "road", hx, hy) || hasTrack(track, "rail", hx, hy)) continue;
+        if (hasTrack(track, "road", hx, hy) || hasTrack(track, "dirt", hx, hy)) continue;
         return [tx, ty, hx, hy];
       }
     }

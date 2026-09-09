@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import {
   NE, SE, SW, NW, DIRS, DIR, OPPOSITE, PRESENT,
-  createTrack, tIdx, spriteKey, isCrossing, hasTrack, bitsAt, canBuildOn, playerNetwork,
+  createTrack, tIdx, spriteKey, hasTrack, bitsAt, canBuildOn, playerNetwork,
   recomputeMask, autotileAround, buildTile, demolishTile,
   tileCost, addCost, canAfford, lPath, previewDrag, commitDrag,
   connectedTiles, areConnected, drawBits, freeAllowanceCovers, type Track,
@@ -28,7 +28,7 @@ function flatGrid(): Grid {
   };
 }
 
-const build = (t: Track, kind: "road" | "rail", pts: [number, number][], owner = 0) => {
+const build = (t: Track, kind: "dirt" | "road", pts: [number, number][], owner = 0) => {
   for (const [x, y] of pts) buildTile(t, kind, x, y, owner);
 };
 
@@ -58,39 +58,39 @@ describe("E5 autotiling — all 16 neighbour configurations", () => {
     for (let mask = 0; mask < 16; mask++) {
       const t = createTrack();
       const cx = 20, cy = 20;
-      buildTile(t, "road", cx, cy);
+      buildTile(t, "dirt", cx, cy);
       for (const d of DIRS) {
-        if (mask & d) buildTile(t, "road", cx + DIR[d][0], cy + DIR[d][1]);
+        if (mask & d) buildTile(t, "dirt", cx + DIR[d][0], cy + DIR[d][1]);
       }
-      const bits = bitsAt(t, "road", cx, cy);
+      const bits = bitsAt(t, "dirt", cx, cy);
       expect(bits, `mask ${mask}`).toBe(mask);
-      const key = spriteKey("road", bits);
-      expect(key).toBe(`road_${mask.toString(2).padStart(4, "0")}`);
+      const key = spriteKey("dirt", bits);
+      expect(key).toBe(`dirt_${mask.toString(2).padStart(4, "0")}`);
       expect(atlas.has(key), `${key} missing from the atlas`).toBe(true);
-      expect(atlas.has(spriteKey("rail", bits))).toBe(true);
+      expect(atlas.has(spriteKey("road", bits))).toBe(true);
     }
   });
 
-  it("builds the key by mask, e.g. NE|SE → road_0011", () => {
-    expect(spriteKey("road", NE | SE)).toBe("road_0011");
-    expect(spriteKey("rail", SE | NW)).toBe("rail_1010");
-    expect(spriteKey("road", 0)).toBe("road_0000");
-    expect(spriteKey("road", 15)).toBe("road_1111");
+  it("builds the key by mask, e.g. NE|SE → dirt_0011", () => {
+    expect(spriteKey("dirt", NE | SE)).toBe("dirt_0011");
+    expect(spriteKey("road", SE | NW)).toBe("road_1010");
+    expect(spriteKey("dirt", 0)).toBe("dirt_0000");
+    expect(spriteKey("dirt", 15)).toBe("dirt_1111");
   });
 
   it("connections are mutual — a neighbour bit implies the reverse bit", () => {
     const t = createTrack();
-    build(t, "road", [[10, 10], [11, 10]]);
-    expect(bitsAt(t, "road", 10, 10) & SE).toBeTruthy();
-    expect(bitsAt(t, "road", 11, 10) & NW).toBeTruthy();
+    build(t, "dirt", [[10, 10], [11, 10]]);
+    expect(bitsAt(t, "dirt", 10, 10) & SE).toBeTruthy();
+    expect(bitsAt(t, "dirt", 11, 10) & NW).toBeTruthy();
   });
 
-  it("road and rail autotile independently and never cross-connect", () => {
+  it("dirt and road autotile independently and never cross-connect", () => {
     const t = createTrack();
-    buildTile(t, "road", 5, 5);
-    buildTile(t, "rail", 6, 5);
-    expect(bitsAt(t, "road", 5, 5)).toBe(0);
-    expect(bitsAt(t, "rail", 6, 5)).toBe(0);
+    buildTile(t, "dirt", 5, 5);
+    buildTile(t, "road", 6, 5);
+    expect(bitsAt(t, "dirt", 5, 5)).toBe(0);
+    expect(bitsAt(t, "road", 6, 5)).toBe(0);
   });
 });
 
@@ -99,7 +99,7 @@ describe("E5 incremental recompute", () => {
   // and 1–4 chunks".
   it("touches exactly 5 tiles and between 1 and 4 chunks", () => {
     const t = createTrack();
-    const r = buildTile(t, "road", 20, 20)!;
+    const r = buildTile(t, "dirt", 20, 20)!;
     expect(r.tiles).toHaveLength(5);
     expect(new Set(r.tiles).size).toBe(5);
     expect(r.chunks.length).toBeGreaterThanOrEqual(1);
@@ -109,62 +109,69 @@ describe("E5 incremental recompute", () => {
   it("touches 1 chunk mid-chunk and more at a chunk corner", () => {
     // K4: chunks are 4×4 — (1,1) is interior to chunk 0, (CHUNK,CHUNK) the
     // four-chunk meeting point.
-    const mid = buildTile(createTrack(), "road", 1, 1)!;
+    const mid = buildTile(createTrack(), "dirt", 1, 1)!;
     expect(mid.chunks).toHaveLength(1);
-    const corner = buildTile(createTrack(), "road", CHUNK, CHUNK)!;
+    const corner = buildTile(createTrack(), "dirt", CHUNK, CHUNK)!;
     expect(corner.chunks.length).toBeGreaterThan(1);
     expect(corner.chunks).toContain(chunksX + 1);
   });
 
   it("clips the touched set at the map edge", () => {
-    const r = buildTile(createTrack(), "road", 0, 0)!;
+    const r = buildTile(createTrack(), "dirt", 0, 0)!;
     expect(r.tiles).toHaveLength(3);   // self + SE + SW
   });
 
   it("never rescans the whole map", () => {
-    const r = buildTile(createTrack(), "road", 20, 20)!;
+    const r = buildTile(createTrack(), "dirt", 20, 20)!;
     expect(r.tiles.length).toBeLessThan(MAP_W * MAP_H);
   });
 
   it("demolishing re-tiles the neighbours that pointed at it", () => {
     const t = createTrack();
-    build(t, "road", [[10, 10], [11, 10], [12, 10]]);
-    expect(bitsAt(t, "road", 11, 10)).toBe(SE | NW);
-    demolishTile(t, "road", 11, 10);
-    expect(hasTrack(t, "road", 11, 10)).toBe(false);
-    expect(bitsAt(t, "road", 10, 10)).toBe(0);
-    expect(bitsAt(t, "road", 12, 10)).toBe(0);
+    build(t, "dirt", [[10, 10], [11, 10], [12, 10]]);
+    expect(bitsAt(t, "dirt", 11, 10)).toBe(SE | NW);
+    demolishTile(t, "dirt", 11, 10);
+    expect(hasTrack(t, "dirt", 11, 10)).toBe(false);
+    expect(bitsAt(t, "dirt", 10, 10)).toBe(0);
+    expect(bitsAt(t, "dirt", 12, 10)).toBe(0);
   });
 });
 
 describe("E5 presence vs direction bits", () => {
   it("keeps a lone stub visible — mask 0000 still draws", () => {
     const t = createTrack();
-    buildTile(t, "road", 15, 15);
-    expect(bitsAt(t, "road", 15, 15)).toBe(0);
-    expect(hasTrack(t, "road", 15, 15)).toBe(true);
+    buildTile(t, "dirt", 15, 15);
+    expect(bitsAt(t, "dirt", 15, 15)).toBe(0);
+    expect(hasTrack(t, "dirt", 15, 15)).toBe(true);
     const grid = flatGrid();
     const list = buildDrawList(
-      { grid, roadBits: drawBits(t, "road") },
+      { grid, dirtBits: drawBits(t, "dirt") },
       { x0: 14, y0: 14, x1: 16, y1: 16 },
     );
-    expect(list.map((d) => d.sprite)).toContain("road_0000");
+    expect(list.map((d) => d.sprite)).toContain("dirt_0000");
   });
 
   it("PRESENT sits above the four direction bits", () => {
     expect(PRESENT).toBe(16);
     const t = createTrack();
-    buildTile(t, "road", 3, 3);
-    expect(t.road[tIdx(3, 3)] & 0b1111).toBe(0);
-    expect(t.road[tIdx(3, 3)] & PRESENT).toBe(PRESENT);
+    buildTile(t, "dirt", 3, 3);
+    expect(t.dirt[tIdx(3, 3)] & 0b1111).toBe(0);
+    expect(t.dirt[tIdx(3, 3)] & PRESENT).toBe(PRESENT);
   });
 
-  it("a tile with both layers is a level crossing", () => {
+  it("paving a Road over a Dirt Road replaces it — a tile never holds both tiers", () => {
+    // The game is de-railwayed into two road tiers with no level crossing:
+    // paving `road` over `dirt` clears the gravel, and laying `dirt` over an
+    // existing `road` is a no-op (a paved road is never downgraded).
     const t = createTrack();
+    buildTile(t, "dirt", 9, 9);
+    expect(hasTrack(t, "dirt", 9, 9)).toBe(true);
     buildTile(t, "road", 9, 9);
-    expect(isCrossing(t, 9, 9)).toBe(false);
-    buildTile(t, "rail", 9, 9);
-    expect(isCrossing(t, 9, 9)).toBe(true);
+    expect(hasTrack(t, "dirt", 9, 9)).toBe(false);   // gravel cleared
+    expect(hasTrack(t, "road", 9, 9)).toBe(true);
+    buildTile(t, "dirt", 9, 9);
+    expect(hasTrack(t, "road", 9, 9)).toBe(true);    // no downgrade
+    expect(hasTrack(t, "dirt", 9, 9)).toBe(false);
   });
 });
 
@@ -172,45 +179,45 @@ describe("E5 buildability", () => {
   it("refuses water for both kinds", () => {
     const grid = flatGrid();
     grid.terrain[tIdx(7, 7)] = WATER;
+    expect(canBuildOn(grid, "dirt", 7, 7)).toBe(false);
     expect(canBuildOn(grid, "road", 7, 7)).toBe(false);
-    expect(canBuildOn(grid, "rail", 7, 7)).toBe(false);
   });
 
-  it("allows road on rough but not rail — rail needs flat", () => {
+  it("allows dirt on rough but not road — road needs flat", () => {
     const grid = flatGrid();
     grid.terrain[tIdx(8, 8)] = ROUGH;
-    expect(TRANSPORT.road.onRough).toBe(true);
-    expect(TRANSPORT.rail.onRough).toBe(false);
-    expect(canBuildOn(grid, "road", 8, 8)).toBe(true);
-    expect(canBuildOn(grid, "rail", 8, 8)).toBe(false);
+    expect(TRANSPORT.dirt.onRough).toBe(true);
+    expect(TRANSPORT.road.onRough).toBe(false);
+    expect(canBuildOn(grid, "dirt", 8, 8)).toBe(true);
+    expect(canBuildOn(grid, "road", 8, 8)).toBe(false);
   });
 
   it("G5: with a network set, refuses tiles not adjacent to it", () => {
     const grid = flatGrid();
     const net = new Set<number>([tIdx(10, 10)]);
-    expect(canBuildOn(grid, "road", 10, 11, net)).toBe(true);
-    expect(canBuildOn(grid, "road", 20, 20, net)).toBe(false);
-    expect(canBuildOn(grid, "road", 20, 20)).toBe(true); // 3-arg form unchanged
+    expect(canBuildOn(grid, "dirt", 10, 11, net)).toBe(true);
+    expect(canBuildOn(grid, "dirt", 20, 20, net)).toBe(false);
+    expect(canBuildOn(grid, "dirt", 20, 20)).toBe(true); // 3-arg form unchanged
   });
 
   it("G5: rival track is not a seed; demolish rebuilds the component", () => {
     const t = createTrack();
-    build(t, "road", [[10, 10], [11, 10], [12, 10], [13, 10]], 1);
+    build(t, "dirt", [[10, 10], [11, 10], [12, 10], [13, 10]], 1);
     const factories = [{ ownerId: 1, tx: 10, ty: 10 }];
     const harvesters: { ownerId: number; tx: number; ty: number }[] = [];
     let net = playerNetwork(t, 1, factories, harvesters);
     expect(net.has(tIdx(13, 10))).toBe(true);
-    demolishTile(t, "road", 11, 10);
+    demolishTile(t, "dirt", 11, 10);
     net = playerNetwork(t, 1, factories, harvesters);
     expect(net.has(tIdx(10, 10))).toBe(true);
     expect(net.has(tIdx(13, 10))).toBe(false);
-    expect(canBuildOn(flatGrid(), "road", 13, 11, net)).toBe(false);
+    expect(canBuildOn(flatGrid(), "dirt", 13, 11, net)).toBe(false);
   });
 
   it("W2: a rival's factory does not seed your network, and vice versa", () => {
     const t = createTrack();
-    build(t, "road", [[10, 10], [11, 10]], 1);
-    build(t, "road", [[30, 30], [31, 30]], 2);
+    build(t, "dirt", [[10, 10], [11, 10]], 1);
+    build(t, "dirt", [[30, 30], [31, 30]], 2);
     const you = playerNetwork(
       t, 1, [{ ownerId: 1, tx: 10, ty: 10 }], [],
     );
@@ -227,9 +234,9 @@ describe("E5 buildability", () => {
     const grid = flatGrid(), t = createTrack();
     const net = new Set<number>([tIdx(5, 5)]);
     const rich = { wood: 999, stone: 999, ore: 999 };
-    const fromSeed = previewDrag(grid, t, "road", rich, 5, 5, 8, 5, true, net);
+    const fromSeed = previewDrag(grid, t, "dirt", rich, 5, 5, 8, 5, true, net);
     expect(fromSeed.tiles.length).toBe(4);
-    const fromEmpty = previewDrag(grid, t, "road", rich, 20, 20, 24, 20, true, net);
+    const fromEmpty = previewDrag(grid, t, "dirt", rich, 20, 20, 24, 20, true, net);
     expect(fromEmpty.tiles.length).toBe(0);
     expect(fromEmpty.truncated).toBe(true);
   });
@@ -237,29 +244,29 @@ describe("E5 buildability", () => {
   it("refuses industry footprints and out-of-bounds", () => {
     const grid = flatGrid();
     grid.occupancy[tIdx(12, 12)] = 0;
-    expect(canBuildOn(grid, "road", 12, 12)).toBe(false);
-    expect(canBuildOn(grid, "road", -1, 0)).toBe(false);
-    expect(canBuildOn(grid, "road", MAP_W, 0)).toBe(false);
+    expect(canBuildOn(grid, "dirt", 12, 12)).toBe(false);
+    expect(canBuildOn(grid, "dirt", -1, 0)).toBe(false);
+    expect(canBuildOn(grid, "dirt", MAP_W, 0)).toBe(false);
   });
 });
 
 describe("E5 costs", () => {
   it("charges the transport cost on virgin ground", () => {
     const t = createTrack();
+    expect(tileCost(t, "dirt", 1, 1)).toEqual(TRANSPORT.dirt.cost);
     expect(tileCost(t, "road", 1, 1)).toEqual(TRANSPORT.road.cost);
-    expect(tileCost(t, "rail", 1, 1)).toEqual(TRANSPORT.rail.cost);
   });
 
   it("is free over existing track of the same kind", () => {
     const t = createTrack();
-    buildTile(t, "road", 1, 1);
-    expect(tileCost(t, "road", 1, 1)).toEqual({});
+    buildTile(t, "dirt", 1, 1);
+    expect(tileCost(t, "dirt", 1, 1)).toEqual({});
   });
 
-  it("charges only the difference to upgrade road → rail in place", () => {
+  it("charges only the difference to upgrade dirt → road in place", () => {
     const t = createTrack();
-    buildTile(t, "road", 1, 1);
-    expect(tileCost(t, "rail", 1, 1)).toEqual(UPGRADE_COST);
+    buildTile(t, "dirt", 1, 1);
+    expect(tileCost(t, "road", 1, 1)).toEqual(UPGRADE_COST);
   });
 
   it("canAfford compares every cargo in the cost", () => {
@@ -291,11 +298,11 @@ describe("E5 drag-to-build acceptance", () => {
 
   it("dragging across 10 tiles charges exactly 10× the per-tile cost", () => {
     const grid = flatGrid(), t = createTrack();
-    const p = previewDrag(grid, t, "road", rich, 5, 5, 14, 5);
+    const p = previewDrag(grid, t, "dirt", rich, 5, 5, 14, 5);
     expect(p.tiles).toHaveLength(10);
     expect(p.cost).toEqual({
-      wood: 10 * TRANSPORT.road.cost.wood!,
-      stone: 10 * TRANSPORT.road.cost.stone!,
+      wood: 10 * TRANSPORT.dirt.cost.wood!,
+      stone: 10 * TRANSPORT.dirt.cost.stone!,
     });
     expect(p.truncated).toBe(false);
   });
@@ -303,16 +310,16 @@ describe("E5 drag-to-build acceptance", () => {
   it("dragging into water truncates at the last legal tile", () => {
     const grid = flatGrid(), t = createTrack();
     grid.terrain[tIdx(9, 5)] = WATER;
-    const p = previewDrag(grid, t, "road", rich, 5, 5, 14, 5);
+    const p = previewDrag(grid, t, "dirt", rich, 5, 5, 14, 5);
     expect(p.truncated).toBe(true);
     expect(p.tiles).toHaveLength(4);            // 5,6,7,8
     expect(p.tiles.at(-1)).toEqual([8, 5]);
   });
 
-  it("dragging over existing road of the same type is free, no double charge", () => {
+  it("dragging over existing dirt of the same type is free, no double charge", () => {
     const grid = flatGrid(), t = createTrack();
-    build(t, "road", [[5, 5], [6, 5], [7, 5]]);
-    const p = previewDrag(grid, t, "road", rich, 5, 5, 9, 5);
+    build(t, "dirt", [[5, 5], [6, 5], [7, 5]]);
+    const p = previewDrag(grid, t, "dirt", rich, 5, 5, 9, 5);
     expect(p.tiles).toHaveLength(5);
     expect(p.cost).toEqual({ wood: 2, stone: 2 });   // only 8,5 and 9,5 are new
   });
@@ -320,40 +327,40 @@ describe("E5 drag-to-build acceptance", () => {
   it("an unaffordable drag previews and builds only the affordable prefix", () => {
     const grid = flatGrid(), t = createTrack();
     const purse = { wood: 99, stone: 3 };
-    const p = previewDrag(grid, t, "road", purse, 5, 5, 14, 5);
+    const p = previewDrag(grid, t, "dirt", purse, 5, 5, 14, 5);
     expect(p.tiles).toHaveLength(3);
     expect(p.cost).toEqual({ wood: 3, stone: 3 });
     expect(p.unaffordable.length).toBeGreaterThan(0);
-    const c = commitDrag(t, "road", p);
+    const c = commitDrag(t, "dirt", p);
     expect(c.built).toHaveLength(3);
-    expect(hasTrack(t, "road", 7, 5)).toBe(true);
-    expect(hasTrack(t, "road", 8, 5)).toBe(false);
+    expect(hasTrack(t, "dirt", 7, 5)).toBe(true);
+    expect(hasTrack(t, "dirt", 8, 5)).toBe(false);
   });
 
   it("commits a contiguous run that autotiles into a straight line", () => {
     const grid = flatGrid(), t = createTrack();
-    const p = previewDrag(grid, t, "road", rich, 5, 5, 9, 5);
-    commitDrag(t, "road", p);
+    const p = previewDrag(grid, t, "dirt", rich, 5, 5, 9, 5);
+    commitDrag(t, "dirt", p);
     // interior tiles connect both ways along the x axis (NW|SE)
-    for (const x of [6, 7, 8]) expect(bitsAt(t, "road", x, 5)).toBe(SE | NW);
-    expect(bitsAt(t, "road", 5, 5)).toBe(SE);
-    expect(bitsAt(t, "road", 9, 5)).toBe(NW);
+    for (const x of [6, 7, 8]) expect(bitsAt(t, "dirt", x, 5)).toBe(SE | NW);
+    expect(bitsAt(t, "dirt", 5, 5)).toBe(SE);
+    expect(bitsAt(t, "dirt", 9, 5)).toBe(NW);
   });
 
-  it("rail drags truncate on rough ground where road would pass", () => {
+  it("road drags truncate on rough ground where dirt would pass", () => {
     const grid = flatGrid(), t = createTrack();
     grid.terrain[tIdx(8, 5)] = ROUGH;
-    const rail = previewDrag(grid, t, "rail", rich, 5, 5, 12, 5);
-    expect(rail.truncated).toBe(true);
-    expect(rail.tiles).toHaveLength(3);
     const road = previewDrag(grid, t, "road", rich, 5, 5, 12, 5);
-    expect(road.truncated).toBe(false);
-    expect(road.tiles).toHaveLength(8);
+    expect(road.truncated).toBe(true);
+    expect(road.tiles).toHaveLength(3);
+    const dirt = previewDrag(grid, t, "dirt", rich, 5, 5, 12, 5);
+    expect(dirt.truncated).toBe(false);
+    expect(dirt.tiles).toHaveLength(8);
   });
 
   it("an L-drag charges for the corner tile exactly once", () => {
     const grid = flatGrid(), t = createTrack();
-    const p = previewDrag(grid, t, "road", rich, 5, 5, 8, 8);
+    const p = previewDrag(grid, t, "dirt", rich, 5, 5, 8, 8);
     expect(p.tiles).toHaveLength(7);            // 4 across + 3 down, corner once
     expect(new Set(p.tiles.map(([x, y]) => `${x},${y}`)).size).toBe(7);
     expect(p.cost).toEqual({ wood: 7, stone: 7 });
@@ -363,49 +370,53 @@ describe("E5 drag-to-build acceptance", () => {
 describe("E5 connectivity (the base E6 scores on)", () => {
   it("flood fills a connected run and excludes a detached one", () => {
     const t = createTrack();
-    build(t, "road", [[5, 5], [6, 5], [7, 5]]);
-    build(t, "road", [[20, 20]]);
-    const set = connectedTiles(t, "road", 5, 5);
+    build(t, "dirt", [[5, 5], [6, 5], [7, 5]]);
+    build(t, "dirt", [[20, 20]]);
+    const set = connectedTiles(t, "dirt", 5, 5);
     expect(set.size).toBe(3);
     expect(set.has(tIdx(20, 20))).toBe(false);
-    expect(areConnected(t, "road", 5, 5, 7, 5)).toBe(true);
-    expect(areConnected(t, "road", 5, 5, 20, 20)).toBe(false);
+    expect(areConnected(t, "dirt", 5, 5, 7, 5)).toBe(true);
+    expect(areConnected(t, "dirt", 5, 5, 20, 20)).toBe(false);
   });
 
   it("requires BOTH neighbours to set the facing bit", () => {
     const t = createTrack();
-    build(t, "road", [[5, 5], [6, 5]]);
+    build(t, "dirt", [[5, 5], [6, 5]]);
     // forge a one-sided bit: (7,5) has no track at all
-    t.road[tIdx(6, 5)] |= SE;
-    expect(areConnected(t, "road", 5, 5, 7, 5)).toBe(false);
+    t.dirt[tIdx(6, 5)] |= SE;
+    expect(areConnected(t, "dirt", 5, 5, 7, 5)).toBe(false);
   });
 
-  it("does not leak between road and rail across a level crossing", () => {
+  it("dirt and road layers stay separate — one tier's flood never uses the other", () => {
+    // The two tiers are independent connectivity graphs. Building two parallel
+    // lines of opposite tiers a tile apart must never let one flood through
+    // the other (that is what used to need the removed level-crossing overlay).
     const t = createTrack();
-    build(t, "road", [[10, 10], [11, 10]]);
-    build(t, "rail", [[11, 10], [11, 11]]);
-    const road = connectedTiles(t, "road", 10, 10);
-    expect(road.has(tIdx(11, 11))).toBe(false);
-    expect(areConnected(t, "rail", 11, 10, 11, 11)).toBe(true);
+    build(t, "dirt", [[10, 10], [10, 11]]);   // vertical Dirt Road
+    build(t, "road", [[11, 10], [11, 11]]);   // vertical paved Road, adjacent
+    expect(connectedTiles(t, "dirt", 10, 10).size).toBe(2);
+    expect(connectedTiles(t, "road", 11, 10).size).toBe(2);
+    expect(areConnected(t, "dirt", 10, 10, 10, 11)).toBe(true);
+    expect(areConnected(t, "dirt", 10, 10, 11, 10)).toBe(false);  // road tile excluded
   });
 
   it("breaking the middle splits one network into two", () => {
     const t = createTrack();
-    build(t, "road", [[5, 5], [6, 5], [7, 5], [8, 5]]);
-    expect(connectedTiles(t, "road", 5, 5).size).toBe(4);
-    demolishTile(t, "road", 7, 5);
-    expect(connectedTiles(t, "road", 5, 5).size).toBe(2);
-    expect(areConnected(t, "road", 5, 5, 8, 5)).toBe(false);
+    build(t, "dirt", [[5, 5], [6, 5], [7, 5], [8, 5]]);
+    expect(connectedTiles(t, "dirt", 5, 5).size).toBe(4);
+    demolishTile(t, "dirt", 7, 5);
+    expect(connectedTiles(t, "dirt", 5, 5).size).toBe(2);
+    expect(areConnected(t, "dirt", 5, 5, 8, 5)).toBe(false);
   });
 
   it("survives a loop without infinite recursion", () => {
     const t = createTrack();
-    build(t, "road", [
+    build(t, "dirt", [
       [5, 5], [6, 5], [7, 5],
       [5, 6], [7, 6],
       [5, 7], [6, 7], [7, 7],
     ]);
-    expect(connectedTiles(t, "road", 5, 5).size).toBe(8);
+    expect(connectedTiles(t, "dirt", 5, 5).size).toBe(8);
   });
 });
 
@@ -415,101 +426,101 @@ describe("E5 renderer integration", () => {
     const t = createTrack();
     // lay a long snake that hits water, rough and industry footprints
     for (let x = 2; x < 46; x++) {
-      if (canBuildOn(grid, "road", x, 24)) buildTile(t, "road", x, 24);
-      if (canBuildOn(grid, "rail", 24, x)) buildTile(t, "rail", 24, x);
+      if (canBuildOn(grid, "dirt", x, 24)) buildTile(t, "dirt", x, 24);
+      if (canBuildOn(grid, "road", 24, x)) buildTile(t, "road", 24, x);
     }
     const list = buildDrawList(
-      { grid, roadBits: drawBits(t, "road"), railBits: drawBits(t, "rail") },
+      { grid, dirtBits: drawBits(t, "dirt"), roadBits: drawBits(t, "road") },
       { x0: 0, y0: 0, x1: MAP_W - 1, y1: MAP_H - 1 },
     );
-    const track = list.filter((d) => /^(road|rail)_/.test(d.sprite));
+    const track = list.filter((d) => /^(dirt|road)_/.test(d.sprite));
     expect(track.length).toBeGreaterThan(20);
     for (const d of track) expect(atlas.has(d.sprite), d.sprite).toBe(true);
   });
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// W9 — the free setup allowance buys ROAD, never rail.
+// W9 — the free setup allowance buys ROAD, never road.
 //
 // `previewDrag` used to spend the allowance on any tile with a non-empty cost,
-// so the first FREE_SETUP_TRACK (12) tiles of a rail drag were free: the ore
-// gate E8/PP-07 settled ("wood and stone for roads, no ore — rail is gated behind
-// an ore mine") was bypassed and the connection jumped straight to rail VP
-// (3/tile) and rail throughput (×1.6) with 0 ore in the purse.
+// so the first FREE_SETUP_TRACK (12) tiles of a road drag were free: the ore
+// gate E8/PP-07 settled ("wood and stone for dirts, no ore — road is gated behind
+// an ore mine") was bypassed and the connection jumped straight to road VP
+// (3/tile) and road throughput (×1.6) with 0 ore in the purse.
 // ══════════════════════════════════════════════════════════════════════════
-describe("W9 the free setup allowance buys road, never rail", () => {
-  /** START_PURSE: 12 wood + 12 stone for the opening road, and no ore at all. */
+describe("W9 the free setup allowance buys dirt, never road", () => {
+  /** START_PURSE: 12 wood + 12 stone for the opening dirt, and no ore at all. */
   const setup = { wood: 12, stone: 12, ore: 0 };
 
-  it("the rule lives in one place, and it says road only", () => {
-    expect(freeAllowanceCovers("road")).toBe(true);
-    expect(freeAllowanceCovers("rail")).toBe(false);
+  it("the rule lives in one place, and it says dirt only", () => {
+    expect(freeAllowanceCovers("dirt")).toBe(true);
+    expect(freeAllowanceCovers("road")).toBe(false);
   });
 
-  it("a rail drag with 12 free tiles and no ore lays 0 tiles (was 12)", () => {
+  it("a road drag with 12 free tiles and no ore lays 0 tiles (was 12)", () => {
     const grid = flatGrid(), t = createTrack();
-    const p = previewDrag(grid, t, "rail", setup, 5, 5, 16, 5, true, undefined, 12);
+    const p = previewDrag(grid, t, "road", setup, 5, 5, 16, 5, true, undefined, 12);
     expect(p.tiles).toHaveLength(0);
     expect(p.cost).toEqual({});                 // nothing to charge
     expect(p.free).toBe(0);                     // and no allowance burned on it
     expect(p.unaffordable).toHaveLength(12);    // drawn red, never built
-    const c = commitDrag(t, "rail", p, 1);
+    const c = commitDrag(t, "road", p, 1);
     expect(c.built).toHaveLength(0);
-    expect(hasTrack(t, "rail", 5, 5)).toBe(false);
+    expect(hasTrack(t, "road", 5, 5)).toBe(false);
   });
 
-  it("the same drag with ore in the purse lays rail and debits it per tile", () => {
+  it("the same drag with ore in the purse lays road and debits it per tile", () => {
     const grid = flatGrid(), t = createTrack();
-    // exactly 4 ore = exactly one new rail tile ({wood 1, stone 1, ore 4})
-    const p = previewDrag(grid, t, "rail", { wood: 12, stone: 12, ore: 4 }, 5, 5, 16, 5, true, undefined, 12);
+    // exactly 4 ore = exactly one new road tile ({wood 1, stone 1, ore 4})
+    const p = previewDrag(grid, t, "road", { wood: 12, stone: 12, ore: 4 }, 5, 5, 16, 5, true, undefined, 12);
     expect(p.tiles).toHaveLength(1);
-    expect(p.cost).toEqual(TRANSPORT.rail.cost);
+    expect(p.cost).toEqual(TRANSPORT.road.cost);
     expect(p.cost.ore).toBe(4);
     expect(p.free).toBe(0);
-    commitDrag(t, "rail", p, 1);
-    expect(hasTrack(t, "rail", 5, 5)).toBe(true);
-    expect(hasTrack(t, "rail", 6, 5)).toBe(false);
+    commitDrag(t, "road", p, 1);
+    expect(hasTrack(t, "road", 5, 5)).toBe(true);
+    expect(hasTrack(t, "road", 6, 5)).toBe(false);
 
     // a purse that can pay lays the whole line, charging every tile
     const grid2 = flatGrid(), t2 = createTrack();
-    const q = previewDrag(grid2, t2, "rail", { wood: 99, stone: 99, ore: 99 }, 5, 5, 16, 5, true, undefined, 12);
+    const q = previewDrag(grid2, t2, "road", { wood: 99, stone: 99, ore: 99 }, 5, 5, 16, 5, true, undefined, 12);
     expect(q.tiles).toHaveLength(12);
     expect(q.cost).toEqual({ wood: 12, ore: 4 * 12, stone: 12 });
     expect(q.free).toBe(0);
   });
 
-  it("an in-place road→rail upgrade is never free either", () => {
+  it("an in-place dirt→road upgrade is never free either", () => {
     const grid = flatGrid(), t = createTrack();
-    build(t, "road", [[5, 5], [6, 5], [7, 5], [8, 5]], 1);
-    const broke = previewDrag(grid, t, "rail", setup, 5, 5, 8, 5, true, undefined, 12);
+    build(t, "dirt", [[5, 5], [6, 5], [7, 5], [8, 5]], 1);
+    const broke = previewDrag(grid, t, "road", setup, 5, 5, 8, 5, true, undefined, 12);
     expect(broke.tiles).toHaveLength(0);
     expect(broke.free).toBe(0);
     // 8 ore = two upgrades at UPGRADE_COST (4) each
-    const paid = previewDrag(grid, t, "rail", { wood: 12, stone: 12, ore: 8 }, 5, 5, 8, 5, true, undefined, 12);
+    const paid = previewDrag(grid, t, "road", { wood: 12, stone: 12, ore: 8 }, 5, 5, 8, 5, true, undefined, 12);
     expect(paid.tiles).toHaveLength(2);
     expect(paid.cost).toEqual({ ore: 2 * UPGRADE_COST.ore! });
     expect(paid.free).toBe(0);
   });
 
-  it("road still rides the allowance exactly as W1 established", () => {
+  it("dirt still rides the allowance exactly as W1 established", () => {
     const grid = flatGrid(), t = createTrack();
-    const free = previewDrag(grid, t, "road", { stone: 0, ore: 0 }, 5, 5, 16, 5, true, undefined, 12);
+    const free = previewDrag(grid, t, "dirt", { stone: 0, ore: 0 }, 5, 5, 16, 5, true, undefined, 12);
     expect(free.tiles).toHaveLength(12);
     expect(free.cost).toEqual({});
     expect(free.free).toBe(12);
 
     // past the allowance the purse pays, and the preview truncates there
     const grid2 = flatGrid(), t2 = createTrack();
-    const mixed = previewDrag(grid2, t2, "road", { wood: 5, stone: 5, ore: 0 }, 5, 5, 21, 5, true, undefined, 12);
+    const mixed = previewDrag(grid2, t2, "dirt", { wood: 5, stone: 5, ore: 0 }, 5, 5, 21, 5, true, undefined, 12);
     expect(mixed.tiles).toHaveLength(17);        // 12 free + 5 paid
     expect(mixed.cost).toEqual({ wood: 5, stone: 5 });
     expect(mixed.free).toBe(12);
   });
 
-  it("a road drag over your own track still wastes no allowance", () => {
+  it("a dirt drag over your own track still wastes no allowance", () => {
     const grid = flatGrid(), t = createTrack();
-    build(t, "road", [[5, 5], [6, 5], [7, 5]], 1);
-    const p = previewDrag(grid, t, "road", { stone: 0, ore: 0 }, 5, 5, 9, 5, true, undefined, 12);
+    build(t, "dirt", [[5, 5], [6, 5], [7, 5]], 1);
+    const p = previewDrag(grid, t, "dirt", { stone: 0, ore: 0 }, 5, 5, 9, 5, true, undefined, 12);
     expect(p.tiles).toHaveLength(5);
     expect(p.free).toBe(2);                      // only the two new tiles
     expect(p.cost).toEqual({});

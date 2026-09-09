@@ -88,7 +88,7 @@ function chooseOpeningFactorySpot(grid: Grid): [number, number] | null {
     let ok = true;
     for (let y = 0; y < fh && ok; y++) {
       for (let x = 0; x < fw && ok; x++) {
-        if (!canBuildOn(grid, "road", tx + x, ty + y)) ok = false;
+        if (!canBuildOn(grid, "dirt", tx + x, ty + y)) ok = false;
       }
     }
     if (ok) return [tx, ty];
@@ -99,7 +99,7 @@ function chooseOpeningFactorySpot(grid: Grid): [number, number] | null {
 const CAP_MS = 90 * 60_000;          // 90 in-game minutes per seed
 const STEP_MS = 1_000;
 /** Expansion legs the bank budgets beyond the purchase itself: a new Depot
- *  needs track to an uncovered industry, and 32 tiles of road covers the
+ *  needs track to an uncovered industry, and 32 tiles of dirt covers the
  *  measured inter-industry legs from a central opening on the 144×144 map. */
 const TRACK_BUDGET_TILES = 24;
 
@@ -152,7 +152,7 @@ function simulate(seed: number): Result {
     if (ownedDepots() < 2) {
       const t: Purse = { ...(freeDepots > 0 ? {} : DEPOT_COST) };
       for (let i = 0; i < TRACK_BUDGET_TILES; i++) {
-        for (const [k, v] of Object.entries(BUILD_COSTS.road) as [Cargo, number][]) {
+        for (const [k, v] of Object.entries(BUILD_COSTS.dirt) as [Cargo, number][]) {
           t[k] = (t[k] ?? 0) + v;
         }
       }
@@ -188,10 +188,10 @@ function simulate(seed: number): Result {
     }
     const deep: Purse = { ...purse };
     for (const c of CARGOES) deep[c] = (deep[c] ?? 0) + MAP_W * MAP_H;
-    // Road plans only: the bank funds the NEXT DEPOT, and a rail leg would
+    // Road plans only: the bank funds the NEXT DEPOT, and a road leg would
     // price the target in Ore a young network may never reach.
     const cands = planCandidates(eco, f, { stock: purse, purse: deep, free: freeTrack, freeDepots })
-      .filter((c) => c.kind === "road");
+      .filter((c) => c.kind === "dirt");
     if (!cands.length) return { target: nextTarget(), reserve };
     const shortfall = (c: (typeof cands)[number]): number => {
       let missing = 0;

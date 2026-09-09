@@ -127,8 +127,8 @@ function bannerSvg(accent) {
 }
 
 const BUTTONS = {
-  "build-road": "#9aa5b0",
-  "build-rail": "#3f7fe0",
+  "build-road": "#9aa5b0",   // paved Road (the premium tier)
+  "build-dirt": "#b79363",   // Dirt Road (gravel, the basic tier)
   "build-harvester": "#4ecb3e",
   "build-demolish": "#e0483a",
   "build-quarry": "#f5da28",

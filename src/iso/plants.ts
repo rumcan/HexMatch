@@ -123,7 +123,7 @@ export function plantRefusal(
     if (grid.terrain[i] === WATER) return "water";
     if (grid.occupancy[i] >= 0 || grid.occupancy[i] === TOWN_OCC) return "occupied";
     if (buildingAt(state, x, y)) return "building";
-    if (hasTrack(track, "road", x, y) || hasTrack(track, "rail", x, y)) return "track";
+    if (hasTrack(track, "road", x, y) || hasTrack(track, "dirt", x, y)) return "track";
   }
   return adjacentTown(grid, tx, ty) ? null : "no-town";
 }

@@ -48,7 +48,10 @@ const state = (grid: Grid, track: Track): EconomyState =>
   ({ grid, track, harvesters: [], factories: [] });
 
 const run = (t: Track, x0: number, x1: number, y: number, owner: number) => {
-  for (let x = x0; x <= x1; x++) buildTile(t, "road", x, y, owner);
+  // The plant-connection fixtures use the BASIC Dirt Road tier (throughput
+  // ×1.0), so a plant reached by one such line yields exactly the industry's
+  // base output — the magnitude the "no duplicate production" tests assert.
+  for (let x = x0; x <= x1; x++) buildTile(t, "dirt", x, y, owner);
 };
 
 describe("PP-06 town adjacency", () => {
@@ -168,7 +171,7 @@ describe("PP-06 routing, scoring and yield with several plants", () => {
   it("connects a depot to a plant and picks exactly one", () => {
     const { st, track, h } = twoPlantWorld();
     const conn = resolveConnection(st, buildAllComponents(track, 1), h);
-    expect(conn.kind).toBe("road");
+    expect(conn.kind).toBe("dirt");   // the fixture line is a basic Dirt Road
     expect(conn.factory).not.toBeNull();
     expect(plantsOf(st, "p1")).toHaveLength(2);
   });

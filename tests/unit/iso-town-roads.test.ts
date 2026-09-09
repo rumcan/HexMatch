@@ -258,7 +258,7 @@ describe("PP-10 seedTownRoads (track wiring)", () => {
     for (const t of g.towns) {
       for (const [rx, ry] of t.roads) {
         expect(buildRefusal(g, "road", rx, ry)).toBe("occupied");
-        expect(buildRefusal(g, "rail", rx, ry)).toBe("occupied");
+        expect(buildRefusal(g, "dirt", rx, ry)).toBe("occupied");
       }
     }
   });

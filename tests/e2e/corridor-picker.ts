@@ -258,7 +258,7 @@ export function findIsoCorridor(opts?: CorridorOptions): Corridor {
   };
   const buildWhy = (tx: number, ty: number) => memo(`b${tx},${ty}`, () => {
     if (h.tileProbe) {
-      const p = h.tileProbe("road", tx, ty);
+      const p = h.tileProbe("dirt", tx, ty);
       return p.build.ok ? null : (p.build.why || "unbuildable");
     }
     if (tx < 0 || ty < 0 || tx >= MAP_W || ty >= MAP_H) return "out-of-bounds";
@@ -275,7 +275,7 @@ export function findIsoCorridor(opts?: CorridorOptions): Corridor {
   // copy would silently go stale the next time the sprite changes.
   const harvesterWhy = (tx: number, ty: number) => memo(`h${tx},${ty}`, () => {
     if (!h.tileProbe) return null;
-    const p = h.tileProbe("road", tx, ty);
+    const p = h.tileProbe("dirt", tx, ty);
     return p.harvester.ok ? null : (p.harvester.why || "no-industry-in-catchment");
   });
 

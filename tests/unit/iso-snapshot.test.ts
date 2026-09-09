@@ -12,11 +12,11 @@ import { MAP_W, MAP_H } from "../../src/game/config";
 
 function source(): SnapshotSource {
   const track = createTrack();
-  for (let x = 5; x <= 30; x++) buildTile(track, "road", x, 10);
-  for (let y = 5; y <= 30; y++) buildTile(track, "rail", 12, y);
+  for (let x = 5; x <= 30; x++) buildTile(track, "dirt", x, 10);
+  for (let y = 5; y <= 30; y++) buildTile(track, "road", 12, y);
   const score = createScoreState();
-  score.connections.set(1, "road");
-  score.connections.set(2, "rail");
+  score.connections.set(1, "dirt");
+  score.connections.set(2, "road");
   return {
     seed: 20260903,
     track,
@@ -90,12 +90,12 @@ describe("E10 snapshot shape", () => {
 
   it("sends the track layers as base64 strings, not arrays", () => {
     const s = buildSnapshot(source());
+    expect(typeof s.dirt).toBe("string");
     expect(typeof s.road).toBe("string");
-    expect(typeof s.rail).toBe("string");
     // W2: the owner layer travels too, otherwise a rejoined guest sees one
     // shared graph instead of two players' networks.
     expect(typeof s.owner).toBe("string");
-    expect(base64ToBytes(s.road)).toHaveLength(EXPECTED_TRACK_BYTES);
+    expect(base64ToBytes(s.dirt)).toHaveLength(EXPECTED_TRACK_BYTES);
     expect(base64ToBytes(s.owner)).toHaveLength(EXPECTED_TRACK_BYTES);
   });
 
@@ -104,8 +104,8 @@ describe("E10 snapshot shape", () => {
     const s = buildSnapshot(src);
     const asJsonArrays = JSON.stringify({
       ...s,
+      dirt: Array.from(src.track.dirt),
       road: Array.from(src.track.road),
-      rail: Array.from(src.track.rail),
       owner: Array.from(src.track.owner),
     }).length;
     expect(snapshotBytes(s)).toBeLessThan(asJsonArrays);
@@ -119,8 +119,8 @@ describe("E10 round trip", () => {
   it("restores all three track layers byte-for-byte", () => {
     const src = source();
     const out = applySnapshot(buildSnapshot(src));
+    expect(out.track.dirt).toEqual(src.track.dirt);
     expect(out.track.road).toEqual(src.track.road);
-    expect(out.track.rail).toEqual(src.track.rail);
     expect(out.track.owner).toEqual(src.track.owner);
   });
 
@@ -135,10 +135,10 @@ describe("E10 round trip", () => {
     const src = source();
     const out = applySnapshot(buildSnapshot(src));
     for (const x of [6, 15, 29]) {
-      expect(bitsAt(out.track, "road", x, 10)).toBe(bitsAt(src.track, "road", x, 10));
+      expect(bitsAt(out.track, "dirt", x, 10)).toBe(bitsAt(src.track, "dirt", x, 10));
     }
-    expect(hasTrack(out.track, "rail", 12, 20)).toBe(true);
-    expect(hasTrack(out.track, "road", 40, 40)).toBe(false);
+    expect(hasTrack(out.track, "road", 12, 20)).toBe(true);
+    expect(hasTrack(out.track, "dirt", 40, 40)).toBe(false);
   });
 
   it("restores harvesters, factories, players and connections", () => {
@@ -147,8 +147,8 @@ describe("E10 round trip", () => {
     expect(out.harvesters).toEqual(src.harvesters);
     expect(out.factories).toEqual(src.factories);
     expect(out.players).toEqual(src.players);
-    expect(out.connections.get(1)).toBe("road");
-    expect(out.connections.get(2)).toBe("rail");
+    expect(out.connections.get(1)).toBe("dirt");
+    expect(out.connections.get(2)).toBe("road");
     expect(out.setupPhase).toBe(false);
     expect(out.t).toBe(1234);
   });
@@ -157,9 +157,9 @@ describe("E10 round trip", () => {
     const src = source();
     const out = applySnapshot(buildSnapshot(src));
     src.harvesters[0].tx = 999;
-    src.track.road[tIdx(6, 10)] = 0;
+    src.track.dirt[tIdx(6, 10)] = 0;
     expect(out.harvesters[0].tx).toBe(6);
-    expect(hasTrack(out.track, "road", 6, 10)).toBe(true);
+    expect(hasTrack(out.track, "dirt", 6, 10)).toBe(true);
   });
 
   it("R6: a guest joining mid-session regenerates the host terrain and industries", () => {
@@ -212,21 +212,22 @@ describe("E10 version gating", () => {
 });
 
 describe("E10 malformed payloads", () => {
-  it("rejects pre-RV-03 v6 clients with a version message before checking layer sizes", () => {
-    // RV-03 bumped the seed-derived map again: the towns' ring roads are now
-    // stamped PUBLIC_OWNER instead of neutral owner 0, so a v6 guest would
-    // regenerate a DIFFERENT owner layer from the same seed. The refusal must
-    // come from the version check, not from the layer-size check (the road
-    // layer is the same size in v6 and v7, so the version gate is what
-    // actually keeps mixed-version rooms from silently diverging).
-    const old = { ...buildSnapshot(source()), version: 6 };
-    expect(SNAPSHOT_VERSION).toBe(7);
+  it("rejects pre-de-railway v7 clients with a version message before checking layer sizes", () => {
+    // The de-railway rebalanced the game: `dirt`/`road` swapped meaning (the
+    // premium paved tier is now `road`) and town roads & inter-town highways
+    // moved onto the premium paved layer, so a v7 guest regenerates a
+    // DIFFERENT grid of free premium connections from the same seed. The
+    // refusal must come from the version check, not from the layer-size check
+    // (both layers are the same size across versions, so the version gate is
+    // what actually keeps mixed-version rooms from silently diverging).
+    const old = { ...buildSnapshot(source()), version: 7 };
+    expect(SNAPSHOT_VERSION).toBe(8);
     expect(validateSnapshot(old)?.code).toBe("version");
     expect(() => applySnapshot(old)).toThrow(/incompatible version/i);
   });
 
   it("rejects a truncated track layer instead of half-applying it", () => {
-    const s = { ...buildSnapshot(source()), road: bytesToBase64(new Uint8Array(10)) };
+    const s = { ...buildSnapshot(source()), dirt: bytesToBase64(new Uint8Array(10)) };
     const err = validateSnapshot(s)!;
     expect(err.code).toBe("malformed");
     expect(err.message).toMatch(/wrong size/i);
@@ -237,7 +238,7 @@ describe("E10 malformed payloads", () => {
     const base = buildSnapshot(source());
     expect(validateSnapshot({ ...base, seed: undefined })!.code).toBe("malformed");
     expect(validateSnapshot({ ...base, harvesters: undefined })!.code).toBe("malformed");
-    expect(validateSnapshot({ ...base, road: undefined })!.code).toBe("malformed");
+    expect(validateSnapshot({ ...base, dirt: undefined })!.code).toBe("malformed");
   });
 
   it("rejects a seed mismatch when the guest already generated a map", () => {
@@ -260,12 +261,12 @@ describe("E10 malformed payloads", () => {
 describe("E10 scale", () => {
   it("handles a fully saturated map without blowing up", () => {
     const src = source();
+    src.track.dirt.fill(31);
     src.track.road.fill(31);
-    src.track.rail.fill(31);
     const s = buildSnapshot(src);
     expect(snapshotBytes(s)).toBeLessThan(10 * EXPECTED_TRACK_BYTES);
     const out = applySnapshot(s);
-    expect(out.track.road).toEqual(src.track.road);
+    expect(out.track.dirt).toEqual(src.track.dirt);
   });
 
   it("the track layers are exactly one byte per tile", () => {
