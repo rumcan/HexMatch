@@ -7,6 +7,13 @@
 // roads). Paving a Road over a Dirt Road replaces it — a tile carries at most
 // ONE layer, so there is no level-crossing overlay any more.
 //
+// The mask is the PHYSICAL road surface: a tile sets a bit toward a neighbour
+// whenever that neighbour carries track of EITHER tier, so gravel and tar are
+// one continuous surface — a Dirt Road that reaches a paved tile connects to
+// it (that is the dirt↔paved seam feature: `dirt_road_*` transition sprites
+// draw the join, and the economy floods the merged surface). The bit still
+// lives in the tile's own tier layer, and a tile only ever carries one tier.
+//
 // Autotiling is a 4-bit / 16-variant problem, so the sprite key is built from
 // the mask rather than looked up in a table nobody maintains:
 //   `${kind}_${bits.toString(2).padStart(4,'0')}` → "dirt_0011" / "road_0011"
@@ -191,6 +198,26 @@ export const bitsAt = (t: Track, kind: TrackKind, tx: number, ty: number): numbe
   inMapT(tx, ty) ? layerOf(t, kind)[tIdx(tx, ty)] & 0b1111 : 0;
 
 /**
+ * Does (tx,ty) carry track of EITHER tier? A tile carries at most one tier
+ * (paving replaces gravel), but the merged test is what the union mask and
+ * the merged floods need: gravel and tar are one continuous road surface, so
+ * presence on either layer is presence on the road.
+ */
+export const mergedPresent = (t: Track, tx: number, ty: number): boolean =>
+  inMapT(tx, ty)
+  && ((layerOf(t, "dirt")[tIdx(tx, ty)] | layerOf(t, "road")[tIdx(tx, ty)]) & PRESENT) !== 0;
+
+/**
+ * Direction bits of whatever tier (tx,ty) carries. Since a tile never holds
+ * both tiers, this is the single mask of the surface there — the graph the
+ * merged floods and the transition sprite selection walk on.
+ */
+export const mergedBitsAt = (t: Track, tx: number, ty: number): number =>
+  inMapT(tx, ty)
+  ? (layerOf(t, "dirt")[tIdx(tx, ty)] | layerOf(t, "road")[tIdx(tx, ty)]) & 0b1111
+  : 0;
+
+/**
  * E14: the ONE place that knows why a build is refused. `canBuildOn` is this
  * function's boolean projection, so a test hook, a debug dump and a refusal
  * toast can never disagree with the rule that actually gates the build — the
@@ -320,8 +347,11 @@ export function playerNetwork(
 // ── autotiling ────────────────────────────────────────────────────────────
 /**
  * Recompute one tile's direction mask from its four neighbours. A bit is set
- * only when the neighbour also carries track of the same kind — the mask is
- * always mutually consistent, which is what E6's flood fill relies on.
+ * when the neighbour carries ANY tier of track — the mask is the physical
+ * road surface and stays mutually consistent across both tiers, which is what
+ * the merged floods rely on. The bit is stored in this tile's own tier layer
+ * only; a tile carrying the other tier is not PRESENT here and recomputes to
+ * zero.
  */
 export function recomputeMask(t: Track, kind: TrackKind, tx: number, ty: number): number {
   const layer = layerOf(t, kind);
@@ -330,7 +360,7 @@ export function recomputeMask(t: Track, kind: TrackKind, tx: number, ty: number)
   let bits = 0;
   for (const d of DIRS) {
     const [dx, dy] = DIR[d];
-    if (hasTrack(t, kind, tx + dx, ty + dy)) bits |= d;
+    if (mergedPresent(t, tx + dx, ty + dy)) bits |= d;
   }
   layer[i] = PRESENT | bits;
   return bits;
@@ -362,6 +392,27 @@ export function autotileAround(t: Track, kind: TrackKind, tx: number, ty: number
 }
 
 // ── build / demolish ──────────────────────────────────────────────────────
+/**
+ * Masks are the MERGED road surface (see `recomputeMask`): laying or removing
+ * a tile can change the direction bits of same-tier neighbours AND of
+ * neighbours carrying the other tier (a gravel tile beside a paved tile faces
+ * it). So after a change the tile is re-autotiled on both layers — but only
+ * when the other tier is actually present in the 4-neighbourhood, so a build
+ * on virgin ground still touches exactly 5 tiles.
+ */
+function autotileAroundBoth(
+  t: Track, kind: TrackKind, tx: number, ty: number,
+): AutotileResult {
+  const r1 = autotileAround(t, kind, tx, ty);
+  const other: TrackKind = kind === "road" ? "dirt" : "road";
+  const otherNearby = DIRS.some((d) => hasTrack(t, other, tx + DIR[d][0], ty + DIR[d][1]));
+  if (!otherNearby) return r1;
+  const r2 = autotileAround(t, other, tx, ty);
+  return {
+    tiles: [...new Set([...r1.tiles, ...r2.tiles])],
+    chunks: [...new Set([...r1.chunks, ...r2.chunks])],
+  };
+}
 /**
  * W2: `owner` is stamped on the tile so the network flood knows whose road
  * this is. Passing 0 (the default) is a neutral placement — it does NOT
@@ -398,10 +449,9 @@ export function buildTile(
     dirt[i] = 0;
     layerOf(t, kind)[i] |= PRESENT;
     if (owner !== 0 && t.owner[i] !== PUBLIC_OWNER) t.owner[i] = owner;
-    // Recompute both layers around the tile (dirt lost this tile, road gained).
-    const r1 = autotileAround(t, "dirt", tx, ty);
-    const r2 = autotileAround(t, "road", tx, ty);
-    return { tiles: [...r1.tiles, ...r2.tiles], chunks: [...new Set([...r1.chunks, ...r2.chunks])] };
+    // Recompute around the tile (dirt lost this tile, road gained) on both
+    // layers: the surrounding gravel now faces a paved tile instead.
+    return autotileAroundBoth(t, "road", tx, ty);
   }
   if (kind === "dirt" && (road[i] & PRESENT) !== 0) {
     // Already a paved road here — laying dirt changes nothing (no downgrade).
@@ -409,7 +459,7 @@ export function buildTile(
   }
   layerOf(t, kind)[i] |= PRESENT;
   if (owner !== 0 && t.owner[i] !== PUBLIC_OWNER) t.owner[i] = owner;
-  return autotileAround(t, kind, tx, ty);
+  return autotileAroundBoth(t, kind, tx, ty);
 }
 
 /**
@@ -422,7 +472,9 @@ export function demolishTile(t: Track, kind: TrackKind, tx: number, ty: number):
   const i = tIdx(tx, ty);
   layerOf(t, kind)[i] = 0;
   if (!hasTrack(t, "road", tx, ty) && !hasTrack(t, "dirt", tx, ty)) t.owner[i] = 0;
-  return autotileAround(t, kind, tx, ty);
+  // Also re-tile the OTHER layer around the gap: a paved neighbour that was
+  // facing this tile (any-tier masks) must stop now that nothing is here.
+  return autotileAroundBoth(t, kind, tx, ty);
 }
 
 // ── costs ─────────────────────────────────────────────────────────────────
@@ -607,8 +659,12 @@ export function commitDrag(t: Track, kind: TrackKind, preview: DragPreview, owne
 
 // ── connectivity (the base E6 will build connection scoring on) ───────────
 /**
- * Flood fill over direction masks. A tile connects to a neighbour only when
- * BOTH tiles set the facing bit — a one-sided bit is never a connection.
+ * Flood fill over direction masks, RESTRICTED to one tier: a tile moves to a
+ * neighbour only when the neighbour also carries track of `kind` (it is
+ * PRESENT on that layer) and BOTH set the facing bit. Because the masks now
+ * cross tiers, a tile's mask can point at the other tier — the flood does
+ * not follow it. This is the single-tier view (used for tier-purist tests);
+ * the merged surface is what `mergedConnectedTiles` and the economy walk.
  */
 export function connectedTiles(
   t: Track, kind: TrackKind, tx: number, ty: number,
@@ -624,7 +680,7 @@ export function connectedTiles(
       if (!(bits & d)) continue;
       const nx = x + DIR[d][0], ny = y + DIR[d][1];
       if (!inMapT(nx, ny)) continue;
-      // mutual: the neighbour must face back
+      // mutual: the neighbour must face back (on this tier)
       if (!(bitsAt(t, kind, nx, ny) & OPPOSITE[d])) continue;
       const ni = tIdx(nx, ny);
       if (seen.has(ni)) continue;
@@ -638,6 +694,40 @@ export function connectedTiles(
 export const areConnected = (
   t: Track, kind: TrackKind, ax: number, ay: number, bx: number, by: number,
 ): boolean => connectedTiles(t, kind, ax, ay).has(tIdx(bx, by));
+
+/**
+ * Flood fill over the MERGED surface: gravel and tar are one continuous
+ * road, so the flood crosses whichever tier a tile carries, exactly as the
+ * economy's owner-scoped flood and the truck route do. Tiles connect only
+ * when both set the facing bit.
+ */
+export function mergedConnectedTiles(
+  t: Track, tx: number, ty: number,
+): Set<number> {
+  const seen = new Set<number>();
+  if (!mergedPresent(t, tx, ty)) return seen;
+  const stack: [number, number][] = [[tx, ty]];
+  seen.add(tIdx(tx, ty));
+  while (stack.length) {
+    const [x, y] = stack.pop()!;
+    const bits = mergedBitsAt(t, x, y);
+    for (const d of DIRS) {
+      if (!(bits & d)) continue;
+      const nx = x + DIR[d][0], ny = y + DIR[d][1];
+      if (!inMapT(nx, ny)) continue;
+      if (!(mergedBitsAt(t, nx, ny) & OPPOSITE[d])) continue;   // mutual
+      const ni = tIdx(nx, ny);
+      if (seen.has(ni)) continue;
+      seen.add(ni);
+      stack.push([nx, ny]);
+    }
+  }
+  return seen;
+}
+
+export const mergedAreConnected = (
+  t: Track, ax: number, ay: number, bx: number, by: number,
+): boolean => mergedConnectedTiles(t, ax, ay).has(tIdx(bx, by));
 
 /**
  * The layer as the renderer consumes it. The PRESENT bit is deliberately kept:
