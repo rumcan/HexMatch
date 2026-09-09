@@ -269,6 +269,32 @@ describe("RV-01 planTrucks", () => {
     expect(trucks[0].route).toEqual([[10, 10], [10, 11], [10, 12]]);
   });
 
+  it("drives ACROSS the dirt→paved seam — gravel and tar are one route", () => {
+    const g = generateMap(1337);
+    const track = createTrack();
+    // gravel half (10,10..12) meeting the player's paved half (10,13..15):
+    // the truck must cross the seam without teleporting, exactly like the
+    // economy scores the merged surface.
+    pave(track, 1, [[10, 10], [10, 11], [10, 12]]);
+    for (const [x, y] of [[10, 13], [10, 14], [10, 15]] as [number, number][]) {
+      buildTile(track, "road", x, y, 1);
+    }
+    const trucks = planTrucks(eco(g, track,
+      [{ id: 1, owner: "you", ownerId: 1, tx: 10, ty: 9 }],
+      [{ owner: "you", ownerId: 1, tx: 10, ty: 16 }],
+    ));
+    expect(trucks).toHaveLength(1);
+    expect(trucks[0].route).toEqual([
+      [10, 10], [10, 11], [10, 12], [10, 13], [10, 14], [10, 15],
+    ]);
+    // the seam itself: gravel (10,12) and paving (10,13) face each other
+    expect(hasTrack(track, "dirt", 10, 12)).toBe(true);
+    expect(hasTrack(track, "road", 10, 13)).toBe(true);
+    expect(hasTrack(track, "dirt", 10, 13)).toBe(false);
+    expect(bitsAt(track, "dirt", 10, 12) & SW).not.toBe(0);
+    expect(bitsAt(track, "road", 10, 13) & NE).not.toBe(0);
+  });
+
   it("sends no truck to an unserviced depot, but serves both Dirt and paved Roads", () => {
     const g = generateMap(1337);
     const track = createTrack();
