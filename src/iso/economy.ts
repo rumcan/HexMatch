@@ -20,6 +20,7 @@
 //
 // Scoring runs on every build and demolish, never on a timer.
 // ══════════════════════════════════════════════════════════════════════════
+import { roadPath, shoulders } from "./road-routing";
 import { MAP_W, MAP_H } from "../game/config";
 import { TRANSPORT, INDUSTRY_BY_KEY, type Cargo } from "./config";
 import type { Grid, Industry } from "./grid";
@@ -246,6 +247,7 @@ export function resolveConnection(
 ): Connection {
   const mine = state.factories.filter((f) => f.owner === h.owner);
   let best: Connection = NO_CONNECTION;
+  let shortest = Infinity;
   for (const f of mine) {
     if (linkedBy(comp.rail, h.tx, h.ty, f.tx, f.ty)) {
       // rail is the ceiling — nothing beats it, stop looking
@@ -253,7 +255,11 @@ export function resolveConnection(
         kind: "rail", multiplier: TRANSPORT.rail.throughput, vp: TRANSPORT.rail.vp, factory: f,
       };
     }
-    if (best.kind === null && linkedBy(comp.road, h.tx, h.ty, f.tx, f.ty)) {
+    if (linkedBy(comp.road, h.tx, h.ty, f.tx, f.ty)) {
+      const route = roadPath(state.track, h.ownerId, shoulders(state.track, h.ownerId, h.tx, h.ty),
+        new Set(shoulders(state.track, h.ownerId, f.tx, f.ty).map(([x, y]) => tIdx(x, y))));
+      if (!route || route.length >= shortest) continue;
+      shortest = route.length;
       best = {
         kind: "road", multiplier: TRANSPORT.road.throughput, vp: TRANSPORT.road.vp, factory: f,
       };

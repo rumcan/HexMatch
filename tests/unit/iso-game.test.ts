@@ -432,7 +432,7 @@ describe("J1 the quarry is mounted in the iso app", () => {
     expect(tools).toEqual(["road", "rail", "harvester", "plant", "demolish"]);
     const panels = [...root.querySelectorAll("[data-panel]")].map(
       (b) => (b as HTMLElement).dataset.panel);
-    expect(panels).toEqual(["quarry", "trade"]);
+    expect(panels).toEqual([]);
     expect(root.querySelector("[data-act=recenter]")).toBeTruthy();
   });
 
@@ -513,13 +513,14 @@ describe("J1 the quarry is mounted in the iso app", () => {
 
   it("surfaces trading, and a bank trade moves cargo in the same purse", async () => {
     const h = await boot();
-    (root.querySelector('[data-panel="trade"]') as HTMLElement).click();
+    (root.querySelector('[data-tab="bank"]') as HTMLElement).click();
     const panel = root.querySelector("#iso-trade") as HTMLElement;
     expect(panel.style.display).not.toBe("none");
 
     h.purse.stone = 4; h.purse.ore = 0;
     (panel.querySelector('[data-f="bank-give"]') as HTMLSelectElement).value = "stone";
     (panel.querySelector('[data-f="bank-want"]') as HTMLSelectElement).value = "ore";
+    await settle();
     (panel.querySelector('[data-act="bank"]') as HTMLElement).click();
 
     expect(h.purse.stone).toBe(0);
@@ -1051,8 +1052,7 @@ describe("PP-08 gold is reserved for Black Market sabotage", () => {
     await settle();
     expect(h.purse.gold ?? 0).toBe(0);
     expect(h.purse.stone).toBe(12);             // no material was touched
-    expect((root.querySelector(".toasts") as HTMLElement).textContent ?? "")
-      .toMatch(/needs 5 gold/i);
+    expect((root.querySelector(".sab-btn.sb-harden") as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("sabotage with enough gold deducts ONLY gold", async () => {
@@ -1099,7 +1099,7 @@ describe("PP-08 gold is reserved for Black Market sabotage", () => {
 
   it("the trade composer never offers gold, and the market refuses it anyway", async () => {
     const h = await boot();
-    (root.querySelector('[data-panel="trade"]') as HTMLElement).click();
+    (root.querySelector('[data-tab="bank"]') as HTMLElement).click();
     const panel = root.querySelector("#iso-trade") as HTMLElement;
     for (const sel of [...panel.querySelectorAll("select")]) {
       const values = [...(sel as HTMLSelectElement).options].map((o) => o.value);
@@ -1115,14 +1115,15 @@ describe("W6 the market is visible and trades are logged", () => {
     const h = await boot();
     const panel = root.querySelector("#iso-trade") as HTMLElement;
     expect(panel).toBeTruthy();
-    expect(panel.classList.contains("hidden")).toBe(true);     // closed at boot
+    expect(panel.classList.contains("hidden")).toBe(false);    // shared window
 
-    (root.querySelector('[data-panel="trade"]') as HTMLElement).click();
+    (root.querySelector('[data-tab="bank"]') as HTMLElement).click();
     expect(panel.classList.contains("hidden")).toBe(false);    // OPEN
 
     h.purse.stone = 4; h.purse.ore = 0;
     (panel.querySelector('[data-f="bank-give"]') as HTMLSelectElement).value = "stone";
     (panel.querySelector('[data-f="bank-want"]') as HTMLSelectElement).value = "ore";
+    await settle();
     (panel.querySelector('[data-act="bank"]') as HTMLElement).click();
     expect(h.purse.stone).toBe(0);
     expect(h.purse.ore).toBe(1);
@@ -1131,7 +1132,7 @@ describe("W6 the market is visible and trades are logged", () => {
   it("a posted offer can be answered by the rival, and the feed logs it", async () => {
     const h = await boot();
     const panel = root.querySelector("#iso-trade") as HTMLElement;
-    (root.querySelector('[data-panel="trade"]') as HTMLElement).click();
+    (root.querySelector('[data-tab="bank"]') as HTMLElement).click();
 
     const me = h.market.players[0];
     const rival = h.market.players[1];
@@ -1143,6 +1144,7 @@ describe("W6 the market is visible and trades are logged", () => {
     (panel.querySelector('[data-f="want"]') as HTMLSelectElement).value = "ore";
     (panel.querySelector('[data-f="give-n"]') as HTMLInputElement).value = "2";
     (panel.querySelector('[data-f="want-n"]') as HTMLInputElement).value = "2";
+    await settle();
     (panel.querySelector('[data-act="post"]') as HTMLElement).click();
     expect(h.market.live(me)).toHaveLength(1);
     expect(me.res.stone).toBe(10);            // escrowed
@@ -1210,10 +1212,10 @@ describe("PP-01 terminology: Processing Plant + Depot", () => {
   it("calls the match-3 panel, its build toggle and the mobile nav 'Processing Plant'", async () => {
     await boot();
     expect(root.querySelector("#iso-quarry .panel-title")?.textContent).toContain("Processing Plant");
-    expect(root.querySelector('[data-panel="quarry"]')?.textContent).toContain("Processing Plant");
+    expect(root.querySelector('[data-tab="plant"]')?.textContent).toContain("Processing Plant");
     const nav = [...root.querySelectorAll<HTMLElement>(".mnav-btn")]
-      .find((b) => b.dataset.view === "quarry");
-    expect(nav?.textContent).toContain("Processing Plant");
+      .find((b) => b.dataset.view === "trade");
+    expect(nav?.textContent).toContain("Economy");
   });
 
   it("explains the loop in the help and keeps the stone node's Quarry name", async () => {
@@ -1567,6 +1569,7 @@ describe("A1 Black Market sabotage lands on the rival", () => {
     const spot = findFactorySpot(h.grid)!;
     expect(h.placeFactory(spot[0], spot[1])).toBe(true);
     h.purse.gold = 20;                                  // afford any of them
+    await settle();
     const before = { ...h.purse };
     const btn = root.querySelector(".sab-btn.sb-harden") as HTMLElement;
     expect(btn).toBeTruthy();
@@ -1586,6 +1589,7 @@ describe("A1 Black Market sabotage lands on the rival", () => {
   it("Iron Girders and Smog Cloud do the same, and Repair Crew stays on your own board", async () => {
     const h = await boot();
     h.purse.gold = 30;
+    await settle();
     (root.querySelector(".sab-btn.sb-block") as HTMLElement).click();
     (root.querySelector(".sab-btn.sb-fog") as HTMLElement).click();
     const now = performance.now();
@@ -1628,5 +1632,40 @@ describe("A1 a lorry arrival is a delivery", () => {
     expect(float!.textContent).toMatch(/^\+\d/);       // "+1 …" / "+2 …"
     // the number on the map and the token on the board are the same event
     expect(tokens()).toBeGreaterThan(before);
+  });
+});
+
+describe("economy window and affordability", () => {
+  it("updates native purchase states as materials are acquired and spent", async () => {
+    const h = await boot();
+    const { PLANT_COST } = await import("../../src/iso/plants");
+    const button = root.querySelector('[data-tool="plant"]') as HTMLButtonElement;
+    for (const k of Object.keys(PLANT_COST)) h.purse[k] = 0;
+    await settle();
+    expect(button.disabled).toBe(true);
+    button.click();
+    expect(h.tool).not.toBe("plant");
+    Object.assign(h.purse, PLANT_COST);
+    await settle();
+    expect(button.disabled).toBe(false);
+    button.click();
+    expect(h.tool).toBe("plant");
+    h.purse[Object.keys(PLANT_COST)[0]] = 0;
+    await settle();
+    expect(button.disabled).toBe(true);
+    expect(root.querySelector('[data-tool="demolish"] small')?.textContent).toBe("Refund 50%");
+  });
+
+  it("keeps one pane visible and nests Black Market beneath the bank", async () => {
+    await boot();
+    expect(root.querySelectorAll('[data-panel]')).toHaveLength(0);
+    for (const tab of ["bank", "market", "plant", "feed"]) {
+      (root.querySelector(`[data-tab="${tab}"]`) as HTMLButtonElement).click();
+      expect(root.querySelectorAll('#iso-trade > .pane:not(.hidden), #iso-trade > #iso-quarry:not(.hidden)')).toHaveLength(1);
+      expect(root.querySelector(`[data-tab="${tab}"]`)?.classList.contains("active")).toBe(true);
+    }
+    const bank = root.querySelector('.bank-pane')!;
+    expect(bank.lastElementChild?.querySelector('.sab-list')).toBeTruthy();
+    expect(root.querySelector('.aside.left .sab-list')).toBeNull();
   });
 });
