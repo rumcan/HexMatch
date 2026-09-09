@@ -455,6 +455,132 @@ async function makeGravelStrip(s) {
   return out;
 }
 
+// ── dirt_road_: the 65 dirt↔paved transition tiles ────────────────────────
+// The two road tiers are ONE connected road graph, so a gravel tile that
+// shares an edge with a PAVED tile draws a transition sprite (`dirt_road_*`)
+// instead of a plain `dirt_*` stub. OpenGFX ships no such art, and hand-
+// painting 65 variants would duplicate the exact-recolor work the gravel
+// sheet already encodes, so they are synthesized at pack time exactly like
+// `dirt` is: every variant is the connection mask's OWN `dirt_<mask>` cell
+// (the gravel silhouette, which is a pixel-identical recolor of the tar) with
+// its road-surface pixels blended toward the SAME mask's `road_<mask>` cell
+// (tar) over DIRT_ROAD_BLEED px from each paved edge, feathered with
+// smoothstep. Geometry follows the tile contract (64x32, anchor [32,31],
+// footprint [1,1]) so a transition lines up pixel-for-pixel with the tiles it
+// bridges — at the seam it IS pure tar, matching the neighbouring paved tile.
+const DIRT_ROAD_BLEED = 9;   // tar bleeds inward ~9px (~⅓ of a half-tile)
+// State chars per edge: "0" = no neighbour, "1" = gravel, "2" = paved. The
+// sprite name is `dirt_road_<eNE><eSE><eSW><eNW>`, so the string itself is
+// the state map (65 strings over {0,1,2} that contain at least one "2").
+const TRANSITION_DIRS = [1, 2, 4, 8];          // NE, SE, SW, NW
+const TILE_EDGE_SEGMENT = {
+  1: [[32, 0], [63, 16]],   // NE — top-right diamond edge
+  2: [[63, 16], [31, 31]],  // SE — bottom-right diamond edge
+  4: [[31, 31], [0, 16]],   // SW — bottom-left diamond edge
+  8: [[0, 16], [32, 0]],    // NW — top-left diamond edge
+};
+
+const smoothstep01 = (t) => {
+  const x = Math.max(0, Math.min(1, t));
+  return x * x * (3 - 2 * x);
+};
+
+/** Alpha (0..1) pulling pixel (x,y) toward tar for the paved edges given. */
+function tarPull(x, y, pavedBits) {
+  let a = 0;
+  for (const d of TRANSITION_DIRS) {
+    if (!(pavedBits & d)) continue;
+    const [p0, p1] = TILE_EDGE_SEGMENT[d];
+    const dist = pointSegDist(x + 0.5, y + 0.5, p0[0], p0[1], p1[0], p1[1]);
+    a = Math.max(a, 1 - smoothstep01(dist / DIRT_ROAD_BLEED));
+  }
+  return a;
+}
+
+/** `dirt` cell with road-surface pixels blended toward the `road` cell on the paved edges. */
+function blendTransition(dirtPx, roadPx, pavedBits) {
+  const out = Buffer.from(dirtPx);
+  for (let y = 0; y < CELL_H; y++) {
+    for (let x = 0; x < CELL_W; x++) {
+      const i = (y * CELL_W + x) * 4;
+      if (out[i + 3] === 0) continue;
+      const a = tarPull(x, y, pavedBits);
+      if (a <= 0) continue;
+      out[i] = Math.round(out[i] + (roadPx[i] - out[i]) * a);
+      out[i + 1] = Math.round(out[i + 1] + (roadPx[i + 1] - out[i + 1]) * a);
+      out[i + 2] = Math.round(out[i + 2] + (roadPx[i + 2] - out[i + 2]) * a);
+    }
+  }
+  return out;
+}
+
+/**
+ * The full dirt_road_* transition set. `s.dirtRoadTransitions` names the same
+ * 2x gravel sheet `dirt` slices from; the tar half of every blend is the flat
+ * `road` trackset cell for the SAME mask (declared sprites, `trackset.base`),
+ * so a transition can never drift from the paved art a player actually builds.
+ */
+async function makeDirtRoadTransitions(s, roadBase) {
+  if (typeof s.dirtRoadTransitions !== "string" || s.dirtRoadTransitions.includes("..")
+    || !/^[A-Za-z0-9_\-./]+\.png$/.test(s.dirtRoadTransitions)) {
+    throw new Error(`cell ${s.name}: bad dirtRoadTransitions path ${JSON.stringify(s.dirtRoadTransitions)}`);
+  }
+  const src = join(ROOT, "src/assets/sprites/png", s.dirtRoadTransitions);
+  let sheet;
+  try {
+    sheet = await sharp(src, { limitInputPixels: false }).ensureAlpha().raw()
+      .toBuffer({ resolveWithObject: true });
+  } catch (e) {
+    throw new Error(`cell ${s.name}: cannot read ${s.dirtRoadTransitions}: ${e.message}`);
+  }
+  const { data, info } = sheet;
+  // Both source halves, one 64x32 1x buffer per mask: the gravel cells are
+  // sliced from the recolor sheet exactly like makeGravelStrip, the tar cells
+  // are the declared flat road tiles composed exactly like makeTrackset.
+  const gravel = [], tar = [];
+  for (let mask = 0; mask < 16; mask++) {
+    const [ox, oy] = dirtTileOrigin(mask);
+    const px = Buffer.alloc(CELL_W * CELL_H * 4);
+    for (let y = 0; y < CELL_H; y++) {
+      for (let x = 0; x < CELL_W; x++) {
+        const sx = ox + x * DIRT_SHEET_SCALE, sy = oy + y * DIRT_SHEET_SCALE;
+        const so = (sy * info.width + sx) * 4;
+        const di = (y * CELL_W + x) * 4;
+        px[di] = data[so]; px[di + 1] = data[so + 1];
+        px[di + 2] = data[so + 2]; px[di + 3] = data[so + 3];
+      }
+    }
+    gravel.push(px);
+    const id = roadBase + OPENTTD_FLAT_TRACK_TABLE[toOpenttdRoadBits(mask)];
+    const composed = await composeLayers([{ sprite: id }]);
+    if (composed.w !== CELL_W || composed.h !== CELL_H) {
+      throw new Error(`cell ${s.name}: road mask ${mask} composed to ${composed.w}x${composed.h}, expected ${CELL_W}x${CELL_H}`);
+    }
+    tar.push(composed.px);
+  }
+  const out = [];
+  for (let q = 0; q < 81; q++) {
+    let v = q, ch = ["0", "0", "0", "0"];
+    for (let p = 3; p >= 0; p--) { ch[p] = String(v % 3); v = (v / 3) | 0; }
+    const state = ch.join("");
+    if (!state.includes("2")) continue;          // 81 − 16 all-0/1 states = 65
+    let mask = 0, paved = 0;
+    for (let p = 0; p < 4; p++) {
+      if (ch[p] === "0") continue;
+      mask |= TRANSITION_DIRS[p];
+      if (ch[p] === "2") paved |= TRANSITION_DIRS[p];
+    }
+    const px = blendTransition(gravel[mask], tar[mask], paved);
+    out.push({
+      name: `${s.namePrefix ?? s.name}_${state}`,
+      cells: [{ px, w: CELL_W, h: CELL_H }], cellW: CELL_W, cellH: CELL_H,
+      anchor: derivedAnchor(-(HW - 1), 0),
+      footprint: s.footprint, frames: 1, frameMs: s.frameMs,
+    });
+  }
+  return out;
+}
+
 /** G1 arm endpoints — centre → diamond-edge midpoint (highlight glow only). */
 const ARM_ENDS = {
   1: [48, 8],   // NE — midpoint of top-right edge    (32,0)-(64,16)
@@ -683,6 +809,15 @@ async function buildSlot(s) {
   if (typeof s.file === "string") return [{ name: s.name, ...(await makeFile(s)) }];
   if (s.gravel) return makeGravelStrip(s);
   if (s.trackset) return makeTrackset(s);
+  if (s.dirtRoadTransitions) {
+    // The paved half of every blend is the flat `road` trackset — read its
+    // declared base so synthesis and the real paved cells can never drift.
+    const road = CELLS.sprites.find((c) => c.trackset?.mode === "flat");
+    if (!road?.trackset?.base) {
+      throw new Error(`cell ${s.name}: dirtRoadTransitions needs a flat road trackset cell`);
+    }
+    return makeDirtRoadTransitions(s, road.trackset.base);
+  }
   if (s.layers) return [{ name: s.name, ...(await makeLayers(s)) }];
   if (s.generator === "highlight" || s.generator === "highlight_soft") {
     return [makeHighlight(s, s.generator === "highlight_soft")];
