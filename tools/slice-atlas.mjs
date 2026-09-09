@@ -640,7 +640,9 @@ async function run() {
   const slots = [];
   for (const s of CELLS.sprites) {
     const built = await buildSlot(s);
-    slots.push(...built);
+    // RV-01: a `moving` cell (a road vehicle) marks every manifest entry it
+    // builds so the validator can exempt it from the V1 small-art invariant.
+    slots.push(...built.map((b) => (s.moving ? { ...b, moving: true } : b)));
   }
 
   // atlas layout: pack slot rects row-major
@@ -691,6 +693,10 @@ async function run() {
     const f = p.frames > 1 ? { w: p.cellW * p.frames, frames: p.frames, frameMs: p.frameMs } : { w: p.cellW };
     manifest.sprites[p.name] = {
       x: p.x, y: p.y, h: p.cellH, footprint: p.footprint, anchor: p.anchor, ...f,
+      // RV-01: vehicles carry a `moving` marker so the manifest can tell a
+      // truck (art inside a tile it does not reserve) from an undersized
+      // building — the V1 small-art invariant does not apply to them.
+      ...(p.moving ? { moving: true } : {}),
     };
   }
 

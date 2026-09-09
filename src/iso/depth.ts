@@ -18,7 +18,7 @@
 // here we do the front-to-back sprite pass with alpha masks, which overrides
 // the flat pick whenever it hits.
 // ══════════════════════════════════════════════════════════════════════════
-import { HW, TILE_H, tileToScreen } from "../game/config";
+import { HW, HH, TILE_H, tileToScreen } from "../game/config";
 import type { Atlas, SpriteDef } from "./atlas";
 
 /** One thing to draw: a sprite placed at a footprint origin. */
@@ -26,6 +26,16 @@ export interface DrawItem {
   sprite: string;
   tx: number;             // footprint origin
   ty: number;
+  /**
+   * RV-01: FRACTIONAL tile position for a MOVING sprite (a truck between
+   * tiles). When both are present the item is placed so its anchor lands on
+   * the CENTRE of the fractional tile's diamond (the vehicle's ground
+   * point), depth-keys by the rounded tile, and is skipped by picking — a
+   * truck is not a clickable thing. `tx`/`ty` then only carry the rounded
+   * tile for culling and legacy reads.
+   */
+  fx?: number;
+  fy?: number;
   frame?: number;
   /** Opaque payload the picker returns (industry, station, …). */
   ref?: unknown;
@@ -53,15 +63,40 @@ export function drawOrigin(def: SpriteDef, tx: number, ty: number): [number, num
   return [sx + HW - def.anchor[0], sy + TILE_H - def.anchor[1]];
 }
 
+/**
+ * RV-01: world-space draw origin for a MOVING sprite at a fractional tile.
+ * The anchor pixel lands on the CENTRE of the fractional tile's diamond —
+ * the ground point a vehicle drives on — not on any footprint corner.
+ */
+export function drawOriginMoving(def: SpriteDef, fx: number, fy: number): [number, number] {
+  const [sx, sy] = tileToScreen(fx, fy);   // the fractional diamond's top vertex
+  return [sx + HW - def.anchor[0], sy + HH - def.anchor[1]];
+}
+
+/** True when a draw item is a moving (fractionally placed) sprite. */
+export const isMoving = (item: DrawItem): boolean =>
+  item.fx !== undefined && item.fy !== undefined;
+
 export function place(atlas: Atlas, item: DrawItem): Placed | null {
   const def = atlas.get(item.sprite);
   if (!def) return null;
   const [fw, fh] = def.footprint;
-  const [wx, wy] = drawOrigin(def, item.tx, item.ty);
+  const moving = isMoving(item);
+  // A moving item's tx/ty are only its rounded tile; the fractional pair is
+  // the real position. Both feed the same span math downstream.
+  const px = moving ? item.fx! : item.tx;
+  const py = moving ? item.fy! : item.ty;
+  const [wx, wy] = moving
+    ? drawOriginMoving(def, px, py)
+    : drawOrigin(def, item.tx, item.ty);
   const w = def.w / (def.frames ?? 1);
   return {
     ...item, def, wx, wy, w, h: def.h,
-    key: (item.tx + fw - 1) + (item.ty + fh - 1),
+    key: moving
+      // nearest lattice point — the truck flips draw order as it crosses a
+      // tile boundary, exactly where its box starts overlapping the neighbour
+      ? Math.round(px + fw - 1) + Math.round(py + fh - 1)
+      : (item.tx + fw - 1) + (item.ty + fh - 1),
   };
 }
 
@@ -163,6 +198,7 @@ export function pickSprite(
 ): Placed | null {
   for (let i = order.length - 1; i >= 0; i--) {
     const p = order[i];
+    if (isMoving(p)) continue;   // RV-01: a moving truck is never clickable
     const lx = wx - p.wx, ly = wy - p.wy;
     if (lx < 0 || ly < 0 || lx >= p.w || ly >= p.h) continue;
     if (atlas.opaqueAt(p.sprite, Math.floor(lx), Math.floor(ly))) return p;

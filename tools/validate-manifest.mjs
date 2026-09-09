@@ -53,7 +53,11 @@ export function validateManifest(manifest) {
     // is (fw + fh) * HW; a sprite covering less than half of it is reserving
     // tiles the player sees as empty.
     const span = (s.footprint[0] + s.footprint[1]) * 32;
-    if (frameW < span / 2)
+    // RV-01: a MOVING sprite (a road vehicle) is the sanctioned exception —
+    // its art is deliberately smaller than the tile diamond because it
+    // reserves no ground at all; the footprint only feeds depth spans and
+    // culling. Every other sprite must still fill what it blocks.
+    if (!s.moving && frameW < span / 2)
       errors.push(`sprite ${name}: frame width ${frameW}px covers < half of its ${s.footprint.join("x")} footprint (${span}px span) — shrink the footprint or use art that fills it`);
   }
   return errors;
