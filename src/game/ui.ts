@@ -756,6 +756,11 @@ export function createOriginalUi(
     if (text) e.textContent = text;
     grid.appendChild(e);
     setTimeout(() => e.remove(), type === "chain" ? 1000 : 600);
+    if (type === "chain" && text) {
+      const f = h("div", "combo-float", text);
+      boardWrap.appendChild(f);
+      setTimeout(() => f.remove(), 900);
+    }
   }
 
   function popup(gains: Partial<Record<ResKey, number>>, label: string) {

@@ -65,6 +65,8 @@ export class Board {
   onPopup: (gains: Partial<Record<ResKey, number>>, label: string) => void = () => {};
   // fired when a combo is banked: (bankedNow, needed, grantedCoin)
   onCombo: (count: number, needed: number, granted: boolean) => void = () => {};
+  /** Arcade bonus (match-5 / L / chain) — always pays, not network-gated. */
+  onBonus: (res: ResKey, amount: number, reason: string) => void = () => {};
 
   constructor() {
     this.initFill();
@@ -159,6 +161,38 @@ export class Board {
     return groups;
   }
 
+  /** Two orthogonal runs of 3+ that share one corner gem = a 5-gem L. */
+  private lShapes(groups: Gem[][]): Gem[][] {
+    const out: Gem[][] = [];
+    for (let i = 0; i < groups.length; i++) {
+      for (let j = i + 1; j < groups.length; j++) {
+        const a = groups[i], b = groups[j];
+        if (a[0].res !== b[0].res) continue;
+        const ids = new Set(a.map((g) => g.id));
+        const shared = b.filter((g) => ids.has(g.id));
+        if (shared.length !== 1) continue;
+        const union = [...a];
+        for (const g of b) if (!ids.has(g.id)) union.push(g);
+        if (union.length < 5) continue;
+        const sameRow = a.every((g) => g.r === a[0].r);
+        const otherCol = b.every((g) => g.c === b[0].c);
+        const sameCol = a.every((g) => g.c === a[0].c);
+        const otherRow = b.every((g) => g.r === b[0].r);
+        if ((sameRow && otherCol) || (sameCol && otherRow)) out.push(union);
+      }
+    }
+    return out;
+  }
+
+  private grantRandom(n: number, reason: string, gains: Partial<Record<ResKey, number>>) {
+    for (let i = 0; i < n; i++) {
+      const res = choice(BASE_POOL);
+      gains[res] = (gains[res] ?? 0) + 1;
+      this.onBonus(res, 1, reason);
+      this.onHarvest(res, 1, true);
+    }
+  }
+
   // returns accumulated gains for popup
   private resolve(groups: Gem[][], gains: Partial<Record<ResKey, number>>) {
     const removeIds = new Set<number>();
@@ -230,6 +264,16 @@ export class Board {
       g.special = "bomb";
       this.grid[b.r][b.c] = g;
       this.onFx("boom", b.r, b.c);
+    }
+
+    // Arcade: match-5 in a line, or a 5-gem L, grants two random materials.
+    const fives = groups.filter((g) => g.length >= 5);
+    const ells = this.lShapes(groups);
+    if (fives.length || ells.length) {
+      const mid = (fives[0] ?? ells[0])[0];
+      const why = fives.length ? "MATCH 5" : "L-SHAPE";
+      this.grantRandom(2, why, gains);
+      this.onFx("chain", mid.r, mid.c, why);
     }
   }
 
