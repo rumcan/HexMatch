@@ -32,8 +32,8 @@ import {
   type Track,
 } from "./track";
 
-/** Tiles per millisecond: one tile every 600 ms — lorry, not sports car. */
-export const TRUCK_SPEED = 1 / 600;
+/** Tiles per millisecond: one tile every 300 ms — RV-02: doubled. */
+export const TRUCK_SPEED = 1 / 300;
 
 /** One truck on one route. Position along the route is `leg + t` tiles. */
 export interface Truck {

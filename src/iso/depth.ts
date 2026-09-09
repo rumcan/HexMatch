@@ -93,9 +93,15 @@ export function place(atlas: Atlas, item: DrawItem): Placed | null {
   return {
     ...item, def, wx, wy, w, h: def.h,
     key: moving
-      // nearest lattice point — the truck flips draw order as it crosses a
-      // tile boundary, exactly where its box starts overlapping the neighbour
-      ? Math.round(px + fw - 1) + Math.round(py + fh - 1)
+      // nearest lattice point + half-step bias: a moving sprite must never
+      // TIE with the integer key of the ground sprite it straddles — a tie
+      // plus tier1Compare's ascending-height tie-break let a road tile paint
+      // OVER the lorry for most of every leg (the RV-02 flash). +0.5 keeps
+      // the truck strictly above the tile it is on/leaving, still strictly
+      // below the NEXT tile's ground until it crosses the midpoint, and
+      // changes nothing about buildings: their integer keys compare the same
+      // against x.5 as they did against x.
+      ? Math.round(px + fw - 1) + Math.round(py + fh - 1) + 0.5
       : (item.tx + fw - 1) + (item.ty + fh - 1),
   };
 }
