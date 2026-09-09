@@ -10,9 +10,11 @@
 //   * USE (`trackOpenTo` and everything that floods through it): a public tile
 //     joins a real player's network, services a depot beside it, and links two
 //     structures that never laid a tile between them. It never lets one player
-//     cross the OTHER's track, and it never turns town furniture into a
-//     network — those two are asserted here so the feature cannot quietly
-//     unwind W2.
+//     cross the OTHER's track — asserted here so the feature cannot quietly
+//     unwind W2. RV-03: a town's ring road is PUBLIC too (same PUBLIC_OWNER
+//     id), so a depot beside a town is serviced exactly like one beside a
+//     highway; the two differ only in `grid.occupancy` (a town road is
+//     TOWN_OCC and can never be built on).
 // ══════════════════════════════════════════════════════════════════════════
 import { describe, it, expect } from "vitest";
 import {
@@ -152,7 +154,7 @@ describe("PP-13 public road generation", () => {
 describe("PP-13 seedPublicRoads", () => {
   const g = generateMap(1337);
 
-  it("stamps every highway tile PUBLIC_OWNER and keeps town roads neutral", () => {
+  it("stamps every highway tile PUBLIC_OWNER and town roads public too", () => {
     const track = createTrack();
     seedTownRoads(track, g);
     seedPublicRoads(track, g);
@@ -162,10 +164,15 @@ describe("PP-13 seedPublicRoads", () => {
       expect(ownerAt(track, tx, ty), `(${tx},${ty}) not public`).toBe(PUBLIC_OWNER);
       expect(isPublicRoad(track, tx, ty)).toBe(true);
     }
+    // RV-03: the town rings are public too, so both kinds of map road are
+    // every player's to drive; only the occupation sentinel differs.
     for (const t of g.towns) {
       for (const [tx, ty] of t.roads) {
-        expect(ownerAt(track, tx, ty), `town road (${tx},${ty}) was adopted`).toBe(0);
-        expect(isPublicRoad(track, tx, ty)).toBe(false);
+        expect(ownerAt(track, tx, ty), `town road (${tx},${ty}) not public`).toBe(PUBLIC_OWNER);
+        expect(isPublicRoad(track, tx, ty)).toBe(true);
+        // a town road is still never OWNED by a player (or the player could
+        // claim/demolish the settlement's ring)
+        expect(trackOwnedBy(track, 1, tx, ty)).toBe(false);
       }
     }
   });
@@ -337,9 +344,11 @@ describe("PP-13 public roads are every player's to drive on", () => {
     expect(trackOpenTo(track, 1, hx, hy)).toBe(false);
     expect(trackOpenTo(track, 2, hx, hy)).toBe(true);
 
-    // a town ring road is still not a network for anybody
+    // a town ring road IS public now (RV-03): a player may drive on it, but it
+    // stays Town furniture — it is never OWNED by the player.
     const [tx2, ty2] = g.towns[0].roads[0];
-    expect(trackOpenTo(track, 1, tx2, ty2)).toBe(false);
-    expect(trackOpenTo(track, 0, tx2, ty2)).toBe(true);
+    expect(trackOpenTo(track, 1, tx2, ty2)).toBe(true);
+    expect(trackOpenTo(track, 2, tx2, ty2)).toBe(true);
+    expect(trackOwnedBy(track, 1, tx2, ty2)).toBe(false);
   });
 });

@@ -35,8 +35,13 @@ import type { Harvester, Factory, ScoreState, ConnKind } from "./economy";
  * towns, stamped owner `PUBLIC_OWNER` (3) onto the road layer. The wire shape
  * is still unchanged, but a v5 guest would regenerate a DIFFERENT map from
  * the same seed, so mixed-version rooms must refuse.
+ * v7 (RV-03): the seed-derived TOWN roads are no longer neutral owner 0 — they
+ * are stamped `PUBLIC_OWNER` (3) like the highways, so a depot beside a town's
+ * ring road is serviced and the route may run over it. The wire shape is
+ * still unchanged (the owner byte travels as-is), but a v6 guest would seed a
+ * different owner layer from the same seed, so mixed-version rooms must refuse.
  */
-export const SNAPSHOT_VERSION = 6;
+export const SNAPSHOT_VERSION = 7;
 
 export const EXPECTED_TRACK_BYTES = MAP_W * MAP_H;
 

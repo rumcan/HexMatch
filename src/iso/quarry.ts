@@ -26,10 +26,12 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { Board, type Gem } from "../game/board";
 import { RES_KEYS, UPGRADE_EVERY, type ResKey } from "../game/config";
-import { CARGOES, type Cargo } from "./config";
+import { CARGOES, INDUSTRY_BY_KEY, type Cargo } from "./config";
 import {
-  playerResources, industriesInCatchment, type Components, type EconomyState,
+  playerResources, industriesInCatchment, buildAllComponents, ownerIdOf,
+  type Components, type EconomyState,
 } from "./economy";
+import { roadRouteForHarvester } from "./vehicles";
 
 // ── the bijection ──────────────────────────────────────────────────────────
 /**
@@ -121,6 +123,64 @@ export function demoteTokens(board: Board, resList: ResKey[]): number {
   return n;
 }
 
+// ── RV-03: delivery is paced by truck distance ─────────────────────────────
+/**
+ * Base time between steady-state token spawns for a cargo. This is the
+ * board's own `UPGRADE_EVERY` (20 s) — distance only ever slows a delivery
+ * down, never speeds it up past the base clock.
+ */
+export const SPAWN_BASE_MS = UPGRADE_EVERY;
+
+/**
+ * Extra milliseconds lost per tile of the shortest truck route depot → factory.
+ * A depot parked right next to its factory adds almost nothing; a depot across
+ * the map (over the public roads) costs real time, which is the whole RV-03
+ * point: *a far depot and network takes longer to deliver its cargo*.
+ */
+export const SPAWN_PER_TILE_MS = 2000;
+
+/**
+ * The shortest truck-route length (in tiles) that delivers each cargo, or
+ * undefined when that cargo has no ROAD truck. The board's token clock is
+ * paced from this: the closer a depot is to its factory, the faster its cargo
+ * lands. Only ROAD connections are paced — a rail-only depot has no lorry
+ * (trains are not this ticket) and keeps the base clock, which is fairest
+ * since rail already carries the ×1.6 throughput multiplier.
+ *
+ * The length is the MINIMUM over every depot delivering the cargo (the
+ * closest depot is what actually turns the truck around fastest). Deterministic
+ * and cheap — `roadRouteForHarvester` runs per qualifying depot, and this is
+ * only recomputed on `refresh` (a network change), never per frame.
+ */
+export function deliveryDistances(
+  state: EconomyState, owner: string, now: number, comp?: Components,
+): Partial<Record<Cargo, number>> {
+  const out: Partial<Record<Cargo, number>> = {};
+  const c = comp ?? buildAllComponents(state.track, ownerIdOf(state, owner));
+  for (const h of state.harvesters) {
+    if (h.owner !== owner) continue;
+    const route = roadRouteForHarvester(state, h, c);
+    if (!route) continue;                       // rail-only / unserviced
+    for (const ind of industriesInCatchment(state.grid, h)) {
+      if (ind.banditUntil > now) continue;      // blockaded industry yields nothing
+      const def = INDUSTRY_BY_KEY[ind.type];
+      if (!def) continue;
+      const len = route.length;
+      out[def.cargo] = Math.min(out[def.cargo] ?? len, len);
+    }
+  }
+  return out;
+}
+
+/** Token-spawn interval for a gem colour, from the delivery distance of its cargo. */
+function spawnIntervalFor(
+  delivery: Partial<Record<Cargo, number>>, res: ResKey,
+): number {
+  const d = delivery[GEM_TO_CARGO[res]];
+  if (d === undefined) return SPAWN_BASE_MS;    // rail-only / not truck-paced
+  return SPAWN_BASE_MS + d * SPAWN_PER_TILE_MS;
+}
+
 // ── the quarry ─────────────────────────────────────────────────────────────
 export interface QuarryHooks {
   /** A token was matched and paid: a reachable cargo, or a forged token. */
@@ -147,9 +207,14 @@ export interface Quarry {
   board: Board;
   /** Cargo per tick the network delivered at the last refresh. */
   reach: Partial<Record<Cargo, number>>;
+  /**
+   * RV-03: shortest truck-route length (tiles) per cargo, from the last
+   * refresh. `undefined` = the cargo is rail-only / not road-truck-paced.
+   */
+  delivery: Partial<Record<Cargo, number>>;
   /** Recompute the reachable set; spawn tokens for newly reached cargo. */
   refresh(now: number): Partial<Record<Cargo, number>>;
-  /** Per-frame: board effects plus the 20s token spawn. */
+  /** Per-frame: board effects plus the distance-paced token spawn. */
   tick(now: number): void;
 }
 
@@ -158,8 +223,13 @@ export function createQuarry(
 ): Quarry {
   const board = new Board();
   let reach: Partial<Record<Cargo, number>> = {};
+  let delivery: Partial<Record<Cargo, number>> = {};
   let lastPool: Partial<Record<ResKey, number>> = {};
-  let lastTokenAt = 0;
+  let lastDelivery: Partial<Record<Cargo, number>> = {};
+  // RV-03: per-gem-colour spawn clock. `nextSpawnAt[res]` is the next wall
+  // time that cargo upgrades a gem; the interval is `spawnIntervalFor` (base
+  // + the truck-route distance). Replaced a single `lastTokenAt`.
+  const nextSpawnAt: Partial<Record<ResKey, number>> = {};
 
   // ── the board pays cargo, gated by the network ──
   // The gate reads the network at MATCH TIME, not from the cached reach the
@@ -212,6 +282,7 @@ export function createQuarry(
     // set, since every build/demolish already funnels through refresh.
     board.setGoldEnabled(hasGoldMineDepot(state, owner));
     reach = reachableCargo(state, owner, now);
+    delivery = deliveryDistances(state, owner, now);
     const pool = tokenPool(reach);
     const gained: Partial<Record<ResKey, number>> = {};
     const lost: ResKey[] = [];
@@ -223,27 +294,50 @@ export function createQuarry(
     }
     if (lost.length && demoteTokens(board, lost)) board.onChange();
     if (Object.keys(gained).length) {
+      // A cargo that just BECAME reachable gets its first token immediately — a
+      // connection is a reward, not a wait — and then settles into its paced
+      // cadence from here.
       board.spawnTokens(gained);
       hooks.onTokens?.(gained);
     }
+    // (Re)arm the spawn clock for every reachable cargo. Re-arms when the
+    // cargo is newly gained, has no clock yet, or its delivery distance changed
+    // (a new road shortened/lengthened the truck's route — RV-03).
+    for (const res of Object.keys(pool) as ResKey[]) {
+      const cargo = GEM_TO_CARGO[res];
+      const dist = delivery[cargo];
+      if (gained[res] !== undefined || nextSpawnAt[res] === undefined
+        || dist !== lastDelivery[cargo]) {
+        nextSpawnAt[res] = now + spawnIntervalFor(delivery, res);
+      }
+    }
     lastPool = pool;
+    lastDelivery = { ...delivery };
     return reach;
   };
 
   const tick = (now: number) => {
     board.tickEffects(now);
-    if (now - lastTokenAt < UPGRADE_EVERY) return;
-    lastTokenAt = now;
     const pool = tokenPool(reach);
-    lastPool = pool;
-    if (Object.keys(pool).length) board.spawnTokens(pool);
+    for (const res of Object.keys(pool) as ResKey[]) {
+      const at = nextSpawnAt[res];
+      if (at === undefined) {
+        nextSpawnAt[res] = now + spawnIntervalFor(delivery, res);
+        continue;
+      }
+      if (now < at) continue;
+      board.spawnTokens({ [res]: pool[res] });
+      nextSpawnAt[res] = now + spawnIntervalFor(delivery, res);
+    }
   };
 
-  // `reach` is reassigned on every refresh, so expose it through a getter —
-  // a plain property would freeze the empty set the quarry booted with.
+  // `reach` / `delivery` are reassigned on every refresh, so expose them
+  // through getters — a plain property would freeze the empty set the quarry
+  // booted with.
   return {
     board,
     get reach() { return reach; },
+    get delivery() { return delivery; },
     refresh,
     tick,
   };

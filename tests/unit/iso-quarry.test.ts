@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   GEM_TO_CARGO, CARGO_TO_GEM, TIER2_YIELD, reachableCargo, tokenPool,
-  demoteTokens, createQuarry, tokenedGems,
+  demoteTokens, createQuarry, tokenedGems, SPAWN_BASE_MS, SPAWN_PER_TILE_MS,
 } from "../../src/iso/quarry";
 import { CARGOES, INDUSTRY_BY_KEY, type Cargo } from "../../src/iso/config";
 import {
@@ -255,6 +255,72 @@ describe("J1 createQuarry", () => {
     expect(demoteTokens(q.board, ["brick"])).toBe(0);
     expect(demoteTokens(q.board, ["wood"])).toBe(1);
     expect(q.board.gems().filter((g) => g.tier > 0)).toHaveLength(0);
+  });
+
+  it("paces the spawn clock by truck-route distance (closer depot = faster)", () => {
+    // The harvest coroutine exposes a QUARRY with a stable factory so a
+    // farther depot's truck rolls a longer route. Build two worlds sharing
+    // everything except how far the factory sits from the depot, and assert
+    // the NEAR depots spawn on the base clock (UPGRADE_EVERY) while the FAR
+    // one adds `distance × SPAWN_PER_TILE_MS`.
+    const near = world();  near.connect();   // factory at 14,10 → depot at 10,10 → 3 tiles of road + shoulders
+    const far = (() => {
+      const grid = flatGrid([ind("farm", 11, 11)]);
+      const track = createTrack();
+      const harvester = H(1, "you", 10, 10);
+      const state: EconomyState = {
+        grid, track, harvesters: [harvester],
+        factories: [{ owner: "you", ownerId: 1, tx: 30, ty: 10 }],   // far across the map
+      };
+      for (let x = 11; x <= 30; x++) buildTile(track, "road", x, 10, 1);
+      return { state };
+    })();
+
+    const qNear = createQuarry(near.state, "you");
+    const qFar = createQuarry(far.state, "you");
+    neutralise(qNear.board); neutralise(qFar.board);
+    qNear.refresh(0); qFar.refresh(0);
+
+    // both reach grain, and the far factory is farther — so its truck route is
+    // longer, which is what paces the token clock (SPAWN_BASE + d·PER_TILE).
+    expect(qNear.reach.grain).toBeGreaterThan(0);
+    expect(qFar.reach.grain).toBeGreaterThan(0);
+    expect(qNear.delivery.grain).toBeGreaterThan(0);
+    expect(qFar.delivery.grain).toBeGreaterThan(qNear.delivery.grain!);
+
+    // the near board's spawn interval is strictly shorter than the far one's.
+    const nearInterval = SPAWN_BASE_MS + qNear.delivery.grain! * SPAWN_PER_TILE_MS;
+    const farInterval = SPAWN_BASE_MS + qFar.delivery.grain! * SPAWN_PER_TILE_MS;
+    expect(nearInterval).toBeLessThan(farInterval);
+    // …and both are strictly longer than the base clock (distance only slows).
+    expect(nearInterval).toBeGreaterThan(SPAWN_BASE_MS);
+    expect(farInterval).toBeGreaterThan(nearInterval);
+  });
+
+  it("a closer depot re-arms a shorter clock when a new road shortens its route", () => {
+    const { state, connect, track } = world();
+    const q = createQuarry(state, "you");
+    neutralise(q.board);
+    connect();
+    q.refresh(0);
+    const d0 = q.delivery.grain!;
+    expect(d0).toBeGreaterThan(0);
+
+    // lay a road that hugs the depot → factory directly (no detour) and a
+    // second depot next to the factory, so the minimum delivery distance drops.
+    const state2 = {
+      ...state,
+      harvesters: [
+        ...state.harvesters,
+        H(2, "you", 13, 11),            // depot right beside the factory's row
+      ],
+    };
+    // extend the corridor straight down to the new depot's shoulder
+    for (let y = 12; y <= 13; y++) buildTile(track, "road", 13, y, 1);
+    const q2 = createQuarry(state2, "you");
+    neutralise(q2.board);
+    q2.refresh(0);
+    expect(q2.delivery.grain!).toBeLessThanOrEqual(d0);
   });
 });
 

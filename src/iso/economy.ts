@@ -129,9 +129,10 @@ export function isServiced(track: Track, h: Harvester): boolean {
  * road that touch each other are still two components, one per player. The
  * old "two players' networks are one shared graph" bug lives and dies here.
  *
- * PP-13: the map's PUBLIC highways are the one shared ground — a highway tile
- * joins every real player's components, so a route may run over it. Owner 0
- * (a town's ring road) still matches only owner-0 tiles.
+ * PP-13/RV-03: the map's PUBLIC roads (highways AND the towns' ring roads) are
+ * the one shared ground — either carries `PUBLIC_OWNER`, so it joins every
+ * real player's components and a route may run over it. Owner 0 matches only
+ * owner-0 tiles, which is nobody's network.
  */
 export function buildComponents(track: Track, kind: TrackKind, owner: number): Int32Array {
   const comp = new Int32Array(MAP_W * MAP_H).fill(-1);

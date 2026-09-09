@@ -59,12 +59,16 @@ export const createTrack = (): Track => ({
 /**
  * PP-10: stamp the towns' seed-generated ring roads into a fresh track.
  *
- * Town roads are MAP FURNITURE, not a player's network: every tile is built
- * with owner 0 (neutral), so none of the owner-scoped floods — `playerNetwork`,
- * `buildComponents`, `isServiced`, `trackOwnedBy` — ever cross them. A town
- * road therefore can never hand a player a free connection, service a depot,
- * or count toward the rival's trunk discount; the town's ring is purely the
- * settlement's own road network, exactly as `grid.towns[i].roads` derives it.
+ * RV-03: town roads are PUBLIC RULES — they are every player's to drive on,
+ * exactly like the inter-town highways (PP-13), so a Depot parked beside a
+ * town's ring road is serviced and may route over the settlement's streets.
+ * They are stamped with `PUBLIC_OWNER` (the same id PP-13 gives the highways),
+ * so every owner-scoped flood — `playerNetwork`, `buildComponents`,
+ * `isServiced`, `trackOwnedBy`, `trackOpenTo` — already treats them as shared
+ * network ground without any new rule. The two kinds of map road differ only
+ * in `grid.occupancy`: a town road is stamped `TOWN_OCC` (a player can never
+ * build on, or pave over, the town), while a highway is free land a player may
+ * extend across. Driving is shared; building on the settlement is not.
  *
  * They ride the snapshot's track bytes like any other track, so a rejoined
  * guest renders them without regenerating anything (E10).
@@ -72,19 +76,22 @@ export const createTrack = (): Track => ({
 export function seedTownRoads(t: Track, grid: Grid): void {
   for (const town of grid.towns) {
     for (const [tx, ty] of town.roads) {
-      buildTile(t, "road", tx, ty, 0);
+      buildTile(t, "road", tx, ty, PUBLIC_OWNER);
     }
   }
 }
 
 /**
- * PP-13: the owner id the map's PUBLIC ROADS carry.
+ * PP-13/RV-03: the owner id the map's PUBLIC ROADS carry.
  *
- * Players are 1 and 2 (player index + 1) and a town's own furniture is 0, so
- * 3 is free and unambiguous. Public roads are the seed-generated highways
- * between the towns (`grid.publicRoads`): unlike town roads they are NOT
- * neutral — `trackOpenTo` lets every player's network run over them, which is
- * what "roads players can use" means here.
+ * Players are 1 and 2 (player index + 1) and a town's own furniture used to be
+ * 0, so 3 is free and unambiguous. Public roads are the seed-generated
+ * highways between the towns (`grid.publicRoads`) AND — since RV-03 — the seed
+ * towns' own ring roads: unlike town furniture they are NOT neutral —
+ * `trackOpenTo` lets every player's network run over them, which is what
+ * "roads players can use" means here. (`seedTownRoads` stamps the town rings
+ * with this same id; the only remaining difference is `grid.occupancy`, where
+ * a town road is TOWN_OCC and a highway is not.)
  */
 export const PUBLIC_OWNER = 3;
 
@@ -92,11 +99,12 @@ export const PUBLIC_OWNER = 3;
  * PP-13: stamp the inter-town highways onto a fresh track.
  *
  * Call this AFTER `seedTownRoads`: a highway tile a town already paves is
- * skipped, so the settlement keeps its neutral ring road and the highway
- * simply meets it. Everything else is built with owner `PUBLIC_OWNER`, so the
- * owner-scoped floods can tell a highway from town furniture — and from a
- * player's own line, which is what keeps a public road demolish-proof
- * (`game.ts` only tears down track whose owner is the player clicking).
+ * skipped, so the settlement keeps its own ring road and the highway simply
+ * meets it. Everything is built with owner `PUBLIC_OWNER` (the same id RV-03
+ * gives a town's ring road), so the owner-scoped floods treat both as shared
+ * network ground — and a player's own line is still distinguishable, which is
+ * what keeps a public road demolish-proof (`game.ts` only tears down track
+ * whose owner is the player clicking).
  *
  * Like the town roads, these ride the snapshot's track bytes to a rejoined
  * guest, so no client has to regenerate them (E10).
@@ -248,23 +256,23 @@ export const isPublicRoad = (t: Track, tx: number, ty: number): boolean =>
   && (hasTrack(t, "road", tx, ty) || hasTrack(t, "rail", tx, ty));
 
 /**
- * PP-13: may `owner`'s network run over this tile?
+ * PP-13/RV-03: may `owner`'s network run over this tile?
  *
  * A tile carries `owner`'s traffic when it holds track and either
  *   (a) `owner` built it — the W2 rule, unchanged — or
  *   (b) it is one of the map's PUBLIC roads: the seed-generated highways
- *       between the towns, which belong to nobody and are everybody's to
- *       drive on. That is the whole feature: hook a Depot or a Factory onto a
- *       highway and the rest of the highway network is yours to route over,
- *       including the stretches the rival is also using.
+ *       between the towns AND the towns' own ring roads, which belong to
+ *       nobody and are everybody's to drive on. That is the whole feature:
+ *       hook a Depot or a Factory onto a highway (or a town's ring road) and
+ *       the rest of the shared network is yours to route over, including the
+ *       stretches the rival is also using.
  *
  * Two things this deliberately does NOT do:
  *   - it never lets one player cross the OTHER player's track (W2 stands);
- *   - it never changes the owner-0 answer. 0 is the neutral identity a town's
- *     ring road is stamped with, so `trackOpenTo(t, 0, …)` stays exactly
- *     `trackOwnedBy(t, 0, …)`: town furniture never becomes a network, and a
- *     public highway is never adopted by the neutral owner. Only a REAL owner
- *     (a player, id ≥ 1) may drive on the highways.
+ *   - it never changes the owner-0 answer. 0 is the neutral identity nobody
+ *     builds with (players are ≥1, public roads are PUBLIC_OWNER), so
+ *     `trackOpenTo(t, 0, …)` stays exactly `trackOwnedBy(t, 0, …)`. Only a
+ *     REAL owner (a player, id ≥ 1) may drive on the public roads.
  */
 export const trackOpenTo = (t: Track, owner: number, tx: number, ty: number): boolean =>
   trackOwnedBy(t, owner, tx, ty) || (owner !== 0 && isPublicRoad(t, tx, ty));

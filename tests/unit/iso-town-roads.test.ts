@@ -5,8 +5,12 @@
 //   * the INTERIOR streets: the free tiles inside the box (the gaps the
 //     BFS-grown cluster leaves between houses).
 // The tiles are TOWN_OCC in `grid.occupancy` (town furniture: nobody may
-// build on them) and are stamped neutral (owner 0) onto the road layer by
+// build on them) and are stamped PUBLIC_OWNER onto the road layer by
 // `seedTownRoads` at game boot, so they ride the snapshot bytes to guests.
+// RV-03: a town's ring road is a PUBLIC road — every player may drive on it,
+// which is what makes a Depot beside a town serviceable and a route that runs
+// over the town legal. A player still cannot BUILD on (or demolish) the town:
+// the occupancy sentinel is what keeps the settlement a settlement.
 //
 // Invariants guarded here (measured over 436 generated towns before pinning):
 //   * every town has >= 10 road tiles (observed minimum: 14);
@@ -23,7 +27,7 @@ import {
 import { MAP_W, MAP_H } from "../../src/iso/config";
 import {
   createTrack, seedTownRoads, hasTrack, bitsAt, buildRefusal, DIRS, DIR,
-  OPPOSITE, PUBLIC_OWNER, playerNetwork, tIdx, type Track,
+  OPPOSITE, PUBLIC_OWNER, playerNetwork, trackOwnedBy, tIdx, type Track,
 } from "../../src/iso/track";
 import { isServiced } from "../../src/iso/economy";
 import { rivalSearchTiles, canReachASpot } from "./helpers/rival-map";
@@ -211,14 +215,16 @@ describe("PP-10 townRoadTiles (pure shape)", () => {
 describe("PP-10 seedTownRoads (track wiring)", () => {
   const g = generateMap(1337);
 
-  it("paves exactly the towns' road tiles, neutral (owner 0)", () => {
+  it("paves exactly the towns' road tiles, public (PUBLIC_OWNER)", () => {
     const track = createTrack();
     seedTownRoads(track, g);
     let count = 0;
     for (let i = 0; i < track.road.length; i++) {
       if (track.road[i] !== 0) {
         count++;
-        expect(track.owner[i], `tile ${i} not neutral`).toBe(0);
+        // RV-03: town roads ride the public owner id, so a player's network
+        // can drive them (and a depot beside one is serviced).
+        expect(track.owner[i], `tile ${i} not public`).toBe(PUBLIC_OWNER);
       }
     }
     const expected = g.towns.reduce((n, t) => n + t.roads.length, 0);
@@ -257,16 +263,13 @@ describe("PP-10 seedTownRoads (track wiring)", () => {
     }
   });
 
-  it("never services a depot or joins a player network (owner scoping)", () => {
+  it("services a depot beside it and joins a player's network (public roads)", () => {
     const track = createTrack();
     seedTownRoads(track, g);
-    // Stand a fake depot beside a town road and check the road gives it
-    // nothing. PP-13 note: this used to probe only the four neighbours of
-    // `towns[0].roads[0]`, and with 3× towns every one of those is town
-    // furniture — so the loop ran zero assertions and a stale import of
-    // `playerNetwork` from economy.ts (which has never exported it) went
-    // unnoticed. Walk the ring until a buildable neighbour turns up, and fail
-    // loudly if none ever does.
+    // RV-03: a town's ring road is PUBLIC — a depot parked beside it is
+    // serviced, and the town road joins the player's network so the depot can
+    // route to a factory over the settlement. Walk the ring until a buildable
+    // neighbour turns up and assert the public behaviour for every such depot.
     let probed = 0;
     for (const t of g.towns) {
       for (const [tx, ty] of t.roads) {
@@ -275,18 +278,24 @@ describe("PP-10 seedTownRoads (track wiring)", () => {
           if (buildRefusal(g, "road", hx, hy) !== null) continue;
           expect(
             isServiced(track, { id: 99, owner: "you", ownerId: 1, tx: hx, ty: hy }),
-            `a neutral town road must not service a depot at (${hx},${hy})`,
-          ).toBe(false);
+            `a public town road must service a depot at (${hx},${hy})`,
+          ).toBe(true);
           const net = playerNetwork(track, 1, [{ ownerId: 1, tx: hx, ty: hy }], []);
           expect(
             net.has(tIdx(tx, ty)),
-            `a neutral town road must not join the player network at (${tx},${ty})`,
-          ).toBe(false);
+            `a public town road must join the player network at (${tx},${ty})`,
+          ).toBe(true);
           probed++;
         }
       }
     }
     expect(probed, "no town road had a buildable neighbour to probe").toBeGreaterThan(0);
+
+    // …but the town road is still NOT owned by the player, so it can never be
+    // demolished or claimed (only driven on).
+    const [tx0, ty0] = g.towns[0].roads[0];
+    expect(track.owner[tIdx(tx0, ty0)]).toBe(PUBLIC_OWNER);
+    expect(trackOwnedBy(track, 1, tx0, ty0)).toBe(false);
   });
 });
 
@@ -334,7 +343,7 @@ describe("PP-10 game boot stamps the town roads", () => {
     document.body.innerHTML = "";
   });
 
-  it("stamps every town's ring road onto the live track, neutral", async () => {
+  it("stamps every town's ring road onto the live track, public", async () => {
     const { startIsoGame } = await import("../../src/iso/game");
     const { setRng, mulberry32 } = await import("../../src/game/config");
     setRng(mulberry32(1337));
@@ -347,13 +356,14 @@ describe("PP-10 game boot stamps the town roads", () => {
     for (const t of h.grid.towns) {
       for (const [rx, ry] of t.roads) {
         expect(hasTrack(h.track, "road", rx, ry), `boot miss (${rx},${ry})`).toBe(true);
-        expect(h.track.owner[tIdx(rx, ry)]).toBe(0);
+        expect(h.track.owner[tIdx(rx, ry)], `town road (${rx},${ry}) not public`)
+          .toBe(PUBLIC_OWNER);
         count++;
       }
     }
-    // PP-13: the inter-town highways stand at boot too — stamped PUBLIC_OWNER,
-    // never the town's neutral 0, so the two kinds of map furniture stay
-    // distinguishable on the wire.
+    // PP-13/RV-03: the inter-town highways stand at boot too — stamped the same
+    // PUBLIC_OWNER the town rings now carry, so both kinds of map road are
+    // every player's to drive on (they differ only in grid.occupancy).
     let pub = 0;
     for (const [rx, ry] of h.grid.publicRoads ?? []) {
       expect(hasTrack(h.track, "road", rx, ry), `boot miss highway (${rx},${ry})`).toBe(true);

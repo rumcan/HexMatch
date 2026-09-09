@@ -212,13 +212,15 @@ describe("E10 version gating", () => {
 });
 
 describe("E10 malformed payloads", () => {
-  it("rejects pre-public-road v5 clients with a version message before checking layer sizes", () => {
-    // PP-13 bumped the seed-derived map (towns ×3, inter-town highways), so a
-    // v5 guest would regenerate a DIFFERENT map from the same seed. The
-    // refusal must come from the version check, not from the layer-size check
-    // that a 48×48-era payload would also trip.
-    const old = { ...buildSnapshot(source()), version: 5, road: bytesToBase64(new Uint8Array(48 * 48)) };
-    expect(SNAPSHOT_VERSION).toBe(6);
+  it("rejects pre-RV-03 v6 clients with a version message before checking layer sizes", () => {
+    // RV-03 bumped the seed-derived map again: the towns' ring roads are now
+    // stamped PUBLIC_OWNER instead of neutral owner 0, so a v6 guest would
+    // regenerate a DIFFERENT owner layer from the same seed. The refusal must
+    // come from the version check, not from the layer-size check (the road
+    // layer is the same size in v6 and v7, so the version gate is what
+    // actually keeps mixed-version rooms from silently diverging).
+    const old = { ...buildSnapshot(source()), version: 6 };
+    expect(SNAPSHOT_VERSION).toBe(7);
     expect(validateSnapshot(old)?.code).toBe("version");
     expect(() => applySnapshot(old)).toThrow(/incompatible version/i);
   });

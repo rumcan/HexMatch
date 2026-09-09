@@ -3,12 +3,16 @@
 //
 // When a Depot reaches a Factory by ROAD the economy already knows the route
 // (`economy.resolveConnection` → `linkedBy` over owner-scoped components).
-// This module turns that fact into one little truck per player that drives
-// the exact tile route — depot → factory → depot, forever, ping-ponging at
-// the ends — so the map explains itself: a connected network has traffic on
-// it, a broken one goes quiet. The truck changes no economy outcome; it is
-// presentation with a contract, and the contract is that it finds the SAME
-// route the flood scores by.
+// This module turns that fact into one little truck per SERVICED DEPOT that
+// drives the exact tile route — depot → factory → depot, forever, ping-ponging
+// at the ends — so the map explains itself: a connected network has traffic
+// on it, a broken one goes quiet. Each truck is bound to its depot and never
+// switches to another; on every network change the routes are re-planned, so
+// each lorry re-routes to whatever is now the closest path for its depot.
+// The truck changes no economy outcome; it is presentation with a contract,
+// and the contract is that it finds the SAME route the flood scores by (and
+// that a depot placed beside a town's ring road gets its route over the
+// public network just like a depot beside a highway — RV-03).
 //
 // The route finder (`roadPath`) walks the same graph the economy floods:
 //   * tiles `trackOpenTo` admits — the player's own track plus the map's
@@ -26,7 +30,10 @@
 import { MAP_W } from "../game/config";
 import type { DrawItem } from "./depth";
 import type { EconomyState } from "./economy";
-import { buildAllComponents, isServiced, resolveConnection } from "./economy";
+import {
+  buildAllComponents, isServiced, resolveConnection, type Components,
+  type Harvester,
+} from "./economy";
 import {
   DIR, DIRS, NE, SE, SW, NW, OPPOSITE, bitsAt, tIdx, inMapT, trackOpenTo,
   type Track,
@@ -112,34 +119,49 @@ const shoulders = (track: Track, owner: number, tx: number, ty: number) => {
 };
 
 /**
- * One truck per player: the first (stable network order) serviced Depot
- * whose connection to one of its owner's factories is a ROAD connection,
- * routed along the actual tiles the connection flood found. A rail-only
- * connection gets no truck (trains are not this ticket); a Depot with no
- * road route at all gets none either. Returns [] when nobody is connected.
+ * Shortest ROAD route from a specific Depot to its owner's connected Factory.
+ *
+ * This is the SAME route the economy scores (`resolveConnection` → ``kind:
+ * "road"``) and the route the lorry drives: it walks `roadPath` from the
+ * depot's shoulders to the connected factory's shoulders over `trackOpenTo`
+ * tiles (own + public, never the rival's — W2), crossing only mutual bits.
+ *
+ * `comp` is optional so callers that already built the owner's components
+ * (the game's hover overlay, `planTrucks`) do not pay a second flood. Returns
+ * null when the depot is unserviced, rail-only (`trains are not this ticket`),
+ * or has no road route to any of its factories — exactly the set of depots
+ * that get no truck.
+ */
+export function roadRouteForHarvester(
+  eco: EconomyState, h: Harvester, comp?: Components,
+): [number, number][] | null {
+  const c = comp ?? buildAllComponents(eco.track, h.ownerId);
+  if (!isServiced(eco.track, h)) return null;
+  const conn = resolveConnection(eco, c, h);
+  if (conn.kind !== "road" || !conn.factory) return null;
+  return roadPath(
+    eco.track, h.ownerId,
+    shoulders(eco.track, h.ownerId, h.tx, h.ty),
+    new Set(shoulders(eco.track, h.ownerId, conn.factory.tx, conn.factory.ty)
+      .map(([x, y]) => tIdx(x, y))),
+  );
+}
+
+/**
+ * One truck per SERVICED DEPOT (RV-03): every depot with a ROAD connection to
+ * its owner's factory gets its own lorry on its own closest route. A truck is
+ * bound to its depot — it never switches to another one — but on every network
+ * change `planTrucks` is re-run, so each depot's lorry re-routes to whatever
+ * is now the closest path. A rail-only connection gets no truck (trains are
+ * not this ticket); a depot with no road route at all gets none either.
  */
 export function planTrucks(eco: EconomyState): Truck[] {
   const out: Truck[] = [];
-  const owners = [...new Set(
-    eco.harvesters.filter((h) => h.ownerId > 0).map((h) => h.ownerId),
-  )].sort((a, b) => a - b);
-  for (const ownerId of owners) {
-    const comp = buildAllComponents(eco.track, ownerId);
-    for (const h of eco.harvesters) {
-      if (h.ownerId !== ownerId) continue;
-      if (!isServiced(eco.track, h)) continue;
-      const conn = resolveConnection(eco, comp, h);
-      if (conn.kind !== "road" || !conn.factory) continue;
-      const route = roadPath(
-        eco.track, ownerId,
-        shoulders(eco.track, ownerId, h.tx, h.ty),
-        new Set(shoulders(eco.track, ownerId, conn.factory.tx, conn.factory.ty)
-          .map(([x, y]) => tIdx(x, y))),
-      );
-      if (!route) continue;
-      out.push({ ownerId, route, leg: 0, t: 0, reverse: false });
-      break;   // one truck per player
-    }
+  for (const h of eco.harvesters) {
+    if (h.ownerId <= 0) continue;
+    const route = roadRouteForHarvester(eco, h);
+    if (!route) continue;
+    out.push({ ownerId: h.ownerId, route, leg: 0, t: 0, reverse: false });
   }
   return out;
 }

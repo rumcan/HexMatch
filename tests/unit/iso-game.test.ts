@@ -9,6 +9,7 @@
 // the committed-reference-PNG fixture is for, and that still needs a browser.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { WATER, factoryTouchesTown } from "../../src/iso/grid";
+import { PUBLIC_OWNER } from "../../src/iso/track";
 import { MAP_W, MAP_H, TRANSPORT, INDUSTRY_BY_KEY } from "../../src/iso/config";
 import { setRng, mulberry32 } from "../../src/game/config";
 
@@ -81,6 +82,8 @@ interface IsoHook {
   ) => import("../../src/iso/placement").PlacementPlan;
   /** PP-03: the exact overlay items painted for a placement hover at (tx,ty). */
   overlayItemsFor: (tx: number, ty: number) => { sprite: string; tx: number; ty: number }[];
+  /** RV-03: the closest ROAD route the truck at a depot drives (tile coords). */
+  routeForDepot: (tx: number, ty: number) => [number, number][] | null;
 }
 
 const hook = () => (window as unknown as { __iso: IsoHook }).__iso;
@@ -1387,4 +1390,106 @@ describe("PP-13 road demolition refunds", () => {
     expect(h.purse.wood).toBe(before.wood);
     expect(h.purse.stone).toBe(before.stone);
   }, 20_000);
+});
+
+// ── RV-03: town roads are public, so the depot→factory truck route can run ──
+// over a settlement, and the depot-hover draws the CLOSEST road route the truck
+// will actually drive (re-checked after every build/demolish).
+describe("RV-03 town roads and the closest truck route", () => {
+  const sorted = (ts: [number, number][]) =>
+    [...ts].map(([x, y]) => [x, y] as [number, number]).sort((a, b) =>
+      a[0] - b[0] || a[1] - b[1]);
+
+  /** A depot and factory beside ONE town ring road, with a road corridor laid. */
+  async function depotOnTownRoad(): Promise<IsoHook> {
+    const h = await boot();
+    const { buildTile } = await import("../../src/iso/track");
+    // free buildable neighbour of a town road tile
+    const free = (nx: number, ny: number) =>
+      nx >= 0 && ny >= 0 && nx < MAP_W && ny < MAP_H
+      && h.grid.terrain[ny * MAP_W + nx] !== WATER
+      && h.grid.occupancy[ny * MAP_W + nx] === -1
+      && !h.eco.harvesters.some((d) => d.tx === nx && d.ty === ny);
+    let hx = 0, hy = 0, fx = 0, fy = 0, found = false;
+    for (const t of h.grid.towns) {
+      for (const [tx, ty] of t.roads) {
+        const spots: [number, number][] = [];
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as [number, number][]) {
+          const nx = tx + dx, ny = ty + dy;
+          if (free(nx, ny)) spots.push([nx, ny]);
+        }
+        if (spots.length >= 2) { [hx, hy] = spots[0]; [fx, fy] = spots[spots.length - 1]; found = true; break; }
+      }
+      if (found) break;
+    }
+    expect(found, "a town road needs two free neighbours").toBe(true);
+    h.eco.factories.push({ owner: "you", ownerId: 1, tx: fx, ty: fy });
+    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy });
+    return h;
+  }
+
+  it("a depot beside a TOWN road is serviced, and its truck routes over the town", async () => {
+    const h = await depotOnTownRoad();
+    const { isServiced } = await import("../../src/iso/economy");
+    const dep = h.eco.harvesters[0];
+    // no player road laid yet — the depot must already be serviced purely
+    // because the town ring beside it is public (RV-03).
+    expect(isServiced(h.track, dep)).toBe(true);
+    // ...and the game exposes a real truck route for it, over public tiles.
+    const route = h.routeForDepot(dep.tx, dep.ty);
+    expect(route).toBeTruthy();
+    expect((route as [number, number][]).length).toBeGreaterThan(0);
+    for (const [x, y] of route as [number, number][]) {
+      expect(h.track.owner[y * MAP_W + x]).toBe(PUBLIC_OWNER);
+    }
+    // the hover overlay for that depot paints exactly those route tiles, soft
+    const items = h.overlayItemsFor(dep.tx, dep.ty).filter((i) => i.sprite === "highlight_soft");
+    expect(sorted(items.map((i) => [i.tx, i.ty] as [number, number])))
+      .toEqual(sorted(route as [number, number][]));
+  });
+
+  it("hovering an unrelated tile adds no route overlay", async () => {
+    const h = await boot();
+    const dep = h.eco.harvesters[0];
+    expect(dep).toBeUndefined();                 // nothing placed yet
+    expect(h.overlayItemsFor(5, 5).filter((i) => i.sprite === "highlight_soft")).toHaveLength(0);
+  });
+
+  it("re-checks the route on build: empty before a road, then the closest route", async () => {
+    const h = await boot();
+    const { canBuildOn } = await import("../../src/iso/track");
+    // a real industry with a legal south corridor (depot above, factory below)
+    const c = findSouthCorridor(h.grid);
+    expect(c).toBeTruthy();
+    const { hx, hy, fy } = c!;
+    expect(canBuildOn(h.grid, "road", hx, hy)).toBe(true);
+    h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx, ty: fy });
+    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy });
+    h.finishSetup();
+
+    // no track yet → the depot has no route and no route overlay
+    expect(h.routeForDepot(hx, hy)).toBeNull();
+    expect(h.overlayItemsFor(hx, hy).filter((i) => i.sprite === "highlight_soft")).toHaveLength(0);
+
+    // build the road corridor depot → factory through the GAME's commit path
+    // (drive the real drag so `rescoreNow` bumps `netVersion` and the hover
+    // route cache is dropped — the re-check the ticket asks for).
+    const d = h.dragBuild("road", hx, hy + 1, hx, fy);
+    expect(d).toBeTruthy();
+    expect(d!.tiles.length).toBe(fy - hy);
+
+    // now the depot has the closest route and the hover paints exactly it.
+    // the route runs shoulder-to-shoulder: from the tile beside the depot up
+    // to the tile beside the factory, so it is one tile shorter than the
+    // full corridor (which spans depot→factory).
+    const route = h.routeForDepot(hx, hy) as [number, number][];
+    expect(route).toBeTruthy();
+    expect(route.length).toBe(fy - hy - 1);
+    for (const [x, y] of route) {
+      expect(h.track.owner[y * MAP_W + x]).toBe(1);   // the player's own road
+    }
+    const soft = h.overlayItemsFor(hx, hy).filter((i) => i.sprite === "highlight_soft");
+    expect(sorted(soft.map((i) => [i.tx, i.ty] as [number, number])))
+      .toEqual(sorted(route));
+  });
 });
