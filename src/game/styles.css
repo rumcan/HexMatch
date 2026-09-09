@@ -677,12 +677,16 @@ html, body, #root {
 }
 .fx-bad { font-size: 26px; animation: popfx .5s forwards; }
 .fx-bad::before { content: "✖"; color: var(--danger2); }
-.fx-chain {
+/* A1: `.fx-combo` is the cascade tier (COMBO x2 / CHAIN x3!!) — same float as
+   a plain callout, hotter and larger so a two-deep cascade reads louder than
+   the MATCH! that started it. */
+.fx-chain, .fx-combo {
   font-family: var(--serif); font-weight: 700; font-size: 19px; color: var(--gold2);
   letter-spacing: 2px; text-transform: uppercase;
   text-shadow: 0 0 12px var(--gold), 0 2px 4px #000; white-space: nowrap;
   animation: chainfx 1s ease-out forwards; z-index: 8;
 }
+.fx-combo { font-size: 23px; text-shadow: 0 0 18px var(--gold), 0 0 34px var(--gold), 0 2px 4px #000; }
 @keyframes chainfx {
   0%   { transform: translate(-50%,-50%) scale(.4); opacity: 0; }
   25%  { transform: translate(-50%,-90%) scale(1.15); opacity: 1; }
@@ -694,12 +698,51 @@ html, body, #root {
   font-family: var(--serif); font-weight: 800; font-size: 22px;
   letter-spacing: 3px; text-transform: uppercase; color: var(--gold2);
   text-shadow: 0 0 14px var(--gold), 0 3px 0 #000;
-  animation: comboPop .9s cubic-bezier(.2,1.4,.3,1) forwards;
+  /* A1: quick grow small → large, hold, then rise and fade. The float is
+     replaced (not stacked) by the next callout, so the whole cascade reads
+     as one banner that keeps re-scoring itself. */
+  animation: comboPop .75s cubic-bezier(.2,1.5,.3,1) forwards;
+}
+.combo-float.cf-big {
+  font-size: 30px; letter-spacing: 4px;
+  text-shadow: 0 0 18px var(--gold), 0 0 40px var(--gold), 0 3px 0 #000;
+  animation: comboPopBig .95s cubic-bezier(.2,1.6,.3,1) forwards;
 }
 @keyframes comboPop {
-  0%   { transform: translateX(-50%) scale(.2) rotate(-8deg); opacity: 0; }
-  35%  { transform: translateX(-50%) scale(1.2) rotate(2deg); opacity: 1; }
-  100% { transform: translateX(-50%) scale(1) translateY(-12px); opacity: 0; }
+  0%   { transform: translateX(-50%) scale(.35) rotate(-6deg); opacity: 0; }
+  22%  { transform: translateX(-50%) scale(1.18) rotate(2deg); opacity: 1; }
+  40%  { transform: translateX(-50%) scale(1) rotate(0deg); opacity: 1; }
+  72%  { transform: translateX(-50%) scale(1) translateY(-6px); opacity: 1; }
+  100% { transform: translateX(-50%) scale(1) translateY(-22px); opacity: 0; }
+}
+@keyframes comboPopBig {
+  0%   { transform: translateX(-50%) scale(.3) rotate(-9deg); opacity: 0; }
+  20%  { transform: translateX(-50%) scale(1.35) rotate(3deg); opacity: 1; }
+  38%  { transform: translateX(-50%) scale(1.05) rotate(0deg); opacity: 1; }
+  74%  { transform: translateX(-50%) scale(1.05) translateY(-8px); opacity: 1; }
+  100% { transform: translateX(-50%) scale(1) translateY(-30px); opacity: 0; }
+}
+
+/* ── A1: world floats — the text that pops over an iso tile ──────────────
+   The lorry's "+2 🌾" when it reaches the Factory, and the sabotage marker
+   over the rival's plant. Anchored by src/iso/floats.ts at the tile's screen
+   position every frame, so it pans and zooms with the map. */
+.iso-float {
+  position: absolute; z-index: 9; pointer-events: none;
+  transform: translate(-50%, -100%);
+  font-family: var(--serif); font-weight: 800; font-size: 18px;
+  letter-spacing: 1px; white-space: nowrap; color: #fff;
+  text-shadow: 0 0 12px rgba(0,0,0,.9), 0 2px 3px #000;
+  animation: isoFloat 1.15s cubic-bezier(.2,1.4,.3,1) forwards;
+}
+.iso-float.delivery { color: #ffe9a8; text-shadow: 0 0 14px var(--gold), 0 2px 3px #000; }
+.iso-float.sabotage { color: #a6ecff; text-shadow: 0 0 14px #2b8fb8, 0 2px 3px #000; }
+@keyframes isoFloat {
+  0%   { transform: translate(-50%, -55%) scale(.4); opacity: 0; }
+  20%  { transform: translate(-50%, -115%) scale(1.15); opacity: 1; }
+  38%  { transform: translate(-50%, -105%) scale(1); opacity: 1; }
+  72%  { transform: translate(-50%, -145%) scale(1); opacity: 1; }
+  100% { transform: translate(-50%, -190%) scale(.95); opacity: 0; }
 }
 
 .harvest-pop {
@@ -1104,6 +1147,17 @@ html, body, #root {
 
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+  /* A1: the arcade readouts are INFORMATION, not decoration. The blanket rule
+     above collapses every `forwards` animation to its last keyframe in .01ms —
+     which for these is `opacity: 0`, so a reduced-motion player would never
+     see a MATCH!, a COMBO or a harvest at all. No animation still means they
+     are removed on time (each is dropped by its own JS timer), it just means
+     they are READABLE for the second they are on screen. Decorative pops,
+     booms and cracks are deliberately left to the blanket rule. */
+  .fx-chain, .fx-combo, .combo-float, .harvest-pop, .iso-float {
+    animation: none !important;
+    opacity: 1 !important;
+  }
 }
 
 /* ════════════════════════════════════════════════════════════════════

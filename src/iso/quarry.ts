@@ -132,12 +132,14 @@ export function demoteTokens(board: Board, resList: ResKey[]): number {
 export const SPAWN_BASE_MS = UPGRADE_EVERY;
 
 /**
- * Extra milliseconds lost per tile of the shortest truck route depot → factory.
- * A depot parked right next to its factory adds almost nothing; a depot across
- * the map (over the public roads) costs real time, which is the whole RV-03
- * point: *a far depot and network takes longer to deliver its cargo*.
+ * A1: RV-03's distance penalty is now REAL travel time instead of an
+ * arithmetic one. The lorry that delivers the token drives the actual route at
+ * `TRUCK_SPEED`, so a far depot waits `2 × route × 300 ms` per load where a
+ * near one waits a fraction of that — the same rule, paid in distance instead
+ * of in a made-up number. What is left for the clock is only the cargo NO
+ * lorry carries (rail, or a depot with no road route), and that keeps the
+ * flat base interval.
  */
-export const SPAWN_PER_TILE_MS = 2000;
 
 /**
  * The shortest truck-route length (in tiles) that delivers each cargo, or
@@ -172,14 +174,7 @@ export function deliveryDistances(
   return out;
 }
 
-/** Token-spawn interval for a gem colour, from the delivery distance of its cargo. */
-function spawnIntervalFor(
-  delivery: Partial<Record<Cargo, number>>, res: ResKey,
-): number {
-  const d = delivery[GEM_TO_CARGO[res]];
-  if (d === undefined) return SPAWN_BASE_MS;    // rail-only / not truck-paced
-  return SPAWN_BASE_MS + d * SPAWN_PER_TILE_MS;
-}
+
 
 // ── the quarry ─────────────────────────────────────────────────────────────
 export interface QuarryHooks {
@@ -198,6 +193,13 @@ export interface QuarryHooks {
   onGold?: (n: number) => void;
   /** Per-match summary, cargo-keyed, for the floating gain readout. */
   onGains?: (gains: Partial<Record<Cargo, number>>, label: string) => void;
+  /**
+   * A1: the same per-match summary in GEM space, which is what the floating
+   * readout over the board draws (it shows gem icons). It fires for every
+   * settle that has gains OR a label — including a tokenless cascade, whose
+   * `gains` is empty but whose COMBO label is the whole point.
+   */
+  onPopup?: (gains: Partial<Record<ResKey, number>>, label: string) => void;
   /** Tokens appeared/disappeared: the panel redraws. */
   onTokens?: (pool: Partial<Record<ResKey, number>>) => void;
   onChange?: () => void;
@@ -214,7 +216,22 @@ export interface Quarry {
   delivery: Partial<Record<Cargo, number>>;
   /** Recompute the reachable set; spawn tokens for newly reached cargo. */
   refresh(now: number): Partial<Record<Cargo, number>>;
-  /** Per-frame: board effects plus the distance-paced token spawn. */
+  /**
+   * A1: tell the quarry which cargoes a LORRY already delivers, so its own
+   * clock stops double-spawning them. A cargo with no lorry (rail-only, or a
+   * depot with no road route) keeps the base clock.
+   */
+  setTruckServed(cargos: Iterable<Cargo>): void;
+  /**
+   * A1: a lorry reached the Factory — mint this cargo's token NOW.
+   *
+   * Returns the tier minted (1 or 2), or 0 when the delivery landed nothing:
+   * the line is cut, or every gem of that colour already carries a token. The
+   * caller only draws the "+N" at the Factory when this is non-zero, so the
+   * number on the map and the token on the board can never disagree.
+   */
+  deliver(cargo: Cargo): number;
+  /** Per-frame: board effects plus the token spawn for cargo no lorry serves. */
   tick(now: number): void;
 }
 
@@ -251,7 +268,11 @@ export function createQuarry(
       // outpaces a connected depot. Forged / match-5 extras stay at face value.
       const paid = forged ? amount : amount * 2;
       hooks.onHarvest?.(cargo, paid);
-      return true;
+      // A1: hand the credited amount back to the board. It is what the purse
+      // actually received, so it is what the floating readout has to show —
+      // returning bare `true` here would let the pop advertise the face value
+      // while the purse banked double.
+      return paid;
     }
     hooks.onBlocked?.(cargo, amount);
     return false;
@@ -268,6 +289,10 @@ export function createQuarry(
       const cargo = GEM_TO_CARGO[res];
       out[cargo] = (out[cargo] ?? 0) + n;
     }
+    // A1: the floating readout draws GEMS, not cargo, so it takes the raw
+    // gains — and it fires even when `out` is empty, because a tokenless
+    // cascade still has its COMBO label to show.
+    hooks.onPopup?.(gains, label);
     if (Object.keys(out).length) hooks.onGains?.(out, label);
   };
   board.onChange = () => hooks.onChange?.();
@@ -300,15 +325,17 @@ export function createQuarry(
       board.spawnTokens(gained);
       hooks.onTokens?.(gained);
     }
-    // (Re)arm the spawn clock for every reachable cargo. Re-arms when the
-    // cargo is newly gained, has no clock yet, or its delivery distance changed
-    // (a new road shortened/lengthened the truck's route — RV-03).
+    // (Re)arm the spawn clock for every reachable cargo. A1: this clock now
+    // only ever fires for cargo NO lorry carries — a lorry-served cargo is
+    // delivered by the lorry's arrival. It still re-arms on a network change,
+    // so a cargo that loses its lorry (road torn up, rail-only connection)
+    // picks the fallback cadence up from here rather than from a stale time.
     for (const res of Object.keys(pool) as ResKey[]) {
       const cargo = GEM_TO_CARGO[res];
       const dist = delivery[cargo];
       if (gained[res] !== undefined || nextSpawnAt[res] === undefined
         || dist !== lastDelivery[cargo]) {
-        nextSpawnAt[res] = now + spawnIntervalFor(delivery, res);
+        nextSpawnAt[res] = now + SPAWN_BASE_MS;
       }
     }
     lastPool = pool;
@@ -316,19 +343,46 @@ export function createQuarry(
     return reach;
   };
 
+  // A1: the cargoes a LORRY delivers. Their tokens are minted by the lorry's
+  // arrival (`deliver`), so the clock must keep its hands off them — otherwise
+  // one delivery would be paid twice, once on the road and once on a timer
+  // that knows nothing about the road.
+  let truckServed = new Set<Cargo>();
+
   const tick = (now: number) => {
     board.tickEffects(now);
     const pool = tokenPool(reach);
     for (const res of Object.keys(pool) as ResKey[]) {
+      if (truckServed.has(GEM_TO_CARGO[res])) continue;   // the lorry owns it
       const at = nextSpawnAt[res];
       if (at === undefined) {
-        nextSpawnAt[res] = now + spawnIntervalFor(delivery, res);
+        nextSpawnAt[res] = now + SPAWN_BASE_MS;
         continue;
       }
       if (now < at) continue;
       board.spawnTokens({ [res]: pool[res] });
-      nextSpawnAt[res] = now + spawnIntervalFor(delivery, res);
+      nextSpawnAt[res] = now + SPAWN_BASE_MS;
     }
+  };
+
+  const setTruckServed = (cargos: Iterable<Cargo>) => {
+    truckServed = new Set(cargos);
+  };
+
+  /**
+   * A1: a lorry arrived at the Factory with this cargo — mint its token now,
+   * in the same frame the "+N" pops over the Factory tile.
+   *
+   * The tier is whatever the network currently earns for that cargo (tier 2
+   * at `TIER2_YIELD` and above), and a return of 0 means the lorry came back
+   * empty: either the line is cut, or the board has no plain gem of that
+   * colour left to upgrade. The caller must not draw a "+N" for an empty load.
+   */
+  const deliver = (cargo: Cargo): number => {
+    const res = CARGO_TO_GEM[cargo];
+    const tier = tokenPool(reach)[res];
+    if (tier === undefined) return 0;              // nothing reachable to load
+    return board.spawnTokens({ [res]: tier }) > 0 ? tier : 0;
   };
 
   // `reach` / `delivery` are reassigned on every refresh, so expose them
@@ -339,6 +393,8 @@ export function createQuarry(
     get reach() { return reach; },
     get delivery() { return delivery; },
     refresh,
+    setTruckServed,
+    deliver,
     tick,
   };
 }

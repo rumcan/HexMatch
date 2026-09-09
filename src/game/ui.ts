@@ -30,7 +30,7 @@ import { CARGO, CARGOES, TRANSPORT, type Cargo } from "../iso/config";
 import { DEPOT_COST, costCompact, depotButtonLabel } from "../iso/construction";
 import { PLANT_COST } from "../iso/plants";
 import { GEM_TO_CARGO } from "../iso/quarry";
-import { Board, type Gem } from "./board";
+import { Board, type FxType, type Gem } from "./board";
 import type { IsoMarket, IsoMarketPlayer, Offer } from "../iso/market";
 
 // ── V5: the restored gem art ────────────────────────────────────────────────
@@ -92,7 +92,7 @@ export interface OriginalUi {
   paint: (state: UiState) => void;
   feed: (text: string, who?: string) => void;
   toast: (text: string, kind?: "good" | "bad" | "info" | "danger" | "success") => void;
-  fx: (type: string, r: number, c: number, text?: string) => void;
+  fx: (type: FxType, r: number, c: number, text?: string) => void;
   popup: (gains: Partial<Record<ResKey, number>>, label: string) => void;
   isQuarryOpen: () => boolean;
   isTradeOpen: () => boolean;
@@ -749,25 +749,48 @@ export function createOriginalUi(
   }
 
   // ── FX / popups / toasts / banner / modals ────────────────────────────────
-  function fx(type: string, r: number, c: number, text?: string) {
+  // ── A1: the board-wide callout slot ─────────────────────────────────────
+  // ONE float at a time: a new callout REPLACES the one before it instead of
+  // stacking. A cascade therefore reads as a single banner that grows and
+  // re-words itself — MATCH! → COMBO x2 → CHAIN x3!! — which is the arcade
+  // behaviour the old stacked floats could never produce.
+  let floatEl: HTMLElement | null = null;
+  let floatTimer = 0;
+
+  function showFloat(text: string, big: boolean) {
+    floatEl?.remove();
+    window.clearTimeout(floatTimer);
+    const f = h("div", `combo-float${big ? " cf-big" : ""}`, text);
+    boardWrap.appendChild(f);
+    floatEl = f;
+    floatTimer = window.setTimeout(() => {
+      if (floatEl === f) floatEl = null;
+      f.remove();
+    }, big ? 950 : 750);
+  }
+
+  function fx(type: FxType, r: number, c: number, text?: string) {
     const e = h("div", `fx fx-${type}`);
     e.style.left = (c * CELL + CELL / 2) + "px";
     e.style.top = (r * CELL + CELL / 2) + "px";
     if (text) e.textContent = text;
     grid.appendChild(e);
-    setTimeout(() => e.remove(), type === "chain" ? 1000 : 600);
-    if (type === "chain" && text) {
-      const f = h("div", "combo-float", text);
-      boardWrap.appendChild(f);
-      setTimeout(() => f.remove(), 900);
-    }
+    const callout = type === "chain" || type === "combo";
+    setTimeout(() => e.remove(), callout ? 1000 : 600);
+    // A1: every callout now draws in the board slot too — the small text at
+    // the matched cell AND the banner above the board. `onFx` was never
+    // assigned before this, so both were dead code.
+    if (callout && text) showFloat(text, type === "combo");
   }
 
   function popup(gains: Partial<Record<ResKey, number>>, label: string) {
     const e = h("div", "harvest-pop");
     const parts = (Object.keys(gains) as ResKey[]).map((k) =>
-      `<span>${gains[k] ?? 0}${RES[k].icon}</span>`).join("");
-    e.innerHTML = (label ? `<b class="hp-label">${label}</b>` : "") + `<div class="hp-body">${parts}</div>`;
+      `<span>+${gains[k] ?? 0}${RES[k].icon}</span>`).join("");
+    // A1: no gains means no body — a tokenless cascade still has its COMBO
+    // label, and an empty flex row would float an empty box beside it.
+    e.innerHTML = (label ? `<b class="hp-label">${label}</b>` : "")
+      + (parts ? `<div class="hp-body">${parts}</div>` : "");
     boardWrap.appendChild(e);
     setTimeout(() => e.remove(), 1600);
   }

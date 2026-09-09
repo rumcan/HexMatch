@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   GEM_TO_CARGO, CARGO_TO_GEM, TIER2_YIELD, reachableCargo, tokenPool,
-  demoteTokens, createQuarry, tokenedGems, SPAWN_BASE_MS, SPAWN_PER_TILE_MS,
+  demoteTokens, createQuarry, tokenedGems, SPAWN_BASE_MS,
 } from "../../src/iso/quarry";
 import { CARGOES, INDUSTRY_BY_KEY, type Cargo } from "../../src/iso/config";
 import {
@@ -257,12 +257,12 @@ describe("J1 createQuarry", () => {
     expect(q.board.gems().filter((g) => g.tier > 0)).toHaveLength(0);
   });
 
-  it("paces the spawn clock by truck-route distance (closer depot = faster)", () => {
-    // The harvest coroutine exposes a QUARRY with a stable factory so a
-    // farther depot's truck rolls a longer route. Build two worlds sharing
-    // everything except how far the factory sits from the depot, and assert
-    // the NEAR depots spawn on the base clock (UPGRADE_EVERY) while the FAR
-    // one adds `distance × SPAWN_PER_TILE_MS`.
+  it("reports the lorry's route length — a far depot's lorry drives farther", () => {
+    // A1: the distance no longer feeds an arithmetic clock, it IS the trip.
+    // The lorry that delivers the token drives this route at TRUCK_SPEED, so
+    // a far depot waits 2 × route × 300ms per load where a near one waits a
+    // fraction of that. What is still asserted here is the measurement the
+    // cadence now rests on: the far route really is longer.
     const near = world();  near.connect();   // factory at 14,10 → depot at 10,10 → 3 tiles of road + shoulders
     const far = (() => {
       const grid = flatGrid([ind("farm", 11, 11)]);
@@ -287,17 +287,9 @@ describe("J1 createQuarry", () => {
     expect(qFar.reach.grain).toBeGreaterThan(0);
     expect(qNear.delivery.grain).toBeGreaterThan(0);
     expect(qFar.delivery.grain).toBeGreaterThan(qNear.delivery.grain!);
-
-    // the near board's spawn interval is strictly shorter than the far one's.
-    const nearInterval = SPAWN_BASE_MS + qNear.delivery.grain! * SPAWN_PER_TILE_MS;
-    const farInterval = SPAWN_BASE_MS + qFar.delivery.grain! * SPAWN_PER_TILE_MS;
-    expect(nearInterval).toBeLessThan(farInterval);
-    // …and both are strictly longer than the base clock (distance only slows).
-    expect(nearInterval).toBeGreaterThan(SPAWN_BASE_MS);
-    expect(farInterval).toBeGreaterThan(nearInterval);
   });
 
-  it("a closer depot re-arms a shorter clock when a new road shortens its route", () => {
+  it("measures a shorter route once a new road shortens it", () => {
     const { state, connect, track } = world();
     const q = createQuarry(state, "you");
     neutralise(q.board);
@@ -388,5 +380,80 @@ describe("W5 the combo coin reaches the purse", () => {
     q.board.registerCombo();
     expect(purse.gold).toBe(2);
     expect(q.board.gems().some((g) => g.res === "gold")).toBe(false);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// A1 — the lorry IS the delivery.
+//
+// The token used to arrive on a 20s clock with a per-tile surcharge that knew
+// nothing about the road it was pretending to model, so the number on the gem
+// and the lorry on the map were two unrelated systems describing one cargo.
+// Now the arrival mints the token, and the clock is only the fallback for
+// cargo no lorry carries.
+// ══════════════════════════════════════════════════════════════════════════
+describe("A1 lorry-driven token delivery", () => {
+  it("mints the cargo's token on demand and reports the tier it minted", () => {
+    const { state, connect } = world();
+    connect();
+    const q = createQuarry(state, "you");
+    neutralise(q.board);
+    q.refresh(0);
+    // the connection's own first token already landed in refresh()
+    expect(tokenedGems(q.board, "wheat")).toHaveLength(1);
+    const tier = q.deliver("grain");
+    expect(tier).toBeGreaterThan(0);
+    expect(tokenedGems(q.board, "wheat")).toHaveLength(2);
+    expect(tokenedGems(q.board, "wheat").every((g) => g.tier === tier)).toBe(true);
+  });
+
+  it("returns 0 for an empty lorry — a cut line delivers nothing", () => {
+    const { state, connect, cut } = world();
+    connect();
+    const q = createQuarry(state, "you");
+    neutralise(q.board);
+    q.refresh(0);
+    cut();
+    q.refresh(1000);                    // the network is re-read
+    expect(q.reach).toEqual({});
+    expect(q.deliver("grain")).toBe(0);
+  });
+
+  it("returns 0 when the board has no plain gem of that colour left to upgrade", () => {
+    const { state, connect } = world();
+    connect();
+    const q = createQuarry(state, "you");
+    neutralise(q.board);
+    q.refresh(0);
+    // token every wheat gem on the board: the lorry has nowhere to put its load
+    for (const g of q.board.gems()) if (g.res === "wheat") g.tier = 2;
+    expect(q.deliver("grain")).toBe(0);
+  });
+
+  it("keeps the clock OFF a cargo a lorry delivers — one load, one token", () => {
+    const { state, connect } = world();
+    connect();
+    // Counted by TIER, not by colour: `tick` runs the board's deadlock guard,
+    // which may reshuffle colours — the token survives, its gem colour may not.
+    const tokens = (b: Board) => b.gems().filter((g) => g.tier > 0).length;
+
+    const q = createQuarry(state, "you");
+    neutralise(q.board);
+    q.refresh(0);
+    const before = tokens(q.board);
+
+    q.setTruckServed(["grain"]);        // a lorry is rolling for grain
+    for (let t = 0; t <= SPAWN_BASE_MS * 3; t += 1000) q.tick(t);
+    expect(tokens(q.board)).toBe(before);          // the clock stayed out of it
+
+    // …and the same cargo still spawns on the base clock when NO lorry serves
+    // it (rail-only, or a depot with no road route).
+    const q2 = createQuarry(state, "you");
+    neutralise(q2.board);
+    q2.refresh(0);
+    q2.setTruckServed([]);
+    const start = tokens(q2.board);
+    for (let t = 0; t <= SPAWN_BASE_MS + 1000; t += 1000) q2.tick(t);
+    expect(tokens(q2.board)).toBeGreaterThan(start);
   });
 });

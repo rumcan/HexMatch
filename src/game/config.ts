@@ -134,13 +134,19 @@ export const COSTS: Record<string, { cost: Partial<Record<ResKey, number>>; vp: 
 export const VP = { target: 10 };
 export const REPAIR_COST: Partial<Record<ResKey, number>> = { wood: 1, brick: 1, wheat: 1, ore: 1 };
 
+/**
+ * A1: `target` names WHO the action lands on, and the three board actions now
+ * mean it — they used to fire into the buyer's own board. Everything here is
+ * aimed at the rival; Repair Crew and Security Forces (below) are the two
+ * actions you buy for yourself.
+ */
 export const SABOTAGE: Record<string, {
   name: string; gold: number; target: "tile" | "player"; desc: string;
 }> = {
   bandit: { name: "Blockade",     gold: 5, target: "tile",   desc: "Auto-blockades the rival's busiest industry for 45s — no one may harvest it." },
-  harden: { name: "Frost Tiles",  gold: 5, target: "player", desc: "Freeze 7 gems in ice (2 matches to shatter)." },
-  block:  { name: "Iron Girders", gold: 9, target: "player", desc: "Drop 2 immovable girders for 2 minutes." },
-  fog:    { name: "Smog Cloud",   gold: 7, target: "player", desc: "Choke a rival's board with smog for 30s (no swaps)." },
+  harden: { name: "Frost Tiles",  gold: 5, target: "player", desc: "Freeze 7 gems in the RIVAL's plant — its yield drops until the ice melts (45s)." },
+  block:  { name: "Iron Girders", gold: 9, target: "player", desc: "Drop 4 immovable girders into the RIVAL's plant for 60s." },
+  fog:    { name: "Smog Cloud",   gold: 7, target: "player", desc: "Smog the RIVAL's plant for 30s — no swaps, and half yield while it hangs." },
 };
 
 /**

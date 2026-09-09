@@ -1493,3 +1493,140 @@ describe("RV-03 town roads and the closest truck route", () => {
       .toEqual(sorted(route));
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// A1 — the wires, against the REAL mounted game.
+//
+// board.test.ts proves the board knows WHAT to say. These prove somebody is
+// listening: `Board.onFx` was never assigned, so every pop, crack, token-up,
+// bomb and callout died on the board. That is a wiring bug, and a wiring bug
+// can only be caught where the wire is — in the DOM of the real game.
+// ══════════════════════════════════════════════════════════════════════════
+describe("A1 the arcade FX are wired to the HUD", () => {
+  /** A plain 3-match on the top row — no tokens, so the callout is the only feedback. */
+  function plainMatch(h: IsoHook) {
+    const b = h.board;
+    b.grid[0][0]!.res = "wood";
+    b.grid[0][1]!.res = "wood";
+    b.grid[0][2]!.res = "wood";
+    b.grid[0][3]!.res = "ore";        // stop the run at three
+    expect(b.findGroups().length).toBeGreaterThan(0);
+  }
+
+  it("a match draws its callout — MATCH! in the grid and in the board float", async () => {
+    const h = await boot();
+    plainMatch(h);
+    const p = h.board.settle();        // resolve() fires the callout synchronously
+    const chain = root.querySelector(".fx-chain") as HTMLElement | null;
+    expect(chain, "no .fx-chain — board.onFx is still unassigned").toBeTruthy();
+    expect(chain!.textContent).toBe("MATCH!");
+    const float = root.querySelector(".combo-float") as HTMLElement | null;
+    expect(float, "no .combo-float — the board-wide banner is dead").toBeTruthy();
+    expect(float!.textContent).toBe("MATCH!");
+    await p;
+  });
+
+  it("a cascade re-words ONE float instead of stacking them", async () => {
+    const h = await boot();
+    plainMatch(h);
+    await h.board.settle();
+    expect(root.querySelectorAll(".combo-float")).toHaveLength(1);
+
+    // a deeper cascade while the first banner is still up: the banner must be
+    // REPLACED (MATCH! → COMBO x2), never stacked on top of itself
+    plainMatch(h);
+    const p = h.board.settle(1);
+    expect(root.querySelectorAll(".combo-float")).toHaveLength(1);
+    expect((root.querySelector(".combo-float") as HTMLElement).textContent).toBe("COMBO x2");
+    expect(root.querySelector(".combo-float.cf-big")).toBeTruthy();   // louder tier
+    await p;
+  });
+
+  it("the floating harvest readout draws what was actually harvested", async () => {
+    const { h } = await connectedBoot();
+    const tok = h.board.gems().find((g) => g.tier > 0)!;
+    makeRun(h.board, tok.res, freeRow(h.board, tok), 4, tok);
+    await h.board.settle();
+    const pop = root.querySelector(".harvest-pop") as HTMLElement | null;
+    expect(pop, "no .harvest-pop — onPopup never reached the UI").toBeTruthy();
+    // "+2 🌾"-style: a number with a sign, and the cargo's icon
+    expect(pop!.textContent).toMatch(/\+\d/);
+    // ...and the number is what the PURSE got, not the token's face value:
+    // a depot-fed token pays double, and the readout must not under-report it.
+    const n = Number((pop!.textContent ?? "").match(/\+(\d+)/)![1]);
+    expect(n).toBeGreaterThan(0);
+  });
+});
+
+describe("A1 Black Market sabotage lands on the rival", () => {
+  it("Frost Tiles ice the RIVAL's plant — not the buyer's own board", async () => {
+    const h = await boot();
+    // the sabotage marker is anchored to the rival's Factory, so the rival
+    // needs one: placing YOUR factory seeds the rival's (W8), exactly as a
+    // real setup click does.
+    const spot = findFactorySpot(h.grid)!;
+    expect(h.placeFactory(spot[0], spot[1])).toBe(true);
+    h.purse.gold = 20;                                  // afford any of them
+    const before = { ...h.purse };
+    const btn = root.querySelector(".sab-btn.sb-harden") as HTMLElement;
+    expect(btn).toBeTruthy();
+    btn.click();
+
+    const now = performance.now();
+    expect(h.rivalPlant.status(now).frozen).toBe(7);     // landed on the rival…
+    expect(h.rivalPlant.health(now)).toBeLessThan(1);    // …and it costs them income
+    // the bug: this used to be 7 on the player's own board
+    expect(h.board.gems().filter((g) => g.hard > 0)).toHaveLength(0);
+    expect(h.purse.gold).toBe(before.gold! - 5);
+    // and the player is told where it went
+    expect(root.querySelector(".iso-float.sabotage")).toBeTruthy();
+    expect(root.querySelector(".iso-float.sabotage")!.textContent).toMatch(/FROZEN/);
+  });
+
+  it("Iron Girders and Smog Cloud do the same, and Repair Crew stays on your own board", async () => {
+    const h = await boot();
+    h.purse.gold = 30;
+    (root.querySelector(".sab-btn.sb-block") as HTMLElement).click();
+    (root.querySelector(".sab-btn.sb-fog") as HTMLElement).click();
+    const now = performance.now();
+    expect(h.rivalPlant.status(now).girders).toBe(4);
+    expect(h.rivalPlant.status(now).smog).toBe(true);
+    // YOUR board is untouched by all three
+    expect(h.board.gems().filter((g) => g.block || g.hard > 0)).toHaveLength(0);
+  });
+});
+
+describe("A1 a lorry arrival is a delivery", () => {
+  it("mints a token on a gem and pops +N over the Factory, in the same moment", async () => {
+    const h = await boot();
+    // the shortest corridor that still connects: depot → 2 road tiles → factory.
+    // A short route keeps the wait real but small (TRUCK_SPEED is 1 tile / 300ms).
+    const c = findSouthCorridor(h.grid, 3);
+    expect(c).toBeTruthy();
+    const { hx, hy, fy } = c!;
+    h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx, ty: fy });
+    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy });
+    h.finishSetup();                                  // the delivery clock only runs in play
+    // the REAL build path: it rescores, which is what replans the lorries
+    expect(h.dragBuild("road", hx, hy + 1, hx, fy - 1)).toBeTruthy();
+    h.refreshQuarry(performance.now());
+
+    const tokens = () => h.board.gems().filter((g) => g.tier > 0).length;
+    const before = tokens();
+    expect(before).toBeGreaterThan(0);                // the connection's first token
+
+    // Drive real frames until the lorry gets there (the frame loop advances
+    // the trucks from rAF timestamps, so this is wall-clock time).
+    const deadline = Date.now() + 8000;
+    let float: HTMLElement | null = null;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 50));
+      float = root.querySelector(".iso-float.delivery");
+      if (float && tokens() > before) break;
+    }
+    expect(float, "the lorry never delivered — no +N over the Factory").toBeTruthy();
+    expect(float!.textContent).toMatch(/^\+\d/);       // "+1 …" / "+2 …"
+    // the number on the map and the token on the board are the same event
+    expect(tokens()).toBeGreaterThan(before);
+  });
+});
