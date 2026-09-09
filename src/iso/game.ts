@@ -64,7 +64,7 @@ import {
 } from "../game/config";
 import { createQuarry, GEM_TO_CARGO, type Quarry } from "./quarry";
 import {
-  createTruckState, planTrucks, tickTrucks, truckItems,
+  createTruckState, planTrucks, tickTrucks, truckItems, roadRouteForHarvester,
 } from "./vehicles";
 import { createIsoMarket, toBag, type CargoBag, type IsoMarket } from "./market";
 import { createOriginalUi, type OriginalUi } from "../game/ui";
@@ -187,6 +187,10 @@ export function startIsoGame(root: HTMLElement) {
    */
   const trucks = createTruckState();
   let trucksDirty = true;
+  /** RV-03: monotonically increments on every network change (set in
+   *  `rescoreNow`), so the hover route overlay cache can tell when a build or
+   *  demolish may have opened a CLOSER route and must re-run `roadPath`. */
+  let netVersion = 0;
   /**
    * PP-05: the next Depot id, skipping ids already on the board. The game's own
    * placements never collide, but structures can arrive from elsewhere (a
@@ -410,6 +414,7 @@ export function startIsoGame(root: HTMLElement) {
   const rescoreNow = () => {
     applyVpEvents(rescore(eco, score));
     trucksDirty = true;   // RV-01: the network changed — replan the lorries
+    netVersion++;         // RV-03: drop the hover-route cache so the closest route is re-checked
     if (phase === "play") {
       for (const p of players) {
         if (vpFor(score, p.id) >= VP_TARGET) {
@@ -884,6 +889,26 @@ export function startIsoGame(root: HTMLElement) {
     }
     for (const [x, y] of plan.nodes) items.push({ sprite: "node_mark", tx: x, ty: y });
   };
+  /**
+   * RV-03: the overlay items for a DEPOT hover — the closest ROAD route the
+   * lorry drives depot → factory, painted as a soft highlight over the route
+   * tiles. This describes the truck on the map, so what you hover is exactly
+   * what the truck does; the cache is keyed by (depot id, owner id) plus
+   * `netVersion`, which `rescoreNow` bumps on every build/demolish, so the
+   * answer is re-checked as soon as a new road may have opened a closer route.
+   */
+  let hoverRouteCache: { key: string; items: OverlayItem[] } | null = null;
+  const routeOverlayFor = (h: Harvester): OverlayItem[] => {
+    const key = `${h.id}:${h.ownerId}:${netVersion}`;
+    if (hoverRouteCache && hoverRouteCache.key === key) return hoverRouteCache.items;
+    const comp = buildAllComponents(track, h.ownerId);
+    const route = roadRouteForHarvester(eco, h, comp);
+    const items = route
+      ? route.map(([x, y]) => ({ sprite: "highlight_soft", tx: x, ty: y }))
+      : [];
+    hoverRouteCache = { key, items };
+    return items;
+  };
   /** The placement overlay for a hover at (tx,ty), whatever the input device —
    *  mouse and touch both arrive here through `hover`, so the preview is
    *  identical at every zoom for both. */
@@ -897,6 +922,12 @@ export function startIsoGame(root: HTMLElement) {
     } else {
       items.push({ sprite: "highlight", tx, ty });
     }
+    // RV-03: hovering an existing depot shows the road the truck takes. The
+    // depot is found by tile, so the hover route and the truck agree even when
+    // the current tool is not a placement tool (setup phases hover empty tiles
+    // and find no depot, so they never double up).
+    const dep = eco.harvesters.find((h) => h.tx === tx && h.ty === ty);
+    if (dep) items.push(...routeOverlayFor(dep));
     return items;
   };
   const overlayItems = () => {
@@ -1447,6 +1478,17 @@ export function startIsoGame(root: HTMLElement) {
      * preview draws, ready to be diffed against the plan above.
      */
     overlayItemsFor: (tx: number, ty: number) => overlayItemsAt(tx, ty),
+    /**
+     * RV-03: the tiles of the closest road route a DEPOT at (tx,ty) drives to
+     * its factory, or null when that depot has no road connection. This is the
+     * route the hover overlay paints and the truck drives, exposed so a test
+     * can assert the path without a sprite path.
+     */
+    routeForDepot: (tx: number, ty: number) => {
+      const h = eco.harvesters.find((x) => x.tx === tx && x.ty === ty);
+      if (!h) return null;
+      return roadRouteForHarvester(eco, h, buildAllComponents(track, h.ownerId));
+    },
     /**
      * W1/W2: the e2e/unit twin of a track drag — the exact pointer path
      * (owned network check → preview with the free allowance → commit).
