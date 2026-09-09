@@ -56,6 +56,19 @@ export interface Grid {
   terrain: Uint8Array;        // MAP_W*MAP_H values GRASS | WATER | ROUGH
   industries: Industry[];
   towns: Town[];              // TOWN-1: four towns per map
+  /**
+   * PP-13: the map's PUBLIC ROADS — the seed-generated highway that links the
+   * towns (see `publicRoadTiles`). Optional only so the hand-built synthetic
+   * grids in the unit tests stay valid; `generateMap` always fills it.
+   *
+   * These tiles are deliberately NOT stamped in `occupancy`: a public road is
+   * track, not town furniture, so a player may build over it (and, because a
+   * tile that already carries road costs nothing, claim it into their own
+   * network for free). The game stamps them onto the road layer at boot with
+   * owner `PUBLIC_OWNER` (`seedPublicRoads` in track.ts), which is what makes
+   * them usable by every player's network.
+   */
+  publicRoads?: [number, number][];
   occupancy: Int16Array;      // per tile: industry list index or -1 (towns use -2)
   seed: number;
 }
@@ -210,9 +223,21 @@ function placeIndustries(terrain: Uint8Array, rng: () => number): { list: Indust
 
 /** TOWN-1: number of towns per map. */
 const TOWN_COUNT = 4;
-/** TOWN-1: houses per town (min..max inclusive). */
-const TOWN_HOUSES_MIN = 6;
-const TOWN_HOUSES_MAX = 12;
+/**
+ * TOWN-1: houses per town (min..max inclusive).
+ *
+ * PP-13: TRIPLED (was 6..12). A settlement of 6–12 houses read as a hamlet
+ * next to the 144×144 map T4 shipped, and its PP-10 ring road was barely a
+ * loop. Three times the houses triples the built area, which also triples the
+ * ring road and the interior streets `townRoadTiles` paves inside the house
+ * box — the town footprint grows with it, since the box is derived from the
+ * houses. The 8-tile industry ring (TOWN_INDUSTRY_SEP) and the 28-tile
+ * town-to-town centre separation are unchanged: they are separations, not
+ * sizes, and the map has the room (all four towns still place on every
+ * standard seed — pinned in tests/unit/iso-grid.test.ts).
+ */
+export const TOWN_HOUSES_MIN = 18;
+export const TOWN_HOUSES_MAX = 36;
 /** Minimum Chebyshev distance from EVERY town tile to any industry tile.
  * T4 widens the former 3-tile ring to 8 on the roomier map. */
 const TOWN_INDUSTRY_SEP = 8;
@@ -288,6 +313,124 @@ export function townRoadTiles(
     for (let tx = x0 - 1; tx <= x1 + 1; tx++) {
       const onRing = tx === x0 - 1 || tx === x1 + 1 || ty === y0 - 1 || ty === y1 + 1;
       if (onRing && free(tx, ty)) out.push([tx, ty]);
+    }
+  }
+  return out;
+}
+
+/** 4-neighbourhood, in a fixed order (keeps every BFS below deterministic). */
+const DIR4: [number, number][] = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+
+/**
+ * PP-13: the PUBLIC ROADS — highways that connect the towns.
+ *
+ * What it builds:
+ *   1. a MINIMUM SPANNING TREE over the town centres, so all four settlements
+ *      end up on one highway network without paving a redundant loop
+ *      (Prim, seeded from town 0, ties by lowest index — no RNG);
+ *   2. for each tree edge, the SHORTEST drivable route between the two towns'
+ *      own road networks (a multi-source BFS, so the highway meets each
+ *      settlement's ring road wherever that is cheapest).
+ *
+ * "Drivable" means: in bounds, not water, not an industry footprint, not a
+ * house. A town's own ROAD tiles are passable — that is precisely how the
+ * highway joins a settlement — and rough ground is fine, because roads build
+ * on rough (`TRANSPORT.road.onRough`).
+ *
+ * Tiles a town already paves are left out of the result: they are on the road
+ * layer already, and they keep the town's neutral ownership rather than being
+ * adopted into the public highway.
+ *
+ * Deterministic and pure — a function of the towns, the terrain and the
+ * occupancy at generation time, with no RNG draws of its own, so it cannot
+ * perturb the seeded stream the rest of the map depends on.
+ */
+export function publicRoadTiles(
+  towns: Town[], terrain: Uint8Array, occ: Int16Array,
+): [number, number][] {
+  if (towns.length < 2) return [];
+
+  const houses = new Set<number>();
+  for (const t of towns) for (const [hx, hy] of t.houses) houses.add(idx(hx, hy));
+  const paved = new Set<number>();
+  for (const t of towns) for (const [rx, ry] of t.roads) paved.add(idx(rx, ry));
+
+  const passable = (tx: number, ty: number): boolean => {
+    if (!inBounds(tx, ty)) return false;
+    const i = idx(tx, ty);
+    // occ < 0 keeps both free land (-1) and town tiles (-2); the house set is
+    // what takes the houses back out, so a highway may cross a ring road but
+    // never runs through somebody's living room.
+    return terrain[i] !== WATER && occ[i] < 0 && !houses.has(i);
+  };
+
+  /** Where a leg may start/end: the town's ring road, else its centre. */
+  const anchorsOf = (t: Town): [number, number][] =>
+    t.roads.length ? t.roads : [[t.tx, t.ty]];
+
+  /** Shortest drivable route between two towns' road networks. */
+  const link = (a: Town, b: Town): [number, number][] => {
+    const targets = new Set<number>(anchorsOf(b).map(([x, y]) => idx(x, y)));
+    const prev = new Int32Array(MAP_W * MAP_H).fill(-1);
+    const seen = new Uint8Array(MAP_W * MAP_H);
+    const queue: number[] = [];
+    for (const [sx, sy] of anchorsOf(a)) {
+      const si = idx(sx, sy);
+      if (seen[si]) continue;
+      seen[si] = 1;
+      prev[si] = si;                 // a source is its own parent: "walk back stops"
+      queue.push(si);
+    }
+    let found = -1;
+    for (let head = 0; head < queue.length && found === -1; head++) {
+      const cur = queue[head];
+      const x = cur % MAP_W, y = (cur / MAP_W) | 0;
+      for (const [dx, dy] of DIR4) {
+        const nx = x + dx, ny = y + dy;
+        if (!passable(nx, ny)) continue;
+        const ni = idx(nx, ny);
+        if (seen[ni]) continue;
+        seen[ni] = 1;
+        prev[ni] = cur;
+        if (targets.has(ni)) { found = ni; break; }
+        queue.push(ni);
+      }
+    }
+    if (found === -1) return [];     // walled off — this leg simply does not exist
+    const path: [number, number][] = [];
+    for (let cur = found; ; cur = prev[cur]) {
+      path.push([cur % MAP_W, (cur / MAP_W) | 0]);
+      if (prev[cur] === cur) break;
+    }
+    return path.reverse();
+  };
+
+  // ── the spanning tree ──
+  const cheb = (a: Town, b: Town) => Math.max(Math.abs(a.tx - b.tx), Math.abs(a.ty - b.ty));
+  const inTree: Town[] = [towns[0]];
+  const rest = towns.slice(1);
+  const legs: [Town, Town][] = [];
+  while (rest.length) {
+    let bestI = 0, bestFrom = inTree[0], bestD = Infinity;
+    for (let i = 0; i < rest.length; i++) {
+      for (const t of inTree) {
+        const d = cheb(rest[i], t);
+        if (d < bestD) { bestD = d; bestI = i; bestFrom = t; }
+      }
+    }
+    legs.push([bestFrom, rest[bestI]]);
+    inTree.push(rest[bestI]);
+    rest.splice(bestI, 1);
+  }
+
+  const out: [number, number][] = [];
+  const added = new Set<number>();
+  for (const [a, b] of legs) {
+    for (const [tx, ty] of link(a, b)) {
+      const i = idx(tx, ty);
+      if (paved.has(i) || added.has(i)) continue;
+      added.add(i);
+      out.push([tx, ty]);
     }
   }
   return out;
@@ -466,6 +609,10 @@ export function generateMap(seed: number): Grid {
   // seeded RNG so the map stays deterministic. Town tiles are stamped with
   // TOWN_OCC in the occupancy array so roads/other structures route around.
   const towns = placeTowns(terrain, occ, list, rng);
+  // PP-13: highways between the towns, derived from the towns that were
+  // actually placed. No RNG draws, so the seeded stream the rest of the map
+  // depends on is untouched — and the highway is a pure function of the seed.
+  const publicRoads = publicRoadTiles(towns, terrain, occ);
   // PP-02: guarantee every town can host a Factory. The only thing that could
   // wall a town off from a legal Factory site is ROUGH terrain around it,
   // so flatten the rough in a small ring around every town tile. A town tile
@@ -488,7 +635,9 @@ export function generateMap(seed: number): Grid {
       }
     }
   }
-  return { w: MAP_W, h: MAP_H, terrain, industries: list, towns, occupancy: occ, seed: s };
+  return {
+    w: MAP_W, h: MAP_H, terrain, industries: list, towns, publicRoads, occupancy: occ, seed: s,
+  };
 }
 
 /**

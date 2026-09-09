@@ -1,7 +1,8 @@
 import { test, expect } from "@playwright/test";
 import { BOARD_H, BOARD_W, MAP_W, MAP_H } from "../../src/game/config";
 import {
-  findIsoCorridor, isoTileOcclusion, isoClickableTile, type Corridor,
+  findIsoCorridor, isoTileOcclusion, isoClickableTile, classifyDragTiles,
+  type Corridor,
 } from "./corridor-picker";
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -16,11 +17,15 @@ import {
 // ══════════════════════════════════════════════════════════════════════════
 
 /** The default route: iso is the standalone default (E12); seed pins the map.
- *  PP-12: seed 74 — its boot frame holds a town-ring corridor at both zooms
- *  (re-swept when the bigger art re-flowed the map; seed 1337's boot industry
- *  now sits 60+ tiles from the nearest town ring). See the E14 swept pairs in
+ *  PP-13: seed 79 — its boot frame holds a town-ring corridor at both zooms.
+ *  PP-12 swept to 74 when the bigger art re-flowed the map; PP-13 re-swept to
+ *  79 because the towns tripled in size and grew inter-town highways, which
+ *  moves every settlement (seed 74's boot industry no longer has a town ring
+ *  inside the 12-tile corridor reach). Swept over seeds 0–400 at both boot
+ *  zooms with this very search: 16 seeds qualify, 79 is the first that reads
+ *  as well as 74 did. See the E14 swept pairs in
  *  tests/unit/iso-corridor-picker.test.ts. */
-const ISO_URL = "/hexmatch/?seed=74";
+const ISO_URL = "/hexmatch/?seed=79";
 
 async function bootIso(page: import("@playwright/test").Page) {
   await page.goto(ISO_URL);
@@ -263,7 +268,7 @@ test.describe("iso game boots on the default route", () => {
       seed: (window as any).__iso.grid.seed,
     }));
     expect(stats.industries).toBeGreaterThan(0);
-    expect(stats.seed).toBe(74);
+    expect(stats.seed).toBe(79);
 
     await test.info().attach("iso-boot-layout", {
       body: await page.screenshot(),
@@ -338,6 +343,39 @@ test.describe("iso game boots on the default route", () => {
     await expect.poll(() => strongGlowNear(page, 2, c.fx + 3, c.fy + 3), { timeout: 5000 }).toBe(0);
     await page.mouse.click(factory.x, factory.y);
     await page.waitForFunction(() => (window as any).__iso.phase === "setup-harvester");
+    // The Factory now covers part of the corridor, and a covered tile is not
+    // clickable — our own building, not a picking bug. Ask the game's own pick
+    // which tiles those are: the atlas's stage-2 alpha decides it, and seed 79
+    // showed a footprint-shaped window is wrong (the sprite reaches one tile
+    // past the 3×3). Then require the Factory to be the ONLY reason any
+    // corridor tile is skipped, so a tile eaten by a map sprite or by HUD
+    // chrome still fails here instead of being quietly stepped over.
+    const { drag: dragTiles, refused } = await classifyDragTiles(c, async (tx, ty) => {
+      try {
+        await clickPointFor(page, tx, ty, aim);
+        return null;
+      } catch (err) {
+        return String(err instanceof Error ? err.message : err);
+      }
+    });
+    for (const r of refused) {
+      expect(
+        r.why,
+        `corridor tile (${r.tile.tx},${r.tile.ty}) is unclickable for a reason `
+        + `that is not the Factory we just placed`,
+      ).toMatch(/via `factory`/);
+    }
+    expect(dragTiles.length, "the drag has no exposed tile left to lay")
+      .toBeGreaterThan(0);
+    const dragEnd = dragTiles[dragTiles.length - 1];
+    expect([dragEnd.tx, dragEnd.ty], "the drag no longer ends on the harvester")
+      .toEqual([c.hx, c.hy]);
+    test.info().annotations.push({
+      type: "drag-stepped-over",
+      description: refused.length
+        ? refused.map((r) => `(${r.tile.tx},${r.tile.ty})`).join(" ")
+        : "none",
+    });
     expect((await page.evaluate(() => (window as any).__iso.factories.length))).toBeGreaterThanOrEqual(1);
     // U2: the guide banner must re-word to the Depot once the Factory is
     // placed (the banner is the user-facing cue; the footprint itself is
@@ -378,14 +416,13 @@ test.describe("iso game boots on the default route", () => {
     // along the picked column → up on the harvester. The path is the
     // corridor itself, so the drag length is whatever the geometry yielded —
     // no tile count is baked into this test any more (E14/A4).
-    const path = [...c.col].reverse();              // factory → harvester
     const dragStart = await at(c.fx, c.fy);
     await page.mouse.move(dragStart.x, dragStart.y);
     await page.mouse.down();
-    // Interior factory pieces all select the same factory anchor in track
-    // mode; move straight to the first exposed corridor tile outside it.
-    for (const t of path.slice(1).filter((t) =>
-      t.tx < c.fx || t.tx >= c.fx + 2 || t.ty < c.fy || t.ty >= c.fy + 2)) {
+    // The pointer only visits the tiles the pick says are clickable; the road
+    // still lands on all `n` of them because `previewDrag` fills the L-path in
+    // between (asserted below).
+    for (const t of dragTiles) {
       const p = t.tx === c.hx && t.ty === c.hy ? harvester : await at(t.tx, t.ty);
       await page.mouse.move(p.x, p.y);
     }

@@ -35,7 +35,8 @@ import { screenToWorld, visibleTileRange, worldToScreen, type Camera } from "./c
 import { flatPick, terrainSprite, type IsoRenderer } from "./renderer";
 import { WATER, ROUGH, industryAt, type Grid } from "./grid";
 import {
-  bitsAt, buildRefusal, hasTrack, ownerAt, playerNetwork, tIdx, type Track, type TrackKind,
+  bitsAt, buildRefusal, hasTrack, isPublicRoad, ownerAt, playerNetwork, tIdx,
+  type Track, type TrackKind,
 } from "./track";
 import { catchmentRect, industriesInCatchment, type EconomyState } from "./economy";
 import type { Atlas, SpriteDef } from "./atlas";
@@ -198,6 +199,8 @@ export function createIsoDebug(ctx: DebugContext) {
         roadPresent: hasTrack(ctx.track, "road", tx, ty),
         railPresent: hasTrack(ctx.track, "rail", tx, ty),
         owner: ownerAt(ctx.track, tx, ty),
+        /** PP-13: one of the map's public highways (owner PUBLIC_OWNER). */
+        publicRoad: isPublicRoad(ctx.track, tx, ty),
       } : null,
       /** Would a build with the CURRENT tool be refused here, and why? */
       build: { kind: ctx.tool === "rail" ? "rail" : "road", ok: refusal === null, why: refusal },

@@ -143,6 +143,48 @@ export interface OcclusionHit extends CorridorTile {
   coveredBy: string;
 }
 
+/** A corridor tile the pointer cannot land on, plus the reason the pick gave. */
+export interface DragTileRefusal {
+  tile: CorridorTile;
+  why: string;
+}
+
+/**
+ * Split the corridor's drag path into the tiles the pointer LANDS on and the
+ * tiles it has to step over — asking the game's own pick, not geometry.
+ *
+ * The path is `col` reversed (factory → harvester) minus the anchor tile the
+ * pointer is already down on. Skipping a tile costs nothing: the game's
+ * `previewDrag` lays an L-path between the pointer's down tile and wherever it
+ * last hovered, and placing a Factory writes nothing to `grid.occupancy`, so
+ * every one of the corridor's tiles is still built and still counted.
+ *
+ * `clickable` answers "would a click on this tile land on it?" — null when it
+ * would, else the reason it would not. It is a PARAMETER on purpose. Which
+ * tiles a placed building covers is decided by the atlas's stage-2 alpha masks,
+ * which only a real browser has; a headless re-derivation cannot be trusted,
+ * and seed 79 proved it twice — the Factory's sprite covers the corridor tile
+ * one step PAST its 3×3 footprint, so both a 2×2 window (what the spec had) and
+ * a 3×3 footprint-shaped one are wrong.
+ *
+ * The caller must assert that every refusal is one it expects. That is what
+ * keeps this from becoming a way to make the suite pass: a tile covered by a
+ * map sprite or by HUD chrome still fails, loudly, in the caller.
+ */
+export async function classifyDragTiles(
+  c: Corridor,
+  clickable: (tx: number, ty: number) => Promise<string | null> | string | null,
+): Promise<{ drag: CorridorTile[]; refused: DragTileRefusal[] }> {
+  const drag: CorridorTile[] = [];
+  const refused: DragTileRefusal[] = [];
+  for (const t of [...c.col].reverse().slice(1)) {
+    const why = await clickable(t.tx, t.ty);
+    if (why === null) drag.push(t);
+    else refused.push({ tile: t, why });
+  }
+  return { drag, refused };
+}
+
 /**
  * Find a legal, on-screen, clickable corridor to play the round on.
  *

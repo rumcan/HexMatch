@@ -36,7 +36,7 @@ import { DEPOT_COST, FREE_SETUP_DEPOTS, priceDepot } from "./construction";
 import { ROUGH, factoryTouchesTown, type Grid, type Industry } from "./grid";
 import {
   DIRS, DIR, tIdx, inMapT, hasTrack, canBuildOn, tileCost, addCost, canAfford,
-  buildTile, trackOwnedBy, freeAllowanceCovers, type Track, type TrackKind, type Purse,
+  buildTile, trackOpenTo, freeAllowanceCovers, type Track, type TrackKind, type Purse,
 } from "./track";
 import {
   catchmentRect, rectContains, isServiced,
@@ -343,8 +343,10 @@ export function planFeasibility(
   for (const d of DIRS) {
     const nx = hx + DIR[d][0], ny = hy + DIR[d][1];
     if (!inMapT(nx, ny)) continue;
-    // standing track of EITHER layer owned by us services the depot (W2)…
-    if (trackOwnedBy(track, ownerId, nx, ny)) { serviced = true; break; }
+    // Standing track of EITHER layer that is open to us services the depot
+    // (W2 — ours, or a public highway, which is what `isServiced` checks too,
+    // so this probe and the rule it predicts can never disagree)…
+    if (trackOpenTo(track, ownerId, nx, ny)) { serviced = true; break; }
     // …and so does track this very plan lays beside it.
     if (freshIdx.has(tIdx(nx, ny))) { serviced = true; break; }
   }
