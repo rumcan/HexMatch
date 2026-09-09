@@ -84,19 +84,67 @@ export interface World {
 const bitName = (prefix: string, cell: number) =>
   `${prefix}_${(cell & 0b1111).toString(2).padStart(4, "0")}`;
 
+// The `dirt_road_<eNE><eSE><eSW><eNW>` transition sprites index their four
+// edge-state chars by DIRECTION (NE first) — NOT by the bit-position order a
+// `dirt_<mask>` name uses — so the renderer walks the edges in this exact
+// order. Each entry: [direction bit, dx, dy].
+const TRANSITION_EDGES: ReadonlyArray<readonly [number, number, number]> = [
+  [1, 0, -1],   // NE
+  [2, 1, 0],    // SE
+  [4, 0, 1],    // SW
+  [8, -1, 0],   // NW
+];
+
+/**
+ * The sprite drawn for one tile of the DIRT layer.
+ *
+ * Gravel and tar are ONE continuous road surface, so a dirt tile whose mask
+ * reaches a neighbour is drawn as plain `dirt_<mask>` only when every reach
+ * is gravel. The moment one of its edges meets a PAVED tile, the tile shows
+ * the seam: `dirt_road_<state>`, one of the 65 transition cells, with an
+ * edge-state char per direction (0 none / 1 gravel / 2 paved) — the tar on
+ * the transition bleeds out to exactly match the neighbouring paved tile.
+ *
+ * The tier test is purely physical (does the neighbouring byte carry a road
+ * PRESENT bit?) because the renderer is a shared view of the map's road
+ * surface — it has no owner layer. W2 (never drive a rival's private track)
+ * is enforced by the owner-scoped floods and routes, not by the art; a rival
+ * tile drawn with a seam is the physical join, exactly as two rival tiles of
+ * the SAME tier already drew arms at each other before this feature.
+ */
+export function dirtSpriteName(world: World, tx: number, ty: number, cell: number): string {
+  const mask = cell & 0b1111;
+  if (!mask) return bitName("dirt", cell);       // lone stub — no edge to classify
+  let state = "";
+  let paved = false;
+  for (const [bit, dx, dy] of TRANSITION_EDGES) {
+    if (!(mask & bit)) { state += "0"; continue; }
+    const nx = tx + dx, ny = ty + dy;
+    if (nx >= 0 && nx < MAP_W && ny >= 0 && ny < MAP_H) {
+      const n = ny * MAP_W + nx;
+      if (((world.roadBits?.[n] ?? 0) & 0b10000) !== 0) { state += "2"; paved = true; continue; }
+    }
+    state += "1";
+  }
+  return paved ? `dirt_road_${state}` : bitName("dirt", cell);
+}
+
 /** Build the structure draw list for a culled tile range. */
 export function buildDrawList(world: World, r: { x0: number; y0: number; x1: number; y1: number }): DrawItem[] {
   const out: DrawItem[] = [];
   const { grid } = world;
   // Both road tiers are flush to the ground and 1×1 — they sort naturally.
   // A tile carries at most ONE tier (paving replaces dirt), so nothing here
-  // needs a crossing overlay — the old road+rail "crossing" is gone.
+  // needs a crossing overlay — the old road+rail "crossing" is gone. A dirt
+  // tile that meets pavement draws the dirt_road_* seam sprite instead of a
+  // plain dirt_* stub (see dirtSpriteName); a paved tile is always plain
+  // road_XXXX.
   for (let ty = r.y0; ty <= r.y1; ty++) {
     for (let tx = r.x0; tx <= r.x1; tx++) {
       const i = ty * MAP_W + tx;
       const rb = world.roadBits?.[i] ?? 0;    // premium paved → road_XXXX (tar)
-      const db = world.dirtBits?.[i] ?? 0;    // basic gravel   → dirt_XXXX
-      if (db) out.push({ sprite: bitName("dirt", db), tx, ty });
+      const db = world.dirtBits?.[i] ?? 0;    // basic gravel   → dirt_XXXX / dirt_road_*
+      if (db) out.push({ sprite: dirtSpriteName(world, tx, ty, db), tx, ty });
       if (rb) out.push({ sprite: bitName("road", rb), tx, ty });
     }
   }

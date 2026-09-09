@@ -154,6 +154,56 @@ describe("E4 culling + draw list", () => {
     expect(names).not.toContain("crossing");
   });
 
+  it("a gravel tile whose edge meets pavement draws the dirt_road_* seam", () => {
+    // Dirt at (10,10) faces NE where a PAVED tile (10,9) faces back. Instead
+    // of a bare dirt_0001 stub the tile draws dirt_road_2000 — edge-state
+    // chars in NE,SE,SW,NW order, '2' on the paved edge — whose tar bleeds
+    // out to match the neighbouring tar tile.
+    const dirtBits = new Uint8Array(MAP_W * MAP_H);
+    const roadBits = new Uint8Array(MAP_W * MAP_H);
+    dirtBits[10 * MAP_W + 10] = 0b10001;              // PRESENT | NE
+    roadBits[9 * MAP_W + 10] = 0b10100;               // PRESENT | SW
+    const names = buildDrawList(
+      { grid, dirtBits, roadBits }, { x0: 9, y0: 8, x1: 11, y1: 11 },
+    ).map((d) => d.sprite);
+    expect(names).toContain("dirt_road_2000");
+    expect(names).not.toContain("dirt_0001");         // the bare stub is gone
+    expect(names).toContain("road_0100");             // the paved tile, unmoved
+    for (const n of names) expect(atlas.has(n), n).toBe(true);
+    expect(names).not.toContain("crossing");
+  });
+
+  it("maps each paved edge to its state char, in NE,SE,SW,NW order", () => {
+    // A 4-arm dirt tile with ONLY the SE neighbour paved (the other arms are
+    // real gravel) must render dirt_road_1211, one sprite, no `crossing`.
+    const dirtBits = new Uint8Array(MAP_W * MAP_H);
+    const roadBits = new Uint8Array(MAP_W * MAP_H);
+    const T = 20 * MAP_W + 20;
+    dirtBits[T] = 0b11111;                            // PRESENT | 4 arms
+    dirtBits[19 * MAP_W + 20] = 0b10100;              // NE neighbour (gravel, faces back SW)
+    roadBits[20 * MAP_W + 21] = 0b11000;              // SE neighbour PAVED, faces back NW
+    dirtBits[21 * MAP_W + 20] = 0b10001;              // SW neighbour (gravel, faces back NE)
+    dirtBits[20 * MAP_W + 19] = 0b10010;              // NW neighbour (gravel, faces back SE)
+    const names = buildDrawList(
+      { grid, dirtBits, roadBits }, { x0: 19, y0: 19, x1: 21, y1: 21 },
+    ).map((d) => d.sprite);
+    expect(names).toContain("dirt_road_1211");
+    expect(names.filter((n) => n.startsWith("dirt_"))).toHaveLength(4);   // one per tile
+    for (const n of names) expect(atlas.has(n), n).toBe(true);
+    expect(names).not.toContain("crossing");
+  });
+
+  it("gravel that never touches pavement keeps drawing plain dirt_* stubs", () => {
+    const dirtBits = new Uint8Array(MAP_W * MAP_H);
+    dirtBits[12 * MAP_W + 12] = 0b10001;              // dirt at (12,12) faces NE
+    dirtBits[11 * MAP_W + 12] = 0b10100;              // dirt at (12,11) faces back SW
+    const names = buildDrawList(
+      { grid, dirtBits }, { x0: 11, y0: 11, x1: 13, y1: 13 },
+    ).map((d) => d.sprite);
+    expect(names).toContain("dirt_0001");
+    expect(names.some((n) => n.startsWith("dirt_road_"))).toBe(false);
+  });
+
   it("draw list stays small under a viewport cull", () => {
     const cam = { ...centerOnMap(createCamera(800, 600)), zoom: 2 as const };
     const r = visibleTileRange(cam, cullPad(atlas));
