@@ -34,7 +34,7 @@ import {
 import { MAP_H, MAP_W } from "../../src/iso/config";
 import type { EconomyState, Factory, Harvester } from "../../src/iso/economy";
 import {
-  place, pickSprite,
+  place, pickSprite, tier1Compare,
 } from "../../src/iso/depth";
 import { Atlas, type Manifest } from "../../src/iso/atlas";
 import { HW, HH, TILE_H, tileToScreen } from "../../src/game/config";
@@ -50,7 +50,7 @@ const atlas = new Atlas(manifest);
 const DIR4: [number, number][] = [[0, -1], [1, 0], [0, 1], [-1, 0]];
 
 /** A 1-tile-every-600ms lorry: easy numbers to tick against. */
-const TICK = 1 / TRUCK_SPEED; // ms per tile (600)
+const TICK = 1 / TRUCK_SPEED; // ms per tile (300)
 
 /** Lay a run of road tiles, each stamped `owner`, autotiled. */
 function pave(t: Track, owner: number, tiles: [number, number][]) {
@@ -425,8 +425,32 @@ describe("RV-01 truck draw items", () => {
     const after = place(atlas, {
       sprite: "truck_goods_se", tx: 3, ty: 10, fx: 3.6, fy: 10,
     })!;
-    expect(before.key).toBe(3 + 10);
-    expect(after.key).toBe(4 + 10);
+    expect(before.key).toBe(3 + 10 + 0.5);
+    expect(after.key).toBe(4 + 10 + 0.5);
+  });
+
+  it("sorts ABOVE the road tiles it drives over, at every phase of a leg", () => {
+    // The RV-02 flash: the moving key tied with the road tile's integer key
+    // and the height tie-break let the road paint OVER the lorry for most of
+    // every leg. The +0.5 bias must make the truck strictly later than the
+    // road it is mostly on, and later than BOTH end roads once past the
+    // midpoint of the leg.
+    const roadA = place(atlas, { sprite: "road_0011", tx: 3, ty: 10 })!;
+    const roadB = place(atlas, { sprite: "road_0011", tx: 4, ty: 10 })!;
+    expect(roadA.key).toBe(13);
+    expect(roadB.key).toBe(14);
+    for (const [fx, afterBoth] of [[3.2, false], [3.7, true], [4.1, true], [4.6, true]] as const) {
+      const truck = place(atlas, {
+        sprite: "truck_goods_se", tx: 3, ty: 10, fx, fy: 10,
+      })!;
+      expect(truck.key, `fx=${fx}`).toBe(Math.round(fx) + 10 + 0.5);
+      // later than the road it is leaving, always
+      expect(tier1Compare(truck, roadA), `fx=${fx} vs source road`).toBeGreaterThan(0);
+      // later than the destination road too, once mostly onto it
+      if (afterBoth) {
+        expect(tier1Compare(truck, roadB), `fx=${fx} vs destination road`).toBeGreaterThan(0);
+      }
+    }
   });
 
   it("is never pickable — clicks fall through a truck to the map", () => {
