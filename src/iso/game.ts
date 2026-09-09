@@ -40,7 +40,7 @@ import {
   type Track, type TrackKind, type Purse, type DragPreview,
 } from "./track";
 import {
-  createScoreState, rescore, vpFor, industriesInCatchment,
+  createScoreState, rescore, vpFor, industriesInCatchment, ownerIdOf,
   playerResources, buildAllComponents, resolveConnection,
   pickBlockadeTarget,
   type EconomyState, type Factory, type Harvester, type ScoreState, type VpEvent,
@@ -60,11 +60,15 @@ import {
 } from "./construction";
 import { bankTrade } from "../game/trade";
 import {
-  MAP_W, MAP_H, BANDIT_MS, BLOCK_MS, FOG_MS, SABOTAGE, SECURITY, choice, type ResKey,
+  MAP_W, MAP_H, BANDIT_MS, BLOCK_MS, FOG_MS, RAID_EVERY, SABOTAGE, SECURITY,
+  choice, type ResKey,
 } from "../game/config";
 import { createQuarry, GEM_TO_CARGO, type Quarry } from "./quarry";
+import { createRivalPlant, RIVAL_FROST_MS, RIVAL_GIRDER_MS, RIVAL_SMOG_MS } from "./rival-plant";
+import { createFloatLayer, type FloatLayer } from "./floats";
 import {
   createTruckState, planTrucks, tickTrucks, truckItems, roadRouteForHarvester,
+  type Truck,
 } from "./vehicles";
 import { createIsoMarket, toBag, type CargoBag, type IsoMarket } from "./market";
 import { createOriginalUi, type OriginalUi } from "../game/ui";
@@ -235,6 +239,10 @@ export function startIsoGame(root: HTMLElement) {
       toast(`+${n} Gold from combos 🪙`, "good");
     },
     onGains: (gains, label) => toast(gainText(gains, label), "good"),
+    // A1: the floating readout over the board. `ui` does not exist yet at
+    // this point (the HUD is built below), but this closure is only ever
+    // called by a match, long after boot.
+    onPopup: (gains, label) => ui.popup(gains, label),
     onTokens: (pool) => toast(`Tokens: ${(Object.keys(pool) as ResKey[])
       .map((r) => CARGO[GEM_TO_CARGO[r]].name).join(", ")}`, "info"),
     onChange: () => onBoardChange(),
@@ -273,6 +281,26 @@ export function startIsoGame(root: HTMLElement) {
   });
   onBoardChange = () => ui.renderBoard();
   root.appendChild(ui.el);
+
+  // ── A1: the board's own effects finally have somewhere to go ────────────
+  // `Board` fires `onFx` for every pop, crack, token-up, bomb, bad swap and
+  // callout, and NOTHING had ever assigned it — so all of it, including
+  // MATCH! / COMBO x2 / CHAIN x3!! / MATCH 5, died on the board. This one
+  // line is the wire the handover was asking for.
+  quarry.board.onFx = (type, r, c, text) => ui.fx(type, r, c, text);
+
+  // A1: world-anchored floats — the lorry's "+N" at the Factory, and the
+  // marker over the rival's plant when sabotage lands. Anchored to the live
+  // camera, so they pan and zoom with the tile they belong to.
+  const floats: FloatLayer = createFloatLayer(ui.mapHost, (tx, ty) => {
+    const [x, y] = tileToScreenAt(cam, tx, ty);
+    const d = dpr();
+    return [x / d, y / d];
+  });
+
+  // A1: the rival owns a Processing Plant now, so Black Market sabotage has
+  // somewhere to land that is not the buyer's own board.
+  const rivalPlant = createRivalPlant();
 
   // U1: the iso layer stack stays the map; it is mounted inside the original
   // map-canvas slot rather than a bespoke floating panel.
@@ -681,22 +709,39 @@ export function startIsoGame(root: HTMLElement) {
       toast(`Blockade set on ${def?.name ?? target.type} — the rival can't harvest it for ${BANDIT_MS / 1000}s.`, "good");
       return;
     }
+    // ── A1: sabotage hits the RIVAL's plant, not the buyer's ──────────────
+    // These three used to call straight into `quarry.board` — buying Gold-
+    // priced sabotage and dumping it on your own Processing Plant. Blockade
+    // was always right (it auto-picks the rival's busiest industry); the
+    // board actions now join it on the rival's side, on the plant
+    // `createRivalPlant` owns. Repair Crew below stays on YOUR board: that is
+    // what a repair crew does.
+    const rivalHit = (text: string) => {
+      const f = factoryOf(rival.id);
+      if (f) floats.add(text, f.tx, f.ty, { cls: "sabotage", now });
+    };
+    /** How far the rival's income just fell, as a whole percentage. */
+    const dentPct = () => Math.round((1 - rivalPlant.health(now)) * 100);
+
     if (key === "harden") {
       if (!spendGold(SABOTAGE.harden.gold)) return;
-      quarry.board.harden();
-      toast("Frost Tiles: 7 gems frozen.", "good");
+      const n = rivalPlant.frost(now);
+      rivalHit(`❄ ${n} FROZEN`);
+      toast(`Frost Tiles: ${n} gems frozen in the rival's plant — its yield is down ${dentPct()}% for ${RIVAL_FROST_MS / 1000}s.`, "good");
       return;
     }
     if (key === "block") {
       if (!spendGold(SABOTAGE.block.gold)) return;
-      quarry.board.dropBlocks(4, BLOCK_MS, now);
-      toast("Iron Girders dropped on the Processing Plant.", "good");
+      const n = rivalPlant.girders(now);
+      rivalHit(`🏗 ${n} GIRDERS`);
+      toast(`Iron Girders: ${n} dropped into the rival's plant — its yield is down ${dentPct()}% for ${RIVAL_GIRDER_MS / 1000}s.`, "good");
       return;
     }
     if (key === "fog") {
       if (!spendGold(SABOTAGE.fog.gold)) return;
-      quarry.board.fog(FOG_MS, now);
-      toast("Smog Cloud: no swaps for 30s.", "good");
+      rivalPlant.smog(now);
+      rivalHit("🌫 SMOG");
+      toast(`Smog Cloud over the rival's plant — its yield is down ${dentPct()}% for ${RIVAL_SMOG_MS / 1000}s.`, "good");
       return;
     }
     if (key === "security") {
@@ -707,7 +752,12 @@ export function startIsoGame(root: HTMLElement) {
         .every(([k, v]) => (me.purse[k] ?? 0) >= v);
       if (!affordable) { toast("Not enough materials for Security Forces.", "bad"); return; }
       spend(me, SECURITY_ISO_COST);
-      toast("Security Forces hired (defensive in this build).", "info");
+      // A1: Security Forces now do the one job their description promises.
+      // Sabotage lands on the RIVAL, which left this purchase guarding
+      // nothing — until the rival started buying back (see `rivalRaid`),
+      // which is the only reason a defence is worth paying for.
+      securityUntil = now + SECURITY.ms;
+      toast(`Security Forces hired — guarded for ${SECURITY.ms / 1000}s.`, "info");
       return;
     }
     if (key === "repair") {
@@ -724,6 +774,10 @@ export function startIsoGame(root: HTMLElement) {
 
   // ── economy + AI clocks ────────────────────────────────────────────────
   let lastHarvest = 0, lastAi = 0;
+  /** A1: Security Forces are on duty until this wall time. */
+  let securityUntil = 0;
+  /** A1: when the rival last ran a Black Market raid on the player's plant. */
+  let lastRaid = 0;
   /**
    * PP-07: the fractional remainder of the rival's trickle yield, carried
    * across ticks so sub-1 rates (Oil Rig 0.4/tick, Gold Mine 0.3/tick) still
@@ -748,9 +802,14 @@ export function startIsoGame(root: HTMLElement) {
     // and with every paid Depot now costing Oil, that was an opening
     // deadlock. The carry turns 0.4/tick into 1 oil every ~7.5 s.
     const y = playerResources(eco, rival.id, now);
+    // A1: the rival's plant is what sabotage wrecks, so it is also what its
+    // income runs through. A pristine plant multiplies by 1; ice, girders
+    // and smog take their share off the top. Without this a Black Market buy
+    // would cost Gold and change nothing.
+    const rivalHealth = rivalPlant.health(now);
     const gain: Purse = {};
     for (const [cargo, v] of Object.entries(y) as [Cargo, number][]) {
-      const acc = (trickleCarry[cargo] ?? 0) + Math.max(0, v);
+      const acc = (trickleCarry[cargo] ?? 0) + Math.max(0, v) * rivalHealth;
       const n = Math.floor(acc);
       trickleCarry[cargo] = acc - n;
       if (n > 0) gain[cargo] = n;
@@ -760,9 +819,12 @@ export function startIsoGame(root: HTMLElement) {
     quarry.refresh(now);
   }
 
-  /** Per frame: board effects, the 20s token spawn, and the market clock. */
+  /** Per frame: board effects, the token spawn, and the market clock. */
   function quarryTick(now: number) {
     market.tick(now);
+    // A1: ice and girders on the rival's plant expire on their own clock —
+    // nobody is there to clear them.
+    rivalPlant.tick(now);
     if (phase !== "play") return;
     quarry.tick(now);
   }
@@ -829,10 +891,47 @@ export function startIsoGame(root: HTMLElement) {
     }
   };
 
+  /**
+   * A1: the rival buys back.
+   *
+   * Sabotage now lands on the rival's plant, which is correct — and which
+   * left Repair Crew with nothing to repair and Security Forces with nothing
+   * to guard, because nothing could ever dirty YOUR board again. The Black
+   * Market is a two-sided shop; the rival raids on its own clock
+   * (`RAID_EVERY`), pays the same Gold price, and is turned away by Security
+   * Forces. Without this the two defensive purchases are dead weight.
+   */
+  function rivalRaid(now: number) {
+    if (phase !== "play") return;
+    if (now - lastRaid < RAID_EVERY) return;
+    lastRaid = now;
+    const keys = (Object.keys(SABOTAGE) as string[]).filter(
+      (k) => (rival.purse.gold ?? 0) >= SABOTAGE[k].gold,
+    );
+    if (!keys.length) return;                     // no Gold, no raid
+    const key = choice(keys);
+    const def = SABOTAGE[key];
+    spend(rival, { gold: def.gold });             // the hire is paid either way
+    if (now < securityUntil) {
+      toast(`Security Forces turned the rival's ${def.name} away.`, "info");
+      return;
+    }
+    const hit = (text: string) => {
+      const f = factoryOf("you");
+      if (f) floats.add(text, f.tx, f.ty, { cls: "sabotage", now });
+    };
+    if (key === "harden") { quarry.board.harden(); hit("❄ 7 FROZEN"); }
+    else if (key === "block") { quarry.board.dropBlocks(4, BLOCK_MS, now); hit("🏗 4 GIRDERS"); }
+    else if (key === "fog") { quarry.board.fog(FOG_MS, now); hit("🌫 SMOG"); }
+    else return;
+    toast(`The rival hit your plant with ${def.name}!`, "bad");
+  }
+
   function aiTick(now: number) {
     if (phase !== "play") return;
     if (now - lastAi < AI_BUILD_MS) return;
     lastAi = now;
+    rivalRaid(now);
     const f = factoryOf("ai");
     if (!f) return;
     // PP-06: the rival expands too, through the SAME rule + cost path — no
@@ -1304,6 +1403,72 @@ export function startIsoGame(root: HTMLElement) {
     if (debug && autoRenderLog) (debug.commands.renderLog as (on: boolean) => unknown)(true);
   };
 
+  // ── A1: lorry deliveries ────────────────────────────────────────────────
+  // A lorry that reaches the Factory HAS delivered, and that arrival is now
+  // the event that mints the token: the "+2 🌾" pops over the Factory on the
+  // same frame a gem on the board gains its token. It used to be a 20s clock
+  // with a per-tile fudge factor that knew nothing about the road it was
+  // pretending to model — the number on the board and the lorry on the map
+  // were two unrelated systems that happened to describe the same cargo.
+  /** Deliveries already paid out, per depot id. */
+  const seenDeliveries = new Map<number, number>();
+  /** Never pay more than this many missed deliveries at once (background tab). */
+  const MAX_CATCHUP = 3;
+
+  /** Every cargo the given lorries deliver — the quarry's clock must skip them. */
+  function truckCargos(list: Truck[], nowMs: number): Cargo[] {
+    const out = new Set<Cargo>();
+    for (const truck of list) {
+      if (truck.ownerId !== ownerIdOf(eco, "you")) continue;
+      for (const cargo of depotCargos(truck.depotId, nowMs)) out.add(cargo);
+    }
+    return [...out];
+  }
+
+  /** The cargoes the depot at `id` feeds, ignoring blockaded industries. */
+  function depotCargos(id: number, nowMs: number): Cargo[] {
+    const h = eco.harvesters.find((x) => x.id === id);
+    if (!h) return [];
+    const out: Cargo[] = [];
+    for (const ind of industriesInCatchment(eco.grid, h)) {
+      if (ind.banditUntil > nowMs) continue;
+      const def = INDUSTRY_BY_KEY[ind.type];
+      if (def && !out.includes(def.cargo)) out.push(def.cargo);
+    }
+    return out;
+  }
+
+  /**
+   * Turn every lorry arrival since the last frame into a delivery: one token
+   * of that depot's cargo on the board, one "+N" over the Factory.
+   */
+  function collectDeliveries(t: number) {
+    if (phase !== "play") return;
+    const mine = ownerIdOf(eco, "you");
+    for (const truck of trucks.trucks) {
+      if (truck.ownerId !== mine) continue;      // the rival's lorries feed no board
+      const seen = seenDeliveries.get(truck.depotId) ?? 0;
+      seenDeliveries.set(truck.depotId, truck.deliveries);
+      if (truck.deliveries <= seen) continue;
+      const due = Math.min(truck.deliveries - seen, MAX_CATCHUP);
+      for (let i = 0; i < due; i++) deliverLoad(truck, t);
+    }
+  }
+
+  /** One lorry-load of cargo: mint the token, then show what it was worth. */
+  function deliverLoad(truck: Truck, t: number) {
+    for (const cargo of depotCargos(truck.depotId, t)) {
+      const tier = quarry.deliver(cargo);
+      // A1: no token, no number. An empty lorry must not promise a gem the
+      // board never received.
+      if (!tier) continue;
+      floats.add(
+        `+${tier} ${CARGO[cargo].icon}`, truck.factory[0], truck.factory[1],
+        { cls: "delivery", now: t },
+      );
+    }
+  }
+
   // ── boot ───────────────────────────────────────────────────────────────
   let raf = 0;
   let disposed = false;
@@ -1341,12 +1506,19 @@ export function startIsoGame(root: HTMLElement) {
       if (trucksDirty) {
         trucks.trucks = planTrucks(eco);
         trucksDirty = false;
+        // A1: the lorries were re-planned, so the delivery counters restart
+        // from zero — and so does the set of cargoes a lorry (rather than the
+        // fallback clock) is responsible for.
+        seenDeliveries.clear();
+        quarry.setTruckServed(truckCargos(trucks.trucks, t));
         // a vanished truck must not linger as a ghost on the structures layer
         renderer?.setWorld(world);
       }
       tickTrucks(trucks, dt);
+      collectDeliveries(t);
       world.vehicles = truckItems(trucks);
       renderer!.render(t, overlayItems());
+      floats.frame(t);
       paintUi(t);
       raf = requestAnimationFrame(frame);
     };
@@ -1369,6 +1541,10 @@ export function startIsoGame(root: HTMLElement) {
     get board() { return quarry.board; },
     get reach() { return quarry.reach; },
     quarry, market,
+    /** A1: the rival's Processing Plant — where Black Market sabotage lands. */
+    rivalPlant,
+    /** A1: the map floats currently on screen (deliveries + sabotage marks). */
+    floats,
     /** Refresh the reachable set now (spawn tokens for newly reached cargo). */
     refreshQuarry: (now = performance.now()) => quarry.refresh(now),
     /** The e2e twin of clicking two adjacent gems in the Quarry panel. */
@@ -1534,6 +1710,7 @@ export function startIsoGame(root: HTMLElement) {
 
   return () => {
     disposed = true;
+    floats.clear();
     cancelAnimationFrame(raf);
     ro.disconnect();
     root.classList.remove("iso-game");

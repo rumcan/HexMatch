@@ -40,7 +40,8 @@ import {
 import { Atlas, type Manifest } from "../../src/iso/atlas";
 import { HW, HH, TILE_H, tileToScreen } from "../../src/game/config";
 import {
-  TRUCK_SPEED, createTruckState, roadPath, roadRouteForHarvester, planTrucks,
+  TRUCK_SPEED, createTruckState, roadPath, roadRouteForHarvester,
+  roadDeliveryForHarvester, planTrucks,
   tickTrucks, truckItems, type Truck,
 } from "../../src/iso/vehicles";
 
@@ -401,7 +402,8 @@ describe("RV-01 planTrucks", () => {
 // ── tickTrucks: drive up … and back down ──────────────────────────────────
 describe("RV-01 tickTrucks ping-pong", () => {
   const truck = (): Truck => ({
-    ownerId: 1, route: [[0, 0], [1, 0], [2, 0]], leg: 0, t: 0, reverse: false,
+    ownerId: 1, depotId: 1, factory: [2, 0],
+    route: [[0, 0], [1, 0], [2, 0]], leg: 0, t: 0, reverse: false, deliveries: 0,
   });
 
   it("advances half a tile per half-tile tick", () => {
@@ -438,7 +440,10 @@ describe("RV-01 tickTrucks ping-pong", () => {
 
   it("holds still on a one-tile route and ignores non-positive ticks", () => {
     const state = createTruckState();
-    state.trucks.push({ ownerId: 1, route: [[4, 4]], leg: 0, t: 0, reverse: false });
+    state.trucks.push({
+      ownerId: 1, depotId: 1, factory: [4, 4],
+      route: [[4, 4]], leg: 0, t: 0, reverse: false, deliveries: 0,
+    });
     tickTrucks(state, TICK * 10);
     expect(state.trucks[0]).toMatchObject({ leg: 0, t: 0, reverse: false });
     tickTrucks(state, 0);
@@ -539,5 +544,82 @@ describe("RV-01 truck draw items", () => {
     const depot = place(atlas, { sprite: "depot_blue", tx: 3, ty: 10 })!;
     expect(pickSprite(atlas, [truck, depot], depot.wx + 1, depot.wy + 1))
       .toBe(depot);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// A1 — an arrival at the Factory end is a DELIVERY.
+//
+// The lorry's whole point used to be decorative ("the truck changes no
+// economy outcome"). Now the arrival is the event that mints the token, so the
+// number that pops over the Factory and the number that lands on a gem are the
+// same fact. That only works if the truck can say "I got there" — which is
+// what `deliveries` is for, and what these tests pin.
+// ══════════════════════════════════════════════════════════════════════════
+describe("A1 lorry deliveries", () => {
+  /** Three tiles, depot end at (0,0), factory end at (2,0). */
+  const lorry = (): Truck => ({
+    ownerId: 1, depotId: 7, factory: [2, 0],
+    route: [[0, 0], [1, 0], [2, 0]], leg: 0, t: 0, reverse: false, deliveries: 0,
+  });
+  /** One tile of travel per TICK; the round trip is four tiles. */
+  const ROUND = TICK * 4;
+  /**
+   * Drive the way the game does: the frame loop caps dt at 100ms, so no real
+   * tick ever skips a whole round trip. (A single huge tick folds through both
+   * ends and the counter legitimately cannot see the arrival — which is
+   * exactly why the frame loop caps dt.)
+   */
+  const drive = (st: { trucks: Truck[] }, ms: number, step = 100) => {
+    for (let i = 0; i < ms; i += step) tickTrucks(st, Math.min(step, ms - i));
+  };
+  /** The same fixture the planTrucks block uses, built locally. */
+  const world = (harvesters: Harvester[], factories: Factory[]): EconomyState => {
+    const g = generateMap(1337);
+    const track = createTrack();
+    seedTownRoads(track, g);
+    seedPublicRoads(track, g);
+    pave(track, 1, [[10, 10], [10, 11], [10, 12]]);
+    return { grid: g, track, harvesters, factories };
+  };
+
+  it("counts one delivery each time it reaches the factory end", () => {
+    const st = createTruckState();
+    st.trucks.push(lorry());
+    drive(st, TICK * 2 + 1);             // just past the factory end
+    expect(st.trucks[0].deliveries).toBe(1);
+    drive(st, TICK * 2);                 // back at the depot — no delivery
+    expect(st.trucks[0].deliveries).toBe(1);
+    drive(st, TICK * 2 + 1);             // out again
+    expect(st.trucks[0].deliveries).toBe(2);
+  });
+
+  it("does not count a departure, or a journey that has not arrived", () => {
+    const st = createTruckState();
+    st.trucks.push(lorry());
+    drive(st, TICK);                     // halfway there
+    expect(st.trucks[0].deliveries).toBe(0);
+    expect(st.trucks[0].reverse).toBe(false);
+    drive(st, TICK * 0.9);               // still short of the end
+    expect(st.trucks[0].deliveries).toBe(0);
+    drive(st, ROUND);                    // a full round trip = one delivery
+    expect(st.trucks[0].deliveries).toBe(1);
+  });
+
+  it("names the depot it belongs to and the factory it delivers to", () => {
+    const state = world(
+      [{ id: 42, owner: "you", ownerId: 1, tx: 10, ty: 9 }],
+      [{ owner: "you", ownerId: 1, tx: 10, ty: 13 }],
+    );
+    // The route alone is not enough to deliver: the arrival has to know WHERE
+    // it arrived, which is the half `roadRouteForHarvester` never returned.
+    expect(roadDeliveryForHarvester(state, state.harvesters[0])).toEqual({
+      route: [[10, 10], [10, 11], [10, 12]],
+      factory: { tx: 10, ty: 13 },
+    });
+    const [truck] = planTrucks(state);
+    expect(truck.depotId).toBe(42);
+    expect(truck.factory).toEqual([10, 13]);
+    expect(truck.deliveries).toBe(0);
   });
 });

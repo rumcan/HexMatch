@@ -27,6 +27,29 @@ export interface Gem {
 
 const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
+// ── A1: the arcade callouts ────────────────────────────────────────────────
+/**
+ * Every visual the board can ask the UI to draw. `chain` is the ordinary
+ * callout (a plain MATCH!, or a MATCH 5 / L-SHAPE); `combo` is the louder
+ * cascade tier (COMBO x2, CHAIN x3!!) — same float, hotter styling.
+ */
+export type FxType = "pop" | "crack" | "up" | "boom" | "bad" | "chain" | "combo";
+
+/**
+ * The word a cascade pass shouts, by how deep in the cascade it is.
+ *
+ * This is the mapping the arcade feedback hung on and never used: cascade
+ * step 1 is a plain `MATCH!` — before A1 the board only spoke at step 2, so
+ * an ordinary 3-match cleared in total silence even with `onFx` wired.
+ * Step 2 is the first real `COMBO x2`, and everything deeper escalates to
+ * `CHAIN xN!!`.
+ */
+export function arcadeLabel(chain: number): string {
+  if (chain <= 1) return "MATCH!";
+  if (chain === 2) return "COMBO x2";
+  return `CHAIN x${chain}!!`;
+}
+
 /**
  * PP-09: the five gem colours that always populate and refill the board.
  * Gold is deliberately absent — gold gems only drop once a depot sits beside
@@ -53,20 +76,37 @@ export class Board {
    * player's own long match rather than from the network spawner.
    *
    * Return `false` to REFUSE the payout: the board then keeps that amount out
-   * of the match's gain popup, so the "+2 🪵" readout can only ever show what
-   * actually reached the purse. Any other return — including `undefined`, for
-   * a handler that does not care — counts as paid, which keeps every existing
+   * of the match's gain popup, so the readout can only ever show what
+   * actually reached the purse. Return a NUMBER to say what was actually
+   * credited when it differs from `amount` — the quarry pays a depot-fed
+   * token at double face value, and a readout that showed the face value
+   * would be advertising a different number than the purse received.
+   *
+   * Any other return — including `undefined`, for a handler that does not
+   * care — counts as paid at face value, which keeps every existing
    * fire-and-forget listener working unchanged.
    */
-  onHarvest: (res: ResKey, amount: number, forged: boolean) => boolean | void = () => true;
+  onHarvest: (res: ResKey, amount: number, forged: boolean) => boolean | number | void = () => true;
+
   onGold: (n: number) => void = () => {};
-  onFx: (type: string, r: number, c: number, text?: string) => void = () => {};
+  onFx: (type: FxType, r: number, c: number, text?: string) => void = () => {};
   onChange: () => void = () => {};
   onPopup: (gains: Partial<Record<ResKey, number>>, label: string) => void = () => {};
   // fired when a combo is banked: (bankedNow, needed, grantedCoin)
   onCombo: (count: number, needed: number, granted: boolean) => void = () => {};
   /** Arcade bonus (match-5 / L / chain) — always pays, not network-gated. */
   onBonus: (res: ResKey, amount: number, reason: string) => void = () => {};
+
+  /**
+   * What a harvest actually credited, from `onHarvest`'s answer — 0 when the
+   * listener refused it. The board never guesses the amount: the quarry knows
+   * what it put in the purse, and the readout has to show that number.
+   */
+  private credited(res: ResKey, amount: number, forged: boolean): number {
+    const r = this.onHarvest(res, amount, forged);
+    if (r === false) return 0;
+    return typeof r === "number" ? r : amount;
+  }
 
   constructor() {
     this.initFill();
@@ -193,8 +233,15 @@ export class Board {
     }
   }
 
-  // returns accumulated gains for popup
-  private resolve(groups: Gem[][], gains: Partial<Record<ResKey, number>>) {
+  /**
+   * Clear one cascade pass. `chain` is this pass's 1-based depth, so the
+   * callout can name it (`MATCH!` / `COMBO x2` / `CHAIN x3!!`).
+   *
+   * Returns accumulated gains for the popup.
+   */
+  private resolve(
+    groups: Gem[][], gains: Partial<Record<ResKey, number>>, chain = 1,
+  ) {
     const removeIds = new Set<number>();
     const crackIds = new Set<number>();
     const forge: { r: number; c: number; res: ResKey; tier: 1 | 2 }[] = [];
@@ -214,11 +261,11 @@ export class Board {
           const amt = g.tier * mult;
           // PP-13: the listener decides whether this token pays (the quarry
           // gate refuses a NETWORK token whose line is cut, but always pays a
-          // FORGED one). `gains` only accumulates what was actually credited,
-          // so the popup can never advertise a harvest the purse never saw.
-          if (this.onHarvest(g.res, amt, g.forged === true) !== false) {
-            gains[g.res] = (gains[g.res] ?? 0) + amt;
-          }
+          // FORGED one). A1: it also decides HOW MUCH it paid — `gains`
+          // accumulates exactly what reached the purse, so the floating
+          // "+2 🪵" can never advertise a number the purse did not receive.
+          const paid = this.credited(g.res, amt, g.forged === true);
+          if (paid > 0) gains[g.res] = (gains[g.res] ?? 0) + paid;
         }
       }
       const mid = grp[Math.floor(size / 2)];
@@ -269,12 +316,24 @@ export class Board {
     // Arcade: match-5 in a line, or a 5-gem L, grants two random materials.
     const fives = groups.filter((g) => g.length >= 5);
     const ells = this.lShapes(groups);
-    if (fives.length || ells.length) {
-      const mid = (fives[0] ?? ells[0])[0];
-      const why = fives.length ? "MATCH 5" : "L-SHAPE";
-      this.grantRandom(2, why, gains);
-      this.onFx("chain", mid.r, mid.c, why);
-    }
+    const why = fives.length ? "MATCH 5" : ells.length ? "L-SHAPE" : null;
+    if (why) this.grantRandom(2, why, gains);
+
+    // ── A1: the callout, fired HERE — the instant the pass resolves ──
+    // Two bugs died here. (1) The old text only fired for `chain >= 2`, so a
+    // plain 3-match cleared in silence. (2) It fired AFTER `gravity` and its
+    // 400ms of sleeps, so `CHAIN x2` appeared ~400ms after the match it was
+    // describing had already been swept off the board. One callout per pass,
+    // now, at the centre of the group the player just matched — the biggest
+    // one, or the special shape when there is one.
+    const biggest = groups.reduce((a, g) => (g.length > a.length ? g : a), groups[0]);
+    const target = fives[0] ?? ells[0] ?? biggest;
+    const mid = target[Math.floor(target.length / 2)];
+    const label = arcadeLabel(chain);
+    // A special shape keeps its own name (it is strictly more informative
+    // than "MATCH!"), but a deep cascade still gets its chain count.
+    const text = why ? (chain > 1 ? `${why} · ${label}` : why) : label;
+    this.onFx(chain > 1 ? "combo" : "chain", mid.r, mid.c, text);
   }
 
   private gravity() {
@@ -299,21 +358,19 @@ export class Board {
       const groups = this.findGroups();
       if (!groups.length) break;
       chain++; maxChain = Math.max(maxChain, chain);
-      this.resolve(groups, gains);
+      this.resolve(groups, gains, chain);
       this.onChange();
       await sleep(190);
       this.gravity();
       this.onChange();
       await sleep(210);
-      if (chain >= 2) {
-        const mid = groups[0][0];
-        this.onFx("chain", mid.r, mid.c, `CHAIN x${chain}`);
-      }
     }
-    if (Object.keys(gains).length) {
-      const label = maxChain > 1 ? `COMBO x${maxChain}` : "";
-      this.onPopup(gains, label);
-    }
+    const label = maxChain > 1 ? `COMBO x${maxChain}` : "";
+    // A1: the readout fires on the LABEL as well as the gains. A tokenless
+    // cascade accumulates an empty `gains`, and gating the popup on that hid
+    // the only feedback such a match had — a two-deep combo of plain gems
+    // cleared, rang up a combo, and told the player nothing at all.
+    if (Object.keys(gains).length || label) this.onPopup(gains, label);
     // a cascade of two or more counts as a combo; every second one pays a coin
     if (maxChain >= 2) this.registerCombo();
     if (!this.hasMove()) await this.reshuffle();
@@ -363,9 +420,8 @@ export class Board {
       if (!g || g.block || g.res !== colorRes) continue;
       if (g.hard > 0) { g.hard = (g.hard - 1) as 0 | 1 | 2; this.onFx("crack", r, c); continue; }
       if (g.tier > 0) {
-        if (this.onHarvest(g.res, g.tier, g.forged === true) !== false) {
-          gains[g.res] = (gains[g.res] ?? 0) + g.tier;
-        }
+        const paid = this.credited(g.res, g.tier, g.forged === true);
+        if (paid > 0) gains[g.res] = (gains[g.res] ?? 0) + paid;
       }
       g.dead = true; this.grid[r][c] = null; this.onFx("pop", r, c); }
     if (Object.keys(gains).length) this.onPopup(gains, "COLOUR PURGE");
@@ -383,7 +439,8 @@ export class Board {
   // board only by dropping in from the top via the gravity pool (see
   // setGoldEnabled). A tokened gold gem pays gold when matched; a plain one
   // pays nothing.
-  spawnTokens(pool: Partial<Record<ResKey, number>>) {
+  spawnTokens(pool: Partial<Record<ResKey, number>>): number {
+    let minted = 0;
     for (const res of Object.keys(pool) as ResKey[]) {
       const tier = pool[res] as 1 | 2;
       const eligible: Gem[] = [];
@@ -399,9 +456,15 @@ export class Board {
         // if it was ever stripped) so the two kinds never get confused.
         g.forged = false;
         this.onFx("up", g.r, g.c);
+        minted++;
       }
     }
     this.onChange();
+    // A1: the caller (the lorry delivery) needs to know whether a token
+    // actually landed — a board with every gem of that colour already
+    // tokened mints nothing, and the "+N" at the factory must not promise a
+    // gem the board never got.
+    return minted;
   }
 
   /**

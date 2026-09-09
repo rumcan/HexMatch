@@ -46,6 +46,14 @@ export const TRUCK_SPEED = 1 / 300;
 export interface Truck {
   /** Track-owner id whose network this truck drives (players are ≥ 1). */
   ownerId: number;
+  /** The Depot this lorry belongs to — it never switches to another one. */
+  depotId: number;
+  /**
+   * A1: the Factory tile at the far end of the route — where the load is
+   * delivered. Kept on the truck so a delivery knows where to show its "+N"
+   * without re-deriving the connection.
+   */
+  factory: [number, number];
   /** Road tiles from the depot's shoulder to the factory's shoulder. */
   route: [number, number][];
   /** Index of the route tile the truck is leaving. */
@@ -54,6 +62,13 @@ export interface Truck {
   t: number;
   /** false = heading depot→factory, true = heading back. */
   reverse: boolean;
+  /**
+   * A1: how many times this lorry has REACHED THE FACTORY END — one delivery
+   * each. The game reads it against the count it last saw, so a delivery is
+   * an event, never a poll: the token lands on a gem at exactly the frame the
+   * lorry arrives.
+   */
+  deliveries: number;
 }
 
 export interface TruckState {
@@ -135,16 +150,32 @@ const shoulders = (track: Track, owner: number, tx: number, ty: number) => {
 export function roadRouteForHarvester(
   eco: EconomyState, h: Harvester, comp?: Components,
 ): [number, number][] | null {
+  return roadDeliveryForHarvester(eco, h, comp)?.route ?? null;
+}
+
+/**
+ * A1: the route AND the factory it delivers to.
+ *
+ * `roadRouteForHarvester` above is the thin wrapper every existing caller
+ * wants (the pacing probe, the hover overlay); this one is what the game
+ * needs to turn an arrival into a delivery, because "the lorry got there" is
+ * only half the fact — the other half is WHERE it got to.
+ */
+export function roadDeliveryForHarvester(
+  eco: EconomyState, h: Harvester, comp?: Components,
+): { route: [number, number][]; factory: { tx: number; ty: number } } | null {
   const c = comp ?? buildAllComponents(eco.track, h.ownerId);
   if (!isServiced(eco.track, h)) return null;
   const conn = resolveConnection(eco, c, h);
   if (conn.kind !== "road" || !conn.factory) return null;
-  return roadPath(
+  const route = roadPath(
     eco.track, h.ownerId,
     shoulders(eco.track, h.ownerId, h.tx, h.ty),
     new Set(shoulders(eco.track, h.ownerId, conn.factory.tx, conn.factory.ty)
       .map(([x, y]) => tIdx(x, y))),
   );
+  if (!route) return null;
+  return { route, factory: { tx: conn.factory.tx, ty: conn.factory.ty } };
 }
 
 /**
@@ -159,9 +190,15 @@ export function planTrucks(eco: EconomyState): Truck[] {
   const out: Truck[] = [];
   for (const h of eco.harvesters) {
     if (h.ownerId <= 0) continue;
-    const route = roadRouteForHarvester(eco, h);
-    if (!route) continue;
-    out.push({ ownerId: h.ownerId, route, leg: 0, t: 0, reverse: false });
+    const plan = roadDeliveryForHarvester(eco, h);
+    if (!plan) continue;
+    out.push({
+      ownerId: h.ownerId,
+      depotId: h.id,
+      factory: [plan.factory.tx, plan.factory.ty],
+      route: plan.route,
+      leg: 0, t: 0, reverse: false, deliveries: 0,
+    });
   }
   return out;
 }
@@ -185,9 +222,17 @@ export function tickTrucks(state: TruckState, dtMs: number): void {
     const fold = ((phase + TRUCK_SPEED * dtMs) % span + span) % span;
     const p = fold <= max ? fold : span - fold;     // reflected into [0, max]
     const leg = Math.min(max - 1, Math.floor(p));
+    const wasReverse = truck.reverse;
     truck.leg = leg;
     truck.t = p - leg;
     truck.reverse = fold > max;
+    // A1: turning around at the FAR end is the delivery. The truck only ever
+    // reverses at an end, and it reverses at the factory end when it was
+    // outbound — so one arrival is one delivery, counted here rather than
+    // inferred by a poll, and read by the game on the same frame it happens.
+    // (dt is capped at 100ms in the frame loop, far below one round trip, so
+    // a single tick cannot skip a delivery.)
+    if (!wasReverse && truck.reverse) truck.deliveries++;
   }
 }
 
