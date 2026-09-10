@@ -3,10 +3,16 @@
 //
 // Terrain and industries are SEED-DERIVED and never sent: every client runs
 // the same `generateMap(seed)` and gets byte-identical output (E3/R6). What
-// actually travels is the mutable world — the two track layers, the harvester
-// list, the factories, and per-player score.
+// actually travels is the mutable world — the track layers, the harvester list
+// and the factories.
 //
-// The three track layers go over the wire as base64, not JSON arrays:
+// VP-01 dropped `connections` from the wire: Victory Points are now scored from
+// the tiles a player has paved and the plants they have raised, both of which
+// are already on the wire (the `upgraded` provenance layer and `factories`), so
+// a guest recomputes the score rather than being told it. A scoreboard number
+// the host could lie about is not a number worth sending.
+//
+// The four track layers go over the wire as base64, not JSON arrays:
 // 20,736 bytes each on the 144×144 map become 27,648 base64 characters.
 // Terrain, towns and industries remain seed-derived rather than transmitted.
 //
@@ -18,7 +24,7 @@ import { MAP_W, MAP_H } from "../game/config";
 import { generateMap } from "./grid";
 import type { Cargo } from "./config";
 import { createTrack, type Track } from "./track";
-import type { Harvester, Factory, ScoreState, ConnKind } from "./economy";
+import type { Harvester, Factory } from "./economy";
 
 /**
  * Bump on ANY change to the snapshot shape or to seed-derived generation.
@@ -45,8 +51,13 @@ import type { Harvester, Factory, ScoreState, ConnKind } from "./economy";
  * is gone). The map's public/town roads now live on the paved `road` layer.
  * The two wire layers are renamed `dirt`/`road` to match, so a v7 guest would
  * read the bytes into the wrong layers and must refuse.
+ * v9 (VP-01): a fourth layer, `upgraded`, carries the per-tile PROVENANCE that
+ * the victory rule reads (a paved Road that replaced a Dirt Road scores 0.25★,
+ * one laid on virgin ground does not), and `connections` leaves the wire — it
+ * is derived state now. A v8 guest has no provenance layer, so it would score
+ * every rival pave as zero: refuse instead.
  */
-export const SNAPSHOT_VERSION = 8;
+export const SNAPSHOT_VERSION = 9;
 
 export const EXPECTED_TRACK_BYTES = MAP_W * MAP_H;
 
@@ -95,11 +106,11 @@ export interface Snapshot {
   road: string;
   /** base64 Uint8Array(MAP_W*MAP_H) — per-tile owner (W2). */
   owner: string;
+  /** VP-01: base64 Uint8Array(MAP_W*MAP_H) — per-tile pave provenance. */
+  upgraded: string;
   harvesters: WireHarvester[];
   factories: Factory[];
   players: WirePlayer[];
-  /** Per-harvester connection kind, so guests render VP state consistently. */
-  connections: [number, ConnKind][];
 }
 
 export interface SnapshotSource {
@@ -107,7 +118,6 @@ export interface SnapshotSource {
   track: Track;
   harvesters: Harvester[];
   factories: Factory[];
-  score: ScoreState;
   setupPhase: boolean;
   won: boolean;
   players: WirePlayer[];
@@ -124,10 +134,10 @@ export function buildSnapshot(src: SnapshotSource): Snapshot {
     dirt: bytesToBase64(src.track.dirt),
     road: bytesToBase64(src.track.road),
     owner: bytesToBase64(src.track.owner),
+    upgraded: bytesToBase64(src.track.upgraded),
     harvesters: src.harvesters.map((h) => ({ id: h.id, owner: h.owner, ownerId: h.ownerId, tx: h.tx, ty: h.ty })),
     factories: src.factories.map((f) => ({ ...f })),
     players: src.players.map((p) => ({ ...p, res: { ...p.res } })),
-    connections: [...src.score.connections],
   };
 }
 
@@ -161,13 +171,15 @@ export function validateSnapshot(s: unknown, localSeed?: number): SnapshotError 
   if (typeof o.seed !== "number" || !Number.isFinite(o.seed)) {
     return new SnapshotError("malformed", "Snapshot has no map seed.");
   }
-  if (typeof o.dirt !== "string" || typeof o.road !== "string" || typeof o.owner !== "string") {
+  if (typeof o.dirt !== "string" || typeof o.road !== "string"
+    || typeof o.owner !== "string" || typeof o.upgraded !== "string") {
     return new SnapshotError("malformed", "Snapshot is missing its track layers.");
   }
   if (!Array.isArray(o.harvesters) || !Array.isArray(o.factories)) {
     return new SnapshotError("malformed", "Snapshot is missing its structure lists.");
   }
-  for (const [name, b64] of [["dirt", o.dirt], ["road", o.road], ["owner", o.owner]] as const) {
+  for (const [name, b64] of [["dirt", o.dirt], ["road", o.road], ["owner", o.owner],
+    ["upgraded", o.upgraded]] as const) {
     if (base64ToBytes(b64).length !== EXPECTED_TRACK_BYTES) {
       return new SnapshotError(
         "malformed",
@@ -190,7 +202,6 @@ export interface AppliedSnapshot {
   harvesters: Harvester[];
   factories: Factory[];
   players: WirePlayer[];
-  connections: Map<number, ConnKind>;
   setupPhase: boolean;
   won: boolean;
   t: number;
@@ -208,13 +219,15 @@ export function applySnapshot(s: unknown, localSeed?: number): AppliedSnapshot {
   track.dirt.set(base64ToBytes(o.dirt));
   track.road.set(base64ToBytes(o.road));
   track.owner.set(base64ToBytes(o.owner));
+  // VP-01: the pave provenance rides with it, or a guest would render the
+  // rival's tarmac as gravel and score their own paves as zero.
+  track.upgraded.set(base64ToBytes(o.upgraded));
   return {
     seed: o.seed >>> 0,
     track,
     harvesters: o.harvesters.map((h) => ({ ...h })),
     factories: o.factories.map((f) => ({ ...f })),
     players: (o.players ?? []).map((p) => ({ ...p, res: { ...p.res } })),
-    connections: new Map(o.connections ?? []),
     setupPhase: !!o.setupPhase,
     won: !!o.won,
     t: o.t ?? 0,

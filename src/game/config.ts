@@ -131,6 +131,13 @@ export const COSTS: Record<string, { cost: Partial<Record<ResKey, number>>; vp: 
   city:       { cost: { wheat: 2, ore: 3 }, vp: 2, label: "Foundry" },
 };
 
+/**
+ * RETIRED by VP-01 (kept, not pruned — see the note above the ResKey table).
+ * This was the HUD's win target; `src/game/ui.ts` now reads `VICTORY` from
+ * `src/iso/config.ts`, which is where the engine's own `VP_TARGET` comes from
+ * too. The two `target` numbers had already drifted (this said 10, the game
+ * won at 12), which is exactly why one of them is now the only one.
+ */
 export const VP = { target: 10 };
 export const REPAIR_COST: Partial<Record<ResKey, number>> = { wood: 1, brick: 1, wheat: 1, ore: 1 };
 

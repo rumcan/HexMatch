@@ -1,14 +1,29 @@
 // ══════════════════════════════════════════════════════════════════════════
 // E7 — Isometric AI: industry scoring + A* auto-routing.
+// VP-01 — the rival plays the victory condition, not just the map.
 //
 // Replaces ai.ts's `findLegalSettlement` / `findLegalRoad`, which were vertex
 // and edge based and do not survive the migration.
 //
-// Behaviour: score candidate industries by
-//     (cargo scarcity in the AI's stock × output) ÷ path cost
-// A* a path from the nearest owned network tile, then place a harvester. The
-// rival prefers the premium paved `road` tier and falls back to a basic
-// `dirt` road when paving is impossible or unaffordable.
+// Behaviour, one turn at a time:
+//
+//   1. PLANT first (`plants.ts` picks the town) — 1★ for the price of four
+//      paves, and it widens the map the rival's depots can deliver to.
+//   2. DEPOT next: score every reachable industry by the YIELD it switches on
+//      — output, diluted by the depots already sharing it, weighted by what the
+//      cargo BUYS, and boosted by how badly the purse lacks it — over the cost
+//      of the track that reaches it. Then A* a path and place the Depot.
+//   3. PAVE last, with whatever Ore is left: `planUpgrades` spends the rival's
+//      gravel on the 0.25★-per-tile upgrade, one tile per live gravel link
+//      first (that single tile flips the whole connection to ×1.6) and then the
+//      rest of its network for the points.
+//
+// Why routes are laid in DIRT and paved afterwards, which is VP-01's whole
+// strategic point: `dirt` (1 Wood + 1 Stone) then a pave (4 Ore) costs exactly
+// what a fresh `road` tile costs (1 + 1 + 4) and, unlike it, pays 0.25★. The
+// old paved-first preference was chasing 3 VP per connection that no longer
+// exists, so `planCandidates` now routes on the cheap tier and the pave pass
+// buys the premium. `preferPaved: true` still asks for the old order.
 //
 // W8: a plan is only ever offered when it can be CARRIED OUT — every tile of
 // the path is legal ground for its transport kind, and the harvester it ends
@@ -32,15 +47,19 @@
 // Everything is deterministic under an injected RNG so T1 can assert on it.
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_W, MAP_H } from "../game/config";
-import { TRANSPORT, UPGRADE_COST, INDUSTRY_BY_KEY, FACTORY_FOOTPRINT, type Cargo } from "./config";
+import {
+  TRANSPORT, UPGRADE_COST, INDUSTRY_BY_KEY, FACTORY_FOOTPRINT, VICTORY, type Cargo,
+} from "./config";
 import { DEPOT_COST, FREE_SETUP_DEPOTS, priceDepot } from "./construction";
 import { ROUGH, factoryTouchesTown, type Grid, type Industry } from "./grid";
 import {
-  DIRS, DIR, tIdx, inMapT, hasTrack, canBuildOn, tileCost, addCost, canAfford,
-  buildTile, trackOpenTo, freeAllowanceCovers, type Track, type TrackKind, type Purse,
+  DIRS, DIR, tIdx, inMapT, hasTrack, canBuildOn, canAfford, tileCost, addCost,
+  buildTile, trackOpenTo, tileAlreadyCarries, freeAllowanceCovers,
+  type Track, type TrackKind, type Purse,
 } from "./track";
 import {
-  catchmentRect, rectContains, isServiced,
+  catchmentRect, rectContains, isServiced, industriesInCatchment, claimantCounts,
+  buildAllComponents, resolveConnection, sharedComponents,
   type EconomyState, type Harvester, type Factory,
 } from "./economy";
 
@@ -69,7 +88,14 @@ export function stepCost(
   let c = terrain === ROUGH ? COST_ROUGH : COST_FLAT;
   // reuse our own trunk lines rather than building parallel spurs
   const own = owner === 0 ? true : track.owner[i] === owner;
-  if (hasTrack(track, kind, tx, ty) && own) c *= COST_OWNED;
+  // VP-01: "already carries it" is the MERGED question, not the same-tier one.
+  // A dirt plan over the rival's own tarmac needs no build there (and
+  // `tileCost` charges 0 for it), so the discount has to apply — otherwise
+  // every tile the pave pass upgrades makes the next route look more expensive
+  // than it is, and the rival answers its own paved trunk with a parallel
+  // gravel spur. The reverse still holds: a paved plan over gravel pays
+  // `UPGRADE_COST`, so it earns no discount (that is `tileAlreadyCarries`).
+  if (own && tileAlreadyCarries(track, kind, tx, ty)) c *= COST_OWNED;
   return c;
 }
 
@@ -213,6 +239,68 @@ class OpenHeap {
 export const scarcity = (stock: Purse, cargo: Cargo): number =>
   1 / (1 + (stock[cargo] ?? 0));
 
+/**
+ * VP-01: what one unit of a cargo is WORTH to the rival, now that points come
+ * from paving rather than from connecting. This is the whole strategic
+ * difference in one table:
+ *
+ *   ore   the pave currency — 4 Ore is one 0.25★ tile, and Ore buys nothing
+ *         else any more (routes are laid in dirt), so an ore mine IS the
+ *         victory point source
+ *   oil   every Depot after the first (`DEPOT_COST`)
+ *   gold  Black Market sabotage — keeps the rival able to hit back
+ *   grain Depot + plant workforce
+ *   wood/stone  the Dirt Road the whole economy is built on, and the baseline
+ *         everything else is compared against
+ *
+ * It MULTIPLIES the scarcity term rather than replacing it, so "I have none of
+ * this" still outranks "I have some of that" and a rival with an empty purse
+ * still goes for the cargo it lacks most (the behaviour the E7 tests pin).
+ */
+export const CARGO_VALUE: Record<Cargo, number> = {
+  ore: 1.7, oil: 1.4, gold: 1.3, grain: 1.15, stone: 1.0, wood: 1.0,
+};
+
+/**
+ * What a Depot at (tx,ty) would switch on: every industry in its catchment,
+ * at its output, diluted by the depots already sharing it, weighted by cargo
+ * value and scarcity.
+ *
+ * The dilution is the new part and it is the rival's biggest single fix. The
+ * old score read `industry.output`, so an industry already covered by one of
+ * the AI's own depots looked exactly as attractive as an untouched one, and
+ * the rival kept spending its last tiles on a second link to the same farm
+ * (overlap splits the yield, so the second link earns half and costs full
+ * track). `claimantCounts` is the same share arithmetic `harvesterYield` pays
+ * by, so the plan is priced on the economy's own numbers, not a guess.
+ */
+/**
+ * VP-01: `oreUrgency` scales how much an Ore Mine is worth, and nothing else.
+ * Default 1 keeps the economy's own ranking; a rival that is behind on the
+ * scoreboard raises it, because Ore is the only cargo that buys points. It is a
+ * multiplier on `CARGO_VALUE.ore` rather than a second formula so there is one
+ * place where "what is a depot worth" is decided.
+ */
+export function catchmentValue(
+  state: EconomyState, counts: Map<number, number>, stock: Purse,
+  tx: number, ty: number, now = 0, oreUrgency = 1,
+): number {
+  const probe = { id: -1, owner: "", ownerId: 0, tx, ty } as Harvester;
+  let v = 0;
+  for (const ind of industriesInCatchment(state.grid, probe)) {
+    if (ind.banditUntil > now) continue;              // blockaded: it pays nothing
+    const def = INDUSTRY_BY_KEY[ind.type];
+    if (!def) continue;
+    const claimants = (counts.get(ind.id) ?? 0) + 1;  // +1 for this new depot
+    const weight = def.cargo === "ore"
+      ? CARGO_VALUE.ore * oreUrgency
+      : CARGO_VALUE[def.cargo];
+    v += ((ind.output ?? def.output) / claimants)
+      * weight * (1 + scarcity(stock, def.cargo));
+  }
+  return v;
+}
+
 export interface Candidate {
   industry: Industry;
   /** Tile the harvester would occupy — adjacent to the industry footprint. */
@@ -222,6 +310,9 @@ export interface Candidate {
   kind: TrackKind;
   cost: Purse;
   score: number;
+  /** VP-01: the yield this Depot switches on, before the route cost divides
+   *  it out (`catchmentValue`). Exposed so a test can read WHY a plan won. */
+  value: number;
 }
 
 /** Tiles orthogonally adjacent to an industry's footprint, in a stable order. */
@@ -251,13 +342,21 @@ export function harvesterSpots(grid: Grid, ind: Industry): [number, number][] {
  * road no longer makes the AI believe it is already connected (the W3
  * "rival never builds" deadlock), and the AI's routing starts from its own
  * trunk lines, never from yours.
+ *
+ * VP-01: `kind` no longer filters the layer. The two tiers are ONE road, and a
+ * plan of either tier may start from a tile that already carries it (see
+ * `tileAlreadyCarries`), so a rival that has paved its trunk still sees that
+ * trunk as a source — before this, `hasTrack(track, "dirt", …)` went quiet
+ * exactly in proportion to how well the rival had paved, and it started
+ * planning from its factory again.
  */
 export function networkTiles(track: Track, kind: TrackKind, factory: Factory): [number, number][] {
+  void kind;
   const out: [number, number][] = [];
   const owner = factory.ownerId;
   for (let y = 0; y < MAP_H; y++) {
     for (let x = 0; x < MAP_W; x++) {
-      if (!hasTrack(track, kind, x, y)) continue;
+      if (!hasTrack(track, "dirt", x, y) && !hasTrack(track, "road", x, y)) continue;
       if (owner !== 0 && track.owner[tIdx(x, y)] !== owner) continue;
       out.push([x, y]);
     }
@@ -380,8 +479,29 @@ export interface PlanOptions {
    * a paid Depot: the allowance is data the caller owns, never a guess here.
    */
   freeDepots?: number;
-  /** Prefer the premium paved Road tier when affordable (spec: fall back to Dirt). */
+  /**
+   * VP-01: ask for the OLD paved-first ordering (a Road plan whenever it can be
+   * afforded, dirt only as a fallback). Default OFF, and that default is the
+   * strategy change: routing a fresh line in `road` pays the same 4 Ore the
+   * dirt-then-pave route pays, but only the second one scores (the pave is what
+   * `victory.ts` counts), so the rival lays gravel now and paves with
+   * `planUpgrades` in the same turn.
+   */
   preferPaved?: boolean;
+  /**
+   * VP-01: multiplier on the value of Ore-bearing industries (see
+   * `catchmentValue`). Raised by `rivalPace` when the rival is losing the
+   * race to 10★ — the point of "reacts to the player's lead" is that the
+   * rival's DEPOT choice changes, not only its spending.
+   */
+  oreUrgency?: number;
+  /**
+   * Wall time used to skip blockaded industries when valuing a catchment.
+   * Omitted = 0, i.e. nothing is blockaded, which is what the pure planning
+   * tests want; `game.ts` passes the live clock so the rival stops planning
+   * around an industry a Blockade has just shut.
+   */
+  now?: number;
 }
 
 /** Optimistic new-tile allowance; exact mixed upgrade prices are checked after A*. */
@@ -400,12 +520,18 @@ function affordableNewTiles(kind: TrackKind, purse: Purse, free: number): number
  * Score every reachable industry and return the candidates best first.
  * Deterministic: equal scores break by industry id.
  *
+ * VP-01 ranking: `catchmentValue ÷ path cost` — the yield a Depot switches on
+ * (diluted by the depots already sharing each industry, weighted by what the
+ * cargo buys in a pave-for-points economy) over the track it has to lay to get
+ * there. The old formula scored `scarcity × industry output`, which could not
+ * tell a second link to a covered farm from a first link to an untouched one.
+ *
  * W8: a candidate is only returned when its plan is VIABLE — every path tile
  * is legal ground for the transport kind, and the harvester the path ends at
  * is serviced once that track is laid (see `planFeasibility`). Because
- * unbuildable paved plans are rejected here rather than ranked, the paved-first
- * preference now genuinely falls through to dirt when paving is impossible —
- * not only when it produces nothing at all — and a turn is never spent on a
+ * unbuildable paved plans are rejected here rather than ranked, the tier
+ * preference genuinely falls through to the other tier when it cannot be built
+ * — not only when it produces nothing at all — and a turn is never spent on a
  * plan that builds nothing.
  */
 export function planCandidates(
@@ -415,12 +541,19 @@ export function planCandidates(
   const out: Candidate[] = [];
   const claimed = new Set(state.harvesters.map((h) => tIdx(h.tx, h.ty)));
   const free = Math.max(0, opts.free ?? 0);
+  // VP-01: one claimant map for the whole ranking pass — the same arithmetic
+  // `harvesterYield` pays by, read once rather than re-derived per candidate.
+  const counts = claimantCounts(state);
+  const now = opts.now ?? 0;
   // PP-05: every candidate ends at a NEW Depot, so the Depot's own price is
   // part of what the plan must afford. Priced by the same `priceDepot` the
   // human click and the HUD use — one table, one rule, no rival-only discount.
   const depotCost = priceDepot(opts.purse, opts.freeDepots ?? 0).cost;
 
-  const kinds: TrackKind[] = opts.preferPaved === false ? ["dirt"] : ["road", "dirt"];
+  // VP-01: dirt first. A paved route on virgin ground costs the same ore as
+  // gravel now and gravel-then-pave later, and only the pave scores, so the
+  // cheap tier is also the right tier; `preferPaved` opts into the old order.
+  const kinds: TrackKind[] = opts.preferPaved === true ? ["road", "dirt"] : ["dirt", "road"];
   for (const kindPref of kinds) {
     const sources = networkTiles(track, kindPref, factory);
     // T4: reject provably unaffordable destinations BEFORE running A*. On
@@ -475,9 +608,12 @@ export function planCandidates(
         // purse cannot finish would place a Depot its caller cannot pay for.
         if (!canAfford(opts.purse, addCost(cost, depotCost))) continue;
 
-        const score = scarcity(opts.stock, def.cargo) * (ind.output ?? def.output)
-          / Math.max(0.3, path.cost);
-        out.push({ industry: ind, hx, hy, path, kind: kindPref, cost, score });
+        // VP-01: value the DEPOT, not the industry — the tile's 4×4 catchment
+        // is what harvests, and on a multi-tile footprint that is usually more
+        // than the one industry A* happened to route to.
+        const value = catchmentValue(state, counts, opts.stock, hx, hy, now, opts.oreUrgency ?? 1);
+        const score = value / Math.max(0.3, path.cost);
+        out.push({ industry: ind, hx, hy, path, kind: kindPref, cost, score, value });
         break;   // one spot per industry is enough — the cheapest we found
       }
     }
@@ -719,4 +855,249 @@ export function aiBuildStep(
     if (out.built.length > 0 || out.harvester) return out;
   }
   return null;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// VP-01 — the pave pass: the rival's second action, and the one that scores.
+//
+// `planCandidates` can only ever ADD to the network. That was fine while a new
+// connection was the only way to score; under VP-01 the highest-value move on
+// the board is usually to take a tile the rival has ALREADY built and improve
+// it, because one paved tile is 0.25★ and, if that tile sits on a component a
+// Depot is using, the same 4 Ore lifts every depot on it from ×1.0 to ×1.6
+// (`resolveConnection` reads `roadComp` of the whole component, not the tile
+// the lorry happens to cross). A rival that never paves simply cannot win any
+// more, so the turn now has a second half.
+//
+// The order the list is built in is the strategy, spelled out:
+//
+//   1. one tile on each live gravel component — the cheapest possible purchase
+//      of a ×1.6 income boost, one tile per link, so a purse of 8 Ore upgrades
+//      two connections instead of paving two tiles of one;
+//   2. the rest of those components' tiles — already premium ground, and each
+//      tile is still 0.25★;
+//   3. everything else it owns, nearest its factory first, so the trunk is
+//      paved before the spurs and the next A* runs over discountable tiles.
+//
+// Nothing here is free: every tile is charged `tileCost` (the in-place
+// `UPGRADE_COST`), the same number the human's drag pays, and the budget stops
+// short of the Ore a plant would still need (`keepOre`), so paving never
+// strands the rival's own 1★ purchase.
+// ══════════════════════════════════════════════════════════════════════════
+
+export interface PaveOptions {
+  /** Display identity of the builder. */
+  owner: string;
+  /** Its numeric track-owner id — the tile ownership the pave has to match. */
+  ownerId: number;
+  /** What it can spend. Only Ore is ever charged for an in-place pave. */
+  purse: Purse;
+  /** Tiles per turn (default 8): the pace the HUD reads as a rival paving a
+   *  stretch of road rather than teleporting tarmac onto its whole network. */
+  maxTiles?: number;
+  /**
+   * Ore held back for the next plant (`PLANT_COST.ore` while the plant is
+   * still unaffordable). The pave pass is the one AI action with no deadline,
+   * so it is the one that has to fund everything else.
+   */
+  keepOre?: number;
+}
+
+export interface PavePlan {
+  /** Tiles to pave, in the order they should be built. */
+  tiles: [number, number][];
+  /** Exactly what `executePaves` will charge, summed from `tileCost`. */
+  cost: Purse;
+  /** How many live gravel links this flips to the paved multiplier. */
+  links: number;
+  /** VP the pave buys — `tiles.length × VICTORY.upgrade`. */
+  vp: number;
+}
+
+interface PaveTile {
+  i: number;
+  x: number;
+  y: number;
+  /** The owner's merged component this tile belongs to (-1 = none). */
+  comp: number;
+  /** True when a depot↔plant link is live on that component, gravel-only. */
+  live: boolean;
+  /** Manhattan distance from the plant the rival builds out from. */
+  d: number;
+}
+
+/**
+ * The rival's paveable tiles, ranked. Exported for the tests and the debug
+ * console: the ranking IS the strategy, so it should be readable without
+ * running a whole turn.
+ */
+export function paveCandidates(
+  state: EconomyState, opts: PaveOptions,
+): PaveTile[] {
+  const { grid, track } = state;
+  const comp = buildAllComponents(track, opts.ownerId);
+  const factory = state.factories.find((f) => f.owner === opts.owner);
+
+  // Which of this rival's connections are still on gravel? Those are the
+  // components where ONE paved tile changes the income of every depot on them.
+  const gravel = new Set<number>();
+  for (const h of state.harvesters) {
+    if (h.owner !== opts.owner) continue;
+    if (!isServiced(track, h)) continue;
+    if (resolveConnection(state, comp, h).kind !== "dirt") continue;
+    for (const f of state.factories) {
+      if (f.owner !== opts.owner) continue;
+      for (const c of sharedComponents(comp.comp, h.tx, h.ty, f.tx, f.ty)) {
+        if (comp.roadComp[c] === 0) gravel.add(c);
+      }
+    }
+  }
+
+  const all: PaveTile[] = [];
+  for (let y = 0; y < MAP_H; y++) {
+    for (let x = 0; x < MAP_W; x++) {
+      const i = y * MAP_W + x;
+      // Only its OWN gravel: a rival may not pave the player's road for the
+      // point (W2 ownership again), and a tile it does not own is not here.
+      if (!hasTrack(track, "dirt", x, y) || track.owner[i] !== opts.ownerId) continue;
+      // Paving needs flat ground — a gravel tile on rough stays gravel
+      // (`TRANSPORT.road.onRough === false`), exactly as the human's drag
+      // refuses it with "A paved Road can't cross rough ground".
+      if (!canBuildOn(grid, "road", x, y)) continue;
+      const c = comp.comp[i];
+      all.push({
+        i, x, y, comp: c,
+        live: c >= 0 && gravel.has(c),
+        d: factory ? Math.abs(x - factory.tx) + Math.abs(y - factory.ty) : i,
+      });
+    }
+  }
+
+  // (1) one tile per live component, (2) the rest of those, (3) the rest.
+  const byIndex = (a: PaveTile, b: PaveTile) => a.i - b.i;
+  const heads: PaveTile[] = [];
+  const restLive: PaveTile[] = [];
+  const rest: PaveTile[] = [];
+  const taken = new Set<number>();
+  for (const c of [...gravel].sort((a, b) => a - b)) {
+    const inComp = all.filter((t) => t.comp === c).sort((a, b) => a.d - b.d || byIndex(a, b));
+    if (!inComp.length) continue;
+    heads.push(inComp[0]);
+    taken.add(inComp[0].i);
+    restLive.push(...inComp.slice(1));
+  }
+  for (const t of all) if (!taken.has(t.i) && !t.live) rest.push(t);
+  restLive.sort((a, b) => a.d - b.d || byIndex(a, b));
+  rest.sort((a, b) => a.d - b.d || byIndex(a, b));
+  return [...heads, ...restLive.sort((a, b) => Number(b.live) - Number(a.live) || a.d - b.d || byIndex(a, b)), ...rest];
+}
+
+/**
+ * Rank the rival's paveable tiles, then cut the list at what it can actually
+ * afford (and can afford to spend). Returns null when there is nothing worth
+ * paving or no Ore to pave with — the caller then simply skips the action, so
+ * a rival with no ore never "paves" into a negative purse.
+ */
+export function planUpgrades(state: EconomyState, opts: PaveOptions): PavePlan | null {
+  const ranked = paveCandidates(state, opts);
+  if (!ranked.length) return null;
+  const orePrice = UPGRADE_COST.ore ?? 4;
+  const spare = Math.max(0, (opts.purse.ore ?? 0) - Math.max(0, opts.keepOre ?? 0));
+  const cap = Math.max(0, Math.min(opts.maxTiles ?? 8, Math.floor(spare / orePrice)));
+  if (cap < 1) return null;
+
+  let cost: Purse = {};
+  const tiles: [number, number][] = [];
+  const links = new Set<number>();
+  for (const t of ranked) {
+    if (tiles.length >= cap) break;
+    const c = tileCost(state.track, "road", t.x, t.y);
+    const next = addCost(cost, c);
+    if (!canAfford(opts.purse, next)) break;
+    cost = next;
+    tiles.push([t.x, t.y]);
+    if (t.live) links.add(t.comp);
+  }
+  if (!tiles.length) return null;
+  return { tiles, cost, links: links.size, vp: tiles.length * VICTORY.upgrade };
+}
+
+export interface PaveOutcome {
+  built: [number, number][];
+  spent: Purse;
+}
+
+/**
+ * Commit a pave plan. `buildTile` is the one place the dirt→paved transition
+ * happens, which is also where the 0.25★ provenance bit is stamped
+ * (`track.ts`), so scoring this rival's turn needs nothing but a `rescore`.
+ * A tile that has become unbuildable since the plan was made (the player tore
+ * up the gravel under it) is skipped, and skipped tiles charge nothing.
+ */
+export function executePaves(state: EconomyState, plan: PavePlan, ownerId: number): PaveOutcome {
+  const built: [number, number][] = [];
+  let spent: Purse = {};
+  for (const [x, y] of plan.tiles) {
+    if (!hasTrack(state.track, "dirt", x, y)) continue;         // no longer gravel
+    if (!canBuildOn(state.grid, "road", x, y)) continue;        // no longer legal
+    spent = addCost(spent, tileCost(state.track, "road", x, y));
+    buildTile(state.track, "road", x, y, ownerId);
+    built.push([x, y]);
+  }
+  return { built, spent };
+}
+
+// ── reading the scoreboard ─────────────────────────────────────────────────
+export interface RivalPace {
+  /** Behind by a whole plant's worth of points: stop investing in income. */
+  sprint: boolean;
+  /**
+   * Exchanges the 4:1 bank may make in one turn (2 is the player's rhythm, and
+   * the rival's cruise rate). Doubling THIS is what sprinting means: the same
+   * milestone, reached in half the turns.
+   *
+   * The milestone itself is deliberately NOT enlarged. An earlier version aimed
+   * a sprinting rival at eight tiles (32 Ore) instead of four (16), on the theory
+   * that a losing seat should swing bigger; on seed 99 of the 5-seed race that
+   * produced the worst possible result — 0★ for the whole game, because a poor
+   * seat cannot assemble 32 Ore, so it sold four stacks a turn toward a target it
+   * could never reach and stopped affording the economy it needed to reach it.
+   * A plan has to be short enough to finish. `planUpgrades` still paves all eight
+   * tiles at once when the Ore happens to be there.
+   */
+  bankPerTurn: number;
+  /**
+   * Multiplier on the value of Ore-bearing industries this turn (1 = the
+   * economy's own ranking) — how the lead reaches the DEPOT choice.
+   */
+  oreUrgency: number;
+  /**
+   * The PLAYER is within one plant of winning, so Gold is worth more spent on a
+   * Blockade of its Ore than banked: `game.ts` drops the rival's reserve to nil
+   * for a turn. Denial is the one action that scores by NOT being about your
+   * own board, and it is only rational when somebody is about to win — which,
+   * from the rival's side, means it reads the opponent's total, not the leader's
+   * (a rival that is itself about to win should be spending on paves).
+   */
+  deny: boolean;
+}
+
+/**
+ * The rival's read of the scoreboard, and the four numbers that follow from it.
+ *
+ * Pure, and deliberately so: it takes two totals and the target, never the
+ * board, so it can be argued about in a test table instead of inferred from a
+ * 40-minute race. `you - ai` is the whole of its information — which is what
+ * "reacts to the player's lead" should mean in a game where the opponent's road
+ * network is visible but their intentions are not.
+ *
+ * Both thresholds are one plant (1★), the cheapest unit of score: a gap the
+ * rival cannot close inside a turn or two of paving is not an emergency, and
+ * an emergency it cannot act on is noise.
+ */
+export function rivalPace(you: number, ai: number, target: number): RivalPace {
+  const behind = you - ai;
+  const sprint = behind >= VICTORY.plant;
+  const deny = you > target - VICTORY.plant;
+  return { sprint, bankPerTurn: sprint ? 4 : 2, oreUrgency: sprint ? 1.5 : 1, deny };
 }

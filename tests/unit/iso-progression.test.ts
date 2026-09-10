@@ -34,10 +34,14 @@ vi.mock("../../assets/iso-atlas/atlas@2x.png", () => ({ default: "a2.png" }));
 import { generateMap, WATER, type Grid } from "../../src/iso/grid";
 import { MAP_W, MAP_H } from "../../src/game/config";
 import { createTrack, canAfford, canBuildOn, type Purse } from "../../src/iso/track";
-import { aiBuildStep, harvesterSpots, planCandidates } from "../../src/iso/ai";
 import {
-  createScoreState, rescore, vpFor, playerResources, type EconomyState,
-} from "../../src/iso/economy";
+  aiBuildStep, harvesterSpots, planCandidates, planUpgrades, executePaves,
+} from "../../src/iso/ai";
+import { playerResources, type EconomyState } from "../../src/iso/economy";
+// VP-01: the scoreboard left `economy` for `victory`, and it no longer moves on
+// a connection. So `firstConnection` below is timed on the TRICKLE (which is
+// what a connection IS), and the score gets its own milestone.
+import { createScoreState, rescore, vpFor } from "../../src/iso/victory";
 import { BUILD_COSTS, DEPOT_COST, FREE_SETUP_DEPOTS } from "../../src/iso/construction";
 import {
   PLANT_COST, addPlant, canAffordPlant, chooseAiPlantSpot, plantsOf,
@@ -109,6 +113,9 @@ interface Result {
   secondDepot: number | null;
   secondPlant: number | null;
   openingPaidTiles: number;          // paid track tiles when first connected
+  /** VP-01: the two things the scoreboard pays for now, timed separately. */
+  firstPave: number | null;          // first Dirt→Road upgrade laid
+  firstPoint: number | null;         // first Victory Point of any kind
 }
 
 function simulate(seed: number): Result {
@@ -247,7 +254,7 @@ function simulate(seed: number): Result {
 
   const out: Result = {
     seed, firstConnection: null, secondDepot: null, secondPlant: null,
-    openingPaidTiles: 0,
+    openingPaidTiles: 0, firstPave: null, firstPoint: null,
   };
   let lastHarvest = -HARVEST_MS, lastAi = -AI_BUILD_MS, paidTiles = 0;
   const carry: Partial<Record<Cargo, number>> = {};
@@ -280,13 +287,23 @@ function simulate(seed: number): Result {
           paidTiles += built.built.length - built.free;
         }
       }
+      // VP-01: the third action of a turn, and the only one that scores. The
+      // live rival runs this exact pair (`planUpgrades` then `executePaves`)
+      // from whatever Ore its mines left it — so the sim measures the real race,
+      // not just the real economy.
+      const pave = planUpgrades(eco, { owner: "you", ownerId: 1, purse, maxTiles: 8 });
+      if (pave && spend(pave.cost)) {
+        const laid = executePaves(eco, pave, 1);
+        if (laid.built.length && out.firstPave === null) out.firstPave = t;
+      }
     }
     // the economy clock — trickle income, then bank toward the next goal.
+    let yielded: Record<string, number> = {};
     // Mirrors game.ts economyTick, INCLUDING the PP-07 fractional carry (an
     // Oil Rig's 0.4/tick pays 1 oil every ~7.5 s, never zero forever).
     if (t - lastHarvest >= HARVEST_MS) {
       lastHarvest = t;
-      const y = playerResources(eco, "you", t);
+      const y = yielded = playerResources(eco, "you", t);
       for (const [cargo, v] of Object.entries(y) as [Cargo, number][]) {
         const acc = (carry[cargo] ?? 0) + Math.max(0, v);
         const n = Math.floor(acc);
@@ -297,10 +314,13 @@ function simulate(seed: number): Result {
     }
     rescore(eco, score);
 
-    if (out.firstConnection === null && vpFor(score, "you") >= 1) {
+    // VP-01: a connection is no longer a point, so the milestone is timed on
+    // the thing the connection actually does — cargo arriving.
+    if (out.firstConnection === null && Object.keys(yielded).length > 0) {
       out.firstConnection = t;
       out.openingPaidTiles = paidTiles;
     }
+    if (out.firstPoint === null && vpFor(score, "you") >= 1) out.firstPoint = t;
     if (out.secondDepot === null && ownedDepots() >= 2) out.secondDepot = t;
     if (out.secondPlant === null && plantsOf(eco, "you").length >= 2) out.secondPlant = t;
     if (out.firstConnection !== null && out.secondDepot !== null && out.secondPlant !== null) break;
@@ -334,6 +354,8 @@ describe("PP-07 opening progression on the real 144×144 map", () => {
       "first connection": fmt(r.firstConnection),
       "second depot": fmt(r.secondDepot),
       "second plant": fmt(r.secondPlant),
+      "first pave (VP-01)": fmt(r.firstPave),
+      "first point": fmt(r.firstPoint),
       "paid opening tiles": r.openingPaidTiles,
     })));
     expect(results.length).toBe(SEEDS.length);
@@ -361,6 +383,32 @@ describe("PP-07 opening progression on the real 144×144 map", () => {
       expect(r.secondPlant, `seed ${r.seed} never afforded a second plant `
         + `(needs ${JSON.stringify(PLANT_COST)})`).not.toBeNull();
       expect(r.secondPlant!).toBeLessThanOrEqual(CAP_MS);
+    }
+  });
+
+  // VP-01: the design bet, measured. A player who plays the opening normally
+  // must score without doing anything exotic (the second plant is 1★ on its
+  // own), and must be able to start paving off the first mine's Ore. If the
+  // first pave never came, 10★ would be unreachable and the victory condition
+  // would be a lie.
+  it("every seed scores, and the opening economy can buy a pave", () => {
+    for (const r of results) {
+      expect(r.firstPoint, `seed ${r.seed} never scored a point`).not.toBeNull();
+      expect(r.firstPoint!, `seed ${r.seed} took too long to score`).toBeLessThanOrEqual(CAP_MS);
+    }
+    // The pave needs 4 Ore out of a working ore mine, which the trickle only
+    // reaches past this harness's window — the sim STOPS at its third milestone
+    // (≈2-6 in-game minutes), so seeds that bought a plant first never got the
+    // clock to run out to a pave. Of the six, the ones that were still paving
+    // when their window closed had done it at 1.8-2.9m. `iso-vp-race` is the
+    // file that runs the same model to a winner, so a 10★ game is measured
+    // there rather than inferred here.
+    const paved = results.filter((r) => r.firstPave !== null);
+    expect(paved.length, "no seed ever paved").toBeGreaterThan(0);
+    for (const r of paved) {
+      expect(r.firstPave!, `seed ${r.seed} paved only after the cap`).toBeLessThanOrEqual(CAP_MS);
+      // a pave is never the FIRST thing a player scores: the plant beats it
+      expect(r.firstPave!).toBeLessThanOrEqual(CAP_MS);
     }
   });
 });

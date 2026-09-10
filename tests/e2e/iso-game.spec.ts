@@ -212,9 +212,18 @@ test.describe("iso game boots on the default route", () => {
     await expect(root.locator(".resbar .chipbar#iso-res")).toHaveCount(1);
     await expect(root.locator("aside.left.iso-panel")).toHaveCount(1);
     await expect(root.locator("aside.right.iso-panel")).toHaveCount(1);
-    await expect(root.locator(".ui-root aside.left .panel-title")).toHaveCount(2);
+    // PP-08 moved the Black Market pane into the RIGHT aside, nested beneath the
+    // bank, and these three lines were never retuned — they have been red on
+    // `main` (and in the nightly e2e) ever since, which is why they ride along
+    // with this branch instead of poisoning its signal. Measured against the
+    // same markup through the jsdom harness (`iso-game.test.ts` boots the real
+    // `ui.ts`): `aside.left` = ["🏗️ Build"], `aside.right` = ["🕵️ Black Market",
+    // "💎 Your Processing Plant"]. Structure, not CSS — Playwright counts hidden
+    // nodes too, so the viewport's media queries cannot move these numbers.
+    await expect(root.locator(".ui-root aside.left .panel-title")).toHaveCount(1);
     await expect(root.locator(".ui-root aside.left .panel-title").first()).toContainText(/Build/i);
-    await expect(root.locator(".ui-root aside.left .panel-title").nth(1)).toContainText(/Black Market/i);
+    await expect(root.locator(".ui-root aside.right .panel-title")).toHaveCount(2);
+    await expect(root.locator(".ui-root aside.right .panel-title").first()).toContainText(/Black Market/i);
     await expect(root.locator(".ui-root aside.right #iso-quarry")).toHaveCount(1);
     await expect(root.locator(".iso-stage#map")).toHaveCount(1);
 
@@ -276,7 +285,14 @@ test.describe("iso game boots on the default route", () => {
     });
   });
 
-  test("gameplay: factory → harvester → Dirt Road drag → +1 VP, all real pointer events", async ({ page }) => {
+  // VP-01 rewrote the end of this round. The drag still lays the column and the
+  // cargo still flows, but a Dirt Road connection is worth NOTHING now — the
+  // assertion flipped from "+1 VP" to "0 VP", which is the ticket in one number.
+  // The points live on the PAVE, and a paved drag needs 4 Ore a tile the opening
+  // purse does not have, so the paving half of the round is asserted in
+  // `tests/unit/iso-victory.test.ts` and `iso-game.test.ts` (drag preview, mode
+  // bar, rival pave pass) rather than faked into this one with a purse handout.
+  test("gameplay: factory → harvester → Dirt Road drag → cargo flows, 0 VP", async ({ page }) => {
     await bootIso(page);
 
     // E14 fix candidate (a): the Kenney tiles doubled every footprint, so the
@@ -403,6 +419,10 @@ test.describe("iso game boots on the default route", () => {
         // paved `road` tiles), while no player Dirt Road exists yet, so the
         // drag's footprint is measured against this (zero) dirt baseline.
         dirt,
+        // VP-01: the victory table, read off the booted game rather than the
+        // config module, so a stale UI constant cannot pass this test.
+        vpTarget: h.vpTarget,
+        vpRates: h.vpRates,
       };
     });
     expect(h0.free).toBe(12);                       // FREE_SETUP_TRACK (E8)
@@ -439,11 +459,18 @@ test.describe("iso game boots on the default route", () => {
       const t = h.track;
       let dirt = 0;
       for (let i = 0; i < t.dirt.length; i++) if (t.dirt[i] & 16) dirt++;
-      return { free: h.freeTrack, vp: h.vp, stone: h.purse.stone, ore: h.purse.ore ?? 0, dirt };
+      return {
+        free: h.freeTrack, vp: h.vp, stone: h.purse.stone, ore: h.purse.ore ?? 0, dirt,
+        vpTarget: h.vpTarget, vpRates: h.vpRates, paved: h.pavedTiles("you"),
+      };
     });
     expect(after.free).toBe(h0.free - n);            // the allowance paid for exactly the column
-    expect(after.vp.you).toBe(1);                    // connection scored
+    expect(after.vp.you).toBe(0);                    // VP-01: a gravel connection scores nothing
     expect(after.vp.ai).toBe(0);
+    // …and the hook that replaces the old scoreboard census reports the new
+    // table straight off the real boot: 10★ to win, a quarter per upgraded tile.
+    expect(h0.vpTarget).toBe(10);
+    expect(h0.vpRates).toEqual({ upgrade: 0.25, plant: 1 });
     expect(after.stone).toBe(12);                    // allowance, not purse
     expect(after.ore).toBe(0);
     // the free opening corridor is DIRT (the allowance buys Dirt Roads only),
@@ -459,8 +486,10 @@ test.describe("iso game boots on the default route", () => {
     // rather than timing out an otherwise-correct pixel read.
     expect(await opaqueNear(page, 1, c.col[1].tx, c.col[1].ty)).toBeGreaterThan(10);
 
-    // UI reflects the scored connection
-    await expect(page.locator("#iso-vp")).toContainText("You 1");
+    // …nothing on the map was upgraded, so nothing was scored, and the badge
+    // says the same thing the state does
+    expect(after.paved).toBe(0);
+    await expect(page.locator("#iso-vp")).toContainText("You 0");
     await expect(page.locator("#iso-banner")).toContainText(/free track tiles/i);
 
     await test.info().attach("iso-round-complete", {

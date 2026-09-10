@@ -6,9 +6,12 @@ import {
 } from "../../src/iso/plants";
 import {
   buildAllComponents, resolveConnection, claimantCounts, harvesterYield,
-  createScoreState, rescore, vpFor, playerResources,
+  playerResources,
   type EconomyState, type Harvester,
 } from "../../src/iso/economy";
+// VP-01: a plant is worth a point of its own now, so this file's scoring
+// assertions moved from `economy` (connections) to `victory` (the scoreboard).
+import { createScoreState, rescore, vpFor } from "../../src/iso/victory";
 import { createTrack, buildTile, tIdx, type Track } from "../../src/iso/track";
 import { GRASS, WATER, TOWN_OCC, type Grid, type Industry, type Town } from "../../src/iso/grid";
 import { MAP_W, MAP_H } from "../../src/game/config";
@@ -186,17 +189,32 @@ describe("PP-06 routing, scoring and yield with several plants", () => {
     expect(total[def.cargo]).toBeCloseTo(def.output, 6);
   });
 
-  it("awards the connection VP once, not once per plant", () => {
-    const { st } = twoPlantWorld();
+  it("scores one point per plant raised, and none for the line that joins them", () => {
+    // PP-06's rule was "a depot reaching two plants still yields ONE connection
+    // VP". VP-01 keeps the shape of that — the connection is not counted at all
+    // — and makes the plants themselves the thing that scores, so two plants
+    // are worth two points and the shared road is worth nothing.
+    const { st, grid, track } = twoPlantWorld();
     const score = createScoreState();
     const events = rescore(st, score);
-    expect(events.filter((e) => e.type === "awarded")).toHaveLength(1);
-    const first = vpFor(score, "p1");
-    // rescoring with an extra plant must not re-award anything
-    const { grid, track } = st as unknown as { grid: Grid; track: Track };
-    addPlant(grid, track, st, "p1", 1, 41, 25);
-    expect(rescore(st, score)).toHaveLength(0);
-    expect(vpFor(score, "p1")).toBe(first);
+    // `twoPlantWorld` raised two plants, but the first is plant #0 — the free
+    // setup Factory — so exactly one of them pays.
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ source: "plant", type: "awarded", owner: "p1", delta: 1 });
+    expect(vpFor(score, "p1")).toBe(1);
+    // idempotent: the same board, the same (empty) diff
+    expect(rescore(st, score)).toEqual([]);
+
+    // …and the dirt line passing both plants and the depot moves no number
+    expect(resolveConnection(st, buildAllComponents(track, 1), st.harvesters[0]).kind).toBe("dirt");
+
+    // a THIRD plant beside the same town pays its own point, once
+    expect(addPlant(grid, track, st, "p1", 1, 43, 25)).toBeTruthy();
+    expect(rescore(st, score)).toEqual([
+      { source: "plant", type: "awarded", owner: "p1", delta: 1, tx: 43, ty: 25, townId: 1, plantNo: 3 },
+    ]);
+    expect(vpFor(score, "p1")).toBe(2);
+    expect(rescore(st, score)).toEqual([]);
   });
 });
 
@@ -250,7 +268,7 @@ describe("PP-06 save/load and multiplayer", () => {
     addPlant(grid, track, st, "p1", 1, 60, 61);
     const snap = buildSnapshot({
       seed: 1, track, harvesters: [], factories: st.factories,
-      score: createScoreState(), setupPhase: false, won: false, players: [],
+      setupPhase: false, won: false, players: [],
     });
     const back = applySnapshot(JSON.parse(JSON.stringify(snap)), 1);
     expect(back.factories).toHaveLength(2);

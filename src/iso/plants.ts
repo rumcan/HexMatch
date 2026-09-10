@@ -25,9 +25,11 @@
 // `game.ts` owns the purse, the toast and the render sync.
 // ══════════════════════════════════════════════════════════════════════════
 import { BUILD_COSTS, FACTORY_FOOTPRINT, type Cargo } from "./config";
+import { catchmentRect, rectContains } from "./economy";
 import { TOWN_OCC, WATER, idx, inBounds, type Grid, type Town } from "./grid";
 import { hasTrack, type Purse, type Track } from "./track";
 import type { EconomyState, Factory } from "./economy";
+import type { Industry } from "./grid";
 
 /**
  * PP-06 / PP-07: the cost of an ADDITIONAL processing plant — an alias into
@@ -167,10 +169,55 @@ export const canAffordPlant = (purse: Partial<Record<Cargo, number>>): boolean =
     .every(([k, v]) => (purse[k] ?? 0) >= v);
 
 /**
- * Where the AI would raise its next plant: a legal footprint beside a town it does
- * not already have a plant at, nearest to its existing network. Same rule
- * function as the human path, so the AI has no adjacency-free fallback.
- * Returns null when there is nowhere legal (the AI then simply doesn't build).
+ * How far a new plant is worth reaching for: a depot has to be laid out to
+ * this footprint, so industries further out than this are not what the plant
+ * is buying. `CATCHMENT` (4) is the depot's reach and a short spur sits inside
+ * 6 tiles; 8 is the generous end of "a plant you can actually feed".
+ */
+export const PLANT_REACH = 8;
+
+/** Industries NOT inside any of `owner`'s depot catchments. */
+function uncoveredIndustries(grid: Grid, state: EconomyState, owner: string): Industry[] {
+  const covered = new Set<number>();
+  for (const h of state.harvesters) {
+    if (h.owner !== owner) continue;
+    const r = catchmentRect(h.tx, h.ty);
+    for (const ind of grid.industries) {
+      if (rectContains(r, ind.tx, ind.ty) || rectContains(r, ind.tx + ind.w - 1, ind.ty + ind.h - 1)
+        || rectContains(r, ind.tx, ind.ty + ind.h - 1) || rectContains(r, ind.tx + ind.w - 1, ind.ty)) {
+        covered.add(ind.id);
+      }
+    }
+  }
+  return grid.industries.filter((ind) => !covered.has(ind.id));
+}
+
+const nearFootprint = (ind: Industry, tx: number, ty: number, reach: number): boolean => {
+  const x1 = tx + FACTORY_FOOTPRINT[0] - 1, y1 = ty + FACTORY_FOOTPRINT[1] - 1;
+  // distance from the industry's footprint box to the plant's footprint box
+  const dx = Math.max(ind.tx - x1, tx - (ind.tx + ind.w - 1), 0);
+  const dy = Math.max(ind.ty - y1, ty - (ind.ty + ind.h - 1), 0);
+  return dx + dy <= reach;
+};
+
+/**
+ * Where the AI would raise its next plant. Same rule function as the human
+ * path (`canPlacePlant`), so the AI has no adjacency-free fallback, and null
+ * when there is nowhere legal — the rival then simply does not build.
+ *
+ * VP-01: the old answer was "the legal footprint nearest my first plant",
+ * which is a way of building a plant that does nothing: it bought the closest
+ * town whether or not that town had anything to harvest, and the plant's value
+ * is the DEPOT REACH it opens. So the rival now scores each site:
+ *
+ *   + the number of industries still uncovered that sit within `PLANT_REACH`
+ *     of the footprint — ground a new depot could be parked on tomorrow;
+ *   − the distance from the owner's existing network, because a plant the
+ *     depots cannot road to is 1★ of dead weight (and it is still 1★, which is
+ *     why a rival with no good site still buys one rather than stalling).
+ *
+ * Ties break by (score desc, distance asc, tile index) so the choice is
+ * deterministic on a seed, as everywhere else in this engine.
  */
 export function chooseAiPlantSpot(
   grid: Grid, track: Track, state: EconomyState, owner: string,
@@ -178,9 +225,20 @@ export function chooseAiPlantSpot(
   const mine = plantsOf(state, owner);
   if (!mine.length) return null;
   const used = new Set(mine.map((f) => f.townId).filter((t) => t != null));
-  const anchor = mine[0];
+  const wanted = uncoveredIndustries(grid, state, owner);
+  const network: [number, number][] = [
+    ...mine.map((f) => [f.tx, f.ty] as [number, number]),
+    ...state.harvesters.filter((h) => h.owner === owner).map((h) => [h.tx, h.ty] as [number, number]),
+  ];
+  const manhattan = (tx: number, ty: number) => {
+    let d = Infinity;
+    for (const [nx, ny] of network) d = Math.min(d, Math.abs(tx - nx) + Math.abs(ty - ny));
+    return d;
+  };
+
   let best: [number, number] | null = null;
-  let bestD = Infinity;
+  let bestScore = -Infinity, bestD = Infinity;
+  const seen = new Set<number>();
   for (const town of grid.towns) {
     if (used.has(town.id)) continue;
     for (const [hx, hy] of town.houses) {
@@ -191,9 +249,20 @@ export function chooseAiPlantSpot(
       for (let dy = -3; dy <= 2; dy++) {
         for (let dx = -3; dx <= 2; dx++) {
           const tx = hx + dx, ty = hy + dy;
+          const key = ty * grid.w + tx;
+          if (seen.has(key)) continue;
+          seen.add(key);
           if (!canPlacePlant(grid, track, state, tx, ty)) continue;
-          const d = Math.abs(tx - anchor.tx) + Math.abs(ty - anchor.ty);
-          if (d < bestD) { bestD = d; best = [tx, ty]; }
+          let reach = 0;
+          for (const ind of wanted) if (nearFootprint(ind, tx, ty, PLANT_REACH)) reach++;
+          const d = manhattan(tx, ty);
+          // 10 per industry in reach, 1 per tile of detour: reach dominates,
+          // distance only breaks ties between equally productive sites.
+          const score = reach * 10 - d;
+          if (score > bestScore || (score === bestScore && (d < bestD
+            || (d === bestD && key < (best ? best[1] * grid.w + best[0] : Infinity))))) {
+            bestScore = score; bestD = d; best = [tx, ty];
+          }
         }
       }
     }

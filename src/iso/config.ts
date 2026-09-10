@@ -107,11 +107,25 @@ export const INDUSTRY_QUOTA: Record<string, number> = {
 };
 
 // ── Road vs rail (the core scoring split) ─────────────────────────────────
+/**
+ * VP-01: a transport tier earns Victory Points per TILE, and only when it is
+ * reached by upgrading the tier underneath it. There is deliberately no VP
+ * for a connection any more (neither dirt nor paved), and none for a paved
+ * Road laid on virgin ground:
+ *
+ *   dirt              0 — a Dirt Road is plumbing, not points
+ *   road (paved)      VP_UPGRADE per Dirt Road tile paved over in place
+ *
+ * `vpUpgrade` is the one number the scorer, the HUD labels and the drag
+ * preview all read, so "what the button says" and "what the scoreboard pays"
+ * cannot drift apart.
+ */
 export interface TransportDef {
   key: "dirt" | "road";
   name: string;
   cost: Partial<Record<Cargo, number>>;
-  vp: number;                 // VP per completed connection, awarded once
+  /** VP per tile when this tier is reached by upgrading the tier below it. */
+  vpUpgrade: number;
   throughput: number;         // multiplier applied to connected harvesters
   onRough: boolean;           // buildable on rough terrain
   label: string;
@@ -120,16 +134,18 @@ export interface TransportDef {
 /**
  * The game is de-railwayed into two tiers of ROAD:
  *
- *   dirt  (gravel)  — the cheap basic road. 1 Wood + 1 Stone, 1 VP, ×1.0,
+ *   dirt  (gravel)  — the cheap basic road. 1 Wood + 1 Stone, no VP, ×1.0,
  *                     buildable on rough ground. Player-built "Dirt Roads"
  *                     render as gravel.
- *   road  (paved)   — the premium road. 1 Wood + 1 Stone + 4 Ore, 3 VP, ×1.6,
- *                     flat ground only. Player-built "Roads" AND the map's
+ *   road  (paved)   — the premium road. 1 Wood + 1 Stone + 4 Ore, ×1.6, flat
+ *                     ground only. Player-built "Roads" AND the map's
  *                     paved public/town roads live on this tier and render as
  *                     tar. (This was the old "rail" tier, re-skinned as a
  *                     paved road so no literal railway tracks remain.)
  *
- * Paving a Dirt Road into a Road pays only the difference (UPGRADE_COST).
+ * Paving a Dirt Road into a Road pays only the difference (UPGRADE_COST) and,
+ * since VP-01, is the ONLY thing roads are worth points for: 0.25 VP per tile
+ * you pave, 0 per connection. A Dirt Road scores nothing at all.
  *
  * PP-07 — THE authoritative construction-cost table (Catan-style roles).
  *
@@ -163,16 +179,47 @@ export const BUILD_COSTS: Readonly<Record<
   plant: { wood: 2, stone: 2, grain: 2, ore: 3 },
 };
 
+// ── VP-01: the victory table ──────────────────────────────────────────────
+/**
+ * Victory Points come from exactly TWO sources, and both of them are things a
+ * player *upgrades* rather than merely connects:
+ *
+ *   upgrade  0.25★ per Dirt Road tile paved into a Road, in place
+ *   plant    1★    per processing plant raised after the setup Factory
+ *   target   10★   first player there wins
+ *
+ * Dirt Road scores nothing (that is the ticket), and neither does a connection
+ * — dirt or paved. A connection sets the throughput multiplier and that is its
+ * whole job. The paved tile VP is deliberately gated on the UPGRADE
+ * (`track.ts`'s `upgraded` provenance layer), so a Road laid on virgin ground
+ * at full price earns no point: the score pays for improving what you already
+ * built, four paves to the point. At 4 Ore a tile, 10★ of pure road is 40
+ * paved tiles (160 Ore) — the scoreboard is a measurement of how much ore a
+ * network can turn in, which is what keeps a game from ending on the first
+ * two spurs. `victory.ts` is the only reader of these three numbers.
+ */
+export const VICTORY = {
+  /** VP per Dirt Road tile paved into a Road (`TRANSPORT.road.vpUpgrade`). */
+  upgrade: 0.25,
+  /** VP per processing plant raised after setup. */
+  plant: 1,
+  /** VP needed to win. */
+  target: 10,
+} as const;
+
 export const TRANSPORT: Record<"dirt" | "road", TransportDef> = {
   dirt: {
     key: "dirt", name: "Dirt Road",
     cost: BUILD_COSTS.dirt,
-    vp: 1, throughput: 1.0, onRough: true, label: "Dirt Road",
+    // VP-01: gravel scores nothing, and there is no tier under it to pave.
+    vpUpgrade: 0, throughput: 1.0, onRough: true, label: "Dirt Road",
   },
   road: {
     key: "road", name: "Road",
     cost: BUILD_COSTS.road,
-    vp: 3, throughput: 1.6, onRough: false, label: "Road",
+    // VP-01: the tile VP is paid per DIRT TILE PAVED, never per connection and
+    // never for a Road laid on virgin ground.
+    vpUpgrade: VICTORY.upgrade, throughput: 1.6, onRough: false, label: "Road",
   },
 };
 
@@ -186,10 +233,14 @@ export const TRANSPORT: Record<"dirt" | "road", TransportDef> = {
 // rival) all consult. The paved Road therefore stays gated behind an ore mine
 // exactly as E8/PP-07 settled it — "wood and stone for roads, no ore — the
 // paved road is gated behind an ore mine" — instead of arriving free with the
-// opening 12 tiles, at road VP (3/tile) and road throughput (×1.6).
+// opening 12 tiles, at road throughput (×1.6) and — since VP-01 — at road VP.
 export const UPGRADE_COST: Partial<Record<Cargo, number>> = BUILD_COSTS.upgrade;
 
-export const VP_TARGET = 12;
+/**
+ * VP-01: the winning total. Dropped from 12 to 10 alongside the new point
+ * economy, because the only sources left are paves (0.25★) and plants (1★).
+ */
+export const VP_TARGET = VICTORY.target;
 
 // ── Player buildings ───────────────────────────────────────────────────────
 /**
