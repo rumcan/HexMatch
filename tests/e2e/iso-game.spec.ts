@@ -212,9 +212,18 @@ test.describe("iso game boots on the default route", () => {
     await expect(root.locator(".resbar .chipbar#iso-res")).toHaveCount(1);
     await expect(root.locator("aside.left.iso-panel")).toHaveCount(1);
     await expect(root.locator("aside.right.iso-panel")).toHaveCount(1);
-    await expect(root.locator(".ui-root aside.left .panel-title")).toHaveCount(2);
+    // PP-08 moved the Black Market pane into the RIGHT aside, nested beneath the
+    // bank, and these three lines were never retuned — they have been red on
+    // `main` (and in the nightly e2e) ever since, which is why they ride along
+    // with this branch instead of poisoning its signal. Measured against the
+    // same markup through the jsdom harness (`iso-game.test.ts` boots the real
+    // `ui.ts`): `aside.left` = ["🏗️ Build"], `aside.right` = ["🕵️ Black Market",
+    // "💎 Your Processing Plant"]. Structure, not CSS — Playwright counts hidden
+    // nodes too, so the viewport's media queries cannot move these numbers.
+    await expect(root.locator(".ui-root aside.left .panel-title")).toHaveCount(1);
     await expect(root.locator(".ui-root aside.left .panel-title").first()).toContainText(/Build/i);
-    await expect(root.locator(".ui-root aside.left .panel-title").nth(1)).toContainText(/Black Market/i);
+    await expect(root.locator(".ui-root aside.right .panel-title")).toHaveCount(2);
+    await expect(root.locator(".ui-root aside.right .panel-title").first()).toContainText(/Black Market/i);
     await expect(root.locator(".ui-root aside.right #iso-quarry")).toHaveCount(1);
     await expect(root.locator(".iso-stage#map")).toHaveCount(1);
 
