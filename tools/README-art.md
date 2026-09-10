@@ -91,6 +91,21 @@ Sheets used so far (paths under `sprites/png/`):
   at four map quadrant offsets → `assets/iso-atlas/footprint-check.png`.
   Acceptance: each base sits inside its footprint — no overhang past the
   top-left edge, no bare bottom-right corner.
+- **Grouped editing sheets:** `node tools/make-atlas-groups.mjs` (chained into
+  `npm run slice-atlas`, standalone via `npm run atlas:groups`) splits the one
+  large atlas into logical groups under `assets/iso-atlas/groups/` — one PNG
+  per group (auto-paginated), every sheet ≤ 1920×1080 so it fits an
+  image-generating UI. Each sprite is cropped verbatim from the packed atlas
+  onto a white card over a transparency checker, with its manifest sprite
+  name — the variable/key the game uses — rendered as text underneath
+  (animated strips show every frame, tagged `[xN]`). `groups@<z>x.json`
+  indexes the sheets and records each sprite's art rect (sheet pixels, card
+  and label excluded) so a future tool can slice sprites back out of an
+  edited sheet. The sheets are editing masters / visual reference only: the
+  game keeps loading `atlas@1x/@2x/@0.5x.png` + `manifest.json` unchanged.
+  `tests/unit/iso-atlas-groups.test.ts` pins the ≤1920×1080, exact-coverage
+  and no-overlap invariants (so a manifest change without regenerated groups
+  fails `npm test`), and the G7 CI step byte-compares the committed sheets.
 - **Y6 invariants** live in `tests/unit/iso-manifest.test.ts`: no compose/crop
   keys remain, every atlas sprite resolves to declared ids, no road/rail cell
   uses the generator, width ≤ footprint_w × 64 + 32, and every manifest anchor

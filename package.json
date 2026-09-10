@@ -16,7 +16,8 @@
     "test:server": "npm --prefix server test",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "slice-atlas": "node tools/slice-atlas.mjs"
+    "slice-atlas": "node tools/slice-atlas.mjs && node tools/make-atlas-groups.mjs",
+    "atlas:groups": "node tools/make-atlas-groups.mjs"
   },
   "dependencies": {
     "clsx": "2.1.1",
