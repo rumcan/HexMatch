@@ -50,6 +50,15 @@ interface IsoHook {
   phase: string;
   tool: string;
   vp: { you: number; ai: number };
+  /** VP-01: the target, the rates, and what a player's total is made of. */
+  vpTarget: number;
+  vpRates: { upgrade: number; plant: number };
+  victoryOf: (who: string) => { paved: number; plants: number; pavedVp: number; plantVp: number };
+  /** how many of `who`'s tiles carry pave provenance (0 = the score is all plants) */
+  pavedTiles: (who: string) => number;
+  /** run the rival's pave pass now, instead of waiting for its turn */
+  rivalPave: () => boolean;
+  rivalBank: () => number;
   purse: Record<string, number>;
   harvesters: { id: number; owner: string; tx: number; ty: number }[];
   factories: { owner: string; tx: number; ty: number }[];
@@ -266,8 +275,8 @@ describe("E11 a full round is playable", () => {
     const {
       createTrack: _c, buildTile,
     } = await import("../../src/iso/track");
-    const { rescore, createScoreState, vpFor, isServiced, industriesInCatchment } =
-      await import("../../src/iso/economy");
+    const { isServiced, industriesInCatchment } = await import("../../src/iso/economy");
+    const { rescore, createScoreState, vpFor } = await import("../../src/iso/victory");
 
     // a real industry with a legal harvester spot beside it
     const c = findSouthCorridor(h.grid);
@@ -287,13 +296,26 @@ describe("E11 a full round is playable", () => {
     expect(rescore(h.eco, score)).toEqual([]);
 
     // lay a dirt from the harvester to the factory (W2: owned by "you")
+    const trunk = fy - hy;
     for (let y = hy + 1; y <= fy; y++) buildTile(h.track, "dirt", hx, y, 1);
     expect(isServiced(h.track, harv)).toBe(true);
 
+    // VP-01: the whole point of the ticket — a live gravel connection, and it
+    // scores EXACTLY nothing. Cargo flows; the scoreboard does not move.
+    expect(rescore(h.eco, score)).toEqual([]);
+    expect(vpFor(score, "you")).toBe(0);
+    expect(h.victoryOf("you")).toMatchObject({ paved: 0, plants: 0 });
+
+    // …and the moment the bottom two tiles are paved over that gravel, the
+    // points arrive — one per four tiles, on the map, not on the connection.
+    buildTile(h.track, "road", hx, fy, 1);
+    buildTile(h.track, "road", hx, fy - 1, 1);
     const events = rescore(h.eco, score);
-    expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({ type: "awarded", to: "dirt", delta: 1 });
-    expect(vpFor(score, "you")).toBe(1);
+    expect(events).toHaveLength(2);
+    for (const e of events) expect(e).toMatchObject({ source: "upgrade", type: "awarded", delta: 0.25 });
+    expect(vpFor(score, "you")).toBe(0.5);
+    expect(h.pavedTiles("you")).toBe(2);
+    expect(trunk).toBeGreaterThan(2);      // the rest of the line is still gravel
   });
 
   it("produces cargo once connected, and stops when the line is cut", async () => {
@@ -703,6 +725,11 @@ describe("W3 the rival actually plays (headless)", () => {
     // the way a connected farm / oil rig would stock them.
     rival.res.oil = 5;
     rival.res.grain = 5;
+    // VP-01: ORE IS THE SCOREBOARD now — a Dirt→Road upgrade is 4 Ore and pays
+    // 0.25★ — so a rival with no ore has no way to score at all. Grant it the
+    // way a connected Ore Mine would, and the last third of this test asserts
+    // it converts that ore into points instead of spending it on more gravel.
+    rival.res.ore = 20;
 
     // Four build ticks = 36s of game time, still within the one-minute goal.
     const t0 = 1_000_000;
@@ -710,8 +737,15 @@ describe("W3 the rival actually plays (headless)", () => {
 
     // its track exists and is ITS OWN...
     expect(rivalTiles()).toBeGreaterThan(0);
-    // ...and it connected at least one industry (VP is owner-scoped)
-    expect(h.vp.ai).toBeGreaterThan(0);
+    // ...and it connected at least one industry (VP is owner-scoped). Note what
+    // this rival does NOT score: its factory was parked beside an Ore Mine, in
+    // the hills, and every gravel tile it lays from there is on ROUGH ground —
+    // where `TRANSPORT.road.onRough === false` forbids pavement, so there is
+    // nothing for the pave pass to upgrade. Points need flat ground, which is
+    // the strategy VP-01 put on the map; W8 below asserts the pave itself.
+    const ai = h.victoryOf("ai");
+    expect(h.pavedTiles("ai")).toBe(ai.paved);
+    expect(ai.pavedVp + ai.plantVp).toBe(h.vp.ai);
     // and it SPENT: the rival started with 12 stone (START_PURSE); builds past
     // the 12-tile free allowance come out of that purse, so the stone falls.
     expect(rival.res.stone).toBeLessThan(12);
@@ -831,13 +865,27 @@ describe("W8 the rival is placed where it can build — and builds", () => {
     expect(rivalTiles()).toBe(0);
     expect(h.vp.ai).toBe(0);
 
+    // VP-01: this rival has never seen an Ore Mine, so it cannot pave — four
+    // turns of gravel and free depots, and the scoreboard stays at zero. That
+    // is the new rule working, not the AI failing to play.
     const t0 = 1_000_000;
     for (let i = 0; i < 4; i++) h.aiTick(t0 + i * AI_BUILD_MS);
-
-    // the rival is no longer a scoreboard entry with 0 VP for the whole match
     expect(rivalTiles()).toBeGreaterThan(0);
     expect(h.harvesters.some((x) => x.owner === "ai")).toBe(true);
+    expect(h.vp.ai).toBe(0);
+    expect(h.pavedTiles("ai")).toBe(0);
+
+    // …give it ore and one pave pass turns the gravel it already laid into
+    // points, without a single new tile being dug.
+    const rival = h.market.players[1];
+    rival.res.ore = 16;
+    expect(h.rivalPave()).toBe(true);
+    expect(h.pavedTiles("ai")).toBeGreaterThan(0);
     expect(h.vp.ai).toBeGreaterThan(0);
+    expect(h.victoryOf("ai")).toMatchObject({
+      paved: h.pavedTiles("ai"),
+      pavedVp: h.pavedTiles("ai") * h.vpRates.upgrade,
+    });
   }, 10_000);
 });
 
@@ -1677,5 +1725,88 @@ describe("economy window and affordability", () => {
     const bank = root.querySelector('.bank-pane')!;
     expect(bank.lastElementChild?.querySelector('.sab-list')).toBeTruthy();
     expect(root.querySelector('.aside.left .sab-list')).toBeNull();
+  });
+});
+
+describe("VP-01 a busy rival still buys the Ore its paving wants", () => {
+  /** Rival plant on flat ground plus a strip of its OWN gravel: legal paving
+   *  targets, so `paveCandidates` is not empty and the only thing in the way is
+   *  the 4 Ore per tile. */
+  const rivalFixture = async () => {
+    const h = await boot();
+    const { buildTile } = await import("../../src/iso/track");
+    const spot = findFactorySpotNear(h.grid, "ore_mine", -1);
+    expect(spot).toBeTruthy();
+    h.eco.factories.push({ owner: "ai", ownerId: 2, tx: spot![0], ty: spot![1] });
+    let laid = 0;
+    for (let d = 1; d <= 4; d++) if (buildTile(h.track, "dirt", spot![0], spot![1] - d, 2)) laid++;
+    expect(laid).toBeGreaterThan(0);
+    h.finishSetup();
+    return h;
+  };
+
+  it("converts a surplus into Ore — two exchanges, the milestone price", async () => {
+    const h = await rivalFixture();
+    const rival = h.market.players[1];
+    Object.assign(rival.res, { grain: 40, wood: 40, stone: 40, oil: 40, ore: 0, gold: 0 });
+    // Four tiles × 4 Ore is the goal, 2 trades per turn is the budget, and the
+    // bank is the 4:1 the player gets — so Ore rises by exactly the exchanges.
+    expect(h.rivalBank()).toBe(2);
+    expect(rival.res.ore).toBe(2);
+    const need = (await import("../../src/iso/construction")).priceDepot(rival.res as never, 0).cost;
+    for (const c of ["grain", "wood", "stone", "oil"] as const) {
+      expect(rival.res[c] ?? 0).toBeGreaterThanOrEqual(need[c] ?? 0);   // plan intact
+    }
+    // …and it stops buying the moment the milestone is affordable: the next
+    // turns take the tiles, not more trades.
+    rival.res.ore = 16;
+    expect(h.rivalBank()).toBe(0);
+  });
+
+  it("refuses to sell a cargo the Depot plan still needs", async () => {
+    const h = await rivalFixture();
+    const rival = h.market.players[1];
+    // Spend the free opening Depot first (two build clocks), so `priceDepot`
+    // quotes the rival the REAL paid price — the guard only means something
+    // against a plan the rival actually owes.
+    Object.assign(rival.res, { grain: 40, wood: 40, stone: 40, oil: 40, ore: 40, gold: 0 });
+    h.aiTick(1_000_000);
+    h.aiTick(1_000_000 + AI_BUILD_MS);
+    expect(h.eco.harvesters.filter((d) => d.owner === "ai").length).toBeGreaterThan(0);
+
+    const { DEPOT_COST, priceDepot } = await import("../../src/iso/construction");
+    const need = priceDepot(rival.res as never, 0).cost;
+    // Three short of spare in every cargo the plan wants, and four in one it
+    // does not: both guards bite at once — never sell below the price of the
+    // next Depot, and never sell a stack the bank cannot even take.
+    const purse: Record<string, number> = { ore: 0, gold: 0 };
+    for (const c of ["grain", "wood", "stone", "oil"] as const) {
+      purse[c] = (need[c] ?? DEPOT_COST[c] ?? 0) + 3;
+    }
+    Object.assign(rival.res, purse);
+    const before = { ...rival.res };
+    expect(h.rivalBank()).toBe(0);
+    expect(rival.res).toEqual(before);
+  });
+
+  it("banks on a turn it spent building, not only on an idle one", async () => {
+    const h = await rivalFixture();
+    const rival = h.market.players[1];
+    Object.assign(rival.res, { grain: 40, wood: 40, stone: 40, oil: 40, ore: 0, gold: 0 });
+    const tiles = () => {
+      let n = 0;
+      for (let i = 0; i < h.track.owner.length; i++) if (h.track.owner[i] === 2) n++;
+      return n;
+    };
+    const t0 = 1_000_000;
+    h.aiTick(t0);                        // arms the raid clock; no Gold to raid with
+    const before = tiles();
+    h.aiTick(t0 + AI_BUILD_MS);
+    expect(tiles(), "the turn should have been spent building, not idling").toBeGreaterThan(before);
+    // The regression this whole test is about: before `rivalBankTowardPave` the
+    // bank lived only on IDLE turns, so a rival that could always afford one
+    // more dirt tile never bought the Ore that turns forty of them into points —
+    // the stall the 5-seed playtest measured at 6.5★ with 27 un-paved tiles.
+    expect(rival.res.ore ?? 0, "it acted, and it banked anyway").toBeGreaterThan(0);
   });
 });

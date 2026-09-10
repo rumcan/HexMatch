@@ -10,7 +10,7 @@ import {
 import { isServiced, type EconomyState, type Factory } from "../../src/iso/economy";
 import { generateMap, GRASS, WATER, ROUGH, TOWN_OCC, type Grid, type Industry } from "../../src/iso/grid";
 import { MAP_W, MAP_H } from "../../src/game/config";
-import { INDUSTRY_BY_KEY, TRANSPORT } from "../../src/iso/config";
+import { INDUSTRY_BY_KEY, TRANSPORT, UPGRADE_COST } from "../../src/iso/config";
 import { DEPOT_COST, FREE_SETUP_DEPOTS } from "../../src/iso/construction";
 import { canReachASpot } from "./helpers/rival-map";
 
@@ -257,10 +257,18 @@ describe("E7 planning", () => {
     expect(TRANSPORT.road.cost.ore).toBeGreaterThan(0);
   });
 
-  it("uses road when it can afford it", () => {
+  it("builds dirt by default and road only when told to pave", () => {
+    // VP-01 changed the default. A Road laid on virgin ground buys throughput
+    // but no points, and 4 extra Ore a tile it will never see back — so the
+    // planner lays gravel, keeps the ore, and the POINTS come from the pave
+    // pass (`planUpgrades`), which is 4 Ore and 0.25★ on a tile it already
+    // owns. `preferPaved` is the option that still asks for road up front.
     const grid = flatGrid([ind("farm", 10, 5)]);
     const plan = planCandidates(state(grid), F, { stock: {}, purse: rich });
-    expect(plan[0].kind).toBe("road");
+    expect(plan.length).toBeGreaterThan(0);
+    expect(plan.every((c) => c.kind === "dirt")).toBe(true);
+    const paved = planCandidates(state(grid), F, { stock: {}, purse: rich, preferPaved: true });
+    expect(paved[0].kind).toBe("road");
   });
 
   it("returns nothing when it can afford nothing", () => {
@@ -592,8 +600,9 @@ describe("W9 the rival's setup allowance buys dirt only", () => {
     expect(plan.length).toBeGreaterThan(0);
     expect(plan.every((c) => c.kind === "dirt"), "free road is the W9 bug").toBe(true);
 
-    // with ore it prefers road again — and now prices every tile of it
-    const paid = planCandidates(s, F, { stock: {}, purse: { wood: 12, stone: 12, ore: 9999 }, free: 12, freeDepots: 1 });
+    // with ore AND `preferPaved` it takes road again — and now prices every
+    // tile of it (VP-01 made the plain default dirt, so the option is required)
+    const paid = planCandidates(s, F, { stock: {}, purse: { wood: 12, stone: 12, ore: 9999 }, free: 12, freeDepots: 1, preferPaved: true });
     expect(paid[0].kind).toBe("road");
     expect(paid[0].cost.ore).toBe(TRANSPORT.road.cost.ore! * paid[0].path.tiles.length);
   });
@@ -601,7 +610,7 @@ describe("W9 the rival's setup allowance buys dirt only", () => {
   it("a road build consumes no allowance, so the rival keeps its dirt budget", () => {
     const grid = flatGrid([ind("farm", 12, 5)]);
     const s = state(grid);
-    const road = aiBuildStep(s, F, { stock: {}, purse: { wood: 12, stone: 12, ore: 9999 }, free: 12, freeDepots: 1 }, 1)!;
+    const road = aiBuildStep(s, F, { stock: {}, purse: { wood: 12, stone: 12, ore: 9999 }, free: 12, freeDepots: 1, preferPaved: true }, 1)!;
     expect(road).toBeTruthy();
     expect(road.kind).toBe("road");
     expect(road.free).toBe(0);
@@ -619,16 +628,29 @@ describe("W9 the rival's setup allowance buys dirt only", () => {
   it("prices a road plan the same way the human drag preview does", () => {
     const grid = flatGrid([ind("farm", 12, 5)]);
     const s = state(grid);
-    const purse = { wood: 12, stone: 12, ore: 8 };   // two road tiles' worth of ore
-    const plan = planCandidates(s, F, { stock: {}, purse, free: 12, freeDepots: 1 });
-    const road = plan.filter((c) => c.kind === "road");
-    // every road candidate must fit the purse: 8 ore = at most 2 tiles
-    for (const c of road) expect(c.cost.ore ?? 0).toBeLessThanOrEqual(8);
-    const out = aiBuildStep(s, F, { stock: {}, purse, free: 12, freeDepots: 1 }, 1);
-    if (out?.kind === "road") {
-      expect(out.spent.ore).toBeLessThanOrEqual(8);
-      expect(out.free).toBe(0);
-    }
+    // 8 Ore will not pay for the ~7 tiles of a paved line from F to the farm, so
+    // the affordability bound must refuse the whole road plan — and VP-01's
+    // default would have bought the same reach in gravel for free.
+    const purse = { wood: 12, stone: 12, ore: 8 };
+    const opts = { stock: {}, purse, free: 12, freeDepots: 1, preferPaved: true as const };
+    const plan = planCandidates(s, F, opts);
+    expect(plan.length).toBeGreaterThan(0);
+    expect(plan.every((c) => c.kind === "dirt")).toBe(true);
+    const out = aiBuildStep(s, F, opts, 1)!;
+    expect(out.kind).toBe("dirt");
+    expect(out.spent.ore ?? 0).toBe(0);
+
+    // …with ore to spare the SAME path is priced tile for tile at the full road
+    // price, which is what `previewDrag` charges a human for that drag (W9),
+    // and a paid tier still burns none of the free dirt allowance.
+    const s2 = state(grid);
+    const paved = aiBuildStep(
+      s2, F, { stock: {}, purse: { wood: 99, stone: 99, ore: 9999 }, free: 12, freeDepots: 1, preferPaved: true }, 1,
+    )!;
+    expect(paved.kind).toBe("road");
+    expect(paved.built.length).toBeGreaterThan(0);
+    expect(paved.spent.ore).toBe((TRANSPORT.road.cost.ore ?? 0) * paved.built.length);
+    expect(paved.free).toBe(0);
   });
 });
 
@@ -654,7 +676,7 @@ describe("T4 routing regressions", () => {
   it("does not prune affordable extensions of a long existing trunk", () => {
     const grid = flatGrid([ind("farm", 65, 5)]), track = createTrack();
     for (let x = 5; x <= 60; x++) buildTile(track, "dirt", x, 5);
-    const candidate = bestCandidate(state(grid, track), F, { stock: {}, purse: { wood: 4, stone: 4 }, preferRail: false, freeDepots: 1 });
+    const candidate = bestCandidate(state(grid, track), F, { stock: {}, purse: { wood: 4, stone: 4 }, freeDepots: 1 });
     expect(candidate).toBeTruthy();
     expect(candidate!.cost.stone).toBeLessThanOrEqual(4);
     expect(candidate!.path.tiles[0]).toEqual([60, 5]);
@@ -663,9 +685,18 @@ describe("T4 routing regressions", () => {
   it("does not charge stone in the affordability bound for dirt-to-road upgrades", () => {
     const grid = flatGrid([ind("farm", 15, 5)]), track = createTrack();
     for (let x = 5; x <= 14; x++) buildTile(track, "dirt", x, 5);
-    const candidate = bestCandidate(state(grid, track), F, { stock: {}, purse: { ore: 40 }, freeDepots: 1 });
+    // `preferPaved` is what VP-01 needs here: the claim under test is that a
+    // path riding existing gravel is bound by the UPGRADE price (4 Ore), not by
+    // the full road price — dirt would be cheaper still, and is the default now.
+    const candidate = bestCandidate(state(grid, track), F, { stock: {}, purse: { ore: 40 }, freeDepots: 1, preferPaved: true });
     expect(candidate?.kind).toBe("road");
-    expect(candidate?.cost).toEqual({ ore: 40 });
+    // The whole bound is an UPGRADE price: the one tile this plan has to touch
+    // is already the AI's own gravel, so it costs Ore and nothing else — no
+    // Wood, no Stone, which is the thing this test was written for. The rest of
+    // the trunk is not in `path.tiles` at all: `networkTiles` seeds the search
+    // from the MERGED network, so a rival never re-prices ground it already owns.
+    expect(candidate!.cost).toEqual({ ore: UPGRADE_COST.ore });
+    expect(candidate!.path.tiles).toEqual([[14, 5]]);
   });
 
   it("finds an affordable rival opening beyond the old eight far-corner probes", () => {

@@ -36,27 +36,39 @@ import { generateMap, resolveMapSeed, type Grid, type Industry } from "./grid";
 import {
   createTrack, drawBits, previewDrag, commitDrag, canBuildOn, hasTrack,
   demolishTile, tIdx, playerNetwork, canAfford, buildRefusal, seedTownRoads,
-  seedPublicRoads, isPublicRoad,
+  seedPublicRoads, isPublicRoad, isUpgradedRoad, tileCost,
   type Track, type TrackKind, type Purse, type DragPreview,
 } from "./track";
 import {
-  createScoreState, rescore, vpFor, industriesInCatchment, ownerIdOf,
+  industriesInCatchment, ownerIdOf,
   playerResources, buildAllComponents, resolveConnection,
   pickBlockadeTarget,
-  type EconomyState, type Factory, type Harvester, type ScoreState, type VpEvent,
+  type EconomyState, type Factory, type Harvester,
 } from "./economy";
-import { aiBuildStep, chooseRivalFactorySpot, planCandidates } from "./ai";
+// VP-01: the scoreboard lives in its own module now, because what it counts
+// changed from "connections a player has made" to "tiles and plants a player
+// has UPGRADED" — a different question about a different part of the state.
+import {
+  createScoreState, rescore, vpFor, hasWon, fmtVp, paveVp, vpDeltaText,
+  victoryBreakdown,
+  type ScoreState, type VpEvent,
+} from "./victory";
+import {
+  aiBuildStep, chooseRivalFactorySpot, planCandidates, planUpgrades, executePaves,
+  paveCandidates,
+} from "./ai";
 import { planDepotPlacement, planFactoryPlacement, type PlacementPlan } from "./placement";
 import {
   PLANT_COST, PLANT_REFUSAL_TEXT, addPlant, adjacentTown, canAffordPlant,
   chooseAiPlantSpot, footprintTiles, plantRefusal, plantsOf,
 } from "./plants";
 import {
-  CARGO, CARGOES, FACTORY_FOOTPRINT, FACTORY_SPRITE, INDUSTRY_BY_KEY, TRANSPORT, VP_TARGET,
+  CARGO, CARGOES, FACTORY_FOOTPRINT, FACTORY_SPRITE, INDUSTRY_BY_KEY, TRANSPORT,
+  VICTORY, VP_TARGET, UPGRADE_COST,
   depotSpriteForCargo, townHouseSprite, type Cargo,
 } from "./config";
 import {
-  DEPOT_COST, FREE_SETUP_DEPOTS, costLabel, priceDepot, shortfallLabel,
+  DEPOT_COST, FREE_SETUP_DEPOTS, costCompact, costLabel, priceDepot, shortfallLabel,
 } from "./construction";
 import { bankTrade } from "../game/trade";
 import {
@@ -95,7 +107,26 @@ export { joinFromSnapshot };
  */
 export const FREE_SETUP_TRACK = 12;
 export const HARVEST_MS = 3000;      // economy tick
+/**
+ * The rival's build clock. VP-01: two numbers now, because a clock that only
+ * ever FIRES turns a rival that cannot yet afford anything into a rival that
+ * idles for nine seconds at a time — and under a pave-for-points economy, an
+ * idle ten seconds is four Ore of tarmac the player gets for free.
+ *
+ *   AI_BUILD_MS  a turn that achieved something waits this long for the next;
+ *   AI_IDLE_MS   a turn that achieved NOTHING (nothing affordable, no plan)
+ *                retries in 2.5s instead, right after the next trickle tick
+ *                lands. Same purse, same prices, no cheat — just no dead time.
+ */
 export const AI_BUILD_MS = 9000;
+export const AI_IDLE_MS = 2500;
+/**
+ * VP-01: how much Gold the rival keeps back for its own economy when it buys a
+ * Blockade. Gold buys sabotage and nothing else (PP-08), but a rival that has
+ * spent its last coin on a hit and cannot pay for its next Depot has won the
+ * exchange and lost the turn, so it holds this much in reserve.
+ */
+export const RIVAL_GOLD_RESERVE = 2;
 /**
  * PP-07: start with wood + stone for the basic Dirt Road (12 paid tiles — the
  * E8 opening curve, now that a Dirt Road tile costs 1 Wood + 1 Stone), and no
@@ -428,35 +459,79 @@ export function startIsoGame(root: HTMLElement) {
     renderer?.setWorld(world);
   };
 
-  const applyVpEvents = (events: VpEvent[]) => {
+  /**
+   * VP-01: turn the scoreboard's diff into what the player sees.
+   *
+   * Two rules shape this, both from the same worry: a drag that paves twelve
+   * tiles must not print twelve toasts (the old per-connection event stream was
+   * already unreadable at that size), and a point that vanishes without a word
+   * is the single most confusing thing this system can do. So events are
+   * AGGREGATED per (source, direction) into one line, and the first few are
+   * also floated on the map at the tile that earned or lost them — the number
+   * appears where the road is, not only on the scoreboard.
+   */
+  const MAX_FLOATS_PER_EVENT = 4;
+  function applyVpEvents(events: VpEvent[], now: number) {
+    if (!events.length) return;
+    type Bucket = { n: number; vp: number; spots: [number, number][] };
+    const byOwner = new Map<string, Map<string, Bucket>>();
     for (const e of events) {
-      const h = eco.harvesters.find((x) => x.id === e.harvester);
-      const owner = h?.owner ?? score.owners.get(e.harvester);
-      if (owner !== "you") continue;
-      if (e.type === "awarded") toast(`Connected by ${e.to} — +${e.delta} VP`, "good");
-      else if (e.type === "revoked") toast(`Connection broken — ${e.delta} VP`, "bad");
-      else if (e.type === "upgraded") toast(`Paved over — upgraded to Road, +${e.delta} VP`, "good");
-      else if (e.type === "downgraded") toast(`Paved Road broken, fell back to Dirt Road — ${e.delta} VP`, "bad");
+      let kinds = byOwner.get(e.owner);
+      if (!kinds) byOwner.set(e.owner, kinds = new Map());
+      const key = `${e.source}:${e.type}`;
+      const b = kinds.get(key) ?? { n: 0, vp: 0, spots: [] };
+      b.n++;
+      b.vp += e.delta;
+      if (b.spots.length < MAX_FLOATS_PER_EVENT) b.spots.push([e.tx, e.ty]);
+      kinds.set(key, b);
     }
-  };
-
-  const rescoreNow = () => {
-    applyVpEvents(rescore(eco, score));
-    trucksDirty = true;   // RV-01: the network changed — replan the lorries
-    netVersion++;         // RV-03: drop the hover-route cache so the closest route is re-checked
-    if (phase === "play") {
-      for (const p of players) {
-        if (vpFor(score, p.id) >= VP_TARGET) {
-          phase = "won"; winner = p;
-          toast(`${p.name} reached ${VP_TARGET} VP!`, p.human ? "good" : "bad");
+    for (const [owner, kinds] of byOwner) {
+      const mine = owner === "you";
+      for (const [key, b] of kinds) {
+        const [source, type] = key.split(":");
+        const gained = type === "awarded";
+        const label = source === "upgrade"
+          ? (gained
+            ? `Paved ${b.n} Dirt Road tile${b.n === 1 ? "" : "s"} · ${vpDeltaText(b.vp)}`
+            : `${b.n} paved tile${b.n === 1 ? "" : "s"} lost · ${vpDeltaText(b.vp)}`)
+          : (gained
+            ? `Processing plant raised · ${vpDeltaText(b.vp)}`
+            : `Processing plant lost · ${vpDeltaText(b.vp)}`);
+        if (!mine) continue;          // the rival's line is its own business
+        toast(label, gained ? "good" : "bad");
+        for (const [tx, ty] of b.spots) {
+          floats.add(vpDeltaText(b.vp / b.n), tx, ty, { cls: gained ? "delivery" : "sabotage", now });
         }
       }
     }
+    // the scoreboard's own tie-breaker: whoever crosses 10★ first, wins
+    if (phase === "play") {
+      for (const p of players) {
+        if (!hasWon(score, p.id)) continue;
+        phase = "won"; winner = p;
+        const b = victoryBreakdown(eco, p.id);
+        toast(`${p.name} wins — ${fmtVp(vpFor(score, p.id))}★ `
+          + `(${b.paved} paved tile${b.paved === 1 ? "" : "s"}, ${b.plants} plant${b.plants === 1 ? "" : "s"})`,
+        p.human ? "good" : "bad");
+      }
+    }
+  }
+
+  /**
+   * The one place the scoreboard is consulted, on every build and demolish
+   * (VP-01: it reads the track's pave provenance and the plant list, so it is
+   * still a network event and never a clock).
+   */
+  const rescoreNow = () => {
+    const now = performance.now();
+    applyVpEvents(rescore(eco, score), now);
+    trucksDirty = true;   // RV-01: the network changed — replan the lorries
+    netVersion++;         // RV-03: drop the hover-route cache so the closest route is re-checked
     // J1: the network just changed. Recompute what the quarry may pay and
     // spawn tokens for cargo that became reachable — no waiting for the 20s
     // clock, because "I connected it and nothing happened" is how this join
     // would look broken.
-    quarry.refresh(performance.now());
+    quarry.refresh(now);
   };
 
   // ── actions ────────────────────────────────────────────────────────────
@@ -842,6 +917,54 @@ export function startIsoGame(root: HTMLElement) {
    * track leg and the Depot together — so it never trades away a cargo
    * that plan still needs.
    */
+  /** VP-01: the OTHER milestone the bank can be pointed at — the pavement the
+   *  rival can ALMOST afford. Ore comes out of one industry type, so a rival
+   *  that never reached a mine has no route to the scoreboard at all, and a
+   *  route it cannot fund is not a plan. This lets the 4:1 bank buy INTO the
+   *  victory condition instead of only into the next Depot. */
+  const paveMilestone = (tiles = 4): Purse | null => {
+    const ranked = paveCandidates(eco, {
+      owner: rival.id, ownerId: rival.i + 1, purse: rival.purse, maxTiles: tiles,
+    });
+    if (!ranked.length) return null;
+    let ore = 0;
+    for (const t of ranked.slice(0, tiles)) ore += tileCost(track, "road", t.x, t.y).ore ?? 0;
+    return ore > 0 ? { ore } : null;
+  };
+
+  /**
+   * VP-01: one bank aimed at the SCOREBOARD rather than at the next Depot.
+   *
+   * `rivalBankTowardPlan` only runs on an idle turn — and a rival with Wood to
+   * burn is never idle: it would rather lay its fortieth gravel tile than buy the
+   * Ore that turns thirty of them into points. That is exactly how it stalled a
+   * measured race at 6.5★ owning 27 un-paved tiles (seed 2024,
+   * `tests/unit/iso-vp-race.test.ts`): busy every turn, pointless every turn.
+   * So the rival converts into Ore whenever it has gravel it wants to pave and
+   * cannot afford to — and never sells a cargo the Depot plan still needs, so
+   * this cannot starve the build step it is competing with.
+   */
+  function rivalBankTowardPave(): number {
+    const want = paveMilestone(4);
+    if (!want) return 0;
+    const price = UPGRADE_COST.ore ?? 4;
+    const need = want.ore ?? 0;
+    if ((rival.purse.ore ?? 0) >= need) return 0;          // it can already pay
+    const depot = priceDepot(rival.purse, rival.freeDepots).cost;
+    const trader = { res: rival.purse };
+    let trades = 0;
+    while ((rival.purse.ore ?? 0) < need && trades < 2) {
+      const surplus = (CARGOES as Cargo[])
+        .filter((c) => c !== "gold" && c !== "ore" && (rival.purse[c] ?? 0) >= price)
+        .filter((c) => (rival.purse[c] ?? 0) - price >= (depot[c] ?? 0))
+        .sort((a, b) => (rival.purse[b] ?? 0) - (rival.purse[a] ?? 0))[0];
+      if (!surplus) return trades;
+      if (!bankTrade(trader, surplus, "ore")) return trades;
+      trades++;
+    }
+    return trades;
+  }
+
   const rivalBankTowardPlan = (f: Factory) => {
     // Price with a HYPOTHETICAL deep purse: `planCandidates` drops plans the
     // purse cannot finish, and the plan to bank toward is exactly one of
@@ -873,9 +996,21 @@ export function startIsoGame(root: HTMLElement) {
     const chosen = [...cands].sort(
       (a, b) => shortfall(a) - shortfall(b) || b.score - a.score,
     )[0];
-    const target: Purse = {};
-    for (const [k, v] of Object.entries(chosen.cost)) target[k as Cargo] = v;
-    for (const [k, v] of Object.entries(depot)) target[k as Cargo] = (target[k as Cargo] ?? 0) + v;
+    const planTarget: Purse = {};
+    for (const [k, v] of Object.entries(chosen.cost)) planTarget[k as Cargo] = v;
+    for (const [k, v] of Object.entries(depot)) planTarget[k as Cargo] = (planTarget[k as Cargo] ?? 0) + v;
+    // …and the scoreboard's own milestone competes with it. Whichever is FEWER
+    // trades away gets the turn, so a rival one trade short of four paves
+    // paves — 1★ of score and the ×1.6 — rather than grinding out a depot.
+    const gap = (p: Purse): number => {
+      let missing = 0;
+      for (const [k, v] of Object.entries(p) as [Cargo, number][]) {
+        missing += Math.max(0, v - (rival.purse[k] ?? 0));
+      }
+      return missing;
+    };
+    const paveTarget = paveMilestone(4);
+    const target: Purse = paveTarget && gap(paveTarget) < gap(planTarget) ? paveTarget : planTarget;
     const trader = { res: rival.purse };
     let trades = 0;
     for (const [cargo, need] of Object.entries(target) as [Cargo, number][]) {
@@ -928,45 +1063,154 @@ export function startIsoGame(root: HTMLElement) {
     toast(`The rival hit your plant with ${def.name}!`, "bad");
   }
 
+  /**
+   * VP-01: is there a plant the rival could still raise, and does it have the
+   * Ore to raise it? The pave pass asks this before it spends: 1★ for
+   * 3 Ore beats 0.25★ for 4, so a rival one Ore short of its next plant keeps
+   * that Ore instead of paving with it.
+   */
+  const rivalPlantWanted = (): boolean => {
+    if (canAffordPlant(rival.purse)) return false;          // it is buying it this turn
+    if (!chooseAiPlantSpot(grid, track, eco, rival.id)) return false;   // nowhere legal
+    return true;
+  };
+
+  /** The rival paves what it can afford, charges itself, and lets `rescoreNow`
+   *  price the points. Returns false when there was nothing to pave. */
+  function rivalPavePass(): boolean {
+    const plan = planUpgrades(eco, {
+      owner: rival.id, ownerId: rival.i + 1, purse: rival.purse,
+      keepOre: rivalPlantWanted() ? (PLANT_COST.ore ?? 0) : 0,
+    });
+    if (!plan) return false;
+    // Charge UP FRONT, exactly as `placePlant` does, and hand back the
+    // difference if a tile turned unbuildable between planning and building
+    // (the player torn up the gravel under it). That ordering is what makes a
+    // failed action cost nothing: `spend` is affordability-guarded, so either
+    // every tile is paid for or the purse is untouched.
+    if (!spend(rival, plan.cost)) return false;
+    const out = executePaves(eco, plan, rival.i + 1);
+    if (!out.built.length) {
+      earn(rival, plan.cost);              // nothing was built: nothing is owed
+      return false;
+    }
+    for (const [cargo, v] of Object.entries(plan.cost) as [Cargo, number][]) {
+      const owed = v - (out.spent[cargo] ?? 0);
+      if (owed > 0) earn(rival, { [cargo]: owed });
+    }
+    for (const [bx, by] of out.built) renderer?.invalidateTile(bx, by);
+    return true;
+  }
+
+  /**
+   * One rival turn. VP-01 restructured this from "one build, or nothing" into
+   * the three actions the new scoreboard actually pays for, most-valuable
+   * first, and made the turn idempotent-proof: every action charges itself and
+   * nothing is spent on a plan that fails.
+   *
+   *   1. a PLANT (1★, and it widens delivery reach) — same rule + cost path as
+   *      the human's click, so no AI-only adjacency bypass (PP-06);
+   *   2. a DEPOT on the best-valued catchment it can afford, priced with the
+   *      SAME model the player's drag preview uses (W3) — `freeDepots`
+   *      included, so its opening Depot is free and every later one pays for
+   *      Oil it has to have earned (PP-05);
+   *   3. the PAVE pass — 0.25★ a tile and the ×1.6 multiplier, with the Ore
+   *      the first two actions left over.
+   *
+   * A tick that achieves nothing banks toward the plan it wants (PP-07's
+   * escape from the dependency loop) and retries once; if even that fails it
+   * shortens its own clock to `AI_IDLE_MS` rather than burning nine seconds of
+   * the player's lead.
+   */
+  /**
+   * VP-01: the rival's own Black Market play.
+   *
+   * `rivalRaid` wrecks the PLAYER's plant with a random affordable action,
+   * which is honest but blunt: it spent its whole Gold on Frost Tiles against
+   * an opponent it is losing a road race to. Under VP-01 the thing worth
+   * stopping is the rival's ORE, and Ore comes out of one industry, so the
+   * rival now buys a Blockade on the player's most productive district first —
+   * the same auto-targeting rule (TK-008) the player buys, the same Gold price,
+   * and the same "one rival, no targeting step" shape.
+   *
+   * Two guards keep it fair rather than mean: it never spends the last of its
+   * Gold (a Depot costs Oil and Oil comes from an economy it still has to
+   * build, so a rival that blocks and then cannot expand has traded a point of
+   * tempo for none), and it never buys when the player has nothing connected to
+   * blockade — no charge for an empty hit.
+   */
+  function rivalSabotage(now: number) {
+    const price = SABOTAGE.bandit.gold;
+    if ((rival.purse.gold ?? 0) < price + RIVAL_GOLD_RESERVE) return;
+    const target = pickBlockadeTarget(eco, "you", now);
+    if (!target) return;
+    if (!spend(rival, { gold: price })) return;
+    target.banditUntil = now + BANDIT_MS;
+    const def = INDUSTRY_BY_KEY[target.type];
+    floats.add("⛓ BLOCKADED", target.tx, target.ty, { cls: "sabotage", now });
+    toast(`The rival blockaded your ${def?.name ?? target.type} — no harvest there for ${BANDIT_MS / 1000}s.`, "bad");
+  }
+
   function aiTick(now: number) {
     if (phase !== "play") return;
     if (now - lastAi < AI_BUILD_MS) return;
     lastAi = now;
     rivalRaid(now);
+    rivalSabotage(now);
     const f = factoryOf("ai");
     if (!f) return;
-    // PP-06: the rival expands too, through the SAME rule + cost path — no
-    // AI-only fallback that skips town adjacency or the charge.
+    let acted = false;
+
+    // 1. plant — the cheapest victory point on the board
     if (canAffordPlant(rival.purse)) {
       const spot = chooseAiPlantSpot(grid, track, eco, rival.id);
-      if (spot && placePlant(spot[0], spot[1], rival)) return;
+      if (spot && placePlant(spot[0], spot[1], rival)) acted = true;
     }
-    // W3: the rival plans with the SAME cost model as the player — its free
-    // setup allowance first, then its purse. (W2's ownership change is what
-    // un-sticks it: the rival no longer "sees" itself as connected across
-    // the player's road, so it actually decides to build.)
-    // PP-05: `freeDepots` rides along with `free`, so the rival prices its
-    // Depot with the same table the player pays — its opening Depot is free on
-    // the same allowance, and every later one needs Oil it has to have earned.
+
+    // 2. depot — W3: the same cost model as the player's preview, allowance first
     const opts = {
       stock: rival.purse, purse: rival.purse,
-      free: rival.freeTrack, freeDepots: rival.freeDepots,
+      free: rival.freeTrack, freeDepots: rival.freeDepots, now,
     };
     const harvesterId = allocHarvesterId();
-    let out = aiBuildStep(eco, f, opts, harvesterId);
-    if (!out) {
-      // PP-07: nothing affordable yet — bank toward the plan it wants and
-      // retry once, the way a player trades for a missing material.
-      rivalBankTowardPlan(f);
-      out = aiBuildStep(eco, f, opts, harvesterId);
+    const out = aiBuildStep(eco, f, opts, harvesterId);
+    if (out) {
+      rival.freeTrack = Math.max(0, rival.freeTrack - out.free);
+      rival.freeDepots = Math.max(0, rival.freeDepots - out.freeDepots);
+      spend(rival, out.spent);
+      for (const [bx, by] of out.built) renderer?.invalidateTile(bx, by);
+      acted = true;
     }
-    if (!out) return;
-    rival.freeTrack = Math.max(0, rival.freeTrack - out.free);
-    rival.freeDepots = Math.max(0, rival.freeDepots - out.freeDepots);
-    spend(rival, out.spent);
-    for (const [bx, by] of out.built) renderer?.invalidateTile(bx, by);
-    syncWorld();
-    rescoreNow();
+
+    // 3. pave — what the scoreboard pays for, with whatever Ore is spare; and
+    //    when the Ore is not spare but the gravel is there, buy it (VP-01)
+    if (rivalPavePass()) acted = true;
+    else rivalBankTowardPave();
+
+    if (acted) {
+      syncWorld();
+      rescoreNow();
+      return;
+    }
+    // PP-07: nothing affordable at all — bank toward the plan it wants, then
+    // take the turn if the trade unlocked it. Retry in one harvest tick, not
+    // one build clock.
+    rivalBankTowardPlan(f);
+    const retry = aiBuildStep(eco, f, opts, allocHarvesterId());
+    if (retry) {
+      rival.freeTrack = Math.max(0, rival.freeTrack - retry.free);
+      rival.freeDepots = Math.max(0, rival.freeDepots - retry.freeDepots);
+      spend(rival, retry.spent);
+      for (const [bx, by] of retry.built) renderer?.invalidateTile(bx, by);
+    }
+    const paved = rivalPavePass();
+    if (retry || paved) {
+      syncWorld();
+      rescoreNow();
+      lastAi = now - AI_BUILD_MS + AI_IDLE_MS;    // something happened: soon again
+      return;
+    }
+    lastAi = now - AI_BUILD_MS + AI_IDLE_MS;       // idle: wake up after the next income tick
   }
 
   // ── rendering ──────────────────────────────────────────────────────────
@@ -1032,7 +1276,17 @@ export function startIsoGame(root: HTMLElement) {
   };
   const overlayItems = () => {
     if (preview) {
-      return preview.tiles.map(([x, y]) => ({ sprite: "highlight", tx: x, ty: y }));
+      const items: OverlayItem[] = preview.tiles.map(([x, y]) => ({ sprite: "highlight", tx: x, ty: y }));
+      // VP-01: a paved drag over your own gravel is the only road action that
+      // scores, so the preview rings the tiles it actually upgrades. Read from
+      // the same `tileCost` question the drag was priced with, so what is
+      // marked and what is charged can never disagree.
+      if (tool === "road") {
+        for (const [x, y] of preview.tiles) {
+          if (hasTrack(track, "dirt", x, y)) items.push({ sprite: "node_mark", tx: x, ty: y });
+        }
+      }
+      return items;
     }
     if (!hover) return [];
     if (phase === "setup-factory") return overlayItemsAt(hover.tx, hover.ty);
@@ -1068,8 +1322,9 @@ export function startIsoGame(root: HTMLElement) {
     // on the allowance, and the player should know the second one is not.
     else if (phase === "setup-harvester") banner = "Place your Depot — it needs an industry in its 4×4 catchment" +
       (me.freeDepots > 0 ? ` (this one is free; later Depots cost ${costLabel(DEPOT_COST)})` : "");
-    else if (phase === "won") banner = `${winner?.name} wins with ${vpFor(score, winner?.id ?? "")} VP`;
+    else if (phase === "won") banner = `${winner?.name} wins — ${fmtVp(vpFor(score, winner?.id ?? ""))}★`;
     else if (me.freeTrack > 0) banner = `${me.freeTrack} free track tiles remaining — connect your depot to your Factory`;
+    else if (tool === "dirt") banner = `Dirt Road scores nothing — paving it later is worth ${fmtVp(VICTORY.upgrade)}★ a tile`;
     else if (Object.keys(quarry.reach).length === 0) banner = "Nothing connected — the Processing Plant only pays cargo your network reaches";
     else if (tool === "plant") banner = `Raise another processing plant next to a town — ${plantCostLabel()}`;
     else banner = "Match the tokened gems in the Processing Plant to process";
@@ -1083,9 +1338,17 @@ export function startIsoGame(root: HTMLElement) {
       const n = preview.tiles.length;
       const label = parts.length ? parts.join(" + ")
         : (preview.free > 0 ? "free (setup)" : "free");
+      // VP-01: the modebar prices the SCORE the drag buys, from the same
+      // numbers the commit charges (W1, applied to points). Only paving your
+      // own gravel is worth anything, so a Road drag onto virgin ground says
+      // "+0★" out loud — which is the whole victory rule in one field.
+      const paved = preview.upgrades;
+      const vpTxt = tool === "road"
+        ? (paved > 0 ? `paves ${paved} · +${fmtVp(paveVp(paved))}★` : "+0★ · pave your dirt for points")
+        : "+0★ · dirt scores nothing";
       costInfo = `<span class="mb-txt"><b>${n}</b> tiles · ${label}</span>` +
         (preview.truncated ? ` · <i>blocked</i>` : "") +
-        `<span class="mb-cost">${(tool === "dirt" || tool === "road") ? TRANSPORT[tool].vp : 0} VP</span>`;
+        `<span class="mb-cost">${vpTxt}</span>`;
     } else if (tool === "plant" && hover) {
       // PP-06: the cost is PREVIEWED from the same constant the charge uses,
       // together with the refusal reason, so a click is never a surprise.
@@ -1093,8 +1356,10 @@ export function startIsoGame(root: HTMLElement) {
       const afford = canAffordPlant(me.purse);
       const note = why !== null ? PLANT_REFUSAL_TEXT[why]
         : afford ? "ready" : "not enough materials";
+      // VP-01: the plant is the other half of the scoreboard, so the price tag
+      // and the point come up together.
       costInfo = `<span class="mb-txt"><b>Processing plant</b> · ${note}</span>` +
-        `<span class="mb-cost">${plantCostLabel()}</span>`;
+        `<span class="mb-cost">${plantCostLabel()} · +${fmtVp(VICTORY.plant)}★</span>`;
     } else if (tool === "harvester" || phase === "setup-harvester") {
       // PP-05: "show the complete cost before placement" — the Depot tool
       // prices itself from the same `priceDepot` the click will charge, so the
@@ -1157,7 +1422,28 @@ export function startIsoGame(root: HTMLElement) {
           (f?.townId != null ? ` · town ${f.townId + 1}` : "") + `<br>` +
           `${served} depot${served === 1 ? "" : "s"} delivering here`;
       } else if (hover) {
-        const occ = grid.occupancy[tIdx(hover.tx, hover.ty)];
+        // VP-01: a road tile answers with what it is WORTH, which is the rule
+        // the whole victory system turns on and the one a player is most likely
+        // to have backwards: gravel is free plumbing (0★), the PAVE over it is
+        // the point, and a Road laid on virgin ground is not a pave at all.
+        const hIdx = tIdx(hover.tx, hover.ty);
+        const pavedHere = isUpgradedRoad(track, hover.tx, hover.ty);
+        const hasRoad = hasTrack(track, "road", hover.tx, hover.ty);
+        const hasDirt = hasTrack(track, "dirt", hover.tx, hover.ty);
+        if ((hasRoad || hasDirt) && grid.occupancy[hIdx] < 0) {
+          const owner = track.owner[hIdx];
+          const who = owner === me.i + 1 ? "yours" : owner === rival.i + 1 ? "the rival's" : "public";
+          const canPave = hasDirt && canBuildOn(grid, "road", hover.tx, hover.ty);
+          info = `<b>${pavedHere ? "Paved Road (upgraded)" : hasRoad ? "Road" : "Dirt Road"}</b> · ${who}<br>` +
+            (pavedHere && owner === me.i + 1
+              ? `<b>+${fmtVp(VICTORY.upgrade)}★</b> — this tile was paved over your Dirt Road`
+              : canPave
+                ? `pave it for <b>+${fmtVp(VICTORY.upgrade)}★</b> (${costCompact(UPGRADE_COST)})`
+                : hasDirt
+                  ? `rough ground — a paved Road can't be laid here`
+                  : `${who === "yours" ? `laid new — scores nothing; upgrade your gravel instead` : `not yours to score`}`);
+        }
+        const occ = grid.occupancy[hIdx];
         if (occ >= 0) {
           const ind: Industry = grid.industries[occ];
           const def = INDUSTRY_BY_KEY[ind.type];
@@ -1534,6 +1820,37 @@ export function startIsoGame(root: HTMLElement) {
     get phase() { return phase; },
     get tool() { return tool; },
     get vp() { return { you: vpFor(score, "you"), ai: vpFor(score, "ai") }; },
+    /** VP-01: the target and the two numbers behind a player's total. */
+    get vpTarget() { return VP_TARGET; },
+    get vpRates() { return { upgrade: VICTORY.upgrade, plant: VICTORY.plant }; },
+    victoryOf: (who: string) => victoryBreakdown(eco, who),
+    /** VP-01: how many of `who`'s tiles carry pave provenance (its score is
+     *  this × `VICTORY.upgrade`, plus 1★ a plant). */
+    pavedTiles: (who: string) => {
+      const id = players.find((p) => p.id === who)?.i;
+      if (id === undefined) return 0;
+      let n = 0;
+      for (let y = 0; y < MAP_H; y++) {
+        for (let x = 0; x < MAP_W; x++) {
+          if (track.owner[tIdx(x, y)] === id + 1 && isUpgradedRoad(track, x, y)) n++;
+        }
+      }
+      return n;
+    },
+    /** VP-01: run the rival's pave pass on demand (the AI turn's third action,
+     *  exposed so a test can assert the pave without waiting on the clock).
+     *  Atomic like the real turn: it rescores, so `vp.ai` is current after it. */
+    rivalPave: () => {
+      const ok = rivalPavePass();
+      if (ok) { syncWorld(); rescoreNow(); }
+      return ok;
+    },
+    /** VP-01: the "buy the Ore my paving wants" bank on its own, returning the
+     *  number of exchanges made (0 means a guard refused: nothing paveable, the
+     *  price already covered, or no cargo it could sell without starving the
+     *  Depot plan). `aiTick` calls exactly this on a turn the pave pass was
+     *  price-blocked, so the count is the rule under test without a clock. */
+    rivalBank: () => rivalBankTowardPave(),
     get purse() { return me.purse; },
     get harvesters() { return eco.harvesters; },
     get factories() { return eco.factories; },

@@ -202,3 +202,28 @@ All resource nodes use the updated `iso-ttd` art.
 Depot art dynamically changes based on the resource it is harvesting (lumbermill for wood, etc.).
 Factory footprint matches the tile dimensions of its new sprite.
 Towns are visually populated using the remaining building assets.
+
+VP-01 — Victory Points from Paving, and a Better AI Opponent
+Status: DONE
+Type: Victory-rule change / AI
+
+Requirements
+Give win points for the roads you upgrade from dirt to paved.
+Dirt roads do not give win points.
+A Road built on ground that was never your dirt does not give win points either: the point is for the upgrade.
+Each upgraded road tile is worth 0.25 VP — every four upgrades is one point (settled down from the proposed 0.5, which ended games too quickly).
+Building a processing plant gives 1 VP; only plants raised after the free opening Factory count.
+Demolishing a paved tile or a plant takes its point back.
+First to 10 VP wins.
+Full AI upgrade: the rival plays the new victory condition — it paves for points, values industries by VP per Ore, plans ore → pave → plant, stops wasting turns, banks toward the milestone it cannot yet afford, and reacts to the player's lead.
+
+Acceptance criteria
+A Dirt Road connection scores nothing; a paved tile scores 0.25 VP exactly once.
+A Road laid on virgin ground scores nothing, at the full Road price — paving is the cheaper, scoring path.
+Provenance survives save/load: a rejoined player sees the same score, because the upgrade bit travels on the tile (snapshot v9).
+Demolition revokes the point; paving the same tile twice cannot farm it.
+Points are owner-scoped: public highways and a rival's paving never land on your total.
+The scoreboard is derived from the board, so it can never drift from it.
+The AI scores by paving within the opening minutes and a full game between two AI-driven seats ends inside a session (see docs/playtest-reports/2026-09-10-vp01-vp-race.md).
+The UI explains the rule: tool labels, mode bar, inspector, banners and help all price the pave.
+Player, AI and multiplayer rules enforce the same restriction (no AI-only scoring path).

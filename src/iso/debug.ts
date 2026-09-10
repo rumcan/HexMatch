@@ -35,7 +35,8 @@ import { screenToWorld, visibleTileRange, worldToScreen, type Camera } from "./c
 import { flatPick, terrainSprite, type IsoRenderer } from "./renderer";
 import { WATER, ROUGH, industryAt, type Grid } from "./grid";
 import {
-  bitsAt, buildRefusal, hasTrack, isPublicRoad, ownerAt, playerNetwork, tIdx,
+  bitsAt, buildRefusal, hasTrack, isPublicRoad, isUpgradedRoad, ownerAt, playerNetwork,
+  PRESENT, tIdx,
   type Track, type TrackKind,
 } from "./track";
 import { catchmentRect, industriesInCatchment, type EconomyState } from "./economy";
@@ -202,6 +203,17 @@ export function createIsoDebug(ctx: DebugContext) {
         owner: ownerAt(ctx.track, tx, ty),
         /** PP-13: one of the map's public highways (owner PUBLIC_OWNER). */
         publicRoad: isPublicRoad(ctx.track, tx, ty),
+        /** VP-01: the paved Road here replaced a Dirt Road, so it is worth
+         *  `VICTORY.upgrade` to whoever owns the tile. This is the ONE bit the
+         *  scoreboard reads about a road, so a screenshot of a disputed point
+         *  resolves here. */
+        upgradedRoad: isUpgradedRoad(ctx.track, tx, ty),
+        /** VP-01: what a `road` build at this tile would be: nothing (already
+         *  paved), the in-place PAVE (dirt under it — the scored case), or a
+         *  fresh Road (full price, no point). */
+        paveState: hasTrack(ctx.track, "road", tx, ty)
+          ? (isUpgradedRoad(ctx.track, tx, ty) ? "upgraded" : "laid-new")
+          : hasTrack(ctx.track, "dirt", tx, ty) ? "paveable" : "empty",
       } : null,
       /** Would a build with the CURRENT tool be refused here, and why? */
       build: { kind: buildKind, ok: refusal === null, why: refusal },
@@ -325,6 +337,11 @@ export function createIsoDebug(ctx: DebugContext) {
       tiles: tiles.length,
       dirtTiles: dirt,
       roadTiles: road,
+      /** VP-01: the paved-over-dirt tiles in this network — the only road
+       *  tiles on the scoreboard. `paved * VICTORY.upgrade` is the road half of
+       *  the player's total, so a VP number in a screenshot is reproducible. */
+      pavedScoredTiles: [...ctx.track.upgraded].filter((v, i) => v !== 0
+        && (ctx.track.road[i] & PRESENT) !== 0 && ctx.track.owner[i] === owner).length,
       /** capped so the console stays readable; the count above is exact. */
       list: tiles.slice(0, 256),
       truncated: tiles.length > 256,

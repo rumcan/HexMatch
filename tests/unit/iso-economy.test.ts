@@ -4,9 +4,12 @@ import {
   buildComponents, buildAllComponents, linkedBy, resolveConnection,
   claimantCounts, harvesterYield, playerResources,
   industryClaimValues, pickBlockadeTarget,
-  createScoreState, rescore, vpFor,
   type EconomyState, type Harvester, type Factory,
 } from "../../src/iso/economy";
+// VP-01: Victory Points left this module with the connection. The economy is
+// THROUGHPUT now, so these tests assert the multiplier and — just as loudly —
+// that nothing here pays a point any more.
+import { createScoreState, rescore, vpFor } from "../../src/iso/victory";
 import {
   createTrack, buildTile, demolishTile, tIdx, PUBLIC_OWNER, type Track,
 } from "../../src/iso/track";
@@ -216,44 +219,80 @@ describe("E6 acceptance", () => {
     expect(res.grain).toBeGreaterThan(0);
   });
 
-  it("a road path scores 3 VP and applies the 1.6× multiplier", () => {
+  it("a road path applies the 1.6× multiplier and scores nothing itself", () => {
     const { state } = scenario("road");
     const comp = buildAllComponents(state.track, 1);
     const conn = resolveConnection(state, comp, state.harvesters[0]);
     expect(conn.kind).toBe("road");
-    expect(conn.vp).toBe(3);
     expect(conn.multiplier).toBe(1.6);
+    // VP-01: the connection object has no `vp` at all — the point lives on the
+    // tile that was paved, and a component that borrowed pavement from a public
+    // highway earns exactly nothing.
+    expect("vp" in conn).toBe(false);
+    const score = createScoreState();
+    expect(rescore(state, score)).toEqual([]);
+    expect(vpFor(score, "p1")).toBe(0);
     const res = playerResources(state, "p1", 0);
     expect(res.grain).toBeCloseTo(INDUSTRY_BY_KEY.farm.output * 1.6, 6);
   });
 
-  it("a dirt path scores 1 VP at 1.0×", () => {
+  it("a dirt path runs at 1.0× and is worth no points at all", () => {
     const { state } = scenario("dirt");
     const comp = buildAllComponents(state.track, 1);
     const conn = resolveConnection(state, comp, state.harvesters[0]);
     expect(conn.kind).toBe("dirt");
-    expect(conn.vp).toBe(1);
     expect(conn.multiplier).toBe(1);
+    // the ticket's headline: a gravel connection is free plumbing, 0★
+    const score = createScoreState();
+    expect(rescore(state, score)).toEqual([]);
+    expect(vpFor(score, "p1")).toBe(0);
     expect(playerResources(state, "p1", 0).grain)
       .toBeCloseTo(INDUSTRY_BY_KEY.farm.output, 6);
   });
 
-  it("demolishing one dirt tile mid-path stops output and revokes VP", () => {
+  it("demolishing one dirt tile mid-path stops output", () => {
     const { state, track } = scenario();
     const score = createScoreState();
-    let events = rescore(state, score);
-    expect(events).toEqual([
-      { harvester: 1, type: "awarded", from: null, to: "dirt", delta: 1 },
-    ]);
-    expect(vpFor(score, "p1")).toBe(1);
+    // nothing to revoke, because a dirt connection was never worth a point
+    expect(rescore(state, score)).toEqual([]);
+    expect(vpFor(score, "p1")).toBe(0);
     expect(playerResources(state, "p1", 0).grain).toBeGreaterThan(0);
 
     demolishTile(track, "dirt", 15, 10);      // cut the trunk mid-path
-    events = rescore(state, score);
-    expect(events).toEqual([
-      { harvester: 1, type: "revoked", from: "dirt", to: null, delta: -1 },
+    expect(rescore(state, score)).toEqual([]);
+    expect(vpFor(score, "p1")).toBe(0);
+    expect(playerResources(state, "p1", 0).grain).toBeUndefined();
+  });
+
+  it("paving one tile of that dirt trunk pays 0.25★ AND doubles the line", () => {
+    // VP-01's two halves in one scenario: the point is on the tile, the
+    // multiplier is on the connection, and they arrive together because both
+    // read the same merged component.
+    const { state, track } = scenario();
+    const score = createScoreState();
+    rescore(state, score);
+    expect(vpFor(score, "p1")).toBe(0);
+
+    buildTile(state.track, "road", 15, 10, 1);       // pave one gravel tile
+    const events = rescore(state, score);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ source: "upgrade", type: "awarded", delta: 0.25 });
+    expect(vpFor(score, "p1")).toBe(0.25);
+    const comp = buildAllComponents(track, 1);
+    expect(resolveConnection(state, comp, state.harvesters[0]).multiplier).toBe(1.6);
+    expect(playerResources(state, "p1", 0).grain)
+      .toBeCloseTo(INDUSTRY_BY_KEY.farm.output * 1.6, 6);
+
+    // Tear the pavement up and the point goes back with it. Note what the tile
+    // becomes: paving CONSUMED the gravel (a paved tile is one layer, not two),
+    // so demolition leaves a hole rather than a dirt road — the line is cut, and
+    // the player pays to re-lay it. Existing construction rule, unchanged here.
+    demolishTile(track, "road", 15, 10);
+    expect(rescore(state, score)).toEqual([
+      { source: "upgrade", type: "revoked", owner: "p1", delta: -0.25, tx: 15, ty: 10 },
     ]);
     expect(vpFor(score, "p1")).toBe(0);
+    expect(resolveConnection(state, buildAllComponents(track, 1), state.harvesters[0]).multiplier).toBe(0);
     expect(playerResources(state, "p1", 0).grain).toBeUndefined();
   });
 
@@ -300,10 +339,11 @@ describe("E6 acceptance", () => {
     state.factories.push({ owner: "p2", ownerId: 2, tx: 28, ty: 11 });   // K0: ≤31
     expect(playerResources(state, "p2", 0)).toEqual({});
     const score = createScoreState();
-    const events = rescore(state, score);
-    // only p1's connection is scored; p2's unserviced harvester earns no VP
-    expect(events.filter((e) => e.type === "awarded")).toHaveLength(1);
-    expect(vpFor(score, "p1")).toBe(1);
+    // VP-01: neither of them scores. p1's line is live but pure gravel, p2's
+    // harvester is unserviced — and under the new rules those are the same
+    // number. What separates the players is whose track reaches the industry.
+    expect(rescore(state, score)).toEqual([]);
+    expect(vpFor(score, "p1")).toBe(0);
     expect(vpFor(score, "p2")).toBe(0);
 
     // The moment p2 lays its OWN dirt home, it connects on its own.
@@ -350,7 +390,7 @@ describe("E6 acceptance", () => {
 });
 
 describe("E6 road beats dirt", () => {
-  it("takes the road multiplier and VP when both paths exist", () => {
+  it("takes the road multiplier when both paths exist", () => {
     const farm = ind("farm", 12, 11);
     const grid = flatGrid([farm]);
     const track = createTrack();
@@ -367,7 +407,7 @@ describe("E6 road beats dirt", () => {
       .toBeCloseTo(INDUSTRY_BY_KEY.farm.output * TRANSPORT.road.throughput, 6);
   });
 
-  it("falls back to dirt and revokes the road VP when the road breaks", () => {
+  it("falls back to dirt when the road breaks", () => {
     const grid = flatGrid([ind("farm", 12, 11)]);
     const track = createTrack();
     run(track, "dirt", 6, 20, 10, 1);
@@ -378,18 +418,21 @@ describe("E6 road beats dirt", () => {
       factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }],
     };
     const score = createScoreState();
-    rescore(state, score);
-    expect(vpFor(score, "p1")).toBe(3);
+    // the road line earns NO point of its own: it was laid on clean ground, so
+    // nobody upgraded anything. Only the multiplier moved.
+    expect(rescore(state, score)).toEqual([]);
+    expect(vpFor(score, "p1")).toBe(0);
+    expect(playerResources(state, "p1", 0).grain)
+      .toBeCloseTo(INDUSTRY_BY_KEY.farm.output * 1.6, 6);
 
     demolishTile(track, "road", 15, 12);
-    const events = rescore(state, score);
-    expect(events).toEqual([
-      { harvester: 1, type: "downgraded", from: "road", to: "dirt", delta: -2 },
-    ]);
-    expect(vpFor(score, "p1")).toBe(1);       // 3 revoked, 1 dirt awarded
+    expect(rescore(state, score)).toEqual([]);      // still nothing to revoke
+    expect(vpFor(score, "p1")).toBe(0);
+    expect(playerResources(state, "p1", 0).grain)   // …and the line is back to ×1.0
+      .toBeCloseTo(INDUSTRY_BY_KEY.farm.output * 1.0, 6);
   });
 
-  it("upgrading dirt to road raises the VP", () => {
+  it("upgrading dirt to road pays 0.25★ a tile and raises the multiplier", () => {
     const grid = flatGrid([ind("farm", 12, 11)]);
     const track = createTrack();
     run(track, "dirt", 6, 20, 10, 1);
@@ -400,16 +443,22 @@ describe("E6 road beats dirt", () => {
     };
     const score = createScoreState();
     rescore(state, score);
-    expect(vpFor(score, "p1")).toBe(1);
-    run(track, "road", 6, 20, 12, 1);
+    expect(vpFor(score, "p1")).toBe(0);                 // the gravel earns nothing
+
+    run(track, "road", 6, 20, 12, 1);                   // 15 fresh tiles, no upgrade
+    run(track, "road", 6, 20, 10, 1);                   // …and the trunk, paved
     const events = rescore(state, score);
-    expect(events[0]).toMatchObject({ type: "upgraded", from: "dirt", to: "road", delta: 2 });
-    expect(vpFor(score, "p1")).toBe(3);
+    for (const e of events) expect(e).toMatchObject({ source: "upgrade", delta: 0.25 });
+    // only the second row scored: x=6..20 at y=10 replaced the player's own
+    // gravel, 15 tiles at a quarter each. The virgin row beside it paid nothing.
+    expect(events).toHaveLength(15);
+    expect(vpFor(score, "p1")).toBe(15 * 0.25);          // 3.75★
+    expect(resolveConnection(state, buildAllComponents(track, 1), state.harvesters[0]).multiplier).toBe(1.6);
   });
 });
 
 describe("E6 best tier on path across the dirt↔paved seam", () => {
-  it("a dirt feeder onto a public highway scores the road tier (intended reward)", () => {
+  it("a dirt feeder onto a public highway gets the road tier for free — and no points", () => {
     const grid = flatGrid([ind("farm", 12, 11)]);
     const track = createTrack();
     run(track, "road", 14, 20, 10, PUBLIC_OWNER);  // the shared highway
@@ -422,14 +471,14 @@ describe("E6 best tier on path across the dirt↔paved seam", () => {
     const comp = buildAllComponents(track, 1);
     const conn = resolveConnection(state, comp, state.harvesters[0]);
     expect(conn.kind).toBe("road");                // gravel + pavement on the path
-    expect(conn.vp).toBe(TRANSPORT.road.vp);
     expect(conn.multiplier).toBe(TRANSPORT.road.throughput);
     expect(playerResources(state, "p1", 0).grain)
       .toBeCloseTo(INDUSTRY_BY_KEY.farm.output * TRANSPORT.road.throughput, 6);
+    // VP-01: borrowing someone else's tarmac is still throughput, never points.
+    // The map's public highway is unowned, so no tile of it was ever an upgrade.
     const score = createScoreState();
-    expect(rescore(state, score)).toEqual([
-      { harvester: 1, type: "awarded", from: null, to: "road", delta: 3 },
-    ]);
+    expect(rescore(state, score)).toEqual([]);
+    expect(vpFor(score, "p1")).toBe(0);
   });
 
   it("a dirt feeder onto your OWN pavement is premium too", () => {
@@ -461,12 +510,11 @@ describe("E6 best tier on path across the dirt↔paved seam", () => {
     const comp = buildAllComponents(track, 1);
     expect(resolveConnection(state, comp, state.harvesters[0]).kind).toBe("dirt");
     const score = createScoreState();
-    expect(rescore(state, score)).toEqual([
-      { harvester: 1, type: "awarded", from: null, to: "dirt", delta: 1 },
-    ]);
+    expect(rescore(state, score)).toEqual([]);      // the off-route pavement scores nothing
+    expect(vpFor(score, "p1")).toBe(0);
   });
 
-  it("cutting the feeder off the highway revokes the road VP", () => {
+  it("cutting the feeder off the highway costs the multiplier, not points", () => {
     const grid = flatGrid([ind("farm", 12, 11)]);
     const track = createTrack();
     run(track, "road", 14, 20, 10, PUBLIC_OWNER);
@@ -478,13 +526,10 @@ describe("E6 best tier on path across the dirt↔paved seam", () => {
     };
     const score = createScoreState();
     rescore(state, score);
-    expect(vpFor(score, "p1")).toBe(3);
+    expect(vpFor(score, "p1")).toBe(0);             // the borrowed highway never scored
 
-    demolishTile(track, "dirt", 13, 10);           // the tile that touches tar
-    const events = rescore(state, score);
-    expect(events).toEqual([
-      { harvester: 1, type: "revoked", from: "road", to: null, delta: -3 },
-    ]);
+    demolishTile(track, "dirt", 13, 10);           // the tile that touched tar
+    expect(rescore(state, score)).toEqual([]);
     expect(vpFor(score, "p1")).toBe(0);
     expect(playerResources(state, "p1", 0).grain).toBeUndefined();
   });
@@ -544,16 +589,23 @@ describe("E6 scoring hygiene", () => {
       factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }],
     };
     const score = createScoreState();
-    expect(rescore(state, score)).toHaveLength(1);
+    expect(rescore(state, score)).toEqual([]);      // gravel: no events, ever
+    run(track, "road", 6, 20, 10, 1);               // pave the same row
+    expect(rescore(state, score)).toHaveLength(15); // one event per upgraded tile
     expect(rescore(state, score)).toEqual([]);
     expect(rescore(state, score)).toEqual([]);
-    expect(vpFor(score, "p1")).toBe(1);
+    expect(vpFor(score, "p1")).toBe(15 * 0.25);
   });
 
-  it("debits VP when the harvester itself is removed", () => {
+  it("a paved tile keeps its point when the line it served is gone", () => {
+    // the deliberate change from the old model: VP used to be the CONNECTION's,
+    // so cutting a line took the point back. It is the PAVING's now — the road
+    // is built, the money is spent, and the point stays on the board. Only
+    // tearing the tile up (see iso-victory) reverses it.
     const grid = flatGrid([ind("farm", 12, 11)]);
     const track = createTrack();
     run(track, "dirt", 6, 20, 10, 1);
+    run(track, "road", 6, 20, 10, 1);
     const state: EconomyState = {
       grid, track,
       harvesters: [H(1, "p1", 11, 11)],
@@ -561,13 +613,10 @@ describe("E6 scoring hygiene", () => {
     };
     const score = createScoreState();
     rescore(state, score);
-    expect(vpFor(score, "p1")).toBe(1);
-    state.harvesters = [];
-    const events = rescore(state, score);
-    expect(events).toEqual([
-      { harvester: 1, type: "revoked", from: "dirt", to: null, delta: -1 },
-    ]);
-    expect(vpFor(score, "p1")).toBe(0);
+    expect(vpFor(score, "p1")).toBe(15 * 0.25);
+    state.harvesters = [];                       // the depot is gone entirely
+    expect(rescore(state, score)).toEqual([]);
+    expect(vpFor(score, "p1")).toBe(15 * 0.25);  // …and nothing was taken back
   });
 
   it("keeps players' VP separate", () => {
@@ -583,9 +632,15 @@ describe("E6 scoring hygiene", () => {
       harvesters: [H(1, "p1", 11, 11), H(2, "p2", 25, 11)],
       factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }, { owner: "p2", ownerId: 2, tx: 30, ty: 11 }],
     };
+    // Each player paves its own row. Track legality is terrain-based, so a drag
+    // CAN cross a rival's tile — but `buildTile` gives the tile to whoever paid
+    // for it (last real builder wins), so a point always follows the ground and
+    // one tile can never score for both. See iso-victory's takeover case.
+    run(track, "road", 6, 21, 10, 1);        // 16 tiles → 4★
+    run(track, "road", 27, 30, 10, 2);       // 4 tiles  → 1★
     const score = createScoreState();
     rescore(state, score);
-    expect(vpFor(score, "p1")).toBe(1);
+    expect(vpFor(score, "p1")).toBe(4);
     expect(vpFor(score, "p2")).toBe(1);
   });
 

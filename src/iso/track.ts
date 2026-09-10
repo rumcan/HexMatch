@@ -57,6 +57,26 @@ export type TrackKind = "dirt" | "road";
  * rebuilt by a second player (e.g. paving a Road over a Dirt Road tile)
  * changes hands: the last real builder owns it.
  */
+/**
+ * VP-01 — `upgraded`: the per-tile UPGRADE PROVENANCE layer, sitting beside the
+ * two bit layers. A tile carries `PRESENT` here when the paved Road standing on
+ * it REPLACED a Dirt Road, which is the only way a road tile is worth Victory
+ * Points (0.25★ each, `victory.ts`).
+ *
+ * The two bit layers alone cannot answer that question: paving clears the dirt
+ * (`buildTile` keeps a tile single-tier), so afterwards "was this tile once
+ * gravel?" is unrecorded. It has to be recorded, because a paved Road laid on
+ * virgin ground is NOT worth a point — the victory rule is "improve what you
+ * already built". Making it a fourth layer of the tile model rather than a
+ * ledger some caller maintains is what makes it survive every build path: the
+ * human drag, the rival's `executeCandidate`, the demo and a rejoined guest's
+ * snapshot all go through `buildTile`/`demolishTile`, so no caller can forget
+ * to update it.
+ *
+ * Public ground never scores: `seedTownRoads`/`seedPublicRoads` pave tiles that
+ * carry no dirt, so they never gain the bit — and the scoreboard filters on the
+ * tile's owner as well, so a public tile could not be claimed even if it did.
+ */
 export interface Track {
   /** Basic gravel roads (player-built). */
   dirt: Uint8Array;
@@ -64,12 +84,15 @@ export interface Track {
   road: Uint8Array;
   /** 0 = unowned, else the builder's id (see above). */
   owner: Uint8Array;
+  /** VP-01: `PRESENT` where the paved Road here replaced a Dirt Road. */
+  upgraded: Uint8Array;
 }
 
 export const createTrack = (): Track => ({
   dirt: new Uint8Array(MAP_W * MAP_H),
   road: new Uint8Array(MAP_W * MAP_H),
   owner: new Uint8Array(MAP_W * MAP_H),
+  upgraded: new Uint8Array(MAP_W * MAP_H),
 });
 
 /**
@@ -206,6 +229,30 @@ export const bitsAt = (t: Track, kind: TrackKind, tx: number, ty: number): numbe
 export const mergedPresent = (t: Track, tx: number, ty: number): boolean =>
   inMapT(tx, ty)
   && ((layerOf(t, "dirt")[tIdx(tx, ty)] | layerOf(t, "road")[tIdx(tx, ty)]) & PRESENT) !== 0;
+
+/**
+ * VP-01: is the paved Road at (tx,ty) one that REPLACED a Dirt Road? That and
+ * only that is worth 0.25★ to whoever owns the tile (`victory.ts`). Reads the
+ * provenance layer `buildTile` stamps and `demolishTile` clears.
+ */
+export const isUpgradedRoad = (t: Track, tx: number, ty: number): boolean =>
+  inMapT(tx, ty)
+  && (t.road[tIdx(tx, ty)] & PRESENT) !== 0
+  && (t.upgraded[tIdx(tx, ty)] & PRESENT) !== 0;
+
+/**
+ * Does a plan of `kind` need to build anything at (tx,ty)? A dirt plan can ride
+ * a paved tile (tar carries traffic at least as well as gravel, and a dirt
+ * drag over pavement is a documented no-op), so BOTH count as already there.
+ * A paved plan over gravel does NOT: that tile still has to be paid for — it
+ * is the in-place upgrade, `UPGRADE_COST` and the 0.25★.
+ *
+ * `stepCost` discounts these tiles for the rival (its own trunk is already
+ * carrying what the plan wants), and `tileCost` already charges 0 for them, so
+ * the AI's route cost, its purse and its money all agree on the same set.
+ */
+export const tileAlreadyCarries = (t: Track, kind: TrackKind, tx: number, ty: number): boolean =>
+  hasTrack(t, kind, tx, ty) || (kind === "dirt" && hasTrack(t, "road", tx, ty));
 
 /**
  * Direction bits of whatever tier (tx,ty) carries. Since a tile never holds
@@ -449,6 +496,11 @@ export function buildTile(
     dirt[i] = 0;
     layerOf(t, kind)[i] |= PRESENT;
     if (owner !== 0 && t.owner[i] !== PUBLIC_OWNER) t.owner[i] = owner;
+    // VP-01: this is THE upgrade event the scoreboard pays for. The gravel is
+    // gone from the bit layers, so `upgraded` is what keeps "this paved tile
+    // used to be a Dirt Road" true after the fact — and `victory.ts` reads
+    // nothing else. Public ground never reaches here with dirt under it.
+    if (t.owner[i] !== PUBLIC_OWNER) t.upgraded[i] = PRESENT;
     // Recompute around the tile (dirt lost this tile, road gained) on both
     // layers: the surrounding gravel now faces a paved tile instead.
     return autotileAroundBoth(t, "road", tx, ty);
@@ -471,6 +523,10 @@ export function demolishTile(t: Track, kind: TrackKind, tx: number, ty: number):
   if (!inMapT(tx, ty)) return null;
   const i = tIdx(tx, ty);
   layerOf(t, kind)[i] = 0;
+  // VP-01: provenance dies with the pavement. Tearing up a paved tile takes
+  // its 0.25★ back with it (the scoreboard diffs against this layer), so a
+  // point can never be farmed by paving and re-paving the same ground.
+  if (kind === "road") t.upgraded[i] = 0;
   if (!hasTrack(t, "road", tx, ty) && !hasTrack(t, "dirt", tx, ty)) t.owner[i] = 0;
   // Also re-tile the OTHER layer around the gap: a paved neighbour that was
   // facing this tile (any-tier masks) must stop now that nothing is here.
@@ -552,6 +608,13 @@ export interface DragPreview {
   /** Tiles that will actually be built, in order. */
   tiles: [number, number][];
   /**
+   * VP-01: how many of `tiles` are in-place DIRT-TO-PAVED upgrades — the
+   * tiles that will earn 0.25★ each. The modebar previews the score the drag
+   * is about to buy (`previewVp` in `victory.ts`), so the number the player
+   * reads is the number the scoreboard pays.
+   */
+  upgrades: number;
+  /**
    * W1: what the purse will be charged — the sum of per-tile costs for the
    * tiles NOT covered by the free allowance. This is the ONLY number the
    * commit spends, so what you see is what you're charged.
@@ -592,6 +655,10 @@ export function previewDrag(
   const unaffordable: [number, number][] = [];
   let cost: Purse = {};
   let truncated = false;
+  // VP-01: count of tiles this drag would PAVE over gravel (all of them are
+  // `kind === "road"` tiles standing on dirt — `tileCost` returns
+  // UPGRADE_COST for exactly that case, so one test drives both numbers).
+  let upgrades = 0;
   // W9: rail never rides the setup allowance, so for rail there is no
   // allowance to spend and `free` in the result stays 0.
   const allowance = freeAllowanceCovers(kind) ? Math.max(0, freeTiles) : 0;
@@ -602,11 +669,12 @@ export function previewDrag(
     const [x, y] = path[i];
     if (!canBuildOn(grid, kind, x, y, growing)) { truncated = true; break; }
     const c = tileCost(t, kind, x, y);
-    // Free tiles are charged nothing; the allowance covers them first.
+    const paves = kind === "road" && hasTrack(t, "dirt", x, y);
+    // VP-01: Free tiles are charged nothing; the allowance covers them first.
     // A tile that costs nothing (dragging over your own track) consumes no
     // allowance — free setup tiles are never wasted.
-    // W9: for rail `freeLeft` starts at 0, so this branch is road-only and a
-    // rail tile always reaches the affordability test below.
+    // W9: for a paved drag `freeLeft` starts at 0, so the allowance branch is
+    // dirt-only and a paved tile always reaches the affordability test below.
     if (Object.keys(c).length === 0) {
       tiles.push([x, y]);
       growing?.add(tIdx(x, y));
@@ -615,6 +683,8 @@ export function previewDrag(
     if (freeLeft > 0) {
       freeLeft--;
       tiles.push([x, y]);
+      // VP-01: never an upgrade — the setup allowance buys dirt only
+      // (`freeAllowanceCovers`), and only a paved tile over gravel scores.
       growing?.add(tIdx(x, y));
       continue;
     }
@@ -629,9 +699,10 @@ export function previewDrag(
     }
     cost = next;
     tiles.push([x, y]);
+    if (paves) upgrades++;
     growing?.add(tIdx(x, y));
   }
-  return { tiles, cost, free: allowance - freeLeft, unaffordable, truncated };
+  return { tiles, cost, upgrades, free: allowance - freeLeft, unaffordable, truncated };
 }
 
 export interface CommitResult {

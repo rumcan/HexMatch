@@ -1,5 +1,5 @@
 // ══════════════════════════════════════════════════════════════════════════
-// E6 — Stations, catchment and connection scoring.
+// E6 — Stations, catchment and connection (throughput) scoring.
 //
 // Replaces vertex adjacency (hexmap's `playerResources`). This is the mechanic
 // that makes the map matter:
@@ -16,14 +16,15 @@
 // components are flooded over the merged masks, so a Dirt Road that reaches a
 // paved tile — a built Road or a map highway/town road — is the same network.
 // The paved tier beats dirt: any depot→factory connection whose component
-// touches a paved tile the owner may drive takes the road multiplier AND the
-// road VP; a pure-gravel connection scores the basic tier. If a paved
-// connection breaks, fall back to a surviving dirt one and REVOKE the road VP
-// — the caller gets an explicit event list so the UI can toast it and animate
-// the counter down, because a silent VP drop is the single most confusing
-// thing this system can do.
+// touches a paved tile the owner may drive takes the road multiplier; a
+// pure-gravel connection stays on the basic one. If a paved connection breaks,
+// the depot falls back to the surviving dirt link and loses the multiplier with
+// it — one tile of tarmac anywhere on the component is enough to lift every
+// depot that rides it, which is why paving (VP-01's scored action) is worth
+// more than laying a new line of the same length.
 //
-// Scoring runs on every build and demolish, never on a timer.
+// VP-01 took Victory Points out of this module: a connection is throughput
+// only. The scoreboard reads the tiles (`victory.ts`).
 // ══════════════════════════════════════════════════════════════════════════
 import { roadPath, shoulders } from "./road-routing";
 import { MAP_W, MAP_H } from "../game/config";
@@ -56,7 +57,7 @@ export interface Harvester {
  * PP-06: a player may own MORE THAN ONE. Nothing in this module assumed a
  * single site — `resolveConnection` already walks every factory the owner has
  * and returns the ONE best connection for a depot, so a depot linked to two
- * plants still yields once and still scores its VP once. `id` and `townId`
+ * plants still yields once. `id` and `townId`
  * are optional so the starting Factory (and old snapshots) stay valid.
  */
 export interface Factory {
@@ -207,9 +208,9 @@ export const buildAllComponents = (track: Track, owner: number): Components =>
 
 /**
  * W2: resolve a player's numeric track-owner id from the string identity the
- * economy scores by. Every structure a player builds carries the same id, so
+ * economy binds track to. Every structure a player builds carries the same id, so
  * the first one found is enough; a player with no structures has none (and
- * therefore no harvesters to score).
+ * therefore no harvesters to connect).
  */
 export const ownerIdOf = (state: EconomyState, owner: string): number =>
   state.harvesters.find((h) => h.owner === owner)?.ownerId
@@ -231,8 +232,12 @@ function adjacentComponents(comp: Int32Array, tx: number, ty: number): Set<numbe
 /**
  * The component ids both structures sit beside. Structures are not themselves
  * track, so we compare the components adjacent to each of the two tiles.
+ *
+ * VP-01 exports it: the rival's pave pass needs exactly this answer — which
+ * components a Depot and a Plant BOTH sit on is what decides whether paving a
+ * tile on that component lifts a live connection (×1.6) or only banks 0.25★.
  */
-function sharedComponents(
+export function sharedComponents(
   comp: Int32Array, ax: number, ay: number, bx: number, by: number,
 ): Set<number> {
   const A = adjacentComponents(comp, ax, ay);
@@ -254,26 +259,32 @@ export function linkedBy(
 // ── connection resolution ─────────────────────────────────────────────────
 export type ConnKind = TrackKind | null;
 
+/**
+ * A depot's link to one of its owner's plants. VP-01 took the Victory Points
+ * out of this and put them on the tiles (`victory.ts`): a connection is worth
+ * THROUGHPUT, nothing else. `kind` still decides the tier the whole economy
+ * turns on — `roadComp` in `buildComponents` is what makes one paved tile
+ * anywhere on a component lift every depot using it to ×1.6.
+ */
 export interface Connection {
   kind: ConnKind;        // null = not connected to any factory
   multiplier: number;    // 1.0 dirt / 1.6 paved road / 0 unconnected
-  vp: number;            // VP this connection is worth
   factory: Factory | null;
 }
 
 export const NO_CONNECTION: Connection = {
-  kind: null, multiplier: 0, vp: 0, factory: null,
+  kind: null, multiplier: 0, factory: null,
 };
 
 /**
  * Resolve a harvester's connection to its owner's Factory over the MERGED
  * surface. Best tier on path wins: when a depot and a Factory both sit beside
  * the same component and that component touches ANY paved tile `owner` may
- * drive (a built Road, or the map's public/town roads), the connection is the
- * paved tier — its multiplier and its VP. That is the Dirt-Road-feeder rule:
+ * drive (a built Road, or the map's public/town roads), the connection takes
+ * the paved tier's multiplier. That is the Dirt-Road-feeder rule:
  * hooking gravel onto a highway deliberately becomes a premium connection.
  * Only when no shared component contains pavement does a pure-gravel link
- * score the basic tier.
+ * keep the basic multiplier.
  *
  * W2: `comp` must be the components for `h.ownerId` (build it with
  * `buildAllComponents(track, h.ownerId)`) — a harvester may only ride its own
@@ -292,7 +303,7 @@ export function resolveConnection(
       if (comp.roadComp[c]) {
         // a paved component is the ceiling — nothing beats it, stop looking
         return {
-          kind: "road", multiplier: TRANSPORT.road.throughput, vp: TRANSPORT.road.vp, factory: f,
+          kind: "road", multiplier: TRANSPORT.road.throughput, factory: f,
         };
       }
     }
@@ -303,7 +314,7 @@ export function resolveConnection(
     if (!route || route.length >= shortest) continue;
     shortest = route.length;
     best = {
-      kind: "dirt", multiplier: TRANSPORT.dirt.throughput, vp: TRANSPORT.dirt.vp, factory: f,
+      kind: "dirt", multiplier: TRANSPORT.dirt.throughput, factory: f,
     };
   }
   return best;
@@ -477,85 +488,8 @@ export function pickBlockadeTarget(
   return near;
 }
 
-// ── VP: award on completion, revoke on break ──────────────────────────────
-export interface VpEvent {
-  harvester: number;
-  type: "awarded" | "revoked" | "upgraded" | "downgraded";
-  from: ConnKind;
-  to: ConnKind;
-  delta: number;
-}
-
-export interface ScoreState {
-  /** Per-harvester connection kind + owner at the last scoring. The owner is
-   *  kept so a DEMOLISHED harvester can still be debited from the right
-   *  player — by then it is gone from `state.harvesters`. */
-  connections: Map<number, ConnKind>;
-  owners: Map<number, string>;
-  /** Per-owner VP total. */
-  vp: Map<string, number>;
-}
-
-export const createScoreState = (): ScoreState => ({
-  connections: new Map(), owners: new Map(), vp: new Map(),
-});
-
-const vpOf = (kind: ConnKind) => (kind === null ? 0 : TRANSPORT[kind].vp);
-
-/**
- * Rescore every harvester and diff against the previous state. Call on every
- * build and demolish — not on a timer — so a break is reflected within one
- * frame. Returns the events the UI must surface: a revoked VP has to be
- * visible or players will not understand what happened.
- */
-export function rescore(
-  state: EconomyState, score: ScoreState,
-): VpEvent[] {
-  const events: VpEvent[] = [];
-  const seen = new Set<number>();
-  // W2: components are per-owner, and rescore walks every player's harvesters
-  // in one pass — cache a component pair per track-owner id that shows up.
-  const compByOwner = new Map<number, Components>();
-  const compFor = (ownerId: number): Components => {
-    let c = compByOwner.get(ownerId);
-    if (!c) {
-      c = buildAllComponents(state.track, ownerId);
-      compByOwner.set(ownerId, c);
-    }
-    return c;
-  };
-
-  for (const h of state.harvesters) {
-    seen.add(h.id);
-    score.owners.set(h.id, h.owner);
-    const from = score.connections.get(h.id) ?? null;
-    const to = isServiced(state.track, h)
-      ? resolveConnection(state, compFor(h.ownerId), h).kind
-      : null;
-    if (from === to) continue;
-    const delta = vpOf(to) - vpOf(from);
-    let type: VpEvent["type"];
-    if (from === null) type = "awarded";
-    else if (to === null) type = "revoked";
-    else type = delta > 0 ? "upgraded" : "downgraded";
-    events.push({ harvester: h.id, type, from, to, delta });
-    score.connections.set(h.id, to);
-    score.owners.set(h.id, h.owner);
-    score.vp.set(h.owner, (score.vp.get(h.owner) ?? 0) + delta);
-  }
-
-  // A demolished harvester surrenders its VP too.
-  for (const [id, kind] of [...score.connections]) {
-    if (seen.has(id)) continue;
-    if (kind !== null) {
-      const owner = score.owners.get(id);
-      events.push({ harvester: id, type: "revoked", from: kind, to: null, delta: -vpOf(kind) });
-      if (owner !== undefined) score.vp.set(owner, (score.vp.get(owner) ?? 0) - vpOf(kind));
-    }
-    score.connections.delete(id);
-    score.owners.delete(id);
-  }
-  return events;
-}
-
-export const vpFor = (score: ScoreState, owner: string) => score.vp.get(owner) ?? 0;
+// ── victory points ────────────────────────────────────────────────────────
+// VP-01 moved the scoreboard out of this module: a CONNECTION no longer earns
+// anything, so nothing here needs a `ScoreState`. What the tiles and the plants
+// are worth is `victory.ts`'s business, and `game.ts` calls `rescore` there on
+// exactly the same build/demolish beats it calls `syncWorld` on.

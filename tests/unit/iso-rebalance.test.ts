@@ -57,7 +57,10 @@ describe("E8 pass 2 — starting curve", () => {
     expect(UPGRADE_COST.ore).toBe(4);  // dirt→road pays the difference only
     expect(TRANSPORT.dirt.onRough).toBe(true);
     expect(TRANSPORT.road.onRough).toBe(false);
-    expect(VP_TARGET).toBe(12);
+    // VP-01 lowered the bar from 12 connection points to 10 VICTORY points,
+    // because what they are made of changed: 10★ is 40 paves (40×4 Ore) or 10
+    // plants, which is a longer road than 12 dirt connections ever was.
+    expect(VP_TARGET).toBe(10);
     expect(INDUSTRY_QUOTA.ore_mine).toBe(5);
   });
 
