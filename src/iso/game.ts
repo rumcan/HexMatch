@@ -55,7 +55,7 @@ import {
 } from "./victory";
 import {
   aiBuildStep, chooseRivalFactorySpot, planCandidates, planUpgrades, executePaves,
-  paveCandidates,
+  paveCandidates, rivalPace, type RivalPace,
 } from "./ai";
 import { planDepotPlacement, planFactoryPlacement, type PlacementPlan } from "./placement";
 import {
@@ -127,6 +127,9 @@ export const AI_IDLE_MS = 2500;
  * exchange and lost the turn, so it holds this much in reserve.
  */
 export const RIVAL_GOLD_RESERVE = 2;
+/** VP-01: how many tiles the rival's banking milestone is worth (see
+ *  `paveMilestone`) — 4 paves, 16 Ore, exactly the 1★ a plant costs. */
+const PAVE_MILESTONE_TILES = 4;
 /**
  * PP-07: start with wood + stone for the basic Dirt Road (12 paid tiles — the
  * E8 opening curve, now that a Dirt Road tile costs 1 Wood + 1 Stone), and no
@@ -854,6 +857,8 @@ export function startIsoGame(root: HTMLElement) {
   let securityUntil = 0;
   /** A1: when the rival last ran a Black Market raid on the player's plant. */
   let lastRaid = 0;
+  /** The sabotage cards `rivalRaid` knows how to aim at the player's plant. */
+  const RAID_ACTIONS = new Set(["harden", "block", "fog"]);
   /**
    * PP-07: the fractional remainder of the rival's trickle yield, carried
    * across ticks so sub-1 rates (Oil Rig 0.4/tick, Gold Mine 0.3/tick) still
@@ -917,18 +922,32 @@ export function startIsoGame(root: HTMLElement) {
    * track leg and the Depot together — so it never trades away a cargo
    * that plan still needs.
    */
+  /**
+   * VP-01: what the rival believes about the race, right now. Read from the
+   * derived scoreboard rather than cached on the turn, because these functions
+   * also run from the debug/test hooks and a policy that changes between
+   * planning and spending is worse than a slightly stale one.
+   */
+  const rivalPaceNow = (): RivalPace =>
+    rivalPace(vpFor(score, "you"), vpFor(score, "ai"), VP_TARGET);
+
   /** VP-01: the OTHER milestone the bank can be pointed at — the pavement the
    *  rival can ALMOST afford. Ore comes out of one industry type, so a rival
    *  that never reached a mine has no route to the scoreboard at all, and a
    *  route it cannot fund is not a plan. This lets the 4:1 bank buy INTO the
    *  victory condition instead of only into the next Depot. */
-  const paveMilestone = (tiles = 4): Purse | null => {
+  const paveMilestone = (): Purse | null => {
+    // The batch size is a constant and NOT a pace lever, which is the measured
+    // lesson recorded on `rivalPace`: a milestone is only a plan if the purse can
+    // reach it. 4 tiles is 1★, the same unit as a plant, and the largest step a
+    // rival with no Ore can realistically take inside its own income.
     const ranked = paveCandidates(eco, {
-      owner: rival.id, ownerId: rival.i + 1, purse: rival.purse, maxTiles: tiles,
+      owner: rival.id, ownerId: rival.i + 1, purse: rival.purse,
+      maxTiles: PAVE_MILESTONE_TILES,
     });
     if (!ranked.length) return null;
     let ore = 0;
-    for (const t of ranked.slice(0, tiles)) ore += tileCost(track, "road", t.x, t.y).ore ?? 0;
+    for (const t of ranked.slice(0, PAVE_MILESTONE_TILES)) ore += tileCost(track, "road", t.x, t.y).ore ?? 0;
     return ore > 0 ? { ore } : null;
   };
 
@@ -945,7 +964,8 @@ export function startIsoGame(root: HTMLElement) {
    * this cannot starve the build step it is competing with.
    */
   function rivalBankTowardPave(): number {
-    const want = paveMilestone(4);
+    const pace = rivalPaceNow();
+    const want = paveMilestone();
     if (!want) return 0;
     const price = UPGRADE_COST.ore ?? 4;
     const need = want.ore ?? 0;
@@ -953,7 +973,7 @@ export function startIsoGame(root: HTMLElement) {
     const depot = priceDepot(rival.purse, rival.freeDepots).cost;
     const trader = { res: rival.purse };
     let trades = 0;
-    while ((rival.purse.ore ?? 0) < need && trades < 2) {
+    while ((rival.purse.ore ?? 0) < need && trades < pace.bankPerTurn) {
       const surplus = (CARGOES as Cargo[])
         .filter((c) => c !== "gold" && c !== "ore" && (rival.purse[c] ?? 0) >= price)
         .filter((c) => (rival.purse[c] ?? 0) - price >= (depot[c] ?? 0))
@@ -1009,13 +1029,14 @@ export function startIsoGame(root: HTMLElement) {
       }
       return missing;
     };
-    const paveTarget = paveMilestone(4);
+    const paveTarget = paveMilestone();   // 4 tiles: the smallest step that scores
     const target: Purse = paveTarget && gap(paveTarget) < gap(planTarget) ? paveTarget : planTarget;
     const trader = { res: rival.purse };
+    const budget = rivalPaceNow().bankPerTurn;
     let trades = 0;
     for (const [cargo, need] of Object.entries(target) as [Cargo, number][]) {
-      if (trades >= 2) break;
-      while ((rival.purse[cargo] ?? 0) < need && trades < 2) {
+      if (trades >= budget) break;
+      while ((rival.purse[cargo] ?? 0) < need && trades < budget) {
         const surplus = (CARGOES as Cargo[])
           .filter((c) => c !== "gold" && c !== cargo && (rival.purse[c] ?? 0) >= 4)
           .filter((c) => (target[c] ?? 0) <= (rival.purse[c] ?? 0) - 4)
@@ -1041,8 +1062,13 @@ export function startIsoGame(root: HTMLElement) {
     if (phase !== "play") return;
     if (now - lastRaid < RAID_EVERY) return;
     lastRaid = now;
+    // VP-01: only the cards this function can actually play. `bandit` is
+    // `rivalSabotage`'s business (it targets a district, not the plant) and
+    // `security` is a defender's card — and because the hire is paid before the
+    // effect, a rival holding exactly 5 Gold used to burn it on a `hit` that did
+    // nothing. "Affordable" is not the same question as "playable".
     const keys = (Object.keys(SABOTAGE) as string[]).filter(
-      (k) => (rival.purse.gold ?? 0) >= SABOTAGE[k].gold,
+      (k) => RAID_ACTIONS.has(k) && (rival.purse.gold ?? 0) >= SABOTAGE[k].gold,
     );
     if (!keys.length) return;                     // no Gold, no raid
     const key = choice(keys);
@@ -1141,7 +1167,13 @@ export function startIsoGame(root: HTMLElement) {
    */
   function rivalSabotage(now: number) {
     const price = SABOTAGE.bandit.gold;
-    if ((rival.purse.gold ?? 0) < price + RIVAL_GOLD_RESERVE) return;
+    // VP-01: `RIVAL_GOLD_RESERVE` exists so a rival that blocks and then cannot
+    // expand has not traded a point of tempo for none. When the LEADER is one
+    // plant from winning that calculus inverts — a 40-second denial of the
+    // leader's Ore is worth more than the reserve — so it spends down to the
+    // last coin instead of hoarding it.
+    const reserve = rivalPaceNow().deny ? 0 : RIVAL_GOLD_RESERVE;
+    if ((rival.purse.gold ?? 0) < price + reserve) return;
     const target = pickBlockadeTarget(eco, "you", now);
     if (!target) return;
     if (!spend(rival, { gold: price })) return;
@@ -1159,6 +1191,7 @@ export function startIsoGame(root: HTMLElement) {
     rivalSabotage(now);
     const f = factoryOf("ai");
     if (!f) return;
+    const pace = rivalPaceNow();      // VP-01: read once, used by three steps
     let acted = false;
 
     // 1. plant — the cheapest victory point on the board
@@ -1171,6 +1204,9 @@ export function startIsoGame(root: HTMLElement) {
     const opts = {
       stock: rival.purse, purse: rival.purse,
       free: rival.freeTrack, freeDepots: rival.freeDepots, now,
+      // VP-01: losing makes an Ore Mine worth more than a bigger farm, because
+      // an Ore Mine is the only industry that prints points.
+      oreUrgency: pace.oreUrgency,
     };
     const harvesterId = allocHarvesterId();
     const out = aiBuildStep(eco, f, opts, harvesterId);
@@ -1851,6 +1887,10 @@ export function startIsoGame(root: HTMLElement) {
      *  Depot plan). `aiTick` calls exactly this on a turn the pave pass was
      *  price-blocked, so the count is the rule under test without a clock. */
     rivalBank: () => rivalBankTowardPave(),
+    /** VP-01: the rival's read of the scoreboard and the four numbers that
+     *  follow from it — exposed so a playtest (or a test) can ask WHY a turn
+     *  was spent the way it was without re-deriving the policy. */
+    get rivalPace() { return rivalPaceNow(); },
     get purse() { return me.purse; },
     get harvesters() { return eco.harvesters; },
     get factories() { return eco.factories; },

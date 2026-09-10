@@ -9,8 +9,9 @@
 // the committed-reference-PNG fixture is for, and that still needs a browser.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { WATER, factoryTouchesTown } from "../../src/iso/grid";
-import { PUBLIC_OWNER } from "../../src/iso/track";
-import { MAP_W, MAP_H, TRANSPORT, INDUSTRY_BY_KEY } from "../../src/iso/config";
+import { SABOTAGE, RAID_EVERY, BANDIT_MS } from "../../src/game/config";
+import { PUBLIC_OWNER, buildTile } from "../../src/iso/track";
+import { MAP_W, MAP_H, TRANSPORT, INDUSTRY_BY_KEY, VICTORY } from "../../src/iso/config";
 import { setRng, mulberry32 } from "../../src/game/config";
 
 // ── stub the art imports (vite handles these in the browser) ──────────────
@@ -59,6 +60,8 @@ interface IsoHook {
   /** run the rival's pave pass now, instead of waiting for its turn */
   rivalPave: () => boolean;
   rivalBank: () => number;
+  /** VP-01: the rival's read of the scoreboard and the four numbers that follow. */
+  rivalPace: { sprint: boolean; bankPerTurn: number; oreUrgency: number; deny: boolean };
   purse: Record<string, number>;
   harvesters: { id: number; owner: string; tx: number; ty: number }[];
   factories: { owner: string; tx: number; ty: number }[];
@@ -1808,5 +1811,141 @@ describe("VP-01 a busy rival still buys the Ore its paving wants", () => {
     // more dirt tile never bought the Ore that turns forty of them into points —
     // the stall the 5-seed playtest measured at 6.5★ with 27 un-paved tiles.
     expect(rival.res.ore ?? 0, "it acted, and it banked anyway").toBeGreaterThan(0);
+  });
+});
+
+describe("VP-01 the rival plays the score, not just the map", () => {
+  /**
+   * `tiles` of the player's own dirt, each immediately paved. `buildTile` is the
+   * primitive the game's own commit path calls, so the pave-provenance bit is
+   * stamped exactly as it is in play — which means the scoreboard (a derivation
+   * of the board) reads `tiles × 0.25★` after the next rescore. Laid along the
+   * map's south edge so it cannot strand anyone's routing.
+   */
+  function paveStrip(h: IsoHook, tiles: number, owner = 1): number {
+    // `ownerIdsByNumber` (victory.ts) reads the board, not the player list: a
+    // tile is only worth points to somebody with a plant or a depot on the map.
+    // `boot()`+`finishSetup()` place neither, so this test puts one there —
+    // exactly what the real setup click would have done.
+    if (!h.eco.factories.some((f) => f.owner === (owner === 1 ? "you" : "ai")))
+      h.eco.factories.push({ owner: owner === 1 ? "you" : "ai", ownerId: owner, tx: 6, ty: 6 });
+    let n = 0;
+    const y = MAP_H - 3;
+    for (let x = 2; x < MAP_W - 2 && n < tiles; x++) {
+      if (!buildTile(h.track, "dirt", x, y, owner)) continue;
+      if (!buildTile(h.track, "road", x, y, owner)) continue;
+      n++;
+    }
+    return n;
+  }
+
+  /** A player with a live Ore line: the rival's Blockade needs a victim. */
+  function connectedPlayer(h: IsoHook): number {
+    const c = findSouthCorridor(h.grid, 6, "ore_mine") ?? findSouthCorridor(h.grid, 6);
+    expect(c).toBeTruthy();
+    h.eco.factories.push({ owner: "you", ownerId: 1, tx: c!.hx, ty: c!.fy });
+    h.eco.harvesters.push({ id: 100, owner: "you", ownerId: 1, tx: c!.hx, ty: c!.hy });
+    for (let y = c!.hy + 1; y <= c!.fy; y++) buildTile(h.track, "dirt", c!.hx, y, 1);
+    return c!.ind.id;
+  }
+
+  it("sprints when it is a point behind: the bank doubles, the goal does not", async () => {
+    const h = await boot();
+    const bt = buildTile;
+    const spot = findFactorySpotNear(h.grid, "ore_mine", -1);
+    expect(spot).toBeTruthy();
+    h.eco.factories.push({ owner: "ai", ownerId: 2, tx: spot![0], ty: spot![1] });
+    for (let d = 1; d <= 4; d++) bt(h.track, "dirt", spot![0], spot![1] - d, 2);
+    // one point of score on the player's side of the ledger: four paves
+    expect(paveStrip(h, 4)).toBe(4);
+    h.finishSetup();
+
+    const rival = h.market.players[1];
+    Object.assign(rival.res, { grain: 40, wood: 40, stone: 40, oil: 40, ore: 0, gold: 0 });
+    h.aiTick(1_000_000);                     // acts → the board is rescored
+    expect(h.vp.you).toBeGreaterThanOrEqual(VICTORY.plant);
+    expect(h.rivalPace.sprint).toBe(true);
+    expect(h.rivalPace.bankPerTurn).toBe(4);
+    // The cruise budget is two exchanges (asserted in the block above); a
+    // sprinting rival spends four on the same turn, because a point a minute
+    // spent is worth more than a Depot it will not live to enjoy. Asserted as a
+    // delta: its own turn may already have banked, and the milestone is a price
+    // to reach, not a stack to add on top.
+    const ore0 = rival.res.ore ?? 0;
+    expect(h.rivalBank()).toBe(4);
+    expect(rival.res.ore ?? 0, "4:1 in, one Ore out, four times").toBe(ore0 + 4);
+    expect(h.rivalPace.oreUrgency).toBeGreaterThan(1);   // and it eyes ore mines
+  });
+
+  it("keeps its Gold reserve while the race is still open", async () => {
+    const h = await boot();
+    const targetId = connectedPlayer(h);
+    h.finishSetup();
+    const rival = h.market.players[1];
+    expect(h.vp.you).toBe(0);                 // cruise: nothing about to be won
+    const t0 = 1_000_000;
+    h.aiTick(t0);                             // arms the raid clock on an empty purse
+    // exactly the price of a Blockade: affordable, but it would leave the rival
+    // with nothing for the economy it still has to build.
+    rival.res.gold = SABOTAGE.bandit.gold;
+    h.aiTick(t0 + AI_BUILD_MS);
+    expect(rival.res.gold).toBe(SABOTAGE.bandit.gold);
+    expect(h.grid.industries[targetId].banditUntil ?? 0).toBe(0);
+  });
+
+  it("spends the last of its Gold to deny a player one point from winning", async () => {
+    const h = await boot();
+    const targetId = connectedPlayer(h);
+    // The rival needs a plant of its own for this test to mean anything: its
+    // turn returns before the rescore without one, and the scoreboard is only
+    // read on a turn that built.
+    const rivalSpot = findFactorySpotNear(h.grid, "ore_mine", -1);
+    expect(rivalSpot).toBeTruthy();
+    h.eco.factories.push({ owner: "ai", ownerId: 2, tx: rivalSpot![0], ty: rivalSpot![1] });
+    // 37 paves = 9.25★: one point short of the target, i.e. the next build turn
+    // can end the game. The reserve's whole purpose was to keep the rival able
+    // to expand afterwards — denial is worth more than that now.
+    expect(paveStrip(h, 37)).toBe(37);
+    h.finishSetup();
+    const rival = h.market.players[1];
+    // Cargo so the rival's first turn ACTS: the scoreboard is derived on a
+    // build (`rescoreNow`), and an empty purse means it never takes one — so
+    // the 9.25★ on the board would still be unread. Gold stays at zero for
+    // that turn: the raid is armed by it, and a raid with coin would spend it.
+    Object.assign(rival.res, { grain: 40, wood: 40, stone: 40, oil: 40, ore: 0, gold: 0 });
+    const t0 = 1_000_000;
+    h.aiTick(t0);                             // arms the raid clock, spends no Gold
+    expect(h.vp.you).toBeGreaterThan(VICTORY.upgrade * 36);
+    expect(h.rivalPace.deny).toBe(true);
+    rival.res.gold = SABOTAGE.bandit.gold;
+    h.aiTick(t0 + AI_BUILD_MS);
+    expect(rival.res.gold ?? 0, "it hoarded while you were one point from winning")
+      .toBeLessThan(SABOTAGE.bandit.gold);
+    const hit = h.grid.industries[targetId].banditUntil ?? 0;
+    expect(hit, "the blockade must land on the district that feeds you")
+      .toBeGreaterThan(t0 + AI_BUILD_MS);
+    expect(hit).toBeLessThanOrEqual(t0 + AI_BUILD_MS + BANDIT_MS);
+  });
+
+  it("never pays for a sabotage card it cannot aim at your plant", async () => {
+    const h = await boot();
+    h.finishSetup();
+    const rival = h.market.players[1];
+    const hits = () => h.board.gems().filter((g: { hard: number; block: boolean }) => g.hard > 0 || g.block).length
+      + (h.board.fogUntil > 0 ? 1 : 0) + (h.board.blockUntil > 0 ? 1 : 0);
+    // Four raid-eligible clocks (one per RAID_EVERY, since a raid per build tick
+    // would not be a raid) with enough Gold for the 5-coin cards only. Before
+    // the `RAID_ACTIONS` filter the pick list also held `bandit` — a card the
+    // rival aims at a DISTRICT, which this function cannot do — and the hire was
+    // paid before the effect, so a paid-for-nothing raid was a coin flip.
+    for (let i = 0; i < 4; i++) {
+      rival.res.gold = SABOTAGE.bandit.gold;
+      const before = hits();
+      h.aiTick(1_000_000 + i * (RAID_EVERY + AI_BUILD_MS));
+      const spent = SABOTAGE.bandit.gold - (rival.res.gold ?? 0);
+      if (spent > 0) {
+        expect(hits(), `raid ${i}: paid ${spent} Gold and nothing happened`).toBeGreaterThan(before);
+      }
+    }
   });
 });

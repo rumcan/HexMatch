@@ -225,5 +225,7 @@ Demolition revokes the point; paving the same tile twice cannot farm it.
 Points are owner-scoped: public highways and a rival's paving never land on your total.
 The scoreboard is derived from the board, so it can never drift from it.
 The AI scores by paving within the opening minutes and a full game between two AI-driven seats ends inside a session (see docs/playtest-reports/2026-09-10-vp01-vp-race.md).
+`rivalPace` is a pure read of the two scoreboard totals: a seat a plant behind sprints (4 bank exchanges a turn instead of 2, Ore-bearing ground weighted 1.5x in the depot planner, and the pave goal itself deliberately unchanged), a seat ahead keeps compounding income, and a leader one point from winning is denied with the rival's last Gold instead of its reserve.
+The rival never pays for a sabotage card it cannot aim (the raid's purchase list is the three cards it can land on your plant).
 The UI explains the rule: tool labels, mode bar, inspector, banners and help all price the pave.
 Player, AI and multiplayer rules enforce the same restriction (no AI-only scoring path).

@@ -146,6 +146,21 @@ Around those three:
   Road on virgin ground costs 4 extra Ore per tile and returns 0★, so the planner
   lays gravel, banks the Ore, and converts it into points *and* ×1.6 with the pave
   pass. `preferPaved: true` is the option that asks for road up front;
+- **it reads the scoreboard before it spends** — `rivalPace(you, ai, target)` in
+  `ai.ts` is a pure function of two totals, and the rival's whole reaction is
+  three numbers: a seat a plant (1★) behind *sprints*, making **four** bank
+  exchanges a turn instead of two and weighting Ore-bearing ground **1.5×** in the
+  depot planner, so it stops chasing the bigger farm and goes for the mine that
+  prints points. What does *not* change is the size of the goal — a first version
+  let a sprinting rival bank at eight tiles (32 Ore) instead of four, and the
+  5-seed race answered that with a seat on 0★ for the entire game (it sold four
+  stacks a turn toward a milestone it could never reach, and stopped affording
+  the economy that would have carried it there). A plan has to be short enough to
+  finish; `planUpgrades` still spends all eight tiles in one pass when the Ore is
+  already in the purse. A rival ahead of you changes nothing at all — compounding
+  income is the right play when you are winning, and this is the one place the AI
+  is allowed to be boring. `__iso.rivalPace` exposes the read, so a playtest can
+  ask *why* a turn looked odd;
 - **the turn cannot be wasted** — when all three actions fail it banks toward the
   plan it wants (PP-07's escape hatch, now able to buy **into the scoreboard**:
   the 4:1 bank will convert Wood into the Ore a pave needs, choosing whichever
@@ -154,7 +169,14 @@ Around those three:
   tick) instead of burning the full `AI_BUILD_MS`;
 - **it plays the Black Market too** — `rivalSabotage` buys a Blockade on the
   industry feeding *your* best connection when it can pay and still keep
-  `RIVAL_GOLD_RESERVE` (2 gold) in hand, floating `⛓ BLOCKADED` on your map tile;
+  `RIVAL_GOLD_RESERVE` (2 gold) in hand, floating `⛓ BLOCKADED` on your map tile.
+  The reserve has one exception, and it is the other half of reading the
+  scoreboard: when *you* are within a plant of winning, denial outranks its own
+  economy and it spends down to the last coin (`pace.deny`). And `rivalRaid` now
+  filters its purchase list to the three cards it can actually aim at your plant
+  — `bandit` (a district card, which `rivalSabotage` owns) and `security` (a
+  defender's card) used to be picked up as "affordable", paid for, and dropped,
+  because the hire is charged before the effect;
 - **routing knows about its own pavement** — `networkTiles` seeds from the MERGED
   network and `stepCost` discounts only what `tileAlreadyCarries` confirms. Without
   this the rival treated a trunk it had just paved as foreign ground and answered
@@ -182,8 +204,12 @@ with it. One tile, one point, whoever's it ends up being: documented, not blocke
 - **Points do not require a live connection.** A paved tile pays whether or not
   anything is driving on it — the road is built and the money is spent. What
   *does* require a live line is the Ore to buy the next one.
-- **The win lands on 10★, never past it**: 0.25 steps mean the check can only
-  arrive exactly, and `fmtVp` prints `9.75` rather than float noise.
+- **The win is checked once a turn, so the last turn can overshoot.** 0.25 steps
+  mean a *single* pave lands exactly on 10★ — but a build turn can pave eight
+  tiles *and* raise a plant, and the gate reads the turn's total (seed 2024 of
+  `iso-vp-race.test.ts` finished 10.25★). That is the design: the banner prints
+  the true number and `fmtVp` shows `9.75` rather than float noise, and what must
+  never happen is the check *lagging* a turn and a player sitting on 13★.
 
 ## Where to tune
 
@@ -191,7 +217,9 @@ The whole rule is four numbers: `VICTORY` (`src/iso/config.ts`) for the rates an
 the target, `UPGRADE_COST.ore` (same file, via `BUILD_COSTS.upgrade`) for the
 price of a pave, and `PLANT_COST` (`plants.ts`, from the same table) for the price
 of the other point. `START_PURSE` and `AI_BUILD_MS`/`AI_IDLE_MS` live in
-`game.ts`. Three harnesses re-measure whenever any of them moves:
+`game.ts`; the rival's catch-up thresholds are the two comparisons inside
+`rivalPace` (`VICTORY.plant` for both), and its cruise budget — 4-tile pave batch,
+2 exchanges a turn, 2 gold in reserve — is the `false` branch of the same object. Three harnesses re-measure whenever any of them moves:
 `tests/unit/iso-victory.test.ts` (what scores, what does not, what takes it
 back), `tests/unit/iso-progression.test.ts` (the opening: connection, second
 depot, second plant, first pave) and `tests/unit/iso-vp-race.test.ts` (a whole

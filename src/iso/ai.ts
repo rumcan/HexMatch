@@ -274,9 +274,16 @@ export const CARGO_VALUE: Record<Cargo, number> = {
  * track). `claimantCounts` is the same share arithmetic `harvesterYield` pays
  * by, so the plan is priced on the economy's own numbers, not a guess.
  */
+/**
+ * VP-01: `oreUrgency` scales how much an Ore Mine is worth, and nothing else.
+ * Default 1 keeps the economy's own ranking; a rival that is behind on the
+ * scoreboard raises it, because Ore is the only cargo that buys points. It is a
+ * multiplier on `CARGO_VALUE.ore` rather than a second formula so there is one
+ * place where "what is a depot worth" is decided.
+ */
 export function catchmentValue(
   state: EconomyState, counts: Map<number, number>, stock: Purse,
-  tx: number, ty: number, now = 0,
+  tx: number, ty: number, now = 0, oreUrgency = 1,
 ): number {
   const probe = { id: -1, owner: "", ownerId: 0, tx, ty } as Harvester;
   let v = 0;
@@ -285,8 +292,11 @@ export function catchmentValue(
     const def = INDUSTRY_BY_KEY[ind.type];
     if (!def) continue;
     const claimants = (counts.get(ind.id) ?? 0) + 1;  // +1 for this new depot
+    const weight = def.cargo === "ore"
+      ? CARGO_VALUE.ore * oreUrgency
+      : CARGO_VALUE[def.cargo];
     v += ((ind.output ?? def.output) / claimants)
-      * CARGO_VALUE[def.cargo] * (1 + scarcity(stock, def.cargo));
+      * weight * (1 + scarcity(stock, def.cargo));
   }
   return v;
 }
@@ -479,6 +489,13 @@ export interface PlanOptions {
    */
   preferPaved?: boolean;
   /**
+   * VP-01: multiplier on the value of Ore-bearing industries (see
+   * `catchmentValue`). Raised by `rivalPace` when the rival is losing the
+   * race to 10★ — the point of "reacts to the player's lead" is that the
+   * rival's DEPOT choice changes, not only its spending.
+   */
+  oreUrgency?: number;
+  /**
    * Wall time used to skip blockaded industries when valuing a catchment.
    * Omitted = 0, i.e. nothing is blockaded, which is what the pure planning
    * tests want; `game.ts` passes the live clock so the rival stops planning
@@ -594,7 +611,7 @@ export function planCandidates(
         // VP-01: value the DEPOT, not the industry — the tile's 4×4 catchment
         // is what harvests, and on a multi-tile footprint that is usually more
         // than the one industry A* happened to route to.
-        const value = catchmentValue(state, counts, opts.stock, hx, hy, now);
+        const value = catchmentValue(state, counts, opts.stock, hx, hy, now, opts.oreUrgency ?? 1);
         const score = value / Math.max(0.3, path.cost);
         out.push({ industry: ind, hx, hy, path, kind: kindPref, cost, score, value });
         break;   // one spot per industry is enough — the cheapest we found
@@ -1028,4 +1045,59 @@ export function executePaves(state: EconomyState, plan: PavePlan, ownerId: numbe
     built.push([x, y]);
   }
   return { built, spent };
+}
+
+// ── reading the scoreboard ─────────────────────────────────────────────────
+export interface RivalPace {
+  /** Behind by a whole plant's worth of points: stop investing in income. */
+  sprint: boolean;
+  /**
+   * Exchanges the 4:1 bank may make in one turn (2 is the player's rhythm, and
+   * the rival's cruise rate). Doubling THIS is what sprinting means: the same
+   * milestone, reached in half the turns.
+   *
+   * The milestone itself is deliberately NOT enlarged. An earlier version aimed
+   * a sprinting rival at eight tiles (32 Ore) instead of four (16), on the theory
+   * that a losing seat should swing bigger; on seed 99 of the 5-seed race that
+   * produced the worst possible result — 0★ for the whole game, because a poor
+   * seat cannot assemble 32 Ore, so it sold four stacks a turn toward a target it
+   * could never reach and stopped affording the economy it needed to reach it.
+   * A plan has to be short enough to finish. `planUpgrades` still paves all eight
+   * tiles at once when the Ore happens to be there.
+   */
+  bankPerTurn: number;
+  /**
+   * Multiplier on the value of Ore-bearing industries this turn (1 = the
+   * economy's own ranking) — how the lead reaches the DEPOT choice.
+   */
+  oreUrgency: number;
+  /**
+   * The PLAYER is within one plant of winning, so Gold is worth more spent on a
+   * Blockade of its Ore than banked: `game.ts` drops the rival's reserve to nil
+   * for a turn. Denial is the one action that scores by NOT being about your
+   * own board, and it is only rational when somebody is about to win — which,
+   * from the rival's side, means it reads the opponent's total, not the leader's
+   * (a rival that is itself about to win should be spending on paves).
+   */
+  deny: boolean;
+}
+
+/**
+ * The rival's read of the scoreboard, and the four numbers that follow from it.
+ *
+ * Pure, and deliberately so: it takes two totals and the target, never the
+ * board, so it can be argued about in a test table instead of inferred from a
+ * 40-minute race. `you - ai` is the whole of its information — which is what
+ * "reacts to the player's lead" should mean in a game where the opponent's road
+ * network is visible but their intentions are not.
+ *
+ * Both thresholds are one plant (1★), the cheapest unit of score: a gap the
+ * rival cannot close inside a turn or two of paving is not an emergency, and
+ * an emergency it cannot act on is noise.
+ */
+export function rivalPace(you: number, ai: number, target: number): RivalPace {
+  const behind = you - ai;
+  const sprint = behind >= VICTORY.plant;
+  const deny = you > target - VICTORY.plant;
+  return { sprint, bankPerTurn: sprint ? 4 : 2, oreUrgency: sprint ? 1.5 : 1, deny };
 }

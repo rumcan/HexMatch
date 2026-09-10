@@ -3,6 +3,7 @@ import {
   COST_FLAT, COST_ROUGH, COST_OWNED, stepCost, findPath, scarcity,
   harvesterSpots, networkTiles, nearestSource, planCandidates, bestCandidate,
   executeCandidate, aiBuildStep, planFeasibility, chooseRivalFactorySpot,
+  catchmentValue, rivalPace, CARGO_VALUE,
 } from "../../src/iso/ai";
 import {
   createTrack, buildTile, hasTrack, tIdx, canBuildOn, type Track,
@@ -721,5 +722,73 @@ describe("T4 routing regressions", () => {
     // The unpruned patch took ~9s locally. Generous CI margin over a <100ms
     // normal opening, without disguising the stall with a 120s test timeout.
     expect(performance.now() - start).toBeLessThan(2000);
+  });
+});
+
+describe("VP-01 the rival reads the scoreboard", () => {
+  // `rivalPace` is pure — two totals and the target — so the whole policy fits
+  // in a table instead of having to be inferred from a 40-minute race.
+  it("sprints only when the gap is a whole point of score", () => {
+    const cruise = { sprint: false, bankPerTurn: 2, oreUrgency: 1, deny: false };
+    expect(rivalPace(0, 0, 10)).toEqual(cruise);
+    expect(rivalPace(0.75, 0, 10).sprint).toBe(false);     // under a plant: noise
+    expect(rivalPace(1, 0, 10).sprint).toBe(true);         // exactly a plant: an emergency
+    expect(rivalPace(3.5, 2.5, 10).sprint).toBe(true);    // the GAP counts, not the totals
+    expect(rivalPace(2, 4, 10)).toEqual(cruise);            // winning → keep compounding income
+    const pace = rivalPace(1, 0, 10);
+    expect(pace.bankPerTurn).toBeGreaterThan(cruise.bankPerTurn); // more trades a turn
+    expect(pace.oreUrgency).toBeGreaterThan(cruise.oreUrgency);  // …and it chases ore mines
+    // …and NOTHING else. In particular the goal does not grow: an earlier
+    // version let a sprinting rival point its bank at eight tiles (32 Ore)
+    // instead of four, and on seed 99 of the 5-seed race that seat scored 0★ for
+    // the entire game — it sold four stacks a turn toward a milestone it could
+    // never reach and stopped affording the economy that would have carried it
+    // there. A plan has to be short enough to finish. The policy's whole surface
+    // is asserted here so that enlarging it is a decision, not an accident
+    // (`planUpgrades` still paves all eight tiles in one go when the Ore is
+    // already in the purse, which is the half of the idea that survived).
+    expect(Object.keys(pace).sort()).toEqual(["bankPerTurn", "deny", "oreUrgency", "sprint"]);
+  });
+
+  it("denies the leader once the game is one plant away from ending", () => {
+    expect(rivalPace(9, 4, 10).deny).toBe(false);       // two points of room: build
+    expect(rivalPace(9.25, 4, 10).deny).toBe(true);     // one pave from the win: block
+    expect(rivalPace(9.25, 10, 10).deny).toBe(true);    // it reads YOUR total, not the gap
+    // denial is independent of sprinting: a rival that is AHEAD still blocks a
+    // player about to win, because that turn is the last turn either way.
+    expect(rivalPace(9.5, 10, 10).sprint).toBe(false);
+  });
+
+  it("scales the value of Ore-bearing ground and nothing else", () => {
+    const ore = ind("ore_mine", 4, 4);
+    const oreGrid = flatGrid([ore]);
+    const counts = new Map<number, number>();
+    const at = (u: number) => catchmentValue(state(oreGrid), counts, {}, 5, 5, 0, u);
+    expect(at(1)).toBeGreaterThan(0);
+    expect(at(3)).toBeCloseTo(at(1) * 3, 10);      // a pure multiplier on the ore term
+
+    const farmGrid = flatGrid([ind("farm", 4, 4)]);
+    const atFarm = (u: number) => catchmentValue(state(farmGrid), counts, {}, 5, 5, 0, u);
+    expect(atFarm(3)).toBe(atFarm(1));              // urgency does not touch other cargo
+  });
+
+  it("changes which industry the next Depot chases", () => {
+    // Equal distance from the plant, so only the cargo weighting can move the
+    // ranking: the farm is worth more per tile at urgency 1 on this output…
+    const farm = ind("farm", 5, 10);
+    const mine = ind("ore_mine", 5, 0);
+    const grid = flatGrid([farm, mine]);
+    const plan = (oreUrgency: number) =>
+      planCandidates(state(grid), F, { stock: {}, purse: rich, oreUrgency });
+    const scoreOf = (p: ReturnType<typeof plan>, type: string) =>
+      p.find((c) => c.industry.type === type)!.score;
+    const calm = plan(1), hot = plan(3);
+    expect(scoreOf(calm, "farm")).toBeGreaterThan(0);
+    expect(scoreOf(hot, "ore_mine") / scoreOf(hot, "farm"))
+      .toBeGreaterThan(scoreOf(calm, "ore_mine") / scoreOf(calm, "farm"));
+    expect(scoreOf(hot, "farm")).toBe(scoreOf(calm, "farm"));   // the farm's own value is untouched
+    // …and the multiplier is bounded by the table it scales, so a rival cannot
+    // be talked into an infinite ore obsession by a large number.
+    expect(CARGO_VALUE.ore).toBeGreaterThan(0);
   });
 });

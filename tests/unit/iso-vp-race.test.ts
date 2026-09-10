@@ -36,7 +36,7 @@ import {
 } from "../../src/iso/track";
 import {
   aiBuildStep, chooseRivalFactorySpot, planUpgrades, executePaves, paveCandidates,
-  planCandidates,
+  planCandidates, rivalPace, type RivalPace,
 } from "../../src/iso/ai";
 import { playerResources, type EconomyState, type Factory } from "../../src/iso/economy";
 import { createScoreState, rescore, vpFor, hasWon, victoryBreakdown } from "../../src/iso/victory";
@@ -124,8 +124,8 @@ const gap = (purse: CargoBag, target: Purse): number => {
   return missing;
 };
 
-/** `rivalBankTowardPave`: two exchanges into Ore, never out of the Depot plan. */
-function bankForPaves(eco: EconomyState, seat: Seat, track: Track) {
+/** `rivalBankTowardPave`: exchanges into Ore, never out of the Depot plan. */
+function bankForPaves(eco: EconomyState, seat: Seat, track: Track, pace: RivalPace) {
   const ranked = paveCandidates(eco, {
     owner: seat.id, ownerId: seat.ownerId, purse: seat.purse, maxTiles: 4,
   });
@@ -135,7 +135,7 @@ function bankForPaves(eco: EconomyState, seat: Seat, track: Track) {
   const price = need > 0 ? 4 : 0;
   if ((seat.purse.ore ?? 0) >= need || !price) return;
   let trades = 0;
-  while ((seat.purse.ore ?? 0) < need && trades < 2) {
+  while ((seat.purse.ore ?? 0) < need && trades < pace.bankPerTurn) {
     const surplus = (CARGOES as Cargo[])
       .filter((c) => c !== "gold" && c !== "ore" && (seat.purse[c] ?? 0) >= price)
       .sort((a, b) => (seat.purse[b] ?? 0) - (seat.purse[a] ?? 0))[0];
@@ -152,7 +152,7 @@ function bankForPaves(eco: EconomyState, seat: Seat, track: Track) {
  * turn, gold never, and it targets the plan with the SMALLEST shortfall, which
  * is what keeps a stalled seat from chasing a moving target forever.
  */
-function bankToward(eco: EconomyState, seat: Seat, track: Track, f: Factory) {
+function bankToward(eco: EconomyState, seat: Seat, track: Track, f: Factory, pace: RivalPace) {
   // Price the transport plan with a hypothetical deep purse: `planCandidates`
   // drops plans a purse cannot finish, and the plan to bank toward is one of
   // those (the scarcity ranking still reads the REAL stock).
@@ -160,6 +160,7 @@ function bankToward(eco: EconomyState, seat: Seat, track: Track, f: Factory) {
   for (const c of CARGOES) deep[c] = (deep[c] ?? 0) + 1_000_000;
   const cands = planCandidates(eco, f, {
     stock: seat.purse, purse: deep, free: seat.freeTrack, freeDepots: seat.freeDepots,
+    oreUrgency: pace.oreUrgency,
   });
   const depot = priceDepot(seat.purse, seat.freeDepots).cost;
   const planTarget: Purse = {};
@@ -185,7 +186,7 @@ function bankToward(eco: EconomyState, seat: Seat, track: Track, f: Factory) {
 
   let trades = 0;
   for (const [cargo, need] of Object.entries(target) as [Cargo, number][]) {
-    while ((seat.purse[cargo] ?? 0) < need && trades < 2) {
+    while ((seat.purse[cargo] ?? 0) < need && trades < pace.bankPerTurn) {
       const surplus = (CARGOES as Cargo[])
         .filter((c) => c !== "gold" && c !== cargo && (seat.purse[c] ?? 0) >= BANK_RATE)
         .filter((c) => (seat.purse[c] ?? 0) - BANK_RATE >= (target[c] ?? 0))
@@ -239,6 +240,12 @@ function race(seed: number): Race {
       if (t - seat.lastBuild >= AI_BUILD_MS) {
         seat.lastBuild = t;
         let acted = false;
+        // VP-01: the same read of the scoreboard the shipped rival makes. The
+        // OTHER seat's total is what a seat reacts to, and BOTH seats run the
+        // policy — the only way to measure whether catching up helps at all.
+        const pace = rivalPace(
+          vpFor(score, seat.id === "you" ? "ai" : "you"), vpFor(score, seat.id), VP_TARGET,
+        );
 
         if (canAffordPlant(seat.purse)) {
           const spot = chooseAiPlantSpot(grid, track, eco, seat.id);
@@ -250,6 +257,7 @@ function race(seed: number): Race {
         const built = aiBuildStep(eco, factoryFor(seat), {
           stock: seat.purse, purse: seat.purse,
           free: seat.freeTrack, freeDepots: seat.freeDepots, now: t,
+          oreUrgency: pace.oreUrgency,
         }, nextHarvesterId);
         if (built) {
           nextHarvesterId++;
@@ -273,10 +281,10 @@ function race(seed: number): Race {
         } else {
           // VP-01: the seat that has gravel and no Ore buys the Ore, even on a
           // turn it also spent building — `rivalBankTowardPave` in game.ts
-          bankForPaves(eco, seat, track);
+          bankForPaves(eco, seat, track, pace);
         }
         if (!acted) {
-          bankToward(eco, seat, track, factoryFor(seat));
+          bankToward(eco, seat, track, factoryFor(seat), pace);
           // the game retries the whole sequence once a bank unlocked something
           const retry = planUpgrades(eco, {
             owner: seat.id, ownerId: seat.ownerId, purse: seat.purse, maxTiles: 8,
