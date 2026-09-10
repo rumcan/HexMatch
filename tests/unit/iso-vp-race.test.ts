@@ -41,8 +41,9 @@ import {
 
 /**
  * The simulated horizon, in in-game minutes. It is long enough for the window to
- * contain a FINISHED game (a seat reaches 10★ around minute 12-20 on these
- * seeds, with no match-3 income at all), and short enough to stay a unit test.
+ * contain a FINISHED game (the AI-02 line is 20★ — seed 1337's normal mirror
+ * closed it at 16.8m with the sim-only trickle, vs 9.9–17.6m to the old 10★),
+ * and short enough to stay a unit test.
  * A playtest run raises it and reads the printed table:
  *
  *   VP_RACE_MINUTES=45 VP_RACE_SEEDS=1337,7,42 npx vitest run tests/unit/iso-vp-race.test.ts
@@ -51,7 +52,7 @@ const RACE_MINUTES = Number(process.env.VP_RACE_MINUTES ?? 24);
 /** Seeds to race. One is enough for the invariant; a playtest wants the spread. */
 const SEEDS = (process.env.VP_RACE_SEEDS ?? "1337").split(",").map((x) => Number(x));
 
-describe("VP-01 the race to ten", () => {
+describe("VP-01 the race to twenty (AI-02 — was ten)", () => {
   const races = SEEDS.map((seed) => runRace(seed, { minutes: RACE_MINUTES }));
 
   it("prints the pace for the playtest report", () => {
@@ -132,7 +133,7 @@ describe("VP-01 the race to ten", () => {
     }
   }, 900_000);
 
-  it("a game ends: someone reaches 10★, and the other seat was racing", () => {
+  it("a game ends: someone reaches 20★, and the other seat was racing", () => {
     for (const r of races) {
       const trailer = Math.min(r.vp.you, r.vp.ai);
       expect(r.winner, `seed ${r.seed}: no seat reached ${VP_TARGET}★ in ${RACE_MINUTES} minutes`).toBeTruthy();

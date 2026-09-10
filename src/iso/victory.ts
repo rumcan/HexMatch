@@ -6,7 +6,7 @@
 //
 //   Dirt Road tile paved into a Road (in place)   +0.25★   (4 paves = 1★)
 //   Processing plant raised after setup           +1★
-//   First to 10★ wins
+//   First to 20★ wins (AI-02 — the line moved from 10)
 //
 // What is deliberately worth nothing:
 //
@@ -24,7 +24,7 @@
 //
 //   1. **Ore is the score.** A pave is 4 Ore, and Ore only comes out of an ore
 //      mine that is IN PRODUCTION — serviced by a depot, on a road, feeding a
-//      plant. So the race to 10★ is a race to build a working economy, and the
+//      plant. So the race to 20★ is a race to build a working economy, and the
 //      connection mechanic (throughput ×1.0 dirt / ×1.6 paved) is what feeds
 //      it, just without paying points twice.
 //   2. **Points are revocable, so losing a road hurts.** Tear up a paved tile

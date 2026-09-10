@@ -48,7 +48,9 @@ import {
   runRace, pacePerMinute, countTier, MIN, type Race,
 } from "./helpers/race";
 
-const RACE_MINUTES = Number(process.env.AI_RACE_MINUTES ?? 30);
+// AI-02: the 20★ line roughly doubles game length (easy mirrors finish at
+// ~28.5m on 1337) — 30 minutes of window was the 10★ era's setting.
+const RACE_MINUTES = Number(process.env.AI_RACE_MINUTES ?? 36);
 const SEEDS = (process.env.AI_RACE_SEEDS ?? "1337").split(",").map((x) => Number(x));
 
 /** When a seat crossed `vp`, or null inside this window. */
@@ -84,7 +86,7 @@ describe("AI-01 every difficulty finishes a mirror match", () => {
     expect(mirrors.size).toBe(SEEDS.length * presets.length);
   }, 1_800_000);
 
-  it("every preset reaches 10★, and the trailer was still racing", () => {
+  it("every preset reaches the win line, and the trailer was still racing", () => {
     for (const seed of SEEDS) {
       for (const key of presets) {
         const r = mirrors.get(`${seed}:${key}`);
@@ -93,11 +95,12 @@ describe("AI-01 every difficulty finishes a mirror match", () => {
         // …and the loser of a mirror was racing, not parked. The race loop
         // STOPS when the winner crosses the line, so the trailer's total is a
         // mid-game snapshot: judge it against what a flowing seat earns by
-        // that minute. Half the requested reporting window (5★ in 20m) is the
-        // floor: 42's hard mirror closes in 5.4m (floor 1.4★, made 2★), 1337's
-        // easy mirror in 17.6m (floor 4.4★, made 8.75★).
+        // that minute. The nominal game length the floor scales with is how
+        // long the line is: 20 minutes carried the 10★ era (9.9–17.6m winner
+        // times), and at the AI-02 line of 20★ the measured game runs 15.5m
+        // (hard) to 28.5m (easy) — hence 30 minutes.
         const trailer = Math.min(r!.vp.you, r!.vp.ai);
-        const floor = (VP_TARGET / 2) * (r!.winner!.at / (20 * 60_000));
+        const floor = (VP_TARGET / 2) * (r!.winner!.at / (30 * 60_000));
         expect(trailer, `seed ${seed}/${key}: mirror loser only reached ${trailer}★ by the winner's ${MIN(r!.winner!.at)}`)
           .toBeGreaterThanOrEqual(Math.min(VP_TARGET / 2, floor));
         // and nobody scored backwards: the winner's own pace over the second
@@ -114,9 +117,10 @@ describe("AI-01 every difficulty finishes a mirror match", () => {
     // THE criterion the user asked for: the speed at which a seat reaches the
     // win points is how hard the rival is. Mirrors make it fair — both seats
     // play the same policy, so the only thing separating easy from hard is the
-    // preset's own numbers. Measured on 1337: hard 9.9m < normal 10.1m < easy
-    // 17.6m; dense lanes (7/42/99) move the absolute times but keep the order
-    // (see docs/playtest-reports/2026-09-10-ai-skills.md).
+    // preset's own numbers. Measured on 1337 at the AI-02 line (20★): hard
+    // 15.5m < normal 16.8m < easy 28.5m; dense lanes (7/42/99) move the
+    // absolute times but keep the order (see
+    // docs/playtest-reports/2026-09-10-ai-02-report.md).
     for (const seed of SEEDS) {
       const winAt = (k: SkillKey) => mirrors.get(`${seed}:${k}`)!.winner!.at;
       expect(winAt("hard"), `seed ${seed}: hard did not finish before normal`)
@@ -172,13 +176,13 @@ describe("AI-01 the ladder orders itself head-to-head", () => {
       expect(at(r, "you", 5)!).toBeLessThan(at(r, "ai", 5) ?? Infinity);
       // …and the easy seat it beat was still playing a real game — "a rival
       // you can catch", not "a rival that never shows up". Same proportional
-      // floor as the mirrors: the moment hard crosses the line the race ENDS,
-      // so easy's total is a snapshot of a seat in flight. On 1337 hard wins
-      // the chair-1 race at 9.9m and easy stands at 4.75★ — 96% of the floor,
-      // mid-stride.
+      // floor as the mirrors (30-minute nominal, per the note above): the
+      // moment hard crosses the line the race ENDS, so easy's total is a
+      // snapshot of a seat in flight. On 1337 hard wins the chair-1 race at
+      // 15.5m and easy stands at 7★ — well past the 5.17★ floor, mid-stride.
       expect(r.vp.ai, `seed ${seed}: easy was parked at ${r.vp.ai}★ when hard won at ${MIN(r.winner!.at)}`)
         .toBeGreaterThanOrEqual(
-          Math.min(VP_TARGET / 2, (VP_TARGET / 2) * (r.winner!.at / (20 * 60_000))),
+          Math.min(VP_TARGET / 2, (VP_TARGET / 2) * (r.winner!.at / (30 * 60_000))),
         );
     }
   }, 1_800_000);

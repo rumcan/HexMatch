@@ -10,15 +10,16 @@
 // How the presets were set, so they do not drift into guesswork: two AI seats
 // race each other head-to-head (tests/unit/iso-skill-calibration.test.ts,
 // seeded with the map's town roads + public highways exactly as the live game
-// boots them) and the time each seat takes to reach 1★, 5★ and 10★ is the
+// boots them) and the time each seat takes to reach 1★, 5★ and the finish line is the
 // measurement. The table of results lives in
 // docs/playtest-reports/2026-09-10-ai-skills.md. The acceptance shape is:
 //
 //   • easy  — finishes a game well behind normal: a relaxed opponent that
 //             still plays the victory condition (expands, paves, scores);
-//   • normal — the VP-01 calibration: 10★ in ~12–20 min of pure trickle
+//   • normal — the shipped rival's tuning: reaches the AI-02 line (20★) in
+//             ~16.8m on the 1337 calibration lane — measured per chair;
 //             income, same as the shipped rival;
-//   • hard  — reaches 10★ roughly 30–40% sooner than easy, and beats easy
+//   • hard  — reaches the line roughly 30–40% sooner than easy, and beats easy
 //             head-to-head on every measured seed.
 //
 // Levers, in order of how loudly a player feels them:

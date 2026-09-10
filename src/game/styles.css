@@ -1369,3 +1369,25 @@ html, body, #root {
 #iso-trade > .tabs { flex-shrink: 0; }
 #iso-trade > #iso-quarry { border: 0; margin: 0; }
 #iso-trade .bank-pane > .panel { margin-top: 16px; }
+
+
+/* ── AI-02: the start-of-game difficulty prompt (src/iso/skill-picker.ts) ── */
+#iso-skill-prompt { position: absolute; inset: 0; z-index: 90;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(12, 16, 26, 0.78); }
+#iso-skill-prompt .iso-skill-card { max-width: 640px; padding: 18px 22px 14px;
+  background: #1d2433; border: 1px solid #44506a; border-radius: 10px;
+  color: #e8ecf5; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5); }
+#iso-skill-prompt h2 { margin: 0 0 4px; font-size: 20px; }
+#iso-skill-prompt .iso-skill-sub { margin: 0 0 12px; opacity: 0.85; font-size: 13px; }
+#iso-skill-prompt .iso-skill-choices { display: flex; gap: 10px; }
+#iso-skill-prompt .iso-skill-choice { flex: 1; display: flex; flex-direction: column;
+  gap: 6px; padding: 10px 12px; text-align: left; cursor: pointer;
+  background: #2a3247; color: inherit; border: 1px solid #4a5878; border-radius: 8px; }
+#iso-skill-prompt .iso-skill-choice:hover, #iso-skill-prompt .iso-skill-choice:focus {
+  border-color: #f5b942; outline: none; }
+#iso-skill-prompt .iso-skill-current { border-color: #f5b942; }
+#iso-skill-prompt .iso-skill-label { font-weight: 700; font-size: 15px; }
+#iso-skill-prompt .iso-skill-blurb { font-size: 12px; opacity: 0.85; min-height: 3em; }
+#iso-skill-prompt .iso-skill-pace { font-size: 11px; opacity: 0.65; }
+#iso-skill-prompt .iso-skill-foot { margin: 10px 0 0; font-size: 11px; opacity: 0.6; }

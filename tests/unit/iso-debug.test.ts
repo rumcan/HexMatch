@@ -82,6 +82,10 @@ beforeEach(() => {
   (globalThis as Record<string, unknown>).Image = FakeImage;
   giveTheStageAViewport();
   window.history.replaceState(null, "", "/?seed=1337");
+  // AI-02: a remembered difficulty keeps the start-of-game picker out of
+  // the DOM — these tests boot the game, not its onboarding (the picker
+  // itself is covered in iso-skill-picker.test.ts).
+  localStorage.setItem("hexmatch:rival-skill", "normal");
   setRng(mulberry32(1337));
   (globalThis as Record<string, unknown>).ResizeObserver = class {
     observe() {} unobserve() {} disconnect() {}

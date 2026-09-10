@@ -116,6 +116,10 @@ beforeEach(() => {
   // `findSouthCorridor` returns null and the whole "full round" block fails —
   // a flake that predates J1. Same seed the e2e suite boots with.
   window.history.replaceState(null, "", "/?seed=1337");
+  // AI-02: a remembered difficulty keeps the start-of-game picker out of
+  // the DOM — these tests boot the game, not its onboarding (the picker
+  // itself is covered in iso-skill-picker.test.ts).
+  localStorage.setItem("hexmatch:rival-skill", "normal");
   setRng(mulberry32(1337));
   (globalThis as Record<string, unknown>).ResizeObserver = class {
     observe() {} unobserve() {} disconnect() {}
@@ -833,6 +837,59 @@ describe("W3 the rival actually plays (headless)", () => {
   }, 150_000);
 });
 
+describe("AI-02 the rival keeps playing for minutes (the live stall)", () => {
+  // The user's first long session saw "one factory and one road and one depot"
+  // — and then, forever, only paving. The headless repro (Seed 1337, 25 sim
+  // minutes) pinned it: with exactly ≥NEED Ore in the purse but a Plant's Ore
+  // earmarked by `keepOre`, the rival's pave pass could never pay, while BOTH
+  // banks measured the goal against the raw purse (gap zero → no trades —
+  // 766 Wood hoarded at +32/min). The fix measures every pave goal against
+  // SPENDABLE Ore. This test is that night pinned in code: no gifts, no
+  // grants, the same opponent the user met, minutes of its own clocks.
+  it("expands, paves, and never hoards, under its own income alone", async () => {
+    const h = await boot();
+    const { buildTile } = await import("../../src/iso/track");
+    const { WATER, factoryTouchesTown } = await import("../../src/iso/grid");
+    // the thinnest possible human opening — the rival gets the live game's own
+    // factory rule (its spot is what this test's seed-1337 stall proved)
+    let spot: [number, number] | null = null;
+    for (let y = 2; y < MAP_H - 3 && !spot; y++) {
+      for (let x = 2; x < MAP_W - 3 && !spot; x++) {
+        if (h.grid.terrain[y * MAP_W + x] !== WATER && factoryTouchesTown(h.grid, x, y)) {
+          spot = [x, y];
+        }
+      }
+    }
+    expect(spot).toBeTruthy();
+    const [fx, fy] = spot!;
+    expect(h.placeFactory(fx, fy)).toBe(true);
+    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: fx, ty: fy - 4 });
+    for (let y = fy - 3; y < fy; y++) buildTile(h.track, "dirt", fx, y, 1);
+    h.finishSetup();
+
+    const rival = h.market.players[1];
+    const depots = () => h.harvesters.filter((x: { owner: string }) => x.owner === "ai").length;
+    const t0 = 1_000_000;
+    // Six in-game minutes at 1s steps — on seed 1337: 4 depots, 32 tiles laid,
+    // 19 paved, 4.75★ (the zz-live trace; the stall's version parked at
+    // 1 depot / 3 tiles / 0.5★ from minute one until the horizon).
+    let t = t0;
+    for (let m = 0; m < 6; m++) {
+      for (let i = 0; i < 60; i++) { t += 1000; h.econTick(t); h.aiTick(t); }
+    }
+    expect(depots(), `rival own expansion: ${depots()} depots — the AI-02 stall was 1 forever`)
+      .toBeGreaterThanOrEqual(4);
+    expect(h.pavedTiles("ai")).toBeGreaterThanOrEqual(12);
+    // the hoarding detector: the stall's signature was Wood piling up at
+    // +32/min pouring past the banks it needs to reach Stone and Oil
+    const wood = rival.res.wood ?? 0;
+    expect(wood, `Wood at +${wood} after 6 min — the banks are not buying Stone/Oil again`)
+      .toBeLessThan(300);
+    // and the whole economy is honest (no purse is overdrawn by any of this)
+    for (const c of CARGOES) expect(rival.res[c], `${c} negative`).toBeGreaterThanOrEqual(0);
+  }, 150_000);
+});
+
 describe("W8 the rival is placed where it can build — and builds", () => {
   it("the real setup click hands the rival a road-legal tile with a viable plan", async () => {
     const h = await boot();
@@ -1466,7 +1523,6 @@ describe("RV-03 town dirts and the closest truck route", () => {
   /** A depot and factory beside ONE town ring dirt, with a dirt corridor laid. */
   async function depotOnTownRoad(): Promise<IsoHook> {
     const h = await boot();
-    const { buildTile } = await import("../../src/iso/track");
     // free buildable neighbour of a town dirt tile
     const free = (nx: number, ny: number) =>
       nx >= 0 && ny >= 0 && nx < MAP_W && ny < MAP_H
@@ -1902,10 +1958,10 @@ describe("VP-01 the rival plays the score, not just the map", () => {
     const rivalSpot = findFactorySpotNear(h.grid, "ore_mine", -1);
     expect(rivalSpot).toBeTruthy();
     h.eco.factories.push({ owner: "ai", ownerId: 2, tx: rivalSpot![0], ty: rivalSpot![1] });
-    // 37 paves = 9.25★: one point short of the target, i.e. the next build turn
-    // can end the game. The reserve's whole purpose was to keep the rival able
-    // to expand afterwards — denial is worth more than that now.
-    expect(paveStrip(h, 37)).toBe(37);
+    // AI-02 (target 20): 77 paves = 19.25★ — one point short, i.e. the next
+    // build turn can end the game. The reserve's whole purpose was to keep the
+    // rival able to expand afterwards — denial is worth more than that now.
+    expect(paveStrip(h, 77)).toBe(77);
     h.finishSetup();
     const rival = h.market.players[1];
     // Cargo so the rival's first turn ACTS: the scoreboard is derived on a
@@ -1915,7 +1971,7 @@ describe("VP-01 the rival plays the score, not just the map", () => {
     Object.assign(rival.res, { grain: 40, wood: 40, stone: 40, oil: 40, ore: 0, gold: 0 });
     const t0 = 1_000_000;
     h.aiTick(t0);                             // arms the raid clock, spends no Gold
-    expect(h.vp.you).toBeGreaterThan(VICTORY.upgrade * 36);
+    expect(h.vp.you).toBeGreaterThan(VICTORY.upgrade * 76);
     expect(h.rivalPace.deny).toBe(true);
     rival.res.gold = SABOTAGE.bandit.gold;
     h.aiTick(t0 + AI_BUILD_MS);

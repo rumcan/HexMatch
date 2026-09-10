@@ -536,7 +536,7 @@ export interface PlanOptions {
   /**
    * VP-01: multiplier on the value of Ore-bearing industries (see
    * `catchmentValue`). Raised by `rivalPace` when the rival is losing the
-   * race to 10★ — the point of "reacts to the player's lead" is that the
+   * race to the win line — the point of "reacts to the player's lead" is that the
    * rival's DEPOT choice changes, not only its spending.
    */
   oreUrgency?: number;

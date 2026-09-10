@@ -28,6 +28,13 @@ import {
 const ISO_URL = "/hexmatch/?seed=79";
 
 async function bootIso(page: import("@playwright/test").Page) {
+  // AI-02: the start-of-game difficulty prompt overlays the UI when nothing
+  // chose yet — these specs play a game, they do not exercise onboarding
+  // (the picker is unit-tested in iso-skill-picker.test.ts), so boot with a
+  // choice already remembered.
+  await page.addInitScript(
+    () => localStorage.setItem("hexmatch:rival-skill", "normal"),
+  );
   await page.goto(ISO_URL);
   await page.waitForFunction(() => {
     const h = (window as any).__iso;
