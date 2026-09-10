@@ -8,12 +8,14 @@ import { DIR, DIRS, OPPOSITE, bitsAt, tIdx, inMapT, trackOpenTo, type Track, typ
  * Multi-source BFS with parents — the same graph the economy's component
  * flood walks, but returning the actual tiles. Null when no route exists.
  *
- * Both road tiers are drivable (a paved Road and a Dirt Road alike), so by
- * default the route runs over whichever tier the tile carries. Pass a
- * specific `kind` to restrict the flood to that one tier (the economy's
- * dirt-only fallback does this, since a dirt component must be measured over
- * dirt tiles). A tile never carries both tiers (`track.ts` replaces on pave),
- * so the two can never cross-connect a route.
+ * Gravel and tar are ONE continuous road surface: masks cross the tier
+ * boundary (`track.ts` autotiles the union), so by default the route runs
+ * over whichever tier each tile carries and crosses dirt↔paved seams freely
+ * — the same merged graph the economy's components flood. Pass a specific
+ * `kind` only when the caller genuinely needs a tier-pure flood; a route
+ * restricted to `dirt` stops at a paved tile (that tile is not PRESENT on
+ * the dirt layer, so it never faces back on it). A tile never carries both
+ * tiers (`track.ts` replaces on pave).
  */
 export function roadPath(
   track: Track, owner: number,

@@ -272,12 +272,15 @@ describe("Y3/Y5/Y6 declaration invariants", () => {
         continue;
       }
       // The gravel (Dirt Road) sheet is the same kind of local source: it is
-      // not an OpenGFX declaration, so it must exist and be a real PNG.
-      if (s.gravel) {
-        const p = `src/assets/sprites/png/${s.gravel}`;
-        expect(existsSync(p), `cell ${s.name}: gravel sheet ${s.gravel} missing`).toBe(true);
+      // not an OpenGFX declaration, so it must exist and be a real PNG. The
+      // `dirt_road` transitions cell synthesizes from that same sheet plus
+      // the declared `road` trackset, so it carries the sheet path too.
+      const sheet = s.gravel ?? s.dirtRoadTransitions;
+      if (sheet) {
+        const p = `src/assets/sprites/png/${sheet}`;
+        expect(existsSync(p), `cell ${s.name}: sheet ${sheet} missing`).toBe(true);
         const magic = readFileSync(p).subarray(0, 4);
-        expect([...magic], `cell ${s.name}: ${s.gravel} is not a PNG`).toEqual([0x89, 0x50, 0x4e, 0x47]);
+        expect([...magic], `cell ${s.name}: ${sheet} is not a PNG`).toEqual([0x89, 0x50, 0x4e, 0x47]);
         continue;
       }
       const ids = referencedIds(s);
@@ -299,6 +302,28 @@ describe("Y3/Y5/Y6 declaration invariants", () => {
     expect(slicer).not.toContain("clipArm");
     expect(slicer).not.toContain("TRACK_HALF_W");
     expect(slicer).not.toContain("makeGenerated(s, \"road\")");
+  });
+
+  it("ships 16 road_* + 16 dirt_* + the 65 dirt_road_* transitions, no rail/crossing", () => {
+    const names = Object.keys(realManifest.sprites);
+    const road = names.filter((n) => /^road_[01]{4}$/.test(n));
+    const dirt = names.filter((n) => /^dirt_[01]{4}$/.test(n));
+    const dirtRoad = names.filter((n) => /^dirt_road_[012]{4}$/.test(n));
+    expect(road).toHaveLength(16);
+    expect(dirt).toHaveLength(16);
+    // every 4-char edge-state string over {0,1,2} containing at least one 2
+    expect(dirtRoad).toHaveLength(65);
+    for (const n of dirtRoad) {
+      const state = n.slice("dirt_road_".length);
+      expect(state).toMatch(/^[012]{4}$/);
+      expect(state).toContain("2");
+    }
+    expect(names.some((n) => /^rail_/.test(n))).toBe(false);
+    expect(names.some((n) => n === "crossing")).toBe(false);
+    const cell = cells.sprites.find((c) => c.name === "dirt_road");
+    expect(cell?.dirtRoadTransitions).toBeTypeOf("string");
+    expect(cell?.generator).toBeUndefined();
+    expect(cell?.crop ?? cell?.box ?? cell?.tiles).toBeUndefined();
   });
 
   it("Y6: sprite width stays within footprint_w * 64 + 96", () => {

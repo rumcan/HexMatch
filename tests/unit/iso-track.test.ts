@@ -5,7 +5,8 @@ import {
   createTrack, tIdx, spriteKey, hasTrack, bitsAt, canBuildOn, playerNetwork,
   recomputeMask, autotileAround, buildTile, demolishTile,
   tileCost, addCost, canAfford, lPath, previewDrag, commitDrag,
-  connectedTiles, areConnected, drawBits, freeAllowanceCovers, type Track,
+  connectedTiles, areConnected, mergedPresent, mergedBitsAt,
+  mergedConnectedTiles, mergedAreConnected, drawBits, freeAllowanceCovers, type Track,
 } from "../../src/iso/track";
 import { Atlas, type Manifest } from "../../src/iso/atlas";
 import { buildDrawList, CHUNK, chunksX } from "../../src/iso/renderer";
@@ -85,12 +86,62 @@ describe("E5 autotiling — all 16 neighbour configurations", () => {
     expect(bitsAt(t, "dirt", 11, 10) & NW).toBeTruthy();
   });
 
-  it("dirt and road autotile independently and never cross-connect", () => {
+  it("gravel and tar are one surface: dirt beside a paved tile sets the facing bit", () => {
+    // The mask is the physical road surface, so a Dirt Road that reaches a
+    // paved tile connects to it — both tiles face each other across the tier
+    // boundary (the dirt↔paved seam feature; the `dirt_road_*` art draws the
+    // join and the merged floods route across it).
+    const t = createTrack();
+    buildTile(t, "dirt", 5, 5);
+    expect(bitsAt(t, "dirt", 5, 5)).toBe(0);
+    buildTile(t, "road", 6, 5);
+    expect(bitsAt(t, "dirt", 5, 5) & SE).toBe(SE);    // dirt faces the paving
+    expect(bitsAt(t, "road", 6, 5) & NW).toBe(NW);    // …and it faces back
+    // each tier's bit still lives in its OWN layer; a tile never carries both
+    expect(hasTrack(t, "dirt", 6, 5)).toBe(false);
+    expect(hasTrack(t, "road", 5, 5)).toBe(false);
+  });
+});
+
+describe("merged surface helpers", () => {
+  it("mergedPresent / mergedBitsAt union the two tier layers per tile", () => {
     const t = createTrack();
     buildTile(t, "dirt", 5, 5);
     buildTile(t, "road", 6, 5);
-    expect(bitsAt(t, "dirt", 5, 5)).toBe(0);
-    expect(bitsAt(t, "road", 6, 5)).toBe(0);
+    expect(mergedPresent(t, 5, 5)).toBe(true);
+    expect(mergedPresent(t, 6, 5)).toBe(true);
+    expect(mergedPresent(t, 7, 5)).toBe(false);
+    expect(mergedBitsAt(t, 5, 5) & SE).toBe(SE);
+    expect(mergedBitsAt(t, 6, 5) & NW).toBe(NW);
+    expect(mergedBitsAt(t, 7, 5)).toBe(0);
+  });
+
+  it("a lone gravel tile and a lone paved tile are merged-connected across the seam", () => {
+    const t = createTrack();
+    buildTile(t, "dirt", 10, 10);
+    buildTile(t, "road", 11, 10);
+    // per-kind views stay separate…
+    expect(connectedTiles(t, "dirt", 10, 10).size).toBe(1);
+    expect(areConnected(t, "dirt", 10, 10, 11, 10)).toBe(false);
+    // …but the merged surface joins them (the tier boundary is transparent)
+    expect(mergedConnectedTiles(t, 10, 10).size).toBe(2);
+    expect(mergedAreConnected(t, 10, 10, 11, 10)).toBe(true);
+    expect(mergedAreConnected(t, 10, 10, 12, 10)).toBe(false);
+  });
+
+  it("merged flood crosses a paved middle between two gravel stubs", () => {
+    // dirt — road — dirt: after paving over the middle of a gravel run the
+    // two surviving gravel stubs are still one road (they both face the tar).
+    const t = createTrack();
+    buildTile(t, "dirt", 10, 10);
+    buildTile(t, "dirt", 11, 10);
+    buildTile(t, "dirt", 12, 10);
+    buildTile(t, "road", 11, 10);                 // pave over the centre
+    expect(hasTrack(t, "dirt", 11, 10)).toBe(false);
+    expect(bitsAt(t, "dirt", 10, 10) & SE).toBe(SE);
+    expect(bitsAt(t, "dirt", 12, 10) & NW).toBe(NW);
+    expect(mergedConnectedTiles(t, 10, 10).size).toBe(3);
+    expect(mergedAreConnected(t, 10, 10, 12, 10)).toBe(true);
   });
 });
 
@@ -387,17 +438,22 @@ describe("E5 connectivity (the base E6 scores on)", () => {
     expect(areConnected(t, "dirt", 5, 5, 7, 5)).toBe(false);
   });
 
-  it("dirt and road layers stay separate — one tier's flood never uses the other", () => {
-    // The two tiers are independent connectivity graphs. Building two parallel
-    // lines of opposite tiers a tile apart must never let one flood through
-    // the other (that is what used to need the removed level-crossing overlay).
+  it("a per-tier flood never enters the other tier — even though the masks cross it", () => {
+    // `connectedTiles` is the SINGLE-TIER view: it only steps onto tiles that
+    // carry the requested tier, so two adjacent runs of opposite tiers never
+    // leak into each other on that flood. (The masks themselves DO cross the
+    // boundary now — see the merged-surface tests — but a tile that is not
+    // PRESENT on the tier is a wall for the per-tier flood.)
     const t = createTrack();
     build(t, "dirt", [[10, 10], [10, 11]]);   // vertical Dirt Road
     build(t, "road", [[11, 10], [11, 11]]);   // vertical paved Road, adjacent
+    expect(bitsAt(t, "dirt", 10, 10) & SE).toBe(SE);   // masks face across…
+    expect(bitsAt(t, "road", 11, 10) & NW).toBe(NW);
     expect(connectedTiles(t, "dirt", 10, 10).size).toBe(2);
     expect(connectedTiles(t, "road", 11, 10).size).toBe(2);
     expect(areConnected(t, "dirt", 10, 10, 10, 11)).toBe(true);
     expect(areConnected(t, "dirt", 10, 10, 11, 10)).toBe(false);  // road tile excluded
+    expect(mergedConnectedTiles(t, 10, 10).size).toBe(4);         // merged joins all
   });
 
   it("breaking the middle splits one network into two", () => {

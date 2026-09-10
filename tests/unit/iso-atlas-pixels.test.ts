@@ -232,6 +232,80 @@ describe("G1/G2 atlas pixels", () => {
     }
   });
 
+  it("dirt_road_* transitions are the gravel mask with tar bleeding in from each paved edge", async () => {
+    // A Dirt Road tile that touches a PAVED tile draws `dirt_road_<state>`
+    // (state chars NE,SE,SW,NW: 0 none / 1 gravel / 2 paved). Each variant
+    // must be the connection mask's `dirt_<mask>` cell in *shape* (identical
+    // alpha), unchanged gravel far from any paved edge, and pure tar exactly
+    // at a paved edge — the pixels that meet the neighbouring paved tile.
+    const { data, info } = await atlas();
+    const EDGES: Record<number, [[number, number], [number, number]]> = {
+      1: [[32, 0], [63, 16]], 2: [[63, 16], [31, 31]],
+      4: [[31, 31], [0, 16]], 8: [[0, 16], [32, 0]],
+    };
+    const DIRB = [1, 2, 4, 8];
+    const segDist = (px: number, py: number, e: [[number, number], [number, number]]) => {
+      const [[ax, ay], [bx, by]] = e;
+      const abx = bx - ax, aby = by - ay;
+      const t = Math.max(0, Math.min(1, ((px - ax) * abx + (py - ay) * aby) / (abx * abx + aby * aby)));
+      return Math.hypot(px - (ax + abx * t), py - (ay + aby * t));
+    };
+    const smooth = (x: number) => {
+      const v = Math.max(0, Math.min(1, x));
+      return v * v * (3 - 2 * v);
+    };
+    const cellOf = (name: string, x: number, y: number) => {
+      const s = manifest.sprites[name];
+      const i = ((s.y + y) * info.width + (s.x + x)) * 4;
+      return [data[i], data[i + 1], data[i + 2], data[i + 3]] as const;
+    };
+    const states: string[] = [];
+    for (let q = 0; q < 81; q++) {
+      const st = q.toString(3).padStart(4, "0");
+      if (st.includes("2")) states.push(st);
+    }
+    expect(states).toHaveLength(65);
+    for (const st of states) {
+      const name = `dirt_road_${st}`;
+      const def = manifest.sprites[name];
+      expect(def, name).toBeTruthy();
+      expect([def.w, def.h, def.anchor, def.footprint], name)
+        .toEqual([64, 32, [32, 31], [1, 1]]);
+      let mask = 0, paved = 0;
+      for (let p = 0; p < 4; p++) {
+        if (st[p] === "0") continue;
+        mask |= DIRB[p];
+        if (st[p] === "2") paved |= DIRB[p];
+      }
+      const dirt = `dirt_${mask.toString(2).padStart(4, "0")}`;
+      const road = `road_${mask.toString(2).padStart(4, "0")}`;
+      let alpha = 0, changedAwayFromPaved = 0, notTarAtEdge = 0;
+      for (let y = 0; y < def.h; y++) {
+        for (let x = 0; x < def.w; x++) {
+          const [r, g, b, a] = cellOf(name, x, y);
+          const [dr, dg, db, da] = cellOf(dirt, x, y);
+          if (a !== da) alpha++;
+          if (da === 0) continue;
+          let pull = 0;
+          for (const d of DIRB) {
+            if (!(paved & d)) continue;
+            const dist = segDist(x + 0.5, y + 0.5, EDGES[d]);
+            pull = Math.max(pull, 1 - smooth(dist / 9));
+          }
+          if (pull === 0) {
+            if (r !== dr || g !== dg || b !== db) changedAwayFromPaved++;
+          } else if (pull >= 0.999) {
+            const [rr, gg, bb] = cellOf(road, x, y);
+            if (Math.abs(r - rr) > 2 || Math.abs(g - gg) > 2 || Math.abs(b - bb) > 2) notTarAtEdge++;
+          }
+        }
+      }
+      expect(alpha, `${name} alpha vs ${dirt}`).toBe(0);
+      expect(changedAwayFromPaved, `${name} gravel changed off the paved edges`).toBe(0);
+      expect(notTarAtEdge, `${name} pixels at a paved edge are not pure tar`).toBe(0);
+    }
+  });
+
   it("terrain sprites have no fully-opaque white bottom row", async () => {
     const { data, info } = await atlas();
     for (const name of ["terrain_grass", "terrain_rough", "terrain_water"]) {

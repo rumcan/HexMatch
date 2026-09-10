@@ -1922,6 +1922,16 @@
    ],
    "moving": true,
    "note": "RV-01: OpenGFX 2nd-generation goods lorry (spr3132, base-3092-road-vehicles.pnml), view NW of 8. The four diagonal views are the ones this game's iso roads can express; the truck runtime picks one per leg of its route. Bottom-centre anchor = ground contact."
+  },
+  {
+   "name": "dirt_road",
+   "namePrefix": "dirt_road",
+   "footprint": [
+    1,
+    1
+   ],
+   "dirtRoadTransitions": "infrastructure/gravelroads.png",
+   "note": "dirt_road: the 65 dirt-to-paved transition sprites. A gravel tile sharing an edge with a PAVED tile is one continuous road, so instead of a plain dirt_<mask> it draws dirt_road_<eNE><eSE><eSW><eNW> (edge char 0 = none, 1 = gravel, 2 = paved; every string over {0,1,2} containing at least one 2). The slicer synthesizes them at pack time from the same two sources the tiers use: the 2x gravel recolor sheet (infrastructure/gravelroads.png, sliced exactly like `dirt`) and the declared flat `road` trackset cells for the same connection mask; each cell is the connection mask's gravel tile with its road-surface pixels blended toward tar over DIRT_ROAD_BLEED (9) px from every paved edge, feathered with smoothstep. Geometry is the tile contract (64x32, anchor [32,31], footprint [1,1]); at the seam the blend is pure tar, so the transition meets a neighbouring paved tile pixel-for-pixel."
   }
  ]
 }
