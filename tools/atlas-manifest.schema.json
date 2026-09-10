@@ -50,6 +50,16 @@
    "additionalProperties": {
     "type": "string"
    }
+  },
+  "imageSets": {
+   "type": "array",
+   "description": "Multi-atlas: additional image sources beyond the original 'images'. Each entry is a zoom→filename map for that source index (index 0 = source 1).",
+   "items": {
+    "type": "object",
+    "additionalProperties": {
+     "type": "string"
+    }
+   }
   }
  },
  "$defs": {
@@ -154,6 +164,11 @@
     "moving": {
      "type": "boolean",
      "description": "RV-01: a moving sprite (a road vehicle). Its art may be much smaller than its footprint diamond because it reserves no ground \u2014 the footprint exists only for depth spans and culling. Exempt from the V1 small-art invariant."
+    },
+    "source": {
+     "type": "integer",
+     "minimum": 0,
+     "description": "Multi-atlas: which image source this sprite blits from. 0 = original atlas images (default), 1+ = additional atlas images."
     }
    }
   }

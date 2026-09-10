@@ -311,7 +311,10 @@ export class IsoRenderer {
     const key = `${z}:${cy * chunksX + cx}`;
     const hit = this.chunkCache.get(key);
     if (hit) return hit;
-    const img = this.atlas.image(z);
+    // We need the terrain image (source 0 or whatever terrain_grass uses).
+    // Use the first terrain sprite's source to resolve the correct atlas image.
+    const terrainDef = this.atlas.get("terrain_grass");
+    const img = terrainDef ? this.atlas.imageForSprite(terrainDef, z) : this.atlas.image(z);
     if (!img) return null;
 
     const { w: W, h: H } = chunkSurfaceSize(z);
@@ -410,7 +413,8 @@ export class IsoRenderer {
 
   private blit(ctx: Ctx2D, p: Placed, timeMs: number) {
     const z = this.cam.zoom;
-    const img = this.atlas.image(z);
+    // Multi-atlas: use the correct source image for this sprite.
+    const img = this.atlas.imageForSprite(p.def, z);
     if (!img) return;
     const frame = p.frame ?? this.atlas.frameAt(p.def, timeMs);
     // Source rect in the ZOOMED atlas — never the raw 1× rect scaled with a

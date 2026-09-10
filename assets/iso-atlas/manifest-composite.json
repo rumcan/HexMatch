@@ -8,9 +8,8 @@
   "tileH": 32,
   "meta": {
     "source": "OpenGFX (https://github.com/OpenTTD/OpenGFX), GPLv2; PP-12 standalone TTD-style buildings (src/assets/sprites/png/*/ttd/)",
-    "generatedBy": "tools/slice-atlas.mjs",
-    "note": "Composite manifest: non-road sprites use new art (source 1 = new-atlas-a), road sprites use original (source 0). Source 2 (new-atlas-b) available for additional graphics.",
-    "composite": true
+    "composite": true,
+    "note": "Composite manifest: non-road sprites use new art (source 1 = new-atlas-a), road sprites use original (source 0). Source 2 (new-atlas-b) available for additional graphics."
   },
   "imageSets": [
     {

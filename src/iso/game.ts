@@ -24,6 +24,8 @@ import manifestJson from "../../assets/iso-atlas/manifest.json";
 import atlas05 from "../../assets/iso-atlas/atlas@0.5x.png";
 import atlas1 from "../../assets/iso-atlas/atlas@1x.png";
 import atlas2 from "../../assets/iso-atlas/atlas@2x.png";
+import newAtlasA from "../../assets/iso-atlas/new-atlas-a.png";
+import newAtlasB from "../../assets/iso-atlas/new-atlas-b.png";
 
 import { Atlas, buildMasks, type Manifest, type AtlasImage } from "./atlas";
 import {
@@ -1482,9 +1484,17 @@ export function startIsoGame(root: HTMLElement) {
 
   (async () => {
     const images = new Map<number, AtlasImage>();
-    const [a05, a1, a2] = await Promise.all([load(atlas05), load(atlas1), load(atlas2)]);
+    const [a05, a1, a2, nA, nB] = await Promise.all([
+      load(atlas05), load(atlas1), load(atlas2),
+      load(newAtlasA), load(newAtlasB),
+    ]);
     images.set(0.5, a05); images.set(1, a1); images.set(2, a2);
     const atlas = new Atlas(manifestJson as unknown as Manifest, images);
+    // Multi-atlas: register the new art images.
+    // Source 1 (new-atlas-a) and source 2 (new-atlas-b) are1x only;
+    // reuse at every zoom so the renderer always finds an image.
+    atlas.extraImages.set("1:0.5", nA); atlas.extraImages.set("1:1", nA); atlas.extraImages.set("1:2", nA);
+    atlas.extraImages.set("2:0.5", nB); atlas.extraImages.set("2:1", nB); atlas.extraImages.set("2:2", nB);
     buildMasks(atlas);
     if (disposed) return;
 

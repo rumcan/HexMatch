@@ -17,6 +17,14 @@ export interface SpriteDef {
   frames?: number;
   frameMs?: number;
   slices?: { x: number; y: number; w: number; h: number }[];
+  /**
+   * Multi-atlas: which image source this sprite blits from.
+   * Source 0 (default) = the original atlas images.
+   * Source 1, 2, … = additional atlas images (new art).
+   * The manifest's `imageSets` array maps each source index to its
+   * per-zoom filenames.
+   */
+  source?: number;
 }
 
 export interface Manifest {
@@ -25,6 +33,12 @@ export interface Manifest {
   tileH: number;
   sprites: Record<string, SpriteDef>;
   meta?: unknown;
+  /**
+   * Multi-atlas: additional image sources beyond the original `images`.
+   * Each entry is a zoom→filename map for that source index.
+   * `images` is always source 0; `imageSets[0]` is source 1, etc.
+   */
+  imageSets?: Record<string, string>[];
 }
 
 /** Anything that can be blitted — real ImageBitmap in the browser, stub in tests. */
@@ -41,6 +55,12 @@ export interface AlphaMask {
 export class Atlas {
   readonly manifest: Manifest;
   readonly images: Map<number, AtlasImage>;
+  /**
+   * Multi-atlas: additional image sources. Key is `"sourceIndex:zoom"`.
+   * Source 0 images live in `images` (the original map) for backward compat;
+   * source 1+ live here.
+   */
+  readonly extraImages = new Map<string, AtlasImage>();
   private masks = new Map<string, AlphaMask>();
 
   constructor(manifest: Manifest, images: Map<number, AtlasImage> = new Map()) {
@@ -60,6 +80,16 @@ export class Atlas {
     return this.images.get(zoom);
   }
 
+  /**
+   * Multi-atlas: return the correct atlas image for a given sprite and zoom.
+   * Source 0 sprites use the original `images` map; source 1+ use `extraImages`.
+   */
+  imageForSprite(sprite: SpriteDef, zoom: number): AtlasImage | undefined {
+    const src = sprite.source ?? 0;
+    if (src === 0) return this.images.get(zoom);
+    return this.extraImages.get(`${src}:${zoom}`);
+  }
+
   /** Source rect of animation frame `i` (frames tile horizontally), at 1×. */
   frameRect(s: SpriteDef, frame = 0): { x: number; y: number; w: number; h: number } {
     const n = s.frames ?? 1;
@@ -75,13 +105,18 @@ export class Atlas {
    * source widths (e.g. a 133px sprite at 0.5× → 66.5px) that miss the real
    * 67px packed column, which crops and shifts art per zoom. This returns the
    * *actual* packed integer rect.
+   *
+   * Multi-atlas: for source 1+ sprites whose image exists only at 1×,
+   * the source rect stays at 1× coordinates (the browser scales on blit).
    */
   zoomRect(s: SpriteDef, z: number): { x: number; y: number; w: number; h: number } {
+    // Source 1+ images are 1x only — always use1x coordinates.
+    const effectiveZ = (s.source ?? 0) > 0 ? 1 : z;
     return {
-      x: Math.round(s.x * z),
-      y: Math.round(s.y * z),
-      w: Math.round(s.w * z),
-      h: Math.round(s.h * z),
+      x: Math.round(s.x * effectiveZ),
+      y: Math.round(s.y * effectiveZ),
+      w: Math.round(s.w * effectiveZ),
+      h: Math.round(s.h * effectiveZ),
     };
   }
 
@@ -90,11 +125,13 @@ export class Atlas {
     const n = s.frames ?? 1;
     const fw = s.w / n;
     const x = s.x + fw * (frame % n);
+    // Source 1+ images are 1x only — always use1x coordinates.
+    const effectiveZ = (s.source ?? 0) > 0 ? 1 : z;
     return {
-      x: Math.round(x * z),
-      y: Math.round(s.y * z),
-      w: Math.round(fw * z),
-      h: Math.round(s.h * z),
+      x: Math.round(x * effectiveZ),
+      y: Math.round(s.y * effectiveZ),
+      w: Math.round(fw * effectiveZ),
+      h: Math.round(s.h * effectiveZ),
     };
   }
 
@@ -143,20 +180,43 @@ export async function loadAtlas(baseUrl = "/assets/iso-atlas/"): Promise<Atlas> 
     images.set(Number(z), await createImageBitmap(blob));
   }));
   const atlas = new Atlas(manifest, images);
+  // Multi-atlas: load extra image sets (source 1, 2, …)
+  if (manifest.imageSets) {
+    await Promise.all(manifest.imageSets.map(async (set, idx) => {
+      const srcIdx = idx + 1;
+      await Promise.all(Object.entries(set).map(async ([z, file]) => {
+        const blob = await fetch(`${baseUrl}${file}`).then((r) => r.blob());
+        atlas.extraImages.set(`${srcIdx}:${Number(z)}`, await createImageBitmap(blob));
+      }));
+    }));
+  }
   buildMasks(atlas);
   return atlas;
 }
 
-/** Rasterise every sprite's frame 0 from the 1× image into an alpha mask. */
+/** Rasterise every sprite's frame 0 from its source's 1× image into an alpha mask. */
 export function buildMasks(atlas: Atlas): void {
-  const img = atlas.image(1);
-  if (!img || typeof document === "undefined") return;
-  const canvas = document.createElement("canvas");
-  canvas.width = img.width; canvas.height = img.height;
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  if (!ctx) return;
-  ctx.drawImage(img as unknown as CanvasImageSource, 0, 0);
+  if (typeof document === "undefined") return;
+
+  // Cache canvases per source so we only draw each atlas image once.
+  const canvasCache = new Map<number, { ctx: CanvasRenderingContext2D; img: AtlasImage }>();
+  const getCtx = (src: number): CanvasRenderingContext2D | null => {
+    if (canvasCache.has(src)) return canvasCache.get(src)!.ctx;
+    const img = src === 0 ? atlas.image(1) : atlas.extraImages.get(`${src}:1`);
+    if (!img) return null;
+    const canvas = document.createElement("canvas");
+    canvas.width = img.width; canvas.height = img.height;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.drawImage(img as unknown as CanvasImageSource, 0, 0);
+    canvasCache.set(src, { ctx, img });
+    return ctx;
+  };
+
   for (const [name, s] of Object.entries(atlas.manifest.sprites)) {
+    const src = s.source ?? 0;
+    const ctx = getCtx(src);
+    if (!ctx) continue;
     const r = atlas.frameRect(s, 0);
     if (r.w <= 0 || r.h <= 0) continue;
     const d = ctx.getImageData(r.x, r.y, r.w, r.h);
