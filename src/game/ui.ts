@@ -37,6 +37,8 @@ import { PLANT_COST } from "../iso/plants";
 import { GEM_TO_CARGO } from "../iso/quarry";
 // VP-01: quarters on the scoreboard — 4.75★, not 4.7499999999999996★.
 import { fmtVp } from "../iso/victory";
+// AI-01: the rival difficulty presets the top-bar selector switches between.
+import { RIVAL_SKILLS, SKILL_KEYS, type SkillKey } from "../iso/skill";
 import { Board, type FxType, type Gem } from "./board";
 import type { IsoMarket, IsoMarketPlayer, Offer } from "../iso/market";
 
@@ -87,6 +89,10 @@ export interface UiHooks {
   onSwap: (r1: number, c1: number, r2: number, c2: number) => void;
   onReset: () => void;
   onBlackAction: (key: string) => void;
+  /** AI-01: the player picked a rival difficulty (applies from the next turn). */
+  onSkill?: (key: SkillKey) => void;
+  /** AI-01: the boot difficulty, so the selector opens on the right value. */
+  skill?: SkillKey;
 }
 
 export interface OriginalUi {
@@ -169,6 +175,26 @@ export function createOriginalUi(
   const kingdoms = h("div", "kingdoms");
   top.appendChild(kingdoms);
   const right = h("div", "top-right");
+  // AI-01: how hard the rival plays. A live switch — the next rival turn
+  // simply reads the new preset — remembered in localStorage for the next boot.
+  if (hooks.onSkill) {
+    const skillWrap = h("label", "rival-skill");
+    const sel = h("select", "rival-skill-sel") as HTMLSelectElement;
+    sel.title = "How hard the rival plays (applies immediately)";
+    for (const key of SKILL_KEYS) {
+      const o = document.createElement("option");
+      o.value = key;
+      o.text = `Rival: ${RIVAL_SKILLS[key].label}`;
+      o.title = RIVAL_SKILLS[key].blurb;
+      sel.appendChild(o);
+    }
+    sel.value = hooks.skill ?? "normal";
+    sel.id = "iso-rival-skill";
+    sel.onchange = () => hooks.onSkill!(sel.value as SkillKey);
+    skillWrap.appendChild(h("span", "rival-skill-ic", "🤖"));
+    skillWrap.appendChild(sel);
+    right.appendChild(skillWrap);
+  }
   const vp = h("div", "vp-badge", "★ 0");
   vp.id = "iso-vp";
   right.appendChild(vp);

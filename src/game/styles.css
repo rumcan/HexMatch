@@ -202,6 +202,18 @@ html, body, #root {
   border-radius: 0; padding: 3px 11px;
   font-variant-numeric: tabular-nums;
 }
+
+/* AI-01: the rival difficulty selector in the top bar */
+.rival-skill { display: flex; align-items: center; gap: 4px; }
+.rival-skill-ic { font-size: 13px; }
+.rival-skill-sel {
+  border: 1px solid rgba(255,122,90,.35); border-radius: 0; padding: 3px 5px;
+  background: rgba(255,122,90,.10); color: var(--txt);
+  font-size: 12px; font-weight: 600; font-family: var(--sans);
+  letter-spacing: .4px; cursor: pointer;
+}
+.rival-skill-sel:focus { outline: none; border-color: rgba(255,122,90,.7); }
+.rival-skill-sel option { background: #0e151d; color: var(--txt); font-weight: 500; }
 .vp-star { color: var(--gold); margin-right: 2px; }
 .vp-tot { font-size: 11px; color: var(--txt-dim); }
 

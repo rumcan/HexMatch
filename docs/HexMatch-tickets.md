@@ -229,3 +229,21 @@ The AI scores by paving within the opening minutes and a full game between two A
 The rival never pays for a sabotage card it cannot aim (the raid's purchase list is the three cards it can land on your plant).
 The UI explains the rule: tool labels, mode bar, inspector, banners and help all price the pave.
 Player, AI and multiplayer rules enforce the same restriction (no AI-only scoring path).
+
+AI-01 — Rival difficulty presets: easy, normal and hard
+Status: DONE
+Type: AI / balance
+
+Requirements
+Give the AI rival three difficulty levels — easy, normal and hard — selectable in game.
+Two AIs must be able to play each other, and the speed at which they reach the win points (10★) is the measure of how hard the rival is: harder preset finishes sooner.
+The rival uses the market every so often to attempt a trade.
+The rival must not be passive: it uses the main roads (town ring roads, public highways) and it expands.
+
+Acceptance criteria
+Difficulty is pacing and budget only: every preset runs the same turn policy and the same costs — no cheats.
+Three presets (easy / normal / hard) ship; the difficulty is chosen from the top bar, live and mid-game, persists between sessions, and can be pinned per match with ?rival=easy|normal|hard (mirrors ?seed=).
+The calibration harness races two AI seats head-to-head on the same map with per-seat clocks and budgets; the ladder assertion is winner-time-to-10★ on mirror matches (hard < normal < easy), and head-to-head pairings run in both seat orientations with results pooled.
+Easy and hard both finish mirrors inside the harness window; the loser of a mirror is never parked (proportional pace floor).
+The easy rival still expands (depots, paving, offers) and never touches sabotage (no raids, no blockades); hard expands two plans a turn, paves 12 tiles a pass, banks harder, offers more often, raids on its own clock.
+See docs/playtest-reports/2026-09-10-ai-skills.md for the measured ladder and the two economy failures (bank churn, plant-rush stall) the harness caught in the shipped rival's own turn.
