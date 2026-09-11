@@ -59,9 +59,14 @@ test.describe("building PNG layers ship in the built game", () => {
     }
 
     // 3. The layers actually INSTALLED — a 200 alone does not prove a sprite
-    //    def was overridden. Every manifest name must be live in the atlas.
-    const installed = await page.evaluate(() => (window as any).__iso.buildings as string[]);
-    expect(installed.length).toBeGreaterThan(0);
+    //    def was overridden. EVERY manifest name must be live in the atlas.
+    const { installed, manifestNames } = await page.evaluate(async () => {
+      const h = (window as any).__iso;
+      const m = await (await fetch("assets/buildings/manifest.json", { cache: "no-store" })).json();
+      return { installed: h.buildings as string[], manifestNames: Object.keys(m.sprites as Record<string, unknown>) };
+    });
+    expect(installed.length, "every buildings-manifest sprite installs (no silent per-sprite fallback)").toBe(manifestNames.length);
+    for (const n of manifestNames) expect(installed, `${n} must install its per-building PNG`).toContain(n);
 
     // 4. No silent fallback warning fired anywhere during boot.
     expect(layerWarnings, `[building-layers] fallback warnings: ${layerWarnings.join(" | ")}`).toEqual([]);
