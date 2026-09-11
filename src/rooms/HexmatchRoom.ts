@@ -15,6 +15,12 @@
 // old `server/server.js` relay did at room creation — every client
 // regenerates identical geometry via `generateMap(seed)`.
 //
+// MP-05 added `snapshot-chunk` to the relayed set: it is the same host
+// assertion as `snapshot`, cut into ≤16 KiB frames because one full state is
+// ~110 KiB (§1.3). The relay deliberately does not reassemble — that is the
+// guest's job in `src/net/session.ts`, and keeping it there leaves this room a
+// router, not a game server.
+//
 // NOTE (ticket sketch correction): the §6 sketch reads `msg.playerId`, but
 // SDK 5.27's `GameMessage` is `{ sender, payload }` — the sender is
 // `msg.sender.id`. This file follows the SDK, not the sketch.
@@ -73,10 +79,15 @@ export default class HexmatchRoom extends GameRoom<HexProtocol> {
       if (this.hostId !== null) this.sendTo(this.hostId, p);
       return;
     }
-    if (p.type === "snapshot" || p.type === "delta") {
+    if (p.type === "snapshot" || p.type === "snapshot-chunk" || p.type === "delta") {
       // THE authority check: only the host may assert state. A guest-forged
-      // snapshot or delta is dropped silently — no broadcast, no error that a
-      // bad client could probe. Do not drop this check.
+      // snapshot, chunk or delta is dropped silently — no broadcast, no error
+      // that a bad client could probe. Do not drop this check.
+      //
+      // `snapshot-chunk` is the same assertion, cut into frames (MP-05): a full
+      // state is ~110 KiB against a 16 KiB frame, so the host sends N of them
+      // and the guest reassembles. The relay does not care which frame it is
+      // forwarding — only that the sender is the host.
       if (msg.sender.id !== this.hostId) return;
       this.broadcast(p);
       return;

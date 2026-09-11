@@ -49,6 +49,7 @@ import {
   createTrack, drawBits, previewDrag, commitDrag, canBuildOn, hasTrack,
   demolishTile, tIdx, playerNetwork, canAfford, buildRefusal, seedTownRoads,
   seedPublicRoads, isPublicRoad, isUpgradedRoad, tileCost, structureTiles,
+  dirtyTiles,
   type Track, type TrackKind, type Purse, type DragPreview,
 } from "./track";
 import {
@@ -111,8 +112,15 @@ import {
   createIsoDebug, shouldInstallDebugConsole, shouldAutoEnableDebugOverlays,
   shouldAutoEnableRenderLog,
 } from "./debug";
-import { joinFromSnapshot } from "./snapshot";
+import { applySnapshot, buildSnapshot, joinFromSnapshot, type Snapshot } from "./snapshot";
 export { joinFromSnapshot };
+// MP-05: the wire. `session.ts` owns roles/roster/chunked state transfer and
+// never imports the SDK (transport.ts does); `protocol.ts` owns the message
+// union; `delta.ts` owns the per-action patch format. game.ts is the only
+// place that knows all three AND the game rules.
+import { NetSession, type NetRole } from "../net/session";
+import { applyTrackDelta } from "../net/delta";
+import { type DeltaMsg, type IntentMsg } from "../net/protocol";
 
 // ── tuning (E8's rebalance surface, all in one place) ─────────────────────
 /**
@@ -212,7 +220,30 @@ type Phase = "setup-factory" | "setup-harvester" | "play" | "won";
 
 export interface Toast { text: string; kind: "good" | "bad" | "info"; until: number; }
 
-export function startIsoGame(root: HTMLElement) {
+/**
+ * MP-05 — how a match is being played (§9).
+ *
+ *   solo   unchanged from today: AI rival, local save, local seed.
+ *   host   the local browser runs the sim for BOTH seats; the guest's seat is
+ *          driven by intents from the relay instead of by `ai.ts`, and every
+ *          mutation is published as a delta (or a chunked snapshot).
+ *   guest  render-only: no AI, no economy tick, no board clock, no save. The
+ *          map arrives from the host (chunked snapshot on join/resync, deltas
+ *          after), and every player action leaves as an intent.
+ *
+ * All three fields are optional and defaulting to solo keeps every existing
+ * call site — `startIsoGame(root)` in `App.tsx`, the e2e specs, the headless
+ * suites — working unchanged.
+ */
+export interface IsoGameOptions {
+  /** Supplied by the room (`welcome.seed`); overrides `resolveMapSeed`. */
+  seed?: number;
+  role?: NetRole;
+  /** The connected session from `src/net/session.ts`. Required for host/guest. */
+  net?: NetSession | null;
+}
+
+export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // ── DOM ────────────────────────────────────────────────────────────────
   // U1: the recovered UI owns the chrome. It is created once the trading
   // state exists (below); the iso canvas layer stack is mounted into its
@@ -229,9 +260,23 @@ export function startIsoGame(root: HTMLElement) {
   // Tests opt out of persistence wholesale via __ISO_DISABLE_SAVE — headless
   // suites boot dozens of games in one window and cannot afford a stranger's
   // save resurrecting over their fixtures.
-  const savesOff = !!(window as unknown as Record<string, unknown>).__ISO_DISABLE_SAVE;
+  // MP-05: the wire, if this match is networked. `role` is a HINT from the
+  // start screen (MP-06); the room's welcome is the authority and corrects it
+  // through `net.role` the moment it lands, so every role-dependent branch
+  // below reads `mpRole()` when it runs rather than capturing a value at boot.
+  const net = opts.net ?? null;
+  const roleHint: NetRole = opts.role ?? (net ? "guest" : "solo");
+  const mpRole = (): NetRole => net?.role ?? roleHint;
+  const isSolo = () => mpRole() === "solo";
+  const isGuest = () => mpRole() === "guest";
+  const isMp = () => mpRole() !== "solo";
+
+  // A networked match NEVER touches the local save: the room owns the match,
+  // and a save written mid-game would resurrect as a solo world on the next
+  // boot (and, on the guest, restore a map the host never generated).
+  const savesOff = isMp() || !!(window as unknown as Record<string, unknown>).__ISO_DISABLE_SAVE;
   const bootSave = savesOff ? null : loadRecentSave();
-  const seed = bootSave?.seed ?? resolveMapSeed();
+  const seed = opts.seed ?? bootSave?.seed ?? resolveMapSeed();
   const grid: Grid = generateMap(seed);
   const track: Track = createTrack();
   // PP-10: every town's seed-generated ring road is stamped onto the road
@@ -376,6 +421,21 @@ export function startIsoGame(root: HTMLElement) {
   });
   const meTrader = market.players[0];
 
+  // MP-05: the market is CLIENT state (`offers` live in this browser), so a
+  // guest's trade would escrow against a purse the host overwrites and match
+  // against an offer list nobody else can see. Refuse the mutators — the tab
+  // still renders, and the toast says why. A synced market is its own ticket.
+  if (isGuest()) {
+    const refused = (): boolean => {
+      toast("Trading is not relayed yet in multiplayer.", "info");
+      return false;
+    };
+    market.post = refused;
+    market.cancel = refused;
+    market.accept = refused;
+    market.bank = refused;
+  }
+
   // Original HUD (U1). It takes the live board + market + the player purse and
   // wires the BUILD / BLACK MARKET / QUARRY / chips chrome to them.
   ui = createOriginalUi(quarry.board, market, meTrader, {
@@ -386,9 +446,18 @@ export function startIsoGame(root: HTMLElement) {
       renderer?.setCamera(cam);
     },
     onSwap: (r1, c1, r2, c2) => {
+      // MP-05: the guest's plant board is a spectator view — the seat's real
+      // board lives on the host (host-autoplayed while board relay is pending).
+      // Letting a guest match locally would pay cargo the host never sees, so
+      // the swap is refused with the reason.
+      if (isGuest()) {
+        toast("Your Processing Plant is simulated by the host in multiplayer.", "info");
+        return;
+      }
       void quarry.board.trySwap(r1, c1, r2, c2, performance.now());
     },
     onReset: () => {
+      if (isGuest()) return;
       quarry.board.resetNeutral();
       toast("Processing Plant collapsed. Fresh neutral board.", "info");
     },
@@ -396,8 +465,10 @@ export function startIsoGame(root: HTMLElement) {
     // AI-01: the top-bar difficulty selector. Applies on the NEXT rival tick —
     // the clocks and budgets re-read `skill()` every call, so there is nothing
     // to restart.
-    onSkill: (key) => setRivalSkill(key),
-    skill: skillKey,
+    // MP-05: the difficulty selector is an AI feature — there is no AI rival
+    // in a hosted game, so the selector is simply not built.
+    onSkill: isSolo() ? (key) => setRivalSkill(key) : undefined,
+    skill: isSolo() ? skillKey : undefined,
   });
   onBoardChange = () => ui.renderBoard();
   root.appendChild(ui.el);
@@ -412,7 +483,7 @@ export function startIsoGame(root: HTMLElement) {
   // ("a refresh restarts the game" — not any more; Restart starts over).
   // (`bootSave` was read up top, before the map generated, so the seed the
   // save carries is the seed the map was grown from.)
-  if (!bootSave) {
+  if (!bootSave && isSolo()) {
     void promptForRivalSkill(ui.el, {
       onPick: (key) => {
         setRivalSkill(key);
@@ -500,7 +571,15 @@ export function startIsoGame(root: HTMLElement) {
 
   // ── helpers ────────────────────────────────────────────────────────────
   let lastToastText = "", lastToastAt = -1e9;
+  /**
+   * MP-05: while the host applies a guest's intent, the toasts that path
+   * produces are the GUEST's feedback — they go back down the wire in the next
+   * delta instead of appearing over the host's own game. Null the rest of the
+   * time, so a solo/host game's toasts are untouched.
+   */
+  let intentEcho: string[] | null = null;
   const toast = (text: string, kind: Toast["kind"] = "info") => {
+    if (intentEcho) { intentEcho.push(text); return; }
     const now = performance.now();
     // the board fires per-gem; collapse repeats so a match is one line
     if (text === lastToastText && now - lastToastAt < 1200) return;
@@ -674,15 +753,22 @@ export function startIsoGame(root: HTMLElement) {
     // spawn tokens for cargo that became reachable — no waiting for the 20s
     // clock, because "I connected it and nothing happened" is how this join
     // would look broken.
-    quarry.refresh(now);
+    // MP-05: not on a guest — its "reach" is the host's reach, and the tokens
+    // it can see were spawned by the host's board clock.
+    if (!isGuest()) quarry.refresh(now);
   };
 
   // ── actions ────────────────────────────────────────────────────────────
-  function placeFactory(tx: number, ty: number): boolean {
-    // PP-02: the whole Factory footprint (FACTORY_FOOTPRINT) must be legal ground AND touch a
-    // town by an edge. `planFactoryPlacement` with `requireTown` is the same
-    // rule the placement preview paints from, so the click and the hover can
-    // never disagree about what "next to a town" means.
+  /**
+   * PP-02: the opening Factory for ONE seat — the rule half of `placeFactory`,
+   * without the local player's rival search. MP-05 split it out because in a
+   * hosted game the GUEST's factory arrives as an intent: same rule function
+   * (`planFactoryPlacement` + `requireTown`), same record, no AI.
+   *
+   * The "already has one" guard is new with the split: a guest could otherwise
+   * send the intent twice and open with two free Factories (each is plant #0).
+   */
+  function placeFactoryFor(p: PlayerState, tx: number, ty: number): boolean {
     const plan = planFactoryPlacement(grid, tx, ty, { requireTown: true });
     if (!plan.valid) {
       toast(plan.code === "not-near-town"
@@ -690,12 +776,30 @@ export function startIsoGame(root: HTMLElement) {
         : `Can't build there — ${plan.why ?? "not buildable"}.`, "bad");
       return false;
     }
+    if (eco.factories.some((f) => f.ownerId === p.i + 1)) {
+      toast(`${p.human ? "You already have" : "That seat already has"} a starting Factory.`, "bad");
+      return false;
+    }
     // W2: the factory carries its builder's track-owner id (player index + 1).
     // PP-06: the starting Factory is plant #0 — same building, same record.
     eco.factories.push({
-      owner: "you", ownerId: me.i + 1, tx, ty,
+      owner: p.id, ownerId: p.i + 1, tx, ty,
       id: 0, townId: adjacentTown(grid, tx, ty)?.id ?? null,
     });
+    return true;
+  }
+
+  function placeFactory(tx: number, ty: number): boolean {
+    if (!placeFactoryFor(me, tx, ty)) return false;
+    if (!isSolo()) {
+      // MP-05: no AI rival to seat — the guest places its own opening Factory
+      // through an intent, on its own click.
+      phase = "setup-harvester";
+      syncWorld();
+      toast("Factory placed. Now place your first depot beside an industry.", "info");
+      publishNet(performance.now(), true);
+      return true;
+    }
     // Give the rival a factory a good distance away, on legal ground it can
     // actually build from. W8: the farthest dirt-legal tile was often ROUGH,
     // where a paved Road is illegal, and the rival's paved-first plan then had
@@ -841,8 +945,14 @@ export function startIsoGame(root: HTMLElement) {
     if (pv.free > 0) toast(`${pv.free} free setup tile${pv.free > 1 ? "s" : ""} used.`, "info");
   }
 
-  function doDemolish(tx: number, ty: number) {
-    const hi = eco.harvesters.findIndex((h) => h.tx === tx && h.ty === ty && h.owner === "you");
+  /**
+   * MP-05: `p` is the seat doing the demolishing. It defaults to the local
+   * player, so every existing call site (the click, the e2e twin) is
+   * unchanged, while the host can run the SAME path for a guest intent — the
+   * "one cost model, one rule" invariant extended to the guest's actions.
+   */
+  function doDemolish(tx: number, ty: number, p: PlayerState = me) {
+    const hi = eco.harvesters.findIndex((h) => h.tx === tx && h.ty === ty && h.owner === p.id);
     if (hi >= 0) {
       eco.harvesters.splice(hi, 1);
       syncWorld(); rescoreNow();
@@ -851,11 +961,11 @@ export function startIsoGame(root: HTMLElement) {
     }
     // PP-06: a plant is demolishable like any other building — but never the
     // last one, or the player would have nowhere to deliver.
-    const pi = eco.factories.findIndex((f) => f.owner === me.id
+    const pi = eco.factories.findIndex((f) => f.owner === p.id
       && tx >= f.tx && tx < f.tx + FACTORY_FOOTPRINT[0]
       && ty >= f.ty && ty < f.ty + FACTORY_FOOTPRINT[1]);
     if (pi >= 0) {
-      if (plantsOf(eco, me.id).length <= 1) {
+      if (plantsOf(eco, p.id).length <= 1) {
         toast("You can't demolish your only processing plant.", "bad");
         return;
       }
@@ -870,7 +980,7 @@ export function startIsoGame(root: HTMLElement) {
     // to destruction, not just travel. PP-13: that also protects the map's
     // PUBLIC highways, which carry owner `PUBLIC_OWNER` and are nobody's to
     // demolish.
-    const mine = track.owner[tIdx(tx, ty)] === me.i + 1;
+    const mine = track.owner[tIdx(tx, ty)] === p.i + 1;
     for (const kind of ["road", "dirt"] as TrackKind[]) {
       if (mine && hasTrack(track, kind, tx, ty)) {
         demolishTile(track, kind, tx, ty); removedKind = kind; break;
@@ -894,7 +1004,7 @@ export function startIsoGame(root: HTMLElement) {
     // 4 Ore, and the dirt→road pave is what upgrades are for.
     if (removedKind === "dirt") {
       const back = choice(DIRT_DEMOLISH_REFUND);
-      earn(me, { [back]: 1 });
+      earn(p, { [back]: 1 });
       toast(`Dirt Road cleared — salvaged 1 ${CARGO[back].icon} ${CARGO[back].name}.`, "good");
     }
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
@@ -921,6 +1031,13 @@ export function startIsoGame(root: HTMLElement) {
   ) as Purse;
 
   function buyBlack(key: string) {
+    // MP-05: sabotage/recon are local-only in a hosted game. Seat 1's Black
+    // Market needs an intent + a synced result channel, which §4 does not have
+    // yet — refused WITH a reason rather than silently desyncing the purse.
+    if (isGuest()) {
+      toast("Black Market actions are not relayed yet in multiplayer.", "info");
+      return;
+    }
     const now = performance.now();
     const spendGold = (n: number) => {
       if ((me.purse.gold ?? 0) < n) { toast(`Needs ${n} Gold.`, "bad"); return false; }
@@ -1020,6 +1137,10 @@ export function startIsoGame(root: HTMLElement) {
    * pay out over time instead of rounding to zero forever.
    */
   function economyTick(now: number) {
+    // MP-05: a guest runs no economy at all — its cargo, purses and VPs arrive
+    // in deltas. Harvest ticks here would credit purses the host overwrites and
+    // spawn tokens on a board the guest does not own.
+    if (isGuest()) return;
     if (phase !== "play") return;
     if (now - lastHarvest < HARVEST_MS) return;
     lastHarvest = now;
@@ -1037,12 +1158,18 @@ export function startIsoGame(root: HTMLElement) {
 
   /** Per frame: board effects, the token spawn, and the market clock. */
   function quarryTick(now: number) {
+    // MP-05: on a guest this whole family is host-owned — the boards, the
+    // market and the sabotage clocks all live where the sim lives. The guest
+    // renders the board panel from its own (inert) grid and changes nothing.
+    if (isGuest()) return;
     market.tick(now);
     // A1: ice and girders on the rival's plant expire on their own clock —
     // nobody is there to clear them.
     rivalPlant.tick(now);
     if (phase !== "play") return;
-    rivalMarketOffer(now);
+    // MP-05: the rival's market policy is solo-only. In a hosted game seat 1 is
+    // a person: the host must not post offers on their behalf.
+    if (isSolo()) rivalMarketOffer(now);
     quarry.tick(now);
     // AI-03: the rival's own plant plays: same board clock as yours, then
     // one watchable move per skill().moveMs. trySwap refuses politely when
@@ -1453,6 +1580,9 @@ export function startIsoGame(root: HTMLElement) {
   }
 
   function aiTick(now: number) {
+    // MP-05: §9 — "the AI rival is disabled in a hosted game; the guest is the
+    // rival". Seat 1 is driven by intents from the relay instead.
+    if (!isSolo()) return;
     if (phase !== "play") return;
     // AI-01: the two clocks come from the live difficulty. The turn that
     // follows is SHARED across presets — easy/hard pace the same policy.
@@ -1568,6 +1698,250 @@ export function startIsoGame(root: HTMLElement) {
       return;
     }
     lastAi = now - skill().buildMs + skill().idleMs;      // idle: wake up after the next income tick
+  }
+
+  // ══════════════════════ MP-05: the networked match ═════════════════════
+  // Host authority (§2) with the room as a thin relay: the host browser runs
+  // the sim for BOTH seats and publishes what changed; the guest renders what
+  // arrives and sends every action as an intent. `src/net/session.ts` owns the
+  // wire; this section is the game's half of it.
+  //
+  // The rule that keeps this small: a guest intent is applied through EXACTLY
+  // the functions the host's own click runs (`previewDrag`/`commitDrag`,
+  // `placeHarvester`, `placePlant`, `doDemolish`, `placeFactoryFor`) against
+  // the GUEST's player record. §4's "the cost rule IS the multiplayer
+  // validation" — one code path, so host and guest cannot drift apart.
+  //
+  // Deliberately out of scope here, so a reader does not mistake it for a bug:
+  //   - the Processing Plant board does not travel. §4's delta has no board
+  //     field, and the board is an entire second simulation. A guest's plant is
+  //     therefore HOST-AUTOPLAYED (`rivalAutoplay`, unchanged): its cargo,
+  //     purses and VP are real, its board panel is a spectator view. Board
+  //     relay needs its own ticket.
+  //   - the market and Black Market are solo-only: offers are client-local
+  //     state, so a guest "trading" would trade with a copy of itself.
+  //   - sabotage and the rival-difficulty selector are AI features.
+
+  /** Delta publish cadence. Deltas only — a full snapshot is join/resync only
+   *  (§1.3), which is why this is a small heartbeat rather than a big one. */
+  const PUBLISH_MS = 200;
+  let lastPublishAt = -Infinity;
+
+  /** The per-seat figures that ride every delta (the snapshot's player list
+   *  plus the opening allowances the HUD previews prices from). */
+  const wirePlayers = () => players.map((p) => ({
+    id: p.id, vp: vpFor(score, p.id), res: { ...p.purse },
+    freeTrack: p.freeTrack, freeDepots: p.freeDepots,
+  }));
+
+  const inSetup = () => phase === "setup-factory" || phase === "setup-harvester";
+
+  /** HOST: the full state (§4 `SnapshotMsg`), built from the live world. */
+  function netFullState(): Snapshot | null {
+    return buildSnapshot({
+      seed, track,
+      harvesters: eco.harvesters,
+      factories: eco.factories,
+      setupPhase: inSetup(),
+      won: phase === "won",
+      players: wirePlayers(),
+      t: performance.now(),
+    });
+  }
+
+  /**
+   * HOST: publish one tick. Throttled because a game mutates many times a
+   * second (lorry arrivals, board matches, purses) and every one of them is
+   * already visible in the next heartbeat; `force` is for actions the guest
+   * is waiting on (its own intent), where the round trip IS the feedback.
+   */
+  function publishNet(now = performance.now(), force = false): void {
+    if (!net || !net.isHost) return;
+    if (!force && now - lastPublishAt < PUBLISH_MS) return;
+    lastPublishAt = now;
+    net.publishTrack(track, dirtyTiles, {
+      t: now,
+      harvesters: eco.harvesters.map((h) => ({ ...h })),
+      factories: eco.factories.map((f) => ({ ...f })),
+      players: wirePlayers(),
+      setupPhase: inSetup(),
+      won: phase === "won",
+    });
+  }
+
+  /** One opening line per guest boot; the phase itself is re-derived on every
+   *  applied state, because the other seat's structures arrive at their own
+   *  pace. */
+  let guestOpened = false;
+
+  /**
+   * GUEST: the opening phases are per-seat and derived from APPLIED state —
+   * "do I have a Factory?", "do I have a Depot?" — rather than from the wire's
+   * single `setupPhase`. Both seats set up at the same time in a hosted game,
+   * so one shared flag could not say whether THIS seat is done.
+   */
+  function refreshGuestPhase() {
+    if (!isGuest() || phase === "won") return;
+    if (!factoryOf(me.id)) phase = "setup-factory";
+    else if (!eco.harvesters.some((h) => h.owner === me.id)) phase = "setup-harvester";
+    else if (phase !== "play") {
+      phase = "play";
+      lastHarvest = performance.now();
+      lastAi = performance.now();
+      if (!guestOpened) {
+        guestOpened = true;
+        toast("Both seats are open — connect your depot to your Factory.", "info");
+      }
+    }
+  }
+  /** GUEST: apply a full state (join or resync). Validated first — a version or
+   *  seed mismatch must refuse loudly rather than paint a foreign map. */
+  function applyNetSnapshot(raw: Snapshot, _seq: number) {
+    let applied;
+    try {
+      applied = applySnapshot(raw, seed);
+    } catch (err) {
+      net?.halt(err instanceof Error ? err.message : "Rejected the host's state.");
+      return;
+    }
+    track.dirt.set(applied.track.dirt);
+    track.road.set(applied.track.road);
+    track.owner.set(applied.track.owner);
+    track.upgraded.set(applied.track.upgraded);
+    eco.harvesters.length = 0;
+    eco.harvesters.push(...applied.harvesters.map((h) => ({ ...h })));
+    eco.factories.length = 0;
+    eco.factories.push(...applied.factories.map((f) => ({ ...f })));
+    for (let i = 0; i < players.length; i++) {
+      const wire = applied.players[i];
+      if (!wire) continue;
+      players[i].purse = toBag(wire.res);
+    }
+    winner = null;
+    refreshGuestPhase();
+    syncWorld();
+    rescoreNow();
+  }
+
+  /** GUEST: apply one steady-state delta — the hot path (§5). */
+  function applyNetDelta(msg: DeltaMsg) {
+    let world = false;
+    if (msg.tiles) { applyTrackDelta(track, msg.tiles); world = true; }
+    if (msg.harvesters) {
+      eco.harvesters.length = 0;
+      eco.harvesters.push(...msg.harvesters.map((h) => ({ ...h })));
+      world = true;
+    }
+    if (msg.factories) {
+      eco.factories.length = 0;
+      eco.factories.push(...msg.factories.map((f) => ({ ...f })));
+      world = true;
+    }
+    if (msg.players) {
+      for (let i = 0; i < players.length; i++) {
+        const wire = msg.players[i];
+        if (!wire) continue;
+        players[i].purse = toBag(wire.res);
+        // MP-05: the opening allowances ride the delta because the snapshot's
+        // player list (§4) has no room for them, and the previews price from
+        // them — a guest that thought it still had 12 free tiles would preview
+        // a drag the host then charges for.
+        if (typeof wire.freeTrack === "number") players[i].freeTrack = wire.freeTrack;
+        if (typeof wire.freeDepots === "number") players[i].freeDepots = wire.freeDepots;
+      }
+    }
+    // A refused intent says why, in the host's own words (the echo).
+    if (msg.notice) toast(msg.notice, "info");
+    refreshGuestPhase();
+    if (world) syncWorld();
+    rescoreNow();
+  }
+
+  /** HOST: a guest intent, applied against the guest's seat. Malformed input is
+   *  ignored outright — the relay is a router, so the game's own rules are the
+   *  only validation, and they must never see a shape they cannot read. */
+  function applyGuestIntent(msg: IntentMsg) {
+    const p = players[1];
+    const payload = msg.payload as Record<string, unknown> | null;
+    if (!payload || typeof payload !== "object") return;
+    const int = (v: unknown): number | null =>
+      typeof v === "number" && Number.isInteger(v) && v >= 0 && v < MAP_W ? v : null;
+    const echoed: string[] = [];
+    intentEcho = echoed;
+    // NOTE: nothing in this block may `return`. The notice echo and the forced
+    // publish below are the guest's ONLY feedback — its click changed nothing
+    // locally — so a refusal has to reach them as surely as an action does.
+    try {
+      const what = payload.do;
+      if (what === "track") {
+        const ax = int(payload.ax), ay = int(payload.ay);
+        const bx = int(payload.bx), by = int(payload.by);
+        if (ax !== null && ay !== null && bx !== null && by !== null) {
+          const kind: TrackKind = payload.kind === "road" ? "road" : "dirt";
+          const owner = playerNetwork(track, p.i + 1, eco.factories, eco.harvesters);
+          const pv = previewDrag(grid, track, kind, p.purse, ax, ay, bx, by,
+            payload.xFirst !== false, owner, p.freeTrack,
+            structureTiles(eco.factories, eco.harvesters, p.i + 1));
+          if (pv.tiles.length === 0) toast("That track would not connect to your network.", "bad");
+          else commitTrackDrag(p, pv, kind);
+        }
+      } else {
+        const tx = int(payload.tx), ty = int(payload.ty);
+        if (tx !== null && ty !== null) {
+          if (what === "factory") placeFactoryFor(p, tx, ty);
+          else if (what === "depot") placeHarvester(tx, ty, p);
+          else if (what === "plant") placePlant(tx, ty, p);
+          else if (what === "demolish") doDemolish(tx, ty, p);
+          // `swap` / `trade` / `skill` are not relayed yet — see the block comment.
+          else toast("That action is not available in multiplayer yet.", "info");
+        }
+      }
+    } finally {
+      intentEcho = null;
+    }
+    if (echoed.length) net?.setNotice(echoed[echoed.length - 1]);
+    publishNet(performance.now(), true);
+  }
+
+  if (net) {
+    net.attach({
+      info: (info) => {
+        // The room's seed is the map. A mismatch means this client grew the
+        // wrong island (§11: refuse, never paint a foreign map).
+        if ((info.seed >>> 0) !== (seed >>> 0)) {
+          net.halt("This room is playing a different map — rejoin to play together.");
+          return;
+        }
+        // Names come from the room: "Rival" is a person now.
+        for (const entry of info.roster) {
+          // Wire seat 0 = the host's seat, wire seat 1 = the guest's; the local
+          // frame keeps the opener at players[0] (see `mirrorSnapshot`).
+          const local = info.role === "host"
+            ? (entry.slot === 0 ? players[0] : players[1])
+            : (entry.slot === 0 ? players[1] : players[0]);
+          if (entry.username) local.name = entry.username;
+        }
+        if (info.role !== roleHint) {
+          toast(info.role === "host"
+            ? "You are hosting this match."
+            : "You joined as the guest.", "info");
+        }
+        if (info.role === "host") publishNet(performance.now(), true);
+      },
+      fullState: () => netFullState(),
+      intent: (msg) => applyGuestIntent(msg),
+      snapshot: (snap, seq) => applyNetSnapshot(snap, seq),
+      delta: (msg) => applyNetDelta(msg),
+      reject: (reason) => {
+        toast(reason, "bad");
+        ui.showModal(`<p>${reason}</p>`);
+      },
+      status: (state) => {
+        // A reconnect is exactly when a guest must re-pull state; the session
+        // already asks, this just tells the player not to panic.
+        if (state === "reconnecting") toast("Reconnecting…", "info");
+      },
+    });
   }
 
   // ── rendering ──────────────────────────────────────────────────────────
@@ -1900,6 +2274,33 @@ export function startIsoGame(root: HTMLElement) {
     });
   }
 
+  /**
+   * MP-05: the ONE drag→action seam. On solo/host it commits exactly as
+   * before; on a guest it sends an intent with the SAME endpoints, so the
+   * host's `previewDrag`/`commitDrag` runs against the guest's seat and the
+   * guest's local preview is what the host is about to do (the two previews
+   * share the cost model and the synced purse, so they agree).
+   *
+   * Returns the preview in both cases: the pointer path paints from it, and the
+   * e2e/unit twin (`dragBuild`) asserts on it without a pixel path.
+   */
+  const requestTrackBuild = (
+    kind: TrackKind, ax: number, ay: number, bx: number, by: number, xFirst: boolean,
+  ): DragPreview | null => {
+    if (phase !== "play") return null;
+    const owner = playerNetwork(track, me.i + 1, eco.factories, eco.harvesters);
+    if (!canBuildOn(grid, kind, ax, ay, owner)) return null;
+    const pv = previewDrag(grid, track, kind, me.purse, ax, ay, bx, by, xFirst, owner,
+      me.freeTrack, structureTiles(eco.factories, eco.harvesters, me.i + 1));
+    if (pv.tiles.length === 0) return null;
+    if (isGuest()) {
+      net?.sendIntent("build", { do: "track", kind, ax, ay, bx, by, xFirst });
+      return pv;
+    }
+    commitTrackDrag(me, pv, kind);
+    return pv;
+  };
+
   // A factory is one multi-tile sprite, but has one network anchor: its
   // origin tile. In track mode a click ANYWHERE on our factory must start at
   // that anchor; otherwise a click on its far tiles would start a road the
@@ -1989,7 +2390,12 @@ export function startIsoGame(root: HTMLElement) {
         } else {
           toast("Track must extend your network.", "bad");
         }
-      } else commitTrackDrag(me, preview, tool as TrackKind);
+      } else {
+        // MP-05: the endpoints the intent carries are the preview's own, so the
+        // host reproduces the exact plan the guest just saw.
+        const end = preview.tiles[preview.tiles.length - 1];
+        requestTrackBuild(tool as TrackKind, drag.ax, drag.ay, end[0], end[1], true);
+      }
       drag = null; preview = null; downAt = null;
       g = pointerUp(g, e.pointerId);
       return;
@@ -2003,11 +2409,16 @@ export function startIsoGame(root: HTMLElement) {
       const p = pickForAction(x, y);
       if (p) {
         if (phase === "setup-factory") {
-          placeFactory(p.tx, p.ty);
+          // MP-05: a guest's opening click is an intent like any other — the
+          // host places seat 1's Factory by the same town-adjacency rule.
+          if (isGuest()) net?.sendIntent("build", { do: "factory", tx: p.tx, ty: p.ty });
+          else placeFactory(p.tx, p.ty);
         } else if (phase === "setup-harvester") {
           // PP-05: the setup Depot is free because `me.freeDepots` is still 1 —
           // the allowance is data on the player record, not this phase.
-          if (placeHarvester(p.tx, p.ty, me)) {
+          if (isGuest()) {
+            net?.sendIntent("build", { do: "depot", tx: p.tx, ty: p.ty });
+          } else if (placeHarvester(p.tx, p.ty, me)) {
             phase = "play";
             lastHarvest = performance.now();
             lastAi = performance.now();
@@ -2015,9 +2426,16 @@ export function startIsoGame(root: HTMLElement) {
           }
         } else if (phase === "play") {
           // PP-05: every Depot after the setup allowance pays DEPOT_COST.
-          if (tool === "harvester") placeHarvester(p.tx, p.ty, me);
-          else if (tool === "plant") placePlant(p.tx, p.ty, me);
-          else if (tool === "demolish") doDemolish(p.tx, p.ty);
+          if (tool === "harvester") {
+            if (isGuest()) net?.sendIntent("build", { do: "depot", tx: p.tx, ty: p.ty });
+            else placeHarvester(p.tx, p.ty, me);
+          } else if (tool === "plant") {
+            if (isGuest()) net?.sendIntent("build", { do: "plant", tx: p.tx, ty: p.ty });
+            else placePlant(p.tx, p.ty, me);
+          } else if (tool === "demolish") {
+            if (isGuest()) net?.sendIntent("demolish", { do: "demolish", tx: p.tx, ty: p.ty });
+            else doDemolish(p.tx, p.ty);
+          }
           else if (tool === "road" || tool === "dirt") {
             const net = playerNetwork(track, me.i + 1, eco.factories, eco.harvesters);
             const refusal = buildRefusal(grid, tool as TrackKind, p.tx, p.ty, net);
@@ -2154,6 +2572,9 @@ export function startIsoGame(root: HTMLElement) {
    * of that depot's cargo on the board, one "+N" over the Factory.
    */
   function collectDeliveries(t: number) {
+    // MP-05: a lorry reaching a factory on a guest's screen is animation, not
+    // income — the host owns both seats' boards and their payouts.
+    if (isGuest()) return;
     if (phase !== "play") return;
     const mine = ownerIdOf(eco, "you");
     for (const truck of trucks.trucks) {
@@ -2294,9 +2715,14 @@ export function startIsoGame(root: HTMLElement) {
   // The interval AND the listener live exactly as long as this game — a
   // disposed game must never write its frozen world into the save the next
   // mount would happily resume (cross-contamination, caught headless).
-  saveIv = window.setInterval(() => saveNow(), 5_000);
-  onPageHide = () => saveNow();
-  window.addEventListener("pagehide", onPageHide);
+  // MP-05: a networked match is not saved. `savesOff` already blocks the write
+  // (see `saveNow`), and skipping the timer entirely keeps a hosted match from
+  // queueing work nobody asked for.
+  if (!isMp()) {
+    saveIv = window.setInterval(() => saveNow(), 5_000);
+    onPageHide = () => saveNow();
+    window.addEventListener("pagehide", onPageHide);
+  }
 
   // ── AI-03: the top-bar buttons — peek at the rival's plant, restart game ──
   const topRight = ui.el.querySelector<HTMLElement>(".top-right");
@@ -2307,19 +2733,26 @@ export function startIsoGame(root: HTMLElement) {
     peek.title = "Watch the rival's plant — its board plays itself";
     peek.addEventListener("click", () => toggleRivalPlantView());
 
-    const restart = document.createElement("button");
-    restart.type = "button"; restart.id = "iso-restart";
-    restart.className = "icon-btn"; restart.textContent = "↻";
-    restart.title = "New game — clears the save and the difficulty pick";
-    restart.addEventListener("click", () => {
-      if (!window.confirm("Start a new game? The save and your difficulty pick are cleared.")) return;
-      restartArmed = true; // do NOT let the pagehide autosave re-write the save
-      clearSave();
-      try { localStorage.removeItem(SKILL_STORAGE_KEY); } catch { /* private mode */ }
-      location.reload();
-    });
-    topRight.appendChild(peek);
-    topRight.appendChild(restart);
+    // MP-05: the peek panel reads the LOCAL plant record, which on a guest is
+    // not the seat's board (that lives on the host), so it is host-only.
+    if (!isGuest()) topRight.appendChild(peek);
+
+    // MP-05: ↻ restarts a SOLO match. In a room the match belongs to the
+    // session — reloading would strand the other seat — so the button is gone.
+    if (isSolo()) {
+      const restart = document.createElement("button");
+      restart.type = "button"; restart.id = "iso-restart";
+      restart.className = "icon-btn"; restart.textContent = "↻";
+      restart.title = "New game — clears the save and the difficulty pick";
+      restart.addEventListener("click", () => {
+        if (!window.confirm("Start a new game? The save and your difficulty pick are cleared.")) return;
+        restartArmed = true; // do NOT let the pagehide autosave re-write the save
+        clearSave();
+        try { localStorage.removeItem(SKILL_STORAGE_KEY); } catch { /* private mode */ }
+        location.reload();
+      });
+      topRight.appendChild(restart);
+    }
   }
 
   function toggleRivalPlantView() {
@@ -2474,18 +2907,28 @@ export function startIsoGame(root: HTMLElement) {
       economyTick(t);
       quarryTick(t);
       aiTick(t);
-      if (trucksDirty) {
-        trucks.trucks = planTrucksTrucksMerge(trucks.trucks, planTrucks(eco));
-        trucksDirty = false;
-        // AI-03: the replan no longer resets driving lorries — see
-        // planTrucksTrucksMerge just above trucksTick. seenDeliveries is
-        // keyed by the stable depot id, so the ledger survives every replan.
-        quarry.setTruckServed(truckCargos(trucks.trucks, t));
-        rivalQuarry.setTruckServed(truckCargos(trucks.trucks, t, "ai"));
-        // a vanished truck must not linger as a ghost on the structures layer
-        renderer?.setWorld(world);
+      // MP-05: the host's heartbeat — one small delta per `PUBLISH_MS`, full
+      // state only when `buildPublish` says the delta would not fit (§5).
+      publishNet(t);
+      // MP-05 (§9): a guest runs NO vehicle movement. Lorry positions are not
+      // on the wire yet, so the guest's roads stay empty rather than carrying a
+      // locally-simulated fleet that disagrees with the host's — the map, the
+      // purses and the payouts it renders are the host's, and the guest must not
+      // spend a router on a convoy it does not own.
+      if (!isGuest()) {
+        if (trucksDirty) {
+          trucks.trucks = planTrucksTrucksMerge(trucks.trucks, planTrucks(eco));
+          trucksDirty = false;
+          // AI-03: the replan no longer resets driving lorries — see
+          // planTrucksTrucksMerge just above trucksTick. seenDeliveries is
+          // keyed by the stable depot id, so the ledger survives every replan.
+          quarry.setTruckServed(truckCargos(trucks.trucks, t));
+          rivalQuarry.setTruckServed(truckCargos(trucks.trucks, t, "ai"));
+          // a vanished truck must not linger as a ghost on the structures layer
+          renderer?.setWorld(world);
+        }
+        tickTrucks(trucks, dt);
       }
-      tickTrucks(trucks, dt);
       collectDeliveries(t);
       world.vehicles = truckItems(trucks);
       renderer!.render(t, overlayItems());
@@ -2569,6 +3012,9 @@ export function startIsoGame(root: HTMLElement) {
      * a headless harness that drives aiTick/econTick/tick saw an economy
      * without roads. Same integrator the frame calls, on demand. */
     truckTick: (now = performance.now(), dtMs = 1000) => {
+      // MP-05: the twin mirrors the FRAME, so it inherits the frame's guest
+      // rule — a guest runs no vehicle movement (§9).
+      if (isGuest()) return;
       // includes the frame's replan step: headless tests have no rAF, and
       // without this branch a dirty world never receives lorries at all.
       if (trucksDirty) {
@@ -2592,8 +3038,12 @@ export function startIsoGame(root: HTMLElement) {
       quarry.board.trySwap(r1, c1, r2, c2, performance.now()),
     setTool: (t: Tool) => { tool = t; },
     /** PP-06: the test twin of clicking with the Processing Plant tool. */
-    placePlant: (tx: number, ty: number, who: "you" | "ai" = "you") =>
-      placePlant(tx, ty, who === "ai" ? rival : me),
+    placePlant: (tx: number, ty: number, who: "you" | "ai" = "you") => {
+      // MP-05: a guest's own placement is an intent; the "ai" twin stays a
+      // local call, because that is how the HOST seats a remote player.
+      if (who === "you" && isGuest()) return net?.sendIntent("build", { do: "plant", tx, ty }) ?? false;
+      return placePlant(tx, ty, who === "ai" ? rival : me);
+    },
     /** PP-06: every processing plant a player owns (starting Factory first). */
     plantsOf: (who: string) => plantsOf(eco, who),
     get plantCost() { return { ...PLANT_COST }; },
@@ -2604,14 +3054,20 @@ export function startIsoGame(root: HTMLElement) {
      * a pixel-driven pointer path. Returns false on illegal ground, exactly
      * like the click does.
      */
-    placeFactory: (tx: number, ty: number) => placeFactory(tx, ty),
+    placeFactory: (tx: number, ty: number) => {
+      if (isGuest()) return net?.sendIntent("build", { do: "factory", tx, ty }) ?? false;
+      return placeFactory(tx, ty);
+    },
     /**
      * PP-05: the test twin of the Depot placement click — the real
      * `placeHarvester`, including the Oil cost, the free-setup allowance and
      * the "a refusal consumes nothing" ordering. Returns false when the site is
      * illegal OR the purse is short, exactly like the click does.
      */
-    placeDepot: (tx: number, ty: number) => placeHarvester(tx, ty, me),
+    placeDepot: (tx: number, ty: number) => {
+      if (isGuest()) return net?.sendIntent("build", { do: "depot", tx, ty }) ?? false;
+      return placeHarvester(tx, ty, me);
+    },
     /** PP-05: the live free-Depot allowance, so a test can watch it burn. */
     get freeDepots() { return me.freeDepots; },
     /** PP-05: what the next Depot placement will charge THIS purse — the same
@@ -2720,16 +3176,10 @@ export function startIsoGame(root: HTMLElement) {
      * (owned network check → preview with the free allowance → commit).
      * Returns the committed preview, or null when the drag can't start.
      */
-    dragBuild: (kind: TrackKind, ax: number, ay: number, bx: number, by: number, xFirst = true): DragPreview | null => {
-      if (phase !== "play") return null;
-      const net = playerNetwork(track, me.i + 1, eco.factories, eco.harvesters);
-      if (!canBuildOn(grid, kind, ax, ay, net)) return null;
-      const pv = previewDrag(grid, track, kind, me.purse, ax, ay, bx, by, xFirst, net, me.freeTrack,
-        structureTiles(eco.factories, eco.harvesters, me.i + 1));
-      if (pv.tiles.length === 0) return null;
-      commitTrackDrag(me, pv, kind);
-      return pv;
-    },
+    dragBuild: (kind: TrackKind, ax: number, ay: number, bx: number, by: number, xFirst = true): DragPreview | null =>
+      // MP-05: the same seam the pointer path uses — commits on solo/host,
+      // sends an intent on a guest.
+      requestTrackBuild(kind, ax, ay, bx, by, xFirst),
     /**
      * W1/PP-15: the read-only half of `dragBuild` — the preview the pointer
      * drag WOULD compute, with nothing committed. The e2e corridor spec needs
@@ -2752,7 +3202,10 @@ export function startIsoGame(root: HTMLElement) {
      * the pointer handler runs, so the road-salvage refund and the "that's a
      * public road" refusal are reachable from a test without a pixel path.
      */
-    demolish: (tx: number, ty: number) => doDemolish(tx, ty),
+    demolish: (tx: number, ty: number) => {
+      if (isGuest()) { net?.sendIntent("demolish", { do: "demolish", tx, ty }); return; }
+      doDemolish(tx, ty);
+    },
     /** W3: the e2e/unit twin of the AI build clock, with an injectable now. */
     aiTick: (now = performance.now()) => aiTick(now),
     /** The per-frame harvest clock (the rival's passive income lives here). */

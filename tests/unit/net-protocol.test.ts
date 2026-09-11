@@ -10,11 +10,15 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  MAX_SNAPSHOT_CHUNKS,
   PROTOCOL_VERSION,
   FRAME_CAP_BYTES,
   HEX_MESSAGE_TYPES,
+  SNAPSHOT_CHUNK_CHARS,
+  SnapshotAssembler,
   VERSION_MISMATCH_MESSAGE,
   ProtocolError,
+  chunkSnapshot,
   validateWelcome,
   isHexProtocol,
   type DeltaMsg,
@@ -22,6 +26,7 @@ import {
   type IntentMsg,
   type RejectMsg,
   type ResyncMsg,
+  type SnapshotChunkMsg,
   type SnapshotMsg,
   type WelcomeMsg,
 } from "../../src/net/protocol";
@@ -67,8 +72,12 @@ function wire<T extends HexProtocol>(msg: T): T {
 }
 
 describe("MP-02 protocol version", () => {
-  it("starts at 1 and is a positive integer", () => {
-    expect(PROTOCOL_VERSION).toBe(1);
+  it("is a positive integer, and 2 since MP-05 widened the wire", () => {
+    // v2 (MP-05) added `snapshot-chunk`: a full state is ~110 KiB against a
+    // 16 KiB frame, so join/resync state crosses as N frames. A v1 peer cannot
+    // reassemble them — the welcome refusal above is what turns "waits forever
+    // for state that can never fit one frame" into "reload to play together".
+    expect(PROTOCOL_VERSION).toBe(2);
     expect(Number.isInteger(PROTOCOL_VERSION)).toBe(true);
     expect(PROTOCOL_VERSION).toBeGreaterThan(0);
   });
@@ -79,7 +88,7 @@ describe("MP-02 protocol version", () => {
 
   it("lists every discriminator in the union", () => {
     expect([...HEX_MESSAGE_TYPES].sort()).toEqual(
-      ["delta", "intent", "reject", "resync", "snapshot", "welcome"],
+      ["delta", "intent", "reject", "resync", "snapshot", "snapshot-chunk", "welcome"],
     );
   });
 });
@@ -200,10 +209,126 @@ describe("MP-02 isHexProtocol narrowing", () => {
     for (const msg of bad) expect(isHexProtocol(msg)).toBe(false);
   });
 
-  it("accepts all six discriminators", () => {
+  it("accepts every discriminator in the union", () => {
     for (const type of HEX_MESSAGE_TYPES) {
       expect(isHexProtocol({ type })).toBe(true);
     }
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// MP-05 chunked full-state transfer
+//
+// §1.3: a whole snapshot is ~110 KiB and the frame cap is 16 KiB, and the
+// gateway does not fragment — so join/resync state must cross as frames that
+// provably fit. These are the pure helpers; the wire behaviour (a real host
+// chunking to a real guest) is `net-session.test.ts`.
+// ══════════════════════════════════════════════════════════════════════════
+
+/** A saturated-ish snapshot: every layer carrying real bytes, not zeros. */
+function fullSnapshot() {
+  const track = createTrack();
+  for (let x = 0; x < 60; x++) {
+    buildTile(track, "dirt", x + 10, 40, 1);
+    buildTile(track, "road", x + 10, 41, 2);
+  }
+  return buildSnapshot({
+    seed: 2024,
+    track,
+    harvesters: [{ id: 1, owner: "you", ownerId: 1, tx: 12, ty: 40 }],
+    factories: [{ owner: "ai", ownerId: 2, tx: 30, ty: 30, id: 1, townId: 3 }],
+    setupPhase: false,
+    won: false,
+    players: [{ id: "you", vp: 3.25, res: { wood: 4, stone: 2 } }],
+  });
+}
+
+describe("MP-05 chunked snapshot transfer", () => {
+  it("cuts a whole snapshot into frames that each fit the frame cap", () => {
+    const snap = fullSnapshot();
+    const frames = chunkSnapshot(snap, 7, 1);
+    expect(frames.length).toBeGreaterThan(1);              // it genuinely does not fit
+    for (const f of frames) {
+      expect(f.type).toBe("snapshot-chunk");
+      expect(f.seq).toBe(7);
+      expect(f.i).toBeLessThan(f.n);
+      expect(f.data.length).toBeLessThanOrEqual(SNAPSHOT_CHUNK_CHARS);
+      // The frame is the JSON the SDK puts on the socket; the cap is not a
+      // guess, it is asserted on the serialized form.
+      expect(JSON.stringify(f).length).toBeLessThanOrEqual(FRAME_CAP_BYTES);
+    }
+    expect(frames.map((f) => f.i)).toEqual([...frames.keys()]);
+    expect(new Set(frames.map((f) => f.id))).toEqual(new Set([1]));
+  });
+
+  it("reassembles to the identical snapshot, sequence included", () => {
+    const snap = fullSnapshot();
+    const frames = chunkSnapshot(snap, 12, 3);
+    const asm = new SnapshotAssembler();
+    let out = null;
+    for (const f of frames) out = asm.accept(JSON.parse(JSON.stringify(f))) ?? out;
+    expect(out).not.toBeNull();
+    expect(out!.seq).toBe(12);
+    expect(out!.snap).toEqual(snap);
+    expect(asm.pending).toBe(false);
+  });
+
+  it("survives frames arriving twice or out of order", () => {
+    const snap = fullSnapshot();
+    const frames = chunkSnapshot(snap, 1, 1);
+    const asm = new SnapshotAssembler();
+    const shuffled = [...frames].reverse();
+    let out = null;
+    for (const f of [...shuffled, ...frames, ...shuffled]) {
+      out = asm.accept(f) ?? out;
+      if (out) break;
+    }
+    // A duplicate index is not double-appended: the joined string parses to the
+    // SAME snapshot rather than to a doubled one.
+    expect(out!.snap).toEqual(snap);
+  });
+
+  it("abandons a half-received transfer when a newer id starts", () => {
+    const snap = fullSnapshot();
+    const first = chunkSnapshot(snap, 1, 1);
+    const second = chunkSnapshot(snap, 9, 2);
+    const asm = new SnapshotAssembler();
+    expect(asm.accept(first[0])).toBeNull();
+    expect(asm.pending).toBe(true);                        // half a world on hand…
+    let out = null;
+    for (const f of second) out = asm.accept(f) ?? out;
+    expect(out).toEqual({ snap, seq: 9 });
+    expect(asm.pending).toBe(false);
+  });
+
+  it("ignores malformed frames and never half-applies a corrupt transfer", () => {
+    const snap = fullSnapshot();
+    const frames = chunkSnapshot(snap, 1, 1);
+    const asm = new SnapshotAssembler();
+    const bad: unknown[] = [
+      null, undefined, "chunk", [], { type: "delta" },
+      { type: "snapshot-chunk", id: 1, seq: 1, i: 0, n: 0, data: "" },
+      { type: "snapshot-chunk", id: 1, seq: 1, i: 2, n: 2, data: "x" },
+      { type: "snapshot-chunk", id: 1, seq: 1, i: 0, n: 2, data: 42 },
+      { type: "snapshot-chunk", id: 1, seq: 1, i: 0, n: MAX_SNAPSHOT_CHUNKS + 1, data: "x" },
+      { type: "snapshot-chunk", id: 1, seq: 1, i: 0, n: 2, data: "x".repeat(SNAPSHOT_CHUNK_CHARS + 1) },
+    ];
+    for (const b of bad) expect(asm.accept(b)).toBeNull();
+    // A transfer whose concatenation is not JSON yields null (a resync heals
+    // it) instead of throwing mid-assembly.
+    const junk: SnapshotChunkMsg = { type: "snapshot-chunk", id: 5, seq: 1, i: 0, n: 2, data: "{oops" };
+    const junk2: SnapshotChunkMsg = { type: "snapshot-chunk", id: 5, seq: 1, i: 1, n: 2, data: "}" };
+    expect(asm.accept(junk)).toBeNull();
+    expect(asm.accept(junk2)).toBeNull();
+    expect(asm.pending).toBe(false);
+    // …and it still works after all that.
+    let out = null;
+    for (const f of frames) out = asm.accept(f) ?? out;
+    expect(out!.snap).toEqual(snap);
+  });
+
+  it("is recognized as a protocol message", () => {
+    expect(isHexProtocol({ type: "snapshot-chunk" })).toBe(true);
   });
 });
 
