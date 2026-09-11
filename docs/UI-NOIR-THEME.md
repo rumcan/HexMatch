@@ -27,7 +27,7 @@ in capital letters over riveted metal — is where the theme lives.
 | Palette | cool near-black glass, orange signal gold | iron `#191310` over walnut, brass `#c9a24a`, lamp `#ffb02e`, oxblood `#b23a26`, patina `#46705c`, parchment `#ece0c6` |
 | Panels | frosted glass with a hairline | painted felt inset (`felt.webp`), brass hairline, engraved corner brackets, one lamp overhead — all drawn inside the box |
 | Buttons | flat plate, procedural hazard-stripe banner | the iron of a button drawn from six fixed-px layers (rivets, lamp, bevel, hammer-grain, body) with a framed job card at the right; hover lifts it, active rings it in brass |
-| Board | 48px nearest-neighbour pixel gems | the repo's own six 128px painted cargo **hexes** (pointy-top, the shape the board is named for), re-lit under the lamp: `saturate(1.02)` + a longer drop-shadow, `cover` sizing so a token is never stretched, and the selection glow drawn on the hex itself instead of a square ring. `make-noir-art.mjs` repaints them only behind an explicit `--gems` |
+| Board | 48px nearest-neighbour pixel gems | the repo's own six 128px painted cargo **hexes** (pointy-top, the shape the board is named for), shown exactly as they were painted: no tint, no boost, no theme filter — only `cover` sizing (the old `100% 100%` was a per-axis stretch), a percentage hex clip instead of a square ring, and the base sheet's one soft drop-shadow. `make-noir-art.mjs` repaints them only behind an explicit `--gems` |
 | Background | `#0b1a26` behind an opaque canvas | the war-room: the board is a table under a banker's lamp with smoke in the beam and rain on the window, graded through `.vignette` (the one overlay already sitting above the map canvases) |
 | Rival roster | coloured initials | the `tycoon_*.png` portraits, back on the dossier cards (they existed, unused, since U1 pruned the `<img>`) |
 | Feed, offers, banner, help | tinted rectangles | manila: the ledger paper, the visiting cards, the telegram, the pinned rule sheets |
@@ -69,16 +69,53 @@ between them is a rule. Where a real bitmap must fill a box of unknown aspect
 `background-size: 100% 100%`, which the theme's test now forbids outright.
 
 **No label runs into its own artwork.** A plate's job card is painted at
-`background-position: right center` — inside the *padding* box — so a flex
-label would happily typeset straight over it. Each action button therefore
-declares the art twice, from the same two custom properties: `--sigil-w` (the
-edge the card is scaled to) and `--sigil-gutter` (the padding reserved for it,
-`w + 4px` at minimum). `padding-right: var(--sigil-gutter)` makes the gutter
-real for the text, `background-size: auto var(--sigil-w)` keeps the card inside
-it, and `.bb-mid { overflow-wrap: break-word }` is the backstop: a cost line
-that genuinely cannot fit breaks onto a second line and the plate grows, rather
-than losing glyphs under the paint. The phone sheet narrows the panel, so it
-scales both numbers down rather than squeezing the label.
+`background-position: right center` — inside the *padding* box, so it overlaps
+the padding — which means a flex label will happily typeset straight over it.
+Each action button therefore declares the art twice, from the same two custom
+properties: `--sigil-w` (the edge the card is scaled to) and `--sigil-gutter`
+(the padding reserved for it, `w + 4px` at minimum). `padding-right:
+var(--sigil-gutter)` makes the gutter real for the text, `background-size: auto
+var(--sigil-w)` keeps the card inside it, and `right 8px center` pulls the card
+off the plate's edge so the clearance is 18px and not 10. `.bb-mid
+{ overflow-wrap: break-word }` is the backstop: a cost line that genuinely
+cannot fit breaks onto a second line and the plate grows, rather than losing
+glyphs under the paint. The phone sheet narrows the panel, so it scales both
+numbers down rather than squeezing the label.
+
+Measured, not eyeballed, by reading the advance widths out of the vendored woff2
+(`fontTools`) and wrapping at the box the CSS builds — a 266px plate with 14/64
+of padding and an 8px gap leaves **180px of column**, and the widest of the five
+labels is 127px (`1🌾 1🪵 1🪙 · +2★ paving dirt`, Special Elite at 11px, four
+emoji counted at a font em each). Longest title: `PROCESSING PLANT` at 115px.
+All five therefore sit on one line with 50px+ to spare, and the sabotage cards
+get the same guard (`.sab-top > b` breaks, `.sab-cost` is `flex: 0 0 auto` so
+the price can never squeeze the racket's name into the art).
+
+**A corner medallion is solid metal, so the plate pays for it.** The brass
+`boss-*.webp` ornaments measure 255 alpha in *all four* of their corners: they
+are squares, not chamfers that fade out. Painted at the plate's corners they
+therefore occupy a `--corner` box flush on the edge, and any type that starts
+inside it is under the brass — that is how "CHOOSE YOUR RIVAL" was being
+swallowed. Both dialog hosts now declare the pair once:
+
+```css
+.iso-skill-card { --corner-inset: 0; --corner: 40px;
+                  --text-clear: calc(var(--corner-inset) + var(--corner)); }
+#iso-skill-prompt h2 { padding-left: var(--text-clear); }   /* 64px of card gutter */
+```
+
+so the ornament, the indent and the phone override (which grows the inset to
+the modal's 14px brass mat and shrinks the medallion to 34px) all read the same
+numbers — nothing to forget to update when an ornament changes size.
+
+**Paper is read, not admired.** The instruction banner used the ledger sheet at
+`multiply` under 11.5px typewriter ink; the sheet's own grain is ±26 levels per
+channel, which at that size is static over the type. The banner (and the log
+rows, same recipe) paints the ledger once, then washes it flat with ivory at
+.74 — texture as a hint, not as noise — and the message moves to the body face
+at 13px on `#1f1405`. The line the player reads mid-game, "Place your Depot —
+it needs an industry in its 4×4 catchment…", goes from 3 wrapped lines of 11.5px
+to 2 of 13px on a 402px column.
 
 ## The one rule that made this safe: geometry is sacred
 

@@ -285,8 +285,13 @@ html, body, #root {
    (the size is one length, and the art is square). Between the ornaments the
    frame is the 1px brass edge and the rule above, and lines have no aspect to
    get wrong. A sidebar plate gets the chamfer at 84px because its contents run
-   to the padding edge; a dialog gets the medallion at 44px, which fits inside
-   its own gutter and never lands on type. */
+   to the padding edge; a dialog gets the brass medallion instead, and a
+   medallion is a SOLID SQUARE (its four corners are opaque 255 alpha, measured:
+   `boss-*.webp`), so it must sit flush on the plate's edge and the plate must
+   keep `--corner-inset + --corner` of its own box clear of type. That clearance
+   is what `--text-clear` below is — one number, derived, so it cannot drift
+   from the ornament it is guarding (the difficulty card and the modal h2 read
+   it, and a media query that shrinks the medallion shrinks the gutter too). */
 .aside.left .panel::after, .modal.box::after, .iso-skill-card::after {
   content: ""; position: absolute; inset: 0; pointer-events: none;
   background-repeat: no-repeat;
@@ -299,11 +304,15 @@ html, body, #root {
 }
 .modal.box::after, .iso-skill-card::after {
   background-image: var(--boss-tl), var(--boss-tr), var(--boss-bl), var(--boss-br);
-  background-position: 4px 4px, right 4px top 4px, left 4px bottom 4px, right 4px bottom 4px;
+  background-position: left top, right top, left bottom, right bottom;
   filter: drop-shadow(0 2px 3px rgba(0, 0, 0, .75));
 }
-.modal.box::after { --corner: 44px; }
-.iso-skill-card::after { --corner: 40px; }
+/* The two numbers live on the PLATE (`.modal.box`, `.iso-skill-card`) rather
+   than on the ornament: the ::after inherits `--corner` for its paint size, and
+   the headline — a child of the plate, not of a pseudo-element — inherits
+   `--text-clear` for its gutter. One declaration, two readers. */
+.modal.box { --corner-inset: 0; --corner: 44px; --text-clear: calc(var(--corner-inset) + var(--corner)); }
+.iso-skill-card { --corner-inset: 0; --corner: 40px; --text-clear: calc(var(--corner-inset) + var(--corner)); }
 .panel + .panel { margin-top: 8px; }
 .panel.grow { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
@@ -579,7 +588,9 @@ html, body, #root {
   --sigil-gutter: 72px;
   background-image: var(--sigil, none), var(--iron-big);
   background-repeat: no-repeat;
-  background-position: right center, 9px center, right 9px center, left top, left top, left top, left top;
+  /* the sigil is pulled 8px off the plate's edge: even a label that overruns
+     its column by a word never touches the artwork */
+  background-position: right 8px center, 9px center, right 9px center, left top, left top, left top, left top;
   background-size: auto var(--sigil-w), 6px 6px, 6px 6px, auto 100%, auto 100%, auto 100%, auto 100%;
   background-color: #14100b;
   position: relative;
@@ -665,7 +676,7 @@ html, body, #root {
   background-color: #140c0a;
   background-image: var(--sigil, none), var(--iron-big);
   background-repeat: no-repeat;
-  background-position: right center, 9px center, right 9px center, left top, left top, left top, left top;
+  background-position: right 8px center, 9px center, right 9px center, left top, left top, left top, left top;
   background-size: auto var(--sigil-w), 6px 6px, 6px 6px, auto 100%, auto 100%, auto 100%, auto 100%;
   border: 1px solid rgba(140, 52, 34, .5);
   border-left: 2px solid rgba(200, 74, 48, .72);
@@ -711,12 +722,13 @@ html, body, #root {
 .sab-btn.disabled { opacity: .34; cursor: not-allowed; filter: grayscale(.6); }
 .sab-btn.disabled:hover { transform: none; box-shadow: inset 0 1px 0 rgba(242, 220, 166, .1), 0 6px 18px rgba(0, 0, 0, .5); }
 .sab-top {
-  display: flex; justify-content: space-between; align-items: center;
+  display: flex; justify-content: space-between; align-items: center; gap: 6px;
   font-family: var(--serif); font-size: 13px; font-weight: 700;
   letter-spacing: 1.4px; text-transform: uppercase;
 }
-.sab-cost { color: var(--gold2); font-size: 11px; display: flex; align-items: center; gap: 2px; font-family: var(--mono); }
-.sab-desc { font-size: 10.5px; color: var(--txt-dim); margin-top: 2px; line-height: 1.35; font-family: var(--mono); }
+.sab-top > b { min-width: 0; overflow-wrap: break-word; }
+.sab-cost { color: var(--gold2); font-size: 11px; display: flex; align-items: center; gap: 2px; font-family: var(--mono); flex: 0 0 auto; }
+.sab-desc { font-size: 10.5px; color: var(--txt-dim); margin-top: 2px; line-height: 1.35; font-family: var(--mono); overflow-wrap: break-word; }
 
 .sab-btn.repair-btn { border-left-color: rgba(99, 192, 138, .7); }
 .sab-btn.repair-btn .sab-cost { color: var(--good); }
@@ -864,13 +876,14 @@ html, body, #root {
   border-radius: 50%; background: rgba(255,255,255,.6);
   filter: blur(2px); pointer-events: none;
 }
-/* Sprite faces supply their own shading — and they are PAINTED, so no
-   nearest-neighbour upscaling. HEXMATCH is a hex grid, so the token is cut as
-   a POINTY-TOP HEXAGON (the clip is percentage-based: it tracks --gem at any
-   zoom, and unlike a per-axis `background-size` it distorts nothing). The cut
-   matches the sprite's own alpha — 128px art, opaque full-height at 50% x and
-   1px wide at the top and bottom points, so the clip removes only what the
-   painting already left empty. */
+/* The board's own gems, restored: the six painted HEX tokens in
+   `src/assets/gems/` (128px, pointy-top — HEXmatch is named for the grid), and
+   presented exactly as the original sheet presented them: no tint, no boost,
+   no theme filter of any kind. Two deliberate departures, both fixes rather
+   than taste — the old `image-rendering: pixelated` would crunch a 128px
+   painting into a 42px cell, and the old `background-size: 100% 100%` is a
+   per-axis stretch, so the token is sized with `cover` and cut by a percentage
+   hex clip (a clip scales with --gem; a bitmap cannot). */
 .gem .face.sprite {
   inset: 0; border: none; border-radius: 0;
   box-shadow: none;
@@ -878,7 +891,7 @@ html, body, #root {
   background-size: cover;   /* square token, square cell — `cover` keeps it that way at any --gem */
   image-rendering: auto;
   clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
-  filter: drop-shadow(0 3px 4px rgba(0, 0, 0, .6)) saturate(1.02);
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, .5));
 }
 .gem .face.sprite::before { display: none; }
 .gem.selected .face.sprite, .gem.sel .face.sprite {
@@ -886,9 +899,9 @@ html, body, #root {
 }
 .gem.token .face.sprite {
   border: none; box-shadow: none;
-  filter: drop-shadow(0 0 8px rgba(255, 176, 46, .75)) drop-shadow(0 3px 4px rgba(0,0,0,.6));
+  filter: drop-shadow(0 0 6px var(--gold2)) drop-shadow(0 2px 3px rgba(0, 0, 0, .5));
 }
-.gem.hard1 .face.sprite, .gem.hard2 .face.sprite { filter: brightness(1.02) saturate(.82) drop-shadow(0 3px 4px rgba(0,0,0,.6)); }
+.gem.hard1 .face.sprite, .gem.hard2 .face.sprite { filter: brightness(1.05) saturate(.9) drop-shadow(0 2px 3px rgba(0,0,0,.5)); }
 
 .gem .icon {
   position: absolute; inset: 0; z-index: 2; display: grid; place-items: center;
@@ -896,14 +909,18 @@ html, body, #root {
   filter: drop-shadow(0 1px 1px rgba(0,0,0,.5));
 }
 .gem.bombic .icon, .gem .icon.bombic { font-size: 52px; }
-/* a selected token is lifted under the lamp, ringed in brass */
+/* a selected token is lifted under the lamp, ringed in brass. `.sprite` first:
+   a painted token carries its own edge, so the ring is dropped and only the
+   lift stays — the glow is added by the filter rule below. */
+.gem.selected .face.sprite { outline: none; box-shadow: none; }
 .gem.selected .face { outline: 2px solid var(--gold2); outline-offset: 1px; box-shadow: 0 0 18px rgba(255, 176, 46, .8); }
 /* U1 board panel uses `.sel` (the J1 picker's class) rather than `.selected`. */
+.gem.sel .face.sprite { outline: none; box-shadow: none; }
 .gem.sel .face { outline: 2px solid var(--gold2); outline-offset: 1px; box-shadow: 0 0 18px rgba(255, 176, 46, .8); }
 /* no transform here: ui.ts positions every gem with an inline translate, and
    a CSS transform of any kind would yank the selected token to the board's
    origin. The lift is drawn on the face instead. */
-.gem.sel .face.sprite, .gem.selected .face.sprite { filter: drop-shadow(0 0 12px rgba(255, 176, 46, .85)) drop-shadow(0 4px 5px rgba(0,0,0,.65)); }
+.gem.sel .face.sprite, .gem.selected .face.sprite { filter: drop-shadow(0 0 9px rgba(255, 217, 138, .9)) drop-shadow(0 3px 4px rgba(0, 0, 0, .6)); }
 .gem.gone { transform: scale(.1) rotate(40deg) !important; opacity: 0; }
 
 .gem.token .face {
@@ -1381,14 +1398,17 @@ html, body, #root {
 .feed-row {
   font-size: 11px; padding: 5px 8px; border-left: 2px solid var(--brass);
   border-radius: 0 var(--r) var(--r) 0;
+  /* same clean-paper recipe as the banner: the ledger is washed flat so the
+     typed log lines stay readable at this size */
   background:
+    linear-gradient(180deg, rgba(238, 226, 200, .66), rgba(214, 197, 162, .6)),
     var(--ledger) center / cover no-repeat,
-    linear-gradient(180deg, rgba(206, 182, 138, .88), rgba(168, 143, 104, .84));
-  background-blend-mode: multiply, normal;
-  color: #221708;
+    linear-gradient(180deg, #ceb68a, #a89068);
+  background-blend-mode: normal, multiply, normal;
+  color: #1c1204;
   line-height: 1.4;
   font-family: var(--mono);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, .45), inset 0 1px 0 rgba(255, 255, 255, .28);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .45), inset 0 1px 0 rgba(255, 255, 255, .34);
 }
 
 
@@ -1458,24 +1478,37 @@ html, body, #root {
 .mb-cancel:hover { background: linear-gradient(180deg, rgba(132, 42, 26, .9), rgba(36, 11, 7, .92)); }
 
 /* the telegram — the one line of copy the game shouts */
+/* The instruction sheet pinned over the table. It carries the one line the
+   player has to READ mid-game, so the paper is a clean manila card: the ledger
+   is painted once at its own size and then washed with ivory, which flattens
+   the grain (its own contrast was ~26 levels per channel — noise under 11px
+   type) instead of multiplying it. No backdrop-filter, no texture at the ink. */
 .banner {
   position: fixed; top: 104px; left: 50%; transform: translateX(-50%); z-index: 45;
-  padding: 11px 38px 11px 18px; border-radius: var(--r); text-align: center; color: var(--txt);
+  padding: 11px 40px 12px 18px; border-radius: var(--r); text-align: center; color: var(--txt);
   background:
+    linear-gradient(180deg, rgba(243, 232, 208, .74), rgba(226, 210, 178, .66) 52%, rgba(205, 186, 150, .72)),
     var(--ledger) center / cover no-repeat,
-    linear-gradient(180deg, rgba(214, 190, 146, .94), rgba(172, 147, 108, .92));
-  background-blend-mode: multiply, normal;
+    linear-gradient(180deg, #ded0ae, #b8a177);
+  background-blend-mode: normal, multiply, normal;
   border: 1px solid rgba(60, 42, 22, .6);
   border-top: 3px solid var(--brass);
-  box-shadow: 0 14px 40px rgba(0, 0, 0, .66), inset 0 1px 0 rgba(255, 255, 255, .3);
-  max-width: 400px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, .66), inset 0 1px 0 rgba(255, 255, 255, .45);
+  max-width: 460px;
 }
 .banner b {
   font-family: var(--display); font-size: 14px; color: #3a2408;
   letter-spacing: 2px; text-transform: uppercase;
   text-shadow: 0 1px 0 rgba(255, 255, 255, .35);
 }
-.banner small { font-size: 11.5px; color: #2b1d0d; line-height: 1.4; font-family: var(--mono); }
+/* the message itself — the only thing here that must be read at a glance:
+   13px of the body face, dark ink, no typewriter texture fighting it */
+.banner small {
+  display: block;
+  font-size: 13px; line-height: 1.45; color: #1f1405;
+  font-family: var(--sans); font-weight: 500; letter-spacing: .15px;
+  text-shadow: none;
+}
 .banner-close {
   position: absolute; top: 6px; right: 8px; width: 20px; height: 20px;
   border-radius: 2px; cursor: pointer; font-size: 11px;
@@ -1515,6 +1548,9 @@ html, body, #root {
 .modal.box.small { max-width: 400px; }
 .modal h2 {
   font-family: var(--display); font-size: 22px; color: var(--brass-hi); font-weight: 700;
+  /* the same clearance as the difficulty card: the seal + title start past the
+     top-left medallion, and the padding shrinks with it on a phone */
+  padding-left: var(--text-clear);
   letter-spacing: 4px; text-transform: uppercase;
   text-shadow: 0 -1px 0 #000, 0 1px 0 rgba(242, 220, 166, .16), 0 0 26px rgba(255, 176, 46, .3);
   display: flex; align-items: center; justify-content: center; gap: 12px;
@@ -1745,10 +1781,11 @@ html, body, #root {
   .panel { padding: 8px; }
   .panel + .panel { margin-top: 8px; }
   .aside.left .panel::after { --corner: 64px; }
-  .modal.box::after, .iso-skill-card::after {
-    --corner: 34px;
-    background-position: 3px 3px, right 3px top 3px, left 3px bottom 3px, right 3px bottom 3px;
-  }
+  /* the medallion shrinks with the dialog, and so does the gutter it needs:
+     both headings read `--text-clear`, derived from these two numbers, so one
+     line here cannot leave a title sitting on the brass. The modal also grows
+     a 14px brass mat below, which holds the ornament off the content box. */
+  .modal.box, .iso-skill-card { --corner-inset: 0; --corner: 34px; }
 
   /* ── art buttons are touch targets now ── */
   .build-btn, .sab-btn { min-height: 62px; }
@@ -1772,6 +1809,9 @@ html, body, #root {
 
   /* modals go full-bleed: the plaque comes off the wall and lies flat */
   .modal.box { width: 94%; padding: 18px 16px; max-height: 84vh; overflow-y: auto; border-width: 14px; }
+  /* the plate keeps its `--text-clear` indent: the mat is 14px and the
+     medallion 34px, so the title still needs 20px of its own to clear the brass */
+  .modal.box, .iso-skill-card { --corner-inset: 14px; --corner: 34px; }
   .modal h2 { font-size: 17px; letter-spacing: 2px; }
   .modal h2::before { width: 24px; height: 24px; }
   .help-cols { flex-direction: column; gap: 8px; }
@@ -1869,8 +1909,12 @@ html, body, #root {
 
 
 /* ── AI-02: the start-of-game difficulty prompt (src/iso/skill-picker.ts) ──
-   The first thing anyone sees, so it is the door: a brass-framed plate over
-   the war-room, with the three rivals written up as a wanted notice. */
+   The card wears a brass medallion in each corner (see `--text-clear` above)
+   and a medallion is solid metal, so the headline is moved right of it:
+   `padding-left: var(--text-clear)` sets "CHOOSE YOUR RIVAL" off the card's own
+   gutter by exactly the ornament's width — and when a phone shrinks the
+   medallion, the indent shrinks with it. The sub and foot lines start below the
+   top band, so they keep the plain gutter. */
 #iso-skill-prompt { position: absolute; inset: 0; z-index: 90;
   display: flex; align-items: center; justify-content: center;
   background:
@@ -1890,8 +1934,11 @@ html, body, #root {
     linear-gradient(180deg, rgba(34, 25, 16, .94), rgba(10, 7, 5, .96));
   background-blend-mode: luminosity, normal;
   box-shadow: 0 26px 70px rgba(0, 0, 0, .72), 0 0 60px -18px rgba(255, 176, 46, .3); }
-#iso-skill-prompt h2 { margin: 0 0 4px; font-size: 24px; font-family: var(--display);
+#iso-skill-prompt h2 {
+  margin: 0 0 4px; font-size: 24px; font-family: var(--display);
   font-weight: 700; letter-spacing: 4px; text-transform: uppercase; color: var(--brass-hi);
+  /* clear of the top-left medallion, whatever size it is painted at */
+  padding-left: var(--text-clear);
   text-shadow: 0 -1px 0 #000, 0 1px 0 rgba(242, 220, 166, .16), 0 0 28px rgba(255, 176, 46, .3); }
 #iso-skill-prompt .iso-skill-sub { margin: 0 0 12px; opacity: 0.9; font-size: 13px;
   color: var(--txt-dim); font-family: var(--serif); letter-spacing: .5px; }

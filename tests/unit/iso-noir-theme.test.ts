@@ -221,13 +221,14 @@ describe("NOIR the surfaces neither seam nor stretch", () => {
     // 88px; anything larger in CSS is an upscale, and an upscale of a bitmap is
     // its own kind of stretch. `--corner` is ONE length, which is also what
     // makes the scale uniform — two lengths could disagree.
-    const painted = { ".aside.left .panel::after": 108, ".modal.box::after": 88, ".iso-skill-card::after": 88 };
+    const painted = { ".aside.left .panel::after": 108, ".modal.box": 88, ".iso-skill-card": 88 };
     for (const [sel, max] of Object.entries(painted)) {
       const body = bodiesFor(sel).join(" ");
       const n = Number(/--corner:\s*(\d+)px/.exec(body)?.[1] ?? NaN);
       expect(n, `${sel} never sets --corner`).toBeGreaterThan(0);
       expect(n, `${sel} upscales its ornament (${n}px > ${max}px)`).toBeLessThanOrEqual(max);
-      expect(body).toMatch(/background-size:\s*var\(--corner\)/);
+      // the paint size is declared once, for all three ornamented plates
+      expect(css).toMatch(/background-size:\s*var\(--corner\)/);
     }
   });
 
@@ -385,6 +386,79 @@ describe("NOIR the painted set is wired end to end", () => {
     expect(sprite!, "hex clip is not a 6-point polygon").toMatch(
       /clip-path:\s*polygon\(\s*50% 0,\s*100% 25%,\s*100% 75%,\s*50% 100%,\s*0 75%,\s*0 25%\s*\)/,
     );
+  });
+
+  it("leaves the gem art alone: the theme paints nothing over the token", () => {
+    // "restore the old gems" means the presentation too. The sheet may size a
+    // token and cut its matte, but a saturate/brightness pass on top of a
+    // finished painting is what made them read as new art.
+    const sprite = ruleFor(".gem .face.sprite", /filter:/) ?? "";
+    expect(sprite, "sprite face is being re-tinted").not.toMatch(/saturate\(\s*1?\.?[1-9]/);
+    expect(sprite, "sprite face is being re-lit").not.toMatch(/brightness\(\s*1\.[1-9]/);
+    expect(sprite).toMatch(/filter:\s*drop-shadow\(0 2px 3px rgba\(0, 0, 0, \.5\)\)/);
+    // a gold token keeps the base's single soft glow, not a themed neon one
+    expect(ruleFor(".gem.token .face.sprite", /filter:/)).toMatch(/0 0 6px var\(--gold2\)/);
+    // and the square selection ring is dropped for painted tokens (it drew a
+    // box around a hexagon); the lift is the glow, drawn on the sprite.
+    expect(ruleFor(".gem.selected .face.sprite", /outline:\s*none/), "square ring on a sprite").toBeTruthy();
+    expect(css).toMatch(/\.gem\.sel \.face\.sprite, \.gem\.selected \.face\.sprite\s*\{\s*filter:/);
+    // ui.ts must not re-introduce the per-axis stretch
+    expect(ui).not.toMatch(/backgroundSize\s*=\s*["']100% 100%["']/);
+  });
+
+  it("prints the instruction sheet on clean paper", () => {
+    // The banner is read mid-game, at arm's length: `multiply` under 11px type
+    // is a sheet of static. The ledger stays (it is the theme) but it is washed
+    // flat by an opaque ivory layer, and the type moves off the typewriter.
+    const body = bodiesFor(".banner").join(" ");
+    expect(body).toMatch(/background-blend-mode:\s*normal,\s*multiply/);
+    const first = /background:\s*linear-gradient\([^;]*?rgba\(\s*2[0-9]{2},\s*2[0-9]{2},\s*1[0-9]{2},\s*\.[6-9]/.exec(body);
+    expect(first, ".banner has no light wash over the ledger").toBeTruthy();
+    const small = bodiesFor(".banner small").join(" ");
+    expect(small, "the banner message is still 11px typewriter").toMatch(/font-size:\s*13px/);
+    expect(small).toMatch(/font-family:\s*var\(--sans\)/);
+    expect(small).toMatch(/color:\s*#1f1405/);
+    // the log shares the recipe
+    expect(bodiesFor(".feed-row").join(" ")).toMatch(/background-blend-mode:\s*normal,\s*multiply/);
+  });
+
+  it("keeps a solid corner medallion clear of the title it frames", async () => {
+    // `boss-*.webp` is opaque in ALL FOUR of its corners — measured, not
+    // assumed — so a medallion is a solid square, not a chamfer that fades out.
+    for (const k of ["tl", "tr", "bl", "br"]) {
+      const file = join("src/assets/ui/noir", `boss-${k}.webp`);
+      const { data, info } = await sharp(file).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      const w = info.width!, h = info.height!;
+      const a = (x: number, y: number) => data[(y * w + x) * 4 + 3];
+      expect(Math.min(a(0, 0), a(w - 1, 0), a(0, h - 1), a(w - 1, h - 1)), `boss-${k} is not a solid square`).toBeGreaterThan(200);
+    }
+    // …so it is painted flush on the edge and the plate keeps an exactly
+    // matching gutter that its own heading reads (one source of truth).
+    expect(css).toMatch(/\.modal\.box::after, \.iso-skill-card::after\s*\{[^}]*background-position:\s*left top,\s*right top,\s*left bottom,\s*right bottom/);
+    for (const sel of [".modal.box", ".iso-skill-card"]) {
+      const host = bodiesFor(sel).join(" ");
+      const inset = Number(/--corner-inset:\s*(\d+)(?:px)?/.exec(host)?.[1] ?? NaN);
+      const corner = Number(/--corner:\s*(\d+)px/.exec(host)?.[1] ?? NaN);
+      expect(inset, `${sel} never declares --corner-inset`).toBe(0);
+      expect(corner, `${sel} never declares --corner`).toBeGreaterThan(0);
+      expect(host, `${sel} does not derive --text-clear from its ornament`)
+        .toMatch(/--text-clear:\s*calc\(var\(--corner-inset\) \+ var\(--corner\)\)/);
+    }
+    const h2 = bodiesFor("#iso-skill-prompt h2").join(" ");
+    expect(h2, "the difficulty headline is not moved clear of its medallion")
+      .toMatch(/padding-left:\s*var\(--text-clear\)/);
+    expect(bodiesFor(".modal h2").join(" ")).toMatch(/padding-left:\s*var\(--text-clear\)/);
+  });
+
+  it("seats the sigil off the plate's edge, not under the label", () => {
+    for (const sel of [".build-btn", ".sab-btn"]) {
+      const body = bodiesFor(sel).join(" ");
+      expect(body, `${sel} paints its sigil flush at the edge`).toMatch(/background-position:\s*right 8px center/);
+    }
+    // a sabotage card's two lines share a row: the name takes what is left and
+    // the price never squeezes it into the art
+    expect(bodiesFor(".sab-top > b").join(" ")).toMatch(/overflow-wrap:\s*break-word/);
+    expect(bodiesFor(".sab-cost").join(" ")).toMatch(/flex:\s*0 0 auto/);
   });
 
   it("ships the painted sources the tool reads", () => {
