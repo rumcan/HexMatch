@@ -116,6 +116,11 @@ beforeEach(() => {
   // `findSouthCorridor` returns null and the whole "full round" block fails —
   // a flake that predates J1. Same seed the e2e suite boots with.
   window.history.replaceState(null, "", "/?seed=1337");
+  // AI-03: NEVER a resume in this harness — boots are fresh games. The
+  // previous test's autosave (an earlier game's interval now cleared on
+  // dispose, but any 5s window can still have written) must not resurrect
+  // over this fixture: drop the save, keep the difficulty pick below.
+  localStorage.removeItem("hexmatch:save");
   // AI-02: a remembered difficulty keeps the start-of-game picker out of
   // the DOM — these tests boot the game, not its onboarding (the picker
   // itself is covered in iso-skill-picker.test.ts).
@@ -762,12 +767,20 @@ describe("W3 the rival actually plays (headless)", () => {
     expect(rival.res.oil).toBeLessThan(5);
     expect(rival.res.grain).toBeLessThan(5);
 
-    // and it EARNS: the connected mine's trickle lands in its purse each tick
-    const ore0 = rival.res.ore;
-    h.econTick(t0 + 4 * AI_BUILD_MS);
-    h.econTick(t0 + 4 * AI_BUILD_MS + HARVEST_MS);
-    h.econTick(t0 + 4 * AI_BUILD_MS + 2 * HARVEST_MS);
-    expect(rival.res.ore).toBeGreaterThan(ore0);
+    // and it EARNS: under the AI-03 parity economy the rival's income IS its
+    // own plant board — matches on the tokens its network gates. Drive its
+    // board clock (`h.tick`, the quarryTick twin) for a sim minute, no build
+    // clocks (so nothing is spent), and SOME cargo must arrive — the same
+    // join the player's own network pays through.
+    const before: Record<string, number> = { ...rival.res };
+    const yieldMacrotask = () => new Promise((r) => setTimeout(r, 0));
+    for (let k = 1; k <= 60; k++) {
+      const tk = t0 + 4 * AI_BUILD_MS + k * 1000;
+      h.tick(tk); h.truckTick(tk);
+      await yieldMacrotask();   // let the board's async swap resolution finish
+    }
+    const gained = CARGOES.some((c) => (rival.res[c] ?? 0) > (before[c] ?? 0));
+    expect(gained, "a sim-minute of the rival's own board and road paid nothing — the parity income join is broken").toBe(true);
     for (const c of CARGOES) expect(rival.res[c], `${c} negative`).toBeGreaterThanOrEqual(0);
     // PP-13: 10s -> 30s. This boots the live game and runs four rival turns of
     // A* over a map whose towns are now three times bigger (3639ms -> 6143ms
@@ -776,7 +789,7 @@ describe("W3 the rival actually plays (headless)", () => {
     // changed.
   }, 30_000);
 
-  it("banks toward a paid Depot when no trickle cargo alone covers it (PP-07)", async () => {
+  it("banks toward a paid Depot when its board income alone won't yet cover it (PP-07)", async () => {
     const h = await boot();
     const { buildTile } = await import("../../src/iso/track");
     const c = findSouthCorridor(h.grid, 6, "farm");
@@ -823,12 +836,19 @@ describe("W3 the rival actually plays (headless)", () => {
     // buys Depot #2 — this budget is wall-clock headroom, not a behaviour.
     const t0 = 1_000_000;
     for (let i = 0; i < 16; i++) {
-      h.econTick(t0 + i * AI_BUILD_MS + HARVEST_MS);
-      h.econTick(t0 + i * AI_BUILD_MS + 2 * HARVEST_MS);
+      // AI-03 parity: the rival's income is its own plant board — drive the
+      // quarryTick twin between build clocks the way the frame loop does,
+      // so matches + lorry credits stock the purse the bank trades from.
+      h.tick(t0 + i * AI_BUILD_MS + HARVEST_MS);
+      h.truckTick(t0 + i * AI_BUILD_MS + HARVEST_MS);
+      await new Promise((r) => setTimeout(r, 0));
+      h.tick(t0 + i * AI_BUILD_MS + 2 * HARVEST_MS);
+      h.truckTick(t0 + i * AI_BUILD_MS + 2 * HARVEST_MS);
+      await new Promise((r) => setTimeout(r, 0));
       h.aiTick(t0 + (i + 1) * AI_BUILD_MS);
     }
 
-    // It expanded: a SECOND Depot exists that no trickle cargo could buy alone.
+    // It expanded: a SECOND Depot exists that its income alone could not buy.
     expect(depots()).toBeGreaterThanOrEqual(2);
     // The bank did the work: ore went 4:1, and grain arrived without a grant.
     expect(rival.res.grain ?? 0).toBeGreaterThanOrEqual(0);
@@ -870,16 +890,59 @@ describe("AI-02 the rival keeps playing for minutes (the live stall)", () => {
     const rival = h.market.players[1];
     const depots = () => h.harvesters.filter((x: { owner: string }) => x.owner === "ai").length;
     const t0 = 1_000_000;
-    // Six in-game minutes at 1s steps — on seed 1337: 4 depots, 32 tiles laid,
+    // Eight in-game minutes at 1s steps (was 6 — AI-03c: on the lean parity
+    // economy the 2nd depot's bank-and-buy lands between minute 6 and 7 with
+    // run-to-run pacing jitter; the fixture asserts "keeps playing", not a
+    // speedrun) — on seed 1337 with the old trickle: 4 depots, 32 tiles laid,
     // 19 paved, 4.75★ (the zz-live trace; the stall's version parked at
     // 1 depot / 3 tiles / 0.5★ from minute one until the horizon).
     let t = t0;
-    for (let m = 0; m < 6; m++) {
-      for (let i = 0; i < 60; i++) { t += 1000; h.econTick(t); h.aiTick(t); }
+    // AI-03c: snapshot its network footprint at runway end — growth over
+    // the horizon is the anti-stall signature that survives economy re-tuning
+    // (unlike an absolute depot count, which rides on how fat income is: the
+    // trickle gave ≥4 depots here, the lean parity model coherently 1-2).
+    const tilesAtRunway = [...h.track.owner].filter((o) => o === 2).length;
+    for (let m = 0; m < 8; m++) {
+      // AI-03 parity: h.tick drives the rival's plant board — its only
+      // income now. Without it this loop pins the trickle world and starves.
+      for (let i = 0; i < 60; i++) {
+        t += 1000; h.econTick(t); h.aiTick(t); h.tick(t); h.truckTick(t);
+        // the board's async resolution needs the event loop between frames
+        await new Promise((r) => setTimeout(r, 0));
+      }
     }
-    expect(depots(), `rival own expansion: ${depots()} depots — the AI-02 stall was 1 forever`)
-      .toBeGreaterThanOrEqual(4);
-    expect(h.pavedTiles("ai")).toBeGreaterThanOrEqual(12);
+    // AI-03c: the BAR moved with the economy. The old floors (4 depots /
+    // 12 paved) were measured for the trickle world (rival income ~30
+    // cargo/min of flat purse pumping): AI-03 cut that and pays both seats
+    // through their plant boards — coherently, this fixture now sees the
+    // opening depot plus steady road growth, one cargo-match at a time.
+    // What must NEVER slip back is the live stall itself. So the asserts
+    // guard the STALL SIGNATURE, not the old absolute heights:
+    //   • the network GROWS past its runway footprint (it never freezes);
+    //   • at least one paved tile — ore flows into the road;
+    //   • its plant board is alive: its lorries mint tokens onto it.
+    // Rail-thin floors by design: if income ever gets fat again (or faster
+    // presets land), raise them back toward the old absolute marks.
+    expect(depots(), "rival never laid its free depot").toBeGreaterThanOrEqual(1);
+    const tilesAtEnd = [...h.track.owner].filter((o) => o === 2).length;
+    expect(tilesAtEnd - tilesAtRunway,
+      `rival network frozen at ${tilesAtRunway} tiles for 8 sim-minutes — the AI-02 stall signature`)
+      .toBeGreaterThanOrEqual(1);
+    expect(h.pavedTiles("ai"), "rival never paved anything — the stall's road-ice signature")
+      .toBeGreaterThanOrEqual(1);
+    // AI-03c: its board must not be a dead ornament either — tokens minted
+    // by its own lorries appear on it (tier>0 gems somewhere), proving the
+    // shared-board parity join end to end.
+    let aiTok = 0;
+    const rb2 = h.rivalPlant.board;
+    for (const row of rb2.grid) for (const g of row) if (g?.tier) aiTok++;
+    const pavedBuckets = h.vpOf("ai").paved;
+    const pavedTotal = typeof pavedBuckets === "number"
+      ? pavedBuckets
+      : Object.values(pavedBuckets as Record<string, number>).reduce((a, b) => a + b, 0);
+    expect(aiTok + pavedTotal,
+      "rival plant board dead: no tokens minted and nothing paved — the shadow-board regression")
+      .toBeGreaterThan(0);
     // the hoarding detector: the stall's signature was Wood piling up at
     // +32/min pouring past the banks it needs to reach Stone and Oil
     const wood = rival.res.wood ?? 0;

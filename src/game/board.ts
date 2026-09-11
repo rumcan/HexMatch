@@ -527,8 +527,23 @@ export class Board {
   /** AI-03: find one swap that produces a match — the rival's autoplayer.
    *  Scans right/down neighbours of unblocked gems; returns [r1,c1,r2,c2] or
    *  null. Honour-system fast: checks the two swapped cells' rows/cols only,
-   *  because only those lines can change. */
-  findMove(): [number, number, number, number] | null {
+   *  because only those lines can change.
+   *
+   *  `score` (optional, per gem) turns it into a SEEKING player: instead of
+   *  the geometrically-first match it returns the match with the highest
+   *  weight (ties → first). The rival uses this to chase tokened gems — the
+   *  difference between a board that merely animates and a board that PAYS,
+   *  which is exactly the skill knob a slow-but-sharp rival earns through. */
+  findMove(score?: (g: Gem) => number): [number, number, number, number] | null {
+    let best: [number, number, number, number] | null = null;
+    let bestScore = score ? -Infinity : 0;
+    const candidate = (mv: [number, number, number, number], a: Gem, b: Gem): [number, number, number, number] | null => {
+      if (!score) return mv;
+      const w = (score(a) ?? 0) + (score(b) ?? 0);
+      if (w <= bestScore) return null;
+      bestScore = w;
+      return mv;
+    };
     const H = this.grid.length, W = this.grid[0]?.length ?? 0;
     const makesMatch = (r: number, c: number): boolean => {
       const g = this.grid[r]?.[c];
@@ -556,11 +571,14 @@ export class Board {
           this.grid[r][c] = b; this.grid[r2][c2] = a;
           const ok = makesMatch(r, c) || makesMatch(r2, c2);
           this.grid[r][c] = a; this.grid[r2][c2] = b;
-          if (ok) return [r, c, r2, c2];
+          if (!ok) continue;
+          const picked = candidate([r, c, r2, c2], a, b);
+          if (picked && !score) return picked;
+          if (picked) best = picked;
         }
       }
     }
-    return null;
+    return best;
   }
 
   /** AI-03 save/restore: everything that is not derivable (grid, pools,

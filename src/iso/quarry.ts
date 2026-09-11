@@ -237,8 +237,12 @@ export interface Quarry {
 
 export function createQuarry(
   state: EconomyState, owner: string, hooks: QuarryHooks = {},
+  boardArg?: Board,
 ): Quarry {
-  const board = new Board();
+  // AI-03: the board can be SHARED (the rival's plant: rival-plant.ts owns
+  // the same grid the Sabotage cards and the peek panel address). Default
+  // stays own-board for the single-player quarry.
+  const board = boardArg ?? new Board();
   let reach: Partial<Record<Cargo, number>> = {};
   let delivery: Partial<Record<Cargo, number>> = {};
   let lastPool: Partial<Record<ResKey, number>> = {};
