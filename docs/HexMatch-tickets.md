@@ -306,3 +306,123 @@ does not silence it, pick persists + applies live; top-bar selector keeps its
 mid-game role.
 Ladder re-measured at the 20★ line — see docs/playtest-reports/2026-09-10-ai-02-report.md.
 
+PP-14 — Industries keep out of the roads' verges
+Status: DONE
+Type: Map generation
+
+Requirements
+"Change spawning so industries can't spawn less than 10 squares from a public road."
+The generator plants industries FIRST (separation ladder, then quotas), towns after them,
+and the PP-13 public roads last — so a highway or a town ring road could be stamped
+straight through a farm. On seed 7 six industries stood within 10 tiles of a highway and
+one of them was on the verge itself; on seed 20260902 it was twelve. A road running under
+a resource reads as a bug in the map, and it handed the opening a free connection the
+player never had to build.
+
+Changes
+`applyRoadSpawnBuffer` runs in `generateMap` right after the highways are laid and before
+the town-ring flattening. `INDUSTRY_ROAD_SEP = 10` is measured against EVERY tile the game
+stamps `PUBLIC_OWNER` — the PP-13 inter-town highways AND each town's ring road and
+streets — over a Chebyshev distance field, which also subsumes the 8-tile town buffer
+(`TOWN_INDUSTRY_SEP`) that `placeTowns` already enforced: town houses and town ground are
+still checked, at their own radius, so a re-sited industry cannot dodge one rule by
+satisfying the other.
+The repair is deliberately LOCAL and RNG-free. Each violator is moved to the nearest legal
+ground by expanding rings around its OWN tile (separation ladder 12, 8, 6, 4, 2), and if
+nothing fits it stays where it was rather than teleporting. The first version of this
+re-sited globally — a row-major scan of the map with a few RNG draws — and every corridor
+test died `off-screen`, because a map-wide scan picks a far corner, `clampCamera` then
+pins the boot camera to that corner, and the opening industry is no longer in frame.
+No RNG also means no new determinism surface: the buffer is a pure function of the terrain
+and the towns, so `?seed=` reproduces the map exactly as before (T1).
+
+Acceptance criteria
+16 swept seeds: no industry within 10 tiles of any public road (closest is 10-13), the
+25-industry quota and its per-type split unchanged, ≥90% of industry pairs still 12 apart
+(100% measured), no overlap with town ground, and `generateMap` byte-identical across
+repeated runs. Covered by `tests/unit/iso-grid.test.ts` (town/industry separation, quotas,
+reachability) plus the corridor suite, which re-derives its openings from the live map.
+
+PP-15 — A road joins a plant at the EDGE of its graphic
+Status: DONE
+Type: Network / UX
+
+Requirements
+"Fix where road connects to processing plants. It should be on the edge of the graphic.
+Right now you have to build the road into some weird spot inside."
+A Factory is ONE sprite over the 3×3 `FACTORY_FOOTPRINT` (PP-12: the footprint is the
+art's), but every rule that asked "does this road touch the plant?" asked it about the
+footprint's ORIGIN tile only — the block's north-west corner, under the graphic, at the
+BACK of the building. So a road that visibly touched the factory's south wall was
+"unconnected", the only legal tile to plug into was one the player could not click, and
+the free opening road was charged for paving the player's own factory floor.
+
+Changes
+The footprint is now the unit of every question about a building:
+• `plantFootprintTiles` (track.ts) is the one geometry, and `playerNetwork` seeds all of
+  a plant's tiles — a drag may start on the building and reach any side of it;
+• `plantShoulders` (road-routing.ts) and `componentsTouchingTiles`/
+  `sharedComponentsWithTiles` (economy.ts) answer "is this Depot joined to that plant" for
+  the block's whole perimeter, so `resolveConnection`, the lorry's route goal and the
+  rival's pave pass all agree with the picture (four separate single-tile answers was the
+  bug, four times);
+• `structureTiles` + `previewDrag`'s `structures` set: the L-path may RUN UNDER the
+  builder's own buildings — refusing it would truncate a legal road — but a tile of a
+  player's own building is never paved and never charged, and it consumes none of the
+  `FREE_SETUP_TRACK` allowance. 12 free tiles are 12 tiles of road, not 10 of road and two
+  of factory floor. It is per OWNER: a rival's ground stays somebody else's wall.
+Deliberately not changed: the rival's A* still prices its own floor as ground it paves
+(one dirt tile under its opening plant). `stepCost` has no structures notion, and threading
+one through `findPath` would move every pinned route cost in `iso-ai.test.ts` for a
+presentational tile the rival can afford.
+
+Acceptance criteria
+`tests/unit/iso-plant-edge.test.ts` (9 tests): the whole block is network ground and one
+tile beyond is not; all four sides accept a new tile; a spur joined to the FAR side of the
+plant is a live connection (and the same fixture is pinned to fail under the origin-tile
+rule); the lorry stops at the edge the road joins instead of driving around the back; a
+drag under the buildings lays nothing, costs nothing, and spends no allowance; what is
+previewed is what is committed. `iso-track`, `iso-vehicles`, `iso-economy`, `iso-plants`
+and the corridor suite were re-swept where the old rule was pinned; the e2e boot spec now
+derives its tile count from `__iso.dragPreview` instead of counting the column, so it
+cannot drift from the game's own pricing.
+
+PP-16 — One Depot holds one industry
+Status: DONE
+Type: Economy / UX
+
+Requirements
+"Only allow 1 player to build a depot next to an industry, and only 1 — as soon as the
+depot is built no other ones can be built there." Clarified on the ticket: "only claim the
+free ones and one if there's a network. You can't just add a depot without a road. The
+first with a network to that resource locks it to himself."
+
+Changes
+`industryLocks(state)` (economy.ts) maps every industry to the FIRST serviced Depot whose
+catchment covers it. A lock is a ROAD: `isServiced` is the gate, so a Depot dropped on open
+ground claims nothing and cannot sterilise a district — its claims arrive with its
+connection, which is also when it starts paying. The map is DERIVED, never stored, so
+demolishing the road that serviced a Depot releases everything it held and no snapshot
+field is added.
+`heldIndustries` is what a Depot is PAID for — its catchment minus what another Depot
+reached first — and it replaces the proportional split: `claimantCounts` and the
+÷claimants in `harvesterYield`/`industryClaimValues` are gone, because an industry now has
+exactly one holder and pays it in full. Placement follows the same set from the other side:
+`planDepotPlacement` takes a `locked` option and refuses a site whose whole catchment is
+held with the readable code `industry-taken`; `placeHarvester` refuses it before anything
+is priced (a refused build still consumes nothing), `tileProbe` reports it so the corridor
+picker can never plan a Depot the round would reject, and the inspector says who holds an
+industry instead of counting how many depots stand near it.
+The rival plays by the same rule: `catchmentValue` ranks only what a NEW Depot would hold,
+`planCandidates` never searches a route to a held industry, and `executeCandidate` places
+no Depot that would claim nothing.
+
+Acceptance criteria
+`tests/unit/iso-depot-claim.test.ts` (8 tests): a serviced Depot locks its catchment, a
+roadless one locks nothing, the first in the list holds it and the late arrival holds
+nothing, the placement refusal is per site with the right code and sentence, at least one
+FREE industry makes a site legal again, and tearing up the road releases the industry.
+`iso-economy`'s old "overlapping catchments split output proportionally" block is now
+"the first Depot with a road holds the industry" (holder paid in full, late arrival paid
+nothing, and the total is capped at one holding rather than halved twice). `iso-ai` pins
+that the rival will not build a second Depot for ground it already holds.

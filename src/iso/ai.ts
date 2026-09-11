@@ -55,12 +55,13 @@ import { ROUGH, factoryTouchesTown, type Grid, type Industry } from "./grid";
 import {
   DIRS, DIR, tIdx, inMapT, hasTrack, canBuildOn, canAfford, tileCost, addCost,
   buildTile, trackOpenTo, tileAlreadyCarries, freeAllowanceCovers, playerNetwork,
-  PUBLIC_OWNER,
+  plantFootprintTiles, PUBLIC_OWNER,
   type Track, type TrackKind, type Purse,
 } from "./track";
 import {
-  catchmentRect, rectContains, isServiced, industriesInCatchment, claimantCounts,
-  buildAllComponents, resolveConnection, sharedComponents,
+  catchmentRect, rectContains, isServiced,
+  buildAllComponents, resolveConnection, sharedComponentsWithTiles,
+  industryLocks, heldIndustries,
   type EconomyState, type Harvester, type Factory,
 } from "./economy";
 
@@ -297,10 +298,13 @@ export const CARGO_VALUE: Record<Cargo, number> = {
  * The dilution is the new part and it is the rival's biggest single fix. The
  * old score read `industry.output`, so an industry already covered by one of
  * the AI's own depots looked exactly as attractive as an untouched one, and
- * the rival kept spending its last tiles on a second link to the same farm
- * (overlap splits the yield, so the second link earns half and costs full
- * track). `claimantCounts` is the same share arithmetic `harvesterYield` pays
- * by, so the plan is priced on the economy's own numbers, not a guess.
+ * the rival kept spending its last tiles on a second link to the same farm,
+ * which paid half and cost full track. PP-16 made the claim exclusive, so the
+ * arithmetic is gone and what remains is the sharper question: is there
+ * anything LEFT to claim here at all. `locks` is `industryLocks(state)`, the
+ * same map the placement refusal and `harvesterYield` read — one source for
+ * "who owns this industry", so a plan can be priced on the economy's numbers
+ * rather than a guess about them.
  */
 /**
  * VP-01: `oreUrgency` scales how much an Ore Mine is worth, and nothing else.
@@ -310,21 +314,22 @@ export const CARGO_VALUE: Record<Cargo, number> = {
  * place where "what is a depot worth" is decided.
  */
 export function catchmentValue(
-  state: EconomyState, counts: Map<number, number>, stock: Purse,
+  state: EconomyState, locks: Map<number, Harvester>, stock: Purse,
   tx: number, ty: number, now = 0, oreUrgency = 1,
 ): number {
   const probe = { id: -1, owner: "", ownerId: 0, tx, ty } as Harvester;
   let v = 0;
-  for (const ind of industriesInCatchment(state.grid, probe)) {
+  // PP-16: `heldIndustries` with a Depot that owns nothing is exactly the
+  // question the candidate has to answer — which industries in this catchment
+  // would the NEW Depot actually hold, i.e. which are still free.
+  for (const ind of heldIndustries(state, probe, locks)) {
     if (ind.banditUntil > now) continue;              // blockaded: it pays nothing
     const def = INDUSTRY_BY_KEY[ind.type];
     if (!def) continue;
-    const claimants = (counts.get(ind.id) ?? 0) + 1;  // +1 for this new depot
     const weight = def.cargo === "ore"
       ? CARGO_VALUE.ore * oreUrgency
       : CARGO_VALUE[def.cargo];
-    v += ((ind.output ?? def.output) / claimants)
-      * weight * (1 + scarcity(stock, def.cargo));
+    v += (ind.output ?? def.output) * weight * (1 + scarcity(stock, def.cargo));
   }
   return v;
 }
@@ -586,9 +591,13 @@ export function planCandidates(
   const out: Candidate[] = [];
   const claimed = new Set(state.harvesters.map((h) => tIdx(h.tx, h.ty)));
   const free = Math.max(0, opts.free ?? 0);
-  // VP-01: one claimant map for the whole ranking pass — the same arithmetic
-  // `harvesterYield` pays by, read once rather than re-derived per candidate.
-  const counts = claimantCounts(state);
+  // PP-16: one claim map for the whole ranking pass — the same map
+  // `harvesterYield` pays by and `planDepotPlacement` refuses by, read once
+  // rather than re-derived per candidate. An industry another Depot has a road
+  // at is not a destination, and the ranking values only what a new Depot
+  // would HOLD (VP-01 had a claimant COUNT here for the same reason: rank on
+  // the economy's own arithmetic, never on a guess about it).
+  const locks = industryLocks(state);
   const now = opts.now ?? 0;
   // PP-05: every candidate ends at a NEW Depot, so the Depot's own price is
   // part of what the plan must afford. Priced by the same `priceDepot` the
@@ -618,6 +627,10 @@ export function planCandidates(
         h.owner === factory.owner
         && rectContains(catchmentRect(h.tx, h.ty), ind.tx, ind.ty));
       if (covered) continue;
+      // PP-16: …and any industry somebody's road already holds. A Depot built
+      // beside it would claim nothing — the game refuses the placement — so no
+      // route is searched for it and no tile is spent reaching it.
+      if (locks.has(ind.id)) continue;
 
       for (const [hx, hy] of harvesterSpots(grid, ind)) {
         if (claimed.has(tIdx(hx, hy))) continue;
@@ -656,7 +669,7 @@ export function planCandidates(
         // VP-01: value the DEPOT, not the industry — the tile's 4×4 catchment
         // is what harvests, and on a multi-tile footprint that is usually more
         // than the one industry A* happened to route to.
-        const value = catchmentValue(state, counts, opts.stock, hx, hy, now, opts.oreUrgency ?? 1);
+        const value = catchmentValue(state, locks, opts.stock, hx, hy, now, opts.oreUrgency ?? 1);
         const score = value / Math.max(0.3, path.cost);
         out.push({ industry: ind, hx, hy, path, kind: kindPref, cost, score, value });
         break;   // one spot per industry is enough — the cheapest we found
@@ -796,6 +809,15 @@ export interface RivalSpotOptions {
   ownerId: number;
   /** Display identity of the rival. Default `"ai"`. */
   owner?: string;
+  /**
+   * PP-16: the OPPONENT's Depots, so the probe can see which industries are
+   * already HELD (a road at them) before the rival commits to a lane. Without
+   * it the search happily parks the rival beside a farm the human wired up
+   * first — a lane whose every Depot pays nothing, because an industry has one
+   * holder now and it is not the rival. Optional: a state with no opponents is
+   * the boot case, where nothing is claimed yet.
+   */
+  opponentHarvesters?: Harvester[];
   /** Optional diagnostic cap on real plan probes; default searches all candidates. */
   probes?: number;
 }
@@ -895,7 +917,12 @@ export function chooseRivalFactorySpot(
   ranked.sort((a, b) =>
     Number(b.paved) - Number(a.paved) || b.d - a.d || tIdx(a.x, a.y) - tIdx(b.x, b.y));
 
-  const state: EconomyState = { grid, track, harvesters: [], factories: [] };
+  // PP-16: the probe plans in the opponent's world, not in a vacuum — its
+  // serviced Depots hold their catchments, and `planCandidates` prices a lane
+  // only by what a NEW Depot could still claim there.
+  const state: EconomyState = {
+    grid, track, harvesters: opts.opponentHarvesters ?? [], factories: [],
+  };
   const probe: Factory = { owner: opts.owner ?? "ai", ownerId: opts.ownerId, tx: 0, ty: 0 };
   // T4: eight far-corner probes are no longer enough on a sparse 144×144
   // map. Skip geometrically unaffordable starts, then keep searching until a
@@ -1008,7 +1035,12 @@ export function executeCandidate(
   // charges no Depot — the same "a refused build consumes nothing" rule the
   // human click follows.
   let depotsUsed = 0;
-  if (isServiced(state.track, h)) {
+  // PP-16: and it has to CLAIM something to be worth placing at all — the same
+  // refusal `planDepotPlacement` gives the human. `planCandidates` filters
+  // locked industries out already; this is the belt-and-braces half, for an
+  // industry that fell into someone else's hands between planning and building.
+  if (isServiced(state.track, h)
+    && heldIndustries(state, h, industryLocks(state)).length > 0) {
     state.harvesters.push(h);
     harvester = h;
     if (freeDepots > 0) depotsUsed = 1;
@@ -1149,7 +1181,11 @@ export function paveCandidates(
     if (resolveConnection(state, comp, h).kind !== "dirt") continue;
     for (const f of state.factories) {
       if (f.owner !== opts.owner) continue;
-      for (const c of sharedComponents(comp.comp, h.tx, h.ty, f.tx, f.ty)) {
+      // PP-15: the plant's whole footprint — a spur that joins the road on the
+      // far side of the block is the same live connection.
+      for (const c of sharedComponentsWithTiles(
+        comp.comp, h.tx, h.ty, plantFootprintTiles(f.tx, f.ty),
+      )) {
         if (comp.roadComp[c] === 0) gravel.add(c);
       }
     }

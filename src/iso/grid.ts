@@ -221,6 +221,253 @@ function placeIndustries(terrain: Uint8Array, rng: () => number): { list: Indust
   return { list, occ };
 }
 
+/**
+ * PP-14: how far (Chebyshev) an industry footprint must sit from every tile
+ * the map seeds as a PUBLIC ROAD — the PP-13 inter-town highways AND each
+ * town's own streets/ring road (RV-03 made those public ground too).
+ *
+ * This is a *spawning* rule, not a building rule: it says nothing about where
+ * a player may put a Depot, only about where a resource node may appear. The
+ * reason is the opening. Public roads service a Depot on their own
+ * (`isServiced` accepts a `PUBLIC_OWNER` tile), so an industry that spawns in
+ * the highway's verge is a free connection — park a Depot on the tarmac, skip
+ * the road entirely, and the tile the map handed you is worth more than the
+ * line you were supposed to lay. 10 tiles is deliberately just over the 8-tile
+ * town ring (TOWN_INDUSTRY_SEP), so an industry near a settlement is now
+ * outside its streets as well as beside them, and the buffer is measured with
+ * the same Chebyshev metric every other separation in this file uses.
+ */
+export const INDUSTRY_ROAD_SEP = 10;
+
+/**
+ * Every tile the map seeds as a PUBLIC ROAD: the highways (`grid.publicRoads`)
+ * plus the towns' own ring roads and streets (`town.roads`). These are the
+ * tiles `track.ts` stamps `PUBLIC_OWNER` at boot, i.e. the roads every player
+ * may drive on and may therefore service a Depot — which is exactly what
+ * `INDUSTRY_ROAD_SEP` keeps industries out of.
+ */
+export function publicRoadTilesOf(grid: Grid): [number, number][] {
+  const out: [number, number][] = [...(grid.publicRoads ?? [])];
+  for (const t of grid.towns) out.push(...t.roads);
+  return out;
+}
+
+/**
+ * A Chebyshev distance field: for every tile, the distance to the nearest tile
+ * in `sources` (8-connected BFS, so `max(|dx|,|dy|)`). Uncrossable for
+ * nothing — this is straight-line tile distance, matching `separated` and
+ * `TOWN_INDUSTRY_SEP`, which is what a "10 squares" buffer means on a grid.
+ */
+export function chebyshevField(sources: Iterable<number>): Uint16Array {
+  const field = new Uint16Array(MAP_W * MAP_H).fill(0xffff);
+  const queue: number[] = [];
+  for (const i of sources) {
+    if (field[i] === 0xffff) { field[i] = 0; queue.push(i); }
+  }
+  for (let head = 0; head < queue.length; head++) {
+    const cur = queue[head];
+    const x = cur % MAP_W, y = (cur / MAP_W) | 0;
+    const d = field[cur] + 1;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue;
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+        const ni = ny * MAP_W + nx;
+        if (field[ni] <= d) continue;
+        field[ni] = d;
+        queue.push(ni);
+      }
+    }
+  }
+  return field;
+}
+
+/**
+ * PP-14: the industries standing inside `min` tiles of the tiles `field` was
+ * built from — `applyRoadSpawnBuffer` uses it to find what it must move, and a
+ * test uses it to assert the answer is empty once the map is finished.
+ */
+export function industriesInRoadBuffer(
+  industries: readonly Industry[], field: Uint16Array, min = INDUSTRY_ROAD_SEP,
+): Industry[] {
+  const out: Industry[] = [];
+  for (const ind of industries) {
+    let near = Infinity;
+    for (let x = ind.tx; x < ind.tx + ind.w && near >= min; x++) {
+      for (let y = ind.ty; y < ind.ty + ind.h; y++) {
+        near = Math.min(near, field[idx(x, y)]);
+        if (near < min) break;
+      }
+    }
+    if (near < min) out.push(ind);
+  }
+  return out;
+}
+
+/**
+ * PP-14 — hold the 10-tile public-road buffer WITHOUT re-ordering the
+ * generator.
+ *
+ * The buffer cannot be a constraint inside `placeIndustries`: the roads it
+ * measures against do not exist yet at that point. Highways are the product of
+ * the towns (`publicRoadTiles` routes between the settlements), the towns are
+ * placed with the industries already on the map (they keep their 8-tile ring
+ * and never wall an industry in), and re-running any of that would move every
+ * map on every seed. So this is a repair pass over the finished layout instead:
+ * anything the earlier stages parked in a road verge is lifted and re-sited on
+ * ground that satisfies the whole rule set at once —
+ *
+ *   • ≥ INDUSTRY_ROAD_SEP (10) from every public road tile — the highways AND
+ *     the towns' ring roads and streets (RV-03 makes those public ground too),
+ *     which is what the rule is about; the town's HOUSE tiles keep their 8-tile
+ *     ring (TOWN_INDUSTRY_SEP), and since the streets are only ever 1 tile
+ *     outside that box, 10 from the streets is ≥9 from the houses;
+ *   • the same Poisson-disc separation from the other industries that
+ *     `placeIndustries` aims for (12, relaxing down to the 2-tile floor that
+ *     keeps footprints from touching), so a repair never re-clusters the map;
+ *   • dry land, free of any occupancy (industry or town), and inside the same
+ *     4-connected landmass the reachability check in `placeTowns` guaranteed —
+ *     so a moved industry can never be walled off behind a town's ring road.
+ *
+ * The search is ring-by-ring from the tile the node already holds and reads no
+ * randomness at all, which keeps determinism trivially (the map stays a pure
+ * function of `seed`) and keeps each moved industry where the generator meant
+ * it to be. If a hostile seed has no legal site within `REPAIR_REACH` the
+ * industry stays where it is — best-effort, exactly like the quota loop above,
+ * because an absent resource type is a worse bug than one node too close to
+ * the highway.
+ */
+function applyRoadSpawnBuffer(
+  terrain: Uint8Array, occ: Int16Array, list: Industry[],
+  towns: Town[], publicRoads: [number, number][],
+): void {
+  // The buffer is measured from the ROAD tiles — the highways and each town's
+  // ring road/streets, i.e. exactly the tiles `track.ts` stamps PUBLIC_OWNER —
+  // because that is what the rule is about: a resource node must not sit in a
+  // verge a Depot can park on for free.
+  const roadSet = new Set<number>();
+  for (const [x, y] of publicRoads) roadSet.add(idx(x, y));
+  for (const t of towns) for (const [x, y] of t.roads) roadSet.add(idx(x, y));
+  const roadField = chebyshevField(roadSet);
+
+  // A town's own ground (houses, centre, streets — everything stamped TOWN_OCC)
+  // keeps the generator's 8-tile ring: `placeTowns` measured it against the
+  // industries of the time, and a repair pass must not hand that work back. The
+  // ring road can have gaps (water, an earlier town), so the distance to the
+  // STREET tiles alone does not imply it.
+  const townSet = new Set<number>();
+  for (let i = 0; i < occ.length; i++) if (occ[i] === TOWN_OCC) townSet.add(i);
+  const townField = chebyshevField(townSet);
+
+  // The land an industry may stand on: dry, 4-connected, and not sealed off
+  // inside a town. Flooded once from the first industry tile (which is on it by
+  // construction) so a re-sited node is never stranded — the same guarantee
+  // `placeTowns`' reachability check exists for.
+  const open = new Uint8Array(MAP_W * MAP_H);
+  {
+    const first = list[0];
+    const start = first ? idx(first.tx, first.ty) : -1;
+    if (start >= 0) {
+      const stack = [start];
+      open[start] = 1;
+      while (stack.length) {
+        const cur = stack.pop()!;
+        const x = cur % MAP_W, y = (cur / MAP_W) | 0;
+        for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]] as const) {
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+          const ni = ny * MAP_W + nx;
+          if (open[ni] || terrain[ni] === WATER || occ[ni] === TOWN_OCC) continue;
+          open[ni] = 1;
+          stack.push(ni);
+        }
+      }
+    }
+  }
+
+  /** Chebyshev distance from every tile to the nearest occupied tile. */
+  const occupancyField = () => {
+    const src: number[] = [];
+    for (let i = 0; i < occ.length; i++) if (occ[i] !== -1) src.push(i);
+    return chebyshevField(src);
+  };
+
+  /**
+   * The nearest legal site for a `w`×`h` footprint, searched in expanding
+   * rings around the tile it currently occupies. LOCAL on purpose: the node
+   * should step out of the verge, not be re-rolled somewhere else — a
+   * far-flung fallback would move the boot camera's focus (`industries[0]`) to
+   * a coast, clamp the framing against the map edge, and take the whole
+   * opening corridor off screen (which is exactly how the e2e corridor picker
+   * first died on a buffered map).
+   */
+  const nearestFit = (
+    ox: number, oy: number, w: number, h: number, sep: number, sepField: Uint16Array,
+  ): [number, number] | null => {
+    for (let d = 1; d <= REPAIR_REACH; d++) {
+      for (let dy = -d; dy <= d; dy++) {
+        for (let dx = -d; dx <= d; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== d) continue;   // ring only
+          const tx = ox + dx, ty = oy + dy;
+          if (!inBounds(tx, ty) || !inBounds(tx + w - 1, ty + h - 1)) continue;
+          let ok = true;
+          for (let x = 0; x < w && ok; x++) {
+            for (let y = 0; y < h && ok; y++) {
+              const i = idx(tx + x, ty + y);
+              ok = terrain[i] !== WATER && occ[i] === -1 && open[i] === 1
+                && roadField[i] >= INDUSTRY_ROAD_SEP
+                && townField[i] >= TOWN_INDUSTRY_SEP
+                && (sep <= 1 || sepField[i] >= sep);
+            }
+          }
+          if (ok) return [tx, ty];
+        }
+      }
+    }
+    return null;
+  };
+
+  // Anything inside a public road's verge moves — or inside a town ring an
+  // earlier move tightened.
+  const near = industriesInRoadBuffer(list, roadField, INDUSTRY_ROAD_SEP)
+    .concat(industriesInRoadBuffer(list, townField, TOWN_INDUSTRY_SEP))
+    .filter((ind, i, arr) => arr.indexOf(ind) === i);
+  if (!near.length) return;
+
+  for (const ind of near) {
+    // Wipe the old footprint first: the search must be free to step onto ground
+    // that was merely "next to its previous spot".
+    for (let x = 0; x < ind.w; x++) {
+      for (let y = 0; y < ind.h; y++) occ[idx(ind.tx + x, ind.ty + y)] = -1;
+    }
+    const sepField = occupancyField();
+    let found: [number, number] | null = null;
+    // The placer's own relaxation ladder, floored at 2 so two footprints never
+    // touch (the ≥1-gap rule the grid tests pin).
+    for (const sep of [12, 8, 6, 4, 2]) {
+      found = nearestFit(ind.tx, ind.ty, ind.w, ind.h, sep, sepField);
+      if (found) break;
+    }
+    if (!found) {
+      // Nothing within REPAIR_REACH: put it back rather than drop a whole
+      // resource type off the map.
+      for (let x = 0; x < ind.w; x++) {
+        for (let y = 0; y < ind.h; y++) {
+          occ[idx(ind.tx + x, ind.ty + y)] = ind.id;
+        }
+      }
+      continue;
+    }
+    ind.tx = found[0]; ind.ty = found[1];
+    for (let x = 0; x < ind.w; x++) {
+      for (let y = 0; y < ind.h; y++) occ[idx(ind.tx + x, ind.ty + y)] = ind.id;
+    }
+  }
+}
+
+/** How far (Chebyshev) a buffered industry may be stepped to find legal ground. */
+const REPAIR_REACH = 24;
 /** TOWN-1: number of towns per map. */
 const TOWN_COUNT = 4;
 /**
@@ -613,6 +860,13 @@ export function generateMap(seed: number): Grid {
   // actually placed. No RNG draws, so the seeded stream the rest of the map
   // depends on is untouched — and the highway is a pure function of the seed.
   const publicRoads = publicRoadTiles(towns, terrain, occ);
+  // PP-14: industries keep out of the roads' verges. The buffer cannot be a
+  // `placeIndustries` constraint — the roads it measures against are derived
+  // from the towns, which are derived from the industries — so it is repaired
+  // here, once the highways and the town streets are known. Uses the seeded
+  // stream (every earlier stage is done drawing from it), so the map is still a
+  // pure function of `seed`.
+  applyRoadSpawnBuffer(terrain, occ, list, towns, publicRoads);
   // PP-02: guarantee every town can host a Factory. The only thing that could
   // wall a town off from a legal Factory site is ROUGH terrain around it,
   // so flatten the rough in a small ring around every town tile. A town tile

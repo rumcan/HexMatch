@@ -11,6 +11,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { WATER, factoryTouchesTown } from "../../src/iso/grid";
 import { SABOTAGE, RAID_EVERY, BANDIT_MS } from "../../src/game/config";
 import { PUBLIC_OWNER, buildTile } from "../../src/iso/track";
+import { lockedIndustryIds } from "../../src/iso/economy";
 import { MAP_W, MAP_H, TRANSPORT, INDUSTRY_BY_KEY, VICTORY } from "../../src/iso/config";
 import { setRng, mulberry32 } from "../../src/game/config";
 
@@ -249,9 +250,15 @@ function findFactorySpot(grid: import("../../src/iso/grid").Grid): [number, numb
   return null;
 }
 
+/** The industries someone else's serviced Depot already holds (PP-16). */
+function heldIndustryIds(eco: import("../../src/iso/economy").EconomyState): ReadonlySet<number> {
+  return lockedIndustryIds(eco);
+}
+
 /** A 2×2 dirt-legal factory spot within a small ring of an industry of `type`. */
 function findFactorySpotNear(
   grid: import("../../src/iso/grid").Grid, type: string, excludeId = -1,
+  held?: ReadonlySet<number>,
 ): [number, number] | null {
   // T4: return the CLOSEST free 2×2 to the footprint (not the top-left-most).
   // On the roomier map the rival's trunk line has to stay short enough to be
@@ -260,7 +267,9 @@ function findFactorySpotNear(
   let best: [number, number] | null = null;
   let bestD = Infinity;
   for (const ind of grid.industries) {
-    if (ind.type !== type || ind.id === excludeId) continue;
+    // PP-16: an industry another seat has a road at is not a place to open —
+    // a Depot built beside it would claim nothing and earn nothing.
+    if (ind.type !== type || ind.id === excludeId || held?.has(ind.id)) continue;
     for (let y = Math.max(0, ind.ty - 8); y < Math.min(MAP_H, ind.ty + ind.h + 8); y++) {
       for (let x = Math.max(0, ind.tx - 8); x < Math.min(MAP_W, ind.tx + ind.w + 8); x++) {
         let ok = true;
@@ -662,7 +671,11 @@ describe("W1 the drag charges exactly what it previewed", () => {
     const c = findSouthCorridor(h.grid, 14);
     expect(c).toBeTruthy();
     const { hx, hy } = c!;
-    h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx, ty: hy + 6 });
+    // PP-15: the Factory stands OFF the drag column — a tile of the player's
+    // own building is neither built nor charged, so a fixture that drags
+    // THROUGH a plant would spend 8 tiles where this test counts 11. The
+    // floor itself is pinned by the test below, in its own right.
+    h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx + 3, ty: hy + 6 });
     h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy });
     h.finishSetup();
 
@@ -697,6 +710,40 @@ describe("W1 the drag charges exactly what it previewed", () => {
     // "no purse value ever negative" — every cargo key, checked, not inferred
     for (const c of CARGOES) expect(h.purse[c] ?? 0, `${c} went negative`).toBeGreaterThanOrEqual(0);
   });
+
+  it("a drag across your own Plant pays for neither the tile nor the allowance", async () => {
+    const h = await boot();
+    const { hasTrack } = await import("../../src/iso/track");
+    const { FACTORY_FOOTPRINT } = await import("../../src/iso/config");
+    const c = findSouthCorridor(h.grid, 14);
+    expect(c).toBeTruthy();
+    const { hx, hy } = c!;
+    // the Factory block sits IN the drag: its footprint spans the column at
+    // y = hy+6..hy+8, so three of the eleven tiles are the building's own floor.
+    h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx, ty: hy + 6 });
+    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy });
+    h.finishSetup();
+
+    const purse0 = { ...h.purse };
+    const pv = h.dragBuild("dirt", hx, hy + 1, hx, hy + 11);
+    expect(pv).toBeTruthy();
+    // `tiles` are the tiles the drag will BUILD: the eleven of path minus the
+    // three that are the plant's own floor, and the allowance is spent on
+    // exactly those — never on the building.
+    expect(pv!.tiles).toHaveLength(11 - FACTORY_FOOTPRINT[1]);
+    expect(pv!.free).toBe(11 - FACTORY_FOOTPRINT[1]);
+    expect(pv!.cost).toEqual({});
+    for (let k = 0; k < FACTORY_FOOTPRINT[1]; k++) {
+      expect(hasTrack(h.track, "dirt", hx, hy + 6 + k), `plant floor ${k}`).toBe(false);
+    }
+    expect(hasTrack(h.track, "dirt", hx, hy + 5)).toBe(true);
+    expect(hasTrack(h.track, "dirt", hx, hy + 9)).toBe(true);
+    expect(h.freeTrack).toBe(12 - pv!.free);
+    for (const c2 of CARGOES) expect(h.purse[c2] ?? 0, `${c2} paid`).toBe(purse0[c2] ?? 0);
+    // the tiles it skipped are not "covered" either: the run is still open, so
+    // a road can start on one side of a plant and finish on the other (PP-15)
+    expect(pv!.unaffordable ?? []).toHaveLength(0);
+  });
 });
 
 describe("W3 the rival actually plays (headless)", () => {
@@ -719,7 +766,9 @@ describe("W3 the rival actually plays (headless)", () => {
     // the live grid rather than hard-coded.
     // T4: keep the rival off the industry the player just wired up, so the two
     // networks don't compete for the same harvester spot on the roomier map.
-    const rivalSpot = findFactorySpotNear(h.grid, "ore_mine", c!.ind.id);
+    // PP-16: and off the industries the player's Depot already holds — a rival
+    // parked on claimed ground would connect a Depot that pays it nothing.
+    const rivalSpot = findFactorySpotNear(h.grid, "ore_mine", c!.ind.id, heldIndustryIds(h.eco));
     expect(rivalSpot).toBeTruthy();
     h.eco.factories.push({ owner: "ai", ownerId: 2, tx: rivalSpot![0], ty: rivalSpot![1] });
     const rival = h.market.players[1];
@@ -802,7 +851,7 @@ describe("W3 the rival actually plays (headless)", () => {
     for (let y = c!.hy + 1; y <= c!.fy; y++) buildTile(h.track, "dirt", c!.hx, y, 1);
     h.finishSetup();
 
-    const rivalSpot = findFactorySpotNear(h.grid, "ore_mine", c!.ind.id);
+    const rivalSpot = findFactorySpotNear(h.grid, "ore_mine", c!.ind.id, heldIndustryIds(h.eco));
     expect(rivalSpot).toBeTruthy();
     h.eco.factories.push({ owner: "ai", ownerId: 2, tx: rivalSpot![0], ty: rivalSpot![1] });
     const rival = h.market.players[1];
@@ -1051,24 +1100,34 @@ describe("W9 the free setup allowance buys dirt, not road", () => {
     expect(h.purse.ore ?? 0).toBe(0);
     expect(hasTrack(h.track, "road", fx, fy)).toBe(false);
 
-    // dirt from the same tile still rides the allowance exactly as before
+    // dirt from the same tile still rides the allowance exactly as before —
+    // except for the tiles under the Factory the drag starts inside: PP-15
+    // crosses a player's own building for free, so `5 - fw` tiles are built and
+    // only those spend the allowance. (The block's floor is never paved.)
+    const { FACTORY_FOOTPRINT } = await import("../../src/iso/config");
+    const fw = FACTORY_FOOTPRINT[0];
+    const run = 5 - fw;
     const dirt = h.dragBuild("dirt", fx, fy, fx + 4, fy);
     expect(dirt).toBeTruthy();
-    expect(dirt!.tiles).toHaveLength(5);
-    expect(dirt!.free).toBe(5);
+    expect(dirt!.tiles).toHaveLength(run);
+    expect(dirt!.free).toBe(run);
     expect(h.purse.stone).toBe(12);              // nothing charged
-    expect(h.freeTrack).toBe(7);
+    expect(h.freeTrack).toBe(12 - run);
 
     // and road becomes buildable the moment ore exists — charged, never free
     h.purse.ore = 40;
     const up = h.dragBuild("road", fx, fy, fx + 4, fy);
     expect(up).toBeTruthy();
-    expect(up!.tiles).toHaveLength(5);
+    expect(up!.tiles).toHaveLength(run);
     expect(up!.free).toBe(0);
-    expect(up!.cost).toEqual({ ore: 20 });       // 5 in-place upgrades × 4 ore
-    expect(h.purse.ore).toBe(20);
-    expect(h.freeTrack).toBe(7);                 // road ate no allowance
-    for (let k = 0; k < 5; k++) expect(hasTrack(h.track, "road", fx + k, fy)).toBe(true);
+    expect(up!.cost).toEqual({ ore: 4 * run });  // `run` in-place upgrades × 4 ore
+    expect(h.purse.ore).toBe(40 - 4 * run);
+    expect(h.freeTrack).toBe(12 - run);          // road ate no allowance
+    for (let k = 0; k < 5; k++) {
+      const on = k >= fw;                        // nothing is paved inside the plant
+      expect(hasTrack(h.track, "road", fx + k, fy), `tile ${k}`).toBe(on);
+      if (!on) expect(hasTrack(h.track, "dirt", fx + k, fy), `floor ${k}`).toBe(false);
+    }
   }, 10_000);
 });
 
@@ -1658,7 +1717,10 @@ describe("RV-03 town dirts and the closest truck route", () => {
     // route cache is dropped — the re-check the ticket asks for).
     const d = h.dragBuild("dirt", hx, hy + 1, hx, fy);
     expect(d).toBeTruthy();
-    expect(d!.tiles.length).toBe(fy - hy);
+    // PP-15: the drag's LAST tile is the Factory's own footprint, which is
+    // network ground already — it is neither built nor charged, so the run
+    // lays up to the block's north edge and stops there, connected.
+    expect(d!.tiles.length).toBe(fy - hy - 1);
 
     // now the depot has the closest route and the hover paints exactly it.
     // the route runs shoulder-to-shoulder: from the tile beside the depot up
@@ -1871,10 +1933,15 @@ describe("VP-01 a busy rival still buys the Ore its paving wants", () => {
     const h = await rivalFixture();
     const rival = h.market.players[1];
     Object.assign(rival.res, { grain: 40, wood: 40, stone: 40, oil: 40, ore: 0, gold: 0 });
-    // Four tiles × 4 Ore is the goal, 2 trades per turn is the budget, and the
-    // bank is the 4:1 the player gets — so Ore rises by exactly the exchanges.
-    expect(h.rivalBank()).toBe(2);
-    expect(rival.res.ore).toBe(2);
+    // Four tiles × 4 Ore is the goal and 2 trades per turn is the budget; the
+    // bank is the 4:1 the player gets, so Ore rises by exactly the exchanges.
+    // PP-14 moved the industries on this seed, and how many exchanges a given
+    // lane is short by is map luck — so the budget is asserted as a ceiling
+    // (both banking passes, never more) and the RATE as an identity.
+    const banks = h.rivalBank();
+    expect(banks, "a surplus is converted into Ore").toBeGreaterThanOrEqual(2);
+    expect(banks, "never more than two passes at the cruise budget").toBeLessThanOrEqual(4);
+    expect(rival.res.ore).toBe(banks);
     const need = (await import("../../src/iso/construction")).priceDepot(rival.res as never, 0).cost;
     for (const c of ["grain", "wood", "stone", "oil"] as const) {
       expect(rival.res[c] ?? 0).toBeGreaterThanOrEqual(need[c] ?? 0);   // plan intact
@@ -1971,7 +2038,7 @@ describe("VP-01 the rival plays the score, not just the map", () => {
   it("sprints when it is a point behind: the bank doubles, the goal does not", async () => {
     const h = await boot();
     const bt = buildTile;
-    const spot = findFactorySpotNear(h.grid, "ore_mine", -1);
+    const spot = findFactorySpotNear(h.grid, "ore_mine", -1, heldIndustryIds(h.eco));
     expect(spot).toBeTruthy();
     h.eco.factories.push({ owner: "ai", ownerId: 2, tx: spot![0], ty: spot![1] });
     for (let d = 1; d <= 4; d++) bt(h.track, "dirt", spot![0], spot![1] - d, 2);
@@ -1991,8 +2058,13 @@ describe("VP-01 the rival plays the score, not just the map", () => {
     // delta: its own turn may already have banked, and the milestone is a price
     // to reach, not a stack to add on top.
     const ore0 = rival.res.ore ?? 0;
-    expect(h.rivalBank()).toBe(4);
-    expect(rival.res.ore ?? 0, "4:1 in, one Ore out, four times").toBe(ore0 + 4);
+    // PP-14's map moved the shortfall, not the rule: a sprinting seat spends up
+    // to double the cruise budget per pass (two passes here), and every exchange
+    // is one Ore in. The doubling itself is `bankPerTurn`, asserted above.
+    const banks = h.rivalBank();
+    expect(banks, "the sprint budget is spent").toBeGreaterThanOrEqual(4);
+    expect(banks, "never more than two passes at the sprint budget").toBeLessThanOrEqual(8);
+    expect(rival.res.ore ?? 0, "4:1 in, one Ore out, once per exchange").toBe(ore0 + banks);
     expect(h.rivalPace.oreUrgency).toBeGreaterThan(1);   // and it eyes ore mines
   });
 
@@ -2018,7 +2090,7 @@ describe("VP-01 the rival plays the score, not just the map", () => {
     // The rival needs a plant of its own for this test to mean anything: its
     // turn returns before the rescore without one, and the scoreboard is only
     // read on a turn that built.
-    const rivalSpot = findFactorySpotNear(h.grid, "ore_mine", -1);
+    const rivalSpot = findFactorySpotNear(h.grid, "ore_mine", -1, heldIndustryIds(h.eco));
     expect(rivalSpot).toBeTruthy();
     h.eco.factories.push({ owner: "ai", ownerId: 2, tx: rivalSpot![0], ty: rivalSpot![1] });
     // AI-02 (target 20): 77 paves = 19.25★ — one point short, i.e. the next

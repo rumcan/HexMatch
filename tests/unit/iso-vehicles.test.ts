@@ -671,7 +671,12 @@ describe("new factories reassign depot routes", () => {
     eco.factories.push(near);
     expect(planTrucks(eco)[0].factory).toEqual([14, 11]);
     expect(planTrucks(eco)[0].depotId).toBe(1);
-    eco.factories.push({ ...near, ty: 9 }); // equally short: earlier plant wins
+    // PP-15: mirrored to the OTHER side of the trunk (a footprint at ty 7 spans
+    // rows 7–9 and still fronts onto row 10), so the two plants are genuinely
+    // equidistant and the tie goes to the earlier one. On the same side of the
+    // road they would not be: a block that hangs over the trunk row is one tile
+    // closer, because its edge is the road.
+    eco.factories.push({ ...near, ty: 7 }); // equally short: earlier plant wins
     expect(planTrucks(eco)[0].factory).toEqual([14, 11]);
     eco.factories.splice(2);
     expect(planTrucks(eco)[0].factory).toEqual([29, 11]);

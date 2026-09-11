@@ -1,5 +1,8 @@
 import { MAP_W } from "../game/config";
-import { DIR, DIRS, OPPOSITE, bitsAt, tIdx, inMapT, trackOpenTo, type Track, type TrackKind } from "./track";
+import {
+  DIR, DIRS, OPPOSITE, bitsAt, tIdx, inMapT, trackOpenTo, plantFootprintTiles,
+  type Track, type TrackKind,
+} from "./track";
 
 // ── the route finder ──────────────────────────────────────────────────────
 /**
@@ -69,3 +72,32 @@ export const shoulders = (track: Track, owner: number, tx: number, ty: number) =
   }
   return out;
 };
+
+/**
+ * PP-15: the road tiles a PLANT's edge touches — every tile 4-adjacent to ANY
+ * tile of its `FACTORY_FOOTPRINT` block, deduplicated in footprint order.
+ *
+ * A plant is one sprite drawn over the whole block, so the block has four
+ * sides and all of them are frontage. The single-tile `shoulders` answer was
+ * the origin tile's ring, which sits at the BACK of the graphic: a road that
+ * plainly touches the building's visible edge was "not connected", and the only
+ * tile a player could plug into was the one the art covers — "you have to build
+ * the road into some weird spot inside". Every consumer of "is this depot
+ * joined to that plant" (the economy's component test, the lorry's route goal,
+ * the rival's pave pass) reads this, so the edge is one rule, not four.
+ */
+export function plantShoulders(
+  track: Track, owner: number, tx: number, ty: number,
+): [number, number][] {
+  const out: [number, number][] = [];
+  const seen = new Set<number>();
+  for (const [fx, fy] of plantFootprintTiles(tx, ty)) {
+    for (const [x, y] of shoulders(track, owner, fx, fy)) {
+      const i = tIdx(x, y);
+      if (seen.has(i)) continue;
+      seen.add(i);
+      out.push([x, y]);
+    }
+  }
+  return out;
+}

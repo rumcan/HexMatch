@@ -36,12 +36,12 @@ import { generateMap, resolveMapSeed, type Grid, type Industry } from "./grid";
 import {
   createTrack, drawBits, previewDrag, commitDrag, canBuildOn, hasTrack,
   demolishTile, tIdx, playerNetwork, canAfford, buildRefusal, seedTownRoads,
-  seedPublicRoads, isPublicRoad, isUpgradedRoad, tileCost,
+  seedPublicRoads, isPublicRoad, isUpgradedRoad, tileCost, structureTiles,
   type Track, type TrackKind, type Purse, type DragPreview,
 } from "./track";
 import {
   industriesInCatchment, ownerIdOf,
-  buildAllComponents, resolveConnection,
+  buildAllComponents, resolveConnection, industryLocks, heldIndustries, lockedIndustryIds,
   pickBlockadeTarget,
   type EconomyState, type Factory, type Harvester,
 } from "./economy";
@@ -692,6 +692,9 @@ export function startIsoGame(root: HTMLElement) {
     // real plan before the tile is committed.
     const spot = chooseRivalFactorySpot(grid, track, [tx, ty], {
       purse: rival.purse, free: rival.freeTrack, ownerId: rival.i + 1, owner: rival.id,
+      // PP-16: the human's setup Depot is already on the board and already holds
+      // its catchment — the rival must not be parked on that ground.
+      opponentHarvesters: eco.harvesters.filter((d) => d.ownerId !== rival.i + 1),
       // PP-05: the probe prices the rival's opening Depot on the same free
       // allowance the human's setup Depot rides on.
       freeDepots: rival.freeDepots,
@@ -732,8 +735,20 @@ export function startIsoGame(root: HTMLElement) {
       toast("A depot is already there.", "bad"); return false;
     }
     const h: Harvester = { id: allocHarvesterId(), owner: p.id, ownerId: p.i + 1, tx, ty };
-    if (!industriesInCatchment(grid, h).length) {
+    const served = industriesInCatchment(grid, h);
+    if (!served.length) {
       toast("A depot needs an industry in its 4×4 catchment.", "bad");
+      return false;
+    }
+    // PP-16: one Depot holds one industry, and the first road at the resource
+    // takes it. A Depot standing on open ground with no track beside it claims
+    // nothing (see `industryLocks`), so it can never shut anyone out — but once
+    // a rival's Depot has a road, every industry in its catchment is spoken
+    // for, and a second Depot there would harvest nothing. Refused before
+    // anything is priced or spent, like every other refusal in here.
+    const locks = industryLocks(eco);
+    if (served.every((ind) => locks.has(ind.id))) {
+      toast("That industry is already claimed — only one Depot may hold it.", "bad");
       return false;
     }
     // PP-05: priced only now that the site is legal, and spent only when the
@@ -1562,6 +1577,15 @@ export function startIsoGame(root: HTMLElement) {
    *  building already stood on and the click then refused it — "can't place
    *  a second plant". Fold `plantRefusal` in: whole-plan veto, plus the
    *  covered tiles themselves turn red. */
+  /**
+   * PP-16: what the Depot placement plans must refuse against — the ids of the
+   * industries some Depot's road network already holds. Computed here, once per
+   * read, and passed in as an option so `planDepotPlacement` stays a question
+   * about ground and geography (the lock needs the track layer, which it must
+   * not reach for).
+   */
+  const depotLocks = () => ({ locked: lockedIndustryIds(eco) });
+
   const factoryPlanForTool = (tx: number, ty: number): PlacementPlan => {
     const plan = planFactoryPlacement(grid, tx, ty, { requireTown: true });
     const why = plantRefusal(grid, track, eco, tx, ty);
@@ -1614,7 +1638,7 @@ export function startIsoGame(root: HTMLElement) {
       // PP-02: the preview enforces the same town-adjacency rule as the click.
       pushPlan(items, planFactoryPlacement(grid, tx, ty, { requireTown: true }));
     } else if (tool === "harvester" || phase === "setup-harvester") {
-      pushPlan(items, planDepotPlacement(grid, eco.harvesters, tx, ty));
+      pushPlan(items, planDepotPlacement(grid, eco.harvesters, tx, ty, depotLocks()));
     } else if (tool === "plant") {
       // AI-03c: the mid-game plant preview paints from the same folded plan
       // the test twin and the click share — no more green footprints over a
@@ -1692,7 +1716,7 @@ export function startIsoGame(root: HTMLElement) {
     if (phase === "setup-factory") banner = "Place your Factory next to a town — click a buildable tile";
     // PP-05: the setup banner states the price too — the first Depot is free
     // on the allowance, and the player should know the second one is not.
-    else if (phase === "setup-harvester") banner = "Place your Depot — it needs an industry in its 4×4 catchment" +
+    else if (phase === "setup-harvester") banner = "Place your Depot — it needs an industry in its 4×4 catchment, and one Depot holds each industry" +
       (me.freeDepots > 0 ? ` (this one is free; later Depots cost ${costLabel(DEPOT_COST)})` : "");
     else if (phase === "won") banner = `${winner?.name} wins — ${fmtVp(vpFor(score, winner?.id ?? ""))}★`;
     else if (me.freeTrack > 0) banner = `${me.freeTrack} free track tiles remaining — connect your depot to your Factory`;
@@ -1757,7 +1781,7 @@ export function startIsoGame(root: HTMLElement) {
       // share an edge with a town").
       ? planFactoryPlacement(grid, hover!.tx, hover!.ty, { requireTown: true })
       : placingDepot
-        ? planDepotPlacement(grid, eco.harvesters, hover!.tx, hover!.ty)
+        ? planDepotPlacement(grid, eco.harvesters, hover!.tx, hover!.ty, depotLocks())
         : null;
     let infoTone: "bad" | null = null;
 
@@ -1776,9 +1800,16 @@ export function startIsoGame(root: HTMLElement) {
           // own network, not the merged graph.
           const comp = buildAllComponents(track, h.ownerId);
           const conn = resolveConnection(eco, comp, h);
-          const inds = industriesInCatchment(grid, h);
+          // PP-16: what a Depot is worth is what it HOLDS, not what stands
+          // nearby — an industry reached first by another Depot's road pays
+          // that one instead, and the panel has to say so or the arithmetic on
+          // screen never matches the money arriving.
+          const locks = industryLocks(eco);
+          const held = heldIndustries(eco, h, locks).length;
+          const lost = industriesInCatchment(grid, h).length - held;
           info = `<b>Depot</b> (${h.owner === "you" ? "yours" : "rival"})<br>` +
-            `serving ${inds.length} industr${inds.length === 1 ? "y" : "ies"}<br>` +
+            `holding ${held} industr${held === 1 ? "y" : "ies"}` +
+            (lost > 0 ? ` · ${lost} reached first by another Depot` : "") + `<br>` +
             `link: ${conn.kind ?? "<i>none</i>"} ×${conn.multiplier || 0}`;
         }
       } else if (ref && ref.kind === "factory") {
@@ -1819,11 +1850,15 @@ export function startIsoGame(root: HTMLElement) {
         if (occ >= 0) {
           const ind: Industry = grid.industries[occ];
           const def = INDUSTRY_BY_KEY[ind.type];
-          const servers = eco.harvesters.filter((h) =>
-            industriesInCatchment(grid, h).some((i) => i.id === ind.id));
+          // PP-16: an industry has ONE holder — the first Depot with a road at
+          // it. Listing how many depots are nearby would advertise a sharing
+          // rule that no longer exists, so the panel names the owner instead.
+          const holder = industryLocks(eco).get(ind.id);
           info = `<b>${def?.name ?? ind.type}</b><br>` +
             `${CARGO[def.cargo].icon} ${CARGO[def.cargo].name} · output ${ind.output}<br>` +
-            `${servers.length} depot${servers.length === 1 ? "" : "s"}`;
+            (holder === undefined
+              ? `unclaimed — the first Depot with a road here holds it`
+              : `<b>held</b> by ${holder.owner === me.id ? "your" : "the rival's"} Depot`);
         }
       }
     }
@@ -1918,7 +1953,8 @@ export function startIsoGame(root: HTMLElement) {
       // from the commit; now both share one cost model, so what you see is
       // what you are charged.
       preview = previewDrag(grid, track, kind, me.purse,
-        drag.ax, drag.ay, p.tx, p.ty, true, net, me.freeTrack);
+        drag.ax, drag.ay, p.tx, p.ty, true, net, me.freeTrack,
+        structureTiles(eco.factories, eco.harvesters, me.i + 1));
       return;
     }
     const out = pointerMove(g, { id: e.pointerId, x, y }, cam);
@@ -2576,6 +2612,11 @@ export function startIsoGame(root: HTMLElement) {
       const served = why === null && !taken
         ? industriesInCatchment(grid, { id: -1, owner: "you", ownerId: 0, tx, ty })
         : [];
+      // PP-16: and every industry in reach has to be still free, or the tile is
+      // not a Depot site. The probe answers with the CLICK's own code, so the
+      // corridor picker can never plan a Depot the round would refuse.
+      const locks = industryLocks(eco);
+      const claimed = served.length > 0 && served.every((x) => locks.has(x.id));
       // PP-05: the probe also reports what the Depot would COST, priced by the
       // same `priceDepot` the click runs — so "is this tile usable" and "can I
       // pay for it" come from one module instead of the e2e tooling guessing.
@@ -2586,9 +2627,13 @@ export function startIsoGame(root: HTMLElement) {
       return {
         build: { ok: why === null, why },
         harvester: {
-          ok: why === null && !taken && served.length > 0,
-          why: why ?? (taken ? "harvester-taken" : served.length ? null : "no-industry-in-catchment"),
+          ok: why === null && !taken && served.length > 0 && !claimed,
+          why: why ?? (taken ? "harvester-taken"
+            : claimed ? "industry-taken"
+            : served.length ? null : "no-industry-in-catchment"),
           industries: served.map((x) => x.id),
+          /** the ones another Depot's network holds (PP-16) */
+          held: served.filter((x) => locks.has(x.id)).map((x) => x.id),
           cost: { ...price.cost },
           free: price.free,
           affordable: price.affordable,
@@ -2608,7 +2653,7 @@ export function startIsoGame(root: HTMLElement) {
         // the folded plan includes the built-world refusal the bare setup
         // plan never saw.
         ? factoryPlanForTool(tx, ty)
-        : planDepotPlacement(grid, eco.harvesters, tx, ty),
+        : planDepotPlacement(grid, eco.harvesters, tx, ty, depotLocks()),
     /**
      * PP-03: the exact overlay items `renderer.drawOverlay` paints for a
      * placement hover at (tx,ty) under the live phase/tool — the tile list the
@@ -2635,10 +2680,28 @@ export function startIsoGame(root: HTMLElement) {
       if (phase !== "play") return null;
       const net = playerNetwork(track, me.i + 1, eco.factories, eco.harvesters);
       if (!canBuildOn(grid, kind, ax, ay, net)) return null;
-      const pv = previewDrag(grid, track, kind, me.purse, ax, ay, bx, by, xFirst, net, me.freeTrack);
+      const pv = previewDrag(grid, track, kind, me.purse, ax, ay, bx, by, xFirst, net, me.freeTrack,
+        structureTiles(eco.factories, eco.harvesters, me.i + 1));
       if (pv.tiles.length === 0) return null;
       commitTrackDrag(me, pv, kind);
       return pv;
+    },
+    /**
+     * W1/PP-15: the read-only half of `dragBuild` — the preview the pointer
+     * drag WOULD compute, with nothing committed. The e2e corridor spec needs
+     * it for its allowance accounting, because "how many tiles does this
+     * corridor cost" is no longer "how many tiles are in the column": the
+     * player's own buildings' ground is stepped over (PP-15). Deriving the
+     * number here means the spec can never bake in a tile count or re-derive
+     * the footprint from the outside — it reads the same preview the click
+     * spends.
+     */
+    dragPreview: (kind: TrackKind, ax: number, ay: number, bx: number, by: number, xFirst = true): DragPreview | null => {
+      if (phase !== "play") return null;
+      const net = playerNetwork(track, me.i + 1, eco.factories, eco.harvesters);
+      if (!canBuildOn(grid, kind, ax, ay, net)) return null;
+      return previewDrag(grid, track, kind, me.purse, ax, ay, bx, by, xFirst, net, me.freeTrack,
+        structureTiles(eco.factories, eco.harvesters, me.i + 1));
     },
     /**
      * PP-13: the e2e/unit twin of a demolish click — the same `doDemolish`

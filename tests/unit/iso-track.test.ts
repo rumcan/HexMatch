@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import {
   NE, SE, SW, NW, DIRS, DIR, OPPOSITE, PRESENT,
   createTrack, tIdx, spriteKey, hasTrack, bitsAt, canBuildOn, playerNetwork,
-  recomputeMask, autotileAround, buildTile, demolishTile,
+  buildTile, demolishTile,
   tileCost, addCost, canAfford, lPath, previewDrag, commitDrag,
   connectedTiles, areConnected, mergedPresent, mergedBitsAt,
   mergedConnectedTiles, mergedAreConnected, drawBits, freeAllowanceCovers, type Track,
@@ -253,16 +253,30 @@ describe("E5 buildability", () => {
 
   it("G5: rival track is not a seed; demolish rebuilds the component", () => {
     const t = createTrack();
-    build(t, "dirt", [[10, 10], [11, 10], [12, 10], [13, 10]], 1);
+    build(t, "dirt", [[10, 10], [11, 10], [12, 10], [13, 10], [14, 10]], 1);
     const factories = [{ ownerId: 1, tx: 10, ty: 10 }];
     const harvesters: { ownerId: number; tx: number; ty: number }[] = [];
     let net = playerNetwork(t, 1, factories, harvesters);
     expect(net.has(tIdx(13, 10))).toBe(true);
+    expect(net.has(tIdx(14, 10))).toBe(true);
+    // PP-15: the Factory stands on a 3×3 block and ALL of it is network ground,
+    // so the frontage tile is alive on its own — cut (11,10) and (12,10), the
+    // two tiles that used to be the only paved path out of the origin, and
+    // (13,10) is still in the network because it shares an edge with footprint
+    // tile (12,10). The building has four sides to plug into now, which is what
+    // makes the front of the graphic legal ground.
     demolishTile(t, "dirt", 11, 10);
+    demolishTile(t, "dirt", 12, 10);
     net = playerNetwork(t, 1, factories, harvesters);
     expect(net.has(tIdx(10, 10))).toBe(true);
-    expect(net.has(tIdx(13, 10))).toBe(false);
-    expect(canBuildOn(flatGrid(), "dirt", 13, 11, net)).toBe(false);
+    expect(net.has(tIdx(13, 10))).toBe(true);
+    expect(net.has(tIdx(14, 10))).toBe(true);
+    // And the component still has to be REACHED: tear the frontage tile up and
+    // the stub behind it is severed, exactly as it was before.
+    demolishTile(t, "dirt", 13, 10);
+    net = playerNetwork(t, 1, factories, harvesters);
+    expect(net.has(tIdx(14, 10))).toBe(false);
+    expect(canBuildOn(flatGrid(), "dirt", 14, 11, net)).toBe(false);
   });
 
   it("W2: a rival's factory does not seed your network, and vice versa", () => {

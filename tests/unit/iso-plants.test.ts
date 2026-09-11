@@ -5,7 +5,7 @@ import {
   chooseAiPlantSpot, footprintTiles, nextPlantId, plantRefusal, plantsOf,
 } from "../../src/iso/plants";
 import {
-  buildAllComponents, resolveConnection, claimantCounts, harvesterYield,
+  buildAllComponents, resolveConnection, industryLocks, harvesterYield,
   playerResources,
   type EconomyState, type Harvester,
 } from "../../src/iso/economy";
@@ -181,8 +181,7 @@ describe("PP-06 routing, scoring and yield with several plants", () => {
 
   it("does not duplicate production when a depot reaches several plants", () => {
     const { st, track, h } = twoPlantWorld();
-    const counts = claimantCounts(st);
-    const y = harvesterYield(st, buildAllComponents(track, 1), counts, h, 0);
+    const y = harvesterYield(st, buildAllComponents(track, 1), industryLocks(st), h, 0);
     const def = INDUSTRY_BY_KEY["farm"];
     expect(y.yields[def.cargo]).toBeCloseTo(def.output, 6);
     const total = playerResources(st, "p1", 0);

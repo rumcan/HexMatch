@@ -22,7 +22,7 @@
 // only the containing chunks are invalidated. The whole map is never rescanned.
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_W, MAP_H } from "../game/config";
-import { TRANSPORT, UPGRADE_COST, type Cargo } from "./config";
+import { TRANSPORT, UPGRADE_COST, FACTORY_FOOTPRINT, type Cargo } from "./config";
 import { WATER, ROUGH, TOWN_OCC, type Grid } from "./grid";
 import { CHUNK, chunksX } from "./renderer";
 
@@ -355,6 +355,54 @@ export const isPublicRoad = (t: Track, tx: number, ty: number): boolean =>
 export const trackOpenTo = (t: Track, owner: number, tx: number, ty: number): boolean =>
   trackOwnedBy(t, owner, tx, ty) || (owner !== 0 && isPublicRoad(t, tx, ty));
 
+/**
+ * PP-15: every tile a plant's graphic stands on. The building is ONE sprite
+ * drawn over the whole `FACTORY_FOOTPRINT` block (its anchor is that block's
+ * south corner, so the art's edge is the block's edge — not the origin tile's),
+ * and `drawOrigin` measures the footprint from the origin towards +x/+y. A
+ * Depot is 1×1, so its origin tile IS its footprint.
+ */
+export function plantFootprintTiles(tx: number, ty: number): [number, number][] {
+  const [fw, fh] = FACTORY_FOOTPRINT;
+  const out: [number, number][] = [];
+  for (let y = 0; y < fh; y++) for (let x = 0; x < fw; x++) out.push([tx + x, ty + y]);
+  return out;
+}
+
+/**
+ * The tiles the players' BUILDINGS stand on (every plant footprint tile, every
+ * Depot tile), keyed by tile index. Two things read this, and they are the two
+ * halves of one idea — a building's own ground is part of its owner's network,
+ * and it is not a road to pay for:
+ *
+ *   • `playerNetwork` seeds from it, so a drag may START on the building and,
+ *     more importantly, lay its first tile on ANY tile touching the graphic's
+ *     edge (PP-15: before this the anchor was the origin tile alone, so the
+ *     only way in was the back corner of the art — "build the road into some
+ *     weird spot inside");
+ *   • `previewDrag` skips it, so those tiles are never charged and never
+ *     built: the L-path may run under the building on its way out, but the
+ *     building's own ground carries no gravel.
+ */
+export function structureTiles(
+  factories: { ownerId: number; tx: number; ty: number }[],
+  harvesters: { ownerId: number; tx: number; ty: number }[],
+  owner: number,
+): Set<number> {
+  const out = new Set<number>();
+  for (const f of factories) {
+    if (f.ownerId !== owner) continue;
+    for (const [x, y] of plantFootprintTiles(f.tx, f.ty)) {
+      if (inMapT(x, y)) out.add(tIdx(x, y));
+    }
+  }
+  for (const h of harvesters) {
+    if (h.ownerId !== owner) continue;
+    if (inMapT(h.tx, h.ty)) out.add(tIdx(h.tx, h.ty));
+  }
+  return out;
+}
+
 export function playerNetwork(
   track: Track,
   owner: number,
@@ -370,7 +418,15 @@ export function playerNetwork(
     seen.add(i);
     stack.push(i);
   };
-  for (const f of factories) if (f.ownerId === owner) seed(f.tx, f.ty);
+  // PP-15: a plant seeds its WHOLE footprint, not its origin tile. The
+  // building is one sprite over the whole block, so every edge of that block is
+  // a side the owner may plug a road into — and the flood that decides what a
+  // drag may extend has to agree, or the front of the graphic would be illegal
+  // ground while the back corner was not.
+  for (const f of factories) {
+    if (f.ownerId !== owner) continue;
+    for (const [x, y] of plantFootprintTiles(f.tx, f.ty)) seed(x, y);
+  }
   for (const h of harvesters) if (h.ownerId === owner) seed(h.tx, h.ty);
   while (stack.length) {
     const i = stack.pop()!;
@@ -644,11 +700,14 @@ export interface DragPreview {
  * prices every tile from tile one, so with no ore in the purse it previews
  * nothing, spends no allowance, and leaves the setup budget intact for the
  * road the player still has to build.
+ *
+ * PP-15: `structures` (from `structureTiles`) marks the builder's own building
+ * tiles, which the path steps over for free — see the skip in the loop.
  */
 export function previewDrag(
   grid: Grid, t: Track, kind: TrackKind, purse: Purse,
   ax: number, ay: number, bx: number, by: number, xFirst = true,
-  network?: Set<number>, freeTiles = 0,
+  network?: Set<number>, freeTiles = 0, structures?: Set<number>,
 ): DragPreview {
   const path = lPath(ax, ay, bx, by, xFirst);
   const tiles: [number, number][] = [];
@@ -668,6 +727,15 @@ export function previewDrag(
   for (let i = 0; i < path.length; i++) {
     const [x, y] = path[i];
     if (!canBuildOn(grid, kind, x, y, growing)) { truncated = true; break; }
+    // PP-15: a tile the builder's OWN building stands on is stepped over — it
+    // is neither built nor charged, and it consumes none of the free allowance.
+    // The path may run under the plant to reach the ground beyond (that is a
+    // normal drag), but nobody pays to pave their own factory's floor, and the
+    // 12 free setup tiles are 12 tiles of ROAD rather than 10 of road plus two
+    // of building. The tile stays legal ground for `canBuildOn`, so a drag may
+    // also START on the building itself — that is how you join a road to the
+    // edge of a plant whose graphic covers the tile you wanted to click.
+    if (structures !== undefined && structures.has(tIdx(x, y))) continue;
     const c = tileCost(t, kind, x, y);
     const paves = kind === "road" && hasTrack(t, "dirt", x, y);
     // VP-01: Free tiles are charged nothing; the allowance covers them first.
