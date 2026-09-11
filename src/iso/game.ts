@@ -25,7 +25,19 @@ import atlas05 from "../../assets/iso-atlas/atlas@0.5x.png";
 import atlas1 from "../../assets/iso-atlas/atlas@1x.png";
 import atlas2 from "../../assets/iso-atlas/atlas@2x.png";
 
+// W-series: LAYER atlases (roads / buildings) + seamless ground textures.
+import roads05 from "../../assets/layers/roads@0.5x.png";
+import roads1 from "../../assets/layers/roads@1x.png";
+import roads2 from "../../assets/layers/roads@2x.png";
+import buildings05 from "../../assets/layers/buildings@0.5x.png";
+import buildings1 from "../../assets/layers/buildings@1x.png";
+import buildings2 from "../../assets/layers/buildings@2x.png";
+import grassTex from "../../assets/ground/grass.png";
+import sandTex from "../../assets/ground/sand.png";
+import waterTex from "../../assets/ground/water.png";
+
 import { Atlas, buildMasks, type Manifest, type AtlasImage } from "./atlas";
+import { loadGroundTextures } from "./ground";
 import {
   createCamera, centerOnTile, resizeCamera, zoomStepAt, tileToScreenAt,
   createGesture, pointerDown, pointerMove, pointerUp,
@@ -2377,12 +2389,33 @@ export function startIsoGame(root: HTMLElement) {
     buildMasks(atlas);
     if (disposed) return;
 
+    // W-series: the roads and buildings blit from their own LAYER atlases
+    // (assets/layers/, identical sprite rects), and the ground paints from
+    // the seamless world-anchored textures. Both load in parallel with the
+    // first frame — the renderer falls back to the monolithic atlas and flat
+    // ground colours until they arrive, then invalidates everything.
+    const layersPromise = Promise.all([
+      load(roads05), load(roads1), load(roads2),
+      load(buildings05), load(buildings1), load(buildings2),
+      loadGroundTextures({ grass: grassTex, sand: sandTex, water: waterTex }),
+    ]).then(([r05, r1, r2, b05, b1, b2, tex]) => {
+      if (disposed) return;
+      atlas.layerImages.set("roads", new Map([[0.5, r05], [1, r1], [2, r2]]));
+      atlas.layerImages.set("buildings", new Map([[0.5, b05], [1, b1], [2, b2]]));
+      renderer?.setGround(tex);
+    }).catch((err) => {
+      // Textures are an upgrade, never a gate: the flat-colour ground and the
+      // monolithic atlas remain fully playable.
+      console.warn("[w-series] layer art failed to load:", err);
+    });
+
     atlasRef = atlas;
     renderer = new IsoRenderer(canvases, atlas, cam, world);
     debug?.attachRenderer();
     enableRenderLogOnBoot();
     resize();
     syncWorld();
+    void layersPromise;
 
     let lastFrameT = 0;
     const frame = (t: number) => {

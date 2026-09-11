@@ -41,7 +41,32 @@ export interface AlphaMask {
 export class Atlas {
   readonly manifest: Manifest;
   readonly images: Map<number, AtlasImage>;
+  /**
+   * W-series: per-LAYER images (assets/layers/roads@…x, buildings@…x). When
+   * set, `imageForSprite` prefers the sprite's own layer atlas — roads and
+   * buildings ship as separate PNGs and blit from separate images — falling
+   * back to the monolithic `images` for anything a layer set doesn't cover.
+   */
+  readonly layerImages = new Map<"roads" | "buildings", Map<number, AtlasImage>>();
   private masks = new Map<string, AlphaMask>();
+
+  /** The layer atlas a sprite blits from, if the layer images are loaded. */
+  layerOfSprite(name: string): "roads" | "buildings" | null {
+    if (this.layerImages.size === 0) return null;
+    if (/^(road|dirt)_/.test(name)) return "roads";
+    if (/^terrain_/.test(name)) return null;   // ground sprites: never blitted
+    return "buildings";
+  }
+
+  /** Image to blit `name` from at zoom `z` (layer atlas when available). */
+  imageForSprite(name: string, z: number): AtlasImage | undefined {
+    const layer = this.layerOfSprite(name);
+    if (layer) {
+      const img = this.layerImages.get(layer)?.get(z);
+      if (img) return img;
+    }
+    return this.images.get(z);
+  }
 
   constructor(manifest: Manifest, images: Map<number, AtlasImage> = new Map()) {
     this.manifest = manifest;

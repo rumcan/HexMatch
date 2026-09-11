@@ -3,10 +3,17 @@
 // CI has no browser canvas, so this extends a software rasteriser to a complete
 // scene. It consumes the real zoom atlas, real manifest, real anchor/depth math
 // and the real flat draw path (declared xrel/yrel anchor on the footprint's
-// SOUTH corner; terrain chunk origin + integer-packed zoom source rects; 1:1
-// blits — the flat renderer never scales inside drawImage). The committed PNGs
-// make visual drift reviewable and block it in `npm test`; set
-// UPDATE_ISO_GOLDENS=1 to intentionally refresh them.
+// SOUTH corner; integer-packed zoom source rects; 1:1 blits — the flat renderer
+// never scales inside drawImage). The committed PNGs make visual drift
+// reviewable and block it in `npm test`; set UPDATE_ISO_GOLDENS=1 to
+// intentionally refresh them.
+//
+// W-series: the GROUND is the pattern-painted landscape (pattern fills are
+// browser-AA'd, so a static golden cannot pin texture pixels). The fixture
+// paints the same GEOMETRY the renderer paints — land diamonds, sand insets,
+// water transparent — with the flat FALLBACK palette through an even-odd
+// scanline fill. That keeps the golden guarding what it always has: placement
+// geometry, layering, zoom rects and the atlas pixels themselves.
 import { beforeAll, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -14,8 +21,9 @@ import sharp from "sharp";
 import { Atlas, type Manifest, type SpriteDef } from "../../src/iso/atlas";
 import { depthSort, place, type DrawItem, type Placed } from "../../src/iso/depth";
 import { screenToWorld, worldToScreen, type Camera } from "../../src/iso/camera";
-import { flatPick, chunkWorldOrigin, CHUNK } from "../../src/iso/renderer";
-import { GRASS, WATER, type Grid } from "../../src/iso/grid";
+import { flatPick } from "../../src/iso/renderer";
+import { GRASS, WATER, SAND, type Grid } from "../../src/iso/grid";
+import { SAND_INSET } from "../../src/iso/ground";
 import { HH, HW, MAP_H, MAP_W, TILE_H, tileToScreen, type Zoom } from "../../src/game/config";
 
 const manifest: Manifest = JSON.parse(readFileSync("assets/iso-atlas/manifest.json", "utf8"));
@@ -93,12 +101,54 @@ function drawPlaced(target: Surface, pixels: AtlasPixels, p: Placed, cam: Camera
   drawDef(target, pixels, p.def, cam.zoom, Math.floor(sx), Math.floor(sy));
 }
 
+/**
+ * Even-odd scanline polygon fill with pixel-centre sampling — the software
+ * stand-in for the renderer's canvas polygon fills of the W-series ground.
+ * Deterministic and drift-sensitive: a half-pixel geometry shift moves the
+ * covered span and the golden comparison catches it.
+ */
+function fillPolygon(target: Surface, polys: [number, number][][], rgb: readonly number[]): void {
+  for (const poly of polys) {
+    const ys = poly.map((p) => p[1]);
+    const y0 = Math.max(0, Math.ceil(Math.min(...ys) - 0.5));
+    const y1 = Math.min(target.height - 1, Math.floor(Math.max(...ys) - 0.5));
+    for (let py = y0; py <= y1; py++) {
+      const yy = py + 0.5;
+      const xs: number[] = [];
+      for (let i = 0; i < poly.length; i++) {
+        const [ax, ay] = poly[i];
+        const [bx, by] = poly[(i + 1) % poly.length];
+        if ((ay <= yy && by > yy) || (by <= yy && ay > yy)) {
+          xs.push(ax + ((yy - ay) / (by - ay)) * (bx - ax));
+        }
+      }
+      xs.sort((p, q) => p - q);
+      for (let k = 0; k + 1 < xs.length; k += 2) {
+        const xa = Math.max(0, Math.ceil(xs[k] - 0.5));
+        const xb = Math.min(target.width - 1, Math.floor(xs[k + 1] - 0.5));
+        for (let px = xa; px <= xb; px++) {
+          const i = (py * target.width + px) * 4;
+          target.data[i] = rgb[0];
+          target.data[i + 1] = rgb[1];
+          target.data[i + 2] = rgb[2];
+          target.data[i + 3] = 255;
+        }
+      }
+    }
+  }
+}
+
 function fixtureGrid(): Grid {
   const terrain = new Uint8Array(MAP_W * MAP_H).fill(WATER);
   // A five-by-five field gives empty interior, road/building tiles, and a
-  // visible SE/SW coastline in one compact deterministic scene.
+  // visible SE/SW coastline in one compact deterministic scene. W-series:
+  // its outer ring is SAND (each ring tile touches water) — the beach ring
+  // the generator lays along every coast, and the inset the golden pins.
   for (let ty = 11; ty <= 15; ty++) {
-    for (let tx = 11; tx <= 15; tx++) terrain[ty * MAP_W + tx] = GRASS;
+    for (let tx = 11; tx <= 15; tx++) {
+      terrain[ty * MAP_W + tx] =
+        tx === 11 || tx === 15 || ty === 11 || ty === 15 ? SAND : GRASS;
+    }
   }
   return {
     w: MAP_W, h: MAP_H, terrain, industries: [],
@@ -117,25 +167,37 @@ async function renderFixture(zoom: Zoom): Promise<FixtureResult> {
   };
   const terrain = surface(true);
 
-  // Terrain, exactly as renderer.chunkCanvas blits it: per-chunk surface at
-  // chunkWorldOrigin, each tile drawn at (wx, wy) − chunk origin, then the
-  // chunk blitted at floor(worldToScreen(origin)). Replicated rather than
-  // re-derived so a chunk-offset drift shows up here as a pixel drift.
-  const terrainTiles: [number, number][] = [];
-  for (let ty = 10; ty <= 16; ty++) for (let tx = 10; tx <= 16; tx++) terrainTiles.push([tx, ty]);
-  terrainTiles.sort(([ax, ay], [bx, by]) => (ax + ay) - (bx + by) || (ax - ay) - (bx - by));
-  for (const [tx, ty] of terrainTiles) {
-    const name = grid.terrain[ty * MAP_W + tx] === WATER ? "terrain_water" : "terrain_grass";
-    const def = atlas.get(name)!;
-    const cx = (tx / CHUNK) | 0, cy = (ty / CHUNK) | 0;
-    const [ox, oy] = chunkWorldOrigin(cx, cy);
-    const wx = (tx - ty) * HW + HW - def.anchor[0];
-    const wy = (tx + ty) * HH + TILE_H - def.anchor[1];
-    const [bx, by] = worldToScreen(cam, ox, oy);
-    const dx = Math.floor((wx - ox) * zoom) + Math.floor(bx);
-    const dy = Math.floor((wy - oy) * zoom) + Math.floor(by);
-    drawDef(terrain, pixels, def, zoom, dx, dy);
+  // W-series ground, exactly as renderer.drawTerrain paints it: land tiles
+  // as full diamonds (grass), SAND tiles as inset diamonds on top, water
+  // left transparent (the animated ocean shows through in the real game).
+  // Replicated with an even-odd scanline fill (pixel-centre sampling) rather
+  // than re-derived, so a geometry drift shows up here as a pixel drift.
+  const landTiles: [number, number][] = [];
+  const sandTiles: [number, number][] = [];
+  for (let ty = 10; ty <= 16; ty++) {
+    for (let tx = 10; tx <= 16; tx++) {
+      const v = grid.terrain[ty * MAP_W + tx];
+      if (v === WATER) continue;
+      landTiles.push([tx, ty]);
+      if (v === 3 /* SAND */) sandTiles.push([tx, ty]);
+    }
   }
+  const diamond = (tx: number, ty: number) => {
+    // tileDiamondWorld against the camera: the four diamond corners in
+    // screen space (the paint space the probe and the golden compare in).
+    const [wx, wy] = tileToScreen(tx, ty);
+    const [sx, sy] = worldToScreen(cam, wx, wy);
+    const z = cam.zoom;
+    return [[sx, sy], [sx + HW * z, sy + HH * z], [sx, sy + TILE_H * z], [sx - HW * z, sy + HH * z]] as [number, number][];
+  };
+  const inset = (pts: [number, number][], s: number): [number, number][] => {
+    let cx = 0, cy = 0;
+    for (const [x, y] of pts) { cx += x; cy += y; }
+    cx /= pts.length; cy /= pts.length;
+    return pts.map(([x, y]) => [cx + (x - cx) * s, cy + (y - cy) * s] as [number, number]);
+  };
+  fillPolygon(terrain, landTiles.map(([tx, ty]) => diamond(tx, ty)), [0x6d, 0x7c, 0x42]);
+  fillPolygon(terrain, sandTiles.map(([tx, ty]) => inset(diamond(tx, ty), SAND_INSET)), [0xd9, 0xb3, 0x6c]);
 
   const scene = surface();
   // Composite the transparent terrain layer over the game background.

@@ -45,6 +45,26 @@ try {
       return [Number(zoom), img];
     })));
     const atlas = new Atlas(manifest, images);
+    // W-series: review the REAL art path — layer atlases for roads/buildings
+    // and the seamless ground textures for the pattern-painted terrain.
+    const layerImg = async (file) => {
+      const img = new Image();
+      img.src = `${base}assets/layers/${file}`;
+      await img.decode();
+      return img;
+    };
+    atlas.layerImages.set("roads", new Map([
+      [0.5, await layerImg("roads@0.5x.png")], [1, await layerImg("roads@1x.png")], [2, await layerImg("roads@2x.png")],
+    ]));
+    atlas.layerImages.set("buildings", new Map([
+      [0.5, await layerImg("buildings@0.5x.png")], [1, await layerImg("buildings@1x.png")], [2, await layerImg("buildings@2x.png")],
+    ]));
+    const { loadGroundTextures } = await import(`${base}src/iso/ground.ts`);
+    const groundTex = await loadGroundTextures({
+      grass: `${base}assets/ground/grass.png`,
+      sand: `${base}assets/ground/sand.png`,
+      water: `${base}assets/ground/water.png`,
+    });
     const grid = generateMap(1337);
     const towns = grid.towns.flatMap((t) => t.houses.map(([tx, ty]) => ({
       tx, ty, sprite: tx === t.tx && ty === t.ty ? "town_center" : config.townHouseSprite(tx, ty),
@@ -56,6 +76,7 @@ try {
     }));
     const world = { grid, extra: towns };
     const renderer = new IsoRenderer(canvases, atlas, camera.createCamera(), world);
+    renderer.setGround(groundTex);
     // Expose only to this throwaway review page, never to the game.
     window.review = (scene, width, height) => {
       for (const c of Object.values(canvases)) { c.width = width; c.height = height; }

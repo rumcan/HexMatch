@@ -303,7 +303,10 @@ describe("C5 the overlay toggles paint on the map", () => {
   it("each overlay draws, and 'none' leaves no debug painter on the renderer", async () => {
     const h = await boot();
     expect(h.overlay()).toEqual({ active: [], drawn: false });
-    expect(ops.filter((o) => o.op === "stroke").length).toBe(0);
+    // W-series: the terrain layer strokes the shoreline foam every frame, so
+    // strokes are no longer a debug-exclusive op. fillText is — only the
+    // debug painter ever labels the map.
+    expect(ops.filter((o) => o.op === "fillText").length).toBe(0);
 
     for (const name of DEBUG_OVERLAYS) {
       expect(h.overlay(name).active).toContain(name);
@@ -323,8 +326,10 @@ describe("C5 the overlay toggles paint on the map", () => {
     const before = ops.length;
     await settle();
     // with no overlay active, the painter is detached: the remaining per-frame
-    // ops are the sprite blits only (drawImage), never the debug marks.
-    const marks = ops.slice(before).filter((o) => o.op === "fillText" || o.op === "stroke");
+    // ops are the sprite blits and the W-series shoreline paint — never the
+    // debug marks, whose fillText is the one op nothing else in the renderer
+    // ever calls.
+    const marks = ops.slice(before).filter((o) => o.op === "fillText");
     expect(marks).toEqual([]);
   });
 

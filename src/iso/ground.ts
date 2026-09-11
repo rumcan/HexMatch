@@ -22,7 +22,7 @@
 // seamless 512×512 PNGs in assets/ground/ (tools/make-ground-textures.mjs).
 // ══════════════════════════════════════════════════════════════════════════
 import { HW, HH, TILE_H, tileToScreen } from "../game/config";
-import { GRASS, WATER, type Grid } from "./grid";
+import { GRASS, SAND, WATER, type Grid } from "./grid";
 import type { AtlasImage } from "./atlas";
 
 export const GROUND_TEX_SIZE = 512;
@@ -59,8 +59,13 @@ export function insetPolygon(pts: [number, number][], s: number): [number, numbe
   return pts.map(([x, y]) => [cx + (x - cx) * s, cy + (y - cy) * s] as [number, number]);
 }
 
-/** Sand inset as a fraction of the diamond (grass peeks past the beach). */
-export const SAND_INSET = 0.86;
+/**
+ * Sand inset as a fraction of the diamond. 1 = full tiles: the beach is a
+ * connected golden terrace — perfect diamond edges at the sea (foam kisses
+ * them), a crisp scalloped staircase inland. Below 1 the ring dissolves into
+ * scattered squares; keep it at 1.
+ */
+export const SAND_INSET = 1;
 
 /**
  * Path a list of world-space polygons onto `ctx` (already in the space the
@@ -81,25 +86,39 @@ export function pathPolygons(ctx: CanvasRenderingContext2D, polys: [number, numb
 }
 
 /**
- * The static parts of one chunk of ground, painted in WORLD space (caller
- * has set the transform). Water tiles are skipped — the animated ocean pass
- * shows through them.
+ * Project world-space (1×) coordinates to the paint space of the target
+ * context. The renderer's chunk painter floors the chunk-local device
+ * position (same rounding discipline as every sprite blit); callers painting
+ * whole scenes pass the identity.
+ */
+export type GroundProject = (wx: number, wy: number) => [number, number];
+
+export const identityProject: GroundProject = (wx, wy) => [wx, wy];
+
+/**
+ * The static parts of the ground for a tile range, painted through `project`.
+ * Water tiles are skipped — the animated ocean pass shows through them. The
+ * caller must have world-anchored any pattern transforms BEFORE calling
+ * (patterns share the paint space).
  */
 export function paintGroundTiles(
   ctx: CanvasRenderingContext2D,
   grid: Grid,
   tx0: number, ty0: number, tx1: number, ty1: number,
   patterns: { grass: string | CanvasPattern; sand: string | CanvasPattern },
+  project: GroundProject = identityProject,
 ): void {
   const grassPolys: [number, number][][] = [];
   const sandPolys: [number, number][][] = [];
   for (let ty = ty0; ty <= ty1; ty++) {
+    if (ty < 0 || ty >= grid.h) continue;
     for (let tx = tx0; tx <= tx1; tx++) {
+      if (tx < 0 || tx >= grid.w) continue;
       const v = grid.terrain[ty * grid.w + tx];
       if (v === WATER) continue;
-      grassPolys.push(tileDiamondWorld(tx, ty));
+      grassPolys.push(tileDiamondWorld(tx, ty).map((p) => project(p[0], p[1])));
       if (v === SAND)
-        sandPolys.push(insetPolygon(tileDiamondWorld(tx, ty), SAND_INSET));
+        sandPolys.push(insetPolygon(tileDiamondWorld(tx, ty), SAND_INSET).map((p) => project(p[0], p[1])));
     }
   }
   if (!grassPolys.length) return;
@@ -192,8 +211,10 @@ export const foamAlpha = (t: number, tx: number, ty: number) =>
 export const foamWidth = (t: number, tx: number, ty: number) =>
   2.1 + 0.9 * Math.sin(t * 0.0031 + shorePhase(tx, ty) * 0.7);
 
-/** Fill colour of the shallow shelf over the ocean pattern. */
-export const SHALLOW_RGBA = "rgba(151,225,214,1)";   // alpha applied per tile
+/** Shallow-shelf tint over the ocean pattern, as "r,g,b" (alpha per tile). */
+export const SHALLOW_RGB = "151,225,214";
+/** Foam stroke colour, as "r,g,b" (alpha per tile). */
+export const FOAM_RGB = "255,244,214";
 
 /** Fallback flat colours when ground textures are not (yet) available. */
 export const FALLBACK = {
@@ -210,15 +231,32 @@ export const FALLBACK = {
 export function oceanMatrix(
   cam: { x: number; y: number; zoom: number },
   t: number,
+  scale = 1,
 ): DOMMatrix {
-  const z = cam.zoom;
+  const z = cam.zoom * scale;
   const period = GROUND_TEX_SIZE * z;
   const dx = cam.x + ((t * 0.0022 * z) % period);
   const dy = cam.y + ((t * 0.0014 * z) % period);
-  const m = new DOMMatrix();
+  const m = makeMatrix();
   m.translateSelf(dx, dy);
   m.scaleSelf(z, z);
   return m;
+}
+
+/**
+ * DOMMatrix where it exists (browsers), a minimal {e,f,m11,m22} stand-in
+ * where it doesn't (Node unit tests — the matrix only ever feeds
+ * CanvasPattern.setTransform, which only runs in a browser).
+ */
+export function makeMatrix(): DOMMatrix {
+  const g = globalThis as { DOMMatrix?: typeof DOMMatrix };
+  if (g.DOMMatrix) return new g.DOMMatrix();
+  const stub = {
+    m11: 1, m12: 0, m21: 0, m22: 1, e: 0, f: 0,
+    translateSelf(x: number, y: number) { this.e += x; this.f += y; return this; },
+    scaleSelf(x: number, y?: number) { this.m11 *= x; this.m22 *= y ?? x; return this; },
+  };
+  return stub as unknown as DOMMatrix;
 }
 
 /** Load the three seamless ground textures in a browser. */

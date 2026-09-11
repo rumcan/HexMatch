@@ -143,16 +143,16 @@ function makeTerrain(rng: () => number): Uint8Array {
   }
 
   // ── W-series: the beach ring ──
-  // Every grass tile that touches water (8-neighbourhood) becomes SAND, so
-  // the island is lined with a golden beach edge exactly along the coast.
-  // Runs AFTER the rough blobs so the beach always wins the shoreline (a
-  // rock clump that reaches the coast keeps its inland tiles only). Consumes
-  // no rng: the seed stream below this point is unchanged.
+  // EVERY land tile that touches water (8-neighbourhood) becomes SAND, so
+  // the island is lined with one continuous golden beach edge — grass or
+  // rock, the shore is beach. Runs AFTER the rough blobs (a rock clump that
+  // reaches the coast keeps only its inland tiles). Consumes no rng: the
+  // seed stream below this point is unchanged.
   {
     const sand: number[] = [];
     for (let ty = 0; ty < MAP_H; ty++) {
       for (let tx = 0; tx < MAP_W; tx++) {
-        if (t[idx(tx, ty)] !== GRASS) continue;
+        if (t[idx(tx, ty)] === WATER) continue;
         let touches = false;
         for (let dy = -1; dy <= 1 && !touches; dy++) {
           for (let dx = -1; dx <= 1 && !touches; dx++) {

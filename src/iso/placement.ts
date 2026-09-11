@@ -33,7 +33,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { FACTORY_FOOTPRINT } from "./config";
 import {
-  GRASS, ROUGH, TOWN_OCC, type Grid, type Industry, type Town,
+  GRASS, ROUGH, SAND, TOWN_OCC, type Grid, type Industry, type Town,
 } from "./grid";
 import { buildRefusal, tIdx } from "./track";
 import {

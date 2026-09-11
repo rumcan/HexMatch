@@ -58,10 +58,14 @@ npm --prefix server install
 npm --prefix server start     # port 8787 (PORT env overrides)
 ```
 
-## Art pipeline (E1)
+## Art pipeline (E1 + W-series)
 
 Sprites are derived from OpenGFX and packed from a shared manifest — see
-`tools/README-art.md` and `tools/atlas-manifest.schema.json`.
+`tools/README-art.md` and `tools/atlas-manifest.schema.json`. The W-series
+terrain overhaul replaced the per-tile ground sprites with a pattern-painted
+landscape (seamless grass/sand textures, an animated ocean, beach ring and
+procedural surf) and split roads/buildings into separate layer atlases —
+see [`docs/w-series-terrain.md`](docs/w-series-terrain.md).
 
 > Graphics derived from OpenGFX (https://github.com/OpenTTD/OpenGFX),
 > © 2007–2016 the OpenGFX team, licensed GPLv2. See `LICENSE`.
