@@ -113,8 +113,8 @@ if (process.env.PREVIEW_GROUND === "1") {
   const CY = Number(process.env.PREVIEW_CY ?? 72);
   const TILES = Number(process.env.PREVIEW_TILES ?? 80);
   const OUT = process.env.PREVIEW_OUT ?? "test-results/ground-preview.png";
-  const S = 2;      // land texture scale vs world px — one brush clump ≈ a tile
-  const SEA = 1.6;  // the ocean reads a little denser
+  const S = 0.2;    // land texture scale vs world px — fine grain (~1.6 tiles/repeat)
+  const SEA = 0.16; // the ocean reads a little denser
 
   beforeAll(async () => {
     const grid = generateMap(SEED);
@@ -157,23 +157,38 @@ if (process.env.PREVIEW_GROUND === "1") {
     const maskSvg = (body: string, fill: string) =>
       `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">${body.replace(/<polygon /g, `<polygon fill="${fill}" `)}</svg>`;
     // NOTE: no <pattern> — librsvg's patternTransform drops/rounds cells and
-    // leaves seams. An explicit <image> grid tiles exactly everywhere.
-    const texSvg = (data: string, scale: number) => {
-      const step = Math.round(512 * scale);
-      let imgs = "";
-      for (let y = 0; y < H; y += step)
-        for (let x = 0; x < W; x += step)
-          imgs += `<image x="${x}" y="${y}" width="${step}" height="${step}" href="data:image/png;base64,${data}" preserveAspectRatio="none"/>`;
-      return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">${imgs}</svg>`;
+    // leaves seams. Tiling an inlined data-URI <image> per cell works at
+    // coarse scale but at fine scale the string exceeds V8's limit (≈1400
+    // cells × 800KB each), so instead: downsample the seamless texture to
+    // ONE period, then stamp that period across the canvas by recursive
+    // doubling — logarithmic composites, no per-cell payload.
+    const tileFill = async (src: string, scale: number): Promise<Buffer> => {
+      const P = Math.max(1, Math.round(512 * scale));        // one period, px
+      let cur = await sharp(src).resize(P, P).png().toBuffer();
+      let cw = P, ch = P;
+      while (cw < W || ch < H) {
+        const nw = Math.min(W, cw << 1), nh = Math.min(H, ch << 1);
+        const stamps: { input: Buffer; left: number; top: number }[] = [];
+        for (let y = 0; y < nh; y += ch)
+          for (let x = 0; x < nw; x += cw)
+            stamps.push({ input: cur, left: x, top: y });
+        cur = await sharp({ create: {
+          width: nw, height: nh, channels: 4,
+          background: { r: 0, g: 0, b: 0, alpha: 0 },
+        } }).composite(stamps).png().toBuffer();
+        cw = nw; ch = nh;
+      }
+      return (cw === W && ch === H)
+        ? cur
+        : sharp(cur).extract({ left: 0, top: 0, width: W, height: H }).png().toBuffer();
     };
     const foamSvg = (body: string) =>
       `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">${body}</svg>`;
 
-    const b64 = (p: string) => readFileSync(p).toString("base64");
     const [waterTile, grassTile, sandTile, landMask, sandMask, foamRaster] = await Promise.all([
-      sharp(Buffer.from(texSvg(b64("assets/ground/water.png"), SEA))).png().toBuffer(),
-      sharp(Buffer.from(texSvg(b64("assets/ground/grass.png"), S))).png().toBuffer(),
-      sharp(Buffer.from(texSvg(b64("assets/ground/sand.png"), S))).png().toBuffer(),
+      tileFill("assets/ground/water.png", SEA),
+      tileFill("assets/ground/grass.png", S),
+      tileFill("assets/ground/sand.png", S),
       sharp(Buffer.from(maskSvg(grass, "#fff"))).png().toBuffer(),
       sharp(Buffer.from(maskSvg(sand, "#fff"))).png().toBuffer(),
       sharp(Buffer.from(foamSvg(foam))).png().toBuffer(),
