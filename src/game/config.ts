@@ -136,9 +136,10 @@ export const COSTS: Record<string, { cost: Partial<Record<ResKey, number>>; vp: 
  * This was the HUD's win target; `src/game/ui.ts` now reads `VICTORY` from
  * `src/iso/config.ts`, which is where the engine's own `VP_TARGET` comes from
  * too. The two `target` numbers had already drifted (this said 10, the game
- * won at 12), which is exactly why one of them is now the only one.
+ * won at 12), which is exactly why one of them is now the only one. AI-02
+ * keeps the value honest anyway (20) in case anything else ever reads it.
  */
-export const VP = { target: 10 };
+export const VP = { target: 20 };
 export const REPAIR_COST: Partial<Record<ResKey, number>> = { wood: 1, brick: 1, wheat: 1, ore: 1 };
 
 /**

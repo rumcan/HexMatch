@@ -54,7 +54,8 @@ import { DEPOT_COST, FREE_SETUP_DEPOTS, priceDepot } from "./construction";
 import { ROUGH, factoryTouchesTown, type Grid, type Industry } from "./grid";
 import {
   DIRS, DIR, tIdx, inMapT, hasTrack, canBuildOn, canAfford, tileCost, addCost,
-  buildTile, trackOpenTo, tileAlreadyCarries, freeAllowanceCovers,
+  buildTile, trackOpenTo, tileAlreadyCarries, freeAllowanceCovers, playerNetwork,
+  PUBLIC_OWNER,
   type Track, type TrackKind, type Purse,
 } from "./track";
 import {
@@ -77,6 +78,26 @@ export const IMPASSABLE = Infinity;
  * (`owner`). Passing 0 keeps the legacy "any track is discounted" behaviour
  * the unit tests use with unowned maps; the live game passes the AI's real
  * id, so the AI can never cheat its routing across the player's road.
+ *
+ * AI-01: two refinements to that rule, both from watching the live rival walk
+ * gravel straight past the map's paved inter-town highways:
+ *
+ *   - shared ground discounts like its own trunk. A plan CAN ride the public
+ *     highways (`trackOpenTo` — the economy's floods, the depot's servicing
+ *     rule and the drag's `playerNetwork` all already say so), `tileCost`
+ *     charges nothing for a tile that already carries the plan, and
+ *     `buildTile` refuses to re-stamp public tiles. So the highway is a
+ *     discountable trunk line exactly like the rival's own road — without the
+ *     discount the A* walked BESIDE it at full price, and the main roads
+ *     were invisible to the one planner they were drawn for.
+ *   - the OTHER player's track is impassable. The rival's network can never
+ *     ride it (W2's owner-scoped floods), and building over it is a no-op at
+ *     best (dirt over paved refuses) and tile theft at worst (a paved plan
+ *     over the player's gravel would re-stamp its owner on a
+ *     `tileCost`-charged tile). Before, a plan that "crossed" the player's
+ *     road could price a harvester as serviced on track the depots could not
+ *     reach back to the plant from. `owner === 0` keeps the legacy behaviour
+ *     the unit tests pin.
  */
 export function stepCost(
   grid: Grid, track: Track, kind: TrackKind, tx: number, ty: number, owner: number = 0,
@@ -84,10 +105,17 @@ export function stepCost(
   // Use the build rule itself: town tiles (TOWN_OCC = -2) block routes too.
   if (!canBuildOn(grid, kind, tx, ty)) return IMPASSABLE;
   const i = tIdx(tx, ty);
+  // AI-01: never plan over the other player's line (see above).
+  if (owner !== 0) {
+    const held = track.owner[i];
+    if (held !== 0 && held !== owner && held !== PUBLIC_OWNER) return IMPASSABLE;
+  }
   const terrain = grid.terrain[i];
   let c = terrain === ROUGH ? COST_ROUGH : COST_FLAT;
   // reuse our own trunk lines rather than building parallel spurs
   const own = owner === 0 ? true : track.owner[i] === owner;
+  // AI-01: …and the map's public roads ride as shared trunk lines.
+  const shared = owner !== 0 && track.owner[i] === PUBLIC_OWNER;
   // VP-01: "already carries it" is the MERGED question, not the same-tier one.
   // A dirt plan over the rival's own tarmac needs no build there (and
   // `tileCost` charges 0 for it), so the discount has to apply — otherwise
@@ -95,7 +123,7 @@ export function stepCost(
   // than it is, and the rival answers its own paved trunk with a parallel
   // gravel spur. The reverse still holds: a paved plan over gravel pays
   // `UPGRADE_COST`, so it earns no discount (that is `tileAlreadyCarries`).
-  if (own && tileAlreadyCarries(track, kind, tx, ty)) c *= COST_OWNED;
+  if ((own || shared) && tileAlreadyCarries(track, kind, tx, ty)) c *= COST_OWNED;
   return c;
 }
 
@@ -349,15 +377,32 @@ export function harvesterSpots(grid: Grid, ind: Industry): [number, number][] {
  * trunk as a source — before this, `hasTrack(track, "dirt", …)` went quiet
  * exactly in proportion to how well the rival had paved, and it started
  * planning from its factory again.
+ *
+ * AI-01: the network is bigger than what it PAID for. The drag grows the
+ * player's road from `playerNetwork` — own track PLUS every public highway
+ * tile reachable from its structures — and plans are nothing but the rival's
+ * answer to the same question, so its sources have to be the same set: a
+ * highway the rival can already drive from is where its next spur starts.
+ * The reachability flood is seeded from the factory (the one structure every
+ * plan has to end up connected to), so a public tile that cannot reach the
+ * plant is never a source — the spur it would start is one of nothing.
+ * `owner === 0` keeps the legacy "any track tile" answer the unit tests pin;
+ * a neutral flood admits no public ground at all.
  */
 export function networkTiles(track: Track, kind: TrackKind, factory: Factory): [number, number][] {
   void kind;
   const out: [number, number][] = [];
   const owner = factory.ownerId;
+  const net = owner === 0 ? null : playerNetwork(track, owner, [factory], []);
   for (let y = 0; y < MAP_H; y++) {
     for (let x = 0; x < MAP_W; x++) {
       if (!hasTrack(track, "dirt", x, y) && !hasTrack(track, "road", x, y)) continue;
-      if (owner !== 0 && track.owner[tIdx(x, y)] !== owner) continue;
+      const i = tIdx(x, y);
+      if (owner !== 0 && track.owner[i] !== owner) {
+        // AI-01: shared ground counts when — and only when — the rival's
+        // network reaches it; the other player's tiles never do.
+        if (track.owner[i] !== PUBLIC_OWNER || !net!.has(i)) continue;
+      }
       out.push([x, y]);
     }
   }
@@ -491,7 +536,7 @@ export interface PlanOptions {
   /**
    * VP-01: multiplier on the value of Ore-bearing industries (see
    * `catchmentValue`). Raised by `rivalPace` when the rival is losing the
-   * race to 10★ — the point of "reacts to the player's lead" is that the
+   * race to the win line — the point of "reacts to the player's lead" is that the
    * rival's DEPOT choice changes, not only its spending.
    */
   oreUrgency?: number;
@@ -635,6 +680,104 @@ export const bestCandidate = (
   state: EconomyState, factory: Factory, opts: PlanOptions,
 ): Candidate | null => planCandidates(state, factory, opts)[0] ?? null;
 
+// ── AI-01: deep-purse planning, memoized ──────────────────────────────────
+/**
+ * `planCandidates` under a hypothetical bottomless purse, with the answer
+ * cached against the world it was computed from.
+ *
+ * The bank's stall turn and the market offer both ask the same question —
+ * "what would the rival build next if money were no object" — and it is an
+ * expensive one: with affordability lifted, NOTHING prunes the search, so
+ * every industry × every depot spot costs a real A* (~0.2 s on the 144×144
+ * map). The stall turn asks it again on every idle retry (~2.5 s), which is
+ * wasted work twice over: the live game hitches mid-stall, and the AI-vs-AI
+ * race harness spends most of its wall clock re-planning an unchanged world.
+ *
+ * The observation that makes it cacheable: with the purse fixed at DEEP, the
+ * candidate SET — routes, tile costs, viability — is a pure function of the
+ * world (`track` + `harvesters` + the factory's seat) and of the free
+ * allowances. The inputs that still vary call to call — `stock` (scarcity),
+ * `oreUrgency`, `now` (blockades) — only feed `catchmentValue`, i.e. they
+ * re-ORDER the list, and the two callers (`rivalSkintTarget` in game.ts and
+ * its twin in the race harness) rank by shortfall themselves with the score
+ * only as a tiebreak. A one-build-old tiebreak is an honest price for making
+ * the stall turn free. Callers that need the true ranking call
+ * `planCandidates` directly.
+ */
+const DEEP_PLAN_PURSE: Purse = {
+  wood: MAP_W * MAP_H, stone: MAP_W * MAP_H, grain: MAP_W * MAP_H,
+  oil: MAP_W * MAP_H, ore: MAP_W * MAP_H, gold: MAP_W * MAP_H,
+};
+
+export interface DeepPlanOptions {
+  /** Cargo actually held — scarcity weighting of the score, order-only. */
+  stock?: Purse;
+  free?: number;
+  freeDepots?: number;
+  oreUrgency?: number;
+  now?: number;
+}
+
+interface DeepSlot {
+  fp: number;
+  free: number;
+  freeDepots: number;
+  cands: Candidate[];
+}
+
+const deepPlanCache = new WeakMap<EconomyState, Map<string, DeepSlot>>();
+
+/**
+ * Everything a deep-purse plan reads from the world, folded to one number:
+ * the three track layers (a build, a pave, or a blockade tile anywhere)
+ * and every harvester (claimed spots, industry coverage, catchment counts).
+ * Factories are not folded: the callers keep ONE factory per seat, whose
+ * identity is in the slot key.
+ */
+function deepPlanFingerprint(state: EconomyState): number {
+  const { track, harvesters } = state;
+  let h = 0;
+  const fold = (arr: Uint8Array) => {
+    for (let i = 0; i < arr.length; i++) h = (Math.imul(h, 31) + arr[i]) | 0;
+  };
+  fold(track.dirt);
+  fold(track.road);
+  fold(track.owner);
+  for (const hv of harvesters) {
+    h = (Math.imul(h, 31) + hv.tx * 256 + hv.ty) | 0;
+    h = (Math.imul(h, 31) + hv.ownerId) | 0;
+  }
+  return h;
+}
+
+/**
+ * The bank/market twin of `planCandidates`: same default tier order, the
+ * same cost model, bottomless affordability, and the result shared by every
+ * seat of one economy until the world moves. Returns the CACHED array —
+ * callers must treat it (and its Candidate objects) as read-only; clone
+ * before sorting.
+ */
+export function deepPlanCandidates(
+  state: EconomyState, factory: Factory, opts: DeepPlanOptions = {},
+): Candidate[] {
+  const free = Math.max(0, opts.free ?? 0);
+  const freeDepots = Math.max(0, opts.freeDepots ?? 0);
+  const fp = deepPlanFingerprint(state);
+  const key = `${factory.ownerId}@${factory.tx},${factory.ty}`;
+  let slots = deepPlanCache.get(state);
+  if (!slots) deepPlanCache.set(state, (slots = new Map()));
+  const hit = slots.get(key);
+  if (hit && hit.fp === fp && hit.free === free && hit.freeDepots === freeDepots) {
+    return hit.cands;
+  }
+  const cands = planCandidates(state, factory, {
+    stock: opts.stock ?? {}, purse: DEEP_PLAN_PURSE,
+    free, freeDepots, oreUrgency: opts.oreUrgency, now: opts.now,
+  });
+  slots.set(key, { fp, free, freeDepots, cands });
+  return cands;
+}
+
 // ── W8: where the rival's factory goes ────────────────────────────────────
 export interface RivalSpotOptions {
   /** What the rival can spend on its first build — prices the probe plan. */
@@ -655,6 +798,43 @@ export interface RivalSpotOptions {
   owner?: string;
   /** Optional diagnostic cap on real plan probes; default searches all candidates. */
   probes?: number;
+}
+
+/**
+ * AI-01: the cargos a mid-game lane is judged by — everything construction
+ * spends besides Wood (which every forest prints) and Gold (which buys
+ * nothing built of track). A lane is richer the more of these it can
+ * eventually harvest without the 4:1 bank.
+ */
+const LANE_CARGOS: ReadonlySet<Cargo> = new Set(["stone", "grain", "oil", "ore"]);
+
+/**
+ * How far around a candidate factory tile `laneRichness` looks, in
+ * Manhattan tiles — about two town-to-town highway spans, the distance a
+ * mid-game network riding the public roads comfortably covers.
+ */
+const LANE_RADIUS = 32;
+
+/**
+ * The number of DISTINCT construction cargos with a harvestable industry
+ * within `LANE_RADIUS` of (x, y). A neighbourhood scan only — deliberately
+ * no routing: it ranks lanes, it does not promise reachability (the A* plan
+ * probe in `chooseRivalFactorySpot` remains the gate), which keeps it all
+ * but free to ask of every probed spot.
+ */
+export function laneRichness(grid: Grid, x: number, y: number): number {
+  const cargos = new Set<Cargo>();
+  for (const ind of grid.industries) {
+    const def = INDUSTRY_BY_KEY[ind.type];
+    if (!def || !LANE_CARGOS.has(def.cargo)) continue;
+    for (const [hx, hy] of harvesterSpots(grid, ind)) {
+      if (Math.abs(hx - x) + Math.abs(hy - y) <= LANE_RADIUS) {
+        cargos.add(def.cargo);
+        break;
+      }
+    }
+  }
+  return cargos.size;
 }
 
 /**
@@ -726,8 +906,25 @@ export function chooseRivalFactorySpot(
     affordableNewTiles("road", opts.purse, opts.free ?? 0),
   );
   const targets = grid.industries.flatMap((ind) => harvesterSpots(grid, ind));
-  const tries = Math.max(1, opts.probes ?? ranked.length);
+  // AI-01: "an opening plan exists" is not enough — the AI-01 race harness
+  // showed what happens when it is all that is asked: a far corner whose only
+  // nearby cargo is WOOD opens fine — two free forest Depots, a real plan —
+  // and then starves: Depots past the free one need Stone/Grain/Oil, every
+  // Ore for paving has to come through the 4:1 bank, and the seat is still
+  // passing 0★ at twenty minutes. Distance-ranked alone, the search handed
+  // the rival the FARTHEST such corner by construction. The probe below
+  // therefore asks a second question of every spot and lets the answer do
+  // the picking: how many DISTINCT construction cargos does the lane around
+  // here hold? `laneRichness` answers with a plain neighbourhood scan — no
+  // routing, so it is free — and the search commits to the RICHEST probed
+  // lane (distance breaks ties, like before). A wood-only corner keeps an
+  // honest answer of 0 and loses to any lane a mid-game can actually be
+  // built out of: the bank can bridge one missing cargo, it cannot bridge
+  // them all. Bounded probes keep a pathological map from stalling the
+  // boot; the ranked fallback below preserves today's behaviour there.
+  const tries = Math.max(1, opts.probes ?? 24);
   let probed = 0;
+  let best: { s: (typeof ranked)[number]; rich: number } | null = null;
   for (const s of ranked) {
     if (emptyTrack && !targets.some(([x, y]) => Math.abs(x - s.x) + Math.abs(y - s.y) + 1 <= maxOpening)) continue;
     if (probed++ >= tries) break;
@@ -739,8 +936,13 @@ export function chooseRivalFactorySpot(
       stock: opts.purse, purse: opts.purse, free: opts.free ?? 0,
       freeDepots: opts.freeDepots ?? FREE_SETUP_DEPOTS,
     });
-    if (plan) return [s.x, s.y];
+    if (!plan) continue;
+    const rich = laneRichness(grid, s.x, s.y);
+    if (!best || rich > best.rich) best = { s, rich };
+    // the richest lane the scale knows — take it and stop probing
+    if (best && best.rich >= LANE_CARGOS.size) return [best.s.x, best.s.y];
   }
+  if (best) return [best.s.x, best.s.y];
   // No probe found a plan (nothing affordable from anywhere): fall back to the
   // best-ranked tile so the rival still exists on the board.
   return [ranked[0].x, ranked[0].y];

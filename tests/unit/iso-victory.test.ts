@@ -3,7 +3,7 @@
 //
 //   Dirt Road tile paved into a Road      +0.25★   (4 paves = 1★)
 //   Processing plant raised after setup   +1★
-//   First to 10★ wins
+//   First to 20★ wins (AI-02 — the line moved from 10)
 //
 // These read like a list of negatives, and that is the point of the ticket:
 // a connection is worth nothing, a Dirt Road is worth nothing, a Road laid on
@@ -87,7 +87,7 @@ describe("VP-01 the victory table", () => {
     expect(VICTORY.upgrade).toBe(0.25);
     expect(TRANSPORT.road.vpUpgrade).toBe(VICTORY.upgrade);
     expect(VICTORY.plant).toBe(1);
-    expect(VP_TARGET).toBe(10);
+    expect(VP_TARGET).toBe(20);   // AI-02: "10 is way too little" — the race now runs to 20
     expect(VICTORY.target).toBe(VP_TARGET);
     expect(paveVp(4)).toBe(1);
     expect(paveVp(1)).toBe(0.25);
@@ -314,32 +314,32 @@ describe("VP-01 plants", () => {
   });
 });
 
-describe("VP-01 the race to ten", () => {
-  it("10★ is reached by 40 paves, 10 plants, or any mix that adds up", () => {
+describe("VP-01 the race to twenty (AI-02 — was ten)", () => {
+  it("20★ is reached by 80 paves, 20 plants, or any mix that adds up", () => {
     const grid = flatGrid();
     const track = createTrack();
     const state = eco(grid, track, [{ id: 1, owner: "you", ownerId: YOU, tx: 5, ty: 6 }]);
     const score = createScoreState();
-    dirtRow(track, 10, 10, 40, YOU);
-    paveRow(track, 10, 10, 40, YOU);
+    dirtRow(track, 10, 10, 80, YOU);
+    paveRow(track, 10, 10, 80, YOU);
     rescore(state, score);
-    expect(vpFor(score, "you")).toBe(10);          // 40 × 0.25, exactly
+    expect(vpFor(score, "you")).toBe(20);          // 80 × 0.25, exactly
     expect(hasWon(score, "you")).toBe(true);
     expect(hasWon(score, "ai")).toBe(false);
   });
 
-  it("39 paves is not a win — and the scoreboard prints 9.75, not float noise", () => {
+  it("79 paves is not a win — and the scoreboard prints 19.75, not float noise", () => {
     const grid = flatGrid();
     const track = createTrack();
     const state = eco(grid, track, [{ id: 1, owner: "you", ownerId: YOU, tx: 5, ty: 6 }]);
     const score = createScoreState();
-    dirtRow(track, 10, 10, 40, YOU);
-    paveRow(track, 10, 10, 39, YOU);
+    dirtRow(track, 10, 10, 80, YOU);
+    paveRow(track, 10, 10, 79, YOU);
     buildTile(track, "road", 10, 20, PUBLIC_OWNER);      // public: never scored
     rescore(state, score);
-    expect(vpFor(score, "you")).toBe(9.75);
-    expect(fmtVp(vpFor(score, "you"))).toBe("9.75");
-    expect(fmtVp(10)).toBe("10");
+    expect(vpFor(score, "you")).toBe(19.75);
+    expect(fmtVp(vpFor(score, "you"))).toBe("19.75");
+    expect(fmtVp(20)).toBe("20");
     expect(fmtVp(0.5)).toBe("0.5");
     expect(hasWon(score, "you")).toBe(false);
   });

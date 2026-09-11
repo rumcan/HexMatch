@@ -186,25 +186,31 @@ export const BUILD_COSTS: Readonly<Record<
  *
  *   upgrade  0.25★ per Dirt Road tile paved into a Road, in place
  *   plant    1★    per processing plant raised after the setup Factory
- *   target   10★   first player there wins
+ *   target   20★   first player there wins
  *
  * Dirt Road scores nothing (that is the ticket), and neither does a connection
  * — dirt or paved. A connection sets the throughput multiplier and that is its
  * whole job. The paved tile VP is deliberately gated on the UPGRADE
  * (`track.ts`'s `upgraded` provenance layer), so a Road laid on virgin ground
  * at full price earns no point: the score pays for improving what you already
- * built, four paves to the point. At 4 Ore a tile, 10★ of pure road is 40
- * paved tiles (160 Ore) — the scoreboard is a measurement of how much ore a
+ * built, four paves to the point. At 4 Ore a tile, 20★ of pure road is 80
+ * paved tiles (320 Ore) — the scoreboard is a measurement of how much ore a
  * network can turn in, which is what keeps a game from ending on the first
  * two spurs. `victory.ts` is the only reader of these three numbers.
+ *
+ * AI-02 raised the line from 10★ to 20★ on the player's first long session:
+ * a healthy normal-seat race to 10★ was finishing around minute 11–14, before
+ * its economy (or the rival's raids) had visibly mattered. The per-point
+ * numbers did not move — only the finish line did.
  */
 export const VICTORY = {
   /** VP per Dirt Road tile paved into a Road (`TRANSPORT.road.vpUpgrade`). */
   upgrade: 0.25,
   /** VP per processing plant raised after setup. */
   plant: 1,
-  /** VP needed to win. */
-  target: 10,
+  /** VP needed to win. AI-02: 10★ ended inside ten minutes against even a
+   *  careful player ("10 is way too little") — the race now runs to 20. */
+  target: 20,
 } as const;
 
 export const TRANSPORT: Record<"dirt" | "road", TransportDef> = {

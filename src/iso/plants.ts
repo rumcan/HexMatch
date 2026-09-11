@@ -103,7 +103,7 @@ export function adjacentTown(grid: Grid, tx: number, ty: number): Town | null {
 }
 
 /** Does any existing plant/depot of ANY player stand on this tile? */
-function buildingAt(state: EconomyState, tx: number, ty: number): boolean {
+export function buildingAt(state: EconomyState, tx: number, ty: number): boolean {
   for (const f of state.factories) {
     if (tx >= f.tx && tx < f.tx + FACTORY_FOOTPRINT[0]
       && ty >= f.ty && ty < f.ty + FACTORY_FOOTPRINT[1]) return true;

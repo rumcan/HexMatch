@@ -229,3 +229,80 @@ The AI scores by paving within the opening minutes and a full game between two A
 The rival never pays for a sabotage card it cannot aim (the raid's purchase list is the three cards it can land on your plant).
 The UI explains the rule: tool labels, mode bar, inspector, banners and help all price the pave.
 Player, AI and multiplayer rules enforce the same restriction (no AI-only scoring path).
+
+AI-01 — Rival difficulty presets: easy, normal and hard
+Status: DONE
+Type: AI / balance
+
+Requirements
+Give the AI rival three difficulty levels — easy, normal and hard — selectable in game.
+Two AIs must be able to play each other, and the speed at which they reach the win points (10★) is the measure of how hard the rival is: harder preset finishes sooner.
+The rival uses the market every so often to attempt a trade.
+The rival must not be passive: it uses the main roads (town ring roads, public highways) and it expands.
+
+Acceptance criteria
+Difficulty is pacing and budget only: every preset runs the same turn policy and the same costs — no cheats.
+Three presets (easy / normal / hard) ship; the difficulty is chosen from the top bar, live and mid-game, persists between sessions, and can be pinned per match with ?rival=easy|normal|hard (mirrors ?seed=).
+The calibration harness races two AI seats head-to-head on the same map with per-seat clocks and budgets; the ladder assertion is winner-time-to-10★ on mirror matches (hard < normal < easy), and head-to-head pairings run in both seat orientations with results pooled.
+Easy and hard both finish mirrors inside the harness window; the loser of a mirror is never parked (proportional pace floor).
+The easy rival still expands (depots, paving, offers) and never touches sabotage (no raids, no blockades); hard expands two plans a turn, paves 12 tiles a pass, banks harder, offers more often, raids on its own clock.
+See docs/playtest-reports/2026-09-10-ai-skills.md for the measured ladder and the two economy failures (bank churn, plant-rush stall) the harness caught in the shipped rival's own turn.
+
+AI-02 — The live opponent that parked itself, faster trucks on road, and a real race length
+Status: DONE
+Type: AI / UX / balance
+
+Requirements
+The player watched a long live session and reported five faults:
+
+1. "The rival has one factory and one road and one depot and it is just upgrading it" — no expansion, and "if I do nothing, the AI does nothing".
+2. "It is not playing the match game to gain gold and using the black market on me" — zero raids in a long session.
+3. Trucks should be 2× as fast on the open (paved) road as on dirt, to motivate upgrading lanes.
+4. "Increase win points to 20. 10 is way too little."
+5. "Make the player select the difficulty at the start of the game."
+
+Diagnosis (headless live-game repro, seed 1337, 25 sim minutes)
+The rival opened, paved 2 of its 3 tiles, then sat at 0.5★ for the whole horizon
+while Wood piled up at +32/min and every other purse entry stayed frozen. The
+deadlock was three guards agreeing on the wrong number: the pave pass refuses
+to spend Ore under the 1★-Plant reserve (`keepOre`), while every afford check —
+`paveMilestone`'s gap, `rivalBankTowardPlan`'s loop, `rivalBankTowardPave`'s
+trigger — asked the RAW purse, saw "enough Ore", and never traded. The sim
+never reproduced it because its lane happened to earn Stone; live, on a lane
+with none, it was permanent. N.B. this is independent of `aiTick` running on
+the frame clock — the rival was thinking fine, it was mis-reading its own wallet.
+The raids were structurally impossible, too: lorry deliveries fed only the
+player's board ("the rival's lorries feed no board"), so the rival had zero
+Gold income, and `rivalRaid` opens with "no Gold, no raid".
+
+Changes
+Pave goals are now priced against SPENDABLE Ore (purse minus the plant reserve)
+in all three spots, so a stuck seat banks into Ore, paves out of the hole, and
+reaches for its next depot plan (seed-1337 live repro afterwards: 4 depots and
+19 paves inside 6 minutes, 10★ by minute 11 against an idle player).
+Every lorry delivery now pays its OWNING seat: the player's loads still feed
+the board; a rival load credits the rival +1 per cargo and +1 Gold — the
+abstract match-3 income that primes the raid pool and feeds the market sales.
+Trucks integrate per route SEGMENT: paved segments run at 2× (dirt 300ms/tile,
+road 150ms), recomputed on every replan, so paving visibly shortens round trips
+for both seats.
+`VICTORY.target` 10 → 20; the single source means the HUD/help/banners follow;
+the ship-constants tests were re-numbered.
+A start-of-game difficulty prompt (easy/normal/hard cards with pace/blurb)
+shows exactly when nothing has chosen yet: `?rival=` or a stored choice skips
+it; the pick flips the live game, persists, and syncs the top-bar selector.
+
+Acceptance criteria
+Live headless regression (seed 1337, six in-game minutes, driven at the game's
+own clocks): ≥4 rival depots, ≥12 paves, no 300+ Wood hoard — parked rival was
+1 depot / 3 tiles / 0.5★ forever before the fix.
+Trucks: per-segment 2× pinned (paved trip = half the dirt time; mixed route
+pays per segment; plans stamp paved segments on replan; legacy trucks without
+seg data keep the old uniform pace).
+VP line: `VICTORY.target === 20`; win-check, HUD, help modal and banner all
+derive from it.
+Difficulty prompt: asks only when no explicit choice exists, URL/store junk
+does not silence it, pick persists + applies live; top-bar selector keeps its
+mid-game role.
+Ladder re-measured at the 20★ line — see docs/playtest-reports/2026-09-10-ai-02-report.md.
+

@@ -41,6 +41,12 @@ import {
 
 /** Tiles per millisecond: one tile every 300 ms — RV-02: doubled. */
 export const TRUCK_SPEED = 1 / 300;
+/** AI-02: a lorry over PAVED road (`track.road`) moves twice as fast as one
+ *  over dirt — so a route is Σ(segment × (paved ? 1/2 : 1)) of its dirt time,
+ *  segment by segment. Paving a lane halves the round trip's paved share —
+ *  the motivation-to-upgrade the player asked for ("truck should be 2× as
+ *  fast on the open road as it is on dirt"). */
+export const TRUCK_ROAD_MULT = 2;
 
 /** One truck on one route. Position along the route is `leg + t` tiles. */
 export interface Truck {
@@ -62,6 +68,11 @@ export interface Truck {
   t: number;
   /** false = heading depot→factory, true = heading back. */
   reverse: boolean;
+  /** AI-02: per-SEGMENT speed flag — segFast[k] for route[k]→route[k+1] says
+   *  the paved multiplier applies. Recomputed with every `planTrucks`, so an
+   *  upgraded tile speeds its lorry up from the next dispatch. Old saves /
+   *  pre-AI-02 call sites without it drive at the uniform dirt pace. */
+  segFast?: boolean[];
   /**
    * A1: how many times this lorry has REACHED THE FACTORY END — one delivery
    * each. The game reads it against the count it last saw, so a delivery is
@@ -135,15 +146,22 @@ export function roadDeliveryForHarvester(
  */
 export function planTrucks(eco: EconomyState): Truck[] {
   const out: Truck[] = [];
+  const paved = ([x, y]: [number, number]): boolean => eco.track.road[tIdx(x, y)] !== 0;
   for (const h of eco.harvesters) {
     if (h.ownerId <= 0) continue;
     const plan = roadDeliveryForHarvester(eco, h);
     if (!plan) continue;
+    // AI-02: a segment is fast when either of its tiles is paved; public and
+    // town roads are paved by construction (see track.ts), so driving the
+    // public network also earns the bonus — same rule the economy scores by.
+    const segFast = plan.route.slice(0, -1).map(
+      (a, k) => paved(a) || paved(plan.route[k + 1]));
     out.push({
       ownerId: h.ownerId,
       depotId: h.id,
       factory: [plan.factory.tx, plan.factory.ty],
       route: plan.route,
+      segFast,
       leg: 0, t: 0, reverse: false, deliveries: 0,
     });
   }
@@ -163,23 +181,34 @@ export function tickTrucks(state: TruckState, dtMs: number): void {
   for (const truck of state.trucks) {
     const max = truck.route.length - 1;
     if (max < 1) { truck.leg = 0; truck.t = 0; continue; }
-    const span = 2 * max;
-    // current phase on the fold axis: forward leg+t, backward mirrored
-    const phase = truck.reverse ? span - (truck.leg + truck.t) : truck.leg + truck.t;
-    const fold = ((phase + TRUCK_SPEED * dtMs) % span + span) % span;
-    const p = fold <= max ? fold : span - fold;     // reflected into [0, max]
-    const leg = Math.min(max - 1, Math.floor(p));
-    const wasReverse = truck.reverse;
-    truck.leg = leg;
-    truck.t = p - leg;
-    truck.reverse = fold > max;
-    // A1: turning around at the FAR end is the delivery. The truck only ever
-    // reverses at an end, and it reverses at the factory end when it was
-    // outbound — so one arrival is one delivery, counted here rather than
-    // inferred by a poll, and read by the game on the same frame it happens.
-    // (dt is capped at 100ms in the frame loop, far below one round trip, so
-    // a single tick cannot skip a delivery.)
-    if (!wasReverse && truck.reverse) truck.deliveries++;
+    const speed = (k: number): number =>
+      TRUCK_SPEED * (truck.segFast?.[k] ? TRUCK_ROAD_MULT : 1);
+    // AI-02: integrate SEGMENT BY SEGMENT at each segment's own pace — the
+    // triangle-fold over a uniform axis would be exact only when every leg
+    // has the same speed. The loop still folds exactly at both ends (a huge
+    // tick turns the truck around at the exact end tile, never a teleport).
+    // A1: turning around at the FAR end is the delivery — one arrival is one
+    // delivery, counted here and read by the game on the same frame.
+    let ms = dtMs;
+    // Frame-capped dt makes this ~1 iteration; tests with a large dt loop at
+    // most dt/segment-time.
+    while (ms > 1e-9) {
+      const k = Math.min(truck.leg, max - 1);
+      const v = speed(k);
+      if (!truck.reverse) {
+        const need = (1 - truck.t) / v;
+        if (ms < need) { truck.t += ms * v; ms = 0; continue; }
+        ms -= need;
+        if (k === max - 1) { truck.reverse = true; truck.t = 1; truck.deliveries++; }
+        else { truck.leg = k + 1; truck.t = 0; }
+      } else {
+        const need = truck.t / v;
+        if (ms < need) { truck.t -= ms * v; ms = 0; continue; }
+        ms -= need;
+        if (k === 0) { truck.reverse = false; truck.t = 0; }
+        else { truck.leg = k - 1; truck.t = 1; }
+      }
+    }
   }
 }
 

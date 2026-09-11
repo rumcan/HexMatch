@@ -89,6 +89,69 @@ export function rivalWouldAccept(
   return o.giveN >= o.wantN;                              // does not lose units
 }
 
+// ── AI-01: the rival POSTS, not just answers ─────────────────────────────
+/**
+ * What the rival would put on the offer board this turn, or null when its
+ * purse has nothing worth trading.
+ *
+ * `need` is the purse its build plan is working toward (the same target the
+ * 4:1 bank aims at — in the live game, `rivalSkintTarget` in game.ts; in the
+ * calibration race, its twin in tests/unit/helpers/race.ts). The rule is the
+ * bank's rule spoken out loud, so an accepted offer is always a real
+ * improvement over banking — never a detour the plan pays for:
+ *
+ *   want  the cargo the plan is shortest of (what it would buy 4:1 tonight);
+ *   give  the cargo furthest above the plan's own demand for it — never
+ *         Gold (PP-08), never the wanted cargo, and never what the bank is
+ *         saving: the rival keeps `need + BANK_RATE` of every cargo its
+ *         plan wants back, not just `need`. The 4:1 bank only fires when a
+ *         surplus of 4 exists ABOVE the plan's demand (`bankToward`'s own
+ *         filter), so an offer escrowed on the thin slice between `need`
+ *         and `need + 4` would pin the purse exactly where the bank can
+ *         never trigger — the AI-vs-AI race showed a wood+stone seat
+ *         deadlocking itself at depot #3 that way, offer-spamming the same
+ *         2–3 wood every 40 s while the grain it needed sat unbought;
+ *   rate  strictly better than the bank: 4 of surplus for 2 of need. The
+ *         poster improves on 4:1, the taker sees `giveN ≥ wantN` and accepts
+ *         by `rivalWouldAccept`'s own rule — which is what makes the market a
+ *         real exchange between THINKING economies rather than a donation.
+ *
+ * Pure so the live game and the headless race share one behaviour (the race
+ * runs two AI seats against each other through exactly this question), and
+ * deterministic: ties resolve to the lowest cargo in `CARGOES` order.
+ */
+export interface OfferIdea {
+  give: Cargo; giveN: number;
+  want: Cargo; wantN: number;
+}
+
+export function chooseRivalOffer(
+  stock: Partial<Record<Cargo, number>>,
+  need: Partial<Record<Cargo, number>>,
+): OfferIdea | null {
+  let want: Cargo | null = null, gap = 0;
+  for (const c of CARGOES) {
+    const g = (need[c] ?? 0) - (stock[c] ?? 0);
+    if (g > gap) { gap = g; want = c; }
+  }
+  if (!want) return null;                       // the plan is fully funded — nothing to buy
+
+  let give: Cargo | null = null, surplus = 1;   // need a surplus of ≥2 to make a lot
+  for (const c of CARGOES) {
+    if (c === "gold" || c === want) continue;
+    // keep the plan's need PLUS one bank lot in hand (see above) — the
+    // escrowed slice must never be the slice the 4:1 bank fires from.
+    const s = Math.max(0, (stock[c] ?? 0) - (need[c] ?? 0) - BANK_RATE);
+    if (s > surplus) { surplus = s; give = c; }
+  }
+  if (!give) return null;                       // nothing it can spare without starving the plan
+
+  const giveN = Math.min(4, surplus);
+  const wantN = Math.min(2, gap);
+  if (wantN < 1 || giveN < wantN) return null;
+  return { give, giveN, want, wantN };
+}
+
 /**
  * Build the market over existing purse records. `res` is the SAME object the
  * game already mutates, so there is one owner of every balance and no copy to
