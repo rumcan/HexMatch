@@ -504,6 +504,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // line is the wire the handover was asking for.
   quarry.board.onFx = (type, r, c, text) => ui.fx(type, r, c, text);
 
+  // PP-14: a HOLY CROSS pauses the cascade and asks the player which cargo
+  // the +4 should be — the board waits on this hook until the UI's chooser
+  // answers it (or the backstops auto-pick).
+  quarry.board.onCrossChoice = (pick) => ui.crossPick(pick);
+
   // A1: world-anchored floats — the lorry's "+N" at the Factory, and the
   // marker over the rival's plant when sabotage lands. Anchored to the live
   // camera, so they pan and zoom with the tile they belong to.

@@ -127,6 +127,162 @@ describe("settle / swap", () => {
     expect(bonus.filter((w) => w === "L-SHAPE").length).toBeGreaterThanOrEqual(2);
   });
 
+  // PP-14: the cross is the shape with a saint on the payroll — 3 horizontal
+  // + 4 vertical overlapping on ONE gem (the centre of the 3-run, an
+  // interior gem of the 4-run). It pauses the cascade, asks the player how
+  // to spend FOUR units of blessing (repeats allowed — 4 of one, 2+2, one of
+  // each, any mix), then pays exactly that allocation, never gated by the
+  // network. Before PP-14 the L detector swallowed crosses and reported them
+  // as L-SHAPEs paying two.
+  it("a cross of six (3 across + 4 down) pays one of each of the four picked cargoes", async () => {
+    const b = freshBoard();
+    const bonus: string[] = [];
+    b.onBonus = (res, n, why) => bonus.push(`${why}:${res}:${n}`);
+    const crosses: [number, number][] = [];
+    b.onFx = (type, r, c) => { if (type === "cross") crosses.push([r, c]); };
+    let picked: string[] = [];
+    b.onCrossChoice = (pick) => { picked = ["wood", "stone", "oil", "grain"]; pick([...picked]); };
+    // 3 horizontal + 4 vertical, overlapping on the centre gem (2,2)
+    b.grid[2][1]!.res = "sheep";
+    b.grid[2][2]!.res = "sheep";
+    b.grid[2][3]!.res = "sheep";
+    b.grid[1][2]!.res = "sheep";
+    b.grid[3][2]!.res = "sheep";
+    b.grid[4][2]!.res = "sheep";
+    // stop both arms and fence the sheep in so pass 1 is exactly this cross
+    for (const [r, c] of [[2, 0], [2, 4], [0, 2], [5, 2], [1, 1], [1, 3], [3, 1], [3, 3], [4, 1], [4, 3]]) {
+      b.grid[r][c]!.res = "ore";
+    }
+    // `resolve` runs synchronously — the angel fires before the choice
+    const p = b.settle();
+    expect(crosses).toEqual([[2, 2]]);
+    expect(picked).toEqual(["wood", "stone", "oil", "grain"]);
+    // the awaited choice credits in a microtask, before the 190ms pop pause
+    await new Promise((r) => setTimeout(r, 0));
+    expect(bonus).toEqual([
+      "HOLY CROSS:wood:1", "HOLY CROSS:stone:1", "HOLY CROSS:oil:1", "HOLY CROSS:grain:1",
+    ]);
+    await p;
+  });
+
+  it("a short pick list is topped up to four, honouring every pick", async () => {
+    const b = freshBoard();
+    const bonus: [string, number][] = [];
+    b.onBonus = (res, n) => bonus.push([res, n]);
+    b.onCrossChoice = (pick) => pick(["wood", "wood"]);
+    b.grid[2][1]!.res = "sheep";
+    b.grid[2][2]!.res = "sheep";
+    b.grid[2][3]!.res = "sheep";
+    b.grid[1][2]!.res = "sheep";
+    b.grid[3][2]!.res = "sheep";
+    b.grid[4][2]!.res = "sheep";
+    for (const [r, c] of [[2, 0], [2, 4], [0, 2], [5, 2], [1, 1], [1, 3], [3, 1], [3, 3], [4, 1], [4, 3]]) {
+      b.grid[r][c]!.res = "ore";
+    }
+    const p = b.settle();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(bonus).toHaveLength(4);
+    // BOTH picks are honoured — the random top-up can only ever add wood,
+    // never take the two the player was promised away.
+    expect(bonus.filter(([res]) => res === "wood").length).toBeGreaterThanOrEqual(2);
+    await p;
+  });
+
+  it("all four of a single cargo is a valid spend", async () => {
+    const b = freshBoard();
+    const bonus: [string, number][] = [];
+    b.onBonus = (res, n) => bonus.push([res, n]);
+    b.onCrossChoice = (pick) => pick(["wood", "wood", "wood", "wood"]);
+    b.grid[2][1]!.res = "sheep";
+    b.grid[2][2]!.res = "sheep";
+    b.grid[2][3]!.res = "sheep";
+    b.grid[1][2]!.res = "sheep";
+    b.grid[3][2]!.res = "sheep";
+    b.grid[4][2]!.res = "sheep";
+    for (const [r, c] of [[2, 0], [2, 4], [0, 2], [5, 2], [1, 1], [1, 3], [3, 1], [3, 3], [4, 1], [4, 3]]) {
+      b.grid[r][c]!.res = "ore";
+    }
+    const p = b.settle();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(bonus).toEqual([["wood", 1], ["wood", 1], ["wood", 1], ["wood", 1]]);
+    await p;
+  });
+
+  it("with no chooser wired the cross still pays four cargoes", async () => {
+    const b = freshBoard();
+    const bonus: [string, number][] = [];
+    b.onBonus = (res, n) => bonus.push([res, n]);
+    b.grid[2][1]!.res = "sheep";
+    b.grid[2][2]!.res = "sheep";
+    b.grid[2][3]!.res = "sheep";
+    b.grid[1][2]!.res = "sheep";
+    b.grid[3][2]!.res = "sheep";
+    b.grid[4][2]!.res = "sheep";
+    for (const [r, c] of [[2, 0], [2, 4], [0, 2], [5, 2], [1, 1], [1, 3], [3, 1], [3, 3], [4, 1], [4, 3]]) {
+      b.grid[r][c]!.res = "ore";
+    }
+    const p = b.settle();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(bonus).toHaveLength(4);
+    await p;
+  });
+
+  it("the same cross rotated — 4 across + 3 down — is holy too", async () => {
+    const b = freshBoard();
+    const crosses: [number, number][] = [];
+    b.onFx = (type, r, c) => { if (type === "cross") crosses.push([r, c]); };
+    b.grid[2][0]!.res = "sheep";
+    b.grid[2][1]!.res = "sheep";
+    b.grid[2][2]!.res = "sheep";
+    b.grid[2][3]!.res = "sheep";
+    b.grid[1][1]!.res = "sheep";
+    b.grid[3][1]!.res = "sheep";
+    for (const [r, c] of [[1, 0], [3, 0], [1, 3], [3, 3], [2, 4], [0, 1], [1, 2], [3, 2], [4, 1]]) {
+      b.grid[r][c]!.res = "ore";
+    }
+    const p = b.settle();
+    expect(crosses).toEqual([[2, 1]]);      // the crossing gem
+    await p;
+  });
+
+  it("a T-shape is not a cross: it stays an L-SHAPE", async () => {
+    const b = freshBoard();
+    const bonus: string[] = [];
+    b.onBonus = (_r, _n, why) => bonus.push(why);
+    // horizontal arm shares its centre with the END of the vertical arm
+    b.grid[2][1]!.res = "sheep";
+    b.grid[2][2]!.res = "sheep";
+    b.grid[2][3]!.res = "sheep";
+    b.grid[3][2]!.res = "sheep";
+    b.grid[4][2]!.res = "sheep";
+    const p = b.settle();
+    expect(bonus.filter((w) => w === "L-SHAPE").length).toBe(2);
+    expect(bonus).not.toContain("HOLY CROSS");
+    await p;
+  });
+
+  it("a 4-run sharing its END with a 3-run is a T with a tail, not a cross", async () => {
+    const b = freshBoard();
+    const bonus: string[] = [];
+    b.onBonus = (_r, _n, why) => bonus.push(why);
+    // 3 horizontal + 4 vertical, but the shared gem is the FIRST gem of the
+    // vertical run — the crossing sits on the end, so it is not holy.
+    b.grid[2][1]!.res = "sheep";
+    b.grid[2][2]!.res = "sheep";
+    b.grid[2][3]!.res = "sheep";
+    b.grid[3][2]!.res = "sheep";
+    b.grid[4][2]!.res = "sheep";
+    b.grid[5][2]!.res = "sheep";
+    for (const [r, c] of [[2, 0], [2, 4], [1, 1], [1, 3], [3, 1], [3, 3], [4, 1], [4, 3], [5, 1], [5, 3], [6, 2]]) {
+      b.grid[r][c]!.res = "ore";
+    }
+    b.grid[1][2]!.res = "wood";
+    const p = b.settle();
+    expect(bonus.filter((w) => w === "L-SHAPE").length).toBe(2);
+    expect(bonus).not.toContain("HOLY CROSS");
+    await p;
+  });
+
   it("combos pay the purse every two and never convert a resource gem into a gold gem", () => {
     const b = freshBoard();
     const gold: number[] = [];
