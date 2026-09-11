@@ -30,6 +30,23 @@ export const PROTOCOL_VERSION = 1;
 /** Two seats: `players[0]` is you, `players[1]` is the rival (src/iso/game.ts). */
 export type Slot = 0 | 1;
 
+/**
+ * §11 — the exact string a mixed-version room must show. `validateSnapshot`
+ * (src/iso/snapshot.ts:159) already refuses a mismatched `SNAPSHOT_VERSION`;
+ * this is the same rule for the wire shape, and it must never desync silently.
+ */
+export const PROTOCOL_MISMATCH_MESSAGE = "This game has been updated — reload to play together.";
+
+/**
+ * `null` when the far end speaks our protocol, otherwise the refusal message.
+ * `undefined` counts as a mismatch: a welcome with no `protocolVersion` came
+ * from a build that predates the check, which is precisely the case that must
+ * not be trusted.
+ */
+export function protocolMismatch(remoteVersion: number | undefined): string | null {
+  return remoteVersion === PROTOCOL_VERSION ? null : PROTOCOL_MISMATCH_MESSAGE;
+}
+
 export interface RosterEntry {
   id: string;
   username: string;
