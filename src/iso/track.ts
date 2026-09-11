@@ -95,6 +95,70 @@ export const createTrack = (): Track => ({
   upgraded: new Uint8Array(MAP_W * MAP_H),
 });
 
+// ── dirty-tile journal (MP-04) ────────────────────────────────────────────
+/**
+ * Which tile indices changed since the last publish. The host drains this on
+ * every publish tick and sends current values at exactly those indices
+ * (`src/net/delta.ts`) — no 20,736-tile scan at 6 Hz (§5).
+ *
+ * Fed at the two choke points `buildTile`/`demolishTile`, which already know
+ * their touched set (`AutotileResult.tiles`: the tile plus its neighbours on
+ * both layers). Everything funnels through them — human drags (`commitDrag`
+ * is a `buildTile` loop), the rival AI, the demo, seeding — so no mutation
+ * path can forget to mark; the no-op paths return `null` and mark nothing.
+ * (The ticket names `construction.ts`, but that module is costs-only — this
+ * is the seam where the bytes actually change.)
+ *
+ * Lifecycle:
+ *   - delta publish: `buildPublish` drains the set (indices are sent, then
+ *     forgotten — a drained tile only reappears if it changes again);
+ *   - snapshot publish (join/resync): the full state supersedes everything,
+ *     so `clear()` right after sending;
+ *   - seeding marks thousands of tiles — also superseded by the initial
+ *     snapshot, so clear after it;
+ *   - the guest never publishes: `applyTrackDelta`/`applySnapshot` write the
+ *     layers directly and never mark, so a guest's journal stays empty;
+ *   - bulk loads (`.set` in `applySnapshot`/savegames) bypass the journal —
+ *     after loading a save the host must snapshot+clear (MP-05 owns that).
+ *
+ * One sim per page ⇒ one process-wide journal is correct. `drain()` sorts so
+ * published deltas are deterministic.
+ */
+export class DirtyTiles {
+  private readonly set = new Set<number>();
+
+  /** How many indices are journalled (the publish path caps this). */
+  get size(): number {
+    return this.set.size;
+  }
+
+  has(i: number): boolean {
+    return this.set.has(i);
+  }
+
+  mark(i: number): void {
+    this.set.add(i);
+  }
+
+  markAll(indices: Iterable<number>): void {
+    for (const i of indices) this.set.add(i);
+  }
+
+  clear(): void {
+    this.set.clear();
+  }
+
+  /** Take all journalled indices, sorted ascending, and empty the journal. */
+  drain(): number[] {
+    const out = [...this.set].sort((a, b) => a - b);
+    this.set.clear();
+    return out;
+  }
+}
+
+/** The process-wide journal — marked by build/demolish, drained on publish. */
+export const dirtyTiles = new DirtyTiles();
+
 /**
  * PP-10: stamp the towns' seed-generated ring roads into a fresh track.
  *
@@ -559,7 +623,9 @@ export function buildTile(
     if (t.owner[i] !== PUBLIC_OWNER) t.upgraded[i] = PRESENT;
     // Recompute around the tile (dirt lost this tile, road gained) on both
     // layers: the surrounding gravel now faces a paved tile instead.
-    return autotileAroundBoth(t, "road", tx, ty);
+    const paved = autotileAroundBoth(t, "road", tx, ty);
+    dirtyTiles.markAll(paved.tiles);
+    return paved;
   }
   if (kind === "dirt" && (road[i] & PRESENT) !== 0) {
     // Already a paved road here — laying dirt changes nothing (no downgrade).
@@ -567,7 +633,9 @@ export function buildTile(
   }
   layerOf(t, kind)[i] |= PRESENT;
   if (owner !== 0 && t.owner[i] !== PUBLIC_OWNER) t.owner[i] = owner;
-  return autotileAroundBoth(t, kind, tx, ty);
+  const built = autotileAroundBoth(t, kind, tx, ty);
+  dirtyTiles.markAll(built.tiles);
+  return built;
 }
 
 /**
@@ -586,7 +654,9 @@ export function demolishTile(t: Track, kind: TrackKind, tx: number, ty: number):
   if (!hasTrack(t, "road", tx, ty) && !hasTrack(t, "dirt", tx, ty)) t.owner[i] = 0;
   // Also re-tile the OTHER layer around the gap: a paved neighbour that was
   // facing this tile (any-tier masks) must stop now that nothing is here.
-  return autotileAroundBoth(t, kind, tx, ty);
+  const torn = autotileAroundBoth(t, kind, tx, ty);
+  dirtyTiles.markAll(torn.tiles);
+  return torn;
 }
 
 // ── costs ─────────────────────────────────────────────────────────────────
