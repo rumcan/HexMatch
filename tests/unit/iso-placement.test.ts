@@ -5,10 +5,10 @@
 // a tile the click handler would refuse (or miss one it would accept).
 import { describe, expect, it } from "vitest";
 import { generateMap } from "../../src/iso/grid";
-import { canBuildOn, tIdx } from "../../src/iso/track";
+import { buildTile, canBuildOn, createTrack, hasTrack, PUBLIC_OWNER, tIdx } from "../../src/iso/track";
 import { catchmentRect, industriesInCatchment, type Harvester } from "../../src/iso/economy";
 import { TOWN_OCC, GRASS, ROUGH, type Grid } from "../../src/iso/grid";
-import { FACTORY_FOOTPRINT } from "../../src/iso/config";
+import { FACTORY_FOOTPRINT, MAP_H, MAP_W } from "../../src/iso/config";
 import {
   DEPOT_FOOTPRINT,
   depotCatchmentNodeTiles,
@@ -192,5 +192,79 @@ describe("PP-03 plan validity is the placement rule, not a copy", () => {
     expect(plan.footprint).toHaveLength(0);
     expect(plan.reach).toHaveLength(0);
     expect(plan.nodes).toHaveLength(0);
+  });
+});
+
+describe("PP-17 a Factory never stands on a road", () => {
+  // A flat grid with one town tile at (10,10). The Factory footprint anchored
+  // at (11,10) spans x 11..13, y 10..12 — edge-adjacent to the town, with no
+  // industry, town or terrain blocker — so the ONLY thing that can refuse it
+  // is a road stamped inside the footprint.
+  const townGrid = (): Grid => {
+    const occ = new Int16Array(MAP_W * MAP_H).fill(-1);
+    occ[10 * MAP_W + 10] = TOWN_OCC;
+    return {
+      w: MAP_W, h: MAP_H,
+      terrain: new Uint8Array(MAP_W * MAP_H).fill(GRASS),
+      industries: [],
+      towns: [{ id: 0, tx: 10, ty: 10, houses: [[10, 10]], roads: [] }],
+      occupancy: occ,
+      seed: 0,
+    };
+  };
+
+  it("refuses a footprint whose tile carries a road, naming that tile", () => {
+    const g = townGrid();
+    const track = createTrack();
+    buildTile(track, "dirt", 12, 10, 1);      // player gravel inside the footprint
+    const plan = planFactoryPlacement(g, 11, 10, { requireTown: true, track });
+    expect(plan.valid).toBe(false);
+    expect(plan.code).toBe("track");
+    expect(plan.why).toBe(placementReasonText("track"));
+    // exactly the road tile is painted bad; the rest of the footprint is clean
+    const bad = plan.footprint.filter((f) => !f.ok).map((f) => `${f.tx},${f.ty}`);
+    expect(bad).toEqual(["12,10"]);
+  });
+
+  it("a public paved highway blocks a Factory exactly like a player road", () => {
+    const g = townGrid();
+    const track = createTrack();
+    // public highways are free land in `occupancy` (a player may build over
+    // them), so this is the one case only the track layer can see.
+    buildTile(track, "road", 12, 10, PUBLIC_OWNER);
+    const plan = planFactoryPlacement(g, 11, 10, { requireTown: true, track });
+    expect(plan.valid).toBe(false);
+    expect(plan.code).toBe("track");
+    expect(plan.why).toBe(placementReasonText("track"));
+  });
+
+  it("without the track layer the plan stays the pure ground question", () => {
+    const g = townGrid();
+    const track = createTrack();
+    buildTile(track, "dirt", 12, 10, 1);
+    // hand-built synthetic grids call the plan without track — the geometry
+    // answer is unchanged (and the game now always passes the live track).
+    expect(planFactoryPlacement(g, 11, 10, { requireTown: true }).valid).toBe(true);
+  });
+
+  it("every public highway on a generated map is refused when a footprint would overlap it", () => {
+    for (const seed of [1337, 7, 42, 2026]) {
+      const g = generateMap(seed);
+      const track = createTrack();
+      for (const [tx, ty] of g.publicRoads ?? []) buildTile(track, "road", tx, ty, PUBLIC_OWNER);
+      let overlapsChecked = 0;
+      for (const [tx, ty] of g.publicRoads ?? []) {
+        const plan = planFactoryPlacement(g, tx, ty, { requireTown: true, track });
+        const overlaps = plan.footprint.some((f) =>
+          hasTrack(track, "road", f.tx, f.ty) || hasTrack(track, "dirt", f.tx, f.ty));
+        if (overlaps) {
+          overlapsChecked++;
+          // a footprint may be refused for other reasons too (e.g. rough or
+          // town ground), but it must NEVER be valid while sitting on a road.
+          expect(plan.valid, `seed ${seed} footprint @ ${tx},${ty} sits on a road`).toBe(false);
+        }
+      }
+      expect(overlapsChecked).toBeGreaterThan(0);   // the fixture really exercised the rule
+    }
   });
 });

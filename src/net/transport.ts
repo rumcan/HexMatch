@@ -118,6 +118,42 @@ export function getUserRooms(
 }
 
 /**
+ * True when there is NO room server behind the SDK: not the RUN host, and not
+ * `vite dev` either (the multiplayer plugin injects the local sidecar's origin
+ * as `window.__RUNDOT_MULTIPLAYER_DEV_SERVER__`, and only on serve — a built or
+ * previewed page never gets it).
+ *
+ * This state is a trap rather than an error: the SDK's offline mock still
+ * RESOLVES `createRoom` and `joinRoomByCode` — with a random six-character code,
+ * and for a join it ignores the code entirely and mocks a second room. Both
+ * lobbies therefore look alive ("Connected", a copyable code) and then wait for
+ * a welcome that nothing will ever send. Detect it at the door and say so.
+ *
+ * Duck-typed on the mock's `delegate` field, which is null exactly when it is
+ * offline: BETA drift (§1.4) means a class name is not a handle to rely on, and
+ * the hosted API has no such field.
+ */
+export function isOfflineMockRealtime(): boolean {
+  try {
+    const rt = RundotGameAPI.realtime as unknown as { delegate?: unknown } | undefined;
+    return !!rt && "delegate" in rt && rt.delegate == null;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Shown instead of a lobby that can never fill. Deliberately names the fix:
+ * multiplayer is only reachable from the dev server (or from RUN.world once
+ * published), never from `vite preview` / a static copy of the build.
+ */
+export const NO_ROOM_SERVER_MESSAGE =
+  "No room server behind this page, so host and join can never meet. " +
+  "Multiplayer runs from `npm run dev` — open the localhost:5173 URL it prints " +
+  "(its room server listens on port 9001). A previewed or statically served " +
+  "build mocks rooms instead; play vs AI here.";
+
+/**
  * Normalize a room code the way the join field (MP-06) does: trim and
  * uppercase, `maxLength={6}` at the input. No server-address field exists —
  * unlike the old relay lobby there is nothing to configure.

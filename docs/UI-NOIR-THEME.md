@@ -150,6 +150,31 @@ opacity, and a `filter` on that element would re-run a full-screen pass per
 frame. Motion stays where it means something: the cascade callouts, the chip
 pulse, the delivery floats.
 
+## A theme layer has to survive the merge
+
+A pure theme is written as rewrites of two files, and a rewrite is exactly what
+git cannot merge: the HOLY CROSS feature (PP-14) landed on `main` while this
+branch was open, both sides touched `styles.css` and `ui.ts`, and the resolution
+is "this branch's file, with the incoming blocks re-applied by hand". Two rules
+make that safe, and both are tested:
+
+- **The contract tests are file-wide, not rule-by-rule.** "never sizes a bitmap
+  to two different axes" reads every `background-size` declaration in the sheet,
+  so a block written after the pass cannot smuggle a stretch in. It caught one:
+  `.fx-cross` arrived with `background-size: 100% 100%`, and since its box is a
+  76px square, `contain` is the identical picture drawn proportionally. That is
+  the *only* word the theme changed in PP-14's CSS.
+- **A merge-contract test asserts the incoming features are still wired.** It
+  requires `.cross-pick*` to have bodies, `.start-screen` to exist,
+  `angel.png`/`holy.ts` to be on disk and `crossPick` to be both defined and
+  returned — the failure mode of a whole-file theme is silently dropping someone
+  else's feature, so that failure mode is pinned.
+
+Everything else main wrote stays untouched: `.start-screen` is a pre-theme
+screen outside this pass, and the chooser's own gradient panels keep their
+original colours (they read `--serif`/`--gold2`, which now resolve to noir
+values anyway).
+
 ## Tuning it
 
 Everything reads from one `:root`, so the dial is short:

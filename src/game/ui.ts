@@ -39,6 +39,16 @@ import { GEM_TO_CARGO } from "../iso/quarry";
 import { fmtVp } from "../iso/victory";
 // AI-01: the rival difficulty presets the top-bar selector switches between.
 import { RIVAL_SKILLS, SKILL_KEYS, type SkillKey } from "../iso/skill";
+// PP-14: the praying angel that a cross match summons, and the choir that
+// sings with it. Both are one-shot fx answers to `onFx("cross", …)`.
+import angelUrl from "../assets/ui/angel.png";
+import { playHoly, prewarmHoly } from "./holy";
+
+// PP-14: the cross bounty chooser offers the five CARGOES, and each button
+// must hand the board back its COLOUR key — the reverse of GEM_TO_CARGO.
+const CARGO_TO_GEM: Partial<Record<Cargo, ResKey>> = Object.fromEntries(
+  Object.entries(GEM_TO_CARGO).map(([gem, cargo]) => [cargo, gem]),
+) as Partial<Record<Cargo, ResKey>>;
 import { Board, type FxType, type Gem } from "./board";
 import type { IsoMarket, IsoMarketPlayer, Offer } from "../iso/market";
 import portraitYou from "../assets/ui/tycoon_you.png";
@@ -131,6 +141,13 @@ export interface OriginalUi {
   toast: (text: string, kind?: "good" | "bad" | "info" | "danger" | "success") => void;
   fx: (type: FxType, r: number, c: number, text?: string) => void;
   popup: (gains: Partial<Record<ResKey, number>>, label: string) => void;
+  /**
+   * PP-14: the board paused on a HOLY CROSS and is waiting for the player's
+   * FOUR picks — show the five-cargo chooser and answer `pick(chosen)` when
+   * four different ones are confirmed (or after the auto-pick timer, so the
+   * cascade never hangs).
+   */
+  crossPick: (pick: (chosen: ResKey[]) => void) => void;
   isQuarryOpen: () => boolean;
   isTradeOpen: () => boolean;
   showModal: (html: string) => void;
@@ -693,6 +710,11 @@ export function createOriginalUi(
     }
     renderSelection();
   };
+  // PP-14: unlock the audio context on the first touch of the board, so the
+  // choir can sing the instant a cross resolves (autoplay policies only let
+  // an AudioContext start inside user interaction — and a cross lands a beat
+  // after the click that made it).
+  grid.addEventListener("pointerdown", () => prewarmHoly(), { once: true });
 
   // Click is the touch/desktop picker path (and what the e2e/unit tests drive).
   grid.addEventListener("click", (e) => {
@@ -829,17 +851,103 @@ export function createOriginalUi(
   }
 
   function fx(type: FxType, r: number, c: number, text?: string) {
+    // PP-14: a cross match summons the angel — the choir sings the instant
+    // the shape resolves, and the praying-angel PNG pops over the centre gem
+    // in the same one-shot style as every other fx icon.
+    if (type === "cross") playHoly();
     const e = h("div", `fx fx-${type}`);
     e.style.left = (c * CELL + CELL / 2) + "px";
     e.style.top = (r * CELL + CELL / 2) + "px";
+    if (type === "cross") {
+      e.style.backgroundImage = `url("${angelUrl}")`;
+      e.setAttribute("aria-hidden", "true");
+    }
     if (text) e.textContent = text;
     grid.appendChild(e);
     const callout = type === "chain" || type === "combo";
-    setTimeout(() => e.remove(), callout ? 1000 : 600);
+    setTimeout(() => e.remove(), callout ? 1000 : type === "cross" ? 1150 : 600);
     // A1: every callout now draws in the board slot too — the small text at
     // the matched cell AND the banner above the board. `onFx` was never
     // assigned before this, so both were dead code.
     if (callout && text) showFloat(text, type === "combo");
+  }
+
+  // ── PP-14: the cross bounty chooser ──────────────────────────────────────
+  // The board pauses the cascade on a HOLY CROSS and waits; this panel asks
+  // how to spend the FOUR units of blessing. Repeats are allowed — tap a
+  // cargo to add one unit, tap it again to take one back, up to a total of
+  // four (4 of one, 2+2, 1+1+1+1, any mix). The confirm enables at exactly
+  // four, and the 8s timer (the board's own 8s backstop is the second line
+  // of defence) auto-confirms whatever is selected so the cascade always
+  // resumes — the board fills any unspent unit with a random cargo.
+  let pickEl: HTMLElement | null = null;
+  let pickTimer = 0;
+
+  function crossPick(pick: (chosen: ResKey[]) => void) {
+    const close = () => {
+      window.clearTimeout(pickTimer);
+      pickEl?.remove();
+      pickEl = null;
+    };
+    close();
+    const panel = h("div", "cross-pick");
+    panel.appendChild(h("div", "cross-pick-title", "🙏 HOLY CROSS"));
+    panel.appendChild(h("div", "cross-pick-sub", "Spend 4 bounties · repeats allowed"));
+    const row = h("div", "cross-pick-row");
+    const counts = new Map<ResKey, number>();
+    const total = () => [...counts.values()].reduce((a, b) => a + b, 0);
+    const count = h("div", "cross-pick-count", "0 / 4 spent");
+    const confirm = h("button", "cross-pick-confirm", "🙏 Bless +4");
+    (confirm as HTMLButtonElement).type = "button";
+    (confirm as HTMLButtonElement).disabled = true;
+    const refresh = () => {
+      count.textContent = `${total()} / 4 spent`;
+      (confirm as HTMLButtonElement).disabled = total() !== 4;
+      row.querySelectorAll<HTMLElement>("[data-gem]").forEach((b) => {
+        const n = counts.get(b.dataset.gem as ResKey) ?? 0;
+        b.classList.toggle("sel", n > 0);
+        b.dataset.n = String(n);
+      });
+    };
+    const expand = () => {
+      const chosen: ResKey[] = [];
+      for (const [res, n] of counts) for (let i = 0; i < n; i++) chosen.push(res);
+      return chosen;
+    };
+    for (const cargo of TRADEABLE) {
+      const gem = CARGO_TO_GEM[cargo];
+      if (!gem) continue;
+      const b = h("button", "cross-pick-btn");
+      (b as HTMLButtonElement).type = "button";
+      b.dataset.cargo = cargo;
+      b.dataset.gem = gem;
+      b.style.setProperty("--c1", CARGO[cargo].c1);
+      b.style.setProperty("--c2", CARGO[cargo].c2);
+      b.innerHTML = `<i>${CARGO[cargo].icon}</i><span>+1</span>`;
+      b.title = `Spend a bounty on ${CARGO[cargo].name} (tap again to take it back)`;
+      b.onclick = () => {
+        const n = counts.get(gem) ?? 0;
+        if (total() >= 4) {
+          if (n > 0) counts.set(gem, n - 1);           // swap one unit out
+          else { toast("All 4 spent — tap a chosen cargo to take one back.", "info"); return; }
+        } else {
+          counts.set(gem, n + 1);                      // spend one more unit
+        }
+        refresh();
+      };
+      row.appendChild(b);
+    }
+    confirm.onclick = () => { pick(expand()); close(); };
+    panel.appendChild(row);
+    panel.appendChild(count);
+    panel.appendChild(confirm);
+    boardWrap.appendChild(panel);
+    pickEl = panel;
+    pickTimer = window.setTimeout(() => {
+      if (!pickEl) return;
+      pick(expand());
+      close();
+    }, 8000);
   }
 
   function popup(gains: Partial<Record<ResKey, number>>, label: string) {
@@ -1125,6 +1233,7 @@ export function createOriginalUi(
     toast,
     fx,
     popup,
+    crossPick,
     isQuarryOpen: () => !qp.classList.contains("hidden"),
     isTradeOpen: () => !marketPane.classList.contains("hidden") || !bankPane.classList.contains("hidden"),
     showModal,

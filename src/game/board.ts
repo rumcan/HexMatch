@@ -32,8 +32,12 @@ const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
  * Every visual the board can ask the UI to draw. `chain` is the ordinary
  * callout (a plain MATCH!, or a MATCH 5 / L-SHAPE); `combo` is the louder
  * cascade tier (COMBO x2, CHAIN x3!!) — same float, hotter styling.
+ *
+ * PP-14: `cross` is the holy cross — 3 horizontal + 4 vertical overlapping
+ * on one gem (the centre of the 3-run), either orientation. The UI answers
+ * it with the praying angel and the choir.
  */
-export type FxType = "pop" | "crack" | "up" | "boom" | "bad" | "chain" | "combo";
+export type FxType = "pop" | "crack" | "up" | "boom" | "bad" | "chain" | "combo" | "cross";
 
 /**
  * The word a cascade pass shouts, by how deep in the cascade it is.
@@ -104,6 +108,17 @@ export class Board {
   onCombo: (count: number, needed: number, granted: boolean) => void = () => {};
   /** Arcade bonus (match-5 / L / chain) — always pays, not network-gated. */
   onBonus: (res: ResKey, amount: number, reason: string) => void = () => {};
+  /**
+   * PP-14: the cross asks the player how to spend its FOUR units of blessing.
+   * Any allocation counts — four of one cargo, a 2+2 split, one of each, or
+   * anything between. When a cross resolves the cascade PAUSES here until
+   * the hook calls `pick(chosen)`; the board tops any missing units up with
+   * random cargoes, so even an empty list still pays four. The default
+   * answers instantly with four random cargoes, so a headless board (the
+   * rival's, or a test) never pauses.
+   */
+  onCrossChoice: (pick: (chosen: ResKey[]) => void) => void = (pick) =>
+    pick(Array.from({ length: 4 }, () => choice(BASE_POOL)));
 
   /**
    * What a harvest actually credited, from `onHarvest`'s answer — 0 when the
@@ -216,6 +231,9 @@ export class Board {
       for (let j = i + 1; j < groups.length; j++) {
         const a = groups[i], b = groups[j];
         if (a[0].res !== b[0].res) continue;
+        // PP-14: a cross (3×4 crossing on the centre of the 3-run) is its
+        // own shape with its own reward — let `crosses()` claim it.
+        if (this.crossPair(a, b)) continue;
         const ids = new Set(a.map((g) => g.id));
         const shared = b.filter((g) => ids.has(g.id));
         if (shared.length !== 1) continue;
@@ -227,6 +245,56 @@ export class Board {
         const sameCol = a.every((g) => g.c === a[0].c);
         const otherRow = b.every((g) => g.r === b[0].r);
         if ((sameRow && otherCol) || (sameCol && otherRow)) out.push(union);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * PP-14: is the pair (a, b) the holy cross? — one 3-run and one 4-run of
+   * the same colour, one horizontal and one vertical, overlapping on exactly
+   * one gem: the centre of the 3-run and an interior (non-end) gem of the
+   * 4-run, so the shape reads as a cross rather than a T with a long tail.
+   * Either orientation counts (3 across + 4 down, or 4 across + 3 down).
+   * Returns the shared gem when it is a cross, else null.
+   */
+  private crossPair(a: Gem[], b: Gem[]): Gem | null {
+    if (a[0].res !== b[0].res) return null;
+    const la = a.length, lb = b.length;
+    if (!((la === 3 && lb === 4) || (la === 4 && lb === 3))) return null;
+    const aRow = a.every((g) => g.r === a[0].r);
+    const bRow = b.every((g) => g.r === b[0].r);
+    if (aRow === bRow) return null;
+    const three = la === 3 ? a : b;
+    const four = la === 3 ? b : a;
+    const ids = new Set(three.map((g) => g.id));
+    const shared = four.filter((g) => ids.has(g.id));
+    if (shared.length !== 1) return null;
+    const s = shared[0];
+    // the overlap must be the CENTRE gem of the 3-run (a corner share is an
+    // L, an end share is a T) …
+    if (s.id !== three[1].id) return null;
+    // … and sit INSIDE the 4-run, not on its end.
+    const idx = four.findIndex((g) => g.id === s.id);
+    if (idx <= 0 || idx >= four.length - 1) return null;
+    return s;
+  }
+
+  /**
+   * PP-14: the holy cross — a 3-run and a 4-run of the same colour crossing
+   * on the centre gem of the 3-run. `mid` is the shared crossing gem, so the
+   * callout — and the angel — land exactly on the overlap.
+   */
+  private crosses(groups: Gem[][]): { gems: Gem[]; mid: Gem }[] {
+    const out: { gems: Gem[]; mid: Gem }[] = [];
+    for (let i = 0; i < groups.length; i++) {
+      for (let j = i + 1; j < groups.length; j++) {
+        const a = groups[i], b = groups[j];
+        const s = this.crossPair(a, b);
+        if (!s) continue;
+        const union = [...a];
+        for (const g of b) if (g.id !== s.id) union.push(g);
+        out.push({ gems: union, mid: s });
       }
     }
     return out;
@@ -258,11 +326,13 @@ export class Board {
    * Clear one cascade pass. `chain` is this pass's 1-based depth, so the
    * callout can name it (`MATCH!` / `COMBO x2` / `CHAIN x3!!`).
    *
-   * Returns accumulated gains for the popup.
+   * Returns accumulated gains for the popup, and the number of crosses this
+   * pass resolved (PP-14: `settle` pays the cross's chosen four AFTER the
+   * player picks — see `chooseCrossReward`).
    */
   private resolve(
     groups: Gem[][], gains: Partial<Record<ResKey, number>>, chain = 1,
-  ) {
+  ): number {
     const removeIds = new Set<number>();
     const crackIds = new Set<number>();
     const forge: { r: number; c: number; res: ResKey; tier: 1 | 2 }[] = [];
@@ -335,10 +405,17 @@ export class Board {
     }
 
     // Arcade: match-5 in a line, or a 5-gem L, grants two random materials.
+    // PP-14: the cross is NOT granted here — the blessing waits for the
+    // player's choice, so `settle` pays the chosen four once the pick lands.
     const fives = groups.filter((g) => g.length >= 5);
+    const crosses = this.crosses(groups);
     const ells = this.lShapes(groups);
-    const why = fives.length ? "MATCH 5" : ells.length ? "L-SHAPE" : null;
-    if (why) this.grantRandom(2, why, gains);
+    const why = fives.length ? "MATCH 5" : crosses.length ? "HOLY CROSS" : ells.length ? "L-SHAPE" : null;
+    if (why && why !== "HOLY CROSS") this.grantRandom(2, why, gains);
+    // PP-14: the praying angel — one `cross` fx per cross, at the centre gem
+    // where the two arms overlap. The UI turns this into the angel popup and
+    // the holy sound.
+    for (const x of crosses) this.onFx("cross", x.mid.r, x.mid.c);
 
     // ── A1: the callout, fired HERE — the instant the pass resolves ──
     // Two bugs died here. (1) The old text only fired for `chain >= 2`, so a
@@ -348,13 +425,38 @@ export class Board {
     // now, at the centre of the group the player just matched — the biggest
     // one, or the special shape when there is one.
     const biggest = groups.reduce((a, g) => (g.length > a.length ? g : a), groups[0]);
-    const target = fives[0] ?? ells[0] ?? biggest;
-    const mid = target[Math.floor(target.length / 2)];
+    // a cross calls out from its crossing gem (a match-5 still shouts first)
+    const cross = fives.length ? undefined : crosses[0];
+    const target = fives[0] ?? cross?.gems ?? ells[0] ?? biggest;
+    const mid = cross ? cross.mid : target[Math.floor(target.length / 2)];
     const label = arcadeLabel(chain);
     // A special shape keeps its own name (it is strictly more informative
     // than "MATCH!"), but a deep cascade still gets its chain count.
     const text = why ? (chain > 1 ? `${why} · ${label}` : why) : label;
     this.onFx(chain > 1 ? "combo" : "chain", mid.r, mid.c, text);
+    return crosses.length;
+  }
+
+  /**
+   * PP-14: hand the cross's reward to `onCrossChoice` and wait for the
+   * picks. The promise ALWAYS resolves — the 8s backstop answers with four
+   * random cargoes for a chooser that was never answered, so a paused
+   * cascade can never deadlock the board.
+   */
+  private chooseCrossReward(): Promise<ResKey[]> {
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = (chosen: ResKey[]) => {
+        if (done) return;
+        done = true;
+        clearTimeout(backstop);
+        resolve(chosen);
+      };
+      const backstop = setTimeout(
+        () => finish(Array.from({ length: 4 }, () => choice(BASE_POOL))), 8000,
+      );
+      this.onCrossChoice(finish);
+    });
   }
 
   private gravity() {
@@ -379,7 +481,23 @@ export class Board {
       const groups = this.findGroups();
       if (!groups.length) break;
       chain++; maxChain = Math.max(maxChain, chain);
-      this.resolve(groups, gains, chain);
+      const nCross = this.resolve(groups, gains, chain);
+      if (nCross > 0) {
+        // PP-14: the blessing waits for the player — the cascade pauses
+        // right after the angel pops, and resumes the moment the chooser
+        // answers. The four units are paid EXACTLY as allocated: all four of
+        // one cargo, a 2+2 split, one of each, any mix. Units the chooser
+        // left unspent are filled at random, and every unit is paid as
+        // forged (never gated by the network) like the other arcade bonuses.
+        const chosen = await this.chooseCrossReward();
+        const list = chosen.slice(0, 4);
+        while (list.length < 4) list.push(choice(BASE_POOL));
+        for (const res of list) {
+          gains[res] = (gains[res] ?? 0) + 1;
+          this.onBonus(res, 1, "HOLY CROSS");
+          this.onHarvest(res, 1, true);
+        }
+      }
       this.onChange();
       await sleep(190);
       this.gravity();

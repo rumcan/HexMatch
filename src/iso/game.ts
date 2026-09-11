@@ -449,12 +449,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       renderer?.setCamera(cam);
     },
     onSwap: (r1, c1, r2, c2) => {
-      // MP-05: the guest's plant board is a spectator view — the seat's real
-      // board lives on the host (host-autoplayed while board relay is pending).
-      // Letting a guest match locally would pay cargo the host never sees, so
-      // the swap is refused with the reason.
+      // MP-05: guests never mutate their local board. Route the action to the
+      // host, where the guest seat's board is authoritative, just like map
+      // construction intents. The board result itself is still a follow-up
+      // sync concern; this keeps the input path server-authoritative.
       if (isGuest()) {
-        toast("Your Processing Plant is simulated by the host in multiplayer.", "info");
+        net?.sendIntent("build", { do: "swap", r1, c1, r2, c2 });
         return;
       }
       void quarry.board.trySwap(r1, c1, r2, c2, performance.now());
@@ -503,6 +503,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // MATCH! / COMBO x2 / CHAIN x3!! / MATCH 5, died on the board. This one
   // line is the wire the handover was asking for.
   quarry.board.onFx = (type, r, c, text) => ui.fx(type, r, c, text);
+
+  // PP-14: a HOLY CROSS pauses the cascade and asks the player which cargo
+  // the +4 should be — the board waits on this hook until the UI's chooser
+  // answers it (or the backstops auto-pick).
+  quarry.board.onCrossChoice = (pick) => ui.crossPick(pick);
 
   // A1: world-anchored floats — the lorry's "+N" at the Factory, and the
   // marker over the rival's plant when sabotage lands. Anchored to the live
@@ -772,7 +777,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * send the intent twice and open with two free Factories (each is plant #0).
    */
   function placeFactoryFor(p: PlayerState, tx: number, ty: number): boolean {
-    const plan = planFactoryPlacement(grid, tx, ty, { requireTown: true });
+    const plan = planFactoryPlacement(grid, tx, ty, { requireTown: true, track });
     if (!plan.valid) {
       toast(plan.code === "not-near-town"
         ? "The Factory must be placed next to a town — its footprint must share an edge with a town tile."
@@ -1969,6 +1974,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           if (pv.tiles.length === 0) toast("That track would not connect to your network.", "bad");
           else commitTrackDrag(p, pv, kind);
         }
+      } else if (what === "swap") {
+        const r1 = int(payload.r1), c1 = int(payload.c1);
+        const r2 = int(payload.r2), c2 = int(payload.c2);
+        if (r1 !== null && c1 !== null && r2 !== null && c2 !== null) {
+          void rivalQuarry.board.trySwap(r1, c1, r2, c2, performance.now());
+        }
       } else {
         const tx = int(payload.tx), ty = int(payload.ty);
         if (tx !== null && ty !== null) {
@@ -2057,7 +2068,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const depotLocks = () => ({ locked: lockedIndustryIds(eco) });
 
   const factoryPlanForTool = (tx: number, ty: number): PlacementPlan => {
-    const plan = planFactoryPlacement(grid, tx, ty, { requireTown: true });
+    const plan = planFactoryPlacement(grid, tx, ty, { requireTown: true, track });
     const why = plantRefusal(grid, track, eco, tx, ty);
     if (why !== null && plan.valid) {
       plan.valid = false;
@@ -2106,7 +2117,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const items: OverlayItem[] = [];
     if (phase === "setup-factory") {
       // PP-02: the preview enforces the same town-adjacency rule as the click.
-      pushPlan(items, planFactoryPlacement(grid, tx, ty, { requireTown: true }));
+      pushPlan(items, planFactoryPlacement(grid, tx, ty, { requireTown: true, track }));
     } else if (tool === "harvester" || phase === "setup-harvester") {
       pushPlan(items, planDepotPlacement(grid, eco.harvesters, tx, ty, depotLocks()));
     } else if (tool === "plant") {
@@ -2258,7 +2269,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // PP-02: the inspector's verdict follows the same town-adjacency rule
       // the click and the overlay enforce ("can't go here — its footprint must
       // share an edge with a town").
-      ? planFactoryPlacement(grid, hover!.tx, hover!.ty, { requireTown: true })
+      ? planFactoryPlacement(grid, hover!.tx, hover!.ty, { requireTown: true, track })
       : placingDepot
         ? planDepotPlacement(grid, eco.harvesters, hover!.tx, hover!.ty, depotLocks())
         : null;
@@ -3401,6 +3412,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   return () => {
     disposed = true;
+    net?.dispose();
     window.clearInterval(saveIv);
     if (onPageHide) window.removeEventListener("pagehide", onPageHide);
     // AI-03: the dead game must not keep overwriting the live save either;

@@ -2140,3 +2140,111 @@ describe("VP-01 the rival plays the score, not just the map", () => {
     }
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// PP-14 — the holy cross: 3 horizontal + 4 vertical overlapping on one gem
+// summons the praying angel and the choir. board.test.ts pins the board half
+// (detection, the HOLY CROSS callout, the `cross` fx event, the pause for
+// the player's picks); this pins the UI half — the angel PNG pops over the
+// crossing, the five-cargo chooser appears, the sound really is asked for,
+// and the four spent units (repeats allowed) are paid exactly as allocated.
+// ══════════════════════════════════════════════════════════════════════════
+describe("PP-14 the holy cross", () => {
+  /** A fake AudioContext that counts the oscillators the choir would play. */
+  function stubAudio() {
+    class Param {
+      value = 0;
+      setValueAtTime() { return this; }
+      linearRampToValueAtTime() { return this; }
+      exponentialRampToValueAtTime() { return this; }
+    }
+    class Node { connect() { return undefined; } }
+    class Osc extends Node {
+      type = "sine";
+      frequency = new Param();
+      start() { oscs++; }
+      stop() {}
+    }
+    class Gain extends Node { gain = new Param(); }
+    let oscs = 0;
+    class FakeAudioContext {
+      currentTime = 0;
+      state: AudioContextState = "running";
+      destination = new Node();
+      resume() { return Promise.resolve(); }
+      createGain() { return new Gain(); }
+      createOscillator() { return new Osc(); }
+    }
+    vi.stubGlobal("AudioContext", FakeAudioContext);
+    return () => oscs;
+  }
+
+  /** Paint a cross onto the board: 3 horizontal + 4 vertical over (2,2). */
+  function paintCross(b: import("../../src/game/board").Board) {
+    b.grid[2][1]!.res = "sheep";
+    b.grid[2][2]!.res = "sheep";
+    b.grid[2][3]!.res = "sheep";
+    b.grid[1][2]!.res = "sheep";
+    b.grid[3][2]!.res = "sheep";
+    b.grid[4][2]!.res = "sheep";
+    b.grid[2][0]!.res = "ore";
+    b.grid[2][4]!.res = "ore";
+    b.grid[0][2]!.res = "ore";
+    b.grid[5][2]!.res = "ore";
+  }
+
+  it("pops the angel, offers the bounty chooser, and pays exactly the spent allocation", async () => {
+    const h = await boot();
+    const started = stubAudio();
+    const before = ["wood", "stone", "oil"].map((c) => [c, h.purse[c as keyof typeof h.purse] ?? 0] as const);
+    paintCross(h.board);
+    const p = h.board.settle();      // the first pass resolves synchronously
+    const angel = root.querySelector(".fx-cross") as HTMLElement | null;
+    expect(angel, "the angel icon must pop").not.toBeNull();
+    expect(angel!.style.backgroundImage).toContain("angel");
+    // dead centre of the board: cell (2,2) at CELL 80 → 200,200
+    expect(angel!.style.left).toBe("200px");
+    expect(angel!.style.top).toBe("200px");
+    // the cascade pauses on the chooser: five cargo buttons over the board
+    const panel = root.querySelector(".cross-pick");
+    expect(panel, "the bounty chooser must appear").not.toBeNull();
+    expect(panel!.querySelectorAll(".cross-pick-btn")).toHaveLength(5);
+    const count = panel!.querySelector(".cross-pick-count");
+    const confirm = panel!.querySelector<HTMLButtonElement>(".cross-pick-confirm");
+    expect(confirm, "the confirm button must exist").not.toBeNull();
+    expect(confirm!.disabled, "confirm stays disabled before four units are spent").toBe(true);
+    const btn = (cargo: string) => panel!.querySelector<HTMLButtonElement>(`[data-cargo="${cargo}"]`)!;
+    // spend 2 wood + 2 stone (repeats allowed)
+    btn("wood").click();
+    btn("wood").click();
+    btn("stone").click();
+    btn("stone").click();
+    expect(count!.textContent).toBe("4 / 4 spent");
+    expect(confirm!.disabled, "four units light the confirm").toBe(false);
+    // a fifth unit on an untouched cargo is refused until something is freed
+    btn("oil").click();
+    expect(btn("oil").dataset.n).toBe("0");
+    // take one stone back and spend it on oil instead
+    btn("stone").click();
+    expect(count!.textContent).toBe("3 / 4 spent");
+    btn("oil").click();
+    expect(btn("stone").dataset.n).toBe("1");
+    expect(btn("oil").dataset.n).toBe("1");
+    confirm!.click();
+    // the click answers the board's promise — a microtask later the purse is
+    // credited (2 wood + 1 stone + 1 oil) and the panel is gone, while the
+    // cascade has not yet moved on
+    await new Promise((r) => setTimeout(r, 0));
+    const [wood0, stone0, oil0] = before.map(([, was]) => was);
+    expect(h.purse.wood ?? 0).toBe(wood0 + 2);
+    expect(h.purse.stone ?? 0).toBe(stone0 + 1);
+    expect(h.purse.oil ?? 0).toBe(oil0 + 1);
+    expect(root.querySelector(".cross-pick")).toBeNull();
+    // the callout names the shape
+    const floats = [...root.querySelectorAll(".combo-float")].map((e) => e.textContent ?? "");
+    expect(floats.some((t) => t.includes("HOLY CROSS"))).toBe(true);
+    // the choir really was asked for (12 choir voices + wobbles + 4 bells)
+    expect(started(), "playHoly never started an oscillator").toBeGreaterThan(10);
+    await p;
+  });
+});

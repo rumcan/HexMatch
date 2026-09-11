@@ -168,6 +168,16 @@ describe("NOIR the surfaces neither seam nor stretch", () => {
     }
   });
 
+  it("keeps that rule when a feature lands on top of the sheet", () => {
+    // A theme is a standing contract, not a snapshot: the HOLY CROSS angel
+    // (PP-14) arrived after the noir pass carrying `background-size: 100%
+    // 100%`, which is exactly the stretch above forbids. It is a 76×76 square
+    // box, so `contain` is the identical picture drawn proportionally — and if
+    // anyone reverts it to per-axis sizing, the test before this one fails.
+    expect(css, ".fx-cross must not be stretched per axis").not.toMatch(/\.fx-cross\s*\{[^}]*background-size:\s*100% 100%/);
+    expect(bodiesFor(".fx-cross").join(" ")).toMatch(/background-size:\s*contain/);
+  });
+
   it("gives every build and racket a gutter for its artwork", () => {
     // A sigil painted at `right center` sits in the button's PADDING BOX, so
     // `padding-right` is the only thing between a label and the artwork — and
@@ -478,6 +488,21 @@ describe("NOIR the painted set is wired end to end", () => {
     ]) {
       expect(existsSync(join("assets/ui-src/noir", p)), p).toBe(true);
     }
+  });
+
+  it("leaves the features that landed after the pass wired up", () => {
+    // The noir pass rewrote styles.css and ui.ts whole, which is precisely the
+    // kind of merge that quietly drops someone else's new block. The theme
+    // layer stays pure, so anything main adds must survive it: the cross
+    // chooser's art, its CSS, and the mount point that keeps them alive.
+    for (const sel of [".cross-pick", ".cross-pick-btn", ".cross-pick-confirm"]) {
+      expect(bodiesFor(sel).join(""), sel).not.toBe("");
+    }
+    expect(css).toMatch(/\.start-screen\s*\{/);
+    expect(existsSync("src/assets/ui/angel.png"), "angel.png").toBe(true);
+    expect(existsSync("src/game/holy.ts"), "holy.ts").toBe(true);
+    expect(ui).toMatch(/function crossPick\(/);
+    expect(ui).toMatch(/\n    crossPick,\n/); // …and it is still handed to the board
   });
 
   it("puts the family portraits back on the dossiers", () => {

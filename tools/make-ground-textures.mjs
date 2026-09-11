@@ -70,9 +70,14 @@ async function seamless(name) {
     cur = next;
   }
 
+  // Palette (256-colour) PNG. These textures are organic noise drawn MINIFIED
+  // — the land pattern is scaled by LAND_SCALE (0.2) × zoom, so a texel never
+  // covers more than 0.4 screen px even at 2× — which makes the quantisation
+  // error (RMSE ≈ 0.9/255) invisible while halving the download. The decoded
+  // bitmap is 512×512×4 either way; this is a transfer-size win only.
   const out = join(OUT, `${name}.png`);
   await sharp(cur, { raw: { width: w, height: h, channels: 4 } })
-    .png({ compressionLevel: 9 })
+    .png({ compressionLevel: 9, effort: 10, palette: true, colours: 256 })
     .toFile(out);
   console.log(`seamless ${name}: ${w}×${h} (fade ${FADE}) → ${out}`);
 }
