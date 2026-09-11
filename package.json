@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "Hexmatch Industries \u2014 a 3D island strategy / match-3 tycoon game with a WebSocket relay room server.",
+  "description": "Hexmatch Industries — a 3D island strategy / match-3 tycoon game with a WebSocket relay room server.",
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.e2e.json",
@@ -17,7 +17,8 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "slice-atlas": "node tools/slice-atlas.mjs && node tools/make-atlas-groups.mjs",
-    "atlas:groups": "node tools/make-atlas-groups.mjs"
+    "atlas:groups": "node tools/make-atlas-groups.mjs",
+    "noir-art": "node tools/make-noir-art.mjs"
   },
   "dependencies": {
     "@series-inc/rundot-game-sdk": "^5.27.0",
