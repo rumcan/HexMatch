@@ -54,6 +54,14 @@ export function arcadeLabel(chain: number): string {
  * PP-09: the five gem colours that always populate and refill the board.
  * Gold is deliberately absent — gold gems only drop once a depot sits beside
  * a gold mine, and the quarry flips them on via `setGoldEnabled`.
+ *
+ * AUDIT 2026-09-11 — these five ResKeys ARE the five non-gold Cargoes the
+ * player can spend, via GEM_TO_CARGO (quarry.ts):
+ *   wood→wood  brick→stone  sheep→oil  wheat→grain  ore→ore.
+ * Any reward that draws from this pool therefore pays an existing resource.
+ * A new colour here must have a GEM_TO_CARGO entry and art in
+ * src/assets/gems/<cargo>.png or the audit fails — sheep may not float as
+ * 🐑 where the purse has no Sheep.
  */
 const BASE_POOL: ResKey[] = ["wood", "brick", "sheep", "wheat", "ore"];
 
@@ -224,11 +232,24 @@ export class Board {
     return out;
   }
 
+  /**
+   * AUDIT 2026-09-11 — rewards from chains and combos must pay existing
+   * Cargo. This helper draws from BASE_POOL (which maps 1-1 to the live
+   * Cargo set via GEM_TO_CARGO: brick→stone, sheep→oil, wheat→grain, …)
+   * so a MATCH 5 / L-SHAPE's “+2 random” never drops a dead 🐑 where the
+   * purse has no Sheep. The Quarry's onHarvest maps the ResKey to Cargo
+   * before it hits the purse, and ui.ts's popup maps it again for the
+   * floating icon — both steps keep the 2× chain bonus on an existing
+   * resource.
+   */
   private grantRandom(n: number, reason: string, gains: Partial<Record<ResKey, number>>) {
     for (let i = 0; i < n; i++) {
       const res = choice(BASE_POOL);
       gains[res] = (gains[res] ?? 0) + 1;
       this.onBonus(res, 1, reason);
+      // forged=true → the Quarry gate always pays it (it's the board's
+      // own reward, not a depot token), and earns it as Cargo via
+      // GEM_TO_CARGO, so the +2 is always stone/oil/grain/wood/ore.
       this.onHarvest(res, 1, true);
     }
   }

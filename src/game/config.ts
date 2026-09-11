@@ -91,13 +91,25 @@ export function mulberry32(seed: number) {
 export type ResKey = "wood" | "brick" | "sheep" | "wheat" | "ore" | "gold";
 export const RES_KEYS: ResKey[] = ["wood", "brick", "sheep", "wheat", "ore", "gold"];
 
+/**
+ * AUDIT 2026-09-11 — sheep/brick were showing as 🐑/🧱 in chain/combo
+ * popups while the iso economy has no Sheep or Brick — its six Cargoes
+ * are grain/wood/ore/stone/oil/gold (src/iso/config.ts). The board's six
+ * gem colours are kept for save compatibility but their DISPLAY is now
+ * aligned to the live Cargo palette via GEM_TO_CARGO (quarry.ts):
+ *   wheat → grain (🌾), wood → wood (🪵), ore → ore (⛏️), gold → gold (🪙),
+ *   brick → stone (🪨), sheep → oil (🛢️).
+ * Chain and combo rewards (board.ts grantRandom + the 4-match ×2) are
+ * therefore always Cargo the purse can spend. Any new ResKey must map
+ * through GEM_TO_CARGO to an existing Cargo or the audit fails.
+ */
 export const RES: Record<ResKey, {
   name: string; icon: string; c1: string; c2: string; ring: string; gem: string;
 }> = {
   wood:  { name: "Wood",  icon: "🪵", c1: "#6b3410", c2: "#c47a2c", ring: "#e6ad63", gem: "#c07b34" },
-  brick: { name: "Brick", icon: "🧱", c1: "#a01808", c2: "#ff5636", ring: "#f59468", gem: "#e8442a" },
-  sheep: { name: "Sheep", icon: "🐑", c1: "#1f7a1c", c2: "#6fe04a", ring: "#b4ec8f", gem: "#4ecb3e" },
-  wheat: { name: "Wheat", icon: "🌾", c1: "#b89400", c2: "#ffe83a", ring: "#ffec93", gem: "#f5da28" },
+  brick: { name: "Stone", icon: "🪨", c1: "#7c8794", c2: "#c7d0da", ring: "#d7dde2", gem: "#9aa5b0" },
+  sheep: { name: "Oil",   icon: "🛢️", c1: "#1c1e20", c2: "#4c4f52", ring: "#6e7275", gem: "#2b2d30" },
+  wheat: { name: "Grain", icon: "🌾", c1: "#b89400", c2: "#ffe83a", ring: "#ffec93", gem: "#f5da28" },
   ore:   { name: "Ore",   icon: "⛏️", c1: "#284a9c", c2: "#5aa8ff", ring: "#c1cfe2", gem: "#3f7fe0" },
   gold:  { name: "Gold",  icon: "🪙", c1: "#9c5a02", c2: "#ffb01f", ring: "#ffcf6e", gem: "#f5921f" },
 };

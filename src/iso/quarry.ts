@@ -41,6 +41,13 @@ import { roadRouteForHarvester } from "./vehicles";
  * brick→stone (a quarry's output) and sheep→oil. It is a bijection by
  * construction and unit-tested as one: no cargo can be unreachable and no two
  * gems can pay the same cargo.
+ *
+ * AUDIT 2026-09-11 — rewards audit: every colour here IS an existing Cargo
+ * the purse can spend. Chain rewards (board.ts grantRandom's +2, the 4-match
+ * ×2, the forge tier-1/2 token) are ResKeys but credit Cargo via this map
+ * (sheep→oil 🛢️, brick→stone 🪨, wheat→grain 🌾). The popup and the purse
+ * therefore never float a dead 🐑 where no Sheep building exists. Any new
+ * ResKey must map to a Cargo in CARGOES or the bijection test fails.
  */
 export const GEM_TO_CARGO: Record<ResKey, Cargo> = {
   wheat: "grain",
