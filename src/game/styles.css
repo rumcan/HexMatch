@@ -1548,12 +1548,13 @@ html, body, #root {
 .modal.box.small { max-width: 400px; }
 .modal h2 {
   font-family: var(--display); font-size: 22px; color: var(--brass-hi); font-weight: 700;
-  /* the same clearance as the difficulty card: the seal + title start past the
-     top-left medallion, and the padding shrinks with it on a phone */
-  padding-left: var(--text-clear);
+  /* the same safe band as the difficulty card: centred between the two top
+     medallions, and `safe` so a title too wide for the band is clamped evenly
+     instead of spilling out of the flex line's left edge and under the brass */
+  padding-inline: var(--text-clear);
   letter-spacing: 4px; text-transform: uppercase;
   text-shadow: 0 -1px 0 #000, 0 1px 0 rgba(242, 220, 166, .16), 0 0 26px rgba(255, 176, 46, .3);
-  display: flex; align-items: center; justify-content: center; gap: 12px;
+  display: flex; align-items: center; justify-content: safe center; gap: 12px;
 }
 /* the seal, set above the title like a stamp on a letterhead */
 .modal h2::before {
@@ -1809,8 +1810,8 @@ html, body, #root {
 
   /* modals go full-bleed: the plaque comes off the wall and lies flat */
   .modal.box { width: 94%; padding: 18px 16px; max-height: 84vh; overflow-y: auto; border-width: 14px; }
-  /* the plate keeps its `--text-clear` indent: the mat is 14px and the
-     medallion 34px, so the title still needs 20px of its own to clear the brass */
+  /* the band follows the ornament: a 14px mat plus a 34px medallion leaves the
+     title 48px of clearance on each side, which `--text-clear` derives for us */
   .modal.box, .iso-skill-card { --corner-inset: 14px; --corner: 34px; }
   .modal h2 { font-size: 17px; letter-spacing: 2px; }
   .modal h2::before { width: 24px; height: 24px; }
@@ -1910,11 +1911,16 @@ html, body, #root {
 
 /* ── AI-02: the start-of-game difficulty prompt (src/iso/skill-picker.ts) ──
    The card wears a brass medallion in each corner (see `--text-clear` above)
-   and a medallion is solid metal, so the headline is moved right of it:
-   `padding-left: var(--text-clear)` sets "CHOOSE YOUR RIVAL" off the card's own
-   gutter by exactly the ornament's width — and when a phone shrinks the
-   medallion, the indent shrinks with it. The sub and foot lines start below the
-   top band, so they keep the plain gutter. */
+   and a medallion is SOLID metal, so the headline is centred inside the safe
+   band between the two of them: `padding-inline: var(--text-clear)` reserves
+   that band on BOTH sides and `justify-content: safe center` puts the words in
+   the middle of what is left. Centre first, then clear — the title reads as the
+   card's own, not as a caption pushed away from a decoration — and when a phone
+   shrinks the medallion the band widens by exactly the same amount. `safe` is
+   the second half of the job: a centred flex line that runs out of room overflows
+   to ONE side only (the left item, here the guild seal), which is how a title
+   ends up under the brass again on a narrow screen; `safe center` clamps the
+   overflow evenly instead, so it can never go under the metal. */
 #iso-skill-prompt { position: absolute; inset: 0; z-index: 90;
   display: flex; align-items: center; justify-content: center;
   background:
@@ -1937,8 +1943,10 @@ html, body, #root {
 #iso-skill-prompt h2 {
   margin: 0 0 4px; font-size: 24px; font-family: var(--display);
   font-weight: 700; letter-spacing: 4px; text-transform: uppercase; color: var(--brass-hi);
-  /* clear of the top-left medallion, whatever size it is painted at */
-  padding-left: var(--text-clear);
+  /* centred in the safe band between the two top medallions, whatever size they
+     are painted at (`--text-clear` = inset + ornament, from the card itself) */
+  padding-inline: var(--text-clear);
+  text-align: center;
   text-shadow: 0 -1px 0 #000, 0 1px 0 rgba(242, 220, 166, .16), 0 0 28px rgba(255, 176, 46, .3); }
 #iso-skill-prompt .iso-skill-sub { margin: 0 0 12px; opacity: 0.9; font-size: 13px;
   color: var(--txt-dim); font-family: var(--serif); letter-spacing: .5px; }

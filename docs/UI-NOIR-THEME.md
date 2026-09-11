@@ -96,17 +96,25 @@ the price can never squeeze the racket's name into the art).
 are squares, not chamfers that fade out. Painted at the plate's corners they
 therefore occupy a `--corner` box flush on the edge, and any type that starts
 inside it is under the brass — that is how "CHOOSE YOUR RIVAL" was being
-swallowed. Both dialog hosts now declare the pair once:
+swallowed. The fix is a **band, not an indent**: the title is centred between
+the two ornaments rather than shunted away from one of them, and the band is
+derived, so nothing can drift when an ornament is resized.
 
 ```css
 .iso-skill-card { --corner-inset: 0; --corner: 40px;
                   --text-clear: calc(var(--corner-inset) + var(--corner)); }
-#iso-skill-prompt h2 { padding-left: var(--text-clear); }   /* 64px of card gutter */
+#iso-skill-prompt h2 { padding-inline: var(--text-clear); text-align: center; }
+.modal h2        { padding-inline: var(--text-clear); justify-content: safe center; }
 ```
 
-so the ornament, the indent and the phone override (which grows the inset to
-the modal's 14px brass mat and shrinks the medallion to 34px) all read the same
-numbers — nothing to forget to update when an ornament changes size.
+At the card's own 640px the safe band is the 592px content box minus 40px at
+each end, and the 275px headline sits at x=158..433 inside it — 118px of air to
+the brass on either side, and dead centre on the plate's own axis. The phone sheet
+grows the modal's inset to its 14px brass mat and shrinks the medallion to 34px,
+and the heading moves by the same arithmetic. `safe center` is load-bearing,
+not decoration: a centred flex line with no room pushes its **left** item out of
+the box (the guild seal, onto the medallion) — which is exactly the bug in
+reverse — whereas `safe` clamps the overflow evenly on both sides.
 
 **Paper is read, not admired.** The instruction banner used the ledger sheet at
 `multiply` under 11.5px typewriter ink; the sheet's own grain is ±26 levels per

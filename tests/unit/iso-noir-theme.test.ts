@@ -444,10 +444,18 @@ describe("NOIR the painted set is wired end to end", () => {
       expect(host, `${sel} does not derive --text-clear from its ornament`)
         .toMatch(/--text-clear:\s*calc\(var\(--corner-inset\) \+ var\(--corner\)\)/);
     }
-    const h2 = bodiesFor("#iso-skill-prompt h2").join(" ");
-    expect(h2, "the difficulty headline is not moved clear of its medallion")
-      .toMatch(/padding-left:\s*var\(--text-clear\)/);
-    expect(bodiesFor(".modal h2").join(" ")).toMatch(/padding-left:\s*var\(--text-clear\)/);
+    // …centred in the band the two ornaments leave, not parked next to one of
+    // them: the reservation is symmetric, and a flex title that overflows it is
+    // clamped with `safe center` (a plain centred flex line overflows its LEFT
+    // item only — which is exactly how the guild seal ended up under the brass).
+    for (const sel of ["#iso-skill-prompt h2", ".modal h2"]) {
+      const body = bodiesFor(sel).join(" ");
+      expect(body, `${sel} does not reserve the medallion band`)
+        .toMatch(/padding-inline:\s*var\(--text-clear\)/);
+      expect(body, `${sel} is not centred`).toMatch(/text-align:\s*center|justify-content:\s*safe center/);
+    }
+    expect(bodiesFor(".modal h2").join(" "), ".modal h2 lost its safe centring")
+      .toMatch(/justify-content:\s*safe center/);
   });
 
   it("seats the sigil off the plate's edge, not under the label", () => {
