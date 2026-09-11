@@ -35,7 +35,7 @@ import { FACTORY_FOOTPRINT } from "./config";
 import {
   GRASS, ROUGH, SAND, TOWN_OCC, type Grid, type Industry, type Town,
 } from "./grid";
-import { buildRefusal, tIdx } from "./track";
+import { buildRefusal, hasTrack, tIdx, type Track } from "./track";
 import {
   catchmentRect, industriesInCatchment, rectContains, type Harvester,
 } from "./economy";
@@ -81,6 +81,7 @@ const REASON_TEXT: Record<string, string> = {
   water: "it is on water",
   rough: "it is on rough ground",
   occupied: "it overlaps an industry, a town or another building",
+  track: "it overlaps a road",
   "not-adjacent": "it is not adjacent to your network",
   "depot-taken": "a Depot is already there",
   "no-industry-in-catchment": "no industry sits inside its 4×4 catchment",
@@ -227,6 +228,15 @@ export interface FactoryPlanOptions {
   /** PP-02 seam: once Factory placement must sit next to a town, pass true —
    *  the overlay then rejects non-adjacent sites with a readable reason. */
   requireTown?: boolean;
+  /**
+   * PP-17: the live track layers. When passed, a footprint tile that already
+   * carries a road (dirt or paved — the player's own line, the map's public
+   * highways, anything) is refused with the "track" reason, exactly like an
+   * additional processing plant (`plantRefusal` in plants.ts) refuses road
+   * ground. Without it the plan is the pure geometry/ground question it used
+   * to be, so the hand-built unit grids stay valid.
+   */
+  track?: Track;
 }
 
 /** The full PP-03 placement plan for a Factory hover at (tx,ty). Validity is
@@ -237,7 +247,18 @@ export function planFactoryPlacement(
   const footprint: PlanFootprintTile[] = [];
   let valid = true, why: string | null = null, code: string | null = null;
   for (const [x, y] of factoryFootprintTiles(tx, ty)) {
-    const refusal = inGrid(grid, x, y) ? buildRefusal(grid, "road", x, y) : "out-of-bounds";
+    let refusal = inGrid(grid, x, y) ? buildRefusal(grid, "road", x, y) : "out-of-bounds";
+    // PP-17: a building never stands on a road. `buildRefusal` is the TRACK
+    // rule (where paving over your own line is a legal no-op), so it cannot
+    // see the existing surface — a Factory footprint must be clean ground, so
+    // any tile that already carries road (dirt or paved) is refused here when
+    // the caller hands us the live track. Public highways are free land in
+    // `occupancy` (a player may build over them), so this is the ONLY check
+    // that stops a plant from being dropped on one.
+    if (refusal === null && opts.track && inGrid(grid, x, y)
+      && (hasTrack(opts.track, "road", x, y) || hasTrack(opts.track, "dirt", x, y))) {
+      refusal = "track";
+    }
     if (refusal !== null && valid) {
       valid = false; code = refusal; why = placementReasonText(refusal);
     }

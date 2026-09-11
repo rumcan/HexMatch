@@ -769,7 +769,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * send the intent twice and open with two free Factories (each is plant #0).
    */
   function placeFactoryFor(p: PlayerState, tx: number, ty: number): boolean {
-    const plan = planFactoryPlacement(grid, tx, ty, { requireTown: true });
+    const plan = planFactoryPlacement(grid, tx, ty, { requireTown: true, track });
     if (!plan.valid) {
       toast(plan.code === "not-near-town"
         ? "The Factory must be placed next to a town — its footprint must share an edge with a town tile."
@@ -1973,7 +1973,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const depotLocks = () => ({ locked: lockedIndustryIds(eco) });
 
   const factoryPlanForTool = (tx: number, ty: number): PlacementPlan => {
-    const plan = planFactoryPlacement(grid, tx, ty, { requireTown: true });
+    const plan = planFactoryPlacement(grid, tx, ty, { requireTown: true, track });
     const why = plantRefusal(grid, track, eco, tx, ty);
     if (why !== null && plan.valid) {
       plan.valid = false;
@@ -2022,7 +2022,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const items: OverlayItem[] = [];
     if (phase === "setup-factory") {
       // PP-02: the preview enforces the same town-adjacency rule as the click.
-      pushPlan(items, planFactoryPlacement(grid, tx, ty, { requireTown: true }));
+      pushPlan(items, planFactoryPlacement(grid, tx, ty, { requireTown: true, track }));
     } else if (tool === "harvester" || phase === "setup-harvester") {
       pushPlan(items, planDepotPlacement(grid, eco.harvesters, tx, ty, depotLocks()));
     } else if (tool === "plant") {
@@ -2165,7 +2165,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // PP-02: the inspector's verdict follows the same town-adjacency rule
       // the click and the overlay enforce ("can't go here — its footprint must
       // share an edge with a town").
-      ? planFactoryPlacement(grid, hover!.tx, hover!.ty, { requireTown: true })
+      ? planFactoryPlacement(grid, hover!.tx, hover!.ty, { requireTown: true, track })
       : placingDepot
         ? planDepotPlacement(grid, eco.harvesters, hover!.tx, hover!.ty, depotLocks())
         : null;
