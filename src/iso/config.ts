@@ -286,6 +286,12 @@ export function depotSpriteForCargo(cargo: Cargo): string {
  * PP-12: one town variant per packed TTD house file (43). The church is the
  * town centre (`town_center` cell); the bungalows pair and the two stadiums
  * are packed as `spare_*` cells instead — far too wide for a 1x1 tile.
+ *
+ * 1950S-B1c: `town_house_c` (the TOWN-3/Y8 *composited* offices variant, not a
+ * verbatim file cell) is the 44th — additive so its per-building PNG renders
+ * immediately instead of being decoded and never drawn. Changing the length
+ * re-rolls `townHouseSprite()` for every tile (cosmetic); the update is
+ * pinned in tests/unit/iso-art-layout.test.ts.
  */
 export const TOWN_HOUSE_VARIANTS = [
   "town_offices_1423", "town_office_1460", "town_flats_trop_1x1_4", "town_flats_trop_1x1_7",
@@ -299,7 +305,7 @@ export const TOWN_HOUSE_VARIANTS = [
   "town_shops_modern", "town_house_modern", "town_house_modern_2", "town_office_tower_modern",
   "town_shops_offices", "town_shops_offices_2", "town_cottage_old_small_a",
   "town_cottage_old_small", "town_cottage_old_small_2", "town_shop_small", "town_house_swiss",
-  "town_cottage_tall", "town_offices_tall", "town_flats_townhouse_tall",
+  "town_cottage_tall", "town_offices_tall", "town_flats_townhouse_tall", "town_house_c",
 ] as const;
 
 /** The atlas cell a town tile draws.

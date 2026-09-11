@@ -1,5 +1,5 @@
 {
-  "note": "Per-building PNG layers: assets/buildings/<name>@{0.5x,1x,2x}.png. Rect is the WHOLE image (x=y=0); anchor is the footprint-centre placement point (see tools/make-building-pngs.mjs).",
+  "note": "Per-building PNG layers: assets/buildings/<name>@{0.5x,1x,2x}.png. Images are TIGHT-alpha-trimmed; the rect is the whole image (x=y=0) and the anchor is the footprint-centre placement point re-expressed relative to the trimmed origin (see tools/make-building-pngs.mjs).",
   "sprites": {
     "oil_rig": {
       "footprint": [
@@ -7,11 +7,575 @@
         3
       ],
       "anchor": [
-        96,
-        144
+        92,
+        44
       ],
-      "w": 192,
-      "h": 192
+      "w": 184,
+      "h": 92
+    },
+    "town_house_c": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        30,
+        48
+      ],
+      "w": 58,
+      "h": 64
+    },
+    "town_house_pool": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        32
+      ],
+      "w": 64,
+      "h": 48
+    },
+    "farm": {
+      "footprint": [
+        4,
+        4
+      ],
+      "anchor": [
+        122,
+        58
+      ],
+      "w": 244,
+      "h": 122
+    },
+    "forest": {
+      "footprint": [
+        4,
+        4
+      ],
+      "anchor": [
+        122,
+        94
+      ],
+      "w": 244,
+      "h": 158
+    },
+    "ore_mine": {
+      "footprint": [
+        3,
+        3
+      ],
+      "anchor": [
+        92,
+        44
+      ],
+      "w": 184,
+      "h": 92
+    },
+    "quarry": {
+      "footprint": [
+        3,
+        3
+      ],
+      "anchor": [
+        92,
+        42
+      ],
+      "w": 184,
+      "h": 90
+    },
+    "gold_mine": {
+      "footprint": [
+        4,
+        4
+      ],
+      "anchor": [
+        122,
+        82
+      ],
+      "w": 244,
+      "h": 146
+    },
+    "factory": {
+      "footprint": [
+        3,
+        3
+      ],
+      "anchor": [
+        92,
+        76
+      ],
+      "w": 184,
+      "h": 124
+    },
+    "depot_grain": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        14
+      ],
+      "w": 64,
+      "h": 30
+    },
+    "depot_wood": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        14
+      ],
+      "w": 64,
+      "h": 30
+    },
+    "depot_ore": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        24
+      ],
+      "w": 64,
+      "h": 40
+    },
+    "depot_stone": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        20
+      ],
+      "w": 62,
+      "h": 34
+    },
+    "depot_oil": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        28,
+        48
+      ],
+      "w": 56,
+      "h": 64
+    },
+    "depot_gold": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        14
+      ],
+      "w": 64,
+      "h": 30
+    },
+    "town_center": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        38
+      ],
+      "w": 64,
+      "h": 54
+    },
+    "town_small_house_1x1_1": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        28
+      ],
+      "w": 60,
+      "h": 42
+    },
+    "town_small_house_arctic_1x1_2": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        30
+      ],
+      "w": 60,
+      "h": 44
+    },
+    "town_house_modern": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        34
+      ],
+      "w": 64,
+      "h": 48
+    },
+    "town_house_swiss": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        34
+      ],
+      "w": 64,
+      "h": 50
+    },
+    "town_house_modern_2": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        28
+      ],
+      "w": 64,
+      "h": 44
+    },
+    "town_house_arctic_1x1_5": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        16
+      ],
+      "w": 60,
+      "h": 32
+    },
+    "town_cottage_old_small": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        16
+      ],
+      "w": 60,
+      "h": 32
+    },
+    "town_cottage_old_small_a": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        18
+      ],
+      "w": 64,
+      "h": 34
+    },
+    "town_cottage_tall": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        30
+      ],
+      "w": 58,
+      "h": 44
+    },
+    "town_cottage_arctic_1x1_1": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        18
+      ],
+      "w": 64,
+      "h": 34
+    },
+    "town_townhouse_3": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        24
+      ],
+      "w": 54,
+      "h": 40
+    },
+    "town_townhouse_garden_2": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        16
+      ],
+      "w": 64,
+      "h": 32
+    },
+    "town_townhouse_gardens_2": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        22
+      ],
+      "w": 64,
+      "h": 38
+    },
+    "town_bank": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        28
+      ],
+      "w": 64,
+      "h": 44
+    },
+    "town_cinema": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        34
+      ],
+      "w": 64,
+      "h": 50
+    },
+    "town_hotel": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        38
+      ],
+      "w": 64,
+      "h": 54
+    },
+    "town_shops_modern": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        28,
+        48
+      ],
+      "w": 56,
+      "h": 64
+    },
+    "town_shops_offices": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        24,
+        48
+      ],
+      "w": 48,
+      "h": 64
+    },
+    "town_shops_offices_2": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        28,
+        48
+      ],
+      "w": 56,
+      "h": 64
+    },
+    "town_shop_small": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        32
+      ],
+      "w": 64,
+      "h": 48
+    },
+    "town_shops_arctic_1x1_2": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        24,
+        48
+      ],
+      "w": 48,
+      "h": 64
+    },
+    "town_offices_1423": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        24,
+        48
+      ],
+      "w": 48,
+      "h": 64
+    },
+    "town_office_1460": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        28,
+        48
+      ],
+      "w": 52,
+      "h": 62
+    },
+    "town_cottage_old_small_2": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        24
+      ],
+      "w": 64,
+      "h": 40
+    },
+    "town_office_tower_modern": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        18,
+        48
+      ],
+      "w": 36,
+      "h": 64
+    },
+    "town_fountain_1x1": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        18
+      ],
+      "w": 64,
+      "h": 34
+    },
+    "town_flats": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        40
+      ],
+      "w": 64,
+      "h": 56
+    },
+    "town_flats_2": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        28
+      ],
+      "w": 64,
+      "h": 44
+    },
+    "town_flats_grey": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        26,
+        48
+      ],
+      "w": 54,
+      "h": 64
+    },
+    "town_flats_townhouse_tall": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        26,
+        48
+      ],
+      "w": 52,
+      "h": 64
+    },
+    "town_small_flat_1x1_1": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        30
+      ],
+      "w": 64,
+      "h": 46
+    },
+    "town_small_flat_1x1_2": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        22
+      ],
+      "w": 62,
+      "h": 38
     }
   }
 }

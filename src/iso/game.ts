@@ -3047,6 +3047,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // failed sprite just keeps the sheet art for that building.
     void loadBuildingLayers(atlas, `${import.meta.env.BASE_URL}assets/buildings/`).then((n) => {
       if (disposed || !n) return;
+      // B-3.2: the install above mutated sprite w/h AFTER the renderer's
+      // constructor cached its cull pad — re-derive it so tall building art
+      // does not pop at screen edges.
+      renderer?.recomputePad();
       renderer?.invalidateAll();
     }).catch((err) => {
       console.warn("[building-layers] failed to load:", err);

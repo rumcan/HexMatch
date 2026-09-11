@@ -278,6 +278,28 @@ export class IsoRenderer {
   private pad: number;
   private logRender = false;
 
+  // ── B-4: instrumented dead-art verification ─────────────────────────────
+  /**
+   * Flag-gated record of every sprite name the blit path ACTUALLY draws.
+   * Dead-art removal must run on runtime truth, not string greps: road
+   * bitmasks (`road_0001`), depots (`depot_${cargo}`) and town houses
+   * (`townHouseSprite()` hash) are constructed at runtime and never appear
+   * as literals in source. Off by default — the set and the flag add no
+   * cost to the draw path until `setSpriteUseTracking(true)`. Exposed on
+   * the debug console as `__iso.spriteUse(...)`.
+   */
+  private spriteUse = new Set<string>();
+  private spriteUseTracking = false;
+
+  /** B-4: start/stop recording drawn sprite names (stop also clears). */
+  setSpriteUseTracking(on: boolean): void {
+    this.spriteUseTracking = on;
+    if (!on) this.spriteUse.clear();
+  }
+
+  /** B-4: names drawn while tracking was on (live view). */
+  get trackedSprites(): ReadonlySet<string> { return this.spriteUse; }
+
   // ── W-series pattern-painted ground ──────────────────────────────────────
   /** Canvas patterns for grass/sand/water; null → flat FALLBACK colours. */
   private ground: GroundPatterns | null = null;
@@ -337,6 +359,21 @@ export class IsoRenderer {
     this.groundChunkCache.clear();
     this.structuresDirty = true;
   }
+
+  /**
+   * B-3.2: re-derive the culling pad. The constructor reads `cullPad(atlas)`
+   * once, but `loadBuildingLayers()` resolves AFTER `new IsoRenderer(...)` and
+   * mutates the covered sprites' `s.w`/`s.h` — so a building PNG taller than
+   * the tallest sheet sprite would cull at the screen edge and pop in/out
+   * until a coincidental recompute. Call this from the same `.then()` that
+   * already invalidates, after the building layers install.
+   */
+  recomputePad(): void {
+    this.pad = cullPad(this.atlas);
+  }
+
+  /** The current culling pad (C5/diagnostics + tests). */
+  get cullPadNow(): number { return this.pad; }
 
   setCamera(cam: Camera) {
     if (cam.zoom !== this.cam.zoom) {
@@ -528,6 +565,7 @@ export class IsoRenderer {
 
   private blit(ctx: Ctx2D, p: Placed, timeMs: number) {
     const z = this.cam.zoom;
+    if (this.spriteUseTracking) this.spriteUse.add(p.sprite);   // B-4
     // W-series: roads blit from the ROADS atlas, buildings from the BUILDINGS
     // atlas (separate PNG layer atlases, identical rect layout); anything
     // else falls back to the monolithic image (layer sets unloaded).

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { Atlas, type Manifest } from "../../src/iso/atlas";
 import {
   CHUNK, chunksX, chunkIndexOf, chunkSurfaceSize, chunkWorldOrigin,
-  terrainSprite, buildDrawList, cullPad, flatPick,
+  terrainSprite, buildDrawList, cullPad, flatPick, IsoRenderer,
 } from "../../src/iso/renderer";
 import { generateMap, WATER, ROUGH } from "../../src/iso/grid";
 import { createCamera, centerOnMap, visibleTileRange } from "../../src/iso/camera";
@@ -223,5 +223,40 @@ describe("E4 flat pick", () => {
     expect(flatPick(-31, 32 * 3 + 1)).toEqual([2, 3]);
     expect(flatPick(0.001, 0.001)).toEqual([0, 0]);
     expect(flatPick(-1, 0.001)).toEqual([-1, 0]);
+  });
+});
+
+// ── B-3.2: the cull pad must follow late building-layer installs ──────────
+// The constructor caches `cullPad(atlas)` once, but `loadBuildingLayers()`
+// resolves AFTER `new IsoRenderer(...)` (game.ts fires it before the renderer
+// exists) and mutates the covered sprites' defs — so a building PNG taller
+// than the tallest sheet sprite would cull at the screen edge until a
+// recompute. `renderer.recomputePad()` is that recompute.
+describe("B-3.2 cull pad follows building-layer installs", () => {
+  const fakeCanvas = () =>
+    ({ getContext: () => ({ imageSmoothingEnabled: false }) }) as unknown as HTMLCanvasElement;
+
+  function makeRenderer() {
+    const manifest: Manifest = JSON.parse(readFileSync("assets/iso-atlas/manifest.json", "utf8"));
+    const atlas = new Atlas(manifest);
+    const renderer = new IsoRenderer(
+      { terrain: fakeCanvas(), structures: fakeCanvas(), overlay: fakeCanvas() },
+      atlas, createCamera(), { grid: generateMap(1234) },
+    );
+    return { renderer, atlas };
+  }
+
+  it("caches the pad at construction; recomputePad() follows a mutated def", () => {
+    const { renderer, atlas } = makeRenderer();
+    const before = renderer.cullPadNow;
+    expect(before).toBe(cullPad(atlas));
+
+    // simulate loadBuildingLayers() installing a taller per-building PNG
+    const def = atlas.manifest.sprites.oil_rig;
+    def.w = def.h = 500;
+    expect(renderer.cullPadNow).toBe(before);        // stale until told
+    renderer.recomputePad();
+    expect(renderer.cullPadNow).toBe(cullPad(atlas));
+    expect(renderer.cullPadNow).toBeGreaterThan(before);
   });
 });

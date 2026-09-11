@@ -1,5 +1,6 @@
 import path from "path";
 import { fileURLToPath } from "url";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { rundotMultiplayerPlugin } from "@series-inc/rundot-game-sdk/vite";
@@ -23,6 +24,41 @@ const __dirname = path.dirname(__filename);
  * nothing at all. Never affects `vite build`: published games talk to RUN.world's
  * hosted room server, not the sidecar.
  */
+/**
+ * B-0 — Ship the per-building PNG layers in the PRODUCTION build.
+ *
+ * `loadBuildingLayers()` (src/iso/atlas.ts) runtime-fetches
+ * `<base>assets/buildings/manifest.json` + the per-zoom PNGs. Under `vite dev`
+ * that resolves off the project root; under `vite build` nothing copies
+ * `assets/buildings/` into `dist/` (it is not publicDir), so every building
+ * 404s and silently falls back to the shared sheet — the new art is invisible
+ * in preview/production. This copies the directory after the bundle so the
+ * built game resolves the layers exactly like dev. Chosen over
+ * `vite-plugin-static-copy` to avoid a new dependency for a flat directory,
+ * and over converting the fetch to static imports to keep the deliberate
+ * non-gating "drop a file in and it appears" design.
+ */
+function copyBuildingsToDist(): Plugin {
+  const from = path.resolve(__dirname, "assets", "buildings");
+  return {
+    name: "hexmatch:copy-buildings",
+    apply: "build",
+    closeBundle() {
+      if (!existsSync(from)) return;
+      const copyDir = (src: string, dest: string) => {
+        mkdirSync(dest, { recursive: true });
+        for (const entry of readdirSync(src, { withFileTypes: true })) {
+          const s = path.join(src, entry.name);
+          const d = path.join(dest, entry.name);
+          if (entry.isDirectory()) copyDir(s, d);
+          else if (statSync(s).isFile()) copyFileSync(s, d);
+        }
+      };
+      copyDir(from, path.resolve(__dirname, "dist", "assets", "buildings"));
+    },
+  };
+}
+
 function devRoomServerOrigin(): Plugin {
   const publicUrl = process.env.RUNDOT_DEV_ROOM_URL?.replace(/\/+$/, "");
   return {
@@ -43,7 +79,7 @@ function devRoomServerOrigin(): Plugin {
 export default defineConfig({
   base: "/hexmatch/",
   server: { host: true, allowedHosts: [".e2b.app"] },
-  plugins: [react(), tailwindcss(), rundotMultiplayerPlugin(), devRoomServerOrigin()],
+  plugins: [react(), tailwindcss(), rundotMultiplayerPlugin(), devRoomServerOrigin(), copyBuildingsToDist()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "src"),

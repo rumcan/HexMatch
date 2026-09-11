@@ -73,11 +73,21 @@ describe("T2 real town buildings", () => {
     const centre = cell("town_center");
     expect(centre.file).toBe("houses/ttd/church.png");
     expect(manifest.sprites.town_center.footprint).toEqual([1, 1]);
-    // every variant is a packed TTD house file on its own 1×1 tile
-    expect(TOWN_HOUSE_VARIANTS).toHaveLength(43);
+    // every variant is a TTD house on its own 1×1 tile — mostly verbatim
+    // file cells; 1950S-B1c added town_house_c, which is the TOWN-3/Y8
+    // *composited* variant (offices ground + offices building layers, no
+    // file), so its per-building PNG can render from the pool. Behaviour
+    // change vs the 43-variant pool: the hash length changes, so every town
+    // tile re-rolls which variant it draws (cosmetic, deterministic).
+    expect(TOWN_HOUSE_VARIANTS).toHaveLength(44);
     for (const name of TOWN_HOUSE_VARIANTS) {
       expect(name).toMatch(/^town_/);
-      expect(cell(name).file, `${name} must be a file cell`).toMatch(/^houses\/ttd\/.*\.png$/);
+      const c = cell(name);
+      if (name === "town_house_c") {
+        expect(c.layers, "town_house_c is the layered TTD variant").toHaveLength(2);
+      } else {
+        expect(c.file, `${name} must be a file cell`).toMatch(/^houses\/ttd\/.*\.png$/);
+      }
       const m = manifest.sprites[name];
       expect(m, `${name} manifest sprite`).toBeTruthy();
       expect(m.footprint, name).toEqual([1, 1]);

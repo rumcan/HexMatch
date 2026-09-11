@@ -16,8 +16,10 @@
 //     footprint's centre (def.center in src/iso/depth.ts), so art drawn on
 //     the template sits concentric with its tiles even if it never "snaps".
 //   • the building may rise at most (w + h) × 48 px above the anchor.
-//   • 1× / 0.5× variants are DERIVED here (2:1 / 4:1 nearest-neighbour), so
-//     the engine never scales inside drawImage (same rule as the atlases).
+//   • 1× / 0.5× variants are DERIVED here (lanczos3, exact 2:1 / 4:1), so the
+//     engine never scales inside drawImage (same rule as the atlases). The
+//     trim step (below) snaps the 2× box to a multiple of 4, keeping 1× and
+//     0.5× exact integers — nothing fractional ever reaches drawImage.
 //
 //   | footprint | canvas @2× | anchor (x, y) | ground zone | max rise |
 //   |-----------|------------|---------------|-------------|----------|
@@ -66,6 +68,36 @@ function footprints() {
   return out;
 }
 
+/**
+ * Tight alpha bounding box of a straight-alpha RGBA buffer, snapped to the
+ * 1×/0.5× integer contract:
+ *   • left/top snap DOWN to a multiple of 4 (2× px) → the anchor offset
+ *     (spec.a − offset) stays even, so the 1× anchor is an integer;
+ *   • right/bottom snap UP to a multiple of 4 (2× px) → the trimmed width
+ *     and height are multiples of 4, so 1× (÷2) and 0.5× (÷4) are integers.
+ * Fully-transparent input falls back to the whole canvas (the old behaviour).
+ */
+function alphaBox(data, width, height) {
+  let l = width, t = height, r = 0, b = 0;
+  for (let y = 0; y < height; y++) {
+    const row = y * width * 4;
+    for (let x = 0; x < width; x++) {
+      if (data[row + x * 4 + 3] === 0) continue;
+      if (x < l) l = x;
+      if (x + 1 > r) r = x + 1;
+      if (y < t) t = y;
+      if (y + 1 > b) b = y + 1;
+    }
+  }
+  if (r === 0) return { l: 0, t: 0, r: width, b: height };
+  return {
+    l: Math.floor(l / 4) * 4,
+    t: Math.floor(t / 4) * 4,
+    r: Math.min(Math.ceil(r / 4) * 4, width),
+    b: Math.min(Math.ceil(b / 4) * 4, height),
+  };
+}
+
 /** One spec-size transparent building canvas → the 3 zoom variants. */
 async function processBuilding(name, fps) {
   const fp = fps[name];
@@ -77,13 +109,33 @@ async function processBuilding(name, fps) {
   if (meta.width !== spec.S || meta.height !== spec.S) {
     throw new Error(`${name}: canvas must be ${spec.S}×${spec.S} at 2× for a ${fp[0]}×${fp[1]} footprint (got ${meta.width}×${meta.height}) — use assets/buildings-src/templates/${fp[0]}x${fp[1]}@2x.png as the base`);
   }
-  // 2:1 and 4:1 nearest-neighbour downscale — exact pixel subsets, crisp.
-  const out2x = join(OUT, `${name}@2x.png`);
-  await sharp(src).png({ compressionLevel: 9 }).toFile(out2x);
-  for (const [z, size] of [["1x", spec.S / 2], ["0.5x", spec.S / 4]]) {
-    await sharp(src).resize(size, size, { kernel: "nearest" }).png({ compressionLevel: 9 }).toFile(join(OUT, `${name}@${z}.png`));
+  // B-3.1: trim the transparent margin. The engine blits the WHOLE image as
+  // the sprite rect (loadBuildingLayers sets x=y=0, w,h from the manifest),
+  // so the trim is folded into the manifest instead: w/h become the trimmed
+  // 1× size and the anchor is re-expressed relative to the trimmed top-left.
+  // No renderer change is needed for that reason; the only dependent read is
+  // buildBuildingMasks, which rasterises the 1× image at its own size.
+  const { data, info } = await sharp(src).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const box = alphaBox(data, info.width, info.height);
+  const w2 = box.r - box.l;                       // trimmed 2× size
+  const h2 = box.b - box.t;
+  const crop = sharp(src).extract({ left: box.l, top: box.t, width: w2, height: h2 });
+  // B-2: quality downscale. sharp premultiplies alpha around the resize
+  // (libvips path, see sharp/src/pipeline.cc) and un-premultiplies after, so
+  // thin structures (derrick lattice, railings) survive 4:1 without the
+  // sparkling/dark-halo artefacts of nearest. Output sizes stay exact halves
+  // and quarters of the (non-square) trimmed box — the engine still never
+  // scales inside drawImage.
+  await crop.clone().png({ compressionLevel: 9 }).toFile(join(OUT, `${name}@2x.png`));
+  for (const [z, div] of [["1x", 2], ["0.5x", 4]]) {
+    await crop.clone().resize(w2 / div, h2 / div, { kernel: "lanczos3" }).png({ compressionLevel: 9 }).toFile(join(OUT, `${name}@${z}.png`));
   }
-  return { name, footprint: fp, anchor: [spec.ax / 2, spec.ay / 2], w: spec.S / 2, h: spec.S / 2, canvas2x: spec.S };
+  return {
+    name, footprint: fp,
+    anchor: [(spec.ax - box.l) / 2, (spec.ay - box.t) / 2],   // 1×, trimmed-origin
+    w: w2 / 2, h: h2 / 2,                                      // 1× trimmed size
+    canvas2x: `${w2}×${h2} (trimmed from ${spec.S}×${spec.S})`,
+  };
 }
 
 /** Marked authoring template for a footprint (2×). */
@@ -145,10 +197,10 @@ if (existsSync(manifestPath)) {                     // merge — partial runs ke
 for (const name of names) {
   const entry = await processBuilding(name, fps);
   manifest.sprites[name] = { footprint: entry.footprint, anchor: entry.anchor, w: entry.w, h: entry.h };
-  console.log(`${name}: ${entry.footprint[0]}×${entry.footprint[1]} → ${entry.w}×${entry.h} @1× (anchor ${entry.anchor.join(",")})`);
+  console.log(`${name}: ${entry.footprint[0]}×${entry.footprint[1]} → ${entry.w}×${entry.h} @1× (anchor ${entry.anchor.join(",")}) — ${entry.canvas2x}`);
 }
 writeFileSync(join(OUT, "manifest.json"), JSON.stringify({
-  note: "Per-building PNG layers: assets/buildings/<name>@{0.5x,1x,2x}.png. Rect is the WHOLE image (x=y=0); anchor is the footprint-centre placement point (see tools/make-building-pngs.mjs).",
+  note: "Per-building PNG layers: assets/buildings/<name>@{0.5x,1x,2x}.png. Images are TIGHT-alpha-trimmed; the rect is the whole image (x=y=0) and the anchor is the footprint-centre placement point re-expressed relative to the trimmed origin (see tools/make-building-pngs.mjs).",
   sprites: manifest.sprites,
 }, null, 2) + "\n");
 console.log(`wrote ${join(OUT, "manifest.json")} (${Object.keys(manifest.sprites).length} building${Object.keys(manifest.sprites).length === 1 ? "" : "s"})`);

@@ -514,6 +514,28 @@ export function createIsoDebug(ctx: DebugContext) {
       console.log("[iso] rendering", out);
       return out;
     },
+    /**
+     * B-4 — dead-art verification on runtime truth. `__iso.spriteUse(true)`
+     * starts recording every sprite name the blit path actually draws
+     * (road/depot/town names are constructed at runtime, so a source grep
+     * proves nothing about them); `__iso.spriteUse()` returns the recorded
+     * set (sorted) for `tools/b4-dead-art-audit.mjs --observed`;
+     * `__iso.spriteUse(false)` stops and clears. Exercise the full map first
+     * (pan/zoom over everything, build roads in every shape, depots for
+     * every cargo, grow a town) before reading the set.
+     */
+    spriteUse: (on?: boolean) => {
+      const renderer = ctx.renderer;
+      if (on === undefined) {
+        const out = renderer ? [...renderer.trackedSprites].sort() : [];
+        console.log("[iso] spriteUse", out.length, "names recorded");
+        return out;
+      }
+      renderer?.setSpriteUseTracking(!!on);
+      const out = { on: !!on, count: renderer?.trackedSprites.size ?? 0 };
+      console.log("[iso] spriteUse", out);
+      return out;
+    },
     /** `__iso.renderLog(true)` toggles the per-blit `[render]` console trace. */
     renderLog: (on = true) => {
       ctx.renderer?.setRenderLog(!!on);
