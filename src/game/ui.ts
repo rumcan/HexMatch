@@ -41,6 +41,10 @@ import { fmtVp } from "../iso/victory";
 import { RIVAL_SKILLS, SKILL_KEYS, type SkillKey } from "../iso/skill";
 import { Board, type FxType, type Gem } from "./board";
 import type { IsoMarket, IsoMarketPlayer, Offer } from "../iso/market";
+import portraitYou from "../assets/ui/tycoon_you.png";
+import portraitKrag from "../assets/ui/tycoon_krag.png";
+import portraitTorvin from "../assets/ui/tycoon_torvin.png";
+import portraitVex from "../assets/ui/tycoon_vex.png";
 
 // ── V5: the restored gem art ────────────────────────────────────────────────
 // One sprite per cargo in src/assets/gems/, mapped through the same gem→cargo
@@ -52,6 +56,22 @@ const GEM_ART: Record<Cargo, string> = Object.fromEntries(
     import.meta.glob<string>("../assets/gems/*.png", { eager: true, import: "default" }),
   ).map(([path, url]) => [path.split("/").pop()!.replace(/\.png$/, ""), url]),
 ) as Record<Cargo, string>;
+
+// ── NOIR: the painted mugshots ──────────────────────────────────────────────
+// `tycoon_*.png` are the family portraits (src/assets/ui/, kept when U1 pruned
+// the `<img>` that used to read them). The roster is a wall of dossiers, so the
+// face goes back on the card: seat order is the tie-break for a name we do not
+// recognise, which keeps "You" the player and every rival its own portrait
+// however the scoreboard sorts them.
+
+const PORTRAIT_BY_SEAT = [portraitYou, portraitKrag, portraitTorvin, portraitVex];
+const PORTRAIT_BY_NAME: Record<string, string> = {
+  you: portraitYou, krag: portraitKrag, torvin: portraitTorvin, vex: portraitVex,
+};
+
+/** The dossier face for one player: their named portrait, else their seat's. */
+const portraitFor = (p: UiPlayer, index: number): string =>
+  PORTRAIT_BY_NAME[p.name.trim().toLowerCase()] ?? PORTRAIT_BY_SEAT[index % PORTRAIT_BY_SEAT.length];
 
 // ── tool + state shapes ─────────────────────────────────────────────────────
 /** PP-06: `plant` raises an additional processing plant beside another town. */
@@ -175,7 +195,7 @@ export function createOriginalUi(
 
   // ── top bar ──────────────────────────────────────────────────────────────
   const top = h("header", "topbar");
-  top.appendChild(h("div", "logo", `<span class="logo-mark">⚙️</span> HEXMATCH <em>INDUSTRIES</em>`));
+  top.appendChild(h("div", "logo", `<span class="logo-mark" aria-hidden="true"></span> HEXMATCH <em>INDUSTRIES</em>`));
   const kingdoms = h("div", "kingdoms");
   top.appendChild(kingdoms);
   const right = h("div", "top-right");
@@ -224,13 +244,13 @@ export function createOriginalUi(
   // ── left: BUILD ────────────────────────────────────────────
   const left = h("aside", "aside left iso-panel");
   const bp = h("div", "panel");
-  bp.appendChild(h("div", "panel-title", "🏗️ Build"));
+  bp.appendChild(h("div", "panel-title", "Build"));
   const buildList = h("div", "build-list");
   bp.appendChild(buildList);
   left.appendChild(bp);
 
   const sp = h("div", "panel grow");
-  sp.appendChild(h("div", "panel-title", "🕵️ Black Market"));
+  sp.appendChild(h("div", "panel-title", "Black Market"));
   // PP-08: the standing currency rule, stated right where Gold is spent.
   sp.appendChild(h("div", "pane-note gold-rule", `🪙 ${GOLD_RULE} Construction and trade never touch it.`));
   const sabList = h("div", "sab-list");
@@ -247,7 +267,7 @@ export function createOriginalUi(
   const qp = h("div", "panel");
   qp.id = "iso-quarry";
   const qh = h("div", "quarry-head");
-  qh.appendChild(h("div", "panel-title", "💎 Your Processing Plant"));
+  qh.appendChild(h("div", "panel-title", "Your Processing Plant"));
   const quarryStatus = h("div", "quarry-status");
   qh.appendChild(quarryStatus);
   const comboBank = h("div", "combo-bank");
@@ -939,7 +959,7 @@ export function createOriginalUi(
       // native title keeps this one line of tooltip code.
       if (p.vpTip) row.title = p.vpTip;
       row.innerHTML = `
-        <div class="king-av">${p.name[0]}</div>
+        <div class="king-av has-portrait" style="background-image:url(${portraitFor(p, players.indexOf(p))})">${p.name[0]}</div>
         <div class="king-mid">
           <div class="king-name">${p.name}${p.human ? " <span class='you'>YOU</span>" : ""}</div>
           <div class="king-bar"><i style="width:${Math.min(100, (p.vp / VICTORY.target) * 100)}%;background:${p.colour}"></i></div>
@@ -1065,15 +1085,15 @@ export function createOriginalUi(
     modalRoot.innerHTML = `
       <div class="modal-back"></div>
       <div class="modal box">
-        <h2>⚙️ HEXMATCH INDUSTRIES</h2>
+        <h2>Hexmatch Industries</h2>
         <p class="sub">Two worlds, one empire: <b>resource node → Depot → transport network → Factory → processing → resources available for construction</b>. First to <b>${VICTORY.target}★ Victory Points</b> wins.</p>
         <div class="help-cols">
-          <div class="help-col"><h3>🏙️ The Territory</h3><p>Place <b>Depots</b> beside resource nodes to collect their output, then build <b>Dirt Roads</b> &amp; <b>Roads</b> (paved) to carry it to your Factory. The connection sets the multiplier — ×1.0 on gravel, ×1.6 anywhere a paved tile touches the line — and nothing else.</p>
-<p><h3>🏆 How you score (VP-01)</h3><p><b>Dirt Roads score nothing.</b> Points come from <b>upgrading</b>: pave a Dirt Road tile into a Road for <b>+${VICTORY.upgrade}★</b> (it costs only ${costCompact(UPGRADE_COST)}, since the gravel is already paid for), and raise a <b>processing plant</b> beside another town for <b>+${VICTORY.plant}★</b>. Four paves to the point; <b>${VICTORY.target}★</b> wins. A Road laid on virgin ground scores nothing — the point is for improving what you built. Tear up a paved tile or demolish a plant and the point goes back.</p><p>Your <b>first Depot is free</b>; every Depot after it costs <b>${costCompact(DEPOT_COST)}</b>, so reaching new industries (or manufacturing in the Processing Plant) is what buys expansion. A Depot you cannot pay for is refused and consumes nothing.</p><p><b>Lorries run 2× faster on paved Roads</b> — paving a lane is both the points and the income (AI-02).</p><p>Pan with the <b>middle mouse button</b> (wheel zooms, touch drags pan). The left button only places or selects — dragging it never pans.</p></div>
-          <div class="help-col"><h3>💎 The Processing Plant</h3><p>Where your Factory turns delivered cargo into resources available for construction. Match tokens to process: a colour only pays when your network reaches its industry. Match 4 doubles, match 5 makes a <b>bomb</b>. <b>Gold</b> 🪙 is its own colour — its gems drop only while a depot sits beside a gold mine (and pay once it's connected).</p></div>
-          <div class="help-col"><h3>🪙 Gold, Trade & Defence</h3><p>Earn <b>gold</b> from gold-mine access or combos. <b>Gold is reserved for Black Market sabotage</b> — it never buys construction, cannot substitute for missing materials, and is refused by every market exchange. Security Forces and Repair Crew are hired with ordinary materials. A <b>Protest</b> ✊ shuts any public road for 2:00 — every truck stops, including your own.</p></div>
+          <div class="help-col"><h3>The Territory</h3><p>Place <b>Depots</b> beside resource nodes to collect their output, then build <b>Dirt Roads</b> &amp; <b>Roads</b> (paved) to carry it to your Factory. The connection sets the multiplier — ×1.0 on gravel, ×1.6 anywhere a paved tile touches the line — and nothing else.</p>
+<p><h3>How you score (VP-01)</h3><p><b>Dirt Roads score nothing.</b> Points come from <b>upgrading</b>: pave a Dirt Road tile into a Road for <b>+${VICTORY.upgrade}★</b> (it costs only ${costCompact(UPGRADE_COST)}, since the gravel is already paid for), and raise a <b>processing plant</b> beside another town for <b>+${VICTORY.plant}★</b>. Four paves to the point; <b>${VICTORY.target}★</b> wins. A Road laid on virgin ground scores nothing — the point is for improving what you built. Tear up a paved tile or demolish a plant and the point goes back.</p><p>Your <b>first Depot is free</b>; every Depot after it costs <b>${costCompact(DEPOT_COST)}</b>, so reaching new industries (or manufacturing in the Processing Plant) is what buys expansion. A Depot you cannot pay for is refused and consumes nothing.</p><p><b>Lorries run 2× faster on paved Roads</b> — paving a lane is both the points and the income (AI-02).</p><p>Pan with the <b>middle mouse button</b> (wheel zooms, touch drags pan). The left button only places or selects — dragging it never pans.</p></div>
+          <div class="help-col"><h3>The Processing Plant</h3><p>Where your Factory turns delivered cargo into resources available for construction. Match tokens to process: a colour only pays when your network reaches its industry. Match 4 doubles, match 5 makes a <b>bomb</b>. <b>Gold</b> 🪙 is its own colour — its gems drop only while a depot sits beside a gold mine (and pay once it's connected).</p></div>
+          <div class="help-col"><h3>Gold, Trade & Defence</h3><p>Earn <b>gold</b> from gold-mine access or combos. <b>Gold is reserved for Black Market sabotage</b> — it never buys construction, cannot substitute for missing materials, and is refused by every market exchange. Security Forces and Repair Crew are hired with ordinary materials. A <b>Protest</b> ✊ shuts any public road for 2:00 — every truck stops, including your own.</p></div>
         </div>
-        <button class="big-btn" id="startBtn">Start Production ⚙️</button>
+        <button class="big-btn" id="startBtn">Start Production</button>
       </div>`;
     (modalRoot.querySelector("#startBtn") as HTMLElement).onclick = () => modalRoot.classList.add("hidden");
     (modalRoot.querySelector(".modal-back") as HTMLElement).onclick = () => modalRoot.classList.add("hidden");

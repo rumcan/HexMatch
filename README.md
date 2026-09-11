@@ -22,6 +22,7 @@ npx playwright install chromium   # one-time, for the e2e suites
 npm run test:e2e     # real-browser e2e (builds + previews first)
 node tools/parse-pnml.mjs   # rebuild tools/opengfx-sprites.json from the .pnml declarations
 npm run slice-atlas  # rebuild assets/iso-atlas from tools/iso-atlas.cells.json
+npm run noir-art     # rebuild the HUD theme art from assets/ui-src/noir
 ```
 
 ## Tooling
@@ -42,6 +43,13 @@ debug console on `window.__iso` — `dumpTile`, `dumpAt`, `dumpBuilding`,
 facts and warnings; `__iso.renderLog(true)` (or the URL flag `?render-log=1`)
 turns on the per-blit `[render]` console trace. See
 [`docs/iso-debug-console.md`](docs/iso-debug-console.md).
+The HUD chrome (panels, buttons, board tokens, dialogs, backgrounds) is one
+theme: *The Foundry Syndicate* — carved iron and aged brass under a single
+amber lamp. The painted masters live in `assets/ui-src/noir/` and
+`npm run noir-art` derives everything the game loads; the type (Cinzel, Barlow
+Condensed, Special Elite) is vendored in `src/assets/fonts/` so it renders the
+same offline. Design notes and the layout rule the theme must not break:
+[`docs/UI-NOIR-THEME.md`](docs/UI-NOIR-THEME.md).
 
 ## Game entry
 
