@@ -1,0 +1,17 @@
+{
+  "note": "Per-building PNG layers: assets/buildings/<name>@{0.5x,1x,2x}.png. Rect is the WHOLE image (x=y=0); anchor is the footprint-centre placement point (see tools/make-building-pngs.mjs).",
+  "sprites": {
+    "oil_rig": {
+      "footprint": [
+        3,
+        3
+      ],
+      "anchor": [
+        96,
+        144
+      ],
+      "w": 192,
+      "h": 192
+    }
+  }
+}

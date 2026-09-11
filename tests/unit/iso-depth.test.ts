@@ -33,6 +33,26 @@ describe("K4 anchor contract", () => {
       expect(oy + def.anchor[1]).toBe(sy + TILE_H);
     }
   });
+
+  it("building layers (def.center): the anchor lands on the footprint bbox CENTRE", () => {
+    // Per-building PNGs place their anchor pixel on the centre of the
+    // footprint's bounding box — verified against the exact tile-union bbox
+    // for square and non-square footprints alike.
+    const def = { ...atlas.get("oil_rig_t29")!, center: true };
+    for (const [fw, fh, tx, ty] of [[3, 3, 5, 5], [1, 1, 9, 7], [4, 4, 2, 3], [3, 2, 4, 6], [2, 1, 8, 8]] as const) {
+      const d = { ...def, footprint: [fw, fh] };
+      const [ox, oy] = drawOrigin(d, tx, ty);
+      // bbox of the tile union
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+      for (let j = 0; j < fh; j++) for (let i = 0; i < fw; i++) {
+        const [x, y] = tileToScreen(tx + i, ty + j);
+        x0 = Math.min(x0, x - HW); x1 = Math.max(x1, x + HW);
+        y0 = Math.min(y0, y);       y1 = Math.max(y1, y + TILE_H);
+      }
+      expect(ox + def.anchor[0]).toBe((x0 + x1) / 2);
+      expect(oy + def.anchor[1]).toBe((y0 + y1) / 2);
+    }
+  });
 });
 
 describe("E4 Tier 1 — max-corner depth key", () => {
