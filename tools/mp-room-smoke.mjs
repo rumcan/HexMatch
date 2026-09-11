@@ -19,7 +19,15 @@
  * exists in CI. The routing LOGIC is pinned by `tests/unit/net-room.test.ts`;
  * this pins the WIRING (room file loads, protocol matches, gateway relays).
  */
+import { readFileSync } from "node:fs";
 import WebSocket from "ws";
+
+// The app's wire version, read from the source of truth rather than pinned
+// here: the smoke exists to catch a ROOM that speaks something else.
+const PROTOCOL_VERSION = Number(
+  readFileSync(new URL("../src/net/protocol.ts", import.meta.url), "utf8")
+    .match(/export const PROTOCOL_VERSION\s*=\s*(\d+)/)[1],
+);
 
 const PORT = Number(process.env.MP_SMOKE_PORT ?? 9001);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -151,7 +159,7 @@ async function main() {
   assert(w1.via === "room:sendTo", "solo welcome arrives targeted (sendTo)");
   assert(Number.isInteger(w1.seed) && w1.seed > 0, `welcome carries a minted seed (${w1.seed})`);
   assert(w1.hostId === "smoke-host", "first joiner is host");
-  assert(w1.protocolVersion === 1, "welcome carries PROTOCOL_VERSION");
+  assert(w1.protocolVersion === PROTOCOL_VERSION, `welcome carries PROTOCOL_VERSION (${PROTOCOL_VERSION})`);
   assert(
     Array.isArray(w1.roster) && w1.roster.length === 1 && w1.roster[0].slot === 0,
     "solo host roster is [slot 0]",
@@ -201,6 +209,32 @@ async function main() {
   await Promise.all([host.quietGame(500, "forged snapshot"), guest.quietGame(500, "forged snapshot")]);
   guest.send({ type: "message", msgType: "delta", data: { t: 1, seq: 999 } });
   await Promise.all([host.quietGame(500, "forged delta"), guest.quietGame(500, "forged delta")]);
+
+  // ── 6. the chunked join snapshot rides the same rails (MP-05) ──────
+  // A whole state is ~110 KiB against the gateway's 16 KiB frame, so the host
+  // sends it as N `snapshot-chunk` frames. The relay must forward each one
+  // unchanged, and a guest's forged chunk must reach nobody — the same
+  // authority rule as `snapshot`/`delta`, one message type later.
+  host.send({
+    type: "message",
+    msgType: "snapshot-chunk",
+    data: { id: 7, seq: 0, i: 0, n: 3, data: "AAAA" },
+  });
+  const chunk = await guest.nextGame("snapshot-chunk");
+  assert(chunk.via === "room:broadcast", "snapshot-chunk is broadcast");
+  assert(
+    chunk.id === 7 && chunk.seq === 0 && chunk.i === 0 && chunk.n === 3 && chunk.data === "AAAA",
+    "snapshot-chunk payload survives the relay",
+  );
+  guest.send({
+    type: "message",
+    msgType: "snapshot-chunk",
+    data: { id: 9, seq: 0, i: 0, n: 1, data: "Zm9yZ2Vk" },
+  });
+  await Promise.all([
+    host.quietGame(500, "forged snapshot-chunk"),
+    guest.quietGame(500, "forged snapshot-chunk"),
+  ]);
 
   host.close();
   guest.close();

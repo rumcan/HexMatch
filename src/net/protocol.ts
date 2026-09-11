@@ -22,8 +22,14 @@ import type { Snapshot } from "../iso/snapshot";
 /**
  * Protocol version. Bump WITH `SNAPSHOT_VERSION`: a new snapshot shape is a
  * new protocol, and mixed-version rooms must refuse, never desync.
+ *
+ * v2 (MP-05): the wire gained `snapshot-chunk`. A full state can be ~110 KiB
+ * and the frame is capped at 16 KiB (§1.3), so join/resync state crosses as N
+ * frames (see `chunkSnapshot`). A v1 peer cannot reassemble them and would sit
+ * forever on an empty map, so the welcome must refuse it instead — the version
+ * check turns "waits for state that can never arrive" into the reload message.
  */
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 /**
  * Realtime WS frame cap in bytes. Mirrors the SDK's `MAX_BROADCAST_BYTES`
@@ -53,10 +59,21 @@ export interface SnapshotMsg {
 }
 
 /**
+ * MP-05: the delta's player entry. The snapshot carries the §4 shape (id, vp,
+ * purse); a guest ALSO needs the per-seat opening allowances it previews
+ * prices from (`freeTrack` / `freeDepots`), and the delta is where MP-05 may
+ * add them — additively, so a v1 reader that ignores them still plays.
+ */
+export type DeltaPlayer = Snapshot["players"][number] & {
+  freeTrack?: number;
+  freeDepots?: number;
+};
+
+/**
  * host → server → all guests. Steady state.
- * `tiles` carries changed tile indices only — the delta format lands in
- * MP-04 (§5); `harvesters` / `factories` / `players` are small lists and go
- * whole. Only the four track layers need diffing.
+ * `tiles` carries changed tile indices only (§5); `harvesters` / `factories` /
+ * `players` are small lists and go whole. Only the four track layers need
+ * diffing.
  */
 export interface DeltaMsg {
   type: "delta";
@@ -65,10 +82,55 @@ export interface DeltaMsg {
   tiles?: { i: number; dirt: number; road: number; owner: number; upgraded: number }[];
   harvesters?: Snapshot["harvesters"];
   factories?: Snapshot["factories"];
-  players?: Snapshot["players"];
+  players?: DeltaPlayer[];
   setupPhase?: boolean;
   won?: boolean;
+  /**
+   * MP-05: a one-shot line for the guest ("your action was refused — 2 more
+   * Ore"). Rides the next delta, which the relay already forwards; there is no
+   * guest→host acknowledgement in §4, and a silent refusal reads as a bug.
+   */
+  notice?: string;
 }
+
+/**
+ * MP-05 — a slice of a full `SnapshotMsg` (§1.3 the frame cap, §5 the
+ * `snapshot` fallback).
+ *
+ * A whole snapshot is ~110 KiB of base64 against a 16 KiB frame, and the
+ * gateway does not fragment: an oversized frame is dropped (or closes the
+ * socket). "Send a full snapshot on join/resync" therefore only works as a
+ * CHUNKED transfer:
+ *
+ *   host: JSON.stringify(snap) → split every `SNAPSHOT_CHUNK_CHARS` → N frames
+ *   guest: concat by index → JSON.parse → `validateSnapshot` → apply
+ *
+ * `seq` is the delta sequence the snapshot REPRESENTS (the last delta the host
+ * published before it). The guest resumes from there, so a snapshot and the
+ * deltas around it compose: apply snapshot(seq) then deltas seq+1, seq+2…
+ * Frames of one transfer share `id`, and a newer `id` supersedes one in
+ * flight, so a resync that overtakes a slow join can never mix halves.
+ */
+export interface SnapshotChunkMsg {
+  type: "snapshot-chunk";
+  /** Transfer id — monotonic per host, newest wins. */
+  id: number;
+  /** Delta sequence this snapshot represents; the guest resumes at `seq`. */
+  seq: number;
+  /** 0-based index of this frame and the transfer's total frame count. */
+  i: number;
+  n: number;
+  /** A slice of `JSON.stringify(snap)`. Reassembly is a plain concat. */
+  data: string;
+}
+
+/** Characters of snapshot JSON per chunk frame. ~8.1 KiB on the wire: half the
+ *  16 KiB cap, which leaves room for the envelope and for a stricter gateway. */
+export const SNAPSHOT_CHUNK_CHARS = 8000;
+
+/** Frames a transfer may run to before it is refused as malformed (~1 MiB).
+ *  A 110 KiB snapshot is ~15; the bound only stops a hostile/broken flood. */
+export const MAX_SNAPSHOT_CHUNKS = 128;
 
 /** guest → server → host only. Guests never mutate locally. */
 export interface IntentMsg {
@@ -91,6 +153,7 @@ export interface RejectMsg {
 export type HexProtocol =
   | WelcomeMsg
   | SnapshotMsg
+  | SnapshotChunkMsg
   | DeltaMsg
   | IntentMsg
   | ResyncMsg
@@ -100,6 +163,7 @@ export type HexProtocol =
 export const HEX_MESSAGE_TYPES = [
   "welcome",
   "snapshot",
+  "snapshot-chunk",
   "delta",
   "intent",
   "resync",
@@ -180,9 +244,139 @@ export function isHexProtocol(msg: unknown): msg is HexProtocol {
   return (
     t === "welcome" ||
     t === "snapshot" ||
+    t === "snapshot-chunk" ||
     t === "delta" ||
     t === "intent" ||
     t === "resync" ||
     t === "reject"
   );
+}
+
+// ── MP-05: chunked full-state transfer ────────────────────────────────────
+
+/**
+ * Split one snapshot into frames that each fit the guaranteed 16 KiB cap.
+ *
+ * `JSON.stringify` output is sliced by UTF-16 code unit; the guest rejoins the
+ * exact same string before parsing, so a slice may split anything (an escape,
+ * a surrogate pair) without corrupting the result — only the concat matters.
+ * The size bound is therefore exact: every frame carries at most
+ * `SNAPSHOT_CHUNK_CHARS` data characters plus ~60 bytes of envelope.
+ */
+export function chunkSnapshot(
+  snap: Snapshot,
+  seq: number,
+  id: number,
+  chunkChars: number = SNAPSHOT_CHUNK_CHARS,
+): SnapshotChunkMsg[] {
+  const json = JSON.stringify(snap);
+  const size = Math.max(1, Math.floor(chunkChars));
+  const n = Math.max(1, Math.ceil(json.length / size));
+  const out: SnapshotChunkMsg[] = [];
+  for (let i = 0; i < n; i++) {
+    out.push({
+      type: "snapshot-chunk",
+      id: Math.floor(id) >>> 0,
+      seq: Math.floor(seq),
+      i,
+      n,
+      data: json.slice(i * size, (i + 1) * size),
+    });
+  }
+  return out;
+}
+
+/** A reassembled full state plus the delta sequence it represents. */
+export interface AssembledSnapshot {
+  snap: Snapshot;
+  /**
+   * The delta sequence the snapshot represents: the guest resumes at `seq`, so
+   * snapshot(seq) then deltas seq+1, seq+2… compose into one continuous state.
+   */
+  seq: number;
+}
+
+/**
+ * Guest-side reassembly of a chunked snapshot.
+ *
+ * Deliberately strict and self-healing: shape-invalid frames are ignored, a new
+ * transfer id abandons whatever was half-received (a resync that overtakes a
+ * slow join), a duplicate index does not double-append, and a transfer that
+ * never completes simply never yields — `pending` tells the caller to keep
+ * buffering deltas instead of applying them to a half-applied world. The
+ * parse is the only throwing step, and it is caught: a corrupt transfer yields
+ * `null` and resets, never a partial snapshot.
+ */
+export class SnapshotAssembler {
+  private id = -1;
+  private seq = -1;
+  private total = 0;
+  private parts: string[] = [];
+  private filled = 0;
+
+  /** True while a transfer is in flight (some frames seen, not all). */
+  get pending(): boolean {
+    return this.total > 0 && this.filled < this.total;
+  }
+
+  /** Frames still missing; 0 when idle or complete. */
+  get missing(): number {
+    return this.total > 0 ? this.total - this.filled : 0;
+  }
+
+  reset(): void {
+    this.id = -1;
+    this.seq = -1;
+    this.total = 0;
+    this.parts = [];
+    this.filled = 0;
+  }
+
+  /**
+   * Feed one frame; returns the reassembled state on the frame that completes
+   * the transfer, `null` otherwise.
+   */
+  accept(msg: unknown): AssembledSnapshot | null {
+    if (!msg || typeof msg !== "object") return null;
+    const m = msg as Partial<SnapshotChunkMsg>;
+    if (m.type !== "snapshot-chunk") return null;
+    const { id, seq, i, n, data } = m;
+    if (
+      typeof id !== "number" || !Number.isInteger(id) ||
+      typeof seq !== "number" || !Number.isInteger(seq) ||
+      typeof i !== "number" || !Number.isInteger(i) ||
+      typeof n !== "number" || !Number.isInteger(n) ||
+      typeof data !== "string"
+    ) {
+      return null;
+    }
+    if (n <= 0 || n > MAX_SNAPSHOT_CHUNKS || i < 0 || i >= n) return null;
+    if (data.length > SNAPSHOT_CHUNK_CHARS) return null;
+
+    if (id !== this.id || n !== this.total) {
+      // A new transfer (or a re-cut of this one) — the old partial is dead.
+      this.id = id;
+      this.seq = seq;
+      this.total = n;
+      this.parts = new Array<string>(n).fill("");
+      this.filled = 0;
+    }
+    if (this.parts[i] === "") {
+      this.parts[i] = data;
+      this.filled++;
+    }
+    if (this.filled < this.total) return null;
+
+    const json = this.parts.join("");
+    const seqAtStart = this.seq;
+    this.reset();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(json);
+    } catch {
+      return null;                                   // corrupt transfer: resync heals it
+    }
+    if (!parsed || typeof parsed !== "object") return null;
+    return { snap: parsed as Snapshot, seq: seqAtStart };
+  }
 }
