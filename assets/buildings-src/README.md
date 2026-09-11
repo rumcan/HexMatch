@@ -21,6 +21,16 @@ For a building whose footprint is **w×h tiles** (the game's footprint, from
 - The **anchor** is the footprint's centre: the game places that exact pixel
   on the footprint centre. Draw the building's ground line around it.
 - Above the anchor you have the **max rise** before the canvas edge clips.
+- **Overhang extension (ART-1950S):** the original TTD art overhangs its
+  footprint — many town sprites and half the depots are wider or taller at 2×
+  than the base canvas (e.g. `town_flats_arctic_2x1_2` is 192×226 on a 128²
+  canvas). A source may therefore use a LARGER canvas: the ground diamond
+  stays pinned to the canvas **bottom** (bottom vertex at `(W/2, H)`, anchor
+  at `(W/2, H − (w+h)×16)`, all at 2×) and the extra room is headroom above
+  and symmetric width either side. Both `W` and `H` must be ≥ `S`; the base
+  canvas is the `W = H = S` special case. The engine is agnostic (it places
+  whatever `w`/`h`/`anchor` the manifest carries) and the footprints never
+  change.
 - Name the file `<sprite-name>@2x.png` (the sprite name = the game key:
   `farm`, `forest`, `ore_mine`, `quarry`, `oil_rig`, `gold_mine`, `factory`,
   `depot_*`, `town_center`, `town_house_a`, …).
