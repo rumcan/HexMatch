@@ -37,20 +37,13 @@ node -e "const s=require('./assets/iso-atlas/manifest.json').sprites.<name>; \
 
 ### PLACEHOLDERS (sheet-reference art — swap for 1950s art, ART-05…07)
 
-23 of 43 pool variants remain on sheet-reference placeholders:
+16 of 43 pool variants remain on sheet-reference placeholders:
 
 ### Residential homes & cottages (ART-05)
-- `town_small_house_1x1_1`
-- `town_small_house_arctic_1x1_2`
-- `town_house_arctic_1x1_5`
-- `town_cottage_old_small`
-- `town_cottage_old_small_2`
-- `town_cottage_old_small_a`
-- `town_cottage_tall`
-- `town_cottage_arctic_1x1_1`
 - `town_townhouse_3`
 - `town_townhouse_garden_2`
 - `town_townhouse_gardens_2`
+- `town_cottage_arctic_1x1_1`
 
 ### Urban apartments & flats (ART-07)
 - `town_flats_townhouse_tall`
@@ -66,12 +59,15 @@ node -e "const s=require('./assets/iso-atlas/manifest.json').sprites.<name>; \
 - `town_townhouse_garden_3`
 - `town_offices_tall`
 
-Redo candidates (authored once, aspect drifted from the reference — re-run
-with a stricter prompt):
+Retry first next batch (generation attempts failed silhouette validation —
+currently restored to placeholder):
 
-- `town_bank` (came out ~24% wider than its reference)
-- `town_offices_tall` (came out squat — aspect 1.72 vs reference 0.62;
-  restored to placeholder, retry pending)
+- `town_offices_tall` — two attempts missed: too wide (aspect 1.72), then too
+  pencil-slim (0.33) vs the reference's 0.62. Next prompt: match the reference
+  proportions exactly — moderately tall tower, not pencil-thin, no magenta
+  bleed at edges.
+- `town_cottage_arctic_1x1_1` — came out too tall/narrow (1.17) vs the
+  reference's 1.94. Next prompt: low, wide, ground-hugging arctic cottage.
 
 ### Not yet started (bonus ticket, existing art still in use)
 - ART-08 match-3 gems `src/assets/gems/{grain,wood,ore,stone,oil,gold}.png`
