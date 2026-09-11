@@ -38,13 +38,14 @@ import {
 } from "./ground";
 
 /**
- * Ground texture scale relative to world pixels: 2 means one texture pixel
- * covers two world pixels, so a painted clump reads at tile scale. Also
- * quarters the apparent tiling frequency and kills zoom-step shimmer.
+ * Ground texture scale relative to world pixels: one texture pixel covers
+ * this many world pixels. Tuned to 10% of the W-series default (was 2 /
+ * 1.6) — the painted brush clumps are fine grain now, roughly one texture
+ * repeat per 1.6 tiles, instead of tile-sized. Drop to 0.1 / 0.08 for 5%.
  */
-const LAND_SCALE = 2;
-/** The ocean reads a little denser than the land. */
-const SEA_SCALE = 1.6;
+const LAND_SCALE = 0.2;
+/** The ocean reads a little denser than the land (same 10% tune). */
+const SEA_SCALE = 0.16;
 
 export const CHUNK = 8;
 export const chunksX = Math.ceil(MAP_W / CHUNK);
@@ -303,14 +304,17 @@ export class IsoRenderer {
     this.cam = cam;
     this.world = world;
     this.pad = cullPad(atlas);
-    const g = (el: HTMLCanvasElement) => {
+    const g = (el: HTMLCanvasElement, smooth: boolean) => {
       const ctx = el.getContext("2d") as Ctx2D;
-      ctx.imageSmoothingEnabled = false;
+      ctx.imageSmoothingEnabled = smooth;
       return ctx;
     };
-    this.ctxT = g(canvases.terrain);
-    this.ctxS = g(canvases.structures);
-    this.ctxO = g(canvases.overlay);
+    // The terrain context samples the ground patterns downscaled
+    // (scale < 1× world), so it smooths; structures/overlay blit 1:1
+    // pixel art and stay crisp.
+    this.ctxT = g(canvases.terrain, true);
+    this.ctxS = g(canvases.structures, false);
+    this.ctxO = g(canvases.overlay, false);
   }
 
   // ── invalidation ────────────────────────────────────────────────────────
@@ -386,7 +390,7 @@ export class IsoRenderer {
       ? new OffscreenCanvas(W, H)
       : Object.assign(document.createElement("canvas"), { width: W, height: H });
     const ctx = (surf as HTMLCanvasElement).getContext("2d") as Ctx2D;
-    ctx.imageSmoothingEnabled = false;
+    ctx.imageSmoothingEnabled = true;   // the pattern fill downsamples
 
     const [ox, oy] = chunkWorldOrigin(cx, cy);
     if (this.ground) {
@@ -394,9 +398,9 @@ export class IsoRenderer {
       // position of world (0,0) — offset by the chunk origin mod the tile
       // period, scaled by the zoom. Per-chunk, pre-fill.
       //
-      // The textures paint at LAND_SCALE × world so one brush clump spans
-      // roughly a tile — the same reading the OpenGFX tile art has — instead
-      // of dissolving into confetti at map view. Water runs slightly denser.
+      // The textures paint at LAND_SCALE × world — fine grain (one repeat ≈
+      // 1.6 tiles wide); the chunk context samples them downscaled, so it
+      // must smooth or the nearest-neighbour subsample shimmers on pans.
       const P = GROUND_TEX_SIZE * z * LAND_SCALE;
       const phase = (v: number) => ((-v * z * LAND_SCALE) % P + P) % P;
       const setPat = (p: CanvasPattern, k: number) => {
