@@ -17,6 +17,13 @@ export interface SpriteDef {
   frames?: number;
   frameMs?: number;
   slices?: { x: number; y: number; w: number; h: number }[];
+  /**
+   * Building-layer placement: the anchor lands on the footprint's CENTRE
+   * instead of its south-corner reference (see drawOrigin in depth.ts).
+   * Set for sprites that blit from per-building PNGs (see buildingImages) —
+   * the art is placed free on the footprint and does not snap to the grid.
+   */
+  center?: boolean;
 }
 
 export interface Manifest {
@@ -58,8 +65,22 @@ export class Atlas {
     return "buildings";
   }
 
-  /** Image to blit `name` from at zoom `z` (layer atlas when available). */
+  /**
+   * Building layers: per-building PNGs (assets/buildings/, authored by
+   * tools/make-building-pngs.mjs) — ONE standalone transparent PNG per
+   * sprite, one per zoom, placed free on the footprint's centre. A sprite
+   * with a building image blits from its OWN whole image (its def rect is
+   * 0,0,w,h at 1×), before the shared layer sheets are even consulted.
+   */
+  readonly buildingImages = new Map<string, Map<number, AtlasImage>>();
+
+  /** True when the sprite has per-building PNG layers installed. */
+  hasBuilding(name: string): boolean { return this.buildingImages.has(name); }
+
+  /** Image to blit `name` from at zoom `z` (per-building PNG when available). */
   imageForSprite(name: string, z: number): AtlasImage | undefined {
+    const building = this.buildingImages.get(name)?.get(z);
+    if (building) return building;
     const layer = this.layerOfSprite(name);
     if (layer) {
       const img = this.layerImages.get(layer)?.get(z);
@@ -170,6 +191,64 @@ export async function loadAtlas(baseUrl = "/assets/iso-atlas/"): Promise<Atlas> 
   const atlas = new Atlas(manifest, images);
   buildMasks(atlas);
   return atlas;
+}
+
+/** Alpha masks for per-building sprites, rasterised from their own 1× PNG. */
+export function buildBuildingMasks(atlas: Atlas): void {
+  if (typeof document === "undefined") return;
+  for (const [name, byZoom] of atlas.buildingImages) {
+    const img = byZoom.get(1);
+    if (!img) continue;
+    const canvas = document.createElement("canvas");
+    canvas.width = img.width; canvas.height = img.height;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) continue;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img as unknown as CanvasImageSource, 0, 0);
+    const d = ctx.getImageData(0, 0, img.width, img.height);
+    atlas.setMask(name, maskFromRGBA(d.data, img.width, img.height));
+  }
+}
+
+/**
+ * Load the per-building PNG layers (assets/buildings/). For every sprite in
+ * the buildings manifest the monolith def is overridden: the whole per-zoom
+ * image IS the sprite (rect 0,0,w,h at 1×), the anchor is the authoring
+ * convention's footprint-centre anchor, and placement switches to centre
+ * anchoring (def.center). Returns the number of sprites installed — 0 when
+ * the directory/manifest is absent, in which case the shared buildings sheet
+ * keeps drawing everything. Never throws: building art is an upgrade, the
+ * sheet path remains fully playable.
+ */
+export async function loadBuildingLayers(atlas: Atlas, baseUrl = "/assets/buildings/"): Promise<number> {
+  let res: Response;
+  try { res = await fetch(`${baseUrl}manifest.json`); } catch { return 0; }
+  if (!res.ok) return 0;
+  const m: {
+    sprites: Record<string, { footprint: [number, number]; anchor: [number, number]; w: number; h: number }>;
+  } = await res.json().catch(() => null);
+  const names = m?.sprites ? Object.entries(m.sprites) : [];
+  await Promise.all(names.map(async ([name, def]) => {
+    const s = atlas.manifest.sprites[name];
+    if (!s) return;                                  // unknown sprite: nothing to override
+    const load = (file: string) => fetch(`${baseUrl}${file}`).then((r) => {
+      if (!r.ok) throw new Error(`${file} → HTTP ${r.status}`);
+      return r.blob();
+    }).then((b) => createImageBitmap(b));
+    try {
+      const [i05, i1, i2] = await Promise.all([
+        load(`${name}@0.5x.png`), load(`${name}@1x.png`), load(`${name}@2x.png`),
+      ]);
+      atlas.buildingImages.set(name, new Map([[0.5, i05], [1, i1], [2, i2]]));
+      s.x = 0; s.y = 0; s.w = def.w; s.h = def.h;
+      s.anchor = def.anchor;
+      s.center = true;
+    } catch (err) {
+      console.warn(`[building-layers] ${name}: fell back to the shared sheet`, err);
+    }
+  }));
+  buildBuildingMasks(atlas);
+  return atlas.buildingImages.size;
 }
 
 /** Rasterise every sprite's frame 0 from the 1× image into an alpha mask. */

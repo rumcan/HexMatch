@@ -16,7 +16,7 @@ import grassTex from "../../assets/ground/grass.png";
 import sandTex from "../../assets/ground/sand.png";
 import waterTex from "../../assets/ground/water.png";
 
-import { Atlas, buildMasks, type Manifest, type AtlasImage } from "./atlas";
+import { Atlas, buildMasks, loadBuildingLayers, type Manifest, type AtlasImage } from "./atlas";
 import { loadGroundTextures } from "./ground";
 import {
   createCamera, centerOnMap, resizeCamera, zoomStepAt, createGesture,
@@ -51,6 +51,9 @@ export async function startDemo(root: HTMLElement) {
   // paints the pattern-painted ground.
   atlas.layerImages.set("roads", new Map([[1, r1x]]));
   atlas.layerImages.set("buildings", new Map([[1, b1x]]));
+  // Per-building PNG layers (assets/buildings/) override the sheet for the
+  // sprites they cover — awaited so the demo's first frame already shows them.
+  await loadBuildingLayers(atlas, `${import.meta.env.BASE_URL}assets/buildings/`);
 
   const mk = (z: number) => {
     const c = document.createElement("canvas");

@@ -36,7 +36,7 @@ import grassTex from "../../assets/ground/grass.png";
 import sandTex from "../../assets/ground/sand.png";
 import waterTex from "../../assets/ground/water.png";
 
-import { Atlas, buildMasks, type Manifest, type AtlasImage } from "./atlas";
+import { Atlas, buildMasks, loadBuildingLayers, type Manifest, type AtlasImage } from "./atlas";
 import { loadGroundTextures } from "./ground";
 import {
   createCamera, centerOnTile, resizeCamera, zoomStepAt, tileToScreenAt,
@@ -2443,6 +2443,17 @@ export function startIsoGame(root: HTMLElement) {
       // Textures are an upgrade, never a gate: the flat-colour ground and the
       // monolithic atlas remain fully playable.
       console.warn("[w-series] layer art failed to load:", err);
+    });
+
+    // Building layers (assets/buildings/): per-building PNGs that override
+    // the shared sheet for the sprites they cover, placed free on their
+    // footprints' centres. Parallel, non-gating — a missing manifest or a
+    // failed sprite just keeps the sheet art for that building.
+    void loadBuildingLayers(atlas, `${import.meta.env.BASE_URL}assets/buildings/`).then((n) => {
+      if (disposed || !n) return;
+      renderer?.invalidateAll();
+    }).catch((err) => {
+      console.warn("[building-layers] failed to load:", err);
     });
 
     atlasRef = atlas;
