@@ -449,12 +449,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       renderer?.setCamera(cam);
     },
     onSwap: (r1, c1, r2, c2) => {
-      // MP-05: the guest's plant board is a spectator view — the seat's real
-      // board lives on the host (host-autoplayed while board relay is pending).
-      // Letting a guest match locally would pay cargo the host never sees, so
-      // the swap is refused with the reason.
+      // MP-05: guests never mutate their local board. Route the action to the
+      // host, where the guest seat's board is authoritative, just like map
+      // construction intents. The board result itself is still a follow-up
+      // sync concern; this keeps the input path server-authoritative.
       if (isGuest()) {
-        toast("Your Processing Plant is simulated by the host in multiplayer.", "info");
+        net?.sendIntent("build", { do: "swap", r1, c1, r2, c2 });
         return;
       }
       void quarry.board.trySwap(r1, c1, r2, c2, performance.now());
@@ -1969,6 +1969,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           if (pv.tiles.length === 0) toast("That track would not connect to your network.", "bad");
           else commitTrackDrag(p, pv, kind);
         }
+      } else if (what === "swap") {
+        const r1 = int(payload.r1), c1 = int(payload.c1);
+        const r2 = int(payload.r2), c2 = int(payload.c2);
+        if (r1 !== null && c1 !== null && r2 !== null && c2 !== null) {
+          void rivalQuarry.board.trySwap(r1, c1, r2, c2, performance.now());
+        }
       } else {
         const tx = int(payload.tx), ty = int(payload.ty);
         if (tx !== null && ty !== null) {
@@ -3401,6 +3407,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   return () => {
     disposed = true;
+    net?.dispose();
     window.clearInterval(saveIv);
     if (onPageHide) window.removeEventListener("pagehide", onPageHide);
     // AI-03: the dead game must not keep overwriting the live save either;
