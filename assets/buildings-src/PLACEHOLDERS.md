@@ -51,13 +51,18 @@ reference — re-run with a ratio-stating prompt if a polish pass is wanted):
 Retry technique that fixed earlier misses: state the reference's explicit
 width/height ratio in the prompt (validate-art.mjs prints aspectRef).
 
-### Done (bonus ticket)
-- ART-08 match-3 gems in `src/assets/gems/` — ALL 6 restyled to the 1950s
-  brief (`grain`, `wood`, `ore`, `stone`, `oil`, `gold`) via
-  `tools/make-gem-pngs.mjs`; raw masters archived in `assets/gems-src/`
+### Done, then reverted (bonus ticket)
+- ART-08 match-3 gems in `src/assets/gems/` — all 6 were restyled to the
+  1950s brief (`grain`, `wood`, `ore`, `stone`, `oil`, `gold`), then
+  **reverted to the original hexgems** after playtesting in the live
+  preview: the original gems read better on the match-3 board. The 1950s
+  restyle is archived — raw masters in `assets/gems-src/`, one command to
+  re-apply any of them:
+  `node tools/make-gem-pngs.mjs <cargo>   # no raw arg → re-emit from the archived master`
 
-**ART-1950S art authoring is COMPLETE: every building layer (58) and every
-match-3 gem (6) carries authored 1950s art. No placeholders remain.**
+**ART-1950S building art is COMPLETE: every building layer (58) carries
+authored 1950s art. No building placeholders remain.** Match-3 gems
+intentionally remain on the original art (see above).
 
 Open follow-ups needing user sign-off (no art generation required):
 - polish candidates: `town_townhouse_gardens_2` (1.91 vs ref 1.488),
