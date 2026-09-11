@@ -83,7 +83,12 @@ function copyBuildingLayers(): Plugin {
 // https://vite.dev/config/
 export default defineConfig({
   base: "/hexmatch/",
+  // `server` covers `vite dev`; `preview` covers `vite preview` of a built app
+  // (the e2e webServer and Arena's sandbox live preview both use it). Vite 7
+  // rejects unknown Host headers on both unless allowedHosts permits them —
+  // localhost is always allowed, tunnelled/sandboxed hosts are not.
   server: { host: true, allowedHosts: [".e2b.app"] },
+  preview: { host: true, allowedHosts: [".e2b.app"] },
   plugins: [react(), tailwindcss(), rundotMultiplayerPlugin(), devRoomServerOrigin(), copyBuildingLayers()],
 
   resolve: {
