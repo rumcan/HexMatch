@@ -59,6 +59,9 @@ try {
     atlas.layerImages.set("buildings", new Map([
       [0.5, await layerImg("buildings@0.5x.png")], [1, await layerImg("buildings@1x.png")], [2, await layerImg("buildings@2x.png")],
     ]));
+    // Building layers: per-building PNGs override the shared sheet.
+    const { loadBuildingLayers } = await import(`${base}src/iso/atlas.ts`);
+    await loadBuildingLayers(atlas, `${base}assets/buildings/`);
     const { loadGroundTextures } = await import(`${base}src/iso/ground.ts`);
     const groundTex = await loadGroundTextures({
       grass: `${base}assets/ground/grass.png`,

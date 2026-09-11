@@ -55,11 +55,21 @@ export interface Placed extends DrawItem {
 /**
  * World-space draw origin for a placement. The anchor pixel lands on the
  * SOUTH corner of the footprint — the bottom vertex of the diamond of tile
- * (tx + fw - 1, ty + fh - 1).
+ * (tx + fw - 1, ty + fh - 1). Building-layer sprites (def.center) instead
+ * land on the footprint's CENTRE — the bbox centre — so free-placed building
+ * art sits concentric with its tiles and does not snap to the grid.
  */
 export function drawOrigin(def: SpriteDef, tx: number, ty: number): [number, number] {
   const [fw, fh] = def.footprint;
   const [sx, sy] = tileToScreen(tx + fw - 1, ty + fh - 1);
+  if (def.center) {
+    // Centre of the footprint bbox, in the same (sx, sy) space as the south
+    // reference: half a footprint-diagonal up, and back off the east lean for
+    // non-square footprints. (sx, sy is tileToScreen of the S tile.)
+    const cx = sx - (fw - fh) * (HW / 2);
+    const cy = sy + TILE_H - (fw + fh) * (HH / 2);
+    return [cx - def.anchor[0], cy - def.anchor[1]];
+  }
   return [sx + HW - def.anchor[0], sy + TILE_H - def.anchor[1]];
 }
 

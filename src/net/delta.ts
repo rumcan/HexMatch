@@ -27,7 +27,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import type { DirtyTiles, Track } from "../iso/track";
 import type { Snapshot } from "../iso/snapshot";
-import { FRAME_CAP_BYTES, type DeltaMsg } from "./protocol";
+import { FRAME_CAP_BYTES, type DeltaMsg, type DeltaPlayer } from "./protocol";
 
 /**
  * A delta carrying more tiles than this flips the publish decision to a full
@@ -134,9 +134,15 @@ export interface PublishFields {
   seq: number;
   harvesters: Snapshot["harvesters"];
   factories: Snapshot["factories"];
-  players: Snapshot["players"];
+  players: DeltaPlayer[];
   setupPhase: boolean;
   won: boolean;
+  /**
+   * MP-05: a one-shot line for the guest (a refused intent, usually). Carried
+   * by the next delta rather than by a message of its own — the relay already
+   * forwards deltas, and §4 has no host→guest side channel.
+   */
+  notice?: string;
 }
 
 /**
@@ -181,6 +187,7 @@ export function buildPublish(track: Track, dirty: DirtyTiles, f: PublishFields):
     players: f.players,
     setupPhase: f.setupPhase,
     won: f.won,
+    ...(f.notice ? { notice: f.notice } : {}),
   };
   const bytes = deltaBytes(msg);
   if (bytes > FRAME_CAP_BYTES) {
