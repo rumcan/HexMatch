@@ -1,0 +1,16 @@
+{
+  "rooms": [
+    {
+      "type": "hexmatch",
+      "file": "src/rooms/HexmatchRoom.ts",
+      "export": "default",
+      "config": {
+        "maxPlayers": 2,
+        "idleTimeout": 300,
+        "allowReconnect": true,
+        "reconnectTimeout": 60,
+        "metadata": { "mode": "versus" }
+      }
+    }
+  ]
+}
