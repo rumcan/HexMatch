@@ -719,6 +719,50 @@ html, body, #root {
   30%  { transform: scale(1); opacity: 1; }
   100% { transform: scale(1.3); opacity: 0; }
 }
+/* PP-14: the bounty chooser for a HOLY CROSS — five cargo buttons, each
+   worth +4 of its colour. The panel fades in over the board and waits for
+   the click; the keyframes END fully visible, so prefers-reduced-motion's
+   animation collapse leaves it readable. */
+.cross-pick {
+  position: absolute; left: 50%; top: 46%;
+  transform: translate(-50%, -50%);
+  z-index: 30;
+  display: flex; flex-direction: column; align-items: center; gap: 7px;
+  padding: 12px 16px 14px;
+  background: linear-gradient(180deg, #1d2a38, #0f1620);
+  border: 1px solid var(--gold2);
+  border-radius: 12px;
+  box-shadow: 0 0 22px rgba(255, 205, 90, .35), 0 10px 30px rgba(0, 0, 0, .6);
+  animation: crosspickin .28s ease-out;
+  pointer-events: auto;
+}
+.cross-pick-title {
+  font-family: var(--serif); font-weight: 800; font-size: 19px;
+  letter-spacing: 3px; text-transform: uppercase; color: var(--gold2);
+  text-shadow: 0 0 14px var(--gold), 0 2px 0 #000;
+}
+.cross-pick-sub {
+  font-size: 11px; letter-spacing: 2px; text-transform: uppercase;
+  color: #9fb3c8;
+}
+.cross-pick-row { display: flex; gap: 8px; }
+.cross-pick-btn {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 1px; width: 56px; height: 58px;
+  border: 1px solid rgba(255, 255, 255, .25); border-radius: 10px;
+  background: linear-gradient(160deg, var(--c1), var(--c2));
+  cursor: pointer; color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, .55);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), 0 3px 8px rgba(0, 0, 0, .45);
+  transition: transform .08s ease, filter .08s ease;
+}
+.cross-pick-btn i { font-style: normal; font-size: 24px; line-height: 1; }
+.cross-pick-btn span { font-size: 12px; font-weight: 800; letter-spacing: 1px; }
+.cross-pick-btn:hover { transform: translateY(-2px) scale(1.06); filter: brightness(1.12); }
+.cross-pick-btn:active { transform: scale(.96); }
+@keyframes crosspickin {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(.7); }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
 /* A1: `.fx-combo` is the cascade tier (COMBO x2 / CHAIN x3!!) — same float as
    a plain callout, hotter and larger so a two-deep cascade reads louder than
    the MATCH! that started it. */

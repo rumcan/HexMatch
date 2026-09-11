@@ -129,16 +129,18 @@ describe("settle / swap", () => {
 
   // PP-14: the cross is the shape with a saint on the payroll — 3 horizontal
   // + 4 vertical overlapping on ONE gem (the centre of the 3-run, an
-  // interior gem of the 4-run). It grants FOUR random materials (double an
-  // L's two) under its own name, and fires the `cross` fx (the praying
-  // angel) at the crossing gem. Before PP-14 the L detector swallowed
-  // crosses and reported them as L-SHAPEs paying two.
-  it("a cross of six (3 across + 4 down) grants four materials and fires the angel at the crossing", async () => {
+  // interior gem of the 4-run). It pauses the cascade, asks the player which
+  // cargo the blessing should be, then pays FOUR of the chosen one (double
+  // an L's two, and never gated by the network). Before PP-14 the L detector
+  // swallowed crosses and reported them as L-SHAPEs paying two.
+  it("a cross of six (3 across + 4 down) pays four of the cargo the player picked", async () => {
     const b = freshBoard();
     const bonus: string[] = [];
-    b.onBonus = (_r, _n, why) => bonus.push(why);
+    b.onBonus = (res, n, why) => bonus.push(`${why}:${res}:${n}`);
     const crosses: [number, number][] = [];
     b.onFx = (type, r, c) => { if (type === "cross") crosses.push([r, c]); };
+    let picked: string | null = null;
+    b.onCrossChoice = (pick) => { picked = "wood"; pick("wood"); };
     // 3 horizontal + 4 vertical, overlapping on the centre gem (2,2)
     b.grid[2][1]!.res = "sheep";
     b.grid[2][2]!.res = "sheep";
@@ -150,11 +152,33 @@ describe("settle / swap", () => {
     for (const [r, c] of [[2, 0], [2, 4], [0, 2], [5, 2], [1, 1], [1, 3], [3, 1], [3, 3], [4, 1], [4, 3]]) {
       b.grid[r][c]!.res = "ore";
     }
-    // the first pass of `resolve` runs synchronously — assert before the
-    // cascade can add anything, so the exact bonus list is deterministic.
+    // `resolve` runs synchronously — the angel fires before the choice
     const p = b.settle();
-    expect(bonus).toEqual(["HOLY CROSS", "HOLY CROSS", "HOLY CROSS", "HOLY CROSS"]);
     expect(crosses).toEqual([[2, 2]]);
+    expect(picked).toBe("wood");
+    // the awaited choice credits in a microtask, before the 190ms pop pause
+    await new Promise((r) => setTimeout(r, 0));
+    expect(bonus).toEqual(["HOLY CROSS:wood:1", "HOLY CROSS:wood:1", "HOLY CROSS:wood:1", "HOLY CROSS:wood:1"]);
+    await p;
+  });
+
+  it("with no chooser wired the cross still pays four of one random cargo", async () => {
+    const b = freshBoard();
+    const bonus: [string, number][] = [];
+    b.onBonus = (res, n) => bonus.push([res, n]);
+    b.grid[2][1]!.res = "sheep";
+    b.grid[2][2]!.res = "sheep";
+    b.grid[2][3]!.res = "sheep";
+    b.grid[1][2]!.res = "sheep";
+    b.grid[3][2]!.res = "sheep";
+    b.grid[4][2]!.res = "sheep";
+    for (const [r, c] of [[2, 0], [2, 4], [0, 2], [5, 2], [1, 1], [1, 3], [3, 1], [3, 3], [4, 1], [4, 3]]) {
+      b.grid[r][c]!.res = "ore";
+    }
+    const p = b.settle();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(bonus).toHaveLength(4);
+    expect(new Set(bonus.map(([res]) => res)).size).toBe(1); // four of ONE cargo
     await p;
   });
 

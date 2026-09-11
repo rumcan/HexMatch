@@ -23,7 +23,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import {
   BOARD_W, BOARD_H, CELL, RES, OFFER_LIFE,
-  SABOTAGE, SECURITY, REPAIR_COST, type ResKey,
+  SABOTAGE, SECURITY, REPAIR_COST, choice, type ResKey,
 } from "./config";
 import { BANK_RATE, MAX_OFFERS } from "./trade";
 // VP-01: the victory numbers come from the iso config, NOT from the legacy
@@ -45,6 +45,14 @@ import type { IsoMarket, IsoMarketPlayer, Offer } from "../iso/market";
 // sings with it. Both are one-shot fx answers to `onFx("cross", …)`.
 import angelUrl from "../assets/ui/angel.png";
 import { playHoly, prewarmHoly } from "./holy";
+
+// PP-14: the cross bounty chooser offers the five CARGOES, and each button
+// must hand the board back its COLOUR key — the reverse of GEM_TO_CARGO.
+const CARGO_TO_GEM: Partial<Record<Cargo, ResKey>> = Object.fromEntries(
+  Object.entries(GEM_TO_CARGO).map(([gem, cargo]) => [cargo, gem]),
+) as Partial<Record<Cargo, ResKey>>;
+/** The colours the cross chooser can offer (all five map to real cargoes). */
+const GEM_CHOICES = Object.keys(GEM_TO_CARGO) as ResKey[];
 
 // ── V5: the restored gem art ────────────────────────────────────────────────
 // One sprite per cargo in src/assets/gems/, mapped through the same gem→cargo
@@ -115,6 +123,12 @@ export interface OriginalUi {
   toast: (text: string, kind?: "good" | "bad" | "info" | "danger" | "success") => void;
   fx: (type: FxType, r: number, c: number, text?: string) => void;
   popup: (gains: Partial<Record<ResKey, number>>, label: string) => void;
+  /**
+   * PP-14: the board paused on a HOLY CROSS and is waiting for a pick —
+   * show the five-cargo chooser and answer `pick(res)` when one is clicked
+   * (or after the auto-pick timer, so the cascade never hangs).
+   */
+  crossPick: (pick: (res: ResKey) => void) => void;
   isQuarryOpen: () => boolean;
   isTradeOpen: () => boolean;
   showModal: (html: string) => void;
@@ -858,6 +872,49 @@ export function createOriginalUi(
     setTimeout(() => e.remove(), 1600);
   }
 
+  // ── PP-14: the cross bounty chooser ──────────────────────────────────────
+  // The board pauses the cascade on a HOLY CROSS and waits; this panel asks
+  // which of the five cargoes the +4 should be. Answered or not, the board
+  // always resumes: a click answers `pick` right away, and the 6.5s timer
+  // here (the board's own 8s backstop is the second line of defence)
+  // auto-answers with a random cargo.
+  let pickEl: HTMLElement | null = null;
+  let pickTimer = 0;
+
+  function crossPick(pick: (res: ResKey) => void) {
+    const close = () => {
+      window.clearTimeout(pickTimer);
+      pickEl?.remove();
+      pickEl = null;
+    };
+    close();
+    const panel = h("div", "cross-pick");
+    panel.appendChild(h("div", "cross-pick-title", "🙏 HOLY CROSS"));
+    panel.appendChild(h("div", "cross-pick-sub", "Choose your bounty · +4"));
+    const row = h("div", "cross-pick-row");
+    for (const cargo of TRADEABLE) {
+      const gem = CARGO_TO_GEM[cargo];
+      if (!gem) continue;
+      const b = h("button", "cross-pick-btn");
+      (b as HTMLButtonElement).type = "button";
+      b.dataset.cargo = cargo;
+      b.style.setProperty("--c1", CARGO[cargo].c1);
+      b.style.setProperty("--c2", CARGO[cargo].c2);
+      b.innerHTML = `<i>${CARGO[cargo].icon}</i><span>+4</span>`;
+      b.title = `Take 4 ${CARGO[cargo].name}`;
+      b.onclick = () => { pick(gem); close(); };
+      row.appendChild(b);
+    }
+    panel.appendChild(row);
+    boardWrap.appendChild(panel);
+    pickEl = panel;
+    pickTimer = window.setTimeout(() => {
+      if (!pickEl) return;
+      pick(choice(GEM_CHOICES));
+      close();
+    }, 6500);
+  }
+
   const lastToast: Record<string, number> = {};
   function toast(text: string, kind: "good" | "bad" | "info" | "danger" | "success" = "info") {
     const now = performance.now();
@@ -1122,6 +1179,7 @@ export function createOriginalUi(
     toast,
     fx,
     popup,
+    crossPick,
     isQuarryOpen: () => !qp.classList.contains("hidden"),
     isTradeOpen: () => !marketPane.classList.contains("hidden") || !bankPane.classList.contains("hidden"),
     showModal,

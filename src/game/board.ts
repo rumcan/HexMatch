@@ -108,6 +108,14 @@ export class Board {
   onCombo: (count: number, needed: number, granted: boolean) => void = () => {};
   /** Arcade bonus (match-5 / L / chain) — always pays, not network-gated. */
   onBonus: (res: ResKey, amount: number, reason: string) => void = () => {};
+  /**
+   * PP-14: the cross asks the player which cargo the blessing should be.
+   * When a cross resolves the cascade PAUSES here until the hook calls
+   * `pick(res)` — the board then pays 4 of that colour and the cascade
+   * resumes. The default answers instantly with a random cargo, so a
+   * headless board (the rival's, or a test) never pauses.
+   */
+  onCrossChoice: (pick: (res: ResKey) => void) => void = (pick) => pick(choice(BASE_POOL));
 
   /**
    * What a harvest actually credited, from `onHarvest`'s answer — 0 when the
@@ -315,11 +323,13 @@ export class Board {
    * Clear one cascade pass. `chain` is this pass's 1-based depth, so the
    * callout can name it (`MATCH!` / `COMBO x2` / `CHAIN x3!!`).
    *
-   * Returns accumulated gains for the popup.
+   * Returns accumulated gains for the popup, and the number of crosses this
+   * pass resolved (PP-14: `settle` pays the cross's chosen four AFTER the
+   * player picks — see `chooseCrossReward`).
    */
   private resolve(
     groups: Gem[][], gains: Partial<Record<ResKey, number>>, chain = 1,
-  ) {
+  ): number {
     const removeIds = new Set<number>();
     const crackIds = new Set<number>();
     const forge: { r: number; c: number; res: ResKey; tier: 1 | 2 }[] = [];
@@ -392,14 +402,13 @@ export class Board {
     }
 
     // Arcade: match-5 in a line, or a 5-gem L, grants two random materials.
-    // PP-14: the cross grants FOUR — it used to be swallowed by `lShapes`
-    // and paid as an L's two; now it pays its own heavier reward under its
-    // own name.
+    // PP-14: the cross is NOT granted here — the blessing waits for the
+    // player's choice, so `settle` pays the chosen four once the pick lands.
     const fives = groups.filter((g) => g.length >= 5);
     const crosses = this.crosses(groups);
     const ells = this.lShapes(groups);
     const why = fives.length ? "MATCH 5" : crosses.length ? "HOLY CROSS" : ells.length ? "L-SHAPE" : null;
-    if (why) this.grantRandom(why === "HOLY CROSS" ? 4 : 2, why, gains);
+    if (why && why !== "HOLY CROSS") this.grantRandom(2, why, gains);
     // PP-14: the praying angel — one `cross` fx per cross, at the centre gem
     // where the two arms overlap. The UI turns this into the angel popup and
     // the holy sound.
@@ -422,6 +431,26 @@ export class Board {
     // than "MATCH!"), but a deep cascade still gets its chain count.
     const text = why ? (chain > 1 ? `${why} · ${label}` : why) : label;
     this.onFx(chain > 1 ? "combo" : "chain", mid.r, mid.c, text);
+    return crosses.length;
+  }
+
+  /**
+   * PP-14: hand the cross's reward to `onCrossChoice` and wait for the pick.
+   * The promise ALWAYS resolves — the 8s backstop answers for a chooser that
+   * was never clicked, so a paused cascade can never deadlock the board.
+   */
+  private chooseCrossReward(): Promise<ResKey> {
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = (res: ResKey) => {
+        if (done) return;
+        done = true;
+        clearTimeout(backstop);
+        resolve(res);
+      };
+      const backstop = setTimeout(() => finish(choice(BASE_POOL)), 8000);
+      this.onCrossChoice(finish);
+    });
   }
 
   private gravity() {
@@ -446,7 +475,19 @@ export class Board {
       const groups = this.findGroups();
       if (!groups.length) break;
       chain++; maxChain = Math.max(maxChain, chain);
-      this.resolve(groups, gains, chain);
+      const nCross = this.resolve(groups, gains, chain);
+      if (nCross > 0) {
+        // PP-14: the blessing waits for the player — the cascade pauses
+        // right after the angel pops, and resumes the moment the chooser
+        // answers. Four of the chosen colour, paid as forged (never gated
+        // by the network) exactly like the other arcade bonuses.
+        const res = await this.chooseCrossReward();
+        for (let i = 0; i < 4; i++) {
+          gains[res] = (gains[res] ?? 0) + 1;
+          this.onBonus(res, 1, "HOLY CROSS");
+          this.onHarvest(res, 1, true);
+        }
+      }
       this.onChange();
       await sleep(190);
       this.gravity();

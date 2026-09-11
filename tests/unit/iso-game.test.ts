@@ -2144,9 +2144,10 @@ describe("VP-01 the rival plays the score, not just the map", () => {
 // ══════════════════════════════════════════════════════════════════════════
 // PP-14 — the holy cross: 3 horizontal + 4 vertical overlapping on one gem
 // summons the praying angel and the choir. board.test.ts pins the board half
-// (detection, the HOLY CROSS callout, the `cross` fx event); this pins the
-// UI half — the angel PNG pops over the crossing and the sound really is
-// asked for.
+// (detection, the HOLY CROSS callout, the `cross` fx event, the pause for
+// the player's pick); this pins the UI half — the angel PNG pops over the
+// crossing, the five-cargo bounty chooser appears, the sound really is asked
+// for, and clicking a cargo pays four of it.
 // ══════════════════════════════════════════════════════════════════════════
 describe("PP-14 the holy cross", () => {
   /** A fake AudioContext that counts the oscillators the choir would play. */
@@ -2192,9 +2193,10 @@ describe("PP-14 the holy cross", () => {
     b.grid[5][2]!.res = "ore";
   }
 
-  it("pops the praying angel over the crossing and starts the choir", async () => {
+  it("pops the angel, offers the bounty chooser, and pays 4 of the picked cargo", async () => {
     const h = await boot();
     const started = stubAudio();
+    const before = h.purse.wood ?? 0;
     paintCross(h.board);
     const p = h.board.settle();      // the first pass resolves synchronously
     const angel = root.querySelector(".fx-cross") as HTMLElement | null;
@@ -2203,6 +2205,19 @@ describe("PP-14 the holy cross", () => {
     // dead centre of the board: cell (2,2) at CELL 80 → 200,200
     expect(angel!.style.left).toBe("200px");
     expect(angel!.style.top).toBe("200px");
+    // the cascade pauses on the chooser: five cargo buttons over the board
+    const panel = root.querySelector(".cross-pick");
+    expect(panel, "the bounty chooser must appear").not.toBeNull();
+    const btns = [...panel!.querySelectorAll(".cross-pick-btn")];
+    expect(btns).toHaveLength(5);
+    const woodBtn = panel!.querySelector<HTMLButtonElement>('[data-cargo="wood"]');
+    expect(woodBtn, "wood must be one of the five choices").not.toBeNull();
+    woodBtn!.click();
+    // the click answers the board's promise — a microtask later the purse is
+    // credited and the panel is gone, while the cascade has not yet moved on
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.purse.wood ?? 0).toBe(before + 4);
+    expect(root.querySelector(".cross-pick")).toBeNull();
     // the callout names the shape
     const floats = [...root.querySelectorAll(".combo-float")].map((e) => e.textContent ?? "");
     expect(floats.some((t) => t.includes("HOLY CROSS"))).toBe(true);
