@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   createRoom,
   isAccessDenied,
@@ -16,7 +16,9 @@ export type StartChoice =
   | { mode: "host"; seed: number; room: HexRoom; net: NetSession }
   | { mode: "guest"; seed: number; room: HexRoom; net: NetSession };
 
-type ScreenState = "choose" | "host" | "join" | "matchmaking" | "error";
+type ScreenState = "choose" | "host" | "join" | "matchmaking" | "matchmaking-timeout" | "error";
+
+const MATCHMAKING_TIMEOUT = null;
 
 interface StartScreenProps {
   onStart: (choice: StartChoice) => void;
@@ -31,6 +33,7 @@ export default function StartScreen({ onStart }: StartScreenProps) {
   const [error, setError] = useState("");
   const [players, setPlayers] = useState<readonly ServerPlayer[]>([]);
   const [net, setNet] = useState<NetSession | null>(null);
+  const matchRequest = useRef(0);
 
   const fail = useCallback((err: unknown) => {
     setError(isAccessDenied(err)
@@ -87,15 +90,36 @@ export default function StartScreen({ onStart }: StartScreenProps) {
   const beginMatch = useCallback(async () => {
     setError("");
     setState("matchmaking");
+    const request = ++matchRequest.current;
+    // The SDK request remains attached to the race even if the UI gives up;
+    // the request token prevents a late room from taking the player out of the
+    // explicit fallback screen.
+    const timeout = new Promise<null>((resolve) => {
+      window.setTimeout(() => resolve(MATCHMAKING_TIMEOUT), 30_000);
+    });
     try {
-      const nextRoom = await withLogin(() => quickMatch({ matchmakeTimeoutMs: 30_000 }));
+      const result = await Promise.race([
+        withLogin(() => quickMatch({ matchmakeTimeoutMs: 30_000 })),
+        timeout,
+      ]);
+      if (result === MATCHMAKING_TIMEOUT) {
+        setState("matchmaking-timeout");
+        return;
+      }
+      if (request !== matchRequest.current) return;
       // A matchmaker can return either an existing room or a newly-created one.
       // isCreator is the SDK's authoritative host hint until welcome arrives.
-      awaitWelcome(nextRoom, nextRoom.isCreator ? "host" : "guest");
+      awaitWelcome(result, result.isCreator ? "host" : "guest");
     } catch (err) {
-      fail(err);
+      if (request === matchRequest.current) fail(err);
     }
-  }, [awaitWelcome, fail, withLogin]);
+  }, [awaitWelcome, fail, matchRequest, withLogin]);
+
+  const abandonMatch = useCallback(() => {
+    ++matchRequest.current;
+    room?.leave();
+    setState("choose");
+  }, [room]);
 
   const startNetworkGame = useCallback((mode: "host" | "guest") => {
     if (!room || seed === null || !net) return;
@@ -137,8 +161,14 @@ export default function StartScreen({ onStart }: StartScreenProps) {
   );
 
   if (state === "matchmaking") return (
-    <main className="start-screen"><div className="start-panel lobby"><p className="start-kicker">QUICK MATCH</p><h1>Finding an opponent…</h1><p className="start-subtitle">You can cancel and play against the AI instead.</p>
-      <button onClick={() => { room?.leave(); setState("choose"); }}>Cancel</button></div></main>
+    <main className="start-screen"><div className="start-panel lobby"><p className="start-kicker">QUICK MATCH</p><h1>Finding an opponent…</h1><p className="start-subtitle">We will keep looking for up to 30 seconds.</p>
+      <button onClick={abandonMatch}>Cancel</button></div></main>
+  );
+
+  if (state === "matchmaking-timeout") return (
+    <main className="start-screen"><div className="start-panel lobby"><p className="start-kicker">QUICK MATCH</p><h1>No rival found yet</h1><p className="start-subtitle">Try again later, or start a match against the AI now.</p>
+      <div className="lobby-actions"><button onClick={abandonMatch}>Back</button><button className="start-primary" onClick={() => onStart({ mode: "ai" })}>Play vs AI</button></div>
+    </div></main>
   );
 
   if (state === "error") return (
