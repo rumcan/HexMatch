@@ -49,9 +49,29 @@ The isometric canvas-2d game is the only boot path (`/`). The hex + three.js
 path (`?legacy=1`) was deleted in E11. e2e specs boot the default route with
 real DOM, real rendering and no mocking.
 
-## Room server (multiplayer relay)
+## Multiplayer (RUN.world rooms)
 
-A separate Node process in `server/` (`ws` relay, Jackbox-style):
+Host / join-by-code / quick-match run over RUN.world realtime rooms: the relay
+is `src/rooms/HexmatchRoom.ts` (registered in `rundot/realtime.config.json`),
+the SDK seam is `src/net/transport.ts`, and the entry point is
+`src/ui/StartScreen.tsx`. `npm run dev` starts a local room sidecar on port 9001
+alongside Vite, so two browser windows on one machine can play — an incognito
+window included, no account needed. Full recipe, tunnel/preview testing, and the
+headless relay check:
+
+```bash
+npm run dev                        # vite + local room sidecar (9001)
+node tools/two-client-check.mjs    # headless host/join/intent/forgery check
+```
+
+See [`docs/multiplayer-local-testing.md`](docs/multiplayer-local-testing.md) and
+[`docs/HexMatch-tickets.md`](docs/HexMatch-tickets.md).
+
+### Legacy relay (self-hosted, unused by the RUN build)
+
+A separate Node process in `server/` (`ws` relay, Jackbox-style). A published
+RUN game cannot reach it — the platform sandbox blocks external hosts — so it is
+a self-hosted option and a protocol reference only:
 
 ```bash
 npm --prefix server install
