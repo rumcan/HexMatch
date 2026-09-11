@@ -72,12 +72,12 @@ function wire<T extends HexProtocol>(msg: T): T {
 }
 
 describe("MP-02 protocol version", () => {
-  it("is a positive integer, and 2 since MP-05 widened the wire", () => {
+  it("is a positive integer, and 3 since PP-14b widened the wire", () => {
     // v2 (MP-05) added `snapshot-chunk`: a full state is ~110 KiB against a
-    // 16 KiB frame, so join/resync state crosses as N frames. A v1 peer cannot
-    // reassemble them — the welcome refusal above is what turns "waits forever
-    // for state that can never fit one frame" into "reload to play together".
-    expect(PROTOCOL_VERSION).toBe(2);
+    // 16 KiB frame, so join/resync state crosses as N frames. v3 (PP-14b)
+    // added `rivalSabotage` (Black-Market sabotage on the guest-seat plant);
+    // a v2 peer would drop that state, so mixed-version rooms must refuse.
+    expect(PROTOCOL_VERSION).toBe(3);
     expect(Number.isInteger(PROTOCOL_VERSION)).toBe(true);
     expect(PROTOCOL_VERSION).toBeGreaterThan(0);
   });

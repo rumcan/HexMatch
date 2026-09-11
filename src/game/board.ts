@@ -36,8 +36,28 @@ const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
  * PP-14: `cross` is the holy cross — 3 horizontal + 4 vertical overlapping
  * on one gem (the centre of the 3-run), either orientation. The UI answers
  * it with the praying angel and the choir.
+ *
+ * PP-14b: `bcross` is the broken holy cross — 3 horizontal + 3 vertical
+ * overlapping on the centre gem of BOTH runs (a small plus). It shares the
+ * pause-and-pick chooser with the holy cross but pays three units instead of
+ * six, and the UI answers it with a dimmer, cracked cross — no angel.
  */
-export type FxType = "pop" | "crack" | "up" | "boom" | "bad" | "chain" | "combo" | "cross";
+export type FxType = "pop" | "crack" | "up" | "boom" | "bad" | "chain" | "combo" | "cross" | "bcross";
+
+/** Which cross shape a matched pair formed. */
+export type CrossKind = "holy" | "broken";
+
+/**
+ * PP-14b — how many units of blessing each cross shape pays.
+ *   holy cross (3×4, six gems)  → 6 picks
+ *   broken holy cross (3×3, five gems) → 3 picks
+ */
+export const HOLY_CROSS_PICKS = 6;
+export const BROKEN_CROSS_PICKS = 3;
+/** The board's own backstop for an unanswered chooser. The live UI answers
+ *  first (its auto-pick timer is 8s), so this only fires when the chooser was
+ *  wired but never answered — 9s keeps a headless board from deadlocking. */
+export const CROSS_BACKSTOP_MS = 9_000;
 
 /**
  * The word a cascade pass shouts, by how deep in the cascade it is.
@@ -109,16 +129,21 @@ export class Board {
   /** Arcade bonus (match-5 / L / chain) — always pays, not network-gated. */
   onBonus: (res: ResKey, amount: number, reason: string) => void = () => {};
   /**
-   * PP-14: the cross asks the player how to spend its FOUR units of blessing.
-   * Any allocation counts — four of one cargo, a 2+2 split, one of each, or
-   * anything between. When a cross resolves the cascade PAUSES here until
-   * the hook calls `pick(chosen)`; the board tops any missing units up with
-   * random cargoes, so even an empty list still pays four. The default
-   * answers instantly with four random cargoes, so a headless board (the
-   * rival's, or a test) never pauses.
+   * PP-14: the cross asks the player how to spend its units of blessing — a
+   * holy cross pays `HOLY_CROSS_PICKS` and a broken cross `BROKEN_CROSS_PICKS`.
+   * Any allocation counts — all of one cargo, splits, one of each, repeats —
+   * so the same resource may be picked more than once. When a cross resolves
+   * the cascade PAUSES here until the hook calls `pick(chosen)`; the board
+   * tops any missing units up with random cargoes, so even an empty list still
+   * pays in full. The default answers instantly with random cargoes, so a
+   * headless board (the rival's, or a test) never pauses.
+   *
+   * The hook receives the shape (`kind`) and how many units it owes (`picks`)
+   * so the UI can title the chooser and cap the spend without hard-coding the
+   * two sizes.
    */
-  onCrossChoice: (pick: (chosen: ResKey[]) => void) => void = (pick) =>
-    pick(Array.from({ length: 4 }, () => choice(BASE_POOL)));
+  onCrossChoice: (kind: CrossKind, picks: number, pick: (chosen: ResKey[]) => void) => void =
+    (_kind, picks, pick) => pick(Array.from({ length: picks }, () => choice(BASE_POOL)));
 
   /**
    * What a harvest actually credited, from `onHarvest`'s answer — 0 when the
@@ -231,8 +256,9 @@ export class Board {
       for (let j = i + 1; j < groups.length; j++) {
         const a = groups[i], b = groups[j];
         if (a[0].res !== b[0].res) continue;
-        // PP-14: a cross (3×4 crossing on the centre of the 3-run) is its
-        // own shape with its own reward — let `crosses()` claim it.
+        // PP-14: a cross (holy 3×4, or broken 3×3, crossing on the centre of
+        // the 3-run) is its own shape with its own reward — let `crosses()`
+        // claim it.
         if (this.crossPair(a, b)) continue;
         const ids = new Set(a.map((g) => g.id));
         const shared = b.filter((g) => ids.has(g.id));
@@ -251,50 +277,62 @@ export class Board {
   }
 
   /**
-   * PP-14: is the pair (a, b) the holy cross? — one 3-run and one 4-run of
-   * the same colour, one horizontal and one vertical, overlapping on exactly
-   * one gem: the centre of the 3-run and an interior (non-end) gem of the
-   * 4-run, so the shape reads as a cross rather than a T with a long tail.
-   * Either orientation counts (3 across + 4 down, or 4 across + 3 down).
-   * Returns the shared gem when it is a cross, else null.
+   * PP-14: is the pair (a, b) a cross — and which kind?
+   *
+   *   holy    — one 3-run and one 4-run of the same colour, one horizontal
+   *             and one vertical, overlapping on exactly one gem: the centre
+   *             of the 3-run and an interior (non-end) gem of the 4-run, so
+   *             the shape reads as a cross rather than a T with a long tail.
+   *             Either orientation counts (3 across + 4 down, or the other
+   *             way). Pays six units.
+   *   broken  — two 3-runs crossing on the centre gem of BOTH runs (a small
+   *             five-gem plus). This is the centre share, so it is never an
+   *             L (corner share) or a T (end share). Pays three units.
+   *
+   * Returns the shape and its crossing gem, else null.
    */
-  private crossPair(a: Gem[], b: Gem[]): Gem | null {
+  private crossPair(a: Gem[], b: Gem[]): { kind: CrossKind; mid: Gem } | null {
     if (a[0].res !== b[0].res) return null;
     const la = a.length, lb = b.length;
-    if (!((la === 3 && lb === 4) || (la === 4 && lb === 3))) return null;
     const aRow = a.every((g) => g.r === a[0].r);
     const bRow = b.every((g) => g.r === b[0].r);
     if (aRow === bRow) return null;
-    const three = la === 3 ? a : b;
-    const four = la === 3 ? b : a;
-    const ids = new Set(three.map((g) => g.id));
-    const shared = four.filter((g) => ids.has(g.id));
+    const ids = new Set(a.map((g) => g.id));
+    const shared = b.filter((g) => ids.has(g.id));
     if (shared.length !== 1) return null;
     const s = shared[0];
-    // the overlap must be the CENTRE gem of the 3-run (a corner share is an
-    // L, an end share is a T) …
+
+    // Broken holy cross: 3×3, the overlap is the centre of both runs.
+    if (la === 3 && lb === 3) {
+      if (s.id !== a[1].id || s.id !== b[1].id) return null;
+      return { kind: "broken", mid: s };
+    }
+    // Holy cross: 3×4 — the overlap is the centre of the 3-run …
+    if (!((la === 3 && lb === 4) || (la === 4 && lb === 3))) return null;
+    const three = la === 3 ? a : b;
+    const four = la === 3 ? b : a;
     if (s.id !== three[1].id) return null;
-    // … and sit INSIDE the 4-run, not on its end.
+    // … and sits INSIDE the 4-run, not on its end.
     const idx = four.findIndex((g) => g.id === s.id);
     if (idx <= 0 || idx >= four.length - 1) return null;
-    return s;
+    return { kind: "holy", mid: s };
   }
 
   /**
-   * PP-14: the holy cross — a 3-run and a 4-run of the same colour crossing
-   * on the centre gem of the 3-run. `mid` is the shared crossing gem, so the
-   * callout — and the angel — land exactly on the overlap.
+   * PP-14: the holy and broken crosses — two orthogonal same-colour runs
+   * overlapping on the centre gem of the 3-run. `mid` is the shared crossing
+   * gem, so the callout — and the angel — land exactly on the overlap.
    */
-  private crosses(groups: Gem[][]): { gems: Gem[]; mid: Gem }[] {
-    const out: { gems: Gem[]; mid: Gem }[] = [];
+  private crosses(groups: Gem[][]): { gems: Gem[]; mid: Gem; kind: CrossKind }[] {
+    const out: { gems: Gem[]; mid: Gem; kind: CrossKind }[] = [];
     for (let i = 0; i < groups.length; i++) {
       for (let j = i + 1; j < groups.length; j++) {
         const a = groups[i], b = groups[j];
-        const s = this.crossPair(a, b);
-        if (!s) continue;
+        const x = this.crossPair(a, b);
+        if (!x) continue;
         const union = [...a];
-        for (const g of b) if (g.id !== s.id) union.push(g);
-        out.push({ gems: union, mid: s });
+        for (const g of b) if (g.id !== x.mid.id) union.push(g);
+        out.push({ gems: union, mid: x.mid, kind: x.kind });
       }
     }
     return out;
@@ -326,13 +364,12 @@ export class Board {
    * Clear one cascade pass. `chain` is this pass's 1-based depth, so the
    * callout can name it (`MATCH!` / `COMBO x2` / `CHAIN x3!!`).
    *
-   * Returns accumulated gains for the popup, and the number of crosses this
-   * pass resolved (PP-14: `settle` pays the cross's chosen four AFTER the
-   * player picks — see `chooseCrossReward`).
+   * Returns the crosses this pass resolved (PP-14: `settle` pays each cross's
+   * chosen units AFTER the player picks — see `chooseCrossReward`).
    */
   private resolve(
     groups: Gem[][], gains: Partial<Record<ResKey, number>>, chain = 1,
-  ): number {
+  ): { gems: Gem[]; mid: Gem; kind: CrossKind }[] {
     const removeIds = new Set<number>();
     const crackIds = new Set<number>();
     const forge: { r: number; c: number; res: ResKey; tier: 1 | 2 }[] = [];
@@ -405,17 +442,26 @@ export class Board {
     }
 
     // Arcade: match-5 in a line, or a 5-gem L, grants two random materials.
-    // PP-14: the cross is NOT granted here — the blessing waits for the
-    // player's choice, so `settle` pays the chosen four once the pick lands.
+    // PP-14: a cross is NOT granted here — the blessing waits for the
+    // player's choice, so `settle` pays the chosen units once the pick lands.
     const fives = groups.filter((g) => g.length >= 5);
     const crosses = this.crosses(groups);
     const ells = this.lShapes(groups);
-    const why = fives.length ? "MATCH 5" : crosses.length ? "HOLY CROSS" : ells.length ? "L-SHAPE" : null;
-    if (why && why !== "HOLY CROSS") this.grantRandom(2, why, gains);
-    // PP-14: the praying angel — one `cross` fx per cross, at the centre gem
-    // where the two arms overlap. The UI turns this into the angel popup and
-    // the holy sound.
-    for (const x of crosses) this.onFx("cross", x.mid.r, x.mid.c);
+    const hasHoly = crosses.some((x) => x.kind === "holy");
+    const why = fives.length
+      ? "MATCH 5"
+      : hasHoly
+        ? "HOLY CROSS"
+        : crosses.length
+          ? "BROKEN CROSS"
+          : ells.length
+            ? "L-SHAPE"
+            : null;
+    if (why && why !== "HOLY CROSS" && why !== "BROKEN CROSS") this.grantRandom(2, why, gains);
+    // PP-14: the praying angel — one fx per cross, at the centre gem where
+    // the two arms overlap. A holy cross fires `cross` (the angel + choir);
+    // a broken cross fires `bcross` (a cracked cross, no angel).
+    for (const x of crosses) this.onFx(x.kind === "broken" ? "bcross" : "cross", x.mid.r, x.mid.c);
 
     // ── A1: the callout, fired HERE — the instant the pass resolves ──
     // Two bugs died here. (1) The old text only fired for `chain >= 2`, so a
@@ -434,16 +480,16 @@ export class Board {
     // than "MATCH!"), but a deep cascade still gets its chain count.
     const text = why ? (chain > 1 ? `${why} · ${label}` : why) : label;
     this.onFx(chain > 1 ? "combo" : "chain", mid.r, mid.c, text);
-    return crosses.length;
+    return crosses;
   }
 
   /**
    * PP-14: hand the cross's reward to `onCrossChoice` and wait for the
-   * picks. The promise ALWAYS resolves — the 8s backstop answers with four
+   * picks. The promise ALWAYS resolves — the backstop answers with `picks`
    * random cargoes for a chooser that was never answered, so a paused
    * cascade can never deadlock the board.
    */
-  private chooseCrossReward(): Promise<ResKey[]> {
+  private chooseCrossReward(kind: CrossKind, picks: number): Promise<ResKey[]> {
     return new Promise((resolve) => {
       let done = false;
       const finish = (chosen: ResKey[]) => {
@@ -453,9 +499,9 @@ export class Board {
         resolve(chosen);
       };
       const backstop = setTimeout(
-        () => finish(Array.from({ length: 4 }, () => choice(BASE_POOL))), 8000,
+        () => finish(Array.from({ length: picks }, () => choice(BASE_POOL))), CROSS_BACKSTOP_MS,
       );
-      this.onCrossChoice(finish);
+      this.onCrossChoice(kind, picks, finish);
     });
   }
 
@@ -481,21 +527,26 @@ export class Board {
       const groups = this.findGroups();
       if (!groups.length) break;
       chain++; maxChain = Math.max(maxChain, chain);
-      const nCross = this.resolve(groups, gains, chain);
-      if (nCross > 0) {
+      const crosses = this.resolve(groups, gains, chain);
+      if (crosses.length > 0) {
         // PP-14: the blessing waits for the player — the cascade pauses
         // right after the angel pops, and resumes the moment the chooser
-        // answers. The four units are paid EXACTLY as allocated: all four of
-        // one cargo, a 2+2 split, one of each, any mix. Units the chooser
-        // left unspent are filled at random, and every unit is paid as
-        // forged (never gated by the network) like the other arcade bonuses.
-        const chosen = await this.chooseCrossReward();
-        const list = chosen.slice(0, 4);
-        while (list.length < 4) list.push(choice(BASE_POOL));
-        for (const res of list) {
-          gains[res] = (gains[res] ?? 0) + 1;
-          this.onBonus(res, 1, "HOLY CROSS");
-          this.onHarvest(res, 1, true);
+        // answers. Each cross is paid EXACTLY as allocated: all of one cargo,
+        // a split, one of each, any mix — the same resource may be picked
+        // more than once. Units the chooser left unspent are filled at
+        // random, and every unit is paid as forged (never gated by the
+        // network) like the other arcade bonuses.
+        for (const x of crosses) {
+          const picks = x.kind === "broken" ? BROKEN_CROSS_PICKS : HOLY_CROSS_PICKS;
+          const reason = x.kind === "broken" ? "BROKEN CROSS" : "HOLY CROSS";
+          const chosen = await this.chooseCrossReward(x.kind, picks);
+          const list = chosen.slice(0, picks);
+          while (list.length < picks) list.push(choice(BASE_POOL));
+          for (const res of list) {
+            gains[res] = (gains[res] ?? 0) + 1;
+            this.onBonus(res, 1, reason);
+            this.onHarvest(res, 1, true);
+          }
         }
       }
       this.onChange();
@@ -646,6 +697,57 @@ export class Board {
   }
 
   fog(ms = 30000, now = performance.now()) { this.fogUntil = now + ms; }
+
+  /**
+   * MP-05: the sabotage overlay the wire ships — where the frost and girders
+   * sit plus the smog clock — WITHOUT the whole sim. A guest's plant board is
+   * a spectator view (its gem layout is never synced), but sabotage the host
+   * bought against it still has to show up, so only the sabotage state travels.
+   */
+  sabotageState(now = performance.now()) {
+    const frozen: { r: number; c: number; hard: number }[] = [];
+    const girders: { r: number; c: number }[] = [];
+    for (const g of this.gems()) {
+      if (g.block) girders.push({ r: g.r, c: g.c });
+      else if (g.hard > 0) frozen.push({ r: g.r, c: g.c, hard: g.hard });
+    }
+    return { frozen, girders, smogIn: Math.max(0, this.fogUntil - now) };
+  }
+
+  /**
+   * MP-05: apply a sabotage overlay received from the host onto this board (a
+   * guest's plant panel). Idempotent — clears whatever was there first, then
+   * stamps the received frost/girders and smog clock. Touches ONLY sabotage
+   * state: no matches, no gravity, no purse, no tokens.
+   */
+  applySabotage(state: {
+    frozen?: { r: number; c: number; hard?: number }[];
+    girders?: { r: number; c: number }[];
+    smogIn?: number;
+  }): void {
+    const now = performance.now();
+    let changed = false;
+    for (const g of this.gems()) {
+      if (g.hard > 0) { g.hard = 0; changed = true; }
+      if (g.block) { g.block = false; changed = true; }
+    }
+    for (const f of state.frozen ?? []) {
+      const g = this.grid[f.r]?.[f.c];
+      if (!g) continue;
+      if (g.block) { g.block = false; changed = true; }
+      const hard = Math.max(1, Math.min(2, Math.floor(f.hard ?? 2))) as 0 | 1 | 2;
+      if (g.hard !== hard) { g.hard = hard; changed = true; }
+    }
+    for (const b of state.girders ?? []) {
+      const g = this.grid[b.r]?.[b.c];
+      if (!g) continue;
+      if (g.hard > 0) { g.hard = 0; changed = true; }
+      if (!g.block) { g.block = true; changed = true; }
+    }
+    const smogIn = Math.max(0, Number.isFinite(state.smogIn) ? (state.smogIn as number) : 0);
+    this.fogUntil = now + smogIn;
+    if (changed) this.onChange();
+  }
 
   // Repair crew: remove all iron blocks AND thaw all frost tiles immediately
   smashBlocks(): number {

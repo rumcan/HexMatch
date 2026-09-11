@@ -512,7 +512,12 @@ export function mirrorOwnerName(name: string): string {
   return name;
 }
 
-/** Mirror a full wire snapshot into the guest's local seat frame. */
+/**
+ * Mirror a full wire snapshot into the guest's local seat frame. `rivalSabotage`
+ * is deliberately left UNMIRRORED: sabotage always targets seat 1 (the host's
+ * rival = the guest's own plant), so the guest applies it to its own board
+ * as-is — swapping it would put the host's frost on the host's plant.
+ */
 export function mirrorSnapshot(snap: Snapshot): Snapshot {
   const owner = base64ToBytes(snap.owner);
   for (let i = 0; i < owner.length; i++) owner[i] = mirrorOwnerByte(owner[i]);

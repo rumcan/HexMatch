@@ -138,6 +138,12 @@ export interface PublishFields {
   setupPhase: boolean;
   won: boolean;
   /**
+   * PP-14b: the Black-Market sabotage on the guest-seat plant. Always sent (it
+   * is a handful of positions), so an expiry reads as "now empty" rather than
+   * an extra event.
+   */
+  rivalSabotage: Snapshot["rivalSabotage"];
+  /**
    * MP-05: a one-shot line for the guest (a refused intent, usually). Carried
    * by the next delta rather than by a message of its own — the relay already
    * forwards deltas, and §4 has no host→guest side channel.
@@ -151,7 +157,7 @@ export interface PublishFields {
  * the guarantee in the type instead of a non-null assertion at every use.
  */
 export type BuiltDeltaMsg = DeltaMsg &
-  Required<Pick<DeltaMsg, "tiles" | "harvesters" | "factories" | "players" | "setupPhase" | "won">>;
+  Required<Pick<DeltaMsg, "tiles" | "harvesters" | "factories" | "players" | "setupPhase" | "won" | "rivalSabotage">>;
 
 export type PublishDecision =
   /** Steady state: send `msg` (it fits — the size guard already passed). */
@@ -187,6 +193,7 @@ export function buildPublish(track: Track, dirty: DirtyTiles, f: PublishFields):
     players: f.players,
     setupPhase: f.setupPhase,
     won: f.won,
+    rivalSabotage: f.rivalSabotage,
     ...(f.notice ? { notice: f.notice } : {}),
   };
   const bytes = deltaBytes(msg);

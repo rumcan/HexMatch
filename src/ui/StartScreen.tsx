@@ -14,11 +14,12 @@ import {
 } from "../net/transport";
 import { NetSession } from "../net/session";
 import { VERSION_MISMATCH_MESSAGE, validateWelcome, type HexProtocol } from "../net/protocol";
+import { PORTRAITS, type Portrait } from "../iso/config";
 
 export type StartChoice =
-  | { mode: "ai" }
-  | { mode: "host"; seed: number; room: HexRoom; net: NetSession }
-  | { mode: "guest"; seed: number; room: HexRoom; net: NetSession };
+  | { mode: "ai"; portrait: Portrait }
+  | { mode: "host"; seed: number; room: HexRoom; net: NetSession; portrait: Portrait }
+  | { mode: "guest"; seed: number; room: HexRoom; net: NetSession; portrait: Portrait };
 
 /**
  * `join` is the CODE FIELD; `joined` is the guest lobby. They used to be one
@@ -59,6 +60,8 @@ export default function StartScreen({ onStart }: StartScreenProps) {
   const [seed, setSeed] = useState<number | null>(null);
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
+  /** PP-14b: the player's tycoon portrait — Vex or You (Torvin is the rival). */
+  const [portrait, setPortrait] = useState<Portrait>("vex");
   const [players, setPlayers] = useState<readonly ServerPlayer[]>([]);
   const [net, setNet] = useState<NetSession | null>(null);
   /** Guards the realtime calls: a double-click must not mint two rooms. */
@@ -228,8 +231,8 @@ export default function StartScreen({ onStart }: StartScreenProps) {
 
   const startNetworkGame = useCallback((mode: "host" | "guest") => {
     if (!room || seed === null || !net) return;
-    onStart({ mode, seed, room, net });
-  }, [net, onStart, room, seed]);
+    onStart({ mode, seed, room, net, portrait });
+  }, [net, onStart, portrait, room, seed]);
 
   const roster = useMemo(() => {
     if (!room) return [] as readonly ServerPlayer[];
@@ -258,8 +261,22 @@ export default function StartScreen({ onStart }: StartScreenProps) {
         <p className="start-kicker">HEXMatch Industries</p>
         <h1>Build the island. Beat the rival.</h1>
         <p className="start-subtitle">A strategy match of roads, resources, and ruthless expansion.</p>
+        <div className="portrait-picker" role="radiogroup" aria-label="Choose your tycoon">
+          <p className="portrait-label">Your tycoon</p>
+          <div className="portrait-options">
+            {PORTRAITS.map((p) => (
+              <button key={p} type="button"
+                className={`portrait-opt${portrait === p ? " on" : ""}`}
+                aria-pressed={portrait === p}
+                onClick={() => setPortrait(p)}>
+                <span className={`portrait-face portrait-${p}`} aria-hidden="true" />
+                <span className="portrait-name">{p === "vex" ? "Vex" : "You"}</span>
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="start-actions">
-          <button className="start-primary" onClick={() => onStart({ mode: "ai" })}>Play vs AI <small>no login</small></button>
+          <button className="start-primary" onClick={() => onStart({ mode: "ai", portrait })}>Play vs AI <small>no login</small></button>
           <button disabled={busy} onClick={() => { setState("host"); void beginRoom("host"); }}>Host a game</button>
           <button disabled={busy} onClick={openJoinScreen}>Join with a code</button>
           <button disabled={busy} onClick={() => void beginMatch()}>Quick match</button>
@@ -288,12 +305,12 @@ export default function StartScreen({ onStart }: StartScreenProps) {
 
   if (state === "matchmaking-timeout") return (
     <main className="start-screen"><div className="start-panel lobby"><p className="start-kicker">QUICK MATCH</p><h1>No rival found yet</h1><p className="start-subtitle">Try again later, or start a match against the AI now.</p>
-      <div className="lobby-actions"><button onClick={abandonMatch}>Back</button><button className="start-primary" onClick={() => onStart({ mode: "ai" })}>Play vs AI</button></div>
+      <div className="lobby-actions"><button onClick={abandonMatch}>Back</button><button className="start-primary" onClick={() => onStart({ mode: "ai", portrait })}>Play vs AI</button></div>
     </div></main>
   );
 
   if (state === "error") return (
-    <main className="start-screen"><div className="start-panel lobby"><p className="start-kicker">MATCH UNAVAILABLE</p><h1>Could not join</h1><p className="lobby-error">{error}</p><div className="lobby-actions"><button onClick={backToChoose}>Back</button><button className="start-primary" onClick={() => onStart({ mode: "ai" })}>Play vs AI</button></div></div></main>
+    <main className="start-screen"><div className="start-panel lobby"><p className="start-kicker">MATCH UNAVAILABLE</p><h1>Could not join</h1><p className="lobby-error">{error}</p><div className="lobby-actions"><button onClick={backToChoose}>Back</button><button className="start-primary" onClick={() => onStart({ mode: "ai", portrait })}>Play vs AI</button></div></div></main>
   );
 
   const hosting = state === "host";

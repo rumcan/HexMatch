@@ -28,8 +28,11 @@ import type { Snapshot } from "../iso/snapshot";
  * frames (see `chunkSnapshot`). A v1 peer cannot reassemble them and would sit
  * forever on an empty map, so the welcome must refuse it instead — the version
  * check turns "waits for state that can never arrive" into the reload message.
+ * v3 (PP-14b): the delta/snapshot gained `rivalSabotage` (Black-Market
+ * sabotage on the guest-seat plant). A v2 peer would drop that state and show
+ * a plant the host already froze, so mixed-version rooms must refuse.
  */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 /**
  * Realtime WS frame cap in bytes. Mirrors the SDK's `MAX_BROADCAST_BYTES`
@@ -85,6 +88,12 @@ export interface DeltaMsg {
   players?: DeltaPlayer[];
   setupPhase?: boolean;
   won?: boolean;
+  /**
+   * PP-14b: the Black-Market sabotage on the guest-seat plant. Carried on the
+   * steady-state delta (it changes only when a sabotage is bought or expires),
+   * and NOT seat-mirrored — see `RivalSabotage` in snapshot.ts.
+   */
+  rivalSabotage?: Snapshot["rivalSabotage"];
   /**
    * MP-05: a one-shot line for the guest ("your action was refused — 2 more
    * Ore"). Rides the next delta, which the relay already forwards; there is no
