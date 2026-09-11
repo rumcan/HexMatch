@@ -12,13 +12,18 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AccessDeniedError } from "@series-inc/rundot-game-sdk";
+// The singleton lives on the `/api` subpath (the package root has no default
+// export) — the same module `transport.ts` loads.
+import RundotGameAPI from "@series-inc/rundot-game-sdk/api";
 import {
   ROOM_TYPE,
   MATCH_CRITERIA,
   ROOM_CODE_LENGTH,
+  NO_ROOM_SERVER_MESSAGE,
   normalizeRoomCode,
   isValidRoomCode,
   isAccessDenied,
+  isOfflineMockRealtime,
 } from "../../src/net/transport";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -97,5 +102,39 @@ describe("MP-02 isAccessDenied", () => {
     expect(isAccessDenied(new Error("boom"))).toBe(false);
     expect(isAccessDenied({ name: "Error", code: "TIMEOUT" })).toBe(false);
     expect(isAccessDenied({})).toBe(false);
+  });
+});
+
+describe("MP-02 isOfflineMockRealtime", () => {
+  const api = RundotGameAPI as unknown as { realtime?: unknown };
+
+  it("reports the SDK's offline mock when no room server was injected", () => {
+    // The multiplayer plugin injects `window.__RUNDOT_MULTIPLAYER_DEV_SERVER__`
+    // ONLY on `vite serve`. This jsdom page never got it — which is exactly the
+    // built / previewed / statically served state, where the SDK resolves
+    // createRoom with a mock room and no welcome ever arrives.
+    expect(
+      (window as unknown as Record<string, unknown>).__RUNDOT_MULTIPLAYER_DEV_SERVER__,
+    ).toBeUndefined();
+    expect(isOfflineMockRealtime()).toBe(true);
+  });
+
+  it("does not flag a realtime API with a room server behind it", () => {
+    const original = api.realtime;
+    try {
+      api.realtime = { delegate: {} };        // dev sidecar delegate present
+      expect(isOfflineMockRealtime()).toBe(false);
+      api.realtime = { createRoom: () => {} };// hosted RUN API: no such field
+      expect(isOfflineMockRealtime()).toBe(false);
+      api.realtime = undefined;               // no realtime at all: `realtime()` throws instead
+      expect(isOfflineMockRealtime()).toBe(false);
+    } finally {
+      api.realtime = original;
+    }
+  });
+
+  it("names the fix in the message shown instead of a lobby that cannot fill", () => {
+    expect(NO_ROOM_SERVER_MESSAGE).toContain("npm run dev");
+    expect(NO_ROOM_SERVER_MESSAGE).toContain("9001");
   });
 });
