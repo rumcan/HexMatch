@@ -3182,6 +3182,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      * the shared buildings sheet (the non-gating fallback).
      */
     get buildings() { return atlasRef ? [...atlasRef.buildingImages.keys()] : []; },
+    /**
+     * ART-1950S (TICKET-B4): every sprite name the renderer actually blitted
+     * this session (industries, depots, town houses, roads, dirt, trucks,
+     * extras — ground tiles are pattern-painted and never appear). The
+     * dead-art audit unions this with the by-construction families to derive
+     * deletion candidates; see docs/iso-debug-console.md and
+     * tools/art-audit.mjs.
+     */
+    get drawnSprites() { return renderer ? [...renderer.drawnSprites] : []; },
     grid, track, eco,
     // ── J1: the quarry join, exposed so the boot test can prove the loop ──
     get board() { return quarry.board; },

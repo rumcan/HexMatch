@@ -543,6 +543,19 @@ export class IsoRenderer {
     if (this.overlayPainter) this.overlayPainter(ctx, cam, timeMs);
   }
 
+  /**
+   * ART-1950S (TICKET-B4): every sprite name actually handed to blit() this
+   * session — industries, depots, town houses, roads, dirt, trucks, extras.
+   * The dead-art audit unions this observed set with the by-construction
+   * families (road/dirt bitmasks, depot_<cargo>, TOWN_HOUSE_VARIANTS) to
+   * derive deletion candidates; a naive grep reports 149 of 239 sprites as
+   * "unused" because most names are built at runtime. Ground tiles are
+   * pattern-painted, not blitted, so terrain_* never appears here (they are
+   * enumerated by construction instead). Cleared never; it is a Set of
+   * strings, cheap to hold.
+   */
+  readonly drawnSprites = new Set<string>();
+
   private blit(ctx: Ctx2D, p: Placed, timeMs: number) {
     const z = this.cam.zoom;
     // W-series: roads blit from the ROADS atlas, buildings from the BUILDINGS
@@ -550,6 +563,7 @@ export class IsoRenderer {
     // else falls back to the monolithic image (layer sets unloaded).
     const img = this.atlas.imageForSprite(p.sprite, z);
     if (!img) return;
+    this.drawnSprites.add(p.sprite);
     const frame = p.frame ?? this.atlas.frameAt(p.def, timeMs);
     // Source rect in the ZOOMED atlas — never the raw 1× rect scaled with a
     // multiplication (the packer rounds both position and size at each zoom).
