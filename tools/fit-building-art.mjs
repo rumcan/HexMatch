@@ -86,16 +86,25 @@ async function chromaKey(img) {
     const i = (y * width + x) * channels;
     return [data[i], data[i + 1], data[i + 2]];
   };
-  // modal border colour (quantised to 16-steps bins to survive jpeg-ish noise)
+  // modal border colour: quantise to 16-step bins, then MERGE the dominant
+  // cluster's near neighbours (a noisy magenta backing splits across bins)
   const bins = new Map();
   const push = (c) => {
     const key = `${c[0] >> 4},${c[1] >> 4},${c[2] >> 4}`;
-    bins.set(key, (bins.get(key) ?? 0) + 1);
+    const b = bins.get(key) ?? { n: 0, r: 0, g: 0, b: 0 };
+    b.n++; b.r += c[0]; b.g += c[1]; b.b += c[2];
+    bins.set(key, b);
   };
   for (let x = 0; x < width; x += 3) { push(sample(x, 0)); push(sample(x, height - 1)); }
-  for (let y = 0; y < height; y += 3) { push(0, y); push(width - 1, y); }
-  const [topBin] = [...bins.entries()].sort((a, b) => b[1] - a[1])[0];
-  const bg = topBin.split(",").map((n) => (Number(n) << 4) + 8);
+  for (let y = 0; y < height; y += 3) { push(sample(0, y)); push(sample(width - 1, y)); }
+  const ranked = [...bins.values()].sort((a, b) => b.n - a.n);
+  const dom = ranked[0];
+  let n = dom.n, r = dom.r, g = dom.g, b = dom.b;
+  for (const c of ranked.slice(1)) {          // merge the near cluster
+    const d = Math.hypot(c.r / c.n - r / n, c.g / c.n - g / n, c.b / c.n - b / n);
+    if (d < 48) { n += c.n; r += c.r; g += c.g; b += c.b; }
+  }
+  const bg = [r / n, g / n, b / n];
 
   const HARD = 80, SOFT = 130;    // colour-distance bands (max 441)
   const out = Buffer.alloc(width * height * 4);
