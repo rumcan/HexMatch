@@ -823,8 +823,15 @@ export function createOriginalUi(
 
   function popup(gains: Partial<Record<ResKey, number>>, label: string) {
     const e = h("div", "harvest-pop");
-    const parts = (Object.keys(gains) as ResKey[]).map((k) =>
-      `<span>+${gains[k] ?? 0}${RES[k].icon}</span>`).join("");
+    // AUDIT 2026-09-11 — ResKey → Cargo: sheep 🐑 has no purse entry,
+    // brick 🧱 has none either. The popup must show the Cargo the purse
+    // actually received (sheep→oil 🛢️, brick→stone 🪨, wheat→grain 🌾)
+    // via GEM_TO_CARGO, or a chain's 2× would float a dead sheep icon.
+    const parts = (Object.keys(gains) as ResKey[]).map((k) => {
+      const cargo = GEM_TO_CARGO[k as ResKey];
+      const icon = cargo ? CARGO[cargo].icon : RES[k as ResKey].icon;
+      return `<span>+${gains[k as ResKey] ?? 0}${icon}</span>`;
+    }).join("");
     // A1: no gains means no body — a tokenless cascade still has its COMBO
     // label, and an empty flex row would float an empty box beside it.
     e.innerHTML = (label ? `<b class="hp-label">${label}</b>` : "")
