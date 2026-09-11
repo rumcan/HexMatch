@@ -1,0 +1,101 @@
+// @vitest-environment jsdom
+//
+// MP-02 — transport helper tests.
+//
+// Runs in jsdom because `transport.ts` loads the RUN SDK singleton, which
+// needs a browser `window` at construction. No test here touches the network:
+// room lifecycle (`createRoom`, `joinRoomByCode`, `quickMatch`, …) needs a
+// signed-in identity and a live room server, so it is covered by local
+// two-client play (MP-03+) and the e2e suite — not by unit tests (§11).
+import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { AccessDeniedError } from "@series-inc/rundot-game-sdk";
+import {
+  ROOM_TYPE,
+  MATCH_CRITERIA,
+  ROOM_CODE_LENGTH,
+  normalizeRoomCode,
+  isValidRoomCode,
+  isAccessDenied,
+} from "../../src/net/transport";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const ROOT = join(here, "../..");
+
+describe("MP-02 room registration", () => {
+  it("ROOM_TYPE matches the registered room in realtime.config.json", () => {
+    const cfg = JSON.parse(
+      readFileSync(join(ROOT, "rundot/realtime.config.json"), "utf8"),
+    ) as {
+      rooms: {
+        type: string;
+        config: { maxPlayers: number; metadata: Record<string, unknown> };
+      }[];
+    };
+    const room = cfg.rooms.find((r) => r.type === ROOM_TYPE);
+    expect(room).toBeDefined();
+    // Two-player model: players[0] = you, players[1] = rival (§6).
+    expect(room?.config.maxPlayers).toBe(2);
+  });
+
+  it("MATCH_CRITERIA matches the room metadata (§8)", () => {
+    const cfg = JSON.parse(
+      readFileSync(join(ROOT, "rundot/realtime.config.json"), "utf8"),
+    ) as { rooms: { config: { metadata: Record<string, unknown> } }[] };
+    for (const [k, v] of Object.entries(MATCH_CRITERIA)) {
+      expect(cfg.rooms[0].config.metadata[k]).toBe(v);
+    }
+  });
+});
+
+describe("MP-02 room codes", () => {
+  it("ROOM_CODE_LENGTH is the RUN 6-character code", () => {
+    expect(ROOM_CODE_LENGTH).toBe(6);
+  });
+
+  it("normalizes the way the join field does: trim + uppercase", () => {
+    expect(normalizeRoomCode("  hx9kwr ")).toBe("HX9KWR");
+    expect(normalizeRoomCode("ab12cd")).toBe("AB12CD");
+  });
+
+  it("accepts well-formed codes", () => {
+    expect(isValidRoomCode("HX9KWR")).toBe(true);
+    expect(isValidRoomCode("  hx9kwr ")).toBe(true);
+    expect(isValidRoomCode("ABC123")).toBe(true);
+  });
+
+  it("rejects malformed codes (server is still the final authority)", () => {
+    expect(isValidRoomCode("")).toBe(false);
+    expect(isValidRoomCode("ABC")).toBe(false);
+    // Old-relay 4-character codes are a different room system entirely.
+    expect(isValidRoomCode("AB12")).toBe(false);
+    expect(isValidRoomCode("ABCDEFG")).toBe(false);
+    expect(isValidRoomCode("AB-12C")).toBe(false);
+    expect(isValidRoomCode("AB 12C")).toBe(false);
+  });
+});
+
+describe("MP-02 isAccessDenied", () => {
+  it("recognizes the SDK's AccessDeniedError", () => {
+    expect(isAccessDenied(new AccessDeniedError("authenticated_18plus", "prompt_login"))).toBe(true);
+  });
+
+  it("recognizes the documented code shape (§1.2)", () => {
+    expect(isAccessDenied({ code: "ACCESS_DENIED" })).toBe(true);
+    expect(isAccessDenied({ name: "AccessDeniedError" })).toBe(true);
+    expect(
+      isAccessDenied({ name: "AccessDeniedError", requiredTier: "authenticated_18plus" }),
+    ).toBe(true);
+  });
+
+  it("rejects everything else", () => {
+    expect(isAccessDenied(null)).toBe(false);
+    expect(isAccessDenied(undefined)).toBe(false);
+    expect(isAccessDenied("ACCESS_DENIED")).toBe(false);
+    expect(isAccessDenied(new Error("boom"))).toBe(false);
+    expect(isAccessDenied({ name: "Error", code: "TIMEOUT" })).toBe(false);
+    expect(isAccessDenied({})).toBe(false);
+  });
+});
