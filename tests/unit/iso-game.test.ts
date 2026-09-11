@@ -2142,10 +2142,10 @@ describe("VP-01 the rival plays the score, not just the map", () => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// PP-14 — the holy cross: 3 horizontal + 3 vertical overlapping on the centre
-// gem summons the praying angel and the choir. board.test.ts pins the board
-// half (detection, the HOLY CROSS callout, the `cross` fx event); this pins
-// the UI half — the angel PNG pops over the crossing and the sound really is
+// PP-14 — the holy cross: 3 horizontal + 4 vertical overlapping on one gem
+// summons the praying angel and the choir. board.test.ts pins the board half
+// (detection, the HOLY CROSS callout, the `cross` fx event); this pins the
+// UI half — the angel PNG pops over the crossing and the sound really is
 // asked for.
 // ══════════════════════════════════════════════════════════════════════════
 describe("PP-14 the holy cross", () => {
@@ -2178,17 +2178,18 @@ describe("PP-14 the holy cross", () => {
     return () => oscs;
   }
 
-  /** Paint a cross onto the board: 3 horizontal + 3 vertical over (2,2). */
+  /** Paint a cross onto the board: 3 horizontal + 4 vertical over (2,2). */
   function paintCross(b: import("../../src/game/board").Board) {
     b.grid[2][1]!.res = "sheep";
     b.grid[2][2]!.res = "sheep";
     b.grid[2][3]!.res = "sheep";
     b.grid[1][2]!.res = "sheep";
     b.grid[3][2]!.res = "sheep";
+    b.grid[4][2]!.res = "sheep";
     b.grid[2][0]!.res = "ore";
     b.grid[2][4]!.res = "ore";
     b.grid[0][2]!.res = "ore";
-    b.grid[4][2]!.res = "ore";
+    b.grid[5][2]!.res = "ore";
   }
 
   it("pops the praying angel over the crossing and starts the choir", async () => {

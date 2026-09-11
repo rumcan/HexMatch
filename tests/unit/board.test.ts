@@ -128,32 +128,51 @@ describe("settle / swap", () => {
   });
 
   // PP-14: the cross is the shape with a saint on the payroll — 3 horizontal
-  // + 3 vertical overlapping on the CENTRE gem. It grants the same two
-  // random materials an L does, but under its own name, and fires the
-  // `cross` fx (the praying angel) at the crossing gem. Before PP-14 the L
-  // detector swallowed crosses and reported them as L-SHAPEs.
-  it("a cross of five grants two random materials and fires the angel at the crossing", async () => {
+  // + 4 vertical overlapping on ONE gem (the centre of the 3-run, an
+  // interior gem of the 4-run). It grants FOUR random materials (double an
+  // L's two) under its own name, and fires the `cross` fx (the praying
+  // angel) at the crossing gem. Before PP-14 the L detector swallowed
+  // crosses and reported them as L-SHAPEs paying two.
+  it("a cross of six (3 across + 4 down) grants four materials and fires the angel at the crossing", async () => {
     const b = freshBoard();
     const bonus: string[] = [];
     b.onBonus = (_r, _n, why) => bonus.push(why);
     const crosses: [number, number][] = [];
     b.onFx = (type, r, c) => { if (type === "cross") crosses.push([r, c]); };
-    // 3 horizontal + 3 vertical, overlapping on the centre gem (2,2)
+    // 3 horizontal + 4 vertical, overlapping on the centre gem (2,2)
     b.grid[2][1]!.res = "sheep";
     b.grid[2][2]!.res = "sheep";
     b.grid[2][3]!.res = "sheep";
     b.grid[1][2]!.res = "sheep";
     b.grid[3][2]!.res = "sheep";
-    // stop both arms at three
-    b.grid[2][0]!.res = "ore";
-    b.grid[2][4]!.res = "ore";
-    b.grid[0][2]!.res = "ore";
-    b.grid[4][2]!.res = "ore";
+    b.grid[4][2]!.res = "sheep";
+    // stop both arms and fence the sheep in so pass 1 is exactly this cross
+    for (const [r, c] of [[2, 0], [2, 4], [0, 2], [5, 2], [1, 1], [1, 3], [3, 1], [3, 3], [4, 1], [4, 3]]) {
+      b.grid[r][c]!.res = "ore";
+    }
     // the first pass of `resolve` runs synchronously — assert before the
     // cascade can add anything, so the exact bonus list is deterministic.
     const p = b.settle();
-    expect(bonus).toEqual(["HOLY CROSS", "HOLY CROSS"]);
+    expect(bonus).toEqual(["HOLY CROSS", "HOLY CROSS", "HOLY CROSS", "HOLY CROSS"]);
     expect(crosses).toEqual([[2, 2]]);
+    await p;
+  });
+
+  it("the same cross rotated — 4 across + 3 down — is holy too", async () => {
+    const b = freshBoard();
+    const crosses: [number, number][] = [];
+    b.onFx = (type, r, c) => { if (type === "cross") crosses.push([r, c]); };
+    b.grid[2][0]!.res = "sheep";
+    b.grid[2][1]!.res = "sheep";
+    b.grid[2][2]!.res = "sheep";
+    b.grid[2][3]!.res = "sheep";
+    b.grid[1][1]!.res = "sheep";
+    b.grid[3][1]!.res = "sheep";
+    for (const [r, c] of [[1, 0], [3, 0], [1, 3], [3, 3], [2, 4], [0, 1], [1, 2], [3, 2], [4, 1]]) {
+      b.grid[r][c]!.res = "ore";
+    }
+    const p = b.settle();
+    expect(crosses).toEqual([[2, 1]]);      // the crossing gem
     await p;
   });
 
@@ -167,6 +186,28 @@ describe("settle / swap", () => {
     b.grid[2][3]!.res = "sheep";
     b.grid[3][2]!.res = "sheep";
     b.grid[4][2]!.res = "sheep";
+    const p = b.settle();
+    expect(bonus.filter((w) => w === "L-SHAPE").length).toBe(2);
+    expect(bonus).not.toContain("HOLY CROSS");
+    await p;
+  });
+
+  it("a 4-run sharing its END with a 3-run is a T with a tail, not a cross", async () => {
+    const b = freshBoard();
+    const bonus: string[] = [];
+    b.onBonus = (_r, _n, why) => bonus.push(why);
+    // 3 horizontal + 4 vertical, but the shared gem is the FIRST gem of the
+    // vertical run — the crossing sits on the end, so it is not holy.
+    b.grid[2][1]!.res = "sheep";
+    b.grid[2][2]!.res = "sheep";
+    b.grid[2][3]!.res = "sheep";
+    b.grid[3][2]!.res = "sheep";
+    b.grid[4][2]!.res = "sheep";
+    b.grid[5][2]!.res = "sheep";
+    for (const [r, c] of [[2, 0], [2, 4], [1, 1], [1, 3], [3, 1], [3, 3], [4, 1], [4, 3], [5, 1], [5, 3], [6, 2]]) {
+      b.grid[r][c]!.res = "ore";
+    }
+    b.grid[1][2]!.res = "wood";
     const p = b.settle();
     expect(bonus.filter((w) => w === "L-SHAPE").length).toBe(2);
     expect(bonus).not.toContain("HOLY CROSS");
