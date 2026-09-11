@@ -58,6 +58,32 @@ npm --prefix server install
 npm --prefix server start     # port 8787 (PORT env overrides)
 ```
 
+This relay is local/self-hosted play only. A game published to RUN.world is
+sandboxed to a host allowlist and cannot reach a backend you host, so nothing
+in `src/` may connect to it — see the next section.
+
+## RUN.world multiplayer (BETA)
+
+The jam's two-player game runs on RUN.world's realtime rooms instead of the
+relay above. The tickets and the constraints behind them (auth, the 16 KiB
+frame cap, host authority) are in
+[`docs/HexMatch-tickets.md`](docs/HexMatch-tickets.md) — MP-01 … MP-09.
+
+| Path | Role |
+|---|---|
+| `rundot/realtime.config.json` | registers the `hexmatch` room type (2 players) |
+| `src/rooms/HexmatchRoom.ts` | server-side `GameRoom` — mints the map seed, names the host, routes messages |
+| `src/net/protocol.ts` | the message union shared by the client and the room |
+
+The room is a **thin validating relay**, not the simulation: the host browser
+stays authoritative and the room's only real authority is refusing world state
+from anyone who is not the host.
+
+`rundotMultiplayerPlugin()` (in `vite.config.ts`) bundles the room into
+`dist/server-bundle.js` and copies the room config to `dist/rooms.config.json`
+on build. Under `npm run dev` it also runs the rooms locally on port 9001, so
+two browser profiles can host/join by code without the platform.
+
 ## Art pipeline (E1)
 
 Sprites are derived from OpenGFX and packed from a shared manifest — see

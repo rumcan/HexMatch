@@ -20,6 +20,7 @@
     "atlas:groups": "node tools/make-atlas-groups.mjs"
   },
   "dependencies": {
+    "@series-inc/rundot-game-sdk": "5.27.0",
     "clsx": "2.1.1",
     "react": "19.2.6",
     "react-dom": "19.2.6",
