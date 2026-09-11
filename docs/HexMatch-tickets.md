@@ -1,428 +1,495 @@
-# Ticket pack: Processing Plants, Depots and resource economy
-Terminology: The Factory is the physical processing site. Its match-3 interface is the Processing Plant. A Depot collects resources from nearby nodes and supplies a Factory through the transport network.
-
-PP-01 — Rename Quarry and Harvester in the UI
-Status: DONE
-Type: UI / terminology
-
-Requirements
-Rename the match-3 Quarry interface to Processing Plant.
-Rename Harvester / Harvesters to Depot / Depots.
-Update buttons, headings, tooltips, placement instructions, inspectors, notifications and accessibility labels.
-Explain the gameplay loop clearly:
-Resource node → Depot → transport network → Factory → processing → resources available for construction.
-
-Acceptance criteria
-No player-facing references to “Harvester” remain.
-The match-3 interface is consistently called “Processing Plant.”
-Stone-producing quarry resource nodes keep their existing name; this is not a global replacement of every occurrence of “quarry.”
-These renames alone do not change gameplay, building footprints or saved-game compatibility.
-
-PP-02 — Require Factory placement next to a town
-Type: Gameplay rule
-
-Requirements
-Starting Factories and additional processing sites must be built next to a town.
-Define “next to” consistently: at least one tile of the Factory’s footprint must share an edge with a town tile. Diagonal-only contact does not qualify.
-The entire Factory footprint must remain on legal ground without overlapping the town or another building.
-Apply the same rule to human players and the AI.
-
-Acceptance criteria
-Placement away from a town is rejected with a clear explanation.
-The preview and actual placement use identical rules.
-The AI cannot bypass town adjacency through a fallback placement.
-Generated maps provide enough valid starting sites for all players.
-Starting resources and transport allowances allow a town-adjacent Factory to establish its first working Depot connection without becoming stuck.
-
-PP-03 — Clearly distinguish building footprint from reach
-Type: UI / placement feedback
-
-Requirements
-Show two clearly different overlays while placing Factories and Depots:
-
-Building footprint: a strong outline or solid translucent fill showing exactly which tiles the building occupies.
-Reach: a lighter overlay showing the building’s actual collection or connection area.
-For each building:
-
-Factory: show its 2×2 footprint, qualifying town and town-adjacency area. Do not suggest that it harvests surrounding resource nodes.
-Depot: show its 1×1 footprint separately from its resource catchment.
-
-Acceptance criteria
-Players can immediately distinguish placement tiles from reach tiles.
-Resource nodes within a Depot’s catchment are visibly identified.
-Invalid placement has a distinct appearance and a readable reason.
-Overlays use the same footprint and reach calculations as gameplay.
-The preview matches the final placement at every zoom level, using both mouse and touch.
-
-PP-04 — Award manufactured resources without requiring a matching Depot
-Type: Bug fix / processing rule
-Priority: High
-
-Reproduction
-Have no Depot supplying Oil.
-Match four Oil gems in the Processing Plant.
-A numbered Oil token is created.
-Clear that token.
-Currently, the player receives no Oil.
-
-Required behaviour
-A numbered resource legitimately created in the Processing Plant must award its resource when cleared—even when the player has no Depot supplying that resource.
-
-Special matches therefore provide a way to manufacture resources that the player cannot currently harvest.
-
-Acceptance criteria
-Clearing a tier-1 token in an ordinary match awards its base resource amount.
-Existing tier and match bonuses still apply correctly.
-Payout works for every resource type, including Oil.
-Each token pays exactly once, including when cleared through special effects or cascades.
-Reach refreshes or route disconnections do not erase already-created numbered output.
-Inventory changes, gain notifications and displayed amounts agree.
-Ordinary, unnumbered matches do not suddenly award resources.
-Important distinction: Depots and transport connections still control the arrival of new delivered inputs. They must not block collection of output already created on the processing board.
-
-Update tests that currently treat every disconnected-resource payout as invalid.
-
-PP-05 — Require Oil when building additional Depots
-Type: Economy / construction costs
-
-Requirements
-Every paid, newly built Depot must require Oil alongside its other construction materials.
-Show the complete cost before placement.
-Apply the same cost to player actions, AI decisions and multiplayer validation.
-
-Acceptance criteria
-A player with sufficient other materials but insufficient Oil cannot build a paid Depot.
-Failed placement consumes nothing.
-Successful placement deducts the complete cost exactly once.
-Oil obtained through Processing Plant matches is valid construction stock.
-The opening cannot become impossible because Oil production itself requires a Depot.
-Proposed setup exception: Keep the first setup Depot free; require Oil for every subsequent Depot.
-
-Dependency: PP-04 must work before this cost change is enabled.
-
-PP-06 — Allow additional processing plants at other towns
-Type: Gameplay expansion
-
-Requirements
-After setup, players can spend resources to build additional Factory/processing-plant sites near other towns.
-These are additional instances of the same processing-site building, not a separate building type with conflicting rules.
-Each site must have ownership, a town association and a valid footprint.
-Each site acts as a delivery destination for the player’s connected Depots.
-Processed resources contribute to the player’s construction inventory.
-
-Acceptance criteria
-Additional plants obey the same town-adjacency rule as the starting Factory.
-Costs are previewed and charged exactly once.
-Routing, processing, scoring and AI no longer assume that a player has only one Factory.
-Connecting a Depot to multiple plants cannot duplicate its production or repeatedly award the same VP.
-Selecting or switching plants cannot reset progress or reroll a board for free.
-Save/load and multiplayer preserve all plants and their state.
-Design decision to lock before implementation: Does each plant have its own persistent processing board, or do all plants share one board? Define input allocation and sabotage targeting alongside that decision.
-
-PP-07 — Rebalance construction and expansion using Catan-style resource roles
-Type: Economy / balancing
-
-Goal
-Make resource combinations drive meaningful choices:
-
-Wood and Stone: basic infrastructure.
-Grain: workforce and expansion.
-Ore: industrial investment and better transport.
-Oil: Depot expansion.
-Gold: Black Market sabotage only.
-
-Suggested first playtest costs
-These are starting proposals, not final balanced values.
-
-Purchase  Proposed cost
-Road tile 1 Wood + 1 Stone
-Rail tile 1 Wood + 1 Stone + 4 Ore
-Upgrade Road to Rail  4 Ore
-Additional Depot  1 Wood + 1 Stone + 1 Grain + 1 Oil
-Additional Processing Plant 2 Wood + 2 Stone + 2 Grain + 3 Ore
-
-Acceptance criteria
-Every normal resource has a useful construction role.
-All costs come from one authoritative table used by the UI, gameplay and AI.
-Starting stock and free transport are retuned if necessary for the new prices.
-Test opening progression and expansion on the actual 144×144 map, not just short synthetic routes.
-Players can manufacture a missing resource without entering an endless dependency loop.
-Record time to first connection, second Depot and second processing plant during playtesting.
-Tune costs and processing yields together; do not assume the proposed numbers are balanced without testing.
-
-PP-08 — Reserve Gold exclusively for Black Market sabotage
-Type: Economy rule
-
-Requirements
-Gold is used only to purchase Black Market actions that sabotage opponents.
-Remove Gold from ordinary construction, Depot costs, processing plants, transport, upgrades and repairs.
-Gold cannot substitute for missing construction materials.
-Ordinary market exchanges must not turn Gold into a general-purpose construction currency.
-Audit existing non-sabotage Gold purchases, including security/defensive actions, and reprice them without Gold.
-
-Acceptance criteria
-Every normal construction action can be completed without Gold.
-Black Market sabotage displays and deducts its Gold cost correctly.
-Insufficient Gold prevents sabotage without consuming other resources.
-Gold earned through processing or bonuses reaches the Gold balance.
-UI copy clearly explains: “Gold is reserved for Black Market sabotage.”
-Player, AI and multiplayer rules enforce the same restriction.
-
-PP-09 — Enable Gold Gem Spawning
-Status: DONE
-Type: Bug fix / processing rule
-
-Requirements
-Gold gems must be added to the Processing Plant board and start spawning like other resource types the moment a Depot is built adjacent to a Gold Mine.
-
-Acceptance criteria
-Building a Depot next to a Gold Mine immediately triggers Gold gems to begin dropping in the match-3 interface.
-
-PP-10 — Add Simple Roads to Towns
-Type: Feature / map generation
-
-Requirements
-Generate simple roads within or connecting to towns to improve structural layout and visual connectivity.
-
-Acceptance criteria
-Towns successfully generate and display a basic internal road network upon creation.
-
-PP-11 — Integrate New Isometric Assets
-Type: Art / Asset replacement
-
-Requirements
-Review the new images in the `assets\iso-ttd` folder (including town buildings like those in `image_00c1ad.png`) and update the game assets accordingly:
-1. Replace existing resource nodes with the new images, matching them by name.
-2. Replace generic Depots with resource-specific buildings (e.g., place a lumbermill at a forest instead of a standard Depot).
-3. Replace the Factory/Processing Plant with one of the new factory images. The new image must dictate the number of tiles the Factory occupies.
-4. Use the remaining unused building images to generate towns.
-
-Acceptance criteria
-All resource nodes use the updated `iso-ttd` art.
-Depot art dynamically changes based on the resource it is harvesting (lumbermill for wood, etc.).
-Factory footprint matches the tile dimensions of its new sprite.
-Towns are visually populated using the remaining building assets.
-
-VP-01 — Victory Points from Paving, and a Better AI Opponent
-Status: DONE
-Type: Victory-rule change / AI
-
-Requirements
-Give win points for the roads you upgrade from dirt to paved.
-Dirt roads do not give win points.
-A Road built on ground that was never your dirt does not give win points either: the point is for the upgrade.
-Each upgraded road tile is worth 0.25 VP — every four upgrades is one point (settled down from the proposed 0.5, which ended games too quickly).
-Building a processing plant gives 1 VP; only plants raised after the free opening Factory count.
-Demolishing a paved tile or a plant takes its point back.
-First to 10 VP wins.
-Full AI upgrade: the rival plays the new victory condition — it paves for points, values industries by VP per Ore, plans ore → pave → plant, stops wasting turns, banks toward the milestone it cannot yet afford, and reacts to the player's lead.
-
-Acceptance criteria
-A Dirt Road connection scores nothing; a paved tile scores 0.25 VP exactly once.
-A Road laid on virgin ground scores nothing, at the full Road price — paving is the cheaper, scoring path.
-Provenance survives save/load: a rejoined player sees the same score, because the upgrade bit travels on the tile (snapshot v9).
-Demolition revokes the point; paving the same tile twice cannot farm it.
-Points are owner-scoped: public highways and a rival's paving never land on your total.
-The scoreboard is derived from the board, so it can never drift from it.
-The AI scores by paving within the opening minutes and a full game between two AI-driven seats ends inside a session (see docs/playtest-reports/2026-09-10-vp01-vp-race.md).
-`rivalPace` is a pure read of the two scoreboard totals: a seat a plant behind sprints (4 bank exchanges a turn instead of 2, Ore-bearing ground weighted 1.5x in the depot planner, and the pave goal itself deliberately unchanged), a seat ahead keeps compounding income, and a leader one point from winning is denied with the rival's last Gold instead of its reserve.
-The rival never pays for a sabotage card it cannot aim (the raid's purchase list is the three cards it can land on your plant).
-The UI explains the rule: tool labels, mode bar, inspector, banners and help all price the pave.
-Player, AI and multiplayer rules enforce the same restriction (no AI-only scoring path).
-
-AI-01 — Rival difficulty presets: easy, normal and hard
-Status: DONE
-Type: AI / balance
-
-Requirements
-Give the AI rival three difficulty levels — easy, normal and hard — selectable in game.
-Two AIs must be able to play each other, and the speed at which they reach the win points (10★) is the measure of how hard the rival is: harder preset finishes sooner.
-The rival uses the market every so often to attempt a trade.
-The rival must not be passive: it uses the main roads (town ring roads, public highways) and it expands.
-
-Acceptance criteria
-Difficulty is pacing and budget only: every preset runs the same turn policy and the same costs — no cheats.
-Three presets (easy / normal / hard) ship; the difficulty is chosen from the top bar, live and mid-game, persists between sessions, and can be pinned per match with ?rival=easy|normal|hard (mirrors ?seed=).
-The calibration harness races two AI seats head-to-head on the same map with per-seat clocks and budgets; the ladder assertion is winner-time-to-10★ on mirror matches (hard < normal < easy), and head-to-head pairings run in both seat orientations with results pooled.
-Easy and hard both finish mirrors inside the harness window; the loser of a mirror is never parked (proportional pace floor).
-The easy rival still expands (depots, paving, offers) and never touches sabotage (no raids, no blockades); hard expands two plans a turn, paves 12 tiles a pass, banks harder, offers more often, raids on its own clock.
-See docs/playtest-reports/2026-09-10-ai-skills.md for the measured ladder and the two economy failures (bank churn, plant-rush stall) the harness caught in the shipped rival's own turn.
-
-AI-02 — The live opponent that parked itself, faster trucks on road, and a real race length
-Status: DONE
-Type: AI / UX / balance
-
-Requirements
-The player watched a long live session and reported five faults:
-
-1. "The rival has one factory and one road and one depot and it is just upgrading it" — no expansion, and "if I do nothing, the AI does nothing".
-2. "It is not playing the match game to gain gold and using the black market on me" — zero raids in a long session.
-3. Trucks should be 2× as fast on the open (paved) road as on dirt, to motivate upgrading lanes.
-4. "Increase win points to 20. 10 is way too little."
-5. "Make the player select the difficulty at the start of the game."
-
-Diagnosis (headless live-game repro, seed 1337, 25 sim minutes)
-The rival opened, paved 2 of its 3 tiles, then sat at 0.5★ for the whole horizon
-while Wood piled up at +32/min and every other purse entry stayed frozen. The
-deadlock was three guards agreeing on the wrong number: the pave pass refuses
-to spend Ore under the 1★-Plant reserve (`keepOre`), while every afford check —
-`paveMilestone`'s gap, `rivalBankTowardPlan`'s loop, `rivalBankTowardPave`'s
-trigger — asked the RAW purse, saw "enough Ore", and never traded. The sim
-never reproduced it because its lane happened to earn Stone; live, on a lane
-with none, it was permanent. N.B. this is independent of `aiTick` running on
-the frame clock — the rival was thinking fine, it was mis-reading its own wallet.
-The raids were structurally impossible, too: lorry deliveries fed only the
-player's board ("the rival's lorries feed no board"), so the rival had zero
-Gold income, and `rivalRaid` opens with "no Gold, no raid".
-
-Changes
-Pave goals are now priced against SPENDABLE Ore (purse minus the plant reserve)
-in all three spots, so a stuck seat banks into Ore, paves out of the hole, and
-reaches for its next depot plan (seed-1337 live repro afterwards: 4 depots and
-19 paves inside 6 minutes, 10★ by minute 11 against an idle player).
-Every lorry delivery now pays its OWNING seat: the player's loads still feed
-the board; a rival load credits the rival +1 per cargo and +1 Gold — the
-abstract match-3 income that primes the raid pool and feeds the market sales.
-Trucks integrate per route SEGMENT: paved segments run at 2× (dirt 300ms/tile,
-road 150ms), recomputed on every replan, so paving visibly shortens round trips
-for both seats.
-`VICTORY.target` 10 → 20; the single source means the HUD/help/banners follow;
-the ship-constants tests were re-numbered.
-A start-of-game difficulty prompt (easy/normal/hard cards with pace/blurb)
-shows exactly when nothing has chosen yet: `?rival=` or a stored choice skips
-it; the pick flips the live game, persists, and syncs the top-bar selector.
-
-Acceptance criteria
-Live headless regression (seed 1337, six in-game minutes, driven at the game's
-own clocks): ≥4 rival depots, ≥12 paves, no 300+ Wood hoard — parked rival was
-1 depot / 3 tiles / 0.5★ forever before the fix.
-Trucks: per-segment 2× pinned (paved trip = half the dirt time; mixed route
-pays per segment; plans stamp paved segments on replan; legacy trucks without
-seg data keep the old uniform pace).
-VP line: `VICTORY.target === 20`; win-check, HUD, help modal and banner all
-derive from it.
-Difficulty prompt: asks only when no explicit choice exists, URL/store junk
-does not silence it, pick persists + applies live; top-bar selector keeps its
-mid-game role.
-Ladder re-measured at the 20★ line — see docs/playtest-reports/2026-09-10-ai-02-report.md.
-
-PP-14 — Industries keep out of the roads' verges
-Status: DONE
-Type: Map generation
-
-Requirements
-"Change spawning so industries can't spawn less than 10 squares from a public road."
-The generator plants industries FIRST (separation ladder, then quotas), towns after them,
-and the PP-13 public roads last — so a highway or a town ring road could be stamped
-straight through a farm. On seed 7 six industries stood within 10 tiles of a highway and
-one of them was on the verge itself; on seed 20260902 it was twelve. A road running under
-a resource reads as a bug in the map, and it handed the opening a free connection the
-player never had to build.
-
-Changes
-`applyRoadSpawnBuffer` runs in `generateMap` right after the highways are laid and before
-the town-ring flattening. `INDUSTRY_ROAD_SEP = 10` is measured against EVERY tile the game
-stamps `PUBLIC_OWNER` — the PP-13 inter-town highways AND each town's ring road and
-streets — over a Chebyshev distance field, which also subsumes the 8-tile town buffer
-(`TOWN_INDUSTRY_SEP`) that `placeTowns` already enforced: town houses and town ground are
-still checked, at their own radius, so a re-sited industry cannot dodge one rule by
-satisfying the other.
-The repair is deliberately LOCAL and RNG-free. Each violator is moved to the nearest legal
-ground by expanding rings around its OWN tile (separation ladder 12, 8, 6, 4, 2), and if
-nothing fits it stays where it was rather than teleporting. The first version of this
-re-sited globally — a row-major scan of the map with a few RNG draws — and every corridor
-test died `off-screen`, because a map-wide scan picks a far corner, `clampCamera` then
-pins the boot camera to that corner, and the opening industry is no longer in frame.
-No RNG also means no new determinism surface: the buffer is a pure function of the terrain
-and the towns, so `?seed=` reproduces the map exactly as before (T1).
-
-Acceptance criteria
-16 swept seeds: no industry within 10 tiles of any public road (closest is 10-13), the
-25-industry quota and its per-type split unchanged, ≥90% of industry pairs still 12 apart
-(100% measured), no overlap with town ground, and `generateMap` byte-identical across
-repeated runs. Covered by `tests/unit/iso-grid.test.ts` (town/industry separation, quotas,
-reachability) plus the corridor suite, which re-derives its openings from the live map.
-
-PP-15 — A road joins a plant at the EDGE of its graphic
-Status: DONE
-Type: Network / UX
-
-Requirements
-"Fix where road connects to processing plants. It should be on the edge of the graphic.
-Right now you have to build the road into some weird spot inside."
-A Factory is ONE sprite over the 3×3 `FACTORY_FOOTPRINT` (PP-12: the footprint is the
-art's), but every rule that asked "does this road touch the plant?" asked it about the
-footprint's ORIGIN tile only — the block's north-west corner, under the graphic, at the
-BACK of the building. So a road that visibly touched the factory's south wall was
-"unconnected", the only legal tile to plug into was one the player could not click, and
-the free opening road was charged for paving the player's own factory floor.
-
-Changes
-The footprint is now the unit of every question about a building:
-• `plantFootprintTiles` (track.ts) is the one geometry, and `playerNetwork` seeds all of
-  a plant's tiles — a drag may start on the building and reach any side of it;
-• `plantShoulders` (road-routing.ts) and `componentsTouchingTiles`/
-  `sharedComponentsWithTiles` (economy.ts) answer "is this Depot joined to that plant" for
-  the block's whole perimeter, so `resolveConnection`, the lorry's route goal and the
-  rival's pave pass all agree with the picture (four separate single-tile answers was the
-  bug, four times);
-• `structureTiles` + `previewDrag`'s `structures` set: the L-path may RUN UNDER the
-  builder's own buildings — refusing it would truncate a legal road — but a tile of a
-  player's own building is never paved and never charged, and it consumes none of the
-  `FREE_SETUP_TRACK` allowance. 12 free tiles are 12 tiles of road, not 10 of road and two
-  of factory floor. It is per OWNER: a rival's ground stays somebody else's wall.
-Deliberately not changed: the rival's A* still prices its own floor as ground it paves
-(one dirt tile under its opening plant). `stepCost` has no structures notion, and threading
-one through `findPath` would move every pinned route cost in `iso-ai.test.ts` for a
-presentational tile the rival can afford.
-
-Acceptance criteria
-`tests/unit/iso-plant-edge.test.ts` (9 tests): the whole block is network ground and one
-tile beyond is not; all four sides accept a new tile; a spur joined to the FAR side of the
-plant is a live connection (and the same fixture is pinned to fail under the origin-tile
-rule); the lorry stops at the edge the road joins instead of driving around the back; a
-drag under the buildings lays nothing, costs nothing, and spends no allowance; what is
-previewed is what is committed. `iso-track`, `iso-vehicles`, `iso-economy`, `iso-plants`
-and the corridor suite were re-swept where the old rule was pinned; the e2e boot spec now
-derives its tile count from `__iso.dragPreview` instead of counting the column, so it
-cannot drift from the game's own pricing.
-
-PP-16 — One Depot holds one industry
-Status: DONE
-Type: Economy / UX
-
-Requirements
-"Only allow 1 player to build a depot next to an industry, and only 1 — as soon as the
-depot is built no other ones can be built there." Clarified on the ticket: "only claim the
-free ones and one if there's a network. You can't just add a depot without a road. The
-first with a network to that resource locks it to himself."
-
-Changes
-`industryLocks(state)` (economy.ts) maps every industry to the FIRST serviced Depot whose
-catchment covers it. A lock is a ROAD: `isServiced` is the gate, so a Depot dropped on open
-ground claims nothing and cannot sterilise a district — its claims arrive with its
-connection, which is also when it starts paying. The map is DERIVED, never stored, so
-demolishing the road that serviced a Depot releases everything it held and no snapshot
-field is added.
-`heldIndustries` is what a Depot is PAID for — its catchment minus what another Depot
-reached first — and it replaces the proportional split: `claimantCounts` and the
-÷claimants in `harvesterYield`/`industryClaimValues` are gone, because an industry now has
-exactly one holder and pays it in full. Placement follows the same set from the other side:
-`planDepotPlacement` takes a `locked` option and refuses a site whose whole catchment is
-held with the readable code `industry-taken`; `placeHarvester` refuses it before anything
-is priced (a refused build still consumes nothing), `tileProbe` reports it so the corridor
-picker can never plan a Depot the round would reject, and the inspector says who holds an
-industry instead of counting how many depots stand near it.
-The rival plays by the same rule: `catchmentValue` ranks only what a NEW Depot would hold,
-`planCandidates` never searches a route to a held industry, and `executeCandidate` places
-no Depot that would claim nothing.
-
-Acceptance criteria
-`tests/unit/iso-depot-claim.test.ts` (8 tests): a serviced Depot locks its catchment, a
-roadless one locks nothing, the first in the list holds it and the late arrival holds
-nothing, the placement refusal is per site with the right code and sentence, at least one
-FREE industry makes a site legal again, and tearing up the road releases the industry.
-`iso-economy`'s old "overlapping catchments split output proportionally" block is now
-"the first Depot with a road holds the industry" (holder paid in full, late arrival paid
-nothing, and the total is capped at one holding rather than halved twice). `iso-ai` pins
-that the rival will not build a second Depot for ground it already holds.
+# MP — Multiplayer on RUN.world (host / join / matchmake)
+
+Implementation spec for an AI agent. Target branch: `arena/01a08aba-hexmatch`.
+
+The game currently boots straight into a single-player match against the AI
+rival (`startIsoGame` → `src/iso/game.ts:203`). This spec adds a start screen
+offering **Host**, **Join by code**, **Quick match** and **Play vs AI**, and
+wires real two-player games over RUN.world's realtime rooms.
+
+Read this whole document before writing code. Sections 1 and 2 contain
+constraints that invalidate the obvious implementation.
+
+---
+
+## 1. Hard constraints
+
+These are platform facts, verified against the RUN.world docs. Do not design
+around them; design *within* them.
+
+### 1.1 The existing relay cannot be used
+
+`server/server.js` (329 lines, ws relay, deployed to `wss://hexmatch.fly.dev`)
+is **unreachable from a published game**. RUN sandboxes games in an iframe with
+a host allowlist:
+
+> "Arbitrary external hosts are not reachable, and that includes your own
+> backend or API server: calls to a server you host from inside the game are
+> blocked by the platform sandbox."
+
+Do not attempt to connect to it, proxy to it, or make it configurable. Leave
+`server/` on disk untouched — it still serves local/self-hosted play and is a
+useful protocol reference — but nothing in `src/` may reference it.
+`.env.production`'s `VITE_ROOM_SERVER` becomes dead for RUN builds.
+
+### 1.2 Multiplayer requires a signed-in user
+
+`createRoom`, `joinRoomByCode`, `joinOrCreateRoom`, `matchmakeRoom` and
+`getUserRooms` all reject anonymous users with `AccessDeniedError`
+(`code === 'ACCESS_DENIED'`).
+
+**Consequence, and the most important UX rule in this spec:** most people who
+open the game from the explore page will not be signed in. *Play vs AI must
+remain fully playable with zero auth and must be the lowest-friction option on
+the start screen.* Multiplayer buttons trigger a login prompt only when pressed.
+Never gate the whole game behind login.
+
+### 1.3 A full snapshot is 6.75× over the frame cap
+
+This kills the naive port of `src/iso/snapshot.ts`'s intended 6 Hz model:
+
+| Quantity | Value |
+|---|---|
+| Map | 144 × 144 = 20,736 tiles |
+| One track layer, base64 | 27,648 chars |
+| Four layers (`dirt`, `road`, `owner`, `upgraded`) | **108 KiB** |
+| At 6 Hz | **648 KiB/s** |
+| RUN frame cap | **16 KiB** |
+
+So: **a full `Snapshot` may be sent on join and on resync only — never on a
+timer.** Steady state must be per-action deltas. See section 5.
+
+### 1.4 Multiplayer is BETA
+
+Expect API drift. Isolate every RUN call behind `src/net/transport.ts` so a
+breaking change is a one-file fix.
+
+---
+
+## 2. Architecture
+
+RUN is server-authoritative: game logic lives in a `GameRoom` subclass running
+on their infrastructure. Hexmatch's existing design is *host-authoritative* —
+"the browser that creates the room owns the truth… guests do not simulate"
+(deleted `src/game/net.ts`).
+
+**Decision: keep host authority; use the `GameRoom` as a thin validating relay.**
+
+Rationale: the alternative — porting the economy tick, vehicle movement, AI
+rival and market into a server-side `GameRoom` — is a rewrite of most of
+`src/iso/`. The relay model reuses `snapshot.ts` as-is and is the documented
+`onGameMessage` → `broadcast` pattern. Revisit only if cheating becomes a real
+concern; this is a jam entry.
+
+```
+Host browser                RUN GameRoom (server)         Guest browser
+────────────                ─────────────────────         ─────────────
+runs full sim               mints seed in onCreate         renders only
+  │                         assigns host = first joiner      │
+  ├── delta ───────────────►  validate sender ──broadcast──►  applies delta
+  │                                                           │
+  ◄── intent ──────────────  forward to host only ◄───────────┤
+  │                         (sendTo hostId)
+  └── full snapshot ───────►  on join / resync ─────────────► applySnapshot
+```
+
+The `GameRoom` owns exactly three things: the map seed, the host identity, and
+message routing. It never simulates.
+
+---
+
+## 3. Files
+
+### New
+
+| Path | Purpose |
+|---|---|
+| `rundot/realtime.config.json` | Room type registration |
+| `src/rooms/HexmatchRoom.ts` | `GameRoom` subclass (relay) |
+| `src/net/protocol.ts` | Shared message union — imported by both sides |
+| `src/net/transport.ts` | Wraps `RundotGameAPI.realtime.*`; the only file that imports the SDK |
+| `src/net/session.ts` | Role, slot, roster, connection state |
+| `src/net/delta.ts` | Track-delta encode/decode (section 5) |
+| `src/ui/StartScreen.tsx` | Host / Join / Quick match / AI |
+| `tests/unit/net-protocol.test.ts` | Protocol version refusal |
+| `tests/unit/net-delta.test.ts` | Delta correctness vs full snapshot |
+
+### Modified
+
+| Path | Change |
+|---|---|
+| `src/App.tsx` | Render `StartScreen` first; start the game only on its resolution |
+| `src/iso/game.ts` | `startIsoGame(root, opts)` — accept seed, role, transport |
+| `vite.config.ts` | Add `rundotMultiplayerPlugin()` |
+| `package.json` | Add `@series-inc/rundot-game-sdk` |
+
+### Reference only — do not import
+
+`src/game/lobby.ts` and `src/game/net.ts` were deleted in commit `36413cf`
+(E11, when the hex/three.js path went). They are a complete working
+host/join implementation against the old relay and renderer.
+
+```bash
+git show 36413cf^:src/game/lobby.ts > /tmp/ref-lobby.ts
+git show 36413cf^:src/game/net.ts   > /tmp/ref-net.ts
+```
+
+`lobby.ts` already implements the exact three-state modal this spec asks for
+(`choose` → `host` → `join`) and resolves to one of
+`{mode:"solo"|"host"|"guest", seed}`. Reuse its **structure and CSS class
+names** — `.lobby`, `.lobby-field`, `.lobby-actions`, `.lobby-error`,
+`.room-code` all still exist in `src/game/styles.css:1317-1340`. Port the
+shape, not the transport.
+
+---
+
+## 4. Protocol
+
+`src/net/protocol.ts`. A discriminated union on `type`, per RUN's requirement.
+
+```ts
+import type { Snapshot } from "../iso/snapshot";
+
+/** Bump with SNAPSHOT_VERSION. Mixed-version rooms must refuse, not desync. */
+export const PROTOCOL_VERSION = 1;
+
+export type Slot = 0 | 1;
+
+/** server → everyone, on join */
+export interface WelcomeMsg {
+  type: "welcome";
+  seed: number;
+  hostId: string;
+  protocolVersion: number;
+  roster: { id: string; username: string; slot: Slot }[];
+}
+
+/** host → server → all guests. Full state; join and resync only. */
+export interface SnapshotMsg { type: "snapshot"; snap: Snapshot }
+
+/** host → server → all guests. Steady state. See section 5. */
+export interface DeltaMsg {
+  type: "delta";
+  t: number;
+  seq: number;
+  tiles?: { i: number; dirt: number; road: number; owner: number; upgraded: number }[];
+  harvesters?: Snapshot["harvesters"];
+  factories?: Snapshot["factories"];
+  players?: Snapshot["players"];
+  setupPhase?: boolean;
+  won?: boolean;
+}
+
+/** guest → server → host only. Guests never mutate locally. */
+export interface IntentMsg {
+  type: "intent";
+  action: "build" | "demolish" | "harvest" | "trade" | "skill";
+  payload: unknown;
+}
+
+/** guest → server → host. Sent when a guest detects a seq gap. */
+export interface ResyncMsg { type: "resync" }
+
+/** server → one client, on refused join or host loss */
+export interface RejectMsg { type: "reject"; reason: string }
+
+export type HexProtocol =
+  | WelcomeMsg | SnapshotMsg | DeltaMsg | IntentMsg | ResyncMsg | RejectMsg;
+```
+
+**Rules**
+
+- Guests never mutate game state directly. Every guest action is an `IntentMsg`.
+  The host runs it through the *same* `construction.ts` / `economy.ts` paths as
+  single-player, so rules cannot drift. `src/iso/construction.ts:17` already
+  documents this intent: "the cost rule IS the multiplayer validation."
+- The host applies its own actions locally and immediately — no round trip.
+- `seq` increments per delta. A guest seeing a gap sends `ResyncMsg`; the host
+  replies with a full `SnapshotMsg`.
+
+---
+
+## 5. The delta format (MP-04) — the hard part
+
+Section 1.3 rules out shipping track layers on a timer. But the game only
+changes a handful of tiles per action: a road segment, a depot, a plant.
+
+`src/net/delta.ts`:
+
+```ts
+/** Diff two track layer sets; return changed tile indices only. */
+export function diffTrack(prev: Track, next: Track): DeltaMsg["tiles"];
+/** Apply changed tiles onto a local Track in place. */
+export function applyTrackDelta(track: Track, tiles: DeltaMsg["tiles"]): void;
+```
+
+Implementation notes:
+
+- The host keeps a shadow copy of the last-published `Track` and diffs against
+  it each publish tick. Do **not** scan all 20,736 tiles at 6 Hz — instead have
+  `construction.ts` push mutated tile indices onto a dirty set, and drain that
+  set on publish. The full scan is the correctness oracle used in tests, not in
+  the loop.
+- Cap a delta at ~200 tiles. Beyond that, send a full `SnapshotMsg` instead — it
+  is cheaper than a huge delta and simpler than chunking. Guard with an
+  assertion that a serialized `DeltaMsg` never exceeds 16 KiB.
+- `harvesters`, `factories` and `players` are small lists; send them whole in
+  each delta. Only the four track layers need diffing.
+
+**Acceptance:** for any sequence of actions, applying the full snapshot then N
+deltas must produce a `Track` byte-identical to the host's. Prove this in
+`tests/unit/net-delta.test.ts` with a randomised action sequence.
+
+---
+
+## 6. Room config and the server class
+
+`rundot/realtime.config.json`:
+
+```json
+{
+  "rooms": [
+    {
+      "type": "hexmatch",
+      "file": "src/rooms/HexmatchRoom.ts",
+      "export": "default",
+      "config": {
+        "maxPlayers": 2,
+        "idleTimeout": 300,
+        "allowReconnect": true,
+        "reconnectTimeout": 60,
+        "metadata": { "mode": "versus" }
+      }
+    }
+  ]
+}
+```
+
+`maxPlayers: 2` matches the current two-player model (`players[0]` = you,
+`players[1]` = rival, `src/iso/game.ts:237`). `reconnectTimeout: 60` is generous
+because a dropped host strands the guest — mirroring the `rehost` case
+(ticket #16) already solved in `server/server.js`.
+
+`src/rooms/HexmatchRoom.ts`:
+
+```ts
+import { GameRoom, type GameMessage, type Player, type LeaveReason }
+  from "@series-inc/rundot-game-sdk/mp-server";
+import { PROTOCOL_VERSION, type HexProtocol } from "../net/protocol";
+
+export default class HexmatchRoom extends GameRoom<HexProtocol> {
+  private seed = 0;
+  private hostId: string | null = null;
+  private slots = new Map<string, 0 | 1>();
+
+  onCreate() {
+    // The seed is minted here, exactly as server.js did at room creation.
+    // Every client regenerates identical geometry via generateMap(seed).
+    this.seed = (Math.random() * 0x7fffffff) | 0;
+  }
+
+  onPlayerJoin(player: Player) {
+    if (this.hostId === null) this.hostId = player.id;
+    this.slots.set(player.id, this.slots.size === 0 ? 0 : 1);
+    if (this.playerCount >= 2) this.lock();
+    this.broadcast(this.welcome());
+  }
+
+  onGameMessage(msg: GameMessage<HexProtocol>) {
+    const p = msg.payload;
+    if (p.type === "intent" || p.type === "resync") {
+      if (this.hostId) this.sendTo(this.hostId, p);   // guest → host only
+      return;
+    }
+    if (p.type === "snapshot" || p.type === "delta") {
+      if (msg.playerId !== this.hostId) return;       // a guest cannot forge state
+      this.broadcast(p);
+    }
+  }
+
+  onPlayerLeave(player: Player, reason: LeaveReason) {
+    this.slots.delete(player.id);
+    if (player.id === this.hostId) {
+      // No host, no truth. Tell the guest plainly rather than stranding them.
+      this.broadcast({ type: "reject", reason: "The host left the game." });
+      this.hostId = null;
+    }
+    this.unlock();
+  }
+
+  private welcome(): HexProtocol { /* build WelcomeMsg from this.players */ }
+}
+```
+
+`msg.playerId !== this.hostId` is the one piece of real authority the relay
+keeps, and it is what stops a guest forging state. Do not drop it.
+
+---
+
+## 7. Start screen (MP-06) — the primary deliverable
+
+`src/ui/StartScreen.tsx`. Replaces the current straight-to-game boot.
+
+```
+┌───────────────────────────────────┐
+│        HEXMATCH INDUSTRIES        │
+│                                   │
+│   ▸ Play vs AI          (no login)│
+│   ▸ Host a game                   │
+│   ▸ Join with a code              │
+│   ▸ Quick match                   │
+└───────────────────────────────────┘
+```
+
+**Ordering is deliberate — "Play vs AI" is first and needs no login (§1.2).**
+
+States, mirroring the deleted `lobby.ts`:
+
+- `choose` — the four buttons above.
+- `host` — after `createRoom("hexmatch")`. Shows `room.roomCode` **large and
+  copyable** (`.room-code` styling exists), a Copy button, and the live roster
+  from `onPlayerJoined`. A Start button, enabled once a guest is present.
+- `join` — a 6-character code field. Uppercase, trim, `maxLength={6}`. No
+  server-address field: unlike the old lobby there is nothing to configure.
+- `matchmaking` — spinner with a Cancel that calls `room.leave()`.
+- `error` — message plus Back.
+
+Resolution — exactly one of:
+
+```ts
+type StartChoice =
+  | { mode: "ai" }
+  | { mode: "host";  seed: number; room: ServerRoom<HexProtocol> }
+  | { mode: "guest"; seed: number; room: ServerRoom<HexProtocol> };
+```
+
+`App.tsx` holds this in state and only mounts the game once resolved.
+
+**Auth handling.** Wrap every realtime call:
+
+```ts
+try {
+  room = await RundotGameAPI.realtime.createRoom<HexProtocol>("hexmatch");
+} catch (err) {
+  if ((err as { code?: string }).code === "ACCESS_DENIED") {
+    // The SDK auto-prompt shows the login sheet and retries. If it still
+    // fails, show: "Sign in to play with friends — or play against the AI
+    // now." with a button that falls through to { mode: "ai" }.
+  }
+}
+```
+
+That fallback is required, not optional. A jam voter who will not sign in must
+still reach a playable game in one click.
+
+---
+
+## 8. Matchmaking (MP-07)
+
+RUN supports it, so include it. Quick match uses `matchmakeRoom`, the
+transactional cross-instance pairing call intended for competitive play:
+
+```ts
+const room = await RundotGameAPI.realtime.matchmakeRoom<HexProtocol>("hexmatch", {
+  criteria: { mode: "versus" },
+  createOptions: { maxPlayers: 2 },
+});
+```
+
+`criteria` matches against room `metadata`, which §6 sets to
+`{ "mode": "versus" }`. Use `matchmakeRoom` rather than `joinOrCreateRoom`: the
+latter races when two players call it simultaneously, which is precisely the
+quick-match case.
+
+Whoever ends up alone in a fresh room becomes host and lands in the `host` state
+showing the room code — so a quick match that finds nobody degrades gracefully
+into a shareable invite. Offer "Play vs AI instead" after ~30 s unmatched.
+
+---
+
+## 9. Wiring the game (MP-05)
+
+`src/iso/game.ts:203` is currently `startIsoGame(root: HTMLElement)` and
+resolves its own seed at line 218:
+
+```ts
+const seed = bootSave?.seed ?? resolveMapSeed();
+```
+
+Change to:
+
+```ts
+export interface IsoGameOptions {
+  seed?: number;                 // supplied by the room; overrides resolveMapSeed
+  role?: "solo" | "host" | "guest";
+  net?: NetSession | null;       // from src/net/session.ts
+}
+export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
+  const seed = opts.seed ?? bootSave?.seed ?? resolveMapSeed();
+```
+
+Keep the default-argument form so every existing call site and e2e spec that
+calls `startIsoGame(root)` keeps working unchanged.
+
+Then:
+
+- **`role === "guest"`** — do not start the AI rival, do not run the economy
+  tick, do not run vehicle movement. Render from applied state only. Route every
+  player action through `net.intent(...)` instead of mutating.
+- **`role === "host"`** — run exactly as today, but drive `players[1]` from
+  guest intents instead of `ai.ts`. The AI rival is *disabled* in a hosted game;
+  the guest is the rival.
+- **`role === "solo"`** — unchanged from today.
+
+The cleanest seam for the guest-action block is `construction.ts`'s existing
+cost/refusal path, which already centralises "can this player do this".
+
+---
+
+## 10. Tickets
+
+Do these in order. Each should land green.
+
+| ID | Title | Depends | Done when |
+|---|---|---|---|
+| MP-01 | SDK install, vite plugin, `realtime.config.json` | — | `vite build` bundles the room; `npm run typecheck` clean |
+| MP-02 | `protocol.ts` + `transport.ts` | MP-01 | Protocol unit test passes; no SDK import outside `transport.ts` |
+| MP-03 | `HexmatchRoom.ts` relay | MP-02 | Two local dev clients exchange messages; guest-forged snapshot rejected |
+| MP-04 | `delta.ts` + dirty-tile tracking | MP-02 | Randomised-sequence test byte-identical; no delta > 16 KiB |
+| MP-05 | `startIsoGame` options + guest mode | MP-04 | Guest renders host's map; guest builds via intent |
+| MP-06 | `StartScreen.tsx` (host / join / AI) | MP-03 | Full host → code → join → play loop works locally |
+| MP-07 | Quick match | MP-06 | Two clients pair with no code exchanged |
+| MP-08 | Reconnect + host-left handling | MP-06 | Guest survives a 10 s host reload; host-left shows a clear message |
+| MP-09 | e2e: two-browser host/join | MP-06 | Playwright spec drives two contexts through a shared room |
+
+---
+
+## 11. Testing
+
+- **Unit** (`vitest`): protocol round-trip, delta correctness, version refusal.
+  These need no network and must run in CI.
+- **Local two-client**: `vite serve` runs rooms locally via
+  `rundotMultiplayerPlugin` (`devPort: 9001`). Use two browser profiles — each
+  needs its own signed-in identity.
+- **e2e** (`playwright`): two `browserContext`s. The existing suite boots the
+  default route with real rendering and no mocking — keep that. Gate the
+  multiplayer spec so it skips cleanly when credentials are absent, so CI does
+  not go red on a machine without test accounts.
+- **Version refusal**: `SNAPSHOT_VERSION` is 9 and `validateSnapshot` already
+  rejects mismatches (`src/iso/snapshot.ts:159`). Add the same check for
+  `PROTOCOL_VERSION` in `welcome`. A mixed-version room must show "This game has
+  been updated — reload to play together", never desync silently.
+
+---
+
+## 12. Risks
+
+| Risk | Severity | Mitigation |
+|---|---|---|
+| Auth friction kills multiplayer reach | **High** | AI path first and login-free (§1.2, §7) |
+| Delta exceeds frame cap on a burst | Medium | 200-tile cap → full snapshot fallback (§5) |
+| Multiplayer API is BETA and shifts | Medium | All SDK calls behind `transport.ts` |
+| Host disconnect strands guest | Medium | MP-08; `reconnectTimeout: 60` |
+| Scope overruns the jam deadline | **High** | MP-01→MP-06 is the shippable core. MP-07/08/09 are follow-ups. Ship AI-only if MP-06 is not green in time. |
+
+---
