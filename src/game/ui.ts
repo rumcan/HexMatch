@@ -23,7 +23,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import {
   BOARD_W, BOARD_H, CELL, RES, OFFER_LIFE,
-  SABOTAGE, SECURITY, REPAIR_COST, choice, type ResKey,
+  SABOTAGE, SECURITY, REPAIR_COST, type ResKey,
 } from "./config";
 import { BANK_RATE, MAX_OFFERS } from "./trade";
 // VP-01: the victory numbers come from the iso config, NOT from the legacy
@@ -51,8 +51,6 @@ import { playHoly, prewarmHoly } from "./holy";
 const CARGO_TO_GEM: Partial<Record<Cargo, ResKey>> = Object.fromEntries(
   Object.entries(GEM_TO_CARGO).map(([gem, cargo]) => [cargo, gem]),
 ) as Partial<Record<Cargo, ResKey>>;
-/** The colours the cross chooser can offer (all five map to real cargoes). */
-const GEM_CHOICES = Object.keys(GEM_TO_CARGO) as ResKey[];
 
 // ── V5: the restored gem art ────────────────────────────────────────────────
 // One sprite per cargo in src/assets/gems/, mapped through the same gem→cargo
@@ -124,11 +122,12 @@ export interface OriginalUi {
   fx: (type: FxType, r: number, c: number, text?: string) => void;
   popup: (gains: Partial<Record<ResKey, number>>, label: string) => void;
   /**
-   * PP-14: the board paused on a HOLY CROSS and is waiting for a pick —
-   * show the five-cargo chooser and answer `pick(res)` when one is clicked
-   * (or after the auto-pick timer, so the cascade never hangs).
+   * PP-14: the board paused on a HOLY CROSS and is waiting for the player's
+   * FOUR picks — show the five-cargo chooser and answer `pick(chosen)` when
+   * four different ones are confirmed (or after the auto-pick timer, so the
+   * cascade never hangs).
    */
-  crossPick: (pick: (res: ResKey) => void) => void;
+  crossPick: (pick: (chosen: ResKey[]) => void) => void;
   isQuarryOpen: () => boolean;
   isTradeOpen: () => boolean;
   showModal: (html: string) => void;
@@ -874,14 +873,15 @@ export function createOriginalUi(
 
   // ── PP-14: the cross bounty chooser ──────────────────────────────────────
   // The board pauses the cascade on a HOLY CROSS and waits; this panel asks
-  // which of the five cargoes the +4 should be. Answered or not, the board
-  // always resumes: a click answers `pick` right away, and the 6.5s timer
-  // here (the board's own 8s backstop is the second line of defence)
-  // auto-answers with a random cargo.
+  // which FOUR DIFFERENT cargoes the blessing should be — one of each. The
+  // confirm enables at exactly four picks, and the 8s timer (the board's own
+  // 8s backstop is the second line of defence) auto-confirms whatever is
+  // selected so the cascade always resumes — the board fills any empty slot
+  // with a random unused cargo.
   let pickEl: HTMLElement | null = null;
   let pickTimer = 0;
 
-  function crossPick(pick: (res: ResKey) => void) {
+  function crossPick(pick: (chosen: ResKey[]) => void) {
     const close = () => {
       window.clearTimeout(pickTimer);
       pickEl?.remove();
@@ -890,29 +890,50 @@ export function createOriginalUi(
     close();
     const panel = h("div", "cross-pick");
     panel.appendChild(h("div", "cross-pick-title", "🙏 HOLY CROSS"));
-    panel.appendChild(h("div", "cross-pick-sub", "Choose your bounty · +4"));
+    panel.appendChild(h("div", "cross-pick-sub", "Pick 4 different bounties · +1 each"));
     const row = h("div", "cross-pick-row");
+    const selected = new Set<ResKey>();
+    const count = h("div", "cross-pick-count", "0 / 4 picked");
+    const confirm = h("button", "cross-pick-confirm", "🙏 Bless +4");
+    (confirm as HTMLButtonElement).type = "button";
+    (confirm as HTMLButtonElement).disabled = true;
+    const refresh = () => {
+      count.textContent = `${selected.size} / 4 picked`;
+      (confirm as HTMLButtonElement).disabled = selected.size !== 4;
+      row.querySelectorAll<HTMLElement>("[data-gem]").forEach((b) => {
+        b.classList.toggle("sel", selected.has(b.dataset.gem as ResKey));
+      });
+    };
     for (const cargo of TRADEABLE) {
       const gem = CARGO_TO_GEM[cargo];
       if (!gem) continue;
       const b = h("button", "cross-pick-btn");
       (b as HTMLButtonElement).type = "button";
       b.dataset.cargo = cargo;
+      b.dataset.gem = gem;
       b.style.setProperty("--c1", CARGO[cargo].c1);
       b.style.setProperty("--c2", CARGO[cargo].c2);
-      b.innerHTML = `<i>${CARGO[cargo].icon}</i><span>+4</span>`;
-      b.title = `Take 4 ${CARGO[cargo].name}`;
-      b.onclick = () => { pick(gem); close(); };
+      b.innerHTML = `<i>${CARGO[cargo].icon}</i><span>+1</span>`;
+      b.title = `Take 1 ${CARGO[cargo].name}`;
+      b.onclick = () => {
+        if (selected.has(gem)) selected.delete(gem);
+        else if (selected.size < 4) selected.add(gem);
+        else { toast("Four DIFFERENT bounties — unselect one to change it.", "info"); return; }
+        refresh();
+      };
       row.appendChild(b);
     }
+    confirm.onclick = () => { pick([...selected]); close(); };
     panel.appendChild(row);
+    panel.appendChild(count);
+    panel.appendChild(confirm);
     boardWrap.appendChild(panel);
     pickEl = panel;
     pickTimer = window.setTimeout(() => {
       if (!pickEl) return;
-      pick(choice(GEM_CHOICES));
+      pick([...selected]);
       close();
-    }, 6500);
+    }, 8000);
   }
 
   const lastToast: Record<string, number> = {};

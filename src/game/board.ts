@@ -109,13 +109,15 @@ export class Board {
   /** Arcade bonus (match-5 / L / chain) — always pays, not network-gated. */
   onBonus: (res: ResKey, amount: number, reason: string) => void = () => {};
   /**
-   * PP-14: the cross asks the player which cargo the blessing should be.
-   * When a cross resolves the cascade PAUSES here until the hook calls
-   * `pick(res)` — the board then pays 4 of that colour and the cascade
-   * resumes. The default answers instantly with a random cargo, so a
-   * headless board (the rival's, or a test) never pauses.
+   * PP-14: the cross asks the player which FOUR cargoes the blessing should
+   * be — one of each, all different. When a cross resolves the cascade
+   * PAUSES here until the hook calls `pick(chosen)`; the board tops any
+   * missing picks up with random unused cargoes, so even an empty list still
+   * pays four distinct. The default answers instantly with four random
+   * cargoes, so a headless board (the rival's, or a test) never pauses.
    */
-  onCrossChoice: (pick: (res: ResKey) => void) => void = (pick) => pick(choice(BASE_POOL));
+  onCrossChoice: (pick: (chosen: ResKey[]) => void) => void = (pick) =>
+    pick(shuffle(BASE_POOL).slice(0, 4));
 
   /**
    * What a harvest actually credited, from `onHarvest`'s answer — 0 when the
@@ -435,20 +437,21 @@ export class Board {
   }
 
   /**
-   * PP-14: hand the cross's reward to `onCrossChoice` and wait for the pick.
-   * The promise ALWAYS resolves — the 8s backstop answers for a chooser that
-   * was never clicked, so a paused cascade can never deadlock the board.
+   * PP-14: hand the cross's reward to `onCrossChoice` and wait for the
+   * picks. The promise ALWAYS resolves — the 8s backstop answers with four
+   * random cargoes for a chooser that was never answered, so a paused
+   * cascade can never deadlock the board.
    */
-  private chooseCrossReward(): Promise<ResKey> {
+  private chooseCrossReward(): Promise<ResKey[]> {
     return new Promise((resolve) => {
       let done = false;
-      const finish = (res: ResKey) => {
+      const finish = (chosen: ResKey[]) => {
         if (done) return;
         done = true;
         clearTimeout(backstop);
-        resolve(res);
+        resolve(chosen);
       };
-      const backstop = setTimeout(() => finish(choice(BASE_POOL)), 8000);
+      const backstop = setTimeout(() => finish(shuffle(BASE_POOL).slice(0, 4)), 8000);
       this.onCrossChoice(finish);
     });
   }
@@ -479,10 +482,15 @@ export class Board {
       if (nCross > 0) {
         // PP-14: the blessing waits for the player — the cascade pauses
         // right after the angel pops, and resumes the moment the chooser
-        // answers. Four of the chosen colour, paid as forged (never gated
-        // by the network) exactly like the other arcade bonuses.
-        const res = await this.chooseCrossReward();
-        for (let i = 0; i < 4; i++) {
+        // answers. Four DIFFERENT cargoes, one of each picked; any slot the
+        // chooser left empty is filled at random, and every unit is paid as
+        // forged (never gated by the network) like the other arcade bonuses.
+        const chosen = await this.chooseCrossReward();
+        const list: ResKey[] = [];
+        for (const r of chosen) if (list.length < 4 && !list.includes(r)) list.push(r);
+        const rest = shuffle(BASE_POOL).filter((r) => !list.includes(r));
+        while (list.length < 4) list.push(rest.shift()!);
+        for (const res of list) {
           gains[res] = (gains[res] ?? 0) + 1;
           this.onBonus(res, 1, "HOLY CROSS");
           this.onHarvest(res, 1, true);

@@ -747,18 +747,55 @@ html, body, #root {
 }
 .cross-pick-row { display: flex; gap: 8px; }
 .cross-pick-btn {
+  position: relative;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 1px; width: 56px; height: 58px;
   border: 1px solid rgba(255, 255, 255, .25); border-radius: 10px;
   background: linear-gradient(160deg, var(--c1), var(--c2));
   cursor: pointer; color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, .55);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), 0 3px 8px rgba(0, 0, 0, .45);
-  transition: transform .08s ease, filter .08s ease;
+  transition: transform .08s ease, filter .08s ease, box-shadow .12s ease;
 }
 .cross-pick-btn i { font-style: normal; font-size: 24px; line-height: 1; }
 .cross-pick-btn span { font-size: 12px; font-weight: 800; letter-spacing: 1px; }
 .cross-pick-btn:hover { transform: translateY(-2px) scale(1.06); filter: brightness(1.12); }
 .cross-pick-btn:active { transform: scale(.96); }
+/* PP-14: the four chosen bounties wear a golden ring and a ✓ — the player
+   can toggle them freely until the confirm below lights up. */
+.cross-pick-btn.sel {
+  transform: translateY(-2px) scale(1.05);
+  border-color: var(--gold2);
+  box-shadow: 0 0 0 2px var(--gold2), 0 0 16px var(--gold), 0 4px 10px rgba(0, 0, 0, .5);
+  filter: brightness(1.1);
+}
+.cross-pick-btn.sel::after {
+  content: "✓";
+  position: absolute; top: -6px; right: -6px;
+  width: 17px; height: 17px; border-radius: 50%;
+  background: var(--gold2); color: #3a2400;
+  font-size: 11px; font-weight: 900; line-height: 17px; text-align: center;
+  box-shadow: 0 0 8px var(--gold);
+}
+.cross-pick-count {
+  font-size: 12px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase;
+  color: var(--gold2); text-shadow: 0 1px 2px #000;
+}
+.cross-pick-confirm {
+  font-family: var(--serif); font-weight: 800; font-size: 15px;
+  letter-spacing: 2px; text-transform: uppercase;
+  padding: 8px 26px; border-radius: 10px; cursor: pointer;
+  color: #3a2400;
+  background: linear-gradient(180deg, #ffe9a8, var(--gold2));
+  border: 1px solid #fff3c8;
+  box-shadow: 0 0 16px rgba(255, 205, 90, .45), inset 0 1px 0 rgba(255, 255, 255, .6);
+  transition: transform .08s ease, filter .08s ease;
+}
+.cross-pick-confirm:disabled {
+  cursor: default; filter: grayscale(.9) brightness(.7);
+  color: #8d94a0; box-shadow: none;
+}
+.cross-pick-confirm:not(:disabled):hover { transform: translateY(-1px); filter: brightness(1.08); }
+.cross-pick-confirm:not(:disabled):active { transform: scale(.97); }
 @keyframes crosspickin {
   from { opacity: 0; transform: translate(-50%, -50%) scale(.7); }
   to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }

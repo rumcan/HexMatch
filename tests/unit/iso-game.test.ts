@@ -2145,9 +2145,9 @@ describe("VP-01 the rival plays the score, not just the map", () => {
 // PP-14 — the holy cross: 3 horizontal + 4 vertical overlapping on one gem
 // summons the praying angel and the choir. board.test.ts pins the board half
 // (detection, the HOLY CROSS callout, the `cross` fx event, the pause for
-// the player's pick); this pins the UI half — the angel PNG pops over the
-// crossing, the five-cargo bounty chooser appears, the sound really is asked
-// for, and clicking a cargo pays four of it.
+// the player's picks); this pins the UI half — the angel PNG pops over the
+// crossing, the five-cargo chooser appears, the sound really is asked for,
+// and picking FOUR DIFFERENT cargoes pays one of each.
 // ══════════════════════════════════════════════════════════════════════════
 describe("PP-14 the holy cross", () => {
   /** A fake AudioContext that counts the oscillators the choir would play. */
@@ -2193,10 +2193,10 @@ describe("PP-14 the holy cross", () => {
     b.grid[5][2]!.res = "ore";
   }
 
-  it("pops the angel, offers the bounty chooser, and pays 4 of the picked cargo", async () => {
+  it("pops the angel, offers the four-pick chooser, and pays one of each chosen cargo", async () => {
     const h = await boot();
     const started = stubAudio();
-    const before = h.purse.wood ?? 0;
+    const before = ["wood", "stone", "oil", "grain"].map((c) => [c, h.purse[c as keyof typeof h.purse] ?? 0] as const);
     paintCross(h.board);
     const p = h.board.settle();      // the first pass resolves synchronously
     const angel = root.querySelector(".fx-cross") as HTMLElement | null;
@@ -2210,13 +2210,23 @@ describe("PP-14 the holy cross", () => {
     expect(panel, "the bounty chooser must appear").not.toBeNull();
     const btns = [...panel!.querySelectorAll(".cross-pick-btn")];
     expect(btns).toHaveLength(5);
-    const woodBtn = panel!.querySelector<HTMLButtonElement>('[data-cargo="wood"]');
-    expect(woodBtn, "wood must be one of the five choices").not.toBeNull();
-    woodBtn!.click();
+    const count = panel!.querySelector(".cross-pick-count");
+    const confirm = panel!.querySelector<HTMLButtonElement>(".cross-pick-confirm");
+    expect(confirm, "the confirm button must exist").not.toBeNull();
+    expect(confirm!.disabled, "confirm stays disabled before four picks").toBe(true);
+    for (const cargo of ["wood", "stone", "oil", "grain"]) {
+      panel!.querySelector<HTMLButtonElement>(`[data-cargo="${cargo}"]`)!.click();
+    }
+    expect(count!.textContent).toBe("4 / 4 picked");
+    expect(confirm!.disabled, "four picks light the confirm").toBe(false);
+    confirm!.click();
     // the click answers the board's promise — a microtask later the purse is
-    // credited and the panel is gone, while the cascade has not yet moved on
+    // credited (one of each chosen cargo) and the panel is gone, while the
+    // cascade has not yet moved on
     await new Promise((r) => setTimeout(r, 0));
-    expect(h.purse.wood ?? 0).toBe(before + 4);
+    for (const [cargo, was] of before) {
+      expect(h.purse[cargo as keyof typeof h.purse] ?? 0, `purse ${cargo}`).toBe(was + 1);
+    }
     expect(root.querySelector(".cross-pick")).toBeNull();
     // the callout names the shape
     const floats = [...root.querySelectorAll(".combo-float")].map((e) => e.textContent ?? "");
