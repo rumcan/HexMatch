@@ -35,12 +35,15 @@ import buildings2 from "../../assets/layers/buildings@2x.png";
 import grassTex from "../../assets/ground/grass.png";
 import sandTex from "../../assets/ground/sand.png";
 import waterTex from "../../assets/ground/water.png";
+// TEMP protest crowd — a placeholder png drawn straight on the overlay
+// canvas, not an atlas sprite (see `paintProtests` + tools/make-protest-png.mjs).
+import protestArt from "../../assets/protest.png";
 
 import { Atlas, buildMasks, loadBuildingLayers, type Manifest, type AtlasImage } from "./atlas";
 import { loadGroundTextures } from "./ground";
 import {
   createCamera, centerOnTile, resizeCamera, zoomStepAt, tileToScreenAt,
-  createGesture, pointerDown, pointerMove, pointerUp,
+  createGesture, pointerDown, pointerMove, pointerUp, worldToScreen,
   type Camera, type GestureState,
 } from "./camera";
 import { IsoRenderer, type World } from "./renderer";
@@ -88,8 +91,8 @@ import {
 } from "./construction";
 import { bankTrade } from "../game/trade";
 import {
-  MAP_W, MAP_H, BANDIT_MS, BLOCK_MS, FOG_MS, SABOTAGE, SECURITY,
-  choice, type ResKey,
+  MAP_W, MAP_H, BANDIT_MS, BLOCK_MS, FOG_MS, PROTEST_MS, SABOTAGE, SECURITY,
+  choice, tileToScreen, type ResKey,
 } from "../game/config";
 import { createQuarry, GEM_TO_CARGO, type Quarry } from "./quarry";
 import {
@@ -714,7 +717,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         }
       }
     }
-    // the scoreboard's own tie-breaker: whoever crosses the line (AI-02: 20★) first, wins
+    // the scoreboard's own tie-breaker: whoever crosses the line (10★) first, wins
     if (phase === "play") {
       for (const p of players) {
         if (!hasWon(score, p.id)) continue;
@@ -1015,6 +1018,70 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     rescoreNow();
   }
 
+  // ── Protests: the Black Market's roadblock ─────────────────────────────────
+  // A protest is a tile + an expiry, bought with Gold and staged on any PUBLIC
+  // road (highways and town streets — `isPublicRoad`). While it stands, every
+  // lorry whose next tile is that one holds where it is (`tickTrucks`'
+  // `blocked` set): nothing re-routes and nothing else changes — the economy
+  // still counts the road as connected, but the deliveries stop arriving, so
+  // the bitten cargo stops minting tokens. It blocks YOUR lorries too.
+  interface Protest { tx: number; ty: number; until: number; owner: string }
+  const protests = new Map<number, Protest>();
+  /** A bought protest waiting for its tile — map clicks stage it, Esc cancels. */
+  let pendingProtest = false;
+  /** Remaining time as the overlay badge and toasts print it: "2:00", "0:07". */
+  const fmtProtestLeft = (ms: number): string => {
+    const s = Math.max(0, Math.ceil(ms / 1000));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  };
+  /** May a protest be staged at (tx,ty)? Any public road with none already. */
+  const protestPlaceable = (tx: number, ty: number): boolean =>
+    isPublicRoad(track, tx, ty) && !protests.has(tIdx(tx, ty));
+
+  /** Stage the armed protest at (tx,ty), charging the Gold. False = still armed. */
+  function placeProtest(tx: number, ty: number): boolean {
+    const now = performance.now();
+    if (!isPublicRoad(track, tx, ty)) {
+      toast("Protests go on public roads — the highways and town streets.", "bad");
+      return false;
+    }
+    if (protests.has(tIdx(tx, ty))) {
+      toast("There's already a protest on that tile.", "bad");
+      return false;
+    }
+    const price = SABOTAGE.protest.gold;
+    if ((me.purse.gold ?? 0) < price) {
+      toast(`Needs ${price} Gold.`, "bad");
+      return false;
+    }
+    spend(me, { gold: price });
+    protests.set(tIdx(tx, ty), { tx, ty, until: now + PROTEST_MS, owner: me.id });
+    pendingProtest = false;
+    floats.add("✊ PROTEST", tx, ty, { cls: "sabotage", now });
+    ui.feed(`You stage a protest on the public road — all trucks stop for ${fmtProtestLeft(PROTEST_MS)}.`);
+    toast(`Protest placed — ALL trucks stop for ${fmtProtestLeft(PROTEST_MS)}, yours included.`, "good");
+    return true;
+  }
+
+  /** Clear every protest whose time is up (one line no matter how many go). */
+  function expireProtests(now: number): number {
+    let n = 0;
+    for (const [i, p] of protests) {
+      if (p.until > now) continue;
+      protests.delete(i);
+      floats.add("ROAD CLEAR", p.tx, p.ty, { cls: "delivery", now });
+      n++;
+    }
+    if (n > 0) {
+      const msg = n === 1
+        ? "The protest dispersed — traffic is moving again."
+        : `${n} protests dispersed — traffic is moving again.`;
+      toast(msg, "info");
+      ui.feed(msg);
+    }
+    return n;
+  }
+
   // ── Black Market (U1 wiring over the restored board + industry blockade) ──
   const REPAIR_ISO_COST: Purse = { wood: 1, stone: 1, grain: 1, ore: 1 };
   /**
@@ -1022,7 +1089,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * Gold. `SECURITY.cost` is declared in the legacy ResKey table
    * (`game/config.ts`); GEM_TO_CARGO is the one ResKey→Cargo bijection, so the
    * same mapping the board uses moves the price into purse space
-   * (`wheat`→grain, `brick`→stone). Only the four SABOTAGE actions above keep
+   * (`wheat`→grain, `brick`→stone). Only the five SABOTAGE actions above keep
    * a Gold price — Gold is reserved for Black Market sabotage.
    */
   const SECURITY_ISO_COST: Purse = Object.fromEntries(
@@ -1058,6 +1125,23 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       target.banditUntil = now + BANDIT_MS;
       const def = INDUSTRY_BY_KEY[target.type];
       toast(`Blockade set on ${def?.name ?? target.type} — the rival can't harvest it for ${BANDIT_MS / 1000}s.`, "good");
+      return;
+    }
+    if (key === "protest") {
+      // A protest is bought and then PLACED: this arms it, and the next map
+      // click stages it on a public road. The Gold is charged on placement,
+      // not here, so cancelling (or never finding a road) costs nothing.
+      if (pendingProtest) {
+        pendingProtest = false;
+        toast("Protest cancelled.", "info");
+        return;
+      }
+      if ((me.purse.gold ?? 0) < SABOTAGE.protest.gold) {
+        toast(`Needs ${SABOTAGE.protest.gold} Gold.`, "bad");
+        return;
+      }
+      pendingProtest = true;
+      toast(`Protest ready — click any public road to block ALL trucks for ${fmtProtestLeft(PROTEST_MS)}.`, "info");
       return;
     }
     // ── A1: sabotage hits the RIVAL's plant, not the buyer's ──────────────
@@ -2055,6 +2139,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       }
       return items;
     }
+    if (pendingProtest && hover) {
+      // The armed protest paints its own legality: green on a free public
+      // road, red anywhere else — the same rule `placeProtest` enforces.
+      const ok = protestPlaceable(hover.tx, hover.ty);
+      const items: OverlayItem[] = [{ sprite: ok ? "highlight" : "highlight_bad", tx: hover.tx, ty: hover.ty }];
+      if (ok) items.push({ sprite: "node_mark", tx: hover.tx, ty: hover.ty });
+      return items;
+    }
     if (!hover) return [];
     if (phase === "setup-factory") return overlayItemsAt(hover.tx, hover.ty);
     // PP-06: the plant tool keeps its own overlay — the Factory footprint is the
@@ -2082,7 +2174,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return overlayItemsAt(hover.tx, hover.ty);
   };
 
-  function paintUi(_now: number) {
+  function paintUi(now: number) {
     // AI-03: what your ★ total is MADE OF, surfaced as the native hover
     // tooltip over each player's name in the header ("I want to see what I
     // and the rival received win points for"). Recomputed live from the
@@ -2105,6 +2197,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     else if (phase === "setup-harvester") banner = "Place your Depot — it needs an industry in its 4×4 catchment, and one Depot holds each industry" +
       (me.freeDepots > 0 ? ` (this one is free; later Depots cost ${costLabel(DEPOT_COST)})` : "");
     else if (phase === "won") banner = `${winner?.name} wins — ${fmtVp(vpFor(score, winner?.id ?? ""))}★`;
+    else if (pendingProtest) banner = `Protest ready — click a public road to stop ALL trucks for ${fmtProtestLeft(PROTEST_MS)} (Esc cancels)`;
     else if (me.freeTrack > 0) banner = `${me.freeTrack} free track tiles remaining — connect your depot to your Factory`;
     else if (tool === "dirt") banner = `Dirt Road scores nothing — paving it later is worth ${fmtVp(VICTORY.upgrade)}★ a tile`;
     else if (Object.keys(quarry.reach).length === 0) banner = "Nothing connected — the Processing Plant only pays cargo your network reaches";
@@ -2231,6 +2324,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
                 : hasDirt
                   ? `rough ground — a paved Road can't be laid here`
                   : `${who === "yours" ? `laid new — scores nothing; upgrade your gravel instead` : `not yours to score`}`);
+          const prot = protests.get(hIdx);
+          if (prot) info += `<br>✊ <b>Protest</b> — all trucks stopped (${fmtProtestLeft(prot.until - now)} left)`;
         }
         const occ = grid.occupancy[hIdx];
         if (occ >= 0) {
@@ -2336,7 +2431,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const isTrackTool = tool === "road" || tool === "dirt";
     // TK-001: left mouse (button 0) is build/place ONLY — it never starts a
     // pan. Touch keeps its old behaviour (one finger pans, a quick tap places).
-    if (phase === "play" && isTrackTool && (!isMouse || e.button === 0) && e.isPrimary) {
+    // An armed protest owns the left button: it must never start a track drag.
+    if (phase === "play" && isTrackTool && !pendingProtest && (!isMouse || e.button === 0) && e.isPrimary) {
       // W2: a drag extends YOUR network only — the rival's road is not a
       // seed you can grow from.
       const net = playerNetwork(track, me.i + 1, eco.factories, eco.harvesters);
@@ -2425,8 +2521,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             toast("Now connect it to your Factory with a Dirt Road or a paved Road — then match the tokened gems in the Processing Plant.", "info");
           }
         } else if (phase === "play") {
+          // A bought protest intercepts the click: it stages on a public road
+          // (or refuses and stays armed), and never runs the current tool.
+          if (pendingProtest) placeProtest(p.tx, p.ty);
           // PP-05: every Depot after the setup allowance pays DEPOT_COST.
-          if (tool === "harvester") {
+          else if (tool === "harvester") {
             if (isGuest()) net?.sendIntent("build", { do: "depot", tx: p.tx, ty: p.ty });
             else placeHarvester(p.tx, p.ty, me);
           } else if (tool === "plant") {
@@ -2467,6 +2566,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   window.addEventListener("keydown", (e) => {
     const map: Record<string, Tool> = { "1": "dirt", "2": "road", "3": "harvester", "4": "plant", "5": "demolish" };
     if (map[e.key]) tool = map[e.key];
+    if (e.key === "Escape" && pendingProtest) {
+      pendingProtest = false;
+      toast("Protest cancelled.", "info");
+      return;
+    }
     if (e.key === "`" || e.key === "~") {
       if (debug) {
         const active = debug.activeOverlays();
@@ -2641,6 +2745,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       savedAt: Date.now(),
       seed, skillKey: skillKey, phase, winnerId: winner?.id ?? null,
       bandit,
+      protests: [...protests.values()].map((p) => ({
+        x: p.tx, y: p.ty, left: Math.max(0, p.until - now), owner: p.owner,
+      })),
       track: trackSave(track),
       eco: { harvesters: eco.harvesters, factories: eco.factories },
       players: players.map((p) => ({
@@ -2681,6 +2788,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     for (const [k, rem] of Object.entries(d.bandit)) {
       const ind = grid.industries.find((x) => x.id === Number(k));
       if (ind) ind.banditUntil = now + rem;
+    }
+    protests.clear();
+    for (const p of d.protests ?? []) {
+      protests.set(tIdx(p.x, p.y), { tx: p.x, ty: p.y, until: now + p.left, owner: p.owner });
     }
     // economy: replace the lists in place — their references are held all
     // over (planTrucks, syncWorld, the AI...)
@@ -2818,6 +2929,47 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     rivalBoardView = { paint, close: () => { window.clearInterval(iv); el.remove(); } };
   }
 
+  // ── Protests on the map ──────────────────────────────────────────────────
+  // The crowd is a TEMP png (`assets/protest.png`, transparent, ~1.5 tiles
+  // wide) drawn straight onto the overlay canvas — above road, trucks and
+  // previews — with the time left under it. It deliberately bypasses the
+  // atlas: no cells.json surgery for placeholder art. Swap the file and the
+  // crowd changes; `tools/make-protest-png.mjs` regenerates it.
+  let protestImg: HTMLImageElement | null = null;
+  /** Box of the temp png in world px — keep in lockstep with the generator. */
+  const PROTEST_PNG_W = 96, PROTEST_PNG_H = 84;
+  /** Crowd + countdown for every live protest, plus the armed-placement ghost. */
+  function paintProtests(ctx: CanvasRenderingContext2D, cam: Camera, now: number) {
+    if (!protestImg) return;
+    const z = cam.zoom;
+    const w = Math.max(1, Math.floor(PROTEST_PNG_W * z));
+    const h = Math.max(1, Math.floor(PROTEST_PNG_H * z));
+    const draw = (tx: number, ty: number, alpha: number, label: string | null) => {
+      // Feet on the road: the png's bottom-centre lands on the tile diamond's
+      // bottom vertex, the same ground point a truck drives over.
+      const [wx, wy] = tileToScreen(tx + 1, ty + 1);
+      const [bx, by] = worldToScreen(cam, wx, wy);
+      if (bx < -w || by < -h - 24 * z || bx > cam.vw + w || by > cam.vh + h) return;
+      ctx.globalAlpha = alpha;
+      ctx.drawImage(protestImg!, Math.floor(bx - w / 2), Math.floor(by - h + 6 * z), w, h);
+      ctx.globalAlpha = 1;
+      if (label !== null) {
+        ctx.font = `bold ${Math.max(10, Math.round(11 * z))}px sans-serif`;
+        ctx.textAlign = "center";
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "rgba(0,0,0,0.75)";
+        const lx = Math.floor(bx), ly = Math.floor(by + 4 * z) + 10;
+        ctx.strokeText(label, lx, ly);
+        ctx.fillStyle = "#ffd75a";
+        ctx.fillText(label, lx, ly);
+      }
+    };
+    for (const p of protests.values()) draw(p.tx, p.ty, 1, fmtProtestLeft(p.until - now));
+    if (pendingProtest && hover && protestPlaceable(hover.tx, hover.ty)) {
+      draw(hover.tx, hover.ty, 0.55, null);
+    }
+  }
+
   // ── boot ───────────────────────────────────────────────────────────────
   let raf = 0;
   let disposed = false;
@@ -2891,6 +3043,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
     atlasRef = atlas;
     renderer = new IsoRenderer(canvases, atlas, cam, world);
+    renderer.overlayPainter = (ctx, c, t) => paintProtests(ctx, c, t);
+    void load(protestArt).then((img) => { protestImg = img; }).catch(() => {});
     debug?.attachRenderer();
     enableRenderLogOnBoot();
     resize();
@@ -2907,6 +3061,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       economyTick(t);
       quarryTick(t);
       aiTick(t);
+      // MP-05: protests are solo/host-only (buyBlack refuses guests, like the
+      // rest of the Black Market), so the sweep is a no-op on a guest — it
+      // runs unguarded rather than splitting the heartbeat below.
+      if (protests.size > 0) expireProtests(t);
       // MP-05: the host's heartbeat — one small delta per `PUBLISH_MS`, full
       // state only when `buildPublish` says the delta would not fit (§5).
       publishNet(t);
@@ -2927,7 +3085,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           // a vanished truck must not linger as a ghost on the structures layer
           renderer?.setWorld(world);
         }
-        tickTrucks(trucks, dt);
+        // Protests hold lorries before the blocked tile — the set is rebuilt per
+        // frame only while a protest stands (usually it is undefined: no crowd,
+        // no cost, no behaviour change).
+        tickTrucks(trucks, dt, protests.size > 0 ? new Set(protests.keys()) : undefined);
       }
       collectDeliveries(t);
       world.vehicles = truckItems(trucks);
@@ -3023,7 +3184,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         quarry.setTruckServed(truckCargos(trucks.trucks, now));
         rivalQuarry.setTruckServed(truckCargos(trucks.trucks, now, "ai"));
       }
-      tickTrucks(trucks, dtMs);
+      tickTrucks(trucks, dtMs, protests.size > 0 ? new Set(protests.keys()) : undefined);
       collectDeliveries(now);
     },
     quarry, market,
@@ -3206,6 +3367,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (isGuest()) { net?.sendIntent("demolish", { do: "demolish", tx, ty }); return; }
       doDemolish(tx, ty);
     },
+    /** The Black Market twin of buying a Protest: arms it (or cancels). */
+    armProtest: () => buyBlack("protest"),
+    /** The map-click twin: stage the armed protest at (tx,ty). */
+    placeProtest: (tx: number, ty: number) => placeProtest(tx, ty),
+    /** Every live protest (tile + expiry), for the overlay/painter tests. */
+    get protests() { return [...protests.values()]; },
+    get protestPending() { return pendingProtest; },
+    /** The expiry sweep's test twin, with an injectable now. */
+    protestTick: (now = performance.now()) => expireProtests(now),
     /** W3: the e2e/unit twin of the AI build clock, with an injectable now. */
     aiTick: (now = performance.now()) => aiTick(now),
     /** The per-frame harvest clock (the rival's passive income lives here). */

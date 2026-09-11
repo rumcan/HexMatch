@@ -148,10 +148,10 @@ export const COSTS: Record<string, { cost: Partial<Record<ResKey, number>>; vp: 
  * This was the HUD's win target; `src/game/ui.ts` now reads `VICTORY` from
  * `src/iso/config.ts`, which is where the engine's own `VP_TARGET` comes from
  * too. The two `target` numbers had already drifted (this said 10, the game
- * won at 12), which is exactly why one of them is now the only one. AI-02
- * keeps the value honest anyway (20) in case anything else ever reads it.
+ * won at 12), which is exactly why one of them is now the only one. It
+ * keeps the value honest anyway (10) in case anything else ever reads it.
  */
-export const VP = { target: 20 };
+export const VP = { target: 10 };
 export const REPAIR_COST: Partial<Record<ResKey, number>> = { wood: 1, brick: 1, wheat: 1, ore: 1 };
 
 /**
@@ -167,6 +167,7 @@ export const SABOTAGE: Record<string, {
   harden: { name: "Frost Tiles",  gold: 5, target: "player", desc: "Freeze 7 gems in the RIVAL's plant — its yield drops until the ice melts (45s)." },
   block:  { name: "Iron Girders", gold: 9, target: "player", desc: "Drop 4 immovable girders into the RIVAL's plant for 60s." },
   fog:    { name: "Smog Cloud",   gold: 7, target: "player", desc: "Smog the RIVAL's plant for 30s — no swaps, and half yield while it hangs." },
+  protest: { name: "Protest",     gold: 6, target: "tile",   desc: "Stage a protest on any public road for 2:00 — ALL trucks stop and cannot pass, yours included." },
 };
 
 /**
@@ -191,6 +192,8 @@ export const PLOT = 220;
 export const MAP_COLS = 6;
 export const MAP_ROWS = 5;
 export const BANDIT_MS = 45000;
+/** How long a Black Market protest holds its public road: 2 minutes. */
+export const PROTEST_MS = 120000;
 export const RAID_EVERY = 120000;
 export const FOG_MS = 30000;
 export const BLOCK_MS = 120000;
