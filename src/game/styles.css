@@ -449,19 +449,6 @@ html, body, #root {
   transition: color .15s, background .15s;
 }
 .reset-btn:hover { color: var(--danger2); background: rgba(224,72,58,.14); }
-/* PP-14 TEMP: the one-click holy-cross test button — gold so nobody mistakes
-   it for a real control. Remove the rule together with the button. */
-.reset-btn.cross-test-btn {
-  color: var(--gold2);
-  border-color: rgba(255, 205, 90, .45);
-  background: rgba(255, 205, 90, .1);
-  text-shadow: 0 0 8px rgba(255, 205, 90, .5);
-}
-.reset-btn.cross-test-btn:hover {
-  color: #3a2400;
-  background: linear-gradient(180deg, #ffe9a8, var(--gold2));
-  border-color: #fff3c8;
-}
 
 .bank-btn { /* legacy — Bank is its own tab now */
   margin-top: 5px; padding: 7px; border-radius: 0;
@@ -773,8 +760,8 @@ html, body, #root {
 .cross-pick-btn span { font-size: 12px; font-weight: 800; letter-spacing: 1px; }
 .cross-pick-btn:hover { transform: translateY(-2px) scale(1.06); filter: brightness(1.12); }
 .cross-pick-btn:active { transform: scale(.96); }
-/* PP-14: the four chosen bounties wear a golden ring and a ✓ — the player
-   can toggle them freely until the confirm below lights up. */
+/* PP-14: each spent bounty wears a golden ring, and the badge counts how many
+   units went to that cargo (×2 wood, etc.) — tap again to take one back. */
 .cross-pick-btn.sel {
   transform: translateY(-2px) scale(1.05);
   border-color: var(--gold2);
@@ -782,11 +769,11 @@ html, body, #root {
   filter: brightness(1.1);
 }
 .cross-pick-btn.sel::after {
-  content: "✓";
-  position: absolute; top: -6px; right: -6px;
-  width: 17px; height: 17px; border-radius: 50%;
+  content: "×" attr(data-n);
+  position: absolute; top: -7px; right: -7px;
+  min-width: 18px; height: 18px; padding: 0 3px; border-radius: 9px;
   background: var(--gold2); color: #3a2400;
-  font-size: 11px; font-weight: 900; line-height: 17px; text-align: center;
+  font-size: 11px; font-weight: 900; line-height: 18px; text-align: center;
   box-shadow: 0 0 8px var(--gold);
 }
 .cross-pick-count {

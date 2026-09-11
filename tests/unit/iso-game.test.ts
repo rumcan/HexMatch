@@ -2147,7 +2147,7 @@ describe("VP-01 the rival plays the score, not just the map", () => {
 // (detection, the HOLY CROSS callout, the `cross` fx event, the pause for
 // the player's picks); this pins the UI half — the angel PNG pops over the
 // crossing, the five-cargo chooser appears, the sound really is asked for,
-// and picking FOUR DIFFERENT cargoes pays one of each.
+// and the four spent units (repeats allowed) are paid exactly as allocated.
 // ══════════════════════════════════════════════════════════════════════════
 describe("PP-14 the holy cross", () => {
   /** A fake AudioContext that counts the oscillators the choir would play. */
@@ -2193,10 +2193,10 @@ describe("PP-14 the holy cross", () => {
     b.grid[5][2]!.res = "ore";
   }
 
-  it("pops the angel, offers the four-pick chooser, and pays one of each chosen cargo", async () => {
+  it("pops the angel, offers the bounty chooser, and pays exactly the spent allocation", async () => {
     const h = await boot();
     const started = stubAudio();
-    const before = ["wood", "stone", "oil", "grain"].map((c) => [c, h.purse[c as keyof typeof h.purse] ?? 0] as const);
+    const before = ["wood", "stone", "oil"].map((c) => [c, h.purse[c as keyof typeof h.purse] ?? 0] as const);
     paintCross(h.board);
     const p = h.board.settle();      // the first pass resolves synchronously
     const angel = root.querySelector(".fx-cross") as HTMLElement | null;
@@ -2208,25 +2208,37 @@ describe("PP-14 the holy cross", () => {
     // the cascade pauses on the chooser: five cargo buttons over the board
     const panel = root.querySelector(".cross-pick");
     expect(panel, "the bounty chooser must appear").not.toBeNull();
-    const btns = [...panel!.querySelectorAll(".cross-pick-btn")];
-    expect(btns).toHaveLength(5);
+    expect(panel!.querySelectorAll(".cross-pick-btn")).toHaveLength(5);
     const count = panel!.querySelector(".cross-pick-count");
     const confirm = panel!.querySelector<HTMLButtonElement>(".cross-pick-confirm");
     expect(confirm, "the confirm button must exist").not.toBeNull();
-    expect(confirm!.disabled, "confirm stays disabled before four picks").toBe(true);
-    for (const cargo of ["wood", "stone", "oil", "grain"]) {
-      panel!.querySelector<HTMLButtonElement>(`[data-cargo="${cargo}"]`)!.click();
-    }
-    expect(count!.textContent).toBe("4 / 4 picked");
-    expect(confirm!.disabled, "four picks light the confirm").toBe(false);
+    expect(confirm!.disabled, "confirm stays disabled before four units are spent").toBe(true);
+    const btn = (cargo: string) => panel!.querySelector<HTMLButtonElement>(`[data-cargo="${cargo}"]`)!;
+    // spend 2 wood + 2 stone (repeats allowed)
+    btn("wood").click();
+    btn("wood").click();
+    btn("stone").click();
+    btn("stone").click();
+    expect(count!.textContent).toBe("4 / 4 spent");
+    expect(confirm!.disabled, "four units light the confirm").toBe(false);
+    // a fifth unit on an untouched cargo is refused until something is freed
+    btn("oil").click();
+    expect(btn("oil").dataset.n).toBe("0");
+    // take one stone back and spend it on oil instead
+    btn("stone").click();
+    expect(count!.textContent).toBe("3 / 4 spent");
+    btn("oil").click();
+    expect(btn("stone").dataset.n).toBe("1");
+    expect(btn("oil").dataset.n).toBe("1");
     confirm!.click();
     // the click answers the board's promise — a microtask later the purse is
-    // credited (one of each chosen cargo) and the panel is gone, while the
+    // credited (2 wood + 1 stone + 1 oil) and the panel is gone, while the
     // cascade has not yet moved on
     await new Promise((r) => setTimeout(r, 0));
-    for (const [cargo, was] of before) {
-      expect(h.purse[cargo as keyof typeof h.purse] ?? 0, `purse ${cargo}`).toBe(was + 1);
-    }
+    const [wood0, stone0, oil0] = before.map(([, was]) => was);
+    expect(h.purse.wood ?? 0).toBe(wood0 + 2);
+    expect(h.purse.stone ?? 0).toBe(stone0 + 1);
+    expect(h.purse.oil ?? 0).toBe(oil0 + 1);
     expect(root.querySelector(".cross-pick")).toBeNull();
     // the callout names the shape
     const floats = [...root.querySelectorAll(".combo-float")].map((e) => e.textContent ?? "");

@@ -109,15 +109,16 @@ export class Board {
   /** Arcade bonus (match-5 / L / chain) — always pays, not network-gated. */
   onBonus: (res: ResKey, amount: number, reason: string) => void = () => {};
   /**
-   * PP-14: the cross asks the player which FOUR cargoes the blessing should
-   * be — one of each, all different. When a cross resolves the cascade
-   * PAUSES here until the hook calls `pick(chosen)`; the board tops any
-   * missing picks up with random unused cargoes, so even an empty list still
-   * pays four distinct. The default answers instantly with four random
-   * cargoes, so a headless board (the rival's, or a test) never pauses.
+   * PP-14: the cross asks the player how to spend its FOUR units of blessing.
+   * Any allocation counts — four of one cargo, a 2+2 split, one of each, or
+   * anything between. When a cross resolves the cascade PAUSES here until
+   * the hook calls `pick(chosen)`; the board tops any missing units up with
+   * random cargoes, so even an empty list still pays four. The default
+   * answers instantly with four random cargoes, so a headless board (the
+   * rival's, or a test) never pauses.
    */
   onCrossChoice: (pick: (chosen: ResKey[]) => void) => void = (pick) =>
-    pick(shuffle(BASE_POOL).slice(0, 4));
+    pick(Array.from({ length: 4 }, () => choice(BASE_POOL)));
 
   /**
    * What a harvest actually credited, from `onHarvest`'s answer — 0 when the
@@ -451,7 +452,9 @@ export class Board {
         clearTimeout(backstop);
         resolve(chosen);
       };
-      const backstop = setTimeout(() => finish(shuffle(BASE_POOL).slice(0, 4)), 8000);
+      const backstop = setTimeout(
+        () => finish(Array.from({ length: 4 }, () => choice(BASE_POOL))), 8000,
+      );
       this.onCrossChoice(finish);
     });
   }
@@ -482,14 +485,13 @@ export class Board {
       if (nCross > 0) {
         // PP-14: the blessing waits for the player — the cascade pauses
         // right after the angel pops, and resumes the moment the chooser
-        // answers. Four DIFFERENT cargoes, one of each picked; any slot the
-        // chooser left empty is filled at random, and every unit is paid as
+        // answers. The four units are paid EXACTLY as allocated: all four of
+        // one cargo, a 2+2 split, one of each, any mix. Units the chooser
+        // left unspent are filled at random, and every unit is paid as
         // forged (never gated by the network) like the other arcade bonuses.
         const chosen = await this.chooseCrossReward();
-        const list: ResKey[] = [];
-        for (const r of chosen) if (list.length < 4 && !list.includes(r)) list.push(r);
-        const rest = shuffle(BASE_POOL).filter((r) => !list.includes(r));
-        while (list.length < 4) list.push(rest.shift()!);
+        const list = chosen.slice(0, 4);
+        while (list.length < 4) list.push(choice(BASE_POOL));
         for (const res of list) {
           gains[res] = (gains[res] ?? 0) + 1;
           this.onBonus(res, 1, "HOLY CROSS");

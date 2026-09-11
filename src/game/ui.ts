@@ -102,12 +102,6 @@ export interface UiHooks {
   onRecenter: () => void;
   onSwap: (r1: number, c1: number, r2: number, c2: number) => void;
   onReset: () => void;
-  /**
-   * PP-14 TEMP: conjure a holy cross (angel + choir + four-pick chooser) on
-   * demand so the moment can be tested without engineering the 3×4 shape on
-   * the board. Remove together with its button once signed off.
-   */
-  onTestCross?: () => void;
   onBlackAction: (key: string) => void;
   /** AI-01: the player picked a rival difficulty (applies from the next turn). */
   onSkill?: (key: SkillKey) => void;
@@ -279,16 +273,6 @@ export function createOriginalUi(
   resetBtn.title = "Collapse the Processing Plant: lose ALL resources, get a fresh neutral board";
   resetBtn.onclick = () => hooks.onReset();
   qh.appendChild(resetBtn);
-  // PP-14 TEMP: one-click conjurer for the holy cross moment — stamp a 3×4
-  // cross onto the board and settle it, so the angel, the choir and the
-  // four-pick chooser can be tested without hunting for the shape. DELETE
-  // this button (and its hook) once the flow is signed off.
-  if (hooks.onTestCross) {
-    const crossBtn = h("button", "reset-btn cross-test-btn", "✚ TEST CROSS");
-    crossBtn.title = "TEST: conjure a holy cross — angel, choir and the +4 picker";
-    crossBtn.onclick = () => hooks.onTestCross!();
-    qh.appendChild(crossBtn);
-  }
   qp.appendChild(qh);
 
   const upbar = h("div", "upbar");
@@ -889,11 +873,12 @@ export function createOriginalUi(
 
   // ── PP-14: the cross bounty chooser ──────────────────────────────────────
   // The board pauses the cascade on a HOLY CROSS and waits; this panel asks
-  // which FOUR DIFFERENT cargoes the blessing should be — one of each. The
-  // confirm enables at exactly four picks, and the 8s timer (the board's own
-  // 8s backstop is the second line of defence) auto-confirms whatever is
-  // selected so the cascade always resumes — the board fills any empty slot
-  // with a random unused cargo.
+  // how to spend the FOUR units of blessing. Repeats are allowed — tap a
+  // cargo to add one unit, tap it again to take one back, up to a total of
+  // four (4 of one, 2+2, 1+1+1+1, any mix). The confirm enables at exactly
+  // four, and the 8s timer (the board's own 8s backstop is the second line
+  // of defence) auto-confirms whatever is selected so the cascade always
+  // resumes — the board fills any unspent unit with a random cargo.
   let pickEl: HTMLElement | null = null;
   let pickTimer = 0;
 
@@ -906,19 +891,27 @@ export function createOriginalUi(
     close();
     const panel = h("div", "cross-pick");
     panel.appendChild(h("div", "cross-pick-title", "🙏 HOLY CROSS"));
-    panel.appendChild(h("div", "cross-pick-sub", "Pick 4 different bounties · +1 each"));
+    panel.appendChild(h("div", "cross-pick-sub", "Spend 4 bounties · repeats allowed"));
     const row = h("div", "cross-pick-row");
-    const selected = new Set<ResKey>();
-    const count = h("div", "cross-pick-count", "0 / 4 picked");
+    const counts = new Map<ResKey, number>();
+    const total = () => [...counts.values()].reduce((a, b) => a + b, 0);
+    const count = h("div", "cross-pick-count", "0 / 4 spent");
     const confirm = h("button", "cross-pick-confirm", "🙏 Bless +4");
     (confirm as HTMLButtonElement).type = "button";
     (confirm as HTMLButtonElement).disabled = true;
     const refresh = () => {
-      count.textContent = `${selected.size} / 4 picked`;
-      (confirm as HTMLButtonElement).disabled = selected.size !== 4;
+      count.textContent = `${total()} / 4 spent`;
+      (confirm as HTMLButtonElement).disabled = total() !== 4;
       row.querySelectorAll<HTMLElement>("[data-gem]").forEach((b) => {
-        b.classList.toggle("sel", selected.has(b.dataset.gem as ResKey));
+        const n = counts.get(b.dataset.gem as ResKey) ?? 0;
+        b.classList.toggle("sel", n > 0);
+        b.dataset.n = String(n);
       });
+    };
+    const expand = () => {
+      const chosen: ResKey[] = [];
+      for (const [res, n] of counts) for (let i = 0; i < n; i++) chosen.push(res);
+      return chosen;
     };
     for (const cargo of TRADEABLE) {
       const gem = CARGO_TO_GEM[cargo];
@@ -930,16 +923,20 @@ export function createOriginalUi(
       b.style.setProperty("--c1", CARGO[cargo].c1);
       b.style.setProperty("--c2", CARGO[cargo].c2);
       b.innerHTML = `<i>${CARGO[cargo].icon}</i><span>+1</span>`;
-      b.title = `Take 1 ${CARGO[cargo].name}`;
+      b.title = `Spend a bounty on ${CARGO[cargo].name} (tap again to take it back)`;
       b.onclick = () => {
-        if (selected.has(gem)) selected.delete(gem);
-        else if (selected.size < 4) selected.add(gem);
-        else { toast("Four DIFFERENT bounties — unselect one to change it.", "info"); return; }
+        const n = counts.get(gem) ?? 0;
+        if (total() >= 4) {
+          if (n > 0) counts.set(gem, n - 1);           // swap one unit out
+          else { toast("All 4 spent — tap a chosen cargo to take one back.", "info"); return; }
+        } else {
+          counts.set(gem, n + 1);                      // spend one more unit
+        }
         refresh();
       };
       row.appendChild(b);
     }
-    confirm.onclick = () => { pick([...selected]); close(); };
+    confirm.onclick = () => { pick(expand()); close(); };
     panel.appendChild(row);
     panel.appendChild(count);
     panel.appendChild(confirm);
@@ -947,7 +944,7 @@ export function createOriginalUi(
     pickEl = panel;
     pickTimer = window.setTimeout(() => {
       if (!pickEl) return;
-      pick([...selected]);
+      pick(expand());
       close();
     }, 8000);
   }
