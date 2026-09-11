@@ -45,9 +45,12 @@ fade against unrelated detail — no mirrored "kaleidoscope" echo.
 - Patterns are **world-anchored**: the pattern transform compensates each
   chunk's origin mod the texture period, so all chunks sample one continuous
   meadow. Zoom swaps rebuild the patterns at the new scale.
-- `LAND_SCALE = 2` (grass/sand) and `SEA_SCALE = 1.6` (water): one painted
-  brush clump spans roughly a tile, matching the OpenGFX art's reading; they
-  also shrink the apparent tiling frequency and stop zoom-step shimmer.
+- `LAND_SCALE = 0.2` (grass/sand) and `SEA_SCALE = 0.16` (water) — 10% of
+  the W-series default (was 2 / 1.6): the painted brush clumps are fine
+  grain now, one texture repeat ≈ 1.6 tiles wide (set 0.1 / 0.08 for 5%).
+  Because the patterns are sampled downscaled, the terrain and ground-chunk
+  contexts paint with `imageSmoothingEnabled = true`; the ocean drift keeps
+  the same on-screen speed, so the finer water reads as a livelier ripple.
 - The terrain layer redraws **every frame** (the ocean drifts, the surf
   breathes); the static island is chunk-cached exactly like the old sprite
   chunks, so the per-frame cost is one fullscreen pattern fill, a handful of
