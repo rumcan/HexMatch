@@ -8,7 +8,11 @@
 //  2. The match-3 board spawns cargo directly (it is NOT transport
 //     capacity); board.ts survives the migration untouched.
 //  3. Road→rail upgrade in place is allowed, paying the cost difference.
-//  4. Overlapping catchments split output proportionally among claimants.
+//  4. One Depot holds one industry: the FIRST Depot with a road at a resource
+//     owns its output outright, and no second Depot may be built for it
+//     (PP-16 — it replaces "overlapping catchments split output
+//     proportionally among claimants", which made a district a spreadsheet
+//     instead of a race).
 //  5. `gold` stays the sabotage currency (SABOTAGE unchanged).
 //     PP-08 tightens that to a hard rule: Gold is reserved for Black Market
 //     sabotage and pays for NOTHING else. Security Forces (defensive, not

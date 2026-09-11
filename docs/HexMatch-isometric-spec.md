@@ -284,6 +284,7 @@ Replaces vertex adjacency. This is the mechanic that makes the map matter.
 If a harvester reaches the Factory by both road and rail, take the rail multiplier and the rail VP. If a rail path is broken, fall back to any surviving road path and **revoke the rail VP** — this must be visible, with a toast and the VP counter animating down, or players will not understand what happened.
 
 **Decide here:** what happens when two players' catchments overlap one industry. Recommend splitting output proportionally to the number of claimants, which avoids a first-mover lockout without needing a rating system.
+*Decided (PP-16, and it went the other way):* the split shipped, and playing against it taught the opposite lesson — a slice of everything meant nothing was ever won. An industry now has exactly ONE holder: the first Depot with a road at it (`industryLocks`), and a Depot whose catchment is entirely held is refused at placement. A roadless Depot claims nothing, so the lock arrives with the connection and is derived from the world on every read (no new save field, and demolishing the road frees the district). See `docs/HexMatch-tickets.md`.*
 
 **Acceptance:** placing a harvester next to a farm starts grain; demolishing one road tile mid-path stops it and revokes VP within one frame; a blockaded industry produces nothing; a rail path scores 3 and its 1.6× multiplier applies.
 

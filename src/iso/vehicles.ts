@@ -27,7 +27,7 @@
 // not teleport). Positions stay fractional in TILE space; `depth.place`
 // pins a moving sprite's anchor to the fractional tile's diamond centre.
 // ══════════════════════════════════════════════════════════════════════════
-import { roadPath, shoulders } from "./road-routing";
+import { plantShoulders, roadPath, shoulders } from "./road-routing";
 export { roadPath } from "./road-routing";
 import type { DrawItem } from "./depth";
 import type { EconomyState } from "./economy";
@@ -96,6 +96,10 @@ export const createTruckState = (): TruckState => ({ trucks: [] });
  * depot's shoulders to the connected factory's shoulders over `trackOpenTo`
  * tiles (own + public, never the rival's — W2), crossing only mutual bits.
  *
+ * PP-15: the plant end is `plantShoulders` — every road tile touching ANY tile
+ * of the factory's footprint. The lorry pulls up at the side of the building
+ * the road joins, which is the tile the player can actually see and click.
+ *
  * `comp` is optional so callers that already built the owner's components
  * (the game's hover overlay, `planTrucks`) do not pay a second flood. Returns
  * null when the depot is unserviced, rail-only (`trains are not this ticket`),
@@ -129,7 +133,7 @@ export function roadDeliveryForHarvester(
   const route = roadPath(
     eco.track, h.ownerId,
     shoulders(eco.track, h.ownerId, h.tx, h.ty),
-    new Set(shoulders(eco.track, h.ownerId, conn.factory.tx, conn.factory.ty)
+    new Set(plantShoulders(eco.track, h.ownerId, conn.factory.tx, conn.factory.ty)
       .map(([x, y]) => tIdx(x, y))),
   );
   if (!route) return null;

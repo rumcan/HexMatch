@@ -8,7 +8,9 @@ import {
 import {
   createTrack, buildTile, hasTrack, tIdx, canBuildOn, type Track,
 } from "../../src/iso/track";
-import { isServiced, type EconomyState, type Factory } from "../../src/iso/economy";
+import {
+  isServiced, lockedIndustryIds, type EconomyState, type Factory,
+} from "../../src/iso/economy";
 import { generateMap, GRASS, WATER, ROUGH, TOWN_OCC, type Grid, type Industry } from "../../src/iso/grid";
 import { MAP_W, MAP_H } from "../../src/game/config";
 import { INDUSTRY_BY_KEY, TRANSPORT, UPGRADE_COST } from "../../src/iso/config";
@@ -327,7 +329,12 @@ describe("E7 execution", () => {
   });
 
   it("reuses its trunk line on the second build instead of a parallel spur", () => {
-    const grid = flatGrid([ind("farm", 20, 5), ind("forest", 24, 5)]);
+    // PP-16 sets the gap here: the second industry has to be far enough that
+    // the first Depot's 4×4 catchment does NOT reach it — a Depot holds every
+    // industry it can see, so two industries within one catchment are one
+    // claim and there is nothing left for a second Depot to build for. Seven
+    // tiles apart is the balance: separate claims, one shared trunk.
+    const grid = flatGrid([ind("farm", 20, 5), ind("forest", 27, 5)]);
     const s = state(grid);
     const first = aiBuildStep(s, F, { stock: {}, purse: rich }, 1)!;
     const laidFirst = first.built.length;
@@ -335,6 +342,18 @@ describe("E7 execution", () => {
     // the second industry is close to the first, so the marginal build is small
     expect(second.built.length).toBeLessThan(laidFirst);
     expect(s.harvesters).toHaveLength(2);
+  });
+
+  it("PP-16: will not build a second Depot for ground the first one holds", () => {
+    // Two industries inside ONE catchment: the rival takes the first, holds
+    // both, and spends no further tile on a Depot that would claim nothing.
+    const grid = flatGrid([ind("farm", 20, 5), ind("forest", 22, 5)]);
+    const s = state(grid);
+    const first = aiBuildStep(s, F, { stock: {}, purse: rich }, 1)!;
+    expect(first.harvester).toBeTruthy();
+    expect(lockedIndustryIds(s).size).toBe(2);
+    expect(bestCandidate(s, F, { stock: {}, purse: rich })).toBeNull();
+    expect(s.harvesters).toHaveLength(1);
   });
 
   it("W3: builds over its free allowance when the purse alone is short", () => {
@@ -762,13 +781,15 @@ describe("VP-01 the rival reads the scoreboard", () => {
   it("scales the value of Ore-bearing ground and nothing else", () => {
     const ore = ind("ore_mine", 4, 4);
     const oreGrid = flatGrid([ore]);
-    const counts = new Map<number, number>();
-    const at = (u: number) => catchmentValue(state(oreGrid), counts, {}, 5, 5, 0, u);
+    // PP-16: the ranking values what a NEW Depot would HOLD, so the second
+    // argument is the claim map — empty here, i.e. nothing spoken for yet.
+    const locks = new Map<number, Harvester>();
+    const at = (u: number) => catchmentValue(state(oreGrid), locks, {}, 5, 5, 0, u);
     expect(at(1)).toBeGreaterThan(0);
     expect(at(3)).toBeCloseTo(at(1) * 3, 10);      // a pure multiplier on the ore term
 
     const farmGrid = flatGrid([ind("farm", 4, 4)]);
-    const atFarm = (u: number) => catchmentValue(state(farmGrid), counts, {}, 5, 5, 0, u);
+    const atFarm = (u: number) => catchmentValue(state(farmGrid), locks, {}, 5, 5, 0, u);
     expect(atFarm(3)).toBe(atFarm(1));              // urgency does not touch other cargo
   });
 

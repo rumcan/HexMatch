@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   CATCHMENT, catchmentRect, industriesInCatchment, isServiced,
   buildComponents, buildAllComponents, linkedBy, resolveConnection,
-  claimantCounts, harvesterYield, playerResources,
+  industryLocks, heldIndustries, lockedIndustryIds, harvesterYield, playerResources,
   industryClaimValues, pickBlockadeTarget,
   type EconomyState, type Harvester, type Factory,
 } from "../../src/iso/economy";
@@ -319,9 +319,12 @@ describe("E6 acceptance", () => {
 
   // W2 acceptance: "a player's network reaches an industry only over that
   // player's own track; the rival must build its own dirt to connect."
+  // PP-16 gives the rival something of its OWN to connect (farm2 beside its
+  // Depot): on a shared farm the test could no longer tell "wrong owner's
+  // track" apart from "somebody got there first", because both pay zero.
   it("reaches an industry only over its own track, never the rival's", () => {
     const farm = ind("farm", 12, 11);
-    const grid = flatGrid([farm]);
+    const grid = flatGrid([farm, ind("farm", 15, 11)]);
     const track = createTrack();
     // p1's full line: harvester → farm → its factory.
     run(track, "dirt", 6, 20, 10, 1);
@@ -346,18 +349,23 @@ describe("E6 acceptance", () => {
     expect(vpFor(score, "p1")).toBe(0);
     expect(vpFor(score, "p2")).toBe(0);
 
-    // The moment p2 lays its OWN dirt home, it connects on its own.
+    // The moment p2 lays its OWN dirt home, it connects on its own — to the
+    // farm it holds, which is the only one left to hold.
     run(track, "dirt", 14, 28, 12, 2);
     run(track, "dirt", 14, 14, 11, 2);   // up from its line to beside the farm
     expect(playerResources(state, "p2", 0).grain).toBeGreaterThan(0);
+    // PP-16 from the other side: p1's farm stays p1's, road or no road.
+    expect(industryLocks(state).get(farm.id)?.owner).toBe("p1");
   });
 
   // W2 acceptance: "demolishing your own dirt never disconnects the rival
-  // (and vice-versa)". Two players share one farm from adjacent lines; each
-  // tears down a tile of its OWN line and the other's connection survives.
+  // (and vice-versa)". Two players on adjacent lines, each with a farm of its
+  // own (PP-16: one Depot, one industry — the farms used to be shared, which
+  // made both halves of this pay); each tears down a tile of its OWN line and
+  // the other's connection survives.
   it("cutting one player's line leaves the other's connection intact", () => {
     const world = (): EconomyState => {
-      const grid = flatGrid([ind("farm", 12, 11)]);
+      const grid = flatGrid([ind("farm", 12, 11), ind("farm", 15, 11)]);
       const track = createTrack();
       run(track, "dirt", 6, 12, 10, 1);   // p1's line (they meet at x=12…)
       run(track, "dirt", 12, 20, 10, 2);  // …which p2 builds last and owns
@@ -371,7 +379,7 @@ describe("E6 acceptance", () => {
       };
     };
 
-    // both start connected, sharing the farm
+    // both start connected, each to the farm it holds
     let state = world();
     expect(playerResources(state, "p1", 0).grain).toBeGreaterThan(0);
     expect(playerResources(state, "p2", 0).grain).toBeGreaterThan(0);
@@ -535,7 +543,12 @@ describe("E6 best tier on path across the dirt↔paved seam", () => {
   });
 });
 
-describe("E6 overlapping catchments split output proportionally", () => {
+// PP-16 replaced this block's premise. Overlapping catchments used to SPLIT an
+// industry's output between everyone who reached it, which made a district a
+// spreadsheet; the rule now is that exactly one Depot holds one industry — the
+// first with a road at it — and a second Depot beside the same farm earns
+// nothing at all (and is refused at placement, `iso-depot-claim.test.ts`).
+describe("PP-16 the first Depot with a road holds the industry", () => {
   function twoClaimants() {
     const grid = flatGrid([ind("farm", 12, 11)]);
     const track = createTrack();
@@ -553,27 +566,46 @@ describe("E6 overlapping catchments split output proportionally", () => {
     return state;
   }
 
-  it("halves the farm between two claimants", () => {
+  it("pays the holder in full and the late arrival nothing", () => {
     const state = twoClaimants();
-    const counts = claimantCounts(state);
-    expect(counts.get(0)).toBe(2);
+    const locks = industryLocks(state);
+    expect(locks.get(0)?.id).toBe(1);            // p1's Depot reached it first
+    expect(heldIndustries(state, state.harvesters[0], locks).map((i) => i.id))
+      .toEqual([0]);
+    expect(heldIndustries(state, state.harvesters[1], locks)).toEqual([]);
     const full = INDUSTRY_BY_KEY.farm.output;
-    expect(playerResources(state, "p1", 0).grain).toBeCloseTo(full / 2, 6);
-    expect(playerResources(state, "p2", 0).grain).toBeCloseTo(full / 2, 6);
+    expect(playerResources(state, "p1", 0).grain).toBeCloseTo(full, 6);
+    expect(playerResources(state, "p2", 0).grain).toBeUndefined();
   });
 
-  it("conserves total output regardless of the split", () => {
+  it("a second Depot on the same ground creates no output to share", () => {
     const state = twoClaimants();
     const total = (playerResources(state, "p1", 0).grain ?? 0)
       + (playerResources(state, "p2", 0).grain ?? 0);
+    // the map produces what the map produces: exclusivity caps it at one
+    // holding, rather than halving it twice.
     expect(total).toBeCloseTo(INDUSTRY_BY_KEY.farm.output, 6);
   });
 
-  it("does not let an unserviced rival dilute the yield", () => {
+  it("a rival with no road at the resource holds nothing", () => {
     const state = twoClaimants();
     state.harvesters[1] = H(2, "p2", 12, 30);   // move p2 far from any track
-    expect(claimantCounts(state).get(0)).toBe(1);
+    expect(lockedIndustryIds(state)).toEqual(new Set([0]));
+    expect(industryLocks(state).get(0)?.owner).toBe("p1");
     expect(playerResources(state, "p1", 0).grain)
+      .toBeCloseTo(INDUSTRY_BY_KEY.farm.output, 6);
+  });
+
+  it("the lock is the road: tear the line up and the industry is free again", () => {
+    const state = twoClaimants();
+    // p1's whole line to the farm, every tile of it (p2 keeps its own, and the
+    // shared end tile it built last — which is why the flood, not a flag, is
+    // what decides this).
+    for (let x = 6; x <= 11; x++) demolishTile(state.track, "dirt", x, 10);
+    const locks = industryLocks(state);
+    expect(locks.get(0)?.id).toBe(2);
+    expect(playerResources(state, "p1", 0).grain).toBeUndefined();
+    expect(playerResources(state, "p2", 0).grain)
       .toBeCloseTo(INDUSTRY_BY_KEY.farm.output, 6);
   });
 });
@@ -668,7 +700,7 @@ describe("E6 scoring hygiene", () => {
       factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }],
     };
     const y = harvesterYield(
-      state, buildAllComponents(track, 1), claimantCounts(state), state.harvesters[0], 0,
+      state, buildAllComponents(track, 1), industryLocks(state), state.harvesters[0], 0,
     );
     expect(y.serviced).toBe(true);
     expect(y.connection.kind).toBe("dirt");

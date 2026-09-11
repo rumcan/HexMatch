@@ -4,8 +4,11 @@
 // Replaces vertex adjacency (hexmap's `playerResources`). This is the mechanic
 // that makes the map matter:
 //
-//   harvester → 4×4 catchment → overlapping industries → output
+//   harvester → 4×4 catchment → the industries IT HOLDS → output
 //               × the transport multiplier of the connection to the Factory
+//
+// PP-16: "holds" is the exclusive claim — the first Depot with a road at an
+// industry owns its output, and no second Depot may be built for it.
 //
 // A harvester must be adjacent to at least one road tile. Connection is a
 // flood fill over the direction masks where a tile connects only if BOTH
@@ -26,13 +29,13 @@
 // VP-01 took Victory Points out of this module: a connection is throughput
 // only. The scoreboard reads the tiles (`victory.ts`).
 // ══════════════════════════════════════════════════════════════════════════
-import { roadPath, shoulders } from "./road-routing";
+import { roadPath, shoulders, plantShoulders } from "./road-routing";
 import { MAP_W, MAP_H } from "../game/config";
 import { TRANSPORT, INDUSTRY_BY_KEY, type Cargo } from "./config";
 import type { Grid, Industry } from "./grid";
 import {
   DIRS, DIR, OPPOSITE, PRESENT, tIdx, inMapT, trackOpenTo, PUBLIC_OWNER,
-  type Track, type TrackKind,
+  plantFootprintTiles, type Track, type TrackKind,
 } from "./track";
 
 /** Catchment is a 4×4 rectangle centred on the harvester tile. */
@@ -217,6 +220,25 @@ export const ownerIdOf = (state: EconomyState, owner: string): number =>
   ?? state.factories.find((f) => f.owner === owner)?.ownerId
   ?? 0;
 
+/**
+ * The components a set of tiles touches from any of their 4 neighbours. The
+ * multi-tile form of `adjacentComponents`, and the reason it exists is
+ * PP-15: a plant is a `FACTORY_FOOTPRINT` block under one sprite, so "beside
+ * the Factory" means beside ANY tile of that block. Every question of the shape
+ * "is this Depot joined to that plant" asks it through here or through
+ * `plantShoulders`, so a road that touches the graphic's edge and a road that
+ * touches the origin tile can never be scored differently.
+ */
+export function componentsTouchingTiles(
+  comp: Int32Array, tiles: [number, number][],
+): Set<number> {
+  const out = new Set<number>();
+  for (const [tx, ty] of tiles) {
+    for (const c of adjacentComponents(comp, tx, ty)) out.add(c);
+  }
+  return out;
+}
+
 /** Component ids of the layer touching a tile from any of its 4 neighbours. */
 function adjacentComponents(comp: Int32Array, tx: number, ty: number): Set<number> {
   const out = new Set<number>();
@@ -240,9 +262,19 @@ function adjacentComponents(comp: Int32Array, tx: number, ty: number): Set<numbe
 export function sharedComponents(
   comp: Int32Array, ax: number, ay: number, bx: number, by: number,
 ): Set<number> {
+  return sharedComponentsWithTiles(comp, ax, ay, [[bx, by]]);
+}
+
+/**
+ * `sharedComponents` with the B side widened to a list of tiles — the plant's
+ * whole footprint. PP-15.
+ */
+export function sharedComponentsWithTiles(
+  comp: Int32Array, ax: number, ay: number, bTiles: [number, number][],
+): Set<number> {
   const A = adjacentComponents(comp, ax, ay);
   const out = new Set<number>();
-  for (const c of adjacentComponents(comp, bx, by)) if (A.has(c)) out.add(c);
+  for (const c of componentsTouchingTiles(comp, bTiles)) if (A.has(c)) out.add(c);
   return out;
 }
 
@@ -297,7 +329,11 @@ export function resolveConnection(
   let best: Connection = NO_CONNECTION;
   let shortest = Infinity;
   for (const f of mine) {
-    const shared = sharedComponents(comp.comp, h.tx, h.ty, f.tx, f.ty);
+    // PP-15: the plant's whole footprint, not its origin tile — the block's
+    // edge is where its road frontage is.
+    const shared = sharedComponentsWithTiles(
+      comp.comp, h.tx, h.ty, plantFootprintTiles(f.tx, f.ty),
+    );
     if (shared.size === 0) continue;
     for (const c of shared) {
       if (comp.roadComp[c]) {
@@ -310,7 +346,7 @@ export function resolveConnection(
     // pure-gravel component: keep the old dirt tier's shortest-factory tie-break
     const route = roadPath(state.track, h.ownerId,
       shoulders(state.track, h.ownerId, h.tx, h.ty),
-      new Set(shoulders(state.track, h.ownerId, f.tx, f.ty).map(([x, y]) => tIdx(x, y))));
+      new Set(plantShoulders(state.track, h.ownerId, f.tx, f.ty).map(([x, y]) => tIdx(x, y))));
     if (!route || route.length >= shortest) continue;
     shortest = route.length;
     best = {
@@ -320,24 +356,63 @@ export function resolveConnection(
   return best;
 }
 
-// ── output ────────────────────────────────────────────────────────────────
+// ── claims: one Depot, one industry ───────────────────────────────────────
 /**
- * How many harvesters claim each industry. Overlapping catchments split the
- * industry's output proportionally among claimants (settled decision), which
- * avoids a first-mover lockout without needing a rating system.
+ * PP-16: which Depot holds which industry.
  *
- * Only serviced harvesters count as claimants — an unserviced one must not
- * dilute someone else's yield.
+ * The rule this replaces was arithmetic: overlapping catchments SPLIT an
+ * industry's output between every Depot that reached it, so a busy district
+ * paid everyone a slice and nothing about a resource was ever decided by who
+ * got there first. The map read as a spreadsheet instead of a race. It is now
+ * exclusivity:
+ *
+ *   • a Depot HOLDS the industries in its catchment that no other Depot holds
+ *     already — the FIRST one to have a road at the resource takes it, and no
+ *     further Depot may be built for it (see `planDepotPlacement`'s
+ *     "industry-taken" refusal, which is the same set read from the other side);
+ *   • "a road at the resource" is `isServiced` — a Depot dropped on open ground
+ *     claims nothing, because a Depot with no network behind it produces
+ *     nothing and must not be able to sterilise a district for its owner's
+ *     convenience. Its locks arrive with its road;
+ *   • the map is DERIVED, never stored: demolish the road that serviced a Depot
+ *     and every industry it held is free again, and a snapshot needs no new
+ *     field. Harvester array order breaks ties, which is build order in the
+ *     live game and list order in a save — deterministic either way.
+ *
+ * Blockades are deliberately NOT part of this: a blockaded industry still
+ * belongs to whoever holds it (the blockade costs its HOLDER throughput, and
+ * a rival's sabotage must not hand the district over).
  */
-export function claimantCounts(state: EconomyState): Map<number, number> {
-  const counts = new Map<number, number>();
+export function industryLocks(state: EconomyState): Map<number, Harvester> {
+  const locks = new Map<number, Harvester>();
   for (const h of state.harvesters) {
     if (!isServiced(state.track, h)) continue;
     for (const ind of industriesInCatchment(state.grid, h)) {
-      counts.set(ind.id, (counts.get(ind.id) ?? 0) + 1);
+      if (!locks.has(ind.id)) locks.set(ind.id, h);
     }
   }
-  return counts;
+  return locks;
+}
+
+/** The industries `h` holds — its catchment minus what another Depot reached
+ *  first. What `h` is PAID for, and the only reason a new Depot may be built. */
+export function heldIndustries(
+  state: EconomyState, h: Harvester, locks: Map<number, Harvester>,
+): Industry[] {
+  const out: Industry[] = [];
+  for (const ind of industriesInCatchment(state.grid, h)) {
+    const holder = locks.get(ind.id);
+    if (holder === undefined || holder.id === h.id) out.push(ind);
+  }
+  return out;
+}
+
+/** Every industry a Depot already holds, as ids — the placement refusal's
+ *  input (`planDepotPlacement`'s `locked` option). */
+export function lockedIndustryIds(state: EconomyState): Set<number> {
+  const out = new Set<number>();
+  for (const id of industryLocks(state).keys()) out.add(id);
+  return out;
 }
 
 export type Yield = Partial<Record<Cargo, number>>;
@@ -350,12 +425,16 @@ export interface HarvesterYield {
 }
 
 /**
- * Per-harvester output. A blockaded industry (`banditUntil > now`) produces
- * nothing — that rule carries over cleanly from the hex version. `comp` must
- * be scoped to `h.ownerId` (W2).
+ * Per-harvester output: everything the Depot HOLDS, at the multiplier of its
+ * connection. A blockaded industry (`banditUntil > now`) produces nothing —
+ * that rule carries over cleanly from the hex version. `comp` must be scoped
+ * to `h.ownerId` (W2) and `locks` is `industryLocks(state)`.
+ *
+ * PP-16 removed the ÷claimants in here: an industry pays its holder in full,
+ * because it now has exactly one.
  */
 export function harvesterYield(
-  state: EconomyState, comp: Components, counts: Map<number, number>,
+  state: EconomyState, comp: Components, locks: Map<number, Harvester>,
   h: Harvester, now: number,
 ): HarvesterYield {
   const serviced = isServiced(state.track, h);
@@ -364,12 +443,11 @@ export function harvesterYield(
   if (!serviced || connection.kind === null) {
     return { harvester: h, connection, serviced, yields };
   }
-  for (const ind of industriesInCatchment(state.grid, h)) {
+  for (const ind of heldIndustries(state, h, locks)) {
     if (ind.banditUntil > now) continue;                 // blockaded
     const def = INDUSTRY_BY_KEY[ind.type];
     if (!def) continue;
-    const share = counts.get(ind.id) ?? 1;
-    const amount = (ind.output ?? def.output) * connection.multiplier / share;
+    const amount = (ind.output ?? def.output) * connection.multiplier;
     yields[def.cargo] = (yields[def.cargo] ?? 0) + amount;
   }
   return { harvester: h, connection, serviced, yields };
@@ -386,14 +464,14 @@ export function harvesterYield(
 export function playerResources(
   state: EconomyState, owner: string, now: number, comp?: Components,
 ): Yield {
-  const counts = claimantCounts(state);
+  const locks = industryLocks(state);
   const out: Yield = {};
   // All of one player's harvesters share a track-owner id, so one flood pair
   // serves the whole loop.
   const c = comp ?? buildAllComponents(state.track, ownerIdOf(state, owner));
   for (const h of state.harvesters) {
     if (h.owner !== owner) continue;
-    const y = harvesterYield(state, c, counts, h, now);
+    const y = harvesterYield(state, c, locks, h, now);
     for (const [cargo, v] of Object.entries(y.yields) as [Cargo, number][]) {
       out[cargo] = (out[cargo] ?? 0) + v;
     }
@@ -415,18 +493,17 @@ export function industryClaimValues(
   const out = new Map<number, number>();
   const ownerId = ownerIdOf(state, owner);
   if (ownerId === 0) return out;              // nothing owned → nothing to lose
-  const counts = claimantCounts(state);
+  const locks = industryLocks(state);
   const comp = buildAllComponents(state.track, ownerId);
   for (const h of state.harvesters) {
     if (h.owner !== owner) continue;
-    const y = harvesterYield(state, comp, counts, h, now);
+    const y = harvesterYield(state, comp, locks, h, now);
     if (!y.serviced || y.connection.kind === null) continue;   // not paying yet
-    for (const ind of industriesInCatchment(state.grid, h)) {
+    for (const ind of heldIndustries(state, h, locks)) {
       if (ind.banditUntil > now) continue;    // already blockaded
       const def = INDUSTRY_BY_KEY[ind.type];
       if (!def) continue;
-      const share = counts.get(ind.id) ?? 1;
-      const v = (ind.output ?? def.output) * y.connection.multiplier / share;
+      const v = (ind.output ?? def.output) * y.connection.multiplier;
       out.set(ind.id, (out.get(ind.id) ?? 0) + v);
     }
   }

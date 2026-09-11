@@ -24,7 +24,8 @@ import {
 } from "../../src/iso/camera";
 import { flatPick } from "../../src/iso/renderer";
 import {
-  createTrack, buildRefusal, previewDrag, playerNetwork, type TrackKind,
+  createTrack, buildRefusal, previewDrag, playerNetwork, structureTiles,
+  plantFootprintTiles, type TrackKind,
 } from "../../src/iso/track";
 import { industriesInCatchment } from "../../src/iso/economy";
 import {
@@ -290,21 +291,40 @@ describe("E14 the corridor picker finds a corridor by real geometry", () => {
     eco.factories.push({ owner: "you", ownerId: 1, tx: c.fx, ty: c.fy });
     eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: c.hx, ty: c.hy });
     const net = playerNetwork(track, 1, eco.factories, eco.harvesters);
-    const pv = previewDrag(grid, track, "dirt", { stone: 12 }, c.fx, c.fy, c.hx, c.hy, true, net, 12);
+    // PP-15: the same `structures` set the click handlers price a drag with —
+    // the ground the player's own buildings stand on. The Factory block and the
+    // Depot tile are ON the path and get stepped over, so the tiles the game
+    // lays are the column minus its own buildings, and the allowance buys road
+    // rather than a player's own floor.
+    const structures = structureTiles(eco.factories, eco.harvesters, 1);
+    const own = new Set([
+      ...plantFootprintTiles(c.fx, c.fy).map(([x, y]) => `${x},${y}`),
+      `${c.hx},${c.hy}`,
+    ]);
+    const want = [...c.col].reverse()
+      .filter((t) => !own.has(`${t.tx},${t.ty}`))
+      .map((t) => [t.tx, t.ty] as [number, number]);
+    const pv = previewDrag(grid, track, "dirt", { stone: 12 }, c.fx, c.fy, c.hx, c.hy, true, net, 12, structures);
+    expect(pv.tiles).toEqual(want);
     expect(pv.truncated).toBe(false);
-    expect(pv.tiles).toHaveLength(c.tiles);
+    expect(pv.tiles.length).toBeLessThan(c.tiles);
+    expect(pv.tiles.length).toBeGreaterThan(0);
     expect(pv.cost).toEqual({});
-    expect(pv.free).toBe(c.tiles);
+    expect(pv.free).toBe(pv.tiles.length);
     expect(pv.unaffordable).toEqual([]);
   });
 
-  it("is not seed-luck: the same search works on the other swept seeds and at zoom 1", () => {
+  it("is not seed-luck: the same search works on the other swept seeds", () => {
     // PP-02/PP-12/PP-13 swept pairs with a town-ring factory reachable from a
-    // boot-camera industry: 13@zoom1, 22@zoom-out, 79@zoom1 and 106@zoom-out
-    // all have a PP-02-legal corridor in the boot frame (verified by this very
-    // search). Re-swept over seeds 0–400 for PP-13, when the towns tripled in
-    // size and the inter-town highways moved every settlement.
-    for (const [seed, wheelOut] of [[13, 0], [22, 1], [79, 0], [106, 1]] as const) {
+    // boot-camera industry. Re-swept after the spawn buffer (T4's follow-up:
+    // no industry may stand closer than 10 tiles to a public road, which is
+    // also what tightened the town buffer at generation time): the opening
+    // column is 8–12 tiles now, so it needs the zoomed-out frame the spec's
+    // `zoomStep()` wheel gesture settles on, and at zoom 1 the boot camera
+    // frames the industry alone. 16 of seeds 0–199 have a town-ring corridor
+    // in that band at wheelOut 1 (3, 22, 37, 40, 47, 63, 79, 106, 129, 132,
+    // 147, 175, 176, 194, 198, 199); four of them are played here.
+    for (const [seed, wheelOut] of [[22, 1], [40, 1], [79, 1], [106, 1]] as const) {
       scene(seed, wheelOut);
       const c = findIsoCorridor({ minTiles: 3, maxTiles: 12 });
       expect(c.tiles).toBeGreaterThanOrEqual(3);
@@ -415,8 +435,11 @@ describe("E14 the old 7-tile south column is the thing that broke", () => {
     // search still finds a town-ring corridor in another direction.
     // PP-13 re-sweep: seed 33's towns grew out of the frame when they tripled
     // in size, so every 4-12 column here died on `factory-not-near-town`.
-    // Seeds 0-159 at zoom 1 with no legacy south column: 79, 91, 117.
-    const { grid } = scene(117, 1);
+    // The spawn-buffer re-sweep (seeds 0-199 at wheelOut 1) leaves exactly two
+    // seeds whose boot industry has no legacy 7-tile south column AND still
+    // has a town-ring corridor in the band: 40 and 79. Seed 40's corridor runs
+    // east, like this test's original seed.
+    const { grid } = scene(40, 1);
     expect(oldFindSouthColumn(grid)).toBeNull();
     expect(findIsoCorridor()).not.toBeNull();
   });
@@ -585,7 +608,8 @@ describe("E14 a tile is clicked wherever the game will actually take the click",
 // `isoClickableTile` reports every aim on them picking `factory`, and rightly
 // refuses to move the click somewhere else to make the test pass. The spec used
 // to skip a hard-coded 2×2 window around the anchor. Seed 79 (factory at
-// (28,135), column running east to (33,135)) broke that in CI on (30,135); the
+// (28,135), column once running east to (33,135), now west to (38,135)) broke
+// that in CI on (30,135); the
 // 3×3 footprint-shaped window that replaced it broke on (31,135), one tile
 // PAST the footprint — the sprite's reach is decided by the atlas's stage-2
 // alpha, which no headless run has. So the decision now belongs to the game's
@@ -602,7 +626,7 @@ describe("PP-13 the road drag steps over the tiles the Factory covers", () => {
   };
 
   it("skips exactly the tiles the pick refuses, in drag order", async () => {
-    for (const [seed, wheelOut] of [[79, 0], [79, 1], [106, 1]] as const) {
+    for (const [seed, wheelOut] of [[79, 1], [106, 1], [129, 1]] as const) {
       scene(seed, wheelOut);
       const c = findIsoCorridor();
       expect(c, `seed ${seed} at wheelOut ${wheelOut} found no corridor`).not.toBeNull();
@@ -637,12 +661,16 @@ describe("PP-13 the road drag steps over the tiles the Factory covers", () => {
   });
 
   it("regression: seed 79 runs west, and the Factory covers fx+1..fx+3", async () => {
-    scene(79, 0);
+    scene(79, 1);
     const c = findIsoCorridor()!;
     expect(c.dir).toBe("NW");
     expect([c.fx, c.fy]).toEqual([28, 135]);
-    expect(c.col.map((t) => `${t.tx},${t.ty}`))
-      .toEqual(["33,135", "32,135", "31,135", "30,135", "29,135", "28,135"]);
+    expect([c.hx, c.hy]).toEqual([38, 135]);
+    // the 10-tile road buffer lengthened this column by 5 tiles: the industry
+    // it hangs off now stands further from the town ring the factory needs.
+    expect(c.col.map((t) => `${t.tx},${t.ty}`)).toEqual(
+      [38, 37, 36, 35, 34, 33, 32, 31, 30, 29, 28].map((tx) => `${tx},135`),
+    );
 
     const { drag, refused } = await classifyDragTiles(c, coveredByFactory(c));
     // the two tiles the old 2×2 window let through, plus the one the 3×3
@@ -654,11 +682,13 @@ describe("PP-13 the road drag steps over the tiles the Factory covers", () => {
     expect(refused.map((r) => `${r.tile.tx},${r.tile.ty}`).sort())
       .toEqual(["29,135", "30,135", "31,135"]);
     // …and the drag still runs the rest of the corridor to the harvester
-    expect(drag.map((t) => `${t.tx},${t.ty}`)).toEqual(["32,135", "33,135"]);
+    expect(drag.map((t) => `${t.tx},${t.ty}`)).toEqual(
+      [32, 33, 34, 35, 36, 37, 38].map((tx) => `${tx},135`),
+    );
   });
 
   it("skips nothing when the pick refuses nothing", async () => {
-    scene(79, 0);
+    scene(79, 1);
     const c = findIsoCorridor()!;
     const { drag, refused } = await classifyDragTiles(c, () => null);
     expect(refused).toEqual([]);

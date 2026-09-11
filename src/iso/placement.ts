@@ -84,6 +84,7 @@ const REASON_TEXT: Record<string, string> = {
   "not-adjacent": "it is not adjacent to your network",
   "depot-taken": "a Depot is already there",
   "no-industry-in-catchment": "no industry sits inside its 4×4 catchment",
+  "industry-taken": "another Depot already holds every industry in reach",
   "not-near-town": "its footprint must share an edge with a town",
 };
 
@@ -265,13 +266,26 @@ export function planFactoryPlacement(
   };
 }
 
+export interface DepotPlanOptions {
+  /**
+   * PP-16: the ids of the industries some Depot's road network already holds
+   * (`industryLocks` in economy.ts — computed there, passed in here, because
+   * the lock needs the TRACK and this module must stay a pure geometry/ground
+   * question). A site whose entire catchment is in the set is refused: an
+   * industry has exactly one Depot, and a second one beside it claims nothing.
+   */
+  locked?: ReadonlySet<number>;
+}
+
 /** The full PP-03 placement plan for a Depot hover at (tx,ty). Validity is
- *  exactly `placeHarvester`'s: buildable ground, no existing Depot, and at
- *  least one industry in the 4×4 catchment. */
+ *  exactly `placeHarvester`'s: buildable ground, no existing Depot, at least
+ *  one industry in the 4×4 catchment, and (PP-16) at least one of those
+ *  industries still unclaimed. */
 export function planDepotPlacement(
   grid: Grid,
   harvesters: readonly { tx: number; ty: number }[],
   tx: number, ty: number,
+  opts: DepotPlanOptions = {},
 ): PlacementPlan {
   let code: string | null = null;
   if (!inGrid(grid, tx, ty)) code = "out-of-bounds";
@@ -282,6 +296,9 @@ export function planDepotPlacement(
   }
   const served = inGrid(grid, tx, ty) ? depotServedIndustries(grid, tx, ty) : [];
   if (code === null && served.length === 0) code = "no-industry-in-catchment";
+  // PP-16: "next to an industry" is not enough — the industry has to be FREE.
+  else if (code === null && opts.locked !== undefined
+    && served.every((ind) => opts.locked!.has(ind.id))) code = "industry-taken";
   const ok = code === null;
   return {
     kind: "depot",

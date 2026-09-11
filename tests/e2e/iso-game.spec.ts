@@ -439,6 +439,22 @@ test.describe("iso game boots on the default route", () => {
     // PP-10: the four towns' seed-generated ring roads are already standing.
     expect(h0.dirt).toBe(0);   // no player Dirt Road yet — allowance untouched
 
+    // PP-15: "how many tiles does this corridor cost" is no longer "how many
+    // tiles are in the column". The drag's L-path runs over the ground the
+    // player's OWN buildings stand on — the Factory's 3×3 block and the Depot
+    // it ends on — and those tiles are stepped over: not built, not charged,
+    // and not spent from the free allowance (nobody paves their own factory's
+    // floor). Ask the game's own preview for the number instead of counting the
+    // column here, so the spec can never bake in a footprint or a tile count.
+    const laid = await page.evaluate(({ fx, fy, hx, hy }) => {
+      const pv = (window as any).__iso.dragPreview("dirt", fx, fy, hx, hy);
+      if (!pv) throw new Error(`dragPreview refused the corridor (${fx},${fy})→(${hx},${hy})`);
+      return pv.tiles.length as number;
+    }, c);
+    expect(laid, "the corridor lays nothing at all once its own buildings are free")
+      .toBeGreaterThan(0);
+    expect(laid, "the preview built more tiles than the column contains").toBeLessThanOrEqual(n);
+
     // ── build phase: drag the free Dirt Road corridor from Factory to harvester ─
     // real pointer stream: move → down on the factory → step tile by tile
     // along the picked column → up on the harvester. The path is the
@@ -457,7 +473,7 @@ test.describe("iso game boots on the default route", () => {
     await page.mouse.up();
     await page.waitForFunction(
       ({ free, used }) => (window as any).__iso.freeTrack === free - used,
-      { free: h0.free, used: n },
+      { free: h0.free, used: laid },
       { timeout: 5000 },
     );
 
@@ -471,7 +487,9 @@ test.describe("iso game boots on the default route", () => {
         vpTarget: h.vpTarget, vpRates: h.vpRates, paved: h.pavedTiles("you"),
       };
     });
-    expect(after.free).toBe(h0.free - n);            // the allowance paid for exactly the column
+    // the allowance paid for exactly the tiles the drag laid — the column minus
+    // the ground under the player's own buildings (PP-15).
+    expect(after.free).toBe(h0.free - laid);
     expect(after.vp.you).toBe(0);                    // VP-01: a gravel connection scores nothing
     expect(after.vp.ai).toBe(0);
     // …and the hook that replaces the old scoreboard census reports the new
@@ -482,7 +500,20 @@ test.describe("iso game boots on the default route", () => {
     expect(after.ore).toBe(0);
     // the free opening corridor is DIRT (the allowance buys Dirt Roads only),
     // so the drag lays exactly `n` new Dirt Road tiles from a zero baseline.
-    expect(after.dirt).toBe(h0.dirt + n);            // h0.dirt === 0
+    expect(after.dirt).toBe(h0.dirt + laid);         // h0.dirt === 0
+
+    // …and the tiles it did NOT lay are exactly its own Factory's floor. Read
+    // the footprint off the game's placement plan — never re-derived here —
+    // because "the road had to be built into some weird spot inside" is what
+    // this whole change is about: the inside of the graphic is nobody's road.
+    const under = await page.evaluate(({ fx, fy }) => {
+      const plan = (window as any).__iso.placementPlan("factory", fx, fy);
+      const t = (window as any).__iso.track;
+      const W = (window as any).__iso.grid.w;
+      return plan.footprint.filter((f: { tx: number; ty: number }) =>
+        (t.dirt[f.ty * W + f.tx] & 16) !== 0);
+    }, c);
+    expect(under, "dirt was laid under the player's own Factory").toEqual([]);
 
     // Track state changes synchronously; the canvas paints on the next RAF.
     await page.evaluate(() => new Promise<void>((resolve) =>
