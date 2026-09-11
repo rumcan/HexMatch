@@ -28,9 +28,9 @@ count in the keyer output is the early tell for a checkerboard/vignetted
 backdrop. QC also includes a magenta-leftover pixel probe (pure-magenta
 pixels with alpha>200 must be 0 in every shipped master).
 
-**Manifest: 48 buildings compiled** — 20 core/depots/town-center + 10 more
-residential (ART-05 complete) + 12 commercial (ART-06 complete) + 6 urban
-flats (ART-07 6/16; `town_flats_4` rejected in QC, reverted to fallback).
+**Manifest: 58 buildings compiled — ALL building restyles complete**
+(ART-01…ART-07 done): 20 core/depots/town-center + 10 more residential +
+12 commercial + 16 urban flats. Only the 6 bonus match-3 gems (ART-08) remain.
 
 ## DONE (1950s Blizzard-style, compiled into `assets/buildings/`)
 
@@ -88,40 +88,27 @@ variant). `town_house_pool` gets its 1950s restyle under ART-05 (it is in the
 variant list); `town_house_c` is an extra variant not in the ART-05/06/07
 lists and keeps its TTD art.
 
-### TICKET-ART-07 — Urban flats (16): 6 done
+### TICKET-ART-07 — Urban flats (16): COMPLETE
 - [x] `town_flats` — brownstone, red-tile roof, fire escape
 - [x] `town_flats_2` — pink corner flat, awning delicatessen
-- [ ] `town_flats_4` — **PENDING regen** — model painted a checkerboard backdrop (caught in QC; reverted to shared-sheet fallback)
+- [x] `town_flats_4` — regen accepted (first gen painted a checkerboard backdrop; rejected, reverted to fallback, regenerated with the anti-checkerboard clause) — brick tenement, rooftop water tower
 - [x] `town_flats_grey` — grey stone block, columned bay
 - [x] `town_flats_townhouse_tall` — tall cream flat, dormer windows
 - [x] `town_small_flat_1x1_1` — orange two-storey, red awnings
 - [x] `town_small_flat_1x1_2` — grey steep-roof flat, antenna
-- [ ] `town_flats_arctic_1x1_1`
-- [ ] `town_flats_arctic_1x1_2`
-- [ ] `town_flats_arctic_2x1_1`
-- [ ] `town_flats_arctic_2x1_2`
-- [ ] `town_flats_trop_1x1_4`
-- [ ] `town_flats_trop_1x1_7`
-- [ ] `town_flats_trop_2x1_6`
-- [ ] `town_townhouse_garden_3`
-- [ ] `town_offices_tall`
+- [x] `town_flats_arctic_1x1_1` — tall snow-topped flat, teal accent
+- [x] `town_flats_arctic_1x1_2` — low wide snowy flat, rooftop antennae
+- [x] `town_flats_arctic_2x1_1` — long snowy flat block
+- [x] `town_flats_arctic_2x1_2` — wide arctic flat, green shutters
+- [x] `town_flats_trop_1x1_4` — coral flat, bougainvillea
+- [x] `town_flats_trop_1x1_7` — coral flat, palm tree
+- [x] `town_flats_trop_2x1_6` — teal/cream tropical block, corner tower
+- [x] `town_townhouse_garden_3` — pair of red row-homes, veg beds
+- [x] `town_offices_tall` — tall tan tower, columned base
 
 ## PLACEHOLDERS — still on the shared sheet (swap list, in ticket order)
 
-**16 images remain ≈ 2 more user messages** (10-per-message budget):
-1 regen + 9 urban + 6 gems.
-
-### TICKET-ART-07 — Urban flats (remaining 10)
-- [ ] `town_flats_4` *(regen — checkerboard backdrop, see ART-07 note)*
-- [ ] `town_flats_arctic_1x1_1`
-- [ ] `town_flats_arctic_1x1_2`
-- [ ] `town_flats_arctic_2x1_1`
-- [ ] `town_flats_arctic_2x1_2`
-- [ ] `town_flats_trop_1x1_4`
-- [ ] `town_flats_trop_1x1_7`
-- [ ] `town_flats_trop_2x1_6`
-- [ ] `town_townhouse_garden_3`
-- [ ] `town_offices_tall`
+**6 images remain = 1 final user message:** the match-3 gems (ART-08 bonus).
 
 ### [BONUS] TICKET-ART-08 — match-3 gems (6) → `src/assets/gems/<cargo>.png`
 - [ ] `grain.png` — golden wheat sheaf in a brass cogwheel
@@ -147,5 +134,6 @@ fallback, so the game is complete at every stage.
 ## Verification status
 - [x] Phase 0: B0 (dist copy + e2e spec), B2 (lanczos3), B3.1 (trim), B3.2 (recomputePad)
 - [x] Phase 1: B1a/B1b/B1c compiled; town_house_c in pool (44 variants)
+- [x] Phase 2: ART-01…ART-07 complete — 58 sprites in manifest; ART-08 gems pending final batch
 - [x] `npm run typecheck && npm run lint && npm test` — green (3 pre-existing rival-AI sim failures, verified identical on base commit)
 - [ ] in-browser visual pass of all new buildings at 3 zooms (e2e spec covers manifest/200s + no fallback warnings; runs in CI — sandbox has no browser)
