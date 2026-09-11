@@ -63,6 +63,10 @@ export interface UiPlayer {
   colour: string;
   vp: number;
   human: boolean;
+  /** AI-03: what the ★ total is made of — shown as the native hover tooltip
+   *  over this player's name row in the header ("what did I and the rival
+   *  receive win points for"). */
+  vpTip?: string;
 }
 
 export interface UiState {
@@ -924,6 +928,9 @@ export function createOriginalUi(
     for (const p of list) {
       const row = h("div", "king" + (p.human ? " self" : ""));
       row.style.setProperty("--pc", p.colour);
+      // AI-03: the breakdown is prebuilt by the game (it owns the ledger);
+      // native title keeps this one line of tooltip code.
+      if (p.vpTip) row.title = p.vpTip;
       row.innerHTML = `
         <div class="king-av">${p.name[0]}</div>
         <div class="king-mid">

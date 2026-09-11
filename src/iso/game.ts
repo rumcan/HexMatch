@@ -210,7 +210,12 @@ export function startIsoGame(root: HTMLElement) {
   let ui: OriginalUi;
 
   // ── state ──────────────────────────────────────────────────────────────
-  const seed = resolveMapSeed();
+  // AI-03: the map is REGENERATED from the save's seed on a resume — never a
+  // fresh random one. Without this, a refresh grew brand-new towns and public
+  // roads and then slapped the restored track layers on top of a layout they
+  // were never built for ("public roads don't spawn correctly").
+  const bootSave = loadRecentSave();
+  const seed = bootSave?.seed ?? resolveMapSeed();
   const grid: Grid = generateMap(seed);
   const track: Track = createTrack();
   // PP-10: every town's seed-generated ring road is stamped onto the road
@@ -389,7 +394,8 @@ export function startIsoGame(root: HTMLElement) {
   // AI-03: a saved game means NO difficulty prompt and NO fresh map — the
   // save carries the pick, and refresh resumes exactly where it left off
   // ("a refresh restarts the game" — not any more; Restart starts over).
-  const bootSave = loadRecentSave();
+  // (`bootSave` was read up top, before the map generated, so the seed the
+  // save carries is the seed the map was grown from.)
   if (!bootSave) {
     void promptForRivalSkill(ui.el, {
       onPick: (key) => {
@@ -1603,6 +1609,21 @@ export function startIsoGame(root: HTMLElement) {
   };
 
   function paintUi(_now: number) {
+    // AI-03: what your ★ total is MADE OF, surfaced as the native hover
+    // tooltip over each player's name in the header ("I want to see what I
+    // and the rival received win points for"). Recomputed live from the
+    // network (VICTORY: paves 0.25★, plants-after-the-first 1★).
+    function vpTooltip(p: PlayerState): string {
+      const b = victoryBreakdown(eco, p.id);
+      const total = vpFor(score, p.id);
+      return [
+        `${p.name}${p.human ? " (you)" : ""} — ${fmtVp(total)}★ of ${VICTORY.target}★`,
+        `Paved road tiles: ${b.paved} × 0.25★ = ${fmtVp(b.pavedVp)}★`,
+        `Processing plants: ${b.plants + 1} (opening plant is free; ${b.plants} × 1★ = ${fmtVp(b.plantVp)}★)`,
+        `${fmtVp(Math.max(0, VICTORY.target - total))}★ to win`,
+      ].join("\n");
+    }
+
     let banner: string | null = null;
     if (phase === "setup-factory") banner = "Place your Factory next to a town — click a buildable tile";
     // PP-05: the setup banner states the price too — the first Depot is free
@@ -1753,6 +1774,7 @@ export function startIsoGame(root: HTMLElement) {
     ui.paint({
       players: players.map((p) => ({
         id: p.id, name: p.name, colour: p.colour, vp: vpFor(score, p.id), human: p.human,
+        vpTip: vpTooltip(p),
       })),
       purse: me.purse,
       phase,
@@ -2100,8 +2122,12 @@ export function startIsoGame(root: HTMLElement) {
     };
   }
 
+  /** AI-03: Restart flips this before clearing the save — the pagehide
+   *  autosave that the ensuing reload fires must NOT resurrect it. */
+  let restartArmed = false;
+
   function saveNow() {
-    if (disposed) return;
+    if (disposed || restartArmed) return;
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify(collectSave()));
     } catch { /* private mode / quota — saving must never break the game */ }
@@ -2165,6 +2191,7 @@ export function startIsoGame(root: HTMLElement) {
     restart.title = "New game — clears the save and the difficulty pick";
     restart.addEventListener("click", () => {
       if (!window.confirm("Start a new game? The save and your difficulty pick are cleared.")) return;
+      restartArmed = true; // do NOT let the pagehide autosave re-write the save
       clearSave();
       try { localStorage.removeItem(SKILL_STORAGE_KEY); } catch { /* private mode */ }
       location.reload();
@@ -2183,6 +2210,8 @@ export function startIsoGame(root: HTMLElement) {
     title.textContent = `${rival.name}'s processing plant`;
     const statusEl = document.createElement("span");
     statusEl.className = "rb-status";
+    const purseEl = document.createElement("div");
+    purseEl.className = "rb-purse";
     const closeBtn = document.createElement("button");
     closeBtn.type = "button"; closeBtn.textContent = "✕";
     closeBtn.className = "rb-close";
@@ -2190,7 +2219,7 @@ export function startIsoGame(root: HTMLElement) {
     head.appendChild(title); head.appendChild(statusEl); head.appendChild(closeBtn);
     const grid = document.createElement("div");
     grid.className = "rb-grid";
-    el.appendChild(head); el.appendChild(grid);
+    el.appendChild(head); el.appendChild(purseEl); el.appendChild(grid);
     ui.el.appendChild(el);
 
     const H = rivalBoard.grid.length, W = rivalBoard.grid[0]?.length ?? 0;
@@ -2212,6 +2241,11 @@ export function startIsoGame(root: HTMLElement) {
       if (st.girders) bits.push(`🏗 ${st.girders} girders`);
       if (st.smog) bits.push("☁ smogged");
       statusEl.textContent = bits.length ? " · " + bits.join(" · ") : " · healthy";
+      // AI-03: the rival's purse, per cargo — "where is all that gold coming
+      // from?" is answered by watching it move against the board above.
+      purseEl.innerHTML = (CARGOES as Cargo[])
+        .map((k) => `<span class="rb-chip">${CARGO[k].icon}&nbsp;${rival.purse[k] ?? 0}</span>`)
+        .join("");
       for (let r = 0; r < H; r++) for (let c = 0; c < W; c++) {
         const g = rivalBoard.grid[r]?.[c] ?? null;
         const cell = cells[r]?.[c];
