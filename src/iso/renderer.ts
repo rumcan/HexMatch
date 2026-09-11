@@ -277,7 +277,6 @@ export class IsoRenderer {
   private lastCycles: string[][] = [];
   private pad: number;
   private logRender = false;
-
   // ── W-series pattern-painted ground ──────────────────────────────────────
   /** Canvas patterns for grass/sand/water; null → flat FALLBACK colours. */
   private ground: GroundPatterns | null = null;
@@ -324,6 +323,24 @@ export class IsoRenderer {
     this.ctxS = g(canvases.structures, false);
     this.ctxO = g(canvases.overlay, false);
   }
+
+  /**
+   * ART-1950S (TICKET-B-3.2): recompute the culling pad from the CURRENT
+   * sprite defs. The constructor computes it once from
+   * `atlas.manifest.sprites` — but `loadBuildingLayers()` resolves LATER and
+   * mutates `s.w`/`s.h` on the defs it installs (a per-building PNG can be
+   * taller than the tallest sheet sprite), so a pad frozen at construction
+   * lets tall buildings pop in and out at the screen edge. Call this from the
+   * same `.then()` that invalidates after the layers install. Exposed as a
+   * method (not re-derived per frame) because it scans every sprite def.
+   */
+  recomputePad(): number {
+    this.pad = cullPad(this.atlas);
+    return this.pad;
+  }
+
+  /** The culling pad currently in use (tiles of overdraw beyond the viewport). */
+  get cullPadValue(): number { return this.pad; }
 
   // ── invalidation ────────────────────────────────────────────────────────
   invalidateTile(tx: number, ty: number) {

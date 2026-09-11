@@ -1,5 +1,5 @@
 {
-  "note": "Per-building PNG layers: assets/buildings/<name>@{0.5x,1x,2x}.png. Rect is the WHOLE image (x=y=0); anchor is the footprint-centre placement point (see tools/make-building-pngs.mjs).",
+  "note": "Per-building PNG layers: assets/buildings/<name>@{0.5x,1x,2x}.png — tight-trimmed to the art's alpha box; w/h/anchor are at 1× relative to the TRIMMED image (rect is the whole image, x=y=0), anchor is the footprint-centre placement point (see tools/make-building-pngs.mjs).",
   "sprites": {
     "oil_rig": {
       "footprint": [
@@ -8,10 +8,34 @@
       ],
       "anchor": [
         96,
-        144
+        76
       ],
-      "w": 192,
-      "h": 192
+      "w": 190,
+      "h": 94
+    },
+    "town_house_c": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        33,
+        62
+      ],
+      "w": 66,
+      "h": 78
+    },
+    "town_house_pool": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        34
+      ],
+      "w": 62,
+      "h": 50
     }
   }
 }
