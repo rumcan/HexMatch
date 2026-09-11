@@ -392,6 +392,28 @@ export function startIsoGame(root: HTMLElement) {
       quarry.board.resetNeutral();
       toast("Processing Plant collapsed. Fresh neutral board.", "info");
     },
+    // PP-14 TEMP: the test button's twin — stamp a real 3×4 cross onto the
+    // board and settle it, so the angel, the choir, the cascade pause and the
+    // four-pick chooser all run exactly as a player-made cross would. The
+    // surrounding gems are re-coloured as a fence so the cross is the only
+    // thing pass one clears. Remove together with the button.
+    onTestCross: () => {
+      const b = quarry.board;
+      if (b.busy) return;
+      const crossCells: [number, number][] = [[2, 1], [2, 2], [2, 3], [1, 2], [3, 2], [4, 2]];
+      const stamp = (r: number, c: number, res: ResKey) => {
+        const g = b.grid[r]?.[c];
+        if (!g) return;
+        g.res = res; g.tier = 0; g.special = null; g.hard = 0; g.block = false; g.forged = false;
+      };
+      for (const [r, c] of crossCells) stamp(r, c, "sheep");
+      const fence: ResKey[] = ["ore", "wood", "brick", "wheat", "ore", "wood", "brick", "wheat", "ore", "wood"];
+      const fenceCells: [number, number][] =
+        [[2, 0], [2, 4], [0, 2], [5, 2], [1, 1], [1, 3], [3, 1], [3, 3], [4, 1], [4, 3]];
+      fenceCells.forEach(([r, c], i) => stamp(r, c, fence[i]));
+      b.onChange();
+      void b.settle();
+    },
     onBlackAction: (key) => buyBlack(key),
     // AI-01: the top-bar difficulty selector. Applies on the NEXT rival tick —
     // the clocks and budgets re-read `skill()` every call, so there is nothing

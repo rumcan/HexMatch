@@ -449,6 +449,19 @@ html, body, #root {
   transition: color .15s, background .15s;
 }
 .reset-btn:hover { color: var(--danger2); background: rgba(224,72,58,.14); }
+/* PP-14 TEMP: the one-click holy-cross test button — gold so nobody mistakes
+   it for a real control. Remove the rule together with the button. */
+.reset-btn.cross-test-btn {
+  color: var(--gold2);
+  border-color: rgba(255, 205, 90, .45);
+  background: rgba(255, 205, 90, .1);
+  text-shadow: 0 0 8px rgba(255, 205, 90, .5);
+}
+.reset-btn.cross-test-btn:hover {
+  color: #3a2400;
+  background: linear-gradient(180deg, #ffe9a8, var(--gold2));
+  border-color: #fff3c8;
+}
 
 .bank-btn { /* legacy — Bank is its own tab now */
   margin-top: 5px; padding: 7px; border-radius: 0;

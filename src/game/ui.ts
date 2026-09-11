@@ -102,6 +102,12 @@ export interface UiHooks {
   onRecenter: () => void;
   onSwap: (r1: number, c1: number, r2: number, c2: number) => void;
   onReset: () => void;
+  /**
+   * PP-14 TEMP: conjure a holy cross (angel + choir + four-pick chooser) on
+   * demand so the moment can be tested without engineering the 3×4 shape on
+   * the board. Remove together with its button once signed off.
+   */
+  onTestCross?: () => void;
   onBlackAction: (key: string) => void;
   /** AI-01: the player picked a rival difficulty (applies from the next turn). */
   onSkill?: (key: SkillKey) => void;
@@ -273,6 +279,16 @@ export function createOriginalUi(
   resetBtn.title = "Collapse the Processing Plant: lose ALL resources, get a fresh neutral board";
   resetBtn.onclick = () => hooks.onReset();
   qh.appendChild(resetBtn);
+  // PP-14 TEMP: one-click conjurer for the holy cross moment — stamp a 3×4
+  // cross onto the board and settle it, so the angel, the choir and the
+  // four-pick chooser can be tested without hunting for the shape. DELETE
+  // this button (and its hook) once the flow is signed off.
+  if (hooks.onTestCross) {
+    const crossBtn = h("button", "reset-btn cross-test-btn", "✚ TEST CROSS");
+    crossBtn.title = "TEST: conjure a holy cross — angel, choir and the +4 picker";
+    crossBtn.onclick = () => hooks.onTestCross!();
+    qh.appendChild(crossBtn);
+  }
   qp.appendChild(qh);
 
   const upbar = h("div", "upbar");
