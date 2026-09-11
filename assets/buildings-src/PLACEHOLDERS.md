@@ -34,26 +34,25 @@ node -e "const s=require('./assets/iso-atlas/manifest.json').sprites.<name>; \
 - ART-02: `factory`
 - ART-03: `depot_grain`, `depot_wood`, `depot_ore`, `depot_stone`, `depot_oil`, `depot_gold`
 - ART-04: `town_center`
+- ART-05…07: ALL 43 town pool variants (homes, cottages, townhouses,
+  commercial, offices, flats) — pool complete 2026-09-11
 
 ### PLACEHOLDERS (sheet-reference art — swap for 1950s art, ART-05…07)
 
-6 of 43 pool variants remain on sheet-reference placeholders:
+**None remain — all 43 pool variants carry authored 1950s art.**
 
-### Residential homes & cottages (ART-05)
-- `town_townhouse_3`
-- `town_townhouse_garden_2`
-- `town_townhouse_gardens_2`
+Polish candidates (installed and passing; widest aspect drift from the sheet
+reference — re-run with a ratio-stating prompt if a polish pass is wanted):
 
-### Urban apartments & flats (ART-07)
-- `town_flats_townhouse_tall`
-- `town_small_flat_1x1_2`
-- `town_townhouse_garden_3`
+- `town_townhouse_gardens_2` (1.91 vs reference 1.488 — scene reads flatter
+  and wider than the reference)
+- `town_flats_arctic_1x1_1` (0.561 vs reference 0.64)
 
-Retry note: town_offices_tall (attempt 3) and town_cottage_arctic_1x1_1 both
-landed after prompts stated the reference's exact width/height ratio — reuse
-that technique (validate-art.mjs prints aspectRef) if any of the above drift.
+Retry technique that fixed earlier misses: state the reference's explicit
+width/height ratio in the prompt (validate-art.mjs prints aspectRef).
 
-### Not yet started (bonus ticket, existing art still in use)
-- ART-08 match-3 gems `src/assets/gems/{grain,wood,ore,stone,oil,gold}.png`
-  (current Kenney-style gem art remains; restyle to the 1950s brief when
-  image generation is available again)
+### In progress (bonus ticket)
+- ART-08 match-3 gems in `src/assets/gems/` — 4 of 6 done (`grain`, `wood`,
+  `ore`, `stone` restyled to the 1950s brief via `tools/make-gem-pngs.mjs`,
+  raw masters archived in `assets/gems-src/`); `oil` and `gold` still use the
+  previous art
