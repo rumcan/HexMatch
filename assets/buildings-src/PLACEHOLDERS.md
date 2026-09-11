@@ -37,14 +37,11 @@ node -e "const s=require('./assets/iso-atlas/manifest.json').sprites.<name>; \
 
 ### PLACEHOLDERS (sheet-reference art — swap for 1950s art, ART-05…07)
 
-32 of 43 pool variants remain on sheet-reference placeholders:
+23 of 43 pool variants remain on sheet-reference placeholders:
 
 ### Residential homes & cottages (ART-05)
 - `town_small_house_1x1_1`
 - `town_small_house_arctic_1x1_2`
-- `town_house_modern`
-- `town_house_modern_2`
-- `town_house_swiss`
 - `town_house_arctic_1x1_5`
 - `town_cottage_old_small`
 - `town_cottage_old_small_2`
@@ -55,16 +52,8 @@ node -e "const s=require('./assets/iso-atlas/manifest.json').sprites.<name>; \
 - `town_townhouse_garden_2`
 - `town_townhouse_gardens_2`
 
-### Commercial shops & services (ART-06)
-- `town_offices_1423`
-- `town_office_1460`
-- `town_office_tower_modern`
-
 ### Urban apartments & flats (ART-07)
 - `town_flats_townhouse_tall`
-- `town_flats_2`
-- `town_flats_4`
-- `town_flats_grey`
 - `town_small_flat_1x1_1`
 - `town_small_flat_1x1_2`
 - `town_flats_arctic_1x1_1`
@@ -77,38 +66,12 @@ node -e "const s=require('./assets/iso-atlas/manifest.json').sprites.<name>; \
 - `town_townhouse_garden_3`
 - `town_offices_tall`
 
-### Urban apartments & flats (ART-07, continued)
-- \`town_offices_1423\`
-- \`town_office_1460\`
-- \`town_flats_trop_1x1_4\`
-- \`town_flats_trop_1x1_7\`
-- \`town_cottage_arctic_1x1_1\`
-- \`town_flats_arctic_1x1_1\`
-- \`town_flats_arctic_1x1_2\`
-- \`town_house_arctic_1x1_5\`
-- \`town_small_flat_1x1_1\`
-- \`town_small_flat_1x1_2\`
-- \`town_small_house_1x1_1\`
-- \`town_small_house_arctic_1x1_2\`
-- \`town_townhouse_garden_2\`
-- \`town_townhouse_gardens_2\`
-- \`town_flats_trop_2x1_6\`
-- \`town_flats_arctic_2x1_1\`
-- \`town_flats_arctic_2x1_2\`
-- \`town_townhouse_3\`
-- \`town_townhouse_garden_3\`
-- \`town_flats_2\`
-- \`town_flats_4\`
-- \`town_flats_grey\`
-- \`town_house_modern\`
-- \`town_house_modern_2\`
-- \`town_office_tower_modern\`
-- \`town_cottage_old_small_a\`
-- \`town_cottage_old_small\`
-- \`town_cottage_old_small_2\`
-- \`town_house_swiss\`
-- \`town_cottage_tall\`
-- \`town_offices_tall\`
+Redo candidates (authored once, aspect drifted from the reference — re-run
+with a stricter prompt):
+
+- `town_bank` (came out ~24% wider than its reference)
+- `town_offices_tall` (came out squat — aspect 1.72 vs reference 0.62;
+  restored to placeholder, retry pending)
 
 ### Not yet started (bonus ticket, existing art still in use)
 - ART-08 match-3 gems `src/assets/gems/{grain,wood,ore,stone,oil,gold}.png`
