@@ -32,8 +32,11 @@ const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
  * Every visual the board can ask the UI to draw. `chain` is the ordinary
  * callout (a plain MATCH!, or a MATCH 5 / L-SHAPE); `combo` is the louder
  * cascade tier (COMBO x2, CHAIN x3!!) — same float, hotter styling.
+ *
+ * PP-14: `cross` is the holy cross — 3 horizontal + 3 vertical overlapping
+ * on the centre gem. The UI answers it with the praying angel and the choir.
  */
-export type FxType = "pop" | "crack" | "up" | "boom" | "bad" | "chain" | "combo";
+export type FxType = "pop" | "crack" | "up" | "boom" | "bad" | "chain" | "combo" | "cross";
 
 /**
  * The word a cascade pass shouts, by how deep in the cascade it is.
@@ -219,6 +222,11 @@ export class Board {
         const ids = new Set(a.map((g) => g.id));
         const shared = b.filter((g) => ids.has(g.id));
         if (shared.length !== 1) continue;
+        // PP-14: when both runs are exactly 3 and overlap on the CENTRE gem
+        // of each, the shape is a cross, not an L — the cross has its own
+        // reward and its own callout, so let it be claimed by `crosses()`.
+        if (a.length === 3 && b.length === 3
+          && shared[0].id === a[1].id && shared[0].id === b[1].id) continue;
         const union = [...a];
         for (const g of b) if (!ids.has(g.id)) union.push(g);
         if (union.length < 5) continue;
@@ -227,6 +235,35 @@ export class Board {
         const sameCol = a.every((g) => g.c === a[0].c);
         const otherRow = b.every((g) => g.r === b[0].r);
         if ((sameRow && otherCol) || (sameCol && otherRow)) out.push(union);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * PP-14: the holy cross — a 3-run and a 3-run of the same colour crossing
+   * on the centre gem of each. The union is returned with the shared centre
+   * gem at index 2 (the middle), so the generic `target[mid]` callout code
+   * lands the label — and the angel — exactly on the crossing.
+   */
+  private crosses(groups: Gem[][]): { gems: Gem[]; mid: Gem }[] {
+    const out: { gems: Gem[]; mid: Gem }[] = [];
+    for (let i = 0; i < groups.length; i++) {
+      for (let j = i + 1; j < groups.length; j++) {
+        const a = groups[i], b = groups[j];
+        if (a[0].res !== b[0].res) continue;
+        if (a.length !== 3 || b.length !== 3) continue;
+        // one arm must be horizontal and the other vertical
+        const aRow = a.every((g) => g.r === a[0].r);
+        const bRow = b.every((g) => g.r === b[0].r);
+        if (aRow === bRow) continue;
+        const ids = new Set(a.map((g) => g.id));
+        const shared = b.filter((g) => ids.has(g.id));
+        // the overlap must be exactly the centre gem of BOTH runs — a corner
+        // share is an L, an end share is a T; neither is a cross.
+        if (shared.length !== 1) continue;
+        if (shared[0].id !== a[1].id || shared[0].id !== b[1].id) continue;
+        out.push({ gems: [a[0], a[2], shared[0], b[0], b[2]], mid: shared[0] });
       }
     }
     return out;
@@ -335,10 +372,17 @@ export class Board {
     }
 
     // Arcade: match-5 in a line, or a 5-gem L, grants two random materials.
+    // PP-14: the cross grants the same — it always did, because `lShapes`
+    // used to swallow it as an L; now it pays under its own name.
     const fives = groups.filter((g) => g.length >= 5);
+    const crosses = this.crosses(groups);
     const ells = this.lShapes(groups);
-    const why = fives.length ? "MATCH 5" : ells.length ? "L-SHAPE" : null;
+    const why = fives.length ? "MATCH 5" : crosses.length ? "HOLY CROSS" : ells.length ? "L-SHAPE" : null;
     if (why) this.grantRandom(2, why, gains);
+    // PP-14: the praying angel — one `cross` fx per cross, at the centre gem
+    // where the two arms overlap. The UI turns this into the angel popup and
+    // the holy sound.
+    for (const x of crosses) this.onFx("cross", x.mid.r, x.mid.c);
 
     // ── A1: the callout, fired HERE — the instant the pass resolves ──
     // Two bugs died here. (1) The old text only fired for `chain >= 2`, so a
@@ -348,7 +392,7 @@ export class Board {
     // now, at the centre of the group the player just matched — the biggest
     // one, or the special shape when there is one.
     const biggest = groups.reduce((a, g) => (g.length > a.length ? g : a), groups[0]);
-    const target = fives[0] ?? ells[0] ?? biggest;
+    const target = fives[0] ?? crosses[0]?.gems ?? ells[0] ?? biggest;
     const mid = target[Math.floor(target.length / 2)];
     const label = arcadeLabel(chain);
     // A special shape keeps its own name (it is strictly more informative

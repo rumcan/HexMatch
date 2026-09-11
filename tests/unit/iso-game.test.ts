@@ -2140,3 +2140,73 @@ describe("VP-01 the rival plays the score, not just the map", () => {
     }
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// PP-14 — the holy cross: 3 horizontal + 3 vertical overlapping on the centre
+// gem summons the praying angel and the choir. board.test.ts pins the board
+// half (detection, the HOLY CROSS callout, the `cross` fx event); this pins
+// the UI half — the angel PNG pops over the crossing and the sound really is
+// asked for.
+// ══════════════════════════════════════════════════════════════════════════
+describe("PP-14 the holy cross", () => {
+  /** A fake AudioContext that counts the oscillators the choir would play. */
+  function stubAudio() {
+    class Param {
+      value = 0;
+      setValueAtTime() { return this; }
+      linearRampToValueAtTime() { return this; }
+      exponentialRampToValueAtTime() { return this; }
+    }
+    class Node { connect() { return undefined; } }
+    class Osc extends Node {
+      type = "sine";
+      frequency = new Param();
+      start() { oscs++; }
+      stop() {}
+    }
+    class Gain extends Node { gain = new Param(); }
+    let oscs = 0;
+    class FakeAudioContext {
+      currentTime = 0;
+      state: AudioContextState = "running";
+      destination = new Node();
+      resume() { return Promise.resolve(); }
+      createGain() { return new Gain(); }
+      createOscillator() { return new Osc(); }
+    }
+    vi.stubGlobal("AudioContext", FakeAudioContext);
+    return () => oscs;
+  }
+
+  /** Paint a cross onto the board: 3 horizontal + 3 vertical over (2,2). */
+  function paintCross(b: import("../../src/game/board").Board) {
+    b.grid[2][1]!.res = "sheep";
+    b.grid[2][2]!.res = "sheep";
+    b.grid[2][3]!.res = "sheep";
+    b.grid[1][2]!.res = "sheep";
+    b.grid[3][2]!.res = "sheep";
+    b.grid[2][0]!.res = "ore";
+    b.grid[2][4]!.res = "ore";
+    b.grid[0][2]!.res = "ore";
+    b.grid[4][2]!.res = "ore";
+  }
+
+  it("pops the praying angel over the crossing and starts the choir", async () => {
+    const h = await boot();
+    const started = stubAudio();
+    paintCross(h.board);
+    const p = h.board.settle();      // the first pass resolves synchronously
+    const angel = root.querySelector(".fx-cross") as HTMLElement | null;
+    expect(angel, "the angel icon must pop").not.toBeNull();
+    expect(angel!.style.backgroundImage).toContain("angel");
+    // dead centre of the board: cell (2,2) at CELL 80 → 200,200
+    expect(angel!.style.left).toBe("200px");
+    expect(angel!.style.top).toBe("200px");
+    // the callout names the shape
+    const floats = [...root.querySelectorAll(".combo-float")].map((e) => e.textContent ?? "");
+    expect(floats.some((t) => t.includes("HOLY CROSS"))).toBe(true);
+    // the choir really was asked for (12 choir voices + wobbles + 4 bells)
+    expect(started(), "playHoly never started an oscillator").toBeGreaterThan(10);
+    await p;
+  });
+});

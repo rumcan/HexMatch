@@ -690,6 +690,35 @@ html, body, #root {
 }
 .fx-bad { font-size: 26px; animation: popfx .5s forwards; }
 .fx-bad::before { content: "✖"; color: var(--danger2); }
+/* PP-14: the praying angel for a cross match — the same one-shot pop as the
+   other fx icons, risen higher with a golden halo so the holy moment reads
+   above the ordinary pops and cracks. The PNG itself comes from ui.ts. */
+.fx-cross {
+  width: 76px; height: 76px;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  filter: drop-shadow(0 0 10px rgba(255, 226, 120, .95)) drop-shadow(0 0 26px rgba(255, 200, 80, .6));
+  animation: crossfx 1.1s ease-out forwards;
+  z-index: 8;
+}
+.fx-cross::before {
+  content: "";
+  position: absolute; inset: -20px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 232, 150, .85), rgba(255, 232, 150, 0) 66%);
+  z-index: -1;
+  animation: crosshalo 1.1s ease-out forwards;
+}
+@keyframes crossfx {
+  0%   { transform: translate(-50%,-50%) scale(.25); opacity: 0; }
+  28%  { transform: translate(-50%,-78%) scale(1.14); opacity: 1; }
+  55%  { transform: translate(-50%,-105%) scale(1); opacity: 1; }
+  100% { transform: translate(-50%,-195%) scale(1.06); opacity: 0; }
+}
+@keyframes crosshalo {
+  0%   { transform: scale(.35); opacity: 0; }
+  30%  { transform: scale(1); opacity: 1; }
+  100% { transform: scale(1.3); opacity: 0; }
+}
 /* A1: `.fx-combo` is the cascade tier (COMBO x2 / CHAIN x3!!) — same float as
    a plain callout, hotter and larger so a two-deep cascade reads louder than
    the MATCH! that started it. */

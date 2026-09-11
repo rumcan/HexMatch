@@ -41,6 +41,10 @@ import { fmtVp } from "../iso/victory";
 import { RIVAL_SKILLS, SKILL_KEYS, type SkillKey } from "../iso/skill";
 import { Board, type FxType, type Gem } from "./board";
 import type { IsoMarket, IsoMarketPlayer, Offer } from "../iso/market";
+// PP-14: the praying angel that a cross match summons, and the choir that
+// sings with it. Both are one-shot fx answers to `onFx("cross", …)`.
+import angelUrl from "../assets/ui/angel.png";
+import { playHoly, prewarmHoly } from "./holy";
 
 // ── V5: the restored gem art ────────────────────────────────────────────────
 // One sprite per cargo in src/assets/gems/, mapped through the same gem→cargo
@@ -674,6 +678,12 @@ export function createOriginalUi(
     renderSelection();
   };
 
+  // PP-14: unlock the audio context on the first touch of the board, so the
+  // choir can sing the instant a cross resolves (autoplay policies only let
+  // an AudioContext start inside user interaction — and a cross lands a beat
+  // after the click that made it).
+  grid.addEventListener("pointerdown", () => prewarmHoly(), { once: true });
+
   // Click is the touch/desktop picker path (and what the e2e/unit tests drive).
   grid.addEventListener("click", (e) => {
     const b = (e.target as HTMLElement).closest<HTMLButtonElement>(".gem");
@@ -808,13 +818,21 @@ export function createOriginalUi(
   }
 
   function fx(type: FxType, r: number, c: number, text?: string) {
+    // PP-14: a cross match summons the angel — the choir sings the instant
+    // the shape resolves, and the praying-angel PNG pops over the centre gem
+    // in the same one-shot style as every other fx icon.
+    if (type === "cross") playHoly();
     const e = h("div", `fx fx-${type}`);
     e.style.left = (c * CELL + CELL / 2) + "px";
     e.style.top = (r * CELL + CELL / 2) + "px";
+    if (type === "cross") {
+      e.style.backgroundImage = `url("${angelUrl}")`;
+      e.setAttribute("aria-hidden", "true");
+    }
     if (text) e.textContent = text;
     grid.appendChild(e);
     const callout = type === "chain" || type === "combo";
-    setTimeout(() => e.remove(), callout ? 1000 : 600);
+    setTimeout(() => e.remove(), callout ? 1000 : type === "cross" ? 1150 : 600);
     // A1: every callout now draws in the board slot too — the small text at
     // the matched cell AND the banner above the board. `onFx` was never
     // assigned before this, so both were dead code.

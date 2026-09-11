@@ -127,6 +127,52 @@ describe("settle / swap", () => {
     expect(bonus.filter((w) => w === "L-SHAPE").length).toBeGreaterThanOrEqual(2);
   });
 
+  // PP-14: the cross is the shape with a saint on the payroll — 3 horizontal
+  // + 3 vertical overlapping on the CENTRE gem. It grants the same two
+  // random materials an L does, but under its own name, and fires the
+  // `cross` fx (the praying angel) at the crossing gem. Before PP-14 the L
+  // detector swallowed crosses and reported them as L-SHAPEs.
+  it("a cross of five grants two random materials and fires the angel at the crossing", async () => {
+    const b = freshBoard();
+    const bonus: string[] = [];
+    b.onBonus = (_r, _n, why) => bonus.push(why);
+    const crosses: [number, number][] = [];
+    b.onFx = (type, r, c) => { if (type === "cross") crosses.push([r, c]); };
+    // 3 horizontal + 3 vertical, overlapping on the centre gem (2,2)
+    b.grid[2][1]!.res = "sheep";
+    b.grid[2][2]!.res = "sheep";
+    b.grid[2][3]!.res = "sheep";
+    b.grid[1][2]!.res = "sheep";
+    b.grid[3][2]!.res = "sheep";
+    // stop both arms at three
+    b.grid[2][0]!.res = "ore";
+    b.grid[2][4]!.res = "ore";
+    b.grid[0][2]!.res = "ore";
+    b.grid[4][2]!.res = "ore";
+    // the first pass of `resolve` runs synchronously — assert before the
+    // cascade can add anything, so the exact bonus list is deterministic.
+    const p = b.settle();
+    expect(bonus).toEqual(["HOLY CROSS", "HOLY CROSS"]);
+    expect(crosses).toEqual([[2, 2]]);
+    await p;
+  });
+
+  it("a T-shape is not a cross: it stays an L-SHAPE", async () => {
+    const b = freshBoard();
+    const bonus: string[] = [];
+    b.onBonus = (_r, _n, why) => bonus.push(why);
+    // horizontal arm shares its centre with the END of the vertical arm
+    b.grid[2][1]!.res = "sheep";
+    b.grid[2][2]!.res = "sheep";
+    b.grid[2][3]!.res = "sheep";
+    b.grid[3][2]!.res = "sheep";
+    b.grid[4][2]!.res = "sheep";
+    const p = b.settle();
+    expect(bonus.filter((w) => w === "L-SHAPE").length).toBe(2);
+    expect(bonus).not.toContain("HOLY CROSS");
+    await p;
+  });
+
   it("combos pay the purse every two and never convert a resource gem into a gold gem", () => {
     const b = freshBoard();
     const gold: number[] = [];
