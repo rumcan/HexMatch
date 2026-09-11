@@ -9,8 +9,15 @@ import manifestJson from "../../assets/iso-atlas/manifest.json";
 import atlas05 from "../../assets/iso-atlas/atlas@0.5x.png";
 import atlas1 from "../../assets/iso-atlas/atlas@1x.png";
 import atlas2 from "../../assets/iso-atlas/atlas@2x.png";
+// W-series: layer atlases + seamless ground textures.
+import roads1 from "../../assets/layers/roads@1x.png";
+import buildings1 from "../../assets/layers/buildings@1x.png";
+import grassTex from "../../assets/ground/grass.png";
+import sandTex from "../../assets/ground/sand.png";
+import waterTex from "../../assets/ground/water.png";
 
 import { Atlas, buildMasks, type Manifest, type AtlasImage } from "./atlas";
+import { loadGroundTextures } from "./ground";
 import {
   createCamera, centerOnMap, resizeCamera, zoomStepAt, createGesture,
   pointerDown, pointerMove, pointerUp, type Camera, type GestureState,
@@ -32,10 +39,18 @@ const load = (src: string) => new Promise<HTMLImageElement>((res, rej) => {
 
 export async function startDemo(root: HTMLElement) {
   const images = new Map<number, AtlasImage>();
-  const [a05, a1, a2] = await Promise.all([load(atlas05), load(atlas1), load(atlas2)]);
+  const [a05, a1, a2, r1x, b1x, tex] = await Promise.all([
+    load(atlas05), load(atlas1), load(atlas2),
+    load(roads1), load(buildings1),
+    loadGroundTextures({ grass: grassTex, sand: sandTex, water: waterTex }),
+  ]);
   images.set(0.5, a05); images.set(1, a1); images.set(2, a2);
   const atlas = new Atlas(manifestJson as unknown as Manifest, images);
   buildMasks(atlas);
+  // W-series: demo blits roads/buildings from the 1× layer atlases and
+  // paints the pattern-painted ground.
+  atlas.layerImages.set("roads", new Map([[1, r1x]]));
+  atlas.layerImages.set("buildings", new Map([[1, b1x]]));
 
   const mk = (z: number) => {
     const c = document.createElement("canvas");
@@ -66,6 +81,7 @@ export async function startDemo(root: HTMLElement) {
 
   let cam: Camera = centerOnMap(createCamera(root.clientWidth, root.clientHeight));
   const r = new IsoRenderer(canvases, atlas, cam, world);
+  r.setGround(tex);
 
   const resize = () => {
     const dpr = Math.min(2, window.devicePixelRatio || 1);

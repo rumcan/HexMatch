@@ -1,21 +1,28 @@
 // ══════════════════════════════════════════════════════════════════════════
-// E4 — Isometric renderer core (flat OpenGFX tiles).
+// E4 — Isometric renderer core (W-series pattern-painted ground).
 //
 // Three stacked canvases:
-//   1. terrain     — chunk-cached, redrawn only on camera move / zoom change
+//   1. terrain     — the pattern-painted GROUND: an animated ocean over the
+//                    whole stage, the grass island and its beach ring cached
+//                    in 8×8-tile chunks, and the animated shoreline (shallow
+//                    swell + foam) stroked live. Redrawn every frame — the
+//                    ocean drifts — but the expensive part is cached.
 //   2. structures  — industries, road, rail, stations; redrawn on world change
 //   3. overlay     — previews, highlights, animated frames, cursor; 60fps
 //
-// Terrain is cached in 8×8-tile chunks rendered once into an OffscreenCanvas
-// and blitted thereafter; a chunk is invalidated per changed tile and all
-// chunks are dropped on a zoom change. Only the culled tile range is touched.
+// Ground chunks are cached per zoom exactly like the old sprite tiles; a
+// chunk is invalidated per changed tile and all chunks are dropped on a zoom
+// change. Land diamonds are filled with seamless world-anchored canvas
+// patterns (assets/ground/*.png — tools/make-ground-textures.mjs); the ocean
+// pattern additionally drifts with time. Without textures (tests, demo
+// fallback) the same polygons paint with flat FALLBACK colours.
 //
-// OpenGFX tiles are FLAT pixel diamonds (64×31 drawn, declared xrel/yrel) with
-// no cube skirt, so a tile is drawn whole by its declared anchor and there is
-// nothing to clip, no skirt to hide and no per-tile height to model.
+// The old per-tile terrain sprites (terrain_grass/water/rough) are gone from
+// the draw path — `terrainSprite` survives only for debug probes. Roads and
+// buildings blit from the LAYER atlases (assets/layers/), same rects.
 //
 // Every draw coordinate goes through Math.floor, and nothing is ever scaled
-// inside drawImage — the atlas ships pre-rendered at 0.5×/1×/2×.
+// inside drawImage — the atlases ship pre-rendered at 0.5×/1×/2×.
 // ══════════════════════════════════════════════════════════════════════════
 import { HW, HH, TILE_W, TILE_H, MAP_W, MAP_H } from "../game/config";
 import type { Camera } from "./camera";
@@ -23,6 +30,21 @@ import { visibleTileRange, screenToWorld, worldToScreen } from "./camera";
 import type { Atlas } from "./atlas";
 import { depthSort, place, pickSprite, type DrawItem, type Placed } from "./depth";
 import { GRASS, WATER, ROUGH, type Grid } from "./grid";
+import {
+  FALLBACK, FOAM_RGB, GROUND_TEX_SIZE, SHALLOW_RGB, computeShore,
+  createGroundPatterns, foamAlpha, foamWidth, makeMatrix, oceanMatrix,
+  paintGroundTiles, pathPolygons, shallowAlpha, tileDiamondWorld,
+  type GroundPatterns, type GroundTextures, type ShoreTile,
+} from "./ground";
+
+/**
+ * Ground texture scale relative to world pixels: 2 means one texture pixel
+ * covers two world pixels, so a painted clump reads at tile scale. Also
+ * quarters the apparent tiling frequency and kills zoom-step shimmer.
+ */
+const LAND_SCALE = 2;
+/** The ocean reads a little denser than the land. */
+const SEA_SCALE = 1.6;
 
 export const CHUNK = 8;
 export const chunksX = Math.ceil(MAP_W / CHUNK);
@@ -52,10 +74,10 @@ export function chunkWorldOrigin(cx: number, cy: number): [number, number] {
 }
 
 /**
- * Terrain sprite for a tile. There is exactly one flat grass tile (declared
- * sprite 3981) — the grass sheet is one terrain type across a 19-sprite slope
- * set, so what used to be `terrain_grass_b` was a hillside drawn on flat
- * ground (the source of the "weird triangles"). Nothing to vary with now.
+ * Terrain sprite for a tile. W-series: no longer on the draw path (the
+ * pattern-painted ground replaces the per-tile puzzle), but the debug console
+ * and its probes still name the tile's terrain class through the old sprite
+ * names, and the manifest still ships the cells.
  */
 export function terrainSprite(grid: Grid, tx: number, ty: number): string {
   const v = grid.terrain[ty * MAP_W + tx];
@@ -241,13 +263,24 @@ export class IsoRenderer {
 
   readonly canvases: RendererCanvases;
   private ctxT: Ctx2D; private ctxS: Ctx2D; private ctxO: Ctx2D;
-  private chunkCache = new Map<string, HTMLCanvasElement | OffscreenCanvas>();
-  private terrainDirty = true;
   private structuresDirty = true;
   private lastOrder: Placed[] = [];
   private lastCycles: string[][] = [];
   private pad: number;
   private logRender = false;
+
+  // ── W-series pattern-painted ground ──────────────────────────────────────
+  /** Canvas patterns for grass/sand/water; null → flat FALLBACK colours. */
+  private ground: GroundPatterns | null = null;
+  /** Shoreline tiles (water touching land) for the animated surf pass. */
+  private shore: ShoreTile[] | null = null;
+  private shoreGrid: Grid | null = null;
+  /**
+   * Chunk surfaces for the STATIC ground (grass fill + beach ring, water left
+   * transparent so the animated ocean shows through). Cached per zoom like
+   * the old sprite chunks; repainted when a tile is invalidated.
+   */
+  private groundChunkCache = new Map<string, HTMLCanvasElement | OffscreenCanvas>();
 
   /** The last depth-sorted structure order actually drawn (C5 dumps/picking). */
   get drawOrder(): Placed[] { return this.lastOrder; }
@@ -282,37 +315,71 @@ export class IsoRenderer {
 
   // ── invalidation ────────────────────────────────────────────────────────
   invalidateTile(tx: number, ty: number) {
-    for (const z of this.atlas.images.keys()) this.chunkCache.delete(`${z}:${chunkIndexOf(tx, ty)}`);
-    this.terrainDirty = true;
+    for (const z of this.atlas.images.keys()) {
+      this.groundChunkCache.delete(`${z}:${chunkIndexOf(tx, ty)}`);
+    }
     this.structuresDirty = true;
   }
 
   invalidateAll() {
-    this.chunkCache.clear();
-    this.terrainDirty = true;
+    this.groundChunkCache.clear();
     this.structuresDirty = true;
   }
 
   setCamera(cam: Camera) {
-    if (cam.zoom !== this.cam.zoom) this.chunkCache.clear();
+    if (cam.zoom !== this.cam.zoom) {
+      this.groundChunkCache.clear();
+    }
     this.cam = cam;
-    this.terrainDirty = true;
     this.structuresDirty = true;
   }
 
   setWorld(world: World) {
     this.world = world;
+    this.shore = null;                       // recompute for the new grid
+    this.shoreGrid = null;
     this.structuresDirty = true;
   }
 
-  // ── chunk cache ─────────────────────────────────────────────────────────
-  private chunkCanvas(cx: number, cy: number): HTMLCanvasElement | OffscreenCanvas | null {
+  /**
+   * W-series: install the seamless ground textures (assets/ground/*.png).
+   * Patterns are built from the terrain canvas' context; pass null to drop
+   * back to flat fallback colours. A context without createPattern (test
+   * stubs) degrades silently to the flat palette. Invalidates everything.
+   */
+  setGround(tex: GroundTextures | null) {
+    if (!tex) { this.ground = null; this.invalidateAll(); return; }
+    try {
+      this.ground = createGroundPatterns(this.ctxT, tex);
+    } catch {
+      this.ground = null;                    // e.g. stubbed canvas in tests
+    }
+    this.invalidateAll();
+  }
+
+  /** Shoreline for the current grid, computed once. */
+  private shoreOf(): ShoreTile[] {
+    if (!this.shore || this.shoreGrid !== this.world.grid) {
+      this.shore = computeShore(this.world.grid);
+      this.shoreGrid = this.world.grid;
+    }
+    return this.shore;
+  }
+
+  // ── ground chunks ────────────────────────────────────────────────────────
+  /**
+   * The STATIC ground of one 8×8 chunk (grass fill + beach ring), painted
+   * once into a surface and blitted thereafter. Water tiles stay transparent
+   * so the animated ocean fill on the layer shows through. Patterns are
+   * world-anchored: the pattern transform compensates the chunk origin
+   * (modulo the texture period), so every chunk samples ONE continuous
+   * meadow — the pattern-painted anti-puzzle.
+   */
+  private groundFillChunk(cx: number, cy: number): HTMLCanvasElement | OffscreenCanvas | null {
     const z = this.cam.zoom;
     const key = `${z}:${cy * chunksX + cx}`;
-    const hit = this.chunkCache.get(key);
+    const hit = this.groundChunkCache.get(key);
     if (hit) return hit;
-    const img = this.atlas.image(z);
-    if (!img) return null;
 
     const { w: W, h: H } = chunkSurfaceSize(z);
     const surf = typeof OffscreenCanvas !== "undefined"
@@ -321,62 +388,99 @@ export class IsoRenderer {
     const ctx = (surf as HTMLCanvasElement).getContext("2d") as Ctx2D;
     ctx.imageSmoothingEnabled = false;
 
-    // Chunk-local origin: world position of the chunk's leftmost tile column.
     const [ox, oy] = chunkWorldOrigin(cx, cy);
-    let sprites = 0;
-    for (let ty = cy * CHUNK; ty < Math.min(MAP_H, (cy + 1) * CHUNK); ty++) {
-      for (let tx = cx * CHUNK; tx < Math.min(MAP_W, (cx + 1) * CHUNK); tx++) {
-        const name = terrainSprite(this.world.grid, tx, ty);
-        const s = this.atlas.get(name);
-        if (!s) continue;
-        sprites++;
-        // Y5 anchor: the declared xrel/yrel pixel lands on the SOUTH corner of
-        // the footprint diamond — drawOrigin in depth.ts places the same pixel
-        // at (sx + HW, sy + TILE_H), i.e. the bottom vertex of the diamond.
-        const wx = (tx - ty) * HW + HW - s.anchor[0];
-        const wy = (tx + ty) * HH + TILE_H - s.anchor[1];
-        // The zoomed atlas is packed at INTEGER source coords
-        // (`Math.round(x*z)` / `Math.round(w*z)` in slice-atlas.mjs), so use
-        // the real packed rect rather than the fractional `s.x*z…s.w*z`.
-        const src = this.atlas.zoomRect(s, z);
-        const dx = Math.floor((wx - ox) * z), dy = Math.floor((wy - oy) * z);
-        ctx.drawImage(
-          img as unknown as CanvasImageSource,
-          src.x, src.y, src.w, src.h,
-          dx, dy, src.w, src.h,
-        );
-        this.trace("terrain", {
-          chunk: [cx, cy], key, tile: [tx, ty], sprite: name,
-          anchor: s.anchor, world: [wx, wy], dest: [dx, dy, src.w, src.h], src, z,
-        });
-      }
+    if (this.ground) {
+      // World-anchored pattern phase: texture (0,0) must land at the screen
+      // position of world (0,0) — offset by the chunk origin mod the tile
+      // period, scaled by the zoom. Per-chunk, pre-fill.
+      //
+      // The textures paint at LAND_SCALE × world so one brush clump spans
+      // roughly a tile — the same reading the OpenGFX tile art has — instead
+      // of dissolving into confetti at map view. Water runs slightly denser.
+      const P = GROUND_TEX_SIZE * z * LAND_SCALE;
+      const phase = (v: number) => ((-v * z * LAND_SCALE) % P + P) % P;
+      const setPat = (p: CanvasPattern, k: number) => {
+        const m = makeMatrix();
+        m.translateSelf(phase(ox), phase(oy));
+        m.scaleSelf(z * k, z * k);
+        p.setTransform(m);
+      };
+      setPat(this.ground.grass, LAND_SCALE);
+      setPat(this.ground.sand, LAND_SCALE);
     }
-    this.chunkCache.set(key, surf);
-    this.trace("chunk-built", { key, chunk: [cx, cy], origin: [ox, oy], surface: [W, H], sprites, z });
+    paintGroundTiles(
+      ctx, this.world.grid,
+      cx * CHUNK, cy * CHUNK, (cx + 1) * CHUNK - 1, (cy + 1) * CHUNK - 1,
+      this.ground
+        ? { grass: this.ground.grass, sand: this.ground.sand }
+        : { grass: FALLBACK.grass, sand: FALLBACK.sand },
+      (wx, wy) => [Math.floor((wx - ox) * z), Math.floor((wy - oy) * z)],
+    );
+    this.groundChunkCache.set(key, surf);
+    this.trace("ground-chunk-built", { chunk: [cx, cy], origin: [ox, oy], surface: [W, H], z, textured: !!this.ground });
     return surf;
   }
 
+  /** The animated shoreline: shallow swell fill + foam strokes per shore tile. */
+  private drawShore(ctx: Ctx2D, cam: Camera, r: { x0: number; y0: number; x1: number; y1: number }, t: number) {
+    const z = cam.zoom;
+    const toScreen = (wx: number, wy: number): [number, number] =>
+      [Math.floor(wx * z + cam.x), Math.floor(wy * z + cam.y)];
+    let tiles = 0;
+    ctx.lineCap = "round";
+    for (const st of this.shoreOf()) {
+      if (st.tx < r.x0 - 1 || st.tx > r.x1 + 1 || st.ty < r.y0 - 1 || st.ty > r.y1 + 1) continue;
+      tiles++;
+      // Shallow shelf: a soft turquoise breath over the ocean pattern.
+      const diamond = tileDiamondWorld(st.tx, st.ty).map((p) => toScreen(p[0], p[1]));
+      pathPolygons(ctx, [diamond]);
+      ctx.fillStyle = `rgba(${SHALLOW_RGB},${shallowAlpha(t, st.tx, st.ty).toFixed(3)})`;
+      ctx.fill();
+      // Foam: a warm white line along every edge this water tile shares
+      // with land, breathing out of phase with the swell.
+      ctx.strokeStyle = `rgba(${FOAM_RGB},${foamAlpha(t, st.tx, st.ty).toFixed(3)})`;
+      ctx.lineWidth = Math.max(1, foamWidth(t, st.tx, st.ty) * z);
+      ctx.beginPath();
+      for (const [[ax, ay], [bx, by]] of st.edges) {
+        const [x1, y1] = toScreen(ax, ay);
+        const [x2, y2] = toScreen(bx, by);
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+      }
+      ctx.stroke();
+    }
+    this.trace("shore-pass", { tiles, z });
+  }
+
   // ── layers ──────────────────────────────────────────────────────────────
-  drawTerrain() {
+  drawTerrain(timeMs = 0) {
     const ctx = this.ctxT, cam = this.cam;
     ctx.clearRect(0, 0, cam.vw, cam.vh);
+    // 1. The ocean: the seamless water texture, anchored to WORLD space and
+    //    drifting with time, fills the whole stage — the map diamond floats
+    //    in an endless animated sea.
+    if (this.ground) this.ground.water.setTransform(oceanMatrix(cam, timeMs, SEA_SCALE));
+    ctx.fillStyle = this.ground ? this.ground.water : FALLBACK.water;
+    ctx.fillRect(0, 0, cam.vw, cam.vh);
+    // 2. The island: cached land chunks (grass + beach ring) blitted over it.
     const r = visibleTileRange(cam, this.pad);
     const cx0 = (r.x0 / CHUNK) | 0, cx1 = (r.x1 / CHUNK) | 0;
     const cy0 = (r.y0 / CHUNK) | 0, cy1 = (r.y1 / CHUNK) | 0;
     let blits = 0;
     for (let cy = cy0; cy <= cy1; cy++) {
       for (let cx = cx0; cx <= cx1; cx++) {
-        const surf = this.chunkCanvas(cx, cy);
+        const surf = this.groundFillChunk(cx, cy);
         if (!surf) continue;
         const [ox, oy] = chunkWorldOrigin(cx, cy);
         const [sx, sy] = worldToScreen(cam, ox, oy);
         ctx.drawImage(surf as unknown as CanvasImageSource, Math.floor(sx), Math.floor(sy));
         blits++;
-        this.trace("terrain-blit", { chunk: [cx, cy], origin: [ox, oy], screen: [Math.floor(sx), Math.floor(sy)], z: cam.zoom });
+        this.trace("ground-blit", { chunk: [cx, cy], origin: [ox, oy], screen: [Math.floor(sx), Math.floor(sy)], z: cam.zoom });
       }
     }
+    // 3. The surf: shallow swell + foam along every coast edge, animated.
+    this.drawShore(ctx, cam, r, timeMs);
     this.trace("terrain-pass", { range: [r.x0, r.y0, r.x1, r.y1], blits, z: cam.zoom });
-    this.terrainDirty = false;
   }
 
   drawStructures(timeMs = 0) {
@@ -410,7 +514,10 @@ export class IsoRenderer {
 
   private blit(ctx: Ctx2D, p: Placed, timeMs: number) {
     const z = this.cam.zoom;
-    const img = this.atlas.image(z);
+    // W-series: roads blit from the ROADS atlas, buildings from the BUILDINGS
+    // atlas (separate PNG layer atlases, identical rect layout); anything
+    // else falls back to the monolithic image (layer sets unloaded).
+    const img = this.atlas.imageForSprite(p.sprite, z);
     if (!img) return;
     const frame = p.frame ?? this.atlas.frameAt(p.def, timeMs);
     // Source rect in the ZOOMED atlas — never the raw 1× rect scaled with a
@@ -432,9 +539,14 @@ export class IsoRenderer {
     });
   }
 
-  /** One frame. Layers 1 and 2 redraw only when dirty. */
+  /**
+   * One frame. The terrain layer redraws every frame — the ocean drifts and
+   * the surf breathes — but its static island is chunk-cached, so the per-
+   * frame cost is one pattern fill, a handful of chunk blits and the shore
+   * strokes. Structures redraw only when dirty or animated.
+   */
   render(timeMs = 0, overlay: DrawItem[] = []) {
-    if (this.terrainDirty) this.drawTerrain();
+    this.drawTerrain(timeMs);
     if (this.structuresDirty || this.hasAnimation()) this.drawStructures(timeMs);
     this.drawOverlay(overlay, timeMs);
   }
@@ -509,7 +621,7 @@ export class IsoRenderer {
     return {
       camera: { zoom: this.cam.zoom, vw: this.cam.vw, vh: this.cam.vh, x: this.cam.x, y: this.cam.y },
       cull: { pad: this.pad, x0: range.x0, y0: range.y0, x1: range.x1, y1: range.y1 },
-      chunkCacheEntries: this.chunkCache.size,
+      chunkCacheEntries: this.groundChunkCache.size,
       groundAnchorReference,
       depthCycles: this.lastCycles,
       structures,

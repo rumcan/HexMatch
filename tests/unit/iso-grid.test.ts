@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  generateMap, randomSeed, GRASS, WATER, ROUGH, terrainAt, industryAt, TOWN_OCC,
+  generateMap, randomSeed, GRASS, WATER, ROUGH, SAND, terrainAt, industryAt, TOWN_OCC,
   TOWN_HOUSES_MIN, TOWN_HOUSES_MAX,
 } from "../../src/iso/grid";
 import { MAP_W, MAP_H, INDUSTRY_QUOTA, INDUSTRY_BY_KEY, CARGOES } from "../../src/iso/config";
@@ -77,14 +77,14 @@ describe("E3 grid generation determinism", () => {
 });
 
 describe("E3 terrain", () => {
-  it("is a flat typed array of MAP_W*MAP_H GRASS|WATER|ROUGH", () => {
+  it("is a flat typed array of MAP_W*MAP_H GRASS|WATER|ROUGH|SAND", () => {
     const g = generateMap(42);
     expect(g.w).toBe(MAP_W);
     expect(g.h).toBe(MAP_H);
     expect(g.terrain).toBeInstanceOf(Uint8Array);
     expect(g.terrain.length).toBe(MAP_W * MAP_H);
     for (const v of g.terrain) {
-      expect([GRASS, WATER, ROUGH]).toContain(v);
+      expect([GRASS, WATER, ROUGH, SAND]).toContain(v);
     }
   });
 
