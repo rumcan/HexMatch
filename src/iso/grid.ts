@@ -18,6 +18,13 @@ import {
 export const GRASS = 0;
 export const WATER = 1;
 export const ROUGH = 2;
+/**
+ * W-series terrain overhaul: the golden beach ring hugging the coastline.
+ * Purely cosmetic — every gameplay check treats SAND exactly like GRASS
+ * (buildable, flat cost). Assigned deterministically after landmass
+ * selection, so the seed → map contract is unchanged.
+ */
+export const SAND = 3;
 
 export const idx = (tx: number, ty: number) => ty * MAP_W + tx;
 export const inBounds = (tx: number, ty: number) =>
@@ -53,7 +60,7 @@ export interface Town {
 export interface Grid {
   w: number;
   h: number;
-  terrain: Uint8Array;        // MAP_W*MAP_H values GRASS | WATER | ROUGH
+  terrain: Uint8Array;        // MAP_W*MAP_H values GRASS | WATER | ROUGH | SAND
   industries: Industry[];
   towns: Town[];              // TOWN-1: four towns per map
   /**
@@ -133,6 +140,32 @@ function makeTerrain(rng: () => number): Uint8Array {
         }
       }
     }
+  }
+
+  // ── W-series: the beach ring ──
+  // Every grass tile that touches water (8-neighbourhood) becomes SAND, so
+  // the island is lined with a golden beach edge exactly along the coast.
+  // Runs AFTER the rough blobs so the beach always wins the shoreline (a
+  // rock clump that reaches the coast keeps its inland tiles only). Consumes
+  // no rng: the seed stream below this point is unchanged.
+  {
+    const sand: number[] = [];
+    for (let ty = 0; ty < MAP_H; ty++) {
+      for (let tx = 0; tx < MAP_W; tx++) {
+        if (t[idx(tx, ty)] !== GRASS) continue;
+        let touches = false;
+        for (let dy = -1; dy <= 1 && !touches; dy++) {
+          for (let dx = -1; dx <= 1 && !touches; dx++) {
+            if (!dx && !dy) continue;
+            const nx = tx + dx, ny = ty + dy;
+            if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+            if (t[idx(nx, ny)] === WATER) touches = true;
+          }
+        }
+        if (touches) sand.push(idx(tx, ty));
+      }
+    }
+    for (const i of sand) t[i] = SAND;
   }
   return t;
 }

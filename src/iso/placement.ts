@@ -179,7 +179,7 @@ export function factoryReachBand(grid: Grid, tx: number, ty: number): [number, n
   for (const [x, y] of factoryAdjacencyRing(grid, tx, ty)) {
     const i = tIdx(x, y);
     const v = grid.terrain[i];
-    if (v !== GRASS && v !== ROUGH) continue;          // no water band
+    if (v !== GRASS && v !== ROUGH && v !== SAND) continue;  // no water band (SAND is buildable beach)
     if (grid.occupancy[i] >= 0 || grid.occupancy[i] === TOWN_OCC) continue;
     out.push([x, y]);
   }
