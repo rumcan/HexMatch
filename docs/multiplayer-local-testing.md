@@ -118,7 +118,35 @@ Details: `node_modules/@series-inc/rundot-game-sdk/docs/rundot-developer-platfor
 
 ---
 
-## 6. Known gaps to expect while testing
+## 6. Troubleshooting
+
+### "No room server behind this page" / "The room never introduced itself"
+
+Both mean the same thing: **nothing is simulating the room.** The SDK's offline
+mock still *resolves* `createRoom` and `joinRoomByCode` — it invents a random
+six-character code, and for a join it ignores the code you typed and mocks a
+second room — so both lobbies look alive ("Connected", a copyable code) and then
+wait for a `welcome` nobody will ever send. `transport.ts` detects that state
+(`isOfflineMockRealtime()`) and refuses at the door with the fix named, rather
+than letting the lobby sit for 10 s and time out.
+
+The mock is used whenever `window.__RUNDOT_MULTIPLAYER_DEV_SERVER__` is missing,
+and `rundotMultiplayerPlugin` injects that **only on `vite serve`**. Usual
+causes, most likely first:
+
+| Cause | How to check |
+|---|---|
+| The page is a **build**, not the dev server — `npm run preview`, `dist/index.html`, a statically served copy, a deployed link | Console: `window.__RUNDOT_MULTIPLAYER_DEV_SERVER__` must print `http://localhost:9001`. `undefined` means build → use `npm run dev`. |
+| Dev server is right, but the **origin** is not localhost (LAN IP, tunnel, sandbox preview) | The injected sidecar origin is `localhost`, so only a browser on the dev machine can reach it — see §4 for `RUNDOT_DEV_ROOM_URL`. |
+| The sidecar **never started** — port 9001 was already taken, so the plugin died with `EADDRINUSE` while Vite kept serving | Vite's terminal must not show `EADDRINUSE … port: 9001`. `node tools/two-client-check.mjs` fails immediately if it is down; kill the stale process and restart. |
+| The **room type is not registered** or the room bundle failed to build | Different symptom: the client gets `ROOM_NOT_FOUND` ("Room type … not found in rooms.config.json") and the start screen shows that text, not a timeout. Check `rundot/realtime.config.json` points at `src/rooms/HexmatchRoom.ts` and that Vite logged no esbuild error. |
+
+Console signature of the mock, if you want certainty:
+`[RUN] Multiplayer running in offline mock mode — rooms will not connect.`
+
+---
+
+## 7. Known gaps to expect while testing
 
 - **Closing the host window is not instant for the guest.** `allowReconnect: true`
   and `reconnectTimeout: 60` make the sidecar hold the host's seat for a minute

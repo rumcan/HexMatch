@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  NO_ROOM_SERVER_MESSAGE,
   createRoom,
   isAccessDenied,
+  isOfflineMockRealtime,
   isValidRoomCode,
   joinRoomByCode,
   normalizeRoomCode,
@@ -149,6 +151,12 @@ export default function StartScreen({ onStart }: StartScreenProps) {
 
   const beginRoom = useCallback(async (kind: "host" | "guest") => {
     if (busy) return;
+    // No room server (a built/previewed page): the SDK would hand back a mock
+    // room with a plausible code and then never introduce itself. Say so now.
+    if (isOfflineMockRealtime()) {
+      failMessage(NO_ROOM_SERVER_MESSAGE);
+      return;
+    }
     if (kind === "guest" && !isValidRoomCode(code)) {
       setError("Enter the six-character code your host is showing.");
       return;
@@ -163,10 +171,14 @@ export default function StartScreen({ onStart }: StartScreenProps) {
     } finally {
       setBusy(false);
     }
-  }, [awaitWelcome, busy, code, fail, withLogin]);
+  }, [awaitWelcome, busy, code, fail, failMessage, withLogin]);
 
   const beginMatch = useCallback(async () => {
     if (busy) return;
+    if (isOfflineMockRealtime()) {
+      failMessage(NO_ROOM_SERVER_MESSAGE);
+      return;
+    }
     setBusy(true);
     setError("");
     setState("matchmaking");
@@ -195,7 +207,7 @@ export default function StartScreen({ onStart }: StartScreenProps) {
     } finally {
       if (request === matchRequest.current) setBusy(false);
     }
-  }, [awaitWelcome, busy, fail, matchRequest, withLogin]);
+  }, [awaitWelcome, busy, fail, failMessage, matchRequest, withLogin]);
 
   const abandonMatch = useCallback(() => {
     ++matchRequest.current;
@@ -228,7 +240,12 @@ export default function StartScreen({ onStart }: StartScreenProps) {
   useEffect(() => {
     if (seed !== null || (state !== "host" && state !== "joined")) return;
     const timer = window.setTimeout(() => {
-      failMessage("The room never introduced itself. Go back and try again.");
+      // A room server that is reachable but silent (a stale sidecar, a room
+      // bundle that failed to load) lands here too, so re-check the mock: the
+      // two causes need different advice.
+      failMessage(isOfflineMockRealtime()
+        ? NO_ROOM_SERVER_MESSAGE
+        : "The room never introduced itself. Go back and try again.");
     }, WELCOME_TIMEOUT_MS);
     return () => window.clearTimeout(timer);
   }, [failMessage, seed, state]);

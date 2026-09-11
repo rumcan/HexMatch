@@ -26,13 +26,18 @@ vi.mock("../../src/net/transport", async (importOriginal) => {
     // The real one opens the platform login sheet; the fallback under test is
     // the "user dismissed it" path (§7's required play-vs-AI escape hatch).
     promptLogin: vi.fn(async () => ({ success: false })),
+    // jsdom has no room sidecar, so the real check would report the SDK's
+    // offline mock and every test below would (correctly) refuse to host.
+    isOfflineMockRealtime: vi.fn(() => false),
   };
 });
 
 import StartScreen, { type StartChoice } from "../../src/ui/StartScreen";
 import { PROTOCOL_VERSION, type HexProtocol } from "../../src/net/protocol";
 import {
+  NO_ROOM_SERVER_MESSAGE,
   createRoom,
+  isOfflineMockRealtime,
   joinRoomByCode,
   quickMatch,
   type HexRoom,
@@ -132,11 +137,15 @@ async function typeCode(code: string): Promise<void> {
 }
 
 const mockCreate = createRoom as unknown as ReturnType<typeof vi.fn>;
+const mockOffline = isOfflineMockRealtime as unknown as ReturnType<typeof vi.fn>;
 const mockJoin = joinRoomByCode as unknown as ReturnType<typeof vi.fn>;
 const mockMatch = quickMatch as unknown as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   choices = [];
+  // `vi.clearAllMocks()` keeps implementations, so a test that flips this must
+  // not leak into the next one.
+  mockOffline.mockReturnValue(false);
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -341,6 +350,47 @@ describe("MP-06 join screen", () => {
     await click("Start game");
     expect(choices).toHaveLength(1);
     expect(choices[0]).toMatchObject({ mode: "host", seed: 99 });
+  });
+
+  // The trap this pins: with no room server (a built or previewed page) the SDK
+  // RESOLVES createRoom/joinRoomByCode with a mock room and a plausible code,
+  // so both lobbies look alive and then wait out the welcome timeout. Fail at
+  // the door with the actionable message instead.
+  it("refuses to host when there is no room server behind the page", async () => {
+    mockOffline.mockReturnValue(true);
+    await render();
+    await click("Host a game");
+    expect(text()).toContain("No room server behind this page");
+    expect(mockCreate).not.toHaveBeenCalled();
+    await click("Play vs AI");
+    expect(choices).toEqual([{ mode: "ai" }]);
+  });
+
+  it("refuses to join and to quick-match when there is no room server", async () => {
+    mockOffline.mockReturnValue(true);
+    await render();
+    await click("Join with a code");
+    await typeCode("HX9KWR");
+    await click("Join game");
+    expect(mockJoin).not.toHaveBeenCalled();
+    expect(text()).toContain("No room server behind this page");
+
+    await click("Back");
+    await click("Quick match");
+    expect(mockMatch).not.toHaveBeenCalled();
+    expect(text()).toContain("No room server behind this page");
+    expect(text()).not.toContain("Finding an opponent");
+  });
+
+  it("names the room server as the cause when a lobby times out in mock mode", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const room = fakeRoom("HX9KWR");
+    mockCreate.mockResolvedValue(room);
+    await render();
+    await click("Host a game");           // the check passed at the door…
+    mockOffline.mockReturnValue(true);    // …but the room server vanished
+    await act(async () => { vi.advanceTimersByTime(10_001); });
+    expect(text()).toContain(NO_ROOM_SERVER_MESSAGE.split(". ")[0]);
   });
 
   it("falls back to the AI when the platform refuses an anonymous player", async () => {
