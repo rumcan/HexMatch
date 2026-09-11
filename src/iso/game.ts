@@ -41,7 +41,7 @@ import {
 } from "./track";
 import {
   industriesInCatchment, ownerIdOf,
-  playerResources, buildAllComponents, resolveConnection,
+  buildAllComponents, resolveConnection,
   pickBlockadeTarget,
   type EconomyState, type Factory, type Harvester,
 } from "./economy";
@@ -79,6 +79,11 @@ import {
   choice, type ResKey,
 } from "../game/config";
 import { createQuarry, GEM_TO_CARGO, type Quarry } from "./quarry";
+import {
+  SAVE_KEY, loadRecentSave, clearSave, trackSave, trackRestored,
+  type SaveGamePayload,
+} from "./savegame-runtime";
+import { RES } from "../game/config";
 import { createRivalPlant, RIVAL_FROST_MS, RIVAL_GIRDER_MS, RIVAL_SMOG_MS } from "./rival-plant";
 import { createFloatLayer, type FloatLayer } from "./floats";
 import {
@@ -312,6 +317,26 @@ export function startIsoGame(root: HTMLElement) {
     onChange: () => onBoardChange(),
   });
 
+  // AI-03: the RIVAL's Processing Plant board — a real quarry of its own,
+  // played by a clock-driven autoplayer (`skill().moveMs`, below). It pays
+  // the same rules the player's board does: match a token, earn the feed,
+  // clear ice, free girders. `rivalPlant.board` is the body that sabotage
+  // already hits (A1), so buying Frost on the rival now also lands on the
+  // board you can WATCH it play — one economy, one addressable plant.
+  // The board drives the purse through the same hooks the player's own
+  // quarry does; what it must never do is toast the human about the rival's
+  // private matches, so its UI surface says nothing — except when its own
+  // peek panel is open (see `openRivalPlantView` below).
+  let rivalQuarry: Quarry;
+
+  /** AI-03: the peek panel handle (set when the player opens it). */
+  interface RivalBoardView { paint: () => void; close: () => void }
+  let rivalBoardView: RivalBoardView | null = null;
+  /** TS narrowing helper: closures bind this `let` as null before any
+   *  assignment exists in straight-line flow; one method keeps the union. */
+  const getRivalView = (): RivalBoardView | null => rivalBoardView;
+  const paintRivalView = () => getRivalView()?.paint();
+
   // W6: the rival's answers and expirations are trade events — surface them
   // in the Feed so "the rival answered my offer" is visible, not silent.
   const market: IsoMarket = createIsoMarket(players.map((p) => ({
@@ -361,14 +386,20 @@ export function startIsoGame(root: HTMLElement) {
   // freshly booted UI; the pick flips the LIVE game straight into
   // `setRivalSkill`, persists for the next boot, and syncs the top-bar
   // selector the `onSkill` hook would otherwise own.
-  void promptForRivalSkill(ui.el, {
-    onPick: (key) => {
-      setRivalSkill(key);
-      try { localStorage.setItem(SKILL_STORAGE_KEY, key); } catch { /* private mode */ }
-      const sel = ui.el.querySelector<HTMLSelectElement>("#iso-rival-skill");
-      if (sel) sel.value = key;
-    },
-  });
+  // AI-03: a saved game means NO difficulty prompt and NO fresh map — the
+  // save carries the pick, and refresh resumes exactly where it left off
+  // ("a refresh restarts the game" — not any more; Restart starts over).
+  const bootSave = loadRecentSave();
+  if (!bootSave) {
+    void promptForRivalSkill(ui.el, {
+      onPick: (key) => {
+        setRivalSkill(key);
+        try { localStorage.setItem(SKILL_STORAGE_KEY, key); } catch { /* private mode */ }
+        const sel = ui.el.querySelector<HTMLSelectElement>("#iso-rival-skill");
+        if (sel) sel.value = key;
+      },
+    });
+  }
 
   // ── A1: the board's own effects finally have somewhere to go ────────────
   // `Board` fires `onFx` for every pop, crack, token-up, bomb, bad swap and
@@ -389,6 +420,25 @@ export function startIsoGame(root: HTMLElement) {
   // A1: the rival owns a Processing Plant now, so Black Market sabotage has
   // somewhere to land that is not the buyer's own board.
   const rivalPlant = createRivalPlant();
+  // AI-03: the AI's quarry plays on THAT VERY board — the A1 sabotage
+  // target is the quarry's grid, so the rival's autoplayer can clear the
+  // ice you bought the way a player would, and you can open its plant and
+  // watch it work.
+  const rivalBoard = rivalPlant.board;
+  rivalQuarry = createQuarry(eco, "ai", {
+    onHarvest: (cargo, amount) => earn(rival, { [cargo]: amount }),
+    onBlocked: () => {},
+    onGold: (n) => {
+      earn(rival, { gold: n });
+      ui.feed(`Rival banks +${n} Gold from its plant combos 🪙`, rival.name);
+    },
+    onGains: () => {},
+    onTokens: () => {},
+    onChange: () => paintRivalView(),
+  });
+  // hand the sabotage target to the quarry as its board (quarry internals
+  // only touch board-shaped behaviour)
+  (rivalQuarry as unknown as { board: import("../game/board").Board }).board = rivalBoard;
 
   // U1: the iso layer stack stays the map; it is mounted inside the original
   // map-canvas slot rather than a bespoke floating panel.
@@ -917,40 +967,20 @@ export function startIsoGame(root: HTMLElement) {
    * across ticks so sub-1 rates (Oil Rig 0.4/tick, Gold Mine 0.3/tick) still
    * pay out over time instead of rounding to zero forever.
    */
-  const trickleCarry: Partial<Record<Cargo, number>> = {};
-
   function economyTick(now: number) {
     if (phase !== "play") return;
     if (now - lastHarvest < HARVEST_MS) return;
     lastHarvest = now;
-    // J1: YOUR cargo comes from matching the quarry, not from a trickle — the
-    // connection decides what the board is allowed to pay. The rival has no
-    // board to play, so the passive yield stays as its income.
-    // W3: the trickle is computed over the rival's OWN network (W2's
-    // owner-scoped components) and credited straight to its purse — this is
-    // the rival's only income, so once it connects an industry its stone/ore
-    // actually move over time.
-    // PP-07: fractional yields ACCUMULATE across ticks instead of rounding
-    // each tick. Per-tick rounding paid 0 forever for an Oil Rig (0.4/tick)
-    // or a Gold Mine (0.3/tick), so an oil-only network was dead income —
-    // and with every paid Depot now costing Oil, that was an opening
-    // deadlock. The carry turns 0.4/tick into 1 oil every ~7.5 s.
-    const y = playerResources(eco, rival.id, now);
-    // A1: the rival's plant is what sabotage wrecks, so it is also what its
-    // income runs through. A pristine plant multiplies by 1; ice, girders
-    // and smog take their share off the top. Without this a Black Market buy
-    // would cost Gold and change nothing.
-    const rivalHealth = rivalPlant.health(now);
-    const gain: Purse = {};
-    for (const [cargo, v] of Object.entries(y) as [Cargo, number][]) {
-      const acc = (trickleCarry[cargo] ?? 0) + Math.max(0, v) * rivalHealth;
-      const n = Math.floor(acc);
-      trickleCarry[cargo] = acc - n;
-      if (n > 0) gain[cargo] = n;
-    }
-    if (Object.keys(gain).length) earn(rival, gain);
-    // blockades expire on a clock, so the reachable set is re-read here too
+    // AI-03: BOTH seats earn through a Processing Plant board now — yours is
+    // the one in the HUD, the rival's is the autoplayed one you can open
+    // from its topbar button. The rival-only passive trickle this used to
+    // run (J1/W3/PP-07's trickleCarry) is gone: he plays the game like you,
+    // tokens gated by his own network, deliveries credited by his own
+    // lorries, gold by his own plant combos.
+    // What stays here is the network re-read — blockades expire on a clock,
+    // and both boards' token gates derive from the reachable set.
     quarry.refresh(now);
+    rivalQuarry.refresh(now);
   }
 
   /** Per frame: board effects, the token spawn, and the market clock. */
@@ -962,6 +992,22 @@ export function startIsoGame(root: HTMLElement) {
     if (phase !== "play") return;
     rivalMarketOffer(now);
     quarry.tick(now);
+    // AI-03: the rival's own plant plays: same board clock as yours, then
+    // one watchable move per skill().moveMs. trySwap refuses politely when
+    // the board is busy or smogged, so the clock can keep cadence calmly.
+    rivalQuarry.tick(now);
+    rivalAutoplay(now);
+  }
+
+  /** AI-03: the rival's match-3 cadence — "a board where he is slowly
+   *  matching". One move per moveMs: a single swap at the skill's pace. */
+  let lastRivalMove = 0;
+  function rivalAutoplay(now: number) {
+    if (now - lastRivalMove < skill().moveMs) return;
+    const mv = rivalBoard.findMove();
+    if (!mv) { lastRivalMove = now; return; }
+    lastRivalMove = now;
+    void rivalBoard.trySwap(mv[0], mv[1], mv[2], mv[3], now);
   }
 
   /**
@@ -1944,11 +1990,13 @@ export function startIsoGame(root: HTMLElement) {
   /** Never pay more than this many missed deliveries at once (background tab). */
   const MAX_CATCHUP = 3;
 
-  /** Every cargo the given lorries deliver — the quarry's clock must skip them. */
-  function truckCargos(list: Truck[], nowMs: number): Cargo[] {
+  /** Every cargo the given lorries deliver — the OWNER's quarry clock must
+   *  skip them (AI-03: generalized over seats, both seats run boards now). */
+  function truckCargos(list: Truck[], nowMs: number, owner = "you"): Cargo[] {
     const out = new Set<Cargo>();
+    const want = ownerIdOf(eco, owner);
     for (const truck of list) {
-      if (truck.ownerId !== ownerIdOf(eco, "you")) continue;
+      if (truck.ownerId !== want) continue;
       for (const cargo of depotCargos(truck.depotId, nowMs)) out.add(cargo);
     }
     return [...out];
@@ -1988,25 +2036,22 @@ export function startIsoGame(root: HTMLElement) {
     }
   }
 
-  /** AI-02: the rival's match-3 board, abstracted to its road network — the
-   *  player watches a rival economy of “one factory, one road, one depot”
-   *  and asks why it never touches the Black Market. Its parcels used to
-   *  vanish: deliveries fed the player's board but “the rival's lorries
-   *  feed no board” meant ZERO cargo income and ZERO Gold for it — and
-   *  `rivalRaid`’s own guard, “no Gold, no raid”, made that permanent. A
-   *  delivered load now pays the Rival what a steady board pays a player: +1
-   *  per delivered cargo (its production credit) plus +1 Gold a delivery —
-   *  the economy that buys its Plants, feeds its market sales, and primes
-   *  its raid pool. */
+  /** AI-03: the rival owns its OWN board now (same quarry, its own matches,
+   *  self-paced at skill().moveMs — "he should have a board where he is
+   *  slowly matching"). A delivered lorry load still pays the own-seat
+   *  production credit, and the float finally says WHICH cargo the lorry
+   *  carried ("every time his truck reaches his plant we see one gold icon
+   *  when it should be grain??" — gold is no longer credited here; gold comes
+   *  from gold tokens on its board, parity with the player's spawner).
+   *  AI-02 note: the flat +1 Gold per delivery this replaces was the
+   *  hack-that-shipped; the audit trail the player asked for now exists on
+   *  a real, watchable board. */
   function rivalDeliverLoad(truck: Truck, t: number) {
-    const gain: Purse = {};
     for (const cargo of depotCargos(truck.depotId, t)) {
-      gain[cargo] = (gain[cargo] ?? 0) + 1;
+      earn(rival, { [cargo]: 1 });
+      floats.add(`+1 ${CARGO[cargo].icon}`, truck.factory[0], truck.factory[1],
+        { cls: "delivery", now: t });
     }
-    gain.gold = (gain.gold ?? 0) + 1;
-    earn(rival, gain);
-    floats.add(`+1 ${CARGO.gold.icon}`, truck.factory[0], truck.factory[1],
-      { cls: "delivery", now: t });
   }
 
   /** One lorry-load of cargo: mint the token, then show what it was worth. */
@@ -2023,6 +2068,167 @@ export function startIsoGame(root: HTMLElement) {
     }
   }
 
+  // ══════════════════════ AI-03: save / restore / peek / new-game ════════
+  // One JSON payload in localStorage, refreshed every few seconds and on
+  // pagehide. The map is seed-derived, so only mutable state travels.
+
+  function collectSave(): SaveGamePayload {
+    const now = performance.now();
+    const bandit: Record<number, number> = {};
+    for (const ind of grid.industries) {
+      if (ind.banditUntil > now) bandit[ind.id] = ind.banditUntil - now;
+    }
+    return {
+      v: 1, // SAVEGAME_VERSION — keep in lockstep with savegame-runtime
+      snapV: 9, // SNAPSHOT_VERSION — track layers share the MP wire format
+      savedAt: Date.now(),
+      seed, skillKey: skillKey, phase, winnerId: winner?.id ?? null,
+      bandit,
+      track: trackSave(track),
+      eco: { harvesters: eco.harvesters, factories: eco.factories },
+      players: players.map((p) => ({
+        purse: p.purse as unknown as Record<string, number>,
+        freeTrack: p.freeTrack, freeDepots: p.freeDepots,
+      })),
+      boards: [
+        { kind: "you", data: quarry.board.save() },
+        { kind: "ai", data: rivalQuarry.board.save() },
+      ],
+      // live AI clocks START FRESH on load — a few seconds of drift is not
+      // worth serialising a timer list for (the games feel identical).
+      clocks: {},
+    };
+  }
+
+  function saveNow() {
+    if (disposed) return;
+    try {
+      localStorage.setItem(SAVE_KEY, JSON.stringify(collectSave()));
+    } catch { /* private mode / quota — saving must never break the game */ }
+  }
+
+  function applySave(d: SaveGamePayload) {
+    // difficulty first: every pacing read below derives from it
+    skillKey = d.skillKey as SkillKey;
+    setRivalSkill(skillKey);
+    trackRestored(track, d.track);
+    const now = performance.now();
+    for (const [k, rem] of Object.entries(d.bandit)) {
+      const ind = grid.industries.find((x) => x.id === Number(k));
+      if (ind) ind.banditUntil = now + rem;
+    }
+    // economy: replace the lists in place — their references are held all
+    // over (planTrucks, syncWorld, the AI...)
+    eco.harvesters.length = 0; eco.harvesters.push(...d.eco.harvesters);
+    eco.factories.length = 0; eco.factories.push(...d.eco.factories);
+    for (let i = 0; i < players.length && i < d.players.length; i++) {
+      Object.assign(players[i].purse, d.players[i].purse);
+      players[i].freeTrack = d.players[i].freeTrack;
+      players[i].freeDepots = d.players[i].freeDepots;
+    }
+    phase = d.phase as typeof phase;
+    winner = d.winnerId
+      ? (players.find((p) => p.id === d.winnerId) ?? null)
+      : null;
+    for (const b of d.boards) {
+      if (b.kind === "ai") rivalQuarry.board.restore(b.data);
+      else quarry.board.restore(b.data);
+    }
+    // pacing clocks start clean — no catch-up bursts after a refresh
+    lastHarvest = now; lastAi = now; lastRaid = now;
+    lastOfferPost = now; lastRivalMove = now;
+    // derive everything else: structures, torii, trucks, banners
+    syncWorld();
+    trucksDirty = true;
+    toast("Game restored from your save — you are right where you left it.", "good");
+    // paintUi runs on the next frame — no explicit UI flush needed here.
+  }
+
+  if (bootSave) applySave(bootSave);
+
+  // autosave: cheap, and it must never be able to break the frame loop
+  window.setInterval(() => saveNow(), 5_000);
+  window.addEventListener("pagehide", () => saveNow());
+
+  // ── AI-03: the top-bar buttons — peek at the rival's plant, restart game ──
+  const topRight = ui.el.querySelector<HTMLElement>(".top-right");
+  if (topRight) {
+    const peek = document.createElement("button");
+    peek.type = "button"; peek.id = "iso-rival-peek";
+    peek.className = "icon-btn"; peek.textContent = "🏭";
+    peek.title = "Watch the rival's plant — its board plays itself";
+    peek.addEventListener("click", () => toggleRivalPlantView());
+
+    const restart = document.createElement("button");
+    restart.type = "button"; restart.id = "iso-restart";
+    restart.className = "icon-btn"; restart.textContent = "↻";
+    restart.title = "New game — clears the save and the difficulty pick";
+    restart.addEventListener("click", () => {
+      if (!window.confirm("Start a new game? The save and your difficulty pick are cleared.")) return;
+      clearSave();
+      try { localStorage.removeItem(SKILL_STORAGE_KEY); } catch { /* private mode */ }
+      location.reload();
+    });
+    topRight.appendChild(peek);
+    topRight.appendChild(restart);
+  }
+
+  function toggleRivalPlantView() {
+    const open = getRivalView();
+    if (open) { open.close(); rivalBoardView = null; return; }
+    const el = document.createElement("div");
+    el.id = "iso-rival-view";
+    const head = document.createElement("header");
+    const title = document.createElement("b");
+    title.textContent = `${rival.name}'s processing plant`;
+    const statusEl = document.createElement("span");
+    statusEl.className = "rb-status";
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button"; closeBtn.textContent = "✕";
+    closeBtn.className = "rb-close";
+    closeBtn.addEventListener("click", () => toggleRivalPlantView());
+    head.appendChild(title); head.appendChild(statusEl); head.appendChild(closeBtn);
+    const grid = document.createElement("div");
+    grid.className = "rb-grid";
+    el.appendChild(head); el.appendChild(grid);
+    ui.el.appendChild(el);
+
+    const H = rivalBoard.grid.length, W = rivalBoard.grid[0]?.length ?? 0;
+    grid.style.gridTemplateColumns = `repeat(${W}, 24px)`;
+    const cells: HTMLElement[][] = [];
+    for (let r = 0; r < H; r++) {
+      const row: HTMLElement[] = [];
+      for (let c = 0; c < W; c++) {
+        const cell = document.createElement("div");
+        cell.className = "rb-cell";
+        grid.appendChild(cell); row.push(cell);
+      }
+      cells.push(row);
+    }
+    const paint = () => {
+      const st = rivalPlant.status(performance.now());
+      const bits: string[] = [];
+      if (st.frozen) bits.push(`❄ ${st.frozen} frozen`);
+      if (st.girders) bits.push(`🏗 ${st.girders} girders`);
+      if (st.smog) bits.push("☁ smogged");
+      statusEl.textContent = bits.length ? " · " + bits.join(" · ") : " · healthy";
+      for (let r = 0; r < H; r++) for (let c = 0; c < W; c++) {
+        const g = rivalBoard.grid[r]?.[c] ?? null;
+        const cell = cells[r]?.[c];
+        if (!cell) continue;
+        if (!g) { cell.style.background = "transparent"; cell.textContent = ""; cell.title = ""; cell.style.boxShadow = "none"; continue; }
+        const R = RES[g.res];
+        cell.style.background = `radial-gradient(circle at 35% 30%, ${R.c2}, ${R.c1})`;
+        cell.style.boxShadow = g.tier ? `inset 0 0 0 2px ${R.ring}` : "none";
+        cell.textContent = g.block ? "🏗" : g.hard > 0 ? "❄" : g.special ? "💣" : g.tier === 2 ? "◆" : g.tier === 1 ? "◇" : "";
+        cell.title = `${R.name}${g.tier ? ` tier ${g.tier}` : ""}${g.hard ? " (frozen)" : ""}${g.block ? " (girder)" : ""}`;
+      }
+    };
+    paint();
+    const iv = window.setInterval(paint, 350);
+    rivalBoardView = { paint, close: () => { window.clearInterval(iv); el.remove(); } };
+  }
+
   // ── boot ───────────────────────────────────────────────────────────────
   let raf = 0;
   let disposed = false;
@@ -2031,6 +2237,29 @@ export function startIsoGame(root: HTMLElement) {
     const img = new Image();
     img.onload = () => res(img); img.onerror = rej; img.src = src;
   });
+
+  /** AI-03: keep moving lorries when a replan leaves their route identical.
+   *  Merged by the stable depot id (the lorry's true identity since the W2
+   *  audit): same route AND same per-segment paved flags → the lorry keeps
+   *  its position (leg/t/reverse/lastAdvance) and drives on mid-crack.
+   *  A genuinely changed route keeps only its deliveries tally (the work is
+   *  done either way) and starts the new legs from the depot. New lorries
+   *  are the plan's own; removed ones vanish — the ghost-truck erase a few
+   *  lines below deals with their sprites. */
+  function planTrucksTrucksMerge(prev: Truck[], next: Truck[]): Truck[] {
+    const byDepot = new Map(prev.map((x) => [x.depotId, x]));
+    return next.map((t2) => {
+      const old = byDepot.get(t2.depotId);
+      if (!old) return t2;
+      t2.deliveries = old.deliveries;
+      if (JSON.stringify(t2.route) === JSON.stringify(old.route)
+          && JSON.stringify(t2.segFast) === JSON.stringify(old.segFast)) {
+        // trucks integrate with dt, so position is the whole migration state
+        t2.leg = old.leg; t2.t = old.t; t2.reverse = old.reverse;
+      }
+      return t2;
+    });
+  }
 
   (async () => {
     const images = new Map<number, AtlasImage>();
@@ -2058,13 +2287,13 @@ export function startIsoGame(root: HTMLElement) {
       quarryTick(t);
       aiTick(t);
       if (trucksDirty) {
-        trucks.trucks = planTrucks(eco);
+        trucks.trucks = planTrucksTrucksMerge(trucks.trucks, planTrucks(eco));
         trucksDirty = false;
-        // A1: the lorries were re-planned, so the delivery counters restart
-        // from zero — and so does the set of cargoes a lorry (rather than the
-        // fallback clock) is responsible for.
-        seenDeliveries.clear();
+        // AI-03: the replan no longer resets driving lorries — see
+        // planTrucksTrucksMerge just above trucksTick. seenDeliveries is
+        // keyed by the stable depot id, so the ledger survives every replan.
         quarry.setTruckServed(truckCargos(trucks.trucks, t));
+        rivalQuarry.setTruckServed(truckCargos(trucks.trucks, t, "ai"));
         // a vanished truck must not linger as a ghost on the structures layer
         renderer?.setWorld(world);
       }

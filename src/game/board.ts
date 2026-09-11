@@ -524,6 +524,86 @@ export class Board {
     return n;
   }
 
+  /** AI-03: find one swap that produces a match — the rival's autoplayer.
+   *  Scans right/down neighbours of unblocked gems; returns [r1,c1,r2,c2] or
+   *  null. Honour-system fast: checks the two swapped cells' rows/cols only,
+   *  because only those lines can change. */
+  findMove(): [number, number, number, number] | null {
+    const H = this.grid.length, W = this.grid[0]?.length ?? 0;
+    const makesMatch = (r: number, c: number): boolean => {
+      const g = this.grid[r]?.[c];
+      if (!g) return false;
+      // horizontal run through (r,c)
+      let run = 1;
+      for (let i = c - 1; i >= 0 && this.grid[r][i]?.res === g.res; i--) run++;
+      for (let i = c + 1; i < W && this.grid[r][i]?.res === g.res; i++) run++;
+      if (run >= 3) return true;
+      run = 1;
+      for (let i = r - 1; i >= 0 && this.grid[i][c]?.res === g.res; i--) run++;
+      for (let i = r + 1; i < H && this.grid[i][c]?.res === g.res; i++) run++;
+      return run >= 3;
+    };
+    const dirs: [number, number][] = [[0, 1], [1, 0]];
+    for (let r = 0; r < H; r++) {
+      for (let c = 0; c < W; c++) {
+        const a = this.grid[r][c];
+        if (!a || a.block) continue;
+        for (const [dr, dc] of dirs) {
+          const r2 = r + dr, c2 = c + dc;
+          const b = this.grid[r2]?.[c2];
+          if (!b || b.block || b.res === a.res) continue;
+          // trial swap
+          this.grid[r][c] = b; this.grid[r2][c2] = a;
+          const ok = makesMatch(r, c) || makesMatch(r2, c2);
+          this.grid[r][c] = a; this.grid[r2][c2] = b;
+          if (ok) return [r, c, r2, c2];
+        }
+      }
+    }
+    return null;
+  }
+
+  /** AI-03 save/restore: everything that is not derivable (grid, pools,
+   *  clocks as REMAINING ms so they survive a page reload). */
+  save(): unknown {
+    const now = performance.now();
+    return {
+      grid: this.grid.map((row) => row.map((g) => g && {
+        res: g.res, tier: g.tier, special: g.special, hard: g.hard,
+        block: g.block, forged: g.forged ? 1 : 0,
+      })),
+      seq: this.seq, pool: this.pool, comboCount: this.comboCount,
+      fogIn: Math.max(0, this.fogUntil - now), blockIn: Math.max(0, this.blockUntil - now),
+    };
+  }
+
+  restore(d: any): void {
+    if (!d?.grid) return;
+    const now = performance.now();
+    let maxId = 1;
+    this.grid = d.grid.map((row: any[]) => row.map((cell: any, ci: number) => {
+      if (!cell) return null;
+      return {
+        id: this.seq++, res: cell.res, tier: cell.tier ?? 0,
+        special: cell.special ?? null, hard: cell.hard ?? 0,
+        block: !!cell.block, forged: !!cell.forged,
+        r: 0, c: ci, // r patched below
+      } as Gem;
+    }));
+    for (let r = 0; r < this.grid.length; r++) {
+      for (let c = 0; c < (this.grid[r]?.length ?? 0); c++) {
+        const g = this.grid[r][c];
+        if (g) { g.r = r; g.c = c; maxId = Math.max(maxId, g.id); }
+      }
+    }
+    if (typeof d.seq === "number") this.seq = Math.max(this.seq, d.seq);
+    if (Array.isArray(d.pool)) this.pool = d.pool;
+    if (typeof d.comboCount === "number") this.comboCount = d.comboCount;
+    this.fogUntil = now + (d.fogIn ?? 0);
+    this.blockUntil = now + (d.blockIn ?? 0);
+    this.busy = false;
+  }
+
   tickEffects(now: number) {
     if (this.busy) return;
     // clear expired iron blocks

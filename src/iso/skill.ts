@@ -74,6 +74,10 @@ export interface RivalSkill {
   raidEveryMs: number;
   /** Whether the rival buys industry Blockades. */
   blockades: boolean;
+  /** AI-03: ms between the rival's match-3 moves on its own plant board —
+   *  the speed a player watches when they open the rival's plant: a slow
+   *  single swap every few seconds, never a cascade bot. */
+  moveMs: number;
   /** Multiplier on the ore urgency rivalPace computes from the scoreboard. */
   urgencyBias: number;
 }
@@ -91,6 +95,7 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     offerEveryMs: 90_000,
     raidEveryMs: 0,
     blockades: false,
+    moveMs: 6_000,
     urgencyBias: 0.75,
   },
   normal: {
@@ -105,6 +110,7 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     offerEveryMs: 60_000,
     raidEveryMs: RAID_EVERY,   // the classic 2-minute raid clock
     blockades: true,
+    moveMs: 4_000,
     urgencyBias: 1,
   },
   hard: {
@@ -119,6 +125,7 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     offerEveryMs: 40_000,
     raidEveryMs: 90_000,
     blockades: true,
+    moveMs: 2_500,
     urgencyBias: 1.3,
   },
 };

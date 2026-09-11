@@ -1391,3 +1391,44 @@ html, body, #root {
 #iso-skill-prompt .iso-skill-blurb { font-size: 12px; opacity: 0.85; min-height: 3em; }
 #iso-skill-prompt .iso-skill-pace { font-size: 11px; opacity: 0.65; }
 #iso-skill-prompt .iso-skill-foot { margin: 10px 0 0; font-size: 11px; opacity: 0.6; }
+
+/* ── AI-03: the rival-plant peek panel ────────────────────────────────────
+   Non-modal: sits over the top-right of the board, repaints from the live
+   board every 350 ms (and on every rival move), so the player can WATCH
+   the rival grind matches, clear ice and free girders in real time. */
+#iso-rival-view {
+  position: absolute;
+  top: 52px;
+  right: 10px;
+  z-index: 40;
+  background: rgba(18, 14, 22, 0.92);
+  border: 1px solid #4a3a56;
+  border-radius: 10px;
+  padding: 8px 10px 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+  font-size: 12px;
+  color: #e8e0ee;
+}
+#iso-rival-view header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+#iso-rival-view .rb-status { opacity: 0.85; font-size: 11px; }
+#iso-rival-view .rb-close {
+  margin-left: auto;
+  background: none; border: none; color: inherit; cursor: pointer;
+  font-size: 14px; padding: 0 2px;
+}
+#iso-rival-view .rb-grid {
+  display: grid;
+  gap: 2px;
+}
+#iso-rival-view .rb-cell {
+  width: 24px; height: 24px;
+  border-radius: 5px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; line-height: 1;
+  background: rgba(255, 255, 255, 0.04);
+}
