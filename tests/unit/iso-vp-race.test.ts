@@ -41,15 +41,16 @@ import {
 
 /**
  * The simulated horizon, in in-game minutes. It is long enough for the window to
- * contain a FINISHED game (the AI-02 line is 20★ — seed 1337's normal mirror
- * closed it at 16.8m with the sim-only trickle, vs 9.9–17.6m to the old 10★),
+ * contain a FINISHED game (the line is back to 10★ — 9.9–17.6m to the flag on
+ * the measured seeds; the AI-02 20★ detour closed at 16.8–25.4m on this one),
  * and short enough to stay a unit test.
  *
  * PP-16 moved this window (24 → 30): with one holder per industry, a seat can
  * no longer park its fifth Depot on a rich cluster it already shares, so every
  * extra Depot costs the road out to fresh ground. Measured on this seed after
- * the change: `you` closed 20★ at 25.4m with 5 depots and 80 paves, `ai` was
- * 4m behind on 3 depots — the race is still a race, it is just honestly
+ * the change, to the old 20★ line: `you` closed at 25.4m with 5 depots and
+ * 80 paves, `ai` was 4m behind on 3 depots — the race is still a race, it is
+ * just honestly
  * contested, and the pace floor below is unchanged. If the window ever needs to
  * move again, the printed table (and the playtest report in `docs/`) is where
  * the number comes from.
@@ -61,7 +62,7 @@ const RACE_MINUTES = Number(process.env.VP_RACE_MINUTES ?? 30);
 /** Seeds to race. One is enough for the invariant; a playtest wants the spread. */
 const SEEDS = (process.env.VP_RACE_SEEDS ?? "1337").split(",").map((x) => Number(x));
 
-describe("VP-01 the race to twenty (AI-02 — was ten)", () => {
+describe("VP-01 the race to ten", () => {
   const races = SEEDS.map((seed) => runRace(seed, { minutes: RACE_MINUTES }));
 
   it("prints the pace for the playtest report", () => {
@@ -142,7 +143,7 @@ describe("VP-01 the race to twenty (AI-02 — was ten)", () => {
     }
   }, 900_000);
 
-  it("a game ends: someone reaches 20★, and the other seat was racing", () => {
+  it("a game ends: someone reaches 10★, and the other seat was racing", () => {
     for (const r of races) {
       const trailer = Math.min(r.vp.you, r.vp.ai);
       expect(r.winner, `seed ${r.seed}: no seat reached ${VP_TARGET}★ in ${RACE_MINUTES} minutes`).toBeTruthy();

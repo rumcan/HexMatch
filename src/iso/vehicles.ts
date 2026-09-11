@@ -179,8 +179,14 @@ export function planTrucks(eco: EconomyState): Truck[] {
  * carried as PHASE along a triangle wave (distance travelled, folded by
  * reflection), so a huge tick turns the truck around at the exact end tile
  * instead of pinning it there or teleporting it.
+ *
+ * `blocked` is the protest set: tile indices no lorry may ENTER. A truck
+ * whose next tile is blocked holds exactly where it is — it does not
+ * re-route, it waits — and rolls on once the road clears. Nothing else about
+ * the truck changes (in particular no delivery is counted for a road it never
+ * finished), so a hold is purely lost time, which is the sabotage.
  */
-export function tickTrucks(state: TruckState, dtMs: number): void {
+export function tickTrucks(state: TruckState, dtMs: number, blocked?: ReadonlySet<number>): void {
   if (dtMs <= 0) return;
   for (const truck of state.trucks) {
     const max = truck.route.length - 1;
@@ -198,6 +204,19 @@ export function tickTrucks(state: TruckState, dtMs: number): void {
     // most dt/segment-time.
     while (ms > 1e-9) {
       const k = Math.min(truck.leg, max - 1);
+      // A protest holds the lorry BEFORE the blocked tile: it may not enter,
+      // but a truck already standing on the boundary (t at the edge) still
+      // completes its arrival or turn, so a crowd landing under a stopped
+      // truck never wedges it mid-leg.
+      if (blocked && blocked.size > 0) {
+        if (!truck.reverse) {
+          const nxt = truck.route[k + 1];
+          if (truck.t < 1 && nxt && blocked.has(tIdx(nxt[0], nxt[1]))) break;
+        } else {
+          const cur = truck.route[k];
+          if (truck.t > 0 && cur && blocked.has(tIdx(cur[0], cur[1]))) break;
+        }
+      }
       const v = speed(k);
       if (!truck.reverse) {
         const need = (1 - truck.t) / v;

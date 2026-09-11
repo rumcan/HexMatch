@@ -1264,7 +1264,7 @@ describe("TK-008 Blockade buys auto-target the rival (no targeting step)", () =>
 
 // ══════════════════════════════════════════════════════════════════════════
 // PP-08 — Gold is reserved for Black Market sabotage.
-//   • the four SABOTAGE actions keep their Gold price, and insufficient Gold
+//   • the five SABOTAGE actions keep their Gold price, and insufficient Gold
 //     refuses the purchase without touching any other resource;
 //   • Security Forces (defensive, NOT sabotage) are repriced to materials,
 //     so every non-sabotage action completes without Gold;
@@ -2093,10 +2093,10 @@ describe("VP-01 the rival plays the score, not just the map", () => {
     const rivalSpot = findFactorySpotNear(h.grid, "ore_mine", -1, heldIndustryIds(h.eco));
     expect(rivalSpot).toBeTruthy();
     h.eco.factories.push({ owner: "ai", ownerId: 2, tx: rivalSpot![0], ty: rivalSpot![1] });
-    // AI-02 (target 20): 77 paves = 19.25★ — one point short, i.e. the next
+    // 37 paves = 9.25★ — one point short of the 10★ line, i.e. the next
     // build turn can end the game. The reserve's whole purpose was to keep the
     // rival able to expand afterwards — denial is worth more than that now.
-    expect(paveStrip(h, 77)).toBe(77);
+    expect(paveStrip(h, 37)).toBe(37);
     h.finishSetup();
     const rival = h.market.players[1];
     // Cargo so the rival's first turn ACTS: the scoreboard is derived on a
@@ -2106,7 +2106,7 @@ describe("VP-01 the rival plays the score, not just the map", () => {
     Object.assign(rival.res, { grain: 40, wood: 40, stone: 40, oil: 40, ore: 0, gold: 0 });
     const t0 = 1_000_000;
     h.aiTick(t0);                             // arms the raid clock, spends no Gold
-    expect(h.vp.you).toBeGreaterThan(VICTORY.upgrade * 76);
+    expect(h.vp.you).toBeGreaterThan(VICTORY.upgrade * 36);
     expect(h.rivalPace.deny).toBe(true);
     rival.res.gold = SABOTAGE.bandit.gold;
     h.aiTick(t0 + AI_BUILD_MS);

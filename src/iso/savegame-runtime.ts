@@ -41,6 +41,9 @@ export interface SaveGamePayload {
   /** Industry id → raid REMAINING ms (phase-offset free, so a reload keeps
    *  the bandit on exactly the time it had left). */
   bandit: Record<number, number>;
+  /** Protests on public roads: tile + REMAINING ms (like `bandit` above).
+   *  Optional so saves written before protests existed (same v) still load. */
+  protests?: { x: number; y: number; left: number; owner: string }[];
   track: { dirt: string; road: string; owner: string; upgraded: string };
   eco: {
     harvesters: EconomyState["harvesters"];

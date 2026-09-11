@@ -262,6 +262,14 @@ export class IsoRenderer {
    */
   debugPainter: ((ctx: CanvasRenderingContext2D, cam: Camera) => void) | null = null;
 
+  /**
+   * Game-owned overlay pass, drawn LAST — above every preview glow and debug
+   * mark. This is where the protest crowds live (`paintProtests` in game.ts):
+   * a crowd standing on the road must never hide under a highlight. Null in
+   * tests and the demo, which stage no protests.
+   */
+  overlayPainter: ((ctx: CanvasRenderingContext2D, cam: Camera, timeMs: number) => void) | null = null;
+
   readonly canvases: RendererCanvases;
   private ctxT: Ctx2D; private ctxS: Ctx2D; private ctxO: Ctx2D;
   private structuresDirty = true;
@@ -514,6 +522,8 @@ export class IsoRenderer {
     for (const p of depthSort(placed).order) this.blit(ctx, p, timeMs);
     // C5: the debug marks are drawn last so they sit above every preview glow.
     if (this.debugPainter) this.debugPainter(ctx, cam);
+    // Protests go above even those — the crowd is the thing on the road.
+    if (this.overlayPainter) this.overlayPainter(ctx, cam, timeMs);
   }
 
   private blit(ctx: Ctx2D, p: Placed, timeMs: number) {

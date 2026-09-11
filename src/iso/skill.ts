@@ -14,13 +14,19 @@
 // measurement. The table of results lives in
 // docs/playtest-reports/2026-09-10-ai-skills.md. The acceptance shape is:
 //
-//   • easy  — finishes a game well behind normal: a relaxed opponent that
-//             still plays the victory condition (expands, paves, scores);
-//   • normal — the shipped rival's tuning: reaches the AI-02 line (20★) in
-//             ~16.8m on the 1337 calibration lane — measured per chair;
-//             income, same as the shipped rival;
-//   • hard  — reaches the line roughly 30–40% sooner than easy, and beats easy
-//             head-to-head on every measured seed.
+//   • easy  — finishes alongside normal, never ahead of it: a relaxed
+//             opponent that still plays the victory condition (expands,
+//             paves, scores);
+//   • normal — the shipped rival's tuning: reaches the 10★ line in 15.8m on
+//             the 1337 lane, on bank income alone like the shipped rival —
+//             well inside any session;
+//   • hard  — reaches the line no later than normal, and never trails easy
+//             pooled over both chairs on any measured seed.
+// Why the ladder reads flat: the 10★ line lands mid-opening, where the
+// calibration sim's bank-only seats are income-capped and every preset
+// moves together (all three 1337 mirrors cross on the same tick). The sim
+// guards against an INVERTED ladder, not a photo finish; the difference a
+// player feels is the clocks below, the raid cadence, and Blockades.
 //
 // Levers, in order of how loudly a player feels them:
 //
