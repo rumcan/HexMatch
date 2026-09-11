@@ -1452,3 +1452,22 @@ html, body, #root {
 
 /* AI-03: hint that the header names carry the VP breakdown on hover. */
 .king { cursor: help; }
+
+/* Multiplayer start screen */
+.start-screen {
+  min-height: 100vh; display: grid; place-items: center; padding: 24px;
+  color: var(--txt, #efe4d0); background: radial-gradient(circle at 50% 30%, rgba(72, 53, 36, .34), transparent 52%), #11100f;
+  font-family: var(--serif, Georgia, serif);
+}
+.start-panel { width: min(440px, 100%); text-align: center; padding: 42px 34px; border: 1px solid var(--line, #594b3b); background: rgba(25, 22, 19, .94); box-shadow: 0 20px 80px rgba(0,0,0,.45); }
+.start-kicker { margin: 0 0 16px; color: var(--gold2, #e9a83e); font: 700 12px/1 var(--sans, sans-serif); letter-spacing: 3px; text-transform: uppercase; }
+.start-panel h1 { margin: 0; font-size: clamp(25px, 5vw, 36px); letter-spacing: 1px; }
+.start-subtitle { margin: 12px auto 28px; max-width: 330px; color: var(--txt-mute, #a89b89); font: 13px/1.5 var(--sans, sans-serif); }
+.start-actions { display: grid; gap: 10px; }
+.start-actions button, .start-panel button { min-height: 44px; padding: 9px 16px; border: 1px solid var(--line, #594b3b); color: var(--txt, #efe4d0); background: rgba(255,255,255,.04); cursor: pointer; font: 600 12px var(--sans, sans-serif); letter-spacing: 1px; }
+.start-actions button:hover, .start-panel button:hover { border-color: var(--gold, #c98731); background: rgba(255,166,43,.1); }
+.start-actions .start-primary, .start-panel .start-primary { color: #1b130b; border-color: var(--gold2, #e9a83e); background: var(--gold2, #e9a83e); }
+.start-primary small { margin-left: 8px; opacity: .7; font-weight: 400; }
+.start-panel input { box-sizing: border-box; width: 100%; margin: 10px 0 14px; padding: 12px; border: 1px solid var(--line, #594b3b); color: var(--txt, #efe4d0); background: #181512; outline: none; }
+.start-panel input:focus { border-color: var(--gold2, #e9a83e); }
+.start-panel button:disabled { opacity: .4; cursor: not-allowed; }
