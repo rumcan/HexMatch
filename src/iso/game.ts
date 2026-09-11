@@ -3169,6 +3169,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     get harvesters() { return eco.harvesters; },
     get factories() { return eco.factories; },
     get freeTrack() { return me.freeTrack; },
+    /**
+     * ART-1950S (TICKET-B0): the per-building PNG layers actually installed
+     * from assets/buildings/ — the sprites whose art overrides the shared
+     * sheet. e2e asserts against this instead of sniffing network responses
+     * (a 200 on the manifest alone does not prove a layer landed), and the
+     * B4 dead-art audit reuses it. Empty array = everything is drawing from
+     * the shared buildings sheet (the non-gating fallback).
+     */
+    get buildings() { return atlasRef ? [...atlasRef.buildingImages.keys()] : []; },
     grid, track, eco,
     // ── J1: the quarry join, exposed so the boot test can prove the loop ──
     get board() { return quarry.board; },

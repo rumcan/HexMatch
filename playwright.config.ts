@@ -14,6 +14,12 @@ export default defineConfig({
     baseURL: `http://localhost:4173${BASE}`,
     trace: "on-first-retry",
     launchOptions: {
+      // Network-restricted environments (sandboxes, air-gapped CI) cannot
+      // reach the Playwright CDN to `npx playwright install chromium`. Point
+      // PW_CHROMIUM_EXECUTABLE at any locally available Chromium/Chrome
+      // binary to run the suite against it; unset (the normal case, and
+      // GitHub Actions) uses the Playwright-managed browser.
+      executablePath: process.env.PW_CHROMIUM_EXECUTABLE || undefined,
       args: ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"],
     },
   },
