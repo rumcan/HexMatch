@@ -1430,7 +1430,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    *  own mine's tokens spawned beside it). Every preset seeks the heaviest
    *  match on offer: tokens count for their tier, frozen ones don't exist
    *  here, and easy still reads as a casual player because its clock is
-   *  slow and its board is often token-thin. */
+   *  slow and its board is often token-thin.
+   *
+   *  AI-03d: the seek is only as good as the move list it seeks over, and
+   *  `findMove` used to disagree with the board about what a match IS — it
+   *  counted a run through any same-coloured neighbour, while `lineRuns`
+   *  (what `trySwap` actually clears) breaks a line at a girder or a bomb.
+   *  The rival then handed `trySwap` a swap that was reverted, and because a
+   *  revert changes nothing, the next tick got the same doomed cells back:
+   *  one dead swap replayed every moveMs for the rest of the match, worst on
+   *  a plant the player had just bought girders for, and worst of all on a
+   *  TOKENED dead swap, which the seek ranked above every real move on the
+   *  board. `findMove` now answers with the board's own rule (see board.ts),
+   *  so every move it offers here is one `trySwap` carries out. */
   let lastRivalMove = 0;
   function rivalAutoplay(now: number) {
     if (now - lastRivalMove < skill().moveMs) return;
