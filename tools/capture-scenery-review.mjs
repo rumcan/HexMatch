@@ -110,6 +110,45 @@ try {
       plantedTrees: scenery.trees.reduce((a, v) => a + (v ? 1 : 0), 0),
       densest: best, densestCount: bestN,
     };
+    // A road fixture: every one of the sixteen masks for both tiers, laid out
+    // on a clear patch so each can be read on its own, plus a mixed-tier run.
+    window.roadFixture = (originX, originY) => {
+      const road = new Uint8Array(grid.w * grid.h);
+      const dirt = new Uint8Array(grid.w * grid.h);
+      const put = (arr, tx, ty, mask) => { arr[ty * grid.w + tx] = 0b10000 | mask; };
+      for (let mask = 0; mask < 16; mask++) {
+        const tx = originX + (mask % 4) * 3, ty = originY + ((mask / 4) | 0) * 3;
+        put(road, tx, ty, mask);
+        put(dirt, tx, ty + 12, mask);
+      }
+      // A long mixed run: dirt meeting paved, so the transitions are visible.
+      for (let k = 0; k < 14; k++) {
+        const tx = originX + k, ty = originY + 24;
+        const mask = (k === 0 ? 0 : 8) | (k === 13 ? 0 : 2);
+        put(k < 7 ? dirt : road, tx, ty, mask);
+      }
+      world.roadBits = road;
+      world.dirtBits = dirt;
+      renderer.setWorld(world);
+      renderer.invalidateAll();
+    };
+    window.setRoadMode = (mode) => { renderer.setRoadMode(mode); renderer.invalidateAll(); };
+    // Road materials, the same two swatches the game loads.
+    {
+      const rr = await import(`${base}src/iso/road-renderer.ts`);
+      const tex = async (f) => { const i = new Image(); i.src = `${base}assets/roads/${f}`; await i.decode(); return i; };
+      try {
+        const [asphalt, dirt] = await Promise.all([tex("asphalt.webp"), tex("dirt.webp")]);
+        renderer.setRoadStyle({
+          ...rr.DEFAULT_ROAD_STYLE,
+          paved: { ...rr.DEFAULT_ROAD_STYLE.paved, image: asphalt },
+          dirt: { ...rr.DEFAULT_ROAD_STYLE.dirt, image: dirt },
+        });
+        window.roadTextures = true;
+      } catch {
+        window.roadTextures = false;
+      }
+    }
     window.review = (zoom, width, height, target) => {
       for (const c of Object.values(canvases)) { c.width = width; c.height = height; }
       renderer.setWorld(world);
@@ -130,6 +169,7 @@ try {
     ["scenery-0.5x", 0.5, 1200, 760],
     ["scenery-map", 0.5, 2400, 1200],
   ];
+  const ROAD_ORIGIN = [40, 40];
   const diagnostics = [];
   for (const [name, zoom, width, height] of shots) {
     await page.setViewportSize({ width, height });
@@ -140,7 +180,27 @@ try {
     await page.screenshot({ path: `${out}/${name}.png` });
     console.log(`rendered ${name}: ${width}×${height} @${zoom}×`);
   }
-  await writeFile(`${out}/diagnostics.json`, JSON.stringify({ info, diagnostics, errors }, null, 2));
+  // Road A/B: the same fixture in both renderers, at every zoom.
+  await page.evaluate(([x, y]) => window.roadFixture(x, y), ROAD_ORIGIN);
+  const roadDiag = [];
+  for (const mode of ["sprites", "textured"]) {
+    await page.evaluate((m) => window.setRoadMode(m), mode);
+    for (const zoom of [2, 1, 0.5]) {
+      const width = zoom === 0.5 ? 1400 : 1200, height = zoom === 0.5 ? 900 : 760;
+      await page.setViewportSize({ width, height });
+      roadDiag.push({
+        mode, zoom,
+        ...(await page.evaluate(
+          ({ zoom, width, height, t }) => window.review(zoom, width, height, t),
+          { zoom, width, height, t: [ROAD_ORIGIN[0] + 5, ROAD_ORIGIN[1] + 10] },
+        )),
+      });
+      await page.screenshot({ path: `${out}/road-${mode}-${zoom}x.png` });
+      console.log(`rendered road-${mode}-${zoom}x`);
+    }
+  }
+
+  await writeFile(`${out}/diagnostics.json`, JSON.stringify({ info, diagnostics, roadDiag, errors }, null, 2));
   if (errors.length) console.warn("page errors:\n" + errors.join("\n"));
 } finally {
   await browser.close();

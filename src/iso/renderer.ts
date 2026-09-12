@@ -43,6 +43,10 @@ import {
   FOREST_FOOTPRINT, TREE_SPRITES, paintDecals,
   type Decal, type DecalImages, type Forest, type Scenery,
 } from "./scenery";
+import {
+  DEFAULT_ROAD_STYLE, RoadCache,
+  type RoadCacheStats, type RoadRenderMode, type RoadStyle,
+} from "./road-renderer";
 
 /**
  * Ground texture scale relative to world pixels: one texture pixel covers
@@ -180,8 +184,25 @@ export function dirtSpriteName(world: World, tx: number, ty: number, cell: numbe
   return paved ? `dirt_road_${state}` : bitName("dirt", cell);
 }
 
+/**
+ * Options for the draw list. `roads: false` suppresses ONLY the road and dirt
+ * SPRITE items, for the textured road renderer which paints those surfaces
+ * itself. Everything else in the tile loop — most importantly the tree and
+ * forest suppression, which reads the live road bytes — runs exactly as
+ * before. Hiding roads by handing this function zeroed road arrays would
+ * "work" and would also resurrect every tree the player has paved over.
+ */
+export interface DrawListOptions {
+  roads?: boolean;
+}
+
 /** Build the structure draw list for a culled tile range. */
-export function buildDrawList(world: World, r: { x0: number; y0: number; x1: number; y1: number }): DrawItem[] {
+export function buildDrawList(
+  world: World,
+  r: { x0: number; y0: number; x1: number; y1: number },
+  opts: DrawListOptions = {},
+): DrawItem[] {
+  const emitRoads = opts.roads !== false;
   const out: DrawItem[] = [];
   const { grid } = world;
   // Both road tiers are flush to the ground and 1×1 — they sort naturally.
@@ -195,8 +216,8 @@ export function buildDrawList(world: World, r: { x0: number; y0: number; x1: num
       const i = ty * MAP_W + tx;
       const rb = world.roadBits?.[i] ?? 0;    // premium paved → road_XXXX (tar)
       const db = world.dirtBits?.[i] ?? 0;    // basic gravel   → dirt_XXXX / dirt_road_*
-      if (db) out.push({ sprite: dirtSpriteName(world, tx, ty, db), tx, ty });
-      if (rb) out.push({ sprite: bitName("road", rb), tx, ty });
+      if (emitRoads && db) out.push({ sprite: dirtSpriteName(world, tx, ty, db), tx, ty });
+      if (emitRoads && rb) out.push({ sprite: bitName("road", rb), tx, ty });
       // SCENERY: a scattered tree, unless the tile has since been paved or
       // built on — the tree was cleared to make room, which is what the
       // player expects to see and costs nothing to model.
@@ -263,6 +284,13 @@ export function cullPad(atlas: Atlas): number {
 
 type Ctx2D = CanvasRenderingContext2D;
 
+/** An offscreen raster surface, or null where neither API exists (tests). */
+function makeSurface(w: number, h: number): HTMLCanvasElement | OffscreenCanvas | null {
+  if (typeof OffscreenCanvas !== "undefined") return new OffscreenCanvas(w, h);
+  if (typeof document === "undefined") return null;
+  return Object.assign(document.createElement("canvas"), { width: w, height: h });
+}
+
 export interface RendererCanvases {
   terrain: HTMLCanvasElement;
   structures: HTMLCanvasElement;
@@ -283,6 +311,13 @@ export interface RenderDiagnostics {
   camera: { zoom: number; vw: number; vh: number; x: number; y: number };
   cull: { pad: number; x0: number; y0: number; x1: number; y1: number };
   chunkCacheEntries: number;
+  /** Road renderer mode, texture readiness and cache accounting. */
+  roads: {
+    mode: RoadRenderMode;
+    textured: { paved: boolean; dirt: boolean };
+    blitsLastFrame: number;
+    cache: RoadCacheStats;
+  };
   groundAnchorReference: number | null;
   depthCycles: string[][];
   structures: {
@@ -344,6 +379,30 @@ export class IsoRenderer {
   // ── scenery ──────────────────────────────────────────────────────────────
   /** The seed-derived ground decals; null until the map's scenery is set. */
   private decals: Decal[] | null = null;
+  // ── roads ────────────────────────────────────────────────────────────────
+  /**
+   * Which road implementation is live. Renderer-local and never persisted —
+   * it is an A/B switch, not game state, so it must not reach the save format
+   * or the multiplayer protocol.
+   *
+   * `textured` is now the default: the vector roads are the roads. The old
+   * per-mask sprites stay reachable through `__iso.roadMode('sprites')` for
+   * comparison and as a rollback, and their atlas cells are still shipped.
+   */
+  private roadMode: RoadRenderMode = "textured";
+  private roadStyle: RoadStyle = DEFAULT_ROAD_STYLE;
+  private roadCache = new RoadCache();
+  private roadBlits = 0;
+  /**
+   * A copy of the road bytes as they were when the caches were last valid.
+   *
+   * The track layers are typed arrays MUTATED IN PLACE, so `setWorld` cannot
+   * detect a change by identity — the same array object arrives every time
+   * with different contents. Comparing against a copy is the reliable way to
+   * find which tiles actually moved, and it dirties only those tiles and
+   * their neighbours instead of dropping the whole cache on every build.
+   */
+  private roadShadow: { road: Uint8Array; dirt: Uint8Array } | null = null;
   /** The decal PNGs by family; null until the art loads (then decals paint). */
   private decalImages: DecalImages | null = null;
 
@@ -404,11 +463,15 @@ export class IsoRenderer {
     for (const z of this.atlas.images.keys()) {
       this.groundChunkCache.delete(`${z}:${chunkIndexOf(tx, ty)}`);
     }
+    // A road's shape depends on its neighbours' bits and their tier, so the
+    // cache dirties a neighbourhood rather than a tile.
+    this.roadCache.invalidateTile(tx, ty, "invalidateTile");
     this.structuresDirty = true;
   }
 
   invalidateAll() {
     this.groundChunkCache.clear();
+    this.roadCache.clear("all");
     this.structuresDirty = true;
   }
 
@@ -421,10 +484,76 @@ export class IsoRenderer {
   }
 
   setWorld(world: World) {
+    const gridChanged = this.world.grid !== world.grid;
     this.world = world;
     this.shore = null;                       // recompute for the new grid
     this.shoreGrid = null;
     this.structuresDirty = true;
+    if (gridChanged) {
+      // A new map, a loaded save or a guest snapshot: nothing cached applies.
+      this.roadCache.clear("world");
+      this.roadShadow = null;
+    }
+    this.syncRoadCache();
+  }
+
+  // ── roads ────────────────────────────────────────────────────────────────
+  /** Which road implementation to draw. A/B switch; never persisted. */
+  setRoadMode(mode: RoadRenderMode): void {
+    if (mode === this.roadMode) return;
+    this.roadMode = mode;
+    this.structuresDirty = true;
+  }
+
+  get roadRenderMode(): RoadRenderMode { return this.roadMode; }
+
+  /**
+   * Install road materials. Called when the textures resolve; a failure just
+   * leaves the flat fallback palette in place, which is a complete look
+   * rather than an error state.
+   */
+  setRoadStyle(style: RoadStyle): void {
+    this.roadStyle = style;
+    this.roadCache.bumpStyle("style");
+    this.structuresDirty = true;
+  }
+
+  /**
+   * Diff the live road bytes against our copy and dirty only what moved.
+   *
+   * Both track layers are mutated IN PLACE, so array identity proves nothing;
+   * this is the only reliable signal short of the simulation raising explicit
+   * events. It is O(map) per call, on a 20 736-tile map, and only on world
+   * syncs — not per frame.
+   */
+  private syncRoadCache(): void {
+    const road = this.world.roadBits, dirt = this.world.dirtBits;
+    if (!road || !dirt) return;
+    const prev = this.roadShadow;
+    if (!prev || prev.road.length !== road.length) {
+      this.roadShadow = { road: Uint8Array.from(road), dirt: Uint8Array.from(dirt) };
+      this.roadCache.clear("resync");
+      return;
+    }
+    for (let i = 0; i < road.length; i++) {
+      if (prev.road[i] === road[i] && prev.dirt[i] === dirt[i]) continue;
+      prev.road[i] = road[i];
+      prev.dirt[i] = dirt[i];
+      this.roadCache.invalidateTile(i % MAP_W, (i / MAP_W) | 0, "build");
+    }
+  }
+
+  /** Road cache + mode, for `__iso.rendering()`. */
+  roadDiagnostics() {
+    return {
+      mode: this.roadMode,
+      textured: {
+        paved: !!this.roadStyle.paved.image,
+        dirt: !!this.roadStyle.dirt.image,
+      },
+      blitsLastFrame: this.roadBlits,
+      cache: this.roadCache.stats(),
+    };
   }
 
   /**
@@ -596,7 +725,14 @@ export class IsoRenderer {
     const ctx = this.ctxS, cam = this.cam;
     ctx.clearRect(0, 0, cam.vw, cam.vh);
     const r = visibleTileRange(cam, this.pad);
-    const items = buildDrawList(this.world, r);
+    const textured = this.roadMode === "textured";
+    // Roads are flat, so they go down first, under every elevated thing —
+    // and above the terrain canvas entirely, which is what keeps their
+    // transparent verges showing the real decals and grass underneath.
+    this.roadBlits = textured
+      ? this.roadCache.paint(ctx, cam, this.world, this.roadStyle, (w, h) => makeSurface(w, h))
+      : 0;
+    const items = buildDrawList(this.world, r, { roads: !textured });
     const placed = items.map((i) => place(this.atlas, i)).filter(Boolean) as Placed[];
     const sorted = depthSort(placed);
     const { order } = sorted;
@@ -747,6 +883,7 @@ export class IsoRenderer {
       camera: { zoom: this.cam.zoom, vw: this.cam.vw, vh: this.cam.vh, x: this.cam.x, y: this.cam.y },
       cull: { pad: this.pad, x0: range.x0, y0: range.y0, x1: range.x1, y1: range.y1 },
       chunkCacheEntries: this.groundChunkCache.size,
+      roads: this.roadDiagnostics(),
       groundAnchorReference,
       depthCycles: this.lastCycles,
       structures,

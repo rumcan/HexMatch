@@ -2331,18 +2331,26 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .ending-screen.path-paving .ending-card { --path-mark: "◆"; }
 .ending-screen.path-plants .ending-card { --path-mark: "▰"; }
 .ending-screen.path-balanced .ending-card { --path-mark: "✦"; }
+/* The supplied win/lose photographs (tools/make-ending-art.mjs), painted
+   UNDER the shade's gradients so the card above still reads. `cover` on a
+   centred position, because the art is a scene rather than a texture and must
+   not tile or letterbox at any window shape. */
 .ending-shade {
   position: absolute; inset: 0; z-index: -3;
   background:
     radial-gradient(ellipse at 50% 16%, rgba(255, 186, 58, .16), transparent 43%),
-    linear-gradient(180deg, rgba(22, 13, 7, .18), rgba(3, 2, 2, .92)),
-    repeating-linear-gradient(90deg, rgba(255,255,255,.012) 0 1px, transparent 1px 5px);
+    linear-gradient(180deg, rgba(22, 13, 7, .28), rgba(3, 2, 2, .74)),
+    repeating-linear-gradient(90deg, rgba(255,255,255,.012) 0 1px, transparent 1px 5px),
+    url("../assets/ui/ending/won.webp") center / cover no-repeat,
+    #060403;
 }
 .ending-screen.defeat .ending-shade {
   background:
     radial-gradient(ellipse at 50% 18%, rgba(129, 45, 30, .14), transparent 42%),
-    linear-gradient(180deg, #15100e, #030303 78%);
-  filter: saturate(.45);
+    linear-gradient(180deg, rgba(21, 16, 14, .42), rgba(3, 3, 3, .8) 78%),
+    url("../assets/ui/ending/lost.webp") center / cover no-repeat,
+    #030303;
+  filter: saturate(.7);
 }
 .ending-card {
   position: relative; z-index: 3;

@@ -38,6 +38,12 @@ import waterTex from "../../assets/ground/water.png";
 // TEMP protest crowd — a placeholder png drawn straight on the overlay
 // canvas, not an atlas sprite (see `paintProtests` + tools/make-protest-png.mjs).
 import protestArt from "../../assets/protest.png";
+// Vector roads: the two seamless material swatches
+// (tools/make-road-textures.mjs). Loaded independently of every other art
+// group, so a slow or failed decode leaves the roads drawn in their flat
+// fallback colours rather than leaving them out.
+import asphaltTex from "../../assets/roads/asphalt.webp";
+import dirtTex from "../../assets/roads/dirt.webp";
 
 import { Atlas, buildMasks, loadBuildingLayers, type Manifest, type AtlasImage } from "./atlas";
 import { loadGroundTextures } from "./ground";
@@ -47,6 +53,7 @@ import {
   type Camera, type GestureState,
 } from "./camera";
 import { IsoRenderer, type World } from "./renderer";
+import { DEFAULT_ROAD_STYLE } from "./road-renderer";
 import { scatterScenery, type Scenery } from "./scenery";
 import { loadDecalImages, loadScenerySprites } from "./scenery-art";
 import { generateMap, resolveMapSeed, type Grid, type Industry } from "./grid";
@@ -3316,6 +3323,21 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       renderer?.invalidateAll();
     }).catch((err) => {
       console.warn("[scenery] art failed to load:", err);
+    });
+
+    // Road materials, on their own promise. Both must decode before the style
+    // is installed — a half-textured road network would look like a bug — but
+    // nothing waits on them, and a failure keeps the flat palette, which is a
+    // complete look rather than an error state.
+    void Promise.all([load(asphaltTex), load(dirtTex)]).then(([asphalt, dirt]) => {
+      if (disposed) return;
+      renderer?.setRoadStyle({
+        ...DEFAULT_ROAD_STYLE,
+        paved: { ...DEFAULT_ROAD_STYLE.paved, image: asphalt },
+        dirt: { ...DEFAULT_ROAD_STYLE.dirt, image: dirt },
+      });
+    }).catch((err) => {
+      console.warn("[roads] material textures failed to load:", err);
     });
 
     void loadBuildingLayers(atlas, `${import.meta.env.BASE_URL}assets/buildings/`).then((n) => {
