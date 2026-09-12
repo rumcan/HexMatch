@@ -34,8 +34,11 @@ import {
 import type { DrawItem } from "./depth";
 import { TRUCK_SPEED } from "./vehicles";
 
-/** The traffic volume the probe starts with — "a few cars". */
-export const CAR_COUNT = 3;
+/** The traffic volume the probe starts with — "lots of cars": a dozen, so
+ *  the streets actually feel lived-in (perf-probed: 12 cars cost well under
+ *  0.05 ms of JS per frame). The art slots cycle, so car 4+ wears car 1's
+ *  livery, and so on. */
+export const CAR_COUNT = 12;
 /** Cars drive at the lorry's pace: one tile every 300 ms. */
 export const CAR_SPEED = TRUCK_SPEED;
 /** Walk budget per car when finding a loop (96 tiles is plenty of street). */
@@ -234,7 +237,7 @@ function routeFrom(
 }
 
 /** Pick the best of a handful of candidate routes: prefer one that shares
- *  little of its street with the routes already adopted (so the three cars
+ *  little of its street with the routes already adopted (so the dozen cars
  *  read as traffic, not a convoy), fall back to the first valid route. */
 function findRoute(
   tiles: number[], neighbours: Map<number, number[]>, rng: () => number, adopted: Car[],

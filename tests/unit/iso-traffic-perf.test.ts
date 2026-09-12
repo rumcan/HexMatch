@@ -157,10 +157,10 @@ describe("TRAFFIC-01 perf probe", () => {
     const cars = createCarState();
     cars.cars = planCars(track, [], CAR_COUNT);
     const items = carItems(cars);
-    // all three cars exist and are named car 1 / car 2 / car 3…
-    expect(items.length).toBe(3);
+    // the full default volume exists and is named car 1 … car N…
+    expect(items.length).toBe(CAR_COUNT);
     expect(items.map((i) => (i.ref as { car: string }).car)).toEqual(
-      ["car 1", "car 2", "car 3"],
+      Array.from({ length: CAR_COUNT }, (_, i) => `car ${i + 1}`),
     );
     world.vehicles = items;
     renderer.render(0);
@@ -168,7 +168,7 @@ describe("TRAFFIC-01 perf probe", () => {
     // items (a car parked outside the viewport is culled, not dropped).
     const drawn = renderer.drawOrder.filter((p) => p.fx !== undefined);
     expect(drawn.length).toBeGreaterThanOrEqual(1);
-    expect(drawn.length).toBeLessThanOrEqual(3);
+    expect(drawn.length).toBeLessThanOrEqual(CAR_COUNT);
   });
 
   it("reports per-frame cost at 0 / 3 / 10 / 30 / 100 cars (HEX_TRAFFIC_BENCH=1)", () => {

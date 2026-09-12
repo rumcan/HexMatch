@@ -1931,7 +1931,8 @@
     1
    ],
    "moving": true,
-   "note": "TRAFFIC-01: ambient car 1 — slot for player art. Currently a copy of the OpenGFX goods lorry view ne (../goods_lorry_ne.png); replace src/assets/sprites/png/vehicles/ttd/cars/car1_ne.png and run `npm run slice-atlas`. Bottom-centre anchor derived, as for the truck."
+   "note": "TRAFFIC-01: ambient car 1 — slot for player art. Currently a copy of the OpenGFX goods lorry view ne (../goods_lorry_ne.png); replace src/assets/sprites/png/vehicles/ttd/cars/car1_ne.png and run `npm run slice-atlas`. Bottom-centre anchor derived, as for the truck.",
+   "scale": 0.5
   },
   {
    "name": "car1_se",
@@ -1941,7 +1942,8 @@
     1
    ],
    "moving": true,
-   "note": "TRAFFIC-01: ambient car 1 — slot for player art. Currently a copy of the OpenGFX goods lorry view se (../goods_lorry_se.png); replace src/assets/sprites/png/vehicles/ttd/cars/car1_se.png and run `npm run slice-atlas`. Bottom-centre anchor derived, as for the truck."
+   "note": "TRAFFIC-01: ambient car 1 — slot for player art. Currently a copy of the OpenGFX goods lorry view se (../goods_lorry_se.png); replace src/assets/sprites/png/vehicles/ttd/cars/car1_se.png and run `npm run slice-atlas`. Bottom-centre anchor derived, as for the truck.",
+   "scale": 0.5
   },
   {
    "name": "car1_sw",
@@ -1951,7 +1953,8 @@
     1
    ],
    "moving": true,
-   "note": "TRAFFIC-01: ambient car 1 — slot for player art. Currently a copy of the OpenGFX goods lorry view sw (../goods_lorry_sw.png); replace src/assets/sprites/png/vehicles/ttd/cars/car1_sw.png and run `npm run slice-atlas`. Bottom-centre anchor derived, as for the truck."
+   "note": "TRAFFIC-01: ambient car 1 — slot for player art. Currently a copy of the OpenGFX goods lorry view sw (../goods_lorry_sw.png); replace src/assets/sprites/png/vehicles/ttd/cars/car1_sw.png and run `npm run slice-atlas`. Bottom-centre anchor derived, as for the truck.",
+   "scale": 0.5
   },
   {
    "name": "car1_nw",
@@ -1961,7 +1964,8 @@
     1
    ],
    "moving": true,
-   "note": "TRAFFIC-01: ambient car 1 — slot for player art. Currently a copy of the OpenGFX goods lorry view nw (../goods_lorry_nw.png); replace src/assets/sprites/png/vehicles/ttd/cars/car1_nw.png and run `npm run slice-atlas`. Bottom-centre anchor derived, as for the truck."
+   "note": "TRAFFIC-01: ambient car 1 — slot for player art. Currently a copy of the OpenGFX goods lorry view nw (../goods_lorry_nw.png); replace src/assets/sprites/png/vehicles/ttd/cars/car1_nw.png and run `npm run slice-atlas`. Bottom-centre anchor derived, as for the truck.",
+   "scale": 0.5
   },
   {
    "name": "car2_ne",
@@ -1971,7 +1975,8 @@
     1
    ],
    "moving": true,
-   "note": "TRAFFIC-01: ambient car 2 — slot for player art. Currently a copy of the OpenGFX goods lorry view ne (../goods_lorry_ne.png); replace src/assets/sprites/png/vehicles/ttd/cars/car2_ne.png and run `npm run slice-atlas`. Bottom-centre anchor derived, as for the truck."
+   "note": "TRAFFIC-01: ambient car 2 — slot for player art. Currently a copy of the OpenGFX goods lorry view ne (../goods_lorry_ne.png); replace src/assets/sprites/png/vehicles/ttd/cars/car2_ne.png and run `npm run slice-atlas`. Bottom-centre anchor derived, as for the truck.",
+   "scale": 0.5
   },
   {
    "name": "car2_se",
@@ -1981,7 +1986,8 @@
     1
    ],
    "moving": true,
-   "note": "TRAFFIC-01: ambient car 2 — slot for player art. Currently a copy of the OpenGFX goods lorry view se (../goods_lorry_se.png); replace src/assets/sprites/png/vehicles/ttd/cars/car2_se.png and run `npm run slice-atlas`. Bottom-centre anchor derived, as for the truck."
+   "note": "TRAFFIC-01: ambient car 2 — slot for player art. Currently a copy of the OpenGFX goods lorry view se (../goods_lorry_se.png); replace src/assets/sprites/png/vehicles/ttd/cars/car2_se.png and run `npm run slice-atlas`. Bottom-centre anchor derived, as for the truck.",
+   "scale": 0.5
   },
   {
    "name": "car2_sw",
@@ -1991,7 +1997,8 @@
     1
    ],
    "moving": true,
-   "note": "TRAFFIC-01: ambient car 2 — slot for player art. Currently a copy of the OpenGFX goods lorry view sw (../goods_lorry_sw.png); replace src/assets/sprites/png/vehicles/ttd/cars/car2_sw.png and run `npm run slice-atlas`. Bottom-centre anchor derived, as for the truck."
+   "note": "TRAFFIC-01: ambient car 2 — slot for player art. Currently a copy of the OpenGFX goods lorry view sw (../goods_lorry_sw.png); replace src/assets/sprites/png/vehicles/ttd/cars/car2_sw.png and run `npm run slice-atlas`. Bottom-centre anchor derived, as for the truck.",
+   "scale": 0.5
   },
   {
    "name": "car2_nw",
@@ -2001,7 +2008,8 @@
     1
    ],
    "moving": true,
-   "note": "TRAFFIC-01: ambient car 2 — slot for player art. Currently a copy of the OpenGFX goods lorry view nw (../goods_lorry_nw.png); replace src/assets/sprites/png/vehicles/ttd/cars/car2_nw.png and run `npm run slice-atlas`. Bottom-centre anchor derived, as for the truck."
+   "note": "TRAFFIC-01: ambient car 2 — slot for player art. Currently a copy of the OpenGFX goods lorry view nw (../goods_lorry_nw.png); replace src/assets/sprites/png/vehicles/ttd/cars/car2_nw.png and run `npm run slice-atlas`. Bottom-centre anchor derived, as for the truck.",
+   "scale": 0.5
   },
   {
    "name": "car3_ne",
@@ -2011,7 +2019,8 @@
     1
    ],
    "moving": true,
-   "note": "TRAFFIC-01: ambient car 3 — slot for player art. Currently a copy of the OpenGFX goods lorry view ne (../goods_lorry_ne.png); replace src/assets/sprites/png/vehicles/ttd/cars/car3_ne.png and run `npm run slice-atlas`. Bottom-centre anchor derived, as for the truck."
+   "note": "TRAFFIC-01: ambient car 3 — slot for player art. Currently a copy of the OpenGFX goods lorry view ne (../goods_lorry_ne.png); replace src/assets/sprites/png/vehicles/ttd/cars/car3_ne.png and run `npm run slice-atlas`. Bottom-centre anchor derived, as for the truck.",
+   "scale": 0.5
   },
   {
    "name": "car3_se",
@@ -2021,7 +2030,8 @@
     1
    ],
    "moving": true,
-   "note": "TRAFFIC-01: ambient car 3 — slot for player art. Currently a copy of the OpenGFX goods lorry view se (../goods_lorry_se.png); replace src/assets/sprites/png/vehicles/ttd/cars/car3_se.png and run `npm run slice-atlas`. Bottom-centre anchor derived, as for the truck."
+   "note": "TRAFFIC-01: ambient car 3 — slot for player art. Currently a copy of the OpenGFX goods lorry view se (../goods_lorry_se.png); replace src/assets/sprites/png/vehicles/ttd/cars/car3_se.png and run `npm run slice-atlas`. Bottom-centre anchor derived, as for the truck.",
+   "scale": 0.5
   },
   {
    "name": "car3_sw",
@@ -2031,7 +2041,8 @@
     1
    ],
    "moving": true,
-   "note": "TRAFFIC-01: ambient car 3 — slot for player art. Currently a copy of the OpenGFX goods lorry view sw (../goods_lorry_sw.png); replace src/assets/sprites/png/vehicles/ttd/cars/car3_sw.png and run `npm run slice-atlas`. Bottom-centre anchor derived, as for the truck."
+   "note": "TRAFFIC-01: ambient car 3 — slot for player art. Currently a copy of the OpenGFX goods lorry view sw (../goods_lorry_sw.png); replace src/assets/sprites/png/vehicles/ttd/cars/car3_sw.png and run `npm run slice-atlas`. Bottom-centre anchor derived, as for the truck.",
+   "scale": 0.5
   },
   {
    "name": "car3_nw",
@@ -2041,7 +2052,8 @@
     1
    ],
    "moving": true,
-   "note": "TRAFFIC-01: ambient car 3 — slot for player art. Currently a copy of the OpenGFX goods lorry view nw (../goods_lorry_nw.png); replace src/assets/sprites/png/vehicles/ttd/cars/car3_nw.png and run `npm run slice-atlas`. Bottom-centre anchor derived, as for the truck."
+   "note": "TRAFFIC-01: ambient car 3 — slot for player art. Currently a copy of the OpenGFX goods lorry view nw (../goods_lorry_nw.png); replace src/assets/sprites/png/vehicles/ttd/cars/car3_nw.png and run `npm run slice-atlas`. Bottom-centre anchor derived, as for the truck.",
+   "scale": 0.5
   },
   {
    "name": "dirt_road",

@@ -1,14 +1,14 @@
 // ══════════════════════════════════════════════════════════════════════════
 // TRAFFIC-01 — ambient cars on the streets: the perf probe's contract.
 //
-// Pinned here (the art is placeholder — truck sprites renamed car 1/2/3 —
-// so nothing about the pixels is asserted, only the driving):
+// Pinned here (the cars now have their own 50×50 art, scaled to fit the
+// road — but nothing about the pixels is asserted, only the driving):
 //   * planCars produces at most `count` cars, named "car 1"…"car N", with
 //     routes over the road surface (paved + dirt, public included);
 //   * every route is a legal drive: consecutive tiles face each other (E5's
 //     mutual-bit invariant), and a loop route's closing edge is mutual too;
-//   * the three cars are spread: routes are never all byte-identical when
-//     the network has room for variety;
+//   * the cars are spread: routes are never all byte-identical when the
+//     network has room for variety;
 //   * tickCars moves a car at exactly CAR_SPEED, folds a huge tick through
 //     the turns without teleporting (position continuity), and ping-pongs
 //     vs loops correctly;
@@ -94,11 +94,15 @@ function carPos(car: Car): [number, number] {
 }
 
 describe("TRAFFIC-01 planning", () => {
-  it("boots with a few cars (3) named car 1 / car 2 / car 3", () => {
+  it("boots with the default volume of cars, named car 1 / car 2 / …", () => {
     const { track } = seededWorld();
     const cars = planCars(track);
     expect(cars.length).toBe(CAR_COUNT);
-    expect(cars.map((c) => c.name)).toEqual(["car 1", "car 2", "car 3"]);
+    // "lots of cars" is the shipped default (12) — names number them 1..N
+    expect(cars.length).toBeGreaterThanOrEqual(8);
+    expect(cars.map((c) => c.name)).toEqual(
+      Array.from({ length: cars.length }, (_, i) => `car ${i + 1}`),
+    );
     for (const c of cars) assertDriveable(track, c);
   });
 
@@ -113,7 +117,7 @@ describe("TRAFFIC-01 planning", () => {
     expect(cars.some((c) => c.loop)).toBe(true);
   });
 
-  it("spreads the three cars: not all of them on the identical route", () => {
+  it("spreads the cars: not all of them on the identical route", () => {
     const { track } = seededWorld();
     const cars = planCars(track);
     const keys = cars.map((c) => JSON.stringify(c.route) + (c.loop ? "L" : "P"));
@@ -309,7 +313,7 @@ describe("TRAFFIC-01 draw items", () => {
     const items = carItems(state);
     expect(items.length).toBe(1);
     // run it to the end and back; the sprite must exist and stay in car 1's
-    // family (the placeholder art is the lorry — TRAFFIC-02 swaps the PNG)
+    // family (its own car1_* art, all four diagonal views)
     for (let i = 0; i < 600; i++) {
       tickCars(state, 300);
       const it = carItems(state)[0]!;

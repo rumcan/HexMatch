@@ -11,6 +11,7 @@
 // run between settle() calls.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { setRng, mulberry32 } from "../../src/game/config";
+import { CAR_COUNT } from "../../src/iso/cars";
 
 // ── stub the art imports (vite handles these in the browser) ──────────────
 vi.mock("../../assets/iso-atlas/atlas@0.5x.png", () => ({ default: "a05.png" }));
@@ -105,11 +106,14 @@ async function boot() {
 }
 
 describe("TRAFFIC-01 in the live game loop", () => {
-  it("boots with three ambient cars driving the streets (car 1/2/3)", async () => {
+  it("boots with the default volume of ambient cars (car 1 … car N)", async () => {
     const h = await boot();
     expect(h.phase).toBe("setup-factory");
     const cars = h.traffic;
-    expect(cars.map((c) => c.name)).toEqual(["car 1", "car 2", "car 3"]);
+    expect(cars.length).toBe(CAR_COUNT);
+    expect(cars.map((c) => c.name)).toEqual(
+      Array.from({ length: cars.length }, (_, i) => `car ${i + 1}`),
+    );
     for (const c of cars) {
       expect(c.routeTiles).toBeGreaterThanOrEqual(2);
       expect(c.t).toBeGreaterThanOrEqual(0);
@@ -132,8 +136,10 @@ describe("TRAFFIC-01 in the live game loop", () => {
     const five = h.setTraffic(5);
     expect(five).toEqual(["car 1", "car 2", "car 3", "car 4", "car 5"]);
     expect(h.traffic).toHaveLength(5);
-    // back to the default volume
-    expect(h.setTraffic(3)).toEqual(["car 1", "car 2", "car 3"]);
-    expect(h.traffic).toHaveLength(3);
+    // back to the default volume (a dozen)
+    expect(h.setTraffic(CAR_COUNT)).toEqual(
+      Array.from({ length: CAR_COUNT }, (_, i) => `car ${i + 1}`),
+    );
+    expect(h.traffic).toHaveLength(CAR_COUNT);
   });
 });

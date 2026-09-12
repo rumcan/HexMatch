@@ -1,12 +1,14 @@
 # TRAFFIC-01 — ambient cars on the streets (and the performance answer)
 
-**Status: implemented.** Three simple cars (`car 1` / `car 2` / `car 3`)
-drive the map's streets and roads, each on its own art slot (`car1_*` /
-`car2_*` / `car3_*`) that currently holds a copy of the TTD lorry — replace
-the PNGs in `src/assets/sprites/png/vehicles/ttd/cars/` and the cars become
-whatever you drop in (TRAFFIC-02, §2). The reason they exist is the
-question they answer: **does having a few cars driving on the map kill
-performance?**
+**Status: implemented.** A dozen simple cars (`car 1` … `car 12`) drive the
+map's streets and roads, three of them with their own art slot (`car1_*` /
+`car2_*` / `car3_*` — the rest cycle those liveries). The slots hold real
+50×50 car art in `src/assets/sprites/png/vehicles/ttd/cars/` (car 1 dark
+teal, car 2 light grey, car 3 green), scaled 0.5× through the atlas
+pipeline so the cars read a bit bigger than the lorry while still fitting
+the road at every zoom level — drop in new PNGs and the cars become whatever
+you draw (§2). The reason they exist is the question they answer: **does
+having a few cars driving on the map kill performance?**
 
 **Answer: no.** Measured, not guessed — see §4.
 
@@ -20,29 +22,37 @@ performance?**
   host/solo only (a guest runs no vehicle movement, the MP-05 rule), merged
   into `world.vehicles` next to `truckItems` so ONE depth-sorted pass draws
   both.
-- `__iso.traffic` — the three cars by name with live position, for
-  playtesting and headless probes.
-- `__iso.setTraffic(n)` — the perf dial: `0` clears the streets, `3` is the
-  default, up to `64` if you want to torture it.
+- `__iso.traffic` — the cars by name with live position, for playtesting
+  and headless probes.
+- `__iso.setTraffic(n)` — the perf dial: `0` clears the streets, `12` is
+  the default ("lots of cars"), up to `64` if you want to torture it.
 
-## 2. Car art — where to drop the real cars (TRAFFIC-02)
+## 2. Car art — where to drop the cars (TRAFFIC-02)
 
 Each car has its own art slot — **car 1 drives `car1_*`, car 2 drives
 `car2_*`, car 3 drives `car3_*`** (four diagonal views each, 12 sprites).
-Right now every slot is a byte-for-byte copy of the OpenGFX goods lorry —
-the placeholder.
+The slots hold real 50×50 car art (car 1 dark teal, car 2 light grey,
+car 3 green) in **`src/assets/sprites/png/vehicles/ttd/cars/`** (a
+README.txt in there explains the naming).
 
-**The folder: `src/assets/sprites/png/vehicles/ttd/cars/`** (a README.txt in
-there explains the naming). To make the cars look like cars:
+**Fitting the road at every zoom:** the car cells in
+`tools/iso-atlas.cells.json` carry `"scale": 0.5`, so the 50×50 sources are
+nearest-resized to 25×25 before the pipeline trims them to their opaque
+bbox — the cars land at 22–25 × 14–16 px, a bit bigger than the 20×15 lorry
+but still road-fitting. The zoom atlases are integer-scale copies of the
+same 1× cells, so the fit holds at 0.5×/1×/2× for free.
 
-1. Replace any of the 12 PNGs — e.g. put a red sedan in `car1_*.png`, a
-   van in `car2_*.png`, a bus in `car3_*.png`. Any size, transparent PNG;
-   it is trimmed to its opaque bbox and anchored bottom-centre
-   automatically. The four views per car: `ne` up/right, `se` down/right,
-   `sw` down/left, `nw` up/left.
+To swap the art (or drop in something bigger):
+
+1. Replace any of the 12 PNGs. Any size, transparent PNG; it is
+   (scaled, then) trimmed to its opaque bbox and anchored bottom-centre
+   automatically. If the new art is larger than 50×50, raise or lower the
+   cell's `"scale"` so the packed size stays in the road's envelope. The
+   four views per car: `ne` up/right, `se` down/right, `sw` down/left,
+   `nw` up/left.
 2. `npm run slice-atlas` — repacks the atlas (0.5×/1×/2×), the manifest and
-   the group editing sheets. Manifest validates; golden tests stay green
-   (sprite geometry unchanged while the slots hold the lorry copy).
+   the group editing sheets. Manifest validates; the golden scene contains
+   no cars, so its fixtures stay green.
 3. Reload the game. Done — no code changes; `carSprite()` in
    `src/iso/cars.ts` already maps car index → slot, cycling the slots past
    three so `setTraffic(n > 3)` grows without new cells.
@@ -73,7 +83,7 @@ dirt OR paved, crossing only **mutual** direction bits (E5's invariant).
   model.
 - **Spread:** each car tries up to 12 candidate starts and takes the route
   that shares least of its street with the routes already adopted, so the
-  three read as traffic, not a convoy.
+  dozen read as traffic, not a convoy.
 - **Motion:** `(leg, t)` position along the route in tile units, 1 tile /
   300 ms (the lorry's pace), ticked with the same dt-capped integration as
   `tickTrucks` — a huge tick folds through the turns at the exact end tile,
@@ -83,12 +93,12 @@ dirt OR paved, crossing only **mutual** direction bits (E5's invariant).
   the lorries' `planTrucksTrucksMerge` rule.
 - **Draw items:** fractional tile position (the `depth.place` moving-item
   contract: anchored at the tile's diamond centre, skipped by picking), the
-  directional `truck_goods_*` sprite for the direction of TRAVEL (a
-  ping-pong car faces the way it is actually rolling), `ref: { car: name }`.
+  directional `car{i}_*` sprite for the direction of TRAVEL (a ping-pong
+  car faces the way it is actually rolling), `ref: { car: name }`.
 
 Cost: one bounded DFS per car per network change (a few thousand edge
-relaxations on the shipped map), then per frame the same ~3 `place()` calls,
-sort inserts and blits a lorry already costs.
+relaxations on the shipped map), then per frame the same ~12 `place()`
+calls, sort inserts and blits a lorry already costs.
 
 ## 4. The structural effect under test
 
@@ -127,9 +137,10 @@ the draw-call delta is the part the browser then rasters):
 Reading: **3 cars cost ~0.01–0.06 ms of JS and ~9–52 extra draw calls per
 frame** (the extra calls are the structures pass — roads + buildings +
 trees — that now runs every frame, plus 3 sprites; at a 64px tile the car
-sprites are 20×16 px, a trivial blit). Even 100 cars stay under 0.15 ms of
-JS and 150 draw calls — far inside the 16.7 ms / 60 fps budget. The
-per-car marginal cost is one `place()`, a sort insert and one blit; the
+sprites are ~22–25×14–16 px, a trivial blit). The shipped default of 12
+cars sits comfortably in the same flat curve. Even 100 cars stay under
+0.15 ms of JS and 150 draw calls — far inside the 16.7 ms / 60 fps budget.
+The per-car marginal cost is one `place()`, a sort insert and one blit; the
 curves are flat, not exponential.
 
 Caveats, stated plainly: this is the JS side of the frame in Node, not an
@@ -140,7 +151,7 @@ drawImages per frame comfortably. For the in-browser feel: boot the game,
 open the console, and drive the dial —
 
 ```js
-__iso.setTraffic(3)    // default
+__iso.setTraffic(12)   // default (a dozen)
 __iso.setTraffic(30)   // real traffic
 __iso.setTraffic(100)  // traffic jam
 __iso.traffic          // who is driving where
@@ -159,7 +170,7 @@ anything drives.
   position preservation across replans, determinism), draw items
   (fractional position, sprite, name in ref, direction of travel).
 - `tests/unit/iso-traffic-game.test.ts` — 3 tests: the REAL `startIsoGame`
-  boots in jsdom with the three cars rolling, positions advance under
+  boots in jsdom with the default dozen rolling, positions advance under
   `truckTick`, `setTraffic` is a working dial.
 - `tests/unit/iso-traffic-perf.test.ts` — the benchmark above plus a
   non-flaky contract (100 cars must not cost 10× the zero-car frame) and a
