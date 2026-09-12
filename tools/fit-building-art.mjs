@@ -46,11 +46,16 @@ const flag = (k, d) => {
   return i >= 0 ? args[i + 1] : d;
 };
 if (!name || !rawPath || args.includes("--help") || args.includes("-h")) {
-  console.log("usage: node tools/fit-building-art.mjs <sprite-name> <raw-art.png> [--scale-ref width|height] [--margin N] [--dry]");
+  console.log("usage: node tools/fit-building-art.mjs <sprite-name> <raw-art.png> [--scale-ref width|height] [--scale-mult N] [--margin N] [--dry]");
   process.exit(1);
 }
 const scaleRef = flag("--scale-ref", "width"); // width | height
 const MARGIN = Number(flag("--margin", "8"));  // canvas breathing room, 2× px
+// --scale-mult N: multiply the computed scale (default 1). Parcel-type art
+// whose silhouette box is inflated by fences/trees/skirt beyond the tile
+// diamond can be nudged onto the template diamond with e.g. 0.95; >1 for
+// art that reads too small. Verify with tools/overlay-building-template.mjs.
+const SCALE_MULT = Number(flag("--scale-mult", "1"));
 const dry = args.includes("--dry");
 
 const snap4 = (v) => Math.ceil(v / 4) * 4;
@@ -160,7 +165,7 @@ if (!artBox) throw new Error(`raw art ${rawPath} is fully transparent after back
 // ── scale: match the reference's ground span (width by default) ────────────
 const refSpan = scaleRef === "height" ? refBox.height : refBox.width;
 const artSpan = scaleRef === "height" ? artBox.height : artBox.width;
-const scale = refSpan / artSpan;
+const scale = (refSpan / artSpan) * SCALE_MULT;
 const artW = Math.max(1, Math.round(artBox.width * scale));
 const artH = Math.max(1, Math.round(artBox.height * scale));
 
@@ -191,7 +196,7 @@ if (!dry) {
 console.log(JSON.stringify({
   name, raw: rawPath, keyed,
   ref: { w: def.w * 2, h: def.h * 2, bbox: [refBox.left, refBox.top, refBox.width, refBox.height], anchor: [refAnchor.x, refAnchor.y] },
-  art: { bbox: [artBox.left, artBox.top, artBox.width, artBox.height], scaled: [artW, artH], scale: +scale.toFixed(4), placed: [dx, dy] },
+  art: { bbox: [artBox.left, artBox.top, artBox.width, artBox.height], scaled: [artW, artH], scale: +scale.toFixed(4), scaleMult: SCALE_MULT, placed: [dx, dy] },
   canvas: { W, H, baseS: spec.S, anchor: [W / 2, H - (def.footprint[0] + def.footprint[1]) * 16] },
   out: dry ? "(dry run)" : out,
 }, null, 2));

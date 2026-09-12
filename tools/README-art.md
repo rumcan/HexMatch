@@ -143,6 +143,35 @@ Gold/quarry grounds 2256, 2257 and 2260 have OpenGFX palette shimmer, not
 separate building frames. They remain static until palette cycling is
 supported; only the shaft tower uses the three explicit 2263–2265 frames.
 
+## 1950s building redo pipeline (ART-1950S second pass)
+
+The first 1950s pass (PR #80) shipped buildings whose human scale was
+inconsistent (cottage doors vs apartment doors differed ~3×), whose 1×1
+parcels lacked grounds, and whose `*_arctic_*` sprites carried snow. The redo
+regenerates the art against `docs/ai-codex-blizzard-redo-guide.md`. The tool
+chain, in order:
+
+| Tool | Job |
+|---|---|
+| `tools/make-ref-cells.mjs` | Extract the OpenGFX reference cell(s) + silhouette aspect ratio for prompt conditioning (`--out`, `--all-town`). |
+| `tools/audit-raw-art.mjs` | Pre-fit audit of a raw: parcel edge slopes (`\|dy/dx\| ≈ 0.5` = the 2:1 family) and a left/right luma light-direction proxy. |
+| `tools/fit-building-art.mjs` | Key the magenta backing, trim, scale to the reference span (`--scale-mult N` to nudge), place on a compliant `@2x` master. |
+| `tools/clean-magenta-fringe.mjs` | Hue-family pass that removes despilled mauve keylines along silhouettes (survivors of the keyer's distance bands) and zeroes RGB under transparent pixels. |
+| `tools/make-building-pngs.mjs` | Downscale to 1×/0.5× and update `assets/buildings/manifest.json`. |
+| `tools/overlay-building-template.mjs` | Composite each master over its `assets/buildings-src/templates/<w>x<h>@2x.png` guide with anchors aligned; prints `parcelPct` and `diamondRatio` (0.5 == true 2:1) per sprite. |
+
+Notes that cost a session to learn:
+
+- The overlay tool **refuses to overwrite** an `--out` that exists unless the
+  filename contains `template-overlay` — a guard added after a mistyped
+  `--out` destroyed a batch of raw generations. Always write to
+  `/tmp/template-overlay-*.png`.
+- The template must **not** be rescaled to an overhang master's canvas width:
+  the footprint diamond stays `(w+h)×64` and only the anchor moves.
+- Back raw generations up (`/tmp/raw-art/bak/`) before any further tooling.
+- Batch generators can return wide/tall images in an unexpected order; trust
+  the fitted dimensions, not the file name, when mapping art to sprites.
+
 ## Licence
 
 Graphics derived from OpenGFX (https://github.com/OpenTTD/OpenGFX),

@@ -20,10 +20,8 @@ conditioning the image model are extracted with (sharp, from
 `assets/iso-atlas/manifest.json` rect × 2):
 
 ```bash
-node -e "const s=require('./assets/iso-atlas/manifest.json').sprites.<name>; \
-  require('sharp')('assets/iso-atlas/atlas@2x.png') \
-  .extract({left:s.x*2,top:s.y*2,width:s.w*2,height:s.h*2}) \
-  .png().toFile('/tmp/ref-<name>.png')"
+node tools/make-ref-cells.mjs --out /tmp/refs.png <sprite...>   # labeled sheet
+node tools/make-ref-cells.mjs --out /tmp/refs.png --all-town    # whole town pool
 ```
 
 ## Status 2026-09-11
@@ -63,6 +61,25 @@ width/height ratio in the prompt (validate-art.mjs prints aspectRef).
 **ART-1950S building art is COMPLETE: every building layer (58) carries
 authored 1950s art. No building placeholders remain.** Match-3 gems
 intentionally remain on the original art (see above).
+
+## Redo pass (in progress, 2026-09-12)
+
+The first pass above shipped, then failed review on three defects: broken
+human-scale hierarchy (cottage vs apartment doors differed ~3×), 1×1 parcels
+without grounds, and snow on every `*_arctic_*` sprite. The redo regenerates
+all 58 layers against `docs/ai-codex-blizzard-redo-guide.md`, using the
+pipeline in `tools/README-art.md` (§ 1950s building redo pipeline).
+
+| Batch | Sprites | State |
+|---|---|---|
+| 1 | `farm`, `factory`, `town_small_house_1x1_1`, `town_flats`, `town_shops_modern`, `town_small_house_arctic_1x1_2`, `town_house_arctic_1x1_5`, `town_cottage_arctic_1x1_1`, `town_shops_arctic_1x1_2`, `town_flats_arctic_2x1_1` | ✅ regenerated, fitted, verified `OK(2:1)`, compiled |
+| remaining 48 | all other sprites | ⏳ pending |
+
+Verification for batch 1: `tools/overlay-building-template.mjs` reports every
+parcel in the 2:1 family, `parcelPct` 84–115% of the guide diamond, and all
+raw audited "left-brighter" (top-left key light). Doors measure ~12–20 px @2×
+across cottage / shops / flats / tower, replacing the old 9 px vs 27 px
+mismatch.
 
 Open follow-ups needing user sign-off (no art generation required):
 - polish candidates: `town_townhouse_gardens_2` (1.91 vs ref 1.488),
