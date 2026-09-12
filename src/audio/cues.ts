@@ -54,12 +54,12 @@ export const CUE_NOTES: Record<Cue, string> = {
   hover: "fingertip on oiled walnut — a control noticed, 16 ms of air",
   click: "a brass key settling — every button, tab and chip",
   tab: "a drawer sliding one bay — Market / Bank / Plant / Feed, Map / Build / Economy",
-  select: "a small glass ping — a gem picked up, a tool armed, a tycoon chosen",
+  select: "a soft thud — a gem picked up, a tool armed, a tycoon chosen",
   pick: "the bounty chooser spending one unit; rises a semitone per tap",
-  swap: "cards sliding on felt — two gems traded",
+  swap: "a soft thud as the gem settles into its new slot — two gems traded",
   open: "a panel swinging up — Help, the rival dossier, the final ledger",
   close: "the same panel settling shut",
-  pop: "a marble dropped in a wooden box — one gem cleared; the cascade climbs a pentatonic ladder",
+  pop: "a bright glass chime — one gem matched; climbs the pentatonic ladder with each combo, like the cargo chute paying out",
   crack: "ice splitting under a boot — a frozen gem or a girder cracked",
   up: "a token stamped up a grade",
   boom: "a charge going off behind a door — a bomb, or sabotage landing across the map",
@@ -163,15 +163,16 @@ const RECIPES: Record<Cue, Recipe> = {
     },
   },
 
-  // Something picked up: a fifth on glass. `step` transposes it, which is how
-  // the tool bar and the portrait picker say "this one, then that one".
+  // Something picked up: a SOFT THUD. The player asked the gem pickup to be
+  // muffled and gentle rather than a bright ping, so this is a low damped
+  // knock in the cloth — no glass, no brassy ring. `step` still transposes it
+  // so the tool bar and the portrait picker say "this one, then that one".
   select: {
     gap: 30,
     run: (v, step) => {
-      const f = semi(784, step);
-      v.tone({ freq: f, gain: 0.07, attack: 0.003, decay: 0.16 });
-      v.tone({ freq: f * 1.5, gain: 0.026, attack: 0.005, decay: 0.13 });
-      v.noise({ dur: 0.01, gain: 0.02, filter: "highpass", freq: 4200 });
+      const f = semi(196, step);
+      v.tone({ freq: f, to: f * 0.55, type: "sine", gain: 0.05, attack: 0.004, decay: 0.13 });
+      v.noise({ dur: 0.035, gain: 0.03, attack: 0.004, filter: "lowpass", freq: 420 });
     },
   },
 
@@ -188,12 +189,14 @@ const RECIPES: Record<Cue, Recipe> = {
     },
   },
 
-  // Two gems traded: a felted swoosh with a little lift at the end.
+  // Two gems traded: the SAME SOFT THUD as the pickup, a touch lower and with
+  // a little downward settle so the gesture reads as "moved" — still a thud,
+  // deliberately not a knock or a swoosh.
   swap: {
     gap: 60,
     run: (v) => {
-      v.noise({ dur: 0.09, gain: 0.05, attack: 0.012, filter: "bandpass", freq: 780, to: 2300, q: 1.0 });
-      v.tone({ freq: 240, to: 330, gain: 0.022, attack: 0.01, decay: 0.09 });
+      v.tone({ freq: 165, to: 120, type: "sine", gain: 0.045, attack: 0.005, decay: 0.16 });
+      v.noise({ dur: 0.045, gain: 0.03, attack: 0.006, filter: "lowpass", freq: 360, to: 220 });
     },
   },
 
@@ -217,17 +220,21 @@ const RECIPES: Record<Cue, Recipe> = {
     },
   },
 
-  // The board's heartbeat. Short, woody, and climbing: a nine-gem cascade is
-  // nine rungs of the ladder, which is the single most "sensory" thing in the
-  // mix and costs four layers a pop.
+  // The board's heartbeat: A BRIGHT GLASS CHIME. A match is no longer the
+  // wooden "marble in a box" — the player wanted it bright and rising with the
+  // combos, like the cargo chute paying out a resource. Short, bright, and
+  // climbing: a nine-gem cascade climbs the pentatonic ladder (the same one
+  // `harvest`/`coin` sit on), so each combo rings a little higher, and it is
+  // the single most "sensory" thing in the mix.
   pop: {
     gap: 38,
     run: (v) => {
       const n = streak("pop", 650, LADDER.length - 1);
       const f = rung(n);
-      v.tone({ freq: f, gain: 0.1, attack: 0.002, decay: 0.13 });
-      v.tone({ freq: f * 2, type: "triangle", gain: 0.026, attack: 0.002, decay: 0.065 });
-      v.noise({ dur: 0.01, gain: 0.022, filter: "bandpass", freq: 3000, q: 1.4 });
+      v.tone({ freq: f, type: "sine", gain: 0.1, attack: 0.0015, decay: 0.16 });
+      v.tone({ freq: f * 2, type: "sine", gain: 0.05, attack: 0.002, decay: 0.11 });
+      v.tone({ freq: f * 3, type: "triangle", gain: 0.022, attack: 0.004, decay: 0.07 });
+      v.noise({ dur: 0.008, gain: 0.014, attack: 0.001, filter: "highpass", freq: 6000 });
     },
   },
 

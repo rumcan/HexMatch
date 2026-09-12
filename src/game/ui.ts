@@ -790,14 +790,14 @@ export function createOriginalUi(
 
   const selectOrSwap = (cell: { r: number; c: number }) => {
     if (selected && adj(selected, cell)) {
-      // SFX-01: cards sliding on felt. The board's own `bad` fx answers a swap
-      // that did not match, so this one is deliberately neutral — the player
-      // hears the gesture, then the verdict.
+      // SFX-01: a soft thud as the gem settles — the board's own `bad` fx
+      // answers a swap that did not match, so this one is deliberately
+      // neutral, just the gesture, then the verdict.
       sfx.play("swap");
       hooks.onSwap(selected.r, selected.c, cell.r, cell.c);
       selected = null;
     } else {
-      // …and a small glass ping when a gem is picked up. The grid opts out of
+      // …and a soft thud when a gem is picked up. The grid opts out of
       // the document delegation (`data-sfx="off"` below) so the board's two
       // moments are the only two sounds it makes: sweeping the mouse across
       // nine gems must not rattle.
