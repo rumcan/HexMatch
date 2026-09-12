@@ -256,6 +256,146 @@ export const OIL_DRILLING_SCENE: RivalryScene = conversation(
   "Okay...",
 );
 
+/**
+ * The Gold Mine warning. Fires the moment the player stands a Depot beside a
+ * Gold Mine — the same placement that drops Gold into their own board's gravity
+ * pool. Torvin's pitch, in a few different dresses, is that chasing Gold is a
+ * young man's game: it adds a SIXTH colour to a match-3 board (more colours,
+ * fewer clean matches) and a coin of Gold buys exactly one thing — Black Market
+ * sabotage, i.e. trouble aimed at the one rival who would rather you didn't.
+ * He's not philosophising; he's covering his own plant, and he's not exactly
+ * hiding it. Every scene starts with Torvin and ends with the player seeing
+ * through him, like the rest of the rivalry.
+ */
+export const GOLD_MINE_SCENES: readonly RivalryScene[] = [
+  conversation(
+    "A depot at the gold mine? Chasing gold is a young man's game, sonny.",
+    "Says a man who's seen better decades.",
+    "That's the point. Gold drops a whole sixth colour into your board — matching gets harder the moment you chase it.",
+    "You're lecturing me on my own match-3 board.",
+    "And that gold buys one thing only: Black Market trouble. Trouble I'd rather not get aimed at my plant.",
+    "So you're not advising. You're covering your back.",
+    "A careful man knows when the ice is thin. Don't be a young man.",
+    "Noted. I'll be a young man exactly as little as I can manage.",
+  ),
+  conversation(
+    "You built beside the gold mine. I can hear your board getting crowded.",
+    "It's one more gem colour, not a population problem.",
+    "One more colour is six to match instead of five. That's a harder board, and I say that kindly.",
+    "Kindly? From you?",
+    "Kindly, and selfishly. Every coin you mine is one pointed at my plant.",
+    "That's the most honest warning you've ever given.",
+  ),
+  conversation(
+    "Gold. You're after the gold. That's a young man's game, and you'll age into it.",
+    "It's a gem that pays out, isn't it?",
+    "Pays for one thing only: Black Market spite. The rest of the shop is locked to you.",
+    "So it's a weapon, not a wallet.",
+    "A weapon you load and aim at the one rival who'd rather you didn't. That's me, by the way.",
+    "Point taken, grandpa.",
+  ),
+  conversation(
+    "Hold on — before that gold depot ships, hear an old fox out.",
+    "I don't remember agreeing to hear a fox.",
+    "Six colours on that board now. More colours, fewer clean matches. You're complicating your own win.",
+    "That's... actually a thing.",
+    "And gold buys nothing but Black Market spite — the kind you'd next fire at the rival you play with.",
+    "Your plant. I get it now.",
+    "I built this town before gold was legal. Chasing it is a young man's game. Play your roads.",
+    "I'll keep the depot. I'll take the advice — sort of.",
+  ),
+  conversation(
+    "A gold depot. I respect the nerve and I hate it for you.",
+    "Why does it bother you so much?",
+    "It adds a sixth colour — harder matching, slower matches — and the only thing gold buys is sabotage aimed at rivals.",
+    "So it's bad for me and a threat to you.",
+    "Exactly. A young man's game: hard on the player, rude to the neighbour. I'd rather you didn't.",
+    "You'll win this argument whether I build it or not.",
+  ),
+];
+
+/**
+ * The idle wire. Between the sabotage set-pieces, Torvin and the player pass
+ * the time: an old tycoon's sayings and a steady supply of cringe dad jokes,
+ * each deflated by the player's portrait. Scenes stay short (four beats),
+ * start with Torvin, and end with the player puncturing the bit — so a lull
+ * reads as banter, never as a threat.
+ */
+export const RIVAL_BANTER: readonly RivalryScene[] = [
+  conversation(
+    "I'm going to tell you a road joke. You don't have to stop and listen.",
+    "I have a factory to run. No, I don't.",
+    "It starts with a paved tile and ends with a Victory Point. You're welcome for the career advice.",
+    "That wasn't even a joke.",
+  ),
+  conversation(
+    "My grandfather paved by feel. I paved by feel too. We call it experience.",
+    "You miss about half your paves.",
+    "The other half are load-bearing.",
+    "That's not what load-bearing means.",
+  ),
+  conversation(
+    "Did you hear about the new match-3 board?",
+    "No. And I'm not asking.",
+    "It's a real gem. Ha! A gem! I'm going to retire happy.",
+    "You've been awake since dawn. Please stop.",
+  ),
+  conversation(
+    "They say a town runs on grain. I say it runs on girders and poor decisions.",
+    "I'd rather think it's the girders.",
+    "One of those two is me.",
+    "That's the worrying part.",
+  ),
+  conversation(
+    "I was going to tell you an ore joke.",
+    "Don't.",
+    "…It would have been a rock one. Mine, in fact.",
+    "I'm taking that as both a warning and a threat. Good.",
+  ),
+  conversation(
+    "A young man builds fast. An old man builds things still standing at the funeral.",
+    "You just planned my funeral.",
+    "I'm planning a long rivalry. The funeral's a detail.",
+    "Noted.",
+  ),
+  conversation(
+    "I don't lose. I re-enter the market.",
+    "You lost the last three rounds.",
+    "I re-entered four times. Mathematically, I'm winning.",
+    "I'd argue with your math, but I'm too busy being rich.",
+  ),
+  conversation(
+    "You know what's hard to get into?",
+    "No.",
+    "A good road network. I had to pave my way in. PAVE MY WAY IN! Ha!",
+    "You're insufferable, and I need your ore.",
+  ),
+  conversation(
+    "The fog of war, sonny. Some men see it. I just smell it — I've been smoking since the blitz.",
+    "That's not a strategy, that's a health warning.",
+    "It's both. I call it tactical smog.",
+    "I'm not repeating that. Thank you.",
+  ),
+  conversation(
+    "Why do I never run out of stone?",
+    "Because you stopped mining it?",
+    "No. I got the quarry's back. Ha! Got the quarry's back! A load-bearing joke.",
+    "Your jokes have no structural integrity whatsoever.",
+  ),
+  conversation(
+    "Every great town starts with one depot and a bad idea. I supply both, and I charge extra.",
+    "You supply the bad idea. I supply the depot.",
+    "Then we're in business, you magnificent young man.",
+    "In business with me, yes. By your ideas, no.",
+  ),
+  conversation(
+    "I told my doctor I needed to slow down.",
+    "And what did he say?",
+    "Build dirt roads instead of paved ones. Same pace, half the points, all the excuses.",
+    "Your doctor is either a genius or your accountant.",
+  ),
+];
+
 /** The original rival-only view remains useful to copy audits and callers. */
 const linesFor = (direction: RivalryDirection): Record<RivalryTactic, readonly string[]> => ({
   bandit: RIVALRY_SCENES[direction].bandit.map((scene) => scene[0].text),
@@ -341,4 +481,33 @@ export function createRivalDirector(seed = 0) {
     previous.set(key, at);
     return scenes[at];
   };
+}
+
+/**
+ * Stateful director over a FLAT pool (the Gold Mine warnings and the idle
+ * wire). Deterministic per (seed, call count) and never touches the
+ * simulation RNG, like `createRivalDirector`; the pick also never repeats the
+ * last scene, so two gold depots back to back hear two different speeches and
+ * the idle wire keeps rotating through the jokes.
+ */
+function createPoolDirector(pool: readonly RivalryScene[], seed = 0): () => RivalryScene {
+  let calls = 0;
+  let last = -1;
+  return (): RivalryScene => {
+    if (pool.length === 1) return pool[0];
+    let at = hashText(`${seed}:${calls++}`) % pool.length;
+    if (at === last) at = (at + 1) % pool.length;
+    last = at;
+    return pool[at];
+  };
+}
+
+/** The next Gold Mine warning for this match (rotates through the pool). */
+export function createGoldMineDirector(seed = 0): () => RivalryScene {
+  return createPoolDirector(GOLD_MINE_SCENES, seed);
+}
+
+/** The next idle-wire exchange for this match (rotates through the pool). */
+export function createBanterDirector(seed = 0): () => RivalryScene {
+  return createPoolDirector(RIVAL_BANTER, seed);
 }

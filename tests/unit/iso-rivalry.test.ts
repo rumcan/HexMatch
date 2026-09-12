@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  OIL_DRILLING_SCENE, RIVALRY_LINES, RIVALRY_SCENES,
-  createRivalDirector, createRivalVoice, rivalLine, rivalryScene,
-  type RivalryDirection, type RivalryTactic,
+  GOLD_MINE_SCENES, OIL_DRILLING_SCENE, RIVAL_BANTER, RIVALRY_LINES, RIVALRY_SCENES,
+  createBanterDirector, createGoldMineDirector, createRivalDirector, createRivalVoice,
+  rivalLine, rivalryScene, type RivalryDirection, type RivalryTactic,
 } from "../../src/iso/rivalry";
 
 const directions: RivalryDirection[] = ["retort", "attack", "thwarted"];
@@ -70,5 +70,76 @@ describe("the rival's deliberately terrible Black Market banter", () => {
         expect(direct(direction, tactic)).not.toBe(direct(direction, tactic));
       }
     }
+  });
+});
+
+/** Every scene Torvin opens (and the player closes) alternates cleanly. */
+function expectWellFormed(scene: readonly { speaker: string; text: string }[]) {
+  expect(scene.length).toBeGreaterThan(0);
+  expect(scene.length % 2).toBe(0);                 // opens with Torvin, ends with the player
+  for (let i = 0; i < scene.length; i++) {
+    expect(scene[i].speaker).toBe(i % 2 === 0 ? "rival" : "you");
+    expect(scene[i].text.length).toBeGreaterThan(0);
+  }
+}
+
+describe("the Gold Mine warning (a young man's game)", () => {
+  it("offers several different speeches, each opening on Torvin", () => {
+    expect(GOLD_MINE_SCENES.length).toBeGreaterThanOrEqual(3);
+    for (const scene of GOLD_MINE_SCENES) expectWellFormed(scene);
+  });
+
+  it("warns that chasing gold is a young man's game", () => {
+    const all = GOLD_MINE_SCENES.flat().map((b) => b.text).join(" ");
+    expect(all).toMatch(/young man's game/i);
+  });
+
+  it("points out both cons: a harder board and a coin that only buys sabotage", () => {
+    const all = GOLD_MINE_SCENES.flat().map((b) => b.text).join(" ");
+    // Con 1 — gold adds a sixth colour to the match-3 board (harder to match).
+    expect(all).toMatch(/sixth colour|six colours|six to match/i);
+    // Con 2 — gold buys nothing but Black Market sabotage aimed at the rival.
+    expect(all).toMatch(/Black Market/i);
+    // …and Torvin is only so honest that it's about his own plant.
+    expect(all).toMatch(/my plant|my skin|neighbour|aimed at/i);
+  });
+
+  it("mentions the gold mine in every speech", () => {
+    for (const scene of GOLD_MINE_SCENES) {
+      expect(scene.map((b) => b.text).join(" ")).toMatch(/gold/i);
+    }
+  });
+
+  it("rotates deterministically and never repeats a speech back to back", () => {
+    const a = createGoldMineDirector(1337);
+    const b = createGoldMineDirector(1337);
+    // same seed → same sequence…
+    expect(a()).toBe(b());
+    // …and two depots back to back hear two different versions.
+    expect(a()).not.toBe(a());
+  });
+});
+
+describe("the idle wire (sayings and cringe dad jokes)", () => {
+  it("has a healthy supply of short two-portrait exchanges", () => {
+    expect(RIVAL_BANTER.length).toBeGreaterThanOrEqual(8);
+    for (const scene of RIVAL_BANTER) {
+      expectWellFormed(scene);
+      // short enough to read while a lorry is still on the road
+      for (const beat of scene) expect(beat.text.length).toBeLessThan(100);
+    }
+  });
+
+  it("sounds like an old tycoon, not a threat", () => {
+    const all = RIVAL_BANTER.flat().map((b) => b.text).join(" ");
+    expect(all).toMatch(/dad joke|joke/i);
+    expect(all).toMatch(/sonny|grandpa|old/i);
+  });
+
+  it("rotates deterministically and never repeats a bit back to back", () => {
+    const a = createBanterDirector(7);
+    const b = createBanterDirector(7);
+    expect(a()).toBe(b());
+    expect(a()).not.toBe(a());
   });
 });

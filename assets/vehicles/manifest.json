@@ -1,0 +1,179 @@
+{
+  "tileW": 64,
+  "tileH": 32,
+  "meta": {
+    "generatedBy": "tools/make-truck-art.mjs",
+    "source": "assets/vehicles-src/<name>@2x.png (authored, keyed off #FF00FF)",
+    "note": "Per-vehicle PNG layers. The DEFS here are complete geometry (rect 0,0,w,h at 1×, ground-contact anchor, footprint 1×1, moving) so `loadVehicleLayers` can install the sprite straight into the table the renderer reads — the branded lorries need no cell in assets/iso-atlas, and the legacy truck_goods_* sheet art stays as the boot fallback."
+  },
+  "sprites": {
+    "truck_blue_ne": {
+      "w": 42,
+      "h": 20,
+      "anchor": [
+        18,
+        19
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        84,
+        40
+      ],
+      "bodyTop1x": 1,
+      "owner": 1,
+      "view": "ne",
+      "note": "TRUCK-BRAND: 1950s delivery lorry, player 1 (human), away to the upper right. Keyed off pure magenta by tools/make-truck-art.mjs; 84×40 at 2×."
+    },
+    "truck_blue_se": {
+      "w": 32,
+      "h": 18,
+      "anchor": [
+        20,
+        17
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        64,
+        36
+      ],
+      "bodyTop1x": 1,
+      "owner": 1,
+      "view": "se",
+      "note": "TRUCK-BRAND: 1950s delivery lorry, player 1 (human), toward the lower right. Keyed off pure magenta by tools/make-truck-art.mjs; 64×36 at 2×."
+    },
+    "truck_blue_sw": {
+      "w": 44,
+      "h": 22,
+      "anchor": [
+        19,
+        20
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        88,
+        44
+      ],
+      "bodyTop1x": 2,
+      "owner": 1,
+      "view": "sw",
+      "note": "TRUCK-BRAND: 1950s delivery lorry, player 1 (human), toward the lower left. Keyed off pure magenta by tools/make-truck-art.mjs; 88×44 at 2×."
+    },
+    "truck_blue_nw": {
+      "w": 46,
+      "h": 24,
+      "anchor": [
+        29,
+        22
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        92,
+        48
+      ],
+      "bodyTop1x": 4,
+      "owner": 1,
+      "view": "nw",
+      "note": "TRUCK-BRAND: 1950s delivery lorry, player 1 (human), away to the upper left. Keyed off pure magenta by tools/make-truck-art.mjs; 92×48 at 2×."
+    },
+    "truck_red_ne": {
+      "w": 46,
+      "h": 24,
+      "anchor": [
+        23,
+        22
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        92,
+        48
+      ],
+      "bodyTop1x": 4,
+      "owner": 2,
+      "view": "ne",
+      "note": "TRUCK-BRAND: 1950s delivery lorry, player 2 (rival), away to the upper right. Keyed off pure magenta by tools/make-truck-art.mjs; 92×48 at 2×."
+    },
+    "truck_red_se": {
+      "w": 40,
+      "h": 20,
+      "anchor": [
+        25,
+        19
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        80,
+        40
+      ],
+      "bodyTop1x": 1,
+      "owner": 2,
+      "view": "se",
+      "note": "TRUCK-BRAND: 1950s delivery lorry, player 2 (rival), toward the lower right. Keyed off pure magenta by tools/make-truck-art.mjs; 80×40 at 2×."
+    },
+    "truck_red_sw": {
+      "w": 44,
+      "h": 22,
+      "anchor": [
+        18,
+        20
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        88,
+        44
+      ],
+      "bodyTop1x": 2,
+      "owner": 2,
+      "view": "sw",
+      "note": "TRUCK-BRAND: 1950s delivery lorry, player 2 (rival), toward the lower left. Keyed off pure magenta by tools/make-truck-art.mjs; 88×44 at 2×."
+    },
+    "truck_red_nw": {
+      "w": 42,
+      "h": 20,
+      "anchor": [
+        25,
+        19
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        84,
+        40
+      ],
+      "bodyTop1x": 1,
+      "owner": 2,
+      "view": "nw",
+      "note": "TRUCK-BRAND: 1950s delivery lorry, player 2 (rival), away to the upper left. Keyed off pure magenta by tools/make-truck-art.mjs; 84×40 at 2×."
+    }
+  }
+}

@@ -56,7 +56,10 @@ import { IsoRenderer, type World } from "./renderer";
 import { DEFAULT_ROAD_STYLE } from "./road-renderer";
 import { scatterScenery, type Scenery } from "./scenery";
 import { loadDecalImages, loadScenerySprites } from "./scenery-art";
-import { generateMap, resolveMapSeed, type Grid, type Industry } from "./grid";
+import { loadVehicleLayers } from "./vehicle-art";
+import {
+  generateMap, resolveMapSeed, townBuildings, type Grid, type Industry,
+} from "./grid";
 import {
   createTrack, drawBits, previewDrag, commitDrag, canBuildOn, hasTrack,
   demolishTile, tIdx, playerNetwork, canAfford, buildRefusal, seedTownRoads,
@@ -96,7 +99,7 @@ import {
 import {
   CARGO, CARGOES, FACTORY_FOOTPRINT, FACTORY_SPRITE, INDUSTRY_BY_KEY, TRANSPORT,
   VICTORY, VP_TARGET, UPGRADE_COST,
-  depotSpriteForCargo, townHouseSprite, type Cargo, type Portrait,
+  depotSpriteForCargo, type Cargo, type Portrait,
 } from "./config";
 import {
   DEPOT_COST, FREE_SETUP_DEPOTS, costCompact, costLabel, priceDepot, shortfallLabel,
@@ -132,7 +135,7 @@ import {
   buildEnding, showEndingScreen, type DecisiveSource, type EndingScreenHandle,
 } from "./ending";
 import {
-  OIL_DRILLING_SCENE, createRivalDirector,
+  OIL_DRILLING_SCENE, createBanterDirector, createGoldMineDirector, createRivalDirector,
   type RivalryDirection, type RivalryScene, type RivalryTactic,
 } from "./rivalry";
 import {
@@ -419,9 +422,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // Rivalry flavour has its own deterministic scene deck and counters. It
   // never consumes simulation RNG, so extra jokes cannot alter an AI decision.
   const nextRivalScene = createRivalDirector(seed);
+  const nextGoldMineScene = createGoldMineDirector(seed);
+  const nextBanterScene = createBanterDirector(seed);
   let playerSabotage = 0;
   let rivalSabotageHits = 0;
   let oilBanterSeen = false;
+  // The idle wire: one short Torvin exchange every so often, mid-game. The
+  // clock arms when play begins and never runs before then (no jokes over the
+  // setup banners or the ending screen). Timing jitter uses Math.random —
+  // presentation pacing, deliberately NOT the seeded simulation RNG.
+  let chitChatArmed = false;
+  let nextChitChatAt = 0;
   // The quarry is created before the HUD. Its callback is replaced once the
   // two-portrait wire exists; no board can pay oil during synchronous boot.
   let onFirstOilHarvest: () => void = () => {};
@@ -710,6 +721,31 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     playRivalryScene(OIL_DRILLING_SCENE);
   };
 
+  /**
+   * The idle wire: a short Torvin exchange — an old tycoon's saying, a cringe
+   * dad joke — drops into the rivalry feed every so often mid-game, so the two
+   * feel like they're keeping each other company between the sabotage
+   * set-pieces. It runs solo only (Torvin is the AI rival) and only once play
+   * has begun: no jokes over the setup banners or the ending screen.
+   *
+   * Pacing: the first bit lands ~40s into play (time to get a road down), then
+   * roughly every 58–111s. The jitter is Math.random on purpose — presentation
+   * cadence, never the seeded simulation RNG.
+   */
+  const CHIT_CHAT_FIRST_MS = 40_000;
+  const CHIT_CHAT_EVERY_MS = 65_000;
+  function rivalChitChat(now: number) {
+    if (!isSolo() || phase !== "play") return;
+    if (!chitChatArmed) {
+      chitChatArmed = true;
+      nextChitChatAt = now + CHIT_CHAT_FIRST_MS;
+      return;
+    }
+    if (now < nextChitChatAt) return;
+    nextChitChatAt = now + CHIT_CHAT_EVERY_MS * (0.9 + Math.random() * 0.7);
+    playRivalryScene(nextBanterScene());
+  }
+
   /** Show the final ledger once. The same model builds victory and defeat, but
    *  only a human win receives the fireworks layer. */
   const presentEnding = (source: DecisiveSource = winningSource) => {
@@ -802,29 +838,22 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       ty: f.ty,
       ref: { kind: "factory", owner: f.owner },
     }));
-    // TOWN-1: emit town house and center draw items
-    const townItems = grid.towns.flatMap((t) => {
-      const items: { sprite: string; tx: number; ty: number; ref: unknown }[] = [];
-      // Town center marker at the center tile
-      items.push({
-        sprite: "town_center",
-        tx: t.tx, ty: t.ty,
-        ref: { kind: "town", id: t.id },
-      });
-      // Houses at all non-center tiles. PP-12: one of 43 verbatim TTD house
-      // cells, chosen by `townHouseSprite` so every settlement mixes homes,
-      // shops, flats and the occasional tall block instead of stamping one
-      // sprite. The centre is the TTD church (`town_center` cell).
-      for (const [hx, hy] of t.houses) {
-        if (hx === t.tx && hy === t.ty) continue; // skip center, already drawn
-        items.push({
-          sprite: townHouseSprite(hx, hy),
-          tx: hx, ty: hy,
-          ref: { kind: "town", id: t.id },
-        });
-      }
-      return items;
-    });
+    // TOWN-1 / TOWN-GRID: the town draw items — art on whole house BLOCKS.
+    //
+    // `townBuildings` decides the layout (see grid.ts): one 2x2 cell per
+    // block where the hash picks one, single houses otherwise. It must be
+    // asked at sync time rather than baked at generation, because a town
+    // cell's footprint comes from the ATLAS and the per-building PNG layers
+    // land after the first sync — `loadBuildingLayers` re-syncs, which is
+    // when the towers move off the streets they used to be drawn across.
+    const footprintOf = (sprite: string): [number, number] =>
+      atlasRef?.get(sprite)?.footprint ?? [1, 1];
+    const townItems = grid.towns.flatMap((t) =>
+      townBuildings(t, footprintOf).map((b) => ({
+        sprite: b.sprite,
+        tx: b.tx, ty: b.ty,
+        ref: { kind: "town", id: t.id } as unknown,
+      })));
     world.extra = [
       ...townItems,
       ...factoryItems,
@@ -1098,6 +1127,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (p.human) sfx.play("build");      // SFX-01
     syncWorld();
     rescoreNow();
+    // Gold Mine warning: the moment the PLAYER stands a Depot beside a Gold
+    // Mine, Torvin warns that chasing gold is a young man's game — it drops a
+    // sixth colour into the player's own board and a coin buys only Black
+    // Market spite aimed at the one rival who'd rather you didn't. He fires
+    // the speech to cover his own skin, and the pool rotates so a second gold
+    // depot hears a different version. Solo only: in a hosted game seat 1 is a
+    // person, not Torvin.
+    if (p.human && isSolo() && served.some((ind) => ind.type === "gold_mine")) {
+      playRivalryScene(nextGoldMineScene());
+    }
     return true;
   }
 
@@ -3443,6 +3482,21 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       console.warn("[scenery] art failed to load:", err);
     });
 
+// TRUCK-BRAND art (assets/vehicles/): the eight liveried lorries — blue for
+    // the player, red for the rival, four headings each. Installed into the
+    // sprite table like the scenery, and just as non-gating: while this is
+    // pending (or on a checkout without the PNGs) the legacy `truck_goods_*`
+    // sheet cells draw every lorry, which is the same lorry unpainted.
+    void loadVehicleLayers(atlas).then((n) => {
+      if (disposed || !n) return;
+      // The trucks are drawn from the structures layer every frame, so the new
+      // defs only need the vehicle items re-derived — but invalidate anyway, the
+      // same way the building layers do, so a paused/still frame updates too.
+      renderer?.invalidateAll();
+    }).catch((err) => {
+      console.warn("[truck-brand] failed to load:", err);
+    });
+
     // Road materials, on their own promise. Both must decode before the style
     // is installed — a half-textured road network would look like a bug — but
     // nothing waits on them, and a failure keeps the flat palette, which is a
@@ -3460,6 +3514,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
     void loadBuildingLayers(atlas, `${import.meta.env.BASE_URL}assets/buildings/`).then((n) => {
       if (disposed || !n) return;
+      // TOWN-GRID: the layers also bring the real FOOTPRINTS with them (a
+      // town cell can be 2x2), and the town draw items were built against the
+      // sheet's 1x1 defs. Re-sync so `townBuildings` re-lays each settlement
+      // on its house blocks — without this the 2x2 towers stay anchored on
+      // single tiles and hang over the streets.
+      syncWorld();
       // B-3.2: the layers just MUTATED sprite w/h (a per-building PNG can
       // out-tall the tallest sheet sprite), so the constructor-time cull pad
       // is stale — tall buildings would pop at the screen edge.
@@ -3495,6 +3555,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       economyTick(t);
       quarryTick(t);
       aiTick(t);
+      // Rivalry idle wire: a Torvin saying / dad joke every so often, mid-game.
+      rivalChitChat(t);
       // MP-05: protests are solo/host-only (buyBlack refuses guests, like the
       // rest of the Black Market), so the sweep is a no-op on a guest — it
       // runs unguarded rather than splitting the heartbeat below.
@@ -3525,7 +3587,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         tickTrucks(trucks, dt, protests.size > 0 ? new Set(protests.keys()) : undefined);
       }
       collectDeliveries(t);
-      world.vehicles = truckItems(trucks);
+      // TRUCK-BRAND: the atlas decides whether a lorry wears a livery — the
+      // branded sprites only exist once `loadVehicleLayers` has installed them
+      // (see below), and until then every truck draws the legacy goods cell.
+      world.vehicles = truckItems(trucks, atlasRef ?? undefined);
       const { items, ghost } = overlayFrame();
       renderer!.render(t, items, ghost);
       floats.frame(t);
@@ -3654,6 +3719,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     refreshQuarry: (now = performance.now()) => quarry.refresh(now),
     /** Story test twin of the player's first successful Oil harvest. */
     firstOilHarvest: () => onFirstOilHarvest(),
+    /** Story test twin of the idle wire: one Torvin saying / dad-joke exchange
+     *  now, honouring the same solo + in-play gates the clock uses, but
+     *  skipping the wait so a test can drive the exchange on demand. */
+    chitChat: () => {
+      if (!isSolo() || phase !== "play") return;
+      playRivalryScene(nextBanterScene());
+    },
+    /** The next Gold Mine warning, as `placeHarvester` will play it when the
+     *  player stands a Depot beside a Gold Mine (test twin). */
+    goldMineWarning: (): RivalryScene => nextGoldMineScene(),
     /** The e2e twin of clicking two adjacent gems in the Quarry panel. */
     swap: (r1: number, c1: number, r2: number, c2: number) =>
       quarry.board.trySwap(r1, c1, r2, c2, performance.now()),

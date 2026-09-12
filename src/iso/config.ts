@@ -313,14 +313,31 @@ export const TOWN_HOUSE_VARIANTS = [
   "town_cottage_tall", "town_offices_tall", "town_flats_townhouse_tall",
 ] as const;
 
-/** The atlas cell a town tile draws.
- *  A spatial hash rather than `(x + y) % n`, which bands a settlement into
- *  diagonal stripes; deterministic, so a re-render always puts the same
- *  building on the same tile. With 43 variants a uniform pick already mixes
- *  homes, shops and the occasional tall block — no weighting needed. */
-export function townHouseSprite(tx: number, ty: number): string {
+/** Spatial hash of a tile, used to pick town art.
+ *  A hash rather than `(x + y) % n`, which bands a settlement into diagonal
+ *  stripes; deterministic, so a re-render always puts the same building on
+ *  the same tile. */
+function tileHash(tx: number, ty: number): number {
   let h = ((tx * 73856093) ^ (ty * 19349663)) >>> 0;
   h = Math.imul(h ^ (h >>> 16), 0x85ebca6b) >>> 0;
-  h = (h ^ (h >>> 13)) >>> 0;
-  return TOWN_HOUSE_VARIANTS[h % TOWN_HOUSE_VARIANTS.length];
+  return (h ^ (h >>> 13)) >>> 0;
+}
+
+/**
+ * TOWN-GRID: a deterministic uniform pick from `variants`, keyed on a tile.
+ *
+ * The caller filters the list by FOOTPRINT — `townBuildings` in grid.ts picks
+ * a 2×2 cell for a whole house block and a 1×1 cell for a single tile — so
+ * the art can never be placed on more tiles than the block it was chosen for
+ * (which is what used to put an office tower across a street).
+ */
+export function pickTownVariant(tx: number, ty: number, variants: readonly string[]): string {
+  return variants[tileHash(tx, ty) % variants.length];
+}
+
+/** The atlas cell a town tile draws, chosen from every variant.
+ *  With 43 variants a uniform pick already mixes homes, shops and the
+ *  occasional tall block — no weighting needed. */
+export function townHouseSprite(tx: number, ty: number): string {
+  return pickTownVariant(tx, ty, TOWN_HOUSE_VARIANTS);
 }
