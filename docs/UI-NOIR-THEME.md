@@ -31,7 +31,7 @@ in capital letters over riveted metal — is where the theme lives.
 | Background | `#0b1a26` behind an opaque canvas | the war-room: the board is a table under a banker's lamp with smoke in the beam and rain on the window, graded through `.vignette` (the one overlay already sitting above the map canvases) |
 | Rival roster | coloured initials | the `tycoon_*.png` portraits, back on the dossier cards (they existed, unused, since U1 pruned the `<img>`) |
 | Feed, offers, banner, help | tinted rectangles | manila: the ledger paper, the visiting cards, the telegram, the pinned rule sheets |
-| Modals & difficulty prompt | translucent box | felt inset, brass edge, and the frame plate's own brass **medallions** — dome, scroll, amber stone — painted in the four corners (`boss-*.webp`), with the guild seal above the title. Tighter plates (sidebar, tray, toast) wear the frame's iron **chamfer** instead, masked to the L along its two edges, because a medallion there would sit on the type |
+| Modals & difficulty prompt | translucent box | Ordinary modals use a felt inset, brass edge, and the frame plate's brass **medallions** (`boss-*.webp`). The difficulty prompt deliberately uses a clean felt card and simple brass keyline with **no ornamental corners**, keeping the three choices uncluttered. Tighter plates (sidebar, tray, toast) wear the frame's iron **chamfer** instead |
 
 ## Two more rules: no seams, no stretching
 
@@ -91,30 +91,26 @@ All five therefore sit on one line with 50px+ to spare, and the sabotage cards
 get the same guard (`.sab-top > b` breaks, `.sab-cost` is `flex: 0 0 auto` so
 the price can never squeeze the racket's name into the art).
 
-**A corner medallion is solid metal, so the plate pays for it.** The brass
-`boss-*.webp` ornaments measure 255 alpha in *all four* of their corners: they
-are squares, not chamfers that fade out. Painted at the plate's corners they
-therefore occupy a `--corner` box flush on the edge, and any type that starts
-inside it is under the brass — that is how "CHOOSE YOUR RIVAL" was being
-swallowed. The fix is a **band, not an indent**: the title is centred between
-the two ornaments rather than shunted away from one of them, and the band is
-derived, so nothing can drift when an ornament is resized.
+**A corner medallion is solid metal, so only real modals pay for it.** The brass
+`boss-*.webp` ornaments measure 255 alpha in *all four* corners: they are
+squares, not chamfers that fade out. Ordinary modal titles therefore keep their
+derived safe band. The difficulty chooser was simplified after visual review:
+its four ornamental bosses competed with the three difficulty cards, so the
+`.iso-skill-card::after` paint and its dead title gutter were removed entirely.
+It is now a clean felt rectangle with one brass keyline.
 
 ```css
-.iso-skill-card { --corner-inset: 0; --corner: 40px;
-                  --text-clear: calc(var(--corner-inset) + var(--corner)); }
-#iso-skill-prompt h2 { padding-inline: var(--text-clear); text-align: center; }
-.modal h2        { padding-inline: var(--text-clear); justify-content: safe center; }
+.modal.box { --corner-inset: 0; --corner: 44px;
+             --text-clear: calc(var(--corner-inset) + var(--corner)); }
+.modal h2 { padding-inline: var(--text-clear); justify-content: safe center; }
+#iso-skill-prompt h2 { text-align: center; } /* no corner ornament to clear */
 ```
 
-At the card's own 640px the safe band is the 592px content box minus 40px at
-each end, and the 275px headline sits at x=158..433 inside it — 118px of air to
-the brass on either side, and dead centre on the plate's own axis. The phone sheet
-grows the modal's inset to its 14px brass mat and shrinks the medallion to 34px,
-and the heading moves by the same arithmetic. `safe center` is load-bearing,
-not decoration: a centred flex line with no room pushes its **left** item out of
-the box (the guild seal, onto the medallion) — which is exactly the bug in
-reverse — whereas `safe` clamps the overflow evenly on both sides.
+On phones the modal's inset grows to its 14px brass mat and the medallion
+shrinks to 34px, with the title following the same arithmetic. The difficulty
+card has no ornament variables at either breakpoint. `safe center` remains
+load-bearing on modal flex titles: it prevents the guild seal overflowing into
+the solid brass square when horizontal room runs out.
 
 **Paper is read, not admired.** The instruction banner used the ledger sheet at
 `multiply` under 11.5px typewriter ink; the sheet's own grain is ±26 levels per

@@ -96,7 +96,7 @@ import {
 } from "../game/config";
 import { createQuarry, GEM_TO_CARGO, type Quarry } from "./quarry";
 import {
-  SAVE_KEY, loadRecentSave, clearSave, trackSave, trackRestored,
+  SAVE_KEY, SAVEGAME_VERSION, loadRecentSave, clearSave, trackSave, trackRestored,
   type SaveGamePayload,
 } from "./savegame-runtime";
 import { RES } from "../game/config";
@@ -112,10 +112,19 @@ import { createOriginalUi, type OriginalUi } from "../game/ui";
 // "when do we ask" contract: only when nothing has chosen yet).
 import { promptForRivalSkill } from "./skill-picker";
 import {
+  buildEnding, showEndingScreen, type DecisiveSource, type EndingScreenHandle,
+} from "./ending";
+import {
+  createRivalVoice, type RivalryDirection, type RivalryTactic,
+} from "./rivalry";
+import {
   createIsoDebug, shouldInstallDebugConsole, shouldAutoEnableDebugOverlays,
   shouldAutoEnableRenderLog,
 } from "./debug";
-import { applySnapshot, buildSnapshot, joinFromSnapshot, type RivalSabotage, type Snapshot } from "./snapshot";
+import {
+  SNAPSHOT_VERSION, applySnapshot, buildSnapshot, joinFromSnapshot,
+  type RivalSabotage, type Snapshot,
+} from "./snapshot";
 export { joinFromSnapshot };
 // MP-05: the wire. `session.ts` owns roles/roster/chunked state transfer and
 // never imports the SDK (transport.ts does); `protocol.ts` owns the message
@@ -361,6 +370,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   let phase: Phase = "setup-factory";
   let tool: Tool = "dirt";
   let winner: PlayerState | null = null;
+  let winningSource: DecisiveSource = null;
+  let endingView: EndingScreenHandle | null = null;
+  let endingShown = false;
+  /** Restart flips this before clearing the save — the pagehide fired by the
+   *  ensuing reload must not resurrect the completed match. */
+  let restartArmed = false;
+
+  // Rivalry flavour has its own deterministic deck and counters. It never
+  // consumes the simulation RNG, so a new line cannot alter an AI decision.
+  const nextRivalLine = createRivalVoice(seed);
+  let playerSabotage = 0;
+  let rivalSabotageHits = 0;
 
   // ── J1: quarry + market + the restored UI ────────────────────────────────
   // Cargo has exactly one owner (the purse above). The board owns gems and the
@@ -617,6 +638,55 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     ui.toast(text, kind);
   };
 
+  /** Put one line on the rival's non-blocking wire and preserve it in Feed. */
+  const rivalSpeaks = (direction: RivalryDirection, tactic: RivalryTactic) => {
+    const line = nextRivalLine(direction, tactic);
+    if (direction === "retort") playerSabotage++;
+    else if (direction === "attack") rivalSabotageHits++;
+    ui.rivalQuip(line);
+    ui.feed(`“${line}”`, rival.name);
+  };
+
+  /** Show the final ledger once. The same model builds victory and defeat, but
+   *  only a human win receives the fireworks layer. */
+  const presentEnding = (source: DecisiveSource = winningSource) => {
+    if (endingShown || !winner) return;
+    endingShown = true;
+    winningSource = source;
+    const playerBreakdown = victoryBreakdown(eco, me.id);
+    const rivalBreakdown = victoryBreakdown(eco, rival.id);
+    const model = buildEnding({
+      playerWon: winner.id === me.id,
+      playerScore: vpFor(score, me.id),
+      rivalScore: vpFor(score, rival.id),
+      playerBreakdown,
+      rivalBreakdown,
+      decisiveSource: source,
+      seed,
+      rivalName: rival.name,
+      difficulty: isSolo() ? skill().label : undefined,
+      playerSabotage,
+      rivalSabotage: rivalSabotageHits,
+    });
+    // A rival can cross the line while Help or the plant preview is open. Do
+    // not leave that stale modal waiting underneath Review; the final ledger
+    // becomes the one authoritative dialog.
+    ui.hideModal();
+    endingView = showEndingScreen(ui.el, model, {
+      onRestart: () => {
+        restartArmed = true;
+        clearSave();
+        // Keep the selected difficulty: this is a rematch, not first-run
+        // onboarding. The top-bar Restart button remains the full reset.
+        location.reload();
+      },
+    });
+    // Preserve the completed ledger immediately instead of waiting up to five
+    // seconds for autosave. A microtask also makes this safe during restore:
+    // all runtime guards below have finished initialising before it writes.
+    if (!savesOff) queueMicrotask(() => saveNow());
+  };
+
   /**
    * W1: the affordability guard. `spend` can never take a purse below zero —
    * the preview already refuses unaffordable tiles, so this is the safety net
@@ -743,15 +813,24 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         }
       }
     }
-    // the scoreboard's own tie-breaker: whoever crosses the line (10★) first, wins
+    // The scoreboard's own tie-breaker: the first seat observed crossing the
+    // line wins. Capture the event that did it so the intertitle can say
+    // whether the last fraction came from pavement or a new plant.
     if (phase === "play") {
       for (const p of players) {
         if (!hasWon(score, p.id)) continue;
-        phase = "won"; winner = p;
+        const decisive = [...events].reverse().find(
+          (e) => e.owner === p.id && e.type === "awarded",
+        )?.source ?? null;
+        phase = "won";
+        winner = p;
+        winningSource = decisive;
         const b = victoryBreakdown(eco, p.id);
         toast(`${p.name} wins — ${fmtVp(vpFor(score, p.id))}★ `
           + `(${b.paved} paved tile${b.paved === 1 ? "" : "s"}, ${b.plants} plant${b.plants === 1 ? "" : "s"})`,
         p.human ? "good" : "bad");
+        presentEnding(decisive);
+        break;
       }
     }
   }
@@ -1086,6 +1165,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     floats.add("✊ PROTEST", tx, ty, { cls: "sabotage", now });
     ui.feed(`You stage a protest on the public road — all trucks stop for ${fmtProtestLeft(PROTEST_MS)}.`);
     toast(`Protest placed — ALL trucks stop for ${fmtProtestLeft(PROTEST_MS)}, yours included.`, "good");
+    rivalSpeaks("retort", "protest");
     return true;
   }
 
@@ -1124,6 +1204,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   ) as Purse;
 
   function buyBlack(key: string) {
+    if (phase === "won") {
+      toast("The final ledger is closed. Start a rematch to settle another score.", "info");
+      return;
+    }
     // MP-05: sabotage/recon are local-only in a hosted game. Seat 1's Black
     // Market needs an intent + a synced result channel, which §4 does not have
     // yet — refused WITH a reason rather than silently desyncing the purse.
@@ -1151,6 +1235,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       target.banditUntil = now + BANDIT_MS;
       const def = INDUSTRY_BY_KEY[target.type];
       toast(`Blockade set on ${def?.name ?? target.type} — the rival can't harvest it for ${BANDIT_MS / 1000}s.`, "good");
+      rivalSpeaks("retort", "bandit");
       return;
     }
     if (key === "protest") {
@@ -1189,6 +1274,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const n = rivalPlant.frost(now);
       rivalHit(`❄ ${n} FROZEN`);
       toast(`Frost Tiles: ${n} gems frozen in the rival's plant — its yield is down ${dentPct()}% for ${RIVAL_FROST_MS / 1000}s.`, "good");
+      rivalSpeaks("retort", "harden");
       // PP-14b: push immediately so the other browser sees the frost now,
       // not on the next 200ms heartbeat.
       publishNet(now, true);
@@ -1199,6 +1285,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const n = rivalPlant.girders(now);
       rivalHit(`🏗 ${n} GIRDERS`);
       toast(`Iron Girders: ${n} dropped into the rival's plant — its yield is down ${dentPct()}% for ${RIVAL_GIRDER_MS / 1000}s.`, "good");
+      rivalSpeaks("retort", "block");
       publishNet(now, true);
       return;
     }
@@ -1207,6 +1294,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       rivalPlant.smog(now);
       rivalHit("🌫 SMOG");
       toast(`Smog Cloud over the rival's plant — its yield is down ${dentPct()}% for ${RIVAL_SMOG_MS / 1000}s.`, "good");
+      rivalSpeaks("retort", "fog");
       publishNet(now, true);
       return;
     }
@@ -1572,7 +1660,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // `security` is a defender's card — and because the hire is paid before the
     // effect, a rival holding exactly 5 Gold used to burn it on a `hit` that did
     // nothing. "Affordable" is not the same question as "playable".
-    const keys = (Object.keys(SABOTAGE) as string[]).filter(
+    const keys = (Object.keys(SABOTAGE) as RivalryTactic[]).filter(
       (k) => RAID_ACTIONS.has(k) && (rival.purse.gold ?? 0) >= SABOTAGE[k].gold,
     );
     if (!keys.length) return;                     // no Gold, no raid
@@ -1581,6 +1669,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     spend(rival, { gold: def.gold });             // the hire is paid either way
     if (now < securityUntil) {
       toast(`Security Forces turned the rival's ${def.name} away.`, "info");
+      rivalSpeaks("thwarted", key);
       return;
     }
     const hit = (text: string) => {
@@ -1592,6 +1681,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     else if (key === "fog") { quarry.board.fog(FOG_MS, now); hit("🌫 SMOG"); }
     else return;
     toast(`The rival hit your plant with ${def.name}!`, "bad");
+    rivalSpeaks("attack", key);
   }
 
   /**
@@ -1692,6 +1782,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const def = INDUSTRY_BY_KEY[target.type];
     floats.add("⛓ BLOCKADED", target.tx, target.ty, { cls: "sabotage", now });
     toast(`The rival blockaded your ${def?.name ?? target.type} — no harvest there for ${BANDIT_MS / 1000}s.`, "bad");
+    rivalSpeaks("attack", "bandit");
   }
 
   function aiTick(now: number) {
@@ -1753,6 +1844,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           // AI-03c: the feed tells the player the rival JUST scored a ★ —
           // an empty feed used to hide every move it made.
           ui.feed(`Rival raises processing plant #${plantsOf(eco, rival.id).length} (+1★)`, rival.name);
+          // placePlant rescores immediately. If this was the winning star, the
+          // curtain is already up; do not let the rest of the same AI turn add
+          // roads after the final ledger was photographed.
+          if (winner !== null) return;
         }
       }
     }
@@ -2803,10 +2898,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (ind.banditUntil > now) bandit[ind.id] = ind.banditUntil - now;
     }
     return {
-      v: 1, // SAVEGAME_VERSION — keep in lockstep with savegame-runtime
-      snapV: 9, // SNAPSHOT_VERSION — track layers share the MP wire format
+      v: SAVEGAME_VERSION,
+      snapV: SNAPSHOT_VERSION, // track layers share the MP wire format
       savedAt: Date.now(),
       seed, skillKey: skillKey, phase, winnerId: winner?.id ?? null,
+      story: { playerSabotage, rivalSabotage: rivalSabotageHits, winningSource },
       bandit,
       protests: [...protests.values()].map((p) => ({
         x: p.tx, y: p.ty, left: Math.max(0, p.until - now), owner: p.owner,
@@ -2827,9 +2923,6 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     };
   }
 
-  /** AI-03: Restart flips this before clearing the save — the pagehide
-   *  autosave that the ensuing reload fires must NOT resurrect it. */
-  let restartArmed = false;
   /** The autosave writer's handles — cleared in dispose so a dead game can
    *  never serialize its frozen world over a live save (contamination). */
   let saveIv = 0;
@@ -2865,9 +2958,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       players[i].freeTrack = d.players[i].freeTrack;
       players[i].freeDepots = d.players[i].freeDepots;
     }
+    // VP is derived state and is intentionally absent from the save. Rebuild
+    // its ledgers now (without UI events), or a restored final screen would say
+    // 0★ despite showing the winning roads beneath it.
+    score.paved.clear(); score.plants.clear(); score.vp.clear();
+    rescore(eco, score);
+    for (const p of players) starFed.set(p.id, Math.floor(vpFor(score, p.id)));
     phase = d.phase as typeof phase;
     winner = d.winnerId
       ? (players.find((p) => p.id === d.winnerId) ?? null)
+      : null;
+    playerSabotage = Math.max(0, Math.floor(d.story?.playerSabotage ?? 0));
+    rivalSabotageHits = Math.max(0, Math.floor(d.story?.rivalSabotage ?? 0));
+    winningSource = d.story?.winningSource === "upgrade" || d.story?.winningSource === "plant"
+      ? d.story.winningSource
       : null;
     for (const b of d.boards) {
       if (b.kind === "ai") rivalQuarry.board.restore(b.data);
@@ -2880,6 +2984,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     syncWorld();
     trucksDirty = true;
     toast("Game restored from your save — you are right where you left it.", "good");
+    if (phase === "won" && winner) presentEnding(winningSource);
     // paintUi runs on the next frame — no explicit UI flush needed here.
   }
 
@@ -3495,6 +3600,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (onPageHide) window.removeEventListener("pagehide", onPageHide);
     // AI-03: the dead game must not keep overwriting the live save either;
     // last intact state stays — the interval was the only writer.
+    endingView?.destroy();
+    endingView = null;
     floats.clear();
     cancelAnimationFrame(raf);
     ro.disconnect();

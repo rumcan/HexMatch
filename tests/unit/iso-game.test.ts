@@ -188,6 +188,134 @@ describe("E11 the game boots", () => {
   });
 });
 
+describe("the live game resolves into a cinematic ending", () => {
+  /** Seed exactly ten points through real pave/plant provenance, then make one
+   * ordinary demolition force the same rescore path a final build uses. */
+  async function finishFor(ownerId: 1 | 2, pavedTarget = 40, expansionPlants = 0) {
+    const h = await boot();
+    h.eco.factories.push(
+      { owner: "you", ownerId: 1, tx: MAP_W - 8, ty: MAP_H - 8, id: 0, townId: null },
+      { owner: "ai", ownerId: 2, tx: MAP_W - 4, ty: MAP_H - 4, id: 0, townId: null },
+    );
+    for (let id = 1; id <= expansionPlants; id++) {
+      h.eco.factories.push({
+        owner: ownerId === 1 ? "you" : "ai",
+        ownerId,
+        tx: MAP_W - 8 - id,
+        ty: MAP_H - 8 - id,
+        id,
+        townId: null,
+      });
+    }
+    let paved = 0;
+    let trigger: [number, number] | null = null;
+    for (let y = 0; y < MAP_H && !trigger; y++) {
+      for (let x = 0; x < MAP_W && !trigger; x++) {
+        const i = y * MAP_W + x;
+        if (h.track.dirt[i] || h.track.road[i]) continue;
+        if (paved < pavedTarget) {
+          buildTile(h.track, "dirt", x, y, ownerId);
+          buildTile(h.track, "road", x, y, ownerId);
+          paved++;
+        } else {
+          // A player-owned gravel tile gives `demolish` a harmless action that
+          // invokes rescore after every scoring road/plant is on the map.
+          buildTile(h.track, "dirt", x, y, 1);
+          trigger = [x, y];
+        }
+      }
+    }
+    expect(paved).toBe(pavedTarget);
+    expect(trigger).toBeTruthy();
+    h.finishSetup();
+    h.demolish(trigger![0], trigger![1]);
+    return h;
+  }
+
+  it("opens the point-aware victory screen with fireworks when the player crosses 10★", async () => {
+    const h = await finishFor(1);
+    expect(h.phase).toBe("won");
+    const ending = root.querySelector("#iso-ending") as HTMLElement;
+    expect(ending?.dataset.outcome).toBe("victory");
+    expect(ending?.dataset.path).toBe("paving");
+    expect(ending.querySelectorAll(".ending-firework")).toHaveLength(7);
+    expect(ending.textContent).toContain("40 tiles × 0.25★");
+    expect(ending.textContent).toContain("The years that followed");
+  });
+
+  it("recognises an expansion-led win and names the new plant as the decisive star", async () => {
+    const h = await finishFor(1, 28, 3);
+    expect(h.phase).toBe("won");
+    const ending = root.querySelector("#iso-ending") as HTMLElement;
+    expect(ending.dataset.path).toBe("plants");
+    expect(ending.textContent).toContain("An Empire of Smoke");
+    expect(ending.textContent).toMatch(/final star arrived when the newest processing plant/i);
+    expect(ending.textContent).toContain("28 tiles × 0.25★");
+    expect(ending.textContent).toContain("3 plants × 1★");
+  });
+
+  it("opens the grim, firework-free defeat screen when the rival crosses 10★", async () => {
+    const h = await finishFor(2);
+    expect(h.phase).toBe("won");
+    const ending = root.querySelector("#iso-ending") as HTMLElement;
+    expect(ending?.dataset.outcome).toBe("defeat");
+    expect(ending.querySelector(".ending-fireworks")).toBeNull();
+    expect(ending.querySelectorAll(".ending-ash")).toHaveLength(24);
+    expect(ending.textContent).toMatch(/hostile takeover/i);
+    expect(ending.textContent).toContain("Where Rival's winning points came from");
+    expect(ending.textContent).toContain("40 tiles × 0.25★");
+  });
+
+  it("persists and restores the decisive source and rivalry-coloured epilogue", async () => {
+    delete (window as unknown as Record<string, unknown>).__ISO_DISABLE_SAVE;
+    await finishFor(1);
+    await Promise.resolve(); // presentEnding writes the completed match here
+
+    const raw = localStorage.getItem("hexmatch:save");
+    expect(raw).toBeTruthy();
+    const saved = JSON.parse(raw!) as {
+      phase: string;
+      story: { playerSabotage: number; rivalSabotage: number; winningSource: string };
+    };
+    expect(saved.phase).toBe("won");
+    expect(saved.story).toEqual({
+      playerSabotage: 0,
+      rivalSabotage: 0,
+      winningSource: "upgrade",
+    });
+
+    // This also proves optional narrative data survives the restore path rather
+    // than merely being written: colour the completed save as a dirty victory.
+    saved.story.playerSabotage = 4;
+    localStorage.setItem("hexmatch:save", JSON.stringify(saved));
+    expect((await import("../../src/iso/savegame-runtime")).readSave()?.phase).toBe("won");
+    dispose!();
+    dispose = undefined;
+    expect((window as unknown as Record<string, unknown>).__ISO_DISABLE_SAVE).toBeUndefined();
+
+    const restored = await boot();
+    expect(restored.phase).toBe("won");
+    const ending = root.querySelector("#iso-ending") as HTMLElement;
+    expect(ending.dataset.outcome).toBe("victory");
+    expect(ending.textContent).toMatch(/last quarter-star clicked into place/i);
+    expect(ending.textContent).toMatch(/Senate hearings/i);
+
+    // Saves from the build immediately before story metadata existed still
+    // reopen the result; they simply receive the neutral decisive line/coda.
+    await Promise.resolve();
+    const legacy = JSON.parse(localStorage.getItem("hexmatch:save")!) as { story?: unknown };
+    delete legacy.story;
+    localStorage.setItem("hexmatch:save", JSON.stringify(legacy));
+    dispose!();
+    dispose = undefined;
+    const legacyRestore = await boot();
+    expect(legacyRestore.phase).toBe("won");
+    const legacyEnding = root.querySelector("#iso-ending") as HTMLElement;
+    expect(legacyEnding.dataset.outcome).toBe("victory");
+    expect(legacyEnding.textContent).toMatch(/network crossed the star line/i);
+  });
+});
+
 // ── driving the game through its own module API ───────────────────────────
 // The pointer path is pixel-driven and needs a real renderer to pick tiles, so
 // these drive the same state the click handlers mutate, via the test hook.
@@ -1823,6 +1951,16 @@ describe("A1 Black Market sabotage lands on the rival", () => {
     // the bug: this used to be 7 on the player's own board
     expect(h.board.gems().filter((g) => g.hard > 0)).toHaveLength(0);
     expect(h.purse.gold).toBe(before.gold! - 5);
+    // The rival answers without interrupting play: a temporary private wire,
+    // with the same quote retained in the Feed after the card fades.
+    const wire = root.querySelector("#iso-rival-quip") as HTMLElement;
+    expect(wire.classList.contains("show")).toBe(true);
+    expect(wire.getAttribute("role")).toBe("status");
+    expect(wire.getAttribute("aria-live")).toBe("polite");
+    expect(wire.parentElement?.classList.contains("toasts"), "the wire can overlap a rules toast").toBe(true);
+    expect(wire.querySelector(".rival-quip-text")!.textContent!.length).toBeGreaterThan(10);
+    expect([...root.querySelectorAll(".feed-row")].some((row) =>
+      row.textContent?.includes(wire.querySelector(".rival-quip-text")!.textContent!))).toBe(true);
     // and the player is told where it went
     expect(root.querySelector(".iso-float.sabotage")).toBeTruthy();
     expect(root.querySelector(".iso-float.sabotage")!.textContent).toMatch(/FROZEN/);
@@ -2116,6 +2254,9 @@ describe("VP-01 the rival plays the score, not just the map", () => {
     expect(hit, "the blockade must land on the district that feeds you")
       .toBeGreaterThan(t0 + AI_BUILD_MS);
     expect(hit).toBeLessThanOrEqual(t0 + AI_BUILD_MS + BANDIT_MS);
+    const wire = root.querySelector("#iso-rival-quip") as HTMLElement;
+    expect(wire.classList.contains("show"), "the rival attacked in silence").toBe(true);
+    expect(wire.querySelector(".rival-quip-text")!.textContent).toMatch(/district|artery|cargo/i);
   });
 
   it("never pays for a sabotage card it cannot aim at your plant", async () => {

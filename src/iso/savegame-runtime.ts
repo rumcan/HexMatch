@@ -38,6 +38,13 @@ export interface SaveGamePayload {
   skillKey: string;
   phase: string;
   winnerId: string | null;
+  /** Optional narrative continuity. Saves written before cinematic endings did
+   *  not have it, so restore treats a missing record as a quiet rivalry. */
+  story?: {
+    playerSabotage: number;
+    rivalSabotage: number;
+    winningSource: "upgrade" | "plant" | null;
+  };
   /** Industry id → raid REMAINING ms (phase-offset free, so a reload keeps
    *  the bandit on exactly the time it had left). */
   bandit: Record<number, number>;

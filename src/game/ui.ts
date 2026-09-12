@@ -148,6 +148,9 @@ export interface OriginalUi {
   setCombo: (count: number, need: number) => void;
   paint: (state: UiState) => void;
   feed: (text: string, who?: string) => void;
+  /** A brief, non-modal transmission beside the HUD. It never steals focus;
+   *  game.ts also records the same line in the Feed for later. */
+  rivalQuip: (text: string) => void;
   toast: (text: string, kind?: "good" | "bad" | "info" | "danger" | "success") => void;
   fx: (type: FxType, r: number, c: number, text?: string) => void;
   popup: (gains: Partial<Record<ResKey, number>>, label: string) => void;
@@ -353,6 +356,23 @@ export function createOriginalUi(
   // ── overlays ──────────────────────────────────────────────────────────────
   const toasts = h("div", "toasts");
   root.appendChild(toasts);
+  // A private wire from the rival: short-lived, pointer-transparent and
+  // aria-live="polite", so Black Market banter adds character without becoming
+  // another modal or interrupting a map gesture.
+  const rivalWire = h("aside", "rival-quip hidden");
+  rivalWire.id = "iso-rival-quip";
+  rivalWire.setAttribute("role", "status");
+  rivalWire.setAttribute("aria-live", "polite");
+  const rivalWireFace = h("span", "rival-quip-face");
+  rivalWireFace.style.backgroundImage = `url(${portraitTorvin})`;
+  const rivalWireCopy = h("span", "rival-quip-copy");
+  rivalWireCopy.appendChild(h("b", "rival-quip-label", "Rival · Private wire"));
+  const rivalWireText = h("q", "rival-quip-text");
+  rivalWireCopy.appendChild(rivalWireText);
+  rivalWire.append(rivalWireFace, rivalWireCopy);
+  // Share the existing notification lane so a simultaneous rules toast and
+  // rival answer stack instead of painting over one another.
+  toasts.appendChild(rivalWire);
   const modebar = h("div", "modebar hidden");
   root.appendChild(modebar);
   const inspectEl = h("div", "iso-inspect");
@@ -1042,6 +1062,31 @@ export function createOriginalUi(
     renderFeed();
   }
 
+  let rivalWireTimer = 0;
+  let rivalWireRemoveTimer = 0;
+  function rivalQuip(text: string) {
+    window.clearTimeout(rivalWireTimer);
+    window.clearTimeout(rivalWireRemoveTimer);
+    rivalWireText.textContent = text;
+    // A sabotage toast is normally appended just before this call. Move the
+    // wire to the lane's end so the two messages stack in reading order.
+    toasts.appendChild(rivalWire);
+    rivalWire.classList.remove("hidden", "leaving");
+    // Restart the restrained slide/fade when a second reply arrives before the
+    // first has left. The Feed still preserves both complete lines.
+    rivalWire.classList.remove("show");
+    void rivalWire.offsetWidth;
+    rivalWire.classList.add("show");
+    rivalWireTimer = window.setTimeout(() => {
+      rivalWire.classList.remove("show");
+      rivalWire.classList.add("leaving");
+      rivalWireRemoveTimer = window.setTimeout(() => {
+        rivalWire.classList.add("hidden");
+        rivalWire.classList.remove("leaving");
+      }, 360);
+    }, 5_200);
+  }
+
   function responsiveZoom() {
     const boardPx = CELL * BOARD_W;
     const wrap = boardWrap;
@@ -1284,6 +1329,7 @@ export function createOriginalUi(
     setCombo,
     paint,
     feed,
+    rivalQuip,
     toast,
     fx,
     popup,
