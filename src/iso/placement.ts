@@ -31,7 +31,9 @@
 // a town, pass it here and the plan's validity (and its readable reason) will
 // follow the shared geometry instead of growing a second copy elsewhere.
 // ══════════════════════════════════════════════════════════════════════════
-import { FACTORY_FOOTPRINT } from "./config";
+import {
+  FACTORY_FOOTPRINT, INDUSTRY_BY_KEY, depotSpriteForCargo,
+} from "./config";
 import {
   GRASS, ROUGH, SAND, TOWN_OCC, type Grid, type Industry, type Town,
 } from "./grid";
@@ -207,6 +209,20 @@ export function depotCatchmentTiles(grid: Grid, tx: number, ty: number): [number
  *  the same rule `placeHarvester` gates on. */
 export function depotServedIndustries(grid: Grid, tx: number, ty: number): Industry[] {
   return industriesInCatchment(grid, { id: -1, owner: "", ownerId: 0, tx, ty } as Harvester);
+}
+
+/**
+ * The sprite a Depot placed at (tx,ty) would be drawn with — the same answer
+ * `syncWorld` gives a standing Depot (the first served industry names the
+ * cargo, `depotSpriteForCargo` names the art), so the transparent preview
+ * shows the very building the click would raise: a lumber mill beside a
+ * forest, a rig beside an oil field. With nothing in catchment there is no
+ * cargo to read, and the grain outpost is the neutral placeholder.
+ */
+export function depotPreviewSprite(grid: Grid, tx: number, ty: number): string {
+  const served = depotServedIndustries(grid, tx, ty);
+  const cargo = served.length ? INDUSTRY_BY_KEY[served[0].type].cargo : "grain";
+  return depotSpriteForCargo(cargo);
 }
 
 /** Every tile of a served industry's footprint that the catchment covers —

@@ -32,9 +32,14 @@ async function bootIso(page: import("@playwright/test").Page) {
   // chose yet — these specs play a game, they do not exercise onboarding
   // (the picker is unit-tested in iso-skill-picker.test.ts), so boot with a
   // choice already remembered.
-  await page.addInitScript(
-    () => localStorage.setItem("hexmatch:rival-skill", "normal"),
-  );
+  // TUT-01: the starting tour is the other boot overlay, and it covers the
+  // whole screen until it is walked or dismissed (it is exercised for real in
+  // tests/e2e/iso-tutorial.spec.ts). Remember its dismissal the same way, so
+  // these specs click on the map and not on a card.
+  await page.addInitScript(() => {
+    localStorage.setItem("hexmatch:rival-skill", "normal");
+    localStorage.setItem("hexmatch:tutorial", "never");
+  });
   await page.goto(ISO_URL);
   await page.waitForFunction(() => {
     const h = (window as any).__iso;
@@ -143,13 +148,16 @@ async function opaqueNear(
 
 /**
  * Count pixels in the same window whose ALPHA is high enough to be a strong
- * placement glow. PP-03 layered a faint reach band (highlight_soft: α ≤ 110)
- * AROUND the Factory's footprint, and at 0.5× zoom the tips of those band
- * diamonds can bleed a few pixels into a neighbouring tile's sample window —
- * that faint bleed must not read as a build tile. The solid placement glow
- * (highlight: fill α 170 / edge α 255), the red invalid twin (α 190/255) and
- * the node tag (α 235) all clear the 130 threshold, so a zero count here is
- * exactly "no strong/placement glow on this tile" at any zoom.
+ * placement mark. The overlay is now the vector placement pass
+ * (`src/iso/overlay-art.ts`), whose marks are strokes and faint fills, not the
+ * baked glow cells: the footprint floor's gradient only ever reaches α ≈ 77
+ * (×0.93 breathing) on a COVERED tile, the reach tint is α ≈ 26, node tags and
+ * the site outline are thin perimeter strokes, and the ghost building's tint is
+ * composited onto the sprite's own alpha — never a flat strong fill on a
+ * neighbour. The high-alpha pixels sit on the site's PERIMETER; at a tile's
+ * centre the fill is faint, and one tile past the site the canvas is clear.
+ * So a zero count here is exactly "no strong/placement mark on this tile" at
+ * any zoom. (See docs/placement-overlay.md.)
  */
 async function strongGlowNear(
   page: import("@playwright/test").Page, canvasIndex: number,

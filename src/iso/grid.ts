@@ -14,6 +14,7 @@
 import { fillCoastalHoles } from "./coastline";
 import {
   MAP_W, MAP_H, mulberry32, INDUSTRIES, INDUSTRY_QUOTA, INDUSTRY_BY_KEY, FACTORY_FOOTPRINT,
+  TOWN_HOUSE_VARIANTS, pickTownVariant,
 } from "./config";
 
 export const GRASS = 0;
@@ -798,6 +799,113 @@ export function townLayout(
   }
 
   return { houses, roads: roads.filter(([rx, ry]) => keep.has(idx(rx, ry))) };
+}
+
+/** TOWN-GRID: one piece of town art and the tile its footprint starts on. */
+export interface TownBuilding { sprite: string; tx: number; ty: number }
+
+/**
+ * TOWN-GRID: the town's DRAW ITEMS — art placed on whole house BLOCKS, never
+ * one item per tile.
+ *
+ * Why this exists. `townLayout` keeps houses and streets strictly apart: a
+ * street lane is every `TOWN_BLOCK`-th column and row, and a house only ever
+ * occupies a cell between them. The art did not respect that. Every house
+ * tile emitted its own draw item, but a third of the town cells are authored
+ * on a 2×2 footprint (the office towers, the tall flats, the bank, the cinema
+ * — `assets/buildings/manifest.json` is the authority), and a 2×2 sprite
+ * anchored on a single tile spans that tile AND its east/south neighbour.
+ * Those neighbours are the streets, so the towers were drawn standing in the
+ * road — and four tiles of one block each drew their own building on top of
+ * each other. The town centre had it twice over: the church is 2×2 and the
+ * other three tiles of its block drew houses through it.
+ *
+ * The blocks are exactly the right unit. `TOWN_BLOCK` of 3 makes each block
+ * `TOWN_BLOCK - 1` = 2 tiles square, so a 2×2 building placed on the block's
+ * origin fills the block and stops at the kerb. Per block:
+ *
+ *   • the variant hash (keyed on the block origin) picks from the full list;
+ *   • a multi-tile pick is placed ONCE on the block origin, provided its
+ *     footprint fits the block and every tile it covers is a house of this
+ *     town — otherwise the block falls back to single tiles, so a block
+ *     clipped by a coast or an industry is never used to smuggle art onto a
+ *     neighbouring street;
+ *   • a 1×1 pick fills the block one house per tile, each tile drawing its
+ *     own variant from the 1×1 cells only.
+ *
+ * `footprintOf` is the runtime atlas, not a table here: a town cell's
+ * footprint comes from its authored canvas size (tools/make-building-pngs.mjs)
+ * and the per-building layers override the sheet defs at load, so asking the
+ * atlas is what keeps this correct when the art is re-authored. Before those
+ * layers load every town cell is 1×1 in the monolith manifest and this
+ * degrades to the per-tile layout the sheet art expects.
+ *
+ * Deterministic: a pure function of the town, so the same settlement always
+ * draws the same buildings.
+ */
+export function townBuildings(
+  t: Town,
+  footprintOf: (sprite: string) => [number, number],
+): TownBuilding[] {
+  const BLOCK = TOWN_BLOCK - 1;                 // tiles per block, per axis
+  const singles = TOWN_HOUSE_VARIANTS.filter((v) => {
+    const [fw, fh] = footprintOf(v);
+    return fw === 1 && fh === 1;
+  });
+  // Nothing 1×1 authored at all (the sheet-art path has no footprints > 1):
+  // fall back to the whole list rather than drawing an empty town.
+  const tileArt: readonly string[] = singles.length ? singles : TOWN_HOUSE_VARIANTS;
+
+  const houses = new Set<number>();
+  for (const [hx, hy] of t.houses) houses.add(idx(hx, hy));
+  const used = new Set<number>();
+  const out: TownBuilding[] = [];
+
+  /** Tiles a footprint covers from an origin. */
+  const span = (ox: number, oy: number, fw: number, fh: number): [number, number][] => {
+    const tiles: [number, number][] = [];
+    for (let dy = 0; dy < fh; dy++) for (let dx = 0; dx < fw; dx++) tiles.push([ox + dx, oy + dy]);
+    return tiles;
+  };
+  const place = (sprite: string, ox: number, oy: number) => {
+    const [fw, fh] = footprintOf(sprite);
+    out.push({ sprite, tx: ox, ty: oy });
+    for (const [x, y] of span(ox, oy, fw, fh)) used.add(idx(x, y));
+  };
+
+  // The church, on the centre block. The grid phase is anchored on the centre
+  // (`townLayout`), so (tx, ty) is always a block ORIGIN and the 2×2 church
+  // lands on the block, not across the crossroads next to it.
+  place("town_center", t.tx, t.ty);
+
+  // The blocks the houses fall in. Block origins share the centre's phase, so
+  // flooring the offset by TOWN_BLOCK gives the origin for negative offsets
+  // too (a house at −2 belongs to the block starting at −3).
+  const blockOrigin = (v: number, centre: number) =>
+    centre + Math.floor((v - centre) / TOWN_BLOCK) * TOWN_BLOCK;
+  const blocks = new Map<number, [number, number]>();
+  for (const [hx, hy] of t.houses) {
+    const ox = blockOrigin(hx, t.tx), oy = blockOrigin(hy, t.ty);
+    blocks.set(idx(ox, oy), [ox, oy]);
+  }
+  // Row-major over the block origins: a fixed order, so the output is stable.
+  const origins = [...blocks.values()].sort((a, b) => (a[1] - b[1]) || (a[0] - b[0]));
+
+  for (const [ox, oy] of origins) {
+    const pick = pickTownVariant(ox, oy, TOWN_HOUSE_VARIANTS);
+    const [fw, fh] = footprintOf(pick);
+    const wholeBlock = (fw > 1 || fh > 1)
+      && fw <= BLOCK && fh <= BLOCK
+      && span(ox, oy, fw, fh).every(([x, y]) => houses.has(idx(x, y)) && !used.has(idx(x, y)));
+    if (wholeBlock) { place(pick, ox, oy); continue; }
+    // Single houses, one per free tile of the block.
+    for (const [x, y] of span(ox, oy, BLOCK, BLOCK)) {
+      const i = idx(x, y);
+      if (!houses.has(i) || used.has(i)) continue;
+      place(pickTownVariant(x, y, tileArt), x, y);
+    }
+  }
+  return out;
 }
 
 /** 4-neighbourhood, in a fixed order (keeps every BFS below deterministic). */

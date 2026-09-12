@@ -11,8 +11,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { WATER, factoryTouchesTown } from "../../src/iso/grid";
 import { SABOTAGE, RAID_EVERY, BANDIT_MS } from "../../src/game/config";
 import { PUBLIC_OWNER, buildTile } from "../../src/iso/track";
-import { lockedIndustryIds } from "../../src/iso/economy";
+import { industriesInCatchment, lockedIndustryIds } from "../../src/iso/economy";
 import { MAP_W, MAP_H, TRANSPORT, INDUSTRY_BY_KEY, VICTORY } from "../../src/iso/config";
+import { RIVAL_BANTER } from "../../src/iso/rivalry";
 import { setRng, mulberry32 } from "../../src/game/config";
 
 // ── stub the art imports (vite handles these in the browser) ──────────────
@@ -129,6 +130,10 @@ beforeEach(() => {
   // the DOM — these tests boot the game, not its onboarding (the picker
   // itself is covered in iso-skill-picker.test.ts).
   localStorage.setItem("hexmatch:rival-skill", "normal");
+  // TUT-01: the starting tour is the other boot overlay — these tests boot
+  // the game, not its onboarding (the tour itself is covered in
+  // iso-tutorial.test.ts).
+  localStorage.setItem("hexmatch:tutorial", "never");
   setRng(mulberry32(1337));
   (globalThis as Record<string, unknown>).ResizeObserver = class {
     observe() {} unobserve() {} disconnect() {}
@@ -403,6 +408,99 @@ describe("the two-portrait rivalry conversation", () => {
   });
 });
 
+describe("the Gold Mine warning (a young man's game)", () => {
+  it("warns the moment the player stands a Depot beside a Gold Mine", async () => {
+    const h = await boot();
+    const gold = findSouthCorridor(h.grid, 6, "gold_mine");
+    expect(gold, "seed 1337 keeps a Gold Mine with a legal south corridor").toBeTruthy();
+    const feedBefore = root.querySelectorAll(".feed-row").length;
+    expect(h.placeDepot(gold!.hx, gold!.hy)).toBe(true);
+
+    const wire = root.querySelector("#iso-rival-quip") as HTMLElement;
+    // Torvin opens, naming the gold…
+    expect(wire.classList.contains("hidden")).toBe(false);
+    expect(wire.dataset.speaker).toBe("rival");
+    expect(wire.querySelector(".rival-quip-text")!.textContent).toMatch(/gold/i);
+    // …and the whole exchange is preserved in the feed.
+    expect(root.querySelectorAll(".feed-row").length).toBeGreaterThan(feedBefore);
+    // The speech lands both cons: a harder board, and a coin that buys only sabotage.
+    expect(root.textContent).toMatch(/sixth colour|six colours|six to match/i);
+    expect(root.textContent).toMatch(/Black Market/i);
+  });
+
+  it("hears a DIFFERENT warning for a second gold Depot", async () => {
+    const h = await boot();
+    // Give the player the materials for a PAID second Depot so the rotation is
+    // exercised the way a real game would use it.
+    h.purse.wood = 99; h.purse.stone = 99; h.purse.grain = 99; h.purse.oil = 99;
+    const spots = goldMineDepotSpots(h.grid);
+    expect(spots.length, "two legal gold-mine Depot sites").toBeGreaterThanOrEqual(2);
+
+    // The wire's read timers must be captured from BEFORE the first speech
+    // plays, so the drain below can finish it and free the wire for the second.
+    const pending = wireDrain();
+    try {
+      expect(h.placeDepot(spots[0][0], spots[0][1])).toBe(true);
+      const wire = root.querySelector("#iso-rival-quip") as HTMLElement;
+      const first = wire.querySelector(".rival-quip-text")!.textContent!;
+      pending.drain(); // let the first exchange finish reading
+      expect(h.placeDepot(spots[1][0], spots[1][1])).toBe(true);
+      const second = wire.querySelector(".rival-quip-text")!.textContent!;
+      expect(second, "the pool rotates: no repeat speech").not.toBe(first);
+    } finally {
+      pending.restore();
+      await settle();
+    }
+  });
+
+  it("does not warn for a non-gold Depot", async () => {
+    const h = await boot();
+    const spot = nonGoldDepotSpot(h.grid);
+    expect(spot, "a Depot site whose catchment holds no Gold Mine").toBeTruthy();
+    expect(h.placeDepot(spot![0], spot![1])).toBe(true);
+    const wire = root.querySelector("#iso-rival-quip") as HTMLElement;
+    expect(wire.classList.contains("hidden")).toBe(true);
+  });
+});
+
+describe("the idle wire (sayings and cringe dad jokes)", () => {
+  it("plays a Torvin exchange mid-game, and stays silent before play", async () => {
+    const h = await boot();
+    // Setup phase: the wire keeps its silence.
+    h.chitChat();
+    expect((root.querySelector("#iso-rival-quip") as HTMLElement).classList.contains("hidden")).toBe(true);
+
+    h.finishSetup(); // → play
+    const feedBefore = root.querySelectorAll(".feed-row").length;
+    h.chitChat();
+    const wire = root.querySelector("#iso-rival-quip") as HTMLElement;
+    expect(wire.classList.contains("hidden")).toBe(false);
+    expect(wire.dataset.speaker).toBe("rival");
+    // It is one of the idle pool's openers — a saying or a dad joke, not a threat.
+    const openers = RIVAL_BANTER.map((s) => s[0].text);
+    expect(openers).toContain(wire.querySelector(".rival-quip-text")!.textContent);
+    expect(root.querySelectorAll(".feed-row").length).toBeGreaterThan(feedBefore);
+  });
+
+  it("rotates through the jokes rather than repeating one", async () => {
+    const h = await boot();
+    h.finishSetup();
+    const pending = wireDrain(); // capture timers from before the first bit
+    try {
+      const wire = root.querySelector("#iso-rival-quip") as HTMLElement;
+      h.chitChat();
+      const first = wire.querySelector(".rival-quip-text")!.textContent!;
+      pending.drain(); // let the first bit finish reading
+      h.chitChat();
+      const second = wire.querySelector(".rival-quip-text")!.textContent!;
+      expect(second, "the pool rotates: no repeat bit").not.toBe(first);
+    } finally {
+      pending.restore();
+      await settle();
+    }
+  });
+});
+
 // ── driving the game through its own module API ───────────────────────────
 // The pointer path is pixel-driven and needs a real renderer to pick tiles, so
 // these drive the same state the click handlers mutate, via the test hook.
@@ -437,6 +535,68 @@ function findSouthCorridor(
     }
   }
   return null;
+}
+
+/** Legal Depot sites that SERVE a Gold Mine (a gold mine in their catchment). */
+function goldMineDepotSpots(grid: import("../../src/iso/grid").Grid): [number, number][] {
+  const spots: [number, number][] = [];
+  for (const ind of grid.industries) {
+    if (ind.type !== "gold_mine") continue;
+    for (let x = ind.tx; x < ind.tx + ind.w; x++) {
+      const hx = x, hy = ind.ty + ind.h;
+      if (hy < 0 || hy + 6 >= MAP_H || hx < 0 || hx >= MAP_W) continue;
+      let legal = true;
+      for (let y = hy; y <= hy + 6; y++) {
+        const i = y * MAP_W + hx;
+        if (grid.terrain[i] === WATER || grid.occupancy[i] !== -1) { legal = false; break; }
+      }
+      if (!legal) continue;
+      const served = industriesInCatchment(grid, { id: -1, owner: "you", ownerId: 0, tx: hx, ty: hy });
+      if (served.some((s) => s.type === "gold_mine")) spots.push([hx, hy]);
+    }
+  }
+  return spots;
+}
+
+/** A legal Depot site whose catchment holds NO Gold Mine (a non-gold control). */
+function nonGoldDepotSpot(grid: import("../../src/iso/grid").Grid): [number, number] | null {
+  for (const ind of grid.industries) {
+    if (ind.type === "gold_mine") continue;
+    for (let x = ind.tx; x < ind.tx + ind.w; x++) {
+      const hx = x, hy = ind.ty + ind.h;
+      if (hy < 0 || hy + 6 >= MAP_H || hx < 0 || hx >= MAP_W) continue;
+      let legal = true;
+      for (let y = hy; y <= hy + 6; y++) {
+        const i = y * MAP_W + hx;
+        if (grid.terrain[i] === WATER || grid.occupancy[i] !== -1) { legal = false; break; }
+      }
+      if (!legal) continue;
+      const served = industriesInCatchment(grid, { id: -1, owner: "you", ownerId: 0, tx: hx, ty: hy });
+      if (!served.length) continue;
+      if (served.some((s) => s.type === "gold_mine")) continue;
+      return [hx, hy];
+    }
+  }
+  return null;
+}
+
+/**
+ * Intercept the rivalry wire's read-time timers so a test can drive two scenes
+ * back to back. Call `wireDrain()` BEFORE the first scene plays (so even its
+ * first beat's timer is captured); `drain()` then runs every captured callback
+ * until the exchange has finished reading and the wire is free; `restore()`
+ * puts the real timers back.
+ */
+function wireDrain(): { drain: () => void; restore: () => void } {
+  const pending: (() => void)[] = [];
+  const spy = vi.spyOn(window, "setTimeout").mockImplementation(((handler: TimerHandler) => {
+    if (typeof handler === "function") pending.push(() => handler());
+    return pending.length;
+  }) as typeof window.setTimeout);
+  return {
+    drain: () => { for (let i = 0; i < 400 && pending.length; i++) pending.shift()!(); },
+    restore: () => spy.mockRestore(),
+  };
 }
 
 /**

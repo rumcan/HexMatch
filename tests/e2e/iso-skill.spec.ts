@@ -13,6 +13,14 @@ import { test, expect } from "@playwright/test";
 const BASE = "/hexmatch/";
 
 async function bootIso(page: import("@playwright/test").Page, extra = "") {
+  // TUT-01: the starting tour is a full-screen boot overlay, and this spec
+  // drives the top-bar selector with real clicks. Remember the tour's
+  // dismissal so it stays out of the way — the rival-skill key is deliberately
+  // NOT set here, because what this spec measures is the URL and the picker
+  // writing it.
+  await page.addInitScript(
+    () => localStorage.setItem("hexmatch:tutorial", "never"),
+  );
   await page.goto(`${BASE}?seed=79${extra}`);
   await page.waitForFunction(() => {
     const h = (window as any).__iso;

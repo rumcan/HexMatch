@@ -70,6 +70,20 @@ The isometric canvas-2d game is the only boot path (`/`). The hex + three.js
 path (`?legacy=1`) was deleted in E11. e2e specs boot the default route with
 real DOM, real rendering and no mocking.
 
+## Onboarding
+
+A first game opens with the **starting tour** (`src/iso/tutorial.ts`): eight
+stepped cards that walk the whole loop — raise the Processing Plant beside a
+town, build a Depot inside an industry's catchment, drag roads between them,
+play the match-3 board the lorries feed, spend the cargo it pays, and take ★ by
+paving your own dirt and by raising more plants. *Never show this again* is the
+one exit that persists (`hexmatch:tutorial` in localStorage); skipping only
+closes the card for the session, the ❔ in the top bar replays the tour at any
+time and re-tells the full rules beside it, and `?tutorial=0` keeps it out of
+the way of a playtest link. Every price and ★ value in the copy is read from
+the same tables the HUD reads, so a rebalance moves the lesson with the rule:
+[`docs/TUT-01-starting-tutorial.md`](docs/TUT-01-starting-tutorial.md).
+
 ## Multiplayer (RUN.world rooms)
 
 Host / join-by-code / quick-match run over RUN.world realtime rooms: the relay
@@ -98,6 +112,15 @@ a self-hosted option and a protocol reference only:
 npm --prefix server install
 npm --prefix server start     # port 8787 (PORT env overrides)
 ```
+
+## Placement overlay (vector)
+
+The building highlight is drawn as geometry, not blitted: `src/iso/overlay-art.ts`
+paints one merged outline per site with corner brackets, a marching-ants
+catchment ring, hatched refusals and a transparent preview of the building the
+click would raise. `__iso.highlightMode('sprites')` restores the baked cells as
+a rollback. Design notes and the A/B seam:
+[`docs/placement-overlay.md`](docs/placement-overlay.md).
 
 ## Art pipeline (E1 + W-series)
 

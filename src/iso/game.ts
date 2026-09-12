@@ -56,7 +56,10 @@ import { IsoRenderer, type World } from "./renderer";
 import { DEFAULT_ROAD_STYLE } from "./road-renderer";
 import { scatterScenery, type Scenery } from "./scenery";
 import { loadDecalImages, loadScenerySprites } from "./scenery-art";
-import { generateMap, resolveMapSeed, type Grid, type Industry } from "./grid";
+import { loadVehicleLayers } from "./vehicle-art";
+import {
+  generateMap, resolveMapSeed, townBuildings, type Grid, type Industry,
+} from "./grid";
 import {
   createTrack, drawBits, previewDrag, commitDrag, canBuildOn, hasTrack,
   demolishTile, tIdx, playerNetwork, canAfford, buildRefusal, seedTownRoads,
@@ -85,15 +88,18 @@ import {
 import {
   RIVAL_SKILLS, resolveSkillKey, SKILL_STORAGE_KEY, type RivalSkill, type SkillKey,
 } from "./skill";
-import { planDepotPlacement, planFactoryPlacement, type PlacementPlan } from "./placement";
+import {
+  depotPreviewSprite, planDepotPlacement, planFactoryPlacement, type PlacementPlan,
+} from "./placement";
+import type { GhostSpec } from "./overlay-art";
 import {
   PLANT_COST, PLANT_REFUSAL_TEXT, addPlant, adjacentTown, buildingAt, canAffordPlant,
-  chooseAiPlantSpot, footprintTiles, plantRefusal, plantsOf, resolvePlantTarget,
+  chooseAiPlantSpot, plantRefusal, plantsOf, resolvePlantTarget,
 } from "./plants";
 import {
   CARGO, CARGOES, FACTORY_FOOTPRINT, FACTORY_SPRITE, INDUSTRY_BY_KEY, TRANSPORT,
   VICTORY, VP_TARGET, UPGRADE_COST,
-  depotSpriteForCargo, townHouseSprite, type Cargo, type Portrait,
+  depotSpriteForCargo, type Cargo, type Portrait,
 } from "./config";
 import {
   DEPOT_COST, FREE_SETUP_DEPOTS, costCompact, costLabel, priceDepot, shortfallLabel,
@@ -128,11 +134,14 @@ import { sfx } from "../audio/sfx";
 // AI-02: the start-of-game difficulty prompt (see skill-picker.ts for the
 // "when do we ask" contract: only when nothing has chosen yet).
 import { promptForRivalSkill } from "./skill-picker";
+// TUT-01: the starting tour — one stepped card that walks the whole loop
+// (plant → depot → road → board → expand → points) before the first click.
+import { showTutorial, type TutorialHandle } from "./tutorial";
 import {
   buildEnding, showEndingScreen, type DecisiveSource, type EndingScreenHandle,
 } from "./ending";
 import {
-  OIL_DRILLING_SCENE, createRivalDirector,
+  OIL_DRILLING_SCENE, createBanterDirector, createGoldMineDirector, createRivalDirector,
   type RivalryDirection, type RivalryScene, type RivalryTactic,
 } from "./rivalry";
 import {
@@ -420,6 +429,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   let winningSource: DecisiveSource = null;
   let endingView: EndingScreenHandle | null = null;
   let endingShown = false;
+  /** TUT-01: the boot tour, while it is open. Held so `dispose` can take its
+   *  document keydown listener with it — the same reason `endingView` is. */
+  let tutorialView: TutorialHandle | null = null;
+  /**
+   * Set by the dispose closure at the bottom of this function and read by every
+   * async continuation and clock in it. Declared here, beside the other boot
+   * state, rather than down in the boot block because TUT-01's prompt chain now
+   * awaits the tour before it asks AI-02's question — and a chain that can be
+   * torn down mid-await has to be able to ask whether the game still exists.
+   */
+  let disposed = false;
   /** Restart flips this before clearing the save — the pagehide fired by the
    *  ensuing reload must not resurrect the completed match. */
   let restartArmed = false;
@@ -427,9 +447,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // Rivalry flavour has its own deterministic scene deck and counters. It
   // never consumes simulation RNG, so extra jokes cannot alter an AI decision.
   const nextRivalScene = createRivalDirector(seed);
+  const nextGoldMineScene = createGoldMineDirector(seed);
+  const nextBanterScene = createBanterDirector(seed);
   let playerSabotage = 0;
   let rivalSabotageHits = 0;
   let oilBanterSeen = false;
+  // The idle wire: one short Torvin exchange every so often, mid-game. The
+  // clock arms when play begins and never runs before then (no jokes over the
+  // setup banners or the ending screen). Timing jitter uses Math.random —
+  // presentation pacing, deliberately NOT the seeded simulation RNG.
+  let chitChatArmed = false;
+  let nextChitChatAt = 0;
   // The quarry is created before the HUD. Its callback is replaced once the
   // two-portrait wire exists; no board can pay oil during synchronous boot.
   let onFirstOilHarvest: () => void = () => {};
@@ -572,25 +600,55 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   onBoardChange = () => ui.renderBoard();
   root.appendChild(ui.el);
 
-  // AI-02: ask for the difficulty before the first click (only when no
-  // previous choice exists — see skill-picker.ts). The overlay sits over the
-  // freshly booted UI; the pick flips the LIVE game straight into
-  // `setRivalSkill`, persists for the next boot, and syncs the top-bar
-  // selector the `onSkill` hook would otherwise own.
-  // AI-03: a saved game means NO difficulty prompt and NO fresh map — the
-  // save carries the pick, and refresh resumes exactly where it left off
-  // ("a refresh restarts the game" — not any more; Restart starts over).
-  // (`bootSave` was read up top, before the map generated, so the seed the
-  // save carries is the seed the map was grown from.)
+  // TUT-01 + AI-02: the two one-shot boot prompts, in the order a new player
+  // meets them. The TOUR goes first — it is the "how does this game work" card,
+  // and the difficulty chooser that follows is a much smaller question that
+  // only makes sense once ★ and the rival exist as ideas. They are awaited in
+  // sequence so two overlays never stack on the same boot.
+  //
+  // Both are gated the same way, and the gate is the same one AI-03 settled:
+  // a saved game means NO tour and NO difficulty prompt and NO fresh map — the
+  // save carries the pick, and refresh resumes exactly where it left off ("a
+  // refresh restarts the game" — not any more; Restart starts over). A
+  // networked seat skips them too: that match is already live and the host is
+  // waiting. (`bootSave` was read up top, before the map generated, so the seed
+  // the save carries is the seed the map was grown from.)
+  //
+  // The tour returns null once the player has pressed "Never show this again"
+  // (src/iso/tutorial.ts owns that key), which leaves the difficulty prompt as
+  // the only card on an ordinary boot.
   if (!bootSave && isSolo()) {
-    void promptForRivalSkill(ui.el, {
-      onPick: (key) => {
-        setRivalSkill(key);
-        try { localStorage.setItem(SKILL_STORAGE_KEY, key); } catch { /* private mode */ }
-        const sel = ui.el.querySelector<HTMLSelectElement>("#iso-rival-skill");
-        if (sel) sel.value = key;
-      },
-    });
+    void (async () => {
+      // The two numbers the tour cannot read for itself: the ★ line belongs to
+      // the live difficulty, and the free dirt tiles are DATA on the player
+      // record. Passing them keeps the copy honest without importing game.ts
+      // into tutorial.ts (which would be a cycle).
+      tutorialView = showTutorial(ui.el, {
+        vpTarget: winTarget(),
+        freeTrack: me.freeTrack,
+      });
+      // Always yield, tour or no tour: the rest of this chain reads `disposed`
+      // (declared with the other boot state at the top of this function), and a
+      // microtask is the earliest point at which reading it is meaningful.
+      await (tutorialView ? tutorialView.promise : Promise.resolve());
+      tutorialView = null;
+      // The game may have been torn down while the card was up (a test's
+      // dispose, a rematch). The difficulty prompt belongs to a live boot only.
+      if (disposed) return;
+      // AI-02: ask for the difficulty before the first click (only when no
+      // previous choice exists — see skill-picker.ts). The overlay sits over
+      // the freshly booted UI; the pick flips the LIVE game straight into
+      // `setRivalSkill`, persists for the next boot, and syncs the top-bar
+      // selector the `onSkill` hook would otherwise own.
+      await promptForRivalSkill(ui.el, {
+        onPick: (key) => {
+          setRivalSkill(key);
+          try { localStorage.setItem(SKILL_STORAGE_KEY, key); } catch { /* private mode */ }
+          const sel = ui.el.querySelector<HTMLSelectElement>("#iso-rival-skill");
+          if (sel) sel.value = key;
+        },
+      });
+    })();
   }
 
   // ── A1: the board's own effects finally have somewhere to go ────────────
@@ -718,6 +776,31 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     playRivalryScene(OIL_DRILLING_SCENE);
   };
 
+  /**
+   * The idle wire: a short Torvin exchange — an old tycoon's saying, a cringe
+   * dad joke — drops into the rivalry feed every so often mid-game, so the two
+   * feel like they're keeping each other company between the sabotage
+   * set-pieces. It runs solo only (Torvin is the AI rival) and only once play
+   * has begun: no jokes over the setup banners or the ending screen.
+   *
+   * Pacing: the first bit lands ~40s into play (time to get a road down), then
+   * roughly every 58–111s. The jitter is Math.random on purpose — presentation
+   * cadence, never the seeded simulation RNG.
+   */
+  const CHIT_CHAT_FIRST_MS = 40_000;
+  const CHIT_CHAT_EVERY_MS = 65_000;
+  function rivalChitChat(now: number) {
+    if (!isSolo() || phase !== "play") return;
+    if (!chitChatArmed) {
+      chitChatArmed = true;
+      nextChitChatAt = now + CHIT_CHAT_FIRST_MS;
+      return;
+    }
+    if (now < nextChitChatAt) return;
+    nextChitChatAt = now + CHIT_CHAT_EVERY_MS * (0.9 + Math.random() * 0.7);
+    playRivalryScene(nextBanterScene());
+  }
+
   /** Show the final ledger once. The same model builds victory and defeat, but
    *  only a human win receives the fireworks layer. */
   const presentEnding = (source: DecisiveSource = winningSource) => {
@@ -810,29 +893,22 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       ty: f.ty,
       ref: { kind: "factory", owner: f.owner },
     }));
-    // TOWN-1: emit town house and center draw items
-    const townItems = grid.towns.flatMap((t) => {
-      const items: { sprite: string; tx: number; ty: number; ref: unknown }[] = [];
-      // Town center marker at the center tile
-      items.push({
-        sprite: "town_center",
-        tx: t.tx, ty: t.ty,
-        ref: { kind: "town", id: t.id },
-      });
-      // Houses at all non-center tiles. PP-12: one of 43 verbatim TTD house
-      // cells, chosen by `townHouseSprite` so every settlement mixes homes,
-      // shops, flats and the occasional tall block instead of stamping one
-      // sprite. The centre is the TTD church (`town_center` cell).
-      for (const [hx, hy] of t.houses) {
-        if (hx === t.tx && hy === t.ty) continue; // skip center, already drawn
-        items.push({
-          sprite: townHouseSprite(hx, hy),
-          tx: hx, ty: hy,
-          ref: { kind: "town", id: t.id },
-        });
-      }
-      return items;
-    });
+    // TOWN-1 / TOWN-GRID: the town draw items — art on whole house BLOCKS.
+    //
+    // `townBuildings` decides the layout (see grid.ts): one 2x2 cell per
+    // block where the hash picks one, single houses otherwise. It must be
+    // asked at sync time rather than baked at generation, because a town
+    // cell's footprint comes from the ATLAS and the per-building PNG layers
+    // land after the first sync — `loadBuildingLayers` re-syncs, which is
+    // when the towers move off the streets they used to be drawn across.
+    const footprintOf = (sprite: string): [number, number] =>
+      atlasRef?.get(sprite)?.footprint ?? [1, 1];
+    const townItems = grid.towns.flatMap((t) =>
+      townBuildings(t, footprintOf).map((b) => ({
+        sprite: b.sprite,
+        tx: b.tx, ty: b.ty,
+        ref: { kind: "town", id: t.id } as unknown,
+      })));
     world.extra = [
       ...townItems,
       ...factoryItems,
@@ -1106,6 +1182,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (p.human) sfx.play("build");      // SFX-01
     syncWorld();
     rescoreNow();
+    // Gold Mine warning: the moment the PLAYER stands a Depot beside a Gold
+    // Mine, Torvin warns that chasing gold is a young man's game — it drops a
+    // sixth colour into the player's own board and a coin buys only Black
+    // Market spite aimed at the one rival who'd rather you didn't. He fires
+    // the speech to cover his own skin, and the pool rotates so a second gold
+    // depot hears a different version. Solo only: in a hosted game seat 1 is a
+    // person, not Torvin.
+    if (p.human && isSolo() && served.some((ind) => ind.type === "gold_mine")) {
+      playRivalryScene(nextGoldMineScene());
+    }
     return true;
   }
 
@@ -2345,6 +2431,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   //                     resource nodes in catchment; the town tiles a Factory
   //                     footprint touches).
   type OverlayItem = { sprite: string; tx: number; ty: number };
+  /**
+   * One overlay frame: the tiles to mark, plus the transparent building the
+   * hover would raise (`null` for the tools that place no building — a road
+   * drag, an armed protest). The renderer paints both from this one answer.
+   */
+  type OverlayFrame = { items: OverlayItem[]; ghost: GhostSpec | null };
   /** AI-03c: the plant tool's preview AND its test twin must answer the same
    *  legality the CLICK enforces. `planFactoryPlacement` knows terrain and
    *  towns but NOT the built world, so it flashed green over footprints a
@@ -2403,21 +2495,37 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     hoverRouteCache = { key, items };
     return items;
   };
-  /** The placement overlay for a hover at (tx,ty), whatever the input device —
-   *  mouse and touch both arrive here through `hover`, so the preview is
-   *  identical at every zoom for both. */
-  const overlayItemsAt = (tx: number, ty: number): OverlayItem[] => {
+  /**
+   * The placement overlay for a hover at (tx,ty), whatever the input device —
+   * mouse and touch both arrive here through `hover`, so the preview is
+   * identical at every zoom for both.
+   *
+   * Returns the tile items AND the ghost: the transparent preview of the
+   * building the click would place, standing on the same footprint with the
+   * same verdict. They come out of the one plan so the two can never
+   * disagree — a green grid under a red building would be worse than either.
+   */
+  const overlayPlanAt = (tx: number, ty: number): OverlayFrame => {
     const items: OverlayItem[] = [];
+    let ghost: GhostSpec | null = null;
     if (phase === "setup-factory") {
       // PP-02: the preview enforces the same town-adjacency rule as the click.
-      pushPlan(items, planFactoryPlacement(grid, tx, ty, { requireTown: true, track }));
+      const plan = planFactoryPlacement(grid, tx, ty, { requireTown: true, track });
+      pushPlan(items, plan);
+      ghost = { sprite: FACTORY_SPRITE, tx, ty, valid: plan.valid };
     } else if (tool === "harvester" || phase === "setup-harvester") {
-      pushPlan(items, planDepotPlacement(grid, eco.harvesters, tx, ty, depotLocks()));
+      const plan = planDepotPlacement(grid, eco.harvesters, tx, ty, depotLocks());
+      pushPlan(items, plan);
+      // The outpost art is the cargo's, so the preview shows the mill/rig/mine
+      // this site would actually raise (see `depotPreviewSprite`).
+      ghost = { sprite: depotPreviewSprite(grid, tx, ty), tx, ty, valid: plan.valid };
     } else if (tool === "plant") {
       // AI-03c: the mid-game plant preview paints from the same folded plan
       // the test twin and the click share — no more green footprints over a
       // building the overlay never saw.
-      pushPlan(items, factoryPlanForTool(tx, ty));
+      const plan = factoryPlanForTool(tx, ty);
+      pushPlan(items, plan);
+      ghost = { sprite: FACTORY_SPRITE, tx, ty, valid: plan.valid };
     } else {
       items.push({ sprite: "highlight", tx, ty });
     }
@@ -2427,9 +2535,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // and find no depot, so they never double up).
     const dep = eco.harvesters.find((h) => h.tx === tx && h.ty === ty);
     if (dep) items.push(...routeOverlayFor(dep));
-    return items;
+    return { items, ghost };
   };
-  const overlayItems = () => {
+  /** The tile items alone — the shape `__iso.overlayItemsFor` has always had. */
+  const overlayItemsAt = (tx: number, ty: number): OverlayItem[] =>
+    overlayPlanAt(tx, ty).items;
+  /** Everything the overlay layer draws this frame. */
+  const overlayFrame = (): OverlayFrame => {
     if (preview) {
       const items: OverlayItem[] = preview.tiles.map(([x, y]) => ({ sprite: "highlight", tx: x, ty: y }));
       // VP-01: a paved drag over your own gravel is the only road action that
@@ -2441,7 +2553,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           if (hasTrack(track, "dirt", x, y)) items.push({ sprite: "node_mark", tx: x, ty: y });
         }
       }
-      return items;
+      // No ghost: a road drag has no building to preview, and the merged
+      // outline the vector overlay draws around the whole drag IS the preview.
+      return { items, ghost: null };
     }
     if (pendingProtest && hover) {
       // The armed protest paints its own legality: green on a free public
@@ -2449,33 +2563,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const ok = protestPlaceable(hover.tx, hover.ty);
       const items: OverlayItem[] = [{ sprite: ok ? "highlight" : "highlight_bad", tx: hover.tx, ty: hover.ty }];
       if (ok) items.push({ sprite: "node_mark", tx: hover.tx, ty: hover.ty });
-      return items;
+      return { items, ghost: null };
     }
-    if (!hover) return [];
-    if (phase === "setup-factory") return overlayItemsAt(hover.tx, hover.ty);
-    // PP-06: the plant tool keeps its own overlay — the Factory footprint is the
-    // strong layer, the qualifying town the soft one — because the placement
-    // plans model factories and depots only. Both come from the SAME rule the
-    // click runs.
-    if (tool === "plant") {
-      const items: OverlayItem[] = [];
-      const ok = plantRefusal(grid, track, eco, hover.tx, hover.ty) === null;
-      for (const [x, y] of footprintTiles(hover.tx, hover.ty)) {
-        if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) continue;
-        // No dedicated invalid sprite in the atlas: a legal footprint is the
-        // strong glow, an illegal one only the faint tint (plus the refusal
-        // reason in the HUD line below).
-        items.push({ sprite: ok ? "highlight" : "highlight_soft", tx: x, ty: y });
-      }
-      const town = adjacentTown(grid, hover.tx, hover.ty);
-      if (town) {
-        for (const [hx, hy] of town.houses) {
-          items.push({ sprite: "highlight_soft", tx: hx, ty: hy });
-        }
-      }
-      return items;
-    }
-    return overlayItemsAt(hover.tx, hover.ty);
+    if (!hover) return { items: [], ghost: null };
+    // Every placement tool — the opening Factory, a Depot, and (since the
+    // overlay was unified) the mid-game plant — paints from its placement
+    // plan, so all three get the same footprint/reach/node read AND the same
+    // transparent building. The plant used to grow its own overlay here
+    // (PP-06) which tinted a refused footprint faintly instead of red; the
+    // plan it now shares marks each blocking tile individually, matching both
+    // the click and the test twin.
+    return overlayPlanAt(hover.tx, hover.ty);
   };
 
   function paintUi(now: number) {
@@ -2938,6 +3036,25 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
   });
 
+  // ── reduced motion ─────────────────────────────────────────────────────
+  /**
+   * Mirror the OS "reduce motion" setting onto the placement overlay, live:
+   * the media query is listened to, not read once, because the setting can
+   * change while a game is open and the canvas has no stylesheet to fall back
+   * on. Absent `matchMedia` (tests, an odd embed) motion simply stays on.
+   */
+  let motionQuery: MediaQueryList | null = null;
+  const syncOverlayMotion = () => {
+    if (typeof window.matchMedia !== "function") return;
+    if (!motionQuery) {
+      motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+      motionQuery.addEventListener?.("change", () => {
+        renderer?.setOverlayMotion(!motionQuery!.matches);
+      });
+    }
+    renderer?.setOverlayMotion(!motionQuery.matches);
+  };
+
   // ── resize ─────────────────────────────────────────────────────────────
   const resize = () => {
     const d = dpr();
@@ -3342,7 +3459,6 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   // ── boot ───────────────────────────────────────────────────────────────
   let raf = 0;
-  let disposed = false;
 
   const load = (src: string) => new Promise<HTMLImageElement>((res, rej) => {
     const img = new Image();
@@ -3420,6 +3536,21 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       console.warn("[scenery] art failed to load:", err);
     });
 
+// TRUCK-BRAND art (assets/vehicles/): the eight liveried lorries — blue for
+    // the player, red for the rival, four headings each. Installed into the
+    // sprite table like the scenery, and just as non-gating: while this is
+    // pending (or on a checkout without the PNGs) the legacy `truck_goods_*`
+    // sheet cells draw every lorry, which is the same lorry unpainted.
+    void loadVehicleLayers(atlas).then((n) => {
+      if (disposed || !n) return;
+      // The trucks are drawn from the structures layer every frame, so the new
+      // defs only need the vehicle items re-derived — but invalidate anyway, the
+      // same way the building layers do, so a paused/still frame updates too.
+      renderer?.invalidateAll();
+    }).catch((err) => {
+      console.warn("[truck-brand] failed to load:", err);
+    });
+
     // Road materials, on their own promise. Both must decode before the style
     // is installed — a half-textured road network would look like a bug — but
     // nothing waits on them, and a failure keeps the flat palette, which is a
@@ -3437,6 +3568,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
     void loadBuildingLayers(atlas, `${import.meta.env.BASE_URL}assets/buildings/`).then((n) => {
       if (disposed || !n) return;
+      // TOWN-GRID: the layers also bring the real FOOTPRINTS with them (a
+      // town cell can be 2x2), and the town draw items were built against the
+      // sheet's 1x1 defs. Re-sync so `townBuildings` re-lays each settlement
+      // on its house blocks — without this the 2x2 towers stay anchored on
+      // single tiles and hang over the streets.
+      syncWorld();
       // B-3.2: the layers just MUTATED sprite w/h (a per-building PNG can
       // out-tall the tallest sheet sprite), so the constructor-time cull pad
       // is stale — tall buildings would pop at the screen edge.
@@ -3450,6 +3587,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     renderer = new IsoRenderer(canvases, atlas, cam, world);
     renderer.setDecals(scenery);
     renderer.overlayPainter = (ctx, c, t) => paintProtests(ctx, c, t);
+    // QoL: the placement overlay animates (a breathing outline, a marching
+    // reach band, a ghost that floats). A player who asks the OS to reduce
+    // motion gets the identical overlay frozen at its resting frame — the
+    // stylesheet already does this for the HUD, this is the canvas half.
+    syncOverlayMotion();
     void load(protestArt).then((img) => { protestImg = img; }).catch(() => {});
     debug?.attachRenderer();
     enableRenderLogOnBoot();
@@ -3467,6 +3609,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       economyTick(t);
       quarryTick(t);
       aiTick(t);
+      // Rivalry idle wire: a Torvin saying / dad joke every so often, mid-game.
+      rivalChitChat(t);
       // MP-05: protests are solo/host-only (buyBlack refuses guests, like the
       // rest of the Black Market), so the sweep is a no-op on a guest — it
       // runs unguarded rather than splitting the heartbeat below.
@@ -3502,13 +3646,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         tickCars(cars, dt);
       }
       collectDeliveries(t);
+
       // TRAFFIC-01: trucks and ambient cars share the vehicles list — one
       // depth-sorted pass draws both, and culling treats them identically.
-      world.vehicles = carItems(cars).concat(truckItems(trucks));
-      renderer!.render(t, overlayItems());
+      // TRUCK-BRAND: the atlas decides whether a lorry wears a livery — the
+      // branded sprites only exist once `loadVehicleLayers` has installed them
+      // (see below), and until then every truck draws the legacy goods cell.
+      world.vehicles = carItems(cars).concat(truckItems(trucks, atlasRef ?? undefined));
+      const { items, ghost } = overlayFrame();
+      renderer!.render(t, items, ghost);
       floats.frame(t);
       paintUi(t);
       raf = requestAnimationFrame(frame);
+
+ 
     };
     raf = requestAnimationFrame(frame);
   })().catch((err) => {
@@ -3654,6 +3805,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     refreshQuarry: (now = performance.now()) => quarry.refresh(now),
     /** Story test twin of the player's first successful Oil harvest. */
     firstOilHarvest: () => onFirstOilHarvest(),
+    /** Story test twin of the idle wire: one Torvin saying / dad-joke exchange
+     *  now, honouring the same solo + in-play gates the clock uses, but
+     *  skipping the wait so a test can drive the exchange on demand. */
+    chitChat: () => {
+      if (!isSolo() || phase !== "play") return;
+      playRivalryScene(nextBanterScene());
+    },
+    /** The next Gold Mine warning, as `placeHarvester` will play it when the
+     *  player stands a Depot beside a Gold Mine (test twin). */
+    goldMineWarning: (): RivalryScene => nextGoldMineScene(),
     /** The e2e twin of clicking two adjacent gems in the Quarry panel. */
     swap: (r1: number, c1: number, r2: number, c2: number) =>
       quarry.board.trySwap(r1, c1, r2, c2, performance.now()),
@@ -3782,6 +3943,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      */
     overlayItemsFor: (tx: number, ty: number) => overlayItemsAt(tx, ty),
     /**
+     * The transparent building preview the overlay draws for a placement hover
+     * at (tx,ty): the sprite the click would place, its footprint origin, and
+     * the plan's verdict (which picks the tint). Null for the tools that place
+     * no building. Same source as `overlayItemsFor`, so the ghost and the grid
+     * it stands on can never disagree.
+     */
+    ghostFor: (tx: number, ty: number): GhostSpec | null => overlayPlanAt(tx, ty).ghost,
+    /**
      * RV-03: the tiles of the closest road route a DEPOT at (tx,ty) drives to
      * its factory, or null when that depot has no road connection. This is the
      * route the hover overlay paints and the truck drives, exposed so a test
@@ -3868,6 +4037,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // last intact state stays — the interval was the only writer.
     endingView?.destroy();
     endingView = null;
+    // TUT-01: the tour holds a document keydown listener, so it goes the same
+    // way the ending ledger does — and destroying it settles its promise, which
+    // is what stops the boot chain from awaiting a card that no longer exists.
+    tutorialView?.destroy();
+    tutorialView = null;
     floats.clear();
     cancelAnimationFrame(raf);
     ro.disconnect();

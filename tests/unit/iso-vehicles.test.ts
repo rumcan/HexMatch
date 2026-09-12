@@ -20,7 +20,13 @@
 //     directional TTD sprite, depth-sorts by the rounded tile, and is never
 //     pickable (a truck is not a clickable thing);
 //   * the atlas ships the four OpenGFX lorry views (2nd-gen goods truck,
-//     spr3132 in base-3092-dirt-vehicles.pnml).
+//     spr3132 in base-3092-dirt-vehicles.pnml);
+//   * TRUCK-BRAND: with the liveried art installed, a truck draws
+//     `truck_<owner's colour>_<heading>` — and every heading falls back to the
+//     goods lorry on its own when the branded sprite is missing, so the art is
+//     an upgrade and never a dependency. The `assets/vehicles/` PNG geometry is
+//     audited here too, because a def that disagrees with its own PNG crops the
+//     lorry at runtime with nothing to complain about.
 // ══════════════════════════════════════════════════════════════════════════
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
@@ -38,11 +44,11 @@ import {
   place, pickSprite, tier1Compare,
 } from "../../src/iso/depth";
 import { Atlas, type Manifest } from "../../src/iso/atlas";
-import { HW, HH, TILE_H, tileToScreen } from "../../src/game/config";
+import { HW, HH, TILE_H, TILE_W, tileToScreen } from "../../src/game/config";
 import {
-  TRUCK_SPEED, createTruckState, roadPath, roadRouteForHarvester,
-  roadDeliveryForHarvester, planTrucks,
-  tickTrucks, truckItems, type Truck,
+  TRUCK_SPEED, TRUCK_VIEW, createTruckState, roadPath, roadRouteForHarvester,
+  roadDeliveryForHarvester, planTrucks, tickTrucks, truckBrand, truckItems,
+  truckSpriteName, type Truck,
 } from "../../src/iso/vehicles";
 
 const manifest: Manifest = JSON.parse(
@@ -517,6 +523,112 @@ describe("RV-01 truck draw items", () => {
     expect(items(up)[0].sprite).toBe("truck_goods_ne");   // (0, -1) → NE view
   });
 
+  // ── TRUCK-BRAND: the liveried art, and the fallback that makes it optional ──
+  /** The bit `truckItems` derives, recomputed here so the test does not have to
+   *  reach into a private helper for a lookup table. */
+  const stepBitOf = (route: [number, number][], reverse: boolean) => {
+    const [a, b] = [route[0], route[1]];
+    const dx = (b[0] - a[0]) * (reverse ? -1 : 1), dy = (b[1] - a[1]) * (reverse ? -1 : 1);
+    return dx > 0 ? SE : dx < 0 ? NW : dy > 0 ? SW : NE;
+  };
+
+  /** A sprite table that only knows the names it is given. */
+  const atlasWith = (names: string[]) => ({ has: (n: string) => names.includes(n) });
+  const ALL_BRANDED = ["ne", "se", "sw", "nw"].flatMap((v) =>
+    [`truck_blue_${v}`, `truck_red_${v}`]);
+
+  it("wears the owner's livery when the branded sprite is in the atlas", () => {
+    const atlas = atlasWith(ALL_BRANDED);
+    const t = (ownerId: number): Truck => ({
+      ownerId, route: [[3, 10], [4, 10]], leg: 0, t: 0.5, reverse: false,
+    });
+    expect(truckItems({ trucks: [t(1)] }, atlas)[0].sprite).toBe("truck_blue_se");
+    expect(truckItems({ trucks: [t(2)] }, atlas)[0].sprite).toBe("truck_red_se");
+    // …and the heading still comes from the leg, per owner
+    const back = (ownerId: number): Truck => ({
+      ownerId, route: [[3, 10], [4, 10]], leg: 0, t: 0.5, reverse: true,
+    });
+    expect(truckItems({ trucks: [back(1)] }, atlas)[0].sprite).toBe("truck_blue_nw");
+    expect(truckItems({ trucks: [back(2)] }, atlas)[0].sprite).toBe("truck_red_nw");
+  });
+
+  it("falls back to the goods lorry per heading when the art has not landed", () => {
+    const t: Truck = {
+      ownerId: 1, route: [[3, 10], [4, 10]], leg: 0, t: 0.5, reverse: false,
+    };
+    // No atlas at all (tools, unit tests, a headless tick): the legacy names,
+    // which `assets/iso-atlas/manifest.json` guarantees.
+    expect(truckItems({ trucks: [t] })[0].sprite).toBe("truck_goods_se");
+    // Atlas loaded but the branded set missing (no assets/vehicles/): still legacy.
+    expect(truckItems({ trucks: [t] }, atlasWith([]))[0].sprite).toBe("truck_goods_se");
+    // PARTIALLY authored family — the compiler ran for two views only. The
+    // lorry is never invisible: each heading resolves on its own.
+    const half = atlasWith(["truck_blue_se", "truck_blue_sw"]);
+    const nw: Truck = { ...t, reverse: true };
+    expect(truckItems({ trucks: [t] }, half)[0].sprite).toBe("truck_blue_se");
+    expect(truckItems({ trucks: [nw] }, half)[0].sprite).toBe("truck_goods_nw");
+    // A rival with no red art yet drives the goods lorry, not the player's blue.
+    expect(truckItems({ trucks: [{ ...t, ownerId: 2 }] }, atlasWith(["truck_blue_se"]))[0].sprite)
+      .toBe("truck_goods_se");
+  });
+
+  it("names every heading the same way for both liveries", () => {
+    for (const [route, reverse, view] of [
+      [[[3, 10], [3, 9]], false, "ne"],   // up in y = away to the upper right
+      [[[3, 10], [4, 10]], false, "se"],
+      [[[3, 10], [3, 11]], false, "sw"],
+      [[[3, 10], [2, 10]], false, "nw"],
+    ] as const) {
+      const mk = (ownerId: number): Truck => ({
+        ownerId, route: route as [number, number][], leg: 0, t: 0, reverse,
+      });
+      const atlas = atlasWith(ALL_BRANDED);
+      expect(truckSpriteName(1, stepBitOf(route as [number, number][], reverse))).toBe(`truck_goods_${view}`);
+      expect(truckItems({ trucks: [mk(1)] }, atlas)[0].sprite).toBe(`truck_blue_${view}`);
+      expect(truckItems({ trucks: [mk(2)] }, atlas)[0].sprite).toBe(`truck_red_${view}`);
+    }
+  });
+  it("resolves against the REAL atlas: legacy before the art lands, liveried after", () => {
+    // `atlas` is the shipped assets/iso-atlas table, so it knows truck_goods_*
+    // and nothing branded — exactly the state of a page before
+    // loadVehicleLayers() resolves, and of a checkout without the art.
+    const t: Truck = {
+      ownerId: 1, route: [[3, 10], [4, 10]], leg: 0, t: 0.5, reverse: false,
+    };
+    expect(atlas.has("truck_blue_se")).toBe(false);
+    expect(truckItems({ trucks: [t] }, atlas)[0].sprite).toBe("truck_goods_se");
+    // Install the defs the way vehicle-art.ts does (rect 0,0,w,h + anchor, and
+    // deliberately NOT `center`: a moving sprite is anchored at the tile's
+    // diamond centre by drawOriginMoving).
+    const veh = JSON.parse(readFileSync("assets/vehicles/manifest.json", "utf8"));
+    for (const [name, d] of Object.entries(veh.sprites) as [string, never][]) {
+      atlas.manifest.sprites[name] = {
+        x: 0, y: 0, w: d.w, h: d.h, anchor: d.anchor, footprint: d.footprint,
+      };
+    }
+    expect(truckItems({ trucks: [t] }, atlas)[0].sprite).toBe("truck_blue_se");
+    const placed = place(atlas, truckItems({ trucks: [t] }, atlas)[0])!;
+    const [ax, ay] = veh.sprites.truck_blue_se.anchor as [number, number];
+    const [sx, sy] = tileToScreen(3.5, 10);
+    expect([placed.wx + ax, placed.wy + ay]).toEqual([sx + HW, sy + HH]);
+    for (const name of Object.keys(veh.sprites)) delete atlas.manifest.sprites[name];
+  });
+
+  it("names every livery and view the engine can ask for", () => {
+    // The two tables must agree or a truck silently drives the goods lorry
+    // forever: `truckSpriteName` builds `truck_<brand>_<view>` and the manifest
+    // has to carry that exact key.
+    const veh = JSON.parse(readFileSync("assets/vehicles/manifest.json", "utf8"));
+    for (const brand of ["blue", "red"] as const)
+      for (const view of Object.values(TRUCK_VIEW))
+        expect(veh.sprites[`truck_${brand}_${view}`], `truck_${brand}_${view}`).toBeDefined();
+    expect(Object.keys(TRUCK_VIEW).length).toBe(4);
+    expect(truckBrand(1)).toBe("blue");
+    expect(truckBrand(2)).toBe("red");
+    expect(truckBrand(0)).toBe("red");           // never the player's colours
+  });
+
+
   it("places a moving sprite by the FRACTIONAL tile's centre, not a south corner", () => {
     const p = place(atlas, {
       sprite: "truck_goods_se", tx: 3, ty: 10, fx: 3.5, fy: 10,
@@ -691,5 +803,72 @@ describe("new factories reassign depot routes", () => {
     expect(planTrucks(eco)[0].factory).toEqual([14, 11]);
     eco.factories.splice(2);
     expect(planTrucks(eco)[0].factory).toEqual([29, 11]);
+  });
+});
+
+// ── TRUCK-BRAND art assets: defs that match their own PNGs ────────────────
+describe("TRUCK-BRAND vehicle layers", () => {
+  const veh = JSON.parse(readFileSync("assets/vehicles/manifest.json", "utf8"));
+  const names = Object.keys(veh.sprites) as string[];
+  /** PNG width/height live in the IHDR: big-endian at byte 16 and 20. */
+  const pngSize = (file: string) => {
+    const b = readFileSync(file);
+    return [b.readUInt32BE(16), b.readUInt32BE(20)] as const;
+  };
+
+  it("ships four headings for each of the two liveries", () => {
+    expect(names.slice().sort()).toEqual(
+      ["blue", "red"].flatMap((c) => ["ne", "se", "sw", "nw"].map((v) => `truck_${c}_${v}`)).sort(),
+    );
+  });
+
+  it("has a def whose rect matches the PNG at every zoom", () => {
+    // The renderer blits `zoomFrameRect(def)` out of the per-zoom image, so a
+    // def that disagrees with its own file crops the lorry at one zoom only —
+    // the kind of bug no preview screenshot catches and no test of the art
+    // alone would ever see.
+    expect(names.length).toBe(8);
+    for (const name of names) {
+      const d = veh.sprites[name];
+      expect(d.footprint).toEqual([1, 1]);
+      expect(d.moving).toBe(true);
+      // 1950s lorry proportions: long and low. The bound that matters is the
+      // GROUND it drives on — a 1×1 sprite may out-lean a tile (the shipped
+      // 1×1 buildings are all ≥64 px wide) but a lorry must never cover a whole
+      // tile plus its neighbour, or the road reads as a car park.
+      expect(d.w).toBeGreaterThanOrEqual(20);        // at least the legacy cell (20×16)
+      expect(d.w).toBeLessThanOrEqual(TILE_W);
+      expect(d.h).toBeGreaterThanOrEqual(12);
+      expect(d.h).toBeLessThanOrEqual(TILE_H * 1.5);  // low-slung, not a building
+      // The manifest's own 2× note must agree with the 1× rect, since the tier
+      // PNGs were cut from that box and every `zoomFrameRect` derives from it.
+      expect(d.box2x, name).toEqual([d.w * 2, d.h * 2]);
+      expect(d.anchor[0]).toBeGreaterThanOrEqual(0);
+      expect(d.anchor[0]).toBeLessThan(d.w);
+      // The anchor is the ground line: the wheels, not the shadow's tail. It
+      // sits ON the last row or one inside it, because the compiler clamps the
+      // anchor into the box (`w2-2`) so a sprite can never be placed with a
+      // pixel of itself hanging off its own canvas.
+      expect(Math.abs(d.anchor[1] - (d.h - 1)), name).toBeLessThanOrEqual(1);
+      for (const [suffix, z] of [["0.5x", 0.5], ["1x", 1], ["2x", 2]] as const) {
+        const [pw, ph] = pngSize(`assets/vehicles/${name}@${suffix}.png`);
+        expect([pw, ph], `${name}@${suffix}.png`).toEqual([Math.round(d.w * z), Math.round(d.h * z)]);
+      }
+    }
+  });
+
+  it("ships art that carries transparency, not the magenta backing", () => {
+    // The masters are authored on pure #FF00FF and keyed to feathered alpha, so
+    // every shipped file must own a transparency channel: colour type 6
+    // (direct RGBA) or type 3 indexed WITH a tRNS palette — the form libvips
+    // picks for small flat-colour sprites, which every PNG in this repo uses
+    // (`assets/ground/sand.png` included). An un-keyed box would wear a pink rim
+    // on every lorry, and no unit test of the geometry could see it.
+    for (const name of names) {
+      const b = readFileSync(`assets/vehicles/${name}@1x.png`);
+      const type = b[25];
+      expect([3, 6], name).toContain(type);
+      if (type === 3) expect(b.includes(Buffer.from("tRNS")), `${name}: indexed without tRNS`).toBe(true);
+    }
   });
 });
