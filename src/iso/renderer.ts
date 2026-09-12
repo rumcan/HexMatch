@@ -38,6 +38,7 @@ import {
   paintGroundTiles, paintShore, invalidateGroundContours,
   type GroundPatterns, type GroundTextures,
 } from "./ground";
+import { ShadowStamps, paintBuildingShadows } from "./building-shadow";
 import {
   FOREST_FOOTPRINT, TREE_SPRITES, paintDecals,
   type Decal, type DecalImages, type Forest, type Scenery,
@@ -355,6 +356,9 @@ export class IsoRenderer {
    * tests and the demo, which stage no protests.
    */
   overlayPainter: ((ctx: CanvasRenderingContext2D, cam: Camera, timeMs: number) => void) | null = null;
+
+  /** Pre-blurred building shadow stamps, one per footprint size per zoom. */
+  private readonly shadowStamps = new ShadowStamps();
 
   readonly canvases: RendererCanvases;
   private ctxT: Ctx2D; private ctxS: Ctx2D; private ctxO: Ctx2D;
@@ -701,10 +705,15 @@ export class IsoRenderer {
     const { order } = sorted;
     this.lastOrder = order;
     this.lastCycles = sorted.cycles;
+    // Contact shadows go down between the roads and the first sprite: they
+    // are ground, so they may darken the asphalt a building stands beside
+    // but must never land on a building, a tree or a passing lorry.
+    const shadows = paintBuildingShadows(
+      ctx, cam, order, this.shadowStamps, (w, h) => makeSurface(w, h));
     for (const p of order) this.blit(ctx, p, timeMs);
     this.trace("structures-pass", {
       z: cam.zoom, range: [r.x0, r.y0, r.x1, r.y1],
-      items: items.length, placed: placed.length, cycles: sorted.cycles,
+      items: items.length, placed: placed.length, shadows, cycles: sorted.cycles,
       order: order.map((p) => ({ sprite: p.sprite, tile: [p.tx, p.ty], key: p.key })),
     });
     this.structuresDirty = false;

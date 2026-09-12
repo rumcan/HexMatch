@@ -65,6 +65,18 @@ export interface Placed extends DrawItem {
  * (tx + fw - 1, ty + fh - 1). Building-layer sprites (def.center) instead
  * land on the footprint's CENTRE — the bbox centre — so free-placed building
  * art sits concentric with its tiles and does not snap to the grid.
+ *
+ * The south branch used to add HW as well, which is NOT the south vertex —
+ * it is half a tile east of it, and it made the docstring above a lie. Every
+ * cell in the monolith atlas is a 64×32 diamond anchored [32,31], so that
+ * offset put the whole sheet half a tile east of the pattern-painted ground
+ * and of the `def.center` buildings. Nothing showed it while the sheet was
+ * self-consistent — the old road sprites were off by the same amount as the
+ * lorries driving on them, and grass has no features to be off against — but
+ * the ground-plane vector roads agree with the ground, so the error surfaced
+ * as the hover highlight sitting on a grid line instead of over the tile it
+ * had selected, and as lorries driving beside their road. Removed here, at
+ * the one place it came from, rather than compensated for at each caller.
  */
 export function drawOrigin(def: SpriteDef, tx: number, ty: number): [number, number] {
   const [fw, fh] = def.footprint;
@@ -77,7 +89,7 @@ export function drawOrigin(def: SpriteDef, tx: number, ty: number): [number, num
     const cy = sy + TILE_H - (fw + fh) * (HH / 2);
     return [cx - def.anchor[0], cy - def.anchor[1]];
   }
-  return [sx + HW - def.anchor[0], sy + TILE_H - def.anchor[1]];
+  return [sx - def.anchor[0], sy + TILE_H - def.anchor[1]];
 }
 
 /**
@@ -86,8 +98,25 @@ export function drawOrigin(def: SpriteDef, tx: number, ty: number): [number, num
  * the ground point a vehicle drives on — not on any footprint corner.
  */
 export function drawOriginMoving(def: SpriteDef, fx: number, fy: number): [number, number] {
-  const [sx, sy] = tileToScreen(fx, fy);   // the fractional diamond's top vertex
-  return [sx + HW - def.anchor[0], sy + HH - def.anchor[1]];
+  const [sx, sy] = tileToScreen(fx, fy);   // the fractional diamond's TOP vertex
+  // The anchor lands on the diamond's CENTRE, which is (0, HH) from the top
+  // vertex — the same point `tileDiamondWorld` centres a tile on and the same
+  // point a centre-anchored building is placed at.
+  //
+  // This used to add HW as well, putting the wheels on the diamond's EAST
+  // vertex: half a tile east of the tile the lorry was on, and on the corner
+  // where four tiles meet. It looked right because the old road SPRITES were
+  // drawn with the same offset — every sprite in the monolith atlas is
+  // anchored [32,31] on a 64px cell, which lands it half a tile east of where
+  // the pattern-painted ground puts that tile. The two errors cancelled, so
+  // lorries sat neatly on sprite roads while both sat half a tile off the
+  // ground underneath them.
+  //
+  // Nothing cancels it now: the vector roads are generated from the ground
+  // plane and agree with the ground and the buildings. So the offset came out
+  // of the lorries, and then out of `drawOrigin` too — see the note there.
+  // Every layer now measures from the same ground plane.
+  return [sx - def.anchor[0], sy + HH - def.anchor[1]];
 }
 
 /** True when a draw item is a moving (fractionally placed) sprite. */
