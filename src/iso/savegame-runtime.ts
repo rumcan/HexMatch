@@ -83,7 +83,9 @@ export const readSave = (): SaveGamePayload | null => {
     const raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return null;
     const d = JSON.parse(raw) as SaveGamePayload;
-    if (d.v !== SAVEGAME_VERSION || d.snapV !== SNAPSHOT_VERSION) return null;
+    // v10 → v11 only adds beach on formerly unbuildable water, after all
+    // seeded placement. Track bytes and every existing placement are intact.
+    if (d.v !== SAVEGAME_VERSION || (d.snapV !== SNAPSHOT_VERSION && d.snapV !== 10)) return null;
     if (typeof d.seed !== "number" || !d.track) return null;
     return d;
   } catch { return null; }

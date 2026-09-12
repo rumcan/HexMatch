@@ -11,12 +11,9 @@
 //   • the island's land tiles are filled with the seamless grass texture,
 //     again world-anchored — adjacent tiles read as one painted meadow with
 //     zero per-tile seams (the "puzzle" is gone);
-//   • SAND tiles (the beach ring hugging the coastline, see grid.ts) get an
-//     inset diamond of the seamless sand texture on top of the grass, so the
-//     island is lined with an organic golden beach edge;
-//   • the shoreline (water tiles that touch land) gets a shallow-water tint
-//     and animated foam strokes along each shared edge — two out-of-phase
-//     sine waves per tile so the surf shimmers instead of blinking.
+//   • connected, rounded land and inland contours reveal a continuous beach;
+//   • shallow-water bands and animated foam follow that same coast path.
+//     No separate sand stamps or tinted water diamonds remain.
 //
 // Everything is a pure function of (grid, camera, time). Textures are the
 // seamless 512×512 PNGs in assets/ground/ (tools/make-ground-textures.mjs).
@@ -24,6 +21,7 @@
 import { HW, HH, TILE_H, tileToScreen } from "../game/config";
 import { GRASS, SAND, WATER, type Grid } from "./grid";
 import type { AtlasImage } from "./atlas";
+import { traceCoast, type CoastPoint } from "./coastline";
 
 export const GROUND_TEX_SIZE = 512;
 
@@ -87,9 +85,8 @@ export function pathPolygons(ctx: CanvasRenderingContext2D, polys: [number, numb
 
 /**
  * Project world-space (1×) coordinates to the paint space of the target
- * context. The renderer's chunk painter floors the chunk-local device
- * position (same rounding discipline as every sprite blit); callers painting
- * whole scenes pass the identity.
+ * context. Preserve subpixel curve coordinates; only the final cache blit
+ * snaps to a device pixel. Callers painting whole scenes pass the identity.
  */
 export type GroundProject = (wx: number, wy: number) => [number, number];
 
@@ -108,35 +105,77 @@ export function paintGroundTiles(
   patterns: { grass: string | CanvasPattern; sand: string | CanvasPattern },
   project: GroundProject = identityProject,
 ): void {
-  const grassPolys: [number, number][][] = [];
-  const sandPolys: [number, number][][] = [];
-  for (let ty = ty0; ty <= ty1; ty++) {
-    if (ty < 0 || ty >= grid.h) continue;
-    for (let tx = tx0; tx <= tx1; tx++) {
-      if (tx < 0 || tx >= grid.w) continue;
-      const v = grid.terrain[ty * grid.w + tx];
-      if (v === WATER) continue;
-      grassPolys.push(tileDiamondWorld(tx, ty).map((p) => project(p[0], p[1])));
-      if (v === SAND)
-        sandPolys.push(insetPolygon(tileDiamondWorld(tx, ty), SAND_INSET).map((p) => project(p[0], p[1])));
-    }
-  }
-  if (!grassPolys.length) return;
-  // Grass under everything (full diamonds — adjacent fills share edges and
-  // opposite winding keeps the union seamless), then the beach ring on top.
-  pathPolygons(ctx, grassPolys);
-  ctx.fillStyle = patterns.grass;
-  ctx.fill();
-  ctx.strokeStyle = patterns.grass;
-  ctx.lineWidth = 1;
-  ctx.stroke();                       // hairline seal against AA cracks
-  if (sandPolys.length) {
-    pathPolygons(ctx, sandPolys);
-    ctx.fillStyle = patterns.sand;
+  const coast = groundContours(grid);
+  // Clip the SAME world contours into each cache surface. The tiny overlap
+  // seals antialiased chunk joins; it never changes the outer coastline.
+  const pad = .04;
+  const corners = [[tx0 - pad, ty0 - pad], [tx1 + 1 + pad, ty0 - pad],
+    [tx1 + 1 + pad, ty1 + 1 + pad], [tx0 - pad, ty1 + 1 + pad]];
+  ctx.save();
+  pathPolygons(ctx, [corners.map(([x, y]) => project(...tileToScreen(x, y)))]);
+  ctx.clip();
+  const paint = (loops: CoastPoint[][], fill: string | CanvasPattern) => {
+    pathPolygons(ctx, loops.map(loop => loop.map(p => project(...p))));
+    ctx.fillStyle = fill;
     ctx.fill();
-    ctx.strokeStyle = patterns.sand;
+  };
+  // Sand under the entire island; the rounded inland mask reveals a beach
+  // between two continuous contours, including concave bays and corners.
+  paint(coast.land, patterns.sand);
+  paint(coast.inland, patterns.grass);
+  // A narrow feather of the real grass texture softens the beach's inland
+  // seam without an extra bitmap or a fringe of disconnected grass stamps.
+  ctx.strokeStyle = patterns.grass;
+  ctx.lineJoin = "round";
+  const [px, py] = project(0, 0), [qx, qy] = project(1, 0);
+  const scale = Math.hypot(qx - px, qy - py);
+  for (const [width, alpha] of [[7, .12], [4, .2], [2, .28]] as const) {
+    ctx.lineWidth = width * scale;
+    ctx.globalAlpha = alpha;
     ctx.stroke();
   }
+  ctx.restore();
+}
+
+export interface GroundContours { land: CoastPoint[][]; inland: CoastPoint[][] }
+const contourCache = new WeakMap<Grid, GroundContours>();
+export function groundContours(grid: Grid): GroundContours {
+  let coast = contourCache.get(grid);
+  if (!coast) {
+    coast = {
+      land: traceCoast(grid.w, grid.h, (x, y) => grid.terrain[y * grid.w + x] !== WATER),
+      inland: traceCoast(grid.w, grid.h, (x, y) => {
+        const v = grid.terrain[y * grid.w + x];
+        return v !== WATER && v !== SAND;
+      }),
+    };
+    contourCache.set(grid, coast);
+  }
+  return coast;
+}
+export function invalidateGroundContours(grid: Grid): void { contourCache.delete(grid); }
+
+/** Soft surf bands follow the exact land contour, never whole water diamonds. */
+export function paintShore(
+  ctx: CanvasRenderingContext2D, grid: Grid, t: number, zoom: number,
+  project: GroundProject = identityProject,
+): void {
+  ctx.save();
+  pathPolygons(ctx, groundContours(grid).land.map(loop => loop.map(p => project(...p))));
+  ctx.lineJoin = "round";
+  // Broad translucent bands feather the shelf into the animated ocean.
+  for (const [width, alpha] of [[18, .035], [12, .055], [7, .09]] as const) {
+    ctx.strokeStyle = `rgba(${SHALLOW_RGB},${alpha})`;
+    ctx.lineWidth = width * zoom;
+    ctx.stroke();
+  }
+  ctx.strokeStyle = "rgba(100,77,43,0.20)";
+  ctx.lineWidth = 3.5 * zoom;
+  ctx.stroke();
+  ctx.strokeStyle = `rgba(${FOAM_RGB},${.32 + .1 * Math.sin(t * .0016)})`;
+  ctx.lineWidth = (1.2 + .25 * Math.sin(t * .002)) * zoom;
+  ctx.stroke();
+  ctx.restore();
 }
 
 // ── shoreline ───────────────────────────────────────────────────────────────
