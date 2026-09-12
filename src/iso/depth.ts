@@ -86,8 +86,26 @@ export function drawOrigin(def: SpriteDef, tx: number, ty: number): [number, num
  * the ground point a vehicle drives on — not on any footprint corner.
  */
 export function drawOriginMoving(def: SpriteDef, fx: number, fy: number): [number, number] {
-  const [sx, sy] = tileToScreen(fx, fy);   // the fractional diamond's top vertex
-  return [sx + HW - def.anchor[0], sy + HH - def.anchor[1]];
+  const [sx, sy] = tileToScreen(fx, fy);   // the fractional diamond's TOP vertex
+  // The anchor lands on the diamond's CENTRE, which is (0, HH) from the top
+  // vertex — the same point `tileDiamondWorld` centres a tile on and the same
+  // point a centre-anchored building is placed at.
+  //
+  // This used to add HW as well, putting the wheels on the diamond's EAST
+  // vertex: half a tile east of the tile the lorry was on, and on the corner
+  // where four tiles meet. It looked right because the old road SPRITES were
+  // drawn with the same offset — every sprite in the monolith atlas is
+  // anchored [32,31] on a 64px cell, which lands it half a tile east of where
+  // the pattern-painted ground puts that tile. The two errors cancelled, so
+  // lorries sat neatly on sprite roads while both sat half a tile off the
+  // ground underneath them.
+  //
+  // Nothing cancels it now: the vector roads are generated from the ground
+  // plane and agree with the ground and the buildings. So the offset had to
+  // come out of the lorries, which is where it was wrong. (Sprite road mode
+  // is consequently half a tile out from the lorries; it is a rollback path,
+  // and the ground is the authority.)
+  return [sx - def.anchor[0], sy + HH - def.anchor[1]];
 }
 
 /** True when a draw item is a moving (fractionally placed) sprite. */

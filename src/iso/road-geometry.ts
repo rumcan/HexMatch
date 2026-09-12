@@ -29,7 +29,37 @@
 //
 // `sharedPortsAgree` in the unit tests pins this down for every direction.
 // ══════════════════════════════════════════════════════════════════════════
-import { NE, SE, SW, NW, DIRS, DIR, OPPOSITE, type Dir } from "./track";
+// TYPE-ONLY import from track.ts, deliberately.
+//
+// A value import here is a circular one: `track.ts` imports CHUNK/chunksX from
+// `renderer.ts`, `renderer.ts` reaches this module through `road-renderer.ts`,
+// and the cycle closes. Under ESM the cycle resolves by evaluating this module
+// first, so every top-level use of an imported binding — `ROAD_DIRS = DIRS`,
+// the computed keys in `PORT_OFFSET` — reads it inside its temporal dead zone
+// and throws `Cannot access 'DIRS' before initialization`. That does not fail
+// gracefully: the whole module graph fails to load, so the app never boots and
+// everything hanging off it (the UI sound layer included) is simply absent.
+//
+// A type import is erased, so it creates no runtime edge. The four direction
+// values are re-declared below instead, and pinned against track.ts by
+// `tests/unit/iso-road-geometry.test.ts` so they cannot drift.
+import type { Dir } from "./track";
+
+/**
+ * The direction bits, re-declared. These MUST equal track.ts's NE/SE/SW/NW —
+ * the unit tests assert it tile for tile.
+ */
+const NE = 1, SE = 2, SW = 4, NW = 8;
+const DIRS: readonly Dir[] = [NE, SE, SW, NW];
+const DIR: Record<number, [number, number]> = {
+  [NE]: [0, -1],
+  [SE]: [1, 0],
+  [SW]: [0, 1],
+  [NW]: [-1, 0],
+};
+const OPPOSITE: Record<number, number> = {
+  [NE]: SW, [SE]: NW, [SW]: NE, [NW]: SE,
+};
 
 /** A point in the ground plane, in tile units. */
 export type GroundPoint = readonly [number, number];
@@ -43,7 +73,7 @@ export const ROAD_DIRS = DIRS;
  * the classic mistake here: it produces roads that meet at the points where
  * four tiles touch instead of across the edges they actually share.
  */
-export const PORT_OFFSET: Record<Dir, GroundPoint> = {
+export const PORT_OFFSET: Record<number, GroundPoint> = {
   [NE]: [0.5, 0],
   [SE]: [1, 0.5],
   [SW]: [0.5, 1],
@@ -249,10 +279,26 @@ export function paintFigures(tx: number, ty: number, mask: number): RoadFigure[]
 export const JUNCTION_GAP = 0.22;
 
 // ── measurements ────────────────────────────────────────────────────────────
-/** Road width in tile units. Ground-plane, never screen-space. */
+/**
+ * Road width in tile units. Ground-plane, never screen-space.
+ *
+ * A road tile OCCUPIES ITS TILE. This is measured, not chosen: the sprite
+ * these vectors replace (`road_1010`, a straight, in the 1× atlas) carries an
+ * asphalt band 0.84 tile units across, leaving only a thin verge in the two
+ * off-axis corners of the diamond. Core 0.78 + `SHOULDER_WIDTH` on each side
+ * reproduces that footprint exactly.
+ *
+ * It was 0.45 — a little under half a tile — and that was the bug behind
+ * "the road runs on the edge of two diamonds, half in one and half in the
+ * other". The centre-line was never off (it passes through `tileCentre`, and
+ * an overlay of the true diamonds confirms it): a ribbon that narrow just
+ * floats midway between the two boundary lines running parallel to it a few
+ * pixels away, and the eye cannot tell which diamond owns it. Filling the
+ * tile is what makes a road section read as one tile of road.
+ */
 export const ROAD_WIDTH: Record<RoadMaterial, number> = {
-  dirt: 0.45,
-  paved: 0.45,
+  dirt: 0.78,
+  paved: 0.78,
 };
 
 /**
@@ -264,7 +310,7 @@ export const ROAD_WIDTH: Record<RoadMaterial, number> = {
  * art direction rules out — rather than as ground disturbed at the road's
  * edge. It is a hint of a verge, not a border.
  */
-export const SHOULDER_WIDTH = 0.045;
+export const SHOULDER_WIDTH = 0.03;
 
 /**
  * The ground-plane bounding box of a tile's road, shoulder included. The

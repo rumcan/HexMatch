@@ -524,7 +524,15 @@ describe("RV-01 truck draw items", () => {
     expect(p).toBeTruthy();
     const def = atlas.get("truck_goods_se")!;
     const [vx, vy] = tileToScreen(3.5, 10);               // diamond top vertex
-    expect(p!.wx + def.anchor[0]).toBe(vx + HW);          // anchor → centre
+    // The diamond's CENTRE is (0, HH) from its top vertex — the point
+    // `tileDiamondWorld` centres the tile on and a centre-anchored building is
+    // placed at. This used to assert `vx + HW`, which is the EAST vertex: the
+    // corner where four tiles meet, half a tile from the tile the lorry is on.
+    // It read as correct because every sprite in the monolith atlas is
+    // anchored [32,31] on a 64px cell and is drawn with the same offset, so
+    // lorries and sprite roads agreed with each other while both disagreed
+    // with the ground.
+    expect(p!.wx + def.anchor[0]).toBe(vx);
     expect(p!.wy + def.anchor[1]).toBe(vy + HH);
     // static sprites still anchor the old way (south corner)
     const q = place(atlas, { sprite: "depot_blue", tx: 3, ty: 10 })!;
