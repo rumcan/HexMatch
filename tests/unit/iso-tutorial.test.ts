@@ -233,6 +233,25 @@ describe("TUT-01 the card", () => {
     expect(prev.disabled).toBe(true);
   });
 
+  it("is one veil and one card — the overlay centres a single in-flow child", () => {
+    show();
+    const screen = card()!;
+    // `#iso-tutorial` is a ROW flex container that centres what it holds. The
+    // veil is out of flow, so the card must be the only in-flow child: a third
+    // one (the note about the two exits used to be appended here) sits BESIDE
+    // the card and squeezes it — and because the footer's keys are
+    // `flex: 0 0 auto` they cannot shrink, so on a phone-width viewport they
+    // are pushed out of the plate and out of reach of a click.
+    expect([...screen.children].map((n) => n.className)).toEqual(["tut-shade", "tut-card"]);
+    const plate = screen.querySelector(".tut-card")!;
+    expect([...plate.children].map((n) => n.className))
+      .toEqual(["tut-head", "tut-body", "tut-foot", "tut-note"]);
+    expect(plate.querySelector(".tut-note")!.textContent).toMatch(/never show this again/i);
+    // the footer holds all three controls, in the order the eye reads them
+    expect([...plate.querySelector(".tut-foot")!.children].map((n) => n.className))
+      .toEqual(["tut-never", "tut-dots", "tut-nav"]);
+  });
+
   it("walks forward to the last step and closes as done", async () => {
     const handle = show();
     for (const id of STEP_IDS.slice(1)) {

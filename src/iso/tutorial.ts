@@ -612,12 +612,17 @@ export function showTutorial(host: HTMLElement, opts: TutorialOptions = {}): Tut
   nav.append(prev, next);
   foot.append(never, dots, nav);
   card.appendChild(foot);
-  // One honest line about the two exits, so the button is not a mystery.
+  // One honest line about the two exits, so the button is not a mystery. It
+  // belongs to the CARD, not to the overlay: `#iso-tutorial` is a row flex
+  // container centring one thing, so a third in-flow child would sit BESIDE
+  // the card and squeeze it (and on a phone-width viewport squeeze the footer
+  // keys, which cannot shrink, clean out of reach).
   card.appendChild(el(
     "p", "tut-note",
     "Skip closes it for now — “Never show this again” is what keeps it closed. "
     + "Replay it any time from the ❔ in the top bar.",
   ));
+  // Exactly two children: the veil (a click on it is a Skip) and the card.
   screen.appendChild(card);
 
   function paint() {

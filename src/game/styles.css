@@ -2204,7 +2204,9 @@ html, body, #root {
   background-blend-mode: screen, soft-light, normal;
   backdrop-filter: blur(9px) saturate(.8) brightness(.72);
   -webkit-backdrop-filter: blur(9px) saturate(.8) brightness(.72); }
-/* A click on the veil is a Skip; the card rides above it. */
+/* A click on the veil is a Skip; the card rides above it. The veil is out of
+   flow, so this row has exactly ONE in-flow child to centre: the card. A
+   second in-flow child would sit beside it and squeeze it (see tutorial.ts). */
 #iso-tutorial .tut-shade { position: absolute; inset: 0; }
 .tut-card {
   position: relative; z-index: 1;
@@ -2386,6 +2388,7 @@ html, body, #root {
 .tut-nav { flex: 0 0 auto; display: flex; gap: 8px; }
 /* the brass "sign here" plate, at stepper size */
 .tut-nav .big-btn { margin-top: 0; padding: 8px 15px; font-size: 11px; letter-spacing: 1.8px; }
+/* the card's own last line — under the keys, inside the plate */
 .tut-note { flex: 0 0 auto; margin: 8px 0 0; text-align: center;
   font-family: var(--mono); font-size: 10.5px; line-height: 1.45; color: var(--txt-mute); }
 

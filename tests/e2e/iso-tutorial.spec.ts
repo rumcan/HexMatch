@@ -22,14 +22,40 @@ const BASE = "/hexmatch/";
 const TOUR = "#iso-tutorial";
 const STEP_IDS = ["loop", "plant", "depot", "roads", "board", "expand", "victory", "desk"];
 
-/** Boot a solo game through the start screen and wait for the map to exist. */
+/**
+ * Every test here mounts the real built game — one mount for the walk, three
+ * for the persistence story — and on the CI runner a single mount (bundle, art,
+ * a 144×144 map, software GL) can eat most of the config's shared 30 s: the
+ * boot-based specs beside this one fail at exactly their own 20 s waits. So
+ * this file asks for room to boot and room to read, and waits longer for a
+ * mount that is slow rather than declaring it broken.
+ */
+const BOOT_MS = 60_000;
+test.describe.configure({ timeout: 180_000 });
+
+/**
+ * Boot a FIRST game through the start screen and wait for the map to exist.
+ *
+ * Two things this has to get right, and the runner is what taught both:
+ *
+ *  * `App.tsx` mounts the game only once a mode is chosen, so `goto` on its own
+ *    leaves the start screen up and `__iso` never appears. The click is part of
+ *    booting, not part of the test.
+ *  * the autosave writes `hexmatch:save` every 5 s and again on `pagehide`, so
+ *    a second navigation RESUMES instead of booting — and AI-03 deliberately
+ *    gives a resumed game no onboarding at all. Clearing the key on every
+ *    navigation is what makes each call here a first game, which is the only
+ *    kind the tour opens on. (Without it, "the next boot asks again" quietly
+ *    measures a resume that was never going to ask.)
+ */
 async function boot(page: import("@playwright/test").Page, extra = "") {
+  await page.addInitScript(() => localStorage.removeItem("hexmatch:save"));
   await page.goto(`${BASE}?seed=79${extra}`);
   await page.getByRole("button", { name: /Play vs AI/ }).click();
   await page.waitForFunction(() => {
     const h = (window as unknown as { __iso?: { phase: string } }).__iso;
     return !!h && h.phase === "setup-factory";
-  }, null, { timeout: 20000 });
+  }, null, { timeout: BOOT_MS });
 }
 
 /** Remember a difficulty so AI-02's picker stays out of the way. */
