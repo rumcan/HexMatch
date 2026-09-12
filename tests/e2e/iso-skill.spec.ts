@@ -24,7 +24,8 @@ async function bootIso(page: import("@playwright/test").Page, extra = "") {
   await page.goto(`${BASE}?seed=79${extra}`);
   await page.waitForFunction(() => {
     const h = (window as any).__iso;
-    return !!h && h.phase === "setup-factory" && !!h.grid && h.grid.industries.length > 0;
+    // LOAD-01: wait for the loading screen to lift before touching the HUD.
+    return !!h && h.phase === "setup-factory" && !!h.grid && h.grid.industries.length > 0 && !h.loading;
   }, null, { timeout: 20000 });
 }
 

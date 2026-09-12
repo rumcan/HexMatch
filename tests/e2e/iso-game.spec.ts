@@ -43,7 +43,9 @@ async function bootIso(page: import("@playwright/test").Page) {
   await page.goto(ISO_URL);
   await page.waitForFunction(() => {
     const h = (window as any).__iso;
-    return !!h && h.phase === "setup-factory" && !!h.grid && h.grid.industries.length > 0;
+    // LOAD-01: the loading screen covers the map until the art settles —
+    // clicking before it lifts would land on the overlay, not a tile.
+    return !!h && h.phase === "setup-factory" && !!h.grid && h.grid.industries.length > 0 && !h.loading;
   }, null, { timeout: 20000 });
 }
 

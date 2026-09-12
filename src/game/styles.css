@@ -856,8 +856,14 @@ html, body, #root {
 /* ── gems (board) — struck tokens on the felt ─────────────────── */
 .gem {
   position: absolute;  width:var(--gem,48px);height:var(--gem,48px); left: 0; top: 0;
-  transition: transform var(--gem-move-ms, 80ms) cubic-bezier(.4,1.3,.5,1), opacity var(--gem-clear-ms, 95ms);
-  will-change: transform;
+  /* `translate` is TACTILE-01's hover lean / drag offset (ui.ts), layered on
+     the inline cell `transform`; the slight overshoot is the "ease into place". */
+  transition:
+    transform var(--gem-move-ms, 80ms) cubic-bezier(.4,1.3,.5,1),
+    translate .2s cubic-bezier(.22,.9,.3,1.12),
+    scale .16s ease-out,
+    opacity var(--gem-clear-ms, 95ms);
+  will-change: transform, translate;
   background: transparent;
   border: none;
   padding: 0;
@@ -942,6 +948,40 @@ html, body, #root {
    origin. The lift is drawn on the face instead. */
 .gem.sel .face.sprite, .gem.selected .face.sprite { filter: drop-shadow(0 0 9px rgba(255, 217, 138, .9)) drop-shadow(0 3px 4px rgba(0, 0, 0, .6)); }
 .gem.gone { transition-duration: var(--gem-clear-ms, 95ms); transform: scale(.1) rotate(40deg) !important; opacity: 0; }
+
+/* ── TACTILE-01: picked up, giving way, settling (src/game/ui.ts) ──────────
+   Held: lifted a touch above the felt and following the hand with only a
+   whisper of lag. Yielding: the neighbour leans out of the way. Settle: a
+   small decaying wobble on `rotate` — its own property, so it never touches
+   the cell `transform` or the glide `translate`. */
+.gem.dragging {
+  z-index: 5; cursor: grabbing; scale: 1.07;
+  transition:
+    transform var(--gem-move-ms, 80ms) cubic-bezier(.4,1.3,.5,1),
+    translate 50ms linear,
+    scale .16s ease-out,
+    opacity var(--gem-clear-ms, 95ms);
+}
+.gem.dragging .face.sprite { filter: drop-shadow(0 0 8px rgba(255, 217, 138, .5)) drop-shadow(0 7px 7px rgba(0, 0, 0, .55)); }
+.gem.yielding {
+  z-index: 4;
+  transition:
+    transform var(--gem-move-ms, 80ms) cubic-bezier(.4,1.3,.5,1),
+    translate 90ms ease-out,
+    opacity var(--gem-clear-ms, 95ms);
+}
+.gem.settle { animation: gem-settle 300ms ease-out; }
+@keyframes gem-settle {
+  0%   { rotate: 0deg;    scale: 1.05; }
+  22%  { rotate: -5deg; }
+  46%  { rotate: 3.5deg;  scale: .98; }
+  70%  { rotate: -1.5deg; }
+  100% { rotate: 0deg;    scale: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gem.settle { animation: none; }
+  .gem.dragging { scale: 1; }
+}
 
 .gem.token .face {
   border-color: var(--gold2);
@@ -2181,6 +2221,58 @@ html, body, #root {
 #iso-skill-prompt .iso-skill-pace { font-size: 11px; opacity: 0.8; font-family: var(--mono); color: var(--brass-hi); }
 #iso-skill-prompt .iso-skill-foot { margin: 10px 0 0; font-size: 11px; opacity: 0.65;
   font-family: var(--mono); }
+
+/* ── LOAD-01: the loading screen (src/iso/loading-screen.ts) ─────────────
+   Same smoke-and-felt room as the difficulty prompt it follows, so the pick
+   reads as walking into the next room rather than a cut to a spinner. */
+#iso-loading { position: absolute; inset: 0; z-index: 95;
+  display: flex; align-items: center; justify-content: center;
+  background:
+    var(--smoke) 0 0 / 1100px,
+    var(--room) center / cover,
+    rgba(6, 4, 3, .94);
+  background-blend-mode: screen, soft-light, normal;
+  transition: opacity .38s ease; }
+#iso-loading.iso-loading-out { opacity: 0; pointer-events: none; }
+#iso-loading .iso-loading-card { width: min(440px, calc(100% - 32px)); padding: 24px 28px 20px;
+  border: 1px solid var(--brass-lo); color: var(--txt); text-align: center;
+  background:
+    var(--felt) 0 0 / 300px,
+    linear-gradient(180deg, rgba(34, 25, 16, .94), rgba(10, 7, 5, .96));
+  background-blend-mode: luminosity, normal;
+  box-shadow: 0 26px 70px rgba(0, 0, 0, .72), 0 0 60px -18px rgba(255, 176, 46, .3); }
+#iso-loading .iso-loading-kicker { margin: 0 0 8px; font: 700 11px/1 var(--mono); letter-spacing: 3px;
+  text-transform: uppercase; color: var(--brass); }
+#iso-loading h2 { margin: 0 0 4px; font-size: 24px; font-family: var(--display); font-weight: 700;
+  letter-spacing: 4px; text-transform: uppercase; color: var(--brass-hi);
+  text-shadow: 0 -1px 0 #000, 0 0 28px rgba(255, 176, 46, .3); }
+#iso-loading .iso-loading-sub { margin: 0; font: 13px/1.4 var(--serif); color: var(--txt-dim); letter-spacing: .5px; }
+#iso-loading .iso-loading-track { position: relative; height: 10px; margin: 18px 0 8px; overflow: hidden;
+  border: 1px solid var(--brass-lo); background: rgba(0, 0, 0, .55);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, .8); }
+#iso-loading .iso-loading-bar { height: 100%; width: 0;
+  background: linear-gradient(180deg, var(--brass-hi), var(--gold) 55%, var(--brass-lo));
+  box-shadow: 0 0 14px rgba(255, 176, 46, .55);
+  transition: width .3s ease-out; }
+#iso-loading .iso-loading-bar::after { content: ""; display: block; height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 244, 214, .45), transparent);
+  background-size: 60px 100%; background-repeat: no-repeat;
+  animation: iso-loading-sheen 1.4s linear infinite; }
+@keyframes iso-loading-sheen { from { background-position: -60px 0; } to { background-position: calc(100% + 60px) 0; } }
+#iso-loading .iso-loading-meta { display: flex; justify-content: space-between; gap: 12px;
+  font: 11px/1.3 var(--mono); color: var(--brass-hi); }
+#iso-loading .iso-loading-steps { list-style: none; margin: 14px 0 0; padding: 10px 0 0;
+  border-top: 1px solid rgba(242, 220, 166, .12);
+  display: grid; grid-template-columns: 1fr 1fr; gap: 5px 14px; text-align: left;
+  font: 12px/1.3 var(--sans); color: var(--txt-dim); }
+#iso-loading .iso-loading-steps li { opacity: .55; transition: opacity .2s, color .2s; }
+#iso-loading .iso-loading-steps li::before { content: "○"; display: inline-block; width: 1.3em; color: var(--brass-lo); }
+#iso-loading .iso-loading-steps li.done { opacity: 1; color: var(--txt); }
+#iso-loading .iso-loading-steps li.done::before { content: "●"; color: var(--gold); }
+@media (prefers-reduced-motion: reduce) {
+  #iso-loading, #iso-loading .iso-loading-bar { transition: none; }
+  #iso-loading .iso-loading-bar::after { animation: none; }
+}
 
 /* ── TUT-01: the starting tutorial (src/iso/tutorial.ts) ───────────────────
    The difficulty card's felt plate, one bay longer: a stepper with a painted

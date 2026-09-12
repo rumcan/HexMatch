@@ -134,6 +134,7 @@ import { sfx } from "../audio/sfx";
 // AI-02: the start-of-game difficulty prompt (see skill-picker.ts for the
 // "when do we ask" contract: only when nothing has chosen yet).
 import { promptForRivalSkill } from "./skill-picker";
+import { createLoadingScreen } from "./loading-screen";
 // TUT-01: the starting tour — one stepped card that walks the whole loop
 // (plant → depot → road → board → expand → points) before the first click.
 import { showTutorial, type TutorialHandle } from "./tutorial";
@@ -600,6 +601,24 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   onBoardChange = () => ui.renderBoard();
   root.appendChild(ui.el);
 
+  // LOAD-01: the loading screen takes over once the boot prompts below are
+  // done (or at once when nothing is asked) and lifts when every art load has
+  // settled. The loads themselves start at boot regardless — the tour and the
+  // difficulty pick are free loading time — so a slow reader usually walks
+  // straight into the map. It follows the prompts rather than stacking on them.
+  const loading = createLoadingScreen(ui.el, [
+    { id: "atlas", label: "Surveying the island" },
+    { id: "layers", label: "Grading the terrain" },
+    { id: "buildings", label: "Raising the buildings" },
+    { id: "scenery", label: "Planting the trees" },
+    { id: "vehicles", label: "Fuelling the lorries" },
+    { id: "roads", label: "Mixing the asphalt" },
+    { id: "protest", label: "Painting the placards" },
+  ]);
+  const showLoading = () => loading.show(isSolo()
+    ? `Rival: ${skill().label} · first to ${winTarget()}★ wins`
+    : "Setting the table for two tycoons");
+
   // TUT-01 + AI-02: the two one-shot boot prompts, in the order a new player
   // meets them. The TOUR goes first — it is the "how does this game work" card,
   // and the difficulty chooser that follows is a much smaller question that
@@ -648,7 +667,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           if (sel) sel.value = key;
         },
       });
+      if (disposed) return;
+      showLoading();
     })();
+  } else {
+    showLoading();
   }
 
   // ── A1: the board's own effects finally have somewhere to go ────────────
@@ -3296,6 +3319,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (b.kind === "ai") rivalQuarry.board.restore(b.data);
       else quarry.board.restore(b.data);
     }
+    // `Board.restore` mints fresh gem ids and fires no onChange, and the UI has
+    // already painted the pre-save board by now — without this the screen kept
+    // showing the OLD gems while clicks and drags acted on the restored ones.
+    onBoardChange();
     // pacing clocks start clean — no catch-up bursts after a refresh
     lastHarvest = now; lastAi = now; lastRaid = now;
     lastOfferPost = now; lastRivalMove = now;
@@ -3490,7 +3517,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   (async () => {
     const images = new Map<number, AtlasImage>();
-    const [a05, a1, a2] = await Promise.all([load(atlas05), load(atlas1), load(atlas2)]);
+    const [a05, a1, a2] = await loading.track("atlas", Promise.all([load(atlas05), load(atlas1), load(atlas2)]));
     images.set(0.5, a05); images.set(1, a1); images.set(2, a2);
     const atlas = new Atlas(manifestJson as unknown as Manifest, images);
     buildMasks(atlas);
@@ -3501,7 +3528,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // the seamless world-anchored textures. Both load in parallel with the
     // first frame — the renderer falls back to the monolithic atlas and flat
     // ground colours until they arrive, then invalidates everything.
-    const layersPromise = Promise.all([
+    const layersPromise = loading.track("layers", Promise.all([
       load(roads05), load(roads1), load(roads2),
       load(buildings05), load(buildings1), load(buildings2),
       loadGroundTextures({ grass: grassTex, sand: sandTex, water: waterTex }),
@@ -3514,7 +3541,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // Textures are an upgrade, never a gate: the flat-colour ground and the
       // monolithic atlas remain fully playable.
       console.warn("[w-series] layer art failed to load:", err);
-    });
+    }));
 
     // Building layers (assets/buildings/): per-building PNGs that override
     // the shared sheet for the sprites they cover, placed free on their
@@ -3523,7 +3550,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // SCENERY art (assets/ground/decals/, assets/scenery/): the decal patches
     // and the tree sprites. Non-gating like every other art load — until it
     // lands the map is the plain meadow with no trees, which is playable.
-    void Promise.all([loadDecalImages(), loadScenerySprites(atlas)]).then(([decals, trees]) => {
+    void loading.track("scenery", Promise.all([loadDecalImages(), loadScenerySprites(atlas)]).then(([decals, trees]) => {
       if (disposed) return;
       renderer?.setDecalImages(decals);
       if (trees) {
@@ -3534,14 +3561,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       renderer?.invalidateAll();
     }).catch((err) => {
       console.warn("[scenery] art failed to load:", err);
-    });
+    }));
 
 // TRUCK-BRAND art (assets/vehicles/): the eight liveried lorries — blue for
     // the player, red for the rival, four headings each. Installed into the
     // sprite table like the scenery, and just as non-gating: while this is
     // pending (or on a checkout without the PNGs) the legacy `truck_goods_*`
     // sheet cells draw every lorry, which is the same lorry unpainted.
-    void loadVehicleLayers(atlas).then((n) => {
+    void loading.track("vehicles", loadVehicleLayers(atlas).then((n) => {
       if (disposed || !n) return;
       // The trucks are drawn from the structures layer every frame, so the new
       // defs only need the vehicle items re-derived — but invalidate anyway, the
@@ -3549,13 +3576,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       renderer?.invalidateAll();
     }).catch((err) => {
       console.warn("[truck-brand] failed to load:", err);
-    });
+    }));
 
     // Road materials, on their own promise. Both must decode before the style
     // is installed — a half-textured road network would look like a bug — but
     // nothing waits on them, and a failure keeps the flat palette, which is a
     // complete look rather than an error state.
-    void Promise.all([load(asphaltTex), load(dirtTex)]).then(([asphalt, dirt]) => {
+    void loading.track("roads", Promise.all([load(asphaltTex), load(dirtTex)]).then(([asphalt, dirt]) => {
       if (disposed) return;
       renderer?.setRoadStyle({
         ...DEFAULT_ROAD_STYLE,
@@ -3564,9 +3591,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       });
     }).catch((err) => {
       console.warn("[roads] material textures failed to load:", err);
-    });
+    }));
 
-    void loadBuildingLayers(atlas, `${import.meta.env.BASE_URL}assets/buildings/`).then((n) => {
+    void loading.track("buildings", loadBuildingLayers(atlas, `${import.meta.env.BASE_URL}assets/buildings/`).then((n) => {
       if (disposed || !n) return;
       // TOWN-GRID: the layers also bring the real FOOTPRINTS with them (a
       // town cell can be 2x2), and the town draw items were built against the
@@ -3581,7 +3608,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       renderer?.invalidateAll();
     }).catch((err) => {
       console.warn("[building-layers] failed to load:", err);
-    });
+    }));
 
     atlasRef = atlas;
     renderer = new IsoRenderer(canvases, atlas, cam, world);
@@ -3592,7 +3619,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // motion gets the identical overlay frozen at its resting frame — the
     // stylesheet already does this for the HUD, this is the canvas half.
     syncOverlayMotion();
-    void load(protestArt).then((img) => { protestImg = img; }).catch(() => {});
+    void loading.track("protest", load(protestArt).then((img) => { protestImg = img; }).catch(() => {}));
     debug?.attachRenderer();
     enableRenderLogOnBoot();
     resize();
@@ -3663,6 +3690,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     };
     raf = requestAnimationFrame(frame);
   })().catch((err) => {
+    // The base atlas is the one gating load: without it the dependent loads
+    // never register, so settle them all rather than leave the bar hanging.
+    loading.finish();
     ui.toast(`Failed to load art: ${err}`, "bad");
   });
 
@@ -3670,6 +3700,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   (window as unknown as Record<string, unknown>).__iso = {
     get phase() { return phase; },
     get tool() { return tool; },
+    /** LOAD-01: true while the loading screen covers the map. */
+    get loading() { return loading.active; },
     get vp() { return { you: vpFor(score, "you"), ai: vpFor(score, "ai") }; },
     /** VP-01: the target and the two numbers behind a player's total.
      *  AI-04: the target is the difficulty's line (5★ on easy), not a constant. */
@@ -4030,6 +4062,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   return () => {
     disposed = true;
+    loading.dispose();
     net?.dispose();
     window.clearInterval(saveIv);
     if (onPageHide) window.removeEventListener("pagehide", onPageHide);
