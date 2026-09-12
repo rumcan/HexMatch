@@ -96,6 +96,29 @@ export const DEFAULT_ROAD_STYLE: RoadStyle = {
 
 // ── paint geometry constants ────────────────────────────────────────────────
 /**
+ * The road's cross-section shading, applied over the material core as
+ * concentric strokes: `[width as a fraction of the road, ink, alpha]`.
+ *
+ * One dark wash across the whole width, then the middle lifted back up in
+ * several thin light steps. Ordered outer-to-inner, and every alpha is low —
+ * this is camber, not a vignette, and at strong values it turns the road into
+ * a tube.
+ *
+ * The lift is four weak passes rather than one strong one because a single
+ * light stroke at 0.58 of the width put a visible STEP down each side of the
+ * road: the ink stopped at a hard edge. Stacking four at a quarter of the
+ * alpha spreads the same total lift over four boundaries, which at road scale
+ * reads as a fade from dark rim to lighter crown.
+ */
+const EDGE_SHADE: [number, string, number][] = [
+  [1, "#0b0d09", 0.20],
+  [0.80, "#c9cbbd", 0.055],
+  [0.62, "#c9cbbd", 0.055],
+  [0.44, "#c9cbbd", 0.055],
+  [0.26, "#c9cbbd", 0.055],
+];
+
+/**
  * Opacity of the shoulder pass. The shoulder is a darkening of the ground
  * beside the road, so it has to let that ground through — at full opacity it
  * is a border, not a verge.
@@ -105,13 +128,15 @@ const SHOULDER_ALPHA = 0.42;
 /** Marking width in tile units. */
 const PAINT_WIDTH = 0.03;
 /**
- * Dash geometry in tile units: a SHORT dash with a long gap, twice per tile.
+ * Dash geometry in tile units: a short dash and a shorter gap, four cycles
+ * per tile.
  *
- * One long dash per tile read as a single tick on an isolated road tile
- * rather than as a broken centre line. Two short ones per tile give the
- * repeat the eye needs to see a line, and stay legible down at 0.5x.
+ * The gap does the work here. One long dash per tile read as a single tick;
+ * two with a wide gap still read as separate marks rather than as one line.
+ * Closing the gap up to roughly the dash's own length is what makes the eye
+ * join them into a centre line, and it still resolves at 0.5x.
  */
-const DASH_ON = 0.13, DASH_OFF = 0.37;
+const DASH_ON = 0.12, DASH_OFF = 0.13;
 
 // ── chunking ────────────────────────────────────────────────────────────────
 /** Chunk size in PROJECTED WORLD pixels at 1×. Non-overlapping by construction. */
@@ -301,6 +326,44 @@ export function paintRoadTiles(ctx: Ctx2D, tiles: RoadTile[], style: RoadStyle):
     ctx.lineWidth = ROAD_WIDTH[t.material];
     for (const f of t.figures) { trace(ctx, f); ctx.stroke(); }
   }
+
+  // 2b. Shade the road ACROSS its width: dark at both edges, lifting towards
+  //     the middle. A flat ribbon of texture reads as a decal lying on the
+  //     grass; a crown reads as a made surface with camber, and it gives the
+  //     centre-line something to sit on.
+  //
+  //     Done as concentric strokes rather than a gradient, because a gradient
+  //     runs ALONG a path, not across it — there is no canvas primitive for
+  //     "perpendicular to this polyline". Two narrowing passes of translucent
+  //     ink, one dark at full width and one light down the middle, add up to
+  //     the same falloff and cost two more strokes.
+  //
+  //     BUTT caps, not round. Every shade ring is NARROWER than the core, so
+  //     a round cap puts a semicircle of ink INSIDE the asphalt at each end
+  //     of the figure — and a figure ends at the tile's edge midpoints. The
+  //     result was a set of concentric arcs printed across the road at every
+  //     tile join: the "weird circles on the front and back of each road
+  //     piece". Butt caps end each band square on the port, where the next
+  //     tile's band begins, so the shading runs continuously down the sides
+  //     and appears nowhere across the road.
+  ctx.lineCap = "butt";
+  for (const t of tiles) {
+    const w = ROAD_WIDTH[t.material];
+    for (const [frac, colour, alpha] of EDGE_SHADE) {
+      ctx.globalAlpha = alpha;
+      ctx.strokeStyle = colour;
+      ctx.lineWidth = w * frac;
+      for (const f of t.figures) {
+        // A pad (a lone road tile) is a zero-length segment: with butt caps
+        // it strokes nothing at all, so it keeps its plain core rather than
+        // gaining a cross-road arc it has no sides to justify.
+        if (f.points.length < 2) continue;
+        trace(ctx, f); ctx.stroke();
+      }
+    }
+  }
+  ctx.globalAlpha = 1;
+  ctx.lineCap = "round";
 
   // 3. Dirt→paved transitions, laid OVER the opaque dirt core.
   for (const t of tiles) {

@@ -116,18 +116,24 @@ export interface Scenery {
 
 // ── tuning ──────────────────────────────────────────────────────────────────
 /**
- * Decal patches per LAND TILE. Each patch covers 4–10 tiles across and they
- * overlap freely, so this is what gives the ground its variety: roughly 250
- * regions on a 144×144 island, in four moods, at every size and both
- * mirrorings.
+ * Decal patches per LAND TILE. Doubled alongside the halving of
+ * `DECAL_BASE_W`, so the ground keeps the same coverage from twice as many
+ * patches at a quarter of the area each — roughly 500 regions on a 144×144
+ * island, in four moods, at every size and both mirrorings.
  */
-const DECAL_DENSITY = 1 / 70;
+const DECAL_DENSITY = 1 / 35;
 /**
  * Nominal patch width in world pixels. A tile diamond is 64 wide, so the base
- * is 5 tiles and the scale range below takes a patch from roughly 3½ to 10
+ * is 2½ tiles and the scale range below takes a patch from roughly 1¾ to 5
  * tiles across.
+ *
+ * Halved. The patches were drawn up to ten tiles wide from a 768px texture,
+ * which at the 2× camera meant stretching that texture across some 1300
+ * screen pixels — visibly soft, and the pixels showed. Half the width is a
+ * quarter of the area per patch and twice the texture density, and the ground
+ * keeps the same coverage because the density below doubles to match.
  */
-const DECAL_BASE_W = 320;
+const DECAL_BASE_W = 160;
 const DECAL_SCALE_MIN = 0.7, DECAL_SCALE_MAX = 1.9;
 /**
  * Forest blocks per land tile. Each covers 16 tiles and is a landmark, so a

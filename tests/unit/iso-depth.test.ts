@@ -22,14 +22,20 @@ describe("K4 anchor contract", () => {
   it("puts the anchor pixel on the footprint diamond's SOUTH corner", () => {
     // OpenGFX sprites anchor by their declared xrel/yrel: the anchor pixel
     // lands on the bottom vertex of the footprint diamond — tileToScreen of
-    // (tx+fw-1, ty+fh-1) shifted by (+HW, +TILE_H). A building's base diamond
+    // (tx+fw-1, ty+fh-1) shifted by (0, +TILE_H). A building's base diamond
     // therefore coincides with its tile's south corner.
+    //
+    // This asserted `sx + HW` until the ground-plane roads landed, and that
+    // point is not the south vertex: it is half a tile EAST of it. The whole
+    // monolith sheet was drawn there, so it was self-consistent and invisible
+    // until a layer measured from the ground disagreed with it — see the note
+    // on drawOrigin.
     for (const [name, tx, ty] of [["farm_t33", 10, 12], ["ore_mine_t0", 3, 20], ["terrain_grass", 0, 0], ["factory_blue", 5, 5], ["depot_blue", 9, 7], ["road_1111", 7, 9]] as const) {
       const def = atlas.get(name)!;
       const [ox, oy] = drawOrigin(def, tx, ty);
       const [fw, fh] = def.footprint;
       const [sx, sy] = tileToScreen(tx + fw - 1, ty + fh - 1);
-      expect(ox + def.anchor[0]).toBe(sx + HW);
+      expect(ox + def.anchor[0]).toBe(sx);
       expect(oy + def.anchor[1]).toBe(sy + TILE_H);
     }
   });
