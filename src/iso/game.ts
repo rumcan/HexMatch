@@ -47,12 +47,14 @@ import {
   type Camera, type GestureState,
 } from "./camera";
 import { IsoRenderer, type World } from "./renderer";
+import { scatterScenery, type Scenery } from "./scenery";
+import { loadDecalImages, loadScenerySprites } from "./scenery-art";
 import { generateMap, resolveMapSeed, type Grid, type Industry } from "./grid";
 import {
   createTrack, drawBits, previewDrag, commitDrag, canBuildOn, hasTrack,
   demolishTile, tIdx, playerNetwork, canAfford, buildRefusal, seedTownRoads,
   seedPublicRoads, isPublicRoad, isUpgradedRoad, tileCost, structureTiles,
-  dirtyTiles,
+  dirtyTiles, plantFootprintTiles,
   type Track, type TrackKind, type Purse, type DragPreview,
 } from "./track";
 import {
@@ -301,6 +303,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const bootSave = savesOff ? null : loadRecentSave();
   const seed = opts.seed ?? bootSave?.seed ?? resolveMapSeed();
   const grid: Grid = generateMap(seed);
+  // SCENERY: decals + clumped trees, a pure function of the seed (so a guest
+  // regenerates exactly the host's woodland from the seed alone — scenery is
+  // never on the wire). Computed before the towns stamp their roads because
+  // it reads `grid.occupancy`/`grid.publicRoads`, both of which `generateMap`
+  // has already filled; nothing in `track` affects it.
+  const scenery: Scenery = scatterScenery(grid);
   const track: Track = createTrack();
   // PP-10: every town's seed-generated ring road is stamped onto the road
   // layer BEFORE the world exists (world.roadBits is a live reference to
@@ -611,6 +619,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     roadBits: drawBits(track, "road"),
     dirtBits: drawBits(track, "dirt"),
     extra: [],
+    trees: scenery.trees,
+    forests: scenery.forests,
+    sceneryBlocked: new Set<number>(),
   };
 
   // Start the camera somewhere with industries in view.
@@ -736,6 +747,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const syncWorld = () => {
     world.roadBits = drawBits(track, "road");
     world.dirtBits = drawBits(track, "dirt");
+    // SCENERY: hide the trees the player has since built over. Roads are not
+    // listed — the draw list reads roadBits/dirtBits directly — so this is
+    // only the free-standing structures: plant footprints and depots.
+    const blocked = new Set<number>();
+    for (const f of eco.factories)
+      for (const [x, y] of plantFootprintTiles(f.tx, f.ty))
+        if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) blocked.add(y * MAP_W + x);
+    for (const h of eco.harvesters) blocked.add(h.ty * MAP_W + h.tx);
+    world.sceneryBlocked = blocked;
     // PP-12: one draw item per factory — the single TTD complex, drawn at the
     // footprint origin. The manifest footprint matches FACTORY_FOOTPRINT (both
     // derive from the art), so the anchor lands on the footprint's south
@@ -3230,6 +3250,22 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // the shared sheet for the sprites they cover, placed free on their
     // footprints' centres. Parallel, non-gating — a missing manifest or a
     // failed sprite just keeps the sheet art for that building.
+    // SCENERY art (assets/ground/decals/, assets/scenery/): the decal patches
+    // and the tree sprites. Non-gating like every other art load — until it
+    // lands the map is the plain meadow with no trees, which is playable.
+    void Promise.all([loadDecalImages(), loadScenerySprites(atlas)]).then(([decals, trees]) => {
+      if (disposed) return;
+      renderer?.setDecalImages(decals);
+      if (trees) {
+        // The tree defs just joined the sprite table, so the cull pad (max
+        // footprint + tallest sprite) may have grown.
+        renderer?.recomputePad();
+      }
+      renderer?.invalidateAll();
+    }).catch((err) => {
+      console.warn("[scenery] art failed to load:", err);
+    });
+
     void loadBuildingLayers(atlas, `${import.meta.env.BASE_URL}assets/buildings/`).then((n) => {
       if (disposed || !n) return;
       // B-3.2: the layers just MUTATED sprite w/h (a per-building PNG can
@@ -3243,6 +3279,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
     atlasRef = atlas;
     renderer = new IsoRenderer(canvases, atlas, cam, world);
+    renderer.setDecals(scenery);
     renderer.overlayPainter = (ctx, c, t) => paintProtests(ctx, c, t);
     void load(protestArt).then((img) => { protestImg = img; }).catch(() => {});
     debug?.attachRenderer();
