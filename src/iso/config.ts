@@ -30,6 +30,13 @@ export { tileToScreen, screenToTile, tileIndex, inMap, mulberry32 } from "../gam
 // ── Cargoes (also the six match-3 colours) ────────────────────────────────
 export type Cargo = "grain" | "wood" | "ore" | "stone" | "oil" | "gold";
 
+/**
+ * PP-14b — the player's tycoon portrait, picked on the start screen. The
+ * rival always shows Torvin; the player's own is Vex or You.
+ */
+export type Portrait = "vex" | "you";
+export const PORTRAITS: Portrait[] = ["vex", "you"];
+
 export const CARGOES: Cargo[] = ["grain", "wood", "ore", "stone", "oil", "gold"];
 
 export const CARGO: Record<Cargo, {

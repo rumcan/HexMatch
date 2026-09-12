@@ -363,7 +363,7 @@ describe("MP-06 join screen", () => {
     expect(text()).toContain("No room server behind this page");
     expect(mockCreate).not.toHaveBeenCalled();
     await click("Play vs AI");
-    expect(choices).toEqual([{ mode: "ai" }]);
+    expect(choices).toEqual([{ mode: "ai", portrait: "vex" }]);
   });
 
   it("refuses to join and to quick-match when there is no room server", async () => {
@@ -399,6 +399,6 @@ describe("MP-06 join screen", () => {
     await click("Host a game");
     expect(text()).toContain("Sign in to play with friends");
     await click("Play vs AI");
-    expect(choices).toEqual([{ mode: "ai" }]);
+    expect(choices).toEqual([{ mode: "ai", portrait: "vex" }]);
   });
 });

@@ -2147,7 +2147,9 @@ describe("VP-01 the rival plays the score, not just the map", () => {
 // (detection, the HOLY CROSS callout, the `cross` fx event, the pause for
 // the player's picks); this pins the UI half — the angel PNG pops over the
 // crossing, the five-cargo chooser appears, the sound really is asked for,
-// and the four spent units (repeats allowed) are paid exactly as allocated.
+// and the SIX spent units (repeats allowed) are paid exactly as allocated.
+// PP-14b also covers the broken holy cross: 3×3, THREE picks, a `bcross` fx
+// with no angel and no choir.
 // ══════════════════════════════════════════════════════════════════════════
 describe("PP-14 the holy cross", () => {
   /** A fake AudioContext that counts the oscillators the choir would play. */
@@ -2179,7 +2181,7 @@ describe("PP-14 the holy cross", () => {
     return () => oscs;
   }
 
-  /** Paint a cross onto the board: 3 horizontal + 4 vertical over (2,2). */
+  /** Paint a holy cross onto the board: 3 horizontal + 4 vertical over (2,2). */
   function paintCross(b: import("../../src/game/board").Board) {
     b.grid[2][1]!.res = "sheep";
     b.grid[2][2]!.res = "sheep";
@@ -2193,7 +2195,21 @@ describe("PP-14 the holy cross", () => {
     b.grid[5][2]!.res = "ore";
   }
 
-  it("pops the angel, offers the bounty chooser, and pays exactly the spent allocation", async () => {
+  /** Paint a broken holy cross: 3 horizontal + 3 vertical, both centred (2,2). */
+  function paintBroken(b: import("../../src/game/board").Board) {
+    b.grid[2][1]!.res = "sheep";
+    b.grid[2][2]!.res = "sheep";
+    b.grid[2][3]!.res = "sheep";
+    b.grid[1][2]!.res = "sheep";
+    b.grid[3][2]!.res = "sheep";
+    for (const [r, c] of [[2, 0], [2, 4], [0, 2], [4, 2], [1, 1], [1, 3], [3, 1], [3, 3]]) {
+      b.grid[r][c]!.res = "ore";
+    }
+    b.grid[4][1]!.res = "wheat";
+    b.grid[4][3]!.res = "wheat";
+  }
+
+  it("pops the angel, offers the six-unit bounty chooser, and pays exactly the spent allocation", async () => {
     const h = await boot();
     const started = stubAudio();
     const before = ["wood", "stone", "oil"].map((c) => [c, h.purse[c as keyof typeof h.purse] ?? 0] as const);
@@ -2209,35 +2225,40 @@ describe("PP-14 the holy cross", () => {
     const panel = root.querySelector(".cross-pick");
     expect(panel, "the bounty chooser must appear").not.toBeNull();
     expect(panel!.querySelectorAll(".cross-pick-btn")).toHaveLength(5);
+    expect(panel!.querySelector(".cross-pick-sub")!.textContent)
+      .toBe("Spend 6 bounties · repeats allowed");
     const count = panel!.querySelector(".cross-pick-count");
     const confirm = panel!.querySelector<HTMLButtonElement>(".cross-pick-confirm");
     expect(confirm, "the confirm button must exist").not.toBeNull();
-    expect(confirm!.disabled, "confirm stays disabled before four units are spent").toBe(true);
+    expect(confirm!.textContent).toBe("🙏 Bless +6");
+    expect(confirm!.disabled, "confirm stays disabled before six units are spent").toBe(true);
     const btn = (cargo: string) => panel!.querySelector<HTMLButtonElement>(`[data-cargo="${cargo}"]`)!;
-    // spend 2 wood + 2 stone (repeats allowed)
+    // spend 3 wood + 3 stone (repeats allowed)
+    btn("wood").click();
     btn("wood").click();
     btn("wood").click();
     btn("stone").click();
     btn("stone").click();
-    expect(count!.textContent).toBe("4 / 4 spent");
-    expect(confirm!.disabled, "four units light the confirm").toBe(false);
-    // a fifth unit on an untouched cargo is refused until something is freed
+    btn("stone").click();
+    expect(count!.textContent).toBe("6 / 6 spent");
+    expect(confirm!.disabled, "six units light the confirm").toBe(false);
+    // a seventh unit on an untouched cargo is refused until something is freed
     btn("oil").click();
     expect(btn("oil").dataset.n).toBe("0");
     // take one stone back and spend it on oil instead
     btn("stone").click();
-    expect(count!.textContent).toBe("3 / 4 spent");
+    expect(count!.textContent).toBe("5 / 6 spent");
     btn("oil").click();
-    expect(btn("stone").dataset.n).toBe("1");
+    expect(btn("stone").dataset.n).toBe("2");
     expect(btn("oil").dataset.n).toBe("1");
     confirm!.click();
     // the click answers the board's promise — a microtask later the purse is
-    // credited (2 wood + 1 stone + 1 oil) and the panel is gone, while the
+    // credited (3 wood + 2 stone + 1 oil) and the panel is gone, while the
     // cascade has not yet moved on
     await new Promise((r) => setTimeout(r, 0));
     const [wood0, stone0, oil0] = before.map(([, was]) => was);
-    expect(h.purse.wood ?? 0).toBe(wood0 + 2);
-    expect(h.purse.stone ?? 0).toBe(stone0 + 1);
+    expect(h.purse.wood ?? 0).toBe(wood0 + 3);
+    expect(h.purse.stone ?? 0).toBe(stone0 + 2);
     expect(h.purse.oil ?? 0).toBe(oil0 + 1);
     expect(root.querySelector(".cross-pick")).toBeNull();
     // the callout names the shape
@@ -2245,6 +2266,47 @@ describe("PP-14 the holy cross", () => {
     expect(floats.some((t) => t.includes("HOLY CROSS"))).toBe(true);
     // the choir really was asked for (12 choir voices + wobbles + 4 bells)
     expect(started(), "playHoly never started an oscillator").toBeGreaterThan(10);
+    await p;
+  });
+
+  it("a broken cross pops a cracked ✝ (no angel, no choir) and pays three units", async () => {
+    const h = await boot();
+    const started = stubAudio();
+    const before = ["wood", "stone"].map((c) => [c, h.purse[c as keyof typeof h.purse] ?? 0] as const);
+    paintBroken(h.board);
+    const p = h.board.settle();
+    // the broken cross fires `bcross` — a cracked ✝, NOT the angel image
+    const bcross = root.querySelector(".fx-bcross") as HTMLElement | null;
+    expect(bcross, "the cracked cross must pop").not.toBeNull();
+    expect(bcross!.style.backgroundImage).toBe("");
+    expect(root.querySelector(".fx-cross"), "no angel for a broken cross").toBeNull();
+    // three-unit chooser, titled BROKEN CROSS
+    const panel = root.querySelector(".cross-pick");
+    expect(panel, "the bounty chooser must appear").not.toBeNull();
+    expect(panel!.classList.contains("broken")).toBe(true);
+    expect(panel!.querySelector(".cross-pick-sub")!.textContent)
+      .toBe("Spend 3 bounties · repeats allowed");
+    const count = panel!.querySelector(".cross-pick-count");
+    const confirm = panel!.querySelector<HTMLButtonElement>(".cross-pick-confirm");
+    expect(confirm!.textContent).toBe("✝ Bless +3");
+    const btn = (cargo: string) => panel!.querySelector<HTMLButtonElement>(`[data-cargo="${cargo}"]`)!;
+    // 2 wood + 1 stone = 3, the broken cross's full spend
+    btn("wood").click();
+    btn("wood").click();
+    btn("stone").click();
+    expect(count!.textContent).toBe("3 / 3 spent");
+    expect(confirm!.disabled).toBe(false);
+    // a fourth unit is refused
+    btn("oil").click();
+    expect(btn("oil").dataset.n).toBe("0");
+    confirm!.click();
+    await new Promise((r) => setTimeout(r, 0));
+    const [wood0, stone0] = before.map(([, was]) => was);
+    expect(h.purse.wood ?? 0).toBe(wood0 + 2);
+    expect(h.purse.stone ?? 0).toBe(stone0 + 1);
+    expect(root.querySelector(".cross-pick")).toBeNull();
+    // no angel ⇒ no choir asked
+    expect(started(), "a broken cross must not start the choir").toBe(0);
     await p;
   });
 });

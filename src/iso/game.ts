@@ -84,7 +84,7 @@ import {
 import {
   CARGO, CARGOES, FACTORY_FOOTPRINT, FACTORY_SPRITE, INDUSTRY_BY_KEY, TRANSPORT,
   VICTORY, VP_TARGET, UPGRADE_COST,
-  depotSpriteForCargo, townHouseSprite, type Cargo,
+  depotSpriteForCargo, townHouseSprite, type Cargo, type Portrait,
 } from "./config";
 import {
   DEPOT_COST, FREE_SETUP_DEPOTS, costCompact, costLabel, priceDepot, shortfallLabel,
@@ -115,7 +115,7 @@ import {
   createIsoDebug, shouldInstallDebugConsole, shouldAutoEnableDebugOverlays,
   shouldAutoEnableRenderLog,
 } from "./debug";
-import { applySnapshot, buildSnapshot, joinFromSnapshot, type Snapshot } from "./snapshot";
+import { applySnapshot, buildSnapshot, joinFromSnapshot, type RivalSabotage, type Snapshot } from "./snapshot";
 export { joinFromSnapshot };
 // MP-05: the wire. `session.ts` owns roles/roster/chunked state transfer and
 // never imports the SDK (transport.ts does); `protocol.ts` owns the message
@@ -244,6 +244,8 @@ export interface IsoGameOptions {
   role?: NetRole;
   /** The connected session from `src/net/session.ts`. Required for host/guest. */
   net?: NetSession | null;
+  /** PP-14b: which tycoon portrait the player picked (defaults to "vex"). */
+  portrait?: Portrait;
 }
 
 export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
@@ -273,6 +275,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const isSolo = () => mpRole() === "solo";
   const isGuest = () => mpRole() === "guest";
   const isMp = () => mpRole() !== "solo";
+  // PP-14b: the tycoon portrait the start screen offered (the rival is always
+  // Torvin; the player's own is Vex or You).
+  const portrait: Portrait = opts.portrait === "you" ? "you" : "vex";
+
+  // PP-14b: the Processing Plant reset's cooldown. `lastResetAt` starts at
+  // -Infinity so the very first reset of a boot is always allowed.
+  const RESET_COOLDOWN_MS = 30_000;
+  let lastResetAt = -Infinity;
 
   // A networked match NEVER touches the local save: the room owns the match,
   // and a save written mid-game would resurrect as a solo world on the next
@@ -461,6 +471,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     },
     onReset: () => {
       if (isGuest()) return;
+      const now = performance.now();
+      // PP-14b: the reset has a 30s cooldown — collapsing the plant is a free
+      // re-roll of the whole board, so it cannot be spammed every cascade.
+      if (now - lastResetAt < RESET_COOLDOWN_MS) {
+        const left = Math.ceil((RESET_COOLDOWN_MS - (now - lastResetAt)) / 1000);
+        toast(`Processing Plant reset is cooling down — ${left}s to go.`, "info");
+        return;
+      }
+      lastResetAt = now;
       quarry.board.resetNeutral();
       toast("Processing Plant collapsed. Fresh neutral board.", "info");
     },
@@ -505,9 +524,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   quarry.board.onFx = (type, r, c, text) => ui.fx(type, r, c, text);
 
   // PP-14: a HOLY CROSS pauses the cascade and asks the player which cargo
-  // the +4 should be — the board waits on this hook until the UI's chooser
-  // answers it (or the backstops auto-pick).
-  quarry.board.onCrossChoice = (pick) => ui.crossPick(pick);
+  // the blessing should be — the board waits on this hook until the UI's
+  // chooser answers it (or the backstops auto-pick). PP-14b: the board passes
+  // the shape and how many units it owes so the chooser can title and cap
+  // itself (6 for a holy cross, 3 for a broken one).
+  quarry.board.onCrossChoice = (kind, picks, pick) => ui.crossPick(kind, picks, pick);
 
   // A1: world-anchored floats — the lorry's "+N" at the Factory, and the
   // marker over the rival's plant when sabotage lands. Anchored to the live
@@ -1168,6 +1189,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const n = rivalPlant.frost(now);
       rivalHit(`❄ ${n} FROZEN`);
       toast(`Frost Tiles: ${n} gems frozen in the rival's plant — its yield is down ${dentPct()}% for ${RIVAL_FROST_MS / 1000}s.`, "good");
+      // PP-14b: push immediately so the other browser sees the frost now,
+      // not on the next 200ms heartbeat.
+      publishNet(now, true);
       return;
     }
     if (key === "block") {
@@ -1175,6 +1199,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const n = rivalPlant.girders(now);
       rivalHit(`🏗 ${n} GIRDERS`);
       toast(`Iron Girders: ${n} dropped into the rival's plant — its yield is down ${dentPct()}% for ${RIVAL_GIRDER_MS / 1000}s.`, "good");
+      publishNet(now, true);
       return;
     }
     if (key === "fog") {
@@ -1182,6 +1207,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       rivalPlant.smog(now);
       rivalHit("🌫 SMOG");
       toast(`Smog Cloud over the rival's plant — its yield is down ${dentPct()}% for ${RIVAL_SMOG_MS / 1000}s.`, "good");
+      publishNet(now, true);
       return;
     }
     if (key === "security") {
@@ -1823,6 +1849,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     freeTrack: p.freeTrack, freeDepots: p.freeDepots,
   }));
 
+  /**
+   * PP-14b: the Black-Market sabotage on the RIVAL's plant, as it travels the
+   * wire. In a hosted game the rival IS the guest's seat, so the guest applies
+   * this to its own board (see `applyRivalSabotage`). In solo the field is
+   * still built — the same snapshot shape serves both — but nobody reads it.
+   */
+  const rivalSabotageNow = (): RivalSabotage => rivalPlant.board.sabotageState(performance.now());
+
   const inSetup = () => phase === "setup-factory" || phase === "setup-harvester";
 
   /** HOST: the full state (§4 `SnapshotMsg`), built from the live world. */
@@ -1835,6 +1869,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       won: phase === "won",
       players: wirePlayers(),
       t: performance.now(),
+      rivalSabotage: rivalSabotageNow(),
     });
   }
 
@@ -1855,6 +1890,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       players: wirePlayers(),
       setupPhase: inSetup(),
       won: phase === "won",
+      rivalSabotage: rivalSabotageNow(),
     });
   }
 
@@ -1883,6 +1919,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       }
     }
   }
+  /**
+   * GUEST: stamp the host's Black-Market sabotage onto the local plant board.
+   * The board is a spectator view, so only the sabotage overlay is applied —
+   * the gem layout itself is deliberately not synced.
+   */
+  function applyRivalSabotage(sab: RivalSabotage) {
+    quarry.board.applySabotage(sab);
+  }
+
   /** GUEST: apply a full state (join or resync). Validated first — a version or
    *  seed mismatch must refuse loudly rather than paint a foreign map. */
   function applyNetSnapshot(raw: Snapshot, _seq: number) {
@@ -1906,6 +1951,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (!wire) continue;
       players[i].purse = toBag(wire.res);
     }
+    if (applied.rivalSabotage) applyRivalSabotage(applied.rivalSabotage);
     winner = null;
     refreshGuestPhase();
     syncWorld();
@@ -1939,6 +1985,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         if (typeof wire.freeDepots === "number") players[i].freeDepots = wire.freeDepots;
       }
     }
+    // PP-14b: the host's sabotage on this seat's plant, applied as an overlay.
+    if (msg.rivalSabotage) applyRivalSabotage(msg.rivalSabotage);
     // A refused intent says why, in the host's own words (the echo).
     if (msg.notice) toast(msg.notice, "info");
     refreshGuestPhase();
@@ -2377,6 +2425,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       inspect: info || null,
       inspectTone: infoTone,
       reach: quarry.reach,
+      // PP-14b: the 30s reset cooldown, so the button can count it down.
+      resetIn: Math.max(0, RESET_COOLDOWN_MS - (now - lastResetAt)),
+      // PP-14b: the tycoon portrait picked on the start screen.
+      portrait,
     });
   }
 
@@ -3201,6 +3253,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     quarry, market,
     /** A1: the rival's Processing Plant — where Black Market sabotage lands. */
     rivalPlant,
+    /** PP-14b: the Black Market twin, exposed so the MP test can buy sabotage
+     *  and prove it crosses the wire (buyBlack refuses on a guest, exactly as
+     *  the click path does). */
+    buyBlack: (key: string) => buyBlack(key),
     /** A1: the map floats currently on screen (deliveries + sabotage marks). */
     floats,
     /** Refresh the reachable set now (spawn tokens for newly reached cargo). */

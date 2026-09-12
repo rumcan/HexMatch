@@ -403,13 +403,15 @@ html, body, #root {
 .sab-btn > * { position: relative; z-index: 1; }
 .sab-btn:hover { background-color: rgba(224,72,58,.12); }
 
-/* per-ability artwork — V5: restored plates in src/assets/ui/ */
-.sab-btn.sb-bandit   { background-image: url("../assets/ui/sab-bandit.png"); }
-.sab-btn.sb-harden   { background-image: url("../assets/ui/sab-harden.png"); }
-.sab-btn.sb-block    { background-image: url("../assets/ui/sab-block.png"); }
-.sab-btn.sb-fog      { background-image: url("../assets/ui/sab-fog.png"); }
-.sab-btn.secure-btn  { background-image: url("../assets/ui/sab-security.png"); }
-.sab-btn.repair-btn  { background-image: url("../assets/ui/sab-repair.png"); }
+/* per-ability artwork — PP-14b: the hand-authored `sab_*.png` plates
+   (Blockade/Frost/Girders/Smog/Security/Repair) from src/assets/ui/, dropped
+   in to replace the generated `sab-*.png` placeholders. */
+.sab-btn.sb-bandit   { background-image: url("../assets/ui/sab_blockade.png"); }
+.sab-btn.sb-harden   { background-image: url("../assets/ui/sab_frost.png"); }
+.sab-btn.sb-block    { background-image: url("../assets/ui/sab_girders.png"); }
+.sab-btn.sb-fog      { background-image: url("../assets/ui/sab_smog.png"); }
+.sab-btn.secure-btn  { background-image: url("../assets/ui/sab_security.png"); }
+.sab-btn.repair-btn  { background-image: url("../assets/ui/sab_repair.png"); }
 .tab                 { background-image: url("../assets/ui/tab.png"); background-size: 100% 100%; background-repeat: no-repeat; }
 
 /* frost reads cold, not hostile */
@@ -449,6 +451,13 @@ html, body, #root {
   transition: color .15s, background .15s;
 }
 .reset-btn:hover { color: var(--danger2); background: rgba(224,72,58,.14); }
+/* PP-14b: while the 30s reset cooldown runs, the button reads its countdown. */
+.reset-btn:disabled {
+  color: var(--txt-mute);
+  background: rgba(255, 255, 255, .03);
+  border-color: var(--line);
+  cursor: not-allowed;
+}
 
 .bank-btn { /* legacy — Bank is its own tab now */
   margin-top: 5px; padding: 7px; border-radius: 0;
@@ -468,26 +477,44 @@ html, body, #root {
 .stat.fog { background: rgba(74,168,224,.18); color: #b9dcf5; }
 .stat.blk { background: rgba(255,166,43,.18); color: var(--gold2); }
 
-/* combo bank — pips fill toward the next free gold coin */
+/* combo bank — pips fill toward the next free gold coin. PP-14b: promoted
+   from a whisper of dots to a real readout — big pips, a bold N/N count, and
+   a gold glow on the whole bank when the next combo pays a coin. */
 .combo-bank {
-  display: flex; align-items: center; gap: 4px;
-  margin-right: 6px;
+  display: flex; align-items: center; gap: 6px;
+  margin-right: 8px;
+  padding: 3px 9px 3px 10px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, .04);
+  transition: border-color .2s, background .2s, box-shadow .2s;
+}
+.combo-bank.full {
+  border-color: var(--gold2);
+  background: rgba(255, 166, 43, .12);
+  box-shadow: 0 0 12px var(--gold-glow);
 }
 .cb-lbl {
-  font-size: 9px; letter-spacing: 1.1px; text-transform: uppercase;
-  color: var(--txt-mute); margin-right: 1px;
+  font-size: 10px; font-weight: 700; letter-spacing: 1.3px; text-transform: uppercase;
+  color: var(--txt-mute);
 }
 .combo-bank i {
-  width: 7px; height: 7px; border-radius: 50%;
+  width: 12px; height: 12px; border-radius: 50%;
   border: 1px solid var(--line-hi);
   background: transparent;
-  transition: background .2s, box-shadow .2s;
+  transition: background .2s, box-shadow .2s, transform .2s;
 }
 .combo-bank i.on {
   background: var(--gold);
   border-color: var(--gold);
-  box-shadow: 0 0 7px var(--gold-glow);
+  box-shadow: 0 0 9px var(--gold-glow);
+  transform: scale(1.08);
 }
+.cb-n {
+  font-family: var(--serif); font-size: 13px; font-weight: 700;
+  font-variant-numeric: tabular-nums; color: var(--gold2);
+  letter-spacing: 1px;
+}
+.combo-bank.full .cb-n { color: var(--gold2); text-shadow: 0 0 10px var(--gold); }
 
 .upbar {
   height: 2px; background: rgba(255,255,255,.08); border-radius: 0;
@@ -719,6 +746,25 @@ html, body, #root {
   30%  { transform: scale(1); opacity: 1; }
   100% { transform: scale(1.3); opacity: 0; }
 }
+/* PP-14b: the broken holy cross — a dimmer, cracked ✝ with no angel. Same
+   one-shot pop as the holy cross, but grey-blue and smaller so it reads as
+   the lesser blessing next to the gold halo. */
+.fx-bcross {
+  font-size: 40px;
+  animation: bcrossfx 1s ease-out forwards;
+  z-index: 8;
+}
+.fx-bcross::before {
+  content: "✝";
+  color: #b9c7d6;
+  text-shadow: 0 0 10px rgba(160, 200, 235, .7), 0 2px 4px #000;
+}
+@keyframes bcrossfx {
+  0%   { transform: translate(-50%,-50%) scale(.3); opacity: 0; }
+  30%  { transform: translate(-50%,-78%) scale(1.15); opacity: 1; }
+  60%  { transform: translate(-50%,-105%) scale(1); opacity: 1; }
+  100% { transform: translate(-50%,-185%) scale(1.04); opacity: 0; }
+}
 /* PP-14: the bounty chooser for a HOLY CROSS — five cargo buttons, each
    worth +4 of its colour. The panel fades in over the board and waits for
    the click; the keyframes END fully visible, so prefers-reduced-motion's
@@ -740,6 +786,16 @@ html, body, #root {
   font-family: var(--serif); font-weight: 800; font-size: 19px;
   letter-spacing: 3px; text-transform: uppercase; color: var(--gold2);
   text-shadow: 0 0 14px var(--gold), 0 2px 0 #000;
+}
+/* PP-14b: the broken holy cross reads dimmer and cooler than the holy one —
+   a cracked ✝, not a golden blessing. */
+.cross-pick.broken {
+  border-color: #7e93ad;
+  box-shadow: 0 0 18px rgba(150, 180, 210, .3), 0 10px 30px rgba(0, 0, 0, .6);
+}
+.cross-pick.broken .cross-pick-title {
+  color: #c3d3e4;
+  text-shadow: 0 0 12px rgba(150, 180, 210, .8), 0 2px 0 #000;
 }
 .cross-pick-sub {
   font-size: 11px; letter-spacing: 2px; text-transform: uppercase;
@@ -1574,6 +1630,22 @@ html, body, #root {
 .start-panel h1 { margin: 0; font-size: clamp(25px, 5vw, 36px); letter-spacing: 1px; }
 .start-subtitle { margin: 12px auto 28px; max-width: 330px; color: var(--txt-mute, #a89b89); font: 13px/1.5 var(--sans, sans-serif); }
 .start-actions { display: grid; gap: 10px; }
+/* PP-14b: the tycoon portrait picker on the start screen. */
+.portrait-picker { margin: 4px 0 20px; }
+.portrait-label { margin: 0 0 8px; color: var(--txt-mute, #a89b89); font: 600 11px/1 var(--sans, sans-serif); letter-spacing: 2px; text-transform: uppercase; }
+.portrait-options { display: flex; justify-content: center; gap: 12px; }
+.portrait-opt {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  min-height: 0; padding: 8px 10px; border-radius: 8px;
+  border: 1px solid var(--line, #594b3b); background: rgba(255,255,255,.03);
+  cursor: pointer; color: var(--txt, #efe4d0);
+}
+.portrait-opt:hover { border-color: var(--gold, #c98731); }
+.portrait-opt.on { border-color: var(--gold2, #e9a83e); box-shadow: 0 0 0 2px rgba(233,168,62,.45); background: rgba(255,166,43,.12); }
+.portrait-face { width: 64px; height: 64px; border-radius: 6px; background-size: cover; background-position: center top; background-repeat: no-repeat; background-color: rgba(255,255,255,.08); }
+.portrait-vex { background-image: url("../assets/ui/tycoon_vex.png"); }
+.portrait-you { background-image: url("../assets/ui/tycoon_you.png"); }
+.portrait-name { font: 700 12px/1 var(--sans, sans-serif); letter-spacing: 1px; }
 .start-actions button, .start-panel button { min-height: 44px; padding: 9px 16px; border: 1px solid var(--line, #594b3b); color: var(--txt, #efe4d0); background: rgba(255,255,255,.04); cursor: pointer; font: 600 12px var(--sans, sans-serif); letter-spacing: 1px; }
 .start-actions button:hover, .start-panel button:hover { border-color: var(--gold, #c98731); background: rgba(255,166,43,.1); }
 .start-actions .start-primary, .start-panel .start-primary { color: #1b130b; border-color: var(--gold2, #e9a83e); background: var(--gold2, #e9a83e); }

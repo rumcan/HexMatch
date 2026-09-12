@@ -14,8 +14,8 @@ export default function App() {
   useEffect(() => {
     if (!choice || !ref.current) return;
     const cleanup = choice.mode === "ai"
-      ? startIsoGame(ref.current, { role: "solo" })
-      : startIsoGame(ref.current, { seed: choice.seed, role: choice.mode, net: choice.net });
+      ? startIsoGame(ref.current, { role: "solo", portrait: choice.portrait })
+      : startIsoGame(ref.current, { seed: choice.seed, role: choice.mode, net: choice.net, portrait: choice.portrait });
     return () => { (cleanup as (() => void) | undefined)?.(); };
   }, [choice]);
 

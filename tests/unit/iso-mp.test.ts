@@ -24,7 +24,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { NetSession, mirrorOwnerByte } from "../../src/net/session";
 import { PROTOCOL_VERSION, type HexProtocol, type WelcomeMsg } from "../../src/net/protocol";
 import type { HexRoom } from "../../src/net/transport";
-import { MAP_W, MAP_H, mulberry32, setRng } from "../../src/game/config";
+import { MAP_W, MAP_H, mulberry32, setRng, SABOTAGE } from "../../src/game/config";
 import { WATER, factoryTouchesTown, type Grid } from "../../src/iso/grid";
 import { tIdx, type Track } from "../../src/iso/track";
 
@@ -84,6 +84,16 @@ interface MpHook {
   ) => { valid: boolean; why: string | null };
   trucksList: unknown[];
   truckTick: (now?: number, dtMs?: number) => void;
+  /** PP-14b: the Black Market twin (refuses on a guest, exactly as the click
+   *  path does) and the rival plant it sabotages. */
+  buyBlack: (key: string) => void;
+  rivalPlant: {
+    status: (now: number) => { frozen: number; girders: number; smog: boolean };
+    board: import("../../src/game/board").Board;
+  };
+  /** PP-14b: the local plant board — where the guest applies the host's
+   *  sabotage overlay. */
+  board: import("../../src/game/board").Board;
 }
 
 const hook = () => (window as unknown as { __iso: MpHook }).__iso;
@@ -457,5 +467,53 @@ describe("MP-05 two real games, one room", () => {
     // Neither side writes a save: a mid-room refresh must never come back as a
     // solo world (and the guest must not restore a map the host never grew).
     expect(localStorage.getItem("hexmatch:save")).toBeNull();
+  });
+
+  it("the host's Black Market sabotage shows up on the guest's plant", async () => {
+    const hostEnd = new Endpoint("host-socket", "HX9KWR");
+    const guestEnd = new Endpoint("guest-socket", "HX9KWR");
+    hostEnd.peer = guestEnd;
+    guestEnd.peer = hostEnd;
+    endpoints = [hostEnd, guestEnd];
+
+    const hostSession = new NetSession({ room: asRoom(hostEnd), role: "host" });
+    const guestSession = new NetSession({ room: asRoom(guestEnd), role: "guest" });
+    const host = await boot("host", hostSession);
+    const guest = await boot("guest", guestSession);
+
+    greet(welcomeFor(hostEnd, guestEnd, true));
+    greet(welcomeFor(hostEnd, guestEnd, false), guestEnd);
+    pump();
+
+    // Neither plant is wrecked yet.
+    expect(guest.board.gems().filter((g) => g.hard > 0)).toHaveLength(0);
+    expect(guest.rivalPlant.status(performance.now()).frozen).toBe(0);
+
+    // The host buys Frost Tiles against the rival (the guest's seat).
+    host.purse.gold = SABOTAGE.harden.gold;
+    host.buyBlack("harden");
+    // The host's own plant is untouched; the RIVAL plant (seat 1) is frozen.
+    expect(host.rivalPlant.status(performance.now()).frozen).toBeGreaterThan(0);
+
+    // Nothing has crossed the wire yet…
+    expect(guest.board.gems().filter((g) => g.hard > 0)).toHaveLength(0);
+    pump();
+    // …and now the guest's OWN plant board shows the frost (sabotage targets
+    // seat 1 = the guest itself, so it is applied WITHOUT seat mirroring).
+    expect(guest.board.gems().filter((g) => g.hard > 0).length).toBeGreaterThan(0);
+    // The host's own seat (the guest's rivalPlant) was never sabotaged.
+    expect(guest.rivalPlant.status(performance.now()).frozen).toBe(0);
+
+    // Girders cross the wire the same way.
+    host.purse.gold = SABOTAGE.block.gold;
+    host.buyBlack("block");
+    pump();
+    expect(guest.board.gems().filter((g) => g.block).length).toBeGreaterThan(0);
+
+    // Smog too — the guest's board reads as smogged.
+    host.purse.gold = SABOTAGE.fog.gold;
+    host.buyBlack("fog");
+    pump();
+    expect(guest.board.fogUntil).toBeGreaterThan(performance.now());
   });
 });
