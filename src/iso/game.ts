@@ -854,6 +854,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * appears where the road is, not only on the scoreboard.
    */
   const MAX_FLOATS_PER_EVENT = 4;
+  /**
+   * TOAST-ONCE: the "you just earned" VP toasts are one-shot per game, by
+   * `${source}:${type}` — "upgrade:awarded" ("Paved N Dirt Road tile(s) · +X★")
+   * and "plant:awarded" ("Processing plant raised · +1★"). The FIRST time a
+   * point arrives the toast spells out what the action is worth in win points;
+   * on every later rescore the per-tile float below still marks each point on
+   * the map, the badge and the star bell still ring, so the repeated toast is
+   * only the noise the player reported. A toast that was shown — closed with
+   * the ✕ or auto-dismissed — never returns. The "lost" variants are
+   * deliberately excluded: a point VANISHING is the one thing the scoreboard
+   * must never report silently. In-memory on purpose: a new game is a new
+   * lesson.
+   */
+  const vpToastSeen = new Set<string>();
   function applyVpEvents(events: VpEvent[], now: number) {
     if (!events.length) return;
     type Bucket = { n: number; vp: number; spots: [number, number][] };
@@ -881,6 +895,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             ? `Processing plant raised · ${vpDeltaText(b.vp)}`
             : `Processing plant lost · ${vpDeltaText(b.vp)}`);
         if (!mine) continue;          // the rival's line is its own business
+        // TOAST-ONCE: the "you just earned" popup is a first-time lesson, not
+        // a per-action ticker — once seen it stays gone (closed or not), while
+        // the map floats keep marking every point where it happened.
+        if (gained && vpToastSeen.has(key)) {
+          for (const [tx, ty] of b.spots) {
+            floats.add(vpDeltaText(b.vp / b.n), tx, ty, { cls: "delivery", now });
+          }
+          continue;
+        }
+        if (gained) vpToastSeen.add(key);
         toast(label, gained ? "good" : "bad");
         for (const [tx, ty] of b.spots) {
           floats.add(vpDeltaText(b.vp / b.n), tx, ty, { cls: gained ? "delivery" : "sabotage", now });
@@ -2462,19 +2486,47 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       ].join("\n");
     }
 
+    // BANNER-ONCE: each banner carries a stable id (`bannerKey`) beside its
+    // text. The ✕ dismissal is remembered by that id, not by the exact text —
+    // a few of these lines change wording while staying the same banner (the
+    // free-tile counter, the protest countdown), so a text-keyed dismissal let
+    // a CLOSED banner pop back up whenever the text changed and came back
+    // (close "Dirt Road scores nothing…", switch tools, switch back → it
+    // returned). The key makes "closed" stick for the rest of the game.
     let banner: string | null = null;
-    if (phase === "setup-factory") banner = "Place your Factory next to a town — click a buildable tile";
+    let bannerKey: string | null = null;
+    if (phase === "setup-factory") {
+      bannerKey = "setup-factory";
+      banner = "Place your Factory next to a town — click a buildable tile";
+    }
     // PP-05: the setup banner states the price too — the first Depot is free
     // on the allowance, and the player should know the second one is not.
-    else if (phase === "setup-harvester") banner = "Place your Depot — it needs an industry in its 4×4 catchment, and one Depot holds each industry" +
-      (me.freeDepots > 0 ? ` (this one is free; later Depots cost ${costLabel(DEPOT_COST)})` : "");
-    else if (phase === "won") banner = `${winner?.name} wins — ${fmtVp(vpFor(score, winner?.id ?? ""))}★`;
-    else if (pendingProtest) banner = `Protest ready — click a public road to stop ALL trucks for ${fmtProtestLeft(PROTEST_MS)} (Esc cancels)`;
-    else if (me.freeTrack > 0) banner = `${me.freeTrack} free track tiles remaining — connect your depot to your Factory`;
-    else if (tool === "dirt") banner = `Dirt Road scores nothing — paving it later is worth ${fmtVp(VICTORY.upgrade)}★ a tile`;
-    else if (Object.keys(quarry.reach).length === 0) banner = "Nothing connected — the Processing Plant only pays cargo your network reaches";
-    else if (tool === "plant") banner = `Raise another processing plant next to a town — ${plantCostLabel()}`;
-    else banner = "Match the tokened gems in the Processing Plant to process";
+    else if (phase === "setup-harvester") {
+      bannerKey = "setup-depot";
+      banner = "Place your Depot — it needs an industry in its 4×4 catchment, and one Depot holds each industry" +
+        (me.freeDepots > 0 ? ` (this one is free; later Depots cost ${costLabel(DEPOT_COST)})` : "");
+    } else if (phase === "won") {
+      bannerKey = "won";
+      banner = `${winner?.name} wins — ${fmtVp(vpFor(score, winner?.id ?? ""))}★`;
+    } else if (pendingProtest) {
+      bannerKey = "protest-ready";
+      banner = `Protest ready — click a public road to stop ALL trucks for ${fmtProtestLeft(PROTEST_MS)} (Esc cancels)`;
+    } else if (me.freeTrack > 0) {
+      bannerKey = "free-track";
+      banner = `${me.freeTrack} free track tiles remaining — connect your depot to your Factory`;
+    } else if (tool === "dirt") {
+      bannerKey = "dirt-value";
+      banner = `Dirt Road scores nothing — paving it later is worth ${fmtVp(VICTORY.upgrade)}★ a tile`;
+    } else if (Object.keys(quarry.reach).length === 0) {
+      bannerKey = "nothing-connected";
+      banner = "Nothing connected — the Processing Plant only pays cargo your network reaches";
+    } else if (tool === "plant") {
+      bannerKey = "plant";
+      banner = `Raise another processing plant next to a town — ${plantCostLabel()}`;
+    } else {
+      bannerKey = "match-gems";
+      banner = "Match the tokened gems in the Processing Plant to process";
+    }
 
     let costInfo: string | null = null;
     if (preview) {
@@ -2637,6 +2689,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       freeTrack: me.freeTrack,
       freeDepots: me.freeDepots,
       banner,
+      // BANNER-ONCE: the stable id behind `banner` (see paintUi) — the ✕
+      // dismissal is remembered by this, so a closed line never pops back up
+      // when the wording changes and returns.
+      bannerKey,
       costInfo,
       inspect: info || null,
       inspectTone: infoTone,

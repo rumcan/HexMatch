@@ -844,6 +844,84 @@ describe("V4 toasts and the banner close", () => {
   });
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// TOAST-ONCE — the user's report: the popups that state what a Dirt Road /
+// Processing Plant is worth in win points ("Paved N Dirt Road tile(s) · +X★",
+// "Processing plant raised · +1★") repeated on every rescore, and a CLOSED
+// banner (the dirt-road ★ line) popped back up once its wording changed.
+// The win-point popups are a first-time lesson: the per-tile map float, the
+// star badge and the bell keep reporting every delta — the popup itself shows
+// once, and a closed banner never returns while the game lasts.
+// ══════════════════════════════════════════════════════════════════════════
+describe("TOAST-ONCE the win-point popups show once and stay gone", () => {
+  const toastText = () => (root.querySelector(".toasts") as HTMLElement).textContent ?? "";
+
+  it("paving dirt toasts the ★ value on the first pass only; the map float keeps marking every point", async () => {
+    const { h, corridor: { hx, hy, fy } } = await connectedBoot();
+    h.finishSetup();
+    h.purse.ore = 40;
+
+    // findSouthCorridor excludes water and occupied ground, not ROUGH (which
+    // road forbids) — probe the corridor for a flat run of three own dirt
+    // tiles: two for the first pass, one for the second.
+    const { canBuildOn } = await import("../../src/iso/track");
+    let y0: number | null = null;
+    for (let y = hy + 1; y + 2 < fy && y0 === null; y++) {
+      if ([y, y + 1, y + 2].every((yy) => canBuildOn(h.grid, "road", hx, yy))) y0 = y;
+    }
+    expect(y0, "the seed 1337 corridor has three road-legal dirt tiles").not.toBeNull();
+
+    // The first paving says the rule out loud, exactly once…
+    expect(h.dragBuild("road", hx, y0!, hx, y0! + 1)).toBeTruthy();
+    expect(toastText()).toMatch(/Paved 2 Dirt Road tiles · \+0\.5★/);
+    expect(h.vp.you).toBe(0.5);
+
+    // …then it leaves for good. The second pass paves a DIFFERENT tile count,
+    // so even the HUD's 900ms same-text dedup cannot hide a repeat here — the
+    // silence below is the once-guard, not the dedup window.
+    await new Promise((r) => setTimeout(r, 2900));   // auto-dismiss 2400ms + fade
+    expect(toastText()).not.toMatch(/Paved/);
+    expect(h.dragBuild("road", hx, y0! + 2, hx, y0! + 2)).toBeTruthy();
+    await settle();
+    expect(toastText()).not.toMatch(/Paved/);
+    // The score still moves, and the float still marks the new point where it
+    // happened — the per-tile feedback the one-shot popup must not silence.
+    // (Lorry deliveries float with the same `delivery` class, so look for the
+    // ★ value among them rather than asserting on the first match.)
+    expect(h.vp.you).toBe(0.75);
+    const floats = [...root.querySelectorAll(".iso-float.delivery")]
+      .map((e) => e.textContent ?? "");
+    expect(floats.some((t) => t.includes("+0.25★"))).toBe(true);
+  }, 15_000);
+
+  it("a closed banner never returns when its own wording changes", async () => {
+    const h = await boot();
+    const c = findSouthCorridor(h.grid, 6);
+    expect(c).toBeTruthy();
+    const { hx, hy } = c!;
+    // One Depot is all the drag needs: the network anchors on its tile, and
+    // the free-tile allowance (12) is what the banner counts down.
+    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy });
+    h.finishSetup();
+    await settle();
+
+    const banner = root.querySelector("#iso-banner") as HTMLElement;
+    expect(banner.classList.contains("hidden")).toBe(false);
+    expect(banner.textContent).toMatch(/12 free track tiles/i);
+    // The reported bug, end to end: close the line…
+    (banner.querySelector(".banner-close") as HTMLElement).click();
+    expect(banner.classList.contains("hidden")).toBe(true);
+    // …then build, so the banner rewords itself (12 → 10 free tiles). The
+    // old text-keyed dismissal read the new wording as a NEW banner and
+    // popped the closed one back up — "close it, switch, it's back". Keyed
+    // by identity, the dismissed line stays gone.
+    expect(h.dragBuild("dirt", hx, hy + 1, hx, hy + 2)).toBeTruthy();
+    await settle();
+    expect(h.freeTrack).toBe(10);        // the wording really did change
+    expect(banner.classList.contains("hidden")).toBe(true);
+  });
+});
+
 describe("V5 gems draw the restored sprite art", () => {
   it("every gem face is a sprite from src/assets/gems, mapped by cargo", async () => {
     await boot();

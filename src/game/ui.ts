@@ -121,6 +121,10 @@ export interface UiState {
    *  "free setup" while it lasts and the full Oil cost afterwards. */
   freeDepots: number;
   banner: string | null;
+  /** BANNER-ONCE: the stable id behind `banner`. The ✕ dismissal is
+   *  remembered by this, not the exact text, so a closed banner never pops
+   *  back up when its wording changes and returns (tool switch, countdown). */
+  bannerKey: string | null;
   costInfo: string | null;
   inspect: string | null;
   /** PP-03: tones the inspector when it is a placement verdict (e.g. the red
@@ -462,9 +466,17 @@ export function createOriginalUi(
   // between its pointerdown and pointerup, so a real click could be lost.
   // Render those only when their visible content actually changed.
   // V4: banner dismissal state — paint() runs every frame, so the banner is
-  // rebuilt only when its text changes and a dismissed text stays dismissed.
+  // rebuilt only when its content changes and a dismissal stays dismissed.
+  // BANNER-ONCE: the dismissal is remembered by the banner's stable id
+  // (`dismissedBannerKey`), NOT its exact text. V4's text key let a CLOSED
+  // banner return whenever the wording changed and came back — close the
+  // "Dirt Road scores nothing… 0.25★ a tile" line, switch to the Road tool,
+  // switch back to Dirt, and the very banner the player had just dismissed
+  // was on screen again. Keyed by identity, a closed banner stays closed for
+  // the rest of the game (the ❔ help still re-tells the rules).
   let lastBannerText: string | null = null;
-  let dismissedBanner: string | null = null;
+  let lastBannerKey: string | null = null;
+  let dismissedBannerKey: string | null = null;
   let lastSabKey = "\u0000";
   let lastMarketKey = "\u0000";
 
@@ -1327,24 +1339,28 @@ export function createOriginalUi(
     }
     // V4: the banner's ✕ must stick. paint() runs every frame, so rebuilding
     // the banner (and re-showing it) each frame undid the close click — the
-    // reported "click the X and it stays there". Rebuild only when the text
-    // changes, and remember a dismissed text until the message changes.
-    if (state.banner !== lastBannerText) {
+    // reported "click the X and it stays there". Rebuild only when the content
+    // changes. BANNER-ONCE: and the dismissal is keyed on the stable id, so a
+    // closed banner is gone for good — a text-keyed dismissal came back to
+    // life every time the line's wording changed and returned (see
+    // `dismissedBannerKey`).
+    if (state.banner !== lastBannerText || state.bannerKey !== lastBannerKey) {
       lastBannerText = state.banner;
-      dismissedBanner = null;
-      if (state.banner) {
+      lastBannerKey = state.bannerKey;
+      if (state.banner && dismissedBannerKey !== state.bannerKey) {
         const text = state.banner;
+        const key = state.bannerKey;
         banner.innerHTML = `<button class="banner-close" title="Hide">✕</button>` +
           `<small>${text}</small>`;
         const bx = banner.querySelector(".banner-close") as HTMLElement;
         bx.dataset.sfx = "close";
         bx.onclick = () => {
-          dismissedBanner = text;
+          dismissedBannerKey = key;
           banner.classList.add("hidden");
         };
       }
     }
-    banner.classList.toggle("hidden", !state.banner || dismissedBanner === state.banner);
+    banner.classList.toggle("hidden", !state.banner || dismissedBannerKey === state.bannerKey);
     const toolState = state.tool;
     buildList.querySelectorAll<HTMLElement>("[data-tool]").forEach((b) => {
       b.classList.toggle("active", b.dataset.tool === toolState);
