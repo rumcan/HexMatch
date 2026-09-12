@@ -121,6 +121,9 @@ import {
   createTruckState, planTrucks, tickTrucks, truckItems, roadRouteForHarvester,
   type Truck,
 } from "./vehicles";
+import {
+  CAR_COUNT, createCarState, planCars, tickCars, carItems,
+} from "./cars";
 import { createIsoMarket, toBag, chooseRivalOffer, type CargoBag, type IsoMarket } from "./market";
 import { createOriginalUi, type OriginalUi } from "../game/ui";
 // SFX-01: the UI sound layer. Everything the player DOES on the map (a road
@@ -393,6 +396,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    */
   const trucks = createTruckState();
   let trucksDirty = true;
+  /** TRAFFIC-01: ambient cars — a few simple cars driving the streets and
+   *  roads, host/solo-local presentation only (a guest runs no vehicle
+   *  movement, same rule as the lorries). Replanned on the same network-
+   *  change edge the lorries use; the frame loop advances and draws them.
+   *  `carCount` is live-tunable from `__iso.setTraffic(n)` — the performance
+   *  probe is "how many cars before it hurts", so the dial exists. */
+  const cars = createCarState();
+  let carCount = CAR_COUNT;
   /** RV-03: monotonically increments on every network change (set in
    *  `rescoreNow`), so the hover route overlay cache can tell when a build or
    *  demolish may have opened a CLOSER route and must re-run `roadPath`. */
@@ -3615,6 +3626,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (!isGuest()) {
         if (trucksDirty) {
           trucks.trucks = planTrucksTrucksMerge(trucks.trucks, planTrucks(eco));
+          // TRAFFIC-01: the road surface is the cars' world too — replan them
+          // on the same edge. A car whose route is unchanged keeps its place.
+          cars.cars = planCars(track, cars.cars, carCount);
           trucksDirty = false;
           // AI-03: the replan no longer resets driving lorries — see
           // planTrucksTrucksMerge just above trucksTick. seenDeliveries is
@@ -3628,17 +3642,24 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // frame only while a protest stands (usually it is undefined: no crowd,
         // no cost, no behaviour change).
         tickTrucks(trucks, dt, protests.size > 0 ? new Set(protests.keys()) : undefined);
+        // TRAFFIC-01: the ambient cars roll on the same frame, host/solo only.
+        tickCars(cars, dt);
       }
       collectDeliveries(t);
+
+      // TRAFFIC-01: trucks and ambient cars share the vehicles list — one
+      // depth-sorted pass draws both, and culling treats them identically.
       // TRUCK-BRAND: the atlas decides whether a lorry wears a livery — the
       // branded sprites only exist once `loadVehicleLayers` has installed them
       // (see below), and until then every truck draws the legacy goods cell.
-      world.vehicles = truckItems(trucks, atlasRef ?? undefined);
+      world.vehicles = carItems(cars).concat(truckItems(trucks, atlasRef ?? undefined));
       const { items, ghost } = overlayFrame();
       renderer!.render(t, items, ghost);
       floats.frame(t);
       paintUi(t);
       raf = requestAnimationFrame(frame);
+
+ 
     };
     raf = requestAnimationFrame(frame);
   })().catch((err) => {
@@ -3742,12 +3763,34 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // without this branch a dirty world never receives lorries at all.
       if (trucksDirty) {
         trucks.trucks = planTrucksTrucksMerge(trucks.trucks, planTrucks(eco));
+        cars.cars = planCars(track, cars.cars, carCount);
         trucksDirty = false;
         quarry.setTruckServed(truckCargos(trucks.trucks, now));
         rivalQuarry.setTruckServed(truckCargos(trucks.trucks, now, "ai"));
       }
       tickTrucks(trucks, dtMs, protests.size > 0 ? new Set(protests.keys()) : undefined);
+      tickCars(cars, dtMs);
       collectDeliveries(now);
+    },
+    /** TRAFFIC-01 diagnostics: the ambient cars by NAME (car 1 / car 2 /
+     *  car 3) with their live position, so headless probes and the perf
+     *  dial can tell them apart while the art is still the lorry. */
+    get traffic() {
+      return cars.cars.map((c) => ({
+        name: c.name, loop: c.loop, reverse: c.reverse,
+        leg: c.leg, t: Math.round(c.t * 1000) / 1000,
+        routeTiles: c.route.length,
+      }));
+    },
+    /** TRAFFIC-01 perf dial: set the ambient-traffic volume (0 clears the
+     *  streets, 3 is the default "a few"). Replans from the live road
+     *  surface immediately — no build needed to feel the cost. */
+    setTraffic: (count: number) => {
+      if (isGuest()) return [];
+      carCount = Math.max(0, Math.min(64, Math.trunc(count) || 0));
+      cars.cars = planCars(track, cars.cars, carCount);
+      renderer?.setWorld(world);
+      return cars.cars.map((c) => c.name);
     },
     quarry, market,
     /** A1: the rival's Processing Plant — where Black Market sabotage lands. */

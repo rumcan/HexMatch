@@ -78,7 +78,9 @@ const GROUPS = [
   { id: "07-dirt-road-blends", title: "Dirt/road transition blends",
     match: (n) => n.startsWith("dirt_road_") },
   { id: "08-spare-trucks", title: "Spare art + road vehicles",
-    match: (n) => n.startsWith("spare_") || n.startsWith("truck_") },
+    // TRAFFIC-01: the ambient-traffic car slots (car1_* … car3_*) join the
+    // road-vehicles group alongside the freight truck (truck_*).
+    match: (n) => n.startsWith("spare_") || n.startsWith("truck_") || /^car[123]_/.test(n) },
 ];
 
 const esc = (s) =>
