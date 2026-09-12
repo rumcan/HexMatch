@@ -31,7 +31,7 @@ import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SRC = join(root, "assets", "buildings-src");
 
-const names = process.argv.slice(2).filter((a) => !a.startsWith("--"));
+const names = process.argv.slice(2).filter((a) => !a.startsWith("--") && !/^\d+$/.test(a));
 const all = readdirSync(SRC)
   .filter((f) => f.endsWith("@2x.png"))
   .map((f) => f.replace(/@2x\.png$/, ""));
@@ -40,7 +40,11 @@ const targets = names.length ? names : all;
 const inMagentaFamily = (r, g, b) =>
   b > 105 && r > 75 && b > 0.7 * r && Math.abs(r - b) < 90 && g < 0.32 * (r + b);
 
-const REACH = 3;
+// --reach N: how far inside the silhouette an opaque magenta-hued pixel may
+// sit and still be treated as keyline residue. 3 suits anti-aliased edges;
+// raise it for stray opaque blobs that survived a soft key (e.g. 6).
+const reachIdx = process.argv.indexOf("--reach");
+const REACH = reachIdx >= 0 ? Number(process.argv[reachIdx + 1]) : 3;
 
 for (const name of targets) {
   const file = join(SRC, `${name}@2x.png`);
