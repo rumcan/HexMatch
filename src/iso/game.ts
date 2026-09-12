@@ -115,7 +115,8 @@ import {
   buildEnding, showEndingScreen, type DecisiveSource, type EndingScreenHandle,
 } from "./ending";
 import {
-  createRivalVoice, type RivalryDirection, type RivalryTactic,
+  OIL_DRILLING_SCENE, createRivalDirector,
+  type RivalryDirection, type RivalryScene, type RivalryTactic,
 } from "./rivalry";
 import {
   createIsoDebug, shouldInstallDebugConsole, shouldAutoEnableDebugOverlays,
@@ -377,11 +378,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    *  ensuing reload must not resurrect the completed match. */
   let restartArmed = false;
 
-  // Rivalry flavour has its own deterministic deck and counters. It never
-  // consumes the simulation RNG, so a new line cannot alter an AI decision.
-  const nextRivalLine = createRivalVoice(seed);
+  // Rivalry flavour has its own deterministic scene deck and counters. It
+  // never consumes simulation RNG, so extra jokes cannot alter an AI decision.
+  const nextRivalScene = createRivalDirector(seed);
   let playerSabotage = 0;
   let rivalSabotageHits = 0;
+  let oilBanterSeen = false;
+  // The quarry is created before the HUD. Its callback is replaced once the
+  // two-portrait wire exists; no board can pay oil during synchronous boot.
+  let onFirstOilHarvest: () => void = () => {};
 
   // ── J1: quarry + market + the restored UI ────────────────────────────────
   // Cargo has exactly one owner (the purse above). The board owns gems and the
@@ -396,7 +401,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       .map(([c, n]) => `+${n} ${CARGO[c].icon}`).join(" ") + (label ? ` · ${label}` : "");
 
   const quarry: Quarry = createQuarry(eco, "you", {
-    onHarvest: (cargo, amount) => earn(me, { [cargo]: amount }),
+    onHarvest: (cargo, amount) => {
+      earn(me, { [cargo]: amount });
+      if (cargo === "oil" && amount > 0) onFirstOilHarvest();
+    },
     onBlocked: (cargo, amount) =>
       toast(`No route for ${CARGO[cargo].name} — ${amount} lost. Reconnect it.`, "bad"),
     // W5: the missing wire. The board banks a combo coin every 2 combos;
@@ -638,13 +646,25 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     ui.toast(text, kind);
   };
 
-  /** Put one line on the rival's non-blocking wire and preserve it in Feed. */
+  /** Queue one alternating portrait scene and preserve the whole exchange in
+   *  Feed. Torvin never gets an unanswered line. */
+  const playRivalryScene = (scene: RivalryScene) => {
+    ui.rivalQuip(scene);
+    for (const beat of scene) {
+      ui.feed(`“${beat.text}”`, beat.speaker === "rival" ? rival.name : me.name);
+    }
+  };
+
   const rivalSpeaks = (direction: RivalryDirection, tactic: RivalryTactic) => {
-    const line = nextRivalLine(direction, tactic);
     if (direction === "retort") playerSabotage++;
     else if (direction === "attack") rivalSabotageHits++;
-    ui.rivalQuip(line);
-    ui.feed(`“${line}”`, rival.name);
+    playRivalryScene(nextRivalScene(direction, tactic));
+  };
+
+  onFirstOilHarvest = () => {
+    if (oilBanterSeen || phase !== "play") return;
+    oilBanterSeen = true;
+    playRivalryScene(OIL_DRILLING_SCENE);
   };
 
   /** Show the final ledger once. The same model builds victory and defeat, but
@@ -2880,6 +2900,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // A1: no token, no number. An empty lorry must not promise a gem the
       // board never received.
       if (!tier) continue;
+      if (cargo === "oil") onFirstOilHarvest();
       floats.add(
         `+${tier} ${CARGO[cargo].icon}`, truck.factory[0], truck.factory[1],
         { cls: "delivery", now: t },
@@ -2902,7 +2923,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       snapV: SNAPSHOT_VERSION, // track layers share the MP wire format
       savedAt: Date.now(),
       seed, skillKey: skillKey, phase, winnerId: winner?.id ?? null,
-      story: { playerSabotage, rivalSabotage: rivalSabotageHits, winningSource },
+      story: {
+        playerSabotage,
+        rivalSabotage: rivalSabotageHits,
+        winningSource,
+        oilBanterSeen,
+      },
       bandit,
       protests: [...protests.values()].map((p) => ({
         x: p.tx, y: p.ty, left: Math.max(0, p.until - now), owner: p.owner,
@@ -2973,6 +2999,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     winningSource = d.story?.winningSource === "upgrade" || d.story?.winningSource === "plant"
       ? d.story.winningSource
       : null;
+    oilBanterSeen = d.story?.oilBanterSeen === true;
     for (const b of d.boards) {
       if (b.kind === "ai") rivalQuarry.board.restore(b.data);
       else quarry.board.restore(b.data);
@@ -3388,6 +3415,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     floats,
     /** Refresh the reachable set now (spawn tokens for newly reached cargo). */
     refreshQuarry: (now = performance.now()) => quarry.refresh(now),
+    /** Story test twin of the player's first successful Oil harvest. */
+    firstOilHarvest: () => onFirstOilHarvest(),
     /** The e2e twin of clicking two adjacent gems in the Quarry panel. */
     swap: (r1: number, c1: number, r2: number, c2: number) =>
       quarry.board.trySwap(r1, c1, r2, c2, performance.now()),

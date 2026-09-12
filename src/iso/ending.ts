@@ -62,22 +62,23 @@ export interface EndingModel {
   epilogue: string;
   coda: string | null;
   rivalQuote: string;
+  playerQuote: string;
   variant: number;
 }
 
 const WIN_EPILOGUES: Record<EndingPath, readonly string[]> = {
   paving: [
-    "You went on to build the largest freight network in the United States. You married the model from your first national advertising campaign, raised seven children, and died peacefully in your own bed at ninety-four, with a freight whistle sounding beyond the garden.",
+    "You went on to become the greatest entrepreneur America had ever seen. Your little freight concern grew into the largest network in the United States, and business schools spent a century arguing over how you did it. You married the model from your first national advertising campaign, raised seven children, and died peacefully in your own bed at ninety-four, with a freight whistle sounding beyond the garden.",
     "Your bright roads crossed three time zones and made forgotten towns into capitals of trade. Congress called you a monopolist; drivers called you the reason supper arrived on time. You retired beside Lake Michigan and spent forty happy years refusing every offer to return.",
     "The little dirt lane became a continental web of asphalt, depots, and midnight headlights. Your company outlived two recessions and every newspaper that predicted its ruin. In old age you toured the first route once a year, waving from the cab like a victorious general.",
   ],
   plants: [
-    "Your processing plants became the furnaces of a new industrial age. Whole towns grew around their gates, and your name appeared on pay envelopes from coast to coast. You left the company to your children, built a glasshouse full of orchids, and never again woke before noon.",
+    "America called you the entrepreneur who made industry believe in itself again. Your processing plants became the furnaces of a new age; whole towns grew around their gates, and your name appeared on pay envelopes from coast to coast. You left the company to your children, built a glasshouse full of orchids, and never again woke before noon.",
     "You raised factory after factory until the nation measured prosperity by the smoke above your roofs. The board made you chairman for life. At eighty-eight you still walked the night shift every Friday, remembered every foreman's name, and left behind an empire nobody could divide.",
     "The final plant was only the beginning. You patented a cleaner furnace, endowed three engineering schools, and turned four company towns into thriving cities. Your bronze statue faced the factory gates; workers kept polishing its shoes long after you were gone.",
   ],
   balanced: [
-    "You joined roads, depots, and processing floors into the most admired industrial network of the century. Rivals copied the diagrams and failed. You married your oldest confidant, filled a rambling house with children and maps, and died content beneath a framed plan of the first route.",
+    "By the time the magazines named you America's greatest living entrepreneur, your roads, depots, and processing floors had become the most admired industrial network of the century. Rivals copied the diagrams and failed. You married your oldest confidant, filled a rambling house with children and maps, and died content beneath a framed plan of the first route.",
     "Your empire worked because every mile of road had a purpose and every furnace had cargo waiting. You became the quiet power behind a decade of prosperity, then gave half the company to its workers and disappeared aboard a private train bound west.",
     "Historians later called it the Hexmatch System: build carefully, process relentlessly, and waste nothing. It made you wealthy beyond arithmetic. You spent your final years funding hospitals in every town that had trusted your first trucks, and every one flew its flags at half-mast for you.",
   ],
@@ -236,6 +237,9 @@ export function buildEnding(input: EndingInput): EndingModel {
     rivalQuote: input.playerWon
       ? "Enjoy the headlines. I have already started on the next map."
       : "The map was never big enough for both of us.",
+    playerQuote: input.playerWon
+      ? "That was almost gracious. Are you feeling all right?"
+      : "You practiced that in the mirror, didn't you?",
     variant,
   };
 }
@@ -376,6 +380,7 @@ export function showEndingScreen(
   after.appendChild(el("p", "ending-epilogue", model.epilogue));
   if (model.coda) after.appendChild(el("p", "ending-coda", model.coda));
   after.appendChild(el("p", "ending-rival-final", `${model.rivalName}'s final wire: “${model.rivalQuote}”`));
+  after.appendChild(el("p", "ending-player-final", `Your reply: “${model.playerQuote}”`));
   card.appendChild(after);
   card.appendChild(el("p", "ending-the-end", "The End"));
 

@@ -63,7 +63,16 @@ describe("cinematic ending story", () => {
     }
     expect(buildEnding(input({ seed: 99 })).epilogue).toBe(buildEnding(input({ seed: 99 })).epilogue);
     expect(buildEnding(input({ variant: 0 })).epilogue)
-      .toMatch(/largest freight network in the United States/i);
+      .toMatch(/greatest entrepreneur America had ever seen/i);
+    expect(buildEnding(input({ variant: 0 })).epilogue)
+      .toMatch(/largest network in the United States/i);
+  });
+
+  it("delivers the explicit greatest-entrepreneur, family, and happy-old-age ending", () => {
+    const end = buildEnding(input({ playerBreakdown: paving, variant: 0 }));
+    expect(end.epilogue).toMatch(/greatest entrepreneur America had ever seen/i);
+    expect(end.epilogue).toMatch(/raised seven children/i);
+    expect(end.epilogue).toMatch(/died peacefully.*ninety-four/i);
   });
 
   it("uses a separate grim deck when the rival wins, based on the rival's route", () => {
@@ -106,6 +115,7 @@ describe("cinematic ending screen", () => {
     expect(view.element.textContent).toContain("Where your points came from");
     expect(view.element.textContent).toContain("36 tiles × 0.25★");
     expect(view.element.textContent).toContain("The years that followed");
+    expect(view.element.textContent).toContain("Your reply:");
     expect(view.element.textContent).toContain("The End");
 
     const review = view.element.querySelector(".ending-review") as HTMLButtonElement;

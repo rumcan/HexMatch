@@ -76,6 +76,7 @@ interface IsoHook {
   quarry: import("../../src/iso/quarry").Quarry;
   market: import("../../src/iso/market").IsoMarket;
   refreshQuarry: (now?: number) => unknown;
+  firstOilHarvest: () => void;
   setTool: (t: string) => void;
   /** W8: the twin of the setup click that places your factory (and seeds the rival's). */
   placeFactory: (tx: number, ty: number) => boolean;
@@ -282,6 +283,7 @@ describe("the live game resolves into a cinematic ending", () => {
       playerSabotage: 0,
       rivalSabotage: 0,
       winningSource: "upgrade",
+      oilBanterSeen: false,
     });
 
     // This also proves optional narrative data survives the restore path rather
@@ -313,6 +315,46 @@ describe("the live game resolves into a cinematic ending", () => {
     const legacyEnding = root.querySelector("#iso-ending") as HTMLElement;
     expect(legacyEnding.dataset.outcome).toBe("victory");
     expect(legacyEnding.textContent).toMatch(/network crossed the star line/i);
+  });
+});
+
+describe("the two-portrait rivalry conversation", () => {
+  it("plays the oil hand-gesture scene once and switches from Torvin to the player", async () => {
+    const h = await boot();
+    h.finishSetup();
+
+    const scheduled: { delay: number; run: () => void }[] = [];
+    const timerSpy = vi.spyOn(window, "setTimeout").mockImplementation(((handler: TimerHandler, delay?: number) => {
+      if (typeof handler === "function") {
+        scheduled.push({ delay: Number(delay), run: () => handler() });
+      }
+      return scheduled.length;
+    }) as typeof window.setTimeout);
+
+    h.firstOilHarvest();
+    const wire = root.querySelector("#iso-rival-quip") as HTMLElement;
+    const face = wire.querySelector(".rival-quip-face") as HTMLElement;
+    expect(wire.dataset.speaker).toBe("rival");
+    expect(wire.querySelector(".rival-quip-text")!.textContent)
+      .toBe("I see you're drilling for oil. How about you drill this!");
+    const rivalPortrait = face.style.backgroundImage;
+
+    scheduled.find((task) => task.delay !== 220)!.run();
+    scheduled.find((task) => task.delay === 220)!.run();
+    expect(wire.dataset.speaker).toBe("you");
+    expect(wire.classList.contains("you-speaking")).toBe(true);
+    expect(wire.querySelector(".rival-quip-label")!.textContent).toBe("You · Open channel");
+    expect(wire.querySelector(".rival-quip-text")!.textContent).toBe("Drill what?");
+    expect(face.style.backgroundImage).not.toBe(rivalPortrait);
+    expect(face.style.backgroundImage).toMatch(/tycoon_vex/i);
+
+    const feedBefore = root.querySelectorAll(".feed-row").length;
+    expect(root.textContent).toContain("I was making a rude gesture with my hands.");
+    expect(root.textContent).toContain("Yeah, I can't see you.");
+    expect(root.textContent).toContain("Just... you just watch your back, sonny.");
+    h.firstOilHarvest();
+    expect(root.querySelectorAll(".feed-row")).toHaveLength(feedBefore);
+    timerSpy.mockRestore();
   });
 });
 

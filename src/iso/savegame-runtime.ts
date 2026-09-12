@@ -44,6 +44,9 @@ export interface SaveGamePayload {
     playerSabotage: number;
     rivalSabotage: number;
     winningSource: "upgrade" | "plant" | null;
+    /** Optional because cinematic saves created before conversational oil
+     * banter did not track whether its one-off scene had played. */
+    oilBanterSeen?: boolean;
   };
   /** Industry id → raid REMAINING ms (phase-offset free, so a reload keeps
    *  the bandit on exactly the time it had left). */

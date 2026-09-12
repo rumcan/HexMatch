@@ -171,6 +171,31 @@ screen outside this pass, and the chooser's own gradient panels keep their
 original colours (they read `--serif`/`--gold2`, which now resolve to noir
 values anyway).
 
+## Final reels and the two-way wire
+
+The ending is a story, not a score toast. `src/iso/ending.ts` carries nine
+victory epilogues and nine grim defeat epilogues, split across paving-led,
+plant-led, and balanced empires. The ledger selects the reel and the decisive
+build supplies the final line. The most explicit success reel begins:
+
+> You went on to become the greatest entrepreneur America had ever seen. Your
+> little freight concern grew into the largest network in the United States…
+
+That prose is rendered under **The years that followed**, followed by a final
+Rival/You exchange. Fireworks occupy a layer inside the victory card so they
+remain visible on a phone where the card is almost full-screen; defeat receives
+ash instead. Review hides the reel without destroying it and leaves a **Final
+ledger** ticket to reopen it.
+
+`src/iso/rivalry.ts` writes Torvin as an old industrialist whose threats keep
+collapsing under their own wordplay. Every scene alternates `rival → you`, and
+`src/game/ui.ts` swaps the wire card from Torvin's portrait/red keyline to the
+player's selected portrait/blue keyline for the reply. The first Oil delivery
+runs the longer “How about you drill this!” hand-gesture exchange; subsequent
+Black Market attacks use shorter paired scenes. The card remains
+pointer-transparent, queues rather than drops replies, and keeps the complete
+conversation in the Feed.
+
 ## Tuning it
 
 Everything reads from one `:root`, so the dial is short:

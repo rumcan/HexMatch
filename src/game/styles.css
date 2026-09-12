@@ -1606,10 +1606,10 @@ html, body, #root {
 .toast.danger { border-left-color: var(--danger2); }
 .toast.info { border-left-color: var(--info); }
 
-/* ── Rival private wire ────────────────────────────────────────────
-   Black Market story beats appear here rather than as another toast: one
-   restrained, self-dismissing transmission, pointer-transparent and below the
-   main controls. Every line is also retained in the Feed. */
+/* ── Two-portrait rivalry wire ─────────────────────────────────────
+   Black Market and oil story beats appear here rather than as another modal:
+   one restrained, self-dismissing line at a time, pointer-transparent in the
+   notification lane. Every line is also retained in the Feed. */
 .rival-quip {
   position: relative;
   width: min(430px, calc(100vw - 32px));
@@ -1627,6 +1627,15 @@ html, body, #root {
 }
 .rival-quip.show { opacity: 1; transform: translateY(0); }
 .rival-quip.leaving { opacity: 0; transform: translateY(-5px); }
+/* The same unobtrusive card visibly changes hands: Torvin's rusty red gives
+   way to the player's blue and, crucially, the player's selected portrait. */
+.rival-quip.you-speaking {
+  background: linear-gradient(100deg, rgba(8, 15, 23, .97), rgba(17, 35, 52, .94));
+  border-color: rgba(90, 168, 255, .44);
+  border-left-color: #5aa8ff;
+}
+.rival-quip.you-speaking .rival-quip-label { color: #86c5ff; }
+.rival-quip.you-speaking .rival-quip-face { border-color: rgba(90, 168, 255, .66); }
 .rival-quip-face {
   width: 38px; height: 38px; flex: 0 0 38px;
   border: 1px solid rgba(226, 112, 79, .55);
@@ -2433,6 +2442,10 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 }
 .ending-rival-final {
   margin: 13px auto 0; color: #cf8169;
+  font: 400 11.5px/1.45 var(--mono);
+}
+.ending-player-final {
+  margin: 4px auto 0; color: #86c5ff;
   font: 400 11.5px/1.45 var(--mono);
 }
 .ending-the-end {
