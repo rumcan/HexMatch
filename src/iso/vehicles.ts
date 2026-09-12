@@ -248,25 +248,65 @@ function stepBit(route: [number, number][], leg: number, reverse: boolean): numb
   return SE;   // degenerate single-tile route: face somewhere sensible
 }
 
-const SPRITE_OF: Record<number, string> = {
-  [NE]: "truck_goods_ne", [SE]: "truck_goods_se",
-  [SW]: "truck_goods_sw", [NW]: "truck_goods_nw",
+/**
+ * The four screen headings a lorry can face, and the ONLY names either livery
+ * family needs: the legacy OpenGFX cells are `truck_goods_<view>` (shipped in
+ * `assets/iso-atlas/manifest.json`) and the branded ones are
+ * `truck_<brand>_<view>` (`assets/vehicles/`). One key, two families, so a
+ * heading can never exist for one art set and be missing from the other.
+ * A route step is exactly one of these — `stepBit` returns no other bit.
+ */
+export const TRUCK_VIEW: Record<number, "ne" | "se" | "sw" | "nw"> = {
+  [NE]: "ne", [SE]: "se", [SW]: "sw", [NW]: "nw",
 };
+
+/** Who owns which livery: the player drives the blue lorries, everyone else red. */
+export const truckBrand = (ownerId: number): "blue" | "red" =>
+  ownerId === 1 ? "blue" : "red";
+
+/** `atlas.has` is all `truckItems` needs — see the doc on `truckSpriteName`. */
+export interface TruckSpriteSource { has(name: string): boolean }
+
+/**
+ * The sprite name for one truck on one leg: `truck_<brand>_<view>`, and the
+ * legacy `truck_goods_<view>` whenever the branded art is not in the atlas.
+ *
+ * The probe is what keeps this non-gating. `assets/vehicles/` is installed at
+ * runtime by `loadVehicleLayers` (see `vehicle-art.ts`), so between the first
+ * frame and that promise resolving — and forever after on a checkout without
+ * the art — `truck_blue_se` simply is not a sprite, and a draw item naming it
+ * would draw NOTHING (not the lorry in the wrong livery: nothing at all). Asking
+ * the atlas is one `in` check per truck per tick, and it means the fallback and
+ * the upgrade are the same code path. With no atlas passed at all (tools, unit
+ * tests) the legacy names are the answer, because that is the only set whose
+ * presence is guaranteed by `assets/iso-atlas/manifest.json`.
+ */
+export function truckSpriteName(
+  ownerId: number, dirBit: number, atlas?: TruckSpriteSource,
+): string {
+  // `stepBit` only ever returns one of the four, so the default is unreachable
+  // from the game — but a truck must never be dropped for a bad bit, and a
+  // one-tile route already faces SE for exactly that reason.
+  const view = TRUCK_VIEW[dirBit] ?? "se";
+  const branded = `truck_${truckBrand(ownerId)}_${view}`;
+  return atlas && atlas.has(branded) ? branded : `truck_goods_${view}`;
+}
 
 /**
  * The trucks as draw items: FRACTIONAL tile position between route-tile
- * centres, the directional TTD lorry for the current leg, and the rounded
- * tile in `tx`/`ty` for culling. `depth.place` anchors a moving item at the
- * fractional tile's diamond centre; `pickSprite` skips such items.
+ * centres, the directional lorry for the current leg in its owner's livery,
+ * and the rounded tile in `tx`/`ty` for culling. `depth.place` anchors a
+ * moving item at the fractional tile's diamond centre; `pickSprite` skips such
+ * items.
  */
-export function truckItems(state: TruckState): DrawItem[] {
+export function truckItems(state: TruckState, atlas?: TruckSpriteSource): DrawItem[] {
   const out: DrawItem[] = [];
   for (const truck of state.trucks) {
     const { route, leg, t } = truck;
     const a = route[leg], b = route[Math.min(leg + 1, route.length - 1)];
     const fx = a[0] + (b[0] - a[0]) * t;
     const fy = a[1] + (b[1] - a[1]) * t;
-    const sprite = SPRITE_OF[stepBit(route, leg, truck.reverse)];
+    const sprite = truckSpriteName(truck.ownerId, stepBit(route, leg, truck.reverse), atlas);
     if (!sprite) continue;
     out.push({
       sprite,
