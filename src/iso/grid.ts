@@ -373,15 +373,26 @@ export function industriesInRoadBuffer(
  */
 function applyRoadSpawnBuffer(
   terrain: Uint8Array, occ: Int16Array, list: Industry[],
-  towns: Town[], publicRoads: [number, number][],
+  publicRoads: [number, number][],
 ): void {
-  // The buffer is measured from the ROAD tiles — the highways and each town's
-  // ring road/streets, i.e. exactly the tiles `track.ts` stamps PUBLIC_OWNER —
-  // because that is what the rule is about: a resource node must not sit in a
-  // verge a Depot can park on for free.
+  // The buffer is measured from the HIGHWAY tiles only.
+  //
+  // The rule is that a resource node must not spawn in a verge a Depot can
+  // park on for free, and it used to measure from the town streets as well.
+  // That was right when a town's road was a ring of perhaps twenty tiles. The
+  // grid towns carry well over a hundred street tiles spread across 13-19
+  // tiles of ground, so a 10-tile Chebyshev buffer from every one of them
+  // excluded a box roughly forty tiles across per town — most of the island,
+  // four times over. Industries ended up flung to the coast, and the opening
+  // corridor from an industry to a town-adjacent Factory site stopped
+  // existing (E14's picker could find no legal 4-12 tile run on any seed).
+  //
+  // Nothing is lost by dropping the streets from this field: `townField`
+  // below already holds every town tile — houses AND streets — at
+  // TOWN_INDUSTRY_SEP, so a node beside a street is still refused. The two
+  // buffers were double-counting the same tiles.
   const roadSet = new Set<number>();
   for (const [x, y] of publicRoads) roadSet.add(idx(x, y));
-  for (const t of towns) for (const [x, y] of t.roads) roadSet.add(idx(x, y));
   const roadField = chebyshevField(roadSet);
 
   // A town's own ground (houses, centre, streets — everything stamped TOWN_OCC)
@@ -697,7 +708,7 @@ export function townLayout(
    * out past the last building, which is the bit that reads as a road to
    * nowhere.
    */
-  const layLane = (line: [number, number][]) => {
+  const layLane = (line: [number, number][], overhang: boolean) => {
     let first = -1, last = -1;
     for (let i = 0; i < line.length; i++) {
       if (!nearHouse(line[i][0], line[i][1])) continue;
@@ -705,20 +716,46 @@ export function townLayout(
       last = i;
     }
     if (first === -1) return;
+    // Only the EXIT lanes run past the last house.
+    //
+    // Every lane used to, and that littered the ring of land just outside the
+    // town with street tiles at three-tile intervals. Those tiles are
+    // TOWN_OCC, a Factory footprint may not overlap them, and a Factory has to
+    // be able to stand against a town — so the opening corridor from an
+    // industry to a town-adjacent Factory site had almost nowhere to land
+    // (E14's picker reported `factory-not-near-town` on every seed). One exit
+    // per axis is all the inter-town highway needs to find its way in.
+    if (overhang) {
+      first = Math.max(0, first - 1);
+      last = Math.min(line.length - 1, last + 1);
+    }
     for (let i = first; i <= last; i++) addRoad(line[i][0], line[i][1]);
   };
+
+  /** The lane nearest the centre on each axis: the town's two through-roads. */
+  const nearestLane = (from: number, to: number, centre: number): number => {
+    let best = centre, bestD = Infinity;
+    for (let v = from; v <= to; v++) {
+      if (!onLane(v, centre)) continue;
+      const d = Math.abs(v - centre);
+      if (d < bestD) { bestD = d; best = v; }
+    }
+    return best;
+  };
+  const exitCol = nearestLane(cx - span, cx + span, cx);
+  const exitRow = nearestLane(cy - span, cy + span, cy);
 
   for (let lx = cx - span; lx <= cx + span; lx++) {
     if (!onLane(lx, cx) || lx < hx0 - 1 || lx > hx1 + 1) continue;
     const line: [number, number][] = [];
     for (let ty = hy0 - 1; ty <= hy1 + 1; ty++) line.push([lx, ty]);
-    layLane(line);
+    layLane(line, lx === exitCol);
   }
   for (let ly = cy - span; ly <= cy + span; ly++) {
     if (!onLane(ly, cy) || ly < hy0 - 1 || ly > hy1 + 1) continue;
     const line: [number, number][] = [];
     for (let tx = hx0 - 1; tx <= hx1 + 1; tx++) line.push([tx, ly]);
-    layLane(line);
+    layLane(line, ly === exitRow);
   }
 
   // Drop any street fragment nothing can drive to.
@@ -1131,7 +1168,7 @@ export function generateMap(seed: number): Grid {
   // here, once the highways and the town streets are known. Uses the seeded
   // stream (every earlier stage is done drawing from it), so the map is still a
   // pure function of `seed`.
-  applyRoadSpawnBuffer(terrain, occ, list, towns, publicRoads);
+  applyRoadSpawnBuffer(terrain, occ, list, publicRoads);
   // PP-02: guarantee every town can host a Factory. The only thing that could
   // wall a town off from a legal Factory site is ROUGH terrain around it,
   // so flatten the rough in a small ring around every town tile. A town tile
