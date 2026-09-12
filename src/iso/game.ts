@@ -108,6 +108,11 @@ import {
 } from "./vehicles";
 import { createIsoMarket, toBag, chooseRivalOffer, type CargoBag, type IsoMarket } from "./market";
 import { createOriginalUi, type OriginalUi } from "../game/ui";
+// SFX-01: the UI sound layer. Everything the player DOES on the map (a road
+// laid, a building raised, a demolition, a star earned, the final ledger) gets
+// one cue from here; the chrome's own clicks and hovers are handled once, by
+// the delegation `attachUiSound` installs. docs/SFX-01-ui-sound.md.
+import { sfx } from "../audio/sfx";
 // AI-02: the start-of-game difficulty prompt (see skill-picker.ts for the
 // "when do we ask" contract: only when nothing has chosen yet).
 import { promptForRivalSkill } from "./skill-picker";
@@ -413,6 +418,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // frame.
     onGold: (n) => {
       earn(me, { gold: n });
+      // SFX-01: two coins touching. The toast reports it; this is the feel.
+      sfx.play("coin");
       toast(`+${n} Gold from combos 🪙`, "good");
     },
     onGains: (gains, label) => toast(gainText(gains, label), "good"),
@@ -692,6 +699,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // not leave that stale modal waiting underneath Review; the final ledger
     // becomes the one authoritative dialog.
     ui.hideModal();
+    // SFX-01: the ledger's own cadence — warm and rising when the player won,
+    // the same shape descending and muted when they did not. No fail horn: the
+    // ending card is already sombre, and the sound must not gloat either way.
+    sfx.play(model.outcome === "victory" ? "victory" : "defeat");
     endingView = showEndingScreen(ui.el, model, {
       playerPortrait: opts.portrait ?? "vex",
       onRestart: () => {
@@ -873,6 +884,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const last = starFed.get(p.id) ?? 0;
       if (stars > last) {
         starFed.set(p.id, stars);
+        // SFX-01: a Victory Point is the only thing worth ringing for. The
+        // rival's stars stay silent — the feed line is enough for those.
+        if (p.human) sfx.play("star");
         ui.feed(`${p.human ? "You" : p.name} reach ${stars}★ of ${VICTORY.target}★`, p.name);
       } else if (stars < last) starFed.set(p.id, stars);
     }
@@ -915,6 +929,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       owner: p.id, ownerId: p.i + 1, tx, ty,
       id: 0, townId: adjacentTown(grid, tx, ty)?.id ?? null,
     });
+    // SFX-01: a heavy crate set down and latched. The rival's own factory
+    // appears in the same instant as the player's, so only the human's click
+    // gets the sound — one thunk per gesture, whoever else moved.
+    if (p.human) sfx.play("build");
     return true;
   }
 
@@ -1008,6 +1026,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     p.freeDepots = price.freeLeft;
     // G5: harvesters seed the network; they no longer need existing track.
     eco.harvesters.push(h);
+    if (p.human) sfx.play("build");      // SFX-01
     syncWorld();
     rescoreNow();
     return true;
@@ -1039,6 +1058,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       earn(p, PLANT_COST);
       return false;
     }
+    // SFX-01: the crate, then — because a plant is a Victory Point — the
+    // star bell from `rescoreNow` a few lines below. Thunk, then chime.
+    if (p.human) sfx.play("build");
     syncWorld();
     rescoreNow();
     if (p.human) {
@@ -1052,6 +1074,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // W2: every tile the drag lays is stamped with the builder's owner id,
     // so the committed road is exactly the tiles that join `p`'s network.
     const res = commitDrag(track, kind, pv, p.i + 1);
+    // SFX-01: one drag, one sound — a shovel patting earth down for Dirt, or
+    // gravel dressed and rolled for a paved Road. The tile count rides along as
+    // `step`, so a six-tile line gets two extra pats behind the first instead
+    // of six identical knocks (and the cue's own 40 ms gap does the rest).
+    if (p.human && res.built.length) {
+      sfx.play(kind === "road" ? "pave" : "place", { step: res.built.length });
+    }
     // W1: the commit spends EXACTLY what the preview charged. The free
     // allowance and the per-tile costs were computed by `previewDrag` over
     // the same cost model the preview drew, so "what you see" and "what you
@@ -1084,6 +1113,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const hi = eco.harvesters.findIndex((h) => h.tx === tx && h.ty === ty && h.owner === p.id);
     if (hi >= 0) {
       eco.harvesters.splice(hi, 1);
+      if (p.human) sfx.play("demolish");   // SFX-01
       syncWorld(); rescoreNow();
       toast("Depot removed.", "info");
       return;
@@ -1099,6 +1129,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         return;
       }
       eco.factories.splice(pi, 1);
+      if (p.human) sfx.play("demolish");   // SFX-01
       syncWorld(); rescoreNow();
       toast("Processing plant demolished.", "info");
       return;
@@ -1131,6 +1162,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // random part, so demolition is a partial refund rather than free
     // re-routing. The paved Road pays nothing back: its price is dominated by
     // 4 Ore, and the dirt→road pave is what upgrades are for.
+    // SFX-01: timber coming apart — a little further away for a single tile
+    // of track than for a whole building.
+    if (p.human) sfx.play("demolish", removedKind === "dirt" ? undefined : { gain: 0.8 });
     if (removedKind === "dirt") {
       const back = choice(DIRT_DEMOLISH_REFUND);
       earn(p, { [back]: 1 });
@@ -1181,6 +1215,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       return false;
     }
     spend(me, { gold: price });
+    sfx.play("boom", { gain: 0.6 });      // SFX-01: a roadblock goes down
     protests.set(tIdx(tx, ty), { tx, ty, until: now + PROTEST_MS, owner: me.id });
     pendingProtest = false;
     floats.add("✊ PROTEST", tx, ty, { cls: "sabotage", now });
@@ -1293,6 +1328,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (key === "harden") {
       if (!spendGold(SABOTAGE.harden.gold)) return;
       const n = rivalPlant.frost(now);
+      sfx.play("boom", { gain: 0.65 });   // SFX-01: something landed across the map
       rivalHit(`❄ ${n} FROZEN`);
       toast(`Frost Tiles: ${n} gems frozen in the rival's plant — its yield is down ${dentPct()}% for ${RIVAL_FROST_MS / 1000}s.`, "good");
       rivalSpeaks("retort", "harden");
@@ -1304,6 +1340,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (key === "block") {
       if (!spendGold(SABOTAGE.block.gold)) return;
       const n = rivalPlant.girders(now);
+      sfx.play("boom", { gain: 0.65 });   // SFX-01
       rivalHit(`🏗 ${n} GIRDERS`);
       toast(`Iron Girders: ${n} dropped into the rival's plant — its yield is down ${dentPct()}% for ${RIVAL_GIRDER_MS / 1000}s.`, "good");
       rivalSpeaks("retort", "block");
@@ -1313,6 +1350,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (key === "fog") {
       if (!spendGold(SABOTAGE.fog.gold)) return;
       rivalPlant.smog(now);
+      sfx.play("boom", { gain: 0.55 });   // SFX-01: smog is the quietest of the three
       rivalHit("🌫 SMOG");
       toast(`Smog Cloud over the rival's plant — its yield is down ${dentPct()}% for ${RIVAL_SMOG_MS / 1000}s.`, "good");
       rivalSpeaks("retort", "fog");
@@ -1332,6 +1370,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // nothing — until the rival started buying back (see `rivalRaid`),
       // which is the only reason a defence is worth paying for.
       securityUntil = now + SECURITY.ms;
+      sfx.play("build");                  // SFX-01: a crew sets up on site
       toast(`Security Forces hired — guarded for ${SECURITY.ms / 1000}s.`, "info");
       return;
     }
@@ -1341,6 +1380,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (!affordable) { toast("Not enough materials for Repair Crew.", "bad"); return; }
       spend(me, REPAIR_ISO_COST);
       const n = quarry.board.smashBlocks();
+      if (n) sfx.play("crack");           // SFX-01: ice and girders giving way
       toast(n ? `Repair Crew cleared ${n} obstacles.` : "Nothing to repair.", n ? "good" : "info");
       return;
     }

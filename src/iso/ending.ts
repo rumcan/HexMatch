@@ -424,12 +424,17 @@ export function showEndingScreen(
     model.outcome === "victory" ? "Tour your empire" : "Survey the wreckage",
   );
   review.type = "button";
+  // SFX-01: Review steps OUT of the ledger, Restart opens a new one — the same
+  // two cues the HUD's panels use, declared in markup so the document-wide
+  // delegation (audio/sfx.ts) plays them without a handler here.
+  review.dataset.sfx = "close";
   const restart = el(
     "button",
     "ending-button ending-restart",
     model.outcome === "victory" ? "Build another empire" : "Demand a rematch",
   );
   restart.type = "button";
+  restart.dataset.sfx = "open";
   actions.append(review, restart);
   card.appendChild(actions);
   screen.appendChild(card);
@@ -438,6 +443,7 @@ export function showEndingScreen(
   reopen.id = "iso-ending-reopen";
   reopen.type = "button";
   reopen.title = "Open the final score and epilogue";
+  reopen.dataset.sfx = "open";
 
   const open = () => {
     screen.classList.remove("hidden");

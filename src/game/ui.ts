@@ -43,6 +43,12 @@ import { RIVAL_SKILLS, SKILL_KEYS, type SkillKey } from "../iso/skill";
 // sings with it. Both are one-shot fx answers to `onFx("cross", …)`.
 import angelUrl from "../assets/ui/angel.png";
 import { playHoly, prewarmHoly } from "./holy";
+// SFX-01: the UI sound layer. `attachUiSound` gives every control in this
+// chrome a hover tick and a press sound from ONE delegation; the calls below
+// are only the moments that are not a button — a tab sliding, a toast saying
+// no, a gem clearing, the wire opening.
+import { attachUiSound, registerSoundPainter, soundGlyph, soundLabel, sfx } from "../audio/sfx";
+import type { Cue } from "../audio/cues";
 // PP-14b: the tycoon portraits live with the NOIR mugshots further down — one
 // set of faces, so the start-screen pick and the dossiers read the same files.
 
@@ -257,6 +263,30 @@ export function createOriginalUi(
   const vp = h("div", "vp-badge", "★ 0");
   vp.id = "iso-vp";
   right.appendChild(vp);
+  // SFX-01: the sound switch. It sits with the other top-bar icon buttons and
+  // it is the ONE control that opts out of the delegation (`data-sfx="off"`):
+  // muting must be silent, and unmuting answers with its own confirming ping
+  // so the player hears the state change instead of guessing at it. The choice
+  // persists (engine), so the next boot remembers it, and `M` does the same
+  // thing from the keyboard.
+  const soundBtn = h("button", "icon-btn sound-btn");
+  soundBtn.id = "iso-sound";
+  soundBtn.type = "button";
+  soundBtn.dataset.sfx = "off";
+  soundBtn.dataset.act = "sound";
+  const paintSound = (on: boolean) => {
+    soundBtn.textContent = soundGlyph(on);
+    soundBtn.title = soundLabel(on);
+    soundBtn.setAttribute("aria-label", on ? "Mute sound" : "Unmute sound");
+    soundBtn.setAttribute("aria-pressed", String(!on));
+    soundBtn.classList.toggle("sound-off", !on);
+  };
+  // The toggle repaints itself through the registry (below) and confirms the
+  // unmute with its own ping — whichever way the state changed: this click, the
+  // `M` shortcut, or `__sfx.mute()` in the console.
+  soundBtn.onclick = () => { sfx.toggle(); };
+  registerSoundPainter((on) => paintSound(on));
+  right.appendChild(soundBtn);
   const fitBtn = h("button", "icon-btn", "🎯");
   fitBtn.title = "Recenter map";
   fitBtn.dataset.act = "recenter";
@@ -326,6 +356,9 @@ export function createOriginalUi(
   const boardWrap = h("div", "board-wrap");
   const grid = h("div", "grid");
   grid.id = "iso-gems";
+  // SFX-01: gems sound from `selectOrSwap` (above), never from the hover/press
+  // delegation — see the comment there.
+  grid.dataset.sfx = "off";
   grid.style.width = CELL * BOARD_W + "px";
   grid.style.height = CELL * BOARD_H + "px";
   grid.style.setProperty("--gem", (CELL - 6) + "px");
@@ -705,6 +738,7 @@ export function createOriginalUi(
   }
 
   // ── tabs / mobile ─────────────────────────────────────────────────────────
+  let currentTab: "market" | "bank" | "plant" | "feed" | null = null;
   function setTab(t: "market" | "bank" | "plant" | "feed") {
     // PP-14b: a pending cross bounty lives inside the plant panel — switching
     // away would hide it mid-pick and the cascade would sit unseen until the
@@ -712,6 +746,13 @@ export function createOriginalUi(
     if (pickEl && t !== "plant") {
       toast("Answer the cross bounty first.", "info");
       return;
+    }
+    // SFX-01: a drawer sliding one bay — but only when the drawer really moves.
+    // The boot calls setTab("plant") and paint() never re-calls it, so an
+    // unchanged tab is a no-op here and stays silent.
+    if (currentTab !== t) {
+      if (currentTab !== null) sfx.play("tab");
+      currentTab = t;
     }
     tabs.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((tab) => {
       tab.setAttribute("aria-pressed", String(tab.dataset.tab === t));
@@ -727,6 +768,7 @@ export function createOriginalUi(
   }
 
   function setMobileView(v: string) {
+    if (root.dataset.view !== v) sfx.play("tab");
     root.dataset.view = v;
     mobileNav.querySelectorAll(".mnav-btn").forEach((b: Element) => {
       (b as HTMLElement).classList.toggle("active", (b as HTMLElement).dataset.view === v);
@@ -748,9 +790,18 @@ export function createOriginalUi(
 
   const selectOrSwap = (cell: { r: number; c: number }) => {
     if (selected && adj(selected, cell)) {
+      // SFX-01: cards sliding on felt. The board's own `bad` fx answers a swap
+      // that did not match, so this one is deliberately neutral — the player
+      // hears the gesture, then the verdict.
+      sfx.play("swap");
       hooks.onSwap(selected.r, selected.c, cell.r, cell.c);
       selected = null;
     } else {
+      // …and a small glass ping when a gem is picked up. The grid opts out of
+      // the document delegation (`data-sfx="off"` below) so the board's two
+      // moments are the only two sounds it makes: sweeping the mouse across
+      // nine gems must not rattle.
+      sfx.play("select");
       selected = cell;
     }
     renderSelection();
@@ -895,11 +946,29 @@ export function createOriginalUi(
     }, big ? 950 : 750);
   }
 
+  /**
+   * SFX-01: the board's fx are the game's heartbeat, so each FxType has one
+   * sound and no more. `pop` climbs a pentatonic ladder on its own (the cue
+   * keeps the streak), which is what makes a nine-gem cascade read as a run
+   * instead of a machine gun; the CHAIN/COMBO callout rings a bell that gets
+   * brighter with the tier it prints.
+   */
+  const FX_SOUND: Record<FxType, Cue | null> = {
+    pop: "pop", crack: "crack", up: "up", boom: "boom", bad: "deny",
+    chain: "combo", combo: "combo", cross: null, bcross: "crack",
+  };
+
   function fx(type: FxType, r: number, c: number, text?: string) {
     // PP-14: a cross match summons the angel — the choir sings the instant
     // the shape resolves, and the praying-angel PNG pops over the centre gem
     // in the same one-shot style as every other fx icon.
     if (type === "cross") playHoly();
+    const cue = FX_SOUND[type];
+    if (cue) {
+      // "CHAIN x2" / "COMBO x3!!" carry their tier in the text; the bell reads it.
+      const tier = Number(/x(\d+)/.exec(text ?? "")?.[1] ?? 0);
+      sfx.play(cue, tier > 1 ? { step: tier - 1 } : undefined);
+    }
     const e = h("div", `fx fx-${type}`);
     e.style.left = (c * CELL + CELL / 2) + "px";
     e.style.top = (r * CELL + CELL / 2) + "px";
@@ -969,6 +1038,8 @@ export function createOriginalUi(
     const confirm = h("button", "cross-pick-confirm", holy ? `🙏 Bless +${picks}` : `✝ Bless +${picks}`);
     (confirm as HTMLButtonElement).type = "button";
     (confirm as HTMLButtonElement).disabled = true;
+    // SFX-01: the blessing lands as gold does — two coins touching.
+    confirm.dataset.sfx = "coin";
     const refresh = () => {
       count.textContent = `${total()} / ${picks} spent`;
       (confirm as HTMLButtonElement).disabled = total() !== picks;
@@ -983,6 +1054,11 @@ export function createOriginalUi(
       if (!gem) continue;
       const b = h("button", "cross-pick-btn");
       (b as HTMLButtonElement).type = "button";
+      // SFX-01: each unit spent climbs a semitone (the `pick` cue keeps the
+      // streak), so the panel audibly fills up. Declared in markup rather than
+      // played from the handler below: the sound belongs to the touch, and the
+      // handler stays about the counting.
+      b.dataset.sfx = "pick";
       b.dataset.cargo = cargo;
       b.dataset.gem = gem;
       b.style.setProperty("--c1", CARGO[cargo].c1);
@@ -1015,6 +1091,9 @@ export function createOriginalUi(
   }
 
   function popup(gains: Partial<Record<ResKey, number>>, label: string) {
+    // SFX-01: the chute pays out. Only when something actually landed — an
+    // empty popup is a cascade's COMBO label, which already rang its bell.
+    if (Object.keys(gains).length) sfx.play("harvest");
     const e = h("div", "harvest-pop");
     // AUDIT 2026-09-11 — ResKey → Cargo: sheep 🐑 has no purse entry,
     // brick 🧱 has none either. The popup must show the Cargo the purse
@@ -1038,6 +1117,14 @@ export function createOriginalUi(
     const now = performance.now();
     if (lastToast[text] && now - lastToast[text] < 900) return;
     lastToast[text] = now;
+    // SFX-01: a refusal is worth a sound — two muted knocks, "a palm flat on
+    // the ledger" — because it is the one message the player might otherwise
+    // miss at the edge of their vision. Good news stays SILENT here on purpose:
+    // every gain already sounds where it happens (`harvest`, `coin`, `star`,
+    // `build`), and a second chime on the toast that reports it is the doubling
+    // that makes a game feel noisy. The cue's own 200 ms gap keeps a cascade of
+    // bad news from drumming.
+    if (kind === "bad" || kind === "danger") sfx.play("deny");
     // V4: the toast carries its own ✕ and the ✕ actually closes it — the
     // auto-dismiss timer is cleared so a closed toast can never re-arm, and
     // each toast owns its timer so closing one leaves the stack intact.
@@ -1052,6 +1139,7 @@ export function createOriginalUi(
       t.classList.remove("in");
       setTimeout(() => t.remove(), 300);
     };
+    x.dataset.sfx = "close";
     x.onclick = (e) => { e.stopPropagation(); close(); };
     t.appendChild(x);
     toasts.appendChild(t);
@@ -1097,6 +1185,10 @@ export function createOriginalUi(
       return;
     }
     rivalWireBusy = true;
+    // SFX-01: a telegraph key and a sheet of paper — the wire opening. The
+    // cue's 420 ms gap means a queued exchange ticks once per beat, not once
+    // per word, and never over the toast that introduced it.
+    sfx.play("wire");
     paintRivalryBeat(beat);
     rivalWire.classList.remove("hidden", "leaving", "show");
     void rivalWire.offsetWidth;
@@ -1244,7 +1336,9 @@ export function createOriginalUi(
         const text = state.banner;
         banner.innerHTML = `<button class="banner-close" title="Hide">✕</button>` +
           `<small>${text}</small>`;
-        (banner.querySelector(".banner-close") as HTMLElement).onclick = () => {
+        const bx = banner.querySelector(".banner-close") as HTMLElement;
+        bx.dataset.sfx = "close";
+        bx.onclick = () => {
           dismissedBanner = text;
           banner.classList.add("hidden");
         };
@@ -1283,6 +1377,7 @@ export function createOriginalUi(
     if (info) {
       modebar.innerHTML = info;
       const cancel = h("button", "mb-cancel", "Cancel ✕");
+      cancel.dataset.sfx = "close";
       cancel.onclick = () => modebar.classList.add("hidden");
       modebar.appendChild(cancel);
     }
@@ -1326,6 +1421,7 @@ export function createOriginalUi(
 
   // ── help / modals ─────────────────────────────────────────────────────────
   function helpModal() {
+    sfx.play("open");
     modalRoot.classList.remove("hidden");
     modalRoot.innerHTML = `
       <div class="modal-back"></div>
@@ -1340,18 +1436,32 @@ export function createOriginalUi(
         </div>
         <button class="big-btn" id="startBtn">Start Production</button>
       </div>`;
-    (modalRoot.querySelector("#startBtn") as HTMLElement).onclick = () => modalRoot.classList.add("hidden");
-    (modalRoot.querySelector(".modal-back") as HTMLElement).onclick = () => modalRoot.classList.add("hidden");
+    const shut = () => { sfx.play("close"); modalRoot.classList.add("hidden"); };
+    (modalRoot.querySelector("#startBtn") as HTMLElement).onclick = shut;
+    (modalRoot.querySelector(".modal-back") as HTMLElement).onclick = shut;
   }
 
   function showModal(html: string) {
+    sfx.play("open");
     modalRoot.classList.remove("hidden");
     modalRoot.innerHTML = `<div class="modal-back"></div>${html}`;
-    (modalRoot.querySelector(".modal-back") as HTMLElement).onclick = () => modalRoot.classList.add("hidden");
+    (modalRoot.querySelector(".modal-back") as HTMLElement).onclick = () => {
+      sfx.play("close");
+      modalRoot.classList.add("hidden");
+    };
   }
-  function hideModal() { modalRoot.classList.add("hidden"); }
+  function hideModal() {
+    if (!modalRoot.classList.contains("hidden")) sfx.play("close");
+    modalRoot.classList.add("hidden");
+  }
 
   // ── boot ──────────────────────────────────────────────────────────────────
+  // SFX-01: the hover/press delegation for this chrome. `main.tsx` already
+  // attaches it to the whole document (so the start screen sounds too) and the
+  // install is idempotent per scope — this call is what covers a UI mounted
+  // straight into a page, which is how the e2e specs and the headless suites
+  // boot it.
+  attachUiSound(root);
   renderSabotage();
   renderBoard();
   renderMarket();

@@ -92,6 +92,9 @@ export function promptForRivalSkill(
       btn.type = "button";
       btn.className = `iso-skill-choice${key === current ? " iso-skill-current" : ""}`;
       btn.dataset.skill = key;
+      // SFX-01: choosing a rival is a pick, not a click — the same small glass
+      // ping the board's gems and the start screen's tycoons use.
+      btn.dataset.sfx = "select";
       btn.innerHTML = `<span class="iso-skill-label">${preset.label}</span>
         <span class="iso-skill-blurb">${preset.blurb}</span>
         <span class="iso-skill-pace">${CARD_TEXT[key].pace}</span>`;
