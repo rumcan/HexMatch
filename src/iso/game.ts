@@ -129,7 +129,7 @@ import {
   buildEnding, showEndingScreen, type DecisiveSource, type EndingScreenHandle,
 } from "./ending";
 import {
-  OIL_DRILLING_SCENE, createRivalDirector,
+  OIL_DRILLING_SCENE, createBanterDirector, createGoldMineDirector, createRivalDirector,
   type RivalryDirection, type RivalryScene, type RivalryTactic,
 } from "./rivalry";
 import {
@@ -416,9 +416,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // Rivalry flavour has its own deterministic scene deck and counters. It
   // never consumes simulation RNG, so extra jokes cannot alter an AI decision.
   const nextRivalScene = createRivalDirector(seed);
+  const nextGoldMineScene = createGoldMineDirector(seed);
+  const nextBanterScene = createBanterDirector(seed);
   let playerSabotage = 0;
   let rivalSabotageHits = 0;
   let oilBanterSeen = false;
+  // The idle wire: one short Torvin exchange every so often, mid-game. The
+  // clock arms when play begins and never runs before then (no jokes over the
+  // setup banners or the ending screen). Timing jitter uses Math.random —
+  // presentation pacing, deliberately NOT the seeded simulation RNG.
+  let chitChatArmed = false;
+  let nextChitChatAt = 0;
   // The quarry is created before the HUD. Its callback is replaced once the
   // two-portrait wire exists; no board can pay oil during synchronous boot.
   let onFirstOilHarvest: () => void = () => {};
@@ -706,6 +714,31 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     oilBanterSeen = true;
     playRivalryScene(OIL_DRILLING_SCENE);
   };
+
+  /**
+   * The idle wire: a short Torvin exchange — an old tycoon's saying, a cringe
+   * dad joke — drops into the rivalry feed every so often mid-game, so the two
+   * feel like they're keeping each other company between the sabotage
+   * set-pieces. It runs solo only (Torvin is the AI rival) and only once play
+   * has begun: no jokes over the setup banners or the ending screen.
+   *
+   * Pacing: the first bit lands ~40s into play (time to get a road down), then
+   * roughly every 58–111s. The jitter is Math.random on purpose — presentation
+   * cadence, never the seeded simulation RNG.
+   */
+  const CHIT_CHAT_FIRST_MS = 40_000;
+  const CHIT_CHAT_EVERY_MS = 65_000;
+  function rivalChitChat(now: number) {
+    if (!isSolo() || phase !== "play") return;
+    if (!chitChatArmed) {
+      chitChatArmed = true;
+      nextChitChatAt = now + CHIT_CHAT_FIRST_MS;
+      return;
+    }
+    if (now < nextChitChatAt) return;
+    nextChitChatAt = now + CHIT_CHAT_EVERY_MS * (0.9 + Math.random() * 0.7);
+    playRivalryScene(nextBanterScene());
+  }
 
   /** Show the final ledger once. The same model builds victory and defeat, but
    *  only a human win receives the fireworks layer. */
@@ -1095,6 +1128,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (p.human) sfx.play("build");      // SFX-01
     syncWorld();
     rescoreNow();
+    // Gold Mine warning: the moment the PLAYER stands a Depot beside a Gold
+    // Mine, Torvin warns that chasing gold is a young man's game — it drops a
+    // sixth colour into the player's own board and a coin buys only Black
+    // Market spite aimed at the one rival who'd rather you didn't. He fires
+    // the speech to cover his own skin, and the pool rotates so a second gold
+    // depot hears a different version. Solo only: in a hosted game seat 1 is a
+    // person, not Torvin.
+    if (p.human && isSolo() && served.some((ind) => ind.type === "gold_mine")) {
+      playRivalryScene(nextGoldMineScene());
+    }
     return true;
   }
 
@@ -3456,6 +3499,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       economyTick(t);
       quarryTick(t);
       aiTick(t);
+      // Rivalry idle wire: a Torvin saying / dad joke every so often, mid-game.
+      rivalChitChat(t);
       // MP-05: protests are solo/host-only (buyBlack refuses guests, like the
       // rest of the Black Market), so the sweep is a no-op on a guest — it
       // runs unguarded rather than splitting the heartbeat below.
@@ -3614,6 +3659,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     refreshQuarry: (now = performance.now()) => quarry.refresh(now),
     /** Story test twin of the player's first successful Oil harvest. */
     firstOilHarvest: () => onFirstOilHarvest(),
+    /** Story test twin of the idle wire: one Torvin saying / dad-joke exchange
+     *  now, honouring the same solo + in-play gates the clock uses, but
+     *  skipping the wait so a test can drive the exchange on demand. */
+    chitChat: () => {
+      if (!isSolo() || phase !== "play") return;
+      playRivalryScene(nextBanterScene());
+    },
+    /** The next Gold Mine warning, as `placeHarvester` will play it when the
+     *  player stands a Depot beside a Gold Mine (test twin). */
+    goldMineWarning: (): RivalryScene => nextGoldMineScene(),
     /** The e2e twin of clicking two adjacent gems in the Quarry panel. */
     swap: (r1: number, c1: number, r2: number, c2: number) =>
       quarry.board.trySwap(r1, c1, r2, c2, performance.now()),
