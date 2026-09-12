@@ -268,6 +268,7 @@ export default function StartScreen({ onStart }: StartScreenProps) {
               <button key={p} type="button"
                 className={`portrait-opt${portrait === p ? " on" : ""}`}
                 aria-pressed={portrait === p}
+                data-sfx="select"
                 onClick={() => setPortrait(p)}>
                 <span className={`portrait-face portrait-${p}`} aria-hidden="true" />
                 <span className="portrait-name">{p === "vex" ? "Anne" : "James"}</span>
@@ -276,7 +277,7 @@ export default function StartScreen({ onStart }: StartScreenProps) {
           </div>
         </div>
         <div className="start-actions">
-          <button className="start-primary" onClick={() => onStart({ mode: "ai", portrait })}>Play vs AI <small>no login</small></button>
+          <button className="start-primary" data-sfx="open" onClick={() => onStart({ mode: "ai", portrait })}>Play vs AI <small>no login</small></button>
           <button disabled={busy} onClick={() => { setState("host"); void beginRoom("host"); }}>Host a game</button>
           <button disabled={busy} onClick={openJoinScreen}>Join with a code</button>
           <button disabled={busy} onClick={() => void beginMatch()}>Quick match</button>
@@ -294,7 +295,7 @@ export default function StartScreen({ onStart }: StartScreenProps) {
         onKeyDown={(e) => { if (e.key === "Enter" && !busy) void beginRoom("guest"); }} />
       {error ? <p className="lobby-error">{error}</p> : null}
       <div className="lobby-actions"><button disabled={busy} onClick={backToChoose}>Back</button>
-        <button className="start-primary" disabled={busy || !isValidRoomCode(code)} onClick={() => void beginRoom("guest")}>{busy ? "Joining…" : "Join game"}</button></div>
+        <button className="start-primary" data-sfx="open" disabled={busy || !isValidRoomCode(code)} onClick={() => void beginRoom("guest")}>{busy ? "Joining…" : "Join game"}</button></div>
     </div></main>
   );
 
@@ -322,6 +323,6 @@ export default function StartScreen({ onStart }: StartScreenProps) {
     <p className="lobby-note">{connecting
       ? "Connecting to the room…"
       : hosting && roster.length < 2 ? "Share the code. Start when your rival joins." : "Both players are ready."}</p>
-    <div className="lobby-actions"><button onClick={backToChoose}>Leave</button><button className="start-primary" disabled={connecting || (hosting && roster.length < 2)} onClick={() => startNetworkGame(hosting ? "host" : "guest")}>{connecting ? "Connecting…" : hosting ? "Start game" : "Play"}</button></div>
+    <div className="lobby-actions"><button onClick={backToChoose}>Leave</button><button className="start-primary" data-sfx="open" disabled={connecting || (hosting && roster.length < 2)} onClick={() => startNetworkGame(hosting ? "host" : "guest")}>{connecting ? "Connecting…" : hosting ? "Start game" : "Play"}</button></div>
   </div></main>;
 }

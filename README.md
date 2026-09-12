@@ -53,6 +53,17 @@ Condensed, Special Elite) is vendored in `src/assets/fonts/` so it renders the
 same offline. Design notes and the layout rule the theme must not break:
 [`docs/UI-NOIR-THEME.md`](docs/UI-NOIR-THEME.md).
 
+Sound is one theme too (SFX-01): a **synthesised** mix of wood, felt, paper,
+glass and brass — 24 cues in `src/audio/cues.ts`, built on the one bus in
+`src/audio/engine.ts` that PP-14's choir now sings into as well, and wired to
+every control by a single document-wide delegation (`src/audio/sfx.ts`), so a
+new button is voiced by markup (`data-sfx="coin"`) rather than by a handler. No
+audio assets, no decode, nothing to 404. The top bar's 🔊 toggles it (`M` does
+the same), the choice persists, `?sound=0` boots silent, and a dev build exposes
+`window.__sfx` — `__sfx.audition()` walks the whole catalogue, `__sfx.stats()`
+reports what the throttle and the voice budget actually swallowed. The mix and
+its three quietness rules: [`docs/SFX-01-ui-sound.md`](docs/SFX-01-ui-sound.md).
+
 ## Game entry
 
 The isometric canvas-2d game is the only boot path (`/`). The hex + three.js

@@ -20,7 +20,11 @@ export default defineConfig({
       // binary to run the suite against it; unset (the normal case, and
       // GitHub Actions) uses the Playwright-managed browser.
       executablePath: process.env.PW_CHROMIUM_EXECUTABLE || undefined,
-      args: ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"],
+      // `--mute-audio`: SFX-01 gave the game a synthesised mix, and an e2e run
+      // clicks through several full matches. The cues still run (the Web Audio
+      // graph is built exactly as in a real session, so a regression in it still
+      // fails a spec) — they simply never reach a speaker on the runner.
+      args: ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--mute-audio"],
     },
   },
   projects: [
