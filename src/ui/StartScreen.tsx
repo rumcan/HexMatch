@@ -271,7 +271,7 @@ export default function StartScreen({ onStart }: StartScreenProps) {
                 data-sfx="select"
                 onClick={() => setPortrait(p)}>
                 <span className={`portrait-face portrait-${p}`} aria-hidden="true" />
-                <span className="portrait-name">{p === "vex" ? "Anne" : "James"}</span>
+                <span className="portrait-name">{p === "vex" ? "Anne Hextall" : "James Hextall"}</span>
               </button>
             ))}
           </div>

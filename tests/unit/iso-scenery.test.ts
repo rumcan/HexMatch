@@ -74,6 +74,25 @@ describe("scenery scatter", () => {
     }
   });
 
+  it("FOREST-01: grows pine clusters around every lumber (forest) industry", () => {
+    const lumber = grid.industries.filter((i) => i.type === "forest");
+    expect(lumber.length).toBeGreaterThan(0);
+    const isPine = (i: number) => TREE_SPRITES[scenery.trees[i] - 1]?.startsWith("tree_pine");
+    for (const ind of lumber) {
+      const cx = ind.tx + (ind.w - 1) / 2, cy = ind.ty + (ind.h - 1) / 2;
+      const reach = Math.max(ind.w, ind.h) / 2 + 9;
+      let pines = 0;
+      for (let y = Math.floor(cy - reach); y <= Math.ceil(cy + reach); y++) {
+        for (let x = Math.floor(cx - reach); x <= Math.ceil(cx + reach); x++) {
+          if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) continue;
+          if (isPine(idx(x, y))) pines++;
+        }
+      }
+      // a real stand, not a stray pine or two
+      expect(pines, `pines around forest industry at ${ind.tx},${ind.ty}`).toBeGreaterThanOrEqual(8);
+    }
+  });
+
   it("places forest blocks on clear ground, never overlapping", () => {
     expect(scenery.forests.length).toBeGreaterThan(0);
     const used = new Set<number>();

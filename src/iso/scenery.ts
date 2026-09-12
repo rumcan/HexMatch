@@ -147,6 +147,14 @@ const CLUMP_MIN = 4, CLUMP_MAX = 17;
 const STRAY_DENSITY = 1 / 200;
 /** Chance a tree inside a clump breaks from the clump's species. */
 const OFF_SPECIES = 0.18;
+/**
+ * FOREST-01: pine clusters around each lumber (`forest`) industry — how many
+ * clusters, how far out from the footprint edge (tiles), and trees per cluster.
+ * The ring starts past the site so the Depot/Harvester approach stays open.
+ */
+const PINE_CLUSTERS_MIN = 3, PINE_CLUSTERS_MAX = 5;
+const PINE_RING_MIN = 2.5, PINE_RING_MAX = 6;
+const PINE_CLUSTER_MIN = 7, PINE_CLUSTER_MAX = 13;
 
 /**
  * Tiles of clear ground a tree keeps from any seed-generated road, measured
@@ -405,7 +413,54 @@ export function scatterScenery(grid: Grid): Scenery {
     plant(i % MAP_W, (i / MAP_W) | 0, weighted(ACCENT_MIX, rng()));
   }
 
+  plantLumberPines(grid, plant);
+
   return { decals, trees, forests };
+}
+
+/** 1-based TREE_SPRITES indices of the pines. */
+const PINES: number[] = TREE_SPRITES
+  .map((n, i) => (n.startsWith("tree_pine") ? i + 1 : 0))
+  .filter((i) => i > 0);
+
+/**
+ * FOREST-01: the lumber resource (the `forest` industry) sits in its own
+ * pine wood — a few dense conifer clusters around the site, so the place that
+ * produces wood reads as a logging camp at a glance instead of a building in
+ * a meadow. Runs LAST and on its own seed stream, so every other scatter
+ * (decals, blocks, clumps, strays) is identical to what it was; the clusters
+ * only fill the ground still open, with the same rules as any tree (open
+ * land, clear of the seed roads, never on a forest block or the industry).
+ */
+function plantLumberPines(
+  grid: Grid, plant: (tx: number, ty: number, species: number) => void,
+): void {
+  const rng = mulberry32((grid.seed ^ 0x9f1e57a3) >>> 0);
+  for (const ind of grid.industries) {
+    if (ind.type !== "forest") continue;
+    const cx = ind.tx + (ind.w - 1) / 2, cy = ind.ty + (ind.h - 1) / 2;
+    const base = Math.max(ind.w, ind.h) / 2;
+    const clusters = PINE_CLUSTERS_MIN + ((rng() * (PINE_CLUSTERS_MAX - PINE_CLUSTERS_MIN + 1)) | 0);
+    // Spread the clusters round the site (an even fan plus jitter), so the
+    // wood surrounds the camp rather than piling up on one side of it.
+    const phase = rng() * Math.PI * 2;
+    for (let k = 0; k < clusters; k++) {
+      const a = phase + (k / clusters) * Math.PI * 2 + (rng() - 0.5) * 0.9;
+      const dist = base + PINE_RING_MIN + rng() * (PINE_RING_MAX - PINE_RING_MIN);
+      const ccx = cx + Math.cos(a) * dist, ccy = cy + Math.sin(a) * dist;
+      const count = PINE_CLUSTER_MIN + ((rng() * (PINE_CLUSTER_MAX - PINE_CLUSTER_MIN + 1)) | 0);
+      const rx = 1.2 + rng() * 1.6, ry = 1.2 + rng() * 1.6;
+      for (let n = 0; n < count; n++) {
+        // the clump's centre-weighted disc: a stand is thickest in the middle
+        const t = rng() * Math.PI * 2, d = rng() * rng();
+        plant(
+          Math.round(ccx + Math.cos(t) * rx * d * 2),
+          Math.round(ccy + Math.sin(t) * ry * d * 2),
+          PINES[(rng() * PINES.length) | 0],
+        );
+      }
+    }
+  }
 }
 
 // ── painting ────────────────────────────────────────────────────────────────

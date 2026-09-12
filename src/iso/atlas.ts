@@ -62,6 +62,11 @@ export class Atlas {
     if (this.layerImages.size === 0) return null;
     if (/^(road|dirt)_/.test(name)) return "roads";
     if (/^terrain_/.test(name)) return null;   // ground sprites: never blitted
+    // TRAFFIC-01: the ambient car cells (car1_* … car3_*) were cut into the
+    // monolithic atlas AFTER the layer sheets were last built, so the
+    // buildings layer holds only transparent pixels at their rects — routed
+    // there, every car blitted as nothing. They live in the monolith alone.
+    if (/^car\d+_/.test(name)) return null;
     return "buildings";
   }
 
