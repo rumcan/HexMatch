@@ -27,6 +27,20 @@ export interface Gem {
 
 const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
+/** Processing-plant animation waits, in ms (2× the previous playback speed).
+ * Shared with the DOM so input never unlocks before gem motion finishes.
+ * Resource-choice prompts and simulation clocks are deliberately unaffected.
+ */
+export const BOARD_ANIMATION_MS = {
+  swap: 80,
+  clear: 95,
+  fall: 105,
+  bombClear: 130,
+  bombFall: 115,
+  shuffle: 110,
+} as const;
+
+
 // ── A1: the arcade callouts ────────────────────────────────────────────────
 /**
  * Every visual the board can ask the UI to draw. `chain` is the ordinary
@@ -38,7 +52,7 @@ const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
  * it with the praying angel and the choir.
  *
  * PP-14b: `bcross` is the broken holy cross — 3 horizontal + 3 vertical
- * overlapping on the centre gem of BOTH runs (a small plus). It shares the
+ * forming a small plus, or two matching runs forming a T. It shares the
  * pause-and-pick chooser with the holy cross but pays three units instead of
  * six, and the UI answers it with a dimmer, cracked cross — no angel.
  */
@@ -50,14 +64,10 @@ export type CrossKind = "holy" | "broken";
 /**
  * PP-14b — how many units of blessing each cross shape pays.
  *   holy cross (3×4, six gems)  → 6 picks
- *   broken holy cross (3×3, five gems) → 3 picks
+ *   broken holy cross (3×3 plus, or a T) → 3 picks
  */
 export const HOLY_CROSS_PICKS = 6;
 export const BROKEN_CROSS_PICKS = 3;
-/** The board's own backstop for an unanswered chooser. The live UI answers
- *  first (its auto-pick timer is 8s), so this only fires when the chooser was
- *  wired but never answered — 9s keeps a headless board from deadlocking. */
-export const CROSS_BACKSTOP_MS = 9_000;
 
 /**
  * The word a cascade pass shouts, by how deep in the cascade it is.
@@ -285,9 +295,9 @@ export class Board {
    *             the shape reads as a cross rather than a T with a long tail.
    *             Either orientation counts (3 across + 4 down, or the other
    *             way). Pays six units.
-   *   broken  — two 3-runs crossing on the centre gem of BOTH runs (a small
-   *             five-gem plus). This is the centre share, so it is never an
-   *             L (corner share) or a T (end share). Pays three units.
+   *   broken  — a 3×3 plus, or a T (the end of one run meets an interior
+   *             gem of the other). Pays three units. Corner-to-corner Ls
+   *             keep their existing L-SHAPE reward.
    *
    * Returns the shape and its crossing gem, else null.
    */
@@ -302,7 +312,12 @@ export class Board {
     if (shared.length !== 1) return null;
     const s = shared[0];
 
-    // Broken holy cross: 3×3, the overlap is the centre of both runs.
+    // A T in any rotation is a broken cross, including a longer stem/bar.
+    const aEnd = s.id === a[0].id || s.id === a[la - 1].id;
+    const bEnd = s.id === b[0].id || s.id === b[lb - 1].id;
+    if (aEnd !== bEnd) return { kind: "broken", mid: s };
+
+    // Broken plus: 3×3, the overlap is the centre of both runs.
     if (la === 3 && lb === 3) {
       if (s.id !== a[1].id || s.id !== b[1].id) return null;
       return { kind: "broken", mid: s };
@@ -320,7 +335,7 @@ export class Board {
 
   /**
    * PP-14: the holy and broken crosses — two orthogonal same-colour runs
-   * overlapping on the centre gem of the 3-run. `mid` is the shared crossing
+   * overlapping as a plus or T. `mid` is the shared crossing
    * gem, so the callout — and the angel — land exactly on the overlap.
    */
   private crosses(groups: Gem[][]): { gems: Gem[]; mid: Gem; kind: CrossKind }[] {
@@ -484,24 +499,13 @@ export class Board {
   }
 
   /**
-   * PP-14: hand the cross's reward to `onCrossChoice` and wait for the
-   * picks. The promise ALWAYS resolves — the backstop answers with `picks`
-   * random cargoes for a chooser that was never answered, so a paused
-   * cascade can never deadlock the board.
+   * Wait for explicit confirmation, with no timeout or random auto-pick.
+   * Headless boards already have an immediate default onCrossChoice handler.
+   * Promise resolution is one-shot even if a handler accidentally answers twice.
    */
   private chooseCrossReward(kind: CrossKind, picks: number): Promise<ResKey[]> {
     return new Promise((resolve) => {
-      let done = false;
-      const finish = (chosen: ResKey[]) => {
-        if (done) return;
-        done = true;
-        clearTimeout(backstop);
-        resolve(chosen);
-      };
-      const backstop = setTimeout(
-        () => finish(Array.from({ length: picks }, () => choice(BASE_POOL))), CROSS_BACKSTOP_MS,
-      );
-      this.onCrossChoice(kind, picks, finish);
+      this.onCrossChoice(kind, picks, resolve);
     });
   }
 
@@ -550,10 +554,10 @@ export class Board {
         }
       }
       this.onChange();
-      await sleep(190);
+      await sleep(BOARD_ANIMATION_MS.clear);
       this.gravity();
       this.onChange();
-      await sleep(210);
+      await sleep(BOARD_ANIMATION_MS.fall);
     }
     const label = maxChain > 1 ? `COMBO x${maxChain}` : "";
     // A1: the readout fires on the LABEL as well as the gains. A tokenless
@@ -580,13 +584,13 @@ export class Board {
     this.onChange();
 
     if (g1.special === "bomb" || g2.special === "bomb") {
-      await sleep(160);
+      await sleep(BOARD_ANIMATION_MS.swap);
       const bomb = g1.special === "bomb" ? g1 : g2;
       const other = g1.special === "bomb" ? g2 : g1;
       await this.detonate(bomb, other.res);
       return;
     }
-    await sleep(160);
+    await sleep(BOARD_ANIMATION_MS.swap);
     const groups = this.findGroups();
     if (!groups.length) {
       // revert
@@ -594,7 +598,7 @@ export class Board {
       g1.r = r1; g1.c = c1; g2.r = r2; g2.c = c2;
       this.onFx("bad", r1, c1);
       this.onChange();
-      await sleep(160);
+      await sleep(BOARD_ANIMATION_MS.swap);
       this.busy = false;
       return;
     }
@@ -616,10 +620,10 @@ export class Board {
       g.dead = true; this.grid[r][c] = null; this.onFx("pop", r, c); }
     if (Object.keys(gains).length) this.onPopup(gains, "COLOUR PURGE");
     this.onChange();
-    await sleep(260);
+    await sleep(BOARD_ANIMATION_MS.bombClear);
     this.gravity();
     this.onChange();
-    await sleep(230);
+    await sleep(BOARD_ANIMATION_MS.bombFall);
     await this.settle(2);
   }
 
@@ -968,7 +972,7 @@ export class Board {
     }
     this.onFx("bad", 0, 0);
     this.onChange();
-    await sleep(220);
+    await sleep(BOARD_ANIMATION_MS.shuffle);
     this.busy = false;
   }
 

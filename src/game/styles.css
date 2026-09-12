@@ -856,7 +856,7 @@ html, body, #root {
 /* ── gems (board) — struck tokens on the felt ─────────────────── */
 .gem {
   position: absolute;  width:var(--gem,48px);height:var(--gem,48px); left: 0; top: 0;
-  transition: transform .26s cubic-bezier(.4,1.3,.5,1), opacity .2s;
+  transition: transform var(--gem-move-ms, 80ms) cubic-bezier(.4,1.3,.5,1), opacity var(--gem-clear-ms, 95ms);
   will-change: transform;
   background: transparent;
   border: none;
@@ -941,7 +941,7 @@ html, body, #root {
    a CSS transform of any kind would yank the selected token to the board's
    origin. The lift is drawn on the face instead. */
 .gem.sel .face.sprite, .gem.selected .face.sprite { filter: drop-shadow(0 0 9px rgba(255, 217, 138, .9)) drop-shadow(0 3px 4px rgba(0, 0, 0, .6)); }
-.gem.gone { transform: scale(.1) rotate(40deg) !important; opacity: 0; }
+.gem.gone { transition-duration: var(--gem-clear-ms, 95ms); transform: scale(.1) rotate(40deg) !important; opacity: 0; }
 
 .gem.token .face {
   border-color: var(--gold2);
@@ -1026,7 +1026,7 @@ html, body, #root {
 .fx-pop {
   width: 44px; height: 44px; border-radius: 50%;
   background: radial-gradient(circle, rgba(255,255,255,.9), transparent 70%);
-  animation: popfx .5s ease-out forwards;
+  animation: popfx .25s ease-out forwards;
 }
 @keyframes popfx {
   from { transform: translate(-50%,-50%) scale(.3); opacity: 1; }
@@ -1035,23 +1035,23 @@ html, body, #root {
 .fx-boom {
   width: 60px; height: 60px; border-radius: 50%;
   background: radial-gradient(circle, #fff, #ffb14a 40%, transparent 72%);
-  animation: boomfx .5s ease-out forwards;
+  animation: boomfx .25s ease-out forwards;
 }
 @keyframes boomfx {
   from { transform: translate(-50%,-50%) scale(.2); }
   to   { transform: translate(-50%,-50%) scale(2.4); opacity: 0; }
 }
-.fx-crack { font-size: 22px; animation: popfx .5s forwards; }
+.fx-crack { font-size: 22px; animation: popfx .25s forwards; }
 .fx-crack::before { content: "✦"; color: #cfd6df; }
 .fx-up {
   width: 46px; height: 46px; border-radius: 0; border: 2px solid var(--gold2);
-  animation: upfx .5s ease-out forwards;
+  animation: upfx .25s ease-out forwards;
 }
 @keyframes upfx {
   from { transform: translate(-50%,-50%) scale(.5); opacity: 1; }
   to   { transform: translate(-50%,-50%) scale(1.5); opacity: 0; }
 }
-.fx-bad { font-size: 26px; animation: popfx .5s forwards; }
+.fx-bad { font-size: 26px; animation: popfx .25s forwards; }
 .fx-bad::before { content: "✖"; color: var(--danger2); }
 /* PP-14: the praying angel for a cross match — the same one-shot pop as the
    other fx icons, risen higher with a golden halo so the holy moment reads
