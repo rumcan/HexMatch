@@ -38,6 +38,12 @@ import waterTex from "../../assets/ground/water.png";
 // TEMP protest crowd — a placeholder png drawn straight on the overlay
 // canvas, not an atlas sprite (see `paintProtests` + tools/make-protest-png.mjs).
 import protestArt from "../../assets/protest.png";
+// Vector roads: the two seamless material swatches
+// (tools/make-road-textures.mjs). Loaded independently of every other art
+// group, so a slow or failed decode leaves the roads drawn in their flat
+// fallback colours rather than leaving them out.
+import asphaltTex from "../../assets/roads/asphalt.webp";
+import dirtTex from "../../assets/roads/dirt.webp";
 
 import { Atlas, buildMasks, loadBuildingLayers, type Manifest, type AtlasImage } from "./atlas";
 import { loadGroundTextures } from "./ground";
@@ -47,6 +53,7 @@ import {
   type Camera, type GestureState,
 } from "./camera";
 import { IsoRenderer, type World } from "./renderer";
+import { DEFAULT_ROAD_STYLE } from "./road-renderer";
 import { scatterScenery, type Scenery } from "./scenery";
 import { loadDecalImages, loadScenerySprites } from "./scenery-art";
 import { loadVehicleLayers } from "./vehicle-art";
@@ -82,7 +89,7 @@ import {
 import { planDepotPlacement, planFactoryPlacement, type PlacementPlan } from "./placement";
 import {
   PLANT_COST, PLANT_REFUSAL_TEXT, addPlant, adjacentTown, buildingAt, canAffordPlant,
-  chooseAiPlantSpot, footprintTiles, plantRefusal, plantsOf,
+  chooseAiPlantSpot, footprintTiles, plantRefusal, plantsOf, resolvePlantTarget,
 } from "./plants";
 import {
   CARGO, CARGOES, FACTORY_FOOTPRINT, FACTORY_SPRITE, INDUSTRY_BY_KEY, TRANSPORT,
@@ -123,7 +130,7 @@ import {
   buildEnding, showEndingScreen, type DecisiveSource, type EndingScreenHandle,
 } from "./ending";
 import {
-  OIL_DRILLING_SCENE, createRivalDirector,
+  OIL_DRILLING_SCENE, createBanterDirector, createGoldMineDirector, createRivalDirector,
   type RivalryDirection, type RivalryScene, type RivalryTactic,
 } from "./rivalry";
 import {
@@ -353,6 +360,21 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
   };
 
+  /**
+   * AI-04: the ★ line THIS game races to, read live from the difficulty — the
+   * easy chair finishes at 5★ (`RIVAL_SKILLS.easy.winTarget`), every other
+   * preset at the shipped `VICTORY.target`. One reader for all five places the
+   * line shows up (the win check, the star feed, the rival's race assessment,
+   * the ★ tooltips and the HUD), so the scoreboard, the HUD and the win toast
+   * can never disagree about how long the race is. Flipping the difficulty
+   * mid-game moves the line for the next tick, exactly like the clocks do.
+   *
+   * Solo only: a hosted game has no difficulty (the selector is not even built,
+   * see `onSkill` below) and both seats must see the same line, so it stays on
+   * the constant.
+   */
+  const winTarget = (): number => (isSolo() ? skill().winTarget : VICTORY.target);
+
   const eco: EconomyState = { grid, track, harvesters: [], factories: [] };
   let nextHarvesterId = 1;
   /**
@@ -395,9 +417,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // Rivalry flavour has its own deterministic scene deck and counters. It
   // never consumes simulation RNG, so extra jokes cannot alter an AI decision.
   const nextRivalScene = createRivalDirector(seed);
+  const nextGoldMineScene = createGoldMineDirector(seed);
+  const nextBanterScene = createBanterDirector(seed);
   let playerSabotage = 0;
   let rivalSabotageHits = 0;
   let oilBanterSeen = false;
+  // The idle wire: one short Torvin exchange every so often, mid-game. The
+  // clock arms when play begins and never runs before then (no jokes over the
+  // setup banners or the ending screen). Timing jitter uses Math.random —
+  // presentation pacing, deliberately NOT the seeded simulation RNG.
+  let chitChatArmed = false;
+  let nextChitChatAt = 0;
   // The quarry is created before the HUD. Its callback is replaced once the
   // two-portrait wire exists; no board can pay oil during synchronous boot.
   let onFirstOilHarvest: () => void = () => {};
@@ -686,6 +716,31 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     playRivalryScene(OIL_DRILLING_SCENE);
   };
 
+  /**
+   * The idle wire: a short Torvin exchange — an old tycoon's saying, a cringe
+   * dad joke — drops into the rivalry feed every so often mid-game, so the two
+   * feel like they're keeping each other company between the sabotage
+   * set-pieces. It runs solo only (Torvin is the AI rival) and only once play
+   * has begun: no jokes over the setup banners or the ending screen.
+   *
+   * Pacing: the first bit lands ~40s into play (time to get a road down), then
+   * roughly every 58–111s. The jitter is Math.random on purpose — presentation
+   * cadence, never the seeded simulation RNG.
+   */
+  const CHIT_CHAT_FIRST_MS = 40_000;
+  const CHIT_CHAT_EVERY_MS = 65_000;
+  function rivalChitChat(now: number) {
+    if (!isSolo() || phase !== "play") return;
+    if (!chitChatArmed) {
+      chitChatArmed = true;
+      nextChitChatAt = now + CHIT_CHAT_FIRST_MS;
+      return;
+    }
+    if (now < nextChitChatAt) return;
+    nextChitChatAt = now + CHIT_CHAT_EVERY_MS * (0.9 + Math.random() * 0.7);
+    playRivalryScene(nextBanterScene());
+  }
+
   /** Show the final ledger once. The same model builds victory and defeat, but
    *  only a human win receives the fireworks layer. */
   const presentEnding = (source: DecisiveSource = winningSource) => {
@@ -833,6 +888,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * appears where the road is, not only on the scoreboard.
    */
   const MAX_FLOATS_PER_EVENT = 4;
+  /**
+   * TOAST-ONCE: the "you just earned" VP toasts are one-shot per game, by
+   * `${source}:${type}` — "upgrade:awarded" ("Paved N Dirt Road tile(s) · +X★")
+   * and "plant:awarded" ("Processing plant raised · +1★"). The FIRST time a
+   * point arrives the toast spells out what the action is worth in win points;
+   * on every later rescore the per-tile float below still marks each point on
+   * the map, the badge and the star bell still ring, so the repeated toast is
+   * only the noise the player reported. A toast that was shown — closed with
+   * the ✕ or auto-dismissed — never returns. The "lost" variants are
+   * deliberately excluded: a point VANISHING is the one thing the scoreboard
+   * must never report silently. In-memory on purpose: a new game is a new
+   * lesson.
+   */
+  const vpToastSeen = new Set<string>();
   function applyVpEvents(events: VpEvent[], now: number) {
     if (!events.length) return;
     type Bucket = { n: number; vp: number; spots: [number, number][] };
@@ -860,6 +929,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             ? `Processing plant raised · ${vpDeltaText(b.vp)}`
             : `Processing plant lost · ${vpDeltaText(b.vp)}`);
         if (!mine) continue;          // the rival's line is its own business
+        // TOAST-ONCE: the "you just earned" popup is a first-time lesson, not
+        // a per-action ticker — once seen it stays gone (closed or not), while
+        // the map floats keep marking every point where it happened.
+        if (gained && vpToastSeen.has(key)) {
+          for (const [tx, ty] of b.spots) {
+            floats.add(vpDeltaText(b.vp / b.n), tx, ty, { cls: "delivery", now });
+          }
+          continue;
+        }
+        if (gained) vpToastSeen.add(key);
         toast(label, gained ? "good" : "bad");
         for (const [tx, ty] of b.spots) {
           floats.add(vpDeltaText(b.vp / b.n), tx, ty, { cls: gained ? "delivery" : "sabotage", now });
@@ -871,7 +950,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // whether the last fraction came from pavement or a new plant.
     if (phase === "play") {
       for (const p of players) {
-        if (!hasWon(score, p.id)) continue;
+        if (!hasWon(score, p.id, winTarget())) continue;
         const decisive = [...events].reverse().find(
           (e) => e.owner === p.id && e.type === "awarded",
         )?.source ?? null;
@@ -908,7 +987,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // SFX-01: a Victory Point is the only thing worth ringing for. The
         // rival's stars stay silent — the feed line is enough for those.
         if (p.human) sfx.play("star");
-        ui.feed(`${p.human ? "You" : p.name} reach ${stars}★ of ${VICTORY.target}★`, p.name);
+        ui.feed(`${p.human ? "You" : p.name} reach ${stars}★ of ${winTarget()}★`, p.name);
       } else if (stars < last) starFed.set(p.id, stars);
     }
     trucksDirty = true;   // RV-01: the network changed — replan the lorries
@@ -1050,6 +1129,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (p.human) sfx.play("build");      // SFX-01
     syncWorld();
     rescoreNow();
+    // Gold Mine warning: the moment the PLAYER stands a Depot beside a Gold
+    // Mine, Torvin warns that chasing gold is a young man's game — it drops a
+    // sixth colour into the player's own board and a coin buys only Black
+    // Market spite aimed at the one rival who'd rather you didn't. He fires
+    // the speech to cover his own skin, and the pool rotates so a second gold
+    // depot hears a different version. Solo only: in a hosted game seat 1 is a
+    // person, not Torvin.
+    if (p.human && isSolo() && served.some((ind) => ind.type === "gold_mine")) {
+      playRivalryScene(nextGoldMineScene());
+    }
     return true;
   }
 
@@ -1544,7 +1633,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * planning and spending is worse than a slightly stale one.
    */
   const rivalPaceNow = (): RivalPace =>
-    rivalPace(vpFor(score, "you"), vpFor(score, "ai"), VP_TARGET);
+    rivalPace(vpFor(score, "you"), vpFor(score, "ai"), winTarget());
 
   /** VP-01: the OTHER milestone the bank can be pointed at — the pavement the
    *  rival can ALMOST afford. Ore comes out of one industry type, so a rival
@@ -2430,27 +2519,58 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     function vpTooltip(p: PlayerState): string {
       const b = victoryBreakdown(eco, p.id);
       const total = vpFor(score, p.id);
+      // AI-04: the line is the difficulty's, so the tooltip's "of X★" and
+      // "Y★ to win" agree with the win check that uses the same reader.
+      const line = winTarget();
       return [
-        `${p.name}${p.human ? " (you)" : ""} — ${fmtVp(total)}★ of ${VICTORY.target}★`,
+        `${p.name}${p.human ? " (you)" : ""} — ${fmtVp(total)}★ of ${line}★`,
         `Paved road tiles: ${b.paved} × 0.25★ = ${fmtVp(b.pavedVp)}★`,
         `Processing plants: ${b.plants + 1} (opening plant is free; ${b.plants} × 1★ = ${fmtVp(b.plantVp)}★)`,
-        `${fmtVp(Math.max(0, VICTORY.target - total))}★ to win`,
+        `${fmtVp(Math.max(0, line - total))}★ to win`,
       ].join("\n");
     }
 
+    // BANNER-ONCE: each banner carries a stable id (`bannerKey`) beside its
+    // text. The ✕ dismissal is remembered by that id, not by the exact text —
+    // a few of these lines change wording while staying the same banner (the
+    // free-tile counter, the protest countdown), so a text-keyed dismissal let
+    // a CLOSED banner pop back up whenever the text changed and came back
+    // (close "Dirt Road scores nothing…", switch tools, switch back → it
+    // returned). The key makes "closed" stick for the rest of the game.
     let banner: string | null = null;
-    if (phase === "setup-factory") banner = "Place your Factory next to a town — click a buildable tile";
+    let bannerKey: string | null = null;
+    if (phase === "setup-factory") {
+      bannerKey = "setup-factory";
+      banner = "Place your Factory next to a town — click a buildable tile";
+    }
     // PP-05: the setup banner states the price too — the first Depot is free
     // on the allowance, and the player should know the second one is not.
-    else if (phase === "setup-harvester") banner = "Place your Depot — it needs an industry in its 4×4 catchment, and one Depot holds each industry" +
-      (me.freeDepots > 0 ? ` (this one is free; later Depots cost ${costLabel(DEPOT_COST)})` : "");
-    else if (phase === "won") banner = `${winner?.name} wins — ${fmtVp(vpFor(score, winner?.id ?? ""))}★`;
-    else if (pendingProtest) banner = `Protest ready — click a public road to stop ALL trucks for ${fmtProtestLeft(PROTEST_MS)} (Esc cancels)`;
-    else if (me.freeTrack > 0) banner = `${me.freeTrack} free track tiles remaining — connect your depot to your Factory`;
-    else if (tool === "dirt") banner = `Dirt Road scores nothing — paving it later is worth ${fmtVp(VICTORY.upgrade)}★ a tile`;
-    else if (Object.keys(quarry.reach).length === 0) banner = "Nothing connected — the Processing Plant only pays cargo your network reaches";
-    else if (tool === "plant") banner = `Raise another processing plant next to a town — ${plantCostLabel()}`;
-    else banner = "Match the tokened gems in the Processing Plant to process";
+    else if (phase === "setup-harvester") {
+      bannerKey = "setup-depot";
+      banner = "Place your Depot — it needs an industry in its 4×4 catchment, and one Depot holds each industry" +
+        (me.freeDepots > 0 ? ` (this one is free; later Depots cost ${costLabel(DEPOT_COST)})` : "");
+    } else if (phase === "won") {
+      bannerKey = "won";
+      banner = `${winner?.name} wins — ${fmtVp(vpFor(score, winner?.id ?? ""))}★`;
+    } else if (pendingProtest) {
+      bannerKey = "protest-ready";
+      banner = `Protest ready — click a public road to stop ALL trucks for ${fmtProtestLeft(PROTEST_MS)} (Esc cancels)`;
+    } else if (me.freeTrack > 0) {
+      bannerKey = "free-track";
+      banner = `${me.freeTrack} free track tiles remaining — connect your depot to your Factory`;
+    } else if (tool === "dirt") {
+      bannerKey = "dirt-value";
+      banner = `Dirt Road scores nothing — paving it later is worth ${fmtVp(VICTORY.upgrade)}★ a tile`;
+    } else if (Object.keys(quarry.reach).length === 0) {
+      bannerKey = "nothing-connected";
+      banner = "Nothing connected — the Processing Plant only pays cargo your network reaches";
+    } else if (tool === "plant") {
+      bannerKey = "plant";
+      banner = `Raise another processing plant next to a town — ${plantCostLabel()}`;
+    } else {
+      bannerKey = "match-gems";
+      banner = "Match the tokened gems in the Processing Plant to process";
+    }
 
     let costInfo: string | null = null;
     if (preview) {
@@ -2607,9 +2727,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       purse: me.purse,
       phase,
       tool,
+      // AI-04: the race length the HUD should print — 5★ on easy, the shipped
+      // line elsewhere. The badge ("You 2★/5") and the king bars' 100% read it.
+      vpTarget: winTarget(),
       freeTrack: me.freeTrack,
       freeDepots: me.freeDepots,
       banner,
+      // BANNER-ONCE: the stable id behind `banner` (see paintUi) — the ✕
+      // dismissal is remembered by this, so a closed line never pops back up
+      // when the wording changes and returns.
+      bannerKey,
       costInfo,
       inspect: info || null,
       inspectTone: infoTone,
@@ -2649,12 +2776,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   };
 
   // A factory is one multi-tile sprite, but has one network anchor: its
-  // origin tile. In track mode a click ANYWHERE on our factory must start at
+  // origin tile. Town clicks with the plant tool resolve to a legal site
+  // beside that town, identically for pointer-move previews and pointer-up.
+  // In track mode a click ANYWHERE on our factory must start at
   // that anchor; otherwise a click on its far tiles would start a road the
   // network cannot reach. Keep raw tile picking for other tools/structures.
   const pickForAction = (x: number, y: number) => {
     const p = renderer?.pick(x, y);
-    if (!p || phase !== "play" || (tool !== "road" && tool !== "dirt")) return p;
+    if (!p || phase !== "play") return p;
+    if (tool === "plant") {
+      const site = resolvePlantTarget(grid, track, eco, p.tx, p.ty);
+      return site ? { ...p, tx: site[0], ty: site[1] } : p;
+    }
+    if (tool !== "road" && tool !== "dirt") return p;
     const ref = p.ref as { kind?: string; owner?: string } | null;
     if (ref?.kind !== "factory" || ref.owner !== me.id) return p;
     const f = factoryOf(me.id);
@@ -3319,7 +3453,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       console.warn("[scenery] art failed to load:", err);
     });
 
-    // TRUCK-BRAND art (assets/vehicles/): the eight liveried lorries — blue for
+// TRUCK-BRAND art (assets/vehicles/): the eight liveried lorries — blue for
     // the player, red for the rival, four headings each. Installed into the
     // sprite table like the scenery, and just as non-gating: while this is
     // pending (or on a checkout without the PNGs) the legacy `truck_goods_*`
@@ -3332,6 +3466,21 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       renderer?.invalidateAll();
     }).catch((err) => {
       console.warn("[truck-brand] failed to load:", err);
+    });
+
+    // Road materials, on their own promise. Both must decode before the style
+    // is installed — a half-textured road network would look like a bug — but
+    // nothing waits on them, and a failure keeps the flat palette, which is a
+    // complete look rather than an error state.
+    void Promise.all([load(asphaltTex), load(dirtTex)]).then(([asphalt, dirt]) => {
+      if (disposed) return;
+      renderer?.setRoadStyle({
+        ...DEFAULT_ROAD_STYLE,
+        paved: { ...DEFAULT_ROAD_STYLE.paved, image: asphalt },
+        dirt: { ...DEFAULT_ROAD_STYLE.dirt, image: dirt },
+      });
+    }).catch((err) => {
+      console.warn("[roads] material textures failed to load:", err);
     });
 
     void loadBuildingLayers(atlas, `${import.meta.env.BASE_URL}assets/buildings/`).then((n) => {
@@ -3366,6 +3515,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       economyTick(t);
       quarryTick(t);
       aiTick(t);
+      // Rivalry idle wire: a Torvin saying / dad joke every so often, mid-game.
+      rivalChitChat(t);
       // MP-05: protests are solo/host-only (buyBlack refuses guests, like the
       // rest of the Black Market), so the sweep is a no-op on a guest — it
       // runs unguarded rather than splitting the heartbeat below.
@@ -3415,8 +3566,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     get phase() { return phase; },
     get tool() { return tool; },
     get vp() { return { you: vpFor(score, "you"), ai: vpFor(score, "ai") }; },
-    /** VP-01: the target and the two numbers behind a player's total. */
-    get vpTarget() { return VP_TARGET; },
+    /** VP-01: the target and the two numbers behind a player's total.
+     *  AI-04: the target is the difficulty's line (5★ on easy), not a constant. */
+    get vpTarget() { return winTarget(); },
     get vpRates() { return { upgrade: VICTORY.upgrade, plant: VICTORY.plant }; },
     victoryOf: (who: string) => victoryBreakdown(eco, who),
     /** VP-01: how many of `who`'s tiles carry pave provenance (its score is
@@ -3526,6 +3678,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     refreshQuarry: (now = performance.now()) => quarry.refresh(now),
     /** Story test twin of the player's first successful Oil harvest. */
     firstOilHarvest: () => onFirstOilHarvest(),
+    /** Story test twin of the idle wire: one Torvin saying / dad-joke exchange
+     *  now, honouring the same solo + in-play gates the clock uses, but
+     *  skipping the wait so a test can drive the exchange on demand. */
+    chitChat: () => {
+      if (!isSolo() || phase !== "play") return;
+      playRivalryScene(nextBanterScene());
+    },
+    /** The next Gold Mine warning, as `placeHarvester` will play it when the
+     *  player stands a Depot beside a Gold Mine (test twin). */
+    goldMineWarning: (): RivalryScene => nextGoldMineScene(),
     /** The e2e twin of clicking two adjacent gems in the Quarry panel. */
     swap: (r1: number, c1: number, r2: number, c2: number) =>
       quarry.board.trySwap(r1, c1, r2, c2, performance.now()),

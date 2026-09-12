@@ -60,7 +60,9 @@ import type { Harvester, Factory } from "./economy";
  * the host's Black Market put on the guest-seat plant. A v9 guest would never
  * show that sabotage (it is new state), so mixed-version rooms must refuse.
  */
-export const SNAPSHOT_VERSION = 10;
+// v11: coastal water pockets become sand after placement. Older network
+// clients must update because buildability on those repaired cells changed.
+export const SNAPSHOT_VERSION = 11;
 
 export const EXPECTED_TRACK_BYTES = MAP_W * MAP_H;
 

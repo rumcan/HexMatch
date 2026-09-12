@@ -221,7 +221,11 @@ export const VICTORY = {
   /** VP per processing plant raised after setup. */
   plant: 1,
   /** VP needed to win. Back to 10★ — the AI-02 experiment with a 20★ line
-   *  made games drag, so the race runs to 10 again. */
+   *  made games drag, so the race runs to 10 again.
+   *  AI-04: this is the SHIPPED line and the default for `hasWon`, but it is no
+   *  longer the only line: the difficulty presets may race a shorter one
+   *  (`RIVAL_SKILLS.easy.winTarget` = 5★), and `game.ts` reads the live preset's
+   *  number for the win check, the HUD and the rival's race assessment. */
   target: 10,
 } as const;
 

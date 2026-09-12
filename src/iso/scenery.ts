@@ -30,7 +30,7 @@
 // cleared to make way, which is also what the player expects to see.
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_W, MAP_H, mulberry32 } from "../game/config";
-import { GRASS, ROUGH, WATER, idx, inBounds, type Grid } from "./grid";
+import { GRASS, ROUGH, WATER, chebyshevField, idx, inBounds, type Grid } from "./grid";
 
 /**
  * Every tree sprite, in the order the per-tile byte indexes them (1-based).
@@ -116,18 +116,24 @@ export interface Scenery {
 
 // ── tuning ──────────────────────────────────────────────────────────────────
 /**
- * Decal patches per LAND TILE. Each patch covers 4–10 tiles across and they
- * overlap freely, so this is what gives the ground its variety: roughly 250
- * regions on a 144×144 island, in four moods, at every size and both
- * mirrorings.
+ * Decal patches per LAND TILE. Doubled alongside the halving of
+ * `DECAL_BASE_W`, so the ground keeps the same coverage from twice as many
+ * patches at a quarter of the area each — roughly 500 regions on a 144×144
+ * island, in four moods, at every size and both mirrorings.
  */
-const DECAL_DENSITY = 1 / 70;
+const DECAL_DENSITY = 1 / 35;
 /**
  * Nominal patch width in world pixels. A tile diamond is 64 wide, so the base
- * is 5 tiles and the scale range below takes a patch from roughly 3½ to 10
+ * is 2½ tiles and the scale range below takes a patch from roughly 1¾ to 5
  * tiles across.
+ *
+ * Halved. The patches were drawn up to ten tiles wide from a 768px texture,
+ * which at the 2× camera meant stretching that texture across some 1300
+ * screen pixels — visibly soft, and the pixels showed. Half the width is a
+ * quarter of the area per patch and twice the texture density, and the ground
+ * keeps the same coverage because the density below doubles to match.
  */
-const DECAL_BASE_W = 320;
+const DECAL_BASE_W = 160;
 const DECAL_SCALE_MIN = 0.7, DECAL_SCALE_MAX = 1.9;
 /**
  * Forest blocks per land tile. Each covers 16 tiles and is a landmark, so a
@@ -141,6 +147,19 @@ const CLUMP_MIN = 4, CLUMP_MAX = 17;
 const STRAY_DENSITY = 1 / 200;
 /** Chance a tree inside a clump breaks from the clump's species. */
 const OFF_SPECIES = 0.18;
+
+/**
+ * Tiles of clear ground a tree keeps from any seed-generated road, measured
+ * as Chebyshev distance.
+ *
+ * A tree standing right against a road hides the road at the camera's angle —
+ * the canopy is drawn well above its own tile — and roads are what the player
+ * is looking at while building. The clearance applies to the roads that exist
+ * when the map is made: the inter-town highways and the town streets. Roads
+ * the player lays later cannot move a tree, so the renderer simply stops
+ * drawing one that has been built over.
+ */
+const TREE_ROAD_CLEARANCE = 3;
 
 /**
  * Weighted family mix for decals. Bare earth leads — it is the only family
@@ -243,6 +262,15 @@ export function scatterScenery(grid: Grid): Scenery {
   for (const [x, y] of grid.publicRoads ?? []) if (inBounds(x, y)) publicRoad.add(idx(x, y));
   const open = buildable(grid, publicRoad);
 
+  // Distance from every tile to the nearest seed-generated road — the
+  // highways plus every town street — so trees can keep clear of them.
+  const roadTiles = new Set<number>(publicRoad);
+  for (const t of grid.towns) {
+    for (const [x, y] of t.roads) if (inBounds(x, y)) roadTiles.add(idx(x, y));
+  }
+  const toRoad = chebyshevField(roadTiles);
+  const clearOfRoads = (i: number) => toRoad[i] >= TREE_ROAD_CLEARANCE;
+
   // The land tiles, collected once — both scatters sample from this list, so
   // density is per LAND tile and does not swing with how much ocean a seed
   // happened to generate.
@@ -307,6 +335,7 @@ export function scatterScenery(grid: Grid): Scenery {
         // The art's canopy overhangs the footprint generously, so the block
         // needs clearance from the coast as well as clear ground.
         if (underForest[j] || !open(j) || toWater[j] < FOREST_FOOTPRINT) ok = false;
+        else if (!clearOfRoads(j)) ok = false;
       }
     }
     if (!ok) continue;
@@ -323,7 +352,7 @@ export function scatterScenery(grid: Grid): Scenery {
   const plant = (tx: number, ty: number, species: number): void => {
     if (!inBounds(tx, ty)) return;
     const i = idx(tx, ty);
-    if (trees[i] || underForest[i] || !open(i)) return;
+    if (trees[i] || underForest[i] || !open(i) || !clearOfRoads(i)) return;
     trees[i] = species;
   };
 

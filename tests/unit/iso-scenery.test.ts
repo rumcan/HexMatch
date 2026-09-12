@@ -177,15 +177,19 @@ describe("scenery scatter", () => {
     }
   });
 
-  it("makes patches big — several tiles across, not stickers", () => {
-    expect(scenery.decals.length).toBeGreaterThan(30);
-    // A whole-island carpet of 950 small ovals was the thing this replaced.
-    expect(scenery.decals.length).toBeLessThan(400);
+  it("keeps patches inside the size band the texture can actually cover", () => {
+    // The band matters in both directions. Too small and the ground goes back
+    // to looking speckled; too LARGE and a 768px texture is stretched across
+    // more screen than it has pixels for, which is what made the patches
+    // visibly soft at the 2x camera. Roughly 1.75 to 4.75 tiles.
+    expect(scenery.decals.length).toBeGreaterThan(200);
+    expect(scenery.decals.length).toBeLessThan(900);
     const widths = scenery.decals.map((d) => d.w);
     const mean = widths.reduce((a, b) => a + b, 0) / widths.length;
-    expect(mean).toBeGreaterThan(64 * 3);      // over three tiles wide on average
-    expect(Math.min(...widths)).toBeGreaterThan(64 * 2);
-    expect(Math.max(...widths)).toBeLessThan(64 * 12);
+    expect(mean).toBeGreaterThan(64 * 1.5);
+    expect(mean).toBeLessThan(64 * 4);
+    expect(Math.min(...widths)).toBeGreaterThan(64);
+    expect(Math.max(...widths)).toBeLessThan(64 * 5.5);
   });
 
   it("paints bare earth under the grass moods, back to front", () => {

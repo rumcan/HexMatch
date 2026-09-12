@@ -28,6 +28,13 @@
 // guards against an INVERTED ladder, not a photo finish; the difference a
 // player feels is the clocks below, the raid cadence, and Blockades.
 //
+// AI-04 note on those numbers: the harness races EVERY preset to the shipped
+// line (`VP_TARGET`, 10★) on purpose. The ladder it measures is about how fast
+// a preset PLAYS, and a per-preset finish line would make the presets' own
+// times incomparable — easy at 5★ would "win" by definition. `winTarget` is a
+// game rule for the live seat, so the calibration stays on one line and the
+// easy chair's 5★ is a shorter race over the same measured pace.
+//
 // Levers, in order of how loudly a player feels them:
 //
 //   buildMs / idleMs  the rival's two clocks (was the AI_BUILD_MS / AI_IDLE_MS
@@ -50,11 +57,18 @@
 //                     what actually wins);
 //   raidEveryMs       Black Market raid cadence (0 = never: the easy rival
 //                     leaves your plant alone);
-//   blockades         whether it buys industry Blockades against you.
+//   blockades         whether it buys industry Blockades against you;
+//   winTarget         AI-04: the ★ line the GAME races to at this difficulty
+//                     (easy 5★, the rest the shipped `VICTORY.target`). A
+//                     shorter race is a difficulty lever like any other, and
+//                     the only one that changes nothing about how the rival
+//                     plays — which is what "make the easy game 5 win points"
+//                     was asking for.
 //
 // ══════════════════════════════════════════════════════════════════════════
 
 import { RAID_EVERY } from "../game/config";
+import { VICTORY } from "./config";
 
 export type SkillKey = "easy" | "normal" | "hard";
 
@@ -86,13 +100,21 @@ export interface RivalSkill {
   moveMs: number;
   /** Multiplier on the ore urgency rivalPace computes from the scoreboard. */
   urgencyBias: number;
+  /**
+   * AI-04: the Victory-Point line the GAME races to while this difficulty is
+   * selected — the number in the HUD's "You 2★/5", the king bars' 100%, the
+   * rival's own race assessment (`rivalPace`) and the win check. `easy` runs a
+   * short race (5★) because that is what the easy chair was asked for; every
+   * other preset aliases the shipped line so the two can never drift.
+   */
+  winTarget: number;
 }
 
 export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
   easy: {
     key: "easy",
     label: "Easy",
-    blurb: "A patient rival: slower clock, one build at a time, no sabotage.",
+    blurb: "A patient rival: slower clock, one build at a time, no sabotage — and a short race, first to 5★.",
     buildMs: 11_000,
     idleMs: 3_500,
     expandPerTurn: 1,
@@ -103,6 +125,8 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     blockades: false,
     moveMs: 4_200,
     urgencyBias: 0.75,
+    // AI-04: the easy chair is a SHORT race — 5★ instead of the shipped 10★.
+    winTarget: 5,
   },
   normal: {
     key: "normal",
@@ -118,6 +142,7 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     blockades: true,
     moveMs: 2_600,
     urgencyBias: 1,
+    winTarget: VICTORY.target,   // AI-04: the shipped 10★ line, aliased
   },
   hard: {
     key: "hard",
@@ -133,10 +158,18 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     blockades: true,
     moveMs: 1_800,
     urgencyBias: 1.4,
+    winTarget: VICTORY.target,   // AI-04: the shipped 10★ line, aliased
   },
 };
 
 export const SKILL_KEYS: SkillKey[] = ["easy", "normal", "hard"];
+
+/**
+ * AI-04: the ★ line a difficulty races to, for the callers that know only the
+ * key (the HUD labels, the boot toast, the tests) rather than holding a live
+ * preset. `easy` is 5★; every other preset is `VICTORY.target`.
+ */
+export const winTargetFor = (key: SkillKey): number => RIVAL_SKILLS[key].winTarget;
 
 /** The default the game boots with when nothing asks otherwise. */
 export const DEFAULT_SKILL: SkillKey = "normal";

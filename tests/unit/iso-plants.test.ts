@@ -2,7 +2,7 @@
 import { describe, it, expect } from "vitest";
 import {
   PLANT_COST, addPlant, adjacentTown, canAffordPlant, canPlacePlant,
-  chooseAiPlantSpot, footprintTiles, nextPlantId, plantRefusal, plantsOf,
+  chooseAiPlantSpot, footprintTiles, nextPlantId, plantRefusal, plantsOf, resolvePlantTarget,
 } from "../../src/iso/plants";
 import {
   buildAllComponents, resolveConnection, industryLocks, harvesterYield,
@@ -273,5 +273,70 @@ describe("PP-06 save/load and multiplayer", () => {
     expect(back.factories).toHaveLength(2);
     expect(back.factories.map((f) => f.id)).toEqual([0, 1]);
     expect(back.factories.map((f) => f.townId)).toEqual([0, 1]);
+  });
+});
+
+
+describe("town-click plant placement", () => {
+  it("resolves houses and town streets to a deterministic legal site in the same town", () => {
+    const grid = flatGrid([town(0, 20, 20, 4, [[20, 19]]), town(1, 60, 60)]);
+    const track = createTrack(), st = state(grid, track);
+    for (const [tx, ty] of [[20, 20], [23, 20], [20, 19]]) {
+      const site = resolvePlantTarget(grid, track, st, tx, ty)!;
+      expect(site).not.toBeNull();
+      expect(plantRefusal(grid, track, st, ...site)).toBeNull();
+      expect(adjacentTown(grid, ...site)?.id).toBe(0);
+      expect(resolvePlantTarget(grid, track, st, tx, ty)).toEqual(site);
+    }
+  });
+
+  it("selects the nearest legal footprint with a tile-index tie-break", () => {
+    const grid = flatGrid([town(0, 20, 20)]);
+    const track = createTrack(), st = state(grid, track);
+    const sites: [number, number][] = [];
+    for (let y = 15; y <= 25; y++) for (let x = 15; x <= 28; x++) {
+      if (plantRefusal(grid, track, st, x, y) === null) sites.push([x, y]);
+    }
+    const distance = ([x, y]: [number, number]) => Math.abs(x + (FACTORY_FOOTPRINT[0] - 1) / 2 - 20)
+      + Math.abs(y + (FACTORY_FOOTPRINT[1] - 1) / 2 - 20);
+    sites.sort((a, b) => distance(a) - distance(b) || tIdx(...a) - tIdx(...b));
+    expect(resolvePlantTarget(grid, track, st, 20, 20)).toEqual(sites[0]);
+  });
+
+  it("avoids existing plants, depots, water and roads rather than building over them", () => {
+    const grid = flatGrid([town(0, 20, 20)]);
+    const track = createTrack(), st = state(grid, track);
+    const first = resolvePlantTarget(grid, track, st, 20, 20)!;
+    st.factories.push({ owner: "rival", ownerId: 2, tx: first[0], ty: first[1] });
+    const second = resolvePlantTarget(grid, track, st, 20, 20)!;
+    expect(second).not.toEqual(first);
+    st.harvesters.push({ id: 0, owner: "rival", ownerId: 2, tx: second[0], ty: second[1] });
+    const third = resolvePlantTarget(grid, track, st, 20, 20)!;
+    buildTile(track, "road", ...third, 1);
+    const fourth = resolvePlantTarget(grid, track, st, 20, 20)!;
+    grid.terrain[tIdx(...fourth)] = WATER;
+    const site = resolvePlantTarget(grid, track, st, 20, 20)!;
+    expect(site).not.toBeNull();
+    expect(plantRefusal(grid, track, st, ...site)).toBeNull();
+    expect(adjacentTown(grid, ...site)?.id).toBe(0);
+  });
+
+  it("does not jump to another town when the clicked town has no available ground", () => {
+    const grid = flatGrid([town(0, 20, 20), town(1, 60, 60)]);
+    const track = createTrack(), st = state(grid, track);
+    for (let y = 15; y <= 25; y++) for (let x = 15; x <= 28; x++) {
+      if (grid.occupancy[tIdx(x, y)] !== TOWN_OCC) grid.terrain[tIdx(x, y)] = WATER;
+    }
+    expect(resolvePlantTarget(grid, track, st, 20, 20)).toBeNull();
+    expect(resolvePlantTarget(grid, track, st, 60, 60)).not.toBeNull();
+  });
+
+  it("leaves non-town clicks exact, including blocked industry and out-of-bounds tiles", () => {
+    const grid = flatGrid([town(0, 20, 20)], [ind("farm", 60, 60)]);
+    const track = createTrack(), st = state(grid, track);
+    for (const tile of [[20, 21], [60, 60], [-1, 20], [MAP_W, 20]] as [number, number][]) {
+      expect(resolvePlantTarget(grid, track, st, ...tile)).toEqual(tile);
+    }
+    expect(plantRefusal(grid, track, st, 60, 60)).toBe("occupied");
   });
 });

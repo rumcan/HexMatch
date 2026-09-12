@@ -11,8 +11,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { WATER, factoryTouchesTown } from "../../src/iso/grid";
 import { SABOTAGE, RAID_EVERY, BANDIT_MS } from "../../src/game/config";
 import { PUBLIC_OWNER, buildTile } from "../../src/iso/track";
-import { lockedIndustryIds } from "../../src/iso/economy";
+import { industriesInCatchment, lockedIndustryIds } from "../../src/iso/economy";
 import { MAP_W, MAP_H, TRANSPORT, INDUSTRY_BY_KEY, VICTORY } from "../../src/iso/config";
+import { RIVAL_BANTER } from "../../src/iso/rivalry";
 import { setRng, mulberry32 } from "../../src/game/config";
 
 // ── stub the art imports (vite handles these in the browser) ──────────────
@@ -98,6 +99,8 @@ interface IsoHook {
   overlayItemsFor: (tx: number, ty: number) => { sprite: string; tx: number; ty: number }[];
   /** RV-03: the closest ROAD route the truck at a depot drives (tile coords). */
   routeForDepot: (tx: number, ty: number) => [number, number][] | null;
+  /** AI-01: the top-bar selector's call — flip the live difficulty. */
+  setRivalSkill: (key: "easy" | "normal" | "hard") => void;
 }
 
 const hook = () => (window as unknown as { __iso: IsoHook }).__iso;
@@ -233,6 +236,49 @@ describe("the live game resolves into a cinematic ending", () => {
     return h;
   }
 
+  // AI-04 — the difficulty sets the finish line: the easy chair races 5★, so
+  // the very same pave provenance the 10★ fixtures above use wins the game at
+  // half the pavement. Everything else about the game is untouched.
+  describe("AI-04 the difficulty sets the win line", () => {
+    const vpBadge = () => (root.querySelector("#iso-vp") as HTMLElement).textContent ?? "";
+
+    it("boots easy on a 5★ race — the hook and the HUD badge agree", async () => {
+      localStorage.setItem("hexmatch:rival-skill", "easy");
+      const h = await boot();
+      expect(h.vpTarget).toBe(5);
+      expect(vpBadge()).toContain("You 0/5");
+    });
+
+    it("keeps the shipped line on normal and moves it with the selector", async () => {
+      const h = await boot();          // beforeEach pins `normal`
+      expect(h.vpTarget).toBe(VICTORY.target);
+      expect(vpBadge()).toContain(`You 0/${VICTORY.target}`);
+      h.setRivalSkill("easy");
+      expect(h.vpTarget).toBe(5);      // live: no reboot, no replay
+      await settle();
+      expect(vpBadge()).toContain("You 0/5");
+    });
+
+    it("wins an easy game at 5★ — the 20 paves that are only half a 10★ race", async () => {
+      localStorage.setItem("hexmatch:rival-skill", "easy");
+      const h = await finishFor(1, 20);
+      expect(h.vpTarget).toBe(5);
+      expect(h.vp.you).toBe(5);
+      expect(h.phase).toBe("won");
+      const ending = root.querySelector("#iso-ending") as HTMLElement;
+      expect(ending?.dataset.outcome).toBe("victory");
+      expect(ending?.dataset.path).toBe("paving");
+      expect(ending.textContent).toContain("20 tiles × 0.25★");
+    });
+
+    it("does not shorten the race on the other chairs: 20 paves stay mid-game", async () => {
+      const h = await finishFor(1, 20);
+      expect(h.vp.you).toBe(5);
+      expect(h.phase).toBe("play");
+      expect(root.querySelector("#iso-ending")).toBeNull();
+    });
+  });
+
   it("opens the point-aware victory screen with fireworks when the player crosses 10★", async () => {
     const h = await finishFor(1);
     expect(h.phase).toBe("won");
@@ -358,6 +404,99 @@ describe("the two-portrait rivalry conversation", () => {
   });
 });
 
+describe("the Gold Mine warning (a young man's game)", () => {
+  it("warns the moment the player stands a Depot beside a Gold Mine", async () => {
+    const h = await boot();
+    const gold = findSouthCorridor(h.grid, 6, "gold_mine");
+    expect(gold, "seed 1337 keeps a Gold Mine with a legal south corridor").toBeTruthy();
+    const feedBefore = root.querySelectorAll(".feed-row").length;
+    expect(h.placeDepot(gold!.hx, gold!.hy)).toBe(true);
+
+    const wire = root.querySelector("#iso-rival-quip") as HTMLElement;
+    // Torvin opens, naming the gold…
+    expect(wire.classList.contains("hidden")).toBe(false);
+    expect(wire.dataset.speaker).toBe("rival");
+    expect(wire.querySelector(".rival-quip-text")!.textContent).toMatch(/gold/i);
+    // …and the whole exchange is preserved in the feed.
+    expect(root.querySelectorAll(".feed-row").length).toBeGreaterThan(feedBefore);
+    // The speech lands both cons: a harder board, and a coin that buys only sabotage.
+    expect(root.textContent).toMatch(/sixth colour|six colours|six to match/i);
+    expect(root.textContent).toMatch(/Black Market/i);
+  });
+
+  it("hears a DIFFERENT warning for a second gold Depot", async () => {
+    const h = await boot();
+    // Give the player the materials for a PAID second Depot so the rotation is
+    // exercised the way a real game would use it.
+    h.purse.wood = 99; h.purse.stone = 99; h.purse.grain = 99; h.purse.oil = 99;
+    const spots = goldMineDepotSpots(h.grid);
+    expect(spots.length, "two legal gold-mine Depot sites").toBeGreaterThanOrEqual(2);
+
+    // The wire's read timers must be captured from BEFORE the first speech
+    // plays, so the drain below can finish it and free the wire for the second.
+    const pending = wireDrain();
+    try {
+      expect(h.placeDepot(spots[0][0], spots[0][1])).toBe(true);
+      const wire = root.querySelector("#iso-rival-quip") as HTMLElement;
+      const first = wire.querySelector(".rival-quip-text")!.textContent!;
+      pending.drain(); // let the first exchange finish reading
+      expect(h.placeDepot(spots[1][0], spots[1][1])).toBe(true);
+      const second = wire.querySelector(".rival-quip-text")!.textContent!;
+      expect(second, "the pool rotates: no repeat speech").not.toBe(first);
+    } finally {
+      pending.restore();
+      await settle();
+    }
+  });
+
+  it("does not warn for a non-gold Depot", async () => {
+    const h = await boot();
+    const spot = nonGoldDepotSpot(h.grid);
+    expect(spot, "a Depot site whose catchment holds no Gold Mine").toBeTruthy();
+    expect(h.placeDepot(spot![0], spot![1])).toBe(true);
+    const wire = root.querySelector("#iso-rival-quip") as HTMLElement;
+    expect(wire.classList.contains("hidden")).toBe(true);
+  });
+});
+
+describe("the idle wire (sayings and cringe dad jokes)", () => {
+  it("plays a Torvin exchange mid-game, and stays silent before play", async () => {
+    const h = await boot();
+    // Setup phase: the wire keeps its silence.
+    h.chitChat();
+    expect((root.querySelector("#iso-rival-quip") as HTMLElement).classList.contains("hidden")).toBe(true);
+
+    h.finishSetup(); // → play
+    const feedBefore = root.querySelectorAll(".feed-row").length;
+    h.chitChat();
+    const wire = root.querySelector("#iso-rival-quip") as HTMLElement;
+    expect(wire.classList.contains("hidden")).toBe(false);
+    expect(wire.dataset.speaker).toBe("rival");
+    // It is one of the idle pool's openers — a saying or a dad joke, not a threat.
+    const openers = RIVAL_BANTER.map((s) => s[0].text);
+    expect(openers).toContain(wire.querySelector(".rival-quip-text")!.textContent);
+    expect(root.querySelectorAll(".feed-row").length).toBeGreaterThan(feedBefore);
+  });
+
+  it("rotates through the jokes rather than repeating one", async () => {
+    const h = await boot();
+    h.finishSetup();
+    const pending = wireDrain(); // capture timers from before the first bit
+    try {
+      const wire = root.querySelector("#iso-rival-quip") as HTMLElement;
+      h.chitChat();
+      const first = wire.querySelector(".rival-quip-text")!.textContent!;
+      pending.drain(); // let the first bit finish reading
+      h.chitChat();
+      const second = wire.querySelector(".rival-quip-text")!.textContent!;
+      expect(second, "the pool rotates: no repeat bit").not.toBe(first);
+    } finally {
+      pending.restore();
+      await settle();
+    }
+  });
+});
+
 // ── driving the game through its own module API ───────────────────────────
 // The pointer path is pixel-driven and needs a real renderer to pick tiles, so
 // these drive the same state the click handlers mutate, via the test hook.
@@ -392,6 +531,68 @@ function findSouthCorridor(
     }
   }
   return null;
+}
+
+/** Legal Depot sites that SERVE a Gold Mine (a gold mine in their catchment). */
+function goldMineDepotSpots(grid: import("../../src/iso/grid").Grid): [number, number][] {
+  const spots: [number, number][] = [];
+  for (const ind of grid.industries) {
+    if (ind.type !== "gold_mine") continue;
+    for (let x = ind.tx; x < ind.tx + ind.w; x++) {
+      const hx = x, hy = ind.ty + ind.h;
+      if (hy < 0 || hy + 6 >= MAP_H || hx < 0 || hx >= MAP_W) continue;
+      let legal = true;
+      for (let y = hy; y <= hy + 6; y++) {
+        const i = y * MAP_W + hx;
+        if (grid.terrain[i] === WATER || grid.occupancy[i] !== -1) { legal = false; break; }
+      }
+      if (!legal) continue;
+      const served = industriesInCatchment(grid, { id: -1, owner: "you", ownerId: 0, tx: hx, ty: hy });
+      if (served.some((s) => s.type === "gold_mine")) spots.push([hx, hy]);
+    }
+  }
+  return spots;
+}
+
+/** A legal Depot site whose catchment holds NO Gold Mine (a non-gold control). */
+function nonGoldDepotSpot(grid: import("../../src/iso/grid").Grid): [number, number] | null {
+  for (const ind of grid.industries) {
+    if (ind.type === "gold_mine") continue;
+    for (let x = ind.tx; x < ind.tx + ind.w; x++) {
+      const hx = x, hy = ind.ty + ind.h;
+      if (hy < 0 || hy + 6 >= MAP_H || hx < 0 || hx >= MAP_W) continue;
+      let legal = true;
+      for (let y = hy; y <= hy + 6; y++) {
+        const i = y * MAP_W + hx;
+        if (grid.terrain[i] === WATER || grid.occupancy[i] !== -1) { legal = false; break; }
+      }
+      if (!legal) continue;
+      const served = industriesInCatchment(grid, { id: -1, owner: "you", ownerId: 0, tx: hx, ty: hy });
+      if (!served.length) continue;
+      if (served.some((s) => s.type === "gold_mine")) continue;
+      return [hx, hy];
+    }
+  }
+  return null;
+}
+
+/**
+ * Intercept the rivalry wire's read-time timers so a test can drive two scenes
+ * back to back. Call `wireDrain()` BEFORE the first scene plays (so even its
+ * first beat's timer is captured); `drain()` then runs every captured callback
+ * until the exchange has finished reading and the wire is free; `restore()`
+ * puts the real timers back.
+ */
+function wireDrain(): { drain: () => void; restore: () => void } {
+  const pending: (() => void)[] = [];
+  const spy = vi.spyOn(window, "setTimeout").mockImplementation(((handler: TimerHandler) => {
+    if (typeof handler === "function") pending.push(() => handler());
+    return pending.length;
+  }) as typeof window.setTimeout);
+  return {
+    drain: () => { for (let i = 0; i < 400 && pending.length; i++) pending.shift()!(); },
+    restore: () => spy.mockRestore(),
+  };
 }
 
 /**
@@ -795,6 +996,84 @@ describe("V4 toasts and the banner close", () => {
     // paint() runs every frame — the dismissal must survive it
     await settle();
     await settle();
+    expect(banner.classList.contains("hidden")).toBe(true);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// TOAST-ONCE — the user's report: the popups that state what a Dirt Road /
+// Processing Plant is worth in win points ("Paved N Dirt Road tile(s) · +X★",
+// "Processing plant raised · +1★") repeated on every rescore, and a CLOSED
+// banner (the dirt-road ★ line) popped back up once its wording changed.
+// The win-point popups are a first-time lesson: the per-tile map float, the
+// star badge and the bell keep reporting every delta — the popup itself shows
+// once, and a closed banner never returns while the game lasts.
+// ══════════════════════════════════════════════════════════════════════════
+describe("TOAST-ONCE the win-point popups show once and stay gone", () => {
+  const toastText = () => (root.querySelector(".toasts") as HTMLElement).textContent ?? "";
+
+  it("paving dirt toasts the ★ value on the first pass only; the map float keeps marking every point", async () => {
+    const { h, corridor: { hx, hy, fy } } = await connectedBoot();
+    h.finishSetup();
+    h.purse.ore = 40;
+
+    // findSouthCorridor excludes water and occupied ground, not ROUGH (which
+    // road forbids) — probe the corridor for a flat run of three own dirt
+    // tiles: two for the first pass, one for the second.
+    const { canBuildOn } = await import("../../src/iso/track");
+    let y0: number | null = null;
+    for (let y = hy + 1; y + 2 < fy && y0 === null; y++) {
+      if ([y, y + 1, y + 2].every((yy) => canBuildOn(h.grid, "road", hx, yy))) y0 = y;
+    }
+    expect(y0, "the seed 1337 corridor has three road-legal dirt tiles").not.toBeNull();
+
+    // The first paving says the rule out loud, exactly once…
+    expect(h.dragBuild("road", hx, y0!, hx, y0! + 1)).toBeTruthy();
+    expect(toastText()).toMatch(/Paved 2 Dirt Road tiles · \+0\.5★/);
+    expect(h.vp.you).toBe(0.5);
+
+    // …then it leaves for good. The second pass paves a DIFFERENT tile count,
+    // so even the HUD's 900ms same-text dedup cannot hide a repeat here — the
+    // silence below is the once-guard, not the dedup window.
+    await new Promise((r) => setTimeout(r, 2900));   // auto-dismiss 2400ms + fade
+    expect(toastText()).not.toMatch(/Paved/);
+    expect(h.dragBuild("road", hx, y0! + 2, hx, y0! + 2)).toBeTruthy();
+    await settle();
+    expect(toastText()).not.toMatch(/Paved/);
+    // The score still moves, and the float still marks the new point where it
+    // happened — the per-tile feedback the one-shot popup must not silence.
+    // (Lorry deliveries float with the same `delivery` class, so look for the
+    // ★ value among them rather than asserting on the first match.)
+    expect(h.vp.you).toBe(0.75);
+    const floats = [...root.querySelectorAll(".iso-float.delivery")]
+      .map((e) => e.textContent ?? "");
+    expect(floats.some((t) => t.includes("+0.25★"))).toBe(true);
+  }, 15_000);
+
+  it("a closed banner never returns when its own wording changes", async () => {
+    const h = await boot();
+    const c = findSouthCorridor(h.grid, 6);
+    expect(c).toBeTruthy();
+    const { hx, hy } = c!;
+    // One Depot is all the drag needs: the network anchors on its tile, and
+    // the free-tile allowance (12) is what the banner counts down.
+    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy });
+    h.finishSetup();
+    await settle();
+
+    const banner = root.querySelector("#iso-banner") as HTMLElement;
+    expect(banner.classList.contains("hidden")).toBe(false);
+    expect(banner.textContent).toMatch(/12 free track tiles/i);
+    // The reported bug, end to end: close the line…
+    (banner.querySelector(".banner-close") as HTMLElement).click();
+    expect(banner.classList.contains("hidden")).toBe(true);
+    // …then build, so the banner rewords itself (12 → 10 free tiles). The
+    // old text-keyed dismissal read the new wording as a NEW banner and
+    // popped the closed one back up — "close it, switch, it's back". Keyed
+    // by identity, the dismissed line stays gone.
+    expect(h.dragBuild("dirt", hx, hy + 1, hx, hy + 2)).toBeTruthy();
+    await settle();
+    expect(h.freeTrack).toBe(10);        // the wording really did change
     expect(banner.classList.contains("hidden")).toBe(true);
   });
 });
@@ -2491,5 +2770,49 @@ describe("PP-14 the holy cross", () => {
     // no angel ⇒ no choir asked
     expect(started(), "a broken cross must not start the choir").toBe(0);
     await p;
+  });
+});
+
+// Town clicks must resolve to a legal site rather than trying to build on a house.
+describe("processing plant town picking", () => {
+  it("previews and builds beside an empty town when the player clicks the town", async () => {
+    const h = await boot() as IsoHook & {
+      tileScreenAt: (tx: number, ty: number) => [number, number];
+      pickAt: (x: number, y: number) => { tx: number; ty: number; sprite: string | null } | null;
+      camera: { zoom: number };
+    };
+    const { plantRefusal, resolvePlantTarget, PLANT_COST, adjacentTown } = await import("../../src/iso/plants");
+    const { TOWN_OCC } = await import("../../src/iso/grid");
+    h.finishSetup();
+    h.setTool("demolish"); // inspection/demolition must still select town sprites
+    let target: { tx: number; ty: number; sx: number; sy: number; townId: number } | null = null;
+    for (const town of h.grid.towns) {
+      const [sx, top] = h.tileScreenAt(town.tx, town.ty);
+      const sy = top + 16 * h.camera.zoom;
+      const picked = h.pickAt(sx, sy);
+      if (!picked || h.grid.occupancy[picked.ty * h.grid.w + picked.tx] !== TOWN_OCC) continue;
+      const site = resolvePlantTarget(h.grid, h.track, h.eco, picked.tx, picked.ty);
+      if (site) { target = { tx: site[0], ty: site[1], sx, sy, townId: town.id }; break; }
+    }
+    expect(target, "seed 1337 has a town with an available plant site").not.toBeNull();
+    const { tx, ty, sx, sy, townId } = target!;
+    expect(plantRefusal(h.grid, h.track, h.eco, tx, ty)).toBeNull();
+    expect(adjacentTown(h.grid, tx, ty)?.id).toBe(townId);
+    Object.assign(h.purse, PLANT_COST);
+    const before = { ...h.purse };
+    h.setTool("plant");
+    expect(h.pickAt(sx, sy)).toMatchObject({ tx, ty });
+    expect(h.placementPlan("factory", tx, ty).valid).toBe(true);
+    const canvas = root.querySelectorAll("canvas.iso-layer")[2] as HTMLCanvasElement;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    for (const type of ["pointerdown", "pointerup"]) {
+      canvas.dispatchEvent(new PointerEvent(type, {
+        clientX: sx / dpr, clientY: sy / dpr, pointerType: "mouse", pointerId: 1,
+        isPrimary: true, button: 0,
+      }));
+    }
+    expect(h.eco.factories.some((f) => f.owner === "you" && f.tx === tx && f.ty === ty)).toBe(true);
+    for (const [cargo, cost] of Object.entries(PLANT_COST)) expect(h.purse[cargo]).toBe(before[cargo] - cost);
+    expect(root.querySelector(".toasts")!.textContent).not.toContain("That ground is taken");
   });
 });

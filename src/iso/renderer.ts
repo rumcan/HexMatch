@@ -34,15 +34,19 @@ import type { Atlas } from "./atlas";
 import { depthSort, place, pickSprite, type DrawItem, type Placed } from "./depth";
 import { GRASS, WATER, ROUGH, type Grid } from "./grid";
 import {
-  FALLBACK, FOAM_RGB, GROUND_TEX_SIZE, SHALLOW_RGB, computeShore,
-  createGroundPatterns, foamAlpha, foamWidth, makeMatrix, oceanMatrix,
-  paintGroundTiles, pathPolygons, shallowAlpha, tileDiamondWorld,
-  type GroundPatterns, type GroundTextures, type ShoreTile,
+  FALLBACK, GROUND_TEX_SIZE, createGroundPatterns, makeMatrix, oceanMatrix,
+  paintGroundTiles, paintShore, invalidateGroundContours,
+  type GroundPatterns, type GroundTextures,
 } from "./ground";
+import { ShadowStamps, paintBuildingShadows } from "./building-shadow";
 import {
   FOREST_FOOTPRINT, TREE_SPRITES, paintDecals,
   type Decal, type DecalImages, type Forest, type Scenery,
 } from "./scenery";
+import {
+  DEFAULT_ROAD_STYLE, RoadCache,
+  type RoadCacheStats, type RoadRenderMode, type RoadStyle,
+} from "./road-renderer";
 
 /**
  * Ground texture scale relative to world pixels: one texture pixel covers
@@ -180,8 +184,27 @@ export function dirtSpriteName(world: World, tx: number, ty: number, cell: numbe
   return paved ? `dirt_road_${state}` : bitName("dirt", cell);
 }
 
+/**
+ * Options for the draw list. `roads: false` suppresses ONLY the road and dirt
+ * SPRITE items, for the textured road renderer which paints those surfaces
+ * itself. Everything else in the tile loop — most importantly the tree and
+ * forest suppression, which reads the live road bytes — runs exactly as
+ * before. Hiding roads by handing this function zeroed road arrays would
+ * "work" and would also resurrect every tree the player has paved over.
+ */
+export interface DrawListOptions {
+  roads?: boolean;
+  /** Exclude per-frame traffic when caching static placements. */
+  vehicles?: boolean;
+}
+
 /** Build the structure draw list for a culled tile range. */
-export function buildDrawList(world: World, r: { x0: number; y0: number; x1: number; y1: number }): DrawItem[] {
+export function buildDrawList(
+  world: World,
+  r: { x0: number; y0: number; x1: number; y1: number },
+  opts: DrawListOptions = {},
+): DrawItem[] {
+  const emitRoads = opts.roads !== false;
   const out: DrawItem[] = [];
   const { grid } = world;
   // Both road tiers are flush to the ground and 1×1 — they sort naturally.
@@ -195,8 +218,8 @@ export function buildDrawList(world: World, r: { x0: number; y0: number; x1: num
       const i = ty * MAP_W + tx;
       const rb = world.roadBits?.[i] ?? 0;    // premium paved → road_XXXX (tar)
       const db = world.dirtBits?.[i] ?? 0;    // basic gravel   → dirt_XXXX / dirt_road_*
-      if (db) out.push({ sprite: dirtSpriteName(world, tx, ty, db), tx, ty });
-      if (rb) out.push({ sprite: bitName("road", rb), tx, ty });
+      if (emitRoads && db) out.push({ sprite: dirtSpriteName(world, tx, ty, db), tx, ty });
+      if (emitRoads && rb) out.push({ sprite: bitName("road", rb), tx, ty });
       // SCENERY: a scattered tree, unless the tile has since been paved or
       // built on — the tree was cleared to make room, which is what the
       // player expects to see and costs nothing to model.
@@ -242,7 +265,7 @@ export function buildDrawList(world: World, r: { x0: number; y0: number; x1: num
   }
   // RV-01: trucks drive BETWEEN tiles, so the cull test uses the rounded
   // tile with the same generous pad the extras get.
-  if (world.vehicles) {
+  if (opts.vehicles !== false && world.vehicles) {
     for (const v of world.vehicles) {
       if (v.tx < r.x0 - 4 || v.tx > r.x1 + 4 || v.ty < r.y0 - 4 || v.ty > r.y1 + 4) continue;
       out.push(v);
@@ -262,6 +285,13 @@ export function cullPad(atlas: Atlas): number {
 }
 
 type Ctx2D = CanvasRenderingContext2D;
+
+/** An offscreen raster surface, or null where neither API exists (tests). */
+function makeSurface(w: number, h: number): HTMLCanvasElement | OffscreenCanvas | null {
+  if (typeof OffscreenCanvas !== "undefined") return new OffscreenCanvas(w, h);
+  if (typeof document === "undefined") return null;
+  return Object.assign(document.createElement("canvas"), { width: w, height: h });
+}
 
 export interface RendererCanvases {
   terrain: HTMLCanvasElement;
@@ -283,6 +313,13 @@ export interface RenderDiagnostics {
   camera: { zoom: number; vw: number; vh: number; x: number; y: number };
   cull: { pad: number; x0: number; y0: number; x1: number; y1: number };
   chunkCacheEntries: number;
+  /** Road renderer mode, texture readiness and cache accounting. */
+  roads: {
+    mode: RoadRenderMode;
+    textured: { paved: boolean; dirt: boolean };
+    blitsLastFrame: number;
+    cache: RoadCacheStats;
+  };
   groundAnchorReference: number | null;
   depthCycles: string[][];
   structures: {
@@ -322,9 +359,16 @@ export class IsoRenderer {
    */
   overlayPainter: ((ctx: CanvasRenderingContext2D, cam: Camera, timeMs: number) => void) | null = null;
 
+  /** Pre-blurred building shadow stamps, one per footprint size per zoom. */
+  private readonly shadowStamps = new ShadowStamps();
+
   readonly canvases: RendererCanvases;
   private ctxT: Ctx2D; private ctxS: Ctx2D; private ctxO: Ctx2D;
   private structuresDirty = true;
+  private staticPlaced: Placed[] = [];
+  private staticItemCount = 0;
+  private staticRange = "";
+  private hadVehicles = false;
   private lastOrder: Placed[] = [];
   private lastCycles: string[][] = [];
   private pad: number;
@@ -332,9 +376,6 @@ export class IsoRenderer {
   // ── W-series pattern-painted ground ──────────────────────────────────────
   /** Canvas patterns for grass/sand/water; null → flat FALLBACK colours. */
   private ground: GroundPatterns | null = null;
-  /** Shoreline tiles (water touching land) for the animated surf pass. */
-  private shore: ShoreTile[] | null = null;
-  private shoreGrid: Grid | null = null;
   /**
    * Chunk surfaces for the STATIC ground (grass fill + beach ring, water left
    * transparent so the animated ocean shows through). Cached per zoom like
@@ -344,6 +385,30 @@ export class IsoRenderer {
   // ── scenery ──────────────────────────────────────────────────────────────
   /** The seed-derived ground decals; null until the map's scenery is set. */
   private decals: Decal[] | null = null;
+  // ── roads ────────────────────────────────────────────────────────────────
+  /**
+   * Which road implementation is live. Renderer-local and never persisted —
+   * it is an A/B switch, not game state, so it must not reach the save format
+   * or the multiplayer protocol.
+   *
+   * `textured` is now the default: the vector roads are the roads. The old
+   * per-mask sprites stay reachable through `__iso.roadMode('sprites')` for
+   * comparison and as a rollback, and their atlas cells are still shipped.
+   */
+  private roadMode: RoadRenderMode = "textured";
+  private roadStyle: RoadStyle = DEFAULT_ROAD_STYLE;
+  private roadCache = new RoadCache();
+  private roadBlits = 0;
+  /**
+   * A copy of the road bytes as they were when the caches were last valid.
+   *
+   * The track layers are typed arrays MUTATED IN PLACE, so `setWorld` cannot
+   * detect a change by identity — the same array object arrives every time
+   * with different contents. Comparing against a copy is the reliable way to
+   * find which tiles actually moved, and it dirties only those tiles and
+   * their neighbours instead of dropping the whole cache on every build.
+   */
+  private roadShadow: { road: Uint8Array; dirt: Uint8Array } | null = null;
   /** The decal PNGs by family; null until the art loads (then decals paint). */
   private decalImages: DecalImages | null = null;
 
@@ -393,6 +458,7 @@ export class IsoRenderer {
    */
   recomputePad(): number {
     this.pad = cullPad(this.atlas);
+    this.structuresDirty = true;
     return this.pad;
   }
 
@@ -404,11 +470,16 @@ export class IsoRenderer {
     for (const z of this.atlas.images.keys()) {
       this.groundChunkCache.delete(`${z}:${chunkIndexOf(tx, ty)}`);
     }
+    // A road's shape depends on its neighbours' bits and their tier, so the
+    // cache dirties a neighbourhood rather than a tile.
+    this.roadCache.invalidateTile(tx, ty, "invalidateTile");
     this.structuresDirty = true;
   }
 
   invalidateAll() {
+    invalidateGroundContours(this.world.grid);
     this.groundChunkCache.clear();
+    this.roadCache.clear("all");
     this.structuresDirty = true;
   }
 
@@ -421,10 +492,76 @@ export class IsoRenderer {
   }
 
   setWorld(world: World) {
+    const gridChanged = this.world.grid !== world.grid;
     this.world = world;
-    this.shore = null;                       // recompute for the new grid
-    this.shoreGrid = null;
     this.structuresDirty = true;
+    if (gridChanged) {
+      // A new map, a loaded save or a guest snapshot: nothing cached applies.
+      invalidateGroundContours(this.world.grid);
+      this.groundChunkCache.clear();
+      this.roadCache.clear("world");
+      this.roadShadow = null;
+    }
+    this.syncRoadCache();
+  }
+
+  // ── roads ────────────────────────────────────────────────────────────────
+  /** Which road implementation to draw. A/B switch; never persisted. */
+  setRoadMode(mode: RoadRenderMode): void {
+    if (mode === this.roadMode) return;
+    this.roadMode = mode;
+    this.structuresDirty = true;
+  }
+
+  get roadRenderMode(): RoadRenderMode { return this.roadMode; }
+
+  /**
+   * Install road materials. Called when the textures resolve; a failure just
+   * leaves the flat fallback palette in place, which is a complete look
+   * rather than an error state.
+   */
+  setRoadStyle(style: RoadStyle): void {
+    this.roadStyle = style;
+    this.roadCache.bumpStyle("style");
+    this.structuresDirty = true;
+  }
+
+  /**
+   * Diff the live road bytes against our copy and dirty only what moved.
+   *
+   * Both track layers are mutated IN PLACE, so array identity proves nothing;
+   * this is the only reliable signal short of the simulation raising explicit
+   * events. It is O(map) per call, on a 20 736-tile map, and only on world
+   * syncs — not per frame.
+   */
+  private syncRoadCache(): void {
+    const road = this.world.roadBits, dirt = this.world.dirtBits;
+    if (!road || !dirt) return;
+    const prev = this.roadShadow;
+    if (!prev || prev.road.length !== road.length) {
+      this.roadShadow = { road: Uint8Array.from(road), dirt: Uint8Array.from(dirt) };
+      this.roadCache.clear("resync");
+      return;
+    }
+    for (let i = 0; i < road.length; i++) {
+      if (prev.road[i] === road[i] && prev.dirt[i] === dirt[i]) continue;
+      prev.road[i] = road[i];
+      prev.dirt[i] = dirt[i];
+      this.roadCache.invalidateTile(i % MAP_W, (i / MAP_W) | 0, "build");
+    }
+  }
+
+  /** Road cache + mode, for `__iso.rendering()`. */
+  roadDiagnostics() {
+    return {
+      mode: this.roadMode,
+      textured: {
+        paved: !!this.roadStyle.paved.image,
+        dirt: !!this.roadStyle.dirt.image,
+      },
+      blitsLastFrame: this.roadBlits,
+      cache: this.roadCache.stats(),
+    };
   }
 
   /**
@@ -460,15 +597,6 @@ export class IsoRenderer {
     this.decalImages = images;
   }
 
-  /** Shoreline for the current grid, computed once. */
-  private shoreOf(): ShoreTile[] {
-    if (!this.shore || this.shoreGrid !== this.world.grid) {
-      this.shore = computeShore(this.world.grid);
-      this.shoreGrid = this.world.grid;
-    }
-    return this.shore;
-  }
-
   // ── ground chunks ────────────────────────────────────────────────────────
   /**
    * The STATIC ground of one 8×8 chunk (grass fill + beach ring), painted
@@ -501,7 +629,7 @@ export class IsoRenderer {
       // 1.6 tiles wide); the chunk context samples them downscaled, so it
       // must smooth or the nearest-neighbour subsample shimmers on pans.
       const P = GROUND_TEX_SIZE * z * LAND_SCALE;
-      const phase = (v: number) => ((-v * z * LAND_SCALE) % P + P) % P;
+      const phase = (v: number) => ((-v * z) % P + P) % P;
       const setPat = (p: CanvasPattern, k: number) => {
         const m = makeMatrix();
         m.translateSelf(phase(ox), phase(oy));
@@ -517,42 +645,17 @@ export class IsoRenderer {
       this.ground
         ? { grass: this.ground.grass, sand: this.ground.sand }
         : { grass: FALLBACK.grass, sand: FALLBACK.sand },
-      (wx, wy) => [Math.floor((wx - ox) * z), Math.floor((wy - oy) * z)],
+      (wx, wy) => [(wx - ox) * z, (wy - oy) * z],
     );
     this.groundChunkCache.set(key, surf);
-    this.trace("ground-chunk-built", { chunk: [cx, cy], origin: [ox, oy], surface: [W, H], z, textured: !!this.ground });
+    if (this.logRender) this.trace("ground-chunk-built", { chunk: [cx, cy], origin: [ox, oy], surface: [W, H], z, textured: !!this.ground });
     return surf;
   }
 
-  /** The animated shoreline: shallow swell fill + foam strokes per shore tile. */
-  private drawShore(ctx: Ctx2D, cam: Camera, r: { x0: number; y0: number; x1: number; y1: number }, t: number) {
-    const z = cam.zoom;
-    const toScreen = (wx: number, wy: number): [number, number] =>
-      [Math.floor(wx * z + cam.x), Math.floor(wy * z + cam.y)];
-    let tiles = 0;
-    ctx.lineCap = "round";
-    for (const st of this.shoreOf()) {
-      if (st.tx < r.x0 - 1 || st.tx > r.x1 + 1 || st.ty < r.y0 - 1 || st.ty > r.y1 + 1) continue;
-      tiles++;
-      // Shallow shelf: a soft turquoise breath over the ocean pattern.
-      const diamond = tileDiamondWorld(st.tx, st.ty).map((p) => toScreen(p[0], p[1]));
-      pathPolygons(ctx, [diamond]);
-      ctx.fillStyle = `rgba(${SHALLOW_RGB},${shallowAlpha(t, st.tx, st.ty).toFixed(3)})`;
-      ctx.fill();
-      // Foam: a warm white line along every edge this water tile shares
-      // with land, breathing out of phase with the swell.
-      ctx.strokeStyle = `rgba(${FOAM_RGB},${foamAlpha(t, st.tx, st.ty).toFixed(3)})`;
-      ctx.lineWidth = Math.max(1, foamWidth(t, st.tx, st.ty) * z);
-      ctx.beginPath();
-      for (const [[ax, ay], [bx, by]] of st.edges) {
-        const [x1, y1] = toScreen(ax, ay);
-        const [x2, y2] = toScreen(bx, by);
-        ctx.moveTo(x1, y1);
-        ctx.lineTo(x2, y2);
-      }
-      ctx.stroke();
-    }
-    this.trace("shore-pass", { tiles, z });
+  /** Surf shares the ground contour, so corners and chunk joins stay aligned. */
+  private drawShore(ctx: Ctx2D, cam: Camera, t: number) {
+    paintShore(ctx, this.world.grid, t, cam.zoom,
+      (wx, wy) => [wx * cam.zoom + cam.x, wy * cam.zoom + cam.y]);
   }
 
   // ── layers ──────────────────────────────────────────────────────────────
@@ -578,7 +681,7 @@ export class IsoRenderer {
         const [sx, sy] = worldToScreen(cam, ox, oy);
         ctx.drawImage(surf as unknown as CanvasImageSource, Math.floor(sx), Math.floor(sy));
         blits++;
-        this.trace("ground-blit", { chunk: [cx, cy], origin: [ox, oy], screen: [Math.floor(sx), Math.floor(sy)], z: cam.zoom });
+        if (this.logRender) this.trace("ground-blit", { chunk: [cx, cy], origin: [ox, oy], screen: [Math.floor(sx), Math.floor(sy)], z: cam.zoom });
       }
     }
     // 3. The scenery decals: dirt scrapes and grass variation painted on the
@@ -588,24 +691,54 @@ export class IsoRenderer {
     if (this.decals && this.decalImages)
       decals = paintDecals(ctx, cam, this.decals, this.decalImages, r);
     // 4. The surf: shallow swell + foam along every coast edge, animated.
-    this.drawShore(ctx, cam, r, timeMs);
-    this.trace("terrain-pass", { range: [r.x0, r.y0, r.x1, r.y1], blits, decals, z: cam.zoom });
+    this.drawShore(ctx, cam, timeMs);
+    if (this.logRender) this.trace("terrain-pass", { range: [r.x0, r.y0, r.x1, r.y1], blits, decals, z: cam.zoom });
   }
 
   drawStructures(timeMs = 0) {
     const ctx = this.ctxS, cam = this.cam;
     ctx.clearRect(0, 0, cam.vw, cam.vh);
     const r = visibleTileRange(cam, this.pad);
-    const items = buildDrawList(this.world, r);
-    const placed = items.map((i) => place(this.atlas, i)).filter(Boolean) as Placed[];
+    const textured = this.roadMode === "textured";
+    // Roads are flat, so they go down first, under every elevated thing —
+    // and above the terrain canvas entirely, which is what keeps their
+    // transparent verges showing the real decals and grass underneath.
+    this.roadBlits = textured
+      ? this.roadCache.paint(ctx, cam, this.world, this.roadStyle, (w, h) => makeSurface(w, h))
+      : 0;
+    // Static geometry only changes on existing world/art/tile invalidation
+    // paths or a changed visible range. Never cache vehicles: the game replaces
+    // that list every frame without setWorld(). Keep their original tail order
+    // so stable Tier-1 ties still behave exactly as before.
+    const rangeKey = `${r.x0}:${r.y0}:${r.x1}:${r.y1}`;
+    if (this.structuresDirty || rangeKey !== this.staticRange) {
+      const items = buildDrawList(this.world, r, { roads: !textured, vehicles: false });
+      this.staticItemCount = items.length;
+      this.staticPlaced = items.map((i) => place(this.atlas, i)).filter((p): p is Placed => p !== null);
+      this.staticRange = rangeKey;
+    }
+    const placed = this.staticPlaced.slice();
+    let itemCount = this.staticItemCount;
+    for (const v of this.world.vehicles ?? []) {
+      if (v.tx < r.x0 - 4 || v.tx > r.x1 + 4 || v.ty < r.y0 - 4 || v.ty > r.y1 + 4) continue;
+      itemCount++;
+      const p = place(this.atlas, v);
+      if (p) placed.push(p);
+    }
+    this.hadVehicles = (this.world.vehicles?.length ?? 0) > 0;
     const sorted = depthSort(placed);
     const { order } = sorted;
     this.lastOrder = order;
     this.lastCycles = sorted.cycles;
+    // Contact shadows go down between the roads and the first sprite: they
+    // are ground, so they may darken the asphalt a building stands beside
+    // but must never land on a building, a tree or a passing lorry.
+    const shadows = paintBuildingShadows(
+      ctx, cam, order, this.shadowStamps, (w, h) => makeSurface(w, h));
     for (const p of order) this.blit(ctx, p, timeMs);
-    this.trace("structures-pass", {
+    if (this.logRender) this.trace("structures-pass", {
       z: cam.zoom, range: [r.x0, r.y0, r.x1, r.y1],
-      items: items.length, placed: placed.length, cycles: sorted.cycles,
+      items: itemCount, placed: placed.length, shadows, cycles: sorted.cycles,
       order: order.map((p) => ({ sprite: p.sprite, tile: [p.tx, p.ty], key: p.key })),
     });
     this.structuresDirty = false;
@@ -654,7 +787,7 @@ export class IsoRenderer {
       src.x, src.y, src.w, src.h,
       Math.floor(sx), Math.floor(sy), src.w, src.h,
     );
-    this.trace("blit", {
+    if (this.logRender) this.trace("blit", {
       sprite: p.sprite, tile: [p.tx, p.ty], def: p.def,
       z, context: p.ref != null ? "world" : "overlay",
       anchor: p.def.anchor, world: [p.wx, p.wy],
@@ -679,7 +812,8 @@ export class IsoRenderer {
   private hasAnimation(): boolean {
     // RV-01: a truck somewhere on the map moves every frame, so the sorted
     // structures pass (which depth-sorts it among the buildings) must run.
-    if ((this.world.vehicles?.length ?? 0) > 0) return true;
+    // Also clear the last drawn truck when the traffic list becomes empty.
+    if (this.hadVehicles || (this.world.vehicles?.length ?? 0) > 0) return true;
     return this.lastOrder.some((p) => (p.def.frames ?? 1) > 1);
   }
 
@@ -747,6 +881,7 @@ export class IsoRenderer {
       camera: { zoom: this.cam.zoom, vw: this.cam.vw, vh: this.cam.vh, x: this.cam.x, y: this.cam.y },
       cull: { pad: this.pad, x0: range.x0, y0: range.y0, x1: range.x1, y1: range.y1 },
       chunkCacheEntries: this.groundChunkCache.size,
+      roads: this.roadDiagnostics(),
       groundAnchorReference,
       depthCycles: this.lastCycles,
       structures,

@@ -7,6 +7,13 @@ function freshBoard() {
   return new Board();
 }
 
+// No incidental matches around hand-painted cross fixtures.
+function crossBoard() {
+  const b = freshBoard();
+  for (const g of b.gems()) g.res = (g.r + g.c) % 2 ? "wood" : "wheat";
+  return b;
+}
+
 describe("Board initial fill", () => {
   it("fills a full grid with no pre-existing matches", () => {
     const b = freshBoard();
@@ -136,7 +143,7 @@ describe("settle / swap", () => {
   // as L-SHAPEs paying two. PP-14b adds the BROKEN holy cross — two 3-runs
   // crossing on their centre gems — which pays THREE units.
   it("a cross of six (3 across + 4 down) pays each of the six picked cargoes", async () => {
-    const b = freshBoard();
+    const b = crossBoard();
     const bonus: string[] = [];
     b.onBonus = (res, n, why) => bonus.push(`${why}:${res}:${n}`);
     const crosses: [number, number][] = [];
@@ -171,7 +178,7 @@ describe("settle / swap", () => {
   });
 
   it("a short pick list is topped up to six, honouring every pick", async () => {
-    const b = freshBoard();
+    const b = crossBoard();
     const bonus: [string, number][] = [];
     b.onBonus = (res, n) => bonus.push([res, n]);
     b.onCrossChoice = (_kind, _picks, pick) => pick(["wood", "wood"]);
@@ -194,7 +201,7 @@ describe("settle / swap", () => {
   });
 
   it("all six of a single cargo is a valid spend", async () => {
-    const b = freshBoard();
+    const b = crossBoard();
     const bonus: [string, number][] = [];
     b.onBonus = (res, n) => bonus.push([res, n]);
     b.onCrossChoice = (_kind, _picks, pick) => pick(["wood", "wood", "wood", "wood", "wood", "wood"]);
@@ -214,7 +221,7 @@ describe("settle / swap", () => {
   });
 
   it("with no chooser wired the cross still pays six cargoes", async () => {
-    const b = freshBoard();
+    const b = crossBoard();
     const bonus: [string, number][] = [];
     b.onBonus = (res, n) => bonus.push([res, n]);
     b.grid[2][1]!.res = "sheep";
@@ -233,7 +240,7 @@ describe("settle / swap", () => {
   });
 
   it("a broken cross (3×3 sharing the centre) pays three units and fires bcross", async () => {
-    const b = freshBoard();
+    const b = crossBoard();
     const bonus: string[] = [];
     b.onBonus = (res, n, why) => bonus.push(`${why}:${res}:${n}`);
     const fx: [string, number, number][] = [];
@@ -262,7 +269,7 @@ describe("settle / swap", () => {
   });
 
   it("a broken cross topped up to three with no chooser pays three", async () => {
-    const b = freshBoard();
+    const b = crossBoard();
     const bonus: [string, number][] = [];
     b.onBonus = (res, n) => bonus.push([res, n]);
     b.grid[2][1]!.res = "sheep";
@@ -282,7 +289,7 @@ describe("settle / swap", () => {
   });
 
   it("the same cross rotated — 4 across + 3 down — is holy too", async () => {
-    const b = freshBoard();
+    const b = crossBoard();
     const crosses: [number, number][] = [];
     b.onFx = (type, r, c) => { if (type === "cross") crosses.push([r, c]); };
     b.grid[2][0]!.res = "sheep";
@@ -299,8 +306,8 @@ describe("settle / swap", () => {
     await p;
   });
 
-  it("a T-shape is not a cross: it stays an L-SHAPE", async () => {
-    const b = freshBoard();
+  it("a T-shape pays a broken cross reward instead of an L-SHAPE", async () => {
+    const b = crossBoard();
     const bonus: string[] = [];
     b.onBonus = (_r, _n, why) => bonus.push(why);
     // horizontal arm shares its centre with the END of the vertical arm
@@ -310,13 +317,15 @@ describe("settle / swap", () => {
     b.grid[3][2]!.res = "sheep";
     b.grid[4][2]!.res = "sheep";
     const p = b.settle();
-    expect(bonus.filter((w) => w === "L-SHAPE").length).toBe(2);
+    await Promise.resolve();
+    expect(bonus.filter((w) => w === "BROKEN CROSS")).toHaveLength(3);
+    expect(bonus).not.toContain("L-SHAPE");
     expect(bonus).not.toContain("HOLY CROSS");
     await p;
   });
 
-  it("a 4-run sharing its END with a 3-run is a T with a tail, not a cross", async () => {
-    const b = freshBoard();
+  it("a T with a longer stem also pays a broken cross reward", async () => {
+    const b = crossBoard();
     const bonus: string[] = [];
     b.onBonus = (_r, _n, why) => bonus.push(why);
     // 3 horizontal + 4 vertical, but the shared gem is the FIRST gem of the
@@ -332,7 +341,9 @@ describe("settle / swap", () => {
     }
     b.grid[1][2]!.res = "wood";
     const p = b.settle();
-    expect(bonus.filter((w) => w === "L-SHAPE").length).toBe(2);
+    await Promise.resolve();
+    expect(bonus.filter((w) => w === "BROKEN CROSS")).toHaveLength(3);
+    expect(bonus).not.toContain("L-SHAPE");
     expect(bonus).not.toContain("HOLY CROSS");
     await p;
   });

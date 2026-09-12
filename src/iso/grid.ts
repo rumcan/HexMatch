@@ -11,6 +11,7 @@
 // style rejection sampling: target separation 12 tiles, no overlap, not on
 // water, quota per industry type so no cargo is absent from the map.
 // ══════════════════════════════════════════════════════════════════════════
+import { fillCoastalHoles } from "./coastline";
 import {
   MAP_W, MAP_H, mulberry32, INDUSTRIES, INDUSTRY_QUOTA, INDUSTRY_BY_KEY, FACTORY_FOOTPRINT,
 } from "./config";
@@ -373,15 +374,26 @@ export function industriesInRoadBuffer(
  */
 function applyRoadSpawnBuffer(
   terrain: Uint8Array, occ: Int16Array, list: Industry[],
-  towns: Town[], publicRoads: [number, number][],
+  publicRoads: [number, number][],
 ): void {
-  // The buffer is measured from the ROAD tiles — the highways and each town's
-  // ring road/streets, i.e. exactly the tiles `track.ts` stamps PUBLIC_OWNER —
-  // because that is what the rule is about: a resource node must not sit in a
-  // verge a Depot can park on for free.
+  // The buffer is measured from the HIGHWAY tiles only.
+  //
+  // The rule is that a resource node must not spawn in a verge a Depot can
+  // park on for free, and it used to measure from the town streets as well.
+  // That was right when a town's road was a ring of perhaps twenty tiles. The
+  // grid towns carry well over a hundred street tiles spread across 13-19
+  // tiles of ground, so a 10-tile Chebyshev buffer from every one of them
+  // excluded a box roughly forty tiles across per town — most of the island,
+  // four times over. Industries ended up flung to the coast, and the opening
+  // corridor from an industry to a town-adjacent Factory site stopped
+  // existing (E14's picker could find no legal 4-12 tile run on any seed).
+  //
+  // Nothing is lost by dropping the streets from this field: `townField`
+  // below already holds every town tile — houses AND streets — at
+  // TOWN_INDUSTRY_SEP, so a node beside a street is still refused. The two
+  // buffers were double-counting the same tiles.
   const roadSet = new Set<number>();
   for (const [x, y] of publicRoads) roadSet.add(idx(x, y));
-  for (const t of towns) for (const [x, y] of t.roads) roadSet.add(idx(x, y));
   const roadField = chebyshevField(roadSet);
 
   // A town's own ground (houses, centre, streets — everything stamped TOWN_OCC)
@@ -516,8 +528,38 @@ const TOWN_COUNT = 4;
  * sizes, and the map has the room (all four towns still place on every
  * standard seed — pinned in tests/unit/iso-grid.test.ts).
  */
+/**
+ * TOWN-GRID: the viability gate. A candidate centre whose grid yields fewer
+ * houses than this is rejected and another centre is tried — that is how a
+ * town avoids being laid half in the sea.
+ *
+ * There is no maximum any more. Under the old BFS growth the house COUNT was
+ * the size knob (the footprint was the bounding box of however many houses
+ * had been grown), so it needed both ends pinned. The grid is the other way
+ * round: `TOWN_SPAN_*` sets the footprint and the house count falls out of it,
+ * so a cap here would only clip a town for no reason.
+ */
 export const TOWN_HOUSES_MIN = 18;
-export const TOWN_HOUSES_MAX = 36;
+
+/**
+ * TOWN-GRID: the street period, in tiles. Each block is
+ * `TOWN_BLOCK - 1` houses across and the next lane is a street, so 3 means
+ * 2×2 blocks of houses separated by one-tile streets — the smallest grid
+ * that still reads as blocks rather than as a chequerboard.
+ */
+export const TOWN_BLOCK = 3;
+
+/**
+ * TOWN-GRID: half-width of a town's box, in tiles, so the town spans
+ * `2·span + 1`. Drawn per town from the seed.
+ *
+ * Deliberately much larger than the footprint the BFS blob produced (18–36
+ * houses came out roughly 6 tiles across). A span of 6–9 is a 13–19 tile
+ * town, which at the grid's 4-in-9 house density is around 70–160 houses —
+ * a settlement with a street plan you can read, rather than a hamlet.
+ */
+export const TOWN_SPAN_MIN = 6;
+export const TOWN_SPAN_MAX = 9;
 /** Minimum Chebyshev distance from EVERY town tile to any industry tile.
  * T4 widens the former 3-tile ring to 8 on the roomier map. */
 const TOWN_INDUSTRY_SEP = 8;
@@ -543,59 +585,219 @@ export const TOWN_OCC = -2;
 export const TOWN_FACTORY_RING = Math.max(...FACTORY_FOOTPRINT);
 
 /**
- * PP-10: a simple road network for a settlement.
+ * TOWN-GRID: a settlement is a STREET GRID with houses in the blocks between
+ * the streets.
  *
- * Two pieces, both "simple" on purpose:
- *   1. the RING — the perimeter of the house bounding box expanded by one
- *      tile: a ring road the settlement sits inside;
- *   2. the INTERIOR streets — every free tile INSIDE the box (the gaps the
- *      BFS-grown cluster leaves between houses along its edge, ~5 per town;
- *      the strict interior is solid, ~0.01 empty tile).
+ * This replaces PP-10's ring-and-fill layout, which grew a solid BFS blob of
+ * houses, paved the gaps it happened to leave, and then drew a closed ring
+ * road one tile outside the whole thing. That produced a town with a road
+ * wrapped around the outside and almost none inside it — the streets were
+ * whatever the blob failed to cover, so their shape was an accident of the
+ * growth order rather than a layout.
  *
- * Piece 2 is load-bearing, not decoration: the ring is a closed loop of
- * TOWN_OCC tiles, and any free tile it encloses would become a road-buildable
- * ENCLAVE — a pocket the W8 sweep proves the rival's factory search must
- * never commit to. Paving the box's free tiles removes the pockets by
- * construction, and every box-edge street touches the ring, so the network
- * is one connected piece wherever the ring is unbroken.
+ * The grid is the obvious thing instead: every `TOWN_BLOCK`-th column and row
+ * is a street, and the cells in between are houses. Streets therefore run
+ * BETWEEN the buildings, they cross each other, and they reach the edge of
+ * the town on all four sides, which is where the inter-town highway meets
+ * them.
  *
- * Only free land becomes road: in-bounds, not water, occupancy -1. Rough is
- * legal (roads build on rough). A water tile or an earlier town's tile
- * simply leaves a gap — the autotile masks render the break naturally.
- * Deterministic: same houses + terrain + occupancy → same roads.
+ * There is no ring, and it is not needed. The old comment worried about
+ * ENCLAVES — free tiles sealed inside the closed ring would become
+ * road-buildable pockets the rival's factory search must never commit to.
+ * A grid has no closed loop: every street runs out of the town, so nothing
+ * is sealed. The only tiles inside the box that are neither house nor street
+ * are ones that failed the free test (water, an industry, an earlier town),
+ * and none of those is a free pocket.
+ *
+ * The grid PHASE is anchored on the town centre, so (cx,cy) is always a house
+ * cell — the centre carries the church sprite, and a church in the middle of
+ * a crossroads would be an odd thing to look at.
+ *
+ * Only free land is used: in-bounds, not water, occupancy -1. Rough is legal
+ * (roads and houses both build on rough). A water tile or an earlier town's
+ * tile simply drops out, leaving a gap the autotile masks render naturally.
+ * Deterministic: same centre, span, terrain and occupancy → same layout.
  */
-export function townRoadTiles(
-  houses: [number, number][], terrain: Uint8Array, occ: Int16Array,
-): [number, number][] {
-  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
-  for (const [hx, hy] of houses) {
-    x0 = Math.min(x0, hx); x1 = Math.max(x1, hx);
-    y0 = Math.min(y0, hy); y1 = Math.max(y1, hy);
-  }
-  // The candidate's own houses are not stamped in `occ` yet (the town
-  // commits them after this returns), so exclude them explicitly — a road
-  // under a house would be drawn, and the house is the tile's owner anyway.
-  const houseSet = new Set<number>(houses.map(([hx, hy]) => idx(hx, hy)));
+export function townLayout(
+  cx: number, cy: number, span: number,
+  terrain: Uint8Array, occ: Int16Array,
+  houseAllowed: (tx: number, ty: number) => boolean = () => true,
+): { houses: [number, number][]; roads: [number, number][] } {
   const free = (tx: number, ty: number): boolean => {
     if (!inBounds(tx, ty)) return false;
     const i = idx(tx, ty);
-    return terrain[i] !== WATER && occ[i] === -1 && !houseSet.has(i);
+    return terrain[i] !== WATER && occ[i] === -1;
   };
-  const out: [number, number][] = [];
-  // Interior streets: the free tiles inside the box (scan order = stable).
-  for (let ty = y0; ty <= y1; ty++) {
-    for (let tx = x0; tx <= x1; tx++) {
-      if (free(tx, ty)) out.push([tx, ty]);
+  // Positive modulo: the box spans negative offsets from the centre too.
+  const phase = (v: number) => ((v % TOWN_BLOCK) + TOWN_BLOCK) % TOWN_BLOCK;
+  /** A street lane is the last column/row of each block period. */
+  const onLane = (v: number, centre: number) => phase(v - centre) === TOWN_BLOCK - 1;
+
+  const houses: [number, number][] = [];
+  // Scan order is fixed, so the output is stable for a given input.
+  for (let ty = cy - span; ty <= cy + span; ty++) {
+    for (let tx = cx - span; tx <= cx + span; tx++) {
+      if (!free(tx, ty)) continue;
+      if (onLane(tx, cx) || onLane(ty, cy)) continue;
+      if (houseAllowed(tx, ty)) houses.push([tx, ty]);
     }
   }
-  // Ring road: the perimeter of the box expanded by one tile.
-  for (let ty = y0 - 1; ty <= y1 + 1; ty++) {
-    for (let tx = x0 - 1; tx <= x1 + 1; tx++) {
-      const onRing = tx === x0 - 1 || tx === x1 + 1 || ty === y0 - 1 || ty === y1 + 1;
-      if (onRing && free(tx, ty)) out.push([tx, ty]);
-    }
+
+  // Trim the lanes back to the built area.
+  //
+  // The grid is laid over the whole box, but houses only appear where the
+  // ground allows one — a coast, an industry buffer or an earlier town can
+  // leave a whole corner of the box unbuilt. Without this, the streets there
+  // survive as lanes running out into empty grass: roads to nowhere, which is
+  // a different species of the same complaint the ring layout earned.
+  //
+  // Keeping the lanes that touch a house is enough to stay connected: a lane
+  // tile between two blocks always has a house beside it, so the interior
+  // grid is untouched and only the dangling ends go.
+  // The streets: one contiguous line along each lane that has blocks built
+  // beside it, running from one tile before the first of those blocks to one
+  // tile after the last.
+  //
+  // Built this way rather than by laying lanes over the whole box and then
+  // trimming them back, because trimming produces two faults. Lanes over
+  // unbuilt ground survive as roads running out into empty grass, and
+  // trimming to "touches a house" breaks a lane into disconnected pieces and
+  // can SEAL THE TOWN IN: the grid's outer row is a house block as often as
+  // it is a lane, so a trimmed network can end up enclosed by a solid wall of
+  // houses, and houses are impassable to the inter-town highway. The map then
+  // comes out with its settlements on separate road networks.
+  //
+  // The one-tile overhang at each end is what a street does at the edge of a
+  // town, and it is what the highway meets. It cannot bring back the ring
+  // layout's enclave problem: these are open-ended lines, not a loop.
+  const houseSet = new Set(houses.map(([hx, hy]) => idx(hx, hy)));
+  const seen = new Set<number>();
+  const roads: [number, number][] = [];
+  const addRoad = (tx: number, ty: number) => {
+    if (!free(tx, ty) || houseSet.has(idx(tx, ty)) || seen.has(idx(tx, ty))) return;
+    seen.add(idx(tx, ty));
+    roads.push([tx, ty]);
+  };
+  // The town's built extent. Every lane spans it, so each lane column meets
+  // each lane row and the street network is ONE connected grid. Running a
+  // lane only as far as its own two blocks left neighbouring lanes that never
+  // crossed, and a town whose streets come out in three disconnected pieces
+  // is one the inter-town highway can only attach to a third of.
+  let hx0 = Infinity, hx1 = -Infinity, hy0 = Infinity, hy1 = -Infinity;
+  for (const [hx, hy] of houses) {
+    hx0 = Math.min(hx0, hx); hx1 = Math.max(hx1, hx);
+    hy0 = Math.min(hy0, hy); hy1 = Math.max(hy1, hy);
   }
-  return out;
+
+  /** Is there a house within two tiles? The reach of a street's frontage. */
+  const nearHouse = (tx: number, ty: number): boolean => {
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
+        if (inBounds(tx + dx, ty + dy) && houseSet.has(idx(tx + dx, ty + dy))) return true;
+      }
+    }
+    return false;
+  };
+
+  /**
+   * Lay one lane, trimming its ENDS back to the outermost house it serves.
+   *
+   * Ends only, deliberately. A town can be L-shaped — its bounding box takes
+   * in ground that no house could be built on — and a lane crossing that gap
+   * is the street joining the two built parts, so cutting the middle out
+   * would sever the grid. Trimming only the ends removes the part that sticks
+   * out past the last building, which is the bit that reads as a road to
+   * nowhere.
+   */
+  const layLane = (line: [number, number][], overhang: boolean) => {
+    let first = -1, last = -1;
+    for (let i = 0; i < line.length; i++) {
+      if (!nearHouse(line[i][0], line[i][1])) continue;
+      if (first === -1) first = i;
+      last = i;
+    }
+    if (first === -1) return;
+    // Only the EXIT lanes run past the last house.
+    //
+    // Every lane used to, and that littered the ring of land just outside the
+    // town with street tiles at three-tile intervals. Those tiles are
+    // TOWN_OCC, a Factory footprint may not overlap them, and a Factory has to
+    // be able to stand against a town — so the opening corridor from an
+    // industry to a town-adjacent Factory site had almost nowhere to land
+    // (E14's picker reported `factory-not-near-town` on every seed). One exit
+    // per axis is all the inter-town highway needs to find its way in.
+    if (overhang) {
+      first = Math.max(0, first - 1);
+      last = Math.min(line.length - 1, last + 1);
+    }
+    for (let i = first; i <= last; i++) addRoad(line[i][0], line[i][1]);
+  };
+
+  /** The lane nearest the centre on each axis: the town's two through-roads. */
+  const nearestLane = (from: number, to: number, centre: number): number => {
+    let best = centre, bestD = Infinity;
+    for (let v = from; v <= to; v++) {
+      if (!onLane(v, centre)) continue;
+      const d = Math.abs(v - centre);
+      if (d < bestD) { bestD = d; best = v; }
+    }
+    return best;
+  };
+  const exitCol = nearestLane(cx - span, cx + span, cx);
+  const exitRow = nearestLane(cy - span, cy + span, cy);
+
+  for (let lx = cx - span; lx <= cx + span; lx++) {
+    if (!onLane(lx, cx) || lx < hx0 - 1 || lx > hx1 + 1) continue;
+    const line: [number, number][] = [];
+    for (let ty = hy0 - 1; ty <= hy1 + 1; ty++) line.push([lx, ty]);
+    layLane(line, lx === exitCol);
+  }
+  for (let ly = cy - span; ly <= cy + span; ly++) {
+    if (!onLane(ly, cy) || ly < hy0 - 1 || ly > hy1 + 1) continue;
+    const line: [number, number][] = [];
+    for (let tx = hx0 - 1; tx <= hx1 + 1; tx++) line.push([tx, ly]);
+    layLane(line, ly === exitRow);
+  }
+
+  // Drop any street fragment nothing can drive to.
+  //
+  // A lane cut by water at both ends can leave a short piece walled in by its
+  // own two house blocks. The inter-town highway routes over free land and
+  // town streets but never through a house, so such a piece is a street with
+  // no way in — and leaving it in the town's road list is what makes the
+  // "every town on one highway network" invariant fail: the highway cannot
+  // reach it, however the legs are chosen.
+  //
+  // A fragment is kept when it touches the outside world: land that is free
+  // and is neither this town's house nor its street.
+  const roadSet = new Set(roads.map(([rx, ry]) => idx(rx, ry)));
+  const openOutside = (tx: number, ty: number): boolean =>
+    free(tx, ty) && !houseSet.has(idx(tx, ty)) && !roadSet.has(idx(tx, ty));
+  const keep = new Set<number>();
+  const visited = new Set<number>();
+  for (const [rx, ry] of roads) {
+    if (visited.has(idx(rx, ry))) continue;
+    const comp: number[] = [];
+    const stack = [idx(rx, ry)];
+    visited.add(stack[0]);
+    let reachable = false;
+    while (stack.length) {
+      const cur = stack.pop()!;
+      comp.push(cur);
+      const x = cur % MAP_W, y = (cur / MAP_W) | 0;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const nx = x + dx, ny = y + dy;
+        if (openOutside(nx, ny)) reachable = true;
+        const ni = idx(nx, ny);
+        if (!inBounds(nx, ny) || !roadSet.has(ni) || visited.has(ni)) continue;
+        visited.add(ni);
+        stack.push(ni);
+      }
+    }
+    if (reachable) for (const i of comp) keep.add(i);
+  }
+
+  return { houses, roads: roads.filter(([rx, ry]) => keep.has(idx(rx, ry))) };
 }
 
 /** 4-neighbourhood, in a fixed order (keeps every BFS below deterministic). */
@@ -644,18 +846,13 @@ export function publicRoadTiles(
     return terrain[i] !== WATER && occ[i] < 0 && !houses.has(i);
   };
 
-  /** Where a leg may start/end: the town's ring road, else its centre. */
-  const anchorsOf = (t: Town): [number, number][] =>
-    t.roads.length ? t.roads : [[t.tx, t.ty]];
-
-  /** Shortest drivable route between two towns' road networks. */
-  const link = (a: Town, b: Town): [number, number][] => {
-    const targets = new Set<number>(anchorsOf(b).map(([x, y]) => idx(x, y)));
+  /** Shortest drivable route between two road-network components. */
+  const link = (aTiles: number[], bTiles: number[]): [number, number][] => {
+    const targets = new Set<number>(bTiles);
     const prev = new Int32Array(MAP_W * MAP_H).fill(-1);
     const seen = new Uint8Array(MAP_W * MAP_H);
     const queue: number[] = [];
-    for (const [sx, sy] of anchorsOf(a)) {
-      const si = idx(sx, sy);
+    for (const si of aTiles) {
       if (seen[si]) continue;
       seen[si] = 1;
       prev[si] = si;                 // a source is its own parent: "walk back stops"
@@ -686,16 +883,63 @@ export function publicRoadTiles(
   };
 
   // ── the spanning tree ──
-  const cheb = (a: Town, b: Town) => Math.max(Math.abs(a.tx - b.tx), Math.abs(a.ty - b.ty));
-  const inTree: Town[] = [towns[0]];
-  const rest = towns.slice(1);
-  const legs: [Town, Town][] = [];
+  //
+  // Over the road-network COMPONENTS, not over the towns.
+  //
+  // With the grid layout a town's streets are not always one piece: a lane
+  // can be cut by water or by an industry, leaving the settlement with two or
+  // three separate street networks. An MST over towns links one fragment of
+  // each and leaves the rest stranded — the map then has settlements whose
+  // road networks never meet, which is exactly what the "every town on ONE
+  // highway network" invariant is there to catch. Spanning the components
+  // instead makes the invariant hold by construction, and costs nothing on a
+  // map where each town happens to be a single piece.
+  const townTiles: number[] = [];
+  for (const t of towns) for (const [rx, ry] of t.roads) townTiles.push(idx(rx, ry));
+  if (!townTiles.length) return [];
+  // Index order, so component discovery is deterministic.
+  const tileSet = new Set(townTiles);
+  const ordered = [...tileSet].sort((a, b) => a - b);
+  const compOf = new Map<number, number>();
+  const comps: number[][] = [];
+  for (const start of ordered) {
+    if (compOf.has(start)) continue;
+    const comp: number[] = [];
+    const stack = [start];
+    compOf.set(start, comps.length);
+    while (stack.length) {
+      const cur = stack.pop()!;
+      comp.push(cur);
+      const x = cur % MAP_W, y = (cur / MAP_W) | 0;
+      for (const [dx, dy] of DIR4) {
+        const ni = idx(x + dx, y + dy);
+        if (!inBounds(x + dx, y + dy) || !tileSet.has(ni) || compOf.has(ni)) continue;
+        compOf.set(ni, comps.length);
+        stack.push(ni);
+      }
+    }
+    comps.push(comp);
+  }
+
+  /** A component's centroid tile, for the cheap MST distance. */
+  const centreOf = (comp: number[]): [number, number] => {
+    let sx = 0, sy = 0;
+    for (const i of comp) { sx += i % MAP_W; sy += (i / MAP_W) | 0; }
+    return [Math.round(sx / comp.length), Math.round(sy / comp.length)];
+  };
+  const centres = comps.map(centreOf);
+  const cheb = (a: number, b: number) => Math.max(
+    Math.abs(centres[a][0] - centres[b][0]), Math.abs(centres[a][1] - centres[b][1]));
+
+  const inTree = [0];
+  const rest = comps.map((_, i) => i).slice(1);
+  const legs: [number, number][] = [];
   while (rest.length) {
     let bestI = 0, bestFrom = inTree[0], bestD = Infinity;
     for (let i = 0; i < rest.length; i++) {
-      for (const t of inTree) {
-        const d = cheb(rest[i], t);
-        if (d < bestD) { bestD = d; bestI = i; bestFrom = t; }
+      for (const c of inTree) {
+        const d = cheb(rest[i], c);
+        if (d < bestD) { bestD = d; bestI = i; bestFrom = c; }
       }
     }
     legs.push([bestFrom, rest[bestI]]);
@@ -706,7 +950,7 @@ export function publicRoadTiles(
   const out: [number, number][] = [];
   const added = new Set<number>();
   for (const [a, b] of legs) {
-    for (const [tx, ty] of link(a, b)) {
+    for (const [tx, ty] of link(comps[a], comps[b])) {
       const i = idx(tx, ty);
       if (paved.has(i) || added.has(i)) continue;
       added.add(i);
@@ -785,6 +1029,59 @@ function placeTowns(
     return true;
   };
 
+  /**
+   * TOWN-GRID: would this town SEAL A POCKET of buildable land?
+   *
+   * Every free tile must still be able to reach an industry over ground a
+   * road could be built on. A pocket that cannot is an ENCLAVE: land the
+   * rival's search will consider, commit to, and then find has no harvester
+   * spot reachable from it — the W8 invariant `canReachASpot` exists to
+   * guarantee away.
+   *
+   * This did not need guarding when a town was a 6-tile blob. The grid towns
+   * are 13–19 tiles across, and one laid along a coast can close the gap
+   * between itself and the sea. The check is the same shape as
+   * `allIndustriesReachable` above: propose, flood, reject.
+   */
+  const noEnclaves = (blocked: Set<number>): boolean => {
+    const seen = new Uint8Array(MAP_W * MAP_H);
+    const stack: number[] = [];
+    // Flood from the industries — they are what a pocket has to be able to
+    // reach — over anything that is not water, not a town and not proposed.
+    const open = (i: number) =>
+      terrain[i] !== WATER && occ[i] !== TOWN_OCC && !blocked.has(i);
+    for (const ind of industries) {
+      for (let x = ind.tx; x < ind.tx + ind.w; x++) {
+        for (let y = ind.ty; y < ind.ty + ind.h; y++) {
+          const i = idx(x, y);
+          if (seen[i] || !open(i)) continue;
+          seen[i] = 1;
+          stack.push(i);
+        }
+      }
+    }
+    if (!stack.length) return true;
+    while (stack.length) {
+      const cur = stack.pop()!;
+      const x = cur % MAP_W, y = (cur / MAP_W) | 0;
+      for (const [dx, dy] of DIR4) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+        const ni = idx(nx, ny);
+        if (seen[ni] || !open(ni)) continue;
+        seen[ni] = 1;
+        stack.push(ni);
+      }
+    }
+    // Every tile a road could be built on must have been reached.
+    for (let i = 0; i < seen.length; i++) {
+      if (seen[i] || blocked.has(i)) continue;
+      if (terrain[i] === WATER || occ[i] !== -1) continue;
+      return false;
+    }
+    return true;
+  };
+
   for (let t = 0; t < TOWN_COUNT; t++) {
     let placed = false;
     // try candidate centres at relaxing separation
@@ -796,47 +1093,19 @@ function placeTowns(
         if (industrySep(cx, cy) < TOWN_INDUSTRY_SEP) continue;
         if (sep > 0 && townSep(cx, cy) < sep) continue;
 
-        // Build a cluster of houses around (cx, cy) by BFS growth.
-        const nHouses = TOWN_HOUSES_MIN + Math.floor(rng() * (TOWN_HOUSES_MAX - TOWN_HOUSES_MIN + 1));
-        const houses: [number, number][] = [[cx, cy]];
-        const houseSet = new Set<number>([idx(cx, cy)]);
-        let frontier: [number, number][] = [[cx, cy]];
-        while (houses.length < nHouses && frontier.length) {
-          // shuffle frontier so growth isn't biased to one direction
-          for (let i = frontier.length - 1; i > 0; i--) {
-            const j = Math.floor(rng() * (i + 1));
-            [frontier[i], frontier[j]] = [frontier[j], frontier[i]];
-          }
-          const next: [number, number][] = [];
-          for (const [fx, fy] of frontier) {
-            if (houses.length >= nHouses) break;
-            const dirs: [number, number][] = [[0, -1], [1, 0], [0, 1], [-1, 0]];
-            // shuffle directions
-            for (let i = dirs.length - 1; i > 0; i--) {
-              const j = Math.floor(rng() * (i + 1));
-              [dirs[i], dirs[j]] = [dirs[j], dirs[i]];
-            }
-            for (const [dx, dy] of dirs) {
-              const nx = fx + dx, ny = fy + dy;
-              if (!tileFree(nx, ny)) continue;
-              if (houseSet.has(idx(nx, ny))) continue;
-              if (industrySep(nx, ny) < TOWN_INDUSTRY_SEP) continue;
-              houses.push([nx, ny]);
-              houseSet.add(idx(nx, ny));
-              next.push([nx, ny]);
-              if (houses.length >= nHouses) break;
-            }
-          }
-          frontier = next;
-        }
+        // TOWN-GRID: lay the street grid and its house blocks around the
+        // centre. Computed against the CURRENT occupancy, so neither houses
+        // nor streets can overlap an industry or an earlier town (both are
+        // already stamped in `occ`).
+        const span = TOWN_SPAN_MIN + Math.floor(rng() * (TOWN_SPAN_MAX - TOWN_SPAN_MIN + 1));
+        const { houses, roads } = townLayout(
+          cx, cy, span, terrain, occ,
+          // Houses keep the industry buffer; streets do not, exactly as the
+          // ring-and-fill layout behaved — a street may run up to an
+          // industry's edge, a house may not.
+          (hx, hy) => industrySep(hx, hy) >= TOWN_INDUSTRY_SEP,
+        );
         if (houses.length < TOWN_HOUSES_MIN) continue;
-
-        // PP-10: the proposed town's ring road. Computed from the candidate
-        // houses against the CURRENT occupancy, so it never overlaps an
-        // industry or an earlier town (both are stamped in `occ` already),
-        // and it is part of the proposed tiles for the reachability check
-        // below — a closed road loop must never wall off an industry either.
-        const roads = townRoadTiles(houses, terrain, occ);
 
         // Reachability check: the PROPOSED TOWN tiles must not strand any
         // industry. F1 fix: `blocked` holds only the town's house tiles.
@@ -855,6 +1124,7 @@ function placeTowns(
         for (const [hx, hy] of houses) blocked.add(idx(hx, hy));
         for (const [rx, ry] of roads) blocked.add(idx(rx, ry));
         if (!allIndustriesReachable(blocked)) continue;
+        if (!noEnclaves(blocked)) continue;
 
         // Commit: mark tiles with TOWN_OCC so later towns/industries avoid them.
         // PP-10: the road tiles are stamped too — a later town's houses AND
@@ -899,7 +1169,7 @@ export function generateMap(seed: number): Grid {
   // here, once the highways and the town streets are known. Uses the seeded
   // stream (every earlier stage is done drawing from it), so the map is still a
   // pure function of `seed`.
-  applyRoadSpawnBuffer(terrain, occ, list, towns, publicRoads);
+  applyRoadSpawnBuffer(terrain, occ, list, publicRoads);
   // PP-02: guarantee every town can host a Factory. The only thing that could
   // wall a town off from a legal Factory site is ROUGH terrain around it,
   // so flatten the rough in a small ring around every town tile. A town tile
@@ -922,10 +1192,26 @@ export function generateMap(seed: number): Grid {
       }
     }
   }
+  // Coastal repair runs AFTER all seed-derived placement. Only WATER becomes
+  // SAND: existing land, industries, towns and public roads remain identical
+  // to v10, making old solo saves safe to resume on the improved coastline.
+  for (let pass = 0; pass < 2; pass++) {
+    const prev = terrain.slice();
+    for (let y = 1; y < MAP_H - 1; y++) for (let x = 1; x < MAP_W - 1; x++) {
+      if (prev[idx(x, y)] !== WATER) continue;
+      const neighbours = [prev[idx(x - 1, y)], prev[idx(x + 1, y)],
+        prev[idx(x, y - 1)], prev[idx(x, y + 1)]];
+      if (neighbours.filter(v => v !== WATER).length >= 3) terrain[idx(x, y)] = SAND;
+    }
+  }
+  fillCoastalHoles(terrain, MAP_W, MAP_H, WATER, SAND);
+
   return {
     w: MAP_W, h: MAP_H, terrain, industries: list, towns, publicRoads, occupancy: occ, seed: s,
   };
 }
+
+
 
 /**
  * Generate a non-deterministic seed for a random game.

@@ -264,7 +264,7 @@ describe("E10 malformed payloads", () => {
     // (both layers are the same size across versions, so the version gate is
     // what actually keeps mixed-version rooms from silently diverging).
     const old = { ...buildSnapshot(source()), version: 7 };
-    expect(SNAPSHOT_VERSION).toBe(10);
+    expect(SNAPSHOT_VERSION).toBe(11);
     expect(validateSnapshot(old)?.code).toBe("version");
     expect(() => applySnapshot(old)).toThrow(/incompatible version/i);
   });

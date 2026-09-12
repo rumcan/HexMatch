@@ -57,7 +57,7 @@ import type { Cue } from "../audio/cues";
 const CARGO_TO_GEM: Partial<Record<Cargo, ResKey>> = Object.fromEntries(
   Object.entries(GEM_TO_CARGO).map(([gem, cargo]) => [cargo, gem]),
 ) as Partial<Record<Cargo, ResKey>>;
-import { Board, type FxType, type Gem } from "./board";
+import { Board, BOARD_ANIMATION_MS, type FxType, type Gem } from "./board";
 import type { IsoMarket, IsoMarketPlayer, Offer } from "../iso/market";
 import portraitYou from "../assets/ui/tycoon_you_small.png";
 import portraitKrag from "../assets/ui/tycoon_krag.png";
@@ -121,6 +121,10 @@ export interface UiState {
    *  "free setup" while it lasts and the full Oil cost afterwards. */
   freeDepots: number;
   banner: string | null;
+  /** BANNER-ONCE: the stable id behind `banner`. The ✕ dismissal is
+   *  remembered by this, not the exact text, so a closed banner never pops
+   *  back up when its wording changes and returns (tool switch, countdown). */
+  bannerKey: string | null;
   costInfo: string | null;
   inspect: string | null;
   /** PP-03: tones the inspector when it is a placement verdict (e.g. the red
@@ -129,6 +133,13 @@ export interface UiState {
   reach: Partial<Record<Cargo, number>>;
   /** PP-14b: ms left on the Processing Plant reset cooldown (0 = ready). */
   resetIn: number;
+  /**
+   * AI-04: the ★ line this game races to — the difficulty owns it now (5★ on
+   * easy, the shipped `VICTORY.target` elsewhere), so the HUD reads it off the
+   * state instead of the constant. Optional: a state that omits it (an older
+   * test harness) falls back to the shipped line.
+   */
+  vpTarget?: number;
   /** PP-14b: which tycoon portrait the player picked. */
   portrait: Portrait;
 }
@@ -226,6 +237,8 @@ export function createOriginalUi(
 ): OriginalUi {
   const root = h("div", "ui-root");
   root.dataset.view = "map";
+  root.style.setProperty("--gem-move-ms", `${BOARD_ANIMATION_MS.swap}ms`);
+  root.style.setProperty("--gem-clear-ms", `${BOARD_ANIMATION_MS.clear}ms`);
 
   // ── the map slot (original `<canvas id="map">` is now a container for the
   //    iso layer stack: terrain / structures / overlay) ─────────────────────
@@ -453,9 +466,17 @@ export function createOriginalUi(
   // between its pointerdown and pointerup, so a real click could be lost.
   // Render those only when their visible content actually changed.
   // V4: banner dismissal state — paint() runs every frame, so the banner is
-  // rebuilt only when its text changes and a dismissed text stays dismissed.
+  // rebuilt only when its content changes and a dismissal stays dismissed.
+  // BANNER-ONCE: the dismissal is remembered by the banner's stable id
+  // (`dismissedBannerKey`), NOT its exact text. V4's text key let a CLOSED
+  // banner return whenever the wording changed and came back — close the
+  // "Dirt Road scores nothing… 0.25★ a tile" line, switch to the Road tool,
+  // switch back to Dirt, and the very banner the player had just dismissed
+  // was on screen again. Keyed by identity, a closed banner stays closed for
+  // the rest of the game (the ❔ help still re-tells the rules).
   let lastBannerText: string | null = null;
-  let dismissedBanner: string | null = null;
+  let lastBannerKey: string | null = null;
+  let dismissedBannerKey: string | null = null;
   let lastSabKey = "\u0000";
   let lastMarketKey = "\u0000";
 
@@ -916,7 +937,7 @@ export function createOriginalUi(
     gemEls.forEach((elem, id) => {
       if (!present.has(id)) {
         elem.classList.add("gone");
-        setTimeout(() => elem.remove(), 260);
+        setTimeout(() => elem.remove(), BOARD_ANIMATION_MS.clear);
         gemEls.delete(id);
       }
     });
@@ -991,44 +1012,25 @@ export function createOriginalUi(
   // CROSS (3 units) and waits; this panel asks how to spend the units of
   // blessing. Repeats are allowed — tap a cargo to add one unit, tap it again
   // to take one back, up to the cross's total (all of one, 2+2, one of each,
-  // any mix). The confirm enables at exactly that total, and the 8s timer
-  // (the board's own 9s backstop is the second line of defence) auto-confirms
-  // whatever is selected so the cascade always resumes — the board fills any
-  // unspent unit with a random cargo.
-  //
-  // The panel must NEVER vanish "weirdly": clicks anywhere outside it do not
-  // dismiss it, a tab switch that would hide the plant panel is refused while
-  // a pick is pending, and a second cross resolving over an unanswered one
-  // answers the first with its current selection before the new chooser shows.
+  // any mix). Confirmation requires the full allocation. There is no timer:
+  // the panel and paused cascade wait until the player explicitly confirms.
+  // Outside clicks/tab switches cannot dismiss it. Queue additional choices
+  // rather than auto-answering and replacing an unfinished allocation.
   let pickEl: HTMLElement | null = null;
-  let pickTimer = 0;
-  let pickFn: ((chosen: ResKey[]) => void) | null = null;
-  const pickCounts = new Map<ResKey, number>();
+  const pickQueue: { kind: "holy" | "broken"; picks: number; pick: (chosen: ResKey[]) => void }[] = [];
 
   function crossPick(kind: "holy" | "broken", picks: number, pick: (chosen: ResKey[]) => void) {
+    if (pickEl) {
+      pickQueue.push({ kind, picks, pick });
+      return;
+    }
+    const pickCounts = new Map<ResKey, number>();
     const total = () => [...pickCounts.values()].reduce((a, b) => a + b, 0);
     const expand = () => {
       const chosen: ResKey[] = [];
       for (const [res, n] of pickCounts) for (let i = 0; i < n; i++) chosen.push(res);
       return chosen;
     };
-    const close = () => {
-      window.clearTimeout(pickTimer);
-      pickEl?.remove();
-      pickEl = null;
-      pickFn = null;
-    };
-    // A second cross while the first chooser is still open: answer the first
-    // with what was picked so far (the board tops up the rest), so its paused
-    // cascade can never hang, then show the new chooser.
-    if (pickFn) {
-      const prev = pickFn;
-      const chosen = expand();
-      close();
-      prev(chosen);
-    }
-    pickCounts.clear();
-    pickFn = pick;
     const holy = kind === "holy";
     const panel = h("div", `cross-pick${holy ? "" : " broken"}`);
     panel.appendChild(h("div", "cross-pick-title", holy ? "🙏 HOLY CROSS" : "✝ BROKEN CROSS"));
@@ -1077,17 +1079,20 @@ export function createOriginalUi(
       };
       row.appendChild(b);
     }
-    confirm.onclick = () => { pick(expand()); close(); };
+    confirm.onclick = () => {
+      if (pickEl !== panel || total() !== picks) return;
+      const chosen = expand();
+      panel.remove();
+      pickEl = null;
+      pick(chosen);
+      const next = pickQueue.shift();
+      if (next) crossPick(next.kind, next.picks, next.pick);
+    };
     panel.appendChild(row);
     panel.appendChild(count);
     panel.appendChild(confirm);
     boardWrap.appendChild(panel);
     pickEl = panel;
-    pickTimer = window.setTimeout(() => {
-      if (!pickEl) return;
-      pick(expand());
-      close();
-    }, 8000);
   }
 
   function popup(gains: Partial<Record<ResKey, number>>, label: string) {
@@ -1195,7 +1200,11 @@ export function createOriginalUi(
     rivalWire.classList.add("show");
     // One compact line at a time keeps even the longer oil exchange out of the
     // player's way. Replies are never discarded: new scenes join this queue.
-    const readingTime = Math.min(4_200, Math.max(2_400, 1_300 + beat.text.length * 30));
+    // Doubled: the exchange was going past faster than anyone could read it,
+    // and it is dialogue — the whole point of it is to be read. Every term of
+    // the old formula is 2x, so a short jab still clears sooner than a long
+    // one instead of everything sitting at the cap.
+    const readingTime = Math.min(8_400, Math.max(4_800, 2_600 + beat.text.length * 60));
     window.setTimeout(() => {
       rivalWire.classList.remove("show");
       rivalWire.classList.add("leaving");
@@ -1247,7 +1256,7 @@ export function createOriginalUi(
   window.addEventListener("orientationchange", responsiveZoom);
 
   // ── top HUD: chips, VP, kingdoms ──────────────────────────────────────────
-  function renderHUD(purse: Partial<Record<Cargo, number>>, players: UiPlayer[], portrait: Portrait) {
+  function renderHUD(purse: Partial<Record<Cargo, number>>, players: UiPlayer[], portrait: Portrait, target: number) {
     chips.innerHTML = "";
     for (const k of CARGOES) {
       const chip = h("div", "chip");
@@ -1261,9 +1270,12 @@ export function createOriginalUi(
     }
     const meP = players.find((p) => p.human);
     const yourVp = meP?.vp ?? 0;
+    // AI-04: the line the difficulty set (5★ on easy), kept for the help modal
+    // below, which has no state of its own.
+    hudVpTarget = target;
     // The original badge is just a star counter; keeping "You" in it lets the
     // boot/e2e assertions stay unambiguous for the single-player build.
-    vp.innerHTML = `<span class="vp-star">★</span> You ${fmtVp(yourVp)}<span class="vp-tot">/${VICTORY.target}</span>`;
+    vp.innerHTML = `<span class="vp-star">★</span> You ${fmtVp(yourVp)}<span class="vp-tot">/${target}</span>`;
 
     const list = [...players].sort((a, b) => b.vp - a.vp);
     kingdoms.innerHTML = "";
@@ -1284,7 +1296,7 @@ export function createOriginalUi(
         <div class="king-av has-portrait" style="background-image:url(${face})">${p.name[0]}</div>
         <div class="king-mid">
           <div class="king-name">${p.name}${p.human ? " <span class='you'>YOU</span>" : ""}</div>
-          <div class="king-bar"><i style="width:${Math.min(100, (p.vp / VICTORY.target) * 100)}%;background:${p.colour}"></i></div>
+          <div class="king-bar"><i style="width:${Math.min(100, (p.vp / target) * 100)}%;background:${p.colour}"></i></div>
         </div>
         <div class="king-vp">${fmtVp(p.vp)}<small>★</small></div>`;
       kingdoms.appendChild(row);
@@ -1309,7 +1321,7 @@ export function createOriginalUi(
     if (rivalWire.dataset.speaker === "you") {
       rivalWireFace.style.backgroundImage = `url(${rivalWirePlayerPortrait})`;
     }
-    renderHUD(state.purse, state.players, state.portrait);
+    renderHUD(state.purse, state.players, state.portrait, state.vpTarget ?? VICTORY.target);
     // PP-14b: the reset button counts its cooldown down and disables while
     // the plant re-arms.
     const resetLeft = Math.ceil((state.resetIn ?? 0) / 1000);
@@ -1327,24 +1339,28 @@ export function createOriginalUi(
     }
     // V4: the banner's ✕ must stick. paint() runs every frame, so rebuilding
     // the banner (and re-showing it) each frame undid the close click — the
-    // reported "click the X and it stays there". Rebuild only when the text
-    // changes, and remember a dismissed text until the message changes.
-    if (state.banner !== lastBannerText) {
+    // reported "click the X and it stays there". Rebuild only when the content
+    // changes. BANNER-ONCE: and the dismissal is keyed on the stable id, so a
+    // closed banner is gone for good — a text-keyed dismissal came back to
+    // life every time the line's wording changed and returned (see
+    // `dismissedBannerKey`).
+    if (state.banner !== lastBannerText || state.bannerKey !== lastBannerKey) {
       lastBannerText = state.banner;
-      dismissedBanner = null;
-      if (state.banner) {
+      lastBannerKey = state.bannerKey;
+      if (state.banner && dismissedBannerKey !== state.bannerKey) {
         const text = state.banner;
+        const key = state.bannerKey;
         banner.innerHTML = `<button class="banner-close" title="Hide">✕</button>` +
           `<small>${text}</small>`;
         const bx = banner.querySelector(".banner-close") as HTMLElement;
         bx.dataset.sfx = "close";
         bx.onclick = () => {
-          dismissedBanner = text;
+          dismissedBannerKey = key;
           banner.classList.add("hidden");
         };
       }
     }
-    banner.classList.toggle("hidden", !state.banner || dismissedBanner === state.banner);
+    banner.classList.toggle("hidden", !state.banner || dismissedBannerKey === state.bannerKey);
     const toolState = state.tool;
     buildList.querySelectorAll<HTMLElement>("[data-tool]").forEach((b) => {
       b.classList.toggle("active", b.dataset.tool === toolState);
@@ -1420,6 +1436,13 @@ export function createOriginalUi(
   }
 
   // ── help / modals ─────────────────────────────────────────────────────────
+  /**
+   * AI-04: the ★ line the last painted HUD showed, so the help modal's "first
+   * to N★" matches the badge the player is looking at (5★ on easy). Seeded with
+   * the shipped line, which is what it reads before the first paint.
+   */
+  let hudVpTarget: number = VICTORY.target;
+
   function helpModal() {
     sfx.play("open");
     modalRoot.classList.remove("hidden");
@@ -1427,10 +1450,10 @@ export function createOriginalUi(
       <div class="modal-back"></div>
       <div class="modal box">
         <h2>Hexmatch Industries</h2>
-        <p class="sub">Two worlds, one empire: <b>resource node → Depot → transport network → Factory → processing → resources available for construction</b>. First to <b>${VICTORY.target}★ Victory Points</b> wins.</p>
+        <p class="sub">Two worlds, one empire: <b>resource node → Depot → transport network → Factory → processing → resources available for construction</b>. First to <b>${hudVpTarget}★ Victory Points</b> wins.</p>
         <div class="help-cols">
           <div class="help-col"><h3>The Territory</h3><p>Place <b>Depots</b> beside resource nodes to collect their output, then build <b>Dirt Roads</b> &amp; <b>Roads</b> (paved) to carry it to your Factory. The connection sets the multiplier — ×1.0 on gravel, ×1.6 anywhere a paved tile touches the line — and nothing else.</p>
-<p><h3>How you score (VP-01)</h3><p><b>Dirt Roads score nothing.</b> Points come from <b>upgrading</b>: pave a Dirt Road tile into a Road for <b>+${VICTORY.upgrade}★</b> (it costs only ${costCompact(UPGRADE_COST)}, since the gravel is already paid for), and raise a <b>processing plant</b> beside another town for <b>+${VICTORY.plant}★</b>. Four paves to the point; <b>${VICTORY.target}★</b> wins. A Road laid on virgin ground scores nothing — the point is for improving what you built. Tear up a paved tile or demolish a plant and the point goes back.</p><p>Your <b>first Depot is free</b>; every Depot after it costs <b>${costCompact(DEPOT_COST)}</b>, so reaching new industries (or manufacturing in the Processing Plant) is what buys expansion. A Depot you cannot pay for is refused and consumes nothing.</p><p><b>Lorries run 2× faster on paved Roads</b> — paving a lane is both the points and the income (AI-02).</p><p>Pan with the <b>middle mouse button</b> (wheel zooms, touch drags pan). The left button only places or selects — dragging it never pans.</p></div>
+<p><h3>How you score (VP-01)</h3><p><b>Dirt Roads score nothing.</b> Points come from <b>upgrading</b>: pave a Dirt Road tile into a Road for <b>+${VICTORY.upgrade}★</b> (it costs only ${costCompact(UPGRADE_COST)}, since the gravel is already paid for), and raise a <b>processing plant</b> beside another town for <b>+${VICTORY.plant}★</b>. Four paves to the point; <b>${hudVpTarget}★</b> wins. A Road laid on virgin ground scores nothing — the point is for improving what you built. Tear up a paved tile or demolish a plant and the point goes back.</p><p>Your <b>first Depot is free</b>; every Depot after it costs <b>${costCompact(DEPOT_COST)}</b>, so reaching new industries (or manufacturing in the Processing Plant) is what buys expansion. A Depot you cannot pay for is refused and consumes nothing.</p><p><b>Lorries run 2× faster on paved Roads</b> — paving a lane is both the points and the income (AI-02).</p><p>Pan with the <b>middle mouse button</b> (wheel zooms, touch drags pan). The left button only places or selects — dragging it never pans.</p></div>
           <div class="help-col"><h3>The Processing Plant</h3><p>Where your Factory turns delivered cargo into resources available for construction. Match tokens to process: a colour only pays when your network reaches its industry. Match 4 doubles, match 5 makes a <b>bomb</b>. <b>Gold</b> 🪙 is its own colour — its gems drop only while a depot sits beside a gold mine (and pay once it's connected).</p></div>
           <div class="help-col"><h3>Gold, Trade & Defence</h3><p>Earn <b>gold</b> from gold-mine access or combos. <b>Gold is reserved for Black Market sabotage</b> — it never buys construction, cannot substitute for missing materials, and is refused by every market exchange. Security Forces and Repair Crew are hired with ordinary materials. A <b>Protest</b> ✊ shuts any public road for 2:00 — every truck stops, including your own.</p></div>
         </div>

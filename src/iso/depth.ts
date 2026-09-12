@@ -8,8 +8,7 @@
 //           wrong for multi-tile footprints.
 //   Tier 2  build an "is behind" DAG over ONLY the sprites whose screen
 //           bounding boxes actually intersect and topologically sort that
-//           subset. n stays in the low tens because the input is already
-//           culled.
+//           subset. A sweep rejects disjoint X bounds before pair testing.
 //   Tier 3  cyclic overlap is unfixable by ordering; fall back to the Tier-1
 //           key for the members of the cycle and report it so the offending
 //           sprite can be cut into `slices` at slice time.
@@ -65,6 +64,18 @@ export interface Placed extends DrawItem {
  * (tx + fw - 1, ty + fh - 1). Building-layer sprites (def.center) instead
  * land on the footprint's CENTRE — the bbox centre — so free-placed building
  * art sits concentric with its tiles and does not snap to the grid.
+ *
+ * The south branch used to add HW as well, which is NOT the south vertex —
+ * it is half a tile east of it, and it made the docstring above a lie. Every
+ * cell in the monolith atlas is a 64×32 diamond anchored [32,31], so that
+ * offset put the whole sheet half a tile east of the pattern-painted ground
+ * and of the `def.center` buildings. Nothing showed it while the sheet was
+ * self-consistent — the old road sprites were off by the same amount as the
+ * lorries driving on them, and grass has no features to be off against — but
+ * the ground-plane vector roads agree with the ground, so the error surfaced
+ * as the hover highlight sitting on a grid line instead of over the tile it
+ * had selected, and as lorries driving beside their road. Removed here, at
+ * the one place it came from, rather than compensated for at each caller.
  */
 export function drawOrigin(def: SpriteDef, tx: number, ty: number): [number, number] {
   const [fw, fh] = def.footprint;
@@ -77,7 +88,7 @@ export function drawOrigin(def: SpriteDef, tx: number, ty: number): [number, num
     const cy = sy + TILE_H - (fw + fh) * (HH / 2);
     return [cx - def.anchor[0], cy - def.anchor[1]];
   }
-  return [sx + HW - def.anchor[0], sy + TILE_H - def.anchor[1]];
+  return [sx - def.anchor[0], sy + TILE_H - def.anchor[1]];
 }
 
 /**
@@ -86,8 +97,25 @@ export function drawOrigin(def: SpriteDef, tx: number, ty: number): [number, num
  * the ground point a vehicle drives on — not on any footprint corner.
  */
 export function drawOriginMoving(def: SpriteDef, fx: number, fy: number): [number, number] {
-  const [sx, sy] = tileToScreen(fx, fy);   // the fractional diamond's top vertex
-  return [sx + HW - def.anchor[0], sy + HH - def.anchor[1]];
+  const [sx, sy] = tileToScreen(fx, fy);   // the fractional diamond's TOP vertex
+  // The anchor lands on the diamond's CENTRE, which is (0, HH) from the top
+  // vertex — the same point `tileDiamondWorld` centres a tile on and the same
+  // point a centre-anchored building is placed at.
+  //
+  // This used to add HW as well, putting the wheels on the diamond's EAST
+  // vertex: half a tile east of the tile the lorry was on, and on the corner
+  // where four tiles meet. It looked right because the old road SPRITES were
+  // drawn with the same offset — every sprite in the monolith atlas is
+  // anchored [32,31] on a 64px cell, which lands it half a tile east of where
+  // the pattern-painted ground puts that tile. The two errors cancelled, so
+  // lorries sat neatly on sprite roads while both sat half a tile off the
+  // ground underneath them.
+  //
+  // Nothing cancels it now: the vector roads are generated from the ground
+  // plane and agree with the ground and the buildings. So the offset came out
+  // of the lorries, and then out of `drawOrigin` too — see the note there.
+  // Every layer now measures from the same ground plane.
+  return [sx - def.anchor[0], sy + HH - def.anchor[1]];
 }
 
 /** True when a draw item is a moving (fractionally placed) sprite. */
@@ -174,15 +202,27 @@ export function depthSort(items: Placed[]): SortResult {
   const edges: number[][] = Array.from({ length: n }, () => []);
   const indeg = new Int32Array(n);
   let anyEdge = false;
-  for (let i = 0; i < n; i++) {
-    for (let j = i + 1; j < n; j++) {
+  // Sweep world-space X bounds. Only active (X-overlapping) boxes need
+  // the exact intersection test. Indices remain Tier-1 indices, including
+  // the old directional-test precedence, regardless of sweep order.
+  const sweep = Array.from({ length: n }, (_, i) => i)
+    .sort((i, j) => base[i].wx - base[j].wx || i - j);
+  const active: number[] = [];
+  for (const current of sweep) {
+    let kept = 0;
+    for (const previous of active) {
+      if (base[previous].wx + base[previous].w <= base[current].wx) continue;
+      active[kept++] = previous;
+      const i = Math.min(previous, current), j = Math.max(previous, current);
       if (!boxesIntersect(base[i], base[j])) continue;
-      let a = -1, b = -1;
+      let a: number, b: number;
       if (isBehind(base[i], base[j])) { a = i; b = j; }
       else if (isBehind(base[j], base[i])) { a = j; b = i; }
       else continue;
       edges[a].push(b); indeg[b]++; anyEdge = true;
     }
+    active.length = kept;
+    active.push(current);
   }
   if (!anyEdge) return { order: base, cycles };
 
@@ -190,15 +230,42 @@ export function depthSort(items: Placed[]): SortResult {
   // degrades gracefully to Tier 1 where the DAG is silent.
   const out: Placed[] = [];
   const ready: number[] = [];
+  // Min-heap: choose the same smallest ready index as the original
+  // repeated sort/shift, without sorting the whole frontier for each sprite.
+  const push = (value: number) => {
+    let i = ready.length;
+    ready.push(value);
+    while (i > 0) {
+      const parent = (i - 1) >>> 1;
+      if (ready[parent] <= value) break;
+      ready[i] = ready[parent];
+      i = parent;
+    }
+    ready[i] = value;
+  };
+  const pop = () => {
+    const first = ready[0], last = ready.pop()!;
+    if (ready.length) {
+      let i = 0;
+      while (i * 2 + 1 < ready.length) {
+        let child = i * 2 + 1;
+        if (child + 1 < ready.length && ready[child + 1] < ready[child]) child++;
+        if (ready[child] >= last) break;
+        ready[i] = ready[child];
+        i = child;
+      }
+      ready[i] = last;
+    }
+    return first;
+  };
   const done = new Uint8Array(n);
   for (let i = 0; i < n; i++) if (indeg[i] === 0) ready.push(i);
   while (ready.length) {
     // pick the Tier-1-smallest ready node (indices are already Tier-1 sorted)
-    ready.sort((p, q) => p - q);
-    const i = ready.shift()!;
+    const i = pop();
     done[i] = 1;
     out.push(base[i]);
-    for (const j of edges[i]) if (--indeg[j] === 0) ready.push(j);
+    for (const j of edges[i]) if (--indeg[j] === 0) push(j);
   }
 
   if (out.length < n) {

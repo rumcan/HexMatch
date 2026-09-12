@@ -134,6 +134,47 @@ export const canPlacePlant = (
   grid: Grid, track: Track, state: EconomyState, tx: number, ty: number,
 ): boolean => plantRefusal(grid, track, state, tx, ty) === null;
 
+/**
+ * A town click means "build beside this town", not "bulldoze this house".
+ * Resolve it to the closest legal footprint touching THAT town. Non-town
+ * targets remain exact, so clicking an industry/road/building cannot silently
+ * move the purchase elsewhere. Used by both hover and click via pickForAction.
+ * A null result means this town has no available plant site.
+ */
+export function resolvePlantTarget(
+  grid: Grid, track: Track, state: EconomyState, tx: number, ty: number,
+): [number, number] | null {
+  if (!inBounds(tx, ty) || grid.occupancy[idx(tx, ty)] !== TOWN_OCC) return [tx, ty];
+  const town = grid.towns.find((t) => townHasTile(t, tx, ty));
+  if (!town) return null;
+  const [fw, fh] = FACTORY_FOOTPRINT;
+  let best: [number, number] | null = null;
+  let bestDistance = Infinity;
+  const seen = new Set<number>();
+  // Any legal footprint sharing an edge with a town tile must have an
+  // origin in this range. Enumerate the boundary, not the entire map.
+  for (const [hx, hy] of [[town.tx, town.ty], ...town.houses, ...(town.roads ?? [])]) {
+    for (let dy = -fh; dy <= 1; dy++) {
+      for (let dx = -fw; dx <= 1; dx++) {
+        const x = hx + dx, y = hy + dy;
+        if (!inBounds(x, y)) continue;
+        const key = idx(x, y);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        if (plantRefusal(grid, track, state, x, y) !== null) continue;
+        // Match addPlant's deterministic town association, including ties.
+        if (adjacentTown(grid, x, y)?.id !== town.id) continue;
+        const distance = Math.abs(x + (fw - 1) / 2 - tx) + Math.abs(y + (fh - 1) / 2 - ty);
+        if (distance < bestDistance || (distance === bestDistance
+          && (!best || key < idx(best[0], best[1])))) {
+          best = [x, y]; bestDistance = distance;
+        }
+      }
+    }
+  }
+  return best;
+}
+
 /** Every plant a player owns (the starting Factory is plant #0). */
 export const plantsOf = (state: EconomyState, owner: string): Factory[] =>
   state.factories.filter((f) => f.owner === owner);
