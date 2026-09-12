@@ -8,10 +8,14 @@
       ],
       "anchor": [
         96,
-        76
+        54
       ],
-      "w": 190,
-      "h": 94
+      "w": 192,
+      "h": 102,
+      "canvas": [
+        400,
+        384
+      ]
     },
     "town_house_c": {
       "footprint": [
@@ -20,792 +24,16 @@
       ],
       "anchor": [
         33,
-        62
+        54
       ],
       "w": 66,
-      "h": 78
-    },
-    "town_house_pool": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        32,
-        34
-      ],
-      "w": 62,
-      "h": 50
-    },
-    "farm": {
-      "footprint": [
-        4,
-        4
-      ],
-      "anchor": [
-        114,
-        70
-      ],
-      "w": 228,
-      "h": 134,
+      "h": 70,
       "canvas": [
-        512,
-        512
-      ]
-    },
-    "forest": {
-      "footprint": [
-        4,
-        4
-      ],
-      "anchor": [
-        128,
-        98
-      ],
-      "w": 256,
-      "h": 162,
-      "canvas": [
-        528,
-        512
-      ]
-    },
-    "ore_mine": {
-      "footprint": [
-        3,
-        3
-      ],
-      "anchor": [
-        112,
-        70
-      ],
-      "w": 224,
-      "h": 118,
-      "canvas": [
-        464,
-        384
-      ]
-    },
-    "quarry": {
-      "footprint": [
-        3,
-        3
-      ],
-      "anchor": [
-        112,
-        86
-      ],
-      "w": 224,
-      "h": 134,
-      "canvas": [
-        464,
-        384
-      ]
-    },
-    "gold_mine": {
-      "footprint": [
-        4,
-        4
-      ],
-      "anchor": [
-        128,
-        82
-      ],
-      "w": 256,
-      "h": 146,
-      "canvas": [
-        528,
-        512
-      ]
-    },
-    "factory": {
-      "footprint": [
-        3,
-        3
-      ],
-      "anchor": [
-        112,
-        100
-      ],
-      "w": 224,
-      "h": 148,
-      "canvas": [
-        464,
-        384
-      ]
-    },
-    "town_center": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        32,
-        40
-      ],
-      "w": 64,
-      "h": 56,
-      "canvas": [
-        144,
-        128
-      ]
-    },
-    "depot_grain": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        63,
-        56
-      ],
-      "w": 126,
-      "h": 72,
-      "canvas": [
-        268,
+        148,
         148
       ]
     },
-    "depot_wood": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        32,
-        20
-      ],
-      "w": 64,
-      "h": 36,
-      "canvas": [
-        144,
-        128
-      ]
-    },
-    "depot_ore": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        48,
-        40
-      ],
-      "w": 96,
-      "h": 56,
-      "canvas": [
-        208,
-        128
-      ]
-    },
-    "depot_stone": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        48,
-        36
-      ],
-      "w": 96,
-      "h": 52,
-      "canvas": [
-        208,
-        128
-      ]
-    },
-    "depot_oil": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        29,
-        46
-      ],
-      "w": 58,
-      "h": 62,
-      "canvas": [
-        132,
-        132
-      ]
-    },
-    "depot_gold": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        63,
-        54
-      ],
-      "w": 126,
-      "h": 70,
-      "canvas": [
-        268,
-        144
-      ]
-    },
-    "town_offices_1423": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        32,
-        76
-      ],
-      "w": 64,
-      "h": 92,
-      "canvas": [
-        144,
-        188
-      ]
-    },
-    "town_office_1460": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        28,
-        50
-      ],
-      "w": 56,
-      "h": 66,
-      "canvas": [
-        128,
-        136
-      ]
-    },
-    "town_flats_trop_1x1_4": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        32,
-        62
-      ],
-      "w": 64,
-      "h": 78,
-      "canvas": [
-        144,
-        160
-      ]
-    },
-    "town_flats_trop_1x1_7": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        32,
-        80
-      ],
-      "w": 64,
-      "h": 96,
-      "canvas": [
-        144,
-        200
-      ]
-    },
-    "town_cottage_arctic_1x1_1": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        32,
-        18
-      ],
-      "w": 64,
-      "h": 34,
-      "canvas": [
-        144,
-        128
-      ]
-    },
-    "town_flats_arctic_1x1_1": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        32,
-        98
-      ],
-      "w": 64,
-      "h": 114,
-      "canvas": [
-        144,
-        236
-      ]
-    },
-    "town_flats_arctic_1x1_2": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        32,
-        104
-      ],
-      "w": 64,
-      "h": 120,
-      "canvas": [
-        144,
-        244
-      ]
-    },
-    "town_fountain_1x1": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        32,
-        26
-      ],
-      "w": 64,
-      "h": 42,
-      "canvas": [
-        144,
-        128
-      ]
-    },
-    "town_house_arctic_1x1_5": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        32,
-        36
-      ],
-      "w": 64,
-      "h": 52,
-      "canvas": [
-        144,
-        128
-      ]
-    },
-    "town_shops_arctic_1x1_2": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        28,
-        60
-      ],
-      "w": 56,
-      "h": 76,
-      "canvas": [
-        128,
-        156
-      ]
-    },
-    "town_small_flat_1x1_1": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        32,
-        30
-      ],
-      "w": 64,
-      "h": 46,
-      "canvas": [
-        144,
-        128
-      ]
-    },
-    "town_small_flat_1x1_2": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        32,
-        20
-      ],
-      "w": 64,
-      "h": 36,
-      "canvas": [
-        144,
-        128
-      ]
-    },
-    "town_small_house_1x1_1": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        32,
-        28
-      ],
-      "w": 64,
-      "h": 44,
-      "canvas": [
-        144,
-        128
-      ]
-    },
-    "town_small_house_arctic_1x1_2": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        32,
-        26
-      ],
-      "w": 64,
-      "h": 42,
-      "canvas": [
-        144,
-        128
-      ]
-    },
-    "town_townhouse_garden_2": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        32,
-        24
-      ],
-      "w": 64,
-      "h": 40,
-      "canvas": [
-        144,
-        128
-      ]
-    },
-    "town_townhouse_gardens_2": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        32,
-        18
-      ],
-      "w": 64,
-      "h": 34,
-      "canvas": [
-        144,
-        128
-      ]
-    },
-    "town_flats_trop_2x1_6": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        48,
-        118
-      ],
-      "w": 96,
-      "h": 134,
-      "canvas": [
-        208,
-        272
-      ]
-    },
-    "town_flats_arctic_2x1_1": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        48,
-        46
-      ],
-      "w": 96,
-      "h": 62,
-      "canvas": [
-        208,
-        128
-      ]
-    },
-    "town_flats_arctic_2x1_2": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        48,
-        98
-      ],
-      "w": 96,
-      "h": 114,
-      "canvas": [
-        208,
-        232
-      ]
-    },
-    "town_townhouse_3": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        18,
-        22
-      ],
-      "w": 36,
-      "h": 38,
-      "canvas": [
-        128,
-        128
-      ]
-    },
-    "town_townhouse_garden_3": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        32,
-        26
-      ],
-      "w": 64,
-      "h": 42,
-      "canvas": [
-        144,
-        128
-      ]
-    },
-    "town_bank": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        48,
-        50
-      ],
-      "w": 96,
-      "h": 66,
-      "canvas": [
-        208,
-        140
-      ]
-    },
-    "town_cinema": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        32,
-        44
-      ],
-      "w": 64,
-      "h": 60,
-      "canvas": [
-        144,
-        128
-      ]
-    },
-    "town_flats": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        32,
-        42
-      ],
-      "w": 64,
-      "h": 58,
-      "canvas": [
-        144,
-        128
-      ]
-    },
-    "town_flats_2": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        32,
-        26
-      ],
-      "w": 64,
-      "h": 42,
-      "canvas": [
-        144,
-        128
-      ]
-    },
-    "town_flats_4": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        38,
-        68
-      ],
-      "w": 76,
-      "h": 84,
-      "canvas": [
-        168,
-        172
-      ]
-    },
-    "town_flats_grey": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        31,
-        64
-      ],
-      "w": 62,
-      "h": 80,
-      "canvas": [
-        140,
-        168
-      ]
-    },
-    "town_hotel": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        45,
-        76
-      ],
-      "w": 90,
-      "h": 92,
-      "canvas": [
-        196,
-        192
-      ]
-    },
-    "town_shops_modern": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        28,
-        54
-      ],
-      "w": 56,
-      "h": 70,
-      "canvas": [
-        128,
-        144
-      ]
-    },
-    "town_house_modern": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        29,
-        28
-      ],
-      "w": 58,
-      "h": 44,
-      "canvas": [
-        132,
-        128
-      ]
-    },
-    "town_house_modern_2": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        32,
-        28
-      ],
-      "w": 64,
-      "h": 44,
-      "canvas": [
-        144,
-        128
-      ]
-    },
-    "town_office_tower_modern": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        32,
-        106
-      ],
-      "w": 64,
-      "h": 122,
-      "canvas": [
-        144,
-        248
-      ]
-    },
-    "town_shops_offices": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        32,
-        70
-      ],
-      "w": 64,
-      "h": 86,
-      "canvas": [
-        144,
-        180
-      ]
-    },
-    "town_shops_offices_2": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        32,
-        60
-      ],
-      "w": 64,
-      "h": 76,
-      "canvas": [
-        144,
-        156
-      ]
-    },
-    "town_cottage_old_small_a": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        32,
-        20
-      ],
-      "w": 64,
-      "h": 36,
-      "canvas": [
-        144,
-        128
-      ]
-    },
-    "town_cottage_old_small": {
+    "town_house_pool": {
       "footprint": [
         1,
         1
@@ -821,7 +49,327 @@
         128
       ]
     },
-    "town_cottage_old_small_2": {
+    "farm": {
+      "footprint": [
+        4,
+        4
+      ],
+      "anchor": [
+        114,
+        56
+      ],
+      "w": 228,
+      "h": 120,
+      "canvas": [
+        512,
+        512
+      ]
+    },
+    "forest": {
+      "footprint": [
+        4,
+        4
+      ],
+      "anchor": [
+        128,
+        60
+      ],
+      "w": 256,
+      "h": 124,
+      "canvas": [
+        528,
+        512
+      ]
+    },
+    "ore_mine": {
+      "footprint": [
+        3,
+        3
+      ],
+      "anchor": [
+        112,
+        108
+      ],
+      "w": 224,
+      "h": 156,
+      "canvas": [
+        464,
+        384
+      ]
+    },
+    "quarry": {
+      "footprint": [
+        3,
+        3
+      ],
+      "anchor": [
+        112,
+        94
+      ],
+      "w": 224,
+      "h": 142,
+      "canvas": [
+        464,
+        384
+      ]
+    },
+    "gold_mine": {
+      "footprint": [
+        4,
+        4
+      ],
+      "anchor": [
+        128,
+        64
+      ],
+      "w": 256,
+      "h": 128,
+      "canvas": [
+        528,
+        512
+      ]
+    },
+    "factory": {
+      "footprint": [
+        3,
+        3
+      ],
+      "anchor": [
+        112,
+        106
+      ],
+      "w": 224,
+      "h": 154,
+      "canvas": [
+        464,
+        384
+      ]
+    },
+    "town_center": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        20
+      ],
+      "w": 64,
+      "h": 36,
+      "canvas": [
+        144,
+        128
+      ]
+    },
+    "depot_grain": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        63,
+        46
+      ],
+      "w": 126,
+      "h": 62,
+      "canvas": [
+        268,
+        132
+      ]
+    },
+    "depot_wood": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        22
+      ],
+      "w": 64,
+      "h": 38,
+      "canvas": [
+        144,
+        128
+      ]
+    },
+    "depot_ore": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        48,
+        36
+      ],
+      "w": 96,
+      "h": 52,
+      "canvas": [
+        208,
+        128
+      ]
+    },
+    "depot_stone": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        48,
+        30
+      ],
+      "w": 96,
+      "h": 46,
+      "canvas": [
+        208,
+        128
+      ]
+    },
+    "depot_oil": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        29,
+        14
+      ],
+      "w": 58,
+      "h": 30,
+      "canvas": [
+        132,
+        128
+      ]
+    },
+    "depot_gold": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        63,
+        48
+      ],
+      "w": 126,
+      "h": 64,
+      "canvas": [
+        268,
+        132
+      ]
+    },
+    "town_offices_1423": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        72
+      ],
+      "w": 64,
+      "h": 88,
+      "canvas": [
+        144,
+        180
+      ]
+    },
+    "town_office_1460": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        28,
+        40
+      ],
+      "w": 56,
+      "h": 56,
+      "canvas": [
+        128,
+        128
+      ]
+    },
+    "town_flats_trop_1x1_4": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        58
+      ],
+      "w": 64,
+      "h": 74,
+      "canvas": [
+        144,
+        156
+      ]
+    },
+    "town_flats_trop_1x1_7": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        60
+      ],
+      "w": 64,
+      "h": 76,
+      "canvas": [
+        144,
+        160
+      ]
+    },
+    "town_cottage_arctic_1x1_1": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        14
+      ],
+      "w": 64,
+      "h": 30,
+      "canvas": [
+        144,
+        128
+      ]
+    },
+    "town_flats_arctic_1x1_1": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        64
+      ],
+      "w": 62,
+      "h": 80,
+      "canvas": [
+        144,
+        164
+      ]
+    },
+    "town_flats_arctic_1x1_2": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        78
+      ],
+      "w": 64,
+      "h": 94,
+      "canvas": [
+        144,
+        196
+      ]
+    },
+    "town_fountain_1x1": {
       "footprint": [
         1,
         1
@@ -837,39 +385,119 @@
         128
       ]
     },
-    "town_shop_small": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        24,
-        30
-      ],
-      "w": 48,
-      "h": 46,
-      "canvas": [
-        128,
-        128
-      ]
-    },
-    "town_house_swiss": {
+    "town_house_arctic_1x1_5": {
       "footprint": [
         1,
         1
       ],
       "anchor": [
         32,
-        32
+        18
       ],
       "w": 64,
-      "h": 48,
+      "h": 34,
       "canvas": [
         144,
         128
       ]
     },
-    "town_cottage_tall": {
+    "town_shops_arctic_1x1_2": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        28,
+        46
+      ],
+      "w": 56,
+      "h": 62,
+      "canvas": [
+        128,
+        132
+      ]
+    },
+    "town_small_flat_1x1_1": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        20
+      ],
+      "w": 64,
+      "h": 36,
+      "canvas": [
+        144,
+        128
+      ]
+    },
+    "town_small_flat_1x1_2": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        14
+      ],
+      "w": 64,
+      "h": 30,
+      "canvas": [
+        144,
+        128
+      ]
+    },
+    "town_small_house_1x1_1": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        16
+      ],
+      "w": 64,
+      "h": 32,
+      "canvas": [
+        144,
+        128
+      ]
+    },
+    "town_small_house_arctic_1x1_2": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        24
+      ],
+      "w": 64,
+      "h": 40,
+      "canvas": [
+        144,
+        128
+      ]
+    },
+    "town_townhouse_garden_2": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        26
+      ],
+      "w": 64,
+      "h": 42,
+      "canvas": [
+        144,
+        128
+      ]
+    },
+    "town_townhouse_gardens_2": {
       "footprint": [
         1,
         1
@@ -885,6 +513,390 @@
         128
       ]
     },
+    "town_flats_trop_2x1_6": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        48,
+        72
+      ],
+      "w": 96,
+      "h": 88,
+      "canvas": [
+        208,
+        180
+      ]
+    },
+    "town_flats_arctic_2x1_1": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        48,
+        30
+      ],
+      "w": 96,
+      "h": 46,
+      "canvas": [
+        208,
+        128
+      ]
+    },
+    "town_flats_arctic_2x1_2": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        48,
+        110
+      ],
+      "w": 96,
+      "h": 126,
+      "canvas": [
+        208,
+        256
+      ]
+    },
+    "town_townhouse_3": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        18,
+        20
+      ],
+      "w": 36,
+      "h": 36,
+      "canvas": [
+        128,
+        128
+      ]
+    },
+    "town_townhouse_garden_3": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        18
+      ],
+      "w": 64,
+      "h": 34,
+      "canvas": [
+        144,
+        128
+      ]
+    },
+    "town_bank": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        48,
+        38
+      ],
+      "w": 96,
+      "h": 54,
+      "canvas": [
+        208,
+        128
+      ]
+    },
+    "town_cinema": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        18
+      ],
+      "w": 64,
+      "h": 34,
+      "canvas": [
+        144,
+        128
+      ]
+    },
+    "town_flats": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        36
+      ],
+      "w": 64,
+      "h": 52,
+      "canvas": [
+        144,
+        128
+      ]
+    },
+    "town_flats_2": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        18
+      ],
+      "w": 64,
+      "h": 34,
+      "canvas": [
+        144,
+        128
+      ]
+    },
+    "town_flats_4": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        38,
+        88
+      ],
+      "w": 76,
+      "h": 104,
+      "canvas": [
+        168,
+        212
+      ]
+    },
+    "town_flats_grey": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        31,
+        44
+      ],
+      "w": 62,
+      "h": 60,
+      "canvas": [
+        140,
+        128
+      ]
+    },
+    "town_hotel": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        45,
+        58
+      ],
+      "w": 90,
+      "h": 74,
+      "canvas": [
+        196,
+        156
+      ]
+    },
+    "town_shops_modern": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        28,
+        40
+      ],
+      "w": 56,
+      "h": 56,
+      "canvas": [
+        128,
+        128
+      ]
+    },
+    "town_house_modern": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        29,
+        14
+      ],
+      "w": 58,
+      "h": 30,
+      "canvas": [
+        132,
+        128
+      ]
+    },
+    "town_house_modern_2": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        18
+      ],
+      "w": 64,
+      "h": 34,
+      "canvas": [
+        144,
+        128
+      ]
+    },
+    "town_office_tower_modern": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        76
+      ],
+      "w": 64,
+      "h": 92,
+      "canvas": [
+        144,
+        192
+      ]
+    },
+    "town_shops_offices": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        66
+      ],
+      "w": 64,
+      "h": 82,
+      "canvas": [
+        144,
+        172
+      ]
+    },
+    "town_shops_offices_2": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        54
+      ],
+      "w": 64,
+      "h": 70,
+      "canvas": [
+        144,
+        148
+      ]
+    },
+    "town_cottage_old_small_a": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        18
+      ],
+      "w": 64,
+      "h": 34,
+      "canvas": [
+        144,
+        128
+      ]
+    },
+    "town_cottage_old_small": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        18
+      ],
+      "w": 64,
+      "h": 34,
+      "canvas": [
+        144,
+        128
+      ]
+    },
+    "town_cottage_old_small_2": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        16
+      ],
+      "w": 64,
+      "h": 32,
+      "canvas": [
+        144,
+        128
+      ]
+    },
+    "town_shop_small": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        24,
+        26
+      ],
+      "w": 48,
+      "h": 42,
+      "canvas": [
+        128,
+        128
+      ]
+    },
+    "town_house_swiss": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        14
+      ],
+      "w": 64,
+      "h": 30,
+      "canvas": [
+        144,
+        128
+      ]
+    },
+    "town_cottage_tall": {
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        32,
+        40
+      ],
+      "w": 64,
+      "h": 56,
+      "canvas": [
+        144,
+        128
+      ]
+    },
     "town_offices_tall": {
       "footprint": [
         1,
@@ -892,13 +904,13 @@
       ],
       "anchor": [
         31,
-        82
+        74
       ],
       "w": 62,
-      "h": 98,
+      "h": 90,
       "canvas": [
         140,
-        204
+        184
       ]
     },
     "town_flats_townhouse_tall": {
@@ -908,13 +920,13 @@
       ],
       "anchor": [
         24,
-        54
+        50
       ],
       "w": 48,
-      "h": 70,
+      "h": 66,
       "canvas": [
         128,
-        148
+        140
       ]
     }
   }
