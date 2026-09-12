@@ -47,6 +47,20 @@ import {
   DEFAULT_ROAD_STYLE, RoadCache,
   type RoadCacheStats, type RoadRenderMode, type RoadStyle,
 } from "./road-renderer";
+import {
+  PlacementOverlay, sceneFromItems,
+  type GhostSpec, type OverlayStats,
+} from "./overlay-art";
+
+/**
+ * Which placement-overlay implementation is live. Same A/B seam the roads
+ * have (`RoadRenderMode`): `vector` paints the highlight as geometry
+ * (`overlay-art.ts`) and is the default; `sprites` blits the four baked atlas
+ * cells the way the overlay always did, kept as a rollback and for comparison
+ * through `__iso.highlightMode('sprites')`. Renderer state only — never
+ * persisted, never on the wire.
+ */
+export type HighlightRenderMode = "sprites" | "vector";
 
 /**
  * Ground texture scale relative to world pixels: one texture pixel covers
@@ -334,8 +348,19 @@ export interface RenderDiagnostics {
     depthKey: number;
   }[];
   sourceRect: { sprite: string; frames: number; raw: [number, number, number, number]; packed: [number, number, number, number] }[];
+  /**
+   * The placement overlay's last frame: which implementation drew it and what
+   * it painted. A screenshot of a placement therefore carries the tile counts
+   * behind the glow, the same way `structures` carries the draw rects.
+   */
+  overlay: OverlayDiagnostics;
   warnings: string[];
 }
+
+/** What the overlay layer drew last frame: the vector scene, or the blit count. */
+export type OverlayDiagnostics =
+  | OverlayStats
+  | { mode: "sprites"; painted: number };
 
 export class IsoRenderer {
   readonly atlas: Atlas;
@@ -399,6 +424,13 @@ export class IsoRenderer {
   private roadStyle: RoadStyle = DEFAULT_ROAD_STYLE;
   private roadCache = new RoadCache();
   private roadBlits = 0;
+  // ── placement overlay ───────────────────────────────────────────────────
+  /** Vector by default; `sprites` is the baked-cell rollback (see the type). */
+  private highlightMode: HighlightRenderMode = "vector";
+  /** The vector painter and its ghost cache — one per renderer. */
+  private readonly overlayArt = new PlacementOverlay();
+  /** How many overlay items the last frame blitted as sprites (0 in vector mode). */
+  private overlayBlits = 0;
   /**
    * A copy of the road bytes as they were when the caches were last valid.
    *
@@ -561,6 +593,40 @@ export class IsoRenderer {
       },
       blitsLastFrame: this.roadBlits,
       cache: this.roadCache.stats(),
+    };
+  }
+
+  // ── placement overlay ───────────────────────────────────────────────────
+  /**
+   * Which placement-overlay implementation to draw. A/B switch, exactly like
+   * `setRoadMode`: renderer state, never persisted, never simulated — both
+   * players place by the same rules whatever they are looking at.
+   */
+  setHighlightMode(mode: HighlightRenderMode): void {
+    this.highlightMode = mode;
+  }
+
+  get highlightRenderMode(): HighlightRenderMode { return this.highlightMode; }
+
+  /**
+   * QoL: freeze the overlay's pulse, marching reach band and ghost bob for
+   * players who ask the OS to reduce motion. Colours, shapes and positions are
+   * untouched — only the movement goes.
+   */
+  setOverlayMotion(on: boolean): void {
+    this.overlayArt.reducedMotion = !on;
+  }
+
+  /** Overlay mode + last frame's paint facts, for `__iso.rendering()`. */
+  overlayDiagnostics(): OverlayDiagnostics {
+    if (this.highlightMode === "sprites") {
+      return { mode: "sprites", painted: this.overlayBlits };
+    }
+    // Nothing painted yet (no frame since boot) still answers as a vector
+    // overlay with an empty scene, rather than as "no overlay at all".
+    return this.overlayArt.stats ?? {
+      mode: "vector", footprint: 0, blocked: 0, reach: 0, nodes: 0,
+      loops: 0, ghost: null, ghostDrawn: false,
     };
   }
 
@@ -745,10 +811,28 @@ export class IsoRenderer {
   }
 
   /** Overlay: cheap, cleared and redrawn every frame. */
-  drawOverlay(items: DrawItem[] = [], timeMs = 0) {
+  /**
+   * Overlay: cheap, cleared and redrawn every frame.
+   *
+   * In `vector` mode the four placement roles (`highlight`, `highlight_bad`,
+   * `highlight_soft`, `node_mark`) are painted as geometry by `overlay-art.ts`
+   * — one outline around the whole tile set instead of a diamond per tile —
+   * and `ghost` adds the transparent preview of the building being placed.
+   * Anything else on the list is still blitted from the atlas, and in
+   * `sprites` mode the whole list is, exactly as before.
+   */
+  drawOverlay(items: DrawItem[] = [], timeMs = 0, ghost: GhostSpec | null = null) {
     const ctx = this.ctxO, cam = this.cam;
     ctx.clearRect(0, 0, cam.vw, cam.vh);
-    const placed = items.map((i) => place(this.atlas, i)).filter(Boolean) as Placed[];
+    const vector = this.highlightMode === "vector";
+    const { scene, rest } = vector
+      ? sceneFromItems(items)
+      : { scene: null, rest: items };
+    if (scene) {
+      this.overlayArt.paint(ctx, cam, this.atlas, scene, ghost, timeMs, makeSurface);
+    }
+    this.overlayBlits = rest.length;
+    const placed = rest.map((i) => place(this.atlas, i)).filter(Boolean) as Placed[];
     for (const p of depthSort(placed).order) this.blit(ctx, p, timeMs);
     // C5: the debug marks are drawn last so they sit above every preview glow.
     if (this.debugPainter) this.debugPainter(ctx, cam);
@@ -803,10 +887,10 @@ export class IsoRenderer {
    * frame cost is one pattern fill, a handful of chunk blits and the shore
    * strokes. Structures redraw only when dirty or animated.
    */
-  render(timeMs = 0, overlay: DrawItem[] = []) {
+  render(timeMs = 0, overlay: DrawItem[] = [], ghost: GhostSpec | null = null) {
     this.drawTerrain(timeMs);
     if (this.structuresDirty || this.hasAnimation()) this.drawStructures(timeMs);
-    this.drawOverlay(overlay, timeMs);
+    this.drawOverlay(overlay, timeMs, ghost);
   }
 
   private hasAnimation(): boolean {
@@ -882,6 +966,7 @@ export class IsoRenderer {
       cull: { pad: this.pad, x0: range.x0, y0: range.y0, x1: range.x1, y1: range.y1 },
       chunkCacheEntries: this.groundChunkCache.size,
       roads: this.roadDiagnostics(),
+      overlay: this.overlayDiagnostics(),
       groundAnchorReference,
       depthCycles: this.lastCycles,
       structures,
