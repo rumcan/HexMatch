@@ -231,7 +231,9 @@ describe("NOIR the surfaces neither seam nor stretch", () => {
     // 88px; anything larger in CSS is an upscale, and an upscale of a bitmap is
     // its own kind of stretch. `--corner` is ONE length, which is also what
     // makes the scale uniform — two lengths could disagree.
-    const painted = { ".aside.left .panel::after": 108, ".modal.box": 88, ".iso-skill-card": 88 };
+    // The difficulty chooser deliberately lost its ornamental corners; only
+    // the sidebar frame and ordinary modal still size corner artwork.
+    const painted = { ".aside.left .panel::after": 108, ".modal.box": 88 };
     for (const [sel, max] of Object.entries(painted)) {
       const body = bodiesFor(sel).join(" ");
       const n = Number(/--corner:\s*(\d+)px/.exec(body)?.[1] ?? NaN);
@@ -432,9 +434,9 @@ describe("NOIR the painted set is wired end to end", () => {
     expect(bodiesFor(".feed-row").join(" ")).toMatch(/background-blend-mode:\s*normal,\s*multiply/);
   });
 
-  it("keeps a solid corner medallion clear of the title it frames", async () => {
-    // `boss-*.webp` is opaque in ALL FOUR of its corners — measured, not
-    // assumed — so a medallion is a solid square, not a chamfer that fades out.
+  it("keeps modal medallions clear, and removes them from difficulty select", async () => {
+    // `boss-*.webp` remains the ordinary modal treatment and is opaque in all
+    // four corners, so those modals still reserve the matching title band.
     for (const k of ["tl", "tr", "bl", "br"]) {
       const file = join("src/assets/ui/noir", `boss-${k}.webp`);
       const { data, info } = await sharp(file).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
@@ -442,30 +444,21 @@ describe("NOIR the painted set is wired end to end", () => {
       const a = (x: number, y: number) => data[(y * w + x) * 4 + 3];
       expect(Math.min(a(0, 0), a(w - 1, 0), a(0, h - 1), a(w - 1, h - 1)), `boss-${k} is not a solid square`).toBeGreaterThan(200);
     }
-    // …so it is painted flush on the edge and the plate keeps an exactly
-    // matching gutter that its own heading reads (one source of truth).
-    expect(css).toMatch(/\.modal\.box::after, \.iso-skill-card::after\s*\{[^}]*background-position:\s*left top,\s*right top,\s*left bottom,\s*right bottom/);
-    for (const sel of [".modal.box", ".iso-skill-card"]) {
-      const host = bodiesFor(sel).join(" ");
-      const inset = Number(/--corner-inset:\s*(\d+)(?:px)?/.exec(host)?.[1] ?? NaN);
-      const corner = Number(/--corner:\s*(\d+)px/.exec(host)?.[1] ?? NaN);
-      expect(inset, `${sel} never declares --corner-inset`).toBe(0);
-      expect(corner, `${sel} never declares --corner`).toBeGreaterThan(0);
-      expect(host, `${sel} does not derive --text-clear from its ornament`)
-        .toMatch(/--text-clear:\s*calc\(var\(--corner-inset\) \+ var\(--corner\)\)/);
-    }
-    // …centred in the band the two ornaments leave, not parked next to one of
-    // them: the reservation is symmetric, and a flex title that overflows it is
-    // clamped with `safe center` (a plain centred flex line overflows its LEFT
-    // item only — which is exactly how the guild seal ended up under the brass).
-    for (const sel of ["#iso-skill-prompt h2", ".modal h2"]) {
-      const body = bodiesFor(sel).join(" ");
-      expect(body, `${sel} does not reserve the medallion band`)
-        .toMatch(/padding-inline:\s*var\(--text-clear\)/);
-      expect(body, `${sel} is not centred`).toMatch(/text-align:\s*center|justify-content:\s*safe center/);
-    }
-    expect(bodiesFor(".modal h2").join(" "), ".modal h2 lost its safe centring")
-      .toMatch(/justify-content:\s*safe center/);
+    expect(css).toMatch(/\.modal\.box::after\s*\{[^}]*background-position:\s*left top,\s*right top,\s*left bottom,\s*right bottom/);
+    const modal = bodiesFor(".modal.box").join(" ");
+    expect(modal).toMatch(/--corner-inset:\s*0/);
+    expect(modal).toMatch(/--corner:\s*44px/);
+    expect(modal).toMatch(/--text-clear:\s*calc\(var\(--corner-inset\) \+ var\(--corner\)\)/);
+    expect(bodiesFor(".modal h2").join(" ")).toMatch(/padding-inline:\s*var\(--text-clear\)/);
+    expect(bodiesFor(".modal h2").join(" ")).toMatch(/justify-content:\s*safe center/);
+
+    // The attached-screen fix: the difficulty card is a clean felt rectangle,
+    // with no corner pseudo-element, boss backgrounds, or dead title gutter.
+    expect(css).not.toMatch(/\.iso-skill-card::after/);
+    expect(bodiesFor(".iso-skill-card").join(" ")).not.toMatch(/--corner|--text-clear|boss-/);
+    const skillTitle = bodiesFor("#iso-skill-prompt h2").join(" ");
+    expect(skillTitle).not.toMatch(/padding-inline:\s*var\(--text-clear\)/);
+    expect(skillTitle).toMatch(/text-align:\s*center/);
   });
 
   it("seats the sigil off the plate's edge, not under the label", () => {

@@ -139,6 +139,11 @@ export interface UiHooks {
   skill?: SkillKey;
 }
 
+export interface UiRivalryBeat {
+  speaker: "rival" | "you";
+  text: string;
+}
+
 export interface OriginalUi {
   el: HTMLElement;
   /** Where the iso canvas layer stack is mounted (the original map canvas slot). */
@@ -148,6 +153,9 @@ export interface OriginalUi {
   setCombo: (count: number, need: number) => void;
   paint: (state: UiState) => void;
   feed: (text: string, who?: string) => void;
+  /** A brief, non-modal exchange beside the HUD. The portrait switches with
+   *  each speaker; game.ts also records every beat in the Feed for later. */
+  rivalQuip: (beats: readonly UiRivalryBeat[]) => void;
   toast: (text: string, kind?: "good" | "bad" | "info" | "danger" | "success") => void;
   fx: (type: FxType, r: number, c: number, text?: string) => void;
   popup: (gains: Partial<Record<ResKey, number>>, label: string) => void;
@@ -353,6 +361,26 @@ export function createOriginalUi(
   // ── overlays ──────────────────────────────────────────────────────────────
   const toasts = h("div", "toasts");
   root.appendChild(toasts);
+  // A two-way wire: short-lived, pointer-transparent and aria-live="polite".
+  // Each beat swaps between Torvin and the player's selected portrait without
+  // becoming another modal or interrupting a map gesture.
+  const rivalWire = h("aside", "rival-quip hidden");
+  rivalWire.id = "iso-rival-quip";
+  rivalWire.setAttribute("role", "status");
+  rivalWire.setAttribute("aria-live", "polite");
+  rivalWire.setAttribute("aria-atomic", "true");
+  const rivalWireFace = h("span", "rival-quip-face");
+  rivalWireFace.setAttribute("aria-hidden", "true");
+  rivalWireFace.style.backgroundImage = `url(${portraitTorvin})`;
+  const rivalWireCopy = h("span", "rival-quip-copy");
+  const rivalWireLabel = h("b", "rival-quip-label", "Rival · Private wire");
+  rivalWireCopy.appendChild(rivalWireLabel);
+  const rivalWireText = h("q", "rival-quip-text");
+  rivalWireCopy.appendChild(rivalWireText);
+  rivalWire.append(rivalWireFace, rivalWireCopy);
+  // Share the existing notification lane so a simultaneous rules toast and
+  // rival answer stack instead of painting over one another.
+  toasts.appendChild(rivalWire);
   const modebar = h("div", "modebar hidden");
   root.appendChild(modebar);
   const inspectEl = h("div", "iso-inspect");
@@ -1042,6 +1070,56 @@ export function createOriginalUi(
     renderFeed();
   }
 
+  const rivalWireQueue: UiRivalryBeat[] = [];
+  let rivalWireBusy = false;
+  let rivalWirePlayerPortrait = portraitVex;
+
+  const paintRivalryBeat = (beat: UiRivalryBeat) => {
+    const yours = beat.speaker === "you";
+    rivalWire.dataset.speaker = beat.speaker;
+    rivalWire.classList.toggle("you-speaking", yours);
+    rivalWireFace.style.backgroundImage = `url(${yours ? rivalWirePlayerPortrait : portraitTorvin})`;
+    rivalWireLabel.textContent = yours ? "You · Open channel" : "Rival · Private wire";
+    rivalWireText.textContent = beat.text;
+  };
+
+  const showNextRivalryBeat = () => {
+    if (!rivalWire.isConnected) {
+      rivalWireQueue.length = 0;
+      rivalWireBusy = false;
+      return;
+    }
+    const beat = rivalWireQueue.shift();
+    if (!beat) {
+      rivalWireBusy = false;
+      rivalWire.classList.add("hidden");
+      rivalWire.classList.remove("show", "leaving");
+      return;
+    }
+    rivalWireBusy = true;
+    paintRivalryBeat(beat);
+    rivalWire.classList.remove("hidden", "leaving", "show");
+    void rivalWire.offsetWidth;
+    rivalWire.classList.add("show");
+    // One compact line at a time keeps even the longer oil exchange out of the
+    // player's way. Replies are never discarded: new scenes join this queue.
+    const readingTime = Math.min(4_200, Math.max(2_400, 1_300 + beat.text.length * 30));
+    window.setTimeout(() => {
+      rivalWire.classList.remove("show");
+      rivalWire.classList.add("leaving");
+      window.setTimeout(showNextRivalryBeat, 220);
+    }, readingTime);
+  };
+
+  function rivalQuip(beats: readonly UiRivalryBeat[]) {
+    if (!beats.length) return;
+    rivalWireQueue.push(...beats);
+    // A sabotage toast is normally appended just before this call. Move the
+    // wire to the lane's end so the messages stack in reading order.
+    toasts.appendChild(rivalWire);
+    if (!rivalWireBusy) showNextRivalryBeat();
+  }
+
   function responsiveZoom() {
     const boardPx = CELL * BOARD_W;
     const wrap = boardWrap;
@@ -1135,6 +1213,10 @@ export function createOriginalUi(
 
   // ── paint ─────────────────────────────────────────────────────────────────
   function paint(state: UiState) {
+    rivalWirePlayerPortrait = state.portrait === "you" ? portraitYou : portraitVex;
+    if (rivalWire.dataset.speaker === "you") {
+      rivalWireFace.style.backgroundImage = `url(${rivalWirePlayerPortrait})`;
+    }
     renderHUD(state.purse, state.players, state.portrait);
     // PP-14b: the reset button counts its cooldown down and disables while
     // the plant re-arms.
@@ -1284,6 +1366,7 @@ export function createOriginalUi(
     setCombo,
     paint,
     feed,
+    rivalQuip,
     toast,
     fx,
     popup,
