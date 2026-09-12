@@ -30,11 +30,18 @@ test("AI-01 picker: url wins, choice persists, switching is live", async ({ page
   await expect(sel).toHaveValue("hard");
   expect(await page.evaluate(() => localStorage.getItem("hexmatch:rival-skill"))).toBe("hard");
   expect(await page.evaluate(() => (window as any).__iso.rivalSkill.key)).toBe("hard");
+  // AI-04: hard races the shipped line, and the HUD badge says so.
+  expect(await page.evaluate(() => (window as any).__iso.vpTarget)).toBe(10);
+  await expect(page.locator("#iso-vp")).toContainText("/10");
 
   // switching persists and reaches the live rival without a reload
   await sel.selectOption("easy");
   expect(await page.evaluate(() => localStorage.getItem("hexmatch:rival-skill"))).toBe("easy");
   expect(await page.evaluate(() => (window as any).__iso.rivalSkill.key)).toBe("easy");
+  // AI-04: the difficulty owns the finish line — the easy chair is a 5★ race,
+  // and both the debug hook and the badge the player reads move with the pick.
+  expect(await page.evaluate(() => (window as any).__iso.vpTarget)).toBe(5);
+  await expect(page.locator("#iso-vp")).toContainText("/5");
 
   // re-boot with no param: the stored choice wins over the default
   await bootIso(page);

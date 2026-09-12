@@ -58,6 +58,13 @@ const CARD_TEXT: Record<SkillKey, { pace: string }> = {
 };
 
 /**
+ * AI-04: the finish line is a difficulty lever now, so each card states it —
+ * picking "Easy" is picking a 5★ race, and the player should see that before
+ * the click rather than in the HUD afterwards.
+ */
+const lineText = (key: SkillKey): string => `first to ${RIVAL_SKILLS[key].winTarget}★ wins`;
+
+/**
  * Show the three-preset chooser over `host` and resolve when the player
  * clicks. A no-op (the function returns without rendering anything) when a
  * difficulty was already pinned through the URL or remembered in storage —
@@ -97,7 +104,7 @@ export function promptForRivalSkill(
       btn.dataset.sfx = "select";
       btn.innerHTML = `<span class="iso-skill-label">${preset.label}</span>
         <span class="iso-skill-blurb">${preset.blurb}</span>
-        <span class="iso-skill-pace">${CARD_TEXT[key].pace}</span>`;
+        <span class="iso-skill-pace">${CARD_TEXT[key].pace} · ${lineText(key)}</span>`;
       btn.addEventListener("click", () => {
         (opts.onPick ?? rememberSkill)(key);
         overlay.remove();

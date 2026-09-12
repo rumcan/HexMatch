@@ -359,6 +359,21 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
   };
 
+  /**
+   * AI-04: the ★ line THIS game races to, read live from the difficulty — the
+   * easy chair finishes at 5★ (`RIVAL_SKILLS.easy.winTarget`), every other
+   * preset at the shipped `VICTORY.target`. One reader for all five places the
+   * line shows up (the win check, the star feed, the rival's race assessment,
+   * the ★ tooltips and the HUD), so the scoreboard, the HUD and the win toast
+   * can never disagree about how long the race is. Flipping the difficulty
+   * mid-game moves the line for the next tick, exactly like the clocks do.
+   *
+   * Solo only: a hosted game has no difficulty (the selector is not even built,
+   * see `onSkill` below) and both seats must see the same line, so it stays on
+   * the constant.
+   */
+  const winTarget = (): number => (isSolo() ? skill().winTarget : VICTORY.target);
+
   const eco: EconomyState = { grid, track, harvesters: [], factories: [] };
   let nextHarvesterId = 1;
   /**
@@ -877,7 +892,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // whether the last fraction came from pavement or a new plant.
     if (phase === "play") {
       for (const p of players) {
-        if (!hasWon(score, p.id)) continue;
+        if (!hasWon(score, p.id, winTarget())) continue;
         const decisive = [...events].reverse().find(
           (e) => e.owner === p.id && e.type === "awarded",
         )?.source ?? null;
@@ -914,7 +929,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // SFX-01: a Victory Point is the only thing worth ringing for. The
         // rival's stars stay silent — the feed line is enough for those.
         if (p.human) sfx.play("star");
-        ui.feed(`${p.human ? "You" : p.name} reach ${stars}★ of ${VICTORY.target}★`, p.name);
+        ui.feed(`${p.human ? "You" : p.name} reach ${stars}★ of ${winTarget()}★`, p.name);
       } else if (stars < last) starFed.set(p.id, stars);
     }
     trucksDirty = true;   // RV-01: the network changed — replan the lorries
@@ -1550,7 +1565,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * planning and spending is worse than a slightly stale one.
    */
   const rivalPaceNow = (): RivalPace =>
-    rivalPace(vpFor(score, "you"), vpFor(score, "ai"), VP_TARGET);
+    rivalPace(vpFor(score, "you"), vpFor(score, "ai"), winTarget());
 
   /** VP-01: the OTHER milestone the bank can be pointed at — the pavement the
    *  rival can ALMOST afford. Ore comes out of one industry type, so a rival
@@ -2436,11 +2451,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     function vpTooltip(p: PlayerState): string {
       const b = victoryBreakdown(eco, p.id);
       const total = vpFor(score, p.id);
+      // AI-04: the line is the difficulty's, so the tooltip's "of X★" and
+      // "Y★ to win" agree with the win check that uses the same reader.
+      const line = winTarget();
       return [
-        `${p.name}${p.human ? " (you)" : ""} — ${fmtVp(total)}★ of ${VICTORY.target}★`,
+        `${p.name}${p.human ? " (you)" : ""} — ${fmtVp(total)}★ of ${line}★`,
         `Paved road tiles: ${b.paved} × 0.25★ = ${fmtVp(b.pavedVp)}★`,
         `Processing plants: ${b.plants + 1} (opening plant is free; ${b.plants} × 1★ = ${fmtVp(b.plantVp)}★)`,
-        `${fmtVp(Math.max(0, VICTORY.target - total))}★ to win`,
+        `${fmtVp(Math.max(0, line - total))}★ to win`,
       ].join("\n");
     }
 
@@ -2613,6 +2631,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       purse: me.purse,
       phase,
       tool,
+      // AI-04: the race length the HUD should print — 5★ on easy, the shipped
+      // line elsewhere. The badge ("You 2★/5") and the king bars' 100% read it.
+      vpTarget: winTarget(),
       freeTrack: me.freeTrack,
       freeDepots: me.freeDepots,
       banner,
@@ -3425,8 +3446,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     get phase() { return phase; },
     get tool() { return tool; },
     get vp() { return { you: vpFor(score, "you"), ai: vpFor(score, "ai") }; },
-    /** VP-01: the target and the two numbers behind a player's total. */
-    get vpTarget() { return VP_TARGET; },
+    /** VP-01: the target and the two numbers behind a player's total.
+     *  AI-04: the target is the difficulty's line (5★ on easy), not a constant. */
+    get vpTarget() { return winTarget(); },
     get vpRates() { return { upgrade: VICTORY.upgrade, plant: VICTORY.plant }; },
     victoryOf: (who: string) => victoryBreakdown(eco, who),
     /** VP-01: how many of `who`'s tiles carry pave provenance (its score is

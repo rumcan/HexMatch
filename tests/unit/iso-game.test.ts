@@ -98,6 +98,8 @@ interface IsoHook {
   overlayItemsFor: (tx: number, ty: number) => { sprite: string; tx: number; ty: number }[];
   /** RV-03: the closest ROAD route the truck at a depot drives (tile coords). */
   routeForDepot: (tx: number, ty: number) => [number, number][] | null;
+  /** AI-01: the top-bar selector's call — flip the live difficulty. */
+  setRivalSkill: (key: "easy" | "normal" | "hard") => void;
 }
 
 const hook = () => (window as unknown as { __iso: IsoHook }).__iso;
@@ -232,6 +234,49 @@ describe("the live game resolves into a cinematic ending", () => {
     h.demolish(trigger![0], trigger![1]);
     return h;
   }
+
+  // AI-04 — the difficulty sets the finish line: the easy chair races 5★, so
+  // the very same pave provenance the 10★ fixtures above use wins the game at
+  // half the pavement. Everything else about the game is untouched.
+  describe("AI-04 the difficulty sets the win line", () => {
+    const vpBadge = () => (root.querySelector("#iso-vp") as HTMLElement).textContent ?? "";
+
+    it("boots easy on a 5★ race — the hook and the HUD badge agree", async () => {
+      localStorage.setItem("hexmatch:rival-skill", "easy");
+      const h = await boot();
+      expect(h.vpTarget).toBe(5);
+      expect(vpBadge()).toContain("You 0/5");
+    });
+
+    it("keeps the shipped line on normal and moves it with the selector", async () => {
+      const h = await boot();          // beforeEach pins `normal`
+      expect(h.vpTarget).toBe(VICTORY.target);
+      expect(vpBadge()).toContain(`You 0/${VICTORY.target}`);
+      h.setRivalSkill("easy");
+      expect(h.vpTarget).toBe(5);      // live: no reboot, no replay
+      await settle();
+      expect(vpBadge()).toContain("You 0/5");
+    });
+
+    it("wins an easy game at 5★ — the 20 paves that are only half a 10★ race", async () => {
+      localStorage.setItem("hexmatch:rival-skill", "easy");
+      const h = await finishFor(1, 20);
+      expect(h.vpTarget).toBe(5);
+      expect(h.vp.you).toBe(5);
+      expect(h.phase).toBe("won");
+      const ending = root.querySelector("#iso-ending") as HTMLElement;
+      expect(ending?.dataset.outcome).toBe("victory");
+      expect(ending?.dataset.path).toBe("paving");
+      expect(ending.textContent).toContain("20 tiles × 0.25★");
+    });
+
+    it("does not shorten the race on the other chairs: 20 paves stay mid-game", async () => {
+      const h = await finishFor(1, 20);
+      expect(h.vp.you).toBe(5);
+      expect(h.phase).toBe("play");
+      expect(root.querySelector("#iso-ending")).toBeNull();
+    });
+  });
 
   it("opens the point-aware victory screen with fireworks when the player crosses 10★", async () => {
     const h = await finishFor(1);
