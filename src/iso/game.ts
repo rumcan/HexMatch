@@ -3099,6 +3099,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // failed sprite just keeps the sheet art for that building.
     void loadBuildingLayers(atlas, `${import.meta.env.BASE_URL}assets/buildings/`).then((n) => {
       if (disposed || !n) return;
+      // B-3.2: the layers just MUTATED sprite w/h (a per-building PNG can
+      // out-tall the tallest sheet sprite), so the constructor-time cull pad
+      // is stale — tall buildings would pop at the screen edge.
+      renderer?.recomputePad();
       renderer?.invalidateAll();
     }).catch((err) => {
       console.warn("[building-layers] failed to load:", err);
@@ -3221,6 +3225,24 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     get harvesters() { return eco.harvesters; },
     get factories() { return eco.factories; },
     get freeTrack() { return me.freeTrack; },
+    /**
+     * ART-1950S (TICKET-B0): the per-building PNG layers actually installed
+     * from assets/buildings/ — the sprites whose art overrides the shared
+     * sheet. e2e asserts against this instead of sniffing network responses
+     * (a 200 on the manifest alone does not prove a layer landed), and the
+     * B4 dead-art audit reuses it. Empty array = everything is drawing from
+     * the shared buildings sheet (the non-gating fallback).
+     */
+    get buildings() { return atlasRef ? [...atlasRef.buildingImages.keys()] : []; },
+    /**
+     * ART-1950S (TICKET-B4): every sprite name the renderer actually blitted
+     * this session (industries, depots, town houses, roads, dirt, trucks,
+     * extras — ground tiles are pattern-painted and never appear). The
+     * dead-art audit unions this with the by-construction families to derive
+     * deletion candidates; see docs/iso-debug-console.md and
+     * tools/art-audit.mjs.
+     */
+    get drawnSprites() { return renderer ? [...renderer.drawnSprites] : []; },
     grid, track, eco,
     // ── J1: the quarry join, exposed so the boot test can prove the loop ──
     get board() { return quarry.board; },
