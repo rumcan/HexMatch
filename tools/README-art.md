@@ -172,6 +172,21 @@ Notes that cost a session to learn:
 - Batch generators can return wide/tall images in an unexpected order; trust
   the fitted dimensions, not the file name, when mapping art to sprites.
 
+## Redo pass complete (2026-09-12)
+
+All **58 building layers** were regenerated against
+`docs/ai-codex-blizzard-redo-guide.md`. The full set is reviewed in
+`test-results/art-redo/redone-58-consistency.png` (every sprite at 1× with its
+real pixel size) — one miniature human scale and one top-left key light across
+1×1 cottages, multi-storey town blocks, 3×3/4×4 industries and the six cargo
+depots.
+
+Batch evidence sheets: `batch{1..6}-template-overlays.png` in the same folder.
+Parcel audit (all in the 2:1 family, `diamondRatio ≈ 0.5`) is printed by
+`tools/overlay-building-template.mjs`; light direction by
+`tools/audit-raw-art.mjs`; magenta residue by a numeric sweep of
+`tools/clean-magenta-fringe.mjs`'s hue test.
+
 ## Licence
 
 Graphics derived from OpenGFX (https://github.com/OpenTTD/OpenGFX),
