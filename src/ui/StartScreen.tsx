@@ -278,7 +278,7 @@ export default function StartScreen({ onStart }: StartScreenProps) {
         </div>
         <div className="start-actions">
           <button className="start-primary" data-sfx="open" onClick={() => onStart({ mode: "ai", portrait })}>Play vs AI <small>no login</small></button>
-          <button disabled={busy} onClick={() => { setState("host"); void beginRoom("host"); }}>Host a game</button>
+          <button disabled={busy} onClick={() => { setState("host"); void beginRoom("host"); }}>Host a game (Experimental)</button>
           <button disabled={busy} onClick={openJoinScreen}>Join with a code</button>
           <button disabled={busy} onClick={() => void beginMatch()}>Quick match</button>
         </div>

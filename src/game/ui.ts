@@ -459,7 +459,6 @@ export function createOriginalUi(
   // ── gem / market DOM state ────────────────────────────────────────────────
   const gemEls = new Map<number, HTMLElement>();
   let selected: { r: number; c: number } | null = null;
-  let down: { r: number; c: number } | null = null;
   const feedEntries: { who: string; colour: string; text: string }[] = [];
   // U1: the restored HUD paints on the game's rAF loop. Re-rendering the
   // Black-Market grid and the offer lists on every frame would detach a button
@@ -835,6 +834,9 @@ export function createOriginalUi(
 
   // Click is the touch/desktop picker path (and what the e2e/unit tests drive).
   grid.addEventListener("click", (e) => {
+    // TACTILE-01: a press that became a drag already swapped (or sprang back);
+    // the click the browser fires after it must not also pick a gem.
+    if (swallowClick) { swallowClick = false; return; }
     const b = (e.target as HTMLElement).closest<HTMLButtonElement>(".gem");
     if (b?.dataset.r && b?.dataset.c) {
       selectOrSwap({ r: Number(b.dataset.r), c: Number(b.dataset.c) });
@@ -843,16 +845,165 @@ export function createOriginalUi(
     const cell = cellFrom(e);
     if (cell) selectOrSwap(cell);
   });
-  // Pointer drags still work for swipe-to-swap on touch.
+  // ── TACTILE-01: the board answers the hand ────────────────────────────────
+  // Hover: the gem under a mouse leans a few px toward the cursor. Press and
+  // drag (mouse or touch): the gem follows along the ONE axis being pulled —
+  // the four directions a gem can trade in — while the neighbour it would
+  // trade with gives way. Past half a cell the swap commits; both gems then
+  // ease from wherever the hand left them into their cells and settle with a
+  // small shake. Let go short of that and the gem springs home.
+  // renderBoard owns each gem's inline `transform` (its cell); everything here
+  // rides the independent `translate` property, so the two never fight.
+  const reduceMotion = typeof matchMedia === "function"
+    && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  /** Hover lean at the very edge of the cell, in grid px. */
+  const LEAN_PX = 3;
+  /** Client px a press must travel before it counts as a drag (not a click). */
+  const DRAG_START_PX = 5;
+  /** Grid px pulled along the axis before the swap commits. */
+  const COMMIT_PX = CELL * 0.5;
+  /** Matches the `.gem` translate transition in styles.css. */
+  const GLIDE_MS = 200;
+  const SETTLE_MS = 300;
+  type Cell = { r: number; c: number };
+  interface Drag { from: Cell; el: HTMLElement; pointerId: number; x0: number; y0: number; active: boolean; peer: HTMLElement | null }
+  let drag: Drag | null = null;
+  let leaning: HTMLElement | null = null;
+  let swallowClick = false;
+
+  /** Client px → grid px (the board panel is zoomed to fit its column). */
+  const toLocal = () => (CELL * BOARD_W) / (grid.getBoundingClientRect().width || CELL * BOARD_W);
+  const baseOf = (el: HTMLElement): [number, number] =>
+    [Number(el.dataset.c) * CELL + 3, Number(el.dataset.r) * CELL + 3];
+  const offsetOf = (el: HTMLElement): [number, number] => {
+    const [x = "0", y = "0"] = el.style.translate.split(" ");
+    return [parseFloat(x) || 0, parseFloat(y) || 0];
+  };
+  const setOffset = (el: HTMLElement, horiz: boolean, px: number) => {
+    el.style.translate = horiz ? `${px}px 0px` : `0px ${px}px`;
+  };
+  const unlean = () => {
+    if (leaning && !leaning.classList.contains("dragging")) leaning.style.translate = "";
+    leaning = null;
+  };
+
+  /**
+   * Ease `el` from the screen spot it was last seen at (`sx`,`sy`, grid px)
+   * into its CURRENT cell. When the board took the swap, renderBoard has
+   * already moved the base; when it refused (busy, fogged, a guest's board),
+   * the base is unchanged and the same glide is a spring back home.
+   */
+  function glide(el: HTMLElement, sx: number, sy: number, shake: boolean) {
+    el.classList.remove("dragging", "yielding");
+    const [bx, by] = baseOf(el);
+    el.style.transition = "none";
+    el.style.transform = `translate(${bx}px, ${by}px)`;
+    el.style.translate = `${sx - bx}px ${sy - by}px`;
+    void el.offsetWidth; // commit the jump before the transition resumes
+    el.style.transition = "";
+    el.style.translate = "";
+    if (!shake || reduceMotion) return;
+    window.setTimeout(() => {
+      el.classList.remove("settle");
+      void el.offsetWidth;
+      el.classList.add("settle");
+      window.setTimeout(() => el.classList.remove("settle"), SETTLE_MS);
+    }, GLIDE_MS - 60);
+  }
+
+  /** Snapshot where each gem is on screen, run `act`, then glide them all. */
+  function releaseGems(d: Drag, act: () => void, shake: boolean) {
+    const els = d.peer ? [d.el, d.peer] : [d.el];
+    const seen = els.map((el) => {
+      const [bx, by] = baseOf(el), [tx, ty] = offsetOf(el);
+      return [bx + tx, by + ty] as const;
+    });
+    act();
+    els.forEach((el, i) => glide(el, seen[i][0], seen[i][1], shake));
+  }
+
   grid.addEventListener("pointerdown", (e) => {
-    down = cellFrom(e);
+    swallowClick = false;
+    if (e.button !== 0) return;
+    const from = cellFrom(e);
+    const g = from ? board.grid[from.r]?.[from.c] : null;
+    const el = g ? gemEls.get(g.id) : undefined;
+    if (!from || !g || !el || g.block) return;
+    unlean();
+    drag = { from, el, pointerId: e.pointerId, x0: e.clientX, y0: e.clientY, active: false, peer: null };
   });
+
   grid.addEventListener("pointermove", (e) => {
-    if (!down) return;
-    const cell = cellFrom(e);
-    if (cell && adj(down, cell)) { hooks.onSwap(down.r, down.c, cell.r, cell.c); down = null; selected = null; renderSelection(); }
+    if (!drag) {
+      // hover lean — a mouse only; a finger has no hover to answer
+      if (reduceMotion || e.pointerType !== "mouse") return;
+      const cell = cellFrom(e);
+      const g = cell ? board.grid[cell.r]?.[cell.c] : null;
+      const el = g && !g.block ? gemEls.get(g.id) ?? null : null;
+      if (el !== leaning) unlean();
+      if (!el || !cell) return;
+      const rect = grid.getBoundingClientRect(), k = toLocal();
+      const lean = (v: number) => Math.max(-1, Math.min(1, v / (CELL / 2))) * LEAN_PX;
+      const lx = (e.clientX - rect.left) * k - (cell.c + 0.5) * CELL;
+      const ly = (e.clientY - rect.top) * k - (cell.r + 0.5) * CELL;
+      el.style.translate = `${lean(lx)}px ${lean(ly)}px`;
+      leaning = el;
+      return;
+    }
+    if (e.pointerId !== drag.pointerId) return;
+    const dx = e.clientX - drag.x0, dy = e.clientY - drag.y0;
+    if (!drag.active) {
+      if (Math.hypot(dx, dy) < DRAG_START_PX) return;
+      drag.active = true;
+      try { grid.setPointerCapture(e.pointerId); } catch { /* synthetic pointer */ }
+      drag.el.classList.add("dragging");
+      sfx.play("select");
+    }
+    const k = toLocal();
+    const horiz = Math.abs(dx) >= Math.abs(dy);
+    const pull = (horiz ? dx : dy) * k;
+    const dir = Math.sign(pull);
+    const to = { r: drag.from.r + (horiz ? 0 : dir), c: drag.from.c + (horiz ? dir : 0) };
+    const tg = dir ? board.grid[to.r]?.[to.c] : null;
+    const open = !!tg && !tg.block;
+    const peer = open ? gemEls.get(tg.id) ?? null : null;
+    if (peer !== drag.peer) {
+      if (drag.peer) { drag.peer.style.translate = ""; drag.peer.classList.remove("yielding"); }
+      drag.peer = peer;
+      peer?.classList.add("yielding");
+    }
+    // A little resistance: the gem trails the hand, and a wall (the board
+    // edge, a chained block) barely gives at all.
+    const travel = open ? Math.min(Math.abs(pull), CELL) * 0.8 : Math.min(Math.abs(pull) * 0.15, 6);
+    const off = dir * travel;
+    // reset the cross axis too, so flicking between directions never leaves a diagonal
+    setOffset(drag.el, horiz, off);
+    if (peer) setOffset(peer, horiz, -off * 0.45);
+
+    if (open && Math.abs(pull) >= COMMIT_PX) {
+      const d = drag;
+      drag = null;
+      swallowClick = true;
+      releaseGems(d, () => {
+        sfx.play("swap");
+        hooks.onSwap(d.from.r, d.from.c, to.r, to.c);
+        selected = null;
+        renderSelection();
+      }, true);
+    }
   });
-  window.addEventListener("pointerup", () => { down = null; });
+
+  const endDrag = (e: PointerEvent) => {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    const d = drag;
+    drag = null;
+    if (!d.active) return; // a plain press — the click handler owns it
+    swallowClick = true;
+    releaseGems(d, () => {}, false);
+  };
+  window.addEventListener("pointerup", endDrag);
+  window.addEventListener("pointercancel", endDrag);
+  grid.addEventListener("pointerleave", () => { if (!drag) unlean(); });
 
   function renderSelection() {
     gemEls.forEach((elem) => elem.classList.remove("sel"));
