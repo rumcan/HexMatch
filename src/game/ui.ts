@@ -39,6 +39,10 @@ import { GEM_TO_CARGO } from "../iso/quarry";
 import { fmtVp } from "../iso/victory";
 // AI-01: the rival difficulty presets the top-bar selector switches between.
 import { RIVAL_SKILLS, SKILL_KEYS, type SkillKey } from "../iso/skill";
+// TUT-01: the stepped starting tour. The ❔ help modal is the reference card;
+// this is the lesson, replayable from it at any time (and shown once at boot by
+// game.ts, which owns that gate).
+import { showTutorial, type TutorialHandle } from "../iso/tutorial";
 // PP-14: the praying angel that a cross match summons, and the choir that
 // sings with it. Both are one-shot fx answers to `onFx("cross", …)`.
 import angelUrl from "../assets/ui/angel.png";
@@ -1469,6 +1473,9 @@ export function createOriginalUi(
   // ── paint ─────────────────────────────────────────────────────────────────
   function paint(state: UiState) {
     rivalWirePlayerPortrait = state.portrait === "you" ? portraitYou : portraitVex;
+    // TUT-01: remember the live free-tile allowance so a tour replayed from ❔
+    // quotes the game being played, not the shipped constant.
+    hudFreeTrack = state.freeTrack;
     if (rivalWire.dataset.speaker === "you") {
       rivalWireFace.style.backgroundImage = `url(${rivalWirePlayerPortrait})`;
     }
@@ -1593,6 +1600,15 @@ export function createOriginalUi(
    * the shipped line, which is what it reads before the first paint.
    */
   let hudVpTarget: number = VICTORY.target;
+  /**
+   * TUT-01: the same idea for the tour's second number — the free dirt tiles
+   * the setup allowance is paying for. The tour reads both from here when the
+   * ❔ replays it mid-game, so its copy quotes the game the player is IN rather
+   * than a constant that may have moved.
+   */
+  let hudFreeTrack = 0;
+  /** The replayed tour, while it is open — held so ❔ cannot stack a second. */
+  let tourView: TutorialHandle | null = null;
 
   function helpModal() {
     sfx.play("open");
@@ -1608,11 +1624,27 @@ export function createOriginalUi(
           <div class="help-col"><h3>The Processing Plant</h3><p>Where your Factory turns delivered cargo into resources available for construction. Match tokens to process: a colour only pays when your network reaches its industry. Match 4 doubles, match 5 makes a <b>bomb</b>. <b>Gold</b> 🪙 is its own colour — its gems drop only while a depot sits beside a gold mine (and pay once it's connected).</p></div>
           <div class="help-col"><h3>Gold, Trade & Defence</h3><p>Earn <b>gold</b> from gold-mine access or combos. <b>Gold is reserved for Black Market sabotage</b> — it never buys construction, cannot substitute for missing materials, and is refused by every market exchange. Security Forces and Repair Crew are hired with ordinary materials. A <b>Protest</b> ✊ shuts any public road for 2:00 — every truck stops, including your own.</p></div>
         </div>
-        <button class="big-btn" id="startBtn">Start Production</button>
+        <div class="confirm-row">
+          <button class="big-btn ghost" id="tourBtn" data-sfx="open">▶ Replay the tour</button>
+          <button class="big-btn" id="startBtn">Start Production</button>
+        </div>
       </div>`;
     const shut = () => { sfx.play("close"); modalRoot.classList.add("hidden"); };
     (modalRoot.querySelector("#startBtn") as HTMLElement).onclick = shut;
     (modalRoot.querySelector(".modal-back") as HTMLElement).onclick = shut;
+    // TUT-01: the plaque above is the reference; the tour is the lesson. Both
+    // stay reachable forever — "Never show this again" only stops the tour
+    // opening ITSELF at boot, it never takes the lesson away.
+    (modalRoot.querySelector("#tourBtn") as HTMLElement).onclick = () => {
+      shut();
+      if (tourView) return;
+      tourView = showTutorial(root, {
+        force: true,
+        vpTarget: hudVpTarget,
+        freeTrack: hudFreeTrack,
+        onClose: () => { tourView = null; },
+      });
+    };
   }
 
   function showModal(html: string) {

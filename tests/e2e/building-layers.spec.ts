@@ -26,7 +26,13 @@ test.describe("building PNG layers ship in the built game", () => {
       if (msg.text().includes("[building-layers]")) layerWarnings.push(msg.text());
     });
 
-    await page.addInitScript(() => localStorage.setItem("hexmatch:rival-skill", "normal"));
+    // TUT-01: remember both boot overlays' preferences — the difficulty prompt
+    // and the starting tour — so this spec measures the built art, not the
+    // onboarding cards that would otherwise cover it.
+    await page.addInitScript(() => {
+      localStorage.setItem("hexmatch:rival-skill", "normal");
+      localStorage.setItem("hexmatch:tutorial", "never");
+    });
     await page.goto("/hexmatch/?seed=79");
     // The start screen is the app's default route — the iso game only mounts
     // once a mode is chosen. "Play vs AI" boots solo play; the ?seed in the

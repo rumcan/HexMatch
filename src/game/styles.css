@@ -2274,6 +2274,233 @@ html, body, #root {
   #iso-loading .iso-loading-bar::after { animation: none; }
 }
 
+/* ── TUT-01: the starting tutorial (src/iso/tutorial.ts) ───────────────────
+   The difficulty card's felt plate, one bay longer: a stepper with a painted
+   figure, typed bullets and a ledger-paper footnote. It sits ABOVE the ❔
+   modal (60) and the difficulty card (90) because the tour can be replayed
+   from inside the help modal and must never hide under the thing that opened
+   it. Like every other overlay it paints over the HUD boxes without moving
+   one of them — the corridor picker's geometry is untouched.
+
+   The four figure kinds the projector can build (`chain`, `iso`, `board`,
+   `ledger`) each get one block below, on the container INSIDE the plate — the
+   `.tut-fig-<kind>` class the plate also carries is a selector hook for the
+   tests, not a look. A step with no figure paints no plate at all and the
+   bullets move up. */
+#iso-tutorial { position: absolute; inset: 0; z-index: 96;
+  display: flex; align-items: center; justify-content: center; padding: 14px;
+  background:
+    var(--smoke) 0 0 / 1100px,
+    var(--room) center / cover,
+    rgba(6, 4, 3, .88);
+  background-blend-mode: screen, soft-light, normal;
+  backdrop-filter: blur(9px) saturate(.8) brightness(.72);
+  -webkit-backdrop-filter: blur(9px) saturate(.8) brightness(.72); }
+/* A click on the veil is a Skip; the card rides above it. */
+#iso-tutorial .tut-shade { position: absolute; inset: 0; }
+.tut-card {
+  position: relative; z-index: 1;
+  width: 100%; max-width: 780px; max-height: min(88vh, 780px);
+  display: flex; flex-direction: column;
+  padding: 15px 22px 11px;
+  color: var(--txt); text-align: center;
+  border: 1px solid var(--brass-lo); border-radius: 0;
+  background:
+    var(--felt) 0 0 / 320px,
+    linear-gradient(180deg, rgba(34, 25, 16, .95), rgba(10, 7, 5, .96));
+  background-blend-mode: luminosity, normal;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, .78), 0 0 60px -18px rgba(255, 176, 46, .3);
+  animation: tut-card-in .34s ease both;
+}
+@keyframes tut-card-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+.tut-head { position: relative; display: flex; flex-direction: column; gap: 3px;
+  padding: 0 30px 9px; border-bottom: 1px solid var(--line); }
+.tut-kicker { margin: 0; font-family: var(--mono); font-size: 10px; letter-spacing: 2.2px;
+  text-transform: uppercase; color: var(--brass); opacity: .85; }
+.tut-title { margin: 0; font-family: var(--display); font-size: 21px; font-weight: 700;
+  letter-spacing: 3px; text-transform: uppercase; color: var(--brass-hi);
+  text-shadow: 0 -1px 0 #000, 0 1px 0 rgba(242, 220, 166, .16), 0 0 26px rgba(255, 176, 46, .3); }
+.tut-x { position: absolute; top: -3px; right: -4px; width: 26px; height: 26px; cursor: pointer;
+  font-size: 12px; line-height: 1; color: var(--txt-dim);
+  border: 1px solid var(--line); border-radius: var(--r);
+  background-color: rgba(12, 9, 6, .7);
+  box-shadow: inset 0 1px 0 rgba(242, 220, 166, .08); transition: color .15s, border-color .15s; }
+.tut-x:hover { color: #ffd0bd; border-color: rgba(226, 112, 79, .6); }
+
+.tut-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch; padding: 12px 2px 4px; text-align: left; }
+.tut-lede { margin: 0 0 4px; font-family: var(--sans); font-size: 13px; line-height: 1.55;
+  color: var(--txt-dim); }
+.tut-lede b { color: var(--txt); }
+.tut-points { margin: 11px 0 0; padding: 0; list-style: none;
+  display: flex; flex-direction: column; gap: 7px; }
+.tut-points li { position: relative; padding-left: 17px;
+  font-family: var(--sans); font-size: 12.5px; line-height: 1.5; color: var(--txt); }
+.tut-points li::before { content: "▪"; position: absolute; left: 1px; top: -1px;
+  color: var(--brass); font-size: 11px; }
+.tut-points b { color: var(--gold2); font-weight: 600; }
+/* the footnote is printed matter: the same ledger paper the help columns use */
+.tut-tip { margin: 12px 0 2px; padding: 8px 11px; color: #2a1d0c;
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.5;
+  background:
+    var(--ledger) center / cover no-repeat,
+    linear-gradient(180deg, rgba(216, 194, 152, .93), rgba(176, 152, 112, .9));
+  background-blend-mode: multiply, normal;
+  border: 1px solid rgba(58, 40, 20, .6); border-radius: 2px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, .5), inset 0 1px 0 rgba(255, 255, 255, .34); }
+.tut-tip b { color: #120c05; font-weight: 700; }
+
+/* ── the figure plate: a blueprint under the lamp ── */
+.tut-fig { margin: 8px 0 2px; padding: 13px 10px 9px; text-align: center;
+  border: 1px solid var(--line); border-radius: var(--r);
+  background:
+    linear-gradient(rgba(255, 176, 46, .05) 1px, transparent 1px) 0 0 / 22px 22px,
+    linear-gradient(90deg, rgba(255, 176, 46, .05) 1px, transparent 1px) 0 0 / 22px 22px,
+    linear-gradient(180deg, rgba(8, 6, 4, .88), rgba(15, 11, 8, .7));
+  box-shadow: inset 0 1px 0 rgba(242, 220, 166, .07), inset 0 0 34px rgba(0, 0, 0, .6); }
+.tut-fig-cap { margin-top: 10px; font-family: var(--mono); font-size: 11px; line-height: 1.45;
+  color: var(--txt-mute); }
+
+/* chain — the loop, one brass chip per station */
+.tut-chain { display: flex; flex-wrap: wrap; align-items: stretch; justify-content: center; gap: 6px; }
+.tut-chain-node { display: inline-flex; flex-direction: column; align-items: center; gap: 4px;
+  min-width: 64px; padding: 6px 7px 5px;
+  border: 1px solid var(--brass-lo); border-radius: var(--r);
+  background-color: rgba(14, 10, 7, .82);
+  box-shadow: inset 0 1px 0 rgba(242, 220, 166, .1), 0 4px 12px rgba(0, 0, 0, .5); }
+.tut-chain-ic { font-style: normal; font-size: 17px; line-height: 1;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, .85)); }
+.tut-chain-node b { font-family: var(--serif); font-size: 9.5px; font-weight: 600; line-height: 1.15;
+  letter-spacing: .8px; text-transform: uppercase; text-align: center; color: var(--txt-dim); }
+.tut-chain-arrow { align-self: center; color: var(--brass); font-size: 12px; opacity: .75; }
+
+/* iso — the mini-map, drawn on the map's own 2:1 lattice */
+.tut-iso { position: relative; margin: 6px auto 2px; }
+.tut-tile { position: absolute; display: block;
+  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+  background-color: #37421f;
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, .16), rgba(0, 0, 0, .3)); }
+.tut-tile i { position: absolute; left: 50%; top: -8px; transform: translateX(-50%);
+  font-style: normal; font-size: 15px; line-height: 1;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, .9)); }
+.t-grass    { background-color: #37421f; }
+.t-rough    { background-color: #4a3b24; }
+.t-water    { background-color: #16323f; }
+.t-town     { background-color: #6d5b43; }
+.t-industry { background-color: #4b3620; }
+.t-plant    { background-color: #2b2118; }
+.t-depot    { background-color: #6b5123; }
+.t-dirt     { background-color: #8a7350; }
+.t-road     { background-color: #232220; }
+/* legality, the same two colours the map's placement preview speaks — a
+   drop-shadow rather than a border, because clip-path cuts the border off */
+.tut-tile.ring-good  { filter: drop-shadow(0 0 6px rgba(99, 192, 138, .9)); }
+.tut-tile.ring-bad   { filter: drop-shadow(0 0 6px rgba(226, 112, 79, .95)); }
+.tut-tile.ring-route { filter: drop-shadow(0 0 5px rgba(255, 176, 46, .65)); }
+
+/* board — the real painted hex gems, one token badge like the live board's */
+.tut-board { display: grid; grid-template-columns: repeat(var(--tut-cols, 5), 30px);
+  gap: 4px; justify-content: center; padding: 7px;
+  border: 1px solid rgba(58, 40, 20, .55); border-radius: 2px;
+  background-color: rgba(10, 7, 5, .62);
+  box-shadow: inset 0 0 22px rgba(0, 0, 0, .7); }
+.tut-gem { position: relative; display: block; width: 30px; height: 30px;
+  background-repeat: no-repeat; background-position: center; background-size: contain;
+  /* the fallback face when a gem png is missing — inline art overrides it */
+  background-image: radial-gradient(circle at 34% 28%, var(--tut-gem-c2, #6b5123), var(--tut-gem-c1, #1b1410));
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, .7)); }
+.tut-gem-hit { outline: 2px solid var(--gold); outline-offset: 1px;
+  filter: drop-shadow(0 0 8px rgba(255, 176, 46, .8)); }
+/* an empty socket where no gem sits: felt hollow, no cargo, no token */
+.tut-gem-empty { background-image: radial-gradient(circle at 50% 45%, rgba(255, 255, 255, .05), rgba(0, 0, 0, .38));
+  box-shadow: inset 0 0 0 1px rgba(242, 220, 166, .08); }
+.tut-gem-token { position: absolute; top: -3px; right: -3px; z-index: 2;
+  min-width: 15px; height: 15px; padding: 0 3px;
+  display: grid; place-items: center; border-radius: 2px;
+  font-family: var(--serif); font-size: 10px; font-weight: 700; color: #14100b;
+  background: linear-gradient(180deg, var(--brass-hi), var(--gold) 60%, var(--gold-d));
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .7), inset 0 1px 0 rgba(255, 255, 255, .5); }
+.tut-gem-token.t2 { background: linear-gradient(180deg, #fff6dd, var(--brass-hi));
+  box-shadow: 0 0 12px rgba(255, 214, 140, .8); }
+
+/* ledger — the point sources, itemised on the same paper as the tax rows */
+.tut-ledger { display: flex; flex-direction: column; gap: 4px; text-align: left; }
+.tut-ledger-row { display: flex; align-items: center; gap: 8px; padding: 5px 9px;
+  color: #221708;
+  background:
+    var(--ledger) center / cover no-repeat,
+    linear-gradient(180deg, rgba(206, 182, 138, .9), rgba(168, 143, 104, .86));
+  background-blend-mode: multiply, normal;
+  border: 1px solid rgba(58, 40, 20, .55); border-radius: 2px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .3), 0 3px 10px rgba(0, 0, 0, .45); }
+.tut-ledger-row.dim { opacity: .66; }
+.tut-ledger-ic { width: 14px; text-align: center; color: #714515;
+  font-family: var(--display); font-size: 13px; font-weight: 700; line-height: 1; }
+.tut-ledger-copy { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.tut-ledger-copy b { color: #1d1308; font-family: var(--serif); font-size: 12px; font-weight: 700;
+  line-height: 1.25; letter-spacing: .7px; text-transform: uppercase; }
+.tut-ledger-copy small { color: #594324; font-family: var(--mono); font-size: 11px; line-height: 1.3; }
+.tut-ledger-vp { color: #422707; font-family: var(--display); font-size: 16px; font-weight: 700;
+  line-height: 1; font-variant-numeric: tabular-nums; }
+.tut-ledger-total { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin-top: 5px; padding: 7px 11px;
+  border: 1px solid var(--brass-lo); border-radius: var(--r);
+  background-color: rgba(14, 10, 7, .82);
+  box-shadow: inset 0 1px 0 rgba(242, 220, 166, .1), 0 4px 12px rgba(0, 0, 0, .5); }
+.tut-ledger-total span { font-family: var(--serif); font-size: 11px; font-weight: 600;
+  letter-spacing: 1.4px; text-transform: uppercase; color: var(--txt-dim); }
+.tut-ledger-total strong { font-family: var(--display); font-size: 19px; font-weight: 700;
+  line-height: 1; color: var(--gold2); text-shadow: 0 0 16px rgba(255, 176, 46, .35); }
+
+/* foot — the preference on the left, the stepper in the middle, the keys right */
+.tut-foot { flex: 0 0 auto; display: flex; align-items: center; gap: 12px;
+  padding-top: 10px; border-top: 1px solid var(--line); }
+.tut-never { flex: 0 0 auto; padding: 8px 11px; cursor: pointer;
+  font-family: var(--serif); font-size: 10px; font-weight: 600; line-height: 1.2;
+  letter-spacing: 1.2px; text-transform: uppercase; color: var(--txt-dim);
+  border: 1px solid var(--line); border-radius: var(--r);
+  background-color: rgba(12, 9, 6, .72);
+  box-shadow: inset 0 1px 0 rgba(242, 220, 166, .08);
+  transition: color .15s, border-color .15s, background-color .15s; }
+.tut-never:hover { color: #ffd0bd; border-color: rgba(226, 112, 79, .6);
+  background-color: rgba(44, 19, 12, .72); }
+.tut-dots { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; gap: 7px; }
+/* diamond pips: the tour is walked on the same lattice as the map */
+.tut-dot { width: 9px; height: 9px; padding: 0; cursor: pointer; border-radius: 0;
+  border: 1px solid var(--brass-lo); background-color: rgba(10, 7, 5, .8);
+  transform: rotate(45deg); transition: background-color .15s, box-shadow .15s, border-color .15s; }
+.tut-dot:hover { border-color: var(--brass-hi); }
+.tut-dot.on { background-color: var(--gold); border-color: var(--brass-hi);
+  box-shadow: 0 0 10px rgba(255, 176, 46, .75); }
+.tut-nav { flex: 0 0 auto; display: flex; gap: 8px; }
+/* the brass "sign here" plate, at stepper size */
+.tut-nav .big-btn { margin-top: 0; padding: 8px 15px; font-size: 11px; letter-spacing: 1.8px; }
+.tut-note { flex: 0 0 auto; margin: 8px 0 0; text-align: center;
+  font-family: var(--mono); font-size: 10.5px; line-height: 1.45; color: var(--txt-mute); }
+
+@media (max-width: 760px) {
+  #iso-tutorial { padding: 8px; align-items: stretch; }
+  .tut-card { max-width: none; max-height: none; padding: 12px 13px 9px; }
+  .tut-head { padding: 0 26px 7px; }
+  .tut-title { font-size: 16px; letter-spacing: 1.8px; }
+  .tut-kicker { font-size: 9px; letter-spacing: 1.6px; }
+  .tut-body { padding: 9px 1px 2px; }
+  .tut-points li { font-size: 12px; line-height: 1.45; }
+  .tut-chain-node { min-width: 54px; padding: 5px 4px 4px; }
+  .tut-chain-arrow { display: none; }
+  .tut-board { grid-template-columns: repeat(var(--tut-cols, 5), 26px); gap: 3px; }
+  .tut-gem { width: 26px; height: 26px; }
+  /* the foot stacks: pips on top, then the two keys side by side */
+  .tut-foot { flex-wrap: wrap; gap: 8px; }
+  .tut-dots { order: 1; flex: 1 1 100%; }
+  .tut-never { order: 2; flex: 1 1 auto; }
+  .tut-nav { order: 3; flex: 1 1 auto; }
+  .tut-nav .big-btn { flex: 1; width: auto; padding: 9px 8px; }
+}
+
 /* ── AI-03: the rival-plant peek panel ────────────────────────────────────
    Non-modal: sits over the top-right of the board, repaints from the live
    board every 350 ms (and on every rival move), so the player can WATCH
