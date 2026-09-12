@@ -56,8 +56,11 @@ import type { Harvester, Factory } from "./economy";
  * one laid on virgin ground does not), and `connections` leaves the wire — it
  * is derived state now. A v8 guest has no provenance layer, so it would score
  * every rival pave as zero: refuse instead.
+ * v10 (PP-14b): the snapshot gains `rivalSabotage` — the frost/girders/smog
+ * the host's Black Market put on the guest-seat plant. A v9 guest would never
+ * show that sabotage (it is new state), so mixed-version rooms must refuse.
  */
-export const SNAPSHOT_VERSION = 9;
+export const SNAPSHOT_VERSION = 10;
 
 export const EXPECTED_TRACK_BYTES = MAP_W * MAP_H;
 
@@ -93,6 +96,23 @@ export interface WirePlayer {
   res: Partial<Record<Cargo, number>>;
 }
 
+/**
+ * PP-14b — the sabotage on the guest-seat plant, as it travels the wire. The
+ * guest's own board is a spectator view whose gem layout is never synced, but
+ * frost/girders/smog bought against it must still appear, so the sabotage
+ * overlay ships instead of the whole sim. Seats are NOT mirrored: sabotage in
+ * multiplayer always targets seat 1 (the host's rival = the guest itself), so
+ * the guest applies it to its OWN board as-is.
+ */
+export interface RivalSabotage {
+  /** Gems frozen in ice: position + ice level (1 or 2). */
+  frozen: { r: number; c: number; hard: number }[];
+  /** Cells blocked by iron girders. */
+  girders: { r: number; c: number }[];
+  /** Smog still hanging over the plant, in remaining ms (0 = none). */
+  smogIn: number;
+}
+
 export interface Snapshot {
   version: number;
   /** The map seed. Terrain and industries are regenerated from it, not sent. */
@@ -111,6 +131,8 @@ export interface Snapshot {
   harvesters: WireHarvester[];
   factories: Factory[];
   players: WirePlayer[];
+  /** PP-14b: the Black-Market sabotage on the guest-seat plant. */
+  rivalSabotage: RivalSabotage;
 }
 
 export interface SnapshotSource {
@@ -122,6 +144,7 @@ export interface SnapshotSource {
   won: boolean;
   players: WirePlayer[];
   t?: number;
+  rivalSabotage?: RivalSabotage;
 }
 
 export function buildSnapshot(src: SnapshotSource): Snapshot {
@@ -138,6 +161,13 @@ export function buildSnapshot(src: SnapshotSource): Snapshot {
     harvesters: src.harvesters.map((h) => ({ id: h.id, owner: h.owner, ownerId: h.ownerId, tx: h.tx, ty: h.ty })),
     factories: src.factories.map((f) => ({ ...f })),
     players: src.players.map((p) => ({ ...p, res: { ...p.res } })),
+    rivalSabotage: src.rivalSabotage
+      ? {
+          frozen: src.rivalSabotage.frozen.map((f) => ({ ...f })),
+          girders: src.rivalSabotage.girders.map((g) => ({ ...g })),
+          smogIn: src.rivalSabotage.smogIn,
+        }
+      : { frozen: [], girders: [], smogIn: 0 },
   };
 }
 
@@ -178,6 +208,18 @@ export function validateSnapshot(s: unknown, localSeed?: number): SnapshotError 
   if (!Array.isArray(o.harvesters) || !Array.isArray(o.factories)) {
     return new SnapshotError("malformed", "Snapshot is missing its structure lists.");
   }
+  // PP-14b: sabotage is optional for tolerance (an old producer might omit it
+  // and still be readable), but if present it must be shaped correctly.
+  if (o.rivalSabotage !== undefined) {
+    const sab = o.rivalSabotage as Partial<RivalSabotage> | null;
+    if (
+      !sab || typeof sab !== "object" ||
+      !Array.isArray(sab.frozen) || !Array.isArray(sab.girders) ||
+      (sab.smogIn !== undefined && !Number.isFinite(sab.smogIn))
+    ) {
+      return new SnapshotError("malformed", "Snapshot's rival sabotage is malformed.");
+    }
+  }
   for (const [name, b64] of [["dirt", o.dirt], ["road", o.road], ["owner", o.owner],
     ["upgraded", o.upgraded]] as const) {
     if (base64ToBytes(b64).length !== EXPECTED_TRACK_BYTES) {
@@ -205,6 +247,7 @@ export interface AppliedSnapshot {
   setupPhase: boolean;
   won: boolean;
   t: number;
+  rivalSabotage?: RivalSabotage;
 }
 
 /**
@@ -231,6 +274,13 @@ export function applySnapshot(s: unknown, localSeed?: number): AppliedSnapshot {
     setupPhase: !!o.setupPhase,
     won: !!o.won,
     t: o.t ?? 0,
+    rivalSabotage: o.rivalSabotage
+      ? {
+          frozen: o.rivalSabotage.frozen.map((f) => ({ ...f })),
+          girders: o.rivalSabotage.girders.map((g) => ({ ...g })),
+          smogIn: o.rivalSabotage.smogIn,
+        }
+      : undefined,
   };
 }
 

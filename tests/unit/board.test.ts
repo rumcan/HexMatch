@@ -130,18 +130,22 @@ describe("settle / swap", () => {
   // PP-14: the cross is the shape with a saint on the payroll — 3 horizontal
   // + 4 vertical overlapping on ONE gem (the centre of the 3-run, an
   // interior gem of the 4-run). It pauses the cascade, asks the player how
-  // to spend FOUR units of blessing (repeats allowed — 4 of one, 2+2, one of
+  // to spend SIX units of blessing (repeats allowed — 6 of one, 3+3, one of
   // each, any mix), then pays exactly that allocation, never gated by the
   // network. Before PP-14 the L detector swallowed crosses and reported them
-  // as L-SHAPEs paying two.
-  it("a cross of six (3 across + 4 down) pays one of each of the four picked cargoes", async () => {
+  // as L-SHAPEs paying two. PP-14b adds the BROKEN holy cross — two 3-runs
+  // crossing on their centre gems — which pays THREE units.
+  it("a cross of six (3 across + 4 down) pays each of the six picked cargoes", async () => {
     const b = freshBoard();
     const bonus: string[] = [];
     b.onBonus = (res, n, why) => bonus.push(`${why}:${res}:${n}`);
     const crosses: [number, number][] = [];
     b.onFx = (type, r, c) => { if (type === "cross") crosses.push([r, c]); };
     let picked: string[] = [];
-    b.onCrossChoice = (pick) => { picked = ["wood", "stone", "oil", "grain"]; pick([...picked]); };
+    b.onCrossChoice = (kind, picks, pick) => {
+      picked = ["wood", "brick", "sheep", "wheat", "ore", "wood"]; // 6, one repeat
+      pick([...picked]);
+    };
     // 3 horizontal + 4 vertical, overlapping on the centre gem (2,2)
     b.grid[2][1]!.res = "sheep";
     b.grid[2][2]!.res = "sheep";
@@ -156,20 +160,21 @@ describe("settle / swap", () => {
     // `resolve` runs synchronously — the angel fires before the choice
     const p = b.settle();
     expect(crosses).toEqual([[2, 2]]);
-    expect(picked).toEqual(["wood", "stone", "oil", "grain"]);
+    expect(picked).toEqual(["wood", "brick", "sheep", "wheat", "ore", "wood"]);
     // the awaited choice credits in a microtask, before the 190ms pop pause
     await new Promise((r) => setTimeout(r, 0));
     expect(bonus).toEqual([
-      "HOLY CROSS:wood:1", "HOLY CROSS:stone:1", "HOLY CROSS:oil:1", "HOLY CROSS:grain:1",
+      "HOLY CROSS:wood:1", "HOLY CROSS:brick:1", "HOLY CROSS:sheep:1",
+      "HOLY CROSS:wheat:1", "HOLY CROSS:ore:1", "HOLY CROSS:wood:1",
     ]);
     await p;
   });
 
-  it("a short pick list is topped up to four, honouring every pick", async () => {
+  it("a short pick list is topped up to six, honouring every pick", async () => {
     const b = freshBoard();
     const bonus: [string, number][] = [];
     b.onBonus = (res, n) => bonus.push([res, n]);
-    b.onCrossChoice = (pick) => pick(["wood", "wood"]);
+    b.onCrossChoice = (_kind, _picks, pick) => pick(["wood", "wood"]);
     b.grid[2][1]!.res = "sheep";
     b.grid[2][2]!.res = "sheep";
     b.grid[2][3]!.res = "sheep";
@@ -181,18 +186,18 @@ describe("settle / swap", () => {
     }
     const p = b.settle();
     await new Promise((r) => setTimeout(r, 0));
-    expect(bonus).toHaveLength(4);
+    expect(bonus).toHaveLength(6);
     // BOTH picks are honoured — the random top-up can only ever add wood,
     // never take the two the player was promised away.
     expect(bonus.filter(([res]) => res === "wood").length).toBeGreaterThanOrEqual(2);
     await p;
   });
 
-  it("all four of a single cargo is a valid spend", async () => {
+  it("all six of a single cargo is a valid spend", async () => {
     const b = freshBoard();
     const bonus: [string, number][] = [];
     b.onBonus = (res, n) => bonus.push([res, n]);
-    b.onCrossChoice = (pick) => pick(["wood", "wood", "wood", "wood"]);
+    b.onCrossChoice = (_kind, _picks, pick) => pick(["wood", "wood", "wood", "wood", "wood", "wood"]);
     b.grid[2][1]!.res = "sheep";
     b.grid[2][2]!.res = "sheep";
     b.grid[2][3]!.res = "sheep";
@@ -204,11 +209,11 @@ describe("settle / swap", () => {
     }
     const p = b.settle();
     await new Promise((r) => setTimeout(r, 0));
-    expect(bonus).toEqual([["wood", 1], ["wood", 1], ["wood", 1], ["wood", 1]]);
+    expect(bonus).toEqual([["wood", 1], ["wood", 1], ["wood", 1], ["wood", 1], ["wood", 1], ["wood", 1]]);
     await p;
   });
 
-  it("with no chooser wired the cross still pays four cargoes", async () => {
+  it("with no chooser wired the cross still pays six cargoes", async () => {
     const b = freshBoard();
     const bonus: [string, number][] = [];
     b.onBonus = (res, n) => bonus.push([res, n]);
@@ -223,7 +228,56 @@ describe("settle / swap", () => {
     }
     const p = b.settle();
     await new Promise((r) => setTimeout(r, 0));
-    expect(bonus).toHaveLength(4);
+    expect(bonus).toHaveLength(6);
+    await p;
+  });
+
+  it("a broken cross (3×3 sharing the centre) pays three units and fires bcross", async () => {
+    const b = freshBoard();
+    const bonus: string[] = [];
+    b.onBonus = (res, n, why) => bonus.push(`${why}:${res}:${n}`);
+    const fx: [string, number, number][] = [];
+    b.onFx = (type, r, c) => { if (type === "cross" || type === "bcross") fx.push([type, r, c]); };
+    let picked: string[] = [];
+    b.onCrossChoice = (kind, picks, pick) => { picked = ["wood", "stone", "stone"]; pick([...picked]); };
+    // 3 horizontal + 3 vertical, both centred on (2,2) — a small plus.
+    b.grid[2][1]!.res = "sheep";
+    b.grid[2][2]!.res = "sheep";
+    b.grid[2][3]!.res = "sheep";
+    b.grid[1][2]!.res = "sheep";
+    b.grid[3][2]!.res = "sheep";
+    // fence the plus in so pass 1 is exactly this cross
+    for (const [r, c] of [[2, 0], [2, 4], [0, 2], [4, 2], [1, 1], [1, 3], [3, 1], [3, 3]]) {
+      b.grid[r][c]!.res = "ore";
+    }
+    // keep (4,1)/(4,3) off ore so the (4,2) fence never forms a 3-run
+    b.grid[4][1]!.res = "wheat";
+    b.grid[4][3]!.res = "wheat";
+    const p = b.settle();
+    expect(fx).toEqual([["bcross", 2, 2]]);
+    expect(picked).toEqual(["wood", "stone", "stone"]);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(bonus).toEqual(["BROKEN CROSS:wood:1", "BROKEN CROSS:stone:1", "BROKEN CROSS:stone:1"]);
+    await p;
+  });
+
+  it("a broken cross topped up to three with no chooser pays three", async () => {
+    const b = freshBoard();
+    const bonus: [string, number][] = [];
+    b.onBonus = (res, n) => bonus.push([res, n]);
+    b.grid[2][1]!.res = "sheep";
+    b.grid[2][2]!.res = "sheep";
+    b.grid[2][3]!.res = "sheep";
+    b.grid[1][2]!.res = "sheep";
+    b.grid[3][2]!.res = "sheep";
+    for (const [r, c] of [[2, 0], [2, 4], [0, 2], [4, 2], [1, 1], [1, 3], [3, 1], [3, 3]]) {
+      b.grid[r][c]!.res = "ore";
+    }
+    b.grid[4][1]!.res = "wheat";
+    b.grid[4][3]!.res = "wheat";
+    const p = b.settle();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(bonus).toHaveLength(3);
     await p;
   });
 

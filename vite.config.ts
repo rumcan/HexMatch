@@ -1,4 +1,5 @@
 import path from "path";
+import { cpSync, existsSync } from "node:fs";
 import { fileURLToPath } from "url";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
@@ -39,11 +40,57 @@ function devRoomServerOrigin(): Plugin {
   };
 }
 
+/**
+ * TICKET-B0 (ART-1950S): ship `assets/buildings/` in the production build.
+ *
+ * `loadBuildingLayers()` (src/iso/atlas.ts) fetches
+ * `${BASE_URL}assets/buildings/manifest.json` at RUNTIME — a fetch, not a
+ * static import, so Vite neither bundles nor copies those files. Under
+ * `vite dev` the request resolves off the project root and everything works;
+ * under `vite build` nothing copied `assets/buildings/` into `dist/`, so in
+ * every built/deployed copy the manifest 404'd and ALL per-building art
+ * silently fell back to the shared sheet.
+ *
+ * Fix: a static-copy step. Chosen over the bundle-import alternative because
+ * the non-gating runtime design is deliberate — the sheet fallback keeps a
+ * partial migration fully playable, and authors can drop a PNG in the folder
+ * and re-run the tool without a rebuild of the TS graph. This hook copies
+ * `assets/buildings/**` into `<outDir>/assets/buildings/` verbatim (no
+ * hashing): the runtime fetch path is then identical in dev, preview and
+ * deploy. `assets/` is deliberately NOT made `publicDir` — that would
+ * deoptimise the bundled atlases and ground textures.
+ */
+function copyBuildingLayers(): Plugin {
+  let outDir = "dist";
+  let srcDir = "";
+  return {
+    name: "hexmatch:building-layers",
+    apply: "build",
+    configResolved(config) {
+      outDir = config.build.outDir;
+      srcDir = config.root;
+    },
+    closeBundle() {
+      const from = path.resolve(srcDir, "assets", "buildings");
+      if (!existsSync(from)) return;
+      const to = path.resolve(srcDir, outDir, "assets", "buildings");
+      cpSync(from, to, { recursive: true });
+      this.environment?.logger?.info?.(`building layers copied → ${path.relative(srcDir, to)}`);
+    },
+  };
+}
+
 // https://vite.dev/config/
 export default defineConfig({
   base: "/hexmatch/",
+  // `server` covers `vite dev`; `preview` covers `vite preview` of a built app
+  // (the e2e webServer and Arena's sandbox live preview both use it). Vite 7
+  // rejects unknown Host headers on both unless allowedHosts permits them —
+  // localhost is always allowed, tunnelled/sandboxed hosts are not.
   server: { host: true, allowedHosts: [".e2b.app"] },
-  plugins: [react(), tailwindcss(), rundotMultiplayerPlugin(), devRoomServerOrigin()],
+  preview: { host: true, allowedHosts: [".e2b.app"] },
+  plugins: [react(), tailwindcss(), rundotMultiplayerPlugin(), devRoomServerOrigin(), copyBuildingLayers()],
+
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "src"),

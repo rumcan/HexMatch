@@ -277,7 +277,6 @@ export class IsoRenderer {
   private lastCycles: string[][] = [];
   private pad: number;
   private logRender = false;
-
   // ── W-series pattern-painted ground ──────────────────────────────────────
   /** Canvas patterns for grass/sand/water; null → flat FALLBACK colours. */
   private ground: GroundPatterns | null = null;
@@ -324,6 +323,24 @@ export class IsoRenderer {
     this.ctxS = g(canvases.structures, false);
     this.ctxO = g(canvases.overlay, false);
   }
+
+  /**
+   * ART-1950S (TICKET-B-3.2): recompute the culling pad from the CURRENT
+   * sprite defs. The constructor computes it once from
+   * `atlas.manifest.sprites` — but `loadBuildingLayers()` resolves LATER and
+   * mutates `s.w`/`s.h` on the defs it installs (a per-building PNG can be
+   * taller than the tallest sheet sprite), so a pad frozen at construction
+   * lets tall buildings pop in and out at the screen edge. Call this from the
+   * same `.then()` that invalidates after the layers install. Exposed as a
+   * method (not re-derived per frame) because it scans every sprite def.
+   */
+  recomputePad(): number {
+    this.pad = cullPad(this.atlas);
+    return this.pad;
+  }
+
+  /** The culling pad currently in use (tiles of overdraw beyond the viewport). */
+  get cullPadValue(): number { return this.pad; }
 
   // ── invalidation ────────────────────────────────────────────────────────
   invalidateTile(tx: number, ty: number) {
@@ -526,6 +543,19 @@ export class IsoRenderer {
     if (this.overlayPainter) this.overlayPainter(ctx, cam, timeMs);
   }
 
+  /**
+   * ART-1950S (TICKET-B4): every sprite name actually handed to blit() this
+   * session — industries, depots, town houses, roads, dirt, trucks, extras.
+   * The dead-art audit unions this observed set with the by-construction
+   * families (road/dirt bitmasks, depot_<cargo>, TOWN_HOUSE_VARIANTS) to
+   * derive deletion candidates; a naive grep reports 149 of 239 sprites as
+   * "unused" because most names are built at runtime. Ground tiles are
+   * pattern-painted, not blitted, so terrain_* never appears here (they are
+   * enumerated by construction instead). Cleared never; it is a Set of
+   * strings, cheap to hold.
+   */
+  readonly drawnSprites = new Set<string>();
+
   private blit(ctx: Ctx2D, p: Placed, timeMs: number) {
     const z = this.cam.zoom;
     // W-series: roads blit from the ROADS atlas, buildings from the BUILDINGS
@@ -533,6 +563,7 @@ export class IsoRenderer {
     // else falls back to the monolithic image (layer sets unloaded).
     const img = this.atlas.imageForSprite(p.sprite, z);
     if (!img) return;
+    this.drawnSprites.add(p.sprite);
     const frame = p.frame ?? this.atlas.frameAt(p.def, timeMs);
     // Source rect in the ZOOMED atlas — never the raw 1× rect scaled with a
     // multiplication (the packer rounds both position and size at each zoom).

@@ -1,5 +1,24 @@
 # ART-1950S: AI Codex Tickets for 1950s Blizzard-Style Isometric Buildings
 
+> **EXECUTION STATUS (2026-09-11, branch `arena/01a091ab-hexmatch`):**
+> - **B0, B2, B3.1, B3.2, B1a, B1b, B1c (compile+resolve)** — done. Pipeline
+>   ships in the production build, quality kernel, tight trimming, cull-pad
+>   recompute; `oil_rig`/`town_house_pool` compiled; `town_house_c` re-fitted
+>   onto a compliant overhang canvas and compiled.
+> - **ART-01…04** — done (real 1950s art: `farm`, `forest`, `ore_mine`,
+>   `quarry`, `gold_mine`, `factory`, 6 × `depot_*`, `town_center`).
+> - **ART-05…07** — pipeline complete for all 43 pool variants, but **42 of
+>   43 masters are sheet-reference PLACEHOLDERS** (pixel-identical to today's
+>   art, drop-in slots). Swap list + one-command recipe:
+>   `assets/buildings-src/PLACEHOLDERS.md`. (`town_house_pool` is authored.)
+> - **ART-08 (gems)** — not started (bonus; existing gem art still in use).
+> - **B4 (dead-art audit)** — instrumentation ready via `__iso.buildings`;
+>   deletion candidates NOT yet gathered; nothing deleted.
+> - `town_house_c` is compiled but **not yet wired into
+>   `TOWN_HOUSE_VARIANTS`** (B1c Option A vs B decision pending sign-off;
+>   note its sheet cell is a *composed* duplicate of `town_offices_1423` —
+>   ground 1424 + building 1423 — while its authored PNG is distinct art).
+
 **Epic:** Visual Overhaul — High-Resolution 1950s Retro-Industrial Tycoon (Blizzard RTS Style)  
 **Target:** Author high-resolution transparent `@2x` PNG images in `assets/buildings-src/`, wire them into the engine, and ship them in production.  
 **Governing Technical Specs:**

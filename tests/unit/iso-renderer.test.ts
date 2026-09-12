@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { Atlas, type Manifest } from "../../src/iso/atlas";
 import {
   CHUNK, chunksX, chunkIndexOf, chunkSurfaceSize, chunkWorldOrigin,
-  terrainSprite, buildDrawList, cullPad, flatPick,
+  terrainSprite, buildDrawList, cullPad, flatPick, IsoRenderer, type World,
 } from "../../src/iso/renderer";
 import { generateMap, WATER, ROUGH } from "../../src/iso/grid";
 import { createCamera, centerOnMap, visibleTileRange } from "../../src/iso/camera";
@@ -223,5 +223,72 @@ describe("E4 flat pick", () => {
     expect(flatPick(-31, 32 * 3 + 1)).toEqual([2, 3]);
     expect(flatPick(0.001, 0.001)).toEqual([0, 0]);
     expect(flatPick(-1, 0.001)).toEqual([-1, 0]);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// ART-1950S / TICKET-B-3.2 — the cull pad must follow LATE sprite mutations.
+//
+// `IsoRenderer`'s constructor freezes `this.pad = cullPad(atlas)` from the
+// manifest defs, but `loadBuildingLayers()` resolves later and mutates
+// `s.w`/`s.h` on the defs it installs (a per-building PNG can out-tall the
+// tallest sheet sprite). A stale pad lets tall buildings pop in and out at
+// the screen edge. `recomputePad()` is the fix; this pins it.
+// ══════════════════════════════════════════════════════════════════════════
+describe("B-3.2 cull pad follows late sprite mutations", () => {
+  /** Minimal renderer: the constructor only stores contexts + the pad. */
+  const mkRenderer = (m: Manifest) => {
+    const ctx = {} as CanvasRenderingContext2D;
+    const canvas = () => ({ getContext: () => ctx }) as unknown as HTMLCanvasElement;
+    const atlas = new Atlas(m);
+    // IsoRenderer reads nothing from the World until a draw pass, which
+    // these tests never trigger.
+    const world = { grid } as World;
+    return new IsoRenderer(
+      { terrain: canvas(), structures: canvas(), overlay: canvas() },
+      atlas, createCamera(800, 600), world,
+    );
+  };
+
+  it("starts from the manifest's tallest sprite, then follows recomputePad()", () => {
+    const m: Manifest = JSON.parse(JSON.stringify(manifest));
+    const r = mkRenderer(m);
+    const before = r.cullPadValue;
+    expect(before).toBe(cullPad(new Atlas(m)));
+
+    // Simulate loadBuildingLayers: mutate a def AFTER construction so the
+    // sprite towers over every sheet sprite (e.g. a tall 4×4 building PNG).
+    const def = m.sprites.farm;
+    const saved = { w: def.w, h: def.h };
+    def.w = def.h = 999;
+    // The frozen pad does NOT follow the mutation…
+    expect(r.cullPadValue).toBe(before);
+    // …until the layers' .then() recomputes it.
+    const after = r.recomputePad();
+    expect(after).toBeGreaterThan(before);
+    expect(r.cullPadValue).toBe(after);
+    expect(after).toBe(cullPad(new Atlas(m)));
+
+    // And back down again when the tall art goes away.
+    def.w = saved.w; def.h = saved.h;
+    expect(r.recomputePad()).toBe(before);
+  });
+
+  it("visibleTileRange widens with the recomputed pad (the pop-in regression)", () => {
+    const m: Manifest = JSON.parse(JSON.stringify(manifest));
+    const r = mkRenderer(m);
+    const cam = centerOnMap(createCamera(800, 600));
+    const def = m.sprites.farm;
+    def.w = def.h = 999;
+    r.recomputePad();
+    const wide = visibleTileRange(cam, r.cullPadValue);
+    const base = visibleTileRange(cam, cullPad(new Atlas(manifest)));
+    // A taller tallest-sprite must widen the visible range in every direction.
+    expect(wide.x0).toBeLessThanOrEqual(base.x0);
+    expect(wide.y0).toBeLessThanOrEqual(base.y0);
+    expect(wide.x1).toBeGreaterThanOrEqual(base.x1);
+    expect(wide.y1).toBeGreaterThanOrEqual(base.y1);
+    // …and materially so: a 999px sprite is ~62 half-tile rows of overdraw.
+    expect(wide.x0).toBeLessThan(base.x0);
   });
 });

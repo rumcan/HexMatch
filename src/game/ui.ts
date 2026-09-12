@@ -31,7 +31,7 @@ import { BANK_RATE, MAX_OFFERS } from "./trade";
 // constant and the engine's own `VP_TARGET` were two numbers with one name,
 // and the HUD was already showing "/10" while the game was winning at 12 — the
 // scoreboard now has exactly one source, `VICTORY` in src/iso/config.ts.
-import { CARGO, CARGOES, TRANSPORT, VICTORY, UPGRADE_COST, type Cargo } from "../iso/config";
+import { CARGO, CARGOES, TRANSPORT, VICTORY, UPGRADE_COST, type Cargo, type Portrait } from "../iso/config";
 import { DEPOT_COST, costCompact, depotButtonLabel } from "../iso/construction";
 import { PLANT_COST } from "../iso/plants";
 import { GEM_TO_CARGO } from "../iso/quarry";
@@ -43,6 +43,8 @@ import { RIVAL_SKILLS, SKILL_KEYS, type SkillKey } from "../iso/skill";
 // sings with it. Both are one-shot fx answers to `onFx("cross", …)`.
 import angelUrl from "../assets/ui/angel.png";
 import { playHoly, prewarmHoly } from "./holy";
+// PP-14b: the tycoon portraits live with the NOIR mugshots further down — one
+// set of faces, so the start-screen pick and the dossiers read the same files.
 
 // PP-14: the cross bounty chooser offers the five CARGOES, and each button
 // must hand the board back its COLOUR key — the reverse of GEM_TO_CARGO.
@@ -77,6 +79,10 @@ const GEM_ART: Record<Cargo, string> = Object.fromEntries(
 const PORTRAIT_BY_SEAT = [portraitYou, portraitKrag, portraitTorvin, portraitVex];
 const PORTRAIT_BY_NAME: Record<string, string> = {
   you: portraitYou, krag: portraitKrag, torvin: portraitTorvin, vex: portraitVex,
+  // PP-14b: the solo rival is simply named "Rival", which is no surname in the
+  // family — name Torvin here rather than let the seat tie-break hand him
+  // Krag's face. Torvin plays the rival; the player's own is chosen below.
+  rival: portraitTorvin,
 };
 
 /** The dossier face for one player: their named portrait, else their seat's. */
@@ -115,6 +121,10 @@ export interface UiState {
    *  "can't go here — …" reason for an invalid Factory/Depot hover). */
   inspectTone?: "good" | "bad" | null;
   reach: Partial<Record<Cargo, number>>;
+  /** PP-14b: ms left on the Processing Plant reset cooldown (0 = ready). */
+  resetIn: number;
+  /** PP-14b: which tycoon portrait the player picked. */
+  portrait: Portrait;
 }
 
 export interface UiHooks {
@@ -142,12 +152,12 @@ export interface OriginalUi {
   fx: (type: FxType, r: number, c: number, text?: string) => void;
   popup: (gains: Partial<Record<ResKey, number>>, label: string) => void;
   /**
-   * PP-14: the board paused on a HOLY CROSS and is waiting for the player's
-   * FOUR picks — show the five-cargo chooser and answer `pick(chosen)` when
-   * four different ones are confirmed (or after the auto-pick timer, so the
-   * cascade never hangs).
+   * PP-14b: the board paused on a cross and is waiting for the player's picks.
+   * `kind` names the shape (holy 3×4 → 6 picks, broken 3×3 → 3 picks); show
+   * the five-cargo chooser and answer `pick(chosen)` when the units are
+   * confirmed (or after the auto-pick timer, so the cascade never hangs).
    */
-  crossPick: (pick: (chosen: ResKey[]) => void) => void;
+  crossPick: (kind: "holy" | "broken", picks: number, pick: (chosen: ResKey[]) => void) => void;
   isQuarryOpen: () => boolean;
   isTradeOpen: () => boolean;
   showModal: (html: string) => void;
@@ -668,6 +678,13 @@ export function createOriginalUi(
 
   // ── tabs / mobile ─────────────────────────────────────────────────────────
   function setTab(t: "market" | "bank" | "plant" | "feed") {
+    // PP-14b: a pending cross bounty lives inside the plant panel — switching
+    // away would hide it mid-pick and the cascade would sit unseen until the
+    // timer answers for the player. Stay put instead.
+    if (pickEl && t !== "plant") {
+      toast("Answer the cross bounty first.", "info");
+      return;
+    }
     tabs.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((tab) => {
       tab.setAttribute("aria-pressed", String(tab.dataset.tab === t));
     });
@@ -873,46 +890,65 @@ export function createOriginalUi(
   }
 
   // ── PP-14: the cross bounty chooser ──────────────────────────────────────
-  // The board pauses the cascade on a HOLY CROSS and waits; this panel asks
-  // how to spend the FOUR units of blessing. Repeats are allowed — tap a
-  // cargo to add one unit, tap it again to take one back, up to a total of
-  // four (4 of one, 2+2, 1+1+1+1, any mix). The confirm enables at exactly
-  // four, and the 8s timer (the board's own 8s backstop is the second line
-  // of defence) auto-confirms whatever is selected so the cascade always
-  // resumes — the board fills any unspent unit with a random cargo.
+  // The board pauses the cascade on a HOLY CROSS (6 units) or a BROKEN HOLY
+  // CROSS (3 units) and waits; this panel asks how to spend the units of
+  // blessing. Repeats are allowed — tap a cargo to add one unit, tap it again
+  // to take one back, up to the cross's total (all of one, 2+2, one of each,
+  // any mix). The confirm enables at exactly that total, and the 8s timer
+  // (the board's own 9s backstop is the second line of defence) auto-confirms
+  // whatever is selected so the cascade always resumes — the board fills any
+  // unspent unit with a random cargo.
+  //
+  // The panel must NEVER vanish "weirdly": clicks anywhere outside it do not
+  // dismiss it, a tab switch that would hide the plant panel is refused while
+  // a pick is pending, and a second cross resolving over an unanswered one
+  // answers the first with its current selection before the new chooser shows.
   let pickEl: HTMLElement | null = null;
   let pickTimer = 0;
+  let pickFn: ((chosen: ResKey[]) => void) | null = null;
+  const pickCounts = new Map<ResKey, number>();
 
-  function crossPick(pick: (chosen: ResKey[]) => void) {
+  function crossPick(kind: "holy" | "broken", picks: number, pick: (chosen: ResKey[]) => void) {
+    const total = () => [...pickCounts.values()].reduce((a, b) => a + b, 0);
+    const expand = () => {
+      const chosen: ResKey[] = [];
+      for (const [res, n] of pickCounts) for (let i = 0; i < n; i++) chosen.push(res);
+      return chosen;
+    };
     const close = () => {
       window.clearTimeout(pickTimer);
       pickEl?.remove();
       pickEl = null;
+      pickFn = null;
     };
-    close();
-    const panel = h("div", "cross-pick");
-    panel.appendChild(h("div", "cross-pick-title", "🙏 HOLY CROSS"));
-    panel.appendChild(h("div", "cross-pick-sub", "Spend 4 bounties · repeats allowed"));
+    // A second cross while the first chooser is still open: answer the first
+    // with what was picked so far (the board tops up the rest), so its paused
+    // cascade can never hang, then show the new chooser.
+    if (pickFn) {
+      const prev = pickFn;
+      const chosen = expand();
+      close();
+      prev(chosen);
+    }
+    pickCounts.clear();
+    pickFn = pick;
+    const holy = kind === "holy";
+    const panel = h("div", `cross-pick${holy ? "" : " broken"}`);
+    panel.appendChild(h("div", "cross-pick-title", holy ? "🙏 HOLY CROSS" : "✝ BROKEN CROSS"));
+    panel.appendChild(h("div", "cross-pick-sub", `Spend ${picks} bounties · repeats allowed`));
     const row = h("div", "cross-pick-row");
-    const counts = new Map<ResKey, number>();
-    const total = () => [...counts.values()].reduce((a, b) => a + b, 0);
-    const count = h("div", "cross-pick-count", "0 / 4 spent");
-    const confirm = h("button", "cross-pick-confirm", "🙏 Bless +4");
+    const count = h("div", "cross-pick-count", `0 / ${picks} spent`);
+    const confirm = h("button", "cross-pick-confirm", holy ? `🙏 Bless +${picks}` : `✝ Bless +${picks}`);
     (confirm as HTMLButtonElement).type = "button";
     (confirm as HTMLButtonElement).disabled = true;
     const refresh = () => {
-      count.textContent = `${total()} / 4 spent`;
-      (confirm as HTMLButtonElement).disabled = total() !== 4;
+      count.textContent = `${total()} / ${picks} spent`;
+      (confirm as HTMLButtonElement).disabled = total() !== picks;
       row.querySelectorAll<HTMLElement>("[data-gem]").forEach((b) => {
-        const n = counts.get(b.dataset.gem as ResKey) ?? 0;
+        const n = pickCounts.get(b.dataset.gem as ResKey) ?? 0;
         b.classList.toggle("sel", n > 0);
         b.dataset.n = String(n);
       });
-    };
-    const expand = () => {
-      const chosen: ResKey[] = [];
-      for (const [res, n] of counts) for (let i = 0; i < n; i++) chosen.push(res);
-      return chosen;
     };
     for (const cargo of TRADEABLE) {
       const gem = CARGO_TO_GEM[cargo];
@@ -926,12 +962,12 @@ export function createOriginalUi(
       b.innerHTML = `<i>${CARGO[cargo].icon}</i><span>+1</span>`;
       b.title = `Spend a bounty on ${CARGO[cargo].name} (tap again to take it back)`;
       b.onclick = () => {
-        const n = counts.get(gem) ?? 0;
-        if (total() >= 4) {
-          if (n > 0) counts.set(gem, n - 1);           // swap one unit out
-          else { toast("All 4 spent — tap a chosen cargo to take one back.", "info"); return; }
+        const n = pickCounts.get(gem) ?? 0;
+        if (total() >= picks) {
+          if (n > 0) pickCounts.set(gem, n - 1);       // swap one unit out
+          else { toast(`All ${picks} spent — tap a chosen cargo to take one back.`, "info"); return; }
         } else {
-          counts.set(gem, n + 1);                      // spend one more unit
+          pickCounts.set(gem, n + 1);                  // spend one more unit
         }
         refresh();
       };
@@ -1041,7 +1077,7 @@ export function createOriginalUi(
   window.addEventListener("orientationchange", responsiveZoom);
 
   // ── top HUD: chips, VP, kingdoms ──────────────────────────────────────────
-  function renderHUD(purse: Partial<Record<Cargo, number>>, players: UiPlayer[]) {
+  function renderHUD(purse: Partial<Record<Cargo, number>>, players: UiPlayer[], portrait: Portrait) {
     chips.innerHTML = "";
     for (const k of CARGOES) {
       const chip = h("div", "chip");
@@ -1067,8 +1103,15 @@ export function createOriginalUi(
       // AI-03: the breakdown is prebuilt by the game (it owns the ledger);
       // native title keeps this one line of tooltip code.
       if (p.vpTip) row.title = p.vpTip;
+      // PP-14b + NOIR: the dossier face. The player's own is the Vex or You
+      // portrait picked on the start screen; every rival keeps the mugshot its
+      // name (or seat) maps to — Torvin plays the solo rival. The coloured
+      // initial stays as the fallback under the image.
+      const face = p.human
+        ? (portrait === "you" ? portraitYou : portraitVex)
+        : portraitFor(p, players.indexOf(p));
       row.innerHTML = `
-        <div class="king-av has-portrait" style="background-image:url(${portraitFor(p, players.indexOf(p))})">${p.name[0]}</div>
+        <div class="king-av has-portrait" style="background-image:url(${face})">${p.name[0]}</div>
         <div class="king-mid">
           <div class="king-name">${p.name}${p.human ? " <span class='you'>YOU</span>" : ""}</div>
           <div class="king-bar"><i style="width:${Math.min(100, (p.vp / VICTORY.target) * 100)}%;background:${p.colour}"></i></div>
@@ -1079,14 +1122,25 @@ export function createOriginalUi(
   }
 
   // ── quota status / upgrade bar / combo ─────────────────────────────────────
+  // PP-14b: the combo bank is more prominent now — the pips grew, and a bold
+  // "N/N" readout spells out how close the next free Gold coin is. The "full"
+  // state (the next combo pays) lights the whole bank gold.
   function setCombo(count: number, need: number) {
-    comboBank.innerHTML = `<span class="cb-lbl">Combo</span>` +
-      Array.from({ length: need }, (_, i) => `<i class="${i < count ? "on" : ""}"></i>`).join("");
+    comboBank.innerHTML =
+      `<span class="cb-lbl">Combo</span>` +
+      Array.from({ length: need }, (_, i) => `<i class="${i < count ? "on" : ""}"></i>`).join("") +
+      `<b class="cb-n">${count}/${need}</b>`;
+    comboBank.classList.toggle("full", count >= need);
   }
 
   // ── paint ─────────────────────────────────────────────────────────────────
   function paint(state: UiState) {
-    renderHUD(state.purse, state.players);
+    renderHUD(state.purse, state.players, state.portrait);
+    // PP-14b: the reset button counts its cooldown down and disables while
+    // the plant re-arms.
+    const resetLeft = Math.ceil((state.resetIn ?? 0) / 1000);
+    resetBtn.disabled = resetLeft > 0;
+    resetBtn.textContent = resetLeft > 0 ? `♻ Reset ${resetLeft}s` : "♻ Reset";
     // PP-08: the panel re-renders when Gold changes OR when the material
     // affordability of a non-gold action (Security, Repair) flips — otherwise
     // a purse that only gained/lost materials would show a stale button.
