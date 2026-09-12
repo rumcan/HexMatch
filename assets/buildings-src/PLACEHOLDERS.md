@@ -75,7 +75,8 @@ pipeline in `tools/README-art.md` (§ 1950s building redo pipeline).
 | 1 | `farm`, `factory`, `town_small_house_1x1_1`, `town_flats`, `town_shops_modern`, `town_small_house_arctic_1x1_2`, `town_house_arctic_1x1_5`, `town_cottage_arctic_1x1_1`, `town_shops_arctic_1x1_2`, `town_flats_arctic_2x1_1` | ✅ regenerated, fitted, verified, compiled |
 | 2 | `town_flats_arctic_1x1_1` *(polish candidate, aspect fixed)*, `town_flats_arctic_1x1_2`, `town_flats_arctic_2x1_2`, `town_house_modern`, `town_house_modern_2`, `town_house_swiss`, `town_house_c`, `town_house_pool`, `town_cottage_old_small`, `town_cottage_old_small_2` | ✅ regenerated, fitted, verified, compiled |
 | 3 | `town_bank`, `town_cinema`, `town_hotel`, `town_shops_offices`, `town_shops_offices_2`, `town_shop_small`, `town_offices_1423`, `town_office_1460`, `town_office_tower_modern`, `town_fountain_1x1` | ✅ regenerated, fitted, verified, compiled |
-| remaining 28 | townhouses/landmark, flats/trop, industries, depots | ⏳ pending |
+| 4 | `forest`, `ore_mine`, `quarry`, `gold_mine`, `oil_rig` *(3×3/4×4 footprints)*, `town_center`, `town_townhouse_gardens_2` *(last polish candidate, now 1.49 aspect)*, `town_flats_2`, `town_flats_4`, `town_flats_grey` | ✅ regenerated, fitted, verified, compiled |
+| remaining 18 | cottages/townhouses, trop flats, offices_tall, depots | ⏳ pending |
 
 Verification for batch 1: `tools/overlay-building-template.mjs` reports every
 parcel in the 2:1 family, `parcelPct` 84–115% of the guide diamond, and all
