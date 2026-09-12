@@ -49,6 +49,7 @@ import {
 import { IsoRenderer, type World } from "./renderer";
 import { scatterScenery, type Scenery } from "./scenery";
 import { loadDecalImages, loadScenerySprites } from "./scenery-art";
+import { loadVehicleLayers } from "./vehicle-art";
 import { generateMap, resolveMapSeed, type Grid, type Industry } from "./grid";
 import {
   createTrack, drawBits, previewDrag, commitDrag, canBuildOn, hasTrack,
@@ -3318,6 +3319,21 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       console.warn("[scenery] art failed to load:", err);
     });
 
+    // TRUCK-BRAND art (assets/vehicles/): the eight liveried lorries — blue for
+    // the player, red for the rival, four headings each. Installed into the
+    // sprite table like the scenery, and just as non-gating: while this is
+    // pending (or on a checkout without the PNGs) the legacy `truck_goods_*`
+    // sheet cells draw every lorry, which is the same lorry unpainted.
+    void loadVehicleLayers(atlas).then((n) => {
+      if (disposed || !n) return;
+      // The trucks are drawn from the structures layer every frame, so the new
+      // defs only need the vehicle items re-derived — but invalidate anyway, the
+      // same way the building layers do, so a paused/still frame updates too.
+      renderer?.invalidateAll();
+    }).catch((err) => {
+      console.warn("[truck-brand] failed to load:", err);
+    });
+
     void loadBuildingLayers(atlas, `${import.meta.env.BASE_URL}assets/buildings/`).then((n) => {
       if (disposed || !n) return;
       // B-3.2: the layers just MUTATED sprite w/h (a per-building PNG can
@@ -3380,7 +3396,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         tickTrucks(trucks, dt, protests.size > 0 ? new Set(protests.keys()) : undefined);
       }
       collectDeliveries(t);
-      world.vehicles = truckItems(trucks);
+      // TRUCK-BRAND: the atlas decides whether a lorry wears a livery — the
+      // branded sprites only exist once `loadVehicleLayers` has installed them
+      // (see below), and until then every truck draws the legacy goods cell.
+      world.vehicles = truckItems(trucks, atlasRef ?? undefined);
       renderer!.render(t, overlayItems());
       floats.frame(t);
       paintUi(t);

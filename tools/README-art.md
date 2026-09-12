@@ -266,6 +266,79 @@ That writes the densest tree clump at 2×/1×/0.5× plus a wide map sweep to
 `test-results/scenery-review/` (ignored). `scenery-lab.html` is the same
 review in the live dev server (`/hexmatch/scenery-lab.html?seed=1337`).
 
+## Vehicles — player-branded lorries (TRUCK-BRAND)
+
+RV-01 drew its trucks from the four OpenGFX goods-lorry cells in the shared
+sheet, so a player's fleet and the rival's were the same grey lorry. The
+branded set is eight sprites — **two liveries × four headings** — authored as
+keyed masters in `assets/vehicles-src/` and compiled by
+`tools/make-truck-art.mjs` into `assets/vehicles/`:
+
+```bash
+node tools/make-truck-art.mjs --raw <dir-of-raw-keyed-pngs>   # author → masters → tiers
+node tools/make-truck-art.mjs                                 # re-tier existing masters
+node tools/make-truck-art.mjs --raw <dir> truck_blue_se       # one sprite at a time
+```
+
+`--raw` is the pass that touches the art: it keys the magenta, snaps the box
+and writes a fresh master. Without it the tool only re-derives the tiers and
+the manifest, which is what a size or anchor change needs.
+
+**The 1950s contract.** A cab-over delivery lorry, rounded hood, chrome grille,
+split windshield, round headlamps, wooden flatbed with burlap-wrapped crates —
+player blue (`#1e40af` body, `#3b82f6` highlight, cream roof) against rival
+crimson (`#b91c1c`/`#ef4444`, charcoal trim), both on a chrome bumper. Body
+about 52 × 34 px at 2×, drawn in strict 2:1 dimetric with the sun at the top
+left and a crisp contact shadow under it. **Zero snow, ever** — the arctic
+TTD sprite sets in this repo are not a source for these.
+
+**Why the masters ship on pure `#FF00FF` instead of with an alpha layer:** the
+key is authored, and the compiler recovers coverage arithmetically rather than
+thresholding it. Magenta carries no green, so `a = 1 − (min(r,b) − g)/255`
+estimates how much paint is on each pixel, and the colour is then un-mixed with
+`c = (o − (1−a)·MAGENTA)/a`. That is the difference between a feathered rim and
+the pink fringe a "distance to magenta" key leaves on every fender.
+
+**Why the scale comes from the BODY box, not the picture's bounds:** each of the
+eight was drawn with its own contact shadow, and a shadow is soft — fitting the
+alpha-inclusive box made the lorry with the widest puddle the smallest vehicle
+on the map, 25 % down on its twin. `measureKeyed` splits them (alpha ≥ 150 is
+body, everything counts toward the box) and only the body drives the scale. The
+anchor's x is then the mean x of the body's **lowest three rows**, for the same
+reason the trees use the trunk's centroid: a bbox or a shadow-dragged anchor
+puts the wheels a few pixels off the road, and it reads as skating.
+
+**Sizes are snapped so `w@2x = 2·w@1x = 4·w@0.5x` exactly**, because the blit's
+source rect is `round(w · zoom)` — a mismatch crops an edge at one zoom only.
+The 1× and 0.5× tiers are quantised palette PNGs (128 colours) and the 2×
+master keeps full RGBA: small sprites that are mostly alpha edge, exactly the
+case the trees' note makes. Eight sprites at three zooms come to 52 kB, and
+the masters another 27 kB.
+
+**Why `assets/iso-atlas/manifest.json` gains no cells and `assets/buildings/`
+gains no entries:** the branded lorries install themselves into the live sprite
+table at runtime (`loadVehicleLayers` in `src/iso/vehicle-art.ts`, the
+`loadScenerySprites` pattern), which keeps the shared sheet untouched — CI
+regenerates and byte-compares `assets/iso-atlas/` — and keeps a livery
+swappable without re-slicing anything. The defs live in
+`assets/vehicles/manifest.json`, which the compiler writes; do not hand-edit
+it. `center` is deliberately NOT set: a moving sprite is anchored by
+`drawOriginMoving`, which puts the def's anchor pixel on the centre of the
+fractional tile's diamond, and centre-placement would float the lorry half a
+tile up the road.
+
+**Why the engine asks the atlas for every name:** `truckSpriteName`
+(`src/iso/vehicles.ts`) returns `truck_<brand>_<view>` only when
+`atlas.has()` says that sprite exists, and `truck_goods_<view>` otherwise —
+checked per heading, not per family, so a half-authored livery mixes liveries
+instead of vanishing, and the window between the first frame and the art
+resolving shows the legacy lorry rather than nothing at all.
+
+```bash
+npm test            # tests/unit/iso-vehicles.test.ts pins the livery rules AND
+                    # audits assets/vehicles: def rect vs PNG at all three zooms
+npm run dev         # lay a road, drive a lorry, watch it turn
+```
 ## Licence
 
 Graphics derived from OpenGFX (https://github.com/OpenTTD/OpenGFX),
