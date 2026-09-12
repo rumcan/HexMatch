@@ -11,7 +11,7 @@
 // This pass keys by HUE FAMILY, not distance:
 //
 //   magenta family  =  b > 105 && r > 75 && b > 0.7*r && |r-b| < 90
-//                      && g < 0.32*(r+b)
+//                      && g < 0.16*(r+b)
 //
 // and clears a pixel only when it is either semi-transparent, or opaque and
 // sitting within 3 px of the silhouette (a neighbouring pixel with
@@ -37,8 +37,12 @@ const all = readdirSync(SRC)
   .map((f) => f.replace(/@2x\.png$/, ""));
 const targets = names.length ? names : all;
 
+// g < 0.16*(r+b) is deliberately tight: keyline residue and key-despilled
+// mauve have a near-zero green channel (g <= ~10), while legitimate violet
+// garden flowers land near g = 44 at comparable r/b — the looser 0.32 guard
+// ate lavender rows on town_cottage_tall before this was tightened.
 const inMagentaFamily = (r, g, b) =>
-  b > 105 && r > 75 && b > 0.7 * r && Math.abs(r - b) < 90 && g < 0.32 * (r + b);
+  b > 105 && r > 75 && b > 0.7 * r && Math.abs(r - b) < 90 && g < 0.16 * (r + b);
 
 // --reach N: how far inside the silhouette an opaque magenta-hued pixel may
 // sit and still be treated as keyline residue. 3 suits anti-aliased edges;
