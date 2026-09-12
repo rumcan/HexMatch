@@ -2048,6 +2048,15 @@ html, body, #root {
   .king-vp { display: none; }
   .king { max-width: 40px; }
   .logo { display: none; }
+  /* SFX-01: the bar gained a fourth plate (🔊), and at this width there is no
+     slack to give it — the logo is already gone and the roster is two portraits.
+     So the new key pays for itself the way the theme always pays at phone
+     width: with decoration and whitespace, never with a control. The 🤖 beside
+     a select that reads "Rival: …" is decoration, and the group's gaps tighten
+     by 2px; the difficulty switch, the score plaque and both other keys keep
+     every pixel they had. */
+  .rival-skill-ic { display: none; }
+  .top-right { gap: 4px; }
 }
 
 /* landscape phone: the board and panels side by side again */
