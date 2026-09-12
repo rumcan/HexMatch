@@ -92,7 +92,7 @@ const LOSS_EPILOGUES: Record<EndingPath, readonly string[]> = {
   paving: [
     "The rival's roads reached every market before yours. Your factory was auctioned in numbered lots, your rails rusted beneath weeds, and you spent eleven years contesting the foreclosure from a rented room above a shuttered depot. The rival used your old desk until retirement.",
     "One by one, carriers abandoned your broken lanes for the rival's shining network. Creditors took the house in spring and the company name in autumn. Years later, motorists crossed your first bridge every day without knowing who had built it.",
-    "The map closed around you like a fist. Your last truck was sold for parts, your portrait came down from the boardroom, and the road crews painted over your company crest before sunrise. You died far from the territory, still carrying the first depot key in your coat.",
+    "The map closed around you like a fist. Your last truck was sold for parts, your portrait came down from the boardroom, and the road crews painted over your company crest before sunrise. You died far from the territory, still carrying the first depot key in your coat. ",
   ],
   plants: [
     "The rival's furnaces swallowed the contracts your plants needed to live. Your gates closed on a wet Tuesday, the payroll went unpaid, and the receivers sold the machinery by weight. The smokestack bearing your initials was the last thing demolished.",
