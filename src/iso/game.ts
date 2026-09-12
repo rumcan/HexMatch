@@ -57,7 +57,9 @@ import { DEFAULT_ROAD_STYLE } from "./road-renderer";
 import { scatterScenery, type Scenery } from "./scenery";
 import { loadDecalImages, loadScenerySprites } from "./scenery-art";
 import { loadVehicleLayers } from "./vehicle-art";
-import { generateMap, resolveMapSeed, type Grid, type Industry } from "./grid";
+import {
+  generateMap, resolveMapSeed, townBuildings, type Grid, type Industry,
+} from "./grid";
 import {
   createTrack, drawBits, previewDrag, commitDrag, canBuildOn, hasTrack,
   demolishTile, tIdx, playerNetwork, canAfford, buildRefusal, seedTownRoads,
@@ -94,7 +96,7 @@ import {
 import {
   CARGO, CARGOES, FACTORY_FOOTPRINT, FACTORY_SPRITE, INDUSTRY_BY_KEY, TRANSPORT,
   VICTORY, VP_TARGET, UPGRADE_COST,
-  depotSpriteForCargo, townHouseSprite, type Cargo, type Portrait,
+  depotSpriteForCargo, type Cargo, type Portrait,
 } from "./config";
 import {
   DEPOT_COST, FREE_SETUP_DEPOTS, costCompact, costLabel, priceDepot, shortfallLabel,
@@ -833,29 +835,22 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       ty: f.ty,
       ref: { kind: "factory", owner: f.owner },
     }));
-    // TOWN-1: emit town house and center draw items
-    const townItems = grid.towns.flatMap((t) => {
-      const items: { sprite: string; tx: number; ty: number; ref: unknown }[] = [];
-      // Town center marker at the center tile
-      items.push({
-        sprite: "town_center",
-        tx: t.tx, ty: t.ty,
-        ref: { kind: "town", id: t.id },
-      });
-      // Houses at all non-center tiles. PP-12: one of 43 verbatim TTD house
-      // cells, chosen by `townHouseSprite` so every settlement mixes homes,
-      // shops, flats and the occasional tall block instead of stamping one
-      // sprite. The centre is the TTD church (`town_center` cell).
-      for (const [hx, hy] of t.houses) {
-        if (hx === t.tx && hy === t.ty) continue; // skip center, already drawn
-        items.push({
-          sprite: townHouseSprite(hx, hy),
-          tx: hx, ty: hy,
-          ref: { kind: "town", id: t.id },
-        });
-      }
-      return items;
-    });
+    // TOWN-1 / TOWN-GRID: the town draw items — art on whole house BLOCKS.
+    //
+    // `townBuildings` decides the layout (see grid.ts): one 2x2 cell per
+    // block where the hash picks one, single houses otherwise. It must be
+    // asked at sync time rather than baked at generation, because a town
+    // cell's footprint comes from the ATLAS and the per-building PNG layers
+    // land after the first sync — `loadBuildingLayers` re-syncs, which is
+    // when the towers move off the streets they used to be drawn across.
+    const footprintOf = (sprite: string): [number, number] =>
+      atlasRef?.get(sprite)?.footprint ?? [1, 1];
+    const townItems = grid.towns.flatMap((t) =>
+      townBuildings(t, footprintOf).map((b) => ({
+        sprite: b.sprite,
+        tx: b.tx, ty: b.ty,
+        ref: { kind: "town", id: t.id } as unknown,
+      })));
     world.extra = [
       ...townItems,
       ...factoryItems,
@@ -3485,6 +3480,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
     void loadBuildingLayers(atlas, `${import.meta.env.BASE_URL}assets/buildings/`).then((n) => {
       if (disposed || !n) return;
+      // TOWN-GRID: the layers also bring the real FOOTPRINTS with them (a
+      // town cell can be 2x2), and the town draw items were built against the
+      // sheet's 1x1 defs. Re-sync so `townBuildings` re-lays each settlement
+      // on its house blocks — without this the 2x2 towers stay anchored on
+      // single tiles and hang over the streets.
+      syncWorld();
       // B-3.2: the layers just MUTATED sprite w/h (a per-building PNG can
       // out-tall the tallest sheet sprite), so the constructor-time cull pad
       // is stale — tall buildings would pop at the screen edge.
