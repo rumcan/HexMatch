@@ -129,6 +129,13 @@ export interface UiState {
   reach: Partial<Record<Cargo, number>>;
   /** PP-14b: ms left on the Processing Plant reset cooldown (0 = ready). */
   resetIn: number;
+  /**
+   * AI-04: the ★ line this game races to — the difficulty owns it now (5★ on
+   * easy, the shipped `VICTORY.target` elsewhere), so the HUD reads it off the
+   * state instead of the constant. Optional: a state that omits it (an older
+   * test harness) falls back to the shipped line.
+   */
+  vpTarget?: number;
   /** PP-14b: which tycoon portrait the player picked. */
   portrait: Portrait;
 }
@@ -1251,7 +1258,7 @@ export function createOriginalUi(
   window.addEventListener("orientationchange", responsiveZoom);
 
   // ── top HUD: chips, VP, kingdoms ──────────────────────────────────────────
-  function renderHUD(purse: Partial<Record<Cargo, number>>, players: UiPlayer[], portrait: Portrait) {
+  function renderHUD(purse: Partial<Record<Cargo, number>>, players: UiPlayer[], portrait: Portrait, target: number) {
     chips.innerHTML = "";
     for (const k of CARGOES) {
       const chip = h("div", "chip");
@@ -1265,9 +1272,12 @@ export function createOriginalUi(
     }
     const meP = players.find((p) => p.human);
     const yourVp = meP?.vp ?? 0;
+    // AI-04: the line the difficulty set (5★ on easy), kept for the help modal
+    // below, which has no state of its own.
+    hudVpTarget = target;
     // The original badge is just a star counter; keeping "You" in it lets the
     // boot/e2e assertions stay unambiguous for the single-player build.
-    vp.innerHTML = `<span class="vp-star">★</span> You ${fmtVp(yourVp)}<span class="vp-tot">/${VICTORY.target}</span>`;
+    vp.innerHTML = `<span class="vp-star">★</span> You ${fmtVp(yourVp)}<span class="vp-tot">/${target}</span>`;
 
     const list = [...players].sort((a, b) => b.vp - a.vp);
     kingdoms.innerHTML = "";
@@ -1288,7 +1298,7 @@ export function createOriginalUi(
         <div class="king-av has-portrait" style="background-image:url(${face})">${p.name[0]}</div>
         <div class="king-mid">
           <div class="king-name">${p.name}${p.human ? " <span class='you'>YOU</span>" : ""}</div>
-          <div class="king-bar"><i style="width:${Math.min(100, (p.vp / VICTORY.target) * 100)}%;background:${p.colour}"></i></div>
+          <div class="king-bar"><i style="width:${Math.min(100, (p.vp / target) * 100)}%;background:${p.colour}"></i></div>
         </div>
         <div class="king-vp">${fmtVp(p.vp)}<small>★</small></div>`;
       kingdoms.appendChild(row);
@@ -1313,7 +1323,7 @@ export function createOriginalUi(
     if (rivalWire.dataset.speaker === "you") {
       rivalWireFace.style.backgroundImage = `url(${rivalWirePlayerPortrait})`;
     }
-    renderHUD(state.purse, state.players, state.portrait);
+    renderHUD(state.purse, state.players, state.portrait, state.vpTarget ?? VICTORY.target);
     // PP-14b: the reset button counts its cooldown down and disables while
     // the plant re-arms.
     const resetLeft = Math.ceil((state.resetIn ?? 0) / 1000);
@@ -1424,6 +1434,13 @@ export function createOriginalUi(
   }
 
   // ── help / modals ─────────────────────────────────────────────────────────
+  /**
+   * AI-04: the ★ line the last painted HUD showed, so the help modal's "first
+   * to N★" matches the badge the player is looking at (5★ on easy). Seeded with
+   * the shipped line, which is what it reads before the first paint.
+   */
+  let hudVpTarget: number = VICTORY.target;
+
   function helpModal() {
     sfx.play("open");
     modalRoot.classList.remove("hidden");
@@ -1431,10 +1448,10 @@ export function createOriginalUi(
       <div class="modal-back"></div>
       <div class="modal box">
         <h2>Hexmatch Industries</h2>
-        <p class="sub">Two worlds, one empire: <b>resource node → Depot → transport network → Factory → processing → resources available for construction</b>. First to <b>${VICTORY.target}★ Victory Points</b> wins.</p>
+        <p class="sub">Two worlds, one empire: <b>resource node → Depot → transport network → Factory → processing → resources available for construction</b>. First to <b>${hudVpTarget}★ Victory Points</b> wins.</p>
         <div class="help-cols">
           <div class="help-col"><h3>The Territory</h3><p>Place <b>Depots</b> beside resource nodes to collect their output, then build <b>Dirt Roads</b> &amp; <b>Roads</b> (paved) to carry it to your Factory. The connection sets the multiplier — ×1.0 on gravel, ×1.6 anywhere a paved tile touches the line — and nothing else.</p>
-<p><h3>How you score (VP-01)</h3><p><b>Dirt Roads score nothing.</b> Points come from <b>upgrading</b>: pave a Dirt Road tile into a Road for <b>+${VICTORY.upgrade}★</b> (it costs only ${costCompact(UPGRADE_COST)}, since the gravel is already paid for), and raise a <b>processing plant</b> beside another town for <b>+${VICTORY.plant}★</b>. Four paves to the point; <b>${VICTORY.target}★</b> wins. A Road laid on virgin ground scores nothing — the point is for improving what you built. Tear up a paved tile or demolish a plant and the point goes back.</p><p>Your <b>first Depot is free</b>; every Depot after it costs <b>${costCompact(DEPOT_COST)}</b>, so reaching new industries (or manufacturing in the Processing Plant) is what buys expansion. A Depot you cannot pay for is refused and consumes nothing.</p><p><b>Lorries run 2× faster on paved Roads</b> — paving a lane is both the points and the income (AI-02).</p><p>Pan with the <b>middle mouse button</b> (wheel zooms, touch drags pan). The left button only places or selects — dragging it never pans.</p></div>
+<p><h3>How you score (VP-01)</h3><p><b>Dirt Roads score nothing.</b> Points come from <b>upgrading</b>: pave a Dirt Road tile into a Road for <b>+${VICTORY.upgrade}★</b> (it costs only ${costCompact(UPGRADE_COST)}, since the gravel is already paid for), and raise a <b>processing plant</b> beside another town for <b>+${VICTORY.plant}★</b>. Four paves to the point; <b>${hudVpTarget}★</b> wins. A Road laid on virgin ground scores nothing — the point is for improving what you built. Tear up a paved tile or demolish a plant and the point goes back.</p><p>Your <b>first Depot is free</b>; every Depot after it costs <b>${costCompact(DEPOT_COST)}</b>, so reaching new industries (or manufacturing in the Processing Plant) is what buys expansion. A Depot you cannot pay for is refused and consumes nothing.</p><p><b>Lorries run 2× faster on paved Roads</b> — paving a lane is both the points and the income (AI-02).</p><p>Pan with the <b>middle mouse button</b> (wheel zooms, touch drags pan). The left button only places or selects — dragging it never pans.</p></div>
           <div class="help-col"><h3>The Processing Plant</h3><p>Where your Factory turns delivered cargo into resources available for construction. Match tokens to process: a colour only pays when your network reaches its industry. Match 4 doubles, match 5 makes a <b>bomb</b>. <b>Gold</b> 🪙 is its own colour — its gems drop only while a depot sits beside a gold mine (and pay once it's connected).</p></div>
           <div class="help-col"><h3>Gold, Trade & Defence</h3><p>Earn <b>gold</b> from gold-mine access or combos. <b>Gold is reserved for Black Market sabotage</b> — it never buys construction, cannot substitute for missing materials, and is refused by every market exchange. Security Forces and Repair Crew are hired with ordinary materials. A <b>Protest</b> ✊ shuts any public road for 2:00 — every truck stops, including your own.</p></div>
         </div>

@@ -13,11 +13,12 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { describe, it, expect } from "vitest";
 import { BANK_RATE } from "../../src/game/trade";
-import { CARGOES } from "../../src/iso/config";
+import { CARGOES, VICTORY } from "../../src/iso/config";
 import {
-  resolveSkillKey, RIVAL_SKILLS, SKILL_KEYS, SKILL_STORAGE_KEY,
+  resolveSkillKey, RIVAL_SKILLS, SKILL_KEYS, SKILL_STORAGE_KEY, winTargetFor,
 } from "../../src/iso/skill";
 import { chooseRivalOffer } from "../../src/iso/market";
+import { createScoreState, hasWon } from "../../src/iso/victory";
 import { deepPlanCandidates, planCandidates } from "../../src/iso/ai";
 import { createTrack, buildTile, tIdx } from "../../src/iso/track";
 import { isServiced, type EconomyState, type Factory } from "../../src/iso/economy";
@@ -43,6 +44,34 @@ describe("AI-01 difficulty resolution", () => {
     expect(resolveSkillKey("?seed=1337", store("junk"))).toBe("normal");
     expect(resolveSkillKey("", null)).toBe("normal");
     expect(resolveSkillKey(undefined, null)).toBe("normal");
+  });
+});
+
+// AI-04 — the difficulty now owns the finish line, not just the pacing.
+describe("AI-04 the difficulty owns the win line", () => {
+  it("easy races a short 5★ line; normal and hard alias the shipped one", () => {
+    expect(winTargetFor("easy")).toBe(5);
+    // aliased, not retyped: if `VICTORY.target` ever moves again the other two
+    // presets move with it and only easy stays the short race.
+    expect(winTargetFor("normal")).toBe(VICTORY.target);
+    expect(winTargetFor("hard")).toBe(VICTORY.target);
+    for (const k of SKILL_KEYS) {
+      expect(RIVAL_SKILLS[k].winTarget).toBe(winTargetFor(k));
+      expect(RIVAL_SKILLS[k].winTarget).toBeGreaterThan(0);
+    }
+  });
+
+  it("hasWon honours the line it is given and still defaults to the shipped one", () => {
+    const score = createScoreState();
+    score.vp.set("you", winTargetFor("easy"));        // 5★
+    // on the easy chair that is the whole race…
+    expect(hasWon(score, "you", winTargetFor("easy"))).toBe(true);
+    // …and on any other chair it is exactly half of it.
+    expect(hasWon(score, "you")).toBe(false);
+    expect(hasWon(score, "you", VICTORY.target)).toBe(false);
+    score.vp.set("you", VICTORY.target);
+    expect(hasWon(score, "you")).toBe(true);
+    expect(hasWon(score, "you", winTargetFor("easy"))).toBe(true);
   });
 });
 

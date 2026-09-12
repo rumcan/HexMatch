@@ -253,6 +253,12 @@ export function victoryBreakdown(state: EconomyState, owner: string) {
  * Has this player reached the winning total? One predicate for the win check,
  * the HUD's "ready to win" glow and the AI's race assessment, so nobody
  * re-derives `>= VP_TARGET` and rounds it differently.
+ *
+ * AI-04: `target` is injectable because the line now belongs to the difficulty
+ * (`RivalSkill.winTarget`) — easy races to 5★. The default stays the shipped
+ * `VICTORY.target`, so every caller that has no difficulty in scope (a hosted
+ * multiplayer game, the race harness, the snapshot parity test) keeps racing
+ * the same 10★ it always did.
  */
-export const hasWon = (score: ScoreState, owner: string): boolean =>
-  vpFor(score, owner) >= VICTORY.target;
+export const hasWon = (score: ScoreState, owner: string, target: number = VICTORY.target): boolean =>
+  vpFor(score, owner) >= target;
