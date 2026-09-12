@@ -85,10 +85,13 @@ import {
 import {
   RIVAL_SKILLS, resolveSkillKey, SKILL_STORAGE_KEY, type RivalSkill, type SkillKey,
 } from "./skill";
-import { planDepotPlacement, planFactoryPlacement, type PlacementPlan } from "./placement";
+import {
+  depotPreviewSprite, planDepotPlacement, planFactoryPlacement, type PlacementPlan,
+} from "./placement";
+import type { GhostSpec } from "./overlay-art";
 import {
   PLANT_COST, PLANT_REFUSAL_TEXT, addPlant, adjacentTown, buildingAt, canAffordPlant,
-  chooseAiPlantSpot, footprintTiles, plantRefusal, plantsOf, resolvePlantTarget,
+  chooseAiPlantSpot, plantRefusal, plantsOf, resolvePlantTarget,
 } from "./plants";
 import {
   CARGO, CARGOES, FACTORY_FOOTPRINT, FACTORY_SPRITE, INDUSTRY_BY_KEY, TRANSPORT,
@@ -2334,6 +2337,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   //                     resource nodes in catchment; the town tiles a Factory
   //                     footprint touches).
   type OverlayItem = { sprite: string; tx: number; ty: number };
+  /**
+   * One overlay frame: the tiles to mark, plus the transparent building the
+   * hover would raise (`null` for the tools that place no building — a road
+   * drag, an armed protest). The renderer paints both from this one answer.
+   */
+  type OverlayFrame = { items: OverlayItem[]; ghost: GhostSpec | null };
   /** AI-03c: the plant tool's preview AND its test twin must answer the same
    *  legality the CLICK enforces. `planFactoryPlacement` knows terrain and
    *  towns but NOT the built world, so it flashed green over footprints a
@@ -2392,21 +2401,37 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     hoverRouteCache = { key, items };
     return items;
   };
-  /** The placement overlay for a hover at (tx,ty), whatever the input device —
-   *  mouse and touch both arrive here through `hover`, so the preview is
-   *  identical at every zoom for both. */
-  const overlayItemsAt = (tx: number, ty: number): OverlayItem[] => {
+  /**
+   * The placement overlay for a hover at (tx,ty), whatever the input device —
+   * mouse and touch both arrive here through `hover`, so the preview is
+   * identical at every zoom for both.
+   *
+   * Returns the tile items AND the ghost: the transparent preview of the
+   * building the click would place, standing on the same footprint with the
+   * same verdict. They come out of the one plan so the two can never
+   * disagree — a green grid under a red building would be worse than either.
+   */
+  const overlayPlanAt = (tx: number, ty: number): OverlayFrame => {
     const items: OverlayItem[] = [];
+    let ghost: GhostSpec | null = null;
     if (phase === "setup-factory") {
       // PP-02: the preview enforces the same town-adjacency rule as the click.
-      pushPlan(items, planFactoryPlacement(grid, tx, ty, { requireTown: true, track }));
+      const plan = planFactoryPlacement(grid, tx, ty, { requireTown: true, track });
+      pushPlan(items, plan);
+      ghost = { sprite: FACTORY_SPRITE, tx, ty, valid: plan.valid };
     } else if (tool === "harvester" || phase === "setup-harvester") {
-      pushPlan(items, planDepotPlacement(grid, eco.harvesters, tx, ty, depotLocks()));
+      const plan = planDepotPlacement(grid, eco.harvesters, tx, ty, depotLocks());
+      pushPlan(items, plan);
+      // The outpost art is the cargo's, so the preview shows the mill/rig/mine
+      // this site would actually raise (see `depotPreviewSprite`).
+      ghost = { sprite: depotPreviewSprite(grid, tx, ty), tx, ty, valid: plan.valid };
     } else if (tool === "plant") {
       // AI-03c: the mid-game plant preview paints from the same folded plan
       // the test twin and the click share — no more green footprints over a
       // building the overlay never saw.
-      pushPlan(items, factoryPlanForTool(tx, ty));
+      const plan = factoryPlanForTool(tx, ty);
+      pushPlan(items, plan);
+      ghost = { sprite: FACTORY_SPRITE, tx, ty, valid: plan.valid };
     } else {
       items.push({ sprite: "highlight", tx, ty });
     }
@@ -2416,9 +2441,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // and find no depot, so they never double up).
     const dep = eco.harvesters.find((h) => h.tx === tx && h.ty === ty);
     if (dep) items.push(...routeOverlayFor(dep));
-    return items;
+    return { items, ghost };
   };
-  const overlayItems = () => {
+  /** The tile items alone — the shape `__iso.overlayItemsFor` has always had. */
+  const overlayItemsAt = (tx: number, ty: number): OverlayItem[] =>
+    overlayPlanAt(tx, ty).items;
+  /** Everything the overlay layer draws this frame. */
+  const overlayFrame = (): OverlayFrame => {
     if (preview) {
       const items: OverlayItem[] = preview.tiles.map(([x, y]) => ({ sprite: "highlight", tx: x, ty: y }));
       // VP-01: a paved drag over your own gravel is the only road action that
@@ -2430,7 +2459,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           if (hasTrack(track, "dirt", x, y)) items.push({ sprite: "node_mark", tx: x, ty: y });
         }
       }
-      return items;
+      // No ghost: a road drag has no building to preview, and the merged
+      // outline the vector overlay draws around the whole drag IS the preview.
+      return { items, ghost: null };
     }
     if (pendingProtest && hover) {
       // The armed protest paints its own legality: green on a free public
@@ -2438,33 +2469,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const ok = protestPlaceable(hover.tx, hover.ty);
       const items: OverlayItem[] = [{ sprite: ok ? "highlight" : "highlight_bad", tx: hover.tx, ty: hover.ty }];
       if (ok) items.push({ sprite: "node_mark", tx: hover.tx, ty: hover.ty });
-      return items;
+      return { items, ghost: null };
     }
-    if (!hover) return [];
-    if (phase === "setup-factory") return overlayItemsAt(hover.tx, hover.ty);
-    // PP-06: the plant tool keeps its own overlay — the Factory footprint is the
-    // strong layer, the qualifying town the soft one — because the placement
-    // plans model factories and depots only. Both come from the SAME rule the
-    // click runs.
-    if (tool === "plant") {
-      const items: OverlayItem[] = [];
-      const ok = plantRefusal(grid, track, eco, hover.tx, hover.ty) === null;
-      for (const [x, y] of footprintTiles(hover.tx, hover.ty)) {
-        if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) continue;
-        // No dedicated invalid sprite in the atlas: a legal footprint is the
-        // strong glow, an illegal one only the faint tint (plus the refusal
-        // reason in the HUD line below).
-        items.push({ sprite: ok ? "highlight" : "highlight_soft", tx: x, ty: y });
-      }
-      const town = adjacentTown(grid, hover.tx, hover.ty);
-      if (town) {
-        for (const [hx, hy] of town.houses) {
-          items.push({ sprite: "highlight_soft", tx: hx, ty: hy });
-        }
-      }
-      return items;
-    }
-    return overlayItemsAt(hover.tx, hover.ty);
+    if (!hover) return { items: [], ghost: null };
+    // Every placement tool — the opening Factory, a Depot, and (since the
+    // overlay was unified) the mid-game plant — paints from its placement
+    // plan, so all three get the same footprint/reach/node read AND the same
+    // transparent building. The plant used to grow its own overlay here
+    // (PP-06) which tinted a refused footprint faintly instead of red; the
+    // plan it now shares marks each blocking tile individually, matching both
+    // the click and the test twin.
+    return overlayPlanAt(hover.tx, hover.ty);
   };
 
   function paintUi(now: number) {
@@ -2926,6 +2941,25 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       }
     }
   });
+
+  // ── reduced motion ─────────────────────────────────────────────────────
+  /**
+   * Mirror the OS "reduce motion" setting onto the placement overlay, live:
+   * the media query is listened to, not read once, because the setting can
+   * change while a game is open and the canvas has no stylesheet to fall back
+   * on. Absent `matchMedia` (tests, an odd embed) motion simply stays on.
+   */
+  let motionQuery: MediaQueryList | null = null;
+  const syncOverlayMotion = () => {
+    if (typeof window.matchMedia !== "function") return;
+    if (!motionQuery) {
+      motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+      motionQuery.addEventListener?.("change", () => {
+        renderer?.setOverlayMotion(!motionQuery!.matches);
+      });
+    }
+    renderer?.setOverlayMotion(!motionQuery.matches);
+  };
 
   // ── resize ─────────────────────────────────────────────────────────────
   const resize = () => {
@@ -3439,6 +3473,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     renderer = new IsoRenderer(canvases, atlas, cam, world);
     renderer.setDecals(scenery);
     renderer.overlayPainter = (ctx, c, t) => paintProtests(ctx, c, t);
+    // QoL: the placement overlay animates (a breathing outline, a marching
+    // reach band, a ghost that floats). A player who asks the OS to reduce
+    // motion gets the identical overlay frozen at its resting frame — the
+    // stylesheet already does this for the HUD, this is the canvas half.
+    syncOverlayMotion();
     void load(protestArt).then((img) => { protestImg = img; }).catch(() => {});
     debug?.attachRenderer();
     enableRenderLogOnBoot();
@@ -3487,7 +3526,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       }
       collectDeliveries(t);
       world.vehicles = truckItems(trucks);
-      renderer!.render(t, overlayItems());
+      const { items, ghost } = overlayFrame();
+      renderer!.render(t, items, ghost);
       floats.frame(t);
       paintUi(t);
       raf = requestAnimationFrame(frame);
@@ -3741,6 +3781,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      * preview draws, ready to be diffed against the plan above.
      */
     overlayItemsFor: (tx: number, ty: number) => overlayItemsAt(tx, ty),
+    /**
+     * The transparent building preview the overlay draws for a placement hover
+     * at (tx,ty): the sprite the click would place, its footprint origin, and
+     * the plan's verdict (which picks the tint). Null for the tools that place
+     * no building. Same source as `overlayItemsFor`, so the ghost and the grid
+     * it stands on can never disagree.
+     */
+    ghostFor: (tx: number, ty: number): GhostSpec | null => overlayPlanAt(tx, ty).ghost,
     /**
      * RV-03: the tiles of the closest road route a DEPOT at (tx,ty) drives to
      * its factory, or null when that depot has no road connection. This is the

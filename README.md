@@ -99,6 +99,15 @@ npm --prefix server install
 npm --prefix server start     # port 8787 (PORT env overrides)
 ```
 
+## Placement overlay (vector)
+
+The building highlight is drawn as geometry, not blitted: `src/iso/overlay-art.ts`
+paints one merged outline per site with corner brackets, a marching-ants
+catchment ring, hatched refusals and a transparent preview of the building the
+click would raise. `__iso.highlightMode('sprites')` restores the baked cells as
+a rollback. Design notes and the A/B seam:
+[`docs/placement-overlay.md`](docs/placement-overlay.md).
+
 ## Art pipeline (E1 + W-series)
 
 Sprites are derived from OpenGFX and packed from a shared manifest — see

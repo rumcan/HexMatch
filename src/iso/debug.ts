@@ -529,6 +529,20 @@ export function createIsoDebug(ctx: DebugContext) {
       console.log("[iso] roadMode", out);
       return out;
     },
+    /**
+     * `__iso.highlightMode('vector'|'sprites')` switches the placement overlay
+     * between the vector grid + ghost preview and the four baked atlas cells.
+     *
+     * The same A/B seam `roadMode` is: renderer state only, so it never enters
+     * a save or the protocol — both players place by the same rules whatever
+     * they are looking at.
+     */
+    highlightMode: (mode?: "sprites" | "vector") => {
+      if (mode) ctx.renderer?.setHighlightMode(mode);
+      const out = ctx.renderer?.overlayDiagnostics() ?? null;
+      console.log("[iso] highlightMode", out);
+      return out;
+    },
     /** `__iso.renderLog(true)` toggles the per-blit `[render]` console trace. */
     renderLog: (on = true) => {
       ctx.renderer?.setRenderLog(!!on);
