@@ -7,13 +7,16 @@
  * Start Vite first: npm run dev
  * Then: node tools/capture-scenery-review.mjs [output-dir]
  *
+ * Use --shoreline for all four coast orientations and the corner at every zoom.
  * Writes <out>/scenery-{2x,1x,0.5x}.png plus a wide 0.5× map sweep.
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { chromium } from "@playwright/test";
 
-const out = resolve(process.argv[2] ?? "test-results/scenery-review");
+const shoreline = process.argv.includes("--shoreline");
+const out = resolve(process.argv.slice(2).find(arg => !arg.startsWith("--"))
+  ?? (shoreline ? "test-results/shoreline-review" : "test-results/scenery-review"));
 const url = process.env.ISO_REVIEW_URL ?? "http://localhost:5173/hexmatch/";
 await mkdir(out, { recursive: true });
 const browser = await chromium.launch({
@@ -163,7 +166,12 @@ try {
   const info = await page.evaluate(() => window.reviewInfo);
   console.log("scenery:", JSON.stringify(info));
 
-  const shots = [
+  const shots = shoreline
+    ? [0.5, 1, 2].flatMap(zoom => [
+      ["south", [72, 140]], ["north", [72, 3]],
+      ["east", [140, 72]], ["west", [3, 72]], ["corner", [140, 140]],
+    ].map(([side, target]) => [`shore-${side}-${zoom}x`, zoom, 1200, 760, target]))
+    : [
     ["scenery-2x", 2, 1200, 760],
     ["scenery-1x", 1, 1200, 760],
     ["scenery-0.5x", 0.5, 1200, 760],
@@ -171,11 +179,11 @@ try {
   ];
   const ROAD_ORIGIN = [40, 40];
   const diagnostics = [];
-  for (const [name, zoom, width, height] of shots) {
+  for (const [name, zoom, width, height, target] of shots) {
     await page.setViewportSize({ width, height });
     diagnostics.push({ name, ...(await page.evaluate(
-      ({ zoom, width, height }) => window.review(zoom, width, height),
-      { zoom, width, height },
+      ({ zoom, width, height, target }) => window.review(zoom, width, height, target),
+      { zoom, width, height, target },
     )) });
     await page.screenshot({ path: `${out}/${name}.png` });
     console.log(`rendered ${name}: ${width}×${height} @${zoom}×`);
@@ -183,7 +191,7 @@ try {
   // Road A/B: the same fixture in both renderers, at every zoom.
   await page.evaluate(([x, y]) => window.roadFixture(x, y), ROAD_ORIGIN);
   const roadDiag = [];
-  for (const mode of ["sprites", "textured"]) {
+  for (const mode of (shoreline ? [] : ["sprites", "textured"])) {
     await page.evaluate((m) => window.setRoadMode(m), mode);
     for (const zoom of [2, 1, 0.5]) {
       const width = zoom === 0.5 ? 1400 : 1200, height = zoom === 0.5 ? 900 : 760;

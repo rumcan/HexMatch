@@ -11,6 +11,7 @@
 // style rejection sampling: target separation 12 tiles, no overlap, not on
 // water, quota per industry type so no cargo is absent from the map.
 // ══════════════════════════════════════════════════════════════════════════
+import { fillCoastalHoles } from "./coastline";
 import {
   MAP_W, MAP_H, mulberry32, INDUSTRIES, INDUSTRY_QUOTA, INDUSTRY_BY_KEY, FACTORY_FOOTPRINT,
 } from "./config";
@@ -1191,6 +1192,20 @@ export function generateMap(seed: number): Grid {
       }
     }
   }
+  // Coastal repair runs AFTER all seed-derived placement. Only WATER becomes
+  // SAND: existing land, industries, towns and public roads remain identical
+  // to v10, making old solo saves safe to resume on the improved coastline.
+  for (let pass = 0; pass < 2; pass++) {
+    const prev = terrain.slice();
+    for (let y = 1; y < MAP_H - 1; y++) for (let x = 1; x < MAP_W - 1; x++) {
+      if (prev[idx(x, y)] !== WATER) continue;
+      const neighbours = [prev[idx(x - 1, y)], prev[idx(x + 1, y)],
+        prev[idx(x, y - 1)], prev[idx(x, y + 1)]];
+      if (neighbours.filter(v => v !== WATER).length >= 3) terrain[idx(x, y)] = SAND;
+    }
+  }
+  fillCoastalHoles(terrain, MAP_W, MAP_H, WATER, SAND);
+
   return {
     w: MAP_W, h: MAP_H, terrain, industries: list, towns, publicRoads, occupancy: occ, seed: s,
   };

@@ -34,10 +34,9 @@ import type { Atlas } from "./atlas";
 import { depthSort, place, pickSprite, type DrawItem, type Placed } from "./depth";
 import { GRASS, WATER, ROUGH, type Grid } from "./grid";
 import {
-  FALLBACK, FOAM_RGB, GROUND_TEX_SIZE, SHALLOW_RGB, computeShore,
-  createGroundPatterns, foamAlpha, foamWidth, makeMatrix, oceanMatrix,
-  paintGroundTiles, pathPolygons, shallowAlpha, tileDiamondWorld,
-  type GroundPatterns, type GroundTextures, type ShoreTile,
+  FALLBACK, GROUND_TEX_SIZE, createGroundPatterns, makeMatrix, oceanMatrix,
+  paintGroundTiles, paintShore, invalidateGroundContours,
+  type GroundPatterns, type GroundTextures,
 } from "./ground";
 import { ShadowStamps, paintBuildingShadows } from "./building-shadow";
 import {
@@ -377,9 +376,6 @@ export class IsoRenderer {
   // ── W-series pattern-painted ground ──────────────────────────────────────
   /** Canvas patterns for grass/sand/water; null → flat FALLBACK colours. */
   private ground: GroundPatterns | null = null;
-  /** Shoreline tiles (water touching land) for the animated surf pass. */
-  private shore: ShoreTile[] | null = null;
-  private shoreGrid: Grid | null = null;
   /**
    * Chunk surfaces for the STATIC ground (grass fill + beach ring, water left
    * transparent so the animated ocean shows through). Cached per zoom like
@@ -481,6 +477,7 @@ export class IsoRenderer {
   }
 
   invalidateAll() {
+    invalidateGroundContours(this.world.grid);
     this.groundChunkCache.clear();
     this.roadCache.clear("all");
     this.structuresDirty = true;
@@ -497,11 +494,11 @@ export class IsoRenderer {
   setWorld(world: World) {
     const gridChanged = this.world.grid !== world.grid;
     this.world = world;
-    this.shore = null;                       // recompute for the new grid
-    this.shoreGrid = null;
     this.structuresDirty = true;
     if (gridChanged) {
       // A new map, a loaded save or a guest snapshot: nothing cached applies.
+      invalidateGroundContours(this.world.grid);
+      this.groundChunkCache.clear();
       this.roadCache.clear("world");
       this.roadShadow = null;
     }
@@ -600,15 +597,6 @@ export class IsoRenderer {
     this.decalImages = images;
   }
 
-  /** Shoreline for the current grid, computed once. */
-  private shoreOf(): ShoreTile[] {
-    if (!this.shore || this.shoreGrid !== this.world.grid) {
-      this.shore = computeShore(this.world.grid);
-      this.shoreGrid = this.world.grid;
-    }
-    return this.shore;
-  }
-
   // ── ground chunks ────────────────────────────────────────────────────────
   /**
    * The STATIC ground of one 8×8 chunk (grass fill + beach ring), painted
@@ -641,7 +629,7 @@ export class IsoRenderer {
       // 1.6 tiles wide); the chunk context samples them downscaled, so it
       // must smooth or the nearest-neighbour subsample shimmers on pans.
       const P = GROUND_TEX_SIZE * z * LAND_SCALE;
-      const phase = (v: number) => ((-v * z * LAND_SCALE) % P + P) % P;
+      const phase = (v: number) => ((-v * z) % P + P) % P;
       const setPat = (p: CanvasPattern, k: number) => {
         const m = makeMatrix();
         m.translateSelf(phase(ox), phase(oy));
@@ -657,42 +645,17 @@ export class IsoRenderer {
       this.ground
         ? { grass: this.ground.grass, sand: this.ground.sand }
         : { grass: FALLBACK.grass, sand: FALLBACK.sand },
-      (wx, wy) => [Math.floor((wx - ox) * z), Math.floor((wy - oy) * z)],
+      (wx, wy) => [(wx - ox) * z, (wy - oy) * z],
     );
     this.groundChunkCache.set(key, surf);
     if (this.logRender) this.trace("ground-chunk-built", { chunk: [cx, cy], origin: [ox, oy], surface: [W, H], z, textured: !!this.ground });
     return surf;
   }
 
-  /** The animated shoreline: shallow swell fill + foam strokes per shore tile. */
-  private drawShore(ctx: Ctx2D, cam: Camera, r: { x0: number; y0: number; x1: number; y1: number }, t: number) {
-    const z = cam.zoom;
-    const toScreen = (wx: number, wy: number): [number, number] =>
-      [Math.floor(wx * z + cam.x), Math.floor(wy * z + cam.y)];
-    let tiles = 0;
-    ctx.lineCap = "round";
-    for (const st of this.shoreOf()) {
-      if (st.tx < r.x0 - 1 || st.tx > r.x1 + 1 || st.ty < r.y0 - 1 || st.ty > r.y1 + 1) continue;
-      tiles++;
-      // Shallow shelf: a soft turquoise breath over the ocean pattern.
-      const diamond = tileDiamondWorld(st.tx, st.ty).map((p) => toScreen(p[0], p[1]));
-      pathPolygons(ctx, [diamond]);
-      ctx.fillStyle = `rgba(${SHALLOW_RGB},${shallowAlpha(t, st.tx, st.ty).toFixed(3)})`;
-      ctx.fill();
-      // Foam: a warm white line along every edge this water tile shares
-      // with land, breathing out of phase with the swell.
-      ctx.strokeStyle = `rgba(${FOAM_RGB},${foamAlpha(t, st.tx, st.ty).toFixed(3)})`;
-      ctx.lineWidth = Math.max(1, foamWidth(t, st.tx, st.ty) * z);
-      ctx.beginPath();
-      for (const [[ax, ay], [bx, by]] of st.edges) {
-        const [x1, y1] = toScreen(ax, ay);
-        const [x2, y2] = toScreen(bx, by);
-        ctx.moveTo(x1, y1);
-        ctx.lineTo(x2, y2);
-      }
-      ctx.stroke();
-    }
-    if (this.logRender) this.trace("shore-pass", { tiles, z });
+  /** Surf shares the ground contour, so corners and chunk joins stay aligned. */
+  private drawShore(ctx: Ctx2D, cam: Camera, t: number) {
+    paintShore(ctx, this.world.grid, t, cam.zoom,
+      (wx, wy) => [wx * cam.zoom + cam.x, wy * cam.zoom + cam.y]);
   }
 
   // ── layers ──────────────────────────────────────────────────────────────
@@ -728,7 +691,7 @@ export class IsoRenderer {
     if (this.decals && this.decalImages)
       decals = paintDecals(ctx, cam, this.decals, this.decalImages, r);
     // 4. The surf: shallow swell + foam along every coast edge, animated.
-    this.drawShore(ctx, cam, r, timeMs);
+    this.drawShore(ctx, cam, timeMs);
     if (this.logRender) this.trace("terrain-pass", { range: [r.x0, r.y0, r.x1, r.y1], blits, decals, z: cam.zoom });
   }
 
