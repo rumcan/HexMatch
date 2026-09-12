@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { Board } from "../../src/game/board";
-import { setRng, mulberry32, BOARD_W, BOARD_H } from "../../src/game/config";
+import { Board, type Gem } from "../../src/game/board";
+import { setRng, mulberry32, randInt, BOARD_W, BOARD_H, type ResKey } from "../../src/game/config";
 
 function freshBoard() {
   setRng(mulberry32(1234));
@@ -498,5 +498,246 @@ describe("arcade callouts (A1)", () => {
     threeInARow(b);                  // three plain gems: no tokens, no gains
     await b.settle(1);
     expect(pops.some(([, label]) => label === "COMBO x2")).toBe(true);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// AI-03d — `findMove`, `hasMove` and the board must agree on what a MOVE is.
+//
+// The rival's autoplayer (`rivalAutoplay` in iso/game.ts) asks `findMove` for a
+// swap every `skill().moveMs` and hands the answer straight to `trySwap`.
+// `findMove` counted a run through ANY same-coloured neighbour, but the board's
+// own `lineRuns` only walks `matchable` cells — so an iron girder or a bomb
+// sitting INSIDE a line breaks it however the colours read. The two oracles
+// disagreed, `trySwap` found no group and reverted; a revert changes nothing,
+// so the next tick asked the same board the same question and got the same
+// doomed cells back. One dead swap, replayed every moveMs for the rest of the
+// match — "the rival is stuck doing the same match-3 move that doesn't work".
+// Sabotage is what puts a `block` gem mid-line, so a plant the player had just
+// bought girders for was the one the rival stalled on, and because the seek
+// scores tokens, the dead swap it locked onto was usually a TOKENED one: ranked
+// above every real move on the board, so the stall cost income too.
+// ══════════════════════════════════════════════════════════════════════════
+describe("findMove agrees with the board (AI-03d)", () => {
+  const CYCLE: ResKey[] = ["wood", "brick", "sheep", "wheat", "ore"];
+  /** What the rival's seek scores: tokens by tier, plain gems as nothing. */
+  const seek = (g: Gem) => g.tier ?? 0;
+
+  /**
+   * A board stamped with a layout that has no match AND no move: colour steps 1
+   * across and 2 down a five-colour cycle, so no three cells in either axis ever
+   * agree. A test then places the one shape it is about.
+   */
+  function deadBoard(seed = 7): Board {
+    setRng(mulberry32(seed));
+    const b = new Board();
+    for (let r = 0; r < BOARD_H; r++) for (let c = 0; c < BOARD_W; c++) {
+      const g = b.grid[r][c]!;
+      g.res = CYCLE[(r * 2 + c) % CYCLE.length];
+      g.tier = 0; g.hard = 0; g.block = false; g.special = null;
+    }
+    expect(b.findGroups(), "the stamped layout must start match-free").toHaveLength(0);
+    expect(b.hasMove(), "the stamped layout must start move-free").toBe(false);
+    return b;
+  }
+
+  /** A REAL move to contrast the trap with: wood at (6,0), (6,1) and (7,2)
+   *  leaves the board still match-free but playable — swapping a wood up into
+   *  row 6 makes three. Without it "findMove returned null" would prove
+   *  nothing; with it, null (or the trap) is the bug. */
+  function withRealMove(b: Board): void {
+    b.grid[6][0]!.res = "wood";
+    b.grid[6][1]!.res = "wood";
+    b.grid[7][2]!.res = "wood";
+    expect(b.findGroups(), "the contrast board must not already be matched").toHaveLength(0);
+    expect(b.hasMove(), "the contrast board must be playable").toBe(true);
+  }
+
+  /** The contract the rival plays by: whatever `findMove` returns, `trySwap`
+   *  CARRIES OUT — the group it promised is really there, or the swap moves a
+   *  bomb (which detonates on any swap). Anything else is a reverted move, and
+   *  a reverted move is the one the rival would replay forever. */
+  function carriedOut(b: Board, mv: [number, number, number, number]): boolean {
+    const [r1, c1, r2, c2] = mv;
+    const a = b.grid[r1][c1], d = b.grid[r2][c2];
+    if (!a || !d || a.block || d.block) return false;      // trySwap refuses it
+    if (a.special === "bomb" || d.special === "bomb") return true;
+    b.grid[r1][c1] = d; b.grid[r2][c2] = a;
+    const groups = b.findGroups().length;
+    b.grid[r1][c1] = a; b.grid[r2][c2] = d;
+    return groups > 0;
+  }
+
+  /** The rival's cadence, replayed: `findMove` → `trySwap`, one move per tick.
+   *  `refused` is every swap the board threw back (its `bad` fx) — the bug's
+   *  signature — and `pops` is proof it was actually playing. */
+  async function rivalLoop(b: Board, ticks: number) {
+    const refused: string[] = [];
+    const played: string[] = [];
+    let pops = 0;
+    b.onFx = (type, r, c) => {
+      if (type === "bad") refused.push(`${r},${c}`);
+      if (type === "pop") pops++;
+    };
+    for (let i = 0; i < ticks; i++) {
+      const mv = b.findMove(seek);
+      if (!mv) continue;
+      played.push(mv.join(","));
+      await b.trySwap(mv[0], mv[1], mv[2], mv[3], 10_000 + i * 3_000);
+    }
+    return { refused, played, pops };
+  }
+
+  /** Row 3 reads wood · wood(girder) · ore with a wood below the ore: the
+   *  COLOURS say "swap the wood up for three in a row", the board says the
+   *  girder breaks the line. [3,2,4,2] is the swap the rival replayed forever. */
+  function girderTrap(b: Board): void {
+    b.grid[3][0]!.res = "wood";
+    b.grid[3][1]!.res = "wood"; b.grid[3][1]!.block = true;
+    b.grid[3][2]!.res = "ore";
+    b.grid[4][2]!.res = "wood";
+    expect(b.findGroups(), "the girder breaks the line the colours promise").toHaveLength(0);
+  }
+
+  it("a girder inside the line is not a match — the trap is not a move", () => {
+    const b = deadBoard();
+    girderTrap(b);
+    expect(b.hasMove(), "nothing on this board is playable").toBe(false);
+    expect(b.findMove(), "the girder trap is not a move").toBeNull();
+    expect(b.findMove(seek), "nor is it one the seeking rival may chase").toBeNull();
+  });
+
+  it("…and with a real move beside the trap, the rival plays the real one", () => {
+    const b = deadBoard();
+    withRealMove(b);
+    girderTrap(b);
+    const mv = b.findMove();
+    expect(mv, "the real move is still on the board").not.toBeNull();
+    expect(mv, "the girder trap is not a move").not.toEqual([3, 2, 4, 2]);
+    expect(carriedOut(b, mv!), `offered ${mv}, which trySwap reverts`).toBe(true);
+  });
+
+  it("a bomb inside the line is not a match either", () => {
+    const b = deadBoard();
+    withRealMove(b);
+    // The same trap with a forged bomb as the middle "ore": a bomb is not
+    // matchable, so it breaks the line exactly like a girder does.
+    b.grid[3][0]!.res = "ore";
+    b.grid[3][1]!.res = "ore"; b.grid[3][1]!.special = "bomb";
+    b.grid[3][2]!.res = "wood";
+    b.grid[4][2]!.res = "ore";
+    const mv = b.findMove(seek);
+    expect(mv).not.toBeNull();
+    expect(mv, "a run through a bomb is not a run").not.toEqual([3, 2, 4, 2]);
+    expect(carriedOut(b, mv!), `offered ${mv}, which trySwap reverts`).toBe(true);
+  });
+
+  it("the seek plays a real match instead of a TOKENED dead swap", () => {
+    const b = deadBoard();
+    withRealMove(b);
+    // The trap, tokened: `findMove` scores the two swapped gems, so a tier-1
+    // token on a dead swap outranked every plain real move on the board — the
+    // rival locked onto this one and never played anything else again.
+    b.grid[0][0]!.res = "ore"; b.grid[0][0]!.tier = 2;
+    b.grid[0][1]!.res = "ore"; b.grid[0][1]!.block = true;
+    b.grid[0][2]!.res = "brick";
+    b.grid[1][2]!.res = "ore"; b.grid[1][2]!.tier = 1;
+    const mv = b.findMove(seek);
+    expect(mv).not.toBeNull();
+    expect(mv, "the tokened girder trap is not a move").not.toEqual([0, 2, 1, 2]);
+    expect(carriedOut(b, mv!), `offered ${mv}, which trySwap reverts`).toBe(true);
+  });
+
+  it("a sabotaged plant keeps playing — no dead swap, and gems actually pop", async () => {
+    // The live shape of the report: a playable plant, a girder the player has
+    // just bought mid-line, and a TOKEN on the dead swap that girder creates.
+    // The seek scores tokens, so the dead swap outranked every real move on the
+    // board — the rival replayed it every moveMs until the girder expired, and
+    // earned nothing while it did. Six moves at the rival's cadence.
+    const b = freshBoard();
+    expect(b.hasMove(), "a fresh plant is playable").toBe(true);
+    b.grid[0][0]!.res = "ore"; b.grid[0][0]!.tier = 2;
+    b.grid[0][1]!.res = "ore"; b.grid[0][1]!.block = true;
+    b.grid[0][2]!.res = "brick";
+    b.grid[1][2]!.res = "ore"; b.grid[1][2]!.tier = 1;
+    b.harden(4);
+    expect(b.findGroups(), "the girder breaks the line the colours promise").toHaveLength(0);
+    const { refused, played, pops } = await rivalLoop(b, 6);
+    expect(refused, `the rival replayed dead swaps at ${refused.join(" / ")}`).toEqual([]);
+    expect(played.length, "the rival never found a move to play").toBeGreaterThan(0);
+    expect(new Set(played).size, "the rival asked for the same cells every tick").toBeGreaterThan(1);
+    expect(pops, "the rival played six moves and cleared nothing").toBeGreaterThan(0);
+  }, 30_000);
+
+  it("a bomb IS a move: findMove offers the detonation when nothing matches", async () => {
+    const b = deadBoard();
+    const bomb = b.grid[4][3]!;
+    bomb.special = "bomb";
+    // hasMove counts a bomb as the board's escape hatch, so the deadlock guard
+    // will never reshuffle while one sits there — findMove has to agree, or the
+    // rival stalls on a board hasMove calls playable.
+    expect(b.hasMove()).toBe(true);
+    const mv = b.findMove(seek);
+    expect(mv, "a bomb-only board is playable").not.toBeNull();
+    const touches = (mv![0] === 4 && mv![1] === 3) || (mv![2] === 4 && mv![3] === 3);
+    expect(touches, `offered ${mv} which does not detonate the bomb`).toBe(true);
+    expect(carriedOut(b, mv!)).toBe(true);
+    await b.trySwap(mv![0], mv![1], mv![2], mv![3], 50_000);
+    expect(b.gems().includes(bomb), "the bomb was never detonated").toBe(false);
+  }, 20_000);
+
+  it("a bomb is only a move while it can be swapped — girders box it in", () => {
+    const b = deadBoard();
+    b.grid[4][3]!.special = "bomb";
+    for (const [r, c] of [[4, 2], [4, 4], [3, 3], [5, 3]]) b.grid[r][c]!.block = true;
+    // trySwap refuses a blocked cell, so this board has NO move at all: hasMove
+    // claiming one kept the deadlock guard from ever rescuing it.
+    expect(b.hasMove()).toBe(false);
+    expect(b.findMove(seek)).toBeNull();
+  });
+
+  it("fuzz: on wrecked boards the oracles agree and every move offered works", () => {
+    let asked = 0, offered = 0, wrecked = 0;
+    for (let seed = 1; seed <= 150; seed++) {
+      setRng(mulberry32(seed));
+      const b = new Board();
+      let girders = 0, bombs = 0;
+      for (let r = 0; r < BOARD_H; r++) for (let c = 0; c < BOARD_W; c++) {
+        const g = b.grid[r][c]!;
+        // a match-free random colour, the way `initFill` deals one: a board
+        // already mid-cascade is settle's business, not findMove's
+        let res = CYCLE[randInt(CYCLE.length)];
+        for (let t = 0; t < 25; t++) {
+          const bad =
+            (c >= 2 && b.grid[r][c - 1]!.res === res && b.grid[r][c - 2]!.res === res) ||
+            (r >= 2 && b.grid[r - 1][c]!.res === res && b.grid[r - 2][c]!.res === res);
+          if (!bad) break;
+          res = CYCLE[randInt(CYCLE.length)];
+        }
+        g.res = res;
+        g.tier = 0; g.hard = 0; g.block = false; g.special = null;
+        const roll = randInt(100);
+        if (roll < 9) { g.block = true; girders++; }              // a girder
+        else if (roll < 13) { g.special = "bomb"; bombs++; }      // a forged bomb
+        else if (roll < 33) g.tier = roll < 23 ? 1 : 2;           // a token
+        else if (roll < 43) g.hard = 2;                           // frost
+      }
+      if (girders + bombs > 0) wrecked++;
+      expect(b.findGroups(), `seed ${seed} dealt a board already matched`).toHaveLength(0);
+      asked++;
+      const mv = b.findMove(seek);
+      if (mv) {
+        offered++;
+        expect(carriedOut(b, mv), `seed ${seed}: findMove offered a dead swap ${mv}`).toBe(true);
+        expect(b.hasMove(), `seed ${seed}: offered ${mv} on a board hasMove calls dead`).toBe(true);
+      }
+      if (b.hasMove()) {
+        expect(mv, `seed ${seed}: hasMove says playable, findMove found nothing`).not.toBeNull();
+      }
+    }
+    // the fuzz has to actually fuzz: most boards are wrecked, most have a move
+    expect(wrecked).toBeGreaterThan(100);
+    expect(asked).toBeGreaterThan(100);
+    expect(offered).toBeGreaterThan(50);
   });
 });

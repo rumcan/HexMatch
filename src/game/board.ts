@@ -765,16 +765,31 @@ export class Board {
     return n;
   }
 
-  /** AI-03: find one swap that produces a match — the rival's autoplayer.
-   *  Scans right/down neighbours of unblocked gems; returns [r1,c1,r2,c2] or
-   *  null. Honour-system fast: checks the two swapped cells' rows/cols only,
-   *  because only those lines can change.
+  /** AI-03: find one swap the board will actually CARRY OUT — the rival's
+   *  autoplayer. Scans right/down neighbours of unblocked gems; returns
+   *  [r1,c1,r2,c2] or null. Honour-system fast: checks the two swapped cells'
+   *  rows/cols only, because only those lines can change.
    *
    *  `score` (optional, per gem) turns it into a SEEKING player: instead of
    *  the geometrically-first match it returns the match with the highest
    *  weight (ties → first). The rival uses this to chase tokened gems — the
    *  difference between a board that merely animates and a board that PAYS,
-   *  which is exactly the skill knob a slow-but-sharp rival earns through. */
+   *  which is exactly the skill knob a slow-but-sharp rival earns through.
+   *
+   *  AI-03d — THE ONE RULE. This used to count a run through ANY same-coloured
+   *  neighbour, which is not the board's rule: `lineRuns` walks `matchable`
+   *  cells, so an iron girder or a bomb sitting INSIDE a line breaks it however
+   *  the colours read. The two oracles disagreed, and the rival — which asks
+   *  this for a move and then hands it to `trySwap` — got a swap `trySwap`
+   *  found no group for and reverted. A revert changes nothing, so the next
+   *  tick asked the same question of the same board and got the same doomed
+   *  cells back: the rival replayed one dead swap every `moveMs` for the rest
+   *  of the match. It was worst on a sabotaged plant (girders are the sabotage
+   *  that puts a `block` gem mid-line) and on a TOKENED dead swap, which the
+   *  tier-weighted seek ranked above every real move on the board — so the
+   *  rival not only stalled, it stalled on the one board it could least afford
+   *  to. `matchable` now decides both sides, and the fuzz in board.test.ts pins
+   *  the agreement: whatever `findMove` returns, `trySwap` carries out. */
   findMove(score?: (g: Gem) => number): [number, number, number, number] | null {
     let best: [number, number, number, number] | null = null;
     let bestScore = score ? -Infinity : 0;
@@ -786,20 +801,39 @@ export class Board {
       return mv;
     };
     const H = this.grid.length, W = this.grid[0]?.length ?? 0;
+    /** The run of one colour through `at` on a line, counted the way the board
+     *  counts it: contiguous AND `matchable` at every cell, exactly the walk
+     *  `lineRuns` does. A girder or a bomb in the line ENDS it. */
+    const runOn = (cell: (i: number) => Gem | null, at: number, len: number, res: ResKey): number => {
+      let run = 1;
+      for (let i = at - 1; i >= 0; i--) {
+        const g = cell(i);
+        if (!this.matchable(g) || g.res !== res) break;
+        run++;
+      }
+      for (let i = at + 1; i < len; i++) {
+        const g = cell(i);
+        if (!this.matchable(g) || g.res !== res) break;
+        run++;
+      }
+      return run;
+    };
     const makesMatch = (r: number, c: number): boolean => {
       const g = this.grid[r]?.[c];
-      if (!g) return false;
-      // horizontal run through (r,c)
-      let run = 1;
-      for (let i = c - 1; i >= 0 && this.grid[r][i]?.res === g.res; i--) run++;
-      for (let i = c + 1; i < W && this.grid[r][i]?.res === g.res; i++) run++;
-      if (run >= 3) return true;
-      run = 1;
-      for (let i = r - 1; i >= 0 && this.grid[i][c]?.res === g.res; i--) run++;
-      for (let i = r + 1; i < H && this.grid[i][c]?.res === g.res; i++) run++;
-      return run >= 3;
+      if (!this.matchable(g)) return false;
+      const res = g.res;
+      if (runOn((i) => this.grid[r][i], c, W, res) >= 3) return true;
+      return runOn((i) => this.grid[i][c], r, H, res) >= 3;
     };
     const dirs: [number, number][] = [[0, 1], [1, 0]];
+    /** A bomb is a move in itself — `trySwap` detonates whatever bomb it is
+     *  handed instead of looking for a group — and `hasMove` counts an
+     *  unblocked bomb as the board's escape hatch, so the deadlock guard will
+     *  never reshuffle while one sits there. `findMove` has to agree with that
+     *  or the rival stalls on a board `hasMove` calls playable. It is the
+     *  FALLBACK, offered only when no scoring match exists: blowing a forged
+     *  bomb on a random colour while a real match is waiting is not a plan. */
+    let bombMove: [number, number, number, number] | null = null;
     for (let r = 0; r < H; r++) {
       for (let c = 0; c < W; c++) {
         const a = this.grid[r][c];
@@ -807,7 +841,12 @@ export class Board {
         for (const [dr, dc] of dirs) {
           const r2 = r + dr, c2 = c + dc;
           const b = this.grid[r2]?.[c2];
-          if (!b || b.block || b.res === a.res) continue;
+          if (!b || b.block) continue;
+          if (a.special === "bomb" || b.special === "bomb") {
+            if (!bombMove) bombMove = [r, c, r2, c2];
+            continue;
+          }
+          if (b.res === a.res) continue;      // swapping two alike gems is a no-op
           // trial swap
           this.grid[r][c] = b; this.grid[r2][c2] = a;
           const ok = makesMatch(r, c) || makesMatch(r2, c2);
@@ -819,7 +858,7 @@ export class Board {
         }
       }
     }
-    return best;
+    return best ?? bombMove;
   }
 
   /** AI-03 save/restore: everything that is not derivable (grid, pools,
@@ -879,6 +918,20 @@ export class Board {
     if (!this.busy && !this.hasMove()) this.reshuffle();
   }
 
+  /** Can the gem at (r,c) be swapped at all — does it have a neighbour
+   *  `trySwap` would accept? A bomb is a move only while it can be moved:
+   *  one boxed in by girders is not, and claiming it was told the deadlock
+   *  guard the board was playable, so the guard never reshuffled it. */
+  private swappable(r: number, c: number): boolean {
+    const g = this.grid[r]?.[c];
+    if (!g || g.block) return false;
+    const dirs: [number, number][] = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+    return dirs.some(([dr, dc]) => {
+      const n = this.grid[r + dr]?.[c + dc];
+      return !!n && !n.block;
+    });
+  }
+
   hasMove(): boolean {
     const test = (r1: number, c1: number, r2: number, c2: number) => {
       const a = this.grid[r1][c1], b = this.grid[r2][c2];
@@ -891,9 +944,15 @@ export class Board {
     for (let r = 0; r < H; r++) for (let c = 0; c < W; c++) {
       if (c < W - 1 && test(r, c, r, c + 1)) return true;
       if (r < H - 1 && test(r, c, r + 1, c)) return true;
-      // bombs always give a "move"
+      // bombs always give a "move" — but only while one can actually be
+      // SWAPPED: `trySwap` refuses a blocked cell, and a girder stamped onto a
+      // bomb (MP-05's `applySabotage` blocks whatever gem is already there) is
+      // not a move. Claiming it anyway told the deadlock guard the board was
+      // playable when it was not, so the guard never reshuffled and both seats
+      // sat on it until the girder expired. AI-03d: this is the same agreement
+      // `findMove` now keeps — if `hasMove` says yes, `findMove` finds one.
       const g = this.grid[r][c];
-      if (g?.special === "bomb") return true;
+      if (g?.special === "bomb" && this.swappable(r, c)) return true;
     }
     return false;
   }
