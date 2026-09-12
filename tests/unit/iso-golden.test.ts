@@ -311,9 +311,18 @@ describe("I0 golden-image scene", () => {
       const b = place(atlas, { sprite: "factory_blue", tx: hover[0], ty: hover[1] })!;
       expect(picked).toEqual(hover);
       // flat anchor: the declared anchor lands on the SOUTH corner, i.e. the
-      // top vertex shifted by (+HW, +TILE_H).
-      expect([h.wx + h.def.anchor[0], h.wy + h.def.anchor[1]]).toEqual([wx + HW, wy + TILE_H]);
-      expect([b.wx + b.def.anchor[0], b.wy + b.def.anchor[1]]).toEqual([wx + HW, wy + TILE_H]);
+      // top vertex shifted by (0, +TILE_H).
+      //
+      // This read `wx + HW` — half a tile EAST of the south corner, which is
+      // where drawOrigin used to put the whole monolith sheet. The test's own
+      // title is the reason it had to change: with the offset in place the
+      // highlight did NOT resolve to the tile `flatPick` returns for the same
+      // point, it resolved to the grid line between that tile and its
+      // neighbour, which is exactly what the hover cursor looked like in game
+      // once the ground-plane roads gave it something honest to be measured
+      // against.
+      expect([h.wx + h.def.anchor[0], h.wy + h.def.anchor[1]]).toEqual([wx, wy + TILE_H]);
+      expect([b.wx + b.def.anchor[0], b.wy + b.def.anchor[1]]).toEqual([wx, wy + TILE_H]);
     }
   });
 

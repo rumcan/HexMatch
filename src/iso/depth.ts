@@ -65,6 +65,18 @@ export interface Placed extends DrawItem {
  * (tx + fw - 1, ty + fh - 1). Building-layer sprites (def.center) instead
  * land on the footprint's CENTRE — the bbox centre — so free-placed building
  * art sits concentric with its tiles and does not snap to the grid.
+ *
+ * The south branch used to add HW as well, which is NOT the south vertex —
+ * it is half a tile east of it, and it made the docstring above a lie. Every
+ * cell in the monolith atlas is a 64×32 diamond anchored [32,31], so that
+ * offset put the whole sheet half a tile east of the pattern-painted ground
+ * and of the `def.center` buildings. Nothing showed it while the sheet was
+ * self-consistent — the old road sprites were off by the same amount as the
+ * lorries driving on them, and grass has no features to be off against — but
+ * the ground-plane vector roads agree with the ground, so the error surfaced
+ * as the hover highlight sitting on a grid line instead of over the tile it
+ * had selected, and as lorries driving beside their road. Removed here, at
+ * the one place it came from, rather than compensated for at each caller.
  */
 export function drawOrigin(def: SpriteDef, tx: number, ty: number): [number, number] {
   const [fw, fh] = def.footprint;
@@ -77,7 +89,7 @@ export function drawOrigin(def: SpriteDef, tx: number, ty: number): [number, num
     const cy = sy + TILE_H - (fw + fh) * (HH / 2);
     return [cx - def.anchor[0], cy - def.anchor[1]];
   }
-  return [sx + HW - def.anchor[0], sy + TILE_H - def.anchor[1]];
+  return [sx - def.anchor[0], sy + TILE_H - def.anchor[1]];
 }
 
 /**
@@ -101,10 +113,9 @@ export function drawOriginMoving(def: SpriteDef, fx: number, fy: number): [numbe
   // ground underneath them.
   //
   // Nothing cancels it now: the vector roads are generated from the ground
-  // plane and agree with the ground and the buildings. So the offset had to
-  // come out of the lorries, which is where it was wrong. (Sprite road mode
-  // is consequently half a tile out from the lorries; it is a rollback path,
-  // and the ground is the authority.)
+  // plane and agree with the ground and the buildings. So the offset came out
+  // of the lorries, and then out of `drawOrigin` too — see the note there.
+  // Every layer now measures from the same ground plane.
   return [sx - def.anchor[0], sy + HH - def.anchor[1]];
 }
 

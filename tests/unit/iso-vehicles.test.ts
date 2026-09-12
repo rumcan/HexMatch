@@ -534,10 +534,13 @@ describe("RV-01 truck draw items", () => {
     // with the ground.
     expect(p!.wx + def.anchor[0]).toBe(vx);
     expect(p!.wy + def.anchor[1]).toBe(vy + HH);
-    // static sprites still anchor the old way (south corner)
+    // A static sprite anchors on its footprint's SOUTH corner — the real one,
+    // (sx, sy + TILE_H). The same half-tile east offset was in drawOrigin too,
+    // and came out with it; the hover highlight is a sheet sprite, and it was
+    // landing on a grid line instead of over the tile it had selected.
     const q = place(atlas, { sprite: "depot_blue", tx: 3, ty: 10 })!;
     const [sx, sy] = tileToScreen(3, 10);
-    expect(q.wx + q.def.anchor[0]).toBe(sx + HW);
+    expect(q.wx + q.def.anchor[0]).toBe(sx);
     expect(q.wy + q.def.anchor[1]).toBe(sy + TILE_H);
   });
 
