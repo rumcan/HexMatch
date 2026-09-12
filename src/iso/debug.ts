@@ -514,6 +514,21 @@ export function createIsoDebug(ctx: DebugContext) {
       console.log("[iso] rendering", out);
       return out;
     },
+    /**
+     * `__iso.roadMode('textured'|'sprites')` switches the road renderer.
+     *
+     * An A/B switch for the vector-road work, deliberately living only on the
+     * debug console: it is renderer state, not game state, so it never enters
+     * a save or the multiplayer protocol and both players always simulate the
+     * same roads whatever they are looking at.
+     */
+    roadMode: (mode?: "sprites" | "textured") => {
+      if (mode) ctx.renderer?.setRoadMode(mode);
+      ctx.renderer?.invalidateAll();
+      const out = ctx.renderer?.roadDiagnostics() ?? null;
+      console.log("[iso] roadMode", out);
+      return out;
+    },
     /** `__iso.renderLog(true)` toggles the per-blit `[render]` console trace. */
     renderLog: (on = true) => {
       ctx.renderer?.setRenderLog(!!on);

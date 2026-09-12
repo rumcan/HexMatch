@@ -170,19 +170,30 @@ const VARIANT_SCALE = [1, 0.8, 1.16, 0.64];
  * and 2:1 squashed because it lies flat on the isometric ground — the same
  * projection the decals use.
  */
-const SHADOW_WIDTH = 0.62;
-/** Peak opacity at the centre of the ellipse. */
-const SHADOW_ALPHA = 0.4;
+const SHADOW_WIDTH = 0.72;
+/** Opacity across the solid core of the ellipse. */
+const SHADOW_ALPHA = 0.55;
+/**
+ * Fraction of the radius held at FULL strength before the falloff starts.
+ *
+ * This matters more than the peak alpha. The first version ramped from the
+ * centre with a double smoothstep, which put the stated opacity on
+ * essentially one pixel and faded everything else — over a grass texture as
+ * busy and as dark as this one the result was invisible in game. A real
+ * contact shadow is flat under the canopy and soft only at its rim.
+ */
+const SHADOW_CORE = 0.42;
 /** How far the ellipse's centre sits ABOVE the art's bottom row, in pixels. */
-const SHADOW_LIFT = 2;
+const SHADOW_LIFT = 1;
+/**
+ * Horizontal offset as a fraction of the radius. The sun is upper right in
+ * every drawing on the sheet, so the shadow falls to the lower left.
+ */
+const SHADOW_DX = -0.16;
 
 /**
- * A soft elliptical shadow as a PNG buffer, plus its radii.
- *
- * The falloff is a smoothstep applied twice: the shadow is dense and flat
- * under the trunk and dies away well before its rim, which is what a real
- * canopy shadow on grass looks like. A single linear ramp reads as an airbrush
- * disc, and a hard ellipse reads as a sticker.
+ * A soft elliptical shadow as a raw RGBA buffer, plus its radii and the
+ * offset its centre sits at relative to the trunk foot.
  */
 function shadowEllipse(spriteW) {
   const rx = Math.max(4, Math.round((spriteW * SHADOW_WIDTH) / 2));
@@ -194,7 +205,7 @@ function shadowEllipse(spriteW) {
       const nx = (x - rx) / rx, ny = (y - ry) / ry;
       const d = Math.hypot(nx, ny);
       if (d >= 1) continue;
-      const t = smooth(smooth(1 - d));
+      const t = d <= SHADOW_CORE ? 1 : smooth(1 - (d - SHADOW_CORE) / (1 - SHADOW_CORE));
       const i = (y * w + x) * 4;
       // A cool near-black rather than pure black: pure black over a warm
       // painted meadow reads as a hole punched in it.
@@ -202,7 +213,10 @@ function shadowEllipse(spriteW) {
       buf[i + 3] = Math.round(255 * SHADOW_ALPHA * t);
     }
   }
-  return { rx, ry, png: buf, raw: { width: w, height: h, channels: 4 } };
+  return {
+    rx, ry, png: buf, raw: { width: w, height: h, channels: 4 },
+    dx: Math.round(rx * SHADOW_DX),
+  };
 }
 
 /**
@@ -320,8 +334,9 @@ async function buildTrees() {
       const shadow = shadowEllipse(tw);
       // The ellipse is centred on the foot, so it can reach outside the art's
       // own box on the left, the right and below; grow the canvas to fit.
-      const padL = Math.max(0, shadow.rx - footX);
-      const padR = Math.max(0, footX + shadow.rx - (tw - 1));
+      const sx = footX + shadow.dx;
+      const padL = Math.max(0, shadow.rx - sx);
+      const padR = Math.max(0, sx + shadow.rx - (tw - 1));
       const padB = Math.max(0, shadow.ry - SHADOW_LIFT);
       const cw = tw + padL + padR, ch = th + padB;
 
@@ -330,7 +345,7 @@ async function buildTrees() {
       }).composite([
         {
           input: shadow.png, raw: shadow.raw,
-          left: footX + padL - shadow.rx,
+          left: sx + padL - shadow.rx,
           top: th - 1 - SHADOW_LIFT - shadow.ry,
         },
         {
