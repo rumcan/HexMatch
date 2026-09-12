@@ -270,7 +270,7 @@ export default function StartScreen({ onStart }: StartScreenProps) {
                 aria-pressed={portrait === p}
                 onClick={() => setPortrait(p)}>
                 <span className={`portrait-face portrait-${p}`} aria-hidden="true" />
-                <span className="portrait-name">{p === "vex" ? "Mary-Anne" : "James"}</span>
+                <span className="portrait-name">{p === "vex" ? "Anne" : "James"}</span>
               </button>
             ))}
           </div>
