@@ -57,7 +57,7 @@ import type { Cue } from "../audio/cues";
 const CARGO_TO_GEM: Partial<Record<Cargo, ResKey>> = Object.fromEntries(
   Object.entries(GEM_TO_CARGO).map(([gem, cargo]) => [cargo, gem]),
 ) as Partial<Record<Cargo, ResKey>>;
-import { Board, type FxType, type Gem } from "./board";
+import { Board, BOARD_ANIMATION_MS, type FxType, type Gem } from "./board";
 import type { IsoMarket, IsoMarketPlayer, Offer } from "../iso/market";
 import portraitYou from "../assets/ui/tycoon_you_small.png";
 import portraitKrag from "../assets/ui/tycoon_krag.png";
@@ -226,6 +226,8 @@ export function createOriginalUi(
 ): OriginalUi {
   const root = h("div", "ui-root");
   root.dataset.view = "map";
+  root.style.setProperty("--gem-move-ms", `${BOARD_ANIMATION_MS.swap}ms`);
+  root.style.setProperty("--gem-clear-ms", `${BOARD_ANIMATION_MS.clear}ms`);
 
   // ── the map slot (original `<canvas id="map">` is now a container for the
   //    iso layer stack: terrain / structures / overlay) ─────────────────────
@@ -916,7 +918,7 @@ export function createOriginalUi(
     gemEls.forEach((elem, id) => {
       if (!present.has(id)) {
         elem.classList.add("gone");
-        setTimeout(() => elem.remove(), 260);
+        setTimeout(() => elem.remove(), BOARD_ANIMATION_MS.clear);
         gemEls.delete(id);
       }
     });
@@ -991,44 +993,25 @@ export function createOriginalUi(
   // CROSS (3 units) and waits; this panel asks how to spend the units of
   // blessing. Repeats are allowed — tap a cargo to add one unit, tap it again
   // to take one back, up to the cross's total (all of one, 2+2, one of each,
-  // any mix). The confirm enables at exactly that total, and the 8s timer
-  // (the board's own 9s backstop is the second line of defence) auto-confirms
-  // whatever is selected so the cascade always resumes — the board fills any
-  // unspent unit with a random cargo.
-  //
-  // The panel must NEVER vanish "weirdly": clicks anywhere outside it do not
-  // dismiss it, a tab switch that would hide the plant panel is refused while
-  // a pick is pending, and a second cross resolving over an unanswered one
-  // answers the first with its current selection before the new chooser shows.
+  // any mix). Confirmation requires the full allocation. There is no timer:
+  // the panel and paused cascade wait until the player explicitly confirms.
+  // Outside clicks/tab switches cannot dismiss it. Queue additional choices
+  // rather than auto-answering and replacing an unfinished allocation.
   let pickEl: HTMLElement | null = null;
-  let pickTimer = 0;
-  let pickFn: ((chosen: ResKey[]) => void) | null = null;
-  const pickCounts = new Map<ResKey, number>();
+  const pickQueue: { kind: "holy" | "broken"; picks: number; pick: (chosen: ResKey[]) => void }[] = [];
 
   function crossPick(kind: "holy" | "broken", picks: number, pick: (chosen: ResKey[]) => void) {
+    if (pickEl) {
+      pickQueue.push({ kind, picks, pick });
+      return;
+    }
+    const pickCounts = new Map<ResKey, number>();
     const total = () => [...pickCounts.values()].reduce((a, b) => a + b, 0);
     const expand = () => {
       const chosen: ResKey[] = [];
       for (const [res, n] of pickCounts) for (let i = 0; i < n; i++) chosen.push(res);
       return chosen;
     };
-    const close = () => {
-      window.clearTimeout(pickTimer);
-      pickEl?.remove();
-      pickEl = null;
-      pickFn = null;
-    };
-    // A second cross while the first chooser is still open: answer the first
-    // with what was picked so far (the board tops up the rest), so its paused
-    // cascade can never hang, then show the new chooser.
-    if (pickFn) {
-      const prev = pickFn;
-      const chosen = expand();
-      close();
-      prev(chosen);
-    }
-    pickCounts.clear();
-    pickFn = pick;
     const holy = kind === "holy";
     const panel = h("div", `cross-pick${holy ? "" : " broken"}`);
     panel.appendChild(h("div", "cross-pick-title", holy ? "🙏 HOLY CROSS" : "✝ BROKEN CROSS"));
@@ -1077,17 +1060,20 @@ export function createOriginalUi(
       };
       row.appendChild(b);
     }
-    confirm.onclick = () => { pick(expand()); close(); };
+    confirm.onclick = () => {
+      if (pickEl !== panel || total() !== picks) return;
+      const chosen = expand();
+      panel.remove();
+      pickEl = null;
+      pick(chosen);
+      const next = pickQueue.shift();
+      if (next) crossPick(next.kind, next.picks, next.pick);
+    };
     panel.appendChild(row);
     panel.appendChild(count);
     panel.appendChild(confirm);
     boardWrap.appendChild(panel);
     pickEl = panel;
-    pickTimer = window.setTimeout(() => {
-      if (!pickEl) return;
-      pick(expand());
-      close();
-    }, 8000);
   }
 
   function popup(gains: Partial<Record<ResKey, number>>, label: string) {
