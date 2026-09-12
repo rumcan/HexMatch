@@ -49,11 +49,11 @@ every cue, so the ceiling can only move in a diff that moves it on purpose.
 | `hover` | a control noticed | 16 ms of air at 2.6 kHz under a whisper of 1.76 kHz, jittered ±40 cents so a row of buttons cannot sound like one stuck note |
 | `click` | any button, chip, mini-action | a brass key settling: triangle 300→190 Hz plus a 12 ms transient |
 | `tab` | Market / Bank / Plant / Feed, Map / Build / Economy, a `<select>` changing | a drawer sliding one bay — mostly noise, 1250→620 Hz, almost no body |
-| `select` | a gem picked up, a tool armed, a tycoon chosen, a difficulty card | a small glass ping on a fifth (784 + 1176 Hz); `step` transposes it |
+| `select` | a gem picked up, a tool armed, a tycoon chosen, a difficulty card | a **soft thud** — a low damped knock (196→108 Hz sine) under a muffled low-pass noise; `step` transposes it |
 | `pick` | the cross bounty chooser spending one unit | the ladder, one rung per tap — the panel audibly fills up |
-| `swap` | two gems traded | cards sliding on felt: noise 780→2300 Hz with a little lift |
+| `swap` | two gems traded | the same **soft thud** as the pickup, a touch lower (165→120 Hz) with a little settle — deliberately not a knock or a swoosh |
 | `open` / `close` | Help, a modal, the final ledger, a toast's ✕, Review / Restart | two notes a fifth apart, rising to open and falling to close |
-| `pop` | one gem cleared | a marble dropped in a wooden box, climbing the pentatonic ladder as the cascade runs |
+| `pop` | one gem cleared | a **bright glass chime** (sine at the ladder pitch + 2× + 3× harmonics + a high shimmer) that climbs the pentatonic ladder with each combo, like the cargo chute paying out a resource |
 | `crack` | ice or a girder cracked, the Repair Crew at work | a bright splinter at 2.8 kHz over a 190→120 Hz thump |
 | `up` | a token stamped up a grade | one note bending up, no transient |
 | `boom` | a bomb, or sabotage landing across the map | behind a door, not in the room: 112→44 Hz, over in 300 ms |
