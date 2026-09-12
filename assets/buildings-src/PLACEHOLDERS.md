@@ -77,7 +77,9 @@ pipeline in `tools/README-art.md` (§ 1950s building redo pipeline).
 | 3 | `town_bank`, `town_cinema`, `town_hotel`, `town_shops_offices`, `town_shops_offices_2`, `town_shop_small`, `town_offices_1423`, `town_office_1460`, `town_office_tower_modern`, `town_fountain_1x1` | ✅ regenerated, fitted, verified, compiled |
 | 4 | `forest`, `ore_mine`, `quarry`, `gold_mine`, `oil_rig` *(3×3/4×4 footprints)*, `town_center`, `town_townhouse_gardens_2` *(last polish candidate, now 1.49 aspect)*, `town_flats_2`, `town_flats_4`, `town_flats_grey` | ✅ regenerated, fitted, verified, compiled |
 | 5 | `town_cottage_old_small_a`, `town_cottage_tall`, `town_townhouse_3`, `town_townhouse_garden_2`, `town_townhouse_garden_3`, `town_flats_townhouse_tall`, `town_small_flat_1x1_1`, `town_small_flat_1x1_2`, `town_offices_tall`, `town_flats_trop_1x1_7` | ✅ regenerated, fitted, verified, compiled |
-| remaining 8 | `town_flats_trop_1x1_4`, `town_flats_trop_2x1_6`, 6 × `depot_*` | ⏳ pending |
+| 6 | `town_flats_trop_1x1_4`, `town_flats_trop_2x1_6`, `depot_grain`, `depot_wood`, `depot_ore`, `depot_stone`, `depot_oil`, `depot_gold` | ✅ regenerated, fitted, verified, compiled |
+
+**All 58 building layers are redone** — the redo pass is complete.
 
 Verification for batch 1: `tools/overlay-building-template.mjs` reports every
 parcel in the 2:1 family, `parcelPct` 84–115% of the guide diamond, and all

@@ -24,7 +24,7 @@
 //   node tools/clean-magenta-fringe.mjs farm town_flats # specific masters
 // ══════════════════════════════════════════════════════════════════════════
 import sharp from "sharp";
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
