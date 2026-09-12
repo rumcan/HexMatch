@@ -174,6 +174,10 @@ beforeEach(() => {
   window.history.replaceState(null, "", "/?seed=1337");
   localStorage.removeItem("hexmatch:save");
   localStorage.setItem("hexmatch:rival-skill", "normal");
+  // TUT-01: the starting tour is the other boot overlay — these tests boot
+  // the game, not its onboarding (the tour itself is covered in
+  // iso-tutorial.test.ts).
+  localStorage.setItem("hexmatch:tutorial", "never");
   setRng(mulberry32(1337));
   (globalThis as Record<string, unknown>).ResizeObserver = class {
     observe() {} unobserve() {} disconnect() {}
