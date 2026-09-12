@@ -25,7 +25,7 @@ import {
 } from "../../src/iso/track";
 import {
   CAR_COUNT, CAR_SPEED, createCarState, planCars, tickCars, carItems,
-  type Car,
+  carSprite, type Car,
 } from "../../src/iso/cars";
 
 /** Fresh seeded map with its public streets stamped — the boot state. */
@@ -37,7 +37,13 @@ function seededWorld() {
   return { grid, track };
 }
 
-const SPRITES = new Set(["truck_goods_ne", "truck_goods_se", "truck_goods_sw", "truck_goods_nw"]);
+// The 12 car art slots: car{1,2,3} × the four diagonal views.
+const CAR_VIEWS = ["ne", "se", "sw", "nw"];
+const SPRITES = new Set(
+  [1, 2, 3].flatMap((i) => CAR_VIEWS.map((v) => `car${i}_${v}`)),
+);
+/** The sprite family a given car index is allowed to blit (slots cycle). */
+const familyOf = (carIndex: number) => `car${((carIndex - 1) % 3) + 1}_`;
 
 /** E5's mutual-bit rule, as the cars' walker uses it: may a car on (x,y)
  *  step toward (nx,ny)? */
@@ -260,7 +266,7 @@ describe("TRAFFIC-01 motion", () => {
 });
 
 describe("TRAFFIC-01 draw items", () => {
-  it("one item per car: fractional position, truck art, name in ref", () => {
+  it("one item per car: fractional position, ITS OWN art slot, name in ref", () => {
     const { track } = seededWorld();
     const state = createCarState();
     state.cars = planCars(track, [], 3);
@@ -272,8 +278,23 @@ describe("TRAFFIC-01 draw items", () => {
       expect(item.tx).toBe(Math.round(item.fx!));
       expect(item.ty).toBe(Math.round(item.fy!));
       expect(SPRITES.has(item.sprite)).toBe(true);
+      // car i blits from ITS OWN art family (car1_* / car2_* / car3_*),
+      // never another car's — the point of the separate slots.
+      expect(item.sprite.startsWith(familyOf(i + 1))).toBe(true);
       expect(item.ref).toEqual({ car: `car ${i + 1}` });
     });
+  });
+
+  it("carSprite maps index×direction to the right slot, cycling past three", () => {
+    // car 1 → car1_*, car 2 → car2_*, car 3 → car3_*
+    expect(carSprite(1, 1)).toBe("car1_ne");   // NE
+    expect(carSprite(2, 2)).toBe("car2_se");   // SE
+    expect(carSprite(3, 8)).toBe("car3_nw");   // NW
+    // beyond the shipped slots the art cycles: car 4 = car 1's livery
+    expect(carSprite(4, 1)).toBe("car1_ne");
+    expect(carSprite(5, 2)).toBe("car2_se");
+    expect(carSprite(6, 4)).toBe("car3_sw");   // SW
+    expect(carSprite(7, 4)).toBe("car1_sw");
   });
 
   it("faces the direction of travel, including the way BACK on a ping-pong", () => {
@@ -287,11 +308,13 @@ describe("TRAFFIC-01 draw items", () => {
     // (40,40)→(41,40), i.e. SE… drive to the far end and flip
     const items = carItems(state);
     expect(items.length).toBe(1);
-    // run it to the end and back; the sprite must exist and be a lorry view
+    // run it to the end and back; the sprite must exist and stay in car 1's
+    // family (the placeholder art is the lorry — TRAFFIC-02 swaps the PNG)
     for (let i = 0; i < 600; i++) {
       tickCars(state, 300);
       const it = carItems(state)[0]!;
       expect(SPRITES.has(it.sprite)).toBe(true);
+      expect(it.sprite.startsWith(familyOf(1))).toBe(true);
     }
     void car;
   });

@@ -1,9 +1,12 @@
 # TRAFFIC-01 — ambient cars on the streets (and the performance answer)
 
 **Status: implemented.** Three simple cars (`car 1` / `car 2` / `car 3`)
-drive the map's streets and roads using the existing TTD lorry art (the real
-car art is later — TRAFFIC-02). The reason they exist is the question they
-answer: **does having a few cars driving on the map kill performance?**
+drive the map's streets and roads, each on its own art slot (`car1_*` /
+`car2_*` / `car3_*`) that currently holds a copy of the TTD lorry — replace
+the PNGs in `src/assets/sprites/png/vehicles/ttd/cars/` and the cars become
+whatever you drop in (TRAFFIC-02, §2). The reason they exist is the
+question they answer: **does having a few cars driving on the map kill
+performance?**
 
 **Answer: no.** Measured, not guessed — see §4.
 
@@ -22,10 +25,38 @@ answer: **does having a few cars driving on the map kill performance?**
 - `__iso.setTraffic(n)` — the perf dial: `0` clears the streets, `3` is the
   default, up to `64` if you want to torture it.
 
+## 2. Car art — where to drop the real cars (TRAFFIC-02)
+
+Each car has its own art slot — **car 1 drives `car1_*`, car 2 drives
+`car2_*`, car 3 drives `car3_*`** (four diagonal views each, 12 sprites).
+Right now every slot is a byte-for-byte copy of the OpenGFX goods lorry —
+the placeholder.
+
+**The folder: `src/assets/sprites/png/vehicles/ttd/cars/`** (a README.txt in
+there explains the naming). To make the cars look like cars:
+
+1. Replace any of the 12 PNGs — e.g. put a red sedan in `car1_*.png`, a
+   van in `car2_*.png`, a bus in `car3_*.png`. Any size, transparent PNG;
+   it is trimmed to its opaque bbox and anchored bottom-centre
+   automatically. The four views per car: `ne` up/right, `se` down/right,
+   `sw` down/left, `nw` up/left.
+2. `npm run slice-atlas` — repacks the atlas (0.5×/1×/2×), the manifest and
+   the group editing sheets. Manifest validates; golden tests stay green
+   (sprite geometry unchanged while the slots hold the lorry copy).
+3. Reload the game. Done — no code changes; `carSprite()` in
+   `src/iso/cars.ts` already maps car index → slot, cycling the slots past
+   three so `setTraffic(n > 3)` grows without new cells.
+
+The manifest declarations live in `tools/iso-atlas.cells.json`
+(`car1_ne` … `car3_nw`, right under the `truck_goods_*` entries), and the
+group sheets that show every sprite as a labelled card come from
+`npm run atlas:groups`. The freight lorry (`truck_goods_*`) is untouched —
+cars and trucks can now look completely different.
+
 The cars are pure presentation and host/solo-local: not on the wire, no
 economy effect, guests see none (same as lorries).
 
-## 2. How it drives
+## 3. How it drives
 
 Routes walk the same graph the economy floods — tiles with a PRESENT bit on
 dirt OR paved, crossing only **mutual** direction bits (E5's invariant).
@@ -59,7 +90,7 @@ Cost: one bounded DFS per car per network change (a few thousand edge
 relaxations on the shipped map), then per frame the same ~3 `place()` calls,
 sort inserts and blits a lorry already costs.
 
-## 3. The structural effect under test
+## 4. The structural effect under test
 
 While ANY vehicle moves, `renderer.hasAnimation()` forces the whole
 structures pass (roads + every structure in view + depth sort + blit of all
@@ -67,7 +98,7 @@ of it) to run **every frame** instead of only on world change. The cars
 switch that on — which is exactly what makes this worth measuring, because
 "a few moving sprites" is not the whole cost; the pass is.
 
-## 4. Performance (measured)
+## 5. Performance (measured)
 
 Opt-in CPU benchmark, real 144×144 seeded world (4 towns, 673 public road
 tiles, scenery), real `IsoRenderer` on a counting canvas stub, steady-state
@@ -119,7 +150,7 @@ If the game feels slow, the cost is NOT the traffic: the every-frame
 terrain pass (animated ocean + shoreline) and UI paint run whether or not
 anything drives.
 
-## 5. Validation
+## 6. Validation
 
 - `tests/unit/iso-cars.test.ts` — 16 tests: plan legality (mutual edges,
   loop simplicity, naming, spread, count dial, empty/stub networks, dirt+

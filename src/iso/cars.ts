@@ -6,9 +6,12 @@
 // implementation is deliberately about as cheap as it can be:
 //
 //   * THREE cars by default (`CAR_COUNT`), named "car 1" / "car 2" /
-//     "car 3". The art is the existing TTD goods lorry (truck_goods_*) —
-//     the user explicitly said we will fix the art later, so the names, not
-//     the pixels, identify them (`__iso.traffic` lists them by name).
+//     "car 3", and each has its OWN art slot (car1_* / car2_* / car3_*,
+//     four diagonal views each). The slots currently hold a COPY of the TTD
+//     goods lorry — the placeholder the user replaces per car by dropping
+//     PNGs into src/assets/sprites/png/vehicles/ttd/cars/ and running
+//     `npm run slice-atlas` (TRAFFIC-02). Until then the names, not the
+//     pixels, identify them (`__iso.traffic` lists them by name).
 //   * Each car drives a route over the road surface (paved AND dirt, public
 //     streets included) using the same mutual-bit edges the economy's routes
 //     cross. A bounded DFS finds a real cycle in the road graph (the town
@@ -48,8 +51,11 @@ const WALK_ATTEMPTS = 12;
 
 /** One car on one route. Position along the route is `leg` + `t` tiles. */
 export interface Car {
-  /** "car 1" … "car N" — the art is placeholder; the name is the identity. */
+  /** "car 1" … "car N" — the art slot follows the index (car1_* … car3_*). */
   name: string;
+  /** 1-based art-slot index: car 1 drives car1_*, car 2 drives car2_*, …
+   *  (beyond three, the slots cycle — see `carSprite`). */
+  carIndex: number;
   /**
    * Loop routes hold the CYCLE without repeating the closing tile
    * (segment k is route[k] → route[(k+1) % n]). Ping-pong routes hold a
@@ -282,7 +288,7 @@ export function planCars(
       const segs = r.loop ? r.tiles.length : r.tiles.length - 1;
       if (segs > 1) leg = (i * 5) % segs;    // spread the starting points
     }
-    out.push({ name: `car ${i + 1}`, route: r.tiles, loop: r.loop, leg, t, reverse });
+    out.push({ name: `car ${i + 1}`, carIndex: i + 1, route: r.tiles, loop: r.loop, leg, t, reverse });
   }
   return out;
 }
@@ -330,20 +336,37 @@ export function tickCars(state: CarState, dtMs: number): void {
 }
 
 // ── drawing ───────────────────────────────────────────────────────────────
-/** The truck art stands in for the car art (the fix is later — TRAFFIC-02). */
-const SPRITE_OF: Record<number, string> = {
-  [NE]: "truck_goods_ne", [SE]: "truck_goods_se",
-  [SW]: "truck_goods_sw", [NW]: "truck_goods_nw",
+/** How many art slots ship: car1_*, car2_*, car3_* (see the cells and the
+ *  art folder src/assets/sprites/png/vehicles/ttd/cars/). */
+export const CAR_ART_SLOTS = 3;
+
+/** View name for a direction bit — the four diagonal views the iso roads
+ *  can express (ne = up/right, se = down/right, sw = down/left, nw = up/left). */
+const VIEW_OF: Record<number, string> = {
+  [NE]: "ne", [SE]: "se", [SW]: "sw", [NW]: "nw",
 };
 
-/** Directional sprite for driving FROM one tile TO an adjacent one. */
-function dirSprite(from: [number, number], to: [number, number]): string {
+/**
+ * The sprite for car `carIndex` (1-based) facing a direction bit. Each car
+ * has its OWN art slot — car 1 drives car1_*, car 2 drives car2_*, car 3
+ * drives car3_* — so dropping different PNGs into
+ * src/assets/sprites/png/vehicles/ttd/cars/ gives different cars on the
+ * street (TRAFFIC-02). Beyond the shipped slots the art cycles (car 4 looks
+ * like car 1), so `setTraffic(n)` can grow past three without new cells.
+ */
+export function carSprite(carIndex: number, dir: number): string {
+  const slot = ((carIndex - 1) % CAR_ART_SLOTS) + 1;
+  return `car${slot}_${VIEW_OF[dir] ?? "se"}`;
+}
+
+/** Direction bit for driving FROM one tile TO an adjacent one. */
+function dirBit(from: [number, number], to: [number, number]): number {
   const dx = to[0] - from[0], dy = to[1] - from[1];
-  if (dx > 0) return SPRITE_OF[SE];
-  if (dx < 0) return SPRITE_OF[NW];
-  if (dy > 0) return SPRITE_OF[SW];
-  if (dy < 0) return SPRITE_OF[NE];
-  return SPRITE_OF[SE];               // degenerate: face somewhere sensible
+  if (dx > 0) return SE;
+  if (dx < 0) return NW;
+  if (dy > 0) return SW;
+  if (dy < 0) return NE;
+  return SE;                           // degenerate: face somewhere sensible
 }
 
 /**
@@ -365,7 +388,8 @@ export function carItems(state: CarState): DrawItem[] {
     const b = car.route[car.loop ? (k + 1) % n : Math.min(k + 1, n - 1)];
     const fx = a[0] + (b[0] - a[0]) * car.t;
     const fy = a[1] + (b[1] - a[1]) * car.t;
-    const sprite = car.reverse ? dirSprite(b, a) : dirSprite(a, b);
+    const dir = car.reverse ? dirBit(b, a) : dirBit(a, b);
+    const sprite = carSprite(car.carIndex, dir);
     out.push({ sprite, tx: Math.round(fx), ty: Math.round(fy), fx, fy, ref: { car: car.name } });
   }
   return out;
