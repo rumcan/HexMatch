@@ -131,6 +131,9 @@ import { sfx } from "../audio/sfx";
 // AI-02: the start-of-game difficulty prompt (see skill-picker.ts for the
 // "when do we ask" contract: only when nothing has chosen yet).
 import { promptForRivalSkill } from "./skill-picker";
+// TUT-01: the starting tour — one stepped card that walks the whole loop
+// (plant → depot → road → board → expand → points) before the first click.
+import { showTutorial, type TutorialHandle } from "./tutorial";
 import {
   buildEnding, showEndingScreen, type DecisiveSource, type EndingScreenHandle,
 } from "./ending";
@@ -415,6 +418,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   let winningSource: DecisiveSource = null;
   let endingView: EndingScreenHandle | null = null;
   let endingShown = false;
+  /** TUT-01: the boot tour, while it is open. Held so `dispose` can take its
+   *  document keydown listener with it — the same reason `endingView` is. */
+  let tutorialView: TutorialHandle | null = null;
+  /**
+   * Set by the dispose closure at the bottom of this function and read by every
+   * async continuation and clock in it. Declared here, beside the other boot
+   * state, rather than down in the boot block because TUT-01's prompt chain now
+   * awaits the tour before it asks AI-02's question — and a chain that can be
+   * torn down mid-await has to be able to ask whether the game still exists.
+   */
+  let disposed = false;
   /** Restart flips this before clearing the save — the pagehide fired by the
    *  ensuing reload must not resurrect the completed match. */
   let restartArmed = false;
@@ -575,25 +589,55 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   onBoardChange = () => ui.renderBoard();
   root.appendChild(ui.el);
 
-  // AI-02: ask for the difficulty before the first click (only when no
-  // previous choice exists — see skill-picker.ts). The overlay sits over the
-  // freshly booted UI; the pick flips the LIVE game straight into
-  // `setRivalSkill`, persists for the next boot, and syncs the top-bar
-  // selector the `onSkill` hook would otherwise own.
-  // AI-03: a saved game means NO difficulty prompt and NO fresh map — the
-  // save carries the pick, and refresh resumes exactly where it left off
-  // ("a refresh restarts the game" — not any more; Restart starts over).
-  // (`bootSave` was read up top, before the map generated, so the seed the
-  // save carries is the seed the map was grown from.)
+  // TUT-01 + AI-02: the two one-shot boot prompts, in the order a new player
+  // meets them. The TOUR goes first — it is the "how does this game work" card,
+  // and the difficulty chooser that follows is a much smaller question that
+  // only makes sense once ★ and the rival exist as ideas. They are awaited in
+  // sequence so two overlays never stack on the same boot.
+  //
+  // Both are gated the same way, and the gate is the same one AI-03 settled:
+  // a saved game means NO tour and NO difficulty prompt and NO fresh map — the
+  // save carries the pick, and refresh resumes exactly where it left off ("a
+  // refresh restarts the game" — not any more; Restart starts over). A
+  // networked seat skips them too: that match is already live and the host is
+  // waiting. (`bootSave` was read up top, before the map generated, so the seed
+  // the save carries is the seed the map was grown from.)
+  //
+  // The tour returns null once the player has pressed "Never show this again"
+  // (src/iso/tutorial.ts owns that key), which leaves the difficulty prompt as
+  // the only card on an ordinary boot.
   if (!bootSave && isSolo()) {
-    void promptForRivalSkill(ui.el, {
-      onPick: (key) => {
-        setRivalSkill(key);
-        try { localStorage.setItem(SKILL_STORAGE_KEY, key); } catch { /* private mode */ }
-        const sel = ui.el.querySelector<HTMLSelectElement>("#iso-rival-skill");
-        if (sel) sel.value = key;
-      },
-    });
+    void (async () => {
+      // The two numbers the tour cannot read for itself: the ★ line belongs to
+      // the live difficulty, and the free dirt tiles are DATA on the player
+      // record. Passing them keeps the copy honest without importing game.ts
+      // into tutorial.ts (which would be a cycle).
+      tutorialView = showTutorial(ui.el, {
+        vpTarget: winTarget(),
+        freeTrack: me.freeTrack,
+      });
+      // Always yield, tour or no tour: the rest of this chain reads `disposed`
+      // (declared with the other boot state at the top of this function), and a
+      // microtask is the earliest point at which reading it is meaningful.
+      await (tutorialView ? tutorialView.promise : Promise.resolve());
+      tutorialView = null;
+      // The game may have been torn down while the card was up (a test's
+      // dispose, a rematch). The difficulty prompt belongs to a live boot only.
+      if (disposed) return;
+      // AI-02: ask for the difficulty before the first click (only when no
+      // previous choice exists — see skill-picker.ts). The overlay sits over
+      // the freshly booted UI; the pick flips the LIVE game straight into
+      // `setRivalSkill`, persists for the next boot, and syncs the top-bar
+      // selector the `onSkill` hook would otherwise own.
+      await promptForRivalSkill(ui.el, {
+        onPick: (key) => {
+          setRivalSkill(key);
+          try { localStorage.setItem(SKILL_STORAGE_KEY, key); } catch { /* private mode */ }
+          const sel = ui.el.querySelector<HTMLSelectElement>("#iso-rival-skill");
+          if (sel) sel.value = key;
+        },
+      });
+    })();
   }
 
   // ── A1: the board's own effects finally have somewhere to go ────────────
@@ -3404,7 +3448,6 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   // ── boot ───────────────────────────────────────────────────────────────
   let raf = 0;
-  let disposed = false;
 
   const load = (src: string) => new Promise<HTMLImageElement>((res, rej) => {
     const img = new Image();
@@ -3951,6 +3994,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // last intact state stays — the interval was the only writer.
     endingView?.destroy();
     endingView = null;
+    // TUT-01: the tour holds a document keydown listener, so it goes the same
+    // way the ending ledger does — and destroying it settles its promise, which
+    // is what stops the boot chain from awaiting a card that no longer exists.
+    tutorialView?.destroy();
+    tutorialView = null;
     floats.clear();
     cancelAnimationFrame(raf);
     ro.disconnect();

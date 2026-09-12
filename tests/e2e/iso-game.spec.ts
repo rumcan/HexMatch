@@ -32,9 +32,14 @@ async function bootIso(page: import("@playwright/test").Page) {
   // chose yet — these specs play a game, they do not exercise onboarding
   // (the picker is unit-tested in iso-skill-picker.test.ts), so boot with a
   // choice already remembered.
-  await page.addInitScript(
-    () => localStorage.setItem("hexmatch:rival-skill", "normal"),
-  );
+  // TUT-01: the starting tour is the other boot overlay, and it covers the
+  // whole screen until it is walked or dismissed (it is exercised for real in
+  // tests/e2e/iso-tutorial.spec.ts). Remember its dismissal the same way, so
+  // these specs click on the map and not on a card.
+  await page.addInitScript(() => {
+    localStorage.setItem("hexmatch:rival-skill", "normal");
+    localStorage.setItem("hexmatch:tutorial", "never");
+  });
   await page.goto(ISO_URL);
   await page.waitForFunction(() => {
     const h = (window as any).__iso;
