@@ -195,6 +195,8 @@ export function dirtSpriteName(world: World, tx: number, ty: number, cell: numbe
  */
 export interface DrawListOptions {
   roads?: boolean;
+  /** Exclude per-frame traffic when caching static placements. */
+  vehicles?: boolean;
 }
 
 /** Build the structure draw list for a culled tile range. */
@@ -264,7 +266,7 @@ export function buildDrawList(
   }
   // RV-01: trucks drive BETWEEN tiles, so the cull test uses the rounded
   // tile with the same generous pad the extras get.
-  if (world.vehicles) {
+  if (opts.vehicles !== false && world.vehicles) {
     for (const v of world.vehicles) {
       if (v.tx < r.x0 - 4 || v.tx > r.x1 + 4 || v.ty < r.y0 - 4 || v.ty > r.y1 + 4) continue;
       out.push(v);
@@ -364,6 +366,10 @@ export class IsoRenderer {
   readonly canvases: RendererCanvases;
   private ctxT: Ctx2D; private ctxS: Ctx2D; private ctxO: Ctx2D;
   private structuresDirty = true;
+  private staticPlaced: Placed[] = [];
+  private staticItemCount = 0;
+  private staticRange = "";
+  private hadVehicles = false;
   private lastOrder: Placed[] = [];
   private lastCycles: string[][] = [];
   private pad: number;
@@ -456,6 +462,7 @@ export class IsoRenderer {
    */
   recomputePad(): number {
     this.pad = cullPad(this.atlas);
+    this.structuresDirty = true;
     return this.pad;
   }
 
@@ -653,7 +660,7 @@ export class IsoRenderer {
       (wx, wy) => [Math.floor((wx - ox) * z), Math.floor((wy - oy) * z)],
     );
     this.groundChunkCache.set(key, surf);
-    this.trace("ground-chunk-built", { chunk: [cx, cy], origin: [ox, oy], surface: [W, H], z, textured: !!this.ground });
+    if (this.logRender) this.trace("ground-chunk-built", { chunk: [cx, cy], origin: [ox, oy], surface: [W, H], z, textured: !!this.ground });
     return surf;
   }
 
@@ -685,7 +692,7 @@ export class IsoRenderer {
       }
       ctx.stroke();
     }
-    this.trace("shore-pass", { tiles, z });
+    if (this.logRender) this.trace("shore-pass", { tiles, z });
   }
 
   // ── layers ──────────────────────────────────────────────────────────────
@@ -711,7 +718,7 @@ export class IsoRenderer {
         const [sx, sy] = worldToScreen(cam, ox, oy);
         ctx.drawImage(surf as unknown as CanvasImageSource, Math.floor(sx), Math.floor(sy));
         blits++;
-        this.trace("ground-blit", { chunk: [cx, cy], origin: [ox, oy], screen: [Math.floor(sx), Math.floor(sy)], z: cam.zoom });
+        if (this.logRender) this.trace("ground-blit", { chunk: [cx, cy], origin: [ox, oy], screen: [Math.floor(sx), Math.floor(sy)], z: cam.zoom });
       }
     }
     // 3. The scenery decals: dirt scrapes and grass variation painted on the
@@ -722,7 +729,7 @@ export class IsoRenderer {
       decals = paintDecals(ctx, cam, this.decals, this.decalImages, r);
     // 4. The surf: shallow swell + foam along every coast edge, animated.
     this.drawShore(ctx, cam, r, timeMs);
-    this.trace("terrain-pass", { range: [r.x0, r.y0, r.x1, r.y1], blits, decals, z: cam.zoom });
+    if (this.logRender) this.trace("terrain-pass", { range: [r.x0, r.y0, r.x1, r.y1], blits, decals, z: cam.zoom });
   }
 
   drawStructures(timeMs = 0) {
@@ -736,8 +743,26 @@ export class IsoRenderer {
     this.roadBlits = textured
       ? this.roadCache.paint(ctx, cam, this.world, this.roadStyle, (w, h) => makeSurface(w, h))
       : 0;
-    const items = buildDrawList(this.world, r, { roads: !textured });
-    const placed = items.map((i) => place(this.atlas, i)).filter(Boolean) as Placed[];
+    // Static geometry only changes on existing world/art/tile invalidation
+    // paths or a changed visible range. Never cache vehicles: the game replaces
+    // that list every frame without setWorld(). Keep their original tail order
+    // so stable Tier-1 ties still behave exactly as before.
+    const rangeKey = `${r.x0}:${r.y0}:${r.x1}:${r.y1}`;
+    if (this.structuresDirty || rangeKey !== this.staticRange) {
+      const items = buildDrawList(this.world, r, { roads: !textured, vehicles: false });
+      this.staticItemCount = items.length;
+      this.staticPlaced = items.map((i) => place(this.atlas, i)).filter((p): p is Placed => p !== null);
+      this.staticRange = rangeKey;
+    }
+    const placed = this.staticPlaced.slice();
+    let itemCount = this.staticItemCount;
+    for (const v of this.world.vehicles ?? []) {
+      if (v.tx < r.x0 - 4 || v.tx > r.x1 + 4 || v.ty < r.y0 - 4 || v.ty > r.y1 + 4) continue;
+      itemCount++;
+      const p = place(this.atlas, v);
+      if (p) placed.push(p);
+    }
+    this.hadVehicles = (this.world.vehicles?.length ?? 0) > 0;
     const sorted = depthSort(placed);
     const { order } = sorted;
     this.lastOrder = order;
@@ -748,9 +773,9 @@ export class IsoRenderer {
     const shadows = paintBuildingShadows(
       ctx, cam, order, this.shadowStamps, (w, h) => makeSurface(w, h));
     for (const p of order) this.blit(ctx, p, timeMs);
-    this.trace("structures-pass", {
+    if (this.logRender) this.trace("structures-pass", {
       z: cam.zoom, range: [r.x0, r.y0, r.x1, r.y1],
-      items: items.length, placed: placed.length, shadows, cycles: sorted.cycles,
+      items: itemCount, placed: placed.length, shadows, cycles: sorted.cycles,
       order: order.map((p) => ({ sprite: p.sprite, tile: [p.tx, p.ty], key: p.key })),
     });
     this.structuresDirty = false;
@@ -799,7 +824,7 @@ export class IsoRenderer {
       src.x, src.y, src.w, src.h,
       Math.floor(sx), Math.floor(sy), src.w, src.h,
     );
-    this.trace("blit", {
+    if (this.logRender) this.trace("blit", {
       sprite: p.sprite, tile: [p.tx, p.ty], def: p.def,
       z, context: p.ref != null ? "world" : "overlay",
       anchor: p.def.anchor, world: [p.wx, p.wy],
@@ -824,7 +849,8 @@ export class IsoRenderer {
   private hasAnimation(): boolean {
     // RV-01: a truck somewhere on the map moves every frame, so the sorted
     // structures pass (which depth-sorts it among the buildings) must run.
-    if ((this.world.vehicles?.length ?? 0) > 0) return true;
+    // Also clear the last drawn truck when the traffic list becomes empty.
+    if (this.hadVehicles || (this.world.vehicles?.length ?? 0) > 0) return true;
     return this.lastOrder.some((p) => (p.def.frames ?? 1) > 1);
   }
 

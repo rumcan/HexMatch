@@ -8,8 +8,7 @@
 //           wrong for multi-tile footprints.
 //   Tier 2  build an "is behind" DAG over ONLY the sprites whose screen
 //           bounding boxes actually intersect and topologically sort that
-//           subset. n stays in the low tens because the input is already
-//           culled.
+//           subset. A sweep rejects disjoint X bounds before pair testing.
 //   Tier 3  cyclic overlap is unfixable by ordering; fall back to the Tier-1
 //           key for the members of the cycle and report it so the offending
 //           sprite can be cut into `slices` at slice time.
@@ -203,15 +202,27 @@ export function depthSort(items: Placed[]): SortResult {
   const edges: number[][] = Array.from({ length: n }, () => []);
   const indeg = new Int32Array(n);
   let anyEdge = false;
-  for (let i = 0; i < n; i++) {
-    for (let j = i + 1; j < n; j++) {
+  // Sweep world-space X bounds. Only active (X-overlapping) boxes need
+  // the exact intersection test. Indices remain Tier-1 indices, including
+  // the old directional-test precedence, regardless of sweep order.
+  const sweep = Array.from({ length: n }, (_, i) => i)
+    .sort((i, j) => base[i].wx - base[j].wx || i - j);
+  const active: number[] = [];
+  for (const current of sweep) {
+    let kept = 0;
+    for (const previous of active) {
+      if (base[previous].wx + base[previous].w <= base[current].wx) continue;
+      active[kept++] = previous;
+      const i = Math.min(previous, current), j = Math.max(previous, current);
       if (!boxesIntersect(base[i], base[j])) continue;
-      let a = -1, b = -1;
+      let a: number, b: number;
       if (isBehind(base[i], base[j])) { a = i; b = j; }
       else if (isBehind(base[j], base[i])) { a = j; b = i; }
       else continue;
       edges[a].push(b); indeg[b]++; anyEdge = true;
     }
+    active.length = kept;
+    active.push(current);
   }
   if (!anyEdge) return { order: base, cycles };
 
@@ -219,15 +230,42 @@ export function depthSort(items: Placed[]): SortResult {
   // degrades gracefully to Tier 1 where the DAG is silent.
   const out: Placed[] = [];
   const ready: number[] = [];
+  // Min-heap: choose the same smallest ready index as the original
+  // repeated sort/shift, without sorting the whole frontier for each sprite.
+  const push = (value: number) => {
+    let i = ready.length;
+    ready.push(value);
+    while (i > 0) {
+      const parent = (i - 1) >>> 1;
+      if (ready[parent] <= value) break;
+      ready[i] = ready[parent];
+      i = parent;
+    }
+    ready[i] = value;
+  };
+  const pop = () => {
+    const first = ready[0], last = ready.pop()!;
+    if (ready.length) {
+      let i = 0;
+      while (i * 2 + 1 < ready.length) {
+        let child = i * 2 + 1;
+        if (child + 1 < ready.length && ready[child + 1] < ready[child]) child++;
+        if (ready[child] >= last) break;
+        ready[i] = ready[child];
+        i = child;
+      }
+      ready[i] = last;
+    }
+    return first;
+  };
   const done = new Uint8Array(n);
   for (let i = 0; i < n; i++) if (indeg[i] === 0) ready.push(i);
   while (ready.length) {
     // pick the Tier-1-smallest ready node (indices are already Tier-1 sorted)
-    ready.sort((p, q) => p - q);
-    const i = ready.shift()!;
+    const i = pop();
     done[i] = 1;
     out.push(base[i]);
-    for (const j of edges[i]) if (--indeg[j] === 0) ready.push(j);
+    for (const j of edges[i]) if (--indeg[j] === 0) push(j);
   }
 
   if (out.length < n) {
