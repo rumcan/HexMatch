@@ -2493,3 +2493,47 @@ describe("PP-14 the holy cross", () => {
     await p;
   });
 });
+
+// Town clicks must resolve to a legal site rather than trying to build on a house.
+describe("processing plant town picking", () => {
+  it("previews and builds beside an empty town when the player clicks the town", async () => {
+    const h = await boot() as IsoHook & {
+      tileScreenAt: (tx: number, ty: number) => [number, number];
+      pickAt: (x: number, y: number) => { tx: number; ty: number; sprite: string | null } | null;
+      camera: { zoom: number };
+    };
+    const { plantRefusal, resolvePlantTarget, PLANT_COST, adjacentTown } = await import("../../src/iso/plants");
+    const { TOWN_OCC } = await import("../../src/iso/grid");
+    h.finishSetup();
+    h.setTool("demolish"); // inspection/demolition must still select town sprites
+    let target: { tx: number; ty: number; sx: number; sy: number; townId: number } | null = null;
+    for (const town of h.grid.towns) {
+      const [sx, top] = h.tileScreenAt(town.tx, town.ty);
+      const sy = top + 16 * h.camera.zoom;
+      const picked = h.pickAt(sx, sy);
+      if (!picked || h.grid.occupancy[picked.ty * h.grid.w + picked.tx] !== TOWN_OCC) continue;
+      const site = resolvePlantTarget(h.grid, h.track, h.eco, picked.tx, picked.ty);
+      if (site) { target = { tx: site[0], ty: site[1], sx, sy, townId: town.id }; break; }
+    }
+    expect(target, "seed 1337 has a town with an available plant site").not.toBeNull();
+    const { tx, ty, sx, sy, townId } = target!;
+    expect(plantRefusal(h.grid, h.track, h.eco, tx, ty)).toBeNull();
+    expect(adjacentTown(h.grid, tx, ty)?.id).toBe(townId);
+    Object.assign(h.purse, PLANT_COST);
+    const before = { ...h.purse };
+    h.setTool("plant");
+    expect(h.pickAt(sx, sy)).toMatchObject({ tx, ty });
+    expect(h.placementPlan("factory", tx, ty).valid).toBe(true);
+    const canvas = root.querySelectorAll("canvas.iso-layer")[2] as HTMLCanvasElement;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    for (const type of ["pointerdown", "pointerup"]) {
+      canvas.dispatchEvent(new PointerEvent(type, {
+        clientX: sx / dpr, clientY: sy / dpr, pointerType: "mouse", pointerId: 1,
+        isPrimary: true, button: 0,
+      }));
+    }
+    expect(h.eco.factories.some((f) => f.owner === "you" && f.tx === tx && f.ty === ty)).toBe(true);
+    for (const [cargo, cost] of Object.entries(PLANT_COST)) expect(h.purse[cargo]).toBe(before[cargo] - cost);
+    expect(root.querySelector(".toasts")!.textContent).not.toContain("That ground is taken");
+  });
+});

@@ -88,7 +88,7 @@ import {
 import { planDepotPlacement, planFactoryPlacement, type PlacementPlan } from "./placement";
 import {
   PLANT_COST, PLANT_REFUSAL_TEXT, addPlant, adjacentTown, buildingAt, canAffordPlant,
-  chooseAiPlantSpot, footprintTiles, plantRefusal, plantsOf,
+  chooseAiPlantSpot, footprintTiles, plantRefusal, plantsOf, resolvePlantTarget,
 } from "./plants";
 import {
   CARGO, CARGOES, FACTORY_FOOTPRINT, FACTORY_SPRITE, INDUSTRY_BY_KEY, TRANSPORT,
@@ -2655,12 +2655,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   };
 
   // A factory is one multi-tile sprite, but has one network anchor: its
-  // origin tile. In track mode a click ANYWHERE on our factory must start at
+  // origin tile. Town clicks with the plant tool resolve to a legal site
+  // beside that town, identically for pointer-move previews and pointer-up.
+  // In track mode a click ANYWHERE on our factory must start at
   // that anchor; otherwise a click on its far tiles would start a road the
   // network cannot reach. Keep raw tile picking for other tools/structures.
   const pickForAction = (x: number, y: number) => {
     const p = renderer?.pick(x, y);
-    if (!p || phase !== "play" || (tool !== "road" && tool !== "dirt")) return p;
+    if (!p || phase !== "play") return p;
+    if (tool === "plant") {
+      const site = resolvePlantTarget(grid, track, eco, p.tx, p.ty);
+      return site ? { ...p, tx: site[0], ty: site[1] } : p;
+    }
+    if (tool !== "road" && tool !== "dirt") return p;
     const ref = p.ref as { kind?: string; owner?: string } | null;
     if (ref?.kind !== "factory" || ref.owner !== me.id) return p;
     const f = factoryOf(me.id);
