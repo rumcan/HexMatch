@@ -1103,7 +1103,11 @@ export function createOriginalUi(
     rivalWire.classList.add("show");
     // One compact line at a time keeps even the longer oil exchange out of the
     // player's way. Replies are never discarded: new scenes join this queue.
-    const readingTime = Math.min(4_200, Math.max(2_400, 1_300 + beat.text.length * 30));
+    // Doubled: the exchange was going past faster than anyone could read it,
+    // and it is dialogue — the whole point of it is to be read. Every term of
+    // the old formula is 2x, so a short jab still clears sooner than a long
+    // one instead of everything sitting at the cap.
+    const readingTime = Math.min(8_400, Math.max(4_800, 2_600 + beat.text.length * 60));
     window.setTimeout(() => {
       rivalWire.classList.remove("show");
       rivalWire.classList.add("leaving");

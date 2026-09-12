@@ -6,14 +6,254 @@
         1,
         1
       ],
-      "w": 52,
-      "h": 88,
+      "w": 38,
+      "h": 62,
       "anchor": [
-        28,
-        78
+        17,
+        58
       ]
     },
     "tree_dead_b": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 32,
+      "h": 50,
+      "anchor": [
+        14,
+        47
+      ]
+    },
+    "tree_dead_c": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 44,
+      "h": 72,
+      "anchor": [
+        20,
+        68
+      ]
+    },
+    "tree_bush_a": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 48,
+      "h": 52,
+      "anchor": [
+        24,
+        46
+      ]
+    },
+    "tree_bush_b": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 38,
+      "h": 40,
+      "anchor": [
+        19,
+        37
+      ]
+    },
+    "tree_bush_c": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 56,
+      "h": 60,
+      "anchor": [
+        28,
+        54
+      ]
+    },
+    "tree_bush_d": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 32,
+      "h": 34,
+      "anchor": [
+        16,
+        30
+      ]
+    },
+    "tree_pine_a": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 38,
+      "h": 64,
+      "anchor": [
+        19,
+        60
+      ]
+    },
+    "tree_pine_b": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 30,
+      "h": 52,
+      "anchor": [
+        15,
+        48
+      ]
+    },
+    "tree_pine_c": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 44,
+      "h": 74,
+      "anchor": [
+        22,
+        69
+      ]
+    },
+    "tree_pine_d": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 24,
+      "h": 42,
+      "anchor": [
+        12,
+        38
+      ]
+    },
+    "tree_oak_a": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 28,
+      "h": 30,
+      "anchor": [
+        14,
+        27
+      ]
+    },
+    "tree_oak_b": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 22,
+      "h": 24,
+      "anchor": [
+        11,
+        22
+      ]
+    },
+    "tree_oak_c": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 32,
+      "h": 36,
+      "anchor": [
+        16,
+        32
+      ]
+    },
+    "tree_oak_d": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 18,
+      "h": 20,
+      "anchor": [
+        9,
+        17
+      ]
+    },
+    "tree_maple_a": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 44,
+      "h": 60,
+      "anchor": [
+        22,
+        55
+      ]
+    },
+    "tree_maple_b": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 36,
+      "h": 48,
+      "anchor": [
+        17,
+        44
+      ]
+    },
+    "tree_maple_c": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 52,
+      "h": 70,
+      "anchor": [
+        25,
+        64
+      ]
+    },
+    "tree_maple_d": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 30,
+      "h": 38,
+      "anchor": [
+        14,
+        35
+      ]
+    },
+    "tree_birch_a": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 36,
+      "h": 60,
+      "anchor": [
+        18,
+        56
+      ]
+    },
+    "tree_birch_b": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 30,
+      "h": 48,
+      "anchor": [
+        15,
+        45
+      ]
+    },
+    "tree_birch_c": {
       "footprint": [
         1,
         1
@@ -22,247 +262,7 @@
       "h": 70,
       "anchor": [
         22,
-        62
-      ]
-    },
-    "tree_dead_c": {
-      "footprint": [
-        1,
-        1
-      ],
-      "w": 60,
-      "h": 102,
-      "anchor": [
-        32,
-        91
-      ]
-    },
-    "tree_bush_a": {
-      "footprint": [
-        1,
-        1
-      ],
-      "w": 64,
-      "h": 74,
-      "anchor": [
-        31,
-        62
-      ]
-    },
-    "tree_bush_b": {
-      "footprint": [
-        1,
-        1
-      ],
-      "w": 52,
-      "h": 58,
-      "anchor": [
-        25,
-        49
-      ]
-    },
-    "tree_bush_c": {
-      "footprint": [
-        1,
-        1
-      ],
-      "w": 74,
-      "h": 86,
-      "anchor": [
-        36,
-        72
-      ]
-    },
-    "tree_bush_d": {
-      "footprint": [
-        1,
-        1
-      ],
-      "w": 42,
-      "h": 48,
-      "anchor": [
-        20,
-        39
-      ]
-    },
-    "tree_pine_a": {
-      "footprint": [
-        1,
-        1
-      ],
-      "w": 50,
-      "h": 90,
-      "anchor": [
-        25,
-        80
-      ]
-    },
-    "tree_pine_b": {
-      "footprint": [
-        1,
-        1
-      ],
-      "w": 40,
-      "h": 72,
-      "anchor": [
-        20,
-        64
-      ]
-    },
-    "tree_pine_c": {
-      "footprint": [
-        1,
-        1
-      ],
-      "w": 58,
-      "h": 104,
-      "anchor": [
-        29,
-        93
-      ]
-    },
-    "tree_pine_d": {
-      "footprint": [
-        1,
-        1
-      ],
-      "w": 32,
-      "h": 58,
-      "anchor": [
-        16,
-        51
-      ]
-    },
-    "tree_oak_a": {
-      "footprint": [
-        1,
-        1
-      ],
-      "w": 74,
-      "h": 88,
-      "anchor": [
-        36,
-        73
-      ]
-    },
-    "tree_oak_b": {
-      "footprint": [
-        1,
-        1
-      ],
-      "w": 60,
-      "h": 70,
-      "anchor": [
-        29,
-        59
-      ]
-    },
-    "tree_oak_c": {
-      "footprint": [
-        1,
-        1
-      ],
-      "w": 86,
-      "h": 102,
-      "anchor": [
-        42,
-        85
-      ]
-    },
-    "tree_oak_d": {
-      "footprint": [
-        1,
-        1
-      ],
-      "w": 48,
-      "h": 56,
-      "anchor": [
-        23,
-        47
-      ]
-    },
-    "tree_maple_a": {
-      "footprint": [
-        1,
-        1
-      ],
-      "w": 60,
-      "h": 84,
-      "anchor": [
-        29,
-        73
-      ]
-    },
-    "tree_maple_b": {
-      "footprint": [
-        1,
-        1
-      ],
-      "w": 48,
-      "h": 68,
-      "anchor": [
-        24,
-        59
-      ]
-    },
-    "tree_maple_c": {
-      "footprint": [
-        1,
-        1
-      ],
-      "w": 70,
-      "h": 98,
-      "anchor": [
-        34,
-        85
-      ]
-    },
-    "tree_maple_d": {
-      "footprint": [
-        1,
-        1
-      ],
-      "w": 38,
-      "h": 54,
-      "anchor": [
-        19,
-        47
-      ]
-    },
-    "tree_birch_a": {
-      "footprint": [
-        1,
-        1
-      ],
-      "w": 48,
-      "h": 84,
-      "anchor": [
-        23,
-        74
-      ]
-    },
-    "tree_birch_b": {
-      "footprint": [
-        1,
-        1
-      ],
-      "w": 40,
-      "h": 66,
-      "anchor": [
-        19,
-        59
-      ]
-    },
-    "tree_birch_c": {
-      "footprint": [
-        1,
-        1
-      ],
-      "w": 56,
-      "h": 96,
-      "anchor": [
-        27,
-        86
+        65
       ]
     },
     "tree_birch_d": {
@@ -270,11 +270,11 @@
         1,
         1
       ],
-      "w": 32,
-      "h": 54,
+      "w": 24,
+      "h": 38,
       "anchor": [
-        15,
-        47
+        12,
+        36
       ]
     },
     "forest_conifer": {
@@ -282,11 +282,11 @@
         4,
         4
       ],
-      "w": 258,
-      "h": 172,
+      "w": 194,
+      "h": 130,
       "anchor": [
-        128,
-        108
+        97,
+        81
       ]
     },
     "forest_mixed": {
@@ -294,11 +294,11 @@
         4,
         4
       ],
-      "w": 260,
-      "h": 184,
+      "w": 196,
+      "h": 138,
       "anchor": [
-        129,
-        119
+        97,
+        89
       ]
     }
   }

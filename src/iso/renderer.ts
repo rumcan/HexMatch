@@ -382,10 +382,14 @@ export class IsoRenderer {
   // ── roads ────────────────────────────────────────────────────────────────
   /**
    * Which road implementation is live. Renderer-local and never persisted —
-   * it is an A/B switch for this change, not game state, so it must not reach
-   * the save format or the multiplayer protocol.
+   * it is an A/B switch, not game state, so it must not reach the save format
+   * or the multiplayer protocol.
+   *
+   * `textured` is now the default: the vector roads are the roads. The old
+   * per-mask sprites stay reachable through `__iso.roadMode('sprites')` for
+   * comparison and as a rollback, and their atlas cells are still shipped.
    */
-  private roadMode: RoadRenderMode = "sprites";
+  private roadMode: RoadRenderMode = "textured";
   private roadStyle: RoadStyle = DEFAULT_ROAD_STYLE;
   private roadCache = new RoadCache();
   private roadBlits = 0;

@@ -141,29 +141,44 @@ const SPECIES = [
   { name: "dead", variants: 3 },
   { name: "bush", variants: 4 },
   { name: "pine", variants: 4 },
-  { name: "oak", variants: 4 },
+  // The oak is drawn as a broad, low tree, and at the sheet's own proportions
+  // it came out the biggest thing on the map — bigger than the buildings, and
+  // it does not read as a tree that ought to be. Half size.
+  { name: "oak", variants: 4, scale: 0.5 },
   { name: "maple", variants: 4 },
   { name: "birch", variants: 4 },
 ];
 
 /**
  * Height in 2× pixels of the TALLEST tree on the sheet; everything else is
- * scaled by the same factor. A 1×1 tile is 64×32 world px, so 160 here puts
- * the biggest tree at 80px at 1× — a little under three tile-heights, which
- * is the proportion the reference forest art uses.
+ * scaled by the same factor. A 1×1 tile is 64×32 world px, so 120 here puts
+ * the biggest tree at 60px at 1×, a little under two tile-heights.
+ *
+ * Was 160. At that size the tallest trees stood higher than the buildings
+ * they were meant to sit among, which reads as scenery out of scale rather
+ * than as a big tree — 25% off the whole set fixes the relationship.
  */
-const TALLEST_2X = 160;
+const TALLEST_2X = 120;
 
 /**
  * Variants are SIZE ONLY — a young tree and an old one of the same species.
  *
- * Mirroring used to be in here and had to come out: every tree on the sheet
- * is lit from the upper right, and a mirrored copy is lit from the upper
- * LEFT. Scattered through a wood that reads immediately as two suns. Scale is
- * the one transform that leaves the key light where the artist put it, and a
- * mixed-age wood is a better result than a mirrored one anyway.
+ * Per-variant mirroring is what is NOT allowed here. Every tree on the sheet
+ * carries its key light on one side, so mirroring SOME of them scatters two
+ * suns through the same wood. Every sprite is flipped, or none is; see
+ * MIRROR_ALL.
  */
 const VARIANT_SCALE = [1, 0.8, 1.16, 0.64];
+
+/**
+ * Flip every tree horizontally, together.
+ *
+ * The sheet is drawn lit from the upper RIGHT; the game wants the sun in the
+ * upper LEFT, to match the buildings. Mirroring the whole set moves the light
+ * consistently, so the wood still has one sun — it is only mirroring a subset
+ * that breaks.
+ */
+const MIRROR_ALL = true;
 
 /**
  * Cast shadow under a tree. Width as a fraction of the sprite's own width,
@@ -186,10 +201,17 @@ const SHADOW_CORE = 0.42;
 /** How far the ellipse's centre sits ABOVE the art's bottom row, in pixels. */
 const SHADOW_LIFT = 1;
 /**
- * Horizontal offset as a fraction of the radius. The sun is upper right in
- * every drawing on the sheet, so the shadow falls to the lower left.
+ * Offset of the shadow's centre from the trunk foot, as a fraction of the
+ * radius: positive x is right, negative y is up the screen.
+ *
+ * The shadow is cast to the UPPER RIGHT. Note that this is an art direction,
+ * not a physical one — with the sun moved to the upper left the cast would
+ * fall to the lower right — but on an isometric ground plane a shadow thrown
+ * up-screen reads as lying BEHIND the tree, which separates the trunk from
+ * its canopy and seats the tree better than one pooling in front of it.
  */
-const SHADOW_DX = -0.16;
+const SHADOW_DX = 0.2;
+const SHADOW_DY = -0.5;
 
 /**
  * A soft elliptical shadow as a raw RGBA buffer, plus its radii and the
@@ -216,6 +238,7 @@ function shadowEllipse(spriteW) {
   return {
     rx, ry, png: buf, raw: { width: w, height: h, channels: 4 },
     dx: Math.round(rx * SHADOW_DX),
+    dy: Math.round(ry * SHADOW_DY),
   };
 }
 
@@ -300,14 +323,15 @@ async function buildTrees() {
     const bw = box.maxX - box.minX + 1, bh = box.maxY - box.minY + 1;
 
     for (let v = 0; v < spec.variants; v++) {
-      const scale = VARIANT_SCALE[v];
+      const scale = VARIANT_SCALE[v] * (spec.scale ?? 1);
       const name = `tree_${spec.name}_${"abcd"[v]}`;
       const targetH = Math.max(8, Math.round(bh * factor * scale));
 
-      const scaled = await sheet.clone()
+      let pipe = sheet.clone()
         .extract({ left: box.minX, top: box.minY, width: bw, height: bh })
-        .resize({ height: targetH, kernel: KERNEL })
-        .png().toBuffer();
+        .resize({ height: targetH, kernel: KERNEL });
+      if (MIRROR_ALL) pipe = pipe.flop();
+      const scaled = await pipe.png().toBuffer();
 
       // Re-trim: the resize can leave a row of near-transparent pixels, and
       // the manifest's box must be the real one or the anchor drifts.
@@ -335,9 +359,11 @@ async function buildTrees() {
       // The ellipse is centred on the foot, so it can reach outside the art's
       // own box on the left, the right and below; grow the canvas to fit.
       const sx = footX + shadow.dx;
+      // Centre of the ellipse, measured down from the art's top edge.
+      const sy = th - 1 - SHADOW_LIFT + shadow.dy;
       const padL = Math.max(0, shadow.rx - sx);
       const padR = Math.max(0, sx + shadow.rx - (tw - 1));
-      const padB = Math.max(0, shadow.ry - SHADOW_LIFT);
+      const padB = Math.max(0, sy + shadow.ry - (th - 1));
       const cw = tw + padL + padR, ch = th + padB;
 
       const composed = await sharp({
@@ -346,7 +372,7 @@ async function buildTrees() {
         {
           input: shadow.png, raw: shadow.raw,
           left: sx + padL - shadow.rx,
-          top: th - 1 - SHADOW_LIFT - shadow.ry,
+          top: sy - shadow.ry,
         },
         {
           input: await sharp(scaled)
@@ -415,9 +441,19 @@ const FOREST = [
 /** Footprint in tiles. Must match FOREST_FOOTPRINT in src/iso/scenery.ts. */
 const FOREST_TILES = 4;
 
+/**
+ * How much of the nominal footprint width the forest art is drawn at.
+ *
+ * 0.75 rather than 1: at full size the block's own trees stood taller than
+ * the buildings beside it, the same scale problem the 1×1 trees had. The
+ * FOOTPRINT stays 4×4 — the block still occupies four tiles by four, it is
+ * just drawn as a smaller wood standing on them.
+ */
+const FOREST_ART_SCALE = 0.75;
+
 async function buildForests(sprites) {
   // (w + h) · HW, doubled for the 2× authoring tier: 8 · 32 · 2.
-  const targetWaist = FOREST_TILES * 2 * 32 * 2;
+  const targetWaist = Math.round(FOREST_TILES * 2 * 32 * 2 * FOREST_ART_SCALE);
   let bytes = 0;
   const names = [];
 

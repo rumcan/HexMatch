@@ -30,7 +30,7 @@
 // cleared to make way, which is also what the player expects to see.
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_W, MAP_H, mulberry32 } from "../game/config";
-import { GRASS, ROUGH, WATER, idx, inBounds, type Grid } from "./grid";
+import { GRASS, ROUGH, WATER, chebyshevField, idx, inBounds, type Grid } from "./grid";
 
 /**
  * Every tree sprite, in the order the per-tile byte indexes them (1-based).
@@ -143,6 +143,19 @@ const STRAY_DENSITY = 1 / 200;
 const OFF_SPECIES = 0.18;
 
 /**
+ * Tiles of clear ground a tree keeps from any seed-generated road, measured
+ * as Chebyshev distance.
+ *
+ * A tree standing right against a road hides the road at the camera's angle —
+ * the canopy is drawn well above its own tile — and roads are what the player
+ * is looking at while building. The clearance applies to the roads that exist
+ * when the map is made: the inter-town highways and the town streets. Roads
+ * the player lays later cannot move a tree, so the renderer simply stops
+ * drawing one that has been built over.
+ */
+const TREE_ROAD_CLEARANCE = 3;
+
+/**
  * Weighted family mix for decals. Bare earth leads — it is the only family
  * that breaks the green outright — and the grass moods share the rest.
  */
@@ -243,6 +256,15 @@ export function scatterScenery(grid: Grid): Scenery {
   for (const [x, y] of grid.publicRoads ?? []) if (inBounds(x, y)) publicRoad.add(idx(x, y));
   const open = buildable(grid, publicRoad);
 
+  // Distance from every tile to the nearest seed-generated road — the
+  // highways plus every town street — so trees can keep clear of them.
+  const roadTiles = new Set<number>(publicRoad);
+  for (const t of grid.towns) {
+    for (const [x, y] of t.roads) if (inBounds(x, y)) roadTiles.add(idx(x, y));
+  }
+  const toRoad = chebyshevField(roadTiles);
+  const clearOfRoads = (i: number) => toRoad[i] >= TREE_ROAD_CLEARANCE;
+
   // The land tiles, collected once — both scatters sample from this list, so
   // density is per LAND tile and does not swing with how much ocean a seed
   // happened to generate.
@@ -307,6 +329,7 @@ export function scatterScenery(grid: Grid): Scenery {
         // The art's canopy overhangs the footprint generously, so the block
         // needs clearance from the coast as well as clear ground.
         if (underForest[j] || !open(j) || toWater[j] < FOREST_FOOTPRINT) ok = false;
+        else if (!clearOfRoads(j)) ok = false;
       }
     }
     if (!ok) continue;
@@ -323,7 +346,7 @@ export function scatterScenery(grid: Grid): Scenery {
   const plant = (tx: number, ty: number, species: number): void => {
     if (!inBounds(tx, ty)) return;
     const i = idx(tx, ty);
-    if (trees[i] || underForest[i] || !open(i)) return;
+    if (trees[i] || underForest[i] || !open(i) || !clearOfRoads(i)) return;
     trees[i] = species;
   };
 

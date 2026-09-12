@@ -87,8 +87,11 @@ export interface RoadStyle {
 export const DEFAULT_ROAD_STYLE: RoadStyle = {
   paved: { flat: "#3c3b38", shoulder: "#2a2926", image: null, repeat: 2.6 },
   dirt: { flat: "#7b6443", shoulder: "#574631", image: null, repeat: 2.6 },
-  paint: "#c6bfa2",
-  paintAlpha: 0.5,
+  // Road markings: near-white and only lightly worn. The first pass used a
+  // dim parchment tone at half opacity, which at 1x simply did not read as a
+  // painted line.
+  paint: "#e8e4d6",
+  paintAlpha: 0.78,
 };
 
 // ── paint geometry constants ────────────────────────────────────────────────
@@ -100,9 +103,15 @@ export const DEFAULT_ROAD_STYLE: RoadStyle = {
 const SHOULDER_ALPHA = 0.42;
 
 /** Marking width in tile units. */
-const PAINT_WIDTH = 0.022;
-/** One dash cycle per tile: dash then gap. */
-const DASH_ON = 0.26, DASH_OFF = 0.74;
+const PAINT_WIDTH = 0.03;
+/**
+ * Dash geometry in tile units: a SHORT dash with a long gap, twice per tile.
+ *
+ * One long dash per tile read as a single tick on an isolated road tile
+ * rather than as a broken centre line. Two short ones per tile give the
+ * repeat the eye needs to see a line, and stay legible down at 0.5x.
+ */
+const DASH_ON = 0.13, DASH_OFF = 0.37;
 
 // ── chunking ────────────────────────────────────────────────────────────────
 /** Chunk size in PROJECTED WORLD pixels at 1×. Non-overlapping by construction. */

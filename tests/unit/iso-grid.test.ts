@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   generateMap, randomSeed, GRASS, WATER, ROUGH, SAND, terrainAt, industryAt, TOWN_OCC,
-  TOWN_HOUSES_MIN, TOWN_HOUSES_MAX,
+  TOWN_HOUSES_MIN, TOWN_BLOCK, TOWN_SPAN_MIN,
 } from "../../src/iso/grid";
 import { MAP_W, MAP_H, INDUSTRY_QUOTA, INDUSTRY_BY_KEY, CARGOES } from "../../src/iso/config";
 
@@ -251,28 +251,76 @@ describe("F1 towns place and never strand an industry", () => {
     }
   });
 
-  // PP-13: "make the towns 3 times bigger". Town footprint is derived from the
-  // house bounding box (streets + ring road all key off it), so house COUNT is
-  // the knob that scales the town — and it is the only one, so asserting the
-  // count asserts the size.
-  it("PP-13: every town is a full town — 3× the PP-10 house count", () => {
-    expect([TOWN_HOUSES_MIN, TOWN_HOUSES_MAX]).toEqual([18, 36]);
+  /**
+   * TOWN-GRID: a town is a street grid with houses in the blocks, and the
+   * streets run BETWEEN the buildings rather than around the outside.
+   *
+   * The old ring-and-fill layout is what these assertions are guarding
+   * against coming back: it grew a solid blob of houses, paved whatever gaps
+   * the growth happened to leave, and ringed the whole thing with a closed
+   * road one tile outside the bounding box. So the test that matters is not
+   * the house count — it is WHERE the roads are.
+   */
+  it("TOWN-GRID: lays streets between the houses, not a ring around them", () => {
     for (const seed of [1337, 7, 42, 100, 1, 123, 2026, 0, 79, 2024]) {
       const g = generateMap(seed);
+      expect(g.towns.length, `seed ${seed} town count`).toBe(4);
       for (const t of g.towns) {
-        expect(t.houses.length, `seed ${seed} town ${t.id} house count`)
-          .toBeGreaterThanOrEqual(TOWN_HOUSES_MIN);
-        expect(t.houses.length, `seed ${seed} town ${t.id} house count`)
-          .toBeLessThanOrEqual(TOWN_HOUSES_MAX);
-        // a town this size spans at least 5×5 — three times the ~3×3 a
-        // 6-12 house town covered, which is the growth the player should see
         const xs = t.houses.map(([x]) => x), ys = t.houses.map(([, y]) => y);
-        expect(Math.max(...xs) - Math.min(...xs) + 1, `seed ${seed} town ${t.id} width`)
-          .toBeGreaterThanOrEqual(5);
-        expect(Math.max(...ys) - Math.min(...ys) + 1, `seed ${seed} town ${t.id} height`)
-          .toBeGreaterThanOrEqual(5);
-        // and the ring road grew with it
-        expect(t.roads.length, `seed ${seed} town ${t.id} ring`).toBeGreaterThan(12);
+        const x0 = Math.min(...xs), x1 = Math.max(...xs);
+        const y0 = Math.min(...ys), y1 = Math.max(...ys);
+
+        // Big enough to be a town, and viable.
+        expect(t.houses.length, `seed ${seed} town ${t.id} houses`)
+          .toBeGreaterThanOrEqual(TOWN_HOUSES_MIN);
+        // The footprint comes from the span now, not the house count. A
+        // coastal town can be clipped on one axis, so assert the larger one.
+        expect(Math.max(x1 - x0, y1 - y0) + 1, `seed ${seed} town ${t.id} span`)
+          .toBeGreaterThanOrEqual(TOWN_SPAN_MIN + 2);
+
+        // The road network lives IN the built area. Under the ring layout the
+        // opposite held: the ring lay wholly outside the house box, one tile
+        // clear of it on all four sides. Thresholds are set below the worst
+        // case measured across these ten seeds (0.71 within, 0.57 strictly
+        // inside), with room for a coastal town to skew them.
+        const within = t.roads.filter(([rx, ry]) =>
+          rx >= x0 && rx <= x1 && ry >= y0 && ry <= y1).length;
+        const inside = t.roads.filter(([rx, ry]) =>
+          rx > x0 && rx < x1 && ry > y0 && ry < y1).length;
+        expect(within / t.roads.length, `seed ${seed} town ${t.id} roads in the box`)
+          .toBeGreaterThan(0.6);
+        expect(inside / t.roads.length, `seed ${seed} town ${t.id} interior roads`)
+          .toBeGreaterThan(0.45);
+
+        // No street runs out into open country. A lane may cross an unbuilt
+        // gap in an L-shaped town — that is the street joining its two halves
+        // — so the bound is a few tiles rather than "adjacent to a house",
+        // but it rules out the lanes-to-nowhere the first cut produced (10).
+        for (const [rx, ry] of t.roads) {
+          let d = Infinity;
+          for (const [hx, hy] of t.houses) {
+            d = Math.min(d, Math.max(Math.abs(hx - rx), Math.abs(hy - ry)));
+          }
+          expect(d, `seed ${seed} town ${t.id} road ${rx},${ry} is ${d} from any house`)
+            .toBeLessThanOrEqual(4);
+        }
+
+        // Streets lie on grid lanes and houses never do, which is what makes
+        // the layout a grid rather than a scatter.
+        const lane = (v: number, c: number) =>
+          ((((v - c) % TOWN_BLOCK) + TOWN_BLOCK) % TOWN_BLOCK) === TOWN_BLOCK - 1;
+        for (const [rx, ry] of t.roads) {
+          expect(lane(rx, t.tx) || lane(ry, t.ty),
+            `seed ${seed} town ${t.id} road ${rx},${ry} off-lane`).toBe(true);
+        }
+        for (const [hx, hy] of t.houses) {
+          expect(lane(hx, t.tx) || lane(hy, t.ty),
+            `seed ${seed} town ${t.id} house ${hx},${hy} on a street`).toBe(false);
+        }
+
+        // The centre carries the church, so it must be a house cell.
+        expect(t.houses.some(([hx, hy]) => hx === t.tx && hy === t.ty),
+          `seed ${seed} town ${t.id} centre is not a house`).toBe(true);
       }
     }
   });
