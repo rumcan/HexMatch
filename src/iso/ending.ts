@@ -10,6 +10,10 @@
 // easy to test; `showEndingScreen` is the small DOM projector used by game.ts.
 // ══════════════════════════════════════════════════════════════════════════
 
+import portraitTorvin from "../assets/ui/tycoon_torvin.png";
+import portraitVex from "../assets/ui/tycoon_vex.png";
+import portraitYou from "../assets/ui/tycoon_you.png";
+
 export type EndingPath = "paving" | "plants" | "balanced";
 export type DecisiveSource = "upgrade" | "plant" | null;
 
@@ -247,6 +251,9 @@ export function buildEnding(input: EndingInput): EndingModel {
 export interface EndingScreenOptions {
   onRestart: () => void;
   onReview?: () => void;
+  /** The portrait selected on the start screen, reused whenever the player
+   * answers Torvin's final wire. */
+  playerPortrait?: "vex" | "you";
 }
 
 export interface EndingScreenHandle {
@@ -267,6 +274,33 @@ const el = <K extends keyof HTMLElementTagNameMap>(
   if (text !== undefined) node.textContent = text;
   return node;
 };
+
+function appendFinalWire(
+  host: HTMLElement,
+  model: EndingModel,
+  playerPortrait: "vex" | "you",
+): void {
+  const wire = el("div", "ending-final-wire");
+  const addBeat = (
+    speaker: "rival" | "player",
+    portrait: string,
+    text: string,
+  ) => {
+    const beat = el("div", `ending-final-beat ${speaker}`);
+    const face = el("span", "ending-final-face");
+    face.setAttribute("aria-hidden", "true");
+    face.style.backgroundImage = `url(${portrait})`;
+    beat.append(face, el("p", `ending-${speaker}-final`, text));
+    wire.appendChild(beat);
+  };
+  addBeat("rival", portraitTorvin, `${model.rivalName}'s final wire: “${model.rivalQuote}”`);
+  addBeat(
+    "player",
+    playerPortrait === "you" ? portraitYou : portraitVex,
+    `Your reply: “${model.playerQuote}”`,
+  );
+  host.appendChild(wire);
+}
 
 function appendCelebration(host: HTMLElement): void {
   const layer = el("div", "ending-fireworks");
@@ -379,8 +413,7 @@ export function showEndingScreen(
   after.appendChild(el("h2", "ending-section-title", "The years that followed"));
   after.appendChild(el("p", "ending-epilogue", model.epilogue));
   if (model.coda) after.appendChild(el("p", "ending-coda", model.coda));
-  after.appendChild(el("p", "ending-rival-final", `${model.rivalName}'s final wire: “${model.rivalQuote}”`));
-  after.appendChild(el("p", "ending-player-final", `Your reply: “${model.playerQuote}”`));
+  appendFinalWire(after, model, options.playerPortrait ?? "vex");
   card.appendChild(after);
   card.appendChild(el("p", "ending-the-end", "The End"));
 

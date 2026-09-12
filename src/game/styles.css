@@ -2440,12 +2440,34 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   margin-top: 10px; color: var(--txt-dim);
   font: italic 400 12px/1.5 var(--sans);
 }
+.ending-final-wire {
+  display: flex; flex-direction: column; gap: 5px;
+  width: min(560px, 100%); margin: 13px auto 0;
+}
+.ending-final-beat {
+  display: flex; align-items: center; gap: 9px;
+  padding: 5px 8px;
+  border-left: 2px solid rgba(226, 112, 79, .65);
+  background: linear-gradient(90deg, rgba(92, 30, 18, .18), transparent 72%);
+}
+.ending-final-beat.player {
+  flex-direction: row-reverse; text-align: right;
+  border-right: 2px solid rgba(90, 168, 255, .68); border-left: 0;
+  background: linear-gradient(270deg, rgba(39, 91, 140, .2), transparent 72%);
+}
+.ending-final-face {
+  width: 34px; height: 34px; flex: 0 0 34px;
+  border: 1px solid rgba(226, 112, 79, .62);
+  background-position: center 20%; background-size: cover;
+  filter: sepia(.2) contrast(1.08);
+}
+.ending-final-beat.player .ending-final-face { border-color: rgba(90, 168, 255, .72); }
 .ending-rival-final {
-  margin: 13px auto 0; color: #cf8169;
+  margin: 0; color: #cf8169;
   font: 400 11.5px/1.45 var(--mono);
 }
 .ending-player-final {
-  margin: 4px auto 0; color: #86c5ff;
+  margin: 0; color: #86c5ff;
   font: 400 11.5px/1.45 var(--mono);
 }
 .ending-the-end {

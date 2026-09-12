@@ -693,6 +693,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // becomes the one authoritative dialog.
     ui.hideModal();
     endingView = showEndingScreen(ui.el, model, {
+      playerPortrait: opts.portrait ?? "vex",
       onRestart: () => {
         restartArmed = true;
         clearSave();

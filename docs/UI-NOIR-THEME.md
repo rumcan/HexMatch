@@ -182,8 +182,9 @@ build supplies the final line. The most explicit success reel begins:
 > little freight concern grew into the largest network in the United States…
 
 That prose is rendered under **The years that followed**, followed by a final
-Rival/You exchange. Fireworks occupy a layer inside the victory card so they
-remain visible on a phone where the card is almost full-screen; defeat receives
+two-portrait Rival/You exchange. Fireworks occupy a layer inside the victory
+card so they remain visible on a phone where the card is almost full-screen;
+defeat receives
 ash instead. Review hides the reel without destroying it and leaves a **Final
 ledger** ticket to reopen it.
 
