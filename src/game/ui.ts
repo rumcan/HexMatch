@@ -39,23 +39,24 @@ import { GEM_TO_CARGO } from "../iso/quarry";
 import { fmtVp } from "../iso/victory";
 // AI-01: the rival difficulty presets the top-bar selector switches between.
 import { RIVAL_SKILLS, SKILL_KEYS, type SkillKey } from "../iso/skill";
-import { Board, type FxType, type Gem } from "./board";
-import type { IsoMarket, IsoMarketPlayer, Offer } from "../iso/market";
 // PP-14: the praying angel that a cross match summons, and the choir that
 // sings with it. Both are one-shot fx answers to `onFx("cross", …)`.
 import angelUrl from "../assets/ui/angel.png";
 import { playHoly, prewarmHoly } from "./holy";
-// PP-14b: the tycoon portraits — Torvin always plays the rival; the player's
-// own is Vex or You, as picked on the start screen.
-import torvinUrl from "../assets/ui/tycoon_torvin.png";
-import vexUrl from "../assets/ui/tycoon_vex.png";
-import youUrl from "../assets/ui/tycoon_you.png";
+// PP-14b: the tycoon portraits live with the NOIR mugshots further down — one
+// set of faces, so the start-screen pick and the dossiers read the same files.
 
 // PP-14: the cross bounty chooser offers the five CARGOES, and each button
 // must hand the board back its COLOUR key — the reverse of GEM_TO_CARGO.
 const CARGO_TO_GEM: Partial<Record<Cargo, ResKey>> = Object.fromEntries(
   Object.entries(GEM_TO_CARGO).map(([gem, cargo]) => [cargo, gem]),
 ) as Partial<Record<Cargo, ResKey>>;
+import { Board, type FxType, type Gem } from "./board";
+import type { IsoMarket, IsoMarketPlayer, Offer } from "../iso/market";
+import portraitYou from "../assets/ui/tycoon_you.png";
+import portraitKrag from "../assets/ui/tycoon_krag.png";
+import portraitTorvin from "../assets/ui/tycoon_torvin.png";
+import portraitVex from "../assets/ui/tycoon_vex.png";
 
 // ── V5: the restored gem art ────────────────────────────────────────────────
 // One sprite per cargo in src/assets/gems/, mapped through the same gem→cargo
@@ -67,6 +68,26 @@ const GEM_ART: Record<Cargo, string> = Object.fromEntries(
     import.meta.glob<string>("../assets/gems/*.png", { eager: true, import: "default" }),
   ).map(([path, url]) => [path.split("/").pop()!.replace(/\.png$/, ""), url]),
 ) as Record<Cargo, string>;
+
+// ── NOIR: the painted mugshots ──────────────────────────────────────────────
+// `tycoon_*.png` are the family portraits (src/assets/ui/, kept when U1 pruned
+// the `<img>` that used to read them). The roster is a wall of dossiers, so the
+// face goes back on the card: seat order is the tie-break for a name we do not
+// recognise, which keeps "You" the player and every rival its own portrait
+// however the scoreboard sorts them.
+
+const PORTRAIT_BY_SEAT = [portraitYou, portraitKrag, portraitTorvin, portraitVex];
+const PORTRAIT_BY_NAME: Record<string, string> = {
+  you: portraitYou, krag: portraitKrag, torvin: portraitTorvin, vex: portraitVex,
+  // PP-14b: the solo rival is simply named "Rival", which is no surname in the
+  // family — name Torvin here rather than let the seat tie-break hand him
+  // Krag's face. Torvin plays the rival; the player's own is chosen below.
+  rival: portraitTorvin,
+};
+
+/** The dossier face for one player: their named portrait, else their seat's. */
+const portraitFor = (p: UiPlayer, index: number): string =>
+  PORTRAIT_BY_NAME[p.name.trim().toLowerCase()] ?? PORTRAIT_BY_SEAT[index % PORTRAIT_BY_SEAT.length];
 
 // ── tool + state shapes ─────────────────────────────────────────────────────
 /** PP-06: `plant` raises an additional processing plant beside another town. */
@@ -201,7 +222,7 @@ export function createOriginalUi(
 
   // ── top bar ──────────────────────────────────────────────────────────────
   const top = h("header", "topbar");
-  top.appendChild(h("div", "logo", `<span class="logo-mark">⚙️</span> HEXMATCH <em>INDUSTRIES</em>`));
+  top.appendChild(h("div", "logo", `<span class="logo-mark" aria-hidden="true"></span> HEXMATCH <em>INDUSTRIES</em>`));
   const kingdoms = h("div", "kingdoms");
   top.appendChild(kingdoms);
   const right = h("div", "top-right");
@@ -250,13 +271,13 @@ export function createOriginalUi(
   // ── left: BUILD ────────────────────────────────────────────
   const left = h("aside", "aside left iso-panel");
   const bp = h("div", "panel");
-  bp.appendChild(h("div", "panel-title", "🏗️ Build"));
+  bp.appendChild(h("div", "panel-title", "Build"));
   const buildList = h("div", "build-list");
   bp.appendChild(buildList);
   left.appendChild(bp);
 
   const sp = h("div", "panel grow");
-  sp.appendChild(h("div", "panel-title", "🕵️ Black Market"));
+  sp.appendChild(h("div", "panel-title", "Black Market"));
   // PP-08: the standing currency rule, stated right where Gold is spent.
   sp.appendChild(h("div", "pane-note gold-rule", `🪙 ${GOLD_RULE} Construction and trade never touch it.`));
   const sabList = h("div", "sab-list");
@@ -273,7 +294,7 @@ export function createOriginalUi(
   const qp = h("div", "panel");
   qp.id = "iso-quarry";
   const qh = h("div", "quarry-head");
-  qh.appendChild(h("div", "panel-title", "💎 Your Processing Plant"));
+  qh.appendChild(h("div", "panel-title", "Your Processing Plant"));
   const quarryStatus = h("div", "quarry-status");
   qh.appendChild(quarryStatus);
   const comboBank = h("div", "combo-bank");
@@ -706,7 +727,6 @@ export function createOriginalUi(
     }
     renderSelection();
   };
-
   // PP-14: unlock the audio context on the first touch of the board, so the
   // choir can sing the instant a cross resolves (autoplay policies only let
   // an AudioContext start inside user interaction — and a cross lands a beat
@@ -765,12 +785,13 @@ export function createOriginalUi(
       icon.className = "icon bombic";
       return;
     }
-    // V5: sprite art per cargo; the gradient only backs a missing file.
+    // V5: sprite art per cargo; the gradient only backs a missing file. The
+    // sheet's own aspect is square and so is the cell, so the stylesheet sizes
+    // the face with `cover` — one bitmap, never stretched per axis, at any zoom.
     const url = gemArtUrl(g.res);
     if (url) {
       face.classList.add("sprite");
       face.style.backgroundImage = `url("${url}")`;
-      face.style.backgroundSize = "100% 100%";
     } else {
       face.style.background = gemFace(g.res);
     }
@@ -868,25 +889,6 @@ export function createOriginalUi(
     if (callout && text) showFloat(text, type === "combo");
   }
 
-  function popup(gains: Partial<Record<ResKey, number>>, label: string) {
-    const e = h("div", "harvest-pop");
-    // AUDIT 2026-09-11 — ResKey → Cargo: sheep 🐑 has no purse entry,
-    // brick 🧱 has none either. The popup must show the Cargo the purse
-    // actually received (sheep→oil 🛢️, brick→stone 🪨, wheat→grain 🌾)
-    // via GEM_TO_CARGO, or a chain's 2× would float a dead sheep icon.
-    const parts = (Object.keys(gains) as ResKey[]).map((k) => {
-      const cargo = GEM_TO_CARGO[k as ResKey];
-      const icon = cargo ? CARGO[cargo].icon : RES[k as ResKey].icon;
-      return `<span>+${gains[k as ResKey] ?? 0}${icon}</span>`;
-    }).join("");
-    // A1: no gains means no body — a tokenless cascade still has its COMBO
-    // label, and an empty flex row would float an empty box beside it.
-    e.innerHTML = (label ? `<b class="hp-label">${label}</b>` : "")
-      + (parts ? `<div class="hp-body">${parts}</div>` : "");
-    boardWrap.appendChild(e);
-    setTimeout(() => e.remove(), 1600);
-  }
-
   // ── PP-14: the cross bounty chooser ──────────────────────────────────────
   // The board pauses the cascade on a HOLY CROSS (6 units) or a BROKEN HOLY
   // CROSS (3 units) and waits; this panel asks how to spend the units of
@@ -982,6 +984,25 @@ export function createOriginalUi(
       pick(expand());
       close();
     }, 8000);
+  }
+
+  function popup(gains: Partial<Record<ResKey, number>>, label: string) {
+    const e = h("div", "harvest-pop");
+    // AUDIT 2026-09-11 — ResKey → Cargo: sheep 🐑 has no purse entry,
+    // brick 🧱 has none either. The popup must show the Cargo the purse
+    // actually received (sheep→oil 🛢️, brick→stone 🪨, wheat→grain 🌾)
+    // via GEM_TO_CARGO, or a chain's 2× would float a dead sheep icon.
+    const parts = (Object.keys(gains) as ResKey[]).map((k) => {
+      const cargo = GEM_TO_CARGO[k as ResKey];
+      const icon = cargo ? CARGO[cargo].icon : RES[k as ResKey].icon;
+      return `<span>+${gains[k as ResKey] ?? 0}${icon}</span>`;
+    }).join("");
+    // A1: no gains means no body — a tokenless cascade still has its COMBO
+    // label, and an empty flex row would float an empty box beside it.
+    e.innerHTML = (label ? `<b class="hp-label">${label}</b>` : "")
+      + (parts ? `<div class="hp-body">${parts}</div>` : "");
+    boardWrap.appendChild(e);
+    setTimeout(() => e.remove(), 1600);
   }
 
   const lastToast: Record<string, number> = {};
@@ -1082,19 +1103,20 @@ export function createOriginalUi(
       // AI-03: the breakdown is prebuilt by the game (it owns the ledger);
       // native title keeps this one line of tooltip code.
       if (p.vpTip) row.title = p.vpTip;
-      // PP-14b: the tycoon portrait — Torvin plays the rival, the player's
-      // own is the Vex or You portrait picked on the start screen. The
-      // coloured initial stays as the fallback under the image.
-      const av = h("div", "king-av has-portrait");
-      const url = p.human ? (portrait === "you" ? youUrl : vexUrl) : torvinUrl;
-      av.style.backgroundImage = `url("${url}")`;
-      av.textContent = p.name[0];
-      const mid = h("div", "king-mid");
-      mid.innerHTML = `
-        <div class="king-name">${p.name}${p.human ? " <span class='you'>YOU</span>" : ""}</div>
-        <div class="king-bar"><i style="width:${Math.min(100, (p.vp / VICTORY.target) * 100)}%;background:${p.colour}"></i></div>`;
-      const vp = h("div", "king-vp", `${fmtVp(p.vp)}<small>★</small>`);
-      row.append(av, mid, vp);
+      // PP-14b + NOIR: the dossier face. The player's own is the Vex or You
+      // portrait picked on the start screen; every rival keeps the mugshot its
+      // name (or seat) maps to — Torvin plays the solo rival. The coloured
+      // initial stays as the fallback under the image.
+      const face = p.human
+        ? (portrait === "you" ? portraitYou : portraitVex)
+        : portraitFor(p, players.indexOf(p));
+      row.innerHTML = `
+        <div class="king-av has-portrait" style="background-image:url(${face})">${p.name[0]}</div>
+        <div class="king-mid">
+          <div class="king-name">${p.name}${p.human ? " <span class='you'>YOU</span>" : ""}</div>
+          <div class="king-bar"><i style="width:${Math.min(100, (p.vp / VICTORY.target) * 100)}%;background:${p.colour}"></i></div>
+        </div>
+        <div class="king-vp">${fmtVp(p.vp)}<small>★</small></div>`;
       kingdoms.appendChild(row);
     }
   }
@@ -1226,15 +1248,15 @@ export function createOriginalUi(
     modalRoot.innerHTML = `
       <div class="modal-back"></div>
       <div class="modal box">
-        <h2>⚙️ HEXMATCH INDUSTRIES</h2>
+        <h2>Hexmatch Industries</h2>
         <p class="sub">Two worlds, one empire: <b>resource node → Depot → transport network → Factory → processing → resources available for construction</b>. First to <b>${VICTORY.target}★ Victory Points</b> wins.</p>
         <div class="help-cols">
-          <div class="help-col"><h3>🏙️ The Territory</h3><p>Place <b>Depots</b> beside resource nodes to collect their output, then build <b>Dirt Roads</b> &amp; <b>Roads</b> (paved) to carry it to your Factory. The connection sets the multiplier — ×1.0 on gravel, ×1.6 anywhere a paved tile touches the line — and nothing else.</p>
-<p><h3>🏆 How you score (VP-01)</h3><p><b>Dirt Roads score nothing.</b> Points come from <b>upgrading</b>: pave a Dirt Road tile into a Road for <b>+${VICTORY.upgrade}★</b> (it costs only ${costCompact(UPGRADE_COST)}, since the gravel is already paid for), and raise a <b>processing plant</b> beside another town for <b>+${VICTORY.plant}★</b>. Four paves to the point; <b>${VICTORY.target}★</b> wins. A Road laid on virgin ground scores nothing — the point is for improving what you built. Tear up a paved tile or demolish a plant and the point goes back.</p><p>Your <b>first Depot is free</b>; every Depot after it costs <b>${costCompact(DEPOT_COST)}</b>, so reaching new industries (or manufacturing in the Processing Plant) is what buys expansion. A Depot you cannot pay for is refused and consumes nothing.</p><p><b>Lorries run 2× faster on paved Roads</b> — paving a lane is both the points and the income (AI-02).</p><p>Pan with the <b>middle mouse button</b> (wheel zooms, touch drags pan). The left button only places or selects — dragging it never pans.</p></div>
-          <div class="help-col"><h3>💎 The Processing Plant</h3><p>Where your Factory turns delivered cargo into resources available for construction. Match tokens to process: a colour only pays when your network reaches its industry. Match 4 doubles, match 5 makes a <b>bomb</b>. <b>Gold</b> 🪙 is its own colour — its gems drop only while a depot sits beside a gold mine (and pay once it's connected).</p></div>
-          <div class="help-col"><h3>🪙 Gold, Trade & Defence</h3><p>Earn <b>gold</b> from gold-mine access or combos. <b>Gold is reserved for Black Market sabotage</b> — it never buys construction, cannot substitute for missing materials, and is refused by every market exchange. Security Forces and Repair Crew are hired with ordinary materials. A <b>Protest</b> ✊ shuts any public road for 2:00 — every truck stops, including your own.</p></div>
+          <div class="help-col"><h3>The Territory</h3><p>Place <b>Depots</b> beside resource nodes to collect their output, then build <b>Dirt Roads</b> &amp; <b>Roads</b> (paved) to carry it to your Factory. The connection sets the multiplier — ×1.0 on gravel, ×1.6 anywhere a paved tile touches the line — and nothing else.</p>
+<p><h3>How you score (VP-01)</h3><p><b>Dirt Roads score nothing.</b> Points come from <b>upgrading</b>: pave a Dirt Road tile into a Road for <b>+${VICTORY.upgrade}★</b> (it costs only ${costCompact(UPGRADE_COST)}, since the gravel is already paid for), and raise a <b>processing plant</b> beside another town for <b>+${VICTORY.plant}★</b>. Four paves to the point; <b>${VICTORY.target}★</b> wins. A Road laid on virgin ground scores nothing — the point is for improving what you built. Tear up a paved tile or demolish a plant and the point goes back.</p><p>Your <b>first Depot is free</b>; every Depot after it costs <b>${costCompact(DEPOT_COST)}</b>, so reaching new industries (or manufacturing in the Processing Plant) is what buys expansion. A Depot you cannot pay for is refused and consumes nothing.</p><p><b>Lorries run 2× faster on paved Roads</b> — paving a lane is both the points and the income (AI-02).</p><p>Pan with the <b>middle mouse button</b> (wheel zooms, touch drags pan). The left button only places or selects — dragging it never pans.</p></div>
+          <div class="help-col"><h3>The Processing Plant</h3><p>Where your Factory turns delivered cargo into resources available for construction. Match tokens to process: a colour only pays when your network reaches its industry. Match 4 doubles, match 5 makes a <b>bomb</b>. <b>Gold</b> 🪙 is its own colour — its gems drop only while a depot sits beside a gold mine (and pay once it's connected).</p></div>
+          <div class="help-col"><h3>Gold, Trade & Defence</h3><p>Earn <b>gold</b> from gold-mine access or combos. <b>Gold is reserved for Black Market sabotage</b> — it never buys construction, cannot substitute for missing materials, and is refused by every market exchange. Security Forces and Repair Crew are hired with ordinary materials. A <b>Protest</b> ✊ shuts any public road for 2:00 — every truck stops, including your own.</p></div>
         </div>
-        <button class="big-btn" id="startBtn">Start Production ⚙️</button>
+        <button class="big-btn" id="startBtn">Start Production</button>
       </div>`;
     (modalRoot.querySelector("#startBtn") as HTMLElement).onclick = () => modalRoot.classList.add("hidden");
     (modalRoot.querySelector(".modal-back") as HTMLElement).onclick = () => modalRoot.classList.add("hidden");
