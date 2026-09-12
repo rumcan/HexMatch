@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>HexMatch — Scenery Lab</title>
+<style>
+  html,body{margin:0;background:#0b1a26;color:#cfe;font:12px system-ui}
+  .row{position:relative;margin:0 0 4px}
+  .row b{position:absolute;left:6px;top:4px;background:#000a;padding:2px 6px;border-radius:3px;z-index:2}
+  canvas{position:absolute;left:0;top:0}
+  .stack{position:relative}
+  #info{padding:6px 8px;font:11px ui-monospace,monospace;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<div id="info">loading…</div>
+<div id="out"></div>
+<script type="module">
+// Scenery review page: the REAL renderer, atlas, ground textures and scenery,
+// rendered at native zoom so the decals and trees can be judged at the size a
+// player actually sees them. Dev-only; not part of the game bundle.
+import { IsoRenderer } from "/src/iso/renderer.ts";
+import { Atlas, loadBuildingLayers } from "/src/iso/atlas.ts";
+import { createCamera, centerOnTile } from "/src/iso/camera.ts";
+import { generateMap } from "/src/iso/grid.ts";
+import { townHouseSprite } from "/src/iso/config.ts";
+import { loadGroundTextures } from "/src/iso/ground.ts";
+import { scatterScenery } from "/src/iso/scenery.ts";
+import { loadScenerySprites, loadDecalImages } from "/src/iso/scenery-art.ts";
+
+const B = "/hexmatch/";
+const img = async (src) => { const i = new Image(); i.src = src; await i.decode(); return i; };
+
+const manifest = await fetch(`${B}assets/iso-atlas/manifest.json`).then((r) => r.json());
+const images = new Map(await Promise.all(Object.entries(manifest.images).map(async ([z, f]) =>
+  [Number(z), await img(`${B}assets/iso-atlas/${f}`)])));
+const atlas = new Atlas(manifest, images);
+for (const layer of ["roads", "buildings"]) {
+  atlas.layerImages.set(layer, new Map(await Promise.all([0.5, 1, 2].map(async (z) =>
+    [z, await img(`${B}assets/layers/${layer}@${z === 0.5 ? "0.5x" : z + "x"}.png`)]))));
+}
+await loadBuildingLayers(atlas, `${B}assets/buildings/`);
+const groundTex = await loadGroundTextures({
+  grass: `${B}assets/ground/grass.png`,
+  sand: `${B}assets/ground/sand.png`,
+  water: `${B}assets/ground/water.png`,
+});
+
+const seed = Number(new URLSearchParams(location.search).get("seed") ?? 1337);
+const grid = generateMap(seed);
+const scenery = scatterScenery(grid);
+const treeCount = await loadScenerySprites(atlas);
+const decalImages = await loadDecalImages();
+
+const towns = grid.towns.flatMap((t) => t.houses.map(([tx, ty]) => ({
+  tx, ty, sprite: tx === t.tx && ty === t.ty ? "town_center" : townHouseSprite(tx, ty),
+})));
+const world = { grid, extra: towns, trees: scenery.trees };
+
+// The densest 7×7 tree neighbourhood — where the clumping is worth looking at.
+let best = [grid.w / 2, grid.h / 2], bestN = -1;
+for (let ty = 6; ty < grid.h - 6; ty += 2) {
+  for (let tx = 6; tx < grid.w - 6; tx += 2) {
+    let n = 0;
+    for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++)
+      if (scenery.trees[(ty + dy) * grid.w + tx + dx]) n++;
+    if (n > bestN) { bestN = n; best = [tx, ty]; }
+  }
+}
+
+let planted = 0;
+for (const v of scenery.trees) if (v) planted++;
+document.getElementById("info").textContent =
+  `seed ${seed} · trees installed ${treeCount} · planted ${planted} · decals ${scenery.decals.length}`
+  + ` · decal art ${Object.entries(decalImages).map(([k, v]) => k + ":" + v.length).join(" ")}`
+  + ` · densest ${best} (${bestN})`;
+
+const out = document.getElementById("out");
+function shot(label, zoom, w, h, target) {
+  const row = document.createElement("div");
+  row.className = "row";
+  const stack = document.createElement("div");
+  stack.className = "stack";
+  stack.style.width = w + "px"; stack.style.height = h + "px";
+  const canvases = {};
+  for (const name of ["terrain", "structures", "overlay"]) {
+    const c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    stack.append(c);
+    canvases[name] = c;
+  }
+  const tag = document.createElement("b");
+  tag.textContent = label;
+  row.append(stack, tag);
+  row.style.height = h + "px";
+  out.append(row);
+  const r = new IsoRenderer(canvases, atlas, createCamera(w, h), world);
+  r.setGround(groundTex);
+  r.setDecals(scenery);
+  r.setDecalImages(decalImages);
+  r.recomputePad();
+  r.invalidateAll();
+  r.setCamera(centerOnTile({ ...createCamera(w, h), zoom }, ...(target ?? best)));
+  r.render(0);
+}
+
+shot("clump @2×", 2, 780, 460);
+shot("clump @1×", 1, 780, 460);
+shot("map @0.5×", 0.5, 780, 460);
+shot("town @1×", 1, 780, 460, [grid.towns[0].tx, grid.towns[0].ty]);
+</script>
+</body>
+</html>

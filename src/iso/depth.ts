@@ -37,6 +37,13 @@ export interface DrawItem {
   fx?: number;
   fy?: number;
   frame?: number;
+  /**
+   * SCENERY: pure decoration (a scattered tree). Depth-sorted and drawn like
+   * anything else so a lorry passes behind it properly, but skipped by
+   * picking — clicking a tree must select the TILE under it, never the tree,
+   * or scenery would silently block every build the player aims through it.
+   */
+  decor?: boolean;
   /** Opaque payload the picker returns (industry, station, …). */
   ref?: unknown;
 }
@@ -215,6 +222,7 @@ export function pickSprite(
   for (let i = order.length - 1; i >= 0; i--) {
     const p = order[i];
     if (isMoving(p)) continue;   // RV-01: a moving truck is never clickable
+    if (p.decor) continue;       // SCENERY: a tree is never clickable either
     const lx = wx - p.wx, ly = wy - p.wy;
     if (lx < 0 || ly < 0 || lx >= p.w || ly >= p.h) continue;
     if (atlas.opaqueAt(p.sprite, Math.floor(lx), Math.floor(ly))) return p;

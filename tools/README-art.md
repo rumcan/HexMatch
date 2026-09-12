@@ -143,6 +143,129 @@ Gold/quarry grounds 2256, 2257 and 2260 have OpenGFX palette shimmer, not
 separate building frames. They remain static until palette cycling is
 supported; only the shaft tower uses the three explicit 2263–2265 frames.
 
+## Scenery — ground decals and trees
+
+The pattern-painted ground is one continuous meadow, which is the point (no
+per-tile sprite puzzle) but leaves a flat green field at map scale. Scenery
+breaks it up.
+
+**Nothing in this pipeline is drawn by the tool.** A first pass generated
+trees as stacked SVG blobs and ground patches as noise fields; both read as
+stickers laid on top of painted OpenGFX pixel art, however they were tuned.
+`tools/make-scenery-art.mjs` now only ever CUTS, FITS and OPTIMISES artwork
+that already exists.
+
+```bash
+npm run scenery-art      # = make-ground-textures.mjs grass + make-scenery-art.mjs
+```
+
+### Trees
+
+Cut from `tools/scenery-src/trees.png` — six painted species, found by
+connected-component labelling so the sheet's spacing and size are free.
+
+Scale comes from the ART, not a hand-set table: the tallest tree on the sheet
+is mapped to `TALLEST_2X` and everything else scaled by that same factor, so
+the proportions the artist drew survive into the game. Each species then ships
+three or four **size** variants, which is what stops a wood reading as a row
+of identical stamps.
+
+Variants are size ONLY. Mirroring was tried and removed: every tree on the
+sheet is lit from the upper right, and a mirrored copy is lit from the upper
+left — scattered through a wood that reads immediately as two suns. Scale is
+the one transform that leaves the key light where the artist put it, and a
+mixed-age wood is a better result anyway.
+
+Each sprite gets a **soft cast shadow** composited under its foot: a 2:1
+squashed ellipse (the ground plane), smoothstepped twice so it is dense under
+the trunk and gone well before its rim. Without it a tree hovers — the art has
+no contact point of its own and a flat painted meadow gives it nothing to sit
+on.
+
+Geometry is the same contract as `make-building-pngs.mjs`: centre-anchored
+(`def.center`), and the anchor is the foot of the trunk — taken from the
+centroid of the bottom few rows, not the bounding-box centre, because a
+painted tree leans and a bbox anchor visibly drifts the wood off the grid.
+Sizes are snapped so `w@2x = 2·w@1x = 4·w@0.5x` exactly (the blit's source
+rect is `round(w · zoom)`; a mismatch crops an edge).
+
+### Forest blocks
+
+`forest-conifer.png` and `forest-mixed.png` become 4×4 sprites. Unlike a 1×1
+tree, a multi-tile block's GROUND DIAMOND has to line up with a specific
+number of tiles, and the bounding box is the wrong thing to scale from because
+the canopies overhang the ground by a different amount in each drawing. So the
+scale comes from the diamond: the widest opaque row of the picture IS its
+waist, and that is mapped to the exact width 4×4 tiles span. The anchor
+follows — the waist's midpoint, half a diamond above the bottom vertex.
+
+They are placed first and their sixteen tiles reserved, so no 1×1 tree sprouts
+out of the middle of a painted wood; a skirt of single trees is then planted
+around each, which is what makes a block feather into the meadow instead of
+ending on its own footprint edge. Anything built on ANY of the sixteen clears
+the whole block — a half-erased painted wood would look far worse than a
+cleared one.
+
+### Ground decals
+
+Cut from `tools/scenery-src/*.png` — four families (`bare`, `dry`, `rocky`,
+`lush`), see the README in that folder. **A family with no source ships
+nothing** and the ground paints a plain meadow there; there is no procedural
+fallback, because filling missing art in with something invented is the thing
+that went wrong the first time.
+
+Output is 768×384, authored 2:1 SQUASHED because a patch lies flat on the iso
+ground, with three ROTATED variants per source (a ground texture has no up,
+and rotating beats cropping, which would cut the soft rim off). The engine
+also mirrors a patch at draw time, so twelve files give twenty-four apparent
+shapes.
+
+Patches are drawn LARGE — 3½ to 10 tiles across — roughly one per 70 land
+tiles, overlapping freely, and each fades out across the outer part of its
+radius. They are painted per frame on the terrain canvas above the cached
+ground chunks (`paintDecals` in `src/iso/scenery.ts`), never baked into a
+chunk: the 8×8 chunk that owned a patch's tile would cut it straight through.
+
+### Formats
+
+Split on purpose, and it is worth about a megabyte:
+
+* **Trees stay PNG** (quantised palette, max zlib effort). They are small and
+  they are mostly alpha EDGE — a lossy codec spends its bits on the flat
+  middle of an image and fringes exactly the thin, high-contrast boundary a
+  tree is made of.
+* **Forest blocks and ground patches ship WebP.** Large, low-frequency painted
+  texture with a wide feathered rim is the case lossy compression is good at
+  and palette PNG is bad at: one patch is 184 kB as a quantised PNG and 73 kB
+  as WebP, with no visible difference on a texture that is about to be scaled
+  and alpha-blended anyway. `alphaQuality` is held high because the feather IS
+  the effect — banding there would put a visible rim back on.
+
+`loadScenerySprites` resolves either extension, so the split is invisible to
+the engine.
+
+### Rules and review
+
+Trees are DECOR: never written to `grid.occupancy` (no placement rule sees
+them), skipped by picking (`decor` on the draw item), and hidden — not
+deleted — the moment a road or a building lands on the tile. The scatter is a
+pure function of the seed, so a multiplayer guest regenerates the host's
+woodland from the seed alone; scenery is never on the wire.
+
+Optimisation is part of the build: every output is tight-trimmed and written
+as a quantised palette PNG at maximum zlib effort. All sixteen tree sprites at
+three zooms come to about 40 kB.
+
+```bash
+npm run dev
+# In another terminal (requires Playwright Chromium):
+node tools/capture-scenery-review.mjs
+```
+
+That writes the densest tree clump at 2×/1×/0.5× plus a wide map sweep to
+`test-results/scenery-review/` (ignored). `scenery-lab.html` is the same
+review in the live dev server (`/hexmatch/scenery-lab.html?seed=1337`).
+
 ## Licence
 
 Graphics derived from OpenGFX (https://github.com/OpenTTD/OpenGFX),

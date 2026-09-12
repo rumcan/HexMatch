@@ -4,10 +4,13 @@
 // Three stacked canvases:
 //   1. terrain     — the pattern-painted GROUND: an animated ocean over the
 //                    whole stage, the grass island and its beach ring cached
-//                    in 8×8-tile chunks, and the animated shoreline (shallow
-//                    swell + foam) stroked live. Redrawn every frame — the
-//                    ocean drifts — but the expensive part is cached.
-//   2. structures  — industries, road, rail, stations; redrawn on world change
+//                    in 8×8-tile chunks, the SCENERY DECALS (dirt scrapes and
+//                    grass variation, painted live above the chunks so they
+//                    are not cut on chunk edges), and the animated shoreline
+//                    (shallow swell + foam) stroked live. Redrawn every frame
+//                    — the ocean drifts — but the expensive part is cached.
+//   2. structures  — industries, road, rail, stations, scattered trees;
+//                    redrawn on world change
 //   3. overlay     — previews, highlights, animated frames, cursor; 60fps
 //
 // Ground chunks are cached per zoom exactly like the old sprite tiles; a
@@ -36,6 +39,10 @@ import {
   paintGroundTiles, pathPolygons, shallowAlpha, tileDiamondWorld,
   type GroundPatterns, type GroundTextures, type ShoreTile,
 } from "./ground";
+import {
+  FOREST_FOOTPRINT, TREE_SPRITES, paintDecals,
+  type Decal, type DecalImages, type Forest, type Scenery,
+} from "./scenery";
 
 /**
  * Ground texture scale relative to world pixels: one texture pixel covers
@@ -99,6 +106,27 @@ export interface World {
    * passing behind them; culling keeps them while they are near the view.
    */
   vehicles?: DrawItem[];
+  /**
+   * SCENERY: one byte per tile — 0 for none, else a 1-based index into
+   * `TREE_SPRITES`. A flat array rather than a list because the draw list is
+   * already built by walking the visible tile range, so a tree costs one
+   * array read on a loop the renderer runs anyway. Seed-derived and never
+   * mutated: a tree is hidden, not deleted, when something is built on it.
+   */
+  trees?: Uint8Array;
+  /**
+   * SCENERY: tile indices where a tree must not be drawn because the player
+   * built something there (plant footprints, depots). Roads are NOT in here —
+   * `roadBits`/`dirtBits` already say where the gravel is, and the draw list
+   * reads those directly.
+   */
+  sceneryBlocked?: Set<number>;
+  /**
+   * SCENERY: the multi-tile forest blocks. A list rather than a per-tile byte
+   * because each covers a 4×4 footprint and depth-sorts as one thing, exactly
+   * like an industry.
+   */
+  forests?: Forest[];
 }
 
 // Track layers carry a PRESENT bit (0b10000) above the 4 direction bits, so a
@@ -169,6 +197,12 @@ export function buildDrawList(world: World, r: { x0: number; y0: number; x1: num
       const db = world.dirtBits?.[i] ?? 0;    // basic gravel   → dirt_XXXX / dirt_road_*
       if (db) out.push({ sprite: dirtSpriteName(world, tx, ty, db), tx, ty });
       if (rb) out.push({ sprite: bitName("road", rb), tx, ty });
+      // SCENERY: a scattered tree, unless the tile has since been paved or
+      // built on — the tree was cleared to make room, which is what the
+      // player expects to see and costs nothing to model.
+      const tree = world.trees?.[i] ?? 0;
+      if (tree && !rb && !db && !world.sceneryBlocked?.has(i))
+        out.push({ sprite: TREE_SPRITES[tree - 1], tx, ty, decor: true });
     }
   }
   // PP-12: each industry is ONE verbatim TTD building sprite, drawn as a single
@@ -181,6 +215,24 @@ export function buildDrawList(world: World, r: { x0: number; y0: number; x1: num
     if (ind.tx + ind.w - 1 < r.x0 || ind.tx > r.x1) continue;
     if (ind.ty + ind.h - 1 < r.y0 || ind.ty > r.y1) continue;
     out.push({ sprite: ind.type, tx: ind.tx, ty: ind.ty, ref: ind });
+  }
+  // SCENERY: the 4×4 forest blocks, culled and depth-keyed exactly like an
+  // industry. Cleared wholesale the moment anything is built inside them —
+  // the wood came down to make room, which is what the player expects, and a
+  // half-erased painted block would look far worse than a cleared one.
+  if (world.forests) {
+    for (const f of world.forests) {
+      if (f.tx + FOREST_FOOTPRINT - 1 < r.x0 || f.tx > r.x1) continue;
+      if (f.ty + FOREST_FOOTPRINT - 1 < r.y0 || f.ty > r.y1) continue;
+      let clear = true;
+      for (let dy = 0; dy < FOREST_FOOTPRINT && clear; dy++) {
+        for (let dx = 0; dx < FOREST_FOOTPRINT && clear; dx++) {
+          const i = (f.ty + dy) * MAP_W + f.tx + dx;
+          if (world.roadBits?.[i] || world.dirtBits?.[i] || world.sceneryBlocked?.has(i)) clear = false;
+        }
+      }
+      if (clear) out.push({ sprite: f.sprite, tx: f.tx, ty: f.ty, decor: true });
+    }
   }
   if (world.extra) {
     for (const e of world.extra) {
@@ -289,6 +341,11 @@ export class IsoRenderer {
    * the old sprite chunks; repainted when a tile is invalidated.
    */
   private groundChunkCache = new Map<string, HTMLCanvasElement | OffscreenCanvas>();
+  // ── scenery ──────────────────────────────────────────────────────────────
+  /** The seed-derived ground decals; null until the map's scenery is set. */
+  private decals: Decal[] | null = null;
+  /** The decal PNGs by family; null until the art loads (then decals paint). */
+  private decalImages: DecalImages | null = null;
 
   /** The last depth-sorted structure order actually drawn (C5 dumps/picking). */
   get drawOrder(): Placed[] { return this.lastOrder; }
@@ -384,6 +441,23 @@ export class IsoRenderer {
       this.ground = null;                    // e.g. stubbed canvas in tests
     }
     this.invalidateAll();
+  }
+
+  /**
+   * SCENERY: install the map's decal list (from `scatterScenery`). The trees
+   * travel on the World instead — the draw list reads them per tile.
+   */
+  setDecals(scenery: Scenery | null): void {
+    this.decals = scenery?.decals ?? null;
+  }
+
+  /**
+   * SCENERY: install the decal PNGs. Until these arrive the decal pass is a
+   * no-op and the map is simply the plain meadow — art is an upgrade here,
+   * never a gate, exactly like the ground textures.
+   */
+  setDecalImages(images: DecalImages | null): void {
+    this.decalImages = images;
   }
 
   /** Shoreline for the current grid, computed once. */
@@ -507,9 +581,15 @@ export class IsoRenderer {
         this.trace("ground-blit", { chunk: [cx, cy], origin: [ox, oy], screen: [Math.floor(sx), Math.floor(sy)], z: cam.zoom });
       }
     }
-    // 3. The surf: shallow swell + foam along every coast edge, animated.
+    // 3. The scenery decals: dirt scrapes and grass variation painted on the
+    //    meadow. Above the chunks (they must not be clipped into 8×8 cuts),
+    //    below the surf (a patch must never cover the foam).
+    let decals = 0;
+    if (this.decals && this.decalImages)
+      decals = paintDecals(ctx, cam, this.decals, this.decalImages, r);
+    // 4. The surf: shallow swell + foam along every coast edge, animated.
     this.drawShore(ctx, cam, r, timeMs);
-    this.trace("terrain-pass", { range: [r.x0, r.y0, r.x1, r.y1], blits, z: cam.zoom });
+    this.trace("terrain-pass", { range: [r.x0, r.y0, r.x1, r.y1], blits, decals, z: cam.zoom });
   }
 
   drawStructures(timeMs = 0) {
