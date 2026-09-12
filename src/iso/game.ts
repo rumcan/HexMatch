@@ -949,6 +949,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         };
       }),
     ];
+    // Every world change funnels through here (builds, demolition, loads,
+    // guest snapshots and deltas), so it retires the network-derived caches
+    // too: hover routes, score breakdowns, inspector components, drag previews.
+    netVersion++;
     renderer?.setWorld(world);
   };
 
@@ -2507,10 +2511,26 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * answer is re-checked as soon as a new road may have opened a closer route.
    */
   let hoverRouteCache: { key: string; items: OverlayItem[] } | null = null;
+  /**
+   * One owner's network components, cached per `netVersion`. The inspector
+   * asked for these on every frame of a hover — once per depot for a plant —
+   * which re-flooded the network while nothing about it had changed.
+   */
+  type Components = ReturnType<typeof buildAllComponents>;
+  let componentCache: { version: number; byOwner: Map<Harvester["ownerId"], Components> } =
+    { version: -1, byOwner: new Map() };
+  const componentsFor = (ownerId: Harvester["ownerId"]): Components => {
+    if (componentCache.version !== netVersion) componentCache = { version: netVersion, byOwner: new Map() };
+    let comp = componentCache.byOwner.get(ownerId);
+    if (!comp) { comp = buildAllComponents(track, ownerId); componentCache.byOwner.set(ownerId, comp); }
+    return comp;
+  };
+  /** Header ★ tooltips by player id, rebuilt only when the network or total moves. */
+  const vpTipCache = new Map<string, { key: string; tip: string }>();
   const routeOverlayFor = (h: Harvester): OverlayItem[] => {
     const key = `${h.id}:${h.ownerId}:${netVersion}`;
     if (hoverRouteCache && hoverRouteCache.key === key) return hoverRouteCache.items;
-    const comp = buildAllComponents(track, h.ownerId);
+    const comp = componentsFor(h.ownerId);
     const route = roadRouteForHarvester(eco, h, comp);
     const items = route
       ? route.map(([x, y]) => ({ sprite: "highlight_soft", tx: x, ty: y }))
@@ -2605,17 +2625,22 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // and the rival received win points for"). Recomputed live from the
     // network (VICTORY: paves 0.25★, plants-after-the-first 1★).
     function vpTooltip(p: PlayerState): string {
-      const b = victoryBreakdown(eco, p.id);
       const total = vpFor(score, p.id);
       // AI-04: the line is the difficulty's, so the tooltip's "of X★" and
       // "Y★ to win" agree with the win check that uses the same reader.
       const line = winTarget();
-      return [
+      const key = `${netVersion}:${total}:${line}:${p.name}:${p.human}`;
+      const hit = vpTipCache.get(p.id);
+      if (hit && hit.key === key) return hit.tip;
+      const b = victoryBreakdown(eco, p.id);
+      const tip = [
         `${p.name}${p.human ? " (you)" : ""} — ${fmtVp(total)}★ of ${line}★`,
         `Paved road tiles: ${b.paved} × 0.25★ = ${fmtVp(b.pavedVp)}★`,
         `Processing plants: ${b.plants + 1} (opening plant is free; ${b.plants} × 1★ = ${fmtVp(b.plantVp)}★)`,
         `${fmtVp(Math.max(0, line - total))}★ to win`,
       ].join("\n");
+      vpTipCache.set(p.id, { key, tip });
+      return tip;
     }
 
     // BANNER-ONCE: each banner carries a stable id (`bannerKey`) beside its
@@ -2733,8 +2758,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         if (h) {
           // W2: the inspector resolves the connection over THIS harvester's
           // own network, not the merged graph.
-          const comp = buildAllComponents(track, h.ownerId);
-          const conn = resolveConnection(eco, comp, h);
+          const conn = resolveConnection(eco, componentsFor(h.ownerId), h);
           // PP-16: what a Depot is worth is what it HOLDS, not what stands
           // nearby — an industry reached first by another Depot's road pays
           // that one instead, and the panel has to say so or the arithmetic on
@@ -2754,7 +2778,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           && hover.tx >= x.tx && hover.tx < x.tx + FACTORY_FOOTPRINT[0]
           && hover.ty >= x.ty && hover.ty < x.ty + FACTORY_FOOTPRINT[1]);
         const served = eco.harvesters.filter((h) => h.owner === owner
-          && resolveConnection(eco, buildAllComponents(track, h.ownerId), h).factory === f).length;
+          && resolveConnection(eco, componentsFor(h.ownerId), h).factory === f).length;
         info = `<b>Processing Plant</b> (${owner === "you" ? "yours" : "rival"})<br>` +
           `plant ${(f?.id ?? 0) + 1} of ${list.length}` +
           (f?.townId != null ? ` · town ${f.townId + 1}` : "") + `<br>` +
@@ -2922,27 +2946,64 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     g = pointerDown(g, { id: e.pointerId, x, y });
   });
 
+  /**
+   * Paint the overlay layer NOW, from the live hover/preview, instead of
+   * leaving the pointer's answer to the next animation frame (which also runs
+   * the simulation, terrain and traffic first). Same `overlayFrame` the frame
+   * loop paints from, so the two can never disagree.
+   */
+  const paintOverlayNow = () => {
+    if (!renderer) return;
+    const { items, ghost } = overlayFrame();
+    renderer.drawOverlay(items, performance.now(), ghost);
+  };
+  /** What the current drag preview was computed from; see pointermove. */
+  let previewKey = "";
+
   canvases.overlay.addEventListener("pointermove", (e) => {
     const [x, y] = pos(e);
     if (downAt && (Math.abs(x - downAt[0]) > 4 || Math.abs(y - downAt[1]) > 4)) moved = true;
     const p = pickForAction(x, y);
-    if (p) hover = { tx: p.tx, ty: p.ty, ref: p.ref };
+    let changed = false;
+    if (p && (!hover || hover.tx !== p.tx || hover.ty !== p.ty || hover.ref !== p.ref)) {
+      hover = { tx: p.tx, ty: p.ty, ref: p.ref };
+      changed = true;
+    }
     if (drag && p) {
       const kind = tool as TrackKind;   // build-track tools are dirt | road
-      const net = playerNetwork(track, me.i + 1, eco.factories, eco.harvesters);
-      // W1: the preview prices the drag with the REAL purse and the free
-      // allowance applied INSIDE the preview (last arg). The old
-      // "freeTrack > 0 → 9999 stone" trick priced the preview differently
-      // from the commit; now both share one cost model, so what you see is
-      // what you are charged.
-      preview = previewDrag(grid, track, kind, me.purse,
-        drag.ax, drag.ay, p.tx, p.ty, true, net, me.freeTrack,
-        structureTiles(eco.factories, eco.harvesters, me.i + 1));
+      // A drag re-plans only when something it depends on moved: the end
+      // tile, the network (netVersion), the purse or the free allowance.
+      // Sub-tile pointer motion reuses the plan it already has.
+      const purseKey = CARGOES.map((c) => me.purse[c] ?? 0).join(",");
+      const key = `${kind}:${drag.ax},${drag.ay}:${p.tx},${p.ty}:${netVersion}:${me.freeTrack}:${purseKey}`;
+      if (!preview || key !== previewKey) {
+        const net = playerNetwork(track, me.i + 1, eco.factories, eco.harvesters);
+        // W1: the preview prices the drag with the REAL purse and the free
+        // allowance applied INSIDE the preview (last arg). The old
+        // "freeTrack > 0 → 9999 stone" trick priced the preview differently
+        // from the commit; now both share one cost model, so what you see is
+        // what you are charged.
+        preview = previewDrag(grid, track, kind, me.purse,
+          drag.ax, drag.ay, p.tx, p.ty, true, net, me.freeTrack,
+          structureTiles(eco.factories, eco.harvesters, me.i + 1));
+        previewKey = key;
+        changed = true;
+      }
+      if (changed) paintOverlayNow();
       return;
     }
+    if (changed) paintOverlayNow();
     const out = pointerMove(g, { id: e.pointerId, x, y }, cam);
     g = out.gesture;
     if (out.cam !== cam) { cam = out.cam; renderer?.setCamera(cam); }
+  });
+
+  // Leaving the map drops the highlight at once. A captured drag keeps its
+  // preview — the pointer is still steering it.
+  canvases.overlay.addEventListener("pointerleave", () => {
+    if (drag || !hover) return;
+    hover = null;
+    paintOverlayNow();
   });
 
   const onUp = (e: PointerEvent) => {

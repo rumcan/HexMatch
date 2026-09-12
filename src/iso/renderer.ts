@@ -31,7 +31,7 @@ import { HW, HH, TILE_W, TILE_H, MAP_W, MAP_H } from "../game/config";
 import type { Camera } from "./camera";
 import { visibleTileRange, screenToWorld, worldToScreen } from "./camera";
 import type { Atlas } from "./atlas";
-import { depthSort, place, pickSprite, type DrawItem, type Placed } from "./depth";
+import { depthSort, isMoving, place, pickSprite, type DrawItem, type Placed } from "./depth";
 import { GRASS, WATER, ROUGH, type Grid } from "./grid";
 import {
   FALLBACK, GROUND_TEX_SIZE, createGroundPatterns, makeMatrix, oceanMatrix,
@@ -300,6 +300,31 @@ export function cullPad(atlas: Atlas): number {
 
 type Ctx2D = CanvasRenderingContext2D;
 
+/** Integer screen rectangle, half-open: [x0, x1) × [y0, y1). */
+interface ScreenRect { x0: number; y0: number; x1: number; y1: number }
+
+const rectsOverlap = (a: ScreenRect, b: ScreenRect): boolean =>
+  a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
+
+/** What the last structures pass painted, for `__iso.rendering().repaint`. */
+export interface RepaintStats {
+  /** true: the whole viewport was cleared and repainted. */
+  full: boolean;
+  /** Sprite blits issued by the pass (roads and shadows not counted). */
+  blits: number;
+  /** Damage rectangles clipped to (0 on a full repaint or an idle pass). */
+  damageRects: number;
+}
+
+/**
+ * The terrain's ambient animation (ocean drift, surf) repaints at ~30 Hz. It
+ * moves slowly enough that 60 Hz bought nothing visible. The small tolerance
+ * keeps a 60 Hz display on every other frame instead of slipping to every
+ * third when frame times jitter under the exact period.
+ */
+export const TERRAIN_FRAME_MS = 1000 / 30;
+const TERRAIN_FRAME_SLACK_MS = 4;
+
 /** An offscreen raster surface, or null where neither API exists (tests). */
 function makeSurface(w: number, h: number): HTMLCanvasElement | OffscreenCanvas | null {
   if (typeof OffscreenCanvas !== "undefined") return new OffscreenCanvas(w, h);
@@ -354,6 +379,8 @@ export interface RenderDiagnostics {
    * behind the glow, the same way `structures` carries the draw rects.
    */
   overlay: OverlayDiagnostics;
+  /** The last structures pass: full repaint or damage-clipped, and its cost. */
+  repaint: RepaintStats;
   warnings: string[];
 }
 
@@ -394,6 +421,20 @@ export class IsoRenderer {
   private staticItemCount = 0;
   private staticRange = "";
   private hadVehicles = false;
+  // ── damage-clipped traffic repaint ───────────────────────────────────────
+  /** The structures canvas holds a complete frame the next pass may patch. */
+  private paintedValid = false;
+  /** Non-moving placements in the order last drawn (compared by identity). */
+  private lastStaticOrder: Placed[] = [];
+  /** Screen bounds of every moving sprite last drawn. */
+  private lastMovingRects: ScreenRect[] = [];
+  /** Frame last drawn for each multi-frame static sprite. */
+  private lastFrames = new Map<Placed, number>();
+  private repaint: RepaintStats = { full: true, blits: 0, damageRects: 0 };
+  // ── terrain cadence ──────────────────────────────────────────────────────
+  /** Camera/world/art changed: repaint the terrain on the next frame. */
+  private terrainDirty = true;
+  private lastTerrainT = -Infinity;
   private lastOrder: Placed[] = [];
   private lastCycles: string[][] = [];
   private pad: number;
@@ -506,6 +547,7 @@ export class IsoRenderer {
     // cache dirties a neighbourhood rather than a tile.
     this.roadCache.invalidateTile(tx, ty, "invalidateTile");
     this.structuresDirty = true;
+    this.terrainDirty = true;
   }
 
   invalidateAll() {
@@ -513,6 +555,7 @@ export class IsoRenderer {
     this.groundChunkCache.clear();
     this.roadCache.clear("all");
     this.structuresDirty = true;
+    this.terrainDirty = true;
   }
 
   setCamera(cam: Camera) {
@@ -521,12 +564,14 @@ export class IsoRenderer {
     }
     this.cam = cam;
     this.structuresDirty = true;
+    this.terrainDirty = true;
   }
 
   setWorld(world: World) {
     const gridChanged = this.world.grid !== world.grid;
     this.world = world;
     this.structuresDirty = true;
+    this.terrainDirty = true;
     if (gridChanged) {
       // A new map, a loaded save or a guest snapshot: nothing cached applies.
       invalidateGroundContours(this.world.grid);
@@ -652,6 +697,7 @@ export class IsoRenderer {
    */
   setDecals(scenery: Scenery | null): void {
     this.decals = scenery?.decals ?? null;
+    this.terrainDirty = true;
   }
 
   /**
@@ -661,6 +707,7 @@ export class IsoRenderer {
    */
   setDecalImages(images: DecalImages | null): void {
     this.decalImages = images;
+    this.terrainDirty = true;
   }
 
   // ── ground chunks ────────────────────────────────────────────────────────
@@ -761,17 +808,22 @@ export class IsoRenderer {
     if (this.logRender) this.trace("terrain-pass", { range: [r.x0, r.y0, r.x1, r.y1], blits, decals, z: cam.zoom });
   }
 
-  drawStructures(timeMs = 0) {
+  /**
+   * The structures layer. When only traffic (or a multi-frame sprite) changed
+   * since the last complete frame, the pass repaints just the DAMAGE: the old
+   * and new screen bounds of each moving sprite, clipped, with the roads, the
+   * shadows and every sprite intersecting those bounds redrawn in the same
+   * depth order — so transparent edges and foreground occlusion come out
+   * exactly as a full repaint would draw them. Anything else — a changed
+   * static order (a lorry dragged into a cycle included), world, camera or
+   * artwork — repaints the whole viewport. `forceFull` does that on demand
+   * (for comparison) without dropping the placement cache.
+   */
+  drawStructures(timeMs = 0, forceFull = false) {
     const ctx = this.ctxS, cam = this.cam;
-    ctx.clearRect(0, 0, cam.vw, cam.vh);
     const r = visibleTileRange(cam, this.pad);
     const textured = this.roadMode === "textured";
-    // Roads are flat, so they go down first, under every elevated thing —
-    // and above the terrain canvas entirely, which is what keeps their
-    // transparent verges showing the real decals and grass underneath.
-    this.roadBlits = textured
-      ? this.roadCache.paint(ctx, cam, this.world, this.roadStyle, (w, h) => makeSurface(w, h))
-      : 0;
+    let full = forceFull || this.structuresDirty || !this.paintedValid;
     // Static geometry only changes on existing world/art/tile invalidation
     // paths or a changed visible range. Never cache vehicles: the game replaces
     // that list every frame without setWorld(). Keep their original tail order
@@ -782,6 +834,7 @@ export class IsoRenderer {
       this.staticItemCount = items.length;
       this.staticPlaced = items.map((i) => place(this.atlas, i)).filter((p): p is Placed => p !== null);
       this.staticRange = rangeKey;
+      full = true;
     }
     const placed = this.staticPlaced.slice();
     let itemCount = this.staticItemCount;
@@ -796,18 +849,91 @@ export class IsoRenderer {
     const { order } = sorted;
     this.lastOrder = order;
     this.lastCycles = sorted.cycles;
+
+    // What moved since the last frame: every moving sprite, and each animated
+    // static sprite whose frame index changed.
+    const staticOrder: Placed[] = [];
+    const movingRects: ScreenRect[] = [];
+    const frames = new Map<Placed, number>();
+    const damage: ScreenRect[] = [];
+    for (const p of order) {
+      if (isMoving(p)) { movingRects.push(this.screenRect(p)); continue; }
+      staticOrder.push(p);
+      if ((p.def.frames ?? 1) > 1) {
+        const f = p.frame ?? this.atlas.frameAt(p.def, timeMs);
+        frames.set(p, f);
+        if (this.lastFrames.get(p) !== f) damage.push(this.screenRect(p));
+      }
+    }
+    if (!full && (sorted.cycles.length > 0 || !sameOrder(staticOrder, this.lastStaticOrder))) full = true;
+    if (!full) damage.push(...this.lastMovingRects, ...movingRects);
+    this.lastStaticOrder = staticOrder;
+    this.lastMovingRects = movingRects;
+    this.lastFrames = frames;
+
+    const paintRoads = () => {
+      // Roads are flat, so they go down first, under every elevated thing —
+      // and above the terrain canvas entirely, which is what keeps their
+      // transparent verges showing the real decals and grass underneath.
+      this.roadBlits = textured
+        ? this.roadCache.paint(ctx, cam, this.world, this.roadStyle, (w, h) => makeSurface(w, h))
+        : 0;
+    };
     // Contact shadows go down between the roads and the first sprite: they
     // are ground, so they may darken the asphalt a building stands beside
     // but must never land on a building, a tree or a passing lorry.
-    const shadows = paintBuildingShadows(
+    const paintShadows = () => paintBuildingShadows(
       ctx, cam, order, this.shadowStamps, (w, h) => makeSurface(w, h));
-    for (const p of order) this.blit(ctx, p, timeMs);
+    let shadows = 0, blits = 0, damageRects = 0;
+    if (full) {
+      ctx.clearRect(0, 0, cam.vw, cam.vh);
+      paintRoads();
+      shadows = paintShadows();
+      for (const p of order) if (this.blit(ctx, p, timeMs)) blits++;
+      this.paintedValid = true;
+    } else {
+      // Off-screen traffic leaves a still viewport untouched.
+      const rects = clampRects(damage, cam.vw, cam.vh);
+      damageRects = rects.length;
+      if (rects.length) {
+        ctx.save();
+        ctx.beginPath();
+        for (const d of rects) {
+          ctx.clearRect(d.x0, d.y0, d.x1 - d.x0, d.y1 - d.y0);
+          ctx.rect(d.x0, d.y0, d.x1 - d.x0, d.y1 - d.y0);
+        }
+        ctx.clip();
+        paintRoads();
+        shadows = paintShadows();
+        for (const p of order) {
+          const box = this.screenRect(p);
+          if (!rects.some((d) => rectsOverlap(box, d))) continue;
+          if (this.blit(ctx, p, timeMs)) blits++;
+        }
+        ctx.restore();
+      } else {
+        this.roadBlits = 0;
+      }
+    }
+    this.repaint = { full, blits, damageRects };
     if (this.logRender) this.trace("structures-pass", {
       z: cam.zoom, range: [r.x0, r.y0, r.x1, r.y1],
       items: itemCount, placed: placed.length, shadows, cycles: sorted.cycles,
+      repaint: this.repaint,
       order: order.map((p) => ({ sprite: p.sprite, tile: [p.tx, p.ty], key: p.key })),
     });
     this.structuresDirty = false;
+  }
+
+  /**
+   * Integer screen bounds a sprite's blit can touch, padded a pixel each way
+   * for the zoomed source rect's rounding.
+   */
+  private screenRect(p: Placed): ScreenRect {
+    const z = this.cam.zoom;
+    const [sx, sy] = worldToScreen(this.cam, p.wx, p.wy);
+    const x0 = Math.floor(sx), y0 = Math.floor(sy);
+    return { x0: x0 - 1, y0: y0 - 1, x1: x0 + Math.ceil(p.w * z) + 1, y1: y0 + Math.ceil(p.h * z) + 1 };
   }
 
   /** Overlay: cheap, cleared and redrawn every frame. */
@@ -853,13 +979,14 @@ export class IsoRenderer {
    */
   readonly drawnSprites = new Set<string>();
 
-  private blit(ctx: Ctx2D, p: Placed, timeMs: number) {
+  /** Draw one placed sprite; false when its image is not loaded. */
+  private blit(ctx: Ctx2D, p: Placed, timeMs: number): boolean {
     const z = this.cam.zoom;
     // W-series: roads blit from the ROADS atlas, buildings from the BUILDINGS
     // atlas (separate PNG layer atlases, identical rect layout); anything
     // else falls back to the monolithic image (layer sets unloaded).
     const img = this.atlas.imageForSprite(p.sprite, z);
-    if (!img) return;
+    if (!img) return false;
     this.drawnSprites.add(p.sprite);
     const frame = p.frame ?? this.atlas.frameAt(p.def, timeMs);
     // Source rect in the ZOOMED atlas — never the raw 1× rect scaled with a
@@ -879,16 +1006,23 @@ export class IsoRenderer {
       src, dest: [Math.floor(sx), Math.floor(sy), src.w, src.h],
       depthKey: p.key,
     });
+    return true;
   }
 
   /**
-   * One frame. The terrain layer redraws every frame — the ocean drifts and
-   * the surf breathes — but its static island is chunk-cached, so the per-
-   * frame cost is one pattern fill, a handful of chunk blits and the shore
-   * strokes. Structures redraw only when dirty or animated.
+   * One frame. The terrain layer animates — the ocean drifts and the surf
+   * breathes — but slowly, so its ambient repaint is capped at ~30 Hz
+   * (`TERRAIN_FRAME_MS`); a camera, world or art change repaints it on the
+   * very next frame. Its static island is chunk-cached either way. Structures
+   * redraw only when dirty or animated, and the overlay every frame.
    */
   render(timeMs = 0, overlay: DrawItem[] = [], ghost: GhostSpec | null = null) {
-    this.drawTerrain(timeMs);
+    const since = timeMs - this.lastTerrainT;
+    if (this.terrainDirty || since < 0 || since >= TERRAIN_FRAME_MS - TERRAIN_FRAME_SLACK_MS) {
+      this.terrainDirty = false;
+      this.lastTerrainT = timeMs;
+      this.drawTerrain(timeMs);
+    }
     if (this.structuresDirty || this.hasAnimation()) this.drawStructures(timeMs);
     this.drawOverlay(overlay, timeMs, ghost);
   }
@@ -967,6 +1101,7 @@ export class IsoRenderer {
       chunkCacheEntries: this.groundChunkCache.size,
       roads: this.roadDiagnostics(),
       overlay: this.overlayDiagnostics(),
+      repaint: { ...this.repaint },
       groundAnchorReference,
       depthCycles: this.lastCycles,
       structures,
@@ -974,6 +1109,24 @@ export class IsoRenderer {
       warnings,
     };
   }
+}
+
+/** Same placements in the same order, by identity. */
+function sameOrder(a: Placed[], b: Placed[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+/** Clamp damage to the viewport, dropping anything wholly off-screen. */
+function clampRects(rects: ScreenRect[], vw: number, vh: number): ScreenRect[] {
+  const out: ScreenRect[] = [];
+  for (const d of rects) {
+    const x0 = Math.max(0, d.x0), y0 = Math.max(0, d.y0);
+    const x1 = Math.min(Math.ceil(vw), d.x1), y1 = Math.min(Math.ceil(vh), d.y1);
+    if (x0 < x1 && y0 < y1) out.push({ x0, y0, x1, y1 });
+  }
+  return out;
 }
 
 /**

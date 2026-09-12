@@ -56,11 +56,7 @@ import { sfx } from "../audio/sfx";
 // The board figure draws the real painted hex gems, mapped by CARGO name the
 // same way ui.ts's GEM_ART does — one set of tokens everywhere, so the tour
 // shows the art the player is about to look at rather than a stand-in.
-const GEM_ART: Partial<Record<Cargo, string>> = Object.fromEntries(
-  Object.entries(
-    import.meta.glob<string>("../assets/gems/*.png", { eager: true, import: "default" }),
-  ).map(([path, url]) => [path.split("/").pop()!.replace(/\.png$/, ""), url]),
-) as Partial<Record<Cargo, string>>;
+import { GEM_ART } from "../game/gem-art";
 
 // ── the preference ────────────────────────────────────────────────────────
 /** One key, one meaning: the player pressed *Never show this again*. */

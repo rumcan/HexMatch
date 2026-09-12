@@ -14,7 +14,7 @@ vi.mock("../../src/iso/building-shadow", async (importOriginal) => ({
 }));
 function setup() {
   const atlas = new Atlas(JSON.parse(readFileSync("assets/iso-atlas/manifest.json", "utf8")) as Manifest);
-  const ctx = { clearRect: vi.fn() };
+  const ctx = { clearRect: vi.fn(), save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn() };
   const canvas = { getContext: () => ctx } as unknown as HTMLCanvasElement;
   const world: World = { grid: generateMap(1234), extra: [{ sprite: "depot_blue", tx: 72, ty: 72 }],
     roadBits: new Uint8Array(MAP_W * MAP_H), dirtBits: new Uint8Array(MAP_W * MAP_H) };

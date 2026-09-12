@@ -69,15 +69,9 @@ import portraitTorvin from "../assets/ui/tycoon_torvin_small.png";
 import portraitVex from "../assets/ui/tycoon_vex_small.png";
 
 // ── V5: the restored gem art ────────────────────────────────────────────────
-// One sprite per cargo in src/assets/gems/, mapped through the same gem→cargo
-// bijection quarry.ts uses, so a colour can never draw the wrong sprite. The
-// files are committed to the repo; drop a replacement PNG of the same name in
-// and it is picked up here.
-const GEM_ART: Record<Cargo, string> = Object.fromEntries(
-  Object.entries(
-    import.meta.glob<string>("../assets/gems/*.png", { eager: true, import: "default" }),
-  ).map(([path, url]) => [path.split("/").pop()!.replace(/\.png$/, ""), url]),
-) as Record<Cargo, string>;
+// One sprite per cargo (./gem-art.ts), mapped through the same gem→cargo
+// bijection quarry.ts uses, so a colour can never draw the wrong sprite.
+import { GEM_ART } from "./gem-art";
 
 // ── NOIR: the painted mugshots ──────────────────────────────────────────────
 // `tycoon_*.png` are the family portraits (src/assets/ui/, kept when U1 pruned
@@ -801,8 +795,10 @@ export function createOriginalUi(
   }
 
   // ── board interactions ────────────────────────────────────────────────────
-  const cellFrom = (e: { clientX: number; clientY: number }): { r: number; c: number } | null => {
-    const rect = grid.getBoundingClientRect();
+  const cellFrom = (e: { clientX: number; clientY: number }): { r: number; c: number } | null =>
+    cellIn(e, grid.getBoundingClientRect());
+  /** The cell under a client point, against a rect the caller already read. */
+  const cellIn = (e: { clientX: number; clientY: number }, rect: DOMRect): { r: number; c: number } | null => {
     const cw = rect.width / BOARD_W, ch = rect.height / BOARD_H;
     const c = Math.floor((e.clientX - rect.left) / cw);
     const r = Math.floor((e.clientY - rect.top) / ch);
@@ -866,8 +862,8 @@ export function createOriginalUi(
   const DRAG_START_PX = 5;
   /** Grid px pulled along the axis before the swap commits. */
   const COMMIT_PX = CELL * 0.5;
-  /** Matches the `.gem` translate transition in styles.css. */
-  const GLIDE_MS = 200;
+  /** The release glide (`.gem.gliding` in styles.css): the board's swap duration. */
+  const GLIDE_MS = BOARD_ANIMATION_MS.swap;
   const SETTLE_MS = 300;
   type Cell = { r: number; c: number };
   interface Drag { from: Cell; el: HTMLElement; pointerId: number; x0: number; y0: number; active: boolean; peer: HTMLElement | null }
@@ -905,14 +901,17 @@ export function createOriginalUi(
     el.style.translate = `${sx - bx}px ${sy - by}px`;
     void el.offsetWidth; // commit the jump before the transition resumes
     el.style.transition = "";
+    // Only a release eases `translate`; hover and held gems follow the pointer.
+    el.classList.add("gliding");
     el.style.translate = "";
+    window.setTimeout(() => el.classList.remove("gliding"), GLIDE_MS);
     if (!shake || reduceMotion) return;
     window.setTimeout(() => {
       el.classList.remove("settle");
       void el.offsetWidth;
       el.classList.add("settle");
       window.setTimeout(() => el.classList.remove("settle"), SETTLE_MS);
-    }, GLIDE_MS - 60);
+    }, Math.max(0, GLIDE_MS - 60));
   }
 
   /** Snapshot where each gem is on screen, run `act`, then glide them all. */
@@ -941,12 +940,15 @@ export function createOriginalUi(
     if (!drag) {
       // hover lean — a mouse only; a finger has no hover to answer
       if (reduceMotion || e.pointerType !== "mouse") return;
-      const cell = cellFrom(e);
+      // Read the geometry ONCE, before any style write, so the lean never
+      // forces a second layout inside the same event.
+      const rect = grid.getBoundingClientRect();
+      const k = (CELL * BOARD_W) / (rect.width || CELL * BOARD_W);
+      const cell = cellIn(e, rect);
       const g = cell ? board.grid[cell.r]?.[cell.c] : null;
       const el = g && !g.block ? gemEls.get(g.id) ?? null : null;
       if (el !== leaning) unlean();
       if (!el || !cell) return;
-      const rect = grid.getBoundingClientRect(), k = toLocal();
       const lean = (v: number) => Math.max(-1, Math.min(1, v / (CELL / 2))) * LEAN_PX;
       const lx = (e.clientX - rect.left) * k - (cell.c + 0.5) * CELL;
       const ly = (e.clientY - rect.top) * k - (cell.r + 0.5) * CELL;
@@ -956,14 +958,15 @@ export function createOriginalUi(
     }
     if (e.pointerId !== drag.pointerId) return;
     const dx = e.clientX - drag.x0, dy = e.clientY - drag.y0;
+    if (!drag.active && Math.hypot(dx, dy) < DRAG_START_PX) return;
+    const k = toLocal();   // geometry first, before the class/style writes below
     if (!drag.active) {
-      if (Math.hypot(dx, dy) < DRAG_START_PX) return;
       drag.active = true;
       try { grid.setPointerCapture(e.pointerId); } catch { /* synthetic pointer */ }
+      drag.el.classList.remove("gliding");
       drag.el.classList.add("dragging");
       sfx.play("select");
     }
-    const k = toLocal();
     const horiz = Math.abs(dx) >= Math.abs(dy);
     const pull = (horiz ? dx : dy) * k;
     const dir = Math.sign(pull);
@@ -1411,17 +1414,32 @@ export function createOriginalUi(
   window.addEventListener("orientationchange", responsiveZoom);
 
   // ── top HUD: chips, VP, kingdoms ──────────────────────────────────────────
+  // The HUD is painted every frame, so its nodes are built once and only what
+  // actually changed is written. Replacing them per frame churned the DOM and
+  // could swallow a hover or click landing between two frames.
+  const chipNums = new Map<Cargo, HTMLElement>();
+  let lastVpHtml = "";
+  const kingRows = new Map<number, { row: HTMLElement; cls: string; colour: string; tip: string; html: string }>();
+  let lastModebarInfo: string | null = null;
+  let lastInspectHtml = "";
+
   function renderHUD(purse: Partial<Record<Cargo, number>>, players: UiPlayer[], portrait: Portrait, target: number) {
-    chips.innerHTML = "";
     for (const k of CARGOES) {
-      const chip = h("div", "chip");
-      chip.style.setProperty("--c1", CARGO[k].c1);
-      chip.style.setProperty("--c2", CARGO[k].c2);
-      chip.innerHTML = `<span class="chip-ic"><i class="gem-ic">${CARGO[k].icon}</i></span><span class="chip-n">${purse[k] ?? 0}</span>`;
-      // PP-08: the Gold chip states what the currency is for, so a player
-      // holding coins never mistakes them for construction stock.
-      if (k === "gold") chip.title = GOLD_RULE;
-      chips.appendChild(chip);
+      let num = chipNums.get(k);
+      if (!num) {
+        const chip = h("div", "chip");
+        chip.style.setProperty("--c1", CARGO[k].c1);
+        chip.style.setProperty("--c2", CARGO[k].c2);
+        chip.innerHTML = `<span class="chip-ic"><i class="gem-ic">${CARGO[k].icon}</i></span><span class="chip-n"></span>`;
+        // PP-08: the Gold chip states what the currency is for, so a player
+        // holding coins never mistakes them for construction stock.
+        if (k === "gold") chip.title = GOLD_RULE;
+        chips.appendChild(chip);
+        num = chip.querySelector(".chip-n") as HTMLElement;
+        chipNums.set(k, num);
+      }
+      const text = String(purse[k] ?? 0);
+      if (num.textContent !== text) num.textContent = text;
     }
     const meP = players.find((p) => p.human);
     const yourVp = meP?.vp ?? 0;
@@ -1430,31 +1448,48 @@ export function createOriginalUi(
     hudVpTarget = target;
     // The original badge is just a star counter; keeping "You" in it lets the
     // boot/e2e assertions stay unambiguous for the single-player build.
-    vp.innerHTML = `<span class="vp-star">★</span> You ${fmtVp(yourVp)}<span class="vp-tot">/${target}</span>`;
+    const vpHtml = `<span class="vp-star">★</span> You ${fmtVp(yourVp)}<span class="vp-tot">/${target}</span>`;
+    if (vpHtml !== lastVpHtml) { vp.innerHTML = vpHtml; lastVpHtml = vpHtml; }
 
     const list = [...players].sort((a, b) => b.vp - a.vp);
-    kingdoms.innerHTML = "";
-    for (const p of list) {
-      const row = h("div", "king" + (p.human ? " self" : ""));
-      row.style.setProperty("--pc", p.colour);
+    const live = new Set<number>();
+    list.forEach((p, i) => {
+      const seat = players.indexOf(p);
+      live.add(seat);
+      let rec = kingRows.get(seat);
+      if (!rec) {
+        rec = { row: h("div"), cls: "", colour: "", tip: "", html: "" };
+        kingRows.set(seat, rec);
+      }
+      const cls = "king" + (p.human ? " self" : "");
+      if (rec.cls !== cls) { rec.row.className = cls; rec.cls = cls; }
+      if (rec.colour !== p.colour) { rec.row.style.setProperty("--pc", p.colour); rec.colour = p.colour; }
       // AI-03: the breakdown is prebuilt by the game (it owns the ledger);
       // native title keeps this one line of tooltip code.
-      if (p.vpTip) row.title = p.vpTip;
+      const tip = p.vpTip ?? "";
+      if (rec.tip !== tip) {
+        if (tip) rec.row.title = tip; else rec.row.removeAttribute("title");
+        rec.tip = tip;
+      }
       // PP-14b + NOIR: the dossier face. The player's own is the Vex or You
       // portrait picked on the start screen; every rival keeps the mugshot its
       // name (or seat) maps to — Torvin plays the solo rival. The coloured
       // initial stays as the fallback under the image.
       const face = p.human
         ? (portrait === "you" ? portraitYou : portraitVex)
-        : portraitFor(p, players.indexOf(p));
-      row.innerHTML = `
+        : portraitFor(p, seat);
+      const html = `
         <div class="king-av has-portrait" style="background-image:url(${face})">${p.name[0]}</div>
         <div class="king-mid">
           <div class="king-name">${p.name}${p.human ? " <span class='you'>YOU</span>" : ""}</div>
           <div class="king-bar"><i style="width:${Math.min(100, (p.vp / target) * 100)}%;background:${p.colour}"></i></div>
         </div>
         <div class="king-vp">${fmtVp(p.vp)}<small>★</small></div>`;
-      kingdoms.appendChild(row);
+      if (rec.html !== html) { rec.row.innerHTML = html; rec.html = html; }
+      if (kingdoms.children[i] !== rec.row) kingdoms.insertBefore(rec.row, kingdoms.children[i] ?? null);
+    });
+    for (const [seat, rec] of kingRows) {
+      if (!live.has(seat)) { rec.row.remove(); kingRows.delete(seat); }
     }
   }
 
@@ -1484,7 +1519,8 @@ export function createOriginalUi(
     // the plant re-arms.
     const resetLeft = Math.ceil((state.resetIn ?? 0) / 1000);
     resetBtn.disabled = resetLeft > 0;
-    resetBtn.textContent = resetLeft > 0 ? `♻ Reset ${resetLeft}s` : "♻ Reset";
+    const resetText = resetLeft > 0 ? `♻ Reset ${resetLeft}s` : "♻ Reset";
+    if (resetBtn.textContent !== resetText) resetBtn.textContent = resetText;
     // PP-08: the panel re-renders when Gold changes OR when the material
     // affordability of a non-gold action (Security, Repair) flips — otherwise
     // a purse that only gained/lost materials would show a stale button.
@@ -1548,23 +1584,23 @@ export function createOriginalUi(
     });
     const info = state.costInfo;
     modebar.classList.toggle("hidden", !info);
-    if (info) {
+    if (info && info !== lastModebarInfo) {
       modebar.innerHTML = info;
       const cancel = h("button", "mb-cancel", "Cancel ✕");
       cancel.dataset.sfx = "close";
       cancel.onclick = () => modebar.classList.add("hidden");
       modebar.appendChild(cancel);
     }
-    if (state.inspect) {
-      inspectEl.innerHTML = state.inspect;
-      inspectEl.classList.toggle("bad", state.inspectTone === "bad");
-      inspectEl.classList.toggle("good", state.inspectTone === "good");
-      inspectEl.style.display = "block";
-    } else {
-      inspectEl.innerHTML = "";
-      inspectEl.classList.remove("bad", "good");
-      inspectEl.style.display = "none";
+    lastModebarInfo = info;
+    const inspectHtml = state.inspect ?? "";
+    if (inspectHtml !== lastInspectHtml) {
+      inspectEl.innerHTML = inspectHtml;
+      lastInspectHtml = inspectHtml;
     }
+    inspectEl.classList.toggle("bad", !!state.inspect && state.inspectTone === "bad");
+    inspectEl.classList.toggle("good", !!state.inspect && state.inspectTone === "good");
+    const inspectDisplay = state.inspect ? "block" : "none";
+    if (inspectEl.style.display !== inspectDisplay) inspectEl.style.display = inspectDisplay;
     const now = performance.now();
     // Refresh when offers are born/expired/accepted, and once per second so the
     // on-card countdown stays live without rebuilding the DOM every frame.

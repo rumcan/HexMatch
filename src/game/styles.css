@@ -857,10 +857,11 @@ html, body, #root {
 .gem {
   position: absolute;  width:var(--gem,48px);height:var(--gem,48px); left: 0; top: 0;
   /* `translate` is TACTILE-01's hover lean / drag offset (ui.ts), layered on
-     the inline cell `transform`; the slight overshoot is the "ease into place". */
+     the inline cell `transform`. It follows the pointer with NO transition —
+     easing each pointer event made the hand lead the gem. Only a release eases
+     (`.gliding`, below), over the board's own swap duration. */
   transition:
     transform var(--gem-move-ms, 80ms) cubic-bezier(.4,1.3,.5,1),
-    translate .2s cubic-bezier(.22,.9,.3,1.12),
     scale .16s ease-out,
     opacity var(--gem-clear-ms, 95ms);
   will-change: transform, translate;
@@ -954,20 +955,15 @@ html, body, #root {
    whisper of lag. Yielding: the neighbour leans out of the way. Settle: a
    small decaying wobble on `rotate` — its own property, so it never touches
    the cell `transform` or the glide `translate`. */
-.gem.dragging {
-  z-index: 5; cursor: grabbing; scale: 1.07;
-  transition:
-    transform var(--gem-move-ms, 80ms) cubic-bezier(.4,1.3,.5,1),
-    translate 50ms linear,
-    scale .16s ease-out,
-    opacity var(--gem-clear-ms, 95ms);
-}
+.gem.dragging { z-index: 5; cursor: grabbing; scale: 1.07; }
 .gem.dragging .face.sprite { filter: drop-shadow(0 0 8px rgba(255, 217, 138, .5)) drop-shadow(0 7px 7px rgba(0, 0, 0, .55)); }
-.gem.yielding {
-  z-index: 4;
+.gem.yielding { z-index: 4; }
+/* Release: ease from where the hand left the gem into its cell. */
+.gem.gliding {
   transition:
     transform var(--gem-move-ms, 80ms) cubic-bezier(.4,1.3,.5,1),
-    translate 90ms ease-out,
+    translate var(--gem-move-ms, 80ms) cubic-bezier(.22,.9,.3,1.12),
+    scale .16s ease-out,
     opacity var(--gem-clear-ms, 95ms);
 }
 .gem.settle { animation: gem-settle 300ms ease-out; }

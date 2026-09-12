@@ -2820,3 +2820,33 @@ describe("processing plant town picking", () => {
     expect(root.querySelector(".toasts")!.textContent).not.toContain("That ground is taken");
   });
 });
+
+// ── Pointer responsiveness: the overlay answers the pointer event itself ────
+// The hover highlight used to wait for the next animation frame, which also
+// runs the simulation, terrain and traffic. It is painted inside the handler
+// now; rAF here is a setTimeout, so a call observed before any await proves
+// the paint happened synchronously.
+describe("pointer responsiveness", () => {
+  it("paints changed pointer hovers synchronously and clears them on leave", async () => {
+    await boot();
+    const { IsoRenderer } = await import("../../src/iso/renderer");
+    // Record the paint without rasterising: the stub context has no gradients.
+    const draw = vi.spyOn(IsoRenderer.prototype, "drawOverlay").mockImplementation(() => {});
+    const overlay = root.querySelectorAll("canvas")[2] as HTMLCanvasElement;
+    const move = (x: number, y: number) =>
+      overlay.dispatchEvent(new MouseEvent("pointermove", { clientX: x, clientY: y, bubbles: true }));
+
+    move(0, 0);
+    expect(draw).toHaveBeenCalledTimes(1);
+    const items = draw.mock.calls[0][0] ?? [];
+    expect(items.length).toBeGreaterThan(0);
+
+    // Same tile again: nothing to repaint.
+    move(0, 0);
+    expect(draw).toHaveBeenCalledTimes(1);
+
+    overlay.dispatchEvent(new MouseEvent("pointerleave"));
+    expect(draw).toHaveBeenCalledTimes(2);
+    expect(draw.mock.calls[1][0]).toEqual([]);
+  });
+});
