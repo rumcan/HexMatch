@@ -297,17 +297,25 @@ export function attachUiSound(
     playCue("tab");
   };
 
+  // `passive` is a promise not to cancel, and it is the right one for the
+  // pointer and change listeners — none of them has a default to stop, and the
+  // browser may then scroll without waiting for this code. The keydown listener
+  // is the exception: the `M` shortcut really does swallow the key so nothing
+  // downstream can act on it too, and a passive listener that calls
+  // `preventDefault()` is ignored (with a console warning) in every browser that
+  // honours the flag.
   const opts = { capture: true, passive: true } as const;
+  const keys = { capture: true } as const;
   host.addEventListener("pointerdown", onDown, opts);
   host.addEventListener("pointerover", onOver, opts);
-  host.addEventListener("keydown", onKey, opts);
+  host.addEventListener("keydown", onKey, keys);
   host.addEventListener("change", onChange, opts);
   installSfxDebug();
 
   return () => {
     host.removeEventListener("pointerdown", onDown, opts);
     host.removeEventListener("pointerover", onOver, opts);
-    host.removeEventListener("keydown", onKey, opts);
+    host.removeEventListener("keydown", onKey, keys);
     host.removeEventListener("change", onChange, opts);
     attached.delete(host as object);
   };

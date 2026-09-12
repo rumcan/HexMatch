@@ -467,13 +467,22 @@ describe("SFX-01 the mute switch mutes the whole game", () => {
   it("answers the M shortcut by flipping the switch", () => {
     const el = host(`<button id="b">Road</button>`);
     sfxMod.attachUiSound(el, REAL);
-    const m = () => el.dispatchEvent(new KeyboardEvent("keydown", { key: "m", bubbles: true }));
-    m();
-    expect(sfx().isEnabled(), "M mutes").toBe(false);
+    const m = () => {
+      const ev = new KeyboardEvent("keydown", { key: "m", bubbles: true, cancelable: true });
+      el.dispatchEvent(ev);
+      return ev;
+    };
+    // The shortcut swallows the key so nothing downstream can act on it too —
+    // which it may only do from a listener that is NOT passive: a passive
+    // listener's preventDefault() is ignored, with a console warning, by every
+    // browser that honours the flag (jsdom among them, which is why this is
+    // assertable here at all).
+    expect(m().defaultPrevented, "M is consumed, and the listener may consume it").toBe(true);
+    expect(sfx().isEnabled(), "…and that first M muted").toBe(false);
     m();
     expect(sfx().isEnabled(), "M unmutes").toBe(true);
     // a modified M is somebody else's shortcut
-    el.dispatchEvent(new KeyboardEvent("keydown", { key: "m", ctrlKey: true, bubbles: true }));
+    el.dispatchEvent(new KeyboardEvent("keydown", { key: "m", ctrlKey: true, bubbles: true, cancelable: true }));
     expect(sfx().isEnabled()).toBe(true);
   });
 
