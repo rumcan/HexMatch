@@ -243,6 +243,7 @@ export async function loadBuildingLayers(atlas: Atlas, baseUrl = "/assets/buildi
       s.x = 0; s.y = 0; s.w = def.w; s.h = def.h;
       s.anchor = def.anchor;
       s.center = true;
+      if (def.footprint) s.footprint = def.footprint;
     } catch (err) {
       console.warn(`[building-layers] ${name}: fell back to the shared sheet`, err);
     }

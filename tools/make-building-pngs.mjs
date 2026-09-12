@@ -130,13 +130,21 @@ async function alphaBBox(img, threshold = 8) {
  * (TICKET-B2).
  */
 async function processBuilding(name, fps) {
-  const fp = fps[name];
-  if (!fp) throw new Error(`"${name}" is not a sprite in assets/iso-atlas/manifest.json — buildings must map onto existing game footprints`);
   const src = join(SRC, `${name}@2x.png`);
   if (!existsSync(src)) throw new Error(`missing ${src}`);
-  const spec = specFor(fp);
   const meta = await sharp(src).metadata();
   const W = meta.width ?? 0, H = meta.height ?? 0;
+
+  // Template size determines the terrain footprint:
+  // 128x128 -> [1, 1], 256x256 -> [2, 2], 384x384 -> [3, 3], 512x512 -> [4, 4]
+  let fp;
+  if (W === 128 && H === 128) fp = [1, 1];
+  else if (W === 256 && H === 256) fp = [2, 2];
+  else if (W === 384 && H === 384) fp = [3, 3];
+  else if (W === 512 && H === 512) fp = [4, 4];
+  else fp = fps[name] ?? [1, 1];
+
+  const spec = specFor(fp);
   if (W < spec.S || H < spec.S) {
     throw new Error(`${name}: canvas must be at least ${spec.S}×${spec.S} at 2× for a ${fp[0]}×${fp[1]} footprint (got ${W}×${H}) — use assets/buildings-src/templates/${fp[0]}x${fp[1]}@2x.png as the base (larger overhang canvases allowed: ground diamond pinned to the canvas bottom)`);
   }
