@@ -53,10 +53,10 @@ const CARGO_TO_GEM: Partial<Record<Cargo, ResKey>> = Object.fromEntries(
 ) as Partial<Record<Cargo, ResKey>>;
 import { Board, type FxType, type Gem } from "./board";
 import type { IsoMarket, IsoMarketPlayer, Offer } from "../iso/market";
-import portraitYou from "../assets/ui/tycoon_you.png";
+import portraitYou from "../assets/ui/tycoon_you_small.png";
 import portraitKrag from "../assets/ui/tycoon_krag.png";
-import portraitTorvin from "../assets/ui/tycoon_torvin.png";
-import portraitVex from "../assets/ui/tycoon_vex.png";
+import portraitTorvin from "../assets/ui/tycoon_torvin_small.png";
+import portraitVex from "../assets/ui/tycoon_vex_small.png";
 
 // ── V5: the restored gem art ────────────────────────────────────────────────
 // One sprite per cargo in src/assets/gems/, mapped through the same gem→cargo

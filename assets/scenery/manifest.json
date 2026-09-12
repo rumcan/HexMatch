@@ -1,0 +1,305 @@
+{
+  "note": "Scenery, cut from tools/scenery-src/ by tools/make-scenery-art.mjs. Same geometry contract as assets/buildings/manifest.json: w/h/anchor are 1x, footprint in tiles, art is centre-anchored on the footprint. For a tree the anchor is the foot of the trunk; for a forest block it is the centre of its ground diamond.",
+  "sprites": {
+    "tree_dead_a": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 52,
+      "h": 86,
+      "anchor": [
+        28,
+        78
+      ]
+    },
+    "tree_dead_b": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 42,
+      "h": 68,
+      "anchor": [
+        22,
+        62
+      ]
+    },
+    "tree_dead_c": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 60,
+      "h": 100,
+      "anchor": [
+        32,
+        91
+      ]
+    },
+    "tree_bush_a": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 64,
+      "h": 72,
+      "anchor": [
+        31,
+        62
+      ]
+    },
+    "tree_bush_b": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 52,
+      "h": 58,
+      "anchor": [
+        25,
+        49
+      ]
+    },
+    "tree_bush_c": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 74,
+      "h": 84,
+      "anchor": [
+        36,
+        72
+      ]
+    },
+    "tree_bush_d": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 42,
+      "h": 46,
+      "anchor": [
+        20,
+        39
+      ]
+    },
+    "tree_pine_a": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 50,
+      "h": 88,
+      "anchor": [
+        25,
+        80
+      ]
+    },
+    "tree_pine_b": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 40,
+      "h": 70,
+      "anchor": [
+        20,
+        64
+      ]
+    },
+    "tree_pine_c": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 58,
+      "h": 102,
+      "anchor": [
+        29,
+        93
+      ]
+    },
+    "tree_pine_d": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 32,
+      "h": 56,
+      "anchor": [
+        16,
+        51
+      ]
+    },
+    "tree_oak_a": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 74,
+      "h": 84,
+      "anchor": [
+        36,
+        73
+      ]
+    },
+    "tree_oak_b": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 60,
+      "h": 68,
+      "anchor": [
+        29,
+        59
+      ]
+    },
+    "tree_oak_c": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 86,
+      "h": 98,
+      "anchor": [
+        42,
+        85
+      ]
+    },
+    "tree_oak_d": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 48,
+      "h": 54,
+      "anchor": [
+        23,
+        47
+      ]
+    },
+    "tree_maple_a": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 60,
+      "h": 82,
+      "anchor": [
+        29,
+        73
+      ]
+    },
+    "tree_maple_b": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 48,
+      "h": 66,
+      "anchor": [
+        24,
+        59
+      ]
+    },
+    "tree_maple_c": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 70,
+      "h": 96,
+      "anchor": [
+        34,
+        85
+      ]
+    },
+    "tree_maple_d": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 38,
+      "h": 52,
+      "anchor": [
+        19,
+        47
+      ]
+    },
+    "tree_birch_a": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 48,
+      "h": 82,
+      "anchor": [
+        23,
+        74
+      ]
+    },
+    "tree_birch_b": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 40,
+      "h": 66,
+      "anchor": [
+        19,
+        59
+      ]
+    },
+    "tree_birch_c": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 56,
+      "h": 96,
+      "anchor": [
+        27,
+        86
+      ]
+    },
+    "tree_birch_d": {
+      "footprint": [
+        1,
+        1
+      ],
+      "w": 32,
+      "h": 52,
+      "anchor": [
+        15,
+        47
+      ]
+    },
+    "forest_conifer": {
+      "footprint": [
+        4,
+        4
+      ],
+      "w": 258,
+      "h": 172,
+      "anchor": [
+        128,
+        108
+      ]
+    },
+    "forest_mixed": {
+      "footprint": [
+        4,
+        4
+      ],
+      "w": 260,
+      "h": 184,
+      "anchor": [
+        129,
+        119
+      ]
+    }
+  }
+}

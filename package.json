@@ -18,7 +18,8 @@
     "test:e2e:ui": "playwright test --ui",
     "slice-atlas": "node tools/slice-atlas.mjs && node tools/make-atlas-groups.mjs",
     "atlas:groups": "node tools/make-atlas-groups.mjs",
-    "noir-art": "node tools/make-noir-art.mjs"
+    "noir-art": "node tools/make-noir-art.mjs",
+    "scenery-art": "node tools/make-ground-textures.mjs grass && node tools/make-scenery-art.mjs"
   },
   "dependencies": {
     "@series-inc/rundot-game-sdk": "^5.27.0",

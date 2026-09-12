@@ -216,41 +216,27 @@ html, body, #root {
 .iso-hint { margin-top: 5px; font-size: 10.5px; opacity: .72; line-height: 1.35; font-family: var(--mono); }
 
 /* ── the room ─────────────────────────────────────────────────────
-   `.vignette` is the single overlay that sits above the three map canvases
-   (z-index 1 over mapHost's z-index 0) and below every panel. It used to be
-   a bare inset shadow. It is now the grade: the lamp, the smoke in the beam,
-   and the crushed corners that make the whole screen read as one photograph.
-   `pointer-events: none` throughout, so the map keeps every gesture. */
+   `.vignette` is the single overlay above the three map canvases (z-index 1
+   over mapHost's z-index 0) and below every panel. `pointer-events: none`
+   throughout, so the map keeps every gesture.
+
+   It used to print the war-room backdrop (`--room`, the same photograph
+   behind the difficulty prompt) and a smoke tile OVER the whole map, plus a
+   .46-alpha darkening ramp and a 150px corner crush. That is a grade applied
+   to the TERRAIN: the ground textures are authored to a palette, and having
+   an unrelated photograph soft-lit across them at 12% meant the grass on
+   screen was never the grass in the file — it read as a screen someone
+   forgot to fade out. The surround still carries the room (`.ui-root` paints
+   it BEHIND the canvases, where it frames the map instead of tinting it), so
+   nothing is lost but the veil.
+
+   What is left is a plain corner falloff: enough to seat the map in the
+   frame, far too little to change a colour anyone is trying to judge. */
 .vignette {
   position: absolute; inset: 0; z-index: 1; pointer-events: none;
-  background:
-    linear-gradient(180deg, rgba(40, 24, 8, .3), rgba(10, 7, 5, .12) 42%, rgba(4, 3, 2, .46)),
-    radial-gradient(78% 62% at 50% 8%, rgba(255, 176, 46, .07), transparent 62%);
   box-shadow:
-    inset 0 0 150px 26px rgba(5, 3, 2, .72),
-    inset 0 0 42px 2px rgba(5, 3, 2, .5),
+    inset 0 0 110px 8px rgba(5, 3, 2, .34),
     inset 0 2px 0 rgba(242, 220, 166, .05);
-  /* NO full-screen `filter` here: the map repaints every animation frame and
-     a filter on this overlay would re-run a full-screen pass each time. The
-     grade is done with the two gradients above and the blend modes below. */
-}
-/* the smoke in the beam — static on purpose. This overlay sits above the three
-   map canvases, which repaint every animation frame: an animated
-   `background-position` here would add a full-screen repaint to every frame of
-   gameplay, and a transform-animated layer big enough to loop a 1100px tile
-   seamlessly costs a 40 MB GPU buffer. The room is still and the light in it is
-   still; the game supplies the motion. */
-.vignette::before {
-  content: ""; position: absolute; inset: 0;
-  background: var(--smoke) 6% 12% / 1100px repeat;   /* one length = uniform scale, and the tile is seamless */
-  opacity: .1; mix-blend-mode: screen;
-}
-/* and the war-room itself, printed under the glass at reading distance */
-.vignette::after {
-  content: ""; position: absolute; inset: 0;
-  background: var(--room) center 24% / cover no-repeat;
-  opacity: .12; mix-blend-mode: soft-light;
-  box-shadow: inset 0 0 120px 40px rgba(0, 0, 0, .5);
 }
 /* ── panels — bolted plates, not floating glass ─────────────────── */
 .panel {
