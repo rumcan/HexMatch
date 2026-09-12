@@ -93,6 +93,21 @@ describe("scenery scatter", () => {
     }
   });
 
+  it("FOREST-01: sets a painted conifer wood right beside every Forest resource", () => {
+    const woods = grid.industries.filter((i) => i.type === "forest");
+    expect(woods.length).toBeGreaterThan(0);
+    const c = (FOREST_FOOTPRINT - 1) / 2;
+    for (const ind of woods) {
+      const cx = ind.tx + (ind.w - 1) / 2, cy = ind.ty + (ind.h - 1) / 2;
+      // block centre within the placement ring (footprint half + block half +
+      // 1 + slack) plus a tile of rounding
+      const reach = Math.max(ind.w, ind.h) / 2 + c + 1 + 3 + 1.5;
+      const beside = scenery.forests.some((f) => f.sprite === "forest_conifer"
+        && Math.hypot(f.tx + c - cx, f.ty + c - cy) <= reach);
+      expect(beside, `conifer block beside forest at ${ind.tx},${ind.ty}`).toBe(true);
+    }
+  });
+
   it("places forest blocks on clear ground, never overlapping", () => {
     expect(scenery.forests.length).toBeGreaterThan(0);
     const used = new Set<number>();

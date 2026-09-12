@@ -155,6 +155,14 @@ const OFF_SPECIES = 0.18;
 const PINE_CLUSTERS_MIN = 3, PINE_CLUSTERS_MAX = 5;
 const PINE_RING_MIN = 2.5, PINE_RING_MAX = 6;
 const PINE_CLUSTER_MIN = 7, PINE_CLUSTER_MAX = 13;
+/**
+ * FOREST-01: painted 4×4 `forest_conifer` blocks set beside each Forest
+ * resource, the tries allowed to find room for them, and how far past the
+ * footprint (tiles) a block's centre may drift.
+ */
+const CONIFER_BLOCKS = 2;
+const CONIFER_BLOCK_ATTEMPTS = 40;
+const CONIFER_BLOCK_SLACK = 3;
 
 /**
  * Tiles of clear ground a tree keeps from any seed-generated road, measured
@@ -413,7 +421,30 @@ export function scatterScenery(grid: Grid): Scenery {
     plant(i % MAP_W, (i / MAP_W) | 0, weighted(ACCENT_MIX, rng()));
   }
 
-  plantLumberPines(grid, plant);
+  // A painted forest block at a tile origin, with the same rules the random
+  // blocks above obey. Trees already standing on its 16 tiles are cleared, so
+  // no 1×1 sprite pokes out of the middle of the painted wood.
+  const tryForestBlock = (tx: number, ty: number, sprite: ForestSprite): boolean => {
+    for (let dy = 0; dy < FOREST_FOOTPRINT; dy++) {
+      for (let dx = 0; dx < FOREST_FOOTPRINT; dx++) {
+        const x = tx + dx, y = ty + dy;
+        if (!inBounds(x, y)) return false;
+        const j = idx(x, y);
+        if (underForest[j] || !open(j) || toWater[j] < FOREST_FOOTPRINT || !clearOfRoads(j)) return false;
+      }
+    }
+    for (let dy = 0; dy < FOREST_FOOTPRINT; dy++) {
+      for (let dx = 0; dx < FOREST_FOOTPRINT; dx++) {
+        const j = idx(tx + dx, ty + dy);
+        underForest[j] = 1;
+        trees[j] = 0;
+      }
+    }
+    forests.push({ tx, ty, sprite });
+    return true;
+  };
+
+  plantForestResourceWoods(grid, plant, tryForestBlock);
 
   return { decals, trees, forests };
 }
@@ -424,22 +455,41 @@ const PINES: number[] = TREE_SPRITES
   .filter((i) => i > 0);
 
 /**
- * FOREST-01: the lumber resource (the `forest` industry) sits in its own
- * pine wood — a few dense conifer clusters around the site, so the place that
- * produces wood reads as a logging camp at a glance instead of a building in
- * a meadow. Runs LAST and on its own seed stream, so every other scatter
- * (decals, blocks, clumps, strays) is identical to what it was; the clusters
- * only fill the ground still open, with the same rules as any tree (open
- * land, clear of the seed roads, never on a forest block or the industry).
+ * FOREST-01: the Forest resource (the `forest` industry, which yields wood)
+ * sits in its own pine wood, so the place that produces wood reads as woodland
+ * at a glance instead of a building in a meadow:
+ *   1. up to `CONIFER_BLOCKS` painted 4×4 `forest_conifer` blocks right beside
+ *      the site — the pine-cluster IMAGE, the thing the eye actually lands on;
+ *   2. then dense clusters of 1×1 pines fanned round it, feathering the blocks
+ *      into the meadow.
+ * Runs LAST and on its own seed stream, so every other scatter (decals, random
+ * blocks, clumps, strays) is identical to what it was; everything here only
+ * takes ground still open, under the same rules as any block or tree.
  */
-function plantLumberPines(
-  grid: Grid, plant: (tx: number, ty: number, species: number) => void,
+function plantForestResourceWoods(
+  grid: Grid,
+  plant: (tx: number, ty: number, species: number) => void,
+  tryForestBlock: (tx: number, ty: number, sprite: ForestSprite) => boolean,
 ): void {
   const rng = mulberry32((grid.seed ^ 0x9f1e57a3) >>> 0);
+  const half = (FOREST_FOOTPRINT - 1) / 2;
   for (const ind of grid.industries) {
     if (ind.type !== "forest") continue;
     const cx = ind.tx + (ind.w - 1) / 2, cy = ind.ty + (ind.h - 1) / 2;
     const base = Math.max(ind.w, ind.h) / 2;
+
+    // 1. the painted conifer woods, hugging the site: block CENTRES sit just
+    //    past the footprint edge, on random bearings, until enough have landed.
+    let blocks = 0;
+    for (let attempt = 0; attempt < CONIFER_BLOCK_ATTEMPTS && blocks < CONIFER_BLOCKS; attempt++) {
+      const a = rng() * Math.PI * 2;
+      const dist = base + half + 1 + rng() * CONIFER_BLOCK_SLACK;
+      const bx = Math.round(cx + Math.cos(a) * dist - half);
+      const by = Math.round(cy + Math.sin(a) * dist - half);
+      if (tryForestBlock(bx, by, "forest_conifer")) blocks++;
+    }
+
+    // 2. the 1×1 pine clusters
     const clusters = PINE_CLUSTERS_MIN + ((rng() * (PINE_CLUSTERS_MAX - PINE_CLUSTERS_MIN + 1)) | 0);
     // Spread the clusters round the site (an even fan plus jitter), so the
     // wood surrounds the camp rather than piling up on one side of it.
