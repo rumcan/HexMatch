@@ -28,7 +28,7 @@
 //   Writes assets/roads/{asphalt,dirt}.webp
 // ══════════════════════════════════════════════════════════════════════════
 import sharp from "sharp";
-import { mkdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -71,6 +71,15 @@ function seamEnergy(data, width, height, channels) {
 let failed = false;
 for (const name of MATERIALS) {
   const src = join(SRC, `${name}-src.png`);
+  if (!existsSync(src)) {
+    // Report rather than throw: the road renderer has a complete flat-colour
+    // fallback, so a missing swatch is a gap in the art, not a broken build.
+    console.error(`missing tools/texture-src/${name}-src.png`);
+    console.error("  Supply a top-down, SEAMLESS material swatch:");
+    console.error("  no perspective, no road edges, no lane lines, no grass frame.");
+    failed = true;
+    continue;
+  }
   const { data, info } = await sharp(src).removeAlpha().raw()
     .toBuffer({ resolveWithObject: true });
   const seam = seamEnergy(data, info.width, info.height, info.channels);

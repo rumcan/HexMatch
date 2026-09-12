@@ -255,8 +255,16 @@ export const ROAD_WIDTH: Record<RoadMaterial, number> = {
   paved: 0.45,
 };
 
-/** Extra width of the soft shoulder drawn under the core, in tile units. */
-export const SHOULDER_WIDTH = 0.1;
+/**
+ * Extra width of the soft shoulder drawn under the core, per side, in tile
+ * units.
+ *
+ * Kept narrow on purpose. At 0.1 with an opaque near-black this read as a
+ * thick outline drawn around every road — the "thick cartoon outlines" the
+ * art direction rules out — rather than as ground disturbed at the road's
+ * edge. It is a hint of a verge, not a border.
+ */
+export const SHOULDER_WIDTH = 0.045;
 
 /**
  * The ground-plane bounding box of a tile's road, shoulder included. The

@@ -30,8 +30,8 @@
 import { HW, HH, MAP_W, MAP_H } from "../game/config";
 import type { Camera } from "./camera";
 import {
-  JUNCTION_GAP, ROAD_WIDTH, SHOULDER_WIDTH,
-  hasRoad, maskOf, paintFigures, roadTile,
+  ROAD_WIDTH, SHOULDER_WIDTH,
+  hasRoad, paintFigures, roadTile,
   type GroundPoint, type RoadFigure, type RoadTile,
 } from "./road-geometry";
 
@@ -92,6 +92,13 @@ export const DEFAULT_ROAD_STYLE: RoadStyle = {
 };
 
 // ── paint geometry constants ────────────────────────────────────────────────
+/**
+ * Opacity of the shoulder pass. The shoulder is a darkening of the ground
+ * beside the road, so it has to let that ground through — at full opacity it
+ * is a border, not a verge.
+ */
+const SHOULDER_ALPHA = 0.42;
+
 /** Marking width in tile units. */
 const PAINT_WIDTH = 0.022;
 /** One dash cycle per tile: dash then gap. */
@@ -266,13 +273,18 @@ export function paintRoadTiles(ctx: Ctx2D, tiles: RoadTile[], style: RoadStyle):
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
 
-  // 1. Shoulders — a soft darker rim that seats the road on the ground.
+  // 1. Shoulders — ground disturbed at the road's edge, NOT an outline. Drawn
+  //    semi-transparent so it darkens whatever it happens to lie on (grass, a
+  //    dry patch, sand) rather than ringing the road in one flat colour,
+  //    which is how the opaque version of this read: a thick cartoon border
+  //    around every road, which is the one thing the art direction rules out.
+  ctx.globalAlpha = SHOULDER_ALPHA;
   for (const t of tiles) {
-    const m = style[t.material];
-    ctx.strokeStyle = m.shoulder;
+    ctx.strokeStyle = style[t.material].shoulder;
     ctx.lineWidth = ROAD_WIDTH[t.material] + SHOULDER_WIDTH * 2;
     for (const f of t.figures) { trace(ctx, f); ctx.stroke(); }
   }
+  ctx.globalAlpha = 1;
 
   // 2. The opaque material core.
   for (const t of tiles) {
@@ -500,6 +512,3 @@ export class RoadCache {
     return blits;
   }
 }
-
-/** Shared with the renderer's diagnostics. */
-export const ROAD_GEOMETRY_INFO = { JUNCTION_GAP, ROAD_WIDTH, SHOULDER_WIDTH, maskOf };

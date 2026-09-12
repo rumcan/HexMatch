@@ -4,13 +4,13 @@ import {
   roadTilesIn, screenToGround, tilesForRect,
 } from "../../src/iso/road-renderer";
 import { NE, SE, SW, NW } from "../../src/iso/track";
-import { HW, HH, MAP_W } from "../../src/game/config";
+import { HW, HH, MAP_W, MAP_H } from "../../src/game/config";
 
 const PRESENT = 0b10000;
 const put = (arr: Uint8Array, tx: number, ty: number, mask: number) => {
   arr[ty * MAP_W + tx] = PRESENT | mask;
 };
-const blank = () => new Uint8Array(MAP_W * MAP_W);
+const blank = () => new Uint8Array(MAP_W * MAP_H);
 
 describe("ground projection round trip", () => {
   it("inverts the projection exactly at lattice points", () => {
@@ -58,6 +58,8 @@ describe("tilesForRect", () => {
     const r = tilesForRect(-100000, -100000, -99000, -99000);
     expect(r.tx0).toBeGreaterThanOrEqual(0);
     expect(r.ty0).toBeGreaterThanOrEqual(0);
+    expect(r.tx1).toBeLessThan(MAP_W);
+    expect(r.ty1).toBeLessThan(MAP_H);
   });
 });
 
@@ -152,6 +154,16 @@ describe("RoadCache", () => {
     const wide = Math.floor(1200 / ROAD_CHUNK_W) + 1;
     const tall = Math.floor(700 / ROAD_CHUNK_H) + 1;
     expect(c.stats().misses).toBe(wide * tall);
+  });
+
+  it("covers fewer chunks when zoomed in, because less world is on screen", () => {
+    const near = new RoadCache(), far = new RoadCache();
+    const world = { roadBits: blank(), dirtBits: blank() };
+    const cam = { x: 0, y: 0, vw: 1200, vh: 700 };
+    const ctx = {} as unknown as CanvasRenderingContext2D;
+    near.paint(ctx, { ...cam, zoom: 2 }, world, DEFAULT_ROAD_STYLE, noSurface);
+    far.paint(ctx, { ...cam, zoom: 0.5 }, world, DEFAULT_ROAD_STYLE, noSurface);
+    expect(near.stats().misses).toBeLessThan(far.stats().misses);
   });
 });
 
