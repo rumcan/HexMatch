@@ -1873,11 +1873,6 @@ html, body, #root {
   backdrop-filter: blur(8px) saturate(.7) brightness(.6);
   -webkit-backdrop-filter: blur(8px) saturate(.7) brightness(.6);
 }
-.modal-back::after {
-  content: ""; position: absolute; inset: 0;
-  background: var(--smoke) 0 0 / 1000px;
-  opacity: .16; mix-blend-mode: screen;
-}
 /* The dialog is a plate like any other: felt inset, brass edge, and the frame's
    corners painted in by `::after` at their own size. Nine-slicing this instead
    would stretch the iron between the ornaments — see the corner rule above. */
@@ -2447,10 +2442,9 @@ html, body, #root {
 #iso-skill-prompt { position: absolute; inset: 0; z-index: 90;
   display: flex; align-items: center; justify-content: center;
   background:
-    var(--smoke) 0 0 / 1100px,
     var(--room) center / cover,
     rgba(6, 4, 3, .86);
-  background-blend-mode: screen, soft-light, normal;
+  background-blend-mode: soft-light, normal;
   backdrop-filter: blur(9px) saturate(.8) brightness(.72);
   -webkit-backdrop-filter: blur(9px) saturate(.8) brightness(.72); }
 #iso-skill-prompt .iso-skill-card { max-width: 640px; padding: 20px 24px 16px;
@@ -2500,10 +2494,9 @@ html, body, #root {
 #iso-loading { position: absolute; inset: 0; z-index: 95;
   display: flex; align-items: center; justify-content: center;
   background:
-    var(--smoke) 0 0 / 1100px,
     var(--room) center / cover,
     rgba(6, 4, 3, .94);
-  background-blend-mode: screen, soft-light, normal;
+  background-blend-mode: soft-light, normal;
   transition: opacity .38s ease; }
 #iso-loading.iso-loading-out { opacity: 0; pointer-events: none; }
 #iso-loading .iso-loading-card { width: min(440px, calc(100% - 32px)); padding: 24px 28px 20px;
@@ -2562,10 +2555,9 @@ html, body, #root {
 #iso-tutorial { position: absolute; inset: 0; z-index: 96;
   display: flex; align-items: center; justify-content: center; padding: 14px;
   background:
-    var(--smoke) 0 0 / 1100px,
     var(--room) center / cover,
     rgba(6, 4, 3, .88);
-  background-blend-mode: screen, soft-light, normal;
+  background-blend-mode: soft-light, normal;
   backdrop-filter: blur(9px) saturate(.8) brightness(.72);
   -webkit-backdrop-filter: blur(9px) saturate(.8) brightness(.72); }
 /* A click on the veil is a Skip; the card rides above it. */
@@ -3005,13 +2997,6 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   animation: plate-breathe 52s ease-in-out infinite alternate;
   will-change: transform;
 }
-.start-screen::after {
-  content: ""; position: fixed; inset: -460px; z-index: -2; pointer-events: none;
-  background: var(--smoke) 0 0 / 900px repeat;
-  opacity: .12;
-  animation: smoke-drift 120s linear infinite;
-  will-change: transform;
-}
 /* the campaign list stands in the noir office, not on the docks */
 .start-screen.campaign::before {
   background:
@@ -3023,11 +3008,6 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 @keyframes plate-breathe {
   from { transform: scale(1) translate3d(0, 0, 0); }
   to   { transform: scale(1.065) translate3d(-1.2%, -1%, 0); }
-}
-/* the tile is seamless at 900px, so travelling exactly one tile loops clean */
-@keyframes smoke-drift {
-  from { transform: translate3d(0, 0, 0); }
-  to   { transform: translate3d(900px, 450px, 0); }
 }
 
 /* ── the menu itself ─────────────────────────────────────────────── */
@@ -3486,11 +3466,9 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 }
 .story-bg.on { opacity: 1; animation: story-breath 26s ease-in-out infinite alternate; }
 @keyframes story-breath { from { transform: scale(1); } to { transform: scale(1.055); } }
-/* the theme's own smoke over the plate, and one lamp-vignette around it */
+/* one lamp-vignette around the plate (the smoke over it was removed) */
 .story-grain {
   position: absolute; inset: 0; pointer-events: none;
-  background: var(--smoke) 0 0 / 1000px;
-  opacity: .12; mix-blend-mode: screen;
   box-shadow: inset 0 0 240px 60px rgba(0, 0, 0, .82);
 }
 .story-caption {
