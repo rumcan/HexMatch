@@ -26,6 +26,7 @@ import { FREE_SETUP_TRACK } from "../iso/game";
 import { RIVAL_SKILLS, resolveSkillKey } from "../iso/skill";
 import { loadStoryProgress } from "../story/progress";
 import { CHAPTERS, EMPLOYER, currentJobTitle } from "../story/chapters";
+import { currentVersionLabel } from "./version";
 
 export interface MainMenuProps {
   onPlay: () => void;
@@ -117,6 +118,7 @@ export default function MainMenu({ onPlay }: MainMenuProps) {
               : "No contracts filed. The first one is open."}
         </p>
       </div>
+      <p className="menu-foot">{currentVersionLabel()}</p>
       {howTo ? <div className="menu-howto" ref={howToRef} /> : null}
       {settings ? <div className="menu-howto" ref={settingsRef} /> : null}
     </main>

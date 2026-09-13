@@ -1,4 +1,5 @@
 import path from "path";
+import { execSync } from "node:child_process";
 import { cpSync, existsSync } from "node:fs";
 import { fileURLToPath } from "url";
 import tailwindcss from "@tailwindcss/vite";
@@ -80,9 +81,24 @@ function copyBuildingLayers(): Plugin {
   };
 }
 
+/**
+ * The build's short git commit, shown beside the game version at the foot of
+ * the main menu (src/ui/version.ts) so a screenshot says exactly which code is
+ * running. The RUN.world version itself is assigned at deploy time and read
+ * from the page URL instead — it does not exist yet when this build runs.
+ */
+function buildId(): string {
+  try {
+    return execSync("git rev-parse --short HEAD", { stdio: ["ignore", "pipe", "ignore"] }).toString().trim() || "local";
+  } catch {
+    return "local";
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig({
   base: "/hexmatch/",
+  define: { __BUILD_ID__: JSON.stringify(buildId()) },
   // `server` covers `vite dev`; `preview` covers `vite preview` of a built app
   // (the e2e webServer and Arena's sandbox live preview both use it). Vite 7
   // rejects unknown Host headers on both unless allowedHosts permits them —
