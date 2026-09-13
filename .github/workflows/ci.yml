@@ -63,3 +63,34 @@ jobs:
         with:
           name: playwright-report
           path: playwright-report/
+
+  # #132: the desktop MULTIPLAYER e2e — two browser contexts, one real room,
+  # the real room sidecar and the production SDK adapter. It cannot share the
+  # job above: that suite runs `vite preview` of the built app, where the room
+  # plugin is absent and the SDK answers with its offline mock, so a room test
+  # there would prove nothing. This job runs the dev server (port 5173) with
+  # the suite's rooms file `rundot/realtime.e2e.config.json` and the suite's own
+  # Playwright config. The file pins the room's reconnect grace to the shipped
+  # 60s: the departure specs wait that grace out on purpose, which is most of
+  # this job's wall clock — hence the generous timeout.
+  e2e-multiplayer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e:mp
+      # The traces/videos/consoles a failed two-client run needs, and the
+      # report. `test-results-mp/` is where `retain-on-failure` writes them.
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-multiplayer-report
+          path: |
+            playwright-report-mp/
+            test-results-mp/

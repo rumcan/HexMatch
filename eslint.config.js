@@ -7,6 +7,9 @@ export default tseslint.config(
     ignores: [
       "dist/**", "node_modules/**", "playwright-report/**",
       "test-results/**", "coverage/**", "server/node_modules/**",
+      // the multiplayer suite's own report/output dirs (same idea, `-mp`
+      // names — its HTML report ships bundled vendor .js)
+      "playwright-report-mp/**", "test-results-mp/**",
     ],
   },
   ...tseslint.configs.recommended,
