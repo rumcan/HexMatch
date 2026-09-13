@@ -56,6 +56,14 @@
 @font-face { font-family: "Special Elite"; font-style: normal; font-weight: 400; font-display: swap; src: url("../assets/fonts/special-elite-latin-400-normal.woff2") format("woff2"); }
 
 :root {
+  /* MOBILE-01: the top bar's own height plus the notch/status-bar inset.
+     Every fixed thing that hangs below the bar (sheets, banner, toasts, the
+     ☰ popover, the rival stakeout) is derived from this pair, so a notched
+     phone moves the whole stack down together instead of sliding the first
+     row of every sheet under the bar. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --topbar-h: 60px;
+
   /* ── surfaces: blackened iron over oiled walnut ── */
   --bg:        #0a0705;
   --iron:      #191310;
@@ -315,9 +323,10 @@ html, body, #root {
 
 /* ── top bar ────────────────────────────────────────────────────── */
 .topbar {
-  position: fixed; top: 0; left: 0; right: 0; height: 60px; z-index: 40;
+  position: fixed; top: 0; left: 0; right: 0; z-index: 40;
+  height: calc(var(--topbar-h) + var(--safe-top));
   display: flex; align-items: center; gap: 16px;
-  padding: calc(env(safe-area-inset-top, 0px)) 14px 0;
+  padding: var(--safe-top) 14px 0;
   background:
     var(--felt) 0 0 / 240px,
     linear-gradient(180deg, rgba(28, 19, 12, .94), rgba(10, 7, 5, .74) 72%, rgba(10, 7, 5, .5));
@@ -492,7 +501,7 @@ html, body, #root {
 }
 
 /* ── asides ─────────────────────────────────────────────────────── */
-.aside { position: fixed; top: 68px; bottom: 52px; z-index: 30; display: flex; flex-direction: column; }
+.aside { position: fixed; top: calc(var(--topbar-h) + var(--safe-top) + 8px); bottom: 52px; z-index: 30; display: flex; flex-direction: column; }
 .aside.left { left: 10px; width: 300px; }
 .aside.right { right: 10px; }
 /* V3: the quarry column sizes to the board. ui.ts publishes --board-px
@@ -1521,7 +1530,7 @@ html, body, #root {
    offer; hovering a group slides out that rival's remaining offers. */
 .offer-tray {
   position: fixed;
-  top: 68px;
+  top: calc(var(--topbar-h) + var(--safe-top) + 8px);
   /* the right aside is the quarry board (486px) + padding, so clear ~530px */
   right: var(--tray-right, 552px);
   z-index: 34;
@@ -1685,7 +1694,7 @@ html, body, #root {
 
 /* ── toasts / mode bar / banner ─────────────────────────────────── */
 .toasts {
-  position: fixed; top: 58px; left: 50%; transform: translateX(-50%); z-index: 55;
+  position: fixed; top: calc(var(--topbar-h) + var(--safe-top) - 2px); left: 50%; transform: translateX(-50%); z-index: 55;
   display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none;
 }
 .toast {
@@ -1846,8 +1855,8 @@ html, body, #root {
 }
 .banner-close {
   pointer-events: auto;
-  position: absolute; top: 6px; right: 8px; width: 20px; height: 20px;
-  border-radius: 2px; cursor: pointer; font-size: 11px;
+  position: absolute; top: 6px; right: 8px; width: 32px; height: 32px;
+  border-radius: 2px; cursor: pointer; font-size: 12px;
   border: 1px solid rgba(60, 42, 22, .5); background: rgba(28, 19, 9, .18); color: #3a2a16;
 }
 .banner-close:hover { background: rgba(28, 19, 9, .34); color: #f2e6c8; }
@@ -1983,7 +1992,7 @@ html, body, #root {
 
 /* ── SETTINGS-01: the ☰ popover ── */
 .iso-topmenu {
-  position: fixed; top: calc(64px + env(safe-area-inset-top, 0px)); right: 10px; z-index: 55;
+  position: fixed; top: calc(var(--topbar-h) + var(--safe-top) + 4px); right: 10px; z-index: 55;
   width: min(264px, calc(100vw - 20px)); padding: 10px 10px 12px; text-align: left;
   border: 1px solid var(--brass-lo); border-radius: var(--r);
   background:
@@ -2033,7 +2042,7 @@ html, body, #root {
   background: rgba(255, 176, 46, .06); border-color: var(--brass-lo); outline: none;
 }
 .iso-topmenu .tm-item:hover span { color: var(--brass-hi); }
-@media (max-width: 900px) { .iso-topmenu { top: calc(50px + env(safe-area-inset-top, 0px)); right: 8px; } }
+@media (max-width: 900px) { .iso-topmenu { top: calc(var(--topbar-h) + var(--safe-top) + 4px); right: 8px; } }
 .gfx-switch { min-width: 74px; }
 /* the composite layer sits above the three map canvases; input is the
    overlay's alone, so the pass is painted-through, never click-blocking */
@@ -2109,14 +2118,21 @@ html, body, #root {
 /* bottom nav — hidden entirely on desktop */
 .mnav { display: none; }
 
-/* floating recentre button — touch-only (ticket #9) */
+/* floating camera cluster — touch-only (ticket #9, MOBILE-01).
+   One thumb-reach column above the resource footer: zoom in, zoom out (the
+   wheel a phone does not have) and recentre. It clears the resbar now — the
+   old single button sat ON the footer's last chip. */
+.fabs { display: none; }
 .recenter-btn { display: none; }
 @media (pointer: coarse), (max-width: 760px) {
-  .recenter-btn {
-    display: block;
-    position: fixed; right: 12px;
-    bottom: calc(70px + env(safe-area-inset-bottom, 0px));
+  .fabs {
+    display: flex; flex-direction: column; gap: 8px;
+    position: fixed; right: 10px;
+    bottom: calc(106px + env(safe-area-inset-bottom, 0px));
     z-index: 45;
+  }
+  .fab, .recenter-btn {
+    display: block;
     width: 46px; height: 46px;
     border-radius: 50%;
     border: 1px solid var(--brass-lo);
@@ -2125,14 +2141,41 @@ html, body, #root {
       radial-gradient(circle at 34% 26%, rgba(255, 176, 46, .16), rgba(8, 5, 3, .92) 62%);
     background-blend-mode: luminosity, normal;
     backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-    color: var(--gold2); font-size: 20px;
+    color: var(--gold2); font-size: 20px; line-height: 1;
     cursor: pointer;
     box-shadow: 0 4px 16px rgba(0,0,0,.45), inset 0 1px 0 rgba(242, 220, 166, .2);
   }
-  .recenter-btn:active { transform: scale(.92); }
+  .fab { font-size: 24px; font-weight: 700; font-family: var(--mono); }
+  .fab:active, .recenter-btn:active { transform: scale(.92); }
 }
 /* only relevant while the map tab is visible */
-.ui-root:not([data-view="map"]) .recenter-btn { display: none; }
+.ui-root:not([data-view="map"]) .fabs { display: none; }
+
+/* MOBILE-01: the held-tool chip — a fingertip's right-click. Floats over the
+   map's lower-left while anything but the pointer is in the hand, names the
+   tool and puts it down on a tap. Hidden with the cluster off the map view. */
+.toolchip {
+  display: none;
+  position: fixed; left: 10px;
+  bottom: calc(106px + env(safe-area-inset-bottom, 0px));
+  z-index: 45;
+  max-width: 62vw;
+  align-items: center; gap: 8px;
+  padding: 10px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--brass);
+  background: linear-gradient(180deg, rgba(58, 44, 28, .92), rgba(12, 9, 6, .94));
+  color: var(--gold2);
+  font-family: var(--serif); font-size: 12px; letter-spacing: 1.2px;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0,0,0,.5), inset 0 1px 0 rgba(242, 220, 166, .2);
+}
+.toolchip .tc-x { color: var(--txt-dim); font-size: 10.5px; letter-spacing: .8px; }
+@media (pointer: coarse), (max-width: 760px) {
+  .toolchip:not(.hidden) { display: flex; }
+  .ui-root:not([data-view="map"]) .toolchip { display: none; }
+}
 
 @media (max-width: 760px) {
   .mnav {
@@ -2164,7 +2207,8 @@ html, body, #root {
   }
 
   /* ── top bar: logo out, roster compressed ── */
-  .topbar { height: 46px; gap: 8px; padding: 0 8px; }
+  :root { --topbar-h: 46px; }
+  .topbar { gap: 6px; padding-left: 8px; padding-right: 8px; }
   .logo { font-size: 12px; letter-spacing: 1.6px; }
   .logo em, .logo-mark { display: none; }
   .kingdoms { gap: 3px; }
@@ -2172,13 +2216,25 @@ html, body, #root {
   .king-av { width: 26px; height: 26px; }
   .king-name, .king-bar { display: none; }     /* portrait + score only */
   .king-vp { font-size: 13px; }
-  .icon-btn { width: 26px; height: 26px; font-size: 12px; }
+  /* MOBILE-01: 26px keys were under half a fingertip. Forty-four is the
+     number Apple and Material both name; 40 is what this bar can carry
+     without shedding a key. */
+  .icon-btn { width: 40px; height: 40px; font-size: 15px; flex: 0 0 auto; }
+  /* MOBILE-01: the ☰ popover's close key was 26px — the one control on the
+     popup that is not a full-width row, so the one that has to be big. */
+  .iso-topmenu .tm-close { width: 40px; height: 40px; font-size: 15px; }
+  .names-btn { min-width: 40px; padding: 0 6px; }
+  .names-btn .nb-word { display: none; }   /* the monogram "Aa" is the key now */
+  .rival-skill-sel { height: 36px; font-size: 12px; }
   .vp-badge { font-size: 13px; padding: 2px 8px; }
 
   /* ── panels become sheets, one per nav view ── */
   .aside {
     position: fixed;
-    top: 52px;
+    /* MOBILE-01: --banner-h is published by the HUD (ui.ts) whenever the
+       posted sheet is up, so the first row of the Build list is never hidden
+       behind the banner again. */
+    top: calc(var(--topbar-h) + var(--safe-top) + 6px + var(--banner-h, 0px));
     bottom: 116px;               /* clears resource footer + nav */
     left: 8px; right: 8px;
     width: auto;
@@ -2233,8 +2289,15 @@ html, body, #root {
     left: 8px; right: 8px; transform: none;
     justify-content: center; flex-wrap: wrap; gap: 8px;
   }
-  .banner { top: 56px; left: 8px; right: 8px; transform: none; max-width: none; }
-  .toasts { top: 52px; left: 8px; right: 8px; transform: none; }
+  .banner {
+    top: calc(var(--topbar-h) + var(--safe-top) + 6px);
+    left: 8px; right: 8px; transform: none; max-width: none;
+  }
+  /* toasts queue UNDER a posted banner instead of over it */
+  .toasts {
+    top: calc(var(--topbar-h) + var(--safe-top) + 6px + var(--banner-h, 0px));
+    left: 8px; right: 8px; transform: none;
+  }
   .toast { width: 100%; text-align: center; }
 
   /* modals go full-bleed: the plaque comes off the wall and lies flat */
@@ -2245,6 +2308,17 @@ html, body, #root {
   .modal h2::before { width: 24px; height: 24px; }
   .help-cols { flex-direction: column; gap: 8px; }
   .big-btn { width: 100%; }
+}
+
+/* MOBILE-01: a 360-390px bar cannot carry six keys at thumb size, so three
+   of them move into the ☰ menu (which gains Recenter + Names rows on coarse
+   pointers, see game.ts) and the sound key and the menu stay. What remains
+   fits at 40px a key with the roster and the score plaque. */
+@media (max-width: 480px) {
+  .topbar .help-btn,
+  .topbar .names-btn,
+  .topbar [data-act="recenter"] { display: none; }
+  .vp-badge { font-size: 12px; padding: 2px 6px; }
 }
 
 /* very small phones: drop the roster to portraits only */
@@ -2265,10 +2339,25 @@ html, body, #root {
 
 /* landscape phone: the board and panels side by side again */
 @media (max-width: 900px) and (orientation: landscape) and (max-height: 500px) {
-  .aside { top: 48px; bottom: 8px; }
+  .aside {
+    top: calc(var(--topbar-h) + var(--safe-top) + 6px + var(--banner-h, 0px));
+    bottom: calc(74px + env(safe-area-inset-bottom, 0px));
+  }
   .mnav-btn span { display: none; }
   .mnav-btn { padding: 5px 2px; }
-  .resbar { display: none; }
+  /* MOBILE-01: hiding the purse entirely left a landscape player flying
+     blind — no wood, no stone, no idea why a build refused. The footer stays,
+     compacted, and the sheets and the camera cluster stack above it. */
+  .resbar {
+    display: flex;
+    bottom: calc(30px + env(safe-area-inset-bottom, 0px));
+    padding: 3px 6px;
+  }
+  .chip { padding: 2px 6px 2px 2px; }
+  .chip-ic { width: 17px; height: 17px; }
+  .chip-n { font-size: 11px; }
+  .fabs, .toolchip { bottom: calc(74px + env(safe-area-inset-bottom, 0px)); }
+  .fab, .recenter-btn { width: 40px; height: 40px; font-size: 17px; }
 }
 
 /* ── multiplayer lobby — the invitation, engraved and posted ───── */
@@ -2501,7 +2590,7 @@ html, body, #root {
 .tut-title { margin: 0; font-family: var(--display); font-size: 21px; font-weight: 700;
   letter-spacing: 3px; text-transform: uppercase; color: var(--brass-hi);
   text-shadow: 0 -1px 0 #000, 0 1px 0 rgba(242, 220, 166, .16), 0 0 26px rgba(255, 176, 46, .3); }
-.tut-x { position: absolute; top: -3px; right: -4px; width: 26px; height: 26px; cursor: pointer;
+.tut-x { position: absolute; top: -3px; right: -4px; width: 36px; height: 36px; cursor: pointer;
   font-size: 12px; line-height: 1; color: var(--txt-dim);
   border: 1px solid var(--line); border-radius: var(--r);
   background-color: rgba(12, 9, 6, .7);
@@ -2679,7 +2768,26 @@ html, body, #root {
   .tut-gem { width: 26px; height: 26px; }
   /* the foot stacks: pips on top, then the two keys side by side */
   .tut-foot { flex-wrap: wrap; gap: 8px; }
-  .tut-dots { order: 1; flex: 1 1 100%; }
+  .tut-dots { order: 1; flex: 1 1 100%; gap: 4px; }
+  /* MOBILE-01: a 9px diamond pip is a mouse affordance — the pips are
+     BUTTONS (they jump to a step), so on a phone each gets a 36px plate and
+     the diamond becomes a centred pseudo-element inside it. Same picture,
+     nine times the finger. */
+  .tut-dot, .tut-dot.on {
+    position: relative; width: 36px; height: 36px; padding: 0;
+    background: none; border: 0; box-shadow: none; transform: none;
+  }
+  .tut-dot::before {
+    content: ""; position: absolute; left: 50%; top: 50%; width: 9px; height: 9px;
+    margin: -5.5px 0 0 -5.5px; border: 1px solid var(--brass-lo); border-radius: 0;
+    background-color: rgba(10, 7, 5, .8); transform: rotate(45deg);
+    transition: background-color .15s, box-shadow .15s, border-color .15s;
+  }
+  .tut-dot:hover::before { border-color: var(--brass-hi); }
+  .tut-dot.on::before {
+    background-color: var(--gold); border-color: var(--brass-hi);
+    box-shadow: 0 0 10px rgba(255, 176, 46, .75);
+  }
   .tut-never { order: 2; flex: 1 1 auto; }
   .tut-nav { order: 3; flex: 1 1 auto; }
   .tut-nav .big-btn { flex: 1; width: auto; padding: 9px 8px; }
@@ -2692,7 +2800,7 @@ html, body, #root {
    It is a stakeout: cold light through a window, not the warm home board. */
 #iso-rival-view {
   position: absolute;
-  top: 52px;
+  top: calc(var(--topbar-h) + var(--safe-top) + 6px);
   right: 10px;
   z-index: 40;
   background:
@@ -2834,6 +2942,45 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
    the plate simply stands still — it is paint, never information.
    ═══════════════════════════════════════════════════════════════════ */
 .start-screen { position: relative; overflow: hidden; isolation: isolate; }
+/* MOBILE-01: a landscape phone is 360-430px tall. `place-items: center` plus
+   `overflow: hidden` put the Play button BELOW the fold with no way to reach
+   it — the menu was unplayable sideways. On short viewports the plate
+   scrolls, and margin:auto keeps the card centred whenever it does fit.
+
+   Portrait phones are in the same rule for a different reason: the STORY
+   contract list (.start-panel.story, four chapter cards in one column) is
+   ~1500px of card in an 844px viewport, and with `overflow: hidden` and no
+   scroller anywhere above it, chapters 2-4, "Watch the opening reel" and
+   "Back to the menu" were painted off the bottom of the screen and simply
+   could not be reached by a finger. Anything narrower than a desktop column
+   gets the scrolling plate. */
+@media (max-width: 760px), (max-height: 620px) {
+  .start-screen {
+    display: flex; flex-direction: column; align-items: center;
+    /* the plate is `min-height: 100vh` and `height: auto`, so with a tall
+       child it GROWS past the viewport instead of scrolling — and nothing
+       above it scrolls either (body is clipped). Pin the box to the
+       viewport and overflow-y does the rest. dvh so a phone's collapsing
+       address bar does not hide the last card. */
+    height: 100vh; height: 100dvh;
+    overflow-y: auto; overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+  .start-screen > .menu-card,
+  .start-screen > .start-panel { margin-block: auto; }
+  /* the credit line flows after the card here instead of pinning to the
+     bottom of a viewport the card no longer fits inside */
+  .start-screen > .menu-foot { position: static; margin: 12px 0 10px; }
+  /* the how-to/settings projector is `absolute inset: 0` of this host; once
+     the host scrolls, an absolute child scrolls away with the content. A
+     projector covers the viewport, so it pins to the viewport. */
+  .menu-howto { position: fixed; }
+  /* the story panel was sized for a desktop column; on a phone it is the
+     whole screen, so let the chapter cards stack and breathe */
+  .start-panel.story { width: 100%; padding: 26px 15px; }
+  .chapter-list { grid-template-columns: 1fr; gap: 10px; margin: 14px 0; }
+  .chapter-card { padding: 11px 12px; }
+}
 .start-screen::before {
   content: ""; position: absolute; inset: -6%; z-index: -3; pointer-events: none;
   background:

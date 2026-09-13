@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { bootBudget } from "./boot";
 
 // ══════════════════════════════════════════════════════════════════════════
 // STORY-01 — the campaign in a real browser, against the real built app.
@@ -30,7 +31,7 @@ async function skipToGame(page: import("@playwright/test").Page) {
   await page.waitForFunction(() => {
     const h = (window as unknown as { __iso?: { phase?: string } }).__iso;
     return !!h && (h.phase === "setup-factory" || h.phase === "play");
-  }, null, { timeout: 20000 });
+  }, null, { timeout: bootBudget() });
 }
 
 test("the campaign menu opens with one open contract and four sealed", async ({ page }) => {

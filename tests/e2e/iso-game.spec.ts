@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { bootBudget } from "./boot";
 import { BOARD_H, BOARD_W, MAP_W, MAP_H } from "../../src/game/config";
 import {
   findIsoCorridor, isoTileOcclusion, isoClickableTile, classifyDragTiles,
@@ -43,12 +44,17 @@ async function bootIso(page: import("@playwright/test").Page) {
     localStorage.setItem("hexmatch:tutorial", "never");
   });
   await page.goto(ISO_URL);
+  // STORY-01: the front door stands first — the iso game only mounts once a
+  // mode is chosen, so walk the menu like a player (and like
+  // iso-tutorial.spec.ts / building-layers.spec.ts already do).
+  await page.locator(".menu-btn.primary").click();
+  await page.getByRole("button", { name: /Play vs AI/ }).click();
   await page.waitForFunction(() => {
     const h = (window as any).__iso;
     // LOAD-01: the loading screen covers the map until the art settles —
     // clicking before it lifts would land on the overlay, not a tile.
     return !!h && h.phase === "setup-factory" && !!h.grid && h.grid.industries.length > 0 && !h.loading;
-  }, null, { timeout: 20000 });
+  }, null, { timeout: bootBudget() });
 }
 
 // E14 — the corridor the gameplay round is played on is chosen by

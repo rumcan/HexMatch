@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { bootBudget } from "./boot";
 
 // ══════════════════════════════════════════════════════════════════════════
 // ART-1950S / TICKET-B0 — the per-building PNG layers must ship in the
@@ -43,14 +44,14 @@ test.describe("building PNG layers ship in the built game", () => {
     await page.waitForFunction(() => {
       const h = (window as any).__iso;
       return !!h && h.phase === "setup-factory" && !!h.grid && h.grid.industries.length > 0;
-    }, null, { timeout: 20000 });
+    }, null, { timeout: bootBudget() });
 
     // The layers load in parallel with the first frame — wait until they land
     // (or fail the assertion below on the timeout).
     await page.waitForFunction(() => {
       const h = (window as any).__iso;
       return Array.isArray(h.buildings) && h.buildings.length > 0;
-    }, null, { timeout: 20000 });
+    }, null, { timeout: bootBudget() });
 
     // 1. The manifest itself resolved — the TICKET-B0 regression: with no
     //    copy step in the build this 404s (or never fires at all).
@@ -73,7 +74,10 @@ test.describe("building PNG layers ship in the built game", () => {
       const m = await (await fetch("assets/buildings/manifest.json", { cache: "no-store" })).json();
       return { installed: h.buildings as string[], manifestNames: Object.keys(m.sprites as Record<string, unknown>) };
     });
-    expect(installed.length, "every buildings-manifest sprite installs (no silent per-sprite fallback)").toBe(manifestNames.length);
+    // The map is a superset on purpose: scenery-art.ts installs its tree and
+    // forest sprites through the same buildingImages table, so counting the
+    // table exactly would pin an unrelated feature's cast. The promise here
+    // is that NOTHING from the buildings manifest fell back to the sheet.
     for (const n of manifestNames) expect(installed, `${n} must install its per-building PNG`).toContain(n);
 
     // 4. No silent fallback warning fired anywhere during boot.

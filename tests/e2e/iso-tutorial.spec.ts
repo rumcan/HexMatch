@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { bootBudget } from "./boot";
 
 // ══════════════════════════════════════════════════════════════════════════
 // TUT-01 — the starting tour, against the REAL built game (vite preview).
@@ -31,7 +32,7 @@ async function boot(page: import("@playwright/test").Page, extra = "") {
   await page.waitForFunction(() => {
     const h = (window as unknown as { __iso?: { phase: string } }).__iso;
     return !!h && h.phase === "setup-factory";
-  }, null, { timeout: 20000 });
+  }, null, { timeout: bootBudget() });
 }
 
 /** Remember a difficulty so AI-02's picker stays out of the way. */

@@ -32,8 +32,13 @@ export default defineConfig({
       name: "desktop-chromium",
       use: { ...devices["Desktop Chrome"], channel: undefined },
     },
+    // MOBILE-01: the phone projects rasterize the island at dpr 2-3 in
+    // software on a CDN-blocked runner, where a boot alone can take a minute
+    // (see tests/e2e/boot.ts). Give their tests the room the pixels need;
+    // desktop keeps the 30s the suite has always run under.
     {
       name: "iphone",
+      timeout: 150000,
       use: {
         ...devices["iPhone 13"],       // 390×844, hasTouch, isMobile, webkit engine UA
         browserName: "chromium",
@@ -45,6 +50,7 @@ export default defineConfig({
     },
     {
       name: "android-small",
+      timeout: 150000,
       use: {
         ...devices["Pixel 5"],
         browserName: "chromium",
@@ -56,6 +62,7 @@ export default defineConfig({
     },
     {
       name: "android-landscape",
+      timeout: 150000,
       use: {
         browserName: "chromium",
         viewport: { width: 844, height: 390 },
