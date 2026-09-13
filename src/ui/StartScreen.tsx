@@ -12,7 +12,7 @@ import {
   type HexRoom,
   type ServerPlayer,
 } from "../net/transport";
-import { NetSession } from "../net/session";
+import { NetSession, type RosterEntry } from "../net/session";
 import { VERSION_MISMATCH_MESSAGE, validateWelcome, type HexProtocol } from "../net/protocol";
 import { PORTRAITS, type Portrait } from "../iso/config";
 // STORY-01: the campaign menu — contracts, their locks and their seals.
@@ -79,6 +79,15 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
   /** Contract cards whose full description the player has opened. */
   const [openBriefs, setOpenBriefs] = useState<ReadonlySet<string>>(() => new Set());
   const [players, setPlayers] = useState<readonly ServerPlayer[]>([]);
+  /**
+   * The welcome's roster — the one authoritative seat list in the lobby.
+   * `room.players` is the SDK's live roster, but a joiner only hears about
+   * players who arrive AFTER it (the gateway's `room:joined` carries no player
+   * list), so a guest used to sit in front of one nameless seat and never see
+   * the host at all. The welcome names every seat — id, username, slot — and
+   * `room.players` fills in whoever joins later.
+   */
+  const [welcomeRoster, setWelcomeRoster] = useState<readonly RosterEntry[]>([]);
   const [net, setNet] = useState<NetSession | null>(null);
   /** Guards the realtime calls: a double-click must not mint two rooms. */
   const [busy, setBusy] = useState(false);
@@ -97,6 +106,7 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
     setNet(null);
     setSeed(null);
     setPlayers([]);
+    setWelcomeRoster([]);
     setBusy(false);
     setError("");
   }, [room]);
@@ -130,6 +140,11 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
     setRoom(nextRoom);
     setPlayers(nextRoom.players);
     const onRoomChanged = () => setPlayers([...nextRoom.players]);
+    /** A seat that emptied leaves the list even though the welcome named it. */
+    const onSeatEmptied = (playerId: string) => {
+      setWelcomeRoster((prev) => prev.filter((entry) => entry.id !== playerId));
+      onRoomChanged();
+    };
     const session = new NetSession({ room: nextRoom, role });
     setNet(session);
     const onGreeting = (message: HexProtocol) => {
@@ -148,6 +163,7 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
         // request/render state.
         session.receive(message);
         setSeed(message.seed);
+        setWelcomeRoster(message.roster);
         return;
       }
       // The host left while we were still in the lobby (MP-03 broadcasts a
@@ -163,7 +179,7 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
       onMessage: onGreeting,
       onPrivateMessage: onGreeting,
       onPlayerJoined: onRoomChanged,
-      onPlayerLeft: onRoomChanged,
+      onPlayerLeft: onSeatEmptied,
     });
     setState(role === "host" ? "host" : "joined");
   }, [failMessage]);
@@ -252,8 +268,26 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
 
   const roster = useMemo(() => {
     if (!room) return [] as readonly ServerPlayer[];
-    return players.length ? players : room.players;
-  }, [players, room]);
+    const byId = new Map<string, ServerPlayer>();
+    // The welcome's seats first — it is slot-ordered and it is the only list
+    // that names everyone (see `welcomeRoster`).
+    for (const entry of welcomeRoster) {
+      byId.set(entry.id, { id: entry.id, username: entry.username, avatarUrl: null });
+    }
+    // Then whoever the live room knows about, filling in the names it has.
+    for (const player of players.length ? players : room.players) {
+      if (!player.id) continue;
+      const known = byId.get(player.id);
+      byId.set(player.id, {
+        id: player.id,
+        // A live room player may carry an empty username (a joiner's own seat
+        // arrives unnamed) — never let it erase the welcome's name.
+        username: player.username || known?.username || "",
+        avatarUrl: player.avatarUrl ?? known?.avatarUrl ?? null,
+      });
+    }
+    return [...byId.values()];
+  }, [players, room, welcomeRoster]);
 
   // The lobby's dead-end guard: no welcome, no seed, no game.
   useEffect(() => {

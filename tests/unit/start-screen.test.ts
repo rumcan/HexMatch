@@ -51,6 +51,8 @@ interface FakeRoom extends HexRoom {
   emit: (msg: HexProtocol) => void;
   /** Seat another player, firing the roster events the SDK fires. */
   seat: (player: ServerPlayer) => void;
+  /** Empty a seat, firing the event the room's `playerLeft` raises. */
+  fireLeft: (playerId: string) => void;
   leaveCalls: number;
 }
 
@@ -77,6 +79,11 @@ function fakeRoom(roomCode: string, playerId = "p1", username = "Dev Player"): F
     seat: (player: ServerPlayer) => {
       players.push(player);
       events.onPlayerJoined?.(player);
+    },
+    fireLeft: (playerId: string) => {
+      const i = players.findIndex((p) => p.id === playerId);
+      if (i >= 0) players.splice(i, 1);
+      events.onPlayerLeft?.(playerId);
     },
   } as unknown as FakeRoom;
   return room;
@@ -238,6 +245,69 @@ describe("MP-06 join screen", () => {
     await click("Play");
     expect(choices).toHaveLength(1);
     expect(choices[0]).toMatchObject({ mode: "guest", seed: 777 });
+  });
+
+  it("names both seats in the guest's lobby from the welcome roster", async () => {
+    // The live room's honest shape: a joiner's `room:joined` carries no player
+    // list, so `room.players` holds the guest alone and without a username —
+    // the lobby used to show one nameless seat and an "Open seat" where the
+    // host was already standing. The welcome names every seat, so it does.
+    const room = fakeRoom("HX9KWR", "guest-socket", "");
+    mockJoin.mockResolvedValue(room);
+    await render();
+    await click("Join with a code");
+    await typeCode("HX9KWR");
+    await click("Join game");
+
+    await act(async () => {
+      room.emit({
+        type: "welcome",
+        seed: 777,
+        hostId: "host-socket",
+        protocolVersion: PROTOCOL_VERSION,
+        roster: [
+          { id: "host-socket", username: "Ada", slot: 0 },
+          { id: "guest-socket", username: "Bo", slot: 1 },
+        ],
+      });
+    });
+
+    const seated = [...container.querySelectorAll(".seat.filled .seat-name")]
+      .map((el) => el.textContent?.trim());
+    expect(seated).toEqual(["Ada", "Bo"]);
+    // Both seats are taken, so the placeholder stops saying it is waiting.
+    expect(text()).toContain("Ready");
+  });
+
+  it("drops a seat from the guest's lobby when the room says it emptied", async () => {
+    const room = fakeRoom("HX9KWR", "guest-socket", "");
+    mockJoin.mockResolvedValue(room);
+    await render();
+    await click("Join with a code");
+    await typeCode("HX9KWR");
+    await click("Join game");
+    await act(async () => {
+      room.emit({
+        type: "welcome",
+        seed: 777,
+        hostId: "host-socket",
+        protocolVersion: PROTOCOL_VERSION,
+        roster: [
+          { id: "host-socket", username: "Ada", slot: 0 },
+          { id: "guest-socket", username: "Bo", slot: 1 },
+        ],
+      });
+    });
+    expect([...container.querySelectorAll(".seat.filled .seat-name")].map((el) => el.textContent))
+      .toEqual(["Ada", "Bo"]);
+
+    // The room's own roster event is what removes a seat — the welcome is a
+    // list of who WAS there, and it must not keep naming a player who left.
+    await act(async () => {
+      (room as unknown as { fireLeft: (id: string) => void }).fireLeft("host-socket");
+    });
+    expect([...container.querySelectorAll(".seat.filled .seat-name")].map((el) => el.textContent))
+      .toEqual(["Bo"]);
   });
 
   it("keeps Play disabled until the welcome brings a seed", async () => {
