@@ -197,6 +197,8 @@ export interface RoadTile {
   mask: number;
   figures: RoadFigure[];
   transitions: RoadTransition[];
+  /** Town paved roads get sidewalks + street lights (issue #159). */
+  isTown?: boolean;
 }
 
 /**
@@ -332,4 +334,212 @@ export function figureBounds(tile: RoadTile): {
     }
   }
   return { u0: u0 - pad, v0: v0 - pad, u1: u1 + pad, v1: v1 + pad };
+}
+
+// ── sidewalks (town) ──────────────────────────────────────────────────────
+/**
+ * Elevated concrete block sidewalks — only for paved roads inside town
+ * limits (TOWN_OCC). Geometry is still ground-plane, same port contract as
+ * roads, so chunks line up without seams.
+ *
+ * Visual spec (issue #159):
+ *  - Light grey ribbon (#c8cbd0 / #d5d8dc) along both outer edges of paved
+ *    road surface, near ROAD_WIDTH.paved/2 (~0.39) from centre line.
+ *  - Width narrow curb/walkway ribbon ~0.06–0.08 tile units.
+ *  - Transverse joints every 0.15–0.20 tile units, dark grey, 1px wide,
+ *    offset by 1px and shortened to stay inside ribbon for elevated effect.
+ *  - Street light posts at bends and intersections on sidewalks.
+ */
+export const SIDEWALK_WIDTH = 0.07;
+export const SIDEWALK_GAP = 0.02;
+export const SIDEWALK_OFFSET = ROAD_WIDTH.paved / 2 + SIDEWALK_GAP + SIDEWALK_WIDTH / 2; // ~0.445
+export const SIDEWALK_JOINT_SPACING = 0.18;
+export const SIDEWALK_JOINT_WIDTH = 0.015;
+export const SIDEWALK_JOINT_INSET = 0.015;
+export const SIDEWALK_JOINT_OFFSET = 0.02;
+export const SIDEWALK_LIGHT_EXTRA = 0.08;
+export const SIDEWALK_LIGHT_DISTANCE = SIDEWALK_OFFSET + SIDEWALK_LIGHT_EXTRA;
+
+function sub(a: GroundPoint, b: GroundPoint): [number, number] {
+  return [a[0] - b[0], a[1] - b[1]];
+}
+function add(a: GroundPoint, v: [number, number]): GroundPoint {
+  return [a[0] + v[0], a[1] + v[1]];
+}
+function mul(v: [number, number], s: number): [number, number] {
+  return [v[0] * s, v[1] * s];
+}
+function len(v: [number, number]): number {
+  return Math.hypot(v[0], v[1]);
+}
+function norm(v: [number, number]): [number, number] {
+  const l = len(v);
+  return l < 1e-9 ? [0, 0] : [v[0] / l, v[1] / l];
+}
+function perpLeft(v: [number, number]): [number, number] {
+  return [-v[1], v[0]];
+}
+function cross(a: [number, number], b: [number, number]): number {
+  return a[0] * b[1] - a[1] * b[0];
+}
+
+/** Offset a 2-point segment by `off` to left (positive) or right (negative). */
+function offsetSegment(
+  p0: GroundPoint, p1: GroundPoint, off: number, side: "left" | "right",
+): [GroundPoint, GroundPoint] {
+  const d = sub(p1, p0);
+  const l = len(d);
+  if (l < 1e-9) return [p0, p1];
+  const n = perpLeft(norm(d));
+  const f = side === "left" ? 1 : -1;
+  const o = mul(n, off * f);
+  return [add(p0, o), add(p1, o)];
+}
+
+/**
+ * Offset a 3-point figure [a,b,c] to one side, with miter join at b.
+ * Returns 3 points [a', intersection, c'].
+ */
+function offsetFigure3(
+  a: GroundPoint, b: GroundPoint, c: GroundPoint,
+  off: number, side: "left" | "right",
+): GroundPoint[] {
+  const d1 = sub(b, a);
+  const d2 = sub(c, b);
+  const l1 = len(d1), l2 = len(d2);
+  if (l1 < 1e-9 || l2 < 1e-9) {
+    // Degenerate, fall back to simple offset
+    const seg1 = offsetSegment(a, b, off, side);
+    const seg2 = offsetSegment(b, c, off, side);
+    return [seg1[0], seg1[1], seg2[1]];
+  }
+  const n1 = perpLeft(norm(d1));
+  const n2 = perpLeft(norm(d2));
+  const f = side === "left" ? 1 : -1;
+  const a1 = add(a, mul(n1, off * f));
+  const b2 = add(b, mul(n2, off * f));
+  const c1 = add(c, mul(n2, off * f));
+
+  const cr = cross(d1, d2);
+  if (Math.abs(cr) < 1e-9) {
+    // Parallel (straight road): middle is b + normal*off
+    return [a1, add(b, mul(n1, off * f)), c1];
+  }
+  // Intersection of lines a1 + t*d1 and b2 + s*d2
+  // t = cross(b2 - a1, d2) / cross(d1, d2)
+  const diff = sub(b2, a1);
+  const t = cross(diff, d2) / cr;
+  const inter = add(a1, mul(d1, t));
+  return [a1, inter, c1];
+}
+
+/** Angle for a Dir, clockwise from north, in degrees. */
+function dirAngle(d: Dir): number {
+  if (d === NE) return 0;
+  if (d === SE) return 90;
+  if (d === SW) return 180;
+  return 270; // NW
+}
+function angleToVec(deg: number): [number, number] {
+  const rad = (deg * Math.PI) / 180;
+  return [Math.sin(rad), -Math.cos(rad)];
+}
+
+/**
+ * Parallel sidewalk centre-lines for a road tile.
+ * Returns an array of polylines (each 2 or 3 points) in ground coords.
+ */
+export function sidewalkFiguresForTile(
+  tx: number, ty: number, mask: number,
+): GroundPoint[][] {
+  const dirs = dirsOf(mask);
+  if (dirs.length === 0) return [];
+  const centre = tileCentre(tx, ty);
+  const off = SIDEWALK_OFFSET;
+  const out: GroundPoint[][] = [];
+
+  if (dirs.length === 1) {
+    const d = dirs[0];
+    const port = portPoint(tx, ty, d);
+    const seg = [port, centre] as const;
+    const left = offsetSegment(seg[0], seg[1], off, "left");
+    const right = offsetSegment(seg[0], seg[1], off, "right");
+    out.push([left[0], left[1]]);
+    out.push([right[0], right[1]]);
+    return out;
+  }
+
+  if (dirs.length === 2) {
+    const [da, db] = dirs;
+    const pa = portPoint(tx, ty, da);
+    const pb = portPoint(tx, ty, db);
+    // Figure from pa -> centre -> pb
+    const left = offsetFigure3(pa, centre, pb, off, "left");
+    const right = offsetFigure3(pa, centre, pb, off, "right");
+    out.push(left);
+    out.push(right);
+    return out;
+  }
+
+  // Junction (>=3): each arm trimmed, left+right per arm
+  const trim = JUNCTION_GAP;
+  const t = trim / 0.5;
+  for (const d of dirs) {
+    const port = portPoint(tx, ty, d);
+    const trimmed: GroundPoint = [
+      centre[0] + (port[0] - centre[0]) * t,
+      centre[1] + (port[1] - centre[1]) * t,
+    ];
+    const left = offsetSegment(port, trimmed, off, "left");
+    const right = offsetSegment(port, trimmed, off, "right");
+    out.push([left[0], left[1]]);
+    out.push([right[0], right[1]]);
+  }
+  return out;
+}
+
+/**
+ * Street light post positions for a town road tile.
+ * - Bend (2 non-opposite): 1 light at outer corner (large gap bisector)
+ * - T / 4-way (>=3): lights at each 90° gap bisector (corners of intersection)
+ */
+export function streetLightPositionsForTile(
+  tx: number, ty: number, mask: number,
+): GroundPoint[] {
+  const dirs = dirsOf(mask);
+  if (dirs.length < 2) return [];
+  const centre = tileCentre(tx, ty);
+  const sorted = [...dirs].sort((a, b) => dirAngle(a) - dirAngle(b));
+  const angles = sorted.map(dirAngle);
+  const gaps: { start: number; gap: number }[] = [];
+  for (let i = 0; i < sorted.length; i++) {
+    const cur = angles[i];
+    const nxt = angles[(i + 1) % angles.length];
+    const gap = (nxt - cur + 360) % 360;
+    gaps.push({ start: cur, gap: gap === 0 ? 360 : gap });
+  }
+
+  const dist = SIDEWALK_LIGHT_DISTANCE;
+  const out: GroundPoint[] = [];
+
+  if (dirs.length === 2) {
+    const isOpposite = sorted[0] === OPPOSITE[sorted[1] as number];
+    if (isOpposite) return []; // straight, no corner
+    // bend: outer corner = large gap
+    let large = gaps[0];
+    for (const g of gaps) if (g.gap > large.gap) large = g;
+    const bis = (large.start + large.gap / 2) % 360;
+    const v = angleToVec(bis);
+    out.push([centre[0] + v[0] * dist, centre[1] + v[1] * dist]);
+    return out;
+  }
+
+  // >=3: lights at each 90° gap
+  for (const g of gaps) {
+    if (Math.abs(g.gap - 90) > 1e-6) continue;
+    const bis = (g.start + g.gap / 2) % 360;
+    const v = angleToVec(bis);
+    out.push([centre[0] + v[0] * dist, centre[1] + v[1] * dist]);
+  }
+  return out;
 }

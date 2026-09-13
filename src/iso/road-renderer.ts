@@ -29,9 +29,13 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { HW, HH, MAP_W, MAP_H } from "../game/config";
 import type { Camera } from "./camera";
+import type { Grid } from "./grid";
+import { TOWN_OCC, idx } from "./grid";
 import {
   ROAD_WIDTH, SHOULDER_WIDTH,
   hasRoad, paintFigures, roadTile,
+  sidewalkFiguresForTile, streetLightPositionsForTile,
+  SIDEWALK_WIDTH, SIDEWALK_OFFSET,
   type GroundPoint, type RoadFigure, type RoadTile,
 } from "./road-geometry";
 
@@ -165,7 +169,10 @@ export function tilesForRect(
     if (v > v1) v1 = v;
   }
   // A tile's road can reach out of the tile by half a width plus a shoulder.
-  const reach = Math.max(ROAD_WIDTH.dirt, ROAD_WIDTH.paved) / 2 + SHOULDER_WIDTH + 0.01;
+  // Include sidewalk reach (issue #159) so town sidewalks don't get clipped at chunk borders.
+  const roadReach = Math.max(ROAD_WIDTH.dirt, ROAD_WIDTH.paved) / 2 + SHOULDER_WIDTH;
+  const sidewalkReach = SIDEWALK_OFFSET + SIDEWALK_WIDTH / 2;
+  const reach = Math.max(roadReach, sidewalkReach) + 0.08;
   return {
     tx0: Math.max(0, Math.floor(u0 - reach) - 1),
     ty0: Math.max(0, Math.floor(v0 - reach) - 1),
@@ -184,6 +191,7 @@ export function tilesForRect(
 export interface RoadWorld {
   roadBits?: Uint8Array;
   dirtBits?: Uint8Array;
+  grid?: Grid;
 }
 
 const cellAt = (arr: Uint8Array | undefined, tx: number, ty: number): number =>
@@ -193,20 +201,34 @@ const cellAt = (arr: Uint8Array | undefined, tx: number, ty: number): number =>
 const isPaved = (world: RoadWorld, tx: number, ty: number): boolean =>
   hasRoad(cellAt(world.roadBits, tx, ty));
 
+function isTownTileAt(grid: Grid | undefined, tx: number, ty: number): boolean {
+  if (!grid) return false;
+  if (tx < 0 || ty < 0 || tx >= MAP_W || ty >= MAP_H) return false;
+  return grid.occupancy[idx(tx, ty)] === TOWN_OCC;
+}
+
 /** Every road tile in a range, as drawing descriptions. */
 export function roadTilesIn(
   world: RoadWorld, tx0: number, ty0: number, tx1: number, ty1: number,
 ): RoadTile[] {
   const out: RoadTile[] = [];
   const paved = (x: number, y: number) => isPaved(world, x, y);
+  const grid = world.grid;
   for (let ty = ty0; ty <= ty1; ty++) {
     for (let tx = tx0; tx <= tx1; tx++) {
       const road = cellAt(world.roadBits, tx, ty);
       const dirt = cellAt(world.dirtBits, tx, ty);
       // A tile carries at most one tier; paved wins if both bytes are set,
       // matching the simulation's "paving replaces dirt" rule.
-      if (hasRoad(road)) out.push(roadTile(tx, ty, road, "paved", paved));
-      else if (hasRoad(dirt)) out.push(roadTile(tx, ty, dirt, "dirt", paved));
+      if (hasRoad(road)) {
+        const tile = roadTile(tx, ty, road, "paved", paved);
+        if (isTownTileAt(grid, tx, ty)) tile.isTown = true;
+        out.push(tile);
+      } else if (hasRoad(dirt)) {
+        const tile = roadTile(tx, ty, dirt, "dirt", paved);
+        if (isTownTileAt(grid, tx, ty)) tile.isTown = true;
+        out.push(tile);
+      }
     }
   }
   return out;
@@ -296,6 +318,34 @@ type RoadFills = Record<"paved" | "dirt", string | CanvasPattern>;
  * in TILE UNITS; the context transform turns that into the correct projected
  * width, including its foreshortening on each diagonal.
  */
+// Sidewalk styling (issue #159)
+const SIDEWALK_COLOR = "#c8cbd0";
+const JOINT_COLOR = "#4a4d52";
+const POST_COLOR = "#2a2a2a";
+const POST_WIDTH = 0.018;
+const POST_HEIGHT_GROUND = 0.32;
+const SHADOW_COLOR = "rgba(0,0,0,0.22)";
+const SHADOW_RADIUS = 0.045;
+const LANTERN_COLOR = "#ffe494";
+const LANTERN_GLOW = "#fdf6d8";
+const LANTERN_RADIUS = 0.028;
+const SIDEWALK_JOINT_SPACING = 0.18;
+const SIDEWALK_JOINT_WIDTH = 0.015;
+const SIDEWALK_JOINT_INSET = 0.015;
+const SIDEWALK_JOINT_OFFSET = 0.02;
+
+function tracePolyline(ctx: Ctx2D, pts: GroundPoint[]): void {
+  if (pts.length === 0) return;
+  ctx.beginPath();
+  if (pts.length === 1) {
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    ctx.lineTo(pts[0][0], pts[0][1]);
+    return;
+  }
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+}
+
 export function paintRoadTiles(ctx: Ctx2D, tiles: RoadTile[], style: RoadStyle): void {
   // Patterns are created against THIS context; a material with no texture
   // falls through to its flat colour, which is a complete look, not a hole.
@@ -404,6 +454,126 @@ export function paintRoadTiles(ctx: Ctx2D, tiles: RoadTile[], style: RoadStyle):
     }
   }
   ctx.setLineDash([]);
+  ctx.globalAlpha = 1;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  // 5. Sidewalks — town paved roads only (issue #159)
+  {
+    const townTiles = tiles.filter(t => t.material === "paved" && t.isTown);
+    if (townTiles.length) {
+      // 5a. Sidewalk ribbons (light grey)
+      ctx.save();
+      ctx.strokeStyle = SIDEWALK_COLOR;
+      ctx.lineWidth = SIDEWALK_WIDTH;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      for (const t of townTiles) {
+        const sidewalks = sidewalkFiguresForTile(t.tx, t.ty, t.mask);
+        for (const poly of sidewalks) {
+          if (poly.length < 2) continue;
+          tracePolyline(ctx, poly);
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
+
+      // 5b. Transverse joints — dark divider lines inside ribbon, world-anchored
+      ctx.save();
+      ctx.strokeStyle = JOINT_COLOR;
+      ctx.lineWidth = SIDEWALK_JOINT_WIDTH;
+      ctx.lineCap = "butt";
+      for (const t of townTiles) {
+        const sidewalks = sidewalkFiguresForTile(t.tx, t.ty, t.mask);
+        for (const poly of sidewalks) {
+          if (poly.length < 2) continue;
+          for (let si = 0; si < poly.length - 1; si++) {
+            const p0 = poly[si];
+            const p1 = poly[si + 1];
+            const dx = p1[0] - p0[0];
+            const dy = p1[1] - p0[1];
+            const segLen = Math.hypot(dx, dy);
+            if (segLen < 1e-9) continue;
+            const ux = dx / segLen;
+            const uy = dy / segLen;
+            const px = -uy;
+            const py = ux;
+            const isHorizontal = Math.abs(dx) > Math.abs(dy);
+            const spacing = SIDEWALK_JOINT_SPACING;
+            let startAlong: number;
+            let endAlong: number;
+            if (isHorizontal) {
+              const minX = Math.min(p0[0], p1[0]);
+              const maxX = Math.max(p0[0], p1[0]);
+              const first = Math.ceil(minX / spacing) * spacing;
+              startAlong = first;
+              endAlong = maxX;
+            } else {
+              const minY = Math.min(p0[1], p1[1]);
+              const maxY = Math.max(p0[1], p1[1]);
+              const first = Math.ceil(minY / spacing) * spacing;
+              startAlong = first;
+              endAlong = maxY;
+            }
+            for (let pos = startAlong; pos <= endAlong + 1e-9; pos += spacing) {
+              let tt: number;
+              if (isHorizontal) {
+                if (Math.abs(dx) < 1e-9) continue;
+                tt = (pos - p0[0]) / dx;
+              } else {
+                if (Math.abs(dy) < 1e-9) continue;
+                tt = (pos - p0[1]) / dy;
+              }
+              if (tt < 0.08 || tt > 0.92) continue;
+              const cx = p0[0] + ux * (tt * segLen + SIDEWALK_JOINT_OFFSET);
+              const cy = p0[1] + uy * (tt * segLen + SIDEWALK_JOINT_OFFSET);
+              const half = SIDEWALK_WIDTH / 2 - SIDEWALK_JOINT_INSET;
+              if (half <= 0) continue;
+              const j0: GroundPoint = [cx + px * half, cy + py * half];
+              const j1: GroundPoint = [cx - px * half, cy - py * half];
+              ctx.beginPath();
+              ctx.moveTo(j0[0], j0[1]);
+              ctx.lineTo(j1[0], j1[1]);
+              ctx.stroke();
+            }
+          }
+        }
+      }
+      ctx.restore();
+
+      // 5c. Street light posts at bends and intersections
+      ctx.save();
+      for (const t of townTiles) {
+        const lights = streetLightPositionsForTile(t.tx, t.ty, t.mask);
+        for (const base of lights) {
+          const top: GroundPoint = [base[0] - POST_HEIGHT_GROUND, base[1] - POST_HEIGHT_GROUND];
+          ctx.fillStyle = SHADOW_COLOR;
+          ctx.beginPath();
+          ctx.arc(base[0], base[1], SHADOW_RADIUS, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = POST_COLOR;
+          ctx.lineWidth = POST_WIDTH;
+          ctx.lineCap = "round";
+          ctx.beginPath();
+          ctx.moveTo(base[0], base[1]);
+          ctx.lineTo(top[0], top[1]);
+          ctx.stroke();
+          ctx.fillStyle = LANTERN_GLOW;
+          ctx.globalAlpha = 0.55;
+          ctx.beginPath();
+          ctx.arc(top[0], top[1], LANTERN_RADIUS * 1.9, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = LANTERN_COLOR;
+          ctx.beginPath();
+          ctx.arc(top[0], top[1], LANTERN_RADIUS, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.restore();
+    }
+  }
+
   ctx.restore();
 }
 
