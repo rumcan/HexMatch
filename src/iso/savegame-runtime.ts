@@ -76,6 +76,7 @@ function trackRestored(track: Track, w: SaveGamePayload["track"]): void {
   track.road.set(base64ToBytes(w.road));
   track.owner.set(base64ToBytes(w.owner));
   track.upgraded.set(base64ToBytes(w.upgraded));
+  track.revision++;
 }
 
 /**
