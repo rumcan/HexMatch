@@ -3048,7 +3048,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     ];
     const protestsWire = [...protests.values()].map((p) => ({ x: p.tx, y: p.ty, until: p.until, owner: p.owner }));
     const trucksWire = trucks.trucks.map((t) => ({ ownerId: t.ownerId, depotId: t.depotId, factory: [...t.factory] as [number, number], route: t.route.map((r) => [...r] as [number, number]), segFast: t.segFast ? [...t.segFast] : [], leg: t.leg, t: t.t, reverse: t.reverse, deliveries: t.deliveries }));
-    const carsWire = cars.cars.map((c) => ({ name: c.name, route: c.route.map((r) => [...r] as [number, number]), leg: c.leg, t: c.t, reverse: c.reverse }));
+    const carsWire = cars.cars.map((c) => ({ name: c.name, carIndex: (c as any).carIndex ?? 1, originTownId: (c as any).originTownId ?? null, destTownId: (c as any).destTownId ?? null, origin: (c as any).origin ? [...(c as any).origin] as [number, number] : null, dest: (c as any).dest ? [...(c as any).dest] as [number, number] : null, route: c.route.map((r) => [...r] as [number, number]), leg: c.leg, t: c.t, state: (c as any).state ?? "driving", waitMs: (c as any).waitMs ?? 0, fadeMs: (c as any).fadeMs ?? 0, fade: (c as any).fade ?? 1, arriveMs: (c as any).arriveMs ?? 0, lastTripKey: (c as any).lastTripKey ?? null }));
     return buildSnapshot({
       seed, track,
       harvesters: eco.harvesters,
@@ -3110,7 +3110,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     boardSyncKeys = keys;
     const protestsWire = [...protests.values()].map((p) => ({ x: p.tx, y: p.ty, until: p.until, owner: p.owner }));
     const trucksWire = trucks.trucks.map((t) => ({ ownerId: t.ownerId, depotId: t.depotId, factory: [...t.factory] as [number, number], route: t.route.map((r) => [...r] as [number, number]), segFast: t.segFast ? [...t.segFast] : [], leg: t.leg, t: t.t, reverse: t.reverse, deliveries: t.deliveries }));
-    const carsWire = cars.cars.map((c) => ({ name: c.name, route: c.route.map((r) => [...r] as [number, number]), leg: c.leg, t: c.t, reverse: c.reverse }));
+    const carsWire = cars.cars.map((c) => ({ name: c.name, carIndex: (c as any).carIndex ?? 1, originTownId: (c as any).originTownId ?? null, destTownId: (c as any).destTownId ?? null, origin: (c as any).origin ? [...(c as any).origin] as [number, number] : null, dest: (c as any).dest ? [...(c as any).dest] as [number, number] : null, route: c.route.map((r) => [...r] as [number, number]), leg: c.leg, t: c.t, state: (c as any).state ?? "driving", waitMs: (c as any).waitMs ?? 0, fadeMs: (c as any).fadeMs ?? 0, fade: (c as any).fade ?? 1, arriveMs: (c as any).arriveMs ?? 0, lastTripKey: (c as any).lastTripKey ?? null }));
     net.publishTrack(track, dirtyTiles, {
       t: now,
       harvesters: eco.harvesters.map((h) => ({ ...h })),
@@ -3220,7 +3220,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       (trucks as any).trucks = applied.trucks.map((t) => ({ ...t, factory: [...t.factory] as [number, number], route: t.route.map((r) => [...r] as [number, number]), segFast: t.segFast ? [...t.segFast] : [] }));
     }
     if (applied.cars) {
-      (cars as any).cars = applied.cars.map((c) => ({ ...c, route: c.route.map((r) => [...r] as [number, number]) }));
+      (cars as any).cars = applied.cars.map((c: any) => ({ ...c, origin: c.origin ? [...c.origin] as [number, number] : null, dest: c.dest ? [...c.dest] as [number, number] : null, route: c.route.map((r: any) => [...r] as [number, number]) }));
       // Ensure guest renders vehicles
       world.vehicles = (carItems(cars as any) as any).concat(truckItems(trucks as any, atlasRef ?? undefined));
     }
@@ -3318,7 +3318,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       worldDirty = true;
     }
     if ((msg as any).cars) {
-      (cars as any).cars = (msg as any).cars.map((c: any) => ({ ...c, route: c.route.map((r: any) => [...r] as [number, number]) }));
+      (cars as any).cars = (msg as any).cars.map((c: any) => ({ ...c, origin: c.origin ? [...c.origin] as [number, number] : null, dest: c.dest ? [...c.dest] as [number, number] : null, route: c.route.map((r: any) => [...r] as [number, number]) }));
       world.vehicles = (carItems(cars as any) as any).concat(truckItems(trucks as any, atlasRef ?? undefined));
     }
     if ((msg as any).boards) {
@@ -5264,9 +5264,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (!isGuest()) {
         if (trucksDirty) {
           trucks.trucks = planTrucksTrucksMerge(trucks.trucks, planTrucks(eco));
-          // TRAFFIC-01: the road surface is the cars' world too — replan them
-          // on the same edge. A car whose route is unchanged keeps its place.
-          cars.cars = planCars(track, cars.cars, carCount);
+          // TRAFFIC-02: bounded trips — town-derived access nodes, host-only.
+          // Retains unaffected trips on road edits (planCars checks revision).
+          cars.cars = planCars(track, grid, cars.cars, carCount, seed);
           trucksDirty = false;
           // AI-03: the replan no longer resets driving lorries — see
           // planTrucksTrucksMerge just above trucksTick. seenDeliveries is
@@ -5281,7 +5281,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // no cost, no behaviour change).
         tickTrucks(trucks, dt, protests.size > 0 ? new Set(protests.keys()) : undefined);
         // TRAFFIC-01: the ambient cars roll on the same frame, host/solo only.
-        tickCars(cars, dt);
+        tickCars(cars, dt, track, grid, seed);
       } else {
         // Guest: vehicles are host-authoritative — already synced via snapshot/delta,
         // just ensure world.vehicles reflects the synced state (applied in delta handler)
@@ -5478,13 +5478,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // without this branch a dirty world never receives lorries at all.
       if (trucksDirty) {
         trucks.trucks = planTrucksTrucksMerge(trucks.trucks, planTrucks(eco));
-        cars.cars = planCars(track, cars.cars, carCount);
+        cars.cars = planCars(track, grid, cars.cars, carCount, seed);
         trucksDirty = false;
         quarry.setTruckServed(truckCargos(trucks.trucks, now));
         rivalQuarry.setTruckServed(truckCargos(trucks.trucks, now, "ai"));
       }
       tickTrucks(trucks, dtMs, protests.size > 0 ? new Set(protests.keys()) : undefined);
-      tickCars(cars, dtMs);
+      tickCars(cars, dtMs, track, grid, seed);
       collectDeliveries(now);
     },
     /** TRAFFIC-01 diagnostics: the ambient cars by NAME (car 1 / car 2 /
@@ -5492,9 +5492,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      *  dial can tell them apart while the art is still the lorry. */
     get traffic() {
       return cars.cars.map((c) => ({
-        name: c.name, loop: c.loop, reverse: c.reverse,
+        name: c.name, state: (c as any).state ?? "driving", loop: (c as any).loop ?? false, reverse: (c as any).reverse ?? false,
         leg: c.leg, t: Math.round(c.t * 1000) / 1000,
         routeTiles: c.route.length,
+        originTownId: (c as any).originTownId ?? null,
+        destTownId: (c as any).destTownId ?? null,
+        origin: (c as any).origin ?? null,
+        dest: (c as any).dest ?? null,
+        fade: (c as any).fade ?? 1,
       }));
     },
     /** TRAFFIC-01 perf dial: set the ambient-traffic volume (0 clears the
@@ -5503,7 +5508,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     setTraffic: (count: number) => {
       if (isGuest()) return [];
       carCount = Math.max(0, Math.min(64, Math.trunc(count) || 0));
-      cars.cars = planCars(track, cars.cars, carCount);
+      cars.cars = planCars(track, grid, cars.cars, carCount, seed);
       renderer?.setWorld(world);
       return cars.cars.map((c) => c.name);
     },

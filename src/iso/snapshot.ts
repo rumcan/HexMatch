@@ -151,11 +151,22 @@ export interface TruckWire {
 }
 export interface CarWire {
   name: string;
+  carIndex?: number;
+  originTownId?: number | null;
+  destTownId?: number | null;
+  origin?: [number, number] | null;
+  dest?: [number, number] | null;
   route: [number, number][];
   segFast?: boolean[];
   leg: number;
   t: number;
-  reverse: boolean;
+  reverse?: boolean;
+  state?: string;
+  waitMs?: number;
+  fadeMs?: number;
+  fade?: number;
+  arriveMs?: number;
+  lastTripKey?: string | null;
 }
 export interface BoardWire {
   owner: string;
@@ -377,6 +388,7 @@ export function applySnapshot(s: unknown, localSeed?: number): AppliedSnapshot {
   // VP-01: the pave provenance rides with it, or a guest would render the
   // rival's tarmac as gravel and score their own paves as zero.
   track.upgraded.set(base64ToBytes(o.upgraded));
+  track.revision++;
   return {
     seed: o.seed >>> 0,
     track,
