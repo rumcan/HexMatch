@@ -100,6 +100,27 @@ export interface WirePlayer {
   id: string;
   vp: number;
   res: Partial<Record<Cargo, number>>;
+  /**
+   * #137: the two SETUP ALLOWANCES, as data on the seat — E8's rule that free
+   * builds are DATA and never an inference from the phase, carried across the
+   * wire. `wirePlayers()` in game.ts has always put them in the snapshot's
+   * player records and `DeltaPlayer` (protocol.ts) has always declared them for
+   * the delta; the snapshot's READ side simply never picked them up, so a guest
+   * joining or resyncing a progressed match kept the allowances it booted with
+   * and advertised a free Depot and 12 free dirt tiles the host had already
+   * spent (pricing its previews from them) until a later delta corrected it.
+   *
+   * Optional in the TYPE because a solo save — or any producer that has nothing
+   * to restore — sends no allowances at all. Absent means "leave the seat
+   * alone"; `0` means EXHAUSTED, which is a value and the one that matters.
+   *
+   * Declaring them changes no bytes on the wire (they already travelled), so
+   * this is not a `SNAPSHOT_VERSION` bump: an old guest reads the same snapshot
+   * it always did, and a new guest reading an old one finds the fields absent
+   * and keeps its boot allowances — the pre-#137 behaviour, no worse.
+   */
+  freeTrack?: number;
+  freeDepots?: number;
 }
 
 /**
@@ -293,6 +314,26 @@ export function validateSnapshot(s: unknown, localSeed?: number): SnapshotError 
   }
   if (!Array.isArray(o.harvesters) || !Array.isArray(o.factories)) {
     return new SnapshotError("malformed", "Snapshot is missing its structure lists.");
+  }
+  // #137: the seat list itself is optional (an empty world has nobody in it),
+  // but when it travels it must be a list of readable records, and a setup
+  // allowance that IS present must be a real number. A guest that quietly
+  // ignored a malformed allowance would keep the one it booted with — the exact
+  // silent divergence every other check here refuses loudly.
+  if (o.players !== undefined && o.players !== null) {
+    if (!Array.isArray(o.players)) {
+      return new SnapshotError("malformed", "Snapshot players is malformed.");
+    }
+    for (const p of o.players as (Partial<WirePlayer> | null)[]) {
+      if (!p || typeof p !== "object") {
+        return new SnapshotError("malformed", "Snapshot carries a malformed player record.");
+      }
+      for (const allowance of [p.freeTrack, p.freeDepots]) {
+        if (allowance !== undefined && (typeof allowance !== "number" || !Number.isFinite(allowance))) {
+          return new SnapshotError("malformed", "Snapshot carries a malformed setup allowance.");
+        }
+      }
+    }
   }
   // MP-AUDIT: new optional fields are validated only when present
   if (o.market !== undefined && o.market !== null) {

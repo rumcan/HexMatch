@@ -179,7 +179,7 @@ import {
 } from "./debug";
 import {
   SNAPSHOT_VERSION, applySnapshot, buildSnapshot, joinFromSnapshot,
-  type RivalSabotage, type Snapshot,
+  type RivalSabotage, type Snapshot, type WirePlayer,
 } from "./snapshot";
 export { joinFromSnapshot };
 // MP-05: the wire. `session.ts` owns roles/roster/chunked state transfer and
@@ -3178,6 +3178,33 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     Object.assign(p.purse, toBag(res));
   }
 
+  /**
+   * #137: write ONE mirrored wire player record into its local seat — the
+   * purse (through `applyPurseWire`, so #114's identity still holds) AND both
+   * setup allowances.
+   *
+   * The delta path has done this since MP-05; the full-state path applied the
+   * purse alone, so a guest that joined or resynced a PROGRESSED match kept the
+   * allowances it booted with — it went on advertising a free Depot and 12 free
+   * dirt tiles the host had already spent, and priced every drag preview and
+   * the HUD's Depot line from them, until some later delta happened to carry
+   * the truth. On a stalled connection that delta never arrives. Both paths now
+   * read the same helper, which is the only way "a snapshot and a delta restore
+   * identical economy state" stays true instead of being a coincidence.
+   *
+   * `typeof … === "number"`, never truthiness: an EXHAUSTED allowance is 0, and
+   * 0 is a VALUE the guest must take, not a missing field to skip. A field that
+   * is genuinely absent (a producer with nothing to restore) leaves the seat
+   * alone. Affordability and spending stay host-authoritative — this mirrors
+   * the host's numbers, it never re-derives them.
+   */
+  function applyPlayerWire(p: PlayerState, wire: WirePlayer) {
+    applyPurseWire(p, wire.res);
+    const ft = wire.freeTrack, fd = wire.freeDepots;
+    if (typeof ft === "number" && Number.isFinite(ft)) p.freeTrack = ft;
+    if (typeof fd === "number" && Number.isFinite(fd)) p.freeDepots = fd;
+  }
+
   /** GUEST: apply a full state (join or resync). Validated first — a version or
    *  seed mismatch must refuse loudly rather than paint a foreign map. */
   function applyNetSnapshot(raw: Snapshot, _seq: number) {
@@ -3199,7 +3226,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     for (let i = 0; i < players.length; i++) {
       const wire = applied.players[i];
       if (!wire) continue;
-      applyPurseWire(players[i], wire.res);
+      // #137: the purse AND both setup allowances — the same seat record a
+      // delta writes, through the same helper, zero allowance included.
+      applyPlayerWire(players[i], wire);
     }
     if (applied.rivalSabotage) applyRivalSabotage(applied.rivalSabotage);
     // MP-AUDIT: market parity
@@ -3288,13 +3317,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       for (let i = 0; i < players.length; i++) {
         const wire = msg.players[i];
         if (!wire) continue;
-        applyPurseWire(players[i], wire.res);
-        // MP-05: the opening allowances ride the delta because the snapshot's
-        // player list (§4) has no room for them, and the previews price from
-        // them — a guest that thought it still had 12 free tiles would preview
-        // a drag the host then charges for.
-        if (typeof wire.freeTrack === "number") players[i].freeTrack = wire.freeTrack;
-        if (typeof wire.freeDepots === "number") players[i].freeDepots = wire.freeDepots;
+        // MP-05: the opening allowances ride the delta because the previews
+        // price from them — a guest that thought it still had 12 free tiles
+        // would preview a drag the host then charges for. #137: they ride the
+        // FULL state through this same helper too, so the two paths cannot
+        // restore different economy state for one seat.
+        applyPlayerWire(players[i], wire);
       }
     }
     // PP-14b: the host's sabotage on this seat's plant, applied as an overlay.
