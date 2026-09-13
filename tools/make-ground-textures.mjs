@@ -16,9 +16,12 @@
 // Usage: node tools/make-ground-textures.mjs [name...]
 // Reads  tools/texture-src/<name>-src.png   (raw generated art, any size)
 // Writes assets/ground/<name>.png            (seamless 512×512 RGBA)
+//        assets/ground/{medium,low}/<name>.png (GFX-01 half/quarter copies,
+//        via tools/make-detail-tiers.mjs)
 // ══════════════════════════════════════════════════════════════════════════
 import sharp from "sharp";
 import { mkdirSync } from "node:fs";
+import { deriveGroundTiers } from "./make-detail-tiers.mjs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -84,4 +87,7 @@ async function seamless(name) {
 
 mkdirSync(OUT, { recursive: true });
 const names = process.argv.slice(2);
-for (const name of (names.length ? names : ["grass", "sand", "water"])) await seamless(name);
+const built = names.length ? names : ["grass", "sand", "water"];
+for (const name of built) await seamless(name);
+// GFX-01: the medium/low presets load smaller copies — keep them in step.
+await deriveGroundTiers(built);

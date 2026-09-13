@@ -32,9 +32,8 @@ import roads2 from "../../assets/layers/roads@2x.png";
 import buildings05 from "../../assets/layers/buildings@0.5x.png";
 import buildings1 from "../../assets/layers/buildings@1x.png";
 import buildings2 from "../../assets/layers/buildings@2x.png";
-import grassTex from "../../assets/ground/grass.png";
-import sandTex from "../../assets/ground/sand.png";
-import waterTex from "../../assets/ground/water.png";
+// GFX-01 terrain LOD: the ground textures resolve per quality preset.
+import { groundTextureUrls } from "./ground-art";
 // TEMP protest crowd — a placeholder png drawn straight on the overlay
 // canvas, not an atlas sprite (see `paintProtests` + tools/make-protest-png.mjs).
 import protestArt from "../../assets/protest.png";
@@ -4483,8 +4482,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const a = atlasRef;
       if (disposed || !a || a.detailCap === cap) return;
       const r = renderer;
+      // GFX-01 terrain LOD: the ground textures and decals swap to the new
+      // preset's tier too. They are an upgrade, never a gate — a failed tier
+      // keeps the current art rather than blocking the rest of the preset.
+      let groundTex: Awaited<ReturnType<typeof loadGroundTextures>> | null = null;
+      let decalTex: Awaited<ReturnType<typeof loadDecalImages>> | null = null;
       try {
         await Promise.all([
+          loadGroundTextures(groundTextureUrls(cap)).then((t) => { groundTex = t; })
+            .catch((err) => console.warn("[gfx] ground textures for this preset failed to load", err)),
+          loadDecalImages(cap).then((d) => { decalTex = d; })
+            .catch((err) => console.warn("[gfx] decals for this preset failed to load", err)),
           capImages(monolithUrls, a.images, cap),
           ...(a.layerImages.has("roads")
             ? [capImages(roadUrls, a.layerImages.get("roads")!, cap)] : []),
@@ -4500,6 +4508,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       }
       if (disposed) return;
       if (r) r.setDetailCap(cap);          // caps the atlas, prunes, repaints
+      if (r && groundTex) r.setGround(groundTex);
+      if (r && decalTex) r.setDecalImages(decalTex);
       else { a.detailCap = cap; a.pruneDetail(); }
       buildMasks(a);
       buildBuildingMasks(a);
@@ -4571,7 +4581,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const layersPromise = loading.track("layers", Promise.all([
       capImages(roadUrls, roadsStore, cap0),
       capImages(sheetUrls, sheetsStore, cap0),
-      loadGroundTextures({ grass: grassTex, sand: sandTex, water: waterTex }),
+      loadGroundTextures(groundTextureUrls(cap0)),
     ]).then(([, , tex]) => {
       if (disposed) return;
       atlas.layerImages.set("roads", roadsStore);
@@ -4590,7 +4600,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // SCENERY art (assets/ground/decals/, assets/scenery/): the decal patches
     // and the tree sprites. Non-gating like every other art load — until it
     // lands the map is the plain meadow with no trees, which is playable.
-    void loading.track("scenery", Promise.all([loadDecalImages(), loadScenerySprites(atlas, cap0)]).then(([decals, trees]) => {
+    void loading.track("scenery", Promise.all([loadDecalImages(cap0), loadScenerySprites(atlas, cap0)]).then(([decals, trees]) => {
       if (disposed) return;
       renderer?.setDecalImages(decals);
       if (trees) {
