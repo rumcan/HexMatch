@@ -35,8 +35,13 @@ import type { Snapshot } from "../iso/snapshot";
  * winner fields (market parity, vehicle presentation, cross-choice, host
  * departure). A v3 peer would drop those and desync the guest's purse, roads
  * or board, so mixed-version rooms must refuse.
+ * v5 (#111–#117): the cross intent gains its typed body (`do:"cross"`), a
+ * cleared crossPrompt travels as an explicit null (v4 mirrors swallowed it),
+ * and deltas omit UNCHANGED board saves (a v4 guest that counts on boards in
+ * every delta would show stale boards between changes), so mixed-version
+ * rooms must refuse.
  */
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 /**
  * Realtime WS frame cap in bytes. Mirrors the SDK's `MAX_BROADCAST_BYTES`

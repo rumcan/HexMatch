@@ -634,9 +634,14 @@ export function mirrorDelta(msg: DeltaMsg): DeltaMsg {
     trucks: msg.trucks?.map((t) => ({ ...t, ownerId: mirrorOwnerId(t.ownerId) })),
     cars: msg.cars?.map((c) => ({ ...c })),
     boards: msg.boards?.map((b) => ({ ...b, owner: mirrorOwnerName(b.owner) })),
-    crossPrompt: msg.crossPrompt
-      ? { ...msg.crossPrompt, boardOwner: mirrorOwnerName((msg.crossPrompt as any).boardOwner) }
-      : (msg.crossPrompt as any) ?? undefined,
+    // #112: an EXPLICIT null means "the host cleared the prompt" and must
+    // reach the guest — `?? undefined` used to swallow it, so a chooser the
+    // host had resolved stayed on screen over a cascade that had moved on.
+    crossPrompt: msg.crossPrompt === undefined
+      ? undefined
+      : msg.crossPrompt
+        ? { ...msg.crossPrompt, boardOwner: mirrorOwnerName((msg.crossPrompt as any).boardOwner) }
+        : null,
     winner: (msg as any).winner ? { ...(msg as any).winner, id: (msg as any).winner.id ? mirrorOwnerName((msg as any).winner.id) : null } : (msg as any).winner,
   };
 }

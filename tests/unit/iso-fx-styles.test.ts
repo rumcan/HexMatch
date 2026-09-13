@@ -82,8 +82,15 @@ describe("A1 the FX classes the UI emits are really styled", () => {
 });
 
 describe("A1 reduced motion keeps the information and drops the movement", () => {
-  const block = /@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\n\}/.exec(css);
-  const reduced = block?.[1] ?? "";
+  // The sheet carries SEVERAL reduced-motion blocks (the gem drag's, the
+  // loading screen's, …) added as features landed. This spec is about the
+  // BLANKET one — the block that holds the `* { animation-duration: .01ms }`
+  // rule and its arcade-readout exemptions — so find THAT block, not merely
+  // the first media query in file order (which today is the gem block).
+  const reduced = css
+    .split(/(?=@media \(prefers-reduced-motion: reduce\))/)
+    .map((chunk) => /@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\n\}/.exec(chunk)?.[1] ?? "")
+    .find((body) => body.includes("animation-duration")) ?? "";
 
   it("exempts the arcade readouts from the blanket .01ms rule", () => {
     // The blanket `* { animation-duration: .01ms !important }` sends every

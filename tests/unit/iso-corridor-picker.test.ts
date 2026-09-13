@@ -218,7 +218,11 @@ function scene(seed: number, wheelOut: number) {
 
 describe("E14 the corridor picker finds a corridor by real geometry", () => {
   it("plays a whole 4–12 tile corridor from a town-ring factory inside the clear band at the zoomed-out boot camera", () => {
-    const { grid } = scene(79, 1);
+    // T4 re-sweep (seeds 0–199 at wheelOut 1, after the spawn buffers
+    // re-rolled every settlement): seed 199's boot frame holds an 11-tile
+    // NW corridor; the old seed 79's industry no longer has a town ring
+    // within the 12-tile reach, like 74 before it.
+    const { grid } = scene(199, 1);
     // PP-02: a factory must touch a town, and towns sit ≥8 tiles from the
     // industries (T4's TOWN_INDUSTRY_SEP), so the corridor is longer than the
     // pre-PP-02 4–7 tile rows. Defaults let it run up to the 12-tile setup
@@ -283,7 +287,7 @@ describe("E14 the corridor picker finds a corridor by real geometry", () => {
   });
 
   it("the picked corridor is a drag the game actually lays, for free, untruncated", () => {
-    const { grid } = scene(79, 1);
+    const { grid } = scene(199, 1);
     if (!track) throw new Error("hook not installed");
     const c = findIsoCorridor() as Corridor;
     // the same setup state the spec's two clicks leave behind, then the same
@@ -316,15 +320,17 @@ describe("E14 the corridor picker finds a corridor by real geometry", () => {
 
   it("is not seed-luck: the same search works on the other swept seeds", () => {
     // PP-02/PP-12/PP-13 swept pairs with a town-ring factory reachable from a
-    // boot-camera industry. Re-swept after the spawn buffer (T4's follow-up:
-    // no industry may stand closer than 10 tiles to a public road, which is
-    // also what tightened the town buffer at generation time): the opening
-    // column is 8–12 tiles now, so it needs the zoomed-out frame the spec's
-    // `zoomStep()` wheel gesture settles on, and at zoom 1 the boot camera
-    // frames the industry alone. 16 of seeds 0–199 have a town-ring corridor
-    // in that band at wheelOut 1 (3, 22, 37, 40, 47, 63, 79, 106, 129, 132,
-    // 147, 175, 176, 194, 198, 199); four of them are played here.
-    for (const [seed, wheelOut] of [[22, 1], [40, 1], [79, 1], [106, 1]] as const) {
+    // boot-camera industry. Re-swept twice since: after the 10-tile public-
+    // road spawn buffer (which also tightened the town buffer), and again
+    // when that re-roll left the last pins' boot industries without a town
+    // ring inside the 12-tile reach. The opening column is 5–12 tiles now,
+    // so it needs the zoomed-out frame the spec's `zoomStep()` wheel gesture
+    // settles on, and at zoom 1 the boot camera frames the industry alone.
+    // 31 of seeds 0–199 have a town-ring corridor in that band at wheelOut 1
+    // (4, 5, 31, 36, 39, 44, 49, 52, 56, 77, 83, 84, 86, 95, 119, 123, 125,
+    // 128, 136, 137, 144, 149, 150, 153, 160, 162, 171, 176, 191, 192, 199);
+    // four of them are played here.
+    for (const [seed, wheelOut] of [[4, 1], [39, 1], [119, 1], [192, 1]] as const) {
       scene(seed, wheelOut);
       const c = findIsoCorridor({ minTiles: 3, maxTiles: 12 });
       expect(c.tiles).toBeGreaterThanOrEqual(3);
@@ -332,7 +338,7 @@ describe("E14 the corridor picker finds a corridor by real geometry", () => {
   });
 
   it("survives the serialization page.evaluate does (self-contained source)", () => {
-    scene(79, 1);
+    scene(199, 1);
     const direct = findIsoCorridor();
     // exactly what Playwright ships into the browser: the function's source,
     // revived with no module scope around it.
@@ -344,7 +350,7 @@ describe("E14 the corridor picker finds a corridor by real geometry", () => {
   });
 
   it("fails LOUDLY when HUD chrome covers the map, naming the coverer", () => {
-    scene(79, 1);
+    scene(199, 1);
     // the banner grows to swallow the map — a plausible layout regression
     boxes.banner = { left: 0, top: 0, right: VIEW_W, bottom: VIEW_H };
     const err = (() => { try { findIsoCorridor(); return null; } catch (e) { return e as Error; } })();
@@ -362,7 +368,7 @@ describe("E14 the corridor picker finds a corridor by real geometry", () => {
   });
 
   it("guards with a geometry message when the corridor cannot fit the band (A4)", () => {
-    scene(79, 2);          // zoom out clamps at the lowest step: 0.5
+    scene(199, 2);         // zoom out clamps at the lowest step: 0.5
     // At this zoom the clear band holds ~34 tiles; 40 cannot fit, so the
     // LAYOUT error (not a search failure) is the answer.
     const err = (() => { try { return findIsoCorridor({ minTiles: 40, maxTiles: 44 }); } catch (e) { return e as Error; } })();
@@ -373,7 +379,7 @@ describe("E14 the corridor picker finds a corridor by real geometry", () => {
   });
 
   it("isoTileOcclusion (the spec's own A2 check) agrees with the picker", () => {
-    scene(79, 1);
+    scene(199, 1);
     const c = findIsoCorridor() as Corridor;
     expect(isoTileOcclusion({ tiles: c.col, aim: c.aim })).toEqual([]);
     // and it does report a genuinely covered tile: aim at the panel strip
@@ -430,16 +436,17 @@ function oldFindSouthColumn(grid: ReturnType<typeof generateMap>): Corridor | nu
 
 describe("E14 the old 7-tile south column is the thing that broke", () => {
   it("finds a general corridor even when the boot industry has no legacy south column", () => {
-    // This seed's corridor runs east (SE), off the boot frame's industry: no
-    // hard-coded 7-tile SOUTH column fits anywhere in view, but the general
+    // This seed's corridor runs down-left (SW), off the boot frame's industry:
+    // no hard-coded 7-tile SOUTH column fits anywhere in view, but the general
     // search still finds a town-ring corridor in another direction.
     // PP-13 re-sweep: seed 33's towns grew out of the frame when they tripled
     // in size, so every 4-12 column here died on `factory-not-near-town`.
-    // The spawn-buffer re-sweep (seeds 0-199 at wheelOut 1) leaves exactly two
-    // seeds whose boot industry has no legacy 7-tile south column AND still
-    // has a town-ring corridor in the band: 40 and 79. Seed 40's corridor runs
-    // east, like this test's original seed.
-    const { grid } = scene(40, 1);
+    // The spawn-buffer re-sweep (seeds 0-199 at wheelOut 1, re-run when that
+    // buffer's re-roll invalidated the previous pins) leaves 31 qualifying
+    // seeds — and not one of them still admits a legacy 7-tile south column:
+    // the buffered map's industries all stand where a straight 7-south is
+    // refused, so the general search is the only thing that can open a game.
+    const { grid } = scene(4, 1);
     expect(oldFindSouthColumn(grid)).toBeNull();
     expect(findIsoCorridor()).not.toBeNull();
   });
@@ -460,7 +467,7 @@ describe("E14 the click point is measured once, and verified before it is used",
     new Function(`return (${fn.toString()});`)() as (a: A) => R;
 
   it("isoTileClickPoint matches an independent measurement, in both call forms", () => {
-    scene(79, 1);
+    scene(199, 1);
     const c = findIsoCorridor();
     const inPage = revive(isoTileClickPoint);
     // the revived source must stand alone, like the other two
@@ -489,7 +496,7 @@ describe("E14 the click point is measured once, and verified before it is used",
   });
 
   it("refuses an offset scaled the way the spec once scaled it", () => {
-    scene(79, 1);
+    scene(199, 1);
     const c = findIsoCorridor();
     const t = c.col[c.tiles - 1];                 // the factory tile (town-ring end)
     const [dx, dy] = tileToScreenAt(cam, t.tx, t.ty);
@@ -542,7 +549,7 @@ describe("E14 a tile is clicked wherever the game will actually take the click",
   });
 
   it("moves to another point on the same tile when a neighbour steals one", () => {
-    scene(79, 1);
+    scene(199, 1);
     const c = findIsoCorridor();
     const t = c.col[0];                               // the harvester end
     const [cx] = tileToScreenAt(cam, t.tx, t.ty);
@@ -573,7 +580,7 @@ describe("E14 a tile is clicked wherever the game will actually take the click",
   });
 
   it("refuses the tile, loudly, when no point on it lands on it", () => {
-    scene(79, 1);
+    scene(199, 1);
     const c = findIsoCorridor();
     const t = c.col[1];
     const real = hook().pickAt!;
@@ -626,7 +633,7 @@ describe("PP-13 the road drag steps over the tiles the Factory covers", () => {
   };
 
   it("skips exactly the tiles the pick refuses, in drag order", async () => {
-    for (const [seed, wheelOut] of [[79, 1], [106, 1], [129, 1]] as const) {
+    for (const [seed, wheelOut] of [[5, 1], [137, 1], [153, 1]] as const) {
       scene(seed, wheelOut);
       const c = findIsoCorridor();
       expect(c, `seed ${seed} at wheelOut ${wheelOut} found no corridor`).not.toBeNull();
@@ -660,35 +667,36 @@ describe("PP-13 the road drag steps over the tiles the Factory covers", () => {
     }
   });
 
-  it("regression: seed 79 runs west, and the Factory covers fx+1..fx+3", async () => {
-    scene(79, 1);
+  it("regression: seed 199 runs west, and the Factory covers fx+1..fx+3", async () => {
+    // T4 re-sweep: the same shaped corridor the old seed 79 pinned — an NW
+    // column whose factory stands at its west end — so the covered window
+    // below still lands ON the column, three tiles of it.
+    scene(199, 1);
     const c = findIsoCorridor()!;
     expect(c.dir).toBe("NW");
-    expect([c.fx, c.fy]).toEqual([28, 135]);
-    expect([c.hx, c.hy]).toEqual([38, 135]);
-    // the 10-tile road buffer lengthened this column by 5 tiles: the industry
-    // it hangs off now stands further from the town ring the factory needs.
+    expect([c.fx, c.fy]).toEqual([62, 31]);
+    expect([c.hx, c.hy]).toEqual([72, 31]);
     expect(c.col.map((t) => `${t.tx},${t.ty}`)).toEqual(
-      [38, 37, 36, 35, 34, 33, 32, 31, 30, 29, 28].map((tx) => `${tx},135`),
+      [72, 71, 70, 69, 68, 67, 66, 65, 64, 63, 62].map((tx) => `${tx},31`),
     );
 
     const { drag, refused } = await classifyDragTiles(c, coveredByFactory(c));
     // the two tiles the old 2×2 window let through, plus the one the 3×3
     // footprint-shaped window let through — all three are gone now
     const aimed = new Set(drag.map((t) => `${t.tx},${t.ty}`));
-    for (const k of ["29,135", "30,135", "31,135"]) {
+    for (const k of ["63,31", "64,31", "65,31"]) {
       expect(aimed.has(k), `${k} must not be aimed at`).toBe(false);
     }
     expect(refused.map((r) => `${r.tile.tx},${r.tile.ty}`).sort())
-      .toEqual(["29,135", "30,135", "31,135"]);
+      .toEqual(["63,31", "64,31", "65,31"]);
     // …and the drag still runs the rest of the corridor to the harvester
     expect(drag.map((t) => `${t.tx},${t.ty}`)).toEqual(
-      [32, 33, 34, 35, 36, 37, 38].map((tx) => `${tx},135`),
+      [66, 67, 68, 69, 70, 71, 72].map((tx) => `${tx},31`),
     );
   });
 
   it("skips nothing when the pick refuses nothing", async () => {
-    scene(79, 1);
+    scene(199, 1);
     const c = findIsoCorridor()!;
     const { drag, refused } = await classifyDragTiles(c, () => null);
     expect(refused).toEqual([]);

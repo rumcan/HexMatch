@@ -17,15 +17,17 @@ import {
 // ══════════════════════════════════════════════════════════════════════════
 
 /** The default route: iso is the standalone default (E12); seed pins the map.
- *  PP-13: seed 79 — its boot frame holds a town-ring corridor at both zooms.
+ *  PP-13: seed 79 — its boot frame holds a town-ring corridor at the boot zoom.
  *  PP-12 swept to 74 when the bigger art re-flowed the map; PP-13 re-swept to
  *  79 because the towns tripled in size and grew inter-town highways, which
  *  moves every settlement (seed 74's boot industry no longer has a town ring
- *  inside the 12-tile corridor reach). Swept over seeds 0–400 at both boot
- *  zooms with this very search: 16 seeds qualify, 79 is the first that reads
- *  as well as 74 did. See the E14 swept pairs in
+ *  inside the 12-tile corridor reach). T4 re-swept to 199 when the spawn
+ *  buffers re-rolled every settlement again: swept over seeds 0–199 at the
+ *  zoomed-out boot camera with this very search, 31 seeds qualify, and 199 is
+ *  the one whose corridor keeps the NW shape the pinned steps below were
+ *  written against. See the E14 swept pairs in
  *  tests/unit/iso-corridor-picker.test.ts. */
-const ISO_URL = "/hexmatch/?seed=79";
+const ISO_URL = "/hexmatch/?seed=199";
 
 async function bootIso(page: import("@playwright/test").Page) {
   // AI-02: the start-of-game difficulty prompt overlays the UI when nothing
@@ -294,7 +296,7 @@ test.describe("iso game boots on the default route", () => {
       seed: (window as any).__iso.grid.seed,
     }));
     expect(stats.industries).toBeGreaterThan(0);
-    expect(stats.seed).toBe(79);
+    expect(stats.seed).toBe(199);
 
     await test.info().attach("iso-boot-layout", {
       body: await page.screenshot(),
