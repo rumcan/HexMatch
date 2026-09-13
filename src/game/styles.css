@@ -188,8 +188,11 @@ html, body, #root {
 .iso-layer { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
 .iso-layer:last-child { cursor: crosshair; }
 .iso-inspect {
-  /* V3: sit left of the quarry column whatever width the board zooms to */
+  /* V3: sit left of the quarry column whatever width the board zooms to.
+     pointer-events: none — the readout is display-only and must never sit
+     between the cursor and the tile it is describing. */
   position: absolute; top: 70px; right: calc(var(--board-px, 496px) + 74px); z-index: 35;
+  pointer-events: none;
   background:
     var(--felt) 0 0 / 220px,
     var(--glass);
@@ -453,6 +456,21 @@ html, body, #root {
   box-shadow: inset 0 1px 0 rgba(242, 220, 166, .3), 0 0 16px -3px rgba(255, 176, 46, .6);
 }
 
+/* NAMES: the top-bar switch for the name tags over the map's features. It
+   is a WORD, not a glyph — the player should read "Names" and know what
+   turns. `.active` is the ON state (tags shown), the lamp-lit version of
+   the same brass plate the sound switch uses for its state. */
+.names-btn {
+  width: auto; min-width: 30px; height: 30px; padding: 0 10px;
+  font-family: var(--serif); font-size: 10.5px; font-weight: 700;
+  letter-spacing: 1.4px; text-transform: uppercase;
+}
+.names-btn.active {
+  background: linear-gradient(180deg, rgba(96, 70, 34, .62), rgba(20, 14, 9, .9));
+  color: var(--gold2); border-color: var(--brass);
+  box-shadow: inset 0 1px 0 rgba(242, 220, 166, .3), 0 0 16px -3px rgba(255, 176, 46, .6);
+}
+
 /* SFX-01 — the sound switch.
    It wears the same brass plate as 🎯 and ❔ beside it, because it IS one of
    them: a bolted key on the top bar. Only the muted state differs, and it
@@ -605,6 +623,7 @@ html, body, #root {
    the same names in to replace them). The scrim below keeps labels legible.
    The old procedural banners (`tools/make-ui-art.mjs`) still exist and stay
    valid as fallbacks; the theme simply points at the noir set. */
+.build-btn.bg-select    { --sigil: url("../assets/ui/noir/sigil/select.png"); }
 .build-btn.bg-dirt      { --sigil: url("../assets/ui/noir/sigil/dirt.png"); }
 .build-btn.bg-road      { --sigil: url("../assets/ui/noir/sigil/road.png"); }
 .build-btn.bg-harvester { --sigil: url("../assets/ui/noir/sigil/harvester.png"); }
@@ -1301,6 +1320,58 @@ html, body, #root {
   100% { transform: translate(-50%, -190%) scale(.95); opacity: 0; }
 }
 
+/* ── the 1-second build flash ───────────────────────────────────────────
+   The on-map answer to "I tried to build and it was refused": it lands on
+   the tile that refused and says, right there, where the thing the player
+   aimed at actually goes. A FloatLayer like the delivery pops, but with its
+   own animation — pop, hold readable for ~0.7 s, out at exactly 1 s. It
+   never rises and drifts: the point is that it STAYS on the spot. */
+.iso-float.build-flash {
+  z-index: 10;
+  font-size: 14px; letter-spacing: .5px; white-space: nowrap;
+  padding: 3px 9px; border-radius: 2px;
+  background: rgba(12, 7, 5, .9);
+  border: 1px solid rgba(226, 112, 79, .7);
+  color: #ffb4a0;
+  text-shadow: 0 0 12px rgba(226, 112, 79, .6), 0 2px 3px #000;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .6), 0 0 22px -6px rgba(226, 112, 79, .5);
+  animation: isoBuildFlash 1s cubic-bezier(.2, 1.25, .3, 1) forwards;
+}
+.iso-float.build-flash.good {
+  border-color: rgba(122, 216, 122, .7);
+  color: #c9f0c0;
+  text-shadow: 0 0 12px rgba(96, 200, 96, .6), 0 2px 3px #000;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .6), 0 0 22px -6px rgba(96, 200, 96, .5);
+}
+@keyframes isoBuildFlash {
+  0%   { transform: translate(-50%, -100%) scale(.5); opacity: 0; }
+  14%  { transform: translate(-50%, -132%) scale(1.12); opacity: 1; }
+  26%  { transform: translate(-50%, -122%) scale(1); opacity: 1; }
+  78%  { transform: translate(-50%, -128%) scale(1); opacity: 1; }
+  100% { transform: translate(-50%, -146%) scale(.96); opacity: 0; }
+}
+
+/* ── NAMES: the tags that float over the map's features while you pan ──
+   One small text tag above each industry, town, plant and depot,
+   re-anchored to the live camera every frame (src/iso/labels.ts).
+   Pointer-transparent — a name must never steal a map click. */
+.iso-label {
+  position: absolute; z-index: 8; pointer-events: none;
+  transform: translate(-50%, -100%);
+  font-family: var(--serif); font-weight: 700; font-size: 11.5px;
+  letter-spacing: 1.1px; text-transform: uppercase; white-space: nowrap;
+  color: #f2e6c8;
+  padding: 1px 7px 2px;
+  background: rgba(7, 9, 7, .58);
+  border-radius: 2px;
+  text-shadow: 0 0 8px rgba(0, 0, 0, .95), 0 1px 2px #000;
+}
+.iso-label.hidden { display: none; }
+.iso-label.label-industry { color: #c9f0c0; }
+.iso-label.label-town { color: #e8d9a8; }
+.iso-label.label-plant { color: #9fd8ff; }
+.iso-label.label-depot { color: #ffd9a0; }
+
 .harvest-pop {
   position: absolute; left: 50%; top: 42%; transform: translate(-50%,-50%);
   z-index: 9; pointer-events: none; text-align: center;
@@ -1636,6 +1707,10 @@ html, body, #root {
 .toast { display: flex; align-items: center; gap: 8px; }
 .toast-msg { flex: 1; min-width: 0; }
 .toast-x {
+  /* The toast lane is pointer-transparent (a toast must never block the
+     map), so the ✕ re-arms itself — without this the close button was a
+     decoration the cursor passed straight through. */
+  pointer-events: auto;
   flex: 0 0 auto; width: 18px; height: 18px; padding: 0;
   display: grid; place-items: center;
   background: rgba(0, 0, 0, .4); border: 1px solid var(--brass-lo);
@@ -1697,9 +1772,14 @@ html, body, #root {
 .rival-quip-text::before { content: "“"; color: var(--brass); }
 .rival-quip-text::after { content: "”"; color: var(--brass); }
 
-/* the work order, pinned under the map while a tool is armed */
+/* the work order, pinned under the map while a tool is armed.
+   pointer-events: none — it appears EXACTLY when the player is mid-gesture
+   (dragging the first road), and a box eating the bottom of the map at that
+   moment is the "the game isn't working" look. Only the Cancel button
+   re-arms itself below. */
 .modebar {
   position: fixed; bottom: 62px; left: 50%; transform: translateX(-50%); z-index: 50;
+  pointer-events: none;
   display: flex; align-items: center; gap: 12px; padding: 8px 14px; border-radius: var(--r);
   background-image: var(--iron-big);
   background-repeat: no-repeat;
@@ -1717,6 +1797,7 @@ html, body, #root {
   text-shadow: 0 0 12px rgba(255, 176, 46, .45);
 }
 .mb-cancel {
+  pointer-events: auto;
   padding: 4px 10px; border-radius: 2px; cursor: pointer; font-weight: 700; font-size: 11px;
   letter-spacing: .8px; text-transform: uppercase; font-family: var(--serif);
   background: linear-gradient(180deg, rgba(96, 30, 18, .8), rgba(26, 8, 5, .9));
@@ -1733,7 +1814,12 @@ html, body, #root {
    the grain (its own contrast was ~26 levels per channel — noise under 11px
    type) instead of multiplying it. No backdrop-filter, no texture at the ink. */
 .banner {
+  /* pointer-events: none — the instruction sheet floats over the map, so it
+     must not swallow the very clicks it is instructing (a first-road drag
+     that starts under the banner would land on the paper, not the map).
+     The ✕ re-arms itself below. */
   position: fixed; top: 104px; left: 50%; transform: translateX(-50%); z-index: 45;
+  pointer-events: none;
   padding: 11px 40px 12px 18px; border-radius: var(--r); text-align: center; color: var(--txt);
   background:
     linear-gradient(180deg, rgba(243, 232, 208, .74), rgba(226, 210, 178, .66) 52%, rgba(205, 186, 150, .72)),
@@ -1759,6 +1845,7 @@ html, body, #root {
   text-shadow: none;
 }
 .banner-close {
+  pointer-events: auto;
   position: absolute; top: 6px; right: 8px; width: 20px; height: 20px;
   border-radius: 2px; cursor: pointer; font-size: 11px;
   border: 1px solid rgba(60, 42, 22, .5); background: rgba(28, 19, 9, .18); color: #3a2a16;

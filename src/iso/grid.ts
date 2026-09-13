@@ -1434,3 +1434,108 @@ export function canPlaceFactory(grid: Grid, tx: number, ty: number): FactoryPlac
   }
   return { ok: true, reason: null };
 }
+
+/**
+ * MP-AUDIT — deterministic distinct starting-town reservations.
+ * Two distant towns, each with a legal factory footprint and a nearby depot site.
+ * Deterministic pure function of the grid (seed-derived), so both clients agree
+ * without wire traffic. Camera, Recenter and opening placement use the local
+ * seat's reservation.
+ */
+export function startingTownReservations(grid: Grid): [Town, Town] | null {
+  // Collect eligible towns: at least one factory site touching the town
+  // that is buildable, and a depot site within 12 tiles of that factory
+  // that is dirt-buildable and has an industry in catchment.
+  const eligible: Town[] = [];
+  for (const town of grid.towns) {
+    let hasFactory = false;
+    let hasDepot = false;
+    // Search factory sites in expanded bounding box around town
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const [hx, hy] of [...town.houses, ...town.roads]) {
+      minX = Math.min(minX, hx); maxX = Math.max(maxX, hx);
+      minY = Math.min(minY, hy); maxY = Math.max(maxY, hy);
+    }
+    if (!isFinite(minX)) continue;
+    // Expand by factory footprint + adjacency
+    const pad = Math.max(...FACTORY_FOOTPRINT) + 2;
+    outer: for (let y = minY - pad; y <= maxY + pad; y++) {
+      for (let x = minX - pad; x <= maxX + pad; x++) {
+        const fac = canPlaceFactory(grid, x, y);
+        if (!fac.ok) continue;
+        if (!factoryTouchesTown(grid, x, y)) continue;
+        // Must be touching THIS town, not just any town
+        // Check if any footprint tile touches this town's tiles
+        let touchesThis = false;
+        for (let dy = 0; dy < FACTORY_FOOTPRINT[1] && !touchesThis; dy++) {
+          for (let dx = 0; dx < FACTORY_FOOTPRINT[0] && !touchesThis; dx++) {
+            const fx = x+dx, fy = y+dy;
+            if (isTownTile(grid, fx, fy-1) || isTownTile(grid, fx, fy+1) || isTownTile(grid, fx-1, fy) || isTownTile(grid, fx+1, fy)) {
+              // Check if that neighbor belongs to this town
+              const nbs = [[fx, fy-1],[fx, fy+1],[fx-1, fy],[fx+1, fy]];
+              for (const [nx,ny] of nbs) {
+                if (town.houses.some(([hx,hy])=>hx===nx&&hy===ny) || town.roads.some(([rx,ry])=>rx===nx&&ry===ny)) touchesThis = true;
+              }
+            }
+          }
+        }
+        if (!touchesThis) continue;
+        hasFactory = true;
+        // Look for depot nearby
+        for (let dy2 = -12; dy2 <= 12 && !hasDepot; dy2++) {
+          for (let dx2 = -12; dx2 <= 12 && !hasDepot; dx2++) {
+            const dx = x+dx2, dy = y+dy2;
+            if (!inBounds(dx, dy)) continue;
+            const i = idx(dx, dy);
+            if (grid.terrain[i] === WATER) continue;
+            if (grid.occupancy[i] !== -1) continue;
+            // Rough is allowed for depot (dirt), so only water/occupancy blocks
+            // Check catchment has an industry
+            let hasInd = false;
+            for (const ind of grid.industries) {
+              if (dx >= ind.tx-4 && dx < ind.tx+ind.w+4 && dy >= ind.ty-4 && dy < ind.ty+ind.h+4) {
+                // Simple 4x4 catchment check approximated
+                const cx0 = dx-4, cy0 = dy-4, cx1 = dx+4, cy1 = dy+4;
+                if (ind.tx <= cx1 && ind.tx+ind.w-1 >= cx0 && ind.ty <= cy1 && ind.ty+ind.h-1 >= cy0) { hasInd = true; break; }
+              }
+            }
+            if (hasInd) hasDepot = true;
+          }
+        }
+        if (hasFactory && hasDepot) break outer;
+      }
+    }
+    if (hasFactory && hasDepot) eligible.push(town);
+  }
+  if (eligible.length < 2) {
+    // Fallback: any two towns with max distance
+    if (grid.towns.length < 2) return null;
+    let best: [Town,Town] | null = null;
+    let bestD = -1;
+    for (let i=0;i<grid.towns.length;i++) for(let j=i+1;j<grid.towns.length;j++) {
+      const a=grid.towns[i], b=grid.towns[j];
+      const d = Math.max(Math.abs(a.tx-b.tx), Math.abs(a.ty-b.ty));
+      if (d>bestD) {bestD=d; best=[a,b];}
+    }
+    return best;
+  }
+  // Choose pair with max distance among eligible
+  let bestPair: [Town,Town] | null = null;
+  let bestDist = -1;
+  for (let i=0;i<eligible.length;i++) {
+    for(let j=i+1;j<eligible.length;j++) {
+      const a=eligible[i], b=eligible[j];
+      const d = Math.hypot(a.tx-b.tx, a.ty-b.ty);
+      if (d>bestDist) {bestDist=d; bestPair=[a,b];}
+    }
+  }
+  return bestPair;
+}
+
+/** Seat → reserved town (0=host,1=guest) */
+export function townForSeat(grid: Grid, seat: 0 | 1): Town | null {
+  const pair = startingTownReservations(grid);
+  if (!pair) return grid.towns[seat] ?? grid.towns[0] ?? null;
+  return pair[seat] ?? null;
+}
+

@@ -312,6 +312,8 @@ export interface DepotPlanOptions {
    * industry has exactly one Depot, and a second one beside it claims nothing.
    */
   locked?: ReadonlySet<number>;
+  /** MP-AUDIT: factory footprints that block depot placement (opening factories + live buildings) */
+  factories?: readonly { tx: number; ty: number }[];
 }
 
 /** The full PP-03 placement plan for a Depot hover at (tx,ty). Validity is
@@ -327,9 +329,10 @@ export function planDepotPlacement(
   let code: string | null = null;
   if (!inGrid(grid, tx, ty)) code = "out-of-bounds";
   else {
-    const refusal = buildRefusal(grid, "road", tx, ty);
+    const refusal = buildRefusal(grid, "dirt", tx, ty);
     if (refusal !== null) code = refusal;
     else if (harvesters.some((h) => h.tx === tx && h.ty === ty)) code = "depot-taken";
+    else if (opts.factories && opts.factories.some((f) => tx >= f.tx && tx < f.tx + FACTORY_FOOTPRINT[0] && ty >= f.ty && ty < f.ty + FACTORY_FOOTPRINT[1])) code = "occupied";
   }
   const served = inGrid(grid, tx, ty) ? depotServedIndustries(grid, tx, ty) : [];
   if (code === null && served.length === 0) code = "no-industry-in-catchment";

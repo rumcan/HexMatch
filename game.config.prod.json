@@ -3,6 +3,15 @@
   "relativePathToDistFolder": "./dist",
   "usesPreloader": false,
   "orientation": "both",
-  "keywords": null,
+  "keywords": [
+    "multiplayer",
+    "strategy",
+    "tycoon",
+    "match-3",
+    "puzzle",
+    "economy",
+    "transport",
+    "pvp"
+  ],
   "kitId": null
 }
