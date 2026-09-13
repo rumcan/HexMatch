@@ -75,3 +75,40 @@ drawImage: each zoom blits a pre-rendered file at its exact pixel size.
 - Non-gating: no manifest → the shared sheet keeps drawing everything.
 
 Review: `tools/capture-iso-review.mjs` loads the building layers too.
+
+## Shipping check (`tests/e2e/building-layers.spec.ts`)
+
+The spec runs against `vite preview` of the production build — a dev-server
+run proves nothing, because `vite dev` resolves `assets/buildings/` off the
+project root while a plain build used to ship none of it (TICKET-B0). It reads
+its required set from `assets/buildings/manifest.json` at run time, so the
+expectation is whatever the art pipeline declares; it is never a count of
+`__iso.buildings`, which is a deliberate superset (`scenery-art.ts` and
+`vehicle-art.ts` install through the same `Atlas.buildingImages` table).
+
+`loadBuildingLayers()` installs **one sprite at a time**, as that sprite's own
+tier fetches resolve, so "the table is non-empty" is a start signal and not a
+completion signal — a spec that asserted 58 sprites at the first non-empty
+moment saw 46 and blamed the art (#136). The wait is therefore:
+
+1. `__iso.artLoad.ready` — the loading screen's own completion flag: every
+   task it tracked (`atlas`, `layers`, `buildings`, `scenery`, `vehicles`,
+   `roads`, `protest`) has settled. `__iso.loading` is the *overlay*, which is
+   false before `show()` mounts it and true through its fade, so it answers a
+   different question.
+2. a bounded poll for inclusion of every required name **and** every tier its
+   cap permits, read from `__iso.buildingLayers` — `{ cap, quality, tiers }`,
+   where `tiers` maps each installed sprite to the zoom levels it holds.
+3. the verdict: one `completenessFailures()` predicate covering the served
+   manifest, per-name install, per-tier 200s, unexpected fetches above the cap
+   and every `[building-layers]` fallback warning.
+
+Four scenarios share it: the healthy boot; the same boot with each PNG
+response deliberately held 0–2.4s (which also records that the table *was*
+seen part-built, so the pass cannot be an accident of an atomic load); one
+required PNG forced to 404, where the same predicate must name that sprite and
+nothing else; and `?quality=medium`, where the expected tiers come from the
+cap the app reports and `@2x` must never be fetched. The loader half of the
+contract — per-sprite install, per-sprite fallback, cap behaviour, unknown
+sprites skipped — is pinned without a browser in
+`tests/unit/iso-atlas-building-layers.test.ts`.
