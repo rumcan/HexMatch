@@ -2644,6 +2644,12 @@ html, body, #root {
   letter-spacing: .8px; text-transform: uppercase; text-align: center; color: var(--txt-dim); }
 .tut-chain-arrow { align-self: center; color: var(--brass); font-size: 12px; opacity: .75; }
 
+/* shot — a real screenshot of the game (tools/capture-tutorial-shots.cjs) */
+.tut-fig-shot { padding: 8px 8px 7px; }
+.tut-shot { display: block; width: auto; height: auto; max-width: 100%; max-height: 340px; margin: 0 auto;
+  border: 1px solid rgba(58, 40, 20, .7); border-radius: 2px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .55); background: rgba(8, 6, 4, .6); }
+
 /* iso — the mini-map, drawn on the map's own 2:1 lattice */
 .tut-iso { position: relative; margin: 6px auto 2px; }
 .tut-tile { position: absolute; display: block;
@@ -3560,7 +3566,11 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .start-panel.story { width: min(900px, 100%); text-align: left; }
 .start-panel.story h1 { text-align: center; }
 .start-panel.story .start-subtitle { text-align: center; }
-.chapter-list { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); margin: 18px 0; }
+/* #122: `minmax(min(250px, 100%), …)` rather than a flat 250px floor — the
+   panel's content box is narrower than 250px below ~370px of viewport (and at
+   200% zoom), and `.start-screen` clips its overflow, so a hard floor made
+   the card spill out of the panel and lose its right edge. */
+.chapter-list { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr)); margin: 18px 0; }
 .chapter-card {
   position: relative; display: flex; gap: 12px; align-items: flex-start;
   padding: 13px 14px; text-align: left; cursor: pointer;
@@ -3581,16 +3591,21 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   box-shadow: inset 0 0 10px rgba(0, 0, 0, .5);
   filter: sepia(.18) contrast(1.06);
 }
-.cc-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.cc-kicker { font: 600 9.5px/1.2 var(--serif); letter-spacing: 1.8px; text-transform: uppercase; color: var(--cc, var(--brass)); }
-.cc-name { font: 700 16px/1.15 var(--display); letter-spacing: .8px; color: var(--txt); }
-.cc-brief { font: 400 12px/1.45 var(--sans); color: var(--txt-dim); }
-.cc-meta { font: 400 11px/1.4 var(--mono); color: var(--txt-mute); }
+.cc-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1 1 auto; }
+.cc-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.cc-kicker { flex: 1 1 auto; min-width: 0; font: 600 9.5px/1.2 var(--serif); letter-spacing: 1.8px; text-transform: uppercase; color: var(--cc, var(--brass)); overflow-wrap: break-word; }
+.cc-name { font: 700 16px/1.15 var(--display); letter-spacing: .8px; color: var(--txt); overflow-wrap: break-word; }
+.cc-brief { font: 400 12px/1.45 var(--sans); color: var(--txt-dim); overflow-wrap: break-word; }
+.cc-meta { font: 400 11px/1.4 var(--mono); color: var(--txt-mute); overflow-wrap: break-word; }
+/* #122: the result badge and the lock live in the header row in normal flow — never
+   absolutely positioned over the kicker — so heading, badge, portrait and description
+   occupy separate readable space at every card width. The row wraps, so on a narrow
+   card the badge drops below the kicker instead of colliding with it. */
 .cc-seal {
-  position: absolute; top: 10px; right: 12px;
+  flex: 0 0 auto; align-self: flex-start; white-space: nowrap;
   font: 700 10px/1 var(--serif); letter-spacing: 1.6px; text-transform: uppercase;
   padding: 4px 7px; border: 1px solid var(--good); color: var(--good);
 }
 .cc-seal.loss { border-color: var(--danger2); color: var(--danger2); }
-.cc-lock { position: absolute; top: 10px; right: 12px; font-size: 14px; color: var(--txt-mute); }
+.cc-lock { flex: 0 0 auto; align-self: flex-start; font-size: 14px; line-height: 1; color: var(--txt-mute); }
 .story-menu-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }

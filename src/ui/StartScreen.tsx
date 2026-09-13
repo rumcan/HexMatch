@@ -16,7 +16,7 @@ import { NetSession } from "../net/session";
 import { VERSION_MISMATCH_MESSAGE, validateWelcome, type HexProtocol } from "../net/protocol";
 import { PORTRAITS, type Portrait } from "../iso/config";
 // STORY-01: the campaign menu — contracts, their locks and their seals.
-import { CHAPTERS } from "../story/chapters";
+import { CHAPTERS, EMPLOYER, currentJobTitle } from "../story/chapters";
 import { CAST, faceOf } from "../story/cast";
 import { loadStoryProgress, pinnedChapter, type StoryProgress } from "../story/progress";
 
@@ -275,8 +275,8 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
         <p className="start-kicker">HEXMatch Industries</p>
         <h1>Build the island. Beat the rival.</h1>
         <p className="start-subtitle">A strategy match of roads, resources, and ruthless expansion.</p>
-        <div className="portrait-picker" role="radiogroup" aria-label="Choose your tycoon">
-          <p className="portrait-label">Your tycoon</p>
+        <div className="portrait-picker" role="radiogroup" aria-label="Choose your manager">
+          <p className="portrait-label">Your manager</p>
           <div className="portrait-options">
             {PORTRAITS.map((p) => (
               <button key={p} type="button"
@@ -307,9 +307,10 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
     return (
       <main className="start-screen" aria-label="Hexmatch campaign">
         <div className="start-panel story">
-          <p className="start-kicker">THE FOUNDRY SYNDICATE</p>
-          <h1>Five contracts, one season</h1>
-          <p className="start-subtitle">1949. An inherited freight company, a bookkeeper who keeps it honest, and five tycoons waiting for you to fold.</p>
+          <p className="start-kicker">THE FOUNDRY SYNDICATE · BACK TO WORK</p>
+          <h1>Five contracts, one career</h1>
+          <p className="start-subtitle">1949. You take the job of Logistics Manager at {EMPLOYER} — a struggling firm, a bookkeeper who keeps it honest, and five tycoons waiting for you to fold. Every contract you win earns a promotion.</p>
+          <p className="start-subtitle story-job">Your job: {currentJobTitle(progress.results)}, {EMPLOYER}</p>
           <div className="chapter-list">
             {CHAPTERS.map((chapter) => {
               const open = pin ? pin === chapter.id : chapter.index < progress.unlocked;
@@ -321,23 +322,25 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
                   className={`chapter-card${open ? "" : " locked"}`}
                   style={{ "--cc": rival.colour } as CSSProperties}
                   disabled={!open}
-                  aria-label={`${chapter.name}${open ? "" : " (sealed)"}`}
+                  aria-label={`${chapter.name}${result === "win" ? " — filed, won" : result === "loss" ? " — filed, lost" : ""}${open ? "" : " (sealed)"}`}
                   onClick={() => onStart({ mode: "story", chapter: chapter.id, portrait })}>
                   <span className="cc-face" aria-hidden="true"
                     style={face.pos
                       ? { backgroundImage: `url(${face.url})`, backgroundSize: "200% 200%", backgroundPosition: `${face.pos[0]}% ${face.pos[1]}%` }
                       : { backgroundImage: `url(${face.url})`, backgroundSize: "cover", backgroundPosition: "center 20%" }} />
                   <span className="cc-body">
-                    <span className="cc-kicker">{chapter.kicker}</span>
+                    <span className="cc-head">
+                      <span className="cc-kicker">{chapter.kicker}</span>
+                      {result === "win"
+                        ? <span className="cc-seal">Filed · won</span>
+                        : result === "loss"
+                          ? <span className="cc-seal loss">Filed · lost</span>
+                          : open ? null : <span className="cc-lock" aria-hidden="true">🔒</span>}
+                    </span>
                     <span className="cc-name">{chapter.name}</span>
                     <span className="cc-brief">{chapter.brief}</span>
-                    <span className="cc-meta">vs {rival.name} · first to {chapter.target}★ · {chapter.skill}</span>
+                    <span className="cc-meta">as {chapter.jobTitle} · vs {rival.name} · first to {chapter.target}★ · {chapter.skill}</span>
                   </span>
-                  {result === "win"
-                    ? <span className="cc-seal">Filed · won</span>
-                    : result === "loss"
-                      ? <span className="cc-seal loss">Filed · lost</span>
-                      : open ? null : <span className="cc-lock" aria-hidden="true">🔒</span>}
                 </button>
               );
             })}

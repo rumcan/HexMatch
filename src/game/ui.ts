@@ -233,6 +233,13 @@ export interface OriginalUi {
    * confirmed (or after the auto-pick timer, so the cascade never hangs).
    */
   crossPick: (kind: "holy" | "broken", picks: number, pick: (chosen: ResKey[]) => void) => void;
+  /**
+   * #112: take the cross chooser down WITHOUT answering it — the host
+   * resolved, expired or cleared the prompt, so a stale dialog must not sit
+   * over a cascade that has moved on (and a queued second chooser must not
+   * surface afterwards).
+   */
+  crossCancel: () => void;
   isQuarryOpen: () => boolean;
   isTradeOpen: () => boolean;
   showModal: (html: string) => void;
@@ -753,9 +760,16 @@ export function createOriginalUi(
     if ((me.res[give] ?? 0) < giveN) { toast(`Not enough ${CARGO[give].name}.`, "danger"); return; }
     if (market.live(me).length >= MAX_OFFERS) { toast("You already have 3 offers live. Cancel one first.", "danger"); return; }
     if (market.post(me, give, giveN, want, wantN)) {
-      toast(`Offer posted: ${giveN} ${CARGO[give].name} → ${wantN} ${CARGO[want].name}.`, "info");
-      // W6: the feed is the trade log — posting is a trade event.
-      feed(`Posted ${giveN} ${CARGO[give].name} → ${wantN} ${CARGO[want].name}`);
+      // #114: on a guest the post is a REQUEST the host must still accept —
+      // say that, not "posted" (the offer exists once the host's sync says so).
+      if (market.relayPending) {
+        toast(`Sent to the host — the offer is live once they confirm.`, "info");
+        feed(`Offer request sent: ${giveN} ${CARGO[give].name} → ${wantN} ${CARGO[want].name}`);
+      } else {
+        toast(`Offer posted: ${giveN} ${CARGO[give].name} → ${wantN} ${CARGO[want].name}.`, "info");
+        // W6: the feed is the trade log — posting is a trade event.
+        feed(`Posted ${giveN} ${CARGO[give].name} → ${wantN} ${CARGO[want].name}`);
+      }
     }
     renderMarket();
   }
@@ -767,9 +781,15 @@ export function createOriginalUi(
     // PP-08: the bank never turns Gold into construction stock (or back).
     if (give === "gold" || want === "gold") { toast(`🪙 ${GOLD_RULE}`, "danger"); return; }
     if (market.bank(me, give, want)) {
-      toast(`Bank: ${BANK_RATE} ${CARGO[give].name} → 1 ${CARGO[want].name}.`, "success");
-      // W6: bank trades are trades — log them even with no rival around.
-      feed(`Bank: ${BANK_RATE} ${CARGO[give].name} → 1 ${CARGO[want].name}`);
+      // #114: a guest's bank trade is a request until the host accepts it.
+      if (market.relayPending) {
+        toast(`Sent to the host — the trade lands once they confirm.`, "info");
+        feed(`Bank request sent: ${BANK_RATE} ${CARGO[give].name} → 1 ${CARGO[want].name}`);
+      } else {
+        toast(`Bank: ${BANK_RATE} ${CARGO[give].name} → 1 ${CARGO[want].name}.`, "success");
+        // W6: bank trades are trades — log them even with no rival around.
+        feed(`Bank: ${BANK_RATE} ${CARGO[give].name} → 1 ${CARGO[want].name}`);
+      }
     }
     else toast(`The bank wants ${BANK_RATE} ${CARGO[give].name}.`, "danger");
     renderMarket();
@@ -795,8 +815,12 @@ export function createOriginalUi(
       b.dataset.cancel = String(o.id);
       b.onclick = () => {
         if (market.cancel(me, o.id)) {
-          toast("Offer withdrawn, escrow refunded.", "info");
-          feed(`Withdrew offer ${o.giveN} ${CARGO[o.give].name} → ${o.wantN} ${CARGO[o.want].name} (escrow refunded)`);
+          // #114: a guest's withdraw is a request until the host confirms.
+          if (market.relayPending) toast("Withdraw request sent — waiting for the host.", "info");
+          else {
+            toast("Offer withdrawn, escrow refunded.", "info");
+            feed(`Withdrew offer ${o.giveN} ${CARGO[o.give].name} → ${o.wantN} ${CARGO[o.want].name} (escrow refunded)`);
+          }
         }
         renderMarket();
       };
@@ -846,8 +870,13 @@ export function createOriginalUi(
     b.onclick = (e) => {
       e.stopPropagation();
       if (market.accept(me, o.id)) {
-        toast(`Took ${from.name}'s offer.`, "success");
-        feed(`Took ${from.name}'s offer: ${o.giveN} ${CARGO[o.give].name} → ${o.wantN} ${CARGO[o.want].name}`);
+        // #114: never spend, and never claim the trade, before the host has
+        // validated and applied the acceptance intent.
+        if (market.relayPending) toast(`Accept request sent — waiting for the host.`, "info");
+        else {
+          toast(`Took ${from.name}'s offer.`, "success");
+          feed(`Took ${from.name}'s offer: ${o.giveN} ${CARGO[o.give].name} → ${o.wantN} ${CARGO[o.want].name}`);
+        }
       }
       renderMarket();
     };
@@ -1364,6 +1393,13 @@ export function createOriginalUi(
     pickEl = panel;
   }
 
+  /** #112: close the chooser and drain any queued ones without answering. */
+  function crossCancel() {
+    pickQueue.length = 0;
+    pickEl?.remove();
+    pickEl = null;
+  }
+
   function popup(gains: Partial<Record<ResKey, number>>, label: string) {
     // SFX-01: the chute pays out. Only when something actually landed — an
     // empty popup is a cascade's COMBO label, which already rang its bell.
@@ -1813,7 +1849,13 @@ export function createOriginalUi(
     // on-card countdown stays live without rebuilding the DOM every frame.
     const offerSecs = (o: import("../iso/market").Offer) =>
       Math.max(0, Math.ceil((OFFER_LIFE - (now - o.born)) / 1000));
-    const marketKey = market.ctx.offers
+    // #114: affordability is part of what this UI displays — the Post, Bank
+    // and Take buttons all price from the purse. A balance that changed under
+    // a STABLE offer list (the guest's authoritative purse sync, most
+    // visibly) must re-render, or a Take button stays disabled after the
+    // purse it prices from has long funded it.
+    const affordKey = CARGOES.map((c) => me.res[c] ?? 0).join(",");
+    const marketKey = affordKey + "#" + market.ctx.offers
       .map((o) => `${o.id}:${o.from}:${o.give}:${o.want}:${o.giveN}:${o.wantN}:${offerSecs(o)}`)
       .join("|");
     if (marketKey !== lastMarketKey) {
@@ -1937,6 +1979,7 @@ export function createOriginalUi(
     fx,
     popup,
     crossPick,
+    crossCancel,
     isQuarryOpen: () => !qp.classList.contains("hidden"),
     isTradeOpen: () => !marketPane.classList.contains("hidden") || !bankPane.classList.contains("hidden"),
     showModal,

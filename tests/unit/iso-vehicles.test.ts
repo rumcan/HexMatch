@@ -38,7 +38,7 @@ import {
   trackOpenTo, isPublicRoad, PUBLIC_OWNER, NE, SE, SW, NW, OPPOSITE, tIdx,
   PRESENT, DIRS, DIR, type Track,
 } from "../../src/iso/track";
-import { MAP_H, MAP_W } from "../../src/iso/config";
+import { FACTORY_FOOTPRINT, MAP_H, MAP_W } from "../../src/iso/config";
 import type { EconomyState, Factory, Harvester } from "../../src/iso/economy";
 import {
   place, pickSprite, tier1Compare,
@@ -211,11 +211,25 @@ describe("RV-01 planTrucks", () => {
     expect(route.length, "the route uses the highway, not teleporting")
       .toBeGreaterThan(2);
 
-    // the ends: depot-side first, factory-side last
+    // the ends: depot-side first (a depot is 1×1), factory-side last — and
+    // the factory end adjoins the PLANT'S BLOCK, which is a
+    // FACTORY_FOOTPRINT square since the art grew (PP-12/PP-15): the lorry
+    // pulls up at whichever side of the block the road joins, not always the
+    // anchor tile's own ring (the old 1×1 assumption measured manh 3 here).
     const manh = (a: [number, number], b: [number, number]) =>
       Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]);
     expect(manh(route[0], depot)).toBe(1);
-    expect(manh(route[route.length - 1], factory)).toBe(1);
+    const last = route[route.length - 1];
+    const [fw, fh] = FACTORY_FOOTPRINT;
+    const blockTouches = (() => {
+      for (let dy = 0; dy < fh; dy++) {
+        for (let dx = 0; dx < fw; dx++) {
+          if (manh(last, [factory[0] + dx, factory[1] + dy]) === 1) return true;
+        }
+      }
+      return false;
+    })();
+    expect(blockTouches, `route ends at ${last}, not beside the plant block`).toBe(true);
 
     // every tile is drivable by owner 1, mutually connected, and at least one
     // tile is a PUBLIC highway — the shared paved road is doing the joining
@@ -610,7 +624,12 @@ describe("RV-01 truck draw items", () => {
     const placed = place(atlas, truckItems({ trucks: [t] }, atlas)[0])!;
     const [ax, ay] = veh.sprites.truck_blue_se.anchor as [number, number];
     const [sx, sy] = tileToScreen(3.5, 10);
-    expect([placed.wx + ax, placed.wy + ay]).toEqual([sx + HW, sy + HH]);
+    // The anchor lands on the fractional diamond's CENTRE — (sx, sy + HH)
+    // from its top vertex. The old `sx + HW` expectation is the diamond's
+    // EAST vertex: the half-tile-east offset the ground-plane fix removed
+    // from `drawOriginMoving` (see the note there — sprite roads used to
+    // cancel it, vector roads do not).
+    expect([placed.wx + ax, placed.wy + ay]).toEqual([sx, sy + HH]);
     for (const name of Object.keys(veh.sprites)) delete atlas.manifest.sprites[name];
   });
 

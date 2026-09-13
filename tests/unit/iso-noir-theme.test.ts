@@ -155,10 +155,28 @@ describe("NOIR the surfaces neither seam nor stretch", () => {
 
   it("never sizes a bitmap to two different axes", () => {
     // `100% 100%` is the classic offender, but so is `300px 100%`; a gradient
-    // may do what it likes (it has no pixels to distort), so only declarations
-    // are read, and each is legal if both components agree or one is `auto`.
-    const sizes = [...css.matchAll(/background-size:([^;]+);/g)].map((m) => m[1].trim());
-    expect(sizes.length, "the sheet should size its layers explicitly").toBeGreaterThanOrEqual(8);
+    // may do what it likes (it has no pixels to distort), so declarations are
+    // read PER RULE, and a rule whose background layers are gradients only is
+    // skipped. Bitmap layers here ride custom properties (`var(--iron)`), so
+    // a rule qualifies as bitmap-bearing when its image declarations mention
+    // `url(` or a `var(` layer — literal `gradient` layers alone do not count.
+    // (The loading sheen used to trip this guard: `60px 100%` sizes a moving
+    // GRADIENT highlight, which has no aspect to preserve.)
+    const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)];
+    const sizes: string[] = [];
+    for (const [, , body] of rules) {
+      const sizeDecls = [...body.matchAll(/background-size:([^;]+);/g)].map((m) => m[1].trim());
+      if (!sizeDecls.length) continue;
+      const images = [...body.matchAll(/background(?:-image)?:([^;]+);/g)].map((m) => m[1]).join(" ");
+      const bitmap = /url\(|var\(/.test(images);
+      if (!bitmap) continue;
+      sizes.push(...sizeDecls);
+    }
+    // Seven, counted per rule: the two iron plates, the modebar, the tabs,
+    // the skill choices and the corner/hero sheets. (The old flat count was
+    // 8 declarations, but it also counted the loading sheen's GRADIENT layer,
+    // which this guard deliberately exempts.)
+    expect(sizes.length, "the sheet should size its bitmap layers explicitly").toBeGreaterThanOrEqual(7);
     for (const value of sizes) {
       for (const layer of value.split(/,(?![^(]*\))/)) {
         const t = layer.trim();

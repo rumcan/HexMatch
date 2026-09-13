@@ -133,7 +133,7 @@ export const CAST: Record<CastId, CastMember> = {
   vex: {
     id: "vex",
     name: "Anne Hextall",
-    role: "Hextall Freight · the inherited name",
+    role: "Logistics Manager · Hextall Freight",
     colour: "#5aa8ff",
     sheet: null,
     solo: soloVex,
@@ -142,7 +142,7 @@ export const CAST: Record<CastId, CastMember> = {
   you: {
     id: "you",
     name: "James Hextall",
-    role: "Hextall Freight · the inherited name",
+    role: "Logistics Manager · Hextall Freight",
     colour: "#5aa8ff",
     sheet: null,
     solo: soloYou,

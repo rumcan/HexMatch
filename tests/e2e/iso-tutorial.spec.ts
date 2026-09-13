@@ -58,13 +58,11 @@ test("TUT-01 the first boot walks the tour, then hands over to the difficulty", 
   // Walk it with the real button, and check each step painted its own figure.
   const expectFigure = async (id: string) => {
     if (id === "loop") return expect(tour.locator(".tut-chain-node")).toHaveCount(7);
-    if (id === "plant") return expect(tour.locator(".tut-tile.ring-good")).toHaveCount(4);
-    if (id === "depot") return expect(tour.locator(".t-depot")).toHaveCount(1);
-    if (id === "roads") return expect(tour.locator(".t-dirt")).toHaveCount(2);
-    if (id === "board") return expect(tour.locator(".tut-gem")).toHaveCount(20);
     if (id === "victory") return expect(tour.locator(".tut-ledger-row")).toHaveCount(4);
-    // expand and desk are words only — a step with no figure paints no plate
-    return expect(tour.locator(".tut-fig")).toHaveCount(0);
+    // every other step shows a real screenshot of the game, and it loads
+    const img = tour.locator("img.tut-shot");
+    await expect(img).toHaveCount(1);
+    await expect.poll(() => img.evaluate((i: HTMLImageElement) => i.complete && i.naturalWidth)).toBeGreaterThan(0);
   };
   await expectFigure("loop");
   for (const id of STEP_IDS.slice(1)) {

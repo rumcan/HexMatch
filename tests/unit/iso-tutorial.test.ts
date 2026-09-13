@@ -181,15 +181,15 @@ describe("TUT-01 content", () => {
 
   it("quotes the board it is describing", () => {
     expect(text("board")).toContain(`${BOARD_W}×${BOARD_H}`);
+    // The board is shown as a real screenshot of the plant with tokened gems.
     const fig = byId("board").figure;
-    expect(fig?.kind).toBe("board");
-    if (fig?.kind === "board") {
-      expect(fig.cells.length % fig.cols).toBe(0);
-      expect(fig.cells.some((c) => c.token === 1)).toBe(true);
-      expect(fig.cells.some((c) => c.token === 2)).toBe(true);
-      expect(fig.cells.filter((c) => c.hit).length).toBeGreaterThanOrEqual(3);
-      for (const c of fig.cells) if (c.cargo) expect(CARGOES).toContain(c.cargo);
+    expect(fig?.kind).toBe("shot");
+    if (fig?.kind === "shot") {
+      expect(fig.src).toMatch(/board.*\.webp/);
+      expect(fig.caption).toMatch(/token/i);
     }
+    // The tour still names every cargo it can stamp a token for.
+    for (const c of CARGOES) expect(text("loop").toLowerCase()).toContain(c);
   });
 
   it("moves with a rebalance — the drift guard", () => {
@@ -365,48 +365,22 @@ describe("TUT-01 figures", () => {
     return card()!.querySelector(".tut-fig") as HTMLElement;
   };
 
-  it("paints the plant step as a mini-map with a legal and a refused footprint", () => {
-    const fig = figureAt("plant");
-    expect(fig.classList.contains("tut-fig-iso")).toBe(true);
-    expect(fig.querySelectorAll(".tut-tile")).toHaveLength(12);
-    // the same four-tile footprint twice: once beside a town, once not
-    expect(fig.querySelectorAll(".t-plant.ring-good")).toHaveLength(4);
-    expect(fig.querySelectorAll(".ring-bad")).toHaveLength(4);
-    expect(fig.querySelectorAll(".t-town")).toHaveLength(4);
-    // every diamond is positioned on the map's own 2:1 lattice
-    const tile = fig.querySelector(".tut-tile") as HTMLElement;
-    expect(tile.style.width).toBe("46px");
-    expect(tile.style.height).toBe("23px");
-    expect(tile.style.left).toMatch(/px$/);
-  });
-
-  it("paints the depot catchment and the road run", () => {
-    const depot = figureAt("depot");
-    // the dotted 4×4 the rule is named after, and nothing else dotted
-    expect(depot.querySelectorAll(".tut-tile.ring-route")).toHaveLength(16);
-    expect(depot.querySelectorAll(".t-depot")).toHaveLength(1);
-    // one industry inside the catchment, one outside it that collects nothing
-    expect(depot.querySelectorAll(".t-industry")).toHaveLength(2);
-    expect(depot.querySelector(".t-depot.ring-good")).toBeTruthy();
-
-    const roads = figureAt("roads");
-    expect(roads.querySelectorAll(".t-dirt")).toHaveLength(2);
-    expect(roads.querySelectorAll(".t-road")).toHaveLength(2);
-    expect(roads.textContent).toContain("🚚");
-    expect(roads.textContent).toContain("🏭");
-  });
-
-  it("paints the board step with the real gem art and token badges", () => {
-    const fig = figureAt("board");
-    const gems = [...fig.querySelectorAll(".tut-gem")] as HTMLElement[];
-    expect(gems).toHaveLength(20);
-    expect(gems.filter((g) => g.style.backgroundImage.includes("url(")).length)
-      .toBe(gems.filter((g) => g.dataset.cargo).length);
-    expect(fig.querySelectorAll(".tut-gem-token")).toHaveLength(3);
-    expect(fig.querySelector(".tut-gem-token.t2")).toBeTruthy();
-    expect(fig.querySelectorAll(".tut-gem-hit")).toHaveLength(3);
-    // the cargo each cell shows is a real cargo, and the badge is its tier
-    for (const g of gems) if (g.dataset.cargo) expect(CARGOES).toContain(g.dataset.cargo as never);
+  it("shows a real screenshot of the game on every map and HUD step", () => {
+    const shots = ["plant", "depot", "roads", "board", "expand", "desk"];
+    const srcs = new Set<string>();
+    for (const id of shots) {
+      const fig = figureAt(id);
+      expect(fig.classList.contains("tut-fig-shot"), `${id} is a screenshot`).toBe(true);
+      const img = fig.querySelector("img.tut-shot") as HTMLImageElement;
+      expect(img, `${id} paints an image`).toBeTruthy();
+      expect(img.getAttribute("src"), `${id} src`).toMatch(new RegExp(`${id}.*\\.webp`));
+      expect(img.alt.length, `${id} alt text`).toBeGreaterThan(20);
+      expect(fig.querySelector(".tut-fig-cap")!.textContent!.length, `${id} caption`).toBeGreaterThan(20);
+      // the old hand-drawn mini-map is gone from these steps
+      expect(fig.querySelectorAll(".tut-tile, .tut-gem")).toHaveLength(0);
+      srcs.add(img.getAttribute("src")!);
+    }
+    expect(srcs.size, "every step has its own screenshot").toBe(shots.length);
   });
 
   it("itemises the point sources on the victory ledger", () => {

@@ -103,6 +103,9 @@ export class Board {
   grid: (Gem | null)[][] = [];
   seq = 1;
   busy = false;
+  /** Queued swaps while animations run — fast play enqueues the next move
+   *  instead of refusing it. Capped to avoid runaway, drained in order. */
+  private moveQueue: { r1: number; c1: number; r2: number; c2: number; now: number }[] = [];
   // Gold is NOT in the base pool at boot — gold gems only drop (join the
   // gravity pool) once a depot sits beside a gold mine. See setGoldEnabled.
   pool: ResKey[] = [...BASE_POOL];
@@ -571,11 +574,13 @@ export class Board {
     this.busy = false;
   }
 
-  async trySwap(r1: number, c1: number, r2: number, c2: number, now: number) {
-    if (this.busy || this.fogUntil > now) return;
-    if (Math.abs(r1 - r2) + Math.abs(c1 - c2) !== 1) return;
-    const g1 = this.grid[r1][c1], g2 = this.grid[r2][c2];
-    if (!g1 || !g2 || g1.block || g2.block) return;
+  /** Internal swap — assumes not busy and not fogged on entry, validates
+   *  adjacency / block again, manages busy flag for its whole lifetime. */
+  private async _doSwap(r1: number, c1: number, r2: number, c2: number, now: number): Promise<boolean> {
+    if (this.fogUntil > now) return false;
+    if (Math.abs(r1 - r2) + Math.abs(c1 - c2) !== 1) return false;
+    const g1 = this.grid[r1]?.[c1], g2 = this.grid[r2]?.[c2];
+    if (!g1 || !g2 || g1.block || g2.block) return false;
     this.busy = true;
 
     // swap positions
@@ -588,7 +593,7 @@ export class Board {
       const bomb = g1.special === "bomb" ? g1 : g2;
       const other = g1.special === "bomb" ? g2 : g1;
       await this.detonate(bomb, other.res);
-      return;
+      return true;
     }
     await sleep(BOARD_ANIMATION_MS.swap);
     const groups = this.findGroups();
@@ -600,9 +605,31 @@ export class Board {
       this.onChange();
       await sleep(BOARD_ANIMATION_MS.swap);
       this.busy = false;
-      return;
+      return true;
     }
     await this.settle(0);
+    return true;
+  }
+
+  async trySwap(r1: number, c1: number, r2: number, c2: number, now: number) {
+    if (this.fogUntil > now) return;
+    if (Math.abs(r1 - r2) + Math.abs(c1 - c2) !== 1) return;
+    const g1 = this.grid[r1]?.[c1], g2 = this.grid[r2]?.[c2];
+    if (!g1 || !g2 || g1.block || g2.block) return;
+    if (this.busy) {
+      if (this.moveQueue.length < 8) this.moveQueue.push({ r1, c1, r2, c2, now });
+      return;
+    }
+    await this._doSwap(r1, c1, r2, c2, now);
+    while (this.moveQueue.length > 0) {
+      if (this.busy) break;
+      const nxt = this.moveQueue.shift()!;
+      if (this.fogUntil > performance.now()) {
+        this.moveQueue.unshift(nxt);
+        break;
+      }
+      await this._doSwap(nxt.r1, nxt.c1, nxt.r2, nxt.c2, nxt.now);
+    }
   }
 
   async detonate(bomb: Gem, colorRes: ResKey) {
@@ -866,11 +893,16 @@ export class Board {
   }
 
   /** AI-03 save/restore: everything that is not derivable (grid, pools,
-   *  clocks as REMAINING ms so they survive a page reload). */
+   * clocks as REMAINING ms so they survive a page reload). #117: each cell
+   * also carries its mint id, so a restore REUSES identities instead of
+   * minting fresh ones — an incremental update (a multiplayer board sync)
+   * then reads to the UI as "the same gems, changed", not a whole-board
+   * replacement. */
   save(): unknown {
     const now = performance.now();
     return {
       grid: this.grid.map((row) => row.map((g) => g && {
+        id: g.id,
         res: g.res, tier: g.tier, special: g.special, hard: g.hard,
         block: g.block, forged: g.forged ? 1 : 0,
       })),
@@ -885,8 +917,14 @@ export class Board {
     let maxId = 1;
     this.grid = d.grid.map((row: any[]) => row.map((cell: any, ci: number) => {
       if (!cell) return null;
+      // #117: keep the sender's id when it is a usable one — stable cell
+      // identity across incremental updates. Anything else (an old save, a
+      // malformed cell) falls back to minting, exactly as before.
+      const id = typeof cell.id === "number" && Number.isInteger(cell.id) && cell.id > 0
+        ? cell.id
+        : this.seq++;
       return {
-        id: this.seq++, res: cell.res, tier: cell.tier ?? 0,
+        id, res: cell.res, tier: cell.tier ?? 0,
         special: cell.special ?? null, hard: cell.hard ?? 0,
         block: !!cell.block, forged: !!cell.forged,
         r: 0, c: ci, // r patched below
@@ -899,11 +937,14 @@ export class Board {
       }
     }
     if (typeof d.seq === "number") this.seq = Math.max(this.seq, d.seq);
+    // ...and however the ids arrived, this board never mints a collision.
+    this.seq = Math.max(this.seq, maxId + 1);
     if (Array.isArray(d.pool)) this.pool = d.pool;
     if (typeof d.comboCount === "number") this.comboCount = d.comboCount;
     this.fogUntil = now + (d.fogIn ?? 0);
     this.blockUntil = now + (d.blockIn ?? 0);
     this.busy = false;
+    this.moveQueue = [];
   }
 
   tickEffects(now: number) {
@@ -979,6 +1020,7 @@ export class Board {
   // Manual escape hatch: wipe the whole quarry to fresh NEUTRAL gems (no tokens).
   resetNeutral() {
     this.busy = true;
+    this.moveQueue = [];
     this.blockUntil = 0; this.fogUntil = 0;
     this.initFill();                       // fresh gems, tier 0, no match at start
     this.onChange();
