@@ -121,7 +121,7 @@ import {
 } from "../game/config";
 import { createQuarry, GEM_TO_CARGO, type Quarry } from "./quarry";
 import {
-  SAVE_KEY, SAVEGAME_VERSION, loadRecentSave, clearSave, trackSave, trackRestored,
+  saveKeyFor, SAVEGAME_VERSION, loadRecentSave, clearSave, trackSave, trackRestored,
   type SaveGamePayload,
 } from "./savegame-runtime";
 import { RES } from "../game/config";
@@ -388,7 +388,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // and a save written mid-game would resurrect as a solo world on the next
   // boot (and, on the guest, restore a map the host never generated).
   const savesOff = isMp() || !!(window as unknown as Record<string, unknown>).__ISO_DISABLE_SAVE;
-  const bootSave = savesOff ? null : loadRecentSave();
+  // STORY-01 fix: each mode has its own save slot — the sandbox's, or this
+  // contract's. A contract that read the sandbox save resumed that world (its
+  // seed, the rival's network, phase "play") against the chapter's lower ★
+  // line and lost on the first rescore.
+  const saveKey = saveKeyFor(storyChapter?.id);
+  const bootSave = savesOff ? null : loadRecentSave(Date.now(), saveKey);
   // STORY-01: a contract is a PLACE — its map must not move between attempts —
   // so the chapter's seed sits in the chain between an explicit `?seed=`
   // (playtests, saved seeds) and the fresh random one. A resumed save keeps
@@ -1189,7 +1194,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         playerPortrait: opts.portrait ?? "vex",
         onRestart: () => {
           restartArmed = true;
-          clearSave();
+          clearSave(saveKey);
           // Keep the selected difficulty: this is a rematch, not first-run
           // onboarding. The ☰ menu's New Game remains the full reset.
           location.reload();
@@ -4124,7 +4129,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   function saveNow() {
     if (disposed || restartArmed || savesOff) return;
     try {
-      localStorage.setItem(SAVE_KEY, JSON.stringify(collectSave()));
+      localStorage.setItem(saveKey, JSON.stringify(collectSave()));
     } catch { /* private mode / quota — saving must never break the game */ }
   }
 
@@ -4284,7 +4289,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       menuItem("New Game", "clears the save and the difficulty pick", () => {
         if (!window.confirm("Start a new game? The save and your difficulty pick are cleared.")) return;
         restartArmed = true; // do NOT let the pagehide autosave re-write the save
-        clearSave();
+        clearSave(saveKey);
         try { localStorage.removeItem(SKILL_STORAGE_KEY); } catch { /* private mode */ }
         location.reload();
       });

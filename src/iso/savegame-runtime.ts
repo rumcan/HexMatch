@@ -78,9 +78,20 @@ function trackRestored(track: Track, w: SaveGamePayload["track"]): void {
   track.upgraded.set(base64ToBytes(w.upgraded));
 }
 
-export const readSave = (): SaveGamePayload | null => {
+/**
+ * STORY-01 fix: which save a match reads and writes. The sandbox keeps the
+ * original `hexmatch:save`; every story contract gets its own slot. They used
+ * to share one key, so a contract resumed the last sandbox world — its seed,
+ * the rival's network and the play phase — and judged that rival against the
+ * chapter's lower ★ line: an instant defeat. Separate slots keep resume-after-
+ * refresh for both without either ever loading the other.
+ */
+export const saveKeyFor = (storyChapterId?: string | null): string =>
+  storyChapterId ? `${SAVE_KEY}:story:${storyChapterId}` : SAVE_KEY;
+
+export const readSave = (key: string = SAVE_KEY): SaveGamePayload | null => {
   try {
-    const raw = localStorage.getItem(SAVE_KEY);
+    const raw = localStorage.getItem(key);
     if (!raw) return null;
     const d = JSON.parse(raw) as SaveGamePayload;
     // v10 → v12 adds multiplayer wires (market/protests/vehicles/boards) and beach; older saves stay loadable
@@ -91,15 +102,15 @@ export const readSave = (): SaveGamePayload | null => {
   } catch { return null; }
 };
 
-export const clearSave = (): void => {
-  try { localStorage.removeItem(SAVE_KEY); } catch { /* private mode */ }
+export const clearSave = (key: string = SAVE_KEY): void => {
+  try { localStorage.removeItem(key); } catch { /* private mode */ }
 };
 
 /** How old is "recent"? A week-old save is nobody's current game. */
 const SAVE_FRESH_MS = 7 * 24 * 3600_000;
 
-export function loadRecentSave(now = Date.now()): SaveGamePayload | null {
-  const d = readSave();
+export function loadRecentSave(now = Date.now(), key: string = SAVE_KEY): SaveGamePayload | null {
+  const d = readSave(key);
   if (!d || now - d.savedAt > SAVE_FRESH_MS) return null;
   return d;
 }
