@@ -167,7 +167,11 @@ describe("PP-03 plan validity is the placement rule, not a copy", () => {
           : [];
         const plan = planDepotPlacement(g, taken, tx, ty);
         const fake: Harvester = { id: -1, owner: "", ownerId: 0, tx, ty };
-        const expected = canBuildOn(g, "road", tx, ty)
+        // The depot asks the DIRT question, exactly as `placeHarvester` does:
+        // a Depot is ground works, not a paved road, so rough ground is a
+        // legal site (the old oracle said "road", which refuses rough, and
+        // disagreed with the click path on every rough tile near an industry).
+        const expected = canBuildOn(g, "dirt", tx, ty)
           && !taken.some((h) => h.tx === tx && h.ty === ty)
           && industriesInCatchment(g, fake).length > 0;
         expect(plan.valid, `depot @ (${tx},${ty})`).toBe(expected);
