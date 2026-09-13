@@ -51,6 +51,9 @@ import {
 import { DEPOT_COST, costCompact, costLabel } from "./construction";
 import { PLANT_COST } from "./plants";
 import { fmtVp } from "./victory";
+// MOBILE-01: the controls card speaks to the hand actually holding the
+// device — a thumb has no wheel, no right button and no Q. See touch.ts.
+import { coarsePointer } from "./touch";
 import { sfx } from "../audio/sfx";
 
 // The board figure draws the real painted hex gems, mapped by CARGO name the
@@ -177,6 +180,8 @@ export interface TutorialContext {
  * from the authoritative tables, so this reads correctly after any rebalance.
  */
 export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
+  /** MOBILE-01: which set of controls the lesson names. */
+  const coarse = coarsePointer();
   const dirt = costCompact(TRANSPORT.dirt.cost);
   const road = costCompact(TRANSPORT.road.cost);
   const pave = costCompact(UPGRADE_COST);
@@ -303,7 +308,9 @@ export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
         "Town ring roads and the map's public highways carry your traffic too, so a route does not have to be entirely your own gravel.",
         `<b>Paved Road</b> is ${road} and runs lorries <b>2× faster</b>. Paving over dirt you already laid costs only ${pave} — and it is the only road work that scores.`,
       ],
-      tip: "Left-drag lays a whole run of tiles at once. Middle-drag pans (one finger on touch), the wheel zooms, 🎯 recentres.",
+      tip: coarse
+        ? "One finger drags a whole run of tiles; a tap lays a single one. One finger still pans while a tool is held, two pinch-zoom, and the + / − / 🎯 keys sit at the map's right edge."
+        : "Left-drag lays a whole run of tiles at once. Middle-drag pans (one finger on touch), the wheel zooms, 🎯 recentres.",
     },
     {
       id: "board",
@@ -381,8 +388,12 @@ export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
       kicker: "THE DESK",
       title: "Controls, and where everything lives",
       points: [
-        "<b>Left button</b> places and drags roads; <b>WASD</b> pans the camera (Shift doubles the speed), and so does the <b>middle button</b> (one finger drags the map on touch, two pinch-zoom); <b>wheel</b> zooms; 🎯 recentres on your plant.",
-        "<b>Right-click drops the tool you are holding</b> back to the <b>Select</b> pointer — hover it over a resource, town, plant or depot and the inspector says exactly what it is. <b>Q</b> does the same from the keyboard.",
+        coarse
+          ? "<b>One finger</b> drags a road tile by tile and <b>a tap lays a single tile</b>; the same finger still <b>pans</b> while a tool is held, <b>two fingers pinch-zoom</b>, and the <b>+ / − / 🎯</b> keys at the map's edge are the wheel and the recentre."
+          : "<b>Left button</b> places and drags roads; <b>WASD</b> pans the camera (Shift doubles the speed), and so does the <b>middle button</b> (one finger drags the map on touch, two pinch-zoom); <b>wheel</b> zooms; 🎯 recentres on your plant.",
+        coarse
+          ? "The <b>chip at the map's lower-left</b> names the tool in your hand and <b>puts it down</b> on a tap — the touch twin of right-click. A tap with <b>Select</b> reads the tile under your finger in the inspector."
+          : "<b>Right-click drops the tool you are holding</b> back to the <b>Select</b> pointer — hover it over a resource, town, plant or depot and the inspector says exactly what it is. <b>Q</b> does the same from the keyboard.",
         "Left column: <b>Build</b> — Select, Dirt Road, Road, Depot, Processing Plant, Demolish (half refund) — and the <b>Black Market</b> beneath it.",
         "Right column: the <b>Bank</b>, <b>Market</b>, <b>Processing Plant</b> and <b>Feed</b> tabs, with the board and the reach strip above them.",
         "<b>Esc</b> cancels an armed card or protest, <b>M</b> mutes, ♻ collapses the board for a fresh neutral one (30 s cooldown), and the top-bar <b>Aa Names</b> switch shows or hides the name tags over the map.",

@@ -102,8 +102,14 @@ describe("NOIR the theme paints inside the boxes; it never moves them", () => {
   // same numbers. If a restyle changes one of them, that test's model and the
   // real hit-testing disagree — so they are pinned here, at the source.
   const boxes: [string, RegExp][] = [
-    [".topbar", /height:\s*60px/],
-    [".aside", /top:\s*68px/],
+    // MOBILE-01: the bar and the sheets now derive their offsets from the
+    // --topbar-h / --safe-top pair (a notched phone moves the whole stack
+    // down together), so the pin moved with them: the DECLARATION is the
+    // calc, and the NUMBER it resolves to on a mouse-and-no-notch desktop is
+    // pinned just below, at :root.
+    [".topbar", /height:\s*calc\(var\(--topbar-h\) \+ var\(--safe-top\)\)/],
+    [":root", /--topbar-h:\s*60px/],
+    [".aside", /top:\s*calc\(var\(--topbar-h\) \+ var\(--safe-top\) \+ 8px\)/],
     [".aside", /bottom:\s*52px/],
     [".aside.left", /width:\s*300px/],
     [".board-wrap", /padding:\s*5px/],

@@ -16,7 +16,7 @@
 // pointer promotion) are unit-testable without a DOM.
 // ══════════════════════════════════════════════════════════════════════════
 import {
-  HW, HH, MAP_W, MAP_H, ZOOM_STEPS, tileToScreen, screenToTile, type Zoom,
+  HW, HH, MAP_W, MAP_H, TILE_W, ZOOM_STEPS, tileToScreen, screenToTile, type Zoom,
 } from "../game/config";
 
 export interface Camera {
@@ -73,6 +73,48 @@ export function zoomAt(c: Camera, z: Zoom, sx: number, sy: number): Camera {
 
 export const zoomStepAt = (c: Camera, dir: number, sx: number, sy: number): Camera =>
   zoomAt(c, stepZoom(c.zoom, dir), sx, sy);
+
+// ── MOBILE-01: a boot zoom that is the same SIZE on every screen ───────────
+// The camera lives in DEVICE pixels, so one zoom step is not one on-screen
+// size: at dpr 3 a zoom-1 tile is 64 device px = 21 CSS px — a desktop tile
+// shrunk to a third, far under a fingertip. The zoom a phone should boot at
+// is the step whose ON-SCREEN (CSS) tile width lands in the comfortable band
+// around the desktop reference (a 64 CSS-px tile), preferring the largest step
+// in the band so retina phones get the crisp 2× art rather than an upscale.
+export const DESKTOP_TILE_CSS = TILE_W;
+const COMFY_MIN_CSS = 40, COMFY_MAX_CSS = 76;
+
+/** The CSS-px width one tile covers at zoom `z` on a `dpr` screen. */
+export const tileCssAt = (z: Zoom, dpr: number): number => (TILE_W * z) / dpr;
+
+/**
+ * The zoom step a new game boots at on this screen. Pure, so the acceptance
+ * ("a phone tile is a fingertip, a desktop tile is unchanged") is unit-tested.
+ */
+export function bootZoomFor(dpr: number): Zoom {
+  const comfy = ZOOM_STEPS.filter((z) => {
+    const css = tileCssAt(z, dpr);
+    return css >= COMFY_MIN_CSS && css <= COMFY_MAX_CSS;
+  });
+  if (comfy.length > 0) return comfy[comfy.length - 1];
+  // No step lands in the band (an exotic dpr): take the nearest to the
+  // desktop reference instead of leaving the player with postage stamps.
+  let best: Zoom = ZOOM_STEPS[0], bd = Infinity;
+  for (const z of ZOOM_STEPS) {
+    const d = Math.abs(tileCssAt(z, dpr) - DESKTOP_TILE_CSS);
+    if (d < bd) { bd = d; best = z; }
+  }
+  return best;
+}
+
+/**
+ * MOBILE-01: how far a press may wander before it stops being a TAP, in
+ * device pixels. A mouse is precise (4 device px, the historic TK-001 slop);
+ * a fingertip is not — 10 CSS px, scaled into the canvas' device space, so a
+ * tap that jitters two pixels still places the building it was aimed at.
+ */
+export const tapSlop = (pointerType: string, dpr: number): number =>
+  (pointerType === "mouse" ? 4 : Math.round(10 * dpr));
 
 // ── panning + clamping ────────────────────────────────────────────────────
 /** Axis-aligned bounds of the whole map diamond in world space. */

@@ -3,7 +3,7 @@ import {
   createCamera, worldToScreen, screenToWorld, screenToTileAt, tileToScreenAt,
   stepZoom, zoomAt, zoomStepAt, clampCamera, panBy, centerOnTile, centerOnMap,
   resizeCamera, visibleTileRange, createGesture, pointerDown, pointerMove, pointerUp,
-  mapWorldBounds,
+  mapWorldBounds, bootZoomFor, tapSlop, tileCssAt,
 } from "../../src/iso/camera";
 import { MAP_W, MAP_H, tileToScreen } from "../../src/game/config";
 
@@ -159,5 +159,63 @@ describe("E4 camera — gestures", () => {
     const r = pointerMove(g, { id: 2, x: 700, y: 300 }, cam);
     expect(r.cam.zoom).toBe(2);
     expect(screenToTileAt(r.cam, 500, 300)).toEqual(t0);
+  });
+});
+
+describe("MOBILE-01 — a boot zoom that is one size on every screen", () => {
+  it("keeps the desktop tile exactly where it has always been", () => {
+    // dpr 1 is the desktop the whole HUD was drawn against: 64 CSS px a tile.
+    expect(bootZoomFor(1)).toBe(1);
+    expect(tileCssAt(bootZoomFor(1), 1)).toBe(64);
+  });
+
+  it("gives a phone a fingertip-sized tile, not a postage stamp", () => {
+    // Before MOBILE-01 every screen booted at zoom 1, which at dpr 2/3 is a
+    // 32/21 CSS-px tile — under half a fingertip. The boot step must now land
+    // in the comfortable band on every dpr the game actually renders at (the
+    // canvas caps devicePixelRatio at 2, so 2 is the hottest real case).
+    for (const raw of [1, 1.25, 1.5, 1.75, 2, 2.5, 3, 3.5, 4]) {
+      const dpr = Math.min(2, raw);
+      const css = tileCssAt(bootZoomFor(dpr), dpr);
+      expect(css, `dpr ${raw}`).toBeGreaterThanOrEqual(40);
+      expect(css, `dpr ${raw}`).toBeLessThanOrEqual(76);
+    }
+    expect(bootZoomFor(2)).toBe(2);
+    expect(tileCssAt(bootZoomFor(2), 2)).toBe(64);   // same as desktop
+  });
+
+  it("never answers with a step the atlas does not ship", () => {
+    for (let dpr = 0.5; dpr <= 5; dpr += 0.25) {
+      expect([0.5, 1, 2] as const).toContain(bootZoomFor(dpr));
+    }
+  });
+
+  it("zooming about the viewport centre keeps the centred tile centred", () => {
+    // the boot applies its zoom through zoomAt at the middle of the stage;
+    // the e2e's "focus == centre" assertion rides on this.
+    const c = centerOnMap(createCamera(390, 844));
+    const [tx, ty] = screenToTileAt(c, 390 / 2, 844 / 2);
+    const z = zoomAt(c, bootZoomFor(3), 390 / 2, 844 / 2);
+    expect(screenToTileAt(z, 390 / 2, 844 / 2)).toEqual([tx, ty]);
+    // …and the CSS→device resize that follows keeps it there too.
+    const r = resizeCamera(z, 390 * 2, 844 * 2);
+    expect(screenToTileAt(r, 390, 844)).toEqual([tx, ty]);
+  });
+});
+
+describe("MOBILE-01 — tap slop is a fingertip, not a mouse hair", () => {
+  it("keeps the mouse's precise 4 device px (TK-001)", () => {
+    expect(tapSlop("mouse", 1)).toBe(4);
+    expect(tapSlop("mouse", 3)).toBe(4);
+  });
+
+  it("gives touch ~10 CSS px in the canvas' own device pixels", () => {
+    expect(tapSlop("touch", 1)).toBe(10);
+    expect(tapSlop("touch", 2)).toBe(20);
+    expect(tapSlop("touch", 3)).toBe(30);
+    // a two-CSS-px finger jitter at dpr 3 must stay INSIDE the slop…
+    expect(2 * 3).toBeLessThanOrEqual(tapSlop("touch", 3));
+    // …while a real drag (this audit's 100px pan) stays outside it.
+    expect(100 * 3).toBeGreaterThan(tapSlop("touch", 3));
   });
 });

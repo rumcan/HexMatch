@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { bootBudget } from "./boot";
 
 // ══════════════════════════════════════════════════════════════════════════
 // AI-01 — the difficulty selector, against the REAL built game (vite preview).
@@ -22,11 +23,14 @@ async function bootIso(page: import("@playwright/test").Page, extra = "") {
     () => localStorage.setItem("hexmatch:tutorial", "never"),
   );
   await page.goto(`${BASE}?seed=79${extra}`);
+  // STORY-01: walk the front door and the mode screen, or nothing mounts
+  await page.locator(".menu-btn.primary").click();
+  await page.getByRole("button", { name: /Play vs AI/ }).click();
   await page.waitForFunction(() => {
     const h = (window as any).__iso;
     // LOAD-01: wait for the loading screen to lift before touching the HUD.
     return !!h && h.phase === "setup-factory" && !!h.grid && h.grid.industries.length > 0 && !h.loading;
-  }, null, { timeout: 20000 });
+  }, null, { timeout: bootBudget() });
 }
 
 test("AI-01 picker: url wins, choice persists, switching is live", async ({ page }) => {

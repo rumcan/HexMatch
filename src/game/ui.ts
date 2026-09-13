@@ -69,6 +69,8 @@ import portraitTorvin from "../assets/ui/tycoon_torvin_small.png";
 import portraitVex from "../assets/ui/tycoon_vex_small.png";
 // STORY-01: the wire's office voice (Mabel) and her standing expression.
 import { faceOf } from "../story/cast";
+// MOBILE-01: copy that names controls must name the ones this device HAS.
+import { coarsePointer } from "../iso/touch";
 
 // ── V5: the restored gem art ────────────────────────────────────────────────
 // One sprite per cargo (./gem-art.ts), mapped through the same gem→cargo
@@ -182,6 +184,11 @@ export interface UiHooks {
   /** NAMES: the boot state, so the button opens in the right pressed look. */
   names?: boolean;
   onRecenter: () => void;
+  /**
+   * MOBILE-01: the floating zoom keys (the wheel's touch twin). Omitted by
+   * harnesses that mount the chrome without a camera behind it.
+   */
+  onZoom?: (dir: 1 | -1) => void;
   onSwap: (r1: number, c1: number, r2: number, c2: number) => void;
   onReset: () => void;
   onBlackAction: (key: string) => void;
@@ -361,14 +368,17 @@ export function createOriginalUi(
   // depots while you pan. ON by default — the map should be readable at a
   // glance, the way a strategy map is — and the choice is the game's to
   // remember (it persists; the chrome only reports the toggle here).
-  const namesBtn = h("button", "icon-btn names-btn", "Aa Names");
+  // MOBILE-01: the word is its own span so a phone can keep the monogram key
+  // and drop the word — the word is what used to wrap out of a 26px button
+  // and hang over the map.
+  const namesBtn = h("button", "icon-btn names-btn", `Aa<span class="nb-word"> Names</span>`);
   namesBtn.id = "iso-names";
   namesBtn.type = "button";
   namesBtn.title = "Show / hide names over resources, towns and buildings";
   namesBtn.setAttribute("aria-pressed", String(hooks.names ?? true));
   namesBtn.onclick = () => hooks.onNames?.();
   right.appendChild(namesBtn);
-  const helpBtn = h("button", "icon-btn", "❔");
+  const helpBtn = h("button", "icon-btn help-btn", "❔");
   helpBtn.title = "How to play";
   helpBtn.onclick = () => helpModal();
   right.appendChild(helpBtn);
@@ -500,10 +510,37 @@ export function createOriginalUi(
   root.appendChild(banner);
   const modalRoot = h("div", "modal-root hidden");
   root.appendChild(modalRoot);
+  // MOBILE-01: the touch-only floating cluster. A phone has no wheel and no
+  // middle button, so the camera's three moves — recentre, zoom in, zoom out —
+  // live here as thumbs-reach keys, and the held-tool chip gives a fingertip
+  // the one thing a right-click used to be: "put the tool down".
+  const fabs = h("div", "fabs");
+  const zoomInBtn = h("button", "fab zoom-in", "+");
+  zoomInBtn.type = "button";
+  zoomInBtn.title = "Zoom in";
+  zoomInBtn.setAttribute("aria-label", "Zoom in");
+  zoomInBtn.onclick = () => hooks.onZoom?.(1);
+  const zoomOutBtn = h("button", "fab zoom-out", "−");
+  zoomOutBtn.type = "button";
+  zoomOutBtn.title = "Zoom out";
+  zoomOutBtn.setAttribute("aria-label", "Zoom out");
+  zoomOutBtn.onclick = () => hooks.onZoom?.(-1);
   const recenterBtn = h("button", "recenter-btn", "🎯");
   recenterBtn.title = "Recenter map";
   recenterBtn.onclick = () => hooks.onRecenter();
-  root.appendChild(recenterBtn);
+  fabs.append(zoomInBtn, zoomOutBtn, recenterBtn);
+  root.appendChild(fabs);
+  // The held tool, named and droppable, while it is not the pointer. Desktop
+  // keeps right-click/Q; this chip is the touch hand's escape hatch.
+  const toolChip = h("button", "toolchip hidden");
+  toolChip.type = "button";
+  toolChip.dataset.sfx = "close";
+  const toolChipLabel = h("span", "tc-label");
+  const toolChipX = h("span", "tc-x", "✕ put down");
+  toolChip.append(toolChipLabel, toolChipX);
+  toolChip.title = "Put this tool back to the pointer";
+  toolChip.onclick = () => hooks.onTool("select");
+  root.appendChild(toolChip);
 
   // ── mobile bottom nav ─────────────────────────────────────────────────────
   const mobileNav = h("nav", "mnav");
@@ -538,6 +575,9 @@ export function createOriginalUi(
   // the rest of the game (the ❔ help still re-tells the rules).
   let lastBannerText: string | null = null;
   let lastBannerKey: string | null = null;
+  /** MOBILE-01: paint gates for the held-tool chip and the banner height var. */
+  let lastChipTool: string = "\u0000";
+  let lastBannerH = -1;
   let dismissedBannerKey: string | null = null;
   let lastSabKey = "\u0000";
   let lastMarketKey = "\u0000";
@@ -554,7 +594,9 @@ export function createOriginalUi(
     // The pointer goes first: it is the hand you hold between builds —
     // hover to read what a tile is, click to select it, right-click (or Q)
     // to return here from any tool.
-    { key: "select", label: "Select", sub: "Point & inspect · Q / right-click" },
+    // MOBILE-01: "Q / right-click" is noise on a phone — the tap and the
+    // held-tool chip are the touch hand's versions of the same two ideas.
+    { key: "select", label: "Select", sub: coarsePointer() ? "Point & inspect · tap reads a tile" : "Point & inspect · Q / right-click" },
     { key: "dirt", label: "Dirt Road", sub: `${costCompact(TRANSPORT.dirt.cost)} · 0★` },
     { key: "road", label: "Road", sub: `${costCompact(TRANSPORT.road.cost)} · +${VICTORY.upgrade}★ paving dirt` },
     // PP-05: `depotSub` refreshes the Depot line below as the free-setup
@@ -1481,8 +1523,17 @@ export function createOriginalUi(
     const wrap = boardWrap;
     let z = 1;
     if (window.innerWidth <= 760) {
-      const availW = window.innerWidth - 24;
-      const availH = window.innerHeight - 210;
+      // MOBILE-01: the old budget subtracted 24px from the WINDOW and forgot
+      // every inset between the window and the board — the sheet's 8px margins
+      // each side, the panel's padding and border, the board wrap's padding —
+      // so on a 390px phone the ninth column of gems sat off the right edge,
+      // half a gem wide and untappable. The budget now pays for the whole
+      // sheet chrome (8+8 sheet, 8+8 panel, 1+1 border, 4+4 wrap = 42, rounded
+      // up), and the height budget prices the real sheet stack above the
+      // board (top bar, tabs, quarry head, reach strip) plus the footer and
+      // nav below it, so the whole 9×9 fits without a scroll where it can.
+      const availW = window.innerWidth - 44;
+      const availH = window.innerHeight - 380;
       z = Math.min(availW / boardPx, availH / boardPx, 1);
       z = Math.max(0.4, z);
     } else {
@@ -1688,6 +1739,28 @@ export function createOriginalUi(
     buildList.querySelectorAll<HTMLElement>("[data-tool]").forEach((b) => {
       b.classList.toggle("active", b.dataset.tool === toolState);
     });
+    // MOBILE-01: the held-tool chip. A touch hand has no right-click and no Q,
+    // so while anything but the pointer is in the hand the chip names it and
+    // puts it down on a tap. It reads the SAME button the Build sheet lit, so
+    // the two can never disagree about what is held.
+    if (toolState !== lastChipTool) {
+      lastChipTool = toolState;
+      const held = toolState !== "select"
+        ? buildList.querySelector<HTMLElement>(`[data-tool="${toolState}"] .bb-mid b`)
+        : null;
+      const label = held?.textContent?.trim() ?? "";
+      toolChipLabel.textContent = label || toolState;
+      toolChip.classList.toggle("hidden", toolState === "select");
+    }
+    // MOBILE-01: on a phone the sheets rise to just under the top bar, which
+    // is exactly where the banner is posted — so the posted sheet covered the
+    // first row of the Build list. Publish the banner's live height and let
+    // the mobile sheet top edge sit below it (styles.css reads --banner-h).
+    const bannerH = banner.classList.contains("hidden") ? 0 : banner.offsetHeight;
+    if (bannerH !== lastBannerH) {
+      lastBannerH = bannerH;
+      root.style.setProperty("--banner-h", `${bannerH}px`);
+    }
     // NAMES: the top-bar button's pressed look follows the live state —
     // whichever way it changed (this chrome's click or the game's hook).
     const namesOn = state.showNames ?? true;
@@ -1781,6 +1854,13 @@ export function createOriginalUi(
   let tourView: TutorialHandle | null = null;
 
   function helpModal() {
+    // MOBILE-01: the reference card names the controls the device actually
+    // has. On touch that is the finger grammar (tap, drag, pinch) plus the
+    // floating keys and the held-tool chip; on a mouse it is the keyboard and
+    // the three buttons. One paragraph, swapped — never both, never neither.
+    const TOUCH_CONTROLS = coarsePointer()
+      ? `<p><h3>Playing by touch</h3><p><b>One finger</b> pans the map and drags roads tile by tile; <b>a tap</b> places a building or lays a single road tile; <b>two fingers</b> pinch-zoom. The <b>+ / − / 🎯</b> keys at the map's right edge zoom and recentre. The chip at the lower-left names the tool in your hand and <b>puts it down</b> on a tap, and a tap with <b>Select</b> reads the tile under your finger in the inspector. The bottom bar switches <b>Map / Build / Economy</b>.</p>`
+      : "";
     sfx.play("open");
     modalRoot.classList.remove("hidden");
     modalRoot.innerHTML = `
@@ -1790,7 +1870,7 @@ export function createOriginalUi(
         <p class="sub">Two worlds, one empire: <b>resource node → Depot → transport network → Factory → processing → resources available for construction</b>. First to <b>${hudVpTarget}★ Victory Points</b> wins.</p>
         <div class="help-cols">
           <div class="help-col"><h3>The Territory</h3><p>Place <b>Depots</b> beside resource nodes to collect their output, then build <b>Dirt Roads</b> &amp; <b>Roads</b> (paved) to carry it to your Factory. The connection sets the multiplier — ×1.0 on gravel, ×1.6 anywhere a paved tile touches the line — and nothing else.</p>
-<p><h3>How you score (VP-01)</h3><p><b>Dirt Roads score nothing.</b> Points come from <b>upgrading</b>: pave a Dirt Road tile into a Road for <b>+${VICTORY.upgrade}★</b> (it costs only ${costCompact(UPGRADE_COST)}, since the gravel is already paid for), and raise a <b>processing plant</b> beside another town for <b>+${VICTORY.plant}★</b>. Four paves to the point; <b>${hudVpTarget}★</b> wins. A Road laid on virgin ground scores nothing — the point is for improving what you built. Tear up a paved tile or demolish a plant and the point goes back.</p><p>Your <b>first Depot is free</b>; every Depot after it costs <b>${costCompact(DEPOT_COST)}</b>, so reaching new industries (or manufacturing in the Processing Plant) is what buys expansion. A Depot you cannot pay for is refused and consumes nothing.</p><p><b>Lorries run 2× faster on paved Roads</b> — paving a lane is both the points and the income (AI-02).</p><p>Move the camera with <b>WASD</b> (Shift holds double speed) or the <b>middle mouse button</b> (wheel zooms, touch drags pan). The left button only places or selects — dragging it never pans. <b>Right-click drops the tool you are holding</b> back to the pointer, and the pointer reads the map: hover a resource, town, plant or depot and the inspector says exactly what it is.</p><p>The top-bar <b>Aa Names</b> switch shows or hides the name tags over the map's features while you pan.</p></div>
+<p><h3>How you score (VP-01)</h3><p><b>Dirt Roads score nothing.</b> Points come from <b>upgrading</b>: pave a Dirt Road tile into a Road for <b>+${VICTORY.upgrade}★</b> (it costs only ${costCompact(UPGRADE_COST)}, since the gravel is already paid for), and raise a <b>processing plant</b> beside another town for <b>+${VICTORY.plant}★</b>. Four paves to the point; <b>${hudVpTarget}★</b> wins. A Road laid on virgin ground scores nothing — the point is for improving what you built. Tear up a paved tile or demolish a plant and the point goes back.</p><p>Your <b>first Depot is free</b>; every Depot after it costs <b>${costCompact(DEPOT_COST)}</b>, so reaching new industries (or manufacturing in the Processing Plant) is what buys expansion. A Depot you cannot pay for is refused and consumes nothing.</p><p><b>Lorries run 2× faster on paved Roads</b> — paving a lane is both the points and the income (AI-02).</p><p>Move the camera with <b>WASD</b> (Shift holds double speed) or the <b>middle mouse button</b> (wheel zooms, touch drags pan). The left button only places or selects — dragging it never pans. <b>Right-click drops the tool you are holding</b> back to the pointer, and the pointer reads the map: hover a resource, town, plant or depot and the inspector says exactly what it is.</p>${TOUCH_CONTROLS}<p>The top-bar <b>Aa Names</b> switch shows or hides the name tags over the map's features while you pan.</p></div>
           <div class="help-col"><h3>The Processing Plant</h3><p>Where your Factory turns delivered cargo into resources available for construction. Match tokens to process: a colour only pays when your network reaches its industry. Match 4 doubles, match 5 makes a <b>bomb</b>. <b>Gold</b> 🪙 is its own colour — its gems drop only while a depot sits beside a gold mine (and pay once it's connected).</p></div>
           <div class="help-col"><h3>Gold, Trade & Defence</h3><p>Earn <b>gold</b> from gold-mine access or combos. <b>Gold is reserved for Black Market sabotage</b> — it never buys construction, cannot substitute for missing materials, and is refused by every market exchange. Security Forces and Repair Crew are hired with ordinary materials. A <b>Protest</b> ✊ shuts any public road for 2:00 — every truck stops, including your own.</p></div>
         </div>

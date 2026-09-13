@@ -55,11 +55,13 @@ import {
 import { createTiltShiftPass } from "./miniature";
 import { loadGroundTextures } from "./ground";
 import {
-  createCamera, centerOnTile, resizeCamera, zoomStepAt, tileToScreenAt,
+  createCamera, centerOnTile, resizeCamera, zoomStepAt, zoomAt, tileToScreenAt,
   createGesture, pointerDown, pointerMove, pointerUp, worldToScreen, panBy,
+  bootZoomFor, tapSlop,
   type Camera, type GestureState,
 } from "./camera";
 import { createLabelLayer, type LabelEntry, type LabelLayer } from "./labels";
+import { coarsePointer } from "./touch";
 import { IsoRenderer, type World } from "./renderer";
 import { DEFAULT_ROAD_STYLE } from "./road-renderer";
 import { scatterScenery, type Scenery } from "./scenery";
@@ -94,7 +96,7 @@ import {
   paveCandidates, rivalPace, type RivalPace,
 } from "./ai";
 import {
-  RIVAL_SKILLS, resolveSkillKey, SKILL_STORAGE_KEY, type RivalSkill, type SkillKey,
+  RIVAL_SKILLS, resolveSkillKey, skillKeyFromUrl, SKILL_STORAGE_KEY, type RivalSkill, type SkillKey,
 } from "./skill";
 import {
   depotPreviewSprite, planDepotPlacement, planFactoryPlacement, type PlacementPlan,
@@ -439,6 +441,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // contract. The top-bar selector still works: changing your mind mid-contract
   // changes the live clock, exactly as in a sandbox match.
   let skillKey: SkillKey = storyChapter ? storyChapter.skill : resolveSkillKey();
+  // AI-01: a pinned `?rival=` link is an explicit choice, exactly like a pick
+  // in the top-bar selector — so it persists for the next boot. Only the URL
+  // path writes here: a plain boot must leave the storage key ABSENT or the
+  // AI-02 start-of-game picker would never ask a fresh player again.
+  if (!storyChapter && skillKeyFromUrl()) {
+    try { localStorage.setItem(SKILL_STORAGE_KEY, skillKey); } catch { /* private mode */ }
+  }
   const skill = (): RivalSkill => RIVAL_SKILLS[skillKey];
   /** The selector + the boot URL both land here; persists for the next boot. */
   const setRivalSkill = (key: SkillKey, announce = true) => {
@@ -689,6 +698,29 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return ok;
   }) as typeof market.bank;
 
+  // MOBILE-01: the two camera/names actions the top bar, the ☰ menu and the
+  // floating touch cluster ALL offer. One closure each, so the three doors
+  // can never drift apart (the menu rows exist because a phone's top bar
+  // sheds buttons to fit a thumb — see the ≤480px block in styles.css).
+  const toggleNames = () => {
+    showNames = !showNames;
+    try { localStorage.setItem(NAMES_STORAGE_KEY, showNames ? "1" : "0"); } catch { /* private mode */ }
+    labels.setEnabled(showNames);
+  };
+  const recenterCamera = () => {
+    // MP-AUDIT: recenter goes to local seat's factory or its reserved town (MP only); solo stays factory→focus
+    const fallback = (() => {
+      if (isMp()) {
+        const myTownRecenter = townForSeat(grid, isGuest() ? 1 : 0);
+        if (myTownRecenter) return { tx: myTownRecenter.tx, ty: myTownRecenter.ty };
+      }
+      return focus;
+    })();
+    const f = factoryOf("you") ?? fallback;
+    cam = centerOnTile(cam, f.tx, f.ty);
+    renderer?.setCamera(cam);
+  };
+
   // Original HUD (U1). It takes the live board + market + the player purse and
   // wires the BUILD / BLACK MARKET / QUARRY / chips chrome to them.
   ui = createOriginalUi(quarry.board, market, meTrader, {
@@ -696,23 +728,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // NAMES: the top-bar "Names" button. The game owns the state (and the
     // localStorage record); the button only reports the toggle and reads
     // `showNames` back through `paint`.
-    onNames: () => {
-      showNames = !showNames;
-      try { localStorage.setItem(NAMES_STORAGE_KEY, showNames ? "1" : "0"); } catch { /* private mode */ }
-      labels.setEnabled(showNames);
-    },
+    onNames: toggleNames,
     names: showNames,
-    onRecenter: () => {
-      // MP-AUDIT: recenter goes to local seat's factory or its reserved town (MP only); solo stays factory→focus
-      const fallback = (() => {
-        if (isMp()) {
-          const myTownRecenter = townForSeat(grid, isGuest() ? 1 : 0);
-          if (myTownRecenter) return { tx: myTownRecenter.tx, ty: myTownRecenter.ty };
-        }
-        return focus;
-      })();
-      const f = factoryOf("you") ?? fallback;
-      cam = centerOnTile(cam, f.tx, f.ty);
+    onRecenter: recenterCamera,
+    // MOBILE-01: the floating +/− keys are the wheel's touch twin — one zoom
+    // step about the middle of the screen, exactly where a thumb-panner's eye
+    // already is. Anchored at the viewport centre, like a wheel at centre.
+    onZoom: (dir) => {
+      cam = zoomStepAt(cam, dir, cam.vw / 2, cam.vh / 2);
       renderer?.setCamera(cam);
     },
     onSwap: (r1, c1, r2, c2) => {
@@ -1013,9 +1036,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     return grid.industries[0] ?? { tx: MAP_W / 2, ty: MAP_H / 2 };
   })();
-  let cam: Camera = centerOnTile(
-    createCamera(stage.clientWidth || 800, stage.clientHeight || 600),
-    focus.tx, focus.ty,
+  // MOBILE-01: the camera is device-pixel space, so a phone's dpr would
+  // otherwise shrink every tile to a third of its desktop size — unreadable
+  // and untappable. Boot at the step whose ON-SCREEN tile matches the desktop
+  // reference; `resizeCamera` below then preserves the centred focus exactly.
+  const bootDpr = () => Math.min(2, (typeof window !== "undefined" && window.devicePixelRatio) || 1);
+  let cam: Camera = zoomAt(
+    centerOnTile(
+      createCamera(stage.clientWidth || 800, stage.clientHeight || 600),
+      focus.tx, focus.ty,
+    ),
+    bootZoomFor(bootDpr()),
+    (stage.clientWidth || 800) / 2, (stage.clientHeight || 600) / 2,
   );
 
   let renderer: IsoRenderer | null = null;
@@ -3602,6 +3634,27 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * Returns the preview in both cases: the pointer path paints from it, and the
    * e2e/unit twin (`dragBuild`) asserts on it without a pixel path.
    */
+  /**
+   * MOBILE-01: the "why not" for a refused track tile, in one place. A drag
+   * that previews nothing and a TAP on an illegal tile (the phone's way of
+   * laying a single tile of road) must say the same thing, in the same two
+   * voices — the toast at the screen's edge and the 1-second flash AT the
+   * tile the finger was on.
+   */
+  const refuseTrackAt = (kind: TrackKind, tx: number, ty: number) => {
+    const net = playerNetwork(track, me.i + 1, eco.factories, eco.harvesters);
+    const refusal = buildRefusal(grid, kind, tx, ty, net);
+    if (refusal === null) return;
+    if (refusal === "not-adjacent") toast("Track must extend your network.", "bad");
+    else if (refusal === "water") toast("Can't build on water.", "bad");
+    else if (refusal === "rough") toast("A paved Road can't cross rough ground — use a Dirt Road.", "bad");
+    else if (refusal === "occupied") toast("Tile is occupied.", "bad");
+    else toast("Can't build there.", "bad");
+    // And the 1-second flash AT the tile that refused — the toast
+    // is at the edge of the screen, the player's eye is here.
+    flashAt(tx, ty, TRACK_FLASH_TEXT[refusal] ?? "Can't build here");
+  };
+
   const requestTrackBuild = (
     kind: TrackKind, ax: number, ay: number, bx: number, by: number, xFirst: boolean,
   ): DragPreview | null => {
@@ -3648,6 +3701,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   };
   let downAt: [number, number] | null = null;
   let moved = false;
+  /** MOBILE-01: this press's tap slop, in device px (mouse vs fingertip). */
+  let slop = 4;
+  /**
+   * MOBILE-01: a track drag is ARMED on press but only goes LIVE once the
+   * pointer outruns the tap slop. Below it the press is a tap (one tile of
+   * track, or a place), and — the part a phone cannot do without — the finger
+   * still PANS while the road tool is in the hand. A second finger always
+   * wins: it drops the armed drag and takes over as the pinch/pan gesture.
+   */
+  let dragLive = false;
 
   canvases.overlay.addEventListener("pointerdown", (e) => {
     if (typeof canvases.overlay.setPointerCapture === "function") {
@@ -3655,9 +3718,27 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     const [x, y] = pos(e);
     downAt = [x, y]; moved = false;
+    slop = tapSlop(e.pointerType, dpr());
+    const isMouse = e.pointerType === "mouse";
+    // MOBILE-01: the gesture bookkeeping runs for every press that MAY pan —
+    // every touch/pen point, and the mouse's middle button — INCLUDING the
+    // press that arms a track drag. Before this, a second finger landing on a
+    // road drag re-anchored the drag instead of pinching, and a phone holding
+    // a road tool had no pan and no zoom at all. TK-001 is untouched: a left
+    // or right MOUSE press still never enters the pan gesture.
+    const panCapable = !isMouse || e.button === 1;
+    if (panCapable) {
+      const secondFinger = g.pointers.length >= 1 && g.pointers[0].id !== e.pointerId;
+      g = pointerDown(g, { id: e.pointerId, x, y });
+      if (secondFinger) {
+        // The pinch/pan gesture outranks an armed road drag: drop it so the
+        // two fingers steer the camera instead of the track preview.
+        if (drag) { drag = null; preview = null; dragLive = false; paintOverlayNow(); }
+        return;
+      }
+    }
     const p = pickForAction(x, y);
     if (!p) return;
-    const isMouse = e.pointerType === "mouse";
     const isTrackTool = tool === "road" || tool === "dirt";
     // TK-001: left mouse (button 0) is build/place ONLY — it never starts a
     // pan. Touch keeps its old behaviour (one finger pans, a quick tap places).
@@ -3668,6 +3749,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const net = playerNetwork(track, me.i + 1, eco.factories, eco.harvesters);
       if (canBuildOn(grid, tool as TrackKind, p.tx, p.ty, net)) {
         drag = { ax: p.tx, ay: p.ty };
+        dragLive = false;
         return;
       }
     }
@@ -3675,8 +3757,6 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // right mouse presses never enter the pan gesture. The right button's
     // map action is on RELEASE — it cancels the held tool to the pointer
     // (see `onUp`) — so a press here still must not start a drag.
-    if (isMouse && e.button !== 1) return;
-    g = pointerDown(g, { id: e.pointerId, x, y });
   });
 
   /**
@@ -3687,15 +3767,24 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    */
   const paintOverlayNow = () => {
     if (!renderer) return;
-    const { items, ghost } = overlayFrame();
-    renderer.drawOverlay(items, performance.now(), ghost);
+    // MOBILE-01: this is a nicety, never a gate. It runs INSIDE pointer
+    // handlers, so a throw here (a canvas mock without gradients in the jsdom
+    // harness, a lost GL context in the wild) must not abort the gesture or
+    // the placement decision that follows — the frame loop repaints the
+    // overlay on the next tick anyway.
+    try {
+      const { items, ghost } = overlayFrame();
+      renderer.drawOverlay(items, performance.now(), ghost);
+    } catch { /* best-effort; the frame loop repaints next tick */ }
   };
   /** What the current drag preview was computed from; see pointermove. */
   let previewKey = "";
 
   canvases.overlay.addEventListener("pointermove", (e) => {
     const [x, y] = pos(e);
-    if (downAt && (Math.abs(x - downAt[0]) > 4 || Math.abs(y - downAt[1]) > 4)) moved = true;
+    // MOBILE-01: the slop is per-press and per-pointer-type (`slop`), so a
+    // fingertip tap that jitters two CSS pixels still counts as a tap.
+    if (downAt && (Math.abs(x - downAt[0]) > slop || Math.abs(y - downAt[1]) > slop)) moved = true;
     const p = pickForAction(x, y);
     let changed = false;
     if (p && (!hover || hover.tx !== p.tx || hover.ty !== p.ty || hover.ref !== p.ref)) {
@@ -3703,27 +3792,46 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       changed = true;
     }
     if (drag && p) {
-      const kind = tool as TrackKind;   // build-track tools are dirt | road
-      // A drag re-plans only when something it depends on moved: the end
-      // tile, the network (netVersion), the purse or the free allowance.
-      // Sub-tile pointer motion reuses the plan it already has.
-      const purseKey = CARGOES.map((c) => me.purse[c] ?? 0).join(",");
-      const key = `${kind}:${drag.ax},${drag.ay}:${p.tx},${p.ty}:${netVersion}:${me.freeTrack}:${purseKey}`;
-      if (!preview || key !== previewKey) {
-        const net = playerNetwork(track, me.i + 1, eco.factories, eco.harvesters);
-        // W1: the preview prices the drag with the REAL purse and the free
-        // allowance applied INSIDE the preview (last arg). The old
-        // "freeTrack > 0 → 9999 stone" trick priced the preview differently
-        // from the commit; now both share one cost model, so what you see is
-        // what you are charged.
-        preview = previewDrag(grid, track, kind, me.purse,
-          drag.ax, drag.ay, p.tx, p.ty, true, net, me.freeTrack,
-          structureTiles(eco.factories, eco.harvesters, me.i + 1));
-        previewKey = key;
-        changed = true;
+      // MOBILE-01: an armed drag stays DORMANT inside the tap slop, and while
+      // it is dormant the finger PANS — the only pan a phone has once a road
+      // tool is in the hand. Outrunning the slop makes the drag live.
+      if (!dragLive) {
+        if (!moved) {
+          const out = pointerMove(g, { id: e.pointerId, x, y }, cam);
+          g = out.gesture;
+          if (out.cam !== cam) { cam = out.cam; renderer?.setCamera(cam); }
+          if (changed) paintOverlayNow();
+          return;
+        }
+        dragLive = true;
       }
-      if (changed) paintOverlayNow();
-      return;
+      // A second finger landed: the pinch owns the gesture now (pointerdown
+      // already dropped the drag when it arrived); fall through to the pan.
+      if (g.pointers.length < 2) {
+        const kind = tool as TrackKind;   // build-track tools are dirt | road
+        // A drag re-plans only when something it depends on moved: the end
+        // tile, the network (netVersion), the purse or the free allowance.
+        // Sub-tile pointer motion reuses the plan it already has.
+        const purseKey = CARGOES.map((c) => me.purse[c] ?? 0).join(",");
+        const key = `${kind}:${drag.ax},${drag.ay}:${p.tx},${p.ty}:${netVersion}:${me.freeTrack}:${purseKey}`;
+        if (!preview || key !== previewKey) {
+          const net = playerNetwork(track, me.i + 1, eco.factories, eco.harvesters);
+          // W1: the preview prices the drag with the REAL purse and the free
+          // allowance applied INSIDE the preview (last arg). The old
+          // "freeTrack > 0 → 9999 stone" trick priced the preview differently
+          // from the commit; now both share one cost model, so what you see is
+          // what you are charged.
+          preview = previewDrag(grid, track, kind, me.purse,
+            drag.ax, drag.ay, p.tx, p.ty, true, net, me.freeTrack,
+            structureTiles(eco.factories, eco.harvesters, me.i + 1));
+          previewKey = key;
+          changed = true;
+        }
+        if (changed) paintOverlayNow();
+        return;
+      }
+      drag = null; preview = null; dragLive = false;
+      changed = true;
     }
     if (changed) paintOverlayNow();
     const out = pointerMove(g, { id: e.pointerId, x, y }, cam);
@@ -3752,6 +3860,21 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         toast("Protest cancelled.", "info");
       } else if (tool !== "select") {
         tool = "select";
+      }
+      downAt = null;
+      g = pointerUp(g, e.pointerId);
+      return;
+    }
+    // MOBILE-01: a track drag that never outran the tap slop is a TAP: one
+    // tile of track under the finger (the phone has no "click then click
+    // again", and a one-tile road is a thing players lay constantly). The
+    // refusal voices are shared with the drag path via `refuseTrackAt`.
+    if (drag && !dragLive) {
+      const { ax, ay } = drag;
+      drag = null; preview = null; dragLive = false;
+      if (!moved && phase === "play" && !pendingProtest) {
+        const pv = requestTrackBuild(tool as TrackKind, ax, ay, ax, ay, true);
+        if (!pv) refuseTrackAt(tool as TrackKind, ax, ay);
       }
       downAt = null;
       g = pointerUp(g, e.pointerId);
@@ -3792,6 +3915,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const isMouse = e.pointerType === "mouse";
     if (!moved && (!isMouse || e.button === 0)) {
       const p = pickForAction(x, y);
+      // MOBILE-01: touch has no hover, so a TAP is the read-the-map gesture —
+      // answer it with the same highlight + inspector a mouse hover paints,
+      // instead of leaving the finger with nothing but a silent map.
+      if (p && (!hover || hover.tx !== p.tx || hover.ty !== p.ty || hover.ref !== p.ref)) {
+        hover = { tx: p.tx, ty: p.ty, ref: p.ref };
+        paintOverlayNow();
+      }
       if (p) {
         if (phase === "setup-factory") {
           // MP-05: a guest's opening click is an intent like any other — the
@@ -3825,18 +3955,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             else doDemolish(p.tx, p.ty);
           }
           else if (tool === "road" || tool === "dirt") {
-            const net = playerNetwork(track, me.i + 1, eco.factories, eco.harvesters);
-            const refusal = buildRefusal(grid, tool as TrackKind, p.tx, p.ty, net);
-            if (refusal !== null) {
-              if (refusal === "not-adjacent") toast("Track must extend your network.", "bad");
-              else if (refusal === "water") toast("Can't build on water.", "bad");
-              else if (refusal === "rough") toast("A paved Road can't cross rough ground — use a Dirt Road.", "bad");
-              else if (refusal === "occupied") toast("Tile is occupied.", "bad");
-              else toast("Can't build there.", "bad");
-              // And the 1-second flash AT the tile that refused — the toast
-              // is at the edge of the screen, the player's eye is here.
-              flashAt(p.tx, p.ty, TRACK_FLASH_TEXT[refusal] ?? "Can't build here");
-            }
+            // A tap with a track tool that got here is a refusal: the legal
+            // single-tile build is handled where the drag ends (above).
+            refuseTrackAt(tool as TrackKind, p.tx, p.ty);
           }
         }
       }
@@ -3846,7 +3967,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   };
   canvases.overlay.addEventListener("pointerup", onUp);
   canvases.overlay.addEventListener("pointercancel", (e) => {
-    drag = null; preview = null; downAt = null; g = pointerUp(g, e.pointerId);
+    drag = null; preview = null; dragLive = false; downAt = null; g = pointerUp(g, e.pointerId);
   });
   // The right button is a game control (it drops the held tool to the
   // pointer), so the browser's context menu must never fight it over the map.
@@ -4282,6 +4403,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       void view.promise.then(() => { if (settingsView === view) settingsView = null; });
     });
     menuItem("How to Play", "the reference card, eight rules", () => ui.showHelp());
+    // MOBILE-01: on a coarse pointer the top bar sheds its 🎯 and Aa keys to
+    // fit a thumb (styles.css ≤480px), so their actions move in here — the
+    // same closures the top bar and the floating cluster call.
+    if (coarsePointer()) {
+      menuItem("Recenter Map", "jump back to your Factory", recenterCamera);
+      menuItem("Names Over The Map", "show or hide the place tags", toggleNames);
+    }
     if (isSolo()) {
       // MP-05 unchanged: a RESTART is solo-only, in a room the session owns
       // the match. The confirm-and-clear flow is AI-03's verbatim.

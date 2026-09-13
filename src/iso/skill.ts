@@ -188,6 +188,17 @@ const parseSkill = (raw: string | null | undefined): SkillKey | null =>
  *   3. the normal preset.
  * Both inputs are injectable so the resolver is testable without a window.
  */
+/** The URL's own answer, without the storage/default fallbacks — the game
+ *  asks this separately so a pinned `?rival=` link can be REMEMBERED (a
+ *  playtest link is an explicit choice) while a plain boot still leaves the
+ *  storage key absent for AI-02's start-of-game picker. */
+export function skillKeyFromUrl(
+  search: string = typeof location !== "undefined" ? location.search : "",
+): SkillKey | null {
+  const rawSearch = search.startsWith("?") ? search.slice(1) : search;
+  return parseSkill(new URLSearchParams(rawSearch).get("rival"));
+}
+
 export function resolveSkillKey(
   search: string = typeof location !== "undefined" ? location.search : "",
   storage: Pick<Storage, "getItem"> | null =

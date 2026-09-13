@@ -31,6 +31,13 @@ function stubCanvas() {
         return (_x: number, _y: number, w: number, h: number) =>
           ({ data: new Uint8ClampedArray(Math.max(1, w * h) * 4).fill(255), width: w, height: h });
       }
+      // MOBILE-01: the placement overlay paints gradient floors, and the tap
+      // path now leaves a hover behind — so a pumped frame reaches
+      // createLinearGradient. A context whose gradients are `undefined`
+      // throws inside paintSite; hand back the shape the renderer uses.
+      if (prop === "createLinearGradient" || prop === "createRadialGradient" || prop === "createConicGradient") {
+        return () => ({ addColorStop: () => undefined });
+      }
       return () => undefined;
     },
     set: () => true,
