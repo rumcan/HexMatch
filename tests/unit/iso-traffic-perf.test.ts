@@ -156,8 +156,20 @@ describe("TRAFFIC-01 perf probe", () => {
     const { renderer, world, track } = setup();
     const cars = createCarState();
     cars.cars = planCars(track, [], CAR_COUNT);
+    // the full default volume is planned, and is named car 1 … car N…
+    expect(cars.cars.length).toBe(CAR_COUNT);
+    expect(cars.cars.map((c) => c.name)).toEqual(
+      Array.from({ length: CAR_COUNT }, (_, i) => `car ${i + 1}`),
+    );
+    // TRAFFIC-02 gave the cars a trip lifecycle: a freshly planned car WAITS a
+    // staggered delay before it fades in at a town access point, and a waiting
+    // car is deliberately not drawn (`carItems` skips it). So roll past the
+    // stagger — the longest seeded wait is well under the cap — and then the
+    // whole volume is on the road and drawable.
+    for (let t = 0; t < 2000 && carItems(cars).length < CAR_COUNT; t += 16.7) {
+      tickCars(cars, 16.7);
+    }
     const items = carItems(cars);
-    // the full default volume exists and is named car 1 … car N…
     expect(items.length).toBe(CAR_COUNT);
     expect(items.map((i) => (i.ref as { car: string }).car)).toEqual(
       Array.from({ length: CAR_COUNT }, (_, i) => `car ${i + 1}`),
