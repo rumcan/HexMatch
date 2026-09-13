@@ -41,7 +41,8 @@ test("the campaign menu opens with one open contract and four sealed", async ({ 
   const cards = page.locator(".chapter-card");
   await expect(cards).toHaveCount(5);
   await expect(page.locator(".chapter-card.locked")).toHaveCount(4);
-  await expect(cards.first()).toContainText("The Inheritance");
+  await expect(cards.first()).toContainText("First Day on the Job");
+  await expect(cards.first()).toContainText("Logistics Manager");
   await expect(cards.first()).toContainText("vs Torvin");
   // the opening reel is offered exactly while it is still unseen
   await expect(page.getByRole("button", { name: /opening reel/ })).toBeVisible();
