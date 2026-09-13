@@ -137,6 +137,7 @@ import {
 } from "./cars";
 import { createIsoMarket, toBag, chooseRivalOffer, type CargoBag, type IsoMarket } from "./market";
 import { createOriginalUi, type OriginalUi } from "../game/ui";
+import { HUD_ICONS, cargoIconHtml, costMarkup } from "../game/hud-icons";
 // SFX-01: the UI sound layer. Everything the player DOES on the map (a road
 // laid, a building raised, a demolition, a star earned, the final ledger) gets
 // one cue from here; the chrome's own clicks and hovers are handled once, by
@@ -3866,13 +3867,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // VP-01: the plant is the other half of the scoreboard, so the price tag
       // and the point come up together.
       costInfo = `<span class="mb-txt"><b>Processing plant</b> · ${note}</span>` +
-        `<span class="mb-cost">${plantCostLabel()} · +${fmtVp(VICTORY.plant)}★</span>`;
+        `<span class="mb-cost">${costMarkup(PLANT_COST)} · +${fmtVp(VICTORY.plant)}★</span>`;
     } else if (tool === "harvester" || phase === "setup-harvester") {
       // PP-05: "show the complete cost before placement" — the Depot tool
       // prices itself from the same `priceDepot` the click will charge, so the
       // modebar and the debit can never disagree (W1, applied to buildings).
       const price = priceDepot(me.purse, me.freeDepots);
-      const label = price.free ? "free (setup)" : costLabel(price.cost);
+      const label = price.free ? "free (setup)" : costMarkup(price.cost);
       costInfo = `<span class="mb-txt"><b>Depot</b> · ${label}</span>` +
         (price.affordable
           ? ""
@@ -4731,7 +4732,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   if (topRight) {
     const peek = document.createElement("button");
     peek.type = "button"; peek.id = "iso-rival-peek";
-    peek.className = "icon-btn"; peek.textContent = "🏭";
+    peek.className = "icon-btn"; peek.innerHTML = HUD_ICONS.binoculars;
     peek.title = "Watch the rival's plant — its board plays itself";
     peek.addEventListener("click", () => toggleRivalPlantView());
     // MP-AUDIT (#105): the peek panel is for BOTH seats now — the host reads
@@ -4937,7 +4938,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // AI-03: the rival's purse, per cargo — "where is all that gold coming
       // from?" is answered by watching it move against the board above.
       purseEl.innerHTML = (CARGOES as Cargo[])
-        .map((k) => `<span class="rb-chip">${CARGO[k].icon}&nbsp;${rival.purse[k] ?? 0}</span>`)
+        .map((k) => `<span class="rb-chip">${cargoIconHtml(k)}&nbsp;${rival.purse[k] ?? 0}</span>`)
         .join("");
       for (let r = 0; r < H; r++) for (let c = 0; c < W; c++) {
         const g = rivalBoard.grid[r]?.[c] ?? null;

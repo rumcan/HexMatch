@@ -397,11 +397,13 @@ html, body, #root {
   100% { transform: scale(1); border-color: transparent; }
 }
 
-/* inline gem sprite used for every resource icon */
+/* inline gem sprite used for every resource icon.
+   No sepia/saturate wash — the painted tokens already match the match-3
+   gem palette (#166); a filter would muddy wheat-green / oil-black. */
 .gem-ic {
   display: inline-block; vertical-align: -0.22em;
   background-repeat: no-repeat;
-  filter: drop-shadow(0 1px 2px rgba(0,0,0,.6)) sepia(.16) saturate(1.06);
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,.6));
 }
 /* the cargo glyph sits in its own struck bezel */
 .chip-ic {
@@ -418,6 +420,61 @@ html, body, #root {
   font-variant-numeric: tabular-nums;
   font-family: var(--serif); letter-spacing: .5px;
   text-shadow: 0 1px 0 #000;
+}
+
+/* #166: painted gem cargo tokens + stroke HUD glyphs. `object-fit: contain`
+   + `image-rendering: auto` keep the 128px tokens crisp at every HUD size
+   (never pixelated, never stretched per-axis). */
+.cargo-ic {
+  display: block;
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  image-rendering: auto;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, .55));
+}
+.chip-ic .cargo-ic { width: 20px; height: 20px; }
+.iso-reach .chip .cargo-ic,
+#iso-rival-view .rb-chip .cargo-ic,
+.cost-chip .cargo-ic,
+.hp-body .cargo-ic,
+.offer-body .cargo-ic,
+.tray-body .cargo-ic,
+.gold-rule .cargo-ic,
+.pane-note .cargo-ic,
+.sab-cost .cargo-ic,
+.mb-cost .cargo-ic,
+.help-col .cargo-ic {
+  width: 14px;
+  height: 14px;
+}
+.cargo-ic-lg { width: 28px; height: 28px; }
+
+.hud-ic {
+  display: block;
+  width: 16px;
+  height: 16px;
+  margin: 0 auto;
+  flex: 0 0 auto;
+  pointer-events: none;
+}
+.tab-ic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+.tab-ic .hud-ic { width: 12px; height: 12px; margin: 0; }
+.cost-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+}
+.cost-chip b {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
 .top-right { display: flex; align-items: center; gap: 6px; }
@@ -442,7 +499,12 @@ html, body, #root {
   padding: 2px 4px; background: rgba(12, 8, 5, .6);
   box-shadow: inset 0 1px 0 rgba(242, 220, 166, .1);
 }
-.rival-skill-ic { font-size: 13px; filter: saturate(.7) brightness(1.05); }
+.rival-skill-ic {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; flex: 0 0 auto;
+  filter: saturate(.7) brightness(1.05);
+}
+.rival-skill-ic .hud-ic { width: 14px; height: 14px; margin: 0; }
 .rival-skill-sel {
   border: 1px solid rgba(226, 112, 79, .38); border-radius: 2px; padding: 3px 5px;
   background: linear-gradient(180deg, rgba(78, 30, 18, .5), rgba(16, 10, 7, .86));
@@ -457,6 +519,7 @@ html, body, #root {
 
 .icon-btn {
   width: 30px; height: 30px; border-radius: var(--r); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
   border: 1px solid var(--brass-lo);
   background: linear-gradient(180deg, rgba(58, 44, 28, .5), rgba(12, 9, 6, .86));
   color: var(--brass-hi); font-size: 14px;
@@ -464,6 +527,7 @@ html, body, #root {
   transition: background .18s, color .18s, border-color .18s, box-shadow .18s;
   text-shadow: 0 1px 2px #000;
 }
+.icon-btn .hud-ic { width: 16px; height: 16px; margin: 0; }
 .icon-btn:hover {
   background: linear-gradient(180deg, rgba(96, 70, 34, .62), rgba(20, 14, 9, .9));
   color: var(--gold2); border-color: var(--brass);
@@ -1746,6 +1810,7 @@ html, body, #root {
 /* PP-08: the standing "Gold is reserved for Black Market sabotage" rule,
    shown at the top of the Black Market panel — house rules, chalked up. */
 .gold-rule {
+  display: flex; align-items: center; gap: 6px;
   color: var(--gold2);
   opacity: .9;
   border-left: 2px solid var(--gold);
@@ -2215,7 +2280,7 @@ html, body, #root {
     z-index: 45;
   }
   .fab, .recenter-btn {
-    display: block;
+    display: inline-flex; align-items: center; justify-content: center;
     width: 46px; height: 46px;
     border-radius: 50%;
     border: 1px solid var(--brass-lo);
@@ -2230,6 +2295,7 @@ html, body, #root {
   }
   .fab { font-size: 24px; font-weight: 700; font-family: var(--mono); }
   .fab:active, .recenter-btn:active { transform: scale(.92); }
+  .fab .hud-ic, .recenter-btn .hud-ic { width: 22px; height: 22px; margin: 0; }
 }
 /* only relevant while the map tab is visible */
 .ui-root:not([data-view="map"]) .fabs { display: none; }
@@ -2950,6 +3016,9 @@ html, body, #root {
   font-family: var(--mono);
 }
 #iso-rival-view .rb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
   background: rgba(200, 226, 244, 0.08);
   border: 1px solid rgba(124, 182, 216, 0.26);
   border-radius: 2px;

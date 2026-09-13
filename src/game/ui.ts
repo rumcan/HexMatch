@@ -32,7 +32,7 @@ import { BANK_RATE, MAX_OFFERS } from "./trade";
 // and the HUD was already showing "/10" while the game was winning at 12 — the
 // scoreboard now has exactly one source, `VICTORY` in src/iso/config.ts.
 import { CARGO, CARGOES, TRANSPORT, VICTORY, UPGRADE_COST, type Cargo, type Portrait } from "../iso/config";
-import { DEPOT_COST, costCompact, depotButtonLabel } from "../iso/construction";
+import { DEPOT_COST } from "../iso/construction";
 import { PLANT_COST } from "../iso/plants";
 import { GEM_TO_CARGO } from "../iso/quarry";
 // VP-01: quarters on the scoreboard — 4.75★, not 4.7499999999999996★.
@@ -51,7 +51,7 @@ import { playHoly, prewarmHoly } from "./holy";
 // chrome a hover tick and a press sound from ONE delegation; the calls below
 // are only the moments that are not a button — a tab sliding, a toast saying
 // no, a gem clearing, the wire opening.
-import { attachUiSound, registerSoundPainter, soundGlyph, soundLabel, sfx } from "../audio/sfx";
+import { attachUiSound, registerSoundPainter, soundLabel, sfx } from "../audio/sfx";
 import type { Cue } from "../audio/cues";
 // PP-14b: the tycoon portraits live with the NOIR mugshots further down — one
 // set of faces, so the start-screen pick and the dossiers read the same files.
@@ -76,6 +76,9 @@ import { coarsePointer } from "../iso/touch";
 // One sprite per cargo (./gem-art.ts), mapped through the same gem→cargo
 // bijection quarry.ts uses, so a colour can never draw the wrong sprite.
 import { GEM_ART } from "./gem-art";
+import {
+  HUD_ICONS, cargoIconHtml, costMarkup, depotButtonMarkup, soundIconHtml,
+} from "./hud-icons";
 
 // ── NOIR: the painted mugshots ──────────────────────────────────────────────
 // `tycoon_*.png` are the family portraits (src/assets/ui/, kept when U1 pruned
@@ -274,8 +277,7 @@ const h = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, html?: s
   return e;
 };
 
-const costStr = (cost: Partial<Record<Cargo, number>>) =>
-  (Object.keys(cost) as Cargo[]).map((k) => `${cost[k]}${CARGO[k].icon}`).join(" ");
+const costStr = (cost: Partial<Record<Cargo, number>>) => costMarkup(cost);
 
 /** Repair Crew numbers are still declared in the old ResKey table — map them. */
 const REPAIR_ISO: Partial<Record<Cargo, number>> = {
@@ -372,7 +374,7 @@ export function createOriginalUi(
     sel.value = hooks.skill ?? "normal";
     sel.id = "iso-rival-skill";
     sel.onchange = () => hooks.onSkill!(sel.value as SkillKey);
-    skillWrap.appendChild(h("span", "rival-skill-ic", "🤖"));
+    skillWrap.appendChild(h("span", "rival-skill-ic", HUD_ICONS.gear));
     skillWrap.appendChild(sel);
     right.appendChild(skillWrap);
   }
@@ -391,7 +393,7 @@ export function createOriginalUi(
   soundBtn.dataset.sfx = "off";
   soundBtn.dataset.act = "sound";
   const paintSound = (on: boolean) => {
-    soundBtn.textContent = soundGlyph(on);
+    soundBtn.innerHTML = soundIconHtml(on);
     soundBtn.title = soundLabel(on);
     soundBtn.setAttribute("aria-label", on ? "Mute sound" : "Unmute sound");
     soundBtn.setAttribute("aria-pressed", String(!on));
@@ -408,7 +410,7 @@ export function createOriginalUi(
   // bar carries Settings, How to Play and Quit to main menu, and the Settings
   // row opens `iso/settings-sheet.ts` — the SAME projector the main menu
   // opens, so the door and the match can never show different controls.
-  const fitBtn = h("button", "icon-btn", "🎯");
+  const fitBtn = h("button", "icon-btn", HUD_ICONS.reticle);
   fitBtn.title = "Recenter map";
   fitBtn.dataset.act = "recenter";
   fitBtn.onclick = () => hooks.onRecenter();
@@ -427,7 +429,7 @@ export function createOriginalUi(
   namesBtn.setAttribute("aria-pressed", String(hooks.names ?? true));
   namesBtn.onclick = () => hooks.onNames?.();
   right.appendChild(namesBtn);
-  const helpBtn = h("button", "icon-btn help-btn", "❔");
+  const helpBtn = h("button", "icon-btn help-btn", HUD_ICONS.help);
   helpBtn.title = "How to play";
   helpBtn.onclick = () => helpModal();
   right.appendChild(helpBtn);
@@ -454,7 +456,7 @@ export function createOriginalUi(
   const sp = h("div", "panel grow");
   sp.appendChild(h("div", "panel-title", "Black Market"));
   // PP-08: the standing currency rule, stated right where Gold is spent.
-  sp.appendChild(h("div", "pane-note gold-rule", `🪙 ${GOLD_RULE} Construction and trade never touch it.`));
+  sp.appendChild(h("div", "pane-note gold-rule", `${cargoIconHtml("gold")} ${GOLD_RULE} Construction and trade never touch it.`));
   const sabList = h("div", "sab-list");
   sp.appendChild(sabList);
 
@@ -533,13 +535,13 @@ export function createOriginalUi(
   topGrip.onclick = () => revealTopbar(6000);
   tp.appendChild(topGrip);
   const tabs = h("div", "tabs");
-  const tabMarket = h("button", "tab active", `<i class="tab-ic" aria-hidden="true">⚖</i><span class="tab-l">Market</span>`);
-  const tabBank = h("button", "tab", `<i class="tab-ic" aria-hidden="true">🏦</i><span class="tab-l">Bank</span>`);
-  const tabFeed = h("button", "tab", `<i class="tab-ic" aria-hidden="true">📰</i><span class="tab-l">Feed</span>`);
+  const tabMarket = h("button", "tab active", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.market}</i><span class="tab-l">Market</span>`);
+  const tabBank = h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.bank}</i><span class="tab-l">Bank</span>`);
+  const tabFeed = h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.feed}</i><span class="tab-l">Feed</span>`);
   tabMarket.onclick = () => setTab("market");
   tabBank.onclick = () => setTab("bank");
   tabFeed.onclick = () => setTab("feed");
-  const tabPlant = h("button", "tab", `<i class="tab-ic" aria-hidden="true">🏭</i><span class="tab-l">Processing Plant</span>`);
+  const tabPlant = h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.plant}</i><span class="tab-l">Processing Plant</span>`);
   tabPlant.onclick = () => setTab("plant");
   tabs.append(tabBank, tabMarket, tabPlant, tabFeed);
   tp.appendChild(tabs);
@@ -678,7 +680,7 @@ export function createOriginalUi(
   zoomOutBtn.title = "Zoom out";
   zoomOutBtn.setAttribute("aria-label", "Zoom out");
   zoomOutBtn.onclick = () => hooks.onZoom?.(-1);
-  const recenterBtn = h("button", "recenter-btn", "🎯");
+  const recenterBtn = h("button", "recenter-btn", HUD_ICONS.reticle);
   recenterBtn.title = "Recenter map";
   recenterBtn.onclick = () => hooks.onRecenter();
   fabs.append(zoomInBtn, zoomOutBtn, recenterBtn);
@@ -750,14 +752,14 @@ export function createOriginalUi(
     // MOBILE-01: "Q / right-click" is noise on a phone — the tap and the
     // held-tool chip are the touch hand's versions of the same two ideas.
     { key: "select", label: "Select", sub: coarsePointer() ? "Point & inspect · tap reads a tile" : "Point & inspect · Q / right-click" },
-    { key: "dirt", label: "Dirt Road", sub: `${costCompact(TRANSPORT.dirt.cost)} · 0★` },
-    { key: "road", label: "Road", sub: `${costCompact(TRANSPORT.road.cost)} · +${VICTORY.upgrade}★ paving dirt` },
+    { key: "dirt", label: "Dirt Road", sub: `${costMarkup(TRANSPORT.dirt.cost)} · 0★` },
+    { key: "road", label: "Road", sub: `${costMarkup(TRANSPORT.road.cost)} · +${VICTORY.upgrade}★ paving dirt` },
     // PP-05: `depotSub` refreshes the Depot line below as the free-setup
     // allowance burns down.
-    { key: "harvester", label: "Depot", sub: depotButtonLabel(0) },
+    { key: "harvester", label: "Depot", sub: depotButtonMarkup(0) },
     // PP-06: another instance of the SAME processing building, raised beside
     // another town.
-    { key: "plant", label: "Processing Plant", sub: `${costCompact(PLANT_COST)} · next to a town` },
+    { key: "plant", label: "Processing Plant", sub: `${costMarkup(PLANT_COST)} · next to a town` },
     { key: "demolish", label: "Demolish", sub: "Refund 50%" },
   ];
   let depotSub: HTMLElement | null = null;
@@ -779,7 +781,7 @@ export function createOriginalUi(
       const s = SABOTAGE[key];
       const afford = (me.res.gold ?? 0) >= s.gold;
       const b = h("button", "sab-btn sb-" + key + (afford ? "" : " disabled"));
-      b.innerHTML = `<div class="sab-top"><b>${s.name}</b><span class="sab-cost">${s.gold}🪙</span></div>` +
+      b.innerHTML = `<div class="sab-top"><b>${s.name}</b><span class="sab-cost">${s.gold}${cargoIconHtml("gold")}</span></div>` +
         `<div class="sab-desc">${s.desc}</div>`;
       b.disabled = !afford;
       b.dataset.black = key;
@@ -880,7 +882,7 @@ export function createOriginalUi(
   bform.appendChild(bGive); bform.appendChild(bWant); bform.appendChild(bankBtn);
   bankPane.appendChild(bform);
   bankPane.appendChild(h("div", "pane-note",
-    `The bank always trades four of one good for one of another. No rival required, no waiting. 🪙 ${GOLD_RULE}`));
+    `The bank always trades four of one good for one of another. No rival required, no waiting. ${cargoIconHtml("gold")} ${GOLD_RULE}`));
 
   bankPane.appendChild(sp);
 
@@ -955,7 +957,7 @@ export function createOriginalUi(
       card.style.setProperty("--pc", me.id === "you" ? "#5aa8ff" : "#ff7a5a");
       card.innerHTML = `
         <div class="offer-who"><b style="color:inherit">You</b><span class="offer-t">${secs}s</span></div>
-        <div class="offer-body"><span class="give">${o.giveN}${CARGO[o.give].icon}</span><span class="arrow">➜</span><span class="want">${o.wantN}${CARGO[o.want].icon}</span></div>`;
+        <div class="offer-body"><span class="give">${o.giveN}${cargoIconHtml(o.give)}</span><span class="arrow">➜</span><span class="want">${o.wantN}${cargoIconHtml(o.want)}</span></div>`;
       const act = h("div", "offer-act");
       const b = h("button", "mini danger", "Cancel");
       b.dataset.cancel = String(o.id);
@@ -1010,7 +1012,7 @@ export function createOriginalUi(
     row.innerHTML = `
       <span class="tray-who">${showName ? from.name : ""}</span>
       <span class="tray-t">${secs}s</span>
-      <span class="tray-body">${o.giveN}${CARGO[o.give].icon}<i class="arrow">➜</i>${o.wantN}${CARGO[o.want].icon}</span>`;
+      <span class="tray-body">${o.giveN}${cargoIconHtml(o.give)}<i class="arrow">➜</i>${o.wantN}${cargoIconHtml(o.want)}</span>`;
     const b = h("button", "mini" + (can ? "" : " disabled"), "Take");
     b.disabled = !can;
     b.onclick = (e) => {
@@ -1563,7 +1565,7 @@ export function createOriginalUi(
       b.dataset.gem = gem;
       b.style.setProperty("--c1", CARGO[cargo].c1);
       b.style.setProperty("--c2", CARGO[cargo].c2);
-      b.innerHTML = `<i>${CARGO[cargo].icon}</i><span>+1</span>`;
+      b.innerHTML = `${cargoIconHtml(cargo, "cargo-ic cargo-ic-lg")}<span>+1</span>`;
       b.title = `Spend a bounty on ${CARGO[cargo].name} (tap again to take it back)`;
       b.onclick = () => {
         const n = pickCounts.get(gem) ?? 0;
@@ -1611,7 +1613,7 @@ export function createOriginalUi(
     // via GEM_TO_CARGO, or a chain's 2× would float a dead sheep icon.
     const parts = (Object.keys(gains) as ResKey[]).map((k) => {
       const cargo = GEM_TO_CARGO[k as ResKey];
-      const icon = cargo ? CARGO[cargo].icon : RES[k as ResKey].icon;
+      const icon = cargo ? cargoIconHtml(cargo) : RES[k as ResKey].icon;
       return `<span>+${gains[k as ResKey] ?? 0}${icon}</span>`;
     }).join("");
     // A1: no gains means no body — a tokenless cascade still has its COMBO
@@ -1937,7 +1939,7 @@ export function createOriginalUi(
         const chip = h("div", "chip");
         chip.style.setProperty("--c1", CARGO[k].c1);
         chip.style.setProperty("--c2", CARGO[k].c2);
-        chip.innerHTML = `<span class="chip-ic"><i class="gem-ic">${CARGO[k].icon}</i></span><span class="chip-n"></span>`;
+        chip.innerHTML = `<span class="chip-ic">${cargoIconHtml(k)}</span><span class="chip-n"></span>`;
         // PP-08: the Gold chip states what the currency is for, so a player
         // holding coins never mistakes them for construction stock.
         if (k === "gold") chip.title = GOLD_RULE;
@@ -2135,10 +2137,10 @@ export function createOriginalUi(
     // (a rebuilt button drops a click mid-gesture, the reason `renderSabotage`
     // is change-gated too). The cost text comes from the same table the
     // placement charges; `disabled` mirrors the affordability the click checks.
-    const sub = depotButtonLabel(state.freeDepots);   // allowance first, then Oil
+    const sub = depotButtonMarkup(state.freeDepots);   // allowance first, then Oil
     if (sub !== lastDepotSub) {
       lastDepotSub = sub;
-      if (depotSub) depotSub.textContent = sub;
+      if (depotSub) depotSub.innerHTML = sub;
     }
     buildList.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((button) => {
       const tool = button.dataset.tool as UiTool;
@@ -2196,7 +2198,7 @@ export function createOriginalUi(
   function setReach(next: Partial<Record<Cargo, number>>) {
     const chipsHtml = CARGOES
       .filter((c) => (next[c] ?? 0) > 0)
-      .map((c) => `<span class="chip" style="--c:${CARGO[c].c2}">${CARGO[c].icon}${CARGO[c].name}</span>`).join("");
+      .map((c) => `<span class="chip" style="--c:${CARGO[c].c2}">${cargoIconHtml(c)}${CARGO[c].name}</span>`).join("");
     reachEl.innerHTML = chipsHtml
       ? `<b>Network reaches</b>${chipsHtml}`
       : "<b>Network reaches</b><i>nothing — connect a depot</i>";
@@ -2241,7 +2243,7 @@ export function createOriginalUi(
         <p class="sub">Two worlds, one empire: <b>resource node → Depot → transport network → Factory → processing → resources available for construction</b>. First to <b>${hudVpTarget}★ Victory Points</b> wins.</p>
         <div class="help-cols">
           <div class="help-col"><h3>The Territory</h3><p>Place <b>Depots</b> beside resource nodes to collect their output, then build <b>Dirt Roads</b> &amp; <b>Roads</b> (paved) to carry it to your Factory. The connection sets the multiplier — ×1.0 on gravel, ×1.6 anywhere a paved tile touches the line — and nothing else.</p>
-<p><h3>How you score (VP-01)</h3><p><b>Dirt Roads score nothing.</b> Points come from <b>upgrading</b>: pave a Dirt Road tile into a Road for <b>+${VICTORY.upgrade}★</b> (it costs only ${costCompact(UPGRADE_COST)}, since the gravel is already paid for), and raise a <b>processing plant</b> beside another town for <b>+${VICTORY.plant}★</b>. Four paves to the point; <b>${hudVpTarget}★</b> wins. A Road laid on virgin ground scores nothing — the point is for improving what you built. Tear up a paved tile or demolish a plant and the point goes back.</p><p>Your <b>first Depot is free</b>; every Depot after it costs <b>${costCompact(DEPOT_COST)}</b>, so reaching new industries (or manufacturing in the Processing Plant) is what buys expansion. A Depot you cannot pay for is refused and consumes nothing.</p><p><b>Lorries run 2× faster on paved Roads</b> — paving a lane is both the points and the income (AI-02).</p><p>Move the camera with <b>WASD</b> (Shift holds double speed) or the <b>middle mouse button</b> (wheel zooms, touch drags pan). The left button only places or selects — dragging it never pans. <b>Right-click drops the tool you are holding</b> back to the pointer, and the pointer reads the map: hover a resource, town, plant or depot and the inspector says exactly what it is.</p>${TOUCH_CONTROLS}<p>The top-bar <b>Aa Names</b> switch shows or hides the name tags over the map's features while you pan.</p></div>
+<p><h3>How you score (VP-01)</h3><p><b>Dirt Roads score nothing.</b> Points come from <b>upgrading</b>: pave a Dirt Road tile into a Road for <b>+${VICTORY.upgrade}★</b> (it costs only ${costMarkup(UPGRADE_COST)}, since the gravel is already paid for), and raise a <b>processing plant</b> beside another town for <b>+${VICTORY.plant}★</b>. Four paves to the point; <b>${hudVpTarget}★</b> wins. A Road laid on virgin ground scores nothing — the point is for improving what you built. Tear up a paved tile or demolish a plant and the point goes back.</p><p>Your <b>first Depot is free</b>; every Depot after it costs <b>${costMarkup(DEPOT_COST)}</b>, so reaching new industries (or manufacturing in the Processing Plant) is what buys expansion. A Depot you cannot pay for is refused and consumes nothing.</p><p><b>Lorries run 2× faster on paved Roads</b> — paving a lane is both the points and the income (AI-02).</p><p>Move the camera with <b>WASD</b> (Shift holds double speed) or the <b>middle mouse button</b> (wheel zooms, touch drags pan). The left button only places or selects — dragging it never pans. <b>Right-click drops the tool you are holding</b> back to the pointer, and the pointer reads the map: hover a resource, town, plant or depot and the inspector says exactly what it is.</p>${TOUCH_CONTROLS}<p>The top-bar <b>Aa Names</b> switch shows or hides the name tags over the map's features while you pan.</p></div>
           <div class="help-col"><h3>The Processing Plant</h3><p>Where your Factory turns delivered cargo into resources available for construction. Match tokens to process: a colour only pays when your network reaches its industry. Match 4 doubles, match 5 makes a <b>bomb</b>. <b>Gold</b> 🪙 is its own colour — its gems drop only while a depot sits beside a gold mine (and pay once it's connected).</p></div>
           <div class="help-col"><h3>Gold, Trade & Defence</h3><p>Earn <b>gold</b> from gold-mine access or combos. <b>Gold is reserved for Black Market sabotage</b> — it never buys construction, cannot substitute for missing materials, and is refused by every market exchange. Security Forces and Repair Crew are hired with ordinary materials. A <b>Protest</b> ✊ shuts any public road for 2:00 — every truck stops, including your own.</p></div>
         </div>
