@@ -20,6 +20,7 @@ import {
   type DecalImages, type DecalKind,
 } from "./scenery";
 import sceneryManifest from "../../assets/scenery/manifest.json";
+import { detailTierFor, type DetailTier } from "./detail-tiers";
 
 // Both extensions: the small tree sprites stay PNG (they are mostly alpha
 // edge, which lossy codecs fringe), while the big soft forest blocks and
@@ -27,9 +28,21 @@ import sceneryManifest from "../../assets/scenery/manifest.json";
 const treeUrls = import.meta.glob<string>(
   "../../assets/scenery/*.{png,webp}", { eager: true, import: "default" },
 );
-const decalUrls = import.meta.glob<string>(
-  "../../assets/ground/decals/*.{png,webp}", { eager: true, import: "default" },
-);
+// GFX-01 terrain LOD: full-size decals, plus the half/quarter-size copies the
+// medium/low presets load (tools/make-detail-tiers.mjs). One literal glob per
+// tier — Vite cannot build a glob from a variable. The tier folders are
+// sub-directories, so the full-size glob (non-recursive) never picks them up.
+const decalUrlsByTier: Record<DetailTier, Record<string, string>> = {
+  high: import.meta.glob<string>(
+    "../../assets/ground/decals/*.{png,webp}", { eager: true, import: "default" },
+  ),
+  medium: import.meta.glob<string>(
+    "../../assets/ground/decals/medium/*.{png,webp}", { eager: true, import: "default" },
+  ),
+  low: import.meta.glob<string>(
+    "../../assets/ground/decals/low/*.{png,webp}", { eager: true, import: "default" },
+  ),
+};
 
 /**
  * The tree geometry table. JSON imports widen `[1, 1]` to `number[]`, so the
@@ -53,8 +66,16 @@ function loadBitmap(url: string): Promise<AtlasImage> {
 /**
  * The decal PNGs, grouped by family. Variants come back in file-name order so
  * a given seed picks the same patch art on every client.
+ *
+ * GFX-01 terrain LOD: `maxZ` is the preset's detail cap; medium and low load
+ * the smaller copies. Decals are drawn at a world size, not their pixel size
+ * (`paintDecals`), so a smaller copy needs no other change. A tier with no
+ * copies falls back to the full-size set rather than painting no patches.
  */
-export async function loadDecalImages(): Promise<DecalImages> {
+export async function loadDecalImages(maxZ = 2): Promise<DecalImages> {
+  const tier = detailTierFor(maxZ);
+  const tierUrls = decalUrlsByTier[tier];
+  const decalUrls = Object.keys(tierUrls).length ? tierUrls : decalUrlsByTier.high;
   const byKind = Object.fromEntries(DECAL_KINDS.map((k) => [k, [] as AtlasImage[]])) as DecalImages;
   const jobs: Promise<void>[] = [];
   for (const [path, url] of Object.entries(decalUrls).sort(([a], [b]) => a.localeCompare(b))) {

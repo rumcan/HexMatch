@@ -266,11 +266,17 @@ export const FALLBACK = {
  * Ocean pattern transform for the terrain canvas: the texture is anchored to
  * WORLD space (pans with the camera) and drifts on its own — the animated
  * sea. `t` is the frame time in ms; the drift wraps at one texture period.
+ *
+ * GFX-01 terrain LOD: `texScale` is GROUND_TEX_SIZE ÷ the loaded texture's
+ * width (2 for the medium tier, 4 for low). It stretches the pattern so a
+ * smaller copy covers the same world area; the drift and its wrap period are
+ * world terms and do not change with the tier.
  */
 export function oceanMatrix(
   cam: { x: number; y: number; zoom: number },
   t: number,
   scale = 1,
+  texScale = 1,
 ): DOMMatrix {
   const z = cam.zoom * scale;
   const period = GROUND_TEX_SIZE * z;
@@ -278,7 +284,7 @@ export function oceanMatrix(
   const dy = cam.y + ((t * 0.0014 * z) % period);
   const m = makeMatrix();
   m.translateSelf(dx, dy);
-  m.scaleSelf(z, z);
+  m.scaleSelf(z * texScale, z * texScale);
   return m;
 }
 

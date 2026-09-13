@@ -38,6 +38,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import sharp from "sharp";
 import { mkdirSync, writeFileSync, existsSync, statSync, readdirSync, rmSync } from "node:fs";
+import { deriveDecalTiers } from "./make-detail-tiers.mjs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -560,7 +561,8 @@ const DECAL_SOURCES = {
 const VARIANTS = 3;
 
 async function buildDecals() {
-  for (const f of readdirSync(DECALS)) rmSync(join(DECALS, f));
+  // `recursive`: the GFX-01 medium/ and low/ tier folders live in here too.
+  for (const f of readdirSync(DECALS)) rmSync(join(DECALS, f), { recursive: true, force: true });
   const counts = {};
   let bytes = 0;
 
@@ -624,6 +626,10 @@ const total = Object.values(decals.counts).reduce((a, b) => a + b, 0);
 console.log(total
   ? `-> ${Object.entries(decals.counts).map(([k, v]) => `${k}:${v}`).join(" ")}, ${kb(decals.bytes)}`
   : "-> none: no source textures, so the ground stays a plain meadow");
+
+// GFX-01: the medium/low presets load half/quarter-size decal copies.
+console.log("\ndecal detail tiers:");
+await deriveDecalTiers();
 
 console.log(`\nsources ${kb(srcBytes)} -> shipped ${kb(trees.bytes + decals.bytes)}`);
 console.log(`\nTREE_SPRITES for src/iso/scenery.ts:\n  ${trees.names.map((n) => `"${n}"`).join(", ")}`);

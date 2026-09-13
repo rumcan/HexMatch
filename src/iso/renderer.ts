@@ -445,6 +445,12 @@ export class IsoRenderer {
   /** Canvas patterns for grass/sand/water; null → flat FALLBACK colours. */
   private ground: GroundPatterns | null = null;
   /**
+   * GFX-01 terrain LOD: GROUND_TEX_SIZE ÷ the loaded texture's width. The
+   * medium/low presets load half/quarter-size copies, which must be stretched
+   * 2×/4× to repeat over the same world area as the full-size texture.
+   */
+  private groundTexScale = 1;
+  /**
    * Chunk surfaces for the STATIC ground (grass fill + beach ring, water left
    * transparent so the animated ocean shows through). Cached per zoom like
    * the old sprite chunks; repainted when a tile is invalidated.
@@ -703,9 +709,10 @@ export class IsoRenderer {
    * stubs) degrades silently to the flat palette. Invalidates everything.
    */
   setGround(tex: GroundTextures | null) {
-    if (!tex) { this.ground = null; this.invalidateAll(); return; }
+    if (!tex) { this.ground = null; this.groundTexScale = 1; this.invalidateAll(); return; }
     try {
       this.ground = createGroundPatterns(this.ctxT, tex);
+      this.groundTexScale = tex.grass.width > 0 ? GROUND_TEX_SIZE / tex.grass.width : 1;
     } catch {
       this.ground = null;                    // e.g. stubbed canvas in tests
     }
@@ -762,12 +769,15 @@ export class IsoRenderer {
       // The textures paint at LAND_SCALE × world — fine grain (one repeat ≈
       // 1.6 tiles wide); the chunk context samples them downscaled, so it
       // must smooth or the nearest-neighbour subsample shimmers on pans.
+      // The period is in WORLD terms, so it does not change with the texture
+      // tier; only the pattern's stretch does (`groundTexScale`).
       const P = GROUND_TEX_SIZE * z * LAND_SCALE;
       const phase = (v: number) => ((-v * z) % P + P) % P;
+      const s = this.groundTexScale;
       const setPat = (p: CanvasPattern, k: number) => {
         const m = makeMatrix();
         m.translateSelf(phase(ox), phase(oy));
-        m.scaleSelf(z * k, z * k);
+        m.scaleSelf(z * k * s, z * k * s);
         p.setTransform(m);
       };
       setPat(this.ground.grass, LAND_SCALE);
@@ -799,7 +809,7 @@ export class IsoRenderer {
     // 1. The ocean: the seamless water texture, anchored to WORLD space and
     //    drifting with time, fills the whole stage — the map diamond floats
     //    in an endless animated sea.
-    if (this.ground) this.ground.water.setTransform(oceanMatrix(cam, timeMs, SEA_SCALE));
+    if (this.ground) this.ground.water.setTransform(oceanMatrix(cam, timeMs, SEA_SCALE, this.groundTexScale));
     ctx.fillStyle = this.ground ? this.ground.water : FALLBACK.water;
     ctx.fillRect(0, 0, cam.vw, cam.vh);
     // 2. The island: cached land chunks (grass + beach ring) blitted over it.
