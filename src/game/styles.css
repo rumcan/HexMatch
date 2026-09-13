@@ -1946,6 +1946,101 @@ html, body, #root {
 .big-btn:disabled { opacity: .32; cursor: not-allowed; filter: grayscale(.6); transform: none; }
 .big-btn.ghost { color: var(--txt-dim); border-color: var(--line); box-shadow: inset 0 1px 0 rgba(242, 220, 166, .1); }
 .big-btn.ghost:hover { color: var(--txt); box-shadow: inset 0 1px 0 rgba(242, 220, 166, .2); }
+
+/* ── GFX-01 / SETTINGS-01: settings sheet + the ☰ menu that carries it ────
+   The sheet is one projector (iso/settings-sheet.ts) mounted over BOTH doors:
+   the main menu and the in-game ☰ popover. Its plate is the stock `.modal box
+   small`, so only the rows are new language. The ☰ replaced AI-03's ↻ at the
+   top bar's right end — same plate, same size, same hover; the popover hangs
+   under it with the ledger's brass edge and closes on ✕ / Esc / anywhere
+   outside. */
+.gfx-modal { text-align: left; }
+.gfx-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 18px;
+  padding: 12px 2px; border-bottom: 1px solid rgba(107, 81, 35, .45);
+}
+.gfx-row:last-of-type { border-bottom: none; }
+.gfx-copy h3 {
+  margin: 0 0 3px; font-family: var(--serif); font-size: 12.5px; font-weight: 700;
+  letter-spacing: 1.6px; text-transform: uppercase; color: var(--brass-hi);
+}
+.gfx-copy p { margin: 0; font-size: 11.5px; color: var(--txt-dim); max-width: 46ch; }
+.gfx-seg { display: flex; gap: 6px; flex: none; }
+.gfx-seg button, .gfx-switch {
+  padding: 7px 13px; cursor: pointer; border: 1px solid var(--brass-lo); border-radius: var(--r);
+  background: linear-gradient(180deg, rgba(58, 44, 28, .5), rgba(12, 9, 6, .86));
+  color: var(--txt-dim); font-family: var(--serif); font-weight: 600;
+  font-size: 11.5px; letter-spacing: 1.6px; text-transform: uppercase;
+  box-shadow: inset 0 1px 0 rgba(242, 220, 166, .1);
+  transition: color .15s, background-color .15s, border-color .15s, box-shadow .15s;
+}
+.gfx-seg button:hover, .gfx-switch:hover { color: var(--brass-hi); border-color: var(--brass); }
+.gfx-seg button.on, .gfx-switch.on {
+  color: #171004; border-color: var(--brass);
+  background: linear-gradient(180deg, var(--brass-hi), var(--brass));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25), 0 0 16px -3px rgba(255, 176, 46, .6);
+}
+
+/* ── SETTINGS-01: the ☰ popover ── */
+.iso-topmenu {
+  position: fixed; top: calc(64px + env(safe-area-inset-top, 0px)); right: 10px; z-index: 55;
+  width: min(264px, calc(100vw - 20px)); padding: 10px 10px 12px; text-align: left;
+  border: 1px solid var(--brass-lo); border-radius: var(--r);
+  background:
+    var(--felt) 0 0 / 220px,
+    linear-gradient(180deg, rgba(34, 25, 16, .97), rgba(10, 7, 5, .98));
+  background-blend-mode: luminosity, normal;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, .65), inset 0 1px 0 rgba(242, 220, 166, .14);
+  animation: topmenu-in 140ms var(--ease-pop) both;
+}
+@keyframes topmenu-in {
+  from { opacity: 0; transform: translateY(-4px) scale(.97); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .iso-topmenu { animation: none; }
+}
+.iso-topmenu .tm-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 2px 8px; margin-bottom: 6px; border-bottom: 1px solid rgba(107, 81, 35, .45);
+}
+.iso-topmenu .tm-head b {
+  font-family: var(--serif); font-size: 12px; letter-spacing: 2.4px;
+  text-transform: uppercase; color: var(--brass-hi);
+}
+.iso-topmenu .tm-close {
+  display: grid; place-items: center; width: 26px; height: 26px; padding: 0;
+  font-size: 13px; line-height: 1; color: var(--txt-dim); cursor: pointer;
+  background: rgba(236, 213, 164, .04);
+  border: 1px solid var(--line-soft); border-radius: var(--r);
+  box-shadow: inset 0 1px 0 rgba(242, 220, 166, .08);
+  transition: color 100ms var(--ease-ui), border-color 100ms var(--ease-ui), box-shadow 100ms var(--ease-ui), transform 90ms var(--ease-ui);
+}
+.iso-topmenu .tm-close:hover { color: var(--txt); border-color: var(--brass-lo); }
+.iso-topmenu .tm-close:active { transform: translateY(1px); }
+.iso-topmenu .tm-item {
+  display: block; width: 100%; padding: 8px 10px; text-align: left; cursor: pointer;
+  background: transparent; border: 1px solid transparent; border-radius: var(--r);
+  transition: background 100ms var(--ease-ui), border-color 100ms var(--ease-ui);
+}
+.iso-topmenu .tm-item + .tm-item { margin-top: 2px; }
+.iso-topmenu .tm-item span {
+  display: block; font-family: var(--serif); font-size: 12.5px; font-weight: 700;
+  letter-spacing: 1.4px; text-transform: uppercase; color: var(--gold2);
+}
+.iso-topmenu .tm-item small { display: block; margin-top: 2px; font-size: 10.5px; color: var(--txt-dim); }
+.iso-topmenu .tm-item:hover, .iso-topmenu .tm-item:focus-visible {
+  background: rgba(255, 176, 46, .06); border-color: var(--brass-lo); outline: none;
+}
+.iso-topmenu .tm-item:hover span { color: var(--brass-hi); }
+@media (max-width: 900px) { .iso-topmenu { top: calc(50px + env(safe-area-inset-top, 0px)); right: 8px; } }
+.gfx-switch { min-width: 74px; }
+/* the composite layer sits above the three map canvases; input is the
+   overlay's alone, so the pass is painted-through, never click-blocking */
+/* GFX-01: the tilt-shift display plate. Same geometry as the game layers,
+   but its own class — it must never enter a `.iso-layer` query, or every
+   index-based lookup of the three game canvases shifts. */
+.iso-mini { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .big-btn.danger { color: #ffc7b4; border-color: rgba(226, 112, 79, .6); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14), 0 6px 18px rgba(0, 0, 0, .55); }
 .big-btn.danger:hover { box-shadow: 0 0 26px -6px rgba(226, 112, 79, .7), 0 8px 20px rgba(0, 0, 0, .6); }
 .confirm-row { display: flex; gap: 10px; justify-content: center; }

@@ -45,7 +45,15 @@ import protestArt from "../../assets/protest.png";
 import asphaltTex from "../../assets/roads/asphalt.webp";
 import dirtTex from "../../assets/roads/dirt.webp";
 
-import { Atlas, buildMasks, loadBuildingLayers, type Manifest, type AtlasImage } from "./atlas";
+import {
+  Atlas, buildMasks, buildBuildingMasks, loadBuildingLayers,
+  type Manifest, type AtlasImage,
+} from "./atlas";
+// GFX-01: the video settings — pixel-detail cap + miniature tilt-shift pass.
+import {
+  currentGraphics, setGraphics, subscribeGraphics, QUALITY_MAX_DETAIL, type Quality,
+} from "./graphics";
+import { createTiltShiftPass } from "./miniature";
 import { loadGroundTextures } from "./ground";
 import {
   createCamera, centerOnTile, resizeCamera, zoomStepAt, tileToScreenAt,
@@ -140,6 +148,7 @@ import { createLoadingScreen } from "./loading-screen";
 // TUT-01: the starting tour — one stepped card that walks the whole loop
 // (plant → depot → road → board → expand → points) before the first click.
 import { showTutorial, type TutorialHandle } from "./tutorial";
+import { showSettingsSheet, type SettingsSheetHandle } from "./settings-sheet";
 import {
   buildEnding, showEndingScreen, type DecisiveSource, type EndingScreenHandle,
 } from "./ending";
@@ -316,6 +325,15 @@ export interface IsoGameOptions {
   story?: string;
   /** STORY-01: the ending's "Continue the campaign" returns through here. */
   onStoryExit?: () => void;
+  /**
+   * SETTINGS-01/GFX-01: the in-game ☰ menu's "Quit to main menu" row returns
+   * through here — an App-level unmount (the same door `onStoryExit` walks
+   * out of), with the save left exactly where a refresh would have found it.
+   * Absent means the row is not offered: a surface that boots a match with no
+   * menu to go back to (`main.tsx`'s legacy boot, the test harnesses) gets a
+   * menu with no broken door.
+   */
+  onQuitToMenu?: () => void;
 }
 
 export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
@@ -965,6 +983,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   };
   const canvases = { terrain: mk(1), structures: mk(2), overlay: mk(3) };
   const stage = ui.mapHost;
+  // GFX-01: the tilt-shift composite. It mounts its own canvas above the
+  // three layers and stays `display: none` until the setting says otherwise,
+  // so at the default (off) it costs one early return in the frame loop.
+  const mini = createTiltShiftPass(canvases, stage);
 
   const world: World = {
     grid,
@@ -1169,7 +1191,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           restartArmed = true;
           clearSave();
           // Keep the selected difficulty: this is a rematch, not first-run
-          // onboarding. The top-bar Restart button remains the full reset.
+          // onboarding. The ☰ menu's New Game remains the full reset.
           location.reload();
         },
         // STORY-01: the ledger's third door — back to the campaign menu with
@@ -3931,6 +3953,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const w = Math.max(1, Math.floor(stage.clientWidth * d));
     const h = Math.max(1, Math.floor(stage.clientHeight * d));
     for (const c of Object.values(canvases)) { c.width = w; c.height = h; }
+    mini.resize(w, h);
     cam = resizeCamera(cam, w, h);
     renderer?.setCamera(cam);
   };
@@ -4196,34 +4219,128 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     window.addEventListener("pagehide", onPageHide);
   }
 
-  // ── AI-03: the top-bar buttons — peek at the rival's plant, restart game ──
+  // ══ AI-03 (as revised by SETTINGS-01 / GFX-01 / MP-AUDIT): top-bar right ══
+  // 🏭 watch the rival's plant — both seats since #105 synced the guest's
+  //   view of the host's plant through the board wire;
+  // ☰ the menu — which replaces AI-03's solo-only ↻. One door for the whole
+  //   back room: Settings (the sheet the main menu also opens), How to Play
+  //   (the ❔ reference card's own modal), New Game (the ↻ flow verbatim, and
+  //   still solo-only — a room's match belongs to its session, not to a
+  //   reload), and Quit to main menu (offered only when the surface that
+  //   booted the match passed `onQuitToMenu`). It sits at the far right of
+  //   the bar — where ↻ stood, beside the rival's plant — as asked.
   const topRight = ui.el.querySelector<HTMLElement>(".top-right");
+  // The sheet handle and the menu's teardown live at function scope so the
+  // dispose closure below can reach them (the listeners ride on `document`).
+  let settingsView: SettingsSheetHandle | null = null;
+  let menuTeardown: (() => void) | null = null;
   if (topRight) {
     const peek = document.createElement("button");
     peek.type = "button"; peek.id = "iso-rival-peek";
     peek.className = "icon-btn"; peek.textContent = "🏭";
     peek.title = "Watch the rival's plant — its board plays itself";
     peek.addEventListener("click", () => toggleRivalPlantView());
-
-    // MP-AUDIT: peek panel shows opponent plant — host shows rivalPlant, guest shows rivalQuarry (host's plant) via synced board
+    // MP-AUDIT (#105): the peek panel is for BOTH seats now — the host reads
+    // its local rivalPlant record; a guest follows the host's plant through
+    // the synced board (`rivalQuarry`). (This gate used to be host-only.)
     topRight.appendChild(peek);
 
-    // MP-05: ↻ restarts a SOLO match. In a room the match belongs to the
-    // session — reloading would strand the other seat — so the button is gone.
+    const menuBtn = document.createElement("button");
+    menuBtn.type = "button"; menuBtn.id = "iso-menu-btn";
+    menuBtn.className = "icon-btn"; menuBtn.textContent = "☰";
+    menuBtn.title = "Menu — settings, how to play, quit";
+    menuBtn.setAttribute("aria-haspopup", "menu");
+    menuBtn.setAttribute("aria-expanded", "false");
+
+    const pop = document.createElement("div");
+    pop.id = "iso-topmenu";
+    pop.className = "iso-topmenu hidden";
+    pop.setAttribute("role", "menu");
+    const popHead = document.createElement("div");
+    popHead.className = "tm-head";
+    const popTitle = document.createElement("b");
+    popTitle.textContent = "Menu";
+    const popClose = document.createElement("button");
+    popClose.type = "button"; popClose.className = "tm-close";
+    popClose.title = "Close"; popClose.dataset.sfx = "close";
+    popClose.textContent = "✕";
+    popHead.append(popTitle, popClose);
+    pop.appendChild(popHead);
+
+    let menuOpen = false;
+    const setMenu = (on: boolean) => {
+      menuOpen = on;
+      pop.classList.toggle("hidden", !on);
+      menuBtn.setAttribute("aria-expanded", String(on));
+    };
+    const menuItem = (label: string, hint: string, onPick: () => void) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "tm-item"; b.setAttribute("role", "menuitem");
+      b.dataset.sfx = "click";
+      const sp = document.createElement("span"); sp.textContent = label;
+      const sm = document.createElement("small"); sm.textContent = hint;
+      b.append(sp, sm);
+      b.addEventListener("click", () => { setMenu(false); onPick(); });
+      pop.appendChild(b);
+    };
+    popClose.addEventListener("click", () => setMenu(false));
+
+    // Settings — THE sheet (iso/settings-sheet.ts), the same projector the
+    // front door raises over the menu plate, mounted over the game root. One
+    // instance at a time; closing repaints nothing here because every control
+    // in the sheet subscribes to the store, and so does the game.
+    menuItem("Settings", "texture detail · miniature · sound", () => {
+      if (settingsView) return;
+      const view = showSettingsSheet(ui.el);
+      settingsView = view;
+      void view.promise.then(() => { if (settingsView === view) settingsView = null; });
+    });
+    menuItem("How to Play", "the reference card, eight rules", () => ui.showHelp());
     if (isSolo()) {
-      const restart = document.createElement("button");
-      restart.type = "button"; restart.id = "iso-restart";
-      restart.className = "icon-btn"; restart.textContent = "↻";
-      restart.title = "New game — clears the save and the difficulty pick";
-      restart.addEventListener("click", () => {
+      // MP-05 unchanged: a RESTART is solo-only, in a room the session owns
+      // the match. The confirm-and-clear flow is AI-03's verbatim.
+      menuItem("New Game", "clears the save and the difficulty pick", () => {
         if (!window.confirm("Start a new game? The save and your difficulty pick are cleared.")) return;
         restartArmed = true; // do NOT let the pagehide autosave re-write the save
         clearSave();
         try { localStorage.removeItem(SKILL_STORAGE_KEY); } catch { /* private mode */ }
         location.reload();
       });
-      topRight.appendChild(restart);
     }
+    if (opts.onQuitToMenu) {
+      menuItem(isSolo() ? "Quit to Main Menu" : "Leave Room",
+        isSolo() ? "the match stays saved — Play resumes it" : "the other seat is told you left",
+        () => {
+          // A solo quit is plain navigation (the save holds the match); a
+          // room's quit strands the far seat, so that one confirms.
+          if (!isSolo() && !window.confirm("Leave this room and return to the main menu?")) return;
+          opts.onQuitToMenu?.();
+        });
+    }
+
+    topRight.appendChild(menuBtn);
+    ui.el.appendChild(pop);
+    // The one listener the whole menu hangs on: the button toggles its
+    // popover. (onDocDown will NOT fight it — its target is inside menuBtn.)
+    menuBtn.addEventListener("click", () => setMenu(!menuOpen));
+    const onDocDown = (e: Event) => {
+      const t = e.target as Node;
+      if (menuOpen && !pop.contains(t) && !menuBtn.contains(t)) setMenu(false);
+    };
+    const onDocKey = (e: KeyboardEvent) => {
+      if (!menuOpen) return;
+      // Escape belongs to the menu while it is open — swallow it so the tool
+      // cancel does not double-fire on the same key.
+      if (e.key === "Escape") { e.stopPropagation(); setMenu(false); }
+    };
+    document.addEventListener("pointerdown", onDocDown, true);
+    document.addEventListener("keydown", onDocKey, true);
+    menuTeardown = () => {
+      document.removeEventListener("pointerdown", onDocDown, true);
+      document.removeEventListener("keydown", onDocKey, true);
+      settingsView?.destroy();
+      settingsView = null;
+    };
   }
 
   function toggleRivalPlantView() {
@@ -4338,6 +4455,90 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     img.onload = () => res(img); img.onerror = rej; img.src = src;
   });
 
+  /* ══ GFX-01 — pixel-detail loading ══════════════════════════════════════
+   * The three shipped detail levels live in tables here so the SAME loader
+   * serves boot (only ≤ cap) and a runtime preset change (fills in the newly
+   * wanted level, prunes above it). `bitmapCache` de-dupes concurrent
+   * requests for one URL; it is deliberately cleared for the levels being
+   * pruned, so stepping DOWN actually frees the big ImageBitmaps instead of
+   * pinning them through a resolved promise. */
+  const monolithUrls = new Map<number, string>([[0.5, atlas05], [1, atlas1], [2, atlas2]]);
+  const roadUrls = new Map<number, string>([[0.5, roads05], [1, roads1], [2, roads2]]);
+  const sheetUrls = new Map<number, string>([[0.5, buildings05], [1, buildings1], [2, buildings2]]);
+  const buildingsBase = `${import.meta.env.BASE_URL}assets/buildings/`;
+  const bitmapCache = new Map<string, Promise<AtlasImage>>();
+  const cachedLoad = (u: string): Promise<AtlasImage> => {
+    let p = bitmapCache.get(u);
+    if (!p) { p = load(u); bitmapCache.set(u, p); }
+    return p;
+  };
+  /** Fill `store` with every detail level ≤ cap it is missing. */
+  const capImages = (
+    urls: Map<number, string>, store: Map<number, AtlasImage>, cap: number,
+  ) => Promise.all(
+    [...urls]
+      .filter(([z]) => z <= cap && !store.has(z))
+      .map(async ([z, u]) => { store.set(z, await cachedLoad(u)); }),
+  );
+
+  /**
+   * Apply a quality preset while the game is live: load the levels newly at
+   * or below the cap (monolith, layer sheets, per-building PNGs, scenery,
+   * liveried trucks), then re-aim the atlas cap, free everything above it and
+   * repaint. Serialized through `detailApplying` so a rapid toggle cannot
+   * interleave two half-applied states. A load failure leaves the CURRENT
+   * preset standing — the player simply does not get the new look — rather
+   * than rendering a map missing its 2× half.
+   */
+  let detailApplying: Promise<void> = Promise.resolve();
+  const applyQuality = (cap: number): Promise<void> => {
+    detailApplying = detailApplying.then(async () => {
+      const a = atlasRef;
+      if (disposed || !a || a.detailCap === cap) return;
+      const r = renderer;
+      try {
+        await Promise.all([
+          capImages(monolithUrls, a.images, cap),
+          ...(a.layerImages.has("roads")
+            ? [capImages(roadUrls, a.layerImages.get("roads")!, cap)] : []),
+          ...(a.layerImages.has("buildings")
+            ? [capImages(sheetUrls, a.layerImages.get("buildings")!, cap)] : []),
+          loadBuildingLayers(a, buildingsBase, cap),
+          loadScenerySprites(a, cap),
+          loadVehicleLayers(a, cap),
+        ]);
+      } catch (err) {
+        console.warn("[gfx] detail levels failed to load; keeping the current preset", err);
+        return;
+      }
+      if (disposed) return;
+      if (r) r.setDetailCap(cap);          // caps the atlas, prunes, repaints
+      else { a.detailCap = cap; a.pruneDetail(); }
+      buildMasks(a);
+      buildBuildingMasks(a);
+      for (const m of [monolithUrls, roadUrls, sheetUrls])
+        for (const [z, u] of m) if (z > cap) bitmapCache.delete(u);
+      r?.recomputePad();
+      r?.invalidateAll();
+    });
+    return detailApplying;
+  };
+
+  // Live wiring of the settings store: the ⚙ modal, `__iso.graphics()` and
+  // any other subscriber all arrive here. The boot path below reads the same
+  // store BEFORE loading, so a preset picked before the atlases fetched is
+  // what those fetches honour.
+  const gfxUnsub = subscribeGraphics((g) => {
+    mini.setEnabled(g.miniature);
+    void applyQuality(QUALITY_MAX_DETAIL[g.quality]);
+  });
+  mini.setEnabled(currentGraphics().miniature);
+  /** What the boot loading below fetches — the preset at frame 0. A settings
+   *  change while the loading screen is up is cosmetic until boot reads it;
+   *  the overlay is in front of everything then anyway. */
+  const gfxBoot = currentGraphics();
+  const cap0 = QUALITY_MAX_DETAIL[gfxBoot.quality];
+
   /** AI-03: keep moving lorries when a replan leaves their route identical.
    *  Merged by the stable depot id (the lorry's true identity since the W2
    *  audit): same route AND same per-segment paved flags → the lorry keeps
@@ -4362,10 +4563,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   }
 
   (async () => {
+    // GFX-01: only the detail levels the quality preset permits are fetched
+    // at boot — `medium` never pays for the 2× sheets, `low` decodes nothing
+    // finer than 0.5×. The URL imports still resolve (they are build-time
+    // asset paths); they are simply not loaded into bitmaps.
     const images = new Map<number, AtlasImage>();
-    const [a05, a1, a2] = await loading.track("atlas", Promise.all([load(atlas05), load(atlas1), load(atlas2)]));
-    images.set(0.5, a05); images.set(1, a1); images.set(2, a2);
+    await loading.track("atlas", capImages(monolithUrls, images, cap0));
     const atlas = new Atlas(manifestJson as unknown as Manifest, images);
+    atlas.detailCap = cap0;
     buildMasks(atlas);
     if (disposed) return;
 
@@ -4374,14 +4579,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // the seamless world-anchored textures. Both load in parallel with the
     // first frame — the renderer falls back to the monolithic atlas and flat
     // ground colours until they arrive, then invalidates everything.
+    const roadsStore = new Map<number, AtlasImage>();
+    const sheetsStore = new Map<number, AtlasImage>();
     const layersPromise = loading.track("layers", Promise.all([
-      load(roads05), load(roads1), load(roads2),
-      load(buildings05), load(buildings1), load(buildings2),
+      capImages(roadUrls, roadsStore, cap0),
+      capImages(sheetUrls, sheetsStore, cap0),
       loadGroundTextures({ grass: grassTex, sand: sandTex, water: waterTex }),
-    ]).then(([r05, r1, r2, b05, b1, b2, tex]) => {
+    ]).then(([, , tex]) => {
       if (disposed) return;
-      atlas.layerImages.set("roads", new Map([[0.5, r05], [1, r1], [2, r2]]));
-      atlas.layerImages.set("buildings", new Map([[0.5, b05], [1, b1], [2, b2]]));
+      atlas.layerImages.set("roads", roadsStore);
+      atlas.layerImages.set("buildings", sheetsStore);
       renderer?.setGround(tex);
     }).catch((err) => {
       // Textures are an upgrade, never a gate: the flat-colour ground and the
@@ -4396,7 +4603,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // SCENERY art (assets/ground/decals/, assets/scenery/): the decal patches
     // and the tree sprites. Non-gating like every other art load — until it
     // lands the map is the plain meadow with no trees, which is playable.
-    void loading.track("scenery", Promise.all([loadDecalImages(), loadScenerySprites(atlas)]).then(([decals, trees]) => {
+    void loading.track("scenery", Promise.all([loadDecalImages(), loadScenerySprites(atlas, cap0)]).then(([decals, trees]) => {
       if (disposed) return;
       renderer?.setDecalImages(decals);
       if (trees) {
@@ -4414,7 +4621,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // sprite table like the scenery, and just as non-gating: while this is
     // pending (or on a checkout without the PNGs) the legacy `truck_goods_*`
     // sheet cells draw every lorry, which is the same lorry unpainted.
-    void loading.track("vehicles", loadVehicleLayers(atlas).then((n) => {
+    void loading.track("vehicles", loadVehicleLayers(atlas, cap0).then((n) => {
       if (disposed || !n) return;
       // The trucks are drawn from the structures layer every frame, so the new
       // defs only need the vehicle items re-derived — but invalidate anyway, the
@@ -4439,7 +4646,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       console.warn("[roads] material textures failed to load:", err);
     }));
 
-    void loading.track("buildings", loadBuildingLayers(atlas, `${import.meta.env.BASE_URL}assets/buildings/`).then((n) => {
+    void loading.track("buildings", loadBuildingLayers(atlas, buildingsBase, cap0).then((n) => {
       if (disposed || !n) return;
       // TOWN-GRID: the layers also bring the real FOOTPRINTS with them (a
       // town cell can be 2x2), and the town draw items were built against the
@@ -4545,6 +4752,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       world.vehicles = carItems(cars).concat(truckItems(trucks, atlasRef ?? undefined));
       const { items, ghost } = overlayFrame();
       renderer!.render(t, items, ghost);
+      mini.paint();
       floats.frame(t);
       // NAMES: re-anchor the name tags to the live camera (no-op while the
       // Names button has them hidden).
@@ -4568,6 +4776,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     get tool() { return tool; },
     /** LOAD-01: true while the loading screen covers the map. */
     get loading() { return loading.active; },
+    /**
+     * GFX-01: the video settings. `__iso.graphics()` reads them;
+     * `__iso.graphics("medium")` / `__iso.graphics(undefined, true)` (the
+     * second argument is the miniature tilt-shift) apply them live through
+     * the SAME store the ⚙ panel uses — persistence and repaint included.
+     */
+    graphics: (q?: Quality, miniature?: boolean) => setGraphics({ quality: q, miniature }),
     get vp() { return { you: vpFor(score, "you"), ai: vpFor(score, "ai") }; },
     /** VP-01: the target and the two numbers behind a player's total.
      *  AI-04: the target is the difficulty's line (5★ on easy), not a constant. */
@@ -4937,6 +5152,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   return () => {
     disposed = true;
     loading.dispose();
+    // GFX-01: the settings subscription and the composite layer die with the
+    // game (the store itself persists — it is the PLAYER's setting, not this
+    // match's state).
+    gfxUnsub();
+    mini.destroy();
+    // SETTINGS-01: the ☰ menu's document listeners die with the game, and an
+    // open sheet is destroyed rather than orphaned over a dead board.
+    menuTeardown?.();
+    menuTeardown = null;
     net?.dispose();
     window.clearInterval(saveIv);
     if (onPageHide) window.removeEventListener("pagehide", onPageHide);

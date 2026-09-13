@@ -165,7 +165,14 @@ async function boot() {
 describe("E11 the game boots", () => {
   it("mounts three canvas layers and a tool bar", async () => {
     await boot();
-    expect(root.querySelectorAll("canvas")).toHaveLength(3);
+    // GFX-01: the tilt-shift composite rides beside those three as its OWN
+    // `.iso-mini` plate (hidden until miniature view is on) — it is counted
+    // separately on purpose: it must never join `.iso-layer`, or the
+    // index-based lookups of the game canvases shift and input hit-tests
+    // land on the wrong plate.
+    expect(root.querySelectorAll("canvas")).toHaveLength(4);
+    expect(root.querySelectorAll("canvas.iso-layer")).toHaveLength(3);
+    expect(root.querySelectorAll("canvas.iso-mini")).toHaveLength(1);
     const tools = [...root.querySelectorAll("[data-tool]")].map(
       (b) => (b as HTMLElement).dataset.tool);
     // The pointer ("select") leads: it is the hand you hold between builds.
@@ -193,6 +200,48 @@ describe("E11 the game boots", () => {
     dispose!();
     dispose = undefined;
     expect(root.querySelectorAll("canvas")).toHaveLength(0);
+  });
+
+  // SETTINGS-01: the ☰ menu, end to end — the click that opens it included.
+  // (This test exists because its ABSENCE is how a dropped menuBtn listener
+  // shipped to manual testing: the sheet, the store and the popover painted
+  // green in jsdom without anyone ever clicking the button that raises them.)
+  it("the ☰ menu opens, carries its rows, and closes again", async () => {
+    await boot();
+    const btn = root.querySelector("#iso-menu-btn") as HTMLButtonElement;
+    const pop = root.querySelector("#iso-topmenu") as HTMLElement;
+    expect(btn).toBeTruthy();
+    expect(pop.classList.contains("hidden")).toBe(true);
+
+    btn.click(); // the whole feature is this one line surviving review
+    expect(pop.classList.contains("hidden")).toBe(false);
+    expect(btn.getAttribute("aria-expanded")).toBe("true");
+    // a bare solo boot: no onQuitToMenu, so no quit row — the App-driven
+    // doors are Settings, How to Play and (solo-only) New Game
+    expect([...pop.querySelectorAll(".tm-item span")].map((x) => x.textContent))
+      .toEqual(["Settings", "How to Play", "New Game"]);
+
+    // Settings raises the REAL sheet over the game, and it writes through
+    // the real store — the GFX-01 miniature toggle, clicked from the menu
+    (pop.querySelectorAll(".tm-item")[0] as HTMLButtonElement).click();
+    expect(pop.classList.contains("hidden")).toBe(true); // the pick closes the menu
+    const sheet = root.querySelector(".settings-sheet") as HTMLElement;
+    expect(sheet).not.toBeNull();
+    (sheet.querySelector("[data-gfx=\"miniature\"]") as HTMLButtonElement).click();
+    expect(JSON.parse(localStorage.getItem("hexmatch:graphics")!))
+      .toMatchObject({ miniature: true });
+    (sheet.querySelector(".big-btn") as HTMLButtonElement).click();
+    expect(root.querySelector(".settings-sheet")).toBeNull();
+    localStorage.removeItem("hexmatch:graphics");
+
+    // Escape closes the popover…
+    btn.click();
+    expect(pop.classList.contains("hidden")).toBe(false);
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(pop.classList.contains("hidden")).toBe(true);
+    // …and a second click reopens it (the toggle, not a one-shot)
+    btn.click();
+    expect(pop.classList.contains("hidden")).toBe(false);
   });
 });
 
@@ -2857,7 +2906,7 @@ describe("pointer responsiveness", () => {
     const { IsoRenderer } = await import("../../src/iso/renderer");
     // Record the paint without rasterising: the stub context has no gradients.
     const draw = vi.spyOn(IsoRenderer.prototype, "drawOverlay").mockImplementation(() => {});
-    const overlay = root.querySelectorAll("canvas")[2] as HTMLCanvasElement;
+    const overlay = root.querySelectorAll("canvas.iso-layer")[2] as HTMLCanvasElement;
     const move = (x: number, y: number) =>
       overlay.dispatchEvent(new MouseEvent("pointermove", { clientX: x, clientY: y, bubbles: true }));
 

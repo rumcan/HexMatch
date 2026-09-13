@@ -139,7 +139,7 @@ async function opaqueNear(
     const [, y1] = h.tileScreenAt(tx + 1, ty + 1);
     const [ax] = h.tileScreenAt(0, 0), [bx] = h.tileScreenAt(1, 0);
     const cx = Math.floor(x0 + Math.abs(bx - ax)), cy = Math.floor((y0 + y1) / 2);
-    const c = document.querySelectorAll("canvas")[canvasIndex] as HTMLCanvasElement;
+    const c = document.querySelectorAll("canvas.iso-layer")[canvasIndex] as HTMLCanvasElement;
     const ctx = c.getContext("2d")!;
     const d = ctx.getImageData(cx - half, cy - half, half * 2 + 1, half * 2 + 1).data;
     let n = 0;
@@ -171,7 +171,7 @@ async function strongGlowNear(
     const [, y1] = h.tileScreenAt(tx + 1, ty + 1);
     const [ax] = h.tileScreenAt(0, 0), [bx] = h.tileScreenAt(1, 0);
     const cx = Math.floor(x0 + Math.abs(bx - ax)), cy = Math.floor((y0 + y1) / 2);
-    const c = document.querySelectorAll("canvas")[canvasIndex] as HTMLCanvasElement;
+    const c = document.querySelectorAll("canvas.iso-layer")[canvasIndex] as HTMLCanvasElement;
     const ctx = c.getContext("2d")!;
     const d = ctx.getImageData(cx - half, cy - half, half * 2 + 1, half * 2 + 1).data;
     let n = 0;
@@ -279,7 +279,7 @@ test.describe("iso game boots on the default route", () => {
     // a real map with industries, and the renderer is painting real pixels
     // (poll: the terrain canvas fills asynchronously once the atlas loads)
     await expect.poll(async () => page.evaluate(() => {
-      const c = document.querySelectorAll("canvas")[0] as HTMLCanvasElement;
+      const c = document.querySelectorAll("canvas.iso-layer")[0] as HTMLCanvasElement;
       const ctx = c.getContext("2d")!;
       const d = ctx.getImageData(0, 0, c.width, c.height).data;
       let opaque = 0, coloured = 0;

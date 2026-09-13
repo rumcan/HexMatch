@@ -230,6 +230,10 @@ export interface OriginalUi {
   isTradeOpen: () => boolean;
   showModal: (html: string) => void;
   hideModal: () => void;
+  /** GFX-01/SETTINGS-01: raise the same ❔ reference card the top bar opens.
+   *  The ☰ menu's "How to Play" row routes through here so one modal serves
+   *  both keys (and `window.__iso` can open it from the console). */
+  showHelp: () => void;
 }
 
 // ── gem face helper ─────────────────────────────────────────────────────────
@@ -343,6 +347,11 @@ export function createOriginalUi(
   soundBtn.onclick = () => { sfx.toggle(); };
   registerSoundPainter((on) => paintSound(on));
   right.appendChild(soundBtn);
+  // GFX-01: the ⚙ this panel used to carry is gone — SETTINGS-01 raised the
+  // whole room instead. The ☰ menu game.ts mounts at the far right of this
+  // bar carries Settings, How to Play and Quit to main menu, and the Settings
+  // row opens `iso/settings-sheet.ts` — the SAME projector the main menu
+  // opens, so the door and the match can never show different controls.
   const fitBtn = h("button", "icon-btn", "🎯");
   fitBtn.title = "Recenter map";
   fitBtn.dataset.act = "recenter";
@@ -1852,5 +1861,6 @@ export function createOriginalUi(
     isTradeOpen: () => !marketPane.classList.contains("hidden") || !bankPane.classList.contains("hidden"),
     showModal,
     hideModal,
+    showHelp: () => helpModal(),
   };
 }
