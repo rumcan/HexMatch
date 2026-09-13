@@ -152,14 +152,14 @@ const SPECIES = [
 
 /**
  * Height in 2× pixels of the TALLEST tree on the sheet; everything else is
- * scaled by the same factor. A 1×1 tile is 64×32 world px, so 120 here puts
- * the biggest tree at 60px at 1×, a little under two tile-heights.
+ * scaled by the same factor. A 1×1 tile is 64×32 world px, so 60 here puts
+ * the biggest tree at 30px at 1×, just under one tile-height.
  *
- * Was 160. At that size the tallest trees stood higher than the buildings
- * they were meant to sit among, which reads as scenery out of scale rather
- * than as a big tree — 25% off the whole set fixes the relationship.
+ * Was 160, then 120. At 120 the bushes still came out the size of mansions
+ * beside the buildings, so the whole set is halved again. The forest blocks
+ * are sized from their own ground diamond (FOREST_ART_SCALE), not from this.
  */
-const TALLEST_2X = 120;
+const TALLEST_2X = 60;
 
 /**
  * Variants are SIZE ONLY — a young tree and an old one of the same species.
@@ -464,7 +464,11 @@ async function buildForests(sprites) {
       console.log(`  ${name}: no ${file} — skipped`);
       continue;
     }
-    const { data, info } = await sharp(path).ensureAlpha().raw()
+    // Mirrored left-to-right, like the 1×1 trees (MIRROR_ALL): the source art
+    // is lit from the upper right and the game's sun is upper left. Flipped
+    // BEFORE the waist and anchor are measured, so they describe the art as
+    // it ships.
+    const { data, info } = await sharp(path).flop().ensureAlpha().raw()
       .toBuffer({ resolveWithObject: true });
     const { width, height } = info;
 
