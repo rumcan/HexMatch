@@ -62,7 +62,11 @@ import type { Harvester, Factory } from "./economy";
  */
 // v11: coastal water pockets become sand after placement. Older network
 // clients must update because buildability on those repaired cells changed.
-export const SNAPSHOT_VERSION = 11;
+// v12 (MP-AUDIT): snapshot gains market, vehicle, protest, board and winner
+// fields for full guest parity (market parity, vehicle presentation,
+// cross-choice, host departure). All new fields are optional for solo saves
+// but required for protocol v4 multiplayer rooms.
+export const SNAPSHOT_VERSION = 12;
 
 export const EXPECTED_TRACK_BYTES = MAP_W * MAP_H;
 
@@ -115,6 +119,59 @@ export interface RivalSabotage {
   smogIn: number;
 }
 
+export interface MarketWireOffer {
+  id: number;
+  from: number;
+  give: string;
+  giveN: number;
+  want: string;
+  wantN: number;
+  born: number;
+}
+export interface MarketWire {
+  offers: MarketWireOffer[];
+  offerSeq: number;
+}
+export interface ProtestWire {
+  x: number;
+  y: number;
+  until: number;
+  owner: string;
+}
+export interface TruckWire {
+  ownerId: number;
+  depotId: number;
+  factory: [number, number];
+  route: [number, number][];
+  segFast: boolean[];
+  leg: number;
+  t: number;
+  reverse: boolean;
+  deliveries: number;
+}
+export interface CarWire {
+  name: string;
+  route: [number, number][];
+  segFast?: boolean[];
+  leg: number;
+  t: number;
+  reverse: boolean;
+}
+export interface BoardWire {
+  owner: string;
+  data: unknown;
+}
+export interface CrossPromptWire {
+  boardOwner: string;
+  kind: "holy" | "broken";
+  picks: number;
+  seq: number;
+}
+export interface WinnerWire {
+  id: string | null;
+  source: string | null;
+}
+
 export interface Snapshot {
   version: number;
   /** The map seed. Terrain and industries are regenerated from it, not sent. */
@@ -135,6 +192,19 @@ export interface Snapshot {
   players: WirePlayer[];
   /** PP-14b: the Black-Market sabotage on the guest-seat plant. */
   rivalSabotage: RivalSabotage;
+  /** MP-AUDIT: market parity — live offers */
+  market?: MarketWire;
+  /** MP-AUDIT: protest roadblocks */
+  protests?: ProtestWire[];
+  /** MP-AUDIT: vehicle presentation */
+  trucks?: TruckWire[];
+  cars?: CarWire[];
+  /** MP-AUDIT: authoritative boards (compact gem tuples) */
+  boards?: BoardWire[];
+  /** MP-AUDIT: cross-bonus choice prompt */
+  crossPrompt?: CrossPromptWire | null;
+  /** MP-AUDIT: winner identity */
+  winner?: WinnerWire | null;
 }
 
 export interface SnapshotSource {
@@ -147,6 +217,13 @@ export interface SnapshotSource {
   players: WirePlayer[];
   t?: number;
   rivalSabotage?: RivalSabotage;
+  market?: MarketWire;
+  protests?: ProtestWire[];
+  trucks?: TruckWire[];
+  cars?: CarWire[];
+  boards?: BoardWire[];
+  crossPrompt?: CrossPromptWire | null;
+  winner?: WinnerWire | null;
 }
 
 export function buildSnapshot(src: SnapshotSource): Snapshot {
@@ -170,6 +247,13 @@ export function buildSnapshot(src: SnapshotSource): Snapshot {
           smogIn: src.rivalSabotage.smogIn,
         }
       : { frozen: [], girders: [], smogIn: 0 },
+    market: src.market ? { offers: src.market.offers.map((o) => ({ ...o })), offerSeq: src.market.offerSeq } : undefined,
+    protests: src.protests ? src.protests.map((p) => ({ ...p })) : undefined,
+    trucks: src.trucks ? src.trucks.map((t) => ({ ...t, factory: [...t.factory] as [number, number], route: t.route.map((r) => [...r] as [number, number]), segFast: [...t.segFast] })) : undefined,
+    cars: src.cars ? src.cars.map((c) => ({ ...c, route: c.route.map((r) => [...r] as [number, number]), segFast: c.segFast ? [...c.segFast] : undefined })) : undefined,
+    boards: src.boards ? src.boards.map((b) => ({ owner: b.owner, data: b.data })) : undefined,
+    crossPrompt: src.crossPrompt ?? null,
+    winner: src.winner ?? null,
   };
 }
 
@@ -209,6 +293,25 @@ export function validateSnapshot(s: unknown, localSeed?: number): SnapshotError 
   }
   if (!Array.isArray(o.harvesters) || !Array.isArray(o.factories)) {
     return new SnapshotError("malformed", "Snapshot is missing its structure lists.");
+  }
+  // MP-AUDIT: new optional fields are validated only when present
+  if (o.market !== undefined && o.market !== null) {
+    const m = o.market as Partial<MarketWire>;
+    if (!m || typeof m !== "object" || !Array.isArray((m as MarketWire).offers) || typeof (m as MarketWire).offerSeq !== "number") {
+      return new SnapshotError("malformed", "Snapshot market is malformed.");
+    }
+  }
+  if (o.protests !== undefined && o.protests !== null && !Array.isArray(o.protests)) {
+    return new SnapshotError("malformed", "Snapshot protests is malformed.");
+  }
+  if (o.trucks !== undefined && o.trucks !== null && !Array.isArray(o.trucks)) {
+    return new SnapshotError("malformed", "Snapshot trucks is malformed.");
+  }
+  if (o.cars !== undefined && o.cars !== null && !Array.isArray(o.cars)) {
+    return new SnapshotError("malformed", "Snapshot cars is malformed.");
+  }
+  if (o.boards !== undefined && o.boards !== null && !Array.isArray(o.boards)) {
+    return new SnapshotError("malformed", "Snapshot boards is malformed.");
   }
   // PP-14b: sabotage is optional for tolerance (an old producer might omit it
   // and still be readable), but if present it must be shaped correctly.
@@ -250,6 +353,13 @@ export interface AppliedSnapshot {
   won: boolean;
   t: number;
   rivalSabotage?: RivalSabotage;
+  market?: MarketWire;
+  protests?: ProtestWire[];
+  trucks?: TruckWire[];
+  cars?: CarWire[];
+  boards?: BoardWire[];
+  crossPrompt?: CrossPromptWire | null;
+  winner?: WinnerWire | null;
 }
 
 /**
@@ -283,6 +393,13 @@ export function applySnapshot(s: unknown, localSeed?: number): AppliedSnapshot {
           smogIn: o.rivalSabotage.smogIn,
         }
       : undefined,
+    market: (o as Snapshot).market ? { offers: (o as Snapshot).market!.offers.map((x) => ({ ...x })), offerSeq: (o as Snapshot).market!.offerSeq } : undefined,
+    protests: (o as Snapshot).protests ? (o as Snapshot).protests!.map((x) => ({ ...x })) : undefined,
+    trucks: (o as Snapshot).trucks ? (o as Snapshot).trucks!.map((x) => ({ ...x, factory: [...x.factory] as [number, number], route: x.route.map((r) => [...r] as [number, number]), segFast: [...x.segFast] })) : undefined,
+    cars: (o as Snapshot).cars ? (o as Snapshot).cars!.map((x) => ({ ...x, route: x.route.map((r) => [...r] as [number, number]), segFast: x.segFast ? [...x.segFast] : undefined })) : undefined,
+    boards: (o as Snapshot).boards ? (o as Snapshot).boards!.map((x) => ({ ...x })) : undefined,
+    crossPrompt: (o as Snapshot).crossPrompt ?? null,
+    winner: (o as Snapshot).winner ?? null,
   };
 }
 

@@ -432,7 +432,7 @@ async function makeGravelStrip(s) {
   for (let mask = 0; mask < 16; mask++) {
     const key = `${s.namePrefix ?? s.name}_${mask.toString(2).padStart(4, "0")}`;
     const [ox, oy] = dirtTileOrigin(mask);
-    const SW = DIRT_SOURCE_TILE[0], SH = DIRT_SOURCE_TILE[1];
+    void DIRT_SOURCE_TILE; // SW/SH unused but kept for tile geometry docs
     // Pull the 2x tile, drop to 1x (64x32). Downscaling must round-trip so the
     // packed dirt_XXXX cells sit on the same grid as every other tile.
     const px = Buffer.alloc(CELL_W * CELL_H * 4);

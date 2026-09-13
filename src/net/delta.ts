@@ -143,6 +143,14 @@ export interface PublishFields {
    * an extra event.
    */
   rivalSabotage: Snapshot["rivalSabotage"];
+  /** MP-AUDIT: market parity, protests, vehicle presentation, boards, crossPrompt, winner */
+  market?: Snapshot["market"];
+  protests?: Snapshot["protests"];
+  trucks?: Snapshot["trucks"];
+  cars?: Snapshot["cars"];
+  boards?: Snapshot["boards"];
+  crossPrompt?: Snapshot["crossPrompt"];
+  winner?: Snapshot["winner"];
   /**
    * MP-05: a one-shot line for the guest (a refused intent, usually). Carried
    * by the next delta rather than by a message of its own — the relay already
@@ -194,6 +202,13 @@ export function buildPublish(track: Track, dirty: DirtyTiles, f: PublishFields):
     setupPhase: f.setupPhase,
     won: f.won,
     rivalSabotage: f.rivalSabotage,
+    ...(f.market !== undefined ? { market: f.market } : {}),
+    ...(f.protests !== undefined ? { protests: f.protests } : {}),
+    ...(f.trucks !== undefined ? { trucks: f.trucks } : {}),
+    ...(f.cars !== undefined ? { cars: f.cars } : {}),
+    ...(f.boards !== undefined ? { boards: f.boards } : {}),
+    ...(f.crossPrompt !== undefined ? { crossPrompt: f.crossPrompt } : {}),
+    ...(f.winner !== undefined ? { winner: f.winner } : {}),
     ...(f.notice ? { notice: f.notice } : {}),
   };
   const bytes = deltaBytes(msg);

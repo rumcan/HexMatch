@@ -536,6 +536,18 @@ export function mirrorSnapshot(snap: Snapshot): Snapshot {
     })),
     // Slot order IS the seat order: [host, guest] → [mine, theirs].
     players: [...snap.players].reverse().map((p) => ({ ...p, res: { ...p.res } })),
+    // MP-AUDIT: parity wires — mirror where seat matters, pass through otherwise
+    market: snap.market
+      ? { offerSeq: snap.market.offerSeq, offers: snap.market.offers.map((o) => ({ ...o, from: o.from === 0 ? 1 : o.from === 1 ? 0 : o.from })) }
+      : undefined,
+    protests: snap.protests?.map((pr) => ({ ...pr, owner: mirrorOwnerName(pr.owner) })),
+    trucks: snap.trucks?.map((t) => ({ ...t, ownerId: mirrorOwnerId(t.ownerId) })),
+    cars: snap.cars?.map((c) => ({ ...c })),
+    boards: snap.boards?.map((b) => ({ ...b, owner: mirrorOwnerName(b.owner) })),
+    crossPrompt: snap.crossPrompt
+      ? { ...snap.crossPrompt, boardOwner: mirrorOwnerName(snap.crossPrompt.boardOwner) }
+      : snap.crossPrompt ?? null,
+    winner: snap.winner ? { ...snap.winner, id: snap.winner.id ? mirrorOwnerName(snap.winner.id) : null } : snap.winner ?? null,
   };
 }
 
@@ -555,6 +567,17 @@ export function mirrorDelta(msg: DeltaMsg): DeltaMsg {
       ownerId: mirrorOwnerId(f.ownerId),
     })),
     players: msg.players ? [...msg.players].reverse().map((p) => ({ ...p, res: { ...p.res } })) : undefined,
+    market: msg.market
+      ? { offerSeq: msg.market.offerSeq, offers: msg.market.offers.map((o) => ({ ...o, from: o.from === 0 ? 1 : o.from === 1 ? 0 : o.from })) }
+      : undefined,
+    protests: msg.protests?.map((pr) => ({ ...pr, owner: mirrorOwnerName(pr.owner) })),
+    trucks: msg.trucks?.map((t) => ({ ...t, ownerId: mirrorOwnerId(t.ownerId) })),
+    cars: msg.cars?.map((c) => ({ ...c })),
+    boards: msg.boards?.map((b) => ({ ...b, owner: mirrorOwnerName(b.owner) })),
+    crossPrompt: msg.crossPrompt
+      ? { ...msg.crossPrompt, boardOwner: mirrorOwnerName((msg.crossPrompt as any).boardOwner) }
+      : (msg.crossPrompt as any) ?? undefined,
+    winner: (msg as any).winner ? { ...(msg as any).winner, id: (msg as any).winner.id ? mirrorOwnerName((msg as any).winner.id) : null } : (msg as any).winner,
   };
 }
 

@@ -58,7 +58,7 @@ import { scatterScenery, type Scenery } from "./scenery";
 import { loadDecalImages, loadScenerySprites } from "./scenery-art";
 import { loadVehicleLayers } from "./vehicle-art";
 import {
-  generateMap, resolveMapSeed, townBuildings, type Grid, type Industry,
+  generateMap, resolveMapSeed, townBuildings, townForSeat, type Grid, type Industry,
 } from "./grid";
 import {
   createTrack, drawBits, previewDrag, commitDrag, canBuildOn, hasTrack,
@@ -105,6 +105,7 @@ import {
   DEPOT_COST, FREE_SETUP_DEPOTS, costCompact, costLabel, priceDepot, shortfallLabel,
 } from "./construction";
 import { bankTrade } from "../game/trade";
+import type { CrossKind } from "../game/board";
 import {
   MAP_W, MAP_H, BANDIT_MS, BLOCK_MS, FOG_MS, PROTEST_MS, SABOTAGE, SECURITY,
   choice, tileToScreen, type ResKey,
@@ -540,27 +541,60 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   });
   const meTrader = market.players[0];
 
-  // MP-05: the market is CLIENT state (`offers` live in this browser), so a
-  // guest's trade would escrow against a purse the host overwrites and match
-  // against an offer list nobody else can see. Refuse the mutators — the tab
-  // still renders, and the toast says why. A synced market is its own ticket.
-  if (isGuest()) {
-    const refused = (): boolean => {
-      toast("Trading is not relayed yet in multiplayer.", "info");
-      return false;
-    };
-    market.post = refused;
-    market.cancel = refused;
-    market.accept = refused;
-    market.bank = refused;
-  }
+  // MP-AUDIT: market parity — host is authoritative, guest relays via intents.
+  // Escrow, pursey and offer list are synced via snapshot/delta; guest mutators
+  // become intents so host can apply them against the guest's player record.
+  const __origPost = market.post.bind(market);
+  const __origCancel = market.cancel.bind(market);
+  const __origAccept = market.accept.bind(market);
+  const __origBank = market.bank.bind(market);
+  const mpMarketSend = (payload: Record<string, unknown>): boolean => {
+    if (!isMp()) return false;
+    if (isGuest()) {
+      net?.sendIntent("market", payload);
+      return true;
+    }
+    return false;
+  };
+  market.post = ((p: any, give: any, giveN: any, want: any, wantN: any) => {
+    if (mpMarketSend({ do: "post", give, giveN, want, wantN })) return true;
+    const ok = __origPost(p, give, giveN, want, wantN);
+    if (ok && isMp()) publishNet(performance.now(), true);
+    return ok;
+  }) as typeof market.post;
+  market.cancel = ((p: any, id: any) => {
+    if (mpMarketSend({ do: "cancel", id })) return true;
+    const ok = __origCancel(p, id);
+    if (ok && isMp()) publishNet(performance.now(), true);
+    return ok;
+  }) as typeof market.cancel;
+  market.accept = ((p: any, id: any) => {
+    if (mpMarketSend({ do: "accept", id })) return true;
+    const ok = __origAccept(p, id);
+    if (ok && isMp()) publishNet(performance.now(), true);
+    return ok;
+  }) as typeof market.accept;
+  market.bank = ((p: any, give: any, want: any) => {
+    if (mpMarketSend({ do: "bank", give, want })) return true;
+    const ok = __origBank(p, give, want);
+    if (ok && isMp()) publishNet(performance.now(), true);
+    return ok;
+  }) as typeof market.bank;
 
   // Original HUD (U1). It takes the live board + market + the player purse and
   // wires the BUILD / BLACK MARKET / QUARRY / chips chrome to them.
   ui = createOriginalUi(quarry.board, market, meTrader, {
     onTool: (t) => { tool = t as Tool; },
     onRecenter: () => {
-      const f = factoryOf("you") ?? focus;
+      // MP-AUDIT: recenter goes to local seat's factory or its reserved town (MP only); solo stays factory→focus
+      const fallback = (() => {
+        if (isMp()) {
+          const myTownRecenter = townForSeat(grid, isGuest() ? 1 : 0);
+          if (myTownRecenter) return { tx: myTownRecenter.tx, ty: myTownRecenter.ty };
+        }
+        return focus;
+      })();
+      const f = factoryOf("you") ?? fallback;
       cam = centerOnTile(cam, f.tx, f.ty);
       renderer?.setCamera(cam);
     },
@@ -686,7 +720,50 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // chooser answers it (or the backstops auto-pick). PP-14b: the board passes
   // the shape and how many units it owes so the chooser can title and cap
   // itself (6 for a holy cross, 3 for a broken one).
-  quarry.board.onCrossChoice = (kind, picks, pick) => ui.crossPick(kind, picks, pick);
+  // MP-AUDIT: cross-bonus choice relay — host holds the pending prompt, guest renders it.
+  let pendingCross: { boardOwner: string; kind: CrossKind; picks: number; resolve: (chosen: ResKey[]) => void } | null = null;
+  let crossPromptSeq = 0;
+  let crossPrompt: import("./snapshot").CrossPromptWire | null = null;
+  const __setCrossPrompt = (boardOwner: string, kind: CrossKind, picks: number, resolve: (chosen: ResKey[]) => void) => {
+    // In solo, just show locally; in host, track prompt for guest sync
+    if (isSolo()) {
+      ui.crossPick(kind, picks, resolve);
+      return;
+    }
+    if (isGuest()) {
+      // guest board should never ask — host is authoritative, but fallback
+      ui.crossPick(kind, picks, resolve);
+      return;
+    }
+    // host: if boardOwner is guest seat, publish prompt instead of showing locally
+    const guestId = players[1].id; // host's guest seat
+    if (boardOwner === guestId) {
+      pendingCross = { boardOwner, kind, picks, resolve };
+      crossPromptSeq++;
+      crossPrompt = { boardOwner, kind, picks, seq: crossPromptSeq };
+      publishNet(performance.now(), true);
+      // Safety: auto-resolve after 30s if guest never answers (engagement)
+      setTimeout(() => {
+        if (pendingCross && pendingCross.boardOwner === boardOwner && crossPrompt && crossPrompt.seq === crossPromptSeq) {
+          const fallback = pendingCross.resolve;
+          pendingCross = null; crossPrompt = null;
+          fallback([]);
+        }
+      }, 30000);
+    } else {
+      // host's own board — show locally
+      ui.crossPick(kind, picks, resolve);
+    }
+  };
+  quarry.board.onCrossChoice = (kind, picks, pick) => __setCrossPrompt("you", kind as CrossKind, picks, pick);
+  // MP-AUDIT: guest renders cross prompt that host published
+  const __showGuestCross = (prompt: import("./snapshot").CrossPromptWire) => {
+    const kind = prompt.kind as CrossKind;
+    const picks = prompt.picks;
+    ui.crossPick(kind, picks, (chosen) => {
+      net?.sendIntent("cross", { seq: prompt.seq, choices: chosen });
+    });
+  };
 
   // A1: world-anchored floats — the lorry's "+N" at the Factory, and the
   // marker over the rival's plant when sabotage lands. Anchored to the live
@@ -722,6 +799,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // flat-purse telemetry that finally smoked this out: reach present,
     // tokens never, income never. One board now — no shadows.
   }, rivalBoard);
+  rivalQuarry.board.onCrossChoice = (kind, picks, pick) => __setCrossPrompt("ai", kind as CrossKind, picks, pick);
 
   // U1: the iso layer stack stays the map; it is mounted inside the original
   // map-canvas slot rather than a bespoke floating panel.
@@ -745,8 +823,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     sceneryBlocked: new Set<number>(),
   };
 
-  // Start the camera somewhere with industries in view.
-  const focus = grid.industries[0] ?? { tx: MAP_W / 2, ty: MAP_H / 2 };
+  // MP-AUDIT: distinct starting-town reservations — camera opens near the local seat's town.
+  // Deterministic pure function of the seed, so host and guest agree without wire traffic.
+  // Solo keeps the original industry focus (D2 regression) — MP seats use reserved towns.
+  const focus = (() => {
+    if (isMp()) {
+      const seatForCamera: 0 | 1 = isGuest() ? 1 : 0;
+      const myTown = townForSeat(grid, seatForCamera);
+      if (myTown) return { tx: myTown.tx, ty: myTown.ty };
+    }
+    return grid.industries[0] ?? { tx: MAP_W / 2, ty: MAP_H / 2 };
+  })();
   let cam: Camera = centerOnTile(
     createCamera(stage.clientWidth || 800, stage.clientHeight || 600),
     focus.tx, focus.ty,
@@ -1099,6 +1186,46 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         : `Can't build there — ${plan.why ?? "not buildable"}.`, "bad");
       return false;
     }
+    // MP-AUDIT: opening placement uses the local seat's reservation — distant towns with legal factory and nearby depot
+    if (isMp() && phase === "setup-factory") {
+      const seat: 0 | 1 = p.i === 0 ? 0 : 1;
+      const reserved = townForSeat(grid, seat);
+      if (reserved) {
+        const touchesReserved = plan.towns.some((t) => t.id === reserved.id);
+        if (!touchesReserved) {
+          toast(`Place your Factory next to your starting town (Town ${reserved.id + 1}).`, "bad");
+          return false;
+        }
+      }
+      // Also enforce distinct reservations: cannot steal the other seat's town
+      const otherSeat: 0 | 1 = seat === 0 ? 1 : 0;
+      const otherTown = townForSeat(grid, otherSeat);
+      if (otherTown && eco.factories.some((f) => f.townId === otherTown.id && f.ownerId !== p.i + 1)) {
+        // The other seat already holds its town; placing adjacent to that same town would duplicate
+        // The touchesReserved check above already ensures we are near our own town, but keep as safety
+      }
+      const otherReserved = otherTown;
+      if (otherReserved && plan.towns.some((t) => t.id === otherReserved.id) && reserved && otherReserved.id !== reserved.id) {
+        // If this placement touches BOTH towns (rare, towns close), prefer own town but don't reject
+        // Only reject if it touches ONLY the other seat's town
+        const touchesOwn = plan.towns.some((t) => reserved && t.id === reserved.id);
+        if (!touchesOwn) {
+          toast(`That town is reserved for the other player — use your own starting town.`, "bad");
+          return false;
+        }
+      }
+      // Factory footprints must not overlap live buildings (opening factories also check live buildings)
+      for (const [fx, fy] of plan.footprint.map((f) => [f.tx, f.ty] as [number, number])) {
+        if (eco.factories.some((f) => fx >= f.tx && fx < f.tx + FACTORY_FOOTPRINT[0] && fy >= f.ty && fy < f.ty + FACTORY_FOOTPRINT[1])) {
+          toast("Can't build there — another Factory stands there.", "bad");
+          return false;
+        }
+        if (eco.harvesters.some((h) => h.tx === fx && h.ty === fy)) {
+          toast("Can't build there — a Depot stands there.", "bad");
+          return false;
+        }
+      }
+    }
     if (eco.factories.some((f) => f.ownerId === p.i + 1)) {
       toast(`${p.human ? "You already have" : "That seat already has"} a starting Factory.`, "bad");
       return false;
@@ -1176,6 +1303,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (!canBuildOn(grid, "dirt", tx, ty)) { toast("Can't build there.", "bad"); return false; }
     if (eco.harvesters.some((h) => h.tx === tx && h.ty === ty)) {
       toast("A depot is already there.", "bad"); return false;
+    }
+    // MP-AUDIT: factory footprints block depot previews and commits (consistent with preview)
+    if (eco.factories.some((f) => tx >= f.tx && tx < f.tx + FACTORY_FOOTPRINT[0] && ty >= f.ty && ty < f.ty + FACTORY_FOOTPRINT[1])) {
+      toast("Can't build there — a Factory stands there.", "bad"); return false;
     }
     const h: Harvester = { id: allocHarvesterId(), owner: p.id, ownerId: p.i + 1, tx, ty };
     const served = industriesInCatchment(grid, h);
@@ -1390,6 +1521,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   /** Stage the armed protest at (tx,ty), charging the Gold. False = still armed. */
   function placeProtest(tx: number, ty: number): boolean {
+    // MP-AUDIT: guest relays protest placement
+    if (isGuest()) {
+      net?.sendIntent("blackMarket", { key: "protest_place", tx, ty });
+      pendingProtest = false;
+      toast("Requesting protest placement…", "info");
+      return true;
+    }
     const now = performance.now();
     if (!isPublicRoad(track, tx, ty)) {
       toast("Protests go on public roads — the highways and town streets.", "bad");
@@ -1454,11 +1592,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       toast("The final ledger is closed. Start a rematch to settle another score.", "info");
       return;
     }
-    // MP-05: sabotage/recon are local-only in a hosted game. Seat 1's Black
-    // Market needs an intent + a synced result channel, which §4 does not have
-    // yet — refused WITH a reason rather than silently desyncing the purse.
+    // MP-AUDIT: Black Market is now relayed — guest sends intent, host applies.
     if (isGuest()) {
-      toast("Black Market actions are not relayed yet in multiplayer.", "info");
+      net?.sendIntent("blackMarket", { key });
+      toast(`Requesting ${key}…`, "info");
       return;
     }
     const now = performance.now();
@@ -2219,6 +2356,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   /** HOST: the full state (§4 `SnapshotMsg`), built from the live world. */
   function netFullState(): Snapshot | null {
+    // MP-AUDIT: full parity snapshot includes market, protests, vehicles, boards, crossPrompt, winner
+    const boardsWire = [
+      { owner: players[0].id, data: quarry.board.save() },
+      { owner: players[1].id, data: rivalQuarry.board.save() },
+    ];
+    const protestsWire = [...protests.values()].map((p) => ({ x: p.tx, y: p.ty, until: p.until, owner: p.owner }));
+    const trucksWire = trucks.trucks.map((t) => ({ ownerId: t.ownerId, depotId: t.depotId, factory: [...t.factory] as [number, number], route: t.route.map((r) => [...r] as [number, number]), segFast: t.segFast ? [...t.segFast] : [], leg: t.leg, t: t.t, reverse: t.reverse, deliveries: t.deliveries }));
+    const carsWire = cars.cars.map((c) => ({ name: c.name, route: c.route.map((r) => [...r] as [number, number]), leg: c.leg, t: c.t, reverse: c.reverse }));
     return buildSnapshot({
       seed, track,
       harvesters: eco.harvesters,
@@ -2228,6 +2373,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       players: wirePlayers(),
       t: performance.now(),
       rivalSabotage: rivalSabotageNow(),
+      market: { offers: market.ctx.offers.map((o) => ({ id: o.id, from: o.from, give: o.give, giveN: o.giveN, want: o.want, wantN: o.wantN, born: o.born })), offerSeq: market.ctx.offerSeq },
+      protests: protestsWire,
+      trucks: trucksWire,
+      cars: carsWire,
+      boards: boardsWire,
+      crossPrompt,
+      winner: winner ? { id: winner.id, source: winningSource } : null,
     });
   }
 
@@ -2241,6 +2393,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (!net || !net.isHost) return;
     if (!force && now - lastPublishAt < PUBLISH_MS) return;
     lastPublishAt = now;
+    const boardsWire = [
+      { owner: players[0].id, data: quarry.board.save() },
+      { owner: players[1].id, data: rivalQuarry.board.save() },
+    ];
+    const protestsWire = [...protests.values()].map((p) => ({ x: p.tx, y: p.ty, until: p.until, owner: p.owner }));
+    const trucksWire = trucks.trucks.map((t) => ({ ownerId: t.ownerId, depotId: t.depotId, factory: [...t.factory] as [number, number], route: t.route.map((r) => [...r] as [number, number]), segFast: t.segFast ? [...t.segFast] : [], leg: t.leg, t: t.t, reverse: t.reverse, deliveries: t.deliveries }));
+    const carsWire = cars.cars.map((c) => ({ name: c.name, route: c.route.map((r) => [...r] as [number, number]), leg: c.leg, t: c.t, reverse: c.reverse }));
     net.publishTrack(track, dirtyTiles, {
       t: now,
       harvesters: eco.harvesters.map((h) => ({ ...h })),
@@ -2249,7 +2408,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       setupPhase: inSetup(),
       won: phase === "won",
       rivalSabotage: rivalSabotageNow(),
-    });
+      market: { offers: market.ctx.offers.map((o) => ({ id: o.id, from: o.from, give: o.give, giveN: o.giveN, want: o.want, wantN: o.wantN, born: o.born })), offerSeq: market.ctx.offerSeq },
+      protests: protestsWire,
+      trucks: trucksWire,
+      cars: carsWire,
+      boards: boardsWire,
+      crossPrompt,
+      winner: winner ? { id: winner.id, source: winningSource } : null,
+    } as any);
   }
 
   /** One opening line per guest boot; the phase itself is re-derived on every
@@ -2310,7 +2476,67 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       players[i].purse = toBag(wire.res);
     }
     if (applied.rivalSabotage) applyRivalSabotage(applied.rivalSabotage);
-    winner = null;
+    // MP-AUDIT: market parity
+    if (applied.market) {
+      market.ctx.offers.length = 0;
+      (market.ctx.offers as any).push(...applied.market.offers.map((o) => ({ ...o })) as any);
+      (market.ctx as any).offerSeq = applied.market.offerSeq;
+    }
+    // protests
+    if (applied.protests) {
+      protests.clear();
+      for (const pw of applied.protests) {
+        protests.set(tIdx(pw.x, pw.y), { tx: pw.x, ty: pw.y, until: pw.until, owner: pw.owner });
+      }
+    }
+    // vehicles
+    if (applied.trucks) {
+      (trucks as any).trucks = applied.trucks.map((t) => ({ ...t, factory: [...t.factory] as [number, number], route: t.route.map((r) => [...r] as [number, number]), segFast: t.segFast ? [...t.segFast] : [] }));
+    }
+    if (applied.cars) {
+      (cars as any).cars = applied.cars.map((c) => ({ ...c, route: c.route.map((r) => [...r] as [number, number]) }));
+      // Ensure guest renders vehicles
+      world.vehicles = (carItems(cars as any) as any).concat(truckItems(trucks as any, atlasRef ?? undefined));
+    }
+    // boards — seat-swapped for guest perspective
+    if (applied.boards) {
+      const byOwner = new Map(applied.boards.map((b) => [b.owner, b.data]));
+      // Host board owners are "you" (host) and "ai" (guest). Guest's local "you" corresponds to host's "ai".
+      const myData = byOwner.get(players[1].id) ?? byOwner.get("ai") ?? byOwner.get("you");
+      const rivalData = byOwner.get(players[0].id) ?? byOwner.get("you");
+      // guest's quarry is its own seat; restore from host's guest board if present, else fallback
+      if (myData) {
+        try { quarry.board.restore(myData); } catch {}
+        onBoardChange();
+      }
+      if (rivalData) {
+        try { rivalQuarry.board.restore(rivalData); } catch {}
+      }
+    }
+    // cross prompt
+    if (applied.crossPrompt) {
+      // Host used "ai" for guest seat; translate
+      const ownerIsGuest = applied.crossPrompt.boardOwner === "ai" || applied.crossPrompt.boardOwner === players[1].id;
+      if (isGuest() && ownerIsGuest) {
+        __showGuestCross(applied.crossPrompt as any);
+      } else if (!isGuest() && !ownerIsGuest) {
+        // Should not happen: host already handled its own prompt
+      }
+      crossPrompt = applied.crossPrompt as any;
+    } else {
+      crossPrompt = null;
+    }
+    // winner
+    if (applied.winner && applied.winner.id) {
+      const w = players.find((p) => p.id === applied.winner!.id);
+      if (w) { winner = w; winningSource = applied.winner.source as any; phase = "won"; presentEnding(winningSource); }
+    } else if (applied.won && !winner) {
+      // Fallback: derive winner from VP if wire says won but no id
+      for (const p of players) if (hasWon(score, p.id, winTarget())) { winner = p; phase = "won"; presentEnding(null); break; }
+    } else {
+      // If host says not won, clear winner if we had one spuriously
+      if (!applied.won) { winner = null; }
+    }
     refreshGuestPhase();
     syncWorld();
     rescoreNow();
@@ -2318,17 +2544,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   /** GUEST: apply one steady-state delta — the hot path (§5). */
   function applyNetDelta(msg: DeltaMsg) {
-    let world = false;
-    if (msg.tiles) { applyTrackDelta(track, msg.tiles); world = true; }
+    let worldDirty = false;
+    if (msg.tiles) { applyTrackDelta(track, msg.tiles); worldDirty = true; }
     if (msg.harvesters) {
       eco.harvesters.length = 0;
       eco.harvesters.push(...msg.harvesters.map((h) => ({ ...h })));
-      world = true;
+      worldDirty = true;
     }
     if (msg.factories) {
       eco.factories.length = 0;
       eco.factories.push(...msg.factories.map((f) => ({ ...f })));
-      world = true;
+      worldDirty = true;
     }
     if (msg.players) {
       for (let i = 0; i < players.length; i++) {
@@ -2344,11 +2570,57 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       }
     }
     // PP-14b: the host's sabotage on this seat's plant, applied as an overlay.
-    if (msg.rivalSabotage) applyRivalSabotage(msg.rivalSabotage);
+    if ((msg as any).rivalSabotage) applyRivalSabotage((msg as any).rivalSabotage);
+    // MP-AUDIT: market
+    if ((msg as any).market) {
+      const m = (msg as any).market;
+      market.ctx.offers.length = 0;
+      market.ctx.offers.push(...m.offers.map((o: any) => ({ ...o })));
+      (market.ctx as any).offerSeq = m.offerSeq;
+    }
+    if ((msg as any).protests) {
+      protests.clear();
+      for (const pw of (msg as any).protests) {
+        protests.set(tIdx(pw.x, pw.y), { tx: pw.x, ty: pw.y, until: pw.until, owner: pw.owner });
+      }
+      worldDirty = true;
+    }
+    if ((msg as any).trucks) {
+      (trucks as any).trucks = (msg as any).trucks.map((t: any) => ({ ...t, factory: [...t.factory] as [number, number], route: t.route.map((r: any) => [...r] as [number, number]), segFast: t.segFast ? [...t.segFast] : [] }));
+      worldDirty = true;
+    }
+    if ((msg as any).cars) {
+      (cars as any).cars = (msg as any).cars.map((c: any) => ({ ...c, route: c.route.map((r: any) => [...r] as [number, number]) }));
+      world.vehicles = (carItems(cars as any) as any).concat(truckItems(trucks as any, atlasRef ?? undefined));
+    }
+    if ((msg as any).boards) {
+      const byOwner = new Map((msg as any).boards.map((b: any) => [b.owner, b.data]));
+      const myData = byOwner.get(players[1].id) ?? byOwner.get("ai") ?? byOwner.get("you");
+      const rivalData = byOwner.get(players[0].id) ?? byOwner.get("you");
+      if (myData) { try { quarry.board.restore(myData); } catch {} onBoardChange(); }
+      if (rivalData) { try { rivalQuarry.board.restore(rivalData); } catch {} }
+    }
+    if ((msg as any).crossPrompt !== undefined) {
+      const cp = (msg as any).crossPrompt;
+      crossPrompt = cp ?? null;
+      if (cp) {
+        const ownerIsGuest = cp.boardOwner === "ai" || cp.boardOwner === players[1].id;
+        if (isGuest() && ownerIsGuest) __showGuestCross(cp);
+      }
+    }
+    if ((msg as any).winner !== undefined) {
+      const w = (msg as any).winner;
+      if (w && w.id) {
+        const found = players.find((p) => p.id === w.id);
+        if (found) { winner = found; winningSource = w.source as any; phase = "won"; presentEnding(winningSource); }
+      } else if (!w || !w.id) {
+        // host cleared winner (should not happen)
+      }
+    }
     // A refused intent says why, in the host's own words (the echo).
     if (msg.notice) toast(msg.notice, "info");
     refreshGuestPhase();
-    if (world) syncWorld();
+    if (worldDirty) syncWorld();
     rescoreNow();
   }
 
@@ -2386,6 +2658,107 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         if (r1 !== null && c1 !== null && r2 !== null && c2 !== null) {
           void rivalQuarry.board.trySwap(r1, c1, r2, c2, performance.now());
         }
+      } else if (what === "cross") {
+        // guest answered cross prompt
+        const seq = typeof payload.seq === "number" ? payload.seq : -1;
+        const choices = Array.isArray(payload.choices) ? (payload.choices as ResKey[]) : [];
+        if (pendingCross && crossPrompt && seq === crossPrompt.seq) {
+          const resolve = pendingCross.resolve;
+          pendingCross = null; crossPrompt = null;
+          resolve(choices);
+        } else {
+          toast("Cross choice expired.", "info");
+        }
+      } else if (payload.do === "post" || payload.do === "cancel" || payload.do === "accept" || payload.do === "bank") {
+        // market intents (guest's p is index 1)
+        const trader = market.players[p.i];
+        const mwhat = payload.do as string;
+        if (mwhat === "post") {
+          const give = String(payload.give) as any, want = String(payload.want) as any;
+          const giveN = Number(payload.giveN) || 0, wantN = Number(payload.wantN) || 0;
+          if (!(market.post as any)(trader, give, giveN, want, wantN)) toast("Market post rejected.", "bad");
+        } else if (mwhat === "cancel") {
+          const id = Number(payload.id);
+          if (!(market.cancel as any)(trader, id)) toast("Market cancel rejected.", "bad");
+        } else if (mwhat === "accept") {
+          const id = Number(payload.id);
+          if (!(market.accept as any)(trader, id)) toast("Market accept rejected.", "bad");
+        } else if (mwhat === "bank") {
+          const give = String(payload.give) as any, want = String(payload.want) as any;
+          if (!(market.bank as any)(trader, give, want)) toast("Bank trade rejected.", "bad");
+        }
+      } else if (typeof payload.key === "string" || typeof (payload as any).do === "string" && ((payload as any).do === "protest_place" || (payload as any).key)) {
+        // blackMarket intents — payload.key or protest_place
+        const key = (payload as any).key as string;
+        const tx = int(payload.tx), ty = int(payload.ty);
+        if (key === "protest_place" && tx !== null && ty !== null) {
+          // Guest wants to place protest at tx,ty with its own purse
+          const price = SABOTAGE.protest.gold;
+          if ((p.purse.gold ?? 0) < price) {
+            toast("Needs Gold for protest.", "bad");
+          } else if (!isPublicRoad(track, tx, ty)) {
+            toast("Protests go on public roads.", "bad");
+          } else if (protests.has(tIdx(tx, ty))) {
+            toast("Protest already there.", "bad");
+          } else {
+            spend(p, { gold: price });
+            protests.set(tIdx(tx, ty), { tx, ty, until: performance.now() + PROTEST_MS, owner: p.id });
+            floats.add("✊ PROTEST", tx, ty, { cls: "sabotage", now: performance.now() });
+            toast("Guest protest placed.", "good");
+          }
+        } else if (typeof key === "string") {
+          // generic black market action for guest seat
+          const buyFor = (key: string): boolean => {
+            const now = performance.now();
+            const spendGoldFor = (n: number): boolean => {
+              if ((p.purse.gold ?? 0) < n) { toast(`Needs ${n} Gold.`, "bad"); return false; }
+              spend(p, { gold: n }); return true;
+            };
+            if (key === "bandit") {
+              if (!spendGoldFor(SABOTAGE.bandit.gold)) return false;
+              const target = pickBlockadeTarget(eco, players[0].id, now);
+              if (!target) { earn(p, { gold: SABOTAGE.bandit.gold }); toast("No industry to blockade.", "bad"); return false; }
+              target.banditUntil = now + BANDIT_MS;
+              return true;
+            }
+            if (key === "protest") {
+              if ((p.purse.gold ?? 0) < SABOTAGE.protest.gold) { toast(`Needs ${SABOTAGE.protest.gold} Gold.`, "bad"); return false; }
+              // arm guest protest via notice? For now just toast that protest is armed for guest
+              net?.setNotice("Protest armed — guest click public road to place.");
+              return true;
+            }
+            const rivalHitFor = (text: string) => {
+              const f = factoryOf(players[0].id);
+              if (f) floats.add(text, f.tx, f.ty, { cls: "sabotage", now });
+            };
+            if (key === "harden") {
+              if (!spendGoldFor(SABOTAGE.harden.gold)) return false;
+              const n = rivalPlant.frost(now); rivalHitFor(`❄ ${n} FROZEN`); return true;
+            }
+            if (key === "block") {
+              if (!spendGoldFor(SABOTAGE.block.gold)) return false;
+              const n = rivalPlant.girders(now); rivalHitFor(`🏗 ${n} GIRDERS`); return true;
+            }
+            if (key === "fog") {
+              if (!spendGoldFor(SABOTAGE.fog.gold)) return false;
+              rivalPlant.smog(now); rivalHitFor("🌫 SMOG"); return true;
+            }
+            if (key === "security") {
+              const affordable = (Object.entries(SECURITY_ISO_COST) as [Cargo, number][]).every(([k, v]) => (p.purse[k] ?? 0) >= v);
+              if (!affordable) { toast("Not enough materials for Security Forces.", "bad"); return false; }
+              spend(p, SECURITY_ISO_COST); (securityUntil as any) = now + SECURITY.ms; return true;
+            }
+            if (key === "repair") {
+              const affordable = (Object.entries(REPAIR_ISO_COST) as [Cargo, number][]).every(([k, v]) => (p.purse[k] ?? 0) >= v);
+              if (!affordable) { toast("Not enough materials for Repair Crew.", "bad"); return false; }
+              spend(p, REPAIR_ISO_COST); rivalQuarry.board.smashBlocks(); return true;
+            }
+            return false;
+          };
+          const ok = buyFor(key);
+          if (ok) toast(`Guest used ${key}.`, "info");
+          else toast(`Guest ${key} failed.`, "bad");
+        }
       } else {
         const tx = int(payload.tx), ty = int(payload.ty);
         if (tx !== null && ty !== null) {
@@ -2393,8 +2766,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           else if (what === "depot") placeHarvester(tx, ty, p);
           else if (what === "plant") placePlant(tx, ty, p);
           else if (what === "demolish") doDemolish(tx, ty, p);
-          // `swap` / `trade` / `skill` are not relayed yet — see the block comment.
-          else toast("That action is not available in multiplayer yet.", "info");
+          else if (what === "protest_place") {
+            // legacy
+            const price = SABOTAGE.protest.gold;
+            if ((p.purse.gold ?? 0) >= price && isPublicRoad(track, tx, ty) && !protests.has(tIdx(tx, ty))) {
+              spend(p, { gold: price });
+              protests.set(tIdx(tx, ty), { tx, ty, until: performance.now() + PROTEST_MS, owner: p.id });
+            }
+          } else toast("That action is not available in multiplayer yet.", "info");
+        } else if (what) {
+          // market intents that arrived as build type fallback
+          toast("That action is not available in multiplayer yet.", "info");
         }
       }
     } finally {
@@ -2477,7 +2859,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * about ground and geography (the lock needs the track layer, which it must
    * not reach for).
    */
-  const depotLocks = () => ({ locked: lockedIndustryIds(eco) });
+  const depotLocks = () => ({ locked: lockedIndustryIds(eco), factories: eco.factories.map((f) => ({ tx: f.tx, ty: f.ty })) });
 
   const factoryPlanForTool = (tx: number, ty: number): PlacementPlan => {
     const plan = planFactoryPlacement(grid, tx, ty, { requireTown: true, track });
@@ -3419,9 +3801,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     peek.title = "Watch the rival's plant — its board plays itself";
     peek.addEventListener("click", () => toggleRivalPlantView());
 
-    // MP-05: the peek panel reads the LOCAL plant record, which on a guest is
-    // not the seat's board (that lives on the host), so it is host-only.
-    if (!isGuest()) topRight.appendChild(peek);
+    // MP-AUDIT: peek panel shows opponent plant — host shows rivalPlant, guest shows rivalQuarry (host's plant) via synced board
+    topRight.appendChild(peek);
 
     // MP-05: ↻ restarts a SOLO match. In a room the match belongs to the
     // session — reloading would strand the other seat — so the button is gone.
@@ -3706,11 +4087,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // MP-05: the host's heartbeat — one small delta per `PUBLISH_MS`, full
       // state only when `buildPublish` says the delta would not fit (§5).
       publishNet(t);
-      // MP-05 (§9): a guest runs NO vehicle movement. Lorry positions are not
-      // on the wire yet, so the guest's roads stay empty rather than carrying a
-      // locally-simulated fleet that disagrees with the host's — the map, the
-      // purses and the payouts it renders are the host's, and the guest must not
-      // spend a router on a convoy it does not own.
+      // MP-AUDIT: vehicle presentation parity — host simulates, guest renders host vehicles.
       if (!isGuest()) {
         if (trucksDirty) {
           trucks.trucks = planTrucksTrucksMerge(trucks.trucks, planTrucks(eco));
@@ -3732,6 +4109,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         tickTrucks(trucks, dt, protests.size > 0 ? new Set(protests.keys()) : undefined);
         // TRAFFIC-01: the ambient cars roll on the same frame, host/solo only.
         tickCars(cars, dt);
+      } else {
+        // Guest: vehicles are host-authoritative — already synced via snapshot/delta,
+        // just ensure world.vehicles reflects the synced state (applied in delta handler)
+        // No ticking, no replan.
       }
       collectDeliveries(t);
 
