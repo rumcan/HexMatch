@@ -83,10 +83,21 @@ export default function App() {
     begin({ mode: "story", chapter: pin, portrait: "vex" });
   }, []); // boot-only: a playtest link is read once, like every other boot flag
 
+  // SETTINGS-01/GFX-01: the in-game ☰ menu's "Quit to main menu" walks out
+  // through here — unmount the match exactly as a navigation would (the save
+  // is left alone; Play resumes what the pagehide autosave keeps), and stand
+  // the front door back up. Rooms use the same door, and `startIsoGame` turns
+  // it into "Leave room" wording with a confirm of its own.
+  const quitToMenu = () => {
+    setChoice(null);
+    setBackToCampaign(false);
+    setAtMenu(true);
+  };
+
   useEffect(() => {
     if (!choice || !ref.current) return;
     const cleanup = choice.mode === "ai"
-      ? startIsoGame(ref.current, { role: "solo", portrait: choice.portrait })
+      ? startIsoGame(ref.current, { role: "solo", portrait: choice.portrait, onQuitToMenu: quitToMenu })
       : choice.mode === "story"
         // STORY-01: the contract rides in on the options — rival, voice, ★
         // line, seed and the three scenes — and the ledger's third door
@@ -95,6 +106,7 @@ export default function App() {
           role: "solo",
           portrait: choice.portrait,
           story: choice.chapter,
+          onQuitToMenu: quitToMenu,
           onStoryExit: () => {
             setChoice(null);
             setBackToCampaign(true);
@@ -105,7 +117,7 @@ export default function App() {
         // branch exists only so the union stays exhaustive.
         : choice.mode === "story-intro"
           ? undefined
-          : startIsoGame(ref.current, { seed: choice.seed, role: choice.mode, net: choice.net, portrait: choice.portrait });
+          : startIsoGame(ref.current, { seed: choice.seed, role: choice.mode, net: choice.net, portrait: choice.portrait, onQuitToMenu: quitToMenu });
     return () => { cleanup?.(); };
   }, [choice]);
 

@@ -11,14 +11,17 @@ import { useEffect, useRef, useState } from "react";
 //
 // · PLAY leaves for the mode screen (StartScreen), which wears the same
 //   animated plate, so the two read as one place and not two apps.
-// · SETTINGS is deliberately UNWIRED: another crew is furnishing that room
-//   (SETTINGS-01). The button says so in one manila line instead of dying
-//   silently — replace `onSettingsNote` with the real sheet when it lands.
+// · SETTINGS is furnished (SETTINGS-01 landed): it raises the same settings
+//   sheet the in-game ☰ menu raises — `iso/settings-sheet.ts`, one projector,
+//   two doors, so the front menu and a live match can never disagree about
+//   which controls exist. Texture detail, miniature view, sound; everything
+//   writes through its store and is remembered.
 // · HOW TO PLAY raises the TUT-01 tour itself (`force: true` — a player who
 //   asked "never show this again" at boot still gets to read the rules when
 //   they ask for them by name), over a host inside the menu.
 // ══════════════════════════════════════════════════════════════════════════
 import { showTutorial, type TutorialHandle } from "../iso/tutorial";
+import { showSettingsSheet, type SettingsSheetHandle } from "../iso/settings-sheet";
 import { FREE_SETUP_TRACK } from "../iso/game";
 import { RIVAL_SKILLS, resolveSkillKey } from "../iso/skill";
 import { loadStoryProgress } from "../story/progress";
@@ -38,10 +41,12 @@ const EMBERS = Array.from({ length: 14 }, (_, i) => ({
 }));
 
 export default function MainMenu({ onPlay }: MainMenuProps) {
-  const [settingsNote, setSettingsNote] = useState(false);
+  const [settings, setSettings] = useState(false);
   const [howTo, setHowTo] = useState(false);
   const howToRef = useRef<HTMLDivElement>(null);
   const tourRef = useRef<TutorialHandle | null>(null);
+  const settingsRef = useRef<HTMLDivElement>(null);
+  const sheetRef = useRef<SettingsSheetHandle | null>(null);
 
   // The tour is a DOM projector beside this component, exactly as it is
   // beside game.ts: React owns the host div and the "is it standing" state,
@@ -58,6 +63,17 @@ export default function MainMenu({ onPlay }: MainMenuProps) {
     void handle.promise.then(() => { tourRef.current = null; setHowTo(false); });
     return () => { handle.destroy(); tourRef.current = null; };
   }, [howTo]);
+
+  // Settings is the same DOM projector mounted the same way: React owns the
+  // host and the open flag, the sheet owns its listeners and resolves its
+  // promise on close (Done, backdrop, Escape — all inside the projector).
+  useEffect(() => {
+    if (!settings || !settingsRef.current) return;
+    const handle = showSettingsSheet(settingsRef.current);
+    sheetRef.current = handle;
+    void handle.promise.then(() => { sheetRef.current = null; setSettings(false); });
+    return () => { handle.destroy(); sheetRef.current = null; };
+  }, [settings]);
 
   const progress = loadStoryProgress();
   const filed = CHAPTERS.filter((c) => progress.results[c.id] === "win").length;
@@ -84,18 +100,13 @@ export default function MainMenu({ onPlay }: MainMenuProps) {
           <button type="button" className="menu-btn primary" data-sfx="open" onClick={onPlay}>
             Play<span className="mb-tag">campaign · sandbox · rooms</span>
           </button>
-          <button type="button" className="menu-btn" data-sfx="click" onClick={() => setSettingsNote(true)}>
-            Settings<span className="mb-tag">the room is being furnished</span>
+          <button type="button" className="menu-btn" data-sfx="click" onClick={() => setSettings(true)}>
+            Settings<span className="mb-tag">graphics · miniature · sound</span>
           </button>
           <button type="button" className="menu-btn" data-sfx="open" onClick={() => setHowTo(true)}>
             How to Play<span className="mb-tag">eight cards, one loop</span>
           </button>
         </nav>
-        {settingsNote ? (
-          <p className="menu-note" role="status">
-            Settings arrive with the next contract — another crew is furnishing that room.
-          </p>
-        ) : null}
         <p className="menu-campaign">
           {filed > 0
             ? `Campaign: ${filed} of ${CHAPTERS.length} contracts filed · ${progress.unlocked} open`
@@ -108,6 +119,7 @@ export default function MainMenu({ onPlay }: MainMenuProps) {
         Graphics derived from OpenGFX (© the OpenGFX team, GPLv2) · type: Cinzel, Barlow, Special Elite (SIL OFL)
       </p>
       {howTo ? <div className="menu-howto" ref={howToRef} /> : null}
+      {settings ? <div className="menu-howto" ref={settingsRef} /> : null}
     </main>
   );
 }

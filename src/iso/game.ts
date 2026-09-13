@@ -146,6 +146,7 @@ import { createLoadingScreen } from "./loading-screen";
 // TUT-01: the starting tour — one stepped card that walks the whole loop
 // (plant → depot → road → board → expand → points) before the first click.
 import { showTutorial, type TutorialHandle } from "./tutorial";
+import { showSettingsSheet, type SettingsSheetHandle } from "./settings-sheet";
 import {
   buildEnding, showEndingScreen, type DecisiveSource, type EndingScreenHandle,
 } from "./ending";
@@ -310,6 +311,15 @@ export interface IsoGameOptions {
   story?: string;
   /** STORY-01: the ending's "Continue the campaign" returns through here. */
   onStoryExit?: () => void;
+  /**
+   * SETTINGS-01/GFX-01: the in-game ☰ menu's "Quit to main menu" row returns
+   * through here — an App-level unmount (the same door `onStoryExit` walks
+   * out of), with the save left exactly where a refresh would have found it.
+   * Absent means the row is not offered: a surface that boots a match with no
+   * menu to go back to (`main.tsx`'s legacy boot, the test harnesses) gets a
+   * menu with no broken door.
+   */
+  onQuitToMenu?: () => void;
 }
 
 export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
@@ -1017,7 +1027,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           restartArmed = true;
           clearSave();
           // Keep the selected difficulty: this is a rematch, not first-run
-          // onboarding. The top-bar Restart button remains the full reset.
+          // onboarding. The ☰ menu's New Game remains the full reset.
           location.reload();
         },
         // STORY-01: the ledger's third door — back to the campaign menu with
@@ -3605,35 +3615,122 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     window.addEventListener("pagehide", onPageHide);
   }
 
-  // ── AI-03: the top-bar buttons — peek at the rival's plant, restart game ──
+  // ══ AI-03 (as revised by SETTINGS-01 / GFX-01): the top-bar right stack ══
+  // 🏭 watch the rival's plant — host-only, because the peek panel reads the
+  //   LOCAL plant record, and on a guest that is not the seat's board;
+  // ☰ the menu — which replaces AI-03's solo-only ↻. One door for the whole
+  //   back room: Settings (the sheet the main menu also opens), How to Play
+  //   (the ❔ reference card's own modal), New Game (the ↻ flow verbatim, and
+  //   still solo-only — a room's match belongs to its session, not to a
+  //   reload), and Quit to main menu (offered only when the surface that
+  //   booted the match passed `onQuitToMenu`). It sits at the far right of
+  //   the bar — where ↻ stood, beside the rival's plant — as asked.
   const topRight = ui.el.querySelector<HTMLElement>(".top-right");
+  // The sheet handle and the menu's teardown live at function scope so the
+  // dispose closure below can reach them (the listeners ride on `document`).
+  let settingsView: SettingsSheetHandle | null = null;
+  let menuTeardown: (() => void) | null = null;
   if (topRight) {
     const peek = document.createElement("button");
     peek.type = "button"; peek.id = "iso-rival-peek";
     peek.className = "icon-btn"; peek.textContent = "🏭";
     peek.title = "Watch the rival's plant — its board plays itself";
     peek.addEventListener("click", () => toggleRivalPlantView());
-
-    // MP-05: the peek panel reads the LOCAL plant record, which on a guest is
-    // not the seat's board (that lives on the host), so it is host-only.
     if (!isGuest()) topRight.appendChild(peek);
 
-    // MP-05: ↻ restarts a SOLO match. In a room the match belongs to the
-    // session — reloading would strand the other seat — so the button is gone.
+    const menuBtn = document.createElement("button");
+    menuBtn.type = "button"; menuBtn.id = "iso-menu-btn";
+    menuBtn.className = "icon-btn"; menuBtn.textContent = "☰";
+    menuBtn.title = "Menu — settings, how to play, quit";
+    menuBtn.setAttribute("aria-haspopup", "menu");
+    menuBtn.setAttribute("aria-expanded", "false");
+
+    const pop = document.createElement("div");
+    pop.id = "iso-topmenu";
+    pop.className = "iso-topmenu hidden";
+    pop.setAttribute("role", "menu");
+    const popHead = document.createElement("div");
+    popHead.className = "tm-head";
+    const popTitle = document.createElement("b");
+    popTitle.textContent = "Menu";
+    const popClose = document.createElement("button");
+    popClose.type = "button"; popClose.className = "tm-close";
+    popClose.title = "Close"; popClose.dataset.sfx = "close";
+    popClose.textContent = "✕";
+    popHead.append(popTitle, popClose);
+    pop.appendChild(popHead);
+
+    let menuOpen = false;
+    const setMenu = (on: boolean) => {
+      menuOpen = on;
+      pop.classList.toggle("hidden", !on);
+      menuBtn.setAttribute("aria-expanded", String(on));
+    };
+    const menuItem = (label: string, hint: string, onPick: () => void) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "tm-item"; b.setAttribute("role", "menuitem");
+      b.dataset.sfx = "click";
+      const sp = document.createElement("span"); sp.textContent = label;
+      const sm = document.createElement("small"); sm.textContent = hint;
+      b.append(sp, sm);
+      b.addEventListener("click", () => { setMenu(false); onPick(); });
+      pop.appendChild(b);
+    };
+    popClose.addEventListener("click", () => setMenu(false));
+
+    // Settings — THE sheet (iso/settings-sheet.ts), the same projector the
+    // front door raises over the menu plate, mounted over the game root. One
+    // instance at a time; closing repaints nothing here because every control
+    // in the sheet subscribes to the store, and so does the game.
+    menuItem("Settings", "texture detail · miniature · sound", () => {
+      if (settingsView) return;
+      const view = showSettingsSheet(ui.el);
+      settingsView = view;
+      void view.promise.then(() => { if (settingsView === view) settingsView = null; });
+    });
+    menuItem("How to Play", "the reference card, eight rules", () => ui.showHelp());
     if (isSolo()) {
-      const restart = document.createElement("button");
-      restart.type = "button"; restart.id = "iso-restart";
-      restart.className = "icon-btn"; restart.textContent = "↻";
-      restart.title = "New game — clears the save and the difficulty pick";
-      restart.addEventListener("click", () => {
+      // MP-05 unchanged: a RESTART is solo-only, in a room the session owns
+      // the match. The confirm-and-clear flow is AI-03's verbatim.
+      menuItem("New Game", "clears the save and the difficulty pick", () => {
         if (!window.confirm("Start a new game? The save and your difficulty pick are cleared.")) return;
         restartArmed = true; // do NOT let the pagehide autosave re-write the save
         clearSave();
         try { localStorage.removeItem(SKILL_STORAGE_KEY); } catch { /* private mode */ }
         location.reload();
       });
-      topRight.appendChild(restart);
     }
+    if (opts.onQuitToMenu) {
+      menuItem(isSolo() ? "Quit to Main Menu" : "Leave Room",
+        isSolo() ? "the match stays saved — Play resumes it" : "the other seat is told you left",
+        () => {
+          // A solo quit is plain navigation (the save holds the match); a
+          // room's quit strands the far seat, so that one confirms.
+          if (!isSolo() && !window.confirm("Leave this room and return to the main menu?")) return;
+          opts.onQuitToMenu?.();
+        });
+    }
+
+    topRight.appendChild(menuBtn);
+    ui.el.appendChild(pop);
+    const onDocDown = (e: Event) => {
+      const t = e.target as Node;
+      if (menuOpen && !pop.contains(t) && !menuBtn.contains(t)) setMenu(false);
+    };
+    const onDocKey = (e: KeyboardEvent) => {
+      if (!menuOpen) return;
+      // Escape belongs to the menu while it is open — swallow it so the tool
+      // cancel does not double-fire on the same key.
+      if (e.key === "Escape") { e.stopPropagation(); setMenu(false); }
+    };
+    document.addEventListener("pointerdown", onDocDown, true);
+    document.addEventListener("keydown", onDocKey, true);
+    menuTeardown = () => {
+      document.removeEventListener("pointerdown", onDocDown, true);
+      document.removeEventListener("keydown", onDocKey, true);
+      settingsView?.destroy();
+      settingsView = null;
+    };
   }
 
   function toggleRivalPlantView() {
@@ -4423,6 +4520,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // match's state).
     gfxUnsub();
     mini.destroy();
+    // SETTINGS-01: the ☰ menu's document listeners die with the game, and an
+    // open sheet is destroyed rather than orphaned over a dead board.
+    menuTeardown?.();
+    menuTeardown = null;
     net?.dispose();
     window.clearInterval(saveIv);
     if (onPageHide) window.removeEventListener("pagehide", onPageHide);

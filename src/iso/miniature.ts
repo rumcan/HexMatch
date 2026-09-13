@@ -96,13 +96,18 @@ export interface MiniaturePass {
 
 /**
  * Create the pass. `host` is the map stage the three layers already live in;
- * the display canvas is inserted as its FIRST child (z-index does the
- * stacking) so `.iso-layer:last-child` in the stylesheet keeps naming the
- * overlay canvas and the crosshair cursor does not move.
+ * the display canvas is inserted as its FIRST child, which keeps two things
+ * true that the game leans on: `.iso-layer:last-child` still names the
+ * overlay canvas (the crosshair cursor does not move), and every `.iso-layer`
+ * query — the renderer's input wiring, the pixel-sampling tests — sees
+ * exactly the three game canvases it has always seen. It therefore carries
+ * its own `.iso-mini` class and copies the layer geometry from the sheet;
+ * joining `.iso-layer` would shift those index-based lookups for a plate that
+ * is an effect, not a layer.
  */
 export function createTiltShiftPass(canvases: RendererCanvases, host: HTMLElement): MiniaturePass {
   const display = document.createElement("canvas");
-  display.className = "iso-layer iso-mini";
+  display.className = "iso-mini";
   display.style.zIndex = "4";
   display.style.pointerEvents = "none";   // input goes to the overlay beneath
   display.style.display = "none";

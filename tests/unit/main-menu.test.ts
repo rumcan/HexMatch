@@ -3,9 +3,10 @@
 // STORY-01 — the front door: Play / Settings / How to Play.
 //
 // The menu is chrome, not game, so the tests hold it to chrome promises:
-// Play leaves for the mode screen, Settings says out loud that it is being
-// furnished (SETTINGS-01 owns the real room — this button must never die
-// silently), and How to Play raises the REAL TUT-01 tour even for a player
+// Play leaves for the mode screen, Settings raises the REAL GFX-01 sheet —
+// the same projector the in-game ☰ menu opens, writing quality and miniature
+// through the store so a player can dress the island before a single hex is
+// claimed — and How to Play raises the REAL TUT-01 tour even for a player
 // who dismissed it at boot (force: true), because asking for the rules by
 // name is not "first visit".
 import { act, createElement } from "react";
@@ -62,14 +63,44 @@ describe("MainMenu — the front door", () => {
     expect(document.querySelector("#iso-root")).toBeNull();
   });
 
-  it("Settings says so instead of dying silently", () => {
+  it("Settings raises the real GFX-01 sheet and writes through the store", async () => {
     const onPlay = mount();
-    expect(host.querySelector(".menu-note")).toBeNull();
+    expect(document.querySelector(".settings-sheet")).toBeNull();
     act(() => { button(/^Settings/).click(); });
-    const note = host.querySelector(".menu-note");
-    expect(note).not.toBeNull();
-    expect(note!.textContent).toMatch(/settings/i);
+    const sheet = document.querySelector(".settings-sheet");
+    expect(sheet).not.toBeNull();
+    // the front door opened the sheet, it did not leave the menu
     expect(onPlay).not.toHaveBeenCalled();
+    expect(sheet!.querySelector(".modal.box[aria-label=\"Settings\"]")).not.toBeNull();
+
+    // three-way quality segment + the miniature switch + sound, live-painted
+    const seg = [...sheet!.querySelectorAll(".gfx-seg button")].map((b) => b.textContent);
+    expect(seg).toEqual(["Low", "Medium", "High"]);
+    const quality = (q: string) => [...sheet!.querySelectorAll(".gfx-seg button")]
+      .find((b) => b.textContent === q) as HTMLButtonElement;
+    act(() => { quality("Medium").click(); });
+    expect(JSON.parse(localStorage.getItem("hexmatch:graphics")!))
+      .toMatchObject({ quality: "medium" });
+    expect(quality("Medium").classList.contains("on")).toBe(true);
+    const mini = sheet!.querySelector("[data-gfx=\"miniature\"]") as HTMLButtonElement;
+    expect(mini.textContent).toBe("OFF");
+    act(() => { mini.click(); });
+    expect(JSON.parse(localStorage.getItem("hexmatch:graphics")!))
+      .toMatchObject({ miniature: true });
+    expect(mini.textContent).toBe("ON");
+
+    // Done closes the sheet and unmounts it; a reopened sheet paints from the
+    // store, so the door and a later match can never disagree.
+    act(() => { (sheet!.querySelector(".big-btn") as HTMLButtonElement).click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(document.querySelector(".settings-sheet")).toBeNull();
+    act(() => { button(/^Settings/).click(); });
+    const again = document.querySelector(".settings-sheet")!;
+    expect(again.querySelector("[data-gfx=\"miniature\"]")!.textContent).toBe("ON");
+    expect([...again.querySelectorAll(".gfx-seg button.on")].map((b) => b.textContent)).toEqual(["Medium"]);
+    act(() => { (again.querySelector("[data-gfx-close].modal-back") as HTMLElement).click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(document.querySelector(".settings-sheet")).toBeNull();
   });
 
   it("How to Play raises the real tour, even after a boot dismissal", async () => {

@@ -165,7 +165,14 @@ async function boot() {
 describe("E11 the game boots", () => {
   it("mounts three canvas layers and a tool bar", async () => {
     await boot();
-    expect(root.querySelectorAll("canvas")).toHaveLength(3);
+    // GFX-01: the tilt-shift composite rides beside those three as its OWN
+    // `.iso-mini` plate (hidden until miniature view is on) — it is counted
+    // separately on purpose: it must never join `.iso-layer`, or the
+    // index-based lookups of the game canvases shift and input hit-tests
+    // land on the wrong plate.
+    expect(root.querySelectorAll("canvas")).toHaveLength(4);
+    expect(root.querySelectorAll("canvas.iso-layer")).toHaveLength(3);
+    expect(root.querySelectorAll("canvas.iso-mini")).toHaveLength(1);
     const tools = [...root.querySelectorAll("[data-tool]")].map(
       (b) => (b as HTMLElement).dataset.tool);
     // PP-06 added the "plant" tool (an additional processing plant).
@@ -2832,7 +2839,7 @@ describe("pointer responsiveness", () => {
     const { IsoRenderer } = await import("../../src/iso/renderer");
     // Record the paint without rasterising: the stub context has no gradients.
     const draw = vi.spyOn(IsoRenderer.prototype, "drawOverlay").mockImplementation(() => {});
-    const overlay = root.querySelectorAll("canvas")[2] as HTMLCanvasElement;
+    const overlay = root.querySelectorAll("canvas.iso-layer")[2] as HTMLCanvasElement;
     const move = (x: number, y: number) =>
       overlay.dispatchEvent(new MouseEvent("pointermove", { clientX: x, clientY: y, bubbles: true }));
 
