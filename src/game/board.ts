@@ -1,4 +1,4 @@
-import { BOARD_W as W, BOARD_H as H, ResKey, RES_KEYS, randInt, choice, shuffle } from "./config";
+import { BOARD_W, BOARD_H, ResKey, RES_KEYS, randInt, choice, shuffle } from "./config";
 
 export interface Gem {
   id: number;
@@ -173,6 +173,47 @@ export class Board {
     this.initFill();
   }
 
+  /**
+   * MOBILE-02: the live grid size, READ FROM the grid itself — the shipped
+   * `BOARD_W × BOARD_H` is only the fallback for a not-yet-filled board.
+   * A phone asks the game to widen/lengthen the plant so the board fills the
+   * window at a comfortable cell size (ui.ts proposes the size, game.ts owns
+   * the decision); desktop boards, rival plants and headless tests keep the
+   * shipped 7×8 because nobody ever proposes otherwise. Deriving rather than
+   * storing means a `restore()` — which replaces the array wholesale (a save
+   * made on another viewport, a peer's board arriving on the wire) — can
+   * never leave the size lying about what the grid actually holds.
+   */
+  get w(): number { return this.grid[0]?.length ?? BOARD_W; }
+  get h(): number { return this.grid.length || BOARD_H; }
+
+  /**
+   * MOBILE-02: resize the board in place. Gems inside the new rectangle keep
+   * their identity, tokens, frost and girders where they stand; cells the
+   * board grows into are filled with fresh gems that drop in (`isNew`); cells
+   * it shrinks out of are simply gone. Returns whether anything moved, so a
+   * resize-driven `onChange` never fires on a no-op.
+   */
+  setSize(w: number, h: number): boolean {
+    const W2 = Math.max(3, Math.min(24, Math.floor(w)));
+    const H2 = Math.max(3, Math.min(24, Math.floor(h)));
+    if (this.w === W2 && this.h === H2) return false;
+    const old = this.grid;
+    const next: (Gem | null)[][] = [];
+    for (let r = 0; r < H2; r++) {
+      const row: (Gem | null)[] = [];
+      for (let c = 0; c < W2; c++) {
+        const g = old[r]?.[c] ?? null;
+        if (g) { g.r = r; g.c = c; row.push(g); }
+        else row.push(this.newGem(this.randRes(), r, c, true));
+      }
+      next.push(row);
+    }
+    this.grid = next;
+    this.onChange();
+    return true;
+  }
+
   private newGem(res: ResKey, r: number, c: number, isNew = false): Gem {
     return { id: this.seq++, res, tier: 0, special: null, hard: 0, block: false, r, c, isNew };
   }
@@ -198,6 +239,12 @@ export class Board {
   }
 
   initFill() {
+    // MOBILE-02: the dims are captured BEFORE the grid is emptied — they are
+    // read off the live grid (so a ♻ reset re-rolls whatever rectangle the
+    // board currently wears, grown phone included), and a half-built array
+    // would read back as nothing.
+    const W = this.grid[0]?.length ?? BOARD_W;
+    const H = this.grid.length || BOARD_H;
     this.grid = [];
     for (let r = 0; r < H; r++) {
       this.grid[r] = [];
@@ -217,7 +264,7 @@ export class Board {
 
   gems(): Gem[] {
     const out: Gem[] = [];
-    for (let r = 0; r < H; r++) for (let c = 0; c < W; c++) { const g = this.grid[r][c]; if (g) out.push(g); }
+    for (let r = 0; r < this.h; r++) for (let c = 0; c < this.w; c++) { const g = this.grid[r][c]; if (g) out.push(g); }
     return out;
   }
 
@@ -253,10 +300,10 @@ export class Board {
 
   findGroups(): Gem[][] {
     const groups: Gem[][] = [];
-    for (let r = 0; r < H; r++) groups.push(...this.lineRuns(this.grid[r]));
-    for (let c = 0; c < W; c++) {
+    for (let r = 0; r < this.h; r++) groups.push(...this.lineRuns(this.grid[r]));
+    for (let c = 0; c < this.w; c++) {
       const col: (Gem | null)[] = [];
-      for (let r = 0; r < H; r++) col.push(this.grid[r][c]);
+      for (let r = 0; r < this.h; r++) col.push(this.grid[r][c]);
       groups.push(...this.lineRuns(col));
     }
     return groups;
@@ -428,7 +475,7 @@ export class Board {
 
     // apply
     const removedCells: { r: number; c: number }[] = [];
-    for (let r = 0; r < H; r++) for (let c = 0; c < W; c++) {
+    for (let r = 0; r < this.h; r++) for (let c = 0; c < this.w; c++) {
       const g = this.grid[r][c];
       if (!g) continue;
       if (removeIds.has(g.id)) { g.dead = true; this.onFx("pop", r, c); this.grid[r][c] = null; removedCells.push({ r, c }); }
@@ -438,7 +485,7 @@ export class Board {
     for (const { r, c } of removedCells) {
       for (const [dr, dc] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
         const nr = r + dr, nc = c + dc;
-        if (nr < 0 || nr >= H || nc < 0 || nc >= W) continue;
+        if (nr < 0 || nr >= this.h || nc < 0 || nc >= this.w) continue;
         const b = this.grid[nr][nc];
         if (b && b.block) { b.block = false; this.onFx("crack", nr, nc); }
       }
@@ -513,10 +560,10 @@ export class Board {
   }
 
   private gravity() {
-    for (let c = 0; c < W; c++) {
+    for (let c = 0; c < this.w; c++) {
       const stack: Gem[] = [];
-      for (let r = H - 1; r >= 0; r--) { const g = this.grid[r][c]; if (g) stack.push(g); this.grid[r][c] = null; }
-      let r = H - 1;
+      for (let r = this.h - 1; r >= 0; r--) { const g = this.grid[r][c]; if (g) stack.push(g); this.grid[r][c] = null; }
+      let r = this.h - 1;
       for (const g of stack) { g.r = r; g.c = c; this.grid[r][c] = g; r--; }
       for (; r >= 0; r--) {
         const g = this.newGem(this.randRes(), r, c, true);
@@ -636,7 +683,7 @@ export class Board {
     this.busy = true;
     const gains: Partial<Record<ResKey, number>> = {};
     bomb.dead = true; this.grid[bomb.r][bomb.c] = null; this.onFx("boom", bomb.r, bomb.c);
-    for (let r = 0; r < H; r++) for (let c = 0; c < W; c++) {
+    for (let r = 0; r < this.h; r++) for (let c = 0; c < this.w; c++) {
       const g = this.grid[r][c];
       if (!g || g.block || g.res !== colorRes) continue;
       if (g.hard > 0) { g.hard = (g.hard - 1) as 0 | 1 | 2; this.onFx("crack", r, c); continue; }
@@ -665,7 +712,7 @@ export class Board {
     for (const res of Object.keys(pool) as ResKey[]) {
       const tier = pool[res] as 1 | 2;
       const eligible: Gem[] = [];
-      for (let r = 0; r < H; r++) for (let c = 0; c < W; c++) {
+      for (let r = 0; r < this.h; r++) for (let c = 0; c < this.w; c++) {
         const g = this.grid[r][c];
         if (g && g.res === res && g.tier === 0 && !g.special && !g.block && g.hard === 0) eligible.push(g);
       }
@@ -715,9 +762,9 @@ export class Board {
   }
 
   dropBlocks(n = 4, ms = 30000, now = performance.now()) {
-    const cols = shuffle(Array.from({ length: W }, (_, i) => i)).slice(0, n);
+    const cols = shuffle(Array.from({ length: this.w }, (_, i) => i)).slice(0, n);
     for (const c of cols) {
-      const r = 2 + randInt(H - 3);
+      const r = 2 + randInt(this.h - 3);
       const g = this.newGem(this.randRes(), r, c);
       g.block = true;
       this.grid[r][c] = g;
@@ -785,7 +832,7 @@ export class Board {
     let n = 0;
     let removed = false;
     this.blockUntil = 0;
-    for (let r = 0; r < H; r++) for (let c = 0; c < W; c++) {
+    for (let r = 0; r < this.h; r++) for (let c = 0; c < this.w; c++) {
       const g = this.grid[r][c];
       if (!g) continue;
       if (g.block) { g.dead = true; this.grid[r][c] = null; this.onFx("boom", r, c); n++; removed = true; }
@@ -831,7 +878,6 @@ export class Board {
       bestScore = w;
       return mv;
     };
-    const H = this.grid.length, W = this.grid[0]?.length ?? 0;
     /** The run of one colour through `at` on a line, counted the way the board
      *  counts it: contiguous AND `matchable` at every cell, exactly the walk
      *  `lineRuns` does. A girder or a bomb in the line ENDS it. */
@@ -853,8 +899,8 @@ export class Board {
       const g = this.grid[r]?.[c];
       if (!this.matchable(g)) return false;
       const res = g.res;
-      if (runOn((i) => this.grid[r][i], c, W, res) >= 3) return true;
-      return runOn((i) => this.grid[i][c], r, H, res) >= 3;
+      if (runOn((i) => this.grid[r][i], c, this.w, res) >= 3) return true;
+      return runOn((i) => this.grid[i][c], r, this.h, res) >= 3;
     };
     const dirs: [number, number][] = [[0, 1], [1, 0]];
     /** A bomb is a move in itself — `trySwap` detonates whatever bomb it is
@@ -865,8 +911,8 @@ export class Board {
      *  FALLBACK, offered only when no scoring match exists: blowing a forged
      *  bomb on a random colour while a real match is waiting is not a plan. */
     let bombMove: [number, number, number, number] | null = null;
-    for (let r = 0; r < H; r++) {
-      for (let c = 0; c < W; c++) {
+    for (let r = 0; r < this.h; r++) {
+      for (let c = 0; c < this.w; c++) {
         const a = this.grid[r][c];
         if (!a || a.block) continue;
         for (const [dr, dc] of dirs) {
@@ -953,7 +999,7 @@ export class Board {
     if (this.blockUntil && now > this.blockUntil) {
       this.blockUntil = 0;
       let removed = false;
-      for (let r = 0; r < H; r++) for (let c = 0; c < W; c++) {
+      for (let r = 0; r < this.h; r++) for (let c = 0; c < this.w; c++) {
         const g = this.grid[r][c];
         if (g?.block) { g.dead = true; this.grid[r][c] = null; removed = true; }
       }
@@ -986,9 +1032,9 @@ export class Board {
       this.grid[r1][c1] = a; this.grid[r2][c2] = b;
       return ok;
     };
-    for (let r = 0; r < H; r++) for (let c = 0; c < W; c++) {
-      if (c < W - 1 && test(r, c, r, c + 1)) return true;
-      if (r < H - 1 && test(r, c, r + 1, c)) return true;
+    for (let r = 0; r < this.h; r++) for (let c = 0; c < this.w; c++) {
+      if (c < this.w - 1 && test(r, c, r, c + 1)) return true;
+      if (r < this.h - 1 && test(r, c, r + 1, c)) return true;
       // bombs always give a "move" — but only while one can actually be
       // SWAPPED: `trySwap` refuses a blocked cell, and a girder stamped onto a
       // bomb (MP-05's `applySabotage` blocks whatever gem is already there) is

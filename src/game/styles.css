@@ -2182,7 +2182,11 @@ html, body, #root {
   .ui-root:not([data-view="map"]) .toolchip { display: none; }
 }
 
-@media (max-width: 760px) {
+/* MOBILE-02: the phone regime (bottom nav, single-sheet view switching) now
+   answers the same media pair the JS fit logic answers — portrait ≤760px and
+   the short landscape phone ≤900×500 — so the board's grow-to-fit and the
+   sheet chrome can never disagree about which layout is live. */
+@media (max-width: 760px), (max-width: 900px) and (orientation: landscape) and (max-height: 500px) {
   .mnav {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 46;
     display: flex;
@@ -3642,3 +3646,201 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .cc-seal.loss { border-color: var(--danger2); color: var(--danger2); }
 .cc-lock { flex: 0 0 auto; align-self: flex-start; font-size: 14px; line-height: 1; color: var(--txt-mute); }
 .story-menu-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   MOBILE-02 — on a phone the match table IS the screen.
+
+   The complaint the screenshots spelled out: the economy sheet was a
+   scrolling panel — a wire card on top, a title row, a combo plate, a
+   reach strip and a rule of help text eating the height, and the fixed
+   7×8 board crammed under it all, clipped by the fold. The fix in here
+   (with ui.ts's phone fit): the trade sheet goes full-bleed, every kept
+   control drops to its smallest honest size, the top bar tucks behind a
+   grip and only drops back when a number in it changes, the rival wire is
+   off (its beats stay in the Feed), and the board GROWS into the room the
+   sheet leaves — columns and rows before pixels, per the ticket.
+   Every selector answers the same media pair the JS fit uses, so the
+   chrome and the grow logic can never disagree about which layout is live.
+   Desktop is untouched.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* the slot between the tab strip and the footer that the board lives in.
+   Everywhere but the phone trade sheet it is `display:contents` — no box,
+   no trace, the panel stacks exactly as it always did. */
+.board-slot { display: contents; }
+
+@media (max-width: 760px), (max-width: 900px) and (orientation: landscape) and (max-height: 500px) {
+  /* ── the trade sheet becomes the window ── */
+  .ui-root[data-view="trade"] .aside.right {
+    top: 0; left: 0; right: 0; bottom: 0;
+    width: auto;
+    overflow: hidden;                 /* the board FITS — it does not scroll */
+    background: var(--bg);
+  }
+  .ui-root[data-view="trade"] .aside.right #iso-trade.panel {
+    margin: 0; padding: 0;
+    border: 0; border-radius: 0;
+    box-shadow: none;
+  }
+  .ui-root[data-view="trade"] .aside.right #iso-trade .panel::before,
+  .ui-root[data-view="trade"] .aside.right #iso-trade.panel::before { display: none; }
+
+  /* tab strip — the sheet's only permanent header. It sits under the notch;
+     the grip (see .tb-grip) rides its top edge. */
+  .ui-root[data-view="trade"] .tabs {
+    margin: 0; padding: calc(var(--safe-top) + 21px) 5px 3px;
+    background: linear-gradient(180deg, rgba(24, 17, 11, .97), rgba(12, 9, 6, .88));
+    border-bottom: 1px solid var(--brass-lo);
+  }
+  .tab {
+    display: flex; align-items: center; justify-content: center; gap: 3px;
+    min-width: 0; padding: 4px 3px;
+    font-size: 9px; letter-spacing: .3px; line-height: 1.25;
+    text-overflow: ellipsis; overflow: hidden; white-space: nowrap;
+  }
+  .tab[data-tab="plant"] { flex: 1.65 1 0; }
+  .tab-ic { font-style: normal; font-size: 12px; line-height: 1; filter: saturate(.8); }
+  .tab-l { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+  /* panes scroll inside the sheet, clearing the floating footer */
+  .ui-root[data-view="trade"] #iso-trade > .pane {
+    padding: 8px 8px calc(126px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* the plant pane: no nested plate, no title (the tab says it), the felt
+     rail fills everything between the controls and the footer */
+  .ui-root[data-view="trade"] #iso-quarry {
+    display: flex; flex-direction: column;
+    flex: 1 1 auto; min-height: 0;
+    margin: 0; padding: 3px 5px calc(118px + env(safe-area-inset-bottom, 0px));
+    background: none; border: 0; border-radius: 0;
+    backdrop-filter: none; -webkit-backdrop-filter: none;
+    box-shadow: none;
+  }
+  .ui-root[data-view="trade"] #iso-quarry .board-slot {
+    display: flex; flex: 1 1 auto; min-height: 0;
+    align-items: center; justify-content: center;
+    overflow: hidden;
+  }
+  /* scoped through the slot — the reach strip also carries .board-wrap for
+     its felt, and must not be stretched to the sheet by this rule */
+  .ui-root[data-view="trade"] .board-slot .board-wrap {
+    width: 100%; height: 100%;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: calc(var(--r) - 2px);
+  }
+
+  /* ── plant head: one slim toolbar, not a banner ── */
+  #iso-quarry .quarry-head { justify-content: flex-end; gap: 5px; padding: 0 1px; }
+  #iso-quarry .quarry-head .panel-title { display: none; }
+  .quarry-status { margin-left: 0; margin-right: 0; }
+  .quarry-status .stat { font-size: 8.5px; padding: 1px 4px; }
+  .combo-bank { padding: 1px 5px; gap: 4px; margin-right: 0; }
+  .cb-lbl { font-size: 7.5px; letter-spacing: .5px; }
+  .combo-bank i { width: 8px; height: 8px; }
+  .cb-n { font-size: 10.5px; }
+  .reset-btn { min-height: 22px; padding: 1px 7px; font-size: 8.5px; letter-spacing: .5px; }
+  .mini, .tax-btn { min-height: 26px; font-size: 10px; }
+  .upbar { height: 3px; margin: 3px 0; }
+  .iso-reach { margin: 0 0 3px; gap: 3px; font-size: 10px; }
+  .iso-reach b { font-size: 8.5px; letter-spacing: .5px; margin-right: 1px; }
+  .iso-reach i { font-size: 9px; }
+  .iso-reach .chip {
+    min-height: 0; padding: 1px 6px; gap: 3px;
+    font-size: 9.5px; letter-spacing: .3px;
+  }
+  /* the rules paragraph was the sheet's most expensive sentence — it lives
+     in the ❔ reference card now */
+  .iso-hint { display: none; }
+
+  /* felt breathes: the rail is the padding the old budget kept charging for */
+  .board-wrap { padding: 4px; }
+
+  /* ── the tucking top bar ── */
+  .ui-root[data-phone="1"] .topbar { transition: transform .3s cubic-bezier(.3,.9,.3,1); }
+  .ui-root[data-phone="1"][data-view="trade"] .topbar.tucked {
+    transform: translateY(calc(-100% - 8px));
+    border-bottom-color: transparent;
+    box-shadow: none;
+  }
+  .ui-root[data-phone="1"] .topbar.changed {
+    animation: m2-topflash 1.3s ease;
+  }
+  @keyframes m2-topflash {
+    0%, 55% { box-shadow:
+      inset 0 -2px 0 rgba(255, 176, 46, .55),
+      0 12px 34px rgba(255, 176, 46, .16), 0 10px 30px rgba(0, 0, 0, .55); }
+  }
+  /* the grip: a fixed invisible strip over the sheet's notch area that
+     calls the bar back down. Below the bar in z, so while the bar is up its
+     own controls eat the touch; once tucked, the pill is the only handle. */
+  .tb-grip { display: none; }
+  .ui-root[data-phone="1"][data-view="trade"] .tb-grip {
+    display: flex; position: fixed; z-index: 39;
+    top: 0; left: 0; right: 0; height: calc(var(--safe-top) + 20px);
+    align-items: flex-end; justify-content: center; padding-bottom: 4px;
+    background: none; border: 0; cursor: pointer;
+  }
+  .tb-grip-pill {
+    width: 46px; height: 4px; border-radius: 99px;
+    background: rgba(242, 220, 166, .38);
+    box-shadow: 0 0 10px rgba(255, 176, 46, .3);
+  }
+  .ui-root[data-phone="1"][data-view="trade"] .topbar:not(.tucked) ~ .aside.right .tb-grip {
+    opacity: 0; pointer-events: none;
+  }
+
+  /* ── the private wire is off (ui.ts also stops queuing beats — this covers
+     a mid-quip rotate/resize) ── */
+  .ui-root[data-phone="1"] .rival-quip { display: none !important; }
+
+  /* the toasts lane drops below the tab strip while the bar is tucked, so a
+     refusal answer never covers the tabs */
+  .ui-root[data-phone="1"][data-view="trade"] .toasts {
+    top: calc(var(--safe-top) + 52px);
+  }
+}
+
+/* portrait phones: the bar becomes TWO rows of smaller displays instead of
+   one squashed row — the roster up top, the controls under it. "It's not
+   squashing, it's stacking." */
+@media (max-width: 760px) {
+  :root { --topbar-h: 60px; }
+  .topbar {
+    flex-wrap: wrap; align-content: center;
+    height: calc(var(--topbar-h) + var(--safe-top));
+    padding: calc(var(--safe-top) + 2px) 8px 3px;
+    row-gap: 0; column-gap: 6px;
+  }
+  .logo { display: none; }
+  .kingdoms { order: 1; margin-left: auto; gap: 2px; }
+  .top-right { order: 2; flex: 1 1 100%; justify-content: space-between; gap: 4px; }
+  .king { max-width: 52px; padding: 1px 3px 1px 0; gap: 3px; }
+  .king-av { width: 20px; height: 20px; font-size: 10px; }
+  .king-vp { font-size: 10.5px; }
+  .rival-skill { padding: 1px 3px; gap: 2px; }
+  .rival-skill-sel { height: 22px; font-size: 10px; padding: 0 3px; letter-spacing: .2px; }
+  .vp-badge { font-size: 11px; padding: 1px 7px; letter-spacing: .4px; }
+  .icon-btn { width: 27px; height: 27px; font-size: 12px; }
+  .iso-topmenu .tm-close { width: 30px; height: 30px; font-size: 13px; }
+  .names-btn { min-width: 27px; padding: 0 4px; }
+  .fab, .recenter-btn { width: 38px; height: 38px; font-size: 16px; }
+  .fab { font-size: 19px; }
+}
+
+/* landscape phones: one slim row — height is the only thing a sideways
+   phone has no spare of, so the bar keeps to 34px and tucks like portrait */
+@media (max-width: 900px) and (orientation: landscape) and (max-height: 500px) {
+  :root { --topbar-h: 34px; }
+  .topbar { height: calc(var(--topbar-h) + var(--safe-top)); padding: calc(var(--safe-top) + 1px) 8px 1px; gap: 6px; }
+  .logo { display: none; }
+  .icon-btn { width: 26px; height: 26px; font-size: 12px; }
+  .vp-badge { font-size: 10.5px; padding: 0 6px; }
+  .rival-skill-sel { height: 22px; font-size: 10px; }
+  .king-av { width: 18px; height: 18px; }
+  .king-vp { font-size: 10px; }
+  .king { max-width: 40px; }
+  /* the floating footer is shorter sideways — the sheet pays it accordingly */
+  .ui-root[data-view="trade"] #iso-quarry { padding-bottom: calc(76px + env(safe-area-inset-bottom, 0px)); }
+  .ui-root[data-view="trade"] #iso-trade > .pane { padding-bottom: calc(82px + env(safe-area-inset-bottom, 0px)); }
+}
