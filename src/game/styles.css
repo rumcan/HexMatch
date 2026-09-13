@@ -1859,6 +1859,46 @@ html, body, #root {
 .big-btn:disabled { opacity: .32; cursor: not-allowed; filter: grayscale(.6); transform: none; }
 .big-btn.ghost { color: var(--txt-dim); border-color: var(--line); box-shadow: inset 0 1px 0 rgba(242, 220, 166, .1); }
 .big-btn.ghost:hover { color: var(--txt); box-shadow: inset 0 1px 0 rgba(242, 220, 166, .2); }
+
+/* ── GFX-01: video settings ────────────────────────────────────────────────
+   The ⚙ button lights its brass edge when the look is NOT the shipped
+   default (reduced detail or the miniature pass) — a glance says "you are
+   not seeing the full-resolution map" without stealing the top bar's space.
+   The modal reuses the plate + .big-btn language; only the rows are new. */
+.icon-btn.gfx-on {
+  color: var(--gold2); border-color: var(--brass);
+  box-shadow: inset 0 1px 0 rgba(242, 220, 166, .3), 0 0 14px -3px rgba(255, 176, 46, .55);
+}
+.gfx-modal { text-align: left; }
+.gfx-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 18px;
+  padding: 12px 2px; border-bottom: 1px solid rgba(107, 81, 35, .45);
+}
+.gfx-row:last-of-type { border-bottom: none; }
+.gfx-copy h3 {
+  margin: 0 0 3px; font-family: var(--serif); font-size: 12.5px; font-weight: 700;
+  letter-spacing: 1.6px; text-transform: uppercase; color: var(--brass-hi);
+}
+.gfx-copy p { margin: 0; font-size: 11.5px; color: var(--txt-dim); max-width: 46ch; }
+.gfx-seg { display: flex; gap: 6px; flex: none; }
+.gfx-seg button, .gfx-switch {
+  padding: 7px 13px; cursor: pointer; border: 1px solid var(--brass-lo); border-radius: var(--r);
+  background: linear-gradient(180deg, rgba(58, 44, 28, .5), rgba(12, 9, 6, .86));
+  color: var(--txt-dim); font-family: var(--serif); font-weight: 600;
+  font-size: 11.5px; letter-spacing: 1.6px; text-transform: uppercase;
+  box-shadow: inset 0 1px 0 rgba(242, 220, 166, .1);
+  transition: color .15s, background-color .15s, border-color .15s, box-shadow .15s;
+}
+.gfx-seg button:hover, .gfx-switch:hover { color: var(--brass-hi); border-color: var(--brass); }
+.gfx-seg button.on, .gfx-switch.on {
+  color: #171004; border-color: var(--brass);
+  background: linear-gradient(180deg, var(--brass-hi), var(--brass));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25), 0 0 16px -3px rgba(255, 176, 46, .6);
+}
+.gfx-switch { min-width: 74px; }
+/* the composite layer sits above the three map canvases; input is the
+   overlay's alone, so the pass is painted-through, never click-blocking */
+.iso-mini { pointer-events: none; }
 .big-btn.danger { color: #ffc7b4; border-color: rgba(226, 112, 79, .6); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14), 0 6px 18px rgba(0, 0, 0, .55); }
 .big-btn.danger:hover { box-shadow: 0 0 26px -6px rgba(226, 112, 79, .7), 0 8px 20px rgba(0, 0, 0, .6); }
 .confirm-row { display: flex; gap: 10px; justify-content: center; }

@@ -81,7 +81,7 @@ export async function loadDecalImages(): Promise<DecalImages> {
  * No alpha mask is built: scenery is drawn as `decor` and skipped by
  * picking, so a mask would only ever cost memory.
  */
-export async function loadScenerySprites(atlas: Atlas): Promise<number> {
+export async function loadScenerySprites(atlas: Atlas, maxZ = atlas.detailCap): Promise<number> {
   // The extension varies by sprite family, so resolve by trying both rather
   // than hard-coding one and silently dropping the other.
   const urlFor = (name: string, suffix: string) =>
@@ -96,10 +96,18 @@ export async function loadScenerySprites(atlas: Atlas): Promise<number> {
   await Promise.all(all.map(async (name) => {
     const def = manifestSprites[name];
     const urls = [["0.5x", 0.5], ["1x", 1], ["2x", 2]] as const;
-    if (!def || urls.some(([s]) => !urlFor(name, s))) return;
+    // GFX-01: the family must be authored at every level the quality preset
+    // asks for — at `low` that means only 0.5×, so a tree set missing @2x
+    // still installs there and a full one still installs at `high`.
+    if (!def || urls.some(([s, z]) => z <= maxZ && !urlFor(name, s))) return;
+    const have = atlas.buildingImages.get(name);
+    const missing = urls.filter(([, z]) => z <= maxZ && !have?.has(z));
+    if (!missing.length) return;             // already at full detail for this cap
     try {
-      const images = await Promise.all(urls.map(([s]) => loadBitmap(urlFor(name, s))));
-      atlas.buildingImages.set(name, new Map(urls.map(([, z], i) => [z, images[i]])));
+      const images = await Promise.all(missing.map(([s]) => loadBitmap(urlFor(name, s))));
+      const map = have ?? new Map<number, AtlasImage>();
+      for (let i = 0; i < missing.length; i++) map.set(missing[i][1], images[i]);
+      atlas.buildingImages.set(name, map);
       atlas.manifest.sprites[name] = {
         x: 0, y: 0, w: def.w, h: def.h,
         footprint: def.footprint,

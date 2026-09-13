@@ -71,14 +71,23 @@ function loadBitmap(url: string): Promise<AtlasImage> {
  * also what makes a partially authored family (say three of four headings)
  * safe — the missing heading falls back on its own.
  */
-export async function loadVehicleLayers(atlas: Atlas): Promise<number> {
+export async function loadVehicleLayers(atlas: Atlas, maxZ = atlas.detailCap): Promise<number> {
   let installed = 0;
   await Promise.all(Object.entries(manifestSprites).map(async ([name, def]) => {
-    const urls = ZOOMS.map(([suffix]) => vehicleUrls[`../../assets/vehicles/${name}@${suffix}.png`]);
-    if (urls.some((u) => u === undefined)) return;      // not authored yet: legacy art
+    const urlFor = (suffix: string) => vehicleUrls[`../../assets/vehicles/${name}@${suffix}.png`];
+    // GFX-01: the family must be authored at every detail level the quality
+    // preset asks for — `low` is satisfied by @0.5x alone. A run with a
+    // RAISED cap only fills the levels the sprite is still missing, so a
+    // quality change never re-fetches a bitmap that is already installed.
+    if (ZOOMS.some(([suffix, z]) => z <= maxZ && !urlFor(suffix))) return;
+    const have = atlas.buildingImages.get(name);
+    const missing = ZOOMS.filter(([, z]) => z <= maxZ && !have?.has(z));
+    if (!missing.length) return;
     try {
-      const images = await Promise.all(urls.map((u) => loadBitmap(u as string)));
-      atlas.buildingImages.set(name, new Map(ZOOMS.map(([, z], i) => [z, images[i]])));
+      const images = await Promise.all(missing.map(([suffix]) => loadBitmap(urlFor(suffix) as string)));
+      const map = have ?? new Map<number, AtlasImage>();
+      for (let i = 0; i < missing.length; i++) map.set(missing[i][1], images[i]);
+      atlas.buildingImages.set(name, map);
       const sprite: SpriteDef = {
         x: 0, y: 0, w: def.w, h: def.h,
         footprint: def.footprint,
@@ -87,7 +96,10 @@ export async function loadVehicleLayers(atlas: Atlas): Promise<number> {
       atlas.manifest.sprites[name] = sprite;
       installed++;
     } catch (err) {
-      delete atlas.manifest.sprites[name];
+      // Only a FIRST install may fall back: dropping the def of a sprite that
+      // already serves its installed levels would delete working art on a
+      // failed fill pass.
+      if (!atlas.buildingImages.get(name)?.size) delete atlas.manifest.sprites[name];
       console.warn(`[truck-brand] ${name}: not installed`, err);
     }
   }));

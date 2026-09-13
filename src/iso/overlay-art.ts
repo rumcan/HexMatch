@@ -352,8 +352,17 @@ export interface OverlayStats {
 
 interface GhostArt {
   image: Surface;
+  /** Size of the tinted surface — the SAMPLED zoom's sprite rect. */
   w: number;
   h: number;
+  /**
+   * GFX-01: the destination rect at the CAMERA zoom. Equal to w/h at High
+   * (and whenever the sampled zoom is not below the camera's), larger when a
+   * quality cap stretched coarser art — the same contract the structures blit
+   * keeps, so a ghost preview sits exactly where the real building will.
+   */
+  dw: number;
+  dh: number;
 }
 
 /** Line weight in DEVICE pixels for a world-pixel weight at this zoom. */
@@ -614,7 +623,7 @@ export class PlacementOverlay {
       ctx.restore();
     }
     const art = this.ghostArt(atlas, ghost.sprite, z, ghost.valid, makeSurface);
-    if (!art) return false;
+    if (!art) return false;   // tinted copy unavailable (art loading) — the pool alone still previews
     // A legal ghost breathes and floats a pixel or two; a refused one sits
     // still — movement is the reward, stillness is the refusal.
     const bob = ghost.valid && !this.reducedMotion
@@ -629,6 +638,7 @@ export class PlacementOverlay {
     ctx.drawImage(
       art.image as unknown as CanvasImageSource,
       Math.floor(sx), Math.floor(sy - bob),
+      art.dw, art.dh,
     );
     ctx.restore();
     return true;
@@ -639,27 +649,33 @@ export class PlacementOverlay {
    * sprite's own alpha (`source-atop`) as a top-down gradient, so the art
    * still reads — chimneys, roofs, wheels — while the whole thing takes the
    * verdict's hue.
+   *
+   * GFX-01: the key carries the SAMPLED zoom as well as the camera's, so a
+   * quality change at runtime (which calls `clearCache()`) and a zoom change
+   * both rebuild the surface instead of serving a stale texel density.
    */
   private ghostArt(
     atlas: Atlas, sprite: string, z: number, valid: boolean,
     makeSurface: (w: number, h: number) => Surface | null,
   ): GhostArt | null {
-    const key = `${sprite}|${z}|${valid ? "ok" : "bad"}`;
+    const az = atlas.atlasZoomFor(z);
+    const key = `${sprite}|${z}|${az}|${valid ? "ok" : "bad"}`;
     if (this.ghosts.has(key)) return this.ghosts.get(key) ?? null;
-    const built = this.buildGhostArt(atlas, sprite, z, valid, makeSurface);
+    const built = this.buildGhostArt(atlas, sprite, z, az, valid, makeSurface);
     this.ghosts.set(key, built);
     return built;
   }
 
   private buildGhostArt(
-    atlas: Atlas, sprite: string, z: number, valid: boolean,
+    atlas: Atlas, sprite: string, z: number, az: number, valid: boolean,
     makeSurface: (w: number, h: number) => Surface | null,
   ): GhostArt | null {
     const def = atlas.get(sprite);
     const img = atlas.imageForSprite(sprite, z);
     if (!def || !img) return null;
     // The packer rounds both position and size per zoom; never scale a 1× rect.
-    const src = atlas.zoomFrameRect(def, 0, z);
+    const src = atlas.zoomFrameRect(def, 0, az);
+    const dst = az === z ? src : atlas.zoomFrameRect(def, 0, z);
     if (src.w < 1 || src.h < 1) return null;
     const surf = makeSurface(src.w, src.h);
     if (!surf) return null;
@@ -680,6 +696,6 @@ export class PlacementOverlay {
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, src.w, src.h);
     ctx.globalCompositeOperation = "source-over";
-    return { image: surf, w: src.w, h: src.h };
+    return { image: surf, w: src.w, h: src.h, dw: dst.w, dh: dst.h };
   }
 }

@@ -52,6 +52,14 @@ import { playHoly, prewarmHoly } from "./holy";
 // are only the moments that are not a button — a tab sliding, a toast saying
 // no, a gem clearing, the wire opening.
 import { attachUiSound, registerSoundPainter, soundGlyph, soundLabel, sfx } from "../audio/sfx";
+// GFX-01: the video settings — texture-detail quality + miniature tilt-shift.
+// The modal below is only a PAINTER for the store; `iso/game.ts` subscribes
+// to the same store and does the actual loading/capping, so `__iso.graphics`
+// and the ⚙ panel can never disagree with what the renderer is doing.
+import {
+  currentGraphics, setGraphics, subscribeGraphics,
+  QUALITY_KEYS, QUALITY_LABEL, QUALITY_NOTE, type GraphicsSettings,
+} from "../iso/graphics";
 import type { Cue } from "../audio/cues";
 // PP-14b: the tycoon portraits live with the NOIR mugshots further down — one
 // set of faces, so the start-screen pick and the dossiers read the same files.
@@ -298,6 +306,23 @@ export function createOriginalUi(
   soundBtn.onclick = () => { sfx.toggle(); };
   registerSoundPainter((on) => paintSound(on));
   right.appendChild(soundBtn);
+  // GFX-01: the video-settings button. The glyph stays the same — the state
+  // rides on the tooltip and the pressed aria flag, because the board theme
+  // promises one icon per concern and ⚙ already reads "this is the machine
+  // room" next to 🔊/🎯/❔.
+  const gfxBtn = h("button", "icon-btn gfx-btn", "⚙︎");
+  gfxBtn.id = "iso-graphics";
+  gfxBtn.type = "button";
+  gfxBtn.dataset.act = "graphics";
+  const paintGfxBtn = (g: GraphicsSettings) => {
+    gfxBtn.title = `Graphics: ${QUALITY_LABEL[g.quality]} detail${g.miniature ? " · miniature view on" : ""}`;
+    gfxBtn.setAttribute("aria-label", "Graphics settings");
+    gfxBtn.classList.toggle("gfx-on", g.miniature || g.quality !== "high");
+  };
+  paintGfxBtn(currentGraphics());
+  subscribeGraphics(paintGfxBtn);
+  gfxBtn.onclick = () => graphicsModal();
+  right.appendChild(gfxBtn);
   const fitBtn = h("button", "icon-btn", "🎯");
   fitBtn.title = "Recenter map";
   fitBtn.dataset.act = "recenter";
@@ -1645,6 +1670,67 @@ export function createOriginalUi(
   let hudFreeTrack = 0;
   /** The replayed tour, while it is open — held so ❔ cannot stack a second. */
   let tourView: TutorialHandle | null = null;
+
+  /**
+   * GFX-01: the video-settings panel. It WRITES TO THE STORE and paints from
+   * the store — never the other way round — so every control reflects every
+   * source (this click, the debug console, a second tab's import would even
+   * be fine). The quality buttons apply live; the heavy half (fetching or
+   * freeing 2× bitmaps) happens in `game.ts`'s subscriber.
+   */
+  function graphicsModal() {
+    sfx.play("open");
+    modalRoot.classList.remove("hidden");
+    modalRoot.innerHTML = `
+      <div class="modal-back"></div>
+      <div class="modal box small gfx-modal">
+        <h2>Graphics</h2>
+        <p class="sub">How the map is drawn. Both settings apply instantly and are remembered for the next game.</p>
+        <div class="gfx-row">
+          <div class="gfx-copy"><h3>Texture detail</h3><p id="gfxNote"></p></div>
+          <div class="gfx-seg" id="gfxQuality" role="radiogroup" aria-label="Texture detail"></div>
+        </div>
+        <div class="gfx-row">
+          <div class="gfx-copy"><h3>Miniature view</h3><p>Tilt-shift: a sharp band across the middle, the rest softly blurred, colours popped — the island reads as a tiny model.</p></div>
+          <button type="button" class="gfx-switch" id="gfxMini" role="switch">OFF</button>
+        </div>
+        <div class="confirm-row">
+          <button class="big-btn" id="gfxClose">Done</button>
+        </div>
+      </div>`;
+    const seg = modalRoot.querySelector("#gfxQuality") as HTMLElement;
+    const note = modalRoot.querySelector("#gfxNote") as HTMLElement;
+    const miniBtn = modalRoot.querySelector("#gfxMini") as HTMLButtonElement;
+    for (const q of QUALITY_KEYS) {
+      const b = h("button", undefined, QUALITY_LABEL[q]);
+      b.type = "button";
+      b.dataset.q = q;
+      b.setAttribute("role", "radio");
+      b.onclick = () => { setGraphics({ quality: q }); };
+      seg.appendChild(b);
+    }
+    miniBtn.onclick = () => { setGraphics({ miniature: !currentGraphics().miniature }); };
+    const paint = (g: GraphicsSettings) => {
+      note.textContent = QUALITY_NOTE[g.quality];
+      for (const b of Array.from(seg.children) as HTMLButtonElement[]) {
+        const on = b.dataset.q === g.quality;
+        b.classList.toggle("on", on);
+        b.setAttribute("aria-checked", String(on));
+      }
+      miniBtn.textContent = g.miniature ? "ON" : "OFF";
+      miniBtn.setAttribute("aria-checked", String(g.miniature));
+      miniBtn.classList.toggle("on", g.miniature);
+    };
+    paint(currentGraphics());
+    const unsub = subscribeGraphics(paint);
+    const shut = () => {
+      unsub();
+      sfx.play("close");
+      modalRoot.classList.add("hidden");
+    };
+    (modalRoot.querySelector("#gfxClose") as HTMLElement).onclick = shut;
+    (modalRoot.querySelector(".modal-back") as HTMLElement).onclick = shut;
+  }
 
   function helpModal() {
     sfx.play("open");

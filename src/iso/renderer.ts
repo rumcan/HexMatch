@@ -350,6 +350,8 @@ export interface RendererCanvases {
  */
 export interface RenderDiagnostics {
   camera: { zoom: number; vw: number; vh: number; x: number; y: number };
+  /** GFX-01: the pixel-detail cap in force and the level sampled for `zoom`. */
+  detail: { cap: number; sampled: number };
   cull: { pad: number; x0: number; y0: number; x1: number; y1: number };
   chunkCacheEntries: number;
   /** Road renderer mode, texture readiness and cache accounting. */
@@ -661,6 +663,25 @@ export class IsoRenderer {
   setOverlayMotion(on: boolean): void {
     this.overlayArt.reducedMotion = !on;
   }
+
+  /**
+   * GFX-01: re-aim the pixel-detail cap live. Everything at or below `cap`
+   * must already be loaded (the game's `applyQuality` does that first); the
+   * atlas is capped, anything above it is pruned — freeing the big bitmaps
+   * when the player steps DOWN to Medium/Low — and the ghost cache and every
+   * chunk cache are dropped so the new texel density reaches the screen on
+   * the very next frame. Renderer/atlas state only, like the A/B switches:
+   * never on the save format, never on the wire.
+   */
+  setDetailCap(cap: number): void {
+    if (this.atlas.detailCap === cap) return;
+    this.atlas.detailCap = cap;
+    this.atlas.pruneDetail();
+    this.overlayArt.clearCache();
+    this.invalidateAll();
+  }
+
+  get detailCap(): number { return this.atlas.detailCap; }
 
   /** Overlay mode + last frame's paint facts, for `__iso.rendering()`. */
   overlayDiagnostics(): OverlayDiagnostics {
@@ -982,6 +1003,13 @@ export class IsoRenderer {
   /** Draw one placed sprite; false when its image is not loaded. */
   private blit(ctx: Ctx2D, p: Placed, timeMs: number): boolean {
     const z = this.cam.zoom;
+    // GFX-01: under a quality cap the LOADED art may be a coarser zoom than
+    // the camera's. The source rect comes from the sampled level, the
+    // destination rect from the camera level — the nearest-neighbour upscale
+    // (smoothing is off on both sprite contexts) is the whole look of
+    // Medium/Low, and at High `atlasZoomFor(z) === z` so the two rects are
+    // identical and nothing scales, exactly as the 1×/0.5×/2× design intended.
+    const az = this.atlas.atlasZoomFor(z);
     // W-series: roads blit from the ROADS atlas, buildings from the BUILDINGS
     // atlas (separate PNG layer atlases, identical rect layout); anything
     // else falls back to the monolithic image (layer sets unloaded).
@@ -989,21 +1017,22 @@ export class IsoRenderer {
     if (!img) return false;
     this.drawnSprites.add(p.sprite);
     const frame = p.frame ?? this.atlas.frameAt(p.def, timeMs);
-    // Source rect in the ZOOMED atlas — never the raw 1× rect scaled with a
+    // Source rect in the sampled atlas — never the raw 1× rect scaled with a
     // multiplication (the packer rounds both position and size at each zoom).
-    const src = this.atlas.zoomFrameRect(p.def, frame, z);
+    const src = this.atlas.zoomFrameRect(p.def, frame, az);
+    const dst = az === z ? src : this.atlas.zoomFrameRect(p.def, frame, z);
     const [sx, sy] = worldToScreen(this.cam, p.wx, p.wy);
     ctx.drawImage(
       img as unknown as CanvasImageSource,
       src.x, src.y, src.w, src.h,
-      Math.floor(sx), Math.floor(sy), src.w, src.h,
+      Math.floor(sx), Math.floor(sy), dst.w, dst.h,
     );
     if (this.logRender) this.trace("blit", {
       sprite: p.sprite, tile: [p.tx, p.ty], def: p.def,
-      z, context: p.ref != null ? "world" : "overlay",
+      z, sampled: az, context: p.ref != null ? "world" : "overlay",
       anchor: p.def.anchor, world: [p.wx, p.wy],
       screen: [Math.floor(sx), Math.floor(sy)],
-      src, dest: [Math.floor(sx), Math.floor(sy), src.w, src.h],
+      src, dest: [Math.floor(sx), Math.floor(sy), dst.w, dst.h],
       depthKey: p.key,
     });
     return true;
@@ -1097,6 +1126,9 @@ export class IsoRenderer {
     }
     return {
       camera: { zoom: this.cam.zoom, vw: this.cam.vw, vh: this.cam.vh, x: this.cam.x, y: this.cam.y },
+      /** GFX-01: what the quality preset capped art loading to, and which
+       *  level the last frame actually sampled. */
+      detail: { cap: this.atlas.detailCap, sampled: this.atlas.atlasZoomFor(this.cam.zoom) },
       cull: { pad: this.pad, x0: range.x0, y0: range.y0, x1: range.x1, y1: range.y1 },
       chunkCacheEntries: this.groundChunkCache.size,
       roads: this.roadDiagnostics(),
