@@ -179,4 +179,36 @@ describe("#122 contract status badge layout", () => {
       expect(rule).not.toMatch(/white-space\s*:\s*nowrap/);
     }
   });
+
+  it("lets the card column shrink instead of spilling out of a clipping panel", () => {
+    // Follow-on to #122: the badge no longer overlaps, but a card can still
+    // lose its right edge. `.start-screen` clips its overflow, and the panel's
+    // content box is narrower than the grid's 250px floor below ~370px of
+    // viewport (and at 200% zoom) — so the floor has to yield to the width
+    // actually available rather than overflow it.
+    const css = stylesCss();
+    const listRule = css.match(/\.chapter-list\s*\{[^}]*\}/s)?.[0] ?? "";
+    expect(listRule).not.toBe("");
+    expect(listRule).toMatch(/minmax\(\s*min\(\s*250px\s*,\s*100%\s*\)/);
+    expect(css).toMatch(/\.start-screen\s*\{[^}]*overflow\s*:\s*hidden/);
+  });
+
+  it("names the filed result to a screen reader, not only in the badge", async () => {
+    // The badge's text sits inside the card's <button>, but the button's
+    // aria-label wins the accessible name — so without this the won/lost
+    // result is invisible to anything that reads the label.
+    localStorage.setItem(STORY_STORAGE_KEY, JSON.stringify({
+      unlocked: 3,
+      results: { inheritance: "loss", "toll-king": "win" },
+      introSeen: true,
+      advisor: true,
+    }));
+    await renderStory();
+    const labels = cards().map((c) => (c as HTMLButtonElement).getAttribute("aria-label") ?? "");
+    expect(labels[0]).toContain("filed, lost");
+    expect(labels[1]).toContain("filed, won");
+    // An unplayed contract carries no result, and a sealed one still says so.
+    expect(labels[2]).not.toContain("filed");
+    expect(labels[4]).toContain("sealed");
+  });
 });

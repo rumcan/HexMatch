@@ -87,7 +87,14 @@ class FakeClientRoom {
       | undefined;
     fn?.(msg);
   }
-  leave(): void {}
+  leave(): void { this.leaveCount++; }
+  /** How many times `leave()` was called — #121's "hands the room back". */
+  leaveCount = 0;
+  /** #121: the gateway's roster event, as `removePlayer` broadcasts it to the
+   *  members still in the room. */
+  firePlayerLeft(playerId: string): void {
+    (this.events.onPlayerLeft as ((id: string) => void) | undefined)?.(playerId);
+  }
   /** This client's OUTBOX, filtered to one message type. */
   frames<T extends HexProtocol["type"]>(type: T): Extract<HexProtocol, { type: T }>[] {
     return this.sent.filter((m) => m.type === type) as Extract<HexProtocol, { type: T }>[];
@@ -533,5 +540,88 @@ describe("MP-05 an intent and its result, over the pair", () => {
     expect(got[0].tiles).toContainEqual({ i: 9 * MAP_W + 9, dirt: 16, road: 0, owner: 1, upgraded: 0 });
     h.dispose();
     g.dispose();
+  });
+});
+
+// ── #121: leaving the room ────────────────────────────────────────────────
+//
+// Two halves of the same report. `dispose()` used to clear local state and
+// stop there — the socket stayed open, so a player who quit to the menu was
+// still an occupied seat in a room they were no longer in. And a GUEST's
+// departure was invisible: the relay only broadcasts when the HOST goes, so
+// the host kept simulating against an empty seat. The gateway's own roster
+// event covers both directions, which is why the wire needed no new message.
+describe("#121 leaving a room", () => {
+  it("hands the room back on dispose, and only once", () => {
+    const session = new NetSession({ room: asRoom(host), role: "host" });
+    session.attach({});
+    expect(host.leaveCount).toBe(0);
+    session.dispose();
+    session.dispose();                       // a navigation can run cleanup twice
+    expect(host.leaveCount).toBe(1);
+  });
+
+  it("drops its hooks before the socket closes, so teardown paints nothing", () => {
+    const states: string[] = [];
+    const session = new NetSession({ room: asRoom(host), role: "host" });
+    session.attach({ status: (s) => states.push(s) });
+    session.dispose();
+    // Closing the socket is what fires this; a hook answered now would toast
+    // over whatever the player navigated to.
+    (host as unknown as { events: Record<string, () => void> }).events.onDisconnect?.();
+    expect(states).toEqual([]);
+  });
+
+  it("tells the host the guest went — the direction the relay never broadcast", () => {
+    const world = hostWorld();
+    const left: (string | null)[] = [];
+    const session = new NetSession({ room: asRoom(host), role: "host" });
+    session.attach({ fullState: () => world.snapshot(), opponentLeft: (n) => left.push(n) });
+    host.deliver(welcome(5));
+    expect(session.hasOpponent).toBe(true);
+
+    host.firePlayerLeft("guest-socket");
+    expect(left).toEqual(["Bo"]);
+    expect(session.hasOpponent).toBe(false);  // the roster is no longer a lie
+    // And the match is over: nothing more is published into the empty room.
+    const before = host.frames("delta").length + host.frames("snapshot-chunk").length;
+    expect(session.publishTrack(world.track, dirtyTiles, {
+      t: 0, harvesters: world.harvesters, factories: world.factories,
+      players: world.players, setupPhase: false, won: false,
+    })).toBe("idle");
+    expect(host.frames("delta").length + host.frames("snapshot-chunk").length).toBe(before);
+    session.dispose();
+  });
+
+  it("tells the guest the host went, and says who when the roster never arrived", () => {
+    const left: (string | null)[] = [];
+    const session = new NetSession({ room: asRoom(guest), role: "guest" });
+    session.attach({ opponentLeft: (n) => left.push(n) });
+    guest.firePlayerLeft("host-socket");
+    expect(left).toEqual([null]);            // no welcome, so no name to give
+    expect(session.awaitingState).toBe(true);
+    session.dispose();
+  });
+
+  it("ignores the gateway echoing our own id back", () => {
+    const left: (string | null)[] = [];
+    const session = new NetSession({ room: asRoom(host), role: "host" });
+    session.attach({ opponentLeft: (n) => left.push(n) });
+    host.deliver(welcome(5));
+    host.firePlayerLeft("host-socket");      // our own departure, not theirs
+    expect(left).toEqual([]);
+    expect(session.hasOpponent).toBe(true);
+    session.dispose();
+  });
+
+  it("reports nobody twice — a second departure cannot fire on a halted session", () => {
+    const left: (string | null)[] = [];
+    const session = new NetSession({ room: asRoom(host), role: "host" });
+    session.attach({ opponentLeft: (n) => left.push(n) });
+    host.deliver(welcome(5));
+    host.firePlayerLeft("guest-socket");
+    host.firePlayerLeft("guest-socket");
+    expect(left).toEqual(["Bo"]);
+    session.dispose();
   });
 });

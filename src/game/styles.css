@@ -3413,7 +3413,11 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .start-panel.story { width: min(900px, 100%); text-align: left; }
 .start-panel.story h1 { text-align: center; }
 .start-panel.story .start-subtitle { text-align: center; }
-.chapter-list { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); margin: 18px 0; }
+/* #122: `minmax(min(250px, 100%), …)` rather than a flat 250px floor — the
+   panel's content box is narrower than 250px below ~370px of viewport (and at
+   200% zoom), and `.start-screen` clips its overflow, so a hard floor made
+   the card spill out of the panel and lose its right edge. */
+.chapter-list { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr)); margin: 18px 0; }
 .chapter-card {
   position: relative; display: flex; gap: 12px; align-items: flex-start;
   padding: 13px 14px; text-align: left; cursor: pointer;

@@ -322,7 +322,7 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
                   className={`chapter-card${open ? "" : " locked"}`}
                   style={{ "--cc": rival.colour } as CSSProperties}
                   disabled={!open}
-                  aria-label={`${chapter.name}${open ? "" : " (sealed)"}`}
+                  aria-label={`${chapter.name}${result === "win" ? " — filed, won" : result === "loss" ? " — filed, lost" : ""}${open ? "" : " (sealed)"}`}
                   onClick={() => onStart({ mode: "story", chapter: chapter.id, portrait })}>
                   <span className="cc-face" aria-hidden="true"
                     style={face.pos
