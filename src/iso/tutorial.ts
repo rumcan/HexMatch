@@ -57,6 +57,14 @@ import { sfx } from "../audio/sfx";
 // same way ui.ts's GEM_ART does — one set of tokens everywhere, so the tour
 // shows the art the player is about to look at rather than a stand-in.
 import { GEM_ART } from "../game/gem-art";
+// Real screenshots of the game, one per step that shows the map or the HUD.
+// Retake them with tools/capture-tutorial-shots.cjs after an art change.
+import shotPlant from "../../assets/tutorial/plant.webp";
+import shotDepot from "../../assets/tutorial/depot.webp";
+import shotRoads from "../../assets/tutorial/roads.webp";
+import shotBoard from "../../assets/tutorial/board.webp";
+import shotExpand from "../../assets/tutorial/expand.webp";
+import shotDesk from "../../assets/tutorial/desk.webp";
 
 // ── the preference ────────────────────────────────────────────────────────
 /** One key, one meaning: the player pressed *Never show this again*. */
@@ -135,6 +143,8 @@ export interface BoardCell { cargo: Cargo | null; token?: 1 | 2; hit?: boolean }
 /** One figure per step, at most. A union so the projector stays exhaustive. */
 export type TutorialFigure =
   | { kind: "chain"; nodes: ChainNode[]; caption?: string }
+  /** A real screenshot of the game (tools/capture-tutorial-shots.cjs). */
+  | { kind: "shot"; src: string; alt: string; caption?: string }
   | { kind: "iso"; tiles: IsoTile[]; caption?: string }
   | { kind: "board"; cols: number; cells: BoardCell[]; caption?: string }
   | {
@@ -222,25 +232,10 @@ export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
       title: "Raise your Processing Plant",
       lede: "The match opens with one job: put your Processing Plant on the map.",
       figure: {
-        kind: "iso",
-        caption: "The footprint must share an EDGE with a town — green is legal, red is refused.",
-        tiles: [
-          // the town
-          { x: 1, y: 1, kind: "town", mark: "🏘️" },
-          { x: 2, y: 1, kind: "town" },
-          { x: 1, y: 2, kind: "town" },
-          { x: 2, y: 2, kind: "town" },
-          // legal: this footprint touches the town along the lattice
-          { x: 3, y: 1, kind: "plant", ring: "good" },
-          { x: 4, y: 1, kind: "plant", ring: "good", mark: "🏭" },
-          { x: 3, y: 2, kind: "plant", ring: "good" },
-          { x: 4, y: 2, kind: "plant", ring: "good" },
-          // refused: the same footprint, with no town tile beside any of it
-          { x: 1, y: 4, kind: "grass", ring: "bad" },
-          { x: 2, y: 4, kind: "grass", ring: "bad", mark: "🏭" },
-          { x: 1, y: 5, kind: "grass", ring: "bad" },
-          { x: 2, y: 5, kind: "grass", ring: "bad" },
-        ],
+        kind: "shot",
+        src: shotPlant,
+        alt: "The Processing Plant's glowing footprint previewed on a site beside a town",
+        caption: "Hover a site beside a town: the footprint lights up where the plant will stand. A site with no town beside it is refused.",
       },
       points: [
         "It is <b>free</b>, and it is the delivery end of every route you will ever build — nothing pays until cargo can reach one.",
@@ -256,19 +251,10 @@ export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
       title: "Build a Depot beside a resource node",
       lede: "Build → Depot, then click the ground you want it on.",
       figure: {
-        kind: "iso",
-        caption: "The dotted 4×4 is the catchment: the farm inside it is collected, the ore mine outside it is not.",
-        tiles: [
-          // the Depot's 4×4 catchment, dotted
-          ...rect(0, 0, 4, 4, "grass", "route"),
-          // painted over the patch: the industry it collects, and the Depot
-          { x: 0, y: 0, kind: "industry", mark: "🌾" },
-          { x: 2, y: 1, kind: "depot", mark: "🛖", ring: "good" },
-          // and ground outside it, where a Depot would collect nothing
-          { x: 4, y: 0, kind: "industry", mark: "⛏️" },
-          { x: 4, y: 1, kind: "grass" },
-          { x: 4, y: 2, kind: "rough" },
-        ],
+        kind: "shot",
+        src: shotDepot,
+        alt: "A Depot previewed near an ore mine, with its catchment shaded around it",
+        caption: "The shaded square around the Depot is its 4×4 catchment — the ore mine it reaches is what this Depot collects.",
       },
       points: [
         "A Depot needs an industry inside its <b>4×4 catchment</b> — hover shows the tiles it would take, and the inspector says why a spot is refused.",
@@ -283,19 +269,10 @@ export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
       title: "Join them with roads",
       lede: "Build → Dirt Road, then drag from the Depot to your Plant.",
       figure: {
-        kind: "iso",
-        caption: "One continuous run is all it takes: the lorry appears the moment the ends meet.",
-        tiles: [
-          { x: 0, y: 1, kind: "industry", mark: "⛏️" },
-          { x: 1, y: 1, kind: "depot", mark: "🛖" },
-          { x: 2, y: 1, kind: "dirt", ring: "route" },
-          { x: 3, y: 1, kind: "dirt", ring: "route" },
-          { x: 3, y: 2, kind: "road", ring: "route", mark: "🚚" },
-          { x: 3, y: 3, kind: "road", ring: "route" },
-          { x: 4, y: 3, kind: "plant", mark: "🏭" },
-          { x: 0, y: 3, kind: "town" },
-          { x: 1, y: 3, kind: "town" },
-        ],
+        kind: "shot",
+        src: shotRoads,
+        alt: "A short dirt road joining the Depot to the Plant, with a lorry hauling ore along it",
+        caption: "One continuous run is all it takes: the lorry starts hauling the moment the Depot and the Plant are joined.",
       },
       points: [
         `<b>Dirt Road</b> is ${dirt} a tile${allowance} — the banner counts them down as you drag.`,
@@ -311,15 +288,10 @@ export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
       title: "Play match-3 in the plant",
       lede: `The ${BOARD_W}×${BOARD_H} board in the right-hand column is your Processing Plant floor.`,
       figure: {
-        kind: "board",
-        cols: 5,
-        caption: "Only gems wearing a numbered token pay. Swap two neighbours to line up 3 or more.",
-        cells: [
-          { cargo: "wood" }, { cargo: "ore", token: 1, hit: true }, { cargo: "grain" }, { cargo: "stone" }, { cargo: "wood" },
-          { cargo: "grain" }, { cargo: "ore", token: 1, hit: true }, { cargo: "oil" }, { cargo: "wood" }, { cargo: "grain" },
-          { cargo: "stone" }, { cargo: "ore", token: 2, hit: true }, { cargo: "wood" }, { cargo: "ore" }, { cargo: "oil" },
-          { cargo: "wood" }, { cargo: "grain" }, { cargo: "stone" }, { cargo: "grain" }, { cargo: "stone" },
-        ],
+        kind: "shot",
+        src: shotBoard,
+        alt: "The Processing Plant board, with ore gems wearing numbered token badges",
+        caption: "Gems wearing a numbered badge are tokened — here, the ore this network reaches. Only those pay. Swap two neighbours to line up 3 or more.",
       },
       points: [
         "Each delivery stamps a <b>numbered cargo token</b> onto a gem of that colour. Swap two <b>adjacent</b> gems to make a line of three or more.",
@@ -334,6 +306,12 @@ export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
       kicker: "STEP 5 · SPEND IT",
       title: "Turn cargo into empire",
       lede: "Matched cargo lands in your purse — the chips along the bottom of the screen.",
+      figure: {
+        kind: "shot",
+        src: shotExpand,
+        alt: "The purse chips along the bottom of the screen and the Bank tab open on the right",
+        caption: "Your purse runs along the bottom; the Bank tab trades four of one good for one of another.",
+      },
       points: [
         "That purse is the only money in the game. It buys Depots, roads, plants, Security Forces and Repair Crews — every price is printed on the button before you click it.",
         "<b>Ore is the gate.</b> Dirt Road needs only wood and stone, but paving, plants and the second Depot all want ore, so an Ore Mine is the first real objective.",
@@ -380,6 +358,12 @@ export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
       id: "desk",
       kicker: "THE DESK",
       title: "Controls, and where everything lives",
+      figure: {
+        kind: "shot",
+        src: shotDesk,
+        alt: "The whole game screen: the Build column, the map, the Processing Plant board and the purse",
+        caption: "Build on the left, the map in the middle, your plant and the tabs on the right, the purse along the bottom.",
+      },
       points: [
         "<b>Left button</b> places and drags roads; <b>WASD</b> pans the camera (Shift doubles the speed), and so does the <b>middle button</b> (one finger drags the map on touch, two pinch-zoom); <b>wheel</b> zooms; 🎯 recentres on your plant.",
         "<b>Right-click drops the tool you are holding</b> back to the <b>Select</b> pointer — hover it over a resource, town, plant or depot and the inspector says exactly what it is. <b>Q</b> does the same from the keyboard.",
@@ -390,23 +374,6 @@ export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
       tip: "Nothing at the start is timed — the rival does not move until your Plant and first Depot are down. Replaying this tour from ❔ mid-game does not pause it.",
     },
   ];
-}
-
-/**
- * A w×h patch of one tile kind, for the mini-map figures. Tiles are painted in
- * array order and a later diamond covers an earlier one at the same lattice
- * coordinate, so a patch is laid down first and the building that sits on it is
- * simply listed after — no bookkeeping about which cell was replaced.
- */
-function rect(
-  x0: number, y0: number, w: number, h: number,
-  kind: IsoTileKind, ring?: IsoTile["ring"],
-): IsoTile[] {
-  const out: IsoTile[] = [];
-  for (let y = y0; y < y0 + h; y++) {
-    for (let x = x0; x < x0 + w; x++) out.push({ x, y, kind, ring });
-  }
-  return out;
 }
 
 // ── the projector ─────────────────────────────────────────────────────────
@@ -469,6 +436,12 @@ function figureNode(fig: TutorialFigure): HTMLElement {
     wrap.appendChild(row);
   } else if (fig.kind === "iso") {
     wrap.appendChild(isoNode(fig.tiles));
+  } else if (fig.kind === "shot") {
+    const img = el("img", "tut-shot");
+    img.src = fig.src;
+    img.alt = fig.alt;
+    img.decoding = "async";
+    wrap.appendChild(img);
   } else if (fig.kind === "board") {
     const grid = el("div", "tut-board");
     grid.style.setProperty("--tut-cols", String(fig.cols));
