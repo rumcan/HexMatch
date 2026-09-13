@@ -50,12 +50,12 @@
 // the first 10★. Default one seed keeps the suite inside a few minutes; the
 // playtest-report spread:
 //
-//   AI_RACE_SEEDS=1337,7,42 AI_RACE_MINUTES=40 npx vitest run tests/unit/iso-skill-calibration.test.ts
+//   AI_RACE_SEEDS=1337,7,42 AI_RACE_MINUTES=40 AI_RACE_DIAGNOSTICS=1 npx vitest run tests/unit/iso-skill-calibration.test.ts
 //
 // The printed table it produces is the one quoted in
 // `docs/playtest-reports/2026-09-10-ai-skills.md`.
 // ══════════════════════════════════════════════════════════════════════════
-import { describe, it, expect } from "vitest";
+import { beforeAll, describe, it, expect } from "vitest";
 import { VP_TARGET } from "../../src/iso/config";
 import { RIVAL_SKILLS, type SkillKey } from "../../src/iso/skill";
 import { victoryBreakdown } from "../../src/iso/victory";
@@ -69,6 +69,7 @@ const RACE_MINUTES = Number(process.env.AI_RACE_MINUTES ?? 36);
 // CI gates the seed TODAY's economy separates on (see the header note: 1337
 // regressed into Finding 3's dense regime after the AI-03c re-tune).
 const SEEDS = (process.env.AI_RACE_SEEDS ?? "7").split(",").map((x) => Number(x));
+const DIAGNOSTICS = process.env.AI_RACE_DIAGNOSTICS === "1";
 
 /** When a seat crossed `vp`, or null inside this window. */
 const at = (r: Race, id: "you" | "ai", vp: number): number | null =>
@@ -80,7 +81,7 @@ const fmt = (ms: number | null) => (ms === null ? "   —  " : MIN(ms).padStart(
 function mirror(seed: number, key: SkillKey): Race {
   const r = runRace(seed, { minutes: RACE_MINUTES, skills: [key, key] });
   const a = r.seats[0], b = r.seats[1];
-  console.log(
+  if (DIAGNOSTICS) console.log(
     `  ${key.padEnd(6)} seed ${r.seed} │ 1★ ${fmt(at(r, "you", 1))} / ${fmt(at(r, "ai", 1))}`
     + ` │ 5★ ${fmt(at(r, "you", 5))} / ${fmt(at(r, "ai", 5))}`
     + ` │ 10★ ${fmt(at(r, "you", VP_TARGET))} / ${fmt(at(r, "ai", VP_TARGET))}`
@@ -95,19 +96,18 @@ describe("AI-01 every difficulty finishes a mirror match", () => {
   const presets: SkillKey[] = ["easy", "normal", "hard"];
   const mirrors = new Map<string, Race>();
 
-  it("prints the ladder (seat A / seat B)", () => {
+  beforeAll(() => {
+    if (DIAGNOSTICS) console.log(`AI-01 mirror matches (window ${RACE_MINUTES}m):`);
     for (const seed of SEEDS) {
-      console.log(`AI-01 mirror matches (window ${RACE_MINUTES}m):`);
       for (const key of presets) mirrors.set(`${seed}:${key}`, mirror(seed, key));
     }
-    expect(mirrors.size).toBe(SEEDS.length * presets.length);
   }, 1_800_000);
 
   it("every preset reaches the win line, and the trailer was still racing", () => {
     for (const seed of SEEDS) {
       for (const key of presets) {
         const r = mirrors.get(`${seed}:${key}`);
-        expect(r, `run the ladder first`).toBeTruthy();
+        expect(r, `seed ${seed}/${key}: mirror fixture is missing`).toBeTruthy();
         expect(r!.winner, `seed ${seed}: "${key}" seats never finish a game`).toBeTruthy();
         // …and the loser of a mirror was racing, not parked. The race loop
         // STOPS when the winner crosses the line, so the trailer's total is a
@@ -157,21 +157,30 @@ describe("AI-01 the ladder holds head-to-head", () => {
   // as the presets themselves). A difficulty order that only shows from the
   // good chair is the chair, so the assertions POOL both orientations and
   // read the chair-1 race (where both presets provably finish) on its own.
-  const tops = SEEDS.map((seed) => ({
-    seed,
-    hardVsEasy: runRace(seed, { minutes: RACE_MINUTES, skills: ["hard", "easy"] }),
-    easyVsHard: runRace(seed, { minutes: RACE_MINUTES, skills: ["easy", "hard"] }),
-    // The easy-vs-normal probe runs its FULL window (24m of simulation, the
-    // win long since decided): posts fire only when a seat's surplus exceeds
-    // its plan's need plus the bank's 4-unit lot, and in today's tighter
-    // economy that surplus first appears well after the winner has crossed
-    // the line — the stopped race ended offerless (0+0 on the gate seed).
-    easyVsNormal: runRace(seed, {
-      minutes: 24, skills: ["easy", "normal"], fullWindow: true,
-    }),
-  }));
+  type HeadToHead = {
+    seed: number;
+    hardVsEasy: Race;
+    easyVsHard: Race;
+    easyVsNormal: Race;
+  };
+  let tops: HeadToHead[] = [];
 
-  it("prints the head-to-head table", () => {
+  beforeAll(() => {
+    tops = SEEDS.map((seed) => ({
+      seed,
+      hardVsEasy: runRace(seed, { minutes: RACE_MINUTES, skills: ["hard", "easy"] }),
+      easyVsHard: runRace(seed, { minutes: RACE_MINUTES, skills: ["easy", "hard"] }),
+      // The easy-vs-normal probe runs its FULL window (24m of simulation, the
+      // win long since decided): posts fire only when a seat's surplus exceeds
+      // its plan's need plus the bank's 4-unit lot, and in today's tighter
+      // economy that surplus first appears well after the winner has crossed
+      // the line — the stopped race ended offerless (0+0 on the gate seed).
+      easyVsNormal: runRace(seed, {
+        minutes: 24, skills: ["easy", "normal"], fullWindow: true,
+      }),
+    }));
+
+    if (!DIAGNOSTICS) return;
     for (const t of tops) {
       console.log(`AI-01 head-to-head, seed ${t.seed} (window ${RACE_MINUTES}m)`);
       for (const [label, r] of [["hard vs easy", t.hardVsEasy], ["easy vs hard", t.easyVsHard], ["easy vs normal", t.easyVsNormal]] as const) {
@@ -184,7 +193,6 @@ describe("AI-01 the ladder holds head-to-head", () => {
         );
       }
     }
-    expect(tops.length).toBe(SEEDS.length);
   }, 1_800_000);
 
   it("hard holds its own over both chairs, and wins the chair-1 race outright", () => {
@@ -219,7 +227,7 @@ describe("AI-01 the ladder holds head-to-head", () => {
 
   it("easy is not slow by being broken: it expands and uses the market", () => {
     for (const { seed, easyVsNormal: r } of tops) {
-      const easy = r.seats[0], normal = r.seats[1];
+      const easy = r.seats[0];
       // both expanded onto the map (the "passive rival" complaint this ticket
       // closed): depots placed and paving started inside the window.
       expect(r.eco.harvesters.filter((h) => h.owner === easy.id).length,
