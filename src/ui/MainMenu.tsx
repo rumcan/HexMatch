@@ -117,9 +117,6 @@ export default function MainMenu({ onPlay }: MainMenuProps) {
               : "No contracts filed. The first one is open."}
         </p>
       </div>
-      <p className="menu-foot">
-        Graphics derived from OpenGFX (© the OpenGFX team, GPLv2) · type: Cinzel, Barlow, Special Elite (SIL OFL)
-      </p>
       {howTo ? <div className="menu-howto" ref={howToRef} /> : null}
       {settings ? <div className="menu-howto" ref={settingsRef} /> : null}
     </main>
