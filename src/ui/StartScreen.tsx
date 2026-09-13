@@ -321,23 +321,30 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
                   className={`chapter-card${open ? "" : " locked"}`}
                   style={{ "--cc": rival.colour } as CSSProperties}
                   disabled={!open}
-                  aria-label={`${chapter.name}${open ? "" : " (sealed)"}`}
+                  aria-label={`${chapter.name}${result === "win" ? " — filed, won" : result === "loss" ? " — filed, lost" : ""}${open ? "" : " (sealed)"}`}
                   onClick={() => onStart({ mode: "story", chapter: chapter.id, portrait })}>
                   <span className="cc-face" aria-hidden="true"
                     style={face.pos
                       ? { backgroundImage: `url(${face.url})`, backgroundSize: "200% 200%", backgroundPosition: `${face.pos[0]}% ${face.pos[1]}%` }
                       : { backgroundImage: `url(${face.url})`, backgroundSize: "cover", backgroundPosition: "center 20%" }} />
                   <span className="cc-body">
-                    <span className="cc-kicker">{chapter.kicker}</span>
+                    {/* #122: the status badge shares a row with the kicker
+                        instead of floating over the card's corner. As an
+                        absolutely positioned plate it painted "Filed · lost"
+                        straight across "CONTRACT I · BLACKWOOD FREIGHT"; in
+                        flow the two can only sit side by side or stack. */}
+                    <span className="cc-head">
+                      <span className="cc-kicker">{chapter.kicker}</span>
+                      {result === "win"
+                        ? <span className="cc-seal">Filed · won</span>
+                        : result === "loss"
+                          ? <span className="cc-seal loss">Filed · lost</span>
+                          : open ? null : <span className="cc-lock" aria-hidden="true">🔒</span>}
+                    </span>
                     <span className="cc-name">{chapter.name}</span>
                     <span className="cc-brief">{chapter.brief}</span>
                     <span className="cc-meta">vs {rival.name} · first to {chapter.target}★ · {chapter.skill}</span>
                   </span>
-                  {result === "win"
-                    ? <span className="cc-seal">Filed · won</span>
-                    : result === "loss"
-                      ? <span className="cc-seal loss">Filed · lost</span>
-                      : open ? null : <span className="cc-lock" aria-hidden="true">🔒</span>}
                 </button>
               );
             })}

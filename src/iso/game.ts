@@ -148,6 +148,13 @@ import { createLoadingScreen } from "./loading-screen";
 // (plant → depot → road → board → expand → points) before the first click.
 import { showTutorial, type TutorialHandle } from "./tutorial";
 import { showSettingsSheet, type SettingsSheetHandle } from "./settings-sheet";
+// #121: the destructive asks are painted plates, not `window.confirm` — a
+// native dialog is answered `false` (with nothing on screen) inside a frame
+// the host sandboxes without `allow-modals`, which is how the hosted build
+// runs, and that read to the player as a dead button.
+import {
+  showConfirm, type ConfirmSheetHandle, type ConfirmSheetOptions,
+} from "./confirm-sheet";
 import {
   buildEnding, showEndingScreen, type DecisiveSource, type EndingScreenHandle,
 } from "./ending";
@@ -291,6 +298,16 @@ export interface PlayerState {
 type Phase = "setup-factory" | "setup-harvester" | "play" | "won";
 
 export interface Toast { text: string; kind: "good" | "bad" | "info"; until: number; }
+
+/**
+ * #121: a room username is another player's string, and both of the game's
+ * text sinks (`ui.toast`, `ui.showModal`) take HTML. The opponent-left line
+ * names who went, so the name crosses that boundary as text.
+ */
+const escText = (s: string): string => s.replace(
+  /[&<>"']/g,
+  (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!,
+);
 
 /**
  * MP-05 — how a match is being played (§9).
@@ -3147,6 +3164,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         toast(reason, "bad");
         ui.showModal(`<p>${reason}</p>`);
       },
+      opponentLeft: (username) => {
+        // #121: the far seat emptied, so the match is over but the board is
+        // still standing. Say it plainly instead of letting the host keep
+        // simulating against a seat nobody is in.
+        const who = username ? `${escText(username)} left` : "Your opponent left";
+        const line = `${who} the room — this match is over.`;
+        toast(line, "bad");
+        ui.showModal(`<p>${line}</p>`);
+      },
       status: (state) => {
         // A reconnect is exactly when a guest must re-pull state; the session
         // already asks, this just tells the player not to panic.
@@ -4206,6 +4232,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // The sheet handle and the menu's teardown live at function scope so the
   // dispose closure below can reach them (the listeners ride on `document`).
   let settingsView: SettingsSheetHandle | null = null;
+  /** #121: at most one question stands at a time — a repeat click on a
+   *  destructive door must not stack a second plate over the first. */
+  let confirmView: ConfirmSheetHandle | null = null;
   let menuTeardown: (() => void) | null = null;
   if (topRight) {
     const peek = document.createElement("button");
@@ -4269,15 +4298,37 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       void view.promise.then(() => { if (settingsView === view) settingsView = null; });
     });
     menuItem("How to Play", "the reference card, eight rules", () => ui.showHelp());
+    /**
+     * #121: one destructive ask, as a painted plate. A double click cannot
+     * stack a second question (the plate's backdrop covers the ☰ that opened
+     * it), and the handle is tracked so the menu's teardown closes it rather
+     * than orphaning it over a dead board.
+     */
+    const ask = (o: ConfirmSheetOptions): Promise<boolean> => {
+      if (confirmView) return Promise.resolve(false);
+      const view = showConfirm(ui.el, o);
+      confirmView = view;
+      return view.promise.then((ok) => {
+        if (confirmView === view) confirmView = null;
+        return ok;
+      });
+    };
     if (isSolo()) {
       // MP-05 unchanged: a RESTART is solo-only, in a room the session owns
       // the match. The confirm-and-clear flow is AI-03's verbatim.
       menuItem("New Game", "clears the save and the difficulty pick", () => {
-        if (!window.confirm("Start a new game? The save and your difficulty pick are cleared.")) return;
-        restartArmed = true; // do NOT let the pagehide autosave re-write the save
-        clearSave(saveKey);
-        try { localStorage.removeItem(SKILL_STORAGE_KEY); } catch { /* private mode */ }
-        location.reload();
+        void ask({
+          title: "Start a new game?",
+          body: "The save and your difficulty pick are cleared.",
+          confirmLabel: "Start over",
+          danger: true,
+        }).then((ok) => {
+          if (!ok) return;
+          restartArmed = true; // do NOT let the pagehide autosave re-write the save
+          clearSave(saveKey);
+          try { localStorage.removeItem(SKILL_STORAGE_KEY); } catch { /* private mode */ }
+          location.reload();
+        });
       });
     }
     if (opts.onQuitToMenu) {
@@ -4285,9 +4336,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         isSolo() ? "the match stays saved — Play resumes it" : "the other seat is told you left",
         () => {
           // A solo quit is plain navigation (the save holds the match); a
-          // room's quit strands the far seat, so that one confirms.
-          if (!isSolo() && !window.confirm("Leave this room and return to the main menu?")) return;
-          opts.onQuitToMenu?.();
+          // room's quit strands the far seat, so that one confirms — and the
+          // confirm is the sheet, because a native `window.confirm` is
+          // answered `false` with nothing on screen inside a host frame that
+          // sandboxes modals (#121: that silence was the whole bug report).
+          if (isSolo()) { opts.onQuitToMenu?.(); return; }
+          void ask({
+            title: "Leave this room?",
+            body: "You return to the main menu and the other seat is told you left.",
+            confirmLabel: "Leave room",
+            danger: true,
+          }).then((ok) => { if (ok) opts.onQuitToMenu?.(); });
         });
     }
 
@@ -4313,6 +4372,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       document.removeEventListener("keydown", onDocKey, true);
       settingsView?.destroy();
       settingsView = null;
+      // #121: a question still standing when the game dies must die with it —
+      // destroy() answers `false`, so the half-clicked door never runs either.
+      confirmView?.destroy();
+      confirmView = null;
     };
   }
 

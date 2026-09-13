@@ -111,6 +111,14 @@ export interface NetHooks {
   reject?: (reason: string) => void;
   /** Connection state changed. */
   status?: (state: ConnectionState) => void;
+  /**
+   * #121: the other seat emptied. `username` is the name the welcome carried,
+   * or null when the departure outran it. Distinct from `reject` on purpose:
+   * a host-left is a fatal error the guest cannot play through, whereas the
+   * opponent leaving ends a match that was still running — the player still
+   * has a board on screen and a door to walk out of.
+   */
+  opponentLeft?: (username: string | null) => void;
 }
 
 export interface NetSessionOptions {
@@ -146,6 +154,8 @@ export class NetSession {
   private noticeValue: string | null = null;
   private halted = false;
   private attached = false;
+  /** #121: `dispose()` releases the room exactly once, however often it runs. */
+  private disposed = false;
 
   constructor(opts: NetSessionOptions) {
     this.room = opts.room;
@@ -214,6 +224,12 @@ export class NetSession {
       // newcomer whose socket registers after the hook). Listen on both or the
       // first joiner never learns it is the host.
       onPrivateMessage: (msg) => this.receive(msg),
+      // #121: the room's roster event is the ONLY signal that works in both
+      // directions. The relay broadcasts a `reject` when the HOST goes, but a
+      // GUEST's departure is silent on the wire — so the host kept simulating
+      // a versus match against a seat that had already emptied. Riding the
+      // SDK's own event needs no new message type, and so no protocol bump.
+      onPlayerLeft: (playerId) => this.onPeerLeft(playerId),
       onDisconnect: () => this.hooks.status?.("disconnected"),
       onReconnecting: () => this.hooks.status?.("reconnecting"),
       onReconnected: () => {
@@ -242,11 +258,51 @@ export class NetSession {
     this.hooks.reject?.(reason);
   }
 
+  /**
+   * Leave the room and stop everything. Idempotent: `App.tsx` unmounts the
+   * match through `startIsoGame`'s cleanup, and a navigation can run that
+   * more than once for one match.
+   *
+   * #121: this is the one place a session's room is released. `leave()` closes
+   * the socket, and the socket closing is what tells the room server the seat
+   * emptied — which is what unlocks it for the next joiner and (host gone)
+   * rejects the player still in the match. Before this, `dispose()` only
+   * cleared local state, so a player who quit to the menu stayed an occupied
+   * seat in a room they were no longer in until the page itself went away.
+   *
+   * Hooks are dropped BEFORE the socket closes on purpose: closing fires the
+   * SDK's `onDisconnect`, and a status hook answered after the game is gone
+   * would paint a toast over whatever the player navigated to.
+   */
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
     this.halted = true;
     this.queue = [];
     this.assembler.reset();
     this.hooks = {};
+    try { this.room.leave(); } catch { /* a socket already dead is not an error */ }
+  }
+
+  /**
+   * #121: a seat emptied. Prune the roster (so `hasOpponent` tells the truth
+   * and a later rejoin is re-seated by a fresh welcome), stop exchanging
+   * state — a two-seat match is over the moment the other seat goes — and
+   * tell the game, which owes the player a clear "opponent left" state.
+   */
+  private onPeerLeft(playerId: string): void {
+    if (this.halted || playerId === this.room.playerId) return;
+    const gone = this.infoValue?.roster.find((e) => e.id === playerId) ?? null;
+    if (this.infoValue) {
+      this.infoValue = {
+        ...this.infoValue,
+        roster: this.infoValue.roster.filter((e) => e.id !== playerId),
+      };
+    }
+    this.halted = true;
+    this.queue = [];
+    this.assembler.reset();
+    this.hooks.opponentLeft?.(gone?.username || null);
   }
 
   // ── guest → host ────────────────────────────────────────────────────────
