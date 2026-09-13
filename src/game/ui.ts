@@ -425,6 +425,8 @@ export function createOriginalUi(
 
   // ── left: BUILD ────────────────────────────────────────────
   const left = h("aside", "aside left iso-panel");
+  // RAIL-01: the collapse key names the panel it folds (aria-controls).
+  left.id = "iso-aside-left";
   const bp = h("div", "panel");
   bp.appendChild(h("div", "panel-title", "Build"));
   const buildList = h("div", "build-list");
@@ -446,6 +448,8 @@ export function createOriginalUi(
 
   // ── right: shared economy window ────────────────────────────
   const rightAside = h("aside", "aside right iso-panel");
+  // RAIL-01: same contract as the build column — the key names its panel.
+  rightAside.id = "iso-aside-right";
   const qp = h("div", "panel");
   qp.id = "iso-quarry";
   const qh = h("div", "quarry-head");
@@ -531,6 +535,82 @@ export function createOriginalUi(
   tp.appendChild(qp);
   rightAside.appendChild(tp);
   root.appendChild(rightAside);
+
+  // ── RAIL-01 — the desktop collapse keys ─────────────────────────────────
+  // The map is the game; the two fixed columns are instruments hung over it,
+  // and the ticket that raised them asked for a way to put them away. Each
+  // column gets one slim brass key on its outer edge (a child, so it rides
+  // the panel's own slide and stays reachable on the folded 28px sliver the
+  // stylesheet leaves on screen). The chevron points where the panel goes
+  // NEXT: expanded, toward the screen edge it folds against; folded, back
+  // toward the center. State lives on the root as data-rail-left /
+  // data-rail-right — the stylesheet owns the whole animation off those two
+  // attributes — and a phone NEVER sees any of it: railSyncViewport() clears
+  // a collapse the instant the viewport crosses to the sheet regime, and the
+  // phone block drops the keys outright.
+  let railLeftCollapsed = false;
+  let railRightCollapsed = false;
+  let railSig = "\u0000";
+  const railLeftBtn = h("button", "rail-toggle rail-toggle-left", "◂");
+  const railRightBtn = h("button", "rail-toggle rail-toggle-right", "▸");
+  railLeftBtn.id = "iso-rail-left";
+  railRightBtn.id = "iso-rail-right";
+  railLeftBtn.type = "button";
+  railRightBtn.type = "button";
+  railLeftBtn.setAttribute("aria-controls", "iso-aside-left");
+  railRightBtn.setAttribute("aria-controls", "iso-aside-right");
+  railLeftBtn.setAttribute("aria-label", "Toggle the Build menu panel");
+  railRightBtn.setAttribute("aria-label", "Toggle the Processing Plant panel");
+  left.appendChild(railLeftBtn);
+  rightAside.appendChild(railRightBtn);
+  /** One writer for both keys: attribute, ARIA state, chevron and title all
+   *  move together, and identical states repaint nothing (resize calls this
+   *  on every frame of a window drag). */
+  function paintRails() {
+    const sig = `${railLeftCollapsed ? 1 : 0}${railRightCollapsed ? 1 : 0}`;
+    if (sig === railSig) return;
+    railSig = sig;
+    root.dataset.railLeft = railLeftCollapsed ? "1" : "0";
+    root.dataset.railRight = railRightCollapsed ? "1" : "0";
+    railLeftBtn.setAttribute("aria-expanded", String(!railLeftCollapsed));
+    railRightBtn.setAttribute("aria-expanded", String(!railRightCollapsed));
+    railLeftBtn.textContent = railLeftCollapsed ? "▸" : "◂";
+    railRightBtn.textContent = railRightCollapsed ? "◂" : "▸";
+    railLeftBtn.title = railLeftCollapsed ? "Expand the Build menu" : "Collapse the Build menu";
+    railRightBtn.title = railRightCollapsed ? "Expand the Processing Plant panel" : "Collapse the Processing Plant panel";
+    // The drawer cue follows the ACT of this click, so the dataset (read by
+    // the sound delegation) is set for the state the click is ABOUT to enter.
+    railLeftBtn.dataset.sfx = railLeftCollapsed ? "close" : "open";
+    railRightBtn.dataset.sfx = railRightCollapsed ? "close" : "open";
+    // A folded panel is a 28px sliver; its controls are off-viewport and must
+    // leave the tab order with it — otherwise a keyboard walk lands on tabs
+    // and market rows nobody can see. `inert` on the panel CONTENT (never on
+    // the aside: the key lives beside the panel and stays reachable) removes
+    // them from focus, pointer and AT traversal, and undoes itself on unfold.
+    bp.inert = railLeftCollapsed;
+    tp.inert = railRightCollapsed;
+  }
+  railLeftBtn.onclick = () => {
+    if (isPhoneViewport()) return;
+    railLeftCollapsed = !railLeftCollapsed;
+    paintRails();
+  };
+  railRightBtn.onclick = () => {
+    if (isPhoneViewport()) return;
+    railRightCollapsed = !railRightCollapsed;
+    paintRails();
+  };
+  /** RAIL-01: the sheets own the panels on a phone. Crossing the regime
+   *  hands them back unfolded — called from responsiveZoom, which is the one
+   *  place that already knows the regime flipped. */
+  function railSyncViewport() {
+    if (isPhoneViewport() && (railLeftCollapsed || railRightCollapsed)) {
+      railLeftCollapsed = false;
+      railRightCollapsed = false;
+      paintRails();
+    }
+  }
+  paintRails();
 
   // ── overlays ──────────────────────────────────────────────────────────────
   const toasts = h("div", "toasts");
@@ -967,7 +1047,10 @@ export function createOriginalUi(
     qp.classList.toggle("hidden", t !== "plant");
     // MOBILE-02: the plant tab re-fits the board — the full-bleed sheet only
     // leaves a measurable slot once this pane is the visible one.
-    if (t === "plant" && root.dataset.view === "trade") responsiveZoom();
+    // FIT-01: and so does the desktop — the fit clamps on the measured plant
+    // column, which has no box while another tab hides it, so a window
+    // resized over Market/Bank/Feed would come back to a stale board.
+    if (t === "plant") responsiveZoom();
     tabMarket.classList.toggle("active", t === "market");
     tabBank.classList.toggle("active", t === "bank");
     tabFeed.classList.toggle("active", t === "feed");
@@ -1645,6 +1728,17 @@ export function createOriginalUi(
     const phone = isPhoneViewport();
     const phoneStr = phone ? "1" : "";
     if (root.dataset.phone !== phoneStr) root.dataset.phone = phoneStr;
+    // FIT-01: the asides park on the resource bar's live top edge, and the
+    // bar is not a constant — the chip row wraps on narrow windows and the
+    // bar (fixed to bottom: 0) grows UPWARD. Measure it here, where a resize
+    // is already being handled, and publish it; styles.css puts both columns
+    // on max(52px, --resbar-h). jsdom lays nothing out (0) and keeps the
+    // stylesheet's 52px fallback, so every pinned number below survives.
+    const resbarH = footer.offsetHeight;
+    if (resbarH > 0) root.style.setProperty("--resbar-h", `${resbarH}px`);
+    // RAIL-01: a collapse is a desktop affordance — crossing into the phone
+    // regime hands the panels back to the sheets, unfolded.
+    railSyncViewport();
     const wrap = boardWrap;
     let z = 1;
     if (phone) {
@@ -1689,6 +1783,32 @@ export function createOriginalUi(
       const leftW = window.innerWidth <= 900 ? 0 : (window.innerWidth <= 1180 ? 262 : 300);
       const availW = window.innerWidth - leftW - 64;
       z = Math.max(0.4, Math.min(z, availW / (boardPx + 10)));
+      // FIT-01: the height rules above guess from viewport bands; the column
+      // can be MEASURED, so measure it. scrollHeight of the economy panel is
+      // everything it wants to paint — tabs, plant head, reach strip, board
+      // — and the board's share of that at the CURRENT zoom is known, so the
+      // fixed furniture around it is `colH − boxNow`. The zoom then closes
+      // whatever gap remains between that furniture and the room the column
+      // actually has (rightAside.clientHeight already ends at the resource
+      // bar, however tall the wrapped chip row made it). The board's share
+      // scales with zoom, the furniture does not — one linear solve. It is
+      // also IDEMPOTENT: a column that fits holds its zoom (room/boxH ≥ the
+      // zoom colH was laid out at), a column that doesn't gives back exactly
+      // the zoom that fits — so resize-event storms can never make the board
+      // pulse or drift. Guards keep the unmeasured or not-laid-out cases
+      // (jsdom, another tab hiding the plant pane) on the band heuristic.
+      const asideH = rightAside.clientHeight;
+      const colH = tp.scrollHeight;
+      if (asideH > 100 && colH > 100 && !qp.classList.contains("hidden")) {
+        const boxH = CELL * board.h + 10;                    // the board box at zoom 1
+        const zNow = Number(wrap.style.zoom || "1") || 1;    // the zoom colH was laid out at
+        const boxNow = Math.ceil(boxH * zNow);
+        if (boxNow > 0 && boxNow < colH) {
+          const chromeH = colH - boxNow;
+          const room = asideH - chromeH - 2;                 // 2px: the column breathes
+          z = Math.max(0.4, Math.min(z, room / boxH));
+        }
+      }
     }
     wrap.style.zoom = String(z);
     // V3: publish the zoomed board width. The right aside and the quarry
