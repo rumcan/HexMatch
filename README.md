@@ -117,7 +117,7 @@ cast table and the dialogue model:
 
 ## Multiplayer (RUN.world rooms)
 
-Host / join-by-code / quick-match run over RUN.world realtime rooms: the relay
+Host / join-by-code / auto matchmaking run over RUN.world realtime rooms: the relay
 is `src/rooms/HexmatchRoom.ts` (registered in `rundot/realtime.config.json`),
 the SDK seam is `src/net/transport.ts`, and the entry point is
 `src/ui/StartScreen.tsx`. `npm run dev` starts a local room sidecar on port 9001
