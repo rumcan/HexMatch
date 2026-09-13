@@ -328,16 +328,18 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
                       ? { backgroundImage: `url(${face.url})`, backgroundSize: "200% 200%", backgroundPosition: `${face.pos[0]}% ${face.pos[1]}%` }
                       : { backgroundImage: `url(${face.url})`, backgroundSize: "cover", backgroundPosition: "center 20%" }} />
                   <span className="cc-body">
-                    <span className="cc-kicker">{chapter.kicker}</span>
+                    <span className="cc-head">
+                      <span className="cc-kicker">{chapter.kicker}</span>
+                      {result === "win"
+                        ? <span className="cc-seal">Filed · won</span>
+                        : result === "loss"
+                          ? <span className="cc-seal loss">Filed · lost</span>
+                          : open ? null : <span className="cc-lock" aria-hidden="true">🔒</span>}
+                    </span>
                     <span className="cc-name">{chapter.name}</span>
                     <span className="cc-brief">{chapter.brief}</span>
                     <span className="cc-meta">vs {rival.name} · first to {chapter.target}★ · {chapter.skill}</span>
                   </span>
-                  {result === "win"
-                    ? <span className="cc-seal">Filed · won</span>
-                    : result === "loss"
-                      ? <span className="cc-seal loss">Filed · lost</span>
-                      : open ? null : <span className="cc-lock" aria-hidden="true">🔒</span>}
                 </button>
               );
             })}

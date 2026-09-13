@@ -19,6 +19,9 @@
 //     first, because "make me wait twice" is not pacing;
 //   · Skip ▸▸ (and Esc) ends the scene NOW and says so: skipping is a
 //     choice the campaign records as seen, never as a fault.
+//   · #123: `instant` mode (loss epilogues) skips the typewriter entirely —
+//     each line lands in full with ▾ already visible, and every advance
+//     moves exactly one line.
 //
 // Geometry follows the theme: the plates are drawn chrome (felt, brass
 // keyline, inset shadow) and every bitmap here is `cover`ed or shown as a
@@ -33,6 +36,15 @@ export interface SceneOptions {
   /** The tycoon the start screen chose — `player` lines resolve to this. */
   player?: "vex" | "you";
   skipLabel?: string;
+  /**
+   * #123: instant-text mode for loss epilogues. Each line appears in full on
+   * its first frame with the advance control already visible — no
+   * character-by-character reveal, no punctuation pauses, no extra click to
+   * finish the line. Progression stays player-controlled (click/Enter/Space
+   * advances exactly one line). Win epilogues, briefings and the opening
+   * reel keep the typewriter.
+   */
+  instant?: boolean;
 }
 
 export interface SceneHandle {
@@ -65,6 +77,8 @@ export function showScene(
 ): SceneHandle {
   const player = opts.player ?? "vex";
   const quiet = reducedMotion();
+  /** #123: loss epilogues show every line in full immediately. */
+  const instant = opts.instant ?? false;
 
   const stage = el("div", "story-stage");
   stage.dataset.scene = scene.id;
@@ -151,7 +165,11 @@ export function showScene(
   const typeOut = (value: string) => {
     stopTyping();
     next.classList.add("hidden");
-    if (quiet) { text.textContent = value; next.classList.remove("hidden"); return; }
+    // #123: instant mode (loss epilogues) and reduced-motion both set the
+    // complete line synchronously with the advance control visible. No timer
+    // is started, so nothing can later overwrite the line, and `isTyping`
+    // stays false so the next click/Enter/Space advances exactly one line.
+    if (instant || quiet) { text.textContent = value; next.classList.remove("hidden"); return; }
     isTyping = true;
     let i = 0;
     text.textContent = "";
