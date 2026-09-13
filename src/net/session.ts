@@ -225,6 +225,10 @@ export class NetSession {
       onError: () => this.hooks.status?.("disconnected"),
     });
     this.attached = true;
+    // MP fix: the welcome may have already arrived in the lobby (StartScreen
+    // calls receive before the game attaches). Replay it so the game's info
+    // hook learns the roster / login names and can update the top bar.
+    if (this.infoValue) this.hooks.info?.(this.infoValue);
     if (this.isGuest) this.requestResync("attach");
     else if (this.hasOpponent) this.publishFullState("host ready");
   }
