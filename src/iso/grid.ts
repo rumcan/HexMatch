@@ -1355,6 +1355,35 @@ export const industryAt = (g: Grid, tx: number, ty: number): Industry | null => 
   return id >= 0 ? g.industries[id] : null;
 };
 
+/**
+ * #159: one byte per tile — non-zero where a town's BLOCK ground is, i.e. the
+ * tiles a town's houses stand on (its streets are the road bits, and its
+ * houses are `TOWN_OCC` in the occupancy rather than houses in a list).
+ *
+ * Derived rather than tracked, and cached per grid like the ground contours:
+ * the towns are a pure function of the seed and never change during a game, so
+ * this costs one pass over the houses the first time anything asks and nothing
+ * thereafter. Returns null when the map has no towns at all, which is what
+ * lets every caller treat "no towns" and "no town ground" identically.
+ */
+const townGroundCache = new WeakMap<Grid, Uint8Array | null>();
+
+export function townGroundBytes(grid: Grid): Uint8Array | null {
+  const cached = townGroundCache.get(grid);
+  if (cached !== undefined) return cached;
+  let bytes: Uint8Array | null = null;
+  if (grid.towns.length) {
+    bytes = new Uint8Array(grid.w * grid.h);
+    for (const town of grid.towns) {
+      for (const [tx, ty] of town.houses) {
+        if (tx >= 0 && ty >= 0 && tx < grid.w && ty < grid.h) bytes[ty * grid.w + tx] = 1;
+      }
+    }
+  }
+  townGroundCache.set(grid, bytes);
+  return bytes;
+}
+
 export const industryHasTile = (ind: Industry, tx: number, ty: number) =>
   tx >= ind.tx && tx < ind.tx + ind.w && ty >= ind.ty && ty < ind.ty + ind.h;
 

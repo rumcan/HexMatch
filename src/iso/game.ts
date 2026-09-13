@@ -5202,6 +5202,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         ...DEFAULT_ROAD_STYLE,
         paved: { ...DEFAULT_ROAD_STYLE.paved, image: asphalt },
         dirt: { ...DEFAULT_ROAD_STYLE.dirt, image: dirt },
+        // #159: a town's blocks borrow the earth texture and are washed to the
+        // town's own grey-brown by the painter, so the yards grain like made
+        // ground beside the asphalt instead of looking like a second road.
+        town: { ...DEFAULT_ROAD_STYLE.town, image: dirt },
       });
     }).catch((err) => {
       console.warn("[roads] material textures failed to load:", err);
