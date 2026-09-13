@@ -14,18 +14,49 @@ import { bootBudget } from "./boot";
 //   * "Never show this again" is the ONE exit that survives a reload — Skip,
 //     Esc and the veil all bring the tour back next boot;
 //   * once dismissed, the ❔ help modal still replays it (the preference stops
-//     the tour opening itself, it never takes the lesson away).
+//     the tour opening itself, it never takes the lesson away);
+//   * a RESUMED save never opens the tour — and does so without writing the
+//     preference, so the four states (fresh start, resume, permanent
+//     dismissal, replay) stay distinguishable.
 //
 // Every step boots through the start screen, the app's only entry point.
+// Because the game autosaves (5s + pagehide), "boot again" is a RESUME unless
+// the spec clears the save first — see `boot(..., { fresh: true })`; nothing relies on a
+// second navigation happening to be a new game.
 // ══════════════════════════════════════════════════════════════════════════
 
 const BASE = "/hexmatch/";
 const TOUR = "#iso-tutorial";
 const STEP_IDS = ["loop", "plant", "depot", "roads", "board", "expand", "victory", "desk"];
 
-/** Boot a solo game through the start screen and wait for the map to exist. */
-async function boot(page: import("@playwright/test").Page, extra = "") {
+// ── save control ──────────────────────────────────────────────────────────
+// The game autosaves every 5s AND on `pagehide`, so the moment a spec
+// navigates away from a booted game there is a recent save — and the next
+// boot RESUMES it, which by design (src/iso/game.ts: `!bootSave && isSolo()`)
+// never opens the tour. A spec that wants a fresh game must therefore say so,
+// rather than trusting that "another navigation" means "another game".
+const SAVE_KEY = "hexmatch:save";
+const hasSave = (page: import("@playwright/test").Page) =>
+  page.evaluate((k) => localStorage.getItem(k) !== null, SAVE_KEY);
+const tutorialPref = (page: import("@playwright/test").Page) =>
+  page.evaluate(() => localStorage.getItem("hexmatch:tutorial"));
+const readSave = (page: import("@playwright/test").Page) =>
+  page.evaluate((k) => JSON.parse(localStorage.getItem(k) ?? "null") as { savedAt: number; seed: number } | null, SAVE_KEY);
+
+/**
+ * Boot a solo game through the start screen and wait for the map to exist.
+ *
+ * `fresh: true` drops the autosave on the START SCREEN — after the previous
+ * game's `pagehide` save has been written and before Play mounts the next
+ * one, the only moment nothing can race the write. That makes the boot a
+ * fresh game by construction; without it, a second boot is a RESUME.
+ */
+async function boot(page: import("@playwright/test").Page, extra = "", opts: { fresh?: boolean } = {}) {
   await page.goto(`${BASE}?seed=79${extra}`);
+  if (opts.fresh) {
+    await page.evaluate((k) => localStorage.removeItem(k), SAVE_KEY);
+    expect(await hasSave(page)).toBe(false);
+  }
   // STORY-01 menu: the mode screen stands behind the front door — Play first
   await page.locator(".menu-btn.primary").click();
   await page.getByRole("button", { name: /Play vs AI/ }).click();
@@ -96,7 +127,7 @@ test("TUT-01 the first boot walks the tour, then hands over to the difficulty", 
   expect(errors).toEqual([]);
 });
 
-test("TUT-01 only “never show this again” survives a reload", async ({ page }) => {
+test("TUT-01 fresh games: only “never show this again” survives to the next one", async ({ page }) => {
   await pickDifficulty(page);
 
   // A skip (Esc) closes the card and remembers nothing.
@@ -104,19 +135,28 @@ test("TUT-01 only “never show this again” survives a reload", async ({ page 
   await expect(page.locator(TOUR)).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.locator(TOUR)).toHaveCount(0);
-  expect(await page.evaluate(() => localStorage.getItem("hexmatch:tutorial"))).toBeNull();
+  expect(await tutorialPref(page)).toBeNull();
 
-  // So the next boot asks again.
-  await boot(page);
+  // So the next FRESH game asks again. (A resume would not — that is the
+  // separate rule the next spec pins down — so the save is dropped on purpose.)
+  await boot(page, "", { fresh: true });
+  await expect(page.locator(TOUR)).toBeVisible();
+
+  // The veil is the other "for now" exit: it closes, it remembers nothing.
+  await page.locator(`${TOUR} .tut-shade`).click({ position: { x: 4, y: 4 } });
+  await expect(page.locator(TOUR)).toHaveCount(0);
+  expect(await tutorialPref(page)).toBeNull();
+
+  await boot(page, "", { fresh: true });
   await expect(page.locator(TOUR)).toBeVisible();
 
   // The button is the one exit that persists.
   await page.locator('[data-act="tut-never"]').click();
   await expect(page.locator(TOUR)).toHaveCount(0);
-  expect(await page.evaluate(() => localStorage.getItem("hexmatch:tutorial"))).toBe("never");
+  expect(await tutorialPref(page)).toBe("never");
 
-  // …and a fresh load now boots straight to the map.
-  await boot(page);
+  // …and a fresh game now boots straight to the map.
+  await boot(page, "", { fresh: true });
   await expect(page.locator(TOUR)).toHaveCount(0);
   await expect(page.locator("#iso-vp")).toBeVisible();
 
@@ -130,7 +170,43 @@ test("TUT-01 only “never show this again” survives a reload", async ({ page 
   // Replaying leaves the stored preference exactly as it was.
   await page.locator('[data-act="tut-close"]').click();
   await expect(page.locator(TOUR)).toHaveCount(0);
-  expect(await page.evaluate(() => localStorage.getItem("hexmatch:tutorial"))).toBe("never");
+  expect(await tutorialPref(page)).toBe("never");
+});
+
+test("TUT-01 a resumed game skips the tour without touching the preference", async ({ page }) => {
+  await pickDifficulty(page);
+
+  // A player mid-match who reloads is not a first-time player: the product
+  // rule is "a restored save never opens the tour" — and it must do so by
+  // reading the SAVE, not by writing the preference.
+  await boot(page);
+  await expect(page.locator(TOUR)).toBeVisible();
+  await page.locator('[data-act="tut-close"]').click();
+  await expect(page.locator(TOUR)).toHaveCount(0);
+  expect(await tutorialPref(page)).toBeNull();
+
+  // Wait for the autosave to actually exist (the 5s writer, no fixed sleep),
+  // so the next boot is a resume by construction rather than by luck.
+  await expect.poll(() => hasSave(page), { timeout: 15000 }).toBe(true);
+
+  const before = await readSave(page);
+  expect(before).not.toBeNull();
+
+  await boot(page);
+  // This boot RESUMED: the save it found is still the save it keeps writing
+  // (same world, newer stamp) — no fresh game replaced it.
+  await expect.poll(async () => (await readSave(page))?.savedAt ?? 0, { timeout: 15000 })
+    .toBeGreaterThan(before!.savedAt);
+  expect((await readSave(page))!.seed).toBe(before!.seed);
+  await expect(page.locator(TOUR)).toHaveCount(0);
+  await expect(page.locator("#iso-vp")).toBeVisible();
+  // The tour is absent because of the save — the preference is still unset…
+  expect(await tutorialPref(page)).toBeNull();
+
+  // …which is why dropping the save brings the tour straight back.
+  await boot(page, "", { fresh: true });
+  await expect(page.locator(TOUR)).toBeVisible();
+  await expect(page.locator(TOUR)).toHaveAttribute("data-step", "loop");
 });
 
 test("TUT-01 the tour quotes the live game, and ?tutorial=0 keeps it out of the way", async ({ page }) => {
@@ -147,12 +223,23 @@ test("TUT-01 the tour quotes the live game, and ?tutorial=0 keeps it out of the 
   await expect(page.locator("#iso-vp")).toContainText("/5");
   // the roads step quotes the allowance the live player record carries
   await tour.locator('[data-step="roads"]').click();
+  await expect(tour).toHaveAttribute("data-step", "roads");
   await expect(tour.locator(".tut-points")).toContainText("first 12 of them");
+  // Mid-tour there is no Done — the last key is "Next" until the final step.
+  await expect(tour.locator('[data-act="tut-done"]')).toHaveCount(0);
+  await expect(tour.locator('[data-act="tut-next"]')).toBeVisible();
+  // Finish it the real way: jump to the last step, where Done actually lives.
+  await tour.locator('[data-step="desk"]').click();
+  await expect(tour).toHaveAttribute("data-step", "desk");
+  await expect(tour.locator('[data-act="tut-done"]')).toBeVisible();
   await tour.locator('[data-act="tut-done"]').click();
   await expect(page.locator(TOUR)).toHaveCount(0);
+  expect(await tutorialPref(page)).toBeNull();
 
-  // The URL opt-out the gameplay specs and playtest links use.
-  await boot(page, "&tutorial=0");
+  // The URL opt-out the gameplay specs and playtest links use — proven on a
+  // FRESH game, so it is the flag keeping the tour away and not the autosave.
+  await boot(page, "&tutorial=0", { fresh: true });
   await expect(page.locator(TOUR)).toHaveCount(0);
   await expect(page.locator("#iso-vp")).toBeVisible();
+  expect(await tutorialPref(page)).toBeNull();
 });

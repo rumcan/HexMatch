@@ -16,17 +16,20 @@ import { AccessDeniedError } from "@series-inc/rundot-game-sdk";
 // export) — the same module `transport.ts` loads.
 import RundotGameAPI from "@series-inc/rundot-game-sdk/api";
 import {
+  MATCHMAKE_WINDOW_MS,
   ROOM_TYPE,
   MATCH_CRITERIA,
   RANK_CRITERIA_KEY,
   ROOM_CODE_LENGTH,
   NO_ROOM_SERVER_MESSAGE,
+  isMatchmakeWindowExpired,
   normalizeRoomCode,
   isValidRoomCode,
   isAccessDenied,
   isOfflineMockRealtime,
   quickMatch,
   LADDER_MODE,
+  type HexRoom,
 } from "../../src/net/transport";
 import { RANK_TIERS, RATING_FLOOR, START_RATING } from "../../src/net/rating";
 
@@ -159,6 +162,47 @@ describe("MP-02 isAccessDenied", () => {
     expect(isAccessDenied(new Error("boom"))).toBe(false);
     expect(isAccessDenied({ name: "Error", code: "TIMEOUT" })).toBe(false);
     expect(isAccessDenied({})).toBe(false);
+  });
+});
+
+describe("MP-02 isMatchmakeWindowExpired", () => {
+  it("recognizes the SDK's window and pool rejections", () => {
+    // The three plain-Error messages SDK 5.27's `_connectMatchmaking` rejects
+    // with when a search ends without a room (verbatim, em dash included).
+    expect(isMatchmakeWindowExpired(new Error("Matchmaking timeout — no opponent found"))).toBe(true);
+    expect(
+      isMatchmakeWindowExpired(new Error("Matchmaking is no longer active (pool expired or cancelled)")),
+    ).toBe(true);
+    expect(isMatchmakeWindowExpired(new Error("Matchmaking cancelled"))).toBe(true);
+  });
+
+  it("rejects everything else — real failures must surface, not retry", () => {
+    expect(isMatchmakeWindowExpired(new Error("No room with that code."))).toBe(false);
+    expect(isMatchmakeWindowExpired(Object.assign(new Error("nope"), { name: "AccessDeniedError" }))).toBe(false);
+    expect(isMatchmakeWindowExpired(new Error("boom"))).toBe(false);
+    expect(isMatchmakeWindowExpired(null)).toBe(false);
+    expect(isMatchmakeWindowExpired(undefined)).toBe(false);
+    expect(isMatchmakeWindowExpired("Matchmaking timeout")).toBe(false); // not an Error
+  });
+});
+
+describe("MP-02 quickMatch window", () => {
+  it("defaults one request's window to MATCHMAKE_WINDOW_MS (30s), criteria intact", async () => {
+    const api = RundotGameAPI as unknown as { realtime?: unknown };
+    const original = api.realtime;
+    const matchmakeRoom = vi.fn(async () => ({}) as HexRoom);
+    try {
+      api.realtime = { matchmakeRoom, delegate: {} };
+      await quickMatch();
+      expect(matchmakeRoom).toHaveBeenCalledWith("hexmatch", {
+        criteria: { ...MATCH_CRITERIA },
+        matchmakeTimeoutMs: MATCHMAKE_WINDOW_MS,
+        pollIntervalMs: undefined,
+      });
+      expect(MATCHMAKE_WINDOW_MS).toBe(30_000);
+    } finally {
+      api.realtime = original;
+    }
   });
 });
 

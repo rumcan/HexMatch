@@ -3,6 +3,7 @@ import {
   NO_ROOM_SERVER_MESSAGE,
   createRoom,
   isAccessDenied,
+  isMatchmakeWindowExpired,
   isOfflineMockRealtime,
   isValidRoomCode,
   joinRoomByCode,
@@ -78,10 +79,7 @@ type ScreenState =
   | "join"
   | "joined"
   | "matchmaking"
-  | "matchmaking-timeout"
   | "error";
-
-const MATCHMAKING_TIMEOUT = null;
 
 /**
  * RANK-01 (#147): the rank windows a SIMILAR RANK search widens through.
@@ -91,33 +89,22 @@ const MATCHMAKING_TIMEOUT = null;
  * (`searchBucket`) and a wider window is a DIFFERENT bucket. The search runs
  * one attempt per rung, on its own budget, and the last rung asks for nothing
  * in particular: a player is never left waiting on a window too narrow to
- * contain anybody. Total: MATCHMAKING_SEARCH_MS, shared by every rung.
+ * contain anybody.
  *
- * `span: 0` is the Any-rank rung — see `RANK_SEARCH_LOOSE`.
+ * The ladder is walked ONCE. After the last rung the search keeps going at Any
+ * rank — it never times out (#146) — because a window closing means widen and
+ * look again, never "no rival found". `span: 0` is that last, never-narrower
+ * rung.
  */
 export const RANK_SEARCH_STEPS: readonly { span: number; budgetMs: number }[] = [
   { span: 75, budgetMs: 6_000 },     // same neighbourhood, tightest pair
   { span: 200, budgetMs: 8_000 },    // a tier or so apart
   { span: 400, budgetMs: 8_000 },    // a couple of tiers
-  { span: 0, budgetMs: 8_000 },      // any rank — the escape hatch
+  { span: 0, budgetMs: 8_000 },      // any rank — the escape hatch, repeated
 ];
-
-/** What the screen promises, and what the whole search costs. */
-export const MATCHMAKING_SEARCH_MS = RANK_SEARCH_STEPS.reduce((n, step) => n + step.budgetMs, 0);
 
 /** How the player wants strangers paired (RANK-01, #147). */
 type RankSearch = "any" | "similar";
-
-/**
- * True when the matchmaker simply found nobody — its own per-attempt timeout,
- * or a pool that expired under us. Both mean "widen the window and look again";
- * anything else (no room server, a refused login) is a real error and must
- * reach the screen instead of being retried four times.
- */
-function isMatchmakeMiss(err: unknown): boolean {
-  const message = err instanceof Error ? err.message : "";
-  return /matchmaking timeout|no longer active/i.test(message);
-}
 
 /**
  * How long a lobby waits for the room's welcome before giving up. The welcome
@@ -174,6 +161,14 @@ function RankChip({ model, label }: { model: RankChipModel; label?: string }) {
     </span>
   );
 }
+ 
+/**
+ * Pause between matchmake requests, so a server that rejects a request
+ * instantly (a pool that keeps expiring, a flapping socket) cannot turn the
+ * endless search into a hot reconnect loop. After a FULL window of waiting
+ * (the normal path) one extra second is invisible.
+ */
+const MATCHMAKE_RETRY_DELAY_MS = 1_000;
 
 interface StartScreenProps {
   onStart: (choice: StartChoice) => void;
@@ -212,6 +207,9 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
   const rankRef = useRef<RankState | null>(null);
   /** Guards the realtime calls: a double-click must not mint two rooms. */
   const [busy, setBusy] = useState(false);
+  /** Seconds since the current search began, shown live on the searching
+   *  screen — with no timeout, "how long has it been" is the only feedback. */
+  const [searchSeconds, setSearchSeconds] = useState(0);
   const matchRequest = useRef(0);
 
   // RANK-01: the rating file is read once per mount. It is deliberately not
@@ -361,17 +359,20 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
   }, [awaitWelcome, busy, code, fail, failMessage, withLogin]);
 
   /**
-   * RANK-01 (#147): quick match, with an optional SIMILAR RANK window.
+   * RANK-01 (#147) + #146: Auto Matchmaking, with an optional SIMILAR RANK
+   * window — and a search that never times out.
    *
-   * Any rank is one attempt with the room type's own criteria. Similar rank is
-   * the widening ladder above: the narrowest window first, then wider ones,
-   * then Any — because a rated queue that can strand a player is worse than a
-   * slightly lopsided match. The window itself is a bucket index
-   * (`searchBucket`); widening the span changes the bucket, which is the only
-   * kind of "wider" the pool understands.
+   * Any rank sends the room type's own criteria and stays there. Similar rank
+   * walks the ladder above — the narrowest window first, then wider ones, then
+   * Any — because a rated queue that can strand a player is worse than a
+   * slightly lopsided match. The window is a bucket index (`searchBucket`);
+   * widening the span changes the bucket, which is the only kind of "wider"
+   * the pool understands.
    *
-   * The SDK request stays attached to the race even if the UI gives up: the
-   * request token prevents a late room from pulling the player anywhere.
+   * ONE `quickMatch` is one bounded window (the rung's own budget; the SDK
+   * sends `matchmaking:cancel` and rejects when it closes), so a closed window
+   * just re-issues at the next rung, and after the last rung at Any rank
+   * forever. Cancel bumps the token, which is what actually ends the search.
    */
   const beginMatch = useCallback(async () => {
     if (busy) return;
@@ -383,36 +384,44 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
     setError("");
     setState("matchmaking");
     const request = ++matchRequest.current;
-    const ladder = rankSearch === "similar" ? RANK_SEARCH_STEPS : [RANK_SEARCH_STEPS[RANK_SEARCH_STEPS.length - 1]];
+    // Similar rank starts tight; Any rank starts (and stays) at the last rung.
+    let rung = rankSearch === "similar" ? 0 : RANK_SEARCH_STEPS.length - 1;
     try {
-      for (let rung = 0; rung < ladder.length; rung++) {
-        if (request !== matchRequest.current) return;
-        const step = ladder[rung];
-        setSearchRung(rung);
-        // The SDK answers its own timeout; the outer race is a backstop for a
-        // promise that never settles at all (the cancel path is best-effort).
-        const backstop = new Promise<null>((resolve) => {
-          window.setTimeout(() => resolve(MATCHMAKING_TIMEOUT), step.budgetMs + 2_000);
-        });
-        const result = await Promise.race([
-          withLogin(() => quickMatch({
+      while (request === matchRequest.current) {
+        const clamped = Math.min(rung, RANK_SEARCH_STEPS.length - 1);
+        const step = RANK_SEARCH_STEPS[clamped];
+        setSearchRung(clamped);
+        rung++;
+        let result: HexRoom;
+        try {
+          result = await withLogin(() => quickMatch({
             matchmakeTimeoutMs: step.budgetMs,
             rankBucket: searchBucket(rankRef.current?.rating ?? 1000, step.span),
-          })).catch((err: unknown) => {
-            if (isMatchmakeMiss(err)) return MATCHMAKING_TIMEOUT;
-            throw err;
-          }),
-          backstop,
-        ]);
-        if (request !== matchRequest.current) return;
-        if (result === MATCHMAKING_TIMEOUT) continue;              // widen and look again
+          }));
+        } catch (err) {
+          if (request !== matchRequest.current) return; // cancelled mid-search
+          if (!isMatchmakeWindowExpired(err)) throw err; // a real failure
+          // Window closed (or the pool dropped us): breathe once, then either
+          // widen to the next rung or — at the last rung — ask again as-is.
+          await new Promise((resolve) => {
+            window.setTimeout(resolve, MATCHMAKE_RETRY_DELAY_MS);
+          });
+          continue;
+        }
+        if (request !== matchRequest.current) {
+          // Cancelled while the pairing was in flight: this room must not
+          // pull the player out of the menu, and its socket must not linger.
+          try {
+            result.leave();
+          } catch { /* the socket is already going away */ }
+          return;
+        }
         // A matchmaker can return either an existing room or a newly-created
-        // one. isCreator is the SDK's authoritative host hint until welcome.
-        // RANK-01: the queue is the ladder — whoever it pairs is rated.
+        // one. isCreator is the SDK's authoritative host hint until welcome
+        // arrives. RANK-01: the queue is the ladder — whoever it pairs is rated.
         awaitWelcome(result, result.isCreator ? "host" : "guest", true);
         return;
       }
-      setState("matchmaking-timeout");
     } catch (err) {
       if (request === matchRequest.current) fail(err);
     } finally {
@@ -421,6 +430,11 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
   }, [awaitWelcome, busy, fail, failMessage, matchRequest, rankSearch, withLogin]);
 
   const abandonMatch = useCallback(() => {
+    // Bumping the token is the whole cancel: the beginMatch loop checks it
+    // after every await and stops. The SDK has no public cancel for a pending
+    // matchmake request, so the abandoned one leaves the RUN pool by itself
+    // when its window closes (the SDK then sends `matchmaking:cancel` and
+    // closes the socket) — its outcome is ignored here either way.
     ++matchRequest.current;
     releaseRoom();
     setState("choose");
@@ -461,6 +475,24 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
     return () => window.clearTimeout(timer);
   }, [failMessage, seed, state]);
 
+  // The searching clock: elapsed time since this search began, reset on every
+  // entry into (and exit from) the matchmaking screen.
+  useEffect(() => {
+    if (state !== "matchmaking") return;
+    setSearchSeconds(0);
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => {
+      setSearchSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [state]);
+
+  const searchClock = useMemo(() => {
+    const minutes = Math.floor(searchSeconds / 60);
+    const seconds = String(searchSeconds % 60).padStart(2, "0");
+    return `${minutes}:${seconds}`;
+  }, [searchSeconds]);
+
   useEffect(() => () => { /* room ownership moves to App after resolution */ }, []);
 
   if (state === "choose") return (
@@ -500,8 +532,10 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
         <div className="start-actions">
           <button className="start-primary" data-sfx="open" onClick={() => { setProgress(loadStoryProgress()); setState("story"); }}>Story Mode <small>the Foundry Syndicate</small></button>
           <button data-sfx="open" onClick={() => onStart({ mode: "ai", portrait })}>Play vs AI <small>no login</small></button>
-          <button disabled={busy} onClick={() => void beginMatch()}>Quick match <small>ranked · a rated stranger</small></button>
-          <div className="rank-search" role="radiogroup" aria-label="Who quick match pairs you with">
+          <button disabled={busy} onClick={() => { setState("host"); void beginRoom("host"); }}>Host a game (Experimental) <small>unranked</small></button>
+          <button disabled={busy} onClick={openJoinScreen}>Join with a code <small>unranked</small></button>
+          <button disabled={busy} onClick={() => void beginMatch()}>Auto Matchmaking <small>ranked · a rated stranger</small></button>
+          <div className="rank-search" role="radiogroup" aria-label="Who Auto Matchmaking pairs you with">
             {([["any", "Any rank", "whoever is waiting"], ["similar", "Similar rank", "widening, never stuck"]] as const)
               .map(([value, label, hint]) => (
                 <button key={value} type="button" disabled={busy}
@@ -514,8 +548,6 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
               ))}
           </div>
           <button disabled={busy} onClick={() => { loadLadder(); setState("ladder"); }}>The ladder <small>top ratings</small></button>
-          <button disabled={busy} onClick={() => { setState("host"); void beginRoom("host"); }}>Host a game (Experimental) <small>unranked</small></button>
-          <button disabled={busy} onClick={openJoinScreen}>Join with a code <small>unranked</small></button>
           {onBack ? <button className="start-back" data-sfx="close" onClick={onBack}>Back to the menu</button> : null}
         </div>
       </div>
@@ -650,18 +682,11 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
       ? `Similar rank — within ${step.span} rating points${searchRung > 0 ? ", widening" : ""}.`
       : "Any rank — a fair match beats a perfect one.";
     return (
-      <main className="start-screen"><div className="start-panel lobby"><p className="start-kicker">QUICK MATCH</p><h1>Finding an opponent…</h1>
-        <p className="start-subtitle">{window} We will keep looking for up to {Math.round(MATCHMAKING_SEARCH_MS / 1000)} seconds.</p>
+      <main className="start-screen"><div className="start-panel lobby"><p className="start-kicker">AUTO MATCHMAKING</p><h1>Finding an opponent…</h1>
+        <p className="start-subtitle">{window} Searching for {searchClock} — we keep looking until you cancel.</p>
         <button onClick={abandonMatch}>Cancel</button></div></main>
     );
   }
-
-  if (state === "matchmaking-timeout") return (
-    <main className="start-screen"><div className="start-panel lobby"><p className="start-kicker">QUICK MATCH</p><h1>No rival found yet</h1><p className="start-subtitle">Nobody was in the queue. Search again — or start a match against the AI now.</p>
-      <div className="lobby-actions"><button onClick={() => void beginMatch()}>Search again</button><button onClick={abandonMatch}>Back</button><button className="start-primary" onClick={() => onStart({ mode: "ai", portrait })}>Play vs AI</button></div>
-    </div></main>
-  );
-
   if (state === "error") return (
     <main className="start-screen"><div className="start-panel lobby"><p className="start-kicker">MATCH UNAVAILABLE</p><h1>Could not join</h1><p className="lobby-error">{error}</p><div className="lobby-actions"><button onClick={backToChoose}>Back</button><button className="start-primary" onClick={() => onStart({ mode: "ai", portrait })}>Play vs AI</button></div></div></main>
   );
