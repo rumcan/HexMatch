@@ -125,6 +125,15 @@ export interface UiState {
    *  remembered by this, not the exact text, so a closed banner never pops
    *  back up when its wording changes and returns (tool switch, countdown). */
   bannerKey: string | null;
+  /**
+   * STORY-01: when set, the sheet is SPOKEN — the banner paints as Mabel's
+   *   speech bubble with this face beside it (a quadrant of her expression
+   *   sheet at a uniform 2×, or a solo portrait at `cover`). Null/omitted:
+   *   the posted manila sheet, exactly as before the campaign.
+   */
+  bannerFace?: { url: string; pos: readonly [number, number] | null } | null;
+  /** STORY-01: the name tag on the bubble ("Mabel Quill"). */
+  bannerWho?: string | null;
   costInfo: string | null;
   inspect: string | null;
   /** PP-03: tones the inspector when it is a placement verdict (e.g. the red
@@ -1601,8 +1610,28 @@ export function createOriginalUi(
       if (state.banner && dismissedBannerKey !== state.bannerKey) {
         const text = state.banner;
         const key = state.bannerKey;
+        // STORY-01: a voiced banner is a speech bubble, not a posted sheet —
+        // her face, her name tag, her line. The ✕ and the BANNER-ONCE
+        // dismissal work identically on both, because the key is the seam.
+        const face = state.bannerFace ?? null;
+        banner.classList.toggle("narrated", !!face);
         banner.innerHTML = `<button class="banner-close" title="Hide">✕</button>` +
-          `<small>${text}</small>`;
+          (face
+            ? `<span class="banner-face" aria-hidden="true"></span>`
+              + `<b class="banner-who">${state.bannerWho ?? "Mabel Quill"}</b>`
+              + `<small>${text}</small>`
+            : `<small>${text}</small>`);
+        if (face) {
+          const faceEl = banner.querySelector(".banner-face") as HTMLElement;
+          faceEl.style.backgroundImage = `url(${face.url})`;
+          if (face.pos) {
+            faceEl.style.backgroundSize = "200% 200%";
+            faceEl.style.backgroundPosition = `${face.pos[0]}% ${face.pos[1]}%`;
+          } else {
+            faceEl.style.backgroundSize = "cover";
+            faceEl.style.backgroundPosition = "center 20%";
+          }
+        }
         const bx = banner.querySelector(".banner-close") as HTMLElement;
         bx.dataset.sfx = "close";
         bx.onclick = () => {

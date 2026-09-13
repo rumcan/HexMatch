@@ -2628,6 +2628,183 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .start-panel button:disabled { opacity: .4; cursor: not-allowed; }
 
 /* ═══════════════════════════════════════════════════════════════════
+   STORY-01 — the living plate behind the front doors.
+
+   One animated backdrop, shared by the MAIN MENU and every StartScreen
+   state (mode pick, campaign list, host/join, lobby), so Play never
+   feels like leaving one app for another. Three compositor-only layers:
+
+   · ::before — the docks at first light (bg-harbor), one slow Ken Burns
+     breath, ~52s round trip, `cover` because a backdrop is a place and
+     places are never stretched per-axis;
+   · ::after  — the theme's SEAMLESS smoke tile drifting exactly one tile
+     per cycle so the loop has no seam to see;
+   · .menu-embers — a fixed cast of fourteen embers rising off the lamps
+     (deterministic, no Math.random flicker between visits).
+
+   Under prefers-reduced-motion every one of them stops dead (below) and
+   the plate simply stands still — it is paint, never information.
+   ═══════════════════════════════════════════════════════════════════ */
+.start-screen { position: relative; overflow: hidden; isolation: isolate; }
+.start-screen::before {
+  content: ""; position: absolute; inset: -6%; z-index: -3; pointer-events: none;
+  background:
+    radial-gradient(ellipse at 50% 14%, rgba(255, 176, 46, .13), transparent 46%),
+    linear-gradient(180deg, rgba(10, 8, 6, .5), rgba(8, 6, 5, .74) 62%, rgba(5, 4, 3, .86)),
+    url("../assets/story/bg-harbor.webp") center / cover no-repeat,
+    #0c0a08;
+  animation: plate-breathe 52s ease-in-out infinite alternate;
+  will-change: transform;
+}
+.start-screen::after {
+  content: ""; position: absolute; inset: -460px; z-index: -2; pointer-events: none;
+  background: var(--smoke) 0 0 / 900px repeat;
+  opacity: .12;
+  animation: smoke-drift 120s linear infinite;
+  will-change: transform;
+}
+@keyframes plate-breathe {
+  from { transform: scale(1) translate3d(0, 0, 0); }
+  to   { transform: scale(1.065) translate3d(-1.2%, -1%, 0); }
+}
+/* the tile is seamless at 900px, so travelling exactly one tile loops clean */
+@keyframes smoke-drift {
+  from { transform: translate3d(0, 0, 0); }
+  to   { transform: translate3d(900px, 450px, 0); }
+}
+
+/* ── the menu itself ─────────────────────────────────────────────── */
+.menu-embers { position: absolute; inset: 0; z-index: -1; pointer-events: none; }
+.menu-embers span {
+  position: absolute; bottom: -12px; border-radius: 50%;
+  background: radial-gradient(circle, #ffd98a 0%, rgba(255, 176, 46, .55) 45%, rgba(255, 176, 46, 0) 72%);
+  box-shadow: 0 0 6px rgba(255, 176, 46, .5);
+  opacity: 0;
+  animation-name: ember-rise; animation-timing-function: linear; animation-iteration-count: infinite;
+  will-change: transform;
+}
+@keyframes ember-rise {
+  0%   { transform: translate3d(0, 0, 0); opacity: 0; }
+  12%  { opacity: .85; }
+  70%  { opacity: .5; }
+  100% { transform: translate3d(var(--drift, 0px), -104vh, 0); opacity: 0; }
+}
+.menu-card {
+  position: relative; z-index: 2;
+  width: min(520px, 100%); text-align: center; padding: 44px 40px 34px;
+  border: 1px solid var(--line, #594b3b); border-top: 3px solid var(--brass, #c9a24a);
+  background:
+    linear-gradient(180deg, rgba(34, 27, 20, .95), rgba(19, 16, 13, .96)),
+    repeating-linear-gradient(104deg, rgba(255, 255, 255, .016) 0 1px, transparent 1px 6px);
+  box-shadow: 0 24px 90px rgba(0, 0, 0, .6), inset 0 1px 0 rgba(255, 255, 255, .06);
+}
+.menu-emblem {
+  display: block; width: 76px; height: 76px; margin: 0 auto 10px;
+  background: var(--seal) center / contain no-repeat;
+  opacity: .92; filter: drop-shadow(0 4px 14px rgba(255, 176, 46, .22));
+}
+.menu-title {
+  margin: 0; color: #f4e9d2;
+  font-family: var(--display); font-weight: 700;
+  font-size: clamp(30px, 6vw, 42px); line-height: 1.08; letter-spacing: 2px;
+  text-shadow: 0 0 26px rgba(255, 176, 46, .28), 0 2px 0 rgba(0, 0, 0, .5);
+}
+.menu-sub {
+  margin: 10px auto 26px; max-width: 360px;
+  color: #a89b89; font: 600 12px/1.5 var(--sans, sans-serif);
+  letter-spacing: 2.5px; text-transform: uppercase;
+}
+.menu-actions { display: grid; gap: 12px; }
+.menu-btn {
+  min-height: 56px; padding: 10px 18px 12px; cursor: pointer;
+  border: 1px solid var(--line, #594b3b); border-radius: var(--r, 3px);
+  color: var(--txt, #efe4d0);
+  background: linear-gradient(180deg, rgba(255, 255, 255, .055), rgba(255, 255, 255, .015)), rgba(21, 18, 14, .85);
+  font-family: var(--display); font-weight: 700; font-size: 15px;
+  letter-spacing: 3px; text-transform: uppercase;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05);
+  transition: border-color .15s ease, background .15s ease, box-shadow .15s ease;
+}
+.menu-btn:hover {
+  border-color: var(--gold, #c98731);
+  background: linear-gradient(180deg, rgba(255, 166, 43, .16), rgba(255, 166, 43, .05)), rgba(21, 18, 14, .85);
+  box-shadow: 0 0 0 1px rgba(233, 168, 62, .25), 0 6px 22px rgba(0, 0, 0, .4);
+}
+.menu-btn.primary {
+  color: #1b130b; border-color: var(--gold2, #e9a83e);
+  background: linear-gradient(180deg, #f0c069, #c99a3e 55%, #b98a34);
+  box-shadow: 0 0 22px rgba(255, 176, 46, .18), inset 0 1px 0 rgba(255, 255, 255, .4);
+}
+.menu-btn.primary:hover { background: linear-gradient(180deg, #ffd47e, #d9a94c 55%, #c2913a); }
+.mb-tag {
+  display: block; margin-top: 3px;
+  font: 500 11px/1.3 var(--sans, sans-serif);
+  letter-spacing: 1.2px; text-transform: none; opacity: .6;
+}
+.menu-btn.primary .mb-tag { color: #3a2a10; opacity: .78; }
+.menu-note {
+  margin: 16px auto 0; max-width: 400px; padding: 10px 14px;
+  border: 1px dashed rgba(201, 162, 74, .55); border-radius: var(--r, 3px);
+  background: rgba(236, 224, 198, .07);
+  color: #e8dcc0; font-family: var(--mono); font-size: 12.5px; line-height: 1.5;
+}
+.menu-campaign {
+  margin: 20px 0 0; color: #8b7d68;
+  font: 600 11px/1 var(--sans, sans-serif); letter-spacing: 2.4px; text-transform: uppercase;
+}
+.menu-foot {
+  position: absolute; left: 0; right: 0; bottom: 10px; z-index: 2;
+  margin: 0; padding: 0 16px; text-align: center;
+  color: rgba(232, 220, 192, .38); font: 500 10px/1.5 var(--sans, sans-serif); letter-spacing: .6px;
+}
+/* the tour projector (#iso-tutorial) hangs inside this host, full-bleed */
+.menu-howto { position: absolute; inset: 0; z-index: 5; }
+
+/* the mode screen answers the menu: same brass-crowned panel on the same
+   living plate, so the two read as one room */
+.start-panel { border-top: 3px solid var(--brass, #c9a24a); }
+.start-back { margin-top: 4px; opacity: .85; }
+.start-back:hover { opacity: 1; }
+
+/* ── STORY-01: the narrated banner — a posted sheet becomes a voice ──
+   When ui.paint gets `bannerFace`, the sheet is Mabel SPEAKING: her face
+   at a uniform 2× quadrant (geometry is sacred — never per-axis), her name
+   in the typewriter face, her line below, and a little brass-edged tail so
+   the whole thing reads as a speech bubble and not a notice. */
+.banner.narrated {
+  display: grid; grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 12px; align-items: center; text-align: left;
+  padding: 12px 40px 13px 14px;
+}
+.banner.narrated .banner-face {
+  grid-row: 1 / -1; width: 46px; height: 46px;
+  border: 2px solid var(--brass, #c9a24a); border-radius: 6px;
+  background-color: rgba(40, 28, 14, .35); background-repeat: no-repeat;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, .4);
+}
+.banner.narrated b.banner-who {
+  grid-column: 2; align-self: end;
+  font-family: var(--mono); font-size: 12.5px; color: #86331c;
+  letter-spacing: .6px; text-transform: none;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, .3);
+}
+.banner.narrated small { grid-column: 2; align-self: start; margin-top: 2px; }
+.banner.narrated::after {
+  content: ""; position: absolute; left: 26px; bottom: -8px;
+  width: 14px; height: 14px; transform: rotate(45deg);
+  background: #c9b288;
+  border-right: 1px solid rgba(60, 42, 22, .6);
+  border-bottom: 1px solid rgba(60, 42, 22, .6);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .start-screen::before, .start-screen::after,
+  .menu-embers span { animation: none; }
+  .menu-embers { display: none; }
+  .menu-embers span { opacity: 0; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
    Cinematic final ledger — victory fireworks / defeat ashes
    ═══════════════════════════════════════════════════════════════════ */
 .ending-screen {

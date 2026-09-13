@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import "./game/styles.css";
 import { startIsoGame } from "./iso/game";
 import StartScreen, { type StartChoice } from "./ui/StartScreen";
+// STORY-01: the front door — Play / Settings / How to Play over a living
+// plate. Play leads to the mode screen; the menu never mounts the game.
+import MainMenu from "./ui/MainMenu";
 // STORY-01: the opening reel stands between the menu and the first contract —
 // one skippable cinematic, played once (watched or skipped both count), and
 // replayable from the campaign menu. It is a DOM projector over an empty
@@ -20,6 +23,12 @@ import { chapterById } from "./story/chapters";
  */
 export default function App() {
   const [choice, setChoice] = useState<StartChoice | null>(null);
+  /** STORY-01: the front door stands until Play is pressed (or a playtest
+   *  link pins a contract, which walks straight past it). */
+  const [atMenu, setAtMenu] = useState(true);
+  /** STORY-01: leaving a contract through the ledger's third door reopens the
+   *  mode screen ON the campaign list, seals and all. */
+  const [backToCampaign, setBackToCampaign] = useState(false);
   /** STORY-01: the reel, and what starts when it settles (null = the menu). */
   const [reel, setReel] = useState<{ next: StartChoice | null } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
@@ -30,7 +39,16 @@ export default function App() {
   // skipped both mark it seen — unless a playtest link suppresses it. The
   // reel never blocks a sandbox match or a networked seat.
   const begin = (next: StartChoice) => {
-    if (next.mode === "story-intro") { setReel({ next: null }); return; }
+    if (next.mode === "story-intro") {
+      // the reel unmounts the mode screen; when it settles the player should
+      // be standing where they were — the campaign list, not the mode pick.
+      setBackToCampaign(true);
+      setReel({ next: null });
+      return;
+    }
+    // any other door forgets the campaign-list return — the mode screen
+    // reopens where the player is actually heading from.
+    if (next.mode !== "story") setBackToCampaign(false);
     const progress = loadStoryProgress();
     // The reel is the campaign's opening, not chapter one's: it stands before
     // whichever contract comes first for a player who has not seen it, and
@@ -77,7 +95,11 @@ export default function App() {
           role: "solo",
           portrait: choice.portrait,
           story: choice.chapter,
-          onStoryExit: () => setChoice(null),
+          onStoryExit: () => {
+            setChoice(null);
+            setBackToCampaign(true);
+            setAtMenu(false);
+          },
         })
         // The reel is never a mounted game: `begin` intercepts it, and this
         // branch exists only so the union stays exhaustive.
@@ -88,6 +110,13 @@ export default function App() {
   }, [choice]);
 
   if (reel) return <div ref={reelRef} className="reel-host" />;
-  if (!choice) return <StartScreen onStart={begin} />;
-  return <div ref={ref} className="game-root" />;
+  if (choice) return <div ref={ref} className="game-root" />;
+  if (atMenu) return <MainMenu onPlay={() => { setBackToCampaign(false); setAtMenu(false); }} />;
+  return (
+    <StartScreen
+      onStart={begin}
+      onBack={() => setAtMenu(true)}
+      initial={backToCampaign ? "story" : "choose"}
+    />
+  );
 }

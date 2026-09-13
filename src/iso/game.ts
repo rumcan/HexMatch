@@ -143,10 +143,11 @@ import {
 } from "./ending";
 // STORY-01 — the campaign seam: a contract names the rival, the voice, the
 // ★ line and the three scenes around the match; the guide rides the wire.
-import { CAST, FACE_FOR_DIRECTION, faceOf, type Expression } from "../story/cast";
+import { CAST, FACE_FOR_DIRECTION, GUIDE, faceOf, type Expression } from "../story/cast";
 import { CHAPTERS, chapterById, type StoryChapter } from "../story/chapters";
 import { createStoryDirector } from "../story/voices";
 import { advisorBeats, type AdvisorEvent } from "../story/advisor";
+import { guideBanner } from "../story/guide-banner";
 import { advisorEnabled, recordChapterResult } from "../story/progress";
 import { showScene, type SceneHandle } from "../story/stage";
 import type { UiRivalryBeat } from "../game/ui";
@@ -2852,6 +2853,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       bannerKey = "match-gems";
       banner = "Match the tokened gems in the Processing Plant to process";
     }
+    // STORY-01: inside a contract the loop's opening beats are SPOKEN, not
+    // posted — Mabel's line replaces the sheet's wording for the keys she
+    // owns (guide-banner.ts), and the HUD paints the sheet as her speech
+    // bubble. Keys she does not own keep the posted sheet verbatim.
+    const voicedBanner = storyOn ? guideBanner(bannerKey) : null;
+    if (voicedBanner) banner = voicedBanner.text;
 
     let costInfo: string | null = null;
     if (preview) {
@@ -3020,6 +3027,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // dismissal is remembered by this, so a closed line never pops back up
       // when the wording changes and returns.
       bannerKey,
+      // STORY-01: her face and name beside the bubble, mood by moment.
+      ...(voicedBanner
+        ? { bannerFace: faceOf(GUIDE, voicedBanner.mood), bannerWho: CAST[GUIDE].name }
+        : {}),
       costInfo,
       inspect: info || null,
       inspectTone: infoTone,

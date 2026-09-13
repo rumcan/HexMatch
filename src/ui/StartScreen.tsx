@@ -58,11 +58,15 @@ const WELCOME_TIMEOUT_MS = 10_000;
 
 interface StartScreenProps {
   onStart: (choice: StartChoice) => void;
+  /** STORY-01: the main menu's Back door, when the screen was reached from it. */
+  onBack?: () => void;
+  /** STORY-01: reopening on the campaign list (the ledger's third door). */
+  initial?: "choose" | "story";
 }
 
 /** The deliberately low-friction entry point: AI is always available without auth. */
-export default function StartScreen({ onStart }: StartScreenProps) {
-  const [state, setState] = useState<ScreenState>("choose");
+export default function StartScreen({ onStart, onBack, initial = "choose" }: StartScreenProps) {
+  const [state, setState] = useState<ScreenState>(initial);
   const [room, setRoom] = useState<HexRoom | null>(null);
   const [seed, setSeed] = useState<number | null>(null);
   const [code, setCode] = useState("");
@@ -292,6 +296,7 @@ export default function StartScreen({ onStart }: StartScreenProps) {
           <button disabled={busy} onClick={() => { setState("host"); void beginRoom("host"); }}>Host a game (Experimental)</button>
           <button disabled={busy} onClick={openJoinScreen}>Join with a code</button>
           <button disabled={busy} onClick={() => void beginMatch()}>Quick match</button>
+          {onBack ? <button className="start-back" data-sfx="close" onClick={onBack}>Back to the menu</button> : null}
         </div>
       </div>
     </main>
@@ -339,7 +344,8 @@ export default function StartScreen({ onStart }: StartScreenProps) {
           </div>
           <div className="story-menu-actions">
             <button data-sfx="open" onClick={() => onStart({ mode: "story-intro", portrait })}>Watch the opening reel</button>
-            <button onClick={() => setState("choose")}>Back</button>
+            <button onClick={() => setState("choose")}>Modes</button>
+            {onBack ? <button data-sfx="close" onClick={onBack}>Back to the menu</button> : null}
           </div>
         </div>
       </main>

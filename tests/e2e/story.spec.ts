@@ -35,6 +35,8 @@ async function skipToGame(page: import("@playwright/test").Page) {
 
 test("the campaign menu opens with one open contract and four sealed", async ({ page }) => {
   await primeStory(page, "/");
+  // STORY-01 menu: Play first — the mode screen stands behind the front door
+  await page.locator(".menu-btn.primary").click();
   await page.getByRole("button", { name: /Story Mode/ }).click();
   const cards = page.locator(".chapter-card");
   await expect(cards).toHaveCount(5);
@@ -63,6 +65,8 @@ test("a playtest link boots the contract, and skipping the briefing lands in the
 
 test("the reel plays once for a fresh player and skips clean", async ({ page }) => {
   await primeStory(page, "/");
+  // STORY-01 menu: Play first — the mode screen stands behind the front door
+  await page.locator(".menu-btn.primary").click();
   await page.getByRole("button", { name: /Story Mode/ }).click();
   await page.locator(".chapter-card").first().click();
   // unseen record ⇒ the opening reel stands before the briefing
