@@ -16,6 +16,11 @@ import {
   introSuppressed, loadStoryProgress, markIntroSeen, pinnedChapter,
 } from "./story/progress";
 import { chapterById } from "./story/chapters";
+// RANK-01 (#147): the rating store is built HERE, once per page, and handed to
+// the game. `iso/game.ts` may not import it — `rankstore.ts` reaches the RUN SDK
+// and `window` at load — and a single instance is also what keeps one match's
+// once-only guard in one place.
+import { rankStore } from "./net/rankstore";
 
 /**
  * Multiplayer is opt-in: keeping the start screen outside the game means the
@@ -117,7 +122,18 @@ export default function App() {
         // branch exists only so the union stays exhaustive.
         : choice.mode === "story-intro"
           ? undefined
-          : startIsoGame(ref.current, { seed: choice.seed, role: choice.mode, net: choice.net, portrait: choice.portrait, onQuitToMenu: quitToMenu });
+          : startIsoGame(ref.current, {
+            seed: choice.seed,
+            role: choice.mode,
+            net: choice.net,
+            portrait: choice.portrait,
+            // RANK-01: only a quick match is rated (#147). `rank` is always
+            // supplied so a future ranked door needs no plumbing; `ranked`
+            // is what decides.
+            ranked: choice.ranked === true,
+            rank: rankStore(),
+            onQuitToMenu: quitToMenu,
+          });
     return () => { cleanup?.(); };
   }, [choice]);
 

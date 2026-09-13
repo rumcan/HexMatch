@@ -189,6 +189,14 @@ export { joinFromSnapshot };
 import { NetSession, type NetRole } from "../net/session";
 import { applyTrackDelta } from "../net/delta";
 import { type DeltaMsg, type IntentMsg } from "../net/protocol";
+// RANK-01 (#147): the rated match. `rank-runtime.ts` holds the rating and talks
+// to the room; the STORE arrives by injection (see `IsoGameOptions.rank`) so
+// this file keeps its promise of booting in a headless test with no SDK, no
+// window and no storage — `rankstore.ts`, which does touch the SDK, is built by
+// the React layer and handed in.
+import { RankRuntime, type RankStore } from "../net/rank-runtime";
+import { fmtRating, fmtRatingDelta, type RankVerdict } from "../net/rating";
+import type { EndingRankLine } from "./ending";
 
 // ── tuning (E8's rebalance surface, all in one place) ─────────────────────
 /**
@@ -333,6 +341,20 @@ export interface IsoGameOptions {
   net?: NetSession | null;
   /** PP-14b: which tycoon portrait the player picked (defaults to "vex"). */
   portrait?: Portrait;
+  /**
+   * RANK-01 (#147): this room's matches are RATED. Set by the start screen for
+   * quick match only — a hosted room or a shared code is a game between
+   * friends, not a ladder match (see `docs/RANK-01-multiplayer-ranking.md`).
+   * Requires `rank` and a live `net`; without either, the flag is inert.
+   */
+  ranked?: boolean;
+  /**
+   * RANK-01: where the rating is kept. Built by the React layer
+   * (`rankStore()` in `src/net/rankstore.ts`) because it is the one ranking
+   * module that touches the SDK. Absent means this match cannot be rated, and
+   * `ranked` is then ignored rather than half-honoured.
+   */
+  rank?: RankStore;
   /**
    * STORY-01: the campaign contract this match plays (`CHAPTERS[].id`). Solo
    * only: a contract names its rival, voice, ★ line and seed, and wraps the
@@ -558,6 +580,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   let winningSource: DecisiveSource = null;
   let endingView: EndingScreenHandle | null = null;
   let endingShown = false;
+  /**
+   * RANK-01 (#147): the rated match's state. Declared here — with the other
+   * end-of-match state, and long before the runtime is built — because
+   * `presentEnding` and the restore path both read it, and a `let` declared
+   * further down would be a temporal dead zone for a boot that restores a
+   * finished match.
+   *
+   *   rankRuntime — null unless this is a rated room match with a store
+   *   rankVerdict — the room's filed result, once it has arrived
+   */
+  let rankRuntime: RankRuntime | null = null;
+  let rankVerdict: RankVerdict | null = null;
+  /** When this match booted, for the ladder's required `duration` field. */
+  const rankBootAt = performance.now();
   /** TUT-01: the boot tour, while it is open. Held so `dispose` can take its
    *  document keydown listener with it — the same reason `endingView` is. */
   let tutorialView: TutorialHandle | null = null;
@@ -1307,6 +1343,70 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     playRivalryScene(nextBanterScene(), "banter");
   }
 
+  /**
+   * RANK-01: the ROOM's id for a local seat. The local frame renames and
+   * re-orders seats (players[0] is always "me"), while the wire — and every
+   * message the room validates — speaks profile ids. The room refuses a result
+   * that names a non-member, so getting this wrong would silently unrank a
+   * finished match rather than rate the wrong player.
+   */
+  const wireIdOf = (p: PlayerState): string => {
+    if (!net) return p.id;
+    if (p === players[0]) return net.playerId;
+    return net.info?.roster.find((e) => e.id !== net.playerId)?.id ?? p.id;
+  };
+
+  /** RANK-01: the ledger's rating row, from the room's verdict. */
+  const rankLineFor = (verdict: RankVerdict): EndingRankLine => ({
+    key: verdict.state.matches > 0 ? verdict.tierAfter.key : "unranked",
+    tierLabel: verdict.state.matches > 0 ? verdict.tierAfter.label : "Unranked",
+    rating: verdict.change.after,
+    before: verdict.change.before,
+    delta: verdict.change.delta,
+    promoted: verdict.promoted,
+    demoted: verdict.demoted,
+    forfeit: verdict.forfeit,
+    provisional: verdict.state.matches < 10,
+    opponentKnown: verdict.opponentKnown,
+  });
+
+  /**
+   * RANK-01: the room filed this match. Fill the ledger's rating row if the
+   * ledger is already standing (it usually is — the host claims the result as
+   * the star line is crossed, and the room's answer lands a round trip later),
+   * and otherwise say it where the player is looking: a match decided by a
+   * departure has no ledger, but it does have a rating.
+   */
+  const onRankVerdict = (verdict: RankVerdict) => {
+    rankVerdict = verdict;
+    const delta = fmtRatingDelta(verdict.change.delta);
+    const arrow = `${fmtRating(verdict.change.before)} → <b>${fmtRating(verdict.change.after)}</b> `
+      + `<span class="rank-delta ${verdict.change.delta >= 0 ? "up" : "down"}">${delta}</span>`;
+    // The ledger usually beats this message to the screen: the host files the
+    // result the instant the star line is crossed, so the answer lands a round
+    // trip later. Fill the standing ledger's row and say nothing twice.
+    if (endingView) {
+      endingView.setRank(rankLineFor(verdict));
+      return;
+    }
+    // No ledger is coming when the match was decided by a DEPARTURE: nothing
+    // crossed a star line, so this is the only place the rating is ever shown.
+    if (verdict.forfeit) {
+      const filed = verdict.outcome === "win"
+        ? `${escText(rival.name)} left the room, so the match is filed as a win.`
+        : "You left the room, so the match is filed as a loss.";
+      ui.showModal(
+        `<p class="rank-modal-line">${filed}</p>`
+        + `<p class="rank-modal-line">Your rating: ${arrow}</p>`,
+      );
+      return;
+    }
+    // A star-line win whose ledger has not mounted yet: one line, and the
+    // ledger carries the row a frame later.
+    toast(`Rating ${fmtRating(verdict.change.before)} → ${fmtRating(verdict.change.after)} (${delta})`,
+      verdict.change.delta >= 0 ? "good" : "bad");
+  };
+
   /** Show the final ledger once. The same model builds victory and defeat, but
    *  only a human win receives the fireworks layer. */
   const presentEnding = (source: DecisiveSource = winningSource) => {
@@ -1339,6 +1439,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const openLedger = () => {
       endingView = showEndingScreen(ui.el, model, {
         playerPortrait: opts.portrait ?? "vex",
+        // RANK-01: `undefined` when this match is not rated at all (no row),
+        // `null` while a rated match waits on the room's verdict (the row
+        // prints "filing…"), and the line itself once it has landed.
+        rank: rankRuntime ? (rankVerdict ? rankLineFor(rankVerdict) : null) : undefined,
         onRestart: () => {
           restartArmed = true;
           clearSave(saveKey);
@@ -1591,6 +1695,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         phase = "won";
         winner = p;
         winningSource = decisive;
+        // RANK-01: the host is the ONLY seat that may file a result — it runs
+        // the simulation, so it is the only one that can say the line was
+        // crossed. The verdict goes to the room, which relays it back to both
+        // seats, so neither seat rates this match from its own opinion.
+        if (rankRuntime && !isGuest()) {
+          const other = p === players[0] ? players[1] : players[0];
+          rankRuntime.claimWin(wireIdOf(p), wireIdOf(other), (performance.now() - rankBootAt) / 1000);
+        }
         const b = victoryBreakdown(eco, p.id);
         toast(`${p.name} wins — ${fmtVp(vpFor(score, p.id))}★ `
           + `(${b.paved} paved tile${b.paved === 1 ? "" : "s"}, ${b.plants} plant${b.plants === 1 ? "" : "s"})`,
@@ -3412,6 +3524,23 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   }
 
   if (net) {
+    // RANK-01 (#147): a rated match. Built BEFORE attach so the very first
+    // greeting/board/result the session delivers already has somewhere to go.
+    // `opts.ranked` comes from the start screen and is true for quick match
+    // only; a store is required, so a caller that forgot one gets an unranked
+    // match rather than a half-rated one.
+    if (opts.ranked && opts.rank) {
+      rankRuntime = new RankRuntime({
+        session: net,
+        store: opts.rank,
+        board: net.board,
+        onVerdict: onRankVerdict,
+      });
+      // Publish the rating the moment the file is loaded: the room's board is
+      // what BOTH seats rate the match from, so the earlier it is complete,
+      // the fewer matches are rated against an unknown opponent.
+      void rankRuntime.start();
+    }
     net.attach({
       info: (info) => {
         // The room's seed is the map. A mismatch means this client grew the
@@ -3440,6 +3569,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         }
         if (info.role === "host") publishNet(performance.now(), true);
       },
+      ratings: (board) => rankRuntime?.applyBoard(board),
+      // RANK-01: the room's verdict on this match. Both seats get it; the
+      // rating arithmetic is fed from here and nowhere else.
+      result: (msg) => { void rankRuntime?.handleResult(msg); },
       fullState: () => netFullState(),
       intent: (msg) => applyGuestIntent(msg),
       snapshot: (snap, seq) => applyNetSnapshot(snap, seq),
@@ -3455,7 +3588,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         const who = username ? `${escText(username)} left` : "Your opponent left";
         const line = `${who} the room — this match is over.`;
         toast(line, "bad");
-        ui.showModal(`<p>${line}</p>`);
+        // RANK-01: in a rated match the departure is also a result, and the
+        // room files it. Which of the two messages arrives first is a race, so
+        // whichever lands second still shows the rating: this one appends the
+        // row when the verdict is already in hand, and `onRankVerdict` fills
+        // the modal in when it is not.
+        const filed = rankVerdict
+          ? `<p class="rank-modal-line">Your rating: ${fmtRating(rankVerdict.change.before)} → `
+            + `<b>${fmtRating(rankVerdict.change.after)}</b> `
+            + `<span class="rank-delta ${rankVerdict.change.delta >= 0 ? "up" : "down"}">`
+            + `${fmtRatingDelta(rankVerdict.change.delta)}</span></p>`
+          : "";
+        ui.showModal(`<p>${line}</p>${filed}`);
       },
       status: (state) => {
         // A reconnect is exactly when a guest must re-pull state; the session
@@ -4697,10 +4841,26 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           if (isSolo()) { opts.onQuitToMenu?.(); return; }
           void ask({
             title: "Leave this room?",
-            body: "You return to the main menu and the other seat is told you left.",
+            // RANK-01: a rated match says what leaving costs BEFORE it costs
+            // it. The number itself is not in the copy — the arithmetic needs
+            // the opponent's rating, and a confirm is no place for a
+            // spreadsheet — but "filed as a loss" is the whole of the warning.
+            body: rankRuntime
+              ? "You return to the main menu and the other seat is told you left. This is a ranked match: leaving before the final star files it as a loss."
+              : "You return to the main menu and the other seat is told you left.",
             confirmLabel: "Leave room",
             danger: true,
-          }).then((ok) => { if (ok) opts.onQuitToMenu?.(); });
+          }).then((ok) => {
+            if (!ok) return;
+            // RANK-01: the room will file this seat's loss the moment the seat
+            // empties, and the leaver will never see that message — it is
+            // leaving. So the leaving seat applies its own loss here, from the
+            // same board the survivor's side uses, and the two land on the
+            // same number. `phase === "won"` is excluded: the match is
+            // decided, nothing is forfeited.
+            if (rankRuntime && !endingShown) void rankRuntime.fileOwnForfeit(wireIdOf(rival));
+            opts.onQuitToMenu?.();
+          });
         });
     }
 

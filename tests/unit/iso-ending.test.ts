@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildEnding, endingPathFor, showEndingScreen,
-  type EndingBreakdown, type EndingInput,
+  type EndingBreakdown, type EndingInput, type EndingRankLine,
 } from "../../src/iso/ending";
 
 const paving: EndingBreakdown = { paved: 36, plants: 1, pavedVp: 9, plantVp: 1 };
@@ -162,6 +162,91 @@ describe("cinematic ending screen", () => {
     expect(view.element.textContent).toMatch(/Hostile takeover/i);
     expect(view.element.textContent).toContain("Where Rival's winning points came from");
     expect(view.element.textContent).toContain("Rival's final ledger10★");
+    view.destroy();
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// RANK-01 (#147) — the rating row on the ledger
+//
+// The issue asks for the rating change on the end-of-match screen. The row has
+// three states and the difference is the whole design: an unrated match draws
+// NOTHING (a solo game has no rating), a rated match whose verdict has not
+// arrived draws a "filing" row (silence would read as a broken feature), and a
+// filed match draws the badge, the number and the signed delta — usually
+// through `setRank`, because the verdict lands a round trip after the ledger.
+// ══════════════════════════════════════════════════════════════════════════
+describe("RANK-01 the ending ledger's rating row", () => {
+  const line = (patch: Partial<EndingRankLine> = {}): EndingRankLine => ({
+    key: "silver",
+    tierLabel: "Silver",
+    rating: 1196,
+    before: 1180,
+    delta: 16,
+    promoted: false,
+    demoted: false,
+    forfeit: false,
+    provisional: false,
+    opponentKnown: true,
+    ...patch,
+  });
+
+  function mount(options: Parameters<typeof showEndingScreen>[2]) {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const view = showEndingScreen(host, buildEnding(input()), options);
+    return view;
+  }
+
+  it("draws NO row for an unrated match, and setRank cannot add one", () => {
+    const view = mount({ onRestart: () => {} });
+    expect(view.element.querySelector(".ending-rank")).toBeNull();
+    // A late, unasked-for verdict must not bolt a rating onto a solo game.
+    view.setRank(line());
+    expect(view.element.querySelector(".ending-rank")).toBeNull();
+    view.destroy();
+  });
+
+  it("opens PENDING when the room has not filed yet, and fills when it does", () => {
+    const view = mount({ onRestart: () => {}, rank: null });
+    const row = view.element.querySelector<HTMLElement>(".ending-rank")!;
+    expect(row.dataset.state).toBe("pending");
+    expect(row.textContent).toContain("Filed with the room");
+    expect(row.querySelector("img")?.getAttribute("src")).toMatch(/unranked/i);
+
+    view.setRank(line());
+    const filled = view.element.querySelector<HTMLElement>(".ending-rank")!;
+    expect(filled.dataset.state).toBe("up");
+    expect(filled.textContent).toContain("Silver");
+    expect(filled.textContent).toContain("1196");
+    expect(filled.textContent).toContain("+16");
+    expect(filled.querySelector(".ending-rank-badge")?.getAttribute("src")).toMatch(/silver/i);
+    // Nothing special to announce: the row still says where the number came from.
+    expect(filled.textContent).toContain("1180 → 1196");
+    view.destroy();
+  });
+
+  it("prints a loss as a negative, with the notes a player needs", () => {
+    const view = mount({
+      onRestart: () => {},
+      rank: line({ key: "bronze", tierLabel: "Bronze", rating: 1164, delta: -16, demoted: true, provisional: true, opponentKnown: false, forfeit: true }),
+    });
+    const row = view.element.querySelector<HTMLElement>(".ending-rank")!;
+    expect(row.dataset.state).toBe("down");
+    expect(row.dataset.demoted).toBe("1");
+    expect(row.textContent).toContain("−16");
+    expect(row.textContent).toContain("Relegated to Bronze");
+    expect(row.textContent).toContain("Placement match.");
+    expect(row.textContent).toContain("unknown");
+    expect(row.textContent).toContain("forfeit");
+    view.destroy();
+  });
+
+  it("marks a promotion", () => {
+    const view = mount({ onRestart: () => {}, rank: line({ key: "gold", tierLabel: "Gold", rating: 1258, before: 1244, delta: 14, promoted: true }) });
+    const row = view.element.querySelector<HTMLElement>(".ending-rank")!;
+    expect(row.dataset.promoted).toBe("1");
+    expect(row.textContent).toContain("Promoted to Gold");
     view.destroy();
   });
 });

@@ -15,9 +15,11 @@
 //   - `protocol.ts` — the message union + version refusal. No SDK, no
 //     browser: safe to import from the server bundle, Node tests, anywhere.
 //   - THIS file — room lifecycle (`createRoom`, `joinRoomByCode`,
-//     `quickMatch`, `getUserRooms`), room-code shape, auth helpers. Needs the
-//     RUN host (or `vite dev` with `rundotMultiplayerPlugin`, which serves
-//     rooms locally on port 9001).
+//     `quickMatch`, `getUserRooms`), room-code shape, auth helpers, per-player
+//     storage and the ladder (RANK-01, #147). Needs the RUN host (or `vite dev`
+//     with `rundotMultiplayerPlugin`, which serves rooms locally on port 9001).
+//   - `rankstore.ts` — the ranking POLICY (which key, what a stored file means,
+//     when a result is filed once). No SDK: it calls the wrappers here.
 // ══════════════════════════════════════════════════════════════════════════
 import RundotGameAPI from "@series-inc/rundot-game-sdk/api";
 import type {
@@ -92,7 +94,17 @@ export interface QuickMatchOptions {
   matchmakeTimeoutMs?: number;
   /** How often to poll the pool while waiting (default 1s). */
   pollIntervalMs?: number;
+  /**
+   * RANK-01 (#147): the similar-rank SEARCH WINDOW, as a bucket index from
+   * `searchBucket()`. The pool matches criteria by equality, so a "within N
+   * points" search is expressed as `rank: <bucket>` and the caller widens the
+   * bucket over time. `null`/absent = Any rank: `MATCH_CRITERIA` alone.
+   */
+  rankBucket?: number | null;
 }
+
+/** The criteria key carrying a similar-rank search window. */
+export const RANK_CRITERIA_KEY = "rank";
 
 /**
  * How long ONE matchmake request waits before the SDK gives up on it: it sends
@@ -143,10 +155,19 @@ export function isMatchmakeWindowExpired(err: unknown): boolean {
  * `isMatchmakeWindowExpired` says the window closed.
  */
 export function quickMatch(opts: QuickMatchOptions = {}): Promise<HexRoom> {
+  const { rankBucket, ...rest } = opts;
+  // A plain search asks for the room type's own criteria only, so it can join
+  // ANY waiting room — including one a similar-rank searcher created (the pool
+  // requires the room to satisfy every requested key, not to match exactly).
+  // That asymmetry is what makes the widening ladder safe: its last rung is
+  // always "any rank", and it can see everyone.
+  const criteria: Record<string, string | number> = rankBucket == null
+    ? { ...MATCH_CRITERIA }
+    : { ...MATCH_CRITERIA, [RANK_CRITERIA_KEY]: rankBucket };
   return realtime().matchmakeRoom<HexProtocol>(ROOM_TYPE, {
-    criteria: { ...MATCH_CRITERIA },
-    matchmakeTimeoutMs: opts.matchmakeTimeoutMs ?? MATCHMAKE_WINDOW_MS,
-    pollIntervalMs: opts.pollIntervalMs,
+    criteria,
+    matchmakeTimeoutMs: rest.matchmakeTimeoutMs ?? MATCHMAKE_WINDOW_MS,
+    pollIntervalMs: rest.pollIntervalMs,
   });
 }
 
@@ -155,6 +176,168 @@ export function getUserRooms(
   options?: ListUserRoomsOptions,
 ): Promise<RealtimeRoomSummary[]> {
   return realtime().getUserRooms(options);
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// RANK-01 (#147) — player storage and the ladder, behind the same seam.
+//
+// The rating system needs two platform calls this file did not previously
+// make: a per-player key/value store (the rating file) and the leaderboard
+// (the public ladder). Both live HERE, with every other SDK call, so a BETA
+// drift is still a one-file fix — and so the ranking policy in
+// `src/net/rankstore.ts` can be read and unit-tested without an SDK.
+//
+// Every wrapper resolves rather than rejects. A rating read that fails must
+// fall back to a fresh file, and a ladder submit that fails must not take the
+// match's ending screen down with it: this is a game about freight, and none
+// of these calls is worth a lost match.
+// ══════════════════════════════════════════════════════════════════════════
+
+/** The stored rating file (`appStorage`, per-player, cloud-backed). */
+export const RANK_STORAGE_KEY = "hexmatch:rank:v1";
+
+/** The once-only guard: the last room result this client filed. */
+export const RANK_FILED_KEY = "hexmatch:rank:filed:v1";
+
+/** The rating board's leaderboard mode (`rundot/leaderboard.config.json`). */
+export const LADDER_MODE = "ranked";
+
+/** Where the local mirror lives in a page with no RUN host (a dev room). */
+export const RANK_LOCAL_MIRROR = "hexmatch:rank";
+
+interface StorageLike {
+  getItem(key: string): Promise<string | null>;
+  setItem(key: string, value: string): Promise<void>;
+}
+
+/**
+ * The RUN player store, or null when there is no host. Duck-typed on the same
+ * basis as `isOfflineMockRealtime`: the mock resolves every call, so a wrapper
+ * that trusted it would write a rating into a bucket that does not exist and
+ * read `null` back forever — which looks exactly like a storage bug.
+ */
+function playerStorage(): StorageLike | null {
+  try {
+    const api = RundotGameAPI as unknown as { appStorage?: StorageLike };
+    return api.appStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Read a stored value; `null` when absent, unreachable, or malformed. */
+export async function readPlayerValue(key: string): Promise<string | null> {
+  const store = playerStorage();
+  if (!store) return null;
+  try {
+    const value = await store.getItem(key);
+    return typeof value === "string" && value.length > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write a stored value. Resolves `false` when the write did not happen, and
+ * the caller mirrors to localStorage: a rating kept only on this device is a
+ * worse rating, not a lost one.
+ */
+export async function writePlayerValue(key: string, value: string): Promise<boolean> {
+  const store = playerStorage();
+  if (!store) return false;
+  try {
+    await store.setItem(key, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** One row of the public ladder, as the start screen prints it. */
+export interface LadderEntry {
+  profileId: string;
+  username: string;
+  rating: number;
+  rank: number;
+  isSeed?: boolean;
+}
+
+export interface LadderResult {
+  entries: LadderEntry[];
+  /** This player's own row, when the board knows them. */
+  mine: { rank: number; rating: number } | null;
+  total: number;
+}
+
+/** True when a leaderboard API exists behind this page at all. */
+export function isLadderAvailable(): boolean {
+  try {
+    return typeof RundotGameAPI.leaderboard?.getPagedScores === "function";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Read the ladder. Never throws: an unreachable or unconfigured board returns
+ * `null`, and the ladder panel says so in one line rather than showing an
+ * empty board that looks like nobody plays this game.
+ */
+export async function readLadder(limit = 20): Promise<LadderResult | null> {
+  try {
+    const page = await RundotGameAPI.leaderboard.getPagedScores({
+      mode: LADDER_MODE,
+      limit,
+    });
+    const entries: LadderEntry[] = (page?.entries ?? []).map((e) => ({
+      profileId: e.profileId,
+      username: e.username,
+      rating: e.score,
+      rank: e.rank ?? 0,
+      isSeed: e.isSeed,
+    }));
+    return {
+      entries,
+      mine: page?.playerRank != null
+        ? { rank: page.playerRank, rating: entries.find((e) => e.rank === page.playerRank)?.rating ?? 0 }
+        : null,
+      total: page?.totalEntries ?? entries.length,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Submit this player's rating to the ladder.
+ *
+ * The board is keep-best (`scoreOrder: "highest"`, the default): a lower
+ * submission is accepted:false and changes nothing, which is exactly right for
+ * a rating — see `docs/RANK-01-multiplayer-ranking.md` for why "peak rating"
+ * rather than "current rating" is what a public board can honestly show.
+ */
+export async function submitLadderScore(params: {
+  rating: number;
+  durationSec: number;
+  metadata?: Record<string, unknown>;
+}): Promise<{ accepted: boolean; rank: number | null; reason: string | null }> {
+  try {
+    const result = await RundotGameAPI.leaderboard.submitScore({
+      score: Math.round(params.rating),
+      duration: Math.max(1, Math.round(params.durationSec)),
+      mode: LADDER_MODE,
+      metadata: params.metadata,
+    });
+    return {
+      accepted: result?.accepted === true,
+      rank: typeof result?.rank === "number" ? result.rank : null,
+      reason: typeof result?.reason === "string" ? result.reason : null,
+    };
+  } catch (err) {
+    // A rate-limited or out-of-bounds submission is not an error the player
+    // needs to see: the rating itself is already filed in their own storage.
+    return { accepted: false, rank: null, reason: err instanceof Error ? err.message : null };
+  }
 }
 
 /**

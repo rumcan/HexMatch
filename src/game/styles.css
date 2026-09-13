@@ -3018,6 +3018,88 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .start-panel button:disabled { opacity: .4; cursor: not-allowed; }
 
 /* ═══════════════════════════════════════════════════════════════════
+   RANK-01 (#147) — the rating, and the badge that names it.
+
+   Three surfaces wear the same chip: the mode screen (your own file), the
+   lobby seat rows (yours and the room's copy of your opponent's) and the
+   ladder list. The badge is a cut-out PNG at one fixed px size, drawn with
+   `object-fit: contain` — never stretched, never squashed, and the tier
+   colour lives in the ART (one painted medallion, re-metalised per tier),
+   so nothing here re-tints it: a CSS filter on a painted plate is how a
+   theme starts looking like two themes.
+   ═══════════════════════════════════════════════════════════════════ */
+/* the Any / Similar rank picker, under the Quick match button */
+.rank-search { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: -2px; }
+.rank-search-opt {
+  display: flex; flex-direction: column; gap: 2px; align-items: center; justify-content: center;
+  min-height: 40px; padding: 6px 8px; border: 1px solid rgba(89,75,59,.75);
+  background: rgba(255,255,255,.02); color: var(--txt-mute, #a89b89);
+  font: 600 11px/1.1 var(--sans, sans-serif); letter-spacing: 1px; cursor: pointer;
+}
+.rank-search-opt small { font-weight: 400; font-size: 10px; letter-spacing: .2px; opacity: .8; }
+.rank-search-opt.on { border-color: var(--gold2, #e9a83e); color: var(--txt, #efe4d0); background: rgba(255,166,43,.1); }
+.rank-search-opt:disabled { opacity: .45; cursor: not-allowed; }
+.rank-block { margin: 2px 0 18px; }
+.rank-chip {
+  display: inline-flex; align-items: center; gap: 9px;
+  padding: 5px 11px 5px 6px; border: 1px solid var(--line, #594b3b);
+  border-radius: 999px; background: rgba(255,255,255,.035);
+  text-align: left; vertical-align: middle;
+}
+.rank-badge { width: 30px; height: 30px; flex: 0 0 auto; object-fit: contain; }
+.rank-chip-text { display: flex; flex-direction: column; line-height: 1.15; }
+.rank-chip-who { font: 600 10px/1.2 var(--sans, sans-serif); letter-spacing: 1px; color: var(--txt, #efe4d0); font-style: normal; opacity: .9; }
+.rank-chip-text b { font: 700 11px/1.2 var(--sans, sans-serif); letter-spacing: 1.4px; text-transform: uppercase; }
+.rank-chip-text small { font: 600 11px/1.2 var(--sans, sans-serif); color: var(--txt-mute, #a89b89); }
+.rank-chip[data-tier="bronze"] .rank-chip-text b { color: #d29a63; }
+.rank-chip[data-tier="silver"] .rank-chip-text b { color: #c9d6de; }
+.rank-chip[data-tier="gold"] .rank-chip-text b { color: var(--gold2, #e9a83e); }
+.rank-chip[data-tier="platinum"] .rank-chip-text b { color: #e6f2f1; }
+.rank-chip[data-tier="diamond"] .rank-chip-text b { color: #9fd0f2; }
+.rank-chip[data-tier="master"] .rank-chip-text b { color: #e8785f; }
+.rank-chip[data-tier="unranked"] .rank-chip-text b { color: var(--txt-mute, #a89b89); }
+.rank-block-note { margin: 9px 0 0; color: var(--txt-mute, #a89b89); font: 11px/1.5 var(--sans, sans-serif); letter-spacing: .6px; }
+/* the lobby rows: name, chip, status — the chip rides the middle */
+.seat-list .rank-chip { margin-left: auto; margin-right: 10px; padding: 2px 9px 2px 4px; }
+.seat-list .rank-badge { width: 24px; height: 24px; }
+/* the ladder list */
+.ladder-panel { width: min(520px, 100%); }
+.ladder-list { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 5px; max-height: 46vh; overflow-y: auto; }
+.ladder-list li { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border: 1px solid rgba(89,75,59,.55); background: rgba(255,255,255,.02); }
+.ladder-list li[data-rank="1"] { border-color: var(--gold2, #e9a83e); background: rgba(255,166,43,.08); }
+.ladder-place { flex: 0 0 26px; color: var(--gold2, #e9a83e); font: 700 13px/1 var(--sans, sans-serif); }
+.ladder-list .rank-chip { border: none; background: none; padding: 0; }
+.ladder-note { margin: 0 0 16px; color: var(--txt-mute, #a89b89); font: 12px/1.6 var(--sans, sans-serif); }
+.ladder-mine { margin: 0 0 4px; display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; color: var(--txt-mute, #a89b89); font: 12px/1.4 var(--sans, sans-serif); }
+.ladder-mine small { letter-spacing: .5px; }
+
+/* The ledger's rating row (see `src/iso/ending.ts`) — the badge, the number
+   and what the match did to it, between the scoreboard and the epilogue. */
+.ending-rank {
+  display: flex; align-items: center; gap: 14px; margin: 18px auto 0;
+  max-width: 460px; padding: 12px 16px; border: 1px solid rgba(89,75,59,.7);
+  background: rgba(255,255,255,.03); text-align: left;
+}
+.ending-rank[data-state="up"] { border-color: rgba(233,168,62,.55); }
+.ending-rank[data-state="down"] { border-color: rgba(120,80,70,.6); }
+.ending-rank[data-state="pending"] { border-style: dashed; opacity: .85; }
+.ending-rank[data-promoted="1"] { box-shadow: 0 0 0 1px rgba(233,168,62,.35), 0 0 22px rgba(233,168,62,.18); }
+.ending-rank-badge { width: 58px; height: 58px; flex: 0 0 auto; object-fit: contain; }
+.ending-rank-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ending-rank-headline { display: flex; align-items: baseline; gap: 9px; font: 700 15px/1.1 var(--sans, sans-serif); }
+.ending-rank-tier { letter-spacing: 2px; text-transform: uppercase; color: var(--gold2, #e9a83e); }
+.ending-rank-rating { font-size: 21px; letter-spacing: .5px; }
+.ending-rank-delta { font-size: 14px; letter-spacing: .5px; }
+.ending-rank-delta.up { color: #8fd08a; }
+.ending-rank-delta.down { color: #e0896f; }
+.ending-rank-note { color: var(--txt-mute, #a89b89); font: 11.5px/1.4 var(--sans, sans-serif); }
+/* the forfeit line inside an in-game modal */
+.rank-modal-line { margin: 8px 0 0; }
+.rank-delta.up { color: #8fd08a; }
+.rank-delta.down { color: #e0896f; }
+
+
+/* ═══════════════════════════════════════════════════════════════════
    STORY-01 — the living plate behind the front doors.
 
    One animated backdrop, shared by the MAIN MENU and every StartScreen
