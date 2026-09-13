@@ -13,7 +13,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:server": "npm --prefix server test",
+    "test:server": "vitest run tests/unit/server.test.ts",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "slice-atlas": "node tools/slice-atlas.mjs && node tools/make-atlas-groups.mjs",

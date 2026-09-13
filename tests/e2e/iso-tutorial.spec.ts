@@ -90,7 +90,8 @@ test("TUT-01 the first boot walks the tour, then hands over to the difficulty", 
   // nothing was placed, nothing was charged, no clock ran off without the player.
   expect(await page.evaluate(() => (window as unknown as { __iso: { phase: string } }).__iso.phase))
     .toBe("setup-factory");
-  await expect(page.locator("#iso-banner")).toContainText(/place your factory/i);
+  // no hint banner stands over the map — the tour is where setup is taught
+  await expect(page.locator("#iso-banner")).toBeHidden();
 
   expect(errors).toEqual([]);
 });
@@ -117,7 +118,7 @@ test("TUT-01 only “never show this again” survives a reload", async ({ page 
   // …and a fresh load now boots straight to the map.
   await boot(page);
   await expect(page.locator(TOUR)).toHaveCount(0);
-  await expect(page.locator("#iso-banner")).toBeVisible();
+  await expect(page.locator("#iso-vp")).toBeVisible();
 
   // The lesson is still one click away from the ❔, dismissal or not.
   await page.locator(".top-right .icon-btn[title='How to play']").click();
@@ -153,5 +154,5 @@ test("TUT-01 the tour quotes the live game, and ?tutorial=0 keeps it out of the 
   // The URL opt-out the gameplay specs and playtest links use.
   await boot(page, "&tutorial=0");
   await expect(page.locator(TOUR)).toHaveCount(0);
-  await expect(page.locator("#iso-banner")).toBeVisible();
+  await expect(page.locator("#iso-vp")).toBeVisible();
 });

@@ -279,8 +279,8 @@ test.describe("iso game boots on the default route", () => {
     await firstGem.click();
     await expect(firstGem).toHaveClass(/sel/);
 
-    // guided-setup banner + scoreboard + starting purse
-    await expect(root.locator("#iso-banner")).toContainText(/place your factory/i);
+    // no hint banner (the How to Play tour teaches setup) + scoreboard + starting purse
+    await expect(root.locator("#iso-banner")).toBeHidden();
     await expect(root.locator("#iso-vp")).toContainText("You 0");
     await expect(root.locator("#iso-res")).toContainText("🪨12");
 
@@ -418,10 +418,11 @@ test.describe("iso game boots on the default route", () => {
         : "none",
     });
     expect((await page.evaluate(() => (window as any).__iso.factories.length))).toBeGreaterThanOrEqual(1);
-    // U2: the guide banner must re-word to the Depot once the Factory is
-    // placed (the banner is the user-facing cue; the footprint itself is
-    // asserted in the pixel sample above).
-    await expect(page.locator("#iso-banner")).toContainText(/place your depot/i);
+    // U2: placing the Factory moves setup on to the Depot. There is no hint
+    // banner any more (the tour teaches it), so the phase is the cue; the
+    // footprint itself is asserted in the pixel sample above.
+    await expect.poll(() => page.evaluate(() => (window as any).__iso.phase)).toBe("setup-harvester");
+    await expect(page.locator("#iso-banner")).toBeHidden();
 
     // ── setup round 2 of 2: click the harvester spot beside the industry ─
     // U2: the harvester is a 1×1 building, so its placement glow is the solid
@@ -546,7 +547,7 @@ test.describe("iso game boots on the default route", () => {
     // says the same thing the state does
     expect(after.paved).toBe(0);
     await expect(page.locator("#iso-vp")).toContainText("You 0");
-    await expect(page.locator("#iso-banner")).toContainText(/free track tiles/i);
+    await expect(page.locator("#iso-banner")).toBeHidden();
 
     await test.info().attach("iso-round-complete", {
       body: await page.screenshot(),

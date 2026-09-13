@@ -34,4 +34,11 @@ export default tseslint.config(
     languageOptions: { ecmaVersion: 2022, sourceType: "module" },
     rules: { "@typescript-eslint/no-explicit-any": "off" },
   },
+  {
+    // CommonJS tool harnesses (the .cjs screenshot scripts) legitimately
+    // require(); the whole source tree is ESM, so the rule stays on there.
+    files: ["**/*.cjs"],
+    languageOptions: { ecmaVersion: 2022, sourceType: "commonjs" },
+    rules: { "@typescript-eslint/no-require-imports": "off" },
+  },
 );

@@ -330,14 +330,16 @@ describe("INPUT-QOL right-click: cancel the tool", () => {
 // WASD — pan the map from the keyboard
 // ══════════════════════════════════════════════════════════════════════════
 describe("INPUT-QOL WASD: pan the map", () => {
-  it("D pans east, A pans west, and releasing stops the pan", async () => {
+  it("D moves the camera right, A moves it left, and releasing stops the pan", async () => {
     const { h } = await connectedBoot();
+    // `camera.x` is the world's screen offset: moving the CAMERA right slides
+    // the world left, so D lowers it and A raises it.
     const x0 = h.camera.x;
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "d" }));
     expect(h.panKeys).toContain("d");
     await new Promise((r) => setTimeout(r, 250));   // ~25 frames of pan
     const x1 = h.camera.x;
-    expect(x1).toBeGreaterThan(x0);
+    expect(x1).toBeLessThan(x0);
 
     window.dispatchEvent(new KeyboardEvent("keyup", { key: "d" }));
     expect(h.panKeys).not.toContain("d");
@@ -347,21 +349,22 @@ describe("INPUT-QOL WASD: pan the map", () => {
 
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "a" }));
     await new Promise((r) => setTimeout(r, 250));
-    expect(h.camera.x).toBeLessThan(x2);
+    expect(h.camera.x).toBeGreaterThan(x2);
     window.dispatchEvent(new KeyboardEvent("keyup", { key: "a" }));
   });
 
-  it("W/S pan north/south", async () => {
+  it("W moves the camera up, S moves it down", async () => {
     const { h } = await connectedBoot();
+    // Moving the camera up slides the world down: W raises `camera.y`.
     const y0 = h.camera.y;
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "w" }));
     await new Promise((r) => setTimeout(r, 250));
-    expect(h.camera.y).toBeLessThan(y0);
+    expect(h.camera.y).toBeGreaterThan(y0);
     window.dispatchEvent(new KeyboardEvent("keyup", { key: "w" }));
     const y1 = h.camera.y;
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "s" }));
     await new Promise((r) => setTimeout(r, 250));
-    expect(h.camera.y).toBeGreaterThan(y1);
+    expect(h.camera.y).toBeLessThan(y1);
     window.dispatchEvent(new KeyboardEvent("keyup", { key: "s" }));
   });
 
@@ -530,27 +533,25 @@ describe("INPUT-QOL build flash: the 1-second answer on the map", () => {
 // FIRST ROAD — the guidance banner retires when the first track lands
 // ══════════════════════════════════════════════════════════════════════════
 describe("INPUT-QOL first road: no popup between the player and the track", () => {
-  it("the 'connect your depot' banner shows pre-first-road and retires after it", async () => {
+  it("no 'connect your depot' banner covers the map before or after the first road", async () => {
     const { h, corridor: { hx, fy } } = await connectedBoot();
-    // The allowance the banner counts down (the corridor above was built
-    // through buildTile, which never spends it).
+    // The corridor above was built through buildTile, which never spends the
+    // allowance — the moment the old hint banner used to count down.
     expect(h.freeTrack).toBe(FREE_SETUP_TRACK);
     await settle();
     let banner = root.querySelector("#iso-banner") as HTMLElement;
     expect(banner).toBeTruthy();
-    expect(banner.classList.contains("hidden")).toBe(false);
-    expect(banner.textContent).toMatch(/free track tiles/i);
+    expect(banner.classList.contains("hidden")).toBe(true);
 
-    // …lay the first road through the REAL commit path, one tile past the
-    // Factory's footprint…
+    // …lay the first road through the REAL commit path…
     const end = firstRoadEnd(h, hx, fy);
     expect(end, "a tile to lay the first road on").not.toBeNull();
     expect(h.dragBuild("dirt", hx, fy, hx, end!)).toBeTruthy();
     await settle();
 
-    // …and the guidance is gone: whatever the banner says next, it is no
-    // longer the "connect your depot" line.
+    // …and still nothing sits between the player and the track.
     banner = root.querySelector("#iso-banner") as HTMLElement;
-    expect(banner.textContent).not.toMatch(/free track tiles/i);
+    expect(banner.classList.contains("hidden")).toBe(true);
+    expect(banner.textContent ?? "").not.toMatch(/free track tiles/i);
   });
 });

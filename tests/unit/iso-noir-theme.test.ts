@@ -250,21 +250,14 @@ describe("NOIR the surfaces neither seam nor stretch", () => {
     }
   });
 
-  it("shrinks the frame ornaments, never blows them up", () => {
-    // tools/make-noir-art.mjs cuts the chamfer at 108px and the medallion at
-    // 88px; anything larger in CSS is an upscale, and an upscale of a bitmap is
-    // its own kind of stretch. `--corner` is ONE length, which is also what
-    // makes the scale uniform — two lengths could disagree.
-    // The difficulty chooser deliberately lost its ornamental corners; only
-    // the sidebar frame and ordinary modal still size corner artwork.
-    const painted = { ".aside.left .panel::after": 108, ".modal.box": 88 };
-    for (const [sel, max] of Object.entries(painted)) {
-      const body = bodiesFor(sel).join(" ");
-      const n = Number(/--corner:\s*(\d+)px/.exec(body)?.[1] ?? NaN);
-      expect(n, `${sel} never sets --corner`).toBeGreaterThan(0);
-      expect(n, `${sel} upscales its ornament (${n}px > ${max}px)`).toBeLessThanOrEqual(max);
-      // the paint size is declared once, for all three ornamented plates
-      expect(css).toMatch(/background-size:\s*var\(--corner\)/);
+  it("paints no corner ornaments on the build panel or the modals", () => {
+    // The iron chamfers (build panel) and brass studs (How to Play, Settings
+    // and every other modal) were removed on request: the one pseudo-element
+    // that painted them is switched off, so no corner art is drawn anywhere.
+    expect(css).toMatch(/\.aside\.left \.panel::after,\s*\.modal\.box::after\s*\{[^}]*content:\s*none/);
+    // …and no modal still reserves a band for a stud that is not there.
+    for (const m of css.matchAll(/\.modal\.box\s*\{[^}]*--corner:\s*(\d+)px/g)) {
+      expect(Number(m[1]), "a modal still sizes a corner ornament").toBe(0);
     }
   });
 
@@ -459,20 +452,12 @@ describe("NOIR the painted set is wired end to end", () => {
     expect(bodiesFor(".feed-row").join(" ")).toMatch(/background-blend-mode:\s*normal,\s*multiply/);
   });
 
-  it("keeps modal medallions clear, and removes them from difficulty select", async () => {
-    // `boss-*.webp` remains the ordinary modal treatment and is opaque in all
-    // four corners, so those modals still reserve the matching title band.
-    for (const k of ["tl", "tr", "bl", "br"]) {
-      const file = join("src/assets/ui/noir", `boss-${k}.webp`);
-      const { data, info } = await sharp(file).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-      const w = info.width!, h = info.height!;
-      const a = (x: number, y: number) => data[(y * w + x) * 4 + 3];
-      expect(Math.min(a(0, 0), a(w - 1, 0), a(0, h - 1), a(w - 1, h - 1)), `boss-${k} is not a solid square`).toBeGreaterThan(200);
-    }
-    expect(css).toMatch(/\.modal\.box::after\s*\{[^}]*background-position:\s*left top,\s*right top,\s*left bottom,\s*right bottom/);
+  it("leaves modal titles centred with no ornament gutter, and keeps difficulty select clean", async () => {
+    // The corner studs are gone, so a modal reserves no title band for them:
+    // `--corner` is 0 and `--text-clear` collapses to the mat inset alone.
     const modal = bodiesFor(".modal.box").join(" ");
     expect(modal).toMatch(/--corner-inset:\s*0/);
-    expect(modal).toMatch(/--corner:\s*44px/);
+    expect(modal).toMatch(/--corner:\s*0px/);
     expect(modal).toMatch(/--text-clear:\s*calc\(var\(--corner-inset\) \+ var\(--corner\)\)/);
     expect(bodiesFor(".modal h2").join(" ")).toMatch(/padding-inline:\s*var\(--text-clear\)/);
     expect(bodiesFor(".modal h2").join(" ")).toMatch(/justify-content:\s*safe center/);

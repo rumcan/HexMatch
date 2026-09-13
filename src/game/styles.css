@@ -282,8 +282,10 @@ html, body, #root {
    chamfers and ordinary modals use brass medallions. The difficulty chooser is
    intentionally EXCLUDED — its reported corner clutter has been removed, so
    that screen is now one clean felt card with a simple brass keyline. */
+/* Ornaments REMOVED: the iron chamfers on the build panel and the brass
+   studs on modals (How to Play, Settings) are no longer painted. */
 .aside.left .panel::after, .modal.box::after {
-  content: ""; position: absolute; inset: 0; pointer-events: none;
+  content: none; position: absolute; inset: 0; pointer-events: none;
   background-repeat: no-repeat;
   background-size: var(--corner);
 }
@@ -298,7 +300,10 @@ html, body, #root {
   filter: drop-shadow(0 2px 3px rgba(0, 0, 0, .75));
 }
 /* Modals reserve exactly the band occupied by their solid medallions. */
-.modal.box { --corner-inset: 0; --corner: 44px; --text-clear: calc(var(--corner-inset) + var(--corner)); }
+.modal.box { --corner-inset: 0; --corner: 0px; --text-clear: calc(var(--corner-inset) + var(--corner)); }
+/* A modal never runs off the window: tall cards (the ❔ How to Play reference,
+   Settings) scroll inside themselves so their close button stays reachable. */
+.modal.box { max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); overflow-y: auto; overscroll-behavior: contain; }
 .panel + .panel { margin-top: 8px; }
 .panel.grow { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
@@ -2271,7 +2276,7 @@ html, body, #root {
   .aside.left .panel::after { --corner: 64px; }
   /* The modal medallion shrinks with the dialog. The clean difficulty card has
      no corner art and therefore needs no ornament variables or title gutter. */
-  .modal.box { --corner-inset: 0; --corner: 34px; }
+  .modal.box { --corner-inset: 0; --corner: 0px; }
 
   /* ── art buttons are touch targets now ── */
   .build-btn, .sab-btn { min-height: 62px; }
@@ -2303,7 +2308,7 @@ html, body, #root {
   /* modals go full-bleed: the plaque comes off the wall and lies flat */
   .modal.box { width: 94%; padding: 18px 16px; max-height: 84vh; overflow-y: auto; border-width: 14px; }
   /* The band follows the modal ornament: a 14px mat plus a 34px medallion. */
-  .modal.box { --corner-inset: 14px; --corner: 34px; }
+  .modal.box { --corner-inset: 14px; --corner: 0px; }
   .modal h2 { font-size: 17px; letter-spacing: 2px; }
   .modal h2::before { width: 24px; height: 24px; }
   .help-cols { flex-direction: column; gap: 8px; }
@@ -2890,11 +2895,13 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 
 /* Multiplayer start screen */
 .start-screen {
-  min-height: 100vh; display: grid; place-items: center; padding: 24px;
+  /* A fixed-height column that SCROLLS: a campaign list taller than the
+     window must never push its buttons out of reach. */
+  height: 100vh; height: 100dvh; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; padding: 24px;
   color: var(--txt, #efe4d0); background: radial-gradient(circle at 50% 30%, rgba(72, 53, 36, .34), transparent 52%), #11100f;
   font-family: var(--serif, Georgia, serif);
 }
-.start-panel { width: min(440px, 100%); text-align: center; padding: 42px 34px; border: 1px solid var(--line, #594b3b); background: rgba(25, 22, 19, .94); box-shadow: 0 20px 80px rgba(0,0,0,.45); }
+.start-panel { margin: auto 0; flex: 0 0 auto; width: min(440px, 100%); text-align: center; padding: 42px 34px; border: 1px solid var(--line, #594b3b); background: rgba(25, 22, 19, .94); box-shadow: 0 20px 80px rgba(0,0,0,.45); }
 .start-kicker { margin: 0 0 16px; color: var(--gold2, #e9a83e); font: 700 12px/1 var(--sans, sans-serif); letter-spacing: 3px; text-transform: uppercase; }
 .start-panel h1 { margin: 0; font-size: clamp(25px, 5vw, 36px); letter-spacing: 1px; }
 .start-subtitle { margin: 12px auto 28px; max-width: 330px; color: var(--txt-mute, #a89b89); font: 13px/1.5 var(--sans, sans-serif); }
@@ -2941,7 +2948,10 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
    Under prefers-reduced-motion every one of them stops dead (below) and
    the plate simply stands still — it is paint, never information.
    ═══════════════════════════════════════════════════════════════════ */
-.start-screen { position: relative; overflow: hidden; isolation: isolate; }
+/* The start screen SCROLLS at every size (menu-ui-polish): a campaign list
+   taller than the window must never push its buttons out of reach. Its plate
+   layers are position: fixed, so the backdrop stays put while it scrolls. */
+.start-screen { position: relative; overflow-x: hidden; overflow-y: auto; isolation: isolate; }
 /* MOBILE-01: a landscape phone is 360-430px tall. `place-items: center` plus
    `overflow: hidden` put the Play button BELOW the fold with no way to reach
    it — the menu was unplayable sideways. On short viewports the plate
@@ -2976,13 +2986,17 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
      projector covers the viewport, so it pins to the viewport. */
   .menu-howto { position: fixed; }
   /* the story panel was sized for a desktop column; on a phone it is the
-     whole screen, so let the chapter cards stack and breathe */
+     whole screen. Only the panel's own box is narrowed here: the contract
+     list's overrides live with the list's rules at the foot of this file,
+     because a `.chapter-list` / `.chapter-card` rule written HERE loses the
+     cascade to those later base rules of the same specificity — which is
+     exactly how the phone's one-column list once shipped dead (it kept the
+     desktop auto-fit grid, so a 760px-wide plate packed two cards abreast
+     and the tighter gap/padding never applied). */
   .start-panel.story { width: 100%; padding: 26px 15px; }
-  .chapter-list { grid-template-columns: 1fr; gap: 10px; margin: 14px 0; }
-  .chapter-card { padding: 11px 12px; }
 }
 .start-screen::before {
-  content: ""; position: absolute; inset: -6%; z-index: -3; pointer-events: none;
+  content: ""; position: fixed; inset: -6%; z-index: -3; pointer-events: none;
   background:
     radial-gradient(ellipse at 50% 14%, rgba(255, 176, 46, .13), transparent 46%),
     linear-gradient(180deg, rgba(10, 8, 6, .5), rgba(8, 6, 5, .74) 62%, rgba(5, 4, 3, .86)),
@@ -2992,11 +3006,19 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   will-change: transform;
 }
 .start-screen::after {
-  content: ""; position: absolute; inset: -460px; z-index: -2; pointer-events: none;
+  content: ""; position: fixed; inset: -460px; z-index: -2; pointer-events: none;
   background: var(--smoke) 0 0 / 900px repeat;
   opacity: .12;
   animation: smoke-drift 120s linear infinite;
   will-change: transform;
+}
+/* the campaign list stands in the noir office, not on the docks */
+.start-screen.campaign::before {
+  background:
+    radial-gradient(ellipse at 50% 14%, rgba(255, 176, 46, .1), transparent 46%),
+    linear-gradient(180deg, rgba(10, 8, 6, .45), rgba(8, 6, 5, .66) 62%, rgba(5, 4, 3, .8)),
+    var(--room) center / cover no-repeat,
+    #0c0a08;
 }
 @keyframes plate-breathe {
   from { transform: scale(1) translate3d(0, 0, 0); }
@@ -3093,7 +3115,9 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   color: rgba(232, 220, 192, .38); font: 500 10px/1.5 var(--sans, sans-serif); letter-spacing: .6px;
 }
 /* the tour projector (#iso-tutorial) hangs inside this host, full-bleed */
-.menu-howto { position: absolute; inset: 0; z-index: 5; }
+/* fixed, not absolute: the start screen scrolls, and the projector covers the
+   viewport — an absolute child would scroll away with the content */
+.menu-howto { position: fixed; inset: 0; z-index: 5; }
 
 /* the mode screen answers the menu: same brass-crowned panel on the same
    living plate, so the two read as one room */
@@ -3563,14 +3587,18 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 }
 
 /* ── the contract menu on the start screen ──────────────────────────── */
-.start-panel.story { width: min(900px, 100%); text-align: left; }
+.start-panel.story { width: min(900px, 100%); text-align: left; padding: 26px 26px 22px; }
+.start-panel.story .start-subtitle { margin: 8px auto 10px; max-width: 640px; }
+.start-panel.story .story-job { margin-bottom: 4px; }
 .start-panel.story h1 { text-align: center; }
 .start-panel.story .start-subtitle { text-align: center; }
 /* #122: `minmax(min(250px, 100%), …)` rather than a flat 250px floor — the
    panel's content box is narrower than 250px below ~370px of viewport (and at
    200% zoom), and `.start-screen` clips its overflow, so a hard floor made
    the card spill out of the panel and lose its right edge. */
-.chapter-list { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr)); margin: 18px 0; }
+.chapter-list { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr)); margin: 12px 0; }
+.chapter-item { display: flex; flex-direction: column; min-width: 0; }
+.chapter-item > .chapter-card { flex: 1 1 auto; }
 .chapter-card {
   position: relative; display: flex; gap: 12px; align-items: flex-start;
   padding: 13px 14px; text-align: left; cursor: pointer;
@@ -3584,6 +3612,18 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 }
 .chapter-card:hover:not(.locked) { border-color: var(--brass); transform: translateY(-1px); box-shadow: 0 16px 36px rgba(0, 0, 0, .6), 0 0 24px -12px var(--cc, var(--brass)); }
 .chapter-card.locked { opacity: .5; cursor: not-allowed; filter: grayscale(.6); }
+/* MOBILE-01: on a phone (and on any short viewport, where the plate is the
+   scrolling one) the story panel is the whole screen, so the contract cards
+   stack in a single column and breathe instead of packing into the desktop
+   auto-fit grid. This sits AFTER the base rules above on purpose: the theme's
+   convention is that a media query is the last word on a selector, and the
+   same override written up in the STORY-01 plate block was silently outranked
+   by these base rules of equal specificity — the phone list kept two abreast
+   cards at 760px and never picked up the tighter gap or card padding. */
+@media (max-width: 760px), (max-height: 620px) {
+  .chapter-list { grid-template-columns: 1fr; gap: 10px; margin: 14px 0; }
+  .chapter-card { padding: 11px 12px; }
+}
 .cc-face {
   flex: 0 0 64px; width: 64px; height: 64px;
   background-repeat: no-repeat;
@@ -3596,6 +3636,15 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .cc-kicker { flex: 1 1 auto; min-width: 0; font: 600 9.5px/1.2 var(--serif); letter-spacing: 1.8px; text-transform: uppercase; color: var(--cc, var(--brass)); overflow-wrap: break-word; }
 .cc-name { font: 700 16px/1.15 var(--display); letter-spacing: .8px; color: var(--txt); overflow-wrap: break-word; }
 .cc-brief { font: 400 12px/1.45 var(--sans); color: var(--txt-dim); overflow-wrap: break-word; }
+/* two lines until the card's More toggle opens it */
+.cc-brief.clamped { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+.start-panel .cc-more {
+  min-height: 0; padding: 5px 12px; text-align: right;
+  font: 600 10px/1.2 var(--serif); letter-spacing: 1.4px; text-transform: uppercase;
+  color: var(--brass); background: rgba(12, 8, 6, .88);
+  border: 1px solid var(--brass-lo); border-top: 0; border-left: 3px solid transparent;
+}
+.start-panel .cc-more:hover { color: var(--txt); background: rgba(24, 17, 12, .95); border-color: var(--brass); border-top: 0; }
 .cc-meta { font: 400 11px/1.4 var(--mono); color: var(--txt-mute); overflow-wrap: break-word; }
 /* #122: the result badge and the lock live in the header row in normal flow — never
    absolutely positioned over the kicker — so heading, badge, portrait and description
