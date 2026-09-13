@@ -110,7 +110,11 @@ describe("NOIR the theme paints inside the boxes; it never moves them", () => {
     [".topbar", /height:\s*calc\(var\(--topbar-h\) \+ var\(--safe-top\)\)/],
     [":root", /--topbar-h:\s*60px/],
     [".aside", /top:\s*calc\(var\(--topbar-h\) \+ var\(--safe-top\) \+ 8px\)/],
-    [".aside", /bottom:\s*52px/],
+    // FIT-01: the column ends at the resource bar's LIVE top edge (ui.ts
+    // publishes the measured bar height as --resbar-h); 52px is the floor
+    // and the no-measurement fallback, and it is the number the corridor
+    // picker's model still replays.
+    [".aside", /bottom:\s*max\(52px, var\(--resbar-h, 52px\)\)/],
     [".aside.left", /width:\s*300px/],
     [".board-wrap", /padding:\s*5px/],
     [".build-btn", /min-height:\s*68px/],

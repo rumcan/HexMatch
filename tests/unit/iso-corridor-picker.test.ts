@@ -40,7 +40,9 @@ const DPR = 1;
  * The fixed HUD boxes that sit over the map, straight from
  * `src/game/styles.css` at 1280×720 (see the E14 ticket's arithmetic):
  *  .topbar   fixed top:0, height 60, z 40
- *  .resbar   fixed bottom:0 (the asides stop at bottom:52px), z 38
+ *  .resbar   fixed bottom:0 (the asides stop at its live top edge through
+ *            --resbar-h, floored at 52px — FIT-01; this model replays the
+ *            52px floor, which is what an unwrapped chip row measures), z 38
  *  .aside.left  fixed 10px, width 300 (1280 > the 1180px narrow breakpoint)
  *  .aside.right fixed 10px, width --board-px + 30 where ui.ts publishes
  *               ceil((CELL·BOARD_W + 10) · 0.68) = 338 for innerHeight ≤ 720

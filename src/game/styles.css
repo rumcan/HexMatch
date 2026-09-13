@@ -506,9 +506,22 @@ html, body, #root {
 }
 
 /* ── asides ─────────────────────────────────────────────────────── */
-.aside { position: fixed; top: calc(var(--topbar-h) + var(--safe-top) + 8px); bottom: 52px; z-index: 30; display: flex; flex-direction: column; }
-.aside.left { left: 10px; width: 300px; }
-.aside.right { right: 10px; }
+/* FIT-01: the column ends where the resource footer begins. That edge is
+   NOT the constant it looks like — the chip row wraps on narrow desktop
+   windows and the bar (fixed to bottom: 0) grows UPWARD, so the old fixed
+   `bottom: 52px` let the column's last painted row slide under the bar's
+   blur. ui.ts measures `footer.offsetHeight` and publishes it as
+   --resbar-h on every resize; max() keeps the historic 52px wherever the
+   bar measures no taller than that (jsdom, which lays nothing out, keeps
+   the fallback and with it every number pinned below). */
+.aside { position: fixed; top: calc(var(--topbar-h) + var(--safe-top) + 8px); bottom: max(52px, var(--resbar-h, 52px)); z-index: 30; display: flex; flex-direction: column; }
+.aside.left { left: 10px; width: 300px; overflow-y: auto; }
+/* FIT-01: the plant column now FITS its box (ui.ts clamps the board zoom to
+   the measured room), so the clip here is a safety net, not a layout tool:
+   if anything ever does overflow again it stops at the column's own edge —
+   above the footer — instead of sliding behind the bar to be cut in half
+   by it. */
+.aside.right { right: 10px; overflow: hidden; }
 /* V3: the quarry column sizes to the board. ui.ts publishes --board-px
    (BOARD_W × CELL × zoom + wrap padding), so the panel always contains all
    nine columns; a fixed width here is what used to clip the right three. */
@@ -516,6 +529,44 @@ html, body, #root {
   .aside.right { width: calc(var(--board-px, 496px) + 30px); }
 }
 .board-wrap { overflow: visible; }
+
+/* ── RAIL-01 — collapsible desktop panels ──────────────────────────
+   The map is the game; the two fixed columns are instruments hung over it.
+   Each gets one slim brass key on its outer edge that folds the panel
+   against the screen edge it lives on — the Build menu out to the LEFT,
+   the Processing Plant board out to the RIGHT — and points the way the
+   panel will travel: expanded, the chevron faces the screen edge (fold),
+   collapsed, it faces the center (unfold). The state lives on the root as
+   data-rail-left / data-rail-right so this sheet owns the whole animation
+   (one transform each, .25s ease) and ui.ts only flips the attribute.
+   The keys ride their panels (they are children), so the folded sliver —
+   the 28px of panel the transform leaves on screen — is itself the edge
+   bar: brass rail, bevel, and the key pointing home. */
+.aside.left, .aside.right { transition: transform .25s ease; }
+.ui-root[data-rail-left="1"] .aside.left  { transform: translateX(calc(-100% + 28px)); }
+.ui-root[data-rail-right="1"] .aside.right { transform: translateX(calc(100% - 28px)); }
+.rail-toggle {
+  position: absolute; z-index: 5;
+  top: 50%; transform: translateY(-50%);
+  width: 24px; height: 64px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--serif); font-size: 13px; line-height: 1;
+  color: var(--brass-hi); cursor: pointer;
+  background: linear-gradient(180deg, rgba(52, 39, 25, .85), rgba(12, 8, 6, .92));
+  border: 1px solid var(--brass-lo);
+  box-shadow: inset 0 1px 0 rgba(242, 220, 166, .18), 0 4px 14px rgba(0, 0, 0, .5);
+  transition: color .15s, border-color .15s, background .15s, box-shadow .15s;
+}
+.rail-toggle:hover {
+  color: var(--gold2); border-color: var(--brass);
+  background: linear-gradient(180deg, rgba(98, 68, 24, .8), rgba(16, 11, 7, .94));
+  box-shadow: inset 0 1px 0 rgba(242, 220, 166, .3), 0 0 16px -4px rgba(255, 176, 46, .5);
+}
+/* the build menu folds left, so its key hangs on the panel's right edge;
+   the board folds right, so its key hangs on the panel's left edge — each
+   bevels the way its panel does, minus the edge that melts into it */
+.rail-toggle-left  { right: 0; border-right: 0; border-radius: var(--r) 0 0 var(--r); }
+.rail-toggle-right { left: 0; border-left: 0; border-radius: 0 var(--r) var(--r) 0; }
 
 /* ── tycoons — the roster is a wall of dossiers ───────────────── */
 /* tycoon roster — horizontal row across the top bar */
@@ -2289,6 +2340,14 @@ html, body, #root {
 
   /* map view: nothing but the map */
   [data-view="map"] .aside { display: none; }
+
+  /* RAIL-01: the desktop rails do not exist on a phone — the tab sheets are
+     the navigation here, and a half-slid panel would fight them. The keys go
+     away entirely and any desktop collapse is undone (ui.ts also clears the
+     state the moment the regime flips, so this is belt and braces for a
+     resize that races the attribute write). */
+  .rail-toggle { display: none !important; }
+  .aside.left, .aside.right { transform: none !important; }
 
   /* ── resource footer sits above the nav ── */
   .resbar {
