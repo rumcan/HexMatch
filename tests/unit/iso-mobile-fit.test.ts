@@ -8,6 +8,13 @@
 // silent, and the top bar tucks on the trade sheet — dropping back when a
 // number in it changes. These are the numbers jsdom can actually observe;
 // pixels belong to the e2e phone projects and the live preview.
+//
+// #163 — the board-size decision only ever runs from a SETTLED measurement
+// of the visible plant slot (a next-frame pass / slot ResizeObserver), so a
+// tab round-trip can never transiently measure the squashed mid-switch box
+// that minted the bogus 11-column board. Growth follows the slot aspect, is
+// capped at +2 per axis, switches off below a 30px cell, and only an
+// unplayed band the chrome itself added this session may be retracted.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Board } from "../../src/game/board";
 import { createOriginalUi, type OriginalUi } from "../../src/game/ui";
@@ -15,6 +22,7 @@ import { createIsoMarket, emptyBag } from "../../src/iso/market";
 import { mulberry32, setRng, BOARD_W, BOARD_H, CELL } from "../../src/game/config";
 
 const PHONE = { w: 390, h: 844 };
+const PHONE_LANDSCAPE = { w: 900, h: 380 };
 const DESK = { w: 1280, h: 800 };
 
 function setViewport(w: number, h: number) {
@@ -30,7 +38,12 @@ function stubSlotBox(ui: OriginalUi, w: number, h: number) {
   return slot;
 }
 
-function mount(size: (w: number, h: number) => boolean) {
+/** Flush the next-frame settled-fit pass (rAF fakes fire on a 16ms frame). */
+async function settle(ms = 40) {
+  await vi.advanceTimersByTimeAsync(ms);
+}
+
+function mount(size: (w: number, h: number) => boolean = () => true) {
   setRng(mulberry32(7));
   const board = new Board();
   const market = createIsoMarket([{ i: 0, id: "you", name: "You", human: true, purse: emptyBag() }]);
@@ -40,7 +53,18 @@ function mount(size: (w: number, h: number) => boolean) {
     requestBoardSize: size,
   });
   document.body.append(ui.el);
-  return { board, ui, market };
+  return { board, ui, market, ask: size as ReturnType<typeof vi.fn> };
+}
+
+/** Open the economy sheet on the phone and wait for its settled fit. */
+async function openTrade(ui: OriginalUi) {
+  (ui.el.querySelector('.mnav-btn[data-view="trade"]') as HTMLElement).click();
+  await settle();
+}
+
+/** Tap an economy tab inside the trade sheet. */
+function tapTab(ui: OriginalUi, tab: "bank" | "market" | "plant" | "feed") {
+  (ui.el.querySelector(`.tab[data-tab="${tab}"]`) as HTMLElement).click();
 }
 
 beforeEach(() => { vi.useFakeTimers(); });
@@ -55,11 +79,14 @@ afterEach(() => {
 describe("MOBILE-02 phone fit", () => {
   it("marks the phone regime and keeps 7×8 while nothing is measurable (map view boots)", async () => {
     setViewport(PHONE.w, PHONE.h);
-    const { board, ui } = mount(() => true);
+    const { board, ui } = mount();
     // Boot happens on the map view: the plant slot has no box to measure, so
     // the fit must NOT propose a grow — the first number it paints with would
     // strand rows of gems under the fold the moment the sheet opened.
     expect(ui.el.dataset.phone).toBe("1");
+    expect(board.w).toBe(BOARD_W);
+    expect(board.h).toBe(BOARD_H);
+    await settle();
     expect(board.w).toBe(BOARD_W);
     expect(board.h).toBe(BOARD_H);
     const grid = ui.el.querySelector("#iso-gems") as HTMLElement;
@@ -69,63 +96,67 @@ describe("MOBILE-02 phone fit", () => {
 
   it("grows the board into the measured slot and sizes the grid box to it", async () => {
     setViewport(PHONE.w, PHONE.h);
-    const { board, ui } = mount(() => true);
-    // A 374×600 slot: cell = floor(min(360/7, 590/8)) = 51, rows = 590/51 → 11.
+    const { board, ui } = mount();
+    // A 374×600 slot: fill cell = floor(min(360/7, 590/8)) = 51; width has
+    // no slack at that cell (360/51 → 7), height does (590/51 → 11), but the
+    // #163 cap is +2 rows over the shipped 8, so the board settles at 7×10.
     stubSlotBox(ui, 374, 600);
-    (ui.el.querySelector('.mnav-btn[data-view="trade"]') as HTMLElement).click();
-    await vi.advanceTimersByTimeAsync(0);
+    await openTrade(ui);
     expect(board.w).toBe(7);
-    expect(board.h).toBe(11);
+    expect(board.h).toBe(10);
     const grid = ui.el.querySelector("#iso-gems") as HTMLElement;
     expect(grid.style.width).toBe(`${CELL * 7}px`);
-    expect(grid.style.height).toBe(`${CELL * 11}px`);
-    expect(ui.el.querySelectorAll("#iso-gems .gem")).toHaveLength(7 * 11);
+    expect(grid.style.height).toBe(`${CELL * 10}px`);
+    expect(ui.el.querySelectorAll("#iso-gems .gem")).toHaveLength(7 * 10);
     // published panel width is the whole live board at the fitted zoom
     const z = Number((ui.el.querySelector("#iso-quarry .board-wrap:last-child") as HTMLElement).dataset.zoom);
-expect(Number(ui.el.dataset.boardPx)).toBe(Math.ceil((CELL * board.w + 10) * z));
+    expect(Number(ui.el.dataset.boardPx)).toBe(Math.ceil((CELL * board.w + 10) * z));
     // …and the fitted board never exceeds the slot it measured
     expect(board.w * CELL * z).toBeLessThanOrEqual(361);
     expect(board.h * CELL * z).toBeLessThanOrEqual(591);
+    // the on-screen gem stays at the comfortable size the grow was paid for
+    expect(CELL * z).toBeGreaterThanOrEqual(30);
   });
 
   it("never resizes without the game's answer — and honors a veto", async () => {
     setViewport(PHONE.w, PHONE.h);
-    const { board, ui } = mount(() => false);
+    const { board, ui, ask } = mount(vi.fn(() => false));
     stubSlotBox(ui, 374, 600);
-    (ui.el.querySelector('.mnav-btn[data-view="trade"]') as HTMLElement).click();
-    await vi.advanceTimersByTimeAsync(0);
+    await openTrade(ui);
     expect(board.w).toBe(BOARD_W);
     expect(board.h).toBe(BOARD_H);
+    // the chrome still ASKS for the settled rectangle; the seat says no
+    expect(ask).toHaveBeenCalledWith(7, 10);
   });
 
   it("keeps the grown rectangle when the window comes back (grow-only, zoom shrinks)", async () => {
     setViewport(PHONE.w, PHONE.h);
-    const { board, ui } = mount(() => true);
+    const { board, ui } = mount();
     stubSlotBox(ui, 374, 600);
-    (ui.el.querySelector('.mnav-btn[data-view="trade"]') as HTMLElement).click();
-    await vi.advanceTimersByTimeAsync(0);
+    await openTrade(ui);
     expect(board.h).toBeGreaterThan(BOARD_H);
     // A resize that shrinks the window must not delete gems — the fit clamps
     // zoom instead, and the board keeps the rectangle its history earned.
     setViewport(320, 568);
     window.dispatchEvent(new Event("resize"));
-    await vi.advanceTimersByTimeAsync(0);
-    expect(board.h).toBe(11);
-    // …back to desktop the phone regime lifts, the board is still 7×11, and
+    await settle();
+    expect(board.w).toBe(7);
+    expect(board.h).toBe(10);
+    // …back to desktop the phone regime lifts, the board is still 7×10, and
     // the grid box keeps telling the truth about it.
     setViewport(DESK.w, DESK.h);
     window.dispatchEvent(new Event("resize"));
-    await vi.advanceTimersByTimeAsync(0);
+    await settle();
     expect(ui.el.dataset.phone).not.toBe("1");
     expect(board.w).toBe(7);
-    expect(board.h).toBe(11);
+    expect(board.h).toBe(10);
     const grid = ui.el.querySelector("#iso-gems") as HTMLElement;
-    expect(grid.style.height).toBe(`${CELL * 11}px`);
+    expect(grid.style.height).toBe(`${CELL * 10}px`);
   });
 
   it("a restored board re-boots the grid box through renderBoard, no resize needed", async () => {
     setViewport(PHONE.w, PHONE.h);
-    const { board, ui } = mount(() => true);
+    const { board, ui } = mount();
     // Simulate the multiplayer/restore path: the whole grid is swapped under
     // the chrome (a 9-column board arriving from a wider phone), and only
     // renderBoard runs. The layout box must follow without asking.
@@ -144,10 +175,10 @@ expect(Number(ui.el.dataset.boardPx)).toBe(Math.ceil((CELL * board.w + 10) * z))
 
   it("the top bar tucks on the trade sheet and drops back for a grip press", async () => {
     setViewport(PHONE.w, PHONE.h);
-    const { ui } = mount(() => false);
+    const { ui } = mount(vi.fn(() => false));
     const top = ui.el.querySelector(".topbar") as HTMLElement;
     // entering the trade sheet shows the bar briefly, then it tucks itself
-    (ui.el.querySelector('.mnav-btn[data-view="trade"]') as HTMLElement).click();
+    await openTrade(ui);
     await vi.advanceTimersByTimeAsync(3400);
     expect(top.classList.contains("tucked")).toBe(true);
     // the grip above the tabs calls it back…
@@ -163,7 +194,7 @@ expect(Number(ui.el.dataset.boardPx)).toBe(Math.ceil((CELL * board.w + 10) * z))
 
   it("the private wire stays silent on a phone but speaks on a desktop", async () => {
     setViewport(PHONE.w, PHONE.h);
-    const phone = mount(() => false);
+    const phone = mount(vi.fn(() => false));
     phone.ui.rivalQuip([{ speaker: "rival", text: "The other half are load-bearing." }]);
     await vi.advanceTimersByTimeAsync(20_000);
     const wire = phone.ui.el.querySelector("#iso-rival-quip") as HTMLElement;
@@ -174,10 +205,146 @@ expect(Number(ui.el.dataset.boardPx)).toBe(Math.ceil((CELL * board.w + 10) * z))
 
     setViewport(DESK.w, DESK.h);
     vi.useFakeTimers();
-    const desk = mount(() => false);
+    const desk = mount(vi.fn(() => false));
     desk.ui.rivalQuip([{ speaker: "rival", text: "The other half are load-bearing." }]);
     await vi.advanceTimersByTimeAsync(0);
     expect((desk.ui.el.querySelector("#iso-rival-quip") as HTMLElement).classList.contains("hidden")).toBe(false);
     expect(desk.ui.el.querySelector(".rival-quip-text")!.textContent).toMatch(/load-bearing/);
+  });
+});
+
+describe("#163 tab switches never resize the board", () => {
+  it("Plant → Bank/Market/Feed → Plant round-trips, repeated, keep the one settled size", async () => {
+    setViewport(PHONE.w, PHONE.h);
+    const { board, ui, ask } = mount(vi.fn(() => true));
+    stubSlotBox(ui, 374, 600);
+    await openTrade(ui);
+    expect([board.w, board.h]).toEqual([7, 10]);
+    ask.mockClear();
+    // Every economy tab, twice out and back. The settled slot is the same
+    // box each time, so the chrome must never ask again — and above all
+    // never ask for the 11-column board the mid-switch box produced.
+    for (let round = 0; round < 2; round++) {
+      for (const away of ["bank", "market", "feed"] as const) {
+        tapTab(ui, away);
+        await settle();
+        tapTab(ui, "plant");
+        await settle();
+        expect([board.w, board.h]).toEqual([7, 10]);
+      }
+    }
+    expect(ask).not.toHaveBeenCalled();
+    const requested = ask.mock.calls.map(([w]) => w);
+    expect(requested).not.toContain(11);
+  });
+
+  it("a wide-but-short (mid-switch shaped) slot earns zoom, never 11 columns", async () => {
+    setViewport(PHONE.w, PHONE.h);
+    const { board, ui, ask } = mount(vi.fn(() => true));
+    // The exact shape the bug measured: full width while the outgoing pane
+    // still shared the flex space — a height too small for the 30px cell
+    // floor. Growth must refuse; the whole 7×8 board is zoomed instead.
+    stubSlotBox(ui, 374, 150);
+    await openTrade(ui);
+    expect([board.w, board.h]).toEqual([BOARD_W, BOARD_H]);
+    expect(ask).not.toHaveBeenCalled();
+    const wrap = ui.el.querySelector("#iso-quarry .board-wrap:last-child") as HTMLElement;
+    expect(Number(wrap.dataset.zoom)).toBeLessThan(1);
+    // Once the layout settles into the real, tall slot, the legitimate grow
+    // still happens — re-validation is what keeps a miss honest.
+    stubSlotBox(ui, 374, 600);
+    window.dispatchEvent(new Event("resize"));
+    await settle();
+    expect([board.w, board.h]).toEqual([7, 10]);
+  });
+
+  it("never measures the box that exists for the single frame during a tab swap", async () => {
+    setViewport(PHONE.w, PHONE.h);
+    const { board, ui } = mount(vi.fn(() => true));
+    stubSlotBox(ui, 374, 600);
+    await openTrade(ui);
+    expect([board.w, board.h]).toEqual([7, 10]);
+    // Bank → Plant: a not-yet-settled frame would hand back the squashed
+    // box. The fit is deferred past it, so even if the box flickers to the
+    // squash before the frame runs, the settled tall box is what counts.
+    tapTab(ui, "bank");
+    tapTab(ui, "plant");
+    stubSlotBox(ui, 374, 140);   // the transient mid-switch measurement …
+    await vi.advanceTimersByTimeAsync(4);
+    stubSlotBox(ui, 374, 600);   // … already gone before the frame lands
+    await settle();
+    expect([board.w, board.h]).toEqual([7, 10]);
+  });
+
+  it("a landscape slot grows columns with the aspect — capped at +2, cells stay ≥30px", async () => {
+    setViewport(PHONE_LANDSCAPE.w, PHONE_LANDSCAPE.h);
+    const { board, ui } = mount(vi.fn(() => true));
+    // 860×300: fill cell = floor(min(846/7, 290/8)) = 36; the slack is all
+    // horizontal, so the shape gains COLUMNS (7→9, the +2 cap) and no rows.
+    stubSlotBox(ui, 860, 300);
+    await openTrade(ui);
+    expect([board.w, board.h]).toEqual([9, 8]);
+    const wrap = ui.el.querySelector("#iso-quarry .board-wrap:last-child") as HTMLElement;
+    const z = Number(wrap.dataset.zoom);
+    expect(CELL * z).toBeGreaterThanOrEqual(30);
+    // width paid for by columns, not by shrinking gems below the floor
+    expect(board.w * CELL * z).toBeLessThanOrEqual(847);
+  });
+
+  it("reshapes an unplayed session band to the slot aspect, then locks after a swap", async () => {
+    setViewport(PHONE.w, PHONE.h);
+    const { board, ui } = mount(vi.fn(() => true));
+    stubSlotBox(ui, 374, 600);
+    await openTrade(ui);
+    expect([board.w, board.h]).toEqual([7, 10]);
+    // The settled slot shortens (orientation, chrome): the two fresh,
+    // unplayed rows cannot render at 30px, so the unplayed board is reshaped
+    // to the slot's aspect — 9×8, rows traded for columns, cells still
+    // comfortable — instead of shrinking gems below the floor.
+    stubSlotBox(ui, 374, 300);
+    window.dispatchEvent(new Event("resize"));
+    await settle();
+    expect([board.w, board.h]).toEqual([9, 8]);
+    let z = Number((ui.el.querySelector("#iso-quarry .board-wrap:last-child") as HTMLElement).dataset.zoom);
+    expect(CELL * z).toBeGreaterThanOrEqual(30);
+    // …the tall band returns when the tall slot does …
+    stubSlotBox(ui, 374, 600);
+    window.dispatchEvent(new Event("resize"));
+    await settle();
+    expect([board.w, board.h]).toEqual([7, 10]);
+    // …and once the player swaps into it, grow-only is permanent: the same
+    // short slot must not delete the earned rows.
+    const gemAt = (r: number, c: number) =>
+      ui.el.querySelector(`#iso-gems .gem[data-r="${r}"][data-c="${c}"]`) as HTMLElement;
+    gemAt(0, 0).click();
+    gemAt(0, 1).click();
+    stubSlotBox(ui, 374, 300);
+    window.dispatchEvent(new Event("resize"));
+    await settle();
+    expect(board.h).toBe(10);
+  });
+
+  it("treats a restored / host-authored rectangle as the floor it never shrinks", async () => {
+    setViewport(PHONE.w, PHONE.h);
+    const { board, ui } = mount(vi.fn(() => true));
+    // A save (or the host) hands over a 9-wide board — that rectangle is
+    // sacred; growth is measured from it and retraction can never reach the
+    // shipped 7 columns.
+    let id = 5000;
+    board.restore({
+      grid: Array.from({ length: 8 }, () =>
+        Array.from({ length: 9 }, () => ({ id: id++, res: "wood", tier: 0 }))),
+    });
+    ui.renderBoard();
+    stubSlotBox(ui, 374, 600);
+    await openTrade(ui);
+    expect(board.w).toBe(9);
+    expect(board.h).toBe(10);
+    // A short settled slot would retract a session band, but only down to
+    // the restored 9×8 floor — never to 7 wide.
+    stubSlotBox(ui, 374, 150);
+    window.dispatchEvent(new Event("resize"));
+    await settle();
+    expect([board.w, board.h]).toEqual([9, 8]);
   });
 });
