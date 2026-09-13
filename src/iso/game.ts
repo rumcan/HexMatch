@@ -162,11 +162,10 @@ import {
 } from "./ending";
 // STORY-01 — the campaign seam: a contract names the rival, the voice, the
 // ★ line and the three scenes around the match; the guide rides the wire.
-import { CAST, FACE_FOR_DIRECTION, GUIDE, faceOf, type Expression } from "../story/cast";
+import { CAST, FACE_FOR_DIRECTION, faceOf, type Expression } from "../story/cast";
 import { CHAPTERS, EMPLOYER, chapterById, type StoryChapter } from "../story/chapters";
 import { createStoryDirector } from "../story/voices";
 import { advisorBeats, type AdvisorEvent } from "../story/advisor";
-import { guideBanner } from "../story/guide-banner";
 import { advisorEnabled, recordChapterResult } from "../story/progress";
 import { showScene, type SceneHandle } from "../story/stage";
 import type { UiRivalryBeat } from "../game/ui";
@@ -3664,52 +3663,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // a CLOSED banner pop back up whenever the text changed and came back
     // (close "Dirt Road scores nothing…", switch tools, switch back → it
     // returned). The key makes "closed" stick for the rest of the game.
+    // NO HINT BANNERS: the step-by-step guidance lines (place your Factory,
+    // place your Depot, free track tiles, dirt value, nothing connected,
+    // raise a plant, match the tokened gems) were removed — the How to Play
+    // tour teaches all of it. Only two banners remain, and neither is a
+    // lesson: an armed Protest waiting for its target click, and the result.
     let banner: string | null = null;
     let bannerKey: string | null = null;
-    if (phase === "setup-factory") {
-      bannerKey = "setup-factory";
-      banner = "Place your Factory next to a town — click a buildable tile";
-    }
-    // PP-05: the setup banner states the price too — the first Depot is free
-    // on the allowance, and the player should know the second one is not.
-    else if (phase === "setup-harvester") {
-      bannerKey = "setup-depot";
-      banner = "Place your Depot — it needs an industry in its 4×4 catchment, and one Depot holds each industry" +
-        (me.freeDepots > 0 ? ` (this one is free; later Depots cost ${costLabel(DEPOT_COST)})` : "");
-    } else if (phase === "won") {
+    if (phase === "won") {
       bannerKey = "won";
       banner = `${winner?.name} wins — ${fmtVp(vpFor(score, winner?.id ?? ""))}★`;
     } else if (pendingProtest) {
       bannerKey = "protest-ready";
       banner = `Protest ready — click a public road to stop ALL trucks for ${fmtProtestLeft(PROTEST_MS)} (Esc cancels)`;
-    } else if (me.freeTrack > 0 && !firstTrackBuilt) {
-      // The guidance line exists to get the FIRST road down — before that,
-      // it is the one thing a new player needs over the map. After it, it
-      // sits over the work as a popup the player has to close (the reported
-      // "the game looks frozen while I lay my first road"), so the first
-      // committed track retires it. The free-tile count still shows in the
-      // drag's modebar, where it belongs.
-      bannerKey = "free-track";
-      banner = `${me.freeTrack} free track tiles remaining — connect your depot to your Factory`;
-    } else if (tool === "dirt") {
-      bannerKey = "dirt-value";
-      banner = `Dirt Road scores nothing — paving it later is worth ${fmtVp(VICTORY.upgrade)}★ a tile`;
-    } else if (Object.keys(quarry.reach).length === 0) {
-      bannerKey = "nothing-connected";
-      banner = "Nothing connected — the Processing Plant only pays cargo your network reaches";
-    } else if (tool === "plant") {
-      bannerKey = "plant";
-      banner = `Raise another processing plant next to a town — ${plantCostLabel()}`;
-    } else {
-      bannerKey = "match-gems";
-      banner = "Match the tokened gems in the Processing Plant to process";
     }
-    // STORY-01: inside a contract the loop's opening beats are SPOKEN, not
-    // posted — Mabel's line replaces the sheet's wording for the keys she
-    // owns (guide-banner.ts), and the HUD paints the sheet as her speech
-    // bubble. Keys she does not own keep the posted sheet verbatim.
-    const voicedBanner = storyOn ? guideBanner(bannerKey) : null;
-    if (voicedBanner) banner = voicedBanner.text;
 
     let costInfo: string | null = null;
     if (preview) {
@@ -3878,10 +3845,6 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // dismissal is remembered by this, so a closed line never pops back up
       // when the wording changes and returns.
       bannerKey,
-      // STORY-01: her face and name beside the bubble, mood by moment.
-      ...(voicedBanner
-        ? { bannerFace: faceOf(GUIDE, voicedBanner.mood), bannerWho: CAST[GUIDE].name }
-        : {}),
       costInfo,
       inspect: info || null,
       inspectTone: infoTone,

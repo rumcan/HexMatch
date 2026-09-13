@@ -196,10 +196,12 @@ describe("E11 the game boots", () => {
     expect(h.purse.stone ?? 0).toBeGreaterThan(0);
   });
 
-  it("exposes a banner telling the player what to do", async () => {
+  it("posts no hint banner during setup — the How to Play tour teaches it", async () => {
     await boot();
+    await settle();
     const banner = root.querySelector("#iso-banner") as HTMLElement;
-    expect(banner.textContent).toMatch(/place your factory/i);
+    expect(banner.classList.contains("hidden")).toBe(true);
+    expect(banner.textContent ?? "").not.toMatch(/place your factory/i);
   });
 
   it("cleans up after itself", async () => {
@@ -1120,13 +1122,13 @@ describe("V4 toasts and the banner close", () => {
     expect(root.querySelectorAll(".toast")).toHaveLength(0);
   }, 8000);
 
-  it("the banner X stays dismissed while the same message repeats", async () => {
-    await boot();
+  it("no hint banner appears through setup and into play", async () => {
+    const h = await boot();
     const banner = root.querySelector("#iso-banner") as HTMLElement;
-    expect(banner.classList.contains("hidden")).toBe(false);
-    (banner.querySelector(".banner-close") as HTMLElement).click();
+    await settle();
     expect(banner.classList.contains("hidden")).toBe(true);
-    // paint() runs every frame — the dismissal must survive it
+    h.finishSetup();
+    // paint() runs every frame — nothing may repopulate it
     await settle();
     await settle();
     expect(banner.classList.contains("hidden")).toBe(true);
@@ -1183,36 +1185,24 @@ describe("TOAST-ONCE the win-point popups show once and stay gone", () => {
     expect(floats.some((t) => t.includes("+0.25★"))).toBe(true);
   }, 15_000);
 
-  it("a closed banner never returns when its own wording changes", async () => {
+  it("no free-track or dirt-value hint banner while laying the first road", async () => {
     const h = await boot();
     const c = findSouthCorridor(h.grid, 6);
     expect(c).toBeTruthy();
     const { hx, hy } = c!;
-    // One Depot is all the drag needs: the network anchors on its tile, and
-    // the free-tile allowance (12) is what the banner counts down.
+    // One Depot is all the drag needs: the network anchors on its tile.
     h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy });
     h.finishSetup();
+    h.setTool("dirt");
     await settle();
 
     const banner = root.querySelector("#iso-banner") as HTMLElement;
-    expect(banner.classList.contains("hidden")).toBe(false);
-    expect(banner.textContent).toMatch(/12 free track tiles/i);
-    // The reported bug, end to end: close the line…
-    (banner.querySelector(".banner-close") as HTMLElement).click();
     expect(banner.classList.contains("hidden")).toBe(true);
-    // …then build, so the banner rewords itself (12 → 10 free tiles). The
-    // old text-keyed dismissal read the new wording as a NEW banner and
-    // popped the closed one back up — "close it, switch, it's back". Keyed
-    // by identity, the dismissed line stays gone.
     expect(h.dragBuild("dirt", hx, hy + 1, hx, hy + 2)).toBeTruthy();
     await settle();
-    expect(h.freeTrack).toBe(10);        // the wording really did change
-    // The first committed track retires the free-track line entirely (the
-    // "connect your depot" guidance is done — the popup the first road
-    // shouldn't be hidden behind), so the dismissed line cannot return in
-    // its old wording; whatever line the banner shows next is a DIFFERENT
-    // banner the dismissal never covered.
-    expect(banner.textContent).not.toMatch(/free track tiles/i);
+    expect(h.freeTrack).toBe(10);        // the road really was laid
+    expect(banner.classList.contains("hidden")).toBe(true);
+    expect(banner.textContent ?? "").not.toMatch(/free track tiles|Dirt Road scores nothing/i);
   });
 });
 
