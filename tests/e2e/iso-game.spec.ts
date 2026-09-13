@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { bootBudget } from "./boot";
+import { bootSoloIso } from "./boot";
 import { BOARD_H, BOARD_W, MAP_W, MAP_H } from "../../src/game/config";
 import {
   findIsoCorridor, isoTileOcclusion, isoClickableTile, classifyDragTiles,
@@ -30,31 +30,25 @@ import {
  *  tests/unit/iso-corridor-picker.test.ts. */
 const ISO_URL = "/hexmatch/?seed=199";
 
+/** Boot a solo game past the menu and onto the map, via the shared
+ *  `bootSoloIso` (issue #135). The spec-specific half lives here:
+ *
+ *  AI-02: the start-of-game difficulty prompt overlays the UI when nothing
+ *  chose yet — this spec plays a game, it does not exercise onboarding
+ *  (the picker is unit-tested in iso-skill-picker.test.ts), so boot with a
+ *  choice already remembered. TUT-01: the starting tour is the other boot
+ *  overlay, and it covers the whole screen until it is walked or dismissed
+ *  (it is exercised for real in tests/e2e/iso-tutorial.spec.ts) — remember
+ *  its dismissal the same way, so these specs click on the map, not on a
+ *  card. */
 async function bootIso(page: import("@playwright/test").Page) {
-  // AI-02: the start-of-game difficulty prompt overlays the UI when nothing
-  // chose yet — these specs play a game, they do not exercise onboarding
-  // (the picker is unit-tested in iso-skill-picker.test.ts), so boot with a
-  // choice already remembered.
-  // TUT-01: the starting tour is the other boot overlay, and it covers the
-  // whole screen until it is walked or dismissed (it is exercised for real in
-  // tests/e2e/iso-tutorial.spec.ts). Remember its dismissal the same way, so
-  // these specs click on the map and not on a card.
-  await page.addInitScript(() => {
-    localStorage.setItem("hexmatch:rival-skill", "normal");
-    localStorage.setItem("hexmatch:tutorial", "never");
+  await bootSoloIso(page, {
+    url: ISO_URL,
+    remembered: {
+      "hexmatch:rival-skill": "normal",
+      "hexmatch:tutorial": "never",
+    },
   });
-  await page.goto(ISO_URL);
-  // STORY-01: the front door stands first — the iso game only mounts once a
-  // mode is chosen, so walk the menu like a player (and like
-  // iso-tutorial.spec.ts / building-layers.spec.ts already do).
-  await page.locator(".menu-btn.primary").click();
-  await page.getByRole("button", { name: /Play vs AI/ }).click();
-  await page.waitForFunction(() => {
-    const h = (window as any).__iso;
-    // LOAD-01: the loading screen covers the map until the art settles —
-    // clicking before it lifts would land on the overlay, not a tile.
-    return !!h && h.phase === "setup-factory" && !!h.grid && h.grid.industries.length > 0 && !h.loading;
-  }, null, { timeout: bootBudget() });
 }
 
 // E14 — the corridor the gameplay round is played on is chosen by
