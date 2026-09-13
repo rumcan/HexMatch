@@ -282,7 +282,9 @@ test.describe("iso game boots on the default route", () => {
     // no hint banner (the How to Play tour teaches setup) + scoreboard + starting purse
     await expect(root.locator("#iso-banner")).toBeHidden();
     await expect(root.locator("#iso-vp")).toContainText("You 0");
-    await expect(root.locator("#iso-res")).toContainText("🪨12");
+    const stoneChip = root.locator("#iso-res .chip").nth(3); // CARGOES: grain, wood, ore, stone
+    await expect(stoneChip.locator(".chip-n")).toHaveText("12");
+    await expect(stoneChip.locator('img.cargo-ic')).toHaveAttribute("alt", "Stone");
 
     // a real map with industries, and the renderer is painting real pixels
     // (poll: the terrain canvas fills asynchronously once the atlas loads)

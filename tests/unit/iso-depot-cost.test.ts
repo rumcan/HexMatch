@@ -383,14 +383,16 @@ describe("PP-05 the cost is visible before the click", () => {
     const h = await boot();
     // the setup allowance is live, so the button says so — and still names Oil
     expect(depotBtn().querySelector("small")!.textContent).toMatch(/free setup/);
-    expect(depotBtn().querySelector("small")!.textContent).toContain("🛢️");
+    expect(depotBtn().querySelector('small img.cargo-ic[alt="Oil"]')).toBeTruthy();
     expect(depotBtn().classList.contains("disabled")).toBe(false);
 
     expect(h.placeDepot(findSouthCorridor(h.grid, 6, "farm")!.hx, findSouthCorridor(h.grid, 6, "farm")!.hy)).toBe(true);
     h.purse.oil = 0;
     await settle();
     // …and once it is spent, the button shows the real price and greys out
-    expect(depotBtn().querySelector("small")!.textContent).toContain("1🛢️");
+    const paid = depotBtn().querySelector("small")!;
+    expect(paid.querySelector('img.cargo-ic[alt="Oil"]')).toBeTruthy();
+    expect(paid.textContent).toContain("1");
     expect(depotBtn().classList.contains("disabled")).toBe(true);
     h.purse.oil = 1;
     h.purse.grain = 1;        // PP-07: the price asks Grain as well as Oil
@@ -404,8 +406,11 @@ describe("PP-05 the cost is visible before the click", () => {
     await settle();
     const bar = root.querySelector(".modebar") as HTMLElement;
     expect(bar.textContent).toMatch(/Depot/);
-    expect(bar.textContent).toMatch(/🛢️|free/i);
     expect(bar.textContent).toMatch(/catchment/);
+    // setup allowance → "free"; a paid Depot names Oil with a gem (#166)
+    const free = /free/i.test(bar.textContent ?? "");
+    const oil = bar.querySelector('img.cargo-ic[alt="Oil"]');
+    expect(free || oil, "modebar shows free setup or the Oil gem cost").toBeTruthy();
   });
 
   it("reports the same price through the read-only tile probe", async () => {
