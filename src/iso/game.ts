@@ -1496,34 +1496,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (p.human) flashAt(tx, ty, plan.code === "not-near-town" ? "Factory must touch a town" : "Can't build here");
       return false;
     }
-    // MP-AUDIT: opening placement uses the local seat's reservation — distant towns with legal factory and nearby depot
-    if (isMp() && phase === "setup-factory") {
-      const seat: 0 | 1 = p.i === 0 ? 0 : 1;
-      const reserved = townForSeat(grid, seat);
-      if (reserved) {
-        const touchesReserved = plan.towns.some((t) => t.id === reserved.id);
-        if (!touchesReserved) {
-          toast(`Place your Factory next to your starting town (Town ${reserved.id + 1}).`, "bad");
-          return false;
-        }
-      }
-      // Also enforce distinct reservations: cannot steal the other seat's town
-      const otherSeat: 0 | 1 = seat === 0 ? 1 : 0;
-      const otherTown = townForSeat(grid, otherSeat);
-      if (otherTown && eco.factories.some((f) => f.townId === otherTown.id && f.ownerId !== p.i + 1)) {
-        // The other seat already holds its town; placing adjacent to that same town would duplicate
-        // The touchesReserved check above already ensures we are near our own town, but keep as safety
-      }
-      const otherReserved = otherTown;
-      if (otherReserved && plan.towns.some((t) => t.id === otherReserved.id) && reserved && otherReserved.id !== reserved.id) {
-        // If this placement touches BOTH towns (rare, towns close), prefer own town but don't reject
-        // Only reject if it touches ONLY the other seat's town
-        const touchesOwn = plan.towns.some((t) => reserved && t.id === reserved.id);
-        if (!touchesOwn) {
-          toast(`That town is reserved for the other player — use your own starting town.`, "bad");
-          return false;
-        }
-      }
+    // MP: the opening Factory may go beside ANY town — the two seats are rivals
+    // racing for one island, not tenants of reserved plots. What stays is the
+    // overlap guard: the other seat's opening buildings are live structures,
+    // and in a hosted game the guest's Factory intent can land after the host
+    // has already moved on to its Depot, so the guard does not wait on phase.
+    if (isMp()) {
       // Factory footprints must not overlap live buildings (opening factories also check live buildings)
       for (const [fx, fy] of plan.footprint.map((f) => [f.tx, f.ty] as [number, number])) {
         if (eco.factories.some((f) => fx >= f.tx && fx < f.tx + FACTORY_FOOTPRINT[0] && fy >= f.ty && fy < f.ty + FACTORY_FOOTPRINT[1])) {
@@ -2109,7 +2087,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // one watchable move per skill().moveMs. trySwap refuses politely when
     // the board is busy or smogged, so the clock can keep cadence calmly.
     rivalQuarry.tick(now);
-    rivalAutoplay(now);
+    // MP: in a hosted game seat 1 is a person who swaps their own board by
+    // intent — an autoplaying AI there would be a third player on their board.
+    if (isSolo()) rivalAutoplay(now);
   }
 
   /** AI-03: the rival's match-3 cadence — "a board where he is slowly
@@ -2841,13 +2821,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // Ensure guest renders vehicles
       world.vehicles = (carItems(cars as any) as any).concat(truckItems(trucks as any, atlasRef ?? undefined));
     }
-    // boards — seat-swapped for guest perspective
+    // boards — already in this guest's seat frame. `mirrorSnapshot` renamed the
+    // host's "ai" (this guest's seat) to "you" on the way in, so the wire owner
+    // IS the local owner. Swapping again here showed the guest the HOST's board.
     if (applied.boards) {
       const byOwner = new Map(applied.boards.map((b) => [b.owner, b.data]));
-      // Host board owners are "you" (host) and "ai" (guest). Guest's local "you" corresponds to host's "ai".
-      const myData = byOwner.get(players[1].id) ?? byOwner.get("ai") ?? byOwner.get("you");
-      const rivalData = byOwner.get(players[0].id) ?? byOwner.get("you");
-      // guest's quarry is its own seat; restore from host's guest board if present, else fallback
+      const myData = byOwner.get(players[0].id);
+      const rivalData = byOwner.get(players[1].id);
       if (myData) {
         try { quarry.board.restore(myData); } catch {}
         onBoardChange();
@@ -2858,8 +2838,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     // cross prompt
     if (applied.crossPrompt) {
-      // Host used "ai" for guest seat; translate
-      const ownerIsGuest = applied.crossPrompt.boardOwner === "ai" || applied.crossPrompt.boardOwner === players[1].id;
+      // Already mirrored: a prompt for THIS guest's board arrives as "you".
+      const ownerIsGuest = applied.crossPrompt.boardOwner === players[0].id;
       if (isGuest() && ownerIsGuest) {
         __showGuestCross(applied.crossPrompt as any);
       } else if (!isGuest() && !ownerIsGuest) {
@@ -2938,8 +2918,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     if ((msg as any).boards) {
       const byOwner = new Map((msg as any).boards.map((b: any) => [b.owner, b.data]));
-      const myData = byOwner.get(players[1].id) ?? byOwner.get("ai") ?? byOwner.get("you");
-      const rivalData = byOwner.get(players[0].id) ?? byOwner.get("you");
+      // Already mirrored by `mirrorDelta`: "you" is this guest's own board.
+      const myData = byOwner.get(players[0].id);
+      const rivalData = byOwner.get(players[1].id);
       if (myData) { try { quarry.board.restore(myData); } catch {} onBoardChange(); }
       if (rivalData) { try { rivalQuarry.board.restore(rivalData); } catch {} }
     }
@@ -2947,7 +2928,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const cp = (msg as any).crossPrompt;
       crossPrompt = cp ?? null;
       if (cp) {
-        const ownerIsGuest = cp.boardOwner === "ai" || cp.boardOwner === players[1].id;
+        // Already mirrored: a prompt for THIS guest's board arrives as "you".
+        const ownerIsGuest = cp.boardOwner === players[0].id;
         if (isGuest() && ownerIsGuest) __showGuestCross(cp);
       }
     }

@@ -25,7 +25,9 @@ import { NetSession, mirrorOwnerByte } from "../../src/net/session";
 import { PROTOCOL_VERSION, type HexProtocol, type WelcomeMsg } from "../../src/net/protocol";
 import type { HexRoom } from "../../src/net/transport";
 import { MAP_W, MAP_H, mulberry32, setRng, SABOTAGE } from "../../src/game/config";
-import { WATER, factoryTouchesTown, type Grid } from "../../src/iso/grid";
+import { FACTORY_FOOTPRINT } from "../../src/iso/config";
+import { WATER, factoryTouchesTown, townForSeat, type Grid } from "../../src/iso/grid";
+import { adjacentTown } from "../../src/iso/plants";
 import { tIdx, type Track } from "../../src/iso/track";
 
 // ── stub the art imports (vite handles these in the browser) ──────────────
@@ -73,6 +75,8 @@ interface MpHook {
   vp: { you: number; ai: number };
   placeFactory: (tx: number, ty: number) => boolean;
   placeDepot: (tx: number, ty: number) => boolean;
+  /** The twin of the setup clicks that flips a seat into `play`. */
+  finishSetup: () => void;
   dragBuild: (
     kind: "dirt" | "road", ax: number, ay: number, bx: number, by: number, xFirst?: boolean,
   ) => { tiles: { tx: number; ty: number }[] } | null;
@@ -235,8 +239,8 @@ function findFactorySpot(grid: Grid, exclude: ReadonlySet<number> = new Set()): 
   for (let y = 6; y < MAP_H - 6; y++) {
     for (let x = 6; x < MAP_W - 6; x++) {
       let ok = true;
-      for (let dy = 0; dy < 2 && ok; dy++) {
-        for (let dx = 0; dx < 2 && ok; dx++) {
+      for (let dy = 0; dy < FACTORY_FOOTPRINT[1] && ok; dy++) {
+        for (let dx = 0; dx < FACTORY_FOOTPRINT[0] && ok; dx++) {
           const i = (y + dy) * MAP_W + (x + dx);
           if (grid.terrain[i] === WATER || grid.occupancy[i] !== -1 || exclude.has(i)) ok = false;
         }
@@ -248,9 +252,15 @@ function findFactorySpot(grid: Grid, exclude: ReadonlySet<number> = new Set()): 
   return null;
 }
 
-/** The 2×2 a factory at (x,y) stands on. */
-const footprint = (x: number, y: number) =>
-  new Set([tIdx(x, y), tIdx(x + 1, y), tIdx(x, y + 1), tIdx(x + 1, y + 1)]);
+/** The tiles a factory at (x,y) stands on — its real footprint (3×3 since the
+ *  factory art grew), not the 2×2 this helper once hard-coded. */
+const footprint = (x: number, y: number) => {
+  const tiles = new Set<number>();
+  for (let dy = 0; dy < FACTORY_FOOTPRINT[1]; dy++) {
+    for (let dx = 0; dx < FACTORY_FOOTPRINT[0]; dx++) tiles.add(tIdx(x + dx, y + dy));
+  }
+  return tiles;
+};
 
 /** The first legal Depot site the guest's own plan accepts, near the factory. */
 function findDepotSpot(h: MpHook, cx: number, cy: number): [number, number] | null {
@@ -519,5 +529,121 @@ describe("MP-05 two real games, one room", () => {
     host.buyBlack("fog");
     pump();
     expect(guest.board.fogUntil).toBeGreaterThan(performance.now());
+  });
+
+  // ── the 1.2.0 playtest: a PvP match that played like co-op ──────────────
+
+  /** The first legal opening Factory beside one particular town. */
+  function spotBesideTown(h: MpHook, townId: number, exclude: ReadonlySet<number> = new Set()): [number, number] | null {
+    for (let y = 6; y < MAP_H - 6; y++) {
+      for (let x = 6; x < MAP_W - 6; x++) {
+        let ok = true;
+        for (let dy = 0; dy < FACTORY_FOOTPRINT[1] && ok; dy++) {
+          for (let dx = 0; dx < FACTORY_FOOTPRINT[0] && ok; dx++) {
+            const i = (y + dy) * MAP_W + (x + dx);
+            if (h.grid.terrain[i] === WATER || h.grid.occupancy[i] !== -1 || exclude.has(i)) ok = false;
+          }
+        }
+        if (!ok || !factoryTouchesTown(h.grid, x, y)) continue;
+        if (adjacentTown(h.grid, x, y)?.id !== townId) continue;
+        if (h.placementPlan("factory", x, y).valid) return [x, y];
+      }
+    }
+    return null;
+  }
+
+  it("either seat may open beside ANY town — there are no reserved starting towns", async () => {
+    const hostEnd = new Endpoint("host-socket", "HX9KWR");
+    const guestEnd = new Endpoint("guest-socket", "HX9KWR");
+    hostEnd.peer = guestEnd;
+    guestEnd.peer = hostEnd;
+    endpoints = [hostEnd, guestEnd];
+
+    const hostSession = new NetSession({ room: asRoom(hostEnd), role: "host" });
+    const guestSession = new NetSession({ room: asRoom(guestEnd), role: "guest" });
+    const host = await boot("host", hostSession);
+    const guest = await boot("guest", guestSession);
+    greet(welcomeFor(hostEnd, guestEnd, true));
+    greet(welcomeFor(hostEnd, guestEnd, false), guestEnd);
+    pump();
+
+    const hostReserved = townForSeat(host.grid, 0)!;
+    const guestReserved = townForSeat(host.grid, 1)!;
+    expect(hostReserved.id).not.toBe(guestReserved.id);
+
+    // The host opens beside a town that is NOT the one the old lock pinned it to…
+    const hostTown = host.grid.towns.find((t) => t.id !== hostReserved.id)!;
+    const hostSpot = spotBesideTown(host, hostTown.id);
+    expect(hostSpot).not.toBeNull();
+    expect(host.placeFactory(hostSpot![0], hostSpot![1])).toBe(true);
+    pump();
+    expect(host.factories).toHaveLength(1);
+
+    // …and the guest opens beside the HOST's old reservation, which the old
+    // lock refused as "reserved for the other player".
+    const guestSpot = spotBesideTown(guest, hostReserved.id, footprint(hostSpot![0], hostSpot![1]));
+    expect(guestSpot).not.toBeNull();
+    guest.placeFactory(guestSpot![0], guestSpot![1]);
+    pump();
+    expect(host.factories.find((f) => f.owner === "ai")).toMatchObject({ tx: guestSpot![0], ty: guestSpot![1] });
+    expect(guest.factories.find((f) => f.owner === "you")).toMatchObject({ tx: guestSpot![0], ty: guestSpot![1] });
+  });
+
+  it("each seat plays its OWN plant board, and no AI plays the guest's", async () => {
+    const hostEnd = new Endpoint("host-socket", "HX9KWR");
+    const guestEnd = new Endpoint("guest-socket", "HX9KWR");
+    hostEnd.peer = guestEnd;
+    guestEnd.peer = hostEnd;
+    endpoints = [hostEnd, guestEnd];
+
+    const hostSession = new NetSession({ room: asRoom(hostEnd), role: "host" });
+    const guestSession = new NetSession({ room: asRoom(guestEnd), role: "guest" });
+    const host = await boot("host", hostSession);
+    const guest = await boot("guest", guestSession);
+    greet(welcomeFor(hostEnd, guestEnd, true));
+    greet(welcomeFor(hostEnd, guestEnd, false), guestEnd);
+    pump();
+
+    // Both seats open and go into play.
+    const hostSpot = findFactorySpot(host.grid)!;
+    expect(host.placeFactory(hostSpot[0], hostSpot[1])).toBe(true);
+    pump();
+    const hostDepot = findDepotSpot(host, hostSpot[0], hostSpot[1])!;
+    expect(host.placeDepot(hostDepot[0], hostDepot[1])).toBe(true);
+    // The hook's Depot twin places the building only; the real setup click is
+    // what flips the host into play, and `finishSetup` is its twin.
+    host.finishSetup();
+    pump();
+    const guestSpot = findFactorySpot(guest.grid, footprint(hostSpot[0], hostSpot[1]))!;
+    guest.placeFactory(guestSpot[0], guestSpot[1]);
+    pump();
+    const guestDepot = findDepotSpot(guest, guestSpot[0], guestSpot[1])!;
+    guest.placeDepot(guestDepot[0], guestDepot[1]);
+    pump();
+    expect(host.phase).toBe("play");
+    expect(guest.phase).toBe("play");
+
+    // Board ownership, read straight after the host's forced publish (no frame
+    // has run since, so neither board has moved). The guest's own panel is ITS
+    // seat's board — the host's seat 1 — and its rival view is the host's board.
+    // The old double seat-swap showed the guest the HOST's board as its own.
+    // `seq` is the board's gem-id counter: `restore` mints fresh ids, so it only
+    // ever grows on the receiving side and is not part of what a board IS.
+    const saved = (b: { save(): unknown }) => {
+      const { seq: _seq, ...rest } = b.save() as { seq: number } & Record<string, unknown>;
+      return JSON.stringify(rest);
+    };
+    expect(saved(host.board)).not.toBe(saved(host.rivalPlant.board));
+    expect(saved(guest.board)).toBe(saved(host.rivalPlant.board));
+    expect(saved(guest.rivalPlant.board)).toBe(saved(host.board));
+
+    // No AI on the guest's seat: the host's autoplayer reaches for a move on
+    // seat 1's board on the first frame of play, so a few frames is plenty.
+    const findMove = vi.spyOn(host.rivalPlant.board, "findMove");
+    const trySwap = vi.spyOn(host.rivalPlant.board, "trySwap");
+    await settle();
+    await settle();
+    expect(findMove).not.toHaveBeenCalled();
+    expect(trySwap).not.toHaveBeenCalled();
   });
 });
