@@ -558,8 +558,9 @@ const DECAL_SOURCES = {
 
 /**
  * How many rotated variants to cut from each source. Three is enough because
- * the engine also mirrors a patch at draw time, so twelve files give
- * twenty-four apparent shapes — and each one of these is a quarter of a
+ * the engine also mirrors a patch at draw time and turns it through its own
+ * angle on the ground, so twelve files give a map where no two patches share
+ * a shape — and each one of these is a quarter of a
  * megabyte of source art, so the count is worth being mean about.
  */
 const VARIANTS = 3;

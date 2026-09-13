@@ -329,11 +329,6 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
                       ? { backgroundImage: `url(${face.url})`, backgroundSize: "200% 200%", backgroundPosition: `${face.pos[0]}% ${face.pos[1]}%` }
                       : { backgroundImage: `url(${face.url})`, backgroundSize: "cover", backgroundPosition: "center 20%" }} />
                   <span className="cc-body">
-                    {/* #122: the status badge shares a row with the kicker
-                        instead of floating over the card's corner. As an
-                        absolutely positioned plate it painted "Filed · lost"
-                        straight across "CONTRACT I · BLACKWOOD FREIGHT"; in
-                        flow the two can only sit side by side or stack. */}
                     <span className="cc-head">
                       <span className="cc-kicker">{chapter.kicker}</span>
                       {result === "win"

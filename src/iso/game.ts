@@ -1227,12 +1227,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // show its arithmetic. The result is recorded first: a refresh mid-reel
     // must not lose the contract.
     if (storyChapter) {
-      recordChapterResult(storyChapter.id, storyChapter.index, winner.id === me.id, CHAPTERS.length);
+      const won = winner.id === me.id;
+      recordChapterResult(storyChapter.id, storyChapter.index, won, CHAPTERS.length);
       // BACK TO WORK: a won contract is a promotion — say so where the job was named.
-      if (winner.id === me.id) ui.feed(`Promoted: ${storyChapter.promotion}, ${EMPLOYER}`, "Contract");
-      storyView = showScene(ui.el, winner.id === me.id ? storyChapter.win : storyChapter.lose, {
+      if (won) ui.feed(`Promoted: ${storyChapter.promotion}, ${EMPLOYER}`, "Contract");
+      // #123: the loss epilogue shows every line in full immediately — the
+      // slow typewriter stays on the win epilogue, the briefing and the reel.
+      storyView = showScene(ui.el, won ? storyChapter.win : storyChapter.lose, {
         player: playerCast,
         skipLabel: "Skip epilogue ▸▸",
+        instant: !won,
       });
       void storyView.promise.then(() => {
         storyView = null;
