@@ -533,27 +533,25 @@ describe("INPUT-QOL build flash: the 1-second answer on the map", () => {
 // FIRST ROAD — the guidance banner retires when the first track lands
 // ══════════════════════════════════════════════════════════════════════════
 describe("INPUT-QOL first road: no popup between the player and the track", () => {
-  it("the 'connect your depot' banner shows pre-first-road and retires after it", async () => {
+  it("no 'connect your depot' banner covers the map before or after the first road", async () => {
     const { h, corridor: { hx, fy } } = await connectedBoot();
-    // The allowance the banner counts down (the corridor above was built
-    // through buildTile, which never spends it).
+    // The corridor above was built through buildTile, which never spends the
+    // allowance — the moment the old hint banner used to count down.
     expect(h.freeTrack).toBe(FREE_SETUP_TRACK);
     await settle();
     let banner = root.querySelector("#iso-banner") as HTMLElement;
     expect(banner).toBeTruthy();
-    expect(banner.classList.contains("hidden")).toBe(false);
-    expect(banner.textContent).toMatch(/free track tiles/i);
+    expect(banner.classList.contains("hidden")).toBe(true);
 
-    // …lay the first road through the REAL commit path, one tile past the
-    // Factory's footprint…
+    // …lay the first road through the REAL commit path…
     const end = firstRoadEnd(h, hx, fy);
     expect(end, "a tile to lay the first road on").not.toBeNull();
     expect(h.dragBuild("dirt", hx, fy, hx, end!)).toBeTruthy();
     await settle();
 
-    // …and the guidance is gone: whatever the banner says next, it is no
-    // longer the "connect your depot" line.
+    // …and still nothing sits between the player and the track.
     banner = root.querySelector("#iso-banner") as HTMLElement;
-    expect(banner.textContent).not.toMatch(/free track tiles/i);
+    expect(banner.classList.contains("hidden")).toBe(true);
+    expect(banner.textContent ?? "").not.toMatch(/free track tiles/i);
   });
 });
