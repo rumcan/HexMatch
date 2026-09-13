@@ -196,6 +196,15 @@ export interface UiHooks {
   onSkill?: (key: SkillKey) => void;
   /** AI-01: the boot difficulty, so the selector opens on the right value. */
   skill?: SkillKey;
+  /**
+   * MOBILE-02: the phone chrome wants a board that FILLS the window — more
+   * columns/rows at a smaller cell where the viewport leaves room, instead of
+   * the shipped 7×8 shrunk toward a clip. The chrome only ASKS; the game
+   * answers. It may grow a solo board (and must not on a multiplayer GUEST,
+   * whose grid is authored by the host), and it may answer `false` to veto
+   * the request entirely. Return true when the growth was applied.
+   */
+  requestBoardSize?: (w: number, h: number) => boolean;
 }
 
 export interface UiRivalryBeat {
@@ -289,6 +298,21 @@ const SECURITY_ISO: Partial<Record<Cargo, number>> = {
 
 /** PP-08: the standing rule, shown wherever Gold is displayed or traded. */
 const GOLD_RULE = "Gold is reserved for Black Market sabotage.";
+
+/**
+ * MOBILE-02: the phone regime, asked the same way the stylesheet asks it —
+ * a portrait sheet at ≤760px, or the short landscape phone at ≤900×500
+ * (styles.css owns both media queries). JS needs the answer too, because the
+ * phone layout is not just CSS there: the board grows into a fit, the top
+ * bar tucks, the private wire falls silent, and all of that must flip on the
+ * EXACT breakpoint the sheet does — not one pixel of drift. Absent window
+ * (headless boards, node tests) this is a desktop.
+ */
+const isPhoneViewport = (): boolean => {
+  if (typeof window === "undefined") return false;
+  const w = window.innerWidth, h = window.innerHeight;
+  return w <= 760 || (w <= 900 && h <= 500);
+};
 
 export function createOriginalUi(
   board: Board,
@@ -452,24 +476,48 @@ export function createOriginalUi(
   // SFX-01: gems sound from `selectOrSwap` (above), never from the hover/press
   // delegation — see the comment there.
   grid.dataset.sfx = "off";
-  grid.style.width = CELL * BOARD_W + "px";
-  grid.style.height = CELL * BOARD_H + "px";
-  grid.style.setProperty("--gem", (CELL - 6) + "px");
+  // MOBILE-02: the layout box follows the LIVE board, not the shipped
+  // constants — a phone may have grown the grid to fill its window (and a
+  // restored save carries whatever rectangle it was left in).
+  applyGridSize();
   boardWrap.appendChild(grid);
-  qp.appendChild(boardWrap);
+  // MOBILE-02: the wrap rides inside a slot. On the desktop the slot is
+  // `display:contents` (invisible, nothing changes); on a phone the trade
+  // sheet makes it the flex box between the tab strip and the footer, so the
+  // chrome can MEASURE the room the board owns and size the board into it —
+  // which is what turns "fits without a scroll where it can" into "always
+  // fits": the gap is filled with extra columns/rows first, zoom second.
+  const boardSlot = h("div", "board-slot");
+  boardSlot.appendChild(boardWrap);
+  qp.appendChild(boardSlot);
 
 
   // Shared tabs; keep the existing board mounted while switching panes.
+  // MOBILE-02: every tab is icon + word now, and the word lives in its own
+  // span so the phone strip can drop to icon-only on the very narrow ends
+  // without touching markup or the accessible name (unit tests keep reading
+  // the full words out of `textContent`).
   const tp = h("div", "panel grow");
   tp.id = "iso-trade";
+  // MOBILE-02: the tuck handle. On a phone in the economy sheet the top bar
+  // hides itself once it stops changing (see syncTopbarTuck); this thin grab
+  // strip above the tabs is the deliberate way to call it back down.
+  const topGrip = h("button", "tb-grip");
+  topGrip.type = "button";
+  topGrip.title = "Show the top bar";
+  topGrip.setAttribute("aria-label", "Show the top bar");
+  topGrip.dataset.sfx = "open";
+  topGrip.innerHTML = `<span class="tb-grip-pill" aria-hidden="true"></span>`;
+  topGrip.onclick = () => revealTopbar(6000);
+  tp.appendChild(topGrip);
   const tabs = h("div", "tabs");
-  const tabMarket = h("button", "tab active", "Market");
-  const tabBank = h("button", "tab", "Bank");
-  const tabFeed = h("button", "tab", "Feed");
+  const tabMarket = h("button", "tab active", `<i class="tab-ic" aria-hidden="true">⚖</i><span class="tab-l">Market</span>`);
+  const tabBank = h("button", "tab", `<i class="tab-ic" aria-hidden="true">🏦</i><span class="tab-l">Bank</span>`);
+  const tabFeed = h("button", "tab", `<i class="tab-ic" aria-hidden="true">📰</i><span class="tab-l">Feed</span>`);
   tabMarket.onclick = () => setTab("market");
   tabBank.onclick = () => setTab("bank");
   tabFeed.onclick = () => setTab("feed");
-  const tabPlant = h("button", "tab", "Processing Plant");
+  const tabPlant = h("button", "tab", `<i class="tab-ic" aria-hidden="true">🏭</i><span class="tab-l">Processing Plant</span>`);
   tabPlant.onclick = () => setTab("plant");
   tabs.append(tabBank, tabMarket, tabPlant, tabFeed);
   tp.appendChild(tabs);
@@ -917,6 +965,9 @@ export function createOriginalUi(
     });
     tabPlant.classList.toggle("active", t === "plant");
     qp.classList.toggle("hidden", t !== "plant");
+    // MOBILE-02: the plant tab re-fits the board — the full-bleed sheet only
+    // leaves a measurable slot once this pane is the visible one.
+    if (t === "plant" && root.dataset.view === "trade") responsiveZoom();
     tabMarket.classList.toggle("active", t === "market");
     tabBank.classList.toggle("active", t === "bank");
     tabFeed.classList.toggle("active", t === "feed");
@@ -931,7 +982,10 @@ export function createOriginalUi(
     mobileNav.querySelectorAll(".mnav-btn").forEach((b: Element) => {
       (b as HTMLElement).classList.toggle("active", (b as HTMLElement).dataset.view === v);
     });
-    if (v === "trade") responsiveZoom();
+    // MOBILE-02: every view change re-runs the phone fit — arriving at trade
+    // gives the board its measurement pass (and tucks the top bar), leaving
+    // it hands the bar back to the map and the build sheet.
+    responsiveZoom();
   }
 
   // ── board interactions ────────────────────────────────────────────────────
@@ -939,10 +993,13 @@ export function createOriginalUi(
     cellIn(e, grid.getBoundingClientRect());
   /** The cell under a client point, against a rect the caller already read. */
   const cellIn = (e: { clientX: number; clientY: number }, rect: DOMRect): { r: number; c: number } | null => {
-    const cw = rect.width / BOARD_W, ch = rect.height / BOARD_H;
+    // MOBILE-02: measured against the LIVE board rectangle — the phone board
+    // may carry more columns than the shipped 7×8, and a restored save may
+    // carry whatever the session it came from was sized to.
+    const cw = rect.width / board.w, ch = rect.height / board.h;
     const c = Math.floor((e.clientX - rect.left) / cw);
     const r = Math.floor((e.clientY - rect.top) / ch);
-    if (r < 0 || r >= BOARD_H || c < 0 || c >= BOARD_W) return null;
+    if (r < 0 || r >= board.h || c < 0 || c >= board.w) return null;
     return { r, c };
   };
   const adj = (a: { r: number; c: number }, b: { r: number; c: number }) =>
@@ -971,6 +1028,14 @@ export function createOriginalUi(
   // an AudioContext start inside user interaction — and a cross lands a beat
   // after the click that made it).
   grid.addEventListener("pointerdown", () => prewarmHoly(), { once: true });
+  // MOBILE-02: a board tap puts the top bar away if it is standing — the
+  // player's hand is on the gems, and the bar only covered the tab strip.
+  grid.addEventListener("pointerdown", () => {
+    if (topbarTucks() && !top.classList.contains("tucked")) {
+      window.clearTimeout(topTuckTimer);
+      top.classList.add("tucked");
+    }
+  });
 
   // Click is the touch/desktop picker path (and what the e2e/unit tests drive).
   grid.addEventListener("click", (e) => {
@@ -1012,7 +1077,7 @@ export function createOriginalUi(
   let swallowClick = false;
 
   /** Client px → grid px (the board panel is zoomed to fit its column). */
-  const toLocal = () => (CELL * BOARD_W) / (grid.getBoundingClientRect().width || CELL * BOARD_W);
+  const toLocal = () => (CELL * board.w) / (grid.getBoundingClientRect().width || CELL * board.w);
   const baseOf = (el: HTMLElement): [number, number] =>
     [Number(el.dataset.c) * CELL + 3, Number(el.dataset.r) * CELL + 3];
   const offsetOf = (el: HTMLElement): [number, number] => {
@@ -1083,7 +1148,7 @@ export function createOriginalUi(
       // Read the geometry ONCE, before any style write, so the lean never
       // forces a second layout inside the same event.
       const rect = grid.getBoundingClientRect();
-      const k = (CELL * BOARD_W) / (rect.width || CELL * BOARD_W);
+      const k = (CELL * board.w) / (rect.width || CELL * board.w);
       const cell = cellIn(e, rect);
       const g = cell ? board.grid[cell.r]?.[cell.c] : null;
       const el = g && !g.block ? gemEls.get(g.id) ?? null : null;
@@ -1208,6 +1273,11 @@ export function createOriginalUi(
   }
 
   function renderBoard() {
+    // MOBILE-02: keep the layout box honest every pass. The board can be
+    // REPLACED under the chrome without a resize — a save restored by game.ts
+    // (a rectangle saved on another device), a multiplayer sync that ships
+    // the host's whole grid — and those paths only know to call renderBoard.
+    applyGridSize();
     const present = new Set<number>();
     for (const g of board.gems()) {
       present.add(g.id);
@@ -1547,6 +1617,11 @@ export function createOriginalUi(
 
   function rivalQuip(beats: readonly UiRivalryBeat[]) {
     if (!beats.length) return;
+    // MOBILE-02: on a phone the private wire is OFF — its card stood between
+    // the player and the board and the window has no rows to spare. Nothing
+    // is lost from the record: game.ts has already written every beat into
+    // the Feed tab, which is where gossip belongs on a screen this small.
+    if (isPhoneViewport()) return;
     rivalWireQueue.push(...beats);
     // A sabotage toast is normally appended just before this call. Move the
     // wire to the lane's end so the messages stack in reading order.
@@ -1554,25 +1629,58 @@ export function createOriginalUi(
     if (!rivalWireBusy) showNextRivalryBeat();
   }
 
+  /**
+   * MOBILE-02: the grid's LAYOUT box always matches the board it carries.
+   * Gems stay drawn at the shipped CELL (80px) with their `translate`
+   * positions; `zoom` on the wrap is the only scaling — so one width write
+   * covers a grown board, a restored save, and the plain 7×8 alike.
+   */
+  function applyGridSize() {
+    grid.style.width = CELL * board.w + "px";
+    grid.style.height = CELL * board.h + "px";
+    grid.style.setProperty("--gem", (CELL - 6) + "px");
+  }
+
   function responsiveZoom() {
-    const boardPx = CELL * BOARD_W;
+    const phone = isPhoneViewport();
+    const phoneStr = phone ? "1" : "";
+    if (root.dataset.phone !== phoneStr) root.dataset.phone = phoneStr;
     const wrap = boardWrap;
     let z = 1;
-    if (window.innerWidth <= 760) {
-      // MOBILE-01: the old budget subtracted 24px from the WINDOW and forgot
-      // every inset between the window and the board — the sheet's 8px margins
-      // each side, the panel's padding and border, the board wrap's padding —
-      // so on a 390px phone the ninth column of gems sat off the right edge,
-      // half a gem wide and untappable. The budget now pays for the whole
-      // sheet chrome (8+8 sheet, 8+8 panel, 1+1 border, 4+4 wrap = 42, rounded
-      // up), and the height budget prices the real sheet stack above the
-      // board (top bar, tabs, quarry head, reach strip) plus the footer and
-      // nav below it, so the whole 9×9 fits without a scroll where it can.
-      const availW = window.innerWidth - 44;
-      const availH = window.innerHeight - 380;
-      z = Math.min(availW / boardPx, availH / boardPx, 1);
-      z = Math.max(0.4, z);
+    if (phone) {
+      // MOBILE-02: the match table IS the screen on a phone. The old fit
+      // squeezed the fixed 7×8 with `zoom` down to a 0.4 floor — below the
+      // floor the last rows spilled under the footer, which is exactly the
+      // crop every screenshot complained about. The new fit works from the
+      // other end: measure the slot the full-bleed sheet leaves for the
+      // board, pick the cell that fills it, and when the window has room to
+      // spare, spend it on EXTRA COLUMNS AND ROWS (the game may veto the
+      // growth — e.g. a multiplayer guest whose grid the host authors). The
+      // zoom then only closes the last pixels; it never has to clip, and the
+      // sheet never scrolls to reach a gem.
+      const slotW = boardSlot.clientWidth, slotH = boardSlot.clientHeight;
+      const measured = slotW > 100 && slotH > 100;
+      const availW = Math.max(140, (measured ? slotW : window.innerWidth - 44) - 14);
+      const availH = Math.max(120,
+        (measured ? slotH : window.innerHeight - (window.innerWidth <= 760 ? 380 : 250)) - 10);
+      const cell = Math.max(30, Math.min(92, Math.floor(Math.min(availW / BOARD_W, availH / BOARD_H))));
+      const wantW = Math.max(BOARD_W, Math.min(BOARD_W + 4, Math.floor(availW / cell)));
+      const wantH = Math.max(BOARD_H, Math.min(BOARD_H + 4, Math.floor(availH / cell)));
+      // grow-only: a window that shrinks never deletes gems — the zoom
+      // shrinks them instead. (Shrinking would also strand a board a peer
+      // authored at a bigger rectangle.) Growing only happens off a real
+      // measurement — the hidden-pane fallback must never propose one.
+      const curW = board.w, curH = board.h;
+      const fitW = Math.max(wantW, curW), fitH = Math.max(wantH, curH);
+      if (measured && (fitW !== curW || fitH !== curH)
+        && (hooks.requestBoardSize?.(fitW, fitH) ?? true)) {
+        board.setSize(fitW, fitH);
+        applyGridSize();
+        renderBoard();
+      }
+      z = Math.max(0.2, Math.min(availW / (CELL * board.w), availH / (CELL * board.h), 1));
     } else {
+      const boardPx = CELL * board.w;
       const vh = window.innerHeight;
       if (vh <= 720) z = 0.68; else if (vh <= 800) z = 0.8; else if (vh <= 900) z = 0.9;
       // V3: the height-only rule could leave the board wider than the space
@@ -1585,17 +1693,65 @@ export function createOriginalUi(
     wrap.style.zoom = String(z);
     // V3: publish the zoomed board width. The right aside and the quarry
     // panel size themselves from it (styles.css), so the panel always fits
-    // all BOARD_W columns instead of a fixed width that assumes fewer.
-    const boardW = Math.ceil((boardPx + 10) * z);
+    // every live column instead of a fixed width that assumes fewer.
+    const boardW = Math.ceil((CELL * board.w + 10) * z);
     root.style.setProperty("--board-px", `${boardW}px`);
     root.style.setProperty("--tray-right", `${boardW + 52}px`);
     // dataset twin of the custom properties (jsdom has no `zoom`/var support,
     // and tests assert the published numbers through these).
     boardWrap.dataset.zoom = String(z);
     root.dataset.boardPx = String(boardW);
+    syncTopbarTuck();
   }
   window.addEventListener("resize", responsiveZoom);
   window.addEventListener("orientationchange", responsiveZoom);
+
+  // ── MOBILE-02: the tucking top bar ───────────────────────────────────
+  // A phone gives the match table the whole window; the top bar earns its
+  // pixels back. It tucks away while the economy sheet is open, and drops
+  // back down (with a brass flash) the moment the score plaque moves — or
+  // the moment the player taps the grip above the tabs, and tucks again on
+  // the next touch of the board. Off the trade sheet, and off phones, it
+  // simply stays where it always was.
+  let topTuckTimer = 0;
+  let lastHudFlash = 0;
+  const topbarTucks = () => isPhoneViewport() && root.dataset.view === "trade";
+  function revealTopbar(holdMs = 2400) {
+    window.clearTimeout(topTuckTimer);
+    if (!topbarTucks()) return;
+    top.classList.remove("tucked");
+    topTuckTimer = window.setTimeout(() => {
+      if (topbarTucks()) top.classList.add("tucked");
+    }, holdMs);
+  }
+  function syncTopbarTuck() {
+    window.clearTimeout(topTuckTimer);
+    if (topbarTucks()) {
+      // Entering the trade sheet with the bar still up lets it go right away
+      // (the CSS transition animates it) — the tab strip under the notch must
+      // be tappable the moment the sheet is, never locked behind a bar the
+      // player did not ask for. The bar comes back for CHANGES and for the
+      // grip, not for a view switch.
+      if (!top.classList.contains("tucked")) {
+        topTuckTimer = window.setTimeout(() => {
+          if (topbarTucks()) top.classList.add("tucked");
+        }, 350);
+      }
+      return;
+    }
+    top.classList.remove("tucked");
+  }
+  function flashTopbarOnChange() {
+    const now = performance.now();
+    // A cascade churns the purse every pass; a bar that re-drops per coin is
+    // the same flicker the wire was. At most one reveal every few seconds.
+    if (now - lastHudFlash < 5000) return;
+    lastHudFlash = now;
+    if (!topbarTucks()) return;
+    revealTopbar(2600);
+    top.classList.add("changed");
+    window.setTimeout(() => top.classList.remove("changed"), 1400);
+  }
 
   // ── top HUD: chips, VP, kingdoms ──────────────────────────────────────────
   // The HUD is painted every frame, so its nodes are built once and only what
@@ -1633,7 +1789,13 @@ export function createOriginalUi(
     // The original badge is just a star counter; keeping "You" in it lets the
     // boot/e2e assertions stay unambiguous for the single-player build.
     const vpHtml = `<span class="vp-star">★</span> You ${fmtVp(yourVp)}<span class="vp-tot">/${target}</span>`;
-    if (vpHtml !== lastVpHtml) { vp.innerHTML = vpHtml; lastVpHtml = vpHtml; }
+    if (vpHtml !== lastVpHtml) {
+      vp.innerHTML = vpHtml; lastVpHtml = vpHtml;
+      // MOBILE-02: the SCORE is the milestone worth breaking a phone's view
+      // for. The purse changes every cascade — a bar that re-dropped per
+      // coin would be the flicker the wire was.
+      flashTopbarOnChange();
+    }
 
     const list = [...players].sort((a, b) => b.vp - a.vp);
     const live = new Set<number>();

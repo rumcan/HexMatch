@@ -820,6 +820,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     },
     onReset: () => resetPlant(),
     onBlackAction: (key) => buyBlack(key),
+    // MOBILE-02: the phone chrome grows the plant (more columns/rows at a
+    // smaller cell) so the match table FILLS the window instead of cropping.
+    // The chrome asks; the seat answers. A guest never resizes its own grid —
+    // the host authors it and the whole rectangle ships on the wire — so a
+    // guest phone only re-zooms what arrives. Solo and host seats own their
+    // board, and the ♻ reset / gravity refill keep whatever size the live
+    // grid carries (the board reads its own dims, not the shipped constants).
+    requestBoardSize: (w, h) => {
+      if (isGuest()) return false;
+      // The rival's plant stays at the shipped 7×8 on purpose: the grow is a
+      // readability concession for small screens, not an economy boost.
+      void w; void h;
+      return true;
+    },
     // AI-01: the top-bar difficulty selector. Applies on the NEXT rival tick —
     // the clocks and budgets re-read `skill()` every call, so there is nothing
     // to restart.
