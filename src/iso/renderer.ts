@@ -752,10 +752,6 @@ export class IsoRenderer {
     return `${z}:${cy * chunksX + cx}`;
   }
 
-  private chunkSurfaceKey(cx: number, cy: number): string {
-    return this.chunkKey(this.cam.zoom, cx, cy);
-  }
-
   // ── ground chunks ────────────────────────────────────────────────────────
   /**
    * The STATIC ground of one 8×8 chunk (grass fill + beach ring), painted
