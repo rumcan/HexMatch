@@ -65,6 +65,13 @@ export interface IsoMarket {
   bank(p: IsoMarketPlayer, give: Cargo, want: Cargo): boolean;
   /** Expire stale offers and let the rival answer the ones it likes. */
   tick(now: number): void;
+  /**
+   * MP-AUDIT (#114): true when the LAST mutator call did not trade but only
+   * relayed a request to the host (a guest's post/accept/cancel/bank). The
+   * trade UI reads it to say "sent — waiting for the host" instead of
+   * declaring success before the host has accepted the request.
+   */
+  relayPending: boolean;
 }
 
 /** How often the rival looks at the offer board. */
@@ -176,6 +183,7 @@ export function createIsoMarket(
     cancel: (p, id) => cancelOffer(p, id, ctx),
     accept: (p, id) => acceptOffer(p, id, list, ctx),
     bank: (p, give, want) => bankTrade(p, give, want, BANK_RATE, ctx.blocked),
+    relayPending: false,
     tick(now: number) {
       // W6: remember what is live so we can report exactly which offers
       // disappeared this tick (taken by the rival, or rotted out).
@@ -183,6 +191,11 @@ export function createIsoMarket(
       tickMarket(now, list, ctx);
       if (now - lastAiTrade >= AI_TRADE_MS) {
         lastAiTrade = now;
+        // #113: the AI taker exists for SOLO rivals. In a hosted game every
+        // seat is a person (game.ts creates this list with human:true), so
+        // `rivals` is empty and the loop below never spends a human guest's
+        // cargo without its own accepted intent — offer EXPIRY above still
+        // runs, as it must.
         const rivals = list.filter((p) => !p.human);
         for (const o of [...ctx.offers]) {
           const poster = at(o.from);

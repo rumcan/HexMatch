@@ -46,6 +46,21 @@ export const MIN_HEALTH = 0.1;
 
 const CELLS = BOARD_W * BOARD_H;
 
+/**
+ * #111: the 0..1 yield multiplier of a plant in the given sabotage state —
+ * the ONE health formula, so a host's own plant (frozen by a guest) and the
+ * rival wrapper's plant report the same damage the same way. `createRivalPlant`'s
+ * `health()` is this over its own board.
+ */
+export function plantHealth(
+  status: { frozen: number; girders: number; smog: boolean },
+): number {
+  const wrecked = status.frozen + status.girders * GIRDER_WEIGHT;
+  const clear = Math.max(0, 1 - wrecked / CELLS);
+  const yieldFactor = status.smog ? SMOG_YIELD : 1;
+  return Math.max(MIN_HEALTH, Math.min(1, clear * yieldFactor));
+}
+
 export interface RivalStatus {
   /** Gems locked in ice. */
   frozen: number;
@@ -107,13 +122,7 @@ export function createRivalPlant(): RivalPlant {
     return { frozen, girders: blocked, smog: board.fogUntil > now };
   };
 
-  const health = (now: number): number => {
-    const s = status(now);
-    const wrecked = s.frozen + s.girders * GIRDER_WEIGHT;
-    const clear = Math.max(0, 1 - wrecked / CELLS);
-    const yieldFactor = s.smog ? SMOG_YIELD : 1;
-    return Math.max(MIN_HEALTH, Math.min(1, clear * yieldFactor));
-  };
+  const health = (now: number): number => plantHealth(status(now));
 
   const tick = (now: number) => {
     // Ice melts on its own clock — the rival has no way to shatter it.

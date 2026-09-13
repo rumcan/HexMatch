@@ -893,11 +893,16 @@ export class Board {
   }
 
   /** AI-03 save/restore: everything that is not derivable (grid, pools,
-   *  clocks as REMAINING ms so they survive a page reload). */
+   * clocks as REMAINING ms so they survive a page reload). #117: each cell
+   * also carries its mint id, so a restore REUSES identities instead of
+   * minting fresh ones — an incremental update (a multiplayer board sync)
+   * then reads to the UI as "the same gems, changed", not a whole-board
+   * replacement. */
   save(): unknown {
     const now = performance.now();
     return {
       grid: this.grid.map((row) => row.map((g) => g && {
+        id: g.id,
         res: g.res, tier: g.tier, special: g.special, hard: g.hard,
         block: g.block, forged: g.forged ? 1 : 0,
       })),
@@ -912,8 +917,14 @@ export class Board {
     let maxId = 1;
     this.grid = d.grid.map((row: any[]) => row.map((cell: any, ci: number) => {
       if (!cell) return null;
+      // #117: keep the sender's id when it is a usable one — stable cell
+      // identity across incremental updates. Anything else (an old save, a
+      // malformed cell) falls back to minting, exactly as before.
+      const id = typeof cell.id === "number" && Number.isInteger(cell.id) && cell.id > 0
+        ? cell.id
+        : this.seq++;
       return {
-        id: this.seq++, res: cell.res, tier: cell.tier ?? 0,
+        id, res: cell.res, tier: cell.tier ?? 0,
         special: cell.special ?? null, hard: cell.hard ?? 0,
         block: !!cell.block, forged: !!cell.forged,
         r: 0, c: ci, // r patched below
@@ -926,6 +937,8 @@ export class Board {
       }
     }
     if (typeof d.seq === "number") this.seq = Math.max(this.seq, d.seq);
+    // ...and however the ids arrived, this board never mints a collision.
+    this.seq = Math.max(this.seq, maxId + 1);
     if (Array.isArray(d.pool)) this.pool = d.pool;
     if (typeof d.comboCount === "number") this.comboCount = d.comboCount;
     this.fogUntil = now + (d.fogIn ?? 0);

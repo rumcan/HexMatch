@@ -24,11 +24,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { NetSession, mirrorOwnerByte } from "../../src/net/session";
 import { PROTOCOL_VERSION, type HexProtocol, type WelcomeMsg } from "../../src/net/protocol";
 import type { HexRoom } from "../../src/net/transport";
-import { MAP_W, MAP_H, mulberry32, setRng, SABOTAGE } from "../../src/game/config";
+import { MAP_W, MAP_H, mulberry32, setRng, OFFER_LIFE, SABOTAGE } from "../../src/game/config";
 import { FACTORY_FOOTPRINT } from "../../src/iso/config";
 import { WATER, factoryTouchesTown, townForSeat, type Grid } from "../../src/iso/grid";
 import { adjacentTown } from "../../src/iso/plants";
-import { tIdx, type Track } from "../../src/iso/track";
+import { tIdx, isPublicRoad, type Track } from "../../src/iso/track";
 
 // ── stub the art imports (vite handles these in the browser) ──────────────
 vi.mock("../../assets/iso-atlas/atlas@0.5x.png", () => ({ default: "a05.png" }));
@@ -98,6 +98,15 @@ interface MpHook {
   /** PP-14b: the local plant board — where the guest applies the host's
    *  sabotage overlay. */
   board: import("../../src/game/board").Board;
+  /** #116: the Reset twin — exactly what the `.reset-btn` click runs. */
+  resetPlant: () => void;
+  /** MP-AUDIT/#113/#114: the market record both seats trade through. */
+  market: import("../../src/iso/market").IsoMarket;
+  /** #115: the protest twins (the card and the map click) and their state. */
+  armProtest: () => void;
+  placeProtest: (tx: number, ty: number) => boolean;
+  readonly protests: { tx: number; ty: number; until: number; owner: string }[];
+  readonly protestPending: boolean;
 }
 
 const hook = () => (window as unknown as { __iso: MpHook }).__iso;
@@ -645,5 +654,490 @@ describe("MP-05 two real games, one room", () => {
     await settle();
     expect(findMove).not.toHaveBeenCalled();
     expect(trySwap).not.toHaveBeenCalled();
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// The 2026-09-13 audit regressions (#111–#117): every defect was reproduced
+// with two real games and a queued relay, and each fix keeps its case here.
+// ══════════════════════════════════════════════════════════════════════════
+
+/** Boot a connected host+guest pair and hand back both hooks and endpoints.
+ *  `beforePump` runs after both welcomes are queued but before delivery —
+ *  the moment to bend the host's state that the OPENING snapshot will carry. */
+async function bootPair(beforePump?: (host: MpHook, guest: MpHook) => void): Promise<{
+  host: MpHook; guest: MpHook;
+  hostEnd: Endpoint; guestEnd: Endpoint;
+}> {
+  const hostEnd = new Endpoint("host-socket", "HX9KWR");
+  const guestEnd = new Endpoint("guest-socket", "HX9KWR");
+  hostEnd.peer = guestEnd;
+  guestEnd.peer = hostEnd;
+  endpoints = [hostEnd, guestEnd];
+  const hostSession = new NetSession({ room: asRoom(hostEnd), role: "host" });
+  const guestSession = new NetSession({ room: asRoom(guestEnd), role: "guest" });
+  const host = await boot("host", hostSession);
+  const guest = await boot("guest", guestSession);
+  greet(welcomeFor(hostEnd, guestEnd, true));
+  greet(welcomeFor(hostEnd, guestEnd, false), guestEnd);
+  beforePump?.(host, guest);
+  pump();
+  return { host, guest, hostEnd, guestEnd };
+}
+
+/** A guest no-op card: the cheapest way to force a host publish on demand. */
+const forcePublish = (guest: MpHook) => guest.buyBlack("nonexistent");
+
+/** The guest's chooser DOM, scoped to the guest's own root. */
+const guestCrossPanel = () => roots[1].querySelector(".cross-pick");
+const clickGem = (el: Element, times: number) => {
+  for (let i = 0; i < times; i++) (el as HTMLElement).click();
+};
+
+describe("audit regressions: two real games, one room", () => {
+  it("a guest's sabotage hits the HOST's plant — never the guest's own (#111)", async () => {
+    const { host, guest } = await bootPair();
+
+    // Fund the guest's seat on the host (its authoritative purse).
+    host.market.players[1].res.gold = 100;
+    forcePublish(guest);
+    pump();
+
+    // ── Frost Tiles: the guest freezes the host's plant ────────────────────
+    let gold = guest.purse.gold ?? 0;
+    guest.buyBlack("harden");
+    pump();
+    // The guest's OWN board (host.rivalPlant) has zero hardened cells…
+    expect(host.rivalPlant.status(performance.now()).frozen).toBe(0);
+    expect(guest.board.gems().filter((g) => g.hard > 0)).toHaveLength(0);
+    // …the HOST's plant is frozen, on the host and in the guest's rival view.
+    expect(host.board.gems().filter((g) => g.hard > 0).length).toBeGreaterThan(0);
+    expect(guest.rivalPlant.board.gems().filter((g) => g.hard > 0).length).toBeGreaterThan(0);
+    // …and the attacker paid exactly once.
+    expect(guest.purse.gold).toBe(gold - SABOTAGE.harden.gold);
+
+    // ── Iron Girders and Smog: same target ─────────────────────────────────
+    gold = guest.purse.gold ?? 0;
+    guest.buyBlack("block");
+    guest.buyBlack("fog");
+    pump();
+    expect(host.board.gems().filter((g) => g.block).length).toBeGreaterThan(0);
+    expect(host.board.fogUntil).toBeGreaterThan(performance.now());
+    expect(guest.rivalPlant.board.gems().filter((g) => g.block).length).toBeGreaterThan(0);
+    expect(guest.rivalPlant.board.fogUntil).toBeGreaterThan(performance.now());
+    expect(guest.board.gems().filter((g) => g.block)).toHaveLength(0);
+    expect(guest.purse.gold).toBe(gold - SABOTAGE.block.gold - SABOTAGE.fog.gold);
+
+    // ── an unaffordable card charges nothing ───────────────────────────────
+    gold = guest.purse.gold ?? 0;
+    host.market.players[1].res.gold = 0;
+    forcePublish(guest);
+    pump();
+    gold = guest.purse.gold ?? 0;
+    expect(gold).toBeLessThan(SABOTAGE.harden.gold);
+    guest.buyBlack("harden");
+    pump();
+    expect(guest.purse.gold).toBe(gold);
+    expect(host.rivalPlant.status(performance.now()).frozen).toBe(0);
+
+    // ── effects clear on both clients ──────────────────────────────────────
+    // The girders expire on the host's authoritative board (its own sweep);
+    // the cleared board crosses the wire and the guest's rival view follows.
+    host.board.tickEffects(performance.now() + 61_000);
+    expect(host.board.gems().filter((g) => g.block)).toHaveLength(0);
+    forcePublish(guest);
+    pump();
+    expect(guest.rivalPlant.board.gems().filter((g) => g.block)).toHaveLength(0);
+  });
+
+  it("the host's sabotage on the guest still lands, through the shared core (#111)", async () => {
+    const { host, guest } = await bootPair();
+    host.purse.gold = SABOTAGE.harden.gold;
+    host.buyBlack("harden");
+    pump();
+    // Host's own plant untouched; the guest's plant frozen on both clients.
+    expect(host.board.gems().filter((g) => g.hard > 0)).toHaveLength(0);
+    expect(host.rivalPlant.status(performance.now()).frozen).toBeGreaterThan(0);
+    expect(guest.board.gems().filter((g) => g.hard > 0).length).toBeGreaterThan(0);
+    expect(guest.rivalPlant.status(performance.now()).frozen).toBe(0);
+  });
+
+  it("a guest's cross choice resolves exactly once, via the typed intent (#112)", async () => {
+    const { host, guest, guestEnd, hostEnd } = await bootPair();
+    const resolveSpy = vi.fn();
+
+    // Trigger a Holy Cross on the guest's board (host-side seat 1).
+    host.rivalPlant.board.onCrossChoice("holy", 6, resolveSpy);
+    pump();
+    // The guest shows ONE chooser.
+    expect(guestCrossPanel()).not.toBeNull();
+    // Heartbeat deltas repeat the prompt — no duplicate dialog may appear.
+    forcePublish(guest);
+    pump();
+    forcePublish(guest);
+    pump();
+    expect(roots[1].querySelectorAll(".cross-pick")).toHaveLength(1);
+
+    // Choose six bounties with the guest's REAL buttons and confirm.
+    const firstGem = guestCrossPanel()!.querySelector(".cross-pick-btn")!;
+    clickGem(firstGem, 6);
+    const confirm = guestCrossPanel()!.querySelector(".cross-pick-confirm") as HTMLButtonElement;
+    expect(confirm.disabled).toBe(false);
+    confirm.click();
+
+    // The intent is the ONE typed cross format.
+    const sent = guestEnd.sent.filter((m) => m.type === "intent" && m.action === "cross");
+    expect(sent).toHaveLength(1);
+    const crossPayload = sent[sent.length - 1].payload as { do: string; seq: number; choices: string[] };
+    const choices = crossPayload.choices;
+    const seq = crossPayload.seq;
+    expect(crossPayload.do).toBe("cross");
+    expect(choices).toHaveLength(6);
+
+    pump();
+    // The host honoured the selection: exactly one resolution, with the picks.
+    expect(resolveSpy).toHaveBeenCalledTimes(1);
+    expect(resolveSpy).toHaveBeenCalledWith(choices);
+    // The chooser is gone and stays gone across further heartbeats.
+    expect(guestCrossPanel()).toBeNull();
+    forcePublish(guest);
+    pump();
+    expect(guestCrossPanel()).toBeNull();
+
+    // A duplicate/late answer cannot award twice.
+    hostEnd.deliver({ type: "intent", action: "cross", payload: { do: "cross", seq, choices } });
+    pump();
+    expect(resolveSpy).toHaveBeenCalledTimes(1);
+
+    // A malformed answer (wrong pick count) for a NEW prompt never resolves.
+    host.rivalPlant.board.onCrossChoice("holy", 6, resolveSpy);
+    pump();
+    expect(guestCrossPanel()).not.toBeNull();
+    hostEnd.deliver({ type: "intent", action: "cross", payload: { do: "cross", seq: seq + 99, choices } });
+    pump();
+    hostEnd.deliver({ type: "intent", action: "cross", payload: { do: "cross", seq: seq + 1, choices: choices.slice(1) } });
+    pump();
+    // The malformed reply never awarded: the prompt is dropped with the SAME
+    // empty fallback the timeout uses (the cascade cannot hang, and the
+    // board's own backstop picks, not a malformed answer).
+    expect(resolveSpy).toHaveBeenCalledTimes(2);
+    expect(resolveSpy).toHaveBeenNthCalledWith(2, []);
+    // The host cleared the stale prompt; the guest's chooser came down with it.
+    expect(guestCrossPanel()).toBeNull();
+  });
+
+  it("the market never spends a human guest's cargo without an acceptance intent (#113)", async () => {
+    const { host, guest, guestEnd } = await bootPair();
+
+    // The host funds both ends of a 2 Stone → 2 Ore trade.
+    host.purse.stone = 10;
+    host.market.players[1].res.ore = 10;
+    forcePublish(guest);
+    pump();
+    // The guest posts one too (relayed as an intent) — the reverse direction.
+    expect(guest.market.post(guest.market.players[0], "stone", 1, "ore", 1)).toBe(true);
+    pump();
+
+    // The host posts 2 Stone → 2 Ore; the guest takes NO action.
+    expect(host.market.post(host.market.players[0], "stone", 2, "ore", 2)).toBe(true);
+    const offerId = host.market.ctx.offers.find((o) => o.from === 0)?.id;
+    expect(offerId).toBeDefined();
+    const guestOre = host.market.players[1].res.ore;
+    const hostStone = host.market.players[0].res.stone;
+
+    // Advance the host's board/market clock well past the AI trade cadence.
+    host.tick(performance.now() + 6_000);
+    host.tick(performance.now() + 12_000);
+
+    // The offer is still pending and the guest's ore is untouched.
+    expect(host.market.ctx.offers.some((o) => o.id === offerId)).toBe(true);
+    expect(host.market.players[1].res.ore).toBe(guestOre);
+    expect(host.market.players[0].res.stone).toBe(hostStone);
+
+    // The reverse direction too: a guest-posted offer is never auto-taken
+    // for the host seat (both seats are people).
+    const guestOffer = host.market.ctx.offers.find((o) => o.from === 1);
+    expect(guestOffer).toBeDefined();
+    const hostOre = host.market.players[0].res.ore;
+    host.tick(performance.now() + 18_000);
+    expect(host.market.ctx.offers.some((o) => o.id === guestOffer!.id)).toBe(true);
+    expect(host.market.players[0].res.ore).toBe(hostOre);
+
+    // …and a validated acceptance intent is still exactly what moves cargo.
+    const oreBefore = host.market.players[1].res.ore;
+    const stoneBefore = host.market.players[1].res.stone;
+    guest.market.accept(guest.market.players[0], offerId!);
+    const lastSent = guestEnd.sent[guestEnd.sent.length - 1];
+    expect(lastSent).toMatchObject({ type: "intent", action: "market", payload: { do: "accept", id: offerId } });
+    pump();
+    expect(host.market.ctx.offers.some((o) => o.id === offerId)).toBe(false);
+    expect(host.market.players[1].res.ore).toBe(oreBefore - 2);
+    expect(host.market.players[1].res.stone).toBe(stoneBefore + 2);
+
+    // Expiry still works in multiplayer and refunds the escrow.
+    const poster = host.market.players[0];
+    const escrowed = poster.res.stone;
+    host.market.post(poster, "stone", 2, "ore", 2);
+    expect(poster.res.stone).toBe(escrowed - 2);
+    host.tick(performance.now() + OFFER_LIFE + 1_000);
+    expect(host.market.ctx.offers).toHaveLength(0);
+    expect(poster.res.stone).toBe(escrowed);
+  });
+
+  it("guest market and HUD balances follow authoritative purse updates (#114)", async () => {
+    const { host, guest, hostEnd } = await bootPair();
+
+    // The opening FULL-state path: the guest's purse and its market player
+    // are the SAME object, so a snapshot balance is visible to both.
+    expect(guest.market.players[0].res).toBe(guest.purse);
+
+    // The host zeroes the guest's authoritative Stone and publishes.
+    host.market.players[1].res.stone = 0;
+    forcePublish(guest);
+    pump();
+    expect(guest.purse.stone).toBe(0);
+    expect(guest.market.players[0].res.stone).toBe(0);
+    expect(guest.market.players[0].res).toBe(guest.purse);
+
+    // Increase again over the DELTA path — agreement both directions.
+    host.market.players[1].res.stone = 7;
+    forcePublish(guest);
+    pump();
+    expect(guest.purse.stone).toBe(7);
+    expect(guest.market.players[0].res.stone).toBe(7);
+
+    // Roster names reach the market's own player list (the offer tray reads
+    // them), on both seats.
+    expect(host.market.players[1].name).toBe("Bo");
+    expect(guest.market.players[1].name).toBe("Ada");
+
+    // A host offer prices from the live inventory: with 0 ore the guest's
+    // Take button is disabled; funding the purse enables it.
+    host.purse.wood = 10;
+    host.market.post(host.market.players[0], "wood", 2, "ore", 2);
+    forcePublish(guest);
+    pump();
+    await settle();                        // a painted frame re-renders the tray
+    const trayBtn = () => roots[1].querySelector(".tray-offer button.mini") as HTMLButtonElement;
+    expect(trayBtn()).not.toBeNull();
+    expect(trayBtn().disabled).toBe(true);
+    host.market.players[1].res.ore = 5;
+    forcePublish(guest);
+    pump();
+    await settle();
+    expect(trayBtn().disabled).toBe(false);
+
+    // A valid guest acceptance reaches the host and moves the real cargo…
+    const guestSeat = host.market.players[1];
+    const oreBefore = guestSeat.res.ore;
+    const woodBefore = guestSeat.res.wood;
+    trayBtn().click();
+    // …but the click itself only REQUESTS — no premature success line, and
+    // nothing moves until the host accepts the intent.
+    expect(guestSeat.res.ore).toBe(oreBefore);
+    pump();
+    expect(host.market.ctx.offers).toHaveLength(0);
+    expect(guestSeat.res.ore).toBe(oreBefore - 2);
+    expect(guestSeat.res.wood).toBe(woodBefore + 2);
+
+    expect(guest.market.players[0].res).toBe(guest.purse);
+  });
+
+  it("the FULL-state path (resync) keeps purse identity too (#114)", async () => {
+    const { host, guest, hostEnd } = await bootPair();
+    // The host zeroes the guest's authoritative stone, then the guest asks
+    // for a resync: the reply is a FULL snapshot, which must land in the
+    // same purse object the market (and HUD) already hold.
+    host.market.players[1].res.stone = 0;
+    // Full state is ask-throttled to one per 300ms wall clock (the welcome's
+    // opening snapshot shares the window) — a genuine later resync waits it out.
+    await new Promise((r) => setTimeout(r, 320));
+    hostEnd.deliver({ type: "resync" });
+    pump();
+    expect(guest.purse.stone).toBe(0);
+    expect(guest.market.players[0].res.stone).toBe(0);
+    expect(guest.market.players[0].res).toBe(guest.purse);
+  });
+
+  it("a guest can arm a protest and place it on a public road (#115)", async () => {
+    const { host, guest, guestEnd } = await bootPair();
+
+    // Fund the guest's seat; find one public road and one non-road tile.
+    host.market.players[1].res.gold = 50;
+    forcePublish(guest);
+    pump();
+    let road: [number, number] | null = null;
+    let dry: [number, number] | null = null;
+    for (let y = 0; y < MAP_H && (!road || !dry); y++) {
+      for (let x = 0; x < MAP_W; x++) {
+        if (!road && isPublicRoad(guest.track, x, y)) road = [x, y];
+        else if (!dry && !isPublicRoad(guest.track, x, y)) dry = [x, y];
+      }
+    }
+    expect(road).not.toBeNull();
+    expect(dry).not.toBeNull();
+
+    // Buying Protest ARMS targeting on the guest (two-step interaction).
+    guest.armProtest();
+    expect(guest.protestPending).toBe(true);
+    expect(guestEnd.sent[guestEnd.sent.length - 1]).toMatchObject({ type: "intent", action: "blackMarket", payload: { key: "protest" } });
+
+    // An invalid road keeps targeting and never sends a placement…
+    expect(guest.placeProtest(dry![0], dry![1])).toBe(false);
+    expect(guest.protestPending).toBe(true);
+    expect(guestEnd.sent[guestEnd.sent.length - 1].payload).toMatchObject({ key: "protest" });
+
+    // …the valid click sends the placement intent and clears targeting.
+    expect(guest.placeProtest(road![0], road![1])).toBe(true);
+    expect(guest.protestPending).toBe(false);
+    expect(guestEnd.sent[guestEnd.sent.length - 1]).toMatchObject({
+      type: "intent", action: "blackMarket",
+      payload: { key: "protest_place", tx: road![0], ty: road![1] },
+    });
+
+    pump();
+    // ONE replicated protest at the expected cost — on both clients.
+    expect(host.protests).toHaveLength(1);
+    expect(host.protests[0]).toMatchObject({ tx: road![0], ty: road![1], owner: "ai" });
+    expect(guest.protests).toHaveLength(1);
+    expect(guest.protests[0]).toMatchObject({ tx: road![0], ty: road![1], owner: "you" });
+    expect(guest.purse.gold).toBe(50 - SABOTAGE.protest.gold);
+
+    // Cancellation is free and sends nothing.
+    const sentBefore = guestEnd.sent.length;
+    guest.armProtest();
+    expect(guest.protestPending).toBe(true);
+    guest.armProtest();
+    expect(guest.protestPending).toBe(false);
+    expect(guestEnd.sent.length).toBe(sentBefore + 1); // the arm ack only
+    pump();
+
+    // Insufficient funds refuse the arm locally and charge nothing.
+    host.market.players[1].res.gold = 0;
+    forcePublish(guest);
+    pump();
+    const gold = guest.purse.gold ?? 0;
+    guest.armProtest();
+    expect(guest.protestPending).toBe(false);
+    expect(guest.purse.gold).toBe(gold);
+
+    // Duplicate placement clicks after success do not double-charge: the
+    // second valid click on an occupied road refuses on the host.
+    host.market.players[1].res.gold = 50;
+    forcePublish(guest);
+    pump();
+    const goldBefore = guest.purse.gold ?? 0;
+    guest.armProtest();
+    guest.placeProtest(road![0], road![1]);   // already protested — refused
+    expect(guest.protestPending).toBe(true);  // still armed: the click was refused
+    pump();
+    expect(host.protests).toHaveLength(1);
+    expect(guest.purse.gold).toBe(goldBefore);
+  });
+
+  it("a guest's Reset collapses its own board through the host (#116)", async () => {
+    const { host, guest, guestEnd, hostEnd } = await bootPair();
+
+    // Give the guest's authoritative board something a reset must clear, and
+    // park a bounty prompt on it.
+    host.rivalPlant.board.harden();
+    const resolveSpy = vi.fn();
+    host.rivalPlant.board.onCrossChoice("holy", 6, resolveSpy);
+    forcePublish(guest);
+    pump();
+    expect(guest.board.gems().some((g) => g.hard > 0 || g.block)).toBe(true);
+
+    // EXPLICIT RULE: a reset during a pending bounty prompt is refused — the
+    // cascade is paused on the prompt, so the board (and the marker) stay.
+    hostEnd.deliver({ type: "intent", action: "build", payload: { do: "reset" } });
+    pump();
+    expect(resolveSpy).not.toHaveBeenCalled();
+    expect(host.rivalPlant.board.gems().some((g) => g.hard > 0)).toBe(true);
+
+    // Answer the prompt properly (the typed intent)…
+    hostEnd.deliver({
+      type: "intent", action: "cross",
+      payload: { do: "cross", seq: 1, choices: ["wood", "wood", "wood", "wood", "wood", "wood"] },
+    });
+    pump();
+    expect(resolveSpy).toHaveBeenCalledTimes(1);
+
+    // …and now the guest's Reset is an intent the host applies:
+    guest.resetPlant();
+    expect(guestEnd.sent[guestEnd.sent.length - 1]).toMatchObject({ type: "intent", action: "build", payload: { do: "reset" } });
+    pump();
+
+    // …the host collapsed the GUEST's board (never its own)…
+    expect(host.rivalPlant.board.gems().some((g) => g.hard > 0 || g.block)).toBe(false);
+    expect(guest.board.gems().some((g) => g.hard > 0 || g.block)).toBe(false);
+    expect(guest.rivalPlant.board.gems().some((g) => g.hard > 0 || g.block)).toBe(false);
+
+    // …the cooldown now holds: the guest's button waits, and a forged
+    // duplicate intent cannot bypass it.
+    const sentBefore = guestEnd.sent.length;
+    guest.resetPlant();
+    expect(guestEnd.sent.length).toBe(sentBefore);
+    const hostBoard = JSON.stringify({ ...host.rivalPlant.board.save(), seq: 0 });
+    hostEnd.deliver({ type: "intent", action: "build", payload: { do: "reset" } });
+    pump();
+    expect(JSON.stringify({ ...host.rivalPlant.board.save(), seq: 0 })).toBe(hostBoard);
+
+    // The host's own reset still works and never touches the guest's board.
+    host.board.harden();
+    host.resetPlant();
+    expect(host.board.gems().some((g) => g.hard > 0)).toBe(false);
+    expect(guest.rivalPlant.board.gems().some((g) => g.hard > 0)).toBe(false);
+  });
+
+  it("idle network ticks preserve gem ids and stop rebuilding the guest board (#117)", async () => {
+    const { host, guest, hostEnd } = await bootPair();
+
+    const guestIds = () => guest.board.grid.flat().map((g) => g?.id);
+    const domIds = () =>
+      [...roots[1].querySelectorAll("#iso-quarry-reach .gem")].map((e) => (e as HTMLElement).dataset.id).sort();
+    const idsBefore = guestIds();
+    const domBefore = domIds();
+    const deltasBefore = hostEnd.sent.filter((m) => m.type === "delta").length;
+
+    // A harmless rejected guest action: the host publishes its normal
+    // response — and the saved grid contents are identical.
+    forcePublish(guest);
+    pump();
+    expect(guestIds()).toEqual(idsBefore);
+
+    // Every NEW delta carried NO board saves: unchanged boards are omitted,
+    // not re-sent (that re-send restored fresh ids — the old bug). (The
+    // opening heartbeats legitimately carried the boot boards once.)
+    const deltas = hostEnd.sent.filter((m) => m.type === "delta").slice(deltasBefore);
+    expect(deltas.length).toBeGreaterThan(0);
+    const boardsBytes = deltas.reduce((n, d) => n + JSON.stringify(d).length, 0);
+    const wouldBeBytes = deltas.reduce(
+      (n, d) => n + JSON.stringify({ ...(d as Record<string, unknown>), boards: [guest.rivalPlant.board.save(), guest.board.save()] }).length,
+      0,
+    );
+    expect(wouldBeBytes).toBeGreaterThan(boardsBytes);   // the boards payload is real bytes saved
+    expect(boardsBytes).toBeGreaterThan(0);
+
+    // The DOM kept its gem elements too — no whole-board rebuild.
+    expect(domIds()).toEqual(domBefore);
+
+    // A REAL change still reaches both views — and even then, surviving gems
+    // keep their identities (the restore reuses the sender's ids).
+    host.purse.gold = SABOTAGE.harden.gold;
+    host.buyBlack("harden");
+    forcePublish(guest);
+    pump();
+    const withBoards = (hostEnd.sent.filter((m) => m.type === "delta") as { boards?: { owner: string }[] }[])
+      .filter((d) => d.boards && d.boards.length > 0);
+    const lastDelta = withBoards[withBoards.length - 1];
+    expect(lastDelta.boards).toHaveLength(1);
+    expect(lastDelta.boards![0].owner).toBe("ai");       // the guest seat's board
+    expect(guest.board.gems().filter((g) => g.hard > 0).length).toBeGreaterThan(0);
+    expect(domIds()).toEqual(domBefore);                  // same elements, restyled
+    // The HOST's board did not change, so its mirrored ids are untouched.
+    const hostIdsBefore = guest.rivalPlant.board.grid.flat().map((g) => g?.id);
+    forcePublish(guest);
+    pump();
+    expect(guest.rivalPlant.board.grid.flat().map((g) => g?.id)).toEqual(hostIdsBefore);
   });
 });
