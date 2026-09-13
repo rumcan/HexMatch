@@ -1,89 +1,99 @@
 // ══════════════════════════════════════════════════════════════════════════
-// TRAFFIC-01 — ambient cars: a few simple cars driving the streets and roads.
+// TRAFFIC-02 — ambient cars as natural town-to-town and local trips.
 //
-// This is a PERFORMANCE PROBE dressed as a feature. The question it answers:
-// "does having a few cars driving on the map kill performance?" — so the
-// implementation is deliberately about as cheap as it can be:
+// Replaces TRAFFIC-01's endlessly roaming loop/ping-pong cars with a bounded
+// trip lifecycle: waiting → spawning → driving → arriving → despawning → waiting.
 //
-//   * THREE cars by default (`CAR_COUNT`), named "car 1" / "car 2" /
-//     "car 3", and each has its OWN art slot (car1_* / car2_* / car3_*,
-//     four diagonal views each). The slots currently hold a COPY of the TTD
-//     goods lorry — the placeholder the user replaces per car by dropping
-//     PNGs into src/assets/sprites/png/vehicles/ttd/cars/ and running
-//     `npm run slice-atlas` (TRAFFIC-02). Until then the names, not the
-//     pixels, identify them (`__iso.traffic` lists them by name).
-//   * Each car drives a route over the road surface (paved AND dirt, public
-//     streets included) using the same mutual-bit edges the economy's routes
-//     cross. A bounded DFS finds a real cycle in the road graph (the town
-//     ring roads) and the car loops it forever; a tree-shaped road with no
-//     cycle degenerates to a ping-pong (go there, come back) — the truck's
-//     exact motion model.
-//   * Motion is position-along-route in tile units (leg + t), ticked with
-//     the same dt-capped integration `tickTrucks` uses, so a huge tick
-//     folds through the turns instead of teleporting.
+// Each car spawns at a plausible origin (a road access node derived from a
+// town's own streets), drives ONE-WAY to a distinct destination (same town for
+// local trips, another town for inter-town), fades out on arrival, waits a
+// short seeded delay, then starts a newly chosen trip. No perpetual circling
+// or endpoint U-turns.
 //
-// It is pure presentation and host/solo-local, exactly like the lorries:
-// a guest runs no vehicle movement, the cars are not on the wire, and
-// nothing here changes any economy outcome.
+// Routing uses the same mutual-bit road graph the economy and lorries use
+// (paved + dirt, public streets included) — only traversable connected roads.
+// Adjacency is cached by track.revision so we don't rebuild every render frame.
+// Path searches run only when a car needs a new trip, never per frame.
+//
+// Multiplayer: host generates and advances trips; guests replicate IDs, trip
+// state and progress through existing vehicle sync. Ambient traffic stays
+// cosmetic: no income, occupancy blocking or VP.
+//
+// Art: reuses current car PNG assets (car1_* / car2_* / car3_*), four diagonal
+// views, slots cycle for car 4+.
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_W } from "../game/config";
 import {
   NE, SE, SW, NW, DIRS, DIR, OPPOSITE, PRESENT, inMapT, tIdx,
   type Track,
 } from "./track";
+import type { Grid } from "./grid";
 import type { DrawItem } from "./depth";
 import { TRUCK_SPEED } from "./vehicles";
 
-/** The traffic volume the probe starts with — "lots of cars": a dozen, so
- *  the streets actually feel lived-in (perf-probed: 12 cars cost well under
- *  0.05 ms of JS per frame). The art slots cycle, so car 4+ wears car 1's
- *  livery, and so on. */
+/** Default traffic volume — a dozen cars feels lived-in. */
 export const CAR_COUNT = 12;
-/** Cars drive at the lorry's pace: one tile every 300 ms. */
+/** Cars drive at lorry pace: one tile every 300 ms. */
 export const CAR_SPEED = TRUCK_SPEED;
-/** Walk budget per car when finding a loop (96 tiles is plenty of street). */
-const MAX_STEPS = 96;
-/** A route shorter than this is not a drive (a stub is a parking spot). */
-const MIN_PING_PONG = 2;
-/** A cycle shorter than this is not a loop (the DFS skips the edge back to
- *  its parent, so 2-tile "cycles" cannot surface). */
-const MIN_LOOP = 3;
-/** How many candidate walks per car before we accept the least-overlapping
- *  one — cheap, and it keeps car 2 and 3 off car 1's exact street. */
-const WALK_ATTEMPTS = 12;
 
-/** One car on one route. Position along the route is `leg` + `t` tiles. */
+/** How many art slots ship: car1_*, car2_*, car3_* */
+export const CAR_ART_SLOTS = 3;
+
+/** Trip lifecycle */
+export type CarTripState = "waiting" | "spawning" | "driving" | "arriving" | "despawning";
+
+/** One ambient car on a bounded trip. */
 export interface Car {
-  /** "car 1" … "car N" — the art slot follows the index (car1_* … car3_*). */
+  /** "car 1" … "car N" */
   name: string;
-  /** 1-based art-slot index: car 1 drives car1_*, car 2 drives car2_*, …
-   *  (beyond three, the slots cycle — see `carSprite`). */
+  /** 1-based art-slot index: car 1 drives car1_*, etc (cycles past 3). */
   carIndex: number;
-  /**
-   * Loop routes hold the CYCLE without repeating the closing tile
-   * (segment k is route[k] → route[(k+1) % n]). Ping-pong routes hold a
-   * plain path (segment k is route[k] → route[k+1], k < n-1).
-   */
+
+  /** Trip endpoints derived from towns. Null when waiting with no trip. */
+  originTownId: number | null;
+  destTownId: number | null;
+  origin: [number, number] | null;
+  dest: [number, number] | null;
+
+  /** One-way route from origin to dest inclusive. Empty when waiting. */
   route: [number, number][];
-  /** true = keeps driving the cycle, false = ping-pongs the path. */
-  loop: boolean;
-  /** Index of the route tile the car is leaving. */
+
+  /** Lifecycle */
+  state: CarTripState;
+  /** Index of route tile car is leaving (0..route.length-2). For spawning/despawning, 0 or last. */
   leg: number;
-  /** 0..1 progress from `route[leg]` toward the segment's far tile. */
+  /** 0..1 progress from route[leg] toward next tile. */
   t: number;
-  /** Ping-pong only: false = toward the end of the path, true = back. */
-  reverse: boolean;
+
+  /** Waiting: ms remaining before next departure attempt. */
+  waitMs: number;
+  /** Spawn/despawn fade: ms remaining in current fade phase. */
+  fadeMs: number;
+  /** 0..1 opacity for rendering (0 invisible, 1 fully visible). */
+  fade: number;
+  /** Arriving pause before despawn. */
+  arriveMs: number;
+
+  /** Last trip key to avoid immediate identical repeats where alternatives exist. */
+  lastTripKey: string | null;
+
+  // ── legacy compat (for old tests/snapshots that read loop/reverse) ───────
+  /** @deprecated — TRAFFIC-02 has no loops; kept as optional for compat. */
+  loop?: boolean;
+  /** @deprecated — TRAFFIC-02 drives one-way; kept as optional for compat. */
+  reverse?: boolean;
 }
 
 export interface CarState {
   cars: Car[];
+  /** Internal revision of cached adjacency — not on wire. */
+  _adjRevision?: number;
+  _adjCache?: Map<number, number[]>;
 }
 
 export const createCarState = (): CarState => ({ cars: [] });
 
-// ── the route finder ──────────────────────────────────────────────────────
-/** Deterministic per-boot PRNG (mulberry32) — ambient traffic needs no
- *  entropy, and a fixed seed keeps the plan stable across replans. */
+// ── PRNG ────────────────────────────────────────────────────────────────
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
@@ -94,7 +104,7 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-/** Tile indices that carry ANY road surface (dirt or paved), in row order. */
+// ── road graph ──────────────────────────────────────────────────────────
 function roadTiles(track: Track): number[] {
   const out: number[] = [];
   const road = track.road, dirt = track.dirt;
@@ -104,13 +114,6 @@ function roadTiles(track: Track): number[] {
   return out;
 }
 
-/**
- * The car graph, built ONCE per plan: for every road tile, the adjacent
- * road tiles it may drive to — one entry per DIRECTION the mask faces, but
- * only where the neighbour faces back (E5's mutual-bit invariant — a half-
- * autotiled stub never carries traffic). The economy's routes cross exactly
- * these edges, so the cars drive what the game calls "a road".
- */
 function buildNeighbours(track: Track, tiles: number[]): Map<number, number[]> {
   const out = new Map<number, number[]>();
   const maskAt = (i: number): number => (track.road[i] || track.dirt[i]) & 0b1111;
@@ -131,269 +134,686 @@ function buildNeighbours(track: Track, tiles: number[]): Map<number, number[]> {
   return out;
 }
 
-const cycleToXY = (idxs: number[]): [number, number][] =>
-  idxs.map((i) => [i % MAP_W, (i / MAP_W) | 0] as [number, number]);
+// Cache adjacency by track.revision
+let globalAdjCache: { track: Track | null; revision: number; neighbours: Map<number, number[]> } = {
+  track: null,
+  revision: -1,
+  neighbours: new Map(),
+};
 
-/**
- * Bounded DFS from `start` looking for a SIMPLE cycle (a driveable ring:
- * no repeated tile, the closing edge implied). A back edge onto a node that
- * is still on the current DFS path closes the path segment between them —
- * that segment IS the cycle. Neighbour order is shuffled per node with the
- * seeded rng, so different attempts find different rings on the same
- * network. null when the reachable component holds no cycle (a tree-shaped
- * private road) or the budget runs out.
- *
- * A random walk cannot do this job: on a 200-tile town ring road a walk has
- * not walked far enough to close, and on a branching network it wanders.
- * The DFS is exact and cheap (each edge relaxed at most twice).
- */
-function findSimpleCycle(
-  start: number, neighbours: Map<number, number[]>, rng: () => number, budget = 8000,
-): [number, number][] | null {
-  const onPath = new Set<number>([start]);
-  const done = new Set<number>();
-  const path: number[] = [start];
-  // stack entries: [node, parent, remaining-neighbours]. The copies matter:
-  // the DFS pops its way through them, and the map's arrays are still
-  // needed afterwards (the dead-end walk, the next car's plan).
-  const stack: [number, number, number[]][] = [
-    [start, -1, shuffle([...(neighbours.get(start) ?? [])], rng)],
-  ];
-  let explored = 0;
-  while (stack.length) {
-    const top = stack[stack.length - 1]!;
-    const u = top[0];
-    let advanced = false;
-    while (top[2].length && explored < budget) {
-      const v = top[2].pop()!;
-      explored++;
-      if (v === top[1]) continue;      // the edge we came in on
-      if (done.has(v)) continue;
-      if (onPath.has(v)) {
-        const cycle = path.slice(path.indexOf(v));
-        if (cycle.length >= MIN_LOOP) return cycleToXY(cycle);
-        continue;
+function getNeighbours(track: Track): Map<number, number[]> {
+  if (globalAdjCache.track === track && globalAdjCache.revision === track.revision) {
+    return globalAdjCache.neighbours;
+  }
+  const tiles = roadTiles(track);
+  const neighbours = buildNeighbours(track, tiles);
+  globalAdjCache = { track, revision: track.revision, neighbours };
+  return neighbours;
+}
+
+function isRouteValid(route: [number, number][], neighbours: Map<number, number[]>): boolean {
+  if (route.length < 2) return false;
+  for (let k = 0; k < route.length - 1; k++) {
+    const a = route[k], b = route[k + 1];
+    const ai = tIdx(a[0], a[1]), bi = tIdx(b[0], b[1]);
+    const open = neighbours.get(ai);
+    if (!open || !open.includes(bi)) return false;
+  }
+  return true;
+}
+
+// ── BFS shortest path ───────────────────────────────────────────────────
+function bfs(start: number, target: number, neighbours: Map<number, number[]>): number[] | null {
+  if (start === target) return [start];
+  const queue: number[] = [start];
+  const prev = new Map<number, number>();
+  const seen = new Set<number>([start]);
+  prev.set(start, -1);
+  for (let head = 0; head < queue.length; head++) {
+    const cur = queue[head]!;
+    const open = neighbours.get(cur) ?? [];
+    for (const nb of open) {
+      if (seen.has(nb)) continue;
+      seen.add(nb);
+      prev.set(nb, cur);
+      if (nb === target) {
+        // reconstruct
+        const path: number[] = [];
+        let at: number | undefined = nb;
+        while (at !== undefined && at !== -1) {
+          path.push(at);
+          at = prev.get(at);
+          if (at === -1) break;
+        }
+        path.reverse();
+        return path;
       }
-      onPath.add(v);
-      path.push(v);
-      stack.push([v, u, shuffle([...(neighbours.get(v) ?? [])], rng)]);
-      advanced = true;
-      break;
-    }
-    if (!advanced) {
-      stack.pop();
-      onPath.delete(u);
-      done.add(u);
-      path.pop();
+      queue.push(nb);
     }
   }
   return null;
 }
 
-/** Fisher-Yates with the seeded rng (the arrays are freshly built per node). */
-function shuffle<T>(arr: T[], rng: () => number): T[] {
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    const a = arr[i]!, b = arr[j]!;
-    arr[i] = b; arr[j] = a;
-  }
-  return arr;
-}
+const idxToXY = (i: number): [number, number] => [i % MAP_W, (i / MAP_W) | 0] as [number, number];
+const xyToIdx = (xy: [number, number]): number => tIdx(xy[0], xy[1]);
 
-/**
- * A walk to a dead end (for tree-shaped components that have no cycle to
- * loop): never U-turns — on a tree that means the path is SIMPLE (no
- * repeated tile) all the way to a leaf, and ping-ponging start→leaf is a
- * perfectly respectable country drive. A lone stub (no exit at all) yields
- * no route.
- */
-function walkToDeadEnd(start: number, neighbours: Map<number, number[]>, rng: () => number):
-  [number, number][] | null {
-  const path: number[] = [start];
-  let cur = start, prev = -1;
-  for (let step = 0; step < MAX_STEPS; step++) {
-    const open = (neighbours.get(cur) ?? []).filter((v) => v !== prev);
-    if (!open.length) break;            // dead end (or lone stub): stop here
-    const next = open[Math.floor(rng() * open.length)]!;
-    path.push(next);
-    prev = cur;
-    cur = next;
-  }
-  return path.length >= MIN_PING_PONG ? cycleToXY(path) : null;
-}
+// ── town access nodes ───────────────────────────────────────────────────
+type TownNodes = Map<number, number[]>; // townId -> tile indices
 
-/**
- * One candidate route from a random start: a LOOP when the DFS closes a
- * ring, else a PING-PONG path (the component either holds a cycle or it
- * doesn't — the DFS answer is authoritative within its budget).
- */
-function routeFrom(
-  start: number, neighbours: Map<number, number[]>, rng: () => number,
-): { tiles: [number, number][]; loop: boolean } | null {
-  const cycle = findSimpleCycle(start, neighbours, rng);
-  if (cycle) return { tiles: cycle, loop: true };
-  const path = walkToDeadEnd(start, neighbours, rng);
-  return path ? { tiles: path, loop: false } : null;
-}
-
-/** Pick the best of a handful of candidate routes: prefer one that shares
- *  little of its street with the routes already adopted (so the dozen cars
- *  read as traffic, not a convoy), fall back to the first valid route. */
-function findRoute(
-  tiles: number[], neighbours: Map<number, number[]>, rng: () => number, adopted: Car[],
-): { tiles: [number, number][]; loop: boolean } | null {
-  const adoptedSets = adopted.map((c) => new Set(c.route.map(([x, y]) => tIdx(x, y))));
-  let best: { tiles: [number, number][]; loop: boolean } | null = null;
-  let bestScore = Infinity;
-  for (let attempt = 0; attempt < WALK_ATTEMPTS; attempt++) {
-    const start = tiles[Math.floor(rng() * tiles.length)];
-    const r = routeFrom(start, neighbours, rng);
-    if (!r) continue;
-    const self = new Set(r.tiles.map(([x, y]) => tIdx(x, y)));
-    let score = 0;
-    for (const set of adoptedSets) {
-      let n = 0;
-      for (const i of self) if (set.has(i)) n++;
-      score = Math.max(score, n / Math.max(1, Math.min(self.size, set.size)));
+function townAccessNodes(grid: Grid | null | undefined, track: Track, neighbours: Map<number, number[]>): TownNodes {
+  const out: TownNodes = new Map();
+  if (grid && grid.towns && grid.towns.length > 0) {
+    for (const town of grid.towns) {
+      const nodes: number[] = [];
+      for (const [rx, ry] of town.roads) {
+        if (!inMapT(rx, ry)) continue;
+        const idx = tIdx(rx, ry);
+        // must be present as road and have at least one mutual edge OR be isolated but still road?
+        // We require present and in neighbours map (even if degree 0, still plausible? but for routing we need degree>0 unless origin==dest)
+        if ((track.road[idx] & PRESENT) === 0 && (track.dirt[idx] & PRESENT) === 0) continue;
+        // keep even if degree 0? For local trips we need at least connectivity, but keep for now
+        // Only keep if in neighbours (which implies present)
+        if (!neighbours.has(idx)) continue;
+        nodes.push(idx);
+      }
+      if (nodes.length > 0) out.set(town.id, nodes);
     }
-    if (score < bestScore) { best = r; bestScore = score; if (score === 0) break; }
   }
-  return best;
-}
-
-const routeKey = (route: [number, number][], loop: boolean): string =>
-  `${loop ? "L" : "P"}${JSON.stringify(route)}`;
-
-/**
- * Plan up to `count` cars over the CURRENT road surface (paved + dirt, every
- * owner — the ambient traffic of the streets, not any player's freight).
- * `prev` is the previous plan: a car whose route is byte-identical keeps its
- * (leg, t, reverse) and drives on mid-crack, the same migration rule as the
- * lorries' `planTrucksTrucksMerge`. New cars start spaced apart on their
- * route so the three are not a single blob at the depot end.
- */
-export function planCars(
-  track: Track, prev: Car[] = [], count: number = CAR_COUNT, seed: number = 0x72af,
-): Car[] {
-  const tiles = roadTiles(track);
-  if (tiles.length === 0 || count <= 0) return [];
-  const rng = mulberry32(seed);
-  const neighbours = buildNeighbours(track, tiles);
-  const out: Car[] = [];
-  for (let i = 0; i < count; i++) {
-    const r = findRoute(tiles, neighbours, rng, out);
-    if (!r) continue;
-    const p = prev[i];
-    let leg = 0, t = 0, reverse = false;
-    if (p && p.loop === r.loop && routeKey(p.route, p.loop) === routeKey(r.tiles, r.loop)) {
-      leg = p.leg; t = p.t; reverse = p.reverse;
-    } else {
-      const segs = r.loop ? r.tiles.length : r.tiles.length - 1;
-      if (segs > 1) leg = (i * 5) % segs;    // spread the starting points
-    }
-    out.push({ name: `car ${i + 1}`, carIndex: i + 1, route: r.tiles, loop: r.loop, leg, t, reverse });
+  // Fallback: if no towns or no town nodes (e.g. synthetic test grids), treat all road tiles as one pseudo-town
+  if (out.size === 0) {
+    const all = roadTiles(track).filter((i) => neighbours.has(i));
+    if (all.length > 0) out.set(0, all);
   }
   return out;
 }
 
-// ── the clock ─────────────────────────────────────────────────────────────
-/**
- * Advance every car by `dtMs`. Position is (leg, t) along the route with the
- * truck's exact integration: forward integrates t up to 1, a ping-pong car
- * flips at the ends, a loop car wraps. A huge tick folds through the turns
- * segment by segment — it turns the car around at the exact end tile, never
- * a teleport. (No blocked-set: ambient traffic has no protests to respect —
- * the crowds stand on the road, the cars politely ignore them for now.)
- */
-export function tickCars(state: CarState, dtMs: number): void {
-  if (dtMs <= 0) return;
-  for (const car of state.cars) {
-    const n = car.route.length;
-    if (n < 2) continue;
-    const segs = car.loop ? n : n - 1;
-    let ms = dtMs;
-    let guard = 0;
-    while (ms > 1e-9 && ++guard < 100_000) {
-      const k = car.leg;
-      // ms to the segment's far end at CAR_SPEED (1 tile / 300 ms).
-      const need = (car.reverse ? car.t : 1 - car.t) / CAR_SPEED;
-      if (ms < need) {
-        car.t += (car.reverse ? -1 : 1) * ms * CAR_SPEED;
-        break;
+// ── trip finding ────────────────────────────────────────────────────────
+export const LOCAL_WEIGHT = 0.6;
+export const INTER_WEIGHT = 0.4;
+const MAX_ROUTE_TILES = 256;
+const TRIP_ATTEMPTS = 30;
+
+interface FoundTrip {
+  originTownId: number;
+  destTownId: number;
+  originIdx: number;
+  destIdx: number;
+  routeIdx: number[];
+  route: [number, number][];
+  key: string;
+}
+
+function tripKey(originIdx: number, destIdx: number): string {
+  return `${originIdx}->${destIdx}`;
+}
+
+function findTrip(
+  rng: () => number,
+  townNodes: TownNodes,
+  neighbours: Map<number, number[]>,
+  lastTripKey: string | null,
+): FoundTrip | null {
+  const townIds = [...townNodes.keys()];
+  if (townIds.length === 0) return null;
+
+  // Helper to pick random element
+  const pick = <T>(arr: T[]): T => arr[Math.floor(rng() * arr.length)]!;
+
+  // Try multiple attempts
+  let best: FoundTrip | null = null;
+
+  for (let attempt = 0; attempt < TRIP_ATTEMPTS; attempt++) {
+    const wantLocal = rng() < LOCAL_WEIGHT || townIds.length < 2;
+    if (wantLocal) {
+      // local: same town, distinct nodes
+      const eligibleTowns = townIds.filter((id) => (townNodes.get(id)?.length ?? 0) >= 2);
+      if (eligibleTowns.length === 0) continue;
+      const townId = pick(eligibleTowns);
+      const nodes = townNodes.get(townId)!;
+      // pick two distinct
+      let a = pick(nodes), b = pick(nodes);
+      let guard = 0;
+      while (b === a && guard < 10) { b = pick(nodes); guard++; }
+      if (a === b) continue;
+      const path = bfs(a, b, neighbours);
+      if (!path) continue;
+      if (path.length < 2 || path.length > MAX_ROUTE_TILES) continue;
+      const key = tripKey(a, b);
+      if (lastTripKey && key === lastTripKey) {
+        // avoid immediate repeat if alternatives exist — try to find different
+        // If this is the only possible route, allow repeat; else skip this attempt
+        const hasAlternative = nodes.length > 2 || eligibleTowns.length > 1 || [...townNodes.values()].some((arr) => arr.length >= 2);
+        if (hasAlternative) {
+          // try again without counting as failed? just continue to next attempt
+          if (attempt < TRIP_ATTEMPTS - 1) continue;
+        }
       }
-      ms -= need;
-      if (car.loop) {
-        car.t = 0;
-        car.leg = (k + 1) % n;
-      } else if (car.reverse) {
-        // t reached 0 — the car is standing on route[k]
-        if (k === 0) { car.reverse = false; car.t = 0; }
-        else { car.leg = k - 1; car.t = 1; }
+      const route = path.map(idxToXY);
+      return {
+        originTownId: townId,
+        destTownId: townId,
+        originIdx: a,
+        destIdx: b,
+        routeIdx: path,
+        route,
+        key,
+      };
+    } else {
+      // inter-town
+      if (townIds.length < 2) continue;
+      const fromId = pick(townIds);
+      const toCandidates = townIds.filter((id) => id !== fromId);
+      if (toCandidates.length === 0) continue;
+      const toId = pick(toCandidates);
+      const fromNodes = townNodes.get(fromId)!;
+      const toNodes = townNodes.get(toId)!;
+      if (fromNodes.length === 0 || toNodes.length === 0) continue;
+      const a = pick(fromNodes);
+      const b = pick(toNodes);
+      const path = bfs(a, b, neighbours);
+      if (!path) continue;
+      if (path.length < 2 || path.length > MAX_ROUTE_TILES) continue;
+      const key = tripKey(a, b);
+      if (lastTripKey && key === lastTripKey) {
+        const hasAlt = townIds.length > 2 || fromNodes.length > 1 || toNodes.length > 1;
+        if (hasAlt && attempt < TRIP_ATTEMPTS - 1) continue;
+      }
+      const route = path.map(idxToXY);
+      return {
+        originTownId: fromId,
+        destTownId: toId,
+        originIdx: a,
+        destIdx: b,
+        routeIdx: path,
+        route,
+        key,
+      };
+    }
+  }
+  // If we found nothing but have a best, return it (currently we return immediately on first valid)
+  return best;
+}
+
+// ── planning ────────────────────────────────────────────────────────────
+// Constants for lifecycle timing
+export const SPAWN_FADE_MS = 400;
+export const DESPAWN_FADE_MS = 400;
+export const ARRIVE_PAUSE_MS = 200;
+export const WAIT_MIN_MS = 1000;
+export const WAIT_MAX_MS = 4000;
+
+/**
+ * Flexible arg parsing to stay backward compatible with old tests that call
+ * planCars(track, prev, count, seed) without a grid.
+ *
+ * New signature: planCars(track, grid, prev, count, seed)
+ * Old signatures:
+ *   planCars(track)
+ *   planCars(track, prev, count, seed)
+ *   planCars(track, [], count)
+ */
+export function planCars(
+  track: Track,
+  gridOrPrev: Grid | Car[] | null | undefined = [],
+  prevOrCount: Car[] | number = [],
+  countOrSeed: number = CAR_COUNT,
+  seed: number = 0x72af,
+): Car[] {
+  let grid: Grid | null = null;
+  let prev: Car[] = [];
+  let count = CAR_COUNT;
+  let seedVal = 0x72af;
+
+  if (Array.isArray(gridOrPrev)) {
+    // old: (track, prev, count, seed)
+    prev = gridOrPrev as Car[];
+    if (typeof prevOrCount === "number") {
+      count = prevOrCount;
+      if (typeof countOrSeed === "number") seedVal = countOrSeed;
+    } else if (Array.isArray(prevOrCount)) {
+      // shouldn't happen, but handle
+      prev = prevOrCount as Car[];
+      if (typeof countOrSeed === "number") count = countOrSeed;
+      if (typeof seed === "number") seedVal = seed;
+    } else {
+      // prevOrCount is [] etc
+      if (typeof countOrSeed === "number") count = countOrSeed;
+      if (typeof seed === "number") seedVal = seed;
+    }
+  } else if (gridOrPrev && typeof gridOrPrev === "object" && "towns" in (gridOrPrev as any)) {
+    grid = gridOrPrev as Grid;
+    if (Array.isArray(prevOrCount)) {
+      prev = prevOrCount as Car[];
+      if (typeof countOrSeed === "number") {
+        count = countOrSeed;
+        if (typeof seed === "number") seedVal = seed;
+      }
+    } else if (typeof prevOrCount === "number") {
+      count = prevOrCount;
+      if (typeof countOrSeed === "number") seedVal = countOrSeed;
+    }
+  } else {
+    // gridOrPrev undefined/null
+    if (Array.isArray(prevOrCount)) {
+      prev = prevOrCount as Car[];
+      if (typeof countOrSeed === "number") count = countOrSeed;
+      if (typeof seed === "number") seedVal = seed;
+    } else if (typeof prevOrCount === "number") {
+      count = prevOrCount;
+      if (typeof countOrSeed === "number") seedVal = countOrSeed;
+    }
+  }
+
+  // Normalise count
+  if (count <= 0) return [];
+  const tiles = roadTiles(track);
+  if (tiles.length === 0) return [];
+
+  const rng = mulberry32(seedVal);
+  const neighbours = getNeighbours(track);
+  const townNodes = townAccessNodes(grid, track, neighbours);
+
+  const out: Car[] = [];
+  // For route overlap avoidance (optional), keep set of adopted routes
+  const adoptedRouteKeys = new Set<string>();
+
+  for (let i = 0; i < count; i++) {
+    const p = prev[i];
+
+    // Retain unaffected trips: if prev route still valid, keep it
+    if (p && p.route && p.route.length >= 2) {
+      if (isRouteValid(p.route, neighbours)) {
+        // Keep car, but ensure name/index updated, and keep state/progress
+        // If grid changed and town nodes missing, still keep if route valid (conservative)
+        const retained: Car = {
+          ...p,
+          name: `car ${i + 1}`,
+          carIndex: i + 1,
+          // keep route as is, but ensure fade etc present
+          waitMs: p.waitMs ?? 0,
+          fadeMs: p.fadeMs ?? 0,
+          fade: p.fade ?? (p.state === "waiting" ? 0 : 1),
+          arriveMs: p.arriveMs ?? 0,
+          lastTripKey: p.lastTripKey ?? (p.origin && p.dest ? tripKey(xyToIdx(p.origin), xyToIdx(p.dest)) : null),
+          state: p.state ?? "driving",
+          leg: p.leg ?? 0,
+          t: p.t ?? 0,
+        };
+        // Clamp leg/t to valid range
+        if (retained.leg >= retained.route.length) retained.leg = 0;
+        if (retained.leg >= retained.route.length - 1 && retained.route.length >= 2) {
+          // at end, should be arriving
+          if (retained.state === "driving") {
+            retained.state = "arriving";
+            retained.arriveMs = ARRIVE_PAUSE_MS;
+          }
+        }
+        out.push(retained);
+        if (retained.route.length) adoptedRouteKeys.add(JSON.stringify(retained.route));
+        continue;
+      }
+      // else route invalid -> will replan below, but keep lastTripKey for avoidance
+    } else if (p && p.state === "waiting") {
+      // Retain waiting cars with their timers (unaffected by road edits if they have no route)
+      const waiting: Car = {
+        ...p,
+        name: `car ${i + 1}`,
+        carIndex: i + 1,
+        state: "waiting",
+        route: [],
+        origin: null,
+        dest: null,
+        originTownId: null,
+        destTownId: null,
+        leg: 0,
+        t: 0,
+        fade: 0,
+        fadeMs: 0,
+        arriveMs: 0,
+        waitMs: p.waitMs ?? (WAIT_MIN_MS + rng() * (WAIT_MAX_MS - WAIT_MIN_MS) + i * 150),
+        lastTripKey: p.lastTripKey ?? null,
+      };
+      out.push(waiting);
+      continue;
+    }
+
+    // Need new trip for this slot
+    const lastKey = p?.lastTripKey ?? null;
+    const trip = findTrip(rng, townNodes, neighbours, lastKey);
+
+    if (trip) {
+      // Avoid immediate identical repeat already handled in findTrip, but also avoid overlapping routes too much?
+      // For simplicity, allow any valid trip
+      const car: Car = {
+        name: `car ${i + 1}`,
+        carIndex: i + 1,
+        originTownId: trip.originTownId,
+        destTownId: trip.destTownId,
+        origin: idxToXY(trip.originIdx),
+        dest: idxToXY(trip.destIdx),
+        route: trip.route,
+        state: "spawning",
+        leg: 0,
+        t: 0,
+        waitMs: 0,
+        fadeMs: SPAWN_FADE_MS,
+        fade: 0,
+        arriveMs: 0,
+        lastTripKey: trip.key,
+        loop: false,
+        reverse: false,
+      };
+      // Stagger initial spawn: add small wait for cars beyond first few
+      if (i > 0) {
+        const stagger = (i * 180) % 1200 + rng() * 400;
+        car.state = "waiting";
+        car.waitMs = stagger;
+        car.fade = 0;
+        car.fadeMs = 0;
+        // keep route for when it spawns? No, waiting cars have no route until tick
+        // To stagger but still have route ready, we keep route but state waiting
+        // On tick, waiting with route will go to spawning? Let's keep route empty for waiting to force re-find on tick for better stagger variety.
+        // Actually we want cars to start at endpoint, not random fractional, so waiting with route is okay if we treat waiting as pre-spawn.
+        // For initial boot, set waiting cars to have route already and small wait, so they spawn soon.
+        // We'll keep route for initial waiting cars to avoid extra search on first tick.
+        // But our tick logic for waiting expects to find trip if route empty. If route present, we should go to spawning.
+        // Let's keep route and go to waiting state with route preserved — tick will transition waiting+route -> spawning.
+      }
+      out.push(car);
+    } else {
+      // No valid route — wait without teleporting or spinning retry loop
+      const wait = WAIT_MIN_MS + rng() * (WAIT_MAX_MS - WAIT_MIN_MS) + i * 200;
+      const car: Car = {
+        name: `car ${i + 1}`,
+        carIndex: i + 1,
+        originTownId: null,
+        destTownId: null,
+        origin: null,
+        dest: null,
+        route: [],
+        state: "waiting",
+        leg: 0,
+        t: 0,
+        waitMs: wait,
+        fadeMs: 0,
+        fade: 0,
+        arriveMs: 0,
+        lastTripKey: lastKey,
+        loop: false,
+        reverse: false,
+      };
+      out.push(car);
+    }
+  }
+
+  return out;
+}
+
+// ── tick ────────────────────────────────────────────────────────────────
+/**
+ * Advance cars by dtMs through their trip lifecycle.
+ *
+ * When track and grid are provided, waiting cars that have expired will attempt
+ * to find a new trip (host only). If not provided (e.g. old tests), only
+ * existing driving cars advance and waiting cars simply count down.
+ */
+export function tickCars(
+  state: CarState,
+  dtMs: number,
+  trackOrBlocked?: Track | ReadonlySet<number> | undefined,
+  grid?: Grid | null,
+  seed: number = 0x72af,
+): void {
+  if (dtMs <= 0) return;
+
+  // Backward compat: third arg used to be blocked set for trucks (old signature had blocked? no)
+  // In current game.ts, tickCars(cars, dt) only. So trackOrBlocked may be Track or undefined.
+  let track: Track | null = null;
+  if (trackOrBlocked && typeof trackOrBlocked === "object" && "revision" in (trackOrBlocked as any)) {
+    track = trackOrBlocked as Track;
+  }
+
+  const needsTripSearch = track && grid && state.cars.some((c) => c.state === "waiting" && c.waitMs <= dtMs);
+
+  let neighbours: Map<number, number[]> | null = null;
+  let townNodes: TownNodes | null = null;
+  let rng: (() => number) | null = null;
+
+  if (needsTripSearch) {
+    neighbours = getNeighbours(track!);
+    townNodes = townAccessNodes(grid!, track!, neighbours);
+    rng = mulberry32(seed);
+  }
+
+  for (const car of state.cars) {
+    let remaining = dtMs;
+    let guard = 0;
+    while (remaining > 1e-9 && guard++ < 1000) {
+      if (car.state === "waiting") {
+        car.waitMs -= remaining;
+        remaining = 0;
+        if (car.waitMs <= 0) {
+          if (car.route.length >= 2) {
+            // Has a pre-planned route from planCars (initial stagger) — go to spawning
+            car.state = "spawning";
+            car.fade = 0;
+            car.fadeMs = SPAWN_FADE_MS;
+            car.leg = 0;
+            car.t = 0;
+          } else if (track && grid && neighbours && townNodes && rng) {
+            // Need to find a new trip now
+            const trip = findTrip(rng, townNodes, neighbours, car.lastTripKey);
+            if (trip) {
+              car.originTownId = trip.originTownId;
+              car.destTownId = trip.destTownId;
+              car.origin = idxToXY(trip.originIdx);
+              car.dest = idxToXY(trip.destIdx);
+              car.route = trip.route;
+              car.lastTripKey = trip.key;
+              car.state = "spawning";
+              car.fade = 0;
+              car.fadeMs = SPAWN_FADE_MS;
+              car.leg = 0;
+              car.t = 0;
+              car.waitMs = 0;
+            } else {
+              // No valid route — wait without spinning retry loop
+              car.waitMs = WAIT_MIN_MS + rng() * (WAIT_MAX_MS - WAIT_MIN_MS);
+              remaining = 0;
+            }
+          } else {
+            // No track/grid to search — just keep waiting with small retry
+            car.waitMs = WAIT_MIN_MS;
+            remaining = 0;
+          }
+        }
+        break;
+      } else if (car.state === "spawning") {
+        if (car.fadeMs <= remaining) {
+          remaining -= car.fadeMs;
+          car.fadeMs = 0;
+          car.fade = 1;
+          car.state = "driving";
+          car.leg = 0;
+          car.t = 0;
+        } else {
+          car.fadeMs -= remaining;
+          car.fade = 1 - car.fadeMs / SPAWN_FADE_MS;
+          remaining = 0;
+        }
+        // During spawning, stay at origin
+        if (car.state !== "driving") break;
+        // else continue to driving with remaining time
+      } else if (car.state === "driving") {
+        const n = car.route.length;
+        if (n < 2) {
+          car.state = "arriving";
+          car.arriveMs = ARRIVE_PAUSE_MS;
+          break;
+        }
+        // Advance along one-way route
+        while (remaining > 1e-9) {
+          if (car.leg >= n - 1) {
+            // reached end
+            car.t = 1;
+            car.state = "arriving";
+            car.arriveMs = ARRIVE_PAUSE_MS;
+            break;
+          }
+          const need = (1 - car.t) / CAR_SPEED;
+          if (remaining < need) {
+            car.t += remaining * CAR_SPEED;
+            remaining = 0;
+            break;
+          }
+          remaining -= need;
+          car.t = 0;
+          car.leg++;
+          if (car.leg >= n - 1) {
+            car.t = 1;
+            car.leg = n - 1;
+            car.state = "arriving";
+            car.arriveMs = ARRIVE_PAUSE_MS;
+            break;
+          }
+        }
+        break; // driving consumes remaining or transitions
+      } else if (car.state === "arriving") {
+        if (car.arriveMs <= remaining) {
+          remaining -= car.arriveMs;
+          car.arriveMs = 0;
+          car.state = "despawning";
+          car.fade = 1;
+          car.fadeMs = DESPAWN_FADE_MS;
+        } else {
+          car.arriveMs -= remaining;
+          remaining = 0;
+        }
+        if (car.state !== "despawning") break;
+      } else if (car.state === "despawning") {
+        if (car.fadeMs <= remaining) {
+          remaining -= car.fadeMs;
+          car.fadeMs = 0;
+          car.fade = 0;
+          // Arrival cleanup: remove from active draw list by going to waiting with empty route
+          car.state = "waiting";
+          car.waitMs = WAIT_MIN_MS + (rng ? rng() * (WAIT_MAX_MS - WAIT_MIN_MS) : 1000);
+          // Keep lastTripKey to avoid immediate repeat
+          car.route = [];
+          car.origin = null;
+          car.dest = null;
+          car.originTownId = null;
+          car.destTownId = null;
+          car.leg = 0;
+          car.t = 0;
+          car.arriveMs = 0;
+        } else {
+          car.fadeMs -= remaining;
+          car.fade = car.fadeMs / DESPAWN_FADE_MS;
+          remaining = 0;
+        }
+        break;
       } else {
-        // t reached 1 — the car is standing on route[k+1]
-        if (k + 1 === segs) car.reverse = true;
-        else { car.leg = k + 1; car.t = 0; }
+        break;
       }
     }
   }
 }
 
 // ── drawing ───────────────────────────────────────────────────────────────
-/** How many art slots ship: car1_*, car2_*, car3_* (see the cells and the
- *  art folder src/assets/sprites/png/vehicles/ttd/cars/). */
-export const CAR_ART_SLOTS = 3;
-
-/** View name for a direction bit — the four diagonal views the iso roads
- *  can express (ne = up/right, se = down/right, sw = down/left, nw = up/left). */
 const VIEW_OF: Record<number, string> = {
-  [NE]: "ne", [SE]: "se", [SW]: "sw", [NW]: "nw",
+  [NE]: "ne",
+  [SE]: "se",
+  [SW]: "sw",
+  [NW]: "nw",
 };
 
-/**
- * The sprite for car `carIndex` (1-based) facing a direction bit. Each car
- * has its OWN art slot — car 1 drives car1_*, car 2 drives car2_*, car 3
- * drives car3_* — so dropping different PNGs into
- * src/assets/sprites/png/vehicles/ttd/cars/ gives different cars on the
- * street (TRAFFIC-02). Beyond the shipped slots the art cycles (car 4 looks
- * like car 1), so `setTraffic(n)` can grow past three without new cells.
- */
 export function carSprite(carIndex: number, dir: number): string {
   const slot = ((carIndex - 1) % CAR_ART_SLOTS) + 1;
   return `car${slot}_${VIEW_OF[dir] ?? "se"}`;
 }
 
-/** Direction bit for driving FROM one tile TO an adjacent one. */
 function dirBit(from: [number, number], to: [number, number]): number {
   const dx = to[0] - from[0], dy = to[1] - from[1];
   if (dx > 0) return SE;
   if (dx < 0) return NW;
   if (dy > 0) return SW;
   if (dy < 0) return NE;
-  return SE;                           // degenerate: face somewhere sensible
+  return SE;
 }
 
-/**
- * The cars as draw items: FRACTIONAL tile position between route-tile
- * centres (same contract as `truckItems` — `depth.place` anchors a moving
- * item at the fractional tile's diamond centre and picking skips it), the
- * directional truck sprite for the direction of TRAVEL (a ping-pong car
- * turning around faces the way it is actually rolling), and the rounded
- * tile for culling. `ref` carries the name so `__iso.traffic` and any
- * debug overlay can label car 1 / car 2 / car 3.
- */
 export function carItems(state: CarState): DrawItem[] {
   const out: DrawItem[] = [];
   for (const car of state.cars) {
+    if (car.state === "waiting") continue;
     const n = car.route.length;
     if (n < 2) continue;
-    const k = car.leg;
-    const a = car.route[k];
-    const b = car.route[car.loop ? (k + 1) % n : Math.min(k + 1, n - 1)];
+    // During waiting we skip; during spawning at origin, driving, arriving at dest, despawning at dest
+    let k = car.leg;
+    if (k < 0) k = 0;
+    if (k >= n) k = n - 1;
+
+    let a: [number, number], b: [number, number];
+    if (k >= n - 1) {
+      // At destination (arriving/despawning)
+      a = car.route[n - 2] ?? car.route[n - 1];
+      b = car.route[n - 1];
+      // Position at dest for fade out
+      if (car.state === "despawning" || car.state === "arriving") {
+        // fx/fy at dest
+        const fx = b[0];
+        const fy = b[1];
+        const dir = dirBit(a, b);
+        const sprite = carSprite(car.carIndex, dir);
+        out.push({
+          sprite,
+          tx: Math.round(fx),
+          ty: Math.round(fy),
+          fx,
+          fy,
+          alpha: car.fade,
+          ref: { car: car.name, state: car.state, fade: car.fade },
+        });
+        continue;
+      }
+    }
+
+    // Normal: between route[k] and route[k+1]
+    const nextIdx = Math.min(k + 1, n - 1);
+    a = car.route[k];
+    b = car.route[nextIdx];
+    // If at last tile (leg == n-1) and t==1, a==b? Use previous segment for direction
+    if (k === n - 1) {
+      a = car.route[n - 2] ?? car.route[n - 1];
+      b = car.route[n - 1];
+    }
     const fx = a[0] + (b[0] - a[0]) * car.t;
     const fy = a[1] + (b[1] - a[1]) * car.t;
-    const dir = car.reverse ? dirBit(b, a) : dirBit(a, b);
+    const dir = dirBit(a, b);
     const sprite = carSprite(car.carIndex, dir);
-    out.push({ sprite, tx: Math.round(fx), ty: Math.round(fy), fx, fy, ref: { car: car.name } });
+    out.push({
+      sprite,
+      tx: Math.round(fx),
+      ty: Math.round(fy),
+      fx,
+      fy,
+      alpha: car.fade,
+      ref: { car: car.name, state: car.state, fade: car.fade },
+    });
   }
   return out;
+}
+
+// ── helpers for tests / game integration ─────────────────────────────────
+/** For tests: check if a car route is local (same town) */
+export function isLocalTrip(car: Car): boolean {
+  return car.originTownId !== null && car.destTownId !== null && car.originTownId === car.destTownId;
+}
+export function isInterTownTrip(car: Car): boolean {
+  return car.originTownId !== null && car.destTownId !== null && car.originTownId !== car.destTownId;
+}
+
+/** Expose for testing: get adjacency revision */
+export function getAdjacencyRevision(): number {
+  return globalAdjCache.revision;
 }

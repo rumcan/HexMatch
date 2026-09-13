@@ -137,6 +137,7 @@ import {
 } from "./cars";
 import { createIsoMarket, toBag, chooseRivalOffer, type CargoBag, type IsoMarket } from "./market";
 import { createOriginalUi, type OriginalUi } from "../game/ui";
+import { HUD_ICONS, cargoIconHtml, costMarkup } from "../game/hud-icons";
 // SFX-01: the UI sound layer. Everything the player DOES on the map (a road
 // laid, a building raised, a demolition, a star earned, the final ledger) gets
 // one cue from here; the chrome's own clicks and hovers are handled once, by
@@ -179,7 +180,7 @@ import {
 } from "./debug";
 import {
   SNAPSHOT_VERSION, applySnapshot, buildSnapshot, joinFromSnapshot,
-  type RivalSabotage, type Snapshot,
+  type RivalSabotage, type Snapshot, type WirePlayer,
 } from "./snapshot";
 export { joinFromSnapshot };
 // MP-05: the wire. `session.ts` owns roles/roster/chunked state transfer and
@@ -860,13 +861,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // smaller cell) so the match table FILLS the window instead of cropping.
     // The chrome asks; the seat answers. A guest never resizes its own grid —
     // the host authors it and the whole rectangle ships on the wire — so a
-    // guest phone only re-zooms what arrives. Solo and host seats own their
-    // board, and the ♻ reset / gravity refill keep whatever size the live
-    // grid carries (the board reads its own dims, not the shipped constants).
+    // guest phone only re-zooms what arrives (the #163 retract asks are
+    // vetoed here too). Solo and host seats own their board, and the ♻ reset
+    // / gravity refill keep whatever size the live grid carries (the board
+    // reads its own dims, not the shipped constants).
     requestBoardSize: (w, h) => {
       if (isGuest()) return false;
       // The rival's plant stays at the shipped 7×8 on purpose: the grow is a
       // readability concession for small screens, not an economy boost.
+      // #163: a smaller (w,h) is only ever a retract of unplayed columns the
+      // chrome itself added this session — restored saves are the floor and
+      // are never asked to shrink — so approving it costs no earned gems.
       void w; void h;
       return true;
     },
@@ -3048,7 +3053,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     ];
     const protestsWire = [...protests.values()].map((p) => ({ x: p.tx, y: p.ty, until: p.until, owner: p.owner }));
     const trucksWire = trucks.trucks.map((t) => ({ ownerId: t.ownerId, depotId: t.depotId, factory: [...t.factory] as [number, number], route: t.route.map((r) => [...r] as [number, number]), segFast: t.segFast ? [...t.segFast] : [], leg: t.leg, t: t.t, reverse: t.reverse, deliveries: t.deliveries }));
-    const carsWire = cars.cars.map((c) => ({ name: c.name, route: c.route.map((r) => [...r] as [number, number]), leg: c.leg, t: c.t, reverse: c.reverse }));
+    const carsWire = cars.cars.map((c) => ({ name: c.name, carIndex: (c as any).carIndex ?? 1, originTownId: (c as any).originTownId ?? null, destTownId: (c as any).destTownId ?? null, origin: (c as any).origin ? [...(c as any).origin] as [number, number] : null, dest: (c as any).dest ? [...(c as any).dest] as [number, number] : null, route: c.route.map((r) => [...r] as [number, number]), leg: c.leg, t: c.t, state: (c as any).state ?? "driving", waitMs: (c as any).waitMs ?? 0, fadeMs: (c as any).fadeMs ?? 0, fade: (c as any).fade ?? 1, arriveMs: (c as any).arriveMs ?? 0, lastTripKey: (c as any).lastTripKey ?? null }));
     return buildSnapshot({
       seed, track,
       harvesters: eco.harvesters,
@@ -3110,7 +3115,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     boardSyncKeys = keys;
     const protestsWire = [...protests.values()].map((p) => ({ x: p.tx, y: p.ty, until: p.until, owner: p.owner }));
     const trucksWire = trucks.trucks.map((t) => ({ ownerId: t.ownerId, depotId: t.depotId, factory: [...t.factory] as [number, number], route: t.route.map((r) => [...r] as [number, number]), segFast: t.segFast ? [...t.segFast] : [], leg: t.leg, t: t.t, reverse: t.reverse, deliveries: t.deliveries }));
-    const carsWire = cars.cars.map((c) => ({ name: c.name, route: c.route.map((r) => [...r] as [number, number]), leg: c.leg, t: c.t, reverse: c.reverse }));
+    const carsWire = cars.cars.map((c) => ({ name: c.name, carIndex: (c as any).carIndex ?? 1, originTownId: (c as any).originTownId ?? null, destTownId: (c as any).destTownId ?? null, origin: (c as any).origin ? [...(c as any).origin] as [number, number] : null, dest: (c as any).dest ? [...(c as any).dest] as [number, number] : null, route: c.route.map((r) => [...r] as [number, number]), leg: c.leg, t: c.t, state: (c as any).state ?? "driving", waitMs: (c as any).waitMs ?? 0, fadeMs: (c as any).fadeMs ?? 0, fade: (c as any).fade ?? 1, arriveMs: (c as any).arriveMs ?? 0, lastTripKey: (c as any).lastTripKey ?? null }));
     net.publishTrack(track, dirtyTiles, {
       t: now,
       harvesters: eco.harvesters.map((h) => ({ ...h })),
@@ -3178,6 +3183,33 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     Object.assign(p.purse, toBag(res));
   }
 
+  /**
+   * #137: write ONE mirrored wire player record into its local seat — the
+   * purse (through `applyPurseWire`, so #114's identity still holds) AND both
+   * setup allowances.
+   *
+   * The delta path has done this since MP-05; the full-state path applied the
+   * purse alone, so a guest that joined or resynced a PROGRESSED match kept the
+   * allowances it booted with — it went on advertising a free Depot and 12 free
+   * dirt tiles the host had already spent, and priced every drag preview and
+   * the HUD's Depot line from them, until some later delta happened to carry
+   * the truth. On a stalled connection that delta never arrives. Both paths now
+   * read the same helper, which is the only way "a snapshot and a delta restore
+   * identical economy state" stays true instead of being a coincidence.
+   *
+   * `typeof … === "number"`, never truthiness: an EXHAUSTED allowance is 0, and
+   * 0 is a VALUE the guest must take, not a missing field to skip. A field that
+   * is genuinely absent (a producer with nothing to restore) leaves the seat
+   * alone. Affordability and spending stay host-authoritative — this mirrors
+   * the host's numbers, it never re-derives them.
+   */
+  function applyPlayerWire(p: PlayerState, wire: WirePlayer) {
+    applyPurseWire(p, wire.res);
+    const ft = wire.freeTrack, fd = wire.freeDepots;
+    if (typeof ft === "number" && Number.isFinite(ft)) p.freeTrack = ft;
+    if (typeof fd === "number" && Number.isFinite(fd)) p.freeDepots = fd;
+  }
+
   /** GUEST: apply a full state (join or resync). Validated first — a version or
    *  seed mismatch must refuse loudly rather than paint a foreign map. */
   function applyNetSnapshot(raw: Snapshot, _seq: number) {
@@ -3199,7 +3231,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     for (let i = 0; i < players.length; i++) {
       const wire = applied.players[i];
       if (!wire) continue;
-      applyPurseWire(players[i], wire.res);
+      // #137: the purse AND both setup allowances — the same seat record a
+      // delta writes, through the same helper, zero allowance included.
+      applyPlayerWire(players[i], wire);
     }
     if (applied.rivalSabotage) applyRivalSabotage(applied.rivalSabotage);
     // MP-AUDIT: market parity
@@ -3220,7 +3254,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       (trucks as any).trucks = applied.trucks.map((t) => ({ ...t, factory: [...t.factory] as [number, number], route: t.route.map((r) => [...r] as [number, number]), segFast: t.segFast ? [...t.segFast] : [] }));
     }
     if (applied.cars) {
-      (cars as any).cars = applied.cars.map((c) => ({ ...c, route: c.route.map((r) => [...r] as [number, number]) }));
+      (cars as any).cars = applied.cars.map((c: any) => ({ ...c, origin: c.origin ? [...c.origin] as [number, number] : null, dest: c.dest ? [...c.dest] as [number, number] : null, route: c.route.map((r: any) => [...r] as [number, number]) }));
       // Ensure guest renders vehicles
       world.vehicles = (carItems(cars as any) as any).concat(truckItems(trucks as any, atlasRef ?? undefined));
     }
@@ -3288,13 +3322,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       for (let i = 0; i < players.length; i++) {
         const wire = msg.players[i];
         if (!wire) continue;
-        applyPurseWire(players[i], wire.res);
-        // MP-05: the opening allowances ride the delta because the snapshot's
-        // player list (§4) has no room for them, and the previews price from
-        // them — a guest that thought it still had 12 free tiles would preview
-        // a drag the host then charges for.
-        if (typeof wire.freeTrack === "number") players[i].freeTrack = wire.freeTrack;
-        if (typeof wire.freeDepots === "number") players[i].freeDepots = wire.freeDepots;
+        // MP-05: the opening allowances ride the delta because the previews
+        // price from them — a guest that thought it still had 12 free tiles
+        // would preview a drag the host then charges for. #137: they ride the
+        // FULL state through this same helper too, so the two paths cannot
+        // restore different economy state for one seat.
+        applyPlayerWire(players[i], wire);
       }
     }
     // PP-14b: the host's sabotage on this seat's plant, applied as an overlay.
@@ -3318,7 +3351,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       worldDirty = true;
     }
     if ((msg as any).cars) {
-      (cars as any).cars = (msg as any).cars.map((c: any) => ({ ...c, route: c.route.map((r: any) => [...r] as [number, number]) }));
+      (cars as any).cars = (msg as any).cars.map((c: any) => ({ ...c, origin: c.origin ? [...c.origin] as [number, number] : null, dest: c.dest ? [...c.dest] as [number, number] : null, route: c.route.map((r: any) => [...r] as [number, number]) }));
       world.vehicles = (carItems(cars as any) as any).concat(truckItems(trucks as any, atlasRef ?? undefined));
     }
     if ((msg as any).boards) {
@@ -3866,13 +3899,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // VP-01: the plant is the other half of the scoreboard, so the price tag
       // and the point come up together.
       costInfo = `<span class="mb-txt"><b>Processing plant</b> · ${note}</span>` +
-        `<span class="mb-cost">${plantCostLabel()} · +${fmtVp(VICTORY.plant)}★</span>`;
+        `<span class="mb-cost">${costMarkup(PLANT_COST)} · +${fmtVp(VICTORY.plant)}★</span>`;
     } else if (tool === "harvester" || phase === "setup-harvester") {
       // PP-05: "show the complete cost before placement" — the Depot tool
       // prices itself from the same `priceDepot` the click will charge, so the
       // modebar and the debit can never disagree (W1, applied to buildings).
       const price = priceDepot(me.purse, me.freeDepots);
-      const label = price.free ? "free (setup)" : costLabel(price.cost);
+      const label = price.free ? "free (setup)" : costMarkup(price.cost);
       costInfo = `<span class="mb-txt"><b>Depot</b> · ${label}</span>` +
         (price.affordable
           ? ""
@@ -4731,7 +4764,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   if (topRight) {
     const peek = document.createElement("button");
     peek.type = "button"; peek.id = "iso-rival-peek";
-    peek.className = "icon-btn"; peek.textContent = "🏭";
+    peek.className = "icon-btn"; peek.innerHTML = HUD_ICONS.binoculars;
     peek.title = "Watch the rival's plant — its board plays itself";
     peek.addEventListener("click", () => toggleRivalPlantView());
     // MP-AUDIT (#105): the peek panel is for BOTH seats now — the host reads
@@ -4937,7 +4970,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // AI-03: the rival's purse, per cargo — "where is all that gold coming
       // from?" is answered by watching it move against the board above.
       purseEl.innerHTML = (CARGOES as Cargo[])
-        .map((k) => `<span class="rb-chip">${CARGO[k].icon}&nbsp;${rival.purse[k] ?? 0}</span>`)
+        .map((k) => `<span class="rb-chip">${cargoIconHtml(k)}&nbsp;${rival.purse[k] ?? 0}</span>`)
         .join("");
       for (let r = 0; r < H; r++) for (let c = 0; c < W; c++) {
         const g = rivalBoard.grid[r]?.[c] ?? null;
@@ -5268,9 +5301,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (!isGuest()) {
         if (trucksDirty) {
           trucks.trucks = planTrucksTrucksMerge(trucks.trucks, planTrucks(eco));
-          // TRAFFIC-01: the road surface is the cars' world too — replan them
-          // on the same edge. A car whose route is unchanged keeps its place.
-          cars.cars = planCars(track, cars.cars, carCount);
+          // TRAFFIC-02: bounded trips — town-derived access nodes, host-only.
+          // Retains unaffected trips on road edits (planCars checks revision).
+          cars.cars = planCars(track, grid, cars.cars, carCount, seed);
           trucksDirty = false;
           // AI-03: the replan no longer resets driving lorries — see
           // planTrucksTrucksMerge just above trucksTick. seenDeliveries is
@@ -5285,7 +5318,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // no cost, no behaviour change).
         tickTrucks(trucks, dt, protests.size > 0 ? new Set(protests.keys()) : undefined);
         // TRAFFIC-01: the ambient cars roll on the same frame, host/solo only.
-        tickCars(cars, dt);
+        tickCars(cars, dt, track, grid, seed);
       } else {
         // Guest: vehicles are host-authoritative — already synced via snapshot/delta,
         // just ensure world.vehicles reflects the synced state (applied in delta handler)
@@ -5482,13 +5515,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // without this branch a dirty world never receives lorries at all.
       if (trucksDirty) {
         trucks.trucks = planTrucksTrucksMerge(trucks.trucks, planTrucks(eco));
-        cars.cars = planCars(track, cars.cars, carCount);
+        cars.cars = planCars(track, grid, cars.cars, carCount, seed);
         trucksDirty = false;
         quarry.setTruckServed(truckCargos(trucks.trucks, now));
         rivalQuarry.setTruckServed(truckCargos(trucks.trucks, now, "ai"));
       }
       tickTrucks(trucks, dtMs, protests.size > 0 ? new Set(protests.keys()) : undefined);
-      tickCars(cars, dtMs);
+      tickCars(cars, dtMs, track, grid, seed);
       collectDeliveries(now);
     },
     /** TRAFFIC-01 diagnostics: the ambient cars by NAME (car 1 / car 2 /
@@ -5496,9 +5529,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      *  dial can tell them apart while the art is still the lorry. */
     get traffic() {
       return cars.cars.map((c) => ({
-        name: c.name, loop: c.loop, reverse: c.reverse,
+        name: c.name, state: (c as any).state ?? "driving", loop: (c as any).loop ?? false, reverse: (c as any).reverse ?? false,
         leg: c.leg, t: Math.round(c.t * 1000) / 1000,
         routeTiles: c.route.length,
+        originTownId: (c as any).originTownId ?? null,
+        destTownId: (c as any).destTownId ?? null,
+        origin: (c as any).origin ?? null,
+        dest: (c as any).dest ?? null,
+        fade: (c as any).fade ?? 1,
       }));
     },
     /** TRAFFIC-01 perf dial: set the ambient-traffic volume (0 clears the
@@ -5507,7 +5545,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     setTraffic: (count: number) => {
       if (isGuest()) return [];
       carCount = Math.max(0, Math.min(64, Math.trunc(count) || 0));
-      cars.cars = planCars(track, cars.cars, carCount);
+      cars.cars = planCars(track, grid, cars.cars, carCount, seed);
       renderer?.setWorld(world);
       return cars.cars.map((c) => c.name);
     },

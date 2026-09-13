@@ -107,16 +107,20 @@ export function readTiles(track: Track, indices: Iterable<number>): TileChange[]
 export function applyTrackDelta(track: Track, tiles: DeltaMsg["tiles"]): void {
   if (!Array.isArray(tiles)) return;
   const n = track.dirt.length;
+  let changed = false;
   for (const entry of tiles) {
     if (!entry || typeof entry !== "object") continue;
     const c = entry as Partial<TileChange>;
     if (typeof c.i !== "number" || !Number.isInteger(c.i) || c.i < 0 || c.i >= n) continue;
     const i: number = c.i;
+    const beforeD = track.dirt[i], beforeR = track.road[i], beforeO = track.owner[i], beforeU = track.upgraded[i];
     setByte(track.dirt, i, c.dirt);
     setByte(track.road, i, c.road);
     setByte(track.owner, i, c.owner);
     setByte(track.upgraded, i, c.upgraded);
+    if (track.dirt[i] !== beforeD || track.road[i] !== beforeR || track.owner[i] !== beforeO || track.upgraded[i] !== beforeU) changed = true;
   }
+  if (changed) track.revision++;
 }
 
 function setByte(layer: Uint8Array, i: number, v: unknown): void {

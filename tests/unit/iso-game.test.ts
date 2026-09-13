@@ -1901,7 +1901,9 @@ describe("PP-08 gold is reserved for Black Market sabotage", () => {
     await settle();
     const sec = root.querySelector('[data-black="security"]') as HTMLElement;
     expect(sec.classList.contains("disabled")).toBe(false);
-    expect(sec.textContent).toMatch(/2🌾/);      // the cost is shown in materials
+    // #166: materials cost is a gem badge, not the OS wheat emoji
+    expect(sec.querySelector('img.cargo-ic[alt="Grain"]')).toBeTruthy();
+    expect(sec.querySelector(".sab-cost")?.textContent).toMatch(/2/);
     sec.click();
     await settle();
     expect(h.purse.grain).toBe(0);

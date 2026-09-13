@@ -96,15 +96,16 @@ export interface SnapshotMsg {
 }
 
 /**
- * MP-05: the delta's player entry. The snapshot carries the §4 shape (id, vp,
- * purse); a guest ALSO needs the per-seat opening allowances it previews
- * prices from (`freeTrack` / `freeDepots`), and the delta is where MP-05 may
- * add them — additively, so a v1 reader that ignores them still plays.
+ * MP-05: the delta's player entry. The opening allowances a guest previews
+ * prices from (`freeTrack` / `freeDepots`) were declared HERE first, because
+ * the delta was the only wire MP-05 could add to. #137 moved them onto
+ * `WirePlayer` itself — the snapshot's player record has always carried them
+ * (`wirePlayers()` in game.ts), it was only ever read for the purse, so a guest
+ * that joined or resynced a progressed match kept advertising allowances the
+ * host had already spent. One record, two wires: the alias below is what that
+ * looks like in the types.
  */
-export type DeltaPlayer = Snapshot["players"][number] & {
-  freeTrack?: number;
-  freeDepots?: number;
-};
+export type DeltaPlayer = Snapshot["players"][number];
 
 /**
  * host → server → all guests. Steady state.

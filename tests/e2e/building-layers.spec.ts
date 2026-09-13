@@ -2,6 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { bootBudget } from "./boot";
+import { MAX_WAIT_MS } from "../../src/iso/loading-screen";
 
 // ══════════════════════════════════════════════════════════════════════════
 // ART-1950S / TICKET-B0 — the per-building PNG layers must ship in the
@@ -163,13 +164,35 @@ async function readReport(page: Page): Promise<LayerReport> {
 
 // ── boot ──────────────────────────────────────────────────────────────────
 
-/**
- * Two bootBudget waits run in series (reach the map, then let the art settle)
- * plus a bounded completeness poll, so a test's own ceiling has to be wider
- * than a single boot. The inner waits keep the honest budgets — this only
- * stops the project's 30s from firing before them on a slow runner.
- */
-const specTimeout = (): number => Math.min(240_000, bootBudget() * 2 + 30_000);
+// ── budgets ───────────────────────────────────────────────────────────────
+//
+// Three waits run in series here, and they are not the same wait:
+//
+//   phase  — the map is reachable. `bootBudget()` sizes this for every spec in
+//            the suite (tests/e2e/boot.ts), and this one is no different.
+//   settle — every tracked art load has finished: the monolith and layer
+//            atlases, ground textures, scenery, liveries, road materials AND
+//            174 building PNGs decoded. The app gives those loads `MAX_WAIT_MS`
+//            of its own before it lifts the overlay and carries on with
+//            whatever landed, so a spec that gave up sooner would fail a boot
+//            the game itself considers merely slow — which is the same mistake
+//            #136 was filed about, one level up. Hence: the app's ceiling plus
+//            margin, and never less than the phase budget (phone projects
+//            already allow more than the app needs).
+//   poll   — a grace window over a state that, post-settle, is already final.
+//
+// The test's own ceiling is their sum plus room for the assertions, so the
+// project's 30s cannot fire before a wait that is honestly budgeted.
+
+/** The app's own patience for the boot art loads, plus margin. */
+const settleBudget = (): number => Math.max(bootBudget(), MAX_WAIT_MS + 15_000);
+/** Grace for the post-settle inclusion poll. */
+const POLL_GRACE = 15_000;
+/** The broken scenario cannot complete, so it does not wait long for it. */
+const BROKEN_POLL_GRACE = 2_000;
+
+const specTimeout = (): number =>
+  Math.min(300_000, bootBudget() + settleBudget() + POLL_GRACE + 30_000);
 
 /** Walk the front door to a booted island, like iso-game.spec.ts does. */
 async function bootIso(page: Page, search = "?seed=79"): Promise<void> {
@@ -197,16 +220,17 @@ async function bootIso(page: Page, search = "?seed=79"): Promise<void> {
  * look gone (`__iso.loading` is false before `show()` mounts it and true
  * through its fade) and not for the building table to be non-empty.
  * `artLoad.ready` is the loading screen's own completion flag: every task it
- * was given, "buildings" among them, has resolved or failed. A timeout is
- * reported as the settle state that never arrived, which is the actionable
- * half of it.
+ * was given, "buildings" among them, has resolved or failed. Budgeted by
+ * `settleBudget()` — the app's own `MAX_WAIT_MS` patience and then some, not
+ * the phase budget — and a timeout is reported as the settle state that never
+ * arrived (`done`/`total`), which is the actionable half of it.
  */
 async function waitForArtSettled(page: Page): Promise<void> {
   const settled = await page
     .waitForFunction(() => {
       const l = (window as unknown as { __iso?: { artLoad?: { ready: boolean } } }).__iso?.artLoad;
       return !!l && l.ready === true;
-    }, null, { timeout: bootBudget() })
+    }, null, { timeout: settleBudget() })
     .then(() => true, () => false);
   if (settled) return;
   const state = await page
@@ -424,7 +448,7 @@ test.describe("building PNG layers ship in the built game", () => {
 
   test("every buildings-manifest sprite installs, at every tier the quality cap loads", async ({ page }) => {
     const want: Expectation = { required: REQUIRED, expectCap: CAP_OF.high, wantTiers: tiersUnder(CAP_OF.high) };
-    const m = await measureBoot(page, "?seed=79", want, 15_000);
+    const m = await measureBoot(page, "?seed=79", want, POLL_GRACE);
 
     expect(REQUIRED.length, "assets/buildings/manifest.json declares no sprites — nothing to check").toBeGreaterThan(0);
     expect(m.complete, `the required building layers never all installed after the boot loads settled — ${verdict(m)}`).toBe(true);
@@ -474,7 +498,7 @@ test.describe("building PNG layers ship in the built game", () => {
     const progress = watchLayerProgress(page, REQUIRED);
     let m: BootMeasurement;
     try {
-      m = await measureBoot(page, "?seed=79", want, 15_000);
+      m = await measureBoot(page, "?seed=79", want, POLL_GRACE);
     } finally {
       await progress.stop();
     }
@@ -539,7 +563,7 @@ test.describe("building PNG layers ship in the built game", () => {
 
     // Settled, and genuinely incomplete: a short poll (this can never finish)
     // rather than a boot budget spent waiting on a 404.
-    const m = await measureBoot(page, "?seed=79", want, 2_000);
+    const m = await measureBoot(page, "?seed=79", want, BROKEN_POLL_GRACE);
     const { report, log } = m;
 
     expect(m.complete, `the 404 route did not take effect — ${missingFile} installed anyway`).toBe(false);
@@ -575,7 +599,7 @@ test.describe("building PNG layers ship in the built game", () => {
     // load — so the tiers come from the cap the app reports, and the cap
     // itself is pinned.
     const want: Expectation = { required: REQUIRED, expectCap: CAP_OF.medium, wantTiers: tiersUnder(CAP_OF.medium) };
-    const m = await measureBoot(page, "?seed=79&quality=medium", want, 15_000);
+    const m = await measureBoot(page, "?seed=79&quality=medium", want, POLL_GRACE);
 
     expect(m.report.quality, "the ?quality=medium flag did not reach the graphics store").toBe("medium");
     expect(m.complete, `the required building layers never all installed at medium quality — ${verdict(m)}`).toBe(true);

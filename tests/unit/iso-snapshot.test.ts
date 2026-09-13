@@ -214,6 +214,67 @@ describe("E10 round trip", () => {
   });
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// #137 — the setup allowances on the player record.
+//
+// `freeTrack` / `freeDepots` are DATA on the seat (E8), and a full state that
+// restores the purse but not them leaves a guest advertising a free Depot and
+// free dirt tiles the host already spent. These pin the WIRE half: what
+// `buildSnapshot` puts in a player record is what `applySnapshot` hands back —
+// zero included, because on the wire "0" and "absent" are different facts.
+// ══════════════════════════════════════════════════════════════════════════
+describe("#137 setup allowances ride the player record", () => {
+  /** The same world with both seats' allowances set: seat 0 EXHAUSTED, seat 1
+   *  partially spent. */
+  function withAllowances(): SnapshotSource {
+    const src = source();
+    src.players = [
+      { ...src.players[0], freeTrack: 0, freeDepots: 0 },
+      { ...src.players[1], freeTrack: 5, freeDepots: 1 },
+    ];
+    return src;
+  }
+
+  it("round-trips an exhausted allowance — zero is a value, not a missing field", () => {
+    const out = applySnapshot(buildSnapshot(withAllowances()));
+    expect(out.players[0].freeTrack).toBe(0);
+    expect(out.players[0].freeDepots).toBe(0);
+    // …and through the actual wire form, not just the object graph: a JSON
+    // round trip is where a `||`-style default would quietly eat the zero.
+    const wire = JSON.parse(JSON.stringify(buildSnapshot(withAllowances())));
+    expect(applySnapshot(wire).players[0]).toMatchObject({ freeTrack: 0, freeDepots: 0 });
+  });
+
+  it("round-trips a partially spent allowance beside it", () => {
+    const out = applySnapshot(buildSnapshot(withAllowances()));
+    expect(out.players[1]).toMatchObject({ freeTrack: 5, freeDepots: 1 });
+  });
+
+  it("leaves an absent allowance absent — a record with nothing to say restores nothing", () => {
+    // Solo saves and pre-#137 producers send no allowances. Inventing a number
+    // here would be as wrong as dropping one: the reader's `typeof … ===
+    // "number"` guard is what keeps "absent" from reading as "exhausted".
+    const out = applySnapshot(buildSnapshot(source()));
+    expect(out.players[0].freeTrack).toBeUndefined();
+    expect(out.players[0].freeDepots).toBeUndefined();
+  });
+
+  it("rejects a malformed allowance instead of letting a guest keep its own", () => {
+    const base = buildSnapshot(withAllowances());
+    for (const bad of [NaN, Infinity, "0", null, {}]) {
+      const s = { ...base, players: [{ ...base.players[0], freeTrack: bad }, base.players[1]] };
+      expect(validateSnapshot(s)?.code, String(bad)).toBe("malformed");
+      expect(() => applySnapshot(s), String(bad)).toThrow(SnapshotError);
+    }
+  });
+
+  it("rejects a player list that is not a list of records", () => {
+    const base = buildSnapshot(source());
+    expect(validateSnapshot({ ...base, players: 7 })!.code).toBe("malformed");
+    expect(validateSnapshot({ ...base, players: [null] })!.code).toBe("malformed");
+  });
+});
+
 describe("E10 version gating", () => {
   it("accepts a matching version", () => {
     expect(validateSnapshot(buildSnapshot(source()))).toBeNull();

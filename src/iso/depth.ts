@@ -45,6 +45,8 @@ export interface DrawItem {
   decor?: boolean;
   /** Opaque payload the picker returns (industry, station, …). */
   ref?: unknown;
+  /** TRAFFIC-02: optional opacity 0..1 for fade in/out at town access points. */
+  alpha?: number;
 }
 
 /** A DrawItem resolved against the atlas: world rect + depth key. */

@@ -1078,11 +1078,19 @@ export class IsoRenderer {
     const src = this.atlas.zoomFrameRect(p.def, frame, az);
     const dst = az === z ? src : this.atlas.zoomFrameRect(p.def, frame, z);
     const [sx, sy] = worldToScreen(this.cam, p.wx, p.wy);
+    // TRAFFIC-02: ambient cars fade in/out at town access points.
+    const alpha = (p as Placed & { alpha?: number }).alpha;
+    const needsAlpha = typeof alpha === "number" && alpha >= 0 && alpha < 1;
+    if (needsAlpha) {
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+    }
     ctx.drawImage(
       img as unknown as CanvasImageSource,
       src.x, src.y, src.w, src.h,
       Math.floor(sx), Math.floor(sy), dst.w, dst.h,
     );
+    if (needsAlpha) ctx.restore();
     if (this.logRender) this.trace("blit", {
       sprite: p.sprite, tile: [p.tx, p.ty], def: p.def,
       z, sampled: az, context: p.ref != null ? "world" : "overlay",
