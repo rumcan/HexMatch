@@ -83,9 +83,9 @@ export const readSave = (): SaveGamePayload | null => {
     const raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return null;
     const d = JSON.parse(raw) as SaveGamePayload;
-    // v10 → v11 only adds beach on formerly unbuildable water, after all
+    // v10 → v12 adds multiplayer wires (market/protests/vehicles/boards) and beach; older saves stay loadable
     // seeded placement. Track bytes and every existing placement are intact.
-    if (d.v !== SAVEGAME_VERSION || (d.snapV !== SNAPSHOT_VERSION && d.snapV !== 10)) return null;
+    if (d.v !== SAVEGAME_VERSION || (d.snapV !== SNAPSHOT_VERSION && d.snapV !== 10 && d.snapV !== 11)) return null;
     if (typeof d.seed !== "number" || !d.track) return null;
     return d;
   } catch { return null; }

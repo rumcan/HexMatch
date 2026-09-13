@@ -31,8 +31,12 @@ import type { Snapshot } from "../iso/snapshot";
  * v3 (PP-14b): the delta/snapshot gained `rivalSabotage` (Black-Market
  * sabotage on the guest-seat plant). A v2 peer would drop that state and show
  * a plant the host already froze, so mixed-version rooms must refuse.
+ * v4 (MP-AUDIT): the delta/snapshot gain market, vehicle, protest, board and
+ * winner fields (market parity, vehicle presentation, cross-choice, host
+ * departure). A v3 peer would drop those and desync the guest's purse, roads
+ * or board, so mixed-version rooms must refuse.
  */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 /**
  * Realtime WS frame cap in bytes. Mirrors the SDK's `MAX_BROADCAST_BYTES`
@@ -94,6 +98,19 @@ export interface DeltaMsg {
    * and NOT seat-mirrored — see `RivalSabotage` in snapshot.ts.
    */
   rivalSabotage?: Snapshot["rivalSabotage"];
+  /** MP-AUDIT: market offers (guest parity) */
+  market?: Snapshot["market"];
+  /** MP-AUDIT: protest roadblocks */
+  protests?: Snapshot["protests"];
+  /** MP-AUDIT: vehicle presentation (trucks + ambient cars) */
+  trucks?: Snapshot["trucks"];
+  cars?: Snapshot["cars"];
+  /** MP-AUDIT: authoritative boards for both seats (compact gem tuples) */
+  boards?: Snapshot["boards"];
+  /** MP-AUDIT: cross-bonus choice prompt */
+  crossPrompt?: Snapshot["crossPrompt"];
+  /** MP-AUDIT: winner identity (host publishes, guest mirrors) */
+  winner?: Snapshot["winner"];
   /**
    * MP-05: a one-shot line for the guest ("your action was refused — 2 more
    * Ore"). Rides the next delta, which the relay already forwards; there is no
@@ -144,7 +161,7 @@ export const MAX_SNAPSHOT_CHUNKS = 128;
 /** guest → server → host only. Guests never mutate locally. */
 export interface IntentMsg {
   type: "intent";
-  action: "build" | "demolish" | "harvest" | "trade" | "skill";
+  action: "build" | "demolish" | "harvest" | "trade" | "skill" | "market" | "blackMarket" | "cross" | "vehicle";
   payload: unknown;
 }
 
