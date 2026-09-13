@@ -168,8 +168,8 @@ describe("E11 the game boots", () => {
     expect(root.querySelectorAll("canvas")).toHaveLength(3);
     const tools = [...root.querySelectorAll("[data-tool]")].map(
       (b) => (b as HTMLElement).dataset.tool);
-    // PP-06 added the "plant" tool (an additional processing plant).
-    expect(tools).toEqual(["dirt", "road", "harvester", "plant", "demolish"]);
+    // The pointer ("select") leads: it is the hand you hold between builds.
+    expect(tools).toEqual(["select", "dirt", "road", "harvester", "plant", "demolish"]);
   });
 
   it("starts in the factory-placement phase with a real map", async () => {
@@ -846,8 +846,8 @@ describe("J1 the quarry is mounted in the iso app", () => {
     await boot();
     const tools = [...root.querySelectorAll("[data-tool]")].map(
       (b) => (b as HTMLElement).dataset.tool);
-    // PP-06 added the "plant" tool (an additional processing plant).
-    expect(tools).toEqual(["dirt", "road", "harvester", "plant", "demolish"]);
+    // The pointer ("select") leads; PP-06 added the "plant" tool.
+    expect(tools).toEqual(["select", "dirt", "road", "harvester", "plant", "demolish"]);
     const panels = [...root.querySelectorAll("[data-panel]")].map(
       (b) => (b as HTMLElement).dataset.panel);
     expect(panels).toEqual([]);
@@ -1078,7 +1078,12 @@ describe("TOAST-ONCE the win-point popups show once and stay gone", () => {
     expect(h.dragBuild("dirt", hx, hy + 1, hx, hy + 2)).toBeTruthy();
     await settle();
     expect(h.freeTrack).toBe(10);        // the wording really did change
-    expect(banner.classList.contains("hidden")).toBe(true);
+    // The first committed track retires the free-track line entirely (the
+    // "connect your depot" guidance is done — the popup the first road
+    // shouldn't be hidden behind), so the dismissed line cannot return in
+    // its old wording; whatever line the banner shows next is a DIFFERENT
+    // banner the dismissal never covered.
+    expect(banner.textContent).not.toMatch(/free track tiles/i);
   });
 });
 
@@ -1101,7 +1106,7 @@ describe("V5 gems draw the restored sprite art", () => {
   it("the build buttons carry per-tool banner art classes", async () => {
     await boot();
     const tools = [...root.querySelectorAll("[data-tool]")] as HTMLElement[];
-    expect(tools).toHaveLength(5);
+    expect(tools).toHaveLength(6);
     for (const b of tools) expect(b.classList.contains(`bg-${b.dataset.tool}`)).toBe(true);
   });
 });

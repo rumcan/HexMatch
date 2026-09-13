@@ -49,9 +49,10 @@ import { Atlas, buildMasks, loadBuildingLayers, type Manifest, type AtlasImage }
 import { loadGroundTextures } from "./ground";
 import {
   createCamera, centerOnTile, resizeCamera, zoomStepAt, tileToScreenAt,
-  createGesture, pointerDown, pointerMove, pointerUp, worldToScreen,
+  createGesture, pointerDown, pointerMove, pointerUp, worldToScreen, panBy,
   type Camera, type GestureState,
 } from "./camera";
+import { createLabelLayer, type LabelEntry, type LabelLayer } from "./labels";
 import { IsoRenderer, type World } from "./renderer";
 import { DEFAULT_ROAD_STYLE } from "./road-renderer";
 import { scatterScenery, type Scenery } from "./scenery";
@@ -196,6 +197,12 @@ export const HARVEST_MS = 3000;      // economy tick
 export const AI_BUILD_MS = 9000;
 export const AI_IDLE_MS = 2500;
 /**
+ * The WASD camera pan speed, in WORLD pixels per second (÷zoom in the frame
+ * loop, so the map glides at the same on-screen speed at every zoom step).
+ * Shift holds double.
+ */
+export const PAN_SPEED = 560;
+/**
  * VP-01: how much Gold the rival keeps back for its own economy when it buys a
  * Blockade. Gold buys sabotage and nothing else (PP-08), but a rival that has
  * spent its last coin on a hit and cannot pay for its next Depot has won the
@@ -235,7 +242,13 @@ export const DIRT_DEMOLISH_REFUND: Cargo[] = ["wood", "stone"];
 export { VP_TARGET, FREE_SETUP_DEPOTS };
 
 /** PP-06: `plant` raises an ADDITIONAL processing plant beside another town. */
-export type Tool = "dirt" | "road" | "harvester" | "plant" | "demolish";
+/**
+ * `select` is the pointer: it never builds — it only highlights the tile
+ * under the cursor and lets the inspector say what it is. Right-click drops
+ * whatever tool is held back to it (the strategy-game "escape to pointer"),
+ * and Q does the same from the keyboard.
+ */
+export type Tool = "select" | "dirt" | "road" | "harvester" | "plant" | "demolish";
 
 export interface PlayerState {
   /** Stable market index — offers are routed by it (`trade.ts`). */
@@ -426,6 +439,23 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   };
   let phase: Phase = "setup-factory";
   let tool: Tool = "dirt";
+  /**
+   * NAMES: the top-bar "Names" button shows/hides the tags that float over
+   * resources, towns, plants and depots while you pan. ON by default (a
+   * strategy map should be readable), remembered in localStorage.
+   */
+  const NAMES_STORAGE_KEY = "hexmatch:names";
+  let showNames = (() => {
+    try { return localStorage.getItem(NAMES_STORAGE_KEY) !== "0"; } catch { return true; }
+  })();
+  /**
+   * The first-road blocker: the guidance banners ("N free track tiles —
+   * connect your depot to your Factory") exist to get the player's FIRST
+   * track on the map. The moment a human track commit lands, the guidance
+   * has done its job — keep showing it over the map after that reads as a
+   * popup the player is stuck behind.
+   */
+  let firstTrackBuilt = false;
   let winner: PlayerState | null = null;
   let winningSource: DecisiveSource = null;
   let endingView: EndingScreenHandle | null = null;
@@ -559,6 +589,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // wires the BUILD / BLACK MARKET / QUARRY / chips chrome to them.
   ui = createOriginalUi(quarry.board, market, meTrader, {
     onTool: (t) => { tool = t as Tool; },
+    // NAMES: the top-bar "Names" button. The game owns the state (and the
+    // localStorage record); the button only reports the toggle and reads
+    // `showNames` back through `paint`.
+    onNames: () => {
+      showNames = !showNames;
+      try { localStorage.setItem(NAMES_STORAGE_KEY, showNames ? "1" : "0"); } catch { /* private mode */ }
+      labels.setEnabled(showNames);
+    },
+    names: showNames,
     onRecenter: () => {
       const f = factoryOf("you") ?? focus;
       cam = centerOnTile(cam, f.tx, f.ty);
@@ -691,11 +730,49 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // A1: world-anchored floats — the lorry's "+N" at the Factory, and the
   // marker over the rival's plant when sabotage lands. Anchored to the live
   // camera, so they pan and zoom with the tile they belong to.
-  const floats: FloatLayer = createFloatLayer(ui.mapHost, (tx, ty) => {
+  //
+  // The tile→CSS-px mapping is shared by the three anchored layers: the
+  // A1 floats, the NAMES tags (labels) and the 1-second build flash
+  // (flashLayer — a FloatLayer of its own so the delivery/sabotage texts a
+  // test reads from `floats` never mix with the on-map "build it HERE" line).
+  const tileScreenCss = (tx: number, ty: number): [number, number] => {
     const [x, y] = tileToScreenAt(cam, tx, ty);
     const d = dpr();
     return [x / d, y / d];
-  });
+  };
+  const floats: FloatLayer = createFloatLayer(ui.mapHost, tileScreenCss);
+  const labels: LabelLayer = createLabelLayer(ui.mapHost, tileScreenCss);
+  labels.setEnabled(showNames);
+  const flashLayer: FloatLayer = createFloatLayer(ui.mapHost, tileScreenCss);
+  /**
+   * The 1-second on-map flash: when a build is REFUSED, say it at the spot
+   * the player aimed at — where the thing they tried to build actually
+   * belongs — instead of (only) in a toast at the edge of the screen.
+   */
+  const flashAt = (tx: number, ty: number, text: string, tone: "bad" | "good" = "bad") => {
+    if (!text) return;
+    flashLayer.add(text, tx, ty, { life: 1000, cls: `build-flash ${tone}` });
+  };
+  /**
+   * The one-line version of each placement refusal, sized for a 1-second
+   * on-map flash (the toast keeps the full sentence). Keys match the
+   * `PlantRefusal` codes and the `buildRefusal` track codes.
+   */
+  const PLANT_FLASH_TEXT: Record<string, string> = {
+    "out-of-bounds": "Off the map",
+    water: "No plant on water",
+    occupied: "Ground is taken",
+    building: "A building is here",
+    track: "Clear the track first",
+    "no-town": "Plant must touch a town",
+  };
+  const TRACK_FLASH_TEXT: Record<string, string> = {
+    "out-of-bounds": "Off the map",
+    water: "Can't build on water",
+    occupied: "Tile is occupied",
+    rough: "Road can't cross rough — use Dirt",
+    "not-adjacent": "Drag out from your Factory / Depot",
+  };
 
   // A1: the rival owns a Processing Plant now, so Black Market sabotage has
   // somewhere to land that is not the buyer's own board.
@@ -953,7 +1030,50 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // guest snapshots and deltas), so it retires the network-derived caches
     // too: hover routes, score breakdowns, inspector components, drag previews.
     netVersion++;
+    syncLabels();
     renderer?.setWorld(world);
+  };
+
+  /**
+   * NAMES: rebuild the tag set from the live world — industry footprints
+   * (anchored at the footprint centre so the name sits over the building,
+   * not its top corner), towns, the plants and the depots, each with its
+   * owner. Runs inside `syncWorld`, so any build/demolish/snapshot that
+   * changes who stands where updates the tags on the same beat.
+   */
+  const syncLabels = () => {
+    const entries: LabelEntry[] = [];
+    for (const ind of grid.industries) {
+      const def = INDUSTRY_BY_KEY[ind.type];
+      entries.push({
+        key: `ind-${ind.id}`,
+        name: def?.name ?? ind.type,
+        tx: ind.tx + ind.w / 2,
+        ty: ind.ty + ind.h / 2,
+        cls: "label-industry",
+      });
+    }
+    for (const t of grid.towns) {
+      entries.push({ key: `town-${t.id}`, name: "Town", tx: t.tx, ty: t.ty, cls: "label-town" });
+    }
+    for (const f of eco.factories) {
+      entries.push({
+        key: `plant-${f.owner}-${f.id}`,
+        name: f.owner === me.id ? "Your Plant" : "Rival's Plant",
+        tx: f.tx + FACTORY_FOOTPRINT[0] / 2,
+        ty: f.ty + FACTORY_FOOTPRINT[1] / 2,
+        cls: "label-plant",
+      });
+    }
+    for (const hv of eco.harvesters) {
+      entries.push({
+        key: `depot-${hv.id}`,
+        name: hv.owner === me.id ? "Your Depot" : "Rival Depot",
+        tx: hv.tx, ty: hv.ty,
+        cls: "label-depot",
+      });
+    }
+    labels.sync(entries);
   };
 
   /**
@@ -1097,10 +1217,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       toast(plan.code === "not-near-town"
         ? "The Factory must be placed next to a town — its footprint must share an edge with a town tile."
         : `Can't build there — ${plan.why ?? "not buildable"}.`, "bad");
+      if (p.human) flashAt(tx, ty, plan.code === "not-near-town" ? "Factory must touch a town" : "Can't build here");
       return false;
     }
     if (eco.factories.some((f) => f.ownerId === p.i + 1)) {
       toast(`${p.human ? "You already have" : "That seat already has"} a starting Factory.`, "bad");
+      if (p.human) flashAt(tx, ty, "You already have a Factory");
       return false;
     }
     // W2: the factory carries its builder's track-owner id (player index + 1).
@@ -1173,14 +1295,23 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * deadlocking: Oil production itself needs a Depot.
    */
   function placeHarvester(tx: number, ty: number, p: PlayerState): boolean {
-    if (!canBuildOn(grid, "dirt", tx, ty)) { toast("Can't build there.", "bad"); return false; }
+    if (!canBuildOn(grid, "dirt", tx, ty)) {
+      toast("Can't build there.", "bad");
+      if (p.human) flashAt(tx, ty, "Can't build here");
+      return false;
+    }
     if (eco.harvesters.some((h) => h.tx === tx && h.ty === ty)) {
-      toast("A depot is already there.", "bad"); return false;
+      toast("A depot is already there.", "bad");
+      if (p.human) flashAt(tx, ty, "A depot is already here");
+      return false;
     }
     const h: Harvester = { id: allocHarvesterId(), owner: p.id, ownerId: p.i + 1, tx, ty };
     const served = industriesInCatchment(grid, h);
     if (!served.length) {
       toast("A depot needs an industry in its 4×4 catchment.", "bad");
+      // The flash says WHERE, at the spot the player picked: beside a
+      // resource node, inside the 4×4 the Depot would reach.
+      if (p.human) flashAt(tx, ty, "Depot: place beside a resource (4×4)");
       return false;
     }
     // PP-16: one Depot holds one industry, and the first road at the resource
@@ -1192,6 +1323,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const locks = industryLocks(eco);
     if (served.every((ind) => locks.has(ind.id))) {
       toast("That industry is already claimed — only one Depot may hold it.", "bad");
+      if (p.human) flashAt(tx, ty, "Resource already claimed");
       return false;
     }
     // PP-05: priced only now that the site is legal, and spent only when the
@@ -1200,6 +1332,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const price = priceDepot(p.purse, p.freeDepots);
     if (!price.affordable) {
       toast(`A Depot costs ${costLabel(DEPOT_COST)} — you need ${shortfallLabel(price.missing)}.`, "bad");
+      if (p.human) flashAt(tx, ty, `Needs ${costCompact(DEPOT_COST)}`);
       return false;
     }
     if (!spend(p, price.cost)) return false;      // guard; `price.affordable` holds
@@ -1233,12 +1366,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   function placePlant(tx: number, ty: number, p: PlayerState): boolean {
     const why = plantRefusal(grid, track, eco, tx, ty);
     if (why !== null) {
-      if (p.human) toast(PLANT_REFUSAL_TEXT[why], "bad");
+      if (p.human) {
+        toast(PLANT_REFUSAL_TEXT[why], "bad");
+        // The toast says the rule; the flash — one short line at the refused
+        // spot — says where the thing the player aimed at actually goes.
+        flashAt(tx, ty, PLANT_FLASH_TEXT[why] ?? "Can't build here");
+      }
       return false;
     }
     if (!canAffordPlant(p.purse)) {
       if (p.human) {
         toast(`Not enough materials — a processing plant costs ${plantCostLabel()}.`, "bad");
+        flashAt(tx, ty, `Plant costs ${plantCostLabel()}`);
       }
       return false;
     }
@@ -1264,6 +1403,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // W2: every tile the drag lays is stamped with the builder's owner id,
     // so the committed road is exactly the tiles that join `p`'s network.
     const res = commitDrag(track, kind, pv, p.i + 1);
+    // The first human track on the map retires the "connect your depot to
+    // your Factory" guidance banner — the guidance is done, and a banner
+    // over the map after the first road reads as a popup blocking the game.
+    if (p.human && res.built.length && !firstTrackBuilt) {
+      firstTrackBuilt = true;
+      // …and mark the spot with the one line that says what just happened,
+      // at the tile the drag ENDED on (the new end of the network).
+      const end = res.built[res.built.length - 1];
+      if (end) flashAt(end[0], end[1], kind === "road" ? "Road laid" : "Dirt Road laid", "good");
+    }
     // SFX-01: one drag, one sound — a shovel patting earth down for Dirt, or
     // gravel dressed and rolled for a paved Road. The tile count rides along as
     // `step`, so a six-tile line gets two extra pats behind the first instead
@@ -1316,6 +1465,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (pi >= 0) {
       if (plantsOf(eco, p.id).length <= 1) {
         toast("You can't demolish your only processing plant.", "bad");
+        if (p.human) flashAt(tx, ty, "Your last plant stays");
         return;
       }
       eco.factories.splice(pi, 1);
@@ -1339,12 +1489,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (!removedKind) {
       // PP-13: a public highway is track you may USE but never tear up — say
       // so, rather than reporting an empty tile.
+      const publicRoad = isPublicRoad(track, tx, ty);
       toast(
-        isPublicRoad(track, tx, ty)
+        publicRoad
           ? "That's a public road — it isn't yours to demolish."
           : "Nothing to demolish there.",
         "bad",
       );
+      if (p.human) flashAt(tx, ty, publicRoad ? "Public road — can't tear up" : "Nothing to demolish");
       return;
     }
     // PP-13: tearing up a DIRT ROAD salvages one of the two materials it cost
@@ -2668,7 +2820,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     } else if (pendingProtest) {
       bannerKey = "protest-ready";
       banner = `Protest ready — click a public road to stop ALL trucks for ${fmtProtestLeft(PROTEST_MS)} (Esc cancels)`;
-    } else if (me.freeTrack > 0) {
+    } else if (me.freeTrack > 0 && !firstTrackBuilt) {
+      // The guidance line exists to get the FIRST road down — before that,
+      // it is the one thing a new player needs over the map. After it, it
+      // sits over the work as a popup the player has to close (the reported
+      // "the game looks frozen while I lay my first road"), so the first
+      // committed track retires it. The free-tile count still shows in the
+      // drag's modebar, where it belongs.
       bannerKey = "free-track";
       banner = `${me.freeTrack} free track tiles remaining — connect your depot to your Factory`;
     } else if (tool === "dirt") {
@@ -2857,6 +3015,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       resetIn: Math.max(0, RESET_COOLDOWN_MS - (now - lastResetAt)),
       // PP-14b: the tycoon portrait picked on the start screen.
       portrait,
+      // NAMES: the top-bar Names button paints its pressed state from this.
+      showNames,
     });
   }
 
@@ -2940,8 +3100,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       }
     }
     // TK-001: mouse panning is the MIDDLE button (button === 1). Left and
-    // right mouse presses never enter the pan gesture — the right button has
-    // no map action at all (previously its isPrimary drag could even build).
+    // right mouse presses never enter the pan gesture. The right button's
+    // map action is on RELEASE — it cancels the held tool to the pointer
+    // (see `onUp`) — so a press here still must not start a drag.
     if (isMouse && e.button !== 1) return;
     g = pointerDown(g, { id: e.pointerId, x, y });
   });
@@ -3008,18 +3169,39 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   const onUp = (e: PointerEvent) => {
     const [x, y] = pos(e);
+    // RIGHT-CLICK: the strategy-game "escape to pointer". It cancels whatever
+    // tool is held — and an armed protest, the same thing Esc does — and
+    // leaves the pointer (select) in the hand, which highlights and names
+    // instead of building. A right press never starts a drag, so nothing
+    // below can misread it as a build.
+    if (e.pointerType === "mouse" && e.button === 2) {
+      if (pendingProtest) {
+        pendingProtest = false;
+        toast("Protest cancelled.", "info");
+      } else if (tool !== "select") {
+        tool = "select";
+      }
+      downAt = null;
+      g = pointerUp(g, e.pointerId);
+      return;
+    }
     if (drag && preview) {
       if (preview.tiles.length === 0) {
         // W9: the allowance buys Dirt only, so a paved Road drag with no ore
         // previews nothing at all. Say that, rather than the generic "must
         // extend your network" — which is not why it refused, and reads as a
         // bug.
-        if (tool === "road" && (me.purse.ore ?? 0) < (TRANSPORT.road.cost.ore ?? 0)) {
+        const isRoad = tool === "road";
+        if (isRoad && (me.purse.ore ?? 0) < (TRANSPORT.road.cost.ore ?? 0)) {
           toast(me.freeTrack > 0
             ? "A paved Road costs ore — free setup tiles only cover Dirt Roads."
             : "A paved Road needs ore — connect an ore mine first.", "bad");
+          // The 1-second flash, at the tile the drag STARTED from: it says
+          // what was tried (a Road) and what is missing, in place.
+          flashAt(drag.ax, drag.ay, isRoad ? "Paved Road needs ore" : "No tiles here");
         } else {
           toast("Track must extend your network.", "bad");
+          flashAt(drag.ax, drag.ay, "Track must touch your Factory / Depot");
         }
       } else {
         // MP-05: the endpoints the intent carries are the preview's own, so the
@@ -3079,6 +3261,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
               else if (refusal === "rough") toast("A paved Road can't cross rough ground — use a Dirt Road.", "bad");
               else if (refusal === "occupied") toast("Tile is occupied.", "bad");
               else toast("Can't build there.", "bad");
+              // And the 1-second flash AT the tile that refused — the toast
+              // is at the edge of the screen, the player's eye is here.
+              flashAt(p.tx, p.ty, TRACK_FLASH_TEXT[refusal] ?? "Can't build here");
             }
           }
         }
@@ -3091,6 +3276,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   canvases.overlay.addEventListener("pointercancel", (e) => {
     drag = null; preview = null; downAt = null; g = pointerUp(g, e.pointerId);
   });
+  // The right button is a game control (it drops the held tool to the
+  // pointer), so the browser's context menu must never fight it over the map.
+  canvases.overlay.addEventListener("contextmenu", (e) => e.preventDefault());
   canvases.overlay.addEventListener("wheel", (e) => {
     e.preventDefault();
     const [x, y] = pos(e as unknown as PointerEvent);
@@ -3098,9 +3286,32 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     renderer?.setCamera(cam);
   }, { passive: false });
 
-  window.addEventListener("keydown", (e) => {
-    const map: Record<string, Tool> = { "1": "dirt", "2": "road", "3": "harvester", "4": "plant", "5": "demolish" };
-    if (map[e.key]) tool = map[e.key];
+  /**
+   * WASD map pan (the strategy-game camera). Screen-space, constant WORLD
+   * speed (÷zoom), integrated in the frame loop from `panKeys` — held keys
+   * pan continuously, Shift doubles the speed. The set is cleared on blur so
+   * a key lost to a window switch cannot stick the camera.
+   */
+  const PAN_KEYS = new Set(["w", "a", "s", "d"]);
+  const panKeys = new Set<string>();
+  let panShift = false;
+  const isTypingTarget = (e: KeyboardEvent): boolean => {
+    const t = e.target as HTMLElement | null;
+    return !!t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA" || t.isContentEditable);
+  };
+
+  const onKeydown = (e: KeyboardEvent) => {
+    // Tool hotkeys. `q` is the pointer (select) — the keyboard twin of the
+    // right-click cancel.
+    const map: Record<string, Tool> = { "q": "select", "1": "dirt", "2": "road", "3": "harvester", "4": "plant", "5": "demolish" };
+    if (!isTypingTarget(e) && map[e.key]) tool = map[e.key];
+    // WASD pan — plain keys only (a modified key is a browser/editor
+    // shortcut, not the camera), and never while typing in a field.
+    if (!isTypingTarget(e) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const k = e.key.toLowerCase();
+      if (PAN_KEYS.has(k)) panKeys.add(k);
+      panShift = e.shiftKey;
+    }
     if (e.key === "Escape" && pendingProtest) {
       pendingProtest = false;
       toast("Protest cancelled.", "info");
@@ -3118,7 +3329,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         }
       }
     }
-  });
+  };
+  const onKeyup = (e: KeyboardEvent) => {
+    const k = e.key.toLowerCase();
+    if (PAN_KEYS.has(k)) panKeys.delete(k);
+    if (e.key === "Shift") panShift = false;
+  };
+  // A key released in another window never sends its keyup here — without
+  // this the camera would pan forever on its own.
+  const onWindowBlur = () => { panKeys.clear(); panShift = false; };
+  window.addEventListener("keydown", onKeydown);
+  window.addEventListener("keyup", onKeyup);
+  window.addEventListener("blur", onWindowBlur);
 
   // ── reduced motion ─────────────────────────────────────────────────────
   /**
@@ -3735,6 +3957,22 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       }
       collectDeliveries(t);
 
+      // WASD camera pan: held keys integrate at a constant world speed per
+      // frame (dt-capped like the lorries), ÷zoom so the map glides at the
+      // same on-screen speed at every zoom step. `panBy` clamps to the map.
+      if (panKeys.size > 0 && renderer) {
+        let dx = 0, dy = 0;
+        if (panKeys.has("a")) dx -= 1;
+        if (panKeys.has("d")) dx += 1;
+        if (panKeys.has("w")) dy -= 1;
+        if (panKeys.has("s")) dy += 1;
+        if (dx !== 0 || dy !== 0) {
+          const step = (PAN_SPEED * (panShift ? 2 : 1) * dt) / 1000 / cam.zoom;
+          cam = panBy(cam, dx * step, dy * step);
+          renderer.setCamera(cam);
+        }
+      }
+
       // TRAFFIC-01: trucks and ambient cars share the vehicles list — one
       // depth-sorted pass draws both, and culling treats them identically.
       // TRUCK-BRAND: the atlas decides whether a lorry wears a livery — the
@@ -3744,6 +3982,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const { items, ghost } = overlayFrame();
       renderer!.render(t, items, ghost);
       floats.frame(t);
+      // NAMES: re-anchor the name tags to the live camera (no-op while the
+      // Names button has them hidden).
+      labels.frame();
       paintUi(t);
       raf = requestAnimationFrame(frame);
 
@@ -3894,6 +4135,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     buyBlack: (key: string) => buyBlack(key),
     /** A1: the map floats currently on screen (deliveries + sabotage marks). */
     floats,
+    /** NAMES: the map's name-tag layer (industries, towns, plants, depots). */
+    labels,
+    /** NAMES: the Names-button state — true = tags are shown over the map. */
+    get showNames() { return showNames; },
+    /** The 1-second build flashes currently on the map (texts only). */
+    flashTexts: () => flashLayer.texts(),
+    /** The WASD pan keys currently held (tests the camera input set). */
+    get panKeys() { return [...panKeys]; },
     /** Refresh the reachable set now (spawn tokens for newly reached cargo). */
     refreshQuarry: (now = performance.now()) => quarry.refresh(now),
     /** Story test twin of the player's first successful Oil harvest. */
@@ -4127,6 +4376,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     net?.dispose();
     window.clearInterval(saveIv);
     if (onPageHide) window.removeEventListener("pagehide", onPageHide);
+    // The WASD camera keys: a disposed game must stop panning (and stop
+    // remembering keys held over its head).
+    window.removeEventListener("keydown", onKeydown);
+    window.removeEventListener("keyup", onKeyup);
+    window.removeEventListener("blur", onWindowBlur);
     // AI-03: the dead game must not keep overwriting the live save either;
     // last intact state stays — the interval was the only writer.
     endingView?.destroy();
@@ -4137,6 +4391,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     tutorialView?.destroy();
     tutorialView = null;
     floats.clear();
+    labels.clear();
+    flashLayer.clear();
     cancelAnimationFrame(raf);
     ro.disconnect();
     root.classList.remove("iso-game");
