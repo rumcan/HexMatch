@@ -88,25 +88,65 @@ export function joinRoomByCode(code: string): Promise<HexRoom> {
 }
 
 export interface QuickMatchOptions {
-  /** How long to wait for an opponent before rejecting (default 120s). */
+  /** How long to wait for an opponent before rejecting (default MATCHMAKE_WINDOW_MS). */
   matchmakeTimeoutMs?: number;
   /** How often to poll the pool while waiting (default 1s). */
   pollIntervalMs?: number;
 }
 
 /**
- * Quick match — cross-instance transactional pairing (§8), the call intended
+ * How long ONE matchmake request waits before the SDK gives up on it: it sends
+ * `matchmaking:cancel`, closes the socket and rejects with
+ * "Matchmaking timeout — no opponent found" (SDK 5.27's own default is 120s).
+ *
+ * A bounded window is what makes Auto Matchmaking's Cancel honest: the SDK has
+ * no public cancel for a pending `matchmakeRoom`, so an abandoned request can
+ * only leave the RUN pool when its window closes. Keeping the window short
+ * bounds how long a cancelled player can still be paired with someone
+ * (a ghost ticket). The search itself never stops — `StartScreen` re-issues
+ * the request each time a window closes.
+ */
+export const MATCHMAKE_WINDOW_MS = 30_000;
+
+/**
+ * True when `err` is one of the SDK's matchmaking-search rejections: the
+ * request's waiting window closed, or the server dropped the ticket from the
+ * pool ("no longer active"), or the ticket was cancelled. All three mean the
+ * SEARCH may continue — the caller re-issues `quickMatch` — as opposed to real
+ * failures (access denied, room errors, connection problems), which must
+ * surface to the player.
+ *
+ * SDK 5.27 rejects these with plain `Error`s — no `code`, no `name` to duck-type
+ * on (BETA drift, §1.4), so the messages are matched, loosely and
+ * case-insensitively, the way `isAccessDenied` duck-types its shapes.
+ */
+export function isMatchmakeWindowExpired(err: unknown): boolean {
+  const message = err instanceof Error ? err.message.toLowerCase() : "";
+  return (
+    message.includes("matchmaking timeout") ||
+    message.includes("no longer active") ||
+    message.includes("matchmaking cancelled")
+  );
+}
+
+/**
+ * Matchmaking — cross-instance transactional pairing (§8), the call intended
  * for competitive play. Whoever ends up alone in a fresh room becomes host
  * (MP-07 degrades that into a shareable invite rather than stranding them).
  *
  * NOTE: the ticket sketch passes `createOptions` here, but SDK 5.27's
  * `MatchmakeOptions` accepts only `criteria` + timeouts — matchmaking always
  * mints a 2-player room and `createOptions` is not accepted. Criteria alone.
+ *
+ * One call is one bounded window (see MATCHMAKE_WINDOW_MS); "keep looking
+ * until found or cancelled" is the caller's loop: re-issue whenever
+ * `isMatchmakeWindowExpired` says the window closed.
  */
 export function quickMatch(opts: QuickMatchOptions = {}): Promise<HexRoom> {
   return realtime().matchmakeRoom<HexProtocol>(ROOM_TYPE, {
     criteria: { ...MATCH_CRITERIA },
-    ...opts,
+    matchmakeTimeoutMs: opts.matchmakeTimeoutMs ?? MATCHMAKE_WINDOW_MS,
+    pollIntervalMs: opts.pollIntervalMs,
   });
 }
 

@@ -3,6 +3,7 @@ import {
   NO_ROOM_SERVER_MESSAGE,
   createRoom,
   isAccessDenied,
+  isMatchmakeWindowExpired,
   isOfflineMockRealtime,
   isValidRoomCode,
   joinRoomByCode,
@@ -42,10 +43,7 @@ type ScreenState =
   | "join"
   | "joined"
   | "matchmaking"
-  | "matchmaking-timeout"
   | "error";
-
-const MATCHMAKING_TIMEOUT = null;
 
 /**
  * How long a lobby waits for the room's welcome before giving up. The welcome
@@ -55,6 +53,14 @@ const MATCHMAKING_TIMEOUT = null;
  * subscriber that registers late, so the race is real even though it is rare.
  */
 const WELCOME_TIMEOUT_MS = 10_000;
+
+/**
+ * Pause between matchmake requests, so a server that rejects a request
+ * instantly (a pool that keeps expiring, a flapping socket) cannot turn the
+ * endless search into a hot reconnect loop. After a FULL window of waiting
+ * (the normal path) one extra second is invisible.
+ */
+const MATCHMAKE_RETRY_DELAY_MS = 1_000;
 
 interface StartScreenProps {
   onStart: (choice: StartChoice) => void;
@@ -82,6 +88,9 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
   const [net, setNet] = useState<NetSession | null>(null);
   /** Guards the realtime calls: a double-click must not mint two rooms. */
   const [busy, setBusy] = useState(false);
+  /** Seconds since the current search began, shown live on the searching
+   *  screen — with no timeout, "how long has it been" is the only feedback. */
+  const [searchSeconds, setSearchSeconds] = useState(0);
   const matchRequest = useRef(0);
 
   /**
@@ -202,33 +211,52 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
     setError("");
     setState("matchmaking");
     const request = ++matchRequest.current;
-    // The SDK request remains attached to the race even if the UI gives up;
-    // the request token prevents a late room from taking the player out of the
-    // explicit fallback screen.
-    const timeout = new Promise<null>((resolve) => {
-      window.setTimeout(() => resolve(MATCHMAKING_TIMEOUT), 30_000);
-    });
     try {
-      const result = await Promise.race([
-        withLogin(() => quickMatch({ matchmakeTimeoutMs: 30_000 })),
-        timeout,
-      ]);
-      if (result === MATCHMAKING_TIMEOUT) {
-        setState("matchmaking-timeout");
+      // Auto matchmaking: the search runs until an opponent is found or the
+      // player cancels. ONE quickMatch call is only one bounded window
+      // (MATCHMAKE_WINDOW_MS — the SDK sends `matchmaking:cancel` and rejects
+      // when it closes), so each closed window is simply re-issued; Cancel
+      // bumps the token, which is what actually ends the loop.
+      while (request === matchRequest.current) {
+        let result: HexRoom;
+        try {
+          result = await withLogin(() => quickMatch());
+        } catch (err) {
+          if (request !== matchRequest.current) return; // cancelled mid-search
+          if (!isMatchmakeWindowExpired(err)) throw err; // a real failure
+          // Window closed (or the pool dropped us): breathe once, ask again.
+          await new Promise((resolve) => {
+            window.setTimeout(resolve, MATCHMAKE_RETRY_DELAY_MS);
+          });
+          continue;
+        }
+        if (request !== matchRequest.current) {
+          // Cancelled while the pairing was in flight: this room must not
+          // pull the player out of the menu, and its socket must not linger.
+          try {
+            result.leave();
+          } catch { /* the socket is already going away */ }
+          return;
+        }
+        // A matchmaker can return either an existing room or a newly-created
+        // one. isCreator is the SDK's authoritative host hint until welcome
+        // arrives.
+        awaitWelcome(result, result.isCreator ? "host" : "guest");
         return;
       }
-      if (request !== matchRequest.current) return;
-      // A matchmaker can return either an existing room or a newly-created one.
-      // isCreator is the SDK's authoritative host hint until welcome arrives.
-      awaitWelcome(result, result.isCreator ? "host" : "guest");
     } catch (err) {
       if (request === matchRequest.current) fail(err);
     } finally {
       if (request === matchRequest.current) setBusy(false);
     }
-  }, [awaitWelcome, busy, fail, failMessage, matchRequest, withLogin]);
+  }, [awaitWelcome, busy, fail, failMessage, withLogin]);
 
   const abandonMatch = useCallback(() => {
+    // Bumping the token is the whole cancel: the beginMatch loop checks it
+    // after every await and stops. The SDK has no public cancel for a pending
+    // matchmake request, so the abandoned one leaves the RUN pool by itself
+    // when its window closes (the SDK then sends `matchmaking:cancel` and
+    // closes the socket) — its outcome is ignored here either way.
     ++matchRequest.current;
     releaseRoom();
     setState("choose");
@@ -269,6 +297,24 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
     return () => window.clearTimeout(timer);
   }, [failMessage, seed, state]);
 
+  // The searching clock: elapsed time since this search began, reset on every
+  // entry into (and exit from) the matchmaking screen.
+  useEffect(() => {
+    if (state !== "matchmaking") return;
+    setSearchSeconds(0);
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => {
+      setSearchSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [state]);
+
+  const searchClock = useMemo(() => {
+    const minutes = Math.floor(searchSeconds / 60);
+    const seconds = String(searchSeconds % 60).padStart(2, "0");
+    return `${minutes}:${seconds}`;
+  }, [searchSeconds]);
+
   useEffect(() => () => { /* room ownership moves to App after resolution */ }, []);
 
   if (state === "choose") return (
@@ -297,7 +343,7 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
           <button data-sfx="open" onClick={() => onStart({ mode: "ai", portrait })}>Play vs AI <small>no login</small></button>
           <button disabled={busy} onClick={() => { setState("host"); void beginRoom("host"); }}>Host a game (Experimental)</button>
           <button disabled={busy} onClick={openJoinScreen}>Join with a code</button>
-          <button disabled={busy} onClick={() => void beginMatch()}>Quick match</button>
+          <button disabled={busy} onClick={() => void beginMatch()}>Auto Matchmaking</button>
           {onBack ? <button className="start-back" data-sfx="close" onClick={onBack}>Back to the menu</button> : null}
         </div>
       </div>
@@ -387,14 +433,8 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
   );
 
   if (state === "matchmaking") return (
-    <main className="start-screen"><div className="start-panel lobby"><p className="start-kicker">QUICK MATCH</p><h1>Finding an opponent…</h1><p className="start-subtitle">We will keep looking for up to 30 seconds.</p>
+    <main className="start-screen"><div className="start-panel lobby"><p className="start-kicker">AUTO MATCHMAKING</p><h1>Finding an opponent…</h1><p className="start-subtitle">Searching for {searchClock} — we keep looking until you cancel.</p>
       <button onClick={abandonMatch}>Cancel</button></div></main>
-  );
-
-  if (state === "matchmaking-timeout") return (
-    <main className="start-screen"><div className="start-panel lobby"><p className="start-kicker">QUICK MATCH</p><h1>No rival found yet</h1><p className="start-subtitle">Try again later, or start a match against the AI now.</p>
-      <div className="lobby-actions"><button onClick={abandonMatch}>Back</button><button className="start-primary" onClick={() => onStart({ mode: "ai", portrait })}>Play vs AI</button></div>
-    </div></main>
   );
 
   if (state === "error") return (
