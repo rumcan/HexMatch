@@ -17,6 +17,17 @@
 //     TERRAIN canvas, above the chunk-cached ground and below the surf, and
 //     are pure decoration: nothing reads them, nothing collides with them.
 //
+//     Placement is INDEPENDENT and EXCLUSIVE (`scatterDecals`): every patch
+//     draws its own size, turn, padding, family and opacity, looks for a
+//     random point on its own, and is rejected if that ground is not clear.
+//     Nothing seeds a patch from a neighbour — no cluster centres, no shared
+//     tile, no family batches — so the only structure in the layout is the
+//     spacing the exclusion rule imposes. Two rules do the work: a patch must
+//     keep its ink (plus its own padding) off the beach and clear of the sea,
+//     and it must not overlap any patch already down. Both are answered
+//     against a uniform spatial hash, so the whole scatter stays linear
+//     instead of O(n²) in patches placed.
+//
 //   • TREES — 1×1 sprites scattered in CLUMPS, because scattered-uniform
 //     trees read as wallpaper while clumps read as woodland. Stored as one
 //     byte per tile (`Uint8Array`, 0 = none) so the renderer picks them up
@@ -29,8 +40,10 @@
 // one the moment a road, a plant or a depot lands on its tile — the tree was
 // cleared to make way, which is also what the player expects to see.
 // ══════════════════════════════════════════════════════════════════════════
-import { MAP_W, MAP_H, mulberry32 } from "../game/config";
-import { GRASS, ROUGH, WATER, chebyshevField, idx, inBounds, type Grid } from "./grid";
+import { HW, HH, MAP_W, MAP_H, TILE_W, TILE_H, mulberry32 } from "../game/config";
+import {
+  GRASS, ROUGH, WATER, chebyshevField, idx, inBounds, type Grid,
+} from "./grid";
 
 /**
  * Every tree sprite, in the order the per-tile byte indexes them (1-based).
@@ -75,9 +88,11 @@ export interface Forest {
 }
 
 /**
- * The decal families, in PAINT ORDER — `bare` earth goes down first and the
- * grass moods lie over it, so a patch of dry grass can soften the edge of a
- * scrape instead of fighting it.
+ * The decal families. This is the family list, not a paint order: patches no
+ * longer overlap (`scatterDecals` reserves each one's ground), so there is no
+ * "bare earth under the grass moods" layering left to arbitrate — the list is
+ * painted back to front by depth alone, and the families only pick art and
+ * weight the mix.
  */
 export const DECAL_KINDS = ["bare", "dry", "rocky", "lush"] as const;
 export type DecalKind = (typeof DECAL_KINDS)[number];
@@ -86,6 +101,13 @@ export type DecalKind = (typeof DECAL_KINDS)[number];
  * One painted ground patch. `wx`/`wy` are the WORLD-space (1×) centre and
  * `w` the world-space width; the art is authored 2:1 squashed (it lies flat
  * on the iso ground), so the drawn height is always `w / 2`.
+ *
+ * `rot`, `pad` and `reach` are the placement's own record of the patch: the
+ * turn it was given, the ground it keeps clear around itself, and the
+ * tile-space radius its turned art box reaches. `reach` is derived — it lives
+ * on the decal because the paint pass tests it against the visible range for
+ * EVERY patch on the map, every frame, and must not do trig or division to
+ * get it.
  */
 export interface Decal {
   tx: number;
@@ -104,6 +126,23 @@ export interface Decal {
    * small set of large, memorable shapes for the price of one transform.
    */
   flip: boolean;
+  /**
+   * Turn the patch ON THE GROUND, in radians, about its own centre. A ground
+   * texture has no up, so this is free variety: the art tool cuts three turned
+   * variants per family and the mirror above doubles them, but a continuous
+   * turn makes every patch on the map a different shape without shipping one
+   * more pixel.
+   */
+  rot: number;
+  /**
+   * This patch's OWN padding, in tiles: clear ground it keeps between its ink
+   * and everything it must not touch — the sea, the beach, and every other
+   * patch. Drawn per patch, so the spacing between two neighbours is the sum
+   * of theirs, and the gaps vary instead of reading as a laid-out grid.
+   */
+  pad: number;
+  /** Tile-space radius of the turned art box, plus a tile of slop. */
+  reach: number;
 }
 
 export interface Scenery {
@@ -114,14 +153,7 @@ export interface Scenery {
   forests: Forest[];
 }
 
-// ── tuning ──────────────────────────────────────────────────────────────────
-/**
- * Decal patches per LAND TILE. Doubled alongside the halving of
- * `DECAL_BASE_W`, so the ground keeps the same coverage from twice as many
- * patches at a quarter of the area each — roughly 500 regions on a 144×144
- * island, in four moods, at every size and both mirrorings.
- */
-const DECAL_DENSITY = 1 / 35;
+// ── tuning: decals ──────────────────────────────────────────────────────────
 /**
  * Nominal patch width in world pixels. A tile diamond is 64 wide, so the base
  * is 2½ tiles and the scale range below takes a patch from roughly 1¾ to 5
@@ -130,11 +162,59 @@ const DECAL_DENSITY = 1 / 35;
  * Halved. The patches were drawn up to ten tiles wide from a 768px texture,
  * which at the 2× camera meant stretching that texture across some 1300
  * screen pixels — visibly soft, and the pixels showed. Half the width is a
- * quarter of the area per patch and twice the texture density, and the ground
- * keeps the same coverage because the density below doubles to match.
+ * quarter of the area per patch and twice the texture density.
  */
 const DECAL_BASE_W = 160;
 const DECAL_SCALE_MIN = 0.7, DECAL_SCALE_MAX = 1.9;
+/**
+ * Patches WANTED per eligible tile — a tile that is open ground and far enough
+ * inland to host the smallest patch. It is a ceiling, not a quota: every patch
+ * now reserves its own ground, so a crowded map simply stops early rather than
+ * stacking patches to hit the number. The old scatter treated density as a
+ * quota it always met, and met it by letting ~300 pairs of patches overlap.
+ */
+const DECAL_DENSITY = 1 / 50;
+/**
+ * Rejection-sampling budget, per patch wanted. Placing a patch that must not
+ * touch any other is a search, and the search gets harder as the map fills:
+ * the budget is what bounds it. Thirty-odd tries per wanted patch fills the
+ * island to where the remaining misses are genuinely full (the placement
+ * curve is flat by then — doubling the budget buys a handful of patches), and
+ * costs a few tens of milliseconds on a 144×144 map, inside the map-load
+ * budget the scenery already shares with the trees.
+ */
+const DECAL_ATTEMPTS = 32;
+/**
+ * Tiles of clear grass a patch keeps between its ink and the shoreline, ON TOP
+ * of its own reach and its own padding. The beach is one tile of SAND and the
+ * surf animates over the water line, so a patch whose feather dies two tiles
+ * inland of them reads as ground; one that dies on the sand reads as a stain
+ * in the sea.
+ */
+export const DECAL_SHORE_PAD = 2;
+/**
+ * A patch's OWN padding band, in tiles. Individual on purpose: the gap between
+ * two neighbours is the sum of theirs, so gaps vary from patch to patch and
+ * the layout never settles into a visible rhythm.
+ */
+export const DECAL_PAD_MIN = 0.4, DECAL_PAD_MAX = 2.2;
+/**
+ * How much of the art's ground box the painted blob actually inks. The tool
+ * trims each variant to its alpha bbox and stretches it back to 768×384, so
+ * the ink does reach the box — but only at its widest: the corners of the box
+ * are the faintest part of the feather. Reserving the whole box would push
+ * neighbours apart over transparent pixels, so the exclusion test reserves
+ * this much of it and the shore/cull tests keep using the full box.
+ */
+export const DECAL_INK = 0.86;
+/**
+ * Spatial-hash cell for the exclusion test, in tiles. Sized above the widest
+ * ground any one patch can reserve (~6 tiles: the largest ink square's
+ * circumradius plus the largest padding), so a candidate's lookup spans a
+ * couple of cells in each direction and the no-overlap rule costs a handful of
+ * separating-axis tests instead of a pass over every patch already placed.
+ */
+const DECAL_CELL = 8;
 /**
  * Forest blocks per land tile. Each covers 16 tiles and is a landmark, so a
  * handful per map is the point — roughly two dozen on a 144x144 island.
@@ -268,6 +348,313 @@ export function waterDistance(grid: Grid, max = 12): Uint8Array {
 }
 
 /**
+ * Chessboard distance from every tile to the nearest sea tile — or to the edge
+ * of the stage, which counts as sea exactly as `waterDistance` treats it. Read
+ * it as: the half-size of the largest TILE BOX centred on this tile that holds
+ * no water.
+ *
+ * A decal's footprint IS a box (its art box, turned), so this is the field that
+ * answers "does the rim reach the beach?" without guessing. `waterDistance`
+ * spreads over 4 neighbours and measures an L1 ball: comparing a box's
+ * half-width against that under-protects the box's corners, and a corner is
+ * exactly where a turned patch reaches farthest.
+ *
+ * Computed as a two-pass raster transform rather than the BFS `chebyshevField`
+ * runs, because it is called on every map load and the transform is the same
+ * answer for a fifth of the work: a king reaches any tile in
+ * max(|dx|, |dy|) moves, so one forward scan over the four already-visited
+ * neighbours and one backward scan over their mirror images settle every tile
+ * exactly — no queue, no allocation, two passes over the map. A unit test
+ * cross-checks it against the BFS so the shortcut cannot drift.
+ */
+export function coastClearance(grid: Grid): Uint8Array {
+  const n = MAP_W * MAP_H;
+  // 255 stands in for ∞: the true distance across a 144×144 stage never
+  // reaches it, and `min` is always applied before a store, so the +1 below
+  // can never wrap a byte.
+  const clear = new Uint8Array(n).fill(255);
+  for (let i = 0; i < n; i++) if (grid.terrain[i] === WATER) clear[i] = 0;
+  for (let x = 0; x < MAP_W; x++) { clear[x] = 0; clear[(MAP_H - 1) * MAP_W + x] = 0; }
+  for (let y = 0; y < MAP_H; y++) { clear[y * MAP_W] = 0; clear[y * MAP_W + MAP_W - 1] = 0; }
+
+  for (let y = 0; y < MAP_H; y++) {
+    const row = y * MAP_W, prev = row - MAP_W;
+    for (let x = 0; x < MAP_W; x++) {
+      const i = row + x;
+      let d = clear[i];
+      if (x > 0 && clear[i - 1] + 1 < d) d = clear[i - 1] + 1;
+      if (y > 0) {
+        if (clear[prev + x] + 1 < d) d = clear[prev + x] + 1;
+        if (x > 0 && clear[prev + x - 1] + 1 < d) d = clear[prev + x - 1] + 1;
+        if (x + 1 < MAP_W && clear[prev + x + 1] + 1 < d) d = clear[prev + x + 1] + 1;
+      }
+      clear[i] = d;
+    }
+  }
+  for (let y = MAP_H - 1; y >= 0; y--) {
+    const row = y * MAP_W, next = row + MAP_W;
+    for (let x = MAP_W - 1; x >= 0; x--) {
+      const i = row + x;
+      let d = clear[i];
+      if (x + 1 < MAP_W && clear[i + 1] + 1 < d) d = clear[i + 1] + 1;
+      if (y + 1 < MAP_H) {
+        if (clear[next + x] + 1 < d) d = clear[next + x] + 1;
+        if (x + 1 < MAP_W && clear[next + x + 1] + 1 < d) d = clear[next + x + 1] + 1;
+        if (x > 0 && clear[next + x - 1] + 1 < d) d = clear[next + x - 1] + 1;
+      }
+      clear[i] = d;
+    }
+  }
+  return clear;
+}
+
+// ── decal placement ─────────────────────────────────────────────────────────
+/**
+ * Ground-space (tile) coordinates of a world point — the inverse of the
+ * projection the decals are placed in. A tile's centre is its own integer
+ * ground coordinate, so a patch can sit at any REAL ground point rather than
+ * on the tile lattice: `gx = 40.3` is a third of the way across tile 40.
+ */
+export const groundOf = (wx: number, wy: number): [number, number] => [
+  wx / TILE_W + (wy - HH) / TILE_H,
+  (wy - HH) / TILE_H - wx / TILE_W,
+];
+
+/** World position of a ground point: the projection the decals are placed in. */
+const worldOf = (gx: number, gy: number): [number, number] => [
+  (gx - gy) * HW, (gx + gy) * HH + HH,
+];
+
+/**
+ * The ground a patch's art actually covers — and it is NOT the box the blit
+ * looks like. Drawn as a `w × w/2` screen rect, the art covers the ground
+ * diamond |dx| + |dy| ≤ w / TILE_W: invert the projection on the rect's
+ * corners and they land on the ground AXES at ±w/64 tiles, not on a square's
+ * sides. So one patch is a square turned 45° to the tile grid, tip to tip
+ * `w / 64` tiles along each ground axis and `w / 64 · √2` tiles side to side.
+ *
+ * Everything below measures that square. Getting it wrong is not a rounding
+ * question: measuring the drawn rect as though it were an axis-aligned ground
+ * square understates the footprint by √2, which is exactly how the old scatter
+ * came to feather patches onto the beach and stack them on each other.
+ */
+/** Half-diagonal of a patch's ground diamond, in tiles: its reach at rot 0. */
+const decalDiagonal = (w: number): number => w / TILE_W;
+/** Half-side of that square, in tiles (a square's side is diagonal / √2). */
+const decalSide = (w: number): number => w / TILE_W / Math.SQRT2;
+/** Half-side of the INK inside it — see `DECAL_INK`. */
+const decalInkSide = (w: number): number => decalSide(w) * DECAL_INK;
+/**
+ * The square's own axes sit 45° off the tile grid before the patch is even
+ * turned, because the blit is a screen-aligned rect (see `decalDiagonal`).
+ */
+const decalAxisAngle = (rot: number): number => rot + Math.PI / 4;
+
+/**
+ * Tile-space radius of a turned patch: how far it reaches along each ground
+ * axis. The square's half-side h at axis angle φ covers h·(|cos φ| + |sin φ|),
+ * which at φ = rot + 45° collapses to the diagonal times max(|cos rot|,
+ * |sin rot|) — D at rot 0, D/√2 at 45°, and never less.
+ *
+ * One tile of slop goes on top, for the two half-tiles the comparison cannot
+ * see: the patch's centre is a random point INSIDE its tile, and a sea tile's
+ * own area reaches half a tile back towards it.
+ *
+ * Computed once, at scatter time, and carried on the decal — the paint pass
+ * runs this test for every patch on the map, every frame, visible or not, so
+ * it must not cost trig or a division per patch to answer.
+ */
+export const decalReach = (w: number, rot: number): number =>
+  decalDiagonal(w) * Math.max(Math.abs(Math.cos(rot)), Math.abs(Math.sin(rot))) + 1;
+
+/**
+ * The ground one patch reserves: its ink square, turned by θ, grown by its own
+ * padding. `u`/`v` are the square's own unit axes, so a projection onto any
+ * direction is arithmetic on four numbers rather than a corner loop.
+ */
+interface Spot {
+  gx: number;
+  gy: number;
+  half: number;
+  pad: number;
+  ux: number; uy: number;
+  vx: number; vy: number;
+  /** Broad-phase radius: the ink square's circumradius, plus the padding. */
+  r: number;
+}
+
+const spotOf = (gx: number, gy: number, w: number, rot: number, pad: number): Spot => {
+  const half = decalInkSide(w), a = decalAxisAngle(rot);
+  const cos = Math.cos(a), sin = Math.sin(a);
+  return {
+    gx, gy, half, pad,
+    ux: cos, uy: sin, vx: -sin, vy: cos,
+    r: half * Math.SQRT2 + pad,
+  };
+};
+
+/** The reserved ground of a patch that is already down. */
+const spotOfDecal = (d: Decal): Spot => {
+  const [gx, gy] = groundOf(d.wx, d.wy);
+  return spotOf(gx, gy, d.w, d.rot, d.pad);
+};
+
+/**
+ * Separating-axis test between two reserved grounds. A square of half-side h
+ * grown by p projects onto an axis n as h·(|n·u| + |n·v|) + p, so if any one of
+ * the four edge normals has room for both projections, a line separates the two
+ * shapes and they cannot overlap. Exact for the shapes actually reserved — a
+ * bounding-circle test would turn two patches that meet corner to corner away
+ * from each other for no reason, and the coast is where they have to fit.
+ */
+function spotsOverlap(a: Spot, b: Spot): boolean {
+  const dx = b.gx - a.gx, dy = b.gy - a.gy;
+  const wide = a.r + b.r;
+  if (dx * dx + dy * dy > wide * wide) return false;
+  const clears = (nx: number, ny: number): boolean => {
+    const gap = Math.abs(dx * nx + dy * ny);
+    const ra = a.half * (Math.abs(nx * a.ux + ny * a.uy) + Math.abs(nx * a.vx + ny * a.vy)) + a.pad;
+    const rb = b.half * (Math.abs(nx * b.ux + ny * b.uy) + Math.abs(nx * b.vx + ny * b.vy)) + b.pad;
+    return gap >= ra + rb;
+  };
+  return !(clears(a.ux, a.uy) || clears(a.vx, a.vy)
+    || clears(b.ux, b.uy) || clears(b.vx, b.vy));
+}
+
+/**
+ * Do two placed patches touch? The contract the scatter holds to, in the terms
+ * a test can check: their ink, plus the padding each keeps for itself.
+ */
+export const decalsOverlap = (a: Decal, b: Decal): boolean =>
+  spotsOverlap(spotOfDecal(a), spotOfDecal(b));
+
+/**
+ * Uniform hash of the reserved ground, `DECAL_CELL` tiles to a side, so a
+ * candidate patch tests only the neighbours that could reach it. Without it
+ * the no-overlap rule is a pass over every patch already placed, per attempt,
+ * and rejection sampling multiplies that by every miss — quadratic in a number
+ * the tuning above only wants to be in the hundreds.
+ */
+class SpotHash {
+  private readonly cols = Math.ceil(MAP_W / DECAL_CELL);
+  private readonly rows = Math.ceil(MAP_H / DECAL_CELL);
+  private readonly cells: Spot[][] = [];
+  constructor() {
+    for (let i = 0; i < this.cols * this.rows; i++) this.cells.push([]);
+  }
+
+  insert(s: Spot): void {
+    const x = Math.min(this.cols - 1, Math.max(0, Math.floor(s.gx / DECAL_CELL)));
+    const y = Math.min(this.rows - 1, Math.max(0, Math.floor(s.gy / DECAL_CELL)));
+    this.cells[y * this.cols + x].push(s);
+  }
+
+  /**
+   * Every spot whose reserved ground could reach a disc of radius `r` at
+   * (gx, gy) — the caller passes its own radius plus the widest any spot can
+   * reserve, so a small candidate cannot miss a large neighbour.
+   */
+  near(gx: number, gy: number, r: number, out: Spot[]): void {
+    out.length = 0;
+    const x0 = Math.max(0, Math.floor((gx - r) / DECAL_CELL));
+    const x1 = Math.min(this.cols - 1, Math.floor((gx + r) / DECAL_CELL));
+    const y0 = Math.max(0, Math.floor((gy - r) / DECAL_CELL));
+    const y1 = Math.min(this.rows - 1, Math.floor((gy + r) / DECAL_CELL));
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const cell = this.cells[y * this.cols + x];
+        for (let i = 0; i < cell.length; i++) out.push(cell[i]);
+      }
+    }
+  }
+}
+
+/**
+ * The decals: independent patches, each on ground it keeps to itself.
+ *
+ * One patch per attempt, drawn whole before it looks for anywhere to go —
+ * size, turn, padding, family, variant, opacity, mirror — and then two tests,
+ * both cheap and both answered without reference to any other patch's CHOICES:
+ *
+ *   1. SHORELINE. The turned art box, this patch's own padding and a fixed
+ *      margin of clear grass must all fit between its centre tile and the sea
+ *      (`coastClearance`, measured in tile boxes because the footprint is a
+ *      box). The beach is its own painted terrace and the surf animates over
+ *      the water line, so a patch that dies on either reads as a spill.
+ *   2. OVERLAP. The reserved ground must not touch any patch already down,
+ *      looked up through the spatial hash.
+ *
+ * The location is a random point INSIDE a random eligible tile, so patches sit
+ * off the tile lattice and no two share a tile: the exclusion rule is wider
+ * than a tile, which is what makes "one patch per tile" a consequence rather
+ * than a rule. Candidates are sampled from a list pre-filtered to tiles that
+ * could host the SMALLEST patch, so the loop spends its rejections on spacing
+ * — the interesting question — and not on the beach.
+ */
+function scatterDecals(rng: () => number, open: (i: number) => boolean, clear: Uint8Array): Decal[] {
+  // The least any patch can need: the smallest art, turned to its narrowest
+  // (45°, where the square sits flush with the tile grid), at its least padding.
+  const minNeed = decalDiagonal(DECAL_BASE_W * DECAL_SCALE_MIN) / Math.SQRT2 + 1
+    + DECAL_PAD_MIN + DECAL_SHORE_PAD;
+  const spots: number[] = [];
+  for (let i = 0; i < MAP_W * MAP_H; i++) {
+    if (open(i) && clear[i] >= minNeed) spots.push(i);
+  }
+  const decals: Decal[] = [];
+  if (!spots.length) return decals;
+
+  const target = Math.max(1, Math.round(spots.length * DECAL_DENSITY));
+  // The widest ground any one patch can reserve, so the hash lookup below is
+  // wide enough for the pair and not just for the candidate.
+  const maxReserve = decalInkSide(DECAL_BASE_W * DECAL_SCALE_MAX) * Math.SQRT2 + DECAL_PAD_MAX;
+  const hash = new SpotHash();
+  const near: Spot[] = [];
+
+  for (let attempt = 0; attempt < target * DECAL_ATTEMPTS && decals.length < target; attempt++) {
+    const i = spots[(rng() * spots.length) | 0];
+    const tx = i % MAP_W, ty = (i / MAP_W) | 0;
+    const w = DECAL_BASE_W * (DECAL_SCALE_MIN + rng() * (DECAL_SCALE_MAX - DECAL_SCALE_MIN));
+    const rot = rng() * Math.PI * 2;
+    const pad = DECAL_PAD_MIN + rng() * (DECAL_PAD_MAX - DECAL_PAD_MIN);
+    const reach = decalReach(w, rot);
+    // 1. the shoreline: the turned box, this patch's own padding, and a fixed
+    //    margin of clear grass must all fit between the centre and the sea.
+    //    `reach` already carries the two half-tiles this comparison cannot
+    //    see — the centre's random offset inside its tile, and the sea tile's
+    //    own area reaching back towards it.
+    if (clear[i] < reach + pad + DECAL_SHORE_PAD) continue;
+    // A random point inside the tile, so the layout is not a lattice of tile
+    // centres nudged by a fixed jitter.
+    const gx = tx + rng() - 0.5, gy = ty + rng() - 0.5;
+    // 2. the neighbours: reserved ground, ink plus each patch's own padding
+    const spot = spotOf(gx, gy, w, rot, pad);
+    hash.near(gx, gy, spot.r + maxReserve, near);
+    let room = true;
+    for (let k = 0; k < near.length; k++) {
+      if (spotsOverlap(spot, near[k])) { room = false; break; }
+    }
+    if (!room) continue;
+    hash.insert(spot);
+    const [wx, wy] = worldOf(gx, gy);
+    decals.push({
+      tx, ty,
+      kind: weighted(DECAL_MIX, rng()),
+      variant: (rng() * 1024) | 0,          // resolved against the file count at load
+      wx, wy, w,
+      alpha: 0.5 + rng() * 0.42,
+      flip: rng() < 0.5,
+      rot, pad, reach,
+    });
+  }
+
+  // Painter's order, back to front: the reserved ground is the INK, which is a
+  // little smaller than the art box, so two neighbours' faintest feather can
+  // still meet — and where it does, the nearer patch lies over the farther one.
+  decals.sort((a, b) => (a.tx + a.ty) - (b.tx + b.ty));
+  return decals;
+}
+
+/**
  * Deterministic scenery for a grid. Seeded off `grid.seed` with its own
  * stream offset, so adding/removing scenery can never shift the terrain or
  * industry generators that already consumed that seed.
@@ -295,42 +682,17 @@ export function scatterScenery(grid: Grid): Scenery {
   const pick = () => land[(rng() * land.length) | 0];
 
   // ── decals ──
-  // Distance (in tiles) from every land tile to the nearest water, capped —
-  // a patch 10 tiles across cannot be centred 2 tiles off the beach or its
-  // soft rim hangs over the sea, and the ground canvas does not clip it.
+  // Two distance fields, because the two scatters ask different questions of
+  // the coast: a patch's footprint is a BOX (its art box, turned), so it is
+  // measured against `coastClearance` — the largest water-free tile box around
+  // a tile — while a forest block's footprint is a 4×4 of tiles walked one at
+  // a time, which `waterDistance` already answers per tile.
+  //
+  // The decal pass runs on its OWN stream, the way the Forest-resource woods
+  // do, so from here on retuning or rewriting the patches cannot shift a
+  // single tree: the two scatters never share a draw.
   const toWater = waterDistance(grid);
-
-  const decals: Decal[] = [];
-  const decalAttempts = Math.round(land.length * DECAL_DENSITY);
-  for (let n = 0; n < decalAttempts; n++) {
-    const i = pick();
-    if (!open(i)) continue;
-    const tx = i % MAP_W, ty = (i / MAP_W) | 0;
-    const kind = weighted(DECAL_MIX, rng());
-    const w = DECAL_BASE_W * (DECAL_SCALE_MIN + rng() * (DECAL_SCALE_MAX - DECAL_SCALE_MIN));
-    // The patch's radius in TILES: the art is 2:1 squashed, so its world width
-    // maps to `w / TILE_W` tiles along each ground axis; half of that is the
-    // reach from the centre, plus a tile of slack for the feathered rim.
-    const reach = Math.ceil(w / 64 / 2) + 1;
-    if (toWater[i] < reach) continue;
-    decals.push({
-      tx, ty, kind,
-      variant: (rng() * 1024) | 0,          // resolved against the file count at load
-      // Jitter within the tile's diamond so the patches do not sit on a
-      // lattice; the centre of tile (tx,ty) in world space is
-      // ((tx-ty)·32, (tx+ty)·16 + 16).
-      wx: (tx - ty) * 32 + (rng() - 0.5) * 46,
-      wy: (tx + ty) * 16 + 16 + (rng() - 0.5) * 24,
-      w,
-      alpha: 0.5 + rng() * 0.42,
-      flip: rng() < 0.5,
-    });
-  }
-  // Paint order: bare earth first, then the grass moods, and back-to-front
-  // within a family so a nearer patch's rim lies over a farther one's.
-  decals.sort((a, b) =>
-    DECAL_KINDS.indexOf(a.kind) - DECAL_KINDS.indexOf(b.kind)
-    || (a.tx + a.ty) - (b.tx + b.ty));
+  const decals = scatterDecals(mulberry32((grid.seed ^ 0x2dec417b) >>> 0), open, coastClearance(grid));
 
   // ── forest blocks ──
   // Placed BEFORE the single trees, and their 16 tiles are then reserved, so
@@ -526,9 +888,19 @@ export type DecalImages = Record<DecalKind, SceneryImage[]>;
  * the meadow but never over the foam.
  *
  * Decals are deliberately NOT baked into the ground chunk cache: a patch is
- * up to 2.5 tiles wide and would be clipped by whichever 8×8 chunk owned its
+ * several tiles wide and would be clipped by whichever 8×8 chunk owned its
  * tile, leaving a hard straight cut every eight tiles. One drawImage per
  * visible patch (a few dozen) is cheaper than the seams would be to fix.
+ *
+ * The pass is built for the fact that it runs over EVERY patch on the map
+ * every frame and blits only the few that are on screen:
+ *   • the cull reads `d.reach`, computed once at scatter time — no trig, no
+ *     division and no `Math.ceil` in the loop that runs ~400 times a frame;
+ *   • the patches do not overlap, so this paints each ground pixel once
+ *     instead of blending the same soft rim two or three times over;
+ *   • the turn is one `transform` on the way in and one `restore` on the way
+ *     out, and the mirror is folded into that matrix instead of costing a
+ *     second transform of its own.
  */
 export function paintDecals(
   ctx: CanvasRenderingContext2D,
@@ -541,30 +913,28 @@ export function paintDecals(
   const prev = ctx.globalAlpha;
   let drawn = 0;
   for (const d of decals) {
-    // A patch reaches up to ~5 tiles from its centre tile on each ground
-    // axis, so the cull pad has to clear the largest one or big patches pop
-    // in at the screen edge. Derived from the decal's own width, not a
-    // constant, so the tuning above cannot silently outgrow it.
-    const pad = Math.ceil(d.w / 64 / 2) + 1;
-    if (d.tx < r.x0 - pad || d.tx > r.x1 + pad || d.ty < r.y0 - pad || d.ty > r.y1 + pad) continue;
+    // The turned art box's tile radius, plus the slop for the centre's random
+    // offset inside its tile: big patches must not pop in at the screen edge.
+    if (d.tx < r.x0 - d.reach || d.tx > r.x1 + d.reach
+      || d.ty < r.y0 - d.reach || d.ty > r.y1 + d.reach) continue;
     const bank = images[d.kind];
     if (!bank?.length) continue;
     const img = bank[d.variant % bank.length];
-    const w = d.w * z, h = (d.w / 2) * z;
-    const x = Math.floor(d.wx * z + cam.x - w / 2);
-    const y = Math.floor(d.wy * z + cam.y - h / 2);
+    const w = d.w * z, h = w / 2;
+    const cos = Math.cos(d.rot), sin = Math.sin(d.rot);
     ctx.globalAlpha = d.alpha;
-    if (d.flip) {
-      // Mirror about the patch's own centre: translate to it, flip x, and
-      // draw at the negated left edge.
-      ctx.save();
-      ctx.translate(x + Math.ceil(w), y);
-      ctx.scale(-1, 1);
-      ctx.drawImage(img as unknown as CanvasImageSource, 0, 0, Math.ceil(w), Math.ceil(h));
-      ctx.restore();
-    } else {
-      ctx.drawImage(img as unknown as CanvasImageSource, x, y, Math.ceil(w), Math.ceil(h));
-    }
+    ctx.save();
+    ctx.translate(Math.floor(d.wx * z + cam.x), Math.floor(d.wy * z + cam.y));
+    // TURNED ON THE GROUND, not on the screen. The projection is a half-squash
+    // (S = diag(1, ½)), so turning the patch by θ on the ground plane is
+    // S·R(θ)·S⁻¹ here: [[cos θ, −2 sin θ], [½ sin θ, cos θ]]. A plain
+    // screen-space rotate would tilt the patch off the ground like a label
+    // stuck to the camera; this keeps it lying flat and the 2:1 art honest.
+    // Mirroring negates the image's own x axis, which negates the matrix's
+    // first column — the flip rides along for free.
+    ctx.transform(d.flip ? -cos : cos, d.flip ? -sin / 2 : sin / 2, -2 * sin, cos, 0, 0);
+    ctx.drawImage(img as unknown as CanvasImageSource, -w / 2, -h / 2, w, h);
+    ctx.restore();
     drawn++;
   }
   ctx.globalAlpha = prev;
