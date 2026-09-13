@@ -417,6 +417,79 @@ describe("the live game resolves into a cinematic ending", () => {
   });
 });
 
+describe("STORY-01 fix: a contract never resumes the sandbox save", () => {
+  it("boots the chapter fresh even when a sandbox game with a rival past its ★ line is saved", async () => {
+    delete (window as unknown as Record<string, unknown>).__ISO_DISABLE_SAVE;
+    const rt = await import("../../src/iso/savegame-runtime");
+    const { startIsoGame } = await import("../../src/iso/game");
+    const { chapterById } = await import("../../src/story/chapters");
+    const { generateMap } = await import("../../src/iso/grid");
+    const chapter = chapterById("inheritance")!;
+    const sandboxKey = rt.saveKeyFor(null);
+    const storyKey = rt.saveKeyFor(chapter.id);
+    expect(storyKey).not.toBe(sandboxKey);
+
+    // A sandbox game, into play, autosaved on pagehide.
+    const sandbox = await boot();
+    let placed = false;
+    for (const t of sandbox.grid.towns) {
+      for (let dy = -12; dy <= 12 && !placed; dy++) {
+        for (let dx = -12; dx <= 12 && !placed; dx++) {
+          const x = t.tx + dx, y = t.ty + dy;
+          if (sandbox.placementPlan("factory", x, y).valid) placed = sandbox.placeFactory(x, y);
+        }
+      }
+      if (placed) break;
+    }
+    expect(placed).toBe(true);
+    sandbox.finishSetup();
+    expect(sandbox.phase).toBe("play");
+    window.dispatchEvent(new Event("pagehide"));
+    dispose!();
+    dispose = undefined;
+    const raw = localStorage.getItem(sandboxKey);
+    expect(raw).toBeTruthy();
+
+    // Doctor it the way the playtest found it: the rival already past the
+    // chapter's 5★ line (24 paved-upgraded tiles = 6★).
+    const saved = JSON.parse(raw!);
+    const road = rt.base64ToBytes(saved.track.road);
+    const up = rt.base64ToBytes(saved.track.upgraded);
+    const own = rt.base64ToBytes(saved.track.owner);
+    const dirt = rt.base64ToBytes(saved.track.dirt);
+    let n = 0;
+    for (let i = MAP_W * 10 + 10; n < 24 && i < road.length; i++) {
+      if (road[i] || dirt[i] || own[i]) continue;
+      road[i] |= 16; up[i] |= 16; own[i] = 2; n++;
+    }
+    expect(n).toBe(24);
+    saved.track.road = rt.bytesToBase64(road);
+    saved.track.upgraded = rt.bytesToBase64(up);
+    saved.track.owner = rt.bytesToBase64(own);
+    saved.savedAt = Date.now();
+    const sandboxJson = JSON.stringify(saved);
+    localStorage.setItem(sandboxKey, sandboxJson);
+    expect(rt.readSave()?.phase).toBe("play");
+
+    // The contract boots: fresh, on its own map, racing its own line.
+    dispose = startIsoGame(root, { story: chapter.id });
+    await settle();
+    const story = hook();
+    expect(story.vpTarget).toBe(chapter.target);
+    expect(story.phase).toBe("setup-factory");
+    expect(story.factories).toEqual([]);
+    expect(story.vp).toEqual({ you: 0, ai: 0 });
+    expect(story.grid.industries.map((i) => [i.tx, i.ty, i.type]))
+      .toEqual(generateMap(chapter.seed).industries.map((i) => [i.tx, i.ty, i.type]));
+
+    // Its autosave lands in its own slot, and the sandbox save is untouched.
+    window.dispatchEvent(new Event("pagehide"));
+    expect(rt.readSave(storyKey)?.seed).toBe(chapter.seed);
+    expect(localStorage.getItem(sandboxKey)).toBe(sandboxJson);
+    localStorage.removeItem(storyKey);
+  });
+});
+
 describe("the two-portrait rivalry conversation", () => {
   it("plays the oil hand-gesture scene once and switches from Torvin to the player", async () => {
     const h = await boot();
