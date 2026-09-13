@@ -44,9 +44,10 @@ import {
   type Decal, type DecalImages, type Forest, type Scenery,
 } from "./scenery";
 import {
-  DEFAULT_ROAD_STYLE, RoadCache,
+  DEFAULT_ROAD_STYLE, RoadCache, paintRoadTiles,
   type RoadCacheStats, type RoadRenderMode, type RoadStyle,
 } from "./road-renderer";
+import { hasRoad, roadTile, type RoadTile } from "./road-geometry";
 import {
   PlacementOverlay, sceneFromItems,
   type GhostSpec, type OverlayStats,
@@ -304,6 +305,41 @@ export function cullPad(atlas: Atlas): number {
     maxH = Math.max(maxH, s.h);
   }
   return maxFoot + Math.ceil(maxH / HH);
+}
+
+/**
+ * ISSUE-144: the road tiles a centre-anchored building must have repainted
+ * after its blit, because the art can overhang the building's GAMEPLAY
+ * footprint onto the camera-facing (SE/SW) neighbours. Pure — the renderer
+ * calls it and strokes the returned tiles, tests call it directly.
+ *
+ * The band is geometric rather than the depth key: a multi-tile building's
+ * max-corner key (tx+fw−1)+(ty+fh−1) is reached only at its SE corner, so
+ * "greater depth" would miss the east/south edges near the block's near end.
+ * `reach` widens the perimeter by the widest authored overhang (two tiles —
+ * the oil rig reaches that far past its played footprint). Roads further out
+ * are not covered by any art and are left to the cached pass.
+ */
+export function frontRoadTiles(p: Placed, world: World, reach = 2): RoadTile[] {
+  const [gw, gh] = p.def.gameplayFootprint ?? p.def.footprint;
+  const x0 = p.tx, y0 = p.ty;
+  const x1 = p.tx + gw - 1 + reach, y1 = p.ty + gh - 1 + reach;
+  const roadBits = world.roadBits, dirtBits = world.dirtBits;
+  const pavedAt = (x: number, y: number): boolean =>
+    x >= 0 && y >= 0 && x < MAP_W && y < MAP_H && hasRoad(roadBits?.[y * MAP_W + x] ?? 0);
+  const tiles: RoadTile[] = [];
+  for (let y = y0; y <= y1; y++) {
+    if (y < 0 || y >= MAP_H) continue;
+    for (let x = x0; x <= x1; x++) {
+      if (x < 0 || x >= MAP_W) continue;
+      if (x <= p.tx + gw - 1 && y <= p.ty + gh - 1) continue; // reserved block
+      const i = y * MAP_W + x;
+      const rb = roadBits?.[i] ?? 0, db = dirtBits?.[i] ?? 0;
+      if (hasRoad(rb)) tiles.push(roadTile(x, y, rb, "paved", pavedAt));
+      else if (hasRoad(db)) tiles.push(roadTile(x, y, db, "dirt", pavedAt));
+    }
+  }
+  return tiles;
 }
 
 type Ctx2D = CanvasRenderingContext2D;
@@ -948,7 +984,10 @@ export class IsoRenderer {
       ctx.clearRect(0, 0, cam.vw, cam.vh);
       paintRoads();
       shadows = paintShadows();
-      for (const p of order) if (this.blit(ctx, p, timeMs)) blits++;
+      for (const p of order) {
+        if (this.blit(ctx, p, timeMs)) blits++;
+        this.repaintFrontRoads(ctx, p);
+      }
       this.paintedValid = true;
     } else {
       // Off-screen traffic leaves a still viewport untouched.
@@ -968,6 +1007,7 @@ export class IsoRenderer {
           const box = this.screenRect(p);
           if (!rects.some((d) => rectsOverlap(box, d))) continue;
           if (this.blit(ctx, p, timeMs)) blits++;
+          this.repaintFrontRoads(ctx, p);
         }
         ctx.restore();
       } else {
@@ -1037,6 +1077,41 @@ export class IsoRenderer {
    * strings, cheap to hold.
    */
   readonly drawnSprites = new Set<string>();
+
+  /**
+   * ISSUE-144: a centre-anchored building's art may overhang its GAMEPLAY
+   * footprint — the Factory is played on 3×3 while its art is authored 4×4,
+   * and the depots/town sprites deliberately overhang theirs. Textured roads
+   * are painted before every sprite, so an overhang onto the camera-facing
+   * (SE/SW) tiles hides the road beside the building. After blitting such a
+   * building, repaint the road tiles that sit in front of its GAMEPLAY
+   * footprint, so the road stays fully visible right up to the reserved
+   * tiles — without ever clipping or resizing the art.
+   *
+   * The front band is geometric, not the depth key: a multi-tile building's
+   * max-corner key (tx+fw−1)+(ty+fh−1) is reached only at its SE corner, so
+   * "greater depth" misses the east/south edges at the near end of the block
+   * (a road at the Factory's north-east edge has a smaller key than the
+   * Factory). The band is the reserved block's SE/SW perimeter, widened by
+   * the widest authored overhang (two tiles: the oil rig reaches that far
+   * past its played footprint). Roads further out are not covered by any art
+   * and are left to the cached pass. Returns the number of tiles repainted.
+   */
+  private repaintFrontRoads(ctx: Ctx2D, p: Placed): number {
+    if (this.roadMode !== "textured") return 0;
+    if (!p.def.center || p.decor || p.fx !== undefined) return 0;
+    const tiles = frontRoadTiles(p, this.world);
+    if (!tiles.length) return 0;
+    const z = this.cam.zoom;
+    ctx.save();
+    // Ground coordinates → this canvas's device pixels (same mapping the road
+    // cache rasteriser uses, but with the camera folded in so strokes land on
+    // the live structures canvas).
+    ctx.setTransform(HW * z, HH * z, -HW * z, HH * z, this.cam.x, this.cam.y);
+    paintRoadTiles(ctx, tiles, this.roadStyle);
+    ctx.restore();
+    return tiles.length;
+  }
 
   /** Draw one placed sprite; false when its image is not loaded. */
   private blit(ctx: Ctx2D, p: Placed, timeMs: number): boolean {

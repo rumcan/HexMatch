@@ -18,6 +18,17 @@ export interface SpriteDef {
   x: number; y: number; w: number; h: number;
   footprint: [number, number];
   anchor: [number, number];
+  /**
+   * ISSUE-144: the GAMEPLAY footprint (tiles the building occupies for
+   * placement, occupancy, routing), preserved from the monolith manifest
+   * before the per-building layers override `footprint` with the art's own
+   * authored footprint. The two can differ — the Factory is played on 3×3
+   * but its art is authored on a 4×4 canvas — and the renderer needs both:
+   * `footprint` places the art, `gameplayFootprint` decides which adjacent
+   * road tiles the art may not hide. Undefined for sprites that never load a
+   * building layer, in which case `footprint` IS the gameplay footprint.
+   */
+  gameplayFootprint?: [number, number];
   frames?: number;
   frameMs?: number;
   slices?: { x: number; y: number; w: number; h: number }[];
@@ -352,6 +363,10 @@ export async function loadBuildingLayers(
       s.x = 0; s.y = 0; s.w = def.w; s.h = def.h;
       s.anchor = def.anchor;
       s.center = true;
+      // ISSUE-144: the monolith def's footprint is the GAMEPLAY footprint
+      // (what placement/occupancy/routing reserve). Keep it around before the
+      // art's authored footprint takes over the draw-side def.
+      s.gameplayFootprint = s.footprint;
       if (def.footprint) s.footprint = def.footprint;
     } catch (err) {
       // A fill pass failing leaves the already-installed levels serving the
