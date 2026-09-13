@@ -95,8 +95,9 @@ async function expectNoCollisions(page: Page, label: string) {
 
 test("the lost contract's badge clears the heading at desktop width", async ({ page }) => {
   await openCampaign(page);
-  // the reported card, in the reported state
-  const reported = page.locator(".chapter-card", { hasText: "The Inheritance" });
+  // The reported card: the FIRST contract, in the reported (lost) state.
+  // Addressed by position, not by title — PR #125 renamed chapter 1.
+  const reported = page.locator(".chapter-card").first();
   await expect(reported.locator(".cc-seal.loss")).toHaveText("Filed · lost");
   await expectNoCollisions(page, "desktop");
 });

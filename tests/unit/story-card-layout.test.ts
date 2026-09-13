@@ -58,8 +58,14 @@ async function openCampaign(): Promise<void> {
 
 const cards = () =>
   Array.from(container.querySelectorAll<HTMLButtonElement>(".chapter-card"));
-const cardById = (name: string) =>
-  cards().find((c) => (c.textContent ?? "").includes(name))!;
+/** The card for a contract, by its id — the list renders `CHAPTERS` in order.
+ *  Keyed on the id rather than the title because titles move (PR #125 renamed
+ *  chapter 1 out from under the first version of this spec). */
+const cardFor = (id: string) => {
+  const at = CHAPTERS.findIndex((c) => c.id === id);
+  expect(at, `no such contract: ${id}`).toBeGreaterThanOrEqual(0);
+  return cards()[at];
+};
 
 beforeEach(() => {
   container = document.createElement("div");
@@ -78,9 +84,9 @@ describe("#122 contract card layout (DOM)", () => {
   it("renders all five contracts, one in each state", async () => {
     await openCampaign();
     expect(cards()).toHaveLength(CHAPTERS.length);
-    expect(cardById("The Inheritance").querySelector(".cc-seal.loss")?.textContent)
+    expect(cardFor("inheritance").querySelector(".cc-seal.loss")?.textContent)
       .toBe("Filed · lost");
-    expect(cardById("The Toll King").querySelector(".cc-seal:not(.loss)")?.textContent)
+    expect(cardFor("toll-king").querySelector(".cc-seal:not(.loss)")?.textContent)
       .toBe("Filed · won");
     // open and unplayed: no badge at all, and nothing where a badge would go
     const unplayed = cards().find((c) => !c.classList.contains("locked")
@@ -94,7 +100,7 @@ describe("#122 contract card layout (DOM)", () => {
   it("puts the badge in the kicker's own row, not floating over the card", async () => {
     await openCampaign();
     // THE reported card, in the reported state.
-    const reported = cardById("The Inheritance");
+    const reported = cardFor("inheritance");
     const seal = reported.querySelector(".cc-seal")!;
     const kicker = reported.querySelector(".cc-kicker")!;
     // Same parent, and that parent is the row — not the card itself.
@@ -120,13 +126,13 @@ describe("#122 contract card layout (DOM)", () => {
 
   it("keeps the card one click target and names the result to a screen reader", async () => {
     await openCampaign();
-    const reported = cardById("The Inheritance");
+    const reported = cardFor("inheritance");
     expect(reported.tagName).toBe("BUTTON");
     expect(reported.disabled).toBe(false);
     // The badge's text is inside the button, but the button's aria-label wins
     // the accessible name — so the result has to be in the label too.
     expect(reported.getAttribute("aria-label")).toContain("filed, lost");
-    const won = cardById("The Toll King");
+    const won = cardFor("toll-king");
     expect(won.getAttribute("aria-label")).toContain("filed, won");
     const sealed = container.querySelector<HTMLButtonElement>(".chapter-card.locked")!;
     expect(sealed.disabled).toBe(true);
