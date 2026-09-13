@@ -4320,6 +4320,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
     topRight.appendChild(menuBtn);
     ui.el.appendChild(pop);
+    // The one listener the whole menu hangs on: the button toggles its
+    // popover. (onDocDown will NOT fight it — its target is inside menuBtn.)
+    menuBtn.addEventListener("click", () => setMenu(!menuOpen));
     const onDocDown = (e: Event) => {
       const t = e.target as Node;
       if (menuOpen && !pop.contains(t) && !menuBtn.contains(t)) setMenu(false);
