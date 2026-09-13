@@ -40,6 +40,25 @@ export const BOARD_ANIMATION_MS = {
   shuffle: 110,
 } as const;
 
+/**
+ * Issue #152 — turbo waits. When the player has already queued their NEXT
+ * move (and it is a real match), the board must keep up with the hand: every
+ * swap / clear / fall wait collapses to a single frame's worth of time, and
+ * the UI paints a fading remnant of each cleared match so the payoff is still
+ * seen. The moment the queue drains (or the queued swap turns out to be a
+ * dud) timing falls back to `BOARD_ANIMATION_MS`.
+ */
+export const FAST_ANIMATION_MS = {
+  swap: 16,
+  clear: 16,
+  fall: 16,
+  bombClear: 24,
+  bombFall: 16,
+  shuffle: 110,
+} as const;
+
+export type AnimationKey = keyof typeof BOARD_ANIMATION_MS;
+
 
 // ── A1: the arcade callouts ────────────────────────────────────────────────
 /**
@@ -106,6 +125,9 @@ export class Board {
   /** Queued swaps while animations run — fast play enqueues the next move
    *  instead of refusing it. Capped to avoid runaway, drained in order. */
   private moveQueue: { r1: number; c1: number; r2: number; c2: number; now: number }[] = [];
+  /** Issue #152 — last turbo state reported to `onTurbo`, so the UI only
+   *  hears about transitions. */
+  private turboOn = false;
   // Gold is NOT in the base pool at boot — gold gems only drop (join the
   // gravity pool) once a depot sits beside a gold mine. See setGoldEnabled.
   pool: ResKey[] = [...BASE_POOL];
@@ -136,6 +158,9 @@ export class Board {
   onGold: (n: number) => void = () => {};
   onFx: (type: FxType, r: number, c: number, text?: string) => void = () => {};
   onChange: () => void = () => {};
+  /** Issue #152 — the animation pipeline switched into (or out of) turbo.
+   *  The UI shortens its gem transitions and leaves match remnants while on. */
+  onTurbo: (on: boolean) => void = () => {};
   onPopup: (gains: Partial<Record<ResKey, number>>, label: string) => void = () => {};
   // fired when a combo is banked: (bankedNow, needed, grantedCoin)
   onCombo: (count: number, needed: number, granted: boolean) => void = () => {};
@@ -572,6 +597,56 @@ export class Board {
     }
   }
 
+  /** How many moves the player has queued behind the running animation. */
+  get queuedMoves(): number { return this.moveQueue.length; }
+
+  /**
+   * Issue #152 — is the board in catch-up mode? True while a move is queued
+   * and that move, dry-run against the grid as it stands, would make a match.
+   * Mid-cascade (a queued cell is empty, waiting on gravity) we cannot judge
+   * yet, so the player is given the benefit of the doubt: the queue only
+   * exists because they are ahead of the board. A queued swap that is plainly
+   * a dud (both gems present, no match) does NOT accelerate — its revert
+   * plays at normal speed so the refusal reads.
+   */
+  get turbo(): boolean {
+    const nxt = this.moveQueue[0];
+    if (!nxt) return false;
+    const g1 = this.grid[nxt.r1]?.[nxt.c1], g2 = this.grid[nxt.r2]?.[nxt.c2];
+    if (!g1 || !g2) return true;
+    if (g1.block || g2.block) return false;
+    if (g1.special === "bomb" || g2.special === "bomb") return true;
+    return this.wouldMatch(nxt.r1, nxt.c1, nxt.r2, nxt.c2);
+  }
+
+  /** Dry-run a swap: would it leave any group on the board? Grid untouched. */
+  private wouldMatch(r1: number, c1: number, r2: number, c2: number): boolean {
+    const g1 = this.grid[r1][c1], g2 = this.grid[r2][c2];
+    if (!g1 || !g2) return false;
+    this.grid[r1][c1] = g2; this.grid[r2][c2] = g1;
+    const hit = this.findGroups().length > 0;
+    this.grid[r1][c1] = g1; this.grid[r2][c2] = g2;
+    return hit;
+  }
+
+  /** Re-read `turbo` and tell the UI if it changed. */
+  private syncTurbo(): boolean {
+    const on = this.turbo;
+    if (on !== this.turboOn) { this.turboOn = on; this.onTurbo(on); }
+    return on;
+  }
+
+  /** Every animation pause goes through here so turbo can shorten it. */
+  private async wait(key: AnimationKey): Promise<void> {
+    const on = this.syncTurbo();
+    await sleep(on ? FAST_ANIMATION_MS[key] : BOARD_ANIMATION_MS[key]);
+  }
+
+  /** Called when the board goes idle: turbo is over whatever the queue says. */
+  private endTurbo() {
+    if (this.turboOn) { this.turboOn = false; this.onTurbo(false); }
+  }
+
   async settle(startCascade = 0) {
     this.busy = true;
     let chain = startCascade;
@@ -604,10 +679,10 @@ export class Board {
         }
       }
       this.onChange();
-      await sleep(BOARD_ANIMATION_MS.clear);
+      await this.wait("clear");
       this.gravity();
       this.onChange();
-      await sleep(BOARD_ANIMATION_MS.fall);
+      await this.wait("fall");
     }
     const label = maxChain > 1 ? `COMBO x${maxChain}` : "";
     // A1: the readout fires on the LABEL as well as the gains. A tokenless
@@ -636,13 +711,13 @@ export class Board {
     this.onChange();
 
     if (g1.special === "bomb" || g2.special === "bomb") {
-      await sleep(BOARD_ANIMATION_MS.swap);
+      await this.wait("swap");
       const bomb = g1.special === "bomb" ? g1 : g2;
       const other = g1.special === "bomb" ? g2 : g1;
       await this.detonate(bomb, other.res);
       return true;
     }
-    await sleep(BOARD_ANIMATION_MS.swap);
+    await this.wait("swap");
     const groups = this.findGroups();
     if (!groups.length) {
       // revert
@@ -650,7 +725,7 @@ export class Board {
       g1.r = r1; g1.c = c1; g2.r = r2; g2.c = c2;
       this.onFx("bad", r1, c1);
       this.onChange();
-      await sleep(BOARD_ANIMATION_MS.swap);
+      await this.wait("swap");
       this.busy = false;
       return true;
     }
@@ -665,6 +740,10 @@ export class Board {
     if (!g1 || !g2 || g1.block || g2.block) return;
     if (this.busy) {
       if (this.moveQueue.length < 8) this.moveQueue.push({ r1, c1, r2, c2, now });
+      // Issue #152: the UI hears about turbo the instant the player gets
+      // ahead, so the match already clearing leaves its remnant too — not
+      // only the ones after the next wait.
+      this.syncTurbo();
       return;
     }
     await this._doSwap(r1, c1, r2, c2, now);
@@ -677,6 +756,9 @@ export class Board {
       }
       await this._doSwap(nxt.r1, nxt.c1, nxt.r2, nxt.c2, nxt.now);
     }
+    // Issue #152: the queue is drained (or parked behind fog) — back to
+    // standard speed for whatever the player does next.
+    this.endTurbo();
   }
 
   async detonate(bomb: Gem, colorRes: ResKey) {
@@ -694,10 +776,10 @@ export class Board {
       g.dead = true; this.grid[r][c] = null; this.onFx("pop", r, c); }
     if (Object.keys(gains).length) this.onPopup(gains, "COLOUR PURGE");
     this.onChange();
-    await sleep(BOARD_ANIMATION_MS.bombClear);
+    await this.wait("bombClear");
     this.gravity();
     this.onChange();
-    await sleep(BOARD_ANIMATION_MS.bombFall);
+    await this.wait("bombFall");
     await this.settle(2);
   }
 

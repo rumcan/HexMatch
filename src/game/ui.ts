@@ -61,7 +61,7 @@ import type { Cue } from "../audio/cues";
 const CARGO_TO_GEM: Partial<Record<Cargo, ResKey>> = Object.fromEntries(
   Object.entries(GEM_TO_CARGO).map(([gem, cargo]) => [cargo, gem]),
 ) as Partial<Record<Cargo, ResKey>>;
-import { Board, BOARD_ANIMATION_MS, type FxType, type Gem } from "./board";
+import { Board, BOARD_ANIMATION_MS, FAST_ANIMATION_MS, type FxType, type Gem } from "./board";
 import type { IsoMarket, IsoMarketPlayer, Offer } from "../iso/market";
 import portraitYou from "../assets/ui/tycoon_you_small.png";
 import portraitKrag from "../assets/ui/tycoon_krag.png";
@@ -324,6 +324,24 @@ export function createOriginalUi(
   root.dataset.view = "map";
   root.style.setProperty("--gem-move-ms", `${BOARD_ANIMATION_MS.swap}ms`);
   root.style.setProperty("--gem-clear-ms", `${BOARD_ANIMATION_MS.clear}ms`);
+
+  // Issue #152 — turbo catch-up. While the player has a valid move queued the
+  // board runs its waits at FAST_ANIMATION_MS; the gem transitions must snap
+  // to match or the DOM would still be gliding when the next swap lands.
+  // The board flips this on and off (`onTurbo`); `renderBoard` reads
+  // `turboMode` to decide whether a cleared gem leaves a remnant behind.
+  let turboMode = false;
+  /** How long a `.gem-remnant` lingers before it is pulled from the DOM. */
+  const REMNANT_MS = 320;
+  function setTurbo(on: boolean) {
+    if (on === turboMode) return;
+    turboMode = on;
+    const t = on ? FAST_ANIMATION_MS : BOARD_ANIMATION_MS;
+    root.style.setProperty("--gem-move-ms", `${t.swap}ms`);
+    root.style.setProperty("--gem-clear-ms", `${t.clear}ms`);
+    root.classList.toggle("turbo", on);
+  }
+  board.onTurbo = setTurbo;
 
   // ── the map slot (original `<canvas id="map">` is now a container for the
   //    iso layer stack: terrain / structures / overlay) ─────────────────────
@@ -1304,14 +1322,43 @@ export function createOriginalUi(
     }
     gemEls.forEach((elem, id) => {
       if (!present.has(id)) {
-        elem.classList.add("gone");
-        setTimeout(() => elem.remove(), BOARD_ANIMATION_MS.clear);
+        if (turboMode) {
+          // Issue #152: the live gem is yanked at once so the refill can
+          // drop in, and a ghost of it is left on the cell to flash and
+          // dissolve in the background — the payoff the player would
+          // otherwise never see at turbo speed.
+          spawnRemnant(elem);
+          elem.remove();
+        } else {
+          elem.classList.add("gone");
+          setTimeout(() => elem.remove(), BOARD_ANIMATION_MS.clear);
+        }
         gemEls.delete(id);
       }
     });
     const combo = board.comboCount;
     setCombo(combo, Board.COMBOS_PER_GOLD);
     renderSelection();
+  }
+
+  /** Issue #152 — clone a cleared gem into an inert `.gem-remnant` that
+   *  fades out where the gem stood. Selection / drag state is stripped so
+   *  the ghost is only ever the token's face. */
+  function spawnRemnant(src: HTMLElement) {
+    const ghost = src.cloneNode(true) as HTMLElement;
+    ghost.className = `gem-remnant ${src.className}`
+      .replace(/\b(sel|selected|dragging|yielding|gliding|settle|gone)\b/g, "")
+      .replace(/\s+/g, " ").trim();
+    ghost.removeAttribute("data-id");
+    ghost.setAttribute("aria-hidden", "true");
+    ghost.setAttribute("tabindex", "-1");
+    ghost.style.translate = "";
+    ghost.style.transform = src.style.transform;
+    grid.appendChild(ghost);
+    // Two frames in the DOM at rest, then the fade — the transition needs
+    // a start state to run from.
+    requestAnimationFrame(() => requestAnimationFrame(() => ghost.classList.add("fade")));
+    setTimeout(() => ghost.remove(), REMNANT_MS + 40);
   }
 
   // ── FX / popups / toasts / banner / modals ────────────────────────────────

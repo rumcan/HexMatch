@@ -983,6 +983,38 @@ html, body, #root {
 .gem.sel .face.sprite, .gem.selected .face.sprite { filter: drop-shadow(0 0 9px rgba(255, 217, 138, .9)) drop-shadow(0 3px 4px rgba(0, 0, 0, .6)); }
 .gem.gone { transition-duration: var(--gem-clear-ms, 95ms); transform: scale(.1) rotate(40deg) !important; opacity: 0; }
 
+/* ── Issue #152: turbo catch-up remnants ─────────────────────────────────
+   While the player is ahead of the board (`.ui-root.turbo`, set by the
+   board's `onTurbo`), a cleared gem is pulled from the grid at once and a
+   ghost of it is left on the cell: a golden flash that swells, blurs and
+   dissolves over ~300ms while the refill already drops in underneath. It is
+   a `.gem` lookalike (same inline cell transform, same face) that can never
+   be hit or focused. */
+.gem-remnant {
+  position: absolute; left: 0; top: 0;
+  width: var(--gem, 48px); height: var(--gem, 48px);
+  pointer-events: none;
+  z-index: 6;
+  opacity: 1;
+  scale: 1;
+  filter: drop-shadow(0 0 14px var(--gold, #ffb02e)) brightness(1.6);
+  transition:
+    opacity .3s ease-out,
+    scale .3s ease-out,
+    filter .3s ease-out;
+}
+.gem-remnant .face { box-shadow: 0 0 18px 4px rgba(255, 217, 138, .75); }
+.gem-remnant.fade {
+  opacity: 0;
+  scale: 1.18;
+  filter: drop-shadow(0 0 12px var(--gold, #ffb02e)) blur(1.5px) brightness(1.2);
+}
+@media (prefers-reduced-motion: reduce) {
+  /* No swell or blur — a plain, quick fade is all the motion budget allows. */
+  .gem-remnant { transition: opacity .25s linear; filter: none; }
+  .gem-remnant.fade { scale: 1; filter: none; }
+}
+
 /* ── TACTILE-01: picked up, giving way, settling (src/game/ui.ts) ──────────
    Held: lifted a touch above the felt and following the hand with only a
    whisper of lag. Yielding: the neighbour leans out of the way. Settle: a
