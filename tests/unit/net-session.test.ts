@@ -301,13 +301,33 @@ describe("MP-05 the seat mirror", () => {
     expect(mirrored.players.map((p) => p.id)).toEqual(["ai", "you"]);
   });
 
+  it("#137: a seat's setup allowances travel with the seat, zero included", () => {
+    const snap = hostWorld().snapshot();
+    // The host's own record is exhausted; the guest's is partially spent.
+    snap.players = [
+      { ...snap.players[0], freeTrack: 0, freeDepots: 0 },
+      { ...snap.players[1], freeTrack: 5, freeDepots: 1 },
+    ];
+    const mirrored = mirrorSnapshot(snap);
+    // Slot order IS seat order, so the guest's OWN record lands first — with
+    // its allowance intact, or `applyNetSnapshot` would restore the purse of a
+    // seat that just happened to keep the allowances it booted with.
+    expect(mirrored.players[0]).toMatchObject({ id: "ai", freeTrack: 5, freeDepots: 1 });
+    // An exhausted allowance arrives as 0, never as "absent": the reader treats
+    // an absent field as "nothing to restore".
+    expect(mirrored.players[1]).toMatchObject({ id: "you", freeTrack: 0, freeDepots: 0 });
+  });
+
   it("mirrors a delta's owner bytes, ids and list order the same way", () => {
     const msg: DeltaMsg = {
       type: "delta", t: 1, seq: 1,
       tiles: [{ i: 5, dirt: 16, road: 0, owner: 2, upgraded: 0 }],
       harvesters: [{ id: 1, owner: "ai", ownerId: 2, tx: 1, ty: 1 }],
       factories: [{ owner: "you", ownerId: 1, tx: 2, ty: 2, id: 0 }],
-      players: [{ id: "you", vp: 1, res: { wood: 1 } }, { id: "ai", vp: 2, res: { wood: 2 } }],
+      players: [
+        { id: "you", vp: 1, res: { wood: 1 }, freeTrack: 0, freeDepots: 0 },
+        { id: "ai", vp: 2, res: { wood: 2 }, freeTrack: 5, freeDepots: 1 },
+      ],
       notice: "hello",
     };
     const m = mirrorDelta(msg);
@@ -315,6 +335,10 @@ describe("MP-05 the seat mirror", () => {
     expect(m.harvesters![0]).toEqual({ id: 1, owner: "you", ownerId: 1, tx: 1, ty: 1 });
     expect(m.factories![0]).toMatchObject({ owner: "ai", ownerId: 2 });
     expect(m.players!.map((p) => p.id)).toEqual(["ai", "you"]);
+    // #137: the allowances swap with their seat exactly as the snapshot's do —
+    // one wire shape, one reader, so the two paths cannot disagree.
+    expect(m.players![0]).toMatchObject({ freeTrack: 5, freeDepots: 1 });
+    expect(m.players![1]).toMatchObject({ freeTrack: 0, freeDepots: 0 });
     expect(m.notice).toBe("hello");              // a notice is not seat-scoped
   });
 });

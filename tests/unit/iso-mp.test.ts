@@ -22,13 +22,19 @@
 // and the rules, not pixels.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { NetSession, mirrorOwnerByte } from "../../src/net/session";
-import { PROTOCOL_VERSION, type HexProtocol, type WelcomeMsg } from "../../src/net/protocol";
+import {
+  PROTOCOL_VERSION,
+  type HexProtocol, type SnapshotChunkMsg, type WelcomeMsg,
+} from "../../src/net/protocol";
 import type { HexRoom } from "../../src/net/transport";
 import { MAP_W, MAP_H, mulberry32, setRng, OFFER_LIFE, SABOTAGE } from "../../src/game/config";
 import { FACTORY_FOOTPRINT } from "../../src/iso/config";
+import { DEPOT_COST, depotButtonLabel } from "../../src/iso/construction";
+import type { Factory, Harvester } from "../../src/iso/economy";
 import { WATER, factoryTouchesTown, townForSeat, type Grid } from "../../src/iso/grid";
 import { adjacentTown } from "../../src/iso/plants";
-import { tIdx, isPublicRoad, type Track } from "../../src/iso/track";
+import { buildSnapshot, type Snapshot, type WirePlayer } from "../../src/iso/snapshot";
+import { tIdx, isPublicRoad, type DragPreview, type Track } from "../../src/iso/track";
 
 // ── stub the art imports (vite handles these in the browser) ──────────────
 vi.mock("../../assets/iso-atlas/atlas@0.5x.png", () => ({ default: "a05.png" }));
@@ -68,10 +74,14 @@ interface MpHook {
   phase: string;
   grid: Grid;
   track: Track;
-  factories: { owner: string; tx: number; ty: number }[];
-  harvesters: { id: number; owner: string; tx: number; ty: number }[];
+  factories: Factory[];
+  harvesters: Harvester[];
   purse: Record<string, number>;
   freeTrack: number;
+  /** PP-05/#137: the live free-Depot allowance and the price it resolves to —
+   *  the same `priceDepot` the click, the HUD and the AI all read. */
+  freeDepots: number;
+  depotPrice: () => import("../../src/iso/construction").DepotPrice;
   vp: { you: number; ai: number };
   placeFactory: (tx: number, ty: number) => boolean;
   placeDepot: (tx: number, ty: number) => boolean;
@@ -79,10 +89,10 @@ interface MpHook {
   finishSetup: () => void;
   dragBuild: (
     kind: "dirt" | "road", ax: number, ay: number, bx: number, by: number, xFirst?: boolean,
-  ) => { tiles: { tx: number; ty: number }[] } | null;
+  ) => DragPreview | null;
   dragPreview: (
     kind: "dirt" | "road", ax: number, ay: number, bx: number, by: number, xFirst?: boolean,
-  ) => { tiles: { tx: number; ty: number }[] } | null;
+  ) => DragPreview | null;
   placementPlan: (
     kind: "factory" | "depot", tx: number, ty: number,
   ) => { valid: boolean; why: string | null };
@@ -127,6 +137,12 @@ class Endpoint {
   isCreator = false;
   latency = 3;
   connectionState = "connected" as const;
+  /**
+   * #137: a stalled downlink. The peer's frames are still RECORDED in `sent`
+   * (so the host's authoritative wire record stays readable) but never arrive,
+   * which is the case where "a later delta will correct it" never happens.
+   */
+  muted = false;
   private handlers: Record<string, ((m: never) => void) | undefined> = {};
 
   constructor(readonly playerId: string, readonly roomCode: string) {}
@@ -140,12 +156,14 @@ class Endpoint {
   }
   /** Delivery, as the gateway does it: `broadcast` → `onMessage`. */
   deliver(msg: HexProtocol): void {
+    if (this.muted) return;
     const copy = structuredClone(msg);
     this.inbox.push(copy);
     this.handlers.onMessage?.(copy as never);
   }
   /** `sendTo` → `onPrivateMessage`. The room greets a newcomer on BOTH. */
   deliverPrivate(msg: HexProtocol): void {
+    if (this.muted) return;
     const copy = structuredClone(msg);
     this.inbox.push(copy);
     this.handlers.onPrivateMessage?.(copy as never);
@@ -694,6 +712,140 @@ const clickGem = (el: Element, times: number) => {
   for (let i = 0; i < times; i++) (el as HTMLElement).click();
 };
 
+// ── #137 helpers: the setup allowances on the full-state path ─────────────
+//
+// `freeTrack` / `freeDepots` are DATA on the seat (E8), they ride every wire
+// record, and the HUD prices from them. These helpers read the two things the
+// ticket's acceptance names: the host's AUTHORITATIVE record (off the frames it
+// actually sent) and the guest's own BUILD list (where a wrong allowance turns
+// into a wrong price line and a wrong `disabled`).
+
+/** Play the opening on both seats — the host's Factory locally, the guest's
+ *  Factory and Depot through intents — and hand back the sites. Afterwards the
+ *  guest is in `play` and the host's world is a PROGRESSED one worth resyncing
+ *  into. */
+function playOpening(host: MpHook, guest: MpHook): {
+  hostSpot: [number, number]; guestSpot: [number, number]; depotSpot: [number, number];
+} {
+  const hostSpot = findFactorySpot(host.grid)!;
+  expect(hostSpot).not.toBeNull();
+  host.placeFactory(hostSpot[0], hostSpot[1]);
+  pump();
+  const guestSpot = findFactorySpot(guest.grid, footprint(hostSpot[0], hostSpot[1]))!;
+  expect(guestSpot).not.toBeNull();
+  guest.placeFactory(guestSpot[0], guestSpot[1]);
+  pump();
+  const depotSpot = findDepotSpot(guest, guestSpot[0], guestSpot[1])!;
+  expect(depotSpot).not.toBeNull();
+  guest.placeDepot(depotSpot[0], depotSpot[1]);
+  pump();
+  expect(guest.phase).toBe("play");
+  return { hostSpot, guestSpot, depotSpot };
+}
+
+/**
+ * A valid FULL state in the HOST's seat frame, built by the real
+ * `buildSnapshot` from the host's live world — the shape `netFullState`
+ * produces — with each seat's economy record set by the test. `seats[1]` is the
+ * guest's seat on the wire (slot order IS seat order; `mirrorSnapshot` reverses
+ * it on the way in).
+ */
+function hostFullState(host: MpHook, seats: [Partial<WirePlayer>, Partial<WirePlayer>]): Snapshot {
+  const seat = (i: 0 | 1, over: Partial<WirePlayer>): WirePlayer => ({
+    id: i === 0 ? "you" : "ai",
+    vp: i === 0 ? host.vp.you : host.vp.ai,
+    res: { ...host.purse },
+    ...over,
+  });
+  return buildSnapshot({
+    seed: SEED,
+    track: host.track,
+    harvesters: host.harvesters,
+    factories: host.factories,
+    setupPhase: false,
+    won: false,
+    players: [seat(0, seats[0]), seat(1, seats[1])],
+    t: performance.now(),
+  });
+}
+
+/**
+ * The host's authoritative record for WIRE seat 1 (the guest's seat), read from
+ * the last frame the host actually sent: a delta's player list, a single-frame
+ * snapshot, or a reassembled chunked transfer. #137 asserts the guest's frame
+ * against THIS, never against a number the test invented.
+ */
+function hostWireSeat(hostEnd: Endpoint): WirePlayer | undefined {
+  for (let i = hostEnd.sent.length - 1; i >= 0; i--) {
+    const m = hostEnd.sent[i];
+    if (m.type === "delta") return m.players?.[1];
+    if (m.type === "snapshot") return m.snap.players[1];
+    if (m.type === "snapshot-chunk") {
+      const frames = hostEnd.sent.filter(
+        (f): f is SnapshotChunkMsg => f.type === "snapshot-chunk" && f.id === m.id,
+      );
+      if (frames.length < m.n) continue;                 // a transfer still in flight
+      const json = [...frames].sort((a, b) => a.i - b.i).map((f) => f.data).join("");
+      return (JSON.parse(json) as Snapshot).players[1];
+    }
+  }
+  return undefined;
+}
+
+/** One Build-list button in the GUEST's own chrome. */
+const guestTool = (tool: string) => roots[1].querySelector<HTMLButtonElement>(`[data-tool="${tool}"]`);
+/** Its price line — the Depot's reads `freeDepots` and nothing else. */
+const guestToolSub = (tool: string) => guestTool(tool)?.querySelector("small")?.textContent ?? null;
+
+/** A straight dirt drag near a centre whose path covers at least `need`
+ *  buildable tiles — long enough that an allowance smaller than the path shows
+ *  up in the preview's `free` / `unaffordable` split. */
+function findLongDrag(
+  h: MpHook, cx: number, cy: number, need: number,
+): [number, number, number, number] | null {
+  for (let r = 1; r <= 20; r++) {
+    for (let y = cy - r; y <= cy + r; y++) {
+      for (let x = cx - r; x <= cx + r; x++) {
+        for (const [dx, dy] of [[1, 0], [0, 1]] as const) {
+          const bx = x + dx * (need + 2), by = y + dy * (need + 2);
+          const pv = h.dragPreview("dirt", x, y, bx, by);
+          if (pv && pv.tiles.length + pv.unaffordable.length >= need) return [x, y, bx, by];
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * `count` tile-disjoint legal dirt drags near a centre. A muted guest's local
+ * track never grows (its own builds are only intents), so the search has to
+ * remember what it already picked — otherwise it hands back the same drag
+ * `count` times and the host spends no allowance on the repeats.
+ */
+function findDrags(
+  h: MpHook, cx: number, cy: number, count: number,
+): [number, number, number, number][] {
+  const out: [number, number, number, number][] = [];
+  const used = new Set<number>();
+  for (let r = 1; r <= 30 && out.length < count; r++) {
+    for (let y = cy - r; y <= cy + r && out.length < count; y++) {
+      for (let x = cx - r; x <= cx + r && out.length < count; x++) {
+        for (const [dx, dy] of [[1, 0], [0, 1], [-1, 0], [0, -1]] as const) {
+          const bx = x + dx * 2, by = y + dy * 2;
+          const pv = h.dragPreview("dirt", x, y, bx, by);
+          if (!pv || pv.tiles.length === 0) continue;
+          if (pv.tiles.some(([tx, ty]) => used.has(tIdx(tx, ty)))) continue;
+          for (const [tx, ty] of pv.tiles) used.add(tIdx(tx, ty));
+          out.push([x, y, bx, by]);
+          break;
+        }
+      }
+    }
+  }
+  return out;
+}
+
 describe("audit regressions: two real games, one room", () => {
   it("a guest's sabotage hits the HOST's plant — never the guest's own (#111)", async () => {
     const { host, guest } = await bootPair();
@@ -1139,5 +1291,148 @@ describe("audit regressions: two real games, one room", () => {
     forcePublish(guest);
     pump();
     expect(guest.rivalPlant.board.grid.flat().map((g) => g?.id)).toEqual(hostIdsBefore);
+  });
+
+  it("a FULL snapshot restores both setup allowances — spent, part-spent and absent (#137)", async () => {
+    const { host, guest, guestEnd } = await bootPair();
+    const { guestSpot } = playOpening(host, guest);
+
+    // What a fresh guest holds: the whole opening dirt allowance, and no free
+    // Depot left — its opening Depot rode the allowance and the DELTA that
+    // answered the intent carried the 0 back (MP-05). The snapshot path had no
+    // such line, which is why the delta's correctness hid the gap.
+    expect(guest.freeTrack).toBeGreaterThan(0);
+    expect(guest.freeDepots).toBe(0);
+
+    // One drag long enough to outlive a small allowance, found while the guest
+    // still holds its boot purse (a path's LEGALITY never depends on the purse).
+    const drag = findLongDrag(guest, guestSpot[0], guestSpot[1], 8);
+    expect(drag).not.toBeNull();
+    const [ax, ay, bx, by] = drag!;
+
+    // An empty purse on the guest's seat makes the HUD read the ALLOWANCE and
+    // nothing else: both Build buttons are then live exactly while an allowance
+    // covers their cost.
+    const send = (over: Partial<WirePlayer>) => {
+      guestEnd.deliver({ type: "snapshot", snap: hostFullState(host, [{ res: {} }, { res: {}, ...over }]) });
+    };
+
+    // ── partially spent: 5 free dirt tiles, one free Depot ─────────────────
+    send({ freeTrack: 5, freeDepots: 1 });
+    await settle();                                   // a painted frame re-renders the HUD
+
+    // The DATA…
+    expect(guest.freeTrack).toBe(5);
+    expect(guest.freeDepots).toBe(1);
+    // …the PREVIEW PRICE the next action will be charged from…
+    expect(guest.depotPrice()).toMatchObject({ free: true, cost: {}, affordable: true, freeLeft: 0 });
+    const part = guest.dragPreview("dirt", ax, ay, bx, by)!;
+    expect(part.free).toBe(5);                        // the allowance covers five tiles…
+    expect(part.tiles).toHaveLength(5);
+    expect(part.cost).toEqual({});                    // …and charges nothing for them
+    expect(part.unaffordable.length).toBeGreaterThan(0);   // the rest the empty purse cannot pay
+    // …and the HUD built from both.
+    expect(guestToolSub("harvester")).toBe(depotButtonLabel(1));
+    expect(guestToolSub("harvester")).toMatch(/free setup/);
+    expect(guestTool("harvester")!.disabled).toBe(false);
+    expect(guestTool("dirt")!.disabled).toBe(false);
+
+    // ── the same seat, EXHAUSTED: zero is a value, not a missing field ─────
+    send({ freeTrack: 0, freeDepots: 0 });
+    await settle();
+
+    expect(guest.freeTrack).toBe(0);
+    expect(guest.freeDepots).toBe(0);
+    const spent = guest.depotPrice();
+    expect(spent.free).toBe(false);
+    expect(spent.cost).toEqual(DEPOT_COST);           // the full Oil price the host will charge
+    expect(spent.affordable).toBe(false);
+    const zero = guest.dragPreview("dirt", ax, ay, bx, by)!;
+    expect(zero.free).toBe(0);
+    expect(zero.tiles).toHaveLength(0);               // nothing free, nothing affordable
+    expect(zero.unaffordable.length).toBeGreaterThan(0);
+    expect(guestToolSub("harvester")).toBe(depotButtonLabel(0));
+    expect(guestToolSub("harvester")).not.toMatch(/free setup/);   // no phantom free Depot
+    expect(guestTool("harvester")!.disabled).toBe(true);
+    expect(guestTool("dirt")!.disabled).toBe(true);                // no phantom free track
+
+    // ── and a producer with nothing to say leaves the seat alone ───────────
+    // Absent is NOT zero: a solo save (or any record without allowances) must
+    // not wipe what the guest already holds — it must restore nothing.
+    send({});
+    await settle();
+    expect(guest.freeTrack).toBe(0);
+    expect(guest.freeDepots).toBe(0);
+    expect(guest.depotPrice().free).toBe(false);
+    expect(guestToolSub("harvester")).toBe(depotButtonLabel(0));
+  });
+
+  it("a stalled guest resyncs into the host's SPENT allowances, not its boot ones (#137)", async () => {
+    const { host, guest, hostEnd, guestEnd } = await bootPair();
+    const { guestSpot } = playOpening(host, guest);
+    const bootTrack = guest.freeTrack;
+
+    // The downlink dies. The guest's intents still reach the host and are still
+    // applied — the answers just never come back, so this is the case where "a
+    // later delta will correct it" never happens.
+    guestEnd.muted = true;
+
+    // Eight three-tile drags: the first twelve tiles ride the guest-seat
+    // allowance, the rest are charged. Locally the guest sees none of it.
+    const drags = findDrags(guest, guestSpot[0], guestSpot[1], 8);
+    expect(drags).toHaveLength(8);
+    for (const [ax, ay, bx, by] of drags) {
+      const pv = guest.dragBuild("dirt", ax, ay, bx, by, true);
+      expect(pv, `drag from ${ax},${ay}`).not.toBeNull();
+      // The stale mirror is the bug's impact: the guest previews free tiles the
+      // host has already spent.
+      expect(pv!.free).toBeGreaterThan(0);
+    }
+    pump();
+
+    // The host's authoritative seat-1 record, read off the frames it SENT.
+    const wire = hostWireSeat(hostEnd);
+    expect(wire).toBeDefined();
+    expect(wire!.freeTrack).toBe(0);                  // exhausted on the host…
+    expect(wire!.freeDepots).toBe(0);
+    expect(guest.freeTrack).toBe(bootTrack);          // …and still whole on the stalled guest
+
+    // A genuine resync: the host's REAL full state crosses chunked, and the
+    // guest applies it through the validated snapshot path.
+    guestEnd.muted = false;
+    // Full state is ask-throttled to one per 300 ms wall clock — a real resync
+    // waits the throttle out.
+    await new Promise((r) => setTimeout(r, 320));
+    hostEnd.deliver({ type: "resync" });
+    pump();
+    expect(guestEnd.inbox.some((m) => m.type === "snapshot-chunk")).toBe(true);
+
+    // The full state restored EXACTLY the host's record — zero included.
+    expect(guest.freeTrack).toBe(wire!.freeTrack);
+    expect(guest.freeTrack).toBe(0);
+    expect(guest.freeDepots).toBe(wire!.freeDepots);
+    expect(guest.freeDepots).toBe(0);
+    await settle();
+
+    // …and the price the guest now previews is the price the host will charge:
+    // no free Depot, no free dirt. (The dirt BUTTON's affordability also reads
+    // the seat's purse, which the paid tiles moved — the purse-independent half
+    // of the HUD is the Depot's price line, and the controlled-purse case is
+    // asserted in the snapshot test above.)
+    expect(guest.depotPrice().free).toBe(false);
+    expect(guest.depotPrice().cost).toEqual(DEPOT_COST);
+    const after = findLongDrag(guest, guestSpot[0], guestSpot[1], 6);
+    expect(after).not.toBeNull();
+    const pv = guest.dragPreview("dirt", after![0], after![1], after![2], after![3])!;
+    expect(pv.free).toBe(0);                          // a fresh drag rides no allowance
+    expect(guestToolSub("harvester")).toBe(depotButtonLabel(0));
+    expect(guestToolSub("harvester")).not.toMatch(/free setup/);
+
+    // The two paths agree: the next delta carries the same record and changes
+    // nothing a full state already restored.
+    forcePublish(guest);
+    pump();
+    expect(guest.freeTrack).toBe(0);
+    expect(guest.freeDepots).toBe(0);
   });
 });
