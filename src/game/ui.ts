@@ -67,6 +67,8 @@ import portraitYou from "../assets/ui/tycoon_you_small.png";
 import portraitKrag from "../assets/ui/tycoon_krag.png";
 import portraitTorvin from "../assets/ui/tycoon_torvin_small.png";
 import portraitVex from "../assets/ui/tycoon_vex_small.png";
+// STORY-01: the wire's office voice (Mabel) and her standing expression.
+import { faceOf } from "../story/cast";
 
 // ── V5: the restored gem art ────────────────────────────────────────────────
 // One sprite per cargo (./gem-art.ts), mapped through the same gem→cargo
@@ -123,6 +125,15 @@ export interface UiState {
    *  remembered by this, not the exact text, so a closed banner never pops
    *  back up when its wording changes and returns (tool switch, countdown). */
   bannerKey: string | null;
+  /**
+   * STORY-01: when set, the sheet is SPOKEN — the banner paints as Mabel's
+   *   speech bubble with this face beside it (a quadrant of her expression
+   *   sheet at a uniform 2×, or a solo portrait at `cover`). Null/omitted:
+   *   the posted manila sheet, exactly as before the campaign.
+   */
+  bannerFace?: { url: string; pos: readonly [number, number] | null } | null;
+  /** STORY-01: the name tag on the bubble ("Mabel Quill"). */
+  bannerWho?: string | null;
   costInfo: string | null;
   inspect: string | null;
   /** PP-03: tones the inspector when it is a placement verdict (e.g. the red
@@ -138,6 +149,13 @@ export interface UiState {
    * test harness) falls back to the shipped line.
    */
   vpTarget?: number;
+  /**
+   * STORY-01: the dossier face the rival seat wears — a quadrant of the
+   * campaign's painted expression sheet (`pos` set, drawn at a uniform 2×)
+   * or a solo portrait (`pos` null, drawn `cover`). Omitted: the name/seat
+   * mugshot map, exactly as before the campaign existed.
+   */
+  rivalFace?: { url: string; pos: readonly [number, number] | null };
   /** PP-14b: which tycoon portrait the player picked. */
   portrait: Portrait;
 }
@@ -155,8 +173,16 @@ export interface UiHooks {
 }
 
 export interface UiRivalryBeat {
-  speaker: "rival" | "you";
+  /** STORY-01 adds the office: Mabel Quill rides the same wire as the rival,
+   *  in her own patina keyline, when the guide has something to say. */
+  speaker: "rival" | "you" | "guide";
   text: string;
+  /** STORY-01: the face this beat speaks with — a quadrant of a painted
+   *  expression sheet (`pos` set, drawn at a uniform 2×) or a solo portrait
+   *  (`pos` null, drawn `cover`). Omitted: the speaker's standing mugshot. */
+  face?: { url: string; pos: readonly [number, number] | null };
+  /** STORY-01: overrides the small keyline label ("Office · Mabel Quill"). */
+  label?: string;
 }
 
 export interface OriginalUi {
@@ -1324,13 +1350,41 @@ export function createOriginalUi(
   const rivalWireQueue: UiRivalryBeat[] = [];
   let rivalWireBusy = false;
   let rivalWirePlayerPortrait = portraitVex;
+  // STORY-01: the guide's standing face — the calm quadrant of her sheet —
+  // for the office beats that arrive without a mood of their own.
+  const rivalWireGuideFace = faceOf("mabel", "calm");
+  /** STORY-01: the rival seat's dossier face for this match (paint sets it). */
+  let rivalFaceOverride: { url: string; pos: readonly [number, number] | null } | null = null;
 
   const paintRivalryBeat = (beat: UiRivalryBeat) => {
     const yours = beat.speaker === "you";
+    const guide = beat.speaker === "guide";
     rivalWire.dataset.speaker = beat.speaker;
     rivalWire.classList.toggle("you-speaking", yours);
-    rivalWireFace.style.backgroundImage = `url(${yours ? rivalWirePlayerPortrait : portraitTorvin})`;
-    rivalWireLabel.textContent = yours ? "You · Open channel" : "Rival · Private wire";
+    rivalWire.classList.toggle("guide-speaking", guide);
+    // STORY-01: a beat may carry the exact face it speaks with — an
+    // expression quadrant off the campaign's painted sheets (uniform 2×,
+    // never stretched) — and the wire wears it for as long as the beat
+    // stands. Without one, the speaker's standing mugshot returns.
+    if (beat.face) {
+      rivalWireFace.style.backgroundImage = `url(${beat.face.url})`;
+      if (beat.face.pos) {
+        rivalWireFace.style.backgroundSize = "200% 200%";
+        rivalWireFace.style.backgroundPosition = `${beat.face.pos[0]}% ${beat.face.pos[1]}%`;
+      } else {
+        rivalWireFace.style.backgroundSize = "cover";
+        rivalWireFace.style.backgroundPosition = "center 20%";
+      }
+    } else {
+      const standing = yours ? rivalWirePlayerPortrait : guide ? rivalWireGuideFace.url : portraitTorvin;
+      rivalWireFace.style.backgroundImage = `url(${standing})`;
+      rivalWireFace.style.backgroundSize = guide ? "200% 200%" : "cover";
+      rivalWireFace.style.backgroundPosition = guide
+        ? `${rivalWireGuideFace.pos?.[0] ?? 0}% ${rivalWireGuideFace.pos?.[1] ?? 0}%`
+        : "center 20%";
+    }
+    rivalWireLabel.textContent = beat.label
+      ?? (yours ? "You · Open channel" : guide ? "Office · Mabel Quill" : "Rival · Private wire");
     rivalWireText.textContent = beat.text;
   };
 
@@ -1478,8 +1532,17 @@ export function createOriginalUi(
       const face = p.human
         ? (portrait === "you" ? portraitYou : portraitVex)
         : portraitFor(p, seat);
+      // STORY-01: a contract's rival wears their painted expression sheet on
+      // the dossier card — one quadrant at a uniform 2×, never stretched —
+      // while a sandbox match keeps the mugshot its name or seat maps to.
+      const rivalFace = !p.human && rivalFaceOverride ? rivalFaceOverride : null;
+      const faceStyle = rivalFace && rivalFace.pos
+        ? `background-image:url(${rivalFace.url});background-size:200% 200%;background-position:${rivalFace.pos[0]}% ${rivalFace.pos[1]}%`
+        : rivalFace
+          ? `background-image:url(${rivalFace.url});background-size:cover;background-position:center 20%`
+          : `background-image:url(${face})`;
       const html = `
-        <div class="king-av has-portrait" style="background-image:url(${face})">${p.name[0]}</div>
+        <div class="king-av has-portrait" style="${faceStyle}">${p.name[0]}</div>
         <div class="king-mid">
           <div class="king-name">${p.name}${p.human ? " <span class='you'>YOU</span>" : ""}</div>
           <div class="king-bar"><i style="width:${Math.min(100, (p.vp / target) * 100)}%;background:${p.colour}"></i></div>
@@ -1508,6 +1571,9 @@ export function createOriginalUi(
   // ── paint ─────────────────────────────────────────────────────────────────
   function paint(state: UiState) {
     rivalWirePlayerPortrait = state.portrait === "you" ? portraitYou : portraitVex;
+    // STORY-01: the contract's rival wears their painted sheet on the dossier
+    // card; a sandbox match (no face on the state) keeps the mugshot map.
+    rivalFaceOverride = state.rivalFace ?? null;
     // TUT-01: remember the live free-tile allowance so a tour replayed from ❔
     // quotes the game being played, not the shipped constant.
     hudFreeTrack = state.freeTrack;
@@ -1544,8 +1610,28 @@ export function createOriginalUi(
       if (state.banner && dismissedBannerKey !== state.bannerKey) {
         const text = state.banner;
         const key = state.bannerKey;
+        // STORY-01: a voiced banner is a speech bubble, not a posted sheet —
+        // her face, her name tag, her line. The ✕ and the BANNER-ONCE
+        // dismissal work identically on both, because the key is the seam.
+        const face = state.bannerFace ?? null;
+        banner.classList.toggle("narrated", !!face);
         banner.innerHTML = `<button class="banner-close" title="Hide">✕</button>` +
-          `<small>${text}</small>`;
+          (face
+            ? `<span class="banner-face" aria-hidden="true"></span>`
+              + `<b class="banner-who">${state.bannerWho ?? "Mabel Quill"}</b>`
+              + `<small>${text}</small>`
+            : `<small>${text}</small>`);
+        if (face) {
+          const faceEl = banner.querySelector(".banner-face") as HTMLElement;
+          faceEl.style.backgroundImage = `url(${face.url})`;
+          if (face.pos) {
+            faceEl.style.backgroundSize = "200% 200%";
+            faceEl.style.backgroundPosition = `${face.pos[0]}% ${face.pos[1]}%`;
+          } else {
+            faceEl.style.backgroundSize = "cover";
+            faceEl.style.backgroundPosition = "center 20%";
+          }
+        }
         const bx = banner.querySelector(".banner-close") as HTMLElement;
         bx.dataset.sfx = "close";
         bx.onclick = () => {

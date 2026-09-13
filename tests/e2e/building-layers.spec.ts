@@ -37,6 +37,8 @@ test.describe("building PNG layers ship in the built game", () => {
     // The start screen is the app's default route — the iso game only mounts
     // once a mode is chosen. "Play vs AI" boots solo play; the ?seed in the
     // URL still pins the map (resolveMapSeed reads location.search).
+    // STORY-01 menu: Play past the front door first
+    await page.locator(".menu-btn.primary").click();
     await page.getByRole("button", { name: /Play vs AI/ }).click();
     await page.waitForFunction(() => {
       const h = (window as any).__iso;

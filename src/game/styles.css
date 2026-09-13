@@ -2628,6 +2628,183 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .start-panel button:disabled { opacity: .4; cursor: not-allowed; }
 
 /* ═══════════════════════════════════════════════════════════════════
+   STORY-01 — the living plate behind the front doors.
+
+   One animated backdrop, shared by the MAIN MENU and every StartScreen
+   state (mode pick, campaign list, host/join, lobby), so Play never
+   feels like leaving one app for another. Three compositor-only layers:
+
+   · ::before — the docks at first light (bg-harbor), one slow Ken Burns
+     breath, ~52s round trip, `cover` because a backdrop is a place and
+     places are never stretched per-axis;
+   · ::after  — the theme's SEAMLESS smoke tile drifting exactly one tile
+     per cycle so the loop has no seam to see;
+   · .menu-embers — a fixed cast of fourteen embers rising off the lamps
+     (deterministic, no Math.random flicker between visits).
+
+   Under prefers-reduced-motion every one of them stops dead (below) and
+   the plate simply stands still — it is paint, never information.
+   ═══════════════════════════════════════════════════════════════════ */
+.start-screen { position: relative; overflow: hidden; isolation: isolate; }
+.start-screen::before {
+  content: ""; position: absolute; inset: -6%; z-index: -3; pointer-events: none;
+  background:
+    radial-gradient(ellipse at 50% 14%, rgba(255, 176, 46, .13), transparent 46%),
+    linear-gradient(180deg, rgba(10, 8, 6, .5), rgba(8, 6, 5, .74) 62%, rgba(5, 4, 3, .86)),
+    url("../assets/story/bg-harbor.webp") center / cover no-repeat,
+    #0c0a08;
+  animation: plate-breathe 52s ease-in-out infinite alternate;
+  will-change: transform;
+}
+.start-screen::after {
+  content: ""; position: absolute; inset: -460px; z-index: -2; pointer-events: none;
+  background: var(--smoke) 0 0 / 900px repeat;
+  opacity: .12;
+  animation: smoke-drift 120s linear infinite;
+  will-change: transform;
+}
+@keyframes plate-breathe {
+  from { transform: scale(1) translate3d(0, 0, 0); }
+  to   { transform: scale(1.065) translate3d(-1.2%, -1%, 0); }
+}
+/* the tile is seamless at 900px, so travelling exactly one tile loops clean */
+@keyframes smoke-drift {
+  from { transform: translate3d(0, 0, 0); }
+  to   { transform: translate3d(900px, 450px, 0); }
+}
+
+/* ── the menu itself ─────────────────────────────────────────────── */
+.menu-embers { position: absolute; inset: 0; z-index: -1; pointer-events: none; }
+.menu-embers span {
+  position: absolute; bottom: -12px; border-radius: 50%;
+  background: radial-gradient(circle, #ffd98a 0%, rgba(255, 176, 46, .55) 45%, rgba(255, 176, 46, 0) 72%);
+  box-shadow: 0 0 6px rgba(255, 176, 46, .5);
+  opacity: 0;
+  animation-name: ember-rise; animation-timing-function: linear; animation-iteration-count: infinite;
+  will-change: transform;
+}
+@keyframes ember-rise {
+  0%   { transform: translate3d(0, 0, 0); opacity: 0; }
+  12%  { opacity: .85; }
+  70%  { opacity: .5; }
+  100% { transform: translate3d(var(--drift, 0px), -104vh, 0); opacity: 0; }
+}
+.menu-card {
+  position: relative; z-index: 2;
+  width: min(520px, 100%); text-align: center; padding: 44px 40px 34px;
+  border: 1px solid var(--line, #594b3b); border-top: 3px solid var(--brass, #c9a24a);
+  background:
+    linear-gradient(180deg, rgba(34, 27, 20, .95), rgba(19, 16, 13, .96)),
+    repeating-linear-gradient(104deg, rgba(255, 255, 255, .016) 0 1px, transparent 1px 6px);
+  box-shadow: 0 24px 90px rgba(0, 0, 0, .6), inset 0 1px 0 rgba(255, 255, 255, .06);
+}
+.menu-emblem {
+  display: block; width: 76px; height: 76px; margin: 0 auto 10px;
+  background: var(--seal) center / contain no-repeat;
+  opacity: .92; filter: drop-shadow(0 4px 14px rgba(255, 176, 46, .22));
+}
+.menu-title {
+  margin: 0; color: #f4e9d2;
+  font-family: var(--display); font-weight: 700;
+  font-size: clamp(30px, 6vw, 42px); line-height: 1.08; letter-spacing: 2px;
+  text-shadow: 0 0 26px rgba(255, 176, 46, .28), 0 2px 0 rgba(0, 0, 0, .5);
+}
+.menu-sub {
+  margin: 10px auto 26px; max-width: 360px;
+  color: #a89b89; font: 600 12px/1.5 var(--sans, sans-serif);
+  letter-spacing: 2.5px; text-transform: uppercase;
+}
+.menu-actions { display: grid; gap: 12px; }
+.menu-btn {
+  min-height: 56px; padding: 10px 18px 12px; cursor: pointer;
+  border: 1px solid var(--line, #594b3b); border-radius: var(--r, 3px);
+  color: var(--txt, #efe4d0);
+  background: linear-gradient(180deg, rgba(255, 255, 255, .055), rgba(255, 255, 255, .015)), rgba(21, 18, 14, .85);
+  font-family: var(--display); font-weight: 700; font-size: 15px;
+  letter-spacing: 3px; text-transform: uppercase;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05);
+  transition: border-color .15s ease, background .15s ease, box-shadow .15s ease;
+}
+.menu-btn:hover {
+  border-color: var(--gold, #c98731);
+  background: linear-gradient(180deg, rgba(255, 166, 43, .16), rgba(255, 166, 43, .05)), rgba(21, 18, 14, .85);
+  box-shadow: 0 0 0 1px rgba(233, 168, 62, .25), 0 6px 22px rgba(0, 0, 0, .4);
+}
+.menu-btn.primary {
+  color: #1b130b; border-color: var(--gold2, #e9a83e);
+  background: linear-gradient(180deg, #f0c069, #c99a3e 55%, #b98a34);
+  box-shadow: 0 0 22px rgba(255, 176, 46, .18), inset 0 1px 0 rgba(255, 255, 255, .4);
+}
+.menu-btn.primary:hover { background: linear-gradient(180deg, #ffd47e, #d9a94c 55%, #c2913a); }
+.mb-tag {
+  display: block; margin-top: 3px;
+  font: 500 11px/1.3 var(--sans, sans-serif);
+  letter-spacing: 1.2px; text-transform: none; opacity: .6;
+}
+.menu-btn.primary .mb-tag { color: #3a2a10; opacity: .78; }
+.menu-note {
+  margin: 16px auto 0; max-width: 400px; padding: 10px 14px;
+  border: 1px dashed rgba(201, 162, 74, .55); border-radius: var(--r, 3px);
+  background: rgba(236, 224, 198, .07);
+  color: #e8dcc0; font-family: var(--mono); font-size: 12.5px; line-height: 1.5;
+}
+.menu-campaign {
+  margin: 20px 0 0; color: #8b7d68;
+  font: 600 11px/1 var(--sans, sans-serif); letter-spacing: 2.4px; text-transform: uppercase;
+}
+.menu-foot {
+  position: absolute; left: 0; right: 0; bottom: 10px; z-index: 2;
+  margin: 0; padding: 0 16px; text-align: center;
+  color: rgba(232, 220, 192, .38); font: 500 10px/1.5 var(--sans, sans-serif); letter-spacing: .6px;
+}
+/* the tour projector (#iso-tutorial) hangs inside this host, full-bleed */
+.menu-howto { position: absolute; inset: 0; z-index: 5; }
+
+/* the mode screen answers the menu: same brass-crowned panel on the same
+   living plate, so the two read as one room */
+.start-panel { border-top: 3px solid var(--brass, #c9a24a); }
+.start-back { margin-top: 4px; opacity: .85; }
+.start-back:hover { opacity: 1; }
+
+/* ── STORY-01: the narrated banner — a posted sheet becomes a voice ──
+   When ui.paint gets `bannerFace`, the sheet is Mabel SPEAKING: her face
+   at a uniform 2× quadrant (geometry is sacred — never per-axis), her name
+   in the typewriter face, her line below, and a little brass-edged tail so
+   the whole thing reads as a speech bubble and not a notice. */
+.banner.narrated {
+  display: grid; grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 12px; align-items: center; text-align: left;
+  padding: 12px 40px 13px 14px;
+}
+.banner.narrated .banner-face {
+  grid-row: 1 / -1; width: 46px; height: 46px;
+  border: 2px solid var(--brass, #c9a24a); border-radius: 6px;
+  background-color: rgba(40, 28, 14, .35); background-repeat: no-repeat;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, .4);
+}
+.banner.narrated b.banner-who {
+  grid-column: 2; align-self: end;
+  font-family: var(--mono); font-size: 12.5px; color: #86331c;
+  letter-spacing: .6px; text-transform: none;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, .3);
+}
+.banner.narrated small { grid-column: 2; align-self: start; margin-top: 2px; }
+.banner.narrated::after {
+  content: ""; position: absolute; left: 26px; bottom: -8px;
+  width: 14px; height: 14px; transform: rotate(45deg);
+  background: #c9b288;
+  border-right: 1px solid rgba(60, 42, 22, .6);
+  border-bottom: 1px solid rgba(60, 42, 22, .6);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .start-screen::before, .start-screen::after,
+  .menu-embers span { animation: none; }
+  .menu-embers { display: none; }
+  .menu-embers span { opacity: 0; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
    Cinematic final ledger — victory fireworks / defeat ashes
    ═══════════════════════════════════════════════════════════════════ */
 .ending-screen {
@@ -2905,3 +3082,186 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   .ending-firework { opacity: .42; transform: scale(.75); }
   .ending-spark { opacity: .6; transform: rotate(calc(var(--i) * 30deg)) translateY(-38px); }
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   STORY-01 — the campaign: cutscene stage, the office voice on the wire,
+   and the contract menu on the start screen.
+
+   The stage obeys the theme's three rules like every other surface here:
+   geometry is its own (a fixed overlay above the HUD, never inside a HUD
+   box), nothing repeats except the seamless smoke, and no bitmap is sized
+   to two different axes — backdrops are `cover`, expression sheets are one
+   quadrant at a uniform `200% 200%`, exactly as the wire card and the
+   dossier row draw them.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── the office on the wire: Mabel's patina keyline ─────────────────── */
+.rival-quip.guide-speaking {
+  background: linear-gradient(100deg, rgba(7, 15, 12, .97), rgba(15, 33, 26, .94));
+  border-color: rgba(99, 192, 138, .42);
+  border-left-color: var(--good);
+}
+.rival-quip.guide-speaking .rival-quip-label { color: var(--good); }
+.rival-quip.guide-speaking .rival-quip-face { border-color: rgba(99, 192, 138, .6); }
+
+/* ── the cutscene stage ─────────────────────────────────────────────── */
+.story-stage {
+  position: fixed; inset: 0; z-index: 80;
+  overflow: hidden; cursor: pointer;
+  background: #060403;
+  --accent: var(--brass);
+  opacity: 0;
+  transition: opacity .45s ease;
+}
+.story-stage.on { opacity: 1; }
+.story-stage.leaving { opacity: 0; transition: opacity .26s ease; }
+/* two stacked plates: the live place, and the one a cross-fade arrives on */
+.story-bg {
+  position: absolute; inset: -4%;
+  background-position: center; background-repeat: no-repeat;
+  background-size: cover;
+  opacity: 0;
+  transition: opacity .9s ease;
+  filter: saturate(.92) contrast(1.05) brightness(.9);
+}
+.story-bg.on { opacity: 1; animation: story-breath 26s ease-in-out infinite alternate; }
+@keyframes story-breath { from { transform: scale(1); } to { transform: scale(1.055); } }
+/* the theme's own smoke over the plate, and one lamp-vignette around it */
+.story-grain {
+  position: absolute; inset: 0; pointer-events: none;
+  background: var(--smoke) 0 0 / 1000px;
+  opacity: .12; mix-blend-mode: screen;
+  box-shadow: inset 0 0 240px 60px rgba(0, 0, 0, .82);
+}
+.story-caption {
+  position: absolute; top: 18px; left: 22px; z-index: 2;
+  font: 500 11px/1.4 var(--serif); letter-spacing: 2.4px; text-transform: uppercase;
+  color: rgba(236, 224, 198, .68);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, .9);
+}
+.story-skip {
+  position: absolute; top: 14px; right: 16px; z-index: 3; cursor: pointer;
+  font: 600 11px/1 var(--serif); letter-spacing: 1.6px; text-transform: uppercase;
+  color: var(--txt-dim); background: rgba(10, 7, 5, .74);
+  border: 1px solid var(--brass-lo); border-radius: 2px; padding: 9px 13px;
+}
+.story-skip:hover { color: var(--gold2); border-color: var(--brass); background: rgba(30, 20, 10, .85); }
+/* the dossier card: the speaker's painted face, engraved name, small-caps role */
+.story-dossier {
+  position: absolute; left: min(7vw, 96px); bottom: 176px; z-index: 2;
+  width: 176px; padding: 8px 8px 10px;
+  display: flex; flex-direction: column; gap: 6px; align-items: center;
+  background: linear-gradient(180deg, rgba(20, 14, 10, .94), rgba(10, 7, 5, .96));
+  border: 1px solid rgba(201, 162, 74, .4);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, .7), inset 0 1px 0 rgba(242, 220, 166, .14);
+  opacity: 0; transform: translateY(10px);
+  transition: opacity .3s ease, transform .3s ease;
+}
+.story-dossier.on { opacity: 1; transform: none; }
+.story-face {
+  display: block; width: 160px; height: 160px;
+  background-repeat: no-repeat;
+  border: 1px solid rgba(201, 162, 74, .5);
+  box-shadow: inset 0 0 18px rgba(0, 0, 0, .55);
+  filter: sepia(.18) contrast(1.06);
+}
+.story-name {
+  font: 700 15px/1.15 var(--display); letter-spacing: 1.6px; text-transform: uppercase;
+  color: var(--accent); text-align: center;
+}
+.story-role {
+  font: 500 10.5px/1.35 var(--serif); letter-spacing: 1.2px; text-transform: uppercase;
+  font-style: normal; color: var(--txt-dim); text-align: center;
+}
+/* the dialogue plate: felt under iron, one accent keyline in the speaker's colour */
+.story-plate {
+  position: absolute; left: 50%; transform: translateX(-50%); bottom: 34px; z-index: 2;
+  width: min(760px, calc(100vw - 48px)); min-height: 112px;
+  padding: 18px 46px 22px 22px;
+  background:
+    linear-gradient(180deg, rgba(24, 17, 12, .96), rgba(12, 8, 6, .97)),
+    var(--felt) 0 0 / 480px 480px repeat;
+  border: 1px solid rgba(201, 162, 74, .42);
+  border-left: 3px solid var(--accent);
+  box-shadow: 0 22px 60px rgba(0, 0, 0, .72), inset 0 1px 0 rgba(242, 220, 166, .12);
+}
+.story-plate.narrator { border-left-color: var(--brass-lo); text-align: center; padding-inline: 36px; }
+.story-text {
+  margin: 0; min-height: 3.1em;
+  font: 400 16.5px/1.55 var(--sans); color: var(--txt);
+  white-space: pre-wrap;
+}
+.story-plate.narrator .story-text { font-style: italic; color: var(--txt-dim); }
+.story-next {
+  position: absolute; right: 14px; bottom: 9px;
+  color: var(--gold); font-size: 14px; line-height: 1;
+  animation: story-bob 1.1s ease-in-out infinite;
+}
+@keyframes story-bob {
+  0%, 100% { transform: translateY(0); opacity: .9; }
+  50% { transform: translateY(4px); opacity: .45; }
+}
+/* the engraved card: title lines stand alone over the place */
+.story-titlecard {
+  position: absolute; inset: 0; z-index: 2;
+  display: grid; place-items: center;
+  background: radial-gradient(ellipse at center, rgba(6, 4, 3, .25), rgba(6, 4, 3, .9));
+  opacity: 0; transition: opacity .5s ease;
+}
+.story-titlecard.on { opacity: 1; }
+.story-titlecard h2 {
+  margin: 0; padding: 0 8vw; text-align: center;
+  font: 700 clamp(22px, 4.6vw, 44px)/1.3 var(--display);
+  letter-spacing: .18em; text-transform: uppercase;
+  color: var(--gold2);
+  text-shadow: 0 2px 0 #2a1a08, 0 0 34px rgba(255, 176, 46, .35);
+}
+@media (max-width: 760px) {
+  .story-dossier { left: 12px; bottom: 158px; width: 128px; }
+  .story-face { width: 112px; height: 112px; }
+  .story-plate { bottom: 18px; min-height: 100px; padding: 14px 40px 18px 16px; }
+  .story-text { font-size: 14.5px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .story-stage, .story-bg, .story-dossier, .story-titlecard { transition: none; }
+  .story-bg.on, .story-next { animation: none; }
+}
+
+/* ── the contract menu on the start screen ──────────────────────────── */
+.start-panel.story { width: min(900px, 100%); text-align: left; }
+.start-panel.story h1 { text-align: center; }
+.start-panel.story .start-subtitle { text-align: center; }
+.chapter-list { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); margin: 18px 0; }
+.chapter-card {
+  position: relative; display: flex; gap: 12px; align-items: flex-start;
+  padding: 13px 14px; text-align: left; cursor: pointer;
+  color: var(--txt);
+  background:
+    linear-gradient(180deg, rgba(24, 17, 12, .92), rgba(12, 8, 6, .94)),
+    var(--felt) 0 0 / 480px 480px repeat;
+  border: 1px solid var(--brass-lo); border-left: 3px solid var(--cc, var(--brass));
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .5), inset 0 1px 0 rgba(242, 220, 166, .1);
+  transition: border-color .15s, transform .12s, box-shadow .15s;
+}
+.chapter-card:hover:not(.locked) { border-color: var(--brass); transform: translateY(-1px); box-shadow: 0 16px 36px rgba(0, 0, 0, .6), 0 0 24px -12px var(--cc, var(--brass)); }
+.chapter-card.locked { opacity: .5; cursor: not-allowed; filter: grayscale(.6); }
+.cc-face {
+  flex: 0 0 64px; width: 64px; height: 64px;
+  background-repeat: no-repeat;
+  border: 1px solid rgba(201, 162, 74, .45);
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, .5);
+  filter: sepia(.18) contrast(1.06);
+}
+.cc-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.cc-kicker { font: 600 9.5px/1.2 var(--serif); letter-spacing: 1.8px; text-transform: uppercase; color: var(--cc, var(--brass)); }
+.cc-name { font: 700 16px/1.15 var(--display); letter-spacing: .8px; color: var(--txt); }
+.cc-brief { font: 400 12px/1.45 var(--sans); color: var(--txt-dim); }
+.cc-meta { font: 400 11px/1.4 var(--mono); color: var(--txt-mute); }
+.cc-seal {
+  position: absolute; top: 10px; right: 12px;
+  font: 700 10px/1 var(--serif); letter-spacing: 1.6px; text-transform: uppercase;
+  padding: 4px 7px; border: 1px solid var(--good); color: var(--good);
+}
+.cc-seal.loss { border-color: var(--danger2); color: var(--danger2); }
+.cc-lock { position: absolute; top: 10px; right: 12px; font-size: 14px; color: var(--txt-mute); }
+.story-menu-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }

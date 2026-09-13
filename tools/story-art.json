@@ -1,0 +1,78 @@
+{
+  "src": "assets/story-src",
+  "out": "src/assets/story",
+  "backdrops": [
+    {
+      "key": "harbor",
+      "master": "bg-harbor-dawn.png",
+      "width": 1600
+    },
+    {
+      "key": "boardroom",
+      "master": "bg-boardroom.png",
+      "width": 1600
+    },
+    {
+      "key": "railyard",
+      "master": "bg-railyard-rain.png",
+      "width": 1600
+    },
+    {
+      "key": "oilfield",
+      "master": "bg-oilfield-dusk.png",
+      "width": 1600
+    },
+    {
+      "key": "quarry",
+      "master": "bg-quarry-night.png",
+      "width": 1600
+    },
+    {
+      "key": "skyline",
+      "master": "bg-skyline-empire.png",
+      "width": 1600
+    },
+    {
+      "key": "town",
+      "master": "bg-town-street.png",
+      "width": 1600
+    },
+    {
+      "key": "office",
+      "master": "bg-office-night.png",
+      "width": 1600
+    }
+  ],
+  "faces": [
+    {
+      "key": "mabel",
+      "master": "sheet-mabel.png",
+      "size": 640
+    },
+    {
+      "key": "torvin",
+      "master": "sheet-torvin.png",
+      "size": 640
+    },
+    {
+      "key": "krag",
+      "master": "sheet-krag.png",
+      "size": 640
+    },
+    {
+      "key": "marrow",
+      "master": "sheet-marrow.png",
+      "size": 640
+    },
+    {
+      "key": "roque",
+      "master": "sheet-roque.png",
+      "size": 640
+    },
+    {
+      "key": "griev",
+      "master": "sheet-griev.png",
+      "size": 640
+    }
+  ]
+}
