@@ -84,6 +84,37 @@ the way of a playtest link. Every price and ★ value in the copy is read from
 the same tables the HUD reads, so a rebalance moves the lesson with the rule:
 [`docs/TUT-01-starting-tutorial.md`](docs/TUT-01-starting-tutorial.md).
 
+## Story mode (STORY-01)
+
+*The Foundry Syndicate* — a campaign in five contracts. Each chapter is a
+live match wearing a contract: its own rival (Torvin, Silas Marrow, Delphine
+Roque, Krag and Chairman Aldous Griev), its own voice deck, its own ★ line,
+a fixed seed, and three scenes around the match — a briefing before the boot
+prompts, a handshake after a win, a rally after a loss. **Mabel Quill**, the
+company bookkeeper, is the guide: she briefs each contract in the cutscenes
+and rides the in-game wire at the moments a player is actually stuck
+(`?advisor=0` silences her). The opening reel plays once, skippable like
+every scene (Skip ▸▸ / Esc), and is replayable from the campaign menu;
+progress — open contracts, filed results, the reel — is one localStorage key
+(`hexmatch:story`).
+
+The cast wears painted **expression sheets** (calm · smile · mad · shock per
+character, one quadrant at a uniform 2× — never stretched), and the cutscenes
+stand on painted backdrops: the docks at first light, the Syndicate
+boardroom, the rainy marshalling yard, the oil field at dusk, the lantern-lit
+quarry, main street under the toll gates, the office above the dock, and the
+empire skyline. Masters live in `assets/story-src/`; the game loads the
+derived webp in `src/assets/story/`:
+
+```bash
+node tools/make-story-art.mjs   # derive (missing masters → marked placeholders)
+```
+
+Playtest links: `?chapter=<id>` boots a contract directly, `?storyintro=0`
+suppresses the reel, `?advisor=0|1` overrules the guide. Design notes, the
+cast table and the dialogue model:
+[`docs/STORY-01-story-mode.md`](docs/STORY-01-story-mode.md).
+
 ## Multiplayer (RUN.world rooms)
 
 Host / join-by-code / quick-match run over RUN.world realtime rooms: the relay
