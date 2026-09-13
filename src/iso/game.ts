@@ -5157,10 +5157,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // same on-screen speed at every zoom step. `panBy` clamps to the map.
       if (panKeys.size > 0 && renderer) {
         let dx = 0, dy = 0;
-        if (panKeys.has("a")) dx -= 1;
-        if (panKeys.has("d")) dx += 1;
-        if (panKeys.has("w")) dy -= 1;
-        if (panKeys.has("s")) dy += 1;
+        // The keys move the CAMERA: `cam.x/y` is the world's screen offset, so
+        // looking left (A) slides the world right (+x), and so on.
+        if (panKeys.has("a")) dx += 1;
+        if (panKeys.has("d")) dx -= 1;
+        if (panKeys.has("w")) dy += 1;
+        if (panKeys.has("s")) dy -= 1;
         if (dx !== 0 || dy !== 0) {
           const step = (PAN_SPEED * (panShift ? 2 : 1) * dt) / 1000 / cam.zoom;
           cam = panBy(cam, dx * step, dy * step);

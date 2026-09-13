@@ -187,10 +187,36 @@ describe("#122 contract status badge layout", () => {
     // viewport (and at 200% zoom) — so the floor has to yield to the width
     // actually available rather than overflow it.
     const css = stylesCss();
-    const listRule = css.match(/\.chapter-list\s*\{[^}]*\}/s)?.[0] ?? "";
-    expect(listRule).not.toBe("");
-    expect(listRule).toMatch(/minmax\(\s*min\(\s*250px\s*,\s*100%\s*\)/);
-    expect(css).toMatch(/\.start-screen\s*\{[^}]*overflow\s*:\s*hidden/);
+    // MOBILE-01 adds a phone-only single-column `.chapter-list` rule earlier in
+    // the sheet, so check every `.chapter-list` rule: one must keep the floor.
+    const listRules = [...css.matchAll(/\.chapter-list\s*\{[^}]*\}/gs)].map((m) => m[0]);
+    expect(listRules.length).toBeGreaterThan(0);
+    expect(listRules.some((r) => /minmax\(\s*min\(\s*250px\s*,\s*100%\s*\)/.test(r))).toBe(true);
+    // The screen clips sideways but SCROLLS vertically: a campaign list taller
+    // than the window must never push the Back button out of reach.
+    expect(css).toMatch(/\.start-screen\s*\{[^}]*overflow-x\s*:\s*hidden/);
+    expect(css).toMatch(/\.start-screen\s*\{[^}]*overflow-y\s*:\s*auto/);
+  });
+
+  it("clamps each brief to two lines behind a More toggle that opens it", async () => {
+    localStorage.setItem(STORY_STORAGE_KEY, JSON.stringify({
+      unlocked: 1, results: {}, introSeen: true, advisor: true,
+    }));
+    await renderStory();
+    const toggles = [...container.querySelectorAll("button.cc-more")] as HTMLButtonElement[];
+    expect(toggles).toHaveLength(5);
+    // The toggle is the card's sibling, never inside the card button.
+    for (const t of toggles) expect(t.closest(".chapter-card")).toBeNull();
+    const brief = cards()[0].querySelector(".cc-brief")!;
+    expect(brief.classList.contains("clamped")).toBe(true);
+    expect(toggles[0].getAttribute("aria-expanded")).toBe("false");
+    expect(toggles[0].getAttribute("aria-controls")).toBe(brief.id);
+    await act(async () => { toggles[0].click(); });
+    expect(cards()[0].querySelector(".cc-brief")!.classList.contains("clamped")).toBe(false);
+    expect(toggles[0].getAttribute("aria-expanded")).toBe("true");
+    // A sealed contract's brief can still be read.
+    expect(toggles[4].disabled).toBe(false);
+    expect(container.querySelector("main.start-screen.campaign")).not.toBeNull();
   });
 
   it("names the filed result to a screen reader, not only in the badge", async () => {

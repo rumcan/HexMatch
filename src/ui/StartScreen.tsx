@@ -76,6 +76,8 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
   /** STORY-01: the campaign record, re-read each time the menu opens so a
    *  finished contract seals itself without a reload. */
   const [progress, setProgress] = useState<StoryProgress>(() => loadStoryProgress());
+  /** Contract cards whose full description the player has opened. */
+  const [openBriefs, setOpenBriefs] = useState<ReadonlySet<string>>(() => new Set());
   const [players, setPlayers] = useState<readonly ServerPlayer[]>([]);
   const [net, setNet] = useState<NetSession | null>(null);
   /** Guards the realtime calls: a double-click must not mint two rooms. */
@@ -273,8 +275,8 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
     <main className="start-screen" aria-label="Hexmatch start screen">
       <div className="start-panel">
         <p className="start-kicker">HEXMatch Industries</p>
-        <h1>Build the island. Beat the rival.</h1>
-        <p className="start-subtitle">A strategy match of roads, resources, and ruthless expansion.</p>
+        <h1>Back to work, Logistics Manager.</h1>
+        <p className="start-subtitle">Your first shift at {EMPLOYER}: move the freight, beat the rival, earn the promotion.</p>
         <div className="portrait-picker" role="radiogroup" aria-label="Choose your manager">
           <p className="portrait-label">Your manager</p>
           <div className="portrait-options">
@@ -305,7 +307,7 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
   if (state === "story") {
     const pin = pinnedChapter();
     return (
-      <main className="start-screen" aria-label="Hexmatch campaign">
+      <main className="start-screen campaign" aria-label="Hexmatch campaign">
         <div className="start-panel story">
           <p className="start-kicker">THE FOUNDRY SYNDICATE · BACK TO WORK</p>
           <h1>Five contracts, one career</h1>
@@ -317,8 +319,14 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
               const result = progress.results[chapter.id];
               const rival = CAST[chapter.rival];
               const face = faceOf(chapter.rival, "calm");
+              const expanded = openBriefs.has(chapter.id);
+              const briefId = `cc-brief-${chapter.id}`;
               return (
-                <button key={chapter.id} type="button" data-sfx="open"
+                // The card is a <button>, so its "More" toggle is a sibling
+                // (a button cannot hold another button). It also works on a
+                // sealed contract, whose card itself is disabled.
+                <div key={chapter.id} className="chapter-item">
+                <button type="button" data-sfx="open"
                   className={`chapter-card${open ? "" : " locked"}`}
                   style={{ "--cc": rival.colour } as CSSProperties}
                   disabled={!open}
@@ -338,10 +346,20 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
                           : open ? null : <span className="cc-lock" aria-hidden="true">🔒</span>}
                     </span>
                     <span className="cc-name">{chapter.name}</span>
-                    <span className="cc-brief">{chapter.brief}</span>
+                    <span id={briefId} className={`cc-brief${expanded ? "" : " clamped"}`}>{chapter.brief}</span>
                     <span className="cc-meta">as {chapter.jobTitle} · vs {rival.name} · first to {chapter.target}★ · {chapter.skill}</span>
                   </span>
                 </button>
+                <button type="button" className="cc-more" data-sfx="tab"
+                  aria-expanded={expanded} aria-controls={briefId}
+                  onClick={() => setOpenBriefs((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(chapter.id)) next.delete(chapter.id); else next.add(chapter.id);
+                    return next;
+                  })}>
+                  {expanded ? "Less ▴" : "More ▾"}
+                </button>
+                </div>
               );
             })}
           </div>
