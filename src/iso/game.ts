@@ -5180,6 +5180,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     /** LOAD-01: true while the loading screen covers the map. */
     get loading() { return loading.active; },
     /**
+     * #136: the boot art loads' SETTLE state — the question `loading` above
+     * cannot answer. `loading` reports the OVERLAY, which is false before
+     * `show()` ever mounts it (everything can settle first) and true through
+     * its fade-out, so "the overlay is down" is not "the art finished".
+     * `ready` is that: every task handed to `loading.track()` — "atlas",
+     * "layers", "buildings", "scenery", "vehicles", "roads", "protest" — has
+     * settled. An asset-completeness assertion waits on THIS, because
+     * `loadBuildingLayers` installs each sprite as its own parallel image
+     * loads land: a non-empty `buildingImages` is a start signal, not an end
+     * one. `done`/`total` are the failure message when it never settles (and
+     * `active` stays available for the overlay question).
+     */
+    get artLoad() { return { active: loading.active, ready: loading.ready, ...loading.progress }; },
+    /**
      * GFX-01: the video settings. `__iso.graphics()` reads them;
      * `__iso.graphics("medium")` / `__iso.graphics(undefined, true)` (the
      * second argument is the miniature tilt-shift) apply them live through
@@ -5240,14 +5254,39 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     get factories() { return eco.factories; },
     get freeTrack() { return me.freeTrack; },
     /**
-     * ART-1950S (TICKET-B0): the per-building PNG layers actually installed
-     * from assets/buildings/ — the sprites whose art overrides the shared
+     * ART-1950S (TICKET-B0): every sprite with per-zoom art installed in
+     * `Atlas.buildingImages` — the sprites whose art overrides the shared
      * sheet. e2e asserts against this instead of sniffing network responses
      * (a 200 on the manifest alone does not prove a layer landed), and the
      * B4 dead-art audit reuses it. Empty array = everything is drawing from
      * the shared buildings sheet (the non-gating fallback).
+     *
+     * #136: this list is a deliberate SUPERSET of the buildings manifest —
+     * scenery-art.ts (trees) and vehicle-art.ts (liveried lorries) install
+     * through the same table — so neither its length nor its first non-empty
+     * moment says anything about whether assets/buildings/ finished loading.
+     * Completeness checks read `buildingLayers` below instead.
      */
     get buildings() { return atlasRef ? [...atlasRef.buildingImages.keys()] : []; },
+    /**
+     * #136: what the per-building PNG pass installed, per sprite AND per zoom
+     * tier — the shape an asset-completeness check actually needs. `buildings`
+     * above can answer "is farm in the table" but not "does farm hold its 1×
+     * layer", and counting the table measures three features at once.
+     * `tiers` maps each installed sprite to the sorted zoom levels it holds
+     * (0.5 / 1 / 2), `cap` is the GFX-01 detail cap the boot loaded under —
+     * the highest tier anything could have fetched — and `quality` the preset
+     * that produced it, so a spec can pin the tiers it expects instead of
+     * demanding @2x from a medium-quality boot. `null` before the atlas
+     * exists.
+     */
+    get buildingLayers() {
+      const a = atlasRef;
+      if (!a) return null;
+      const tiers: Record<string, number[]> = {};
+      for (const [name, byZoom] of a.buildingImages) tiers[name] = [...byZoom.keys()].sort((x, y) => x - y);
+      return { cap: a.detailCap, quality: currentGraphics().quality, tiers };
+    },
     /**
      * ART-1950S (TICKET-B4): every sprite name the renderer actually blitted
      * this session (industries, depots, town houses, roads, dirt, trucks,
