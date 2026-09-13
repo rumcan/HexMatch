@@ -2986,10 +2986,14 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
      projector covers the viewport, so it pins to the viewport. */
   .menu-howto { position: fixed; }
   /* the story panel was sized for a desktop column; on a phone it is the
-     whole screen, so let the chapter cards stack and breathe */
+     whole screen. Only the panel's own box is narrowed here: the contract
+     list's overrides live with the list's rules at the foot of this file,
+     because a `.chapter-list` / `.chapter-card` rule written HERE loses the
+     cascade to those later base rules of the same specificity — which is
+     exactly how the phone's one-column list once shipped dead (it kept the
+     desktop auto-fit grid, so a 760px-wide plate packed two cards abreast
+     and the tighter gap/padding never applied). */
   .start-panel.story { width: 100%; padding: 26px 15px; }
-  .chapter-list { grid-template-columns: 1fr; gap: 10px; margin: 14px 0; }
-  .chapter-card { padding: 11px 12px; }
 }
 .start-screen::before {
   content: ""; position: fixed; inset: -6%; z-index: -3; pointer-events: none;
@@ -3608,6 +3612,18 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 }
 .chapter-card:hover:not(.locked) { border-color: var(--brass); transform: translateY(-1px); box-shadow: 0 16px 36px rgba(0, 0, 0, .6), 0 0 24px -12px var(--cc, var(--brass)); }
 .chapter-card.locked { opacity: .5; cursor: not-allowed; filter: grayscale(.6); }
+/* MOBILE-01: on a phone (and on any short viewport, where the plate is the
+   scrolling one) the story panel is the whole screen, so the contract cards
+   stack in a single column and breathe instead of packing into the desktop
+   auto-fit grid. This sits AFTER the base rules above on purpose: the theme's
+   convention is that a media query is the last word on a selector, and the
+   same override written up in the STORY-01 plate block was silently outranked
+   by these base rules of equal specificity — the phone list kept two abreast
+   cards at 760px and never picked up the tighter gap or card padding. */
+@media (max-width: 760px), (max-height: 620px) {
+  .chapter-list { grid-template-columns: 1fr; gap: 10px; margin: 14px 0; }
+  .chapter-card { padding: 11px 12px; }
+}
 .cc-face {
   flex: 0 0 64px; width: 64px; height: 64px;
   background-repeat: no-repeat;
