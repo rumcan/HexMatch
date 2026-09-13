@@ -1995,13 +1995,17 @@ describe("W6 the market is visible and trades are logged", () => {
 });
 
 describe("D2/D3 dirt building feedback and debug overlay toggle", () => {
-  it("shows a toast explaining why a dirt click/drag is refused on non-adjacent ground", async () => {
+  it("roads can be built anywhere — no network adjacency requirement", async () => {
     const h = await boot();
     h.finishSetup();
     h.setTool("dirt");
 
     const canvas = root.querySelectorAll("canvas.iso-layer")[2] as HTMLCanvasElement;
     expect(canvas).toBeTruthy();
+    // With roads-anywhere, a dirt click far from the network should still
+    // be allowed to start a drag (or at least not refuse as not-adjacent).
+    // The old test asserted a toast about extending the network; that rule
+    // no longer exists.
     const evtDown = new PointerEvent("pointerdown", { clientX: 200, clientY: 200, isPrimary: true, button: 0 });
     const evtUp = new PointerEvent("pointerup", { clientX: 200, clientY: 200, isPrimary: true, button: 0 });
     canvas.dispatchEvent(evtDown);
@@ -2009,7 +2013,7 @@ describe("D2/D3 dirt building feedback and debug overlay toggle", () => {
     await settle();
 
     const toastEl = root.querySelector(".toasts") as HTMLElement;
-    expect(toastEl.textContent).toMatch(/Track must extend your network|Can't build/);
+    expect(toastEl.textContent ?? "").not.toMatch(/extend your network/i);
   });
 
   it("pressing backtick toggles the debug overlay", async () => {

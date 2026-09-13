@@ -70,7 +70,7 @@ import {
 } from "./grid";
 import {
   createTrack, drawBits, previewDrag, commitDrag, canBuildOn, hasTrack,
-  demolishTile, tIdx, playerNetwork, canAfford, buildRefusal, seedTownRoads,
+  demolishTile, tIdx, canAfford, buildRefusal, seedTownRoads,
   seedPublicRoads, isPublicRoad, isUpgradedRoad, tileCost, structureTiles,
   dirtyTiles, plantFootprintTiles,
   type Track, type TrackKind, type Purse, type DragPreview,
@@ -2974,11 +2974,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         const bx = int(payload.bx), by = int(payload.by);
         if (ax !== null && ay !== null && bx !== null && by !== null) {
           const kind: TrackKind = payload.kind === "road" ? "road" : "dirt";
-          const owner = playerNetwork(track, p.i + 1, eco.factories, eco.harvesters);
           const pv = previewDrag(grid, track, kind, p.purse, ax, ay, bx, by,
-            payload.xFirst !== false, owner, p.freeTrack,
+            payload.xFirst !== false, undefined, p.freeTrack,
             structureTiles(eco.factories, eco.harvesters, p.i + 1));
-          if (pv.tiles.length === 0) toast("That track would not connect to your network.", "bad");
+          if (pv.tiles.length === 0) toast("Can't build there.", "bad");
           else commitTrackDrag(p, pv, kind);
         }
       } else if (what === "swap") {
@@ -3606,9 +3605,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     kind: TrackKind, ax: number, ay: number, bx: number, by: number, xFirst: boolean,
   ): DragPreview | null => {
     if (phase !== "play") return null;
-    const owner = playerNetwork(track, me.i + 1, eco.factories, eco.harvesters);
-    if (!canBuildOn(grid, kind, ax, ay, owner)) return null;
-    const pv = previewDrag(grid, track, kind, me.purse, ax, ay, bx, by, xFirst, owner,
+    if (!canBuildOn(grid, kind, ax, ay)) return null;
+    const pv = previewDrag(grid, track, kind, me.purse, ax, ay, bx, by, xFirst, undefined,
       me.freeTrack, structureTiles(eco.factories, eco.harvesters, me.i + 1));
     if (pv.tiles.length === 0) return null;
     if (isGuest()) {
@@ -3663,10 +3661,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // pan. Touch keeps its old behaviour (one finger pans, a quick tap places).
     // An armed protest owns the left button: it must never start a track drag.
     if (phase === "play" && isTrackTool && !pendingProtest && (!isMouse || e.button === 0) && e.isPrimary) {
-      // W2: a drag extends YOUR network only — the rival's road is not a
-      // seed you can grow from.
-      const net = playerNetwork(track, me.i + 1, eco.factories, eco.harvesters);
-      if (canBuildOn(grid, tool as TrackKind, p.tx, p.ty, net)) {
+      if (canBuildOn(grid, tool as TrackKind, p.tx, p.ty)) {
         drag = { ax: p.tx, ay: p.ty };
         return;
       }
@@ -3710,14 +3705,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const purseKey = CARGOES.map((c) => me.purse[c] ?? 0).join(",");
       const key = `${kind}:${drag.ax},${drag.ay}:${p.tx},${p.ty}:${netVersion}:${me.freeTrack}:${purseKey}`;
       if (!preview || key !== previewKey) {
-        const net = playerNetwork(track, me.i + 1, eco.factories, eco.harvesters);
-        // W1: the preview prices the drag with the REAL purse and the free
-        // allowance applied INSIDE the preview (last arg). The old
-        // "freeTrack > 0 → 9999 stone" trick priced the preview differently
-        // from the commit; now both share one cost model, so what you see is
-        // what you are charged.
+        // Roads anywhere: no network adjacency requirement, so preview is
+        // allowed to start anywhere and grow without a network seed.
         preview = previewDrag(grid, track, kind, me.purse,
-          drag.ax, drag.ay, p.tx, p.ty, true, net, me.freeTrack,
+          drag.ax, drag.ay, p.tx, p.ty, true, undefined, me.freeTrack,
           structureTiles(eco.factories, eco.harvesters, me.i + 1));
         previewKey = key;
         changed = true;
@@ -3760,9 +3751,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (drag && preview) {
       if (preview.tiles.length === 0) {
         // W9: the allowance buys Dirt only, so a paved Road drag with no ore
-        // previews nothing at all. Say that, rather than the generic "must
-        // extend your network" — which is not why it refused, and reads as a
-        // bug.
+        // previews nothing at all.
         const isRoad = tool === "road";
         if (isRoad && (me.purse.ore ?? 0) < (TRANSPORT.road.cost.ore ?? 0)) {
           toast(me.freeTrack > 0
@@ -3772,8 +3761,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           // what was tried (a Road) and what is missing, in place.
           flashAt(drag.ax, drag.ay, isRoad ? "Paved Road needs ore" : "No tiles here");
         } else {
-          toast("Track must extend your network.", "bad");
-          flashAt(drag.ax, drag.ay, "Track must touch your Factory / Depot");
+          toast("Can't build there.", "bad");
+          flashAt(drag.ax, drag.ay, "Can't build here");
         }
       } else {
         // MP-05: the endpoints the intent carries are the preview's own, so the
@@ -3825,11 +3814,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             else doDemolish(p.tx, p.ty);
           }
           else if (tool === "road" || tool === "dirt") {
-            const net = playerNetwork(track, me.i + 1, eco.factories, eco.harvesters);
-            const refusal = buildRefusal(grid, tool as TrackKind, p.tx, p.ty, net);
+            const refusal = buildRefusal(grid, tool as TrackKind, p.tx, p.ty);
             if (refusal !== null) {
-              if (refusal === "not-adjacent") toast("Track must extend your network.", "bad");
-              else if (refusal === "water") toast("Can't build on water.", "bad");
+              if (refusal === "water") toast("Can't build on water.", "bad");
               else if (refusal === "rough") toast("A paved Road can't cross rough ground — use a Dirt Road.", "bad");
               else if (refusal === "occupied") toast("Tile is occupied.", "bad");
               else toast("Can't build there.", "bad");
@@ -5100,9 +5087,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      */
     dragPreview: (kind: TrackKind, ax: number, ay: number, bx: number, by: number, xFirst = true): DragPreview | null => {
       if (phase !== "play") return null;
-      const net = playerNetwork(track, me.i + 1, eco.factories, eco.harvesters);
-      if (!canBuildOn(grid, kind, ax, ay, net)) return null;
-      return previewDrag(grid, track, kind, me.purse, ax, ay, bx, by, xFirst, net, me.freeTrack,
+      if (!canBuildOn(grid, kind, ax, ay)) return null;
+      return previewDrag(grid, track, kind, me.purse, ax, ay, bx, by, xFirst, undefined, me.freeTrack,
         structureTiles(eco.factories, eco.harvesters, me.i + 1));
     },
     /**
