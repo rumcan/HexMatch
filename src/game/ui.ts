@@ -22,7 +22,7 @@
 // renders the same chrome from them.
 // ══════════════════════════════════════════════════════════════════════════
 import {
-  BOARD_W, BOARD_H, CELL, RES, OFFER_LIFE,
+  CELL, RES, OFFER_LIFE,
   SABOTAGE, SECURITY, REPAIR_COST, type ResKey,
 } from "./config";
 import { BANK_RATE, MAX_OFFERS } from "./trade";
@@ -205,7 +205,15 @@ export interface UiHooks {
    * the shipped 7×8 shrunk toward a clip. The chrome only ASKS; the game
    * answers. It may grow a solo board (and must not on a multiplayer GUEST,
    * whose grid is authored by the host), and it may answer `false` to veto
-   * the request entirely. Return true when the growth was applied.
+   * the request entirely. Return true when the size was applied.
+   *
+   * #163: the ask only ever comes from a SETTLED measurement of the visible
+   * plant slot — never from a tab switch — so the same viewport always asks
+   * for the same rectangle. The chrome may also ask to RETRACT columns/rows
+   * it itself added earlier in this session when they no longer fit at the
+   * comfortable cell size, but only before the player has played into them;
+   * the shipped size, restored saves and host-authored boards are never
+   * asked to shrink (a guest vetoes every answer here regardless).
    */
   requestBoardSize?: (w: number, h: number) => boolean;
 }
@@ -1065,18 +1073,23 @@ export function createOriginalUi(
     });
     tabPlant.classList.toggle("active", t === "plant");
     qp.classList.toggle("hidden", t !== "plant");
-    // MOBILE-02: the plant tab re-fits the board — the full-bleed sheet only
-    // leaves a measurable slot once this pane is the visible one.
-    // FIT-01: and so does the desktop — the fit clamps on the measured plant
-    // column, which has no box while another tab hides it, so a window
-    // resized over Market/Bank/Feed would come back to a stale board.
-    if (t === "plant") responsiveZoom();
     tabMarket.classList.toggle("active", t === "market");
     tabBank.classList.toggle("active", t === "bank");
     tabFeed.classList.toggle("active", t === "feed");
     marketPane.classList.toggle("hidden", t !== "market");
     bankPane.classList.toggle("hidden", t !== "bank");
     feedPane.classList.toggle("hidden", t !== "feed");
+    // MOBILE-02: the plant tab re-fits the board — the full-bleed sheet only
+    // leaves a measurable slot once this pane is the visible one.
+    // FIT-01: and so does the desktop — the fit clamps on the measured plant
+    // column, which has no box while another tab hides it, so a window
+    // resized over Market/Bank/Feed would come back to a stale board.
+    // #163: this runs AFTER every pane has swapped (`.hidden` is
+    // display:none), so the immediate zoom pass measures the settled sheet;
+    // the board-SIZE decision itself is deferred to the next settled frame
+    // (schedulePhoneFit) — measuring while the outgoing pane still shared
+    // the flex space is what minted the bogus 11-column board.
+    if (t === "plant") responsiveZoom();
   }
 
   function setMobileView(v: string) {
@@ -1114,6 +1127,9 @@ export function createOriginalUi(
       // answers a swap that did not match, so this one is deliberately
       // neutral, just the gesture, then the verdict.
       sfx.play("swap");
+      // #163: the player has played into the board — any session-added
+      // rows/columns are earned now and the fit becomes grow-only.
+      markBoardPlayed();
       hooks.onSwap(selected.r, selected.c, cell.r, cell.c);
       selected = null;
     } else {
@@ -1301,6 +1317,7 @@ export function createOriginalUi(
       swallowClick = true;
       releaseGems(d, () => {
         sfx.play("swap");
+        markBoardPlayed();   // #163: a drag swap earns the grown band too
         hooks.onSwap(d.from.r, d.from.c, to.r, to.c);
         selected = null;
         renderSelection();
@@ -1376,6 +1393,10 @@ export function createOriginalUi(
   }
 
   function renderBoard() {
+    // #163: notice a board REPLACED under the chrome (restored save, host
+    // multiplayer sync) so its rectangle becomes the sacred floor the fit
+    // never shrinks below — before the layout box is synced below.
+    noteBoardProvenance();
     // MOBILE-02: keep the layout box honest every pass. The board can be
     // REPLACED under the chrome without a resize — a save restored by game.ts
     // (a rectangle saved on another device), a multiplayer sync that ships
@@ -1773,7 +1794,117 @@ export function createOriginalUi(
     grid.style.setProperty("--gem", (CELL - 6) + "px");
   }
 
-  function responsiveZoom() {
+  /**
+   * #163 — settled phone board sizing.
+   *
+   * The board may GROW beyond its shipped rectangle ONLY from a SETTLED
+   * measurement of the visible plant slot: never from the box a tab switch
+   * exposes for the instant between un-hiding the plant pane and hiding the
+   * outgoing one. That transient wide-but-short box (full width, a sliver of
+   * height) drove `cell` to its 30px floor, made `availW / cell` ask for the
+   * 11-column maximum, and — because the fit was grow-only — stuck for the
+   * rest of the match, shrinking every gem into a band.
+   *
+   * `paintZoom` below is safe on every pass (zoom is never sticky), but the
+   * size decision lives here: it runs a frame after every tab/view/resize
+   * pass and from a ResizeObserver on the slot, both of which only ever
+   * report post-layout boxes. Comfort and aspect guards mean even a settled
+   * but too-small slot earns zoom, never extra columns; a session-added
+   * band stays retractable until the player has played into it, while the
+   * shipped size, restored saves and host-authored boards are sacred.
+   */
+  const PHONE_GROW_MAX = 2;       // at most +2 columns / +2 rows over baseline
+  const PHONE_MIN_CELL = 30;      // added cells must render at least this big
+  const PHONE_MAX_CELL = 92;      // never upscale gems past this on-screen size
+  const PHONE_SLOT_PAD_W = 14;    // felt breathing room around the board
+  const PHONE_SLOT_PAD_H = 10;
+  // The floor the fit never shrinks under: the live rectangle at mount, and
+  // any replacement noticed by noteBoardProvenance (restored save / host
+  // sync). Growth is always measured relative to THIS, not to 7×8.
+  let baseBoardW = board.w;
+  let baseBoardH = board.h;
+  let knownBoardW = board.w;
+  let knownBoardH = board.h;
+  // A band this chrome itself added stays retractable until the player's
+  // first swap lands; afterwards the board is grow-only for the session.
+  let boardPlayed = false;
+  let fitFrameQueued = false;
+
+  /** Adopt an externally-authored rectangle (restore / host) as the floor. */
+  function noteBoardProvenance() {
+    if (board.w === knownBoardW && board.h === knownBoardH) return;
+    baseBoardW = knownBoardW = board.w;
+    baseBoardH = knownBoardH = board.h;
+    boardPlayed = false;
+  }
+
+  /** Lock in any session-added band: the player has swapped into the board. */
+  function markBoardPlayed() {
+    boardPlayed = true;
+  }
+
+  /**
+   * The rectangle the settled slot asks for, from its ASPECT RATIO: one
+   * shared cell size fills the limiting axis of the BASELINE board, and
+   * each axis then spends its own slack at that cell — a portrait slot adds
+   * rows, a landscape one adds columns, never 4 columns and 0 rows off a
+   * squashed height. Growth is capped at +2 per axis and switches off
+   * entirely the moment the baseline board itself would not render at the
+   * 30px comfortable floor (that slot gets zoom, not columns).
+   */
+  function phoneBoardTarget(slotW: number, slotH: number): { w: number; h: number } {
+    const availW = slotW - PHONE_SLOT_PAD_W;
+    const availH = slotH - PHONE_SLOT_PAD_H;
+    const fillCell = Math.floor(Math.min(availW / baseBoardW, availH / baseBoardH));
+    if (fillCell < PHONE_MIN_CELL) return { w: baseBoardW, h: baseBoardH };
+    const cell = Math.min(PHONE_MAX_CELL, fillCell);
+    const w = Math.min(baseBoardW + PHONE_GROW_MAX,
+      Math.max(baseBoardW, Math.floor(availW / cell)));
+    const h = Math.min(baseBoardH + PHONE_GROW_MAX,
+      Math.max(baseBoardH, Math.floor(availH / cell)));
+    return { w, h };
+  }
+
+  /** The deferred, settled half of the phone fit. */
+  function settlePhoneFit() {
+    fitFrameQueued = false;
+    if (isPhoneViewport()
+      && root.dataset.view === "trade"
+      && !qp.classList.contains("hidden")) {
+      const slotW = boardSlot.clientWidth;
+      const slotH = boardSlot.clientHeight;
+      if (slotW > 100 && slotH > 100) {
+        const { w: wantW, h: wantH } = phoneBoardTarget(slotW, slotH);
+        const curW = board.w, curH = board.h;
+        // Before the first swap a session-added band is advisory: a settled
+        // slot that no longer fits it retracts the extra rows/columns. Once
+        // played into, the board is grow-only; the baseline can never be
+        // asked to shrink either way, and the game vetoes every resize it
+        // does not own (a multiplayer guest's host-authored grid).
+        const fitW = boardPlayed ? Math.max(curW, wantW) : wantW;
+        const fitH = boardPlayed ? Math.max(curH, wantH) : wantH;
+        if ((fitW !== curW || fitH !== curH)
+          && (hooks.requestBoardSize?.(fitW, fitH) ?? true)) {
+          board.setSize(fitW, fitH);
+          knownBoardW = fitW;
+          knownBoardH = fitH;
+          boardPlayed = false;   // the fresh band is unplayed until a swap
+          applyGridSize();
+          renderBoard();
+        }
+      }
+    }
+    paintZoom();
+  }
+
+  /** Ask for the settled pass on the next frame (idempotent per frame). */
+  function schedulePhoneFit() {
+    if (fitFrameQueued || typeof requestAnimationFrame !== "function") return;
+    fitFrameQueued = true;
+    requestAnimationFrame(() => settlePhoneFit());
+  }
+
+  function paintZoom() {
     const phone = isPhoneViewport();
     const phoneStr = phone ? "1" : "";
     if (root.dataset.phone !== phoneStr) root.dataset.phone = phoneStr;
@@ -1791,36 +1922,17 @@ export function createOriginalUi(
     const wrap = boardWrap;
     let z = 1;
     if (phone) {
-      // MOBILE-02: the match table IS the screen on a phone. The old fit
-      // squeezed the fixed 7×8 with `zoom` down to a 0.4 floor — below the
-      // floor the last rows spilled under the footer, which is exactly the
-      // crop every screenshot complained about. The new fit works from the
-      // other end: measure the slot the full-bleed sheet leaves for the
-      // board, pick the cell that fills it, and when the window has room to
-      // spare, spend it on EXTRA COLUMNS AND ROWS (the game may veto the
-      // growth — e.g. a multiplayer guest whose grid the host authors). The
-      // zoom then only closes the last pixels; it never has to clip, and the
-      // sheet never scrolls to reach a gem.
+      // MOBILE-02: the match table IS the screen on a phone. This pass only
+      // sets the ZOOM — cheap, reversible and safe to run mid tab-switch.
+      // Growing rows/columns lives in settlePhoneFit (#163), which runs from
+      // a settled post-layout measurement, never from a transient box. Zoom
+      // closes the remaining pixels so the current rectangle never clips and
+      // the sheet never scrolls to reach a gem.
       const slotW = boardSlot.clientWidth, slotH = boardSlot.clientHeight;
       const measured = slotW > 100 && slotH > 100;
-      const availW = Math.max(140, (measured ? slotW : window.innerWidth - 44) - 14);
+      const availW = Math.max(140, (measured ? slotW : window.innerWidth - 44) - PHONE_SLOT_PAD_W);
       const availH = Math.max(120,
-        (measured ? slotH : window.innerHeight - (window.innerWidth <= 760 ? 380 : 250)) - 10);
-      const cell = Math.max(30, Math.min(92, Math.floor(Math.min(availW / BOARD_W, availH / BOARD_H))));
-      const wantW = Math.max(BOARD_W, Math.min(BOARD_W + 4, Math.floor(availW / cell)));
-      const wantH = Math.max(BOARD_H, Math.min(BOARD_H + 4, Math.floor(availH / cell)));
-      // grow-only: a window that shrinks never deletes gems — the zoom
-      // shrinks them instead. (Shrinking would also strand a board a peer
-      // authored at a bigger rectangle.) Growing only happens off a real
-      // measurement — the hidden-pane fallback must never propose one.
-      const curW = board.w, curH = board.h;
-      const fitW = Math.max(wantW, curW), fitH = Math.max(wantH, curH);
-      if (measured && (fitW !== curW || fitH !== curH)
-        && (hooks.requestBoardSize?.(fitW, fitH) ?? true)) {
-        board.setSize(fitW, fitH);
-        applyGridSize();
-        renderBoard();
-      }
+        (measured ? slotH : window.innerHeight - (window.innerWidth <= 760 ? 380 : 250)) - PHONE_SLOT_PAD_H);
       z = Math.max(0.2, Math.min(availW / (CELL * board.w), availH / (CELL * board.h), 1));
     } else {
       const boardPx = CELL * board.w;
@@ -1872,8 +1984,30 @@ export function createOriginalUi(
     root.dataset.boardPx = String(boardW);
     syncTopbarTuck();
   }
+
+  /**
+   * Every layout trigger (boot, tab switch, view switch, window resize) gets
+   * the immediate zoom pass, then asks the settled pass to re-validate the
+   * board rectangle before the next paint. Tab switches that land on the
+   * same viewport therefore ask for the SAME size and change nothing
+   * (#163); only a genuinely different settled box can.
+   */
+  function responsiveZoom() {
+    paintZoom();
+    schedulePhoneFit();
+  }
   window.addEventListener("resize", responsiveZoom);
   window.addEventListener("orientationchange", responsiveZoom);
+  // The observer delivers exactly the boxes the grow step is allowed to
+  // trust: post-layout sizes of the slot, fired between frames. The pane
+  // swap a tab switch performs settles within the SAME synchronous task, so
+  // only its final box is ever reported — the squashed mid-switch box is
+  // not observable. Absent RO (headless tests, older engines) the next-frame
+  // fallback above carries the same contract.
+  if (typeof ResizeObserver === "function") {
+    const slotObserver = new ResizeObserver(() => settlePhoneFit());
+    slotObserver.observe(boardSlot);
+  }
 
   // ── MOBILE-02: the tucking top bar ───────────────────────────────────
   // A phone gives the match table the whole window; the top bar earns its
