@@ -303,7 +303,7 @@ html, body, #root {
 .modal.box { --corner-inset: 0; --corner: 0px; --text-clear: calc(var(--corner-inset) + var(--corner)); }
 /* A modal never runs off the window: tall cards (the ❔ How to Play reference,
    Settings) scroll inside themselves so their close button stays reachable. */
-.modal.box { max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); overflow-y: auto; overscroll-behavior: contain; }
+.modal.box { max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); overflow-y: auto; scrollbar-gutter: stable; overscroll-behavior: contain; }
 .panel + .panel { margin-top: 8px; }
 .panel.grow { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
@@ -2305,7 +2305,7 @@ html, body, #root {
   .toast { width: 100%; text-align: center; }
 
   /* modals go full-bleed: the plaque comes off the wall and lies flat */
-  .modal.box { width: 94%; padding: 18px 16px; max-height: 84vh; overflow-y: auto; border-width: 14px; }
+  .modal.box { width: 94%; padding: 18px 16px; max-height: 84vh; overflow-y: auto; scrollbar-gutter: stable; border-width: 14px; }
   /* The band follows the modal ornament: a 14px mat plus a 34px medallion. */
   .modal.box { --corner-inset: 14px; --corner: 0px; }
   .modal h2 { font-size: 17px; letter-spacing: 2px; }
@@ -2598,7 +2598,7 @@ html, body, #root {
   box-shadow: inset 0 1px 0 rgba(242, 220, 166, .08); transition: color .15s, border-color .15s; }
 .tut-x:hover { color: #ffd0bd; border-color: rgba(226, 112, 79, .6); }
 
-.tut-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+.tut-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch; padding: 12px 2px 4px; text-align: left; }
 .tut-lede { margin: 0 0 4px; font-family: var(--sans); font-size: 13px; line-height: 1.55;
   color: var(--txt-dim); }
@@ -2947,7 +2947,7 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 /* The start screen SCROLLS at every size (menu-ui-polish): a campaign list
    taller than the window must never push its buttons out of reach. Its plate
    layers are position: fixed, so the backdrop stays put while it scrolls. */
-.start-screen { position: relative; overflow-x: hidden; overflow-y: auto; isolation: isolate; }
+.start-screen { position: relative; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; isolation: isolate; }
 /* MOBILE-01: a landscape phone is 360-430px tall. `place-items: center` plus
    `overflow: hidden` put the Play button BELOW the fold with no way to reach
    it — the menu was unplayable sideways. On short viewports the plate
@@ -3193,6 +3193,7 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   width: min(760px, 94vw);
   max-height: calc(100vh - 48px);
   overflow: auto;
+  scrollbar-gutter: stable;
   padding: 28px 34px 22px;
   text-align: center;
   color: var(--txt);
