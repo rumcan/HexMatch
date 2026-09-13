@@ -210,6 +210,8 @@ export interface DrawListOptions {
   roads?: boolean;
   /** Exclude per-frame traffic when caching static placements. */
   vehicles?: boolean;
+  /** Scenery density: 0 = none, 1 = full. Tied to graphics quality preset. */
+  sceneryDensity?: number;
 }
 
 /** Build the structure draw list for a culled tile range. */
@@ -238,8 +240,14 @@ export function buildDrawList(
       // built on — the tree was cleared to make room, which is what the
       // player expects to see and costs nothing to model.
       const tree = world.trees?.[i] ?? 0;
-      if (tree && !rb && !db && !world.sceneryBlocked?.has(i))
-        out.push({ sprite: TREE_SPRITES[tree - 1], tx, ty, decor: true });
+      // GFX-01 scenery LOD: graphics preset caps how many trees render.
+      // LOW (cap 0.5) → hardly any; MEDIUM (cap 1) → medium; HIGH (2) → all.
+      // Deterministic: same seed + tile always produces the same result.
+      const density = opts.sceneryDensity ?? 1;
+      if (density >= 1 || (density > 0 && ((tx * 31 + ty * 17 + (grid?.seed ?? 0)) % 100) / 100 < density)) {
+        if (tree && !rb && !db && !world.sceneryBlocked?.has(i))
+          out.push({ sprite: TREE_SPRITES[tree - 1], tx, ty, decor: true });
+      }
     }
   }
   // PP-12: each industry is ONE verbatim TTD building sprite, drawn as a single
@@ -738,6 +746,16 @@ export class IsoRenderer {
     this.terrainDirty = true;
   }
 
+  // Faster chunk surface lookup: pre-compute the zoom key once instead of
+  // allocating a new string per chunk lookup in the draw loop.
+  private chunkKey(z: number, cx: number, cy: number): string {
+    return `${z}:${cy * chunksX + cx}`;
+  }
+
+  private chunkSurfaceKey(cx: number, cy: number): string {
+    return this.chunkKey(this.cam.zoom, cx, cy);
+  }
+
   // ── ground chunks ────────────────────────────────────────────────────────
   /**
    * The STATIC ground of one 8×8 chunk (grass fill + beach ring), painted
@@ -749,7 +767,7 @@ export class IsoRenderer {
    */
   private groundFillChunk(cx: number, cy: number): HTMLCanvasElement | OffscreenCanvas | null {
     const z = this.cam.zoom;
-    const key = `${z}:${cy * chunksX + cx}`;
+    const key = this.chunkKey(z, cx, cy);
     const hit = this.groundChunkCache.get(key);
     if (hit) return hit;
 
@@ -805,18 +823,29 @@ export class IsoRenderer {
   // ── layers ──────────────────────────────────────────────────────────────
   drawTerrain(timeMs = 0) {
     const ctx = this.ctxT, cam = this.cam;
+    const z = cam.zoom;
     ctx.clearRect(0, 0, cam.vw, cam.vh);
     // 1. The ocean: the seamless water texture, anchored to WORLD space and
     //    drifting with time, fills the whole stage — the map diamond floats
-    //    in an endless animated sea.
-    if (this.ground) this.ground.water.setTransform(oceanMatrix(cam, timeMs, SEA_SCALE, this.groundTexScale));
-    ctx.fillStyle = this.ground ? this.ground.water : FALLBACK.water;
-    ctx.fillRect(0, 0, cam.vw, cam.vh);
+    //    in an endless animated sea. 30 Hz cap (`TERRAIN_FRAME_MS`) keeps
+    //    ambient motion smooth without overworking the full-viewport fill.
+    // For a faster path when no textures are loaded, skip the pattern
+    // transform and fill with the flat fallback colour directly.
+    if (this.ground && this.ground.water) {
+      this.ground.water.setTransform(oceanMatrix(cam, timeMs, SEA_SCALE, this.groundTexScale));
+      ctx.fillStyle = this.ground.water;
+      ctx.fillRect(0, 0, cam.vw, cam.vh);
+    } else {
+      // Fast fallback: flat colour, no pattern overhead.
+      ctx.fillStyle = FALLBACK.water;
+      ctx.fillRect(0, 0, cam.vw, cam.vh);
+    }
     // 2. The island: cached land chunks (grass + beach ring) blitted over it.
     const r = visibleTileRange(cam, this.pad);
     const cx0 = (r.x0 / CHUNK) | 0, cx1 = (r.x1 / CHUNK) | 0;
     const cy0 = (r.y0 / CHUNK) | 0, cy1 = (r.y1 / CHUNK) | 0;
     let blits = 0;
+    // Pre-compute the chunk range so we don't recompute per-iteration keys.
     for (let cy = cy0; cy <= cy1; cy++) {
       for (let cx = cx0; cx <= cx1; cx++) {
         const surf = this.groundFillChunk(cx, cy);
@@ -825,7 +854,7 @@ export class IsoRenderer {
         const [sx, sy] = worldToScreen(cam, ox, oy);
         ctx.drawImage(surf as unknown as CanvasImageSource, Math.floor(sx), Math.floor(sy));
         blits++;
-        if (this.logRender) this.trace("ground-blit", { chunk: [cx, cy], origin: [ox, oy], screen: [Math.floor(sx), Math.floor(sy)], z: cam.zoom });
+        if (this.logRender) this.trace("ground-blit", { chunk: [cx, cy], origin: [ox, oy], screen: [Math.floor(sx), Math.floor(sy)], z });
       }
     }
     // 3. The scenery decals: dirt scrapes and grass variation painted on the
@@ -861,7 +890,10 @@ export class IsoRenderer {
     // so stable Tier-1 ties still behave exactly as before.
     const rangeKey = `${r.x0}:${r.y0}:${r.x1}:${r.y1}`;
     if (this.structuresDirty || rangeKey !== this.staticRange) {
-      const items = buildDrawList(this.world, r, { roads: !textured, vehicles: false });
+      // GFX-01 scenery LOD: graphics preset caps tree density in draw.
+      const cap = this.atlas.detailCap;
+      const sceneryDensity = cap >= 2 ? 1 : (cap >= 1 ? 0.45 : 0.05);
+      const items = buildDrawList(this.world, r, { roads: !textured, vehicles: false, sceneryDensity });
       this.staticItemCount = items.length;
       this.staticPlaced = items.map((i) => place(this.atlas, i)).filter((p): p is Placed => p !== null);
       this.staticRange = rangeKey;
