@@ -25,7 +25,7 @@ import { showSettingsSheet, type SettingsSheetHandle } from "../iso/settings-she
 import { FREE_SETUP_TRACK } from "../iso/game";
 import { RIVAL_SKILLS, resolveSkillKey } from "../iso/skill";
 import { loadStoryProgress } from "../story/progress";
-import { CHAPTERS } from "../story/chapters";
+import { CHAPTERS, EMPLOYER, currentJobTitle } from "../story/chapters";
 
 export interface MainMenuProps {
   onPlay: () => void;
@@ -96,6 +96,8 @@ export default function MainMenu({ onPlay }: MainMenuProps) {
         <p className="start-kicker">EST. 1949 · THE ISLAND RUNS ON WHOEVER MOVES IT FIRST</p>
         <h1 className="menu-title">Hexmatch Industries</h1>
         <p className="menu-sub">The Foundry Syndicate · a campaign in five contracts</p>
+        {/* BACK TO WORK: the player's job, and it grows with the campaign. */}
+        <p className="menu-sub menu-job">Your job: {currentJobTitle(progress.results)}, {EMPLOYER}</p>
         <nav className="menu-actions" aria-label="Main menu">
           <button type="button" className="menu-btn primary" data-sfx="open" onClick={onPlay}>
             Play<span className="mb-tag">campaign · sandbox · rooms</span>

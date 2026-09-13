@@ -161,7 +161,7 @@ import {
 // STORY-01 — the campaign seam: a contract names the rival, the voice, the
 // ★ line and the three scenes around the match; the guide rides the wire.
 import { CAST, FACE_FOR_DIRECTION, GUIDE, faceOf, type Expression } from "../story/cast";
-import { CHAPTERS, chapterById, type StoryChapter } from "../story/chapters";
+import { CHAPTERS, EMPLOYER, chapterById, type StoryChapter } from "../story/chapters";
 import { createStoryDirector } from "../story/voices";
 import { advisorBeats, type AdvisorEvent } from "../story/advisor";
 import { guideBanner } from "../story/guide-banner";
@@ -815,6 +815,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (storyChapter) {
         ui.feed(`${storyChapter.kicker} — ${storyChapter.name}`, "Contract");
         ui.feed(storyChapter.objective, "Contract");
+        // BACK TO WORK: the feed says whose job this contract is.
+        ui.feed(`Your job: ${storyChapter.jobTitle}, ${EMPLOYER}`, "Contract");
         storyView = showScene(ui.el, storyChapter.pre, {
           player: playerCast,
           skipLabel: "Skip briefing ▸▸",
@@ -1226,6 +1228,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // must not lose the contract.
     if (storyChapter) {
       recordChapterResult(storyChapter.id, storyChapter.index, winner.id === me.id, CHAPTERS.length);
+      // BACK TO WORK: a won contract is a promotion — say so where the job was named.
+      if (winner.id === me.id) ui.feed(`Promoted: ${storyChapter.promotion}, ${EMPLOYER}`, "Contract");
       storyView = showScene(ui.el, winner.id === me.id ? storyChapter.win : storyChapter.lose, {
         player: playerCast,
         skipLabel: "Skip epilogue ▸▸",
