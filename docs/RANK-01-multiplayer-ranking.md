@@ -163,11 +163,16 @@ rank, or `mode` + `rank: <bucket>` for a window.
 
 Similar rank is therefore a client-side widening ladder
 (`RANK_SEARCH_STEPS` in `src/ui/StartScreen.tsx`): ±75 for 6 s, ±200 for 8 s,
-±400 for 8 s, then **Any rank** for the last 8 s. The last rung is the promise
-that nobody is stuck forever, and it is also the widest net: the pool requires
-a room to satisfy every REQUESTED key, so a plain search can join a room that a
-windowed search created, but not the other way round. Total 30 s, matching the
-screen's promise.
+±400 for 8 s, then **Any rank**. The last rung is the promise that nobody is
+stuck forever, and it is also the widest net: the pool requires a room to
+satisfy every REQUESTED key, so a plain search can join a room that a windowed
+search created, but not the other way round.
+
+The ladder is walked ONCE, and then the search stays at Any rank and keeps
+re-issuing until an opponent is found or the player cancels (#146: Auto
+Matchmaking never times out, so there is no "no rival found" screen to land on).
+Each attempt is one bounded SDK window; a window that closes means *widen and
+look again*, never *give up*.
 
 Two honest notes: a bucket boundary means a window can miss somebody a point
 outside it (which is why the ladder widens instead of trusting one bucket), and
@@ -213,7 +218,7 @@ follow needs a new board (or a period) rather than a lower submission.
 | `tests/unit/net-room.test.ts` | The room's five refusals (foreign id, missing/changed token, guest claim, malformed claim) and the two filings (host claim, abandoned seat), including the 30 s grace with fake timers. |
 | `tests/unit/net-session.test.ts` | The welcome's board, `publishRating`'s token, the opponent's number, host-only `claimResult`, and the result that arrives AFTER the peer-left halt. |
 | `tests/unit/net-protocol.test.ts` | v6 bumps and rejects v5, the four new messages round-trip, and a malformed welcome board is refused. |
-| `tests/unit/start-screen.test.ts` | The Any/Similar control, the widening ladder's four rungs (and that the last one asks for nothing), and a ranked lobby. |
+| `tests/unit/start-screen.test.ts` | The Any/Similar control, the widening ladder's four rungs (and that the last one asks for nothing, then stays there), a search that re-issues past the old 30 s cutoff, and a ranked lobby. |
 | `tests/unit/net-transport.test.ts` | The `ranked` leaderboard mode and the config's required fields. |
 
 Play it end to end with `npm run dev`, two browser windows and a quick match
