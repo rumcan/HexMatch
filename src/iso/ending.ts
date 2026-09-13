@@ -251,6 +251,9 @@ export function buildEnding(input: EndingInput): EndingModel {
 export interface EndingScreenOptions {
   onRestart: () => void;
   onReview?: () => void;
+  /** STORY-01: present adds a third door — back to the campaign menu with the
+   *  contract recorded. Absent (every sandbox match) the ledger keeps its two. */
+  onContinue?: () => void;
   /** The portrait selected on the start screen, reused whenever the player
    * answers Torvin's final wire. */
   playerPortrait?: "vex" | "you";
@@ -435,7 +438,16 @@ export function showEndingScreen(
   );
   restart.type = "button";
   restart.dataset.sfx = "open";
-  actions.append(review, restart);
+  // STORY-01: the campaign's third door, between stepping out and starting
+  // over — "back to the contracts" with this one filed in the record.
+  const continueBtn = options.onContinue
+    ? el("button", "ending-button ending-continue", "Continue the campaign ▸")
+    : null;
+  if (continueBtn) {
+    continueBtn.type = "button";
+    continueBtn.dataset.sfx = "open";
+  }
+  actions.append(review, ...(continueBtn ? [continueBtn] : []), restart);
   card.appendChild(actions);
   screen.appendChild(card);
 
@@ -458,7 +470,13 @@ export function showEndingScreen(
   };
   review.addEventListener("click", close);
   restart.addEventListener("click", options.onRestart);
+  if (continueBtn && options.onContinue) {
+    continueBtn.addEventListener("click", options.onContinue);
+  }
   reopen.addEventListener("click", open);
+  // The ledger's keyboard trap walks whatever doors this match actually has:
+  // two in a sandbox match, three inside a contract.
+  const doors = [review, ...(continueBtn ? [continueBtn] : []), restart];
   const onKey = (event: KeyboardEvent) => {
     if (screen.classList.contains("hidden")) return;
     if (event.key === "Escape") {
@@ -470,12 +488,14 @@ export function showEndingScreen(
     // its two choices until Review deliberately returns to the map.
     if (event.key === "Tab") {
       const active = document.activeElement;
-      if (event.shiftKey && (active === review || !screen.contains(active))) {
+      const at = doors.indexOf(active as HTMLButtonElement);
+      const outside = at === -1;
+      if (event.shiftKey && (outside || at === 0)) {
         event.preventDefault();
-        restart.focus();
-      } else if (!event.shiftKey && (active === restart || !screen.contains(active))) {
+        doors[doors.length - 1].focus();
+      } else if (!event.shiftKey && (outside || at === doors.length - 1)) {
         event.preventDefault();
-        review.focus();
+        doors[0].focus();
       }
     }
   };

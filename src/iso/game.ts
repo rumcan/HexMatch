@@ -149,6 +149,16 @@ import { showTutorial, type TutorialHandle } from "./tutorial";
 import {
   buildEnding, showEndingScreen, type DecisiveSource, type EndingScreenHandle,
 } from "./ending";
+// STORY-01 — the campaign seam: a contract names the rival, the voice, the
+// ★ line and the three scenes around the match; the guide rides the wire.
+import { CAST, FACE_FOR_DIRECTION, GUIDE, faceOf, type Expression } from "../story/cast";
+import { CHAPTERS, chapterById, type StoryChapter } from "../story/chapters";
+import { createStoryDirector } from "../story/voices";
+import { advisorBeats, type AdvisorEvent } from "../story/advisor";
+import { guideBanner } from "../story/guide-banner";
+import { advisorEnabled, recordChapterResult } from "../story/progress";
+import { showScene, type SceneHandle } from "../story/stage";
+import type { UiRivalryBeat } from "../game/ui";
 import {
   OIL_DRILLING_SCENE, createBanterDirector, createGoldMineDirector, createRivalDirector,
   type RivalryDirection, type RivalryScene, type RivalryTactic,
@@ -291,6 +301,15 @@ export interface IsoGameOptions {
   net?: NetSession | null;
   /** PP-14b: which tycoon portrait the player picked (defaults to "vex"). */
   portrait?: Portrait;
+  /**
+   * STORY-01: the campaign contract this match plays (`CHAPTERS[].id`). Solo
+   * only: a contract names its rival, voice, ★ line and seed, and wraps the
+   * match in its briefing and epilogue scenes. An unknown id — or a networked
+   * seat, where the room owns the match — reads as no story at all.
+   */
+  story?: string;
+  /** STORY-01: the ending's "Continue the campaign" returns through here. */
+  onStoryExit?: () => void;
 }
 
 export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
@@ -323,6 +342,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // PP-14b: the tycoon portrait the start screen offered (the rival is always
   // Torvin; the player's own is Vex or You).
   const portrait: Portrait = opts.portrait === "you" ? "you" : "vex";
+  /**
+   * STORY-01: the contract this match plays. Solo only — a networked seat's
+   * match belongs to the room — and an id the campaign does not know reads as
+   * no story at all, so a stale playtest link can never break a boot.
+   */
+  const storyChapter: StoryChapter | null =
+    opts.story && isSolo() ? chapterById(opts.story) : null;
+  const storyOn = storyChapter !== null;
+  /** The cast member playing the rival: the contract's, else Torvin as ever. */
+  const rivalCast = storyChapter ? storyChapter.rival : "torvin";
+  /** The player's own cast id, for every line the wire answers in. */
+  const playerCast: "vex" | "you" = portrait;
 
   // PP-14b: the Processing Plant reset's cooldown. `lastResetAt` starts at
   // -Infinity so the very first reset of a boot is always allowed.
@@ -334,7 +365,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // boot (and, on the guest, restore a map the host never generated).
   const savesOff = isMp() || !!(window as unknown as Record<string, unknown>).__ISO_DISABLE_SAVE;
   const bootSave = savesOff ? null : loadRecentSave();
-  const seed = opts.seed ?? bootSave?.seed ?? resolveMapSeed();
+  // STORY-01: a contract is a PLACE — its map must not move between attempts —
+  // so the chapter's seed sits in the chain between an explicit `?seed=`
+  // (playtests, saved seeds) and the fresh random one. A resumed save keeps
+  // carrying its own seed, as always.
+  const seed = opts.seed ?? bootSave?.seed ?? storyChapter?.seed ?? resolveMapSeed();
   const grid: Grid = generateMap(seed);
   // SCENERY: decals + clumped trees, a pure function of the seed (so a guest
   // regenerates exactly the host's woodland from the seed alone — scenery is
@@ -357,7 +392,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   const players: PlayerState[] = [
     { i: 0, id: "you", name: "You", colour: "#5aa8ff", purse: toBag(START_PURSE), human: true, freeTrack: FREE_SETUP_TRACK, freeDepots: FREE_SETUP_DEPOTS },
-    { i: 1, id: "ai", name: "Rival", colour: "#ff7a5a", purse: toBag(START_PURSE), human: false, freeTrack: FREE_SETUP_TRACK, freeDepots: FREE_SETUP_DEPOTS },
+    // STORY-01: a contract renames and recolours the rival seat — the dossier
+    // cards, the scoreboard and the ending ledger all read this name, so the
+    // whole HUD introduces whoever the chapter cast.
+    { i: 1, id: "ai", name: storyChapter ? CAST[rivalCast].name : "Rival", colour: storyChapter ? CAST[rivalCast].colour : "#ff7a5a", purse: toBag(START_PURSE), human: false, freeTrack: FREE_SETUP_TRACK, freeDepots: FREE_SETUP_DEPOTS },
   ];
   const me = players[0], rival = players[1];
 
@@ -368,7 +406,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // shared code, flipping the difficulty mid-match (the top-bar selector runs
   // `setRivalSkill`) just changes the numbers the NEXT tick reads — no replay,
   // no reload, and nothing in the ledger to migrate.
-  let skillKey: SkillKey = resolveSkillKey();
+  // STORY-01: a contract casts its rival at a fixed difficulty — the chapter
+  // IS the pacing — so the resolver (URL, storage) never gets a vote inside a
+  // contract. The top-bar selector still works: changing your mind mid-contract
+  // changes the live clock, exactly as in a sandbox match.
+  let skillKey: SkillKey = storyChapter ? storyChapter.skill : resolveSkillKey();
   const skill = (): RivalSkill => RIVAL_SKILLS[skillKey];
   /** The selector + the boot URL both land here; persists for the next boot. */
   const setRivalSkill = (key: SkillKey, announce = true) => {
@@ -393,7 +435,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * see `onSkill` below) and both seats must see the same line, so it stays on
    * the constant.
    */
-  const winTarget = (): number => (isSolo() ? skill().winTarget : VICTORY.target);
+  // STORY-01: a contract races to its OWN ★ line (5★ for the inheritance, the
+  // full 8★ for the Chairman), read live like everything else on this dial —
+  // the scoreboard, the HUD badge and the win check all ask `winTarget()`.
+  const winTarget = (): number => storyChapter
+    ? storyChapter.target
+    : (isSolo() ? skill().winTarget : VICTORY.target);
 
   const eco: EconomyState = { grid, track, harvesters: [], factories: [] };
   let nextHarvesterId = 1;
@@ -441,6 +488,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   /** TUT-01: the boot tour, while it is open. Held so `dispose` can take its
    *  document keydown listener with it — the same reason `endingView` is. */
   let tutorialView: TutorialHandle | null = null;
+  /** STORY-01: the contract reel (briefing or epilogue) while it stands — the
+   *  same ownership rule: its document listeners die with the game. */
+  let storyView: SceneHandle | null = null;
   /**
    * Set by the dispose closure at the bottom of this function and read by every
    * async continuation and clock in it. Declared here, beside the other boot
@@ -455,9 +505,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   // Rivalry flavour has its own deterministic scene deck and counters. It
   // never consumes simulation RNG, so extra jokes cannot alter an AI decision.
-  const nextRivalScene = createRivalDirector(seed);
+  // STORY-01: the contract's rival speaks with their own deck (voices.ts) and
+  // falls back to Torvin's where theirs is silent; the idle wire follows the
+  // same routing. Torvin in a sandbox match keeps his original directors.
+  const storyDirector = storyOn ? createStoryDirector(rivalCast, seed) : null;
+  const nextRivalScene = storyDirector ?? createRivalDirector(seed);
   const nextGoldMineScene = createGoldMineDirector(seed);
-  const nextBanterScene = createBanterDirector(seed);
+  const nextBanterScene = storyDirector
+    ? (): RivalryScene => storyDirector("banter", "protest")
+    : createBanterDirector(seed);
   let playerSabotage = 0;
   let rivalSabotageHits = 0;
   let oilBanterSeen = false;
@@ -646,6 +702,23 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // the only card on an ordinary boot.
   if (!bootSave && isSolo()) {
     void (async () => {
+      // STORY-01: a contract opens with its briefing — the rival's face, the
+      // bookkeeper's terms — before any onboarding card, because "who am I
+      // and who is that" precedes "what button is this". Skippable like every
+      // other reel; a skip is a choice, not a fault. Then the tour (if it is
+      // still welcome) and the difficulty prompt — which a contract does not
+      // ask, the chapter having already cast the rival at a fixed difficulty.
+      if (storyChapter) {
+        ui.feed(`${storyChapter.kicker} — ${storyChapter.name}`, "Contract");
+        ui.feed(storyChapter.objective, "Contract");
+        storyView = showScene(ui.el, storyChapter.pre, {
+          player: playerCast,
+          skipLabel: "Skip briefing ▸▸",
+        });
+        await storyView.promise;
+        storyView = null;
+        if (disposed) return;
+      }
       // The two numbers the tour cannot read for itself: the ★ line belongs to
       // the live difficulty, and the free dirt tiles are DATA on the player
       // record. Passing them keeps the copy honest without importing game.ts
@@ -666,16 +739,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // previous choice exists — see skill-picker.ts). The overlay sits over
       // the freshly booted UI; the pick flips the LIVE game straight into
       // `setRivalSkill`, persists for the next boot, and syncs the top-bar
-      // selector the `onSkill` hook would otherwise own.
-      await promptForRivalSkill(ui.el, {
-        onPick: (key) => {
-          setRivalSkill(key);
-          try { localStorage.setItem(SKILL_STORAGE_KEY, key); } catch { /* private mode */ }
-          const sel = ui.el.querySelector<HTMLSelectElement>("#iso-rival-skill");
-          if (sel) sel.value = key;
-        },
-      });
-      if (disposed) return;
+      // selector the `onSkill` hook would otherwise own. A contract skips the
+      // question: the chapter cast the rival, and re-asking would un-cast it.
+      if (!storyChapter) {
+        await promptForRivalSkill(ui.el, {
+          onPick: (key) => {
+            setRivalSkill(key);
+            try { localStorage.setItem(SKILL_STORAGE_KEY, key); } catch { /* private mode */ }
+            const sel = ui.el.querySelector<HTMLSelectElement>("#iso-rival-skill");
+            if (sel) sel.value = key;
+          },
+        });
+        if (disposed) return;
+      }
       showLoading();
     })();
   } else {
@@ -790,25 +866,94 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     ui.toast(text, kind);
   };
 
+  /**
+   * STORY-01: the face a beat speaks with. Rival beats wear the mood their
+   * direction implies off the contract's painted sheet (an attack arrives
+   * angry, a thwarted raid reads shocked); the player answers in their own
+   * start-screen mugshot, exactly as the wire has always shown them.
+   */
+  const beatFaces = (direction: RivalryDirection | "banter" | null) => {
+    const mood: Expression = direction ? FACE_FOR_DIRECTION[direction] : "calm";
+    return {
+      rival: faceOf(rivalCast, mood),
+      you: faceOf(playerCast, "calm"),
+    };
+  };
+
   /** Queue one alternating portrait scene and preserve the whole exchange in
    *  Feed. Torvin never gets an unanswered line. */
-  const playRivalryScene = (scene: RivalryScene) => {
-    ui.rivalQuip(scene);
+  const playRivalryScene = (
+    scene: RivalryScene, direction: RivalryDirection | "banter" | null = null,
+  ) => {
+    const faces = beatFaces(direction);
+    const beats: UiRivalryBeat[] = scene.map((beat) => ({
+      speaker: beat.speaker,
+      text: beat.text,
+      face: beat.speaker === "rival" ? faces.rival : faces.you,
+    }));
+    ui.rivalQuip(beats);
     for (const beat of scene) {
       ui.feed(`“${beat.text}”`, beat.speaker === "rival" ? rival.name : me.name);
     }
   };
 
+  // ── STORY-01: the guide on the wire ──────────────────────────────────────
+  // Mabel speaks in contracts only, once per moment per match, and only while
+  // the player has not said otherwise (`?advisor=0`, or the stored word). Her
+  // beats ride the same queue as the rivalry so a sabotage toast, a rival jab
+  // and her advice stack in reading order instead of painting over each other.
+  const advisorOn = storyOn && advisorEnabled();
+  const advisorSeen = new Set<AdvisorEvent>();
+  const ADVISOR_FACE: Record<AdvisorEvent, Expression> = {
+    welcome: "calm", stalled: "mad", sabotaged: "shock",
+    halfway: "smile", behind: "mad", gold: "calm",
+  };
+  const playAdvisor = (event: AdvisorEvent) => {
+    if (!advisorOn || advisorSeen.has(event)) return;
+    advisorSeen.add(event);
+    const guideFace = faceOf("mabel", ADVISOR_FACE[event]);
+    const playerFace = faceOf(playerCast, "calm");
+    const beats: UiRivalryBeat[] = advisorBeats(event, storyChapter).map((beat) => (
+      beat.speaker === "guide"
+        ? { speaker: "guide", text: beat.text, face: guideFace, label: "Office · Mabel Quill" }
+        : { speaker: "you", text: beat.text, face: playerFace }
+    ));
+    ui.rivalQuip(beats);
+    for (const beat of beats) {
+      ui.feed(`“${beat.text}”`, beat.speaker === "guide" ? "Mabel Quill" : me.name);
+    }
+  };
+  /** The frame-loop half of the guide: she reads the same state the clocks do. */
+  let playStartAt = 0;
+  function advisorTick(now: number) {
+    if (!advisorOn || phase !== "play") return;
+    if (!playStartAt) { playStartAt = now; playAdvisor("welcome"); return; }
+    const elapsed = now - playStartAt;
+    if (elapsed > 90_000 && !eco.harvesters.some((h) => h.owner === me.id)) {
+      playAdvisor("stalled");
+    }
+    const mine = vpFor(score, me.id);
+    const theirs = vpFor(score, rival.id);
+    if (mine > 0 && mine >= Math.ceil(winTarget() / 2) && mine < winTarget()) playAdvisor("halfway");
+    if (elapsed > 120_000 && theirs - mine >= 3) playAdvisor("behind");
+  }
+
   const rivalSpeaks = (direction: RivalryDirection, tactic: RivalryTactic) => {
     if (direction === "retort") playerSabotage++;
     else if (direction === "attack") rivalSabotageHits++;
-    playRivalryScene(nextRivalScene(direction, tactic));
+    playRivalryScene(nextRivalScene(direction, tactic), direction);
+    // STORY-01: a raid that lands is also the moment the guide explains what
+    // stops the next one — once per match, and only inside a contract.
+    if (direction === "attack") playAdvisor("sabotaged");
   };
 
   onFirstOilHarvest = () => {
     if (oilBanterSeen || phase !== "play") return;
     oilBanterSeen = true;
-    playRivalryScene(OIL_DRILLING_SCENE);
+    // STORY-01: the first oil is the sixth colour arriving — in a contract it
+    // is Mabel, not the rival, who explains what that means for the board.
+    if (storyOn) playAdvisor("gold");
+    else playRivalryScene(OIL_DRILLING_SCENE);
   };
 
   /**
@@ -833,7 +978,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     if (now < nextChitChatAt) return;
     nextChitChatAt = now + CHIT_CHAT_EVERY_MS * (0.9 + Math.random() * 0.7);
-    playRivalryScene(nextBanterScene());
+    playRivalryScene(nextBanterScene(), "banter");
   }
 
   /** Show the final ledger once. The same model builds victory and defeat, but
@@ -865,16 +1010,38 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // the same shape descending and muted when they did not. No fail horn: the
     // ending card is already sombre, and the sound must not gloat either way.
     sfx.play(model.outcome === "victory" ? "victory" : "defeat");
-    endingView = showEndingScreen(ui.el, model, {
-      playerPortrait: opts.portrait ?? "vex",
-      onRestart: () => {
-        restartArmed = true;
-        clearSave();
-        // Keep the selected difficulty: this is a rematch, not first-run
-        // onboarding. The top-bar Restart button remains the full reset.
-        location.reload();
-      },
-    });
+    const openLedger = () => {
+      endingView = showEndingScreen(ui.el, model, {
+        playerPortrait: opts.portrait ?? "vex",
+        onRestart: () => {
+          restartArmed = true;
+          clearSave();
+          // Keep the selected difficulty: this is a rematch, not first-run
+          // onboarding. The top-bar Restart button remains the full reset.
+          location.reload();
+        },
+        // STORY-01: the ledger's third door — back to the campaign menu with
+        // the contract recorded, instead of a reload into the same chapter.
+        ...(storyOn ? { onContinue: () => opts.onStoryExit?.() } : {}),
+      });
+    };
+    // STORY-01: the epilogue stands BEFORE the ledger — the rival concedes (or
+    // gloats) in person, Mabel closes the book, and only then does the match
+    // show its arithmetic. The result is recorded first: a refresh mid-reel
+    // must not lose the contract.
+    if (storyChapter) {
+      recordChapterResult(storyChapter.id, storyChapter.index, winner.id === me.id, CHAPTERS.length);
+      storyView = showScene(ui.el, winner.id === me.id ? storyChapter.win : storyChapter.lose, {
+        player: playerCast,
+        skipLabel: "Skip epilogue ▸▸",
+      });
+      void storyView.promise.then(() => {
+        storyView = null;
+        if (!disposed) openLedger();
+      });
+    } else {
+      openLedger();
+    }
     // Preserve the completed ledger immediately instead of waiting up to five
     // seconds for autosave. A microtask also makes this safe during restore:
     // all runtime guards below have finished initialising before it writes.
@@ -1229,7 +1396,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // depot hears a different version. Solo only: in a hosted game seat 1 is a
     // person, not Torvin.
     if (p.human && isSolo() && served.some((ind) => ind.type === "gold_mine")) {
-      playRivalryScene(nextGoldMineScene());
+      // STORY-01: the same fine print, in the guide's voice, inside a contract.
+      if (storyOn) playAdvisor("gold");
+      else playRivalryScene(nextGoldMineScene());
     }
     return true;
   }
@@ -2696,6 +2865,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       bannerKey = "match-gems";
       banner = "Match the tokened gems in the Processing Plant to process";
     }
+    // STORY-01: inside a contract the loop's opening beats are SPOKEN, not
+    // posted — Mabel's line replaces the sheet's wording for the keys she
+    // owns (guide-banner.ts), and the HUD paints the sheet as her speech
+    // bubble. Keys she does not own keep the posted sheet verbatim.
+    const voicedBanner = storyOn ? guideBanner(bannerKey) : null;
+    if (voicedBanner) banner = voicedBanner.text;
 
     let costInfo: string | null = null;
     if (preview) {
@@ -2851,6 +3026,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       purse: me.purse,
       phase,
       tool,
+      // STORY-01: the contract's rival wears their painted sheet on the
+      // dossier card; a sandbox match sends nothing and keeps the mugshots.
+      ...(storyOn ? { rivalFace: faceOf(rivalCast, "calm") } : {}),
       // AI-04: the race length the HUD should print — 5★ on easy, the shipped
       // line elsewhere. The badge ("You 2★/5") and the king bars' 100% read it.
       vpTarget: winTarget(),
@@ -2861,6 +3039,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // dismissal is remembered by this, so a closed line never pops back up
       // when the wording changes and returns.
       bannerKey,
+      // STORY-01: her face and name beside the bubble, mood by moment.
+      ...(voicedBanner
+        ? { bannerFace: faceOf(GUIDE, voicedBanner.mood), bannerWho: CAST[GUIDE].name }
+        : {}),
       costInfo,
       inspect: info || null,
       inspectTone: infoTone,
@@ -3802,6 +3984,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       aiTick(t);
       // Rivalry idle wire: a Torvin saying / dad joke every so often, mid-game.
       rivalChitChat(t);
+      advisorTick(t);
       // MP-05: protests are solo/host-only (buyBlack refuses guests, like the
       // rest of the Black Market), so the sweep is a no-op on a guest — it
       // runs unguarded rather than splitting the heartbeat below.
@@ -4014,7 +4197,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      *  skipping the wait so a test can drive the exchange on demand. */
     chitChat: () => {
       if (!isSolo() || phase !== "play") return;
-      playRivalryScene(nextBanterScene());
+      playRivalryScene(nextBanterScene(), "banter");
     },
     /** The next Gold Mine warning, as `placeHarvester` will play it when the
      *  player stands a Depot beside a Gold Mine (test twin). */
@@ -4252,6 +4435,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // is what stops the boot chain from awaiting a card that no longer exists.
     tutorialView?.destroy();
     tutorialView = null;
+    storyView?.destroy();
+    storyView = null;
     floats.clear();
     cancelAnimationFrame(raf);
     ro.disconnect();

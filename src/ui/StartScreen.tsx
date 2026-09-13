@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   NO_ROOM_SERVER_MESSAGE,
   createRoom,
@@ -15,9 +15,15 @@ import {
 import { NetSession } from "../net/session";
 import { VERSION_MISMATCH_MESSAGE, validateWelcome, type HexProtocol } from "../net/protocol";
 import { PORTRAITS, type Portrait } from "../iso/config";
+// STORY-01: the campaign menu — contracts, their locks and their seals.
+import { CHAPTERS } from "../story/chapters";
+import { CAST, faceOf } from "../story/cast";
+import { loadStoryProgress, pinnedChapter, type StoryProgress } from "../story/progress";
 
 export type StartChoice =
   | { mode: "ai"; portrait: Portrait }
+  | { mode: "story"; chapter: string; portrait: Portrait }
+  | { mode: "story-intro"; portrait: Portrait }
   | { mode: "host"; seed: number; room: HexRoom; net: NetSession; portrait: Portrait }
   | { mode: "guest"; seed: number; room: HexRoom; net: NetSession; portrait: Portrait };
 
@@ -31,6 +37,7 @@ export type StartChoice =
  */
 type ScreenState =
   | "choose"
+  | "story"
   | "host"
   | "join"
   | "joined"
@@ -51,17 +58,24 @@ const WELCOME_TIMEOUT_MS = 10_000;
 
 interface StartScreenProps {
   onStart: (choice: StartChoice) => void;
+  /** STORY-01: the main menu's Back door, when the screen was reached from it. */
+  onBack?: () => void;
+  /** STORY-01: reopening on the campaign list (the ledger's third door). */
+  initial?: "choose" | "story";
 }
 
 /** The deliberately low-friction entry point: AI is always available without auth. */
-export default function StartScreen({ onStart }: StartScreenProps) {
-  const [state, setState] = useState<ScreenState>("choose");
+export default function StartScreen({ onStart, onBack, initial = "choose" }: StartScreenProps) {
+  const [state, setState] = useState<ScreenState>(initial);
   const [room, setRoom] = useState<HexRoom | null>(null);
   const [seed, setSeed] = useState<number | null>(null);
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   /** PP-14b: the player's tycoon portrait — Vex or You (Torvin is the rival). */
   const [portrait, setPortrait] = useState<Portrait>("vex");
+  /** STORY-01: the campaign record, re-read each time the menu opens so a
+   *  finished contract seals itself without a reload. */
+  const [progress, setProgress] = useState<StoryProgress>(() => loadStoryProgress());
   const [players, setPlayers] = useState<readonly ServerPlayer[]>([]);
   const [net, setNet] = useState<NetSession | null>(null);
   /** Guards the realtime calls: a double-click must not mint two rooms. */
@@ -277,14 +291,66 @@ export default function StartScreen({ onStart }: StartScreenProps) {
           </div>
         </div>
         <div className="start-actions">
-          <button className="start-primary" data-sfx="open" onClick={() => onStart({ mode: "ai", portrait })}>Play vs AI <small>no login</small></button>
+          <button className="start-primary" data-sfx="open" onClick={() => { setProgress(loadStoryProgress()); setState("story"); }}>Story Mode <small>the Foundry Syndicate</small></button>
+          <button data-sfx="open" onClick={() => onStart({ mode: "ai", portrait })}>Play vs AI <small>no login</small></button>
           <button disabled={busy} onClick={() => { setState("host"); void beginRoom("host"); }}>Host a game (Experimental)</button>
           <button disabled={busy} onClick={openJoinScreen}>Join with a code</button>
           <button disabled={busy} onClick={() => void beginMatch()}>Quick match</button>
+          {onBack ? <button className="start-back" data-sfx="close" onClick={onBack}>Back to the menu</button> : null}
         </div>
       </div>
     </main>
   );
+
+  if (state === "story") {
+    const pin = pinnedChapter();
+    return (
+      <main className="start-screen" aria-label="Hexmatch campaign">
+        <div className="start-panel story">
+          <p className="start-kicker">THE FOUNDRY SYNDICATE</p>
+          <h1>Five contracts, one season</h1>
+          <p className="start-subtitle">1949. An inherited freight company, a bookkeeper who keeps it honest, and five tycoons waiting for you to fold.</p>
+          <div className="chapter-list">
+            {CHAPTERS.map((chapter) => {
+              const open = pin ? pin === chapter.id : chapter.index < progress.unlocked;
+              const result = progress.results[chapter.id];
+              const rival = CAST[chapter.rival];
+              const face = faceOf(chapter.rival, "calm");
+              return (
+                <button key={chapter.id} type="button" data-sfx="open"
+                  className={`chapter-card${open ? "" : " locked"}`}
+                  style={{ "--cc": rival.colour } as CSSProperties}
+                  disabled={!open}
+                  aria-label={`${chapter.name}${open ? "" : " (sealed)"}`}
+                  onClick={() => onStart({ mode: "story", chapter: chapter.id, portrait })}>
+                  <span className="cc-face" aria-hidden="true"
+                    style={face.pos
+                      ? { backgroundImage: `url(${face.url})`, backgroundSize: "200% 200%", backgroundPosition: `${face.pos[0]}% ${face.pos[1]}%` }
+                      : { backgroundImage: `url(${face.url})`, backgroundSize: "cover", backgroundPosition: "center 20%" }} />
+                  <span className="cc-body">
+                    <span className="cc-kicker">{chapter.kicker}</span>
+                    <span className="cc-name">{chapter.name}</span>
+                    <span className="cc-brief">{chapter.brief}</span>
+                    <span className="cc-meta">vs {rival.name} · first to {chapter.target}★ · {chapter.skill}</span>
+                  </span>
+                  {result === "win"
+                    ? <span className="cc-seal">Filed · won</span>
+                    : result === "loss"
+                      ? <span className="cc-seal loss">Filed · lost</span>
+                      : open ? null : <span className="cc-lock" aria-hidden="true">🔒</span>}
+                </button>
+              );
+            })}
+          </div>
+          <div className="story-menu-actions">
+            <button data-sfx="open" onClick={() => onStart({ mode: "story-intro", portrait })}>Watch the opening reel</button>
+            <button onClick={() => setState("choose")}>Modes</button>
+            {onBack ? <button data-sfx="close" onClick={onBack}>Back to the menu</button> : null}
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   if (state === "join") return (
     <main className="start-screen"><div className="start-panel lobby">

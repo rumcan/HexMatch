@@ -25,6 +25,8 @@ const STEP_IDS = ["loop", "plant", "depot", "roads", "board", "expand", "victory
 /** Boot a solo game through the start screen and wait for the map to exist. */
 async function boot(page: import("@playwright/test").Page, extra = "") {
   await page.goto(`${BASE}?seed=79${extra}`);
+  // STORY-01 menu: the mode screen stands behind the front door — Play first
+  await page.locator(".menu-btn.primary").click();
   await page.getByRole("button", { name: /Play vs AI/ }).click();
   await page.waitForFunction(() => {
     const h = (window as unknown as { __iso?: { phase: string } }).__iso;
