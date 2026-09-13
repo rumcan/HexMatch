@@ -27,6 +27,7 @@ import {
   VERSION_MISMATCH_MESSAGE,
   type DeltaMsg,
   type HexProtocol,
+  type ResultMsg,
   type WelcomeMsg,
 } from "../../src/net/protocol";
 import type { ConnectionState, HexRoom } from "../../src/net/transport";
@@ -623,5 +624,125 @@ describe("#121 leaving a room", () => {
     host.firePlayerLeft("guest-socket");
     expect(left).toEqual(["Bo"]);
     session.dispose();
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// RANK-01 (#147) — the rating board as this client sees it
+//
+// The room owns the board's authority (`net-room.test.ts`); the arithmetic is
+// pure (`net-rank.test.ts`). This is the middle: what a session does with a
+// welcome, with a `ratingUpdate`, with its own publish, and — the one that
+// would be easy to get wrong — with a `result` that arrives on a session the
+// peer-left halt has already stopped.
+// ══════════════════════════════════════════════════════════════════════════
+describe("RANK-01 the rating board on a session", () => {
+  const hostRating = { id: "host-socket", rating: 1180, matches: 12 };
+  const guestRating = { id: "guest-socket", rating: 1040, matches: 3 };
+
+  it("takes the welcome's board as the room's whole truth", () => {
+    const session = new NetSession({ room: asRoom(guest), role: "guest" });
+    const seen: { board: Record<string, unknown>; raw: unknown[] }[] = [];
+    session.attach({ ratings: (board, raw) => seen.push({ board, raw }) });
+    guest.deliver({ ...welcome(5), ratings: [hostRating, guestRating] }, true);
+    expect(session.ratings).toEqual([hostRating, guestRating]);
+    // Keyed by player id, not by slot or seat index.
+    expect(session.board["host-socket"]).toEqual({ rating: 1180, matches: 12 });
+    expect(session.info?.ratings).toEqual([hostRating, guestRating]);
+    expect(seen).toHaveLength(1);
+    // A welcome with NO board (nobody has published yet) must not erase a
+    // board this session already learned — the field is optional on the wire.
+    guest.deliver(welcome(5));
+    expect(session.ratings).toEqual([hostRating, guestRating]);
+    session.dispose();
+  });
+
+  it("publishes its own rating with the session's join token, and adopts it locally", () => {
+    const session = new NetSession({ room: asRoom(host), role: "host" });
+    session.attach({});
+    session.publishRating({ rating: 1180, matches: 12, wins: 7, losses: 5, season: "s1" });
+    const [sent] = host.frames("playerRating");
+    expect(sent).toMatchObject({ id: "host-socket", rating: 1180, matches: 12 });
+    expect(sent.joinToken).toBe(session.joinToken);
+    expect(sent.joinToken.length).toBeGreaterThan(8);
+    // The lobby can print a number before the room echoes anything back.
+    expect(session.board["host-socket"]).toEqual({ rating: 1180, matches: 12 });
+    // A later publish (the rating moved) replaces the entry rather than
+    // duplicating it, and carries the SAME token — the room's sticky rule.
+    session.publishRating({ rating: 1196, matches: 13, wins: 8, losses: 5, season: "s1" });
+    expect(host.frames("playerRating")).toHaveLength(2);
+    expect(host.frames("playerRating")[1].joinToken).toBe(sent.joinToken);
+    expect(session.ratings).toHaveLength(1);
+    expect(session.board["host-socket"]).toEqual({ rating: 1196, matches: 13 });
+    session.dispose();
+  });
+
+  it("folds a ratingUpdate and reports the opponent's published number", () => {
+    const session = new NetSession({ room: asRoom(host), role: "host" });
+    session.attach({});
+    expect(session.opponentRating()).toBeNull();
+    host.deliver({ type: "ratingUpdate", ratings: [guestRating] });
+    expect(session.opponentRating()).toEqual(guestRating);
+    expect(session.board["guest-socket"]).toEqual({ rating: 1040, matches: 3 });
+    // A message that is not a board is ignored rather than wiping one.
+    host.deliver({ type: "ratingUpdate", ratings: "nope" });
+    expect(session.ratings).toEqual([guestRating]);
+    session.dispose();
+  });
+
+  it("lets only the host file the verdict", () => {
+    const hostSession = new NetSession({ room: asRoom(host), role: "host" });
+    hostSession.attach({});
+    expect(hostSession.claimResult("host-socket", "guest-socket", 300)).toBe(true);
+    expect(host.frames("resultClaim")).toEqual([
+      { type: "resultClaim", winnerId: "host-socket", loserId: "guest-socket", reason: "win", durationSec: 300 },
+    ]);
+
+    const guestSession = new NetSession({ room: asRoom(guest), role: "guest" });
+    guestSession.attach({});
+    expect(guestSession.claimResult("guest-socket", "host-socket", 300)).toBe(false);
+    expect(guest.frames("resultClaim")).toEqual([]);
+    hostSession.dispose();
+    guestSession.dispose();
+  });
+
+  it("delivers the room's result even after the peer-left HALT — that is the forfeit case", () => {
+    // The order a forfeit really happens in: the guest's seat empties, which
+    // halts this session — and THEN the room files the result. A session that
+    // refused to act after a halt would drop the rating of every abandoned
+    // match on exactly the seat that has to file it.
+    const session = new NetSession({ room: asRoom(host), role: "host" });
+    const results: ResultMsg[] = [];
+    session.attach({ result: (m) => results.push(m) });
+    host.deliver(welcome(5));
+    host.firePlayerLeft("guest-socket");
+    const filed: ResultMsg = {
+      type: "result",
+      winnerId: "host-socket",
+      loserId: "guest-socket",
+      reason: "forfeit",
+      durationSec: 0,
+      ratings: [hostRating, guestRating],
+      departedId: "guest-socket",
+      at: 1_760_000_000_000,
+    };
+    host.deliver(filed);
+    expect(results).toEqual([filed]);
+    // …and the board the result carried is folded, so the arithmetic runs on
+    // the numbers the result was filed against.
+    expect(session.board["guest-socket"]).toEqual({ rating: 1040, matches: 3 });
+    // Nothing else gets through a halted session (the deltas in flight stop).
+    const before = session.appliedDeltas;
+    host.deliver({ type: "delta", t: 9, seq: 99, tiles: [] });
+    expect(session.appliedDeltas).toBe(before);
+    session.dispose();
+  });
+
+  it("sends nothing once disposed — a rating cannot move the room after leaving", () => {
+    const session = new NetSession({ room: asRoom(host), role: "host" });
+    session.attach({});
+    session.dispose();
+    expect(session.publishRating({ rating: 1400, matches: 30, wins: 20, losses: 10, season: "s1" })).toBe(false);
+    expect(host.frames("playerRating")).toEqual([]);
   });
 });

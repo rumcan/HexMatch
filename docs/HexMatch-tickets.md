@@ -461,6 +461,7 @@ Do these in order. Each should land green.
 | MP-07 | Quick match | MP-06 | Two clients pair with no code exchanged |
 | MP-08 | Reconnect + host-left handling | MP-06 | Guest survives a 10 s host reload; host-left shows a clear message |
 | MP-09 | e2e: two-browser host/join | MP-06 | Playwright spec drives two contexts through a shared room |
+| RANK-01 | Elo ratings, tiers, badges, forfeits, the ladder and the ranked queue | MP-07 | Both seats file the same result; abandoning files a loss; quick match can search Any or a widening Similar window — see `docs/RANK-01-multiplayer-ranking.md` |
 
 ---
 

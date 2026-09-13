@@ -13,6 +13,22 @@ import {
   type ServerPlayer,
 } from "../net/transport";
 import { NetSession } from "../net/session";
+// RANK-01 (#147): the rating file and the ladder. The store is the only
+// ranking module that touches the SDK/player storage, and this screen is where
+// a rating is first PUBLISHED to the room — both seats must have their numbers
+// on the room's board before the match starts, or the match rates against a
+// stranger's default.
+import { rankStore } from "../net/rankstore";
+import {
+  fmtRating,
+  rankKeyOf,
+  rankLabelOf,
+  searchBucket,
+  tierProgress,
+  type RankState,
+  type RankWire,
+} from "../net/rating";
+import { badgeUrlFor } from "./rank-badge";
 import { VERSION_MISMATCH_MESSAGE, validateWelcome, type HexProtocol } from "../net/protocol";
 import { PORTRAITS, type Portrait } from "../iso/config";
 // STORY-01: the campaign menu — contracts, their locks and their seals.
@@ -20,12 +36,31 @@ import { CHAPTERS, EMPLOYER, currentJobTitle } from "../story/chapters";
 import { CAST, faceOf } from "../story/cast";
 import { loadStoryProgress, pinnedChapter, type StoryProgress } from "../story/progress";
 
+/** RANK-01: the ladder panel's data, as `rankStore().loadLadder()` returns it. */
+type LadderView = {
+  entries: { profileId: string; username: string; rating: number; rank: number }[];
+  mine: { rank: number; rating: number } | null;
+  total: number;
+} | null;
+
 export type StartChoice =
   | { mode: "ai"; portrait: Portrait }
   | { mode: "story"; chapter: string; portrait: Portrait }
   | { mode: "story-intro"; portrait: Portrait }
-  | { mode: "host"; seed: number; room: HexRoom; net: NetSession; portrait: Portrait }
-  | { mode: "guest"; seed: number; room: HexRoom; net: NetSession; portrait: Portrait };
+  | {
+      mode: "host" | "guest";
+      seed: number;
+      room: HexRoom;
+      net: NetSession;
+      portrait: Portrait;
+      /**
+       * RANK-01: this room's matches are RATED. True for quick match only —
+       * a hosted room and a shared code are games between friends, and #147
+       * settled that the ladder is fed by the one queue that pairs strangers
+       * by rating.
+       */
+      ranked?: boolean;
+    };
 
 /**
  * `join` is the CODE FIELD; `joined` is the guest lobby. They used to be one
@@ -37,6 +72,7 @@ export type StartChoice =
  */
 type ScreenState =
   | "choose"
+  | "ladder"
   | "story"
   | "host"
   | "join"
@@ -48,6 +84,42 @@ type ScreenState =
 const MATCHMAKING_TIMEOUT = null;
 
 /**
+ * RANK-01 (#147): the rank windows a SIMILAR RANK search widens through.
+ *
+ * Why a ladder at all: `matchmakeRoom` takes flat equality criteria — the pool
+ * has no "within N points" operator — so a window is a bucket index
+ * (`searchBucket`) and a wider window is a DIFFERENT bucket. The search runs
+ * one attempt per rung, on its own budget, and the last rung asks for nothing
+ * in particular: a player is never left waiting on a window too narrow to
+ * contain anybody. Total: MATCHMAKING_SEARCH_MS, shared by every rung.
+ *
+ * `span: 0` is the Any-rank rung — see `RANK_SEARCH_LOOSE`.
+ */
+export const RANK_SEARCH_STEPS: readonly { span: number; budgetMs: number }[] = [
+  { span: 75, budgetMs: 6_000 },     // same neighbourhood, tightest pair
+  { span: 200, budgetMs: 8_000 },    // a tier or so apart
+  { span: 400, budgetMs: 8_000 },    // a couple of tiers
+  { span: 0, budgetMs: 8_000 },      // any rank — the escape hatch
+];
+
+/** What the screen promises, and what the whole search costs. */
+export const MATCHMAKING_SEARCH_MS = RANK_SEARCH_STEPS.reduce((n, step) => n + step.budgetMs, 0);
+
+/** How the player wants strangers paired (RANK-01, #147). */
+type RankSearch = "any" | "similar";
+
+/**
+ * True when the matchmaker simply found nobody — its own per-attempt timeout,
+ * or a pool that expired under us. Both mean "widen the window and look again";
+ * anything else (no room server, a refused login) is a real error and must
+ * reach the screen instead of being retried four times.
+ */
+function isMatchmakeMiss(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : "";
+  return /matchmaking timeout|no longer active/i.test(message);
+}
+
+/**
  * How long a lobby waits for the room's welcome before giving up. The welcome
  * carries the seed and the seed is what lets the game mount, so a missed one is
  * a dead end with a permanently disabled Play button — this turns it into a
@@ -55,6 +127,53 @@ const MATCHMAKING_TIMEOUT = null;
  * subscriber that registers late, so the race is real even though it is rare.
  */
 const WELCOME_TIMEOUT_MS = 10_000;
+
+/**
+ * RANK-01: a badge and a number, in one component, because the same chip is
+ * printed on the mode screen (your own rating), in every lobby seat (yours and
+ * the opponent's) and in the ladder list. `rating: null` means the room has not
+ * carried this player's number yet — which the lobby says out loud rather than
+ * hiding, since a rated match against an unknown opponent is worth less.
+ */
+interface RankChipModel {
+  key: string;
+  label: string;
+  rating: number | null;
+  provisional: boolean;
+}
+
+function chipFor(state: RankState): RankChipModel {
+  return {
+    key: rankKeyOf(state),
+    label: rankLabelOf(state),
+    rating: state.rating,
+    provisional: state.matches < 10,
+  };
+}
+
+function chipForWire(wire: RankWire | null): RankChipModel {
+  if (!wire) return { key: "unranked", label: "Unrated", rating: null, provisional: false };
+  const state: RankState = {
+    rating: wire.rating, matches: wire.matches, wins: 0, losses: 0, season: "s1",
+  };
+  return { ...chipFor(state), provisional: wire.matches < 10 };
+}
+
+function RankChip({ model, label }: { model: RankChipModel; label?: string }) {
+  const title = model.rating === null
+    ? "No rating published to this room yet"
+    : `${model.label} · ${fmtRating(model.rating)}${model.provisional ? " · placement matches" : ""}`;
+  return (
+    <span className="rank-chip" data-tier={model.key} title={title}>
+      <img className="rank-badge" src={badgeUrlFor(model.key)} alt="" aria-hidden="true" />
+      <span className="rank-chip-text">
+        {label ? <em className="rank-chip-who">{label}</em> : null}
+        <b>{model.label}</b>
+        <small>{model.rating === null ? "no rating yet" : fmtRating(model.rating)}</small>
+      </span>
+    </span>
+  );
+}
 
 interface StartScreenProps {
   onStart: (choice: StartChoice) => void;
@@ -80,9 +199,46 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
   const [openBriefs, setOpenBriefs] = useState<ReadonlySet<string>>(() => new Set());
   const [players, setPlayers] = useState<readonly ServerPlayer[]>([]);
   const [net, setNet] = useState<NetSession | null>(null);
+  /** RANK-01: this player's own rating file, and the room's board of everyone's. */
+  const [rank, setRank] = useState<RankState | null>(null);
+  const [board, setBoard] = useState<readonly RankWire[]>([]);
+  const [ladder, setLadder] = useState<LadderView | null | "loading">("loading");
+  /** RANK-01: this lobby came out of the quick-match queue, so its matches rate. */
+  const [rankedRoom, setRankedRoom] = useState(false);
+  /** RANK-01: Any rank (the default — fastest) or Similar rank (widening). */
+  const [rankSearch, setRankSearch] = useState<RankSearch>("any");
+  /** The rung a similar-rank search is currently on, for the waiting screen. */
+  const [searchRung, setSearchRung] = useState(0);
+  const rankRef = useRef<RankState | null>(null);
   /** Guards the realtime calls: a double-click must not mint two rooms. */
   const [busy, setBusy] = useState(false);
   const matchRequest = useRef(0);
+
+  // RANK-01: the rating file is read once per mount. It is deliberately not
+  // awaited by anything: a room can be created while the read is in flight,
+  // and `publishRating` is idempotent, so the number arrives a moment later
+  // rather than holding up a match.
+  useEffect(() => {
+    let live = true;
+    void rankStore().loadState().then((state) => {
+      if (!live) return;
+      rankRef.current = state;
+      setRank(state);
+      setNet((session) => {
+        if (session) session.publishRating(state);      // a room that is already open
+        return session;
+      });
+    }).catch(() => { /* no storage: the match simply rates from the default */ });
+    return () => { live = false; };
+  }, []);
+
+  /** RANK-01: the ladder panel's contents, re-read each time it opens. */
+  const loadLadder = useCallback(() => {
+    setLadder("loading");
+    void rankStore().loadLadder(20)
+      .then((view) => setLadder(view))
+      .catch(() => setLadder(null));
+  }, []);
 
   /**
    * Drop the room and everything derived from it — the SDK socket, the
@@ -126,7 +282,8 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
     }
   }, []);
 
-  const awaitWelcome = useCallback((nextRoom: HexRoom, role: "host" | "guest") => {
+  const awaitWelcome = useCallback((nextRoom: HexRoom, role: "host" | "guest", ranked = false) => {
+    setRankedRoom(ranked);
     setRoom(nextRoom);
     setPlayers(nextRoom.players);
     const onRoomChanged = () => setPlayers([...nextRoom.players]);
@@ -147,6 +304,10 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
         // authoritative roster and role so attach() can immediately
         // request/render state.
         session.receive(message);
+        // RANK-01: publish this player's rating now that a room exists to hold
+        // it, and mirror the room's board for the lobby.
+        if (rankRef.current) session.publishRating(rankRef.current);
+        setBoard([...session.ratings]);
         setSeed(message.seed);
         return;
       }
@@ -154,6 +315,10 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
       // reject). Without this the guest is offered a Play button that leads
       // into a world nobody is simulating.
       if (message.type === "reject") failMessage(message.reason);
+      // RANK-01: any other traffic may carry the opponent's rating (a board
+      // update lands as its own message). Cheap, and it keeps the lobby chips
+      // live rather than frozen at welcome time.
+      setBoard([...session.ratings]);
     };
     // MP-03 sends the welcome BOTH ways (broadcast to members, sendTo to the
     // newcomer), so listen on both channels or the first joiner never learns
@@ -184,7 +349,10 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
     setError("");
     try {
       const nextRoom = await withLogin(() => kind === "host" ? createRoom() : joinRoomByCode(code));
-      awaitWelcome(nextRoom, kind === "host" ? "host" : "guest");
+      // RANK-01: hosting and joining by code are UNRANKED by decision (#147):
+      // a code is how you play a friend, and a ladder match is a stranger
+      // paired by the queue.
+      awaitWelcome(nextRoom, kind === "host" ? "host" : "guest", false);
     } catch (err) {
       fail(err);
     } finally {
@@ -192,6 +360,19 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
     }
   }, [awaitWelcome, busy, code, fail, failMessage, withLogin]);
 
+  /**
+   * RANK-01 (#147): quick match, with an optional SIMILAR RANK window.
+   *
+   * Any rank is one attempt with the room type's own criteria. Similar rank is
+   * the widening ladder above: the narrowest window first, then wider ones,
+   * then Any — because a rated queue that can strand a player is worse than a
+   * slightly lopsided match. The window itself is a bucket index
+   * (`searchBucket`); widening the span changes the bucket, which is the only
+   * kind of "wider" the pool understands.
+   *
+   * The SDK request stays attached to the race even if the UI gives up: the
+   * request token prevents a late room from pulling the player anywhere.
+   */
   const beginMatch = useCallback(async () => {
     if (busy) return;
     if (isOfflineMockRealtime()) {
@@ -202,31 +383,42 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
     setError("");
     setState("matchmaking");
     const request = ++matchRequest.current;
-    // The SDK request remains attached to the race even if the UI gives up;
-    // the request token prevents a late room from taking the player out of the
-    // explicit fallback screen.
-    const timeout = new Promise<null>((resolve) => {
-      window.setTimeout(() => resolve(MATCHMAKING_TIMEOUT), 30_000);
-    });
+    const ladder = rankSearch === "similar" ? RANK_SEARCH_STEPS : [RANK_SEARCH_STEPS[RANK_SEARCH_STEPS.length - 1]];
     try {
-      const result = await Promise.race([
-        withLogin(() => quickMatch({ matchmakeTimeoutMs: 30_000 })),
-        timeout,
-      ]);
-      if (result === MATCHMAKING_TIMEOUT) {
-        setState("matchmaking-timeout");
+      for (let rung = 0; rung < ladder.length; rung++) {
+        if (request !== matchRequest.current) return;
+        const step = ladder[rung];
+        setSearchRung(rung);
+        // The SDK answers its own timeout; the outer race is a backstop for a
+        // promise that never settles at all (the cancel path is best-effort).
+        const backstop = new Promise<null>((resolve) => {
+          window.setTimeout(() => resolve(MATCHMAKING_TIMEOUT), step.budgetMs + 2_000);
+        });
+        const result = await Promise.race([
+          withLogin(() => quickMatch({
+            matchmakeTimeoutMs: step.budgetMs,
+            rankBucket: searchBucket(rankRef.current?.rating ?? 1000, step.span),
+          })).catch((err: unknown) => {
+            if (isMatchmakeMiss(err)) return MATCHMAKING_TIMEOUT;
+            throw err;
+          }),
+          backstop,
+        ]);
+        if (request !== matchRequest.current) return;
+        if (result === MATCHMAKING_TIMEOUT) continue;              // widen and look again
+        // A matchmaker can return either an existing room or a newly-created
+        // one. isCreator is the SDK's authoritative host hint until welcome.
+        // RANK-01: the queue is the ladder — whoever it pairs is rated.
+        awaitWelcome(result, result.isCreator ? "host" : "guest", true);
         return;
       }
-      if (request !== matchRequest.current) return;
-      // A matchmaker can return either an existing room or a newly-created one.
-      // isCreator is the SDK's authoritative host hint until welcome arrives.
-      awaitWelcome(result, result.isCreator ? "host" : "guest");
+      setState("matchmaking-timeout");
     } catch (err) {
       if (request === matchRequest.current) fail(err);
     } finally {
       if (request === matchRequest.current) setBusy(false);
     }
-  }, [awaitWelcome, busy, fail, failMessage, matchRequest, withLogin]);
+  }, [awaitWelcome, busy, fail, failMessage, matchRequest, rankSearch, withLogin]);
 
   const abandonMatch = useCallback(() => {
     ++matchRequest.current;
@@ -245,9 +437,9 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
     setState("join");
   }, [releaseRoom]);
 
-  const startNetworkGame = useCallback((mode: "host" | "guest") => {
+  const startNetworkGame = useCallback((mode: "host" | "guest", ranked = false) => {
     if (!room || seed === null || !net) return;
-    onStart({ mode, seed, room, net, portrait });
+    onStart({ mode, seed, room, net, portrait, ranked });
   }, [net, onStart, portrait, room, seed]);
 
   const roster = useMemo(() => {
@@ -292,12 +484,38 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
             ))}
           </div>
         </div>
+        {rank ? (
+          <div className="rank-block">
+            <RankChip model={chipFor(rank)} />
+            <p className="rank-block-note">
+              {rank.matches === 0
+                ? "Play a quick match to place on the ladder."
+                : `${rank.wins}W · ${rank.losses}L · ${
+                    tierProgress(rank.rating).next
+                      ? `${tierProgress(rank.rating).toNext} rating to ${tierProgress(rank.rating).next!.label}`
+                      : "top of the ladder"}`}
+            </p>
+          </div>
+        ) : null}
         <div className="start-actions">
           <button className="start-primary" data-sfx="open" onClick={() => { setProgress(loadStoryProgress()); setState("story"); }}>Story Mode <small>the Foundry Syndicate</small></button>
           <button data-sfx="open" onClick={() => onStart({ mode: "ai", portrait })}>Play vs AI <small>no login</small></button>
-          <button disabled={busy} onClick={() => { setState("host"); void beginRoom("host"); }}>Host a game (Experimental)</button>
-          <button disabled={busy} onClick={openJoinScreen}>Join with a code</button>
-          <button disabled={busy} onClick={() => void beginMatch()}>Quick match</button>
+          <button disabled={busy} onClick={() => void beginMatch()}>Quick match <small>ranked · a rated stranger</small></button>
+          <div className="rank-search" role="radiogroup" aria-label="Who quick match pairs you with">
+            {([["any", "Any rank", "whoever is waiting"], ["similar", "Similar rank", "widening, never stuck"]] as const)
+              .map(([value, label, hint]) => (
+                <button key={value} type="button" disabled={busy}
+                  className={`rank-search-opt${rankSearch === value ? " on" : ""}`}
+                  aria-pressed={rankSearch === value}
+                  data-sfx="select"
+                  onClick={() => setRankSearch(value)}>
+                  {label}<small>{hint}</small>
+                </button>
+              ))}
+          </div>
+          <button disabled={busy} onClick={() => { loadLadder(); setState("ladder"); }}>The ladder <small>top ratings</small></button>
+          <button disabled={busy} onClick={() => { setState("host"); void beginRoom("host"); }}>Host a game (Experimental) <small>unranked</small></button>
+          <button disabled={busy} onClick={openJoinScreen}>Join with a code <small>unranked</small></button>
           {onBack ? <button className="start-back" data-sfx="close" onClick={onBack}>Back to the menu</button> : null}
         </div>
       </div>
@@ -373,6 +591,46 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
     );
   }
 
+  if (state === "ladder") {
+    const mine = rank ? chipFor(rank) : null;
+    return (
+      <main className="start-screen" aria-label="Hexmatch ladder">
+        <div className="start-panel ladder-panel">
+          <p className="start-kicker">THE LADDER</p>
+          <h1>Top ratings</h1>
+          <p className="start-subtitle">Every rated quick match moves one number. The badge is the band it lands in.</p>
+          {ladder === "loading" ? (
+            <p className="ladder-note">Reading the board…</p>
+          ) : ladder === null ? (
+            <p className="ladder-note">The ladder is not reachable from this page — it needs a signed-in RUN.world player. Quick match still works; the rating is kept on your own file.</p>
+          ) : ladder.entries.length === 0 ? (
+            <p className="ladder-note">Nobody has filed a rating yet. Win a quick match and this board has a first name on it.</p>
+          ) : (
+            <ol className="ladder-list">
+              {ladder.entries.map((row) => (
+                <li key={row.profileId} data-rank={row.rank}>
+                  <span className="ladder-place">{row.rank}</span>
+                  <RankChip model={chipForWire({ id: row.profileId, rating: row.rating, matches: 1 })} label={row.username} />
+                </li>
+              ))}
+            </ol>
+          )}
+          {mine ? (
+            <p className="ladder-mine">
+              Your card: <RankChip model={mine} />
+              {typeof ladder === "object" && ladder?.mine
+                ? <small> · rank {ladder.mine.rank} of {ladder.total}</small>
+                : null}
+            </p>
+          ) : null}
+          <div className="lobby-actions">
+            <button onClick={() => { setState("choose"); loadLadder(); }}>Back</button>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
   if (state === "join") return (
     <main className="start-screen"><div className="start-panel lobby">
       <p className="start-kicker">JOIN A MATCH</p><h1>Enter room code</h1>
@@ -386,14 +644,21 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
     </div></main>
   );
 
-  if (state === "matchmaking") return (
-    <main className="start-screen"><div className="start-panel lobby"><p className="start-kicker">QUICK MATCH</p><h1>Finding an opponent…</h1><p className="start-subtitle">We will keep looking for up to 30 seconds.</p>
-      <button onClick={abandonMatch}>Cancel</button></div></main>
-  );
+  if (state === "matchmaking") {
+    const step = RANK_SEARCH_STEPS[searchRung] ?? RANK_SEARCH_STEPS[RANK_SEARCH_STEPS.length - 1];
+    const window = rankSearch === "similar" && step.span > 0
+      ? `Similar rank — within ${step.span} rating points${searchRung > 0 ? ", widening" : ""}.`
+      : "Any rank — a fair match beats a perfect one.";
+    return (
+      <main className="start-screen"><div className="start-panel lobby"><p className="start-kicker">QUICK MATCH</p><h1>Finding an opponent…</h1>
+        <p className="start-subtitle">{window} We will keep looking for up to {Math.round(MATCHMAKING_SEARCH_MS / 1000)} seconds.</p>
+        <button onClick={abandonMatch}>Cancel</button></div></main>
+    );
+  }
 
   if (state === "matchmaking-timeout") return (
-    <main className="start-screen"><div className="start-panel lobby"><p className="start-kicker">QUICK MATCH</p><h1>No rival found yet</h1><p className="start-subtitle">Try again later, or start a match against the AI now.</p>
-      <div className="lobby-actions"><button onClick={abandonMatch}>Back</button><button className="start-primary" onClick={() => onStart({ mode: "ai", portrait })}>Play vs AI</button></div>
+    <main className="start-screen"><div className="start-panel lobby"><p className="start-kicker">QUICK MATCH</p><h1>No rival found yet</h1><p className="start-subtitle">Nobody was in the queue. Search again — or start a match against the AI now.</p>
+      <div className="lobby-actions"><button onClick={() => void beginMatch()}>Search again</button><button onClick={abandonMatch}>Back</button><button className="start-primary" onClick={() => onStart({ mode: "ai", portrait })}>Play vs AI</button></div>
     </div></main>
   );
 
@@ -403,13 +668,24 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
 
   const hosting = state === "host";
   const connecting = seed === null;
+  // RANK-01: the seat rows carry a badge each. The room's board is the source
+  // for everyone (including ourselves, echoed back), and the local file is the
+  // fallback for our own seat until that echo lands.
+  const chipBySeat = (player: ServerPlayer): RankChipModel => {
+    const wire = board.find((entry) => entry.id === player.id) ?? null;
+    if (wire) return chipForWire(wire);
+    if (room && player.id === room.playerId && rank) return chipFor(rank);
+    return chipForWire(null);
+  };
   return <main className="start-screen"><div className="start-panel lobby">
-    <p className="start-kicker">{hosting ? "HOST GAME" : "MATCH READY"}</p><h1>{hosting ? "Invite a rival" : "Room found"}</h1>
+    <p className="start-kicker">{hosting ? "HOST GAME" : "MATCH READY"}{rankedRoom ? " · RANKED" : ""}</p><h1>{hosting ? "Invite a rival" : "Room found"}</h1>
     <div className="room-code"><b>{room?.roomCode ?? "——"}</b><button aria-label="Copy room code" onClick={() => room && void navigator.clipboard?.writeText(room.roomCode)}>Copy</button></div>
-    <div className="seat-list">{roster.map((player) => <div className="seat filled" key={player.id}><span className="seat-name">{player.username}</span><span className="seat-status">Connected</span></div>)}<div className="seat"><span>Open seat</span><span className="seat-status">{roster.length >= 2 ? "Ready" : "Waiting"}</span></div></div>
+    <div className="seat-list">{roster.map((player) => <div className="seat filled" key={player.id}><span className="seat-name">{player.username}</span><RankChip model={chipBySeat(player)} /><span className="seat-status">Connected</span></div>)}<div className="seat"><span>Open seat</span><span className="seat-status">{roster.length >= 2 ? "Ready" : "Waiting"}</span></div></div>
     <p className="lobby-note">{connecting
       ? "Connecting to the room…"
-      : hosting && roster.length < 2 ? "Share the code. Start when your rival joins." : "Both players are ready."}</p>
-    <div className="lobby-actions"><button onClick={backToChoose}>Leave</button><button className="start-primary" data-sfx="open" disabled={connecting || (hosting && roster.length < 2)} onClick={() => startNetworkGame(hosting ? "host" : "guest")}>{connecting ? "Connecting…" : hosting ? "Start game" : "Play"}</button></div>
+      : rankedRoom
+        ? "Ranked: the winner's rating rises and the loser's falls. Leaving mid-match counts as a loss."
+        : hosting && roster.length < 2 ? "Share the code. Start when your rival joins." : "Both players are ready."}</p>
+    <div className="lobby-actions"><button onClick={backToChoose}>Leave</button><button className="start-primary" data-sfx="open" disabled={connecting || (hosting && roster.length < 2)} onClick={() => startNetworkGame(hosting ? "host" : "guest", rankedRoom)}>{connecting ? "Connecting…" : hosting ? "Start game" : "Play"}</button></div>
   </div></main>;
 }

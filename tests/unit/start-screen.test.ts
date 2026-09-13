@@ -402,3 +402,71 @@ describe("MP-06 join screen", () => {
     expect(choices).toEqual([{ mode: "ai", portrait: "vex" }]);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// RANK-01 (#147) — the rank window a quick match searches in
+//
+// "Any rank" and "Similar rank" differ in exactly one thing on the wire: a
+// bucket criterion (`transport.quickMatch`'s `rankBucket`). Similar rank is a
+// WIDENING LADDER of attempts — narrow window, wider, wider, then Any — because
+// the pool matches criteria by equality and has no "within N points" operator,
+// and because a rated queue that can strand a player is worse than a lopsided
+// match. These tests pin the ladder, including its last rung.
+// ══════════════════════════════════════════════════════════════════════════
+describe("RANK-01 the quick-match rank window", () => {
+  const missed = () => new Error("Matchmaking timeout after 6000ms");
+
+  it("Any rank (the default) makes ONE attempt, with no rank criterion", async () => {
+    mockMatch.mockRejectedValue(missed());
+    await render();
+    await click("Quick match");
+    expect(mockMatch).toHaveBeenCalledTimes(1);
+    expect(mockMatch.mock.calls[0][0].rankBucket).toBeNull();
+    expect(text()).toContain("No rival found yet");
+  });
+
+  it("Similar rank widens through every window and ends at Any — never stuck", async () => {
+    mockMatch.mockRejectedValue(missed());
+    await render();
+    await click("Similar rank");
+    await click("Quick match");
+    // One attempt per rung, and the LAST rung asks for nothing in particular:
+    // that is the promise that nobody waits forever on a window too narrow to
+    // contain anybody.
+    expect(mockMatch).toHaveBeenCalledTimes(4);
+    const buckets = mockMatch.mock.calls.map((c) => c[0].rankBucket as number | null);
+    expect(buckets.slice(0, 3).every((b) => typeof b === "number")).toBe(true);
+    expect(buckets[3]).toBeNull();
+    // Narrow → wide: each rung is a coarser bucket than the one before it.
+    expect(new Set(buckets.slice(0, 3)).size).toBe(3);
+    // Every rung gets its own budget, and the whole search stays bounded.
+    expect(mockMatch.mock.calls.map((c) => c[0].matchmakeTimeoutMs)).toEqual([6_000, 8_000, 8_000, 8_000]);
+    expect(text()).toContain("No rival found yet");
+  });
+
+  it("a match found on a widened rung seats the player in a RANKED lobby", async () => {
+    const room = fakeRoom("HX9KWR");
+    mockMatch
+      .mockRejectedValueOnce(missed())      // the tight window found nobody
+      .mockResolvedValueOnce(room);         // the next window did
+    await render();
+    await click("Similar rank");
+    await click("Quick match");
+    await act(async () => { room.emit(welcome(room)); });
+    expect(mockMatch).toHaveBeenCalledTimes(2);
+    expect(text()).toContain("HX9KWR");
+    expect(text()).toContain("RANKED");
+  });
+
+  it("shows which window it is searching in, and can search again after a miss", async () => {
+    mockMatch.mockReturnValue(new Promise(() => {}));   // a search that does not settle
+    await render();
+    await click("Similar rank");
+    // Await only the click's own microtasks: the attempt is deliberately still
+    // pending, and the waiting screen must already say what it is looking for.
+    await click("Quick match");
+    expect(text()).toContain("within 75 rating points");
+    // The backstop timer is what would advance this ladder; the component is
+    // unmounted by afterEach, so nothing else needs unwinding here.
+  });
+});
