@@ -271,6 +271,10 @@ export const FALLBACK = {
  * width (2 for the medium tier, 4 for low). It stretches the pattern so a
  * smaller copy covers the same world area; the drift and its wrap period are
  * world terms and do not change with the tier.
+ *
+ * Optimized path: pre-compute the scaled zoom and period once so the per-frame
+ * matrix only calculates the drift offset (two modulo operations) and applies
+ * the pre-computed scale.
  */
 export function oceanMatrix(
   cam: { x: number; y: number; zoom: number },
@@ -280,11 +284,13 @@ export function oceanMatrix(
 ): DOMMatrix {
   const z = cam.zoom * scale;
   const period = GROUND_TEX_SIZE * z;
+  // Pre-compute the scaled texture size for faster matrix application.
+  const sz = z * texScale;
   const dx = cam.x + ((t * 0.0022 * z) % period);
   const dy = cam.y + ((t * 0.0014 * z) % period);
   const m = makeMatrix();
   m.translateSelf(dx, dy);
-  m.scaleSelf(z * texScale, z * texScale);
+  m.scaleSelf(sz, sz);
   return m;
 }
 
