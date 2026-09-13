@@ -347,7 +347,8 @@ describe("NOIR the painted set is wired end to end", () => {
   const sabots = [...table.matchAll(/^  ([a-z]+):\s*\{ name:/gm)].map((m) => m[1]);
 
   it("gives every build tool its sigil, rule and plate", () => {
-    expect(tools).toEqual(["dirt", "road", "harvester", "plant", "demolish"]);
+    // The pointer (select) leads the list — it is the hand you hold between builds.
+    expect(tools).toEqual(["select", "dirt", "road", "harvester", "plant", "demolish"]);
     for (const t of tools) {
       expect(css, `.build-btn.bg-${t} has no rule`).toMatch(new RegExp(`\\.build-btn\\.bg-${t}\\s*\\{`));
       expect(existsSync(`src/assets/ui/noir/sigil/${t}.png`), `${t} sigil file`).toBe(true);
