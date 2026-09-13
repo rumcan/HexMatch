@@ -1,0 +1,29 @@
+Hexmatch Industries — third-party notices
+=========================================
+
+This file ships with the game build. It replaces the credit line that used to
+sit at the foot of the main menu.
+
+ART
+---
+The buildings, industries, depots, roads, vehicles and ground the game draws
+are original Hexmatch art.
+
+The build still contains an older sprite atlas and the road/building layer
+sheets cut from it (assets/atlas@*.png, assets/roads@*.png,
+assets/buildings@*.png). Those files are derived from OpenGFX:
+
+  OpenGFX — (c) the OpenGFX team
+  https://github.com/OpenTTD/OpenGFX
+  Licensed under the GNU General Public License, version 2 (GPLv2).
+
+The derived atlas is distributed under the same licence; see LICENSE in the
+source repository (https://github.com/rumcan/HexMatch) for the full text and
+the corresponding source.
+
+FONTS
+-----
+Cinzel, Barlow Condensed, Barlow Semi Condensed and Special Elite are used
+under the SIL Open Font License, version 1.1. The licence text for each font
+is kept beside the font files in the source repository
+(src/assets/fonts/*-OFL.txt).

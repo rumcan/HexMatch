@@ -2978,9 +2978,6 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   }
   .start-screen > .menu-card,
   .start-screen > .start-panel { margin-block: auto; }
-  /* the credit line flows after the card here instead of pinning to the
-     bottom of a viewport the card no longer fits inside */
-  .start-screen > .menu-foot { position: static; margin: 12px 0 10px; }
   /* the how-to/settings projector is `absolute inset: 0` of this host; once
      the host scrolls, an absolute child scrolls away with the content. A
      projector covers the viewport, so it pins to the viewport. */
@@ -3108,11 +3105,6 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .menu-campaign {
   margin: 20px 0 0; color: #8b7d68;
   font: 600 11px/1 var(--sans, sans-serif); letter-spacing: 2.4px; text-transform: uppercase;
-}
-.menu-foot {
-  position: absolute; left: 0; right: 0; bottom: 10px; z-index: 2;
-  margin: 0; padding: 0 16px; text-align: center;
-  color: rgba(232, 220, 192, .38); font: 500 10px/1.5 var(--sans, sans-serif); letter-spacing: .6px;
 }
 /* the tour projector (#iso-tutorial) hangs inside this host, full-bleed */
 /* fixed, not absolute: the start screen scrolls, and the projector covers the
