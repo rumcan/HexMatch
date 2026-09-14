@@ -2809,6 +2809,16 @@ export function createOriginalUi(
   }
 
   function showModal(html: string) {
+    // #164: never stand up a bare backdrop. A modal whose content carries no
+    // readable text is the blank dark panel a player cannot dismiss and
+    // cannot understand — the report's second bug, and every caller that
+    // interpolates a possibly-empty string (a reject reason, a verdict line)
+    // could produce it. An empty ask becomes a CLOSE: whatever was standing
+    // comes down instead of darkness going up.
+    if (!html.replace(/<[^>]*>/g, " ").replace(/&nbsp;/gi, " ").trim()) {
+      hideModal();
+      return;
+    }
     sfx.play("open");
     modalRoot.classList.remove("hidden");
     modalRoot.innerHTML = `<div class="modal-back"></div>${html}`;

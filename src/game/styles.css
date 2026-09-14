@@ -3333,6 +3333,12 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .start-panel input { box-sizing: border-box; width: 100%; margin: 10px 0 14px; padding: 12px; border: 1px solid var(--line, #594b3b); color: var(--txt, #efe4d0); background: #181512; outline: none; }
 .start-panel input:focus { border-color: var(--gold2, #e9a83e); }
 .start-panel button:disabled { opacity: .4; cursor: not-allowed; }
+/* #164: the rejoin offer — the room line names what is being walked back
+   into, and the abandon door wears the warning colour its copy promises. */
+.rejoin-room { margin: 2px 0 14px; font: 12px/1.4 var(--mono, monospace); letter-spacing: 1.5px; color: var(--txt-dim, #b7a98f); }
+.rejoin-room b { color: var(--gold2, #e9a83e); font-size: 14px; letter-spacing: 3px; }
+.start-panel button.danger { color: #ffc7b4; border-color: rgba(226, 112, 79, .55); background: rgba(96, 30, 18, .28); }
+.start-panel button.danger:hover { border-color: rgba(226, 112, 79, .85); background: rgba(132, 42, 26, .38); }
 
 /* Issue 184 — two-column desktop mode menu.
    The play/start screen was a narrow 440px column, tall enough to push The
@@ -3536,6 +3542,16 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .rank-modal-line { margin: 8px 0 0; }
 .rank-delta.up { color: #8fd08a; }
 .rank-delta.down { color: #e0896f; }
+
+/* ── #164: the "opponent left" sheet ─────────────────────────────────
+   The stock `.modal-root` plate with doors that stack instead of sitting
+   shoulder-to-shoulder: three consequences in a row reads as one blur, and
+   the walk-away door must never be a mis-click away from the win door. The
+   status line under the body is where a late verdict lands (`settle`). */
+.left-sheet .modal.box { max-width: 460px; }
+.left-doors { display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
+.left-doors .big-btn { margin-top: 0; width: 100%; }
+.left-status { font-size: 12.5px; color: var(--txt-dim); font-family: var(--serif); letter-spacing: .4px; }
 
 
 /* ═══════════════════════════════════════════════════════════════════

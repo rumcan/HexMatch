@@ -24,6 +24,11 @@ import { rankStore } from "./net/rankstore";
 // #186: the ladder's gate on custom rules — a match that is not the shipped
 // game does not feed the rating, whatever door it was started from.
 import { isDefaultMatchSettings } from "./net/match-settings";
+// #164: the "match in progress" memo lives in player storage so a page the
+// platform kicked can offer the walk back on its next boot. Only the layer
+// that mounts a networked match knows when that memo stops being true — a
+// quit to menu or a decided match — so the drop is wired here, not in game.ts.
+import { writeActiveMatch } from "./net/transport";
 
 /**
  * Multiplayer is opt-in: keeping the start screen outside the game means the
@@ -102,6 +107,19 @@ export default function App() {
     setAtMenu(true);
   };
 
+  /**
+   * #164: a NETWORKED seat walks out through the same door, but it also drops
+   * the "match in progress" memo on the way: the player has answered the
+   * question the memo exists to ask (they left), so a later boot must not
+   * offer a walk back into a room they deliberately quit. The write is
+   * fire-and-forget — storage refusing must never trap the player in a match
+   * they are leaving.
+   */
+  const quitNetToMenu = () => {
+    void writeActiveMatch(null).catch(() => { /* the memo is best-effort */ });
+    quitToMenu();
+  };
+
   useEffect(() => {
     if (!choice || !ref.current) return;
     const cleanup = choice.mode === "ai"
@@ -144,7 +162,13 @@ export default function App() {
             // custom rules, and this makes sure nothing else can either.
             ranked: choice.ranked === true && isDefaultMatchSettings(choice.settings ?? null),
             rank: rankStore(),
-            onQuitToMenu: quitToMenu,
+            onQuitToMenu: quitNetToMenu,
+            // #164: a decided match is nothing to rejoin — drop the memo the
+            // start screen wrote when this seat was taken, so the next boot
+            // offers the walk back only while a match is genuinely live.
+            onMatchEnded: () => {
+              void writeActiveMatch(null).catch(() => { /* best-effort */ });
+            },
           });
     return () => { cleanup?.(); };
   }, [choice]);

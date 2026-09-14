@@ -14,7 +14,7 @@
 // the match that their opponent is gone.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NetSession } from "../../src/net/session";
-import { PROTOCOL_VERSION, type HexProtocol, type WelcomeMsg } from "../../src/net/protocol";
+import { HOST_LEFT_REASON, PROTOCOL_VERSION, type HexProtocol, type WelcomeMsg } from "../../src/net/protocol";
 import type { HexRoom } from "../../src/net/transport";
 import { mulberry32, setRng } from "../../src/game/config";
 import { rateOutcome } from "../../src/net/rating";
@@ -292,10 +292,19 @@ describe("#121 Leave Room", () => {
     room.firePlayerLeft("guest-socket");
     await settle();
     expect(session.hasOpponent).toBe(false);
-    const m = modal();
-    expect(m.classList.contains("hidden")).toBe(false);
-    expect(m.textContent).toContain("Bo left the room");
-    expect(m.textContent).toContain("this match is over");
+    // #164: the notice is a SHEET with doors, never a bare sentence on a dark
+    // backdrop the player can only click away — every overlay carries text AND
+    // an action. It is a `.left-sheet` over the game root, not ui's modal.
+    const sheetEl = root.querySelector<HTMLElement>(".left-sheet");
+    expect(sheetEl).toBeTruthy();
+    expect(sheetEl!.textContent).toContain("Opponent left");
+    expect(sheetEl!.textContent).toContain("Bo left");
+    expect(sheetEl!.textContent).toContain("this match is over");
+    // The real choices are on it: finish the board solo, or leave.
+    const doors = [...sheetEl!.querySelectorAll<HTMLButtonElement>(".left-doors button")]
+      .map((b) => b.textContent ?? "");
+    expect(doors).toContain("Finish the game");
+    expect(doors.some((t) => t.startsWith("Leave"))).toBe(true);
   });
 
   it("does not mistake its own departure for the opponent's", async () => {
@@ -386,5 +395,177 @@ describe("RANK-01 leaving a rated match", () => {
     sheetOk().click();
     await settle();
     expect(quits).toBe(1);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// #164 — the stranded seat gets a dialog, a countdown, and a way to be paid
+//
+// The report: a player kicked by a browser resize could not get back in, and
+// the player left behind got a blank dark overlay with nothing on it. These
+// pin the answer through the REAL game: the reconnect window counts down in
+// plain sight while play continues; the seat emptying raises a sheet whose
+// every door spells out its consequence; the rated survivor can claim the
+// win (and Leave claims FIRST, so walking away cannot strand an unfiled
+// rating); a reject paints words and a door even with an empty reason; and
+// a return takes the whole thing down.
+// ══════════════════════════════════════════════════════════════════════════
+const leftSheetEl = () => root.querySelector<HTMLElement>(".left-sheet");
+const leftDoors = () =>
+  [...root.querySelectorAll<HTMLButtonElement>(".left-doors button")].map((b) => b.textContent ?? "");
+const doorByLabel = (label: string) =>
+  [...root.querySelectorAll<HTMLButtonElement>(".left-doors button")]
+    .find((b) => (b.textContent ?? "").startsWith(label))!;
+
+/**
+ * Flip the client's "a match is live" mirror the way the room does: the far
+ * seat asks for state and the host answers. The boot welcome's own publish
+ * sits inside the session's 300 ms full-state throttle, so outwait it first —
+ * otherwise the resync is coalesced away and the doors never learn there is
+ * a rated match to claim.
+ */
+async function makeMatchLive(): Promise<void> {
+  await new Promise((r) => setTimeout(r, 320));
+  const before = room.sentCount("snapshot-chunk");
+  session.receive({ type: "resync" });
+  await settle();
+  expect(room.sentCount("snapshot-chunk")).toBeGreaterThan(before);
+}
+
+/** The room's own verdict, as it broadcasts it after a survivor's claim. */
+const filedWin = (): HexProtocol => ({
+  type: "result",
+  winnerId: "host-socket",
+  loserId: "guest-socket",
+  reason: "win",
+  ratings: [],
+  departedId: "guest-socket",
+  at: Date.now(),
+});
+
+describe("#164 disconnect, departure, and the rated claim", () => {
+  it("counts the reconnect window down in plain sight — the seat is held, not lost", async () => {
+    const banner = document.getElementById("iso-banner")!;
+    session.receive({
+      type: "peerStatus", playerId: "guest-socket", status: "disconnected",
+      username: "Bo", graceMs: 60_000,
+    });
+    await settle();
+    // The wait is VISIBLE where the play continues underneath it…
+    expect(banner.classList.contains("hidden")).toBe(false);
+    expect(banner.textContent).toContain("Bo disconnected");
+    expect(banner.textContent).toMatch(/reconnecting \d+:\d\d/);
+    // …and it is a countdown, not a verdict: no sheet, no quit, seat intact.
+    expect(leftSheetEl()).toBeNull();
+    expect(session.hasOpponent).toBe(true);
+    expect(quits).toBe(0);
+
+    session.receive({
+      type: "peerStatus", playerId: "guest-socket", status: "reconnected", username: "Bo",
+    });
+    await settle();
+    expect(
+      banner.classList.contains("hidden") || !banner.textContent!.includes("disconnected"),
+    ).toBe(true);
+  });
+
+  it("the rated survivor can CLAIM the win: the ask rides out, the ledger shows the rating", async () => {
+    const rank = fakeRankStore();
+    await reboot({ ranked: true, rank: rank.store });
+    await makeMatchLive();
+
+    room.firePlayerLeft("guest-socket");
+    await settle();
+
+    // The sheet spells out the rating consequence on every door (#164's ask).
+    const el = leftSheetEl();
+    expect(el).toBeTruthy();
+    expect(el!.querySelector("h2")!.textContent).toBe("Opponent left");
+    expect(el!.textContent).toContain("rank points");
+    const doors = leftDoors();
+    expect(doors).toContain("Finish the game");
+    expect(doors).toContain("Claim the win now");
+    expect(doors.some((t) => t.startsWith("Leave — claim the win first"))).toBe(true);
+
+    doorByLabel("Claim the win now").click();
+    await settle();
+
+    // The claim went to the room — the ONLY seat that may file is the one
+    // that ran the simulation, and the room files from everJoined even
+    // though the loser's socket is already gone.
+    const claim = room.sent.find((m) => m.type === "resultClaim");
+    expect(claim).toMatchObject({
+      type: "resultClaim", winnerId: "host-socket", loserId: "guest-socket", reason: "win",
+    });
+    // The ledger replaced the sheet: the celebration AND the verdict's home.
+    expect(leftSheetEl()).toBeNull();
+    expect(document.getElementById("iso-ending")).toBeTruthy();
+
+    // The room's answer lands a round trip later; the local file moves once,
+    // and the ledger's rating row — "filing…" until now — fills in.
+    session.receive(filedWin());
+    await settle();
+    expect(rank.filings).toHaveLength(1);
+    expect(root.querySelector(".ending-rank-rating")?.textContent ?? "").not.toBe("");
+    expect(rank.filings[0].result.winnerId).toBe("host-socket");
+    expect(rank.filings[0].opponent).toMatchObject({ id: "guest-socket" });
+    expect(leftSheetEl()).toBeNull();
+    expect(quits).toBe(0);
+  });
+
+  it("the LEAVE door claims FIRST — walking away cannot strand an unfiled win", async () => {
+    const rank = fakeRankStore();
+    await reboot({ ranked: true, rank: rank.store });
+    await makeMatchLive();
+
+    room.firePlayerLeft("guest-socket");
+    await settle();
+    doorByLabel("Leave").click();
+    await settle();
+
+    // The claim rode out before the walk: the quit now waits on the verdict.
+    expect(room.sent.some((m) => m.type === "resultClaim")).toBe(true);
+    expect(leftSheetEl()).toBeNull();
+    expect(quits).toBe(0);
+
+    session.receive(filedWin());
+    await settle();
+    expect(rank.filings).toHaveLength(1);
+    expect(quits).toBe(1);   // the rating folded into the file — the door completes
+  });
+
+  it("a HOST departure paints its reason on a sheet with a door — never a bare sentence", async () => {
+    session.receive({ type: "reject", reason: HOST_LEFT_REASON });
+    await settle();
+    const el = leftSheetEl();
+    expect(el).toBeTruthy();
+    expect(el!.querySelector("h2")!.textContent).toBe("Opponent left");
+    expect(el!.textContent).toContain("The host left the game");
+    // No win to claim from this seat — Leave is the one honest door.
+    expect(leftDoors()).toEqual(["Leave the match"]);
+  });
+
+  it("an EMPTY reject reason still paints words and a door — the blank-overlay regression", async () => {
+    session.receive({ type: "reject", reason: "" });
+    await settle();
+    const el = leftSheetEl();
+    expect(el).toBeTruthy();
+    expect(el!.querySelector("h2")!.textContent).toBe("Match ended");
+    expect(el!.textContent).toContain("The room ended this match");
+    expect(leftDoors()).toEqual(["Leave the match"]);
+  });
+
+  it("a return after eviction takes the standing sheet down — the match resumes", async () => {
+    room.firePlayerLeft("guest-socket");
+    await settle();
+    expect(leftSheetEl()).toBeTruthy();
+
+    // The seat refilled and the room re-greets: the welcome's roster says
+    // the far seat is back, so the sheet — and every door on it — is a lie.
+    session.receive(welcome("host-socket"));
+    await settle();
+    expect(leftSheetEl()).toBeNull();
+    expect(session.hasOpponent).toBe(true);
+    expect(quits).toBe(0);
   });
 });

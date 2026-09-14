@@ -918,6 +918,158 @@ describe("#121 leaving a room", () => {
   });
 });
 
+// ── #164: presence, the park, and the resume ─────────────────────────────
+//
+// The kicked player's half of the report was a session that could not come
+// back: `onPeerLeft` halted, and a halted session drops the welcome that
+// re-seats a returner. So a departure now PARKS the session (peerGone) — the
+// state flow stops, the verdicts and greetings still pass — and the room's
+// re-greeting resumes it. The countdown half is `peerStatus`: the room's poll
+// says "held" and "back", and the session turns that into hooks the game can
+// print without guessing.
+describe("#164 presence, park, resume", () => {
+  it("counts a held seat down out loud — and starts the count once", () => {
+    const away: [string | null, number][] = [];
+    const session = new NetSession({ room: asRoom(host), role: "host" });
+    session.attach({ opponentDisconnected: (n, g) => away.push([n, g]) });
+    host.deliver(welcome(5));
+    host.deliver({ type: "peerStatus", playerId: "guest-socket", status: "disconnected", graceMs: 45_000, username: "Bo" });
+    expect(away).toEqual([["Bo", 45_000]]);
+    expect(session.opponentAway).toBe(true);
+    // The poll repeats itself while the socket stays down; the countdown is
+    // one episode, not a strobe.
+    host.deliver({ type: "peerStatus", playerId: "guest-socket", status: "disconnected", graceMs: 30_000 });
+    expect(away).toHaveLength(1);
+    // A held seat is not an empty one: the roster — and the match — stand.
+    expect(session.hasOpponent).toBe(true);
+    session.dispose();
+  });
+
+  it("falls back to the roster's name and to a 60 s window", () => {
+    const away: [string | null, number][] = [];
+    const session = new NetSession({ room: asRoom(host), role: "host" });
+    session.attach({ opponentDisconnected: (n, g) => away.push([n, g]) });
+    host.deliver(welcome(5));
+    host.deliver({ type: "peerStatus", playerId: "guest-socket", status: "disconnected" });
+    expect(away).toEqual([["Bo", 60_000]]);   // the roster knew the name
+    session.dispose();
+  });
+
+  it("ignores this client's own presence", () => {
+    const away: unknown[] = [];
+    const session = new NetSession({ room: asRoom(host), role: "host" });
+    session.attach({ opponentDisconnected: (n, g) => away.push([n, g]) });
+    host.deliver(welcome(5));
+    host.deliver({ type: "peerStatus", playerId: "host-socket", status: "disconnected", graceMs: 1_000 });
+    expect(away).toEqual([]);
+    expect(session.opponentAway).toBe(false);
+    session.dispose();
+  });
+
+  it("ends the count when the seat comes back", () => {
+    const back: (string | null)[] = [];
+    const session = new NetSession({ room: asRoom(host), role: "host" });
+    session.attach({ opponentReconnected: (n) => back.push(n) });
+    host.deliver(welcome(5));
+    host.deliver({ type: "peerStatus", playerId: "guest-socket", status: "disconnected", graceMs: 45_000 });
+    host.deliver({ type: "peerStatus", playerId: "guest-socket", status: "reconnected", username: "Bo" });
+    expect(back).toEqual(["Bo"]);
+    expect(session.opponentAway).toBe(false);
+    expect(session.hasOpponent).toBe(true);
+    session.dispose();
+  });
+
+  it("parks the state flow when the seat truly empties — verdicts still pass", () => {
+    const world = hostWorld();
+    const session = new NetSession({ room: asRoom(host), role: "host" });
+    session.attach({ fullState: () => world.snapshot() });
+    host.deliver(welcome(5));
+    host.firePlayerLeft("guest-socket");
+    expect(session.opponentGone).toBe(true);
+    expect(session.hasOpponent).toBe(false);
+    const before = host.frames("delta").length + host.frames("snapshot-chunk").length;
+    expect(session.publishTrack(world.track, dirtyTiles, {
+      t: 0, harvesters: world.harvesters, factories: world.factories,
+      players: world.players, setupPhase: false, won: false,
+    })).toBe("idle");
+    expect(host.frames("delta").length + host.frames("snapshot-chunk").length).toBe(before);
+    session.dispose();
+  });
+
+  it("a parked guest drops world frames but hears the verdict", () => {
+    const deltas: unknown[] = [];
+    const results: ResultMsg[] = [];
+    const session = new NetSession({ room: asRoom(guest), role: "guest" });
+    session.attach({ delta: (m) => deltas.push(m), result: (m) => results.push(m) });
+    guest.deliver(welcome(5));
+    guest.firePlayerLeft("host-socket");
+    guest.deliver({ type: "delta", t: 2, seq: 9 });
+    expect(deltas).toEqual([]);                     // the world flow is parked
+    const verdict: ResultMsg = {
+      type: "result", winnerId: "guest-socket", loserId: "host-socket",
+      reason: "forfeit", durationSec: 0, ratings: [], at: 1,
+    };
+    guest.deliver(verdict);
+    expect(results).toEqual([verdict]);             // the rating always lands
+    session.dispose();
+  });
+
+  it("resumes on the greeting that re-seats the opponent — the rejoin a halt used to drop", () => {
+    vi.useFakeTimers();
+    try {
+      const world = hostWorld();
+      const back: (string | null)[] = [];
+      const session = new NetSession({ room: asRoom(host), role: "host" });
+      session.attach({ fullState: () => world.snapshot(), opponentReconnected: (n) => back.push(n) });
+      host.deliver(welcome(5));
+      host.firePlayerLeft("guest-socket");
+      expect(session.opponentGone).toBe(true);
+      // A rejoin is seconds later, not the same millisecond — the clock moves
+      // so the full-state duplicate throttle does not swallow the re-greeting.
+      vi.advanceTimersByTime(5_000);
+      host.sent.length = 0;
+
+      // The room re-greeted everyone: the evicted seat is back (a fresh join
+      // after the hold window, or the poll's re-greeting after a re-attach).
+      host.deliver(welcome(5));
+      expect(session.opponentGone).toBe(false);
+      expect(back).toEqual(["Bo"]);
+      // And the host did what it does at any seating: the world went to the
+      // returner, whose page may have reloaded into an empty client.
+      expect(host.frames("snapshot-chunk").length + host.frames("snapshot").length).toBeGreaterThan(0);
+      // The flow works again.
+      world.build(21, 20, 1);
+      expect(session.publishTrack(world.track, dirtyTiles, {
+        t: 1, harvesters: world.harvesters, factories: world.factories,
+        players: world.players, setupPhase: false, won: false,
+      })).not.toBe("idle");
+      session.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a welcome that seats NOBODY keeps the session parked", () => {
+    const back: (string | null)[] = [];
+    const session = new NetSession({ room: asRoom(host), role: "host" });
+    session.attach({ opponentReconnected: (n) => back.push(n) });
+    host.deliver(welcome(5));
+    host.firePlayerLeft("guest-socket");
+    host.deliver(welcome(5, [{ id: "host-socket", username: "Ada", slot: 0 }]));
+    expect(session.opponentGone).toBe(true);
+    expect(back).toEqual([]);
+    session.dispose();
+  });
+
+  it("says goodbye on dispose — the room frees the seat instead of holding it", () => {
+    const session = new NetSession({ room: asRoom(host), role: "host" });
+    session.attach({});
+    session.dispose();
+    expect(host.sent.some((m) => m.type === "abandon")).toBe(true);
+    expect(host.leaveCount).toBe(1);
+  });
+});
+
 // ══════════════════════════════════════════════════════════════════════════
 // RANK-01 (#147) — the rating board as this client sees it
 //

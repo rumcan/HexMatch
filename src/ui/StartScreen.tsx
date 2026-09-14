@@ -7,15 +7,28 @@ import {
   isOfflineMockRealtime,
   isValidRoomCode,
   joinRoomByCode,
+  listRejoinableRooms,
   normalizeRoomCode,
   promptLogin,
   quickMatch,
+  readActiveMatch,
+  writeActiveMatch,
+  type ActiveMatchMemo,
   type HexRoom,
+  type RealtimeRoomSummary,
   type ServerPlayer,
 } from "../net/transport";
-
 import { NetSession, type RosterEntry } from "../net/session";
-
+// #164: abandoning a match in progress is a ranked LOSS, and the abandoning
+// client is the one party that will never see the room's verdict (it is
+// leaving). RankRuntime.fileOwnForfeit is the same local filing the in-game
+// "Leave room" door uses — reused here so the two paths cannot drift.
+import { RankRuntime } from "../net/rank-runtime";
+// RANK-01 (#147): the rating file and the ladder. The store is the only
+// ranking module that touches the SDK/player storage, and this screen is where
+// a rating is first PUBLISHED to the room — both seats must have their numbers
+// on the room's board before the match starts, or the match rates against a
+// stranger's default.
 import { rankStore } from "../net/rankstore";
 import {
   fmtRating,
@@ -114,6 +127,7 @@ type ScreenState =
   | "join"
   | "joined"
   | "matchmaking"
+  | "rejoin"
   | "error";
 
 /**
@@ -284,6 +298,56 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
     confirmLabel: string;
     act: () => void;
   } | null>(null);
+  /** #164: one-shot bypass for the Auto Matchmaking rejoin guard, set by
+   *  "Abandon" — the just-kicked seat may still be settling out of the
+   *  platform's roster, and the player was already asked once. */
+  const rejoinGuardBypass = useRef(false);
+  /**
+   * #164: the match this player can walk back into — the room summary the
+   * platform still rosters them in (a kick holds the seat for the room's
+   * `reconnectTimeout`), plus the memo saying whether it was RANKED. Set on
+   * mount (the "you were disconnected" offer) and by the Auto Matchmaking
+   * guard (the "you have a match in progress" warn-first).
+   */
+  const [rejoinable, setRejoinable] = useState<{
+    summary: RealtimeRoomSummary;
+    memo: ActiveMatchMemo | null;
+  } | null>(null);
+  /** What the rejoin screen's Abandon/Dismiss returns to. */
+  const [rejoinNext, setRejoinNext] = useState<"choose" | "matchmaking">("choose");
+
+  /**
+   * #164: ask the platform for a match this player was dropped from. The
+   * memo is matched by room code — a stale one (a different device, an old
+   * build) must not dress a casual room up as ranked. Resolves null when
+   * there is nothing to rejoin, which is also the answer whenever the
+   * platform cannot list rooms at all.
+   */
+  const findRejoinable = useCallback(async () => {
+    const rooms = await listRejoinableRooms();
+    if (rooms.length === 0) return null;
+    const memo = await readActiveMatch();
+    // The match this device remembers comes first; any other live seat is
+    // still worth offering (a return from a different device is a return).
+    const summary = rooms.find((r) => memo?.roomCode === r.roomCode) ?? rooms[0];
+    return { summary, memo: memo?.roomCode === summary.roomCode ? memo : null };
+  }, []);
+
+  // #164: the return offer. A player who was kicked lands back at this screen
+  // with no memory of the match; the platform still holds their seat, so the
+  // first thing they see is the choice to walk back into it. Only offered
+  // from the neutral ground ("choose") — never over a flow already running.
+  useEffect(() => {
+    if (initial !== "choose") return;
+    let live = true;
+    void findRejoinable().then((found) => {
+      if (!live || !found) return;
+      setRejoinable(found);
+      setRejoinNext("choose");
+      setState((s) => (s === "choose" ? "rejoin" : s));
+    });
+    return () => { live = false; };
+  }, [findRejoinable, initial]);
 
   // RANK-01: the rating file is read once per mount. It is deliberately not
   // awaited by anything: a room can be created while the read is in flight,
@@ -381,6 +445,14 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
         // authoritative roster and role so attach() can immediately
         // request/render state.
         session.receive(message);
+        // #164: welcome.hostId is the authority on who simulates. A re-attached
+        // seat can be the ORIGINAL HOST (the platform held their seat; they did
+        // not re-create the room), and awaitWelcome only guessed "guest" for the
+        // rejoin. Correct the lobby from the room's own answer so the Play
+        // button hands the game the right mode — a host publishes state, a
+        // guest requests it, and guessing wrong would leave the returner
+        // waiting on a full state nobody sends.
+        setState(message.hostId === nextRoom.playerId ? "host" : "joined");
         // RANK-01: publish this player's rating now that a room exists to hold
         // it, and mirror the room's board for the lobby.
         if (rankRef.current) session.publishRating(rankRef.current);
@@ -477,7 +549,22 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
       failMessage(NO_ROOM_SERVER_MESSAGE);
       return;
     }
+    // #164: warn before queueing. A player still rostered in a live match who
+    // silently re-queues is the exact stranding the report describes: the
+    // queue pairs them elsewhere, the platform evicts them from the old room,
+    // and the opponent's match dies with nobody told why. Ask first — rejoin
+    // it, or abandon it (which counts as a loss) and THEN search.
+    const bypass = rejoinGuardBypass.current;
+    rejoinGuardBypass.current = false;
     setBusy(true);
+    const found = bypass ? null : await findRejoinable();
+    if (found) {
+      setBusy(false);
+      setRejoinable(found);
+      setRejoinNext("matchmaking");
+      setState("rejoin");
+      return;
+    }
     setError("");
     setState("matchmaking");
     const request = ++matchRequest.current;
@@ -524,7 +611,7 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
     } finally {
       if (request === matchRequest.current) setBusy(false);
     }
-  }, [awaitWelcome, busy, fail, failMessage, matchRequest, rankSearch, withLogin]);
+  }, [awaitWelcome, busy, fail, failMessage, findRejoinable, matchRequest, rankSearch, withLogin]);
 
   const abandonMatch = useCallback(() => {
     // Bumping the token is the whole cancel: the beginMatch loop checks it
@@ -549,6 +636,114 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
     setRankSearch(next);
     if (state === "matchmaking") void beginMatch(next, true);
   }, [beginMatch, rankSearch, state]);
+
+  /**
+   * #164: walk back into the match the platform is still holding a seat in.
+   *
+   * The join is the ordinary `joinRoomByCode`: inside the hold window the
+   * room server RE-ATTACHES the seat (same player id, same slot), and the
+   * room's presence poll re-greets everyone with a fresh welcome — so the
+   * lobby here lights up with the seed exactly like a first join, and the
+   * game's resync restores the board, purse, buildings and score from the
+   * host's authoritative state. After the window the seat is a plain fresh
+   * join into the same room, which the room also re-seats (and which cancels
+   * its armed forfeit) — until the survivor has walked out, the match is
+   * recoverable.
+   */
+  const rejoinNow = useCallback(async () => {
+    if (busy || !rejoinable) return;
+    setBusy(true);
+    setError("");
+    try {
+      const nextRoom = await withLogin(() => joinRoomByCode(rejoinable.summary.roomCode));
+      // The memo is what remembers the queue: the summary cannot say whether
+      // the match was RANKED, and a rejoin that downgraded it would leave the
+      // two seats filing different ratings for one match.
+      awaitWelcome(nextRoom, "guest", rejoinable.memo?.ranked ?? false);
+      setRejoinable(null);
+    } catch (err) {
+      // The room died while we were asking (the survivor left, the grace
+      // expired): there is nothing to rejoin, and the honest screen is the
+      // error one with the AI fallback — never a hang.
+      setRejoinable(null);
+      fail(err);
+    } finally {
+      setBusy(false);
+    }
+  }, [awaitWelcome, busy, fail, rejoinable, withLogin]);
+
+  /**
+   * #164: abandon the held seat — an explicit loss, on purpose and told so.
+   *
+   * Two filings, one for each seat, the same split the in-game "Leave room"
+   * door uses:
+   *
+   *   the survivor — the room files the leaver's loss the moment the seat
+   *                empties. Re-attaching and leaving right away is what turns
+   *                "wait out the whole hold window staring at a countdown"
+   *                into an immediate "opponent left" dialog and result.
+   *   this player  — the room's verdict can never reach a client that is
+   *                leaving, so the rating file takes its own loss locally
+   *                (`fileOwnForfeit`: same arithmetic, same board, no ladder
+   *                write), exactly as the in-game door does.
+   *
+   * A room that will not take the join (already disposed) is an abandonment
+   * the platform has already processed — nothing to file against a match the
+   * room itself has forgotten, and the ladder only ever moves on a result the
+   * room witnessed.
+   */
+  const abandonRejoinable = useCallback(async () => {
+    if (busy || !rejoinable) return;
+    setBusy(true);
+    setError("");
+    const { summary, memo } = rejoinable;
+    setRejoinable(null);
+    try {
+      const doomed = await withLogin(() => joinRoomByCode(summary.roomCode));
+      const selfId = doomed.playerId;
+      // The summary lists the seats' ids; whichever one is not us is the rival.
+      const opponentId = summary.players.find((id) => id !== selfId) ?? "";
+      if (memo?.ranked && opponentId) {
+        // The board here is empty on purpose: this browser was kicked before
+        // it could mirror one, and the opponent's cached rating (same file,
+        // same browser) is what the Elo needs. The survivor's own gain is
+        // computed on THEIR side from the room's verdict, off their live
+        // board — the two filings mirror each other without this one
+        // pretending to know the match state.
+        const runtime = new RankRuntime({
+          session: { playerId: selfId, publishRating: () => false, claimResult: () => false },
+          store: rankStore(),
+        });
+        await runtime.start();
+        await runtime.fileOwnForfeit(opponentId);
+        if (runtime.state) {
+          rankRef.current = runtime.state;
+          setRank(runtime.state);
+        }
+      }
+      // Tell the room this is a DEPARTURE, not a drop: the `abandon` message
+      // makes it file the survivor's win and free the seat at once, so the
+      // opponent's "Opponent left" dialog arrives immediately instead of
+      // after a full hold window counting down a seat that never refills.
+      try { doomed.send({ type: "abandon" }); } catch { /* socket already closing */ }
+      try { doomed.leave(); } catch { /* same */ }
+    } catch {
+      // The room is gone — the abandonment already happened on its own.
+    }
+    void writeActiveMatch(null);
+    setBusy(false);
+    // The guard sent us here from a search that never started; abandoning is
+    // the answer to "rejoin it, or abandon it?" — so the search runs now.
+    if (rejoinNext === "matchmaking") {
+      // The bypass keeps the guard from catching our own seat: the kick and
+      // the roster bookkeeping behind it are still settling platform-side.
+      rejoinGuardBypass.current = true;
+      setState("choose");
+      void beginMatch();
+      return;
+    }
+    setState("choose");
+  }, [beginMatch, busy, rejoinNext, rejoinable, withLogin]);
 
   const backToChoose = useCallback(() => {
     releaseRoom();
@@ -576,6 +771,13 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
         ? { ...settings, aiSeats: [] }
         : settings
       : roomSettings;
+    // #164: remember the match on the way in, so a player the browser later
+    // kicks can be offered the walk back. The memo is a hint only — the
+    // rejoin offer is gated on the platform STILL rostering the seat, and
+    // the memo is what remembers whether the match was RANKED (the summary
+    // cannot say). Written before onStart so the game's first frame is
+    // already covered.
+    void writeActiveMatch({ roomCode: room.roomCode, ranked, at: Date.now() });
     onStart({ mode, seed, room, net, portrait, ranked, settings: rules });
   }, [net, onStart, portrait, room, roomSettings, seed, settings]);
 
@@ -973,6 +1175,37 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
           </div>
         </div>
       </main>
+    );
+  }
+
+  // #164: a match in progress this player was dropped from. Two ways in — the
+  // return offer on mount, and the Auto Matchmaking guard — and one panel for
+  // both, because the choice is the same: rejoin it, or abandon it and take
+  // the loss. Never a silent re-queue that strands the far seat.
+  if (state === "rejoin" && rejoinable) {
+    const ranked = rejoinable.memo?.ranked ?? false;
+    const dismissLabel = rejoinNext === "matchmaking" ? "Cancel" : "Not now";
+    return (
+      <main className="start-screen"><div className="start-panel lobby">
+        <p className="start-kicker">MATCH IN PROGRESS</p>
+        <h1>You have a match in progress</h1>
+        <p className="start-subtitle">
+          {ranked
+            ? "You were dropped from a ranked match, but your seat is still held. Rejoin it, or abandon it — abandoning counts as a loss and moves your rating down."
+            : "You were dropped from a match, but your seat is still held. Rejoin it, or abandon it and return to the menu."}
+        </p>
+        <p className="rejoin-room">Room <b>{rejoinable.summary.roomCode}</b>{ranked ? " · ranked" : ""}</p>
+        {error ? <p className="lobby-error">{error}</p> : null}
+        <div className="lobby-actions">
+          <button disabled={busy} onClick={() => { setRejoinable(null); setState("choose"); }}>{dismissLabel}</button>
+          <button className="danger" disabled={busy} onClick={() => void abandonRejoinable()}>
+            {busy ? "Working…" : "Abandon"}{ranked ? " (counts as a loss)" : ""}
+          </button>
+          <button className="start-primary" data-sfx="open" disabled={busy} onClick={() => void rejoinNow()}>
+            {busy ? "Working…" : "Rejoin the match"}
+          </button>
+        </div>
+      </div></main>
     );
   }
 

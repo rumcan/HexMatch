@@ -731,9 +731,61 @@ export async function expectEndedMatch(side: Side, pattern: RegExp | string): Pr
 export async function expectNoEndedMatch(side: Side): Promise<void> {
   const state = await readState(side);
   expect(state.modal, `${side.name} has no ended-match modal`).toBe("");
+  expect(await leftSheet(side), `${side.name} has no departure sheet`).toBeNull();
   for (const line of state.toasts) {
     expect(line, `${side.name} heard no departure`).not.toMatch(/left the room|host left the game/i);
   }
+}
+
+// ── #164: the departure sheet ──────────────────────────────────────────────
+// The ended-match state above is ui's modal. Since #164 a departure raises a
+// `.left-sheet` instead — the dialog with the doors (Finish the game / Claim
+// the win now / Leave) and, once the room's verdict has landed, the rating
+// row. These read it the way `readState` reads the modal: from the DOM the
+// player is looking at.
+
+/** The departure sheet as it stands: its words, its live doors, and whether
+ *  the rating row (when one has landed) says the number went UP. */
+export interface LeftSheetState {
+  text: string;
+  doors: string[];
+  ratingRow: string;
+  ratingUp: boolean;
+}
+
+export function leftSheetState(): LeftSheetState | null {
+  const el = document.querySelector(".left-sheet");
+  if (!el) return null;
+  const status = el.querySelector(".left-status");
+  return {
+    text: (el.textContent ?? "").replace(/\s+/g, " ").trim(),
+    doors: Array.from(el.querySelectorAll(".left-doors button"))
+      .map((b) => (b.textContent ?? "").trim()),
+    ratingRow: status && !status.classList.contains("hidden")
+      ? (status.textContent ?? "").replace(/\s+/g, " ").trim()
+      : "",
+    ratingUp: !!el.querySelector(".rank-delta.up"),
+  };
+}
+
+export async function leftSheet(side: Side): Promise<LeftSheetState | null> {
+  return await side.page.evaluate(leftSheetState);
+}
+
+/** Wait for the departure sheet to stand, and to say `pattern`. */
+export async function expectLeftSheet(
+  side: Side, pattern: RegExp | string,
+): Promise<LeftSheetState> {
+  await expect.poll(async () => (await leftSheet(side))?.text ?? "", {
+    message: `${side.name} gets the departure sheet (words AND doors)`,
+    timeout: MP_DEPARTURE_MS,
+  }).toMatch(pattern);
+  return (await leftSheet(side))!;
+}
+
+/** No departure sheet: as far as this seat knows, the match is still a match. */
+export async function expectNoLeftSheet(side: Side): Promise<void> {
+  expect(await leftSheet(side), `${side.name} has no departure sheet`).toBeNull();
 }
 
 /** Keep every toast the game raises, in the order it raised them. */
