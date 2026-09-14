@@ -180,7 +180,7 @@ export interface TransportDef {
  * charged" are one number.
  */
 export const BUILD_COSTS: Readonly<Record<
-  "dirt" | "road" | "upgrade" | "depot" | "plant",
+  "dirt" | "road" | "upgrade" | "depot" | "plant" | "rail" | "platform" | "trainDepot" | "train",
   Partial<Record<Cargo, number>>
 >> = {
   dirt: { wood: 1, stone: 1 },
@@ -188,6 +188,10 @@ export const BUILD_COSTS: Readonly<Record<
   upgrade: { ore: 4 },
   depot: { wood: 1, stone: 1, grain: 1, oil: 1 },
   plant: { wood: 2, stone: 2, grain: 2, ore: 3 },
+  rail: { stone: 1 },
+  platform: { wood: 4, stone: 4, ore: 12, oil: 2 },
+  trainDepot: { wood: 3, stone: 3, ore: 4, oil: 2 },
+  train: { ore: 4, oil: 2 },
 };
 
 // ── VP-01: the victory table ──────────────────────────────────────────────
@@ -220,6 +224,8 @@ export const VICTORY = {
   upgrade: 0.25,
   /** VP per processing plant raised after setup. */
   plant: 1,
+  /** VP per rail platform (Railways v1). */
+  platform: 1,
   /** VP needed to win. Back to 10★ — the AI-02 experiment with a 20★ line
    *  made games drag, so the race runs to 10 again.
    *  AI-04: this is the SHIPPED line and the default for `hasWon`, but it is no

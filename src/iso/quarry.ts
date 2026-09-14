@@ -28,9 +28,10 @@ import { Board, type Gem } from "../game/board";
 import { RES_KEYS, UPGRADE_EVERY, type ResKey } from "../game/config";
 import { CARGOES, INDUSTRY_BY_KEY, type Cargo } from "./config";
 import {
-  playerResources, industriesInCatchment, buildAllComponents, ownerIdOf,
+  playerResources, playerResourcesWithRail, industriesInCatchment, buildAllComponents, ownerIdOf,
   type Components, type EconomyState,
 } from "./economy";
+import type { RailwayState } from "./railway/state";
 import { roadRouteForHarvester } from "./vehicles";
 
 // ── the bijection ──────────────────────────────────────────────────────────
@@ -66,14 +67,22 @@ export const CARGO_TO_GEM: Record<Cargo, ResKey> = Object.fromEntries(
 /** Cargo per tick that `owner`'s network currently delivers. Empty = nothing. */
 export function reachableCargo(
   state: EconomyState, owner: string, now: number, comp?: Components,
+  railway?: RailwayState,
 ): Partial<Record<Cargo, number>> {
-  const yields = playerResources(state, owner, now, comp);
+  const yields = railway ? playerResourcesWithRail(state, owner, now, railway, comp) : playerResources(state, owner, now, comp);
   const out: Partial<Record<Cargo, number>> = {};
   for (const c of CARGOES) {
     const v = yields[c] ?? 0;
     if (v > 0) out[c] = v;
   }
   return out;
+}
+
+/** Railway-aware reachable cargo (union road + valid rail). */
+export function reachableCargoWithRail(
+  state: EconomyState, railway: RailwayState | undefined, owner: string, now: number, comp?: Components,
+): Partial<Record<Cargo, number>> {
+  return reachableCargo(state, owner, now, comp, railway);
 }
 
 /** A cargo delivering at least this much per tick upgrades its token to tier 2. */
@@ -245,6 +254,7 @@ export interface Quarry {
 export function createQuarry(
   state: EconomyState, owner: string, hooks: QuarryHooks = {},
   boardArg?: Board,
+  railway?: RailwayState,
 ): Quarry {
   // AI-03: the board can be SHARED (the rival's plant: rival-plant.ts owns
   // the same grid the Sabotage cards and the peek panel address). Default
@@ -267,7 +277,7 @@ export function createQuarry(
   // one flood fill over the two track layers, so paying it per token is free.
   board.onHarvest = (res: ResKey, amount: number, forged: boolean) => {
     const cargo = GEM_TO_CARGO[res];
-    reach = reachableCargo(state, owner, performance.now());
+    reach = reachableCargo(state, owner, performance.now(), undefined, railway);
     // PP-13: a FORGED token — the tier-1 gem a 4-in-a-row mints (tier-2 for
     // 5+) — pays no matter what the network reaches. It is the board's own
     // reward for the long match, and gating it meant "match four wood, then
@@ -317,7 +327,7 @@ export function createQuarry(
     // PP-09: placement-gated gold drops — recompute alongside the reachable
     // set, since every build/demolish already funnels through refresh.
     board.setGoldEnabled(hasGoldMineDepot(state, owner));
-    reach = reachableCargo(state, owner, now);
+    reach = reachableCargo(state, owner, now, undefined, railway);
     delivery = deliveryDistances(state, owner, now);
     const pool = tokenPool(reach);
     const gained: Partial<Record<ResKey, number>> = {};
