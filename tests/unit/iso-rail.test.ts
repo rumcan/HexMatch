@@ -28,6 +28,7 @@ import {
   type RailState, type RailView, type RailStructure,
 } from "../../src/iso/rail";
 import { createTrack, tIdx, type Track } from "../../src/iso/track";
+import { TRUCK_SPEED } from "../../src/iso/vehicles";
 import { GRASS, WATER, ROUGH, type Grid, type Industry } from "../../src/iso/grid";
 import { MAP_W, MAP_H } from "../../src/game/config";
 import { INDUSTRY_BY_KEY } from "../../src/iso/config";
@@ -257,6 +258,14 @@ describe("RAIL-01 costs and scoring", () => {
     expect(total).toEqual({ wood: 11, stone: 31, ore: 32, oil: 8 });
     // Gold is reserved for Black Market sabotage and buys no railway.
     for (const cost of Object.values(RAIL_COSTS)) expect(cost.gold).toBeUndefined();
+  });
+
+  it("runs a train at exactly twice the dirt lorry's pace", () => {
+    // #178: the ticket's one speed rule — a train is not a second vehicle
+    // family with its own tuning knob, it is the lorry's pace doubled. Pinned
+    // by value because every motion assertion above reads `RAIL_SPEED` and
+    // would happily follow it to any other number.
+    expect(RAIL_SPEED).toBe(TRUCK_SPEED * 2);
   });
 
   it("returns floor(50%) per resource and never pays gold", () => {
