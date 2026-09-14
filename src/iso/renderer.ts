@@ -717,7 +717,8 @@ export class IsoRenderer {
     if (blocks) for (let i = 0; i < blocks.length; i++) if (blocks[i]) townTiles++;
     let railTiles = 0;
     const rail = this.world.railBits;
-    if (rail) for (let i = 0; i < rail.length; i++) if ((rail[i] & 0b10000) !== 0 || (rail[i] & 0b1111) !== 0) railTiles++;
+    // A rail byte is `RAIL_PRESENT | mask` and nothing else, so any set bit is a tile.
+    if (rail) for (let i = 0; i < rail.length; i++) if (rail[i] !== 0) railTiles++;
     return {
       mode: this.roadMode,
       townGroundTiles: townTiles,

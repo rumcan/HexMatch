@@ -187,9 +187,9 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-async function boot() {
+async function boot(opts: { rail?: boolean } = {}) {
   const { startIsoGame } = await import("../../src/iso/game");
-  dispose = startIsoGame(root);
+  dispose = startIsoGame(root, opts);
   await settle();
   return hook();
 }
@@ -208,8 +208,16 @@ describe("E11 the game boots", () => {
     const tools = [...root.querySelectorAll("[data-tool]")].map(
       (b) => (b as HTMLElement).dataset.tool);
     // The pointer ("select") leads: it is the hand you hold between builds.
-    // RL-4 (#178) adds the four railway tools with the other BUILDERS —
-    // Demolish stays last, beside the pointer's other destructive neighbour.
+    // RAIL-05 (#182): the railway sits behind its feature flag, OFF by
+    // default, so a default boot has no railway buttons at all.
+    expect(tools).toEqual(["select", "dirt", "road", "harvester", "plant", "demolish"]);
+  });
+
+  it("adds the four railway tools, with the builders, when the rail flag is on", async () => {
+    await boot({ rail: true });
+    const tools = [...root.querySelectorAll("[data-tool]")].map(
+      (b) => (b as HTMLElement).dataset.tool);
+    // RL-4 (#178) seats them with the other BUILDERS; Demolish stays last.
     expect(tools).toEqual([
       "select", "dirt", "road", "harvester", "plant",
       "rail", "platform", "raildepot", "railway", "demolish",
@@ -1024,7 +1032,7 @@ describe("J1 the quarry is mounted in the iso app", () => {
   });
 
   it("extends the tool bar instead of replacing it", async () => {
-    await boot();
+    await boot({ rail: true });
     const tools = [...root.querySelectorAll("[data-tool]")].map(
       (b) => (b as HTMLElement).dataset.tool);
     // The pointer ("select") leads; PP-06 added the "plant" tool, RL-4 (#178)
@@ -1277,7 +1285,7 @@ describe("V5 gems draw the restored sprite art", () => {
   });
 
   it("the build buttons carry per-tool banner art classes", async () => {
-    await boot();
+    await boot({ rail: true });
     const tools = [...root.querySelectorAll("[data-tool]")] as HTMLElement[];
     expect(tools).toHaveLength(10);
     for (const b of tools) expect(b.classList.contains(`bg-${b.dataset.tool}`)).toBe(true);
@@ -3190,7 +3198,7 @@ describe("RL-4 (#178) the railway in the real game", () => {
   };
 
   it("holds the four railway tools and opens the Railway panel with them", async () => {
-    const h = await boot();
+    const h = await boot({ rail: true });
     for (const t of ["rail", "platform", "raildepot", "railway"]) {
       expect(root.querySelector(`[data-tool=${t}]`), `${t} button`).toBeTruthy();
     }
@@ -3205,7 +3213,7 @@ describe("RL-4 (#178) the railway in the real game", () => {
   });
 
   it("lays rail with a drag, charges a Stone a tile, and lifts it again", async () => {
-    const h = await boot();
+    const h = await boot({ rail: true });
     h.finishSetup();
     rich(h);
     const run = railRun(h, 5);
@@ -3228,7 +3236,7 @@ describe("RL-4 (#178) the railway in the real game", () => {
   });
 
   it("scores exactly one Victory Point for a platform, and revokes it on demolish", async () => {
-    const h = await boot();
+    const h = await boot({ rail: true });
     h.finishSetup();
     rich(h);
     expect(h.victoryOf("you").platformVp).toBe(0);
@@ -3260,7 +3268,7 @@ describe("RL-4 (#178) the railway in the real game", () => {
   });
 
   it("refuses a line that has no destination, and a depot with no rail to serve", async () => {
-    const h = await boot();
+    const h = await boot({ rail: true });
     h.finishSetup();
     rich(h);
     // Nothing to run: no platforms, no depot.

@@ -3,6 +3,7 @@ import {
   JUNCTION_GAP, PORT_OFFSET, ROAD_DIRS, ROAD_WIDTH, TRANSITION_BLEND,
   dirsOf, figureBounds, hasRoad, maskOf, neighbourOf, paintFigures,
   portPoint, roadFigures, roadTile, tileCentre, type GroundPoint,
+  RAIL_GAUGE, RAIL_SLEEPER_OFF, RAIL_SLEEPER_ON, railSleeperOffset, railTileGeo,
 } from "../../src/iso/road-geometry";
 import { NE, SE, SW, NW, OPPOSITE, type Dir } from "../../src/iso/track";
 import { HW, HH, tileToScreen } from "../../src/game/config";
@@ -301,5 +302,80 @@ describe("paint centre-lines", () => {
   it("keeps the junction gap inside the arm", () => {
     expect(JUNCTION_GAP).toBeGreaterThan(0);
     expect(JUNCTION_GAP).toBeLessThan(0.5);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// RAIL-05 (#182) — vector rail track: two steel rails a gauge apart, joined
+// seamlessly across tiles, sleepers on a world-anchored rhythm.
+// ══════════════════════════════════════════════════════════════════════════
+describe("RAIL-05 vector rail geometry", () => {
+  const k = RAIL_GAUGE / 2;
+  const dist = (a: GroundPoint, b: GroundPoint) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+
+  it("lays a straight run's two rails a gauge apart, each half a gauge off the centre-line", () => {
+    for (const mask of [NE | SW, SE | NW]) {
+      const geo = railTileGeo(5, 7, mask);
+      expect(geo.figures).toHaveLength(1);
+      expect(geo.heads).toHaveLength(2);
+      const centre = geo.figures[0].points;
+      const [left, right] = geo.heads;
+      expect(left.points).toHaveLength(centre.length);
+      for (let i = 0; i < centre.length; i++) {
+        near(dist(left.points[i], centre[i]), k);
+        near(dist(right.points[i], centre[i]), k);
+        near(dist(left.points[i], right.points[i]), RAIL_GAUGE);
+      }
+    }
+  });
+
+  it("keeps the gauge through a bend: ends on the ports' normals, the corner on the miter", () => {
+    for (const mask of [NE | SE, SE | SW, SW | NW, NW | NE]) {
+      const geo = railTileGeo(5, 7, mask);
+      expect(geo.figures).toHaveLength(1);
+      const centre = geo.figures[0].points;
+      expect(centre).toHaveLength(3);
+      for (const head of geo.heads) {
+        near(dist(head.points[0], centre[0]), k);
+        near(dist(head.points[2], centre[2]), k);
+        near(dist(head.points[1], centre[1]), k * Math.SQRT2);   // the exact miter
+      }
+      const [a, b] = geo.heads;
+      near(dist(a.points[0], b.points[0]), RAIL_GAUGE);
+      near(dist(a.points[2], b.points[2]), RAIL_GAUGE);
+    }
+  });
+
+  it("meets the neighbouring tile's rails at the shared port, so chunks join without a seam", () => {
+    for (const d of ROAD_DIRS) {
+      const [tx, ty] = [20, 20];
+      const [nx, ny] = neighbourOf(tx, ty, d);
+      const mask = d | OPPOSITE[d];
+      const port = portPoint(tx, ty, d);
+      const atPort = (pts: GroundPoint[]) => pts
+        .filter((p) => Math.abs(dist(p, port) - k) < 1e-9)
+        .map((p) => p.map((v) => v.toFixed(9)).join(","))
+        .sort();
+      const here = atPort(railTileGeo(tx, ty, mask).heads.flatMap((h) => h.points));
+      const there = atPort(railTileGeo(nx, ny, mask).heads.flatMap((h) => h.points));
+      expect(here).toHaveLength(2);
+      expect(there).toEqual(here);
+    }
+  });
+
+  it("anchors the sleeper dashes to the world, so every straight tile keeps one rhythm", () => {
+    const cycle = RAIL_SLEEPER_ON + RAIL_SLEEPER_OFF;
+    for (const mask of [NE | SW, SE | NW]) {
+      for (const [tx, ty] of [[3, 3], [4, 3], [3, 4], [50, 61], [143, 0]]) {
+        const f = railTileGeo(tx, ty, mask).figures[0];
+        const off = railSleeperOffset(f);
+        const [a, , c] = f.points;
+        const along = Math.abs(c[0] - a[0]) > Math.abs(c[1] - a[1]) ? a[0] : a[1];
+        const phase = (((along + off) % cycle) + cycle) % cycle;
+        expect(Math.min(phase, cycle - phase)).toBeCloseTo(0, 9);
+      }
+    }
+    // A bend has no single axis to anchor to; it starts its cycle at the port.
+    expect(railSleeperOffset(railTileGeo(3, 3, NE | SE).figures[0])).toBe(0);
   });
 });

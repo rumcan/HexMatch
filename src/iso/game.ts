@@ -117,7 +117,7 @@ import {
 import {
   DEPOT_COST, FREE_SETUP_DEPOTS, costCompact, costLabel, priceDepot, shortfallLabel,
 } from "./construction";
-import { bankTrade } from "../game/trade";
+import { BANK_RATE, bankTrade } from "../game/trade";
 import type { CrossKind } from "../game/board";
 import {
   MAP_W, MAP_H, BANDIT_MS, BLOCK_MS, FOG_MS, PROTEST_MS, SABOTAGE, SECURITY,
@@ -146,8 +146,8 @@ import {
   createRailState, railPreview, buildRail, demolishRail, structureAt, hasRail,
   placePlatform, placeDepot, platformRefusal, depotRefusal, resolveAnchor,
   RAIL_COSTS, RAIL_REFUSAL_TEXT, footprintTiles,
-  railStructureItems, trainItems, assignLine, recallTrain, sellTrain, tickTrains,
-  rotateView, trainOccupies, railPanelRows, canPay, costEntries, resaleValue, demolishStructure, PLATFORM_VP,
+  railStructureItems, trainItems, assignLine, renameLine, buyTrain, startLine, recallTrain, sellTrain, tickTrains,
+  rotateView, trainOccupies, trainBasedAt, railPanelRows, canPay, costEntries, resaleValue, demolishStructure, PLATFORM_VP,
   footprintFor, depotExit, RAIL_VIEWS, trainTile, ownerRailTiles as ownerRailTilesOf,
   railToWire, applyRailWire, clearRail, railLayerPatch, copyRailLayer,
   type RailState, type RailView, type RailStructure,
@@ -402,10 +402,9 @@ export interface IsoGameOptions {
   /** STORY-01: the ending's "Continue the campaign" returns through here. */
   onStoryExit?: () => void;
   /**
-   * RAIL-05 (#182): force the railway feature flag. The default is read from
-   * the `?rail=` URL param, then from the mode: ON in sandbox and multiplayer,
-   * OFF in the campaign until #179/#181 land (the written decision, PR + the
-   * release-gate doc). Absent = no override.
+   * RAIL-05 (#182): force the railway feature flag. Absent, the flag is read
+   * from `?rail=1` and is otherwise OFF in every mode until #179/#181 land
+   * (the release gate in docs/railway-balance.md).
    */
   rail?: boolean;
   /**
@@ -473,14 +472,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const storyChapter: StoryChapter | null =
     opts.story && isSolo() ? chapterById(opts.story) : null;
   const storyOn = storyChapter !== null;
-  // RAIL-05 (#182): the feature flag. `?rail=1|0` overrides everything — the
-  // QA door; without it, ON in sandbox and multiplayer, OFF in the campaign
-  // until #179/#181 land (the written decision lives in the PR and the
-  // release-gate doc).
+  // RAIL-05 (#182): the feature flag. OFF everywhere by default: the release
+  // gate (docs/railway-balance.md) keeps the railway behind it until the
+  // construction UI (#179) and multiplayer authority (#181) are done.
+  // `?rail=1` — or `opts.rail` — turns it on for QA and playtests.
   const railParam = (() => {
     try { return new URLSearchParams(location.search).get("rail"); } catch { return null; }
   })();
-  const railAvailable = opts.rail ?? (railParam ? railParam === "1" : !storyOn);
+  const railAvailable = opts.rail ?? railParam === "1";
   /** The cast member playing the rival: the contract's, else Torvin as ever. */
   const rivalCast = storyChapter ? storyChapter.rival : "torvin";
   /** The player's own cast id, for every line the wire answers in. */
@@ -1026,6 +1025,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         if (partnerId === undefined) return;
         railAssign(id, partnerId);
       } else if (action === "recall") railRecall(id);
+      else if (action === "buy") { if (partnerId !== undefined) railBuy(id, partnerId); }
+      else if (action === "start") railStart(id);
       else railSell(id);
       paintOverlayNow();
     },
@@ -2398,6 +2399,54 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return true;
   }
 
+  /**
+   * #179: buy a train into a depot for one of the owner's lines. The rules
+   * (ownership, reach, one train per network) are `buyTrain`'s; the price is
+   * checked before and charged after, on the host, so a refusal costs nothing.
+   */
+  function railBuy(depotId: number, lineId: number, p: PlayerState = me): boolean {
+    if (isGuest()) { net?.sendIntent("build", { do: "railact", what: "buy", depot: depotId, line: lineId }); return true; }
+    if (!rail.lines.some((l) => l.id === lineId && l.ownerId === p.i + 1)) {
+      if (p.human) toast("Assign a line first — a train needs somewhere to run.", "bad");
+      return false;
+    }
+    if (!canPay(p.purse, RAIL_COSTS.train)) {
+      if (p.human) toast(`Not enough materials — a train costs ${railCostLabel(RAIL_COSTS.train)}.`, "bad");
+      return false;
+    }
+    const bought = buyTrain(rail, p.i + 1, depotId, lineId);
+    if (!bought.ok) {
+      if (p.human) toast(bought.why ?? "That train cannot be bought.", "bad");
+      return false;
+    }
+    spend(p, RAIL_COSTS.train);
+    if (p.human) sfx.play("build");
+    syncWorld();
+    if (p.human) toast("Train bought — it is waiting in the depot. Press Start to send it off.", "good");
+    return true;
+  }
+
+  /** #179: send a parked train off along its line. */
+  function railStart(trainId: number, p: PlayerState = me): boolean {
+    if (isGuest()) { net?.sendIntent("build", { do: "railact", what: "start", id: trainId }); return true; }
+    const train = rail.trains.find((t) => t.id === trainId && t.ownerId === p.i + 1);
+    if (!train) return false;
+    const ok = startLine(rail, p.i + 1, train.lineId);
+    if (p.human) {
+      toast(ok ? "Train started — it is leaving the depot." : (train.blockedWhy ?? "That train cannot start."), ok ? "good" : "bad");
+    }
+    syncWorld();
+    return ok;
+  }
+
+  /** #179: rename one of the owner's lines (the rules trim and cap the name). */
+  function railRename(lineId: number, name: string, p: PlayerState = me): boolean {
+    if (isGuest()) { net?.sendIntent("build", { do: "railact", what: "rename", id: lineId, name }); return true; }
+    const ok = renameLine(rail, p.i + 1, lineId, name);
+    if (ok) syncWorld();
+    return ok;
+  }
+
   /** Send a line's train home (it stays until it is re-assigned or sold). */
   function railRecall(trainId: number, p: PlayerState = me): boolean {
     if (isGuest()) { net?.sendIntent("build", { do: "railact", what: "recall", id: trainId }); return true; }
@@ -2606,8 +2655,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const cost = rs.kind === "platform" ? RAIL_COSTS.platform : RAIL_COSTS.depot;
       const gone = demolishStructure(rail, rs.id);
       if (!gone) {
-        toast("A train is standing there — send it home first.", "bad");
-        if (p.human) flashAt(tx, ty, "A train is on it");
+        // Two refusals share this path: a train physically ON the structure,
+        // and a depot that still has a train based at it (the epic's "never
+        // demolish a structure a train occupies" — a shed with a train in it
+        // is the clearest case, and destroying it would delete the train).
+        const based = rs.kind === "depot" ? trainBasedAt(rail, rs.id) : null;
+        toast(
+          based ? "A train is based here — sell it first." : "A train is standing there — send it home first.",
+          "bad",
+        );
+        if (p.human) flashAt(tx, ty, based ? "Train is based here" : "A train is on it");
         return;
       }
       // #142: demolition returns floor(50%) of the build price, and the
@@ -2615,8 +2672,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const refund = resaleValue(cost);
       if (Object.keys(refund).length) earn(p, refund);
       if (p.human) sfx.play("demolish");
-      // demolishStructure has already dropped any line that lost a platform,
-      // and any train that lost its depot, so the world is consistent here.
+      // demolishStructure has already dropped any line that lost a platform —
+      // and a depot can no longer come down under its train (that refusal is
+      // the `based` branch above), so no train is ever deleted by demolition.
       syncWorld();
       rescoreNow();
       toast(`${railKindName(rs.kind)} removed${Object.keys(refund).length ? ` — ${railCostLabel(refund)} salvaged` : ""}.`, "info");
@@ -3236,6 +3294,31 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   }
 
   /**
+   * RAIL-05 (#182): bank toward the rail project's next piece. Same 4:1 bank
+   * and budget as the pave bank, with the same guard against churn: never sell
+   * what the depot plan is saving for, nor a cargo the rail piece itself needs.
+   * Returns the exchanges made.
+   */
+  function rivalBankTowardRail(goal: Purse, f: Factory, now: number): number {
+    const pace = rivalPaceNow();
+    const planGuard = rivalPlanTarget(f, now) ?? {};
+    const trader = { res: rival.purse };
+    let trades = 0;
+    for (const [cargo, need] of Object.entries(goal) as [Cargo, number][]) {
+      while ((rival.purse[cargo] ?? 0) < need && trades < bankBudget(pace)) {
+        const surplus = (CARGOES as Cargo[])
+          .filter((c) => c !== "gold" && c !== cargo && (rival.purse[c] ?? 0) >= BANK_RATE)
+          .filter((c) => (rival.purse[c] ?? 0) - BANK_RATE >= Math.max(planGuard[c] ?? 0, goal[c] ?? 0))
+          .sort((a, b) => (rival.purse[b] ?? 0) - (rival.purse[a] ?? 0))[0];
+        if (!surplus) break;
+        if (!bankTrade(trader, surplus, cargo)) break;
+        trades++;
+      }
+    }
+    return trades;
+  }
+
+  /**
    * AI-01: the purse the rival is working toward right now — extracted from
    * `rivalBankTowardPlan` so the bank and the MARKET aim at the same shortage
    * (`rivalMarketOffer` asks for exactly what the next bank exchange would
@@ -3410,12 +3493,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   /** The rival paves what it can afford, charges itself, and lets `rescoreNow`
    *  price the points. Returns false when there was nothing to pave. */
-  function rivalPavePass(): boolean {
+  function rivalPavePass(railKeepOre = 0): boolean {
     const plan = planUpgrades(eco, {
       owner: rival.id, ownerId: rival.i + 1, purse: rival.purse,
       // AI-01: the batch cap is a skill lever (8 on normal, 4/12 on easy/hard).
       maxTiles: skill().paveTiles,
-      keepOre: rivalPlantWanted() ? (PLANT_COST.ore ?? 0) : 0,
+      // RAIL-05 (#182): the Ore a wanted plant OR the rail project's next piece
+      // still needs is not spare — whichever reserve is larger stays in the purse.
+      keepOre: Math.max(rivalPlantWanted() ? (PLANT_COST.ore ?? 0) : 0, railKeepOre),
     });
     if (!plan) return false;
     // Charge UP FRONT, exactly as `placePlant` does, and hand back the
@@ -3594,36 +3679,41 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       acted = true;
     }
 
-    // 3. pave — what the scoreboard pays for, with whatever Ore is spare; and
-    //    when the Ore is not spare but the gravel is there, buy it (VP-01)
-    if (rivalPavePass()) acted = true;
-    else rivalBankTowardPave(f, now);
+    // 3a. railway plan (RAIL-05, #182) — decided BEFORE the pave pass. A line's
+    //     pieces are lumpy (a platform is 12 Ore) while paving spends Ore four
+    //     at a time, so without a reserve the paves eat every Ore the moment
+    //     it lands and the rival never affords its first platform — the
+    //     balance matrix measured exactly that: 51 races, 0 rail actions.
+    //     Easy rivals keep the lever down; the flag down means no railway.
+    const railState = railAvailable && skill().rail ? eco.rail ?? null : null;
+    const railMove = railState
+      ? planRailMove(eco, railState, f, {
+        purse: rival.purse, ownerId: rival.i + 1, useRail: true, scope: "line", now,
+      })
+      : null;
+    const railGoal = railMove && !canPay(rival.purse, railMove.cost) ? railMove.cost : null;
+    const railKeepOre = railGoal?.ore ?? 0;
 
-    // 4. railway (RAIL-05, #182) — the seat's ONE rail action this turn,
-    //    planned and committed through the SAME `rail.ts` rules the player's
-    //    drag commits through (`planRailMove` → `buildRail` / `placePlatform`
-    //    / …, no private rule copy). Easy rivals keep the lever down.
+    // 3. pave — what the scoreboard pays for, with whatever Ore is spare (the
+    //    rail reserve is not spare); when the Ore is not spare but the gravel
+    //    is there, buy it (VP-01) — unless the bank is saving for rail, where
+    //    the two banks would trade each other's cargo back and forth.
+    if (rivalPavePass(railKeepOre)) acted = true;
+    else if (!railGoal) rivalBankTowardPave(f, now);
+    if (railGoal) rivalBankTowardRail(railGoal, f, now);
+
+    // 4. railway — the seat's ONE rail action this turn, planned above and
+    //    committed through the SAME `rail.ts` rules the player's drag commits
+    //    through (`executeRailMove` → `buildRail` / `placePlatform` / …).
     let railLaid: [number, number][] = [];
-    if (railAvailable && skill().rail) {
-      const railState = eco.rail;
-      if (railState) {
-        const move = planRailMove(eco, railState, f, {
-          purse: rival.purse, ownerId: rival.i + 1, useRail: true, scope: "line", now,
-        });
-        if (move) {
-          // `planRailMove` already priced the move against this purse, and
-          // nothing else spent since; re-check so the invariant holds anyway.
-          if (canPay(rival.purse, move.cost)) {
-            const res = executeRailMove(eco, railState, move, rival.id, rival.i + 1);
-            if (res) {
-              if (res.refund) earn(rival, res.refund);
-              else if (Object.keys(res.spent).length) spend(rival, res.spent);
-              if (move.kind === "track") railLaid = res.tiles;
-              acted = true;
-              ui.feed(`Rival ${res.label}`, rival.name);
-            }
-          }
-        }
+    if (railState && railMove && canPay(rival.purse, railMove.cost)) {
+      const res = executeRailMove(eco, railState, railMove, rival.id, rival.i + 1);
+      if (res) {
+        if (res.refund) earn(rival, res.refund);
+        else if (Object.keys(res.spent).length) spend(rival, res.spent);
+        if (railMove.kind === "track") railLaid = res.tiles;
+        acted = true;
+        ui.feed(`Rival ${res.label}`, rival.name);
       }
     }
 
@@ -3654,7 +3744,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       for (const [bx, by] of retry.built) renderer?.invalidateTile(bx, by);
       ui.feed(`Rival expands: a new Depot and ${retry.built.length} road tile${retry.built.length === 1 ? "" : "s"}`, rival.name);
     }
-    const paved = rivalPavePass();
+    const paved = rivalPavePass(railKeepOre);
     if (retry || paved) {
       syncWorld();
       rescoreNow();
@@ -3722,10 +3812,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     tile: new Uint8Array(rail.rail.tile.length),
     owner: new Uint8Array(rail.rail.owner.length),
   };
+  /**
+   * #142: "replicate graph changes and routes only by revision; train progress
+   * via compact updates and interpolation". The route each train last sent,
+   * keyed by id — `railToWire` compares by array identity (a replan is always a
+   * new array) and leaves an unchanged leg off the wire, so a steady-state
+   * publish is progress (dist, status, dwell) alone. Cleared on every full
+   * send, so a join or resync always carries the routes themselves.
+   */
+  const railRoutesSent = new Map<number, [number, number][]>();
   function railWire(fullLayers = false): Snapshot["rail"] {
     const moved = rail.rail.revision !== lastRailWireRev;
     lastRailWireRev = rail.rail.revision;
-    const wire = railToWire(rail, { layers: fullLayers });
+    if (fullLayers) railRoutesSent.clear();
+    const wire = railToWire(rail, { layers: fullLayers, routeCache: railRoutesSent });
     if (!wire) return undefined;
     if (fullLayers) copyRailLayer(rail, railSent.tile, railSent.owner);
     else if (moved) {
@@ -4138,6 +4238,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           if (pv.tiles.length === 0) toast("Can't build there.", "bad");
           else commitTrackDrag(p, pv, kind);
         }
+      } else if (!railAvailable && (what === "rail" || what === "platform" || what === "raildepot" || what === "railact")) {
+        // RAIL-05 (#182): with the flag down the railway does not exist on this
+        // host, so a guest's rail request is refused whole — never half-built.
+        echoed.push("Rail is not available in this mode.");
       } else if (what === "rail") {
         // RAIL-04 (#178): a guest's rail drag. The host runs the SAME preview
         // and the SAME commit against the guest's seat, so the tiles the guest
@@ -4164,14 +4268,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           else placeRailDepot(tx, ty, p);
         }
       } else if (what === "railact") {
-        // The panel's three verbs. Malformed bodies are ignored, exactly like
+        // The panel's verbs. Malformed bodies are ignored, exactly like
         // every other intent: the rules below are the only validation.
         const id = typeof payload.id === "number" && Number.isInteger(payload.id) ? payload.id : null;
         const source = typeof payload.source === "number" && Number.isInteger(payload.source) ? payload.source : null;
         const dest = typeof payload.dest === "number" && Number.isInteger(payload.dest) ? payload.dest : null;
+        const depot = typeof payload.depot === "number" && Number.isInteger(payload.depot) ? payload.depot : null;
+        const lineId = typeof payload.line === "number" && Number.isInteger(payload.line) ? payload.line : null;
         if (payload.what === "assign" && source !== null && dest !== null) railAssign(source, dest, p);
         else if (payload.what === "recall" && id !== null) railRecall(id, p);
         else if (payload.what === "sell" && id !== null) railSell(id, p);
+        else if (payload.what === "buy" && depot !== null && lineId !== null) railBuy(depot, lineId, p);
+        else if (payload.what === "start" && id !== null) railStart(id, p);
+        else if (payload.what === "rename" && id !== null && typeof payload.name === "string") railRename(id, payload.name, p);
       } else if (what === "swap") {
         const r1 = int(payload.r1), c1 = int(payload.c1);
         const r2 = int(payload.r2), c2 = int(payload.c2);
@@ -4913,7 +5022,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       rail: {
         rows: railPanelRows(rail, me.i + 1).map((r) => ({
           ...r,
-          hint: r.actions.includes("assign") ? `buys a train · ${railCostLabel(RAIL_COSTS.train)}`
+          hint: r.actions.includes("assign") || r.actions.includes("buy") ? `buys a train · ${railCostLabel(RAIL_COSTS.train)}`
             : r.actions.includes("sell") ? `refund ${railCostLabel(resaleValue(RAIL_COSTS.train))} once`
               : undefined,
         })),
@@ -6715,6 +6824,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      *  real cancel clears, and the two paths would drift. */
     setTool: (t: Tool) => { if (t === "select") cancelPlacement(); else armTool(t); },
     // ── RAIL-04 (#178): the railway's test twins ──────────────────────────
+    /**
+     * RAIL-05 (#182): the LIVE rail state itself — the object the rules, the
+     * renderer and the rival mutate. For tools that must run the shared rail
+     * functions against the real world (the rail screenshot script plans a
+     * line with `planRailMove`); `rail` below stays the plain-data summary.
+     */
+    get railState() { return rail; },
     /** The live rail state, read-only by convention (the twins below mutate). */
     get rail() {
       return {
@@ -6776,6 +6892,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       railRecall(trainId, who === "ai" ? rival : me),
     railSell: (trainId: number, who: "you" | "ai" = "you") =>
       railSell(trainId, who === "ai" ? rival : me),
+    /** #179: the test twins of the panel's Buy train / Start buttons, and a rename. */
+    railBuy: (depotId: number, lineId: number, who: "you" | "ai" = "you") =>
+      railBuy(depotId, lineId, who === "ai" ? rival : me),
+    railStart: (trainId: number, who: "you" | "ai" = "you") =>
+      railStart(trainId, who === "ai" ? rival : me),
+    railRename: (lineId: number, name: string, who: "you" | "ai" = "you") =>
+      railRename(lineId, name, who === "ai" ? rival : me),
     /** Advance the trains by hand — the headless twin of the frame's tick. */
     railTick: (dtMs = 1000) => { tickTrains(rail, dtMs); return rail.trains.length; },
     /** How many tiles of this seat's rail the layer holds. */
@@ -6823,6 +6946,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     /** Screen position (device px, live camera) of a tile's drawn diamond
      *  centre — clicking it hits that tile (renderer.flatPick, N4). */
     tileScreenAt: (tx: number, ty: number) => tileToScreenAt(cam, tx, ty),
+    /**
+     * RAIL-05 (#182): the screenshot twin of panning and zooming by hand —
+     * centre the camera on a tile, optionally at one of the zoom steps (the
+     * same `zoomAt` the wheel uses, so the atlas swap and clamp still apply).
+     */
+    lookAt: (tx: number, ty: number, zoom?: number) => {
+      if (zoom === 0.5 || zoom === 1 || zoom === 2) cam = zoomAt(cam, zoom, cam.vw / 2, cam.vh / 2);
+      cam = centerOnTile(cam, tx, ty);
+      renderer?.setCamera(cam);
+      return { x: cam.x, y: cam.y, zoom: cam.zoom };
+    },
     /**
      * E14: the live camera, so a test can report the zoom it picked a corridor
      * at instead of assuming the boot value.

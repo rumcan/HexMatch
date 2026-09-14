@@ -73,8 +73,8 @@ import {
   platformRefusal, resolveAnchor, placePlatform,
   depotRefusal, placeDepot, depotExit, stopTile, railPorts,
   structureAt, structuresOf, railComponents, ownerRailTiles,
-  footprintTiles, trainsOf, assignLine, recallTrain, sellTrain, depotReaching,
-  type RailState, type RailView, type RailAnchor, type RailStructure, type RailRefusal, type RailLine,
+  footprintTiles, trainsOf, assignLine, recallTrain, sellTrain, depotReaching, trainAtHome,
+  type RailState, type RailView, type RailAnchor, type RailStructure, type RailRefusal,
 } from "./rail";
 
 // ── terrain cost ──────────────────────────────────────────────────────────
@@ -1599,23 +1599,6 @@ function endpointSources(
   return out;
 }
 
-/**
- * The one component rule the line must satisfy for a train to run on it: the
- * source's, the destination's and the depot's stop tiles all sit on ONE
- * connected owner rail component. The same three reads `railServesIndustry`
- * makes — the economy's "this line works" — so the planner and the score can
- * never disagree about a running line.
- */
-function lineRunsOn(rail: RailState, ownerId: number, line: RailLine): boolean {
-  const source = rail.structures.find((s) => s.id === line.source);
-  const dest = rail.structures.find((s) => s.id === line.dest);
-  if (!source || !dest) return false;
-  const comp = railComponents(rail, ownerId);
-  const a = comp.get(tIdx(...stopTile(source))) ?? 0;
-  const b = comp.get(tIdx(...stopTile(dest))) ?? 0;
-  return a !== 0 && a === b;
-}
-
 /** Is this owner's component already holding a train (the one-train rule)? */
 function componentBusy(rail: RailState, ownerId: number, depot: RailStructure): boolean {
   const comp = railComponents(rail, ownerId);
@@ -1821,16 +1804,16 @@ export function planRailMove(
   const factories = state.factories.filter((f) => f.ownerId === ownerId);
   if (!factories.length) return null;
 
-  // 1. A broken line drains before anything new is bought.
+  // 1. An orphaned train (its line is gone) is sold once it is home — the
+  //    one-time 50%. A BLOCKED train on a line is never recalled from here:
+  //    a recall needs a route home, and the cut that blocked the train is
+  //    usually the same cut between it and its depot, so the recall would
+  //    fail every turn and starve every other rail action. The connect pass
+  //    below re-lays the missing stretch instead, and the train re-plans the
+  //    moment the rail revision moves.
   for (const t of trainsOf(rail, ownerId)) {
     const line = rail.lines.find((l) => l.id === t.lineId);
-    if (t.status === "blocked") {
-      if (!line || !lineRunsOn(rail, ownerId, line)) return { kind: "recall", trainId: t.id, cost: {} };
-      // intact on one component: the connect pass below re-lays the missing
-      // stretch, and the train re-plans when the revision moves
-    } else if (t.status === "stored" && !line) {
-      return { kind: "sell", trainId: t.id, cost: {} };
-    }
+    if (!line && trainAtHome(rail, t)) return { kind: "sell", trainId: t.id, cost: {} };
   }
 
   const plantPlat = firstPlatform(rail, ownerId, "plant");

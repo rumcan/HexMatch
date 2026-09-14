@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   DEFAULT_ROAD_STYLE, ROAD_CHUNK_H, ROAD_CHUNK_W, RoadCache,
-  roadTilesIn, screenToGround, tilesForRect,
+  railTilesIn, roadTilesIn, screenToGround, tilesForRect,
 } from "../../src/iso/road-renderer";
 import { NE, SE, SW, NW } from "../../src/iso/track";
 import { HW, HH, MAP_W, MAP_H } from "../../src/game/config";
@@ -193,5 +193,19 @@ describe("direction bits are the ones the simulation uses", () => {
   it("keeps the geometry aligned with track.ts", () => {
     // If these ever drift, roads render rotated with no other symptom.
     expect([NE, SE, SW, NW]).toEqual([1, 2, 4, 8]);
+  });
+});
+
+describe("RAIL-05 railTilesIn", () => {
+  it("reads the rail layer's PRESENT tiles as vector geometry, and nothing else", () => {
+    const rail = blank();
+    put(rail, 10, 10, NE | SW);
+    put(rail, 11, 10, 0);                       // a lone stub still draws (a pad)
+    const geo = railTilesIn({ railBits: rail }, 0, 0, 30, 30);
+    expect(geo.map((g) => [g.tx, g.ty, g.mask])).toEqual([[10, 10, NE | SW], [11, 10, 0]]);
+    expect(geo[0].heads).toHaveLength(2);          // two steel rails
+    // Road bytes are not rail, and a world with no rail layer draws none.
+    expect(railTilesIn({ roadBits: rail }, 0, 0, 30, 30)).toEqual([]);
+    expect(railTilesIn({}, 0, 0, 30, 30)).toEqual([]);
   });
 });
