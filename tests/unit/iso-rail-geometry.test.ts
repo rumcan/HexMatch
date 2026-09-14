@@ -17,10 +17,10 @@
 //     crossing classifier) agreed with `track.ts` / `rail.ts` mask for mask.
 // ══════════════════════════════════════════════════════════════════════════
 import { describe, expect, it } from "vitest";
-import { DIR, DIRS, NE, NW, OPPOSITE, PRESENT, SE, SW, type Dir } from "../../src/iso/track";
+import { createTrack, DIR, DIRS, NE, NW, OPPOSITE, PRESENT, SE, SW, type Dir } from "../../src/iso/track";
 import { ROAD_DIRS, portPoint } from "../../src/iso/road-geometry";
 import {
-  RAIL_VIEWS, autotileRail, createRailState, crossingMasksOk, laneTiles, placeDepot, placePlatform,
+  RAIL_VIEWS, buildRail, demolishRail, autotileRail, createRailState, crossingMasksOk, laneTiles, placeDepot, placePlatform,
   railDrawLayer, railPorts, type RailState, type RailStructure, type RailView,
 } from "../../src/iso/rail";
 import {
@@ -29,7 +29,8 @@ import {
   type GroundPoint, type RailTile,
 } from "../../src/iso/rail-geometry";
 import { railDetailFor, planksFor, tiesFor } from "../../src/iso/rail-renderer";
-import { MAP_W } from "../../src/game/config";
+import { MAP_W, MAP_H } from "../../src/game/config";
+import { GRASS, type Grid } from "../../src/iso/grid";
 
 /** A rail layer exactly as `railDrawLayer` writes it: PRESENT | mask per tile. */
 function layerOf(tiles: readonly (readonly [number, number, number])[]): Uint8Array {
@@ -161,10 +162,10 @@ describe("RAIL-03 the shape of one tile", () => {
     expect(t.ties.length).toBeGreaterThan(0);
   });
 
-  it("draws a buffer stop exactly where the steel ends, and none where it continues", () => {
+  it("caps both exposed ends of a dangling arm, and none in a connected straight", () => {
     const dead = build(layerOf([[10, 10, NE]]), 10, 10);
-    expect(dead.stops).toHaveLength(1);
-    const beam = dead.stops[0];
+    expect(dead.stops).toHaveLength(2);
+    const beam = dead.stops[1];
     const port = portPoint(10, 10, NE);
     const centre = centreOf(beam);
     expect(centre[0]).toBeCloseTo(port[0], 9);
@@ -389,7 +390,68 @@ describe("RAIL-03 graphics tiers change detail, never placement", () => {
     }
     // Rails and buffer stops never vary by tier at all.
     const dead = build(layerOf([[10, 10, NE]]), 10, 10);
-    expect(dead.stops).toHaveLength(1);
+    expect(dead.stops).toHaveLength(2);
     expect(dead.rails).toEqual(build(layerOf([[10, 10, NE]]), 10, 10).rails);
+  });
+});
+
+describe("RAIL-03 buffer stops on player-built track", () => {
+  function setupRail() {
+    const grid: Grid = {
+      w: MAP_W, h: MAP_H,
+      terrain: new Uint8Array(MAP_W * MAP_H).fill(GRASS),
+      occupancy: new Int16Array(MAP_W * MAP_H).fill(-1),
+      industries: [], towns: [], seed: 7,
+    };
+    return { grid, track: createTrack(), state: createRailState() };
+  }
+
+  it("caps both real endpoints in all four build directions", () => {
+    for (const d of DIRS) {
+      const { grid, track, state } = setupRail();
+      const [dx, dy] = DIR[d];
+      const tiles: [number, number][] = [0, 1, 2].map(
+        (i) => [20 + i * dx, 20 + i * dy] as [number, number],
+      );
+      expect(buildRail(grid, track, state, 1, tiles).built).toEqual(tiles);
+      const layer = railDrawLayer(state);
+      const drawn = tiles.map(([x, y]) => tileAt(layer, x, y));
+      expect(drawn.map((t) => t.mask)).toEqual([d, d | OPPOSITE[d], OPPOSITE[d]]);
+      expect(drawn.map((t) => t.stops.length)).toEqual([1, 0, 1]);
+      for (const i of [0, 2]) {
+        const [x, y] = tiles[i];
+        const sign = i === 0 ? 1 : -1;
+        const centre = centreOf(drawn[i].stops[0]);
+        expect(centre[0]).toBeCloseTo(x + 0.5 + sign * dx * RAIL_STOP_INSET, 9);
+        expect(centre[1]).toBeCloseTo(y + 0.5 + sign * dy * RAIL_STOP_INSET, 9);
+        expect(dist(drawn[i].stops[0][0], drawn[i].stops[0][1])).toBeCloseTo(RAIL_STOP_LENGTH, 9);
+        expect(dist(drawn[i].stops[0][0], drawn[i].stops[0][3])).toBeCloseTo(RAIL_STOP_WIDTH, 9);
+      }
+    }
+  });
+
+  it("adds new endpoint stops after demolition and removes them on rebuild", () => {
+    const { grid, track, state } = setupRail();
+    const tiles: [number, number][] = [10, 11, 12, 13, 14].map((x) => [x, 10] as [number, number]);
+    expect(buildRail(grid, track, state, 1, tiles).built).toEqual(tiles);
+    expect(demolishRail(state, 12, 10)).toBe(true);
+    let layer = railDrawLayer(state);
+    expect([10, 11, 13, 14].map((x) => tileAt(layer, x, 10).stops.length)).toEqual([1, 1, 1, 1]);
+    expect(layer.tile[10 * MAP_W + 12]).toBe(0);
+    expect(buildRail(grid, track, state, 1, [[12, 10]]).built).toEqual([[12, 10]]);
+    layer = railDrawLayer(state);
+    expect(tiles.map(([x, y]) => tileAt(layer, x, y).stops.length)).toEqual([1, 0, 0, 0, 1]);
+  });
+
+  it("does not cap the centre of a connected bend, T or crossroads", () => {
+    for (const dirs of [[NE, SE], [NE, SE, SW], [NE, SE, SW, NW]]) {
+      const { grid, track, state } = setupRail();
+      expect(buildRail(grid, track, state, 1, [[20, 20]]).built).toEqual([[20, 20]]);
+      for (const d of dirs) {
+        const tile: [number, number] = [20 + DIR[d][0], 20 + DIR[d][1]];
+        expect(buildRail(grid, track, state, 1, [tile]).built).toEqual([tile]);
+      }
+      expect(tileAt(railDrawLayer(state), 20, 20).stops).toEqual([]);
+    }
   });
 });

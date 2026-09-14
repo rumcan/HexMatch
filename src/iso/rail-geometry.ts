@@ -186,7 +186,7 @@ export interface RailTile {
   planks: GroundPoint[][];
   /** The same strip as one slab, for the tiers below High. Null when not a crossing. */
   plankSlab: GroundPoint[] | null;
-  /** Buffer-stop beams (quads) where the rail ends and no neighbour faces back. */
+  /** Buffer-stop beams at exposed centre ends and ports with no reciprocal neighbour. */
   stops: GroundPoint[][];
 }
 
@@ -330,7 +330,8 @@ function crossingPlanks(tx: number, ty: number, mask: number): { boards: GroundP
  * with a structure's lane folded in, which is what `railDrawLayer` in `rail.ts`
  * hands the renderer), and is asked only about neighbours: a port whose
  * neighbour does not carry the reciprocal bit is where the rail ENDS, and a dead
- * end gets a buffer stop. `roadMask` is the road byte's low nibble at this tile
+ * end gets a buffer stop. A one-bit tile also ends at its centre, away from
+ * its connected neighbour, and gets a buffer there. `roadMask` is the road byte's low nibble at this tile
  * (either tier), and turns the tile into a level crossing when the two are
  * straight and perpendicular.
  */
@@ -368,6 +369,18 @@ export function railTile(
       beamAt([c[0] + half - RAIL_STOP_INSET, c[1]], DIR_VEC[NW], RAIL_STOP_LENGTH, RAIL_STOP_WIDTH),
     );
   } else {
+    // Autotiling stores connections, not the exposed end: a one-bit tile
+    // runs from its centre toward its only neighbour. Cap the centre end,
+    // inset along that run so the beam sits fully on the steel. Do not cap
+    // the centre of a T: its branch joins the through run there.
+    if ((mask & (mask - 1)) === 0) {
+      const c = tileCentre(tx, ty);
+      const toward = DIR_VEC[mask];
+      stops.push(beamAt(
+        [c[0] + toward[0] * RAIL_STOP_INSET, c[1] + toward[1] * RAIL_STOP_INSET],
+        toward, RAIL_STOP_LENGTH, RAIL_STOP_WIDTH,
+      ));
+    }
     for (const d of ROAD_DIRS) {
       if (!(mask & d)) continue;
       const [nx, ny] = neighbourOf(tx, ty, d as Dir);
