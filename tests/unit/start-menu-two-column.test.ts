@@ -98,7 +98,7 @@ describe("#184 two-column mode menu", () => {
     expect(actions.querySelector(".portrait-picker")).toBeNull();
   });
 
-  it("lists every primary action on the right, matchmaking preferences beside their button", async () => {
+  it("lists every primary action on the right; the rank picker waits for the search", async () => {
     await renderModes();
     const labels = buttonLabels(container.querySelector(".start-actions")!);
     for (const action of [
@@ -112,12 +112,26 @@ describe("#184 two-column mode menu", () => {
     ]) {
       expect(labels.some((l) => l.startsWith(action)), `missing action: ${action}`).toBe(true);
     }
-    // The Any/Similar rank options ride with Auto Matchmaking, directly after it.
-    const autoIdx = labels.findIndex((l) => l.startsWith("Auto Matchmaking"));
-    expect(labels[autoIdx + 1]).toMatch(/^Any rank/);
-    expect(labels[autoIdx + 2]).toMatch(/^Similar rank/);
-    const search = container.querySelector(".start-actions .rank-search")!;
-    expect(search.getAttribute("role")).toBe("radiogroup");
+    // The Any/Similar rank picker moved to the Auto Matchmaking waiting
+    // screen, so the mode list stays one decision per button.
+    expect(container.querySelector(".start-actions .rank-search")).toBeNull();
+    expect(labels.some((l) => /^(Any|Similar) rank/.test(l))).toBe(false);
+    // Nobody is told a hosted game is experimental any more.
+    expect(labels.some((l) => l.includes("Experimental"))).toBe(false);
+    // Solo and multiplayer are labelled groups, in that order.
+    const groupLabels = [...container.querySelectorAll(".start-actions .start-actions-label")]
+      .map((el) => el.textContent);
+    expect(groupLabels).toEqual(["Solo", "Multiplayer"]);
+  });
+
+  it("puts each mode's detail on its own line under the label", async () => {
+    await renderModes();
+    const story = [...container.querySelectorAll(".start-actions button")]
+      .find((b) => (b.textContent ?? "").startsWith("Story Mode"))!;
+    expect(story.querySelector("small")?.textContent).toBeTruthy();
+    const css = stylesCss();
+    expect(css).toMatch(/\.start-panel\.start-modes \.start-actions button\s*\{[^}]*flex-direction:\s*column/s);
+    expect(css).toMatch(/\.start-panel\.start-modes \.start-actions button small,[^{]*\{[^}]*display:\s*block/s);
   });
 
   it("tabs through the manager picker before the mode buttons", async () => {

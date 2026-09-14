@@ -27,11 +27,9 @@ const SIZES = [
 const ACTIONS = [
   "Story Mode",
   "Play vs AI",
+  "Auto Matchmaking",
   "Host a game",
   "Join with a code",
-  "Auto Matchmaking",
-  "Any rank",
-  "Similar rank",
   "The ladder",
   "Back to the menu",
 ] as const;
