@@ -98,7 +98,11 @@ the vector track — and pins the art/rules contract around it.
 
 - `npx tsc --noEmit` — clean.
 - New suites: `iso-rail-geometry.test.ts` 19 tests, `iso-rail-cache.test.ts` 8,
-  `iso-rail-art.test.ts` 11.
+  and five new cases in `iso-rail-art.test.ts` (12 in the file, 7 on `main`):
+  the coupling contract against `WAGON_OFFSET` and `LOCO_LEN`/`WAGON_LEN`,
+  `DEPOT_FOOTPRINT`, the lane gauge the art and the network's track share
+  (`LANE` in the generator), the 1950s palette, and provenance plus the
+  no-copy-step build guard.
 - `npx vite build --base=./` — every one of the 48 railway PNGs ships: 38 as
   hashed files under `dist/assets/` (referenced relative to `./`) and 10 inlined
   as data URIs by Vite's 4 KiB inline limit. No PNG is missing, and
