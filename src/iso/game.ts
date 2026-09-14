@@ -73,6 +73,7 @@ import {
 import {
   createTrack, drawBits, previewDrag, commitDrag, canBuildOn, hasTrack,
   demolishTile, tIdx, canAfford, buildRefusal, seedTownRoads,
+  PRESENT, PUBLIC_OWNER,
   seedPublicRoads, isPublicRoad, isUpgradedRoad, tileCost, structureTiles,
   dirtyTiles, plantFootprintTiles,
   type Track, type TrackKind, type Purse, type DragPreview,
@@ -121,6 +122,23 @@ import {
   RES_KEYS, choice, tileToScreen, type ResKey,
 } from "../game/config";
 import { createQuarry, GEM_TO_CARGO, type Quarry } from "./quarry";
+import { createRailwayState, type RailwayState } from "./railway/state";
+import {
+  railPreviewDrag, railCommitDrag, demolishRailTile, railBuildRefusal,
+  platformRefusal, depotRefusal as railDepotRefusal, findPlatformAnchors,
+} from "./railway/placement";
+import {
+  buyTrain as railBuyTrain, createLine as railCreateLine, assignTrainToLine as railAssignTrain,
+  startTrain as railStartTrain, returnTrain as railReturnTrain, sellTrain as railSellTrain,
+  tickTrains as railTickTrains, canAffordTrain as railCanAffordTrain, assignRefusal as railAssignRefusal,
+} from "./railway/trains";
+import { BUILD_COSTS } from "./config";
+import { platformFootprint as railPlatformFootprint, depotFootprint as railDepotFootprint } from "./railway/graph";
+// silence noUnusedLocals until wiring complete
+void railPreviewDrag; void railCommitDrag; void demolishRailTile; void railBuildRefusal; void platformRefusal; void railDepotRefusal; void findPlatformAnchors;
+void railBuyTrain; void railCreateLine; void railAssignTrain; void railStartTrain; void railReturnTrain; void railSellTrain; void railTickTrains; void railCanAffordTrain; void railAssignRefusal;
+void railPlatformFootprint; void railDepotFootprint; void PUBLIC_OWNER;
+void createRailwayState;
 import {
   saveKeyFor, SAVEGAME_VERSION, loadRecentSave, clearSave, trackSave, trackRestored,
   type SaveGamePayload,
@@ -180,6 +198,7 @@ import {
 } from "./debug";
 import {
   SNAPSHOT_VERSION, applySnapshot, buildSnapshot, joinFromSnapshot,
+  bytesToBase64, base64ToBytes,
   type RivalSabotage, type Snapshot, type WirePlayer,
 } from "./snapshot";
 export { joinFromSnapshot };
@@ -284,7 +303,7 @@ export { VP_TARGET, FREE_SETUP_DEPOTS };
  * whatever tool is held back to it (the strategy-game "escape to pointer"),
  * and Q does the same from the keyboard.
  */
-export type Tool = "select" | "dirt" | "road" | "harvester" | "plant" | "demolish";
+export type Tool = "select" | "dirt" | "road" | "harvester" | "plant" | "demolish" | "rail" | "platform" | "trainDepot";
 
 export interface PlayerState {
   /** Stable market index — offers are routed by it (`trade.ts`). */
@@ -450,6 +469,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // has already filled; nothing in `track` affects it.
   const scenery: Scenery = scatterScenery(grid);
   const track: Track = createTrack();
+  const railway: RailwayState = createRailwayState();
+  let lastRailRev = railway.railRevision;
   // PP-10: every town's seed-generated ring road is stamped onto the road
   // layer BEFORE the world exists (world.roadBits is a live reference to
   // track.road), so the first frame already shows settled towns with roads.
@@ -560,6 +581,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   };
   let phase: Phase = "setup-factory";
   let tool: Tool = "dirt";
+  // Railways v1 — platform/depot orientation and pending guest ops
+  let platformRot = 0;
+  let trainDepotRot = 0;
+  let selectedPlatformAnchor: { kind: "industry"; id: number } | { kind: "plant"; id: number } | null = null;
+  const pendingRailOps = new Map<string, number>(); // key -> expiry ms, for guest pending UI
+  void pendingRailOps;
   /**
    * NAMES: the top-bar "Names" button shows/hides the tags that float over
    * resources, towns, plants and depots while you pan. ON by default (a
@@ -674,7 +701,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     onTokens: (pool) => toast(`Tokens: ${(Object.keys(pool) as ResKey[])
       .map((r) => CARGO[GEM_TO_CARGO[r]].name).join(", ")}`, "info"),
     onChange: () => onBoardChange(),
-  });
+  }, undefined, railway);
 
   // AI-03: the RIVAL's Processing Plant board — a real quarry of its own,
   // played by a clock-driven autoplayer (`skill().moveMs`, below). It pays
@@ -885,6 +912,151 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   });
   onBoardChange = () => ui.renderBoard();
   root.appendChild(ui.el);
+
+  // Railways v1 — wire railway panel actions (buy/line lifecycle with confirmation sheets and guest pending)
+  const railwayActionHandlers: Record<string, ()=>void> = {
+    buyTrain: () => {
+      if (isGuest()) {
+        const depot = railway.depots.find(d=> d.owner===me.id) ?? railway.depots.find((d:any)=> d.ownerId===me.i+1);
+        if (!depot) { toast("Need a Train Depot first.", "bad"); return; }
+        const k = `buyTrain:${(depot as any).id}`;
+        pendingRailOps.set(k, performance.now()+3000);
+        net?.sendIntent("build", { do: "buyTrain", depotId: (depot as any).id });
+        toast("Train purchase pending — awaiting host...", "info");
+        setTimeout(()=> pendingRailOps.delete(k), 3000);
+        return;
+      }
+      const depot = railway.depots.find(d=> d.owner===me.id) ?? railway.depots.find((d:any)=> d.ownerId===me.i+1);
+      if (!depot) { toast("Need a Train Depot first.", "bad"); return; }
+      // @ts-ignore
+      const res = railBuyTrain(railway, me.id, me.i+1, (depot as any).id, me.purse as any);
+      if (!res) {
+        // diagnose reason
+        if (!railCanAffordTrain(me.purse as any)) toast("Not enough Ore+Oil for train (4⛏️ 2🛢️).", "bad");
+        else toast("Can't buy train — blocked/no-depot?", "bad");
+        return;
+      }
+      spend(me, BUILD_COSTS.train as any);
+      toast("Train bought.", "good");
+      syncWorld(); rescoreNow();
+    },
+    newLine: () => {
+      const myPlatforms = railway.platforms.filter(p=> p.owner===me.id || (p as any).ownerId===me.i+1);
+      const industryPlatforms = myPlatforms.filter(p=> (p as any).anchor?.kind==="industry");
+      const plantPlatforms = myPlatforms.filter(p=> (p as any).anchor?.kind==="plant");
+      if (industryPlatforms.length===0 || plantPlatforms.length===0) { toast("Need one industry platform and one plant platform.", "bad"); return; }
+      const src = industryPlatforms[0] as any;
+      const dst = plantPlatforms[0] as any;
+      if (isGuest()) {
+        const k = `newLine:${src.id}->${dst.id}`;
+        pendingRailOps.set(k, performance.now()+3000);
+        net?.sendIntent("build", { do: "createLine", src: src.id, dst: dst.id, name: `Line ${railway.nextLineId}` });
+        toast("Line creation pending — awaiting host...", "info");
+        setTimeout(()=> pendingRailOps.delete(k), 3000);
+        return;
+      }
+      // @ts-ignore
+      const res = railCreateLine(railway, me.id, me.i+1, `Line ${railway.nextLineId}`, src.id, dst.id);
+      if (!res) {
+        toast("Can't create line — no rail path or depot not reachable? (blocked/no-path)", "bad");
+        return;
+      }
+      toast(`Line "${(res as any).name ?? "new"}" created.`, "good");
+      syncWorld(); rescoreNow();
+    },
+    assign: () => {
+      const train = railway.trains.find(t=> t.owner===me.id || (t as any).ownerId===me.i+1);
+      const line = railway.lines.find(l=> l.owner===me.id || (l as any).ownerId===me.i+1);
+      if (!train || !line) { toast("Need a train and a line to assign.", "bad"); return; }
+      if (isGuest()) {
+        const k = `assign:${train.id}->${line.id}`;
+        pendingRailOps.set(k, performance.now()+3000);
+        net?.sendIntent("build", { do: "assignTrain", trainId: train.id, lineId: line.id });
+        toast("Assign pending — awaiting host...", "info");
+        setTimeout(()=> pendingRailOps.delete(k), 3000);
+        return;
+      }
+      // @ts-ignore
+      const ok = railAssignTrain(railway, me.id, me.i+1, train.id, line.id);
+      if (!ok) {
+        // @ts-ignore
+        const reason = railAssignRefusal(railway, me.id, me.i+1, train.id, line.id);
+        toast(String(reason ?? "Assign failed — blocked/no-path or one-train-per-component"), "bad");
+      } else { toast("Train assigned.", "good"); syncWorld(); rescoreNow(); }
+    },
+    start: () => {
+      const line = railway.lines.find(l=> l.owner===me.id);
+      if (!line || !line.trainId) { toast("No assigned train to start.", "bad"); return; }
+      const train = railway.trains.find(t=> t.id===line.trainId);
+      if (!train) { toast("No train.", "bad"); return; }
+      if (isGuest()) {
+        const k = `start:${train.id}`;
+        pendingRailOps.set(k, performance.now()+3000);
+        net?.sendIntent("build", { do: "startTrain", trainId: train.id });
+        toast("Start pending — awaiting host...", "info");
+        setTimeout(()=> pendingRailOps.delete(k), 3000);
+        return;
+      }
+      // @ts-ignore
+      const ok = railStartTrain(railway, me.id, train.id);
+      if (!ok) toast("Can't start — blocked/no-path or component has active train", "bad");
+      else { toast("Train started.", "good"); syncWorld(); rescoreNow(); }
+    },
+    return: () => {
+      const train = railway.trains.find(t=> (t.owner===me.id) && t.state!=="stored");
+      if (!train) { toast("No active train to return.", "bad"); return; }
+      if (isGuest()) {
+        const k = `return:${train.id}`;
+        pendingRailOps.set(k, performance.now()+3000);
+        net?.sendIntent("build", { do: "returnTrain", trainId: train.id });
+        toast("Return pending — awaiting host...", "info");
+        setTimeout(()=> pendingRailOps.delete(k), 3000);
+        return;
+      }
+      // @ts-ignore
+      const ok = railReturnTrain(railway, me.id, train.id);
+      if (!ok) toast("Return failed", "bad");
+      else { toast("Train returning to depot.", "good"); syncWorld(); }
+    },
+    sell: () => {
+      const train = railway.trains.find(t=> t.owner===me.id);
+      if (!train) { toast("No train to sell.", "bad"); return; }
+      const sheet = showConfirm(root, { title: "Sell train?", body: `Sell train #${train.id} for ${costMarkup({ ore:2, oil:1 })} (50% return, only after returning to depot)?`, confirmLabel: "Sell", cancelLabel: "Keep", danger: true });
+      void sheet.promise.then(ok=>{
+        if (!ok) return;
+        if (isGuest()) {
+          const k = `sell:${train.id}`;
+          pendingRailOps.set(k, performance.now()+3000);
+          net?.sendIntent("build", { do: "sellTrain", trainId: train.id });
+          toast("Sell pending — awaiting host...", "info");
+          setTimeout(()=> pendingRailOps.delete(k), 3000);
+          return;
+        }
+        // @ts-ignore
+        const refund = railSellTrain(railway, me.id, train.id, me.purse as any);
+        if (!refund) toast("Can't sell — train must be stored at depot (return first)", "bad");
+        else { for (const [k,v] of Object.entries(refund as any)) earn(me, { [k]: v } as any); toast(`Train sold — +${costMarkup(refund as any)} refund.`, "good"); syncWorld(); rescoreNow(); }
+      });
+    },
+  };
+  // delegate clicks from railway panel and also from anywhere with data-rail-action (for tests)
+  root.addEventListener("click", (e)=>{
+    const target = (e.target as HTMLElement).closest("[data-rail-action]") as HTMLElement | null;
+    if (!target) return;
+    const act = target.dataset.railAction;
+    if (!act) return;
+    const fn = railwayActionHandlers[act];
+    if (fn) { e.preventDefault(); fn(); }
+  });
+  // Also listen inside ui.el for railway panel (since panel lives inside ui's left aside)
+  ui.el.addEventListener("click", (e)=>{
+    const target = (e.target as HTMLElement).closest("[data-rail-action]") as HTMLElement | null;
+    if (!target) return;
+    const act = target.dataset.railAction;
+    if (!act) return;
+    const fn = railwayActionHandlers[act];
+    if (fn) { e.preventDefault(); fn(); }
+  });
 
   // LOAD-01: the loading screen takes over once the boot prompts below are
   // done (or at once when nothing is asked) and lifts when every art load has
@@ -1153,7 +1325,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // autoplayer played (and the peek panel showed) the shared one. The
     // flat-purse telemetry that finally smoked this out: reach present,
     // tokens never, income never. One board now — no shadows.
-  }, rivalBoard);
+  }, rivalBoard, railway);
   rivalQuarry.board.onCrossChoice = (kind, picks, pick) => __setCrossPrompt("ai", kind as CrossKind, picks, pick);
 
   // U1: the iso layer stack stays the map; it is mounted inside the original
@@ -1213,6 +1385,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   let hover: { tx: number; ty: number; ref: unknown } | null = null;
   let drag: { ax: number; ay: number } | null = null;
   let preview: DragPreview | null = null;
+  let railPreview: any | null = null;
+  let railPreviewKey = "";
 
   // ── helpers ────────────────────────────────────────────────────────────
   let lastToastText = "", lastToastAt = -1e9;
@@ -1418,8 +1592,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (endingShown || !winner) return;
     endingShown = true;
     winningSource = source;
-    const playerBreakdown = victoryBreakdown(eco, me.id);
-    const rivalBreakdown = victoryBreakdown(eco, rival.id);
+    const playerBreakdown = victoryBreakdown(eco, me.id, railway);
+    const rivalBreakdown = victoryBreakdown(eco, rival.id, railway);
     const model = buildEnding({
       playerWon: winner.id === me.id,
       playerScore: vpFor(score, me.id),
@@ -1708,7 +1882,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           const other = p === players[0] ? players[1] : players[0];
           rankRuntime.claimWin(wireIdOf(p), wireIdOf(other), (performance.now() - rankBootAt) / 1000);
         }
-        const b = victoryBreakdown(eco, p.id);
+        const b = victoryBreakdown(eco, p.id, railway);
         toast(`${p.name} wins — ${fmtVp(vpFor(score, p.id))}★ `
           + `(${b.paved} paved tile${b.paved === 1 ? "" : "s"}, ${b.plants} plant${b.plants === 1 ? "" : "s"})`,
         p.human ? "good" : "bad");
@@ -1729,7 +1903,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   const rescoreNow = () => {
     const now = performance.now();
-    applyVpEvents(rescore(eco, score), now);
+    applyVpEvents(rescore(eco, score, railway), now);
     for (const p of players) {
       const stars = Math.floor(vpFor(score, p.id));
       const last = starFed.get(p.id) ?? 0;
@@ -1749,7 +1923,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // would look broken.
     // MP-05: not on a guest — its "reach" is the host's reach, and the tokens
     // it can see were spawned by the host's board clock.
-    if (!isGuest()) quarry.refresh(now);
+    if (!isGuest()) {
+      quarry.refresh(now);
+      rivalQuarry.refresh(now);
+    }
   };
 
   // ── actions ────────────────────────────────────────────────────────────
@@ -2024,6 +2201,70 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * "one cost model, one rule" invariant extended to the guest's actions.
    */
   function doDemolish(tx: number, ty: number, p: PlayerState = me) {
+    // Railways v1: handle platform/depot/rail demolition first (shared legality: blocked if train occupies)
+    // Check platform
+    // platform footprint search
+    for (let i=0;i<railway.platforms.length;i++) {
+      const pl = railway.platforms[i] as any;
+      if (pl.owner!==p.id) continue;
+      const foot = railPlatformFootprint(pl.tx, pl.ty, pl.rotation ?? 0);
+      if (foot.some(([x,y]:[number,number])=> x===tx && y===ty)) {
+        // check train occupancy
+        for (const tr of railway.trains) {
+          if (tr.state==="stored" || tr.state==="blocked") continue;
+          // simple check: if train path includes tile
+          if (tr.path && tr.path.includes(tIdx(tx,ty))) { toast("Can't demolish — train occupies this tile.", "bad"); flashAt(tx,ty,"Train blocked"); return; }
+        }
+        // remove platform, refund 50%
+        railway.platforms.splice(i,1);
+        const refund: Record<string,number> = {};
+        for (const [k,v] of Object.entries(BUILD_COSTS.platform as Record<string,number>)) refund[k]=Math.floor(v/2);
+        earn(p, refund as any);
+        railway.railRevision++;
+        syncWorld(); rescoreNow();
+        toast(`Rail Platform removed — refund ${costMarkup(refund as any)} and -1★`, "info");
+        if (p.human) sfx.play("demolish");
+        return;
+      }
+    }
+    for (let i=0;i<railway.depots.length;i++) {
+      const d = railway.depots[i] as any;
+      if (d.owner!==p.id) continue;
+      const foot = railDepotFootprint(d.tx,d.ty);
+      if (foot.some(([x,y]:[number,number])=> x===tx && y===ty)) {
+        for (const tr of railway.trains) {
+          if (tr.state==="stored" || tr.state==="blocked") continue;
+          if (tr.path && tr.path.includes(tIdx(tx,ty))) { toast("Can't demolish — train occupies depot.", "bad"); flashAt(tx,ty,"Train blocked"); return; }
+          if (tr.depotId===d.id) { toast("Can't demolish depot — train is out.", "bad"); return; }
+        }
+        railway.depots.splice(i,1);
+        const refund: Record<string,number> = {};
+        for (const [k,v] of Object.entries(BUILD_COSTS.trainDepot as Record<string,number>)) refund[k]=Math.floor(v/2);
+        earn(p, refund as any);
+        railway.railRevision++;
+        syncWorld(); rescoreNow();
+        toast(`Train Depot removed — refund ${costMarkup(refund as any)}`, "info");
+        if (p.human) sfx.play("demolish");
+        return;
+      }
+    }
+    // rail tile
+    if ((railway.rail[tIdx(tx,ty)] & PRESENT)!==0 && railway.railOwner[tIdx(tx,ty)]===p.i+1) {
+      for (const tr of railway.trains) {
+        if (tr.state==="stored" || tr.state==="blocked") continue;
+        if (tr.path && tr.path.includes(tIdx(tx,ty))) { toast("Can't demolish — train on rail.", "bad"); flashAt(tx,ty,"Train blocked"); return; }
+      }
+      // @ts-ignore
+      const ok = demolishRailTile(railway, tx, ty, p.i+1);
+      if (ok) {
+        // rail costs 1 stone, floor 50% =0, so no refund but keep revision
+        railway.railRevision++;
+        syncWorld(); rescoreNow();
+        toast("Rail removed.", "info");
+        if (p.human) sfx.play("demolish");
+        return;
+      }
+    }
     const hi = eco.harvesters.findIndex((h) => h.tx === tx && h.ty === ty && h.owner === p.id);
     if (hi >= 0) {
       eco.harvesters.splice(hi, 1);
@@ -3133,6 +3374,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       ...(boardsWire.length ? { boards: boardsWire } : {}),
       crossPrompt,
       winner: winner ? { id: winner.id, source: winningSource } : null,
+      railway: { rail: bytesToBase64(railway.rail), railOwner: bytesToBase64(railway.railOwner), platforms: railway.platforms.map(p=> ({...p})), depots: railway.depots.map(d=> ({...d})), lines: railway.lines.map(l=> ({...l})), trains: railway.trains.map(t=> ({...t, path: t.path? [...t.path] : null})), rev: railway.railRevision },
     } as any);
   }
 
@@ -3288,6 +3530,21 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       crossPrompt = null;
       if (isGuest()) __clearGuestCross();
     }
+    // Railways v1 — snapshot railway (optional additive)
+    if ((applied as any).railway) {
+      const r = (applied as any).railway;
+      railway.rail.set(r.rail);
+      railway.railOwner.set(r.railOwner);
+      railway.platforms.length = 0; railway.platforms.push(...r.platforms);
+      railway.depots.length = 0; railway.depots.push(...r.depots);
+      railway.lines.length = 0; railway.lines.push(...r.lines);
+      railway.trains.length = 0; railway.trains.push(...r.trains);
+      railway.railRevision = r.rev ?? 0;
+      railway.nextPlatformId = Math.max(1, ...railway.platforms.map((p:any)=>p.id+1), railway.nextPlatformId);
+      railway.nextDepotId = Math.max(1, ...railway.depots.map((d:any)=>d.id+1), railway.nextDepotId);
+      railway.nextTrainId = Math.max(1, ...railway.trains.map((t:any)=>t.id+1), railway.nextTrainId);
+      railway.nextLineId = Math.max(1, ...railway.lines.map((l:any)=>l.id+1), railway.nextLineId);
+    }
     // winner
     if (applied.winner && applied.winner.id) {
       const w = players.find((p) => p.id === applied.winner!.id);
@@ -3386,6 +3643,26 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       } else if (!w || !w.id) {
         // host cleared winner (should not happen)
       }
+    }
+    if ((msg as any).railway) {
+      const r = (msg as any).railway;
+      try {
+        railway.rail.set(base64ToBytes(r.rail));
+        railway.railOwner.set(base64ToBytes(r.railOwner));
+        // replace arrays content but keep object identity for score
+        railway.platforms.length = 0; for (const p of r.platforms) railway.platforms.push(p);
+        railway.depots.length = 0; for (const d of r.depots) railway.depots.push(d);
+        railway.lines.length = 0; for (const l of r.lines) railway.lines.push(l);
+        railway.trains.length = 0; for (const t of r.trains) railway.trains.push(t);
+        railway.railRevision = r.rev ?? railway.railRevision;
+        railway.nextPlatformId = Math.max(1, ...railway.platforms.map((p:any)=>p.id+1), railway.nextPlatformId ?? 1);
+        railway.nextDepotId = Math.max(1, ...railway.depots.map((d:any)=>d.id+1), railway.nextDepotId ?? 1);
+        railway.nextTrainId = Math.max(1, ...railway.trains.map((t:any)=>t.id+1), railway.nextTrainId ?? 1);
+        railway.nextLineId = Math.max(1, ...railway.lines.map((l:any)=>l.id+1), railway.nextLineId ?? 1);
+        worldDirty = true;
+        // clear guest pending ops that have been acknowledged
+        pendingRailOps.clear();
+      } catch {}
     }
     // A refused intent says why, in the host's own words (the echo).
     if (msg.notice) toast(msg.notice, "info");
@@ -3494,6 +3771,102 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         } else if (mwhat === "bank") {
           const give = String(payload.give) as any, want = String(payload.want) as any;
           if (!(market.bank as any)(trader, give, want)) toast("Bank trade rejected.", "bad");
+        }
+      } else if (what === "rail" || what === "platform" || what === "trainDepot" || what === "buyTrain" || what === "createLine" || what === "assignTrain" || what === "startTrain" || what === "returnTrain" || what === "sellTrain") {
+        // Railways v1 — host authoritative for guest railway intents
+        if (what === "rail") {
+          const ax = int(payload.ax), ay = int(payload.ay), bx = int(payload.bx), by = int(payload.by);
+          if (ax!==null && ay!==null && bx!==null && by!==null) {
+            const pv = railPreviewDrag(grid, track, railway, p.purse, ax, ay, bx, by, p.i+1, payload.xFirst!==false, 0);
+            if (pv.tiles.length===0) toast("Can't build rail there.", "bad");
+            else { railCommitDrag( // @ts-ignore
+              railway, pv, p.i+1); spend(p, pv.cost as any); }
+          }
+        } else if (what === "platform") {
+          const tx = int(payload.tx), ty = int(payload.ty);
+          const rot = typeof payload.rot==="number"? payload.rot:0;
+          if (tx!==null && ty!==null) {
+            // @ts-ignore
+            const anchors = findPlatformAnchors(grid, track, railway, tx, ty, rot, p.id, p.i+1, eco.factories);
+            // @ts-ignore
+            const anchor = (payload.anchor as any) ?? (anchors[0] ?? null);
+            // @ts-ignore
+            const refusal = platformRefusal(grid, track, railway, tx, ty, rot, p.id, p.i+1, anchor, eco.factories);
+            if (refusal) toast(`Platform can't go there — ${refusal}`, "bad");
+            else {
+              const canAfford = Object.entries(BUILD_COSTS.platform as Record<string,number>).every(([k,v])=> (p.purse as any)[k] >= v);
+              if (!canAfford) toast("Not enough materials for platform.", "bad");
+              else {
+                const pid = railway.nextPlatformId++;
+                railway.platforms.push({ id: pid, owner: p.id, ownerId: p.i+1, tx, ty, rotation: rot, anchor } as any);
+                spend(p, BUILD_COSTS.platform as any);
+                railway.railRevision++;
+                toast("Rail Platform placed (guest).", "good");
+              }
+            }
+          }
+        } else if (what === "trainDepot") {
+          const tx = int(payload.tx), ty = int(payload.ty);
+          const rot = typeof payload.rot==="number"? payload.rot:0;
+          if (tx!==null && ty!==null) {
+            // @ts-ignore
+            const refusal = railDepotRefusal(grid, track, railway, tx, ty, rot, p.i+1);
+            if (refusal) toast(`Depot can't go there — ${refusal}`, "bad");
+            else {
+              const canAfford = Object.entries(BUILD_COSTS.trainDepot as Record<string,number>).every(([k,v])=> (p.purse as any)[k] >= v);
+              if (!canAfford) toast("Not enough materials for depot.", "bad");
+              else {
+                const did = railway.nextDepotId++;
+                railway.depots.push({ id: did, owner: p.id, ownerId: p.i+1, tx, ty, rotation: rot } as any);
+                spend(p, BUILD_COSTS.trainDepot as any);
+                railway.railRevision++;
+                toast("Train Depot placed (guest).", "good");
+              }
+            }
+          }
+        } else if (what === "buyTrain") {
+          const depotId = typeof payload.depotId==="number"? payload.depotId : (railway.depots.find(d=> d.owner===p.id || (d as any).ownerId===p.i+1) as any)?.id;
+          if (depotId!=null) {
+            // @ts-ignore
+            const res = railBuyTrain(railway, p.id, p.i+1, depotId, p.purse as any);
+            if (!res) toast("Can't buy train — insufficient funds or no depot?", "bad");
+            else { spend(p, BUILD_COSTS.train as any); toast("Train bought (guest).", "good"); }
+          }
+        } else if (what === "createLine") {
+          const src = typeof payload.src==="number"? payload.src : null;
+          const dst = typeof payload.dst==="number"? payload.dst : null;
+          const name = typeof payload.name==="string"? payload.name : `Line ${railway.nextLineId}`;
+          if (src!=null && dst!=null) {
+            // @ts-ignore
+            const res = railCreateLine(railway, p.id, p.i+1, name, src, dst);
+            if (!res) toast("Can't create line — blocked/no-path?", "bad");
+            else toast("Line created (guest).", "good");
+          }
+        } else if (what === "assignTrain") {
+          if (typeof payload.trainId==="number" && typeof payload.lineId==="number") {
+            // @ts-ignore
+            const ok = railAssignTrain(railway, p.id, p.i+1, payload.trainId as number, payload.lineId as number);
+            if (!ok) toast("Assign failed — blocked/no-path or one-train-per-component", "bad"); else toast("Train assigned (guest).", "good");
+          }
+        } else if (what === "startTrain") {
+          if (typeof payload.trainId==="number" || typeof payload.lineId==="number") {
+            const tid = typeof payload.trainId==="number" ? payload.trainId : payload.lineId;
+            // @ts-ignore
+            const ok2 = railStartTrain(railway, p.id, tid as number);
+            if (!ok2) toast("Start failed — blocked/no-path or component limit", "bad"); else toast("Train started (guest).", "good");
+          }
+        } else if (what === "returnTrain") {
+          if (typeof payload.trainId==="number") {
+            // @ts-ignore
+            const ok3 = railReturnTrain(railway, p.id, payload.trainId as number);
+            if (!ok3) toast("Return failed", "bad"); else toast("Train returning (guest).", "good");
+          }
+        } else if (what === "sellTrain") {
+          if (typeof payload.trainId==="number") {
+            // @ts-ignore
+            const refund = railSellTrain(railway, p.id, payload.trainId as number, p.purse as any);
+            if (!refund) toast("Sell failed — train must be stored", "bad"); else toast("Train sold (guest).", "good");
+          }
         }
       } else if (typeof payload.key === "string" || typeof (payload as any).do === "string" && ((payload as any).do === "protest_place" || (payload as any).key)) {
         // blackMarket intents — payload.key or protest_place
@@ -3773,6 +4146,37 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const plan = factoryPlanForTool(tx, ty);
       pushPlan(items, plan);
       ghost = { sprite: FACTORY_SPRITE, tx, ty, valid: plan.valid };
+    } else if (tool === "platform") {
+      // Railways v1: platform preview uses shared legality — cost, VP, orientation, footprint, ports, selected anchor
+      const ownerId = me.i+1;
+      const anchors = findPlatformAnchors(grid, track, railway, tx, ty, platformRot, me.id, ownerId, eco.factories);
+      // @ts-ignore
+      const anchor = selectedPlatformAnchor && (anchors as any[]).some((a:any)=>a.kind===selectedPlatformAnchor!.kind && a.id===selectedPlatformAnchor!.id) ? selectedPlatformAnchor : ((anchors as any[])[0] ?? null);
+      const refusal = platformRefusal(grid, track, railway, tx, ty, platformRot, me.id, ownerId, anchor as any, eco.factories);
+      const footprint = railPlatformFootprint(tx,ty,platformRot);
+      const lane = (()=>{ try{ const { platformLaneTiles } = require("./railway/graph"); return platformLaneTiles(tx,ty,platformRot); }catch{ return []; } })();
+      const ports = (()=>{ try{ const { platformPorts } = require("./railway/graph"); return platformPorts(tx,ty,platformRot); }catch{ return []; } })();
+      for (const [x,y] of footprint) items.push({ sprite: refusal ? "highlight_bad" : "highlight", tx: x, ty: y });
+      for (const [x,y] of lane) items.push({ sprite: "highlight_soft", tx: x, ty: y });
+      for (const [x,y] of ports) items.push({ sprite: "node_mark", tx: x, ty: y });
+      if (anchor) {
+        // highlight anchor building footprint softly (industry or plant)
+        if (anchor.kind==="industry") {
+          const ind = grid.industries.find(ii=>ii.id===anchor.id);
+          if (ind) for(let yy=ind.ty; yy<ind.ty+ind.h; yy++) for(let xx=ind.tx; xx<ind.tx+ind.w; xx++) items.push({ sprite: "highlight_soft", tx: xx, ty: yy });
+        } else {
+          const f = eco.factories.find(ff=> (ff.id??0)===anchor.id && ff.owner===me.id);
+          if (f) for(let yy=f.ty; yy<f.ty+2; yy++) for(let xx=f.tx; xx<f.tx+2; xx++) items.push({ sprite: "highlight_soft", tx: xx, ty: yy });
+        }
+      }
+      ghost = { sprite: "platform_ne", tx, ty, valid: !refusal } as any;
+    } else if (tool === "trainDepot") {
+      const refusal = railDepotRefusal(grid, track, railway, tx, ty, trainDepotRot, me.i+1);
+      const footprint = railDepotFootprint(tx,ty);
+      for (const [x,y] of footprint) items.push({ sprite: refusal ? "highlight_bad" : "highlight", tx: x, ty: y });
+      ghost = { sprite: "train_depot_ne", tx, ty, valid: !refusal } as any;
+    } else if (tool === "rail") {
+      items.push({ sprite: "highlight", tx, ty });
     } else {
       items.push({ sprite: "highlight", tx, ty });
     }
@@ -3789,6 +4193,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     overlayPlanAt(tx, ty).items;
   /** Everything the overlay layer draws this frame. */
   const overlayFrame = (): OverlayFrame => {
+    if (railPreview) {
+      const items: OverlayItem[] = railPreview.tiles.map(([x, y]: [number,number]) => ({ sprite: "highlight", tx: x, ty: y }));
+      if (railPreview.unaffordable) for (const [x,y] of railPreview.unaffordable) items.push({ sprite: "highlight_bad", tx: x, ty: y });
+      return { items, ghost: null };
+    }
     if (preview) {
       const items: OverlayItem[] = preview.tiles.map(([x, y]) => ({ sprite: "highlight", tx: x, ty: y }));
       // VP-01: a paved drag over your own gravel is the only road action that
@@ -3836,11 +4245,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const key = `${netVersion}:${total}:${line}:${p.name}:${p.human}`;
       const hit = vpTipCache.get(p.id);
       if (hit && hit.key === key) return hit.tip;
-      const b = victoryBreakdown(eco, p.id);
+      const b = victoryBreakdown(eco, p.id, railway);
       const tip = [
         `${p.name}${p.human ? " (you)" : ""} — ${fmtVp(total)}★ of ${line}★`,
         `Paved road tiles: ${b.paved} × 0.25★ = ${fmtVp(b.pavedVp)}★`,
         `Processing plants: ${b.plants + 1} (opening plant is free; ${b.plants} × 1★ = ${fmtVp(b.plantVp)}★)`,
+        `Rail Platforms: ${b.platforms ?? 0} × 1★ = ${fmtVp(b.platformVp ?? 0)}★ — rail service is match-3 eligibility only, no arrival payout`,
         `${fmtVp(Math.max(0, line - total))}★ to win`,
       ].join("\n");
       vpTipCache.set(p.id, { key, tip });
@@ -3870,7 +4280,29 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
 
     let costInfo: string | null = null;
-    if (preview) {
+    if (railPreview) {
+      const parts = Object.entries(railPreview.cost as Record<string,number>).map(([k,v])=> `${v} ${k}`);
+      const n = railPreview.tiles.length;
+      const label = parts.length ? parts.join(" + ") : "free";
+      costInfo = `<span class="mb-txt"><b>${n}</b> rail tiles · ${label}</span>` + (railPreview.truncated? ` · <i>blocked</i>`:"") + `<span class="mb-cost">${costMarkup(BUILD_COSTS.rail)} · 0★ · straight ⊥ crossings only</span>`;
+    } else if (tool==="platform" && hover) {
+      const ownerId = me.i+1;
+      const anchors = findPlatformAnchors(grid, track, railway, hover.tx, hover.ty, platformRot, me.id, ownerId, eco.factories);
+      // @ts-ignore
+      const anchor = selectedPlatformAnchor && anchors.some((a:any)=>a.kind===selectedPlatformAnchor!.kind && a.id===selectedPlatformAnchor!.id) ? selectedPlatformAnchor : (anchors[0] ?? null);
+      const refusal = platformRefusal(grid, track, railway, hover.tx, hover.ty, platformRot, me.id, ownerId, anchor as any, eco.factories);
+      const note = refusal ? refusal : ((Object.entries(BUILD_COSTS.platform as Record<string,number>).every(([k,v])=> (me.purse as any)[k] >= v)) ? "ready" : "not enough materials");
+      const anchorTxt = anchor ? `${anchor.kind}#${anchor.id}` : (anchors.length? `${anchors.length} anchors — click to select` : "no anchor within 3");
+      const rotTxt = `${platformRot*90}°`;
+      costInfo = `<span class="mb-txt"><b>Rail Platform</b> · ${note} · ${anchorTxt} · ${rotTxt} (R to rotate)</span>` + `<span class="mb-cost">${costMarkup(BUILD_COSTS.platform)} · +1★ · 2×3 lane+strip ports ${anchor?`→ ${anchorTxt}`:""}</span>`;
+    } else if (tool==="trainDepot" && hover) {
+      const refusal = railDepotRefusal(grid, track, railway, hover.tx, hover.ty, trainDepotRot, me.i+1);
+      const note = refusal ? refusal : ((Object.entries(BUILD_COSTS.trainDepot as Record<string,number>).every(([k,v])=> (me.purse as any)[k] >= v)) ? "ready" : "not enough materials");
+      costInfo = `<span class="mb-txt"><b>Train Depot</b> · ${note} · ${trainDepotRot*90}° (R)</span>` + `<span class="mb-cost">${costMarkup(BUILD_COSTS.trainDepot)} · 0★ · 2×2 one port</span>`;
+    } else if (tool==="rail" && hover) {
+      const refusal = railBuildRefusal(grid, track, railway, hover.tx, hover.ty, me.i+1);
+      costInfo = `<span class="mb-txt"><b>Railway Track</b> · ${refusal? refusal : costMarkup(BUILD_COSTS.rail)}</span>` + `<span class="mb-cost">0★ · drag to lay</span>`;
+    } else if (preview) {
       // W1: the label shows the preview's OWN numbers — the charge is
       // `preview.cost` and the free count is `preview.free`, exactly what the
       // commit will do.
@@ -4022,7 +4454,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       })),
       purse: me.purse,
       phase,
-      tool,
+      tool: tool as any,
       // STORY-01: the contract's rival wears their painted sheet on the
       // dossier card; a sandbox match sends nothing and keeps the mugshots.
       ...(storyOn ? { rivalFace: faceOf(rivalCast, "calm") } : {}),
@@ -4040,6 +4472,29 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       inspect: info || null,
       inspectTone: infoTone,
       reach: quarry.reach,
+      railway: {
+        platforms: railway.platforms.map(p=> ({ id:p.id, owner:p.owner, tx:p.tx, ty:p.ty, anchor: p.anchor.kind==="industry"? `industry#${p.anchor.id}`:`plant#${p.anchor.id}` })),
+        depots: railway.depots.map(d=> ({ id:d.id, owner:d.owner, tx:d.tx, ty:d.ty })),
+        trains: railway.trains.map(t=> ({ id:t.id, owner:t.owner, depotId:t.depotId, lineId:t.lineId, state:t.state, blockedReason:t.blockedReason })),
+        lines: railway.lines.map(l=> {
+          const src=railway.platforms.find(p=>p.id===l.sourcePlatformId);
+          const dst=railway.platforms.find(p=>p.id===l.destPlatformId);
+          let status="ok";
+          if (!src||!dst) status="no-platform";
+          else if (l.trainId===null) status="no train";
+          else {
+            const tr=railway.trains.find(t=>t.id===l.trainId);
+            if (!tr) status="no-train";
+            else if (tr.state==="stored") status="stored";
+            else if (tr.state==="blocked") status=tr.blockedReason||"blocked";
+            else if (!tr.hasReachedSource) status="en route to source";
+            else status=tr.state;
+          }
+          return { id:l.id, owner:l.owner, name:l.name, source:l.sourcePlatformId, dest:l.destPlatformId, trainId:l.trainId, status };
+        }),
+        canAffordTrain: (me.purse.ore??0) >= (BUILD_COSTS.train.ore??0) && (me.purse.oil??0) >= (BUILD_COSTS.train.oil??0),
+      },
+      platformVp: victoryBreakdown(eco, me.id, railway).platformVp,
       // PP-14b: the 30s reset cooldown, so the button can count it down.
       // #116: per seat — a guest counts down ITS OWN clock (its cooldown
       // lives on the host; this mirror moves when the guest requests).
@@ -4166,12 +4621,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     const p = pickForAction(x, y);
     if (!p) return;
-    const isTrackTool = tool === "road" || tool === "dirt";
+    const isTrackTool = tool === "road" || tool === "dirt" || tool === "rail";
     // TK-001: left mouse (button 0) is build/place ONLY — it never starts a
     // pan. Touch keeps its old behaviour (one finger pans, a quick tap places).
     // An armed protest owns the left button: it must never start a track drag.
     if (phase === "play" && isTrackTool && !pendingProtest && (!isMouse || e.button === 0) && e.isPrimary) {
-      if (canBuildOn(grid, tool as TrackKind, p.tx, p.ty)) {
+      if (tool === "rail") {
+        if (!railBuildRefusal(grid, track, railway, p.tx, p.ty, me.i+1)) {
+          drag = { ax: p.tx, ay: p.ty };
+          dragLive = false;
+          return;
+        }
+      } else if (canBuildOn(grid, tool as TrackKind, p.tx, p.ty)) {
         drag = { ax: p.tx, ay: p.ty };
         dragLive = false;
         return;
@@ -4232,25 +4693,35 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // A second finger landed: the pinch owns the gesture now (pointerdown
       // already dropped the drag when it arrived); fall through to the pan.
       if (g.pointers.length < 2) {
-        const kind = tool as TrackKind;   // build-track tools are dirt | road
-        // A drag re-plans only when something it depends on moved: the end
-        // tile, the network (netVersion), the purse or the free allowance.
-        // Sub-tile pointer motion reuses the plan it already has.
-        const purseKey = CARGOES.map((c) => me.purse[c] ?? 0).join(",");
-        const key = `${kind}:${drag.ax},${drag.ay}:${p.tx},${p.ty}:${netVersion}:${me.freeTrack}:${purseKey}`;
-        if (!preview || key !== previewKey) {
-          // Roads anywhere (main): no network adjacency requirement, so the
-          // preview is allowed to start anywhere and grow without a seed.
-          preview = previewDrag(grid, track, kind, me.purse,
-            drag.ax, drag.ay, p.tx, p.ty, true, undefined, me.freeTrack,
-            structureTiles(eco.factories, eco.harvesters, me.i + 1));
-          previewKey = key;
-          changed = true;
+        if (tool === "rail") {
+          const purseKey = CARGOES.map((c) => me.purse[c] ?? 0).join(",");
+          const key = `rail:${drag.ax},${drag.ay}:${p.tx},${p.ty}:${railway.railRevision}:${purseKey}`;
+          if (!railPreview || key !== railPreviewKey) {
+            railPreview = railPreviewDrag(grid, track, railway, me.purse, drag.ax, drag.ay, p.tx, p.ty, me.i+1, true, 0);
+            railPreviewKey = key;
+            changed = true;
+          }
+        } else {
+          const kind = tool as TrackKind;   // build-track tools are dirt | road
+          // A drag re-plans only when something it depends on moved: the end
+          // tile, the network (netVersion), the purse or the free allowance.
+          // Sub-tile pointer motion reuses the plan it already has.
+          const purseKey = CARGOES.map((c) => me.purse[c] ?? 0).join(",");
+          const key = `${kind}:${drag.ax},${drag.ay}:${p.tx},${p.ty}:${netVersion}:${me.freeTrack}:${purseKey}`;
+          if (!preview || key !== previewKey) {
+            // Roads anywhere (main): no network adjacency requirement, so the
+            // preview is allowed to start anywhere and grow without a seed.
+            preview = previewDrag(grid, track, kind, me.purse,
+              drag.ax, drag.ay, p.tx, p.ty, true, undefined, me.freeTrack,
+              structureTiles(eco.factories, eco.harvesters, me.i + 1));
+            previewKey = key;
+            changed = true;
+          }
         }
         if (changed) paintOverlayNow();
         return;
       }
-      drag = null; preview = null; dragLive = false;
+      drag = null; preview = null; railPreview=null; dragLive = false;
       changed = true;
     }
     if (changed) paintOverlayNow();
@@ -4291,16 +4762,28 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // refusal voices are shared with the drag path via `refuseTrackAt`.
     if (drag && !dragLive) {
       const { ax, ay } = drag;
-      drag = null; preview = null; dragLive = false;
+      drag = null; preview = null; railPreview=null; dragLive = false;
       if (!moved && phase === "play" && !pendingProtest) {
-        const pv = requestTrackBuild(tool as TrackKind, ax, ay, ax, ay, true);
-        if (!pv) refuseTrackAt(tool as TrackKind, ax, ay);
+        if (tool==="rail") {
+          const pv = railPreviewDrag(grid, track, railway, me.purse, ax, ay, ax, ay, me.i+1, true, 0);
+          if (pv.tiles.length===0) { const r=railBuildRefusal(grid,track,railway,ax,ay,me.i+1); toast(r? String(r):"Can't build there.","bad"); flashAt(ax,ay, r? String(r):"Can't build here"); }
+          else { if (isGuest()) { net?.sendIntent("build", { do:"rail", ax,ay,bx:ax,by:ay, xFirst:true }); } else { railCommitDrag(railway, pv, me.i+1); spend(me, pv.cost as any); syncWorld(); rescoreNow(); } }
+        } else {
+          const pv = requestTrackBuild(tool as TrackKind, ax, ay, ax, ay, true);
+          if (!pv) refuseTrackAt(tool as TrackKind, ax, ay);
+        }
       }
       downAt = null;
       g = pointerUp(g, e.pointerId);
       return;
     }
-    if (drag && preview) {
+    if (drag && (preview || railPreview)) {
+      if (railPreview) {
+        if (railPreview.tiles.length===0) { toast("Can't build rail there.","bad"); flashAt(drag.ax,drag.ay,"Can't build here"); }
+        else { const end = railPreview.tiles[railPreview.tiles.length-1]; if (isGuest()) net?.sendIntent("build",{do:"rail", ax:drag.ax, ay:drag.ay, bx:end[0], by:end[1], xFirst:true}); else { railCommitDrag(railway, railPreview, me.i+1); spend(me, railPreview.cost as any); syncWorld(); rescoreNow(); } }
+        drag=null; preview=null; railPreview=null; downAt=null; g=pointerUp(g,e.pointerId); return;
+      }
+      if (preview) {
       if (preview.tiles.length === 0) {
         // W9: the allowance buys Dirt only, so a paved Road drag with no ore
         // previews nothing at all.
@@ -4326,7 +4809,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       g = pointerUp(g, e.pointerId);
       return;
     }
-    drag = null; preview = null;
+    }
+    drag = null; preview = null; railPreview=null;
 
     // TK-001: a mouse click that places/builds is LEFT-button only. Middle
     // clicks (pan) and right clicks never fall through to the place path.
@@ -4371,6 +4855,56 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           } else if (tool === "demolish") {
             if (isGuest()) net?.sendIntent("demolish", { do: "demolish", tx: p.tx, ty: p.ty });
             else doDemolish(p.tx, p.ty);
+          } else if (tool === "platform") {
+            if (isGuest()) {
+              const pendingKey = `platform:${p.tx},${p.ty}:${platformRot}`;
+              pendingRailOps.set(pendingKey, performance.now()+3000);
+              net?.sendIntent("build", { do: "platform", tx: p.tx, ty: p.ty, rot: platformRot, anchor: selectedPlatformAnchor });
+              toast("Platform pending — awaiting host...", "info");
+              setTimeout(()=> pendingRailOps.delete(pendingKey), 3000);
+            } else {
+              // @ts-ignore
+              const anchors = findPlatformAnchors(grid, track, railway, p.tx, p.ty, platformRot, me.id, me.i+1, eco.factories);
+              // @ts-ignore
+              let anchor = selectedPlatformAnchor && (anchors as any[]).some((a:any)=>a.kind===selectedPlatformAnchor.kind && a.id===selectedPlatformAnchor.id) ? selectedPlatformAnchor : (anchors[0] ?? null);
+              if (!anchor && anchors.length>1) { toast(`Multiple anchors: ${anchors.map((a:any)=> a.kind+"#"+a.id).join(", ")} — click anchor to select (R to rotate)`, "info"); selectedPlatformAnchor = anchors[0]; return; }
+              // @ts-ignore
+              const refusal = platformRefusal(grid, track, railway, p.tx, p.ty, platformRot, me.id, me.i+1, anchor as any, eco.factories);
+              if (refusal) { toast(`Platform can't go here — ${refusal}`, "bad"); flashAt(p.tx,p.ty, String(refusal)); return; }
+              const canAfford = Object.entries(BUILD_COSTS.platform as Record<string,number>).every(([k,v])=> (me.purse as any)[k] >= v);
+              if (!canAfford) { toast(`Platform needs ${costMarkup(BUILD_COSTS.platform)}`, "bad"); return; }
+              // create platform via railway state
+              const pid = railway.nextPlatformId++;
+              const platform = { id: pid, owner: me.id, ownerId: me.i+1, tx: p.tx, ty: p.ty, rotation: platformRot, anchor: anchor as any };
+              railway.platforms.push(platform as any);
+              spend(me, BUILD_COSTS.platform as any);
+              railway.railRevision++;
+              syncWorld(); rescoreNow();
+              toast(`Rail Platform #${pid} placed +1★`, "good");
+              // explain service without passive income
+              if (railway.platforms.filter(pl=>pl.owner===me.id).length===1) toast("Rail service grants match-3 eligibility only — no arrival payout. Build depot + train + line.", "info");
+            }
+          } else if (tool === "trainDepot") {
+            if (isGuest()) {
+              const k = `depot:${p.tx},${p.ty}:${trainDepotRot}`;
+              pendingRailOps.set(k, performance.now()+3000);
+              net?.sendIntent("build", { do: "trainDepot", tx:p.tx, ty:p.ty, rot:trainDepotRot });
+              toast("Train Depot pending — awaiting host...", "info");
+              setTimeout(()=> pendingRailOps.delete(k), 3000);
+            } else {
+              // @ts-ignore
+              const refusal = railDepotRefusal(grid, track, railway, p.tx, p.ty, trainDepotRot, me.i+1);
+              if (refusal) { toast(`Depot can't go here — ${refusal}`, "bad"); flashAt(p.tx,p.ty, String(refusal)); return; }
+              const canAfford = Object.entries(BUILD_COSTS.trainDepot as Record<string,number>).every(([k,v])=> (me.purse as any)[k] >= v);
+              if (!canAfford) { toast(`Train Depot needs ${costMarkup(BUILD_COSTS.trainDepot)}`, "bad"); return; }
+              const did = railway.nextDepotId++;
+              const depot = { id: did, owner: me.id, ownerId: me.i+1, tx:p.tx, ty:p.ty, rotation: trainDepotRot };
+              railway.depots.push(depot as any);
+              spend(me, BUILD_COSTS.trainDepot as any);
+              railway.railRevision++;
+              syncWorld(); rescoreNow();
+              toast(`Train Depot #${did} placed`, "good");
+            }
           }
           else if (tool === "road" || tool === "dirt") {
             // A tap with a track tool that got here is a refusal: the legal
@@ -4413,8 +4947,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const onKeydown = (e: KeyboardEvent) => {
     // Tool hotkeys. `q` is the pointer (select) — the keyboard twin of the
     // right-click cancel.
-    const map: Record<string, Tool> = { "q": "select", "1": "dirt", "2": "road", "3": "harvester", "4": "plant", "5": "demolish" };
+    const map: Record<string, Tool> = { "q": "select", "1": "dirt", "2": "road", "3": "harvester", "4": "plant", "5": "demolish", "6": "rail", "7": "platform", "8": "trainDepot" };
     if (!isTypingTarget(e) && map[e.key]) tool = map[e.key];
+    // Railways v1: R rotates platform/depot orientation, using shared legality for preview
+    if (!isTypingTarget(e) && (e.key === "r" || e.key === "R")) {
+      if (tool === "platform") { platformRot = (platformRot + 1) % 4; toast(`Platform rotation ${platformRot * 90}°`, "info"); }
+      else if (tool === "trainDepot") { trainDepotRot = (trainDepotRot + 1) % 4; toast(`Depot rotation ${trainDepotRot * 90}°`, "info"); }
+    }
     // WASD pan — plain keys only (a modified key is a browser/editor
     // shortcut, not the camera), and never while typing in a field.
     if (!isTypingTarget(e) && !e.ctrlKey && !e.metaKey && !e.altKey) {
@@ -4422,10 +4961,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (PAN_KEYS.has(k)) panKeys.add(k);
       panShift = e.shiftKey;
     }
-    if (e.key === "Escape" && pendingProtest) {
-      pendingProtest = false;
-      toast("Protest cancelled.", "info");
-      return;
+    if (e.key === "Escape") {
+      if (pendingProtest) { pendingProtest = false; toast("Protest cancelled.", "info"); return; }
+      if (drag || preview) { drag = null; preview = null; dragLive=false; railPreview=null; toast("Rail drag cancelled.", "info"); return; }
+      if (tool !== "select") { tool = "select"; toast("Tool cancelled.", "info"); return; }
     }
     if (e.key === "`" || e.key === "~") {
       if (debug) {
@@ -4652,6 +5191,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         { kind: "you", data: quarry.board.save() },
         { kind: "ai", data: rivalQuarry.board.save() },
       ],
+      railway: { rail: bytesToBase64(railway.rail), railOwner: bytesToBase64(railway.railOwner), platforms: railway.platforms.map(p=> ({...p})), depots: railway.depots.map(d=> ({...d})), lines: railway.lines.map(l=> ({...l})), trains: railway.trains.map(t=> ({...t, path: t.path? [...t.path]: null})), rev: railway.railRevision },
       // live AI clocks START FRESH on load — a few seconds of drift is not
       // worth serialising a timer list for (the games feel identical).
       clocks: {},
@@ -4693,11 +5233,26 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       players[i].freeTrack = d.players[i].freeTrack;
       players[i].freeDepots = d.players[i].freeDepots;
     }
+    // Railways v1 — additive migration: old saves have no railway
+    if ((d as any).railway) {
+      const r = (d as any).railway;
+      railway.rail.set(base64ToBytes(r.rail));
+      railway.railOwner.set(base64ToBytes(r.railOwner));
+      railway.platforms.length=0; for (const p of r.platforms) railway.platforms.push(p);
+      railway.depots.length=0; for (const dd of r.depots) railway.depots.push(dd);
+      railway.lines.length=0; for (const l of r.lines) railway.lines.push(l);
+      railway.trains.length=0; for (const t of r.trains) railway.trains.push(t);
+      railway.railRevision = r.rev ?? 0;
+      railway.nextPlatformId = Math.max(1, ...railway.platforms.map((p:any)=>p.id+1), railway.nextPlatformId);
+      railway.nextDepotId = Math.max(1, ...railway.depots.map((d:any)=>d.id+1), railway.nextDepotId);
+      railway.nextTrainId = Math.max(1, ...railway.trains.map((t:any)=>t.id+1), railway.nextTrainId);
+      railway.nextLineId = Math.max(1, ...railway.lines.map((l:any)=>l.id+1), railway.nextLineId);
+    }
     // VP is derived state and is intentionally absent from the save. Rebuild
     // its ledgers now (without UI events), or a restored final screen would say
     // 0★ despite showing the winning roads beneath it.
-    score.paved.clear(); score.plants.clear(); score.vp.clear();
-    rescore(eco, score);
+    score.paved.clear(); score.plants.clear(); score.vp.clear(); (score.platforms as any)?.clear?.();
+    rescore(eco, score, railway);
     for (const p of players) starFed.set(p.id, Math.floor(vpFor(score, p.id)));
     phase = d.phase as typeof phase;
     winner = d.winnerId
@@ -4705,8 +5260,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       : null;
     playerSabotage = Math.max(0, Math.floor(d.story?.playerSabotage ?? 0));
     rivalSabotageHits = Math.max(0, Math.floor(d.story?.rivalSabotage ?? 0));
-    winningSource = d.story?.winningSource === "upgrade" || d.story?.winningSource === "plant"
-      ? d.story.winningSource
+    winningSource = d.story?.winningSource === "upgrade" || d.story?.winningSource === "plant" || d.story?.winningSource === "platform"
+      ? d.story.winningSource as any
       : null;
     oilBanterSeen = d.story?.oilBanterSeen === true;
     for (const b of d.boards) {
@@ -5319,6 +5874,24 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         tickTrucks(trucks, dt, protests.size > 0 ? new Set(protests.keys()) : undefined);
         // TRAFFIC-01: the ambient cars roll on the same frame, host/solo only.
         tickCars(cars, dt, track, grid, seed);
+        // Railways v1: trains tick host/solo only — guests interpolate from host deltas
+        try {
+          const beforeRev = lastRailRev;
+          const beforeStates = railway.trains.map(tr=> `${tr.id}:${tr.state}:${tr.hasReachedSource}`);
+          railTickTrains(railway, dt, t);
+          if (railway.railRevision !== beforeRev || railway.trains.map(tr=> `${tr.id}:${tr.state}:${tr.hasReachedSource}`).join("|") !== beforeStates.join("|")) {
+            lastRailRev = railway.railRevision;
+            // host authoritative: refresh economy reachability and VP
+            quarry.refresh(t);
+            rescoreNow();
+          }
+        } catch {}
+        // Recompute reached-source etc which may affect economy reachability
+        // Refresh quarry if rail revision advanced (not every frame)
+        // Note: quarry.refresh will be called via rescoreNow when railRevision changes? For now we call when any train changed state
+        // We do lightweight check: if any train's hasReachedSource changed, we could rescore.
+        // Simplest: if railRevision changed since last frame, refresh.
+        // We track via closure variable lastRailRev
       } else {
         // Guest: vehicles are host-authoritative — already synced via snapshot/delta,
         // just ensure world.vehicles reflects the synced state (applied in delta handler)

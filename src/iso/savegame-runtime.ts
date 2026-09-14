@@ -43,7 +43,7 @@ export interface SaveGamePayload {
   story?: {
     playerSabotage: number;
     rivalSabotage: number;
-    winningSource: "upgrade" | "plant" | null;
+    winningSource: "upgrade" | "plant" | "platform" | null;
     /** Optional because cinematic saves created before conversational oil
      * banter did not track whether its one-off scene had played. */
     oilBanterSeen?: boolean;
@@ -61,6 +61,7 @@ export interface SaveGamePayload {
   };
   players: { purse: Record<string, number>; freeTrack: number; freeDepots: number }[];
   boards: SavedBoardShape[];
+  railway?: { rail: string; railOwner: string; platforms: any[]; depots: any[]; lines: any[]; trains: any[]; rev: number };
   /** Reserved. The live AI pacing clocks (build/offer/raid) re-start clean
    *  on restore — a few seconds of drift is not worth serialising timers. */
   clocks: Record<string, number>;

@@ -95,10 +95,17 @@ function copyBuildingLayers(): Plugin {
     },
     closeBundle() {
       const from = path.resolve(srcDir, "assets", "buildings");
-      if (!existsSync(from)) return;
-      const to = path.resolve(srcDir, outDir, "assets", "buildings");
-      cpSync(from, to, { recursive: true });
-      this.environment?.logger?.info?.(`building layers copied → ${path.relative(srcDir, to)}`);
+      if (existsSync(from)) {
+        const to = path.resolve(srcDir, outDir, "assets", "buildings");
+        cpSync(from, to, { recursive: true });
+        this.environment?.logger?.info?.(`building layers copied → ${path.relative(srcDir, to)}`);
+      }
+      const fromRail = path.resolve(srcDir, "assets", "railway");
+      if (existsSync(fromRail)) {
+        const toRail = path.resolve(srcDir, outDir, "assets", "railway");
+        cpSync(fromRail, toRail, { recursive: true });
+        this.environment?.logger?.info?.(`railway layers copied → ${path.relative(srcDir, toRail)}`);
+      }
     },
   };
 }
