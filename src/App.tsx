@@ -139,7 +139,18 @@ export default function App() {
 
   if (reel) return <div ref={reelRef} className="reel-host" />;
   if (choice) return <div ref={ref} className="game-root" />;
-  if (atMenu) return <MainMenu onPlay={() => { setBackToCampaign(false); setAtMenu(false); }} />;
+  if (atMenu) return (
+    <MainMenu
+      onPlay={() => { setBackToCampaign(false); setAtMenu(false); }}
+      // CONTINUE-01 (#191): the front door's gold button jumps straight into
+      // the freshest resumable solo save — sandbox slot or a contract — by
+      // handing `begin` the same choice the mode screen would. The boot finds
+      // the slot and resumes it; no slot is cleared on this path.
+      onContinue={(chapterId) => begin(chapterId === null
+        ? { mode: "ai", portrait: "vex" }
+        : { mode: "story", chapter: chapterId, portrait: "vex" })}
+    />
+  );
   return (
     <StartScreen
       onStart={begin}

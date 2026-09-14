@@ -3082,6 +3082,13 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .start-actions button:hover, .start-panel button:hover { border-color: var(--gold, #c98731); background: rgba(255,166,43,.1); }
 .start-actions .start-primary, .start-panel .start-primary { color: #1b130b; border-color: var(--gold2, #e9a83e); background: var(--gold2, #e9a83e); }
 .start-primary small { margin-left: 8px; opacity: .7; font-weight: 400; }
+/* CONTINUE-01 (#191): the resume door carries its dossier on a second line
+   instead of the inline small every other start button uses. */
+.start-continue { line-height: 1.3; }
+.start-continue small {
+  display: block; margin: 3px 0 0; opacity: .72; font-weight: 500;
+  letter-spacing: .2px; text-transform: none; white-space: normal;
+}
 .start-panel input { box-sizing: border-box; width: 100%; margin: 10px 0 14px; padding: 12px; border: 1px solid var(--line, #594b3b); color: var(--txt, #efe4d0); background: #181512; outline: none; }
 .start-panel input:focus { border-color: var(--gold2, #e9a83e); }
 .start-panel button:disabled { opacity: .4; cursor: not-allowed; }
@@ -3883,6 +3890,27 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 }
 .cc-seal.loss { border-color: var(--danger2); color: var(--danger2); }
 .cc-lock { flex: 0 0 auto; align-self: flex-start; font-size: 14px; line-height: 1; color: var(--txt-mute); }
+/* CONTINUE-01 (#191): a contract with a live save wears a gold Continue
+   ribbon (the card itself resumes), and its More toggle shares a button row
+   with the destructive "Start over" door that clears the slot. */
+.chapter-card.has-save { border-color: rgba(233, 168, 62, .55); }
+.chapter-card.has-save:hover:not(.locked) { border-color: var(--gold2); }
+.cc-continue {
+  align-self: flex-start; margin-top: 3px; padding: 3px 8px;
+  font: 600 10px/1.4 var(--mono); letter-spacing: .3px;
+  color: var(--gold2); background: rgba(233, 168, 62, .1);
+  border: 1px solid rgba(201, 162, 74, .5);
+}
+.cc-continue b { font-weight: 700; letter-spacing: 1.2px; }
+.cc-actions { display: flex; }
+.cc-actions .cc-more { flex: 1 1 auto; }
+.start-panel .cc-restart {
+  flex: 0 0 auto; min-height: 0; padding: 5px 12px;
+  font: 600 10px/1.2 var(--serif); letter-spacing: 1.4px; text-transform: uppercase;
+  color: var(--txt-mute); background: rgba(12, 8, 6, .88);
+  border: 1px solid var(--brass-lo); border-top: 0; border-left: 0; cursor: pointer;
+}
+.start-panel .cc-restart:hover { color: var(--danger2); border-color: var(--danger2); border-top-color: var(--brass-lo); background: rgba(24, 17, 12, .95); }
 .story-menu-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
 
 /* ══════════════════════════════════════════════════════════════════════
