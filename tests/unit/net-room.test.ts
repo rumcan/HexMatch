@@ -15,7 +15,7 @@ import {
   type Player,
   type RoomProtocol,
 } from "@series-inc/rundot-game-sdk/mp-server";
-import HexmatchRoom, { FORFEIT_GRACE_MS, HOST_LEFT_REASON } from "../../src/rooms/HexmatchRoom";
+import HexmatchRoom, { FORFEIT_GRACE_MS, HOST_LEFT_REASON, PRESENCE_POLL_MS } from "../../src/rooms/HexmatchRoom";
 import {
   PROTOCOL_VERSION,
   validateWelcome,
@@ -48,7 +48,7 @@ interface Harness {
   frames: Frame[];
 }
 
-function setup(): Harness {
+function setup(config: Record<string, unknown> = {}): Harness {
   const frames: Frame[] = [];
   const players = new Map<string, Player>();
   const silentLog = {
@@ -68,7 +68,12 @@ function setup(): Harness {
     sendTo: (playerId: string, type: string, data: unknown) => {
       frames.push({ target: playerId, type, data });
     },
-    kick: () => {},
+    // #164: a kick is the room's answer to an `abandon` — recorded like every
+    // other outbound call (the real harness turns it into removePlayer, which
+    // the tests then drive through `handleLeave` as they always have).
+    kick: (playerId: string, reason?: string) => {
+      frames.push({ target: playerId, type: "kick", data: { reason: reason ?? null } });
+    },
     lock: () => {},
     unlock: () => {},
     persist: () => {},
@@ -87,7 +92,7 @@ function setup(): Harness {
     protocol,
     roomId: "room-1",
     roomType: "hexmatch",
-    config: { maxPlayers: 2 },
+    config: { maxPlayers: 2, ...config },
     players,
     clock: new Clock(),
     log: silentLog,
@@ -684,5 +689,192 @@ describe("#186 the room's match settings", () => {
     h.frames.length = 0;
     await h.protocol.handleMessage("host-1", "snapshot", { snap: tinySnapshot() });
     expect(h.room.locked).toBe(false);
+  });
+});
+
+// #164 — presence, the reconnect window, the rejoin, and `abandon`
+//
+// The report: a player the browser kicked could not rejoin, and the seat left
+// behind got a dark, silent board. The room is the only party that can fix
+// either half — it is the only place the platform's presence flags are
+// visible, and the only authority on a result. So it polls the flags, speaks
+// the two transitions out loud (`peerStatus`), re-greets a returner the
+// harness never re-introduces, remembers seats it has evicted so a survivor's
+// claim still files, and answers an announced departure (`abandon`) with an
+// immediate kick instead of a hold-window countdown.
+// ══════════════════════════════════════════════════════════════════════════
+describe("#164 presence, reconnect, abandon", () => {
+  async function liveMatch(config: Record<string, unknown> = {}): Promise<Harness> {
+    const h = setup(config);
+    await h.protocol.handleCreate();
+    await join(h, "host-1", "Host");
+    await join(h, "guest-2", "Guest");
+    await h.protocol.handleMessage("host-1", "delta", { t: 4, seq: 1 });
+    h.frames.length = 0;
+    return h;
+  }
+  const results = (h: Harness) =>
+    h.frames.filter((f) => f.type === "result").map((f) => messageOf(f) as ResultMsg);
+  const statuses = (h: Harness) =>
+    h.frames.filter((f) => f.type === "peerStatus").map((f) => messageOf(f));
+  /** Flip the platform's presence flag the way the gateway does on a drop. */
+  const setConnected = (h: Harness, id: string, connected: boolean) => {
+    const p = h.protocol.getPlayers().get(id) as unknown as { connected: boolean };
+    p.connected = connected;
+  };
+
+  it("a dropped socket is announced as HELD, with the window the platform is running", async () => {
+    vi.useFakeTimers();
+    try {
+      const h = await liveMatch();
+      setConnected(h, "guest-2", false);
+      // Nothing before the poll: the flag alone says nothing to the survivor.
+      expect(statuses(h)).toHaveLength(0);
+      vi.advanceTimersByTime(PRESENCE_POLL_MS);
+      expect(statuses(h)).toEqual([
+        { type: "peerStatus", playerId: "guest-2", status: "disconnected", graceMs: 60_000, username: "Guest" },
+      ]);
+      // And a held seat is not a lost one: no forfeit, no result yet.
+      expect(results(h)).toHaveLength(0);
+      // The window is the room's own config, not a hardcoded guess.
+      const h2 = await liveMatch({ reconnectTimeout: 15 });
+      setConnected(h2, "guest-2", false);
+      vi.advanceTimersByTime(PRESENCE_POLL_MS);
+      expect(statuses(h2)[0]).toMatchObject({ status: "disconnected", graceMs: 15_000 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a return inside the window is announced, and RE-GREETED with a fresh welcome", async () => {
+    vi.useFakeTimers();
+    try {
+      const h = await liveMatch();
+      setConnected(h, "guest-2", false);
+      vi.advanceTimersByTime(PRESENCE_POLL_MS);
+      h.frames.length = 0;
+
+      setConnected(h, "guest-2", true);
+      vi.advanceTimersByTime(PRESENCE_POLL_MS);
+      expect(statuses(h)).toEqual([
+        { type: "peerStatus", playerId: "guest-2", status: "reconnected", username: "Guest" },
+      ]);
+      // The harness runs NO hook on a re-attach, and a returner whose page
+      // reloaded is a brand-new client that never saw the seed — so the poll
+      // re-greets on both channels, exactly like a first join.
+      const welcomed = h.frames.filter((f) => f.type === "welcome");
+      expect(welcomed.some((f) => f.target === "broadcast")).toBe(true);
+      expect(welcomed.some((f) => f.target === "guest-2")).toBe(true);
+      // The survivor's own session resumes off the broadcast welcome.
+      expect(results(h)).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the poll speaks each transition ONCE — a second tick does not re-announce", async () => {
+    vi.useFakeTimers();
+    try {
+      const h = await liveMatch();
+      setConnected(h, "guest-2", false);
+      vi.advanceTimersByTime(PRESENCE_POLL_MS * 4);
+      expect(statuses(h)).toHaveLength(1);
+      setConnected(h, "guest-2", true);
+      vi.advanceTimersByTime(PRESENCE_POLL_MS * 4);
+      expect(statuses(h)).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("an announced `abandon` kicks the seat at once — no hold-window countdown", async () => {
+    const h = await liveMatch();
+    await h.protocol.handleMessage("guest-2", "abandon", {});
+    // The kick is the room's whole answer; the harness turns it into
+    // removePlayer → handleLeave("kick"), which files the survivor's win.
+    const kicks = h.frames.filter((f) => f.type === "kick");
+    expect(kicks).toHaveLength(1);
+    expect(kicks[0].target).toBe("guest-2");
+    // Drive the harness half of the kick.
+    await leave(h, "guest-2", "kick");
+    expect(results(h)).toEqual([
+      expect.objectContaining({ winnerId: "host-1", loserId: "guest-2", reason: "forfeit", departedId: "guest-2" }),
+    ]);
+  });
+
+  it("`abandon` in a LOBBY rates nothing — the match was never live", async () => {
+    const h = setup();
+    await h.protocol.handleCreate();
+    await join(h, "host-1", "Host");
+    await join(h, "guest-2", "Guest");
+    h.frames.length = 0;
+    await h.protocol.handleMessage("guest-2", "abandon", {});
+    expect(h.frames.filter((f) => f.type === "kick")).toHaveLength(1);
+    await leave(h, "guest-2", "kick");
+    expect(results(h)).toHaveLength(0);
+  });
+
+  it("`abandon` after the result is filed kicks but files nothing twice", async () => {
+    const h = await liveMatch();
+    await leave(h, "guest-2");                  // an explicit leave files it
+    expect(results(h)).toHaveLength(1);
+    h.frames.length = 0;
+    // A racing abandon from the same seat cannot double-file.
+    await h.protocol.handleMessage("host-1", "abandon", {});
+    await leave(h, "host-1", "kick");
+    expect(results(h)).toHaveLength(0);
+  });
+
+  it("a survivor who FINISHES after the seat was evicted still files (everJoined)", async () => {
+    vi.useFakeTimers();
+    try {
+      const h = await liveMatch();
+      await leave(h, "guest-2", "disconnect");   // evicted: no longer a member
+      expect(results(h)).toHaveLength(0);        // armed, not filed
+      // The survivor crosses the star line and claims — the loser is a seat
+      // this room has SEEN, so the claim is honoured without waiting out the
+      // forfeit timer.
+      await h.protocol.handleMessage("host-1", "resultClaim", {
+        winnerId: "host-1", loserId: "guest-2", reason: "win", durationSec: 300,
+      });
+      expect(results(h)).toEqual([
+        expect.objectContaining({ winnerId: "host-1", loserId: "guest-2", reason: "win" }),
+      ]);
+      // The armed timer died with the filing.
+      vi.advanceTimersByTime(FORFEIT_GRACE_MS * 3);
+      expect(results(h)).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a claim naming a seat this room NEVER saw is still refused", async () => {
+    const h = await liveMatch();
+    await h.protocol.handleMessage("host-1", "resultClaim", {
+      winnerId: "host-1", loserId: "ghost-9", reason: "win", durationSec: 10,
+    });
+    expect(results(h)).toHaveLength(0);
+  });
+
+  it("stops polling an empty room, and restarts on the next join", async () => {
+    vi.useFakeTimers();
+    try {
+      const h = await liveMatch();
+      await leave(h, "host-1");
+      await leave(h, "guest-2");
+      expect(h.room.playerCount).toBe(0);
+      h.frames.length = 0;
+      // No member left to watch: the poll is silent, and flipping a flag on a
+      // gone seat produces nothing.
+      vi.advanceTimersByTime(PRESENCE_POLL_MS * 3);
+      expect(statuses(h)).toHaveLength(0);
+      // A fresh join restarts the watch.
+      await join(h, "host-3", "Host");
+      setConnected(h, "host-3", false);
+      vi.advanceTimersByTime(PRESENCE_POLL_MS);
+      expect(statuses(h)).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

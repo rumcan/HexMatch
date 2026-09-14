@@ -43,12 +43,29 @@
 //
 // It still never simulates, never reads a scoreboard, and never invents a
 // number: every rating on its board was sent by the player it describes.
+//
+// ── #164: presence, the reconnect window, and the rejoin ──────────────────
+//
+// A dropped socket used to be invisible until the platform evicted the seat a
+// minute later: the survivor watched a frozen board behind a blank overlay,
+// and the returner had no way back in. The room is the only party that can
+// see BOTH sides of that, so it now watches the harness's own `connected`
+// flags once a second (`pollPresence`) and speaks the transitions as
+// `peerStatus` — "disconnected, seat held for graceMs" and "reconnected" —
+// re-greeting a returner with a fresh welcome so a reloaded page can rejoin
+// the SAME match by room code (the rejoin path `getUserRooms` lists). The
+// forfeit rules are unchanged: an eviction inside a live match still arms
+// `FORFEIT_GRACE_MS` and still files the leaver's loss, and a survivor's
+// `resultClaim` may now name an opponent the room has already evicted — the
+// "finish the game" the opponent-left dialog promises.
 // ══════════════════════════════════════════════════════════════════════════
 import { GameRoom, type GameMessage, type LeaveReason, type Player } from "@series-inc/rundot-game-sdk/mp-server";
-import { PROTOCOL_VERSION, readMatchSettings, readRankWire, type HexProtocol, type MatchSettings, type PlayerRatingMsg, type RankWire, type ResultClaimMsg, type ResultMsg, type SettingsClaimMsg, type Slot } from "../net/protocol";
+import { HOST_LEFT_REASON, PROTOCOL_VERSION, readMatchSettings, readRankWire, type HexProtocol, type MatchSettings, type PlayerRatingMsg, type RankWire, type ResultClaimMsg, type ResultMsg, type SettingsClaimMsg, type Slot } from "../net/protocol";
 
-/** Sent when the host is gone — no host, no truth, say so plainly. */
-export const HOST_LEFT_REASON = "The host left the game.";
+/** Sent when the host is gone — no host, no truth, say so plainly. The
+ *  string lives in the protocol so the client can recognise it without
+ *  importing the server module (#164); re-exported for existing callers. */
+export { HOST_LEFT_REASON };
 
 /**
  * RANK-01: how long the room waits before a DISCONNECT becomes a forfeit.
@@ -61,6 +78,25 @@ export const HOST_LEFT_REASON = "The host left the game.";
  * escapable by pressing the button faster.
  */
 export const FORFEIT_GRACE_MS = 30_000;
+
+/**
+ * #164: how often the room looks at its members' `connected` flags.
+ *
+ * The platform flips `player.connected` to false the moment a socket drops and
+ * holds the seat for `reconnectTimeout`, but it TELLS the room nothing — the
+ * system messages that carry the transition are consumed inside the SDK's
+ * `GameRoom` and never reach `onGameMessage`. Without a poll the seat still in
+ * the match would watch a frozen world for a whole minute with no idea why
+ * (the blank-overlay strand in #164). One look a second is cheap (two members,
+ * one boolean each) and bounds how long the silence lasts.
+ */
+export const PRESENCE_POLL_MS = 1_000;
+
+/** The clock handle the presence poll runs under (named, so it is clearable). */
+export const PRESENCE_TIMER = "presence-poll";
+
+/** The reconnect window the platform holds a dropped seat for, in ms. */
+export const DEFAULT_RECONNECT_GRACE_MS = 60_000;
 
 export default class HexmatchRoom extends GameRoom<HexProtocol> {
   private seed = 0;
@@ -87,6 +123,17 @@ export default class HexmatchRoom extends GameRoom<HexProtocol> {
   private matchLive = false;
   /** Armed forfeits for disconnected players, by timer name. */
   private readonly forfeitTimers = new Map<string, string>();
+  /**
+   * #164: every id that has ever held a seat. A survivor's `resultClaim` may
+   * name an opponent the room has already EVICTED (the star line can be
+   * crossed after the "opponent left" dialog offered "finish the game") — the
+   * membership check alone would drop exactly the claim the dialog promises.
+   * Membership is still required for the WINNER: a seat that never existed can
+   * never win, and a seat that emptied can no longer claim anything.
+   */
+  private readonly everJoined = new Set<string>();
+  /** #164: the last `connected` value the presence poll saw, per member. */
+  private readonly presence = new Map<string, boolean>();
 
   onCreate() {
     // The seed is minted here, exactly as server.js did at room creation.
@@ -107,6 +154,7 @@ export default class HexmatchRoom extends GameRoom<HexProtocol> {
       // would mis-slot that case.
       this.slots.set(player.id, player.id === hostId ? 0 : 1);
     }
+    this.everJoined.add(player.id);
     if (this.playerCount >= 2) this.lock();
     // RANK-01: a reconnecting player is not a leaver. Cancelling the armed
     // forfeit here is the whole point of the grace window above.
@@ -115,6 +163,12 @@ export default class HexmatchRoom extends GameRoom<HexProtocol> {
       this.clock.clear(armed);
       this.forfeitTimers.delete(player.id);
       this.log.info("Forfeit cancelled — player reconnected", { playerId: player.id });
+    }
+    // #164: seed the presence poll with the joiner's live state, and start the
+    // poll the first time the room has anyone to watch.
+    this.presence.set(player.id, player.connected !== false);
+    if (!this.clock.has(PRESENCE_TIMER)) {
+      this.clock.setInterval(PRESENCE_TIMER, () => this.pollPresence(), PRESENCE_POLL_MS);
     }
     this.log.info("Player joined", { playerId: player.id, hostId });
     // A broadcast inside onPlayerJoin only reaches ALREADY-connected members:
@@ -151,6 +205,24 @@ export default class HexmatchRoom extends GameRoom<HexProtocol> {
       this.onSettingsClaim(msg.sender, p);
       return;
     }
+    if (p.type === "abandon") {
+      // #164: "I am not coming back." A socket close looks exactly like a
+      // drop to the platform — the seat is HELD for the whole reconnect
+      // window — so a player who quits through a door (the in-game "Leave
+      // room", the rejoin prompt's "Abandon") would otherwise leave the
+      // survivor counting down a seat that will never refill. The kick is
+      // the whole handling: `onPlayerLeave` receives it as a deliberate
+      // departure (reason "kick") and files the leaver's loss at once for a
+      // live match, and the harness's own `room:playerLeft` broadcast opens
+      // the survivor's dialog in the same instant. Nothing is filed HERE —
+      // one place files for every leave reason, and its `resultFiled` guard
+      // is what keeps the racing socket close from filing twice.
+      if (this.players.has(msg.sender.id)) {
+        this.log.info("Player abandoning match — kicking seat", { playerId: msg.sender.id });
+        this.kick(msg.sender.id, "You left the match.");
+      }
+      return;
+    }
     if (p.type === "snapshot" || p.type === "snapshot-chunk" || p.type === "delta") {
       // THE authority check: only the host may assert state. A guest-forged
       // snapshot, chunk or delta is dropped silently — no broadcast, no error
@@ -176,10 +248,97 @@ export default class HexmatchRoom extends GameRoom<HexProtocol> {
     // what the relay does not understand.
   }
 
+  /**
+   * #164: one look a second at the platform's own presence flags.
+   *
+   * The harness flips `player.connected` when a socket drops (and holds the
+   * seat for `reconnectTimeout`) and flips it back on a re-attach — but it
+   * never calls a room hook for either transition, and the client SDK drops
+   * the gateway's `room:playerDisconnected` / `room:playerReconnected` frames
+   * on the floor. Polling is the only place the room can see it, and the room
+   * is the only party that can tell BOTH seats:
+   *
+   *   connected → disconnected   broadcast `peerStatus` with the hold window,
+   *                              so the survivor shows "Opponent disconnected
+   *                              — reconnecting 0:59" instead of a dark,
+   *                              silent board.
+   *   disconnected → connected   the seat came back inside the window. Cancel
+   *                              any armed forfeit, broadcast `peerStatus`,
+   *                              and RE-GREET the returner with a welcome:
+   *                              a re-attach never runs `onPlayerJoin`, and a
+   *                              returner whose PAGE reloaded is a brand-new
+   *                              client that has never seen the seed. The
+   *                              broadcast copy re-seats the survivor's
+   *                              session (its soft peer-gone state resumes on
+   *                              a welcome), and the host answers the fresh
+   *                              guest's resync with full state — the match
+   *                              resumes where it stood.
+   */
+  private pollPresence(): void {
+    for (const player of this.players.values()) {
+      const connected = player.connected !== false;
+      const before = this.presence.get(player.id);
+      if (before === undefined || before === connected) {
+        this.presence.set(player.id, connected);
+        continue;
+      }
+      this.presence.set(player.id, connected);
+      if (!connected) {
+        this.log.info("Peer disconnected — seat held", { playerId: player.id });
+        this.broadcast({
+          type: "peerStatus",
+          playerId: player.id,
+          status: "disconnected",
+          graceMs: this.reconnectGraceMs(),
+          username: player.username,
+        });
+        continue;
+      }
+      this.log.info("Peer reconnected inside the window", { playerId: player.id });
+      const armed = this.forfeitTimers.get(player.id);
+      if (armed) {
+        this.clock.clear(armed);
+        this.forfeitTimers.delete(player.id);
+      }
+      this.broadcast({
+        type: "peerStatus",
+        playerId: player.id,
+        status: "reconnected",
+        username: player.username,
+      });
+      // The re-greeting: targeted (the returner may be a fresh client that
+      // missed everything) and broadcast (the survivor resumes on a welcome).
+      const greeting = this.welcome(this.hostId ?? player.id);
+      this.broadcast(greeting);
+      this.sendTo(player.id, greeting);
+    }
+    // Tidy: drop presence for seats that are gone, and stop watching an empty
+    // room — the next join restarts the poll.
+    for (const id of this.presence.keys()) {
+      if (!this.players.has(id)) this.presence.delete(id);
+    }
+    if (this.playerCount === 0 && this.clock.has(PRESENCE_TIMER)) {
+      this.clock.clear(PRESENCE_TIMER);
+    }
+  }
+
+  /**
+   * The reconnect window the platform is holding, in ms — the countdown the
+   * survivor's UI prints. Read from the room's own config so the number on
+   * screen is the number the server is actually running.
+   */
+  private reconnectGraceMs(): number {
+    const secs = this.config.reconnectTimeout;
+    return typeof secs === "number" && secs > 0
+      ? secs * 1000
+      : DEFAULT_RECONNECT_GRACE_MS;
+  }
+
   onPlayerLeave(player: Player, reason: LeaveReason) {
     // MP-08 refines this per reason (a 10 s host reload must not end the
     // game); for now every departure is final.
     this.slots.delete(player.id);
+    this.presence.delete(player.id);
     if (player.id === this.hostId) {
       // No host, no truth. Tell the guest plainly rather than stranding them.
       this.hostId = null;
@@ -262,9 +421,12 @@ export default class HexmatchRoom extends GameRoom<HexProtocol> {
 
   /**
    * The host says the match is over. Validated to the shape the room can
-   * check — both ids are members, exactly one result per room — and then
-   * relayed to EVERYONE including the host, so both seats act on one verdict
-   * instead of each trusting itself.
+   * check — the winner is a member, the loser is a member OR a seat this room
+   * has seen and already evicted (#164: the survivor who picked "finish the
+   * game" crosses the star line AFTER the opponent's seat was removed, and
+   * "claim the win now" must not wait out the forfeit timer), exactly one
+   * result per room — and then relayed to EVERYONE including the host, so both
+   * seats act on one verdict instead of each trusting itself.
    *
    * A guest claiming a win is dropped: the guest does not run the simulation,
    * so it has no standing to declare the star line crossed.
@@ -274,7 +436,8 @@ export default class HexmatchRoom extends GameRoom<HexProtocol> {
     if (this.resultFiled) return;
     if (msg.reason !== "win" && msg.reason !== "forfeit") return;
     if (msg.winnerId === msg.loserId) return;
-    if (!this.players.has(msg.winnerId) || !this.players.has(msg.loserId)) return;
+    if (!this.players.has(msg.winnerId)) return;
+    if (!this.players.has(msg.loserId) && !this.everJoined.has(msg.loserId)) return;
     const durationSec = typeof msg.durationSec === "number" && Number.isFinite(msg.durationSec)
       ? Math.max(0, Math.round(msg.durationSec))
       : 0;

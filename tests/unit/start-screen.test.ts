@@ -23,6 +23,11 @@ vi.mock("../../src/net/transport", async (importOriginal) => {
     createRoom: vi.fn(),
     joinRoomByCode: vi.fn(),
     quickMatch: vi.fn(),
+    // #164: the rejoin offer reads these; every test that does not stage a
+    // held seat gets the honest default (no rooms, no memo) from beforeEach.
+    listRejoinableRooms: vi.fn(),
+    readActiveMatch: vi.fn(),
+    writeActiveMatch: vi.fn(),
     // The real one opens the platform login sheet; the fallback under test is
     // the "user dismissed it" path (§7's required play-vs-AI escape hatch).
     promptLogin: vi.fn(async () => ({ success: false })),
@@ -32,6 +37,25 @@ vi.mock("../../src/net/transport", async (importOriginal) => {
   };
 });
 
+// #164: abandoning a held match files the abandoner's own loss through the
+// REAL RankRuntime — the store underneath is the fake, recording the filing
+// the way iso-leave-room.test.ts does for the in-game door.
+const { rankFilings } = vi.hoisted(() => ({
+  rankFilings: [] as Parameters<import("../../src/net/rank-runtime").RankStore["fileResult"]>[0][],
+}));
+vi.mock("../../src/net/rankstore", () => ({
+  rankStore: () => ({
+    loadState: async () => ({ rating: 1180, matches: 12, wins: 7, losses: 5, season: "s1" }),
+    fileResult: async (
+      input: Parameters<import("../../src/net/rank-runtime").RankStore["fileResult"]>[0],
+    ) => {
+      rankFilings.push(input);
+      return { state: input.state, verdict: null, applied: true, ladder: null };
+    },
+    loadLadder: async () => null,
+  }),
+}));
+
 import StartScreen, { type StartChoice } from "../../src/ui/StartScreen";
 import { DEFAULT_MATCH_SETTINGS, type MatchSettings } from "../../src/net/match-settings";
 import { PROTOCOL_VERSION, type HexProtocol, type WelcomeMsg } from "../../src/net/protocol";
@@ -40,8 +64,12 @@ import {
   createRoom,
   isOfflineMockRealtime,
   joinRoomByCode,
+  listRejoinableRooms,
   quickMatch,
+  readActiveMatch,
+  writeActiveMatch,
   type HexRoom,
+  type RealtimeRoomSummary,
   type ServerPlayer,
 } from "../../src/net/transport";
 
@@ -55,7 +83,8 @@ interface FakeRoom extends HexRoom {
   /** Empty a seat, firing the event the room's `playerLeft` raises. */
   fireLeft: (playerId: string) => void;
   leaveCalls: number;
-  /** Everything the lobby sent to the room. */
+  /** Everything the lobby sent to the room — assertable for settings claims
+   *  (#186) and for the abandon frame (#164). */
   sent: HexProtocol[];
 }
 
@@ -94,11 +123,17 @@ function fakeRoom(roomCode: string, playerId = "p1", username = "Dev Player"): F
   return room;
 }
 
-function welcome(room: FakeRoom, seed = 4242): HexProtocol {
+// #164: a real room names the HOST in the welcome, and the start screen reads
+// that to seat the lobby (a guest's welcome names the far player, a host's
+// names itself, and a REJOINED original host's names itself again — the whole
+// point of the correction). So `hostId` is a parameter: host-side tests take
+// the default (the joiner), and guest-side tests pass a different id, exactly
+// as the room would.
+function welcome(room: FakeRoom, seed = 4242, hostId = room.playerId): HexProtocol {
   return {
     type: "welcome",
     seed,
-    hostId: room.playerId,
+    hostId,
     protocolVersion: PROTOCOL_VERSION,
     roster: [{ id: room.playerId, username: "Dev Player", slot: 0 }],
   };
@@ -152,12 +187,30 @@ const mockCreate = createRoom as unknown as ReturnType<typeof vi.fn>;
 const mockOffline = isOfflineMockRealtime as unknown as ReturnType<typeof vi.fn>;
 const mockJoin = joinRoomByCode as unknown as ReturnType<typeof vi.fn>;
 const mockMatch = quickMatch as unknown as ReturnType<typeof vi.fn>;
+const mockList = listRejoinableRooms as unknown as ReturnType<typeof vi.fn>;
+const mockReadMemo = readActiveMatch as unknown as ReturnType<typeof vi.fn>;
+const mockWriteMemo = writeActiveMatch as unknown as ReturnType<typeof vi.fn>;
+
+/** #164: a room the platform still rosters this player in (a held seat). */
+function heldSummary(roomCode = "HX9KWR", selfId = "p2", otherId = "host-1"): RealtimeRoomSummary {
+  return {
+    roomId: "room-1", roomCode, roomType: "hexmatch", appId: "app",
+    players: [otherId, selfId], maxPlayers: 2, isPrivate: false,
+    status: "active", createdAt: 0, updatedAt: 0,
+  };
+}
 
 beforeEach(() => {
   choices = [];
+  rankFilings.length = 0;
   // `vi.clearAllMocks()` keeps implementations, so a test that flips this must
   // not leak into the next one.
   mockOffline.mockReturnValue(false);
+  // #164: the honest default is "no held seat, no memo" — a test that stages a
+  // rejoin overrides these.
+  mockList.mockResolvedValue([]);
+  mockReadMemo.mockResolvedValue(null);
+  mockWriteMemo.mockResolvedValue(undefined);
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -246,7 +299,9 @@ describe("MP-06 join screen", () => {
     expect(mockJoin).toHaveBeenCalledWith("HX9KWR");
     expect(text()).toContain("Room found");
 
-    await act(async () => { room.emit(welcome(room, 777)); });
+    // A guest's welcome names the HOST (a different id), as a real room sends
+    // it — the joiner is not the host, so the lobby must resolve as guest.
+    await act(async () => { room.emit(welcome(room, 777, "host-1")); });
     await click("Play");
     expect(choices).toHaveLength(1);
     expect(choices[0]).toMatchObject({ mode: "guest", seed: 777 });
@@ -324,7 +379,7 @@ describe("MP-06 join screen", () => {
     await click("Join game");
     expect(button("Connecting…").disabled).toBe(true);
 
-    await act(async () => { room.emit(welcome(room)); });
+    await act(async () => { room.emit(welcome(room, 4242, "host-1")); });
     expect(button("Play").disabled).toBe(false);
   });
 
@@ -539,7 +594,8 @@ describe("auto matchmaking: never time out, and the rank window", () => {
     // Matched while still searching → into the room, as today.
     await act(async () => { resolveMatch(room); });
     expect(text()).toContain("Room found");
-    await act(async () => { room.emit(welcome(room, 777)); });
+    // Paired as the guest: the welcome names the OTHER seat as host.
+    await act(async () => { room.emit(welcome(room, 777, "host-1")); });
     await click("Play");
     expect(choices[0]).toMatchObject({ mode: "guest", seed: 777 });
   });
@@ -813,7 +869,10 @@ describe("#186 host game settings", () => {
     await click("Join with a code");
     await typeCode("HX9KWR");
     await act(async () => { button("Join game").click(); });
-    const greeting = welcome(room, 99) as WelcomeMsg;
+    // A real room's welcome names the HOST in hostId — p1, the slot-0 seat
+    // the roster below gives it (#164: the lobby re-derives its mode from
+    // welcome.hostId, so the fake must be as consistent as the real thing).
+    const greeting = welcome(room, 99, "p1") as WelcomeMsg;
     greeting.roster = [{ id: "p1", username: "Host", slot: 0 }, { id: "p2", username: "Guest", slot: 1 }];
     await act(async () => { room.emit(greeting); });
     expect(text()).toContain("Match rules");
@@ -848,5 +907,166 @@ describe("#186 host game settings", () => {
     expect(text()).toContain("RANKED");
     expect(text()).toContain("Ranked matches play the standard rules");
     expect(button("Add AI opponent").disabled).toBe(true);
+  });
+});
+
+// #164 — the match in progress: offer the walk back, or the honest loss
+//
+// The kicked player returns to a start screen that does not know they were
+// ever in a match. The platform still rosters them in the room (a held seat),
+// and `transport.listRejoinableRooms` reads that; the memo says whether it was
+// RANKED. Two ways in — the return offer on mount, and the Auto Matchmaking
+// guard that refuses to silently re-queue a player the far seat is waiting
+// on — and one panel: Rejoin, or Abandon (which files the loss at home and
+// tells the room, so nobody waits out a hold window).
+// ══════════════════════════════════════════════════════════════════════════
+describe("#164 a match in progress", () => {
+  /** Let the mount effect's findRejoinable (two awaits + a .then) settle. */
+  async function flush(): Promise<void> {
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  }
+  const memo = (ranked: boolean, roomCode = "HX9KWR") => ({ roomCode, ranked, at: 1 });
+
+  it("offers the walk back on return — the room, and whether it was ranked", async () => {
+    mockList.mockResolvedValue([heldSummary("HX9KWR", "p2", "host-1")]);
+    mockReadMemo.mockResolvedValue(memo(true));
+    await render();
+    await flush();
+    expect(text()).toContain("You have a match in progress");
+    expect(text()).toContain("HX9KWR");
+    expect(text()).toContain("ranked");
+    // The three doors: walk back, take the loss, or defer.
+    expect(button("Rejoin the match")).toBeTruthy();
+    expect(button("Abandon")).toBeTruthy();
+    expect(button("Not now")).toBeTruthy();
+  });
+
+  it("says nothing when the platform holds no seat", async () => {
+    await render();
+    await flush();
+    expect(text()).toContain("Back to work");
+    expect(text()).not.toContain("You have a match in progress");
+  });
+
+  it("Auto Matchmaking WARNS first instead of silently re-queueing", async () => {
+    mockList.mockResolvedValue([heldSummary("HX9KWR", "p2", "host-1")]);
+    mockReadMemo.mockResolvedValue(memo(true));
+    await render();
+    await flush();
+    // Dismiss the return offer, then try to queue: the guard catches it.
+    await click("Not now");
+    await click("Auto Matchmaking");
+    await flush();
+    expect(mockMatch).not.toHaveBeenCalled();          // the queue was never entered
+    expect(text()).toContain("You have a match in progress");
+    expect(button("Cancel")).toBeTruthy();              // the guard's dismiss is Cancel
+  });
+
+  it("rejoins the held seat and resolves the lobby from the room's own welcome", async () => {
+    mockList.mockResolvedValue([heldSummary("HX9KWR", "p2", "host-1")]);
+    mockReadMemo.mockResolvedValue(memo(true));
+    const room = fakeRoom("HX9KWR", "p2", "Rival");
+    mockJoin.mockResolvedValue(room);
+    await render();
+    await flush();
+    await click("Rejoin the match");
+    await flush();
+    expect(mockJoin).toHaveBeenCalledWith("HX9KWR");
+    // The room re-greets: this returner is the GUEST (the welcome names the
+    // far seat host), so the lobby resolves as guest and Play starts ranked.
+    await act(async () => { room.emit(welcome(room, 777, "host-1")); });
+    await click("Play");
+    expect(choices).toHaveLength(1);
+    expect(choices[0]).toMatchObject({ mode: "guest", seed: 777, ranked: true });
+    // Rejoining re-writes the memo (still an active match).
+    expect(mockWriteMemo).toHaveBeenCalledWith(expect.objectContaining({ roomCode: "HX9KWR", ranked: true }));
+  });
+
+  it("a rejoined ORIGINAL HOST resolves as host off the welcome's hostId", async () => {
+    mockList.mockResolvedValue([heldSummary("HX9KWR", "p2", "host-1")]);
+    mockReadMemo.mockResolvedValue(memo(true));
+    // This player is actually the host of the held room (hostId === playerId).
+    const room = fakeRoom("HX9KWR", "p2", "Rival");
+    mockJoin.mockResolvedValue(room);
+    await render();
+    await flush();
+    await click("Rejoin the match");
+    await flush();
+    await act(async () => { room.seat({ id: "host-1", username: "Bo", avatarUrl: null }); });
+    await act(async () => { room.emit(welcome(room, 555, "p2")); });  // hostId is us
+    await click("Start game");
+    expect(choices[0]).toMatchObject({ mode: "host", seed: 555, ranked: true });
+  });
+
+  it("ABANDON files the loss at home, tells the room, and drops the memo", async () => {
+    mockList.mockResolvedValue([heldSummary("HX9KWR", "p2", "host-1")]);
+    mockReadMemo.mockResolvedValue(memo(true));
+    const room = fakeRoom("HX9KWR", "p2", "Rival");
+    mockJoin.mockResolvedValue(room);
+    await render();
+    await flush();
+    await click("Abandon");
+    await flush();
+    // The abandoning seat filed its OWN loss locally (it will never see the
+    // room's verdict — it is leaving), against the rival's wire id, localOnly.
+    expect(rankFilings).toHaveLength(1);
+    expect(rankFilings[0].localOnly).toBe(true);
+    expect(rankFilings[0].selfId).toBe("p2");
+    expect(rankFilings[0].result).toMatchObject({
+      type: "result", winnerId: "host-1", loserId: "p2", reason: "forfeit",
+    });
+    // The room was told this is a departure, and the socket handed back.
+    expect(room.sent.some((m) => m.type === "abandon")).toBe(true);
+    expect(room.leaveCalls).toBe(1);
+    // The memo is cleared and the player is back at the modes.
+    expect(mockWriteMemo).toHaveBeenCalledWith(null);
+    expect(text()).toContain("Back to work");
+  });
+
+  it("ABANDON from the matchmaking guard files the loss, THEN searches", async () => {
+    mockList.mockResolvedValue([heldSummary("HX9KWR", "p2", "host-1")]);
+    mockReadMemo.mockResolvedValue(memo(true));
+    const room = fakeRoom("HX9KWR", "p2", "Rival");
+    mockJoin.mockResolvedValue(room);
+    mockMatch.mockReturnValue(new Promise(() => {}));    // the search never pairs
+    await render();
+    await flush();
+    await click("Not now");
+    await click("Auto Matchmaking");
+    await flush();
+    await click("Abandon");
+    await flush();
+    // The loss was filed, and the guard's promise is kept: abandon THEN queue.
+    expect(rankFilings).toHaveLength(1);
+    expect(mockMatch).toHaveBeenCalledTimes(1);
+    expect(text()).toContain("Finding an opponent");
+    // The just-abandoned seat is not re-caught by the guard on the way in:
+    // the mount offer and the guard each asked once, and the abandon's own
+    // search used the bypass rather than asking a third time.
+    expect(mockList).toHaveBeenCalledTimes(2);
+  });
+
+  it("writes the memo when a match begins, so a later kick can be answered", async () => {
+    const room = fakeRoom("HX9KWR", "p1", "Host");
+    mockCreate.mockResolvedValue(room);
+    await render();
+    await click("Host a game");
+    await act(async () => { room.emit(welcome(room, 99, "p1")); });
+    await act(async () => { room.seat({ id: "p2", username: "Rival", avatarUrl: null }); });
+    await click("Start game");
+    expect(choices[0]).toMatchObject({ mode: "host", seed: 99 });
+    // A hosted match is UNRANKED (#147), and the memo says so.
+    expect(mockWriteMemo).toHaveBeenCalledWith(expect.objectContaining({ roomCode: "HX9KWR", ranked: false }));
+  });
+
+  it("an unranked held seat still offers the walk back, without the rating warning", async () => {
+    mockList.mockResolvedValue([heldSummary("HX9KWR", "p2", "host-1")]);
+    mockReadMemo.mockResolvedValue(memo(false));
+    await render();
+    await flush();
+    expect(text()).toContain("You have a match in progress");
+    // Unranked: abandon is not "a loss" on the ladder, so the door says less.
+    expect(button("Abandon").textContent).not.toContain("counts as a loss");
   });
 });

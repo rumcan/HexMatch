@@ -179,6 +179,108 @@ export function getUserRooms(
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// #164 — the rejoin path.
+//
+// A kicked player lands back at the start screen with no memory of the match
+// they were in. The platform DOES remember: a dropped socket's seat is held
+// for the room's `reconnectTimeout`, and `getUserRooms` lists every room the
+// player is still rostered in — which is exactly the set of matches they can
+// walk back into. Two wrappers make that usable:
+//
+//   listRejoinableRooms — the filtered, never-throwing list. "Never throws"
+//                         is the whole design: the start screen asks this on
+//                         every boot, and a host without the rooms RPC (an old
+//                         webview, an offline mock) must degrade to "no
+//                         rejoin on offer", never to a broken screen.
+//   the active-match memo — one small per-player record of the match this
+//                         device walked into (room code + whether it is
+//                         RANKED). The summary cannot say whether a room came
+//                         out of the rated queue, and a rejoin that silently
+//                         downgraded a ranked match to a casual one would
+//                         leave the two seats filing different ratings for
+//                         one match. Cloud-backed like the rating file, with
+//                         the same localStorage mirror for dev pages.
+// ══════════════════════════════════════════════════════════════════════════
+
+/** The per-player key holding the active-match memo (see below). */
+export const ACTIVE_MATCH_KEY = "hexmatch:mp:active:v1";
+
+/** What this device walked into, so a return can offer the same match back. */
+export interface ActiveMatchMemo {
+  roomCode: string;
+  /** True when the match came out of the rated queue (RANK-01). */
+  ranked: boolean;
+  /** Wall clock (ms) when the match was entered. */
+  at: number;
+}
+
+/**
+ * Hexmatch rooms the signed-in player is still rostered in — the matches a
+ * return can rejoin. Resolves `[]` whenever the platform cannot answer (no
+ * host RPC, offline mock, signed out): no rejoin on offer is always safe.
+ */
+export async function listRejoinableRooms(): Promise<RealtimeRoomSummary[]> {
+  try {
+    const rooms = await getUserRooms();
+    if (!Array.isArray(rooms)) return [];
+    return rooms.filter(
+      (r) => r && r.roomType === ROOM_TYPE && r.status === "active" && typeof r.roomCode === "string",
+    );
+  } catch {
+    return [];
+  }
+}
+
+/** The memo's localStorage mirror key, same pattern as the rating file. */
+function activeMatchMirrorKey(): string {
+  return `${RANK_LOCAL_MIRROR}:${ACTIVE_MATCH_KEY}`;
+}
+
+/** Read the active-match memo; null when absent, unreadable or malformed. */
+export async function readActiveMatch(): Promise<ActiveMatchMemo | null> {
+  const parse = (raw: string | null): ActiveMatchMemo | null => {
+    if (!raw) return null;
+    try {
+      const o = JSON.parse(raw) as Partial<ActiveMatchMemo>;
+      if (typeof o?.roomCode !== "string" || o.roomCode.length === 0) return null;
+      return { roomCode: o.roomCode, ranked: o.ranked === true, at: Number(o.at) || 0 };
+    } catch {
+      return null;
+    }
+  };
+  const memo = parse(await readPlayerValue(ACTIVE_MATCH_KEY));
+  if (memo) return memo;
+  try {
+    if (typeof localStorage !== "undefined") return parse(localStorage.getItem(activeMatchMirrorKey()));
+  } catch { /* private mode */ }
+  return null;
+}
+
+/**
+ * Write (or with `null`, clear) the active-match memo. Written when a
+ * networked match is entered, cleared when it is left through a door this
+ * client controls — a kick is precisely the case that CANNOT clear it, which
+ * is what makes the rejoin offer possible on return.
+ */
+export async function writeActiveMatch(memo: ActiveMatchMemo | null): Promise<void> {
+  const json = memo ? JSON.stringify(memo) : "";
+  try {
+    if (typeof localStorage !== "undefined") {
+      if (memo) localStorage.setItem(activeMatchMirrorKey(), json);
+      else localStorage.removeItem(activeMatchMirrorKey());
+    }
+  } catch { /* private mode: the remote write is the real one */ }
+  if (memo) await writePlayerValue(ACTIVE_MATCH_KEY, json);
+  else {
+    // No removePlayerValue in the seam; an empty write reads back as null.
+    try {
+      const api = RundotGameAPI as unknown as { appStorage?: { removeItem?(key: string): Promise<void> } };
+      await api.appStorage?.removeItem?.(ACTIVE_MATCH_KEY);
+    } catch { /* nothing to clear */ }
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // RANK-01 (#147) — player storage and the ladder, behind the same seam.
 //
 // The rating system needs two platform calls this file did not previously

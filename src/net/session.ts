@@ -62,6 +62,7 @@ import {
   type HexProtocol,
   type IntentMsg,
   type MatchSettings,
+  type PeerStatusMsg,
   type PlayerRatingMsg,
   type RankWire,
   type ResultClaimMsg,
@@ -194,8 +195,28 @@ export interface NetHooks {
    * a host-left is a fatal error the guest cannot play through, whereas the
    * opponent leaving ends a match that was still running — the player still
    * has a board on screen and a door to walk out of.
+   *
+   * #164: NOT final any more. The seat can be re-taken — the same player
+   * rejoining by room code inside the room's forfeit window — and the fresh
+   * `welcome` that re-seats them resumes this session (`opponentReconnected`
+   * fires and state flow restarts). The hook still means what it says: right
+   * now, the opponent is out of the room.
    */
   opponentLeft?: (username: string | null) => void;
+  /**
+   * #164: the opponent's socket dropped, and the platform is HOLDING their
+   * seat for `graceMs` (the room's `reconnectTimeout`). The match is not over
+   * — this is the "Opponent disconnected — reconnecting…" notice, and the
+   * countdown the survivor prints is `graceMs`.
+   */
+  opponentDisconnected?: (username: string | null, graceMs: number) => void;
+  /**
+   * #164: the opponent is back — either their socket re-attached inside the
+   * hold window, or they rejoined by room code after it expired and a fresh
+   * welcome re-seated them. Whatever dialog the departure raised comes down,
+   * and state flow has already restarted by the time this fires.
+   */
+  opponentReconnected?: (username: string | null) => void;
 }
 
 export interface NetSessionOptions {
@@ -244,6 +265,26 @@ export class NetSession {
   private noticeValue: string | null = null;
   private halted = false;
   private attached = false;
+  /**
+   * #164: the far seat's presence, in two degrees.
+   *
+   *   peerAway — their socket dropped and the platform is HOLDING the seat
+   *              (the room's `peerStatus` said so). The match is paused in
+   *              spirit, not in state: nothing is pruned, and a
+   *              `reconnected` puts everything back without a resync of
+   *              anything but the UI's countdown.
+   *   peerGone — the seat EMPTYED (the gateway's roster event). The roster is
+   *              pruned, state flow stops, and the game owes the player the
+   *              "opponent left" choices. This used to be a `halt` — final,
+   *              unresumable — which is exactly why a rejoin was impossible:
+   *              the fresh welcome that re-seats the returner was dropped on
+   *              the floor. It is now soft: a welcome with an opponent in it
+   *              clears the flag and the match resumes.
+   */
+  private peerAway = false;
+  private peerGone = false;
+  /** The name the departed seat carried, so a return can be announced. */
+  private departedName: string | null = null;
   /**
    * RANK-01: the room's rating board, in wire order. Held here (not in the UI)
    * because it is wire state that must survive the lobby → match handover: the
@@ -321,6 +362,14 @@ export class NetSession {
   /** True once the room has seated a second player. */
   get hasOpponent(): boolean {
     return this.roster.length >= 2;
+  }
+  /** #164: the opponent's socket is down but their seat is being held. */
+  get opponentAway(): boolean {
+    return this.peerAway;
+  }
+  /** #164: the opponent's seat emptied (they may still rejoin it). */
+  get opponentGone(): boolean {
+    return this.peerGone;
   }
   /** Host: deltas published so far. Guest: deltas applied so far. */
   get seq(): number {
@@ -419,7 +468,14 @@ export class NetSession {
     // game unmounted would send on a socket that has already been left.
     this.clearResyncRetry();
     this.hooks = {};
-    try { this.room.leave(); } catch { /* a socket already dead is not an error */ }
+    // #164: say it is a DEPARTURE, not a drop. A bare socket close leaves the
+    // seat held for the platform's whole reconnect window, and the opponent
+    // spends it watching a countdown that can only expire. `abandon` makes the
+    // room file the result at once (live match) and free the seat; with a
+    // result already filed its guard turns the filing into a no-op and only
+    // the early release remains.
+    try { this.room.send({ type: "abandon" }); } catch { /* a socket already dead is not an error */ }
+    try { this.room.leave(); } catch { /* same */ }
   }
 
   /**
@@ -427,9 +483,16 @@ export class NetSession {
    * and a later rejoin is re-seated by a fresh welcome), stop exchanging
    * state — a two-seat match is over the moment the other seat goes — and
    * tell the game, which owes the player a clear "opponent left" state.
+   *
+   * #164: this is a SOFT stop, not a `halt`. The player who went can still
+   * come back — the room keeps their seat warm for `reconnectTimeout` and
+   * re-greets a returner with a fresh welcome — and a halted session dropped
+   * that welcome on the floor, which is exactly why a kicked player could
+   * never rejoin. `peerGone` parks the state flow instead; `onWelcome`
+   * resumes it when the roster fills again.
    */
   private onPeerLeft(playerId: string): void {
-    if (this.halted || playerId === this.room.playerId) return;
+    if (this.halted || this.peerGone || playerId === this.room.playerId) return;
     const gone = this.infoValue?.roster.find((e) => e.id === playerId) ?? null;
     if (this.infoValue) {
       this.infoValue = {
@@ -437,11 +500,41 @@ export class NetSession {
         roster: this.infoValue.roster.filter((e) => e.id !== playerId),
       };
     }
-    this.halted = true;
+    this.peerGone = true;
+    this.peerAway = false;
+    if (gone?.username) this.departedName = gone.username;
     this.queue = [];
     this.assembler.reset();
     this.clearResyncRetry();                 // #131: nobody left to answer
     this.hooks.opponentLeft?.(gone?.username || null);
+  }
+
+  /**
+   * #164: the room's presence poll spoke. `disconnected` starts the
+   * countdown the survivor prints (the platform is holding the seat for
+   * `graceMs`); `reconnected` ends it. Neither prunes anything — the roster
+   * event is still the only signal that a seat actually emptied.
+   */
+  private onPeerStatus(msg: PeerStatusMsg): void {
+    if (msg.playerId === this.room.playerId) return;
+    const name =
+      msg.username ||
+      this.infoValue?.roster.find((e) => e.id === msg.playerId)?.username ||
+      null;
+    if (msg.status === "disconnected") {
+      if (this.peerAway || this.peerGone) return;
+      this.peerAway = true;
+      const grace = typeof msg.graceMs === "number" && msg.graceMs > 0
+        ? Math.round(msg.graceMs)
+        : 60_000;
+      this.hooks.opponentDisconnected?.(name, grace);
+      return;
+    }
+    // "reconnected": the socket re-attached inside the hold window. The room
+    // re-greets the returner with a welcome right behind this message, which
+    // is what restarts the state flow — this hook is for the countdown UI.
+    this.peerAway = false;
+    this.hooks.opponentReconnected?.(name ?? this.departedName);
   }
 
   // ── guest → host ────────────────────────────────────────────────────────
@@ -450,7 +543,7 @@ export class NetSession {
    * ONLY way its clicks reach the world (§4).
    */
   sendIntent(action: IntentMsg["action"], payload: unknown): boolean {
-    if (!this.isGuest || this.halted) return false;
+    if (!this.isGuest || this.halted || this.peerGone) return false;
     this.room.send({ type: "intent", action, payload } satisfies IntentMsg);
     return true;
   }
@@ -469,7 +562,7 @@ export class NetSession {
    * Returns true when a `resync` frame actually went out.
    */
   requestResync(why: string): boolean {
-    if (!this.isGuest || this.halted || this.disposed) return false;
+    if (!this.isGuest || this.halted || this.disposed || this.peerGone) return false;
     const now = Date.now();
     const since = now - this.lastResyncAt;
     if (since < RESYNC_MIN_INTERVAL_MS) {
@@ -569,7 +662,7 @@ export class NetSession {
     dirty: DirtyTiles,
     fields: Omit<PublishFields, "seq" | "notice"> & { notice?: string | null },
   ): "delta" | "snapshot" | "idle" {
-    if (!this.isHost || this.halted) return "idle";
+    if (!this.isHost || this.halted || this.peerGone) return "idle";
     const notice = fields.notice ?? this.noticeValue;
     const decision = buildPublish(track, dirty, {
       ...fields,
@@ -608,7 +701,7 @@ export class NetSession {
    * and the newcomer's own ask share one transfer.
    */
   private sendFullState(reason: string, force: boolean): boolean {
-    if (!this.isHost || this.halted) return false;
+    if (!this.isHost || this.halted || this.peerGone) return false;
     const now = Date.now();
     if (!force && now - this.lastFullAt < FULL_STATE_MIN_INTERVAL_MS) return false;
     const snap = this.hooks.fullState?.();
@@ -732,9 +825,27 @@ export class NetSession {
       return;
     }
     if (this.halted) return;
+    // #164: a session parked by an emptied seat keeps listening for exactly
+    // the messages that can bring the opponent back (a re-seating `welcome`,
+    // a presence line) or settle the match (a `result`, handled above, and
+    // `reject`/`ratingUpdate`). Everything that moves the world is dropped:
+    // applying deltas from — or intents into — a seat nobody is in is the
+    // desync this file exists to prevent.
+    if (
+      this.peerGone &&
+      raw.type !== "welcome" &&
+      raw.type !== "peerStatus" &&
+      raw.type !== "ratingUpdate" &&
+      raw.type !== "reject"
+    ) {
+      return;
+    }
     switch (raw.type) {
       case "welcome":
         this.onWelcome(raw);
+        return;
+      case "peerStatus":
+        this.onPeerStatus(raw);
         return;
       case "snapshot-chunk":
         this.onChunk(raw);
@@ -773,6 +884,15 @@ export class NetSession {
       this.halt(err.code === "version" ? VERSION_MISMATCH_MESSAGE : err.message);
       return;
     }
+    // #164: a welcome that re-seats an opponent RESUMES a parked session —
+    // this is the rejoin path (the kicked player came back by room code
+    // inside the forfeit window, and the room re-greeted everyone). Clear the
+    // park BEFORE the flow below runs: it is what re-publishes full state to
+    // the returner (host) or re-requests it (guest).
+    const wasGone = this.peerGone;
+    if (wasGone && msg.roster.some((e) => e.id !== this.room.playerId)) {
+      this.peerGone = false;
+    }
     // The room seated us; that is the truth, not the start screen's guess.
     const seat: Slot | null =
       msg.roster.find((e) => e.id === this.room.playerId)?.slot ?? null;
@@ -799,6 +919,10 @@ export class NetSession {
     // board alone rather than clearing a board learned from an earlier hello.
     if (msg.ratings) this.onRatings(msg.ratings);
     this.hooks.info?.(this.infoValue);
+    if (wasGone && !this.peerGone) {
+      const back = msg.roster.find((e) => e.id !== this.room.playerId);
+      this.hooks.opponentReconnected?.(back?.username || this.departedName);
+    }
     if (!this.attached) return;                 // attach() runs the handshake
     if (this.isHost) {
       // A second seat exists — it needs the world, whether it asked yet or not.

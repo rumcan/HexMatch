@@ -97,7 +97,12 @@ describe("MP-02 protocol version", () => {
     // and `settings`. A v6 peer drops both new types and boots on the shipped
     // ★ line and purse, so the two seats would race different finish lines —
     // the quietest desync there is, and the reason this is a version gate.
-    expect(PROTOCOL_VERSION).toBe(7);
+    // v8 (#164) adds presence: `peerStatus` (a held seat counting down) and
+    // `abandon` (a departure the room files at once). A v7 peer drops both, so
+    // it would sit on a dark, silent board through a reconnect and never free
+    // a stranded opponent — the two seats would disagree about whether the
+    // match is recoverable, which is what the version gate is for.
+    expect(PROTOCOL_VERSION).toBe(8);
     expect(Number.isInteger(PROTOCOL_VERSION)).toBe(true);
     expect(PROTOCOL_VERSION).toBeGreaterThan(0);
   });
@@ -109,9 +114,9 @@ describe("MP-02 protocol version", () => {
   it("lists every discriminator in the union", () => {
     expect([...HEX_MESSAGE_TYPES].sort()).toEqual(
       [
-        "delta", "intent", "playerRating", "ratingUpdate", "reject", "result",
-        "resultClaim", "resync", "settings", "settingsClaim", "snapshot",
-        "snapshot-chunk", "welcome",
+        "abandon", "delta", "intent", "peerStatus", "playerRating",
+        "ratingUpdate", "reject", "result", "resultClaim", "resync",
+        "settings", "settingsClaim", "snapshot", "snapshot-chunk", "welcome",
       ],
     );
   });

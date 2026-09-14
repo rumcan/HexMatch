@@ -71,8 +71,17 @@ export { readMatchSettings };
  * `VICTORY.target` and `START_PURSE`, and race a different finish line from
  * the seat it is playing against — the quietest possible desync, since both
  * boards would look perfectly healthy right up to the star line.
+ * v8 (#164): the room watches PRESENCE. `peerStatus` tells the seat still in
+ * the match the instant the other socket drops (with the reconnect window the
+ * platform is holding) and the instant it comes back, which is what turns the
+ * silent blank-overlay strand into "Opponent disconnected — reconnecting 0:47"
+ * and a resumable match; `abandon` is a deliberate departure saying itself out
+ * loud, so the room files at once instead of holding the seat for a window
+ * that will never refill. A v7 peer would drop both and sit on a world that
+ * no longer says why nothing is moving — the exact bug the version check
+ * exists to refuse rather than half-run.
  */
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 8;
 
 /**
  * Realtime WS frame cap in bytes. Mirrors the SDK's `MAX_BROADCAST_BYTES`
@@ -371,6 +380,60 @@ export interface RejectMsg {
   reason: string;
 }
 
+/**
+ * The reject reason the room sends when the HOST seat empties — no host, no
+ * truth. It lives with the wire vocabulary because BOTH ends speak it: the
+ * room sends it, and the client (#164) compares against it to choose the
+ * "opponent left" copy — without the client importing the server module.
+ */
+export const HOST_LEFT_REASON = "The host left the game.";
+
+/**
+ * server → everyone (#164). One seat's presence, as the room's own poll sees it.
+ *
+ * The platform holds a dropped socket's seat for `reconnectTimeout` before it
+ * evicts, and neither the SDK's roster event nor any game message used to say
+ * so: the seat still in the match watched a world that simply stopped moving,
+ * with no way to tell "opponent is reconnecting" from "opponent is gone". The
+ * room polls its members' `connected` flag once a second and speaks the two
+ * transitions out loud:
+ *
+ *   disconnected — the socket dropped; the seat is being held for `graceMs`.
+ *                  The match may keep running; the peer should show a countdown.
+ *   reconnected  — the same seat is back inside the window (a re-attach, or a
+ *                  rejoin by room code). The room re-greets the returner with a
+ *                  fresh welcome, so the host answers with full state and the
+ *                  match resumes where it stood.
+ *
+ * An EVICTION is not carried here: it is the platform's own `room:playerLeft`
+ * roster event, which the session already hears (`opponentLeft`).
+ */
+export interface PeerStatusMsg {
+  type: "peerStatus";
+  playerId: string;
+  status: "disconnected" | "reconnected";
+  /** For `disconnected`: milliseconds the seat is held before eviction. */
+  graceMs?: number;
+  /** The room's name for the seat, so a notice can say who even mid-race. */
+  username?: string;
+}
+
+/**
+ * `abandon` — client -> room: "I am leaving this match for good, right now."
+ * (#164.) A socket close cannot say that: the room server reads every close
+ * as a possible drop and HOLDS the seat for its whole reconnect window, so a
+ * player who quits through the door — or answers a rejoin prompt with
+ * "Abandon" — leaves the opponent staring at a countdown for a seat that will
+ * never refill. The room answers this by filing the sender's loss (a live
+ * match only, and only while the result is unfiled) and kicking the seat, so
+ * the survivor's `playerLeft` and the verdict arrive in the same instant
+ * instead of a minute apart. A client that simply vanishes (reload, crash,
+ * closed tab) never sends this — that is what the disconnect grace is for.
+ */
+export interface AbandonMsg {
+  type: "abandon";
+}
+
 export type HexProtocol =
   | WelcomeMsg
   | SnapshotMsg
@@ -384,6 +447,8 @@ export type HexProtocol =
   | ResultMsg
   | SettingsClaimMsg
   | SettingsMsg
+  | PeerStatusMsg
+  | AbandonMsg
   | RejectMsg;
 
 /** Every `type` tag in the union — the discriminator RUN switches on. */
@@ -400,6 +465,8 @@ export const HEX_MESSAGE_TYPES = [
   "result",
   "settingsClaim",
   "settings",
+  "peerStatus",
+  "abandon",
   "reject",
 ] as const;
 
@@ -547,6 +614,8 @@ export function isHexProtocol(msg: unknown): msg is HexProtocol {
     t === "result" ||
     t === "settingsClaim" ||
     t === "settings" ||
+    t === "peerStatus" ||
+    t === "abandon" ||
     t === "reject"
   );
 }
