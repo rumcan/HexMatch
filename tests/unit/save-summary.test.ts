@@ -88,19 +88,25 @@ function makeSave(now: number, opts: MakeOpts = {}): { key: string; payload: Sav
     boards: [],
     clocks: {},
     // Railways v1: platforms are flat owner-scored records worth a star each.
+    // RAIL-04's wire shape: the railway rides the payload's `rail` field and
+    // its platforms/depots ride `structures` with a `kind` discriminator.
     ...((w.youPlatforms ?? w.aiPlatforms) ? {
-      railway: {
-        rail: "", railOwner: "", rev: 0, depots: [], lines: [], trains: [],
-        platforms: [
+      rail: {
+        revision: 0, seq: 0,
+        structures: [
           ...Array.from({ length: w.youPlatforms ?? 0 }, (_, i) => ({
-            id: i, owner: "you" as const, ownerId: 1, tx: i, ty: 40, rotation: 0 as const,
-            anchor: { kind: "industry" as const, id: i },
+            id: i, kind: "platform" as const, ownerId: 1, owner: "you",
+            tx: i, ty: 40, w: 2, h: 1, view: "ne",
+            anchor: { kind: "industry" as const, id: i, tiles: [] },
           })),
           ...Array.from({ length: w.aiPlatforms ?? 0 }, (_, i) => ({
-            id: 100 + i, owner: "ai" as const, ownerId: 2, tx: i, ty: 50, rotation: 0 as const,
-            anchor: { kind: "industry" as const, id: 100 + i },
+            id: 100 + i, kind: "platform" as const, ownerId: 2, owner: "ai",
+            tx: i, ty: 50, w: 2, h: 1, view: "ne",
+            anchor: { kind: "industry" as const, id: 100 + i, tiles: [] },
           })),
         ],
+        lines: [],
+        trains: [],
       },
     } : {}),
   };

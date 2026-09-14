@@ -79,10 +79,13 @@ function starsFromSave(d: SaveGamePayload): { you: number; rival: number } {
     const score = createScoreState();
     // Railways v1: platforms score 1★ each (`rescore`'s third argument is a
     // full RailwayState), but a platform is a flat owner-scored record, so
-    // the payload's serialised platform list is enough — no rail graph.
+    // the payload's serialised structures list is enough — no rail graph.
+    // RAIL-04 wire: the railway sits on the payload's `rail` field and its
+    // platforms/depots ride `structures` with a `kind` discriminator.
     rescore(scratch, score);
     const platformStars = (owner: string): number =>
-      (d.railway?.platforms ?? []).filter((p) => p.owner === owner).length
+      (d.rail?.structures ?? [])
+        .filter((p) => p.kind === "platform" && p.owner === owner).length
       * VICTORY.platform;
     return {
       you: Math.floor(vpFor(score, "you") + platformStars("you")),

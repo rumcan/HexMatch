@@ -115,6 +115,29 @@ describe("MainMenu — the front door", () => {
       .toMatchObject({ miniature: true });
     expect(mini.textContent).toBe("ON");
 
+    // PERF-01: the performance switch beside the miniature — it writes the
+    // store, and while it stands the miniature is SUPPRESSED (disabled,
+    // labelled why) without losing its stored choice.
+    const perf = sheet!.querySelector("[data-gfx=\"performance\"]") as HTMLButtonElement;
+    expect(perf.getAttribute("role")).toBe("switch");
+    expect(perf.textContent).toBe("OFF");
+    expect(mini.disabled).toBe(false);
+    act(() => { perf.click(); });
+    expect(JSON.parse(localStorage.getItem("hexmatch:graphics")!))
+      .toMatchObject({ performance: true, miniature: true });
+    expect(perf.textContent).toBe("ON");
+    expect(perf.getAttribute("aria-checked")).toBe("true");
+    expect(mini.disabled).toBe(true);
+    expect(mini.getAttribute("aria-checked")).toBe("true");      // still ON, stored
+    expect((sheet!.querySelector(".gfx-mini-note") as HTMLElement).textContent)
+      .toBe("Unavailable while Performance mode is on.");
+    // …and switching it back restores the miniature exactly as it was
+    act(() => { perf.click(); });
+    expect(mini.disabled).toBe(false);
+    expect(mini.textContent).toBe("ON");
+    expect((sheet!.querySelector(".gfx-mini-note") as HTMLElement).textContent)
+      .not.toBe("Unavailable while Performance mode is on.");
+
     // Done closes the sheet and unmounts it; a reopened sheet paints from the
     // store, so the door and a later match can never disagree.
     act(() => { (sheet!.querySelector(".big-btn") as HTMLButtonElement).click(); });
