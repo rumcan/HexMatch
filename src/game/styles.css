@@ -3862,10 +3862,10 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   letter-spacing: 1px; text-transform: none; opacity: .72;
 }
 /* the tour projector (#iso-tutorial) hangs inside this host, full-bleed */
-/* the game version + build id at the foot of the main menu (src/ui/version.ts) */
+/* the game version + build id at the foot of the main menu (src/ui/version.ts) — now flows under the leaderboard, not pinned to the viewport */
 .menu-foot {
-  position: absolute; left: 0; right: 0; bottom: 10px; z-index: 2;
-  margin: 0; padding: 0 16px; text-align: center;
+  position: static; z-index: 2;
+  margin: 16px 0 10px; padding: 0 16px; text-align: center;
   color: rgba(232, 220, 192, .38); font: 500 10px/1.5 var(--sans, sans-serif); letter-spacing: .6px;
 }
 /* fixed, not absolute: the start screen scrolls, and the projector covers the
