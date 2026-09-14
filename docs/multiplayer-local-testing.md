@@ -148,14 +148,20 @@ Console signature of the mock, if you want certainty:
 
 ## 7. Known gaps to expect while testing
 
-- **Closing the host window is not instant for the guest.** `allowReconnect: true`
-  and `reconnectTimeout: 60` make the sidecar hold the host's seat for a minute
-  before the room's `onPlayerLeave` fires, so the plain-language
-  `{ type: "reject", reason: "The host left the game." }` arrives only after that
-  window. The start screen now surfaces a reject that lands while you are still
-  in the lobby, and a lobby that never receives its welcome times out after 10 s
-  instead of leaving **Play** disabled forever — but making the in-game guest
-  react to `room:playerDisconnected` immediately is MP-08's job.
+- **Closing a window is not instant for the other seat — by design (#164).**
+  `allowReconnect: true` and `reconnectTimeout: 60` make the sidecar hold the
+  departed seat for a minute. Since #164 that window is *surfaced*: the room's
+  presence poll broadcasts `peerStatus` ("disconnected, seat held for 60 s" /
+  "reconnected"), the survivor sees a countdown banner while play continues,
+  and the returner — same tab profile, so the same player id — is offered the
+  walk back on the start screen ("You have a match in progress": **Rejoin** or,
+  ranked, **Abandon (counts as a loss)**). If the seat never returns, the
+  eviction fires `onPlayerLeave("disconnect")`, the room arms its 30 s
+  `FORFEIT_GRACE_MS` and then files the leaver's loss; the survivor gets the
+  "Opponent left" sheet with Finish / Claim / Leave doors and the rating
+  consequence spelled out. Closing the HOST window ends the match as the
+  guest's win after the hold: there is no host migration (see
+  `docs/RANK-01-multiplayer-ranking.md` §2).
 - **`server/` is not part of this path.** The old `ws` relay (`wss://hexmatch.fly.dev`)
   is unreachable from a published RUN game — the platform sandbox blocks
   arbitrary external hosts (`docs/HexMatch-tickets.md` §1.1) — so nothing in
@@ -198,9 +204,11 @@ coin: a client saturated with software-rasterized art can take tens of seconds
 to notice its own socket died, which is why the grace cannot be shortened to a
 few seconds without turning the reconnect spec into a coin toss.
 
-Budget accordingly: the whole file is **~35–40 minutes** on a
-software-rasterized runner (seven two-seat tests, each booting two clients and
-the departure specs then waiting out the grace). `npx playwright test --config
+Budget accordingly: the whole file is **tens of minutes** on a
+software-rasterized runner (nine two-seat tests, each booting two clients).
+Since #164 the leave specs no longer wait out a grace — a deliberate leave
+rides out as an `abandon` and is filed at once — while the drop specs still
+wait on the room's own windows. `npx playwright test --config
 playwright.multiplayer.config.ts tests/e2e-mp/mp-lobby.e2e.spec.ts` — or `-g
 "<title>"` — runs a single one while iterating.
 
@@ -219,11 +227,12 @@ What it asserts, all of it read back from the game's own `__iso` hooks:
 - **simultaneous construction** — both seats click the same legal tile in the
   same instant; the authoritative world settles on **one** depot and both seats
   agree whose it is;
-- **both leave directions** — a guest's departure reaches the host through the
-  SDK's roster event after the grace ("… left the room — this match is over."),
-  and a host's departure refuses the guest with the room's own
-  `{ type: "reject", reason: "The host left the game." }` before the same
-  ended-match state;
+- **both leave directions** (#164) — a deliberate leave sends `abandon` on the
+  way out, so the room kicks and files at once: the survivor gets the
+  departure sheet ("… left — this match is over.", with Finish / Leave doors)
+  behind the roster event, and a host's departure refuses the guest with the
+  room's own `{ type: "reject", reason: "The host left the game." }` on a
+  sheet of its own;
 - **the transport boundary** — the guest's room socket is closed underneath the
   SDK; the SDK re-attaches inside the grace (`room:reconnected`), the host sees
   the drop but never a departure, and the returning guest is resynced onto the
@@ -315,3 +324,40 @@ build (and only there — preview-mode or localhost runs are not evidence for it
 
 Until that is automated, treat issues it could hide (login, iframe sandboxing,
 hosted reconnect timing) as **not covered by `npm run test:e2e:mp`**.
+
+---
+
+## 9. Disconnects, rejoins and abandons by hand (#164)
+
+The two windows above are also the two PERSONAS the disconnect flow needs: the
+seat that gets dropped, and the seat left watching. To play the whole story by
+hand:
+
+1. Get both windows into a match (§2).
+2. **Reload window B** (a reload kills the socket exactly like the browser's
+   resize-kill does). Within a second or two window A shows the notice banner —
+   "Dev Player XXXX disconnected — reconnecting 1:00" — counting down over a
+   board that is still live.
+3. In window B: **Play** → the start screen answers with **"You have a match in
+   progress"** naming the room code — **Rejoin the match** walks back into the
+   SAME seat (the sidecar re-attaches the tab's `dev-tab-XXXX` profile inside
+   the hold window), the lobby lights up from the room's re-greeting, and
+   **Play** resyncs the board, purse, buildings and score from the host.
+   Window A's countdown comes down.
+4. Or answer the offer with **Abandon**: window B files its own loss locally,
+   tells the room, and lands back on the mode screen; window A gets the
+   "Opponent left" sheet. In a RANKED match (both seats arrived through **Auto
+   Matchmaking**) the sheet carries the rating row — the survivor's win is
+   filed whether they finish the board or claim it from the sheet, and walking
+   out through **Leave** claims first, so the rating is never stranded.
+
+**Automated:** the suite from §8 carries these flows in
+`tests/e2e-mp/mp-rejoin.e2e.spec.ts` — the reload-drop with the countdown
+announcement and the walk back into the same seat, and the ranked abandon that
+credits the survivor's win with the rating moved on the sheet.
+
+One dev-only caveat: the hold window keys on the tab's fake profile
+(`sessionStorage`). A NEW tab or an incognito window mints a DIFFERENT
+profile, so it cannot walk back into the dropped seat — that is the dev stand-in
+for "a different RUN account". Test the return in the same tab you dropped
+(a reload), which is also the shape of the real bug.

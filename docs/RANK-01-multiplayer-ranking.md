@@ -78,13 +78,19 @@ two clients cannot disagree about one match:
 
 **Abandonment is a loss for the seat that empties.** A ladder that ignored
 abandonment would make quitting strictly better than losing, and the top of the
-board would belong to whoever walked away fastest.
+board would belong to whoever walked away fastest. #164 gave that rule its
+front door: a player the browser dropped is offered the held seat back
+(**Rejoin**) or the honest way out (**Abandon — counts as a loss**) on the
+start screen, backed by the active-match memo and `getUserRooms` in
+`src/net/transport.ts`; abandoning files `fileOwnForfeit` locally and tells the
+room, which kicks the seat so the survivor's win is filed immediately.
 
 | Case | Rule |
 |---|---|
 | Explicit "Leave room" in a live match | Immediate forfeit. The confirm sheet says so before the player commits. |
-| A dropped socket | 30 s of grace (`FORFEIT_GRACE_MS`), cancelled by a reconnect (the room's `reconnectTimeout` is 60 s, so the window is inside it). |
-| The host abandons | The guest is credited the win — the same rule, either seat. |
+| A dropped socket (#164) | Two windows, and a return inside either costs nothing: the platform holds the seat for its `reconnectTimeout` (60 s — the survivor watches a countdown, not a verdict), then the eviction arms the room's own 30 s (`FORFEIT_GRACE_MS`). A reconnect re-attaches the socket; a rejoin re-seats the player and disarms the timer. Only when both windows run out is the loss filed. |
+| The host abandons | The guest is credited the win — the same rule, either seat. There is **no host migration** (#164's documented decision): the host is the only seat that runs the simulation, so without it there is no truth to continue from — the room files the guest's win and the match ends. The guest sees a sheet that says so, with the rating on it, never a blank panel. |
+| The survivor of an abandonment (#164) | Full win credit **whether they finish the board or claim it now** — the "Opponent left" sheet offers both, and the room files from `everJoined`, so a seat that was already evicted can still be named the loser. |
 | A departure in the LOBBY (before any state was published) | Nothing is rated. Leaving before the match is not losing. |
 | An AI or story match | Nothing is rated. |
 
@@ -198,8 +204,8 @@ follow needs a new board (or a period) rather than a lower submission.
 | File | Owns |
 |---|---|
 | `src/net/rating.ts` | The arithmetic, the tiers, `searchBucket` — pure, SDK-free, no storage. |
-| `src/net/protocol.ts` | The v6 wire: `playerRating`, `ratingUpdate`, `resultClaim`, `result`, `Welcome.ratings`. |
-| `src/rooms/HexmatchRoom.ts` | The board, the join tokens, the one-result rule, the forfeit timer. |
+| `src/net/protocol.ts` | The v7 wire: `playerRating`, `ratingUpdate`, `resultClaim`, `result`, `Welcome.ratings` — plus #164's `peerStatus` and `abandon`. |
+| `src/rooms/HexmatchRoom.ts` | The board, the join tokens, the one-result rule, the forfeit timer, and #164's presence poll (the `peerStatus` announcements, the re-greeting, `everJoined`). |
 | `src/net/session.ts` | The client's copy of the board (`ratings`, `board`, `publishRating`, `claimResult`) — and the `result` that must survive the peer-left halt. |
 | `src/net/rank-runtime.ts` | The match's half: publish at boot, file once, re-publish, own-forfeit. Injected into the game, so `iso/game.ts` stays SDK-free. |
 | `src/net/rankstore.ts` | The policy: keys, the once-only guard, the local mirror, the ladder write. |
@@ -215,13 +221,18 @@ follow needs a new board (or a period) rather than a lower submission.
 | `tests/unit/net-rank.test.ts` | Elo behaviour (lower-rated wins more, provisional moves faster, the floor holds), tier bands and boundaries, `searchBucket`, `parseRankState` tolerance, `advanceRating` newest-wins, and that the badge PNGs match `RANK_TIERS` and the derive tool's table. |
 | `tests/unit/net-rankstore.test.ts` | The file read order (remote → mirror → fresh), the mirror promotion, the once-only guard, a loss writing through, `localOnly`, an unreachable ladder, and the match key. |
 | `tests/unit/net-rank-runtime.test.ts` | Publish-once at boot, the board the RESULT carried beating the local copy, one filing per match, a foreign result ignored, storage failure not taking the match down, `claimWin` rounding, and the leaver's local-only loss. |
-| `tests/unit/net-room.test.ts` | The room's five refusals (foreign id, missing/changed token, guest claim, malformed claim) and the two filings (host claim, abandoned seat), including the 30 s grace with fake timers. |
+| `tests/unit/net-room.test.ts` | The room's five refusals (foreign id, missing/changed token, guest claim, malformed claim) and the two filings (host claim, abandoned seat), including the 30 s grace with fake timers — plus #164: the presence poll's once-per-transition announcements, the re-greeting on re-attach, `abandon` → kick → forfeit, the `everJoined` claim after an eviction, and the armed timer a rejoin disarms. |
 | `tests/unit/net-session.test.ts` | The welcome's board, `publishRating`'s token, the opponent's number, host-only `claimResult`, and the result that arrives AFTER the peer-left halt. |
-| `tests/unit/net-protocol.test.ts` | v6 bumps and rejects v5, the four new messages round-trip, and a malformed welcome board is refused. |
-| `tests/unit/start-screen.test.ts` | The Any/Similar control, the widening ladder's four rungs (and that the last one asks for nothing, then stays there), a search that re-issues past the old 30 s cutoff, and a ranked lobby. |
+| `tests/unit/net-protocol.test.ts` | v7 bumps and rejects v6, the new messages round-trip (including #164's `peerStatus` and `abandon`), and a malformed welcome board is refused. |
+| `tests/unit/start-screen.test.ts` | The Any/Similar control, the widening ladder's four rungs (and that the last one asks for nothing, then stays there), a search that re-issues past the old 30 s cutoff, and a ranked lobby — plus #164: the rejoin offer (and its silence when the platform holds no seat), the Auto-Matchmaking guard, rejoins resolving host/guest from the room's own welcome, the abandonment's local filing, and the memo written when a match begins. |
 | `tests/unit/net-transport.test.ts` | The `ranked` leaderboard mode and the config's required fields. |
+| `tests/unit/iso-leave-room.test.ts` | The in-game half of #164: the countdown banner over a live board, the departure sheet's doors and rating copy, the claim riding out (and Leave claiming FIRST), a reject painting words instead of a blank panel, and a return taking the sheet down. |
+| `tests/e2e-mp/mp-rejoin.e2e.spec.ts` (`npm run test:e2e:mp`) | Both #164 acceptance flows with two real browser contexts against the dev sidecar: guest dropped → host sees the countdown → guest rejoins the same seat; ranked abandon → the survivor's win filed with the rating moved. |
+| `tests/e2e-mp/mp-leave.e2e.spec.ts` (`npm run test:e2e:mp`) | The deliberate-leave directions as #164 reshaped them: `abandon` → the room kicks and files at once, and the survivor gets the departure sheet with its doors, not a blank modal. |
 
 Play it end to end with `npm run dev`, two browser windows and a quick match
 (see `docs/multiplayer-local-testing.md`): the lobby shows both badges, the
 ending shows the delta, and closing one window files the match as a forfeit for
-the seat that closed.
+the seat that closed — unless that window reloads inside the minute the
+platform holds the seat, which offers the walk back (#164; the scripted version
+of both flows is `npm run test:e2e:mp`).

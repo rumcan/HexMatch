@@ -175,6 +175,9 @@ import { showSettingsSheet, type SettingsSheetHandle } from "./settings-sheet";
 import {
   showConfirm, type ConfirmSheetHandle, type ConfirmSheetOptions,
 } from "./confirm-sheet";
+// #164: the "opponent left" sheet — a departure is a decision, and a decision
+// needs doors. Never a bare sentence, never a bare backdrop.
+import { showLeftSheet, type LeftSheetDoors, type LeftSheetHandle } from "./left-sheet";
 import {
   buildEnding, showEndingScreen, type DecisiveSource, type EndingScreenHandle,
 } from "./ending";
@@ -206,7 +209,7 @@ export { joinFromSnapshot };
 // place that knows all three AND the game rules.
 import { NetSession, type NetRole } from "../net/session";
 import { applyTrackDelta } from "../net/delta";
-import { type DeltaMsg, type IntentMsg } from "../net/protocol";
+import { HOST_LEFT_REASON, type DeltaMsg, type IntentMsg } from "../net/protocol";
 // #186: the room's match settings — the ★ line, the opening purse and the AI
 // seats a hosted game plays by. Pure data with a strict reader, so a hand-built
 // `IsoGameOptions` (a test harness, a playtest link) is normalised exactly like
@@ -413,6 +416,15 @@ export interface IsoGameOptions {
    * menu with no broken door.
    */
   onQuitToMenu?: () => void;
+  /**
+   * #164: the match was DECIDED — the ledger is standing, or a departure was
+   * claimed. The React layer uses this to drop the "match in progress" memo
+   * (`writeActiveMatch(null)` in `src/net/transport.ts`): a finished match is
+   * nothing to rejoin, and a stale memo would offer exactly that on the next
+   * boot. Fires once, from `presentEnding`, for every mode — only a networked
+   * seat is handed a callback that cares.
+   */
+  onMatchEnded?: () => void;
 }
 
 export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
@@ -701,6 +713,44 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   let rankVerdict: RankVerdict | null = null;
   /** When this match booted, for the ladder's required `duration` field. */
   const rankBootAt = performance.now();
+
+  // ── #164: presence of the far seat ─────────────────────────────────────
+  /**
+   * The opponent's wire id, captured from the roster while it is still whole.
+   * A late "claim the win now" runs AFTER the seat emptied and the session
+   * pruned the roster, so `wireIdOf(rival)` no longer has a room id to give;
+   * this is the copy that survives the departure.
+   */
+  let mpOpponentWireId = "";
+  /**
+   * The disconnect countdown's deadline on the `performance.now()` clock, and
+   * the name to print beside it. Zero when the peer is present (or this is a
+   * solo match). `paintUi` reads both every frame — the banner is the visible
+   * countdown the issue asks for, and a per-frame read is the only way the
+   * number stays honest without a second timer to leak.
+   */
+  let mpPeerAwayUntil = 0;
+  let mpPeerAwayName = "";
+  /**
+   * BANNER-ONCE keys the dismissal by id; a NEW disconnect must not inherit
+   * the previous one's ✕, so each episode bumps this into the banner's key.
+   */
+  let mpDisconnectEpisode = 0;
+  /**
+   * The departure sheet while it stands. One at a time: a reconnect resumes
+   * the match and takes it down, a verdict fills it in, and dispose() must
+   * not orphan it over a dead board.
+   */
+  let leftSheet: LeftSheetHandle | null = null;
+  /** True once the sheet's Leave door is waiting on a claim it just filed. */
+  let leaveAfterVerdict = false;
+  let leaveAfterVerdictTimer = 0;
+  /**
+   * The client's mirror of the room's `matchLive`: state has crossed the wire
+   * at least once. Before it, a departure is a lobby exit — there is no rated
+   * match to claim, and the doors must not offer one.
+   */
+  let mpMatchLive = false;
   /** TUT-01: the boot tour, while it is open. Held so `dispose` can take its
    *  document keydown listener with it — the same reason `endingView` is. */
   let tutorialView: TutorialHandle | null = null;
@@ -1505,7 +1555,114 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const wireIdOf = (p: PlayerState): string => {
     if (!net) return p.id;
     if (p === players[0]) return net.playerId;
-    return net.info?.roster.find((e) => e.id !== net.playerId)?.id ?? p.id;
+    // #164: the roster fallback is the CAPTURED id — after a departure the
+    // session has pruned the roster, and a claim naming nobody is a claim the
+    // room refuses, which would silently unrank the survivor's forfeit win.
+    return net.info?.roster.find((e) => e.id !== net.playerId)?.id
+      || mpOpponentWireId
+      || p.id;
+  };
+
+  /** #164: the rating row, as the departure sheet's status line. */
+  const ratingLineHtml = (verdict: RankVerdict): string =>
+    `Your rating: ${fmtRating(verdict.change.before)} → <b>${fmtRating(verdict.change.after)}</b> `
+    + `<span class="rank-delta ${verdict.change.delta >= 0 ? "up" : "down"}">`
+    + `${fmtRatingDelta(verdict.change.delta)}</span>`;
+
+  // ── #164: the departure sheet — one dialog, every door, no blank panel ──
+
+  /** The sheet's Leave door, once the rating has landed (or the bounded wait ran out). */
+  const quitFromSheet = () => {
+    leaveAfterVerdict = false;
+    window.clearTimeout(leaveAfterVerdictTimer);
+    if (leftSheet) { leftSheet.destroy(); leftSheet = null; }
+    opts.onQuitToMenu?.();
+  };
+
+  /** "Claim the win now": the room files the forfeit win; the ledger presents it. */
+  const claimWinNow = () => {
+    leftSheet = null; // the door's click already closed the sheet
+    if (net && rankRuntime) {
+      rankRuntime.claimWin(net.playerId, wireIdOf(rival), (performance.now() - rankBootAt) / 1000);
+    }
+    // The ledger is both the celebration and the verdict's home: the room's
+    // answer lands a round trip later, and onRankVerdict fills the rank row
+    // ("filing…" until it does).
+    winner = me;
+    phase = "won";
+    presentEnding(null);
+  };
+
+  /**
+   * The Leave door. A survivor who walks out before the room's verdict
+   * strands it: the room disposes when it empties, armed forfeit timer and
+   * all, and the rating never moves. So Leave claims first when this seat
+   * can (the host), or waits for the room's own filing when it cannot (the
+   * guest — the room files the leaver's loss shortly after the seat
+   * empties), and quits the moment the verdict has folded into the local
+   * file. The wait is bounded: a room that never answers must not hold the
+   * player hostage.
+   */
+  const leaveFromSheet = (canClaim: boolean) => {
+    if (net && rankRuntime && !rankVerdict && mpMatchLive) {
+      if (canClaim) {
+        rankRuntime.claimWin(net.playerId, wireIdOf(rival), (performance.now() - rankBootAt) / 1000);
+        leftSheet?.setStatus("Claiming your win — filing your rating…");
+        leaveAfterVerdict = true;
+        leaveAfterVerdictTimer = window.setTimeout(quitFromSheet, 5_000);
+        return;
+      }
+      // A guest cannot file — only the seat that runs the simulation may
+      // speak for it — so this waits on the room's own forfeit timer. That
+      // is up to FORFEIT_GRACE_MS, and it is worth the wait: the difference
+      // is a rating that moves and a rating that does not.
+      leftSheet?.setStatus("Waiting for the room to file your win — up to 30 s. "
+        + "It lands here, then you return to the menu.");
+      leaveAfterVerdict = true;
+      leaveAfterVerdictTimer = window.setTimeout(quitFromSheet, 35_000);
+      return;
+    }
+    quitFromSheet();
+  };
+
+  /**
+   * Raise the departure sheet — the ONE answer to "the far seat is gone".
+   * `canClaim` is the host's privilege (the room files a result only from
+   * the seat that runs the simulation); a guest survivor waits on the
+   * room's own filing instead. A verdict already in hand opens the sheet
+   * SETTLED: the rating has moved, Finish and Claim are decisions about a
+   * rating that can no longer be filed, and Leave is the only honest door.
+   */
+  const openLeftSheet = (spec: { title: string; body: string; canClaim: boolean }) => {
+    if (leftSheet || endingShown || disposed) return;
+    const settled = rankVerdict !== null;
+    const doors: LeftSheetDoors = {
+      leave: {
+        label: !settled && rankRuntime && spec.canClaim && mpMatchLive
+          ? "Leave — claim the win first"
+          : "Leave the match",
+        onClick: () => leaveFromSheet(spec.canClaim),
+      },
+    };
+    if (!settled && spec.canClaim) {
+      doors.finish = {
+        label: "Finish the game",
+        onClick: () => {
+          toast(rankRuntime
+            ? "Play on — cross the star line and the win is claimed with your rank points."
+            : "Play on — the board is yours to finish.", "info");
+        },
+      };
+      if (rankRuntime && mpMatchLive) {
+        doors.claim = { label: "Claim the win now", onClick: claimWinNow };
+      }
+    }
+    leftSheet = showLeftSheet(ui.el, {
+      title: spec.title,
+      body: spec.body,
+      ...(settled ? { statusHtml: ratingLineHtml(rankVerdict!) } : {}),
+      doors,
+    });
   };
 
   /** RANK-01: the ledger's rating row, from the room's verdict. */
@@ -1531,9 +1688,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    */
   const onRankVerdict = (verdict: RankVerdict) => {
     rankVerdict = verdict;
+    // #164: the departure sheet's Leave door was waiting on exactly this —
+    // the rating has folded into the local file, so the quit is honest now.
+    if (leaveAfterVerdict) { quitFromSheet(); return; }
+    // A standing departure sheet is the verdict's home when the match ended
+    // by absence: fill its rating row and fold its doors down to the exit —
+    // Finish and Claim are decisions about a rating that has already moved.
+    if (leftSheet) { leftSheet.settle(ratingLineHtml(verdict), "Leave the match"); return; }
     const delta = fmtRatingDelta(verdict.change.delta);
-    const arrow = `${fmtRating(verdict.change.before)} → <b>${fmtRating(verdict.change.after)}</b> `
-      + `<span class="rank-delta ${verdict.change.delta >= 0 ? "up" : "down"}">${delta}</span>`;
     // The ledger usually beats this message to the screen: the host files the
     // result the instant the star line is crossed, so the answer lands a round
     // trip later. Fill the standing ledger's row and say nothing twice.
@@ -1544,13 +1706,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // No ledger is coming when the match was decided by a DEPARTURE: nothing
     // crossed a star line, so this is the only place the rating is ever shown.
     if (verdict.forfeit) {
+      // #164: and it is shown on a sheet with a door, never on a panel the
+      // player can only backdrop-click away — if no sheet is standing (the
+      // events raced, or a reconnect waived one off that then died again),
+      // open one, already settled.
       const filed = verdict.outcome === "win"
-        ? `${escText(rival.name)} left the room, so the match is filed as a win.`
+        ? `${rival.name} left the room, so the match is filed as a win.`
         : "You left the room, so the match is filed as a loss.";
-      ui.showModal(
-        `<p class="rank-modal-line">${filed}</p>`
-        + `<p class="rank-modal-line">Your rating: ${arrow}</p>`,
-      );
+      openLeftSheet({ title: "Opponent left", body: filed, canClaim: false });
       return;
     }
     // A star-line win whose ledger has not mounted yet: one line, and the
@@ -1565,6 +1728,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (endingShown || !winner) return;
     endingShown = true;
     winningSource = source;
+    // #164: the match is decided — whatever "match in progress" memo the
+    // front door wrote for this seat is now a lie, and only the layer that
+    // wrote it can drop it.
+    opts.onMatchEnded?.();
     const playerBreakdown = victoryBreakdown(eco, me.id, railPlatforms());
     const rivalBreakdown = victoryBreakdown(eco, rival.id, railPlatforms());
     const model = buildEnding({
@@ -3566,6 +3733,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (!net || !net.isHost) return;
     if (!force && now - lastPublishAt < PUBLISH_MS) return;
     lastPublishAt = now;
+    // #164: the room calls a match "live" on the first state publish; this is
+    // the client's mirror of that flag, so the departure doors know whether
+    // there is a rated match to claim.
+    mpMatchLive = true;
     // #117: only boards whose content changed since the last publish ride
     // this delta. Join/resync snapshots (`netFullState`) always carry both.
     const keys: [string, string] = [boardSyncKey(quarry.board), boardSyncKey(rivalQuarry.board)];
@@ -4103,6 +4274,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         }
         // Names come from the room: "Rival" is a person now.
         for (const entry of info.roster) {
+          // #164: capture the opponent's ROOM id while the roster is whole —
+          // a late claim (after the seat emptied and the session pruned the
+          // roster) has no other source for the id the room will accept.
+          if (entry.id !== net.playerId && entry.id) mpOpponentWireId = entry.id;
           // Wire seat 0 = the host's seat, wire seat 1 = the guest's; the local
           // frame keeps the opener at players[0] (see `mirrorSnapshot`).
           const local = info.role === "host"
@@ -4125,33 +4300,80 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // RANK-01: the room's verdict on this match. Both seats get it; the
       // rating arithmetic is fed from here and nowhere else.
       result: (msg) => { void rankRuntime?.handleResult(msg); },
-      fullState: () => netFullState(),
+      // #164: the guest's mirror of `matchLive` — the first state it receives
+      // is the moment this becomes a rated match, so the departure doors know
+      // whether there is a win to claim.
+      fullState: () => { mpMatchLive = true; return netFullState(); },
       intent: (msg) => applyGuestIntent(msg),
-      snapshot: (snap, seq) => applyNetSnapshot(snap, seq),
-      delta: (msg) => applyNetDelta(msg),
+      snapshot: (snap, seq) => { mpMatchLive = true; applyNetSnapshot(snap, seq); },
+      delta: (msg) => { mpMatchLive = true; applyNetDelta(msg); },
       reject: (reason) => {
+        mpPeerAwayUntil = 0;
+        // #164: a reject is fatal — the session halts on it — and it must
+        // never be a bare sentence, let alone the blank dark panel an empty
+        // reason used to paint. The sheet carries the reason and the one
+        // door that is left. A live rated match is filed by the room itself
+        // (the leaver's loss), so the verdict fills the sheet when it lands
+        // and the Leave door waits for it instead of stranding the rating.
+        // A decided match (ledger up) or a sheet already standing owns this
+        // moment — the host quitting after a win broadcasts a fatal reject
+        // to a loser who has nothing left to decide, so say nothing then.
+        if (endingShown || leftSheet) return;
         toast(reason, "bad");
-        ui.showModal(`<p>${reason}</p>`);
+        const hostGone = reason === HOST_LEFT_REASON;
+        openLeftSheet({
+          title: hostGone ? "Opponent left" : "Match ended",
+          body: hostGone && rankRuntime
+            ? "The host left the game. The room files this match as your win — your rating lands here in a moment."
+            : (reason || "The room ended this match."),
+          canClaim: false,
+        });
       },
       opponentLeft: (username) => {
-        // #121: the far seat emptied, so the match is over but the board is
-        // still standing. Say it plainly instead of letting the host keep
-        // simulating against a seat nobody is in.
-        const who = username ? `${escText(username)} left` : "Your opponent left";
-        const line = `${who} the room — this match is over.`;
-        toast(line, "bad");
-        // RANK-01: in a rated match the departure is also a result, and the
-        // room files it. Which of the two messages arrives first is a race, so
-        // whichever lands second still shows the rating: this one appends the
-        // row when the verdict is already in hand, and `onRankVerdict` fills
-        // the modal in when it is not.
-        const filed = rankVerdict
-          ? `<p class="rank-modal-line">Your rating: ${fmtRating(rankVerdict.change.before)} → `
-            + `<b>${fmtRating(rankVerdict.change.after)}</b> `
-            + `<span class="rank-delta ${rankVerdict.change.delta >= 0 ? "up" : "down"}">`
-            + `${fmtRatingDelta(rankVerdict.change.delta)}</span></p>`
-          : "";
-        ui.showModal(`<p>${line}</p>${filed}`);
+        // #121/#164: the far seat emptied. The board is still standing, so
+        // this is a decision, not a dead end — and never a bare sentence
+        // with no doors. The sheet spells out the rating consequence on
+        // every door: finish the game (the star line still claims the win),
+        // claim it now, or leave — and leaving claims first, so walking
+        // away cannot strand a win the room has not filed yet.
+        const who = username || "Your opponent";
+        mpPeerAwayUntil = 0; // the countdown is over — the seat has emptied
+        // A decided match is already showing its ledger; the far seat
+        // emptying now is just teardown (dispose() frees it), not a
+        // departure to answer. Say nothing over the ending.
+        if (endingShown || leftSheet) return;
+        toast(`${escText(who)} left the room.`, "bad");
+        openLeftSheet({
+          title: "Opponent left",
+          body: rankRuntime
+            ? `${who} left. Finish the game to claim the win and your rank points, or claim the win now — either way the room files this match in your favour.`
+            : `${who} left — this match is over. You can finish the board solo, or head back to the menu.`,
+          canClaim: !net.isGuest,
+        });
+      },
+      // #164: the far socket dropped but the seat is NOT lost — the platform
+      // holds it for its reconnect window, and the room says so out loud.
+      // The banner counts the window down in plain sight (paintUi) while
+      // play continues underneath; a return clears it, and an eviction hands
+      // over to the "opponent left" sheet above.
+      opponentDisconnected: (username, graceMs) => {
+        mpPeerAwayName = username || rival.name || "Opponent";
+        mpPeerAwayUntil = performance.now() + Math.max(graceMs, 0);
+        mpDisconnectEpisode++;
+        toast(`${escText(mpPeerAwayName)} disconnected — holding their seat for `
+          + `${Math.round(Math.max(graceMs, 0) / 1000)}s…`, "info");
+      },
+      opponentReconnected: (username) => {
+        mpPeerAwayUntil = 0;
+        toast(`${escText(username || mpPeerAwayName || "Opponent")} is back — the match resumes.`, "good");
+        // The seat may have emptied and refilled (eviction, then a fresh
+        // join): a standing departure sheet is now a lie — take it down, and
+        // call off a Leave that was waiting on a verdict that will not come.
+        if (leftSheet) { leftSheet.destroy(); leftSheet = null; }
+        if (leaveAfterVerdict) {
+          leaveAfterVerdict = false;
+          window.clearTimeout(leaveAfterVerdictTimer);
+        }
       },
       status: (state) => {
         // A reconnect is exactly when a guest must re-pull state; the session
@@ -4408,6 +4630,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (phase === "won") {
       bannerKey = "won";
       banner = `${winner?.name} wins — ${fmtVp(vpFor(score, winner?.id ?? ""))}★`;
+    } else if (mpPeerAwayUntil > 0 && !endingShown) {
+      // #164: the opponent's socket dropped and the platform is holding the
+      // seat — the wait is VISIBLE, counted down where the play continues
+      // underneath it. A return clears it (deadline → 0); an eviction hands
+      // over to the "opponent left" sheet. The episode number keeps a
+      // BANNER-ONCE ✕ from silencing the NEXT disconnect too.
+      const leftMs = mpPeerAwayUntil - now;
+      const secs = Math.max(0, Math.ceil(leftMs / 1000));
+      bannerKey = `mp-disconnect-${mpDisconnectEpisode}`;
+      banner = `${mpPeerAwayName || "Opponent"} disconnected — `
+        + (secs > 0
+          ? `reconnecting ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`
+          : "the room is closing their seat…");
     } else if (pendingProtest) {
       bannerKey = "protest-ready";
       banner = `Protest ready — click a public road to stop ALL trucks for ${fmtProtestLeft(PROTEST_MS)} (Esc cancels)`;
@@ -6708,6 +6943,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // open sheet is destroyed rather than orphaned over a dead board.
     menuTeardown?.();
     menuTeardown = null;
+    // #164: the departure sheet is torn down with the game (never orphaned
+    // over a dead board), and a Leave that was waiting on a verdict is
+    // cancelled — its timer must not fire into a disposed game.
+    leftSheet?.destroy();
+    leftSheet = null;
+    leaveAfterVerdict = false;
+    if (leaveAfterVerdictTimer) window.clearTimeout(leaveAfterVerdictTimer);
+    leaveAfterVerdictTimer = 0;
     net?.dispose();
     window.clearInterval(saveIv);
     if (onPageHide) window.removeEventListener("pagehide", onPageHide);
