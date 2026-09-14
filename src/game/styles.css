@@ -3658,7 +3658,9 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
     -webkit-overflow-scrolling: touch;
   }
   .start-screen > .menu-card,
+  .start-screen > .menu-leaderboard,
   .start-screen > .start-panel { margin-block: auto; }
+  .start-screen > .menu-card + .menu-leaderboard { margin-top: 14px; }
   /* the version line flows after the card here instead of pinning to the
      bottom of a viewport the card no longer fits inside */
   .start-screen > .menu-foot { position: static; margin: 12px 0 10px; }
@@ -3778,11 +3780,92 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   margin: 20px 0 0; color: #8b7d68;
   font: 600 11px/1 var(--sans, sans-serif); letter-spacing: 2.4px; text-transform: uppercase;
 }
+/* ── LEADERBOARD on the front door — same ladder the StartScreen RANK-01
+   panel reads, but seated under the menu card so the Top 10 is visible
+   without leaving the menu. One felt plate with a brass crown, stacked
+   under `.menu-card`; on a short viewport the start-screen media that makes
+   the whole plate scroll includes this card via the shared margin rule. */
+.menu-leaderboard {
+  position: relative; z-index: 2;
+  width: min(520px, 100%); margin-top: 18px; padding: 16px 18px 14px;
+  text-align: left;
+  border: 1px solid var(--line, #594b3b);
+  border-top: 2px solid var(--brass, #c9a24a);
+  background:
+    linear-gradient(180deg, rgba(34, 27, 20, .95), rgba(19, 16, 13, .96)),
+    repeating-linear-gradient(104deg, rgba(255, 255, 255, .016) 0 1px, transparent 1px 6px);
+  box-shadow: 0 16px 50px rgba(0, 0, 0, .45), inset 0 1px 0 rgba(255, 255, 255, .06);
+}
+.menu-leaderboard-title {
+  margin: 0 0 4px; text-align: center;
+  font-family: var(--display); font-weight: 700; font-size: 12.5px;
+  letter-spacing: 2.6px; text-transform: uppercase; color: var(--brass-hi);
+  text-shadow: 0 -1px 0 #000, 0 0 16px rgba(255, 176, 46, .18);
+}
+.menu-leaderboard-sub {
+  margin: 0 0 12px; text-align: center;
+  color: var(--txt-mute, #a89b89); font: 12px/1.45 var(--sans, sans-serif);
+}
+.menu-leaderboard .ladder-note {
+  margin: 8px 0 4px; text-align: center;
+}
+.menu-leaderboard .ladder-list {
+  margin: 0;
+  max-height: none;
+}
+.menu-leaderboard-list li {
+  /* the ladder's row, but tighter: the card is narrow and ten rows must stay
+     readable without scrolling the plate at 900px tall */
+  gap: 8px; padding: 5px 8px;
+}
+.menu-leaderboard .ladder-name {
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--serif); font-weight: 600; font-size: 12.5px;
+  letter-spacing: .4px; color: var(--txt, #efe4d0);
+}
+.menu-leaderboard .ladder-rating {
+  flex: 0 0 auto;
+  font: 700 12px/1 var(--mono); font-variant-numeric: tabular-nums;
+  color: var(--gold2, #e9a83e); letter-spacing: .4px;
+}
+.menu-leaderboard .rank-chip {
+  padding: 2px 8px 2px 4px; gap: 6px;
+}
+.menu-leaderboard .rank-badge {
+  width: 22px; height: 22px;
+}
+.menu-leaderboard .ladder-mine {
+  margin-top: 10px;
+}
+.menu-leaderboard .start-kicker {
+  margin: 0 0 6px; text-align: center;
+}
+.menu-ladder-link {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  width: 100%; min-height: 44px; margin-top: 12px; padding: 7px 14px;
+  border: 1px solid var(--line, #594b3b); border-radius: var(--r, 3px);
+  color: var(--txt, #efe4d0);
+  background: linear-gradient(180deg, rgba(255,255,255,.055), rgba(255,255,255,.015)), rgba(21,18,14,.85);
+  font-family: var(--display); font-weight: 700; font-size: 12px;
+  letter-spacing: 2px; text-transform: uppercase; cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
+  transition: border-color .15s ease, background .15s ease, box-shadow .15s ease;
+}
+.menu-ladder-link:hover {
+  border-color: var(--gold, #c98731);
+  background: linear-gradient(180deg, rgba(255,166,43,.16), rgba(255,166,43,.05)), rgba(21,18,14,.85);
+  box-shadow: 0 0 0 1px rgba(233,168,62,.25), 0 6px 22px rgba(0,0,0,.4);
+}
+.menu-ladder-link small {
+  font-family: var(--sans, sans-serif); font-weight: 500; font-size: 10.5px;
+  letter-spacing: 1px; text-transform: none; opacity: .72;
+}
 /* the tour projector (#iso-tutorial) hangs inside this host, full-bleed */
-/* the game version + build id at the foot of the main menu (src/ui/version.ts) */
+/* the game version + build id at the foot of the main menu (src/ui/version.ts) — now flows under the leaderboard, not pinned to the viewport */
 .menu-foot {
-  position: absolute; left: 0; right: 0; bottom: 10px; z-index: 2;
-  margin: 0; padding: 0 16px; text-align: center;
+  position: static; z-index: 2;
+  margin: 16px 0 10px; padding: 0 16px; text-align: center;
   color: rgba(232, 220, 192, .38); font: 500 10px/1.5 var(--sans, sans-serif); letter-spacing: .6px;
 }
 /* fixed, not absolute: the start screen scrolls, and the projector covers the
