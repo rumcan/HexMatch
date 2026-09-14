@@ -209,6 +209,16 @@ export { joinFromSnapshot };
 import { NetSession, type NetRole } from "../net/session";
 import { applyTrackDelta } from "../net/delta";
 import { type DeltaMsg, type IntentMsg } from "../net/protocol";
+// #186: the room's match settings — the ★ line, the opening purse and the AI
+// seats a hosted game plays by. Pure data with a strict reader, so a hand-built
+// `IsoGameOptions` (a test harness, a playtest link) is normalised exactly like
+// a block that crossed the wire.
+import {
+  DEFAULT_MATCH_SETTINGS,
+  describeMatchSettings,
+  normalizeMatchSettings,
+  type MatchSettings,
+} from "../net/match-settings";
 // RANK-01 (#147): the rated match. `rank-runtime.ts` holds the rating and talks
 // to the room; the STORE arrives by injection (see `IsoGameOptions.rank`) so
 // this file keeps its promise of booting in a headless test with no SDK, no
@@ -385,6 +395,13 @@ export interface IsoGameOptions {
   /** STORY-01: the ending's "Continue the campaign" returns through here. */
   onStoryExit?: () => void;
   /**
+   * #186: the rules a HOSTED room plays by — the ★ line, the opening purse and
+   * the AI seats. The start screen passes the room's copy; absent (or unreadable)
+   * falls back to the session's, and then to the shipped defaults, so a solo
+   * boot and a room nobody customised both get exactly today's game.
+   */
+  settings?: MatchSettings | null;
+  /**
    * SETTINGS-01/GFX-01: the in-game ☰ menu's "Quit to main menu" row returns
    * through here — an App-level unmount (the same door `onStoryExit` walks
    * out of), with the save left exactly where a refresh would have found it.
@@ -438,6 +455,52 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   /** The player's own cast id, for every line the wire answers in. */
   const playerCast: "vex" | "you" = portrait;
 
+  // ── #186: what this room plays by ────────────────────────────────────────
+  /**
+   * The match settings, resolved once and then read live everywhere the rules
+   * show up (`winTarget()`, the opening purse, the AI seat).
+   *
+   * Order of authority, and why it is this way round:
+   *   1. what the caller passed — the start screen hands over the room's copy,
+   *      and a test harness may pin one the way a playtest link pins a seed;
+   *   2. the session's own copy — a game booted straight from a session (the
+   *      e2e suites) still gets the rules the room filed;
+   *   3. the shipped defaults.
+   *
+   * A SOLO boot always lands on the defaults, whatever it was handed: a solo
+   * game's ★ line belongs to its difficulty (`RIVAL_SKILLS.easy.winTarget`) and
+   * a contract's belongs to its chapter, so a settings block there would be a
+   * second opinion about a rule that already has an owner. That is also what
+   * makes "defaults unchanged" true by construction — the two paths that could
+   * carry a surprise (solo, story) never read this record at all.
+   */
+  const settings: MatchSettings = isSolo()
+    ? DEFAULT_MATCH_SETTINGS
+    : normalizeMatchSettings(opts.settings ?? null) ?? net?.settings ?? DEFAULT_MATCH_SETTINGS;
+  /**
+   * #186: does an AI hold the opponent seat?
+   *
+   * The host filed an AI seat in its lobby and no human took the seat before it
+   * started — "seats fill with AI when the host starts early". Read ONCE at
+   * boot, which is safe because the room locks that seat the moment the match
+   * goes live (`lockAiSeat` in `src/rooms/HexmatchRoom.ts`): a joiner cannot
+   * arrive mid-match into a seat a machine is already playing.
+   *
+   * A GUEST never runs an AI (§ the issue's rule: AI is simulated on the host
+   * and synced like any other seat), and a room where a human did take the seat
+   * plays the human — the AI is the filler, never a third player. The check is
+   * on a KNOWN guest: the host's own lobby is the authority for the seat it
+   * filled (and the start screen clears `aiSeats` when a human is sitting
+   * there), so a welcome that has not landed yet cannot talk the host out of
+   * the machine it just started a match against.
+   */
+  const aiOpponent = !isSolo() && mpRole() === "host"
+    && settings.aiSeats.length > 0
+    && !(net !== null && net.info !== null && net.info.roster.length >= 2);
+  /** The opening purse every seat starts with (#186). Solo reads the same
+   *  numbers through `START_PURSE`, which the suite pins to this default. */
+  const startPurse: Purse = settings.startPurse;
+
   // PP-14b: the Processing Plant reset's cooldown. `lastResetAt` starts at
   // -Infinity so the very first reset of a boot is always allowed.
   const RESET_COOLDOWN_MS = 30_000;
@@ -484,11 +547,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const score: ScoreState = createScoreState();
 
   const players: PlayerState[] = [
-    { i: 0, id: "you", name: "You", colour: "#5aa8ff", purse: toBag(START_PURSE), human: true, freeTrack: FREE_SETUP_TRACK, freeDepots: FREE_SETUP_DEPOTS },
+    { i: 0, id: "you", name: "You", colour: "#5aa8ff", purse: toBag(startPurse), human: true, freeTrack: FREE_SETUP_TRACK, freeDepots: FREE_SETUP_DEPOTS },
     // STORY-01: a contract renames and recolours the rival seat — the dossier
     // cards, the scoreboard and the ending ledger all read this name, so the
     // whole HUD introduces whoever the chapter cast.
-    { i: 1, id: "ai", name: storyChapter ? CAST[rivalCast].name : "Rival", colour: storyChapter ? CAST[rivalCast].colour : "#ff7a5a", purse: toBag(START_PURSE), human: false, freeTrack: FREE_SETUP_TRACK, freeDepots: FREE_SETUP_DEPOTS },
+    // #186: both seats open on the room's purse — the settings are the ROOM's
+    // rules, so a Rich game is rich for the guest and for the AI alike, and the
+    // two purses can never disagree about what the host chose.
+    { i: 1, id: "ai", name: storyChapter ? CAST[rivalCast].name : "Rival", colour: storyChapter ? CAST[rivalCast].colour : "#ff7a5a", purse: toBag(startPurse), human: false, freeTrack: FREE_SETUP_TRACK, freeDepots: FREE_SETUP_DEPOTS },
   ];
   const me = players[0], rival = players[1];
 
@@ -503,7 +569,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // IS the pacing — so the resolver (URL, storage) never gets a vote inside a
   // contract. The top-bar selector still works: changing your mind mid-contract
   // changes the live clock, exactly as in a sandbox match.
-  let skillKey: SkillKey = storyChapter ? storyChapter.skill : resolveSkillKey();
+  // #186: an AI-filled seat in a hosted room is cast by the ROOM's settings —
+  // the difficulty the host picked in the lobby, not this browser's last solo
+  // pick. A human guest keeps the seat's own (unused) preset, and a solo game
+  // resolves exactly as it always did: contract, then URL/storage, then normal.
+  let skillKey: SkillKey = storyChapter
+    ? storyChapter.skill
+    : aiOpponent
+      ? settings.aiSeats[0]
+      : resolveSkillKey();
   // AI-01: a pinned `?rival=` link is an explicit choice, exactly like a pick
   // in the top-bar selector — so it persists for the next boot. Only the URL
   // path writes here: a plain boot must leave the storage key ABSENT or the
@@ -532,15 +606,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * mid-game moves the line for the next tick, exactly like the clocks do.
    *
    * Solo only: a hosted game has no difficulty (the selector is not even built,
-   * see `onSkill` below) and both seats must see the same line, so it stays on
-   * the constant.
+   * see `onSkill` below) and both seats must see the same line — so #186 moved
+   * it onto the ROOM's settings, the one copy of the rules every seat was told
+   * at its welcome. The default is `VICTORY.target`, so a room nobody
+   * customised races the shipped line, and the HUD's "first to N★", the
+   * scoreboard's king bars and the win check all move together when it does.
    */
   // STORY-01: a contract races to its OWN ★ line (5★ for the inheritance, the
   // full 8★ for the Chairman), read live like everything else on this dial —
   // the scoreboard, the HUD badge and the win check all ask `winTarget()`.
   const winTarget = (): number => storyChapter
     ? storyChapter.target
-    : (isSolo() ? skill().winTarget : VICTORY.target);
+    : (isSolo() ? skill().winTarget : settings.winTarget);
 
   const eco: EconomyState = { grid, track, harvesters: [], factories: [] };
   let nextHarvesterId = 1;
@@ -733,7 +810,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // another player's inventory on offers they never accepted. A networked
     // market is all-human: offers only leave the board by expiry, cancellation
     // or a validated acceptance intent.
-    human: isMp() ? true : p.human,
+    // #186: …unless the host filled that seat with a machine, in which case the
+    // seat IS an AI and the AI-acceptance policy is exactly what should run on
+    // it — there is no person there to accept anything.
+    human: isMp() ? !aiOpponent || p !== rival : p.human,
     purse: p.purse,
   })), {
     onOfferClosed: (o, how) => {
@@ -1072,9 +1152,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     { id: "roads", label: "Mixing the asphalt" },
     { id: "protest", label: "Painting the placards" },
   ]);
+  // #186: a hosted game says its rules out loud on the way in — the ★ line and
+  // the purse are the host's choices, and a guest who never opened the settings
+  // panel should still hear them before the map lands.
   const showLoading = () => loading.show(isSolo()
     ? `Rival: ${skill().label} · first to ${winTarget()}★ wins`
-    : "Setting the table for two tycoons");
+    : `${aiOpponent ? `Rival: ${skill().label} · ` : "Setting the table for two tycoons · "}${describeMatchSettings(settings)}`);
 
   // TUT-01 + AI-02: the two one-shot boot prompts, in the order a new player
   // meets them. The TOUR goes first — it is the "how does this game work" card,
@@ -1196,7 +1279,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   };
   const __setCrossPrompt = (boardOwner: string, kind: CrossKind, picks: number, resolve: (chosen: ResKey[]) => void) => {
     // In solo, just show locally; in host, track prompt for guest sync
-    if (isSolo()) {
+    // #186: an AI-FILLED seat shows locally too — the seat the host would
+    // otherwise publish this prompt to is a machine, and a prompt nobody can
+    // answer would sit until its 30 s expiry instead of being played.
+    if (isSolo() || aiOpponent) {
       ui.crossPick(kind, picks, resolve);
       return;
     }
@@ -1986,9 +2072,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   function placeFactory(tx: number, ty: number): boolean {
     if (!placeFactoryFor(me, tx, ty)) return false;
-    if (!isSolo()) {
+    if (!isSolo() && !aiOpponent) {
       // MP-05: no AI rival to seat — the guest places its own opening Factory
       // through an intent, on its own click.
+      // #186: an AI-filled seat is seated below, exactly as in solo — there is
+      // nobody on the other end of the wire to click for it.
       phase = "setup-harvester";
       syncWorld();
       toast("Factory placed. Now place your first depot beside an industry.", "info");
@@ -2689,7 +2777,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (phase !== "play") return;
     // MP-05: the rival's market policy is solo-only. In a hosted game seat 1 is
     // a person: the host must not post offers on their behalf.
-    if (isSolo()) rivalMarketOffer(now);
+    // #186: an AI-FILLED seat is the exception — the host is that seat's player,
+    // so its offers are posted here exactly as they are in solo.
+    if (isSolo() || aiOpponent) rivalMarketOffer(now);
     quarry.tick(now);
     // AI-03: the rival's own plant plays: same board clock as yours, then
     // one watchable move per skill().moveMs. trySwap refuses politely when
@@ -2697,7 +2787,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     rivalQuarry.tick(now);
     // MP: in a hosted game seat 1 is a person who swaps their own board by
     // intent — an autoplaying AI there would be a third player on their board.
-    if (isSolo()) rivalAutoplay(now);
+    // #186: an AI-FILLED seat has no person on it, so its board plays itself at
+    // the same cadence it does in solo (and the guest-side wire carries it).
+    if (isSolo() || aiOpponent) rivalAutoplay(now);
   }
 
   /** AI-03: the rival's match-3 cadence — "a board where he is slowly
@@ -3119,7 +3211,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   function aiTick(now: number) {
     // MP-05: §9 — "the AI rival is disabled in a hosted game; the guest is the
     // rival". Seat 1 is driven by intents from the relay instead.
-    if (!isSolo()) return;
+    // #186: …unless the host filled that seat itself, which is the one hosted
+    // game with a machine in it — the AI is simulated ON THE HOST and synced to
+    // the guest like any other seat state, so this tick is the whole of "the AI
+    // plays" and the guest never runs a line of it.
+    if (!isSolo() && !aiOpponent) return;
     if (phase !== "play") return;
     // AI-01: the two clocks come from the live difficulty. The turn that
     // follows is SHARED across presets — easy/hard pace the same policy.
@@ -6020,6 +6116,23 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       return market.ctx.offers.length > before;
     },
     get purse() { return me.purse; },
+    /**
+     * #186: the seats, as the game holds them — id, name, whether a person is
+     * on it, its purse and its ★. The two-seat purse check ("host and guest
+     * purses match") and the AI-seat check both need to see BOTH seats, and
+     * `purse` above is only ever the local one.
+     */
+    get players() {
+      return players.map((p) => ({
+        i: p.i, id: p.id, name: p.name, human: p.human,
+        purse: { ...p.purse }, vp: vpFor(score, p.id),
+      }));
+    },
+    /** #186: the rules this match booted with, and whether a machine holds the
+     *  opponent seat. Both are boot facts — a test reads them to prove the
+     *  room's settings reached the game rather than inferring it. */
+    get matchSettings() { return settings; },
+    get aiSeat() { return aiOpponent; },
     get harvesters() { return eco.harvesters; },
     get factories() { return eco.factories; },
     get freeTrack() { return me.freeTrack; },

@@ -575,3 +575,114 @@ describe("RANK-01 the room as the referee", () => {
     }
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// #186 — the room as the holder of the match rules.
+//
+// The host CHOOSES the rules; the room HOLDS them, because the room is the only
+// party every seat hears from. That is what makes "a guest sees the settings as
+// soon as it joins" and "a late join receives the same settings" the same fact
+// rather than two features: both are the welcome carrying what the host filed.
+// And it is why a guest's claim is dropped rather than merged — one room, one
+// set of rules, one authority.
+// ══════════════════════════════════════════════════════════════════════════
+describe("#186 the room's match settings", () => {
+  const RULES = { aiSeats: [] as string[], winTarget: 5, startPurse: { wood: 24, stone: 24, ore: 0 } };
+
+  function settingsFrames(h: Harness) {
+    return h.frames.filter((f) => f.type === "settings").map((f) => messageOf(f));
+  }
+
+  it("relays the host's rules to everyone, normalised", async () => {
+    const h = setup();
+    await h.protocol.handleCreate();
+    await join(h, "host-1", "Host");
+    await join(h, "guest-2", "Guest");
+    h.frames.length = 0;
+    await h.protocol.handleMessage("host-1", "settingsClaim", { settings: RULES });
+    const echoed = settingsFrames(h);
+    // One echo, broadcast — it goes to the host too, so a lobby has exactly one
+    // source for the rules it prints: the room's.
+    expect(echoed).toHaveLength(1);
+    expect(h.frames[0].target).toBe("broadcast");
+    expect(echoed[0]).toEqual({ type: "settings", settings: RULES });
+  });
+
+  it("drops a guest's claim — the host is the only seat that may speak for the room", async () => {
+    const h = setup();
+    await h.protocol.handleCreate();
+    await join(h, "host-1", "Host");
+    await join(h, "guest-2", "Guest");
+    h.frames.length = 0;
+    await h.protocol.handleMessage("guest-2", "settingsClaim", { settings: RULES });
+    expect(settingsFrames(h)).toHaveLength(0);
+    // …and the room went on holding nothing, so the next welcome still carries
+    // no rules and both seats play the defaults.
+    h.frames.length = 0;
+    await join(h, "late-3", "Late");
+    const [w] = h.frames.filter((f) => f.type === "welcome").map((f) => messageOf(f) as WelcomeMsg);
+    expect(w.settings).toBeUndefined();
+  });
+
+  it("drops a malformed claim rather than storing half a rule", async () => {
+    const h = setup();
+    await h.protocol.handleCreate();
+    await join(h, "host-1", "Host");
+    h.frames.length = 0;
+    for (const bad of [{ winTarget: 900 }, { aiSeats: ["medium"] }, { startPurse: { wood: -4 } }, "rich"]) {
+      await h.protocol.handleMessage("host-1", "settingsClaim", { settings: bad });
+    }
+    expect(settingsFrames(h)).toHaveLength(0);
+  });
+
+  it("carries the filed rules on every later welcome (late join, rejoin)", async () => {
+    const h = setup();
+    await h.protocol.handleCreate();
+    await join(h, "host-1", "Host");
+    await h.protocol.handleMessage("host-1", "settingsClaim", { settings: RULES });
+    h.frames.length = 0;
+    await join(h, "guest-2", "Guest");
+    const greetings = h.frames.filter((f) => f.type === "welcome").map((f) => messageOf(f) as WelcomeMsg);
+    expect(greetings.length).toBeGreaterThan(0);
+    for (const greeting of greetings) {
+      expect(greeting.settings).toEqual(RULES);
+      // The client's own validator must accept the greeting the room built.
+      expect(validateWelcome(greeting)).toBeNull();
+    }
+  });
+
+  it("keeps a default-rules room's welcome free of a settings block", async () => {
+    const h = setup();
+    await h.protocol.handleCreate();
+    await join(h, "host-1", "Host");
+    const [w] = welcomes(h.frames);
+    expect(w.settings).toBeUndefined();
+  });
+
+  it("locks the seat an AI is holding once the match goes live", async () => {
+    // The host started early against a machine. `maxPlayers: 2` only locks on a
+    // second HUMAN, so without this a joiner with the code would be seated into
+    // a seat the host is already simulating — arriving mid-match as a passenger
+    // in somebody else's game.
+    const h = setup();
+    await h.protocol.handleCreate();
+    await join(h, "host-1", "Host");
+    await h.protocol.handleMessage("host-1", "settingsClaim", {
+      settings: { ...RULES, aiSeats: ["normal"] },
+    });
+    expect(h.room.locked).toBe(false);            // still a lobby: a human may take the seat
+    h.frames.length = 0;
+    await h.protocol.handleMessage("host-1", "snapshot", { snap: tinySnapshot() });
+    expect(h.room.locked).toBe(true);
+  });
+
+  it("leaves an all-human room unlocked until its second seat fills", async () => {
+    const h = setup();
+    await h.protocol.handleCreate();
+    await join(h, "host-1", "Host");
+    await h.protocol.handleMessage("host-1", "settingsClaim", { settings: RULES });
+    h.frames.length = 0;
+    await h.protocol.handleMessage("host-1", "snapshot", { snap: tinySnapshot() });
+    expect(h.room.locked).toBe(false);
+  });
+});
