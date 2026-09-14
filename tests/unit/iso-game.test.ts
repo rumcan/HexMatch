@@ -2846,7 +2846,7 @@ describe("PP-14 the holy cross", () => {
     const count = panel!.querySelector(".cross-pick-count");
     const confirm = panel!.querySelector<HTMLButtonElement>(".cross-pick-confirm");
     expect(confirm, "the confirm button must exist").not.toBeNull();
-    expect(confirm!.textContent).toBe("🙏 Bless +6");
+    expect(confirm!.textContent).toBe("Bless +6");
     expect(confirm!.disabled, "confirm stays disabled before six units are spent").toBe(true);
     const btn = (cargo: string) => panel!.querySelector<HTMLButtonElement>(`[data-cargo="${cargo}"]`)!;
     // spend 3 wood + 3 stone (repeats allowed)
@@ -2904,7 +2904,7 @@ describe("PP-14 the holy cross", () => {
       .toBe("Spend 3 bounties · repeats allowed");
     const count = panel!.querySelector(".cross-pick-count");
     const confirm = panel!.querySelector<HTMLButtonElement>(".cross-pick-confirm");
-    expect(confirm!.textContent).toBe("✝ Bless +3");
+    expect(confirm!.textContent).toBe("Bless +3");
     const btn = (cargo: string) => panel!.querySelector<HTMLButtonElement>(`[data-cargo="${cargo}"]`)!;
     // 2 wood + 1 stone = 3, the broken cross's full spend
     btn("wood").click();

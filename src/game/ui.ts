@@ -77,7 +77,7 @@ import { coarsePointer } from "../iso/touch";
 // bijection quarry.ts uses, so a colour can never draw the wrong sprite.
 import { GEM_ART } from "./gem-art";
 import {
-  HUD_ICONS, cargoIconHtml, costMarkup, depotButtonMarkup, soundIconHtml,
+  HUD_ICONS, ICON_CROSS, cargoIconHtml, costMarkup, depotButtonMarkup, soundIconHtml,
 } from "./hud-icons";
 
 // ── NOIR: the painted mugshots ──────────────────────────────────────────────
@@ -1537,6 +1537,9 @@ export function createOriginalUi(
   // the panel and paused cascade wait until the player explicitly confirms.
   // Outside clicks/tab switches cannot dismiss it. Queue additional choices
   // rather than auto-answering and replacing an unfinished allocation.
+  // #185 restyled the plate into the house language — shared `.panel`
+  // treatment over a light board dim, chip-dark cargo tiles, and the dialog
+  // `.big-btn` as the confirm. None of the flow above changed.
   let pickEl: HTMLElement | null = null;
   const pickQueue: { kind: "holy" | "broken"; picks: number; pick: (chosen: ResKey[]) => void }[] = [];
 
@@ -1553,12 +1556,29 @@ export function createOriginalUi(
       return chosen;
     };
     const holy = kind === "holy";
-    const panel = h("div", `cross-pick${holy ? "" : " broken"}`);
-    panel.appendChild(h("div", "cross-pick-title", holy ? "🙏 HOLY CROSS" : "✝ BROKEN CROSS"));
+    // #185: the plate is the house plate. It wears the shared `.panel`
+    // treatment (felt, glass gradient, brass keyline, `--r`) exactly like the
+    // Bank, Market and build panels, and it rides a light dim — the modal
+    // sheets' `.modal-back` idea, sized to the board rather than the window.
+    // The dim swallows clicks aimed at the board (which is paused anyway) and
+    // carries no handler of its own: outside clicks still cannot dismiss it.
+    // No emoji anywhere in the markup; the title is the ledger kicker over an
+    // engraved display-face name sealed with the stroke-SVG cross.
+    const back = h("div", "cross-pick-back");
+    const panel = h("div", `cross-pick panel${holy ? "" : " broken"}`);
+    const head = h("div", "cross-pick-head");
+    head.appendChild(h("div", "cross-pick-kicker", "Blessing"));
+    head.appendChild(h(
+      "div", "cross-pick-title",
+      `${ICON_CROSS}<span>${holy ? "Holy Cross" : "Broken Cross"}</span>`,
+    ));
+    panel.appendChild(head);
     panel.appendChild(h("div", "cross-pick-sub", `Spend ${picks} bounties · repeats allowed`));
     const row = h("div", "cross-pick-row");
     const count = h("div", "cross-pick-count", `0 / ${picks} spent`);
-    const confirm = h("button", "cross-pick-confirm", holy ? `🙏 Bless +${picks}` : `✝ Bless +${picks}`);
+    // #185: the confirm is the game's primary action button — the brass
+    // "sign here" plate of the dialogs, class and all.
+    const confirm = h("button", "cross-pick-confirm big-btn", `Bless +${picks}`);
     (confirm as HTMLButtonElement).type = "button";
     (confirm as HTMLButtonElement).disabled = true;
     // SFX-01: the blessing lands as gold does — two coins touching.
@@ -1584,6 +1604,9 @@ export function createOriginalUi(
       b.dataset.sfx = "pick";
       b.dataset.cargo = cargo;
       b.dataset.gem = gem;
+      // #185: the cargo's own two colours ride along as `--c1/--c2` — the
+      // tile reads chip-dark like the purse's, and the colour lives in its
+      // painted gem token and the assay line struck under it.
       b.style.setProperty("--c1", CARGO[cargo].c1);
       b.style.setProperty("--c2", CARGO[cargo].c2);
       b.innerHTML = `${cargoIconHtml(cargo, "cargo-ic cargo-ic-lg")}<span>+1</span>`;
@@ -1601,9 +1624,9 @@ export function createOriginalUi(
       row.appendChild(b);
     }
     confirm.onclick = () => {
-      if (pickEl !== panel || total() !== picks) return;
+      if (pickEl !== back || total() !== picks) return;
       const chosen = expand();
-      panel.remove();
+      back.remove();
       pickEl = null;
       pick(chosen);
       const next = pickQueue.shift();
@@ -1612,8 +1635,9 @@ export function createOriginalUi(
     panel.appendChild(row);
     panel.appendChild(count);
     panel.appendChild(confirm);
-    boardWrap.appendChild(panel);
-    pickEl = panel;
+    back.appendChild(panel);
+    boardWrap.appendChild(back);
+    pickEl = back;
   }
 
   /** #112: close the chooser and drain any queued ones without answering. */
