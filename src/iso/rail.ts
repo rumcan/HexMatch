@@ -1038,6 +1038,11 @@ export interface Train {
   resold: boolean;
   /** Why a blocked train is blocked, for the panel. */
   blockedWhy?: string;
+  /** Simple trains: wagons behind the loco, 1..TRAIN_MAX_CARTS (absent = 1). Each
+   *  cart carries one resource a trip. */
+  carts?: number;
+  /** Simple trains: trips delivered to the plant platform so far (monotonic). */
+  loads?: number;
 }
 
 export interface LinePlan {
@@ -1463,10 +1468,69 @@ export function tickTrains(state: RailState, dtMs: number): void {
         train.dist = 0;
         continue;
       }
+      // Simple trains: reaching the plant platform delivers the load.
+      if (train.target === "dest") train.loads = (train.loads ?? 0) + 1;
       train.status = "dwelling";
       train.dwellMs = DWELL_MS;
     }
   }
+}
+
+// ── simple trains: automatic lines and carts ──────────────────────────────
+/** The most carts a train can pull; each carries one resource a trip. */
+export const TRAIN_MAX_CARTS = 5;
+
+/** A train's cart count, clamped (an old save or wire without carts reads 1). */
+export const cartsOf = (t: Pick<Train, "carts">): number =>
+  Math.max(1, Math.min(TRAIN_MAX_CARTS, Math.floor(t.carts ?? 1)));
+
+/** Add one cart. The price is the caller's to check and charge. */
+export function addCart(train: Train): { ok: boolean; why?: string } {
+  const n = cartsOf(train);
+  if (n >= TRAIN_MAX_CARTS) return { ok: false, why: `This train already pulls ${TRAIN_MAX_CARTS} carts.` };
+  train.carts = n + 1;
+  return { ok: true };
+}
+
+/**
+ * Simple trains: every industry platform of the owner that has no line yet,
+ * and shares a connected rail network with one of the owner's plant
+ * platforms and a depot, gets its line and a FREE train that starts driving
+ * at once — the way a lorry appears when a depot joins a plant. The rules are
+ * `assignLine`'s, so the one-train-per-network limit still holds. Returns the
+ * trains it started.
+ */
+export function autoRunLines(state: RailState, ownerId: number): Train[] {
+  const started: Train[] = [];
+  const platforms = structuresOf(state, ownerId, "platform");
+  for (const src of platforms) {
+    if (src.anchor?.kind !== "industry") continue;
+    if (state.lines.some((l) => l.source === src.id)) continue;
+    const comp = railComponents(state, ownerId);
+    const a = comp.get(tIdx(...stopTile(src))) ?? 0;
+    if (!a) continue;
+    for (const dst of platforms) {
+      if (dst.anchor?.kind !== "plant") continue;
+      if ((comp.get(tIdx(...stopTile(dst))) ?? 0) !== a) continue;
+      const plan = assignLine(state, ownerId, src.id, dst.id);
+      if (plan.ok && plan.train) started.push(plan.train);
+      break;
+    }
+  }
+  return started;
+}
+
+/** The resource a train's line carries: its source platform's industry cargo. */
+export function trainCargo(
+  state: RailState, grid: Grid, train: Train,
+): { cargo: Cargo; industry: Grid["industries"][number] } | null {
+  const line = state.lines.find((l) => l.id === train.lineId);
+  const src = line ? structureById(state, line.source) : null;
+  if (!src || src.anchor?.kind !== "industry") return null;
+  const id = src.anchor.id;
+  const industry = grid.industries.find((i) => i.id === id);
+  const cargo = industry ? INDUSTRY_BY_KEY[industry.type]?.cargo : undefined;
+  return industry && cargo ? { cargo, industry } : null;
 }
 
 /** Send a train home: `returning` first, and it stays there until re-assigned. */
@@ -1561,7 +1625,7 @@ export const platformVp = (state: RailState, ownerId: number): number =>
   structuresOf(state, ownerId, "platform").length * PLATFORM_VP;
 
 // ── the Railway panel's model ─────────────────────────────────────────────
-export type RailPanelAction = "assign" | "recall" | "sell" | "buy" | "start";
+export type RailPanelAction = "assign" | "recall" | "sell" | "buy" | "start" | "cart";
 
 export interface RailPanelRow {
   id: number;
@@ -1645,13 +1709,17 @@ export function railPanelRows(state: RailState, ownerId: number): RailPanelRow[]
       id: t.id,
       kind: "train",
       label: line?.name ?? "Train",
-      detail: trainStatusText(t),
+      detail: `${trainStatusText(t)} · ${cartsOf(t)}/${TRAIN_MAX_CARTS} carts`,
       // A blocked train stopped on its depot exit is home (see `trainAtHome`)
       // and offers its 50% sale rather than a recall that can never route.
       // #179: a train parked in its shed on a line can be started as well as sold.
-      actions: trainAtHome(state, t)
-        ? (t.status === "stored" && line ? ["start", "sell"] : ["sell"])
-        : ["recall"],
+      // Simple trains: "cart" adds a wagon wherever the train is, up to the cap.
+      actions: [
+        ...(cartsOf(t) < TRAIN_MAX_CARTS ? ["cart"] as const : []),
+        ...(trainAtHome(state, t)
+          ? (t.status === "stored" && line ? ["start", "sell"] as const : ["sell"] as const)
+          : ["recall"] as const),
+      ],
     });
   }
   return rows;
@@ -1704,8 +1772,12 @@ export function trainItems(state: RailState, atlas?: RailSpriteSource): DrawItem
     if (!train.route.length) continue;
     const cum = polyline(train.route);
     const loco = pointAt(train.route, train.dist, cum);
-    const wagon = pointAt(train.route, train.dist - WAGON_OFFSET, cum);
-    for (const [kind, p] of [["locomotive", loco], ["wagon", wagon]] as const) {
+    // Simple trains: one wagon per cart, coupled nose to tail behind the loco.
+    const parts: ["locomotive" | "wagon", PathPoint][] = [["locomotive", loco]];
+    for (let k = 0; k < cartsOf(train); k++) {
+      parts.push(["wagon", pointAt(train.route, train.dist - WAGON_OFFSET - k * (WAGON_LEN + COUPLE_GAP), cum)]);
+    }
+    for (const [kind, p] of parts) {
       const name = `${kind}_${VIEW_NAME[p.dirBit] ?? "se"}`;
       if (atlas && !atlas.has(name)) continue;
       out.push({ sprite: name, tx: Math.round(p.fx), ty: Math.round(p.fy), fx: p.fx, fy: p.fy });
@@ -1871,6 +1943,8 @@ export function applyRailWire(state: RailState, wire: RailWire | null | undefine
         : (prevRoutes.get(t.id) ?? []).map((r) => [...r] as [number, number]),
       dist: t.dist, planRevision: t.planRevision, dwellMs: t.dwellMs,
       dirBit: t.dirBit, resold: !!t.resold, blockedWhy: t.blockedWhy,
+      carts: cartsOf({ carts: typeof t.carts === "number" ? t.carts : 1 }),
+      loads: typeof t.loads === "number" && t.loads >= 0 ? Math.floor(t.loads) : 0,
     });
   }
   return true;

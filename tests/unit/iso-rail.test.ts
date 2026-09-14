@@ -21,10 +21,10 @@ import {
   anchorCandidates, resolveAnchor, platformRefusal, placePlatform, overlaps,
   depotRefusal, placeDepot, depotExit, laneTiles, stopTile, railPorts, footprintFor, rotateView,
   railComponents, railPath, ownerRailTiles,
-  lineRefusal, assignLine, createLine, renameLine, buyTrain, startLine, LINE_NAME_MAX, planLeg, tickTrains, trainTile, trainOccupies, demolishStructure,
+  lineRefusal, assignLine, autoRunLines, addCart, cartsOf, TRAIN_MAX_CARTS, createLine, renameLine, buyTrain, startLine, LINE_NAME_MAX, planLeg, tickTrains, trainTile, trainOccupies, demolishStructure,
   recallTrain, sellTrain, stopLine, depotReaching, trainAtHome, trainBasedAt,
   railServesIndustry, railServicedIndustries, platformVp, railPanelRows,
-  railStructureItems, trainItems, pointAt, polyline, routeLength,
+  railStructureItems, trainItems, railToWire, applyRailWire, pointAt, polyline, routeLength,
   type RailState, type RailView, type RailStructure,
 } from "../../src/iso/rail";
 import { createTrack, tIdx, type Track } from "../../src/iso/track";
@@ -696,7 +696,7 @@ describe("the Railway panel's model", () => {
     const plan = assignLine(state, 1, source.id, dest.id);
     const after = railPanelRows(state, 1);
     const trainRow = after.find((r) => r.kind === "train");
-    expect(trainRow?.actions).toEqual(["recall"]);
+    expect(trainRow?.actions).toEqual(["cart", "recall"]);
     expect(trainRow?.detail).toMatch(/departing/);
     for (let i = 0; i < 400 && plan.train?.status !== "dwelling"; i++) tickTrains(state, 50);
     expect(railPanelRows(state, 1).find((r) => r.kind === "train")?.detail).toMatch(/dwelling/);
@@ -847,8 +847,60 @@ describe("#179 line and train management", () => {
     expect(buyTrain(state, 1, depot.id, line.id).ok).toBe(true);
     const parked = railPanelRows(state, 1);
     expect(parked.find((r) => r.kind === "depot")?.actions).toEqual([]);
-    expect(parked.find((r) => r.kind === "train")?.actions).toEqual(["start", "sell"]);
+    expect(parked.find((r) => r.kind === "train")?.actions).toEqual(["cart", "start", "sell"]);
     expect(startLine(state, 1, line.id)).toBe(true);
-    expect(railPanelRows(state, 1).find((r) => r.kind === "train")?.actions).toEqual(["recall"]);
+    expect(railPanelRows(state, 1).find((r) => r.kind === "train")?.actions).toEqual(["cart", "recall"]);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// Simple trains — a line runs by itself, and carts add a resource a trip
+// ══════════════════════════════════════════════════════════════════════════
+describe("simple trains: automatic lines and carts", () => {
+  const world = () => {
+    const grid = flatGrid();
+    const track = createTrack();
+    const state = createRailState();
+    return { state, ...buildLine(state, grid, track, 7, 3) };
+  };
+
+  it("gives a connected platform pair its free train automatically, and only once", () => {
+    const { state, source, dest } = world();
+    const started = autoRunLines(state, 1);
+    expect(started).toHaveLength(1);
+    expect(state.lines[0]).toMatchObject({ source: source.id, dest: dest.id });
+    expect(started[0].status).toBe("departing");
+    expect(cartsOf(started[0])).toBe(1);
+    expect(autoRunLines(state, 1)).toHaveLength(0);          // already running
+    expect(autoRunLines(state, 2)).toHaveLength(0);          // nothing of the rival's
+  });
+
+  it("counts one delivered trip each time the train reaches the plant platform", () => {
+    const { state } = world();
+    const [train] = autoRunLines(state, 1);
+    for (let i = 0; i < 8000 && (train.loads ?? 0) < 2; i++) tickTrains(state, 50);
+    expect(train.loads).toBe(2);
+  });
+
+  it("adds carts up to five, one more wagon behind the locomotive each", () => {
+    const { state } = world();
+    const [train] = autoRunLines(state, 1);
+    for (let k = 1; k < TRAIN_MAX_CARTS; k++) expect(addCart(train).ok).toBe(true);
+    expect(cartsOf(train)).toBe(TRAIN_MAX_CARTS);
+    expect(addCart(train).ok).toBe(false);
+    tickTrains(state, 400);
+    const parts = trainItems(state).map((i) => i.sprite.split("_")[0]);
+    expect(parts.filter((p) => p === "locomotive")).toHaveLength(1);
+    expect(parts.filter((p) => p === "wagon")).toHaveLength(TRAIN_MAX_CARTS);
+  });
+
+  it("keeps carts and delivered trips across the wire", () => {
+    const { state } = world();
+    const [train] = autoRunLines(state, 1);
+    train.carts = 3;
+    train.loads = 7;
+    const copy = createRailState();
+    applyRailWire(copy, railToWire(state));
+    expect(copy.trains[0]).toMatchObject({ carts: 3, loads: 7 });
   });
 });

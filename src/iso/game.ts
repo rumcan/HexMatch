@@ -147,6 +147,7 @@ import {
   placePlatform, placeDepot, platformRefusal, depotRefusal, resolveAnchor,
   RAIL_COSTS, RAIL_REFUSAL_TEXT, footprintTiles,
   railStructureItems, trainItems, assignLine, renameLine, buyTrain, startLine, recallTrain, sellTrain, tickTrains,
+  autoRunLines, addCart, cartsOf, trainCargo, structureById,
   rotateView, trainOccupies, trainBasedAt, railPanelRows, canPay, costEntries, resaleValue, demolishStructure, PLATFORM_VP,
   footprintFor, depotExit, RAIL_VIEWS, trainTile, ownerRailTiles as ownerRailTilesOf,
   railToWire, applyRailWire, clearRail, railLayerPatch, copyRailLayer,
@@ -1028,6 +1029,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       } else if (action === "recall") railRecall(id);
       else if (action === "buy") { if (partnerId !== undefined) railBuy(id, partnerId); }
       else if (action === "start") railStart(id);
+      else if (action === "cart") railCart(id);
       else railSell(id);
       paintOverlayNow();
     },
@@ -2091,6 +2093,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   const rescoreNow = () => {
     const now = performance.now();
+    // Simple trains: a platform pair the network now joins gets its free train
+    // straight away — like a lorry appearing when a depot reaches a plant.
+    if (railAvailable && !isGuest()) {
+      for (const p of players) {
+        for (const tr of autoRunLines(rail, p.i + 1)) {
+          if (!p.human) continue;
+          const name = rail.lines.find((l) => l.id === tr.lineId)?.name ?? "A line";
+          toast(`${name} is running — the train brings ${cartsOf(tr)} resource a trip. Add carts for more.`, "good");
+        }
+      }
+    }
     // RAIL-02 (#176): platforms are the third scored thing, handed to the
     // scoreboard from the rail state on every rescore — built = awarded,
     // demolished = revoked, both through `applyVpEvents` like everything else.
@@ -2459,6 +2472,27 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (p.human && ok) toast("Train recalled to its depot.", "info");
     syncWorld();
     return ok;
+  }
+
+  /** Simple trains: add a cart (one more resource a trip), up to the cap. */
+  function railCart(trainId: number, p: PlayerState = me): boolean {
+    if (isGuest()) { net?.sendIntent("build", { do: "railact", what: "cart", id: trainId }); return true; }
+    const train = rail.trains.find((t) => t.id === trainId && t.ownerId === p.i + 1);
+    if (!train) return false;
+    if (!canPay(p.purse, RAIL_COSTS.train)) {
+      if (p.human) toast(`Not enough materials — a cart costs ${railCostLabel(RAIL_COSTS.train)}.`, "bad");
+      return false;
+    }
+    const added = addCart(train);
+    if (!added.ok) {
+      if (p.human) toast(added.why ?? "No room for another cart.", "bad");
+      return false;
+    }
+    spend(p, RAIL_COSTS.train);
+    if (p.human) sfx.play("build");
+    syncWorld();
+    if (p.human) toast(`Cart added — ${cartsOf(train)} resources a trip.`, "good");
+    return true;
   }
 
   /**
@@ -4245,6 +4279,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         else if (payload.what === "sell" && id !== null) railSell(id, p);
         else if (payload.what === "buy" && depot !== null && lineId !== null) railBuy(depot, lineId, p);
         else if (payload.what === "start" && id !== null) railStart(id, p);
+        else if (payload.what === "cart" && id !== null) railCart(id, p);
         else if (payload.what === "rename" && id !== null && typeof payload.name === "string") railRename(id, payload.name, p);
       } else if (what === "swap") {
         const r1 = int(payload.r1), c1 = int(payload.c1);
@@ -4987,7 +5022,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       rail: {
         rows: railPanelRows(rail, me.i + 1).map((r) => ({
           ...r,
-          hint: r.actions.includes("assign") || r.actions.includes("buy") ? `buys a train · ${railCostLabel(RAIL_COSTS.train)}`
+          hint: r.actions.includes("cart") ? `add a cart · ${railCostLabel(RAIL_COSTS.train)}`
+            : r.actions.includes("assign") || r.actions.includes("buy") ? `buys a train · ${railCostLabel(RAIL_COSTS.train)}`
             : r.actions.includes("sell") ? `refund ${railCostLabel(resaleValue(RAIL_COSTS.train))} once`
               : undefined,
         })),
@@ -5606,6 +5642,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // were two unrelated systems that happened to describe the same cargo.
   /** Deliveries already paid out, per depot id. */
   const seenDeliveries = new Map<number, number>();
+  /** Simple trains: the trips each train had delivered when last collected. */
+  const seenTrainLoads = new Map<number, number>();
   /** Never pay more than this many missed deliveries at once (background tab). */
   const MAX_CATCHUP = 3;
 
@@ -5655,6 +5693,25 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // AI-02: the rival's lorries DO feed its game — see rivalDeliverLoad.
         for (let i = 0; i < due; i++) rivalDeliverLoad(truck, t);
       }
+    }
+    // Simple trains: each trip that reached the plant platform pays one of the
+    // source industry's resource per cart straight into the owner's purse.
+    for (const tr of rail.trains) {
+      const loads = tr.loads ?? 0;
+      const seenLoads = seenTrainLoads.get(tr.id);
+      seenTrainLoads.set(tr.id, loads);
+      // First sight (a new train, a load, a snapshot) pays nothing: only trips
+      // made while this seat watched are income.
+      if (seenLoads === undefined || loads <= seenLoads) continue;
+      const got = trainCargo(rail, grid, tr);
+      if (!got || got.industry.banditUntil > t) continue;     // a blockade pays nothing
+      const owner = players.find((p) => p.i + 1 === tr.ownerId);
+      if (!owner) continue;
+      const n = Math.min(loads - seenLoads, MAX_CATCHUP) * cartsOf(tr);
+      earn(owner, { [got.cargo]: n });
+      const line = rail.lines.find((l) => l.id === tr.lineId);
+      const dest = line ? structureById(rail, line.dest) : null;
+      if (dest) floats.add(`+${n} ${CARGO[got.cargo].icon}`, dest.tx, dest.ty, { cls: "delivery", now: t });
     }
   }
 

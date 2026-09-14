@@ -251,6 +251,9 @@ export interface TrainWire {
   dirBit: number;
   resold: boolean;
   blockedWhy?: string;
+  /** Simple trains: carts (absent = 1) and delivered trips (absent = 0). */
+  carts?: number;
+  loads?: number;
 }
 /**
  * The whole railway. Structures, lines and trains are a handful of records and
