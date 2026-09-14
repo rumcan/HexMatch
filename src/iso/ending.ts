@@ -19,7 +19,7 @@ import portraitYou from "../assets/ui/tycoon_you.png";
 import { UNRANKED_KEY, badgeUrlFor } from "../ui/rank-badge";
 
 export type EndingPath = "paving" | "plants" | "balanced";
-export type DecisiveSource = "upgrade" | "plant" | null;
+export type DecisiveSource = "upgrade" | "plant" | "platform" | null;
 
 export interface EndingBreakdown {
   paved: number;

@@ -37,6 +37,8 @@ import {
   DIRS, DIR, OPPOSITE, PRESENT, tIdx, inMapT, trackOpenTo, PUBLIC_OWNER,
   plantFootprintTiles, type Track, type TrackKind,
 } from "./track";
+import type { RailwayState } from "./railway/state";
+import { platformsRailConnected, depotReachableToPlatform } from "./railway/graph";
 
 /** Catchment is a 4×4 rectangle centred on the harvester tile. */
 export const CATCHMENT = 4;
@@ -563,6 +565,129 @@ export function pickBlockadeTarget(
     }
   }
   return near;
+}
+
+// ── Rail service integration (Railways 6/8) ─────────────────────────────────
+/**
+ * Road-served industry IDs (road network only). Helper for union logic.
+ */
+export function roadServedIndustryIds(
+  state: EconomyState, owner: string, now: number, comp?: Components,
+): Set<number> {
+  const out = new Set<number>();
+  const locks = industryLocks(state);
+  const c = comp ?? buildAllComponents(state.track, ownerIdOf(state, owner));
+  for (const h of state.harvesters) {
+    if (h.owner !== owner) continue;
+    const y = harvesterYield(state, c, locks, h, now);
+    if (!y.serviced || y.connection.kind === null) continue;
+    for (const ind of heldIndustries(state, h, locks)) {
+      if (ind.banditUntil > now) continue;
+      // Already filtered by holder, but ensure we only add if this harvester is the holder
+      const holder = locks.get(ind.id);
+      if (holder && holder.id !== h.id) continue;
+      out.add(ind.id);
+    }
+  }
+  return out;
+}
+
+/**
+ * Rail-served industry IDs (Railways v1).
+ *
+ * Eligibility per spec:
+ *  - active assigned train that hasReachedSource (stored or topology-blocked grants no service)
+ *  - intact source-to-owned-plant route and reachable depot (rail graph)
+ *  - apply existing claim/blockade/Gold rules (blockade excluded, deduplication later)
+ *  - Treat as basic road-equivalent reachability in v1 (multiplier 1.0, not duplicated)
+ */
+export function railServedIndustryIds(
+  state: EconomyState,
+  railway: RailwayState | undefined,
+  owner: string,
+  now: number,
+): Set<number> {
+  const out = new Set<number>();
+  if (!railway) return out;
+  const ownerId = ownerIdOf(state, owner);
+  // For each line owned by this owner with eligible train
+  for (const line of railway.lines) {
+    if (line.owner !== owner) continue;
+    if (line.trainId === null) continue;
+    const train = railway.trains.find(t => t.id === line.trainId && t.owner === owner);
+    if (!train) continue;
+    if (train.state === "stored" || train.state === "blocked") continue;
+    if (!train.hasReachedSource) continue;
+    const src = railway.platforms.find(p => p.id === line.sourcePlatformId);
+    const dst = railway.platforms.find(p => p.id === line.destPlatformId);
+    if (!src || !dst) continue;
+    if (src.owner !== owner || dst.owner !== owner) continue;
+    // Anchor checks: source must be industry, dest plant, and plant must be owned
+    if (src.anchor.kind !== "industry") continue;
+    if (dst.anchor.kind !== "plant") continue;
+    const plant = state.factories.find(f => (f.id ?? 0) === dst.anchor.id && f.owner === owner);
+    if (!plant) continue;
+    // Intact route checks via rail graph helpers (avoid circular import by inline logic)
+    // Use dynamic import to avoid cycle; we lazily require graph functions
+    // To avoid import cycle, we implement minimal connectivity check here using railway graph built via same logic as graph.ts
+    // Instead we call helper from railway/graph if available via runtime import
+    const connected = platformsRailConnected(railway, ownerId, src.id, dst.id);
+    const depotReachable = depotReachableToPlatform(railway, ownerId, train.depotId, src.id);
+    if (!connected) continue;
+    if (!depotReachable) continue;
+    const industry = state.grid.industries.find(i => i.id === src.anchor.id);
+    if (!industry) continue;
+    if (industry.banditUntil > now) continue;
+    // Deduplication across road and rail will be handled by caller union; but we still add
+    // Enemy anchor check: source anchor industry is not enemy-specific, but ensure platform not anchored to enemy plant indirectly?
+    // Already ensured dst plant is owned, so enemy anchors excluded.
+    out.add(industry.id);
+  }
+  return out;
+}
+
+/**
+ * Union of road-served and valid rail-served industry IDs, deduplicated.
+ * This is the authoritative reachability set for match-3 economy (quarry).
+ */
+export function servedIndustryIds(
+  state: EconomyState, owner: string, now: number,
+  railway?: RailwayState,
+  comp?: Components,
+): Set<number> {
+  const road = roadServedIndustryIds(state, owner, now, comp);
+  const rail = railServedIndustryIds(state, railway, owner, now);
+  const out = new Set<number>(road);
+  for (const id of rail) out.add(id);
+  return out;
+}
+
+/**
+ * Player resources including rail service (union, deduplicated, road-equivalent multiplier for rail).
+ * Preserves existing road/match-3 functionality; rail adds basic (1.0×) reachability.
+ */
+export function playerResourcesWithRail(
+  state: EconomyState, owner: string, now: number,
+  railway?: RailwayState,
+  comp?: Components,
+): Yield {
+  const roadYield = playerResources(state, owner, now, comp);
+  if (!railway) return roadYield;
+  const roadIds = roadServedIndustryIds(state, owner, now, comp);
+  const railIds = railServedIndustryIds(state, railway, owner, now);
+  // Deduplicate: only add rail industries not already road-served
+  const out: Yield = { ...roadYield };
+  for (const id of railIds) {
+    if (roadIds.has(id)) continue;
+    const ind = state.grid.industries.find(i => i.id === id);
+    if (!ind) continue;
+    if (ind.banditUntil > now) {} // already filtered
+    const def = INDUSTRY_BY_KEY[ind.type];
+    if (!def) continue;
+    const amount = (ind.output ?? def.output) * 1.0; // basic road-equivalent
+    out[def.cargo] = (out[def.cargo] ?? 0) + amount;
+  }
+  return out;
 }
 
 // ── victory points ────────────────────────────────────────────────────────

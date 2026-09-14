@@ -31,7 +31,7 @@ import { BANK_RATE, MAX_OFFERS } from "./trade";
 // constant and the engine's own `VP_TARGET` were two numbers with one name,
 // and the HUD was already showing "/10" while the game was winning at 12 — the
 // scoreboard now has exactly one source, `VICTORY` in src/iso/config.ts.
-import { CARGO, CARGOES, TRANSPORT, VICTORY, UPGRADE_COST, type Cargo, type Portrait } from "../iso/config";
+import { CARGO, CARGOES, TRANSPORT, VICTORY, UPGRADE_COST, BUILD_COSTS, type Cargo, type Portrait } from "../iso/config";
 import { DEPOT_COST } from "../iso/construction";
 import { PLANT_COST } from "../iso/plants";
 import { GEM_TO_CARGO } from "../iso/quarry";
@@ -108,7 +108,7 @@ const portraitFor = (p: UiPlayer, index: number): string =>
  * "read the map" hand). Right-click on the map drops any tool back to it,
  * and Q does the same from the keyboard.
  */
-export type UiTool = "select" | "dirt" | "road" | "harvester" | "plant" | "demolish";
+export type UiTool = "select" | "dirt" | "road" | "harvester" | "plant" | "demolish" | "rail" | "platform" | "trainDepot";
 
 export interface UiPlayer {
   id: string;
@@ -174,6 +174,16 @@ export interface UiState {
    * top-bar Names button paints its pressed state from this.
    */
   showNames?: boolean;
+  /** Railways v1 — railway panel data */
+  railway?: {
+    platforms: { id:number; owner:string; tx:number; ty:number; anchor:string }[];
+    depots: { id:number; owner:string; tx:number; ty:number }[];
+    trains: { id:number; owner:string; depotId:number; lineId:number|null; state:string; blockedReason?:string }[];
+    lines: { id:number; owner:string; name:string; source:number; dest:number; trainId:number|null; status:string }[];
+    canAffordTrain?: boolean;
+  };
+  /** Railways v1 — platform VP breakdown */
+  platformVp?: number;
 }
 
 export interface UiHooks {
@@ -472,6 +482,19 @@ export function createOriginalUi(
   const sabList = h("div", "sab-list");
   sp.appendChild(sabList);
 
+  // ── Railways v1 — Railway management panel ─────────────────────────
+  const railwayPanel = h("div", "panel railway-panel");
+  railwayPanel.id = "railway-panel";
+  railwayPanel.appendChild(h("div", "panel-title", "Railway"));
+  const railwayBody = h("div", "railway-body");
+  railwayBody.innerHTML = `<div class="pane-note">Build <b>Railway Track</b> (1🪨) to connect a <b>Rail Platform</b> (+1★) near an industry to a platform near your owned plant. Build a <b>Train Depot</b> on the network, buy a train (4⛏️+2🛢️), create a two-stop line, assign and start. Trains shuttle and grant match-3 service — no passive income, just token eligibility — deduplicated with roads.</div>`;
+  const railwayLists = h("div", "railway-lists");
+  railwayBody.appendChild(railwayLists);
+  const railwayActions = h("div", "railway-actions");
+  railwayBody.appendChild(railwayActions);
+  railwayPanel.appendChild(railwayBody);
+  left.appendChild(railwayPanel);
+
   root.appendChild(left);
 
   // ── rival offer tray (floats left of the Quarry) ─────────────────────────
@@ -769,6 +792,10 @@ export function createOriginalUi(
     // PP-05: `depotSub` refreshes the Depot line below as the free-setup
     // allowance burns down.
     { key: "harvester", label: "Depot", sub: depotButtonMarkup(0) },
+    // Railways v1 — distinct tools, preserve Depot naming
+    { key: "rail", label: "Railway Track", sub: `${costMarkup(BUILD_COSTS.rail)} · 0★` },
+    { key: "platform", label: "Rail Platform", sub: `${costMarkup(BUILD_COSTS.platform)} · +${VICTORY.platform}★` },
+    { key: "trainDepot", label: "Train Depot", sub: `${costMarkup(BUILD_COSTS.trainDepot)} · 0★` },
     // PP-06: another instance of the SAME processing building, raised beside
     // another town.
     { key: "plant", label: "Processing Plant", sub: `${costMarkup(PLANT_COST)} · next to a town` },
@@ -2543,6 +2570,54 @@ export function createOriginalUi(
     const namesOn = state.showNames ?? true;
     namesBtn.setAttribute("aria-pressed", String(namesOn));
     namesBtn.classList.toggle("active", namesOn);
+    // Railways v1: render railway panel lists and actions
+    if (state.railway) {
+      const r = state.railway;
+      railwayLists.innerHTML = "";
+      const mkSection = (title:string, items:string[]) => {
+        const sec = h("div", "railway-section");
+        sec.appendChild(h("div", "railway-section-title", title));
+        if (!items.length) sec.appendChild(h("div", "empty", "None"));
+        else for (const it of items) sec.appendChild(h("div", "railway-item", it));
+        return sec;
+      };
+      railwayLists.appendChild(mkSection("Platforms", r.platforms.map(p=> `#${p.id} ${p.anchor} @${p.tx},${p.ty} (${p.owner})`)));
+      railwayLists.appendChild(mkSection("Depots", r.depots.map(d=> `#${d.id} @${d.tx},${d.ty} (${d.owner})`)));
+      railwayLists.appendChild(mkSection("Trains", r.trains.map(t=> {
+        let s = `#${t.id} depot#${t.depotId} ${t.state}`;
+        if (t.blockedReason) s+= ` (${t.blockedReason})`;
+        if (t.lineId) s+= ` line#${t.lineId}`;
+        return s + ` (${t.owner})`;
+      })));
+      railwayLists.appendChild(mkSection("Lines", r.lines.map(l=> `#${l.id} "${l.name}" ${l.source}→${l.dest} ${l.trainId?`train#${l.trainId}`:"no train"} ${l.status} (${l.owner})`)));
+      railwayActions.innerHTML = "";
+      const buyBtn = h("button", "mini" + (r.canAffordTrain ? "" : " disabled"), "Buy Train (4⛏️ 2🛢️)");
+      (buyBtn as HTMLButtonElement).disabled = !r.canAffordTrain;
+      buyBtn.title = r.canAffordTrain ? "Buy a train into your depot" : "Need 4 Ore + 2 Oil";
+      // hooks for actions are handled via custom events from game.ts; for now just placeholder with data-rail-action
+      buyBtn.dataset.railAction = "buyTrain";
+      railwayActions.appendChild(buyBtn);
+      const lineBtn = h("button", "mini", "New Line");
+      lineBtn.dataset.railAction = "newLine";
+      railwayActions.appendChild(lineBtn);
+      const assignBtn = h("button", "mini", "Assign");
+      assignBtn.dataset.railAction = "assign";
+      railwayActions.appendChild(assignBtn);
+      const startBtn = h("button", "mini", "Start");
+      startBtn.dataset.railAction = "start";
+      railwayActions.appendChild(startBtn);
+      const returnBtn = h("button", "mini", "Return");
+      returnBtn.dataset.railAction = "return";
+      railwayActions.appendChild(returnBtn);
+      const sellBtn = h("button", "mini danger", "Sell (50%)");
+      sellBtn.dataset.railAction = "sell";
+      railwayActions.appendChild(sellBtn);
+      if (state.platformVp !== undefined) {
+        const vpNote = h("div", "pane-note", `Platforms: ${state.platformVp}★ — rail service is match-3 eligibility only, no arrival payout.`);
+        railwayBody.appendChild(vpNote);
+      }
+    }
+
     // PP-05: keep the Depot's price line honest without rebuilding the button
     // (a rebuilt button drops a click mid-gesture, the reason `renderSabotage`
     // is change-gated too). The cost text comes from the same table the
@@ -2552,10 +2627,15 @@ export function createOriginalUi(
       lastDepotSub = sub;
       if (depotSub) depotSub.innerHTML = sub;
     }
-    buildList.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((button) => {
+        buildList.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((button) => {
       const tool = button.dataset.tool as UiTool;
-      const cost = tool === "plant" ? PLANT_COST : tool === "harvester" ? DEPOT_COST
-        : tool === "road" || tool === "dirt" ? TRANSPORT[tool].cost : {};
+      let cost: Partial<Record<Cargo, number>> = {};
+      if (tool === "plant") cost = PLANT_COST;
+      else if (tool === "harvester") cost = DEPOT_COST;
+      else if (tool === "road" || tool === "dirt") cost = TRANSPORT[tool as "road"|"dirt"].cost;
+      else if (tool === "rail") cost = BUILD_COSTS.rail;
+      else if (tool === "platform") cost = BUILD_COSTS.platform;
+      else if (tool === "trainDepot") cost = BUILD_COSTS.trainDepot;
       // W9: the free setup allowance buys Dirt Roads only.
       const free = tool === "harvester" ? state.freeDepots > 0
         : (tool === "dirt") && state.freeTrack > 0;

@@ -1,0 +1,31 @@
+{
+  "locomotive": [
+    "ne",
+    "se",
+    "sw",
+    "nw"
+  ],
+  "wagon": [
+    "ne",
+    "se",
+    "sw",
+    "nw"
+  ],
+  "platform": [
+    "ne",
+    "se",
+    "sw",
+    "nw"
+  ],
+  "train-depot": [
+    "ne",
+    "se",
+    "sw",
+    "nw"
+  ],
+  "scales": [
+    "0.5x",
+    "1x",
+    "2x"
+  ]
+}
