@@ -45,7 +45,7 @@
 // number: every rating on its board was sent by the player it describes.
 // ══════════════════════════════════════════════════════════════════════════
 import { GameRoom, type GameMessage, type LeaveReason, type Player } from "@series-inc/rundot-game-sdk/mp-server";
-import { PROTOCOL_VERSION, readRankWire, type HexProtocol, type PlayerRatingMsg, type RankWire, type ResultClaimMsg, type ResultMsg, type Slot } from "../net/protocol";
+import { PROTOCOL_VERSION, readMatchSettings, readRankWire, type HexProtocol, type MatchSettings, type PlayerRatingMsg, type RankWire, type ResultClaimMsg, type ResultMsg, type SettingsClaimMsg, type Slot } from "../net/protocol";
 
 /** Sent when the host is gone — no host, no truth, say so plainly. */
 export const HOST_LEFT_REASON = "The host left the game.";
@@ -68,6 +68,19 @@ export default class HexmatchRoom extends GameRoom<HexProtocol> {
   private readonly slots = new Map<string, Slot>();
   /** RANK-01: the room's rating board, keyed by player id (with the join token). */
   private readonly ratings = new Map<string, RankWire & { joinToken: string }>();
+  /**
+   * #186: the rules this room plays by, as the HOST last filed them. Null until
+   * a claim arrives — which reads as the shipped defaults, never as "unknown".
+   *
+   * The room keeps them (rather than letting the two seats agree peer-to-peer)
+   * because it is the only party every joiner hears from: a guest learns the
+   * rules on its welcome, a rejoined seat learns them again, and a host that
+   * changes them mid-lobby is heard by everybody through the echo.
+   */
+  private settings: MatchSettings | null = null;
+  /** #186: true when the filed rules put an AI in the opponent seat — see
+   *  `lockAiSeat`. */
+  private aiSeatFiled = false;
   /** A room files at most ONE result, however the match ended. */
   private resultFiled = false;
   /** True once the host has published state — i.e. a match is actually running. */
@@ -134,6 +147,10 @@ export default class HexmatchRoom extends GameRoom<HexProtocol> {
       this.onResultClaim(msg.sender, p);
       return;
     }
+    if (p.type === "settingsClaim") {
+      this.onSettingsClaim(msg.sender, p);
+      return;
+    }
     if (p.type === "snapshot" || p.type === "snapshot-chunk" || p.type === "delta") {
       // THE authority check: only the host may assert state. A guest-forged
       // snapshot, chunk or delta is dropped silently — no broadcast, no error
@@ -150,6 +167,7 @@ export default class HexmatchRoom extends GameRoom<HexProtocol> {
       // done rating, so a trailing publish (the winner's final delta) must not
       // re-open it.
       if (!this.resultFiled) this.matchLive = true;
+      this.lockAiSeat();
       this.broadcast(p);
       return;
     }
@@ -268,6 +286,57 @@ export default class HexmatchRoom extends GameRoom<HexProtocol> {
     this.fileResult(winnerId, leaverId, reason, 0, leaverId);
   }
 
+  // ── #186: the room's match settings ─────────────────────────────────────
+
+  /**
+   * The host files the rules its lobby is showing.
+   *
+   * Two checks, both about who may speak and what may be said:
+   *
+   *   - the claim must come from the HOST. A guest has no standing to declare
+   *     what the match plays by — the host runs the simulation, so the host's
+   *     ★ line is the only one that exists;
+   *   - the block must NORMALISE (`readMatchSettings`). What the room stores
+   *     and echoes is therefore always a whole record: a half-typed purse line
+   *     or a 900★ stepper is dropped rather than becoming the room's rules.
+   *
+   * The echo goes to EVERYONE including the host, so a lobby has exactly one
+   * source for the rules it prints — the room's — and a refused claim simply
+   * never comes back.
+   */
+  private onSettingsClaim(sender: Player, msg: SettingsClaimMsg): void {
+    if (sender.id !== this.hostId) return;
+    const next = readMatchSettings(msg.settings);
+    if (!next) return;
+    this.settings = next;
+    this.aiSeatFiled = next.aiSeats.length > 0;
+    this.log.info("Match settings filed", {
+      playerId: sender.id,
+      winTarget: next.winTarget,
+      aiSeats: next.aiSeats,
+    });
+    this.broadcast({ type: "settings", settings: next });
+    // A seat that emptied while an AI was filed frees it again: the next
+    // joiner is welcome to take the seat the AI was holding.
+    if (!this.aiSeatFiled) this.unlock();
+  }
+
+  /**
+   * #186: an AI is holding the opponent seat, so the room is full the moment
+   * the match goes live.
+   *
+   * `maxPlayers: 2` locks a room on its second HUMAN, and a host who started
+   * early against an AI has only ever had one — so without this a joiner with
+   * the code would be seated into a seat the host is already simulating for a
+   * machine, arriving mid-match as a passenger in somebody else's game. The
+   * lock is the honest version of that seat: taken.
+   */
+  private lockAiSeat(): void {
+    if (!this.aiSeatFiled) return;
+    if (this.playerCount >= 2) return;              // a human already holds it
+    this.lock();
+  }
+
   /**
    * File the one result this room will ever carry. Idempotent by construction:
    * `resultFiled` is set before the broadcast, so a race between a disconnect
@@ -317,7 +386,7 @@ export default class HexmatchRoom extends GameRoom<HexProtocol> {
     }
     // RANK-01: the board rides the greeting, so a newcomer's very first look at
     // the lobby already shows both players' ratings.
-    return {
+    const greeting: HexProtocol = {
       type: "welcome",
       seed: this.seed,
       hostId,
@@ -325,5 +394,12 @@ export default class HexmatchRoom extends GameRoom<HexProtocol> {
       roster,
       ratings: this.ratingBoard(),
     };
+    // #186: and so do the rules. A guest learns the ★ line, the opening purse
+    // and the AI seats here — which is also how a LATE join or a rejoin gets
+    // the same settings the room has been playing by all along. Absent (no
+    // claim yet) reads as the defaults, so the field is only sent once the
+    // host has actually chosen something.
+    if (this.settings) greeting.settings = this.settings;
+    return greeting;
   }
 }

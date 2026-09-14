@@ -61,6 +61,7 @@ import {
   type DeltaMsg,
   type HexProtocol,
   type IntentMsg,
+  type MatchSettings,
   type PlayerRatingMsg,
   type RankWire,
   type ResultClaimMsg,
@@ -69,6 +70,11 @@ import {
   type SnapshotChunkMsg,
   type WelcomeMsg,
 } from "./protocol";
+import {
+  defaultMatchSettings,
+  matchSettingsEqual,
+  readMatchSettings,
+} from "./match-settings";
 import { applyTrackDelta, buildPublish, type PublishFields } from "./delta";
 import {
   rankBoardFrom,
@@ -134,6 +140,16 @@ export interface NetInfo {
    * computed from exactly this board.
    */
   ratings: RankWire[];
+  /**
+   * #186: the rules this room plays by — the ★ line, the opening purse and the
+   * AI seats. Carried on the info (rather than read off a side channel)
+   * because it is wire state that must survive the lobby → match handover:
+   * `startIsoGame` reads the room's ★ line and purse from exactly this.
+   *
+   * Defaults until the room says otherwise, never absent — a reader that had
+   * to ask "did the settings arrive yet" would race the welcome.
+   */
+  settings: MatchSettings;
 }
 
 /** The game's end of the session — all optional, all called synchronously. */
@@ -163,6 +179,13 @@ export interface NetHooks {
    * thing the rating arithmetic is ever fed.
    */
   result?: (msg: ResultMsg) => void;
+  /**
+   * #186: the room's rules changed — the host moved a dial and the echo came
+   * back, or a welcome carried rules this client had not seen. Fires for BOTH
+   * seats: the host reads it as confirmation of what the room accepted, the
+   * guest as the read-only view of what it is about to play.
+   */
+  settings?: (settings: MatchSettings) => void;
   /** Connection state changed. */
   status?: (state: ConnectionState) => void;
   /**
@@ -227,6 +250,13 @@ export class NetSession {
    * same session object is handed to `startIsoGame`.
    */
   private ratingsValue: RankWire[] = [];
+  /**
+   * #186: the room's rules, as the room last stated them. Defaults until a
+   * welcome or a `settings` echo says otherwise — a seat that has not been
+   * told plays the shipped game, which is exactly what "defaults unchanged"
+   * means for a room nobody customised.
+   */
+  private settingsValue: MatchSettings = defaultMatchSettings();
   /** This session's join nonce — what authorises its rating publications. */
   private readonly token: string = makeJoinToken();
   /** #121: `dispose()` releases the room exactly once, however often it runs. */
@@ -271,6 +301,10 @@ export class NetSession {
   /** RANK-01: the same board keyed by player id, for the rating arithmetic. */
   get board(): RankBoard {
     return rankBoardFrom(this.ratingsValue);
+  }
+  /** #186: the room's rules, whole. Never null — defaults until told. */
+  get settings(): MatchSettings {
+    return this.settingsValue;
   }
   /** RANK-01: this session's join nonce (see `PlayerRatingMsg.joinToken`). */
   get joinToken(): string {
@@ -638,6 +672,39 @@ export class NetSession {
     return true;
   }
 
+  /**
+   * #186 — HOST only: file the rules this room plays by.
+   *
+   * The room is the only party every seat hears from, so a dial moved in the
+   * host's lobby goes there and comes back as a `settings` echo — to the host
+   * too, which is what makes the lobby's printed rules the room's rules rather
+   * than the host's opinion of them. Nothing is applied optimistically: a
+   * claim the relay refuses (a malformed block) simply never returns, and the
+   * lobby keeps showing what the room actually holds.
+   *
+   * Returns false when this seat may not speak for the room, or when the block
+   * would not survive the relay's own read — the lobby uses that to leave the
+   * dial where it was instead of pretending.
+   */
+  publishSettings(settings: MatchSettings): boolean {
+    if (!this.isHost || this.halted || this.disposed) return false;
+    const clean = readMatchSettings(settings);
+    if (!clean) return false;
+    if (matchSettingsEqual(clean, this.settingsValue)) return false;   // nothing to file
+    this.room.send({ type: "settingsClaim", settings: clean });
+    return true;
+  }
+
+  /** Fold the room's rules into local state and tell the lobby. */
+  private onSettings(raw: unknown): void {
+    const next = readMatchSettings(raw);
+    if (!next) return;                       // unreadable: keep what the room said last
+    const changed = !matchSettingsEqual(next, this.settingsValue);
+    this.settingsValue = next;
+    if (this.infoValue) this.infoValue = { ...this.infoValue, settings: next };
+    if (changed) this.hooks.settings?.(next);
+  }
+
   /** Fold a board update into local state and tell the game. */
   private onRatings(raw: unknown): void {
     if (!Array.isArray(raw)) return;
@@ -683,6 +750,9 @@ export class NetSession {
       case "ratingUpdate":
         this.onRatings(raw.ratings);
         return;
+      case "settings":
+        this.onSettings(raw.settings);
+        return;
       case "resync":
         if (this.isHost) this.publishFullState("guest resync");
         return;
@@ -708,6 +778,11 @@ export class NetSession {
       msg.roster.find((e) => e.id === this.room.playerId)?.slot ?? null;
     if (seat !== null) this.roleValue = seat === 0 ? "host" : "guest";
     else if (msg.hostId === this.room.playerId) this.roleValue = "host";
+    // #186: the rules the room holds, folded in BEFORE the info is built so a
+    // lobby reading `info.settings` on its very first hello sees them. A
+    // welcome that carries none leaves whatever the room said last alone — a
+    // second welcome (a seat joining) is not a reset of the rules.
+    if (msg.settings !== undefined) this.onSettings(msg.settings);
     this.infoValue = {
       role: this.roleValue,
       seed: msg.seed,
@@ -716,6 +791,7 @@ export class NetSession {
       roster: msg.roster.map((e) => ({ ...e })),
       roomCode: this.room.roomCode,
       ratings: msg.ratings ? msg.ratings.map((e) => ({ ...e })) : [],
+      settings: this.settingsValue,
     };
     // RANK-01: the greeting's board replaces whatever we held — it is the
     // room's whole truth, not a delta on top of a stale guess. A welcome with
@@ -922,7 +998,7 @@ export function mirrorDelta(msg: DeltaMsg): DeltaMsg {
 export type { ConnectionState };
 export { applyTrackDelta };
 export const SESSION_PROTOCOL_VERSION = PROTOCOL_VERSION;
-export type { HexProtocol, IntentMsg, DeltaMsg, Snapshot };
+export type { HexProtocol, IntentMsg, DeltaMsg, Snapshot, MatchSettings };
 
 /**
  * A session nonce for the rating board (RANK-01). Not a secret and not a
