@@ -475,11 +475,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // RAIL-05 (#182): the feature flag. OFF everywhere by default: the release
   // gate (docs/railway-balance.md) keeps the railway behind it until the
   // construction UI (#179) and multiplayer authority (#181) are done.
-  // `?rail=1` — or `opts.rail` — turns it on for QA and playtests.
+  // `opts.rail` turns it on; `?rail=1` does too, but ONLY in a dev build
+  // (`vite dev`), so a production deploy can never show the railway.
   const railParam = (() => {
     try { return new URLSearchParams(location.search).get("rail"); } catch { return null; }
   })();
-  const railAvailable = opts.rail ?? railParam === "1";
+  const railAvailable = opts.rail ?? (import.meta.env.DEV && railParam === "1");
   /** The cast member playing the rival: the contract's, else Torvin as ever. */
   const rivalCast = storyChapter ? storyChapter.rival : "torvin";
   /** The player's own cast id, for every line the wire answers in. */
@@ -6379,7 +6380,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // the lorries. Non-gating by contract — a missing folder leaves the vector
     // rail standing — and it lands as its own tracked job so the loading screen
     // reports it like every other layer.
-    void loading.track("railway", loadRailwaySprites(atlas, cap0).then((n) => {
+    // With the railway flag down there is nothing to draw, so nothing loads.
+    if (railAvailable) void loading.track("railway", loadRailwaySprites(atlas, cap0).then((n) => {
       if (disposed || !n) return;
       // A late-landing def can be TALLER than anything the cull pad was built
       // against, and the sprite table just changed: re-sync and re-pad, exactly

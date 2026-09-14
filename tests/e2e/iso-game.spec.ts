@@ -193,7 +193,8 @@ test.describe("iso layout on every viewport", () => {
     expect(overflow).toBeLessThanOrEqual(1);
     // The pointer ("Select") leads, then PP-06's "plant" tool and demolish:
     // six buttons. RAIL-05 (#182) keeps the railway's four behind its feature
-    // flag, OFF by default — the `?rail=1` boot below counts all ten.
+    // flag, OFF by default (production ignores `?rail=1`; the rail-on bar is
+    // covered by iso-game.test.ts booting with { rail: true }).
     await expect(root.locator("[data-tool]")).toHaveCount(6);
     await expect(root.locator("[data-act=recenter]")).toHaveCount(1);
     const scene = await page.evaluate(() => {
@@ -213,27 +214,6 @@ test.describe("iso layout on every viewport", () => {
     // The first CSS→device-pixel resize must not push the focus off centre
     // on DPR 2/3 phones, even with the expanded map's distant coordinates.
     expect(scene.focus).toEqual(scene.centre);
-  });
-});
-
-test.describe("iso railway tools behind the feature flag (RAIL-05, #182)", () => {
-  test("?rail=1 adds the four railway tools between the plant and demolish", async ({ page }) => {
-    await bootSoloIso(page, {
-      url: `${ISO_URL}&rail=1`,
-      remembered: {
-        "hexmatch:rival-skill": "normal",
-        "hexmatch:tutorial": "never",
-      },
-    });
-    const root = page.locator(".game-root.iso-game");
-    // RAIL-04 (#178) seats the railway's four with the other builders, and
-    // Demolish stays last beside the pointer's other destructive neighbour.
-    const tools = await root.locator("[data-tool]").evaluateAll((bs) =>
-      bs.map((b) => (b as HTMLElement).dataset.tool));
-    expect(tools).toEqual([
-      "select", "dirt", "road", "harvester", "plant",
-      "rail", "platform", "raildepot", "railway", "demolish",
-    ]);
   });
 });
 
@@ -279,7 +259,7 @@ test.describe("iso game boots on the default route", () => {
 
     // tool chrome on the default boot: the pointer ("select") leads, then
     // PP-06's plant, then demolish + recentre. The railway's four tools are
-    // behind RAIL-05's feature flag (OFF by default; see the `?rail=1` spec).
+    // behind RAIL-05's feature flag (OFF by default, and never on in production).
     const tools = await root.locator("[data-tool]").evaluateAll((bs) =>
       bs.map((b) => (b as HTMLElement).dataset.tool));
     expect(tools).toEqual(["select", "dirt", "road", "harvester", "plant", "demolish"]);
