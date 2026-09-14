@@ -10,6 +10,9 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -24,3 +27,23 @@ jobs:
         with:
           name: playwright-report-nightly
           path: playwright-report/
+      - name: open/update tracking issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          TITLE="Nightly e2e failure — $(date -u +%Y-%m-%d)"
+          BODY="Nightly e2e failed on \`main\` @ \`${{ github.sha }}\` (run ${{ github.run_id }}).
+          See: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          Artifact: playwright-report-nightly
+          This issue is updated on each nightly failure. Check \`docs/known-test-failures.md\` and link the fix PR to close it."
+          # Find an existing open nightly tracking issue (label contains nightly or title prefix)
+          EXISTING=$(gh issue list --state open --search "Nightly e2e failure in:title" --json number --jq '.[0].number // empty' || true)
+          if [ -n "$EXISTING" ]; then
+            echo "Updating existing issue #$EXISTING"
+            gh issue comment "$EXISTING" --body "$BODY"
+          else
+            echo "Creating new tracking issue"
+            gh issue create --title "$TITLE" --body "$BODY" --label "bug" || echo "failed to create issue (permissions?)"
+          fi
