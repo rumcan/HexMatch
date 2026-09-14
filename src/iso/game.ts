@@ -96,6 +96,7 @@ import {
 import {
   aiBuildStep, chooseRivalFactorySpot, deepPlanCandidates, planUpgrades, executePaves,
   paveCandidates, rivalPace, type RivalPace,
+  planRailMove, executeRailMove,
 } from "./ai";
 import {
   RIVAL_SKILLS, resolveSkillKey, skillKeyFromUrl, SKILL_STORAGE_KEY, type RivalSkill, type SkillKey,
@@ -153,7 +154,7 @@ import {
 } from "./rail";
 import { loadRailwaySprites } from "./rail-art";
 import { createIsoMarket, toBag, chooseRivalOffer, type CargoBag, type IsoMarket } from "./market";
-import { createOriginalUi, type OriginalUi } from "../game/ui";
+import { createOriginalUi, RAIL_TOOL_KEYS, type OriginalUi } from "../game/ui";
 import { HUD_ICONS, cargoIconHtml, costMarkup } from "../game/hud-icons";
 // SFX-01: the UI sound layer. Everything the player DOES on the map (a road
 // laid, a building raised, a demolition, a star earned, the final ledger) gets
@@ -401,6 +402,13 @@ export interface IsoGameOptions {
   /** STORY-01: the ending's "Continue the campaign" returns through here. */
   onStoryExit?: () => void;
   /**
+   * RAIL-05 (#182): force the railway feature flag. The default is read from
+   * the `?rail=` URL param, then from the mode: ON in sandbox and multiplayer,
+   * OFF in the campaign until #179/#181 land (the written decision, PR + the
+   * release-gate doc). Absent = no override.
+   */
+  rail?: boolean;
+  /**
    * #186: the rules a HOSTED room plays by — the ★ line, the opening purse and
    * the AI seats. The start screen passes the room's copy; absent (or unreadable)
    * falls back to the session's, and then to the shipped defaults, so a solo
@@ -465,6 +473,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const storyChapter: StoryChapter | null =
     opts.story && isSolo() ? chapterById(opts.story) : null;
   const storyOn = storyChapter !== null;
+  // RAIL-05 (#182): the feature flag. `?rail=1|0` overrides everything — the
+  // QA door; without it, ON in sandbox and multiplayer, OFF in the campaign
+  // until #179/#181 land (the written decision lives in the PR and the
+  // release-gate doc).
+  const railParam = (() => {
+    try { return new URLSearchParams(location.search).get("rail"); } catch { return null; }
+  })();
+  const railAvailable = opts.rail ?? (railParam ? railParam === "1" : !storyOn);
   /** The cast member playing the rival: the contract's, else Torvin as ever. */
   const rivalCast = storyChapter ? storyChapter.rival : "torvin";
   /** The player's own cast id, for every line the wire answers in. */
@@ -1064,7 +1080,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // in a hosted game, so the selector is simply not built.
     onSkill: isSolo() ? (key) => setRivalSkill(key) : undefined,
     skill: isSolo() ? skillKey : undefined,
-  });
+  }, { rail: railAvailable });
   onBoardChange = () => ui.renderBoard();
   root.appendChild(ui.el);
 
@@ -1364,6 +1380,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     grid,
     roadBits: drawBits(track, "road"),
     dirtBits: drawBits(track, "dirt"),
+    railBits: rail.rail.tile,
     extra: [],
     trees: scenery.trees,
     forests: scenery.forests,
@@ -1842,6 +1859,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const syncWorld = () => {
     world.roadBits = drawBits(track, "road");
     world.dirtBits = drawBits(track, "dirt");
+    // RAILWAYS (#182): the rail LAYER's bytes are the vector track's source —
+    // the road renderer paints them into the same cached chunks it paints the
+    // road into, and diffs them against its shadow on every sync. Structures
+    // (platforms, depots) and trains are sprites in `world.extra`/`vehicles`,
+    // never bytes, so a moving train repaints nothing but itself.
+    world.railBits = rail.rail.tile;
     // SCENERY: hide the trees the player has since built over. Roads are not
     // listed — the draw list reads roadBits/dirtBits directly — so this is
     // only the free-standing structures: plant footprints and depots.
@@ -3576,8 +3599,46 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (rivalPavePass()) acted = true;
     else rivalBankTowardPave(f, now);
 
+    // 4. railway (RAIL-05, #182) — the seat's ONE rail action this turn,
+    //    planned and committed through the SAME `rail.ts` rules the player's
+    //    drag commits through (`planRailMove` → `buildRail` / `placePlatform`
+    //    / …, no private rule copy). Easy rivals keep the lever down.
+    let railLaid: [number, number][] = [];
+    if (railAvailable && skill().rail) {
+      const railState = eco.rail;
+      if (railState) {
+        const move = planRailMove(eco, railState, f, {
+          purse: rival.purse, ownerId: rival.i + 1, useRail: true, scope: "line", now,
+        });
+        if (move) {
+          // `planRailMove` already priced the move against this purse, and
+          // nothing else spent since; re-check so the invariant holds anyway.
+          if (canPay(rival.purse, move.cost)) {
+            const res = executeRailMove(eco, railState, move, rival.id, rival.i + 1);
+            if (res) {
+              if (res.refund) earn(rival, res.refund);
+              else if (Object.keys(res.spent).length) spend(rival, res.spent);
+              if (move.kind === "track") railLaid = res.tiles;
+              acted = true;
+              ui.feed(`Rival ${res.label}`, rival.name);
+            }
+          }
+        }
+      }
+    }
+
     if (acted) {
       syncWorld();
+      // RAIL-05: syncWorld's shadow diff repainted the tiles whose OWN rail
+      // byte moved; a track tile's NEIGHBOURS changed shape with it (their
+      // rail end-cap becomes a through-run), so the ±1 neighbourhood goes too
+      // — the same invalidation the player's `commitRailDrag` does.
+      for (const [tx, ty] of railLaid) {
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const x = tx + dx, y = ty + dy;
+          if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) renderer?.invalidateTile(x, y);
+        }
+      }
       rescoreNow();
       return;
     }
@@ -5056,6 +5117,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * a road drag left armed under the Depot tool would quote the wrong build.
    */
   function armTool(t: Tool) {
+    // RAIL-05 (#182): the flag down means the tool does not exist. Refuse the
+    // arm and keep whatever is already in the hand — a hotkey that would
+    // summon a refused build is just a confusing one.
+    if (!railAvailable && RAIL_TOOL_KEYS.has(t)) {
+      toast("Rail is not available in this mode.", "info");
+      return;
+    }
     tool = t;
     if (dropDrag()) paintOverlayNow();
   }

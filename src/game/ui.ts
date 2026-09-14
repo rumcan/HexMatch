@@ -119,6 +119,12 @@ export type UiTool =
   // buttons.
   | "rail" | "platform" | "raildepot" | "railway";
 
+/** RAIL-05 (#182): the tools the railway feature flag owns — the set the
+ *  campaign boot hides when the flag is down. */
+export const RAIL_TOOL_KEYS: ReadonlySet<UiTool> = new Set<UiTool>([
+  "rail", "platform", "raildepot", "railway",
+]);
+
 /**
  * RAIL-04: one row of the Railway panel. The MODEL is `railPanelRows` in
  * `rail.ts` (platforms, depots, trains and which actions each offers); the game
@@ -363,11 +369,19 @@ const isPhoneViewport = (): boolean => {
   return w <= 760 || (w <= 900 && h <= 500);
 };
 
+/** Optional per-boot chrome flags (RAIL-05: the railway's four buttons only
+ *  exist when the feature flag lets them — the campaign boots without rail
+ *  until #179/#181 land). */
+export interface OriginalUiOptions {
+  rail?: boolean;
+}
+
 export function createOriginalUi(
   board: Board,
   market: IsoMarket,
   me: IsoMarketPlayer,
   hooks: UiHooks,
+  opts: OriginalUiOptions = {},
 ): OriginalUi {
   const root = h("div", "ui-root");
   root.dataset.view = "map";
@@ -860,9 +874,14 @@ export function createOriginalUi(
     { key: "railway", label: "Railway", sub: "Lines · trains · assign & sell" },
     { key: "demolish", label: "Demolish", sub: "Refund 50%" },
   ];
+  // RAIL-05 (#182): with the flag down the four railway buttons do not exist
+  // — a button the rules would refuse is a promise the HUD cannot keep.
+  const visibleTools = opts.rail === false
+    ? TOOLS.filter((t) => !RAIL_TOOL_KEYS.has(t.key))
+    : TOOLS;
   let depotSub: HTMLElement | null = null;
   let lastDepotSub = "\u0000";
-  for (const t of TOOLS) {
+  for (const t of visibleTools) {
     // V5: each tool gets its own banner artwork class (bg-dirt / bg-road /
     // bg-harvester / bg-demolish) — they all shared bg-rail before.
     const b = h("button", "build-btn bg-" + t.key);

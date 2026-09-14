@@ -764,3 +764,138 @@ export function townGroundQuad(
   const v0 = ty - over(tx, ty - 1), v1 = ty + 1 + over(tx, ty + 1);
   return [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+// RAILWAYS (#142 epic, rendering rule of #182) — vector TRACK geometry.
+//
+// Rail track is ground, exactly like the road: geometry in this module,
+// painted by the road renderer into the same cached chunks, invalidated by
+// the rail revision. What the two surfaces share is the PORT CONTRACT and the
+// arm-pairing of `roadFigures` — a rail tile computes the very same points as
+// its neighbour at the shared edge, so two chunks agree at a boundary with no
+// shared state, and a bend has no seam. What it has of its own is the
+// cross-section: a ballast bed, sleepers on a dash cycle, and TWO steel rails
+// stroked as explicit offset polylines instead of one wide ribbon.
+//
+// WHY OFFSET POLYLINES AND NOT A SECOND STROKE. There is no canvas primitive
+// for "stroke this polyline, but also its parallel twin", and the twins have
+// to keep their spacing ACROSS a corner — a road's round join blurs across a
+// bend, which would put the inner rail on top of the outer one. So each
+// figure is offset once per side into a plain polyline (miter-joined at the
+// corner) and stroked thin. The rail directions are axis-aligned in the
+// ground plane (the four bits name the four tile axes), which makes the
+// offset exact: normals are the axis unit vectors, and the only angles that
+// occur are 180° (straight, through the centre) and 90° (a bend), so the
+// miter has one formula per case and no numeric knife edge.
+// ══════════════════════════════════════════════════════════════════════════
+/** Ballast bed under the track, in tile units. Narrower than a road, on
+ *  purpose: a rail line is a made thing laid ON the ground, not a street. */
+export const RAIL_BED_WIDTH = 0.5;
+/** Centre-to-centre distance between the two rails, in tile units. */
+export const RAIL_GAUGE = 0.3;
+/** The width of one steel rail, in tile units. */
+export const RAIL_HEAD_WIDTH = 0.055;
+/** Sleeper dash cycle, in tile units: `on` then `off`, four sleepers-ish per
+ *  tile. The sleepers are the SAME figure as the bed, stroked wide and
+ *  dashed — a dash is a bar perpendicular to the path, which is exactly what
+ *  a sleeper is. */
+export const RAIL_SLEEPER_ON = 0.07;
+export const RAIL_SLEEPER_OFF = 0.13;
+/** The sleeper stroke, slightly narrower than the bed so the ballast shows
+ *  at both flanks. */
+export const RAIL_SLEEPER_WIDTH = RAIL_BED_WIDTH * 0.74;
+
+/**
+ * One side of a figure's two rails, as a polyline in ground coordinates.
+ *
+ * `side` picks which flank: `1` offsets along each segment's counter-clockwise
+ * normal, `-1` along its clockwise normal — so the two calls return the two
+ * rails on opposite sides of the centre-line.
+ *
+ * The join at an interior point is a MITER, worked out rather than guessed:
+ *   • straight through (the normals agree) the offset is simply `n·k` — the
+ *     "miter" of two parallel offset lines is any point on them, and the one
+ *     at the corner's own distance is the only one that keeps a straight run
+ *     straight;
+ *   • a 90° bend (the only other case in the four-direction world) joins the
+ *     two offset LINES, which meet at `corner + (n1 + n2)·k`. That point sits
+ *     `k·√2` from the corner along the bisector — the exact miter of a stroke
+ *     of half-width `k` — so the rail keeps its gauge through the bend.
+ */
+export function railHeadLine(fig: RoadFigure, side: 1 | -1): RoadFigure {
+  const pts = fig.points;
+  const k = RAIL_GAUGE / 2;
+  if (pts.length === 1) return { points: [pts[0]] };
+  // Unit normals, one per segment: rotate the unit direction by 90°, on the
+  // requested flank. The segments are axis-aligned, so this is exact.
+  const n: GroundPoint[] = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const dx = pts[i + 1][0] - pts[i][0], dy = pts[i + 1][1] - pts[i][1];
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-9) { n.push([0, 0]); continue; }
+    const ux = dx / len, uy = dy / len;
+    n.push(side === 1 ? [-uy, ux] : [uy, -ux]);
+  }
+  const out: GroundPoint[] = new Array(pts.length);
+  for (let i = 0; i < pts.length; i++) {
+    if (i === 0) {
+      out[i] = [pts[0][0] + n[0][0] * k, pts[0][1] + n[0][1] * k];
+    } else if (i === pts.length - 1) {
+      const m = n[i - 1];
+      out[i] = [pts[i][0] + m[0] * k, pts[i][1] + m[1] * k];
+    } else {
+      const a = n[i - 1], b = n[i];
+      const dot = a[0] * b[0] + a[1] * b[1];
+      if (dot > 0.999) {
+        // Straight through: the two offset lines coincide.
+        out[i] = [pts[i][0] + a[0] * k, pts[i][1] + a[1] * k];
+      } else {
+        // A bend: join the two offset lines.
+        out[i] = [pts[i][0] + (a[0] + b[0]) * k, pts[i][1] + (a[1] + b[1]) * k];
+      }
+    }
+  }
+  return { points: out };
+}
+
+/**
+ * The drawing description of one rail tile: the bed/sleeper figures (the
+ * road's own arm-paired figures, so a rail bend and a road bend on the same
+ * ground share their centre-line) and the two rail polylines of each.
+ */
+export interface RailTileGeo {
+  tx: number;
+  ty: number;
+  mask: number;
+  /** Ballast + sleepers: stroked with the bed width, round cap. */
+  figures: RoadFigure[];
+  /** The two steel rails of every figure, in figure order. */
+  heads: RoadFigure[];
+}
+
+export function railTileGeo(tx: number, ty: number, mask: number): RailTileGeo {
+  const figures = roadFigures(tx, ty, mask);
+  const heads: RoadFigure[] = [];
+  for (const f of figures) {
+    heads.push(railHeadLine(f, 1), railHeadLine(f, -1));
+  }
+  return { tx, ty, mask, figures, heads };
+}
+
+/**
+ * The sleeper dash phase for a figure, anchored to the WORLD like the road's
+ * centre-line dashes: a straight run's sleepers line up with its neighbours'
+ * and a chunk boundary or a pan cannot shift them. Only straight runs (three
+ * collinear points) get the anchor; a bend starts its cycle at the port,
+ * where the bend itself reads as a change of pace.
+ */
+export function railSleeperOffset(fig: RoadFigure): number {
+  const pts = fig.points;
+  if (pts.length !== 3) return 0;
+  const [a, , c] = pts;
+  const du = Math.abs(c[0] - a[0]), dv = Math.abs(c[1] - a[1]);
+  const cycle = RAIL_SLEEPER_ON + RAIL_SLEEPER_OFF;
+  if (du > 1e-9 && dv > 1e-9) return 0;             // a bend: no single axis
+  const along = du > dv ? a[0] : a[1];
+  return -(((along % cycle) + cycle) % cycle);
+}

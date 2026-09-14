@@ -127,6 +127,13 @@ export interface World {
   grid: Grid;
   roadBits?: Uint8Array;   // E5 — the premium paved layer (drawn with road_XXXX tar)
   dirtBits?: Uint8Array;   // E5 — the basic gravel layer (drawn with dirt_XXXX)
+  /**
+   * RAILWAYS (#182): the player-built rail layer's bytes (`rail.tile`),
+   * painted as VECTOR track by the road renderer's cached chunks — the same
+   * `RAIL_PRESENT | mask` shape as the two road tiers, its own cache key.
+   * Structures (platforms, depots) and trains are PNG sprites, never here.
+   */
+  railBits?: Uint8Array;
   extra?: DrawItem[];      // stations, previews owned by the caller
   /**
    * RV-01: moving sprites (trucks), refreshed by the game every frame.
@@ -255,7 +262,7 @@ export function buildDrawList(
       // Deterministic: same seed + tile always produces the same result.
       const density = opts.sceneryDensity ?? 1;
       if (density >= 1 || (density > 0 && ((tx * 31 + ty * 17 + (grid?.seed ?? 0)) % 100) / 100 < density)) {
-        if (tree && !rb && !db && !world.sceneryBlocked?.has(i))
+        if (tree && !rb && !db && !world.railBits?.[i] && !world.sceneryBlocked?.has(i))
           out.push({ sprite: TREE_SPRITES[tree - 1], tx, ty, decor: true });
       }
     }
@@ -283,7 +290,7 @@ export function buildDrawList(
       for (let dy = 0; dy < FOREST_FOOTPRINT && clear; dy++) {
         for (let dx = 0; dx < FOREST_FOOTPRINT && clear; dx++) {
           const i = (f.ty + dy) * MAP_W + f.tx + dx;
-          if (world.roadBits?.[i] || world.dirtBits?.[i] || world.sceneryBlocked?.has(i)) clear = false;
+          if (world.roadBits?.[i] || world.dirtBits?.[i] || world.railBits?.[i] || world.sceneryBlocked?.has(i)) clear = false;
         }
       }
       if (clear) out.push({ sprite: f.sprite, tx: f.tx, ty: f.ty, decor: true });
@@ -524,7 +531,7 @@ export class IsoRenderer {
    * find which tiles actually moved, and it dirties only those tiles and
    * their neighbours instead of dropping the whole cache on every build.
    */
-  private roadShadow: { road: Uint8Array; dirt: Uint8Array } | null = null;
+  private roadShadow: { road: Uint8Array; dirt: Uint8Array; rail: Uint8Array | null } | null = null;
   /** The decal PNGs by family; null until the art loads (then decals paint). */
   private decalImages: DecalImages | null = null;
   /**
@@ -555,7 +562,9 @@ export class IsoRenderer {
     this.atlas = atlas;
     this.cam = cam;
     this.world = world;
-    this.roadWorld = { grid: world.grid, roadBits: world.roadBits, dirtBits: world.dirtBits };
+    this.roadWorld = {
+      grid: world.grid, roadBits: world.roadBits, dirtBits: world.dirtBits, railBits: world.railBits,
+    };
     this.pad = cullPad(atlas);
     const g = (el: HTMLCanvasElement, smooth: boolean) => {
       const ctx = el.getContext("2d") as Ctx2D;
@@ -634,6 +643,7 @@ export class IsoRenderer {
       grid: this.world.grid,
       roadBits: this.world.roadBits,
       dirtBits: this.world.dirtBits,
+      railBits: this.world.railBits,
     };
     this.syncRoadCache();
   }
@@ -660,26 +670,42 @@ export class IsoRenderer {
   }
 
   /**
-   * Diff the live road bytes against our copy and dirty only what moved.
+   * Diff the live road AND rail bytes against our copies and dirty only what
+   * moved.
    *
-   * Both track layers are mutated IN PLACE, so array identity proves nothing;
+   * All three layers are mutated IN PLACE, so array identity proves nothing;
    * this is the only reliable signal short of the simulation raising explicit
    * events. It is O(map) per call, on a 20 736-tile map, and only on world
    * syncs — not per frame.
+   *
+   * The rail layer is the railway's own revision (`rail.rail.revision` is
+   * bumped by every rail mutation), and the chunk raster it invalidates is the
+   * same road cache the track is painted into — a tile's rail bytes move, only
+   * that tile's neighbourhood of chunks goes stale, and train movement never
+   * appears here at all (trains are sprites, not bytes).
    */
   private syncRoadCache(): void {
-    const road = this.world.roadBits, dirt = this.world.dirtBits;
+    const road = this.world.roadBits, dirt = this.world.dirtBits, rail = this.world.railBits;
     if (!road || !dirt) return;
     const prev = this.roadShadow;
-    if (!prev || prev.road.length !== road.length) {
-      this.roadShadow = { road: Uint8Array.from(road), dirt: Uint8Array.from(dirt) };
+    const railSameShape = prev !== null
+      && ((prev.rail === null) === (rail === undefined))
+      && (rail === undefined || prev.rail === null || prev.rail.length === rail.length);
+    if (!prev || prev.road.length !== road.length || !railSameShape) {
+      this.roadShadow = {
+        road: Uint8Array.from(road),
+        dirt: Uint8Array.from(dirt),
+        rail: rail ? Uint8Array.from(rail) : null,
+      };
       this.roadCache.clear("resync");
       return;
     }
     for (let i = 0; i < road.length; i++) {
-      if (prev.road[i] === road[i] && prev.dirt[i] === dirt[i]) continue;
+      const railMoved = rail !== undefined && prev.rail !== null && prev.rail[i] !== rail[i];
+      if (prev.road[i] === road[i] && prev.dirt[i] === dirt[i] && !railMoved) continue;
       prev.road[i] = road[i];
       prev.dirt[i] = dirt[i];
+      if (rail !== undefined && prev.rail !== null) prev.rail[i] = rail[i];
       this.roadCache.invalidateTile(i % MAP_W, (i / MAP_W) | 0, "build");
     }
   }
@@ -689,9 +715,13 @@ export class IsoRenderer {
     let townTiles = 0;
     const blocks = townGroundBytes(this.world.grid);
     if (blocks) for (let i = 0; i < blocks.length; i++) if (blocks[i]) townTiles++;
+    let railTiles = 0;
+    const rail = this.world.railBits;
+    if (rail) for (let i = 0; i < rail.length; i++) if ((rail[i] & 0b10000) !== 0 || (rail[i] & 0b1111) !== 0) railTiles++;
     return {
       mode: this.roadMode,
       townGroundTiles: townTiles,
+      railTiles,
       textured: {
         paved: !!this.roadStyle.paved.image,
         dirt: !!this.roadStyle.dirt.image,

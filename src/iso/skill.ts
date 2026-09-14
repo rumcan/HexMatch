@@ -101,6 +101,14 @@ export interface RivalSkill {
   /** Multiplier on the ore urgency rivalPace computes from the scoreboard. */
   urgencyBias: number;
   /**
+   * RAIL-05 (#182): the railway lever — does this rival build and run lines at
+   * all? `easy` keeps to the road entirely (the issue's "easy may skip rail");
+   * `normal` and `hard` plan one rail action per turn through the SAME
+   * `rail.ts` rules the player's drag commits through. Inert while the game's
+   * `?rail` feature flag is down.
+   */
+  rail: boolean;
+  /**
    * AI-04: the Victory-Point line the GAME races to while this difficulty is
    * selected — the number in the HUD's "You 2★/5", the king bars' 100%, the
    * rival's own race assessment (`rivalPace`) and the win check. `easy` runs a
@@ -125,6 +133,8 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     blockades: false,
     moveMs: 4_200,
     urgencyBias: 0.75,
+    // RAIL-05: the easy chair keeps to the road — no rail for it to learn.
+    rail: false,
     // AI-04: the easy chair is a SHORT race — 5★ instead of the shipped 10★.
     winTarget: 5,
   },
@@ -142,6 +152,8 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     blockades: true,
     moveMs: 2_600,
     urgencyBias: 1,
+    // RAIL-05: normal builds and runs rail lines, one action per turn.
+    rail: true,
     winTarget: VICTORY.target,   // AI-04: the shipped 10★ line, aliased
   },
   hard: {
@@ -158,6 +170,8 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     blockades: true,
     moveMs: 1_800,
     urgencyBias: 1.4,
+    // RAIL-05: hard runs rail as hard as it paves — the spread lever.
+    rail: true,
     winTarget: VICTORY.target,   // AI-04: the shipped 10★ line, aliased
   },
 };

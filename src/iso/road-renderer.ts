@@ -32,8 +32,10 @@ import type { Camera } from "./camera";
 import { isTownTile, townGroundBytes, type Grid } from "./grid";
 import {
   ROAD_WIDTH, SHOULDER_WIDTH, SIDEWALK_WIDTH,
-  hasRoad, paintFigures, roadTile, sidewalkJoints, sidewalkPaths, streetLampSpots, townGroundQuad,
-  type GroundPoint, type RoadFigure, type RoadTile,
+  RAIL_BED_WIDTH, RAIL_HEAD_WIDTH, RAIL_SLEEPER_ON, RAIL_SLEEPER_OFF, RAIL_SLEEPER_WIDTH,
+  hasRoad, paintFigures, railSleeperOffset, railTileGeo, roadTile,
+  sidewalkJoints, sidewalkPaths, streetLampSpots, townGroundQuad,
+  type GroundPoint, type RailTileGeo, type RoadFigure, type RoadTile,
 } from "./road-geometry";
 
 type Ctx2D = CanvasRenderingContext2D;
@@ -106,6 +108,26 @@ export const DEFAULT_ROAD_STYLE: RoadStyle = {
   paint: "#e8e4d6",
   paintAlpha: 0.78,
 };
+
+/**
+ * RAILWAYS (#182): the track's palette. Flat colours, exactly like the road's
+ * camber and markings — a rail line is a made surface and a texture would
+ * fight the two thin steel lines that are its whole read.
+ *
+ * The bed is a step LIGHTER and warmer than the asphalt (which sits at
+ * `#3c3b38`), so where a line crosses a straight road the crossing reads as
+ * "track over road" rather than "road over road". The sleepers are dark
+ * enough to break the bed into a track rather than a third carriageway, and
+ * the rails carry the cool highlight that does the identifying at distance.
+ */
+export const DEFAULT_RAIL_STYLE = {
+  bed: "#5b564d",
+  sleeper: "#2f2820",
+  rail: "#b9bfc7",
+  railAlpha: 0.92,
+} as const;
+
+export type RailStyle = typeof DEFAULT_RAIL_STYLE;
 
 // ── paint geometry constants ────────────────────────────────────────────────
 /**
@@ -315,6 +337,15 @@ export interface RoadWorld {
   roadBits?: Uint8Array;
   dirtBits?: Uint8Array;
   /**
+   * RAILWAYS (#182): the player-built rail layer's bytes — `rail.tile`, the
+   * same `RAIL_PRESENT | 4-bit mask` shape the road layers use. Only the
+   * LAYER is vector-drawn here: a platform's or depot's internal lane rides in
+   * its own PNG sprite, so the two never double-paint a tile. Optional like
+   * the road tiers: a world with no rail bytes draws exactly the roads it
+   * always drew.
+   */
+  railBits?: Uint8Array;
+  /**
    * #159: the map, for its TOWN LIMITS. A tile stamped `TOWN_OCC` in
    * `occupancy` is town ground — the same test `isTownTile` makes — and a
    * paved tile on town ground is a town STREET: kerbs, sidewalks and corner
@@ -361,6 +392,28 @@ export function roadTilesIn(
       // matching the simulation's "paving replaces dirt" rule.
       if (hasRoad(road)) out.push(roadTile(tx, ty, road, "paved", paved, town));
       else if (hasRoad(dirt)) out.push(roadTile(tx, ty, dirt, "dirt", paved, town));
+    }
+  }
+  return out;
+}
+
+/**
+ * RAILWAYS (#182): every rail tile in a range, as geometry to stroke.
+ *
+ * The layer's bytes are autotiled by the rules (`rail.ts`'s `autotileRail`),
+ * so a tile's mask already carries the mutual bits and no neighbour state is
+ * needed here — one tile in, one `RailTileGeo` out, exactly the shape
+ * `roadTilesIn` has for the road tiers.
+ */
+export function railTilesIn(
+  world: RoadWorld, tx0: number, ty0: number, tx1: number, ty1: number,
+): RailTileGeo[] {
+  const out: RailTileGeo[] = [];
+  for (let ty = ty0; ty <= ty1; ty++) {
+    for (let tx = tx0; tx <= tx1; tx++) {
+      const cell = cellAt(world.railBits, tx, ty);
+      if (!hasRoad(cell)) continue;             // same PRESENT-bit test as the road tiers
+      out.push(railTileGeo(tx, ty, cell & 0b1111));
     }
   }
   return out;
@@ -641,6 +694,61 @@ function paintStreetLamps(ctx: Ctx2D, tiles: RoadTile[]): void {
 }
 
 /**
+ * RAILWAYS (#182) — the vector track of a set of rail tiles, in one batched
+ * pass, in a context that is ALREADY in ground coordinates.
+ *
+ * The pass order is the track's cross-section, bottom up:
+ *
+ *   1. ballast  — the bed the track sits in, one round-capped stroke per
+ *                 figure (the road's own arm-paired figures, so a bend is one
+ *                 continuous bed with no seam down its inside);
+ *   2. sleepers — the SAME figures stroked wide and DASHED: a dash is a bar
+ *                 perpendicular to the path, which is what a sleeper is. The
+ *                 phase is world-anchored (`railSleeperOffset`) so sleepers of
+ *                 neighbouring tiles line up and a chunk boundary cannot shift
+ *                 them;
+ *   3. rails    — the two steel lines, every head of every figure in ONE
+ *                 path, one stroke. Butt caps, so a head ends square on the
+ *                 port where the neighbour's head begins.
+ *
+ * The bed is drawn OVER whatever the road painted at a level crossing — which
+ * is the rule: rail over a straight road, the road untouched. It is drawn in
+ * the chunk UNDER every sprite, which is why the platforms, depots and trains
+ * (PNG, in the structure list) always sit on top of the track.
+ */
+export function paintRailTiles(ctx: Ctx2D, tiles: RailTileGeo[], style: RailStyle): void {
+  if (!tiles.length) return;
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  // 1. The ballast bed.
+  ctx.strokeStyle = style.bed;
+  ctx.lineWidth = RAIL_BED_WIDTH;
+  for (const t of tiles) for (const f of t.figures) { trace(ctx, f); ctx.stroke(); }
+  // 2. The sleepers, as a dash over the bed.
+  ctx.strokeStyle = style.sleeper;
+  ctx.lineWidth = RAIL_SLEEPER_WIDTH;
+  ctx.setLineDash([RAIL_SLEEPER_ON, RAIL_SLEEPER_OFF]);
+  for (const t of tiles) for (const f of t.figures) {
+    if (f.points.length < 2) continue;          // a pad gets ballast, not a sleeper
+    ctx.lineDashOffset = railSleeperOffset(f);
+    trace(ctx, f);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  // 3. The rails: every head of every figure in one path, one stroke.
+  ctx.strokeStyle = style.rail;
+  ctx.globalAlpha = style.railAlpha;
+  ctx.lineWidth = RAIL_HEAD_WIDTH;
+  ctx.lineCap = "butt";
+  ctx.beginPath();
+  for (const t of tiles) for (const h of t.heads) traceInto(ctx, h);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+/**
  * Paint a set of road tiles into a context that is ALREADY in ground
  * coordinates — i.e. whose transform maps tile units to device pixels.
  *
@@ -655,6 +763,9 @@ function paintStreetLamps(ctx: Ctx2D, tiles: RoadTile[]): void {
  *   2b. camber      — the cross-width shading;
  *   3. transitions  — the dirt→paved blend, over the finished dirt;
  *   4. markings     — centre-lines, on paved tiles, never across a junction;
+ *   4b. rail        — the vector track, over a crossing's asphalt and its
+ *                     markings, UNDER the street lamps that stand beside it
+ *                     (RAILWAYS #182);
  *   5. lamps        — last, because a lamp stands ON the ground it is planted
  *                     in and its head may hang over the next tile's asphalt.
  *
@@ -664,10 +775,13 @@ function paintStreetLamps(ctx: Ctx2D, tiles: RoadTile[]): void {
  * sprite art it stands among.
  *
  * `townGround` is the block paving to lay down first, in the same ground
- * coordinates — one quad per paved tile, from `townGroundQuadsIn`.
+ * coordinates — one quad per paved tile, from `townGroundQuadsIn`. `rail` is
+ * the track of the chunk's rail tiles, from `railTilesIn`; absent, the pass
+ * is exactly the roads alone.
  */
 export function paintRoadTiles(
   ctx: Ctx2D, tiles: RoadTile[], style: RoadStyle, townGround: GroundPoint[][] = [],
+  rail: RailTileGeo[] = [], railStyle: RailStyle = DEFAULT_RAIL_STYLE,
 ): void {
   // Patterns are created against THIS context; a material with no texture
   // falls through to its flat colour, which is a complete look, not a hole.
@@ -795,6 +909,10 @@ export function paintRoadTiles(
   }
   ctx.setLineDash([]);
 
+  // 4b. RAILWAYS (#182): the track, over the crossing's finished road (asphalt,
+  //     camber, markings) and under the lamps that stand beside it.
+  paintRailTiles(ctx, rail, railStyle);
+
   // 5. #159 Street lamps, on top of everything else on the ground: see
   //    `paintStreetLamps` for why they cannot go down with their sidewalks.
   //    Markings stay under a lamp, exactly as paint on asphalt does.
@@ -905,6 +1023,7 @@ export class RoadCache {
   private chunk(
     cx: number, cy: number, zoom: number, world: RoadWorld, style: RoadStyle,
     makeSurface: (w: number, h: number) => Surface | null,
+    railStyle: RailStyle = DEFAULT_RAIL_STYLE,
   ): CacheEntry | null {
     const key = `${this.styleVersion}:${zoom}:${cx},${cy}`;
     const hit = this.entries.get(key);
@@ -931,12 +1050,17 @@ export class RoadCache {
     // Town ground comes from the same tile range, so a block at a chunk's edge
     // is paved by the chunk that owns it and the gutter simply agrees.
     const townGround = townGroundQuadsIn(world, range.tx0, range.ty0, range.tx1, range.ty1);
-    if (tiles.length || townGround.length) {
+    // RAILWAYS (#182): the track of the same tile range. Its bed is narrower
+    // than a road's reach, so `tilesForRect`'s road-based padding already
+    // covers it, and a rail tile at a chunk's edge is completed by the gutter
+    // exactly like a road's.
+    const railTiles = railTilesIn(world, range.tx0, range.ty0, range.tx1, range.ty1);
+    if (tiles.length || townGround.length || railTiles.length) {
       ctx.imageSmoothingEnabled = true;
       // Ground coordinates → this surface's device pixels. The gutter origin
       // is folded in here; the camera is NOT — that belongs to the blit.
       ctx.setTransform(HW * zoom, HH * zoom, -HW * zoom, HH * zoom, -px * zoom, -py * zoom);
-      paintRoadTiles(ctx, tiles, style, townGround);
+      paintRoadTiles(ctx, tiles, style, townGround, railTiles, railStyle);
       ctx.setTransform(1, 0, 0, 1, 0, 0);
     }
 
@@ -956,6 +1080,7 @@ export class RoadCache {
   paint(
     ctx: Ctx2D, cam: Camera, world: RoadWorld, style: RoadStyle,
     makeSurface: (w: number, h: number) => Surface | null,
+    railStyle: RailStyle = DEFAULT_RAIL_STYLE,
   ): number {
     const z = cam.zoom;
     // Viewport in projected world pixels.
@@ -967,7 +1092,7 @@ export class RoadCache {
     let blits = 0;
     for (let cy = cy0; cy <= cy1; cy++) {
       for (let cx = cx0; cx <= cx1; cx++) {
-        const e = this.chunk(cx, cy, z, world, style, makeSurface);
+        const e = this.chunk(cx, cy, z, world, style, makeSurface, railStyle);
         if (!e) continue;
         const sx = Math.round(GUTTER * z), sy = Math.round(GUTTER * z);
         const sw = Math.round(ROAD_CHUNK_W * z), sh = Math.round(ROAD_CHUNK_H * z);
