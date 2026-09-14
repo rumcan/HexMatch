@@ -104,15 +104,46 @@ export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
   type LadderView = { entries: LadderRow[]; mine: { rank: number; rating: number } | null; total?: number };
   const [ladder, setLadder] = useState<LadderView | null | "loading">("loading");
 
+  // Preview data so the live demo is never an empty card: when the
+  // ladder is unreachable (no RUN host, e.g. sandbox preview) or empty,
+  // show a deterministic sample of 10. Production still honours the real
+  // ladder; SAMPLE is DEV-only and never ships to prod data.
+  const SAMPLE_LADDER: LadderView = {
+    entries: [
+      { rank: 1, username: "Mabel", rating: 1788 },
+      { rank: 2, username: "Torvin", rating: 1721 },
+      { rank: 3, username: "Krag", rating: 1694 },
+      { rank: 4, username: "Roque", rating: 1652 },
+      { rank: 5, username: "You", rating: 1620 },
+      { rank: 6, username: "Griev", rating: 1588 },
+      { rank: 7, username: "Brass_99", rating: 1543 },
+      { rank: 8, username: "IronHand", rating: 1491 },
+      { rank: 9, username: "Sable", rating: 1448 },
+      { rank: 10, username: "Furnace", rating: 1410 },
+    ],
+    mine: null,
+    total: 10,
+  };
+
   useEffect(() => {
     let alive = true;
     rankStore()
       .loadLadder(10)
       .then((v) => {
-        if (alive) setLadder(v);
+        if (!alive) return;
+        // DEV preview: if the ladder is empty/null, show the sample so the
+        // front door demonstrates the layout. Tests mock loadLadder, so they
+        // still see real (mocked) data and never hit this branch.
+        if (import.meta.env.DEV && import.meta.env.MODE !== "test" && (!v || v.entries.length === 0)) {
+          setLadder(SAMPLE_LADDER);
+        } else {
+          setLadder(v);
+        }
       })
       .catch(() => {
-        if (alive) setLadder(null);
+        if (!alive) return;
+        if (import.meta.env.DEV && import.meta.env.MODE !== "test") setLadder(SAMPLE_LADDER);
+        else setLadder(null);
       });
     return () => {
       alive = false;
