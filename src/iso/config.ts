@@ -180,7 +180,8 @@ export interface TransportDef {
  * charged" are one number.
  */
 export const BUILD_COSTS: Readonly<Record<
-  "dirt" | "road" | "upgrade" | "depot" | "plant",
+  "dirt" | "road" | "upgrade" | "depot" | "plant"
+  | "rail" | "platform" | "railDepot" | "train",
   Partial<Record<Cargo, number>>
 >> = {
   dirt: { wood: 1, stone: 1 },
@@ -188,6 +189,23 @@ export const BUILD_COSTS: Readonly<Record<
   upgrade: { ore: 4 },
   depot: { wood: 1, stone: 1, grain: 1, oil: 1 },
   plant: { wood: 2, stone: 2, grain: 2, ore: 3 },
+  // ── RAIL-01/02/03 (#142, the railway epic) ────────────────────────────────
+  // The railway is a THIRD transport surface, not a re-skin of the two road
+  // tiers: `rail` is a cheap track layer, and the three things that make it
+  // pay (a platform, a train depot, a train) are priced here with everything
+  // else so the UI, the host authority, the AI and the balance harness all
+  // read one table. The prices are the epic's provisional tuning constants —
+  // they are NOT claimed balanced (railway epic, "Balance and rollout").
+  //
+  //   rail      1 Stone                     cheap reach; no VP, and no setup
+  //                                         allowance applies to it either
+  //   platform  4 Wood+4 Stone+12 Ore+2 Oil exactly 1 VP, immediately
+  //   depot     3 Wood+3 Stone+4 Ore+2 Oil  0 VP, one declared rail exit
+  //   train     4 Ore+2 Oil                 0 VP, one locomotive + one wagon
+  rail: { stone: 1 },
+  platform: { wood: 4, stone: 4, ore: 12, oil: 2 },
+  railDepot: { wood: 3, stone: 3, ore: 4, oil: 2 },
+  train: { ore: 4, oil: 2 },
 };
 
 // ── VP-01: the victory table ──────────────────────────────────────────────
@@ -220,6 +238,18 @@ export const VICTORY = {
   upgrade: 0.25,
   /** VP per processing plant raised after setup. */
   plant: 1,
+  /**
+   * RAIL-01: VP per EXISTING owned Rail Platform — exactly 1★, paid the moment
+   * the platform is built (even with no running line) and revoked by its
+   * demolition. `victory.ts` scores it like the plant source: a diff against
+   * the standing platforms, never a running total, so rebuilding the same
+   * ground can never accumulate a second point.
+   *
+   * Every OTHER rail asset scores zero — track, depots, trains and lines are
+   * infrastructure, and the epic is explicit ("Other rail assets score
+   * zero"). Rail's offer is reach and a different investment, not free points.
+   */
+  platform: 1,
   /** VP needed to win. Back to 10★ — the AI-02 experiment with a 20★ line
    *  made games drag, so the race runs to 10 again.
    *  AI-04: this is the SHIPPED line and the default for `hasWon`, but it is no

@@ -89,8 +89,11 @@ describe("PP-07 Catan-style resource roles", () => {
     expect(usedBy("grain")).toEqual(expect.arrayContaining(["depot", "plant"]));
     // industrial investment and better transport
     expect(usedBy("ore")).toEqual(expect.arrayContaining(["road", "upgrade", "plant"]));
-    // depot expansion
-    expect(usedBy("oil")).toEqual(["depot"]);
+    // RAIL-02 (#142): oil is no longer the Depot's alone. The railway epic
+    // prices every rail asset with Oil on it — the platform, the train depot
+    // and the train — so an Oil Rig now feeds construction beyond one Depot,
+    // and the assertion below names the whole set instead of one entry.
+    expect(usedBy("oil")).toEqual(["depot", "platform", "railDepot", "train"]);
   });
 
   it("reserves gold for Black Market sabotage — it buys no construction", () => {

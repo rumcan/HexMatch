@@ -19,13 +19,24 @@ import portraitYou from "../assets/ui/tycoon_you.png";
 import { UNRANKED_KEY, badgeUrlFor } from "../ui/rank-badge";
 
 export type EndingPath = "paving" | "plants" | "balanced";
-export type DecisiveSource = "upgrade" | "plant" | null;
+/**
+ * RAIL-01: the scoring event that crossed the line. `platform` is the rail
+ * source — a Rail Platform's 1★, awarded the moment it was built.
+ */
+export type DecisiveSource = "upgrade" | "plant" | "platform" | null;
 
 export interface EndingBreakdown {
   paved: number;
   plants: number;
   pavedVp: number;
   plantVp: number;
+  /**
+   * RAIL-01: standing rail platforms and their VP. Optional so a caller with
+   * no railway in scope (and every pre-railway the test fixture) still
+   * produces a valid ledger — `buildEnding` reads them as zero.
+   */
+  platforms?: number;
+  platformVp?: number;
 }
 
 export interface EndingInput {
@@ -46,7 +57,7 @@ export interface EndingInput {
 }
 
 export interface EndingScoreRow {
-  key: "paving" | "plants";
+  key: "paving" | "plants" | "platforms";
   icon: string;
   label: string;
   detail: string;
@@ -144,7 +155,10 @@ const fmt = (value: number): string => {
  * two is balanced; three-plus is industrial.
  */
 export function endingPathFor(breakdown: EndingBreakdown): EndingPath {
-  const total = breakdown.pavedVp + breakdown.plantVp;
+  // RAIL-01: platform VP is part of the finish — it is infrastructure money,
+  // the same kind of win as pavement — so it counts in the total and in the
+  // share, and a rail-heavy finish reads as the network path it is.
+  const total = breakdown.pavedVp + breakdown.plantVp + (breakdown.platformVp ?? 0);
   if (total <= 0) return "balanced";
   const plantShare = breakdown.plantVp / total;
   if (breakdown.plants >= 3 || plantShare >= 0.28) return "plants";
@@ -155,7 +169,7 @@ export function endingPathFor(breakdown: EndingBreakdown): EndingPath {
 function methodText(path: EndingPath, won: boolean): string {
   const who = won ? "You" : "The rival";
   if (path === "paving") {
-    return `${who} won on the network: mile after mile of upgraded road turned Ore into an unanswerable lead.`;
+    return `${who} won on the network: mile after mile of upgraded road and rail turned the island's freight into an unanswerable lead.`;
   }
   if (path === "plants") {
     return `${who} won through industrial expansion: a chain of processing plants supplied the stars that broke the race open.`;
@@ -170,6 +184,9 @@ function decisiveText(source: DecisiveSource, won: boolean): string {
   }
   if (source === "upgrade") {
     return `${who} winning margin came from fresh pavement—the last quarter-star clicked into place on the road.`;
+  }
+  if (source === "platform") {
+    return `${who} final star arrived with a new rail platform, signalling that the island's freight would now move by rail.`;
   }
   return `${who} network crossed the star line and the territory had its answer.`;
 }
@@ -236,6 +253,17 @@ export function buildEnding(input: EndingInput): EndingModel {
         detail: `${winnerBreakdown.plants} plant${winnerBreakdown.plants === 1 ? "" : "s"} × 1★`,
         vp: winnerBreakdown.plantVp,
       },
+      // RAIL-01: rail's only points are its platforms, and the ledger says so
+      // beside the other two sources rather than folding them into either.
+      ...((winnerBreakdown.platformVp ?? 0) > 0
+        ? [{
+            key: "platforms" as const,
+            icon: "▤",
+            label: "Rail platforms",
+            detail: `${winnerBreakdown.platforms ?? 0} platform${(winnerBreakdown.platforms ?? 0) === 1 ? "" : "s"} × 1★`,
+            vp: winnerBreakdown.platformVp ?? 0,
+          }]
+        : []),
     ],
     playerScore,
     rivalScore,

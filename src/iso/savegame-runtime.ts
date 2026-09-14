@@ -43,7 +43,8 @@ export interface SaveGamePayload {
   story?: {
     playerSabotage: number;
     rivalSabotage: number;
-    winningSource: "upgrade" | "plant" | null;
+    /** RAIL-01 adds "platform" to the sources the ledger can name. */
+    winningSource: "upgrade" | "plant" | "platform" | null;
     /** Optional because cinematic saves created before conversational oil
      * banter did not track whether its one-off scene had played. */
     oilBanterSeen?: boolean;

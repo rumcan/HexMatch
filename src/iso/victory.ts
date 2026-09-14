@@ -6,7 +6,16 @@
 //
 //   Dirt Road tile paved into a Road (in place)   +0.25★   (4 paves = 1★)
 //   Processing plant raised after setup           +1★
+//   Rail Platform standing in your name           +1★   (RAIL-01)
 //   First to 10★ wins (the line visited 20★ under AI-02 and came back)
+//
+// RAIL-01 (#142's epic) adds the third source, and it is deliberately the
+// cheapest thing to *hold* rather than to *connect*: a Rail Platform pays
+// exactly 1★ the instant it is built, even with no line running to it, and it
+// pays again NEVER — the score is a diff against the standing platforms, so
+// demolish-and-rebuild returns the point it took off the board and accumulates
+// nothing. Every other rail asset (track, depots, trains, lines) scores zero:
+// rail's offer is reach and a different investment, not free points.
 //
 // What is deliberately worth nothing:
 //
@@ -45,6 +54,10 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_W, MAP_H } from "../game/config";
 import { PRESENT, PUBLIC_OWNER, type Track } from "./track";
+// RAIL-01: the platform source reads the railway's own record list (a type-only
+// import — the railway module never imports the scoreboard, so there is no
+// cycle and the score stays a pure READ of what was built).
+import type { RailPlatform } from "./railway/state";
 import { VICTORY } from "./config";
 import type { EconomyState } from "./economy";
 
@@ -55,7 +68,7 @@ import type { EconomyState } from "./economy";
  */
 export const OPENING_PLANT_ID = 0;
 
-export type VpSource = "upgrade" | "plant";
+export type VpSource = "upgrade" | "plant" | "platform";
 export type VpChange = "awarded" | "revoked";
 
 /**
@@ -74,6 +87,8 @@ export interface VpEvent {
   townId?: number | null;
   /** `plant` events: 1-based plant number, for the toast. */
   plantNo?: number;
+  /** `platform` events: the rail platform's stable id, for the toast. */
+  platformId?: number;
 }
 
 /** Where a scored thing is and who it paid. Kept so a removal can be debited
@@ -89,17 +104,31 @@ export interface PlantLedger {
   no: number;
 }
 
+/**
+ * RAIL-01: where a scored Rail Platform stands. Keyed by its stable id, so the
+ * ledger survives the platform list being rebuilt and a demolition can be
+ * debited from the right player after the structure itself is gone.
+ */
+export interface PlatformLedger {
+  owner: string;
+  tx: number;
+  ty: number;
+  id: number;
+}
+
 export interface ScoreState {
   /** tile index → who it scored for. */
   paved: Map<number, PavedLedger>;
   /** `${owner}#${plantId}` → what it scored. */
   plants: Map<string, PlantLedger>;
+  /** `${owner}#${platformId}` → what it scored. */
+  platforms: Map<string, PlatformLedger>;
   /** Per-owner VP total. */
   vp: Map<string, number>;
 }
 
 export const createScoreState = (): ScoreState => ({
-  paved: new Map(), plants: new Map(), vp: new Map(),
+  paved: new Map(), plants: new Map(), platforms: new Map(), vp: new Map(),
 });
 
 /** VP as the HUD prints it: whole when it is whole, 2dp at most otherwise. */
@@ -163,15 +192,44 @@ export function scoredPlants(state: EconomyState): Map<string, PlantLedger> {
 }
 
 /**
+ * RAIL-01: every scored Rail Platform: `${owner}#${id}` → where it stands.
+ *
+ * The railway is passed in (rather than reached for) because a solo game with
+ * no railway at all must score exactly as it always did. `undefined` means "no
+ * railway on this board" and yields an empty map, so every existing caller —
+ * and every existing test — is untouched by the third source's arrival.
+ */
+export function scoredPlatforms(
+  railway: { platforms: readonly RailPlatform[] } | undefined | null,
+): Map<string, PlatformLedger> {
+  const out = new Map<string, PlatformLedger>();
+  if (!railway) return out;
+  for (const p of railway.platforms) {
+    out.set(`${p.owner}#${p.id}`, {
+      owner: p.owner, tx: p.tx, ty: p.ty, id: p.id,
+    });
+  }
+  return out;
+}
+
+/**
  * Diff the board against the last scoring and return what changed. Called from
  * every build and demolish path (`rescoreNow` in game.ts), which is what keeps
  * a pave and the point it buys one atomic moment.
+ *
+ * `railway` is optional: when it is given, standing platforms are scored by the
+ * same diff as everything else — the point lands the moment the platform does,
+ * and a demolition takes it back with no separate bookkeeping to forget.
  */
-export function rescore(state: EconomyState, score: ScoreState): VpEvent[] {
+export function rescore(
+  state: EconomyState, score: ScoreState,
+  railway?: { platforms: readonly RailPlatform[] } | null,
+): VpEvent[] {
   const events: VpEvent[] = [];
   const owners = ownerIdsByNumber(state);
   const paves = scoredPaves(state.track, owners);
   const plants = scoredPlants(state);
+  const platforms = scoredPlatforms(railway);
   const add = (owner: string, delta: number) =>
     score.vp.set(owner, (score.vp.get(owner) ?? 0) + delta);
 
@@ -225,6 +283,30 @@ export function rescore(state: EconomyState, score: ScoreState): VpEvent[] {
       tx: p.tx, ty: p.ty, townId: p.townId, plantNo: p.no + 1,
     });
   }
+
+  // ── rail platforms (RAIL-01) ─────────────────────────────────────────────
+  // Keyed by the platform's own id: rebuilding on the same ground is a NEW id
+  // and therefore a new award, but the demolition that preceded it gave the
+  // first point back — so a rebuild cycle ends where it started, at most one
+  // point per standing platform.
+  for (const [key, p] of platforms) {
+    if (score.platforms.has(key)) continue;
+    score.platforms.set(key, p);
+    add(p.owner, VICTORY.platform);
+    events.push({
+      source: "platform", type: "awarded", owner: p.owner, delta: VICTORY.platform,
+      tx: p.tx, ty: p.ty, platformId: p.id,
+    });
+  }
+  for (const [key, p] of [...score.platforms]) {
+    if (platforms.has(key)) continue;
+    score.platforms.delete(key);
+    add(p.owner, -VICTORY.platform);
+    events.push({
+      source: "platform", type: "revoked", owner: p.owner, delta: -VICTORY.platform,
+      tx: p.tx, ty: p.ty, platformId: p.id,
+    });
+  }
   return events;
 }
 
@@ -235,17 +317,24 @@ export const vpFor = (score: ScoreState, owner: string) => score.vp.get(owner) ?
  * for the HUD, the inspector and the tests. Recomputed from the board rather
  * than accumulated, so it can never drift from the network it describes.
  */
-export function victoryBreakdown(state: EconomyState, owner: string) {
+export function victoryBreakdown(
+  state: EconomyState, owner: string,
+  railway?: { platforms: readonly RailPlatform[] } | null,
+) {
   const owners = ownerIdsByNumber(state);
   let paved = 0;
   for (const o of scoredPaves(state.track, owners).values()) if (o === owner) paved++;
   let plants = 0;
   for (const p of scoredPlants(state).values()) if (p.owner === owner) plants++;
+  let platforms = 0;
+  for (const p of scoredPlatforms(railway).values()) if (p.owner === owner) platforms++;
   return {
     paved,
     plants,
+    platforms,
     pavedVp: paveVp(paved),
     plantVp: plants * VICTORY.plant,
+    platformVp: platforms * VICTORY.platform,
   };
 }
 
