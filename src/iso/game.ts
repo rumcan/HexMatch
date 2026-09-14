@@ -117,7 +117,7 @@ import {
 import {
   DEPOT_COST, FREE_SETUP_DEPOTS, costCompact, costLabel, priceDepot, shortfallLabel,
 } from "./construction";
-import { BANK_RATE, bankTrade } from "../game/trade";
+import { bankTrade } from "../game/trade";
 import type { CrossKind } from "../game/board";
 import {
   MAP_W, MAP_H, BANDIT_MS, BLOCK_MS, FOG_MS, PROTEST_MS, SABOTAGE, SECURITY,
@@ -3294,31 +3294,6 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   }
 
   /**
-   * RAIL-05 (#182): bank toward the rail project's next piece. Same 4:1 bank
-   * and budget as the pave bank, with the same guard against churn: never sell
-   * what the depot plan is saving for, nor a cargo the rail piece itself needs.
-   * Returns the exchanges made.
-   */
-  function rivalBankTowardRail(goal: Purse, f: Factory, now: number): number {
-    const pace = rivalPaceNow();
-    const planGuard = rivalPlanTarget(f, now) ?? {};
-    const trader = { res: rival.purse };
-    let trades = 0;
-    for (const [cargo, need] of Object.entries(goal) as [Cargo, number][]) {
-      while ((rival.purse[cargo] ?? 0) < need && trades < bankBudget(pace)) {
-        const surplus = (CARGOES as Cargo[])
-          .filter((c) => c !== "gold" && c !== cargo && (rival.purse[c] ?? 0) >= BANK_RATE)
-          .filter((c) => (rival.purse[c] ?? 0) - BANK_RATE >= Math.max(planGuard[c] ?? 0, goal[c] ?? 0))
-          .sort((a, b) => (rival.purse[b] ?? 0) - (rival.purse[a] ?? 0))[0];
-        if (!surplus) break;
-        if (!bankTrade(trader, surplus, cargo)) break;
-        trades++;
-      }
-    }
-    return trades;
-  }
-
-  /**
    * AI-01: the purse the rival is working toward right now — extracted from
    * `rivalBankTowardPlan` so the bank and the MARKET aim at the same shortage
    * (`rivalMarketOffer` asks for exactly what the next bank exchange would
@@ -3493,14 +3468,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   /** The rival paves what it can afford, charges itself, and lets `rescoreNow`
    *  price the points. Returns false when there was nothing to pave. */
-  function rivalPavePass(railKeepOre = 0): boolean {
+  function rivalPavePass(): boolean {
     const plan = planUpgrades(eco, {
       owner: rival.id, ownerId: rival.i + 1, purse: rival.purse,
       // AI-01: the batch cap is a skill lever (8 on normal, 4/12 on easy/hard).
       maxTiles: skill().paveTiles,
-      // RAIL-05 (#182): the Ore a wanted plant OR the rail project's next piece
-      // still needs is not spare — whichever reserve is larger stays in the purse.
-      keepOre: Math.max(rivalPlantWanted() ? (PLANT_COST.ore ?? 0) : 0, railKeepOre),
+      keepOre: rivalPlantWanted() ? (PLANT_COST.ore ?? 0) : 0,
     });
     if (!plan) return false;
     // Charge UP FRONT, exactly as `placePlant` does, and hand back the
@@ -3679,32 +3652,21 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       acted = true;
     }
 
-    // 3a. railway plan (RAIL-05, #182) — decided BEFORE the pave pass. A line's
-    //     pieces are lumpy (a platform is 12 Ore) while paving spends Ore four
-    //     at a time, so without a reserve the paves eat every Ore the moment
-    //     it lands and the rival never affords its first platform — the
-    //     balance matrix measured exactly that: 51 races, 0 rail actions.
-    //     Easy rivals keep the lever down; the flag down means no railway.
+    // 3. pave — what the scoreboard pays for, with whatever Ore is spare; and
+    //    when the Ore is not spare but the gravel is there, buy it (VP-01)
+    if (rivalPavePass()) acted = true;
+    else rivalBankTowardPave(f, now);
+
+    // 4. railway (RAIL-05, #182) — the seat's ONE rail action this turn,
+    //    committed through the SAME `rail.ts` rules the player's drag commits
+    //    through (`executeRailMove` → `buildRail` / `placePlatform` / …). Easy
+    //    rivals keep the lever down; the flag down means no railway.
     const railState = railAvailable && skill().rail ? eco.rail ?? null : null;
     const railMove = railState
       ? planRailMove(eco, railState, f, {
         purse: rival.purse, ownerId: rival.i + 1, useRail: true, scope: "line", now,
       })
       : null;
-    const railGoal = railMove && !canPay(rival.purse, railMove.cost) ? railMove.cost : null;
-    const railKeepOre = railGoal?.ore ?? 0;
-
-    // 3. pave — what the scoreboard pays for, with whatever Ore is spare (the
-    //    rail reserve is not spare); when the Ore is not spare but the gravel
-    //    is there, buy it (VP-01) — unless the bank is saving for rail, where
-    //    the two banks would trade each other's cargo back and forth.
-    if (rivalPavePass(railKeepOre)) acted = true;
-    else if (!railGoal) rivalBankTowardPave(f, now);
-    if (railGoal) rivalBankTowardRail(railGoal, f, now);
-
-    // 4. railway — the seat's ONE rail action this turn, planned above and
-    //    committed through the SAME `rail.ts` rules the player's drag commits
-    //    through (`executeRailMove` → `buildRail` / `placePlatform` / …).
     let railLaid: [number, number][] = [];
     if (railState && railMove && canPay(rival.purse, railMove.cost)) {
       const res = executeRailMove(eco, railState, railMove, rival.id, rival.i + 1);
@@ -3744,7 +3706,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       for (const [bx, by] of retry.built) renderer?.invalidateTile(bx, by);
       ui.feed(`Rival expands: a new Depot and ${retry.built.length} road tile${retry.built.length === 1 ? "" : "s"}`, rival.name);
     }
-    const paved = rivalPavePass(railKeepOre);
+    const paved = rivalPavePass();
     if (retry || paved) {
       syncWorld();
       rescoreNow();

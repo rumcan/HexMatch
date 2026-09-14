@@ -220,28 +220,6 @@ function bankForPaves(eco: EconomyState, seat: Seat, track: Track, f: Factory, p
 }
 
 /**
- * RAIL-05 (#182): the live rival's `rivalBankTowardRail` — the 4:1 bank toward
- * the rail project's next piece, never selling what the depot plan or the
- * rail piece itself needs.
- */
-function bankTowardRail(eco: EconomyState, seat: Seat, track: Track, f: Factory, goal: Purse, pace: RivalPace, urgency: number) {
-  seatSkintTarget(eco, seat, track, f, urgency);        // refresh the plan guard
-  const guard = seat.planGoal ?? {};
-  let trades = 0;
-  for (const [cargo, need] of Object.entries(goal) as [Cargo, number][]) {
-    while ((seat.purse[cargo] ?? 0) < need && trades < bankBudget(seat.skill, pace)) {
-      const surplus = (CARGOES as Cargo[])
-        .filter((c) => c !== "gold" && c !== cargo && (seat.purse[c] ?? 0) >= BANK_RATE)
-        .filter((c) => (seat.purse[c] ?? 0) - BANK_RATE >= Math.max(guard[c] ?? 0, goal[c] ?? 0))
-        .sort((a, b) => (seat.purse[b] ?? 0) - (seat.purse[a] ?? 0))[0];
-      if (!surplus) break;
-      if (!bankTrade({ res: seat.purse }, surplus, cargo, undefined, GOLD_BLOCKED)) break;
-      trades++;
-    }
-  }
-}
-
-/**
  * The purse a seat is working toward right now — the depot plan closest to
  * affordable, unless the pave milestone is fewer trades away. The game twin is
  * `rivalSkintTarget` in game.ts; the bank and the market offer both read it.
@@ -440,16 +418,9 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
           pay(seat, built.spent);
           acted = true;
         }
-        // RAIL-05: the live rival's rail reserve — plan the rail piece before
-        // paving and hold its Ore back while the purse cannot pay for it.
-        const railPlan = seat.rail === "road" ? null : planRailMove(eco, rail, factoryFor(seat), {
-          purse: seat.purse, ownerId: seat.ownerId, useRail: true,
-          scope: seat.rail === "platforms" ? "platforms" : "line", now: t,
-        });
-        const railGoal = railPlan && !canAfford(seat.purse, railPlan.cost) ? railPlan.cost : null;
         const plan = planUpgrades(eco, {
           owner: seat.id, ownerId: seat.ownerId, purse: seat.purse,
-          maxTiles: seat.skill.paveTiles, keepOre: railGoal?.ore ?? 0,
+          maxTiles: seat.skill.paveTiles,
         });
         if (plan && pay(seat, plan.cost)) {
           const laid = executePaves(eco, plan, seat.ownerId);
@@ -460,12 +431,11 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
             seat.oreOnPaves += laid.spent.ore ?? 0;
             acted = true;
           }
-        } else if (!railGoal) {
+        } else {
           // VP-01: the seat that has gravel and no Ore buys the Ore, even on a
           // turn it also spent building — `rivalBankTowardPave` in game.ts
           bankForPaves(eco, seat, track, factoryFor(seat), pace, urgency);
         }
-        if (railGoal) bankTowardRail(eco, seat, track, factoryFor(seat), railGoal, pace, urgency);
         // RAIL-05: the rail action after the road turn — every turn ("mixed",
         // "platforms"), or only when the road did nothing ("exclusive").
         if (seat.rail === "mixed" || seat.rail === "platforms"
@@ -478,7 +448,7 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
           // the game retries the whole sequence once a bank unlocked something
           const retry = planUpgrades(eco, {
             owner: seat.id, ownerId: seat.ownerId, purse: seat.purse,
-            maxTiles: seat.skill.paveTiles, keepOre: railGoal?.ore ?? 0,
+            maxTiles: seat.skill.paveTiles,
           });
           if (retry && pay(seat, retry.cost)) {
             const laid = executePaves(eco, retry, seat.ownerId);
