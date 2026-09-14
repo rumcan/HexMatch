@@ -42,6 +42,28 @@ function devRoomServerOrigin(): Plugin {
 }
 
 /**
+ * DEV ONLY. Which rooms file the local room sidecar runs.
+ *
+ * `rundotMultiplayerPlugin()` resolves `rundot/realtime.config.json` on its own,
+ * and that is what `npm run dev` uses — unchanged. The multiplayer Playwright
+ * suite (`npm run test:e2e:mp`, docs/multiplayer-local-testing.md §8) needs the
+ * room's reconnect grace to be a value the SUITE owns rather than one inherited
+ * from the shipped file, so `RUNDOT_DEV_ROOMS_CONFIG` points the sidecar at
+ * `rundot/realtime.e2e.config.json` for that run. Its `reconnectTimeout` is the
+ * shipped 60s: the suite asserts both outcomes of a seat's grace (resumed
+ * inside it, evicted after it), and a dropped link on a software-rasterized
+ * runner can take tens of seconds just to be noticed, so a shorter grace would
+ * make the reconnect spec a coin toss instead of a test.
+ *
+ * Serve-only by construction — the plugin never starts a sidecar on `vite build`
+ * — so a published game is untouched whatever this variable says.
+ */
+function devRoomsConfigPath(): string | undefined {
+  const path = process.env.RUNDOT_DEV_ROOMS_CONFIG?.trim();
+  return path || undefined;
+}
+
+/**
  * TICKET-B0 (ART-1950S): ship `assets/buildings/` in the production build.
  *
  * `loadBuildingLayers()` (src/iso/atlas.ts) fetches
@@ -105,7 +127,15 @@ export default defineConfig({
   // localhost is always allowed, tunnelled/sandboxed hosts are not.
   server: { host: true, allowedHosts: [".e2b.app"] },
   preview: { host: true, allowedHosts: [".e2b.app"] },
-  plugins: [react(), tailwindcss(), rundotMultiplayerPlugin(), devRoomServerOrigin(), copyBuildingLayers()],
+  plugins: [
+    react(),
+    tailwindcss(),
+    // The sidecar's rooms file: the shipped one unless a dev/e2e run overrides
+    // it (see `devRoomsConfigPath`).
+    rundotMultiplayerPlugin(devRoomsConfigPath() ? { configPath: devRoomsConfigPath() } : {}),
+    devRoomServerOrigin(),
+    copyBuildingLayers(),
+  ],
 
   resolve: {
     alias: {
