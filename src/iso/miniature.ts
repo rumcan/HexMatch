@@ -167,6 +167,12 @@ export function createTiltShiftPass(canvases: RendererCanvases, host: HTMLElemen
         // The stage may have resized since the pass last ran.
         w = Math.max(1, Math.floor(canvases.terrain.width));
         h = Math.max(1, Math.floor(canvases.terrain.height));
+      } else {
+        // PERF-01: a suppressed pass (performance mode ON) must hold no
+        // buffers — drop the scratch surfaces so an idle performance mode
+        // costs one hidden canvas, not three more. They rebuild on the next
+        // enable, which always follows a `resize()` in lockstep anyway.
+        buf = null; bufW = -1; bufH = -1;
       }
     },
     resize(nw, nh) {

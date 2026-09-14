@@ -101,6 +101,8 @@ interface IsoHook {
   aiTick: (now?: number) => void;
   econTick: (now?: number) => void;
   tick: (now?: number) => void;
+  /** PERF-01: the renderer diagnostics (debug console, on in dev builds). */
+  rendering?: (() => { terrain: { performance: boolean; animated: boolean; redraws: number } } | null) | null;
   finishSetup: () => void;
   /** PP-03: the twin of the placement overlay's plan for a hover tile. */
   placementPlan: (
@@ -267,6 +269,26 @@ describe("E11 the game boots", () => {
     (sheet.querySelector("[data-gfx=\"miniature\"]") as HTMLButtonElement).click();
     expect(JSON.parse(localStorage.getItem("hexmatch:graphics")!))
       .toMatchObject({ miniature: true });
+    // PERF-01: the performance toggle, clicked the same way, runs the full
+    // game wiring — the store, the suppressed miniature row and the
+    // renderer's flat policy — without touching the match.
+    const perfSwitch = sheet.querySelector("[data-gfx=\"performance\"]") as HTMLButtonElement;
+    perfSwitch.click();
+    expect(JSON.parse(localStorage.getItem("hexmatch:graphics")!))
+      .toMatchObject({ performance: true, miniature: true });
+    const miniSwitch = sheet.querySelector("[data-gfx=\"miniature\"]") as HTMLButtonElement;
+    expect(miniSwitch.disabled).toBe(true);                 // suppressed…
+    expect(miniSwitch.getAttribute("aria-checked")).toBe("true"); // …not forgotten
+    // wait for the boot chain to have attached the renderer to the debug
+    // console (the boot IIFE finishes a few microtasks after `boot()`)
+    for (let i = 0; i < 400 && !(hook().rendering?.()); i++) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    expect(hook().rendering?.()).toMatchObject({ terrain: expect.objectContaining({ performance: true, animated: false }) });
+    perfSwitch.click();
+    expect(miniSwitch.disabled).toBe(false);
+    await settle();
+    expect(hook().rendering?.()).toMatchObject({ terrain: expect.objectContaining({ performance: false, animated: true }) });
     (sheet.querySelector(".big-btn") as HTMLButtonElement).click();
     expect(root.querySelector(".settings-sheet")).toBeNull();
     localStorage.removeItem("hexmatch:graphics");
@@ -3030,6 +3052,82 @@ describe("pointer responsiveness", () => {
     overlay.dispatchEvent(new MouseEvent("pointerleave"));
     expect(draw).toHaveBeenCalledTimes(2);
     expect(draw.mock.calls[1][0]).toEqual([]);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// CONTINUE-01 (#191) — finishing a contract and taking its ledger's
+// "Continue the campaign" door must not leave the decided match in the slot:
+// the campaign card would otherwise keep offering "Continue" straight back
+// into this ledger. The sandbox restart path always cleared; this is the
+// story equivalent.
+// ═════════════════════════════════════════════════════════════════════════
+describe("CONTINUE-01 (#191): Continue the campaign clears the contract save", () => {
+  it("filing a contract removes its slot when the ledger returns to the campaign", async () => {
+    delete (window as unknown as Record<string, unknown>).__ISO_DISABLE_SAVE;
+    const rt = await import("../../src/iso/savegame-runtime");
+    const { startIsoGame } = await import("../../src/iso/game");
+    const { chapterById } = await import("../../src/story/chapters");
+    const chapter = chapterById("inheritance")!;
+    const storyKey = rt.saveKeyFor(chapter.id);
+    rt.clearSave(storyKey);
+    const storyExit = vi.fn();
+
+    dispose = startIsoGame(root, { story: chapter.id, onStoryExit: storyExit });
+    await settle();
+
+    // skip the pre-contract briefing the way ▸▸ does
+    let skip = root.querySelector(".story-skip") as HTMLButtonElement | null;
+    if (skip) { skip.click(); await settle(); }
+
+    // Win the contract for real (chapter I races to 5★): both opening
+    // factories bind owner ids, then twenty upgraded tiles owned by you.
+    const h = hook();
+    h.eco.factories.push(
+      { owner: "you", ownerId: 1, tx: MAP_W - 8, ty: MAP_H - 8, id: 0, townId: null },
+      { owner: "ai", ownerId: 2, tx: MAP_W - 4, ty: MAP_W - 4, id: 0, townId: null },
+    );
+    let paved = 0;
+    let trigger: [number, number] | null = null;
+    for (let y = 0; y < MAP_H && !trigger; y++) {
+      for (let x = 0; x < MAP_H && !trigger; x++) {
+        const i = y * MAP_W + x;
+        if (h.track.dirt[i] || h.track.road[i]) continue;
+        if (paved < 20) {
+          buildTile(h.track, "dirt", x, y, 1);
+          buildTile(h.track, "road", x, y, 1);
+          paved++;
+        } else {
+          buildTile(h.track, "dirt", x, y, 1);
+          trigger = [x, y];
+        }
+      }
+    }
+    expect(paved).toBe(20);
+    expect(trigger).toBeTruthy();
+    h.finishSetup();
+    h.demolish(trigger![0], trigger![1]);
+    expect(h.phase).toBe("won");
+
+    // skip the epilogue so the ledger stands
+    for (let t = 0; t < 20 && !root.querySelector("#iso-ending"); t++) {
+      const epSkip = root.querySelector(".story-stage .story-skip") as HTMLButtonElement | null;
+      epSkip?.click();
+      await settle();
+    }
+    const ending = root.querySelector("#iso-ending");
+    expect(ending).not.toBeNull();
+    const continueCampaign = ending!.querySelector(".ending-continue") as HTMLButtonElement;
+    expect(continueCampaign).not.toBeNull();
+
+    // the decided match is on the shelf right up until the door is taken
+    await settle();
+    expect(rt.readSave(storyKey)?.phase).toBe("won");
+
+    continueCampaign.click();
+    expect(storyExit).toHaveBeenCalledTimes(1);
+    // and off the shelf immediately after — no Continue ribbon on a filed card
+    expect(rt.readSave(storyKey)).toBeNull();
   });
 });
 

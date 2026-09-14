@@ -137,6 +137,91 @@ export function paintGroundTiles(
   ctx.restore();
 }
 
+// ── PERF-01: the flat performance-mode ground ─────────────────────────────
+/**
+ * PERF-01: the muted flat palette for performance mode. Solid fills — no
+ * textures, no patterns — so a painted chunk stays valid for the whole map's
+ * life instead of one animation frame. Muted so buildings and the placement
+ * glow read above it, and close to the textured palette's mid-tones so
+ * toggling the mode does not flash the island a different colour.
+ */
+export const PERF_FLAT = {
+  /** Flat blue under the island (the ocean, with its drift switched off). */
+  water: "#1a5f7d",
+  /** Flat sand terrace — the coast keeps the textured ground's shape. */
+  sand: "#d9bd7f",
+  /** Muted flat green land. */
+  grass: "#6f7f4a",
+  /** The subtle isometric build grid, stroked over the land only. */
+  grid: "rgba(24, 32, 16, 0.16)",
+};
+
+export interface FlatGroundColors {
+  grass: string;
+  sand: string;
+  grid: string;
+}
+
+/**
+ * PERF-01: the STATIC performance-mode ground for a tile range, painted
+ * through `project`. Same contours as the textured ground (`groundContours`),
+ * so the island and its beach keep their exact shape — only the paint is
+ * flat: a solid sand terrace under the land, a solid muted-green meadow over
+ * it, and ONE subtle isometric build grid (every tile diamond of the range,
+ * plus a one-tile ring so the lines reach the chunk edges) stroked once,
+ * clipped to the land so the water stays clean.
+ *
+ * No `time` parameter by construction: everything here is a function of
+ * (grid, range) only, which is what makes the chunk it lands on cacheable
+ * for good. The caller must be in the paint space the points project into
+ * (the chunk surfaces do).
+ */
+export function paintFlatGroundTiles(
+  ctx: CanvasRenderingContext2D,
+  grid: Grid,
+  tx0: number, ty0: number, tx1: number, ty1: number,
+  colors: FlatGroundColors,
+  project: GroundProject = identityProject,
+): void {
+  const coast = groundContours(grid);
+  // The same tiny padded clip the textured ground uses: it seals
+  // antialiased chunk joins without changing the outer coastline.
+  const pad = .04;
+  const corners: [number, number][] = [[tx0 - pad, ty0 - pad], [tx1 + 1 + pad, ty0 - pad],
+    [tx1 + 1 + pad, ty1 + 1 + pad], [tx0 - pad, ty1 + pad]];
+  ctx.save();
+  pathPolygons(ctx, [corners.map(([x, y]) => project(...tileToScreen(x, y)))]);
+  ctx.clip();
+  const loops = (loops: CoastPoint[][]) => loops.map((l) => l.map((p) => project(...p)));
+  // Sand under the entire island, grass over the inland mask — the rounded
+  // beach ring between the two contours, exactly as in the textured paint.
+  pathPolygons(ctx, loops(coast.land));
+  ctx.fillStyle = colors.sand;
+  ctx.fill();
+  pathPolygons(ctx, loops(coast.inland));
+  ctx.fillStyle = colors.grass;
+  ctx.fill();
+  // The build grid: one path over every tile diamond in the range (ringed),
+  // one stroke, clipped to the land so the grid never crosses the water.
+  // 1px in paint space — it scales with the chunk's zoom, so the line stays
+  // one tile-fraction wide on screen at every zoom step.
+  ctx.save();
+  pathPolygons(ctx, loops(coast.land));
+  ctx.clip();
+  const diamonds: [number, number][][] = [];
+  for (let ty = ty0 - 1; ty <= ty1 + 1; ty++) {
+    for (let tx = tx0 - 1; tx <= tx1 + 1; tx++) {
+      diamonds.push(tileDiamondWorld(tx, ty).map(([x, y]) => project(x, y)));
+    }
+  }
+  pathPolygons(ctx, diamonds);
+  ctx.strokeStyle = colors.grid;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.restore();
+  ctx.restore();
+}
+
 export interface GroundContours { land: CoastPoint[][]; inland: CoastPoint[][] }
 const contourCache = new WeakMap<Grid, GroundContours>();
 export function groundContours(grid: Grid): GroundContours {

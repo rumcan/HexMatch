@@ -1,9 +1,10 @@
 // ══════════════════════════════════════════════════════════════════════════
-// GFX-01 — the video settings store.
+// GFX-01 / PERF-01 — the video settings store.
 //
 // The player's LOOK of the game, in one place: how much texture detail the
-// art pipeline loads (`quality`) and whether the map wears the miniature
-// tilt-shift (`miniature`). Like `?sound` and the rival-skill choice, this is
+// art pipeline loads (`quality`), whether the map wears the miniature
+// tilt-shift (`miniature`) and whether the map wears PERFORMANCE MODE
+// (`performance`). Like `?sound` and the rival-skill choice, this is
 // pure presentation state: it persists to localStorage, it NEVER enters a
 // savegame or the multiplayer wire, and both players simulate the same game
 // whatever they are looking at.
@@ -17,10 +18,17 @@
 // so geometry (anchors, footprints, depth keys, picking) never moves — only
 // the texel density behind it does. See `Atlas.detailCap`.
 //
-// URL flags, same rules as `?sound=0`: `?quality=low|medium|high` and
-// `?miniature=1|0` override what is READ at boot without writing to storage,
-// so e2e runs and a bookmarked "always miniature" link beat a stranger's
-// saved preference predictably.
+// `performance` (PERF-01) is a SEPARATE axis from quality: it is a cheaper
+// RENDERING policy, not a texture preset. Selecting Low alone must never
+// force it, and it works at every quality. It derives one effective policy
+// (`renderPolicy`) that the game, the renderer and the miniature pass all
+// read, so a toggle moves terrain art, water animation, decals, the backing
+// DPR and the post pass together — and back, atomically.
+//
+// URL flags, same rules as `?sound=0`: `?quality=low|medium|high`,
+// `?miniature=1|0` and `?performance=1|0` override what is READ at boot
+// without writing to storage, so e2e runs and a bookmarked "always
+// miniature" link beat a stranger's saved preference predictably.
 // ══════════════════════════════════════════════════════════════════════════
 import { ZOOM_STEPS, type Zoom } from "../game/config";
 
@@ -42,19 +50,75 @@ export const QUALITY_LABEL: Record<Quality, string> = {
 
 /** One-line copy for the settings panel. */
 export const QUALITY_NOTE: Record<Quality, string> = {
-  low: "Half-detail art only — the smallest memory, the chunkiest pixels.",
+  low: "Half-detail art only — the smallest memory, the chunkiest pixels. On a slow machine, switch Performance mode on too.",
   medium: "Middle-detail art — a fair trade for modest machines.",
   high: "Full 2× detail — the sharpest look (default).",
 };
+
+/** One-line copy for the settings panel (PERF-01). */
+export const PERFORMANCE_NOTE = "Simpler ground and water, fewer effects, smoother play.";
 
 export interface GraphicsSettings {
   quality: Quality;
   /** Tilt-shift "miniature" post pass (src/iso/miniature.ts). */
   miniature: boolean;
+  /**
+   * PERF-01: the performance mode — flat static terrain, no decals, backing
+   * DPR capped at 1, miniature suppressed. Independent of quality; default
+   * OFF (a stored blob without the key simply means OFF, so old
+   * preferences migrate without a step).
+   */
+  performance: boolean;
 }
 
-/** The shipped look: everything loaded, no post pass. */
-export const DEFAULT_SETTINGS: GraphicsSettings = { quality: "high", miniature: false };
+/** The shipped look: everything loaded, no post pass, full-detail terrain. */
+export const DEFAULT_SETTINGS: GraphicsSettings = { quality: "high", miniature: false, performance: false };
+
+// ── PERF-01: the effective render policy ───────────────────────────────────
+/**
+ * Everything the renderer must know to draw one consistent frame, derived
+ * from the two player choices. Quality stays an ART axis (which texture
+ * detail is loaded — Medium/High look is preserved under the policy); the
+ * performance flag is a RENDER axis (how the frame is composed). One object
+ * so the game (DPR, loads), the renderer (terrain, cadence) and the
+ * miniature pass (effective enable) cannot drift apart.
+ */
+export interface RenderPolicy {
+  /** The texture quality, unchanged — the policy never rewrites it. */
+  readonly quality: Quality;
+  /** The atlas detail cap the quality implies (`QUALITY_MAX_DETAIL`). */
+  readonly detail: Zoom;
+  /** The performance flag itself (for display/diagnostics). */
+  readonly performance: boolean;
+  /** Seamless grass/sand/water textures, or solid flat fills. */
+  readonly texturedGround: boolean;
+  /** The drifting ocean + breathing surf, or one static coast. */
+  readonly animatedWater: boolean;
+  /** The decorative terrain decals (dirt scrapes, grass variation). */
+  readonly decals: boolean;
+  /**
+   * The miniature pass as it EFFECTIVELY runs: the stored choice, suppressed
+   * while performance mode stands (the stored choice is preserved, so OFFing
+   * performance restores it).
+   */
+  readonly miniature: boolean;
+  /** Backing canvas device-pixel-ratio cap (1 in performance mode). */
+  readonly dprCap: number;
+}
+
+/** Derive the frame policy from the settings. Pure — safe on every read. */
+export function renderPolicy(s: GraphicsSettings): RenderPolicy {
+  return {
+    quality: s.quality,
+    detail: QUALITY_MAX_DETAIL[s.quality],
+    performance: s.performance,
+    texturedGround: !s.performance,
+    animatedWater: !s.performance,
+    decals: !s.performance,
+    miniature: s.miniature && !s.performance,
+    dprCap: s.performance ? 1 : 2,
+  };
+}
 
 /** localStorage key — one JSON payload, same pattern as the audio settings. */
 export const GRAPHICS_STORAGE_KEY = "hexmatch:graphics";
@@ -75,16 +139,21 @@ function parseFlag(v: string | null): boolean | null {
   return null;
 }
 
-/** `?quality=` / `?miniature=` overrides; absent or garbage → null. */
+/** `?quality=` / `?miniature=` / `?performance=` overrides; absent or garbage → null. */
 export function urlOverrides(
   search: string | undefined,
-): { quality: Quality | null; miniature: boolean | null } {
-  const out = { quality: null as Quality | null, miniature: null as boolean | null };
+): { quality: Quality | null; miniature: boolean | null; performance: boolean | null } {
+  const out = {
+    quality: null as Quality | null,
+    miniature: null as boolean | null,
+    performance: null as boolean | null,
+  };
   if (!search) return out;
   try {
     const q = new URLSearchParams(search);
     out.quality = parseQuality(q.get("quality"));
     out.miniature = parseFlag(q.get("miniature"));
+    out.performance = parseFlag(q.get("performance"));
   } catch {
     /* a malformed query is simply no override */
   }
@@ -107,7 +176,7 @@ const locationSearch = (): string | undefined =>
  */
 export function parseSettings(
   raw: string | null,
-  overrides: { quality: Quality | null; miniature: boolean | null },
+  overrides: { quality: Quality | null; miniature: boolean | null; performance: boolean | null },
 ): GraphicsSettings {
   const s: GraphicsSettings = { ...DEFAULT_SETTINGS };
   if (raw) {
@@ -116,12 +185,16 @@ export function parseSettings(
       const q = parseQuality(parsed.quality);
       if (q) s.quality = q;
       if (typeof parsed.miniature === "boolean") s.miniature = parsed.miniature;
+      // PERF-01 migration: a blob written before the key existed simply
+      // keeps the default (OFF) — no rewrite of the stored choice needed.
+      if (typeof parsed.performance === "boolean") s.performance = parsed.performance;
     } catch {
       /* unreadable blob: the defaults stand */
     }
   }
   if (overrides.quality) s.quality = overrides.quality;
   if (overrides.miniature !== null) s.miniature = overrides.miniature;
+  if (overrides.performance !== null) s.performance = overrides.performance;
   return s;
 }
 
@@ -161,8 +234,11 @@ export function setGraphics(patch: Partial<GraphicsSettings>): GraphicsSettings 
   const s = read();
   const quality = patch.quality !== undefined ? (parseQuality(patch.quality) ?? s.quality) : s.quality;
   const miniature = patch.miniature !== undefined ? !!patch.miniature : s.miniature;
-  const next = { quality, miniature };
-  if (next.quality === s.quality && next.miniature === s.miniature) return { ...s };
+  const performance = patch.performance !== undefined ? !!patch.performance : s.performance;
+  const next = { quality, miniature, performance };
+  if (next.quality === s.quality && next.miniature === s.miniature && next.performance === s.performance) {
+    return { ...s };
+  }
   settings = next;
   persist();
   for (const fn of [...listeners]) fn({ ...next });

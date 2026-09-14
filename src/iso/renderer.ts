@@ -20,6 +20,16 @@
 // pattern additionally drifts with time. Without textures (tests, demo
 // fallback) the same polygons paint with flat FALLBACK colours.
 //
+// PERF-01: the player's performance mode (graphics.ts `renderPolicy`) swaps
+// the terrain layer for a FLAT, STATIC scene — muted green land, flat sand
+// coast, blue water, one subtle isometric build grid — and turns the 30 Hz
+// ambient timer off, so an idle map never repaints the terrain canvas at
+// all. The flat chunks ride the SAME chunk cache (the mode switch clears
+// it), are culled to the visible range like the textured ones, and the
+// shore is stroked from the same contours as the textured ground — only the
+// animation goes. Everything else (structures, roads, ownership, placement
+// feedback, picking) is untouched.
+//
 // The old per-tile terrain sprites (terrain_grass/water/rough) are gone from
 // the draw path — `terrainSprite` survives only for debug probes. Roads and
 // buildings blit from the LAYER atlases (assets/layers/), same rects.
@@ -34,8 +44,8 @@ import type { Atlas } from "./atlas";
 import { depthSort, isMoving, place, pickSprite, type DrawItem, type Placed } from "./depth";
 import { GRASS, WATER, ROUGH, townGroundBytes, type Grid } from "./grid";
 import {
-  FALLBACK, GROUND_TEX_SIZE, createGroundPatterns, makeMatrix, oceanMatrix,
-  paintGroundTiles, paintShore, invalidateGroundContours,
+  FALLBACK, GROUND_TEX_SIZE, PERF_FLAT, createGroundPatterns, makeMatrix, oceanMatrix,
+  paintFlatGroundTiles, paintGroundTiles, paintShore, invalidateGroundContours,
   type GroundPatterns, type GroundTextures,
 } from "./ground";
 import { ShadowStamps, paintBuildingShadows } from "./building-shadow";
@@ -391,6 +401,19 @@ export interface RenderDiagnostics {
   overlay: OverlayDiagnostics;
   /** The last structures pass: full repaint or damage-clipped, and its cost. */
   repaint: RepaintStats;
+  /**
+   * PERF-01: the terrain layer's policy and its repaint ledger — the idle
+   * counter the A/B validation reads (`redraws` must not climb while
+   * `animated` is false and nothing dirties the layer).
+   */
+  terrain: {
+    /** Performance mode is drawing the flat static scene. */
+    performance: boolean;
+    /** The ambient 30 Hz terrain timer is armed (false in performance mode). */
+    animated: boolean;
+    /** Full terrain redraws since boot. */
+    redraws: number;
+  };
   warnings: string[];
 }
 
@@ -445,6 +468,10 @@ export class IsoRenderer {
   /** Camera/world/art changed: repaint the terrain on the next frame. */
   private terrainDirty = true;
   private lastTerrainT = -Infinity;
+  /** PERF-01: the flat static performance-mode terrain (see graphics policy). */
+  private perfMode = false;
+  /** PERF-01: full terrain redraws since boot — the idle A/B counter. */
+  private terrainRedraws = 0;
   private lastOrder: Placed[] = [];
   private lastCycles: string[][] = [];
   private pad: number;
@@ -745,6 +772,27 @@ export class IsoRenderer {
     this.invalidateAll();
   }
 
+  // ── PERF-01: the performance mode ───────────────────────────────────────
+  /**
+   * PERF-01: switch the terrain layer between the textured animated ground
+   * and the FLAT STATIC performance scene. ON: no ocean drift, no breathing
+   * surf, no decals — the layer repaints only when something dirties it
+   * (camera, world, art, quality, this switch); the ambient 30 Hz timer in
+   * `render()` disarms. The textured chunk surfaces are released at once
+   * (the cache is per-paint, and a key must never serve the wrong paint);
+   * stepping back repaints them lazily. Structures, roads, picking and the
+   * overlay are untouched — this is the ground's policy, not the map's.
+   */
+  setPerformanceMode(on: boolean): void {
+    if (on === this.perfMode) return;
+    this.perfMode = on;
+    this.groundChunkCache.clear();
+    this.terrainDirty = true;
+  }
+
+  /** PERF-01, for `__iso.rendering()` and the settings layer. */
+  get performanceMode(): boolean { return this.perfMode; }
+
   /**
    * SCENERY: install the map's decal list (from `scatterScenery`). The trees
    * travel on the World instead — the draw list reads them per tile.
@@ -834,8 +882,77 @@ export class IsoRenderer {
       (wx, wy) => [wx * cam.zoom + cam.x, wy * cam.zoom + cam.y]);
   }
 
+  // ── PERF-01: the flat static performance terrain ────────────────────────
+  /**
+   * PERF-01: one 8×8 of performance-mode ground, painted once into a
+   * surface and blitted for the life of the map. Flat fills + the build
+   * grid (see `paintFlatGroundTiles`) — no patterns, no time, so nothing
+   * about the surface can go stale until the map, zoom or mode changes.
+   * Same cache and keys as the textured chunks; the mode switch clears the
+   * cache, so a key can never serve the wrong paint.
+   */
+  private flatGroundChunk(cx: number, cy: number): HTMLCanvasElement | OffscreenCanvas | null {
+    const z = this.cam.zoom;
+    const key = this.chunkKey(z, cx, cy);
+    const hit = this.groundChunkCache.get(key);
+    if (hit) return hit;
+
+    const { w: W, h: H } = chunkSurfaceSize(z);
+    const surf = typeof OffscreenCanvas !== "undefined"
+      ? new OffscreenCanvas(W, H)
+      : Object.assign(document.createElement("canvas"), { width: W, height: H });
+    const ctx = (surf as HTMLCanvasElement).getContext("2d") as Ctx2D;
+    const [ox, oy] = chunkWorldOrigin(cx, cy);
+    paintFlatGroundTiles(
+      ctx, this.world.grid,
+      cx * CHUNK, cy * CHUNK, (cx + 1) * CHUNK - 1, (cy + 1) * CHUNK - 1,
+      PERF_FLAT,
+      (wx, wy) => [(wx - ox) * z, (wy - oy) * z],
+    );
+    this.groundChunkCache.set(key, surf);
+    if (this.logRender) this.trace("flat-chunk-built", { chunk: [cx, cy], z });
+    return surf;
+  }
+
+  /**
+   * PERF-01: the performance-mode terrain pass. STATIC by construction —
+   * a flat blue fill, the cached flat island chunks (sand + muted grass +
+   * subtle build grid), and the shore stroked ONCE from the same contours
+   * as the textured ground (fixed time: the coast keeps its shape, none of
+   * its motion). No decals, no pattern transforms, no drift. Culling is
+   * the visible chunk range, exactly like the textured pass.
+   */
+  private drawTerrainFlat() {
+    const ctx = this.ctxT, cam = this.cam;
+    ctx.clearRect(0, 0, cam.vw, cam.vh);
+    // 1. The ocean, with its drift switched off: one flat fill.
+    ctx.fillStyle = PERF_FLAT.water;
+    ctx.fillRect(0, 0, cam.vw, cam.vh);
+    // 2. The island: cached flat chunks over it.
+    const r = visibleTileRange(cam, this.pad);
+    const cx0 = (r.x0 / CHUNK) | 0, cx1 = (r.x1 / CHUNK) | 0;
+    const cy0 = (r.y0 / CHUNK) | 0, cy1 = (r.y1 / CHUNK) | 0;
+    let blits = 0;
+    for (let cy = cy0; cy <= cy1; cy++) {
+      for (let cx = cx0; cx <= cx1; cx++) {
+        const surf = this.flatGroundChunk(cx, cy);
+        if (!surf) continue;
+        const [ox, oy] = chunkWorldOrigin(cx, cy);
+        const [sx, sy] = worldToScreen(cam, ox, oy);
+        ctx.drawImage(surf as unknown as CanvasImageSource, Math.floor(sx), Math.floor(sy));
+        blits++;
+      }
+    }
+    // 3. The coast: the SAME contour as the textured ground, stroked at a
+    //    fixed time — the shape of the shoreline, none of its breathing.
+    paintShore(ctx, this.world.grid, 0, cam.zoom,
+      (wx, wy) => [wx * cam.zoom + cam.x, wy * cam.zoom + cam.y]);
+    if (this.logRender) this.trace("terrain-pass-flat", { range: [r.x0, r.y0, r.x1, r.y1], blits, z: cam.zoom });
+  }
+
   // ── layers ──────────────────────────────────────────────────────────────
   drawTerrain(timeMs = 0) {
+    if (this.perfMode) { this.drawTerrainFlat(); return; }
     const ctx = this.ctxT, cam = this.cam;
     const z = cam.zoom;
     ctx.clearRect(0, 0, cam.vw, cam.vh);
@@ -1111,9 +1228,15 @@ export class IsoRenderer {
    */
   render(timeMs = 0, overlay: DrawItem[] = [], ghost: GhostSpec | null = null) {
     const since = timeMs - this.lastTerrainT;
-    if (this.terrainDirty || since < 0 || since >= TERRAIN_FRAME_MS - TERRAIN_FRAME_SLACK_MS) {
+    // PERF-01: the performance-mode terrain is STATIC — the ambient 30 Hz
+    // timer disarms, so an idle map repaints the terrain layer only when a
+    // camera/world/art change (or the mode switch) dirtied it. With the
+    // timer still armed, the old cadence holds exactly as before.
+    const ambientDue = !this.perfMode && since >= TERRAIN_FRAME_MS - TERRAIN_FRAME_SLACK_MS;
+    if (this.terrainDirty || since < 0 || ambientDue) {
       this.terrainDirty = false;
       this.lastTerrainT = timeMs;
+      this.terrainRedraws++;
       this.drawTerrain(timeMs);
     }
     if (this.structuresDirty || this.hasAnimation()) this.drawStructures(timeMs);
@@ -1198,6 +1321,12 @@ export class IsoRenderer {
       roads: this.roadDiagnostics(),
       overlay: this.overlayDiagnostics(),
       repaint: { ...this.repaint },
+      /** PERF-01: the flat policy and the idle repaint counter. */
+      terrain: {
+        performance: this.perfMode,
+        animated: !this.perfMode,
+        redraws: this.terrainRedraws,
+      },
       groundAnchorReference,
       depthCycles: this.lastCycles,
       structures,

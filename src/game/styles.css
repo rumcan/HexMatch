@@ -2087,34 +2087,56 @@ html, body, #root {
 .rival-quip-text::before { content: "“"; color: var(--brass); }
 .rival-quip-text::after { content: "”"; color: var(--brass); }
 
-/* the work order, pinned under the map while a tool is armed.
+/* #187 — the placement hint: ONE slim line, pinned above the resource bar
+   while a tool is armed. It replaced a full-width two-line work order that
+   restated the tool and its price — both already on the Build button — and on
+   a phone covered the build list and half the map. What is left is the verdict
+   the button cannot state (the rule a Depot is placed by, why a tile or a
+   purse refuses, the ★ a road drag buys), in a 32px box that shrinks to its
+   text and ellipsises instead of wrapping.
    pointer-events: none — it appears EXACTLY when the player is mid-gesture
    (dragging the first road), and a box eating the bottom of the map at that
-   moment is the "the game isn't working" look. Only the Cancel button
-   re-arms itself below. */
+   moment is the "the game isn't working" look. Only the ✕ re-arms itself
+   below, and it is a real cancel: ui.ts routes it to the pointer tool, which
+   is what clears this line. In the phone regime the held-tool chip carries the
+   same verdict instead (see .toolchip), so the two never stack. */
 .modebar {
-  position: fixed; bottom: 62px; left: 50%; transform: translateX(-50%); z-index: 50;
+  position: fixed; z-index: 50;
+  left: 50%; transform: translateX(-50%);
+  bottom: calc(max(52px, var(--resbar-h, 52px)) + 8px);
+  display: flex; align-items: center; gap: 8px;
+  width: max-content; max-width: min(560px, calc(100vw - 24px));
+  height: 32px; padding: 0 6px 0 12px;
+  overflow: hidden; white-space: nowrap;
   pointer-events: none;
-  display: flex; align-items: center; gap: 12px; padding: 8px 14px; border-radius: var(--r);
-  background-image: var(--iron-big);
+  border-radius: var(--r);
+  background-image: var(--iron);
   background-repeat: no-repeat;
-  background-position: 9px center, right 9px center, left top, left top, left top, left top;
-  background-size: 6px 6px, 6px 6px, auto 100%, auto 100%, auto 100%, auto 100%;
-  background-color: rgba(10, 7, 5, .9);
+  background-size: auto 100%;
+  background-color: rgba(10, 7, 5, .92);
   border: 1px solid var(--brass);
-  box-shadow: inset 0 1px 0 rgba(242, 220, 166, .22), 0 12px 34px rgba(0, 0, 0, .66), 0 0 30px -10px rgba(255, 176, 46, .4);
+  box-shadow: inset 0 1px 0 rgba(242, 220, 166, .22), 0 8px 22px rgba(0, 0, 0, .6), 0 0 24px -12px rgba(255, 176, 46, .4);
 }
-.mb-txt { color: var(--txt); font-size: 12.5px; letter-spacing: .6px; font-family: var(--serif); text-transform: uppercase; }
+.mb-txt {
+  color: var(--txt); font-size: 11.5px; letter-spacing: .5px; font-family: var(--serif);
+  text-transform: uppercase;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis;
+}
+/* A refusal reads in the theme's warm red, and stays in its own case — it is a
+   sentence the player has to parse, not an engraved label. */
+.mb-txt i { color: #ffb3a0; font-style: normal; text-transform: none; }
 .mb-cost {
-  color: var(--gold2); font-weight: 400; font-size: 12.5px;
-  display: flex; align-items: center; gap: 3px;
+  color: var(--gold2); font-weight: 400; font-size: 11.5px;
+  display: flex; align-items: center; gap: 3px; flex: 0 0 auto;
   font-family: var(--mono);
   text-shadow: 0 0 12px rgba(255, 176, 46, .45);
 }
 .mb-cancel {
-  pointer-events: auto;
-  padding: 4px 10px; border-radius: 2px; cursor: pointer; font-weight: 700; font-size: 11px;
-  letter-spacing: .8px; text-transform: uppercase; font-family: var(--serif);
+  pointer-events: auto; flex: 0 0 auto;
+  width: 22px; height: 22px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 2px; cursor: pointer; font-weight: 700; font-size: 11px; line-height: 1;
+  letter-spacing: 0; font-family: var(--serif);
   background: linear-gradient(180deg, rgba(96, 30, 18, .8), rgba(26, 8, 5, .9));
   color: #ffc7b4;
   border: 1px solid rgba(226, 112, 79, .5);
@@ -2290,6 +2312,13 @@ html, body, #root {
   background: linear-gradient(180deg, var(--brass-hi), var(--brass));
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25), 0 0 16px -3px rgba(255, 176, 46, .6);
 }
+/* PERF-01: the miniature switch, dimmed while performance mode suppresses
+   the pass (its stored choice survives; the row copy says why). */
+.gfx-switch:disabled {
+  opacity: .38; cursor: not-allowed; filter: grayscale(.55);
+  box-shadow: inset 0 1px 0 rgba(242, 220, 166, .05);
+}
+.gfx-switch:disabled:hover { color: var(--txt-dim); border-color: var(--brass-lo); }
 
 /* ── SETTINGS-01: the ☰ popover ── */
 .iso-topmenu {
@@ -2455,15 +2484,23 @@ html, body, #root {
 
 /* MOBILE-01: the held-tool chip — a fingertip's right-click. Floats over the
    map's lower-left while anything but the pointer is in the hand, names the
-   tool and puts it down on a tap. Hidden with the cluster off the map view. */
+   tool and puts it down on a tap. Hidden with the cluster off the map view.
+   #187: and in this regime the chip IS the placement hint — the desktop pill
+   is `display: none` here, so the verdict rides beside the tool's name in the
+   one thumb-reach line above the resource bar, and the ✕ that puts the tool
+   down is the same cancel the pill's ✕ is (both ask for the pointer, which is
+   what disarms the tool and clears the hint). 32px, one line, ellipsised: the
+   map keeps the screen while a tool is armed. */
 .toolchip {
   display: none;
   position: fixed; left: 10px;
   bottom: calc(106px + env(safe-area-inset-bottom, 0px));
   z-index: 45;
-  max-width: 62vw;
-  align-items: center; gap: 8px;
-  padding: 10px 12px;
+  max-width: calc(100vw - 76px);
+  height: 32px;
+  align-items: center; gap: 7px;
+  padding: 0 9px 0 12px;
+  overflow: hidden; white-space: nowrap;
   border-radius: 999px;
   border: 1px solid var(--brass);
   background: linear-gradient(180deg, rgba(58, 44, 28, .92), rgba(12, 9, 6, .94));
@@ -2473,10 +2510,30 @@ html, body, #root {
   cursor: pointer;
   box-shadow: 0 4px 16px rgba(0,0,0,.5), inset 0 1px 0 rgba(242, 220, 166, .2);
 }
-.toolchip .tc-x { color: var(--txt-dim); font-size: 10.5px; letter-spacing: .8px; }
+.toolchip .tc-label { flex: 0 0 auto; }
+/* The verdict: the two fields the desktop pill lays side by side go inline
+   here, so the ONE line can ellipsize instead of growing the pill. */
+.toolchip .tc-hint {
+  flex: 0 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding-left: 7px;
+  border-left: 1px solid var(--brass-lo);
+  letter-spacing: .3px;
+}
+.toolchip .tc-hint .mb-txt,
+.toolchip .tc-hint .mb-cost { display: inline; font-size: 10.5px; letter-spacing: .3px; }
+.toolchip .tc-hint .mb-cost { text-shadow: none; }
+.toolchip .tc-hint .mb-cost::before { content: " · "; color: var(--txt-dim); }
+.toolchip .tc-hint .cargo-ic { width: 12px; height: 12px; vertical-align: -2px; }
+.toolchip .tc-x { flex: 0 0 auto; color: var(--txt-dim); font-size: 11px; letter-spacing: .8px; }
 @media (pointer: coarse), (max-width: 760px) {
   .toolchip:not(.hidden) { display: flex; }
   .ui-root:not([data-view="map"]) .toolchip { display: none; }
+  /* #187: …and where the chip is the hint, the desktop pill leaves the screen
+     instead of stacking a second box over the map. ONE media pair drives both
+     halves of the swap, so no regime can end up with two pills — or, worse,
+     with neither and no way to put a tool down. */
+  .modebar { display: none !important; }
 }
 
 /* MOBILE-02: the phone regime (bottom nav, single-sheet view switching) now
@@ -2598,11 +2655,11 @@ html, body, #root {
 
   /* ── things that don't fit a phone ── */
   .offer-tray { display: none !important; }
-  .modebar {
-    bottom: calc(118px + env(safe-area-inset-bottom, 0px));
-    left: 8px; right: 8px; transform: none;
-    justify-content: center; flex-wrap: wrap; gap: 8px;
-  }
+  /* #187: a SHORT LANDSCAPE window with a mouse keeps the hint pill (the
+     held-tool chip needs a coarse pointer or a ≤760px width), but its resource
+     footer sits lower than the portrait one, so the pill sits lower with it.
+     Everywhere the chip lives, the rule below takes the pill off the screen. */
+  .modebar { bottom: calc(66px + env(safe-area-inset-bottom, 0px)); }
   .banner {
     top: calc(var(--topbar-h) + var(--safe-top) + 6px);
     left: 8px; right: 8px; transform: none; max-width: none;
@@ -3323,6 +3380,13 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .start-actions button:hover, .start-panel button:hover { border-color: var(--gold, #c98731); background: rgba(255,166,43,.1); }
 .start-actions .start-primary, .start-panel .start-primary { color: #1b130b; border-color: var(--gold2, #e9a83e); background: var(--gold2, #e9a83e); }
 .start-primary small { margin-left: 8px; opacity: .7; font-weight: 400; }
+/* CONTINUE-01 (#191): the resume door carries its dossier on a second line
+   instead of the inline small every other start button uses. */
+.start-continue { line-height: 1.3; }
+.start-continue small {
+  display: block; margin: 3px 0 0; opacity: .72; font-weight: 500;
+  letter-spacing: .2px; text-transform: none; white-space: normal;
+}
 .start-panel input { box-sizing: border-box; width: 100%; margin: 10px 0 14px; padding: 12px; border: 1px solid var(--line, #594b3b); color: var(--txt, #efe4d0); background: #181512; outline: none; }
 .start-panel input:focus { border-color: var(--gold2, #e9a83e); }
 .start-panel button:disabled { opacity: .4; cursor: not-allowed; }
@@ -3338,12 +3402,16 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   width: min(980px, 100%);
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 28px;
-  align-items: start;
+  gap: 40px;
+  align-items: stretch;
   text-align: left;
-  padding: 28px 32px;
+  padding: 32px 36px;
 }
-.start-modes-info { min-width: 0; display: flex; flex-direction: column; }
+/* The left column breathes: heading up top, the manager picker in the
+   middle, the rating seated at the foot on its own rule — instead of
+   everything stacked tight under the title. */
+.start-modes-info { min-width: 0; display: flex; flex-direction: column; gap: 26px; }
+.start-modes-head { display: flex; flex-direction: column; }
 .start-panel.start-modes .start-kicker { margin: 0 0 10px; }
 .start-panel.start-modes h1 {
   font-size: clamp(22px, 2.6vw, 30px);
@@ -3352,34 +3420,62 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   overflow-wrap: break-word;
   text-wrap: balance;
 }
-.start-panel.start-modes .start-subtitle { margin: 8px 0 14px; max-width: none; overflow-wrap: break-word; }
-.start-panel.start-modes .portrait-picker { margin: 0 0 14px; }
+.start-panel.start-modes .start-subtitle { margin: 10px 0 0; max-width: 42ch; overflow-wrap: break-word; }
+.start-panel.start-modes .portrait-picker { margin: 0; }
+.start-panel.start-modes .portrait-label { margin-bottom: 10px; }
+.start-panel.start-modes .portrait-opt { min-width: 118px; padding: 10px 12px; }
 .start-panel.start-modes .portrait-options { justify-content: flex-start; }
 .start-panel.start-modes .portrait-face { width: 56px; height: 56px; }
-.start-panel.start-modes .rank-block { margin: 0; }
-.start-panel.start-modes .rank-block-note { margin: 8px 0 0; }
-.start-panel.start-modes .start-actions { gap: 8px; min-width: 0; }
+.start-panel.start-modes .rank-block {
+  margin: auto 0 0;
+  padding-top: 18px;
+  border-top: 1px solid rgba(89, 75, 59, .55);
+}
+.start-panel.start-modes .rank-block-note { margin: 8px 0 0; color: var(--txt-mute, #a89b89); font: 12px/1.4 var(--sans, sans-serif); }
+.start-panel.start-modes .start-actions { gap: 8px; min-width: 0; align-content: start; }
+/* Each mode is a label with its detail on the line UNDER it, not a run-on. */
 .start-panel.start-modes .start-actions button {
-  min-height: 40px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  min-height: 48px;
   padding: 7px 14px;
   overflow-wrap: break-word;
+  font-size: 13px;
 }
-.start-panel.start-modes .rank-search { margin-top: 0; }
-.start-panel.start-modes .start-actions .rank-search-opt { min-height: 38px; }
-.start-panel.start-modes .start-back { margin-top: 0; }
+.start-panel.start-modes .start-actions button small,
+.start-panel.start-modes .start-primary small {
+  display: block; margin: 0;
+  font: 400 10.5px/1.2 var(--sans, sans-serif); letter-spacing: .6px;
+  text-transform: none; opacity: .72;
+}
+.start-panel.start-modes .start-back { min-height: 40px; margin-top: 2px; color: var(--txt-mute, #a89b89); }
+/* Group headings: SOLO / MULTIPLAYER, a hairline rule running out to the edge. */
+.start-actions-label {
+  display: flex; align-items: center; gap: 10px;
+  margin: 6px 0 0; color: var(--txt-mute, #a89b89);
+  font: 600 10.5px/1 var(--sans, sans-serif); letter-spacing: 2.5px; text-transform: uppercase;
+}
+.start-actions-label::after { content: ""; flex: 1; height: 1px; background: rgba(89, 75, 59, .55); }
+.start-actions-label:first-child { margin-top: 0; }
+.start-actions-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+/* The waiting screen carries the rank picker now. */
+.start-panel.lobby.matchmaking .portrait-label { margin: 4px 0 10px; }
+.start-panel.lobby.matchmaking .rank-search { margin: 0 0 22px; }
+.start-panel.lobby.matchmaking .rank-search-opt { min-height: 48px; }
+.start-panel.lobby.matchmaking .matchmaking-cancel { min-width: 160px; }
 
 /* Height-aware compaction for shorter desktop windows and the RUN wrapper:
    the game iframe is shorter than the browser window, so shed padding and
    control height before anything reaches the fold. No transform scaling. */
 @media (min-width: 761px) and (max-height: 800px) {
-  .start-panel.start-modes { padding: 22px 28px; gap: 22px; }
+  .start-panel.start-modes { padding: 22px 28px; gap: 28px; }
+  .start-modes-info { gap: 18px; }
+  .start-panel.start-modes .rank-block { padding-top: 14px; }
   .start-panel.start-modes h1 { font-size: 26px; }
   .start-panel.start-modes .start-subtitle { margin: 6px 0 12px; }
   .start-panel.start-modes .portrait-picker { margin-bottom: 12px; }
   .start-panel.start-modes .portrait-face { width: 52px; height: 52px; }
   .start-panel.start-modes .start-actions { gap: 7px; }
-  .start-panel.start-modes .start-actions button { min-height: 38px; padding: 6px 12px; }
-  .start-panel.start-modes .start-actions .rank-search-opt { min-height: 36px; }
+  .start-panel.start-modes .start-actions button { min-height: 42px; padding: 5px 12px; }
 }
 @media (min-width: 761px) and (max-height: 680px) {
   .start-panel.start-modes { padding: 18px 24px; gap: 18px; }
@@ -3388,8 +3484,9 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   .start-panel.start-modes .start-subtitle { font-size: 12.5px; }
   .start-panel.start-modes .portrait-face { width: 48px; height: 48px; }
   .start-panel.start-modes .start-actions { gap: 6px; }
-  .start-panel.start-modes .start-actions button { min-height: 36px; }
-  .start-panel.start-modes .start-actions .rank-search-opt { min-height: 34px; }
+  .start-panel.start-modes .start-actions button { min-height: 38px; padding: 4px 12px; gap: 1px; }
+  .start-panel.start-modes .start-actions-label { margin-top: 2px; }
+  .start-modes-info { gap: 14px; }
 }
 /* Mid-width desktops: keep both columns, just seat them closer together. */
 @media (min-width: 761px) and (max-width: 900px) {
@@ -3409,9 +3506,11 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   .start-panel.start-modes .portrait-options { justify-content: center; }
   .start-panel.start-modes .portrait-face { width: 64px; height: 64px; }
   .start-panel.start-modes .rank-block { margin: 14px 0 0; }
-  .start-panel.start-modes .start-actions button { min-height: 44px; }
-  .start-panel.start-modes .start-actions .rank-search-opt { min-height: 40px; }
+  .start-panel.start-modes .start-actions button { min-height: 48px; }
   .start-panel.start-modes .start-back { margin-top: 4px; }
+  .start-modes-info { gap: 16px; }
+  .start-panel.start-modes .rank-block { margin: 0; }
+  .start-actions-label { justify-content: center; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -3425,7 +3524,7 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
    so nothing here re-tints it: a CSS filter on a painted plate is how a
    theme starts looking like two themes.
    ═══════════════════════════════════════════════════════════════════ */
-/* the Any / Similar rank picker, under the Quick match button */
+/* the Any / Similar rank picker, on the Auto Matchmaking waiting screen */
 .rank-search { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: -2px; }
 .rank-search-opt {
   display: flex; flex-direction: column; gap: 2px; align-items: center; justify-content: center;
@@ -4211,6 +4310,27 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 }
 .cc-seal.loss { border-color: var(--danger2); color: var(--danger2); }
 .cc-lock { flex: 0 0 auto; align-self: flex-start; font-size: 14px; line-height: 1; color: var(--txt-mute); }
+/* CONTINUE-01 (#191): a contract with a live save wears a gold Continue
+   ribbon (the card itself resumes), and its More toggle shares a button row
+   with the destructive "Start over" door that clears the slot. */
+.chapter-card.has-save { border-color: rgba(233, 168, 62, .55); }
+.chapter-card.has-save:hover:not(.locked) { border-color: var(--gold2); }
+.cc-continue {
+  align-self: flex-start; margin-top: 3px; padding: 3px 8px;
+  font: 600 10px/1.4 var(--mono); letter-spacing: .3px;
+  color: var(--gold2); background: rgba(233, 168, 62, .1);
+  border: 1px solid rgba(201, 162, 74, .5);
+}
+.cc-continue b { font-weight: 700; letter-spacing: 1.2px; }
+.cc-actions { display: flex; }
+.cc-actions .cc-more { flex: 1 1 auto; }
+.start-panel .cc-restart {
+  flex: 0 0 auto; min-height: 0; padding: 5px 12px;
+  font: 600 10px/1.2 var(--serif); letter-spacing: 1.4px; text-transform: uppercase;
+  color: var(--txt-mute); background: rgba(12, 8, 6, .88);
+  border: 1px solid var(--brass-lo); border-top: 0; border-left: 0; cursor: pointer;
+}
+.start-panel .cc-restart:hover { color: var(--danger2); border-color: var(--danger2); border-top-color: var(--brass-lo); background: rgba(24, 17, 12, .95); }
 .story-menu-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
 
 /* ══════════════════════════════════════════════════════════════════════

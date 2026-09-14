@@ -57,9 +57,17 @@ async function boot(page: import("@playwright/test").Page, extra = "", opts: { f
     await page.evaluate((k) => localStorage.removeItem(k), SAVE_KEY);
     expect(await hasSave(page)).toBe(false);
   }
-  // STORY-01 menu: the mode screen stands behind the front door — Play first
-  await page.locator(".menu-btn.primary").click();
-  await page.getByRole("button", { name: /Play vs AI/ }).click();
+  // CONTINUE-01 (#191): a shelf with a save makes the front door's gold
+  // button CONTINUE, which resumes the match in one click — so a resume boot
+  // never walks into Play vs AI (that door now starts a NEW game and would
+  // ask first). A fresh shelf keeps Play gold, then Play vs AI boots clean.
+  if (await hasSave(page)) {
+    await page.getByRole("button", { name: /^Continue/ }).click();
+  } else {
+    // STORY-01 menu: the mode screen stands behind the front door — Play first
+    await page.locator(".menu-btn.primary").click();
+    await page.getByRole("button", { name: /Play vs AI/ }).click();
+  }
   await page.waitForFunction(() => {
     const h = (window as unknown as { __iso?: { phase: string } }).__iso;
     return !!h && h.phase === "setup-factory";

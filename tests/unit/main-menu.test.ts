@@ -13,13 +13,39 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import MainMenu from "../../src/ui/MainMenu";
+import { SAVEGAME_VERSION, saveKeyFor } from "../../src/iso/savegame-runtime";
+import { SNAPSHOT_VERSION } from "../../src/iso/snapshot";
+import type { SaveGamePayload } from "../../src/iso/savegame-runtime";
+
+/** CONTINUE-01 (#191): a minimal but valid solo save in the named slot. */
+function writeSave(key: string, over: Partial<SaveGamePayload> = {}): void {
+  const payload: SaveGamePayload = {
+    v: SAVEGAME_VERSION,
+    snapV: SNAPSHOT_VERSION,
+    savedAt: Date.now() - 2 * 3600_000,
+    seed: 1337,
+    skillKey: "normal",
+    phase: "play",
+    winnerId: null,
+    bandit: {},
+    track: { dirt: "", road: "", owner: "", upgraded: "" },
+    eco: { harvesters: [], factories: [] },
+    players: [],
+    boards: [],
+    clocks: {},
+    ...over,
+  };
+  localStorage.setItem(key, JSON.stringify(payload));
+}
 
 let host: HTMLDivElement;
 let root: Root;
 
-function mount(onPlay = vi.fn()) {
-  act(() => { root.render(createElement(MainMenu, { onPlay })); });
-  return onPlay;
+function mount(onPlay = vi.fn(), onContinue?: ReturnType<typeof vi.fn>) {
+  act(() => {
+    root.render(createElement(MainMenu, { onPlay, onContinue }));
+  });
+  return { onPlay, onContinue };
 }
 
 function button(name: RegExp): HTMLButtonElement {
@@ -56,7 +82,7 @@ describe("MainMenu — the front door", () => {
   });
 
   it("Play leaves for the mode screen", () => {
-    const onPlay = mount();
+    const { onPlay } = mount();
     act(() => { button(/^Play/).click(); });
     expect(onPlay).toHaveBeenCalledTimes(1);
     // the menu never mounts a game — no canvas, no iso root
@@ -64,7 +90,7 @@ describe("MainMenu — the front door", () => {
   });
 
   it("Settings raises the real GFX-01 sheet and writes through the store", async () => {
-    const onPlay = mount();
+    const { onPlay } = mount();
     expect(document.querySelector(".settings-sheet")).toBeNull();
     act(() => { button(/^Settings/).click(); });
     const sheet = document.querySelector(".settings-sheet");
@@ -88,6 +114,29 @@ describe("MainMenu — the front door", () => {
     expect(JSON.parse(localStorage.getItem("hexmatch:graphics")!))
       .toMatchObject({ miniature: true });
     expect(mini.textContent).toBe("ON");
+
+    // PERF-01: the performance switch beside the miniature — it writes the
+    // store, and while it stands the miniature is SUPPRESSED (disabled,
+    // labelled why) without losing its stored choice.
+    const perf = sheet!.querySelector("[data-gfx=\"performance\"]") as HTMLButtonElement;
+    expect(perf.getAttribute("role")).toBe("switch");
+    expect(perf.textContent).toBe("OFF");
+    expect(mini.disabled).toBe(false);
+    act(() => { perf.click(); });
+    expect(JSON.parse(localStorage.getItem("hexmatch:graphics")!))
+      .toMatchObject({ performance: true, miniature: true });
+    expect(perf.textContent).toBe("ON");
+    expect(perf.getAttribute("aria-checked")).toBe("true");
+    expect(mini.disabled).toBe(true);
+    expect(mini.getAttribute("aria-checked")).toBe("true");      // still ON, stored
+    expect((sheet!.querySelector(".gfx-mini-note") as HTMLElement).textContent)
+      .toBe("Unavailable while Performance mode is on.");
+    // …and switching it back restores the miniature exactly as it was
+    act(() => { perf.click(); });
+    expect(mini.disabled).toBe(false);
+    expect(mini.textContent).toBe("ON");
+    expect((sheet!.querySelector(".gfx-mini-note") as HTMLElement).textContent)
+      .not.toBe("Unavailable while Performance mode is on.");
 
     // Done closes the sheet and unmounts it; a reopened sheet paints from the
     // store, so the door and a later match can never disagree.
@@ -125,5 +174,55 @@ describe("MainMenu — the front door", () => {
     mount();
     expect(host.querySelector(".menu-campaign")!.textContent)
       .toMatch(/1 of 5 contracts filed/i);
+  });
+});
+
+// CONTINUE-01 (#191): the gold door resumes; Play beneath it starts new.
+describe("MainMenu — Continue (#191)", () => {
+  it("offers no Continue door on a fresh machine and keeps Play gold", () => {
+    mount();
+    expect([...host.querySelectorAll("button")].some((b) => /^Continue/.test((b.textContent ?? "").trim()))).toBe(false);
+    const play = button(/^Play/);
+    expect(play.classList.contains("primary")).toBe(true);
+  });
+
+  it("names a resumable sandbox save and resumes it from the gold door", () => {
+    writeSave(saveKeyFor(null), { skillKey: "hard" });
+    const onContinue = vi.fn();
+    const { onPlay } = mount(vi.fn(), onContinue);
+    const cont = button(/^Continue/);
+    expect(cont.classList.contains("primary")).toBe(true);
+    expect(cont.textContent).toMatch(/vs AI \(Hard\)/);
+    expect(cont.textContent).toMatch(/saved 2 h ago/);
+    // Play stays on the menu but is no longer the gold door
+    expect(button(/^Play/).classList.contains("primary")).toBe(false);
+    expect(button(/^Play/).textContent).toMatch(/start a new game/i);
+    act(() => { cont.click(); });
+    expect(onContinue).toHaveBeenCalledTimes(1);
+    expect(onContinue).toHaveBeenCalledWith(null);
+    expect(onPlay).not.toHaveBeenCalled();
+  });
+
+  it("continues the freshest slot and names a contract for a story save", () => {
+    // an older sandbox slot…
+    writeSave(saveKeyFor(null), { savedAt: Date.now() - 5 * 3600_000 });
+    // …loses the door to a newer contract slot
+    writeSave(saveKeyFor("black-gold"), {
+      savedAt: Date.now() - 10 * 60_000,
+      skillKey: "normal",
+    });
+    const onContinue = vi.fn();
+    mount(vi.fn(), onContinue);
+    const cont = button(/^Continue/);
+    expect(cont.textContent).toMatch(/Black Gold/);
+    expect(cont.textContent).toMatch(/saved 10 min ago/);
+    act(() => { cont.click(); });
+    expect(onContinue).toHaveBeenCalledWith("black-gold");
+  });
+
+  it("stays quiet about saves when no onContinue handler is supplied", () => {
+    writeSave(saveKeyFor(null));
+    mount();
+    expect([...host.querySelectorAll("button")].some((b) => /^Continue/.test((b.textContent ?? "").trim()))).toBe(false);
   });
 });

@@ -26,10 +26,21 @@ import { FREE_SETUP_TRACK } from "../iso/game";
 import { RIVAL_SKILLS, resolveSkillKey } from "../iso/skill";
 import { loadStoryProgress } from "../story/progress";
 import { CHAPTERS, EMPLOYER, currentJobTitle } from "../story/chapters";
+// CONTINUE-01 (#191): the front door names the save it can resume. Read once
+// per mount — returning from a match mounts the menu afresh, so a slot just
+// written or cleared is always re-read.
+import { describeSave, mostRecentSave, type SoloSaveSummary } from "../iso/save-summary";
 import { currentVersionLabel } from "./version";
 
 export interface MainMenuProps {
   onPlay: () => void;
+  /**
+   * CONTINUE-01 (#191): offered only while a resumable solo save exists. It
+   * carries null for the sandbox or the contract id for a story slot — the
+   * App turns that straight into the matching start choice, and the boot's
+   * existing resume path does the rest.
+   */
+  onContinue?: (chapterId: string | null) => void;
 }
 
 /** Deterministic embers: same sixteen every visit, no Math.random flicker. */
@@ -41,7 +52,7 @@ const EMBERS = Array.from({ length: 14 }, (_, i) => ({
   size: 2 + (i % 3),
 }));
 
-export default function MainMenu({ onPlay }: MainMenuProps) {
+export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
   const [settings, setSettings] = useState(false);
   const [howTo, setHowTo] = useState(false);
   const howToRef = useRef<HTMLDivElement>(null);
@@ -78,6 +89,10 @@ export default function MainMenu({ onPlay }: MainMenuProps) {
 
   const progress = loadStoryProgress();
   const filed = CHAPTERS.filter((c) => progress.results[c.id] === "win").length;
+  // CONTINUE-01 (#191): the freshest resumable solo save, if any — it gets
+  // the gold door, and Play drops to a plain door beneath it. A fresh player
+  // sees no Continue button and Play keeps the primary styling it always had.
+  const resume: SoloSaveSummary | null = onContinue ? mostRecentSave() : null;
 
   return (
     <main className="start-screen menu" aria-label="Hexmatch main menu">
@@ -100,11 +115,18 @@ export default function MainMenu({ onPlay }: MainMenuProps) {
         {/* BACK TO WORK: the player's job, and it grows with the campaign. */}
         <p className="menu-sub menu-job">Your job: {currentJobTitle(progress.results)}, {EMPLOYER}</p>
         <nav className="menu-actions" aria-label="Main menu">
-          <button type="button" className="menu-btn primary" data-sfx="open" onClick={onPlay}>
-            Play<span className="mb-tag">campaign · sandbox · rooms</span>
+          {resume ? (
+            <button type="button" className="menu-btn primary" data-sfx="open"
+              aria-label={`Continue — ${describeSave(resume)}`}
+              onClick={() => onContinue?.(resume.chapterId)}>
+              Continue<span className="mb-tag">{describeSave(resume)}</span>
+            </button>
+          ) : null}
+          <button type="button" className={`menu-btn${resume ? "" : " primary"}`} data-sfx="open" onClick={onPlay}>
+            Play<span className="mb-tag">{resume ? "start a new game" : "campaign · sandbox · rooms"}</span>
           </button>
           <button type="button" className="menu-btn" data-sfx="click" onClick={() => setSettings(true)}>
-            Settings<span className="mb-tag">graphics · miniature · sound</span>
+            Settings<span className="mb-tag">graphics · miniature · performance · sound</span>
           </button>
           <button type="button" className="menu-btn" data-sfx="open" onClick={() => setHowTo(true)}>
             How to Play<span className="mb-tag">eight cards, one loop</span>
