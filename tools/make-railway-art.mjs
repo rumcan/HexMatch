@@ -629,7 +629,7 @@ async function contactSheet(entries) {
     const col = i % COLS, row = (i / COLS) | 0;
     const x0 = col * CELL_W, y0 = 34 + row * CELL_H;
     parts.push(`<rect x="${x0 + 6}" y="${y0 + 6}" width="${CELL_W - 12}" height="${CELL_H - 12}" fill="#1b1e21" stroke="#2f3438"/>`);
-    parts.push(`<text x="${x0 + PAD}" y="${y0 + CELL_H - 12}" font-family="DejaVu Sans, Helvetica, sans-serif" font-size="12" fill="#b9bec4">${e.name} · ${e.master.w2 / 2}x${e.master.h2 / 2} @1x · ${e.master.footprint[0]}x${e.master.footprint[1]}</text>`);
+    parts.push(`<text x="${x0 + PAD}" y="${y0 + CELL_H - 12}" font-family="DejaVu Sans, Helvetica, sans-serif" font-size="12" fill="#b9bec4">${e.master.name} · ${e.master.w2 / 2}x${e.master.h2 / 2} @1x · ${e.master.footprint[0]}x${e.master.footprint[1]}</text>`);
     const buf = await derive(e.master, 1);
     const left = Math.round(x0 + (CELL_W - e.master.w2 / 2) / 2);
     const top = Math.round(y0 + 18);
