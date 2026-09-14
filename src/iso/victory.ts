@@ -6,6 +6,7 @@
 //
 //   Dirt Road tile paved into a Road (in place)   +0.25★   (4 paves = 1★)
 //   Processing plant raised after setup           +1★
+//   Rail platform                                  +1★  (Railways v1)
 //   First to 10★ wins (the line visited 20★ under AI-02 and came back)
 //
 // What is deliberately worth nothing:
@@ -47,6 +48,7 @@ import { MAP_W, MAP_H } from "../game/config";
 import { PRESENT, PUBLIC_OWNER, type Track } from "./track";
 import { VICTORY } from "./config";
 import type { EconomyState } from "./economy";
+import type { RailwayState } from "./railway/state";
 
 /**
  * The plant id of a player's opening Factory. It is placed during setup for
@@ -55,7 +57,7 @@ import type { EconomyState } from "./economy";
  */
 export const OPENING_PLANT_ID = 0;
 
-export type VpSource = "upgrade" | "plant";
+export type VpSource = "upgrade" | "plant" | "platform";
 export type VpChange = "awarded" | "revoked";
 
 /**
@@ -88,18 +90,26 @@ export interface PlantLedger {
   townId: number | null;
   no: number;
 }
+export interface PlatformLedger {
+  owner: string;
+  tx: number;
+  ty: number;
+  platformId: number;
+}
 
 export interface ScoreState {
   /** tile index → who it scored for. */
   paved: Map<number, PavedLedger>;
   /** `${owner}#${plantId}` → what it scored. */
   plants: Map<string, PlantLedger>;
+  /** `${owner}#${platformId}` → platform ledger */
+  platforms: Map<string, PlatformLedger>;
   /** Per-owner VP total. */
   vp: Map<string, number>;
 }
 
 export const createScoreState = (): ScoreState => ({
-  paved: new Map(), plants: new Map(), vp: new Map(),
+  paved: new Map(), plants: new Map(), platforms: new Map(), vp: new Map(),
 });
 
 /** VP as the HUD prints it: whole when it is whole, 2dp at most otherwise. */
@@ -162,16 +172,28 @@ export function scoredPlants(state: EconomyState): Map<string, PlantLedger> {
   return out;
 }
 
+export function scoredPlatforms(railway?: RailwayState): Map<string, PlatformLedger> {
+  const out = new Map<string, PlatformLedger>();
+  if (!railway) return out;
+  for (const p of railway.platforms) {
+    out.set(`${p.owner}#${p.id}`, {
+      owner: p.owner, tx: p.tx, ty: p.ty, platformId: p.id,
+    });
+  }
+  return out;
+}
+
 /**
  * Diff the board against the last scoring and return what changed. Called from
  * every build and demolish path (`rescoreNow` in game.ts), which is what keeps
  * a pave and the point it buys one atomic moment.
  */
-export function rescore(state: EconomyState, score: ScoreState): VpEvent[] {
+export function rescore(state: EconomyState, score: ScoreState, railway?: RailwayState): VpEvent[] {
   const events: VpEvent[] = [];
   const owners = ownerIdsByNumber(state);
   const paves = scoredPaves(state.track, owners);
   const plants = scoredPlants(state);
+  const platforms = scoredPlatforms(railway);
   const add = (owner: string, delta: number) =>
     score.vp.set(owner, (score.vp.get(owner) ?? 0) + delta);
 
@@ -225,6 +247,26 @@ export function rescore(state: EconomyState, score: ScoreState): VpEvent[] {
       tx: p.tx, ty: p.ty, townId: p.townId, plantNo: p.no + 1,
     });
   }
+
+  // ── platforms (Railways v1): 1 VP per owned platform ──────────────────────
+  for (const [key, p] of platforms) {
+    if (score.platforms.has(key)) continue;
+    score.platforms.set(key, p);
+    add(p.owner, VICTORY.platform);
+    events.push({
+      source: "platform", type: "awarded", owner: p.owner, delta: VICTORY.platform,
+      tx: p.tx, ty: p.ty,
+    });
+  }
+  for (const [key, p] of [...score.platforms]) {
+    if (platforms.has(key)) continue;
+    score.platforms.delete(key);
+    add(p.owner, -VICTORY.platform);
+    events.push({
+      source: "platform", type: "revoked", owner: p.owner, delta: -VICTORY.platform,
+      tx: p.tx, ty: p.ty,
+    });
+  }
   return events;
 }
 
@@ -235,17 +277,25 @@ export const vpFor = (score: ScoreState, owner: string) => score.vp.get(owner) ?
  * for the HUD, the inspector and the tests. Recomputed from the board rather
  * than accumulated, so it can never drift from the network it describes.
  */
-export function victoryBreakdown(state: EconomyState, owner: string) {
+export function victoryBreakdown(state: EconomyState, owner: string, railway?: RailwayState) {
   const owners = ownerIdsByNumber(state);
   let paved = 0;
   for (const o of scoredPaves(state.track, owners).values()) if (o === owner) paved++;
   let plants = 0;
   for (const p of scoredPlants(state).values()) if (p.owner === owner) plants++;
+  let platforms = 0;
+  if (railway) {
+    for (const p of scoredPlatforms(railway).values()) if (p.owner === owner) platforms++;
+  } else if ((state as any).platforms) {
+    // fallback if railway passed via state extension
+  }
   return {
     paved,
     plants,
+    platforms,
     pavedVp: paveVp(paved),
     plantVp: plants * VICTORY.plant,
+    platformVp: platforms * VICTORY.platform,
   };
 }
 

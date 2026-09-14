@@ -35,7 +35,7 @@ interface MakeOpts {
   skillKey?: string;
   phase?: string;
   /** [you paved tiles, you extra plants, rival paved tiles]. */
-  world?: { youPaved?: number; youPlants?: number; aiPaved?: number };
+  world?: { youPaved?: number; youPlants?: number; aiPaved?: number; youPlatforms?: number; aiPlatforms?: number };
 }
 
 /**
@@ -87,6 +87,22 @@ function makeSave(now: number, opts: MakeOpts = {}): { key: string; payload: Sav
     players: [],
     boards: [],
     clocks: {},
+    // Railways v1: platforms are flat owner-scored records worth a star each.
+    ...((w.youPlatforms ?? w.aiPlatforms) ? {
+      railway: {
+        rail: "", railOwner: "", rev: 0, depots: [], lines: [], trains: [],
+        platforms: [
+          ...Array.from({ length: w.youPlatforms ?? 0 }, (_, i) => ({
+            id: i, owner: "you" as const, ownerId: 1, tx: i, ty: 40, rotation: 0 as const,
+            anchor: { kind: "industry" as const, id: i },
+          })),
+          ...Array.from({ length: w.aiPlatforms ?? 0 }, (_, i) => ({
+            id: 100 + i, owner: "ai" as const, ownerId: 2, tx: i, ty: 50, rotation: 0 as const,
+            anchor: { kind: "industry" as const, id: 100 + i },
+          })),
+        ],
+      },
+    } : {}),
   };
   if (opts.phase === "won") {
     payload.phase = "won";
@@ -178,6 +194,17 @@ describe("resumableSaves — the shelf", () => {
     const [s] = resumableSaves(now);
     expect(s.youStars).toBe(0);
     expect(s.rivalStars).toBe(0);
+  });
+
+  it("counts rail platforms (Railways v1) in the star totals", () => {
+    // 20 paves = 5★, one platform = +1★ → you 6★; the rival's two platforms
+    // sit on zero paves, so its total is exactly 2★.
+    const { key, payload } = makeSave(now, {
+      world: { youPaved: 20, youPlatforms: 1, aiPaved: 0, aiPlatforms: 2 },
+    });
+    write(key, payload);
+    const s = mostRecentSave(now)!;
+    expect([s.youStars, s.rivalStars]).toEqual([6, 2]);
   });
 
   it("marks a decided match as finished with the winner named", () => {

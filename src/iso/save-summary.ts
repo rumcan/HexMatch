@@ -26,6 +26,7 @@ import {
 } from "./savegame-runtime";
 import { createTrack } from "./track";
 import { createScoreState, rescore, vpFor } from "./victory";
+import { VICTORY } from "./config";
 import type { EconomyState } from "./economy";
 import { RIVAL_SKILLS, SKILL_STORAGE_KEY, type SkillKey } from "./skill";
 import { chapterById } from "../story/chapters";
@@ -76,10 +77,16 @@ function starsFromSave(d: SaveGamePayload): { you: number; rival: number } {
       factories: d.eco.factories,
     };
     const score = createScoreState();
+    // Railways v1: platforms score 1★ each (`rescore`'s third argument is a
+    // full RailwayState), but a platform is a flat owner-scored record, so
+    // the payload's serialised platform list is enough — no rail graph.
     rescore(scratch, score);
+    const platformStars = (owner: string): number =>
+      (d.railway?.platforms ?? []).filter((p) => p.owner === owner).length
+      * VICTORY.platform;
     return {
-      you: Math.floor(vpFor(score, "you")),
-      rival: Math.floor(vpFor(score, "ai")),
+      you: Math.floor(vpFor(score, "you") + platformStars("you")),
+      rival: Math.floor(vpFor(score, "ai") + platformStars("ai")),
     };
   } catch {
     return { you: 0, rival: 0 };

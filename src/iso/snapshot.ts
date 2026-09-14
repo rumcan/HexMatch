@@ -235,6 +235,8 @@ export interface Snapshot {
   boards?: BoardWire[];
   /** MP-AUDIT: cross-bonus choice prompt */
   crossPrompt?: CrossPromptWire | null;
+  /** Railways v1 — railway snapshot (optional, additive) */
+  railway?: { rail: string; railOwner: string; platforms: any[]; depots: any[]; lines: any[]; trains: any[]; rev: number };
   /** MP-AUDIT: winner identity */
   winner?: WinnerWire | null;
 }
@@ -256,6 +258,7 @@ export interface SnapshotSource {
   boards?: BoardWire[];
   crossPrompt?: CrossPromptWire | null;
   winner?: WinnerWire | null;
+  railway?: { rail: Uint8Array; railOwner: Uint8Array; platforms: any[]; depots: any[]; lines: any[]; trains: any[]; rev: number };
 }
 
 export function buildSnapshot(src: SnapshotSource): Snapshot {
@@ -286,6 +289,7 @@ export function buildSnapshot(src: SnapshotSource): Snapshot {
     boards: src.boards ? src.boards.map((b) => ({ owner: b.owner, data: b.data })) : undefined,
     crossPrompt: src.crossPrompt ?? null,
     winner: src.winner ?? null,
+    railway: (src as any).railway ? { rail: bytesToBase64((src as any).railway.rail), railOwner: bytesToBase64((src as any).railway.railOwner), platforms: (src as any).railway.platforms, depots: (src as any).railway.depots, lines: (src as any).railway.lines, trains: (src as any).railway.trains, rev: (src as any).railway.rev } : undefined,
   };
 }
 
@@ -412,6 +416,7 @@ export interface AppliedSnapshot {
   boards?: BoardWire[];
   crossPrompt?: CrossPromptWire | null;
   winner?: WinnerWire | null;
+  railway?: { rail: Uint8Array; railOwner: Uint8Array; platforms: any[]; depots: any[]; lines: any[]; trains: any[]; rev: number };
 }
 
 /**
@@ -453,6 +458,7 @@ export function applySnapshot(s: unknown, localSeed?: number): AppliedSnapshot {
     boards: (o as Snapshot).boards ? (o as Snapshot).boards!.map((x) => ({ ...x })) : undefined,
     crossPrompt: (o as Snapshot).crossPrompt ?? null,
     winner: (o as Snapshot).winner ?? null,
+    railway: (o as any).railway ? { rail: base64ToBytes((o as any).railway.rail), railOwner: base64ToBytes((o as any).railway.railOwner), platforms: (o as any).railway.platforms, depots: (o as any).railway.depots, lines: (o as any).railway.lines, trains: (o as any).railway.trains, rev: (o as any).railway.rev } : undefined,
   };
 }
 

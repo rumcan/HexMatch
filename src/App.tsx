@@ -21,6 +21,9 @@ import { chapterById } from "./story/chapters";
 // and `window` at load — and a single instance is also what keeps one match's
 // once-only guard in one place.
 import { rankStore } from "./net/rankstore";
+// #186: the ladder's gate on custom rules — a match that is not the shipped
+// game does not feed the rating, whatever door it was started from.
+import { isDefaultMatchSettings } from "./net/match-settings";
 
 /**
  * Multiplayer is opt-in: keeping the start screen outside the game means the
@@ -127,10 +130,19 @@ export default function App() {
             role: choice.mode,
             net: choice.net,
             portrait: choice.portrait,
+            // #186: the room's rules — ★ line, opening purse, AI seats. The
+            // session carries them too; passing them explicitly means a room
+            // whose echo is still in flight plays the rules the lobby showed.
+            settings: choice.settings ?? null,
             // RANK-01: only a quick match is rated (#147). `rank` is always
             // supplied so a future ranked door needs no plumbing; `ranked`
             // is what decides.
-            ranked: choice.ranked === true,
+            // #186 (RANK-01): …and only a DEFAULT-RULES one. A match the host
+            // customised — a shorter ★ line, a richer purse, a machine in the
+            // other seat — is not a ladder match, so the settings are the
+            // second gate on the flag: the queue cannot pair a rated game into
+            // custom rules, and this makes sure nothing else can either.
+            ranked: choice.ranked === true && isDefaultMatchSettings(choice.settings ?? null),
             rank: rankStore(),
             onQuitToMenu: quitToMenu,
           });
