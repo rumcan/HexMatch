@@ -142,7 +142,7 @@ import {
 // and every cost in `rail.ts`/`config.ts`: this file is the one place those
 // rules are APPLIED (tools, clicks, the panel, the frame), never re-derived.
 import {
-  createRailState, railPreview, buildRail, demolishRail, structureAt, hasRail,
+  createRailState, railPreview, buildRail, demolishRail, structureAt, hasRail, railDrawLayer,
   placePlatform, placeDepot, platformRefusal, depotRefusal, resolveAnchor,
   RAIL_COSTS, RAIL_REFUSAL_TEXT, footprintTiles,
   railStructureItems, trainItems, assignLine, renameLine, buyTrain, startLine, recallTrain, sellTrain, tickTrains,
@@ -1370,6 +1370,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     trees: scenery.trees,
     forests: scenery.forests,
     sceneryBlocked: new Set<number>(),
+    // RAIL-03 (#177): the railway layer the renderer paints the vector track
+    // from — refreshed in `syncWorld`, which is the only place the world
+    // changes.
+    rail: railDrawLayer(rail),
   };
 
   // MP-AUDIT: distinct starting-town reservations — camera opens near the local seat's town.
@@ -1844,6 +1848,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const syncWorld = () => {
     world.roadBits = drawBits(track, "road");
     world.dirtBits = drawBits(track, "dirt");
+    // RAIL-03 (#177): the rail bytes the chunk painter draws. Rebuilt here
+    // because a lane belongs to a structure, not to the layer, so a platform
+    // or a depot placed without laying a single rail tile still changes the
+    // track. `rail.revision` rides along and is what the renderer diffs.
+    world.rail = railDrawLayer(rail);
     // SCENERY: hide the trees the player has since built over. Roads are not
     // listed — the draw list reads roadBits/dirtBits directly — so this is
     // only the free-standing structures: plant footprints and depots.

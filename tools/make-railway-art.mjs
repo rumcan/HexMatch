@@ -119,6 +119,22 @@ export const PALETTE = {
   lamp: "#ffd98a",
 };
 
+/**
+ * The LANE contract the vector track mirrors (RAIL-03 / #177).
+ *
+ * A platform's and a depot's internal track is drawn here, on the LANE_L band
+ * of a `se`/`nw` lane, and `src/iso/rail-geometry.ts` draws the network's track
+ * with `RAIL_GAUGE` — the same rails at the same distance apart, because the
+ * two MEET at the structure's ports. Both halves of the contract are exported
+ * and asserted in `tests/unit/iso-rail-art.test.ts`, so a change on either side
+ * has to face the other.
+ *
+ * The pitch differs on purpose: the art's 0.23 is a drawn detail of one lane,
+ * while the network's sleepers sit on an absolute 0.25 lattice so tiles, chunks
+ * and structures cannot drift apart (see `TIE_SPACING`).
+ */
+export const LANE = { platformRailHalf: 0.16, depotRailHalf: 0.15, tiePitch: 0.23 };
+
 // ── colour maths (facet shading) ───────────────────────────────────────────
 const hex = (c) => {
   const s = c.replace("#", "");
@@ -424,9 +440,9 @@ function drawPlatform(scene) {
   // Lane: ballast, sleepers, two rails (the internal track is part of the price).
   scene.box({ f: 0, l: LANE_L, hf: HALF, hl: 0.5, z0: 0, z1: 0.035, color: P.ballast, edge: false });
   for (let i = -6; i <= 6; i++) {
-    scene.box({ f: i * 0.23, l: LANE_L, hf: 0.045, hl: 0.24, z0: 0.035, z1: 0.06, color: P.sleeper, edge: false });
+    scene.box({ f: i * LANE.tiePitch, l: LANE_L, hf: 0.045, hl: 0.24, z0: 0.035, z1: 0.06, color: P.sleeper, edge: false });
   }
-  for (const railL of [LANE_L - 0.16, LANE_L + 0.16]) {
+  for (const railL of [LANE_L - LANE.platformRailHalf, LANE_L + LANE.platformRailHalf]) {
     scene.box({ f: 0, l: railL, hf: HALF, hl: 0.035, z0: 0.06, z1: 0.105, color: P.steel });
     scene.box({ f: 0, l: railL, hf: HALF, hl: 0.035, z0: 0.06, z1: 0.078, color: darken(P.steel, 0.35), edge: false });
   }
@@ -474,9 +490,9 @@ function drawDepot(scene) {
   // track visibly meets the network at the exit.
   scene.box({ f: 0, l: LANE_L, hf: 1.0, hl: 0.45, z0: 0, z1: 0.03, color: P.ballast, edge: false });
   for (let i = -4; i <= 4; i++) {
-    scene.box({ f: i * 0.23, l: LANE_L, hf: 0.045, hl: 0.22, z0: 0.03, z1: 0.05, color: P.sleeper, edge: false });
+    scene.box({ f: i * LANE.tiePitch, l: LANE_L, hf: 0.045, hl: 0.22, z0: 0.03, z1: 0.05, color: P.sleeper, edge: false });
   }
-  for (const railL of [LANE_L - 0.15, LANE_L + 0.15]) {
+  for (const railL of [LANE_L - LANE.depotRailHalf, LANE_L + LANE.depotRailHalf]) {
     scene.box({ f: 0, l: railL, hf: 1.0, hl: 0.033, z0: 0.05, z1: 0.09, color: P.steel });
   }
   // Concrete apron beside the lane and the brick pad under the shed.
