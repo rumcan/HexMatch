@@ -48,7 +48,7 @@ import {
 import { GRASS, ROUGH, SAND, idx, type Grid } from "./grid";
 import { TRUCK_SPEED } from "./vehicles";
 import type { DrawItem } from "./depth";
-import { base64ToBytes, bytesToBase64, type RailTileWire, type RailWire } from "./snapshot";
+import { base64ToBytes, bytesToBase64, type RailTileWire, type RailWire, type TrainWire } from "./snapshot";
 
 // ── bits ──────────────────────────────────────────────────────────────────
 export const RAIL_PRESENT = PRESENT;
@@ -926,18 +926,22 @@ export function demolishStructure(state: RailState, id: number): RailStructure |
   const at = state.structures.findIndex((s) => s.id === id);
   if (at < 0) return null;
   const s = state.structures[at];
+  // #142: "disallow demolishing rail/structures physically occupied by a
+  // train". The lane is the obvious half; the less obvious one is the depot
+  // whose train is INSIDE it — a stored train has no route and so no tile, and
+  // without this guard demolishing the shed would delete a bought train (and
+  // its line) with no message and no refund. A train that is out on the line
+  // is based here too: destroying its home would strand it, so the player must
+  // sell it (it is at home) or wait for it to return.
+  if (s.kind === "depot" && trainBasedAt(state, s.id)) return null;
   const lane = laneTiles(s);
   if (lane.some(([x, y]) => trainOccupies(state, x, y))) return null;
   state.structures.splice(at, 1);
   autotileRail(state, lane);
-  if (s.kind === "depot") {
-    for (const t of [...state.trains]) {
-      if (t.depotId !== id) continue;
-      state.trains.splice(state.trains.indexOf(t), 1);
-      const li = state.lines.findIndex((l) => l.id === t.lineId);
-      if (li >= 0) state.lines.splice(li, 1);
-    }
-  } else {
+  if (s.kind !== "depot") {
+    // Only a PLATFORM can take a line down with it: the guard above means a
+    // depot reached this point with no train based at it, so a line can never
+    // lose its depot here.
     for (const line of [...state.lines]) {
       if (line.source !== id && line.dest !== id) continue;
       state.lines.splice(state.lines.indexOf(line), 1);
@@ -1063,6 +1067,30 @@ export function trainOccupies(state: RailState, tx: number, ty: number): Train |
 
 export const depotOfTrain = (state: RailState, t: Train): RailStructure | null =>
   state.structures.find((s) => s.id === t.depotId && s.kind === "depot") ?? null;
+
+/** The train based at a depot — the one in its shed, or out on its line. */
+export const trainBasedAt = (state: RailState, depotId: number): Train | null =>
+  state.trains.find((t) => t.depotId === depotId) ?? null;
+
+/**
+ * Is this train standing at home — in its shed, or STOPPED SAFELY on its
+ * depot's own exit tile? The second half matters: a route cut between the
+ * depot and the line leaves a train `blocked` where it started, and the epic's
+ * resale rule ("return to depot precedes resale") is about the train being
+ * home, not about the state's name. A train on its line — running, dwelling
+ * or blocked mid-route — is not home and cannot be sold.
+ */
+export function trainAtHome(state: RailState, train: Train): boolean {
+  if (train.status === "stored") return true;
+  // A live train is on its way somewhere and is never "at home", however
+  // close to the shed it looks — only one that STOPPED (blocked) counts.
+  if (train.status !== "blocked") return false;
+  const depot = depotOfTrain(state, train);
+  if (!depot) return false;
+  if (train.route.length === 0 || train.dist > 1e-9) return false;
+  const exit = depotExit(depot);
+  return train.route[0][0] === exit.tx && train.route[0][1] === exit.ty;
+}
 
 export const lineOfTrain = (state: RailState, t: Train): RailLine | null =>
   state.lines.find((l) => l.id === t.lineId) ?? null;
@@ -1308,11 +1336,15 @@ export function recallTrain(state: RailState, train: Train): boolean {
 /**
  * Sell a train back. The epic's rule is explicit: the 50% refund is available
  * only AFTER the train has returned to its depot, and only ONCE. A train still
- * on the line must be recalled first, so a player cannot mint money by buying
- * and selling inside one tick.
+ * out on the line must be recalled first, so a player cannot mint money by
+ * buying and selling inside one tick — at best they lose half of it.
+ *
+ * "Returned" is `trainAtHome`, not the state name: a train whose route was cut
+ * at the depot is `blocked` forever, and a player must still be able to get
+ * their 50% back out of it.
  */
 export function sellTrain(state: RailState, train: Train): { ok: boolean; why?: string; refund: Purse } {
-  if (train.status !== "stored") {
+  if (!trainAtHome(state, train)) {
     return { ok: false, why: "Send the train back to its depot first.", refund: {} };
   }
   if (train.resold) return { ok: false, why: "This train has already been sold.", refund: {} };
@@ -1433,7 +1465,9 @@ export function railPanelRows(state: RailState, ownerId: number): RailPanelRow[]
       id: s.id,
       kind: "depot",
       label: `Train Depot (${s.view})`,
-      detail: train ? "train at home" : "no train",
+      // "based here", not "at home": the train this depot owns is usually out
+      // on its line, and the row must not promise it is parked.
+      detail: train ? "train based here" : "no train",
       actions: [],
     });
   }
@@ -1445,7 +1479,9 @@ export function railPanelRows(state: RailState, ownerId: number): RailPanelRow[]
       kind: "train",
       label: line?.name ?? "Train",
       detail: trainStatusText(t),
-      actions: t.status === "stored" ? ["sell"] : ["recall"],
+      // A blocked train stopped on its depot exit is home (see `trainAtHome`)
+      // and offers its 50% sale rather than a recall that can never route.
+      actions: trainAtHome(state, t) ? ["sell"] : ["recall"],
     });
   }
   return rows;
@@ -1511,15 +1547,23 @@ export function trainItems(state: RailState, atlas?: RailSpriteSource): DrawItem
 // ── the wire (RAIL-04 / #178) ─────────────────────────────────────────────
 /**
  * The railway as a snapshot/delta carries it. Structures, lines and trains
- * always ride — a guest's panel and its trains need them every tick. The two
- * base64 layers are ~2 KB each, so a steady-state delta whose rail revision has
- * not moved passes `layers: false` and the guest keeps the bytes it already
- * has; a join or resync always sends them.
+ * always ride — a guest's panel and its trains need them every tick — but not
+ * every FIELD of every train: a leg's tiles are ~40 numbers for a 20-tile line
+ * and only change when the train is replanned, so a caller that passes a
+ * `routeCache` gets the route once and progress (dist, status, dwell) after
+ * that (#142: "replicate graph changes and routes only by revision; train
+ * progress via compact updates and interpolation"). The two base64 layers are
+ * ~2 KB each, so a steady-state delta whose rail revision has not moved passes
+ * `layers: false` and the guest keeps the bytes it already has; a join or
+ * resync always sends both the layers and the routes.
  *
  * A world with no railway returns `undefined` and `buildPublish` keeps the
  * field off the wire entirely — a rail-free match pays nothing for this.
  */
-export function railToWire(state: RailState, opts: { layers?: boolean } = {}): RailWire | undefined {
+export function railToWire(
+  state: RailState,
+  opts: { layers?: boolean; routeCache?: Map<number, [number, number][]> } = {},
+): RailWire | undefined {
   const empty = state.rail.revision === 0 && state.structures.length === 0
     && state.lines.length === 0 && state.trains.length === 0;
   if (empty) return undefined;
@@ -1534,7 +1578,16 @@ export function railToWire(state: RailState, opts: { layers?: boolean } = {}): R
         : null,
     })),
     lines: state.lines.map((l) => ({ ...l })),
-    trains: state.trains.map((t) => ({ ...t, route: t.route.map((r) => [...r] as [number, number]) })),
+    trains: state.trains.map((t) => {
+      const record: TrainWire = { ...t, route: t.route.map((r) => [...r] as [number, number]) };
+      // `planLeg` REPLACES the route array whenever it replans, so array
+      // identity is the cheapest exact test that the guest's copy is current.
+      if (opts.routeCache) {
+        if (opts.routeCache.get(t.id) === t.route) delete record.route;
+        else opts.routeCache.set(t.id, t.route);
+      }
+      return record;
+    }),
   };
   if (opts.layers !== false) {
     wire.tile = bytesToBase64(state.rail.tile);
@@ -1583,9 +1636,11 @@ const asTarget = (t: unknown): Train["target"] =>
 /**
  * Apply a wire onto local rail state (guest side). Tolerant reader, like
  * `applyTrackDelta`: an absent wire is a no-op, layer bytes of the wrong size
- * are skipped, and an ABSENT `tile`/`owner` pair means "unchanged" — the guest
- * keeps the bytes it already has. Structures, lines and trains are replaced
- * wholesale, because the host is authoritative for all three.
+ * are skipped, an ABSENT `tile`/`owner` pair means "unchanged" — the guest
+ * keeps the bytes it already has — and a train record with no `route` keeps
+ * the leg this guest already holds (`railToWire` sends a route only when the
+ * train is replanned). Structures, lines and trains are replaced wholesale,
+ * because the host is authoritative for all three.
  *
  * Returns true when anything was applied, so the caller can rebuild the
  * vehicle list.
@@ -1630,13 +1685,20 @@ export function applyRailWire(state: RailState, wire: RailWire | null | undefine
   }
   state.lines.length = 0;
   for (const l of Array.isArray(wire.lines) ? wire.lines : []) state.lines.push({ ...l });
+  // A train record with no `route` means "the route you hold is current"
+  // (#142: routes ride only when replanned), so the previous leg is carried
+  // over — for a train this guest has never seen, there is nothing to carry
+  // and it stands still until the next full snapshot.
+  const prevRoutes = new Map(state.trains.map((t) => [t.id, t.route] as const));
   state.trains.length = 0;
   for (const t of Array.isArray(wire.trains) ? wire.trains : []) {
     if (!t || typeof t.id !== "number") continue;
     state.trains.push({
       id: t.id, ownerId: t.ownerId, lineId: t.lineId, depotId: t.depotId,
       status: asStatus(t.status), target: asTarget(t.target),
-      route: (t.route ?? []).map((r) => [...r] as [number, number]),
+      route: Array.isArray(t.route)
+        ? t.route.map((r) => [...r] as [number, number])
+        : (prevRoutes.get(t.id) ?? []).map((r) => [...r] as [number, number]),
       dist: t.dist, planRevision: t.planRevision, dwellMs: t.dwellMs,
       dirBit: t.dirBit, resold: !!t.resold, blockedWhy: t.blockedWhy,
     });

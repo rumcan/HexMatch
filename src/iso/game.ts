@@ -146,7 +146,7 @@ import {
   placePlatform, placeDepot, platformRefusal, depotRefusal, resolveAnchor,
   RAIL_COSTS, RAIL_REFUSAL_TEXT, footprintTiles,
   railStructureItems, trainItems, assignLine, recallTrain, sellTrain, tickTrains,
-  rotateView, trainOccupies, railPanelRows, canPay, costEntries, resaleValue, demolishStructure, PLATFORM_VP,
+  rotateView, trainOccupies, trainBasedAt, railPanelRows, canPay, costEntries, resaleValue, demolishStructure, PLATFORM_VP,
   footprintFor, depotExit, RAIL_VIEWS, trainTile, ownerRailTiles as ownerRailTilesOf,
   railToWire, applyRailWire, clearRail, railLayerPatch, copyRailLayer,
   type RailState, type RailView, type RailStructure,
@@ -2583,8 +2583,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const cost = rs.kind === "platform" ? RAIL_COSTS.platform : RAIL_COSTS.depot;
       const gone = demolishStructure(rail, rs.id);
       if (!gone) {
-        toast("A train is standing there — send it home first.", "bad");
-        if (p.human) flashAt(tx, ty, "A train is on it");
+        // Two refusals share this path: a train physically ON the structure,
+        // and a depot that still has a train based at it (the epic's "never
+        // demolish a structure a train occupies" — a shed with a train in it
+        // is the clearest case, and destroying it would delete the train).
+        const based = rs.kind === "depot" ? trainBasedAt(rail, rs.id) : null;
+        toast(
+          based ? "A train is based here — sell it first." : "A train is standing there — send it home first.",
+          "bad",
+        );
+        if (p.human) flashAt(tx, ty, based ? "Train is based here" : "A train is on it");
         return;
       }
       // #142: demolition returns floor(50%) of the build price, and the
@@ -2592,8 +2600,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const refund = resaleValue(cost);
       if (Object.keys(refund).length) earn(p, refund);
       if (p.human) sfx.play("demolish");
-      // demolishStructure has already dropped any line that lost a platform,
-      // and any train that lost its depot, so the world is consistent here.
+      // demolishStructure has already dropped any line that lost a platform —
+      // and a depot can no longer come down under its train (that refusal is
+      // the `based` branch above), so no train is ever deleted by demolition.
       syncWorld();
       rescoreNow();
       toast(`${railKindName(rs.kind)} removed${Object.keys(refund).length ? ` — ${railCostLabel(refund)} salvaged` : ""}.`, "info");
@@ -3661,10 +3670,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     tile: new Uint8Array(rail.rail.tile.length),
     owner: new Uint8Array(rail.rail.owner.length),
   };
+  /**
+   * #142: "replicate graph changes and routes only by revision; train progress
+   * via compact updates and interpolation". The route each train last sent,
+   * keyed by id — `railToWire` compares by array identity (a replan is always a
+   * new array) and leaves an unchanged leg off the wire, so a steady-state
+   * publish is progress (dist, status, dwell) alone. Cleared on every full
+   * send, so a join or resync always carries the routes themselves.
+   */
+  const railRoutesSent = new Map<number, [number, number][]>();
   function railWire(fullLayers = false): Snapshot["rail"] {
     const moved = rail.rail.revision !== lastRailWireRev;
     lastRailWireRev = rail.rail.revision;
-    const wire = railToWire(rail, { layers: fullLayers });
+    if (fullLayers) railRoutesSent.clear();
+    const wire = railToWire(rail, { layers: fullLayers, routeCache: railRoutesSent });
     if (!wire) return undefined;
     if (fullLayers) copyRailLayer(rail, railSent.tile, railSent.owner);
     else if (moved) {
