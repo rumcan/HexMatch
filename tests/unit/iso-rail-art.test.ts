@@ -22,8 +22,9 @@ import {
   DEPOT_FOOTPRINT, COUPLE_GAP, LOCO_LEN, WAGON_LEN, WAGON_OFFSET, RAIL_VIEWS,
 } from "../../src/iso/rail";
 import {
-  ALL_SPRITE_NAMES, PALETTE, PLATFORM_FOOTPRINT, SPRITE_KINDS, VIEWS, footprintFor,
+  ALL_SPRITE_NAMES, LANE, PALETTE, PLATFORM_FOOTPRINT, SPRITE_KINDS, VIEWS, footprintFor,
 } from "../../tools/make-railway-art.mjs";
+import { RAIL_GAUGE } from "../../src/iso/rail-geometry";
 import type { Atlas } from "../../src/iso/atlas";
 
 const ROOT = resolve(__dirname, "../..");
@@ -153,6 +154,20 @@ describe("RAIL-03 the art set is complete and self-consistent", () => {
       expect(wagon.coupler!.front).toBeGreaterThan(0);
       expect(wagon.coupler!.rear).toBeLessThan(0);
     }
+  });
+
+  it("draws the lane rails at the gauge the vector track uses", () => {
+    // A structure's internal track IS the network's track — the two meet at the
+    // structure's ports — so the art's lane half-gauge and the geometry's
+    // RAIL_GAUGE are one contract, asserted from both sides.
+    expect(LANE.platformRailHalf).toBeCloseTo(RAIL_GAUGE / 2, 9);
+    // The depot's lane is the art's own figure, a fifth of a tile inside the
+    // gauge and under a pixel apart at 1×: bound rather than left to drift.
+    expect(Math.abs(LANE.depotRailHalf - RAIL_GAUGE / 2)).toBeLessThan(0.02);
+    // The lane's own sleeper pitch is the art's (the network's sleepers ride
+    // the absolute 0.25 lattice instead — see TIE_SPACING), and it is pinned so
+    // neither number can move without the other being looked at.
+    expect(LANE.tiePitch).toBeCloseTo(0.23, 9);
   });
 
   it("carries the 1950s palette it was drawn from", () => {
