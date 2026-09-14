@@ -5210,6 +5210,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       toast("Rail is not available in this mode.", "info");
       return;
     }
+    // The opening Depot is owed: every click in this phase places it, so any
+    // other build tool would light up and then silently build a Depot instead.
+    if (phase === "setup-harvester" && t !== "harvester") {
+      toast("Place your free Depot first — then the rest of the Build menu opens up.", "info");
+      return;
+    }
     tool = t;
     if (dropDrag()) paintOverlayNow();
   }

@@ -827,7 +827,7 @@ html, body, #root {
 .bb-ic { display: none; }
 
 /* unaffordable builds dim the whole tile, art included */
-.build-btn.disabled { opacity: .42; filter: saturate(.35); }
+.build-btn.disabled, .build-btn.locked { opacity: .42; filter: saturate(.35); }
 .build-btn.active   {
   border-color: var(--gold); opacity: 1;
   box-shadow:

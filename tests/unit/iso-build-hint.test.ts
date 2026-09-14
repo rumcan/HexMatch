@@ -473,6 +473,21 @@ describe("#187 the setup phases hide Cancel instead of showing a dead ✕", () =
     expect(cancelBtn()).toBeNull();
   });
 
+  it("refuses the Processing Plant while the opening Depot is owed", async () => {
+    const h = await boot();
+    const spot = findFactorySpot(h.grid)!;
+    expect(h.placeFactory(spot[0], spot[1])).toBe(true);
+    h.setTool("harvester");
+    await settle();
+    expect(h.phase).toBe("setup-harvester");
+    // Every click in this phase places the Depot, so the plant must not arm.
+    buildBtn("plant").click();
+    await settle();
+    expect(h.tool, "the Depot stays in the hand").toBe("harvester");
+    expect(buildBtn("plant").classList.contains("locked")).toBe(true);
+    expect(buildBtn("harvester").classList.contains("locked")).toBe(false);
+  });
+
   it("and grows its ✕ back the moment the debt is paid", async () => {
     const h = await boot();
     const spot = findFactorySpot(h.grid)!;

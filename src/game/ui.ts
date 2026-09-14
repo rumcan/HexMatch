@@ -2575,8 +2575,12 @@ export function createOriginalUi(
     }
     banner.classList.toggle("hidden", !state.banner || dismissedBannerKey === state.bannerKey);
     const toolState = state.tool;
+    // While the opening Depot is owed, every other build is locked out (the
+    // game refuses them too) — greyed so the menu never promises a plant.
+    const depotOwed = state.phase === "setup-harvester";
     buildList.querySelectorAll<HTMLElement>("[data-tool]").forEach((b) => {
       b.classList.toggle("active", b.dataset.tool === toolState);
+      b.classList.toggle("locked", depotOwed && b.dataset.tool !== "harvester" && b.dataset.tool !== "select");
     });
     // #187: what a Build button's re-tap means this frame. The button is its
     // own toggle — re-tapping the armed tool puts it down, the same gesture as
