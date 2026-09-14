@@ -145,7 +145,7 @@ import {
   createRailState, railPreview, buildRail, demolishRail, structureAt, hasRail,
   placePlatform, placeDepot, platformRefusal, depotRefusal, resolveAnchor,
   RAIL_COSTS, RAIL_REFUSAL_TEXT, footprintTiles,
-  railStructureItems, trainItems, assignLine, recallTrain, sellTrain, tickTrains,
+  railStructureItems, trainItems, assignLine, renameLine, buyTrain, startLine, recallTrain, sellTrain, tickTrains,
   rotateView, trainOccupies, railPanelRows, canPay, costEntries, resaleValue, demolishStructure, PLATFORM_VP,
   footprintFor, depotExit, RAIL_VIEWS, trainTile, ownerRailTiles as ownerRailTilesOf,
   railToWire, applyRailWire, clearRail, railLayerPatch, copyRailLayer,
@@ -1010,6 +1010,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         if (partnerId === undefined) return;
         railAssign(id, partnerId);
       } else if (action === "recall") railRecall(id);
+      else if (action === "buy") railBuy(id);
+      else if (action === "start") railStart(id);
+      else if (action === "rename") railRename(id);
       else railSell(id);
       paintOverlayNow();
     },
@@ -2373,6 +2376,24 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       toast(`${plan.line?.name ?? "Line"} assigned — the train is leaving the depot.`, "good");
     }
     return true;
+  }
+
+  function railBuy(depotId: number, p: PlayerState = me): boolean {
+    const line = rail.lines.find((l) => l.ownerId === p.i + 1);
+    if (isGuest()) { net?.sendIntent("build", { do: "railact", what: "buy", depot: depotId, line: line?.id }); return true; }
+    if (!line || !canPay(p.purse, RAIL_COSTS.train)) { if (p.human) toast(`Not enough materials — a train costs ${railCostLabel(RAIL_COSTS.train)}.`, "bad"); return false; }
+    const result = buyTrain(rail, p.i + 1, depotId, line.id, p.purse);
+    if (!result.ok || !result.train) { if (p.human) toast(result.why ?? "Train purchase refused.", "bad"); return false; }
+    spend(p, RAIL_COSTS.train); syncWorld(); return true;
+  }
+  function railStart(trainId: number, p: PlayerState = me): boolean {
+    const train = rail.trains.find((t) => t.id === trainId && t.ownerId === p.i + 1);
+    if (isGuest()) { net?.sendIntent("build", { do: "railact", what: "start", id: trainId }); return true; }
+    return !!train && startLine(rail, p.i + 1, train.lineId);
+  }
+  function railRename(lineId: number, p: PlayerState = me): boolean {
+    if (isGuest()) { net?.sendIntent("build", { do: "railact", what: "rename", id: lineId, name: `Line ${lineId}` }); return true; }
+    return renameLine(rail, p.i + 1, lineId, `Line ${lineId}`);
   }
 
   /** Send a line's train home (it stays until it is re-assigned or sold). */
@@ -4111,6 +4132,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         if (payload.what === "assign" && source !== null && dest !== null) railAssign(source, dest, p);
         else if (payload.what === "recall" && id !== null) railRecall(id, p);
         else if (payload.what === "sell" && id !== null) railSell(id, p);
+        else if (payload.what === "buy" && typeof payload.depot === "number" && typeof payload.line === "number") railBuy(payload.depot, p);
+        else if (payload.what === "start" && id !== null) railStart(id, p);
+        else if (payload.what === "rename" && id !== null && typeof payload.name === "string") renameLine(rail, p.i + 1, id, payload.name);
       } else if (what === "swap") {
         const r1 = int(payload.r1), c1 = int(payload.c1);
         const r2 = int(payload.r2), c2 = int(payload.c2);

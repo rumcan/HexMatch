@@ -129,7 +129,7 @@ export interface UiRailRow {
   kind: "platform" | "depot" | "train";
   label: string;
   detail: string;
-  actions: ("assign" | "recall" | "sell")[];
+  actions: ("assign" | "recall" | "sell" | "buy" | "start" | "rename")[];
   partnerId?: number;
   /** What the action costs, in the game's own cargo wording. */
   hint?: string;
@@ -216,7 +216,7 @@ export interface UiHooks {
    * also carries the partner platform the line would run to. The game owns the
    * rules and the prices; this chrome only reports the click.
    */
-  onRailAction: (id: number, action: "assign" | "recall" | "sell", partnerId?: number) => void;
+  onRailAction: (id: number, action: "assign" | "recall" | "sell" | "buy" | "start" | "rename", partnerId?: number) => void;
   /**
    * NAMES: the top-bar "Names" button reports a toggle. The game owns the
    * state and the localStorage record; the chrome only repaints its pressed
@@ -310,7 +310,7 @@ export interface OriginalUi {
 }
 
 // ── gem face helper ─────────────────────────────────────────────────────────
-// V5: gems draw the restored sprite art (src/assets/gems/<cargo>.png). The
+// V5: gems draw the restored sprite art (src/assetsstored sprite art (src/assets/gems/<cargo>.png). The
 // radial gradient is only the fallback for a missing file, so a pruned assets
 // folder degrades to a coloured gem instead of a broken image.
 const gemFace = (res: ResKey) =>

@@ -1116,8 +1116,7 @@ const depotComponent = (comp: Map<number, number>, depot: RailStructure): number
  * component the line lives on must not already hold a train (v1's one-train
  * rule — no signals, so no collisions).
  */
-/** Create a named line without silently buying rolling stock. The UI uses this
- * as the first step of the line editor; `buyTrain` is the separate purchase. */
+/** Create a named line without silently buying rolling stock. */
 export function createLine(
   state: RailState, ownerId: number, sourceId: number, destId: number, name?: string,
 ): { ok: boolean; line?: RailLine; why?: string } {
@@ -1155,6 +1154,12 @@ export function buyTrain(state: RailState, ownerId: number, depotId: number, lin
   if (!depot || !line) return { ok: false, why: RAIL_REFUSAL_TEXT.missing, cost };
   if (state.trains.some((t) => t.depotId === depotId && !t.resold)) return { ok: false, why: "This depot already has a train.", cost };
   if (!depotReaching(state, ownerId, line.source)) return { ok: false, why: "The depot can't reach the source platform.", cost };
+  const comp = railComponents(state, ownerId);
+  const home = depotComponent(comp, depot);
+  if (state.trains.some((t) => {
+    const d = depotOfTrain(state, t);
+    return t.ownerId === ownerId && d !== null && depotComponent(comp, d) === home;
+  })) return { ok: false, why: "One train per connected network — this line is already running one.", cost };
   const exit = depotExit(depot);
   const train: Train = { id: state.seq++, ownerId, lineId, depotId, status: "stored", target: "depot",
     route: [[exit.tx, exit.ty]], dist: 0, planRevision: state.rail.revision, dwellMs: 0,
@@ -1167,57 +1172,40 @@ export function startLine(state: RailState, ownerId: number, lineId: number): bo
   const line = state.lines.find((l) => l.id === lineId && l.ownerId === ownerId);
   if (!line) return false;
   let started = false;
+  const comp = railComponents(state, ownerId);
+  const occupied = new Set<number>();
+  for (const t of state.trains) {
+    if (t.ownerId !== ownerId) continue;
+    const d = depotOfTrain(state, t);
+    if (d) occupied.add(depotComponent(comp, d));
+  }
   for (const t of state.trains.filter((t) => t.lineId === lineId && t.status === "stored")) {
-    t.target = "source"; started = planLeg(state, t) || started;
+    const d = depotOfTrain(state, t);
+    const component = d ? depotComponent(comp, d) : 0;
+    if (occupied.has(component)) continue;
+    t.target = "source";
+    if (planLeg(state, t)) { occupied.add(component); started = true; }
   }
   return started;
 }
 
+/**
+ * Assign a complete line using the shared create, buy and start rules.
+ * This is the compatibility convenience path; the UI can call the three
+ * operations independently when it needs a named line editor.
+ */
 export function assignLine(
   state: RailState, ownerId: number, sourceId: number, destId: number, name?: string,
 ): LinePlan {
-  const why = lineRefusal(state, ownerId, sourceId, destId);
-  if (why !== "ok") return { ok: false, why: RAIL_REFUSAL_TEXT[why] };
-  const depot = depotReaching(state, ownerId, sourceId);
-  if (!depot) return { ok: false, why: "No depot of yours can reach that platform." };
-  const comp = railComponents(state, ownerId);
-  const homeComp = depotComponent(comp, depot);
-  if (!homeComp) return { ok: false, why: "The depot is not connected to the platform." };
-  const busy = state.trains.some((t) => {
-    if (t.ownerId !== ownerId) return false;
-    const d = depotOfTrain(state, t);
-    return d ? depotComponent(comp, d) === homeComp : false;
-  });
-  if (busy) return { ok: false, why: "One train per connected network — this line is already running one." };
-
-  const line: RailLine = {
-    id: state.seq++,
-    ownerId,
-    name: name?.trim() || `Line ${state.lines.filter((l) => l.ownerId === ownerId).length + 1}`,
-    source: sourceId,
-    dest: destId,
-  };
-  state.lines.push(line);
-  const exit = depotExit(depot);
-  const train: Train = {
-    id: state.seq++,
-    ownerId,
-    lineId: line.id,
-    depotId: depot.id,
-    status: "stored",
-    target: "source",
-    // Parked on the depot exit: RAIL-04's "start at the depot exit", so the
-    // first thing a player sees is the train leaving the shed toward its line.
-    route: [[exit.tx, exit.ty]],
-    dist: 0,
-    planRevision: -1,
-    dwellMs: 0,
-    dirBit: exit.dir,
-    resold: false,
-  };
-  state.trains.push(train);
-  planLeg(state, train);
-  return { ok: true, line, train };
+  const created = createLine(state, ownerId, sourceId, destId, name);
+  if (!created.ok || !created.line) return { ok: false, why: created.why ?? RAIL_REFUSAL_TEXT.missing };
+  const bought = buyTrain(state, ownerId, depotReaching(state, ownerId, sourceId)?.id ?? -1, created.line.id);
+  if (!bought.ok || !bought.train) {
+    state.lines.splice(state.lines.indexOf(created.line), 1);
+    return { ok: false, why: bought.why ?? RAIL_REFUSAL_TEXT.missing };
+  }
+  startLine(state, ownerId, created.line.id);
+  return { ok: true, line: created.line, train: bought.train };
 }
 
 /**
@@ -1443,7 +1431,7 @@ export const platformVp = (state: RailState, ownerId: number): number =>
   structuresOf(state, ownerId, "platform").length * PLATFORM_VP;
 
 // ── the Railway panel's model ─────────────────────────────────────────────
-export type RailPanelAction = "assign" | "recall" | "sell";
+export type RailPanelAction = "assign" | "recall" | "sell" | "buy" | "start" | "rename";
 
 export interface RailPanelRow {
   id: number;
@@ -1491,7 +1479,7 @@ export function railPanelRows(state: RailState, ownerId: number): RailPanelRow[]
       kind: "depot",
       label: `Train Depot (${s.view})`,
       detail: train ? "train at home" : "no train",
-      actions: [],
+      actions: train ? [] : ["buy"],
     });
   }
   for (const t of state.trains) {
@@ -1502,7 +1490,7 @@ export function railPanelRows(state: RailState, ownerId: number): RailPanelRow[]
       kind: "train",
       label: line?.name ?? "Train",
       detail: trainStatusText(t),
-      actions: t.status === "stored" ? ["sell"] : ["recall"],
+      actions: t.status === "stored" ? ["start", "sell"] : ["recall"],
     });
   }
   return rows;
