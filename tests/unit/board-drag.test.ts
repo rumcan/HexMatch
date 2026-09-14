@@ -182,20 +182,20 @@ describe("issue #162 — drag-and-drop commits on release", () => {
     expect(gemEl(ui, board, 2, 3).classList.contains("shake")).toBe(true);
   });
 
-  it("pulses one valid pair after six idle seconds, and a touch stands it down", async () => {
+  it("never hints a swap, however long the board sits idle", async () => {
     vi.useFakeTimers();
-    const { board, ui, grid } = uiFixture();
+    const { board, ui } = uiFixture();
     const mv = board.findMove();
     expect(mv).not.toBeNull();
-    const [r1, c1, r2, c2] = mv!;
-    await vi.advanceTimersByTimeAsync(6000);
-    expect(gemEl(ui, board, r1, c1).classList.contains("hint")).toBe(true);
-    expect(gemEl(ui, board, r2, c2).classList.contains("hint")).toBe(true);
-    // Any touch clears the hint and re-arms the wait.
-    const p = center(r1, c1);
-    grid.dispatchEvent(pointer("pointerdown", p.x, p.y));
-    expect(gemEl(ui, board, r1, c1).classList.contains("hint")).toBe(false);
-    expect(gemEl(ui, board, r2, c2).classList.contains("hint")).toBe(false);
-    window.dispatchEvent(pointer("pointerup", p.x, p.y));
+    await vi.advanceTimersByTimeAsync(30000);
+    void ui; void board;
+    expect(document.querySelectorAll(".gem.hint").length).toBe(0);
+  });
+
+  it("does not move a hovered gem — hover is a glow, not a lean", () => {
+    const { board, ui, grid } = uiFixture();
+    const p = center(2, 2);
+    grid.dispatchEvent(pointer("pointermove", p.x + 10, p.y + 10));
+    expect(gemEl(ui, board, 2, 2).style.translate).toBe("");
   });
 });

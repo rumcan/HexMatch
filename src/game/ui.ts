@@ -1180,7 +1180,6 @@ export function createOriginalUi(
       toast("Answer the cross bounty first.", "info");
       return;
     }
-    resetIdleHint(); // #162: a tab switch is a touch — and a hint for a hidden board is pointless
     // SFX-01: a drawer sliding one bay — but only when the drawer really moves.
     // The boot calls setTab("plant") and paint() never re-calls it, so an
     // unchanged tab is a no-op here and stays silent.
@@ -1242,7 +1241,6 @@ export function createOriginalUi(
     Math.abs(a.r - b.r) + Math.abs(a.c - b.c) === 1;
 
   const selectOrSwap = (cell: { r: number; c: number }) => {
-    resetIdleHint(); // #162: any tap is a touch — the idle hint stands down
     if (selected && adj(selected, cell)) {
       // SFX-01: a soft thud as the gem settles — the board's own `bad` fx
       // answers a swap that did not match, so this one is deliberately
@@ -1292,7 +1290,7 @@ export function createOriginalUi(
     if (cell) selectOrSwap(cell);
   });
   // ── TACTILE-01: the board answers the hand ────────────────────────────────
-  // Hover: the gem under a mouse leans a few px toward the cursor. Press and
+  // Hover is a CSS glow behind the gem (styles.css) — nothing moves. Press and
   // drag (mouse or touch): the picked-up gem follows along the ONE axis being
   // pulled — the four directions a gem can trade in — while the neighbour it
   // would trade with gives way AND lights up as the previewed target.
@@ -1305,8 +1303,6 @@ export function createOriginalUi(
   // rides the independent `translate` property, so the two never fight.
   const reduceMotion = typeof matchMedia === "function"
     && matchMedia("(prefers-reduced-motion: reduce)").matches;
-  /** Hover lean at the very edge of the cell, in grid px. */
-  const LEAN_PX = 3;
   /** Client px a press must travel before it counts as a drag (not a click). */
   const DRAG_START_PX = 5;
   /** Grid px pulled along the axis before a release commits the swap (#162:
@@ -1317,10 +1313,6 @@ export function createOriginalUi(
    *  so the DOM never lags the logic it just triggered. */
   const glideMs = () => (turboMode ? FAST_ANIMATION_MS.swap : BOARD_ANIMATION_MS.swap);
   const SETTLE_MS = 300;
-  /** Ms with no board touch before one valid pair pulses as a hint. */
-  const IDLE_HINT_MS = 6000;
-  /** How long the idle hint stays on the board before it clears. */
-  const HINT_SHOW_MS = 1600;
   type Cell = { r: number; c: number };
   interface Drag {
     from: Cell; el: HTMLElement; gemId: number;
@@ -1331,7 +1323,6 @@ export function createOriginalUi(
     horiz: boolean; pull: number; to: Cell | null; open: boolean;
   }
   let drag: Drag | null = null;
-  let leaning: HTMLElement | null = null;
   let swallowClick = false;
 
   /** Client px → grid px (the board panel is zoomed to fit its column). */
@@ -1344,10 +1335,6 @@ export function createOriginalUi(
   };
   const setOffset = (el: HTMLElement, horiz: boolean, px: number) => {
     el.style.translate = horiz ? `${px}px 0px` : `0px ${px}px`;
-  };
-  const unlean = () => {
-    if (leaning && !leaning.classList.contains("dragging")) leaning.style.translate = "";
-    leaning = null;
   };
 
   /**
@@ -1425,47 +1412,6 @@ export function createOriginalUi(
     if (pendingSwaps.length > 8) pendingSwaps.shift(); // same cap as the board's queue
   }
 
-  let idleTimer = 0;
-  let hintEls: HTMLElement[] = [];
-  function clearHint() {
-    for (const el of hintEls) el.classList.remove("hint");
-    hintEls = [];
-  }
-  /** One valid pair pulses gently — the board teaching its own grammar. */
-  function showIdleHint() {
-    idleTimer = 0;
-    // A hint is for a quiet, visible, idle board — never mid-gesture, never
-    // mid-cascade, never under the cross chooser, never on another tab.
-    if (document.hidden || drag || board.busy || pickEl || qp.classList.contains("hidden")) {
-      armIdleHint();
-      return;
-    }
-    const mv = board.findMove();
-    if (!mv) { armIdleHint(); return; } // deadlocked — the guard reshuffles, not us
-    const els: HTMLElement[] = [];
-    for (const [r, c] of [[mv[0], mv[1]], [mv[2], mv[3]]] as const) {
-      const g = board.grid[r]?.[c];
-      const el = g ? gemEls.get(g.id) : undefined;
-      if (el) els.push(el);
-    }
-    if (els.length === 2) {
-      clearHint();
-      hintEls = els;
-      for (const el of els) el.classList.add("hint");
-      window.setTimeout(() => { clearHint(); armIdleHint(); }, HINT_SHOW_MS);
-    } else {
-      armIdleHint();
-    }
-  }
-  function armIdleHint() {
-    window.clearTimeout(idleTimer);
-    idleTimer = window.setTimeout(showIdleHint, IDLE_HINT_MS);
-  }
-  function resetIdleHint() {
-    clearHint();
-    armIdleHint();
-  }
-
   grid.addEventListener("pointerdown", (e) => {
     swallowClick = false;
     // #162: a second finger voids the gesture — the held gems spring back
@@ -1480,8 +1426,6 @@ export function createOriginalUi(
     const g = from ? board.grid[from.r]?.[from.c] : null;
     const el = g ? gemEls.get(g.id) : undefined;
     if (!from || !g || !el || g.block) return;
-    unlean();
-    resetIdleHint();
     // #162: the pickup is ON PRESS, not after 5px of travel — the gem lifts
     // under the finger the instant it is touched (a tap flashes it, then the
     // click handler below owns the selection).
@@ -1494,25 +1438,7 @@ export function createOriginalUi(
   });
 
   grid.addEventListener("pointermove", (e) => {
-    if (!drag) {
-      // hover lean — a mouse only; a finger has no hover to answer
-      if (reduceMotion || e.pointerType !== "mouse") return;
-      // Read the geometry ONCE, before any style write, so the lean never
-      // forces a second layout inside the same event.
-      const rect = grid.getBoundingClientRect();
-      const k = (CELL * board.w) / (rect.width || CELL * board.w);
-      const cell = cellIn(e, rect);
-      const g = cell ? board.grid[cell.r]?.[cell.c] : null;
-      const el = g && !g.block ? gemEls.get(g.id) ?? null : null;
-      if (el !== leaning) unlean();
-      if (!el || !cell) return;
-      const lean = (v: number) => Math.max(-1, Math.min(1, v / (CELL / 2))) * LEAN_PX;
-      const lx = (e.clientX - rect.left) * k - (cell.c + 0.5) * CELL;
-      const ly = (e.clientY - rect.top) * k - (cell.r + 0.5) * CELL;
-      el.style.translate = `${lean(lx)}px ${lean(ly)}px`;
-      leaning = el;
-      return;
-    }
+    if (!drag) return;
     if (e.pointerId !== drag.pointerId) return;
     // #162: leaving the board voids the gesture — with pointer capture the
     // moves keep arriving, so the bounds check does what pointerleave would.
@@ -1588,7 +1514,6 @@ export function createOriginalUi(
       hooks.onSwap(d.from.r, d.from.c, to.r, to.c);
       selected = null;
       renderSelection();
-      resetIdleHint();
     }, true);
   };
   /** Void the gesture unconditionally: spring back, never commit. */
@@ -1610,13 +1535,11 @@ export function createOriginalUi(
   };
   window.addEventListener("pointerup", commitDrag);
   window.addEventListener("pointercancel", cancelDragEvent);
-  grid.addEventListener("pointerleave", () => { if (!drag) unlean(); });
   // A hidden tab voids the gesture too — the hand is gone, and a `.dragging`
   // gem must never survive the layout it was held in. No click follows, so
   // the swallow flag stays untouched; the hint re-arms on return.
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) { cancelDrag(); clearHint(); }
-    else armIdleHint();
+    if (document.hidden) cancelDrag();
   });
 
   function renderSelection() {
@@ -2944,7 +2867,6 @@ export function createOriginalUi(
   renderMarket();
   responsiveZoom();
   setTab("plant");
-  armIdleHint(); // #162: the idle hint arms at boot and re-arms on every touch
 
   return {
     el: root,

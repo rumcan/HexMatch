@@ -1052,22 +1052,21 @@ html, body, #root {
   outline: none;
   box-shadow: none;
 }
-/* Soft cell wash on hover only — never an active/selected hard frame. */
+/* Hover: a soft warm glow BEHIND the gem — no movement, never a hard frame. */
 .gem::before {
   content: "";
   position: absolute;
-  inset: 4px;
-  border-radius: 8px;
-  background: transparent;
+  inset: -6px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 214, 140, .55), rgba(255, 176, 46, .22) 45%, transparent 70%);
+  opacity: 0;
   pointer-events: none;
   z-index: 0;
-  transition: background .15s ease;
+  transition: opacity .18s ease;
 }
-.gem:hover::before {
-  background: radial-gradient(circle at 50% 45%, rgba(255, 214, 140, .18), rgba(255, 176, 46, .06) 60%, transparent 72%);
-}
+.gem:hover::before { opacity: 1; }
 .gem:active::before, .gem.sel::before, .gem.selected::before {
-  background: transparent;
+  opacity: 0;
 }
 .gem .face {
   position: absolute; inset: 3px; border-radius: 50% 50% 50% 50% / 55% 55% 45% 45%;
@@ -1136,15 +1135,6 @@ html, body, #root {
 /* #162: the selection's legal answers — every open neighbour glows faintly. */
 .gem.neighbor .face { outline: 1.5px dashed rgba(255, 255, 255, .55); outline-offset: 2px; }
 .gem.neighbor .face.sprite { outline: none; filter: drop-shadow(0 0 5px rgba(255, 255, 255, .55)) drop-shadow(0 2px 3px rgba(0, 0, 0, .5)); }
-/* #162: the idle hint — one valid pair wiggles gently until touched. */
-.gem.hint { animation: hintWiggle .8s ease-in-out 2; z-index: 3; }
-.gem.hint .face { outline: 2px solid var(--gold2); outline-offset: 1px; }
-.gem.hint .face.sprite { outline: none; filter: drop-shadow(0 0 8px rgba(255, 217, 138, .9)) drop-shadow(0 2px 3px rgba(0, 0, 0, .5)); }
-@keyframes hintWiggle {
-  0%, 100% { scale: 1; rotate: 0deg; }
-  25%      { scale: 1.1; rotate: -5deg; }
-  75%      { scale: 1.1; rotate: 5deg; }
-}
 /* #162: the invalid-swap verdict — a short lateral shake after the bounce. */
 .gem.shake { animation: gemShake 260ms ease-out; }
 @keyframes gemShake {
@@ -1241,7 +1231,7 @@ html, body, #root {
   .gem.dragging { scale: 1; }
   /* #162: no pulse, no wiggle, no shake — the static outlines stay, the
      motion goes; clears fade without swelling. */
-  .gem.sel, .gem.selected, .gem.hint, .gem.shake { animation: none; }
+  .gem.sel, .gem.selected, .gem.shake { animation: none; }
   .gem.gone { scale: 1; }
 }
 

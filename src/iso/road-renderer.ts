@@ -36,7 +36,7 @@
 // invalidates single tiles with `invalidateTile(..., "rail", 1)` when a rail
 // byte moves.
 // ══════════════════════════════════════════════════════════════════════════
-import { HW, HH, MAP_W, MAP_H } from "../game/config";
+import { HW, HH, MAP_W, MAP_H, ZOOM_STEPS } from "../game/config";
 import type { Camera } from "./camera";
 import { isTownTile, townGroundBytes, type Grid } from "./grid";
 import {
@@ -1026,8 +1026,10 @@ export class RoadCache {
       // artwork instead of looking razor-cut. ONE filtered copy of the finished
       // chunk: a filter set while painting would blur every one of the hundreds
       // of fills/strokes separately and freeze the game whenever panning
-      // rasterises new chunks.
-      const soft = makeSurface(w, h);
+      // rasterises new chunks. Only at the closest zoom: further out the
+      // roads are already small enough to read as pixel art, and blurring
+      // them just makes them muddy.
+      const soft = zoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1] ? makeSurface(w, h) : null;
       const sctx = soft ? (soft as HTMLCanvasElement).getContext("2d") as Ctx2D | null : null;
       if (soft && sctx && "filter" in sctx) {
         sctx.filter = ROAD_SOFTEN_FILTER;
