@@ -48,12 +48,14 @@ import {
   Atlas, buildMasks, buildBuildingMasks, loadBuildingLayers,
   type Manifest, type AtlasImage,
 } from "./atlas";
-// GFX-01: the video settings — pixel-detail cap + miniature tilt-shift pass.
+// GFX-01 / PERF-01: the video settings — pixel-detail cap, the miniature
+// tilt-shift pass and the performance-mode render policy.
 import {
-  currentGraphics, setGraphics, subscribeGraphics, QUALITY_MAX_DETAIL, type Quality,
+  currentGraphics, setGraphics, subscribeGraphics, QUALITY_MAX_DETAIL,
+  renderPolicy, type Quality, type RenderPolicy,
 } from "./graphics";
 import { createTiltShiftPass } from "./miniature";
-import { loadGroundTextures } from "./ground";
+import { loadGroundTextures, type GroundTextures } from "./ground";
 import {
   createCamera, centerOnTile, resizeCamera, zoomStepAt, zoomAt, tileToScreenAt,
   createGesture, pointerDown, pointerMove, pointerUp, worldToScreen, panBy,
@@ -64,7 +66,7 @@ import { createLabelLayer, type LabelEntry, type LabelLayer } from "./labels";
 import { coarsePointer } from "./touch";
 import { IsoRenderer, type World } from "./renderer";
 import { DEFAULT_ROAD_STYLE } from "./road-renderer";
-import { scatterScenery, type Scenery } from "./scenery";
+import { scatterScenery, type DecalImages, type Scenery } from "./scenery";
 import { loadDecalImages, loadScenerySprites } from "./scenery-art";
 import { loadVehicleLayers } from "./vehicle-art";
 import {
@@ -1193,11 +1195,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     return grid.industries[0] ?? { tx: MAP_W / 2, ty: MAP_H / 2 };
   })();
+  // PERF-01: ONE effective dpr for the whole game — the browser's
+  // devicePixelRatio capped by the live render policy (performance mode
+  // caps the backing at 1). Every CSS↔backing conversion in the file (boot
+  // zoom, pointer `pos`, tap slop, anchored labels/floats, canvas resize)
+  // must go through it, or selection, drag ghosts and zoom anchors drift
+  // the moment the policy and the screen disagree. Reading the store on
+  // each call keeps a runtime toggle truthful without a second source of
+  // truth; the store read is one object property.
+  const dprCapOf = (): number => renderPolicy(currentGraphics()).dprCap;
   // MOBILE-01: the camera is device-pixel space, so a phone's dpr would
   // otherwise shrink every tile to a third of its desktop size — unreadable
   // and untappable. Boot at the step whose ON-SCREEN tile matches the desktop
   // reference; `resizeCamera` below then preserves the centred focus exactly.
-  const bootDpr = () => Math.min(2, (typeof window !== "undefined" && window.devicePixelRatio) || 1);
+  const bootDpr = () => Math.min(dprCapOf(), (typeof window !== "undefined" && window.devicePixelRatio) || 1);
   let cam: Camera = zoomAt(
     centerOnTile(
       createCamera(stage.clientWidth || 800, stage.clientHeight || 600),
@@ -4121,7 +4132,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   // ── input ──────────────────────────────────────────────────────────────
   let g: GestureState = createGesture();
-  const dpr = () => Math.min(2, window.devicePixelRatio || 1);
+  // PERF-01: the EFFECTIVE dpr (policy-capped), not the browser's — the
+  // canvas backing is sized by it in `resize()`, so a pointer CSS pixel maps
+  // to backing pixels through exactly this factor. On a dpr-2 screen with
+  // performance mode ON the backing is 1× and this returns 1, keeping
+  // picking, drags and zoom anchors on the same lattice the renderer draws.
+  const dpr = () => Math.min(dprCapOf(), window.devicePixelRatio || 1);
   const pos = (e: PointerEvent): [number, number] => {
     const b = stage.getBoundingClientRect();
     return [(e.clientX - b.left) * dpr(), (e.clientY - b.top) * dpr()];
@@ -4816,7 +4832,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // front door raises over the menu plate, mounted over the game root. One
     // instance at a time; closing repaints nothing here because every control
     // in the sheet subscribes to the store, and so does the game.
-    menuItem("Settings", "texture detail · miniature · sound", () => {
+    menuItem("Settings", "texture detail · miniature · performance · sound", () => {
       if (settingsView) return;
       const view = showSettingsSheet(ui.el);
       settingsView = view;
@@ -5065,31 +5081,49 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   );
 
   /**
-   * Apply a quality preset while the game is live: load the levels newly at
-   * or below the cap (monolith, layer sheets, per-building PNGs, scenery,
-   * liveried trucks), then re-aim the atlas cap, free everything above it and
-   * repaint. Serialized through `detailApplying` so a rapid toggle cannot
-   * interleave two half-applied states. A load failure leaves the CURRENT
-   * preset standing — the player simply does not get the new look — rather
-   * than rendering a map missing its 2× half.
+   * Apply the EFFECTIVE RENDER POLICY (quality + performance mode) while the
+   * game is live: load the atlas levels newly at or below the cap (monolith,
+   * layer sheets, per-building PNGs, scenery, liveried trucks), and — only
+   * for the textured policy — the ground textures and terrain decals; then
+   * re-aim the atlas cap, free everything above it, install the flat/textured
+   * terrain and repaint. Serialized through `detailApplying` so a rapid
+   * toggle cannot interleave two half-applied states; every async step
+   * re-reads the settings AFTER its awaits, so a stale load (its mode was
+   * switched mid-fetch) never restores old terrain — the newer change owns
+   * the screen. A load failure leaves the CURRENT policy standing — the
+   * player simply does not get the new look — rather than rendering a map
+   * missing its 2× half.
    */
   let detailApplying: Promise<void> = Promise.resolve();
-  const applyQuality = (cap: number): Promise<void> => {
+  /** The performance flag the last COMPLETED apply installed (or null: none yet). */
+  let appliedPerf: boolean | null = null;
+  const applyRenderPolicy = (policy: RenderPolicy): Promise<void> => {
     detailApplying = detailApplying.then(async () => {
       const a = atlasRef;
-      if (disposed || !a || a.detailCap === cap) return;
+      if (disposed || !a) return;
+      const cap = policy.detail;
+      const capChanged = a.detailCap !== cap;
+      const perfChanged = appliedPerf !== policy.performance;
+      if (!capChanged && !perfChanged) return;
+      appliedPerf = policy.performance;
       const r = renderer;
-      // GFX-01 terrain LOD: the ground textures and decals swap to the new
-      // preset's tier too. They are an upgrade, never a gate — a failed tier
-      // keeps the current art rather than blocking the rest of the preset.
+      // PERF-01: the ground textures + terrain decals are only wanted by the
+      // textured policy — the flat mode paints solid colours, so they are
+      // skipped while it stands (and released from the renderer) rather than
+      // fetched, decoded and held for a look it will not draw.
+      const wantGround = policy.texturedGround;
       let groundTex: Awaited<ReturnType<typeof loadGroundTextures>> | null = null;
       let decalTex: Awaited<ReturnType<typeof loadDecalImages>> | null = null;
       try {
         await Promise.all([
-          loadGroundTextures(groundTextureUrls(cap)).then((t) => { groundTex = t; })
-            .catch((err) => console.warn("[gfx] ground textures for this preset failed to load", err)),
-          loadDecalImages(cap).then((d) => { decalTex = d; })
-            .catch((err) => console.warn("[gfx] decals for this preset failed to load", err)),
+          ...(wantGround
+            ? [
+              loadGroundTextures(groundTextureUrls(cap)).then((t) => { groundTex = t; })
+                .catch((err) => console.warn("[gfx] ground textures for this preset failed to load", err)),
+              loadDecalImages(cap).then((d) => { decalTex = d; })
+                .catch((err) => console.warn("[gfx] decals for this preset failed to load", err)),
+            ]
+            : []),
           capImages(monolithUrls, a.images, cap),
           ...(a.layerImages.has("roads")
             ? [capImages(roadUrls, a.layerImages.get("roads")!, cap)] : []),
@@ -5103,17 +5137,31 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         console.warn("[gfx] detail levels failed to load; keeping the current preset", err);
         return;
       }
-      if (disposed) return;
-      if (r) r.setDetailCap(cap);          // caps the atlas, prunes, repaints
-      if (r && groundTex) r.setGround(groundTex);
-      if (r && decalTex) r.setDecalImages(decalTex);
-      else { a.detailCap = cap; a.pruneDetail(); }
-      buildMasks(a);
-      buildBuildingMasks(a);
+      // PERF-01 stale-load guard: the settings moved again mid-fetch. The
+      // change always enqueued its own task (the store notifies
+      // synchronously), and THAT task applies the final state — this one
+      // must not overwrite it with the tier it loaded.
+      const now = renderPolicy(currentGraphics());
+      if (disposed || now.quality !== policy.quality || now.performance !== policy.performance) return;
+      if (r) {
+        if (capChanged) r.setDetailCap(cap);   // caps the atlas, prunes, repaints
+        r.setPerformanceMode(policy.performance);
+        if (policy.texturedGround) {
+          if (groundTex) r.setGround(groundTex);
+        } else {
+          r.setGround(null);                   // release the seamless ground art
+        }
+        if (decalTex) r.setDecalImages(decalTex);
+        buildMasks(a);
+        buildBuildingMasks(a);
+        r.recomputePad();
+        r.invalidateAll();
+      } else {
+        a.detailCap = cap;
+        a.pruneDetail();
+      }
       for (const m of [monolithUrls, roadUrls, sheetUrls])
         for (const [z, u] of m) if (z > cap) bitmapCache.delete(u);
-      r?.recomputePad();
-      r?.invalidateAll();
     });
     return detailApplying;
   };
@@ -5121,17 +5169,29 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // Live wiring of the settings store: the ⚙ modal, `__iso.graphics()` and
   // any other subscriber all arrive here. The boot path below reads the same
   // store BEFORE loading, so a preset picked before the atlases fetched is
-  // what those fetches honour.
+  // what those fetches honour. PERF-01: one change may move several policy
+  // fields at once (performance mode caps the DPR, so the BACKING changes
+  // too) — resize the layers, the camera and the miniature plate before the
+  // next frame, or the old backing keeps drawing at the wrong scale until
+  // some unrelated ResizeObserver event happens to fire.
   const gfxUnsub = subscribeGraphics((g) => {
-    mini.setEnabled(g.miniature);
-    void applyQuality(QUALITY_MAX_DETAIL[g.quality]);
+    const p = renderPolicy(g);
+    mini.setEnabled(p.miniature);         // effective: suppressed under performance mode
+    resize();                             // unified boot + runtime DPR policy
+    renderer?.setPerformanceMode(p.performance);
+    void applyRenderPolicy(p);
   });
-  mini.setEnabled(currentGraphics().miniature);
+  mini.setEnabled(renderPolicy(currentGraphics()).miniature);
   /** What the boot loading below fetches — the preset at frame 0. A settings
    *  change while the loading screen is up is cosmetic until boot reads it;
    *  the overlay is in front of everything then anyway. */
   const gfxBoot = currentGraphics();
   const cap0 = QUALITY_MAX_DETAIL[gfxBoot.quality];
+  // PERF-01: the boot policy. A performance-mode boot never fetches the
+  // seamless ground textures or terrain decals (the flat scene does not use
+  // them); the atlas tiers still follow the quality, because buildings and
+  // roads are drawn textured at every quality.
+  const policy0 = renderPolicy(gfxBoot);
 
   /** AI-03: keep moving lorries when a replan leaves their route identical.
    *  Merged by the stable depot id (the lorry's true identity since the W2
@@ -5178,12 +5238,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const layersPromise = loading.track("layers", Promise.all([
       capImages(roadUrls, roadsStore, cap0),
       capImages(sheetUrls, sheetsStore, cap0),
-      loadGroundTextures(groundTextureUrls(cap0)),
+      // PERF-01: a flat-mode boot skips the ground textures entirely.
+      policy0.texturedGround
+        ? loadGroundTextures(groundTextureUrls(cap0))
+        : Promise.resolve<GroundTextures | null>(null),
     ]).then(([, , tex]) => {
       if (disposed) return;
       atlas.layerImages.set("roads", roadsStore);
       atlas.layerImages.set("buildings", sheetsStore);
-      renderer?.setGround(tex);
+      // PERF-01 stale-load guard: the mode flipped while this was fetching —
+      // a texture nobody asked for must not install (the live apply chain
+      // owns the current policy's art).
+      if (tex && renderPolicy(currentGraphics()).texturedGround) renderer?.setGround(tex);
     }).catch((err) => {
       // Textures are an upgrade, never a gate: the flat-colour ground and the
       // monolithic atlas remain fully playable.
@@ -5197,9 +5263,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // SCENERY art (assets/ground/decals/, assets/scenery/): the decal patches
     // and the tree sprites. Non-gating like every other art load — until it
     // lands the map is the plain meadow with no trees, which is playable.
-    void loading.track("scenery", Promise.all([loadDecalImages(cap0), loadScenerySprites(atlas, cap0)]).then(([decals, trees]) => {
+    // PERF-01: the terrain DECALS are ground art — a flat-mode boot skips
+    // them; the tree SPRITES are structures-layer art and still load.
+    void loading.track("scenery", Promise.all([
+      policy0.decals
+        ? loadDecalImages(cap0)
+        : Promise.resolve<DecalImages | null>(null),
+      loadScenerySprites(atlas, cap0),
+    ]).then(([decals, trees]) => {
       if (disposed) return;
-      renderer?.setDecalImages(decals);
+      // PERF-01 stale-load guard, as on the layers path: a decal image only
+      // installs while the textured policy still stands.
+      if (decals && renderPolicy(currentGraphics()).decals) renderer?.setDecalImages(decals);
       if (trees) {
         // The tree defs just joined the sprite table, so the cull pad (max
         // footprint + tallest sprite) may have grown.
@@ -5264,6 +5339,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     atlasRef = atlas;
     renderer = new IsoRenderer(canvases, atlas, cam, world);
     renderer.setDecals(scenery);
+    // PERF-01: the boot policy's terrain, applied before the first frame —
+    // a performance-mode boot draws the flat static ground from frame one
+    // (the dpr cap above already sized the backing for it). The apply chain
+    // starts believing the same state, so a later quality-only change diffs
+    // against boot rather than re-applying the performance leg.
+    renderer.setPerformanceMode(policy0.performance);
+    appliedPerf = policy0.performance;
     renderer.overlayPainter = (ctx, c, t) => paintProtests(ctx, c, t);
     // QoL: the placement overlay animates (a breathing outline, a marching
     // reach band, a ghost that floats). A player who asks the OS to reduce
@@ -5391,12 +5473,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      */
     get artLoad() { return { active: loading.active, ready: loading.ready, ...loading.progress }; },
     /**
-     * GFX-01: the video settings. `__iso.graphics()` reads them;
+     * GFX-01 / PERF-01: the video settings. `__iso.graphics()` reads them;
      * `__iso.graphics("medium")` / `__iso.graphics(undefined, true)` (the
-     * second argument is the miniature tilt-shift) apply them live through
-     * the SAME store the ⚙ panel uses — persistence and repaint included.
+     * second argument is the miniature tilt-shift) / `__iso.graphics(undefined,
+     * undefined, true)` (the third is performance mode) apply them live
+     * through the SAME store the ⚙ panel uses — persistence, the DPR
+     * re-size and the repaint included.
      */
-    graphics: (q?: Quality, miniature?: boolean) => setGraphics({ quality: q, miniature }),
+    graphics: (q?: Quality, miniature?: boolean, performance?: boolean) =>
+      setGraphics({ quality: q, miniature, performance }),
     get vp() { return { you: vpFor(score, "you"), ai: vpFor(score, "ai") }; },
     /** VP-01: the target and the two numbers behind a player's total.
      *  AI-04: the target is the difficulty's line (5★ on easy), not a constant. */

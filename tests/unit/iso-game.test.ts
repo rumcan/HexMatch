@@ -97,6 +97,8 @@ interface IsoHook {
   aiTick: (now?: number) => void;
   econTick: (now?: number) => void;
   tick: (now?: number) => void;
+  /** PERF-01: the renderer diagnostics (debug console, on in dev builds). */
+  rendering?: (() => { terrain: { performance: boolean; animated: boolean; redraws: number } } | null) | null;
   finishSetup: () => void;
   /** PP-03: the twin of the placement overlay's plan for a hover tile. */
   placementPlan: (
@@ -239,6 +241,26 @@ describe("E11 the game boots", () => {
     (sheet.querySelector("[data-gfx=\"miniature\"]") as HTMLButtonElement).click();
     expect(JSON.parse(localStorage.getItem("hexmatch:graphics")!))
       .toMatchObject({ miniature: true });
+    // PERF-01: the performance toggle, clicked the same way, runs the full
+    // game wiring — the store, the suppressed miniature row and the
+    // renderer's flat policy — without touching the match.
+    const perfSwitch = sheet.querySelector("[data-gfx=\"performance\"]") as HTMLButtonElement;
+    perfSwitch.click();
+    expect(JSON.parse(localStorage.getItem("hexmatch:graphics")!))
+      .toMatchObject({ performance: true, miniature: true });
+    const miniSwitch = sheet.querySelector("[data-gfx=\"miniature\"]") as HTMLButtonElement;
+    expect(miniSwitch.disabled).toBe(true);                 // suppressed…
+    expect(miniSwitch.getAttribute("aria-checked")).toBe("true"); // …not forgotten
+    // wait for the boot chain to have attached the renderer to the debug
+    // console (the boot IIFE finishes a few microtasks after `boot()`)
+    for (let i = 0; i < 400 && !(hook().rendering?.()); i++) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    expect(hook().rendering?.()).toMatchObject({ terrain: expect.objectContaining({ performance: true, animated: false }) });
+    perfSwitch.click();
+    expect(miniSwitch.disabled).toBe(false);
+    await settle();
+    expect(hook().rendering?.()).toMatchObject({ terrain: expect.objectContaining({ performance: false, animated: true }) });
     (sheet.querySelector(".big-btn") as HTMLButtonElement).click();
     expect(root.querySelector(".settings-sheet")).toBeNull();
     localStorage.removeItem("hexmatch:graphics");
