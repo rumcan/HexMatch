@@ -1132,7 +1132,44 @@ html, body, #root {
    a CSS transform of any kind would yank the selected token to the board's
    origin. The lift is drawn on the face instead. */
 .gem.sel .face.sprite, .gem.selected .face.sprite { filter: drop-shadow(0 0 9px rgba(255, 217, 138, .9)) drop-shadow(0 3px 4px rgba(0, 0, 0, .6)); }
-.gem.gone { transition-duration: var(--gem-clear-ms, 95ms); transform: scale(.1) rotate(40deg) !important; opacity: 0; }
+/* #162: the tap selection breathes — a slow scale pulse over the brass ring,
+   so the held gem is unmistakable even in peripheral vision. */
+.gem.sel:not(.dragging), .gem.selected:not(.dragging) { animation: selPulse 1.6s ease-in-out infinite; }
+@keyframes selPulse {
+  0%, 100% { scale: 1; }
+  50%      { scale: 1.06; }
+}
+/* #162: the selection's legal answers — every open neighbour glows faintly. */
+.gem.neighbor .face { outline: 1.5px dashed rgba(255, 255, 255, .55); outline-offset: 2px; }
+.gem.neighbor .face.sprite { outline: none; filter: drop-shadow(0 0 5px rgba(255, 255, 255, .55)) drop-shadow(0 2px 3px rgba(0, 0, 0, .5)); }
+/* #162: the idle hint — one valid pair wiggles gently until touched. */
+.gem.hint { animation: hintWiggle .8s ease-in-out 2; z-index: 3; }
+.gem.hint .face { outline: 2px solid var(--gold2); outline-offset: 1px; }
+.gem.hint .face.sprite { outline: none; filter: drop-shadow(0 0 8px rgba(255, 217, 138, .9)) drop-shadow(0 2px 3px rgba(0, 0, 0, .5)); }
+@keyframes hintWiggle {
+  0%, 100% { scale: 1; rotate: 0deg; }
+  25%      { scale: 1.1; rotate: -5deg; }
+  75%      { scale: 1.1; rotate: 5deg; }
+}
+/* #162: the invalid-swap verdict — a short lateral shake after the bounce. */
+.gem.shake { animation: gemShake 260ms ease-out; }
+@keyframes gemShake {
+  0%, 100% { translate: 0px 0px; }
+  20%      { translate: -8px 0px; }
+  45%      { translate: 7px 0px; }
+  70%      { translate: -4px 0px; }
+  88%      { translate: 2px 0px; }
+}
+/* #162: clears POP in place — swell and dissolve on the cell, never a slide
+   to the board's corner (the old `transform !important` overrode the cell
+   position, so every cleared gem flew to the grid origin while shrinking). */
+.gem.gone {
+  transition:
+    scale var(--gem-clear-ms, 95ms) ease-out,
+    opacity var(--gem-clear-ms, 95ms) ease-out;
+  scale: 1.35;
+  opacity: 0;
+}
 
 /* ── Issue #152: turbo catch-up remnants ─────────────────────────────────
    While the player is ahead of the board (`.ui-root.turbo`, set by the
@@ -1171,13 +1208,28 @@ html, body, #root {
    whisper of lag. Yielding: the neighbour leans out of the way. Settle: a
    small decaying wobble on `rotate` — its own property, so it never touches
    the cell `transform` or the glide `translate`. */
-.gem.dragging { z-index: 5; cursor: grabbing; scale: 1.07; }
+.gem.dragging { z-index: 5; cursor: grabbing; scale: 1.1; }
 .gem.dragging .face.sprite { filter: drop-shadow(0 0 8px rgba(255, 217, 138, .5)) drop-shadow(0 7px 7px rgba(0, 0, 0, .55)); }
+/* #162: the yielding neighbour IS the previewed target — it glows white-hot
+   while the hand holds it, so the release can never be a surprise. */
 .gem.yielding { z-index: 4; }
+.gem.yielding .face { outline: 2px solid #fff; outline-offset: 1px; box-shadow: 0 0 14px rgba(255, 255, 255, .75); }
+.gem.yielding .face.sprite { outline: none; box-shadow: none; filter: drop-shadow(0 0 8px rgba(255, 255, 255, .9)) drop-shadow(0 2px 3px rgba(0, 0, 0, .5)); }
 /* Release: ease from where the hand left the gem into its cell. */
 .gem.gliding {
   transition:
     transform var(--gem-move-ms, 80ms) cubic-bezier(.4,1.3,.5,1),
+    translate var(--gem-move-ms, 80ms) cubic-bezier(.22,.9,.3,1.12),
+    scale .16s ease-out,
+    opacity var(--gem-clear-ms, 95ms);
+}
+/* #162: gravity — refills and fallen gems accelerate home and land with a
+   small bounce. Duration is per-gem (`--fall-ms`, scaled by drop distance,
+   capped at the board's own fall wait); the `translate` arm keeps a release
+   glide working if a fall ever overlaps one. */
+.gem.falling {
+  transition:
+    transform var(--fall-ms, 105ms) cubic-bezier(.45,.05,.35,1.12),
     translate var(--gem-move-ms, 80ms) cubic-bezier(.22,.9,.3,1.12),
     scale .16s ease-out,
     opacity var(--gem-clear-ms, 95ms);
@@ -1193,6 +1245,10 @@ html, body, #root {
 @media (prefers-reduced-motion: reduce) {
   .gem.settle { animation: none; }
   .gem.dragging { scale: 1; }
+  /* #162: no pulse, no wiggle, no shake — the static outlines stay, the
+     motion goes; clears fade without swelling. */
+  .gem.sel, .gem.selected, .gem.hint, .gem.shake { animation: none; }
+  .gem.gone { scale: 1; }
 }
 
 .gem.token .face {
@@ -1358,96 +1414,157 @@ html, body, #root {
   60%  { transform: translate(-50%,-105%) scale(1); opacity: 1; }
   100% { transform: translate(-50%,-185%) scale(1.04); opacity: 0; }
 }
-/* PP-14: the bounty chooser for a HOLY CROSS — five cargo buttons, each
-   worth +4 of its colour. The panel fades in over the board and waits for
-   the click; the keyframes END fully visible, so prefers-reduced-motion's
-   animation collapse leaves it readable. */
-.cross-pick {
-  position: absolute; left: 50%; top: 46%;
-  transform: translate(-50%, -50%);
-  z-index: 30;
-  display: flex; flex-direction: column; align-items: center; gap: 7px;
-  padding: 12px 16px 14px;
-  background: linear-gradient(180deg, #1d2a38, #0f1620);
-  border: 1px solid var(--gold2);
-  border-radius: 12px;
-  box-shadow: 0 0 22px rgba(255, 205, 90, .35), 0 10px 30px rgba(0, 0, 0, .6);
-  animation: crosspickin .28s ease-out;
+/* PP-14 / #185: the bounty chooser for a HOLY CROSS — five cargo tiles, each
+   worth +4 of its colour. The plate is now the house plate: it wears the
+   shared `.panel` treatment (felt, glass gradient, brass keyline, `--r`)
+   exactly like the Bank, Market and build panels, and it rides a light dim
+   over the board — `.modal-back`'s idea, sized to the board rather than the
+   window. The dim eats clicks aimed at the (paused) board and carries no
+   handler, so outside clicks still cannot dismiss the panel. The one-off
+   blue-slate gradient, its halo, and its emoji are gone; the title is a
+   ledger kicker over an engraved display-face name sealed with the house
+   stroke cross, the confirm is the dialog `.big-btn`, and Holy vs Broken
+   differ by the state of one metal, not by a second palette. The keyframes
+   END fully visible, so prefers-reduced-motion's blanket animation collapse
+   leaves the panel readable. */
+.cross-pick-back {
+  position: absolute; inset: 0; z-index: 30;
+  display: grid; place-items: center;
+  padding: 6px;
+  border-radius: inherit;
+  background: radial-gradient(120% 95% at 50% 42%, rgba(4, 3, 2, .58), rgba(4, 3, 2, .82));
   pointer-events: auto;
+  animation: crosspickdim .22s ease-out;
 }
-.cross-pick-title {
-  font-family: var(--serif); font-weight: 800; font-size: 19px;
-  letter-spacing: 3px; text-transform: uppercase; color: var(--gold2);
-  text-shadow: 0 0 14px var(--gold), 0 2px 0 #000;
+.cross-pick {
+  /* the kind's metal: Holy burns lamp gold; Broken is the same brass,
+     tarnished. Everything accent-coloured reads these three variables. */
+  --pick-metal: var(--brass);
+  --pick-lit:   var(--brass-hi);
+  --pick-glow:  rgba(255, 176, 46, .45);
+  position: relative;
+  display: flex; flex-direction: column; align-items: center; gap: 7px;
+  width: max-content; max-width: 100%;
+  animation: crosspickin .28s ease-out;
 }
-/* PP-14b: the broken holy cross reads dimmer and cooler than the holy one —
-   a cracked ✝, not a golden blessing. */
+/* `.panel` owns the plate's face (felt, glass, brass, shadow); the chooser
+   only sets its own footing — `(0,2,0)` so a later phone-width `.panel` rule
+   can't steal the padding back. */
+.cross-pick.panel { padding: 12px 16px 14px; }
 .cross-pick.broken {
-  border-color: #7e93ad;
-  box-shadow: 0 0 18px rgba(150, 180, 210, .3), 0 10px 30px rgba(0, 0, 0, .6);
+  --pick-metal: #9a875f;               /* tarnished brass, not a blue theme */
+  --pick-lit:   #cdbb92;
+  --pick-glow:  rgba(180, 150, 96, .16);
 }
-.cross-pick.broken .cross-pick-title {
-  color: #c3d3e4;
-  text-shadow: 0 0 12px rgba(150, 180, 210, .8), 0 2px 0 #000;
+.cross-pick-head { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+/* the kicker: `.panel-title`'s small-caps stamp, centred between hairlines */
+.cross-pick-kicker {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--serif); font-weight: 600; font-size: 9.5px;
+  letter-spacing: 3.4px; text-transform: uppercase; color: var(--txt-mute);
+}
+.cross-pick-kicker::before, .cross-pick-kicker::after {
+  content: ""; width: 20px; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--brass-lo));
+}
+.cross-pick-kicker::after { background: linear-gradient(90deg, var(--brass-lo), transparent); }
+/* the name is engraved like a modal title — display face, carved lip — and
+   sealed with the house stroke cross (src/game/hud-icons.ts) */
+.cross-pick-title {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--display); font-weight: 700; font-size: 16px;
+  letter-spacing: 2.6px; text-transform: uppercase; color: var(--pick-lit);
+  text-shadow: 0 -1px 0 rgba(0, 0, 0, .9), 0 1px 0 rgba(242, 220, 166, .12), 0 0 18px var(--pick-glow);
+}
+.cross-pick-title .hud-ic {
+  width: 20px; height: 20px; margin: 0; color: var(--gold);
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .8)) drop-shadow(0 0 7px var(--pick-glow));
+}
+.cross-pick.broken .cross-pick-title .hud-ic { color: var(--txt-dim); filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .8)); }
+/* the chip-out only exists for the broken kind: the plate's iron cut across
+   the engraving's beam */
+.cross-pick-title .ic-chip { opacity: 0; }
+.cross-pick.broken .cross-pick-title .ic-chip {
+  opacity: 1; stroke: #120d09; stroke-width: 3.4; stroke-linecap: butt;
 }
 .cross-pick-sub {
-  font-size: 11px; letter-spacing: 2px; text-transform: uppercase;
-  color: #9fb3c8;
+  font-family: var(--serif); font-size: 11px; letter-spacing: 1.6px;
+  text-transform: uppercase; color: var(--txt-dim);
 }
-.cross-pick-row { display: flex; gap: 8px; }
+.cross-pick-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+/* the tiles are the purse's chips struck one size up (see `.chip` /
+   `.chip-ic`): struck iron, brass keyline, the painted cargo token — the
+   candy gradients are gone. A hairline of the cargo's own assay keeps the
+   colours legible at a glance. */
 .cross-pick-btn {
   position: relative;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 1px; width: 56px; height: 58px;
-  border: 1px solid rgba(255, 255, 255, .25); border-radius: 10px;
-  background: linear-gradient(160deg, var(--c1), var(--c2));
-  cursor: pointer; color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, .55);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), 0 3px 8px rgba(0, 0, 0, .45);
-  transition: transform .08s ease, filter .08s ease, box-shadow .12s ease;
+  gap: 2px; width: 56px; height: 58px;
+  border: 1px solid var(--brass-lo); border-radius: var(--r);
+  background: linear-gradient(180deg, rgba(56, 42, 26, .8), rgba(12, 9, 6, .92));
+  cursor: pointer; color: var(--txt-dim);
+  box-shadow: inset 0 1px 0 rgba(242, 220, 166, .14), inset 0 0 12px rgba(0, 0, 0, .5), 0 4px 12px rgba(0, 0, 0, .45);
+  transition: transform .08s ease, color .12s ease, border-color .12s ease, box-shadow .12s ease;
 }
-.cross-pick-btn i { font-style: normal; font-size: 24px; line-height: 1; }
-.cross-pick-btn span { font-size: 12px; font-weight: 800; letter-spacing: 1px; }
-.cross-pick-btn:hover { transform: translateY(-2px) scale(1.06); filter: brightness(1.12); }
+.cross-pick-btn::before {
+  content: ""; position: absolute; left: 7px; right: 7px; bottom: 4px; height: 2px; border-radius: 1px;
+  background: linear-gradient(90deg, transparent, var(--c1) 30%, var(--c2) 70%, transparent);
+  opacity: .5; transition: opacity .12s ease;
+}
+.cross-pick-btn span {
+  font-family: var(--serif); font-size: 10.5px; font-weight: 700; letter-spacing: 1.4px;
+  text-shadow: 0 1px 0 #000;
+}
+.cross-pick-btn:hover { transform: translateY(-2px); border-color: var(--brass); color: var(--txt); }
+.cross-pick-btn:hover::before { opacity: .85; }
 .cross-pick-btn:active { transform: scale(.96); }
-/* PP-14: each spent bounty wears a golden ring, and the badge counts how many
-   units went to that cargo (×2 wood, etc.) — tap again to take one back. */
+/* PP-14: each spent bounty wears the plate's brass ring, and the badge counts
+   how many units went to that cargo (×2 wood, etc.) — tap again to take one
+   back. The medallion is the gem badge's own recipe, not a pill. */
 .cross-pick-btn.sel {
-  transform: translateY(-2px) scale(1.05);
-  border-color: var(--gold2);
-  box-shadow: 0 0 0 2px var(--gold2), 0 0 16px var(--gold), 0 4px 10px rgba(0, 0, 0, .5);
-  filter: brightness(1.1);
+  transform: translateY(-2px);
+  color: var(--txt);
+  border-color: var(--pick-metal);
+  box-shadow:
+    0 0 0 2px var(--pick-metal),
+    inset 0 1px 0 rgba(242, 220, 166, .26),
+    inset 0 0 14px -4px var(--pick-glow),
+    0 4px 10px rgba(0, 0, 0, .5);
 }
+.cross-pick-btn.sel::before { opacity: 1; }
 .cross-pick-btn.sel::after {
   content: "×" attr(data-n);
   position: absolute; top: -7px; right: -7px;
-  min-width: 18px; height: 18px; padding: 0 3px; border-radius: 9px;
-  background: var(--gold2); color: #3a2400;
-  font-size: 11px; font-weight: 900; line-height: 18px; text-align: center;
-  box-shadow: 0 0 8px var(--gold);
+  min-width: 18px; height: 18px; padding: 0 3px; border-radius: 2px;
+  background: linear-gradient(180deg, var(--brass-hi), var(--brass) 60%, var(--brass-lo));
+  color: #14100b; font-family: var(--serif); font-size: 11px; font-weight: 700;
+  line-height: 18px; text-align: center;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .7), inset 0 1px 0 rgba(255, 255, 255, .5);
 }
+.cross-pick.broken .cross-pick-btn.sel::after {
+  background: linear-gradient(180deg, var(--brass-hi), #8f7a4e 60%, var(--brass-lo));
+}
+/* the counter is the dialog's standard secondary line (see `.modal .sub`) */
 .cross-pick-count {
-  font-size: 12px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase;
-  color: var(--gold2); text-shadow: 0 1px 2px #000;
+  font-family: var(--serif); font-size: 11.5px; font-weight: 500; letter-spacing: 1.6px;
+  text-transform: uppercase; color: var(--txt-dim);
 }
-.cross-pick-confirm {
-  font-family: var(--serif); font-weight: 800; font-size: 15px;
-  letter-spacing: 2px; text-transform: uppercase;
-  padding: 8px 26px; border-radius: 10px; cursor: pointer;
-  color: #3a2400;
-  background: linear-gradient(180deg, #ffe9a8, var(--gold2));
-  border: 1px solid #fff3c8;
-  box-shadow: 0 0 16px rgba(255, 205, 90, .45), inset 0 1px 0 rgba(255, 255, 255, .6);
-  transition: transform .08s ease, filter .08s ease;
+/* #185: the confirm is the game's primary action button — `big-btn` rides in
+   the markup (brass wash over iron, and its own disabled/grayscale state);
+   only its footing inside the plate belongs to the chooser. */
+/* scoped `(0,2,0)` because `.big-btn` sits later in the sheet: the plate's
+   own spacing wins over the dialog default, the dialog keeps the rest. */
+.cross-pick .cross-pick-confirm {
+  margin: 2px 0 0; padding: 8px 26px; min-height: 40px;
+  letter-spacing: 2.6px;
 }
-.cross-pick-confirm:disabled {
-  cursor: default; filter: grayscale(.9) brightness(.7);
-  color: #8d94a0; box-shadow: none;
-}
-.cross-pick-confirm:not(:disabled):hover { transform: translateY(-1px); filter: brightness(1.08); }
-.cross-pick-confirm:not(:disabled):active { transform: scale(.97); }
 @keyframes crosspickin {
-  from { opacity: 0; transform: translate(-50%, -50%) scale(.7); }
-  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  from { opacity: 0; transform: translateY(6px) scale(.94); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes crosspickdim {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 /* A1: `.fx-combo` is the cascade tier (COMBO x2 / CHAIN x3!!) — same float as
    a plain callout, hotter and larger so a two-deep cascade reads louder than
@@ -2623,6 +2740,94 @@ html, body, #root {
   color: var(--txt-dim); font-family: var(--mono);
 }
 .seat.filled .seat-status { color: var(--good); }
+
+/* ── #186: the host's Game settings ─────────────────────────────────────────
+   One felt card under the seat list, in the same idiom as the seat rows: a
+   brass keyline on the left of anything that is a SETTING, dimmed brass for
+   anything that is only a label. The panel is the host's to move and the
+   guest's to read, so a guest gets the identical card with every group
+   disabled — same words, no dials that lie about being turnable. */
+.match-settings {
+  margin: 12px 0 4px; padding: 12px 12px 10px; text-align: left;
+  border: 1px solid var(--brass-lo, var(--line));
+  border-top: 2px solid var(--brass, #c9a24a);
+  border-radius: var(--r);
+  background: linear-gradient(180deg, rgba(38, 28, 18, .55), rgba(10, 7, 5, .82));
+  box-shadow: inset 0 1px 0 rgba(242, 220, 166, .12);
+}
+.match-settings.locked { opacity: .82; }
+.ms-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.ms-head h2 {
+  margin: 0; font: 700 11px var(--mono); letter-spacing: 2px; text-transform: uppercase;
+  color: var(--gold2, #e9a83e);
+}
+.ms-head .ms-reset { min-height: 0; padding: 4px 9px; font-size: 10px; letter-spacing: 1px; }
+.ms-group {
+  margin: 10px 0 0; padding: 8px 0 0; border: 0; border-top: 1px solid rgba(201, 162, 74, .22);
+}
+.ms-group legend {
+  padding: 0 6px 0 0; font: 600 10px var(--mono); letter-spacing: 1.6px;
+  text-transform: uppercase; color: var(--txt-dim);
+}
+.ms-group:disabled { opacity: .6; }
+.ms-group:disabled legend { color: var(--txt-dim); }
+
+/* seats: the same place setting as `.seat`, with the machine's controls on it */
+.ms-seats { display: flex; flex-direction: column; gap: 4px; }
+.ms-seat {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 9px; font-size: 12px; color: var(--txt);
+  background: linear-gradient(180deg, rgba(30, 22, 15, .6), rgba(8, 6, 4, .8));
+  border: 1px solid transparent; border-left: 3px solid var(--line);
+  border-radius: var(--r); font-family: var(--serif); letter-spacing: .8px;
+}
+.ms-swatch { width: 10px; height: 10px; border-radius: 50%; box-shadow: 0 0 8px -1px currentColor; flex: 0 0 auto; }
+.ms-seat-name { font-weight: 600; }
+.ms-badge {
+  font: 600 9px var(--mono); letter-spacing: 1.2px; text-transform: uppercase;
+  padding: 2px 6px; border-radius: 2px; border: 1px solid currentColor;
+}
+.ms-badge.human { color: var(--good, #8fd39a); }
+.ms-badge.ai { color: var(--gold2, #e9a83e); }
+.ms-seat .ms-skill { margin-left: auto; }
+.ms-skill {
+  min-height: 0; padding: 3px 6px; font: 600 10px var(--mono); letter-spacing: 1px;
+  color: var(--txt, #efe4d0); background: #181512;
+  border: 1px solid var(--line, #594b3b); border-radius: 2px;
+}
+.ms-remove { min-height: 0; padding: 3px 7px; font-size: 10px; line-height: 1; }
+.ms-add { margin-top: 6px; width: 100%; min-height: 34px; font-size: 11px; }
+.ms-hint { margin: 6px 0 0; font-size: 10px; color: var(--txt-dim); font-family: var(--mono); }
+
+/* the two dials: preset keys first, a stepper behind them */
+.ms-presets { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
+.ms-preset {
+  flex: 1 1 auto; min-height: 34px; padding: 5px 8px;
+  display: flex; flex-direction: column; align-items: center; gap: 1px;
+  font-size: 11px; letter-spacing: .8px;
+}
+.ms-preset small { font: 500 9px var(--mono); letter-spacing: 1px; color: var(--txt-dim); }
+.ms-preset.on {
+  color: #1b130b; border-color: var(--gold2, #e9a83e);
+  background: var(--gold2, #e9a83e);
+}
+.ms-preset.on small { color: rgba(27, 19, 11, .75); }
+.ms-stepper {
+  display: flex; align-items: center; gap: 7px; margin-top: 8px;
+  font: 500 10px var(--mono); letter-spacing: 1px; color: var(--txt-mute);
+}
+.ms-stepper input {
+  width: 64px; margin: 0; padding: 5px 7px; text-align: center;
+  font: 600 12px var(--mono); color: var(--txt, #efe4d0); background: #181512;
+  border: 1px solid var(--line, #594b3b);
+}
+.ms-purse { margin: 8px 0 0; font: 500 10px var(--mono); letter-spacing: .8px; color: var(--txt-mute); }
+.ms-summary {
+  margin: 10px 0 0; padding-top: 8px; border-top: 1px solid rgba(201, 162, 74, .22);
+  font: 600 11px var(--serif); letter-spacing: .6px; color: var(--txt, #efe4d0);
+}
+.ms-note { margin: 5px 0 0; font-size: 10px; color: var(--txt-dim); font-family: var(--mono); }
+
 /* Native disabled states prevent activation by pointer and keyboard. */
 .build-btn:disabled, .sab-btn:disabled, .post-btn:disabled, .mini:disabled {
   filter: grayscale(.8) brightness(.8); opacity: .42; cursor: not-allowed;
@@ -3121,6 +3326,93 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .start-panel input { box-sizing: border-box; width: 100%; margin: 10px 0 14px; padding: 12px; border: 1px solid var(--line, #594b3b); color: var(--txt, #efe4d0); background: #181512; outline: none; }
 .start-panel input:focus { border-color: var(--gold2, #e9a83e); }
 .start-panel button:disabled { opacity: .4; cursor: not-allowed; }
+
+/* Issue 184 — two-column desktop mode menu.
+   The play/start screen was a narrow 440px column, tall enough to push The
+   ladder and Back to the menu below the fold at 1432x936. The wider card is
+   a two-column grid: manager and rating on the left, every play action on
+   the right, so all primary actions fit without scrolling at desktop sizes.
+   Same industrial plate, same handlers — only the seating plan changes.
+   DOM order matches visual order (left then right) for keyboard users. */
+.start-panel.start-modes {
+  width: min(980px, 100%);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 28px;
+  align-items: start;
+  text-align: left;
+  padding: 28px 32px;
+}
+.start-modes-info { min-width: 0; display: flex; flex-direction: column; }
+.start-panel.start-modes .start-kicker { margin: 0 0 10px; }
+.start-panel.start-modes h1 {
+  font-size: clamp(22px, 2.6vw, 30px);
+  line-height: 1.15;
+  letter-spacing: .5px;
+  overflow-wrap: break-word;
+  text-wrap: balance;
+}
+.start-panel.start-modes .start-subtitle { margin: 8px 0 14px; max-width: none; overflow-wrap: break-word; }
+.start-panel.start-modes .portrait-picker { margin: 0 0 14px; }
+.start-panel.start-modes .portrait-options { justify-content: flex-start; }
+.start-panel.start-modes .portrait-face { width: 56px; height: 56px; }
+.start-panel.start-modes .rank-block { margin: 0; }
+.start-panel.start-modes .rank-block-note { margin: 8px 0 0; }
+.start-panel.start-modes .start-actions { gap: 8px; min-width: 0; }
+.start-panel.start-modes .start-actions button {
+  min-height: 40px;
+  padding: 7px 14px;
+  overflow-wrap: break-word;
+}
+.start-panel.start-modes .rank-search { margin-top: 0; }
+.start-panel.start-modes .start-actions .rank-search-opt { min-height: 38px; }
+.start-panel.start-modes .start-back { margin-top: 0; }
+
+/* Height-aware compaction for shorter desktop windows and the RUN wrapper:
+   the game iframe is shorter than the browser window, so shed padding and
+   control height before anything reaches the fold. No transform scaling. */
+@media (min-width: 761px) and (max-height: 800px) {
+  .start-panel.start-modes { padding: 22px 28px; gap: 22px; }
+  .start-panel.start-modes h1 { font-size: 26px; }
+  .start-panel.start-modes .start-subtitle { margin: 6px 0 12px; }
+  .start-panel.start-modes .portrait-picker { margin-bottom: 12px; }
+  .start-panel.start-modes .portrait-face { width: 52px; height: 52px; }
+  .start-panel.start-modes .start-actions { gap: 7px; }
+  .start-panel.start-modes .start-actions button { min-height: 38px; padding: 6px 12px; }
+  .start-panel.start-modes .start-actions .rank-search-opt { min-height: 36px; }
+}
+@media (min-width: 761px) and (max-height: 680px) {
+  .start-panel.start-modes { padding: 18px 24px; gap: 18px; }
+  .start-panel.start-modes .start-kicker { margin-bottom: 8px; }
+  .start-panel.start-modes h1 { font-size: 24px; }
+  .start-panel.start-modes .start-subtitle { font-size: 12.5px; }
+  .start-panel.start-modes .portrait-face { width: 48px; height: 48px; }
+  .start-panel.start-modes .start-actions { gap: 6px; }
+  .start-panel.start-modes .start-actions button { min-height: 36px; }
+  .start-panel.start-modes .start-actions .rank-search-opt { min-height: 34px; }
+}
+/* Mid-width desktops: keep both columns, just seat them closer together. */
+@media (min-width: 761px) and (max-width: 900px) {
+  .start-panel.start-modes { gap: 20px; padding: 24px; }
+}
+/* Narrow screens keep the single-column menu; the mobile pass owns it. */
+@media (max-width: 760px) {
+  .start-panel.start-modes {
+    grid-template-columns: 1fr;
+    width: min(440px, 100%);
+    text-align: center;
+    padding: 26px 20px;
+    gap: 16px;
+  }
+  .start-panel.start-modes .start-subtitle { margin: 8px auto 0; max-width: 330px; }
+  .start-panel.start-modes .portrait-picker { margin: 14px 0 0; }
+  .start-panel.start-modes .portrait-options { justify-content: center; }
+  .start-panel.start-modes .portrait-face { width: 64px; height: 64px; }
+  .start-panel.start-modes .rank-block { margin: 14px 0 0; }
+  .start-panel.start-modes .start-actions button { min-height: 44px; }
+  .start-panel.start-modes .start-actions .rank-search-opt { min-height: 40px; }
+  .start-panel.start-modes .start-back { margin-top: 4px; }
+}
 
 /* ═══════════════════════════════════════════════════════════════════
    RANK-01 (#147) — the rating, and the badge that names it.
@@ -4073,6 +4365,21 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   .ui-root[data-phone="1"][data-view="trade"] .toasts {
     top: calc(var(--safe-top) + 52px);
   }
+
+  /* #185: the blessing plate shrinks with the board it crowns — the row
+     wraps before the plate ever clips, the tiles and the confirm stay at
+     thumb size (≥44px), and `.big-btn`'s own phone rule runs the plate's
+     edge to edge. */
+  .cross-pick-back { padding: 4px; }
+  .cross-pick { gap: 5px; }
+  .cross-pick.panel { padding: 9px 10px 11px; }
+  .cross-pick-title { font-size: 13.5px; letter-spacing: 2px; }
+  .cross-pick-title .hud-ic { width: 16px; height: 16px; }
+  .cross-pick-sub, .cross-pick-count { font-size: 10px; letter-spacing: 1px; }
+  .cross-pick-row { gap: 6px; }
+  .cross-pick-btn { width: 46px; height: 50px; }
+  .cross-pick-btn .cargo-ic-lg { width: 24px; height: 24px; }
+  .cross-pick .cross-pick-confirm { min-height: 44px; padding: 7px 18px; font-size: 12px; }
 }
 
 /* portrait phones: the bar becomes TWO rows of smaller displays instead of

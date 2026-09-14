@@ -6,6 +6,7 @@
 //
 //   Dirt Road tile paved into a Road (in place)   +0.25★   (4 paves = 1★)
 //   Processing plant raised after setup           +1★
+//   Rail platform                                  +1★  (Railways v1)
 //   First to 10★ wins (the line visited 20★ under AI-02 and came back)
 //
 // What is deliberately worth nothing:
@@ -88,7 +89,6 @@ export interface PlantLedger {
   townId: number | null;
   no: number;
 }
-
 /**
  * RAIL-02 (#176): a railway platform, as the scoreboard sees it. The railway
  * owns the structures; this module only needs to know one stands somewhere and

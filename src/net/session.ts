@@ -33,7 +33,14 @@
 //                          instead of quietly drifting. Deltas that arrive
 //                          while a snapshot is in flight are BUFFERED, because
 //                          applying them to a half-known world is the desync
-//                          this whole file exists to prevent.
+//                          this whole file exists to prevent. A duplicate of a
+//                          delta already applied is NOT drift and is ignored.
+//   resync retry           #131: an ask the throttle swallowed, or an ask whose
+//                          answer was lost, used to leave the guest suspect
+//                          forever — frozen mid-match with a growing backlog and
+//                          nothing left to try. A guest awaiting state now keeps
+//                          a retry armed until the world lands (or the session
+//                          halts/disposes, which cancels it).
 //   connection state       A reconnect is exactly when a guest must resync —
 //                          the SDK re-attaches the socket but replays nothing.
 //
@@ -54,6 +61,7 @@ import {
   type DeltaMsg,
   type HexProtocol,
   type IntentMsg,
+  type MatchSettings,
   type PlayerRatingMsg,
   type RankWire,
   type ResultClaimMsg,
@@ -62,6 +70,11 @@ import {
   type SnapshotChunkMsg,
   type WelcomeMsg,
 } from "./protocol";
+import {
+  defaultMatchSettings,
+  matchSettingsEqual,
+  readMatchSettings,
+} from "./match-settings";
 import { applyTrackDelta, buildPublish, type PublishFields } from "./delta";
 import {
   rankBoardFrom,
@@ -78,8 +91,26 @@ import type { ConnectionState, HexRoom } from "./transport";
 /** What a client is. `solo` never constructs a session at all. */
 export type NetRole = "solo" | "host" | "guest";
 
-/** How long a full-state transfer may be reused before a new one is minted. */
-const RESYNC_MIN_INTERVAL_MS = 400;
+/**
+ * How long a full-state transfer may be reused before a new one is minted.
+ * Exported because the recovery tests (#131) assert the ask stays inside this
+ * rate limit rather than hard-coding a magic number of their own.
+ */
+export const RESYNC_MIN_INTERVAL_MS = 400;
+
+/**
+ * #131: how long a guest that is STILL awaiting full state waits before asking
+ * again. A throttled ask used to be a dropped ask — the world was marked
+ * suspect, every later delta queued behind a snapshot nobody was coming to
+ * deliver, and the guest sat frozen with a full backlog and no way out except
+ * a page reload. The retry is what makes recovery automatic; the backoff
+ * (`RESYNC_RETRY_MAX_MS`) keeps a guest whose host has gone quiet from
+ * hammering the relay.
+ */
+export const RESYNC_RETRY_MS = 500;
+
+/** #131: the retry backoff's ceiling — one ask every 4 s at worst. */
+export const RESYNC_RETRY_MAX_MS = 4_000;
 
 /** Two full-state publishes closer than this are the same event (the room
  *  welcomes a joiner AND the joiner asks for a resync — one snapshot answers
@@ -109,6 +140,16 @@ export interface NetInfo {
    * computed from exactly this board.
    */
   ratings: RankWire[];
+  /**
+   * #186: the rules this room plays by — the ★ line, the opening purse and the
+   * AI seats. Carried on the info (rather than read off a side channel)
+   * because it is wire state that must survive the lobby → match handover:
+   * `startIsoGame` reads the room's ★ line and purse from exactly this.
+   *
+   * Defaults until the room says otherwise, never absent — a reader that had
+   * to ask "did the settings arrive yet" would race the welcome.
+   */
+  settings: MatchSettings;
 }
 
 /** The game's end of the session — all optional, all called synchronously. */
@@ -138,6 +179,13 @@ export interface NetHooks {
    * thing the rating arithmetic is ever fed.
    */
   result?: (msg: ResultMsg) => void;
+  /**
+   * #186: the room's rules changed — the host moved a dial and the echo came
+   * back, or a welcome carried rules this client had not seen. Fires for BOTH
+   * seats: the host reads it as confirmation of what the room accepted, the
+   * guest as the read-only view of what it is about to play.
+   */
+  settings?: (settings: MatchSettings) => void;
   /** Connection state changed. */
   status?: (state: ConnectionState) => void;
   /**
@@ -180,6 +228,19 @@ export class NetSession {
   private transferId = 0;
   private lastResyncAt = -Infinity;
   private lastFullAt = -Infinity;
+  /**
+   * #131: the guest's outstanding "I am still waiting for full state" retry —
+   * null whenever nothing is armed. `resyncRetryAt` is the wall-clock deadline
+   * it was armed for, so an earlier need can pull a later retry forward
+   * instead of stacking a second timer. `resyncBackoff` doubles each unanswered
+   * ask (capped) and resets the moment a transfer makes progress.
+   */
+  private resyncTimer: ReturnType<typeof setTimeout> | null = null;
+  private resyncRetryAt = Infinity;
+  private resyncWhy: string | null = null;
+  private resyncBackoff = 0;
+  /** When a snapshot frame last arrived — a transfer in motion is left alone. */
+  private lastChunkAt = -Infinity;
   private noticeValue: string | null = null;
   private halted = false;
   private attached = false;
@@ -189,6 +250,13 @@ export class NetSession {
    * same session object is handed to `startIsoGame`.
    */
   private ratingsValue: RankWire[] = [];
+  /**
+   * #186: the room's rules, as the room last stated them. Defaults until a
+   * welcome or a `settings` echo says otherwise — a seat that has not been
+   * told plays the shipped game, which is exactly what "defaults unchanged"
+   * means for a room nobody customised.
+   */
+  private settingsValue: MatchSettings = defaultMatchSettings();
   /** This session's join nonce — what authorises its rating publications. */
   private readonly token: string = makeJoinToken();
   /** #121: `dispose()` releases the room exactly once, however often it runs. */
@@ -233,6 +301,10 @@ export class NetSession {
   /** RANK-01: the same board keyed by player id, for the rating arithmetic. */
   get board(): RankBoard {
     return rankBoardFrom(this.ratingsValue);
+  }
+  /** #186: the room's rules, whole. Never null — defaults until told. */
+  get settings(): MatchSettings {
+    return this.settingsValue;
   }
   /** RANK-01: this session's join nonce (see `PlayerRatingMsg.joinToken`). */
   get joinToken(): string {
@@ -289,8 +361,14 @@ export class NetSession {
       onReconnected: () => {
         this.hooks.status?.("connected");
         // The socket replays nothing: whatever happened while it was down is
-        // exactly what a resync is for.
-        if (this.isGuest) this.requestResync("reconnected");
+        // exactly what a resync is for. Invalidate FIRST, so the world is
+        // `awaitingState` before the ask — a reconnect can strand a guest whose
+        // seq still looks fine, and an ask the throttle swallows is only
+        // retried while the guest is genuinely waiting (#131).
+        if (this.isGuest) {
+          this.lastSeqValue = -1;
+          this.requestResync("reconnected");
+        }
       },
       onError: () => this.hooks.status?.("disconnected"),
     });
@@ -309,6 +387,9 @@ export class NetSession {
     this.halted = true;
     this.queue = [];
     this.assembler.reset();
+    // #131: a halted session asks for nothing — the retry would keep knocking
+    // on a room the player has been told is over.
+    this.clearResyncRetry();
     this.hooks.reject?.(reason);
   }
 
@@ -334,6 +415,9 @@ export class NetSession {
     this.halted = true;
     this.queue = [];
     this.assembler.reset();
+    // #131: no timer of this session may outlive it — a retry firing after the
+    // game unmounted would send on a socket that has already been left.
+    this.clearResyncRetry();
     this.hooks = {};
     try { this.room.leave(); } catch { /* a socket already dead is not an error */ }
   }
@@ -356,6 +440,7 @@ export class NetSession {
     this.halted = true;
     this.queue = [];
     this.assembler.reset();
+    this.clearResyncRetry();                 // #131: nobody left to answer
     this.hooks.opponentLeft?.(gone?.username || null);
   }
 
@@ -377,20 +462,100 @@ export class NetSession {
    * exists for exactly one thing: `attach()` and the welcome both ask, and the
    * host should answer both with ONE transfer. It never blocks the state
    * machine (`onDelta` marks the world suspect itself), so a throttled ask can
-   * only delay a re-ask, never skip the resync.
+   * only DELAY a re-ask, never skip the resync — and #131 is the fix that makes
+   * that literal: a throttled ask now arms a retry for the rest of the window
+   * instead of being dropped on the floor.
+   *
+   * Returns true when a `resync` frame actually went out.
    */
   requestResync(why: string): boolean {
-    if (!this.isGuest || this.halted) return false;
+    if (!this.isGuest || this.halted || this.disposed) return false;
     const now = Date.now();
-    if (now - this.lastResyncAt < RESYNC_MIN_INTERVAL_MS) return false;
+    const since = now - this.lastResyncAt;
+    if (since < RESYNC_MIN_INTERVAL_MS) {
+      // Inside the throttle: keep the ask, retry when the window opens. Without
+      // this the guest is stuck — `onDelta` has already marked its world
+      // suspect, so every later delta queues behind a snapshot nobody asked for.
+      this.armResyncRetry(why, RESYNC_MIN_INTERVAL_MS - since);
+      return false;
+    }
     this.lastResyncAt = now;
+    this.clearResyncRetry();
     void why;
     // The world is suspect from here: `lastSeq < 0` queues every delta until
     // the snapshot lands, so nothing half-true can be applied on top of an old
     // map.
     this.lastSeqValue = -1;
     this.room.send({ type: "resync" });
+    // #131: the ask is out, but the answer can be lost exactly like the delta
+    // that caused the gap. Stay armed until the world lands. (A relay that
+    // delivers synchronously — the unit suite's room pair — has often answered
+    // already, in which case there is nothing left to wait for.)
+    if (this.awaitingState) this.armResyncRetry("resync unanswered", this.nextRetryDelay());
     return true;
+  }
+
+  /**
+   * #131: true while a guest has a resync retry armed — i.e. it is waiting for
+   * full state and WILL ask again on its own. Tests read this to prove recovery
+   * is the session's work and not theirs.
+   */
+  get resyncPending(): boolean {
+    return this.resyncTimer !== null;
+  }
+
+  /**
+   * Take the next unanswered-ask delay and step the backoff: `RESYNC_RETRY_MS`
+   * doubling to `RESYNC_RETRY_MAX_MS`. Only an ask that went out and was not
+   * answered consumes a step — `onChunk` / `applyFullState` reset it, so a
+   * guest that recovers starts the next wait at the short end again.
+   */
+  private nextRetryDelay(): number {
+    const delay = RESYNC_RETRY_MS * 2 ** this.resyncBackoff;
+    this.resyncBackoff = Math.min(this.resyncBackoff + 1, 16);
+    return Math.min(delay, RESYNC_RETRY_MAX_MS);
+  }
+
+  /**
+   * #131: arm (or pull forward) the one retry a waiting guest keeps. Never
+   * stacks timers, never fires on a session that has stopped, and `unref`s in
+   * Node so a retry cannot hold the process — or a vitest worker — open.
+   */
+  private armResyncRetry(why: string, delayMs: number): void {
+    if (!this.isGuest || this.halted || this.disposed) return;
+    const at = Date.now() + Math.max(0, delayMs);
+    // An earlier deadline already armed wins; a later one is not worth a reset.
+    if (this.resyncTimer !== null && at >= this.resyncRetryAt) return;
+    this.clearResyncRetry();
+    this.resyncWhy = why;
+    this.resyncRetryAt = at;
+    this.resyncTimer = setTimeout(() => this.onResyncRetry(), Math.max(0, at - Date.now()));
+    (this.resyncTimer as unknown as { unref?: () => void }).unref?.();
+  }
+
+  /** Cancel the retry — the world landed, or this session is over. */
+  private clearResyncRetry(): void {
+    if (this.resyncTimer !== null) clearTimeout(this.resyncTimer);
+    this.resyncTimer = null;
+    this.resyncRetryAt = Infinity;
+  }
+
+  /**
+   * #131: the retry firing. Re-ask if — and only if — the guest is still
+   * waiting. A transfer that is actively delivering frames is left to finish:
+   * re-asking mints a new transfer id, which abandons the half-received one and
+   * starts its ~15-frame walk over, so a slow link would never converge.
+   */
+  private onResyncRetry(): void {
+    this.resyncTimer = null;
+    this.resyncRetryAt = Infinity;
+    if (!this.isGuest || this.halted || this.disposed) return;
+    if (!this.awaitingState) return;                       // healed: nothing to do
+    if (this.assembler.pending && Date.now() - this.lastChunkAt < RESYNC_RETRY_MS) {
+      this.armResyncRetry(this.resyncWhy ?? "awaiting state", RESYNC_RETRY_MS);
+      return;
+    }
+    this.requestResync(`retry (${this.resyncWhy ?? "awaiting state"})`);
   }
 
   // ── host → guests ───────────────────────────────────────────────────────
@@ -507,6 +672,39 @@ export class NetSession {
     return true;
   }
 
+  /**
+   * #186 — HOST only: file the rules this room plays by.
+   *
+   * The room is the only party every seat hears from, so a dial moved in the
+   * host's lobby goes there and comes back as a `settings` echo — to the host
+   * too, which is what makes the lobby's printed rules the room's rules rather
+   * than the host's opinion of them. Nothing is applied optimistically: a
+   * claim the relay refuses (a malformed block) simply never returns, and the
+   * lobby keeps showing what the room actually holds.
+   *
+   * Returns false when this seat may not speak for the room, or when the block
+   * would not survive the relay's own read — the lobby uses that to leave the
+   * dial where it was instead of pretending.
+   */
+  publishSettings(settings: MatchSettings): boolean {
+    if (!this.isHost || this.halted || this.disposed) return false;
+    const clean = readMatchSettings(settings);
+    if (!clean) return false;
+    if (matchSettingsEqual(clean, this.settingsValue)) return false;   // nothing to file
+    this.room.send({ type: "settingsClaim", settings: clean });
+    return true;
+  }
+
+  /** Fold the room's rules into local state and tell the lobby. */
+  private onSettings(raw: unknown): void {
+    const next = readMatchSettings(raw);
+    if (!next) return;                       // unreadable: keep what the room said last
+    const changed = !matchSettingsEqual(next, this.settingsValue);
+    this.settingsValue = next;
+    if (this.infoValue) this.infoValue = { ...this.infoValue, settings: next };
+    if (changed) this.hooks.settings?.(next);
+  }
+
   /** Fold a board update into local state and tell the game. */
   private onRatings(raw: unknown): void {
     if (!Array.isArray(raw)) return;
@@ -552,6 +750,9 @@ export class NetSession {
       case "ratingUpdate":
         this.onRatings(raw.ratings);
         return;
+      case "settings":
+        this.onSettings(raw.settings);
+        return;
       case "resync":
         if (this.isHost) this.publishFullState("guest resync");
         return;
@@ -577,6 +778,11 @@ export class NetSession {
       msg.roster.find((e) => e.id === this.room.playerId)?.slot ?? null;
     if (seat !== null) this.roleValue = seat === 0 ? "host" : "guest";
     else if (msg.hostId === this.room.playerId) this.roleValue = "host";
+    // #186: the rules the room holds, folded in BEFORE the info is built so a
+    // lobby reading `info.settings` on its very first hello sees them. A
+    // welcome that carries none leaves whatever the room said last alone — a
+    // second welcome (a seat joining) is not a reset of the rules.
+    if (msg.settings !== undefined) this.onSettings(msg.settings);
     this.infoValue = {
       role: this.roleValue,
       seed: msg.seed,
@@ -585,6 +791,7 @@ export class NetSession {
       roster: msg.roster.map((e) => ({ ...e })),
       roomCode: this.room.roomCode,
       ratings: msg.ratings ? msg.ratings.map((e) => ({ ...e })) : [],
+      settings: this.settingsValue,
     };
     // RANK-01: the greeting's board replaces whatever we held — it is the
     // room's whole truth, not a delta on top of a stale guess. A welcome with
@@ -603,12 +810,21 @@ export class NetSession {
 
   private onChunk(msg: SnapshotChunkMsg): void {
     if (!this.isGuest) return;                  // only the host asserts state
+    // #131: a frame in hand is progress — it is what tells the retry that this
+    // transfer is alive and must not be restarted out from under itself.
+    this.lastChunkAt = Date.now();
+    this.resyncBackoff = 0;
     const done = this.assembler.accept(msg);
     if (done) this.applyFullState(done);
   }
 
   private applyFullState(done: AssembledSnapshot): void {
     this.lastSeqValue = done.seq;
+    // #131: the world landed, so the wait is over. `flushQueue` below may find
+    // a fresh gap in what was held, and re-arm through `requestResync`.
+    this.clearResyncRetry();
+    this.resyncBackoff = 0;
+    this.resyncWhy = null;
     // Mirror first: the hook is handed a world already expressed in the
     // guest's own seats, exactly like the deltas it will receive next.
     this.hooks.snapshot?.(mirrorSnapshot(done.snap), done.seq);
@@ -628,6 +844,12 @@ export class NetSession {
       this.bufferDelta(msg);
       return;
     }
+    // #131: a frame this world already contains — the relay repeating itself,
+    // a reconnect replay, a stale frame overtaking a snapshot — is NOT
+    // divergence. Treating it as a gap threw away a perfectly good world and
+    // froze the guest behind a full resync it did not need. (`flushQueue` drops
+    // the same frames from the backlog; this is the steady-state half.)
+    if (msg.seq <= this.lastSeqValue) return;
     if (msg.seq !== this.lastSeqValue + 1) {
       // Out of step. Mark the world suspect (so everything after this queues
       // rather than landing on a map we know is wrong), keep this delta for the
@@ -807,7 +1029,7 @@ export function mirrorDelta(msg: DeltaMsg): DeltaMsg {
 export type { ConnectionState };
 export { applyTrackDelta };
 export const SESSION_PROTOCOL_VERSION = PROTOCOL_VERSION;
-export type { HexProtocol, IntentMsg, DeltaMsg, Snapshot };
+export type { HexProtocol, IntentMsg, DeltaMsg, Snapshot, MatchSettings };
 
 /**
  * A session nonce for the rating board (RANK-01). Not a secret and not a

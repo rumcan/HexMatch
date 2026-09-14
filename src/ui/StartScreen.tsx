@@ -29,6 +29,29 @@ import {
 import { badgeUrlFor } from "./rank-badge";
 
 import { VERSION_MISMATCH_MESSAGE, validateWelcome, type HexProtocol } from "../net/protocol";
+// #186: the hosted room's rules — ★ line, opening purse, AI seats. The lobby is
+// where the host picks them, the room is where they are held, and the guest
+// reads them back read-only from the same record.
+import {
+  AI_SKILL_KEYS,
+  DEFAULT_MATCH_SETTINGS,
+  MAX_AI_SEATS,
+  PURSE_PRESETS,
+  START_PURSE_KEYS,
+  WIN_TARGET_MAX,
+  WIN_TARGET_MIN,
+  WIN_TARGET_PRESETS,
+  clampWinTarget,
+  describeMatchSettings,
+  isDefaultMatchSettings,
+  loadMatchSettings,
+  pursePresetOf,
+  saveMatchSettings,
+  scalePurse,
+  winPresetOf,
+  type AiSkillKey,
+  type MatchSettings,
+} from "../net/match-settings";
 import { PORTRAITS, type Portrait } from "../iso/config";
 // STORY-01: the campaign menu — contracts, their locks and their seals.
 import { CHAPTERS, EMPLOYER, currentJobTitle } from "../story/chapters";
@@ -56,9 +79,16 @@ export type StartChoice =
        * RANK-01: this room's matches are RATED. True for quick match only —
        * a hosted room and a shared code are games between friends, and #147
        * settled that the ladder is fed by the one queue that pairs strangers
-       * by rating.
+       * by rating. #186 tightens it further: a match the host customised is
+       * never rated, so `App.tsx` also asks `isDefaultMatchSettings`.
        */
       ranked?: boolean;
+      /**
+       * #186: the rules this room plays by. The host hands over the copy its
+       * lobby is showing (it is the authority); a guest hands over the room's
+       * echo. Absent reads as the shipped defaults in `startIsoGame`.
+       */
+      settings?: MatchSettings;
     };
 
 /**
@@ -207,11 +237,29 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
   const [ladder, setLadder] = useState<LadderView | null | "loading">("loading");
   /** RANK-01: this lobby came out of the quick-match queue, so its matches rate. */
   const [rankedRoom, setRankedRoom] = useState(false);
+  /**
+   * #186: the rules the HOST is offering. Seeded from this browser's last-used
+   * settings (a host who ran a Marathon last night gets a Marathon tonight),
+   * and filed with the room on every change so the guest reads the same record.
+   */
+  const [settings, setSettings] = useState<MatchSettings>(() => loadMatchSettings());
+  /**
+   * #186: the rules the ROOM holds — what a guest plays by, and what the host's
+   * own panel confirms. Kept apart from `settings` on purpose: the room's echo
+   * is the only copy a guest is allowed to read, and showing the host the
+   * room's answer (rather than its own keystroke) is what makes a refused claim
+   * visible instead of silent.
+   */
+  const [roomSettings, setRoomSettings] = useState<MatchSettings>({ ...DEFAULT_MATCH_SETTINGS, startPurse: { ...DEFAULT_MATCH_SETTINGS.startPurse } });
   /** RANK-01: Any rank (the default — fastest) or Similar rank (widening). */
   const [rankSearch, setRankSearch] = useState<RankSearch>("any");
   /** The rung a similar-rank search is currently on, for the waiting screen. */
   const [searchRung, setSearchRung] = useState(0);
   const rankRef = useRef<RankState | null>(null);
+  /** #186: the current settings for the room's greeting handler, whose closure
+   *  is built once per room and must not file a stale copy. */
+  const settingsRef = useRef<MatchSettings>(settings);
+  settingsRef.current = settings;
   /** Guards the realtime calls: a double-click must not mint two rooms. */
   const [busy, setBusy] = useState(false);
   /** Seconds since the current search began, shown live on the searching
@@ -318,7 +366,14 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
         // RANK-01: publish this player's rating now that a room exists to hold
         // it, and mirror the room's board for the lobby.
         if (rankRef.current) session.publishRating(rankRef.current);
+        // #186: a host files its lobby's rules as soon as the room exists to
+        // hold them, so a guest who joins a moment later is welcomed with the
+        // ★ line and purse already on the greeting. A default-rules host files
+        // nothing (`publishSettings` says no), and the room's empty hand reads
+        // as the defaults — the shipped game needs no wire at all.
+        if (session.isHost) session.publishSettings(settingsRef.current);
         setBoard([...session.ratings]);
+        setRoomSettings(session.settings);
         setSeed(message.seed);
         setWelcomeRoster(message.roster);
         return;
@@ -326,11 +381,19 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
       // The host left while we were still in the lobby (MP-03 broadcasts a
       // reject). Without this the guest is offered a Play button that leads
       // into a world nobody is simulating.
-      if (message.type === "reject") failMessage(message.reason);
+      if (message.type === "reject") {
+        failMessage(message.reason);
+        return;
+      }
+      // #186: the room's rules echo. Fed to the session (which keeps the room's
+      // copy) and then read back, so the guest's read-only panel updates live
+      // while the host is still choosing — a guest never guesses at the rules.
+      if (message.type === "settings" || message.type === "ratingUpdate") session.receive(message);
       // RANK-01: any other traffic may carry the opponent's rating (a board
       // update lands as its own message). Cheap, and it keeps the lobby chips
       // live rather than frozen at welcome time.
       setBoard([...session.ratings]);
+      setRoomSettings(session.settings);
     };
     // MP-03 sends the welcome BOTH ways (broadcast to members, sendTo to the
     // newcomer), so listen on both channels or the first joiner never learns
@@ -467,8 +530,89 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
 
   const startNetworkGame = useCallback((mode: "host" | "guest", ranked = false) => {
     if (!room || seed === null || !net) return;
-    onStart({ mode, seed, room, net, portrait, ranked });
-  }, [net, onStart, portrait, room, seed]);
+    // #186: the host hands over the rules its lobby is showing (it is the
+    // authority, and the room has them too); a guest hands over the room's
+    // echo, which is the only copy it is allowed to read.
+    //
+    // An AI seat is the seat NOBODY took: if a human is sitting there, the
+    // machine is out of the match — the lobby already refuses to add one, and
+    // clearing it here means a settings block can never put two players on one
+    // seat however it was reached.
+    const rules = mode === "host"
+      ? (net.info?.roster.length ?? 0) >= 2 && settings.aiSeats.length > 0
+        ? { ...settings, aiSeats: [] }
+        : settings
+      : roomSettings;
+    onStart({ mode, seed, room, net, portrait, ranked, settings: rules });
+  }, [net, onStart, portrait, room, roomSettings, seed, settings]);
+
+  // ── #186: the host's match settings ─────────────────────────────────────
+  /**
+   * Adopt a new set of rules: remember them for the next room, and file them
+   * with the room so the guest reads the same record. The filing is fire-and-
+   * forget by design — the panel keeps showing the host's choice, and the
+   * room's echo (which lands as `roomSettings`) is what confirms it.
+   */
+  const applySettings = useCallback((next: MatchSettings) => {
+    setSettings(next);
+    saveMatchSettings(next);
+    net?.publishSettings(next);
+  }, [net]);
+
+  /** One dial moved. Every edit goes through here so remembering and filing
+   *  can never be forgotten by a future control. */
+  const patchSettings = useCallback((patch: Partial<MatchSettings>) => {
+    setSettings((prev) => {
+      const next: MatchSettings = {
+        aiSeats: patch.aiSeats ? [...patch.aiSeats] : [...prev.aiSeats],
+        winTarget: patch.winTarget ?? prev.winTarget,
+        startPurse: patch.startPurse ? { ...patch.startPurse } : { ...prev.startPurse },
+      };
+      saveMatchSettings(next);
+      net?.publishSettings(next);
+      return next;
+    });
+  }, [net]);
+
+  const addAiSeat = useCallback(() => {
+    setSettings((prev) => {
+      if (prev.aiSeats.length >= MAX_AI_SEATS) return prev;
+      const next: MatchSettings = { ...prev, aiSeats: [...prev.aiSeats, "normal" as AiSkillKey] };
+      saveMatchSettings(next);
+      net?.publishSettings(next);
+      return next;
+    });
+  }, [net]);
+
+  const removeAiSeat = useCallback((index: number) => {
+    setSettings((prev) => {
+      const next: MatchSettings = { ...prev, aiSeats: prev.aiSeats.filter((_, i) => i !== index) };
+      saveMatchSettings(next);
+      net?.publishSettings(next);
+      return next;
+    });
+  }, [net]);
+
+  const setAiSkill = useCallback((index: number, key: AiSkillKey) => {
+    setSettings((prev) => {
+      const next: MatchSettings = {
+        ...prev,
+        aiSeats: prev.aiSeats.map((seat, i) => (i === index ? key : seat)),
+      };
+      saveMatchSettings(next);
+      net?.publishSettings(next);
+      return next;
+    });
+  }, [net]);
+
+  const resetSettings = useCallback(() => {
+    const next: MatchSettings = {
+      aiSeats: [],
+      winTarget: DEFAULT_MATCH_SETTINGS.winTarget,
+      startPurse: { ...DEFAULT_MATCH_SETTINGS.startPurse },
+    };
+    applySettings(next);
+  }, [applySettings]);
 
   const roster = useMemo(() => {
     if (!room) return [] as readonly ServerPlayer[];
@@ -529,39 +673,41 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
 
   if (state === "choose") return (
     <main className="start-screen" aria-label="Hexmatch start screen">
-      <div className="start-panel">
-        <p className="start-kicker">HEXMatch Industries</p>
-        <h1>Back to work, Logistics Manager.</h1>
-        <p className="start-subtitle">Your first shift at {EMPLOYER}: move the freight, beat the rival, earn the promotion.</p>
-        <div className="portrait-picker" role="radiogroup" aria-label="Choose your manager">
-          <p className="portrait-label">Your manager</p>
-          <div className="portrait-options">
-            {PORTRAITS.map((p) => (
-              <button key={p} type="button"
-                className={`portrait-opt${portrait === p ? " on" : ""}`}
-                aria-pressed={portrait === p}
-                data-sfx="select"
-                onClick={() => setPortrait(p)}>
-                <span className={`portrait-face portrait-${p}`} aria-hidden="true" />
-                <span className="portrait-name">{p === "vex" ? "Anne Hextall" : "James Hextall"}</span>
-              </button>
-            ))}
+      <div className="start-panel start-modes">
+        <section className="start-modes-info" aria-label="Manager and rating">
+          <p className="start-kicker">HEXMatch Industries</p>
+          <h1>Back to work, Logistics Manager.</h1>
+          <p className="start-subtitle">Your first shift at {EMPLOYER}: move the freight, beat the rival, earn the promotion.</p>
+          <div className="portrait-picker" role="radiogroup" aria-label="Choose your manager">
+            <p className="portrait-label">Your manager</p>
+            <div className="portrait-options">
+              {PORTRAITS.map((p) => (
+                <button key={p} type="button"
+                  className={`portrait-opt${portrait === p ? " on" : ""}`}
+                  aria-pressed={portrait === p}
+                  data-sfx="select"
+                  onClick={() => setPortrait(p)}>
+                  <span className={`portrait-face portrait-${p}`} aria-hidden="true" />
+                  <span className="portrait-name">{p === "vex" ? "Anne Hextall" : "James Hextall"}</span>
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
-        {rank ? (
-          <div className="rank-block">
-            <RankChip model={chipFor(rank)} />
-            <p className="rank-block-note">
-              {rank.matches === 0
-                ? "Play a quick match to place on the ladder."
-                : `${rank.wins}W · ${rank.losses}L · ${
-                    tierProgress(rank.rating).next
-                      ? `${tierProgress(rank.rating).toNext} rating to ${tierProgress(rank.rating).next!.label}`
-                      : "top of the ladder"}`}
-            </p>
-          </div>
-        ) : null}
-        <div className="start-actions">
+          {rank ? (
+            <div className="rank-block">
+              <RankChip model={chipFor(rank)} />
+              <p className="rank-block-note">
+                {rank.matches === 0
+                  ? "Play a quick match to place on the ladder."
+                  : `${rank.wins}W · ${rank.losses}L · ${
+                      tierProgress(rank.rating).next
+                        ? `${tierProgress(rank.rating).toNext} rating to ${tierProgress(rank.rating).next!.label}`
+                        : "top of the ladder"}`}
+              </p>
+            </div>
+          ) : null}
+        </section>
+        <nav className="start-actions" aria-label="Game modes">
           <button className="start-primary" data-sfx="open" onClick={() => { setProgress(loadStoryProgress()); setState("story"); }}>Story Mode <small>the Foundry Syndicate</small></button>
           <button data-sfx="open" onClick={() => onStart({ mode: "ai", portrait })}>Play vs AI <small>no login</small></button>
           <button disabled={busy} onClick={() => { setState("host"); void beginRoom("host"); }}>Host a game (Experimental) <small>unranked</small></button>
@@ -581,7 +727,7 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
           </div>
           <button disabled={busy} onClick={() => { loadLadder(); setState("ladder"); }}>The ladder <small>top ratings</small></button>
           {onBack ? <button className="start-back" data-sfx="close" onClick={onBack}>Back to the menu</button> : null}
-        </div>
+        </nav>
       </div>
     </main>
   );
@@ -725,6 +871,17 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
 
   const hosting = state === "host";
   const connecting = seed === null;
+  // #186: the host's own panel edits `settings`; a guest reads the room's echo.
+  // Ranked rooms play the shipped rules (#147's ladder is fed by the queue
+  // alone, and a customised match is not a ladder match), so the dials are
+  // disabled there rather than hidden — a player should see WHY nothing moves.
+  const shown = hosting ? settings : roomSettings;
+  const locked = rankedRoom;
+  const humanSeats = roster.length;
+  const aiSeats = shown.aiSeats;
+  const canStart = humanSeats >= 2 || aiSeats.length > 0;
+  const winKey = winPresetOf(shown.winTarget);
+  const purseKey = pursePresetOf(shown.startPurse);
   // RANK-01: the seat rows carry a badge each. The room's board is the source
   // for everyone (including ourselves, echoed back), and the local file is the
   // fallback for our own seat until that echo lands.
@@ -734,15 +891,132 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
     if (room && player.id === room.playerId && rank) return chipFor(rank);
     return chipForWire(null);
   };
+  // #186: the rules panel. The host edits it; a guest reads the room's copy.
+  // One control per rule, presets first and a stepper behind them, and a Reset
+  // that is disabled exactly when there is nothing to reset.
+  const settingsPanel = (
+    <section className={`match-settings${locked ? " locked" : ""}`} aria-label="Game settings">
+      <div className="ms-head">
+        <h2>{hosting ? "Game settings" : "Match rules"}</h2>
+        {hosting ? (
+          <button type="button" className="ms-reset" data-sfx="tab"
+            disabled={locked || isDefaultMatchSettings(settings)}
+            onClick={resetSettings}>Reset to default</button>
+        ) : null}
+      </div>
+
+      {/* Seats: who is in the match, and which of them is a machine. */}
+      <fieldset className="ms-group" disabled={locked || !hosting}>
+        <legend>Players</legend>
+        <div className="ms-seats">
+          <div className="ms-seat">
+            <span className="ms-swatch" style={{ background: "#5aa8ff" }} aria-hidden="true" />
+            <span className="ms-seat-name">{room && room.playerId ? "You" : "Host"}</span>
+            <span className="ms-badge human">Human</span>
+          </div>
+          {aiSeats.map((seat, index) => (
+            <div className="ms-seat" key={`ai-${index}`}>
+              <span className="ms-swatch" style={{ background: "#ff7a5a" }} aria-hidden="true" />
+              <span className="ms-seat-name">AI opponent</span>
+              <span className="ms-badge ai">AI</span>
+              {hosting ? (
+                <>
+                  <select className="ms-skill" aria-label="AI difficulty" data-sfx="tab"
+                    value={seat} onChange={(e) => setAiSkill(index, e.target.value as AiSkillKey)}>
+                    {AI_SKILL_KEYS.map((key) => (
+                      <option key={key} value={key}>{key.charAt(0).toUpperCase()}{key.slice(1)}</option>
+                    ))}
+                  </select>
+                  <button type="button" className="ms-remove" data-sfx="close"
+                    aria-label="Remove AI seat" onClick={() => removeAiSeat(index)}>✕</button>
+                </>
+              ) : null}
+            </div>
+          ))}
+          {humanSeats >= 2 ? (
+            <div className="ms-seat">
+              <span className="ms-swatch" style={{ background: "#ff7a5a" }} aria-hidden="true" />
+              <span className="ms-seat-name">{roster[1]?.username || "Rival"}</span>
+              <span className="ms-badge human">Human</span>
+            </div>
+          ) : null}
+        </div>
+        {hosting ? (
+          <p className="ms-hint">
+            {aiSeats.length >= MAX_AI_SEATS
+              ? "A match seats two: you and one opponent."
+              : humanSeats >= 2
+                ? "A human has taken the second seat — remove them from the room to play an AI."
+                : "Fill the open seat with a machine and start without waiting."}
+          </p>
+        ) : null}
+        {hosting ? (
+          <button type="button" className="ms-add" data-sfx="coin"
+            disabled={locked || aiSeats.length >= MAX_AI_SEATS || humanSeats >= 2}
+            onClick={addAiSeat}>Add AI opponent</button>
+        ) : null}
+      </fieldset>
+
+      {/* The ★ line. */}
+      <fieldset className="ms-group" disabled={locked || !hosting}>
+        <legend>Win points</legend>
+        <div className="ms-presets" role="group" aria-label="Win points">
+          {WIN_TARGET_PRESETS.map((preset) => (
+            <button type="button" key={preset.key} data-sfx="tab"
+              className={`ms-preset${winKey === preset.key ? " on" : ""}`}
+              aria-pressed={winKey === preset.key}
+              onClick={() => hosting && patchSettings({ winTarget: preset.winTarget })}>
+              {preset.label}<small>{preset.winTarget}★</small>
+            </button>
+          ))}
+        </div>
+        <label className="ms-stepper">Or exactly
+          <input type="number" min={WIN_TARGET_MIN} max={WIN_TARGET_MAX} step={1}
+            aria-label="Victory points to win" value={shown.winTarget}
+            onChange={(e) => hosting && patchSettings({ winTarget: clampWinTarget(Number(e.target.value)) })} />
+          ★ to win
+        </label>
+      </fieldset>
+
+      {/* The opening purse. */}
+      <fieldset className="ms-group" disabled={locked || !hosting}>
+        <legend>Starting resources</legend>
+        <div className="ms-presets" role="group" aria-label="Starting resources">
+          {PURSE_PRESETS.map((preset) => (
+            <button type="button" key={preset.key} data-sfx="tab"
+              className={`ms-preset${purseKey === preset.key ? " on" : ""}`}
+              aria-pressed={purseKey === preset.key}
+              onClick={() => hosting && patchSettings({ startPurse: scalePurse(preset.scale) })}>
+              {preset.label}
+            </button>
+          ))}
+        </div>
+        <p className="ms-purse">{START_PURSE_KEYS.map((key) => `${shown.startPurse[key]} ${key}`).join(" · ")} for every seat</p>
+      </fieldset>
+
+      <p className="ms-summary">{describeMatchSettings(shown)}</p>
+      {locked ? (
+        <p className="ms-note">Ranked matches play the standard rules — a customised game never feeds the ladder.</p>
+      ) : hosting ? (
+        <p className="ms-note">Your rival sees these as you change them. A customised match is unranked.</p>
+      ) : (
+        <p className="ms-note">The host chooses the rules; they update here live.</p>
+      )}
+    </section>
+  );
+
   return <main className="start-screen"><div className="start-panel lobby">
     <p className="start-kicker">{hosting ? "HOST GAME" : "MATCH READY"}{rankedRoom ? " · RANKED" : ""}</p><h1>{hosting ? "Invite a rival" : "Room found"}</h1>
     <div className="room-code"><b>{room?.roomCode ?? "——"}</b><button aria-label="Copy room code" onClick={() => room && void navigator.clipboard?.writeText(room.roomCode)}>Copy</button></div>
-    <div className="seat-list">{roster.map((player) => <div className="seat filled" key={player.id}><span className="seat-name">{player.username}</span><RankChip model={chipBySeat(player)} /><span className="seat-status">Connected</span></div>)}<div className="seat"><span>Open seat</span><span className="seat-status">{roster.length >= 2 ? "Ready" : "Waiting"}</span></div></div>
+    <div className="seat-list">{roster.map((player) => <div className="seat filled" key={player.id}><span className="seat-name">{player.username}</span><RankChip model={chipBySeat(player)} /><span className="seat-status">Connected</span></div>)}<div className="seat"><span>{aiSeats.length > 0 && humanSeats < 2 ? "AI opponent" : "Open seat"}</span><span className="seat-status">{canStart ? "Ready" : "Waiting"}</span></div></div>
+    {settingsPanel}
     <p className="lobby-note">{connecting
       ? "Connecting to the room…"
       : rankedRoom
         ? "Ranked: the winner's rating rises and the loser's falls. Leaving mid-match counts as a loss."
-        : hosting && roster.length < 2 ? "Share the code. Start when your rival joins." : "Both players are ready."}</p>
-    <div className="lobby-actions"><button onClick={backToChoose}>Leave</button><button className="start-primary" data-sfx="open" disabled={connecting || (hosting && roster.length < 2)} onClick={() => startNetworkGame(hosting ? "host" : "guest", rankedRoom)}>{connecting ? "Connecting…" : hosting ? "Start game" : "Play"}</button></div>
+        : hosting && !canStart ? "Share the code. Start when your rival joins — or fill the seat with an AI."
+        : hosting && humanSeats < 2 ? "An AI holds the second seat. Share the code before you start and a human takes it."
+        : "Both players are ready."}</p>
+    <div className="lobby-actions"><button onClick={backToChoose}>Leave</button><button className="start-primary" data-sfx="open" disabled={connecting || (hosting && !canStart)} onClick={() => startNetworkGame(hosting ? "host" : "guest", rankedRoom)}>{connecting ? "Connecting…" : hosting ? "Start game" : "Play"}</button></div>
   </div></main>;
 }

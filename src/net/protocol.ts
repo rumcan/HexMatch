@@ -25,6 +25,12 @@ import type { Snapshot } from "../iso/snapshot";
 // to import `rating.ts` for the type of a field on a message.
 import type { RankWire } from "./rating";
 export type { RankWire };
+// #186: the match-settings record and its reader. `match-settings.ts` is pure
+// (no SDK, no DOM, no game imports) precisely so this file — and therefore the
+// room bundle — may import it at runtime rather than by type only.
+import { readMatchSettings, type MatchSettings } from "./match-settings";
+export type { MatchSettings };
+export { readMatchSettings };
 
 /**
  * Protocol version. Bump WITH `SNAPSHOT_VERSION`: a new snapshot shape is a
@@ -56,8 +62,17 @@ export type { RankWire };
  * unknown message type, drop it, and file its own private arithmetic — the two
  * seats would then hold different ratings for the same match, which is exactly
  * the silent divergence the version check exists to stop.
+ * v7 (#186): the room carries MATCH SETTINGS — the ★ line, the opening purse
+ * and the AI seats a hosted game plays by. `welcome` gains an optional
+ * `settings` block, and two messages are added: `settingsClaim` (the host
+ * files the rules its lobby is showing) and `settings` (the room's echo, which
+ * is what a guest reads them from — live, before the match starts, and again
+ * on every later welcome). A v6 peer would drop both, boot on the shipped
+ * `VICTORY.target` and `START_PURSE`, and race a different finish line from
+ * the seat it is playing against — the quietest possible desync, since both
+ * boards would look perfectly healthy right up to the star line.
  */
-export const PROTOCOL_VERSION = 6;
+export const PROTOCOL_VERSION = 7;
 
 /**
  * Realtime WS frame cap in bytes. Mirrors the SDK's `MAX_BROADCAST_BYTES`
@@ -87,6 +102,20 @@ export interface WelcomeMsg {
    * yet", never as a malformed message.
    */
   ratings?: RankWire[];
+  /**
+   * #186 (v7): the rules this room plays by — ★ line, opening purse, AI seats.
+   *
+   * The room holds them because the HOST chose them and the room is the only
+   * party every seat hears from: a guest learns them here on join (and again on
+   * a rejoin, which is the "late join receives the same settings" rule), while
+   * a host that changes them mid-lobby is heard through `settings`.
+   *
+   * Optional in shape — a room nobody has filed settings for sends none, and
+   * absent reads as `DEFAULT_MATCH_SETTINGS`, never as a malformed welcome.
+   * Present-but-unreadable IS refused: two seats disagreeing about the ★ line
+   * is the desync this whole file exists to prevent.
+   */
+  settings?: MatchSettings;
 }
 
 /** host → server → all guests. Full state; join and resync only. */
@@ -303,6 +332,39 @@ export interface ResultMsg {
   at: number;
 }
 
+// ── #186 (v7): the room's match settings ──────────────────────────────────
+
+/**
+ * host → server → everyone. The rules the host's lobby is showing.
+ *
+ * Host-only, and the relay enforces it the way it enforces a snapshot: a guest
+ * has no standing to declare what the match plays by, so a `settingsClaim`
+ * from any other seat is dropped without an error to probe. The room
+ * NORMALISES before it stores (`readMatchSettings`), so what it echoes back is
+ * always a whole record — a half-typed purse line or a 900★ stepper cannot
+ * become the room's rules.
+ *
+ * Sent on every change while the lobby is open (the guest reads them
+ * read-only and updates live), and once more when the match starts, so a room
+ * that never saw a claim still gets one on the way in.
+ */
+export interface SettingsClaimMsg {
+  type: "settingsClaim";
+  settings: MatchSettings;
+}
+
+/**
+ * server → everyone. The room's copy of the rules.
+ *
+ * The echo, not a delta: it goes to the host too, so a lobby has exactly one
+ * source for what it prints — the room's — and a claim the relay refused
+ * (a guest's, a malformed one) simply never comes back.
+ */
+export interface SettingsMsg {
+  type: "settings";
+  settings: MatchSettings;
+}
+
 /** server → one client, on refused join or host loss */
 export interface RejectMsg {
   type: "reject";
@@ -320,6 +382,8 @@ export type HexProtocol =
   | RatingUpdateMsg
   | ResultClaimMsg
   | ResultMsg
+  | SettingsClaimMsg
+  | SettingsMsg
   | RejectMsg;
 
 /** Every `type` tag in the union — the discriminator RUN switches on. */
@@ -334,6 +398,8 @@ export const HEX_MESSAGE_TYPES = [
   "ratingUpdate",
   "resultClaim",
   "result",
+  "settingsClaim",
+  "settings",
   "reject",
 ] as const;
 
@@ -412,6 +478,15 @@ export function validateWelcome(msg: unknown): ProtocolError | null {
       }
     }
   }
+  // #186 (v7): the match settings. Same contract as the rating board — absent
+  // is fine (a room nobody has filed rules for plays the defaults), but a
+  // block that is PRESENT and unreadable is refused rather than half-read: one
+  // seat racing to 10★ against a seat racing to 5★ is a match that looks
+  // healthy until somebody wins it, which is exactly the silent divergence
+  // this protocol refuses mixed versions over.
+  if (o.settings !== undefined && !readMatchSettings(o.settings)) {
+    return new ProtocolError("malformed", "Welcome match settings are malformed.");
+  }
   return null;
 }
 
@@ -470,6 +545,8 @@ export function isHexProtocol(msg: unknown): msg is HexProtocol {
     t === "ratingUpdate" ||
     t === "resultClaim" ||
     t === "result" ||
+    t === "settingsClaim" ||
+    t === "settings" ||
     t === "reject"
   );
 }

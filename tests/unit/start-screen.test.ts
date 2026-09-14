@@ -33,7 +33,8 @@ vi.mock("../../src/net/transport", async (importOriginal) => {
 });
 
 import StartScreen, { type StartChoice } from "../../src/ui/StartScreen";
-import { PROTOCOL_VERSION, type HexProtocol } from "../../src/net/protocol";
+import { DEFAULT_MATCH_SETTINGS, type MatchSettings } from "../../src/net/match-settings";
+import { PROTOCOL_VERSION, type HexProtocol, type WelcomeMsg } from "../../src/net/protocol";
 import {
   NO_ROOM_SERVER_MESSAGE,
   createRoom,
@@ -54,6 +55,8 @@ interface FakeRoom extends HexRoom {
   /** Empty a seat, firing the event the room's `playerLeft` raises. */
   fireLeft: (playerId: string) => void;
   leaveCalls: number;
+  /** Everything the lobby sent to the room. */
+  sent: HexProtocol[];
 }
 
 function fakeRoom(roomCode: string, playerId = "p1", username = "Dev Player"): FakeRoom {
@@ -69,8 +72,10 @@ function fakeRoom(roomCode: string, playerId = "p1", username = "Dev Player"): F
     latency: 1,
     players,
     leaveCalls: 0,
+    /** #186: the lobby's outbound frames — a settings claim is assertable. */
+    sent: [] as HexProtocol[],
     on: (e: Record<string, unknown>) => { Object.assign(events, e); },
-    send: () => {},
+    send: (msg: HexProtocol) => { room.sent.push(msg); },
     leave: () => { room.leaveCalls += 1; },
     emit: (msg: HexProtocol) => {
       events.onPrivateMessage?.(msg);
@@ -650,5 +655,169 @@ describe("auto matchmaking: never time out, and the rank window", () => {
     await click("Auto Matchmaking");
     expect(text()).toContain("Any rank — a fair match beats a perfect one.");
     await click("Cancel");
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// #186 — the host's Game settings panel.
+//
+// The lobby is where a room's rules are chosen, and three things have to be
+// true there: the host can start a match WITHOUT a second human (an AI holds
+// the seat), every change is filed with the room (so a guest reads the same
+// record rather than guessing), and a guest's copy is read-only. The record
+// itself and its validation are pinned in net-match-settings.test.ts.
+// ══════════════════════════════════════════════════════════════════════════
+describe("#186 host game settings", () => {
+  const settingsClaims = (room: FakeRoom) =>
+    room.sent.filter((m) => m.type === "settingsClaim") as { type: "settingsClaim"; settings: MatchSettings }[];
+
+  async function hostLobby(rosterHasGuest = false): Promise<FakeRoom> {
+    const room = fakeRoom("HX9KWR");
+    mockCreate.mockResolvedValue(room);
+    await render();
+    await click("Host a game");
+    const greeting = welcome(room, 99) as WelcomeMsg;
+    if (rosterHasGuest) greeting.roster = [...greeting.roster, { id: "p2", username: "Rival", slot: 1 }];
+    await act(async () => { room.emit(greeting); });
+    if (rosterHasGuest) {
+      await act(async () => { room.seat({ id: "p2", username: "Rival", avatarUrl: null }); });
+    }
+    return room;
+  }
+
+  beforeEach(() => {
+    // The panel seeds itself from the last-used rules; every test starts clean.
+    localStorage.removeItem("hexmatch:match-settings");
+  });
+
+  it("shows the panel with the shipped rules, and a disabled Reset", async () => {
+    await hostLobby();
+    expect(text()).toContain("Game settings");
+    expect(text()).toContain("Win points");
+    expect(text()).toContain("Starting resources");
+    expect(text()).toContain(`First to ${DEFAULT_MATCH_SETTINGS.winTarget}★`);
+    expect(button("Reset to default").disabled).toBe(true);
+  });
+
+  it("lets the host start alone by filling the seat with a machine", async () => {
+    const room = await hostLobby();
+    expect(button("Start game").disabled).toBe(true);      // nobody to play yet
+    await click("Add AI opponent");
+    expect(text()).toContain("AI opponent");
+    expect(button("Start game").disabled).toBe(false);     // the seat is filled
+    // …and the room was told, so a guest who joins later reads the same rules.
+    expect(settingsClaims(room).at(-1)?.settings.aiSeats).toEqual(["normal"]);
+
+    await click("Start game");
+    expect(choices).toHaveLength(1);
+    expect(choices[0]).toMatchObject({ mode: "host", seed: 99 });
+    expect((choices[0] as { settings: MatchSettings }).settings.aiSeats).toEqual(["normal"]);
+  });
+
+  it("caps the AI seats at the ones a match can hold", async () => {
+    await hostLobby();
+    await click("Add AI opponent");
+    expect(button("Add AI opponent").disabled).toBe(true);
+    expect(text()).toContain("A match seats two");
+  });
+
+  it("refuses an AI seat once a human has taken it", async () => {
+    const room = await hostLobby(true);
+    expect(button("Add AI opponent").disabled).toBe(true);
+    expect(text()).toContain("A human has taken the second seat");
+    expect(settingsClaims(room)).toHaveLength(0);          // nothing to file
+  });
+
+  it("files the ★ line and the purse with the room, and remembers them here", async () => {
+    const room = await hostLobby();
+    await click("Short");                       // 5★
+    await click("Rich 2×");                     // 2× the opening purse
+    const last = settingsClaims(room).at(-1);
+    expect(last?.settings.winTarget).toBe(5);
+    expect(last?.settings.startPurse).toEqual({ wood: 24, stone: 24, ore: 0 });
+    expect(text()).toContain("First to 5★ · Rich 2× resources");
+    // The host's last-used rules survive the lobby.
+    expect(JSON.parse(localStorage.getItem("hexmatch:match-settings")!))
+      .toMatchObject({ winTarget: 5, startPurse: { wood: 24, stone: 24, ore: 0 } });
+    expect(button("Reset to default").disabled).toBe(false);
+  });
+
+  it("does not file a rule that did not move", async () => {
+    const room = await hostLobby();
+    await click("Standard");                    // already the shipped line
+    expect(settingsClaims(room)).toHaveLength(0);
+  });
+
+  /** The room's echo, as the real relay sends it: a claim comes back to
+   *  everybody, which is what makes the lobby's printed rules the room's. */
+  async function ackSettings(room: FakeRoom): Promise<void> {
+    const last = settingsClaims(room).at(-1);
+    if (!last) return;
+    await act(async () => { room.emit({ type: "settings", settings: last.settings }); });
+  }
+
+  it("restores the shipped rules on Reset", async () => {
+    const room = await hostLobby();
+    await click("Marathon");
+    await ackSettings(room);
+    await click("Reset to default");
+    expect(settingsClaims(room).at(-1)?.settings).toEqual(DEFAULT_MATCH_SETTINGS);
+    expect(text()).toContain(`First to ${DEFAULT_MATCH_SETTINGS.winTarget}★`);
+    expect(button("Reset to default").disabled).toBe(true);
+  });
+
+  it("comes back on the last-used rules", async () => {
+    const room = await hostLobby();
+    await click("Short");
+    await click("Leave");
+    const again = await hostLobby();
+    void room;
+    expect(text()).toContain("First to 5★");
+    // …and a room that joins late is told them on the way in.
+    expect(settingsClaims(again).at(-1)?.settings.winTarget).toBe(5);
+  });
+
+  it("shows a guest the room's rules, read-only", async () => {
+    const room = fakeRoom("HX9KWR", "p2", "Guest");
+    mockJoin.mockResolvedValue(room);
+    await render();
+    await click("Join with a code");
+    await typeCode("HX9KWR");
+    await act(async () => { button("Join game").click(); });
+    const greeting = welcome(room, 99) as WelcomeMsg;
+    greeting.roster = [{ id: "p1", username: "Host", slot: 0 }, { id: "p2", username: "Guest", slot: 1 }];
+    await act(async () => { room.emit(greeting); });
+    expect(text()).toContain("Match rules");
+    // The guest sees the same dials and cannot move any of them…
+    const groups = [...container.querySelectorAll("fieldset.ms-group")] as HTMLFieldSetElement[];
+    expect(groups.length).toBe(3);
+    expect(groups.every((g) => g.disabled)).toBe(true);
+    // …has no seat controls at all…
+    expect(text()).not.toContain("Add AI opponent");
+    expect(text()).not.toContain("Reset to default");
+    // …and no say in the rules.
+    expect(room.sent.filter((m) => m.type === "settingsClaim")).toHaveLength(0);
+
+    // The host moves a dial; the guest's panel follows, live.
+    await act(async () => {
+      room.emit({
+        type: "settings",
+        settings: { aiSeats: [], winTarget: 5, startPurse: { wood: 24, stone: 24, ore: 0 } },
+      });
+    });
+    expect(text()).toContain("First to 5★ · Rich 2× resources");
+    await click("Play");
+    expect((choices[0] as { settings: MatchSettings }).settings.winTarget).toBe(5);
+  });
+
+  it("keeps a ranked room on the standard rules", async () => {
+    const room = fakeRoom("HX9KWR");
+    mockMatch.mockResolvedValue(room);
+    await render();
+    await click("Auto Matchmaking");
+    await act(async () => { room.emit(welcome(room, 99)); });
+    expect(text()).toContain("RANKED");
+    expect(text()).toContain("Ranked matches play the standard rules");
+    expect(button("Add AI opponent").disabled).toBe(true);
   });
 });
