@@ -79,7 +79,7 @@ function wire<T extends HexProtocol>(msg: T): T {
 }
 
 describe("MP-02 protocol version", () => {
-  it("is a positive integer, and 6 since RANK-01 added the rating board", () => {
+  it("is a positive integer, and 7 since #186 added the room's match settings", () => {
     // v2 (MP-05) added `snapshot-chunk`: a full state is ~110 KiB against a
     // 16 KiB frame, so join/resync state crosses as N frames. v3 (PP-14b)
     // added `rivalSabotage` (Black-Market sabotage on the guest-seat plant);
@@ -93,7 +93,11 @@ describe("MP-02 protocol version", () => {
     // `resultClaim` and `result`. A v5 peer receives an unknown type, drops it,
     // and files its own arithmetic — the two seats would hold different ratings
     // for one match, which is exactly what the version gate is for.
-    expect(PROTOCOL_VERSION).toBe(6);
+    // v7 (#186) adds the match settings: `welcome.settings`, `settingsClaim`
+    // and `settings`. A v6 peer drops both new types and boots on the shipped
+    // ★ line and purse, so the two seats would race different finish lines —
+    // the quietest desync there is, and the reason this is a version gate.
+    expect(PROTOCOL_VERSION).toBe(7);
     expect(Number.isInteger(PROTOCOL_VERSION)).toBe(true);
     expect(PROTOCOL_VERSION).toBeGreaterThan(0);
   });
@@ -106,7 +110,8 @@ describe("MP-02 protocol version", () => {
     expect([...HEX_MESSAGE_TYPES].sort()).toEqual(
       [
         "delta", "intent", "playerRating", "ratingUpdate", "reject", "result",
-        "resultClaim", "resync", "snapshot", "snapshot-chunk", "welcome",
+        "resultClaim", "resync", "settings", "settingsClaim", "snapshot",
+        "snapshot-chunk", "welcome",
       ],
     );
   });
@@ -381,7 +386,27 @@ describe("MP-02 SDK isolation", () => {
     // …and value-free of game code: the Snapshot import must be type-only or
     // the server bundle would drag the whole sim in at runtime.
     expect(src).toMatch(/import\s+type\s*\{[^}]*Snapshot[^}]*\}/);
-    expect(src).not.toMatch(/^import\s+\{[^}]*\}\s+from/m);
+    // #186 relaxed the blanket "no value imports at all" to "no value imports
+    // except from a module that cannot drag anything in". The rule's PURPOSE is
+    // the server bundle, and `match-settings.ts` is the one runtime dependency
+    // `validateWelcome` needs (it reads a settings block), so the honest check
+    // is the two halves together: protocol.ts reaches nothing but that module,
+    // and that module reaches nothing at all.
+    const valueImports = [...src.matchAll(/^import\s+(?!type\b)\{[^}]*\}\s+from\s+"([^"]+)"/gm)]
+      .map((m) => m[1]);
+    expect(valueImports).toEqual(["./match-settings"]);
+  });
+
+  it("match-settings.ts is the leaf protocol.ts may import at runtime (#186)", () => {
+    // The other half of the rule above: the settings module is pure by
+    // construction — no SDK, no DOM, no game code, no imports of any kind — so
+    // the room bundle gains one small file and nothing behind it. Its two
+    // game-side twins (the ★ line and the opening purse) are pinned to
+    // `iso/config.ts` / `iso/game.ts` in net-match-settings.test.ts.
+    const src = readFileSync(join(ROOT, "src/net/match-settings.ts"), "utf8");
+    expect(src).not.toContain(SDK);
+    expect(src).not.toMatch(/^import\s/m);
+    expect(src).not.toMatch(/^export\s+.*from\s/m);
   });
 
   it("transport.ts really is the SDK seam (guard against a vacuous pass)", () => {

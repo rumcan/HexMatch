@@ -3000,3 +3000,24 @@ describe("pointer responsiveness", () => {
     expect(draw.mock.calls[1][0]).toEqual([]);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// #186 — the settings module's default purse IS the game's opening purse.
+//
+// `src/net/match-settings.ts` declares its own `DEFAULT_START_PURSE` because
+// `protocol.ts` imports it and the room bundle must not drag the game in. This
+// is the pin that keeps the copy honest: if the opening purse is ever rebalanced
+// here, a hosted room that nobody customised would open on different money than
+// a solo game — and "defaults unchanged" would be a claim rather than a fact.
+// ══════════════════════════════════════════════════════════════════════════
+describe("#186 the default purse has one source", () => {
+  it("matches START_PURSE, key for key", async () => {
+    const { START_PURSE } = await import("../../src/iso/game");
+    const { DEFAULT_START_PURSE, DEFAULT_MATCH_SETTINGS, DEFAULT_WIN_TARGET } =
+      await import("../../src/net/match-settings");
+    expect(DEFAULT_START_PURSE).toEqual({ ...START_PURSE });
+    expect(DEFAULT_MATCH_SETTINGS.startPurse).toEqual({ ...START_PURSE });
+    expect(DEFAULT_MATCH_SETTINGS.winTarget).toBe(VICTORY.target);
+    expect(DEFAULT_WIN_TARGET).toBe(VICTORY.target);
+  });
+});

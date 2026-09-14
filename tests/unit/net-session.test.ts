@@ -31,6 +31,7 @@ import {
   type WelcomeMsg,
 } from "../../src/net/protocol";
 import type { ConnectionState, HexRoom } from "../../src/net/transport";
+import { DEFAULT_MATCH_SETTINGS, type MatchSettings } from "../../src/net/match-settings";
 import { applyTrackDelta } from "../../src/net/delta";
 import { base64ToBytes, buildSnapshot, type Snapshot } from "../../src/iso/snapshot";
 import {
@@ -768,5 +769,85 @@ describe("RANK-01 the rating board on a session", () => {
     session.dispose();
     expect(session.publishRating({ rating: 1400, matches: 30, wins: 20, losses: 10, season: "s1" })).toBe(false);
     expect(host.frames("playerRating")).toEqual([]);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// #186 — the room's match settings on a session.
+//
+// The session is where wire state survives the lobby → match handover, and the
+// settings are exactly that: the game reads its ★ line and opening purse from
+// `session.settings`, so a session that lost them would boot a match on the
+// shipped rules while the other seat raced the room's.
+// ══════════════════════════════════════════════════════════════════════════
+describe("#186 the room's settings on a session", () => {
+  const RULES: MatchSettings = {
+    aiSeats: ["hard"],
+    winTarget: 5,
+    startPurse: { wood: 24, stone: 24, ore: 0 },
+  };
+
+  it("reads the defaults until the room says otherwise", () => {
+    const session = new NetSession({ room: asRoom(host), role: "host" });
+    session.attach({});
+    expect(session.settings).toEqual(DEFAULT_MATCH_SETTINGS);
+    session.dispose();
+  });
+
+  it("takes the rules a welcome carries, onto the info the game reads", () => {
+    const session = new NetSession({ room: asRoom(guest), role: "guest" });
+    session.attach({});
+    guest.deliver({ ...welcome(5), settings: RULES }, true);
+    expect(session.settings).toEqual(RULES);
+    expect(session.info?.settings).toEqual(RULES);
+    session.dispose();
+  });
+
+  it("files the host's rules as a claim, and folds the room's echo", () => {
+    const session = new NetSession({ room: asRoom(host), role: "host" });
+    const seen: MatchSettings[] = [];
+    session.attach({ settings: (s) => seen.push(s) });
+    expect(session.publishSettings(RULES)).toBe(true);
+    expect(host.frames("settingsClaim")).toEqual([{ type: "settingsClaim", settings: RULES }]);
+    // Nothing is applied optimistically: the echo is the only thing that moves
+    // the session's copy, so a refused claim is visible rather than silent.
+    expect(session.settings).toEqual(DEFAULT_MATCH_SETTINGS);
+    host.deliver({ type: "settings", settings: RULES });
+    expect(session.settings).toEqual(RULES);
+    expect(seen).toEqual([RULES]);
+    session.dispose();
+  });
+
+  it("does not file rules the room already holds, nor a guest's rules at all", () => {
+    const session = new NetSession({ room: asRoom(host), role: "host" });
+    session.attach({});
+    host.deliver({ type: "settings", settings: RULES });
+    expect(session.publishSettings({ ...RULES, startPurse: { ...RULES.startPurse } })).toBe(false);
+    expect(host.frames("settingsClaim")).toHaveLength(0);
+    const guestSession = new NetSession({ room: asRoom(guest), role: "guest" });
+    guestSession.attach({});
+    expect(guestSession.publishSettings(RULES)).toBe(false);
+    expect(guest.frames("settingsClaim")).toHaveLength(0);
+    session.dispose();
+    guestSession.dispose();
+  });
+
+  it("keeps the last rules it was told when an echo is unreadable", () => {
+    const session = new NetSession({ room: asRoom(guest), role: "guest" });
+    session.attach({});
+    guest.deliver({ ...welcome(5), settings: RULES }, true);
+    guest.deliver({ type: "settings", settings: { winTarget: 900 } as unknown as MatchSettings });
+    expect(session.settings).toEqual(RULES);
+    session.dispose();
+  });
+
+  it("carries the room's rules across to a second welcome (rejoin)", () => {
+    const session = new NetSession({ room: asRoom(guest), role: "guest" });
+    session.attach({});
+    guest.deliver({ ...welcome(5), settings: RULES }, true);
+    // A later welcome (a seat joining) is not a reset of the rules.
+    guest.deliver(welcome(5), true);
+    expect(session.settings).toEqual(RULES);
+    session.dispose();
   });
 });
