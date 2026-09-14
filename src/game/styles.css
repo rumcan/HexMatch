@@ -3142,6 +3142,93 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .start-panel input:focus { border-color: var(--gold2, #e9a83e); }
 .start-panel button:disabled { opacity: .4; cursor: not-allowed; }
 
+/* Issue 184 — two-column desktop mode menu.
+   The play/start screen was a narrow 440px column, tall enough to push The
+   ladder and Back to the menu below the fold at 1432x936. The wider card is
+   a two-column grid: manager and rating on the left, every play action on
+   the right, so all primary actions fit without scrolling at desktop sizes.
+   Same industrial plate, same handlers — only the seating plan changes.
+   DOM order matches visual order (left then right) for keyboard users. */
+.start-panel.start-modes {
+  width: min(980px, 100%);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 28px;
+  align-items: start;
+  text-align: left;
+  padding: 28px 32px;
+}
+.start-modes-info { min-width: 0; display: flex; flex-direction: column; }
+.start-panel.start-modes .start-kicker { margin: 0 0 10px; }
+.start-panel.start-modes h1 {
+  font-size: clamp(22px, 2.6vw, 30px);
+  line-height: 1.15;
+  letter-spacing: .5px;
+  overflow-wrap: break-word;
+  text-wrap: balance;
+}
+.start-panel.start-modes .start-subtitle { margin: 8px 0 14px; max-width: none; overflow-wrap: break-word; }
+.start-panel.start-modes .portrait-picker { margin: 0 0 14px; }
+.start-panel.start-modes .portrait-options { justify-content: flex-start; }
+.start-panel.start-modes .portrait-face { width: 56px; height: 56px; }
+.start-panel.start-modes .rank-block { margin: 0; }
+.start-panel.start-modes .rank-block-note { margin: 8px 0 0; }
+.start-panel.start-modes .start-actions { gap: 8px; min-width: 0; }
+.start-panel.start-modes .start-actions button {
+  min-height: 40px;
+  padding: 7px 14px;
+  overflow-wrap: break-word;
+}
+.start-panel.start-modes .rank-search { margin-top: 0; }
+.start-panel.start-modes .start-actions .rank-search-opt { min-height: 38px; }
+.start-panel.start-modes .start-back { margin-top: 0; }
+
+/* Height-aware compaction for shorter desktop windows and the RUN wrapper:
+   the game iframe is shorter than the browser window, so shed padding and
+   control height before anything reaches the fold. No transform scaling. */
+@media (min-width: 761px) and (max-height: 800px) {
+  .start-panel.start-modes { padding: 22px 28px; gap: 22px; }
+  .start-panel.start-modes h1 { font-size: 26px; }
+  .start-panel.start-modes .start-subtitle { margin: 6px 0 12px; }
+  .start-panel.start-modes .portrait-picker { margin-bottom: 12px; }
+  .start-panel.start-modes .portrait-face { width: 52px; height: 52px; }
+  .start-panel.start-modes .start-actions { gap: 7px; }
+  .start-panel.start-modes .start-actions button { min-height: 38px; padding: 6px 12px; }
+  .start-panel.start-modes .start-actions .rank-search-opt { min-height: 36px; }
+}
+@media (min-width: 761px) and (max-height: 680px) {
+  .start-panel.start-modes { padding: 18px 24px; gap: 18px; }
+  .start-panel.start-modes .start-kicker { margin-bottom: 8px; }
+  .start-panel.start-modes h1 { font-size: 24px; }
+  .start-panel.start-modes .start-subtitle { font-size: 12.5px; }
+  .start-panel.start-modes .portrait-face { width: 48px; height: 48px; }
+  .start-panel.start-modes .start-actions { gap: 6px; }
+  .start-panel.start-modes .start-actions button { min-height: 36px; }
+  .start-panel.start-modes .start-actions .rank-search-opt { min-height: 34px; }
+}
+/* Mid-width desktops: keep both columns, just seat them closer together. */
+@media (min-width: 761px) and (max-width: 900px) {
+  .start-panel.start-modes { gap: 20px; padding: 24px; }
+}
+/* Narrow screens keep the single-column menu; the mobile pass owns it. */
+@media (max-width: 760px) {
+  .start-panel.start-modes {
+    grid-template-columns: 1fr;
+    width: min(440px, 100%);
+    text-align: center;
+    padding: 26px 20px;
+    gap: 16px;
+  }
+  .start-panel.start-modes .start-subtitle { margin: 8px auto 0; max-width: 330px; }
+  .start-panel.start-modes .portrait-picker { margin: 14px 0 0; }
+  .start-panel.start-modes .portrait-options { justify-content: center; }
+  .start-panel.start-modes .portrait-face { width: 64px; height: 64px; }
+  .start-panel.start-modes .rank-block { margin: 14px 0 0; }
+  .start-panel.start-modes .start-actions button { min-height: 44px; }
+  .start-panel.start-modes .start-actions .rank-search-opt { min-height: 40px; }
+  .start-panel.start-modes .start-back { margin-top: 4px; }
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    RANK-01 (#147) — the rating, and the badge that names it.
 

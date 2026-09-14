@@ -529,39 +529,41 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
 
   if (state === "choose") return (
     <main className="start-screen" aria-label="Hexmatch start screen">
-      <div className="start-panel">
-        <p className="start-kicker">HEXMatch Industries</p>
-        <h1>Back to work, Logistics Manager.</h1>
-        <p className="start-subtitle">Your first shift at {EMPLOYER}: move the freight, beat the rival, earn the promotion.</p>
-        <div className="portrait-picker" role="radiogroup" aria-label="Choose your manager">
-          <p className="portrait-label">Your manager</p>
-          <div className="portrait-options">
-            {PORTRAITS.map((p) => (
-              <button key={p} type="button"
-                className={`portrait-opt${portrait === p ? " on" : ""}`}
-                aria-pressed={portrait === p}
-                data-sfx="select"
-                onClick={() => setPortrait(p)}>
-                <span className={`portrait-face portrait-${p}`} aria-hidden="true" />
-                <span className="portrait-name">{p === "vex" ? "Anne Hextall" : "James Hextall"}</span>
-              </button>
-            ))}
+      <div className="start-panel start-modes">
+        <section className="start-modes-info" aria-label="Manager and rating">
+          <p className="start-kicker">HEXMatch Industries</p>
+          <h1>Back to work, Logistics Manager.</h1>
+          <p className="start-subtitle">Your first shift at {EMPLOYER}: move the freight, beat the rival, earn the promotion.</p>
+          <div className="portrait-picker" role="radiogroup" aria-label="Choose your manager">
+            <p className="portrait-label">Your manager</p>
+            <div className="portrait-options">
+              {PORTRAITS.map((p) => (
+                <button key={p} type="button"
+                  className={`portrait-opt${portrait === p ? " on" : ""}`}
+                  aria-pressed={portrait === p}
+                  data-sfx="select"
+                  onClick={() => setPortrait(p)}>
+                  <span className={`portrait-face portrait-${p}`} aria-hidden="true" />
+                  <span className="portrait-name">{p === "vex" ? "Anne Hextall" : "James Hextall"}</span>
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
-        {rank ? (
-          <div className="rank-block">
-            <RankChip model={chipFor(rank)} />
-            <p className="rank-block-note">
-              {rank.matches === 0
-                ? "Play a quick match to place on the ladder."
-                : `${rank.wins}W · ${rank.losses}L · ${
-                    tierProgress(rank.rating).next
-                      ? `${tierProgress(rank.rating).toNext} rating to ${tierProgress(rank.rating).next!.label}`
-                      : "top of the ladder"}`}
-            </p>
-          </div>
-        ) : null}
-        <div className="start-actions">
+          {rank ? (
+            <div className="rank-block">
+              <RankChip model={chipFor(rank)} />
+              <p className="rank-block-note">
+                {rank.matches === 0
+                  ? "Play a quick match to place on the ladder."
+                  : `${rank.wins}W · ${rank.losses}L · ${
+                      tierProgress(rank.rating).next
+                        ? `${tierProgress(rank.rating).toNext} rating to ${tierProgress(rank.rating).next!.label}`
+                        : "top of the ladder"}`}
+              </p>
+            </div>
+          ) : null}
+        </section>
+        <nav className="start-actions" aria-label="Game modes">
           <button className="start-primary" data-sfx="open" onClick={() => { setProgress(loadStoryProgress()); setState("story"); }}>Story Mode <small>the Foundry Syndicate</small></button>
           <button data-sfx="open" onClick={() => onStart({ mode: "ai", portrait })}>Play vs AI <small>no login</small></button>
           <button disabled={busy} onClick={() => { setState("host"); void beginRoom("host"); }}>Host a game (Experimental) <small>unranked</small></button>
@@ -581,7 +583,7 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
           </div>
           <button disabled={busy} onClick={() => { loadLadder(); setState("ladder"); }}>The ladder <small>top ratings</small></button>
           {onBack ? <button className="start-back" data-sfx="close" onClick={onBack}>Back to the menu</button> : null}
-        </div>
+        </nav>
       </div>
     </main>
   );
