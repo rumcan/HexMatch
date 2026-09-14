@@ -21,8 +21,8 @@ import {
   anchorCandidates, resolveAnchor, platformRefusal, placePlatform, overlaps,
   depotRefusal, placeDepot, depotExit, laneTiles, stopTile, railPorts, footprintFor, rotateView,
   railComponents, railPath, ownerRailTiles,
-  lineRefusal, assignLine, planLeg, tickTrains, trainTile, trainOccupies, demolishStructure,
-  recallTrain, sellTrain, stopLine, depotReaching,
+  lineRefusal, assignLine, createLine, renameLine, buyTrain, startLine, LINE_NAME_MAX, planLeg, tickTrains, trainTile, trainOccupies, demolishStructure,
+  recallTrain, sellTrain, stopLine, depotReaching, trainAtHome, trainBasedAt,
   railServesIndustry, railServicedIndustries, platformVp, railPanelRows,
   railStructureItems, trainItems, pointAt, polyline, routeLength,
   type RailState, type RailView, type RailStructure,
@@ -476,10 +476,10 @@ describe("RAIL-04 the train's states and motion", () => {
     const grid = flatGrid([industry("farm", 30, 30)]);
     const track = createTrack();
     const state = createRailState();
-    const { source, dest } = buildLine(state, grid, track, 7, 3);
+    const { source, dest, depot } = buildLine(state, grid, track, 7, 3);
     const plan = assignLine(state, 1, source.id, dest.id);
     if (!plan.ok || !plan.train) throw new Error(`fixture failed to assign: ${plan.why}`);
-    return { grid, track, state, source, dest, train: plan.train, line: plan.line };
+    return { grid, track, state, source, dest, depot, train: plan.train, line: plan.line };
   }
 
   it("starts at the depot exit, departs to the source and dwells 1.5s", () => {
@@ -601,6 +601,43 @@ describe("RAIL-04 the train's states and motion", () => {
     expect(sellTrain(state, train).ok).toBe(false);
   });
 
+  it("sells a train that stopped safely on its depot exit when the route was cut", () => {
+    const { state, train, depot } = running();
+    const exit = depotExit(depot);
+    expect(trainTile(train)).toEqual([exit.tx, exit.ty]);
+    // Cut the line at the depot's own stub: nothing the train can do — it
+    // stops safely where it stands, which is still its depot's exit.
+    expect(demolishRail(state, 13, 4)).toBe(true);
+    tickTrains(state, 50);
+    expect(train.status).toBe("blocked");
+    expect(trainTile(train)).toEqual([exit.tx, exit.ty]);
+    expect(trainAtHome(state, train)).toBe(true);
+    // `stored` is unreachable for a train that can never route again, and the
+    // 50% is owed on "returned to depot", not on the state's name.
+    const sale = sellTrain(state, train);
+    expect(sale.ok).toBe(true);
+    expect(sale.refund).toEqual({ ore: 2, oil: 1 });
+    expect(state.trains).toHaveLength(0);
+    expect(state.lines).toHaveLength(0);
+  });
+
+  it("refuses to demolish a depot its train is based at, and lets go once it is sold", () => {
+    const { state, train, depot } = running();
+    // Out on the line: its home cannot be pulled out from under it.
+    for (let i = 0; i < 400 && train.status !== "dwelling"; i++) tickTrains(state, 50);
+    expect(demolishStructure(state, depot.id)).toBeNull();
+    expect(trainBasedAt(state, depot.id)).toBe(train);
+    // Home and sold: the shed is empty, and may come down for its 50%.
+    expect(recallTrain(state, train)).toBe(true);
+    for (let i = 0; i < 5000 && train.status !== "stored"; i++) tickTrains(state, 50);
+    expect(train.status).toBe("stored");
+    // A stored train has no tile at all, so tile occupancy cannot see it —
+    // this is the case the guard exists for.
+    expect(demolishStructure(state, depot.id)).toBeNull();
+    expect(sellTrain(state, train).ok).toBe(true);
+    expect(demolishStructure(state, depot.id)).toBe(depot);
+  });
+
   it("stopLine sends a running train home", () => {
     const { state, train, line } = running();
     tickTrains(state, 100);
@@ -688,5 +725,130 @@ describe("the Railway panel's model", () => {
     // With no atlas installed, art that does not exist is skipped, not faked.
     const stub = { has: (n: string) => n.startsWith("locomotive") };
     expect(trainItems(state, stub).map((i) => i.sprite)).toEqual(["locomotive_se"]);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// #179 — a line in steps: create it, buy its train, start it
+//
+// `assignLine` stays the one-click path; these are the three steps the Railway
+// panel runs separately. They share every rule with it — above all the
+// one-train-per-connected-network limit, which must hold across a SECOND depot
+// on the same network, not only within one depot.
+// ══════════════════════════════════════════════════════════════════════════
+describe("#179 line and train management", () => {
+  const world = () => {
+    const grid = flatGrid();
+    const track = createTrack();
+    const state = createRailState();
+    return { grid, track, state, ...buildLine(state, grid, track, 7, 3) };
+  };
+
+  it("creates a named line without buying a train, and refuses an illegal one", () => {
+    const { state, source, dest } = world();
+    const made = createLine(state, 1, source.id, dest.id, "  Timber   run ");
+    expect(made.ok).toBe(true);
+    expect(made.line?.name).toBe("Timber run");
+    expect(state.trains).toHaveLength(0);
+    expect(createLine(state, 1, source.id, dest.id).line?.name).toBe("Line 2");
+    // Backwards (a plant platform as the source) and another owner's platforms.
+    expect(createLine(state, 1, dest.id, source.id).ok).toBe(false);
+    expect(createLine(state, 2, source.id, dest.id).ok).toBe(false);
+  });
+
+  it("renames only the owner's line, trimmed and capped, never to nothing", () => {
+    const { state, source, dest } = world();
+    const line = createLine(state, 1, source.id, dest.id).line!;
+    expect(renameLine(state, 1, line.id, "  Quarry   express  ")).toBe(true);
+    expect(line.name).toBe("Quarry express");
+    expect(renameLine(state, 1, line.id, "   ")).toBe(false);
+    expect(line.name).toBe("Quarry express");
+    expect(renameLine(state, 2, line.id, "Stolen")).toBe(false);
+    expect(renameLine(state, 1, line.id, "x".repeat(80))).toBe(true);
+    expect(line.name).toHaveLength(LINE_NAME_MAX);
+  });
+
+  it("buys a train that waits in the depot until the line is started", () => {
+    const { state, source, dest, depot } = world();
+    const line = createLine(state, 1, source.id, dest.id).line!;
+    const bought = buyTrain(state, 1, depot.id, line.id);
+    expect(bought.ok).toBe(true);
+    const train = bought.train!;
+    expect(train.status).toBe("stored");
+    // Parked means parked: time passing does not send it anywhere.
+    tickTrains(state, 5_000);
+    expect(train.status).toBe("stored");
+    expect(trainAtHome(state, train)).toBe(true);
+    expect(startLine(state, 1, line.id)).toBe(true);
+    expect(train.status).toBe("departing");
+    const exit = depotExit(depot);
+    expect(trainTile(train)).toEqual([exit.tx, exit.ty]);   // from the depot exit
+    // A line whose train is already running has nothing left to start.
+    expect(startLine(state, 1, line.id)).toBe(false);
+    expect(startLine(state, 2, line.id)).toBe(false);        // and never another owner's
+  });
+
+  it("refuses a missing depot or line, another owner's, and a depot that can't reach the source", () => {
+    const { state, source, dest, depot } = world();
+    const line = createLine(state, 1, source.id, dest.id).line!;
+    expect(buyTrain(state, 1, 9999, line.id).ok).toBe(false);
+    expect(buyTrain(state, 1, depot.id, 9999).ok).toBe(false);
+    expect(buyTrain(state, 2, depot.id, line.id).ok).toBe(false);
+    // A depot standing on bare grass far away has no rail to the source.
+    const stranded = placeDepot(state, "you", 1, 60, 60, "ne");
+    const refused = buyTrain(state, 1, stranded.id, line.id);
+    expect(refused.ok).toBe(false);
+    expect(refused.why).toMatch(/can reach that platform/);
+    expect(state.trains).toHaveLength(0);
+  });
+
+  it("keeps one train per connected network, even through a second depot", () => {
+    const { state, grid, track, source, dest, depot } = world();
+    const line = createLine(state, 1, source.id, dest.id).line!;
+    expect(buyTrain(state, 1, depot.id, line.id).ok).toBe(true);
+    // A second depot on the SAME network: a stub under the line, a shed below it.
+    expect(lay(grid, track, state, 1, [[11, 4]]).ok).toBe(true);
+    const second = placeDepot(state, "you", 1, 11, 5, "ne");
+    const other = createLine(state, 1, source.id, dest.id).line!;
+    const refused = buyTrain(state, 1, second.id, other.id);
+    expect(refused.ok).toBe(false);
+    expect(refused.why).toMatch(/One train per connected network/);
+    expect(state.trains).toHaveLength(1);
+    // A second, DISCONNECTED network may run its own.
+    const far = buildLine(state, grid, track, 17, 30);
+    const farLine = createLine(state, 1, far.source.id, far.dest.id).line!;
+    expect(buyTrain(state, 1, far.depot.id, farLine.id).ok).toBe(true);
+    expect(state.trains).toHaveLength(2);
+  });
+
+  it("assignLine is create + buy + start, and a refusal leaves nothing behind", () => {
+    const { state, source, dest } = world();
+    const seq = state.seq;
+    const plan = assignLine(state, 1, source.id, dest.id, "Main line");
+    expect(plan.ok).toBe(true);
+    expect(plan.line?.name).toBe("Main line");
+    expect(plan.train?.status).toBe("departing");
+    const again = assignLine(state, 1, source.id, dest.id);
+    expect(again.ok).toBe(false);
+    expect(again.why).toMatch(/One train per connected network/);
+    expect(state.lines).toHaveLength(1);
+    expect(state.trains).toHaveLength(1);
+    expect(state.seq).toBe(seq + 2);          // the refused attempt spent no ids
+  });
+
+  it("the panel offers Buy train for an idle line, then Start and Sell for the parked train", () => {
+    const { state, source, dest, depot } = world();
+    expect(railPanelRows(state, 1).find((r) => r.kind === "depot")?.actions).toEqual([]);
+    const line = createLine(state, 1, source.id, dest.id, "Ore run").line!;
+    const depotRow = railPanelRows(state, 1).find((r) => r.kind === "depot")!;
+    expect(depotRow.actions).toEqual(["buy"]);
+    expect(depotRow.partnerId).toBe(line.id);
+    expect(depotRow.detail).toMatch(/Ore run/);
+    expect(buyTrain(state, 1, depot.id, line.id).ok).toBe(true);
+    const parked = railPanelRows(state, 1);
+    expect(parked.find((r) => r.kind === "depot")?.actions).toEqual([]);
+    expect(parked.find((r) => r.kind === "train")?.actions).toEqual(["start", "sell"]);
+    expect(startLine(state, 1, line.id)).toBe(true);
+    expect(railPanelRows(state, 1).find((r) => r.kind === "train")?.actions).toEqual(["recall"]);
   });
 });

@@ -236,8 +236,15 @@ export interface TrainWire {
   depotId: number;
   status: string;
   target: "source" | "dest" | "depot";
-  /** Tiles of the leg being driven, from where it was to where it is going. */
-  route: [number, number][];
+  /**
+   * Tiles of the leg being driven, from where it was to where it is going.
+   *
+   * ABSENT means "unchanged since the last wire" (`rail.ts` sends a train's
+   * route only when it is replanned — #142's "routes by revision, train
+   * progress via compact updates") and the guest keeps the route it already
+   * has for that id. A join, a resync and a save always carry it.
+   */
+  route?: [number, number][];
   dist: number;
   planRevision: number;
   dwellMs: number;

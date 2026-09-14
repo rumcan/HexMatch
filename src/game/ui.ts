@@ -129,7 +129,8 @@ export interface UiRailRow {
   kind: "platform" | "depot" | "train";
   label: string;
   detail: string;
-  actions: ("assign" | "recall" | "sell" | "buy" | "start" | "rename")[];
+  actions: ("assign" | "recall" | "sell" | "buy" | "start")[];
+  /** `assign`: the partner platform. `buy`: the line the train is bought for. */
   partnerId?: number;
   /** What the action costs, in the game's own cargo wording. */
   hint?: string;
@@ -213,10 +214,11 @@ export interface UiHooks {
   /**
    * RAIL-04: the Railway panel's buttons. `id` is the row's rail id (a
    * platform, a depot or a train — the action says which table), and `assign`
-   * also carries the partner platform the line would run to. The game owns the
+   * also carries the partner platform the line would run to; `buy` carries
+   * the line the train is bought for, and `start` sends a parked train off. The game owns the
    * rules and the prices; this chrome only reports the click.
    */
-  onRailAction: (id: number, action: "assign" | "recall" | "sell" | "buy" | "start" | "rename", partnerId?: number) => void;
+  onRailAction: (id: number, action: "assign" | "recall" | "sell" | "buy" | "start", partnerId?: number) => void;
   /**
    * NAMES: the top-bar "Names" button reports a toggle. The game owns the
    * state and the localStorage record; the chrome only repaints its pressed
@@ -310,7 +312,7 @@ export interface OriginalUi {
 }
 
 // ── gem face helper ─────────────────────────────────────────────────────────
-// V5: gems draw the restored sprite art (src/assetsstored sprite art (src/assets/gems/<cargo>.png). The
+// V5: gems draw the restored sprite art (src/assets/gems/<cargo>.png). The
 // radial gradient is only the fallback for a missing file, so a pruned assets
 // folder degrades to a coloured gem instead of a broken image.
 const gemFace = (res: ResKey) =>
@@ -2726,7 +2728,8 @@ export function createOriginalUi(
           const line = h("div", "rail-row");
           line.innerHTML = `<b>${row.label}</b><small>${row.detail}${row.hint ? ` · ${row.hint}` : ""}</small>`;
           for (const action of row.actions) {
-            const b = h("button", "rail-act", action === "assign" ? "Assign line" : action === "recall" ? "Recall" : "Sell");
+            const b = h("button", "rail-act", action === "assign" ? "Assign line" : action === "buy" ? "Buy train"
+              : action === "start" ? "Start" : action === "recall" ? "Recall" : "Sell");
             b.dataset.railAction = `${row.id}:${action}`;
             b.dataset.sfx = "click";
             b.onclick = () => hooks.onRailAction(row.id, action, row.partnerId);
