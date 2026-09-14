@@ -53,8 +53,15 @@ import {
   type MatchSettings,
 } from "../net/match-settings";
 import { PORTRAITS, type Portrait } from "../iso/config";
+// CONTINUE-01 (#191): the menus name the saves they can resume, and starting
+// a new game deliberately clears the slot first instead of silently resuming.
+import { showConfirm } from "../iso/confirm-sheet";
+import {
+  describeSave, discardSoloSave, formatSavedAgo, resumableSaves, saveForMode,
+  type SoloSaveSummary,
+} from "../iso/save-summary";
 // STORY-01: the campaign menu — contracts, their locks and their seals.
-import { CHAPTERS, EMPLOYER, currentJobTitle } from "../story/chapters";
+import { CHAPTERS, EMPLOYER, currentJobTitle, type StoryChapter } from "../story/chapters";
 import { CAST, faceOf } from "../story/cast";
 import { loadStoryProgress, pinnedChapter, type StoryProgress } from "../story/progress";
 
@@ -266,6 +273,17 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
    *  screen — with no timeout, "how long has it been" is the only feedback. */
   const [searchSeconds, setSearchSeconds] = useState(0);
   const matchRequest = useRef(0);
+  /**
+   * CONTINUE-01 (#191): the destructive "start a NEW game over an existing
+   * save" ask. The chapter-card restart and the Play-vs-AI restart both walk
+   * through the same painted plate (#121: never a native confirm in a frame).
+   */
+  const [pendingNew, setPendingNew] = useState<{
+    title: string;
+    body: string;
+    confirmLabel: string;
+    act: () => void;
+  } | null>(null);
 
   // RANK-01: the rating file is read once per mount. It is deliberately not
   // awaited by anything: a room can be created while the read is in flight,
@@ -669,6 +687,84 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
     return `${minutes}:${seconds}`;
   }, [searchSeconds]);
 
+  // CONTINUE-01 (#191): the saves these two doors are built from. They are
+  // re-read every time the mode screen or campaign list is entered (every
+  // return from a match mounts the component afresh anyway), so a Continue
+  // ribbon just cleared or just written never lies.
+  const sandboxSave = useMemo<SoloSaveSummary | null>(
+    () => (state === "choose" ? saveForMode(null) : null),
+    [state],
+  );
+  const storySaves = useMemo<Map<string, SoloSaveSummary>>(() => {
+    const map = new Map<string, SoloSaveSummary>();
+    if (state === "story") {
+      for (const s of resumableSaves()) if (s.chapterId) map.set(s.chapterId, s);
+    }
+    return map;
+  }, [state]);
+
+  // The one destructive-ask plate. It hangs off a body-level host the effect
+  // owns, so every screen branch (mode pick, campaign list) gets it without
+  // each branch rendering a host. Cancel/backdrop/Escape/destroy all answer
+  // false; the clear-and-start action runs only on the confirm button.
+  useEffect(() => {
+    if (!pendingNew) return;
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const view = showConfirm(host, {
+      title: pendingNew.title,
+      body: pendingNew.body,
+      confirmLabel: pendingNew.confirmLabel,
+      danger: true,
+    });
+    let live = true;
+    void view.promise.then((ok) => {
+      if (!live) return;
+      const act = pendingNew.act;
+      setPendingNew(null);
+      // Let the plate tear down before the confirming click mounts a whole
+      // game over the same document.
+      if (ok) queueMicrotask(act);
+    });
+    return () => { live = false; view.destroy(); host.remove(); };
+  }, [pendingNew]);
+
+  /**
+   * CONTINUE-01 (#191): Play vs AI starts a NEW match. A fresh save slot boots
+   * straight in; an occupied one asks first and is cleared on confirm, which
+   * is what stops the old match silently reattaching. The save's own door is
+   * the Continue button rendered above this one.
+   */
+  const beginAiNew = useCallback(() => {
+    if (sandboxSave) {
+      setPendingNew({
+        title: "Start a new game vs the AI?",
+        body: `Your saved match — ${describeSave(sandboxSave)} — will be cleared. Use Continue above to pick that match back up.`,
+        confirmLabel: "Start new game",
+        act: () => {
+          discardSoloSave(null);
+          onStart({ mode: "ai", portrait });
+        },
+      });
+      return;
+    }
+    onStart({ mode: "ai", portrait });
+  }, [onStart, portrait, sandboxSave]);
+
+  /** A contract card resumes when a save exists; this sibling starts the
+   *  contract over, clearing the slot only after the player confirms. */
+  const beginChapterNew = useCallback((chapter: StoryChapter, save: SoloSaveSummary) => {
+    setPendingNew({
+      title: `Start "${chapter.name}" over?`,
+      body: `Your saved contract — ${describeSave(save)} — will be cleared. Use Continue on the card to pick it back up.`,
+      confirmLabel: "Start over",
+      act: () => {
+        discardSoloSave(chapter.id);
+        onStart({ mode: "story", chapter: chapter.id, portrait });
+      },
+    });
+  }, [onStart, portrait]);
+
   useEffect(() => () => { /* room ownership moves to App after resolution */ }, []);
 
   if (state === "choose") return (
@@ -708,8 +804,18 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
           ) : null}
         </section>
         <nav className="start-actions" aria-label="Game modes">
-          <button className="start-primary" data-sfx="open" onClick={() => { setProgress(loadStoryProgress()); setState("story"); }}>Story Mode <small>the Foundry Syndicate</small></button>
-          <button data-sfx="open" onClick={() => onStart({ mode: "ai", portrait })}>Play vs AI <small>no login</small></button>
+          {/* CONTINUE-01 (#191): a resumable sandbox save gets the gold door,
+              naming the rival, the score and when it was last saved. It boots
+              exactly as a refresh would; Play vs AI beneath it starts new. */}
+          {sandboxSave ? (
+            <button className="start-primary start-continue" data-sfx="open"
+              aria-label={`Continue — ${describeSave(sandboxSave)}`}
+              onClick={() => onStart({ mode: "ai", portrait })}>
+              Continue<small>{describeSave(sandboxSave)}</small>
+            </button>
+          ) : null}
+          <button className={sandboxSave ? "" : "start-primary"} data-sfx="open" onClick={() => { setProgress(loadStoryProgress()); setState("story"); }}>Story Mode <small>the Foundry Syndicate</small></button>
+          <button data-sfx="open" onClick={beginAiNew}>Play vs AI <small>{sandboxSave ? "start a new game" : "no login"}</small></button>
           <button disabled={busy} onClick={() => { setState("host"); void beginRoom("host"); }}>Host a game (Experimental) <small>unranked</small></button>
           <button disabled={busy} onClick={openJoinScreen}>Join with a code <small>unranked</small></button>
           <button disabled={busy} onClick={() => void beginMatch()}>Auto Matchmaking <small>ranked · a rated stranger</small></button>
@@ -749,16 +855,22 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
               const face = faceOf(chapter.rival, "calm");
               const expanded = openBriefs.has(chapter.id);
               const briefId = `cc-brief-${chapter.id}`;
+              // CONTINUE-01 (#191): an open contract with a fresh save is a
+              // Continue door — the card itself resumes (the boot reads the
+              // slot), and the "Start over" sibling is the only path that
+              // clears it. Sealed contracts never hold saves.
+              const save = open ? storySaves.get(chapter.id) ?? null : null;
               return (
-                // The card is a <button>, so its "More" toggle is a sibling
-                // (a button cannot hold another button). It also works on a
-                // sealed contract, whose card itself is disabled.
+                // The card is a <button>, so its "More"/"Start over" toggles
+                // are siblings (a button cannot hold another button). They
+                // also work on a sealed contract, whose card itself is
+                // disabled.
                 <div key={chapter.id} className="chapter-item">
                 <button type="button" data-sfx="open"
-                  className={`chapter-card${open ? "" : " locked"}`}
+                  className={`chapter-card${open ? "" : " locked"}${save ? " has-save" : ""}`}
                   style={{ "--cc": rival.colour } as CSSProperties}
                   disabled={!open}
-                  aria-label={`${chapter.name}${result === "win" ? " — filed, won" : result === "loss" ? " — filed, lost" : ""}${open ? "" : " (sealed)"}`}
+                  aria-label={`${chapter.name}${save ? ` — continue saved match, ${describeSave(save)}` : ""}${result === "win" ? " — filed, won" : result === "loss" ? " — filed, lost" : ""}${open ? "" : " (sealed)"}`}
                   onClick={() => onStart({ mode: "story", chapter: chapter.id, portrait })}>
                   <span className="cc-face" aria-hidden="true"
                     style={face.pos
@@ -776,17 +888,32 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
                     <span className="cc-name">{chapter.name}</span>
                     <span id={briefId} className={`cc-brief${expanded ? "" : " clamped"}`}>{chapter.brief}</span>
                     <span className="cc-meta">as {chapter.jobTitle} · vs {rival.name} · first to {chapter.target}★ · {chapter.skill}</span>
+                    {save ? (
+                      <span className="cc-continue">
+                        <b>▸ Continue</b> · {save.finished ? "match complete · " : ""}
+                        {save.youStars}★ vs {save.rivalStars}★ · saved {formatSavedAgo(save.savedAt)}
+                      </span>
+                    ) : null}
                   </span>
                 </button>
-                <button type="button" className="cc-more" data-sfx="tab"
-                  aria-expanded={expanded} aria-controls={briefId}
-                  onClick={() => setOpenBriefs((prev) => {
-                    const next = new Set(prev);
-                    if (next.has(chapter.id)) next.delete(chapter.id); else next.add(chapter.id);
-                    return next;
-                  })}>
-                  {expanded ? "Less ▴" : "More ▾"}
-                </button>
+                <span className="cc-actions">
+                  <button type="button" className="cc-more" data-sfx="tab"
+                    aria-expanded={expanded} aria-controls={briefId}
+                    onClick={() => setOpenBriefs((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(chapter.id)) next.delete(chapter.id); else next.add(chapter.id);
+                      return next;
+                    })}>
+                    {expanded ? "Less ▴" : "More ▾"}
+                  </button>
+                  {save ? (
+                    <button type="button" className="cc-restart" data-sfx="click"
+                      title="Clear the saved match and start this contract again"
+                      onClick={() => beginChapterNew(chapter, save)}>
+                      ↻ Start over
+                    </button>
+                  ) : null}
+                </span>
                 </div>
               );
             })}
@@ -866,7 +993,7 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
     );
   }
   if (state === "error") return (
-    <main className="start-screen"><div className="start-panel lobby"><p className="start-kicker">MATCH UNAVAILABLE</p><h1>Could not join</h1><p className="lobby-error">{error}</p><div className="lobby-actions"><button onClick={backToChoose}>Back</button><button className="start-primary" onClick={() => onStart({ mode: "ai", portrait })}>Play vs AI</button></div></div></main>
+    <main className="start-screen"><div className="start-panel lobby"><p className="start-kicker">MATCH UNAVAILABLE</p><h1>Could not join</h1><p className="lobby-error">{error}</p><div className="lobby-actions"><button onClick={backToChoose}>Back</button><button className="start-primary" onClick={beginAiNew}>Play vs AI</button></div></div></main>
   );
 
   const hosting = state === "host";

@@ -1717,7 +1717,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         },
         // STORY-01: the ledger's third door — back to the campaign menu with
         // the contract recorded, instead of a reload into the same chapter.
-        ...(storyOn ? { onContinue: () => opts.onStoryExit?.() } : {}),
+        // CONTINUE-01 (#191): the decided contract is cleared first — its
+        // result is already recorded, and leaving the finished save behind
+        // would make the campaign card offer "Continue" straight back into
+        // this ledger instead of a fresh attempt. `restartArmed` stops the
+        // teardown's autosave from rewriting the slot we just cleared.
+        ...(storyOn ? {
+          onContinue: () => {
+            restartArmed = true;
+            clearSave(saveKey);
+            opts.onStoryExit?.();
+          },
+        } : {}),
       });
     };
     // STORY-01: the epilogue stands BEFORE the ledger — the rival concedes (or
@@ -5515,7 +5526,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     if (opts.onQuitToMenu) {
       menuItem(isSolo() ? "Quit to Main Menu" : "Leave Room",
-        isSolo() ? "the match stays saved — Play resumes it" : "the other seat is told you left",
+        isSolo() ? "the match stays saved — Continue resumes it" : "the other seat is told you left",
         () => {
           // A solo quit is plain navigation (the save holds the match); a
           // room's quit strands the far seat, so that one confirms — and the
