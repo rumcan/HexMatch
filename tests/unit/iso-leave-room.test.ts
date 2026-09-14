@@ -17,6 +17,8 @@ import { NetSession } from "../../src/net/session";
 import { PROTOCOL_VERSION, type HexProtocol, type WelcomeMsg } from "../../src/net/protocol";
 import type { HexRoom } from "../../src/net/transport";
 import { mulberry32, setRng } from "../../src/game/config";
+import { rateOutcome } from "../../src/net/rating";
+import type { RankStore } from "../../src/net/rank-runtime";
 
 vi.mock("../../assets/iso-atlas/atlas@0.5x.png", () => ({ default: "a05.png" }));
 vi.mock("../../assets/iso-atlas/atlas@1x.png", () => ({ default: "a1.png" }));
@@ -108,6 +110,71 @@ const sheetCancel = () =>
   document.querySelector<HTMLButtonElement>(".confirm-sheet button[data-confirm-cancel]")!;
 const modal = () => root.querySelector<HTMLElement>(".modal-root")!;
 
+/**
+ * Boot one game against the fake room. Extracted so a ranked match can be
+ * booted with its injected `RankStore` without a second harness.
+ */
+async function bootGame(opts: { ranked?: boolean; rank?: RankStore } = {}): Promise<void> {
+  room = new FakeRoom("host-socket");
+  session = new NetSession({ room: asRoom(room), role: "host" });
+  quits = 0;
+
+  root = document.createElement("div");
+  root.className = "game-root";
+  Object.defineProperty(root, "clientWidth", { value: 900, configurable: true });
+  Object.defineProperty(root, "clientHeight", { value: 700, configurable: true });
+  document.body.appendChild(root);
+
+  const { startIsoGame } = await import("../../src/iso/game");
+  dispose = startIsoGame(root, {
+    seed: SEED, role: "host", net: session, onQuitToMenu: () => { quits++; },
+    ...opts,
+  });
+  await settle();
+  session.receive(welcome("host-socket"));
+  await settle();
+}
+
+/**
+ * Re-boot the game for a test that needs different options. `beforeEach`
+ * already mounted a casual match, and a second `#iso-menu-btn` would shadow
+ * the first for every `getElementById` lookup, so the old one goes first.
+ */
+async function reboot(opts: { ranked?: boolean; rank?: RankStore }): Promise<void> {
+  dispose?.();
+  dispose = undefined;
+  root.remove();
+  await bootGame(opts);
+}
+
+/** A `RankStore` whose only job is to record what the game asks it to file. */
+function fakeRankStore(): {
+  store: RankStore;
+  filings: Parameters<RankStore["fileResult"]>[0][];
+  loads: () => number;
+} {
+  let loads = 0;
+  const filings: Parameters<RankStore["fileResult"]>[0][] = [];
+  const store: RankStore = {
+    loadState: async () => {
+      loads++;
+      return { rating: 1180, matches: 12, wins: 7, losses: 5, season: "s1" };
+    },
+    fileResult: async (input) => {
+      filings.push(input);
+      const verdict = rateOutcome({
+        self: { id: input.selfId, state: input.state },
+        opponent: input.opponent,
+        won: input.result.winnerId === input.selfId,
+        forfeit: input.result.reason === "forfeit",
+      });
+      return { state: verdict.state, verdict, applied: true, ladder: null };
+    },
+    loadLadder: async () => null,
+  };
+  return { store, filings, loads: () => loads };
+}
+
 beforeEach(async () => {
   stubCanvas();
   stubImage();
@@ -129,23 +196,7 @@ beforeEach(async () => {
   // routes the ask through it, every test below fails.
   vi.spyOn(window, "confirm").mockReturnValue(false);
 
-  room = new FakeRoom("host-socket");
-  session = new NetSession({ room: asRoom(room), role: "host" });
-  quits = 0;
-
-  root = document.createElement("div");
-  root.className = "game-root";
-  Object.defineProperty(root, "clientWidth", { value: 900, configurable: true });
-  Object.defineProperty(root, "clientHeight", { value: 700, configurable: true });
-  document.body.appendChild(root);
-
-  const { startIsoGame } = await import("../../src/iso/game");
-  dispose = startIsoGame(root, {
-    seed: SEED, role: "host", net: session, onQuitToMenu: () => { quits++; },
-  });
-  await settle();
-  session.receive(welcome("host-socket"));
-  await settle();
+  await bootGame();
 });
 
 afterEach(() => {
@@ -262,5 +313,78 @@ describe("#121 Leave Room", () => {
     bare.firePlayerLeft("host-socket");
     expect(seen).toEqual([null]);
     bareSession.dispose();
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// RANK-01 (#147) — what leaving costs in a RATED room
+//
+// The forfeit policy is enforced by the room (an empty seat in a live match
+// loses); what this pins is the LOCAL half of it: the game tells the player
+// before they commit, and applies the same loss to its own file on the way
+// out, because the leaver never sees the room's `result` message.
+// ══════════════════════════════════════════════════════════════════════════
+describe("RANK-01 leaving a rated match", () => {
+  it("publishes the rating to the room as the match boots", async () => {
+    const rank = fakeRankStore();
+    await reboot({ ranked: true, rank: rank.store });
+    // The room's board is what both seats rate from, so the number is on the
+    // wire before a single tile is laid.
+    expect(room.sentCount("playerRating")).toBe(1);
+    const [published] = room.sent.filter((m) => m.type === "playerRating");
+    expect(published).toMatchObject({ id: "host-socket", rating: 1180, matches: 12 });
+    expect(rank.loads()).toBe(1);
+  });
+
+  it("says what leaving costs, and files the loss when the player confirms", async () => {
+    const rank = fakeRankStore();
+    await reboot({ ranked: true, rank: rank.store });
+    openMenu();
+    leaveItem().click();
+    await settle();
+    expect(sheet()!.textContent).toContain("ranked match");
+    sheetOk().click();
+    await settle();
+
+    expect(quits).toBe(1);
+    // The room itself is handed back when the app unmounts the match (#121);
+    // what a rated leave adds is the local filing below.
+    expect(rank.filings).toHaveLength(1);
+    const filed = rank.filings[0];
+    // The LEAVER's own seat: filed locally, against the rival's wire id, and
+    // marked so it never touches the ladder.
+    expect(filed.localOnly).toBe(true);
+    expect(filed.selfId).toBe("host-socket");
+    expect(filed.result).toMatchObject({
+      type: "result",
+      winnerId: "guest-socket",
+      loserId: "host-socket",
+      reason: "forfeit",
+    });
+    expect(filed.opponent).toMatchObject({ id: "guest-socket" });
+  });
+
+  it("files nothing when the player changes their mind", async () => {
+    const rank = fakeRankStore();
+    await reboot({ ranked: true, rank: rank.store });
+    openMenu();
+    leaveItem().click();
+    await settle();
+    sheetCancel().click();
+    await settle();
+    expect(rank.filings).toHaveLength(0);
+    expect(quits).toBe(0);
+  });
+
+  it("keeps a CASUAL room casual: no rating published, no warning", async () => {
+    // The boot in `beforeEach` is the host-by-code path: no store, no `ranked`.
+    expect(room.sentCount("playerRating")).toBe(0);
+    openMenu();
+    leaveItem().click();
+    await settle();
+    expect(sheet()!.textContent).not.toContain("ranked match");
+    sheetOk().click();
+    await settle();
+    expect(quits).toBe(1);
   });
 });

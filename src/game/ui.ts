@@ -22,7 +22,7 @@
 // renders the same chrome from them.
 // ══════════════════════════════════════════════════════════════════════════
 import {
-  BOARD_W, BOARD_H, CELL, RES, OFFER_LIFE,
+  CELL, RES, OFFER_LIFE,
   SABOTAGE, SECURITY, REPAIR_COST, type ResKey,
 } from "./config";
 import { BANK_RATE, MAX_OFFERS } from "./trade";
@@ -32,7 +32,7 @@ import { BANK_RATE, MAX_OFFERS } from "./trade";
 // and the HUD was already showing "/10" while the game was winning at 12 — the
 // scoreboard now has exactly one source, `VICTORY` in src/iso/config.ts.
 import { CARGO, CARGOES, TRANSPORT, VICTORY, UPGRADE_COST, type Cargo, type Portrait } from "../iso/config";
-import { DEPOT_COST, costCompact, depotButtonLabel } from "../iso/construction";
+import { DEPOT_COST } from "../iso/construction";
 import { PLANT_COST } from "../iso/plants";
 import { GEM_TO_CARGO } from "../iso/quarry";
 // VP-01: quarters on the scoreboard — 4.75★, not 4.7499999999999996★.
@@ -51,7 +51,7 @@ import { playHoly, prewarmHoly } from "./holy";
 // chrome a hover tick and a press sound from ONE delegation; the calls below
 // are only the moments that are not a button — a tab sliding, a toast saying
 // no, a gem clearing, the wire opening.
-import { attachUiSound, registerSoundPainter, soundGlyph, soundLabel, sfx } from "../audio/sfx";
+import { attachUiSound, registerSoundPainter, soundLabel, sfx } from "../audio/sfx";
 import type { Cue } from "../audio/cues";
 // PP-14b: the tycoon portraits live with the NOIR mugshots further down — one
 // set of faces, so the start-screen pick and the dossiers read the same files.
@@ -61,7 +61,7 @@ import type { Cue } from "../audio/cues";
 const CARGO_TO_GEM: Partial<Record<Cargo, ResKey>> = Object.fromEntries(
   Object.entries(GEM_TO_CARGO).map(([gem, cargo]) => [cargo, gem]),
 ) as Partial<Record<Cargo, ResKey>>;
-import { Board, BOARD_ANIMATION_MS, type FxType, type Gem } from "./board";
+import { Board, BOARD_ANIMATION_MS, FAST_ANIMATION_MS, type FxType, type Gem } from "./board";
 import type { IsoMarket, IsoMarketPlayer, Offer } from "../iso/market";
 import portraitYou from "../assets/ui/tycoon_you_small.png";
 import portraitKrag from "../assets/ui/tycoon_krag.png";
@@ -76,6 +76,9 @@ import { coarsePointer } from "../iso/touch";
 // One sprite per cargo (./gem-art.ts), mapped through the same gem→cargo
 // bijection quarry.ts uses, so a colour can never draw the wrong sprite.
 import { GEM_ART } from "./gem-art";
+import {
+  HUD_ICONS, cargoIconHtml, costMarkup, depotButtonMarkup, soundIconHtml,
+} from "./hud-icons";
 
 // ── NOIR: the painted mugshots ──────────────────────────────────────────────
 // `tycoon_*.png` are the family portraits (src/assets/ui/, kept when U1 pruned
@@ -202,7 +205,15 @@ export interface UiHooks {
    * the shipped 7×8 shrunk toward a clip. The chrome only ASKS; the game
    * answers. It may grow a solo board (and must not on a multiplayer GUEST,
    * whose grid is authored by the host), and it may answer `false` to veto
-   * the request entirely. Return true when the growth was applied.
+   * the request entirely. Return true when the size was applied.
+   *
+   * #163: the ask only ever comes from a SETTLED measurement of the visible
+   * plant slot — never from a tab switch — so the same viewport always asks
+   * for the same rectangle. The chrome may also ask to RETRACT columns/rows
+   * it itself added earlier in this session when they no longer fit at the
+   * comfortable cell size, but only before the player has played into them;
+   * the shipped size, restored saves and host-authored boards are never
+   * asked to shrink (a guest vetoes every answer here regardless).
    */
   requestBoardSize?: (w: number, h: number) => boolean;
 }
@@ -274,8 +285,7 @@ const h = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, html?: s
   return e;
 };
 
-const costStr = (cost: Partial<Record<Cargo, number>>) =>
-  (Object.keys(cost) as Cargo[]).map((k) => `${cost[k]}${CARGO[k].icon}`).join(" ");
+const costStr = (cost: Partial<Record<Cargo, number>>) => costMarkup(cost);
 
 /** Repair Crew numbers are still declared in the old ResKey table — map them. */
 const REPAIR_ISO: Partial<Record<Cargo, number>> = {
@@ -325,6 +335,24 @@ export function createOriginalUi(
   root.style.setProperty("--gem-move-ms", `${BOARD_ANIMATION_MS.swap}ms`);
   root.style.setProperty("--gem-clear-ms", `${BOARD_ANIMATION_MS.clear}ms`);
 
+  // Issue #152 — turbo catch-up. While the player has a valid move queued the
+  // board runs its waits at FAST_ANIMATION_MS; the gem transitions must snap
+  // to match or the DOM would still be gliding when the next swap lands.
+  // The board flips this on and off (`onTurbo`); `renderBoard` reads
+  // `turboMode` to decide whether a cleared gem leaves a remnant behind.
+  let turboMode = false;
+  /** How long a `.gem-remnant` lingers before it is pulled from the DOM. */
+  const REMNANT_MS = 320;
+  function setTurbo(on: boolean) {
+    if (on === turboMode) return;
+    turboMode = on;
+    const t = on ? FAST_ANIMATION_MS : BOARD_ANIMATION_MS;
+    root.style.setProperty("--gem-move-ms", `${t.swap}ms`);
+    root.style.setProperty("--gem-clear-ms", `${t.clear}ms`);
+    root.classList.toggle("turbo", on);
+  }
+  board.onTurbo = setTurbo;
+
   // ── the map slot (original `<canvas id="map">` is now a container for the
   //    iso layer stack: terrain / structures / overlay) ─────────────────────
   const mapHost = h("div", "map-canvas iso-stage");
@@ -354,7 +382,7 @@ export function createOriginalUi(
     sel.value = hooks.skill ?? "normal";
     sel.id = "iso-rival-skill";
     sel.onchange = () => hooks.onSkill!(sel.value as SkillKey);
-    skillWrap.appendChild(h("span", "rival-skill-ic", "🤖"));
+    skillWrap.appendChild(h("span", "rival-skill-ic", HUD_ICONS.gear));
     skillWrap.appendChild(sel);
     right.appendChild(skillWrap);
   }
@@ -373,7 +401,7 @@ export function createOriginalUi(
   soundBtn.dataset.sfx = "off";
   soundBtn.dataset.act = "sound";
   const paintSound = (on: boolean) => {
-    soundBtn.textContent = soundGlyph(on);
+    soundBtn.innerHTML = soundIconHtml(on);
     soundBtn.title = soundLabel(on);
     soundBtn.setAttribute("aria-label", on ? "Mute sound" : "Unmute sound");
     soundBtn.setAttribute("aria-pressed", String(!on));
@@ -390,7 +418,7 @@ export function createOriginalUi(
   // bar carries Settings, How to Play and Quit to main menu, and the Settings
   // row opens `iso/settings-sheet.ts` — the SAME projector the main menu
   // opens, so the door and the match can never show different controls.
-  const fitBtn = h("button", "icon-btn", "🎯");
+  const fitBtn = h("button", "icon-btn", HUD_ICONS.reticle);
   fitBtn.title = "Recenter map";
   fitBtn.dataset.act = "recenter";
   fitBtn.onclick = () => hooks.onRecenter();
@@ -409,7 +437,7 @@ export function createOriginalUi(
   namesBtn.setAttribute("aria-pressed", String(hooks.names ?? true));
   namesBtn.onclick = () => hooks.onNames?.();
   right.appendChild(namesBtn);
-  const helpBtn = h("button", "icon-btn help-btn", "❔");
+  const helpBtn = h("button", "icon-btn help-btn", HUD_ICONS.help);
   helpBtn.title = "How to play";
   helpBtn.onclick = () => helpModal();
   right.appendChild(helpBtn);
@@ -425,6 +453,8 @@ export function createOriginalUi(
 
   // ── left: BUILD ────────────────────────────────────────────
   const left = h("aside", "aside left iso-panel");
+  // RAIL-01: the collapse key names the panel it folds (aria-controls).
+  left.id = "iso-aside-left";
   const bp = h("div", "panel");
   bp.appendChild(h("div", "panel-title", "Build"));
   const buildList = h("div", "build-list");
@@ -434,7 +464,7 @@ export function createOriginalUi(
   const sp = h("div", "panel grow");
   sp.appendChild(h("div", "panel-title", "Black Market"));
   // PP-08: the standing currency rule, stated right where Gold is spent.
-  sp.appendChild(h("div", "pane-note gold-rule", `🪙 ${GOLD_RULE} Construction and trade never touch it.`));
+  sp.appendChild(h("div", "pane-note gold-rule", `${cargoIconHtml("gold")} ${GOLD_RULE} Construction and trade never touch it.`));
   const sabList = h("div", "sab-list");
   sp.appendChild(sabList);
 
@@ -446,6 +476,8 @@ export function createOriginalUi(
 
   // ── right: shared economy window ────────────────────────────
   const rightAside = h("aside", "aside right iso-panel");
+  // RAIL-01: same contract as the build column — the key names its panel.
+  rightAside.id = "iso-aside-right";
   const qp = h("div", "panel");
   qp.id = "iso-quarry";
   const qh = h("div", "quarry-head");
@@ -511,13 +543,13 @@ export function createOriginalUi(
   topGrip.onclick = () => revealTopbar(6000);
   tp.appendChild(topGrip);
   const tabs = h("div", "tabs");
-  const tabMarket = h("button", "tab active", `<i class="tab-ic" aria-hidden="true">⚖</i><span class="tab-l">Market</span>`);
-  const tabBank = h("button", "tab", `<i class="tab-ic" aria-hidden="true">🏦</i><span class="tab-l">Bank</span>`);
-  const tabFeed = h("button", "tab", `<i class="tab-ic" aria-hidden="true">📰</i><span class="tab-l">Feed</span>`);
+  const tabMarket = h("button", "tab active", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.market}</i><span class="tab-l">Market</span>`);
+  const tabBank = h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.bank}</i><span class="tab-l">Bank</span>`);
+  const tabFeed = h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.feed}</i><span class="tab-l">Feed</span>`);
   tabMarket.onclick = () => setTab("market");
   tabBank.onclick = () => setTab("bank");
   tabFeed.onclick = () => setTab("feed");
-  const tabPlant = h("button", "tab", `<i class="tab-ic" aria-hidden="true">🏭</i><span class="tab-l">Processing Plant</span>`);
+  const tabPlant = h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.plant}</i><span class="tab-l">Processing Plant</span>`);
   tabPlant.onclick = () => setTab("plant");
   tabs.append(tabBank, tabMarket, tabPlant, tabFeed);
   tp.appendChild(tabs);
@@ -531,6 +563,82 @@ export function createOriginalUi(
   tp.appendChild(qp);
   rightAside.appendChild(tp);
   root.appendChild(rightAside);
+
+  // ── RAIL-01 — the desktop collapse keys ─────────────────────────────────
+  // The map is the game; the two fixed columns are instruments hung over it,
+  // and the ticket that raised them asked for a way to put them away. Each
+  // column gets one slim brass key on its outer edge (a child, so it rides
+  // the panel's own slide and stays reachable on the folded 28px sliver the
+  // stylesheet leaves on screen). The chevron points where the panel goes
+  // NEXT: expanded, toward the screen edge it folds against; folded, back
+  // toward the center. State lives on the root as data-rail-left /
+  // data-rail-right — the stylesheet owns the whole animation off those two
+  // attributes — and a phone NEVER sees any of it: railSyncViewport() clears
+  // a collapse the instant the viewport crosses to the sheet regime, and the
+  // phone block drops the keys outright.
+  let railLeftCollapsed = false;
+  let railRightCollapsed = false;
+  let railSig = "\u0000";
+  const railLeftBtn = h("button", "rail-toggle rail-toggle-left", "◂");
+  const railRightBtn = h("button", "rail-toggle rail-toggle-right", "▸");
+  railLeftBtn.id = "iso-rail-left";
+  railRightBtn.id = "iso-rail-right";
+  railLeftBtn.type = "button";
+  railRightBtn.type = "button";
+  railLeftBtn.setAttribute("aria-controls", "iso-aside-left");
+  railRightBtn.setAttribute("aria-controls", "iso-aside-right");
+  railLeftBtn.setAttribute("aria-label", "Toggle the Build menu panel");
+  railRightBtn.setAttribute("aria-label", "Toggle the Processing Plant panel");
+  left.appendChild(railLeftBtn);
+  rightAside.appendChild(railRightBtn);
+  /** One writer for both keys: attribute, ARIA state, chevron and title all
+   *  move together, and identical states repaint nothing (resize calls this
+   *  on every frame of a window drag). */
+  function paintRails() {
+    const sig = `${railLeftCollapsed ? 1 : 0}${railRightCollapsed ? 1 : 0}`;
+    if (sig === railSig) return;
+    railSig = sig;
+    root.dataset.railLeft = railLeftCollapsed ? "1" : "0";
+    root.dataset.railRight = railRightCollapsed ? "1" : "0";
+    railLeftBtn.setAttribute("aria-expanded", String(!railLeftCollapsed));
+    railRightBtn.setAttribute("aria-expanded", String(!railRightCollapsed));
+    railLeftBtn.textContent = railLeftCollapsed ? "▸" : "◂";
+    railRightBtn.textContent = railRightCollapsed ? "◂" : "▸";
+    railLeftBtn.title = railLeftCollapsed ? "Expand the Build menu" : "Collapse the Build menu";
+    railRightBtn.title = railRightCollapsed ? "Expand the Processing Plant panel" : "Collapse the Processing Plant panel";
+    // The drawer cue follows the ACT of this click, so the dataset (read by
+    // the sound delegation) is set for the state the click is ABOUT to enter.
+    railLeftBtn.dataset.sfx = railLeftCollapsed ? "close" : "open";
+    railRightBtn.dataset.sfx = railRightCollapsed ? "close" : "open";
+    // A folded panel is a 28px sliver; its controls are off-viewport and must
+    // leave the tab order with it — otherwise a keyboard walk lands on tabs
+    // and market rows nobody can see. `inert` on the panel CONTENT (never on
+    // the aside: the key lives beside the panel and stays reachable) removes
+    // them from focus, pointer and AT traversal, and undoes itself on unfold.
+    bp.inert = railLeftCollapsed;
+    tp.inert = railRightCollapsed;
+  }
+  railLeftBtn.onclick = () => {
+    if (isPhoneViewport()) return;
+    railLeftCollapsed = !railLeftCollapsed;
+    paintRails();
+  };
+  railRightBtn.onclick = () => {
+    if (isPhoneViewport()) return;
+    railRightCollapsed = !railRightCollapsed;
+    paintRails();
+  };
+  /** RAIL-01: the sheets own the panels on a phone. Crossing the regime
+   *  hands them back unfolded — called from responsiveZoom, which is the one
+   *  place that already knows the regime flipped. */
+  function railSyncViewport() {
+    if (isPhoneViewport() && (railLeftCollapsed || railRightCollapsed)) {
+      railLeftCollapsed = false;
+      railRightCollapsed = false;
+      paintRails();
+    }
+  }
+  paintRails();
 
   // ── overlays ──────────────────────────────────────────────────────────────
   const toasts = h("div", "toasts");
@@ -580,7 +688,7 @@ export function createOriginalUi(
   zoomOutBtn.title = "Zoom out";
   zoomOutBtn.setAttribute("aria-label", "Zoom out");
   zoomOutBtn.onclick = () => hooks.onZoom?.(-1);
-  const recenterBtn = h("button", "recenter-btn", "🎯");
+  const recenterBtn = h("button", "recenter-btn", HUD_ICONS.reticle);
   recenterBtn.title = "Recenter map";
   recenterBtn.onclick = () => hooks.onRecenter();
   fabs.append(zoomInBtn, zoomOutBtn, recenterBtn);
@@ -652,14 +760,14 @@ export function createOriginalUi(
     // MOBILE-01: "Q / right-click" is noise on a phone — the tap and the
     // held-tool chip are the touch hand's versions of the same two ideas.
     { key: "select", label: "Select", sub: coarsePointer() ? "Point & inspect · tap reads a tile" : "Point & inspect · Q / right-click" },
-    { key: "dirt", label: "Dirt Road", sub: `${costCompact(TRANSPORT.dirt.cost)} · 0★` },
-    { key: "road", label: "Road", sub: `${costCompact(TRANSPORT.road.cost)} · +${VICTORY.upgrade}★ paving dirt` },
+    { key: "dirt", label: "Dirt Road", sub: `${costMarkup(TRANSPORT.dirt.cost)} · 0★` },
+    { key: "road", label: "Road", sub: `${costMarkup(TRANSPORT.road.cost)} · +${VICTORY.upgrade}★ paving dirt` },
     // PP-05: `depotSub` refreshes the Depot line below as the free-setup
     // allowance burns down.
-    { key: "harvester", label: "Depot", sub: depotButtonLabel(0) },
+    { key: "harvester", label: "Depot", sub: depotButtonMarkup(0) },
     // PP-06: another instance of the SAME processing building, raised beside
     // another town.
-    { key: "plant", label: "Processing Plant", sub: `${costCompact(PLANT_COST)} · next to a town` },
+    { key: "plant", label: "Processing Plant", sub: `${costMarkup(PLANT_COST)} · next to a town` },
     { key: "demolish", label: "Demolish", sub: "Refund 50%" },
   ];
   let depotSub: HTMLElement | null = null;
@@ -681,7 +789,7 @@ export function createOriginalUi(
       const s = SABOTAGE[key];
       const afford = (me.res.gold ?? 0) >= s.gold;
       const b = h("button", "sab-btn sb-" + key + (afford ? "" : " disabled"));
-      b.innerHTML = `<div class="sab-top"><b>${s.name}</b><span class="sab-cost">${s.gold}🪙</span></div>` +
+      b.innerHTML = `<div class="sab-top"><b>${s.name}</b><span class="sab-cost">${s.gold}${cargoIconHtml("gold")}</span></div>` +
         `<div class="sab-desc">${s.desc}</div>`;
       b.disabled = !afford;
       b.dataset.black = key;
@@ -782,7 +890,7 @@ export function createOriginalUi(
   bform.appendChild(bGive); bform.appendChild(bWant); bform.appendChild(bankBtn);
   bankPane.appendChild(bform);
   bankPane.appendChild(h("div", "pane-note",
-    `The bank always trades four of one good for one of another. No rival required, no waiting. 🪙 ${GOLD_RULE}`));
+    `The bank always trades four of one good for one of another. No rival required, no waiting. ${cargoIconHtml("gold")} ${GOLD_RULE}`));
 
   bankPane.appendChild(sp);
 
@@ -857,7 +965,7 @@ export function createOriginalUi(
       card.style.setProperty("--pc", me.id === "you" ? "#5aa8ff" : "#ff7a5a");
       card.innerHTML = `
         <div class="offer-who"><b style="color:inherit">You</b><span class="offer-t">${secs}s</span></div>
-        <div class="offer-body"><span class="give">${o.giveN}${CARGO[o.give].icon}</span><span class="arrow">➜</span><span class="want">${o.wantN}${CARGO[o.want].icon}</span></div>`;
+        <div class="offer-body"><span class="give">${o.giveN}${cargoIconHtml(o.give)}</span><span class="arrow">➜</span><span class="want">${o.wantN}${cargoIconHtml(o.want)}</span></div>`;
       const act = h("div", "offer-act");
       const b = h("button", "mini danger", "Cancel");
       b.dataset.cancel = String(o.id);
@@ -912,7 +1020,7 @@ export function createOriginalUi(
     row.innerHTML = `
       <span class="tray-who">${showName ? from.name : ""}</span>
       <span class="tray-t">${secs}s</span>
-      <span class="tray-body">${o.giveN}${CARGO[o.give].icon}<i class="arrow">➜</i>${o.wantN}${CARGO[o.want].icon}</span>`;
+      <span class="tray-body">${o.giveN}${cargoIconHtml(o.give)}<i class="arrow">➜</i>${o.wantN}${cargoIconHtml(o.want)}</span>`;
     const b = h("button", "mini" + (can ? "" : " disabled"), "Take");
     b.disabled = !can;
     b.onclick = (e) => {
@@ -965,15 +1073,23 @@ export function createOriginalUi(
     });
     tabPlant.classList.toggle("active", t === "plant");
     qp.classList.toggle("hidden", t !== "plant");
-    // MOBILE-02: the plant tab re-fits the board — the full-bleed sheet only
-    // leaves a measurable slot once this pane is the visible one.
-    if (t === "plant" && root.dataset.view === "trade") responsiveZoom();
     tabMarket.classList.toggle("active", t === "market");
     tabBank.classList.toggle("active", t === "bank");
     tabFeed.classList.toggle("active", t === "feed");
     marketPane.classList.toggle("hidden", t !== "market");
     bankPane.classList.toggle("hidden", t !== "bank");
     feedPane.classList.toggle("hidden", t !== "feed");
+    // MOBILE-02: the plant tab re-fits the board — the full-bleed sheet only
+    // leaves a measurable slot once this pane is the visible one.
+    // FIT-01: and so does the desktop — the fit clamps on the measured plant
+    // column, which has no box while another tab hides it, so a window
+    // resized over Market/Bank/Feed would come back to a stale board.
+    // #163: this runs AFTER every pane has swapped (`.hidden` is
+    // display:none), so the immediate zoom pass measures the settled sheet;
+    // the board-SIZE decision itself is deferred to the next settled frame
+    // (schedulePhoneFit) — measuring while the outgoing pane still shared
+    // the flex space is what minted the bogus 11-column board.
+    if (t === "plant") responsiveZoom();
   }
 
   function setMobileView(v: string) {
@@ -1011,6 +1127,9 @@ export function createOriginalUi(
       // answers a swap that did not match, so this one is deliberately
       // neutral, just the gesture, then the verdict.
       sfx.play("swap");
+      // #163: the player has played into the board — any session-added
+      // rows/columns are earned now and the fit becomes grow-only.
+      markBoardPlayed();
       hooks.onSwap(selected.r, selected.c, cell.r, cell.c);
       selected = null;
     } else {
@@ -1198,6 +1317,7 @@ export function createOriginalUi(
       swallowClick = true;
       releaseGems(d, () => {
         sfx.play("swap");
+        markBoardPlayed();   // #163: a drag swap earns the grown band too
         hooks.onSwap(d.from.r, d.from.c, to.r, to.c);
         selected = null;
         renderSelection();
@@ -1273,6 +1393,10 @@ export function createOriginalUi(
   }
 
   function renderBoard() {
+    // #163: notice a board REPLACED under the chrome (restored save, host
+    // multiplayer sync) so its rectangle becomes the sacred floor the fit
+    // never shrinks below — before the layout box is synced below.
+    noteBoardProvenance();
     // MOBILE-02: keep the layout box honest every pass. The board can be
     // REPLACED under the chrome without a resize — a save restored by game.ts
     // (a rectangle saved on another device), a multiplayer sync that ships
@@ -1304,14 +1428,43 @@ export function createOriginalUi(
     }
     gemEls.forEach((elem, id) => {
       if (!present.has(id)) {
-        elem.classList.add("gone");
-        setTimeout(() => elem.remove(), BOARD_ANIMATION_MS.clear);
+        if (turboMode) {
+          // Issue #152: the live gem is yanked at once so the refill can
+          // drop in, and a ghost of it is left on the cell to flash and
+          // dissolve in the background — the payoff the player would
+          // otherwise never see at turbo speed.
+          spawnRemnant(elem);
+          elem.remove();
+        } else {
+          elem.classList.add("gone");
+          setTimeout(() => elem.remove(), BOARD_ANIMATION_MS.clear);
+        }
         gemEls.delete(id);
       }
     });
     const combo = board.comboCount;
     setCombo(combo, Board.COMBOS_PER_GOLD);
     renderSelection();
+  }
+
+  /** Issue #152 — clone a cleared gem into an inert `.gem-remnant` that
+   *  fades out where the gem stood. Selection / drag state is stripped so
+   *  the ghost is only ever the token's face. */
+  function spawnRemnant(src: HTMLElement) {
+    const ghost = src.cloneNode(true) as HTMLElement;
+    ghost.className = `gem-remnant ${src.className}`
+      .replace(/\b(sel|selected|dragging|yielding|gliding|settle|gone)\b/g, "")
+      .replace(/\s+/g, " ").trim();
+    ghost.removeAttribute("data-id");
+    ghost.setAttribute("aria-hidden", "true");
+    ghost.setAttribute("tabindex", "-1");
+    ghost.style.translate = "";
+    ghost.style.transform = src.style.transform;
+    grid.appendChild(ghost);
+    // Two frames in the DOM at rest, then the fade — the transition needs
+    // a start state to run from.
+    requestAnimationFrame(() => requestAnimationFrame(() => ghost.classList.add("fade")));
+    setTimeout(() => ghost.remove(), REMNANT_MS + 40);
   }
 
   // ── FX / popups / toasts / banner / modals ────────────────────────────────
@@ -1433,7 +1586,7 @@ export function createOriginalUi(
       b.dataset.gem = gem;
       b.style.setProperty("--c1", CARGO[cargo].c1);
       b.style.setProperty("--c2", CARGO[cargo].c2);
-      b.innerHTML = `<i>${CARGO[cargo].icon}</i><span>+1</span>`;
+      b.innerHTML = `${cargoIconHtml(cargo, "cargo-ic cargo-ic-lg")}<span>+1</span>`;
       b.title = `Spend a bounty on ${CARGO[cargo].name} (tap again to take it back)`;
       b.onclick = () => {
         const n = pickCounts.get(gem) ?? 0;
@@ -1481,7 +1634,7 @@ export function createOriginalUi(
     // via GEM_TO_CARGO, or a chain's 2× would float a dead sheep icon.
     const parts = (Object.keys(gains) as ResKey[]).map((k) => {
       const cargo = GEM_TO_CARGO[k as ResKey];
-      const icon = cargo ? CARGO[cargo].icon : RES[k as ResKey].icon;
+      const icon = cargo ? cargoIconHtml(cargo) : RES[k as ResKey].icon;
       return `<span>+${gains[k as ResKey] ?? 0}${icon}</span>`;
     }).join("");
     // A1: no gains means no body — a tokenless cascade still has its COMBO
@@ -1641,43 +1794,145 @@ export function createOriginalUi(
     grid.style.setProperty("--gem", (CELL - 6) + "px");
   }
 
-  function responsiveZoom() {
+  /**
+   * #163 — settled phone board sizing.
+   *
+   * The board may GROW beyond its shipped rectangle ONLY from a SETTLED
+   * measurement of the visible plant slot: never from the box a tab switch
+   * exposes for the instant between un-hiding the plant pane and hiding the
+   * outgoing one. That transient wide-but-short box (full width, a sliver of
+   * height) drove `cell` to its 30px floor, made `availW / cell` ask for the
+   * 11-column maximum, and — because the fit was grow-only — stuck for the
+   * rest of the match, shrinking every gem into a band.
+   *
+   * `paintZoom` below is safe on every pass (zoom is never sticky), but the
+   * size decision lives here: it runs a frame after every tab/view/resize
+   * pass and from a ResizeObserver on the slot, both of which only ever
+   * report post-layout boxes. Comfort and aspect guards mean even a settled
+   * but too-small slot earns zoom, never extra columns; a session-added
+   * band stays retractable until the player has played into it, while the
+   * shipped size, restored saves and host-authored boards are sacred.
+   */
+  const PHONE_GROW_MAX = 2;       // at most +2 columns / +2 rows over baseline
+  const PHONE_MIN_CELL = 30;      // added cells must render at least this big
+  const PHONE_MAX_CELL = 92;      // never upscale gems past this on-screen size
+  const PHONE_SLOT_PAD_W = 14;    // felt breathing room around the board
+  const PHONE_SLOT_PAD_H = 10;
+  // The floor the fit never shrinks under: the live rectangle at mount, and
+  // any replacement noticed by noteBoardProvenance (restored save / host
+  // sync). Growth is always measured relative to THIS, not to 7×8.
+  let baseBoardW = board.w;
+  let baseBoardH = board.h;
+  let knownBoardW = board.w;
+  let knownBoardH = board.h;
+  // A band this chrome itself added stays retractable until the player's
+  // first swap lands; afterwards the board is grow-only for the session.
+  let boardPlayed = false;
+  let fitFrameQueued = false;
+
+  /** Adopt an externally-authored rectangle (restore / host) as the floor. */
+  function noteBoardProvenance() {
+    if (board.w === knownBoardW && board.h === knownBoardH) return;
+    baseBoardW = knownBoardW = board.w;
+    baseBoardH = knownBoardH = board.h;
+    boardPlayed = false;
+  }
+
+  /** Lock in any session-added band: the player has swapped into the board. */
+  function markBoardPlayed() {
+    boardPlayed = true;
+  }
+
+  /**
+   * The rectangle the settled slot asks for, from its ASPECT RATIO: one
+   * shared cell size fills the limiting axis of the BASELINE board, and
+   * each axis then spends its own slack at that cell — a portrait slot adds
+   * rows, a landscape one adds columns, never 4 columns and 0 rows off a
+   * squashed height. Growth is capped at +2 per axis and switches off
+   * entirely the moment the baseline board itself would not render at the
+   * 30px comfortable floor (that slot gets zoom, not columns).
+   */
+  function phoneBoardTarget(slotW: number, slotH: number): { w: number; h: number } {
+    const availW = slotW - PHONE_SLOT_PAD_W;
+    const availH = slotH - PHONE_SLOT_PAD_H;
+    const fillCell = Math.floor(Math.min(availW / baseBoardW, availH / baseBoardH));
+    if (fillCell < PHONE_MIN_CELL) return { w: baseBoardW, h: baseBoardH };
+    const cell = Math.min(PHONE_MAX_CELL, fillCell);
+    const w = Math.min(baseBoardW + PHONE_GROW_MAX,
+      Math.max(baseBoardW, Math.floor(availW / cell)));
+    const h = Math.min(baseBoardH + PHONE_GROW_MAX,
+      Math.max(baseBoardH, Math.floor(availH / cell)));
+    return { w, h };
+  }
+
+  /** The deferred, settled half of the phone fit. */
+  function settlePhoneFit() {
+    fitFrameQueued = false;
+    if (isPhoneViewport()
+      && root.dataset.view === "trade"
+      && !qp.classList.contains("hidden")) {
+      const slotW = boardSlot.clientWidth;
+      const slotH = boardSlot.clientHeight;
+      if (slotW > 100 && slotH > 100) {
+        const { w: wantW, h: wantH } = phoneBoardTarget(slotW, slotH);
+        const curW = board.w, curH = board.h;
+        // Before the first swap a session-added band is advisory: a settled
+        // slot that no longer fits it retracts the extra rows/columns. Once
+        // played into, the board is grow-only; the baseline can never be
+        // asked to shrink either way, and the game vetoes every resize it
+        // does not own (a multiplayer guest's host-authored grid).
+        const fitW = boardPlayed ? Math.max(curW, wantW) : wantW;
+        const fitH = boardPlayed ? Math.max(curH, wantH) : wantH;
+        if ((fitW !== curW || fitH !== curH)
+          && (hooks.requestBoardSize?.(fitW, fitH) ?? true)) {
+          board.setSize(fitW, fitH);
+          knownBoardW = fitW;
+          knownBoardH = fitH;
+          boardPlayed = false;   // the fresh band is unplayed until a swap
+          applyGridSize();
+          renderBoard();
+        }
+      }
+    }
+    paintZoom();
+  }
+
+  /** Ask for the settled pass on the next frame (idempotent per frame). */
+  function schedulePhoneFit() {
+    if (fitFrameQueued || typeof requestAnimationFrame !== "function") return;
+    fitFrameQueued = true;
+    requestAnimationFrame(() => settlePhoneFit());
+  }
+
+  function paintZoom() {
     const phone = isPhoneViewport();
     const phoneStr = phone ? "1" : "";
     if (root.dataset.phone !== phoneStr) root.dataset.phone = phoneStr;
+    // FIT-01: the asides park on the resource bar's live top edge, and the
+    // bar is not a constant — the chip row wraps on narrow windows and the
+    // bar (fixed to bottom: 0) grows UPWARD. Measure it here, where a resize
+    // is already being handled, and publish it; styles.css puts both columns
+    // on max(52px, --resbar-h). jsdom lays nothing out (0) and keeps the
+    // stylesheet's 52px fallback, so every pinned number below survives.
+    const resbarH = footer.offsetHeight;
+    if (resbarH > 0) root.style.setProperty("--resbar-h", `${resbarH}px`);
+    // RAIL-01: a collapse is a desktop affordance — crossing into the phone
+    // regime hands the panels back to the sheets, unfolded.
+    railSyncViewport();
     const wrap = boardWrap;
     let z = 1;
     if (phone) {
-      // MOBILE-02: the match table IS the screen on a phone. The old fit
-      // squeezed the fixed 7×8 with `zoom` down to a 0.4 floor — below the
-      // floor the last rows spilled under the footer, which is exactly the
-      // crop every screenshot complained about. The new fit works from the
-      // other end: measure the slot the full-bleed sheet leaves for the
-      // board, pick the cell that fills it, and when the window has room to
-      // spare, spend it on EXTRA COLUMNS AND ROWS (the game may veto the
-      // growth — e.g. a multiplayer guest whose grid the host authors). The
-      // zoom then only closes the last pixels; it never has to clip, and the
-      // sheet never scrolls to reach a gem.
+      // MOBILE-02: the match table IS the screen on a phone. This pass only
+      // sets the ZOOM — cheap, reversible and safe to run mid tab-switch.
+      // Growing rows/columns lives in settlePhoneFit (#163), which runs from
+      // a settled post-layout measurement, never from a transient box. Zoom
+      // closes the remaining pixels so the current rectangle never clips and
+      // the sheet never scrolls to reach a gem.
       const slotW = boardSlot.clientWidth, slotH = boardSlot.clientHeight;
       const measured = slotW > 100 && slotH > 100;
-      const availW = Math.max(140, (measured ? slotW : window.innerWidth - 44) - 14);
+      const availW = Math.max(140, (measured ? slotW : window.innerWidth - 44) - PHONE_SLOT_PAD_W);
       const availH = Math.max(120,
-        (measured ? slotH : window.innerHeight - (window.innerWidth <= 760 ? 380 : 250)) - 10);
-      const cell = Math.max(30, Math.min(92, Math.floor(Math.min(availW / BOARD_W, availH / BOARD_H))));
-      const wantW = Math.max(BOARD_W, Math.min(BOARD_W + 4, Math.floor(availW / cell)));
-      const wantH = Math.max(BOARD_H, Math.min(BOARD_H + 4, Math.floor(availH / cell)));
-      // grow-only: a window that shrinks never deletes gems — the zoom
-      // shrinks them instead. (Shrinking would also strand a board a peer
-      // authored at a bigger rectangle.) Growing only happens off a real
-      // measurement — the hidden-pane fallback must never propose one.
-      const curW = board.w, curH = board.h;
-      const fitW = Math.max(wantW, curW), fitH = Math.max(wantH, curH);
-      if (measured && (fitW !== curW || fitH !== curH)
-        && (hooks.requestBoardSize?.(fitW, fitH) ?? true)) {
-        board.setSize(fitW, fitH);
-        applyGridSize();
-        renderBoard();
-      }
+        (measured ? slotH : window.innerHeight - (window.innerWidth <= 760 ? 380 : 250)) - PHONE_SLOT_PAD_H);
       z = Math.max(0.2, Math.min(availW / (CELL * board.w), availH / (CELL * board.h), 1));
     } else {
       const boardPx = CELL * board.w;
@@ -1689,6 +1944,32 @@ export function createOriginalUi(
       const leftW = window.innerWidth <= 900 ? 0 : (window.innerWidth <= 1180 ? 262 : 300);
       const availW = window.innerWidth - leftW - 64;
       z = Math.max(0.4, Math.min(z, availW / (boardPx + 10)));
+      // FIT-01: the height rules above guess from viewport bands; the column
+      // can be MEASURED, so measure it. scrollHeight of the economy panel is
+      // everything it wants to paint — tabs, plant head, reach strip, board
+      // — and the board's share of that at the CURRENT zoom is known, so the
+      // fixed furniture around it is `colH − boxNow`. The zoom then closes
+      // whatever gap remains between that furniture and the room the column
+      // actually has (rightAside.clientHeight already ends at the resource
+      // bar, however tall the wrapped chip row made it). The board's share
+      // scales with zoom, the furniture does not — one linear solve. It is
+      // also IDEMPOTENT: a column that fits holds its zoom (room/boxH ≥ the
+      // zoom colH was laid out at), a column that doesn't gives back exactly
+      // the zoom that fits — so resize-event storms can never make the board
+      // pulse or drift. Guards keep the unmeasured or not-laid-out cases
+      // (jsdom, another tab hiding the plant pane) on the band heuristic.
+      const asideH = rightAside.clientHeight;
+      const colH = tp.scrollHeight;
+      if (asideH > 100 && colH > 100 && !qp.classList.contains("hidden")) {
+        const boxH = CELL * board.h + 10;                    // the board box at zoom 1
+        const zNow = Number(wrap.style.zoom || "1") || 1;    // the zoom colH was laid out at
+        const boxNow = Math.ceil(boxH * zNow);
+        if (boxNow > 0 && boxNow < colH) {
+          const chromeH = colH - boxNow;
+          const room = asideH - chromeH - 2;                 // 2px: the column breathes
+          z = Math.max(0.4, Math.min(z, room / boxH));
+        }
+      }
     }
     wrap.style.zoom = String(z);
     // V3: publish the zoomed board width. The right aside and the quarry
@@ -1703,8 +1984,30 @@ export function createOriginalUi(
     root.dataset.boardPx = String(boardW);
     syncTopbarTuck();
   }
+
+  /**
+   * Every layout trigger (boot, tab switch, view switch, window resize) gets
+   * the immediate zoom pass, then asks the settled pass to re-validate the
+   * board rectangle before the next paint. Tab switches that land on the
+   * same viewport therefore ask for the SAME size and change nothing
+   * (#163); only a genuinely different settled box can.
+   */
+  function responsiveZoom() {
+    paintZoom();
+    schedulePhoneFit();
+  }
   window.addEventListener("resize", responsiveZoom);
   window.addEventListener("orientationchange", responsiveZoom);
+  // The observer delivers exactly the boxes the grow step is allowed to
+  // trust: post-layout sizes of the slot, fired between frames. The pane
+  // swap a tab switch performs settles within the SAME synchronous task, so
+  // only its final box is ever reported — the squashed mid-switch box is
+  // not observable. Absent RO (headless tests, older engines) the next-frame
+  // fallback above carries the same contract.
+  if (typeof ResizeObserver === "function") {
+    const slotObserver = new ResizeObserver(() => settlePhoneFit());
+    slotObserver.observe(boardSlot);
+  }
 
   // ── MOBILE-02: the tucking top bar ───────────────────────────────────
   // A phone gives the match table the whole window; the top bar earns its
@@ -1770,7 +2073,7 @@ export function createOriginalUi(
         const chip = h("div", "chip");
         chip.style.setProperty("--c1", CARGO[k].c1);
         chip.style.setProperty("--c2", CARGO[k].c2);
-        chip.innerHTML = `<span class="chip-ic"><i class="gem-ic">${CARGO[k].icon}</i></span><span class="chip-n"></span>`;
+        chip.innerHTML = `<span class="chip-ic">${cargoIconHtml(k)}</span><span class="chip-n"></span>`;
         // PP-08: the Gold chip states what the currency is for, so a player
         // holding coins never mistakes them for construction stock.
         if (k === "gold") chip.title = GOLD_RULE;
@@ -1968,10 +2271,10 @@ export function createOriginalUi(
     // (a rebuilt button drops a click mid-gesture, the reason `renderSabotage`
     // is change-gated too). The cost text comes from the same table the
     // placement charges; `disabled` mirrors the affordability the click checks.
-    const sub = depotButtonLabel(state.freeDepots);   // allowance first, then Oil
+    const sub = depotButtonMarkup(state.freeDepots);   // allowance first, then Oil
     if (sub !== lastDepotSub) {
       lastDepotSub = sub;
-      if (depotSub) depotSub.textContent = sub;
+      if (depotSub) depotSub.innerHTML = sub;
     }
     buildList.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((button) => {
       const tool = button.dataset.tool as UiTool;
@@ -2029,7 +2332,7 @@ export function createOriginalUi(
   function setReach(next: Partial<Record<Cargo, number>>) {
     const chipsHtml = CARGOES
       .filter((c) => (next[c] ?? 0) > 0)
-      .map((c) => `<span class="chip" style="--c:${CARGO[c].c2}">${CARGO[c].icon}${CARGO[c].name}</span>`).join("");
+      .map((c) => `<span class="chip" style="--c:${CARGO[c].c2}">${cargoIconHtml(c)}${CARGO[c].name}</span>`).join("");
     reachEl.innerHTML = chipsHtml
       ? `<b>Network reaches</b>${chipsHtml}`
       : "<b>Network reaches</b><i>nothing — connect a depot</i>";
@@ -2074,7 +2377,7 @@ export function createOriginalUi(
         <p class="sub">Two worlds, one empire: <b>resource node → Depot → transport network → Factory → processing → resources available for construction</b>. First to <b>${hudVpTarget}★ Victory Points</b> wins.</p>
         <div class="help-cols">
           <div class="help-col"><h3>The Territory</h3><p>Place <b>Depots</b> beside resource nodes to collect their output, then build <b>Dirt Roads</b> &amp; <b>Roads</b> (paved) to carry it to your Factory. The connection sets the multiplier — ×1.0 on gravel, ×1.6 anywhere a paved tile touches the line — and nothing else.</p>
-<p><h3>How you score (VP-01)</h3><p><b>Dirt Roads score nothing.</b> Points come from <b>upgrading</b>: pave a Dirt Road tile into a Road for <b>+${VICTORY.upgrade}★</b> (it costs only ${costCompact(UPGRADE_COST)}, since the gravel is already paid for), and raise a <b>processing plant</b> beside another town for <b>+${VICTORY.plant}★</b>. Four paves to the point; <b>${hudVpTarget}★</b> wins. A Road laid on virgin ground scores nothing — the point is for improving what you built. Tear up a paved tile or demolish a plant and the point goes back.</p><p>Your <b>first Depot is free</b>; every Depot after it costs <b>${costCompact(DEPOT_COST)}</b>, so reaching new industries (or manufacturing in the Processing Plant) is what buys expansion. A Depot you cannot pay for is refused and consumes nothing.</p><p><b>Lorries run 2× faster on paved Roads</b> — paving a lane is both the points and the income (AI-02).</p><p>Move the camera with <b>WASD</b> (Shift holds double speed) or the <b>middle mouse button</b> (wheel zooms, touch drags pan). The left button only places or selects — dragging it never pans. <b>Right-click drops the tool you are holding</b> back to the pointer, and the pointer reads the map: hover a resource, town, plant or depot and the inspector says exactly what it is.</p>${TOUCH_CONTROLS}<p>The top-bar <b>Aa Names</b> switch shows or hides the name tags over the map's features while you pan.</p></div>
+<p><h3>How you score (VP-01)</h3><p><b>Dirt Roads score nothing.</b> Points come from <b>upgrading</b>: pave a Dirt Road tile into a Road for <b>+${VICTORY.upgrade}★</b> (it costs only ${costMarkup(UPGRADE_COST)}, since the gravel is already paid for), and raise a <b>processing plant</b> beside another town for <b>+${VICTORY.plant}★</b>. Four paves to the point; <b>${hudVpTarget}★</b> wins. A Road laid on virgin ground scores nothing — the point is for improving what you built. Tear up a paved tile or demolish a plant and the point goes back.</p><p>Your <b>first Depot is free</b>; every Depot after it costs <b>${costMarkup(DEPOT_COST)}</b>, so reaching new industries (or manufacturing in the Processing Plant) is what buys expansion. A Depot you cannot pay for is refused and consumes nothing.</p><p><b>Lorries run 2× faster on paved Roads</b> — paving a lane is both the points and the income (AI-02).</p><p>Move the camera with <b>WASD</b> (Shift holds double speed) or the <b>middle mouse button</b> (wheel zooms, touch drags pan). The left button only places or selects — dragging it never pans. <b>Right-click drops the tool you are holding</b> back to the pointer, and the pointer reads the map: hover a resource, town, plant or depot and the inspector says exactly what it is.</p>${TOUCH_CONTROLS}<p>The top-bar <b>Aa Names</b> switch shows or hides the name tags over the map's features while you pan.</p></div>
           <div class="help-col"><h3>The Processing Plant</h3><p>Where your Factory turns delivered cargo into resources available for construction. Match tokens to process: a colour only pays when your network reaches its industry. Match 4 doubles, match 5 makes a <b>bomb</b>. <b>Gold</b> 🪙 is its own colour — its gems drop only while a depot sits beside a gold mine (and pay once it's connected).</p></div>
           <div class="help-col"><h3>Gold, Trade & Defence</h3><p>Earn <b>gold</b> from gold-mine access or combos. <b>Gold is reserved for Black Market sabotage</b> — it never buys construction, cannot substitute for missing materials, and is refused by every market exchange. Security Forces and Repair Crew are hired with ordinary materials. A <b>Protest</b> ✊ shuts any public road for 2:00 — every truck stops, including your own.</p></div>
         </div>

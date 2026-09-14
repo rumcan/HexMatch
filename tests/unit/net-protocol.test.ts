@@ -19,6 +19,8 @@ import {
   VERSION_MISMATCH_MESSAGE,
   ProtocolError,
   chunkSnapshot,
+  readRankWire,
+  readRankBoard,
   validateWelcome,
   isHexProtocol,
   type DeltaMsg,
@@ -27,6 +29,11 @@ import {
   type RejectMsg,
   type ResyncMsg,
   type SnapshotChunkMsg,
+  type PlayerRatingMsg,
+  type RankWire,
+  type RatingUpdateMsg,
+  type ResultClaimMsg,
+  type ResultMsg,
   type SnapshotMsg,
   type WelcomeMsg,
 } from "../../src/net/protocol";
@@ -72,7 +79,7 @@ function wire<T extends HexProtocol>(msg: T): T {
 }
 
 describe("MP-02 protocol version", () => {
-  it("is a positive integer, and 5 since the guest-intent audit re-typed the wire", () => {
+  it("is a positive integer, and 6 since RANK-01 added the rating board", () => {
     // v2 (MP-05) added `snapshot-chunk`: a full state is ~110 KiB against a
     // 16 KiB frame, so join/resync state crosses as N frames. v3 (PP-14b)
     // added `rivalSabotage` (Black-Market sabotage on the guest-seat plant);
@@ -82,7 +89,11 @@ describe("MP-02 protocol version", () => {
     // v5 (#111-#117 guest-seat audit) re-types the cross intent with a body,
     // mirrors an explicit-null crossPrompt, and omits UNCHANGED board saves
     // from deltas — a v4 peer would misread all three, so rooms refuse.
-    expect(PROTOCOL_VERSION).toBe(5);
+    // v6 (RANK-01, #147) adds the rating board: `playerRating`, `ratingUpdate`,
+    // `resultClaim` and `result`. A v5 peer receives an unknown type, drops it,
+    // and files its own arithmetic — the two seats would hold different ratings
+    // for one match, which is exactly what the version gate is for.
+    expect(PROTOCOL_VERSION).toBe(6);
     expect(Number.isInteger(PROTOCOL_VERSION)).toBe(true);
     expect(PROTOCOL_VERSION).toBeGreaterThan(0);
   });
@@ -93,7 +104,10 @@ describe("MP-02 protocol version", () => {
 
   it("lists every discriminator in the union", () => {
     expect([...HEX_MESSAGE_TYPES].sort()).toEqual(
-      ["delta", "intent", "reject", "resync", "snapshot", "snapshot-chunk", "welcome"],
+      [
+        "delta", "intent", "playerRating", "ratingUpdate", "reject", "result",
+        "resultClaim", "resync", "snapshot", "snapshot-chunk", "welcome",
+      ],
     );
   });
 });
@@ -375,5 +389,86 @@ describe("MP-02 SDK isolation", () => {
     expect(src).toContain(`${SDK}/api`);
     expect(src).toContain(`${SDK}/mp-client`);
     expect(src).toContain("RundotGameAPI.realtime");
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// RANK-01 (#147) — the rating board on the wire
+//
+// Four messages carry every rated match: each player publishes its number once
+// (`playerRating`), the room echoes the board (`ratingUpdate`, and the welcome
+// carries it), the host files the verdict (`resultClaim`) and the room answers
+// everyone with the one filed result (`result`). What these pin is the part
+// that has to be impossible: a board entry that is not a number, and a rating
+// for somebody who is not the sender.
+// ══════════════════════════════════════════════════════════════════════════
+describe("RANK-01 the rating board on the wire", () => {
+  const rating = (over: Partial<RankWire> = {}): RankWire => ({
+    id: "host-1", rating: 1042, matches: 3, ...over,
+  });
+
+  it("round-trips all four RANK-01 messages", () => {
+    const published: PlayerRatingMsg = {
+      type: "playerRating", id: "host-1", rating: 1042, matches: 3, joinToken: "tok-1",
+    };
+    const update: RatingUpdateMsg = { type: "ratingUpdate", ratings: [rating()] };
+    const claim: ResultClaimMsg = {
+      type: "resultClaim", winnerId: "host-1", loserId: "guest-2", reason: "win", durationSec: 412,
+    };
+    const result: ResultMsg = {
+      type: "result",
+      winnerId: "host-1",
+      loserId: "guest-2",
+      reason: "forfeit",
+      durationSec: 0,
+      ratings: [rating(), rating({ id: "guest-2", rating: 986, matches: 1 })],
+      departedId: "guest-2",
+      at: 1_760_000_000_000,
+    };
+    for (const msg of [published, update, claim, result]) {
+      expect(wire(msg)).toEqual(msg);
+      expect(isHexProtocol(wire(msg))).toBe(true);
+    }
+  });
+
+  it("carries the board on the welcome, and accepts a welcome without one", () => {
+    expect(validateWelcome(welcome({ ratings: [rating()] }))).toBeNull();
+    expect(validateWelcome(welcome({ ratings: [] }))).toBeNull();
+    // A v6 welcome may legitimately omit the field (nobody has published yet).
+    expect(validateWelcome(welcome())).toBeNull();
+  });
+
+  it("refuses a welcome whose board is present but unreadable", () => {
+    const bad: unknown[] = [
+      "ratings",
+      [null],
+      [{ rating: 1000, matches: 0 }],                       // no id
+      [{ id: "host-1", rating: "1000", matches: 0 }],       // rating is a string
+      [{ id: "host-1", rating: Number.NaN, matches: 0 }],    // a NaN expectation poisons every later match
+      [{ id: "host-1", rating: 1000 }],                      // no match count
+      [{ id: "host-1", rating: 1000, matches: -1 }],         // a negative history
+    ];
+    for (const ratings of bad) {
+      const err = validateWelcome(welcome({ ratings: ratings as RankWire[] }));
+      expect(err, JSON.stringify(ratings)).toBeInstanceOf(ProtocolError);
+      expect(err?.code).toBe("malformed");
+    }
+  });
+
+  it("readRankWire is the strict half: a non-number is never a rating", () => {
+    expect(readRankWire({ id: "a", rating: 1000, matches: 0 })).toEqual(
+      { id: "a", rating: 1000, matches: 0 },
+    );
+    expect(readRankWire({ id: "a", rating: 1000, matches: 0, joinToken: "t" })?.joinToken).toBe("t");
+    // Rounded and floored, so a peer cannot smuggle a fraction into the file.
+    expect(readRankWire({ id: "a", rating: 1000.7, matches: 2.9 })).toEqual(
+      { id: "a", rating: 1001, matches: 2 },
+    );
+    for (const bad of [null, 7, "a", {}, { id: "" }, { id: "a" }, { id: "a", rating: Infinity, matches: 0 }]) {
+      expect(readRankWire(bad)).toBeNull();
+    }
+    // readRankBoard drops the broken rows rather than the whole message.
+    expect(readRankBoard([{ id: "a", rating: 1000, matches: 0 }, { id: "b" }, null])).toHaveLength(1);
+    expect(readRankBoard("nope")).toEqual([]);
   });
 });

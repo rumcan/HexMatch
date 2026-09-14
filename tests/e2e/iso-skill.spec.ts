@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { bootBudget } from "./boot";
+import { bootSoloIso } from "./boot";
 
 // ══════════════════════════════════════════════════════════════════════════
 // AI-01 — the difficulty selector, against the REAL built game (vite preview).
@@ -13,24 +13,18 @@ import { bootBudget } from "./boot";
 
 const BASE = "/hexmatch/";
 
+/** Boot a solo game past the menu via the shared `bootSoloIso` (issue #135);
+ *  `extra` appends the spec's own query (e.g. `&rival=hard`). The spec-specific
+ *  half is what is remembered — and what deliberately is NOT: TUT-01's tour is
+ *  a full-screen boot overlay and this spec drives the top-bar selector with
+ *  real clicks, so its dismissal is remembered; the rival-skill key is
+ *  deliberately left out, because what this spec measures is the URL and the
+ *  picker writing it. */
 async function bootIso(page: import("@playwright/test").Page, extra = "") {
-  // TUT-01: the starting tour is a full-screen boot overlay, and this spec
-  // drives the top-bar selector with real clicks. Remember the tour's
-  // dismissal so it stays out of the way — the rival-skill key is deliberately
-  // NOT set here, because what this spec measures is the URL and the picker
-  // writing it.
-  await page.addInitScript(
-    () => localStorage.setItem("hexmatch:tutorial", "never"),
-  );
-  await page.goto(`${BASE}?seed=79${extra}`);
-  // STORY-01: walk the front door and the mode screen, or nothing mounts
-  await page.locator(".menu-btn.primary").click();
-  await page.getByRole("button", { name: /Play vs AI/ }).click();
-  await page.waitForFunction(() => {
-    const h = (window as any).__iso;
-    // LOAD-01: wait for the loading screen to lift before touching the HUD.
-    return !!h && h.phase === "setup-factory" && !!h.grid && h.grid.industries.length > 0 && !h.loading;
-  }, null, { timeout: bootBudget() });
+  await bootSoloIso(page, {
+    url: `${BASE}?seed=79${extra}`,
+    remembered: { "hexmatch:tutorial": "never" },
+  });
 }
 
 test("AI-01 picker: url wins, choice persists, switching is live", async ({ page }) => {

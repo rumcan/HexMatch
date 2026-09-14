@@ -86,6 +86,10 @@ export interface Track {
   owner: Uint8Array;
   /** VP-01: `PRESENT` where the paved Road here replaced a Dirt Road. */
   upgraded: Uint8Array;
+  /** TRAFFIC-02: monotonically increments on every road mutation, so ambient
+   *  traffic can cache adjacency by revision without rescanning the whole map
+   *  every render frame. */
+  revision: number;
 }
 
 export const createTrack = (): Track => ({
@@ -93,6 +97,7 @@ export const createTrack = (): Track => ({
   road: new Uint8Array(MAP_W * MAP_H),
   owner: new Uint8Array(MAP_W * MAP_H),
   upgraded: new Uint8Array(MAP_W * MAP_H),
+  revision: 0,
 });
 
 // ── dirty-tile journal (MP-04) ────────────────────────────────────────────
@@ -625,6 +630,7 @@ export function buildTile(
     // layers: the surrounding gravel now faces a paved tile instead.
     const paved = autotileAroundBoth(t, "road", tx, ty);
     dirtyTiles.markAll(paved.tiles);
+    t.revision++;
     return paved;
   }
   if (kind === "dirt" && (road[i] & PRESENT) !== 0) {
@@ -635,6 +641,7 @@ export function buildTile(
   if (owner !== 0 && t.owner[i] !== PUBLIC_OWNER) t.owner[i] = owner;
   const built = autotileAroundBoth(t, kind, tx, ty);
   dirtyTiles.markAll(built.tiles);
+  t.revision++;
   return built;
 }
 
@@ -656,6 +663,7 @@ export function demolishTile(t: Track, kind: TrackKind, tx: number, ty: number):
   // facing this tile (any-tier masks) must stop now that nothing is here.
   const torn = autotileAroundBoth(t, kind, tx, ty);
   dirtyTiles.markAll(torn.tiles);
+  t.revision++;
   return torn;
 }
 

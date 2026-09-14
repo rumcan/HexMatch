@@ -117,7 +117,7 @@ cast table and the dialogue model:
 
 ## Multiplayer (RUN.world rooms)
 
-Host / join-by-code / quick-match run over RUN.world realtime rooms: the relay
+Host / join-by-code / auto matchmaking run over RUN.world realtime rooms: the relay
 is `src/rooms/HexmatchRoom.ts` (registered in `rundot/realtime.config.json`),
 the SDK seam is `src/net/transport.ts`, and the entry point is
 `src/ui/StartScreen.tsx`. `npm run dev` starts a local room sidecar on port 9001
@@ -129,6 +129,12 @@ headless relay check:
 npm run dev                        # vite + local room sidecar (9001)
 node tools/two-client-check.mjs    # headless host/join/intent/forgery check
 ```
+
+Auto matchmaking is the RATED door: it carries an Elo rating (start 1000,
+K 40 then 16), a tier badge per band, a public ladder and an end-of-match delta.
+Host and join-by-code rooms are casual by decision — a shared code is how you
+play a friend, not a ladder match. The rules, the numbers and the anti-cheat
+stance: [`docs/RANK-01-multiplayer-ranking.md`](docs/RANK-01-multiplayer-ranking.md).
 
 See [`docs/multiplayer-local-testing.md`](docs/multiplayer-local-testing.md) and
 [`docs/HexMatch-tickets.md`](docs/HexMatch-tickets.md).

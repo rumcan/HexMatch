@@ -191,12 +191,12 @@ describe("MP-06 join screen", () => {
     expect(text()).toContain("Enter room code");
   });
 
-  it("still offers a code field after a cancelled quick match", async () => {
+  it("still offers a code field after a cancelled auto match", async () => {
     const room = fakeRoom("QM1234");
     mockMatch.mockResolvedValue(room);
     await render();
 
-    await click("Quick match");
+    await click("Auto Matchmaking");
     await act(async () => { room.emit(welcome(room)); });
     await click("Leave");
     await click("Join with a code");
@@ -436,7 +436,7 @@ describe("MP-06 join screen", () => {
     expect(choices).toEqual([{ mode: "ai", portrait: "vex" }]);
   });
 
-  it("refuses to join and to quick-match when there is no room server", async () => {
+  it("refuses to join and to auto-matchmake when there is no room server", async () => {
     mockOffline.mockReturnValue(true);
     await render();
     await click("Join with a code");
@@ -446,7 +446,7 @@ describe("MP-06 join screen", () => {
     expect(text()).toContain("No room server behind this page");
 
     await click("Back");
-    await click("Quick match");
+    await click("Auto Matchmaking");
     expect(mockMatch).not.toHaveBeenCalled();
     expect(text()).toContain("No room server behind this page");
     expect(text()).not.toContain("Finding an opponent");
@@ -470,5 +470,185 @@ describe("MP-06 join screen", () => {
     expect(text()).toContain("Sign in to play with friends");
     await click("Play vs AI");
     expect(choices).toEqual([{ mode: "ai", portrait: "vex" }]);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// Auto Matchmaking — #146's search that never times out, and RANK-01's (#147)
+// Any / Similar rank window on the same door.
+//
+// Two rules, one loop: a closed matchmake window is simply re-issued (there is
+// no "no rival found" screen any more), and a SIMILAR RANK search walks the
+// widening ladder once before settling at Any rank for good. "Any rank" opens
+// at that last rung and stays there.
+// ══════════════════════════════════════════════════════════════════════════
+describe("auto matchmaking: never time out, and the rank window", () => {
+  /** The SDK's own per-request window closing (transport.isMatchmakeWindowExpired). */
+  const windowExpired = () => new Error("Matchmaking timeout — no opponent found");
+
+  it("re-issues the request each time a matchmake window closes, then lands in the room", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const room = fakeRoom("QM1234");
+    // One RUN request is one bounded window; the SDK rejects each expiry with
+    // one of these plain Errors (matched by transport's isMatchmakeWindowExpired).
+    mockMatch.mockRejectedValueOnce(windowExpired());
+    mockMatch.mockRejectedValueOnce(new Error("Matchmaking is no longer active (pool expired or cancelled)"));
+    mockMatch.mockResolvedValue(room);
+    await render();
+
+    await click("Auto Matchmaking");
+    expect(mockMatch).toHaveBeenCalledTimes(1);
+    expect(text()).toContain("Finding an opponent");
+
+    // Each closed window → the loop breathes once → asks again. No give-up,
+    // no timeout screen: the search simply continues.
+    await act(async () => { vi.advanceTimersByTime(1_000); });
+    expect(mockMatch).toHaveBeenCalledTimes(2);
+    expect(text()).toContain("Finding an opponent");
+    expect(text()).not.toContain("No rival found yet");
+    await act(async () => { vi.advanceTimersByTime(1_000); });
+    expect(mockMatch).toHaveBeenCalledTimes(3);
+
+    // The third request pairs. Alone in a fresh room → host lobby with the code.
+    expect(text()).toContain("QM1234");
+    await act(async () => { room.emit(welcome(room, 99)); });
+    await act(async () => { room.seat({ id: "p2", username: "Rival", avatarUrl: null }); });
+    await click("Start game");
+    expect(choices[0]).toMatchObject({ mode: "host", seed: 99 });
+  });
+
+  it("searches past the old 30-second cutoff and lands a late match as guest", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const room = fakeRoom("QM5678", "p2", "Rival");
+    room.isCreator = false; // the matchmaker joined us into someone's room
+    let resolveMatch: (room: HexRoom) => void = () => {};
+    mockMatch.mockReturnValue(new Promise<HexRoom>((res) => { resolveMatch = res; }));
+    await render();
+
+    await click("Auto Matchmaking");
+    await act(async () => { vi.advanceTimersByTime(120_000); });
+    expect(text()).toContain("Finding an opponent");
+    expect(text()).not.toContain("No rival found yet");  // the timeout screen is gone
+    expect(mockMatch).toHaveBeenCalledTimes(1);          // same search, still pending
+
+    // Matched while still searching → into the room, as today.
+    await act(async () => { resolveMatch(room); });
+    expect(text()).toContain("Room found");
+    await act(async () => { room.emit(welcome(room, 777)); });
+    await click("Play");
+    expect(choices[0]).toMatchObject({ mode: "guest", seed: 777 });
+  });
+
+  it("a Cancel beats a match that resolves afterwards, and the room is left", async () => {
+    const room = fakeRoom("QM9999", "p2", "Rival");
+    let resolveMatch: (room: HexRoom) => void = () => {};
+    mockMatch.mockReturnValue(new Promise<HexRoom>((res) => { resolveMatch = res; }));
+    await render();
+
+    await click("Auto Matchmaking");
+    await click("Cancel");
+    expect(text()).toContain("Back to work");            // back on the mode list
+
+    await act(async () => { resolveMatch(room); });      // the pairing lands late…
+    expect(text()).not.toContain("Room found");
+    expect(text()).not.toContain("QM9999");              // …and must not yank us in
+    expect(room.leaveCalls).toBe(1);                     // abandoned socket closed
+  });
+
+  it("shows the elapsed search time and stops the clock on cancel", async () => {
+    // Date is faked too: the clock derives elapsed time from wall time.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+    mockMatch.mockReturnValue(new Promise<HexRoom>(() => {}));
+    await render();
+
+    await click("Auto Matchmaking");
+    expect(text()).toMatch(/Searching for 0:00/);
+    await act(async () => { vi.advanceTimersByTime(61_000); });
+    expect(text()).toMatch(/Searching for 1:01/);
+    expect(text()).not.toContain("up to 30 seconds");    // the old promise is gone
+
+    await click("Cancel");
+    expect(text()).not.toContain("Finding an opponent");
+    expect(text()).not.toMatch(/Searching for/);
+  });
+
+  it("surfaces a real failure instead of retrying forever", async () => {
+    mockMatch.mockRejectedValue(Object.assign(new Error("nope"), { name: "AccessDeniedError" }));
+    await render();
+    await click("Auto Matchmaking");
+    expect(mockMatch).toHaveBeenCalledTimes(1);
+    expect(text()).toContain("Sign in to play with friends");
+    await click("Play vs AI");
+    expect(choices).toEqual([{ mode: "ai", portrait: "vex" }]);
+  });
+
+  it("Any rank opens at the widest rung and STAYS there — no criterion, no give-up", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    mockMatch.mockRejectedValue(windowExpired());
+    await render();
+    await click("Auto Matchmaking");
+    // The first attempt already asks for nothing in particular: Any rank is
+    // the last rung of the ladder, and it is a place, not a pass-through.
+    expect(mockMatch.mock.calls[0][0].rankBucket).toBeNull();
+    await act(async () => { vi.advanceTimersByTime(1_000); });
+    await act(async () => { vi.advanceTimersByTime(1_000); });
+    expect(mockMatch.mock.calls.length).toBeGreaterThanOrEqual(2);
+    // …and it keeps asking for nothing, forever, rather than narrowing.
+    expect(mockMatch.mock.calls.every((c) => c[0].rankBucket === null)).toBe(true);
+    expect(text()).toContain("Finding an opponent");
+    expect(text()).not.toContain("No rival found yet");
+    await click("Cancel");
+  });
+
+  it("Similar rank widens through every window and settles at Any — never stuck", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    mockMatch.mockRejectedValue(windowExpired());
+    await render();
+    await click("Similar rank");
+    await click("Auto Matchmaking");
+    // Six windows' worth of "widen and look again": one per rung, then Any.
+    for (let i = 0; i < 6; i++) await act(async () => { vi.advanceTimersByTime(1_000); });
+
+    const buckets = mockMatch.mock.calls.map((c) => c[0].rankBucket as number | null);
+    const budgets = mockMatch.mock.calls.map((c) => c[0].matchmakeTimeoutMs as number);
+    expect(budgets.slice(0, 4)).toEqual([6_000, 8_000, 8_000, 8_000]);
+    // Narrow → wide: each of the first three rungs is a COARSER bucket, so two
+    // players who miss each other tight can still meet wide.
+    expect(buckets.slice(0, 3).every((b) => typeof b === "number")).toBe(true);
+    expect(new Set(buckets.slice(0, 3)).size).toBe(3);
+    // …and the last rung asks for nothing in particular, then stays there.
+    expect(buckets[3]).toBeNull();
+    expect(buckets.at(-1)).toBeNull();
+    expect(text()).toContain("Finding an opponent");
+    await click("Cancel");
+  });
+
+  it("a match found on a widened rung seats the player in a RANKED lobby", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const room = fakeRoom("HX9KWR");
+    mockMatch
+      .mockRejectedValueOnce(windowExpired())   // the tight window found nobody
+      .mockResolvedValueOnce(room);             // the next window did
+    await render();
+    await click("Similar rank");
+    await click("Auto Matchmaking");
+    await act(async () => { vi.advanceTimersByTime(1_000); });
+    await act(async () => { room.emit(welcome(room)); });
+    expect(mockMatch).toHaveBeenCalledTimes(2);
+    expect(text()).toContain("HX9KWR");
+    expect(text()).toContain("RANKED");
+  });
+
+  it("the waiting screen says which window the search is in", async () => {
+    mockMatch.mockReturnValue(new Promise(() => {}));
+    await render();
+    await click("Similar rank");
+    await click("Auto Matchmaking");
+    expect(text()).toContain("within 75 rating points");
+    await click("Cancel");
+    await click("Any rank");
+    await click("Auto Matchmaking");
+    expect(text()).toContain("Any rank — a fair match beats a perfect one.");
+    await click("Cancel");
   });
 });

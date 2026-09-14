@@ -5,7 +5,7 @@
 // fake `RoomProtocol` that records every outbound frame. No network, no auth —
 // runs in CI. The live two-client exchange (real WS through `vite dev`) is
 // `tools/mp-room-smoke.mjs`.
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   Clock,
   type GameRoomProps,
@@ -15,11 +15,13 @@ import {
   type Player,
   type RoomProtocol,
 } from "@series-inc/rundot-game-sdk/mp-server";
-import HexmatchRoom, { HOST_LEFT_REASON } from "../../src/rooms/HexmatchRoom";
+import HexmatchRoom, { FORFEIT_GRACE_MS, HOST_LEFT_REASON } from "../../src/rooms/HexmatchRoom";
 import {
   PROTOCOL_VERSION,
   validateWelcome,
   type HexProtocol,
+  type RankWire,
+  type ResultMsg,
   type WelcomeMsg,
 } from "../../src/net/protocol";
 import { buildSnapshot } from "../../src/iso/snapshot";
@@ -347,5 +349,229 @@ describe("MP-03 leaving", () => {
       { id: "host-1", username: "Host", slot: 0 },
       { id: "guest-2", username: "Guest", slot: 1 },
     ]);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// RANK-01 (#147) — the room as a rating board, and the room as the referee
+//
+// The rating arithmetic is unit-tested in `net-rank.test.ts`; what belongs here
+// is the part neither client can be trusted with: who may speak about a rating,
+// and who gets to say a match is over. Two rules carry the whole design —
+// a rating's id must be the sender's, and the room files exactly ONE result.
+// ══════════════════════════════════════════════════════════════════════════
+describe("RANK-01 the room as a rating board", () => {
+  async function twoPlayer(): Promise<Harness> {
+    const h = setup();
+    await h.protocol.handleCreate();
+    await join(h, "host-1", "Host");
+    await join(h, "guest-2", "Guest");
+    h.frames.length = 0;
+    return h;
+  }
+
+  /** A room mid-match: both seats published, the host has sent state. */
+  async function liveMatch(): Promise<Harness> {
+    const h = await twoPlayer();
+    await h.protocol.handleMessage("host-1", "playerRating", {
+      id: "host-1", rating: 1180, matches: 12, joinToken: "tok-host",
+    });
+    await h.protocol.handleMessage("guest-2", "playerRating", {
+      id: "guest-2", rating: 1040, matches: 3, joinToken: "tok-guest",
+    });
+    await h.protocol.handleMessage("host-1", "delta", { t: 4, seq: 1 });
+    h.frames.length = 0;
+    return h;
+  }
+
+  const of = (h: Harness, type: string) => h.frames.filter((f) => f.type === type);
+
+  it("broadcasts the board when a rating is published, and echoes it on welcome", async () => {
+    const h = await twoPlayer();
+    await h.protocol.handleMessage("host-1", "playerRating", {
+      id: "host-1", rating: 1180, matches: 12, joinToken: "tok-host",
+    });
+    const [update] = of(h, "ratingUpdate");
+    expect(update.target).toBe("broadcast");
+    expect((messageOf(update) as { ratings: RankWire[] }).ratings).toEqual([
+      { id: "host-1", rating: 1180, matches: 12 },
+    ]);
+    // The board is on the greeting too, so a newcomer's lobby shows it at once.
+    h.frames.length = 0;
+    await join(h, "guest-3", "Guest3");
+    const [w] = welcomes(h.frames);
+    expect(w.ratings).toEqual([{ id: "host-1", rating: 1180, matches: 12 }]);
+  });
+
+  it("DROPS a rating published for somebody else — id must be the sender", async () => {
+    const h = await twoPlayer();
+    await h.protocol.handleMessage("guest-2", "playerRating", {
+      id: "host-1", rating: 3000, matches: 0, joinToken: "tok-guest",
+    });
+    expect(of(h, "ratingUpdate")).toHaveLength(0);
+    // …and the seat it tried to claim still publishes its own number.
+    await h.protocol.handleMessage("host-1", "playerRating", {
+      id: "host-1", rating: 1180, matches: 12, joinToken: "tok-host",
+    });
+    const [update] = of(h, "ratingUpdate");
+    expect((messageOf(update) as { ratings: RankWire[] }).ratings).toEqual([
+      { id: "host-1", rating: 1180, matches: 12 },
+    ]);
+  });
+
+  it("requires a join token on the first publish, and the SAME one after", async () => {
+    const h = await twoPlayer();
+    // No token: a stranger who joined could otherwise claim a seat's number.
+    await h.protocol.handleMessage("host-1", "playerRating", { id: "host-1", rating: 1180, matches: 12 });
+    expect(of(h, "ratingUpdate")).toHaveLength(0);
+    await h.protocol.handleMessage("host-1", "playerRating", {
+      id: "host-1", rating: 1180, matches: 12, joinToken: "tok-host",
+    });
+    expect(of(h, "ratingUpdate")).toHaveLength(1);
+    // A different token is a different claimant: ignored.
+    h.frames.length = 0;
+    await h.protocol.handleMessage("host-1", "playerRating", {
+      id: "host-1", rating: 2400, matches: 12, joinToken: "stale",
+    });
+    expect(of(h, "ratingUpdate")).toHaveLength(0);
+    // The same token re-publishing is idempotent — and the newer value wins:
+    // a client re-attaching after a reconnect sends its rating again.
+    await h.protocol.handleMessage("host-1", "playerRating", {
+      id: "host-1", rating: 1196, matches: 13, joinToken: "tok-host",
+    });
+    expect(of(h, "ratingUpdate")).toHaveLength(1);
+    expect((messageOf(of(h, "ratingUpdate")[0]) as { ratings: RankWire[] }).ratings[0].rating).toBe(1196);
+  });
+});
+
+describe("RANK-01 the room as the referee", () => {
+  async function liveMatch(): Promise<Harness> {
+    const h = setup();
+    await h.protocol.handleCreate();
+    await join(h, "host-1", "Host");
+    await join(h, "guest-2", "Guest");
+    await h.protocol.handleMessage("host-1", "playerRating", {
+      id: "host-1", rating: 1180, matches: 12, joinToken: "tok-host",
+    });
+    await h.protocol.handleMessage("guest-2", "playerRating", {
+      id: "guest-2", rating: 1040, matches: 3, joinToken: "tok-guest",
+    });
+    await h.protocol.handleMessage("host-1", "delta", { t: 4, seq: 1 });
+    h.frames.length = 0;
+    return h;
+  }
+  const results = (h: Harness) => h.frames.filter((f) => f.type === "result").map((f) => messageOf(f) as ResultMsg);
+
+  it("files the host's claim once, broadcast to BOTH seats with the room's board", async () => {
+    const h = await liveMatch();
+    await h.protocol.handleMessage("host-1", "resultClaim", {
+      winnerId: "host-1", loserId: "guest-2", reason: "win", durationSec: 412.4,
+    });
+    const [filed] = results(h);
+    expect(h.frames.filter((f) => f.type === "result")[0].target).toBe("broadcast");
+    expect(filed).toMatchObject({ winnerId: "host-1", loserId: "guest-2", reason: "win", durationSec: 412 });
+    expect(filed.ratings).toEqual([
+      { id: "host-1", rating: 1180, matches: 12 },
+      { id: "guest-2", rating: 1040, matches: 3 },
+    ]);
+    // One result per room: a second claim (however it is phrased) is ignored,
+    // so one match can never move a rating twice.
+    h.frames.length = 0;
+    await h.protocol.handleMessage("host-1", "resultClaim", {
+      winnerId: "guest-2", loserId: "host-1", reason: "win", durationSec: 1,
+    });
+    expect(results(h)).toHaveLength(0);
+  });
+
+  it("DROPS a guest's claim — the guest does not run the simulation", async () => {
+    const h = await liveMatch();
+    await h.protocol.handleMessage("guest-2", "resultClaim", {
+      winnerId: "guest-2", loserId: "host-1", reason: "win", durationSec: 60,
+    });
+    expect(results(h)).toHaveLength(0);
+  });
+
+  it("refuses a claim naming a non-member, a self-match, or an unknown reason", async () => {
+    const h = await liveMatch();
+    await h.protocol.handleMessage("host-1", "resultClaim", { winnerId: "ghost", loserId: "guest-2", reason: "win", durationSec: 5 });
+    await h.protocol.handleMessage("host-1", "resultClaim", { winnerId: "host-1", loserId: "host-1", reason: "win", durationSec: 5 });
+    await h.protocol.handleMessage("host-1", "resultClaim", { winnerId: "host-1", loserId: "guest-2", reason: "ragequit", durationSec: 5 });
+    expect(results(h)).toHaveLength(0);
+  });
+
+  it("a LOBBY departure rates nothing — leaving before the match is not losing", async () => {
+    const h = setup();
+    await h.protocol.handleCreate();
+    await join(h, "host-1", "Host");
+    await join(h, "guest-2", "Guest");
+    h.frames.length = 0;
+    await leave(h, "guest-2");
+    expect(results(h)).toHaveLength(0);
+  });
+
+  it("an explicit leave in a live match files it immediately: the leaver loses", async () => {
+    const h = await liveMatch();
+    await leave(h, "guest-2");
+    const [filed] = results(h);
+    expect(filed).toMatchObject({ winnerId: "host-1", loserId: "guest-2", reason: "forfeit", departedId: "guest-2" });
+  });
+
+  it("gives a DISCONNECT 30 s of grace, then files the forfeit", async () => {
+    vi.useFakeTimers();
+    try {
+      const h = await liveMatch();
+      await leave(h, "guest-2", "disconnect");
+      // Not a departure yet — the seat may be coming back.
+      expect(results(h)).toHaveLength(0);
+      vi.advanceTimersByTime(FORFEIT_GRACE_MS - 1_000);
+      expect(results(h)).toHaveLength(0);
+      vi.advanceTimersByTime(1_000);
+      expect(results(h)).toHaveLength(1);
+      expect(results(h)[0]).toMatchObject({ winnerId: "host-1", loserId: "guest-2", reason: "forfeit" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels the armed forfeit when the seat reconnects inside the window", async () => {
+    vi.useFakeTimers();
+    try {
+      const h = await liveMatch();
+      await leave(h, "guest-2", "disconnect");
+      h.frames.length = 0;
+      await join(h, "guest-2", "Guest");
+      vi.advanceTimersByTime(FORFEIT_GRACE_MS * 3);
+      expect(results(h)).toHaveLength(0);
+      // …and the match is still rateable afterwards: the host can still claim.
+      await h.protocol.handleMessage("host-1", "resultClaim", {
+        winnerId: "host-1", loserId: "guest-2", reason: "win", durationSec: 300,
+      });
+      expect(results(h)).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a host who abandons a live match HANDED the win to the guest", async () => {
+    // Abandonment is symmetric: whoever walks away loses, host or guest. The
+    // host-left reject and the result are two separate messages — the guest is
+    // told the room is over AND told what it did to their rating.
+    const h = await liveMatch();
+    await leave(h, "host-1");
+    const [filed] = results(h);
+    expect(filed).toMatchObject({ winnerId: "guest-2", loserId: "host-1", reason: "forfeit", departedId: "host-1" });
+  });
+
+  it("disposing the room disarms an armed forfeit — no rating move after the room is gone", async () => {
+    vi.useFakeTimers();
+    try {
+      const h = await liveMatch();
+      await leave(h, "guest-2", "disconnect");
+      await h.protocol.handleDispose();
+      vi.advanceTimersByTime(FORFEIT_GRACE_MS * 3);
+      expect(results(h)).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

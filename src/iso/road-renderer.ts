@@ -29,9 +29,10 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { HW, HH, MAP_W, MAP_H } from "../game/config";
 import type { Camera } from "./camera";
+import { isTownTile, townGroundBytes, type Grid } from "./grid";
 import {
-  ROAD_WIDTH, SHOULDER_WIDTH,
-  hasRoad, paintFigures, roadTile,
+  ROAD_WIDTH, SHOULDER_WIDTH, SIDEWALK_WIDTH,
+  hasRoad, paintFigures, roadTile, sidewalkJoints, sidewalkPaths, streetLampSpots, townGroundQuad,
   type GroundPoint, type RoadFigure, type RoadTile,
 } from "./road-geometry";
 
@@ -73,6 +74,14 @@ export interface RoadMaterialStyle {
 export interface RoadStyle {
   paved: RoadMaterialStyle;
   dirt: RoadMaterialStyle;
+  /**
+   * #159: the surface a town's BLOCKS are paved with — the yards the houses
+   * stand on, between the streets. Its own material rather than a reuse of
+   * `dirt`, because a settlement's ground is its own thing: compacted,
+   * trodden, greyer than a rural track's earth, and it has to read as made
+   * ground beside both the asphalt and the grass.
+   */
+  town: RoadMaterialStyle;
   /** Worn, low-saturation marking colour. */
   paint: string;
   paintAlpha: number;
@@ -87,6 +96,10 @@ export interface RoadStyle {
 export const DEFAULT_ROAD_STYLE: RoadStyle = {
   paved: { flat: "#3c3b38", shoulder: "#2a2926", image: null, repeat: 2.6 },
   dirt: { flat: "#7b6443", shoulder: "#574631", image: null, repeat: 2.6 },
+  // Dark grey-brown, and deliberately within a shade or two of the asphalt:
+  // a town's ground is the same made surface as its streets, one step softer
+  // and browner, which is what makes the two read as one streetscape.
+  town: { flat: "#4b463d", shoulder: "#4b463d", image: null, repeat: 2.6 },
   // Road markings: near-white and only lightly worn. The first pass used a
   // dim parchment tone at half opacity, which at 1x simply did not read as a
   // painted line.
@@ -119,6 +132,17 @@ const EDGE_SHADE: [number, string, number][] = [
 ];
 
 /**
+ * #159: the wash laid over a town block's paving.
+ *
+ * TRANSLUCENT INK OVER WHATEVER TEXTURE THE YARD HAS, rather than a tint baked
+ * into an asset, so the yard can borrow the road materials' own grain and
+ * still read as the town's own surface: dark, desaturated, grey-brown. The
+ * wash is what makes the same texture read as a rural track outside the
+ * limits and as a trodden town yard inside them.
+ */
+const TOWN_GROUND_WASH = "rgba(38,37,33,0.42)";
+
+/**
  * Opacity of the shoulder pass. The shoulder is a darkening of the ground
  * beside the road, so it has to let that ground through — at full opacity it
  * is a border, not a verge.
@@ -127,6 +151,112 @@ const SHOULDER_ALPHA = 0.42;
 
 /** Marking width in tile units. */
 const PAINT_WIDTH = 0.03;
+
+// ── #159: town-street sidewalks and lamps ───────────────────────────────────
+/**
+ * The sidewalk palette, and the last word on how a town street's verges look.
+ *
+ * Flat colours, like the road's own camber and markings: a sidewalk is a MADE
+ * surface, not a sample of ground, so it has nothing to gain from a texture
+ * and everything to lose from sharing the asphalt's. Light, cool concrete
+ * against the road's weathered charcoal is what makes a town read as paved
+ * while a highway reads as worn.
+ *
+ * `ribbon`/`crown` are the ticket's two greys, stroked concentrically exactly
+ * as the road's camber is: the crown is the top of a slab that is a little
+ * higher in the middle than at its kerbs.
+ */
+export const SIDEWALK_STYLE = {
+  ribbon: "#c8cbd0",
+  crown: "#d5d8dc",
+  /**
+   * The transverse joints. Dark enough to divide the ribbon into blocks, and
+   * never drawn across its full width (see SIDEWALK_JOINT_INSET): the light
+   * perimeter that survives is what makes each block look like a raised slab
+   * rather than a stripe.
+   */
+  joint: "#4a4d52",
+  jointAlpha: 0.9,
+  /** Cast iron, the lantern's glass, and the warm incandescent light in it. */
+  iron: "#33363b",
+  lantern: "#ffe494",
+  glow: "#fdf6d8",
+  glowAlpha: 0.22,
+  /** The soft contact shadow at the post's foot. */
+  shadow: "rgba(10,13,9,0.34)",
+} as const;
+
+/**
+ * One projected pixel, as a ground distance measured ACROSS the projection.
+ *
+ * The transformation sends one tile unit along a ground axis to `hypot(HW,HH)`
+ * world pixels, so this is the ground length of a single one — the unit the
+ * sidewalk's own 1px details (joint ink, lamp iron) are specified in. It
+ * scales with the zoom with everything else in the raster pass, which is what
+ * makes a sidewalk look the same at every zoom rather than thinning out.
+ */
+const PIXEL = 1 / Math.hypot(HW, HH);
+
+/** Joint ink thickness: one projected pixel across the ribbon. */
+const JOINT_WIDTH = PIXEL;
+
+/**
+ * The lamp, in PROJECTED WORLD pixels — the same pixel grid the sprites are
+ * authored on, so it grows with the zoom exactly like the buildings it stands
+ * between.
+ *
+ * `LAMP_POST_H + LAMP_HEAD_H` is 11px, in the 8–12 the ticket asks for, and
+ * that range is the point: a town street is 32px of ground across at 1x, so a
+ * post the height of the road's half-width is a piece of street furniture. At
+ * twice this it stopped reading as period hardware and started reading as a
+ * signal post.
+ */
+const LAMP_POST_H = 8;
+const LAMP_HEAD_W = 3;
+const LAMP_HEAD_H = 3;
+/** The lantern's glass, inset into the housing rather than filling it. */
+const LAMP_GLASS_W = 1.6;
+const LAMP_GLASS_H = 1.8;
+const LAMP_GLASS_Y = 0.6;
+const LAMP_GLOW_R = 2.2;
+/** The contact shadow, as a GROUND radius: the projection flattens it for us. */
+const LAMP_SHADOW_R = 0.04;
+/**
+ * Segments in a lamp's circle. Twelve is smooth at the sizes involved — the
+ * contact shadow is about two and a half world pixels across, the glow five —
+ * and keeps the painter to `moveTo`/`lineTo`, which every 2D context and every
+ * test stub has.
+ */
+const LAMP_ELLIPSE_SEGMENTS = 12;
+
+/** A screen-space offset of `n` projected pixels to the RIGHT, in ground units. */
+const pxRight = (n: number): GroundPoint => [n / (2 * HW), -n / (2 * HW)];
+/** A screen-space offset of `n` projected pixels UP, in ground units. */
+const pxUp = (n: number): GroundPoint => [-n / (2 * HH), -n / (2 * HH)];
+
+/**
+ * Add a ground-plane ellipse to the current path, as a polyline.
+ *
+ * A POLYLINE, like every other curve this feature draws (the walkway's bends
+ * are arcs traced segment by segment, and so is a lamp's smudge), and not
+ * `ctx.ellipse`. Two reasons, and the second is the one that matters: the
+ * painting stays inside the handful of path ops every canvas has — including
+ * the stubs the unit tests paint through — and a shape defined by points is
+ * the same shape whether it is rasterised by a browser, by an SVG backend or
+ * by a test that only counts strokes.
+ */
+function ellipseInto(ctx: Ctx2D, [u, v]: GroundPoint, rx: number, ry: number, rotation: number): void {
+  const cos = Math.cos(rotation), sin = Math.sin(rotation);
+  for (let i = 0; i <= LAMP_ELLIPSE_SEGMENTS; i++) {
+    const a = (i / LAMP_ELLIPSE_SEGMENTS) * Math.PI * 2;
+    const x = rx * Math.cos(a), y = ry * Math.sin(a);
+    const px = u + x * cos - y * sin, py = v + x * sin + y * cos;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+}
+
 /**
  * Dash geometry in tile units: a short dash and a shorter gap, four cycles
  * per tile.
@@ -184,6 +314,17 @@ export function tilesForRect(
 export interface RoadWorld {
   roadBits?: Uint8Array;
   dirtBits?: Uint8Array;
+  /**
+   * #159: the map, for its TOWN LIMITS. A tile stamped `TOWN_OCC` in
+   * `occupancy` is town ground — the same test `isTownTile` makes — and a
+   * paved tile on town ground is a town STREET: kerbs, sidewalks and corner
+   * lamps instead of rural verges.
+   *
+   * Optional, and deliberately so: a world without a map draws the rural road
+   * it always drew, exactly as a world with no road bytes draws nothing. The
+   * live renderer passes its whole `World`, whose `grid` this is.
+   */
+  grid?: Grid;
 }
 
 const cellAt = (arr: Uint8Array | undefined, tx: number, ty: number): number =>
@@ -192,6 +333,18 @@ const cellAt = (arr: Uint8Array | undefined, tx: number, ty: number): number =>
 /** Is there PAVED road on this tile? The transition classifier's one question. */
 const isPaved = (world: RoadWorld, tx: number, ty: number): boolean =>
   hasRoad(cellAt(world.roadBits, tx, ty));
+
+/**
+ * #159: is this tile inside a town's limits?
+ *
+ * The map's own test, `isTownTile`: a town's houses, its centre AND its
+ * streets are all stamped `TOWN_OCC`, so one occupancy read answers it. What
+ * is NOT town ground is a public highway running between towns, which is
+ * track rather than town furniture and is never stamped — which is exactly
+ * the distinction the ticket draws between a town street and a rural road.
+ */
+const isTownStreet = (world: RoadWorld, tx: number, ty: number): boolean =>
+  !!world.grid && isTownTile(world.grid, tx, ty);
 
 /** Every road tile in a range, as drawing descriptions. */
 export function roadTilesIn(
@@ -203,20 +356,50 @@ export function roadTilesIn(
     for (let tx = tx0; tx <= tx1; tx++) {
       const road = cellAt(world.roadBits, tx, ty);
       const dirt = cellAt(world.dirtBits, tx, ty);
+      const town = isTownStreet(world, tx, ty);
       // A tile carries at most one tier; paved wins if both bytes are set,
       // matching the simulation's "paving replaces dirt" rule.
-      if (hasRoad(road)) out.push(roadTile(tx, ty, road, "paved", paved));
-      else if (hasRoad(dirt)) out.push(roadTile(tx, ty, dirt, "dirt", paved));
+      if (hasRoad(road)) out.push(roadTile(tx, ty, road, "paved", paved, town));
+      else if (hasRoad(dirt)) out.push(roadTile(tx, ty, dirt, "dirt", paved, town));
+    }
+  }
+  return out;
+}
+
+/**
+ * #159: the paving of every town block tile in a range, ready to fill.
+ *
+ * One quad per tile, in tile order, so the whole of a chunk's yards go into a
+ * single path and are filled in one call. A tile is paved because the map says
+ * a town house stands there; it is not paved because a road passes it, which
+ * is what keeps the town's limits — and the grass outside them — exactly where
+ * the generator drew them.
+ */
+export function townGroundQuadsIn(
+  world: RoadWorld, tx0: number, ty0: number, tx1: number, ty1: number,
+): GroundPoint[][] {
+  const blocks = world.grid ? townGroundBytes(world.grid) : null;
+  if (!blocks) return [];
+  const street = (x: number, y: number) => hasRoad(cellAt(world.roadBits, x, y));
+  const out: GroundPoint[][] = [];
+  for (let ty = ty0; ty <= ty1; ty++) {
+    for (let tx = tx0; tx <= tx1; tx++) {
+      if (!cellAt(blocks, tx, ty)) continue;
+      out.push(townGroundQuad(tx, ty, street));
     }
   }
   return out;
 }
 
 // ── painting ────────────────────────────────────────────────────────────────
-/** Trace a figure into the current path, in ground coordinates. */
-function trace(ctx: Ctx2D, fig: RoadFigure): void {
+/**
+ * Add a figure to the CURRENT path, in ground coordinates. Separate from
+ * `trace` because the batched passes below put many figures in one path: a
+ * single stroke call is one rasterisation of the whole lot, which is what
+ * keeps a street of sidewalks as cheap as a single stroke of asphalt.
+ */
+function traceInto(ctx: Ctx2D, fig: RoadFigure): void {
   const pts = fig.points;
-  ctx.beginPath();
   if (pts.length === 1) {
     // A pad: a zero-length segment with a round cap strokes a disc of exactly
     // the road's width, which is the shape we want and needs no special case.
@@ -226,6 +409,12 @@ function trace(ctx: Ctx2D, fig: RoadFigure): void {
   }
   ctx.moveTo(pts[0][0], pts[0][1]);
   for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+}
+
+/** Trace one figure into a path of its own. */
+function trace(ctx: Ctx2D, fig: RoadFigure): void {
+  ctx.beginPath();
+  traceInto(ctx, fig);
 }
 
 /**
@@ -287,25 +476,214 @@ export function makeMatrix(): DOMMatrix {
 type RoadFills = Record<"paved" | "dirt", string | CanvasPattern>;
 
 /**
+ * #159 — the paved yards of a town's blocks, under everything else.
+ *
+ * One path, one fill, one wash: the whole town's ground costs two canvas
+ * operations per chunk however many blocks it has. It goes down FIRST, before
+ * the shoulders, the sidewalks and the asphalt, because it is the ground the
+ * other three sit on — and because the kerbs have to be painted over the band
+ * the paving reaches under them, not beside it.
+ */
+function paintTownGround(ctx: Ctx2D, quads: GroundPoint[][], fill: string | CanvasPattern): void {
+  if (!quads.length) return;
+  ctx.save();
+  ctx.lineJoin = "miter";
+  ctx.beginPath();
+  for (const quad of quads) {
+    ctx.moveTo(quad[0][0], quad[0][1]);
+    for (let i = 1; i < quad.length; i++) ctx.lineTo(quad[i][0], quad[i][1]);
+    ctx.closePath();
+  }
+  ctx.fillStyle = fill;
+  ctx.fill();
+  ctx.fillStyle = TOWN_GROUND_WASH;
+  ctx.fill();
+  ctx.restore();
+}
+
+/**
+ * #159 — the sidewalks of a set of town-street tiles, in one batched pass.
+ *
+ * Every ribbon in the chunk goes into a SINGLE path and is stroked once per
+ * coat, because the whole lot shares one width and one colour: the difference
+ * between a street and a whole town of streets is then the difference between
+ * four subpaths and four hundred, not between one stroke call and four
+ * hundred. The joints are batched the same way.
+ *
+ * Cap and join are the load-bearing details. BUTT caps, so a ribbon ends
+ * square on the port where the neighbour's ribbon begins — a round cap would
+ * bulge past it and, worse, would round the END of an arm whose neighbour has
+ * no sidewalk at all, which is what the town's limits look like. ROUND joins,
+ * so a bend's outer arc has no seam down its inside.
+ */
+function paintSidewalks(ctx: Ctx2D, tiles: RoadTile[]): void {
+  const streets = tiles.filter((t) => t.sidewalk);
+  if (!streets.length) return;
+
+  const paths: RoadFigure[] = [];
+  const joints: RoadFigure[] = [];
+  for (const t of streets) {
+    for (const path of sidewalkPaths(t.tx, t.ty, t.mask)) {
+      paths.push(path);
+      for (const joint of sidewalkJoints(path)) joints.push(joint);
+    }
+  }
+
+  ctx.save();
+  ctx.lineCap = "butt";
+  ctx.lineJoin = "round";
+  // The slab, then its crown: two concentric strokes, the trick the road's own
+  // camber already uses. `traceInto` puts every run in the one path.
+  for (const [colour, width] of [[SIDEWALK_STYLE.ribbon, SIDEWALK_WIDTH],
+    [SIDEWALK_STYLE.crown, SIDEWALK_WIDTH * 0.55]] as const) {
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    for (const path of paths) traceInto(ctx, path);
+    ctx.stroke();
+  }
+  // The joints, over the finished ribbon: a run of slabs, not a painted line.
+  ctx.strokeStyle = SIDEWALK_STYLE.joint;
+  ctx.globalAlpha = SIDEWALK_STYLE.jointAlpha;
+  ctx.lineWidth = JOINT_WIDTH;
+  ctx.lineCap = "butt";
+  ctx.beginPath();
+  for (const joint of joints) traceInto(ctx, joint);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+/**
+ * #159 — the street lamps of a set of town-street tiles.
+ *
+ * A lamp is a SCREEN-space object standing on a ground point, which is why it
+ * is drawn from explicit pixel offsets rather than in ground units: its post
+ * rises straight up the screen, its lantern is an axis-aligned little box like
+ * the pixel-art buildings, and its shadow is the one part that is a ground
+ * shape (an ellipse under the projection, so it lies on the pavement).
+ *
+ * Drawn last of everything on a road, because a lamp stands ABOVE the ground
+ * it is planted in: its head can legitimately hang over the next tile's
+ * asphalt, and the asphalt was painted several passes ago.
+ */
+function paintStreetLamps(ctx: Ctx2D, tiles: RoadTile[]): void {
+  const spots: GroundPoint[] = [];
+  for (const t of tiles) {
+    if (!t.sidewalk) continue;
+    for (const spot of streetLampSpots(t.tx, t.ty, t.mask)) spots.push(spot);
+  }
+  if (!spots.length) return;
+
+  ctx.save();
+  ctx.lineCap = "butt";
+  ctx.lineJoin = "miter";
+  for (const base of spots) {
+    // 1. The contact shadow the post casts on the pavement. A ground circle:
+    //    the projection flattens it into the iso smudge a shadow should be.
+    ctx.fillStyle = SIDEWALK_STYLE.shadow;
+    ctx.beginPath();
+    ellipseInto(ctx, base, LAMP_SHADOW_R, LAMP_SHADOW_R, 0);
+    ctx.fill();
+
+    // 2. The iron post, and the lantern it carries: a screen-aligned box, so
+    //    its 4x3 pixels read as pixels at every zoom.
+    const head: GroundPoint = [base[0] + pxUp(LAMP_POST_H)[0], base[1] + pxUp(LAMP_POST_H)[1]];
+    ctx.strokeStyle = SIDEWALK_STYLE.iron;
+    ctx.lineWidth = PIXEL;
+    ctx.beginPath();
+    ctx.moveTo(base[0], base[1]);
+    ctx.lineTo(head[0], head[1]);
+    ctx.stroke();
+
+    const corner = (right: number, up: number): GroundPoint => [
+      head[0] + pxRight(right)[0] + pxUp(up)[0],
+      head[1] + pxRight(right)[1] + pxUp(up)[1],
+    ];
+    const [bl, br, tr, tl] = [
+      corner(-LAMP_HEAD_W / 2, 0), corner(LAMP_HEAD_W / 2, 0),
+      corner(LAMP_HEAD_W / 2, LAMP_HEAD_H), corner(-LAMP_HEAD_W / 2, LAMP_HEAD_H),
+    ];
+    // 3. The warm light it throws, BEFORE the lantern that contains it: the
+    //    glow belongs around the glass, not painted over its housing.
+    const bulb: GroundPoint = [corner(0, LAMP_HEAD_H / 2)[0], corner(0, LAMP_HEAD_H / 2)[1]];
+    const glowR = LAMP_GLOW_R / (Math.SQRT2 * HW), glowRy = LAMP_GLOW_R / (Math.SQRT2 * HH);
+    ctx.fillStyle = SIDEWALK_STYLE.glow;
+    ctx.globalAlpha = SIDEWALK_STYLE.glowAlpha;
+    ctx.beginPath();
+    ellipseInto(ctx, bulb, glowR, glowRy, -Math.PI / 4);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    ctx.fillStyle = SIDEWALK_STYLE.iron;
+    ctx.beginPath();
+    ctx.moveTo(bl[0], bl[1]);
+    ctx.lineTo(br[0], br[1]);
+    ctx.lineTo(tr[0], tr[1]);
+    ctx.lineTo(tl[0], tl[1]);
+    ctx.closePath();
+    ctx.fill();
+
+    // 4. The glass: a smaller warm pane INSIDE the housing, so the lamp reads
+    //    as an iron lantern with a light in it rather than as a yellow sign.
+    ctx.fillStyle = SIDEWALK_STYLE.lantern;
+    ctx.beginPath();
+    const glass = [
+      corner(-LAMP_GLASS_W / 2, LAMP_GLASS_Y), corner(LAMP_GLASS_W / 2, LAMP_GLASS_Y),
+      corner(LAMP_GLASS_W / 2, LAMP_GLASS_Y + LAMP_GLASS_H), corner(-LAMP_GLASS_W / 2, LAMP_GLASS_Y + LAMP_GLASS_H),
+    ];
+    ctx.moveTo(glass[0][0], glass[0][1]);
+    for (const p of glass.slice(1)) ctx.lineTo(p[0], p[1]);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+/**
  * Paint a set of road tiles into a context that is ALREADY in ground
  * coordinates — i.e. whose transform maps tile units to device pixels.
  *
- * Pass order is bottom-up and deliberate: shoulders first so the core covers
- * their inner half, then the opaque core, then the dirt→paved transitions
- * over the finished dirt, then markings last. Every pass strokes with a width
- * in TILE UNITS; the context transform turns that into the correct projected
- * width, including its foreshortening on each diagonal.
+ * Pass order is bottom-up and deliberate, and #159 slots the town-street work
+ * into it rather than beside it:
+ *
+ *   0. town ground  — the paved blocks a town's houses stand on;
+ *   1. shoulders    — ground disturbed at the road's edge, under the core;
+ *   1b. sidewalks   — the walkways, over the shoulders and UNDER the asphalt,
+ *                     which is what trims them at every junction for free;
+ *   2. the core     — opaque asphalt or earth;
+ *   2b. camber      — the cross-width shading;
+ *   3. transitions  — the dirt→paved blend, over the finished dirt;
+ *   4. markings     — centre-lines, on paved tiles, never across a junction;
+ *   5. lamps        — last, because a lamp stands ON the ground it is planted
+ *                     in and its head may hang over the next tile's asphalt.
+ *
+ * Every pass strokes with a width in TILE UNITS; the context transform turns
+ * that into the correct projected width, including its foreshortening on each
+ * diagonal. The lamp is the one exception, drawn in projected pixels like the
+ * sprite art it stands among.
+ *
+ * `townGround` is the block paving to lay down first, in the same ground
+ * coordinates — one quad per paved tile, from `townGroundQuadsIn`.
  */
-export function paintRoadTiles(ctx: Ctx2D, tiles: RoadTile[], style: RoadStyle): void {
+export function paintRoadTiles(
+  ctx: Ctx2D, tiles: RoadTile[], style: RoadStyle, townGround: GroundPoint[][] = [],
+): void {
   // Patterns are created against THIS context; a material with no texture
   // falls through to its flat colour, which is a complete look, not a hole.
   const fills: RoadFills = {
     paved: makePattern(ctx, style.paved) ?? style.paved.flat,
     dirt: makePattern(ctx, style.dirt) ?? style.dirt.flat,
   };
+  const townFill = style.town ? (makePattern(ctx, style.town) ?? style.town.flat) : null;
   ctx.save();
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
+
+  // 0. #159 Town ground: the paved yards the houses stand on, under everything
+  //    a road paints. Absent a `town` material the passes below still draw the
+  //    streets; only the blocks between them stay grass.
+  if (townFill) paintTownGround(ctx, townGround, townFill);
 
   // 1. Shoulders — ground disturbed at the road's edge, NOT an outline. Drawn
   //    semi-transparent so it darkens whatever it happens to lie on (grass, a
@@ -319,6 +697,18 @@ export function paintRoadTiles(ctx: Ctx2D, tiles: RoadTile[], style: RoadStyle):
     for (const f of t.figures) { trace(ctx, f); ctx.stroke(); }
   }
   ctx.globalAlpha = 1;
+
+  // 1b. #159 Town-street sidewalks and their joints, BETWEEN the shoulders and
+  //     any asphalt.
+  //
+  //     The position is the whole trick. A ribbon runs from its port to the
+  //     tile centre, so at a junction it would cross the carriageway it meets;
+  //     painted here, it is simply covered by that carriageway's core below,
+  //     and every approach is trimmed at the kerb line with no clipping, no
+  //     per-tile special case and no gap. Where two ribbons cross each other
+  //     they overprint — which is the corner apron of an intersection, and is
+  //     the shape a corner-kerb is supposed to have anyway.
+  paintSidewalks(ctx, tiles);
 
   // 2. The opaque material core.
   for (const t of tiles) {
@@ -404,6 +794,11 @@ export function paintRoadTiles(ctx: Ctx2D, tiles: RoadTile[], style: RoadStyle):
     }
   }
   ctx.setLineDash([]);
+
+  // 5. #159 Street lamps, on top of everything else on the ground: see
+  //    `paintStreetLamps` for why they cannot go down with their sidewalks.
+  //    Markings stay under a lamp, exactly as paint on asphalt does.
+  paintStreetLamps(ctx, tiles);
   ctx.restore();
 }
 
@@ -533,12 +928,15 @@ export class RoadCache {
 
     const range = tilesForRect(px, py, px + ROAD_CHUNK_W + GUTTER * 2, py + ROAD_CHUNK_H + GUTTER * 2);
     const tiles = roadTilesIn(world, range.tx0, range.ty0, range.tx1, range.ty1);
-    if (tiles.length) {
+    // Town ground comes from the same tile range, so a block at a chunk's edge
+    // is paved by the chunk that owns it and the gutter simply agrees.
+    const townGround = townGroundQuadsIn(world, range.tx0, range.ty0, range.tx1, range.ty1);
+    if (tiles.length || townGround.length) {
       ctx.imageSmoothingEnabled = true;
       // Ground coordinates → this surface's device pixels. The gutter origin
       // is folded in here; the camera is NOT — that belongs to the blit.
       ctx.setTransform(HW * zoom, HH * zoom, -HW * zoom, HH * zoom, -px * zoom, -py * zoom);
-      paintRoadTiles(ctx, tiles, style);
+      paintRoadTiles(ctx, tiles, style, townGround);
       ctx.setTransform(1, 0, 0, 1, 0, 0);
     }
 

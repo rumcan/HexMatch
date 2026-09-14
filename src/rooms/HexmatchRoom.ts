@@ -24,17 +24,56 @@
 // NOTE (ticket sketch correction): the §6 sketch reads `msg.playerId`, but
 // SDK 5.27's `GameMessage` is `{ sender, payload }` — the sender is
 // `msg.sender.id`. This file follows the SDK, not the sketch.
+//
+// ── RANK-01 (#147): what a rating needs from the ROOM ─────────────────────
+//
+// The rating itself is computed by both clients from one shared board
+// (`src/net/rating.ts`), so the room's job is only to be that board and to
+// hold the two things no client can be trusted with:
+//
+//   1. WHO MAY SPEAK. A rating is published by its owner (`playerRating`) and
+//      the relay drops any message whose `id` is not the sender's — a client
+//      can be wrong about itself, but it can never write somebody else's
+//      number. A departure is filed by the ROOM, not by the player it happens
+//      to leave behind.
+//   2. WHEN A MATCH IS OVER. The room files exactly one `result` per room,
+//      and the room is the only party that saw both seats at that moment. The
+//      star line is the host's call (`resultClaim`); an EMPTY SEAT is the
+//      room's own (see `onPlayerLeave`).
+//
+// It still never simulates, never reads a scoreboard, and never invents a
+// number: every rating on its board was sent by the player it describes.
 // ══════════════════════════════════════════════════════════════════════════
 import { GameRoom, type GameMessage, type LeaveReason, type Player } from "@series-inc/rundot-game-sdk/mp-server";
-import { PROTOCOL_VERSION, type HexProtocol, type Slot } from "../net/protocol";
+import { PROTOCOL_VERSION, readRankWire, type HexProtocol, type PlayerRatingMsg, type RankWire, type ResultClaimMsg, type ResultMsg, type Slot } from "../net/protocol";
 
 /** Sent when the host is gone — no host, no truth, say so plainly. */
 export const HOST_LEFT_REASON = "The host left the game.";
+
+/**
+ * RANK-01: how long the room waits before a DISCONNECT becomes a forfeit.
+ *
+ * A dropped socket is not the same as walking out — `reconnectTimeout` is 60 s
+ * and a player who reconnects inside it is still in the match. So a disconnect
+ * arms this timer instead of filing immediately, and `onPlayerJoin` cancels it
+ * when they come back. A deliberate `leave` gets no such grace: the SDK only
+ * reports `leave` after the client asked to go, and a rated match must not be
+ * escapable by pressing the button faster.
+ */
+export const FORFEIT_GRACE_MS = 30_000;
 
 export default class HexmatchRoom extends GameRoom<HexProtocol> {
   private seed = 0;
   private hostId: string | null = null;
   private readonly slots = new Map<string, Slot>();
+  /** RANK-01: the room's rating board, keyed by player id (with the join token). */
+  private readonly ratings = new Map<string, RankWire & { joinToken: string }>();
+  /** A room files at most ONE result, however the match ended. */
+  private resultFiled = false;
+  /** True once the host has published state — i.e. a match is actually running. */
+  private matchLive = false;
+  /** Armed forfeits for disconnected players, by timer name. */
+  private readonly forfeitTimers = new Map<string, string>();
 
   onCreate() {
     // The seed is minted here, exactly as server.js did at room creation.
@@ -56,6 +95,14 @@ export default class HexmatchRoom extends GameRoom<HexProtocol> {
       this.slots.set(player.id, player.id === hostId ? 0 : 1);
     }
     if (this.playerCount >= 2) this.lock();
+    // RANK-01: a reconnecting player is not a leaver. Cancelling the armed
+    // forfeit here is the whole point of the grace window above.
+    const armed = this.forfeitTimers.get(player.id);
+    if (armed) {
+      this.clock.clear(armed);
+      this.forfeitTimers.delete(player.id);
+      this.log.info("Forfeit cancelled — player reconnected", { playerId: player.id });
+    }
     this.log.info("Player joined", { playerId: player.id, hostId });
     // A broadcast inside onPlayerJoin only reaches ALREADY-connected members:
     // the newcomer's socket registers after the hook runs, so the first
@@ -79,6 +126,14 @@ export default class HexmatchRoom extends GameRoom<HexProtocol> {
       if (this.hostId !== null) this.sendTo(this.hostId, p);
       return;
     }
+    if (p.type === "playerRating") {
+      this.onRating(msg.sender, p);
+      return;
+    }
+    if (p.type === "resultClaim") {
+      this.onResultClaim(msg.sender, p);
+      return;
+    }
     if (p.type === "snapshot" || p.type === "snapshot-chunk" || p.type === "delta") {
       // THE authority check: only the host may assert state. A guest-forged
       // snapshot, chunk or delta is dropped silently — no broadcast, no error
@@ -89,6 +144,12 @@ export default class HexmatchRoom extends GameRoom<HexProtocol> {
       // and the guest reassembles. The relay does not care which frame it is
       // forwarding — only that the sender is the host.
       if (msg.sender.id !== this.hostId) return;
+      // RANK-01: the first state publish is what makes the match "live" — a
+      // player who leaves a LOBBY has not lost a rated match, and the room has
+      // no other way to tell the two apart. Once a result is filed the room is
+      // done rating, so a trailing publish (the winner's final delta) must not
+      // re-open it.
+      if (!this.resultFiled) this.matchLive = true;
       this.broadcast(p);
       return;
     }
@@ -97,7 +158,7 @@ export default class HexmatchRoom extends GameRoom<HexProtocol> {
     // what the relay does not understand.
   }
 
-  onPlayerLeave(player: Player, _reason: LeaveReason) {
+  onPlayerLeave(player: Player, reason: LeaveReason) {
     // MP-08 refines this per reason (a 10 s host reload must not end the
     // game); for now every departure is final.
     this.slots.delete(player.id);
@@ -106,8 +167,145 @@ export default class HexmatchRoom extends GameRoom<HexProtocol> {
       this.hostId = null;
       this.broadcast({ type: "reject", reason: HOST_LEFT_REASON });
     }
-    this.log.info("Player left", { playerId: player.id });
+    this.log.info("Player left", { playerId: player.id, reason });
     this.unlock();
+
+    // RANK-01: an empty seat in a LIVE match is a forfeit — the leaver loses.
+    //
+    // The policy, and why it is this way round: a ladder that ignored
+    // abandonment would make quitting strictly better than losing, and the top
+    // of the board would belong to whoever walked away fastest. So the leaver
+    // is debited and the survivor credited, exactly as if the star line had
+    // been crossed the other way.
+    //
+    // The room files it rather than the survivor because the two seats must
+    // not be able to disagree about one match: the player who walks away is
+    // not going to send anything, and a survivor who filed alone could claim
+    // any verdict. One `result`, broadcast to whoever is still in the room —
+    // and the leaver's own client applies the same loss locally at the moment
+    // it leaves (`src/iso/game.ts`), so both seats land on the same number.
+    if (!this.matchLive || this.resultFiled) return;
+    const others = [...this.players.keys()].filter((id) => id !== player.id);
+    if (others.length === 0) return;                 // the room emptied: nobody to rate
+    if (reason === "disconnect") {
+      // A dropped socket is not a departure yet. Clear any earlier timer for
+      // this seat and re-arm: the LAST disconnect is the one that counts.
+      const previous = this.forfeitTimers.get(player.id);
+      if (previous) this.clock.clear(previous);
+      const name = `forfeit:${player.id}`;
+      this.forfeitTimers.set(player.id, name);
+      this.clock.setTimeout(name, () => {
+        this.forfeitTimers.delete(player.id);
+        this.fileLeaverLoss(player.id, others[0], "forfeit");
+      }, FORFEIT_GRACE_MS);
+      return;
+    }
+    this.fileLeaverLoss(player.id, others[0], "forfeit");
+  }
+
+  onDispose() {
+    // A room that empties is not a room that lost. Drop the armed timers: the
+    // clock is disposed with the room, and firing into a gone room would file
+    // against players nobody can reach.
+    for (const name of this.forfeitTimers.values()) this.clock.clear(name);
+    this.forfeitTimers.clear();
+  }
+
+  // ── RANK-01: the rating board and the filed result ──────────────────────
+
+  /**
+   * A rating arrives. Two rules, both about who is allowed to speak:
+   *
+   *   - the id must be the SENDER's. A rating is the one number a player is
+   *     allowed to be wrong about (it only ever feeds an expectation), but it
+   *     must never be possible to write somebody else's;
+   *   - the first publish for a seat must carry a join token, and any later
+   *     publish for the same seat must carry the SAME one. The token is minted
+   *     when the player joins the room, so a third party who joined later (or
+   *     a stale tab) cannot overwrite a rating mid-room. Re-publishing with
+   *     the same token is allowed and idempotent — a client re-attaching after
+   *     a reconnect sends its rating again, and the newer value is the truer
+   *     one (it may have just filed a match).
+   */
+  private onRating(sender: Player, msg: PlayerRatingMsg): void {
+    const wire = readRankWire(msg);
+    if (!wire || wire.id !== sender.id) return;
+    const existing = this.ratings.get(sender.id);
+    if (existing) {
+      if (!wire.joinToken || wire.joinToken !== existing.joinToken) return;
+    } else if (!wire.joinToken) {
+      return;
+    }
+    this.ratings.set(sender.id, { ...wire, joinToken: wire.joinToken ?? existing!.joinToken });
+    // The board goes out whole: two entries, and a delta would need a sequence
+    // and a re-request path for the one message a room ever sends twice.
+    this.broadcast({ type: "ratingUpdate", ratings: this.ratingBoard() });
+  }
+
+  /**
+   * The host says the match is over. Validated to the shape the room can
+   * check — both ids are members, exactly one result per room — and then
+   * relayed to EVERYONE including the host, so both seats act on one verdict
+   * instead of each trusting itself.
+   *
+   * A guest claiming a win is dropped: the guest does not run the simulation,
+   * so it has no standing to declare the star line crossed.
+   */
+  private onResultClaim(sender: Player, msg: ResultClaimMsg): void {
+    if (sender.id !== this.hostId) return;
+    if (this.resultFiled) return;
+    if (msg.reason !== "win" && msg.reason !== "forfeit") return;
+    if (msg.winnerId === msg.loserId) return;
+    if (!this.players.has(msg.winnerId) || !this.players.has(msg.loserId)) return;
+    const durationSec = typeof msg.durationSec === "number" && Number.isFinite(msg.durationSec)
+      ? Math.max(0, Math.round(msg.durationSec))
+      : 0;
+    this.fileResult(msg.winnerId, msg.loserId, msg.reason, durationSec);
+  }
+
+  /** The room's own verdict on an empty seat: the leaver loses. */
+  private fileLeaverLoss(leaverId: string, winnerId: string, reason: ResultMsg["reason"]): void {
+    this.fileResult(winnerId, leaverId, reason, 0, leaverId);
+  }
+
+  /**
+   * File the one result this room will ever carry. Idempotent by construction:
+   * `resultFiled` is set before the broadcast, so a race between a disconnect
+   * grace expiring and the host's own claim cannot produce two results (and
+   * therefore cannot move a rating twice for one match).
+   */
+  private fileResult(
+    winnerId: string,
+    loserId: string,
+    reason: ResultMsg["reason"],
+    durationSec: number,
+    departedId?: string,
+  ): void {
+    if (this.resultFiled) return;
+    this.resultFiled = true;
+    for (const name of this.forfeitTimers.values()) this.clock.clear(name);
+    this.forfeitTimers.clear();
+    const result: ResultMsg = {
+      type: "result",
+      winnerId,
+      loserId,
+      reason,
+      durationSec,
+      ratings: this.ratingBoard(),
+      at: Date.now(),
+    };
+    if (departedId) result.departedId = departedId;
+    this.log.info("Ranked result filed", { winnerId, loserId, reason, durationSec });
+    this.broadcast(result);
+  }
+
+  /** The board as it stands: every rating the room has actually been told. */
+  private ratingBoard(): RankWire[] {
+    return [...this.ratings.entries()].map(([id, entry]) => ({
+      id,
+      rating: entry.rating,
+      matches: entry.matches,
+    }));
   }
 
   /** The join greeting: seed, host, protocol version, and the slot roster. */
@@ -117,6 +315,15 @@ export default class HexmatchRoom extends GameRoom<HexProtocol> {
       const slot = this.slots.get(p.id);
       if (slot !== undefined) roster.push({ id: p.id, username: p.username, slot });
     }
-    return { type: "welcome", seed: this.seed, hostId, protocolVersion: PROTOCOL_VERSION, roster };
+    // RANK-01: the board rides the greeting, so a newcomer's very first look at
+    // the lobby already shows both players' ratings.
+    return {
+      type: "welcome",
+      seed: this.seed,
+      hostId,
+      protocolVersion: PROTOCOL_VERSION,
+      roster,
+      ratings: this.ratingBoard(),
+    };
   }
 }

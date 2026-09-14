@@ -303,7 +303,7 @@ html, body, #root {
 .modal.box { --corner-inset: 0; --corner: 0px; --text-clear: calc(var(--corner-inset) + var(--corner)); }
 /* A modal never runs off the window: tall cards (the ❔ How to Play reference,
    Settings) scroll inside themselves so their close button stays reachable. */
-.modal.box { max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); overflow-y: auto; overscroll-behavior: contain; }
+.modal.box { max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); overflow-y: auto; scrollbar-gutter: stable; overscroll-behavior: contain; }
 .panel + .panel { margin-top: 8px; }
 .panel.grow { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
@@ -397,11 +397,13 @@ html, body, #root {
   100% { transform: scale(1); border-color: transparent; }
 }
 
-/* inline gem sprite used for every resource icon */
+/* inline gem sprite used for every resource icon.
+   No sepia/saturate wash — the painted tokens already match the match-3
+   gem palette (#166); a filter would muddy wheat-green / oil-black. */
 .gem-ic {
   display: inline-block; vertical-align: -0.22em;
   background-repeat: no-repeat;
-  filter: drop-shadow(0 1px 2px rgba(0,0,0,.6)) sepia(.16) saturate(1.06);
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,.6));
 }
 /* the cargo glyph sits in its own struck bezel */
 .chip-ic {
@@ -418,6 +420,61 @@ html, body, #root {
   font-variant-numeric: tabular-nums;
   font-family: var(--serif); letter-spacing: .5px;
   text-shadow: 0 1px 0 #000;
+}
+
+/* #166: painted gem cargo tokens + stroke HUD glyphs. `object-fit: contain`
+   + `image-rendering: auto` keep the 128px tokens crisp at every HUD size
+   (never pixelated, never stretched per-axis). */
+.cargo-ic {
+  display: block;
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  image-rendering: auto;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, .55));
+}
+.chip-ic .cargo-ic { width: 20px; height: 20px; }
+.iso-reach .chip .cargo-ic,
+#iso-rival-view .rb-chip .cargo-ic,
+.cost-chip .cargo-ic,
+.hp-body .cargo-ic,
+.offer-body .cargo-ic,
+.tray-body .cargo-ic,
+.gold-rule .cargo-ic,
+.pane-note .cargo-ic,
+.sab-cost .cargo-ic,
+.mb-cost .cargo-ic,
+.help-col .cargo-ic {
+  width: 14px;
+  height: 14px;
+}
+.cargo-ic-lg { width: 28px; height: 28px; }
+
+.hud-ic {
+  display: block;
+  width: 16px;
+  height: 16px;
+  margin: 0 auto;
+  flex: 0 0 auto;
+  pointer-events: none;
+}
+.tab-ic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+.tab-ic .hud-ic { width: 12px; height: 12px; margin: 0; }
+.cost-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+}
+.cost-chip b {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
 .top-right { display: flex; align-items: center; gap: 6px; }
@@ -442,7 +499,12 @@ html, body, #root {
   padding: 2px 4px; background: rgba(12, 8, 5, .6);
   box-shadow: inset 0 1px 0 rgba(242, 220, 166, .1);
 }
-.rival-skill-ic { font-size: 13px; filter: saturate(.7) brightness(1.05); }
+.rival-skill-ic {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; flex: 0 0 auto;
+  filter: saturate(.7) brightness(1.05);
+}
+.rival-skill-ic .hud-ic { width: 14px; height: 14px; margin: 0; }
 .rival-skill-sel {
   border: 1px solid rgba(226, 112, 79, .38); border-radius: 2px; padding: 3px 5px;
   background: linear-gradient(180deg, rgba(78, 30, 18, .5), rgba(16, 10, 7, .86));
@@ -457,6 +519,7 @@ html, body, #root {
 
 .icon-btn {
   width: 30px; height: 30px; border-radius: var(--r); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
   border: 1px solid var(--brass-lo);
   background: linear-gradient(180deg, rgba(58, 44, 28, .5), rgba(12, 9, 6, .86));
   color: var(--brass-hi); font-size: 14px;
@@ -464,6 +527,7 @@ html, body, #root {
   transition: background .18s, color .18s, border-color .18s, box-shadow .18s;
   text-shadow: 0 1px 2px #000;
 }
+.icon-btn .hud-ic { width: 16px; height: 16px; margin: 0; }
 .icon-btn:hover {
   background: linear-gradient(180deg, rgba(96, 70, 34, .62), rgba(20, 14, 9, .9));
   color: var(--gold2); border-color: var(--brass);
@@ -506,9 +570,22 @@ html, body, #root {
 }
 
 /* ── asides ─────────────────────────────────────────────────────── */
-.aside { position: fixed; top: calc(var(--topbar-h) + var(--safe-top) + 8px); bottom: 52px; z-index: 30; display: flex; flex-direction: column; }
-.aside.left { left: 10px; width: 300px; }
-.aside.right { right: 10px; }
+/* FIT-01: the column ends where the resource footer begins. That edge is
+   NOT the constant it looks like — the chip row wraps on narrow desktop
+   windows and the bar (fixed to bottom: 0) grows UPWARD, so the old fixed
+   `bottom: 52px` let the column's last painted row slide under the bar's
+   blur. ui.ts measures `footer.offsetHeight` and publishes it as
+   --resbar-h on every resize; max() keeps the historic 52px wherever the
+   bar measures no taller than that (jsdom, which lays nothing out, keeps
+   the fallback and with it every number pinned below). */
+.aside { position: fixed; top: calc(var(--topbar-h) + var(--safe-top) + 8px); bottom: max(52px, var(--resbar-h, 52px)); z-index: 30; display: flex; flex-direction: column; }
+.aside.left { left: 10px; width: 300px; overflow-y: auto; }
+/* FIT-01: the plant column now FITS its box (ui.ts clamps the board zoom to
+   the measured room), so the clip here is a safety net, not a layout tool:
+   if anything ever does overflow again it stops at the column's own edge —
+   above the footer — instead of sliding behind the bar to be cut in half
+   by it. */
+.aside.right { right: 10px; overflow: hidden; }
 /* V3: the quarry column sizes to the board. ui.ts publishes --board-px
    (BOARD_W × CELL × zoom + wrap padding), so the panel always contains all
    nine columns; a fixed width here is what used to clip the right three. */
@@ -516,6 +593,44 @@ html, body, #root {
   .aside.right { width: calc(var(--board-px, 496px) + 30px); }
 }
 .board-wrap { overflow: visible; }
+
+/* ── RAIL-01 — collapsible desktop panels ──────────────────────────
+   The map is the game; the two fixed columns are instruments hung over it.
+   Each gets one slim brass key on its outer edge that folds the panel
+   against the screen edge it lives on — the Build menu out to the LEFT,
+   the Processing Plant board out to the RIGHT — and points the way the
+   panel will travel: expanded, the chevron faces the screen edge (fold),
+   collapsed, it faces the center (unfold). The state lives on the root as
+   data-rail-left / data-rail-right so this sheet owns the whole animation
+   (one transform each, .25s ease) and ui.ts only flips the attribute.
+   The keys ride their panels (they are children), so the folded sliver —
+   the 28px of panel the transform leaves on screen — is itself the edge
+   bar: brass rail, bevel, and the key pointing home. */
+.aside.left, .aside.right { transition: transform .25s ease; }
+.ui-root[data-rail-left="1"] .aside.left  { transform: translateX(calc(-100% + 28px)); }
+.ui-root[data-rail-right="1"] .aside.right { transform: translateX(calc(100% - 28px)); }
+.rail-toggle {
+  position: absolute; z-index: 5;
+  top: 50%; transform: translateY(-50%);
+  width: 24px; height: 64px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--serif); font-size: 13px; line-height: 1;
+  color: var(--brass-hi); cursor: pointer;
+  background: linear-gradient(180deg, rgba(52, 39, 25, .85), rgba(12, 8, 6, .92));
+  border: 1px solid var(--brass-lo);
+  box-shadow: inset 0 1px 0 rgba(242, 220, 166, .18), 0 4px 14px rgba(0, 0, 0, .5);
+  transition: color .15s, border-color .15s, background .15s, box-shadow .15s;
+}
+.rail-toggle:hover {
+  color: var(--gold2); border-color: var(--brass);
+  background: linear-gradient(180deg, rgba(98, 68, 24, .8), rgba(16, 11, 7, .94));
+  box-shadow: inset 0 1px 0 rgba(242, 220, 166, .3), 0 0 16px -4px rgba(255, 176, 46, .5);
+}
+/* the build menu folds left, so its key hangs on the panel's right edge;
+   the board folds right, so its key hangs on the panel's left edge — each
+   bevels the way its panel does, minus the edge that melts into it */
+.rail-toggle-left  { right: 0; border-right: 0; border-radius: var(--r) 0 0 var(--r); }
+.rail-toggle-right { left: 0; border-left: 0; border-radius: 0 var(--r) var(--r) 0; }
 
 /* ── tycoons — the roster is a wall of dossiers ───────────────── */
 /* tycoon roster — horizontal row across the top bar */
@@ -982,6 +1097,38 @@ html, body, #root {
    origin. The lift is drawn on the face instead. */
 .gem.sel .face.sprite, .gem.selected .face.sprite { filter: drop-shadow(0 0 9px rgba(255, 217, 138, .9)) drop-shadow(0 3px 4px rgba(0, 0, 0, .6)); }
 .gem.gone { transition-duration: var(--gem-clear-ms, 95ms); transform: scale(.1) rotate(40deg) !important; opacity: 0; }
+
+/* ── Issue #152: turbo catch-up remnants ─────────────────────────────────
+   While the player is ahead of the board (`.ui-root.turbo`, set by the
+   board's `onTurbo`), a cleared gem is pulled from the grid at once and a
+   ghost of it is left on the cell: a golden flash that swells, blurs and
+   dissolves over ~300ms while the refill already drops in underneath. It is
+   a `.gem` lookalike (same inline cell transform, same face) that can never
+   be hit or focused. */
+.gem-remnant {
+  position: absolute; left: 0; top: 0;
+  width: var(--gem, 48px); height: var(--gem, 48px);
+  pointer-events: none;
+  z-index: 6;
+  opacity: 1;
+  scale: 1;
+  filter: drop-shadow(0 0 14px var(--gold, #ffb02e)) brightness(1.6);
+  transition:
+    opacity .3s ease-out,
+    scale .3s ease-out,
+    filter .3s ease-out;
+}
+.gem-remnant .face { box-shadow: 0 0 18px 4px rgba(255, 217, 138, .75); }
+.gem-remnant.fade {
+  opacity: 0;
+  scale: 1.18;
+  filter: drop-shadow(0 0 12px var(--gold, #ffb02e)) blur(1.5px) brightness(1.2);
+}
+@media (prefers-reduced-motion: reduce) {
+  /* No swell or blur — a plain, quick fade is all the motion budget allows. */
+  .gem-remnant { transition: opacity .25s linear; filter: none; }
+  .gem-remnant.fade { scale: 1; filter: none; }
+}
 
 /* ── TACTILE-01: picked up, giving way, settling (src/game/ui.ts) ──────────
    Held: lifted a touch above the felt and following the hand with only a
@@ -1663,6 +1810,7 @@ html, body, #root {
 /* PP-08: the standing "Gold is reserved for Black Market sabotage" rule,
    shown at the top of the Black Market panel — house rules, chalked up. */
 .gold-rule {
+  display: flex; align-items: center; gap: 6px;
   color: var(--gold2);
   opacity: .9;
   border-left: 2px solid var(--gold);
@@ -2132,7 +2280,7 @@ html, body, #root {
     z-index: 45;
   }
   .fab, .recenter-btn {
-    display: block;
+    display: inline-flex; align-items: center; justify-content: center;
     width: 46px; height: 46px;
     border-radius: 50%;
     border: 1px solid var(--brass-lo);
@@ -2147,6 +2295,7 @@ html, body, #root {
   }
   .fab { font-size: 24px; font-weight: 700; font-family: var(--mono); }
   .fab:active, .recenter-btn:active { transform: scale(.92); }
+  .fab .hud-ic, .recenter-btn .hud-ic { width: 22px; height: 22px; margin: 0; }
 }
 /* only relevant while the map tab is visible */
 .ui-root:not([data-view="map"]) .fabs { display: none; }
@@ -2258,6 +2407,14 @@ html, body, #root {
   /* map view: nothing but the map */
   [data-view="map"] .aside { display: none; }
 
+  /* RAIL-01: the desktop rails do not exist on a phone — the tab sheets are
+     the navigation here, and a half-slid panel would fight them. The keys go
+     away entirely and any desktop collapse is undone (ui.ts also clears the
+     state the moment the regime flips, so this is belt and braces for a
+     resize that races the attribute write). */
+  .rail-toggle { display: none !important; }
+  .aside.left, .aside.right { transform: none !important; }
+
   /* ── resource footer sits above the nav ── */
   .resbar {
     bottom: calc(58px + env(safe-area-inset-bottom, 0px));
@@ -2305,7 +2462,7 @@ html, body, #root {
   .toast { width: 100%; text-align: center; }
 
   /* modals go full-bleed: the plaque comes off the wall and lies flat */
-  .modal.box { width: 94%; padding: 18px 16px; max-height: 84vh; overflow-y: auto; border-width: 14px; }
+  .modal.box { width: 94%; padding: 18px 16px; max-height: 84vh; overflow-y: auto; scrollbar-gutter: stable; border-width: 14px; }
   /* The band follows the modal ornament: a 14px mat plus a 34px medallion. */
   .modal.box { --corner-inset: 14px; --corner: 0px; }
   .modal h2 { font-size: 17px; letter-spacing: 2px; }
@@ -2598,7 +2755,7 @@ html, body, #root {
   box-shadow: inset 0 1px 0 rgba(242, 220, 166, .08); transition: color .15s, border-color .15s; }
 .tut-x:hover { color: #ffd0bd; border-color: rgba(226, 112, 79, .6); }
 
-.tut-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+.tut-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch; padding: 12px 2px 4px; text-align: left; }
 .tut-lede { margin: 0 0 4px; font-family: var(--sans); font-size: 13px; line-height: 1.55;
   color: var(--txt-dim); }
@@ -2859,6 +3016,9 @@ html, body, #root {
   font-family: var(--mono);
 }
 #iso-rival-view .rb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
   background: rgba(200, 226, 244, 0.08);
   border: 1px solid rgba(124, 182, 216, 0.26);
   border-radius: 2px;
@@ -2927,6 +3087,88 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .start-panel button:disabled { opacity: .4; cursor: not-allowed; }
 
 /* ═══════════════════════════════════════════════════════════════════
+   RANK-01 (#147) — the rating, and the badge that names it.
+
+   Three surfaces wear the same chip: the mode screen (your own file), the
+   lobby seat rows (yours and the room's copy of your opponent's) and the
+   ladder list. The badge is a cut-out PNG at one fixed px size, drawn with
+   `object-fit: contain` — never stretched, never squashed, and the tier
+   colour lives in the ART (one painted medallion, re-metalised per tier),
+   so nothing here re-tints it: a CSS filter on a painted plate is how a
+   theme starts looking like two themes.
+   ═══════════════════════════════════════════════════════════════════ */
+/* the Any / Similar rank picker, under the Quick match button */
+.rank-search { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: -2px; }
+.rank-search-opt {
+  display: flex; flex-direction: column; gap: 2px; align-items: center; justify-content: center;
+  min-height: 40px; padding: 6px 8px; border: 1px solid rgba(89,75,59,.75);
+  background: rgba(255,255,255,.02); color: var(--txt-mute, #a89b89);
+  font: 600 11px/1.1 var(--sans, sans-serif); letter-spacing: 1px; cursor: pointer;
+}
+.rank-search-opt small { font-weight: 400; font-size: 10px; letter-spacing: .2px; opacity: .8; }
+.rank-search-opt.on { border-color: var(--gold2, #e9a83e); color: var(--txt, #efe4d0); background: rgba(255,166,43,.1); }
+.rank-search-opt:disabled { opacity: .45; cursor: not-allowed; }
+.rank-block { margin: 2px 0 18px; }
+.rank-chip {
+  display: inline-flex; align-items: center; gap: 9px;
+  padding: 5px 11px 5px 6px; border: 1px solid var(--line, #594b3b);
+  border-radius: 999px; background: rgba(255,255,255,.035);
+  text-align: left; vertical-align: middle;
+}
+.rank-badge { width: 30px; height: 30px; flex: 0 0 auto; object-fit: contain; }
+.rank-chip-text { display: flex; flex-direction: column; line-height: 1.15; }
+.rank-chip-who { font: 600 10px/1.2 var(--sans, sans-serif); letter-spacing: 1px; color: var(--txt, #efe4d0); font-style: normal; opacity: .9; }
+.rank-chip-text b { font: 700 11px/1.2 var(--sans, sans-serif); letter-spacing: 1.4px; text-transform: uppercase; }
+.rank-chip-text small { font: 600 11px/1.2 var(--sans, sans-serif); color: var(--txt-mute, #a89b89); }
+.rank-chip[data-tier="bronze"] .rank-chip-text b { color: #d29a63; }
+.rank-chip[data-tier="silver"] .rank-chip-text b { color: #c9d6de; }
+.rank-chip[data-tier="gold"] .rank-chip-text b { color: var(--gold2, #e9a83e); }
+.rank-chip[data-tier="platinum"] .rank-chip-text b { color: #e6f2f1; }
+.rank-chip[data-tier="diamond"] .rank-chip-text b { color: #9fd0f2; }
+.rank-chip[data-tier="master"] .rank-chip-text b { color: #e8785f; }
+.rank-chip[data-tier="unranked"] .rank-chip-text b { color: var(--txt-mute, #a89b89); }
+.rank-block-note { margin: 9px 0 0; color: var(--txt-mute, #a89b89); font: 11px/1.5 var(--sans, sans-serif); letter-spacing: .6px; }
+/* the lobby rows: name, chip, status — the chip rides the middle */
+.seat-list .rank-chip { margin-left: auto; margin-right: 10px; padding: 2px 9px 2px 4px; }
+.seat-list .rank-badge { width: 24px; height: 24px; }
+/* the ladder list */
+.ladder-panel { width: min(520px, 100%); }
+.ladder-list { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 5px; max-height: 46vh; overflow-y: auto; }
+.ladder-list li { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border: 1px solid rgba(89,75,59,.55); background: rgba(255,255,255,.02); }
+.ladder-list li[data-rank="1"] { border-color: var(--gold2, #e9a83e); background: rgba(255,166,43,.08); }
+.ladder-place { flex: 0 0 26px; color: var(--gold2, #e9a83e); font: 700 13px/1 var(--sans, sans-serif); }
+.ladder-list .rank-chip { border: none; background: none; padding: 0; }
+.ladder-note { margin: 0 0 16px; color: var(--txt-mute, #a89b89); font: 12px/1.6 var(--sans, sans-serif); }
+.ladder-mine { margin: 0 0 4px; display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; color: var(--txt-mute, #a89b89); font: 12px/1.4 var(--sans, sans-serif); }
+.ladder-mine small { letter-spacing: .5px; }
+
+/* The ledger's rating row (see `src/iso/ending.ts`) — the badge, the number
+   and what the match did to it, between the scoreboard and the epilogue. */
+.ending-rank {
+  display: flex; align-items: center; gap: 14px; margin: 18px auto 0;
+  max-width: 460px; padding: 12px 16px; border: 1px solid rgba(89,75,59,.7);
+  background: rgba(255,255,255,.03); text-align: left;
+}
+.ending-rank[data-state="up"] { border-color: rgba(233,168,62,.55); }
+.ending-rank[data-state="down"] { border-color: rgba(120,80,70,.6); }
+.ending-rank[data-state="pending"] { border-style: dashed; opacity: .85; }
+.ending-rank[data-promoted="1"] { box-shadow: 0 0 0 1px rgba(233,168,62,.35), 0 0 22px rgba(233,168,62,.18); }
+.ending-rank-badge { width: 58px; height: 58px; flex: 0 0 auto; object-fit: contain; }
+.ending-rank-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ending-rank-headline { display: flex; align-items: baseline; gap: 9px; font: 700 15px/1.1 var(--sans, sans-serif); }
+.ending-rank-tier { letter-spacing: 2px; text-transform: uppercase; color: var(--gold2, #e9a83e); }
+.ending-rank-rating { font-size: 21px; letter-spacing: .5px; }
+.ending-rank-delta { font-size: 14px; letter-spacing: .5px; }
+.ending-rank-delta.up { color: #8fd08a; }
+.ending-rank-delta.down { color: #e0896f; }
+.ending-rank-note { color: var(--txt-mute, #a89b89); font: 11.5px/1.4 var(--sans, sans-serif); }
+/* the forfeit line inside an in-game modal */
+.rank-modal-line { margin: 8px 0 0; }
+.rank-delta.up { color: #8fd08a; }
+.rank-delta.down { color: #e0896f; }
+
+
+/* ═══════════════════════════════════════════════════════════════════
    STORY-01 — the living plate behind the front doors.
 
    One animated backdrop, shared by the MAIN MENU and every StartScreen
@@ -2947,7 +3189,7 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 /* The start screen SCROLLS at every size (menu-ui-polish): a campaign list
    taller than the window must never push its buttons out of reach. Its plate
    layers are position: fixed, so the backdrop stays put while it scrolls. */
-.start-screen { position: relative; overflow-x: hidden; overflow-y: auto; isolation: isolate; }
+.start-screen { position: relative; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; isolation: isolate; }
 /* MOBILE-01: a landscape phone is 360-430px tall. `place-items: center` plus
    `overflow: hidden` put the Play button BELOW the fold with no way to reach
    it — the menu was unplayable sideways. On short viewports the plate
@@ -3193,6 +3435,7 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   width: min(760px, 94vw);
   max-height: calc(100vh - 48px);
   overflow: auto;
+  scrollbar-gutter: stable;
   padding: 28px 34px 22px;
   text-align: center;
   color: var(--txt);

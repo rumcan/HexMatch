@@ -110,7 +110,7 @@ message routing. It never simulates.
 | `src/net/transport.ts` | Wraps `RundotGameAPI.realtime.*`; the only file that imports the SDK |
 | `src/net/session.ts` | Role, slot, roster, connection state |
 | `src/net/delta.ts` | Track-delta encode/decode (section 5) |
-| `src/ui/StartScreen.tsx` | Host / Join / Quick match / AI |
+| `src/ui/StartScreen.tsx` | Host / Join / Auto Matchmaking / AI |
 | `tests/unit/net-protocol.test.ts` | Protocol version refusal |
 | `tests/unit/net-delta.test.ts` | Delta correctness vs full snapshot |
 
@@ -337,7 +337,7 @@ keeps, and it is what stops a guest forging state. Do not drop it.
 │   ▸ Play vs AI          (no login)│
 │   ▸ Host a game                   │
 │   ▸ Join with a code              │
-│   ▸ Quick match                   │
+│   ▸ Auto Matchmaking              │
 └───────────────────────────────────┘
 ```
 
@@ -351,7 +351,9 @@ States, mirroring the deleted `lobby.ts`:
   from `onPlayerJoined`. A Start button, enabled once a guest is present.
 - `join` — a 6-character code field. Uppercase, trim, `maxLength={6}`. No
   server-address field: unlike the old lobby there is nothing to configure.
-- `matchmaking` — spinner with a Cancel that calls `room.leave()`.
+- `matchmaking` — searching screen with a live elapsed-time clock and a Cancel
+  that ends the search; the abandoned request leaves the RUN pool when its
+  window closes (the SDK sends `matchmaking:cancel` and closes the socket).
 - `error` — message plus Back.
 
 Resolution — exactly one of:
@@ -461,6 +463,7 @@ Do these in order. Each should land green.
 | MP-07 | Quick match | MP-06 | Two clients pair with no code exchanged |
 | MP-08 | Reconnect + host-left handling | MP-06 | Guest survives a 10 s host reload; host-left shows a clear message |
 | MP-09 | e2e: two-browser host/join | MP-06 | Playwright spec drives two contexts through a shared room |
+| RANK-01 | Elo ratings, tiers, badges, forfeits, the ladder and the ranked queue | MP-07 | Both seats file the same result; abandoning files a loss; quick match can search Any or a widening Similar window — see `docs/RANK-01-multiplayer-ranking.md` |
 
 ---
 

@@ -27,11 +27,11 @@
 // never moves backwards while nothing is demolished, and a leader whose PACE
 // closes 10★ inside a session. Pacing itself is measured over a long run:
 //
-//   VP_RACE_MINUTES=45 VP_RACE_SEEDS=1337,7,42,99 npx vitest run tests/unit/iso-vp-race.test.ts
+//   VP_RACE_MINUTES=45 VP_RACE_SEEDS=1337,7,42,99 VP_RACE_DIAGNOSTICS=1 npx vitest run tests/unit/iso-vp-race.test.ts
 //
 // whose printed table feeds the playtest report in `docs/`.
 // ══════════════════════════════════════════════════════════════════════════
-import { describe, it, expect } from "vitest";
+import { beforeAll, describe, it, expect } from "vitest";
 import { victoryBreakdown } from "../../src/iso/victory";
 import { plantsOf } from "../../src/iso/plants";
 import { VICTORY, VP_TARGET } from "../../src/iso/config";
@@ -56,16 +56,19 @@ import {
  * the number comes from.
  * A playtest run raises it and reads the printed table:
  *
- *   VP_RACE_MINUTES=45 VP_RACE_SEEDS=1337,7,42 npx vitest run tests/unit/iso-vp-race.test.ts
+ *   VP_RACE_MINUTES=45 VP_RACE_SEEDS=1337,7,42 VP_RACE_DIAGNOSTICS=1 npx vitest run tests/unit/iso-vp-race.test.ts
  */
 const RACE_MINUTES = Number(process.env.VP_RACE_MINUTES ?? 30);
 /** Seeds to race. One is enough for the invariant; a playtest wants the spread. */
 const SEEDS = (process.env.VP_RACE_SEEDS ?? "1337").split(",").map((x) => Number(x));
+const DIAGNOSTICS = process.env.VP_RACE_DIAGNOSTICS === "1";
 
 describe("VP-01 the race to ten", () => {
-  const races = SEEDS.map((seed) => runRace(seed, { minutes: RACE_MINUTES }));
+  let races: ReturnType<typeof runRace>[] = [];
 
-  it("prints the pace for the playtest report", () => {
+  beforeAll(() => {
+    races = SEEDS.map((seed) => runRace(seed, { minutes: RACE_MINUTES }));
+    if (!DIAGNOSTICS) return;
     for (const r of races) {
       console.log(`seed ${r.seed} (${RACE_MINUTES}m window)`, JSON.stringify(r.seats.map((s) => ({
         seat: s.id,
@@ -91,7 +94,6 @@ describe("VP-01 the race to ten", () => {
         : `none inside ${RACE_MINUTES}m — leader ${r.vp.you >= r.vp.ai ? "you" : "ai"} at ${Math.max(r.vp.you, r.vp.ai)}★`);
       console.table(r.trace.map((p) => ({ minute: Math.round(p.t / 60_000), you: p.you, ai: p.ai })));
     }
-    expect(races.length).toBe(SEEDS.length);
   }, 900_000);
 
   it("both seats score off paving, inside the opening", () => {

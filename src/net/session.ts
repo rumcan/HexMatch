@@ -54,11 +54,20 @@ import {
   type DeltaMsg,
   type HexProtocol,
   type IntentMsg,
+  type PlayerRatingMsg,
+  type RankWire,
+  type ResultClaimMsg,
+  type ResultMsg,
   type Slot,
   type SnapshotChunkMsg,
   type WelcomeMsg,
 } from "./protocol";
 import { applyTrackDelta, buildPublish, type PublishFields } from "./delta";
+import {
+  rankBoardFrom,
+  type RankBoard,
+  type RankState,
+} from "./rating";
 import { bytesToBase64, base64ToBytes, type Snapshot } from "../iso/snapshot";
 import type { DirtyTiles, Track } from "../iso/track";
 // Type-only: `transport.ts` loads the RUN SDK singleton, and this module must
@@ -93,6 +102,13 @@ export interface NetInfo {
   selfId: string;
   roster: RosterEntry[];
   roomCode: string;
+  /**
+   * RANK-01 (#147): the room's rating board at greeting time — every member
+   * that had published a rating when this client was welcomed. Kept on the
+   * info rather than in a side channel because the match's rated result is
+   * computed from exactly this board.
+   */
+  ratings: RankWire[];
 }
 
 /** The game's end of the session — all optional, all called synchronously. */
@@ -109,6 +125,19 @@ export interface NetHooks {
   delta?: (msg: DeltaMsg) => void;
   /** Either side: the room refused something final (host left, version skew). */
   reject?: (reason: string) => void;
+  /**
+   * RANK-01: the room's rating board changed (someone published a rating).
+   * Fires on every `ratingUpdate`; the welcome's board arrives through
+   * `info` instead, so a client that only ever reads this hook still sees the
+   * full history rather than only the tail of it.
+   */
+  ratings?: (board: RankBoard, raw: RankWire[]) => void;
+  /**
+   * RANK-01: the room filed a result for this match — the star line was
+   * crossed, or a seat emptied. This arrives for BOTH seats and is the only
+   * thing the rating arithmetic is ever fed.
+   */
+  result?: (msg: ResultMsg) => void;
   /** Connection state changed. */
   status?: (state: ConnectionState) => void;
   /**
@@ -154,6 +183,14 @@ export class NetSession {
   private noticeValue: string | null = null;
   private halted = false;
   private attached = false;
+  /**
+   * RANK-01: the room's rating board, in wire order. Held here (not in the UI)
+   * because it is wire state that must survive the lobby → match handover: the
+   * same session object is handed to `startIsoGame`.
+   */
+  private ratingsValue: RankWire[] = [];
+  /** This session's join nonce — what authorises its rating publications. */
+  private readonly token: string = makeJoinToken();
   /** #121: `dispose()` releases the room exactly once, however often it runs. */
   private disposed = false;
 
@@ -188,6 +225,23 @@ export class NetSession {
   /** The welcome, once it has arrived. Null while the room is still greeting. */
   get info(): NetInfo | null {
     return this.infoValue;
+  }
+  /** RANK-01: the room's rating board, whole. */
+  get ratings(): RankWire[] {
+    return this.ratingsValue;
+  }
+  /** RANK-01: the same board keyed by player id, for the rating arithmetic. */
+  get board(): RankBoard {
+    return rankBoardFrom(this.ratingsValue);
+  }
+  /** RANK-01: this session's join nonce (see `PlayerRatingMsg.joinToken`). */
+  get joinToken(): string {
+    return this.token;
+  }
+  /** RANK-01: the opponent's entry on the board, or null if unpublished. */
+  opponentRating(): RankWire | null {
+    const self = this.room.playerId;
+    return this.ratingsValue.find((entry) => entry.id !== self) ?? null;
   }
   get roster(): RosterEntry[] {
     return this.infoValue?.roster ?? [];
@@ -414,10 +468,72 @@ export class NetSession {
     return this.noticeValue;
   }
 
+  // ── RANK-01: the rating board ───────────────────────────────────────────
+
+  /**
+   * Publish this player's rating to the room. Safe to call more than once per
+   * session (a re-attach, a rating that moved): the room accepts a re-publish
+   * that carries this session's join token, and drops one that does not.
+   *
+   * Called by the start screen as soon as the rank file is loaded, and again
+   * by the game once a match has been filed — the second publish is what lets
+   * the NEXT match in the same room rate correctly.
+   */
+  publishRating(state: RankState): boolean {
+    if (this.halted || this.disposed) return false;
+    const msg: PlayerRatingMsg = {
+      type: "playerRating",
+      id: this.room.playerId,
+      rating: state.rating,
+      matches: state.matches,
+      joinToken: this.token,
+    };
+    this.room.send(msg);
+    // Adopt our own entry locally too: the room's `ratingUpdate` echo will
+    // overwrite this with the same numbers, but the lobby must be able to
+    // print a rating before the round trip completes.
+    this.onRatings([...this.ratingsValue.filter((e) => e.id !== msg.id), msg]);
+    return true;
+  }
+
+  /**
+   * HOST only: file the finished match with the room. The relay validates the
+   * ids and relays the verdict to both seats — see `ResultMsg`.
+   */
+  claimResult(winnerId: string, loserId: string, durationSec: number): boolean {
+    if (!this.isHost || this.halted || this.disposed) return false;
+    const msg: ResultClaimMsg = { type: "resultClaim", winnerId, loserId, reason: "win", durationSec };
+    this.room.send(msg);
+    return true;
+  }
+
+  /** Fold a board update into local state and tell the game. */
+  private onRatings(raw: unknown): void {
+    if (!Array.isArray(raw)) return;
+    this.ratingsValue = (raw as RankWire[])
+      .filter((e) => e && typeof e === "object" && typeof e.id === "string")
+      .map((e) => ({ ...e }));
+    this.hooks.ratings?.(this.board, this.ratingsValue);
+  }
+
   // ── inbound ─────────────────────────────────────────────────────────────
   /** Feed one message. Public so tests can drive a session without a room. */
   receive(raw: unknown): void {
-    if (this.halted || !isHexProtocol(raw)) return;
+    if (!isHexProtocol(raw)) return;
+    // RANK-01: a result is the ONE message that must survive a halt. The
+    // forfeit case is filed by the room AFTER the seat it belongs to emptied —
+    // which is the very event that halts this session (`onPeerLeft`) — so
+    // gating results behind `halted` would drop the rating of every abandoned
+    // match on exactly the seat that needs it.
+    if (raw.type === "result") {
+      // The result carries the board it was computed from, so a seat that
+      // never saw the opponent's `ratingUpdate` still rates the match exactly
+      // as the other seat did.
+      this.onRatings(raw.ratings);
+      if (!this.disposed) this.hooks.result?.(raw);
+      return;
+    }
+    if (this.halted) return;
     switch (raw.type) {
       case "welcome":
         this.onWelcome(raw);
@@ -432,6 +548,9 @@ export class NetSession {
         return;
       case "delta":
         if (this.isGuest) this.onDelta(raw);
+        return;
+      case "ratingUpdate":
+        this.onRatings(raw.ratings);
         return;
       case "resync":
         if (this.isHost) this.publishFullState("guest resync");
@@ -465,7 +584,13 @@ export class NetSession {
       selfId: this.room.playerId,
       roster: msg.roster.map((e) => ({ ...e })),
       roomCode: this.room.roomCode,
+      ratings: msg.ratings ? msg.ratings.map((e) => ({ ...e })) : [],
     };
+    // RANK-01: the greeting's board replaces whatever we held — it is the
+    // room's whole truth, not a delta on top of a stale guess. A welcome with
+    // no board at all (a room where nobody has published yet) leaves the empty
+    // board alone rather than clearing a board learned from an earlier hello.
+    if (msg.ratings) this.onRatings(msg.ratings);
     this.hooks.info?.(this.infoValue);
     if (!this.attached) return;                 // attach() runs the handshake
     if (this.isHost) {
@@ -652,3 +777,19 @@ export type { ConnectionState };
 export { applyTrackDelta };
 export const SESSION_PROTOCOL_VERSION = PROTOCOL_VERSION;
 export type { HexProtocol, IntentMsg, DeltaMsg, Snapshot };
+
+/**
+ * A session nonce for the rating board (RANK-01). Not a secret and not a
+ * signature — it is the room's way of telling "the same client publishing
+ * again" (a reconnect, a re-attach) apart from "somebody else publishing for
+ * this seat". `crypto.randomUUID` when the page has one, which is every RUN
+ * host and every browser this game ships to; the fallback keeps Node/CI runs
+ * (and an older webview) working.
+ */
+function makeJoinToken(): string {
+  try {
+    const c = globalThis.crypto as Crypto | undefined;
+    if (c && typeof c.randomUUID === "function") return c.randomUUID();
+  } catch { /* no web crypto: fall through */ }
+  return `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+}

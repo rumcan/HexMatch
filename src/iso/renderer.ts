@@ -32,7 +32,7 @@ import type { Camera } from "./camera";
 import { visibleTileRange, screenToWorld, worldToScreen } from "./camera";
 import type { Atlas } from "./atlas";
 import { depthSort, isMoving, place, pickSprite, type DrawItem, type Placed } from "./depth";
-import { GRASS, WATER, ROUGH, type Grid } from "./grid";
+import { GRASS, WATER, ROUGH, townGroundBytes, type Grid } from "./grid";
 import {
   FALLBACK, GROUND_TEX_SIZE, createGroundPatterns, makeMatrix, oceanMatrix,
   paintGroundTiles, paintShore, invalidateGroundContours,
@@ -45,7 +45,7 @@ import {
 } from "./scenery";
 import {
   DEFAULT_ROAD_STYLE, RoadCache,
-  type RoadCacheStats, type RoadRenderMode, type RoadStyle,
+  type RoadCacheStats, type RoadRenderMode, type RoadStyle, type RoadWorld,
 } from "./road-renderer";
 import {
   PlacementOverlay, sceneFromItems,
@@ -500,6 +500,13 @@ export class IsoRenderer {
   private roadShadow: { road: Uint8Array; dirt: Uint8Array } | null = null;
   /** The decal PNGs by family; null until the art loads (then decals paint). */
   private decalImages: DecalImages | null = null;
+  /**
+   * The view of the world the road cache is handed: the same road bytes, plus
+   * the map — which is where the town limits AND the paved block ground come
+   * from (`townGroundBytes` caches the latter per grid, so building this per
+   * `setWorld` is a few field copies).
+   */
+  private roadWorld: RoadWorld = {};
 
   /** The last depth-sorted structure order actually drawn (C5 dumps/picking). */
   get drawOrder(): Placed[] { return this.lastOrder; }
@@ -521,6 +528,7 @@ export class IsoRenderer {
     this.atlas = atlas;
     this.cam = cam;
     this.world = world;
+    this.roadWorld = { grid: world.grid, roadBits: world.roadBits, dirtBits: world.dirtBits };
     this.pad = cullPad(atlas);
     const g = (el: HTMLCanvasElement, smooth: boolean) => {
       const ctx = el.getContext("2d") as Ctx2D;
@@ -595,6 +603,11 @@ export class IsoRenderer {
       this.roadCache.clear("world");
       this.roadShadow = null;
     }
+    this.roadWorld = {
+      grid: this.world.grid,
+      roadBits: this.world.roadBits,
+      dirtBits: this.world.dirtBits,
+    };
     this.syncRoadCache();
   }
 
@@ -646,11 +659,16 @@ export class IsoRenderer {
 
   /** Road cache + mode, for `__iso.rendering()`. */
   roadDiagnostics() {
+    let townTiles = 0;
+    const blocks = townGroundBytes(this.world.grid);
+    if (blocks) for (let i = 0; i < blocks.length; i++) if (blocks[i]) townTiles++;
     return {
       mode: this.roadMode,
+      townGroundTiles: townTiles,
       textured: {
         paved: !!this.roadStyle.paved.image,
         dirt: !!this.roadStyle.dirt.image,
+        town: !!this.roadStyle.town.image,
       },
       blitsLastFrame: this.roadBlits,
       cache: this.roadCache.stats(),
@@ -935,7 +953,7 @@ export class IsoRenderer {
       // and above the terrain canvas entirely, which is what keeps their
       // transparent verges showing the real decals and grass underneath.
       this.roadBlits = textured
-        ? this.roadCache.paint(ctx, cam, this.world, this.roadStyle, (w, h) => makeSurface(w, h))
+        ? this.roadCache.paint(ctx, cam, this.roadWorld, this.roadStyle, (w, h) => makeSurface(w, h))
         : 0;
     };
     // Contact shadows go down between the roads and the first sprite: they
@@ -1060,11 +1078,19 @@ export class IsoRenderer {
     const src = this.atlas.zoomFrameRect(p.def, frame, az);
     const dst = az === z ? src : this.atlas.zoomFrameRect(p.def, frame, z);
     const [sx, sy] = worldToScreen(this.cam, p.wx, p.wy);
+    // TRAFFIC-02: ambient cars fade in/out at town access points.
+    const alpha = (p as Placed & { alpha?: number }).alpha;
+    const needsAlpha = typeof alpha === "number" && alpha >= 0 && alpha < 1;
+    if (needsAlpha) {
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+    }
     ctx.drawImage(
       img as unknown as CanvasImageSource,
       src.x, src.y, src.w, src.h,
       Math.floor(sx), Math.floor(sy), dst.w, dst.h,
     );
+    if (needsAlpha) ctx.restore();
     if (this.logRender) this.trace("blit", {
       sprite: p.sprite, tile: [p.tx, p.ty], def: p.def,
       z, sampled: az, context: p.ref != null ? "world" : "overlay",

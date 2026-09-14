@@ -137,6 +137,7 @@ import {
 } from "./cars";
 import { createIsoMarket, toBag, chooseRivalOffer, type CargoBag, type IsoMarket } from "./market";
 import { createOriginalUi, type OriginalUi } from "../game/ui";
+import { HUD_ICONS, cargoIconHtml, costMarkup } from "../game/hud-icons";
 // SFX-01: the UI sound layer. Everything the player DOES on the map (a road
 // laid, a building raised, a demolition, a star earned, the final ledger) gets
 // one cue from here; the chrome's own clicks and hovers are handled once, by
@@ -179,7 +180,7 @@ import {
 } from "./debug";
 import {
   SNAPSHOT_VERSION, applySnapshot, buildSnapshot, joinFromSnapshot,
-  type RivalSabotage, type Snapshot,
+  type RivalSabotage, type Snapshot, type WirePlayer,
 } from "./snapshot";
 export { joinFromSnapshot };
 // MP-05: the wire. `session.ts` owns roles/roster/chunked state transfer and
@@ -189,6 +190,14 @@ export { joinFromSnapshot };
 import { NetSession, type NetRole } from "../net/session";
 import { applyTrackDelta } from "../net/delta";
 import { type DeltaMsg, type IntentMsg } from "../net/protocol";
+// RANK-01 (#147): the rated match. `rank-runtime.ts` holds the rating and talks
+// to the room; the STORE arrives by injection (see `IsoGameOptions.rank`) so
+// this file keeps its promise of booting in a headless test with no SDK, no
+// window and no storage — `rankstore.ts`, which does touch the SDK, is built by
+// the React layer and handed in.
+import { RankRuntime, type RankStore } from "../net/rank-runtime";
+import { fmtRating, fmtRatingDelta, type RankVerdict } from "../net/rating";
+import type { EndingRankLine } from "./ending";
 
 // ── tuning (E8's rebalance surface, all in one place) ─────────────────────
 /**
@@ -333,6 +342,20 @@ export interface IsoGameOptions {
   net?: NetSession | null;
   /** PP-14b: which tycoon portrait the player picked (defaults to "vex"). */
   portrait?: Portrait;
+  /**
+   * RANK-01 (#147): this room's matches are RATED. Set by the start screen for
+   * quick match only — a hosted room or a shared code is a game between
+   * friends, not a ladder match (see `docs/RANK-01-multiplayer-ranking.md`).
+   * Requires `rank` and a live `net`; without either, the flag is inert.
+   */
+  ranked?: boolean;
+  /**
+   * RANK-01: where the rating is kept. Built by the React layer
+   * (`rankStore()` in `src/net/rankstore.ts`) because it is the one ranking
+   * module that touches the SDK. Absent means this match cannot be rated, and
+   * `ranked` is then ignored rather than half-honoured.
+   */
+  rank?: RankStore;
   /**
    * STORY-01: the campaign contract this match plays (`CHAPTERS[].id`). Solo
    * only: a contract names its rival, voice, ★ line and seed, and wraps the
@@ -558,6 +581,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   let winningSource: DecisiveSource = null;
   let endingView: EndingScreenHandle | null = null;
   let endingShown = false;
+  /**
+   * RANK-01 (#147): the rated match's state. Declared here — with the other
+   * end-of-match state, and long before the runtime is built — because
+   * `presentEnding` and the restore path both read it, and a `let` declared
+   * further down would be a temporal dead zone for a boot that restores a
+   * finished match.
+   *
+   *   rankRuntime — null unless this is a rated room match with a store
+   *   rankVerdict — the room's filed result, once it has arrived
+   */
+  let rankRuntime: RankRuntime | null = null;
+  let rankVerdict: RankVerdict | null = null;
+  /** When this match booted, for the ladder's required `duration` field. */
+  const rankBootAt = performance.now();
   /** TUT-01: the boot tour, while it is open. Held so `dispose` can take its
    *  document keydown listener with it — the same reason `endingView` is. */
   let tutorialView: TutorialHandle | null = null;
@@ -824,13 +861,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // smaller cell) so the match table FILLS the window instead of cropping.
     // The chrome asks; the seat answers. A guest never resizes its own grid —
     // the host authors it and the whole rectangle ships on the wire — so a
-    // guest phone only re-zooms what arrives. Solo and host seats own their
-    // board, and the ♻ reset / gravity refill keep whatever size the live
-    // grid carries (the board reads its own dims, not the shipped constants).
+    // guest phone only re-zooms what arrives (the #163 retract asks are
+    // vetoed here too). Solo and host seats own their board, and the ♻ reset
+    // / gravity refill keep whatever size the live grid carries (the board
+    // reads its own dims, not the shipped constants).
     requestBoardSize: (w, h) => {
       if (isGuest()) return false;
       // The rival's plant stays at the shipped 7×8 on purpose: the grow is a
       // readability concession for small screens, not an economy boost.
+      // #163: a smaller (w,h) is only ever a retract of unplayed columns the
+      // chrome itself added this session — restored saves are the floor and
+      // are never asked to shrink — so approving it costs no earned gems.
       void w; void h;
       return true;
     },
@@ -1307,6 +1348,70 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     playRivalryScene(nextBanterScene(), "banter");
   }
 
+  /**
+   * RANK-01: the ROOM's id for a local seat. The local frame renames and
+   * re-orders seats (players[0] is always "me"), while the wire — and every
+   * message the room validates — speaks profile ids. The room refuses a result
+   * that names a non-member, so getting this wrong would silently unrank a
+   * finished match rather than rate the wrong player.
+   */
+  const wireIdOf = (p: PlayerState): string => {
+    if (!net) return p.id;
+    if (p === players[0]) return net.playerId;
+    return net.info?.roster.find((e) => e.id !== net.playerId)?.id ?? p.id;
+  };
+
+  /** RANK-01: the ledger's rating row, from the room's verdict. */
+  const rankLineFor = (verdict: RankVerdict): EndingRankLine => ({
+    key: verdict.state.matches > 0 ? verdict.tierAfter.key : "unranked",
+    tierLabel: verdict.state.matches > 0 ? verdict.tierAfter.label : "Unranked",
+    rating: verdict.change.after,
+    before: verdict.change.before,
+    delta: verdict.change.delta,
+    promoted: verdict.promoted,
+    demoted: verdict.demoted,
+    forfeit: verdict.forfeit,
+    provisional: verdict.state.matches < 10,
+    opponentKnown: verdict.opponentKnown,
+  });
+
+  /**
+   * RANK-01: the room filed this match. Fill the ledger's rating row if the
+   * ledger is already standing (it usually is — the host claims the result as
+   * the star line is crossed, and the room's answer lands a round trip later),
+   * and otherwise say it where the player is looking: a match decided by a
+   * departure has no ledger, but it does have a rating.
+   */
+  const onRankVerdict = (verdict: RankVerdict) => {
+    rankVerdict = verdict;
+    const delta = fmtRatingDelta(verdict.change.delta);
+    const arrow = `${fmtRating(verdict.change.before)} → <b>${fmtRating(verdict.change.after)}</b> `
+      + `<span class="rank-delta ${verdict.change.delta >= 0 ? "up" : "down"}">${delta}</span>`;
+    // The ledger usually beats this message to the screen: the host files the
+    // result the instant the star line is crossed, so the answer lands a round
+    // trip later. Fill the standing ledger's row and say nothing twice.
+    if (endingView) {
+      endingView.setRank(rankLineFor(verdict));
+      return;
+    }
+    // No ledger is coming when the match was decided by a DEPARTURE: nothing
+    // crossed a star line, so this is the only place the rating is ever shown.
+    if (verdict.forfeit) {
+      const filed = verdict.outcome === "win"
+        ? `${escText(rival.name)} left the room, so the match is filed as a win.`
+        : "You left the room, so the match is filed as a loss.";
+      ui.showModal(
+        `<p class="rank-modal-line">${filed}</p>`
+        + `<p class="rank-modal-line">Your rating: ${arrow}</p>`,
+      );
+      return;
+    }
+    // A star-line win whose ledger has not mounted yet: one line, and the
+    // ledger carries the row a frame later.
+    toast(`Rating ${fmtRating(verdict.change.before)} → ${fmtRating(verdict.change.after)} (${delta})`,
+      verdict.change.delta >= 0 ? "good" : "bad");
+  };
+
   /** Show the final ledger once. The same model builds victory and defeat, but
    *  only a human win receives the fireworks layer. */
   const presentEnding = (source: DecisiveSource = winningSource) => {
@@ -1339,6 +1444,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const openLedger = () => {
       endingView = showEndingScreen(ui.el, model, {
         playerPortrait: opts.portrait ?? "vex",
+        // RANK-01: `undefined` when this match is not rated at all (no row),
+        // `null` while a rated match waits on the room's verdict (the row
+        // prints "filing…"), and the line itself once it has landed.
+        rank: rankRuntime ? (rankVerdict ? rankLineFor(rankVerdict) : null) : undefined,
         onRestart: () => {
           restartArmed = true;
           clearSave(saveKey);
@@ -1591,6 +1700,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         phase = "won";
         winner = p;
         winningSource = decisive;
+        // RANK-01: the host is the ONLY seat that may file a result — it runs
+        // the simulation, so it is the only one that can say the line was
+        // crossed. The verdict goes to the room, which relays it back to both
+        // seats, so neither seat rates this match from its own opinion.
+        if (rankRuntime && !isGuest()) {
+          const other = p === players[0] ? players[1] : players[0];
+          rankRuntime.claimWin(wireIdOf(p), wireIdOf(other), (performance.now() - rankBootAt) / 1000);
+        }
         const b = victoryBreakdown(eco, p.id);
         toast(`${p.name} wins — ${fmtVp(vpFor(score, p.id))}★ `
           + `(${b.paved} paved tile${b.paved === 1 ? "" : "s"}, ${b.plants} plant${b.plants === 1 ? "" : "s"})`,
@@ -2936,7 +3053,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     ];
     const protestsWire = [...protests.values()].map((p) => ({ x: p.tx, y: p.ty, until: p.until, owner: p.owner }));
     const trucksWire = trucks.trucks.map((t) => ({ ownerId: t.ownerId, depotId: t.depotId, factory: [...t.factory] as [number, number], route: t.route.map((r) => [...r] as [number, number]), segFast: t.segFast ? [...t.segFast] : [], leg: t.leg, t: t.t, reverse: t.reverse, deliveries: t.deliveries }));
-    const carsWire = cars.cars.map((c) => ({ name: c.name, route: c.route.map((r) => [...r] as [number, number]), leg: c.leg, t: c.t, reverse: c.reverse }));
+    const carsWire = cars.cars.map((c) => ({ name: c.name, carIndex: (c as any).carIndex ?? 1, originTownId: (c as any).originTownId ?? null, destTownId: (c as any).destTownId ?? null, origin: (c as any).origin ? [...(c as any).origin] as [number, number] : null, dest: (c as any).dest ? [...(c as any).dest] as [number, number] : null, route: c.route.map((r) => [...r] as [number, number]), leg: c.leg, t: c.t, state: (c as any).state ?? "driving", waitMs: (c as any).waitMs ?? 0, fadeMs: (c as any).fadeMs ?? 0, fade: (c as any).fade ?? 1, arriveMs: (c as any).arriveMs ?? 0, lastTripKey: (c as any).lastTripKey ?? null }));
     return buildSnapshot({
       seed, track,
       harvesters: eco.harvesters,
@@ -2998,7 +3115,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     boardSyncKeys = keys;
     const protestsWire = [...protests.values()].map((p) => ({ x: p.tx, y: p.ty, until: p.until, owner: p.owner }));
     const trucksWire = trucks.trucks.map((t) => ({ ownerId: t.ownerId, depotId: t.depotId, factory: [...t.factory] as [number, number], route: t.route.map((r) => [...r] as [number, number]), segFast: t.segFast ? [...t.segFast] : [], leg: t.leg, t: t.t, reverse: t.reverse, deliveries: t.deliveries }));
-    const carsWire = cars.cars.map((c) => ({ name: c.name, route: c.route.map((r) => [...r] as [number, number]), leg: c.leg, t: c.t, reverse: c.reverse }));
+    const carsWire = cars.cars.map((c) => ({ name: c.name, carIndex: (c as any).carIndex ?? 1, originTownId: (c as any).originTownId ?? null, destTownId: (c as any).destTownId ?? null, origin: (c as any).origin ? [...(c as any).origin] as [number, number] : null, dest: (c as any).dest ? [...(c as any).dest] as [number, number] : null, route: c.route.map((r) => [...r] as [number, number]), leg: c.leg, t: c.t, state: (c as any).state ?? "driving", waitMs: (c as any).waitMs ?? 0, fadeMs: (c as any).fadeMs ?? 0, fade: (c as any).fade ?? 1, arriveMs: (c as any).arriveMs ?? 0, lastTripKey: (c as any).lastTripKey ?? null }));
     net.publishTrack(track, dirtyTiles, {
       t: now,
       harvesters: eco.harvesters.map((h) => ({ ...h })),
@@ -3066,6 +3183,33 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     Object.assign(p.purse, toBag(res));
   }
 
+  /**
+   * #137: write ONE mirrored wire player record into its local seat — the
+   * purse (through `applyPurseWire`, so #114's identity still holds) AND both
+   * setup allowances.
+   *
+   * The delta path has done this since MP-05; the full-state path applied the
+   * purse alone, so a guest that joined or resynced a PROGRESSED match kept the
+   * allowances it booted with — it went on advertising a free Depot and 12 free
+   * dirt tiles the host had already spent, and priced every drag preview and
+   * the HUD's Depot line from them, until some later delta happened to carry
+   * the truth. On a stalled connection that delta never arrives. Both paths now
+   * read the same helper, which is the only way "a snapshot and a delta restore
+   * identical economy state" stays true instead of being a coincidence.
+   *
+   * `typeof … === "number"`, never truthiness: an EXHAUSTED allowance is 0, and
+   * 0 is a VALUE the guest must take, not a missing field to skip. A field that
+   * is genuinely absent (a producer with nothing to restore) leaves the seat
+   * alone. Affordability and spending stay host-authoritative — this mirrors
+   * the host's numbers, it never re-derives them.
+   */
+  function applyPlayerWire(p: PlayerState, wire: WirePlayer) {
+    applyPurseWire(p, wire.res);
+    const ft = wire.freeTrack, fd = wire.freeDepots;
+    if (typeof ft === "number" && Number.isFinite(ft)) p.freeTrack = ft;
+    if (typeof fd === "number" && Number.isFinite(fd)) p.freeDepots = fd;
+  }
+
   /** GUEST: apply a full state (join or resync). Validated first — a version or
    *  seed mismatch must refuse loudly rather than paint a foreign map. */
   function applyNetSnapshot(raw: Snapshot, _seq: number) {
@@ -3087,7 +3231,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     for (let i = 0; i < players.length; i++) {
       const wire = applied.players[i];
       if (!wire) continue;
-      applyPurseWire(players[i], wire.res);
+      // #137: the purse AND both setup allowances — the same seat record a
+      // delta writes, through the same helper, zero allowance included.
+      applyPlayerWire(players[i], wire);
     }
     if (applied.rivalSabotage) applyRivalSabotage(applied.rivalSabotage);
     // MP-AUDIT: market parity
@@ -3108,7 +3254,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       (trucks as any).trucks = applied.trucks.map((t) => ({ ...t, factory: [...t.factory] as [number, number], route: t.route.map((r) => [...r] as [number, number]), segFast: t.segFast ? [...t.segFast] : [] }));
     }
     if (applied.cars) {
-      (cars as any).cars = applied.cars.map((c) => ({ ...c, route: c.route.map((r) => [...r] as [number, number]) }));
+      (cars as any).cars = applied.cars.map((c: any) => ({ ...c, origin: c.origin ? [...c.origin] as [number, number] : null, dest: c.dest ? [...c.dest] as [number, number] : null, route: c.route.map((r: any) => [...r] as [number, number]) }));
       // Ensure guest renders vehicles
       world.vehicles = (carItems(cars as any) as any).concat(truckItems(trucks as any, atlasRef ?? undefined));
     }
@@ -3176,13 +3322,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       for (let i = 0; i < players.length; i++) {
         const wire = msg.players[i];
         if (!wire) continue;
-        applyPurseWire(players[i], wire.res);
-        // MP-05: the opening allowances ride the delta because the snapshot's
-        // player list (§4) has no room for them, and the previews price from
-        // them — a guest that thought it still had 12 free tiles would preview
-        // a drag the host then charges for.
-        if (typeof wire.freeTrack === "number") players[i].freeTrack = wire.freeTrack;
-        if (typeof wire.freeDepots === "number") players[i].freeDepots = wire.freeDepots;
+        // MP-05: the opening allowances ride the delta because the previews
+        // price from them — a guest that thought it still had 12 free tiles
+        // would preview a drag the host then charges for. #137: they ride the
+        // FULL state through this same helper too, so the two paths cannot
+        // restore different economy state for one seat.
+        applyPlayerWire(players[i], wire);
       }
     }
     // PP-14b: the host's sabotage on this seat's plant, applied as an overlay.
@@ -3206,7 +3351,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       worldDirty = true;
     }
     if ((msg as any).cars) {
-      (cars as any).cars = (msg as any).cars.map((c: any) => ({ ...c, route: c.route.map((r: any) => [...r] as [number, number]) }));
+      (cars as any).cars = (msg as any).cars.map((c: any) => ({ ...c, origin: c.origin ? [...c.origin] as [number, number] : null, dest: c.dest ? [...c.dest] as [number, number] : null, route: c.route.map((r: any) => [...r] as [number, number]) }));
       world.vehicles = (carItems(cars as any) as any).concat(truckItems(trucks as any, atlasRef ?? undefined));
     }
     if ((msg as any).boards) {
@@ -3412,6 +3557,23 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   }
 
   if (net) {
+    // RANK-01 (#147): a rated match. Built BEFORE attach so the very first
+    // greeting/board/result the session delivers already has somewhere to go.
+    // `opts.ranked` comes from the start screen and is true for quick match
+    // only; a store is required, so a caller that forgot one gets an unranked
+    // match rather than a half-rated one.
+    if (opts.ranked && opts.rank) {
+      rankRuntime = new RankRuntime({
+        session: net,
+        store: opts.rank,
+        board: net.board,
+        onVerdict: onRankVerdict,
+      });
+      // Publish the rating the moment the file is loaded: the room's board is
+      // what BOTH seats rate the match from, so the earlier it is complete,
+      // the fewer matches are rated against an unknown opponent.
+      void rankRuntime.start();
+    }
     net.attach({
       info: (info) => {
         // The room's seed is the map. A mismatch means this client grew the
@@ -3440,6 +3602,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         }
         if (info.role === "host") publishNet(performance.now(), true);
       },
+      ratings: (board) => rankRuntime?.applyBoard(board),
+      // RANK-01: the room's verdict on this match. Both seats get it; the
+      // rating arithmetic is fed from here and nowhere else.
+      result: (msg) => { void rankRuntime?.handleResult(msg); },
       fullState: () => netFullState(),
       intent: (msg) => applyGuestIntent(msg),
       snapshot: (snap, seq) => applyNetSnapshot(snap, seq),
@@ -3455,7 +3621,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         const who = username ? `${escText(username)} left` : "Your opponent left";
         const line = `${who} the room — this match is over.`;
         toast(line, "bad");
-        ui.showModal(`<p>${line}</p>`);
+        // RANK-01: in a rated match the departure is also a result, and the
+        // room files it. Which of the two messages arrives first is a race, so
+        // whichever lands second still shows the rating: this one appends the
+        // row when the verdict is already in hand, and `onRankVerdict` fills
+        // the modal in when it is not.
+        const filed = rankVerdict
+          ? `<p class="rank-modal-line">Your rating: ${fmtRating(rankVerdict.change.before)} → `
+            + `<b>${fmtRating(rankVerdict.change.after)}</b> `
+            + `<span class="rank-delta ${rankVerdict.change.delta >= 0 ? "up" : "down"}">`
+            + `${fmtRatingDelta(rankVerdict.change.delta)}</span></p>`
+          : "";
+        ui.showModal(`<p>${line}</p>${filed}`);
       },
       status: (state) => {
         // A reconnect is exactly when a guest must re-pull state; the session
@@ -3722,13 +3899,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // VP-01: the plant is the other half of the scoreboard, so the price tag
       // and the point come up together.
       costInfo = `<span class="mb-txt"><b>Processing plant</b> · ${note}</span>` +
-        `<span class="mb-cost">${plantCostLabel()} · +${fmtVp(VICTORY.plant)}★</span>`;
+        `<span class="mb-cost">${costMarkup(PLANT_COST)} · +${fmtVp(VICTORY.plant)}★</span>`;
     } else if (tool === "harvester" || phase === "setup-harvester") {
       // PP-05: "show the complete cost before placement" — the Depot tool
       // prices itself from the same `priceDepot` the click will charge, so the
       // modebar and the debit can never disagree (W1, applied to buildings).
       const price = priceDepot(me.purse, me.freeDepots);
-      const label = price.free ? "free (setup)" : costLabel(price.cost);
+      const label = price.free ? "free (setup)" : costMarkup(price.cost);
       costInfo = `<span class="mb-txt"><b>Depot</b> · ${label}</span>` +
         (price.affordable
           ? ""
@@ -4587,7 +4764,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   if (topRight) {
     const peek = document.createElement("button");
     peek.type = "button"; peek.id = "iso-rival-peek";
-    peek.className = "icon-btn"; peek.textContent = "🏭";
+    peek.className = "icon-btn"; peek.innerHTML = HUD_ICONS.binoculars;
     peek.title = "Watch the rival's plant — its board plays itself";
     peek.addEventListener("click", () => toggleRivalPlantView());
     // MP-AUDIT (#105): the peek panel is for BOTH seats now — the host reads
@@ -4697,10 +4874,26 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           if (isSolo()) { opts.onQuitToMenu?.(); return; }
           void ask({
             title: "Leave this room?",
-            body: "You return to the main menu and the other seat is told you left.",
+            // RANK-01: a rated match says what leaving costs BEFORE it costs
+            // it. The number itself is not in the copy — the arithmetic needs
+            // the opponent's rating, and a confirm is no place for a
+            // spreadsheet — but "filed as a loss" is the whole of the warning.
+            body: rankRuntime
+              ? "You return to the main menu and the other seat is told you left. This is a ranked match: leaving before the final star files it as a loss."
+              : "You return to the main menu and the other seat is told you left.",
             confirmLabel: "Leave room",
             danger: true,
-          }).then((ok) => { if (ok) opts.onQuitToMenu?.(); });
+          }).then((ok) => {
+            if (!ok) return;
+            // RANK-01: the room will file this seat's loss the moment the seat
+            // empties, and the leaver will never see that message — it is
+            // leaving. So the leaving seat applies its own loss here, from the
+            // same board the survivor's side uses, and the two land on the
+            // same number. `phase === "won"` is excluded: the match is
+            // decided, nothing is forfeited.
+            if (rankRuntime && !endingShown) void rankRuntime.fileOwnForfeit(wireIdOf(rival));
+            opts.onQuitToMenu?.();
+          });
         });
     }
 
@@ -4777,7 +4970,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // AI-03: the rival's purse, per cargo — "where is all that gold coming
       // from?" is answered by watching it move against the board above.
       purseEl.innerHTML = (CARGOES as Cargo[])
-        .map((k) => `<span class="rb-chip">${CARGO[k].icon}&nbsp;${rival.purse[k] ?? 0}</span>`)
+        .map((k) => `<span class="rb-chip">${cargoIconHtml(k)}&nbsp;${rival.purse[k] ?? 0}</span>`)
         .join("");
       for (let r = 0; r < H; r++) for (let c = 0; c < W; c++) {
         const g = rivalBoard.grid[r]?.[c] ?? null;
@@ -5042,6 +5235,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         ...DEFAULT_ROAD_STYLE,
         paved: { ...DEFAULT_ROAD_STYLE.paved, image: asphalt },
         dirt: { ...DEFAULT_ROAD_STYLE.dirt, image: dirt },
+        // #159: a town's blocks borrow the earth texture and are washed to the
+        // town's own grey-brown by the painter, so the yards grain like made
+        // ground beside the asphalt instead of looking like a second road.
+        town: { ...DEFAULT_ROAD_STYLE.town, image: dirt },
       });
     }).catch((err) => {
       console.warn("[roads] material textures failed to load:", err);
@@ -5104,9 +5301,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (!isGuest()) {
         if (trucksDirty) {
           trucks.trucks = planTrucksTrucksMerge(trucks.trucks, planTrucks(eco));
-          // TRAFFIC-01: the road surface is the cars' world too — replan them
-          // on the same edge. A car whose route is unchanged keeps its place.
-          cars.cars = planCars(track, cars.cars, carCount);
+          // TRAFFIC-02: bounded trips — town-derived access nodes, host-only.
+          // Retains unaffected trips on road edits (planCars checks revision).
+          cars.cars = planCars(track, grid, cars.cars, carCount, seed);
           trucksDirty = false;
           // AI-03: the replan no longer resets driving lorries — see
           // planTrucksTrucksMerge just above trucksTick. seenDeliveries is
@@ -5121,7 +5318,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // no cost, no behaviour change).
         tickTrucks(trucks, dt, protests.size > 0 ? new Set(protests.keys()) : undefined);
         // TRAFFIC-01: the ambient cars roll on the same frame, host/solo only.
-        tickCars(cars, dt);
+        tickCars(cars, dt, track, grid, seed);
       } else {
         // Guest: vehicles are host-authoritative — already synced via snapshot/delta,
         // just ensure world.vehicles reflects the synced state (applied in delta handler)
@@ -5179,6 +5376,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     get tool() { return tool; },
     /** LOAD-01: true while the loading screen covers the map. */
     get loading() { return loading.active; },
+    /**
+     * #136: the boot art loads' SETTLE state — the question `loading` above
+     * cannot answer. `loading` reports the OVERLAY, which is false before
+     * `show()` ever mounts it (everything can settle first) and true through
+     * its fade-out, so "the overlay is down" is not "the art finished".
+     * `ready` is that: every task handed to `loading.track()` — "atlas",
+     * "layers", "buildings", "scenery", "vehicles", "roads", "protest" — has
+     * settled. An asset-completeness assertion waits on THIS, because
+     * `loadBuildingLayers` installs each sprite as its own parallel image
+     * loads land: a non-empty `buildingImages` is a start signal, not an end
+     * one. `done`/`total` are the failure message when it never settles (and
+     * `active` stays available for the overlay question).
+     */
+    get artLoad() { return { active: loading.active, ready: loading.ready, ...loading.progress }; },
     /**
      * GFX-01: the video settings. `__iso.graphics()` reads them;
      * `__iso.graphics("medium")` / `__iso.graphics(undefined, true)` (the
@@ -5240,14 +5451,39 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     get factories() { return eco.factories; },
     get freeTrack() { return me.freeTrack; },
     /**
-     * ART-1950S (TICKET-B0): the per-building PNG layers actually installed
-     * from assets/buildings/ — the sprites whose art overrides the shared
+     * ART-1950S (TICKET-B0): every sprite with per-zoom art installed in
+     * `Atlas.buildingImages` — the sprites whose art overrides the shared
      * sheet. e2e asserts against this instead of sniffing network responses
      * (a 200 on the manifest alone does not prove a layer landed), and the
      * B4 dead-art audit reuses it. Empty array = everything is drawing from
      * the shared buildings sheet (the non-gating fallback).
+     *
+     * #136: this list is a deliberate SUPERSET of the buildings manifest —
+     * scenery-art.ts (trees) and vehicle-art.ts (liveried lorries) install
+     * through the same table — so neither its length nor its first non-empty
+     * moment says anything about whether assets/buildings/ finished loading.
+     * Completeness checks read `buildingLayers` below instead.
      */
     get buildings() { return atlasRef ? [...atlasRef.buildingImages.keys()] : []; },
+    /**
+     * #136: what the per-building PNG pass installed, per sprite AND per zoom
+     * tier — the shape an asset-completeness check actually needs. `buildings`
+     * above can answer "is farm in the table" but not "does farm hold its 1×
+     * layer", and counting the table measures three features at once.
+     * `tiers` maps each installed sprite to the sorted zoom levels it holds
+     * (0.5 / 1 / 2), `cap` is the GFX-01 detail cap the boot loaded under —
+     * the highest tier anything could have fetched — and `quality` the preset
+     * that produced it, so a spec can pin the tiers it expects instead of
+     * demanding @2x from a medium-quality boot. `null` before the atlas
+     * exists.
+     */
+    get buildingLayers() {
+      const a = atlasRef;
+      if (!a) return null;
+      const tiers: Record<string, number[]> = {};
+      for (const [name, byZoom] of a.buildingImages) tiers[name] = [...byZoom.keys()].sort((x, y) => x - y);
+      return { cap: a.detailCap, quality: currentGraphics().quality, tiers };
+    },
     /**
      * ART-1950S (TICKET-B4): every sprite name the renderer actually blitted
      * this session (industries, depots, town houses, roads, dirt, trucks,
@@ -5279,13 +5515,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // without this branch a dirty world never receives lorries at all.
       if (trucksDirty) {
         trucks.trucks = planTrucksTrucksMerge(trucks.trucks, planTrucks(eco));
-        cars.cars = planCars(track, cars.cars, carCount);
+        cars.cars = planCars(track, grid, cars.cars, carCount, seed);
         trucksDirty = false;
         quarry.setTruckServed(truckCargos(trucks.trucks, now));
         rivalQuarry.setTruckServed(truckCargos(trucks.trucks, now, "ai"));
       }
       tickTrucks(trucks, dtMs, protests.size > 0 ? new Set(protests.keys()) : undefined);
-      tickCars(cars, dtMs);
+      tickCars(cars, dtMs, track, grid, seed);
       collectDeliveries(now);
     },
     /** TRAFFIC-01 diagnostics: the ambient cars by NAME (car 1 / car 2 /
@@ -5293,9 +5529,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      *  dial can tell them apart while the art is still the lorry. */
     get traffic() {
       return cars.cars.map((c) => ({
-        name: c.name, loop: c.loop, reverse: c.reverse,
+        name: c.name, state: (c as any).state ?? "driving", loop: (c as any).loop ?? false, reverse: (c as any).reverse ?? false,
         leg: c.leg, t: Math.round(c.t * 1000) / 1000,
         routeTiles: c.route.length,
+        originTownId: (c as any).originTownId ?? null,
+        destTownId: (c as any).destTownId ?? null,
+        origin: (c as any).origin ?? null,
+        dest: (c as any).dest ?? null,
+        fade: (c as any).fade ?? 1,
       }));
     },
     /** TRAFFIC-01 perf dial: set the ambient-traffic volume (0 clears the
@@ -5304,7 +5545,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     setTraffic: (count: number) => {
       if (isGuest()) return [];
       carCount = Math.max(0, Math.min(64, Math.trunc(count) || 0));
-      cars.cars = planCars(track, cars.cars, carCount);
+      cars.cars = planCars(track, grid, cars.cars, carCount, seed);
       renderer?.setWorld(world);
       return cars.cars.map((c) => c.name);
     },

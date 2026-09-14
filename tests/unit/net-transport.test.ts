@@ -7,7 +7,7 @@
 // room lifecycle (`createRoom`, `joinRoomByCode`, `quickMatch`, …) needs a
 // signed-in identity and a live room server, so it is covered by local
 // two-client play (MP-03+) and the e2e suite — not by unit tests (§11).
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,15 +16,22 @@ import { AccessDeniedError } from "@series-inc/rundot-game-sdk";
 // export) — the same module `transport.ts` loads.
 import RundotGameAPI from "@series-inc/rundot-game-sdk/api";
 import {
+  MATCHMAKE_WINDOW_MS,
   ROOM_TYPE,
   MATCH_CRITERIA,
+  RANK_CRITERIA_KEY,
   ROOM_CODE_LENGTH,
   NO_ROOM_SERVER_MESSAGE,
+  isMatchmakeWindowExpired,
   normalizeRoomCode,
   isValidRoomCode,
   isAccessDenied,
   isOfflineMockRealtime,
+  quickMatch,
+  LADDER_MODE,
+  type HexRoom,
 } from "../../src/net/transport";
+import { RANK_TIERS, RATING_FLOOR, START_RATING } from "../../src/net/rating";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(here, "../..");
@@ -43,6 +50,59 @@ describe("MP-02 room registration", () => {
     expect(room).toBeDefined();
     // Two-player model: players[0] = you, players[1] = rival (§6).
     expect(room?.config.maxPlayers).toBe(2);
+  });
+
+  it("the ladder config is the shape the platform reads (RANK-01)", () => {
+    // `rundot/leaderboard.config.json` is read by the RUN host, not by this
+    // build — so a typo in it fails silently, at deploy, in production. Check
+    // the fields the SDK's `LeaderboardConfig` REQUIRES, and that the board
+    // this game submits to exists and can hold a rating.
+    const cfg = JSON.parse(
+      readFileSync(join(ROOT, "rundot/leaderboard.config.json"), "utf8"),
+    ) as Record<string, unknown>;
+    for (const key of ["minDurationSec", "maxDurationSec", "minScore", "maxScore", "requiresToken", "enableScoreSealing"]) {
+      expect(typeof cfg[key], key).not.toBe("undefined");
+    }
+    for (const key of ["modes", "periods", "antiCheat", "displaySettings"]) {
+      expect(typeof cfg[key], key).toBe("object");
+    }
+    // No wrapping key: the file holds the config directly (LEADERBOARD.md).
+    expect(cfg.leaderboard).toBeUndefined();
+    // The mode this game submits (`LADDER_MODE`) is a declared mode, and its
+    // bounds admit the rating scale: the floor, the start, and the top band.
+    const modes = cfg.modes as Record<string, { minScore?: number; maxScore?: number }>;
+    expect(Object.keys(modes)).toContain(LADDER_MODE);
+    const min = Math.max(cfg.minScore as number, modes[LADDER_MODE]?.minScore ?? 0);
+    const max = Math.min(cfg.maxScore as number, modes[LADDER_MODE]?.maxScore ?? Infinity);
+    expect(min).toBeLessThanOrEqual(RATING_FLOOR);
+    expect(max).toBeGreaterThanOrEqual(START_RATING);
+    expect(max).toBeGreaterThanOrEqual(RANK_TIERS[RANK_TIERS.length - 1].min);
+    // A forfeit files duration 1 (the wrapper clamps to >= 1), so the minimum
+    // run length must not be longer than that.
+    expect(cfg.minDurationSec as number).toBeLessThanOrEqual(1);
+    expect(cfg.maxDurationSec as number).toBeGreaterThanOrEqual(600);
+    expect((cfg.periods as Record<string, { type: string }>).alltime?.type).toBe("alltime");
+  });
+
+  it("a similar-rank search adds the bucket as one more criteria key, and Any removes it", async () => {
+    // RANK-01 (#147): the pool matches criteria by EQUALITY, so the search
+    // window rides the request as one more key. The room type itself declares
+    // only `mode` — the bucket is a request-time hint, and the last rung of
+    // the widening ladder must be indistinguishable from a plain search.
+    const realtime = RundotGameAPI.realtime as unknown as {
+      matchmakeRoom: (roomType: string, opts?: unknown) => Promise<unknown>;
+    };
+    const spy = vi.spyOn(realtime, "matchmakeRoom").mockResolvedValue({} as never);
+    await quickMatch();
+    expect(spy.mock.calls[0][1]).toMatchObject({ criteria: MATCH_CRITERIA });
+    await quickMatch({ rankBucket: 7 });
+    expect(spy.mock.calls[1][1]).toMatchObject({
+      criteria: { ...MATCH_CRITERIA, [RANK_CRITERIA_KEY]: 7 },
+    });
+    // `null` is Any rank, as are the default and an omitted field.
+    await quickMatch({ rankBucket: null });
+    expect(spy.mock.calls[2][1]).toMatchObject({ criteria: MATCH_CRITERIA });
+    spy.mockRestore();
   });
 
   it("MATCH_CRITERIA matches the room metadata (§8)", () => {
@@ -102,6 +162,47 @@ describe("MP-02 isAccessDenied", () => {
     expect(isAccessDenied(new Error("boom"))).toBe(false);
     expect(isAccessDenied({ name: "Error", code: "TIMEOUT" })).toBe(false);
     expect(isAccessDenied({})).toBe(false);
+  });
+});
+
+describe("MP-02 isMatchmakeWindowExpired", () => {
+  it("recognizes the SDK's window and pool rejections", () => {
+    // The three plain-Error messages SDK 5.27's `_connectMatchmaking` rejects
+    // with when a search ends without a room (verbatim, em dash included).
+    expect(isMatchmakeWindowExpired(new Error("Matchmaking timeout — no opponent found"))).toBe(true);
+    expect(
+      isMatchmakeWindowExpired(new Error("Matchmaking is no longer active (pool expired or cancelled)")),
+    ).toBe(true);
+    expect(isMatchmakeWindowExpired(new Error("Matchmaking cancelled"))).toBe(true);
+  });
+
+  it("rejects everything else — real failures must surface, not retry", () => {
+    expect(isMatchmakeWindowExpired(new Error("No room with that code."))).toBe(false);
+    expect(isMatchmakeWindowExpired(Object.assign(new Error("nope"), { name: "AccessDeniedError" }))).toBe(false);
+    expect(isMatchmakeWindowExpired(new Error("boom"))).toBe(false);
+    expect(isMatchmakeWindowExpired(null)).toBe(false);
+    expect(isMatchmakeWindowExpired(undefined)).toBe(false);
+    expect(isMatchmakeWindowExpired("Matchmaking timeout")).toBe(false); // not an Error
+  });
+});
+
+describe("MP-02 quickMatch window", () => {
+  it("defaults one request's window to MATCHMAKE_WINDOW_MS (30s), criteria intact", async () => {
+    const api = RundotGameAPI as unknown as { realtime?: unknown };
+    const original = api.realtime;
+    const matchmakeRoom = vi.fn(async () => ({}) as HexRoom);
+    try {
+      api.realtime = { matchmakeRoom, delegate: {} };
+      await quickMatch();
+      expect(matchmakeRoom).toHaveBeenCalledWith("hexmatch", {
+        criteria: { ...MATCH_CRITERIA },
+        matchmakeTimeoutMs: MATCHMAKE_WINDOW_MS,
+        pollIntervalMs: undefined,
+      });
+      expect(MATCHMAKE_WINDOW_MS).toBe(30_000);
+    } finally {
+      api.realtime = original;
+    }
   });
 });
 

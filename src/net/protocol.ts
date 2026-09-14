@@ -18,6 +18,13 @@
 //     rules out full snapshots on a timer: 108 KiB vs the 16 KiB frame cap).
 // ══════════════════════════════════════════════════════════════════════════
 import type { Snapshot } from "../iso/snapshot";
+// Type-only, and it must stay that way: `rating.ts` is pure (no SDK, no DOM),
+// but protocol.ts is imported by the SERVER bundle too, and a value import from
+// a module the room does not need would drag it in for nothing.
+// Re-exported so a wire consumer (the room, the session, the lobby) never has
+// to import `rating.ts` for the type of a field on a message.
+import type { RankWire } from "./rating";
+export type { RankWire };
 
 /**
  * Protocol version. Bump WITH `SNAPSHOT_VERSION`: a new snapshot shape is a
@@ -40,8 +47,17 @@ import type { Snapshot } from "../iso/snapshot";
  * and deltas omit UNCHANGED board saves (a v4 guest that counts on boards in
  * every delta would show stale boards between changes), so mixed-version
  * rooms must refuse.
+ * v6 (RANK-01): the room holds a RATING BOARD. Four messages are added —
+ * `playerRating` (each client publishes its number once per join, with the
+ * join token that authorises it), `ratingUpdate` (the room's copy of the
+ * board, for the peer who was never told it), `resultClaim` (the host files a
+ * finished match) and `result` (the room's verdict, which is the only thing a
+ * client is allowed to submit to the ladder). A v5 peer would receive an
+ * unknown message type, drop it, and file its own private arithmetic — the two
+ * seats would then hold different ratings for the same match, which is exactly
+ * the silent divergence the version check exists to stop.
  */
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 
 /**
  * Realtime WS frame cap in bytes. Mirrors the SDK's `MAX_BROADCAST_BYTES`
@@ -62,6 +78,15 @@ export interface WelcomeMsg {
   hostId: string;
   protocolVersion: number;
   roster: { id: string; username: string; slot: Slot }[];
+  /**
+   * RANK-01 (v6): the room's rating board — every member that has published a
+   * rating, as the room holds it. This is the number both seats compute the
+   * rated result from, so it must arrive with the greeting rather than be
+   * traded peer-to-peer. Optional in shape (a room whose members have not
+   * published yet sends an empty list) — missing reads as "nobody has a rating
+   * yet", never as a malformed message.
+   */
+  ratings?: RankWire[];
 }
 
 /** host → server → all guests. Full state; join and resync only. */
@@ -71,15 +96,16 @@ export interface SnapshotMsg {
 }
 
 /**
- * MP-05: the delta's player entry. The snapshot carries the §4 shape (id, vp,
- * purse); a guest ALSO needs the per-seat opening allowances it previews
- * prices from (`freeTrack` / `freeDepots`), and the delta is where MP-05 may
- * add them — additively, so a v1 reader that ignores them still plays.
+ * MP-05: the delta's player entry. The opening allowances a guest previews
+ * prices from (`freeTrack` / `freeDepots`) were declared HERE first, because
+ * the delta was the only wire MP-05 could add to. #137 moved them onto
+ * `WirePlayer` itself — the snapshot's player record has always carried them
+ * (`wirePlayers()` in game.ts), it was only ever read for the purse, so a guest
+ * that joined or resynced a progressed match kept advertising allowances the
+ * host had already spent. One record, two wires: the alias below is what that
+ * looks like in the types.
  */
-export type DeltaPlayer = Snapshot["players"][number] & {
-  freeTrack?: number;
-  freeDepots?: number;
-};
+export type DeltaPlayer = Snapshot["players"][number];
 
 /**
  * host → server → all guests. Steady state.
@@ -175,6 +201,102 @@ export interface ResyncMsg {
   type: "resync";
 }
 
+// ── RANK-01 (v6): the room's rating board and the filed result ────────────
+
+/**
+ * client → server. A player's rating, published once per join.
+ *
+ * The one rule the relay enforces here: `id` must be the SENDER's own id.
+ * Nothing else about a rating can be checked by a thin relay — the number is
+ * the player's own, and a player is allowed to be wrong about themselves (the
+ * board is only ever used to compute expectations, never to award anything).
+ * What must not be possible is a client writing SOMEBODY ELSE's rating, which
+ * is why the id check exists at all.
+ *
+ * `joinToken` is minted by the client when it joins and is what authorises a
+ * later re-publish for the same seat (a re-attach, a reconnect). The room
+ * keeps the first token it saw for a player and refuses any later rating that
+ * arrives without it, so a third party cannot overwrite a rating mid-room. It
+ * is a session nonce, not a secret: it never leaves the room's own members.
+ */
+export interface PlayerRatingMsg {
+  type: "playerRating";
+  id: string;
+  rating: number;
+  matches: number;
+  joinToken: string;
+}
+
+/**
+ * server → everyone. The room's rating board, whole (two entries — cheaper to
+ * send whole than to sequence).
+ *
+ * Needed because a rating published after a client's own welcome would
+ * otherwise be visible only to whoever joined later: the host publishes on
+ * boot, the guest may already be in the lobby, and the guest must still learn
+ * the host's number before the match is filed.
+ */
+export interface RatingUpdateMsg {
+  type: "ratingUpdate";
+  ratings: RankWire[];
+}
+
+/**
+ * host → server. "This match is over, and this is the verdict."
+ *
+ * Only the host may file a finished match (the relay drops it otherwise) —
+ * the host is the seat that runs the simulation and therefore the only one
+ * that can say the star line was crossed. A guest claiming a win is either
+ * confused or lying; both are ignored.
+ *
+ * The verdict is NOT a rating and carries no numbers: the room stamps the
+ * result with its own clock and its own copy of the board, and both seats
+ * compute the rating change from THAT. A forged claim can therefore only ever
+ * ask for the wrong verdict, never a wrong number.
+ */
+export interface ResultClaimMsg {
+  type: "resultClaim";
+  winnerId: string;
+  loserId: string;
+  reason: "win" | "forfeit";
+  /** Match length in seconds, as the host measured it; 0 when unknown. */
+  durationSec: number;
+}
+
+/**
+ * server → everyone. The room's filed result — the end of a rated match, from
+ * the only party that saw both seats.
+ *
+ * Two producers, one shape:
+ *
+ *   1. the host's `resultClaim` is relayed after validation, so both seats act
+ *      on the same verdict rather than each trusting itself;
+ *   2. the ROOM ITSELF files the result when a player leaves mid-match (see
+ *      `HexmatchRoom.onPlayerLeave`) — the leaver loses. This is the case that
+ *      has to be the room's own: the player who walked away is not going to
+ *      send anything, and letting the stayer file it alone would leave the two
+ *      seats with different ratings for one match.
+ *
+ * `ratings` is the board as it stood when the result was filed, so a result is
+ * self-contained — a seat that never saw the other's `ratingUpdate` (or saw it
+ * late) still computes the same numbers as everyone else.
+ */
+export interface ResultMsg {
+  type: "result";
+  winnerId: string;
+  loserId: string;
+  reason: "win" | "forfeit";
+  durationSec?: number;
+  ratings: RankWire[];
+  /**
+   * The seat that emptied, when the result was a forfeit. Lets the survivor's
+   * UI name who left even if the roster event and this message race.
+   */
+  departedId?: string;
+  /** Room clock (ms) when the room filed it. Forms the once-only match key. */
+  at: number;
+}
+
 /** server → one client, on refused join or host loss */
 export interface RejectMsg {
   type: "reject";
@@ -188,6 +310,10 @@ export type HexProtocol =
   | DeltaMsg
   | IntentMsg
   | ResyncMsg
+  | PlayerRatingMsg
+  | RatingUpdateMsg
+  | ResultClaimMsg
+  | ResultMsg
   | RejectMsg;
 
 /** Every `type` tag in the union — the discriminator RUN switches on. */
@@ -198,6 +324,10 @@ export const HEX_MESSAGE_TYPES = [
   "delta",
   "intent",
   "resync",
+  "playerRating",
+  "ratingUpdate",
+  "resultClaim",
+  "result",
   "reject",
 ] as const;
 
@@ -261,7 +391,58 @@ export function validateWelcome(msg: unknown): ProtocolError | null {
       return new ProtocolError("malformed", "Welcome roster entry is malformed.");
     }
   }
+  // RANK-01 (v6): the rating board. Optional — a room where nobody has
+  // published yet sends an empty list, and the field itself may be absent — but
+  // a board that is PRESENT and unreadable is refused rather than half-read:
+  // one seat computing from a rating the other never sent is precisely the
+  // divergence this protocol's version check exists to prevent.
+  if (o.ratings !== undefined) {
+    if (!Array.isArray(o.ratings)) {
+      return new ProtocolError("malformed", "Welcome ratings are not a list.");
+    }
+    for (const entry of o.ratings) {
+      if (!readRankWire(entry)) {
+        return new ProtocolError("malformed", "Welcome rating entry is malformed.");
+      }
+    }
+  }
   return null;
+}
+
+/**
+ * Shape check for one rating as it travels (RANK-01). Kept here rather than in
+ * `rating.ts` because BOTH sides call it while parsing a message — the room
+ * while validating a `playerRating`, the client while reading a welcome or a
+ * `ratingUpdate` — and `rating.ts` must stay free of wire concerns.
+ *
+ * Deliberately strict about `rating` being a finite number: this is the one
+ * field a peer can get wrong in a way that poisons somebody else's arithmetic
+ * (a NaN expectation makes every later match worth nothing).
+ */
+export function readRankWire(raw: unknown): RankWire | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Partial<RankWire>;
+  if (typeof o.id !== "string" || o.id.length === 0) return null;
+  if (typeof o.rating !== "number" || !Number.isFinite(o.rating)) return null;
+  if (typeof o.matches !== "number" || !Number.isFinite(o.matches) || o.matches < 0) return null;
+  const out: RankWire = {
+    id: o.id,
+    rating: Math.max(0, Math.round(o.rating)),
+    matches: Math.floor(o.matches),
+  };
+  if (typeof o.joinToken === "string" && o.joinToken.length > 0) out.joinToken = o.joinToken;
+  return out;
+}
+
+/** Read a whole board, dropping malformed entries instead of the message. */
+export function readRankBoard(raw: unknown): RankWire[] {
+  if (!Array.isArray(raw)) return [];
+  const out: RankWire[] = [];
+  for (const entry of raw) {
+    const wire = readRankWire(entry);
+    if (wire) out.push(wire);
+  }
+  return out;
 }
 
 /**
@@ -279,6 +460,10 @@ export function isHexProtocol(msg: unknown): msg is HexProtocol {
     t === "delta" ||
     t === "intent" ||
     t === "resync" ||
+    t === "playerRating" ||
+    t === "ratingUpdate" ||
+    t === "resultClaim" ||
+    t === "result" ||
     t === "reject"
   );
 }

@@ -13,6 +13,10 @@
 import portraitTorvin from "../assets/ui/tycoon_torvin.png";
 import portraitVex from "../assets/ui/tycoon_vex.png";
 import portraitYou from "../assets/ui/tycoon_you.png";
+// RANK-01 (#147): the rating row. The badge art is derived from the painted
+// medallion master (`tools/make-rank-badges.mjs`) and bundled by Vite, so a
+// ledger never depends on a network fetch to show a player their tier.
+import { UNRANKED_KEY, badgeUrlFor } from "../ui/rank-badge";
 
 export type EndingPath = "paving" | "plants" | "balanced";
 export type DecisiveSource = "upgrade" | "plant" | null;
@@ -248,6 +252,30 @@ export function buildEnding(input: EndingInput): EndingModel {
   };
 }
 
+/**
+ * RANK-01: the rated-match row on the ledger — the badge, the number, and what
+ * the match did to it. Built by `src/iso/game.ts` from the room's verdict; this
+ * module only prints it.
+ */
+export interface EndingRankLine {
+  /** Badge key (`src/assets/ui/rank/<key>.png`). */
+  key: string;
+  tierLabel: string;
+  /** Rating after the match. */
+  rating: number;
+  before: number;
+  /** Signed rating change. */
+  delta: number;
+  promoted: boolean;
+  demoted: boolean;
+  /** True when the match was decided by a departure rather than the star line. */
+  forfeit: boolean;
+  /** Still inside the placement matches. */
+  provisional: boolean;
+  /** False when the opponent's rating was unknown to the room. */
+  opponentKnown: boolean;
+}
+
 export interface EndingScreenOptions {
   onRestart: () => void;
   onReview?: () => void;
@@ -257,6 +285,21 @@ export interface EndingScreenOptions {
   /** The portrait selected on the start screen, reused whenever the player
    * answers Torvin's final wire. */
   playerPortrait?: "vex" | "you";
+  /**
+   * RANK-01: the rating row. Three states, and the difference matters:
+   *
+   *   undefined — this match is not rated: no row is drawn at all (every solo,
+   *               story and casual room match);
+   *   null      — rated, and the room has not filed the result yet: the row
+   *               stands with a "filing" note, because a rated match that shows
+   *               nothing reads like a rating system that did not work;
+   *   a line    — the room's verdict, printed.
+   *
+   * The row opens in whichever state the ledger was built with and is filled in
+   * later through `EndingScreenHandle.setRank` — the verdict normally arrives a
+   * round trip after the ledger mounts.
+   */
+  rank?: EndingRankLine | null;
 }
 
 export interface EndingScreenHandle {
@@ -265,6 +308,11 @@ export interface EndingScreenHandle {
   open: () => void;
   close: () => void;
   destroy: () => void;
+  /**
+   * RANK-01: fill (or replace) the rating row once the room has filed the
+   * result. A no-op when the ledger was opened for an unrated match.
+   */
+  setRank: (line: EndingRankLine | null) => void;
 }
 
 const el = <K extends keyof HTMLElementTagNameMap>(
@@ -344,6 +392,61 @@ function appendAsh(host: HTMLElement): void {
 }
 
 /**
+ * RANK-01: the ledger's rating row. `line === null` is the pending state — the
+ * room has not filed yet — and prints deliberately as work in progress rather
+ * than as a zero, because a 0 rating is a number a player would believe.
+ */
+function appendRankRow(
+  card: HTMLElement,
+  line: EndingRankLine | null,
+): { element: HTMLElement; fill: (line: EndingRankLine | null) => void } {
+  const section = el("section", "ending-rank");
+  section.setAttribute("aria-label", "Ranked rating");
+  const fill = (value: EndingRankLine | null) => {
+    section.replaceChildren();
+    const badge = el("img", "ending-rank-badge");
+    badge.alt = "";
+    badge.setAttribute("aria-hidden", "true");
+    badge.decoding = "async";
+    const body = el("div", "ending-rank-body");
+    if (!value) {
+      // Rated, but the room has not answered yet. Prints as work in progress:
+      // a zero here would be a number a player would believe.
+      section.dataset.state = "pending";
+      badge.src = badgeUrlFor(UNRANKED_KEY);
+      body.appendChild(el("b", undefined, "Filed with the room…"));
+      body.appendChild(el("small", undefined, "The rating lands as soon as both seats agree."));
+      section.append(badge, body);
+      return;
+    }
+    section.dataset.state = value.delta >= 0 ? "up" : "down";
+    if (value.promoted) section.dataset.promoted = "1";
+    if (value.demoted) section.dataset.demoted = "1";
+    badge.src = badgeUrlFor(value.key);
+    const headline = el("b", "ending-rank-headline");
+    headline.append(
+      el("span", "ending-rank-tier", value.tierLabel),
+      el("span", "ending-rank-rating", fmt(value.rating)),
+      el("span", `ending-rank-delta ${value.delta >= 0 ? "up" : "down"}`,
+        `${value.delta >= 0 ? "+" : "−"}${Math.abs(Math.round(value.delta))}`),
+    );
+    body.appendChild(headline);
+    const notes: string[] = [];
+    if (value.promoted) notes.push(`Promoted to ${value.tierLabel}.`);
+    else if (value.demoted) notes.push(`Relegated to ${value.tierLabel}.`);
+    if (value.provisional) notes.push("Placement match.");
+    if (!value.opponentKnown) notes.push("The rival's rating was unknown — a provisional number.");
+    if (value.forfeit) notes.push("Filed by forfeit.");
+    body.appendChild(el("small", "ending-rank-note",
+      notes.length ? notes.join(" ") : `Rating ${fmt(value.before)} → ${fmt(value.rating)}.`));
+    section.append(badge, body);
+  };
+  fill(line);
+  card.appendChild(section);
+  return { element: section, fill };
+}
+
+/**
  * Project an ending model as a full-screen movie intertitle. Celebration is
  * present only for a win; defeat gets falling ash. The explicit Review button
  * leaves a small "Final ledger" ticket behind so the ending is never lost.
@@ -411,6 +514,10 @@ export function showEndingScreen(
   ));
   ledger.appendChild(totals);
   card.appendChild(ledger);
+
+  // RANK-01: the rating row stands between the ledger and the epilogue — the
+  // score, then what the scoreboard did to the ladder, then what happened next.
+  const rankRow = options.rank === undefined ? null : appendRankRow(card, options.rank);
 
   const after = el("section", "ending-after");
   after.appendChild(el("h2", "ending-section-title", "The years that followed"));
@@ -509,6 +616,11 @@ export function showEndingScreen(
     reopenButton: reopen,
     open,
     close,
+    setRank: (line: EndingRankLine | null) => {
+      // A no-op for an unrated ledger: the row was never drawn, so there is
+      // nothing to fill.
+      rankRow?.fill(line);
+    },
     destroy: () => {
       document.removeEventListener("keydown", onKey);
       screen.remove();
