@@ -66,7 +66,11 @@ import type { Harvester, Factory } from "./economy";
 // fields for full guest parity (market parity, vehicle presentation,
 // cross-choice, host departure). All new fields are optional for solo saves
 // but required for protocol v4 multiplayer rooms.
-export const SNAPSHOT_VERSION = 12;
+// v13 (RAIL-04 / #178): the snapshot gains `rail` — the owner-scoped railway
+// layer, its platforms and depots, its lines and its trains. A v12 guest would
+// draw a rival's railway as empty ground and never show a train, so
+// mixed-version rooms must refuse.
+export const SNAPSHOT_VERSION = 13;
 
 export const EXPECTED_TRACK_BYTES = MAP_W * MAP_H;
 
@@ -193,6 +197,81 @@ export interface BoardWire {
   owner: string;
   data: unknown;
 }
+
+// ── RAIL-04 (#178): the railway on the wire ───────────────────────────────
+/**
+ * One platform or depot, as the wire carries it. `view` and `kind` travel as
+ * plain strings rather than string-literal unions: this module is the tolerant
+ * reader, and `rail.ts` re-narrows them on apply. Unknown headings or kinds are
+ * never a thrown parse.
+ */
+export interface RailAnchorWire {
+  kind: "industry" | "plant";
+  id: number;
+  tiles: [number, number][];
+}
+export interface RailStructureWire {
+  id: number;
+  kind: "platform" | "depot";
+  ownerId: number;
+  owner: string;
+  tx: number;
+  ty: number;
+  w: number;
+  h: number;
+  view: string;
+  anchor?: RailAnchorWire | null;
+}
+export interface RailLineWire {
+  id: number;
+  ownerId: number;
+  name: string;
+  source: number;
+  dest: number;
+}
+export interface TrainWire {
+  id: number;
+  ownerId: number;
+  lineId: number;
+  depotId: number;
+  status: string;
+  target: "source" | "dest" | "depot";
+  /** Tiles of the leg being driven, from where it was to where it is going. */
+  route: [number, number][];
+  dist: number;
+  planRevision: number;
+  dwellMs: number;
+  dirBit: number;
+  resold: boolean;
+  blockedWhy?: string;
+}
+/**
+ * The whole railway. Structures, lines and trains are a handful of records and
+ * ride on EVERY publish (a guest's panel and its trains need them); the two
+ * base64 layers are ~2 KB each, so a delta whose rail revision has not moved
+ * omits them and the guest keeps its own bytes. A world with no railway sends
+ * no `rail` field at all — a rail-free match pays nothing for this.
+ */
+export interface RailTileWire {
+  /** Tile index (`tIdx`). */
+  i: number;
+  tile: number;
+  owner: number;
+}
+export interface RailWire {
+  /** base64 Uint8Array(MAP_W*MAP_W) — direction masks plus the PRESENT bit.
+   *  Sent on a join/resync; a steady-state delta sends `tiles` instead. */
+  tile?: string;
+  /** base64 Uint8Array(MAP_W*MAP_W) — per-tile owner (player index + 1). */
+  owner?: string;
+  /** The sparse half: only the tiles that moved since the last publish. */
+  tiles?: RailTileWire[];
+  revision: number;
+  seq: number;
+  structures: RailStructureWire[];
+  lines: RailLineWire[];
+  trains: TrainWire[];
+}
 export interface CrossPromptWire {
   boardOwner: string;
   kind: "holy" | "broken";
@@ -231,12 +310,12 @@ export interface Snapshot {
   /** MP-AUDIT: vehicle presentation */
   trucks?: TruckWire[];
   cars?: CarWire[];
+  /** RAIL-04 (#178): the railway — layer, platforms, depots, lines, trains. */
+  rail?: RailWire;
   /** MP-AUDIT: authoritative boards (compact gem tuples) */
   boards?: BoardWire[];
   /** MP-AUDIT: cross-bonus choice prompt */
   crossPrompt?: CrossPromptWire | null;
-  /** Railways v1 — railway snapshot (optional, additive) */
-  railway?: { rail: string; railOwner: string; platforms: any[]; depots: any[]; lines: any[]; trains: any[]; rev: number };
   /** MP-AUDIT: winner identity */
   winner?: WinnerWire | null;
 }
@@ -255,10 +334,10 @@ export interface SnapshotSource {
   protests?: ProtestWire[];
   trucks?: TruckWire[];
   cars?: CarWire[];
+  rail?: RailWire;
   boards?: BoardWire[];
   crossPrompt?: CrossPromptWire | null;
   winner?: WinnerWire | null;
-  railway?: { rail: Uint8Array; railOwner: Uint8Array; platforms: any[]; depots: any[]; lines: any[]; trains: any[]; rev: number };
 }
 
 export function buildSnapshot(src: SnapshotSource): Snapshot {
@@ -286,11 +365,35 @@ export function buildSnapshot(src: SnapshotSource): Snapshot {
     protests: src.protests ? src.protests.map((p) => ({ ...p })) : undefined,
     trucks: src.trucks ? src.trucks.map((t) => ({ ...t, factory: [...t.factory] as [number, number], route: t.route.map((r) => [...r] as [number, number]), segFast: [...t.segFast] })) : undefined,
     cars: src.cars ? src.cars.map((c) => ({ ...c, route: c.route.map((r) => [...r] as [number, number]), segFast: c.segFast ? [...c.segFast] : undefined })) : undefined,
+    rail: copyRailWire(src.rail),
     boards: src.boards ? src.boards.map((b) => ({ owner: b.owner, data: b.data })) : undefined,
     crossPrompt: src.crossPrompt ?? null,
     winner: src.winner ?? null,
-    railway: (src as any).railway ? { rail: bytesToBase64((src as any).railway.rail), railOwner: bytesToBase64((src as any).railway.railOwner), platforms: (src as any).railway.platforms, depots: (src as any).railway.depots, lines: (src as any).railway.lines, trains: (src as any).railway.trains, rev: (src as any).railway.rev } : undefined,
   };
+}
+
+/**
+ * Deep copy for the wire: `route` and anchor `tiles` are arrays of tuples, so a
+ * shared reference would let the host and the guest mutate one another's state.
+ */
+function copyRailWire(w: RailWire | undefined | null): RailWire | undefined {
+  if (!w) return undefined;
+  const out: RailWire = {
+    revision: w.revision,
+    seq: w.seq,
+    structures: (w.structures ?? []).map((s) => ({
+      ...s,
+      anchor: s.anchor
+        ? { kind: s.anchor.kind, id: s.anchor.id, tiles: s.anchor.tiles.map((t) => [...t] as [number, number]) }
+        : s.anchor ?? null,
+    })),
+    lines: (w.lines ?? []).map((l) => ({ ...l })),
+    trains: (w.trains ?? []).map((t) => ({ ...t, route: (t.route ?? []).map((r) => [...r] as [number, number]) })),
+  };
+  if (w.tile !== undefined) out.tile = w.tile;
+  if (w.owner !== undefined) out.owner = w.owner;
+  if (w.tiles !== undefined) out.tiles = w.tiles.map((t) => ({ ...t }));
+  return out;
 }
 
 // ── validation ────────────────────────────────────────────────────────────
@@ -366,6 +469,25 @@ export function validateSnapshot(s: unknown, localSeed?: number): SnapshotError 
   if (o.cars !== undefined && o.cars !== null && !Array.isArray(o.cars)) {
     return new SnapshotError("malformed", "Snapshot cars is malformed.");
   }
+  // RAIL-04: the railway is optional (a world with no track sends none), but a
+  // present one must be readable: lists where lists belong, numbers where
+  // numbers belong, and layer bytes of the map's size when they travel.
+  if (o.rail !== undefined && o.rail !== null) {
+    const r = o.rail as Partial<RailWire>;
+    if (typeof r !== "object" || typeof r.revision !== "number" || typeof r.seq !== "number"
+      || !Array.isArray(r.structures) || !Array.isArray(r.lines) || !Array.isArray(r.trains)
+      || (r.tiles !== undefined && !Array.isArray(r.tiles))) {
+      return new SnapshotError("malformed", "Snapshot rail is malformed.");
+    }
+    for (const [name, b64] of [["rail.tile", r.tile], ["rail.owner", r.owner]] as const) {
+      if (b64 !== undefined && base64ToBytes(b64).length !== EXPECTED_TRACK_BYTES) {
+        return new SnapshotError(
+          "malformed",
+          `Snapshot ${name} layer is the wrong size (expected ${EXPECTED_TRACK_BYTES} bytes).`,
+        );
+      }
+    }
+  }
   if (o.boards !== undefined && o.boards !== null && !Array.isArray(o.boards)) {
     return new SnapshotError("malformed", "Snapshot boards is malformed.");
   }
@@ -413,10 +535,10 @@ export interface AppliedSnapshot {
   protests?: ProtestWire[];
   trucks?: TruckWire[];
   cars?: CarWire[];
+  rail?: RailWire;
   boards?: BoardWire[];
   crossPrompt?: CrossPromptWire | null;
   winner?: WinnerWire | null;
-  railway?: { rail: Uint8Array; railOwner: Uint8Array; platforms: any[]; depots: any[]; lines: any[]; trains: any[]; rev: number };
 }
 
 /**
@@ -455,10 +577,10 @@ export function applySnapshot(s: unknown, localSeed?: number): AppliedSnapshot {
     protests: (o as Snapshot).protests ? (o as Snapshot).protests!.map((x) => ({ ...x })) : undefined,
     trucks: (o as Snapshot).trucks ? (o as Snapshot).trucks!.map((x) => ({ ...x, factory: [...x.factory] as [number, number], route: x.route.map((r) => [...r] as [number, number]), segFast: [...x.segFast] })) : undefined,
     cars: (o as Snapshot).cars ? (o as Snapshot).cars!.map((x) => ({ ...x, route: x.route.map((r) => [...r] as [number, number]), segFast: x.segFast ? [...x.segFast] : undefined })) : undefined,
+    rail: copyRailWire((o as Snapshot).rail),
     boards: (o as Snapshot).boards ? (o as Snapshot).boards!.map((x) => ({ ...x })) : undefined,
     crossPrompt: (o as Snapshot).crossPrompt ?? null,
     winner: (o as Snapshot).winner ?? null,
-    railway: (o as any).railway ? { rail: base64ToBytes((o as any).railway.rail), railOwner: base64ToBytes((o as any).railway.railOwner), platforms: (o as any).railway.platforms, depots: (o as any).railway.depots, lines: (o as any).railway.lines, trains: (o as any).railway.trains, rev: (o as any).railway.rev } : undefined,
   };
 }
 

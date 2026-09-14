@@ -165,6 +165,12 @@ export interface DeltaMsg {
   /** MP-AUDIT: vehicle presentation (trucks + ambient cars) */
   trucks?: Snapshot["trucks"];
   cars?: Snapshot["cars"];
+  /**
+   * RAIL-04 (#178): the railway — its layer (omitted when this delta did not
+   * move the rail revision), platforms and depots, lines and trains. Absent
+   * means "unchanged" on a delta, and "no railway at all" on a full snapshot.
+   */
+  rail?: Snapshot["rail"];
   /** MP-AUDIT: authoritative boards for both seats (compact gem tuples) */
   boards?: Snapshot["boards"];
   /** MP-AUDIT: cross-bonus choice prompt */

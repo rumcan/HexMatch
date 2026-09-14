@@ -1,31 +1,553 @@
 {
-  "locomotive": [
-    "ne",
-    "se",
-    "sw",
-    "nw"
+  "tileW": 64,
+  "tileH": 32,
+  "zooms": [
+    0.5,
+    1,
+    2
   ],
-  "wagon": [
-    "ne",
-    "se",
-    "sw",
-    "nw"
-  ],
-  "platform": [
-    "ne",
-    "se",
-    "sw",
-    "nw"
-  ],
-  "train-depot": [
-    "ne",
-    "se",
-    "sw",
-    "nw"
-  ],
-  "scales": [
-    "0.5x",
-    "1x",
-    "2x"
-  ]
+  "generatedBy": "tools/make-railway-art.mjs",
+  "license": "Repository LICENSE (original art, procedurally generated — no third-party assets)",
+  "meta": {
+    "note": "Per-sprite PNG layers for the railway (epic #142). The defs are complete geometry (rect 0,0,w,h at 1x, origin anchor, footprint, moving) so src/iso/rail-art.ts can install them straight into the atlas table the renderer reads. A missing file leaves the vector fallback.",
+    "palette": {
+      "charcoal": "#2f3033",
+      "oxide": "#8f3f2b",
+      "brick": "#7d4536",
+      "slate": "#3a3f45",
+      "steel": "#9aa0a6",
+      "brass": "#c8a13a",
+      "cream": "#e9e3d2"
+    }
+  },
+  "sprites": {
+    "locomotive_ne": {
+      "name": "locomotive_ne",
+      "kind": "locomotive",
+      "view": "ne",
+      "w": 58,
+      "h": 62,
+      "anchor": [
+        27,
+        45
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        116,
+        124
+      ],
+      "alpha": {
+        "coverage": 0.7052,
+        "corners": [
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "note": "locomotive ne; original procedural art (tools/make-railway-art.mjs).",
+      "lenTiles": 1.16,
+      "widthTiles": 0.42,
+      "coupler": {
+        "front": 0.63,
+        "rear": -0.63
+      }
+    },
+    "locomotive_se": {
+      "name": "locomotive_se",
+      "kind": "locomotive",
+      "view": "se",
+      "w": 58,
+      "h": 70,
+      "anchor": [
+        27,
+        52
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        116,
+        140
+      ],
+      "alpha": {
+        "coverage": 0.6153,
+        "corners": [
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "note": "locomotive se; original procedural art (tools/make-railway-art.mjs).",
+      "lenTiles": 1.16,
+      "widthTiles": 0.42,
+      "coupler": {
+        "front": 0.63,
+        "rear": -0.63
+      }
+    },
+    "locomotive_sw": {
+      "name": "locomotive_sw",
+      "kind": "locomotive",
+      "view": "sw",
+      "w": 58,
+      "h": 70,
+      "anchor": [
+        30,
+        52
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        116,
+        140
+      ],
+      "alpha": {
+        "coverage": 0.6153,
+        "corners": [
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "note": "locomotive sw; original procedural art (tools/make-railway-art.mjs).",
+      "lenTiles": 1.16,
+      "widthTiles": 0.42,
+      "coupler": {
+        "front": 0.63,
+        "rear": -0.63
+      }
+    },
+    "locomotive_nw": {
+      "name": "locomotive_nw",
+      "kind": "locomotive",
+      "view": "nw",
+      "w": 58,
+      "h": 62,
+      "anchor": [
+        30,
+        45
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        116,
+        124
+      ],
+      "alpha": {
+        "coverage": 0.7052,
+        "corners": [
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "note": "locomotive nw; original procedural art (tools/make-railway-art.mjs).",
+      "lenTiles": 1.16,
+      "widthTiles": 0.42,
+      "coupler": {
+        "front": 0.63,
+        "rear": -0.63
+      }
+    },
+    "wagon_ne": {
+      "name": "wagon_ne",
+      "kind": "wagon",
+      "view": "ne",
+      "w": 46,
+      "h": 56,
+      "anchor": [
+        23,
+        40
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        92,
+        112
+      ],
+      "alpha": {
+        "coverage": 0.7372,
+        "corners": [
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "note": "wagon ne; original procedural art (tools/make-railway-art.mjs).",
+      "lenTiles": 0.98,
+      "widthTiles": 0.42,
+      "coupler": {
+        "front": 0.54,
+        "rear": -0.54
+      }
+    },
+    "wagon_se": {
+      "name": "wagon_se",
+      "kind": "wagon",
+      "view": "se",
+      "w": 46,
+      "h": 56,
+      "anchor": [
+        23,
+        41
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        92,
+        112
+      ],
+      "alpha": {
+        "coverage": 0.738,
+        "corners": [
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "note": "wagon se; original procedural art (tools/make-railway-art.mjs).",
+      "lenTiles": 0.98,
+      "widthTiles": 0.42,
+      "coupler": {
+        "front": 0.54,
+        "rear": -0.54
+      }
+    },
+    "wagon_sw": {
+      "name": "wagon_sw",
+      "kind": "wagon",
+      "view": "sw",
+      "w": 46,
+      "h": 56,
+      "anchor": [
+        23,
+        41
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        92,
+        112
+      ],
+      "alpha": {
+        "coverage": 0.738,
+        "corners": [
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "note": "wagon sw; original procedural art (tools/make-railway-art.mjs).",
+      "lenTiles": 0.98,
+      "widthTiles": 0.42,
+      "coupler": {
+        "front": 0.54,
+        "rear": -0.54
+      }
+    },
+    "wagon_nw": {
+      "name": "wagon_nw",
+      "kind": "wagon",
+      "view": "nw",
+      "w": 46,
+      "h": 56,
+      "anchor": [
+        23,
+        40
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        92,
+        112
+      ],
+      "alpha": {
+        "coverage": 0.7368,
+        "corners": [
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "note": "wagon nw; original procedural art (tools/make-railway-art.mjs).",
+      "lenTiles": 0.98,
+      "widthTiles": 0.42,
+      "coupler": {
+        "front": 0.54,
+        "rear": -0.54
+      }
+    },
+    "platform_ne": {
+      "name": "platform_ne",
+      "kind": "platform",
+      "view": "ne",
+      "w": 162,
+      "h": 118,
+      "anchor": [
+        64,
+        116
+      ],
+      "footprint": [
+        2,
+        3
+      ],
+      "moving": false,
+      "box2x": [
+        324,
+        236
+      ],
+      "alpha": {
+        "coverage": 0.4714,
+        "corners": [
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "note": "platform ne; original procedural art (tools/make-railway-art.mjs)."
+    },
+    "platform_se": {
+      "name": "platform_se",
+      "kind": "platform",
+      "view": "se",
+      "w": 162,
+      "h": 110,
+      "anchor": [
+        97,
+        109
+      ],
+      "footprint": [
+        3,
+        2
+      ],
+      "moving": false,
+      "box2x": [
+        324,
+        220
+      ],
+      "alpha": {
+        "coverage": 0.5067,
+        "corners": [
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "note": "platform se; original procedural art (tools/make-railway-art.mjs)."
+    },
+    "platform_sw": {
+      "name": "platform_sw",
+      "kind": "platform",
+      "view": "sw",
+      "w": 162,
+      "h": 132,
+      "anchor": [
+        65,
+        132
+      ],
+      "footprint": [
+        2,
+        3
+      ],
+      "moving": false,
+      "box2x": [
+        324,
+        264
+      ],
+      "alpha": {
+        "coverage": 0.5208,
+        "corners": [
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "note": "platform sw; original procedural art (tools/make-railway-art.mjs)."
+    },
+    "platform_nw": {
+      "name": "platform_nw",
+      "kind": "platform",
+      "view": "nw",
+      "w": 162,
+      "h": 132,
+      "anchor": [
+        96,
+        132
+      ],
+      "footprint": [
+        3,
+        2
+      ],
+      "moving": false,
+      "box2x": [
+        324,
+        264
+      ],
+      "alpha": {
+        "coverage": 0.5164,
+        "corners": [
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "note": "platform nw; original procedural art (tools/make-railway-art.mjs)."
+    },
+    "train-depot_ne": {
+      "name": "train-depot_ne",
+      "kind": "train-depot",
+      "view": "ne",
+      "w": 132,
+      "h": 96,
+      "anchor": [
+        68,
+        97
+      ],
+      "footprint": [
+        2,
+        2
+      ],
+      "moving": false,
+      "box2x": [
+        264,
+        192
+      ],
+      "alpha": {
+        "coverage": 0.6115,
+        "corners": [
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "note": "train-depot ne; original procedural art (tools/make-railway-art.mjs)."
+    },
+    "train-depot_se": {
+      "name": "train-depot_se",
+      "kind": "train-depot",
+      "view": "se",
+      "w": 132,
+      "h": 114,
+      "anchor": [
+        68,
+        113
+      ],
+      "footprint": [
+        2,
+        2
+      ],
+      "moving": false,
+      "box2x": [
+        264,
+        228
+      ],
+      "alpha": {
+        "coverage": 0.5884,
+        "corners": [
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "note": "train-depot se; original procedural art (tools/make-railway-art.mjs)."
+    },
+    "train-depot_sw": {
+      "name": "train-depot_sw",
+      "kind": "train-depot",
+      "view": "sw",
+      "w": 132,
+      "h": 114,
+      "anchor": [
+        63,
+        113
+      ],
+      "footprint": [
+        2,
+        2
+      ],
+      "moving": false,
+      "box2x": [
+        264,
+        228
+      ],
+      "alpha": {
+        "coverage": 0.6118,
+        "corners": [
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "note": "train-depot sw; original procedural art (tools/make-railway-art.mjs)."
+    },
+    "train-depot_nw": {
+      "name": "train-depot_nw",
+      "kind": "train-depot",
+      "view": "nw",
+      "w": 132,
+      "h": 106,
+      "anchor": [
+        63,
+        106
+      ],
+      "footprint": [
+        2,
+        2
+      ],
+      "moving": false,
+      "box2x": [
+        264,
+        212
+      ],
+      "alpha": {
+        "coverage": 0.5493,
+        "corners": [
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "note": "train-depot nw; original procedural art (tools/make-railway-art.mjs)."
+    }
+  }
 }

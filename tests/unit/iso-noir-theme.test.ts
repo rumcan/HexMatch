@@ -362,17 +362,42 @@ describe("NOIR the painted set is wired end to end", () => {
   // the tool keys, read out of ui.ts's TOOLS table — the same list the loop
   // turns into `build-btn bg-<key>` buttons, so a tool with no art fails here.
   const tools = [...ui.matchAll(/\{ key: "([a-z]+)", label:/g)].map((m) => m[1]);
+  // RAIL-04 (#178): the four railway buttons joined the row. The noir sigil
+  // SHEET is pre-baked and has no railway emblem in it, so the railway group
+  // takes the painted plate plus a brass rule down its left edge rather than
+  // borrowing a road's artwork — styles.css states the same decision in place
+  // ("An emblem is a follow-up art pass."). The assertions below keep the
+  // contract either way: every tool has its own rule, and if a tool has no
+  // sigil it must say so (`--sigil: none`) instead of silently painting one.
+  const PAINTED_TOOLS = ["select", "dirt", "road", "harvester", "plant", "demolish"];
+  const RAIL_TOOLS = ["rail", "platform", "raildepot", "railway"];
   // the sabotage keys, read out of the SABOTAGE table itself — the same object
   // ui.ts iterates, so a new racket with no art fails here rather than in play.
   const table = /export const SABOTAGE[^{]*\{([\s\S]*?)\n\};/.exec(gameConfig)![1];
   const sabots = [...table.matchAll(/^  ([a-z]+):\s*\{ name:/gm)].map((m) => m[1]);
 
   it("gives every build tool its sigil, rule and plate", () => {
-    // The pointer (select) leads the list — it is the hand you hold between builds.
-    expect(tools).toEqual(["select", "dirt", "road", "harvester", "plant", "demolish"]);
-    for (const t of tools) {
+    // The pointer (select) leads the list — it is the hand you hold between
+    // builds — and the railway's four sit between the plant and the wrecking
+    // ball, which is the order the tickets build in (art, then track, then the
+    // two structures, then the panel that runs the line).
+    expect(tools).toEqual(["select", "dirt", "road", "harvester", "plant", ...RAIL_TOOLS, "demolish"]);
+    for (const t of PAINTED_TOOLS) {
       expect(css, `.build-btn.bg-${t} has no rule`).toMatch(new RegExp(`\\.build-btn\\.bg-${t}\\s*\\{`));
       expect(existsSync(`src/assets/ui/noir/sigil/${t}.png`), `${t} sigil file`).toBe(true);
+    }
+    for (const t of RAIL_TOOLS) {
+      const bodies = bodiesFor(`.build-btn.bg-${t}`);
+      expect(bodies.length, `.build-btn.bg-${t} has no rule`).toBeGreaterThan(0);
+      expect(bodies.join("\n"), `.build-btn.bg-${t} must not borrow a painted sigil`).toMatch(/--sigil:\s*none/);
+    }
+  });
+  it("keeps the railway's four buttons out of the painted sigil set", () => {
+    // The follow-up art pass adds rail emblems to the SHEET and a `--sigil`
+    // url per button; until then a railway button that quietly points at a
+    // road's PNG would be the failure this test exists to catch.
+    for (const t of RAIL_TOOLS) {
+      expect(existsSync(`src/assets/ui/noir/sigil/${t}.png`), `${t} sigil file (remove this assertion when the follow-up sheet lands)`).toBe(false);
     }
   });
 
