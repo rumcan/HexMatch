@@ -43,6 +43,15 @@ describe("PP-07 one authoritative cost table", () => {
     expect(BUILD_COSTS.upgrade).toEqual({ ore: 4 });
     expect(BUILD_COSTS.depot).toEqual({ wood: 1, stone: 1, grain: 1, oil: 1 });
     expect(BUILD_COSTS.plant).toEqual({ wood: 2, stone: 2, grain: 2, ore: 3 });
+    // RAIL-01/RAIL-04 (#175/#178): the railway. A rail tile is deliberately
+    // the cheapest thing on the map (stone only, no wood); the platform is the
+    // one purchase that pays a Victory Point; the depot is the shed the trains
+    // live in; the train is the locomotive AND its one wagon, bought as one
+    // price so a player can never own half a train.
+    expect(BUILD_COSTS.rail).toEqual({ stone: 1 });
+    expect(BUILD_COSTS.platform).toEqual({ wood: 4, stone: 4, ore: 12, oil: 2 });
+    expect(BUILD_COSTS.trainDepot).toEqual({ wood: 3, stone: 3, ore: 4, oil: 2 });
+    expect(BUILD_COSTS.train).toEqual({ ore: 4, oil: 2 });
   });
 
   it("is the SAME object every surface reads — no copies to drift", () => {
@@ -89,8 +98,13 @@ describe("PP-07 Catan-style resource roles", () => {
     expect(usedBy("grain")).toEqual(expect.arrayContaining(["depot", "plant"]));
     // industrial investment and better transport
     expect(usedBy("ore")).toEqual(expect.arrayContaining(["road", "upgrade", "plant"]));
-    // depot expansion
-    expect(usedBy("oil")).toEqual(["depot"]);
+    // depot expansion — and, since RAIL-04 (#178), every wheel on the railway:
+    // the platform, the shed and the train itself all burn oil, so the depot is
+    // no longer the only spender (the ticket's claim was "each resource has a
+    // role", not "each resource has exactly one table").
+    expect(new Set(usedBy("oil"))).toEqual(new Set(["depot", "platform", "trainDepot", "train"]));
+    // the railway's other half: rail and sheds are stone-heavy
+    expect(usedBy("stone")).toEqual(expect.arrayContaining(["rail", "platform", "trainDepot"]));
   });
 
   it("reserves gold for Black Market sabotage — it buys no construction", () => {

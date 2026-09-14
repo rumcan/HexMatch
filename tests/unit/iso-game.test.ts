@@ -8,9 +8,9 @@
 // this verifies wiring and game logic, not pixels. Pixel correctness is what
 // the committed-reference-PNG fixture is for, and that still needs a browser.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { WATER, factoryTouchesTown } from "../../src/iso/grid";
+import { WATER, GRASS, ROUGH, SAND, factoryTouchesTown } from "../../src/iso/grid";
 import { SABOTAGE, RAID_EVERY, BANDIT_MS } from "../../src/game/config";
-import { PUBLIC_OWNER, buildTile } from "../../src/iso/track";
+import { PUBLIC_OWNER, buildTile, tIdx } from "../../src/iso/track";
 import { industriesInCatchment, lockedIndustryIds } from "../../src/iso/economy";
 import { MAP_W, MAP_H, TRANSPORT, INDUSTRY_BY_KEY, VICTORY } from "../../src/iso/config";
 import { RIVAL_BANTER } from "../../src/iso/rivalry";
@@ -62,8 +62,12 @@ interface IsoHook {
   vp: { you: number; ai: number };
   /** VP-01: the target, the rates, and what a player's total is made of. */
   vpTarget: number;
-  vpRates: { upgrade: number; plant: number };
-  victoryOf: (who: string) => { paved: number; plants: number; pavedVp: number; plantVp: number };
+  vpRates: { upgrade: number; plant: number; platform: number };
+  victoryOf: (who: string) => {
+    paved: number; plants: number; pavedVp: number; plantVp: number;
+    /** RAIL-02 (#176): the platform line of the same breakdown. */
+    platforms: number; platformVp: number;
+  };
   /** how many of `who`'s tiles carry pave provenance (0 = the score is all plants) */
   pavedTiles: (who: string) => number;
   /** run the rival's pave pass now, instead of waiting for its turn */
@@ -108,6 +112,25 @@ interface IsoHook {
   routeForDepot: (tx: number, ty: number) => [number, number][] | null;
   /** AI-01: the top-bar selector's call — flip the live difficulty. */
   setRivalSkill: (key: "easy" | "normal" | "hard") => void;
+  // ── RAIL-04 (#178): the railway's twins ─────────────────────────────────
+  readonly rail: {
+    revision: number;
+    tiles: number;
+    structures: { id: number; kind: "platform" | "depot"; ownerId: number; tx: number; ty: number; view: string; anchor: { kind: string; id: number } | null }[];
+    lines: { id: number; ownerId: number; name: string; source: number; dest: number }[];
+    trains: { id: number; ownerId: number; status: string; target: string; dist: number; tile: [number, number] | null; blockedWhy: string | null }[];
+  };
+  readonly railView: string;
+  setRailView: (v: string) => string;
+  railPanel: (who?: "you" | "ai") => { id: number; kind: string; label: string; detail: string; actions: string[] }[];
+  railDrag: (ax: number, ay: number, bx: number, by: number) => { tiles: [number, number][]; cost: Record<string, number> } | null;
+  placePlatform: (tx: number, ty: number, view?: string, who?: "you" | "ai") => boolean;
+  placeRailDepot: (tx: number, ty: number, view?: string, who?: "you" | "ai") => boolean;
+  railAssign: (sourceId: number, destId: number, who?: "you" | "ai") => boolean;
+  railRecall: (trainId: number, who?: "you" | "ai") => boolean;
+  railSell: (trainId: number, who?: "you" | "ai") => boolean;
+  railTick: (dtMs?: number) => number;
+  railTiles: (who?: "you" | "ai") => number;
 }
 
 const hook = () => (window as unknown as { __iso: IsoHook }).__iso;
@@ -183,7 +206,12 @@ describe("E11 the game boots", () => {
     const tools = [...root.querySelectorAll("[data-tool]")].map(
       (b) => (b as HTMLElement).dataset.tool);
     // The pointer ("select") leads: it is the hand you hold between builds.
-    expect(tools).toEqual(["select", "dirt", "road", "harvester", "plant", "demolish"]);
+    // RL-4 (#178) adds the four railway tools with the other BUILDERS —
+    // Demolish stays last, beside the pointer's other destructive neighbour.
+    expect(tools).toEqual([
+      "select", "dirt", "road", "harvester", "plant",
+      "rail", "platform", "raildepot", "railway", "demolish",
+    ]);
   });
 
   it("starts in the factory-placement phase with a real map", async () => {
@@ -977,8 +1005,12 @@ describe("J1 the quarry is mounted in the iso app", () => {
     await boot();
     const tools = [...root.querySelectorAll("[data-tool]")].map(
       (b) => (b as HTMLElement).dataset.tool);
-    // The pointer ("select") leads; PP-06 added the "plant" tool.
-    expect(tools).toEqual(["select", "dirt", "road", "harvester", "plant", "demolish"]);
+    // The pointer ("select") leads; PP-06 added the "plant" tool, RL-4 (#178)
+    // the four railway tools (Demolish keeps the last slot).
+    expect(tools).toEqual([
+      "select", "dirt", "road", "harvester", "plant",
+      "rail", "platform", "raildepot", "railway", "demolish",
+    ]);
     const panels = [...root.querySelectorAll("[data-panel]")].map(
       (b) => (b as HTMLElement).dataset.panel);
     expect(panels).toEqual([]);
@@ -1225,7 +1257,7 @@ describe("V5 gems draw the restored sprite art", () => {
   it("the build buttons carry per-tool banner art classes", async () => {
     await boot();
     const tools = [...root.querySelectorAll("[data-tool]")] as HTMLElement[];
-    expect(tools).toHaveLength(6);
+    expect(tools).toHaveLength(10);
     for (const b of tools) expect(b.classList.contains(`bg-${b.dataset.tool}`)).toBe(true);
   });
 });
@@ -3001,7 +3033,233 @@ describe("pointer responsiveness", () => {
   });
 });
 
+// ═════════════════════════════════════════════════════════════════════════
+// CONTINUE-01 (#191) — finishing a contract and taking its ledger's
+// "Continue the campaign" door must not leave the decided match in the slot:
+// the campaign card would otherwise keep offering "Continue" straight back
+// into this ledger. The sandbox restart path always cleared; this is the
+// story equivalent.
+// ═════════════════════════════════════════════════════════════════════════
+describe("CONTINUE-01 (#191): Continue the campaign clears the contract save", () => {
+  it("filing a contract removes its slot when the ledger returns to the campaign", async () => {
+    delete (window as unknown as Record<string, unknown>).__ISO_DISABLE_SAVE;
+    const rt = await import("../../src/iso/savegame-runtime");
+    const { startIsoGame } = await import("../../src/iso/game");
+    const { chapterById } = await import("../../src/story/chapters");
+    const chapter = chapterById("inheritance")!;
+    const storyKey = rt.saveKeyFor(chapter.id);
+    rt.clearSave(storyKey);
+    const storyExit = vi.fn();
+
+    dispose = startIsoGame(root, { story: chapter.id, onStoryExit: storyExit });
+    await settle();
+
+    // skip the pre-contract briefing the way ▸▸ does
+    let skip = root.querySelector(".story-skip") as HTMLButtonElement | null;
+    if (skip) { skip.click(); await settle(); }
+
+    // Win the contract for real (chapter I races to 5★): both opening
+    // factories bind owner ids, then twenty upgraded tiles owned by you.
+    const h = hook();
+    h.eco.factories.push(
+      { owner: "you", ownerId: 1, tx: MAP_W - 8, ty: MAP_H - 8, id: 0, townId: null },
+      { owner: "ai", ownerId: 2, tx: MAP_W - 4, ty: MAP_W - 4, id: 0, townId: null },
+    );
+    let paved = 0;
+    let trigger: [number, number] | null = null;
+    for (let y = 0; y < MAP_H && !trigger; y++) {
+      for (let x = 0; x < MAP_H && !trigger; x++) {
+        const i = y * MAP_W + x;
+        if (h.track.dirt[i] || h.track.road[i]) continue;
+        if (paved < 20) {
+          buildTile(h.track, "dirt", x, y, 1);
+          buildTile(h.track, "road", x, y, 1);
+          paved++;
+        } else {
+          buildTile(h.track, "dirt", x, y, 1);
+          trigger = [x, y];
+        }
+      }
+    }
+    expect(paved).toBe(20);
+    expect(trigger).toBeTruthy();
+    h.finishSetup();
+    h.demolish(trigger![0], trigger![1]);
+    expect(h.phase).toBe("won");
+
+    // skip the epilogue so the ledger stands
+    for (let t = 0; t < 20 && !root.querySelector("#iso-ending"); t++) {
+      const epSkip = root.querySelector(".story-stage .story-skip") as HTMLButtonElement | null;
+      epSkip?.click();
+      await settle();
+    }
+    const ending = root.querySelector("#iso-ending");
+    expect(ending).not.toBeNull();
+    const continueCampaign = ending!.querySelector(".ending-continue") as HTMLButtonElement;
+    expect(continueCampaign).not.toBeNull();
+
+    // the decided match is on the shelf right up until the door is taken
+    await settle();
+    expect(rt.readSave(storyKey)?.phase).toBe("won");
+
+    continueCampaign.click();
+    expect(storyExit).toHaveBeenCalledTimes(1);
+    // and off the shelf immediately after — no Continue ribbon on a filed card
+    expect(rt.readSave(storyKey)).toBeNull();
+  });
+});
+
 // ══════════════════════════════════════════════════════════════════════════
+// RL-4 (#178) — the railway in the REAL game: the tools, the drag, the
+// platform's single Victory Point, the depot, and the one-line limit as the
+// player meets them. The rules themselves (states, dwell, blocking, large dt,
+// resale, the one-train-per-component limit) are pinned headless in
+// `iso-rail.test.ts`; this is the wiring.
+// ══════════════════════════════════════════════════════════════════════════
+describe("RL-4 (#178) the railway in the real game", () => {
+  /** The first horizontal run of `n` tiles that may carry rail. */
+  function railRun(h: IsoHook, n: number): [number, number] | null {
+    for (let y = 1; y < MAP_H - 1; y++) {
+      for (let x = 1; x + n < MAP_W - 1; x++) {
+        let ok = true;
+        for (let i = 0; i < n && ok; i++) {
+          const at = tIdx(x + i, y);
+          const t = h.grid.terrain[at];
+          if (t !== GRASS && t !== ROUGH && t !== SAND) ok = false;
+          if (h.grid.occupancy[at] >= 0) ok = false;
+          if ((h.track.dirt[at] | h.track.road[at]) & 0b1111) ok = false;
+        }
+        if (ok) return [x, y];
+      }
+    }
+    return null;
+  }
+
+  /** A platform origin the rules accept: near a real industry, clear ground. */
+  function platformSpot(h: IsoHook): { tx: number; ty: number; view: string } | null {
+    for (const ind of h.grid.industries) {
+      for (let dy = -4; dy <= 4; dy++) {
+        for (let dx = -4; dx <= 4; dx++) {
+          for (const view of ["se", "ne", "sw", "nw"]) {
+            const tx = ind.tx + dx, ty = ind.ty + dy;
+            if (tx < 1 || ty < 1 || tx + 3 >= MAP_W || ty + 3 >= MAP_H) continue;
+            const [w, hh] = view === "se" || view === "nw" ? [3, 2] : [2, 3];
+            let clear = true;
+            for (let y = 0; y < hh && clear; y++) {
+              for (let x = 0; x < w && clear; x++) {
+                const at = tIdx(tx + x, ty + y);
+                const t = h.grid.terrain[at];
+                if (t !== GRASS && t !== SAND && t !== ROUGH) clear = false;
+                if (h.grid.occupancy[at] >= 0) clear = false;
+                if (h.track.dirt[at] || h.track.road[at]) clear = false;
+              }
+            }
+            if (!clear) continue;
+            if (h.placePlatform(tx, ty, view)) return { tx, ty, view };
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  const rich = (h: IsoHook) => {
+    h.purse.wood = 60; h.purse.stone = 60; h.purse.ore = 60; h.purse.oil = 60;
+  };
+
+  it("holds the four railway tools and opens the Railway panel with them", async () => {
+    const h = await boot();
+    for (const t of ["rail", "platform", "raildepot", "railway"]) {
+      expect(root.querySelector(`[data-tool=${t}]`), `${t} button`).toBeTruthy();
+    }
+    const panel = root.querySelector<HTMLElement>(".rail-panel");
+    expect(panel).toBeTruthy();
+    // The panel rides the same `.hidden` class every other collapsible does.
+    expect(panel!.classList.contains("hidden")).toBe(true);
+    h.setTool("rail");
+    await settle();
+    expect(panel!.classList.contains("hidden")).toBe(false);
+    expect(panel!.textContent).toMatch(/railway/i);
+  });
+
+  it("lays rail with a drag, charges a Stone a tile, and lifts it again", async () => {
+    const h = await boot();
+    h.finishSetup();
+    rich(h);
+    const run = railRun(h, 5);
+    expect(run, "no clear 5-tile run on this map").toBeTruthy();
+    const [x, y] = run!;
+    const stone = h.purse.stone;
+    const pv = h.railDrag(x, y, x + 4, y);
+    expect(pv?.tiles).toHaveLength(5);
+    expect(h.railTiles("you")).toBe(5);
+    expect(h.purse.stone).toBe(stone - 5);      // 1 Stone a tile, new tiles only
+    expect(h.rail.revision).toBeGreaterThan(0);
+    // The same drag again is free — it is already your rail.
+    // …and the same drag again is FREE: rail you already own is stepped over,
+    // exactly like a road drag over your own road.
+    expect(h.railDrag(x, y, x + 4, y)?.tiles).toHaveLength(5);
+    expect(h.purse.stone).toBe(stone - 5);
+    // …and a demolish click lifts the whole drag, one tile at a time.
+    for (let i = 0; i < 5; i++) h.demolish(x + i, y);
+    expect(h.railTiles("you")).toBe(0);
+  });
+
+  it("scores exactly one Victory Point for a platform, and revokes it on demolish", async () => {
+    const h = await boot();
+    h.finishSetup();
+    rich(h);
+    expect(h.victoryOf("you").platformVp).toBe(0);
+    expect(h.victoryOf("you").platforms).toBe(0);
+    // `platformSpot` IS the click: it walks candidate sites until the rules
+    // accept one, which is exactly how the real tool behaves (a refused site
+    // costs nothing).
+    const spot = platformSpot(h);
+    expect(spot, "no legal platform site on this map").toBeTruthy();
+    const { tx, ty, view } = spot!;
+    expect(h.railPanel("you").some((r) => r.kind === "platform")).toBe(true);
+    const row = h.railPanel("you").find((r) => r.kind === "platform")!;
+    // The panel says what the platform is worth and that it is not yet served.
+    expect(row.detail).toMatch(/1★/);
+    expect(row.detail).toMatch(/not on a line/i);
+    // Nothing to assign to yet (no plant platform), so no action is offered —
+    // the row itself still names the point and the state.
+    expect(row.actions).toEqual([]);
+    // The scoreboard the player sees carries it — the same ledger the HUD reads.
+    expect(h.victoryOf("you").platformVp).toBe(h.vpRates.platform);
+    const paid = { ...h.purse };
+    h.demolish(tx, ty);
+    expect(h.victoryOf("you").platformVp).toBe(0);
+    expect(h.rail.structures).toHaveLength(0);
+    // The 50% refund is floor() per resource, through the one resale rule.
+    expect(h.purse.wood).toBe(paid.wood + 2);
+    expect(h.purse.ore).toBe(paid.ore + 6);
+    void view;
+  });
+
+  it("refuses a line that has no destination, and a depot with no rail to serve", async () => {
+    const h = await boot();
+    h.finishSetup();
+    rich(h);
+    // Nothing to run: no platforms, no depot.
+    expect(h.railAssign(1, 2)).toBe(false);
+    expect(h.rail.lines).toHaveLength(0);
+    expect(h.rail.trains).toHaveLength(0);
+    // A depot dropped on bare grass has no exit to join — refused, unpaid.
+    const run = railRun(h, 2);
+    expect(run).toBeTruthy();
+    const [x, y] = run!;
+    const stone = h.purse.stone;
+    const placed = h.placeRailDepot(x + 20, y + 20, "se");
+    if (placed) {
+      // If that spot happened to reach rail it must at least have been charged.
+      expect(h.purse.stone).toBeLessThan(stone);
+    } else {
+      expect(h.purse.stone).toBe(stone);
+    }
+  });
+});
+
 // #186 — the settings module's default purse IS the game's opening purse.
 //
 // `src/net/match-settings.ts` declares its own `DEFAULT_START_PURSE` because

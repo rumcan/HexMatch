@@ -24,8 +24,11 @@ export type DecisiveSource = "upgrade" | "plant" | "platform" | null;
 export interface EndingBreakdown {
   paved: number;
   plants: number;
+  /** RAIL-02 (#176): platforms, the railway's contribution to the line. */
+  platforms?: number;
   pavedVp: number;
   plantVp: number;
+  platformVp?: number;
 }
 
 export interface EndingInput {
@@ -170,6 +173,9 @@ function decisiveText(source: DecisiveSource, won: boolean): string {
   }
   if (source === "upgrade") {
     return `${who} winning margin came from fresh pavement—the last quarter-star clicked into place on the road.`;
+  }
+  if (source === "platform") {
+    return `${who} final star was the new railway platform opening for business.`;
   }
   return `${who} network crossed the star line and the territory had its answer.`;
 }

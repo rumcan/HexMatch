@@ -29,7 +29,8 @@ import {
 import type { HexRoom } from "../../src/net/transport";
 import { MAP_W, MAP_H, mulberry32, setRng, OFFER_LIFE, SABOTAGE } from "../../src/game/config";
 import { FACTORY_FOOTPRINT } from "../../src/iso/config";
-import { DEPOT_COST, depotButtonLabel } from "../../src/iso/construction";
+import { DEPOT_COST } from "../../src/iso/construction";
+import { depotButtonMarkup } from "../../src/game/hud-icons";
 import type { Factory, Harvester } from "../../src/iso/economy";
 import { WATER, factoryTouchesTown, townForSeat, type Grid } from "../../src/iso/grid";
 import { adjacentTown } from "../../src/iso/plants";
@@ -796,6 +797,14 @@ function hostWireSeat(hostEnd: Endpoint): WirePlayer | undefined {
 const guestTool = (tool: string) => roots[1].querySelector<HTMLButtonElement>(`[data-tool="${tool}"]`);
 /** Its price line — the Depot's reads `freeDepots` and nothing else. */
 const guestToolSub = (tool: string) => guestTool(tool)?.querySelector("small")?.textContent ?? null;
+/**
+ * The same line as MARKUP. The HUD draws each cargo as a gem badge (an <img>
+ * with alt text, `hud-icons.ts`), which `textContent` cannot see — so the
+ * allowance parity check compares the rendered HTML against the markup the
+ * host's own chrome is built from. The value in it (1 free vs 0) is what the
+ * test is actually about: it must be the HOST's allowance, mirrored.
+ */
+const guestToolHtml = (tool: string) => guestTool(tool)?.querySelector("small")?.innerHTML ?? null;
 
 /** A straight dirt drag near a centre whose path covers at least `need`
  *  buildable tiles — long enough that an allowance smaller than the path shows
@@ -1332,7 +1341,7 @@ describe("audit regressions: two real games, one room", () => {
     expect(part.cost).toEqual({});                    // …and charges nothing for them
     expect(part.unaffordable.length).toBeGreaterThan(0);   // the rest the empty purse cannot pay
     // …and the HUD built from both.
-    expect(guestToolSub("harvester")).toBe(depotButtonLabel(1));
+    expect(guestToolHtml("harvester")).toBe(depotButtonMarkup(1));
     expect(guestToolSub("harvester")).toMatch(/free setup/);
     expect(guestTool("harvester")!.disabled).toBe(false);
     expect(guestTool("dirt")!.disabled).toBe(false);
@@ -1351,7 +1360,7 @@ describe("audit regressions: two real games, one room", () => {
     expect(zero.free).toBe(0);
     expect(zero.tiles).toHaveLength(0);               // nothing free, nothing affordable
     expect(zero.unaffordable.length).toBeGreaterThan(0);
-    expect(guestToolSub("harvester")).toBe(depotButtonLabel(0));
+    expect(guestToolHtml("harvester")).toBe(depotButtonMarkup(0));
     expect(guestToolSub("harvester")).not.toMatch(/free setup/);   // no phantom free Depot
     expect(guestTool("harvester")!.disabled).toBe(true);
     expect(guestTool("dirt")!.disabled).toBe(true);                // no phantom free track
@@ -1364,7 +1373,7 @@ describe("audit regressions: two real games, one room", () => {
     expect(guest.freeTrack).toBe(0);
     expect(guest.freeDepots).toBe(0);
     expect(guest.depotPrice().free).toBe(false);
-    expect(guestToolSub("harvester")).toBe(depotButtonLabel(0));
+    expect(guestToolHtml("harvester")).toBe(depotButtonMarkup(0));
   });
 
   it("a stalled guest resyncs into the host's SPENT allowances, not its boot ones (#137)", async () => {
@@ -1425,7 +1434,7 @@ describe("audit regressions: two real games, one room", () => {
     expect(after).not.toBeNull();
     const pv = guest.dragPreview("dirt", after![0], after![1], after![2], after![3])!;
     expect(pv.free).toBe(0);                          // a fresh drag rides no allowance
-    expect(guestToolSub("harvester")).toBe(depotButtonLabel(0));
+    expect(guestToolHtml("harvester")).toBe(depotButtonMarkup(0));
     expect(guestToolSub("harvester")).not.toMatch(/free setup/);
 
     // The two paths agree: the next delta carries the same record and changes
