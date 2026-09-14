@@ -57,6 +57,7 @@ import {
   DEFAULT_ROAD_STYLE, RoadCache,
   type RoadCacheStats, type RoadRenderMode, type RoadStyle, type RoadWorld,
 } from "./road-renderer";
+import { railDetailFor, type RailLayer } from "./rail-renderer";
 import {
   PlacementOverlay, sceneFromItems,
   type GhostSpec, type OverlayStats,
@@ -155,6 +156,15 @@ export interface World {
    * like an industry.
    */
   forests?: Forest[];
+  /**
+   * RAIL-03 (#177): the railway layer — the effective rail masks (a structure's
+   * internal lane folded in), their owners and `Rail.revision`. Track is
+   * GROUND: it is painted into the road cache's chunk rasters, not drawn as
+   * draw-list sprites, so it never joins the depth sort and can never land on
+   * top of a train. The game refreshes it in `syncWorld`; the renderer diffs it
+   * and drops only the chunks whose tiles moved.
+   */
+  rail?: RailLayer;
 }
 
 // Track layers carry a PRESENT bit (0b10000) above the 4 direction bits, so a
@@ -525,6 +535,18 @@ export class IsoRenderer {
    * their neighbours instead of dropping the whole cache on every build.
    */
   private roadShadow: { road: Uint8Array; dirt: Uint8Array } | null = null;
+  /**
+   * RAIL-03: the same idea for the railway, plus its revision as the cheap
+   * gate — `Rail.revision` moves on every rail mutation, so the O(map) byte
+   * diff below only runs when the railway actually changed. Owner bytes are
+   * diffed too: today's steel is neutral for every owner (see rail-geometry),
+   * but a change of hands is still a change, and a raster must never outlive
+   * the bytes it was derived from.
+   */
+  private railShadow: { tile: Uint8Array; owner: Uint8Array } | null = null;
+  private railRevision = -1;
+  /** The rail detail tier the rasters were last rasterised at. */
+  private railDetailKey = "";
   /** The decal PNGs by family; null until the art loads (then decals paint). */
   private decalImages: DecalImages | null = null;
   /**
@@ -629,11 +651,14 @@ export class IsoRenderer {
       this.groundChunkCache.clear();
       this.roadCache.clear("world");
       this.roadShadow = null;
+      this.railShadow = null;
+      this.railRevision = -1;
     }
     this.roadWorld = {
       grid: this.world.grid,
       roadBits: this.world.roadBits,
       dirtBits: this.world.dirtBits,
+      rail: this.world.rail,
     };
     this.syncRoadCache();
   }
@@ -668,6 +693,10 @@ export class IsoRenderer {
    * syncs — not per frame.
    */
   private syncRoadCache(): void {
+    // The railway first: the road diff below returns early on a fresh or
+    // reshaped map, and a rail revision must not have to wait for a second
+    // world sync to be seen.
+    this.syncRailCache();
     const road = this.world.roadBits, dirt = this.world.dirtBits;
     if (!road || !dirt) return;
     const prev = this.roadShadow;
@@ -684,6 +713,39 @@ export class IsoRenderer {
     }
   }
 
+  /**
+   * RAIL-03: diff the rail layer and dirty only the chunks its tiles touch.
+   *
+   * `Rail.revision` is the gate — it moves on every rail mutation, including
+   * the ones that only change a structure's lane — and the byte diff is what
+   * makes the invalidation SPARSE: one tile laid drops the handful of chunks
+   * that tile's geometry reaches, not the map. A rail tile's shape stays inside
+   * its own tile, so the reach is one, not the road's two.
+   */
+  private syncRailCache(): void {
+    const rail = this.world.rail;
+    if (!rail?.tile) {
+      this.railShadow = null;
+      this.railRevision = -1;
+      return;
+    }
+    if (rail.revision === this.railRevision) return;
+    this.railRevision = rail.revision ?? -1;
+    const prev = this.railShadow;
+    const owner = rail.owner;
+    if (!prev || prev.tile.length !== rail.tile.length || !owner) {
+      this.railShadow = { tile: Uint8Array.from(rail.tile), owner: owner ? Uint8Array.from(owner) : new Uint8Array(rail.tile.length) };
+      this.roadCache.clear("rail");
+      return;
+    }
+    for (let i = 0; i < rail.tile.length; i++) {
+      if (prev.tile[i] === rail.tile[i] && prev.owner[i] === owner[i]) continue;
+      prev.tile[i] = rail.tile[i];
+      prev.owner[i] = owner[i];
+      this.roadCache.invalidateTile(i % MAP_W, (i / MAP_W) | 0, "rail", 1);
+    }
+  }
+
   /** Road cache + mode, for `__iso.rendering()`. */
   roadDiagnostics() {
     let townTiles = 0;
@@ -691,6 +753,8 @@ export class IsoRenderer {
     if (blocks) for (let i = 0; i < blocks.length; i++) if (blocks[i]) townTiles++;
     return {
       mode: this.roadMode,
+      /** RAIL-03: the cache paints the railway alone in the sprite road mode. */
+      railsOnly: this.roadCache.railOnlyMode,
       townGroundTiles: townTiles,
       textured: {
         paved: !!this.roadStyle.paved.image,
@@ -699,7 +763,23 @@ export class IsoRenderer {
       },
       blitsLastFrame: this.roadBlits,
       cache: this.roadCache.stats(),
+      // RAIL-03: the railway's own facts — the revision the rasters were
+      // diffed against, and the detail tier they were baked at.
+      rail: {
+        revision: this.railRevision,
+        detail: this.roadCache.railDetailTier,
+        tiles: this.world.rail?.tile ? this.railTileCount() : 0,
+      },
     };
+  }
+
+  /** How many tiles the rail layer says carry track (diagnostics only). */
+  private railTileCount(): number {
+    const tile = this.world.rail?.tile;
+    if (!tile) return 0;
+    let n = 0;
+    for (let i = 0; i < tile.length; i++) if (tile[i] !== 0) n++;
+    return n;
   }
 
   // ── placement overlay ───────────────────────────────────────────────────
@@ -1014,6 +1094,17 @@ export class IsoRenderer {
     const ctx = this.ctxS, cam = this.cam;
     const r = visibleTileRange(cam, this.pad);
     const textured = this.roadMode === "textured";
+    // GFX-01: the rail's detail tier follows the SAME quality preset the art
+    // tiers do (the atlas cap). It is baked into each cached raster, so a
+    // change re-keys the cache here rather than at every paint call site.
+    const railDetail = railDetailFor(this.atlas.detailCap);
+    if (railDetail.key !== this.railDetailKey) {
+      this.railDetailKey = railDetail.key;
+      this.roadCache.setRailDetail(railDetail);
+    }
+    // The same seam, for the road implementation: in the sprite mode the cache
+    // must not paint the roads (the cells do) but must still paint the track.
+    this.roadCache.setRailOnly(!textured);
     let full = forceFull || this.structuresDirty || !this.paintedValid;
     // Static geometry only changes on existing world/art/tile invalidation
     // paths or a changed visible range. Never cache vehicles: the game replaces
@@ -1069,9 +1160,13 @@ export class IsoRenderer {
       // Roads are flat, so they go down first, under every elevated thing —
       // and above the terrain canvas entirely, which is what keeps their
       // transparent verges showing the real decals and grass underneath.
-      this.roadBlits = textured
-        ? this.roadCache.paint(ctx, cam, this.roadWorld, this.roadStyle, (w, h) => makeSurface(w, h))
-        : 0;
+      //
+      // RAIL-03: this runs in BOTH road modes. The sprite mode takes the roads
+      // from the atlas, but the railway has no cells by design, so its rasters
+      // are blitted either way — carrying the track alone when the cells own
+      // the roads (`setRailOnly`, pinned in `drawStructures`).
+      this.roadBlits = this.roadCache.paint(
+        ctx, cam, this.roadWorld, this.roadStyle, (w, h) => makeSurface(w, h));
     };
     // Contact shadows go down between the roads and the first sprite: they
     // are ground, so they may darken the asphalt a building stands beside
