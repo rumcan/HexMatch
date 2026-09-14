@@ -400,17 +400,33 @@ describe("PP-05 the cost is visible before the click", () => {
     expect(depotBtn().classList.contains("disabled")).toBe(false);
   });
 
-  it("shows the Depot's cost in the modebar while the tool is armed", async () => {
+  it("shows the Depot's placement verdict in the hint while the tool is armed", async () => {
     const h = await boot();
     h.setTool("harvester");
     await settle();
+    // #187: the hint is ONE slim line and carries only what the Build button
+    // cannot — the site rule a Depot is placed by. The tool's name and its
+    // complete price stay on the button (PP-05/PP-07, asserted above), so the
+    // bar no longer restates either of them over the map.
     const bar = root.querySelector(".modebar") as HTMLElement;
-    expect(bar.textContent).toMatch(/Depot/);
+    expect(bar.classList.contains("hidden")).toBe(false);
     expect(bar.textContent).toMatch(/catchment/);
-    // setup allowance → "free"; a paid Depot names Oil with a gem (#166)
-    const free = /free/i.test(bar.textContent ?? "");
-    const oil = bar.querySelector('img.cargo-ic[alt="Oil"]');
-    expect(free || oil, "modebar shows free setup or the Oil gem cost").toBeTruthy();
+    expect(bar.textContent).not.toMatch(/Depot/);
+    expect(bar.querySelectorAll(".mb-txt").length, "one line, one verdict").toBe(1);
+    // No ✕ here: the phase still OWES this Depot, so a cancel would be a dead
+    // button. iso-build-hint.test.ts pins both halves of that rule.
+    expect(bar.querySelector(".mb-cancel")).toBeNull();
+
+    // Once the setup allowance is spent and the purse is short, the REFUSAL is
+    // the verdict: what is missing, named with its gem (#166). That is PP-05's
+    // "complete cost before placement" from the other end — the button states
+    // the price, the hint states why this click would refuse it.
+    const c = findSouthCorridor(h.grid, 6, "farm")!;
+    expect(h.placeDepot(c.hx, c.hy)).toBe(true);
+    h.purse.oil = 0;
+    await settle();
+    expect(bar.textContent).toMatch(/needs/i);
+    expect(bar.querySelector('img.cargo-ic[alt="Oil"]')).toBeTruthy();
   });
 
   it("reports the same price through the read-only tile probe", async () => {

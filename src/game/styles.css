@@ -2087,34 +2087,56 @@ html, body, #root {
 .rival-quip-text::before { content: "“"; color: var(--brass); }
 .rival-quip-text::after { content: "”"; color: var(--brass); }
 
-/* the work order, pinned under the map while a tool is armed.
+/* #187 — the placement hint: ONE slim line, pinned above the resource bar
+   while a tool is armed. It replaced a full-width two-line work order that
+   restated the tool and its price — both already on the Build button — and on
+   a phone covered the build list and half the map. What is left is the verdict
+   the button cannot state (the rule a Depot is placed by, why a tile or a
+   purse refuses, the ★ a road drag buys), in a 32px box that shrinks to its
+   text and ellipsises instead of wrapping.
    pointer-events: none — it appears EXACTLY when the player is mid-gesture
    (dragging the first road), and a box eating the bottom of the map at that
-   moment is the "the game isn't working" look. Only the Cancel button
-   re-arms itself below. */
+   moment is the "the game isn't working" look. Only the ✕ re-arms itself
+   below, and it is a real cancel: ui.ts routes it to the pointer tool, which
+   is what clears this line. In the phone regime the held-tool chip carries the
+   same verdict instead (see .toolchip), so the two never stack. */
 .modebar {
-  position: fixed; bottom: 62px; left: 50%; transform: translateX(-50%); z-index: 50;
+  position: fixed; z-index: 50;
+  left: 50%; transform: translateX(-50%);
+  bottom: calc(max(52px, var(--resbar-h, 52px)) + 8px);
+  display: flex; align-items: center; gap: 8px;
+  width: max-content; max-width: min(560px, calc(100vw - 24px));
+  height: 32px; padding: 0 6px 0 12px;
+  overflow: hidden; white-space: nowrap;
   pointer-events: none;
-  display: flex; align-items: center; gap: 12px; padding: 8px 14px; border-radius: var(--r);
-  background-image: var(--iron-big);
+  border-radius: var(--r);
+  background-image: var(--iron);
   background-repeat: no-repeat;
-  background-position: 9px center, right 9px center, left top, left top, left top, left top;
-  background-size: 6px 6px, 6px 6px, auto 100%, auto 100%, auto 100%, auto 100%;
-  background-color: rgba(10, 7, 5, .9);
+  background-size: auto 100%;
+  background-color: rgba(10, 7, 5, .92);
   border: 1px solid var(--brass);
-  box-shadow: inset 0 1px 0 rgba(242, 220, 166, .22), 0 12px 34px rgba(0, 0, 0, .66), 0 0 30px -10px rgba(255, 176, 46, .4);
+  box-shadow: inset 0 1px 0 rgba(242, 220, 166, .22), 0 8px 22px rgba(0, 0, 0, .6), 0 0 24px -12px rgba(255, 176, 46, .4);
 }
-.mb-txt { color: var(--txt); font-size: 12.5px; letter-spacing: .6px; font-family: var(--serif); text-transform: uppercase; }
+.mb-txt {
+  color: var(--txt); font-size: 11.5px; letter-spacing: .5px; font-family: var(--serif);
+  text-transform: uppercase;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis;
+}
+/* A refusal reads in the theme's warm red, and stays in its own case — it is a
+   sentence the player has to parse, not an engraved label. */
+.mb-txt i { color: #ffb3a0; font-style: normal; text-transform: none; }
 .mb-cost {
-  color: var(--gold2); font-weight: 400; font-size: 12.5px;
-  display: flex; align-items: center; gap: 3px;
+  color: var(--gold2); font-weight: 400; font-size: 11.5px;
+  display: flex; align-items: center; gap: 3px; flex: 0 0 auto;
   font-family: var(--mono);
   text-shadow: 0 0 12px rgba(255, 176, 46, .45);
 }
 .mb-cancel {
-  pointer-events: auto;
-  padding: 4px 10px; border-radius: 2px; cursor: pointer; font-weight: 700; font-size: 11px;
-  letter-spacing: .8px; text-transform: uppercase; font-family: var(--serif);
+  pointer-events: auto; flex: 0 0 auto;
+  width: 22px; height: 22px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 2px; cursor: pointer; font-weight: 700; font-size: 11px; line-height: 1;
+  letter-spacing: 0; font-family: var(--serif);
   background: linear-gradient(180deg, rgba(96, 30, 18, .8), rgba(26, 8, 5, .9));
   color: #ffc7b4;
   border: 1px solid rgba(226, 112, 79, .5);
@@ -2455,15 +2477,23 @@ html, body, #root {
 
 /* MOBILE-01: the held-tool chip — a fingertip's right-click. Floats over the
    map's lower-left while anything but the pointer is in the hand, names the
-   tool and puts it down on a tap. Hidden with the cluster off the map view. */
+   tool and puts it down on a tap. Hidden with the cluster off the map view.
+   #187: and in this regime the chip IS the placement hint — the desktop pill
+   is `display: none` here, so the verdict rides beside the tool's name in the
+   one thumb-reach line above the resource bar, and the ✕ that puts the tool
+   down is the same cancel the pill's ✕ is (both ask for the pointer, which is
+   what disarms the tool and clears the hint). 32px, one line, ellipsised: the
+   map keeps the screen while a tool is armed. */
 .toolchip {
   display: none;
   position: fixed; left: 10px;
   bottom: calc(106px + env(safe-area-inset-bottom, 0px));
   z-index: 45;
-  max-width: 62vw;
-  align-items: center; gap: 8px;
-  padding: 10px 12px;
+  max-width: calc(100vw - 76px);
+  height: 32px;
+  align-items: center; gap: 7px;
+  padding: 0 9px 0 12px;
+  overflow: hidden; white-space: nowrap;
   border-radius: 999px;
   border: 1px solid var(--brass);
   background: linear-gradient(180deg, rgba(58, 44, 28, .92), rgba(12, 9, 6, .94));
@@ -2473,10 +2503,30 @@ html, body, #root {
   cursor: pointer;
   box-shadow: 0 4px 16px rgba(0,0,0,.5), inset 0 1px 0 rgba(242, 220, 166, .2);
 }
-.toolchip .tc-x { color: var(--txt-dim); font-size: 10.5px; letter-spacing: .8px; }
+.toolchip .tc-label { flex: 0 0 auto; }
+/* The verdict: the two fields the desktop pill lays side by side go inline
+   here, so the ONE line can ellipsize instead of growing the pill. */
+.toolchip .tc-hint {
+  flex: 0 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding-left: 7px;
+  border-left: 1px solid var(--brass-lo);
+  letter-spacing: .3px;
+}
+.toolchip .tc-hint .mb-txt,
+.toolchip .tc-hint .mb-cost { display: inline; font-size: 10.5px; letter-spacing: .3px; }
+.toolchip .tc-hint .mb-cost { text-shadow: none; }
+.toolchip .tc-hint .mb-cost::before { content: " · "; color: var(--txt-dim); }
+.toolchip .tc-hint .cargo-ic { width: 12px; height: 12px; vertical-align: -2px; }
+.toolchip .tc-x { flex: 0 0 auto; color: var(--txt-dim); font-size: 11px; letter-spacing: .8px; }
 @media (pointer: coarse), (max-width: 760px) {
   .toolchip:not(.hidden) { display: flex; }
   .ui-root:not([data-view="map"]) .toolchip { display: none; }
+  /* #187: …and where the chip is the hint, the desktop pill leaves the screen
+     instead of stacking a second box over the map. ONE media pair drives both
+     halves of the swap, so no regime can end up with two pills — or, worse,
+     with neither and no way to put a tool down. */
+  .modebar { display: none !important; }
 }
 
 /* MOBILE-02: the phone regime (bottom nav, single-sheet view switching) now
@@ -2598,11 +2648,11 @@ html, body, #root {
 
   /* ── things that don't fit a phone ── */
   .offer-tray { display: none !important; }
-  .modebar {
-    bottom: calc(118px + env(safe-area-inset-bottom, 0px));
-    left: 8px; right: 8px; transform: none;
-    justify-content: center; flex-wrap: wrap; gap: 8px;
-  }
+  /* #187: a SHORT LANDSCAPE window with a mouse keeps the hint pill (the
+     held-tool chip needs a coarse pointer or a ≤760px width), but its resource
+     footer sits lower than the portrait one, so the pill sits lower with it.
+     Everywhere the chip lives, the rule below takes the pill off the screen. */
+  .modebar { bottom: calc(66px + env(safe-area-inset-bottom, 0px)); }
   .banner {
     top: calc(var(--topbar-h) + var(--safe-top) + 6px);
     left: 8px; right: 8px; transform: none; max-width: none;
