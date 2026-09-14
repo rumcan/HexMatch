@@ -145,7 +145,7 @@ import {
   createRailState, railPreview, buildRail, demolishRail, structureAt, hasRail,
   placePlatform, placeDepot, platformRefusal, depotRefusal, resolveAnchor,
   RAIL_COSTS, RAIL_REFUSAL_TEXT, footprintTiles,
-  railStructureItems, trainItems, assignLine, recallTrain, sellTrain, tickTrains,
+  railStructureItems, trainItems, assignLine, renameLine, buyTrain, startLine, recallTrain, sellTrain, tickTrains,
   rotateView, trainOccupies, trainBasedAt, railPanelRows, canPay, costEntries, resaleValue, demolishStructure, PLATFORM_VP,
   footprintFor, depotExit, RAIL_VIEWS, trainTile, ownerRailTiles as ownerRailTilesOf,
   railToWire, applyRailWire, clearRail, railLayerPatch, copyRailLayer,
@@ -1010,6 +1010,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         if (partnerId === undefined) return;
         railAssign(id, partnerId);
       } else if (action === "recall") railRecall(id);
+      else if (action === "buy") { if (partnerId !== undefined) railBuy(id, partnerId); }
+      else if (action === "start") railStart(id);
       else railSell(id);
       paintOverlayNow();
     },
@@ -2373,6 +2375,54 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       toast(`${plan.line?.name ?? "Line"} assigned — the train is leaving the depot.`, "good");
     }
     return true;
+  }
+
+  /**
+   * #179: buy a train into a depot for one of the owner's lines. The rules
+   * (ownership, reach, one train per network) are `buyTrain`'s; the price is
+   * checked before and charged after, on the host, so a refusal costs nothing.
+   */
+  function railBuy(depotId: number, lineId: number, p: PlayerState = me): boolean {
+    if (isGuest()) { net?.sendIntent("build", { do: "railact", what: "buy", depot: depotId, line: lineId }); return true; }
+    if (!rail.lines.some((l) => l.id === lineId && l.ownerId === p.i + 1)) {
+      if (p.human) toast("Assign a line first — a train needs somewhere to run.", "bad");
+      return false;
+    }
+    if (!canPay(p.purse, RAIL_COSTS.train)) {
+      if (p.human) toast(`Not enough materials — a train costs ${railCostLabel(RAIL_COSTS.train)}.`, "bad");
+      return false;
+    }
+    const bought = buyTrain(rail, p.i + 1, depotId, lineId);
+    if (!bought.ok) {
+      if (p.human) toast(bought.why ?? "That train cannot be bought.", "bad");
+      return false;
+    }
+    spend(p, RAIL_COSTS.train);
+    if (p.human) sfx.play("build");
+    syncWorld();
+    if (p.human) toast("Train bought — it is waiting in the depot. Press Start to send it off.", "good");
+    return true;
+  }
+
+  /** #179: send a parked train off along its line. */
+  function railStart(trainId: number, p: PlayerState = me): boolean {
+    if (isGuest()) { net?.sendIntent("build", { do: "railact", what: "start", id: trainId }); return true; }
+    const train = rail.trains.find((t) => t.id === trainId && t.ownerId === p.i + 1);
+    if (!train) return false;
+    const ok = startLine(rail, p.i + 1, train.lineId);
+    if (p.human) {
+      toast(ok ? "Train started — it is leaving the depot." : (train.blockedWhy ?? "That train cannot start."), ok ? "good" : "bad");
+    }
+    syncWorld();
+    return ok;
+  }
+
+  /** #179: rename one of the owner's lines (the rules trim and cap the name). */
+  function railRename(lineId: number, name: string, p: PlayerState = me): boolean {
+    if (isGuest()) { net?.sendIntent("build", { do: "railact", what: "rename", id: lineId, name }); return true; }
+    const ok = renameLine(rail, p.i + 1, lineId, name);
+    if (ok) syncWorld();
+    return ok;
   }
 
   /** Send a line's train home (it stays until it is re-assigned or sold). */
@@ -4122,14 +4172,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           else placeRailDepot(tx, ty, p);
         }
       } else if (what === "railact") {
-        // The panel's three verbs. Malformed bodies are ignored, exactly like
+        // The panel's verbs. Malformed bodies are ignored, exactly like
         // every other intent: the rules below are the only validation.
         const id = typeof payload.id === "number" && Number.isInteger(payload.id) ? payload.id : null;
         const source = typeof payload.source === "number" && Number.isInteger(payload.source) ? payload.source : null;
         const dest = typeof payload.dest === "number" && Number.isInteger(payload.dest) ? payload.dest : null;
+        const depot = typeof payload.depot === "number" && Number.isInteger(payload.depot) ? payload.depot : null;
+        const lineId = typeof payload.line === "number" && Number.isInteger(payload.line) ? payload.line : null;
         if (payload.what === "assign" && source !== null && dest !== null) railAssign(source, dest, p);
         else if (payload.what === "recall" && id !== null) railRecall(id, p);
         else if (payload.what === "sell" && id !== null) railSell(id, p);
+        else if (payload.what === "buy" && depot !== null && lineId !== null) railBuy(depot, lineId, p);
+        else if (payload.what === "start" && id !== null) railStart(id, p);
+        else if (payload.what === "rename" && id !== null && typeof payload.name === "string") railRename(id, payload.name, p);
       } else if (what === "swap") {
         const r1 = int(payload.r1), c1 = int(payload.c1);
         const r2 = int(payload.r2), c2 = int(payload.c2);
@@ -4871,7 +4926,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       rail: {
         rows: railPanelRows(rail, me.i + 1).map((r) => ({
           ...r,
-          hint: r.actions.includes("assign") ? `buys a train · ${railCostLabel(RAIL_COSTS.train)}`
+          hint: r.actions.includes("assign") || r.actions.includes("buy") ? `buys a train · ${railCostLabel(RAIL_COSTS.train)}`
             : r.actions.includes("sell") ? `refund ${railCostLabel(resaleValue(RAIL_COSTS.train))} once`
               : undefined,
         })),
@@ -6727,6 +6782,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       railRecall(trainId, who === "ai" ? rival : me),
     railSell: (trainId: number, who: "you" | "ai" = "you") =>
       railSell(trainId, who === "ai" ? rival : me),
+    /** #179: the test twins of the panel's Buy train / Start buttons, and a rename. */
+    railBuy: (depotId: number, lineId: number, who: "you" | "ai" = "you") =>
+      railBuy(depotId, lineId, who === "ai" ? rival : me),
+    railStart: (trainId: number, who: "you" | "ai" = "you") =>
+      railStart(trainId, who === "ai" ? rival : me),
+    railRename: (lineId: number, name: string, who: "you" | "ai" = "you") =>
+      railRename(lineId, name, who === "ai" ? rival : me),
     /** Advance the trains by hand — the headless twin of the frame's tick. */
     railTick: (dtMs = 1000) => { tickTrains(rail, dtMs); return rail.trains.length; },
     /** How many tiles of this seat's rail the layer holds. */

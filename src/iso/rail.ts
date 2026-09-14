@@ -1134,10 +1134,134 @@ const depotComponent = (comp: Map<number, number>, depot: RailStructure): number
   return comp.get(tIdx(exit.tx, exit.ty)) ?? 0;
 };
 
+/** The longest name a line may carry. A name is trimmed and never empty. */
+export const LINE_NAME_MAX = 32;
+
+const cleanLineName = (name: string | undefined): string | null => {
+  const clean = (name ?? "").replace(/\s+/g, " ").trim().slice(0, LINE_NAME_MAX);
+  return clean || null;
+};
+
+/** Can this depot's exit reach the platform's lane on the owner's own rail? */
+function depotReachesPlatform(
+  state: RailState, ownerId: number, depot: RailStructure, platformId: number,
+): boolean {
+  const platform = structureById(state, platformId);
+  if (!platform) return false;
+  const goals = new Set(laneTiles(platform).map(([x, y]) => tIdx(x, y)));
+  const exit = depotExit(depot);
+  return !!railPath(state, ownerId, [[exit.tx, exit.ty]], goals);
+}
+
+/**
+ * #179: create a named line between two of the owner's platforms — an
+ * industry-anchored source and a plant-anchored destination. It buys nothing:
+ * `buyTrain` is the separate purchase and `startLine` sends the train off, so
+ * the Railway panel can build a line in steps. `assignLine` is all three at once.
+ */
+export function createLine(
+  state: RailState, ownerId: number, sourceId: number, destId: number, name?: string,
+): { ok: boolean; line?: RailLine; why?: string } {
+  const why = lineRefusal(state, ownerId, sourceId, destId);
+  if (why !== "ok") return { ok: false, why: RAIL_REFUSAL_TEXT[why] };
+  const line: RailLine = {
+    id: state.seq++,
+    ownerId,
+    name: cleanLineName(name) ?? `Line ${state.lines.filter((l) => l.ownerId === ownerId).length + 1}`,
+    source: sourceId,
+    dest: destId,
+  };
+  state.lines.push(line);
+  return { ok: true, line };
+}
+
+/** #179: rename one of the owner's lines. An empty name is refused. */
+export function renameLine(state: RailState, ownerId: number, lineId: number, name: string): boolean {
+  const line = state.lines.find((l) => l.id === lineId && l.ownerId === ownerId);
+  const clean = cleanLineName(name);
+  if (!line || !clean) return false;
+  line.name = clean;
+  return true;
+}
+
+/**
+ * #179: buy a locomotive + one wagon into an owned depot, for one of the
+ * owner's lines. The train is PARKED in the shed (`stored`, heading home, no
+ * leg) until `startLine` sends it off.
+ *
+ * Refusals: the depot and the line must be the owner's; the depot must reach
+ * the line's source platform; and the connected owner rail network must not
+ * already hold a train — v1's one-train rule (no signals, so no collisions),
+ * checked across EVERY depot on that network, not just this one.
+ *
+ * The PRICE is the caller's to check and charge, so a guest can ask and the
+ * host debits its authoritative purse; a refusal here costs nothing.
+ */
+export function buyTrain(
+  state: RailState, ownerId: number, depotId: number, lineId: number,
+): { ok: boolean; train?: Train; why?: string } {
+  const depot = state.structures.find((s) => s.id === depotId && s.kind === "depot" && s.ownerId === ownerId);
+  const line = state.lines.find((l) => l.id === lineId && l.ownerId === ownerId);
+  if (!depot || !line) return { ok: false, why: RAIL_REFUSAL_TEXT.missing };
+  if (!depotReachesPlatform(state, ownerId, depot, line.source)) {
+    return { ok: false, why: "No depot of yours can reach that platform." };
+  }
+  const comp = railComponents(state, ownerId);
+  const home = depotComponent(comp, depot);
+  if (!home) return { ok: false, why: "The depot is not connected to the platform." };
+  const busy = state.trains.some((t) => {
+    if (t.ownerId !== ownerId) return false;
+    const d = depotOfTrain(state, t);
+    return d ? depotComponent(comp, d) === home : false;
+  });
+  if (busy) return { ok: false, why: "One train per connected network — this line is already running one." };
+  const exit = depotExit(depot);
+  const train: Train = {
+    id: state.seq++,
+    ownerId,
+    lineId: line.id,
+    depotId: depot.id,
+    status: "stored",
+    // Parked: `tickTrains` leaves a stored train that is heading for its depot
+    // with no leg exactly where it is, so a bought train waits to be started.
+    target: "depot",
+    route: [],
+    dist: 0,
+    planRevision: -1,
+    dwellMs: 0,
+    dirBit: exit.dir,
+    resold: false,
+  };
+  state.trains.push(train);
+  return { ok: true, train };
+}
+
+/**
+ * #179: send a line's parked train off to its source platform, from the depot
+ * exit (RAIL-04's "start at the depot exit"). A train that cannot route is left
+ * `blocked` where it stands — `planLeg`'s rule — never deleted. The one-train
+ * rule needs no second check here: `buyTrain` and the rail merge guard already
+ * keep a network to one train. Returns true when a train set off.
+ */
+export function startLine(state: RailState, ownerId: number, lineId: number): boolean {
+  const line = state.lines.find((l) => l.id === lineId && l.ownerId === ownerId);
+  if (!line) return false;
+  let started = false;
+  for (const t of state.trains) {
+    if (t.lineId !== lineId || t.ownerId !== ownerId || t.status !== "stored") continue;
+    t.target = "source";
+    if (planLeg(state, t)) started = true;
+  }
+  return started;
+}
+
 /**
  * Buy a locomotive + one wagon and put it on a line — the whole of #178's
  * "assign an owned industry-platform to an owned-plant-platform line with a
- * reachable depot" in one authoritative call.
+ * reachable depot" in one authoritative call. Since #179 it is exactly
+ * `createLine` → `buyTrain` → `startLine`, rolled back whole (no line, no train,
+ * no ids spent) when any step refuses, so the panel's step-by-step path and
+ * this one-click path share every rule.
  *
  * Refusals, in the order a player hits them: the two platforms must make a
  * legal line; a depot must reach the source; and the connected owner rail
@@ -1151,44 +1275,17 @@ export function assignLine(
   if (why !== "ok") return { ok: false, why: RAIL_REFUSAL_TEXT[why] };
   const depot = depotReaching(state, ownerId, sourceId);
   if (!depot) return { ok: false, why: "No depot of yours can reach that platform." };
-  const comp = railComponents(state, ownerId);
-  const homeComp = depotComponent(comp, depot);
-  if (!homeComp) return { ok: false, why: "The depot is not connected to the platform." };
-  const busy = state.trains.some((t) => {
-    if (t.ownerId !== ownerId) return false;
-    const d = depotOfTrain(state, t);
-    return d ? depotComponent(comp, d) === homeComp : false;
-  });
-  if (busy) return { ok: false, why: "One train per connected network — this line is already running one." };
-
-  const line: RailLine = {
-    id: state.seq++,
-    ownerId,
-    name: name?.trim() || `Line ${state.lines.filter((l) => l.ownerId === ownerId).length + 1}`,
-    source: sourceId,
-    dest: destId,
-  };
-  state.lines.push(line);
-  const exit = depotExit(depot);
-  const train: Train = {
-    id: state.seq++,
-    ownerId,
-    lineId: line.id,
-    depotId: depot.id,
-    status: "stored",
-    target: "source",
-    // Parked on the depot exit: RAIL-04's "start at the depot exit", so the
-    // first thing a player sees is the train leaving the shed toward its line.
-    route: [[exit.tx, exit.ty]],
-    dist: 0,
-    planRevision: -1,
-    dwellMs: 0,
-    dirBit: exit.dir,
-    resold: false,
-  };
-  state.trains.push(train);
-  planLeg(state, train);
-  return { ok: true, line, train };
+  const seq = state.seq;
+  const created = createLine(state, ownerId, sourceId, destId, name);
+  if (!created.ok || !created.line) return { ok: false, why: created.why ?? RAIL_REFUSAL_TEXT.missing };
+  const bought = buyTrain(state, ownerId, depot.id, created.line.id);
+  if (!bought.ok || !bought.train) {
+    state.lines.splice(state.lines.indexOf(created.line), 1);
+    state.seq = seq;
+    return { ok: false, why: bought.why ?? RAIL_REFUSAL_TEXT.missing };
+  }
+  startLine(state, ownerId, created.line.id);
+  return { ok: true, line: created.line, train: bought.train };
 }
 
 /**
@@ -1418,7 +1515,7 @@ export const platformVp = (state: RailState, ownerId: number): number =>
   structuresOf(state, ownerId, "platform").length * PLATFORM_VP;
 
 // ── the Railway panel's model ─────────────────────────────────────────────
-export type RailPanelAction = "assign" | "recall" | "sell";
+export type RailPanelAction = "assign" | "recall" | "sell" | "buy" | "start";
 
 export interface RailPanelRow {
   id: number;
@@ -1427,7 +1524,10 @@ export interface RailPanelRow {
   detail: string;
   /** What the panel offers for this row (the game supplies the callbacks). */
   actions: RailPanelAction[];
-  /** For a platform with no line yet: the partner platform the action would use. */
+  /**
+   * For a platform with no line yet: the partner platform `assign` would use.
+   * For a depot offering `buy`: the line the train would be bought for.
+   */
   partnerId?: number;
 }
 
@@ -1459,16 +1559,37 @@ export function railPanelRows(state: RailState, ownerId: number): RailPanelRow[]
       partnerId,
     });
   }
+  // #179: a depot with no train offers "Buy train" for a line that has none,
+  // when the depot sits on that line's network and the network is free.
+  // Computed only when some line is still idle, so a running railway pays no
+  // network flood per paint. `buyTrain` re-checks all of it on the click.
+  const idleLines = state.lines.filter(
+    (l) => l.ownerId === ownerId && !state.trains.some((t) => t.lineId === l.id),
+  );
+  const comp = idleLines.length ? railComponents(state, ownerId) : null;
   for (const s of structuresOf(state, ownerId, "depot")) {
     const train = state.trains.find((t) => t.depotId === s.id);
+    const home = !train && comp ? depotComponent(comp, s) : 0;
+    const networkBusy = home !== 0 && state.trains.some((t) => {
+      if (t.ownerId !== ownerId) return false;
+      const d = depotOfTrain(state, t);
+      return d ? depotComponent(comp!, d) === home : false;
+    });
+    const buyFor = home !== 0 && !networkBusy
+      ? idleLines.find((l) => {
+        const src = structureById(state, l.source);
+        return src ? (comp!.get(tIdx(...stopTile(src))) ?? 0) === home : false;
+      })
+      : undefined;
     rows.push({
       id: s.id,
       kind: "depot",
       label: `Train Depot (${s.view})`,
       // "based here", not "at home": the train this depot owns is usually out
       // on its line, and the row must not promise it is parked.
-      detail: train ? "train based here" : "no train",
-      actions: [],
+      detail: train ? "train based here" : buyFor ? `no train · ready for ${buyFor.name}` : "no train",
+      actions: buyFor ? ["buy"] : [],
+      partnerId: buyFor?.id,
     });
   }
   for (const t of state.trains) {
@@ -1481,7 +1602,10 @@ export function railPanelRows(state: RailState, ownerId: number): RailPanelRow[]
       detail: trainStatusText(t),
       // A blocked train stopped on its depot exit is home (see `trainAtHome`)
       // and offers its 50% sale rather than a recall that can never route.
-      actions: trainAtHome(state, t) ? ["sell"] : ["recall"],
+      // #179: a train parked in its shed on a line can be started as well as sold.
+      actions: trainAtHome(state, t)
+        ? (t.status === "stored" && line ? ["start", "sell"] : ["sell"])
+        : ["recall"],
     });
   }
   return rows;
