@@ -14,6 +14,8 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      - name: run slow suite (AI/map sweeps)
+        run: npm run test:slow
       - name: atlas matches cells (G7)
         run: |
           # slice-atlas reads tools/opengfx-sprites.json, a gitignored build
