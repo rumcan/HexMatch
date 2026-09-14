@@ -1812,6 +1812,19 @@ export function createOriginalUi(
    * but too-small slot earns zoom, never extra columns; a session-added
    * band stays retractable until the player has played into it, while the
    * shipped size, restored saves and host-authored boards are sacred.
+   *
+   * #188 — and ONE settled box decides ONE rectangle. The settled measurement
+   * was necessary but not sufficient on its own: `Board.setSize` repaints the
+   * chrome through the game's `onChange`, and that repaint promoted the
+   * chrome's own grow to the baseline, so every LATER settled pass measured
+   * from a bigger board and grew again. Each Plant round-trip therefore added
+   * two rows in portrait (7×8 → 7×10 → 7×11) and two COLUMNS in a landscape
+   * slot (7×8 → 9×8 → 11×8 → 13×8 …), which walks exactly into the 11-column
+   * board that no longer fits — the bug #163 was supposed to have closed.
+   * Two guards close it for good: the rectangle is claimed BEFORE `setSize`,
+   * so a repaint cannot mistake the chrome for a host; and a box this fit has
+   * already answered can never decide again, so a tab switch cannot resize
+   * the board even when the measurement jitters by a pixel.
    */
   const PHONE_GROW_MAX = 2;       // at most +2 columns / +2 rows over baseline
   const PHONE_MIN_CELL = 30;      // added cells must render at least this big
@@ -1829,6 +1842,14 @@ export function createOriginalUi(
   // first swap lands; afterwards the board is grow-only for the session.
   let boardPlayed = false;
   let fitFrameQueued = false;
+  // #188: the settled slot box the live rectangle was last DECIDED from, as
+  // `"<w>x<h>"`. Empty until a real decision has been made. A tab switch
+  // cannot move the slot, so a pass that measures the box one has already
+  // answered must not touch the board at all — that is what makes "switching
+  // tabs never resizes the board" a structural fact instead of an arithmetic
+  // coincidence that only holds while the measured box holds still to the
+  // pixel. Only a genuinely different settled box re-opens the decision.
+  let settledSlotKey = "";
 
   /** Adopt an externally-authored rectangle (restore / host) as the floor. */
   function noteBoardProvenance() {
@@ -1836,6 +1857,10 @@ export function createOriginalUi(
     baseBoardW = knownBoardW = board.w;
     baseBoardH = knownBoardH = board.h;
     boardPlayed = false;
+    // #188: a REPLACED board earns one fresh settled look at the slot it now
+    // lives in — its rectangle, not the one this chrome last answered for,
+    // is what the next decision must be measured against.
+    settledSlotKey = "";
   }
 
   /** Lock in any session-added band: the player has swapped into the board. */
@@ -1874,23 +1899,44 @@ export function createOriginalUi(
       const slotW = boardSlot.clientWidth;
       const slotH = boardSlot.clientHeight;
       if (slotW > 100 && slotH > 100) {
-        const { w: wantW, h: wantH } = phoneBoardTarget(slotW, slotH);
-        const curW = board.w, curH = board.h;
-        // Before the first swap a session-added band is advisory: a settled
-        // slot that no longer fits it retracts the extra rows/columns. Once
-        // played into, the board is grow-only; the baseline can never be
-        // asked to shrink either way, and the game vetoes every resize it
-        // does not own (a multiplayer guest's host-authored grid).
-        const fitW = boardPlayed ? Math.max(curW, wantW) : wantW;
-        const fitH = boardPlayed ? Math.max(curH, wantH) : wantH;
-        if ((fitW !== curW || fitH !== curH)
-          && (hooks.requestBoardSize?.(fitW, fitH) ?? true)) {
-          board.setSize(fitW, fitH);
-          knownBoardW = fitW;
-          knownBoardH = fitH;
-          boardPlayed = false;   // the fresh band is unplayed until a swap
-          applyGridSize();
-          renderBoard();
+        // #188: ONE settled box decides ONE rectangle. A tab switch cannot
+        // move the slot, so a pass that re-measures a box this fit has
+        // already answered must leave the board alone — however many times
+        // the pane is un-hidden, and to the pixel. Only a different settled
+        // box (a real resize, a rotation, the chrome coming or going) earns
+        // a new decision. `paintZoom` below still runs on every pass: zoom
+        // is reversible and always has to answer the CURRENT box.
+        const boxKey = `${slotW}x${slotH}`;
+        if (boxKey !== settledSlotKey) {
+          settledSlotKey = boxKey;
+          const { w: wantW, h: wantH } = phoneBoardTarget(slotW, slotH);
+          const curW = board.w, curH = board.h;
+          // Before the first swap a session-added band is advisory: a settled
+          // slot that no longer fits it retracts the extra rows/columns. Once
+          // played into, the board is grow-only; the baseline can never be
+          // asked to shrink either way, and the game vetoes every resize it
+          // does not own (a multiplayer guest's host-authored grid).
+          const fitW = boardPlayed ? Math.max(curW, wantW) : wantW;
+          const fitH = boardPlayed ? Math.max(curH, wantH) : wantH;
+          if ((fitW !== curW || fitH !== curH)
+            && (hooks.requestBoardSize?.(fitW, fitH) ?? true)) {
+            // #188: CLAIM the rectangle before it lands. `Board.setSize` fires
+            // the game's `onChange` → `renderBoard` synchronously, and
+            // `noteBoardProvenance` would read the chrome's OWN grow as an
+            // externally-authored board and promote it to the floor. Every
+            // later pass then measured from the promoted base and grew again
+            // — +2 rows on each tab round-trip in portrait, and +2 COLUMNS on
+            // each round-trip in a landscape slot (7 → 9 → 11 → 13 …), which
+            // is the 11-column board #188 reported and the reason the +2 cap
+            // did not hold. Claiming first keeps the shipped (or restored)
+            // baseline the yardstick for the whole session.
+            knownBoardW = fitW;
+            knownBoardH = fitH;
+            board.setSize(fitW, fitH);
+            boardPlayed = false;   // the fresh band is unplayed until a swap
+            applyGridSize();
+            renderBoard();
+          }
         }
       }
     }

@@ -15,6 +15,16 @@
 // that minted the bogus 11-column board. Growth follows the slot aspect, is
 // capped at +2 per axis, switches off below a 30px cell, and only an
 // unplayed band the chrome itself added this session may be retracted.
+//
+// #188 — and the harness below wires `board.onChange` to `renderBoard`,
+// exactly as `src/iso/quarry.ts` + `src/iso/game.ts` do. That one line is
+// what a settled measurement alone could not survive: `Board.setSize` fires
+// the repaint SYNCHRONOUSLY, and the repaint used to promote the chrome's own
+// grow to the baseline it measures from, so every later settled pass grew
+// again — +2 rows per tab round-trip in portrait (7×8 → 7×10 → 7×11) and +2
+// COLUMNS per round-trip in a landscape slot (7×8 → 9×8 → 11×8 → 13×8 → …),
+// straight into the 11-column board that no longer fits. A harness that
+// leaves `onChange` at its no-op default cannot see any of that.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Board } from "../../src/game/board";
 import { createOriginalUi, type OriginalUi } from "../../src/game/ui";
@@ -43,7 +53,7 @@ async function settle(ms = 40) {
   await vi.advanceTimersByTimeAsync(ms);
 }
 
-function mount(size: (w: number, h: number) => boolean = () => true) {
+function mount(size: (w: number, h: number) => boolean = vi.fn(() => true)) {
   setRng(mulberry32(7));
   const board = new Board();
   const market = createIsoMarket([{ i: 0, id: "you", name: "You", human: true, purse: emptyBag() }]);
@@ -52,6 +62,13 @@ function mount(size: (w: number, h: number) => boolean = () => true) {
     onBlackAction: vi.fn(),
     requestBoardSize: size,
   });
+  // #188: the REAL wiring. `src/iso/quarry.ts` sets `board.onChange` to its
+  // hook and `src/iso/game.ts` points that hook at `ui.renderBoard()`, so
+  // every resize — including the fit's own `setSize` — repaints the chrome
+  // before the fit's next statement runs. Leaving this a no-op (as this
+  // harness used to) hides the whole class of feedback bugs the phone fit
+  // lives or dies by.
+  board.onChange = () => ui.renderBoard();
   document.body.append(ui.el);
   return { board, ui, market, ask: size as ReturnType<typeof vi.fn> };
 }
@@ -220,17 +237,21 @@ describe("#163 tab switches never resize the board", () => {
     stubSlotBox(ui, 374, 600);
     await openTrade(ui);
     expect([board.w, board.h]).toEqual([7, 10]);
+    const wrap = ui.el.querySelector("#iso-quarry .board-wrap:last-child") as HTMLElement;
+    const zoom0 = wrap.dataset.zoom;
     ask.mockClear();
-    // Every economy tab, twice out and back. The settled slot is the same
-    // box each time, so the chrome must never ask again — and above all
-    // never ask for the 11-column board the mid-switch box produced.
-    for (let round = 0; round < 2; round++) {
+    // Every economy tab, ten times out and back (#188's acceptance run). The
+    // settled slot is the same box each time, so the chrome must never ask
+    // again — and above all never ask for the 11-column board the mid-switch
+    // box produced.
+    for (let round = 0; round < 10; round++) {
       for (const away of ["bank", "market", "feed"] as const) {
         tapTab(ui, away);
         await settle();
         tapTab(ui, "plant");
         await settle();
-        expect([board.w, board.h]).toEqual([7, 10]);
+        expect([board.w, board.h], `round ${round} ${away} → plant`).toEqual([7, 10]);
+        expect(wrap.dataset.zoom, `round ${round} ${away} → plant re-zoomed`).toBe(zoom0);
       }
     }
     expect(ask).not.toHaveBeenCalled();
@@ -346,5 +367,142 @@ describe("#163 tab switches never resize the board", () => {
     window.dispatchEvent(new Event("resize"));
     await settle();
     expect([board.w, board.h]).toEqual([9, 8]);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// #188 — ONE settled box decides ONE rectangle.
+//
+// A settled measurement was necessary but not sufficient. `Board.setSize`
+// repaints the chrome through the game's `onChange`, and that repaint used to
+// read the chrome's own grow as an externally-authored board and adopt it as
+// the baseline — so every LATER settled pass measured from the bigger board
+// and grew again. The +2 cap could not hold: each Plant round-trip added two
+// rows in portrait, and two COLUMNS in a landscape slot, walking 7 → 9 → 11 →
+// 13 … straight into the over-wide board that no longer fits. These tests
+// drive the real wiring and the real repeated round-trips, which is what the
+// rest of the file's harness could not see.
+// ══════════════════════════════════════════════════════════════════════════
+describe("#188 a settled box decides one rectangle — round-trips cannot creep", () => {
+  /** The zoom `paintZoom` last published, as the dataset twin the tests read. */
+  const zoomOf = (ui: OriginalUi) =>
+    (ui.el.querySelector("#iso-quarry .board-wrap:last-child") as HTMLElement).dataset.zoom;
+
+  it("portrait: ten Plant round-trips keep the 7×10 the slot asked for", async () => {
+    setViewport(PHONE.w, PHONE.h);
+    const { board, ui, ask } = mount(vi.fn(() => true));
+    stubSlotBox(ui, 374, 600);
+    await openTrade(ui);
+    expect([board.w, board.h]).toEqual([7, 10]);
+    const zoom0 = zoomOf(ui);
+    ask.mockClear();
+    for (let round = 0; round < 10; round++) {
+      tapTab(ui, "bank");
+      await settle();
+      tapTab(ui, "plant");
+      await settle();
+      // A row gained per round-trip is exactly the creep #188 saw: the third
+      // row over the cap (7×11) is the board the player cannot fit.
+      expect([board.w, board.h], `round ${round}`).toEqual([7, 10]);
+      expect(zoomOf(ui), `round ${round}`).toBe(zoom0);
+    }
+    expect(ask).not.toHaveBeenCalled();
+  });
+
+  it("landscape: ten Plant round-trips keep the columns the slot asked for — never BOARD_W + 4", async () => {
+    setViewport(PHONE_LANDSCAPE.w, PHONE_LANDSCAPE.h);
+    const { board, ui, ask } = mount(vi.fn(() => true));
+    // 860×300: the slack is all horizontal, so the ONE legitimate grow buys
+    // COLUMNS (7→9, the +2 cap) and no rows.
+    stubSlotBox(ui, 860, 300);
+    await openTrade(ui);
+    expect([board.w, board.h]).toEqual([9, 8]);
+    const settled = [board.w, board.h];
+    ask.mockClear();
+    for (let round = 0; round < 10; round++) {
+      tapTab(ui, "bank");
+      await settle();
+      tapTab(ui, "plant");
+      await settle();
+      expect([board.w, board.h], `round ${round}`).toEqual(settled);
+    }
+    // The board #188 reported: 11 columns, one over the cap and off the
+    // screen. Nothing in the run above may ask for it, or drift toward it.
+    expect(ask).not.toHaveBeenCalled();
+    expect(board.w).toBeLessThan(BOARD_W + 4);
+    expect(ask.mock.calls.map(([w]) => w)).not.toContain(BOARD_W + 4);
+  });
+
+  it("measures the slot short on the first pass and full on the second: no grow to BOARD_W + 4", async () => {
+    setViewport(PHONE.w, PHONE.h);
+    const { board, ui, ask } = mount(vi.fn(() => true));
+    // The tab switch's first settled look lands on the squashed box — full
+    // width, a sliver of height: the shape that used to mint the 11-column
+    // board. It must refuse (the 30px comfort floor), ask nothing, and zoom.
+    stubSlotBox(ui, 374, 150);
+    await openTrade(ui);
+    expect([board.w, board.h]).toEqual([BOARD_W, BOARD_H]);
+    expect(ask).not.toHaveBeenCalled();
+    expect(Number(zoomOf(ui))).toBeLessThan(1);
+    // …then the real layout arrives, and the fit answers the NEW box. The
+    // legitimate grow happens once, from the baseline — not compounded on
+    // top of the squashed pass, and never to the maximum.
+    stubSlotBox(ui, 374, 600);
+    window.dispatchEvent(new Event("resize"));
+    await settle();
+    expect([board.w, board.h]).toEqual([7, 10]);
+    expect(board.w).toBeLessThan(BOARD_W + 4);
+    // …and a further settled pass on that same box changes neither the board
+    // nor asks again: the box has been answered, to the pixel.
+    await settle();
+    tapTab(ui, "bank");
+    await settle();
+    tapTab(ui, "plant");
+    await settle();
+    expect([board.w, board.h]).toEqual([7, 10]);
+    expect(ask.mock.calls).toEqual([[7, 10]]);
+  });
+
+  it("a repeated settled pass on an answered box never asks again (the tab switch is not a trigger)", async () => {
+    setViewport(PHONE.w, PHONE.h);
+    const { board, ui, ask } = mount(vi.fn(() => true));
+    stubSlotBox(ui, 374, 600);
+    await openTrade(ui);
+    expect(ask.mock.calls).toEqual([[7, 10]]);
+    ask.mockClear();
+    // Every way a pass can arrive — the view toggling out and back, a resize
+    // that does not move the slot, the ResizeObserver's own fire — measures
+    // the same box, and the same box may not decide twice.
+    for (let i = 0; i < 5; i++) {
+      window.dispatchEvent(new Event("resize"));
+      await settle();
+    }
+    (ui.el.querySelector('.mnav-btn[data-view="map"]') as HTMLElement).click();
+    await settle();
+    (ui.el.querySelector('.mnav-btn[data-view="trade"]') as HTMLElement).click();
+    await settle();
+    expect([board.w, board.h]).toEqual([7, 10]);
+    expect(ask).not.toHaveBeenCalled();
+  });
+
+  it("a board REPLACED under the chrome earns one fresh settled look", async () => {
+    setViewport(PHONE.w, PHONE.h);
+    const { board, ui } = mount(vi.fn(() => true));
+    stubSlotBox(ui, 374, 600);
+    await openTrade(ui);
+    expect([board.w, board.h]).toEqual([7, 10]);
+    // A host sync / restored save arrives asynchronously (the path that only
+    // knows to call renderBoard). The replaced rectangle is the new floor,
+    // AND the box gate re-opens so the new board is looked at — a row taller
+    // here, measured from 9×8 rather than from the 7×10 it replaced.
+    let id = 7000;
+    board.restore({
+      grid: Array.from({ length: 8 }, () =>
+        Array.from({ length: 9 }, () => ({ id: id++, res: "wood", tier: 0 }))),
+    });
+    ui.renderBoard();
+    window.dispatchEvent(new Event("resize"));
+    await settle();
+    expect([board.w, board.h]).toEqual([9, 10]);
   });
 });

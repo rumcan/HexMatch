@@ -13,6 +13,16 @@ import { bootBudget, isPhoneProject } from "./boot";
 // growth at +2 rows/columns, and tab switches on the same viewport ask for
 // the exact same rectangle. These assertions read the REAL board box the
 // player sees, so the band (and the overflow) fail loudly.
+//
+// #188 — the settled measurement was not enough by itself. `Board.setSize`
+// repaints the chrome through the game's `onChange`, and that repaint used to
+// adopt the chrome's own grow as the baseline the next pass measured from, so
+// every round-trip below added two rows (portrait) or two COLUMNS (landscape)
+// and the cap could not hold — the same over-wide board, one tab switch at a
+// time. `src/game/ui.ts` now claims the rectangle before `setSize` and will
+// not re-decide a slot box it has already answered, so the round-trip loop in
+// this spec is also the creep regression: `first` is read once, and every
+// later read must match it exactly.
 // ══════════════════════════════════════════════════════════════════════════
 
 const ISO_URL = "/hexmatch/?seed=199";

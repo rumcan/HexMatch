@@ -26,10 +26,26 @@ window".
 
 * The phone fit measures the **slot** the sheet leaves for the board
   (`.board-slot` between the tab strip and the floating footer), picks the
-  cell that fills it, and proposes `cols × rows` clamped around the shipped
-  7×8 (up to +4 columns and +4 rows). A 390×844 portrait phone gets roughly
-  7×10–7×12 at ~52 px gems; a 844×390 landscape phone buys its extra width
-  with columns (up to 11).
+  cell that fills it, and proposes `cols × rows` around the shipped 7×8. A
+  390×844 portrait phone gets roughly 7×10 at ~52 px gems; a 844×390
+  landscape phone buys its extra width with columns — 7×8 → 9×8.
+* The rectangle is decided by the slot's **aspect ratio** and capped at **+2
+  per axis** (#163), and it may only be decided from a **settled** box: a
+  next-frame pass or the slot's `ResizeObserver`, never the box a tab switch
+  exposes for a frame. Growth switches off entirely (zoom only) below a 30 px
+  cell, so a short slot can never buy columns with unreadable gems.
+* **One settled box decides one rectangle** (#188). The fit records the
+  `width × height` it last answered, and only a *different* box may decide
+  again — so a tab switch structurally cannot resize the board, whatever the
+  arithmetic would do with a measurement that jittered by a pixel. The
+  rectangle it asks for is also **claimed before `Board.setSize` runs**:
+  `setSize` repaints the chrome through the game's `onChange` synchronously,
+  and that repaint must not mistake the chrome's own grow for a restored save
+  or a host-authored board and adopt it as the new floor. Before it did, the
+  floor ratcheted up once per settled pass and the +2 cap could not hold —
+  every Processing Plant round-trip added two rows in portrait (7×8 → 7×10 →
+  7×11) and two **columns** in a landscape slot (7×8 → 9×8 → 11×8 → 13×8 …),
+  which is the over-wide board of #188.
 * The growth goes through **`hooks.requestBoardSize`** — the chrome asks, the
   game answers. `src/iso/game.ts` says yes solo and as host (the host's whole
   rectangle ships on the wire, so a guest sees the same board it grows), and
@@ -51,9 +67,12 @@ window".
 
 Verified numerically by `tests/unit/iso-mobile-fit.test.ts` (grows into a
 stubbed slot, honors the veto, grows only from a real measurement, keeps the
-grown rectangle when the window shrinks, follows a restored grid) — jsdom has
-no layout, so the pixel proof is the three phone projects plus the live
-preview.
+grown rectangle when the window shrinks, follows a restored grid, and — for
+#188 — drives ten Plant round-trips with the board's real `onChange` wiring,
+which is what the creep needed to show itself) — jsdom has no layout, so the
+pixel proof is the three phone projects plus the live preview. That wiring
+matters: `src/iso/quarry.ts` points `board.onChange` at `ui.renderBoard()`,
+so a harness that leaves it a no-op cannot see any feedback bug in this fit.
 
 ## 2. The sheet becomes the window
 
@@ -109,10 +128,10 @@ column layout):
 | File | Change |
 |---|---|
 | `src/game/board.ts` | live `w`/`h` getters (grid-derived), `setSize()`, every scan/refill counts the live dims |
-| `src/game/ui.ts` | `isPhoneViewport()`, slot-measured grow-fit, `applyGridSize()` from `renderBoard`, `.board-slot` mount, icon tabs + grip, tucking top bar with change-flash, phone gate on `rivalQuip`, `requestBoardSize` hook |
+| `src/game/ui.ts` | `isPhoneViewport()`, slot-measured grow-fit (#163: settled, aspect-driven, +2 cap; #188: one settled box per rectangle, claimed before `setSize`), `applyGridSize()` from `renderBoard`, `.board-slot` mount, icon tabs + grip, tucking top bar with change-flash, phone gate on `rivalQuip`, `requestBoardSize` hook |
 | `src/iso/game.ts` | `requestBoardSize` — solo/host yes, guest no |
 | `src/game/styles.css` | MOBILE-02 block; landscape phones join the sheet regime; `.board-slot` |
-| `tests/unit/iso-mobile-fit.test.ts` | the fit contract, pinned |
+| `tests/unit/iso-mobile-fit.test.ts` | the fit contract, pinned — including the real `board.onChange` wiring and the #188 round-trip runs |
 
 ## 6. What did NOT change
 
