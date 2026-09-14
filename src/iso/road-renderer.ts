@@ -50,6 +50,9 @@ import {
 } from "./rail-renderer";
 
 type Ctx2D = CanvasRenderingContext2D;
+
+/** The one-pixel softening baked into every road/rail chunk raster. */
+export const ROAD_SOFTEN_FILTER = "blur(1px)";
 type Surface = HTMLCanvasElement | OffscreenCanvas;
 
 /** Which road implementation the renderer is using. Never persisted. */
@@ -1011,6 +1014,10 @@ export class RoadCache {
       const ctx = (surface as HTMLCanvasElement).getContext("2d") as Ctx2D | null;
       if (!ctx) return null;
       ctx.imageSmoothingEnabled = true;
+      // Soften the vectors by a pixel so roads and rails sit with the pixel
+      // artwork instead of looking razor-cut. Baked into the cached raster, so
+      // it costs nothing per frame (a context without `filter` ignores it).
+      ctx.filter = ROAD_SOFTEN_FILTER;
       // Ground coordinates → this surface's device pixels. The gutter origin
       // is folded in here; the camera is NOT — that belongs to the blit.
       ctx.setTransform(HW * zoom, HH * zoom, -HW * zoom, HH * zoom, -px * zoom, -py * zoom);
@@ -1019,6 +1026,7 @@ export class RoadCache {
       // is, and why the road pass above has to stay exactly as it was.
       paintRailTiles(ctx, rail, this.railDetail, this.railStyle);
       ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.filter = "none";
     }
 
     const bytes = surface ? w * h * 4 : 0;

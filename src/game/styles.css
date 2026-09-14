@@ -209,7 +209,6 @@ html, body, #root {
   border-left: 2px solid var(--info); padding: 8px 11px; max-width: 230px;
   border-radius: var(--r);
   box-shadow: 0 10px 26px rgba(0, 0, 0, .5), inset 0 1px 0 rgba(242, 220, 166, .1);
-  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
 }
 /* PP-03: the inspector doubles as the "readable reason" for an invalid
    Factory/Depot placement — red verdict, matching the red overlay. */
@@ -255,8 +254,6 @@ html, body, #root {
     var(--felt) 0 0 / 240px,
     linear-gradient(180deg, var(--glass-hi), var(--glass) 46%, var(--glass-lo));
   background-blend-mode: luminosity, normal;
-  backdrop-filter: blur(10px) saturate(.86) brightness(.78);
-  -webkit-backdrop-filter: blur(10px) saturate(.86) brightness(.78);
   border: 1px solid var(--brass-lo);
   border-radius: var(--r);
   padding: var(--pad);
@@ -336,8 +333,6 @@ html, body, #root {
     var(--felt) 0 0 / 240px,
     linear-gradient(180deg, rgba(28, 19, 12, .94), rgba(10, 7, 5, .74) 72%, rgba(10, 7, 5, .5));
   background-blend-mode: luminosity, normal;
-  backdrop-filter: blur(12px) saturate(.85) brightness(.8);
-  -webkit-backdrop-filter: blur(12px) saturate(.85) brightness(.8);
   border-bottom: 1px solid var(--brass-lo);
   box-shadow: inset 0 -2px 0 rgba(255, 176, 46, .16), 0 10px 30px rgba(0, 0, 0, .55);
 }
@@ -364,7 +359,6 @@ html, body, #root {
   display: flex; justify-content: center; align-items: center;
   padding: 7px 12px;
   background: linear-gradient(0deg, rgba(9, 6, 4, .96), rgba(9, 6, 4, .66) 60%, rgba(9, 6, 4, .28));
-  backdrop-filter: blur(12px) brightness(.85); -webkit-backdrop-filter: blur(12px) brightness(.85);
   border-top: 1px solid var(--brass-lo);
   box-shadow: inset 0 2px 0 rgba(255, 176, 46, .12), 0 -10px 26px rgba(0, 0, 0, .5);
   pointer-events: none;
@@ -1323,7 +1317,6 @@ html, body, #root {
     var(--smoke) 0 0 / 600px,
     rgba(26, 22, 18, .8);
   background-blend-mode: screen, normal;
-  backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
   border: 1px solid rgba(124, 182, 216, .25);
   cursor: not-allowed;
   text-shadow: 0 0 14px rgba(0, 0, 0, .9);
@@ -1850,8 +1843,6 @@ html, body, #root {
     var(--felt) 0 0 / 200px,
     linear-gradient(180deg, var(--glass-hi), var(--glass-lo));
   background-blend-mode: luminosity, normal;
-  backdrop-filter: blur(10px) saturate(.85) brightness(.8);
-  -webkit-backdrop-filter: blur(10px) saturate(.85) brightness(.8);
   border: 1px solid var(--brass-lo);
   border-left: 3px solid var(--pc);
   border-radius: var(--r);
@@ -2009,7 +2000,6 @@ html, body, #root {
     var(--felt) 0 0 / 180px,
     linear-gradient(180deg, rgba(38, 28, 19, .94), rgba(10, 7, 5, .94));
   background-blend-mode: luminosity, normal;
-  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
   border: 1px solid var(--brass-lo);
   border-left: 3px solid var(--txt-dim);
   box-shadow: 0 10px 28px rgba(0, 0, 0, .66), inset 0 1px 0 rgba(242, 220, 166, .14);
@@ -2193,8 +2183,6 @@ html, body, #root {
 .modal-root { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; }
 .modal-back {
   position: absolute; inset: 0; background: rgba(4, 3, 2, .84);
-  backdrop-filter: blur(8px) saturate(.7) brightness(.6);
-  -webkit-backdrop-filter: blur(8px) saturate(.7) brightness(.6);
 }
 /* The dialog is a plate like any other: felt inset, brass edge, and the frame's
    corners painted in by `::after` at their own size. Nine-slicing this instead
@@ -2470,7 +2458,6 @@ html, body, #root {
       var(--felt) 0 0 / 120px,
       radial-gradient(circle at 34% 26%, rgba(255, 176, 46, .16), rgba(8, 5, 3, .92) 62%);
     background-blend-mode: luminosity, normal;
-    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
     color: var(--gold2); font-size: 20px; line-height: 1;
     cursor: pointer;
     box-shadow: 0 4px 16px rgba(0,0,0,.45), inset 0 1px 0 rgba(242, 220, 166, .2);
@@ -2548,7 +2535,6 @@ html, body, #root {
       var(--felt) 0 0 / 200px,
       linear-gradient(180deg, rgba(24, 17, 11, .96), rgba(8, 5, 3, .98));
     background-blend-mode: luminosity, normal;
-    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
     border-top: 1px solid var(--brass-lo);
     box-shadow: inset 0 1px 0 rgba(242, 220, 166, .16);
     padding-bottom: env(safe-area-inset-bottom, 0);
@@ -2904,8 +2890,7 @@ html, body, #root {
     var(--room) center / cover,
     rgba(6, 4, 3, .86);
   background-blend-mode: soft-light, normal;
-  backdrop-filter: blur(9px) saturate(.8) brightness(.72);
-  -webkit-backdrop-filter: blur(9px) saturate(.8) brightness(.72); }
+  }
 #iso-skill-prompt .iso-skill-card { max-width: 640px; padding: 20px 24px 16px;
   position: relative;
   border: 1px solid var(--brass-lo);
@@ -3017,8 +3002,7 @@ html, body, #root {
     var(--room) center / cover,
     rgba(6, 4, 3, .88);
   background-blend-mode: soft-light, normal;
-  backdrop-filter: blur(9px) saturate(.8) brightness(.72);
-  -webkit-backdrop-filter: blur(9px) saturate(.8) brightness(.72); }
+  }
 /* A click on the veil is a Skip; the card rides above it. */
 #iso-tutorial .tut-shade { position: absolute; inset: 0; }
 .tut-card {
