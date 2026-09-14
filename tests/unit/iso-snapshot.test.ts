@@ -325,7 +325,9 @@ describe("E10 malformed payloads", () => {
     // (both layers are the same size across versions, so the version gate is
     // what actually keeps mixed-version rooms from silently diverging).
     const old = { ...buildSnapshot(source()), version: 7 };
-    expect(SNAPSHOT_VERSION).toBe(12);
+    // v13 (RAIL-04 / #178): the snapshot gained the `rail` wire — a v12 guest
+    // would draw a railway as empty ground, so the gate has to see the bump.
+    expect(SNAPSHOT_VERSION).toBe(13);
     expect(validateSnapshot(old)?.code).toBe("version");
     expect(() => applySnapshot(old)).toThrow(/incompatible version/i);
   });

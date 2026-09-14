@@ -37,6 +37,10 @@ import {
   DIRS, DIR, OPPOSITE, PRESENT, tIdx, inMapT, trackOpenTo, PUBLIC_OWNER,
   plantFootprintTiles, type Track, type TrackKind,
 } from "./track";
+// RAIL-04 (#178): the railway is a SOURCE of throughput, not a second economy.
+// `railOpenTo` / `railServicedIndustries` are the rail module's own rules; this
+// module only asks them the same question it asks the road tar.
+import { railOpenTo, railServicedIndustries, type RailState } from "./rail";
 
 /** Catchment is a 4×4 rectangle centred on the harvester tile. */
 export const CATCHMENT = 4;
@@ -79,6 +83,13 @@ export interface EconomyState {
   track: Track;
   harvesters: Harvester[];
   factories: Factory[];
+  /**
+   * RAIL-04 (#178): the railway, when the game has one. Optional on purpose —
+   * the headless economy tests, the rival's sweep and any save written before
+   * the railway existed build an `EconomyState` with no rails, and every rail
+   * rule below reads as "no railway" rather than throwing.
+   */
+  rail?: RailState;
 }
 
 // ── catchment ─────────────────────────────────────────────────────────────
@@ -119,10 +130,15 @@ export function industriesInCatchment(grid: Grid, h: Harvester): Industry[] {
  * are every player's to use. Parking a Depot beside the inter-town highway is
  * a legitimate opening, exactly as it would be beside your own road.
  */
-export function isServiced(track: Track, h: Harvester): boolean {
+export function isServiced(track: Track, h: Harvester, rail?: RailState | null): boolean {
   for (const d of DIRS) {
     const nx = h.tx + DIR[d][0], ny = h.ty + DIR[d][1];
     if (trackOpenTo(track, h.ownerId, nx, ny)) return true;
+    // RAIL-04 (#178): the epic's clause — a running line gives a source THE
+    // SAME reachability a basic road connection does. So a rail tile at the
+    // Depot services it exactly as a Dirt Road tile would, and the Depot's
+    // industries become claimable and deliverable over the railway.
+    if (rail && railOpenTo(rail.rail, h.ownerId, nx, ny)) return true;
   }
   return false;
 }
@@ -386,7 +402,7 @@ export function resolveConnection(
 export function industryLocks(state: EconomyState): Map<number, Harvester> {
   const locks = new Map<number, Harvester>();
   for (const h of state.harvesters) {
-    if (!isServiced(state.track, h)) continue;
+    if (!isServiced(state.track, h, state.rail)) continue;
     for (const ind of industriesInCatchment(state.grid, h)) {
       if (!locks.has(ind.id)) locks.set(ind.id, h);
     }
@@ -437,7 +453,7 @@ export function harvesterYield(
   state: EconomyState, comp: Components, locks: Map<number, Harvester>,
   h: Harvester, now: number,
 ): HarvesterYield {
-  const serviced = isServiced(state.track, h);
+  const serviced = isServiced(state.track, h, state.rail);
   const connection = serviced ? resolveConnection(state, comp, h) : NO_CONNECTION;
   const yields: Yield = {};
   if (!serviced || connection.kind === null) {
@@ -469,12 +485,56 @@ export function playerResources(
   // All of one player's harvesters share a track-owner id, so one flood pair
   // serves the whole loop.
   const c = comp ?? buildAllComponents(state.track, ownerIdOf(state, owner));
+  // RAIL-04: the industry ids a road Depot is ALREADY delivering, so the rail
+  // pass below can skip them — the epic's "dedupe ids across road and rail".
+  const byRoad = new Set<number>();
   for (const h of state.harvesters) {
     if (h.owner !== owner) continue;
     const y = harvesterYield(state, c, locks, h, now);
+    if (y.serviced && y.connection.kind !== null) {
+      for (const ind of heldIndustries(state, h, locks)) byRoad.add(ind.id);
+    }
     for (const [cargo, v] of Object.entries(y.yields) as [Cargo, number][]) {
       out[cargo] = (out[cargo] ?? 0) + v;
     }
+  }
+  const railYields = railYield(state, owner, now, byRoad);
+  for (const [cargo, v] of Object.entries(railYields) as [Cargo, number][]) {
+    out[cargo] = (out[cargo] ?? 0) + v;
+  }
+  return out;
+}
+
+/**
+ * RAIL-04 (#178): what one owner's RUNNING railway lines deliver, per cargo.
+ *
+ * The epic is precise about the value of a line: it grants the SAME source
+ * reachability a basic road connection does, and no more — so every industry
+ * whose platform is on a live line pays its output at the Dirt Road tier (v1
+ * has no rail tiers to upgrade it to), and nothing is paid for a train that is
+ * stored, blocked or still on its first departure (`railServicedIndustries`
+ * enforces exactly that).
+ *
+ * `already` carries the industry ids a road Depot is delivering, so an industry
+ * reached BOTH ways is paid once. Blockaded industries still produce nothing —
+ * the same `banditUntil` rule the road path applies.
+ */
+export function railYield(
+  state: EconomyState, owner: string, now: number, already?: ReadonlySet<number>,
+): Yield {
+  const rail = state.rail;
+  if (!rail) return {};
+  const ownerId = ownerIdOf(state, owner);
+  if (ownerId === 0) return {};
+  const out: Yield = {};
+  for (const id of railServicedIndustries(rail, ownerId)) {
+    if (already?.has(id)) continue;
+    const ind = state.grid.industries.find((i) => i.id === id);
+    if (!ind || ind.banditUntil > now) continue;    // blockaded: no output
+    const def = INDUSTRY_BY_KEY[ind.type];
+    if (!def) continue;
+    const amount = (ind.output ?? def.output) * TRANSPORT.dirt.throughput;
+    out[def.cargo] = (out[def.cargo] ?? 0) + amount;
   }
   return out;
 }

@@ -220,6 +220,11 @@ export const VICTORY = {
   upgrade: 0.25,
   /** VP per processing plant raised after setup. */
   plant: 1,
+  /** RAIL-02 (#176): VP per railway PLATFORM built (`PLATFORM_VP` in
+   *  `rail.ts` aliases this). The epic's exact figure: a platform is worth its
+   *  point at valid construction — a line does not have to be running — and
+   *  the point is revoked when the platform is demolished. */
+  platform: 1,
   /** VP needed to win. Back to 10★ — the AI-02 experiment with a 20★ line
    *  made games drag, so the race runs to 10 again.
    *  AI-04: this is the SHIPPED line and the default for `hasWon`, but it is no

@@ -698,6 +698,35 @@ export function mirrorOwnerName(name: string): string {
 }
 
 /**
+ * RAIL-04 (#178): mirror the railway into the guest's seat frame — the layer's
+ * owner bytes, every structure, line and train owner, and the sparse patch's
+ * owner bytes. Without this a guest's own platforms would read as the host's
+ * and its panel would offer the rival's lines.
+ */
+function mirrorRail(w: Snapshot["rail"]): Snapshot["rail"] | undefined {
+  if (!w) return undefined;
+  const out: NonNullable<Snapshot["rail"]> = {
+    ...w,
+    structures: w.structures.map((s) => ({
+      ...s,
+      owner: mirrorOwnerName(s.owner),
+      ownerId: mirrorOwnerId(s.ownerId),
+    })),
+    lines: w.lines.map((l) => ({ ...l, ownerId: mirrorOwnerId(l.ownerId) })),
+    trains: w.trains.map((t) => ({ ...t, ownerId: mirrorOwnerId(t.ownerId) })),
+  };
+  if (w.owner !== undefined) {
+    const owner = base64ToBytes(w.owner);
+    for (let i = 0; i < owner.length; i++) owner[i] = mirrorOwnerByte(owner[i]);
+    out.owner = bytesToBase64(owner);
+  }
+  if (w.tiles !== undefined) {
+    out.tiles = w.tiles.map((t) => ({ ...t, owner: mirrorOwnerByte(t.owner) }));
+  }
+  return out;
+}
+
+/**
  * Mirror a full wire snapshot into the guest's local seat frame. `rivalSabotage`
  * is deliberately left UNMIRRORED: sabotage always targets seat 1 (the host's
  * rival = the guest's own plant), so the guest applies it to its own board
@@ -728,6 +757,7 @@ export function mirrorSnapshot(snap: Snapshot): Snapshot {
     protests: snap.protests?.map((pr) => ({ ...pr, owner: mirrorOwnerName(pr.owner) })),
     trucks: snap.trucks?.map((t) => ({ ...t, ownerId: mirrorOwnerId(t.ownerId) })),
     cars: snap.cars?.map((c) => ({ ...c })),
+    rail: mirrorRail(snap.rail),
     boards: snap.boards?.map((b) => ({ ...b, owner: mirrorOwnerName(b.owner) })),
     crossPrompt: snap.crossPrompt
       ? { ...snap.crossPrompt, boardOwner: mirrorOwnerName(snap.crossPrompt.boardOwner) }
@@ -758,6 +788,7 @@ export function mirrorDelta(msg: DeltaMsg): DeltaMsg {
     protests: msg.protests?.map((pr) => ({ ...pr, owner: mirrorOwnerName(pr.owner) })),
     trucks: msg.trucks?.map((t) => ({ ...t, ownerId: mirrorOwnerId(t.ownerId) })),
     cars: msg.cars?.map((c) => ({ ...c })),
+    ...(msg.rail ? { rail: mirrorRail(msg.rail) } : {}),
     boards: msg.boards?.map((b) => ({ ...b, owner: mirrorOwnerName(b.owner) })),
     // #112: an EXPLICIT null means "the host cleared the prompt" and must
     // reach the guest — `?? undefined` used to swallow it, so a chooser the

@@ -35,6 +35,9 @@ import { CARGO, CARGOES, TRANSPORT, VICTORY, UPGRADE_COST, type Cargo, type Port
 import { DEPOT_COST } from "../iso/construction";
 import { PLANT_COST } from "../iso/plants";
 import { GEM_TO_CARGO } from "../iso/quarry";
+// RAIL-04 (#178): the buttons print the railway's real prices and its real
+// point value — the same table and the same constant the placement charges.
+import { RAIL_COSTS } from "../iso/rail";
 // VP-01: quarters on the scoreboard — 4.75★, not 4.7499999999999996★.
 import { fmtVp } from "../iso/victory";
 // AI-01: the rival difficulty presets the top-bar selector switches between.
@@ -108,7 +111,29 @@ const portraitFor = (p: UiPlayer, index: number): string =>
  * "read the map" hand). Right-click on the map drops any tool back to it,
  * and Q does the same from the keyboard.
  */
-export type UiTool = "select" | "dirt" | "road" | "harvester" | "plant" | "demolish";
+export type UiTool =
+  | "select" | "dirt" | "road" | "harvester" | "plant" | "demolish"
+  // RAIL-04 (#178): the railway's tools. `rail` drags track, `platform` and
+  // `raildepot` place one structure in the current heading (R turns it), and
+  // `railway` holds the panel: the lines, the trains and the buy/recall/sell
+  // buttons.
+  | "rail" | "platform" | "raildepot" | "railway";
+
+/**
+ * RAIL-04: one row of the Railway panel. The MODEL is `railPanelRows` in
+ * `rail.ts` (platforms, depots, trains and which actions each offers); the game
+ * adds the price the button should print, because only it knows the tables.
+ */
+export interface UiRailRow {
+  id: number;
+  kind: "platform" | "depot" | "train";
+  label: string;
+  detail: string;
+  actions: ("assign" | "recall" | "sell")[];
+  partnerId?: number;
+  /** What the action costs, in the game's own cargo wording. */
+  hint?: string;
+}
 
 export interface UiPlayer {
   id: string;
@@ -174,10 +199,24 @@ export interface UiState {
    * top-bar Names button paints its pressed state from this.
    */
   showNames?: boolean;
+  /**
+   * RAIL-04 (#178): the Railway panel — one row per platform, depot and train,
+   * each carrying the actions a player may take on it. Optional: a state that
+   * omits it (an older harness, a game with no railway yet) simply shows the
+   * panel's empty hint.
+   */
+  rail?: { rows: UiRailRow[]; view: string };
 }
 
 export interface UiHooks {
   onTool: (tool: UiTool) => void;
+  /**
+   * RAIL-04: the Railway panel's buttons. `id` is the row's rail id (a
+   * platform, a depot or a train — the action says which table), and `assign`
+   * also carries the partner platform the line would run to. The game owns the
+   * rules and the prices; this chrome only reports the click.
+   */
+  onRailAction: (id: number, action: "assign" | "recall" | "sell", partnerId?: number) => void;
   /**
    * NAMES: the top-bar "Names" button reports a toggle. The game owns the
    * state and the localStorage record; the chrome only repaints its pressed
@@ -460,6 +499,21 @@ export function createOriginalUi(
   const buildList = h("div", "build-list");
   bp.appendChild(buildList);
   left.appendChild(bp);
+
+  // ── RAIL-04 (#178): the Railway panel ────────────────────────────────────
+  // Shown while a railway tool is held (the tile tool, the two placements and
+  // the panel button itself). The rows come from the game — one per platform,
+  // depot and train, with the actions the RULES allow — so the panel can never
+  // offer a button the rules would refuse (a sell before the train is home, an
+  // assign on a network that already runs one).
+  const railPanel = h("div", "panel rail-panel hidden");
+  railPanel.appendChild(h("div", "panel-title", "Railway"));
+  const railNote = h("div", "pane-note");
+  railNote.innerHTML = "Rail costs stone · a platform pays +1★ · one train per connected network. <b>R</b> turns a platform or depot.";
+  railPanel.appendChild(railNote);
+  const railRows = h("div", "rail-rows");
+  railPanel.appendChild(railRows);
+  left.appendChild(railPanel);
 
   const sp = h("div", "panel grow");
   sp.appendChild(h("div", "panel-title", "Black Market"));
@@ -744,6 +798,8 @@ export function createOriginalUi(
   let dismissedBannerKey: string | null = null;
   let lastSabKey = "\u0000";
   let lastMarketKey = "\u0000";
+  /** RAIL-04: the Railway panel's repaint gate (its rows, folded to a string). */
+  let lastRailKey = "\u0000";
 
   // ── build list: the iso tools, keeping the original Build panel layout ────
   // PP-07: every price line is READ from the one authoritative cost table
@@ -768,6 +824,14 @@ export function createOriginalUi(
     // PP-06: another instance of the SAME processing building, raised beside
     // another town.
     { key: "plant", label: "Processing Plant", sub: `${costMarkup(PLANT_COST)} · next to a town` },
+    // ── RAIL-04 (#178): the railway's four buttons ────────────────────────
+    // The prices are read from the same table the placement charges
+    // (`RAIL_COSTS`) and the point from the same constant the scoreboard pays
+    // (`VICTORY.platform`, aliased in rail.ts as PLATFORM_VP).
+    { key: "rail", label: "Rail", sub: `${costMarkup(RAIL_COSTS.rail)} a tile · 0★` },
+    { key: "platform", label: "Platform", sub: `${costMarkup(RAIL_COSTS.platform)} · +${VICTORY.platform}★` },
+    { key: "raildepot", label: "Train Depot", sub: `${costMarkup(RAIL_COSTS.depot)} · needs your rail` },
+    { key: "railway", label: "Railway", sub: "Lines · trains · assign & sell" },
     { key: "demolish", label: "Demolish", sub: "Refund 50%" },
   ];
   let depotSub: HTMLElement | null = null;
@@ -2276,10 +2340,50 @@ export function createOriginalUi(
       lastDepotSub = sub;
       if (depotSub) depotSub.innerHTML = sub;
     }
+    // RAIL-04: the Railway panel. Repainted only when its rows change, for the
+    // same reason the Black Market is: a rebuild between a button's pointerdown
+    // and pointerup would swallow the click.
+    const railState = state.rail;
+    const railPanelOn = railState !== undefined
+      && (state.tool === "rail" || state.tool === "platform"
+        || state.tool === "raildepot" || state.tool === "railway");
+    // The key carries the PANEL'S STATE as well as its rows: a fresh game has
+    // no rows at all, so an empty-but-visible panel would key the same as a
+    // hidden one and the toggle below would never fire the first time a rail
+    // tool is picked up.
+    const railKey = railPanelOn
+      ? "on|" + railState!.rows.map((r) => `${r.id}:${r.kind}:${r.label}:${r.detail}:${r.actions.join(",")}:${r.hint ?? ""}`).join("|")
+      : "off|";
+    if (railKey !== lastRailKey) {
+      lastRailKey = railKey;
+      railPanel.classList.toggle("hidden", !railPanelOn);
+      railRows.innerHTML = "";
+      if (!railPanelOn) {
+        // nothing to paint; the panel is hidden
+      } else if (!railState!.rows.length) {
+        railRows.appendChild(h("div", "rail-empty",
+          "No railway yet — drag Rail to a resource, then place a Platform beside it and a Train Depot on the line."));
+      } else {
+        for (const row of railState!.rows) {
+          const line = h("div", "rail-row");
+          line.innerHTML = `<b>${row.label}</b><small>${row.detail}${row.hint ? ` · ${row.hint}` : ""}</small>`;
+          for (const action of row.actions) {
+            const b = h("button", "rail-act", action === "assign" ? "Assign line" : action === "recall" ? "Recall" : "Sell");
+            b.dataset.railAction = `${row.id}:${action}`;
+            b.dataset.sfx = "click";
+            b.onclick = () => hooks.onRailAction(row.id, action, row.partnerId);
+            line.appendChild(b);
+          }
+          railRows.appendChild(line);
+        }
+      }
+    }
     buildList.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((button) => {
       const tool = button.dataset.tool as UiTool;
       const cost = tool === "plant" ? PLANT_COST : tool === "harvester" ? DEPOT_COST
-        : tool === "road" || tool === "dirt" ? TRANSPORT[tool].cost : {};
+        : tool === "road" || tool === "dirt" ? TRANSPORT[tool].cost
+        : tool === "platform" ? RAIL_COSTS.platform
+        : tool === "raildepot" ? RAIL_COSTS.depot : {};
       // W9: the free setup allowance buys Dirt Roads only.
       const free = tool === "harvester" ? state.freeDepots > 0
         : (tool === "dirt") && state.freeTrack > 0;

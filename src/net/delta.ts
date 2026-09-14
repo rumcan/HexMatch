@@ -152,6 +152,8 @@ export interface PublishFields {
   protests?: Snapshot["protests"];
   trucks?: Snapshot["trucks"];
   cars?: Snapshot["cars"];
+  /** RAIL-04 (#178): the railway (see `DeltaMsg["rail"]`). */
+  rail?: Snapshot["rail"];
   boards?: Snapshot["boards"];
   crossPrompt?: Snapshot["crossPrompt"];
   winner?: Snapshot["winner"];
@@ -210,6 +212,7 @@ export function buildPublish(track: Track, dirty: DirtyTiles, f: PublishFields):
     ...(f.protests !== undefined ? { protests: f.protests } : {}),
     ...(f.trucks !== undefined ? { trucks: f.trucks } : {}),
     ...(f.cars !== undefined ? { cars: f.cars } : {}),
+    ...(f.rail !== undefined ? { rail: f.rail } : {}),
     ...(f.boards !== undefined ? { boards: f.boards } : {}),
     ...(f.crossPrompt !== undefined ? { crossPrompt: f.crossPrompt } : {}),
     ...(f.winner !== undefined ? { winner: f.winner } : {}),

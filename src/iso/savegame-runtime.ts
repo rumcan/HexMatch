@@ -22,7 +22,7 @@ import type { Cargo } from "./config";
 import type { Track } from "./track";
 import type { EconomyState } from "./economy";
 import {
-  SNAPSHOT_VERSION, bytesToBase64, base64ToBytes,
+  SNAPSHOT_VERSION, bytesToBase64, base64ToBytes, type RailWire,
 } from "./snapshot";
 
 export const SAVE_KEY = "hexmatch:save";
@@ -43,7 +43,7 @@ export interface SaveGamePayload {
   story?: {
     playerSabotage: number;
     rivalSabotage: number;
-    winningSource: "upgrade" | "plant" | null;
+    winningSource: "upgrade" | "plant" | "platform" | null;
     /** Optional because cinematic saves created before conversational oil
      * banter did not track whether its one-off scene had played. */
     oilBanterSeen?: boolean;
@@ -55,6 +55,10 @@ export interface SaveGamePayload {
    *  Optional so saves written before protests existed (same v) still load. */
   protests?: { x: number; y: number; left: number; owner: string }[];
   track: { dirt: string; road: string; owner: string; upgraded: string };
+  /** RAIL-04 (#178): the railway — layer, platforms, depots, lines, trains.
+   *  Optional so saves written before railways existed still load (they read as
+   *  a world with no railway, which is exactly what they are). */
+  rail?: RailWire;
   eco: {
     harvesters: EconomyState["harvesters"];
     factories: EconomyState["factories"];
@@ -95,9 +99,12 @@ export const readSave = (key: string = SAVE_KEY): SaveGamePayload | null => {
     const raw = localStorage.getItem(key);
     if (!raw) return null;
     const d = JSON.parse(raw) as SaveGamePayload;
-    // v10 → v12 adds multiplayer wires (market/protests/vehicles/boards) and beach; older saves stay loadable
-    // seeded placement. Track bytes and every existing placement are intact.
-    if (d.v !== SAVEGAME_VERSION || (d.snapV !== SNAPSHOT_VERSION && d.snapV !== 10 && d.snapV !== 11)) return null;
+    // v10 → v13 adds multiplayer wires (market/protests/vehicles/boards), the
+    // repaired beach and the railway; older saves stay loadable because every
+    // layer added since is either derivable or reads as its empty past — a
+    // v12 save simply has no railway, which is what it was played without.
+    // Seeded placement. Track bytes and every existing placement are intact.
+    if (d.v !== SAVEGAME_VERSION || (d.snapV !== SNAPSHOT_VERSION && d.snapV !== 10 && d.snapV !== 11 && d.snapV !== 12)) return null;
     if (typeof d.seed !== "number" || !d.track) return null;
     return d;
   } catch { return null; }
