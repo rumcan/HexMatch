@@ -758,6 +758,42 @@ html, body, #root {
 .build-btn.bg-harvester { --sigil: url("../assets/ui/noir/sigil/harvester.png"); }
 .build-btn.bg-plant     { --sigil: url("../assets/ui/noir/sigil/plant.png"); }
 .build-btn.bg-demolish  { --sigil: url("../assets/ui/noir/sigil/demolish.png"); }
+/* RAIL-04: the railway's four buttons. The noir sigil sheet is pre-baked and
+   has no railway emblem in it, so these keep the plate and take a brass rule
+   down the left instead — the group reads as one section without borrowing a
+   road's artwork. (An emblem is a follow-up art pass.) */
+.build-btn.bg-rail,
+.build-btn.bg-platform,
+.build-btn.bg-raildepot,
+.build-btn.bg-railway {
+  --sigil: none;
+  border-left: 2px solid rgba(200, 161, 58, .55);
+}
+
+/* ── RAIL-04: the Railway panel ────────────────────────────────────────────
+   One row per platform, depot and train; each row carries the actions the
+   RULES allow, so the panel never offers a button that would be refused. */
+.rail-panel { margin-top: 6px; }
+.rail-panel.hidden { display: none; }
+.rail-rows { display: flex; flex-direction: column; gap: 4px; }
+.rail-empty {
+  font-size: 11px; line-height: 1.35; opacity: .72; padding: 4px 2px;
+}
+.rail-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+  padding: 4px 6px; border-radius: 4px;
+  background: rgba(255, 255, 255, .04);
+  border-left: 2px solid rgba(200, 161, 58, .45);
+}
+.rail-row b { font-size: 12px; }
+.rail-row small { flex: 1 1 100%; font-size: 11px; opacity: .72; }
+.rail-act {
+  font: inherit; font-size: 11px; padding: 2px 8px; cursor: pointer;
+  border-radius: 3px; color: #f3ead6;
+  background: rgba(200, 161, 58, .18);
+  border: 1px solid rgba(200, 161, 58, .5);
+}
+.rail-act:hover { background: rgba(200, 161, 58, .32); }
 
 /* scrim — the lamp is on the right, the reading on the left. It fades out at
    the gutter (`--sigil-gutter`), so the last glyph of a label always sits on
