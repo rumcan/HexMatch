@@ -602,15 +602,18 @@ describe("auto matchmaking: never time out, and the rank window", () => {
 
   it("Similar rank widens through every window and settles at Any — never stuck", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    mockMatch.mockReturnValueOnce(new Promise<HexRoom>(() => {}));  // the Any search it replaces
     mockMatch.mockRejectedValue(windowExpired());
     await render();
-    await click("Similar rank");
     await click("Auto Matchmaking");
+    // The picker is on the waiting screen: switching restarts the search.
+    await click("Similar rank");
     // Six windows' worth of "widen and look again": one per rung, then Any.
     for (let i = 0; i < 6; i++) await act(async () => { vi.advanceTimersByTime(1_000); });
 
-    const buckets = mockMatch.mock.calls.map((c) => c[0].rankBucket as number | null);
-    const budgets = mockMatch.mock.calls.map((c) => c[0].matchmakeTimeoutMs as number);
+    const restarted = mockMatch.mock.calls.slice(1);
+    const buckets = restarted.map((c) => c[0].rankBucket as number | null);
+    const budgets = restarted.map((c) => c[0].matchmakeTimeoutMs as number);
     expect(budgets.slice(0, 4)).toEqual([6_000, 8_000, 8_000, 8_000]);
     // Narrow → wide: each of the first three rungs is a COARSER bucket, so two
     // players who miss each other tight can still meet wide.
@@ -627,28 +630,54 @@ describe("auto matchmaking: never time out, and the rank window", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const room = fakeRoom("HX9KWR");
     mockMatch
+      .mockReturnValueOnce(new Promise<HexRoom>(() => {}))  // the Any search, replaced
       .mockRejectedValueOnce(windowExpired())   // the tight window found nobody
       .mockResolvedValueOnce(room);             // the next window did
     await render();
-    await click("Similar rank");
     await click("Auto Matchmaking");
+    await click("Similar rank");
     await act(async () => { vi.advanceTimersByTime(1_000); });
     await act(async () => { room.emit(welcome(room)); });
-    expect(mockMatch).toHaveBeenCalledTimes(2);
+    expect(mockMatch).toHaveBeenCalledTimes(3);
     expect(text()).toContain("HX9KWR");
     expect(text()).toContain("RANKED");
   });
 
-  it("the waiting screen says which window the search is in", async () => {
+  it("the waiting screen carries the rank picker and says which window the search is in", async () => {
     mockMatch.mockReturnValue(new Promise(() => {}));
     await render();
-    await click("Similar rank");
-    await click("Auto Matchmaking");
-    expect(text()).toContain("within 75 rating points");
-    await click("Cancel");
-    await click("Any rank");
     await click("Auto Matchmaking");
     expect(text()).toContain("Any rank — a fair match beats a perfect one.");
+    expect(container.querySelector(".matchmaking .rank-search")?.getAttribute("role")).toBe("radiogroup");
+
+    await click("Similar rank");                        // restarts the search, narrow first
+    expect(mockMatch).toHaveBeenCalledTimes(2);
+    expect(mockMatch.mock.calls[1][0].rankBucket).not.toBeNull();
+    expect(text()).toContain("within 75 rating points");
+
+    await click("Any rank");                            // and back to the widest window
+    expect(mockMatch).toHaveBeenCalledTimes(3);
+    expect(mockMatch.mock.calls[2][0].rankBucket).toBeNull();
+    expect(text()).toContain("Any rank — a fair match beats a perfect one.");
+
+    await click("Any rank");                            // re-picking the same window is a no-op
+    expect(mockMatch).toHaveBeenCalledTimes(3);
+    await click("Cancel");
+  });
+
+  it("switching rank mid-search leaves a room that lands for the abandoned search", async () => {
+    const late = fakeRoom("OLD111", "p2", "Rival");
+    let resolveOld: (room: HexRoom) => void = () => {};
+    mockMatch
+      .mockReturnValueOnce(new Promise<HexRoom>((res) => { resolveOld = res; }))
+      .mockReturnValue(new Promise<HexRoom>(() => {}));
+    await render();
+    await click("Auto Matchmaking");
+    await click("Similar rank");
+    await act(async () => { resolveOld(late); });       // the Any search pairs, too late
+    expect(text()).not.toContain("OLD111");
+    expect(text()).toContain("Finding an opponent");
+    expect(late.leaveCalls).toBe(1);
     await click("Cancel");
   });
 });

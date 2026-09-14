@@ -388,8 +388,10 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
    * just re-issues at the next rung, and after the last rung at Any rank
    * forever. Cancel bumps the token, which is what actually ends the search.
    */
-  const beginMatch = useCallback(async () => {
-    if (busy) return;
+  const beginMatch = useCallback(async (mode: RankSearch = rankSearch, restart = false) => {
+    // `restart`: the waiting screen's rank picker re-opens a search that is
+    // already running, so the busy flag it holds must not refuse it.
+    if (busy && !restart) return;
     if (isOfflineMockRealtime()) {
       failMessage(NO_ROOM_SERVER_MESSAGE);
       return;
@@ -399,7 +401,7 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
     setState("matchmaking");
     const request = ++matchRequest.current;
     // Similar rank starts tight; Any rank starts (and stays) at the last rung.
-    let rung = rankSearch === "similar" ? 0 : RANK_SEARCH_STEPS.length - 1;
+    let rung = mode === "similar" ? 0 : RANK_SEARCH_STEPS.length - 1;
     try {
       while (request === matchRequest.current) {
         const clamped = Math.min(rung, RANK_SEARCH_STEPS.length - 1);
@@ -453,6 +455,19 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
     releaseRoom();
     setState("choose");
   }, [releaseRoom]);
+
+  /**
+   * The Any / Similar rank picker lives on the waiting screen, where the
+   * choice actually matters. Changing it mid-search starts the search again
+   * in the new window: `beginMatch` bumps the token, which retires the old
+   * loop (and it leaves any room that lands late), then walks the new ladder
+   * from its first rung.
+   */
+  const changeRankSearch = useCallback((next: RankSearch) => {
+    if (next === rankSearch) return;
+    setRankSearch(next);
+    if (state === "matchmaking") void beginMatch(next, true);
+  }, [beginMatch, rankSearch, state]);
 
   const backToChoose = useCallback(() => {
     releaseRoom();
@@ -531,9 +546,11 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
     <main className="start-screen" aria-label="Hexmatch start screen">
       <div className="start-panel start-modes">
         <section className="start-modes-info" aria-label="Manager and rating">
-          <p className="start-kicker">HEXMatch Industries</p>
-          <h1>Back to work, Logistics Manager.</h1>
-          <p className="start-subtitle">Your first shift at {EMPLOYER}: move the freight, beat the rival, earn the promotion.</p>
+          <header className="start-modes-head">
+            <p className="start-kicker">HEXMatch Industries</p>
+            <h1>Back to work, Logistics Manager.</h1>
+            <p className="start-subtitle">Your first shift at {EMPLOYER}: move the freight, beat the rival, earn the promotion.</p>
+          </header>
           <div className="portrait-picker" role="radiogroup" aria-label="Choose your manager">
             <p className="portrait-label">Your manager</p>
             <div className="portrait-options">
@@ -554,7 +571,7 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
               <RankChip model={chipFor(rank)} />
               <p className="rank-block-note">
                 {rank.matches === 0
-                  ? "Play a quick match to place on the ladder."
+                  ? "Play Auto Matchmaking to place on the ladder."
                   : `${rank.wins}W · ${rank.losses}L · ${
                       tierProgress(rank.rating).next
                         ? `${tierProgress(rank.rating).toNext} rating to ${tierProgress(rank.rating).next!.label}`
@@ -564,22 +581,14 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
           ) : null}
         </section>
         <nav className="start-actions" aria-label="Game modes">
-          <button className="start-primary" data-sfx="open" onClick={() => { setProgress(loadStoryProgress()); setState("story"); }}>Story Mode <small>the Foundry Syndicate</small></button>
-          <button data-sfx="open" onClick={() => onStart({ mode: "ai", portrait })}>Play vs AI <small>no login</small></button>
-          <button disabled={busy} onClick={() => { setState("host"); void beginRoom("host"); }}>Host a game (Experimental) <small>unranked</small></button>
-          <button disabled={busy} onClick={openJoinScreen}>Join with a code <small>unranked</small></button>
+          <p className="start-actions-label">Solo</p>
+          <button className="start-primary" data-sfx="open" onClick={() => { setProgress(loadStoryProgress()); setState("story"); }}>Story Mode <small>the Foundry Syndicate campaign</small></button>
+          <button data-sfx="open" onClick={() => onStart({ mode: "ai", portrait })}>Play vs AI <small>sandbox · no login</small></button>
+          <p className="start-actions-label">Multiplayer</p>
           <button disabled={busy} onClick={() => void beginMatch()}>Auto Matchmaking <small>ranked · a rated stranger</small></button>
-          <div className="rank-search" role="radiogroup" aria-label="Who Auto Matchmaking pairs you with">
-            {([["any", "Any rank", "whoever is waiting"], ["similar", "Similar rank", "widening, never stuck"]] as const)
-              .map(([value, label, hint]) => (
-                <button key={value} type="button" disabled={busy}
-                  className={`rank-search-opt${rankSearch === value ? " on" : ""}`}
-                  aria-pressed={rankSearch === value}
-                  data-sfx="select"
-                  onClick={() => setRankSearch(value)}>
-                  {label}<small>{hint}</small>
-                </button>
-              ))}
+          <div className="start-actions-pair">
+            <button disabled={busy} onClick={() => { setState("host"); void beginRoom("host"); }}>Host a game <small>invite a friend · unranked</small></button>
+            <button disabled={busy} onClick={openJoinScreen}>Join with a code <small>unranked</small></button>
           </div>
           <button disabled={busy} onClick={() => { loadLadder(); setState("ladder"); }}>The ladder <small>top ratings</small></button>
           {onBack ? <button className="start-back" data-sfx="close" onClick={onBack}>Back to the menu</button> : null}
@@ -716,9 +725,22 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
       ? `Similar rank — within ${step.span} rating points${searchRung > 0 ? ", widening" : ""}.`
       : "Any rank — a fair match beats a perfect one.";
     return (
-      <main className="start-screen"><div className="start-panel lobby"><p className="start-kicker">AUTO MATCHMAKING</p><h1>Finding an opponent…</h1>
+      <main className="start-screen"><div className="start-panel lobby matchmaking"><p className="start-kicker">AUTO MATCHMAKING</p><h1>Finding an opponent…</h1>
         <p className="start-subtitle">{window} Searching for {searchClock} — we keep looking until you cancel.</p>
-        <button onClick={abandonMatch}>Cancel</button></div></main>
+        <p className="portrait-label">Who to play</p>
+        <div className="rank-search" role="radiogroup" aria-label="Who Auto Matchmaking pairs you with">
+          {([["any", "Any rank", "whoever is waiting"], ["similar", "Similar rank", "widening, never stuck"]] as const)
+            .map(([value, label, hint]) => (
+              <button key={value} type="button"
+                className={`rank-search-opt${rankSearch === value ? " on" : ""}`}
+                aria-pressed={rankSearch === value}
+                data-sfx="select"
+                onClick={() => changeRankSearch(value)}>
+                {label}<small>{hint}</small>
+              </button>
+            ))}
+        </div>
+        <button className="matchmaking-cancel" onClick={abandonMatch}>Cancel</button></div></main>
     );
   }
   if (state === "error") return (
