@@ -56,17 +56,18 @@ export const QUALITY_NOTE: Record<Quality, string> = {
 };
 
 /** One-line copy for the settings panel (PERF-01). */
-export const PERFORMANCE_NOTE = "Simpler ground and water, fewer effects, smoother play.";
+export const PERFORMANCE_NOTE = "Hides grass details and single trees for smoother play — ground textures and water stay.";
 
 export interface GraphicsSettings {
   quality: Quality;
   /** Tilt-shift "miniature" post pass (src/iso/miniature.ts). */
   miniature: boolean;
   /**
-   * PERF-01: the performance mode — flat static terrain, no decals, backing
-   * DPR capped at 1, miniature suppressed. Independent of quality; default
-   * OFF (a stored blob without the key simply means OFF, so old
-   * preferences migrate without a step).
+   * PERF-01: the performance mode — hides grass decals and single trees,
+   * caps backing DPR at 1 and suppresses miniature. Ground textures and
+   * animated water STAY. Independent of quality; default OFF (a stored blob
+   * without the key simply means OFF, so old preferences migrate without a
+   * step).
    */
   performance: boolean;
 }
@@ -90,12 +91,14 @@ export interface RenderPolicy {
   readonly detail: Zoom;
   /** The performance flag itself (for display/diagnostics). */
   readonly performance: boolean;
-  /** Seamless grass/sand/water textures, or solid flat fills. */
+  /** Seamless grass/sand/water textures — now always true, even in perf mode. */
   readonly texturedGround: boolean;
-  /** The drifting ocean + breathing surf, or one static coast. */
+  /** The drifting ocean + breathing surf — now always true, even in perf mode. */
   readonly animatedWater: boolean;
-  /** The decorative terrain decals (dirt scrapes, grass variation). */
+  /** The decorative terrain decals (dirt scrapes, grass variation). Hidden in perf mode. */
   readonly decals: boolean;
+  /** Scattered single trees (world.trees / TREE_SPRITES). Hidden in perf mode; forest blocks stay. */
+  readonly singleTrees: boolean;
   /**
    * The miniature pass as it EFFECTIVELY runs: the stored choice, suppressed
    * while performance mode stands (the stored choice is preserved, so OFFing
@@ -112,9 +115,10 @@ export function renderPolicy(s: GraphicsSettings): RenderPolicy {
     quality: s.quality,
     detail: QUALITY_MAX_DETAIL[s.quality],
     performance: s.performance,
-    texturedGround: !s.performance,
-    animatedWater: !s.performance,
+    texturedGround: true,
+    animatedWater: true,
     decals: !s.performance,
+    singleTrees: !s.performance,
     miniature: s.miniature && !s.performance,
     dprCap: s.performance ? 1 : 2,
   };

@@ -55,7 +55,7 @@ import {
   renderPolicy, type Quality, type RenderPolicy,
 } from "./graphics";
 import { createTiltShiftPass } from "./miniature";
-import { loadGroundTextures, type GroundTextures } from "./ground";
+import { loadGroundTextures } from "./ground";
 import {
   createCamera, centerOnTile, resizeCamera, zoomStepAt, zoomAt, tileToScreenAt,
   createGesture, pointerDown, pointerMove, pointerUp, worldToScreen, panBy,
@@ -6091,16 +6091,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   /**
    * Apply the EFFECTIVE RENDER POLICY (quality + performance mode) while the
    * game is live: load the atlas levels newly at or below the cap (monolith,
-   * layer sheets, per-building PNGs, scenery, liveried trucks), and — only
-   * for the textured policy — the ground textures and terrain decals; then
-   * re-aim the atlas cap, free everything above it, install the flat/textured
-   * terrain and repaint. Serialized through `detailApplying` so a rapid
-   * toggle cannot interleave two half-applied states; every async step
-   * re-reads the settings AFTER its awaits, so a stale load (its mode was
-   * switched mid-fetch) never restores old terrain — the newer change owns
-   * the screen. A load failure leaves the CURRENT policy standing — the
-   * player simply does not get the new look — rather than rendering a map
-   * missing its 2× half.
+   * layer sheets, per-building PNGs, scenery, liveried trucks), the ground
+   * textures (always, perf keeps them) and — only when decals are wanted —
+   * the terrain decals; then re-aim the atlas cap, free everything above it,
+   * install ground/decal art and repaint. Serialized through `detailApplying`
+   * so a rapid toggle cannot interleave two half-applied states; every async
+   * step re-reads the settings AFTER its awaits, so a stale load never
+   * restores old terrain. A load failure leaves the CURRENT policy standing.
    */
   let detailApplying: Promise<void> = Promise.resolve();
   /** The performance flag the last COMPLETED apply installed (or null: none yet). */
@@ -6115,19 +6112,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (!capChanged && !perfChanged) return;
       appliedPerf = policy.performance;
       const r = renderer;
-      // PERF-01: the ground textures + terrain decals are only wanted by the
-      // textured policy — the flat mode paints solid colours, so they are
-      // skipped while it stands (and released from the renderer) rather than
-      // fetched, decoded and held for a look it will not draw.
-      const wantGround = policy.texturedGround;
+      // PERF-01 new: ground textures stay even in perf mode; only decals are
+      // skipped when policy.decals is false. So always fetch ground, conditionally decals.
+      const wantDecals = policy.decals;
       let groundTex: Awaited<ReturnType<typeof loadGroundTextures>> | null = null;
       let decalTex: Awaited<ReturnType<typeof loadDecalImages>> | null = null;
       try {
         await Promise.all([
-          ...(wantGround
+          loadGroundTextures(groundTextureUrls(cap)).then((t) => { groundTex = t; })
+            .catch((err) => console.warn("[gfx] ground textures for this preset failed to load", err)),
+          ...(wantDecals
             ? [
-              loadGroundTextures(groundTextureUrls(cap)).then((t) => { groundTex = t; })
-                .catch((err) => console.warn("[gfx] ground textures for this preset failed to load", err)),
               loadDecalImages(cap).then((d) => { decalTex = d; })
                 .catch((err) => console.warn("[gfx] decals for this preset failed to load", err)),
             ]
@@ -6158,11 +6153,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (r) {
         if (capChanged) r.setDetailCap(cap);   // caps the atlas, prunes, repaints
         r.setPerformanceMode(policy.performance);
-        if (policy.texturedGround) {
-          if (groundTex) r.setGround(groundTex);
-        } else {
-          r.setGround(null);                   // release the seamless ground art
-        }
+        if (groundTex) r.setGround(groundTex);
         if (decalTex) r.setDecalImages(decalTex);
         buildMasks(a);
         buildBuildingMasks(a);
@@ -6250,18 +6241,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const layersPromise = loading.track("layers", Promise.all([
       capImages(roadUrls, roadsStore, cap0),
       capImages(sheetUrls, sheetsStore, cap0),
-      // PERF-01: a flat-mode boot skips the ground textures entirely.
-      policy0.texturedGround
-        ? loadGroundTextures(groundTextureUrls(cap0))
-        : Promise.resolve<GroundTextures | null>(null),
+      // PERF-01 new: ground textures always load, even in perf mode.
+      loadGroundTextures(groundTextureUrls(cap0)),
     ]).then(([, , tex]) => {
       if (disposed) return;
       atlas.layerImages.set("roads", roadsStore);
       atlas.layerImages.set("buildings", sheetsStore);
-      // PERF-01 stale-load guard: the mode flipped while this was fetching —
-      // a texture nobody asked for must not install (the live apply chain
-      // owns the current policy's art).
-      if (tex && renderPolicy(currentGraphics()).texturedGround) renderer?.setGround(tex);
+      if (tex) renderer?.setGround(tex);
     }).catch((err) => {
       // Textures are an upgrade, never a gate: the flat-colour ground and the
       // monolithic atlas remain fully playable.

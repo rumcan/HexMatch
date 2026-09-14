@@ -15,9 +15,9 @@
 //     is loaded at all (see graphics.ts + Atlas.detailCap);
 //   · Miniature view — the tilt-shift tilt the island looks through
 //     (see miniature.ts);
-//   · Performance mode — PERF-01's cheaper rendering policy: flat static
-//     terrain, static water, capped backing DPR, and the miniature pass
-//     suppressed for the duration (its own choice is preserved and restored);
+//   · Performance mode — PERF-01's cheaper rendering policy: hides grass
+//     decals and single trees, caps backing DPR, and suppresses the miniature
+//     pass for the duration (its own choice is preserved and restored);
 //   · Sound — the SFX-01 mix, reachable here too because the main menu has
 //     no 🔊 plate of its own and a player muting from the door must be able
 //     to.

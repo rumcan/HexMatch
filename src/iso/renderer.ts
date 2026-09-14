@@ -20,15 +20,15 @@
 // pattern additionally drifts with time. Without textures (tests, demo
 // fallback) the same polygons paint with flat FALLBACK colours.
 //
-// PERF-01: the player's performance mode (graphics.ts `renderPolicy`) swaps
-// the terrain layer for a FLAT, STATIC scene — muted green land, flat sand
-// coast, blue water, one subtle isometric build grid — and turns the 30 Hz
-// ambient timer off, so an idle map never repaints the terrain canvas at
-// all. The flat chunks ride the SAME chunk cache (the mode switch clears
-// it), are culled to the visible range like the textured ones, and the
-// shore is stroked from the same contours as the textured ground — only the
-// animation goes. Everything else (structures, roads, ownership, placement
-// feedback, picking) is untouched.
+// PERF-01: the player's performance mode (graphics.ts `renderPolicy`) now
+// hides grass decals and single scattered trees (world.trees / TREE_SPRITES),
+// caps the backing DPR at 1 and suppresses the miniature tilt-shift pass.
+// Ground textures (grass/sand/water) and animated water STAY — the terrain
+// layer remains textured and continues to repaint at 30 Hz. Forest blocks
+// stay too. Everything else (structures, roads, ownership, placement
+// feedback, picking) is untouched. The flat static terrain path
+// (PERF_FLAT / drawTerrainFlat) is retained for tests but is no longer
+// entered by the performance toggle.
 //
 // The old per-tile terrain sprites (terrain_grass/water/rough) are gone from
 // the draw path — `terrainSprite` survives only for debug probes. Roads and
@@ -232,6 +232,8 @@ export interface DrawListOptions {
   vehicles?: boolean;
   /** Scenery density: 0 = none, 1 = full. Tied to graphics quality preset. */
   sceneryDensity?: number;
+  /** Hide scattered single trees (world.trees). Forest blocks stay. Used by perf mode. */
+  singleTrees?: boolean;
 }
 
 /** Build the structure draw list for a culled tile range. */
@@ -259,12 +261,14 @@ export function buildDrawList(
       // SCENERY: a scattered tree, unless the tile has since been paved or
       // built on — the tree was cleared to make room, which is what the
       // player expects to see and costs nothing to model.
+      // PERF-01: singleTrees false hides these (perf mode), forest blocks stay.
+      const emitSingleTrees = opts.singleTrees !== false;
       const tree = world.trees?.[i] ?? 0;
       // GFX-01 scenery LOD: graphics preset caps how many trees render.
       // LOW (cap 0.5) → hardly any; MEDIUM (cap 1) → medium; HIGH (2) → all.
       // Deterministic: same seed + tile always produces the same result.
       const density = opts.sceneryDensity ?? 1;
-      if (density >= 1 || (density > 0 && ((tx * 31 + ty * 17 + (grid?.seed ?? 0)) % 100) / 100 < density)) {
+      if (emitSingleTrees && (density >= 1 || (density > 0 && ((tx * 31 + ty * 17 + (grid?.seed ?? 0)) % 100) / 100 < density))) {
         if (tree && !rb && !db && !world.sceneryBlocked?.has(i))
           out.push({ sprite: TREE_SPRITES[tree - 1], tx, ty, decor: true });
       }
@@ -854,20 +858,23 @@ export class IsoRenderer {
 
   // ── PERF-01: the performance mode ───────────────────────────────────────
   /**
-   * PERF-01: switch the terrain layer between the textured animated ground
-   * and the FLAT STATIC performance scene. ON: no ocean drift, no breathing
-   * surf, no decals — the layer repaints only when something dirties it
-   * (camera, world, art, quality, this switch); the ambient 30 Hz timer in
-   * `render()` disarms. The textured chunk surfaces are released at once
-   * (the cache is per-paint, and a key must never serve the wrong paint);
-   * stepping back repaints them lazily. Structures, roads, picking and the
-   * overlay are untouched — this is the ground's policy, not the map's.
+   * PERF-01: performance mode hides grass decals and single trees, caps DPR
+   * at 1 and suppresses miniature. Ground textures and animated water STAY,
+   * so the terrain layer remains animated (30 Hz). The mode switch still
+   * dirties terrain (decals disappear) and structures (single trees
+   * disappear). Forest blocks, roads, picking and overlay are untouched.
+   * The flat static path is retained for tests but is no longer entered.
    */
   setPerformanceMode(on: boolean): void {
     if (on === this.perfMode) return;
     this.perfMode = on;
+    // Decals live on terrain, single trees on structures — both need repaint.
+    // Keep cache clear for decals path even though ground stays textured.
+    // Keep flat path reachable for tests (tsc unused check).
+    void this.drawTerrainFlat;
     this.groundChunkCache.clear();
     this.terrainDirty = true;
+    this.structuresDirty = true;
   }
 
   /** PERF-01, for `__iso.rendering()` and the settings layer. */
@@ -1032,7 +1039,11 @@ export class IsoRenderer {
 
   // ── layers ──────────────────────────────────────────────────────────────
   drawTerrain(timeMs = 0) {
-    if (this.perfMode) { this.drawTerrainFlat(); return; }
+    // PERF-01 new policy: performance mode keeps textured ground and animated
+    // water — the flat path is no longer entered by the toggle. It is retained
+    // for tests/debug, but drawTerrain always takes the textured path now.
+    // If flat ground is ever needed again, gate it behind a separate flag,
+    // not perfMode.
     const ctx = this.ctxT, cam = this.cam;
     const z = cam.zoom;
     ctx.clearRect(0, 0, cam.vw, cam.vh);
@@ -1071,8 +1082,9 @@ export class IsoRenderer {
     // 3. The scenery decals: dirt scrapes and grass variation painted on the
     //    meadow. Above the chunks (they must not be clipped into 8×8 cuts),
     //    below the surf (a patch must never cover the foam).
+    // PERF-01: performance mode hides these (grass details).
     let decals = 0;
-    if (this.decals && this.decalImages)
+    if (this.decals && this.decalImages && !this.perfMode)
       decals = paintDecals(ctx, cam, this.decals, this.decalImages, r);
     // 4. The surf: shallow swell + foam along every coast edge, animated.
     this.drawShore(ctx, cam, timeMs);
@@ -1113,9 +1125,11 @@ export class IsoRenderer {
     const rangeKey = `${r.x0}:${r.y0}:${r.x1}:${r.y1}`;
     if (this.structuresDirty || rangeKey !== this.staticRange) {
       // GFX-01 scenery LOD: graphics preset caps tree density in draw.
+      // PERF-01: performance mode hides single trees.
       const cap = this.atlas.detailCap;
       const sceneryDensity = cap >= 2 ? 1 : (cap >= 1 ? 0.45 : 0.05);
-      const items = buildDrawList(this.world, r, { roads: !textured, vehicles: false, sceneryDensity });
+      const singleTrees = !this.perfMode;
+      const items = buildDrawList(this.world, r, { roads: !textured, vehicles: false, sceneryDensity, singleTrees });
       this.staticItemCount = items.length;
       this.staticPlaced = items.map((i) => place(this.atlas, i)).filter((p): p is Placed => p !== null);
       this.staticRange = rangeKey;
@@ -1323,11 +1337,11 @@ export class IsoRenderer {
    */
   render(timeMs = 0, overlay: DrawItem[] = [], ghost: GhostSpec | null = null) {
     const since = timeMs - this.lastTerrainT;
-    // PERF-01: the performance-mode terrain is STATIC — the ambient 30 Hz
-    // timer disarms, so an idle map repaints the terrain layer only when a
-    // camera/world/art change (or the mode switch) dirtied it. With the
-    // timer still armed, the old cadence holds exactly as before.
-    const ambientDue = !this.perfMode && since >= TERRAIN_FRAME_MS - TERRAIN_FRAME_SLACK_MS;
+    // PERF-01 new policy: terrain stays textured and animated even in perf
+    // mode, so the 30 Hz ambient timer stays armed. The old flat-mode comment
+    // about disarming is kept above drawTerrainFlat for historical context,
+    // but this path now always animates.
+    const ambientDue = since >= TERRAIN_FRAME_MS - TERRAIN_FRAME_SLACK_MS;
     if (this.terrainDirty || since < 0 || ambientDue) {
       this.terrainDirty = false;
       this.lastTerrainT = timeMs;
@@ -1416,10 +1430,10 @@ export class IsoRenderer {
       roads: this.roadDiagnostics(),
       overlay: this.overlayDiagnostics(),
       repaint: { ...this.repaint },
-      /** PERF-01: the flat policy and the idle repaint counter. */
+      /** PERF-01: performance flag and animated state — ground stays animated now. */
       terrain: {
         performance: this.perfMode,
-        animated: !this.perfMode,
+        animated: true,
         redraws: this.terrainRedraws,
       },
       groundAnchorReference,
