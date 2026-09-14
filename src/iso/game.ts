@@ -5840,7 +5840,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // front door raises over the menu plate, mounted over the game root. One
     // instance at a time; closing repaints nothing here because every control
     // in the sheet subscribes to the store, and so does the game.
-    menuItem("Settings", "texture detail · miniature · performance · sound", () => {
+    menuItem("Settings", "texture detail · miniature · sound", () => {
       if (settingsView) return;
       const view = showSettingsSheet(ui.el);
       settingsView = view;
