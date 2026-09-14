@@ -594,6 +594,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   ];
   const me = players[0], rival = players[1];
 
+  // DEV: unlimited resources for YOUR seat while testing. Only in the Vite dev
+  // server — never in unit tests (vitest also sets DEV) and never in a shipped
+  // build. `?unlimited=0` turns it off to test the real economy in dev.
+  const DEV_PURSE_FLOOR = 9999;
+  const devUnlimited = import.meta.env.DEV && import.meta.env.MODE !== "test"
+    && !(typeof location !== "undefined" && /[?&]unlimited=0\b/.test(location.search));
+  const topUpDevPurse = () => {
+    if (!devUnlimited) return;
+    for (const c of CARGOES) if ((me.purse[c] ?? 0) < DEV_PURSE_FLOOR) me.purse[c] = DEV_PURSE_FLOOR;
+  };
+  topUpDevPurse();
+
   // ── AI-01: how hard the rival plays ────────────────────────────────────────
   // One variable, read lively everywhere the rival's pacing shows up: the
   // build/idle clocks, expansion-per-turn, the pave batch, the bank budget,
@@ -6440,6 +6452,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // needs a real dt (capped — a background tab must not teleport them).
       const dt = Math.min(100, Math.max(0, t - lastFrameT));
       lastFrameT = t;
+      topUpDevPurse();
       economyTick(t);
       quarryTick(t);
       aiTick(t);
