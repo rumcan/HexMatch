@@ -1038,7 +1038,19 @@ export class IsoRenderer {
   }
 
   // ── layers ──────────────────────────────────────────────────────────────
-  drawTerrain(timeMs = 0) {
+  /**
+   * PERF: the island (ground chunks + decals) composed into ONE viewport-sized
+   * surface. It changes only with the camera, the world, the art or the mode,
+   * but the terrain layer repaints ~30 times a second to animate the sea — and
+   * re-blitting every visible 8×8 chunk (hundreds of large surfaces when
+   * zoomed out) plus every decal on each of those ticks is what made the game
+   * crawl, whatever the size of the ground texture. An ambient tick now pastes
+   * this one surface between the sea fill and the surf.
+   */
+  private islandSurf: HTMLCanvasElement | OffscreenCanvas | null = null;
+  private islandKey = "";
+
+  drawTerrain(timeMs = 0, rebuildIsland = true) {
     // PERF-01 new policy: performance mode keeps textured ground and animated
     // water — the flat path is no longer entered by the toggle. It is retained
     // for tests/debug, but drawTerrain always takes the textured path now.
@@ -1062,30 +1074,52 @@ export class IsoRenderer {
       ctx.fillStyle = FALLBACK.water;
       ctx.fillRect(0, 0, cam.vw, cam.vh);
     }
-    // 2. The island: cached land chunks (grass + beach ring) blitted over it.
+    // 2. The island: cached land chunks (grass + beach ring), then 3. the
+    //    scenery decals over them (never clipped into 8×8 cuts, always under
+    //    the surf). Both go into the composed island surface, rebuilt only
+    //    when something other than time changed; the ambient tick pastes it.
+    // PERF-01: performance mode hides the decals (grass details).
     const r = visibleTileRange(cam, this.pad);
-    const cx0 = (r.x0 / CHUNK) | 0, cx1 = (r.x1 / CHUNK) | 0;
-    const cy0 = (r.y0 / CHUNK) | 0, cy1 = (r.y1 / CHUNK) | 0;
     let blits = 0;
-    // Pre-compute the chunk range so we don't recompute per-iteration keys.
-    for (let cy = cy0; cy <= cy1; cy++) {
-      for (let cx = cx0; cx <= cx1; cx++) {
-        const surf = this.groundFillChunk(cx, cy);
-        if (!surf) continue;
-        const [ox, oy] = chunkWorldOrigin(cx, cy);
-        const [sx, sy] = worldToScreen(cam, ox, oy);
-        ctx.drawImage(surf as unknown as CanvasImageSource, Math.floor(sx), Math.floor(sy));
-        blits++;
-        if (this.logRender) this.trace("ground-blit", { chunk: [cx, cy], origin: [ox, oy], screen: [Math.floor(sx), Math.floor(sy)], z });
-      }
-    }
-    // 3. The scenery decals: dirt scrapes and grass variation painted on the
-    //    meadow. Above the chunks (they must not be clipped into 8×8 cuts),
-    //    below the surf (a patch must never cover the foam).
-    // PERF-01: performance mode hides these (grass details).
     let decals = 0;
-    if (this.decals && this.decalImages && !this.perfMode)
-      decals = paintDecals(ctx, cam, this.decals, this.decalImages, r);
+    const paintIsland = (target: Ctx2D) => {
+      const cx0 = (r.x0 / CHUNK) | 0, cx1 = (r.x1 / CHUNK) | 0;
+      const cy0 = (r.y0 / CHUNK) | 0, cy1 = (r.y1 / CHUNK) | 0;
+      for (let cy = cy0; cy <= cy1; cy++) {
+        for (let cx = cx0; cx <= cx1; cx++) {
+          const surf = this.groundFillChunk(cx, cy);
+          if (!surf) continue;
+          const [ox, oy] = chunkWorldOrigin(cx, cy);
+          const [sx, sy] = worldToScreen(cam, ox, oy);
+          target.drawImage(surf as unknown as CanvasImageSource, Math.floor(sx), Math.floor(sy));
+          blits++;
+          if (this.logRender) this.trace("ground-blit", { chunk: [cx, cy], origin: [ox, oy], screen: [Math.floor(sx), Math.floor(sy)], z });
+        }
+      }
+      if (this.decals && this.decalImages && !this.perfMode)
+        decals = paintDecals(target, cam, this.decals, this.decalImages, r);
+    };
+    const key = `${cam.x},${cam.y},${z},${cam.vw},${cam.vh},${this.perfMode}`;
+    // Whole pixels: a canvas truncates its size, so comparing against a
+    // fractional viewport would re-create (and rebuild) the surface every frame.
+    const IW = Math.max(1, Math.ceil(cam.vw)), IH = Math.max(1, Math.ceil(cam.vh));
+    if (!this.islandSurf || this.islandSurf.width !== IW || this.islandSurf.height !== IH) {
+      this.islandSurf = typeof OffscreenCanvas !== "undefined"
+        ? new OffscreenCanvas(IW, IH)
+        : Object.assign(document.createElement("canvas"), { width: IW, height: IH });
+      rebuildIsland = true;
+    }
+    const ictx = (this.islandSurf as HTMLCanvasElement).getContext("2d") as Ctx2D | null;
+    if (!ictx) {
+      paintIsland(ctx);                              // no surface (test stubs): paint directly
+    } else {
+      if (rebuildIsland || key !== this.islandKey) {
+        ictx.clearRect(0, 0, cam.vw, cam.vh);
+        paintIsland(ictx);
+        this.islandKey = key;
+      }
+      ctx.drawImage(this.islandSurf as unknown as CanvasImageSource, 0, 0);
+    }
     // 4. The surf: shallow swell + foam along every coast edge, animated.
     this.drawShore(ctx, cam, timeMs);
     if (this.logRender) this.trace("terrain-pass", { range: [r.x0, r.y0, r.x1, r.y1], blits, decals, z: cam.zoom });
@@ -1343,10 +1377,13 @@ export class IsoRenderer {
     // but this path now always animates.
     const ambientDue = since >= TERRAIN_FRAME_MS - TERRAIN_FRAME_SLACK_MS;
     if (this.terrainDirty || since < 0 || ambientDue) {
+      // PERF: only a real change (camera, world, art, mode) rebuilds the
+      // composed island; the 30 Hz ambient tick just re-animates the sea.
+      const rebuildIsland = this.terrainDirty || since < 0;
       this.terrainDirty = false;
       this.lastTerrainT = timeMs;
       this.terrainRedraws++;
-      this.drawTerrain(timeMs);
+      this.drawTerrain(timeMs, rebuildIsland);
     }
     if (this.structuresDirty || this.hasAnimation()) this.drawStructures(timeMs);
     this.drawOverlay(overlay, timeMs, ghost);
