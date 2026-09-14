@@ -36,8 +36,9 @@ import {
 } from "../../../src/iso/track";
 import {
   aiBuildStep, chooseRivalFactorySpot, planUpgrades, executePaves, paveCandidates,
-  deepPlanCandidates, rivalPace, type RivalPace,
+  deepPlanCandidates, rivalPace, planRailMove, executeRailMove, type RivalPace,
 } from "../../../src/iso/ai";
+import { createRailState, tickTrains, type RailState } from "../../../src/iso/rail";
 import { RIVAL_SKILLS, type RivalSkill, type SkillKey } from "../../../src/iso/skill";
 import {
   playerResources, type EconomyState, type Factory,
@@ -96,12 +97,20 @@ export interface Seat {
    *  other is saving for and never trade it away. */
   planGoal: Purse | null;
   paveGoal: Purse | null;
+  /** RAIL-05 (#182): how this seat plays the railway (see `RailStrategy`). */
+  rail: RailStrategy;
+  /** RAIL-05: rail actions taken, what they cost, and when a train first ran. */
+  railActions: number;
+  railSpent: Partial<Record<Cargo, number>>;
+  firstTrain: number | null;
 }
 
 export interface Race {
   seed: number;
   minutes: number;
   eco: EconomyState;
+  /** RAIL-05: the railway both seats built. */
+  rail: RailState;
   seats: Seat[];
   vp: Record<string, number>;
   /** VP per seat, sampled every simulated minute. */
@@ -124,7 +133,24 @@ export interface RaceOptions {
    * line, like the live game's.
    */
   fullWindow?: boolean;
+  /** RAIL-05 (#182): [you, ai] railway strategy. Default: both "road". */
+  rail?: [RailStrategy, RailStrategy];
 }
+
+/**
+ * RAIL-05 (#182) — how a seat plays the railway, for the balance matrix. Every
+ * rail action is the live rival's own `planRailMove` → `executeRailMove`:
+ *
+ *   road       no rail at all — the pre-railway game;
+ *   mixed      the shipped draft order: the full road turn, THEN one rail
+ *              action, both in the same turn;
+ *   exclusive  one rail action, only on a turn the road did nothing;
+ *   railFirst  one rail action first; road EXPANSION (plant, depot) only when
+ *              the rail action did nothing — paving still runs;
+ *   platforms  the platform-only seat: platforms for their 1★ and nothing else
+ *              of the railway, on the mixed timing.
+ */
+export type RailStrategy = "road" | "mixed" | "exclusive" | "railFirst" | "platforms";
 
 /** Spend from a seat's bag through the same affordability rule the game's spends use. */
 function pay(seat: Seat, cost: Purse): boolean {
@@ -271,6 +297,7 @@ function bankToward(eco: EconomyState, seat: Seat, track: Track, f: Factory, pac
 export function runRace(seed: number, opts: RaceOptions = {}): Race {
   const RACE_MS = (opts.minutes ?? 24) * 60_000;
   const [skillYou, skillAi] = opts.skills ?? ["normal", "normal"];
+  const [railYou, railAi] = opts.rail ?? ["road", "road"];
   const grid = generateMap(seed);
   const track = createTrack();
   // AI-01: the live map boots with its towns' ring roads and inter-town
@@ -279,9 +306,10 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
   // an opponent that cannot use the main roads at all.
   seedTownRoads(track, grid);
   seedPublicRoads(track, grid);
-  const eco: EconomyState = { grid, track, harvesters: [], factories: [] };
+  const rail = createRailState();
+  const eco: EconomyState = { grid, track, harvesters: [], factories: [], rail };
   const score = createScoreState();
-  const mk = (id: string, ownerId: number, key: SkillKey): Seat => ({
+  const mk = (id: string, ownerId: number, key: SkillKey, strategy: RailStrategy): Seat => ({
     id, ownerId,
     skill: RIVAL_SKILLS[key],
     purse: toBag(START_PURSE),
@@ -292,8 +320,9 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
     firstPave: null, firstPoint: null, oreOnPaves: 0, paves: 0,
     offersPosted: 0, offersTaken: 0, milestones: [],
     target: null, planGoal: null, paveGoal: null,
+    rail: strategy, railActions: 0, railSpent: {}, firstTrain: null,
   });
-  const seats: Seat[] = [mk("you", 1, skillYou), mk("ai", 2, skillAi)];
+  const seats: Seat[] = [mk("you", 1, skillYou, railYou), mk("ai", 2, skillAi, railAi)];
 
   // AI-01: the two seats trade through ONE real market — escrow, expiry
   // refunds and all (postOffer stamps `born` with the wall clock, so the sim
@@ -317,6 +346,30 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
   eco.factories.push({ owner: "ai", ownerId: 2, tx: rival[0], ty: rival[1], id: 0, townId: null });
 
   const factoryFor = (seat: Seat) => eco.factories.find((f) => f.ownerId === seat.ownerId)!;
+  /** RAIL-05: the platforms `rescore` scores, in the shape game.ts hands it. */
+  const platforms = () => rail.structures
+    .filter((st) => st.kind === "platform")
+    .map((st) => ({ id: st.id, ownerId: st.ownerId, owner: st.owner, tx: st.tx, ty: st.ty }));
+  /** RAIL-05: one rail action, through the live rival's planner and executor. */
+  const railAction = (seat: Seat, t: number): boolean => {
+    if (seat.rail === "road") return false;
+    const move = planRailMove(eco, rail, factoryFor(seat), {
+      purse: seat.purse, ownerId: seat.ownerId, useRail: true,
+      scope: seat.rail === "platforms" ? "platforms" : "line", now: t,
+    });
+    if (!move || !canAfford(seat.purse, move.cost)) return false;
+    const res = executeRailMove(eco, rail, move, seat.id, seat.ownerId);
+    if (!res) return false;
+    if (res.refund) {
+      for (const [k, v] of Object.entries(res.refund) as [Cargo, number][]) seat.purse[k] = (seat.purse[k] ?? 0) + v;
+    } else {
+      pay(seat, res.spent);
+      for (const [k, v] of Object.entries(res.spent) as [Cargo, number][]) seat.railSpent[k] = (seat.railSpent[k] ?? 0) + v;
+    }
+    if (move.kind === "train" && seat.firstTrain === null) seat.firstTrain = t;
+    seat.railActions++;
+    return true;
+  };
   let nextHarvesterId = 1;
   const trace: Race["trace"] = [];
   let winner: Race["winner"] = null;
@@ -324,6 +377,7 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
   const MILESTONES = [1, 5, VP_TARGET];
 
   for (let t = 0; t <= RACE_MS && (opts.fullWindow || !winner); t += STEP_MS) {
+    tickTrains(rail, STEP_MS);     // RAIL-05: trains move on the sim clock
     for (const seat of seats) {
       // ── the build clock: `aiTick`'s actions, most valuable first, each one
       //    paying for itself before it is applied
@@ -337,7 +391,12 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
         const pace = rivalPace(vpFor(score, other), vpFor(score, seat.id), VP_TARGET);
         const urgency = pace.oreUrgency * seat.skill.urgencyBias;
 
-        if (canAffordPlant(seat.purse)) {
+        // RAIL-05: the rail-first seat acts on the railway before anything else
+        // and expands its road (plant, depot) only when that did nothing.
+        const railFirstActed = seat.rail === "railFirst" && railAction(seat, t);
+        if (railFirstActed) acted = true;
+
+        if (!railFirstActed && canAffordPlant(seat.purse)) {
           const spot = chooseAiPlantSpot(grid, track, eco, seat.id);
           if (spot && pay(seat, PLANT_COST)) {
             addPlant(grid, track, eco, seat.id, seat.ownerId, spot[0], spot[1]);
@@ -346,7 +405,7 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
         }
         // AI-01: a hard preset expands several depot plans per turn; each pass
         // re-plans against the purse the last build left, like the live loop.
-        for (let n = Math.max(1, seat.skill.expandPerTurn); n > 0; n--) {
+        for (let n = railFirstActed ? 0 : Math.max(1, seat.skill.expandPerTurn); n > 0; n--) {
           const built = aiBuildStep(eco, factoryFor(seat), {
             stock: seat.purse, purse: seat.purse,
             free: seat.freeTrack, freeDepots: seat.freeDepots, now: t,
@@ -377,6 +436,13 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
           // turn it also spent building — `rivalBankTowardPave` in game.ts
           bankForPaves(eco, seat, track, factoryFor(seat), pace, urgency);
         }
+        // RAIL-05: the rail action after the road turn — every turn ("mixed",
+        // "platforms"), or only when the road did nothing ("exclusive").
+        if (seat.rail === "mixed" || seat.rail === "platforms"
+          || (seat.rail === "exclusive" && !acted)) {
+          if (railAction(seat, t)) acted = true;
+        }
+
         if (!acted) {
           bankToward(eco, seat, track, factoryFor(seat), pace, urgency);
           // the game retries the whole sequence once a bank unlocked something
@@ -399,7 +465,7 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
         // Points move on a build, never on a clock — the rule `game.ts` keeps by
         // rescoring from the build paths only.
         if (acted) {
-          rescore(eco, score);
+          rescore(eco, score, platforms());
           const got = vpFor(score, seat.id);
           if (seat.firstPoint === null && got > 0) seat.firstPoint = t;
           for (const m of MILESTONES) {
@@ -481,7 +547,7 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
   return {
     seed,
     minutes: Math.round(trace.length ? (trace[trace.length - 1].t - trace[0].t) / 60_000 : 0),
-    eco, seats,
+    eco, rail, seats,
     vp: { you: vpFor(score, "you"), ai: vpFor(score, "ai") },
     trace, winner,
   };

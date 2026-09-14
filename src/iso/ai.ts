@@ -55,7 +55,7 @@ import { ROUGH, factoryTouchesTown, type Grid, type Industry } from "./grid";
 import {
   DIRS, DIR, tIdx, inMapT, hasTrack, canBuildOn, canAfford, tileCost, addCost,
   buildTile, trackOpenTo, tileAlreadyCarries, freeAllowanceCovers, playerNetwork,
-  plantFootprintTiles, PUBLIC_OWNER,
+  plantFootprintTiles, PUBLIC_OWNER, NE, SE, SW, NW,
   type Track, type TrackKind, type Purse,
 } from "./track";
 import {
@@ -64,6 +64,18 @@ import {
   industryLocks, heldIndustries,
   type EconomyState, type Harvester, type Factory,
 } from "./economy";
+// RAILWAYS (#182): the rival's railway runs through the railway's OWN module —
+// its rules, its costs, its refusals. Nothing rail-shaped is re-derived below;
+// every "may I" answer is a `rail.ts` function the player's click reads too.
+import {
+  RAIL_COSTS, RAIL_PRESENT, RAIL_VIEWS, footprintFor,
+  railCost, railTerrainOk, roadAt, railTileRefusal, buildRail,
+  platformRefusal, resolveAnchor, placePlatform,
+  depotRefusal, placeDepot, depotExit, stopTile, railPorts,
+  structureAt, structuresOf, railComponents, ownerRailTiles,
+  footprintTiles, trainsOf, assignLine, recallTrain, sellTrain, depotReaching, trainAtHome,
+  type RailState, type RailView, type RailAnchor, type RailStructure, type RailRefusal,
+} from "./rail";
 
 // ── terrain cost ──────────────────────────────────────────────────────────
 export const COST_FLAT = 1;
@@ -1338,4 +1350,735 @@ export function rivalPace(you: number, ai: number, target: number): RivalPace {
   const sprint = behind >= VICTORY.plant;
   const deny = you > target - VICTORY.plant;
   return { sprint, bankPerTurn: sprint ? 4 : 2, oreUrgency: sprint ? 1.5 : 1, deny };
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// RAILWAYS (#182) — the rival's railway.
+//
+// The rival plans through the SAME shared functions and prices the player
+// uses: `railTileRefusal`/`buildRail` for track, `platformRefusal`/
+// `resolveAnchor`/`placePlatform` for the platforms, `depotRefusal`/
+// `placeDepot` for the shed, `assignLine`/`recallTrain`/`sellTrain` for the
+// train, and `RAIL_COSTS` — an alias of `BUILD_COSTS` — for every price. No
+// rule of the railway is re-derived in this file; the planner only RANKS
+// candidate shapes (an A* over a cost table, a ring of legal spots) and the
+// shared rules hold the final "may I" — the same answers the player's click
+// and the multiplayer host's validation read.
+//
+// The decision the ticket asks for, in one sentence: the rival builds a line
+// when an industry is worth claiming that its road either cannot reach or
+// can only reach expensively — because the line's fixed price (a platform, a
+// depot, a train) is paid back by the industry's income plus the platform's
+// own 1★, and a platform that anchors nothing the road cannot already get is
+// 12 Ore of VP-chasing the road would not survive.
+//
+// The one project at a time: a turn returns exactly ONE action — a platform,
+// a stretch of track, a depot, a train, or the recall/sell pair that drains a
+// broken line — so a seat builds watchably, exactly like it paves.
+// ══════════════════════════════════════════════════════════════════════════
+
+/** What one rail turn is allowed to build. `line` is the full project
+ *  (platforms → track → depot → train); `platforms` is the balance matrix's
+ *  platform-only seat — the 1★ purchase measured on its own, nothing else. */
+export type RailScope = "line" | "platforms";
+
+export interface RailMoveOptions {
+  /** What the seat can spend. Prices come from `RAIL_COSTS` only. */
+  purse: Purse;
+  /** The seat's numeric track-owner id (player index + 1, everywhere else). */
+  ownerId: number;
+  /** The skill lever: the easy chair never plays the railway at all. */
+  useRail: boolean;
+  /** The strategy lever the balance harness turns. Default: the full line. */
+  scope?: RailScope;
+  /** Simulated clock: an industry under Blockade pays nothing this turn. */
+  now?: number;
+}
+
+/**
+ * One of the rival's rail actions. Every build is priced from `RAIL_COSTS`
+ * (i.e. `BUILD_COSTS`) and executed through the shared `rail.ts` function
+ * named in its `kind`; `recall` and `sell` are the two moves that cost
+ * nothing up front.
+ */
+export type RailMove =
+  | { kind: "track"; tiles: [number, number][]; fresh: number; cost: Purse }
+  | { kind: "platform"; tx: number; ty: number; view: RailView; anchor: RailAnchor; cost: Purse }
+  | { kind: "depot"; tx: number; ty: number; view: RailView; cost: Purse }
+  | { kind: "train"; sourceId: number; destId: number; cost: Purse }
+  | { kind: "recall"; trainId: number; cost: Purse }
+  | { kind: "sell"; trainId: number; cost: Purse };
+
+export interface RailMoveOutcome {
+  /** What the build actually charged (a track may cost less than planned). */
+  spent: Purse;
+  /** The one-time 50% refund of a `sell`. */
+  refund?: Purse;
+  /** The tiles that appeared, for the renderer's invalidation. */
+  tiles: [number, number][];
+  /** The feed line: what the rival just did, in the player's words. */
+  label: string;
+}
+
+// ── routing: a NEW drag, ranked by cost and judged by the shared rule ──────
+/** A crossing is legal but not preferred: the rival walks around a straight
+ *  road when it can, and pays this when it cannot. */
+const RAIL_CROSSING_PENALTY = 8;
+/** Stepping over the seat's own track costs nothing to build — and is
+ *  cheaper than grass in the ranker, so a line reuses its trunk. */
+const RAIL_OWN_COST = 0.2;
+
+/**
+ * The A* step cost for laying rail across one tile. Water, built things,
+ * foreign rail and a curve over a road are impassable; a straight road is a
+ * crossing (penalty, not wall); the seat's own track is nearly free.
+ *
+ * This table only RANKS. Whether the drag is legal at all is the shared
+ * `railTileRefusal`'s answer, checked on the whole planned shape — the same
+ * split `stepCost`/`planFeasibility` keep for the road tiers.
+ */
+export function railStepCost(
+  grid: Grid, track: Track, rail: RailState, ownerId: number, tx: number, ty: number,
+): number {
+  if (!inMapT(tx, ty)) return IMPASSABLE;
+  const i = tIdx(tx, ty);
+  // The occupancy test is the shared rule's own (`railTileRefusal` reads the
+  // same byte the same way), so the ranker can never prefer a tile the rule
+  // would refuse.
+  if (grid.occupancy[i] >= 0) return IMPASSABLE;
+  if (structureAt(rail, tx, ty)) return IMPASSABLE;
+  if (!railTerrainOk(grid, tx, ty)) return IMPASSABLE;
+  if ((rail.rail.tile[i] & RAIL_PRESENT) !== 0) {
+    return rail.rail.owner[i] === ownerId ? RAIL_OWN_COST : IMPASSABLE;
+  }
+  const road = roadAt(track, tx, ty);
+  if (road !== 0) {
+    const straight = road === (NE | SW) || road === (SE | NW);
+    if (!straight) return IMPASSABLE;         // the crossing is straight-only
+    return RAIL_CROSSING_PENALTY;
+  }
+  return grid.terrain[i] === ROUGH ? COST_ROUGH : COST_FLAT;
+}
+
+/** Rail's own admissible heuristic: the cheapest step costs `RAIL_OWN_COST`. */
+const railHeuristic = (ax: number, ay: number, bx: number, by: number) =>
+  (Math.abs(ax - bx) + Math.abs(ay - by)) * RAIL_OWN_COST;
+
+/**
+ * A* from (ax,ay) to (bx,by) for a NEW rail drag. Same shape and same
+ * deterministic pop order as `findPath` (ties by tile index, binary heap),
+ * but the cost table is rail's own and the search is boxed around the two
+ * endpoints: a line is a local job, and the box is what keeps a rival turn
+ * from spending a road turn's worth of wall clock on it.
+ */
+export function planRailRoute(
+  grid: Grid, track: Track, rail: RailState, ownerId: number,
+  ax: number, ay: number, bx: number, by: number,
+): [number, number][] | null {
+  if (!inMapT(ax, ay) || !inMapT(bx, by)) return null;
+  const start = tIdx(ax, ay), goal = tIdx(bx, by);
+  if (railStepCost(grid, track, rail, ownerId, ax, ay) === IMPASSABLE) return null;
+  if (railStepCost(grid, track, rail, ownerId, bx, by) === IMPASSABLE) return null;
+  // The search box: the endpoints plus a margin of detour room.
+  const cx = (ax + bx) >> 1, cy = (ay + by) >> 1;
+  const box = (Math.abs(ax - bx) + Math.abs(ay - by)) / 2 + 14;
+  const inBox = (x: number, y: number) => Math.abs(x - cx) <= box && Math.abs(y - cy) <= box;
+
+  const gScore = new Map<number, number>([[start, 0]]);
+  const cameFrom = new Map<number, number>();
+  const fScore = new Map<number, number>([[start, railHeuristic(ax, ay, bx, by)]]);
+  const open = new OpenHeap();
+  open.push(start, fScore.get(start)!);
+  const closed = new Set<number>();
+
+  while (open.size) {
+    // deterministic pop: lowest f, ties by lowest tile index; skip stale.
+    let cur = -1;
+    for (;;) {
+      if (!open.size) break;
+      const e = open.pop();
+      if (closed.has(e.i)) continue;
+      if (e.f !== (fScore.get(e.i) ?? Infinity)) continue;
+      cur = e.i;
+      break;
+    }
+    if (cur === -1) break;
+    if (cur === goal) {
+      const tiles: [number, number][] = [];
+      let n: number | undefined = cur;
+      while (n !== undefined) {
+        tiles.push([n % MAP_W, (n / MAP_W) | 0]);
+        n = cameFrom.get(n);
+      }
+      tiles.reverse();
+      return tiles;
+    }
+    closed.add(cur);
+    const cxn = cur % MAP_W, cyn = (cur / MAP_W) | 0;
+    for (const d of DIRS) {
+      const nx = cxn + DIR[d][0], ny = cyn + DIR[d][1];
+      if (!inMapT(nx, ny) || !inBox(nx, ny)) continue;
+      const ni = tIdx(nx, ny);
+      if (closed.has(ni)) continue;
+      const c = railStepCost(grid, track, rail, ownerId, nx, ny);
+      if (!isFinite(c)) continue;
+      const tentative = (gScore.get(cur) ?? Infinity) + c;
+      if (tentative >= (gScore.get(ni) ?? Infinity)) continue;
+      cameFrom.set(ni, cur);
+      gScore.set(ni, tentative);
+      const nf = tentative + railHeuristic(nx, ny, bx, by);
+      fScore.set(ni, nf);
+      open.push(ni, nf);
+    }
+  }
+  return null;
+}
+
+/**
+ * The final word on a planned drag — the shared rule on the whole shape, the
+ * way `buildRail` and the player's preview judge it. A drag is only accepted
+ * when EVERY tile passes; `fresh` counts what the purse would actually pay
+ * for (the seat's own tiles are stepped over free).
+ */
+export function validateRailDrag(
+  grid: Grid, track: Track, rail: RailState, ownerId: number, tiles: [number, number][],
+): { ok: boolean; fresh: number; why: RailRefusal | null } {
+  const planned = new Set(tiles.map(([x, y]) => tIdx(x, y)));
+  let fresh = 0;
+  for (const [x, y] of tiles) {
+    const why = railTileRefusal(grid, track, rail, ownerId, x, y, planned);
+    if (why !== "ok") return { ok: false, fresh: 0, why };
+    const i = tIdx(x, y);
+    if ((rail.rail.tile[i] & RAIL_PRESENT) === 0 || rail.rail.owner[i] !== ownerId) fresh++;
+  }
+  return { ok: true, fresh, why: null };
+}
+
+// ── the project, read off the rail state each turn (stateless) ─────────────
+/** The owner's first platform anchored to `kind`, in structure-id order. */
+const firstPlatform = (rail: RailState, ownerId: number, kind: "industry" | "plant"): RailStructure | null =>
+  structuresOf(rail, ownerId, "platform").find((p) => p.anchor?.kind === kind) ?? null;
+
+/** The tile a rail drag joins `port` on: the port's outward neighbour. */
+const portJoin = (port: { tx: number; ty: number; dir: number }): [number, number] =>
+  [port.tx + DIR[port.dir][0], port.ty + DIR[port.dir][1]];
+
+/**
+ * The A* endpoints for `plat`: its two port-join tiles (when the rail may
+ * start there — the rule's own occupancy and terrain reads), plus the nearest
+ * tile of the component the platform's lane already sits on (when it has
+ * track). In that order: a line grows from the platform's own mouth first.
+ */
+function endpointSources(
+  grid: Grid, rail: RailState, ownerId: number, plat: RailStructure, compId: number,
+): [number, number][] {
+  const out: [number, number][] = [];
+  for (const port of railPorts(plat)) {
+    const [jx, jy] = portJoin(port);
+    if (!inMapT(jx, jy)) continue;
+    const i = tIdx(jx, jy);
+    if (grid.occupancy[i] >= 0) continue;              // the rule's occupancy read
+    if (structureAt(rail, jx, jy)) continue;
+    const ownRail = (rail.rail.tile[i] & RAIL_PRESENT) !== 0 && rail.rail.owner[i] === ownerId;
+    if (ownRail || railTerrainOk(grid, jx, jy)) out.push([jx, jy]);
+  }
+  if (compId !== 0) {
+    const comp = railComponents(rail, ownerId);
+    let best: [number, number] | null = null;
+    let bestD = Infinity;
+    for (const i of ownerRailTiles(rail, ownerId)) {
+      if ((comp.get(i) ?? 0) !== compId) continue;
+      const x = i % MAP_W, y = (i / MAP_W) | 0;
+      const d = Math.abs(x - (plat.tx + plat.w / 2)) + Math.abs(y - (plat.ty + plat.h / 2));
+      if (d < bestD || (d === bestD && best && tIdx(x, y) < tIdx(best[0], best[1]))) {
+        best = [x, y]; bestD = d;
+      }
+    }
+    if (best && !out.some(([x, y]) => x === best![0] && y === best![1])) out.push(best);
+  }
+  return out;
+}
+
+/** Is this owner's component already holding a train (the one-train rule)? */
+function componentBusy(rail: RailState, ownerId: number, depot: RailStructure): boolean {
+  const comp = railComponents(rail, ownerId);
+  const ex = depotExit(depot);
+  const home = comp.get(tIdx(ex.tx, ex.ty)) ?? 0;
+  if (!home) return true;                 // a depot the network cannot use is busy
+  return rail.trains.some((t) => {
+    if (t.ownerId !== ownerId) return false;
+    const d = rail.structures.find((s) => s.id === t.depotId && s.kind === "depot");
+    if (!d) return false;
+    const dex = depotExit(d);
+    return (comp.get(tIdx(dex.tx, dex.ty)) ?? 0) === home;
+  });
+}
+
+// ── target selection: the industry a line is worth its fixed price for ─────
+/**
+ * How far a road may be and still beat the railway. A dirt run costs Wood and
+ * Stone per tile and pays 0.25★ per tile it later paves; a line costs its
+ * fixed price (platform + depot + train) and ONE platform point. Past this
+ * many tiles of road the line's income starts paying for itself, and at
+ * "unreachable" it is the only way to the industry at all.
+ */
+export const RAIL_ROAD_THRESHOLD = 16;
+
+/**
+ * The owner's road, flooded. One O(map) BFS over the dirt build rule from the
+ * network the road planner uses (`playerNetwork`-reached tiles, the factory
+ * included), so "can a road get to that industry?" costs a flood instead of a
+ * fleet of A* searches — the target question is asked every turn.
+ */
+function roadReachable(state: EconomyState, factory: Factory): Map<number, number> {
+  const { grid, track } = state;
+  const dist = new Map<number, number>();
+  const queue: number[] = [];
+  const owner = factory.ownerId;
+  const net = owner === 0 ? null : playerNetwork(track, owner, [factory], []);
+  const seed = (x: number, y: number) => {
+    const i = tIdx(x, y);
+    if (!dist.has(i)) { dist.set(i, 0); queue.push(i); }
+  };
+  for (let y = 0; y < MAP_H; y++) {
+    for (let x = 0; x < MAP_W; x++) {
+      if (!hasTrack(track, "dirt", x, y) && !hasTrack(track, "road", x, y)) continue;
+      const i = tIdx(x, y);
+      if (owner !== 0 && track.owner[i] !== owner) {
+        if (track.owner[i] !== PUBLIC_OWNER || !net!.has(i)) continue;
+      }
+      seed(x, y);
+    }
+  }
+  seed(factory.tx, factory.ty);
+  for (let head = 0; head < queue.length; head++) {
+    const cur = queue[head];
+    const cx = cur % MAP_W, cy = (cur / MAP_W) | 0;
+    for (const d of DIRS) {
+      const nx = cx + DIR[d][0], ny = cy + DIR[d][1];
+      if (!inMapT(nx, ny)) continue;
+      const ni = tIdx(nx, ny);
+      if (dist.has(ni)) continue;
+      if (!canBuildOn(grid, "dirt", nx, ny)) continue;
+      dist.set(ni, (dist.get(cur) ?? 0) + 1);
+      queue.push(ni);
+    }
+  }
+  return dist;
+}
+
+/**
+ * The industries a line would claim, best first, deterministic: equal value
+ * breaks by id. An industry qualifies when the owner's road CANNOT reach one
+ * of its harvester spots, or can only reach it past `RAIL_ROAD_THRESHOLD`
+ * tiles; blockaded and already-claimed industries pay nothing and are out;
+ * one the owner already platformed is out too (one platform per anchor).
+ */
+export function railTargets(
+  state: EconomyState, rail: RailState, factory: Factory,
+  stock: Purse, ownerId: number, now = 0,
+): Industry[] {
+  const { grid } = state;
+  const locks = industryLocks(state);
+  const reach = roadReachable(state, factory);
+  const taken = new Set(
+    structuresOf(rail, ownerId, "platform")
+      .filter((p) => p.anchor?.kind === "industry")
+      .map((p) => p.anchor!.id),
+  );
+  const scored: { ind: Industry; score: number }[] = [];
+  for (const ind of grid.industries) {
+    const def = INDUSTRY_BY_KEY[ind.type];
+    if (!def) continue;
+    if (locks.has(ind.id)) continue;                 // somebody's road already holds it
+    if (ind.banditUntil > now) continue;             // blockaded: it pays nothing
+    if (taken.has(ind.id)) continue;                 // one platform per anchor
+    let best = Infinity;
+    for (const [hx, hy] of harvesterSpots(grid, ind)) {
+      const d = reach.get(tIdx(hx, hy));
+      if (d !== undefined && d < best) best = d;
+    }
+    if (best <= RAIL_ROAD_THRESHOLD) continue;       // the road gets there cheaply enough
+    const weight = CARGO_VALUE[def.cargo] * (1 + scarcity(stock, def.cargo));
+    const score = (ind.output ?? def.output) * weight * (best === Infinity ? 1 : 0.85);
+    scored.push({ ind, score });
+  }
+  scored.sort((a, b) => b.score - a.score || a.ind.id - b.ind.id);
+  return scored.map((s) => s.ind);
+}
+
+// ── the geometry of one line ───────────────────────────────────────────────
+/** A structure-shaped probe: `railPorts` and friends read only these fields. */
+function platProbe(tx: number, ty: number, view: RailView): RailStructure {
+  const [w, h] = footprintFor("platform", view);
+  return { id: -1, kind: "platform", ownerId: 0, owner: "", tx, ty, w, h, view };
+}
+
+/**
+ * The rail drag that joins two platform spots: the closest port pair first
+ * (four combinations, ranked by the gap between their join tiles), each
+ * A*ed and judged by the shared rule on the whole shape. Null when no port
+ * pair connects — which is the answer, not an error: the target is walled or
+ * the spots sit on the wrong sides of a river, and the caller excludes it.
+ */
+function joinPath(
+  state: EconomyState, rail: RailState, ownerId: number,
+  a: { tx: number; ty: number; view: RailView }, b: { tx: number; ty: number; view: RailView },
+): [number, number][] | null {
+  const { grid, track } = state;
+  const pa = railPorts(platProbe(a.tx, a.ty, a.view));
+  const pb = railPorts(platProbe(b.tx, b.ty, b.view));
+  const combos: { ja: [number, number]; jb: [number, number]; d: number }[] = [];
+  for (const x of pa) {
+    for (const y of pb) {
+      const ja = portJoin(x), jb = portJoin(y);
+      if (!inMapT(ja[0], ja[1]) || !inMapT(jb[0], jb[1])) continue;
+      combos.push({
+        ja, jb,
+        d: Math.abs(ja[0] - jb[0]) + Math.abs(ja[1] - jb[1]),
+      });
+    }
+  }
+  combos.sort((p, q) => p.d - q.d || tIdx(p.ja[0], p.ja[1]) - tIdx(q.ja[0], q.ja[1]));
+  for (const { ja, jb } of combos) {
+    const path = planRailRoute(grid, track, rail, ownerId, ja[0], ja[1], jb[0], jb[1]);
+    if (!path) continue;
+    if (validateRailDrag(grid, track, rail, ownerId, path).ok) return path;
+  }
+  return null;
+}
+
+/**
+ * Legal platform spots around an anchor building, in a fixed order (views,
+ * then row, then column — the same determinism discipline as the factory
+ * search). `limit` keeps the geometry pass cheap; the spots are re-derived
+ * every turn, so a spot that stops being legal stops being offered.
+ */
+function platformSpotsAround(
+  grid: Grid, rail: RailState, factories: { ownerId: number; tx: number; ty: number; id?: number }[],
+  ownerId: number, bx: number, by: number, bw: number, bh: number,
+  anchor: RailAnchor, limit: number,
+): { tx: number; ty: number; view: RailView; anchor: RailAnchor }[] {
+  const out: { tx: number; ty: number; view: RailView; anchor: RailAnchor }[] = [];
+  for (const view of RAIL_VIEWS) {
+    const [w, h] = footprintFor("platform", view);
+    // The anchor rule is "within 3 of a footprint cell to an anchor cell", so
+    // the origin's ring is 3 + the footprint past the anchor on every side.
+    for (let ty = by - 3 - (h - 1); ty <= by + bh + 2; ty++) {
+      for (let tx = bx - 3 - (w - 1); tx <= bx + bw + 2; tx++) {
+        const chosen = resolveAnchor(grid, factories, ownerId, tx, ty, view, anchor);
+        if (!chosen) continue;
+        if (platformRefusal(grid, rail.structures, factories, ownerId, tx, ty, view, chosen) !== "ok") continue;
+        out.push({ tx, ty, view, anchor: chosen });
+        if (out.length >= limit) return out;
+      }
+    }
+  }
+  return out;
+}
+
+// ── the planner: one action per turn, most-urgent first ────────────────────
+/**
+ * The rival's rail turn, decided.
+ *
+ *   1. a broken line drains first: a blocked train whose line no longer runs
+ *      on one component is recalled, and a stored train whose line is gone is
+ *      sold (the one-time 50%);
+ *   2. an existing project completes in the order its missing piece demands:
+ *      connect the platforms, place the depot, buy the train;
+ *   3. otherwise a new line: the best claimable industry (road-unreachable or
+ *      road-far), the first geometry that joins plant to industry, and the
+ *      plant platform as its first piece.
+ *
+ * Stateless by design: the project is read off the rail state every turn, so
+ * a save, a load and a guest snapshot all resume it with nothing to carry.
+ */
+export function planRailMove(
+  state: EconomyState, rail: RailState, factory: Factory, opts: RailMoveOptions,
+): RailMove | null {
+  if (!opts.useRail) return null;
+  const { grid, track } = state;
+  const ownerId = opts.ownerId;
+  const now = opts.now ?? 0;
+  const scope: RailScope = opts.scope ?? "line";
+  const factories = state.factories.filter((f) => f.ownerId === ownerId);
+  if (!factories.length) return null;
+
+  // 1. An orphaned train (its line is gone) is sold once it is home — the
+  //    one-time 50%. A BLOCKED train on a line is never recalled from here:
+  //    a recall needs a route home, and the cut that blocked the train is
+  //    usually the same cut between it and its depot, so the recall would
+  //    fail every turn and starve every other rail action. The connect pass
+  //    below re-lays the missing stretch instead, and the train re-plans the
+  //    moment the rail revision moves.
+  for (const t of trainsOf(rail, ownerId)) {
+    const line = rail.lines.find((l) => l.id === t.lineId);
+    if (!line && trainAtHome(rail, t)) return { kind: "sell", trainId: t.id, cost: {} };
+  }
+
+  const plantPlat = firstPlatform(rail, ownerId, "plant");
+  const indPlat = firstPlatform(rail, ownerId, "industry");
+
+  // The platform-only seat: the 1★ on its own. One industry platform at a
+  // time (best target first), then a plant platform per factory it has not
+  // platformed yet. No track, no depot, no train — that is the strategy.
+  if (scope === "platforms") {
+    for (const ind of railTargets(state, rail, factory, opts.purse, ownerId, now)) {
+      const spots = platformSpotsAround(
+        grid, rail, factories, ownerId, ind.tx, ind.ty, ind.w, ind.h,
+        { kind: "industry", id: ind.id, tiles: industryTiles(ind) }, 1,
+      );
+      if (spots.length) {
+        const s = spots[0];
+        return { kind: "platform", tx: s.tx, ty: s.ty, view: s.view, anchor: s.anchor, cost: { ...RAIL_COSTS.platform } };
+      }
+    }
+    for (const f of factories) {
+      const has = structuresOf(rail, ownerId, "platform")
+        .some((p) => p.anchor?.kind === "plant" && p.anchor.id === (f.id ?? 0));
+      if (has) continue;
+      const spots = platformSpotsAround(
+        grid, rail, factories, ownerId, f.tx, f.ty, FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1],
+        { kind: "plant", id: f.id ?? 0, tiles: plantFootprintTiles(f.tx, f.ty) }, 1,
+      );
+      if (spots.length) {
+        const s = spots[0];
+        return { kind: "platform", tx: s.tx, ty: s.ty, view: s.view, anchor: s.anchor, cost: { ...RAIL_COSTS.platform } };
+      }
+    }
+    return null;
+  }
+
+  // 2. An existing project.
+  if (plantPlat && indPlat) {
+    const comp = railComponents(rail, ownerId);
+    const a = comp.get(tIdx(...stopTile(plantPlat))) ?? 0;
+    const b = comp.get(tIdx(...stopTile(indPlat))) ?? 0;
+    if (a === 0 || b === 0 || a !== b) {
+      const sources = endpointSources(grid, rail, ownerId, plantPlat, a);
+      const goals = endpointSources(grid, rail, ownerId, indPlat, b);
+      for (const s of sources) {
+        for (const g of goals) {
+          if (s[0] === g[0] && s[1] === g[1]) continue;
+          const path = planRailRoute(grid, track, rail, ownerId, s[0], s[1], g[0], g[1]);
+          if (!path) continue;
+          const v = validateRailDrag(grid, track, rail, ownerId, path);
+          if (!v.ok) continue;
+          return { kind: "track", tiles: path, fresh: v.fresh, cost: railCost(v.fresh) };
+        }
+      }
+      return null;   // broken and unconnectable: the recall/sell above drains it
+    }
+    const depot = depotReaching(rail, ownerId, indPlat.id);
+    if (!depot) {
+      const move = planDepotSpot(state, rail, ownerId);
+      if (move) return move;
+      return null;   // track with nowhere for the shed: wait
+    }
+    if (!componentBusy(rail, ownerId, depot)) {
+      return { kind: "train", sourceId: indPlat.id, destId: plantPlat.id, cost: { ...RAIL_COSTS.train } };
+    }
+    return null;     // the line is running
+  }
+
+  // 3. A new line — or the missing half of one.
+  const excluded = excludedTargets(state, rail);
+  const targets = railTargets(state, rail, factory, opts.purse, ownerId, now)
+    .filter((ind) => !excluded.has(ind.id));
+  if (!targets.length) return null;
+  const ind = targets[0];
+
+  const indSpots = (limit: number) => platformSpotsAround(
+    grid, rail, factories, ownerId, ind.tx, ind.ty, ind.w, ind.h,
+    { kind: "industry", id: ind.id, tiles: industryTiles(ind) }, limit,
+  );
+  const plantSpots = (limit: number) => platformSpotsAround(
+    grid, rail, factories, ownerId, factory.tx, factory.ty, FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1],
+    { kind: "plant", id: factory.id ?? 0, tiles: plantFootprintTiles(factory.tx, factory.ty) }, limit,
+  );
+
+  if (!plantPlat && !indPlat) {
+    // The pair must JOIN before either is committed: a platform that can
+    // never meet the other is 12 Ore of orphan.
+    for (const ps of plantSpots(1)) {
+      for (const is of indSpots(2)) {
+        if (!joinPath(state, rail, ownerId, ps, is)) continue;
+        return { kind: "platform", tx: ps.tx, ty: ps.ty, view: ps.view, anchor: ps.anchor, cost: { ...RAIL_COSTS.platform } };
+      }
+      // geometry against this spot failed: try the next plant spot
+    }
+    excluded.add(ind.id);        // the top target is walled: skip it until the world moves
+    return null;
+  }
+  if (plantPlat) {
+    // The plant platform stands; the industry platform is the missing half.
+    for (const is of indSpots(3)) {
+      if (joinPath(state, rail, ownerId, plantPlat, is)) {
+        return { kind: "platform", tx: is.tx, ty: is.ty, view: is.view, anchor: is.anchor, cost: { ...RAIL_COSTS.platform } };
+      }
+    }
+    excluded.add(ind.id);
+    return null;
+  }
+  // plantPlat missing, indPlat standing (a save can arrive this way)
+  const standing = indPlat;
+  if (!standing) return null;   // both halves were handled above; belt and braces
+  for (const ps of plantSpots(3)) {
+    if (joinPath(state, rail, ownerId, ps, standing)) {
+      return { kind: "platform", tx: ps.tx, ty: ps.ty, view: ps.view, anchor: ps.anchor, cost: { ...RAIL_COSTS.platform } };
+    }
+  }
+  excluded.add(ind.id);
+  return null;
+}
+
+// ── target exclusions: walled industries, remembered per world ────────────
+/**
+ * The top target's geometry can fail for the whole world (a river between the
+ * plant and the industry), and the plan is stateless, so without a memory the
+ * rival would re-fail the same A* on every turn. The exclusions live in a
+ * WeakMap keyed on the economy state, fingerprinted like `deepPlanCandidates`:
+ * a build anywhere (the seat's own or the other's) moves the world and
+ * re-opens every target.
+ */
+const railExclusions = new WeakMap<EconomyState, { fp: number; excluded: Set<number> }>();
+
+function railFingerprint(state: EconomyState, rail: RailState): number {
+  let h = 0;
+  const fold = (arr: Uint8Array) => {
+    for (let i = 0; i < arr.length; i++) h = (Math.imul(h, 31) + arr[i]) | 0;
+  };
+  fold(state.track.dirt);
+  fold(state.track.road);
+  fold(state.track.owner);
+  fold(rail.rail.tile);
+  fold(rail.rail.owner);
+  h = (Math.imul(h, 31) + rail.rail.revision) | 0;
+  for (const f of state.factories) h = (Math.imul(h, 31) + f.tx * 256 + f.ty) | 0;
+  for (const hv of state.harvesters) h = (Math.imul(h, 31) + hv.tx * 256 + hv.ty) | 0;
+  return h;
+}
+
+/** The live exclusion set for this world (fresh when the world has moved). */
+function excludedTargets(state: EconomyState, rail: RailState): Set<number> {
+  const fp = railFingerprint(state, rail);
+  let slot = railExclusions.get(state);
+  if (!slot) railExclusions.set(state, (slot = { fp, excluded: new Set() }));
+  if (slot.fp !== fp) { slot.fp = fp; slot.excluded = new Set(); }
+  return slot.excluded;
+}
+
+// ── the depot: a 2×2 whose declared exit faces the seat's own track ────────
+/**
+ * The four views' exit geometry, worked out once: `face` is the direction the
+ * exit port points, and (du, dv) takes the exit tile — which is INSIDE the
+ * footprint — to the footprint's origin. So a depot that faces a track tile
+ * R from `face` sits at origin `R - DIR[face] - (du, dv)`.
+ */
+const DEPOT_EXIT_GEOM: Record<RailView, { face: number; du: number; dv: number }> = {
+  ne: { face: NE, du: 0, dv: 0 },
+  se: { face: SE, du: 1, dv: 0 },
+  sw: { face: SW, du: 1, dv: 1 },
+  nw: { face: NW, du: 0, dv: 1 },
+};
+
+/**
+ * The rival's depot, placed against its own track: every one of its layer
+ * tiles within reach of its platforms, in tile order, four headings each —
+ * the first `depotRefusal`-legal spot wins. The refusal is the shared rule:
+ * legal ground, no overlap, and an exit that joins the network.
+ */
+function planDepotSpot(state: EconomyState, rail: RailState, ownerId: number): RailMove | null {
+  const { grid } = state;
+  const plats = structuresOf(rail, ownerId, "platform");
+  if (!plats.length) return null;
+  const cx = Math.round(plats.reduce((s, p) => s + p.tx, 0) / plats.length);
+  const cy = Math.round(plats.reduce((s, p) => s + p.ty, 0) / plats.length);
+  const cands: number[] = [];
+  for (let i = 0; i < rail.rail.tile.length; i++) {
+    if ((rail.rail.tile[i] & RAIL_PRESENT) === 0 || rail.rail.owner[i] !== ownerId) continue;
+    const x = i % MAP_W, y = (i / MAP_W) | 0;
+    if (Math.abs(x - cx) + Math.abs(y - cy) > 48) continue;
+    cands.push(i);
+  }
+  cands.sort((p, q) => p - q);
+  for (const i of cands) {
+    const rx = i % MAP_W, ry = (i / MAP_W) | 0;
+    for (const view of RAIL_VIEWS) {
+      const g = DEPOT_EXIT_GEOM[view];
+      const ex = rx - DIR[g.face][0], ey = ry - DIR[g.face][1];
+      const tx = ex - g.du, ty = ey - g.dv;
+      if (depotRefusal(grid, rail, ownerId, tx, ty, view) !== "ok") continue;
+      return { kind: "depot", tx, ty, view, cost: { ...RAIL_COSTS.depot } };
+    }
+  }
+  return null;
+}
+
+// ── execution: the shared functions, one per move ──────────────────────────
+/**
+ * Commit a move through the shared rule — the same calls the player's click
+ * and the host's validation run. A move the world has since outgrown refuses
+ * and is reported as nothing built (the caller charges nothing), never a
+ * partial state.
+ */
+export function executeRailMove(
+  state: EconomyState, rail: RailState, move: RailMove, owner: string, ownerId: number,
+): RailMoveOutcome | null {
+  const { grid, track } = state;
+  switch (move.kind) {
+    case "track": {
+      const res = buildRail(grid, track, rail, ownerId, move.tiles);
+      if (!res.built.length) return null;
+      return {
+        spent: res.cost, tiles: res.built,
+        label: `lays ${res.built.length} rail tile${res.built.length === 1 ? "" : "s"}`,
+      };
+    }
+    case "platform": {
+      const factories = state.factories;
+      if (platformRefusal(grid, rail.structures, factories, ownerId, move.tx, move.ty, move.view, move.anchor) !== "ok") {
+        return null;
+      }
+      const s = placePlatform(rail, owner, ownerId, move.tx, move.ty, move.view, move.anchor);
+      return {
+        spent: { ...RAIL_COSTS.platform }, tiles: footprintTiles(s),
+        label: "raises a rail platform (+1★)",
+      };
+    }
+    case "depot": {
+      if (depotRefusal(grid, rail, ownerId, move.tx, move.ty, move.view) !== "ok") return null;
+      const s = placeDepot(rail, owner, ownerId, move.tx, move.ty, move.view);
+      return {
+        spent: { ...RAIL_COSTS.depot }, tiles: footprintTiles(s),
+        label: "builds a train depot",
+      };
+    }
+    case "train": {
+      const plan = assignLine(rail, ownerId, move.sourceId, move.destId);
+      if (!plan.ok) return null;
+      return { spent: { ...RAIL_COSTS.train }, tiles: [], label: `starts ${plan.line!.name}` };
+    }
+    case "recall": {
+      const t = rail.trains.find((x) => x.id === move.trainId && x.ownerId === ownerId);
+      if (!t || !recallTrain(rail, t)) return null;
+      return { spent: {}, tiles: [], label: "recalls its blocked train" };
+    }
+    case "sell": {
+      const t = rail.trains.find((x) => x.id === move.trainId && x.ownerId === ownerId);
+      if (!t) return null;
+      const sale = sellTrain(rail, t);
+      if (!sale.ok) return null;
+      return { spent: {}, refund: sale.refund, tiles: [], label: "sells its train" };
+    }
+  }
+}
+
+// ── small adapters (the rail rules read these shapes) ──────────────────────
+/** The industry's footprint tiles, the shape the anchor rule measures from. */
+function industryTiles(ind: Industry): [number, number][] {
+  const out: [number, number][] = [];
+  for (let y = ind.ty; y < ind.ty + ind.h; y++)
+    for (let x = ind.tx; x < ind.tx + ind.w; x++) out.push([x, y]);
+  return out;
 }

@@ -96,6 +96,7 @@ import {
 import {
   aiBuildStep, chooseRivalFactorySpot, deepPlanCandidates, planUpgrades, executePaves,
   paveCandidates, rivalPace, type RivalPace,
+  planRailMove, executeRailMove,
 } from "./ai";
 import {
   RIVAL_SKILLS, resolveSkillKey, skillKeyFromUrl, SKILL_STORAGE_KEY, type RivalSkill, type SkillKey,
@@ -153,7 +154,7 @@ import {
 } from "./rail";
 import { loadRailwaySprites } from "./rail-art";
 import { createIsoMarket, toBag, chooseRivalOffer, type CargoBag, type IsoMarket } from "./market";
-import { createOriginalUi, type OriginalUi } from "../game/ui";
+import { createOriginalUi, RAIL_TOOL_KEYS, type OriginalUi } from "../game/ui";
 import { HUD_ICONS, cargoIconHtml, costMarkup } from "../game/hud-icons";
 // SFX-01: the UI sound layer. Everything the player DOES on the map (a road
 // laid, a building raised, a demolition, a star earned, the final ledger) gets
@@ -401,6 +402,12 @@ export interface IsoGameOptions {
   /** STORY-01: the ending's "Continue the campaign" returns through here. */
   onStoryExit?: () => void;
   /**
+   * RAIL-05 (#182): force the railway feature flag. Absent, the flag is read
+   * from `?rail=1` and is otherwise OFF in every mode until #179/#181 land
+   * (the release gate in docs/railway-balance.md).
+   */
+  rail?: boolean;
+  /**
    * #186: the rules a HOSTED room plays by — the ★ line, the opening purse and
    * the AI seats. The start screen passes the room's copy; absent (or unreadable)
    * falls back to the session's, and then to the shipped defaults, so a solo
@@ -465,6 +472,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const storyChapter: StoryChapter | null =
     opts.story && isSolo() ? chapterById(opts.story) : null;
   const storyOn = storyChapter !== null;
+  // RAIL-05 (#182): the feature flag. OFF everywhere by default: the release
+  // gate (docs/railway-balance.md) keeps the railway behind it until the
+  // construction UI (#179) and multiplayer authority (#181) are done.
+  // `?rail=1` — or `opts.rail` — turns it on for QA and playtests.
+  const railParam = (() => {
+    try { return new URLSearchParams(location.search).get("rail"); } catch { return null; }
+  })();
+  const railAvailable = opts.rail ?? railParam === "1";
   /** The cast member playing the rival: the contract's, else Torvin as ever. */
   const rivalCast = storyChapter ? storyChapter.rival : "torvin";
   /** The player's own cast id, for every line the wire answers in. */
@@ -1066,7 +1081,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // in a hosted game, so the selector is simply not built.
     onSkill: isSolo() ? (key) => setRivalSkill(key) : undefined,
     skill: isSolo() ? skillKey : undefined,
-  });
+  }, { rail: railAvailable });
   onBoardChange = () => ui.renderBoard();
   root.appendChild(ui.el);
 
@@ -3644,8 +3659,40 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (rivalPavePass()) acted = true;
     else rivalBankTowardPave(f, now);
 
+    // 4. railway (RAIL-05, #182) — the seat's ONE rail action this turn,
+    //    committed through the SAME `rail.ts` rules the player's drag commits
+    //    through (`executeRailMove` → `buildRail` / `placePlatform` / …). Easy
+    //    rivals keep the lever down; the flag down means no railway.
+    const railState = railAvailable && skill().rail ? eco.rail ?? null : null;
+    const railMove = railState
+      ? planRailMove(eco, railState, f, {
+        purse: rival.purse, ownerId: rival.i + 1, useRail: true, scope: "line", now,
+      })
+      : null;
+    let railLaid: [number, number][] = [];
+    if (railState && railMove && canPay(rival.purse, railMove.cost)) {
+      const res = executeRailMove(eco, railState, railMove, rival.id, rival.i + 1);
+      if (res) {
+        if (res.refund) earn(rival, res.refund);
+        else if (Object.keys(res.spent).length) spend(rival, res.spent);
+        if (railMove.kind === "track") railLaid = res.tiles;
+        acted = true;
+        ui.feed(`Rival ${res.label}`, rival.name);
+      }
+    }
+
     if (acted) {
       syncWorld();
+      // RAIL-05: syncWorld's shadow diff repainted the tiles whose OWN rail
+      // byte moved; a track tile's NEIGHBOURS changed shape with it (their
+      // rail end-cap becomes a through-run), so the ±1 neighbourhood goes too
+      // — the same invalidation the player's `commitRailDrag` does.
+      for (const [tx, ty] of railLaid) {
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const x = tx + dx, y = ty + dy;
+          if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) renderer?.invalidateTile(x, y);
+        }
+      }
       rescoreNow();
       return;
     }
@@ -4155,6 +4202,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           if (pv.tiles.length === 0) toast("Can't build there.", "bad");
           else commitTrackDrag(p, pv, kind);
         }
+      } else if (!railAvailable && (what === "rail" || what === "platform" || what === "raildepot" || what === "railact")) {
+        // RAIL-05 (#182): with the flag down the railway does not exist on this
+        // host, so a guest's rail request is refused whole — never half-built.
+        echoed.push("Rail is not available in this mode.");
       } else if (what === "rail") {
         // RAIL-04 (#178): a guest's rail drag. The host runs the SAME preview
         // and the SAME commit against the guest's seat, so the tiles the guest
@@ -5139,6 +5190,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * a road drag left armed under the Depot tool would quote the wrong build.
    */
   function armTool(t: Tool) {
+    // RAIL-05 (#182): the flag down means the tool does not exist. Refuse the
+    // arm and keep whatever is already in the hand — a hotkey that would
+    // summon a refused build is just a confusing one.
+    if (!railAvailable && RAIL_TOOL_KEYS.has(t)) {
+      toast("Rail is not available in this mode.", "info");
+      return;
+    }
     tool = t;
     if (dropDrag()) paintOverlayNow();
   }
@@ -6716,6 +6774,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      *  real cancel clears, and the two paths would drift. */
     setTool: (t: Tool) => { if (t === "select") cancelPlacement(); else armTool(t); },
     // ── RAIL-04 (#178): the railway's test twins ──────────────────────────
+    /**
+     * RAIL-05 (#182): the LIVE rail state itself — the object the rules, the
+     * renderer and the rival mutate. For tools that must run the shared rail
+     * functions against the real world (the rail screenshot script plans a
+     * line with `planRailMove`); `rail` below stays the plain-data summary.
+     */
+    get railState() { return rail; },
     /** The live rail state, read-only by convention (the twins below mutate). */
     get rail() {
       return {
@@ -6831,6 +6896,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     /** Screen position (device px, live camera) of a tile's drawn diamond
      *  centre — clicking it hits that tile (renderer.flatPick, N4). */
     tileScreenAt: (tx: number, ty: number) => tileToScreenAt(cam, tx, ty),
+    /**
+     * RAIL-05 (#182): the screenshot twin of panning and zooming by hand —
+     * centre the camera on a tile, optionally at one of the zoom steps (the
+     * same `zoomAt` the wheel uses, so the atlas swap and clamp still apply).
+     */
+    lookAt: (tx: number, ty: number, zoom?: number) => {
+      if (zoom === 0.5 || zoom === 1 || zoom === 2) cam = zoomAt(cam, zoom, cam.vw / 2, cam.vh / 2);
+      cam = centerOnTile(cam, tx, ty);
+      renderer?.setCamera(cam);
+      return { x: cam.x, y: cam.y, zoom: cam.zoom };
+    },
     /**
      * E14: the live camera, so a test can report the zoom it picked a corridor
      * at instead of assuming the boot value.
