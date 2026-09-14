@@ -15,7 +15,7 @@
 import { describe, it, expect } from "vitest";
 import {
   createRailState, buildRail, placePlatform, placeDepot, assignLine, railToWire,
-  applyRailWire, clearRail, railLayerPatch, copyRailLayer, DWELL_MS, type RailState,
+  applyRailWire, clearRail, railLayerPatch, copyRailLayer, tickTrains, DWELL_MS, type RailState,
 } from "../../src/iso/rail";
 import {
   buildSnapshot, applySnapshot, validateSnapshot, base64ToBytes, bytesToBase64,
@@ -98,8 +98,10 @@ describe("RAIL-04 the wire shape", () => {
 
   it("omits the two layers for a delta whose rail revision did not move", () => {
     // Structures, lines and trains are small and always ride (the guest's
-    // panel and its trains need them every tick); the base64 layers are ~2 KB
-    // each and a guest that already has them must not be sent them again.
+    // panel and its trains need them every tick — a leg's TILES only when it
+    // is replanned, see the compact-progress block below); the base64 layers
+    // are ~2 KB each and a guest that already has them must not be sent them
+    // again.
     const { state } = running();
     const light = railToWire(state, { layers: false })!;
     expect(light.tile).toBeUndefined();
@@ -255,5 +257,73 @@ describe("RAIL-04 validation and the delta field", () => {
     const wire = railToWire(state, { layers: true })!;
     expect(wire.tile).toBeDefined();
     expect(applyRailWire(createRailState(), wire)).toBe(true);
+  });
+});
+
+describe("RAIL-04 train progress rides compact (#142)", () => {
+  it("sends a leg once, then progress alone — and the guest keeps the leg", () => {
+    const { state } = running();
+    const sent = new Map<number, [number, number][]>();
+    const first = railToWire(state, { layers: true, routeCache: sent })!;
+    expect(first.trains[0].route!.length).toBeGreaterThan(1);
+    expect(sent.get(state.trains[0].id)).toBe(state.trains[0].route);
+
+    // The train moves; the leg does not change. The record shrinks to progress.
+    tickTrains(state, 200);
+    const progress = railToWire(state, { routeCache: sent })!;
+    expect(progress.trains[0].route).toBeUndefined();
+    expect(progress.trains[0].dist).toBeGreaterThan(0);
+    expect(progress.trains[0].dist).toBe(state.trains[0].dist);
+
+    // A guest that applied both keeps the route it was given and follows the
+    // host's distance — that is the "interpolation" half of the rule.
+    const guest = createRailState();
+    applyRailWire(guest, first);
+    const legs = guest.trains[0].route.length;
+    applyRailWire(guest, progress);
+    expect(guest.trains[0].route).toHaveLength(legs);
+    expect(guest.trains[0].dist).toBe(progress.trains[0].dist);
+    expect(guest.trains[0].status).toBe(progress.trains[0].status);
+  });
+
+  it("always carries the routes on a join or a resync", () => {
+    const { state } = running();
+    const sent = new Map<number, [number, number][]>();
+    railToWire(state, { layers: true, routeCache: sent });
+    tickTrains(state, 120);
+    // A fresh cache is what a join/resync looks like to the wire builder.
+    const join = railToWire(state, { layers: true, routeCache: new Map() })!;
+    expect(join.trains[0].route!.length).toBeGreaterThan(1);
+    // …and no cache at all (the save path) is a full send too.
+    expect(railToWire(state)!.trains[0].route!.length).toBeGreaterThan(1);
+  });
+
+  it("re-sends the leg when the dwell flips the target at the same revision", () => {
+    const { state } = running();
+    const train = state.trains[0];
+    const sent = new Map<number, [number, number][]>();
+    for (let i = 0; i < 400 && train.status !== "dwelling"; i++) tickTrains(state, 50);
+    expect(train.status).toBe("dwelling");
+    const outbound = railToWire(state, { routeCache: sent })!;
+    expect(outbound.trains[0].route!.length).toBeGreaterThan(1);
+    const revision = state.rail.revision;
+    tickTrains(state, DWELL_MS + 50);            // dwell ends, the way back is planned
+    expect(state.rail.revision).toBe(revision);  // same graph…
+    const back = railToWire(state, { routeCache: sent })!;
+    expect(back.trains[0].route!.length).toBeGreaterThan(1);  // …new leg
+    expect(back.trains[0].target).toBe(train.target);
+  });
+
+  it("does not invent a leg for a train the guest has never seen", () => {
+    const guest = createRailState();
+    applyRailWire(guest, {
+      revision: 1, seq: 2, structures: [], lines: [],
+      trains: [{
+        id: 7, ownerId: 1, lineId: 1, depotId: 1, status: "moving", target: "source",
+        dist: 3, planRevision: 1, dwellMs: 0, dirBit: 0, resold: false,
+      }],
+    });
+    expect(guest.trains).toHaveLength(1);
+    expect(guest.trains[0].route).toEqual([]);
   });
 });

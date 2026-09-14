@@ -22,7 +22,7 @@ import {
   depotRefusal, placeDepot, depotExit, laneTiles, stopTile, railPorts, footprintFor, rotateView,
   railComponents, railPath, ownerRailTiles,
   lineRefusal, assignLine, planLeg, tickTrains, trainTile, trainOccupies, demolishStructure,
-  recallTrain, sellTrain, stopLine, depotReaching,
+  recallTrain, sellTrain, stopLine, depotReaching, trainAtHome, trainBasedAt,
   railServesIndustry, railServicedIndustries, platformVp, railPanelRows,
   railStructureItems, trainItems, pointAt, polyline, routeLength,
   type RailState, type RailView, type RailStructure,
@@ -476,10 +476,10 @@ describe("RAIL-04 the train's states and motion", () => {
     const grid = flatGrid([industry("farm", 30, 30)]);
     const track = createTrack();
     const state = createRailState();
-    const { source, dest } = buildLine(state, grid, track, 7, 3);
+    const { source, dest, depot } = buildLine(state, grid, track, 7, 3);
     const plan = assignLine(state, 1, source.id, dest.id);
     if (!plan.ok || !plan.train) throw new Error(`fixture failed to assign: ${plan.why}`);
-    return { grid, track, state, source, dest, train: plan.train, line: plan.line };
+    return { grid, track, state, source, dest, depot, train: plan.train, line: plan.line };
   }
 
   it("starts at the depot exit, departs to the source and dwells 1.5s", () => {
@@ -599,6 +599,43 @@ describe("RAIL-04 the train's states and motion", () => {
     expect(state.lines).toHaveLength(0);
     // A resold train cannot be sold again: it is not on the books at all.
     expect(sellTrain(state, train).ok).toBe(false);
+  });
+
+  it("sells a train that stopped safely on its depot exit when the route was cut", () => {
+    const { state, train, depot } = running();
+    const exit = depotExit(depot);
+    expect(trainTile(train)).toEqual([exit.tx, exit.ty]);
+    // Cut the line at the depot's own stub: nothing the train can do — it
+    // stops safely where it stands, which is still its depot's exit.
+    expect(demolishRail(state, 13, 4)).toBe(true);
+    tickTrains(state, 50);
+    expect(train.status).toBe("blocked");
+    expect(trainTile(train)).toEqual([exit.tx, exit.ty]);
+    expect(trainAtHome(state, train)).toBe(true);
+    // `stored` is unreachable for a train that can never route again, and the
+    // 50% is owed on "returned to depot", not on the state's name.
+    const sale = sellTrain(state, train);
+    expect(sale.ok).toBe(true);
+    expect(sale.refund).toEqual({ ore: 2, oil: 1 });
+    expect(state.trains).toHaveLength(0);
+    expect(state.lines).toHaveLength(0);
+  });
+
+  it("refuses to demolish a depot its train is based at, and lets go once it is sold", () => {
+    const { state, train, depot } = running();
+    // Out on the line: its home cannot be pulled out from under it.
+    for (let i = 0; i < 400 && train.status !== "dwelling"; i++) tickTrains(state, 50);
+    expect(demolishStructure(state, depot.id)).toBeNull();
+    expect(trainBasedAt(state, depot.id)).toBe(train);
+    // Home and sold: the shed is empty, and may come down for its 50%.
+    expect(recallTrain(state, train)).toBe(true);
+    for (let i = 0; i < 5000 && train.status !== "stored"; i++) tickTrains(state, 50);
+    expect(train.status).toBe("stored");
+    // A stored train has no tile at all, so tile occupancy cannot see it —
+    // this is the case the guard exists for.
+    expect(demolishStructure(state, depot.id)).toBeNull();
+    expect(sellTrain(state, train).ok).toBe(true);
+    expect(demolishStructure(state, depot.id)).toBe(depot);
   });
 
   it("stopLine sends a running train home", () => {
