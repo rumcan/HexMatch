@@ -40,7 +40,7 @@
 //   between the road graph and the rail graph at a crossing.
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_W } from "../game/config";
-import { CARGOES, INDUSTRY_BY_KEY, VICTORY, type Cargo } from "./config";
+import { BUILD_COSTS, CARGOES, INDUSTRY_BY_KEY, VICTORY, type Cargo } from "./config";
 import {
   NE, SE, SW, NW, DIRS, DIR, OPPOSITE, PRESENT, tIdx, inMapT, plantFootprintTiles,
   addCost, lPath, type DragPreview, type Purse, type Track,
@@ -81,14 +81,18 @@ export function rotateView(view: RailView, quarterTurns = 1): RailView {
  * drift (the W1 invariant the road tiers already keep).
  *
  * Gold is deliberately absent: PP-08 reserves it for Black Market sabotage.
+ *
+ * The numbers themselves live in ONE place, `BUILD_COSTS` (config.ts), beside
+ * every road and building price, so the balance gate (#182) tunes one table.
+ * This is the railway's view of that table under the names the rules use.
  */
 export const RAIL_COSTS: Readonly<{
   rail: Purse; platform: Purse; depot: Purse; train: Purse;
 }> = {
-  rail: { stone: 1 },
-  platform: { wood: 4, stone: 4, ore: 12, oil: 2 },
-  depot: { wood: 3, stone: 3, ore: 4, oil: 2 },
-  train: { ore: 4, oil: 2 },
+  rail: BUILD_COSTS.rail,
+  platform: BUILD_COSTS.platform,
+  depot: BUILD_COSTS.trainDepot,
+  train: BUILD_COSTS.train,
 };
 
 /** RAIL-01: exactly one Victory Point per platform, on construction. */
