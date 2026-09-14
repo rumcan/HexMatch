@@ -1116,6 +1116,63 @@ const depotComponent = (comp: Map<number, number>, depot: RailStructure): number
  * component the line lives on must not already hold a train (v1's one-train
  * rule — no signals, so no collisions).
  */
+/** Create a named line without silently buying rolling stock. The UI uses this
+ * as the first step of the line editor; `buyTrain` is the separate purchase. */
+export function createLine(
+  state: RailState, ownerId: number, sourceId: number, destId: number, name?: string,
+): { ok: boolean; line?: RailLine; why?: string } {
+  const why = lineRefusal(state, ownerId, sourceId, destId);
+  if (why !== "ok") return { ok: false, why: RAIL_REFUSAL_TEXT[why] };
+  const line: RailLine = {
+    id: state.seq++, ownerId,
+    name: name?.trim() || `Line ${state.lines.filter((l) => l.ownerId === ownerId).length + 1}`,
+    source: sourceId, dest: destId,
+  };
+  state.lines.push(line);
+  return { ok: true, line };
+}
+
+export function renameLine(state: RailState, ownerId: number, lineId: number, name: string): boolean {
+  const line = state.lines.find((l) => l.id === lineId && l.ownerId === ownerId);
+  const clean = name.trim();
+  if (!line || !clean) return false;
+  line.name = clean;
+  return true;
+}
+
+/** Buy one train into an owned, reachable depot for an existing line. Economy
+ * mutation is deliberately left to the caller, so guests can send this intent
+ * and the host can debit its authoritative purse. */
+export function buyTrain(state: RailState, ownerId: number, depotId: number, lineId: number, purse?: Purse):
+  { ok: boolean; train?: Train; why?: string; cost: Purse } {
+  const cost = RAIL_COSTS.train;
+  if (purse && !canPay(purse, cost)) {
+    const missing = missingFor(purse, cost);
+    return { ok: false, why: `Needs ${missing.join(" and ")}.`, cost };
+  }
+  const depot = state.structures.find((s) => s.id === depotId && s.kind === "depot" && s.ownerId === ownerId);
+  const line = state.lines.find((l) => l.id === lineId && l.ownerId === ownerId);
+  if (!depot || !line) return { ok: false, why: RAIL_REFUSAL_TEXT.missing, cost };
+  if (state.trains.some((t) => t.depotId === depotId && !t.resold)) return { ok: false, why: "This depot already has a train.", cost };
+  if (!depotReaching(state, ownerId, line.source)) return { ok: false, why: "The depot can't reach the source platform.", cost };
+  const exit = depotExit(depot);
+  const train: Train = { id: state.seq++, ownerId, lineId, depotId, status: "stored", target: "depot",
+    route: [[exit.tx, exit.ty]], dist: 0, planRevision: state.rail.revision, dwellMs: 0,
+    dirBit: exit.dir, resold: false };
+  state.trains.push(train);
+  return { ok: true, train, cost };
+}
+
+export function startLine(state: RailState, ownerId: number, lineId: number): boolean {
+  const line = state.lines.find((l) => l.id === lineId && l.ownerId === ownerId);
+  if (!line) return false;
+  let started = false;
+  for (const t of state.trains.filter((t) => t.lineId === lineId && t.status === "stored")) {
+    t.target = "source"; started = planLeg(state, t) || started;
+  }
+  return started;
+}
+
 export function assignLine(
   state: RailState, ownerId: number, sourceId: number, destId: number, name?: string,
 ): LinePlan {
