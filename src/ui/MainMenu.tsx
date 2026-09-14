@@ -104,46 +104,15 @@ export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
   type LadderView = { entries: LadderRow[]; mine: { rank: number; rating: number } | null; total?: number };
   const [ladder, setLadder] = useState<LadderView | null | "loading">("loading");
 
-  // Preview data so the live demo is never an empty card: when the
-  // ladder is unreachable (no RUN host, e.g. sandbox preview) or empty,
-  // show a deterministic sample of 10. Production still honours the real
-  // ladder; SAMPLE is DEV-only and never ships to prod data.
-  const SAMPLE_LADDER: LadderView = {
-    entries: [
-      { rank: 1, username: "Mabel", rating: 1788 },
-      { rank: 2, username: "Torvin", rating: 1721 },
-      { rank: 3, username: "Krag", rating: 1694 },
-      { rank: 4, username: "Roque", rating: 1652 },
-      { rank: 5, username: "You", rating: 1620 },
-      { rank: 6, username: "Griev", rating: 1588 },
-      { rank: 7, username: "Brass_99", rating: 1543 },
-      { rank: 8, username: "IronHand", rating: 1491 },
-      { rank: 9, username: "Sable", rating: 1448 },
-      { rank: 10, username: "Furnace", rating: 1410 },
-    ],
-    mine: null,
-    total: 10,
-  };
-
   useEffect(() => {
     let alive = true;
     rankStore()
       .loadLadder(10)
       .then((v) => {
-        if (!alive) return;
-        // DEV preview: if the ladder is empty/null, show the sample so the
-        // front door demonstrates the layout. Tests mock loadLadder, so they
-        // still see real (mocked) data and never hit this branch.
-        if (import.meta.env.DEV && import.meta.env.MODE !== "test" && (!v || v.entries.length === 0)) {
-          setLadder(SAMPLE_LADDER);
-        } else {
-          setLadder(v);
-        }
+        if (alive) setLadder(v);
       })
       .catch(() => {
-        if (!alive) return;
-        if (import.meta.env.DEV && import.meta.env.MODE !== "test") setLadder(SAMPLE_LADDER);
-        else setLadder(null);
+        if (alive) setLadder(null);
       });
     return () => {
       alive = false;
@@ -196,15 +165,16 @@ export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
               : "No contracts filed. The first one is open."}
         </p>
       </div>
-      <section className="menu-leaderboard" aria-label="Leaderboard — Top 10" data-testid="main-menu-leaderboard">
-        <h2 className="menu-leaderboard-title">Leaderboard — Top 10</h2>
-        <p className="menu-leaderboard-sub">The island&apos;s best-rated managers. Win quick matches to climb.</p>
+      <section className="menu-leaderboard" aria-label="The Ladder — Top 10" data-testid="main-menu-leaderboard">
+        <p className="start-kicker">THE LADDER</p>
+        <h2 className="menu-leaderboard-title">Top Rankings — Top 10</h2>
+        <p className="menu-leaderboard-sub">Every rated quick match moves one number. The badge is the band it lands in.</p>
         {ladder === "loading" ? (
-          <p className="ladder-note" aria-live="polite">Loading leaderboard…</p>
+          <p className="ladder-note" aria-live="polite">Reading the board…</p>
         ) : ladder === null ? (
-          <p className="ladder-note">Leaderboard unavailable — check your connection and try again.</p>
+          <p className="ladder-note">The ladder is not reachable from this page — it needs a signed-in RUN.world player. Quick match still works; the rating is kept on your own file.</p>
         ) : ladder.entries.length === 0 ? (
-          <p className="ladder-note">No rated matches yet. Be the first to file one.</p>
+          <p className="ladder-note">Nobody has filed a rating yet. Win a quick match and this board has a first name on it.</p>
         ) : (
           <ol className="ladder-list menu-leaderboard-list" aria-label="Top 10 players">
             {ladder.entries.slice(0, 10).map((row) => {
@@ -231,6 +201,9 @@ export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
             <small>Your best: #{ladder.mine.rank} · {fmtRating(ladder.mine.rating)}</small>
           </p>
         ) : null}
+        <button type="button" className="menu-ladder-link" onClick={onPlay} aria-label="View the full ladder — top ratings">
+          The ladder <small>top ratings — view full board</small>
+        </button>
       </section>
       <p className="menu-foot">{currentVersionLabel()}</p>
       {howTo ? <div className="menu-howto" ref={howToRef} /> : null}

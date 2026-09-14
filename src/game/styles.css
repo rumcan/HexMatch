@@ -3838,6 +3838,29 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .menu-leaderboard .ladder-mine {
   margin-top: 10px;
 }
+.menu-leaderboard .start-kicker {
+  margin: 0 0 6px; text-align: center;
+}
+.menu-ladder-link {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  width: 100%; min-height: 44px; margin-top: 12px; padding: 7px 14px;
+  border: 1px solid var(--line, #594b3b); border-radius: var(--r, 3px);
+  color: var(--txt, #efe4d0);
+  background: linear-gradient(180deg, rgba(255,255,255,.055), rgba(255,255,255,.015)), rgba(21,18,14,.85);
+  font-family: var(--display); font-weight: 700; font-size: 12px;
+  letter-spacing: 2px; text-transform: uppercase; cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
+  transition: border-color .15s ease, background .15s ease, box-shadow .15s ease;
+}
+.menu-ladder-link:hover {
+  border-color: var(--gold, #c98731);
+  background: linear-gradient(180deg, rgba(255,166,43,.16), rgba(255,166,43,.05)), rgba(21,18,14,.85);
+  box-shadow: 0 0 0 1px rgba(233,168,62,.25), 0 6px 22px rgba(0,0,0,.4);
+}
+.menu-ladder-link small {
+  font-family: var(--sans, sans-serif); font-weight: 500; font-size: 10.5px;
+  letter-spacing: 1px; text-transform: none; opacity: .72;
+}
 /* the tour projector (#iso-tutorial) hangs inside this host, full-bleed */
 /* the game version + build id at the foot of the main menu (src/ui/version.ts) */
 .menu-foot {
