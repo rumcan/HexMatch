@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   DEFAULT_ROAD_STYLE, ROAD_CHUNK_H, ROAD_CHUNK_W, RoadCache,
-  railTilesIn, roadTilesIn, screenToGround, tilesForRect,
+  roadTilesIn, screenToGround, tilesForRect,
 } from "../../src/iso/road-renderer";
 import { NE, SE, SW, NW } from "../../src/iso/track";
 import { HW, HH, MAP_W, MAP_H } from "../../src/game/config";
@@ -122,18 +122,29 @@ describe("RoadCache", () => {
     expect(c.stats().entries).toBe(0);
   });
 
-  it("counts a miss for every chunk it cannot allocate, and caches nothing", () => {
+  it("counts a miss for every chunk it cannot allocate, and holds no bytes", () => {
     const c = new RoadCache();
     const cam = { x: 0, y: 0, zoom: 1, vw: 800, vh: 600 };
     const road = blank();
     put(road, 4, 4, NE | SW);
-    const blits = c.paint(
+    const paint = () => c.paint(
       {} as unknown as CanvasRenderingContext2D,
       cam, { roadBits: road, dirtBits: blank() }, DEFAULT_ROAD_STYLE, noSurface,
     );
-    expect(blits).toBe(0);
+    expect(paint()).toBe(0);
     expect(c.stats().misses).toBeGreaterThan(0);
-    expect(c.stats().entries).toBe(0);
+    // No raster is held for anything, so the cache weighs nothing…
+    expect(c.stats().bytes).toBe(0);
+    // …and the chunks that turned out to have NOTHING to draw are remembered
+    // (they need no surface at all), so the next frame re-attempts only the
+    // one chunk that does carry road.
+    const misses = c.stats().misses;
+    const visited = (Math.floor(800 / ROAD_CHUNK_W) + 1) * (Math.floor(600 / ROAD_CHUNK_H) + 1);
+    expect(paint()).toBe(0);
+    const retried = c.stats().misses - misses;
+    expect(retried).toBeGreaterThan(0);              // the chunks that carry road
+    expect(retried).toBeLessThan(visited);           // …not the empty ones
+    expect(c.stats().hits).toBe(visited - retried);
   });
 
   it("invalidating a tile is a no-op on an empty cache but still records why", () => {
@@ -193,19 +204,5 @@ describe("direction bits are the ones the simulation uses", () => {
   it("keeps the geometry aligned with track.ts", () => {
     // If these ever drift, roads render rotated with no other symptom.
     expect([NE, SE, SW, NW]).toEqual([1, 2, 4, 8]);
-  });
-});
-
-describe("RAIL-05 railTilesIn", () => {
-  it("reads the rail layer's PRESENT tiles as vector geometry, and nothing else", () => {
-    const rail = blank();
-    put(rail, 10, 10, NE | SW);
-    put(rail, 11, 10, 0);                       // a lone stub still draws (a pad)
-    const geo = railTilesIn({ railBits: rail }, 0, 0, 30, 30);
-    expect(geo.map((g) => [g.tx, g.ty, g.mask])).toEqual([[10, 10, NE | SW], [11, 10, 0]]);
-    expect(geo[0].heads).toHaveLength(2);          // two steel rails
-    // Road bytes are not rail, and a world with no rail layer draws none.
-    expect(railTilesIn({ roadBits: rail }, 0, 0, 30, 30)).toEqual([]);
-    expect(railTilesIn({}, 0, 0, 30, 30)).toEqual([]);
   });
 });

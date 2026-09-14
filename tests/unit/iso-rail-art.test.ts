@@ -18,19 +18,32 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { loadRailwaySprites, RAILWAY_SPRITE_NAMES } from "../../src/iso/rail-art";
-import { ALL_SPRITE_NAMES, PLATFORM_FOOTPRINT, SPRITE_KINDS, VIEWS, footprintFor } from "../../tools/make-railway-art.mjs";
+import {
+  DEPOT_FOOTPRINT, COUPLE_GAP, LOCO_LEN, WAGON_LEN, WAGON_OFFSET, RAIL_VIEWS,
+} from "../../src/iso/rail";
+import {
+  ALL_SPRITE_NAMES, LANE, PALETTE, PLATFORM_FOOTPRINT, SPRITE_KINDS, VIEWS, footprintFor,
+} from "../../tools/make-railway-art.mjs";
+import { RAIL_GAUGE } from "../../src/iso/rail-geometry";
 import type { Atlas } from "../../src/iso/atlas";
 
 const ROOT = resolve(__dirname, "../..");
 const manifest = JSON.parse(readFileSync(resolve(ROOT, "assets/railway/manifest.json"), "utf8")) as {
   tileW: number; tileH: number; zooms: number[];
+  generatedBy: string; license: string;
+  meta: { note: string; palette: Record<string, string> };
   sprites: Record<string, {
     name: string; kind: string; view: string; w: number; h: number;
     anchor: [number, number]; footprint: [number, number]; moving: boolean;
     box2x: [number, number]; alpha: { coverage: number; corners: number[] };
-    lenTiles?: number; widthTiles?: number;
+    lenTiles?: number; widthTiles?: number; coupler?: { front: number; rear: number };
   }>;
 };
+
+/** A `#rrggbb` colour's channels, and how far they are from neutral. */
+const channels = (hex: string): [number, number, number] =>
+  [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)) as [number, number, number];
+const chroma = (hex: string): number => Math.max(...channels(hex)) - Math.min(...channels(hex));
 const spriteFiles = ALL_SPRITE_NAMES as string[];
 
 /** A stand-in for the real atlas: the loader only reads these three fields. */
@@ -77,6 +90,8 @@ describe("RAIL-03 the art set is complete and self-consistent", () => {
       const view = s.view as never;
       expect(s.footprint).toEqual(footprintFor(kind, view));
       if (kind === "platform") expect(s.footprint).toEqual(PLATFORM_FOOTPRINT[view]);
+      // …and the depot's, against the RULES' own constant rather than the art's.
+      if (kind === "train-depot") expect(s.footprint).toEqual(DEPOT_FOOTPRINT);
       // The anchor is inside the sprite's own box, and the alpha metadata says
       // the art is transparent — the epic's "explicit metadata" clause.
       expect(s.anchor[0]).toBeGreaterThanOrEqual(0);
@@ -118,6 +133,84 @@ describe("RAIL-03 the art set is complete and self-consistent", () => {
       expect(dims[0][1]).toBeCloseTo(def.h / 2, 0);
       expect(dims[2][1]).toBeCloseTo(def.h * 2, 0);
     }
+  });
+
+  it("couples the wagon to the locomotive exactly as the rules space it", () => {
+    for (const view of RAIL_VIEWS) {
+      const loco = manifest.sprites[`locomotive_${view}`];
+      const wagon = manifest.sprites[`wagon_${view}`];
+      // The body lengths the runtime spaces by are the art's own.
+      expect(loco.lenTiles).toBeCloseTo(LOCO_LEN, 6);
+      expect(wagon.lenTiles).toBeCloseTo(WAGON_LEN, 6);
+      // The buffer planes overhang the bodies, and at `WAGON_OFFSET` apart they
+      // MEET: never overlapping, and never further apart than the coupling gap.
+      const buffers = Math.abs(loco.coupler!.rear) + wagon.coupler!.front;
+      expect(buffers).toBeGreaterThan(LOCO_LEN / 2 + WAGON_LEN / 2);
+      expect(WAGON_OFFSET - buffers).toBeGreaterThan(0);
+      expect(WAGON_OFFSET - buffers).toBeLessThanOrEqual(COUPLE_GAP);
+      // Centres, not edges: the coupling sign convention is front-positive.
+      expect(loco.coupler!.front).toBeGreaterThan(0);
+      expect(loco.coupler!.rear).toBeLessThan(0);
+      expect(wagon.coupler!.front).toBeGreaterThan(0);
+      expect(wagon.coupler!.rear).toBeLessThan(0);
+    }
+  });
+
+  it("draws the lane rails at the gauge the vector track uses", () => {
+    // A structure's internal track IS the network's track — the two meet at the
+    // structure's ports — so the art's lane half-gauge and the geometry's
+    // RAIL_GAUGE are one contract, asserted from both sides.
+    expect(LANE.platformRailHalf).toBeCloseTo(RAIL_GAUGE / 2, 9);
+    // The depot's lane is the art's own figure, a fifth of a tile inside the
+    // gauge and under a pixel apart at 1×: bound rather than left to drift.
+    expect(Math.abs(LANE.depotRailHalf - RAIL_GAUGE / 2)).toBeLessThan(0.02);
+    // The lane's own sleeper pitch is the art's (the network's sleepers ride
+    // the absolute 0.25 lattice instead — see TIE_SPACING), and it is pinned so
+    // neither number can move without the other being looked at.
+    expect(LANE.tiePitch).toBeCloseTo(0.23, 9);
+  });
+
+  it("carries the 1950s palette it was drawn from", () => {
+    expect(manifest.meta.palette).toEqual({
+      charcoal: PALETTE.charcoal, oxide: PALETTE.oxide, brick: PALETTE.brick,
+      slate: PALETTE.slate, steel: PALETTE.steel, brass: PALETTE.brass, cream: PALETTE.cream,
+    });
+    // The period look is the constraint, so it is asserted as one: running gear
+    // and roofing are near-neutral (charcoal, slate, steel), and the only
+    // saturated hues are the 1950s railway's own — oxide, brick and brass.
+    for (const key of ["charcoal", "slate", "steel"]) expect(chroma(PALETTE[key])).toBeLessThanOrEqual(0x14);
+    for (const key of ["oxide", "brick", "brass"]) expect(chroma(PALETTE[key])).toBeGreaterThan(0x40);
+    // No modern plastic: every colour is either near-neutral (the greys and
+    // slates) or WARM — r ≥ g ≥ b — so nothing in the set is a cyan, a magenta
+    // or a green, which is what "1950s railway" rules out.
+    for (const value of Object.values(PALETTE)) {
+      if (!value.startsWith("#")) continue;               // the two rgba inks
+      const [r, g, b] = channels(value);
+      const neutral = chroma(value) <= 0x28;
+      expect(neutral || (r >= g && g >= b), `${value} is neither neutral nor period-warm`).toBe(true);
+    }
+  });
+
+  it("states its provenance: original procedural art, no third-party asset", () => {
+    const licences = readFileSync(resolve(ROOT, "assets/railway/LICENSES.md"), "utf8");
+    expect(manifest.license).toMatch(/original art, procedurally generated/);
+    expect(licences).toMatch(/no third-party art/i);
+    expect(licences).toMatch(/make-railway-art\.mjs/);
+    // The epic's one prohibition, stated as a negative in the file itself.
+    expect(licences).toMatch(/\* no Transport Fever \/ Urban Games asset has been extracted/i);
+    // Every sprite's own note points at the generator, so a stray hand-made
+    // PNG in the folder is visible in review.
+    for (const name of spriteFiles) expect(manifest.sprites[name].note).toMatch(/make-railway-art\.mjs/);
+  });
+
+  it("ships with no build-time copy step: the art is globbed into the bundle", () => {
+    const art = readFileSync(resolve(ROOT, "src/iso/rail-art.ts"), "utf8");
+    expect(art).toContain("import.meta.glob<string>");
+    expect(art).toContain('"../../assets/railway/*.png"');
+    // The folder needs no entry in the bundler config at all — the same promise
+    // `assets/buildings/` cannot make and B-0 fell into once.
+    const vite = readFileSync(resolve(ROOT, "vite.config.ts"), "utf8");
+    expect(vite).not.toMatch(/railway/i);
   });
 
   it("documents itself: README, licences and a contact sheet ship beside the art", () => {

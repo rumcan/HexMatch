@@ -206,11 +206,26 @@ const isStraight = (mask: number): boolean => mask === (NE | SW) || mask === (SE
  * never written — the crossing exists purely as two overlapping tile models.
  */
 export function crossingOk(track: Track, tx: number, ty: number, railMask: number): boolean {
-  const road = roadAt(track, tx, ty);
+  return crossingMasksOk(roadAt(track, tx, ty), railMask);
+}
+
+/**
+ * The SHAPE half of `crossingOk`, on masks alone.
+ *
+ * Exported because the RENDERER has to classify a tile as a crossing from the
+ * layer bytes it was handed, with no `Track` in reach — and the geometry that
+ * draws the planks must agree with the rule that allowed them, or a legal
+ * crossing would be drawn as track laid across an open road. `rail-geometry.ts`
+ * cannot import this (a value import there would close a runtime cycle through
+ * `track.ts` and `renderer.ts`), so it re-states these four lines and the unit
+ * test drives all 16 × 16 mask pairs through both to prove they agree.
+ */
+export function crossingMasksOk(roadMask: number, railMask: number): boolean {
+  const road = roadMask & 0b1111, rail = railMask & 0b1111;
   if (road === 0) return false;
   if (!isStraight(road)) return false;      // no curves or junctions at a crossing
-  if (!isStraight(railMask)) return false;  // ditto for the rail
-  return road !== railMask;                 // perpendicular, never shared
+  if (!isStraight(rail)) return false;      // ditto for the rail
+  return road !== rail;                     // perpendicular, never shared
 }
 
 // ── structures ────────────────────────────────────────────────────────────
@@ -381,6 +396,37 @@ export function effectiveOwner(state: RailState, tx: number, ty: number): number
   if (!inMapT(tx, ty)) return 0;
   const s = structureAt(state, tx, ty);
   return s ? s.ownerId : state.rail.owner[tIdx(tx, ty)];
+}
+
+/**
+ * RAIL-03 (#177): the layer as the RENDERER reads it.
+ *
+ * The mask bytes the track painter draws from, with each structure's internal
+ * lane folded in — a platform's lane and a depot's exit ARE track, they just
+ * are not stored in the layer (see `effectiveMask`), and the vector geometry
+ * has to draw them or the structure's rails would stop at its own footprint.
+ * Ownership rides along for the cache's benefit (a change of hands invalidates
+ * that tile) and `revision` is the gate its diff hangs off.
+ *
+ * This is the ONLY railway state the renderer gets: it never re-derives a rule
+ * from the map, and it never writes back.
+ */
+export function railDrawLayer(state: RailState): { tile: Uint8Array; owner: Uint8Array; revision: number } {
+  const tile = new Uint8Array(state.rail.tile.length);
+  const owner = new Uint8Array(state.rail.owner.length);
+  for (let i = 0; i < state.rail.tile.length; i++) {
+    if ((state.rail.tile[i] & RAIL_PRESENT) === 0) continue;
+    tile[i] = state.rail.tile[i] | RAIL_PRESENT;
+    owner[i] = state.rail.owner[i];
+  }
+  for (const s of state.structures) {
+    for (const [x, y] of laneTiles(s)) {
+      const i = tIdx(x, y);
+      tile[i] |= RAIL_PRESENT | laneMaskAt(s, x, y);
+      owner[i] = s.ownerId;
+    }
+  }
+  return { tile, owner, revision: state.rail.revision };
 }
 
 /** May `ownerId` drive over (tx,ty) — its own rail tile or its own lane? */

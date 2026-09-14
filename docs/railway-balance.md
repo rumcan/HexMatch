@@ -36,7 +36,4 @@ RAIL_BALANCE=1 RAIL_BALANCE_SEEDS=7 RAIL_BALANCE_OUT=out.jsonl npx vitest run te
 1. **An economy that can reach rail.** Give the rival a reason to hold Oil: plan an Oil Rig depot or bank toward Oil. Consider starting rail only after the opening network, for example two or more depots. Possibly tune the platform's Oil and Ore price.
 2. **Pave and rail in the same turn.** It can't be measured until rail actions happen. Rerun `mixed` against `exclusive`.
 3. **Rerun this matrix** and fill in this document before switching the flag on anywhere.
-4. **Rendering polish from the screenshots** (`docs/railway-08/`):
-   - the track reads a little like a road: dark bed, light edges, sleepers barely visible at zoom 2;
-   - the zoom 2 and zoom 1 captures look close in scale;
-   - no train sprite was visible in the moving-train capture.
+4. **Rendering** is #177's vector rail pass on main (`rail-geometry` / `railDrawLayer`); this PR's parallel rendering was dropped in favour of it when main was merged.

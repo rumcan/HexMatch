@@ -26,17 +26,28 @@
 // ground coordinates alone, never from the chunk origin, the camera or the
 // draw order, so two chunks sample the same material field and a pan does not
 // slide the surface.
+//
+// THE RAILWAY RIDES THE SAME RASTERS (RAIL-03 / #177). `rail-geometry.ts`
+// produces the track's paths in the same ground plane, and each chunk paints
+// them AFTER the roads — that ordering is what a level crossing is — inside the
+// same surface, so track is always under the sprites and train movement (which
+// changes none of the layer's bytes) repaints nothing. The cache re-keys when
+// the rail DETAIL tier or the region's road mode changes, and the renderer
+// invalidates single tiles with `invalidateTile(..., "rail", 1)` when a rail
+// byte moves.
 // ══════════════════════════════════════════════════════════════════════════
 import { HW, HH, MAP_W, MAP_H } from "../game/config";
 import type { Camera } from "./camera";
 import { isTownTile, townGroundBytes, type Grid } from "./grid";
 import {
   ROAD_WIDTH, SHOULDER_WIDTH, SIDEWALK_WIDTH,
-  RAIL_BED_WIDTH, RAIL_HEAD_WIDTH, RAIL_SLEEPER_ON, RAIL_SLEEPER_OFF, RAIL_SLEEPER_WIDTH,
-  hasRoad, paintFigures, railSleeperOffset, railTileGeo, roadTile,
-  sidewalkJoints, sidewalkPaths, streetLampSpots, townGroundQuad,
-  type GroundPoint, type RailTileGeo, type RoadFigure, type RoadTile,
+  hasRoad, paintFigures, roadTile, sidewalkJoints, sidewalkPaths, streetLampSpots, townGroundQuad,
+  type GroundPoint, type RoadFigure, type RoadTile,
 } from "./road-geometry";
+import {
+  DEFAULT_RAIL_STYLE, paintRailTiles, railDetailFor, railTilesIn,
+  type RailDetail, type RailLayer, type RailStyle,
+} from "./rail-renderer";
 
 type Ctx2D = CanvasRenderingContext2D;
 type Surface = HTMLCanvasElement | OffscreenCanvas;
@@ -108,26 +119,6 @@ export const DEFAULT_ROAD_STYLE: RoadStyle = {
   paint: "#e8e4d6",
   paintAlpha: 0.78,
 };
-
-/**
- * RAILWAYS (#182): the track's palette. Flat colours, exactly like the road's
- * camber and markings — a rail line is a made surface and a texture would
- * fight the two thin steel lines that are its whole read.
- *
- * The bed is a step LIGHTER and warmer than the asphalt (which sits at
- * `#3c3b38`), so where a line crosses a straight road the crossing reads as
- * "track over road" rather than "road over road". The sleepers are dark
- * enough to break the bed into a track rather than a third carriageway, and
- * the rails carry the cool highlight that does the identifying at distance.
- */
-export const DEFAULT_RAIL_STYLE = {
-  bed: "#5b564d",
-  sleeper: "#2f2820",
-  rail: "#b9bfc7",
-  railAlpha: 0.92,
-} as const;
-
-export type RailStyle = typeof DEFAULT_RAIL_STYLE;
 
 // ── paint geometry constants ────────────────────────────────────────────────
 /**
@@ -337,15 +328,6 @@ export interface RoadWorld {
   roadBits?: Uint8Array;
   dirtBits?: Uint8Array;
   /**
-   * RAILWAYS (#182): the player-built rail layer's bytes — `rail.tile`, the
-   * same `RAIL_PRESENT | 4-bit mask` shape the road layers use. Only the
-   * LAYER is vector-drawn here: a platform's or depot's internal lane rides in
-   * its own PNG sprite, so the two never double-paint a tile. Optional like
-   * the road tiers: a world with no rail bytes draws exactly the roads it
-   * always drew.
-   */
-  railBits?: Uint8Array;
-  /**
    * #159: the map, for its TOWN LIMITS. A tile stamped `TOWN_OCC` in
    * `occupancy` is town ground — the same test `isTownTile` makes — and a
    * paved tile on town ground is a town STREET: kerbs, sidewalks and corner
@@ -356,6 +338,14 @@ export interface RoadWorld {
    * live renderer passes its whole `World`, whose `grid` this is.
    */
   grid?: Grid;
+  /**
+   * RAIL-03 (#177): the railway layer, painted by the same chunk raster as the
+   * roads — after them (so a level crossing's steel and boards land on the
+   * finished road surface) and inside the cache (so train movement, which
+   * changes none of these bytes, repaints no track). A world without a railway
+   * draws exactly the roads it always drew.
+   */
+  rail?: RailLayer;
 }
 
 const cellAt = (arr: Uint8Array | undefined, tx: number, ty: number): number =>
@@ -392,28 +382,6 @@ export function roadTilesIn(
       // matching the simulation's "paving replaces dirt" rule.
       if (hasRoad(road)) out.push(roadTile(tx, ty, road, "paved", paved, town));
       else if (hasRoad(dirt)) out.push(roadTile(tx, ty, dirt, "dirt", paved, town));
-    }
-  }
-  return out;
-}
-
-/**
- * RAILWAYS (#182): every rail tile in a range, as geometry to stroke.
- *
- * The layer's bytes are autotiled by the rules (`rail.ts`'s `autotileRail`),
- * so a tile's mask already carries the mutual bits and no neighbour state is
- * needed here — one tile in, one `RailTileGeo` out, exactly the shape
- * `roadTilesIn` has for the road tiers.
- */
-export function railTilesIn(
-  world: RoadWorld, tx0: number, ty0: number, tx1: number, ty1: number,
-): RailTileGeo[] {
-  const out: RailTileGeo[] = [];
-  for (let ty = ty0; ty <= ty1; ty++) {
-    for (let tx = tx0; tx <= tx1; tx++) {
-      const cell = cellAt(world.railBits, tx, ty);
-      if (!hasRoad(cell)) continue;             // same PRESENT-bit test as the road tiers
-      out.push(railTileGeo(tx, ty, cell & 0b1111));
     }
   }
   return out;
@@ -694,61 +662,6 @@ function paintStreetLamps(ctx: Ctx2D, tiles: RoadTile[]): void {
 }
 
 /**
- * RAILWAYS (#182) — the vector track of a set of rail tiles, in one batched
- * pass, in a context that is ALREADY in ground coordinates.
- *
- * The pass order is the track's cross-section, bottom up:
- *
- *   1. ballast  — the bed the track sits in, one round-capped stroke per
- *                 figure (the road's own arm-paired figures, so a bend is one
- *                 continuous bed with no seam down its inside);
- *   2. sleepers — the SAME figures stroked wide and DASHED: a dash is a bar
- *                 perpendicular to the path, which is what a sleeper is. The
- *                 phase is world-anchored (`railSleeperOffset`) so sleepers of
- *                 neighbouring tiles line up and a chunk boundary cannot shift
- *                 them;
- *   3. rails    — the two steel lines, every head of every figure in ONE
- *                 path, one stroke. Butt caps, so a head ends square on the
- *                 port where the neighbour's head begins.
- *
- * The bed is drawn OVER whatever the road painted at a level crossing — which
- * is the rule: rail over a straight road, the road untouched. It is drawn in
- * the chunk UNDER every sprite, which is why the platforms, depots and trains
- * (PNG, in the structure list) always sit on top of the track.
- */
-export function paintRailTiles(ctx: Ctx2D, tiles: RailTileGeo[], style: RailStyle): void {
-  if (!tiles.length) return;
-  ctx.save();
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  // 1. The ballast bed.
-  ctx.strokeStyle = style.bed;
-  ctx.lineWidth = RAIL_BED_WIDTH;
-  for (const t of tiles) for (const f of t.figures) { trace(ctx, f); ctx.stroke(); }
-  // 2. The sleepers, as a dash over the bed.
-  ctx.strokeStyle = style.sleeper;
-  ctx.lineWidth = RAIL_SLEEPER_WIDTH;
-  ctx.setLineDash([RAIL_SLEEPER_ON, RAIL_SLEEPER_OFF]);
-  for (const t of tiles) for (const f of t.figures) {
-    if (f.points.length < 2) continue;          // a pad gets ballast, not a sleeper
-    ctx.lineDashOffset = railSleeperOffset(f);
-    trace(ctx, f);
-    ctx.stroke();
-  }
-  ctx.setLineDash([]);
-  // 3. The rails: every head of every figure in one path, one stroke.
-  ctx.strokeStyle = style.rail;
-  ctx.globalAlpha = style.railAlpha;
-  ctx.lineWidth = RAIL_HEAD_WIDTH;
-  ctx.lineCap = "butt";
-  ctx.beginPath();
-  for (const t of tiles) for (const h of t.heads) traceInto(ctx, h);
-  ctx.stroke();
-  ctx.globalAlpha = 1;
-  ctx.restore();
-}
-
-/**
  * Paint a set of road tiles into a context that is ALREADY in ground
  * coordinates — i.e. whose transform maps tile units to device pixels.
  *
@@ -763,9 +676,6 @@ export function paintRailTiles(ctx: Ctx2D, tiles: RailTileGeo[], style: RailStyl
  *   2b. camber      — the cross-width shading;
  *   3. transitions  — the dirt→paved blend, over the finished dirt;
  *   4. markings     — centre-lines, on paved tiles, never across a junction;
- *   4b. rail        — the vector track, over a crossing's asphalt and its
- *                     markings, UNDER the street lamps that stand beside it
- *                     (RAILWAYS #182);
  *   5. lamps        — last, because a lamp stands ON the ground it is planted
  *                     in and its head may hang over the next tile's asphalt.
  *
@@ -775,13 +685,10 @@ export function paintRailTiles(ctx: Ctx2D, tiles: RailTileGeo[], style: RailStyl
  * sprite art it stands among.
  *
  * `townGround` is the block paving to lay down first, in the same ground
- * coordinates — one quad per paved tile, from `townGroundQuadsIn`. `rail` is
- * the track of the chunk's rail tiles, from `railTilesIn`; absent, the pass
- * is exactly the roads alone.
+ * coordinates — one quad per paved tile, from `townGroundQuadsIn`.
  */
 export function paintRoadTiles(
   ctx: Ctx2D, tiles: RoadTile[], style: RoadStyle, townGround: GroundPoint[][] = [],
-  rail: RailTileGeo[] = [], railStyle: RailStyle = DEFAULT_RAIL_STYLE,
 ): void {
   // Patterns are created against THIS context; a material with no texture
   // falls through to its flat colour, which is a complete look, not a hole.
@@ -909,10 +816,6 @@ export function paintRoadTiles(
   }
   ctx.setLineDash([]);
 
-  // 4b. RAILWAYS (#182): the track, over the crossing's finished road (asphalt,
-  //     camber, markings) and under the lamps that stand beside it.
-  paintRailTiles(ctx, rail, railStyle);
-
   // 5. #159 Street lamps, on top of everything else on the ground: see
   //    `paintStreetLamps` for why they cannot go down with their sidewalks.
   //    Markings stay under a lamp, exactly as paint on asphalt does.
@@ -928,7 +831,14 @@ function withAlpha(hex: string, a: number): string {
 
 // ── the cache ───────────────────────────────────────────────────────────────
 interface CacheEntry {
-  surface: Surface;
+  /**
+   * The raster, or NULL for a chunk with nothing to draw at all — an empty
+   * stretch of ocean in textured mode, or a chunk with no railway in the
+   * sprite road mode. An empty chunk is remembered rather than re-tried, and it
+   * is skipped by the blit rather than blended into the canvas as a fully
+   * transparent rectangle.
+   */
+  surface: Surface | null;
   /** Projected-world top-left of the chunk's OWNED rectangle. */
   ox: number;
   oy: number;
@@ -958,8 +868,47 @@ export class RoadCache {
   private lastInvalidation: string | null = null;
   /** Bumped when the style or textures change; keys carry it, so old rasters die. */
   private styleVersion = 0;
+  /**
+   * RAIL-03: the rail's detail tier. It is baked INTO a raster, so it belongs
+   * to the cache key: `setRailDetail` bumps the style version when the quality
+   * preset changes, and every chunk re-rasterises at the new detail without any
+   * caller having to remember that it must.
+   */
+  private railDetail: RailDetail = railDetailFor(2);
+  /**
+   * RAIL-03: the sprite road mode draws the ROADS itself, from the atlas cells
+   * (`buildDrawList` with `roads: true`), while the railway has no cells at all
+   * and must be painted either way. In that mode a raster carries the railway
+   * ONLY, so the two never double-draw a road — and the flag is part of the
+   * raster's content, which is why turning it on or off re-keys every chunk.
+   */
+  private railOnly = false;
+  private railStyle: RailStyle = DEFAULT_RAIL_STYLE;
 
   constructor(private budgetBytes = 48 * 1024 * 1024) {}
+
+  /** Set the rail detail tier; a change re-keys every cached raster. */
+  setRailDetail(detail: RailDetail): void {
+    if (detail.key === this.railDetail.key) return;
+    this.railDetail = detail;
+    this.bumpStyle("rail-detail");
+  }
+
+  /** The rail detail tier currently baked into the rasters. */
+  get railDetailTier(): RailDetail["key"] { return this.railDetail.key; }
+
+  /**
+   * Paint the railway only, for the sprite road mode. A change re-keys every
+   * cached raster, exactly like a detail-tier change: the content differs.
+   */
+  setRailOnly(on: boolean): void {
+    if (on === this.railOnly) return;
+    this.railOnly = on;
+    this.bumpStyle(on ? "rail-only" : "roads");
+  }
+
+  /** Is the cache painting the railway without the roads? */
+  get railOnlyMode(): boolean { return this.railOnly; }
 
   stats(): RoadCacheStats {
     return {
@@ -986,10 +935,10 @@ export class RoadCache {
   /**
    * Drop the chunks a tile can affect. A road's shape depends on its
    * neighbours' bits (the mask) and its neighbours' TIER (the transitions),
-   * so a single tile edit dirties a neighbourhood, not a tile.
+   * so a single tile edit dirties a neighbourhood, not a tile. A rail tile's
+   * shape stays inside its own tile, so the rail diff asks for `reach = 1`.
    */
-  invalidateTile(tx: number, ty: number, reason = "tile"): void {
-    const reach = 2;
+  invalidateTile(tx: number, ty: number, reason = "tile", reach = 2): void {
     const corners: [number, number][] = [];
     for (const [u, v] of [
       [tx - reach, ty - reach], [tx + 1 + reach, ty - reach],
@@ -1023,7 +972,6 @@ export class RoadCache {
   private chunk(
     cx: number, cy: number, zoom: number, world: RoadWorld, style: RoadStyle,
     makeSurface: (w: number, h: number) => Surface | null,
-    railStyle: RailStyle = DEFAULT_RAIL_STYLE,
   ): CacheEntry | null {
     const key = `${this.styleVersion}:${zoom}:${cx},${cy}`;
     const hit = this.entries.get(key);
@@ -1040,31 +988,40 @@ export class RoadCache {
     const px = ox - GUTTER, py = oy - GUTTER;
     const w = Math.ceil((ROAD_CHUNK_W + GUTTER * 2) * zoom);
     const h = Math.ceil((ROAD_CHUNK_H + GUTTER * 2) * zoom);
-    const surface = makeSurface(w, h);
-    if (!surface) return null;
-    const ctx = (surface as HTMLCanvasElement).getContext("2d") as Ctx2D | null;
-    if (!ctx) return null;
-
     const range = tilesForRect(px, py, px + ROAD_CHUNK_W + GUTTER * 2, py + ROAD_CHUNK_H + GUTTER * 2);
-    const tiles = roadTilesIn(world, range.tx0, range.ty0, range.tx1, range.ty1);
+    // In the sprite road mode the atlas cells draw the roads, so this raster
+    // carries the railway and nothing else.
+    const tiles = this.railOnly ? [] : roadTilesIn(world, range.tx0, range.ty0, range.tx1, range.ty1);
     // Town ground comes from the same tile range, so a block at a chunk's edge
     // is paved by the chunk that owns it and the gutter simply agrees.
-    const townGround = townGroundQuadsIn(world, range.tx0, range.ty0, range.tx1, range.ty1);
-    // RAILWAYS (#182): the track of the same tile range. Its bed is narrower
-    // than a road's reach, so `tilesForRect`'s road-based padding already
-    // covers it, and a rail tile at a chunk's edge is completed by the gutter
-    // exactly like a road's.
-    const railTiles = railTilesIn(world, range.tx0, range.ty0, range.tx1, range.ty1);
-    if (tiles.length || townGround.length || railTiles.length) {
+    const townGround = this.railOnly
+      ? [] : townGroundQuadsIn(world, range.tx0, range.ty0, range.tx1, range.ty1);
+    // RAIL-03: the railway rides the same range, the gutter included — the
+    // geometry is per tile, so a chunk paints its own tiles plus the neighbours
+    // inside its gutter and the seam between chunks is invisible.
+    const rail = railTilesIn(world, range.tx0, range.ty0, range.tx1, range.ty1);
+
+    // A chunk with nothing to draw is never rasterised: an empty path painted
+    // into a fresh surface would cost the same memory for a rectangle that
+    // shows nothing, and the blit skips it on every frame after this one.
+    let surface: Surface | null = null;
+    if (tiles.length || townGround.length || rail.length) {
+      surface = makeSurface(w, h);
+      if (!surface) return null;
+      const ctx = (surface as HTMLCanvasElement).getContext("2d") as Ctx2D | null;
+      if (!ctx) return null;
       ctx.imageSmoothingEnabled = true;
       // Ground coordinates → this surface's device pixels. The gutter origin
       // is folded in here; the camera is NOT — that belongs to the blit.
       ctx.setTransform(HW * zoom, HH * zoom, -HW * zoom, HH * zoom, -px * zoom, -py * zoom);
-      paintRoadTiles(ctx, tiles, style, townGround, railTiles, railStyle);
+      paintRoadTiles(ctx, tiles, style, townGround);
+      // …and the track OVER the finished road: that is what a level crossing
+      // is, and why the road pass above has to stay exactly as it was.
+      paintRailTiles(ctx, rail, this.railDetail, this.railStyle);
       ctx.setTransform(1, 0, 0, 1, 0, 0);
     }
 
-    const bytes = w * h * 4;
+    const bytes = surface ? w * h * 4 : 0;
     const entry: CacheEntry = { surface, ox, oy, bytes };
     this.entries.set(key, entry);
     this.bytes += bytes;
@@ -1080,7 +1037,6 @@ export class RoadCache {
   paint(
     ctx: Ctx2D, cam: Camera, world: RoadWorld, style: RoadStyle,
     makeSurface: (w: number, h: number) => Surface | null,
-    railStyle: RailStyle = DEFAULT_RAIL_STYLE,
   ): number {
     const z = cam.zoom;
     // Viewport in projected world pixels.
@@ -1092,8 +1048,8 @@ export class RoadCache {
     let blits = 0;
     for (let cy = cy0; cy <= cy1; cy++) {
       for (let cx = cx0; cx <= cx1; cx++) {
-        const e = this.chunk(cx, cy, z, world, style, makeSurface, railStyle);
-        if (!e) continue;
+        const e = this.chunk(cx, cy, z, world, style, makeSurface);
+        if (!e?.surface) continue;
         const sx = Math.round(GUTTER * z), sy = Math.round(GUTTER * z);
         const sw = Math.round(ROAD_CHUNK_W * z), sh = Math.round(ROAD_CHUNK_H * z);
         ctx.drawImage(
