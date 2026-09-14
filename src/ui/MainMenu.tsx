@@ -31,6 +31,9 @@ import { CHAPTERS, EMPLOYER, currentJobTitle } from "../story/chapters";
 // written or cleared is always re-read.
 import { describeSave, mostRecentSave, type SoloSaveSummary } from "../iso/save-summary";
 import { currentVersionLabel } from "./version";
+import { rankStore } from "../net/rankstore";
+import { badgeUrlFor } from "./rank-badge";
+import { fmtRating, rankOf } from "../net/rating";
 
 export interface MainMenuProps {
   onPlay: () => void;
@@ -94,6 +97,28 @@ export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
   // sees no Continue button and Play keeps the primary styling it always had.
   const resume: SoloSaveSummary | null = onContinue ? mostRecentSave() : null;
 
+  // ── leaderboard (top 10) — fetched once per mount, same ladder the
+  //    StartScreen's RANK-01 panel reads, but limited to 10 so the front
+  //    door answers "who's on top" without a second click.
+  type LadderRow = { rank: number; username: string; rating: number; profileId?: string };
+  type LadderView = { entries: LadderRow[]; mine: { rank: number; rating: number } | null; total?: number };
+  const [ladder, setLadder] = useState<LadderView | null | "loading">("loading");
+
+  useEffect(() => {
+    let alive = true;
+    rankStore()
+      .loadLadder(10)
+      .then((v) => {
+        if (alive) setLadder(v);
+      })
+      .catch(() => {
+        if (alive) setLadder(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   return (
     <main className="start-screen menu" aria-label="Hexmatch main menu">
       <div className="menu-embers" aria-hidden="true">
@@ -140,6 +165,42 @@ export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
               : "No contracts filed. The first one is open."}
         </p>
       </div>
+      <section className="menu-leaderboard" aria-label="Leaderboard — Top 10" data-testid="main-menu-leaderboard">
+        <h2 className="menu-leaderboard-title">Leaderboard — Top 10</h2>
+        <p className="menu-leaderboard-sub">The island&apos;s best-rated managers. Win quick matches to climb.</p>
+        {ladder === "loading" ? (
+          <p className="ladder-note" aria-live="polite">Loading leaderboard…</p>
+        ) : ladder === null ? (
+          <p className="ladder-note">Leaderboard unavailable — check your connection and try again.</p>
+        ) : ladder.entries.length === 0 ? (
+          <p className="ladder-note">No rated matches yet. Be the first to file one.</p>
+        ) : (
+          <ol className="ladder-list menu-leaderboard-list" aria-label="Top 10 players">
+            {ladder.entries.slice(0, 10).map((row) => {
+              const tier = rankOf(row.rating);
+              const key = tier.key;
+              return (
+                <li key={String(row.rank) + row.username} data-rank={String(row.rank)}>
+                  <span className="ladder-place" aria-label={`Rank ${row.rank}`}>#{row.rank}</span>
+                  <span className="rank-chip" data-tier={key}>
+                    <img className="rank-badge" src={badgeUrlFor(key)} alt="" aria-hidden="true" width={22} height={22} />
+                    <span className="rank-chip-text">
+                      <b>{tier.label}</b>
+                    </span>
+                  </span>
+                  <span className="ladder-name">{row.username}</span>
+                  <span className="ladder-rating">{fmtRating(row.rating)}</span>
+                </li>
+              );
+            })}
+          </ol>
+        )}
+        {ladder !== "loading" && ladder !== null && ladder.mine ? (
+          <p className="ladder-mine">
+            <small>Your best: #{ladder.mine.rank} · {fmtRating(ladder.mine.rating)}</small>
+          </p>
+        ) : null}
+      </section>
       <p className="menu-foot">{currentVersionLabel()}</p>
       {howTo ? <div className="menu-howto" ref={howToRef} /> : null}
       {settings ? <div className="menu-howto" ref={settingsRef} /> : null}
