@@ -937,7 +937,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // Original HUD (U1). It takes the live board + market + the player purse and
   // wires the BUILD / BLACK MARKET / QUARRY / chips chrome to them.
   ui = createOriginalUi(quarry.board, market, meTrader, {
-    onTool: (t) => { tool = t as Tool; },
+    // #187: every door the chrome has out of a placement — the hint's ✕, the
+    // touch chip, a re-tap of the armed Build button — asks for the pointer,
+    // and asking for the pointer IS the cancel: `cancelPlacement` takes the
+    // armed drag and its ghost with the tool, so no door can leave a preview
+    // painted that no pointerup will ever commit (and `costInfo`, derived
+    // from `tool`/`preview` below, follows them away on the next frame).
+    onTool: (t) => {
+      if (t === "select") cancelPlacement();
+      else armTool(t as Tool);
+    },
     /**
      * RAIL-04 (#178): the Railway panel's three verbs. `assign` finds the
      * partner platform the row named (the model picked it: the industry
@@ -4393,48 +4402,67 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       banner = `Protest ready — click a public road to stop ALL trucks for ${fmtProtestLeft(PROTEST_MS)} (Esc cancels)`;
     }
 
+    // #187: the placement hint — ONE slim line, and only what the Build button
+    // cannot already say. The button names the tool and prices it from PP-07's
+    // one authoritative table, so the hint carries the VERDICT instead: the
+    // rule this tool places by, the reason a tile or a purse refuses, and —
+    // for a road drag — the tiles and the ★ that drag buys, two numbers that
+    // exist only once the drag does. The old bar restated the tool and its
+    // whole price on two full-width lines over the map, and its ✕ hid a class
+    // the next frame put straight back; this one is derived from `tool` and
+    // `preview`, so `cancelPlacement` is what clears it.
     let costInfo: string | null = null;
+    /** The hint's two fields: the verdict, then what the gesture buys. */
+    const hintLine = (verdict: string, buys = ""): string =>
+      `<span class="mb-txt">${verdict}</span>` +
+      (buys ? `<span class="mb-cost">${buys}</span>` : "");
+    /** What THIS purse is short of, as a price of its own (empty = it isn't). */
+    const shortfallOf = (cost: Purse): Purse => {
+      const out: Purse = {};
+      for (const c of CARGOES) if ((cost[c] ?? 0) > (me.purse[c] ?? 0)) out[c] = cost[c];
+      return out;
+    };
     if (preview) {
-      // W1: the label shows the preview's OWN numbers — the charge is
-      // `preview.cost` and the free count is `preview.free`, exactly what the
-      // commit will do.
-      const parts = Object.entries(preview.cost).map(([k, v]) => `${v} ${k}`);
+      // W1: the drag's OWN numbers — `preview.cost` is exactly what the commit
+      // charges, and a per-tile price on a button cannot say what a nine-tile
+      // drag costs. VP-01: and the SCORE it buys comes from the same numbers,
+      // so a Road drag onto virgin ground says "+0★" out loud — the whole
+      // victory rule in one field.
       const n = preview.tiles.length;
-      const label = parts.length ? parts.join(" + ")
-        : (preview.free > 0 ? "free (setup)" : "free");
-      // VP-01: the modebar prices the SCORE the drag buys, from the same
-      // numbers the commit charges (W1, applied to points). Only paving your
-      // own gravel is worth anything, so a Road drag onto virgin ground says
-      // "+0★" out loud — which is the whole victory rule in one field.
       const paved = preview.upgrades;
       const vpTxt = tool === "road"
-        ? (paved > 0 ? `paves ${paved} · +${fmtVp(paveVp(paved))}★` : "+0★ · pave your dirt for points")
+        ? (paved > 0 ? `+${fmtVp(paveVp(paved))}★ · paves ${paved}` : "+0★ · pave your dirt for points")
         : "+0★ · dirt scores nothing";
-      costInfo = `<span class="mb-txt"><b>${n}</b> tiles · ${label}</span>` +
-        (preview.truncated ? ` · <i>blocked</i>` : "") +
-        `<span class="mb-cost">${vpTxt}</span>`;
+      const owed = Object.keys(preview.cost).length
+        ? costMarkup(preview.cost)
+        : (preview.free > 0 ? `${preview.free} free` : "free");
+      costInfo = hintLine(
+        `<b>${n}</b> ${n === 1 ? "tile" : "tiles"}` + (preview.truncated ? ` · <i>blocked</i>` : ""),
+        `${vpTxt} · ${owed}`,
+      );
     } else if (tool === "plant" && hover) {
-      // PP-06: the cost is PREVIEWED from the same constant the charge uses,
-      // together with the refusal reason, so a click is never a surprise.
+      // PP-06: the refusal reason is PREVIEWED from the same rule the click
+      // enforces, so a click is never a surprise — and this hint is the only
+      // place it is spelled out before the click (the inspector's plan
+      // verdicts cover the setup Factory and the Depot, not a mid-game plant).
+      // VP-01: the ★ a plant is worth rides along, since no button states it.
       const why = plantRefusal(grid, track, eco, hover.tx, hover.ty);
-      const afford = canAffordPlant(me.purse);
-      const note = why !== null ? PLANT_REFUSAL_TEXT[why]
-        : afford ? "ready" : "not enough materials";
-      // VP-01: the plant is the other half of the scoreboard, so the price tag
-      // and the point come up together.
-      costInfo = `<span class="mb-txt"><b>Processing plant</b> · ${note}</span>` +
-        `<span class="mb-cost">${costMarkup(PLANT_COST)} · +${fmtVp(VICTORY.plant)}★</span>`;
+      const short = shortfallOf(PLANT_COST);
+      costInfo = why !== null
+        ? hintLine(`<i>${PLANT_REFUSAL_TEXT[why]}</i>`)
+        : Object.keys(short).length
+          ? hintLine(`<i>needs ${costMarkup(short)}</i>`)
+          : hintLine("ready to raise", `+${fmtVp(VICTORY.plant)}★`);
     } else if (tool === "harvester" || phase === "setup-harvester") {
-      // PP-05: "show the complete cost before placement" — the Depot tool
-      // prices itself from the same `priceDepot` the click will charge, so the
-      // modebar and the debit can never disagree (W1, applied to buildings).
+      // PP-05: "show the complete cost before placement" — the Build button
+      // states the complete price from the same `priceDepot` the click will
+      // charge (W1, applied to buildings), so the hint adds the two things the
+      // button cannot: the SITE rule a Depot is placed by, and the shortfall
+      // when this purse cannot pay for it.
       const price = priceDepot(me.purse, me.freeDepots);
-      const label = price.free ? "free (setup)" : costMarkup(price.cost);
-      costInfo = `<span class="mb-txt"><b>Depot</b> · ${label}</span>` +
-        (price.affordable
-          ? ""
-          : ` · <i>needs ${shortfallLabel(price.missing)}</i>`) +
-        `<span class="mb-cost">1×1 · industry in catchment</span>`;
+      costInfo = price.affordable
+        ? hintLine("place it inside an industry's catchment")
+        : hintLine(`<i>needs ${costMarkup(shortfallOf(DEPOT_COST))}</i>`);
     }
 
     // PP-03: while a Factory or a Depot is being placed, an INVALID hover
@@ -4744,6 +4772,43 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   /** What the current drag preview was computed from; see pointermove. */
   let previewKey = "";
 
+  /** Drop the half-planned drag, if one is armed. */
+  function dropDrag(): boolean {
+    if (!drag && !preview) return false;
+    drag = null; preview = null; dragLive = false; previewKey = "";
+    return true;
+  }
+
+  /**
+   * #187: the ONE way out of a placement. The hint's Cancel ✕, the touch
+   * chip, Esc, Q, the right button and a re-tap of the armed Build button all
+   * land here, so "cancel" cannot mean one thing in one door and another in
+   * the next: the pointer comes back into the hand, the armed drag and its
+   * ghost go with it, and the overlay repaints at once instead of leaving
+   * tiles painted that no pointerup will ever commit.
+   *
+   * `costInfo` is derived from `tool`/`preview` in paintUi, so the hint
+   * follows them down on the next frame. That derivation is the bug the old
+   * `.mb-cancel` ran into: it added a `hidden` class and left the tool armed,
+   * so the next frame's `toggle("hidden", !info)` put the bar straight back.
+   */
+  function cancelPlacement(): boolean {
+    const armed = tool !== "select";
+    tool = "select";
+    if (dropDrag() || armed) paintOverlayNow();
+    return armed;
+  }
+
+  /**
+   * Put a build tool in the hand. Switching tools drops a drag that was
+   * planned for the previous one — the preview prices `tool`'s own tiles, so
+   * a road drag left armed under the Depot tool would quote the wrong build.
+   */
+  function armTool(t: Tool) {
+    tool = t;
+    if (dropDrag()) paintOverlayNow();
+  }
+
   canvases.overlay.addEventListener("pointermove", (e) => {
     const [x, y] = pos(e);
     // MOBILE-01: the slop is per-press and per-pointer-type (`slop`), so a
@@ -4829,13 +4894,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // tool is held — and an armed protest, the same thing Esc does — and
     // leaves the pointer (select) in the hand, which highlights and names
     // instead of building. A right press never starts a drag, so nothing
-    // below can misread it as a build.
+    // below can misread it as a build. #187: it goes through the SAME
+    // `cancelPlacement` the hint's ✕ uses, so one door cannot leave a ghost
+    // or a hint behind that another one clears.
     if (e.pointerType === "mouse" && e.button === 2) {
       if (pendingProtest) {
         pendingProtest = false;
         toast("Protest cancelled.", "info");
-      } else if (tool !== "select") {
-        tool = "select";
+      } else {
+        cancelPlacement();
       }
       downAt = null;
       g = pointerUp(g, e.pointerId);
@@ -5002,12 +5069,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   const onKeydown = (e: KeyboardEvent) => {
     // Tool hotkeys. `q` is the pointer (select) — the keyboard twin of the
-    // right-click cancel.
+    // right-click cancel, and #187 routes both through `cancelPlacement` so
+    // the hint and the placement ghost go down with the tool — whatever tool
+    // it is, RAIL-04's four included.
     const map: Record<string, Tool> = {
       "q": "select", "1": "dirt", "2": "road", "3": "harvester", "4": "plant",
       "5": "demolish", "6": "rail", "7": "platform", "8": "raildepot", "9": "railway",
     };
-    if (!isTypingTarget(e) && map[e.key]) tool = map[e.key];
+    if (!isTypingTarget(e) && map[e.key]) {
+      if (map[e.key] === "select") cancelPlacement();
+      else armTool(map[e.key]);
+    }
     // RAIL-02: R turns the platform/depot heading a quarter turn — the same
     // four headings the art and the footprints are authored in, in the same
     // order (`rotateView` is the rail module's, not a second list here).
@@ -5024,8 +5096,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     if (e.key === "Escape") {
       if (pendingProtest) { pendingProtest = false; toast("Protest cancelled.", "info"); return; }
-      if (drag || preview) { drag = null; preview = null; dragLive=false; toast("Rail drag cancelled.", "info"); return; }
-      if (tool !== "select") { tool = "select"; toast("Tool cancelled.", "info"); return; }
+      // #187: Esc is the desktop twin of the hint's Cancel ✕, so it goes
+      // through the SAME seam — the tool comes out of the hand and an armed
+      // drag goes with it, ghost and priced hint included, plus the
+      // `previewKey` that would otherwise let the next pointermove skip
+      // re-pricing a drag that is no longer there. The two full-screen layers
+      // the game owns keep the key to themselves: closing a tutorial, a story
+      // scene or the ending must not also disarm a tool behind it. (The ☰
+      // menu, Settings and a confirm question already swallow Esc in a capture
+      // listener, so this never fires underneath one of them.)
+      if (tutorialView || storyView) return;
+      if (endingView && !endingView.element.classList.contains("hidden")) return;
+      if (drag || preview) { cancelPlacement(); toast("Drag cancelled.", "info"); return; }
+      if (tool !== "select") { cancelPlacement(); toast("Tool cancelled.", "info"); return; }
     }
     if (e.key === "`" || e.key === "~") {
       if (debug) {
@@ -6238,7 +6321,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     /** The e2e twin of clicking two adjacent gems in the Quarry panel. */
     swap: (r1: number, c1: number, r2: number, c2: number) =>
       quarry.board.trySwap(r1, c1, r2, c2, performance.now()),
-    setTool: (t: Tool) => { tool = t; },
+    /** #187: the same seam the chrome's doors use — asking for the pointer
+     *  CANCELS (tool, armed drag and placement ghost together), anything else
+     *  arms. A test twin that assigned `tool` directly would leave the drag the
+     *  real cancel clears, and the two paths would drift. */
+    setTool: (t: Tool) => { if (t === "select") cancelPlacement(); else armTool(t); },
     // ── RAIL-04 (#178): the railway's test twins ──────────────────────────
     /** The live rail state, read-only by convention (the twins below mutate). */
     get rail() {

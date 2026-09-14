@@ -721,6 +721,13 @@ export function createOriginalUi(
   // Share the existing notification lane so a simultaneous rules toast and
   // rival answer stack instead of painting over one another.
   toasts.appendChild(rivalWire);
+  // #187: the placement hint — one slim line, pinned above the resource bar,
+  // carrying the verdict for the tool in the hand (the rule it places by, a
+  // refusal, the ★ a road drag buys). It replaced a full-width two-line work
+  // order that restated the tool and its price — both already on the Build
+  // button — and covered the map and the build list on a phone. On a phone the
+  // held-tool chip below carries the same verdict, so this pill is desktop
+  // only (styles.css owns the swap; the two never show at once).
   const modebar = h("div", "modebar hidden");
   root.appendChild(modebar);
   const inspectEl = h("div", "iso-inspect");
@@ -752,13 +759,18 @@ export function createOriginalUi(
   fabs.append(zoomInBtn, zoomOutBtn, recenterBtn);
   root.appendChild(fabs);
   // The held tool, named and droppable, while it is not the pointer. Desktop
-  // keeps right-click/Q; this chip is the touch hand's escape hatch.
+  // keeps right-click/Q and the slim hint pill; this chip is the touch hand's
+  // escape hatch — and, since #187, its verdict line too: in the phone regime
+  // the desktop pill is hidden, so the one thumb-reach pill above the resource
+  // bar carries the tool's name, the placement verdict and the ✕ that puts it
+  // down (which now really disarms the tool, drag and ghost included).
   const toolChip = h("button", "toolchip hidden");
   toolChip.type = "button";
   toolChip.dataset.sfx = "close";
   const toolChipLabel = h("span", "tc-label");
-  const toolChipX = h("span", "tc-x", "✕ put down");
-  toolChip.append(toolChipLabel, toolChipX);
+  const toolChipHint = h("span", "tc-hint");
+  const toolChipX = h("span", "tc-x", "✕");
+  toolChip.append(toolChipLabel, toolChipHint, toolChipX);
   toolChip.title = "Put this tool back to the pointer";
   toolChip.onclick = () => hooks.onTool("select");
   root.appendChild(toolChip);
@@ -799,6 +811,16 @@ export function createOriginalUi(
   /** MOBILE-01: paint gates for the held-tool chip and the banner height var. */
   let lastChipTool: string = "\u0000";
   let lastBannerH = -1;
+  /** #187: the chip's verdict line, gated like every other per-frame write. */
+  let lastChipHint: string | null = null;
+  /**
+   * #187: what the last paint put in the hand, and whether the phase MANDATES
+   * a placement. The Build buttons read these to decide whether a re-tap arms
+   * or cancels, and the hint's ✕ is only offered when cancelling is a move the
+   * game actually has.
+   */
+  let armedTool: UiTool | null = null;
+  let placementMandatory = false;
   let dismissedBannerKey: string | null = null;
   let lastSabKey = "\u0000";
   let lastMarketKey = "\u0000";
@@ -846,7 +868,15 @@ export function createOriginalUi(
     const b = h("button", "build-btn bg-" + t.key);
     b.dataset.tool = t.key;
     b.innerHTML = `<div class="bb-mid"><b>${t.label}</b><small>${t.sub}</small></div>`;
-    b.onclick = () => hooks.onTool(t.key);
+    b.onclick = () => {
+      // #187: the button is its own toggle — a re-tap of the tool already in
+      // the hand puts it down, the same gesture as the hint's ✕, Esc and the
+      // right button, so the Build sheet is never a one-way door. Not while
+      // the phase OWES a placement (the opening Factory/Depot): there is
+      // nothing to cancel then, and the tap simply keeps the tool armed.
+      if (t.key !== "select" && t.key === armedTool && !placementMandatory) hooks.onTool("select");
+      else hooks.onTool(t.key);
+    };
     if (t.key === "harvester") depotSub = b.querySelector("small");
     buildList.appendChild(b);
   }
@@ -2604,6 +2634,13 @@ export function createOriginalUi(
     buildList.querySelectorAll<HTMLElement>("[data-tool]").forEach((b) => {
       b.classList.toggle("active", b.dataset.tool === toolState);
     });
+    // #187: what a Build button's re-tap means this frame. The button is its
+    // own toggle — re-tapping the armed tool puts it down, the same gesture as
+    // the hint's ✕, Esc and the right button — except while the phase still
+    // OWES a placement (the opening Factory, the opening Depot), where there
+    // is nothing to cancel and a ✕ would be a dead button.
+    armedTool = toolState;
+    placementMandatory = state.phase === "setup-factory" || state.phase === "setup-harvester";
     // MOBILE-01: the held-tool chip. A touch hand has no right-click and no Q,
     // so while anything but the pointer is in the hand the chip names it and
     // puts it down on a tap. It reads the SAME button the Build sheet lit, so
@@ -2615,7 +2652,28 @@ export function createOriginalUi(
         : null;
       const label = held?.textContent?.trim() ?? "";
       toolChipLabel.textContent = label || toolState;
+      // The chip's own text is its accessible name, and the ✕ is a bare glyph
+      // now that the verdict rides beside it — so name the whole button.
+      toolChip.setAttribute("aria-label", `Put the ${label || toolState} tool down`);
       toolChip.classList.toggle("hidden", toolState === "select");
+      // #187: on a phone the Build sheet is full-bleed, so arming a tool from
+      // it left the player looking at a list instead of the map they are about
+      // to tap. Hand the screen back to the map on the TRANSITION into a tool
+      // — never on every frame, or a player who re-opens Build to switch tools
+      // would be thrown straight back out again. The chip above (and the ✕ on
+      // it) is the way out from there.
+      if (toolState !== "select" && isPhoneViewport() && root.dataset.view === "build") {
+        setMobileView("map");
+      }
+    }
+    // #187: in the phone regime the chip IS the placement hint — styles.css
+    // hides the desktop pill there, so one thumb-reach line carries the tool's
+    // name, the verdict and the ✕, instead of two pills saying half of it each.
+    const chipHint = state.costInfo ?? "";
+    if (chipHint !== lastChipHint) {
+      lastChipHint = chipHint;
+      toolChipHint.innerHTML = chipHint;
+      toolChipHint.classList.toggle("hidden", !chipHint);
     }
     // MOBILE-01: on a phone the sheets rise to just under the top bar, which
     // is exactly where the banner is posted — so the posted sheet covered the
@@ -2694,16 +2752,36 @@ export function createOriginalUi(
     buildList.querySelectorAll<HTMLElement>("[data-act]").forEach((b) => {
       b.classList.toggle("active", b.dataset.act === "recenter");
     });
+    // #187: the hint. One slim line, and its ✕ is a REAL cancel: it asks for
+    // the pointer through the same hook the Select button and the touch chip
+    // use, which in game.ts disarms the tool, drops an armed drag and repaints
+    // the overlay — so `state.costInfo` is null on the next frame and this bar
+    // STAYS down. The old ✕ only added a `hidden` class that the very next
+    // `classList.toggle("hidden", !info)` took straight back off, leaving the
+    // tool armed and the next map tap building.
+    // While the phase mandates a placement there is nothing to cancel, so no
+    // dead button is offered at all.
     const info = state.costInfo;
-    modebar.classList.toggle("hidden", !info);
-    if (info && info !== lastModebarInfo) {
-      modebar.innerHTML = info;
-      const cancel = h("button", "mb-cancel", "Cancel ✕");
-      cancel.dataset.sfx = "close";
-      cancel.onclick = () => modebar.classList.add("hidden");
-      modebar.appendChild(cancel);
+    const cancellable = !!info && !placementMandatory && toolState !== "select";
+    // The bar is rebuilt when the verdict changes OR when the ✕ appears/goes
+    // away — a phase that stops mandating a placement must grow its cancel.
+    // An empty `costInfo` empties the bar too, so the DOM says what the state
+    // says: a cancelled hint is gone, not merely hidden with its old text.
+    const barSig = info === null ? null : `${cancellable ? "✕" : ""}\u0000${info}`;
+    if (barSig !== lastModebarInfo) {
+      lastModebarInfo = barSig;
+      modebar.innerHTML = info ?? "";
+      if (cancellable) {
+        const cancel = h("button", "mb-cancel", "✕");
+        cancel.type = "button";
+        cancel.dataset.sfx = "close";
+        cancel.title = "Cancel — put the tool down (Esc / right-click)";
+        cancel.setAttribute("aria-label", "Cancel this placement and return to the pointer");
+        cancel.onclick = () => hooks.onTool("select");
+        modebar.appendChild(cancel);
+      }
     }
-    lastModebarInfo = info;
+    modebar.classList.toggle("hidden", !info);
     const inspectHtml = state.inspect ?? "";
     if (inspectHtml !== lastInspectHtml) {
       inspectEl.innerHTML = inspectHtml;
