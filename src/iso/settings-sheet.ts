@@ -15,14 +15,13 @@
 //     is loaded at all (see graphics.ts + Atlas.detailCap);
 //   · Miniature view — the tilt-shift tilt the island looks through
 //     (see miniature.ts);
+//   · Performance mode — PERF-01's cheaper rendering policy: hides grass
+//     decals and single trees, caps backing DPR, and suppresses the miniature
+//     pass for the duration (its own choice is preserved and restored);
 //   · Sound — the SFX-01 mix, reachable here too because the main menu has
 //     no 🔊 plate of its own and a player muting from the door must be able
 //     to.
-// Performance mode (PERF-01) still exists as a flag — flat static terrain,
-// static water, capped DPR, miniature suppressed — but its toggle is hidden
-// from the sheet (still reachable via ?performance=1 or localStorage).
-// All three visible controls write through their stores (graphics.ts, the
-// audio engine), so a
+// All four write through their stores (graphics.ts, the audio engine), so a
 // change made here repaints every OTHER control of the same setting — the
 // top-bar 🔊, the in-game modal a second tab could conjure — by the
 // registration the stores already provide. The sheet never reads the store
@@ -30,7 +29,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import {
   currentGraphics, setGraphics, subscribeGraphics,
-  QUALITY_KEYS, QUALITY_LABEL, QUALITY_NOTE, type GraphicsSettings,
+  QUALITY_KEYS, QUALITY_LABEL, QUALITY_NOTE, PERFORMANCE_NOTE, type GraphicsSettings,
 } from "./graphics";
 import { registerSoundPainter, sfx } from "../audio/sfx";
 
@@ -68,6 +67,10 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
         <button type="button" class="gfx-switch" role="switch" aria-label="Miniature view" data-gfx="miniature" data-sfx="click">OFF</button>
       </div>
       <div class="gfx-row">
+        <div class="gfx-copy"><h3>Performance mode</h3><p>${PERFORMANCE_NOTE}</p></div>
+        <button type="button" class="gfx-switch" role="switch" aria-label="Performance mode" data-gfx="performance" data-sfx="click">OFF</button>
+      </div>
+      <div class="gfx-row">
         <div class="gfx-copy"><h3>Sound</h3><p>Brass, felt and paper — every click, coin and cascade (the top bar&rsquo;s 🔊 keeps the same time).</p></div>
         <button type="button" class="gfx-switch" role="switch" data-gfx="sound" data-sfx="click">ON</button>
       </div>
@@ -82,6 +85,7 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
   const note = root.querySelector(".gfx-note") as HTMLElement;
   const miniBtn = root.querySelector("[data-gfx=\"miniature\"]") as HTMLButtonElement;
   const miniNote = root.querySelector(".gfx-mini-note") as HTMLElement;
+  const perfBtn = root.querySelector("[data-gfx=\"performance\"]") as HTMLButtonElement;
   const soundBtn = root.querySelector("[data-gfx=\"sound\"]") as HTMLButtonElement;
 
   for (const q of QUALITY_KEYS) {
@@ -96,6 +100,7 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
     seg.appendChild(b);
   }
   miniBtn.onclick = () => { setGraphics({ miniature: !currentGraphics().miniature }); };
+  perfBtn.onclick = () => { setGraphics({ performance: !currentGraphics().performance }); };
   soundBtn.onclick = () => { sfx.setEnabled(!sfx.isEnabled()); };
 
   const paint = (g: GraphicsSettings) => {
@@ -105,8 +110,9 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
       b.classList.toggle("on", on);
       b.setAttribute("aria-checked", String(on));
     }
-    // PERF-01 still suppresses miniature even though the toggle is hidden —
-    // performance can still be enabled via ?performance=1 or localStorage.
+    // PERF-01: performance mode SUPPRESSES the miniature pass without
+    // touching the stored choice — the switch dims and its row says why,
+    // and turning performance mode off restores the preference as it was.
     const miniSuppressed = g.performance;
     miniBtn.textContent = g.miniature ? "ON" : "OFF";
     miniBtn.classList.toggle("on", g.miniature && !miniSuppressed);
@@ -114,6 +120,9 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
     miniBtn.disabled = miniSuppressed;
     miniBtn.setAttribute("aria-disabled", String(miniSuppressed));
     miniNote.textContent = miniSuppressed ? MINIATURE_UNAVAILABLE : MINIATURE_NOTE;
+    perfBtn.textContent = g.performance ? "ON" : "OFF";
+    perfBtn.classList.toggle("on", g.performance);
+    perfBtn.setAttribute("aria-checked", String(g.performance));
   };
   const unsubGfx = subscribeGraphics(paint);
   const unsubSound = registerSoundPainter((enabled) => {
