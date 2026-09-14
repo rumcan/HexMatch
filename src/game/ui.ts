@@ -31,7 +31,7 @@ import { BANK_RATE, MAX_OFFERS } from "./trade";
 // constant and the engine's own `VP_TARGET` were two numbers with one name,
 // and the HUD was already showing "/10" while the game was winning at 12 — the
 // scoreboard now has exactly one source, `VICTORY` in src/iso/config.ts.
-import { CARGO, CARGOES, TRANSPORT, VICTORY, UPGRADE_COST, type Cargo, type Portrait } from "../iso/config";
+import { CARGO, CARGOES, TRANSPORT, VICTORY, UPGRADE_COST, BUILD_COSTS, type Cargo, type Portrait } from "../iso/config";
 import { DEPOT_COST } from "../iso/construction";
 import { PLANT_COST } from "../iso/plants";
 import { GEM_TO_CARGO } from "../iso/quarry";
@@ -77,7 +77,7 @@ import { coarsePointer } from "../iso/touch";
 // bijection quarry.ts uses, so a colour can never draw the wrong sprite.
 import { GEM_ART } from "./gem-art";
 import {
-  HUD_ICONS, cargoIconHtml, costMarkup, depotButtonMarkup, soundIconHtml,
+  HUD_ICONS, ICON_CROSS, cargoIconHtml, costMarkup, depotButtonMarkup, soundIconHtml,
 } from "./hud-icons";
 
 // ── NOIR: the painted mugshots ──────────────────────────────────────────────
@@ -108,7 +108,7 @@ const portraitFor = (p: UiPlayer, index: number): string =>
  * "read the map" hand). Right-click on the map drops any tool back to it,
  * and Q does the same from the keyboard.
  */
-export type UiTool = "select" | "dirt" | "road" | "harvester" | "plant" | "demolish";
+export type UiTool = "select" | "dirt" | "road" | "harvester" | "plant" | "demolish" | "rail" | "platform" | "trainDepot";
 
 export interface UiPlayer {
   id: string;
@@ -174,6 +174,16 @@ export interface UiState {
    * top-bar Names button paints its pressed state from this.
    */
   showNames?: boolean;
+  /** Railways v1 — railway panel data */
+  railway?: {
+    platforms: { id:number; owner:string; tx:number; ty:number; anchor:string }[];
+    depots: { id:number; owner:string; tx:number; ty:number }[];
+    trains: { id:number; owner:string; depotId:number; lineId:number|null; state:string; blockedReason?:string }[];
+    lines: { id:number; owner:string; name:string; source:number; dest:number; trainId:number|null; status:string }[];
+    canAffordTrain?: boolean;
+  };
+  /** Railways v1 — platform VP breakdown */
+  platformVp?: number;
 }
 
 export interface UiHooks {
@@ -334,6 +344,9 @@ export function createOriginalUi(
   root.dataset.view = "map";
   root.style.setProperty("--gem-move-ms", `${BOARD_ANIMATION_MS.swap}ms`);
   root.style.setProperty("--gem-clear-ms", `${BOARD_ANIMATION_MS.clear}ms`);
+  // #162: falls ease under their own wait (swap/clear kept theirs), so the
+  // DOM's gravity can never outrun the board logic it trails.
+  root.style.setProperty("--gem-fall-ms", `${BOARD_ANIMATION_MS.fall}ms`);
 
   // Issue #152 — turbo catch-up. While the player has a valid move queued the
   // board runs its waits at FAST_ANIMATION_MS; the gem transitions must snap
@@ -349,6 +362,7 @@ export function createOriginalUi(
     const t = on ? FAST_ANIMATION_MS : BOARD_ANIMATION_MS;
     root.style.setProperty("--gem-move-ms", `${t.swap}ms`);
     root.style.setProperty("--gem-clear-ms", `${t.clear}ms`);
+    root.style.setProperty("--gem-fall-ms", `${t.fall}ms`);
     root.classList.toggle("turbo", on);
   }
   board.onTurbo = setTurbo;
@@ -467,6 +481,19 @@ export function createOriginalUi(
   sp.appendChild(h("div", "pane-note gold-rule", `${cargoIconHtml("gold")} ${GOLD_RULE} Construction and trade never touch it.`));
   const sabList = h("div", "sab-list");
   sp.appendChild(sabList);
+
+  // ── Railways v1 — Railway management panel ─────────────────────────
+  const railwayPanel = h("div", "panel railway-panel");
+  railwayPanel.id = "railway-panel";
+  railwayPanel.appendChild(h("div", "panel-title", "Railway"));
+  const railwayBody = h("div", "railway-body");
+  railwayBody.innerHTML = `<div class="pane-note">Build <b>Railway Track</b> (1🪨) to connect a <b>Rail Platform</b> (+1★) near an industry to a platform near your owned plant. Build a <b>Train Depot</b> on the network, buy a train (4⛏️+2🛢️), create a two-stop line, assign and start. Trains shuttle and grant match-3 service — no passive income, just token eligibility — deduplicated with roads.</div>`;
+  const railwayLists = h("div", "railway-lists");
+  railwayBody.appendChild(railwayLists);
+  const railwayActions = h("div", "railway-actions");
+  railwayBody.appendChild(railwayActions);
+  railwayPanel.appendChild(railwayBody);
+  left.appendChild(railwayPanel);
 
   root.appendChild(left);
 
@@ -765,6 +792,10 @@ export function createOriginalUi(
     // PP-05: `depotSub` refreshes the Depot line below as the free-setup
     // allowance burns down.
     { key: "harvester", label: "Depot", sub: depotButtonMarkup(0) },
+    // Railways v1 — distinct tools, preserve Depot naming
+    { key: "rail", label: "Railway Track", sub: `${costMarkup(BUILD_COSTS.rail)} · 0★` },
+    { key: "platform", label: "Rail Platform", sub: `${costMarkup(BUILD_COSTS.platform)} · +${VICTORY.platform}★` },
+    { key: "trainDepot", label: "Train Depot", sub: `${costMarkup(BUILD_COSTS.trainDepot)} · 0★` },
     // PP-06: another instance of the SAME processing building, raised beside
     // another town.
     { key: "plant", label: "Processing Plant", sub: `${costMarkup(PLANT_COST)} · next to a town` },
@@ -1061,6 +1092,7 @@ export function createOriginalUi(
       toast("Answer the cross bounty first.", "info");
       return;
     }
+    resetIdleHint(); // #162: a tab switch is a touch — and a hint for a hidden board is pointless
     // SFX-01: a drawer sliding one bay — but only when the drawer really moves.
     // The boot calls setTab("plant") and paint() never re-calls it, so an
     // unchanged tab is a no-op here and stays silent.
@@ -1122,6 +1154,7 @@ export function createOriginalUi(
     Math.abs(a.r - b.r) + Math.abs(a.c - b.c) === 1;
 
   const selectOrSwap = (cell: { r: number; c: number }) => {
+    resetIdleHint(); // #162: any tap is a touch — the idle hint stands down
     if (selected && adj(selected, cell)) {
       // SFX-01: a soft thud as the gem settles — the board's own `bad` fx
       // answers a swap that did not match, so this one is deliberately
@@ -1130,6 +1163,7 @@ export function createOriginalUi(
       // #163: the player has played into the board — any session-added
       // rows/columns are earned now and the fit becomes grow-only.
       markBoardPlayed();
+      noteSwap(selected.r, selected.c, cell.r, cell.c);
       hooks.onSwap(selected.r, selected.c, cell.r, cell.c);
       selected = null;
     } else {
@@ -1171,11 +1205,14 @@ export function createOriginalUi(
   });
   // ── TACTILE-01: the board answers the hand ────────────────────────────────
   // Hover: the gem under a mouse leans a few px toward the cursor. Press and
-  // drag (mouse or touch): the gem follows along the ONE axis being pulled —
-  // the four directions a gem can trade in — while the neighbour it would
-  // trade with gives way. Past half a cell the swap commits; both gems then
+  // drag (mouse or touch): the picked-up gem follows along the ONE axis being
+  // pulled — the four directions a gem can trade in — while the neighbour it
+  // would trade with gives way AND lights up as the previewed target.
+  // #162: NOTHING commits mid-gesture — the swap is decided on RELEASE. Past
+  // half a cell toward an open neighbour the swap commits; both gems then
   // ease from wherever the hand left them into their cells and settle with a
-  // small shake. Let go short of that and the gem springs home.
+  // small wobble. Short of that, dragged back, cancelled, or aimed at a wall,
+  // the gems spring home and no move is spent.
   // renderBoard owns each gem's inline `transform` (its cell); everything here
   // rides the independent `translate` property, so the two never fight.
   const reduceMotion = typeof matchMedia === "function"
@@ -1184,13 +1221,27 @@ export function createOriginalUi(
   const LEAN_PX = 3;
   /** Client px a press must travel before it counts as a drag (not a click). */
   const DRAG_START_PX = 5;
-  /** Grid px pulled along the axis before the swap commits. */
+  /** Grid px pulled along the axis before a release commits the swap (#162:
+   *  the hand's travel, not the gem's — the gem trails at 0.8×). */
   const COMMIT_PX = CELL * 0.5;
-  /** The release glide (`.gem.gliding` in styles.css): the board's swap duration. */
-  const GLIDE_MS = BOARD_ANIMATION_MS.swap;
+  /** The release glide (`.gem.gliding` in styles.css) runs at the board's own
+   *  swap pace — turbo-aware, like the `--gem-move-ms` var it eases under —
+   *  so the DOM never lags the logic it just triggered. */
+  const glideMs = () => (turboMode ? FAST_ANIMATION_MS.swap : BOARD_ANIMATION_MS.swap);
   const SETTLE_MS = 300;
+  /** Ms with no board touch before one valid pair pulses as a hint. */
+  const IDLE_HINT_MS = 6000;
+  /** How long the idle hint stays on the board before it clears. */
+  const HINT_SHOW_MS = 1600;
   type Cell = { r: number; c: number };
-  interface Drag { from: Cell; el: HTMLElement; pointerId: number; x0: number; y0: number; active: boolean; peer: HTMLElement | null }
+  interface Drag {
+    from: Cell; el: HTMLElement; gemId: number;
+    pointerId: number; x0: number; y0: number; active: boolean; peer: HTMLElement | null;
+    /** The live preview, refreshed by every pointermove: the locked axis, the
+     *  hand's pull along it in grid px, the targeted cell and whether a swap
+     *  there is legal. The release decision reads THIS, never the event. */
+    horiz: boolean; pull: number; to: Cell | null; open: boolean;
+  }
   let drag: Drag | null = null;
   let leaning: HTMLElement | null = null;
   let swallowClick = false;
@@ -1228,14 +1279,17 @@ export function createOriginalUi(
     // Only a release eases `translate`; hover and held gems follow the pointer.
     el.classList.add("gliding");
     el.style.translate = "";
-    window.setTimeout(() => el.classList.remove("gliding"), GLIDE_MS);
-    if (!shake || reduceMotion) return;
+    const ms = glideMs();
+    window.setTimeout(() => el.classList.remove("gliding"), ms);
+    // A wobble is a celebration for a settled swap — fast play (turbo) and
+    // reduced motion both skip it.
+    if (!shake || reduceMotion || turboMode) return;
     window.setTimeout(() => {
       el.classList.remove("settle");
       void el.offsetWidth;
       el.classList.add("settle");
       window.setTimeout(() => el.classList.remove("settle"), SETTLE_MS);
-    }, Math.max(0, GLIDE_MS - 60));
+    }, Math.max(0, ms - 60));
   }
 
   /** Snapshot where each gem is on screen, run `act`, then glide them all. */
@@ -1249,15 +1303,106 @@ export function createOriginalUi(
     els.forEach((el, i) => glide(el, seen[i][0], seen[i][1], shake));
   }
 
+  // ── #162: invalid-swap shake + idle hint ─────────────────────────────────
+  // Every swap the player commits (tap or drag) is queued here in commit
+  // order. The board answers a dud with `onFx("bad")` and a match with pops;
+  // `fx()` below shakes the dud's two gems and drops matched entries, so an
+  // invalid swap reads as "not allowed" instead of nothing happening — with
+  // no board change at all (the wire already carries everything this needs).
+  const pendingSwaps: { r1: number; c1: number; r2: number; c2: number }[] = [];
+  const SHAKE_MS = 260;
+  function shakeCells(a: Cell, b: Cell) {
+    if (reduceMotion) return;
+    for (const cell of [a, b]) {
+      const g = board.grid[cell.r]?.[cell.c];
+      const el = g ? gemEls.get(g.id) : undefined;
+      if (!el) continue;
+      el.classList.remove("shake");
+      void el.offsetWidth;
+      el.classList.add("shake");
+      window.setTimeout(() => el.classList.remove("shake"), SHAKE_MS + 30);
+    }
+  }
+  /** A dud landed: shake its two gems (or nothing, if they are gone). */
+  function shakePendingSwap() {
+    const s = pendingSwaps.shift();
+    if (s) shakeCells({ r: s.r1, c: s.c1 }, { r: s.r2, c: s.c2 });
+  }
+  /** A match resolved: every older commit was legal, drop them all. */
+  function clearPendingSwaps() {
+    pendingSwaps.length = 0;
+  }
+  function noteSwap(r1: number, c1: number, r2: number, c2: number) {
+    pendingSwaps.push({ r1, c1, r2, c2 });
+    if (pendingSwaps.length > 8) pendingSwaps.shift(); // same cap as the board's queue
+  }
+
+  let idleTimer = 0;
+  let hintEls: HTMLElement[] = [];
+  function clearHint() {
+    for (const el of hintEls) el.classList.remove("hint");
+    hintEls = [];
+  }
+  /** One valid pair pulses gently — the board teaching its own grammar. */
+  function showIdleHint() {
+    idleTimer = 0;
+    // A hint is for a quiet, visible, idle board — never mid-gesture, never
+    // mid-cascade, never under the cross chooser, never on another tab.
+    if (document.hidden || drag || board.busy || pickEl || qp.classList.contains("hidden")) {
+      armIdleHint();
+      return;
+    }
+    const mv = board.findMove();
+    if (!mv) { armIdleHint(); return; } // deadlocked — the guard reshuffles, not us
+    const els: HTMLElement[] = [];
+    for (const [r, c] of [[mv[0], mv[1]], [mv[2], mv[3]]] as const) {
+      const g = board.grid[r]?.[c];
+      const el = g ? gemEls.get(g.id) : undefined;
+      if (el) els.push(el);
+    }
+    if (els.length === 2) {
+      clearHint();
+      hintEls = els;
+      for (const el of els) el.classList.add("hint");
+      window.setTimeout(() => { clearHint(); armIdleHint(); }, HINT_SHOW_MS);
+    } else {
+      armIdleHint();
+    }
+  }
+  function armIdleHint() {
+    window.clearTimeout(idleTimer);
+    idleTimer = window.setTimeout(showIdleHint, IDLE_HINT_MS);
+  }
+  function resetIdleHint() {
+    clearHint();
+    armIdleHint();
+  }
+
   grid.addEventListener("pointerdown", (e) => {
     swallowClick = false;
+    // #162: a second finger voids the gesture — the held gems spring back
+    // and the new press is ignored (its tap must not select mid-void).
+    if (drag) {
+      cancelDrag();
+      swallowClick = true;
+      return;
+    }
     if (e.button !== 0) return;
     const from = cellFrom(e);
     const g = from ? board.grid[from.r]?.[from.c] : null;
     const el = g ? gemEls.get(g.id) : undefined;
     if (!from || !g || !el || g.block) return;
     unlean();
-    drag = { from, el, pointerId: e.pointerId, x0: e.clientX, y0: e.clientY, active: false, peer: null };
+    resetIdleHint();
+    // #162: the pickup is ON PRESS, not after 5px of travel — the gem lifts
+    // under the finger the instant it is touched (a tap flashes it, then the
+    // click handler below owns the selection).
+    el.classList.remove("gliding");
+    el.classList.add("dragging");
+    drag = {
+      from, el, gemId: g.id, pointerId: e.pointerId, x0: e.clientX, y0: e.clientY,
+      active: false, peer: null, horiz: true, pull: 0, to: null, open: false,
+    };
   });
 
   grid.addEventListener("pointermove", (e) => {
@@ -1281,14 +1426,21 @@ export function createOriginalUi(
       return;
     }
     if (e.pointerId !== drag.pointerId) return;
+    // #162: leaving the board voids the gesture — with pointer capture the
+    // moves keep arriving, so the bounds check does what pointerleave would.
+    const rect = grid.getBoundingClientRect();
+    if (rect.width > 0 && (e.clientX < rect.left || e.clientX > rect.right
+      || e.clientY < rect.top || e.clientY > rect.bottom)) {
+      cancelDrag();
+      swallowClick = true;
+      return;
+    }
     const dx = e.clientX - drag.x0, dy = e.clientY - drag.y0;
     if (!drag.active && Math.hypot(dx, dy) < DRAG_START_PX) return;
     const k = toLocal();   // geometry first, before the class/style writes below
     if (!drag.active) {
       drag.active = true;
       try { grid.setPointerCapture(e.pointerId); } catch { /* synthetic pointer */ }
-      drag.el.classList.remove("gliding");
-      drag.el.classList.add("dragging");
       sfx.play("select");
     }
     const horiz = Math.abs(dx) >= Math.abs(dy);
@@ -1297,51 +1449,100 @@ export function createOriginalUi(
     const to = { r: drag.from.r + (horiz ? 0 : dir), c: drag.from.c + (horiz ? dir : 0) };
     const tg = dir ? board.grid[to.r]?.[to.c] : null;
     const open = !!tg && !tg.block;
+    // The release decision reads this preview — the move only stores it.
+    drag.horiz = horiz; drag.pull = pull; drag.to = to; drag.open = open;
     const peer = open ? gemEls.get(tg.id) ?? null : null;
     if (peer !== drag.peer) {
       if (drag.peer) { drag.peer.style.translate = ""; drag.peer.classList.remove("yielding"); }
       drag.peer = peer;
+      // `.yielding` IS the target highlight (styles.css): the neighbour the
+      // release would trade with glows while the preview holds it.
       peer?.classList.add("yielding");
     }
     // A little resistance: the gem trails the hand, and a wall (the board
-    // edge, a chained block) barely gives at all.
-    const travel = open ? Math.min(Math.abs(pull), CELL) * 0.8 : Math.min(Math.abs(pull) * 0.15, 6);
+    // edge, a chained block) rubber-bands a few px and offers no target.
+    const travel = open ? Math.min(Math.abs(pull), CELL) * 0.8 : Math.min(Math.abs(pull) * 0.15, 10);
     const off = dir * travel;
     // reset the cross axis too, so flicking between directions never leaves a diagonal
     setOffset(drag.el, horiz, off);
     if (peer) setOffset(peer, horiz, -off * 0.45);
-
-    if (open && Math.abs(pull) >= COMMIT_PX) {
-      const d = drag;
-      drag = null;
-      swallowClick = true;
-      releaseGems(d, () => {
-        sfx.play("swap");
-        markBoardPlayed();   // #163: a drag swap earns the grown band too
-        hooks.onSwap(d.from.r, d.from.c, to.r, to.c);
-        selected = null;
-        renderSelection();
-      }, true);
-    }
+    // #162: NO commit here — the swap is decided on release (commitDrag),
+    // so the hand can change its mind until the very last pixel.
   });
 
-  const endDrag = (e: PointerEvent) => {
+  // #162: release DECIDES. Past the threshold toward an open neighbour the
+  // swap commits; short of it — or dragged back, or aimed at a wall — the
+  // gems spring home and no move is spent. The gem-identity check is the
+  // cascade guard: if gravity carried the held gem away mid-preview (a drag
+  // drawn during a running cascade), the stale cells do NOT swap.
+  const commitDrag = (e: PointerEvent) => {
     if (!drag || e.pointerId !== drag.pointerId) return;
     const d = drag;
     drag = null;
-    if (!d.active) return; // a plain press — the click handler owns it
+    if (!d.active) {
+      // a plain press — drop the pickup flash, the click handler owns it
+      d.el.classList.remove("dragging");
+      return;
+    }
     swallowClick = true;
-    releaseGems(d, () => {}, false);
+    const held = board.grid[d.from.r]?.[d.from.c];
+    const commit = d.open && d.to !== null && Math.abs(d.pull) >= COMMIT_PX
+      && held?.id === d.gemId;
+    if (!commit || !d.to) {
+      releaseGems(d, () => {}, false);
+      return;
+    }
+    const to = d.to;
+    releaseGems(d, () => {
+      sfx.play("swap");
+      markBoardPlayed();   // #163: a drag swap earns the grown band too
+      noteSwap(d.from.r, d.from.c, to.r, to.c);
+      hooks.onSwap(d.from.r, d.from.c, to.r, to.c);
+      selected = null;
+      renderSelection();
+      resetIdleHint();
+    }, true);
   };
-  window.addEventListener("pointerup", endDrag);
-  window.addEventListener("pointercancel", endDrag);
+  /** Void the gesture unconditionally: spring back, never commit. */
+  function cancelDrag() {
+    const d = drag;
+    drag = null;
+    if (!d) return;
+    if (!d.active) {
+      d.el.classList.remove("dragging");
+      return;
+    }
+    releaseGems(d, () => {}, false);
+  }
+  const cancelDragEvent = (e: PointerEvent) => {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    const wasActive = drag.active;
+    cancelDrag();
+    if (wasActive) swallowClick = true;
+  };
+  window.addEventListener("pointerup", commitDrag);
+  window.addEventListener("pointercancel", cancelDragEvent);
   grid.addEventListener("pointerleave", () => { if (!drag) unlean(); });
+  // A hidden tab voids the gesture too — the hand is gone, and a `.dragging`
+  // gem must never survive the layout it was held in. No click follows, so
+  // the swallow flag stays untouched; the hint re-arms on return.
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) { cancelDrag(); clearHint(); }
+    else armIdleHint();
+  });
 
   function renderSelection() {
-    gemEls.forEach((elem) => elem.classList.remove("sel"));
-    if (selected) {
-      const g = board.grid[selected.r]?.[selected.c];
-      if (g) gemEls.get(g.id)?.classList.add("sel");
+    gemEls.forEach((elem) => elem.classList.remove("sel", "neighbor"));
+    if (!selected) return;
+    const g = board.grid[selected.r]?.[selected.c];
+    if (!g) return;
+    gemEls.get(g.id)?.classList.add("sel");
+    // #162: the tap path names its legal answers — every open orthogonal
+    // neighbour of the selection glows faintly, so the second tap is never a
+    // guess. Blocked cells stay dark: they cannot be traded with.
+    for (const [dr, dc] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
+      const n = board.grid[selected.r + dr]?.[selected.c + dc];
+      if (n && !n.block) gemEls.get(n.id)?.classList.add("neighbor");
     }
   }
 
@@ -1349,7 +1550,16 @@ export function createOriginalUi(
     const face = elem.querySelector(".face") as HTMLElement;
     const icon = elem.querySelector(".icon") as HTMLElement;
     const badge = elem.querySelector(".badge") as HTMLElement;
+    // #162: a re-style must never strip a live gesture — `renderBoard`
+    // re-styles EVERY gem on EVERY change (a lorry's token, a sabotage
+    // frost, a cascade refill), and any of those can land mid-drag. The
+    // transient animation states survive; `.sel`/`.neighbor` are re-applied
+    // by renderSelection below, and `.hint` is deliberately dropped (a
+    // changed board voids the old hint; the idle timer re-arms its own).
+    const keep = ["dragging", "yielding", "gliding", "settle", "shake", "falling"]
+      .filter((c) => elem.classList.contains(c));
     elem.className = "gem res-" + g.res;
+    for (const c of keep) elem.classList.add(c);
     elem.dataset.res = g.res;
     elem.dataset.tier = String(g.tier);
     face.removeAttribute("style");
@@ -1415,15 +1625,54 @@ export function createOriginalUi(
         elem.dataset.id = String(g.id);
         elem.dataset.r = String(g.r);
         elem.dataset.c = String(g.c);
-        elem.style.transform = `translate(${x}px, ${y}px)`;
-        grid.appendChild(elem);
-        gemEls.set(g.id, elem);
+        // #162: refills drop in from above the board — staged above their
+        // cell for one frame, then eased home with the fall. Skipped under
+        // turbo (the remnant is the juice there) and reduced motion.
+        if (g.isNew && !turboMode && !reduceMotion) {
+          elem.style.transform = `translate(${x}px, ${y - CELL * 3}px)`;
+          grid.appendChild(elem);
+          gemEls.set(g.id, elem);
+          styleGem(elem, g);
+          const el = elem, homeX = x, homeY = y;
+          const fallMs = BOARD_ANIMATION_MS.fall;
+          el.style.setProperty("--fall-ms", `${fallMs}ms`);
+          el.classList.add("falling");
+          requestAnimationFrame(() => {
+            el.style.transform = `translate(${homeX}px, ${homeY}px)`;
+            window.setTimeout(() => {
+              el.classList.remove("falling");
+              el.style.removeProperty("--fall-ms");
+            }, fallMs + 40);
+          });
+        } else {
+          elem.style.transform = `translate(${x}px, ${y}px)`;
+          grid.appendChild(elem);
+          gemEls.set(g.id, elem);
+          styleGem(elem, g);
+        }
       } else {
+        // #162: a gem that FELL reads as falling — its drop eases with
+        // gravity and lands with a small bounce, longer drops taking longer
+        // (capped at the board's own fall wait, so the DOM never outruns the
+        // logic). Sideways steps (swaps) keep the swap easing instead.
+        const oldR = Number(elem.dataset.r), oldC = Number(elem.dataset.c);
+        const dist = g.r - oldR;
+        const fell = !turboMode && !reduceMotion && oldC === g.c && dist > 0;
         elem.dataset.r = String(g.r);
         elem.dataset.c = String(g.c);
         elem.style.transform = `translate(${x}px, ${y}px)`;
+        styleGem(elem, g);
+        if (fell) {
+          const fallMs = BOARD_ANIMATION_MS.fall;
+          elem.style.setProperty("--fall-ms", `${Math.min(fallMs, 45 + dist * 25)}ms`);
+          elem.classList.add("falling");
+          const el = elem;
+          window.setTimeout(() => {
+            el.classList.remove("falling");
+            el.style.removeProperty("--fall-ms");
+          }, fallMs + 40);
+        }
       }
-      styleGem(elem, g);
       g.isNew = false;
     }
     gemEls.forEach((elem, id) => {
@@ -1501,6 +1750,12 @@ export function createOriginalUi(
   };
 
   function fx(type: FxType, r: number, c: number, text?: string) {
+    // #162: the verdict on the player's commits. A dud ("bad") shakes the
+    // two gems of the oldest unanswered swap; any pop, callout or blessing
+    // proves a match resolved and retires every older commit with it.
+    if (type === "bad") shakePendingSwap();
+    else if (type === "pop" || type === "chain" || type === "combo"
+      || type === "cross" || type === "bcross" || type === "boom") clearPendingSwaps();
     // PP-14: a cross match summons the angel — the choir sings the instant
     // the shape resolves, and the praying-angel PNG pops over the centre gem
     // in the same one-shot style as every other fx icon.
@@ -1537,6 +1792,9 @@ export function createOriginalUi(
   // the panel and paused cascade wait until the player explicitly confirms.
   // Outside clicks/tab switches cannot dismiss it. Queue additional choices
   // rather than auto-answering and replacing an unfinished allocation.
+  // #185 restyled the plate into the house language — shared `.panel`
+  // treatment over a light board dim, chip-dark cargo tiles, and the dialog
+  // `.big-btn` as the confirm. None of the flow above changed.
   let pickEl: HTMLElement | null = null;
   const pickQueue: { kind: "holy" | "broken"; picks: number; pick: (chosen: ResKey[]) => void }[] = [];
 
@@ -1553,12 +1811,29 @@ export function createOriginalUi(
       return chosen;
     };
     const holy = kind === "holy";
-    const panel = h("div", `cross-pick${holy ? "" : " broken"}`);
-    panel.appendChild(h("div", "cross-pick-title", holy ? "🙏 HOLY CROSS" : "✝ BROKEN CROSS"));
+    // #185: the plate is the house plate. It wears the shared `.panel`
+    // treatment (felt, glass gradient, brass keyline, `--r`) exactly like the
+    // Bank, Market and build panels, and it rides a light dim — the modal
+    // sheets' `.modal-back` idea, sized to the board rather than the window.
+    // The dim swallows clicks aimed at the board (which is paused anyway) and
+    // carries no handler of its own: outside clicks still cannot dismiss it.
+    // No emoji anywhere in the markup; the title is the ledger kicker over an
+    // engraved display-face name sealed with the stroke-SVG cross.
+    const back = h("div", "cross-pick-back");
+    const panel = h("div", `cross-pick panel${holy ? "" : " broken"}`);
+    const head = h("div", "cross-pick-head");
+    head.appendChild(h("div", "cross-pick-kicker", "Blessing"));
+    head.appendChild(h(
+      "div", "cross-pick-title",
+      `${ICON_CROSS}<span>${holy ? "Holy Cross" : "Broken Cross"}</span>`,
+    ));
+    panel.appendChild(head);
     panel.appendChild(h("div", "cross-pick-sub", `Spend ${picks} bounties · repeats allowed`));
     const row = h("div", "cross-pick-row");
     const count = h("div", "cross-pick-count", `0 / ${picks} spent`);
-    const confirm = h("button", "cross-pick-confirm", holy ? `🙏 Bless +${picks}` : `✝ Bless +${picks}`);
+    // #185: the confirm is the game's primary action button — the brass
+    // "sign here" plate of the dialogs, class and all.
+    const confirm = h("button", "cross-pick-confirm big-btn", `Bless +${picks}`);
     (confirm as HTMLButtonElement).type = "button";
     (confirm as HTMLButtonElement).disabled = true;
     // SFX-01: the blessing lands as gold does — two coins touching.
@@ -1584,6 +1859,9 @@ export function createOriginalUi(
       b.dataset.sfx = "pick";
       b.dataset.cargo = cargo;
       b.dataset.gem = gem;
+      // #185: the cargo's own two colours ride along as `--c1/--c2` — the
+      // tile reads chip-dark like the purse's, and the colour lives in its
+      // painted gem token and the assay line struck under it.
       b.style.setProperty("--c1", CARGO[cargo].c1);
       b.style.setProperty("--c2", CARGO[cargo].c2);
       b.innerHTML = `${cargoIconHtml(cargo, "cargo-ic cargo-ic-lg")}<span>+1</span>`;
@@ -1601,9 +1879,9 @@ export function createOriginalUi(
       row.appendChild(b);
     }
     confirm.onclick = () => {
-      if (pickEl !== panel || total() !== picks) return;
+      if (pickEl !== back || total() !== picks) return;
       const chosen = expand();
-      panel.remove();
+      back.remove();
       pickEl = null;
       pick(chosen);
       const next = pickQueue.shift();
@@ -1612,8 +1890,9 @@ export function createOriginalUi(
     panel.appendChild(row);
     panel.appendChild(count);
     panel.appendChild(confirm);
-    boardWrap.appendChild(panel);
-    pickEl = panel;
+    back.appendChild(panel);
+    boardWrap.appendChild(back);
+    pickEl = back;
   }
 
   /** #112: close the chooser and drain any queued ones without answering. */
@@ -1812,6 +2091,19 @@ export function createOriginalUi(
    * but too-small slot earns zoom, never extra columns; a session-added
    * band stays retractable until the player has played into it, while the
    * shipped size, restored saves and host-authored boards are sacred.
+   *
+   * #188 — and ONE settled box decides ONE rectangle. The settled measurement
+   * was necessary but not sufficient on its own: `Board.setSize` repaints the
+   * chrome through the game's `onChange`, and that repaint promoted the
+   * chrome's own grow to the baseline, so every LATER settled pass measured
+   * from a bigger board and grew again. Each Plant round-trip therefore added
+   * two rows in portrait (7×8 → 7×10 → 7×11) and two COLUMNS in a landscape
+   * slot (7×8 → 9×8 → 11×8 → 13×8 …), which walks exactly into the 11-column
+   * board that no longer fits — the bug #163 was supposed to have closed.
+   * Two guards close it for good: the rectangle is claimed BEFORE `setSize`,
+   * so a repaint cannot mistake the chrome for a host; and a box this fit has
+   * already answered can never decide again, so a tab switch cannot resize
+   * the board even when the measurement jitters by a pixel.
    */
   const PHONE_GROW_MAX = 2;       // at most +2 columns / +2 rows over baseline
   const PHONE_MIN_CELL = 30;      // added cells must render at least this big
@@ -1829,6 +2121,14 @@ export function createOriginalUi(
   // first swap lands; afterwards the board is grow-only for the session.
   let boardPlayed = false;
   let fitFrameQueued = false;
+  // #188: the settled slot box the live rectangle was last DECIDED from, as
+  // `"<w>x<h>"`. Empty until a real decision has been made. A tab switch
+  // cannot move the slot, so a pass that measures the box one has already
+  // answered must not touch the board at all — that is what makes "switching
+  // tabs never resizes the board" a structural fact instead of an arithmetic
+  // coincidence that only holds while the measured box holds still to the
+  // pixel. Only a genuinely different settled box re-opens the decision.
+  let settledSlotKey = "";
 
   /** Adopt an externally-authored rectangle (restore / host) as the floor. */
   function noteBoardProvenance() {
@@ -1836,6 +2136,10 @@ export function createOriginalUi(
     baseBoardW = knownBoardW = board.w;
     baseBoardH = knownBoardH = board.h;
     boardPlayed = false;
+    // #188: a REPLACED board earns one fresh settled look at the slot it now
+    // lives in — its rectangle, not the one this chrome last answered for,
+    // is what the next decision must be measured against.
+    settledSlotKey = "";
   }
 
   /** Lock in any session-added band: the player has swapped into the board. */
@@ -1874,23 +2178,44 @@ export function createOriginalUi(
       const slotW = boardSlot.clientWidth;
       const slotH = boardSlot.clientHeight;
       if (slotW > 100 && slotH > 100) {
-        const { w: wantW, h: wantH } = phoneBoardTarget(slotW, slotH);
-        const curW = board.w, curH = board.h;
-        // Before the first swap a session-added band is advisory: a settled
-        // slot that no longer fits it retracts the extra rows/columns. Once
-        // played into, the board is grow-only; the baseline can never be
-        // asked to shrink either way, and the game vetoes every resize it
-        // does not own (a multiplayer guest's host-authored grid).
-        const fitW = boardPlayed ? Math.max(curW, wantW) : wantW;
-        const fitH = boardPlayed ? Math.max(curH, wantH) : wantH;
-        if ((fitW !== curW || fitH !== curH)
-          && (hooks.requestBoardSize?.(fitW, fitH) ?? true)) {
-          board.setSize(fitW, fitH);
-          knownBoardW = fitW;
-          knownBoardH = fitH;
-          boardPlayed = false;   // the fresh band is unplayed until a swap
-          applyGridSize();
-          renderBoard();
+        // #188: ONE settled box decides ONE rectangle. A tab switch cannot
+        // move the slot, so a pass that re-measures a box this fit has
+        // already answered must leave the board alone — however many times
+        // the pane is un-hidden, and to the pixel. Only a different settled
+        // box (a real resize, a rotation, the chrome coming or going) earns
+        // a new decision. `paintZoom` below still runs on every pass: zoom
+        // is reversible and always has to answer the CURRENT box.
+        const boxKey = `${slotW}x${slotH}`;
+        if (boxKey !== settledSlotKey) {
+          settledSlotKey = boxKey;
+          const { w: wantW, h: wantH } = phoneBoardTarget(slotW, slotH);
+          const curW = board.w, curH = board.h;
+          // Before the first swap a session-added band is advisory: a settled
+          // slot that no longer fits it retracts the extra rows/columns. Once
+          // played into, the board is grow-only; the baseline can never be
+          // asked to shrink either way, and the game vetoes every resize it
+          // does not own (a multiplayer guest's host-authored grid).
+          const fitW = boardPlayed ? Math.max(curW, wantW) : wantW;
+          const fitH = boardPlayed ? Math.max(curH, wantH) : wantH;
+          if ((fitW !== curW || fitH !== curH)
+            && (hooks.requestBoardSize?.(fitW, fitH) ?? true)) {
+            // #188: CLAIM the rectangle before it lands. `Board.setSize` fires
+            // the game's `onChange` → `renderBoard` synchronously, and
+            // `noteBoardProvenance` would read the chrome's OWN grow as an
+            // externally-authored board and promote it to the floor. Every
+            // later pass then measured from the promoted base and grew again
+            // — +2 rows on each tab round-trip in portrait, and +2 COLUMNS on
+            // each round-trip in a landscape slot (7 → 9 → 11 → 13 …), which
+            // is the 11-column board #188 reported and the reason the +2 cap
+            // did not hold. Claiming first keeps the shipped (or restored)
+            // baseline the yardstick for the whole session.
+            knownBoardW = fitW;
+            knownBoardH = fitH;
+            board.setSize(fitW, fitH);
+            boardPlayed = false;   // the fresh band is unplayed until a swap
+            applyGridSize();
+            renderBoard();
+          }
         }
       }
     }
@@ -1993,6 +2318,8 @@ export function createOriginalUi(
    * (#163); only a genuinely different settled box can.
    */
   function responsiveZoom() {
+    // #162: a new layout voids any held gesture (see the visibility hook).
+    cancelDrag();
     paintZoom();
     schedulePhoneFit();
   }
@@ -2267,6 +2594,54 @@ export function createOriginalUi(
     const namesOn = state.showNames ?? true;
     namesBtn.setAttribute("aria-pressed", String(namesOn));
     namesBtn.classList.toggle("active", namesOn);
+    // Railways v1: render railway panel lists and actions
+    if (state.railway) {
+      const r = state.railway;
+      railwayLists.innerHTML = "";
+      const mkSection = (title:string, items:string[]) => {
+        const sec = h("div", "railway-section");
+        sec.appendChild(h("div", "railway-section-title", title));
+        if (!items.length) sec.appendChild(h("div", "empty", "None"));
+        else for (const it of items) sec.appendChild(h("div", "railway-item", it));
+        return sec;
+      };
+      railwayLists.appendChild(mkSection("Platforms", r.platforms.map(p=> `#${p.id} ${p.anchor} @${p.tx},${p.ty} (${p.owner})`)));
+      railwayLists.appendChild(mkSection("Depots", r.depots.map(d=> `#${d.id} @${d.tx},${d.ty} (${d.owner})`)));
+      railwayLists.appendChild(mkSection("Trains", r.trains.map(t=> {
+        let s = `#${t.id} depot#${t.depotId} ${t.state}`;
+        if (t.blockedReason) s+= ` (${t.blockedReason})`;
+        if (t.lineId) s+= ` line#${t.lineId}`;
+        return s + ` (${t.owner})`;
+      })));
+      railwayLists.appendChild(mkSection("Lines", r.lines.map(l=> `#${l.id} "${l.name}" ${l.source}→${l.dest} ${l.trainId?`train#${l.trainId}`:"no train"} ${l.status} (${l.owner})`)));
+      railwayActions.innerHTML = "";
+      const buyBtn = h("button", "mini" + (r.canAffordTrain ? "" : " disabled"), "Buy Train (4⛏️ 2🛢️)");
+      (buyBtn as HTMLButtonElement).disabled = !r.canAffordTrain;
+      buyBtn.title = r.canAffordTrain ? "Buy a train into your depot" : "Need 4 Ore + 2 Oil";
+      // hooks for actions are handled via custom events from game.ts; for now just placeholder with data-rail-action
+      buyBtn.dataset.railAction = "buyTrain";
+      railwayActions.appendChild(buyBtn);
+      const lineBtn = h("button", "mini", "New Line");
+      lineBtn.dataset.railAction = "newLine";
+      railwayActions.appendChild(lineBtn);
+      const assignBtn = h("button", "mini", "Assign");
+      assignBtn.dataset.railAction = "assign";
+      railwayActions.appendChild(assignBtn);
+      const startBtn = h("button", "mini", "Start");
+      startBtn.dataset.railAction = "start";
+      railwayActions.appendChild(startBtn);
+      const returnBtn = h("button", "mini", "Return");
+      returnBtn.dataset.railAction = "return";
+      railwayActions.appendChild(returnBtn);
+      const sellBtn = h("button", "mini danger", "Sell (50%)");
+      sellBtn.dataset.railAction = "sell";
+      railwayActions.appendChild(sellBtn);
+      if (state.platformVp !== undefined) {
+        const vpNote = h("div", "pane-note", `Platforms: ${state.platformVp}★ — rail service is match-3 eligibility only, no arrival payout.`);
+        railwayBody.appendChild(vpNote);
+      }
+    }
+
     // PP-05: keep the Depot's price line honest without rebuilding the button
     // (a rebuilt button drops a click mid-gesture, the reason `renderSabotage`
     // is change-gated too). The cost text comes from the same table the
@@ -2276,10 +2651,15 @@ export function createOriginalUi(
       lastDepotSub = sub;
       if (depotSub) depotSub.innerHTML = sub;
     }
-    buildList.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((button) => {
+        buildList.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((button) => {
       const tool = button.dataset.tool as UiTool;
-      const cost = tool === "plant" ? PLANT_COST : tool === "harvester" ? DEPOT_COST
-        : tool === "road" || tool === "dirt" ? TRANSPORT[tool].cost : {};
+      let cost: Partial<Record<Cargo, number>> = {};
+      if (tool === "plant") cost = PLANT_COST;
+      else if (tool === "harvester") cost = DEPOT_COST;
+      else if (tool === "road" || tool === "dirt") cost = TRANSPORT[tool as "road"|"dirt"].cost;
+      else if (tool === "rail") cost = BUILD_COSTS.rail;
+      else if (tool === "platform") cost = BUILD_COSTS.platform;
+      else if (tool === "trainDepot") cost = BUILD_COSTS.trainDepot;
       // W9: the free setup allowance buys Dirt Roads only.
       const free = tool === "harvester" ? state.freeDepots > 0
         : (tool === "dirt") && state.freeTrack > 0;
@@ -2430,6 +2810,7 @@ export function createOriginalUi(
   renderMarket();
   responsiveZoom();
   setTab("plant");
+  armIdleHint(); // #162: the idle hint arms at boot and re-arms on every touch
 
   return {
     el: root,

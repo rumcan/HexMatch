@@ -16,6 +16,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   MAX_PENDING_DELTAS,
   NetSession,
+  RESYNC_MIN_INTERVAL_MS,
+  RESYNC_RETRY_MAX_MS,
+  RESYNC_RETRY_MS,
   mirrorDelta,
   mirrorOwnerByte,
   mirrorOwnerName,
@@ -31,6 +34,7 @@ import {
   type WelcomeMsg,
 } from "../../src/net/protocol";
 import type { ConnectionState, HexRoom } from "../../src/net/transport";
+import { DEFAULT_MATCH_SETTINGS, type MatchSettings } from "../../src/net/match-settings";
 import { applyTrackDelta } from "../../src/net/delta";
 import { base64ToBytes, buildSnapshot, type Snapshot } from "../../src/iso/snapshot";
 import {
@@ -95,6 +99,13 @@ class FakeClientRoom {
    *  members still in the room. */
   firePlayerLeft(playerId: string): void {
     (this.events.onPlayerLeft as ((id: string) => void) | undefined)?.(playerId);
+  }
+  /** #131: the gateway's socket lifecycle events, as `transport.ts` forwards them. */
+  fireReconnected(): void {
+    (this.events.onReconnected as (() => void) | undefined)?.();
+  }
+  fireReconnecting(): void {
+    (this.events.onReconnecting as (() => void) | undefined)?.();
   }
   /** This client's OUTBOX, filtered to one message type. */
   frames<T extends HexProtocol["type"]>(type: T): Extract<HexProtocol, { type: T }>[] {
@@ -423,32 +434,288 @@ describe("MP-05 the sequence guard", () => {
     session.dispose();
   });
 
-  it("asks for a resync on a seq gap and recovers to byte-identity", () => {
+  // ── #131: recovery the SESSION performs ─────────────────────────────────
+  //
+  // Everything below heals through production callbacks and the clock alone.
+  // No test calls `requestResync` or `publishFullState` to finish the job: the
+  // previous version of this suite did, which is how a guest that stalled for
+  // good — suspect world, growing backlog, ask swallowed by the throttle —
+  // stayed green. Drop the retry in `session.ts` and these fail.
+
+  it("#131: a delta lost inside the throttle window heals by itself, to byte-identity", () => {
     vi.useFakeTimers();
     const { world, hostSession, track, applied, session } = liveMatch();
     hostTick(world, hostSession, () => world.build(50, 50, 1));   // delta 1
     expect(session.seq).toBe(1);
     expectGuestMatchesHost(world.track, track, "after delta 1");
 
-    // Delta 2 is lost in transit; delta 3 arrives and says so.
+    // Delta 2 is lost in transit; delta 3 arrives and says so. The gap lands
+    // inside RESYNC_MIN_INTERVAL_MS of the attach's ask — the timing that used
+    // to strand the guest, because a throttled ask was a dropped ask.
     guest.dropInbound = 1;
     hostTick(world, hostSession, () => world.build(51, 50, 1));   // delta 2 (lost)
     hostTick(world, hostSession, () => world.build(52, 50, 1));   // delta 3
-    // 3 was held, not applied, and the world is marked suspect.
-    expect(session.awaitingState).toBe(true);
-    expect(session.backlog).toBeGreaterThan(0);
-    // The ask respects its throttle (attach's ask was moments ago)…
-    vi.advanceTimersByTime(1_000);
-    expect(session.requestResync("gap")).toBe(true);
-    expect(guest.frames("resync").length).toBeGreaterThan(1);
-    // …and the host's answer makes the guest whole again.
-    hostSession.publishFullState("resync");
-    expectGuestMatchesHost(world.track, track, "after resync");
+    expect(session.awaitingState).toBe(true);                     // world suspect
+    expect(session.backlog).toBe(1);                              // delta 3 held
+    expect(guest.frames("resync").length).toBe(1);                // only attach asked
+    expect(session.resyncPending).toBe(true);                     // …and a retry is armed
+
+    // The clock is the only thing this test advances.
+    vi.advanceTimersByTime(RESYNC_MIN_INTERVAL_MS);
+
     expect(session.awaitingState).toBe(false);
+    expect(session.backlog).toBe(0);
+    expectGuestMatchesHost(world.track, track, "after the automatic resync");
     expect(session.seq).toBe(3);
+    // Exactly one extra ask: the throttled one, retried when the window opened.
+    expect(guest.frames("resync").length).toBe(2);
     // The queued delta 3 is not re-applied on top of a snapshot that already
     // includes it: the seq guard held.
     expect(applied.filter((a) => a.kind === "delta").map((a) => a.seq)).toEqual([1]);
+    // Recovered means the wait is over — no retry keeps knocking on a good world.
+    expect(session.resyncPending).toBe(false);
+    vi.advanceTimersByTime(5_000);
+    expect(guest.frames("resync").length).toBe(2);
+    session.dispose();
+  });
+
+  it("#131: keeps recovering while deltas keep arriving, and never storms the relay", () => {
+    vi.useFakeTimers();
+    const { world, hostSession, track, session } = liveMatch();
+    // The FIRST delta is the one lost, so every later delta arrives at a guest
+    // that is already suspect — the backlog grows while the retry is pending.
+    guest.dropInbound = 1;
+    const ticks = 12;
+    for (let i = 0; i < ticks; i++) {
+      vi.advanceTimersByTime(120);
+      hostTick(world, hostSession, () => world.build(40 + i, 40, 1));
+    }
+    const elapsed = ticks * 120;
+    // Healed without a hand on it, and in step with the host's last tick.
+    expect(session.awaitingState).toBe(false);
+    expect(session.backlog).toBe(0);
+    expect(session.seq).toBe(ticks);
+    expectGuestMatchesHost(world.track, track, "after a gap mid-stream");
+    // Rate-limited: never more than one ask per throttle window, and at least
+    // the one automatic re-ask that proves the retry exists.
+    const asks = guest.frames("resync").length;
+    expect(asks).toBeGreaterThan(1);
+    expect(asks).toBeLessThanOrEqual(1 + Math.ceil(elapsed / RESYNC_MIN_INTERVAL_MS));
+    session.dispose();
+  });
+
+  it("#131: an ask nobody answers is retried, backing off instead of hammering", () => {
+    vi.useFakeTimers();
+    const detached = new FakeClientRoom("guest-socket");          // no peer: nobody answers
+    const { session } = guestHarness(detached);
+    const asks = () => detached.frames("resync").length;
+    expect(asks()).toBe(1);                                       // attach asked at t=0
+    expect(session.awaitingState).toBe(true);
+    expect(session.resyncPending).toBe(true);
+
+    // The exact schedule: RESYNC_RETRY_MS doubling to RESYNC_RETRY_MAX_MS. One
+    // ask per step, so a guest whose host has gone quiet costs the relay 1.25
+    // asks/s at worst and 0.25/s once the backoff has run out — never a storm.
+    for (const [at, total] of [
+      [RESYNC_RETRY_MS, 2],
+      [RESYNC_RETRY_MS * 2, 3],
+      [RESYNC_RETRY_MS * 4, 4],
+      [RESYNC_RETRY_MS * 8, 5],
+      [RESYNC_RETRY_MAX_MS, 6],
+    ] as const) {
+      vi.advanceTimersByTime(at);
+      expect(asks(), `after +${at}ms`).toBe(total);
+    }
+
+    expect(session.awaitingState).toBe(true);                     // still waiting, still armed
+    expect(session.resyncPending).toBe(true);
+    expect(session.backlog).toBe(0);
+    session.dispose();
+    expect(session.resyncPending).toBe(false);
+    const settled = asks();
+    vi.advanceTimersByTime(30_000);
+    expect(asks()).toBe(settled);                                 // disposed means done
+  });
+
+  it("#131: a transfer that stops mid-way is restarted, not waited on forever", () => {
+    vi.useFakeTimers();
+    const world = hostWorld();
+    const hostSession = new NetSession({ room: asRoom(host), role: "host" });
+    hostSession.attach({ fullState: () => world.snapshot() });
+    const detached = new FakeClientRoom("guest-socket");
+    detached.onSend = (m) => hostSession.receive(m);              // asks reach the host
+    const { session, track } = guestHarness(detached);
+    const frames = host.frames("snapshot-chunk");
+    session.receive(frames[0]);                                   // …then the link dies
+    expect(session.awaitingState).toBe(true);
+
+    vi.advanceTimersByTime(RESYNC_RETRY_MS + 50);
+
+    expect(detached.frames("resync").length).toBe(2);             // asked again by itself
+    const fresh = host.frames("snapshot-chunk").slice(frames.length);
+    expect(fresh.length).toBeGreaterThan(2);
+    expect(new Set(fresh.map((f) => f.id)).size).toBe(1);         // one NEW transfer id
+    for (const f of fresh) session.receive(f);
+    expect(session.awaitingState).toBe(false);
+    expectGuestMatchesHost(world.track, track, "after a restarted transfer");
+    session.dispose();
+  });
+
+  it("#131: a delta already applied is not divergence — duplicates never force a resync", () => {
+    vi.useFakeTimers();
+    const { world, hostSession, track, applied, session } = liveMatch();
+    hostTick(world, hostSession, () => world.build(50, 50, 1));   // delta 1
+    const asks = guest.frames("resync").length;
+    const delta1 = guest.received("delta").at(-1)!;
+
+    // The relay repeats a frame, and an old one overtakes the stream. Both are
+    // noise, not a gap: the old code marked the world suspect and froze.
+    session.receive(structuredClone(delta1));
+    session.receive(structuredClone(delta1));
+    session.receive({ ...structuredClone(delta1), seq: 0 });
+
+    expect(session.awaitingState).toBe(false);
+    expect(session.seq).toBe(1);
+    expect(session.backlog).toBe(0);
+    expect(guest.frames("resync").length).toBe(asks);             // no unnecessary resync
+    expect(applied.filter((a) => a.kind === "delta").map((a) => a.seq)).toEqual([1]);
+    expectGuestMatchesHost(world.track, track, "after duplicate frames");
+
+    // …and the next real delta still lands, so nothing was knocked out of step.
+    hostTick(world, hostSession, () => world.build(51, 50, 1));   // delta 2
+    expect(session.seq).toBe(2);
+    expect(session.awaitingState).toBe(false);
+    expect(guest.frames("resync").length).toBe(asks);
+    expectGuestMatchesHost(world.track, track, "after duplicates then delta 2");
+    // The welcome's own throttled ask left a retry armed (that is #131's fix);
+    // a guest with a good world is not awaiting state, so it stays silent.
+    vi.advanceTimersByTime(5_000);
+    expect(guest.frames("resync").length).toBe(asks);             // nothing sent for a healthy world
+    session.dispose();
+  });
+
+  it("#131: dispose cancels the retry — a session that is gone asks for nothing", () => {
+    vi.useFakeTimers();
+    const { world, hostSession, session } = liveMatch();
+    guest.dropInbound = 1;
+    hostTick(world, hostSession, () => world.build(50, 50, 1));   // lost
+    hostTick(world, hostSession, () => world.build(51, 50, 1));   // the gap
+    expect(session.resyncPending).toBe(true);
+
+    session.dispose();
+
+    expect(session.resyncPending).toBe(false);
+    const asks = guest.frames("resync").length;
+    vi.advanceTimersByTime(10_000);
+    expect(guest.frames("resync").length).toBe(asks);             // no timer outlived it
+    expect(guest.leaveCount).toBe(1);
+  });
+
+  it("#131: a halt cancels the retry too — a refused room is not re-asked", () => {
+    vi.useFakeTimers();
+    const { world, hostSession, session } = liveMatch();
+    guest.dropInbound = 1;
+    hostTick(world, hostSession, () => world.build(50, 50, 1));   // lost
+    hostTick(world, hostSession, () => world.build(51, 50, 1));   // the gap
+    expect(session.resyncPending).toBe(true);
+
+    session.halt("boom");
+
+    expect(session.resyncPending).toBe(false);
+    const asks = guest.frames("resync").length;
+    vi.advanceTimersByTime(10_000);
+    expect(guest.frames("resync").length).toBe(asks);
+    expect(session.requestResync("after halt")).toBe(false);      // the API agrees
+    session.dispose();
+  });
+
+  it("#131: the opponent leaving cancels the retry — #121's halt is final", () => {
+    vi.useFakeTimers();
+    const { world, hostSession, session } = liveMatch();
+    guest.dropInbound = 1;
+    hostTick(world, hostSession, () => world.build(50, 50, 1));   // lost
+    hostTick(world, hostSession, () => world.build(51, 50, 1));   // the gap
+    expect(session.resyncPending).toBe(true);
+
+    guest.firePlayerLeft("host-socket");
+
+    expect(session.resyncPending).toBe(false);
+    const asks = guest.frames("resync").length;
+    vi.advanceTimersByTime(10_000);
+    expect(guest.frames("resync").length).toBe(asks);
+    session.dispose();
+  });
+
+  /**
+   * The explicit API, tested AS an API: what `requestResync` returns and what
+   * the host does with the frame. This is deliberately not a recovery proof —
+   * the tests above are, and they touch nothing but the clock. (This is the
+   * old "recovers to byte-identity" test, re-scoped: it used to call both
+   * halves of the recovery by hand and so proved neither.)
+   */
+  it("the explicit resync API: throttled to one ask per window, kept rather than dropped", () => {
+    vi.useFakeTimers();
+    const { session } = guestHarness(guest);                      // attach asked at t=0
+    expect(guest.frames("resync").length).toBe(1);
+    expect(session.requestResync("manual")).toBe(false);          // inside the window…
+    expect(guest.frames("resync").length).toBe(1);                // …nothing sent…
+    expect(session.resyncPending).toBe(true);                     // …but the ask is kept
+
+    vi.advanceTimersByTime(RESYNC_MIN_INTERVAL_MS);
+    expect(guest.frames("resync").length).toBe(2);                // one ask when it opened
+    expect(session.requestResync("manual")).toBe(false);          // and the window is shut again
+    session.dispose();
+  });
+
+  it("#131: a reconnect inside the throttle window still resyncs — the ask is owed, not dropped", () => {
+    vi.useFakeTimers();
+    const { world, hostSession, track, session } = liveMatch();
+    hostTick(world, hostSession, () => world.build(50, 50, 1));   // delta 1 lands
+    expect(session.seq).toBe(1);
+
+    // The socket drops a tick's worth of world and comes back. Nothing on the
+    // wire says so: the guest's seq still looks perfectly fine, which is why
+    // the reconnect has to invalidate the world itself.
+    guest.dropInbound = 1;
+    hostTick(world, hostSession, () => world.build(51, 50, 1));   // delta 2, unheard
+    guest.fireReconnecting();
+    guest.fireReconnected();                                      // inside the window
+
+    expect(session.awaitingState).toBe(true);                     // suspect, and owed an ask
+    expect(session.resyncPending).toBe(true);
+    const asks = guest.frames("resync").length;
+
+    vi.advanceTimersByTime(RESYNC_MIN_INTERVAL_MS);
+
+    expect(guest.frames("resync").length).toBe(asks + 1);         // it asked on its own
+    expect(host.received("resync").length).toBe(asks + 1);        // and the host heard it
+    expect(session.awaitingState).toBe(false);
+    expect(session.seq).toBe(2);
+    expectGuestMatchesHost(world.track, track, "after the reconnect resync");
+    session.dispose();
+    hostSession.dispose();
+  });
+
+  it("#131: a manual ask on a HEALTHY guest is not owed — the throttle still coalesces", () => {
+    vi.useFakeTimers();
+    const { world, hostSession, track, session } = liveMatch();
+    hostTick(world, hostSession, () => world.build(50, 50, 1));
+    expect(session.publishFullState("guests assert nothing")).toBe(false);
+    const asks = guest.frames("resync").length;
+    const chunks = guest.received("snapshot-chunk").length;
+
+    // The welcome asks, attach already asked, and this asks again: all inside
+    // one throttle window, all for a world the guest already has. One transfer
+    // answered them and no retry re-asks for a guest that is not waiting —
+    // that is the coalescing the throttle exists for.
+    expect(session.requestResync("manual")).toBe(false);
+    vi.advanceTimersByTime(5_000);
+    expect(guest.frames("resync").length).toBe(asks);
+    expect(guest.received("snapshot-chunk").length).toBe(chunks);
+    expect(session.awaitingState).toBe(false);
+    expectGuestMatchesHost(world.track, track, "an unchanged world");
+    session.dispose();
+    hostSession.dispose();
   });
 
   it("gives up on an unbounded backlog instead of applying a stale queue", () => {
@@ -768,5 +1035,85 @@ describe("RANK-01 the rating board on a session", () => {
     session.dispose();
     expect(session.publishRating({ rating: 1400, matches: 30, wins: 20, losses: 10, season: "s1" })).toBe(false);
     expect(host.frames("playerRating")).toEqual([]);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// #186 — the room's match settings on a session.
+//
+// The session is where wire state survives the lobby → match handover, and the
+// settings are exactly that: the game reads its ★ line and opening purse from
+// `session.settings`, so a session that lost them would boot a match on the
+// shipped rules while the other seat raced the room's.
+// ══════════════════════════════════════════════════════════════════════════
+describe("#186 the room's settings on a session", () => {
+  const RULES: MatchSettings = {
+    aiSeats: ["hard"],
+    winTarget: 5,
+    startPurse: { wood: 24, stone: 24, ore: 0 },
+  };
+
+  it("reads the defaults until the room says otherwise", () => {
+    const session = new NetSession({ room: asRoom(host), role: "host" });
+    session.attach({});
+    expect(session.settings).toEqual(DEFAULT_MATCH_SETTINGS);
+    session.dispose();
+  });
+
+  it("takes the rules a welcome carries, onto the info the game reads", () => {
+    const session = new NetSession({ room: asRoom(guest), role: "guest" });
+    session.attach({});
+    guest.deliver({ ...welcome(5), settings: RULES }, true);
+    expect(session.settings).toEqual(RULES);
+    expect(session.info?.settings).toEqual(RULES);
+    session.dispose();
+  });
+
+  it("files the host's rules as a claim, and folds the room's echo", () => {
+    const session = new NetSession({ room: asRoom(host), role: "host" });
+    const seen: MatchSettings[] = [];
+    session.attach({ settings: (s) => seen.push(s) });
+    expect(session.publishSettings(RULES)).toBe(true);
+    expect(host.frames("settingsClaim")).toEqual([{ type: "settingsClaim", settings: RULES }]);
+    // Nothing is applied optimistically: the echo is the only thing that moves
+    // the session's copy, so a refused claim is visible rather than silent.
+    expect(session.settings).toEqual(DEFAULT_MATCH_SETTINGS);
+    host.deliver({ type: "settings", settings: RULES });
+    expect(session.settings).toEqual(RULES);
+    expect(seen).toEqual([RULES]);
+    session.dispose();
+  });
+
+  it("does not file rules the room already holds, nor a guest's rules at all", () => {
+    const session = new NetSession({ room: asRoom(host), role: "host" });
+    session.attach({});
+    host.deliver({ type: "settings", settings: RULES });
+    expect(session.publishSettings({ ...RULES, startPurse: { ...RULES.startPurse } })).toBe(false);
+    expect(host.frames("settingsClaim")).toHaveLength(0);
+    const guestSession = new NetSession({ room: asRoom(guest), role: "guest" });
+    guestSession.attach({});
+    expect(guestSession.publishSettings(RULES)).toBe(false);
+    expect(guest.frames("settingsClaim")).toHaveLength(0);
+    session.dispose();
+    guestSession.dispose();
+  });
+
+  it("keeps the last rules it was told when an echo is unreadable", () => {
+    const session = new NetSession({ room: asRoom(guest), role: "guest" });
+    session.attach({});
+    guest.deliver({ ...welcome(5), settings: RULES }, true);
+    guest.deliver({ type: "settings", settings: { winTarget: 900 } as unknown as MatchSettings });
+    expect(session.settings).toEqual(RULES);
+    session.dispose();
+  });
+
+  it("carries the room's rules across to a second welcome (rejoin)", () => {
+    const session = new NetSession({ room: asRoom(guest), role: "guest" });
+    session.attach({});
+    guest.deliver({ ...welcome(5), settings: RULES }, true);
+    // A later welcome (a seat joining) is not a reset of the rules.
+    guest.deliver(welcome(5), true);
+    expect(session.settings).toEqual(RULES);
+    session.dispose();
   });
 });

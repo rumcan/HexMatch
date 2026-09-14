@@ -88,6 +88,16 @@ export const ICON_PLANT = svg(
   `<path d="M5.4 15.4h1.6M5.4 17.4h1.6M13.6 13.2h1.8v2.4h-1.8zM17.2 13.2h1.8v2.4h-1.8z"/>`,
 );
 
+/** Engraved blessing cross — the #185 chooser's title seal. The chip-out
+ *  (`ic-chip`) is hidden by default; `.cross-pick.broken` paints it in the
+ *  plate's own iron, so a cracked beam costs no second file and no emoji. */
+export const ICON_CROSS = svg(
+  `<path d="M12 3.9v15.6"/>` +
+  `<path d="M7.7 8.7h8.6"/>` +
+  `<path d="M9.5 19.5h5"/>` +
+  `<path class="ic-chip" d="M13.9 11.9l-3.7 2.1 1.6 2.4"/>`,
+);
+
 /** Folded dispatch / newsprint — Feed. */
 export const ICON_FEED = svg(
   `<path d="M5 5.4h10.4l3.6 3.6V18.6H5z"/>` +
@@ -106,6 +116,7 @@ export const HUD_ICONS = {
   market: ICON_MARKET,
   plant: ICON_PLANT,
   feed: ICON_FEED,
+  cross: ICON_CROSS,
 } as const;
 
 export function soundIconHtml(enabled: boolean): string {
