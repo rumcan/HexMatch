@@ -695,8 +695,16 @@ export const canAfford = (purse: Purse, cost: Purse): boolean =>
  * One rule, one place: `previewDrag` (the human drag), `planCandidates` and
  * `executeCandidate` (the AI, W3's "same cost model as the player") all ask
  * this function, so the two can never disagree about what "free" means.
+ *
+ * L2 (#216) MVP: under `newLoop` the allowance covers NOTHING on the road
+ * tiers. Dirt is free outright (`tileCost` returns {}), so it needs no
+ * allowance — and a paved Road still pays full price exactly as before, so
+ * the ore gate stands. The count stays DATA on the player record and keeps
+ * riding the wire and saves untouched; post-MVP rail work wires it to the
+ * paid tiers (rail/paid upgrades) per the L2 spec.
  */
-export const freeAllowanceCovers = (kind: TrackKind): boolean => kind === "dirt";
+export const freeAllowanceCovers = (kind: TrackKind, newLoop = false): boolean =>
+  newLoop ? false : kind === "dirt";
 
 /**
  * Cost of applying `kind` to a single tile:
@@ -707,8 +715,15 @@ export const freeAllowanceCovers = (kind: TrackKind): boolean => kind === "dirt"
  *   - a `dirt` over an existing `road` tile → free (a paved road is already
  *     there and is never downgraded)
  *   - otherwise the full transport cost
+ *
+ * L2 (#216) MVP: under `newLoop` a Dirt Road tile is free on virgin ground
+ * too ({}), so the purse — however empty — never blocks expansion by road.
+ * The paved tier is unchanged: full price on virgin ground, UPGRADE_COST
+ * over gravel. The adjacency rule (build off your own network) is untouched;
+ * `BUILD_COSTS.dirt` keeps its old-loop price and the old loop reads it.
  */
-export function tileCost(t: Track, kind: TrackKind, tx: number, ty: number): Purse {
+export function tileCost(t: Track, kind: TrackKind, tx: number, ty: number, newLoop = false): Purse {
+  if (kind === "dirt" && newLoop) return {};   // L2: free dirt under the new loop
   if (hasTrack(t, kind, tx, ty)) return {};
   if (kind === "dirt" && hasTrack(t, "road", tx, ty)) return {};  // already paved
   if (kind === "road" && hasTrack(t, "dirt", tx, ty)) return { ...UPGRADE_COST };
@@ -781,11 +796,17 @@ export interface DragPreview {
  *
  * PP-15: `structures` (from `structureTiles`) marks the builder's own building
  * tiles, which the path steps over for free — see the skip in the loop.
+ *
+ * L2 (#216) MVP: `newLoop` makes dirt free (see `tileCost`) and the setup
+ * allowance inapplicable (see `freeAllowanceCovers`), so a dirt drag prices
+ * {} with `free: 0` and never truncates on affordability. A paved drag is
+ * priced exactly as before.
  */
 export function previewDrag(
   grid: Grid, t: Track, kind: TrackKind, purse: Purse,
   ax: number, ay: number, bx: number, by: number, xFirst = true,
   network?: Set<number>, freeTiles = 0, structures?: Set<number>,
+  newLoop = false,
 ): DragPreview {
   const path = lPath(ax, ay, bx, by, xFirst);
   const tiles: [number, number][] = [];
@@ -798,7 +819,8 @@ export function previewDrag(
   let upgrades = 0;
   // W9: rail never rides the setup allowance, so for rail there is no
   // allowance to spend and `free` in the result stays 0.
-  const allowance = freeAllowanceCovers(kind) ? Math.max(0, freeTiles) : 0;
+  // L2: under newLoop the allowance covers no road tier at all.
+  const allowance = freeAllowanceCovers(kind, newLoop) ? Math.max(0, freeTiles) : 0;
   let freeLeft = allowance;
   const growing = network ? new Set(network) : undefined;
 
@@ -814,7 +836,7 @@ export function previewDrag(
     // also START on the building itself — that is how you join a road to the
     // edge of a plant whose graphic covers the tile you wanted to click.
     if (structures !== undefined && structures.has(tIdx(x, y))) continue;
-    const c = tileCost(t, kind, x, y);
+    const c = tileCost(t, kind, x, y, newLoop);
     const paves = kind === "road" && hasTrack(t, "dirt", x, y);
     // VP-01: Free tiles are charged nothing; the allowance covers them first.
     // A tile that costs nothing (dragging over your own track) consumes no

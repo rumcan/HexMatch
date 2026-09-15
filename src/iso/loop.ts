@@ -1,4 +1,11 @@
-/** New-loop tuning seams. Later L issues replace these implementations. */
+/**
+ * New-loop tuning seams. Later L issues replace these implementations.
+ *
+ * L2 (#216) MVP: `transportFactor` is 1.0 for road — the clock pays
+ * `baseRate × yield × distance × 1.0` on any road connection. The 1.6× rail
+ * factor from the L2 spec is post-MVP (rail stays behind its DEV flag until
+ * its pricing lands); when it does, this function reads the depot's line.
+ */
 import type { Harvester } from "./economy";
 
 export function depotYield(depot: Harvester): number {
