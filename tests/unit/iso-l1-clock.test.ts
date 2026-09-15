@@ -206,6 +206,23 @@ describe("L1 yieldLevel rides the snapshot", () => {
   });
 });
 
+// ── the shipped promise must describe the game that actually plays ───────
+describe("L1 tour copy follows the loop", () => {
+  it("the loop step never promises purse cargo for a match when newLoop is on", async () => {
+    const { buildTutorialSteps } = await import("../../src/iso/tutorial");
+    const CTX = { vpTarget: 10, freeTrack: 12 };
+    const old = buildTutorialSteps(CTX).find((s) => s.id === "loop")!;
+    expect(old.points.join(" ")).toMatch(/matching tokened gems pays the cargo/i);  // shipped copy kept
+    const fresh = buildTutorialSteps({ ...CTX, newLoop: true });
+    const loop = fresh.find((s) => s.id === "loop")!;
+    expect(loop.points.join(" ")).toMatch(/ticks in from every .*Depot.*clock/i);
+    expect(loop.points.join(" ")).not.toMatch(/pays the cargo into your purse/i);
+    expect(loop.figure?.kind === "chain" ? loop.figure.caption : "").toMatch(/clock/i);
+    // step count and ids are otherwise untouched — only the two L1 lines move
+    expect(fresh.map((s) => s.id)).toEqual(buildTutorialSteps(CTX).map((s) => s.id));
+  });
+});
+
 // ── the live game ─────────────────────────────────────────────────────────
 // stub the art imports (vite handles these in the browser) — same kit as
 // iso-game.test.ts: jsdom has no 2D context, so the boot is verified through
