@@ -70,7 +70,7 @@ import { scatterScenery, type DecalImages, type Scenery } from "./scenery";
 import { loadDecalImages, loadScenerySprites } from "./scenery-art";
 import { loadVehicleLayers } from "./vehicle-art";
 import {
-  generateMap, resolveMapSeed, townBuildings, townForSeat, type Grid, type Industry,
+  FIELD_OCC, generateMap, resolveMapSeed, townBuildings, townForSeat, type Grid, type Industry,
 } from "./grid";
 import {
   createTrack, drawBits, previewDrag, commitDrag, canBuildOn, hasTrack,
@@ -601,6 +601,29 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // it reads `grid.occupancy`/`grid.publicRoads`, both of which `generateMap`
   // has already filled; nothing in `track` affects it.
   const scenery: Scenery = scatterScenery(grid);
+  // RES-FIELDS: the wheat fields / tree blocks beside the resources stand on
+  // the grid as obstacles (FIELD_OCC) until demolished. Their layout is seeded;
+  // only which ones were cleared is state (saved, and sent to a guest).
+  const clearedFields = new Set<number>();
+  const fieldAt = (tx: number, ty: number) => scenery.fields.find((f) =>
+    !clearedFields.has(f.id) && tx >= f.tx && tx < f.tx + 2 && ty >= f.ty && ty < f.ty + 2);
+  const stampFields = () => {
+    for (const f of scenery.fields) {
+      const v = clearedFields.has(f.id) ? -1 : FIELD_OCC;
+      for (let dy = 0; dy < 2; dy++) {
+        for (let dx = 0; dx < 2; dx++) {
+          const i = (f.ty + dy) * MAP_W + f.tx + dx;
+          if (grid.occupancy[i] === -1 || grid.occupancy[i] === FIELD_OCC) grid.occupancy[i] = v;
+        }
+      }
+    }
+  };
+  const setClearedFields = (ids: Iterable<number>) => {
+    clearedFields.clear();
+    for (const id of ids) if (scenery.fields[id]) clearedFields.add(id);
+    stampFields();
+  };
+  stampFields();
   const track: Track = createTrack();
   // RAIL-04 (#178): the railway's own world. #142 is explicit that rail is a
   // SECOND, owner-scoped graph — it never reuses the road tiers, their bytes or
@@ -1411,6 +1434,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     "out-of-bounds": "Off the map",
     water: "Can't build on water",
     occupied: "Tile is occupied",
+    field: "Demolish the field first",
     rough: "Road can't cross rough — use Dirt",
     "not-adjacent": "Drag out from your Factory / Depot",
   };
@@ -1465,6 +1489,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     extra: [],
     trees: scenery.trees,
     forests: scenery.forests,
+    fields: scenery.fields,
     sceneryBlocked: new Set<number>(),
     // RAIL-03 (#177): the railway layer the renderer paints the vector track
     // from — refreshed in `syncWorld`, which is the only place the world
@@ -1965,6 +1990,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       for (const [x, y] of footprintTiles(s))
         if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) blocked.add(y * MAP_W + x);
     world.sceneryBlocked = blocked;
+    world.fields = scenery.fields.filter((f) => !clearedFields.has(f.id));
     // PP-12: one draw item per factory — the single TTD complex, drawn at the
     // footprint origin. The manifest footprint matches FACTORY_FOOTPRINT (both
     // derive from the art), so the anchor lands on the footprint's south
@@ -2714,6 +2740,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const message: Record<string, string> = {
         "depot-taken": "A depot is already there.",
         occupied: "Can't build there — something already stands there.",
+        field: "A field or trees stand there — demolish them first.",
         "no-industry-beside": "A depot must sit right beside a resource.",
         "entrance-blocked": "Resources on both sides — the depot needs one open side for its entrance.",
         "industry-taken": "That industry is already claimed — only one Depot may hold it.",
@@ -2964,6 +2991,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (p.human) sfx.play("demolish");   // SFX-01
       syncWorld(); rescoreNow();
       toast("Processing plant demolished.", "info");
+      return;
+    }
+    // RES-FIELDS: a wheat field or tree block comes down for free, for
+    // whoever wants the ground — that is how a Depot or a road gets through.
+    const field = fieldAt(tx, ty);
+    if (field) {
+      clearedFields.add(field.id);
+      stampFields();
+      if (p.human) sfx.play("demolish");
+      syncWorld(); rescoreNow();
+      toast(field.sprite === "trees" ? "Trees felled — the ground is clear." : "Wheat field cleared.", "info");
       return;
     }
     let removedKind: TrackKind | null = null;
@@ -4115,6 +4153,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       boards: boardsWire,
       crossPrompt,
       winner: winner ? { id: winner.id, source: winningSource } : null,
+      clearedFields: [...clearedFields],
     });
   }
 
@@ -4178,6 +4217,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       trucks: trucksWire,
       cars: carsWire,
       rail: railWire(),
+      clearedFields: [...clearedFields],
       // #117: the field is omitted entirely when neither board changed —
       // `buildPublish` keeps optional fields off the wire when undefined.
       ...(boardsWire.length ? { boards: boardsWire } : {}),
@@ -4275,6 +4315,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     track.owner.set(applied.track.owner);
     track.upgraded.set(applied.track.upgraded);
     eco.harvesters.length = 0;
+    setClearedFields(applied.clearedFields);
     eco.harvesters.push(...applied.harvesters.map((h) => ({ ...h, facing: depotFacingOf(grid, h) })));
     eco.factories.length = 0;
     eco.factories.push(...applied.factories.map((f) => ({ ...f })));
@@ -4367,6 +4408,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   function applyNetDelta(msg: DeltaMsg) {
     let worldDirty = false;
     if (msg.tiles) { applyTrackDelta(track, msg.tiles); worldDirty = true; }
+    if (Array.isArray(msg.clearedFields) && msg.clearedFields.length !== clearedFields.size) {
+      setClearedFields(msg.clearedFields.filter((id) => Number.isInteger(id) && id >= 0));
+      worldDirty = true;
+    }
     if (msg.harvesters) {
       eco.harvesters.length = 0;
       eco.harvesters.push(...msg.harvesters.map((h) => ({ ...h, facing: depotFacingOf(grid, h) })));
@@ -5323,6 +5368,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (refusal === "water") toast("Can't build on water.", "bad");
     else if (refusal === "rough") toast("A paved Road can't cross rough ground — use a Dirt Road.", "bad");
     else if (refusal === "occupied") toast("Tile is occupied.", "bad");
+    else if (refusal === "field") toast("A field or trees stand there — demolish them first.", "bad");
     else toast("Can't build there.", "bad");
     // And the 1-second flash AT the tile that refused — the toast
     // is at the edge of the screen, the player's eye is here.
@@ -6048,6 +6094,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // built line, its platforms or its train with it.
       rail: railToWire(rail),
       eco: { harvesters: eco.harvesters, factories: eco.factories },
+      clearedFields: [...clearedFields],
       players: players.map((p) => ({
         purse: p.purse as unknown as Record<string, number>,
         freeTrack: p.freeTrack, freeDepots: p.freeDepots,
@@ -6094,6 +6141,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     // economy: replace the lists in place — their references are held all
     // over (planTrucks, syncWorld, the AI...)
+    setClearedFields(d.clearedFields ?? []);
     eco.harvesters.length = 0;
     eco.harvesters.push(...d.eco.harvesters.map((h) => ({ ...h, facing: depotFacingOf(grid, h) })));
     eco.factories.length = 0; eco.factories.push(...d.eco.factories);

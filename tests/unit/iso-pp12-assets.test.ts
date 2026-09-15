@@ -79,11 +79,15 @@ describe("PP-12 the manifest matches the packed file art", () => {
 });
 
 describe("PP-12 gameplay footprints are the art's footprints", () => {
-  it("every industry def matches its sprite's manifest footprint", () => {
+  it("every industry def stands on the 4×4 lot its compiled building art is authored on", () => {
+    const layers = JSON.parse(readFileSync("assets/buildings/manifest.json", "utf8")) as {
+      sprites: Record<string, { footprint: [number, number] }>;
+    };
     for (const key of Object.keys(INDUSTRY_BY_KEY)) {
-      const m = manifest.sprites[key];
-      expect(m, `manifest is missing industry sprite ${key}`).toBeTruthy();
-      expect(INDUSTRY_BY_KEY[key].footprint, key).toEqual(m.footprint);
+      const m = layers.sprites[key];
+      expect(m, `building layers are missing industry sprite ${key}`).toBeTruthy();
+      expect(INDUSTRY_BY_KEY[key].footprint, key).toEqual([4, 4]);
+      expect(m.footprint, `${key} art footprint`).toEqual(INDUSTRY_BY_KEY[key].footprint);
     }
   });
 

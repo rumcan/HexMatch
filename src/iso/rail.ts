@@ -45,7 +45,7 @@ import {
   NE, SE, SW, NW, DIRS, DIR, OPPOSITE, PRESENT, tIdx, inMapT, plantFootprintTiles,
   addCost, lPath, type DragPreview, type Purse, type Track,
 } from "./track";
-import { GRASS, ROUGH, SAND, idx, type Grid } from "./grid";
+import { FIELD_OCC, GRASS, ROUGH, SAND, idx, type Grid } from "./grid";
 import { TRUCK_SPEED } from "./vehicles";
 import type { DrawItem } from "./depth";
 import { base64ToBytes, bytesToBase64, type RailTileWire, type RailWire, type TrainWire } from "./snapshot";
@@ -601,7 +601,7 @@ export function railTileRefusal(
   if (!railTerrainOk(grid, tx, ty)) return "water";
   // Anything built on the tile blocks rail: a town, an industry, a depot, a
   // plant, a platform, or a train standing on it.
-  if (grid.occupancy[tIdx(tx, ty)] >= 0) return "occupied";
+  if (grid.occupancy[tIdx(tx, ty)] >= 0 || grid.occupancy[tIdx(tx, ty)] === FIELD_OCC) return "occupied";
   if (structureAt(state, tx, ty)) return "occupied";
   if (trainOccupies(state, tx, ty)) return "train-in-way";
   const owner = state.rail.owner[tIdx(tx, ty)];
@@ -880,7 +880,7 @@ export function platformRefusal(
   if (!inMapT(tx + w - 1, ty + h - 1)) return "off-map";
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
     if (!railTerrainOk(grid, tx + x, ty + y)) return "water";
-    if (grid.occupancy[tIdx(tx + x, ty + y)] >= 0) return "occupied";
+    if (grid.occupancy[tIdx(tx + x, ty + y)] >= 0 || grid.occupancy[tIdx(tx + x, ty + y)] === FIELD_OCC) return "occupied";
   }
   if (structures.some((s) => overlaps(s, tx, ty, w, h))) return "overlap";
   const candidates = anchorCandidates(grid, factories, ownerId, tx, ty, view);
@@ -935,7 +935,7 @@ export function depotRefusal(
   if (!inMapT(tx + w - 1, ty + h - 1)) return "off-map";
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
     if (!railTerrainOk(grid, tx + x, ty + y)) return "water";
-    if (grid.occupancy[tIdx(tx + x, ty + y)] >= 0) return "occupied";
+    if (grid.occupancy[tIdx(tx + x, ty + y)] >= 0 || grid.occupancy[tIdx(tx + x, ty + y)] === FIELD_OCC) return "occupied";
   }
   if (state.structures.some((s) => overlaps(s, tx, ty, w, h))) return "overlap";
   const probe: RailStructure = { id: -1, kind: "depot", ownerId, owner: "", tx, ty, w, h, view };
@@ -949,7 +949,7 @@ export function depotRefusal(
   if (railOpenTo(state.rail, ownerId, nx, ny)) return "ok";
   // Nothing to join: is the tile even capable of carrying rail?
   if (!inMapT(nx, ny) || !railTerrainOk(grid, nx, ny)) return "exit-blocked";
-  const blocked = grid.occupancy[tIdx(nx, ny)] >= 0 || structureAt(state, nx, ny) !== null
+  const blocked = grid.occupancy[tIdx(nx, ny)] >= 0 || grid.occupancy[tIdx(nx, ny)] === FIELD_OCC || structureAt(state, nx, ny) !== null
     || (hasRail(state.rail, nx, ny) && state.rail.owner[tIdx(nx, ny)] !== ownerId);
   return blocked ? "exit-blocked" : "no-network";
 }

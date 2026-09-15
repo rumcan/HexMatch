@@ -39,7 +39,7 @@ import {
   industriesTouchingDepot, type DepotFacing,
 } from "./depot";
 import {
-  GRASS, ROUGH, SAND, TOWN_OCC, type Grid, type Industry, type Town,
+  FIELD_OCC, GRASS, ROUGH, SAND, TOWN_OCC, type Grid, type Industry, type Town,
 } from "./grid";
 import { buildRefusal, hasTrack, tIdx, type Track } from "./track";
 import {
@@ -89,6 +89,7 @@ const REASON_TEXT: Record<string, string> = {
   water: "it is on water",
   rough: "it is on rough ground",
   occupied: "it overlaps an industry, a town or another building",
+  field: "a field or trees stand there — demolish them first",
   track: "it overlaps a road",
   "not-adjacent": "it is not adjacent to your network",
   "depot-taken": "a Depot is already there",
@@ -192,7 +193,7 @@ export function factoryReachBand(grid: Grid, tx: number, ty: number): [number, n
     const i = tIdx(x, y);
     const v = grid.terrain[i];
     if (v !== GRASS && v !== ROUGH && v !== SAND) continue;  // no water band (SAND is buildable beach)
-    if (grid.occupancy[i] >= 0 || grid.occupancy[i] === TOWN_OCC) continue;
+    if (grid.occupancy[i] >= 0 || grid.occupancy[i] === TOWN_OCC || grid.occupancy[i] === FIELD_OCC) continue;
     out.push([x, y]);
   }
   return out;

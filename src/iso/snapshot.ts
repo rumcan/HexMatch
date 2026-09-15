@@ -70,7 +70,7 @@ import type { Harvester, Factory } from "./economy";
 // layer, its platforms and depots, its lines and its trains. A v12 guest would
 // draw a rival's railway as empty ground and never show a train, so
 // mixed-version rooms must refuse.
-export const SNAPSHOT_VERSION = 13;
+export const SNAPSHOT_VERSION = 14;
 
 export const EXPECTED_TRACK_BYTES = MAP_W * MAP_H;
 
@@ -334,6 +334,11 @@ export interface Snapshot {
   crossPrompt?: CrossPromptWire | null;
   /** MP-AUDIT: winner identity */
   winner?: WinnerWire | null;
+  /**
+   * RES-FIELDS: ids of the wheat fields / tree blocks demolished so far. The
+   * fields themselves regenerate from the seed; only their clearing travels.
+   */
+  clearedFields?: number[];
 }
 
 export interface SnapshotSource {
@@ -354,6 +359,7 @@ export interface SnapshotSource {
   boards?: BoardWire[];
   crossPrompt?: CrossPromptWire | null;
   winner?: WinnerWire | null;
+  clearedFields?: number[];
 }
 
 export function buildSnapshot(src: SnapshotSource): Snapshot {
@@ -392,6 +398,7 @@ export function buildSnapshot(src: SnapshotSource): Snapshot {
     boards: src.boards ? src.boards.map((b) => ({ owner: b.owner, data: b.data })) : undefined,
     crossPrompt: src.crossPrompt ?? null,
     winner: src.winner ?? null,
+    ...(src.clearedFields?.length ? { clearedFields: [...src.clearedFields] } : {}),
   };
 }
 
@@ -525,6 +532,10 @@ export function validateSnapshot(s: unknown, localSeed?: number): SnapshotError 
   if (o.boards !== undefined && o.boards !== null && !Array.isArray(o.boards)) {
     return new SnapshotError("malformed", "Snapshot boards is malformed.");
   }
+  if (o.clearedFields !== undefined && (!Array.isArray(o.clearedFields)
+    || o.clearedFields.some((id) => !Number.isInteger(id) || id < 0))) {
+    return new SnapshotError("malformed", "Snapshot cleared fields are malformed.");
+  }
   // PP-14b: sabotage is optional for tolerance (an old producer might omit it
   // and still be readable), but if present it must be shaped correctly.
   if (o.rivalSabotage !== undefined) {
@@ -573,6 +584,7 @@ export interface AppliedSnapshot {
   boards?: BoardWire[];
   crossPrompt?: CrossPromptWire | null;
   winner?: WinnerWire | null;
+  clearedFields: number[];
 }
 
 /**
@@ -615,6 +627,7 @@ export function applySnapshot(s: unknown, localSeed?: number): AppliedSnapshot {
     boards: (o as Snapshot).boards ? (o as Snapshot).boards!.map((x) => ({ ...x })) : undefined,
     crossPrompt: (o as Snapshot).crossPrompt ?? null,
     winner: (o as Snapshot).winner ?? null,
+    clearedFields: [...(o.clearedFields ?? [])],
   };
 }
 

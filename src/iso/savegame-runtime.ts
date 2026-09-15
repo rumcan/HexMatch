@@ -64,6 +64,9 @@ export interface SaveGamePayload {
     factories: EconomyState["factories"];
   };
   players: { purse: Record<string, number>; freeTrack: number; freeDepots: number }[];
+  /** RES-FIELDS: ids of the wheat fields / tree blocks demolished so far.
+   *  Optional so saves written before fields existed still load. */
+  clearedFields?: number[];
   boards: SavedBoardShape[];
   /** Reserved. The live AI pacing clocks (build/offer/raid) re-start clean
    *  on restore — a few seconds of drift is not worth serialising timers. */
@@ -104,7 +107,10 @@ export const readSave = (key: string = SAVE_KEY): SaveGamePayload | null => {
     // layer added since is either derivable or reads as its empty past — a
     // v12 save simply has no railway, which is what it was played without.
     // Seeded placement. Track bytes and every existing placement are intact.
-    if (d.v !== SAVEGAME_VERSION || (d.snapV !== SNAPSHOT_VERSION && d.snapV !== 10 && d.snapV !== 11 && d.snapV !== 12)) return null;
+    // v14 (2×2 truck depots, 4×4 resources, fields beside them): the map a
+    // seed generates moved, so an older save would put its depots and roads on
+    // the wrong ground. Only current saves load.
+    if (d.v !== SAVEGAME_VERSION || d.snapV !== SNAPSHOT_VERSION) return null;
     if (typeof d.seed !== "number" || !d.track) return null;
     return d;
   } catch { return null; }

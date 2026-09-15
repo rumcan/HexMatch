@@ -89,20 +89,23 @@ describe("ART-1950S compiled building PNGs", () => {
         // snapped to the 4px lattice: floor origin / ceil far edge
         const left = Math.max(0, Math.floor(box!.left / 4) * 4);
         const top = Math.max(0, Math.floor(box!.top / 4) * 4);
-        const right = Math.ceil((box!.left + box!.width) / 4) * 4;
-        const bottom = Math.ceil((box!.top + box!.height) / 4) * 4;
+        // …clamped to the canvas, as the tool does (a 510-wide canvas stays 510)
+        const canvas = await sharp(src).metadata();
+        const right = Math.min(canvas.width!, Math.ceil((box!.left + box!.width) / 4) * 4);
+        const bottom = Math.min(canvas.height!, Math.ceil((box!.top + box!.height) / 4) * 4);
         const meta = await sharp(join(ROOT, "assets", "buildings", `${name}@2x.png`)).metadata();
         expect(meta.width).toBe(right - left);
         expect(meta.height).toBe(bottom - top);
         // and the anchor is the source anchor shifted by the trim origin
-        const S = (e.footprint[0] + e.footprint[1]) * 64; // base canvas side
+        const n = e.footprint[0] + e.footprint[1];
         const srcMeta = await sharp(src).metadata();
         const ax2 = srcMeta.width! / 2;                    // canvas anchor (see tool)
         const ay2 = srcMeta.height! - (e.footprint[0] + e.footprint[1]) * 16;
         expect(e.anchor[0]).toBeCloseTo((ax2 - left) / 2, 1);
         expect(e.anchor[1]).toBeCloseTo((ay2 - top) / 2, 1);
-        expect(srcMeta.width!).toBeGreaterThanOrEqual(S);
-        expect(srcMeta.height!).toBeGreaterThanOrEqual(S);
+        // the canvas holds the collar-inset lot; its height is the art's own
+        expect(srcMeta.width!).toBeGreaterThanOrEqual(Math.round((n - 0.32) * 64));
+        expect(srcMeta.height!).toBeGreaterThanOrEqual(n * 32);
       });
 
       it("derived tiers are quality-resampled, not nearest pixel subsets (B2)", async () => {

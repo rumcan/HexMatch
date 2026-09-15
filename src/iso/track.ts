@@ -23,7 +23,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_W, MAP_H } from "../game/config";
 import { TRANSPORT, UPGRADE_COST, FACTORY_FOOTPRINT, type Cargo } from "./config";
-import { WATER, ROUGH, TOWN_OCC, type Grid } from "./grid";
+import { WATER, ROUGH, TOWN_OCC, FIELD_OCC, type Grid } from "./grid";
 import { CHUNK, chunksX } from "./renderer";
 
 // ── directions ────────────────────────────────────────────────────────────
@@ -355,6 +355,8 @@ export function buildRefusal(
   // checked before the terrain kind, so a town road on rough ground reports
   // "occupied" (the permanent blocker) rather than "rough".
   if (grid.occupancy[i] >= 0 || grid.occupancy[i] === TOWN_OCC) return "occupied";
+  // RES-FIELDS: a wheat field or tree block stands here until demolished.
+  if (grid.occupancy[i] === FIELD_OCC) return "field";
   // The premium paved Road additionally needs flat ground (TRANSPORT.onRough);
   // the basic Dirt Road builds on rough.
   if (terrain === ROUGH && !TRANSPORT[kind].onRough) return "rough";

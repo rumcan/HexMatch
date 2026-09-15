@@ -220,11 +220,11 @@ function scene(seed: number, wheelOut: number) {
 
 describe("E14 the corridor picker finds a corridor by real geometry", () => {
   it("plays a whole 4–12 tile corridor from a town-ring factory inside the clear band at the zoomed-out boot camera", () => {
-    // T4 re-sweep (seeds 0–199 at wheelOut 1, after the spawn buffers
-    // re-rolled every settlement): seed 199's boot frame holds an 11-tile
-    // NW corridor; the old seed 79's industry no longer has a town ring
-    // within the 12-tile reach, like 74 before it.
-    const { grid } = scene(199, 1);
+    // 4×4-resource re-sweep (seeds 0–199 at wheelOut 1, after every resource
+    // grew to a 4×4 lot and the map moved): seed 36's boot frame holds an
+    // 11-tile corridor; the old seed 199's industry no longer has a town ring
+    // within the 12-tile reach, like 79 and 74 before it.
+    const { grid } = scene(36,1);
     // PP-02: a factory must touch a town, and towns sit ≥8 tiles from the
     // industries (T4's TOWN_INDUSTRY_SEP), so the corridor is longer than the
     // pre-PP-02 4–7 tile rows. Defaults let it run up to the 12-tile setup
@@ -289,7 +289,7 @@ describe("E14 the corridor picker finds a corridor by real geometry", () => {
   });
 
   it("the picked corridor is a drag the game actually lays, for free, untruncated", () => {
-    const { grid } = scene(199, 1);
+    const { grid } = scene(36,1);
     if (!track) throw new Error("hook not installed");
     const c = findIsoCorridor() as Corridor;
     // the same setup state the spec's two clicks leave behind, then the same
@@ -328,11 +328,12 @@ describe("E14 the corridor picker finds a corridor by real geometry", () => {
     // ring inside the 12-tile reach. The opening column is 5–12 tiles now,
     // so it needs the zoomed-out frame the spec's `zoomStep()` wheel gesture
     // settles on, and at zoom 1 the boot camera frames the industry alone.
-    // 31 of seeds 0–199 have a town-ring corridor in that band at wheelOut 1
-    // (4, 5, 31, 36, 39, 44, 49, 52, 56, 77, 83, 84, 86, 95, 119, 123, 125,
-    // 128, 136, 137, 144, 149, 150, 153, 160, 162, 171, 176, 191, 192, 199);
-    // four of them are played here.
-    for (const [seed, wheelOut] of [[4, 1], [39, 1], [119, 1], [192, 1]] as const) {
+    // Re-swept again when every resource grew to a 4×4 lot: 45 of seeds 0–199
+    // have a town-ring corridor in that band at wheelOut 1 (1, 4, 15, 22, 29,
+    // 30, 31, 34, 36, 44, 47, 49, 52, 56, 72, 74, 81, 84, 86, 101, 118, 119,
+    // 123, 128, 130, 131, 135, 136, 137, 144, 147, 149, 150, 151, 153, 163,
+    // 166, 167, 168, 170, 171, 174, 183, 191, 197); four of them are played here.
+    for (const [seed, wheelOut] of [[4, 1], [119, 1], [136, 1], [191, 1]] as const) {
       scene(seed, wheelOut);
       const c = findIsoCorridor({ minTiles: 3, maxTiles: 12 });
       expect(c.tiles).toBeGreaterThanOrEqual(3);
@@ -340,7 +341,7 @@ describe("E14 the corridor picker finds a corridor by real geometry", () => {
   });
 
   it("survives the serialization page.evaluate does (self-contained source)", () => {
-    scene(199, 1);
+    scene(36,1);
     const direct = findIsoCorridor();
     // exactly what Playwright ships into the browser: the function's source,
     // revived with no module scope around it.
@@ -352,7 +353,7 @@ describe("E14 the corridor picker finds a corridor by real geometry", () => {
   });
 
   it("fails LOUDLY when HUD chrome covers the map, naming the coverer", () => {
-    scene(199, 1);
+    scene(36,1);
     // the banner grows to swallow the map — a plausible layout regression
     boxes.banner = { left: 0, top: 0, right: VIEW_W, bottom: VIEW_H };
     const err = (() => { try { findIsoCorridor(); return null; } catch (e) { return e as Error; } })();
@@ -370,7 +371,7 @@ describe("E14 the corridor picker finds a corridor by real geometry", () => {
   });
 
   it("guards with a geometry message when the corridor cannot fit the band (A4)", () => {
-    scene(199, 2);         // zoom out clamps at the lowest step: 0.5
+    scene(36,2);         // zoom out clamps at the lowest step: 0.5
     // At this zoom the clear band holds ~34 tiles; 40 cannot fit, so the
     // LAYOUT error (not a search failure) is the answer.
     const err = (() => { try { return findIsoCorridor({ minTiles: 40, maxTiles: 44 }); } catch (e) { return e as Error; } })();
@@ -381,7 +382,7 @@ describe("E14 the corridor picker finds a corridor by real geometry", () => {
   });
 
   it("isoTileOcclusion (the spec's own A2 check) agrees with the picker", () => {
-    scene(199, 1);
+    scene(36,1);
     const c = findIsoCorridor() as Corridor;
     expect(isoTileOcclusion({ tiles: c.col, aim: c.aim })).toEqual([]);
     // and it does report a genuinely covered tile: aim at the panel strip
@@ -469,7 +470,7 @@ describe("E14 the click point is measured once, and verified before it is used",
     new Function(`return (${fn.toString()});`)() as (a: A) => R;
 
   it("isoTileClickPoint matches an independent measurement, in both call forms", () => {
-    scene(199, 1);
+    scene(36,1);
     const c = findIsoCorridor();
     const inPage = revive(isoTileClickPoint);
     // the revived source must stand alone, like the other two
@@ -498,7 +499,7 @@ describe("E14 the click point is measured once, and verified before it is used",
   });
 
   it("refuses an offset scaled the way the spec once scaled it", () => {
-    scene(199, 1);
+    scene(36,1);
     const c = findIsoCorridor();
     const t = c.col[c.tiles - 1];                 // the factory tile (town-ring end)
     const [dx, dy] = tileToScreenAt(cam, t.tx, t.ty);
@@ -551,7 +552,7 @@ describe("E14 a tile is clicked wherever the game will actually take the click",
   });
 
   it("moves to another point on the same tile when a neighbour steals one", () => {
-    scene(199, 1);
+    scene(36,1);
     const c = findIsoCorridor();
     const t = c.col[0];                               // the harvester end
     const [cx] = tileToScreenAt(cam, t.tx, t.ty);
@@ -582,7 +583,7 @@ describe("E14 a tile is clicked wherever the game will actually take the click",
   });
 
   it("refuses the tile, loudly, when no point on it lands on it", () => {
-    scene(199, 1);
+    scene(36,1);
     const c = findIsoCorridor();
     const t = c.col[1];
     const real = hook().pickAt!;
@@ -635,7 +636,7 @@ describe("PP-13 the road drag steps over the tiles the Factory covers", () => {
   };
 
   it("skips exactly the tiles the pick refuses, in drag order", async () => {
-    for (const [seed, wheelOut] of [[5, 1], [137, 1], [153, 1]] as const) {
+    for (const [seed, wheelOut] of [[4, 1], [137, 1], [153, 1]] as const) {
       scene(seed, wheelOut);
       const c = findIsoCorridor();
       expect(c, `seed ${seed} at wheelOut ${wheelOut} found no corridor`).not.toBeNull();
@@ -669,36 +670,36 @@ describe("PP-13 the road drag steps over the tiles the Factory covers", () => {
     }
   });
 
-  it("regression: seed 199 runs west, and the Factory covers fx+1..fx+3", async () => {
-    // T4 re-sweep: the same shaped corridor the old seed 79 pinned — an NW
-    // column whose factory stands at its west end — so the covered window
-    // below still lands ON the column, three tiles of it.
-    scene(199, 1);
+  it("regression: seed 36 runs west, and the Factory covers fx+1..fx+3", async () => {
+    // 4×4-resource re-sweep: the same shaped corridor seeds 79 and 199 pinned
+    // before it — an NW column whose factory stands at its west end — so the
+    // covered window below still lands ON the column, three tiles of it.
+    scene(36, 1);
     const c = findIsoCorridor()!;
     expect(c.dir).toBe("NW");
-    expect([c.fx, c.fy]).toEqual([62, 31]);
-    expect([c.hx, c.hy]).toEqual([72, 31]);
+    expect([c.fx, c.fy]).toEqual([120, 123]);
+    expect([c.hx, c.hy]).toEqual([130, 123]);
     expect(c.col.map((t) => `${t.tx},${t.ty}`)).toEqual(
-      [72, 71, 70, 69, 68, 67, 66, 65, 64, 63, 62].map((tx) => `${tx},31`),
+      [130, 129, 128, 127, 126, 125, 124, 123, 122, 121, 120].map((tx) => `${tx},123`),
     );
 
     const { drag, refused } = await classifyDragTiles(c, coveredByFactory(c));
     // the two tiles the old 2×2 window let through, plus the one the 3×3
     // footprint-shaped window let through — all three are gone now
     const aimed = new Set(drag.map((t) => `${t.tx},${t.ty}`));
-    for (const k of ["63,31", "64,31", "65,31"]) {
+    for (const k of ["121,123", "122,123", "123,123"]) {
       expect(aimed.has(k), `${k} must not be aimed at`).toBe(false);
     }
     expect(refused.map((r) => `${r.tile.tx},${r.tile.ty}`).sort())
-      .toEqual(["63,31", "64,31", "65,31"]);
+      .toEqual(["121,123", "122,123", "123,123"]);
     // …and the drag still runs the rest of the corridor to the harvester
     expect(drag.map((t) => `${t.tx},${t.ty}`)).toEqual(
-      [66, 67, 68, 69, 70, 71, 72].map((tx) => `${tx},31`),
+      [124, 125, 126, 127, 128, 129, 130].map((tx) => `${tx},123`),
     );
   });
 
   it("skips nothing when the pick refuses nothing", async () => {
-    scene(199, 1);
+    scene(36,1);
     const c = findIsoCorridor()!;
     const { drag, refused } = await classifyDragTiles(c, () => null);
     expect(refused).toEqual([]);

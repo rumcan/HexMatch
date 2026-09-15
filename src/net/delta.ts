@@ -157,6 +157,8 @@ export interface PublishFields {
   boards?: Snapshot["boards"];
   crossPrompt?: Snapshot["crossPrompt"];
   winner?: Snapshot["winner"];
+  /** RES-FIELDS: ids of the demolished wheat fields / tree blocks. */
+  clearedFields?: Snapshot["clearedFields"];
   /**
    * MP-05: a one-shot line for the guest (a refused intent, usually). Carried
    * by the next delta rather than by a message of its own — the relay already
@@ -216,6 +218,7 @@ export function buildPublish(track: Track, dirty: DirtyTiles, f: PublishFields):
     ...(f.boards !== undefined ? { boards: f.boards } : {}),
     ...(f.crossPrompt !== undefined ? { crossPrompt: f.crossPrompt } : {}),
     ...(f.winner !== undefined ? { winner: f.winner } : {}),
+    ...(f.clearedFields !== undefined ? { clearedFields: f.clearedFields } : {}),
     ...(f.notice ? { notice: f.notice } : {}),
   };
   const bytes = deltaBytes(msg);

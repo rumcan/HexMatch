@@ -281,16 +281,18 @@ describe("F1 towns place and never strand an industry", () => {
         // The road network lives IN the built area. Under the ring layout the
         // opposite held: the ring lay wholly outside the house box, one tile
         // clear of it on all four sides. Thresholds are set below the worst
-        // case measured across these ten seeds (0.71 within, 0.57 strictly
-        // inside), with room for a coastal town to skew them.
+        // case measured across these ten seeds, with room for a coastal town
+        // to skew them. Re-measured when every resource became a 4×4 lot (the
+        // layout moved): worst 0.553 within, 0.426 strictly inside (seed 0,
+        // a coast-clipped town) — the ring layout scored 0 on both.
         const within = t.roads.filter(([rx, ry]) =>
           rx >= x0 && rx <= x1 && ry >= y0 && ry <= y1).length;
         const inside = t.roads.filter(([rx, ry]) =>
           rx > x0 && rx < x1 && ry > y0 && ry < y1).length;
         expect(within / t.roads.length, `seed ${seed} town ${t.id} roads in the box`)
-          .toBeGreaterThan(0.6);
+          .toBeGreaterThan(0.5);
         expect(inside / t.roads.length, `seed ${seed} town ${t.id} interior roads`)
-          .toBeGreaterThan(0.45);
+          .toBeGreaterThan(0.4);
 
         // No street runs out into open country. A lane may cross an unbuilt
         // gap in an L-shaped town — that is the street joining its two halves

@@ -86,6 +86,14 @@ const GAME_KEYS = ["farm", "forest", "ore_mine", "quarry", "oil_rig", "gold_mine
 // fringes while still catching any re-introduction of the bug class.
 const FRONT_ALLOWANCE_PX = 8;
 
+/**
+ * The footprint the game reserves: every resource stands on a 4×4 lot
+ * (RESOURCE_FOOTPRINT in src/iso/config.ts); the plant is still sized from its
+ * monolith art.
+ */
+const reservedFor = (key: string): [number, number] =>
+  key === "factory" ? footprintForArt(atlas.sprites[key].w) : [4, 4];
+
 describe("ISSUE-144: per-building art fits its reserved footprint", () => {
   it("every monolith-footprint building has both a monolith cell and a per-building master", () => {
     for (const key of GAME_KEYS) {
@@ -97,7 +105,7 @@ describe("ISSUE-144: per-building art fits its reserved footprint", () => {
   it("per-building art footprint never exceeds the reserved (monolith) footprint", () => {
     for (const key of GAME_KEYS) {
       const art = buildings.sprites[key].footprint;
-      const reserved = footprintForArt(atlas.sprites[key].w);
+      const reserved = reservedFor(key);
       expect(
         art[0] <= reserved[0] && art[1] <= reserved[1],
         `${key}: art ${art[0]}×${art[1]} is wider than the reserved ${reserved[0]}×${reserved[1]} — ` +
@@ -110,7 +118,7 @@ describe("ISSUE-144: per-building art fits its reserved footprint", () => {
     it(`${key}: no opaque pixel crosses the reserved footprint's front ground edge`, async () => {
       const e = buildings.sprites[key];
       const n = e.footprint[0];
-      const m = footprintForArt(atlas.sprites[key].w)[0];
+      const m = reservedFor(key)[0];
       const { data, info } = await sharp(join(ROOT, "assets", "buildings", `${key}@2x.png`))
         .ensureAlpha().raw().toBuffer({ resolveWithObject: true });
       const { width, height, channels } = info;

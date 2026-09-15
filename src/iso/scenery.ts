@@ -151,7 +151,34 @@ export interface Scenery {
   trees: Uint8Array;
   /** The multi-tile forest blocks, at their footprint origins. */
   forests: Forest[];
+  /** RES-FIELDS: the 2×2 wheat fields and tree blocks beside Farms and Forests. */
+  fields: Field[];
 }
+
+/**
+ * RES-FIELDS: the 2×2 dressing laid beside a resource — wheat fields round a
+ * Farm, tree blocks round a Forest. Unlike the rest of the scenery these are
+ * OBSTACLES: the game stamps their tiles `FIELD_OCC` so nothing builds on them
+ * until the player demolishes one. They all go on ONE side of the resource,
+ * so its other sides stay open for a Depot.
+ */
+export const FIELD_SIZE = 2;
+export const FIELD_SPRITE_FOR: Readonly<Record<string, FieldSprite>> = {
+  farm: "wheat_field",
+  forest: "trees",
+};
+export type FieldSprite = "wheat_field" | "trees";
+export interface Field {
+  /** Stable index into `Scenery.fields` — what a save and the wire name. */
+  id: number;
+  tx: number;
+  ty: number;
+  sprite: FieldSprite;
+}
+/** The fewest blocks a side must take before it is chosen outright. */
+export const FIELDS_MIN = 6;
+/** How many 2×2 rows a side may stack outward from the resource. */
+const FIELD_ROWS = 4;
 
 // ── tuning: decals ──────────────────────────────────────────────────────────
 /**
@@ -699,6 +726,9 @@ export function scatterScenery(grid: Grid): Scenery {
   // a 1×1 tree can never sprout out of the middle of a painted wood.
   const trees = new Uint8Array(MAP_W * MAP_H);
   const underForest = new Uint8Array(MAP_W * MAP_H);
+  // RES-FIELDS first: their tiles are reserved like a forest block's, so no
+  // tree or painted wood lands on a field.
+  const fields = layResourceFields(grid, open, underForest);
   const forests: Forest[] = [];
   const forestAttempts = Math.round(land.length * FOREST_DENSITY);
   for (let n = 0; n < forestAttempts; n++) {
@@ -808,7 +838,72 @@ export function scatterScenery(grid: Grid): Scenery {
 
   plantForestResourceWoods(grid, plant, tryForestBlock);
 
-  return { decals, trees, forests };
+  return { decals, trees, forests, fields };
+}
+
+/**
+ * RES-FIELDS: lay at least `FIELDS_MIN` 2×2 blocks beside every Farm (wheat)
+ * and Forest (trees), all on ONE side. A side fills row by row outward from
+ * the resource's edge; a row stops the side as soon as none of its blocks fit,
+ * so the dressing always touches the resource. Sides are tried in a seeded
+ * order: the first to reach the minimum wins, otherwise the fullest one does.
+ * Own seed stream, so nothing else in the scenery shifts.
+ */
+function layResourceFields(
+  grid: Grid, open: (i: number) => boolean, reserved: Uint8Array,
+): Field[] {
+  const rng = mulberry32((grid.seed ^ 0x6f1e1d5b) >>> 0);
+  const fields: Field[] = [];
+  const S = FIELD_SIZE;
+  const fits = (x: number, y: number): boolean => {
+    for (let dy = 0; dy < S; dy++) {
+      for (let dx = 0; dx < S; dx++) {
+        if (!inBounds(x + dx, y + dy)) return false;
+        const i = idx(x + dx, y + dy);
+        if (reserved[i] || !open(i)) return false;
+      }
+    }
+    return true;
+  };
+  for (const ind of grid.industries) {
+    const sprite = FIELD_SPRITE_FOR[ind.type];
+    if (!sprite) continue;
+    // [NW, SE, NE, SW] in grid terms: −x, +x, −y, +y
+    const origin = (side: number, row: number, col: number): [number, number] => {
+      switch (side) {
+        case 0: return [ind.tx - S * (row + 1), ind.ty + S * col];
+        case 1: return [ind.tx + ind.w + S * row, ind.ty + S * col];
+        case 2: return [ind.tx + S * col, ind.ty - S * (row + 1)];
+        default: return [ind.tx + S * col, ind.ty + ind.h + S * row];
+      }
+    };
+    const order = [0, 1, 2, 3];
+    for (let k = order.length - 1; k > 0; k--) {
+      const j = (rng() * (k + 1)) | 0;
+      [order[k], order[j]] = [order[j], order[k]];
+    }
+    let best: [number, number][] = [];
+    for (const side of order) {
+      const cols = Math.ceil((side < 2 ? ind.h : ind.w) / S);
+      const taken: [number, number][] = [];
+      for (let row = 0; row < FIELD_ROWS; row++) {
+        const inRow: [number, number][] = [];
+        for (let col = 0; col < cols; col++) {
+          const [x, y] = origin(side, row, col);
+          if (fits(x, y)) inRow.push([x, y]);
+        }
+        if (!inRow.length) break;
+        taken.push(...inRow);
+      }
+      if (taken.length > best.length) best = taken;
+      if (best.length >= FIELDS_MIN) break;
+    }
+    for (const [x, y] of best) {
+      for (let dy = 0; dy < S; dy++) for (let dx = 0; dx < S; dx++) reserved[idx(x + dx, y + dy)] = 1;
+      fields.push({ id: fields.length, tx: x, ty: y, sprite });
+    }
+  }
+  return fields;
 }
 
 /** 1-based TREE_SPRITES indices of the pines. */

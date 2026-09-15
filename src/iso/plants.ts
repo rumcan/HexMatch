@@ -26,7 +26,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { BUILD_COSTS, FACTORY_FOOTPRINT, type Cargo } from "./config";
 import { catchmentRect, rectContains } from "./economy";
-import { TOWN_OCC, WATER, idx, inBounds, type Grid, type Town } from "./grid";
+import { FIELD_OCC, TOWN_OCC, WATER, idx, inBounds, type Grid, type Town } from "./grid";
 import { hasTrack, type Purse, type Track } from "./track";
 import type { EconomyState, Factory } from "./economy";
 import type { Industry } from "./grid";
@@ -123,7 +123,7 @@ export function plantRefusal(
     if (!inBounds(x, y)) return "out-of-bounds";
     const i = idx(x, y);
     if (grid.terrain[i] === WATER) return "water";
-    if (grid.occupancy[i] >= 0 || grid.occupancy[i] === TOWN_OCC) return "occupied";
+    if (grid.occupancy[i] >= 0 || grid.occupancy[i] === TOWN_OCC || grid.occupancy[i] === FIELD_OCC) return "occupied";
     if (buildingAt(state, x, y)) return "building";
     if (hasTrack(track, "road", x, y) || hasTrack(track, "dirt", x, y)) return "track";
   }

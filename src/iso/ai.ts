@@ -51,7 +51,7 @@ import {
   TRANSPORT, UPGRADE_COST, INDUSTRY_BY_KEY, FACTORY_FOOTPRINT, VICTORY, type Cargo,
 } from "./config";
 import { DEPOT_COST, FREE_SETUP_DEPOTS, priceDepot } from "./construction";
-import { ROUGH, factoryTouchesTown, type Grid, type Industry } from "./grid";
+import { FIELD_OCC, ROUGH, factoryTouchesTown, type Grid, type Industry } from "./grid";
 import {
   DIRS, DIR, tIdx, inMapT, hasTrack, canBuildOn, canAfford, tileCost, addCost,
   buildTile, trackOpenTo, tileAlreadyCarries, freeAllowanceCovers, playerNetwork,
@@ -1483,7 +1483,7 @@ export function railStepCost(
   // The occupancy test is the shared rule's own (`railTileRefusal` reads the
   // same byte the same way), so the ranker can never prefer a tile the rule
   // would refuse.
-  if (grid.occupancy[i] >= 0) return IMPASSABLE;
+  if (grid.occupancy[i] >= 0 || grid.occupancy[i] === FIELD_OCC) return IMPASSABLE;
   if (structureAt(rail, tx, ty)) return IMPASSABLE;
   if (!railTerrainOk(grid, tx, ty)) return IMPASSABLE;
   if ((rail.rail.tile[i] & RAIL_PRESENT) !== 0) {
@@ -1615,7 +1615,7 @@ function endpointSources(
     const [jx, jy] = portJoin(port);
     if (!inMapT(jx, jy)) continue;
     const i = tIdx(jx, jy);
-    if (grid.occupancy[i] >= 0) continue;              // the rule's occupancy read
+    if (grid.occupancy[i] >= 0 || grid.occupancy[i] === FIELD_OCC) continue;   // the rule's occupancy read
     if (structureAt(rail, jx, jy)) continue;
     const ownRail = (rail.rail.tile[i] & RAIL_PRESENT) !== 0 && rail.rail.owner[i] === ownerId;
     if (ownRail || railTerrainOk(grid, jx, jy)) out.push([jx, jy]);

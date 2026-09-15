@@ -132,8 +132,15 @@ function spriteWidth(name: string): number {
   return s.w;
 }
 
+/**
+ * Every resource (industry) stands on a 4×4 block: the resource art in
+ * assets/buildings-src/ is authored on that lot, and a truck Depot parks on
+ * any of its four sides.
+ */
+export const RESOURCE_FOOTPRINT: [number, number] = [4, 4];
+
 function industryDef(key: string, name: string, cargo: Cargo, output: number): IndustryDef {
-  return { key, name, cargo, footprint: footprintForArt(spriteWidth(key)), output };
+  return { key, name, cargo, footprint: [...RESOURCE_FOOTPRINT], output };
 }
 
 export const INDUSTRIES: IndustryDef[] = [
