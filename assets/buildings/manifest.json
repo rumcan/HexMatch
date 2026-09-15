@@ -848,6 +848,38 @@
         256,
         256
       ]
+    },
+    "truck_depot_top_entrance": {
+      "footprint": [
+        2,
+        2
+      ],
+      "anchor": [
+        60,
+        32
+      ],
+      "w": 120,
+      "h": 62,
+      "canvas": [
+        256,
+        256
+      ]
+    },
+    "truck_depot_bottom_entrance": {
+      "footprint": [
+        2,
+        2
+      ],
+      "anchor": [
+        60,
+        34
+      ],
+      "w": 120,
+      "h": 64,
+      "canvas": [
+        256,
+        256
+      ]
     }
   }
 }
