@@ -7182,6 +7182,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     aiTick: (now = performance.now()) => aiTick(now),
     /** The per-frame harvest clock (the rival's passive income lives here). */
     econTick: (now = performance.now()) => economyTick(now),
+    /** L1 (#215): the lorry-arrival pass, exposed so a test can hand the
+     *  trucks an arrival without waiting on their animation clocks; `trucks`
+     *  is the live list (count = the animation is intact, and a test may
+     *  bump a `deliveries` counter the way an arrival would). */
+    deliveryTick: (now = performance.now()) => collectDeliveries(now),
+    get trucks() { return trucks.trucks; },
     /** L1 (#215): did this boot come up on the new loop (`?loop=new`, or a
      *  refusable mode that dropped it)? Tests and playtests read the truth
      *  instead of inferring it from behaviour. */
