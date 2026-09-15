@@ -188,6 +188,20 @@ export interface QuarryHooks {
   /** A token was matched and paid: a reachable cargo, or a forged token. */
   onHarvest?: (cargo: Cargo, amount: number) => void;
   /**
+   * L1c (#234): `false` cuts the board's PURSE line — the new loop pays cargo
+   * on the clock, so a matched token clears, cascades still cascade and the
+   * COMBO label still fires, but nothing is credited and `onHarvest` is never
+   * called. The harvest answers 0, the board's own contract for "nothing
+   * reached the purse", so the gain accumulator behind every "+N" readout
+   * stays honest and a refused token reports no "lost cargo" either: nothing
+   * was owed, so nothing was lost.
+   *
+   * Default `true` — the shipped loop, unchanged. The rival's seat keeps it
+   * (#235 gives the rival its own clock); combo Gold (`onGold`) and the
+   * board's cross/bonus rewards are untouched here (#227 re-homes them).
+   */
+  payCargo?: boolean;
+  /**
    * A NETWORK token was matched but the line is down: refused, so the player
    * learns. A forged token never arrives here (PP-13) — it always pays.
    */
@@ -266,6 +280,12 @@ export function createQuarry(
   // exact bug this ticket exists to prevent. Recomputing the reachable set is
   // one flood fill over the two track layers, so paying it per token is free.
   board.onHarvest = (res: ResKey, amount: number, forged: boolean) => {
+    // L1c (#234): the new loop's board does not pay cargo — answer 0 before
+    // the gate runs, so neither `onHarvest` (the purse) nor the board's gain
+    // accumulation (the floating "+N") fires, and no "no route for X — N
+    // lost" toast is raised for a cargo nobody was owed. Gems still clear,
+    // cascades still cascade, and the board's tokens still spawn.
+    if (hooks.payCargo === false) return 0;
     const cargo = GEM_TO_CARGO[res];
     reach = reachableCargo(state, owner, performance.now());
     // PP-13: a FORGED token — the tier-1 gem a 4-in-a-row mints (tier-2 for

@@ -316,6 +316,86 @@ describe("J1 createQuarry", () => {
   });
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// L1c (#234) — the new loop's board pays nothing.
+//
+// With `payCargo: false` the board plays on: gems clear, cascades cascade and
+// the network still stamps its tokens. Only the PURSE line is cut, and it is
+// cut inside the quarry so the answer is 0 — the board's own contract for
+// "nothing reached the purse". That single answer keeps every readout honest
+// (the gain accumulator only counts what was credited) and silences the
+// "no route — N lost" toast for a token nobody was owed.
+// ══════════════════════════════════════════════════════════════════════════
+describe("L1c (#234) the quarry's purse line", () => {
+  it("payCargo: false — a real match credits nothing, refuses nothing, reads out nothing", async () => {
+    const { state, connect } = world();
+    connect();
+    const purse: Record<Cargo, number> = {
+      grain: 0, wood: 0, ore: 0, stone: 0, oil: 0, gold: 0,
+    };
+    const harvested: [Cargo, number][] = [];
+    const blocked: [Cargo, number][] = [];
+    const q = createQuarry(state, "you", {
+      payCargo: false,
+      onHarvest: (c, n) => { purse[c] += n; harvested.push([c, n]); },
+      onBlocked: (c, n) => blocked.push([c, n]),
+    });
+    neutralise(q.board);
+    q.refresh(0);
+
+    // the gate is intact — the network tokened the colour it reaches…
+    expect(tokenedGems(q.board, "wheat")).toHaveLength(1);
+    // …and the harvest answers 0 in every case: reachable token, unreachable
+    // colour, and the FORGED token the board minted itself. All three paid
+    // under the old loop; under this one the wire is off, so all three are 0.
+    expect(q.board.onHarvest("wheat", 2, false)).toBe(0);
+    expect(q.board.onHarvest("gold", 2, false)).toBe(0);
+    expect(q.board.onHarvest("wood", 1, true)).toBe(0);
+    expect(harvested).toEqual([]);
+    expect(blocked).toEqual([]);          // nothing was owed, so nothing "lost"
+
+    // a real match on the live token: the gems clear (the board still plays),
+    // the token is spent, and the purse does not move.
+    const tok = lineUpToken(q.board, "wheat");
+    await q.board.settle();
+    expect(q.board.gems().includes(tok)).toBe(false);
+    for (const c of CARGOES) expect(purse[c], `${c} after the match`).toBe(0);
+    expect(harvested).toEqual([]);        // the purse hook never fired
+  });
+
+  it("default (the shipped loop): the same match pays the depot-fed token 2×", async () => {
+    const { state, connect } = world();
+    connect();
+    const purse: Record<Cargo, number> = {
+      grain: 0, wood: 0, ore: 0, stone: 0, oil: 0, gold: 0,
+    };
+    const harvested: [Cargo, number][] = [];
+    const q = createQuarry(state, "you", {
+      onHarvest: (c, n) => { purse[c] += n; harvested.push([c, n]); },
+    });
+    neutralise(q.board);
+    q.refresh(0);
+    lineUpToken(q.board, "wheat");
+    await q.board.settle();
+
+    expect(harvested).toEqual([["grain", 2]]);
+    expect(purse.grain).toBe(2);
+  });
+
+  it("keeps the combo coin out of the cut — `onGold` is a different wire (#224)", () => {
+    // The ticket leaves the board's Gold alone: a banked coin still reaches
+    // the purse under the flag, because Gold is not cargo and its new source
+    // is L9's job.
+    const { state } = world();
+    const gold: number[] = [];
+    const q = createQuarry(state, "you", { payCargo: false, onGold: (n) => gold.push(n) });
+    neutralise(q.board);
+    q.board.registerCombo();
+    q.board.registerCombo();
+    expect(gold).toEqual([1]);
+  });
+});
+
 // W5 — gold coins must reach the purse. The board banks a coin every
 // COMBOS_PER_GOLD combos; the quarry's onGold hook is the wire that credits
 // the purse. Without it the coin dies on the board and the Black Market
