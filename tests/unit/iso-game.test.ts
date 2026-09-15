@@ -1236,28 +1236,30 @@ describe("L1c (#234) the board and the lorries stop paying the purse", () => {
   const readout = () => [...root.querySelectorAll(".harvest-pop")]
     .map((e) => e.textContent ?? "").join(" · ");
 
-  it("newLoop: a matched token credits no cargo and shows no '+N cargo'", async () => {
+  it("newLoop: a matched gem credits no cargo and shows no '+N cargo'", async () => {
     const { h } = await connectedBoot({ newLoop: true });
     expect(h.newLoop).toBe(true);
 
-    // the board is still the board: the network tokened the colours it reaches
-    const tokens = h.board.gems().filter((g) => g.tier > 0);
-    expect(tokens.length).toBeGreaterThan(0);
-    const line = h.board.gems().find((g) => g.tier > 0)!;
+    // L12 (#227): the new loop's board is token-free — nothing to spend, so
+    // nothing mints. The match is a PLAIN gem's then, and it still must not
+    // reach the purse or advertise a payout.
+    expect(h.board.gems().some((g) => g.tier > 0)).toBe(false);
+    const row = freeRow(h.board);
+    const gem = h.board.grid[row][4]!;
     const before = { ...h.purse };
 
-    makeRun(h.board, line.res, freeRow(h.board, line), 4, line);
+    makeRun(h.board, gem.res, row, 4);
     expect(h.board.findGroups().length).toBeGreaterThan(0);
     await h.board.settle();          // what trySwap runs after a legal swap
 
-    // the gems cleared and the token was spent — the match really happened…
-    expect(h.board.gems().includes(line)).toBe(false);
-    // …and nothing reached the purse: no cargo at all, Gold included (the
-    // ticket leaves the board's coin and its cross/bonus rewards to #224/#227).
+    // the gems cleared — the match really happened…
+    expect(h.board.gems().includes(gem)).toBe(false);
+    // …and nothing reached the purse: no cargo at all, Gold included.
     for (const c of CARGOES) {
       expect(h.purse[c] ?? 0, `${c} paid by a match`).toBe(before[c] ?? 0);
     }
-    // and nothing was advertised: no pop body means no "+N"
+    // and nothing was advertised: no session is open, so the pass banks no
+    // score either and the popup floats nothing — no "+N" of any kind.
     expect(readout()).not.toMatch(/\+\d/);
   });
 
@@ -1320,9 +1322,13 @@ describe("L1c (#234) the board and the lorries stop paying the purse", () => {
     const { h } = await connectedBoot({ viaUrl: "/?seed=1337&loop=new&unlimited=0" });
     expect(h.newLoop).toBe(true);
 
-    const line = h.board.gems().find((g) => g.tier > 0)!;
+    // L12 (#227): the board the URL boots is token-free, so a plain gem is
+    // what gets matched.
+    expect(h.board.gems().some((g) => g.tier > 0)).toBe(false);
+    const row = freeRow(h.board);
+    const gem = h.board.grid[row][4]!;
     const before = { ...h.purse };
-    makeRun(h.board, line.res, freeRow(h.board, line), 4, line);
+    makeRun(h.board, gem.res, row, 4);
     await h.board.settle();
     for (const c of CARGOES) {
       expect(h.purse[c] ?? 0, `${c} paid by a match`).toBe(before[c] ?? 0);

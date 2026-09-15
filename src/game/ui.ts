@@ -329,7 +329,11 @@ export interface OriginalUi {
   rivalQuip: (beats: readonly UiRivalryBeat[]) => void;
   toast: (text: string, kind?: "good" | "bad" | "info" | "danger" | "success") => void;
   fx: (type: FxType, r: number, c: number, text?: string) => void;
-  popup: (gains: Partial<Record<ResKey, number>>, label: string) => void;
+  /**
+   * `score` (L12 #227): the new loop's readout — the pass's session SCORE
+   * instead of cargo gains. The old loop never passes it.
+   */
+  popup: (gains: Partial<Record<ResKey, number>>, label: string, score?: number) => void;
   /**
    * PP-14b: the board paused on a cross and is waiting for the player's picks.
    * `kind` names the shape (holy 3×4 → 6 picks, broken 3×3 → 3 picks); show
@@ -2015,11 +2019,12 @@ export function createOriginalUi(
     pickEl = null;
   }
 
-  function popup(gains: Partial<Record<ResKey, number>>, label: string) {
-    // SFX-01: the chute pays out. Only when something actually landed — an
-    // empty popup is a cascade's COMBO label, which already rang its bell.
+  function popup(gains: Partial<Record<ResKey, number>>, label: string, score?: number) {
+    // SFX-01: the chute pays out. Only when cargo actually landed — an empty
+    // popup is a cascade's COMBO label, which already rang its bell. L12
+    // (#227): a score-only popup stays quiet too; the pass already has its
+    // match sound, and a second chime on every match is the noise.
     if (Object.keys(gains).length) sfx.play("harvest");
-    const e = h("div", "harvest-pop");
     // AUDIT 2026-09-11 — ResKey → Cargo: sheep 🐑 has no purse entry,
     // brick 🧱 has none either. The popup must show the Cargo the purse
     // actually received (sheep→oil 🛢️, brick→stone 🪨, wheat→grain 🌾)
@@ -2029,10 +2034,19 @@ export function createOriginalUi(
       const icon = cargo ? cargoIconHtml(cargo) : RES[k as ResKey].icon;
       return `<span>+${gains[k as ResKey] ?? 0}${icon}</span>`;
     }).join("");
+    // L12 (#227) — the new loop's readout: the pass's SCORE in one number, no
+    // cargo icons to draw wrong. The old "+N cargo" popups are what this
+    // replaces; gains and score never mix in one popup (the new loop has no
+    // gains).
+    const scorePart = score && score > 0 ? `<span class="hp-score">+${score} score</span>` : "";
+    const body = parts || scorePart;
     // A1: no gains means no body — a tokenless cascade still has its COMBO
-    // label, and an empty flex row would float an empty box beside it.
+    // label, and an empty flex row would float an empty box beside it. A
+    // popup with neither label nor body floats nothing at all.
+    if (!label && !body) return;
+    const e = h("div", "harvest-pop");
     e.innerHTML = (label ? `<b class="hp-label">${label}</b>` : "")
-      + (parts ? `<div class="hp-body">${parts}</div>` : "");
+      + (body ? `<div class="hp-body">${body}</div>` : "");
     boardWrap.appendChild(e);
     setTimeout(() => e.remove(), 1600);
   }

@@ -29,6 +29,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { CARGO, TUNING, type Cargo } from "./config";
 import { RIVAL_SKILLS, type SkillKey } from "./skill";
+import type { RewardKind } from "../game/board";
 
 /** Round to the two decimals the HUD prints and the depot stores. */
 export const roundYield = (y: number): number => Math.round(y * 100) / 100;
@@ -69,6 +70,29 @@ export function tuningGoldFor(score: number): number {
 }
 
 /**
+ * L12 (#227) — what each board REWARD is worth in session score, on top of
+ * the plain gems the pass already cleared (`onClear` scores those by count).
+ *
+ * The board reports the event, never the value — this table is the single
+ * place the value lives, so tuning a reward's worth is a one-line change and
+ * the "bigger shape pays more" rule the issue asks for is visible in one
+ * glance: a holy cross (the 3×4 shape) outscores a broken cross, both
+ * outscore the smaller shapes, and a combo — a cascade that kept going —
+ * pays on its own.
+ *
+ * Plain gems still score 1 apiece (the board's `onClear` count), so a 3-match
+ * is worth 3; the numbers below are the BONUS a shape or event adds.
+ */
+export const TUNING_REWARD_SCORE: Record<RewardKind, number> = {
+  holyCross: 10,
+  brokenCross: 5,
+  shape: 2,     // a match-5 or L-shape
+  combo: 2,     // a cascade that ran two deep
+  frost: 1,     // one step of frost cracked off a gem
+  girder: 2,    // a girder broken by an adjacent match
+};
+
+/**
  * A session in progress. Mutable on purpose — it is one small record with one
  * writer (the game), read by the HUD every frame.
  */
@@ -105,7 +129,12 @@ export function takeTuningMove(s: TuningSession): boolean {
   return true;
 }
 
-/** Score the gems a resolved pass cleared. */
+/**
+ * Add points to a session's score. L4 called this per CLEARED GEM; L12
+ * (#227) calls it for the bonus value of a board REWARD too (see
+ * `TUNING_REWARD_SCORE`) — either way the session's score is just a number,
+ * and `tuningYieldFor` does not care where it came from.
+ */
 export function recordTuningCleared(s: TuningSession, cleared: number): void {
   if (Number.isFinite(cleared) && cleared > 0) s.score += cleared;
 }
