@@ -3371,3 +3371,118 @@ describe("#186 the default purse has one source", () => {
     expect(DEFAULT_WIN_TARGET).toBe(VICTORY.target);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// L2 (#216) — free dirt roads in the live game: free builds on an empty
+// purse, no demolish salvage, the paved tier still gated, the rival still
+// expanding, and the HUD saying free.
+// ══════════════════════════════════════════════════════════════════════════
+describe("L2 free dirt roads in the live game", () => {
+  it("builds dirt for nothing with an empty purse and leaves the allowance alone", async () => {
+    const h = await boot({ newLoop: true });
+    expect(h.newLoop).toBe(true);
+    const { hasTrack } = await import("../../src/iso/track");
+    const c = findSouthCorridor(h.grid, 14);
+    expect(c).toBeTruthy();
+    const { hx, hy } = c!;
+    // PP-15: the Factory stands OFF the drag column, as in the W1 fixture.
+    h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx + 3, ty: hy + 6 });
+    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy });
+    h.finishSetup();
+
+    // Empty the purse completely — road must still be buildable.
+    for (const k of Object.keys(h.purse)) h.purse[k] = 0;
+    const pv = h.dragBuild("dirt", hx, hy + 1, hx, hy + 11);
+    expect(pv).toBeTruthy();
+    expect(pv!.tiles).toHaveLength(11);
+    expect(pv!.cost).toEqual({});
+    expect(pv!.free).toBe(0);
+    expect(pv!.unaffordable).toHaveLength(0);
+    expect(hasTrack(h.track, "dirt", hx, hy + 1)).toBe(true);
+    expect(hasTrack(h.track, "dirt", hx, hy + 11)).toBe(true);
+    // The allowance idles — dirt needs none of it — and the purse stays empty.
+    expect(h.freeTrack).toBe(12);
+    for (const k of Object.keys(h.purse)) expect(h.purse[k], `${k} moved`).toBe(0);
+  });
+
+  it("demolishing dirt under newLoop salvages nothing", async () => {
+    const h = await boot({ newLoop: true });
+    const { buildTile, hasTrack } = await import("../../src/iso/track");
+    let spot: [number, number] | null = null;
+    for (let ty = 10; ty < MAP_H - 10 && !spot; ty++) {
+      for (let tx = 10; tx < MAP_W - 10; tx++) {
+        if (h.grid.occupancy[ty * MAP_W + tx] !== -1) continue;
+        if (h.grid.terrain[ty * MAP_W + tx] === WATER) continue;
+        if (h.eco.harvesters.some((d) => d.tx === tx && d.ty === ty)) continue;
+        buildTile(h.track, "dirt", tx, ty, 1);
+        spot = [tx, ty];
+        break;
+      }
+    }
+    expect(spot).toBeTruthy();
+    const before = { ...h.purse };
+    setRng(() => 0);   // the draw that pays wood in the old loop
+    h.demolish(spot![0], spot![1]);
+    expect(hasTrack(h.track, "dirt", spot![0], spot![1])).toBe(false);
+    expect(h.purse).toEqual(before);
+  });
+
+  it("the paved tier still needs ore under newLoop", async () => {
+    const h = await boot({ newLoop: true });
+    const c = findSouthCorridor(h.grid, 6);
+    expect(c).toBeTruthy();
+    const { hx, hy } = c!;
+    h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx + 3, ty: hy + 6 });
+    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy });
+    h.finishSetup();
+    for (const k of Object.keys(h.purse)) h.purse[k] = 0;
+    const pv = h.dragPreview("road", hx, hy + 1, hx, hy + 3);
+    expect(pv).toBeTruthy();
+    expect(pv!.tiles).toHaveLength(0);   // no ore, no pavement — the gate stands
+    expect(pv!.free).toBe(0);
+  });
+
+  it("the rival still expands with an empty purse under newLoop", async () => {
+    const h = await boot({ newLoop: true });
+    const { buildTile } = await import("../../src/iso/track");
+    const c = findSouthCorridor(h.grid, 6, "farm");
+    expect(c).toBeTruthy();
+    h.eco.factories.push({ owner: "you", ownerId: 1, tx: c!.hx, ty: c!.fy });
+    h.eco.harvesters.push({ id: 100, owner: "you", ownerId: 1, tx: c!.hx, ty: c!.hy });
+    for (let y = c!.hy + 1; y <= c!.fy; y++) buildTile(h.track, "dirt", c!.hx, y, 1);
+    h.finishSetup();
+
+    const rivalSpot = findFactorySpotNear(h.grid, "ore_mine", c!.ind.id, heldIndustryIds(h.eco));
+    expect(rivalSpot).toBeTruthy();
+    h.eco.factories.push({ owner: "ai", ownerId: 2, tx: rivalSpot![0], ty: rivalSpot![1] });
+    const rival = h.market.players[1];
+    // Empty the rival's purse: free track + free first Depot must still expand.
+    for (const k of Object.keys(rival.res)) rival.res[k] = 0;
+    const rivalTiles = () => [...h.track.owner].filter((o) => o === 2).length;
+    expect(rivalTiles()).toBe(0);
+
+    const t0 = 1_000_000;
+    for (let i = 0; i < 3; i++) h.aiTick(t0 + i * AI_BUILD_MS);
+
+    expect(rivalTiles()).toBeGreaterThan(0);
+    expect(h.eco.harvesters.some((d) => d.owner === "ai")).toBe(true);
+    for (const k of Object.keys(rival.res)) {
+      expect(rival.res[k] ?? 0, `${k} went negative`).toBeGreaterThanOrEqual(0);
+    }
+  }, 30_000);
+
+  it("the Dirt Road button reads free under newLoop", async () => {
+    await boot({ newLoop: true });
+    const sub = root.querySelector('[data-tool="dirt"] small') as HTMLElement;
+    expect(sub).toBeTruthy();
+    expect(sub.textContent ?? "").toContain("free");
+  });
+
+  it("transportFactor is 1.0× for road on the L1 clock", async () => {
+    const { transportFactor, distanceFactor, depotYield } = await import("../../src/iso/loop");
+    const depot = { id: 1, owner: "you", ownerId: 1, tx: 0, ty: 0 };
+    expect(transportFactor(depot)).toBe(1);
+    expect(distanceFactor(depot)).toBe(1);
+    expect(depotYield(depot)).toBe(1);
+  });
+});

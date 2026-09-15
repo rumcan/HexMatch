@@ -564,10 +564,22 @@ export interface PlanOptions {
    * around an industry a Blockade has just shut.
    */
   now?: number;
+  /**
+   * L2 (#216) MVP: the new-loop flag. When true, dirt is free (the same
+   * `tileCost`/`freeAllowanceCovers` cost model the human's drag previews
+   * with), so the rival plans and prices gravel routes at {} and never
+   * prunes them for affordability. Omitted/false = the shipped loop.
+   */
+  newLoop?: boolean;
 }
 
-/** Optimistic new-tile allowance; exact mixed upgrade prices are checked after A*. */
-function affordableNewTiles(kind: TrackKind, purse: Purse, free: number): number {
+/**
+ * Optimistic new-tile allowance; exact mixed upgrade prices are checked after A*.
+ * L2: under `newLoop` a dirt tile costs nothing, so the allowance is unbounded
+ * no matter how empty the purse is.
+ */
+function affordableNewTiles(kind: TrackKind, purse: Purse, free: number, newLoop = false): number {
+  if (kind === "dirt" && newLoop) return Number.POSITIVE_INFINITY;
   let n = Infinity;
   for (const [cargo, amount] of Object.entries(TRANSPORT[kind].cost)) {
     // An in-place pave (paved Road over dirt) may omit a resource (stone) the
@@ -575,7 +587,7 @@ function affordableNewTiles(kind: TrackKind, purse: Purse, free: number): number
     const unit = kind === "road" ? Math.min(amount, UPGRADE_COST[cargo as Cargo] ?? 0) : amount;
     if (unit > 0) n = Math.min(n, Math.floor((purse[cargo as Cargo] ?? 0) / unit));
   }
-  return n + (freeAllowanceCovers(kind) ? Math.ceil(Math.max(0, free)) : 0);
+  return n + (freeAllowanceCovers(kind, newLoop) ? Math.ceil(Math.max(0, free)) : 0);
 }
 
 /**
@@ -611,6 +623,9 @@ export function planCandidates(
   // the economy's own arithmetic, never on a guess about it).
   const locks = industryLocks(state);
   const now = opts.now ?? 0;
+  // L2 (#216): the new-loop cost model — dirt free, allowance inapplicable —
+  // shared with the human drag preview, never re-derived.
+  const newLoop = opts.newLoop === true;
   // PP-05: every candidate ends at a NEW Depot, so the Depot's own price is
   // part of what the plan must afford. Priced by the same `priceDepot` the
   // human click and the HUD use — one table, one rule, no rival-only discount.
@@ -630,7 +645,7 @@ export function planCandidates(
     // owner, since tileCost charges neither), or at the factory with no track.
     // Its Manhattan length is a lower bound on the number of new tiles.
     const existing = networkTiles(track, kindPref, { ...factory, ownerId: 0 });
-    const maxFresh = affordableNewTiles(kindPref, opts.purse, free);
+    const maxFresh = affordableNewTiles(kindPref, opts.purse, free, newLoop);
     for (const ind of grid.industries) {
       const def = INDUSTRY_BY_KEY[ind.type];
       if (!def) continue;
@@ -666,10 +681,11 @@ export function planCandidates(
         // W3: same cost model as the human preview — the allowance covers the
         // first new tiles, the purse pays the rest. W9: …and only for dirt; a
         // paved plan prices every tile, so the rival needs real ore to pave.
+        // L2: under newLoop dirt prices {} per tile (the allowance is moot).
         let cost: Purse = {};
-        let freeLeft = freeAllowanceCovers(kindPref) ? free : 0;
+        let freeLeft = freeAllowanceCovers(kindPref, newLoop) ? free : 0;
         for (const [x, y] of path.tiles) {
-          const c = tileCost(track, kindPref, x, y);
+          const c = tileCost(track, kindPref, x, y, newLoop);
           if (Object.keys(c).length === 0) continue;
           if (freeLeft > 0) { freeLeft--; continue; }
           cost = addCost(cost, c);
@@ -741,12 +757,15 @@ export interface DeepPlanOptions {
   freeDepots?: number;
   oreUrgency?: number;
   now?: number;
+  /** L2 (#216): the new-loop cost model (dirt free). Part of the cache key. */
+  newLoop?: boolean;
 }
 
 interface DeepSlot {
   fp: number;
   free: number;
   freeDepots: number;
+  newLoop: boolean;
   cands: Candidate[];
 }
 
@@ -787,19 +806,20 @@ export function deepPlanCandidates(
 ): Candidate[] {
   const free = Math.max(0, opts.free ?? 0);
   const freeDepots = Math.max(0, opts.freeDepots ?? 0);
+  const newLoop = opts.newLoop === true;
   const fp = deepPlanFingerprint(state);
   const key = `${factory.ownerId}@${factory.tx},${factory.ty}`;
   let slots = deepPlanCache.get(state);
   if (!slots) deepPlanCache.set(state, (slots = new Map()));
   const hit = slots.get(key);
-  if (hit && hit.fp === fp && hit.free === free && hit.freeDepots === freeDepots) {
+  if (hit && hit.fp === fp && hit.free === free && hit.freeDepots === freeDepots && hit.newLoop === newLoop) {
     return hit.cands;
   }
   const cands = planCandidates(state, factory, {
     stock: opts.stock ?? {}, purse: DEEP_PLAN_PURSE,
-    free, freeDepots, oreUrgency: opts.oreUrgency, now: opts.now,
+    free, freeDepots, oreUrgency: opts.oreUrgency, now: opts.now, newLoop,
   });
-  slots.set(key, { fp, free, freeDepots, cands });
+  slots.set(key, { fp, free, freeDepots, newLoop, cands });
   return cands;
 }
 
@@ -832,6 +852,8 @@ export interface RivalSpotOptions {
   opponentHarvesters?: Harvester[];
   /** Optional diagnostic cap on real plan probes; default searches all candidates. */
   probes?: number;
+  /** L2 (#216): the new-loop cost model (dirt free) for the probe plans. */
+  newLoop?: boolean;
 }
 
 /**
@@ -940,9 +962,10 @@ export function chooseRivalFactorySpot(
   // map. Skip geometrically unaffordable starts, then keep searching until a
   // real opening plan exists. Do not silently strand the rival on probe #1.
   const emptyTrack = !track.dirt.some((v) => v !== 0) && !track.road.some((v) => v !== 0);
+  const spotNewLoop = opts.newLoop === true;
   const maxOpening = Math.max(
-    affordableNewTiles("dirt", opts.purse, opts.free ?? 0),
-    affordableNewTiles("road", opts.purse, opts.free ?? 0),
+    affordableNewTiles("dirt", opts.purse, opts.free ?? 0, spotNewLoop),
+    affordableNewTiles("road", opts.purse, opts.free ?? 0, spotNewLoop),
   );
   const targets = grid.industries.flatMap((ind) => harvesterSpots(grid, ind));
   // AI-01: "an opening plan exists" is not enough — the AI-01 race harness
@@ -973,7 +996,7 @@ export function chooseRivalFactorySpot(
     // human's setup Depot does.
     const plan = bestCandidate(state, probe, {
       stock: opts.purse, purse: opts.purse, free: opts.free ?? 0,
-      freeDepots: opts.freeDepots ?? FREE_SETUP_DEPOTS,
+      freeDepots: opts.freeDepots ?? FREE_SETUP_DEPOTS, newLoop: spotNewLoop,
     });
     if (!plan) continue;
     const rich = laneRichness(grid, s.x, s.y);
@@ -1015,21 +1038,27 @@ export interface BuildOutcome {
  * a guard, not the behaviour the plan was priced around. `free` is the same
  * allowance `planCandidates` priced with, so `spent` is exactly what the plan
  * said the purse would pay.
+ *
+ * L2 (#216): `newLoop` must match what `planCandidates` priced with — dirt
+ * free, allowance inapplicable — or `spent`/`free` would disagree with the
+ * plan. `aiBuildStep` forwards `opts.newLoop` for exactly this reason.
  */
 export function executeCandidate(
   state: EconomyState, c: Candidate, owner: string, ownerId: number,
   nextHarvesterId: number, free: number = 0, freeDepots: number = 0,
+  newLoop = false,
 ): BuildOutcome {
   const built: [number, number][] = [];
   let spent: Purse = {};
   // W9: a rail build consumes no setup allowance, so `free` in the outcome is
   // 0 and the caller leaves `freeTrack` alone — the rival keeps its road budget.
-  const allowance = freeAllowanceCovers(c.kind) ? Math.max(0, free) : 0;
+  // L2: under newLoop NO road tier consumes the allowance (dirt is free).
+  const allowance = freeAllowanceCovers(c.kind, newLoop) ? Math.max(0, free) : 0;
   let freeLeft = allowance;
   for (const [x, y] of c.path.tiles) {
     if (!canBuildOn(state.grid, c.kind, x, y)) continue;
     if (hasTrack(state.track, c.kind, x, y)) continue;
-    const cCost = tileCost(state.track, c.kind, x, y);
+    const cCost = tileCost(state.track, c.kind, x, y, newLoop);
     if (Object.keys(cCost).length === 0) {
       // already this kind — rebuild is free and consumes no allowance
     } else if (freeLeft > 0) {
@@ -1097,6 +1126,7 @@ export function aiBuildStep(
     if (!canAfford(opts.purse, addCost(c.cost, depotCost))) continue;
     const out = executeCandidate(
       state, c, factory.owner, factory.ownerId, nextHarvesterId, opts.free, freeDepots,
+      opts.newLoop === true,
     );
     if (out.built.length > 0 || out.harvester) return out;
   }

@@ -875,7 +875,9 @@ export function createOriginalUi(
     // MOBILE-01: "Q / right-click" is noise on a phone — the tap and the
     // held-tool chip are the touch hand's versions of the same two ideas.
     { key: "select", label: "Select", sub: coarsePointer() ? "Point & inspect · tap reads a tile" : "Point & inspect · Q / right-click" },
-    { key: "dirt", label: "Dirt Road", sub: `${costMarkup(TRANSPORT.dirt.cost)} · 0★` },
+    // L2 (#216): under newLoop dirt is free — the button says so (`costMarkup({})`
+    // renders "free"), instead of quoting a price the placement never charges.
+    { key: "dirt", label: "Dirt Road", sub: `${costMarkup(newLoop ? {} : TRANSPORT.dirt.cost)} · 0★` },
     { key: "road", label: "Road", sub: `${costMarkup(TRANSPORT.road.cost)} · +${VICTORY.upgrade}★ paving dirt` },
     // PP-05: `depotSub` refreshes the Depot line below as the free-setup
     // allowance burns down.
@@ -2706,13 +2708,17 @@ export function createOriginalUi(
     }
     buildList.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((button) => {
       const tool = button.dataset.tool as UiTool;
+      // L2 (#216): under newLoop dirt costs nothing, so the button prices {}
+      // and an empty purse never disables it.
       const cost = tool === "plant" ? PLANT_COST : tool === "harvester" ? DEPOT_COST
-        : tool === "road" || tool === "dirt" ? TRANSPORT[tool].cost
+        : tool === "road" ? TRANSPORT.road.cost
+        : tool === "dirt" ? (newLoop ? {} : TRANSPORT.dirt.cost)
         : tool === "platform" ? RAIL_COSTS.platform
         : tool === "raildepot" ? RAIL_COSTS.depot : {};
       // W9: the free setup allowance buys Dirt Roads only.
+      // L2: under newLoop dirt is free with or without the allowance.
       const free = tool === "harvester" ? state.freeDepots > 0
-        : (tool === "dirt") && state.freeTrack > 0;
+        : (tool === "dirt") && (newLoop || state.freeTrack > 0);
       button.disabled = !free && !Object.entries(cost).every(([k, v]) => (state.purse[k as Cargo] ?? 0) >= v);
       button.classList.toggle("disabled", button.disabled);
     });

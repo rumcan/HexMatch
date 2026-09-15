@@ -244,6 +244,10 @@ import type { EndingRankLine } from "./ending";
  * (3) and ×1.6 throughput for free. The rule itself lives in
  * `freeAllowanceCovers` (`track.ts`) so the human drag and the AI share one
  * cost model (W3).
+ *
+ * L2 (#216) MVP: under `newLoop` dirt is free, so the allowance buys nothing
+ * on the road tiers and simply idles on the player record (still wired and
+ * saved — post-MVP rail work puts it behind the paid tiers per the L2 spec).
  */
 export const FREE_SETUP_TRACK = 12;
 export const HARVEST_MS = 3000;      // economy tick
@@ -297,6 +301,9 @@ export const START_PURSE: Purse = { wood: 12, stone: 12, ore: 0 };
  * two, but demolition is never free and never profitable. The paved Road is
  * excluded on purpose — its price is dominated by 4 Ore and the dirt→road pave
  * exists precisely so a paved Road does not have to be torn up.
+ *
+ * L2 (#216): the shipped-loop rule only — under `newLoop` dirt is free and
+ * salvages nothing (`doDemolish` gates on the flag).
  */
 export const DIRT_DEMOLISH_REFUND: Cargo[] = ["wood", "stone"];
 /**
@@ -2237,6 +2244,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // PP-05: the probe prices the rival's opening Depot on the same free
       // allowance the human's setup Depot rides on.
       freeDepots: rival.freeDepots,
+      // L2 (#216): the probe plans with the loop's cost model (dirt free under newLoop).
+      newLoop,
     });
     if (spot) {
       eco.factories.push({
@@ -2793,13 +2802,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // random part, so demolition is a partial refund rather than free
     // re-routing. The paved Road pays nothing back: its price is dominated by
     // 4 Ore, and the dirt→road pave is what upgrades are for.
+    // L2 (#216): under newLoop dirt is free, so it salvages nothing — a free
+    // tile must not mint resources. Tearing it up is free re-routing.
     // SFX-01: timber coming apart — a little further away for a single tile
     // of track than for a whole building.
     if (p.human) sfx.play("demolish", removedKind === "dirt" ? undefined : { gain: 0.8 });
     if (removedKind === "dirt") {
-      const back = choice(DIRT_DEMOLISH_REFUND);
-      earn(p, { [back]: 1 });
-      toast(`Dirt Road cleared — salvaged 1 ${CARGO[back].icon} ${CARGO[back].name}.`, "good");
+      if (newLoop) {
+        toast("Dirt Road cleared.", "info");
+      } else {
+        const back = choice(DIRT_DEMOLISH_REFUND);
+        earn(p, { [back]: 1 });
+        toast(`Dirt Road cleared — salvaged 1 ${CARGO[back].icon} ${CARGO[back].name}.`, "good");
+      }
     }
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
       const x = tx + dx, y = ty + dy;
@@ -3380,6 +3395,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const cands = deepPlanCandidates(eco, f, {
       stock: rival.purse,
       free: rival.freeTrack, freeDepots: rival.freeDepots, now,
+      newLoop,
     });
     const depot = priceDepot(rival.purse, rival.freeDepots).cost;
     let planTarget: Purse | null = null;
@@ -3697,7 +3713,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const opts = () => ({
       stock: rival.purse, purse: rival.purse,
       free: rival.freeTrack, freeDepots: rival.freeDepots, now,
-      oreUrgency: urgency,
+      oreUrgency: urgency, newLoop,
     });
     const depotBuild = (): boolean => {
       const out = aiBuildStep(eco, f, opts(), allocHarvesterId());
@@ -4260,7 +4276,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           const kind: TrackKind = payload.kind === "road" ? "road" : "dirt";
           const pv = previewDrag(grid, track, kind, p.purse, ax, ay, bx, by,
             payload.xFirst !== false, undefined, p.freeTrack,
-            structureTiles(eco.factories, eco.harvesters, p.i + 1));
+            structureTiles(eco.factories, eco.harvesters, p.i + 1), newLoop);
           if (pv.tiles.length === 0) toast("Can't build there.", "bad");
           else commitTrackDrag(p, pv, kind);
         }
@@ -5095,7 +5111,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (phase !== "play") return null;
     if (!canBuildOn(grid, kind, ax, ay)) return null;
     const pv = previewDrag(grid, track, kind, me.purse, ax, ay, bx, by, xFirst, undefined,
-      me.freeTrack, structureTiles(eco.factories, eco.harvesters, me.i + 1));
+      me.freeTrack, structureTiles(eco.factories, eco.harvesters, me.i + 1), newLoop);
     if (pv.tiles.length === 0) return null;
     if (isGuest()) {
       net?.sendIntent("build", { do: "track", kind, ax, ay, bx, by, xFirst });
@@ -5322,9 +5338,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         if (!preview || key !== previewKey) {
           // Roads anywhere (main): no network adjacency requirement, so the
           // preview is allowed to start anywhere and grow without a seed.
+          // L2: the drag prices with the loop's cost model (dirt free under newLoop).
           preview = previewDrag(grid, track, kind, me.purse,
             drag.ax, drag.ay, p.tx, p.ty, true, undefined, me.freeTrack,
-            structureTiles(eco.factories, eco.harvesters, me.i + 1));
+            structureTiles(eco.factories, eco.harvesters, me.i + 1), newLoop);
           previewKey = key;
           changed = true;
         }
@@ -7112,7 +7129,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (phase !== "play") return null;
       if (!canBuildOn(grid, kind, ax, ay)) return null;
       return previewDrag(grid, track, kind, me.purse, ax, ay, bx, by, xFirst, undefined, me.freeTrack,
-        structureTiles(eco.factories, eco.harvesters, me.i + 1));
+        structureTiles(eco.factories, eco.harvesters, me.i + 1), newLoop);
     },
     /**
      * PP-13: the e2e/unit twin of a demolish click — the same `doDemolish`

@@ -161,6 +161,15 @@ export interface TransportDef {
  * since VP-01, is the ONLY thing roads are worth points for: 0.25 VP per tile
  * you pave, 0 per connection. A Dirt Road scores nothing at all.
  *
+ * L2 (#216) MVP: the paved tier stays EXACTLY as priced and scored here — a
+ * paid mid-tier (full price on virgin ground, UPGRADE_COST over gravel,
+ * 0.25★ per pave) that the new loop does not require. The L2 spec's
+ * paved-vs-rail decision ("remove it or keep it as a paid mid-upgrade") and
+ * its ★ replacement land in #228 (L13); this ticket only makes dirt free
+ * under `newLoop` (see `tileCost` in track.ts) and removes the dirt
+ * demolish refund there. `BUILD_COSTS.dirt` keeps its shipped-loop price —
+ * the old loop reads it, and the cost tests pin it.
+ *
  * PP-07 — THE authoritative construction-cost table (Catan-style roles).
  *
  * Every buildable in the game is priced here, and ONLY here:

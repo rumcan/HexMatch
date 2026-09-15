@@ -813,3 +813,60 @@ describe("VP-01 the rival reads the scoreboard", () => {
     expect(CARGO_VALUE.ore).toBeGreaterThan(0);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// L2 (#216) — the rival plans with the new-loop cost model: dirt free, so an
+// empty purse still expands (the Depot allowance still gates the Depot).
+// ══════════════════════════════════════════════════════════════════════════
+describe("L2 the rival plans with free dirt under newLoop", () => {
+  it("plans dirt routes at zero track cost with an empty purse", () => {
+    const grid = flatGrid([ind("farm", 12, 5)]);
+    const s = state(grid);
+    const plan = planCandidates(s, F, { stock: {}, purse: {}, free: 0, freeDepots: 1, newLoop: true });
+    expect(plan.length).toBeGreaterThan(0);
+    expect(plan.every((c) => c.kind === "dirt")).toBe(true);
+    expect(plan[0].cost).toEqual({});
+  });
+
+  it("the same empty purse plans nothing without the flag", () => {
+    const grid = flatGrid([ind("farm", 12, 5)]);
+    const s = state(grid);
+    expect(planCandidates(s, F, { stock: {}, purse: {}, free: 0, freeDepots: 1 })).toEqual([]);
+  });
+
+  it("aiBuildStep expands on an empty purse under newLoop and spends nothing", () => {
+    const grid = flatGrid([ind("farm", 12, 5)]);
+    const s = state(grid);
+    const out = aiBuildStep(s, F, { stock: {}, purse: {}, free: 0, freeDepots: 1, newLoop: true }, 1)!;
+    expect(out).toBeTruthy();
+    expect(out.kind).toBe("dirt");
+    expect(out.built.length).toBeGreaterThan(0);
+    expect(out.spent).toEqual({});        // free track + free first Depot
+    expect(out.free).toBe(0);            // the allowance covers nothing — dirt needs none
+    expect(out.freeDepots).toBe(1);
+    expect(out.harvester).toBeTruthy();
+  });
+
+  it("executeCandidate charges the plan it was priced with (no allowance drift)", () => {
+    const grid = flatGrid([ind("farm", 12, 5)]);
+    const s = state(grid);
+    const [c] = planCandidates(s, F, { stock: {}, purse: {}, free: 12, freeDepots: 1, newLoop: true });
+    expect(c).toBeTruthy();
+    const out = executeCandidate(s, c, "ai", 0, 1, 12, 1, true);
+    expect(out.built.length).toBeGreaterThan(0);
+    expect(out.spent).toEqual({});
+    expect(out.free).toBe(0);
+  });
+
+  it("deepPlanCandidates keys its cache on the loop, so the bank reads the right price", async () => {
+    const { deepPlanCandidates } = await import("../../src/iso/ai");
+    const grid = flatGrid([ind("farm", 12, 5)]);
+    const s = state(grid);
+    const oldLoop = deepPlanCandidates(s, F, { stock: {}, free: 0, freeDepots: 1 });
+    expect(oldLoop.length).toBeGreaterThan(0);
+    expect(Object.keys(oldLoop[0].cost).length).toBeGreaterThan(0);   // wood + stone per tile
+    const fresh = deepPlanCandidates(s, F, { stock: {}, free: 0, freeDepots: 1, newLoop: true });
+    expect(fresh.length).toBeGreaterThan(0);
+    expect(fresh[0].cost).toEqual({});                               // not the cached old-loop price
+  });
+});
