@@ -135,6 +135,7 @@ import {
 import { createQuarry, CARGO_TO_GEM, GEM_TO_CARGO, type Quarry } from "./quarry";
 import {
   saveKeyFor, SAVEGAME_VERSION, loadRecentSave, clearSave, trackSave, trackRestored,
+  NEW_LOOP_SAVE_TOAST, saveNeedsNewLoop, loopCarryToWire, savedLoopCarry,
   type SaveGamePayload,
 } from "./savegame-runtime";
 import { RES } from "../game/config";
@@ -587,7 +588,21 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // seed, the rival's network, phase "play") against the chapter's lower ★
   // line and lost on the first rescore.
   const saveKey = saveKeyFor(storyChapter?.id);
-  const bootSave = savesOff ? null : loadRecentSave(Date.now(), saveKey);
+  const foundSave = savesOff ? null : loadRecentSave(Date.now(), saveKey);
+  /**
+   * L1e (#236): a save the new loop wrote is NOT restored into the shipped one.
+   * Its depots carry tuning yields only the L1b clock pays, so half-restoring
+   * it would hand back a world that looks intact and has stopped earning — the
+   * opposite of what "Continue" promises. The boot therefore treats it as no
+   * save at all (fresh map, no seed of its own, onboarding as normal), KEEPS
+   * the slot untouched — see `saveHeldBack`, which stops this boot's autosave
+   * from writing the fresh world over it — and says how to open it instead of
+   * breaking (the note waits for the overlays, like the flag's own).
+   */
+  const saveHeldBack = foundSave !== null && saveNeedsNewLoop(foundSave, newLoop);
+  const bootSave = saveHeldBack ? null : foundSave;
+  /** The note about that refusal, fired on the first clear frame (below). */
+  let saveToastPending = saveHeldBack;
   // STORY-01: a contract is a PLACE — its map must not move between attempts —
   // so the chapter's seed sits in the chain between an explicit `?seed=`
   // (playtests, saved seeds) and the fresh random one. A resumed save keeps
@@ -2970,6 +2985,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (hi >= 0) {
       const removed = eco.harvesters[hi];
       eco.harvesters.splice(hi, 1);
+      // L1e (#236): a removed Depot's banked remainder goes with it. No depot
+      // is left to pay it to, and a stale id must not ride the save forever
+      // (or come back as a ghost entry the next restore would carry).
+      loopCarry.delete(removed.id);
       // L4 (#218): the board was only up for THAT Depot's session. Without
       // this, demolishing a Depot mid-session would leave the player on a
       // board with no session behind it and no key out — the stuck state the
@@ -6122,6 +6141,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // RAIL-04 (#178): the railway rides the save — a refresh must not take a
       // built line, its platforms or its train with it.
       rail: railToWire(rail),
+      // L1e (#236): which loop this world earns under, and what its clock had
+      // banked but not yet paid. Depot yield levels ride `eco.harvesters`
+      // below — the record they belong to — so they need no field here.
+      loop: newLoop,
+      loopCarry: loopCarryToWire(loopCarry),
       eco: { harvesters: eco.harvesters, factories: eco.factories },
       players: players.map((p) => ({
         purse: p.purse as unknown as Record<string, number>,
@@ -6142,8 +6166,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   let saveIv = 0;
   let onPageHide: (() => void) | null = null;
 
+  /**
+   * Write the payload now.
+   *
+   * `saveHeldBack` (L1e, #236) joins `savesOff` and `restartArmed` here: a boot
+   * that refused a new-loop save must not overwrite it, or the "open with
+   * ?loop=new" note would point at a world this fresh boot had already
+   * replaced. The player keeps the save they came back for; this session
+   * simply is not the one that owns the slot.
+   */
   function saveNow() {
-    if (disposed || restartArmed || savesOff) return;
+    if (disposed || restartArmed || savesOff || saveHeldBack) return;
     try {
       localStorage.setItem(saveKey, JSON.stringify(collectSave()));
     } catch { /* private mode / quota — saving must never break the game */ }
@@ -6171,6 +6204,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // over (planTrucks, syncWorld, the AI...)
     eco.harvesters.length = 0; eco.harvesters.push(...d.eco.harvesters);
     eco.factories.length = 0; eco.factories.push(...d.eco.factories);
+    // L1e (#236): the clock's banked remainders come back with their depots,
+    // so the first tick after a Continue pays the rate the player was earning
+    // instead of restarting every depot from zero (a visible dip, once, every
+    // reload). Yields ride the harvesters pushed above. An old save has no
+    // `loopCarry`, and this reads as the empty map it always was.
+    loopCarry.clear();
+    for (const [id, rem] of savedLoopCarry(d)) loopCarry.set(id, rem);
     for (let i = 0; i < players.length && i < d.players.length; i++) {
       Object.assign(players[i].purse, d.players[i].purse);
       players[i].freeTrack = d.players[i].freeTrack;
@@ -6844,6 +6884,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         loopToastPending = false;
         toast("The new loop is sandbox-only for now.", "info");
       }
+      // L1e (#236): a save this boot refused for want of the flag says so, on
+      // the same terms as the note above — nothing covering the map, and one
+      // line naming the way back in. The save is still on the shelf (this
+      // boot does not write over it), so the instruction is true when read.
+      if (saveToastPending && !loading.active && !storyView && !tutorialView) {
+        saveToastPending = false;
+        toast(NEW_LOOP_SAVE_TOAST, "info");
+      }
       // RV-01: the lorries move in TILE units per millisecond, so the frame
       // needs a real dt (capped — a background tab must not teleport them).
       const dt = Math.min(100, Math.max(0, t - lastFrameT));
@@ -7123,6 +7171,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     get depotYields() {
       return eco.harvesters.map((h) => ({ id: h.id, owner: h.owner, tx: h.tx, ty: h.ty, yield: h.yield ?? null }));
     },
+    /** L1e (#236): the income the clock has banked but not yet paid, per
+     *  depot — exactly what the save's `loopCarry` carries, so a round-trip
+     *  test reads the live map on one side and the payload on the other. */
+    get loopCarries() {
+      return [...loopCarry.entries()].map(([id, carry]) => ({ id, carry }));
+    },
+    /** L1e (#236): the autosave writer's twin — writes the payload NOW, the
+     *  same call the 5-second interval and `pagehide` make, including its
+     *  refusals (a held-back save is not written, so the slot keeps what it
+     *  had and a test can assert that by reading the raw string). */
+    saveNow: () => { saveNow(); },
+    /** L1e (#236): true when this boot found a new-loop save it could not
+     *  restore and is holding the slot for the boot that can. */
+    get saveHeldBack() { return saveHeldBack; },
     /** L4 (#218): the rival's tuning level sweep, on demand — the same call an
      *  AI turn makes, for tests that raise a rival depot by hand. */
     rivalTuning: () => { applyRivalTuning(); },
