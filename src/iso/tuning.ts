@@ -49,6 +49,26 @@ export function tuningYieldFor(score: number): number {
 }
 
 /**
+ * L9 (#224) — the Gold a session's score pays.
+ *
+ * The new loop's replacement for combo Gold (`Board.COMBOS_PER_GOLD`, which
+ * stops paying under the flag): the same burst of matching that sets a Depot's
+ * yield also banks the coins the Black Market's two map cards are bought with.
+ *
+ *   score 0            0 — a session nobody played pays nothing;
+ *   any score          at least `TUNING.minGold`;
+ *   `targetScore`+     `TUNING.maxGold`.
+ *
+ * Whole coins only (Gold is a counted cargo, not a fraction), and monotone in
+ * the score, so a better session is never worth less.
+ */
+export function tuningGoldFor(score: number): number {
+  if (!Number.isFinite(score) || score <= 0) return 0;
+  const t = Math.min(1, score / TUNING.targetScore);
+  return Math.max(TUNING.minGold, Math.round(TUNING.minGold + (TUNING.maxGold - TUNING.minGold) * t));
+}
+
+/**
  * A session in progress. Mutable on purpose — it is one small record with one
  * writer (the game), read by the HUD every frame.
  */
@@ -93,6 +113,9 @@ export function recordTuningCleared(s: TuningSession, cleared: number): void {
 /** What this session pays if it is played out now. */
 export const tuningSessionYield = (s: TuningSession): number => tuningYieldFor(s.score);
 
+/** L9 (#224): the Gold this session pays if it is played out now. */
+export const tuningSessionGold = (s: TuningSession): number => tuningGoldFor(s.score);
+
 /**
  * What ABANDONING pays — the defined default a closed or unwinnable session
  * leaves behind, and the value a depot is born with. Never below the baseline
@@ -116,4 +139,19 @@ export function rivalTuningYield(key: SkillKey, noise = 0): number {
   const skill = RIVAL_SKILLS[key]?.tuningSkill ?? RIVAL_SKILLS.normal.tuningSkill;
   const t = Math.min(1, Math.max(0, skill + noise));
   return clampYield(TUNING.minYield + (TUNING.maxYield - TUNING.minYield) * t);
+}
+
+/**
+ * L9 (#224): the Gold the rival banks per depot it tunes.
+ *
+ * Same axis as `rivalTuningYield` — a simulated session at the difficulty's
+ * `tuningSkill`, priced through the SAME score→Gold curve the player's own
+ * session is paid by (`tuningGoldFor`), so both seats are funded by the same
+ * rule and the raid table never runs dry on one side only. Deterministic per
+ * skill, like the yield.
+ */
+export function rivalTuningGold(key: SkillKey, noise = 0): number {
+  const skill = RIVAL_SKILLS[key]?.tuningSkill ?? RIVAL_SKILLS.normal.tuningSkill;
+  const t = Math.min(1, Math.max(0, skill + noise));
+  return tuningGoldFor(t * TUNING.targetScore);
 }

@@ -150,6 +150,8 @@ export interface PublishFields {
   /** MP-AUDIT: market parity, protests, vehicle presentation, boards, crossPrompt, winner */
   market?: Snapshot["market"];
   protests?: Snapshot["protests"];
+  /** L9 (#224): live industry Blockades — see `DeltaMsg["blockades"]`. */
+  blockades?: Snapshot["blockades"];
   trucks?: Snapshot["trucks"];
   cars?: Snapshot["cars"];
   /** RAIL-04 (#178): the railway (see `DeltaMsg["rail"]`). */
@@ -210,6 +212,7 @@ export function buildPublish(track: Track, dirty: DirtyTiles, f: PublishFields):
     rivalSabotage: f.rivalSabotage,
     ...(f.market !== undefined ? { market: f.market } : {}),
     ...(f.protests !== undefined ? { protests: f.protests } : {}),
+    ...(f.blockades !== undefined ? { blockades: f.blockades } : {}),
     ...(f.trucks !== undefined ? { trucks: f.trucks } : {}),
     ...(f.cars !== undefined ? { cars: f.cars } : {}),
     ...(f.rail !== undefined ? { rail: f.rail } : {}),

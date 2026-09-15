@@ -97,6 +97,7 @@ interface MpHook {
   placementPlan: (
     kind: "factory" | "depot", tx: number, ty: number,
   ) => { valid: boolean; why: string | null };
+  demolish: (tx: number, ty: number) => void;
   trucksList: unknown[];
   truckTick: (now?: number, dtMs?: number) => void;
   /** PP-14b: the Black Market twin (refuses on a guest, exactly as the click
@@ -118,6 +119,11 @@ interface MpHook {
   placeProtest: (tx: number, ty: number) => boolean;
   readonly protests: { tx: number; ty: number; until: number; owner: string }[];
   readonly protestPending: boolean;
+  /** L9 (#224): the Black-Market core run as a named seat (host-side only). */
+  buyBlackFor: (seat: number, key: string) => boolean;
+  /** L1b: the income clock, with an injectable now — what a Blockade stops. */
+  econTick: (now?: number) => void;
+  eco: import("../../src/iso/economy").EconomyState;
 }
 
 const hook = () => (window as unknown as { __iso: MpHook }).__iso;
@@ -511,7 +517,7 @@ describe("MP-05 two real games, one room", () => {
     expect(localStorage.getItem("hexmatch:save")).toBeNull();
   });
 
-  it("the host's Black Market sabotage shows up on the guest's plant", async () => {
+  it("the host's Black Market Blockade shows up on the guest's map (#224)", async () => {
     const hostEnd = new Endpoint("host-socket", "HX9KWR");
     const guestEnd = new Endpoint("guest-socket", "HX9KWR");
     hostEnd.peer = guestEnd;
@@ -526,37 +532,42 @@ describe("MP-05 two real games, one room", () => {
     greet(welcomeFor(hostEnd, guestEnd, true));
     greet(welcomeFor(hostEnd, guestEnd, false), guestEnd);
     pump();
+    // A Blockade needs something to blockade, so both seats open properly
+    // (the guest ends with a Factory AND a Depot — the network the card bites).
+    playOpening(host, guest);
 
-    // Neither plant is wrecked yet.
-    expect(guest.board.gems().filter((g) => g.hard > 0)).toHaveLength(0);
-    expect(guest.rivalPlant.status(performance.now()).frozen).toBe(0);
+    // L9 (#224): the Black Market is MAP sabotage only, so what has to cross
+    // the wire is no longer a dirtied plant board — it is the blockade on the
+    // map. Neither seat has one yet.
+    const live = (h: MpHook) => h.grid.industries.filter((i) => i.banditUntil > performance.now());
+    expect(live(host)).toHaveLength(0);
+    expect(live(guest)).toHaveLength(0);
+    // …and no card in the shop can reach a board at all
+    expect(guest.board.gems().filter((g) => g.hard > 0 || g.block)).toHaveLength(0);
 
-    // The host buys Frost Tiles against the rival (the guest's seat).
-    host.purse.gold = SABOTAGE.harden.gold;
-    host.buyBlack("harden");
-    // The host's own plant is untouched; the RIVAL plant (seat 1) is frozen.
-    expect(host.rivalPlant.status(performance.now()).frozen).toBeGreaterThan(0);
+    // The host buys a Blockade against the rival (the guest's seat).
+    host.purse.gold = SABOTAGE.bandit.gold;
+    host.buyBlack("bandit");
+    expect(live(host).length, "the host's map shows the blockade").toBe(1);
 
     // Nothing has crossed the wire yet…
-    expect(guest.board.gems().filter((g) => g.hard > 0)).toHaveLength(0);
+    expect(live(guest)).toHaveLength(0);
     pump();
-    // …and now the guest's OWN plant board shows the frost (sabotage targets
-    // seat 1 = the guest itself, so it is applied WITHOUT seat mirroring).
-    expect(guest.board.gems().filter((g) => g.hard > 0).length).toBeGreaterThan(0);
-    // The host's own seat (the guest's rivalPlant) was never sabotaged.
-    expect(guest.rivalPlant.status(performance.now()).frozen).toBe(0);
+    // …and now the guest sees the SAME industry blockaded, with the same
+    // expiry: it is the guest's own income that stops, so its map has to say
+    // so (industries are seed-derived, so only the expiry travels).
+    expect(live(guest).length).toBe(1);
+    expect(live(guest)[0].id).toBe(live(host)[0].id);
+    expect(live(guest)[0].banditUntil).toBe(live(host)[0].banditUntil);
+    // and the board stayed clean on both sides — no card touches match-3 now
+    expect(guest.board.gems().filter((g) => g.hard > 0 || g.block)).toHaveLength(0);
+    expect(guest.rivalPlant.status(performance.now())).toMatchObject({ frozen: 0, girders: 0, smog: false });
 
-    // Girders cross the wire the same way.
-    host.purse.gold = SABOTAGE.block.gold;
-    host.buyBlack("block");
+    // A lifted blockade clears on the guest too (absent = none, never stale).
+    for (const ind of host.grid.industries) ind.banditUntil = 0;
+    forcePublish(guest);
     pump();
-    expect(guest.board.gems().filter((g) => g.block).length).toBeGreaterThan(0);
-
-    // Smog too — the guest's board reads as smogged.
-    host.purse.gold = SABOTAGE.fog.gold;
-    host.buyBlack("fog");
-    pump();
-    expect(guest.board.fogUntil).toBeGreaterThan(performance.now());
+    expect(live(guest)).toHaveLength(0);
   });
 
   // ── the 1.2.0 playtest: a PvP match that played like co-op ──────────────
@@ -704,8 +715,14 @@ async function bootPair(beforePump?: (host: MpHook, guest: MpHook) => void): Pro
   return { host, guest, hostEnd, guestEnd };
 }
 
-/** A guest no-op card: the cheapest way to force a host publish on demand. */
-const forcePublish = (guest: MpHook) => guest.buyBlack("nonexistent");
+/**
+ * A guest no-op INTENT: the cheapest way to force a host publish on demand.
+ * (It used to be `buyBlack("nonexistent")`, but L9 (#224) gave the shop a
+ * closed inventory — an unknown card is now refused on the guest and never
+ * relayed. A demolish aimed at the map's corner is refused by the host
+ * instead, which still ends in the intent handler's forced publish.)
+ */
+const forcePublish = (guest: MpHook) => guest.demolish(0, 0);
 
 /** The guest's chooser DOM, scoped to the guest's own root. */
 const guestCrossPanel = () => roots[1].querySelector(".cross-pick");
@@ -856,71 +873,68 @@ function findDrags(
 }
 
 describe("audit regressions: two real games, one room", () => {
-  it("a guest's sabotage hits the HOST's plant — never the guest's own (#111)", async () => {
+  it("a guest's sabotage hits the HOST — never the guest's own seat (#111/#224)", async () => {
     const { host, guest } = await bootPair();
+    playOpening(host, guest);
 
     // Fund the guest's seat on the host (its authoritative purse).
     host.market.players[1].res.gold = 100;
     forcePublish(guest);
     pump();
 
-    // ── Frost Tiles: the guest freezes the host's plant ────────────────────
+    const liveOn = (h: MpHook) => h.grid.industries.filter((i) => i.banditUntil > performance.now());
+
+    // ── the Blockade: the guest stops the HOST's depots ───────────────────
     let gold = guest.purse.gold ?? 0;
-    guest.buyBlack("harden");
+    guest.buyBlack("bandit");
     pump();
-    // The guest's OWN board (host.rivalPlant) has zero hardened cells…
-    expect(host.rivalPlant.status(performance.now()).frozen).toBe(0);
-    expect(guest.board.gems().filter((g) => g.hard > 0)).toHaveLength(0);
-    // …the HOST's plant is frozen, on the host and in the guest's rival view.
-    expect(host.board.gems().filter((g) => g.hard > 0).length).toBeGreaterThan(0);
-    expect(guest.rivalPlant.board.gems().filter((g) => g.hard > 0).length).toBeGreaterThan(0);
-    // …and the attacker paid exactly once.
-    expect(guest.purse.gold).toBe(gold - SABOTAGE.harden.gold);
+    // exactly one industry is blockaded, and both clients agree which
+    expect(liveOn(host).length).toBe(1);
+    expect(liveOn(guest).length).toBe(1);
+    expect(liveOn(guest)[0].id).toBe(liveOn(host)[0].id);
+    // …and the attacker paid exactly once
+    expect(guest.purse.gold).toBe(gold - SABOTAGE.bandit.gold);
+    // L9 (#224): nothing in the shop can dirty a board any more
+    expect(host.board.gems().filter((g) => g.hard > 0 || g.block)).toHaveLength(0);
+    expect(guest.board.gems().filter((g) => g.hard > 0 || g.block)).toHaveLength(0);
 
-    // ── Iron Girders and Smog: same target ─────────────────────────────────
+    // ── the retired cards are refused, not relayed ────────────────────────
     gold = guest.purse.gold ?? 0;
-    guest.buyBlack("block");
-    guest.buyBlack("fog");
+    for (const dead of ["harden", "block", "fog", "repair"]) guest.buyBlack(dead);
     pump();
-    expect(host.board.gems().filter((g) => g.block).length).toBeGreaterThan(0);
-    expect(host.board.fogUntil).toBeGreaterThan(performance.now());
-    expect(guest.rivalPlant.board.gems().filter((g) => g.block).length).toBeGreaterThan(0);
-    expect(guest.rivalPlant.board.fogUntil).toBeGreaterThan(performance.now());
-    expect(guest.board.gems().filter((g) => g.block)).toHaveLength(0);
-    expect(guest.purse.gold).toBe(gold - SABOTAGE.block.gold - SABOTAGE.fog.gold);
+    expect(guest.purse.gold, "a retired card charges nothing").toBe(gold);
+    expect(host.board.gems().filter((g) => g.hard > 0 || g.block)).toHaveLength(0);
+    expect(host.board.fogUntil).toBe(0);
 
-    // ── an unaffordable card charges nothing ───────────────────────────────
-    gold = guest.purse.gold ?? 0;
+    // ── an unaffordable card charges nothing ──────────────────────────────
+    for (const ind of host.grid.industries) ind.banditUntil = 0;   // clean slate
     host.market.players[1].res.gold = 0;
     forcePublish(guest);
     pump();
     gold = guest.purse.gold ?? 0;
-    expect(gold).toBeLessThan(SABOTAGE.harden.gold);
-    guest.buyBlack("harden");
+    expect(gold).toBeLessThan(SABOTAGE.bandit.gold);
+    guest.buyBlack("bandit");
     pump();
     expect(guest.purse.gold).toBe(gold);
-    expect(host.rivalPlant.status(performance.now()).frozen).toBe(0);
-
-    // ── effects clear on both clients ──────────────────────────────────────
-    // The girders expire on the host's authoritative board (its own sweep);
-    // the cleared board crosses the wire and the guest's rival view follows.
-    host.board.tickEffects(performance.now() + 61_000);
-    expect(host.board.gems().filter((g) => g.block)).toHaveLength(0);
-    forcePublish(guest);
-    pump();
-    expect(guest.rivalPlant.board.gems().filter((g) => g.block)).toHaveLength(0);
+    expect(liveOn(host)).toHaveLength(0);
+    expect(liveOn(guest)).toHaveLength(0);
   });
 
   it("the host's sabotage on the guest still lands, through the shared core (#111)", async () => {
     const { host, guest } = await bootPair();
-    host.purse.gold = SABOTAGE.harden.gold;
-    host.buyBlack("harden");
+    playOpening(host, guest);
+    host.purse.gold = SABOTAGE.bandit.gold;
+    host.buyBlack("bandit");
     pump();
-    // Host's own plant untouched; the guest's plant frozen on both clients.
+    // L9 (#224): the effect is on the MAP, and it is the same industry on both
+    // clients — the guest's own depots are the ones that stop ticking.
+    const now = performance.now();
+    const hostHit = host.grid.industries.filter((i) => i.banditUntil > now);
+    const guestHit = guest.grid.industries.filter((i) => i.banditUntil > now);
+    expect(hostHit.length).toBe(1);
+    expect(guestHit.map((i) => i.id)).toEqual(hostHit.map((i) => i.id));
     expect(host.board.gems().filter((g) => g.hard > 0)).toHaveLength(0);
-    expect(host.rivalPlant.status(performance.now()).frozen).toBeGreaterThan(0);
-    expect(guest.board.gems().filter((g) => g.hard > 0).length).toBeGreaterThan(0);
-    expect(guest.rivalPlant.status(performance.now()).frozen).toBe(0);
+    expect(guest.board.gems().filter((g) => g.hard > 0)).toHaveLength(0);
   });
 
   it("a guest's cross choice resolves exactly once, via the typed intent (#112)", async () => {
@@ -1284,8 +1298,14 @@ describe("audit regressions: two real games, one room", () => {
 
     // A REAL change still reaches both views — and even then, surviving gems
     // keep their identities (the restore reuses the sender's ids).
-    host.purse.gold = SABOTAGE.harden.gold;
-    host.buyBlack("harden");
+    //
+    // L9 (#224): this used to be a Frost Tiles purchase. The Black Market is
+    // map sabotage only now — no card can dirty a plant board — so the change
+    // is made on the host's authoritative guest-seat board directly. What is
+    // under test here is the DELTA rule (only changed boards ride), not how
+    // the board came to change; the obstacle model that will drive this in
+    // play lands with the tuning-session obstacles (#225).
+    host.rivalPlant.board.harden(7);
     forcePublish(guest);
     pump();
     const withBoards = (hostEnd.sent.filter((m) => m.type === "delta") as { boards?: { owner: string }[] }[])

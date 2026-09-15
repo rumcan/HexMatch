@@ -121,12 +121,19 @@ export const readSave = (key: string = SAVE_KEY): SaveGamePayload | null => {
     const raw = localStorage.getItem(key);
     if (!raw) return null;
     const d = JSON.parse(raw) as SaveGamePayload;
-    // v10 → v13 adds multiplayer wires (market/protests/vehicles/boards), the
-    // repaired beach and the railway; older saves stay loadable because every
-    // layer added since is either derivable or reads as its empty past — a
-    // v12 save simply has no railway, which is what it was played without.
-    // Seeded placement. Track bytes and every existing placement are intact.
-    if (d.v !== SAVEGAME_VERSION || (d.snapV !== SNAPSHOT_VERSION && d.snapV !== 10 && d.snapV !== 11 && d.snapV !== 12)) return null;
+    // v10 → v14 adds multiplayer wires (market/protests/vehicles/boards), the
+    // repaired beach, the railway and the Blockade wire; older saves stay
+    // loadable because every layer added since is either derivable or reads as
+    // its empty past — a v12 save simply has no railway, which is what it was
+    // played without, and a v13 save carries its blockades in `bandit` (this
+    // file's own field) exactly as it always did. Track bytes and every
+    // existing placement are intact.
+    //
+    // L9 (#224): `snapV` is the MP wire version, which this payload borrows
+    // for its track layers; the SAVE's own shape did not change, so bumping
+    // the wire must not orphan a game somebody is in the middle of.
+    const KNOWN_SNAP_V = new Set([SNAPSHOT_VERSION, 10, 11, 12, 13]);
+    if (d.v !== SAVEGAME_VERSION || !KNOWN_SNAP_V.has(d.snapV)) return null;
     if (typeof d.seed !== "number" || !d.track) return null;
     return d;
   } catch { return null; }

@@ -74,6 +74,33 @@ export const TUNING = {
   targetScore: 60,
   /** Chance a spawned gem is the session depot's own cargo. */
   cargoBias: 0.45,
+  /**
+   * L9 (#224) — THE new-loop Gold source (and the reason `COMBOS_PER_GOLD`
+   * stops paying under the flag).
+   *
+   * Gold used to be minted by the always-on board: every 2 combos banked a
+   * coin. The new loop's board is only up during a tuning session, so that
+   * wire dries up — and Gold is the only currency the Black Market takes.
+   * The replacement keeps Gold inside the loop's own core event rather than
+   * inventing a second economy: **a tuning session pays Gold for its score**,
+   * so the same burst of matching that sets a Depot's yield also funds the
+   * sabotage the player can aim at the rival's map.
+   *
+   *   score 0 (or an abandoned session)   0 Gold — a session you did not play
+   *   any score at all                    at least `minGold`
+   *   `targetScore` and beyond            `maxGold`
+   *
+   * It reaches BOTH seats: the rival takes a simulated session per depot
+   * (`rivalTuningYield`), and the same simulated score pays it the same Gold
+   * (`rivalTuningGold`), so the raid table stays funded at every difficulty.
+   *
+   * The second, map-side source is unchanged and deliberate: Gold is a cargo,
+   * a Gold Mine is an industry, so a Depot that holds one ticks Gold in on the
+   * clock like any other cargo. Connecting a mine is the *bulk* source; the
+   * session reward is the steady one that needs no map luck.
+   */
+  minGold: 1,
+  maxGold: 3,
 } as const;
 
 export const CARGO: Record<Cargo, {

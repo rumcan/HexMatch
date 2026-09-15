@@ -213,6 +213,19 @@ export interface QuarryHooks {
    * purse (and the whole Black Market) never saw it.
    */
   onGold?: (n: number) => void;
+  /**
+   * L9 (#224): `false` cuts the COMBO-GOLD line, the same way `payCargo` cuts
+   * the cargo line. On the new loop the board is only up during a tuning
+   * session, so "2 combos = 1 Gold" would mint the sabotage currency in
+   * bursts tied to how long a session happens to cascade. Gold comes from the
+   * session's SCORE instead (`tuningGoldFor`) and from a Depot that holds a
+   * Gold Mine ticking it in like any other cargo. The combo counter itself
+   * still runs — the HUD's combo bank is feedback about the board, not a
+   * payout — it simply banks nothing.
+   *
+   * Default `true`: the shipped loop, unchanged.
+   */
+  payGold?: boolean;
   /** Per-match summary, cargo-keyed, for the floating gain readout. */
   onGains?: (gains: Partial<Record<Cargo, number>>, label: string) => void;
   /**
@@ -310,7 +323,9 @@ export function createQuarry(
     return false;
   };
   // W5: the coin the board banks on a combo goes straight to the purse.
-  board.onGold = (n: number) => hooks.onGold?.(n);
+  // L9 (#224): …unless this quarry is running the new loop, where the combo
+  // coin is not a Gold source at all (see `payGold`).
+  board.onGold = (n: number) => { if (hooks.payGold !== false) hooks.onGold?.(n); };
   board.onPopup = (gains, label) => {
     // PP-13: the board accumulates a gain ONLY for a harvest `onHarvest` said
     // was paid, so this is exactly what reached the purse — re-gating it here

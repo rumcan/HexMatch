@@ -672,5 +672,9 @@ test("consolidated economy tabs and disabled purchases", async ({ page }) => {
   });
   await expect(page.locator('[data-tool="plant"]')).toBeDisabled();
   await expect(page.locator('[data-act="bank"]')).toBeDisabled();
-  await expect(page.locator('[data-black="harden"]')).toBeDisabled();
+  // L9 (#224): the Black Market sells the two MAP cards and the defence — an
+  // empty purse disables the Gold cards. (Frost Tiles used to stand here.)
+  await expect(page.locator('[data-black="bandit"]')).toBeDisabled();
+  await expect(page.locator('[data-black="protest"]')).toBeDisabled();
+  await expect(page.locator('[data-black="harden"]')).toHaveCount(0);
 });
