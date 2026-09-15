@@ -82,7 +82,7 @@ import {
 import {
   industriesInCatchment, ownerIdOf,
   buildAllComponents, resolveConnection, industryLocks, heldIndustries, lockedIndustryIds,
-  pickBlockadeTarget,
+  pickBlockadeTarget, clockIncome,
   type EconomyState, type Factory, type Harvester,
 } from "./economy";
 // VP-01: the scoreboard lives in its own module now, because what it counts
@@ -408,6 +408,12 @@ export interface IsoGameOptions {
    */
   rail?: boolean;
   /**
+   * L1 (#215): force the new game-loop flag. Absent, it reads `?loop=new` and
+   * is otherwise OFF outside dev builds; a multiplayer room or a story
+   * contract refuses it (they keep the current loop until the MVP lands).
+   */
+  newLoop?: boolean;
+  /**
    * #186: the rules a HOSTED room plays by — the ★ line, the opening purse and
    * the AI seats. The start screen passes the room's copy; absent (or unreadable)
    * falls back to the session's, and then to the shipped defaults, so a solo
@@ -481,6 +487,30 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     try { return new URLSearchParams(location.search).get("rail"); } catch { return null; }
   })();
   const railAvailable = opts.rail ?? (import.meta.env.DEV && railParam === "1");
+  /**
+   * L1 (#223 MVP): the game-loop redesign switch. `opts.newLoop` forces it
+   * (tests, harnesses); `?loop=new` turns it on, but ONLY in a dev build —
+   * production keeps the current loop until the MVP passes playtesting, exactly
+   * like the railway gate above. On, this match plays: clock income instead of
+   * board payouts (see `economyTick`/`clockIncome`), trucks as pure animation,
+   * and no Black Market / Market / Bank tabs (they are converted post-MVP by
+   * #224/#226). Multiplayer rooms and story contracts REFUSE it — they keep the
+   * old loop until the redesign is promoted (the epic's MVP rule) — with a clear
+   * message rather than a silent fallback.
+   */
+  const loopParam = (() => {
+    try { return new URLSearchParams(location.search).get("loop"); } catch { return null; }
+  })();
+  let newLoop = opts.newLoop ?? (import.meta.env.DEV && loopParam === "new");
+  if (newLoop && (isMp() || storyOn)) {
+    newLoop = false;
+    const why = isMp() ? "a multiplayer room" : "a story contract";
+    console.warn(`[loop] ?loop=new is the solo sandbox preview — ${why} keeps the current loop.`);
+    setTimeout(() => toast(
+      `The new game loop is a solo-sandbox preview only — ${why} plays the current loop.`,
+      "info",
+    ), 0);
+  }
   /** The cast member playing the rival: the contract's, else Torvin as ever. */
   const rivalCast = storyChapter ? storyChapter.rival : "torvin";
   /** The player's own cast id, for every line the wire answers in. */
@@ -834,6 +864,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       .map(([c, n]) => `+${n} ${CARGO[c].icon}`).join(" ") + (label ? ` · ${label}` : "");
 
   const quarry: Quarry = createQuarry(eco, "you", {
+    // L1 (#215): under the new loop a match never credits cargo — the clock
+    // pays (see `economyTick`). The quarry still clears gems and runs its
+    // token gate for the board's own rules; only the purse line is cut, and
+    // it is cut INSIDE the quarry so a "+N" can never be advertised for a
+    // payout that never happened.
+    payCargo: !newLoop,
     onHarvest: (cargo, amount) => {
       earn(me, { [cargo]: amount });
       if (cargo === "oil" && amount > 0) onFirstOilHarvest();
@@ -850,11 +886,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       sfx.play("coin");
       toast(`+${n} Gold from combos 🪙`, "good");
     },
-    onGains: (gains, label) => toast(gainText(gains, label), "good"),
     // A1: the floating readout over the board. `ui` does not exist yet at
     // this point (the HUD is built below), but this closure is only ever
     // called by a match, long after boot.
-    onPopup: (gains, label) => ui.popup(gains, label),
+    // L1: the board's own chain/cross rewards still accumulate `+1`s in the
+    // gains map even though the purse line is cut — under `newLoop` the
+    // readout shows the LABEL only (combo/chain feedback stays), never a "+N"
+    // for cargo nobody was paid.
+    onGains: (gains, label) => {
+      if (newLoop) { if (label) toast(label, "good"); return; }
+      toast(gainText(gains, label), "good");
+    },
+    onPopup: (gains, label) => ui.popup(newLoop ? {} : gains, label),
     onTokens: (pool) => toast(`Tokens: ${(Object.keys(pool) as ResKey[])
       .map((r) => CARGO[GEM_TO_CARGO[r]].name).join(", ")}`, "info"),
     onChange: () => onBoardChange(),
@@ -1094,7 +1137,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // in a hosted game, so the selector is simply not built.
     onSkill: isSolo() ? (key) => setRivalSkill(key) : undefined,
     skill: isSolo() ? skillKey : undefined,
-  }, { rail: railAvailable });
+  // L1 (#215): with the new loop on, the Market and Bank tabs and the Black
+  // Market are hidden — they are converted post-MVP (#224/#226).
+  }, { rail: railAvailable, newLoop });
   onBoardChange = () => ui.renderBoard();
   root.appendChild(ui.el);
 
@@ -1164,6 +1209,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       tutorialView = showTutorial(ui.el, {
         vpTarget: winTarget(),
         freeTrack: me.freeTrack,
+        // L1 (#215): the tour voices the loop the match actually plays.
+        newLoop,
       });
       // Always yield, tour or no tour: the rest of this chain reads `disposed`
       // (declared with the other boot state at the top of this function), and a
@@ -1356,6 +1403,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // watch it work.
   const rivalBoard = rivalPlant.board;
   rivalQuarry = createQuarry(eco, "ai", {
+    // L1 (#215): under the new loop the rival earns on the same clock you do
+    // (see `economyTick`), so its autoplayed board pays no cargo — only its
+    // combo Gold keeps running, exactly as the player's own board does.
+    payCargo: !newLoop,
     onHarvest: (cargo, amount) => earn(rival, { [cargo]: amount }),
     onBlocked: () => {},
     onGold: (n) => {
@@ -3102,10 +3153,45 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   /** The sabotage cards `rivalRaid` knows how to aim at the player's plant. */
   const RAID_ACTIONS = new Set(["harden", "block", "fog"]);
   /**
-   * PP-07: the fractional remainder of the rival's trickle yield, carried
-   * across ticks so sub-1 rates (Oil Rig 0.4/tick, Gold Mine 0.3/tick) still
-   * pay out over time instead of rounding to zero forever.
+   * L1 (#215): the new loop's per-depot fractional remainder, carried across
+   * ticks so sub-1 rates (Oil Rig 0.4/tick, Gold Mine 0.3/tick) still pay out
+   * over time instead of rounding to zero forever — the PP-07 `trickleCarry`
+   * idea, keyed per depot-and-cargo because `clockIncome` credits per Depot.
+   * Deliberately NOT saved: at most a tick's dust is lost across a reload, and
+   * a live carry on the harvester record would float the guest off the host's
+   * purse parity for nothing.
    */
+  const clockCarry = new Map<string, Partial<Record<Cargo, number>>>();
+
+  /**
+   * L1: one clock income pass for BOTH seats — every connected Depot credits
+   * its held industries at `baseRate × yield × distance × transport` (the
+   * factor functions live in `economy.ts`; #216/#217/#218 fill them in).
+   */
+  function payClockIncome(now: number) {
+    for (const p of players) {
+      let gained: Purse | null = null;
+      for (const inc of clockIncome(eco, p.id, now)) {
+        const key = `${inc.harvester.id}:${inc.cargo}`;
+        const carry = clockCarry.get(key) ?? {};
+        const acc = (carry[inc.cargo] ?? 0) + inc.amount;
+        const whole = Math.floor(acc);
+        carry[inc.cargo] = acc - whole;
+        clockCarry.set(key, carry);
+        if (whole > 0) {
+          gained ??= {};
+          gained[inc.cargo] = (gained[inc.cargo] ?? 0) + whole;
+        }
+      }
+      if (gained) {
+        earn(p, gained);
+        // Torvin's oil banter was armed by the first oil through the board;
+        // under the new loop the clock IS the oil line, so arm it here too.
+        if ((gained.oil ?? 0) > 0 && p === me) onFirstOilHarvest();
+      }
+    }
+  }
+
   function economyTick(now: number) {
     // MP-05: a guest runs no economy at all — its cargo, purses and VPs arrive
     // in deltas. Harvest ticks here would credit purses the host overwrites and
@@ -3124,6 +3210,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // and both boards' token gates derive from the reachable set.
     quarry.refresh(now);
     rivalQuarry.refresh(now);
+    // L1 (#215): with `newLoop` the CLOCK is the income path for both seats:
+    // each connected Depot credits its cargo here (and the board's purse line
+    // is switched off in `quarry.ts` — `payCargo: false`). The rival earns on
+    // this same function, so its autoplay no longer feeds its purse either.
+    if (newLoop) payClockIncome(now);
   }
 
   /** Per frame: board effects, the token spawn, and the market clock. */
@@ -3141,7 +3232,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // a person: the host must not post offers on their behalf.
     // #186: an AI-FILLED seat is the exception — the host is that seat's player,
     // so its offers are posted here exactly as they are in solo.
-    if (isSolo() || aiOpponent) rivalMarketOffer(now);
+    // L1 (#215): with the Market tab hidden there is nothing to post into —
+    // the rival keeps its offers to itself until the loop work (#226) lands.
+    if ((isSolo() || aiOpponent) && !newLoop) rivalMarketOffer(now);
     quarry.tick(now);
     // AI-03: the rival's own plant plays: same board clock as yours, then
     // one watchable move per skill().moveMs. trySwap refuses politely when
@@ -5410,7 +5503,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             phase = "play";
             lastHarvest = performance.now();
             lastAi = performance.now();
-            toast("Now connect it to your Factory with a Dirt Road or a paved Road — then match the tokened gems in the Processing Plant.", "info");
+            toast(newLoop
+              ? // L1 (#215): the new loop pays cargo on the clock — the copy
+                // matches what the game actually does (short and honest for
+                // the interim state: the board still exists, it just no
+                // longer pays). #222 (L8) writes the final wording.
+                "Connect it to your Factory with a Dirt Road or a paved Road — connected Depots then deliver their cargo into your purse on the clock."
+              : "Now connect it to your Factory with a Dirt Road or a paved Road — then match the tokened gems in the Processing Plant.", "info");
           }
         } else if (phase === "play") {
           // A bought protest intercepts the click: it stages on a public road
@@ -5661,6 +5760,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // income — the host owns both seats' boards and their payouts.
     if (isGuest()) return;
     if (phase !== "play") return;
+    // L1 (#215): under the new loop a lorry's arrival creates no board token
+    // and credits nothing — the clock pays (payClockIncome). The trucks keep
+    // running their routes as pure animation until #221 (L7) makes their
+    // speed honest. The flag never flips mid-match, so the seen-delivery
+    // bookkeeping below simply stays unwritten.
+    if (newLoop) return;
     const mine = ownerIdOf(eco, "you");
     for (const truck of trucks.trucks) {
       const seen = seenDeliveries.get(truck.depotId) ?? 0;
@@ -7077,6 +7182,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     aiTick: (now = performance.now()) => aiTick(now),
     /** The per-frame harvest clock (the rival's passive income lives here). */
     econTick: (now = performance.now()) => economyTick(now),
+    /** L1 (#215): did this boot come up on the new loop (`?loop=new`, or a
+     *  refusable mode that dropped it)? Tests and playtests read the truth
+     *  instead of inferring it from behaviour. */
+    get newLoop() { return newLoop; },
+    /** L1 (#215): write the autosave NOW — the 5 s interval's test twin, so a
+     *  save/restore assertion does not have to outwait a timer. */
+    saveNow: () => saveNow(),
     /**
      * The test twin of finishing the setup clicks (factory + first
      * harvester): it is what flips the game into `play`, which the AI and

@@ -98,6 +98,9 @@ export function base64ToBytes(b64: string): Uint8Array {
 // ── wire shape ────────────────────────────────────────────────────────────
 export interface WireHarvester {
   id: number; owner: string; ownerId: number; tx: number; ty: number;
+  /** L1 (#215): the Depot's yield level, optional so v-before-L1 snapshots
+   *  still decode (an absent field reads as the default 1 in `depotYield`). */
+  yieldLevel?: number;
 }
 
 export interface WirePlayer {
@@ -358,7 +361,13 @@ export function buildSnapshot(src: SnapshotSource): Snapshot {
     road: bytesToBase64(src.track.road),
     owner: bytesToBase64(src.track.owner),
     upgraded: bytesToBase64(src.track.upgraded),
-    harvesters: src.harvesters.map((h) => ({ id: h.id, owner: h.owner, ownerId: h.ownerId, tx: h.tx, ty: h.ty })),
+    // L1 (#215): `yieldLevel` rides the wire — `undefined` fields are dropped
+    // by JSON, so an old-loop snapshot costs nothing and a new-loop one keeps
+    // host and guest in agreement about what each Depot multiplies.
+    harvesters: src.harvesters.map((h) => ({
+      id: h.id, owner: h.owner, ownerId: h.ownerId, tx: h.tx, ty: h.ty,
+      yieldLevel: h.yieldLevel,
+    })),
     factories: src.factories.map((f) => ({ ...f })),
     players: src.players.map((p) => ({ ...p, res: { ...p.res } })),
     rivalSabotage: src.rivalSabotage

@@ -183,6 +183,15 @@ export interface TutorialContext {
   vpTarget: number;
   /** Dirt-road tiles the setup allowance pays for. */
   freeTrack: number;
+  /**
+   * L1 (#215): the tour lines up with the loop the match actually plays.
+   * With the new loop on, cargo ticks in from connected Depots on the
+   * clock — the board no longer pays the purse, so the tour must not say
+   * it does. #222 (L8) writes the final tour for the redesign; until then
+   * this only re-voices the two lines L1 invalidates. Default false: the
+   * shipped loop copy.
+   */
+  newLoop?: boolean;
 }
 
 /**
@@ -221,12 +230,19 @@ export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
           { icon: "📦", label: "Cargo" },
           { icon: "★", label: "Expand" },
         ],
-        caption: "Cargo paid by the board buys the next Depot, the next road and the next plant.",
+        caption: ctx.newLoop
+          ? "Cargo paid by the clock buys the next Depot, the next road and the next plant."
+          : "Cargo paid by the board buys the next Depot, the next road and the next plant.",
       },
       points: [
         "A <b>resource node</b> (farm, forest, ore mine, quarry, oil rig) makes cargo. A <b>Depot</b> built within its reach picks that cargo up.",
         "<b>Roads</b> carry it to your <b>Processing Plant</b> — a lorry starts the run the instant the two are connected, and that lorry is the connection made visible.",
-        "Inside the plant you play <b>match-3</b>: every delivery stamps a cargo token onto a gem, and matching tokened gems pays the cargo into your purse.",
+        // L1 (#215): with the new loop the clock pays, not the board. The
+        // plant stays open (combo Gold, and the yield tuning #218 lands
+        // next) — the line below must not promise cargo for a gem match.
+        ctx.newLoop
+          ? "Cargo now ticks in from every <b>connected Depot</b> on the clock. The plant's <b>match-3</b> stays open: it still clears gems and banks combo Gold, and it is about to learn a new job."
+          : "Inside the plant you play <b>match-3</b>: every delivery stamps a cargo token onto a gem, and matching tokened gems pays the cargo into your purse.",
         "Purse cargo buys more Depots, more road and more plants — and a rival is doing exactly the same thing on the other side of the island.",
       ],
       tip: `Six cargoes, six gem colours: ${CARGOES.map((c) => `${CARGO[c].icon} ${CARGO[c].name}`).join(" · ")}.`,
@@ -538,6 +554,7 @@ export function showTutorial(host: HTMLElement, opts: TutorialOptions = {}): Tut
   const ctx: TutorialContext = {
     vpTarget: opts.vpTarget ?? VICTORY.target,
     freeTrack: opts.freeTrack ?? 0,
+    newLoop: opts.newLoop ?? false,
   };
   const steps = buildTutorialSteps(ctx);
   let index = 0;

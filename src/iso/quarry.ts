@@ -188,6 +188,13 @@ export interface QuarryHooks {
   /** A token was matched and paid: a reachable cargo, or a forged token. */
   onHarvest?: (cargo: Cargo, amount: number) => void;
   /**
+   * L1 (#215): `false` turns the board's PURSE line off — a matched token
+   * still clears, cascades and labels still fire, but nothing is credited and
+   * the harvest answers 0 so the board's own gain accumulator (and every
+   * "+N" readout built from it) stays honest. Default: `true`, the old loop.
+   */
+  payCargo?: boolean;
+  /**
    * A NETWORK token was matched but the line is down: refused, so the player
    * learns. A forged token never arrives here (PP-13) — it always pays.
    */
@@ -266,6 +273,12 @@ export function createQuarry(
   // exact bug this ticket exists to prevent. Recomputing the reachable set is
   // one flood fill over the two track layers, so paying it per token is free.
   board.onHarvest = (res: ResKey, amount: number, forged: boolean) => {
+    // L1 (#215): the new loop's board does not pay cargo — answer 0 ("paid
+    // nothing") before the gate runs, so neither the purse hook nor the
+    // board's gain accumulation (which feeds the floating "+N") fires, and
+    // the refused-token toast stays silent too: nothing was lost, because
+    // nothing was owed. Gems still clear, cascades still cascade.
+    if (hooks.payCargo === false) return 0;
     const cargo = GEM_TO_CARGO[res];
     reach = reachableCargo(state, owner, performance.now());
     // PP-13: a FORGED token — the tier-1 gem a 4-in-a-row mints (tier-2 for

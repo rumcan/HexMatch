@@ -376,6 +376,13 @@ const isPhoneViewport = (): boolean => {
  *  until #179/#181 land). */
 export interface OriginalUiOptions {
   rail?: boolean;
+  /**
+   * L1 (#215): the new-loop MVP shows the solo sandbox only — with the flag
+   * on, the Market and Bank tabs are not built (and the Black Market, which
+   * lives inside the Bank pane with them). They are converted post-MVP by
+   * #224/#226; until then the new loop has nothing for them to trade.
+   */
+  newLoop?: boolean;
 }
 
 export function createOriginalUi(
@@ -625,7 +632,15 @@ export function createOriginalUi(
   tabFeed.onclick = () => setTab("feed");
   const tabPlant = h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.plant}</i><span class="tab-l">Processing Plant</span>`);
   tabPlant.onclick = () => setTab("plant");
-  tabs.append(tabBank, tabMarket, tabPlant, tabFeed);
+  // L1 (#215): the new-loop MVP hides trading. The Market/Bank buttons and
+  // their panes are BUILT as ever (the market engine below composes into the
+  // detached panes exactly as before — no half-built code path) but never
+  // appended, so no tab can open a pane the new loop has nothing to trade in.
+  // The Black Market rides along: it lives inside the Bank pane. #224/#226
+  // decide what returns when the tabs are converted.
+  const tradeHidden = opts.newLoop === true;
+  if (!tradeHidden) tabs.append(tabBank, tabMarket);
+  tabs.append(tabPlant, tabFeed);
   tp.appendChild(tabs);
   [tabBank, tabMarket, tabPlant, tabFeed].forEach((tab, i) => {
     tab.dataset.tab = ["bank", "market", "plant", "feed"][i];
@@ -633,7 +648,8 @@ export function createOriginalUi(
   const marketPane = h("div", "pane market-pane");
   const bankPane = h("div", "pane bank-pane hidden");
   const feedPane = h("div", "pane feed-pane hidden");
-  tp.appendChild(marketPane); tp.appendChild(bankPane); tp.appendChild(feedPane);
+  if (!tradeHidden) { tp.appendChild(marketPane); tp.appendChild(bankPane); }
+  tp.appendChild(feedPane);
   tp.appendChild(qp);
   rightAside.appendChild(tp);
   root.appendChild(rightAside);

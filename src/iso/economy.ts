@@ -56,6 +56,16 @@ export interface Harvester {
   ownerId: number;
   tx: number;
   ty: number;
+  /**
+   * L1 (#215): the Depot's yield LEVEL — a per-depot multiplier on its clock
+   * income. #218 (L4) will set it from the match-3 session that raises the
+   * Depot, #220 (L6) will default it per difficulty; until they land every
+   * Depot reads `undefined` and `depotYield` answers 1. Optional on purpose:
+   * saves and snapshots written before L1 carry no field and restore at the
+   * default. It rides `buildSnapshot` (wire) and the save's wholesale
+   * harvester list, so host/guest and save/restore agree on it.
+   */
+  yieldLevel?: number;
 }
 
 /**
@@ -501,6 +511,94 @@ export function playerResources(
   const railYields = railYield(state, owner, now, byRoad);
   for (const [cargo, v] of Object.entries(railYields) as [Cargo, number][]) {
     out[cargo] = (out[cargo] ?? 0) + v;
+  }
+  return out;
+}
+
+// ── L1 (#215): clock income — the new loop's pay line ─────────────────────
+/**
+ * The redesign replaces "a match credits the purse" with "a connected Depot
+ * pays on the clock". The per-tick amount of one Depot is
+ *
+ *     baseRate × depotYield(h) × distanceFactor(state, h) × transportFactor(state, h)
+ *
+ * and the epic's wave-2 contract says L1 ships one function PER FACTOR, each
+ * answering `1`, so #216/#217/#218 each fill exactly one of them and never
+ * touch the tick loop itself. Keep it that way.
+ */
+
+/** The Depot's yield level (L4 sets it from the match, L6 defaults it per
+ *  difficulty). Until both land, an unset level means 1 — pay at base rate. */
+export function depotYield(h: Harvester): number {
+  return h.yieldLevel ?? 1;
+}
+
+/** Distance factor — a seam for #217 (L3: distance affects tick rate). */
+export function distanceFactor(_state: EconomyState, _h: Harvester): number {
+  return 1;
+}
+
+/** Transport factor — a seam for #216 (L2: free dirt, rail is the paid
+ *  upgrade). Note it REPLACES the old `connection.multiplier` here: under the
+ *  new loop road quality multiplies the tick itself, and L2 fills this in. */
+export function transportFactor(_state: EconomyState, _h: Harvester): number {
+  return 1;
+}
+
+/** One Depot's per-tick credit of one cargo — `clockIncome`'s row. */
+export interface ClockGain {
+  harvester: Harvester;
+  cargo: Cargo;
+  /** EXACT (fractional) credit for this tick — `base × yield × factors`.
+   *  The caller carries the fractional remainder per depot so sub-1 rates
+   *  still pay over time (the old PP-07 `trickleCarry` discipline). */
+  amount: number;
+}
+
+/**
+ * What every CONNECTED Depot of `owner` pays this tick, one row per
+ * depot-cargo pair. This is the new loop's income path (L1): the purse grows
+ * here, not from a gem match or a lorry arrival.
+ *
+ * The gate keeps the network honest, in the same shape `harvesterYield` uses
+ * — "a depot only ticks if `playerResources` reaches it":
+ *   • the Depot must be serviced (a road or rail at its tile) AND connected to
+ *     one of the owner's plants (`resolveConnection`); cut the line and the
+ *     Depot's rows simply stop appearing, reconnect and they resume;
+ *   • only the industries the Depot HOLDS count (PP-16's `industryLocks`
+ *     first-come exclusivity), and a blockaded industry (`banditUntil`) pays
+ *     nothing while the blockade runs;
+ *   • the base rate is the industry's own output — no connection multiplier:
+ *     road quality is `transportFactor`'s job from #216 on.
+ *
+ * Rail platforms without a road-connected Depot are NOT paid here yet — like
+ * the gate above, that is #216's `transportFactor`/rail upgrade work.
+ */
+export function clockIncome(
+  state: EconomyState, owner: string, now: number, comp?: Components,
+): ClockGain[] {
+  const out: ClockGain[] = [];
+  const ownerId = ownerIdOf(state, owner);
+  if (ownerId === 0) return out;
+  const locks = industryLocks(state);
+  const c = comp ?? buildAllComponents(state.track, ownerId);
+  for (const h of state.harvesters) {
+    if (h.owner !== owner) continue;
+    if (!isServiced(state.track, h, state.rail)) continue;
+    if (resolveConnection(state, c, h).kind === null) continue;
+    const mult = depotYield(h) * distanceFactor(state, h) * transportFactor(state, h);
+    if (!(mult > 0)) continue;   // a zeroed yield (L6 decay) pays nothing
+    const base: Partial<Record<Cargo, number>> = {};
+    for (const ind of heldIndustries(state, h, locks)) {
+      if (ind.banditUntil > now) continue;                 // blockaded
+      const def = INDUSTRY_BY_KEY[ind.type];
+      if (!def) continue;
+      base[def.cargo] = (base[def.cargo] ?? 0) + (ind.output ?? def.output);
+    }
+    for (const [cargo, b] of Object.entries(base) as [Cargo, number][]) {
+      const amount = b * mult;
+      if (amount > 0) out.push({ harvester: h, cargo, amount });
+    }
   }
   return out;
 }
