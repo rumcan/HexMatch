@@ -877,8 +877,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // quarry so the board's own gain accumulator, and every "+N cargo" pop
     // built from it, can never advertise a payout that did not happen. Gems
     // still clear and cascades still cascade: matching is what sets a Depot's
-    // yield. The RIVAL's seat is untouched (#235 gives it the same clock),
-    // as are combo Gold below and the board's cross/bonus rewards (#227).
+    // yield. The RIVAL's seat is cut the same way (#235 gave it the same
+    // clock); combo Gold below and the board's cross/bonus rewards stay
+    // wired on both seats (#227 re-homes them).
     payCargo: !newLoop,
     onHarvest: (cargo, amount) => {
       earn(me, { [cargo]: amount });
@@ -924,6 +925,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // quarry does; what it must never do is toast the human about the rival's
   // private matches, so its UI surface says nothing — except when its own
   // peek panel is open (see `openRivalPlantView` below).
+  //
+  // L1d (#235): on the new loop that purse line is cut for the rival exactly
+  // as #234 cut it for the player (`payCargo: false`) — the rival earns on the
+  // clock from its connected depots instead, in the same `economyTick` pass.
+  // The board stays ALIVE (the autoplay keeps running) because two things
+  // still need it: it is the plant you can watch from the peek panel, and it
+  // is the body sabotage lands on — ice and girders only clear because
+  // somebody keeps playing. Its combo Gold is untouched (#227 re-homes Gold).
   let rivalQuarry: Quarry;
 
   /** AI-03: the peek panel handle (set when the player opens it). */
@@ -1423,6 +1432,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // watch it work.
   const rivalBoard = rivalPlant.board;
   rivalQuarry = createQuarry(eco, "ai", {
+    // L1d (#235): mirror of #234 for the "ai" seat — a matched token on the
+    // rival's plant clears, cascades and banks its combo Gold, but it credits
+    // no cargo. `payCargo` is cut INSIDE the quarry (not by muting
+    // `onHarvest`) so the board's own gain accumulator can never advertise a
+    // "+N cargo" the rival was not paid, and no "no route — N lost" is raised
+    // for cargo nobody owed it.
+    payCargo: !newLoop,
     onHarvest: (cargo, amount) => earn(rival, { [cargo]: amount }),
     onBlocked: () => {},
     onGold: (n) => {
@@ -3342,7 +3358,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   // ── economy + AI clocks ────────────────────────────────────────────────
   let lastHarvest = 0, lastAi = 0;
-  /** Fractional new-loop income retained per depot until it reaches one. */
+  /** Fractional new-loop income retained per depot (either seat) until it
+   *  reaches one whole unit. Depot ids are unique, so one map serves both. */
   const loopCarry = new Map<number, number>();
   /** A1: Security Forces are on duty until this wall time. */
   let securityUntil = 0;
@@ -3353,9 +3370,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   /** The sabotage cards `rivalRaid` knows how to aim at the player's plant. */
   const RAID_ACTIONS = new Set(["harden", "block", "fog"]);
   /**
-   * PP-07: the fractional remainder of the rival's trickle yield, carried
-   * across ticks so sub-1 rates (Oil Rig 0.4/tick, Gold Mine 0.3/tick) still
-   * pay out over time instead of rounding to zero forever.
+   * The income clock — one call every `HARVEST_MS`, host only, `play` only.
+   *
+   *   • new loop (L1b/L1d): BOTH seats are paid by their connected depots,
+   *     `BASE_RATE × depotYield × distanceFactor × transportFactor` per depot,
+   *     with the fractional remainder carried in `loopCarry` (the PP-07 rule:
+   *     a sub-1 rate still pays out over time instead of rounding to zero
+   *     forever). Nothing else pays cargo — the boards and the lorries are
+   *     animation (#234, #235).
+   *   • shipped loop: nobody is paid here at all (AI-03 removed the rival's
+   *     passive trickle); the clock only re-reads the network so both boards'
+   *     token gates follow blockades expiring.
    */
   function economyTick(now: number) {
     // MP-05: a guest runs no economy at all — its cargo, purses and VPs arrive
@@ -3371,25 +3396,35 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // catches everything else (a restored save, a depot built before the
       // redesign). Idempotent: a depot that already has a level is left alone.
       applyRivalTuning();
-      // L1b: the host clocks only the local seat. Connectivity is evaluated
-      // per depot, so removing a road immediately stops that depot's income.
-      const owner = me.id;
-      const components = buildAllComponents(eco.track, ownerIdOf(eco, owner));
+      // L1b: the host clocks the local seat. L1d (#235): and the rival's too —
+      // both seats earn on the clock through the SAME seams, the same
+      // `harvesterYield` connectivity gate and the same per-depot fractional
+      // carry, so "the rival is paid by its own connected depots" needs no
+      // second rule set. `newLoop` is solo-only (L1a), which is exactly the
+      // game where seat 1 is a machine; in a room the host's guest is a person
+      // and this branch never runs.
+      // Connectivity is evaluated per depot, so removing a road immediately
+      // stops that depot's income — on either seat.
       const locks = industryLocks(eco);
-      for (const depot of eco.harvesters) {
-        if (depot.owner !== owner) continue;
-        const result = harvesterYield(eco, components, locks, depot, now);
-        const cargoes = Object.entries(result.yields) as [Cargo, number][];
-        if (!result.serviced || !cargoes.length) continue;
-        const factor = BASE_RATE * depotYield(depot) * distanceFactor(depot) * transportFactor(depot);
-        const total = cargoes.reduce((sum, [, amount]) => sum + amount, 0) * factor
-          + (loopCarry.get(depot.id) ?? 0);
-        const whole = Math.floor(total);
-        loopCarry.set(depot.id, total - whole);
-        if (whole > 0) {
-          // A depot normally holds one industry/cargo; use the first cargo for
-          // the integer credit and retain any sub-unit remainder per depot.
-          earn(me, { [cargoes[0][0]]: whole } as Purse);
+      for (const seat of [me, rival]) {
+        const owner = seat.id;
+        const components = buildAllComponents(eco.track, ownerIdOf(eco, owner));
+        for (const depot of eco.harvesters) {
+          if (depot.owner !== owner) continue;
+          const result = harvesterYield(eco, components, locks, depot, now);
+          const cargoes = Object.entries(result.yields) as [Cargo, number][];
+          if (!result.serviced || !cargoes.length) continue;
+          const factor = BASE_RATE * depotYield(depot) * distanceFactor(depot) * transportFactor(depot);
+          const total = cargoes.reduce((sum, [, amount]) => sum + amount, 0) * factor
+            + (loopCarry.get(depot.id) ?? 0);
+          const whole = Math.floor(total);
+          loopCarry.set(depot.id, total - whole);
+          if (whole > 0) {
+            // A depot normally holds one industry/cargo; use the first cargo
+            // for the integer credit and retain any sub-unit remainder per
+            // depot (one map serves both seats: depot ids are unique).
+            earn(seat, { [cargoes[0][0]]: whole } as Purse);
+          }
         }
       }
       return;
@@ -5966,12 +6001,29 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   }
 
   /**
+   * The lorry reservation a board's token clock has to keep its hands off.
+   *
+   * Shipped loop: the cargoes this seat's lorries carry — an arrival mints
+   * their tokens, so the clock must not spawn them too (that was the A1
+   * double-pay). New loop (L1c/L1d, #234/#235): no arrival mints anything on
+   * either seat, so there is nothing to reserve — and if the reservation
+   * stayed, the spawn clock would go quiet for exactly the connected cargoes
+   * and the boards would have no tokens to match. The player's board only ever
+   * comes up for a tuning session (which fills its own plate), but the rival's
+   * plant is the one you can WATCH, and it still banks combo Gold on the
+   * matches its tokens allow (#227 owns Gold) — so its clock keeps feeding it.
+   */
+  const truckServedCargos = (now: number, owner: "you" | "ai"): Cargo[] =>
+    (newLoop ? [] : truckCargos(trucks.trucks, now, owner));
+
+  /**
    * Turn every lorry arrival since the last frame into a delivery: one token
    * of that depot's cargo on the board, one "+N" over the Factory.
    *
    * L1c (#234): with the new loop on your seat's arrivals are animation only —
    * the lorry still drives its route, but it lands no token and no "+N" (the
-   * clock pays the cargo now). See the branch inside.
+   * clock pays the cargo now). L1d (#235) made that BOTH seats: on the new
+   * loop no lorry delivery pays anybody. See the branches inside.
    */
   function collectDeliveries(t: number) {
     // MP-05: a lorry reaching a factory on a guest's screen is animation, not
@@ -5989,12 +6041,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // frame keeps driving them (they leave, arrive and turn around exactly
         // as before) but an arrival mints no token and credits nothing: the
         // clock pays. Their cargoes stay in `seenDeliveries` above so the
-        // ledger cannot drift, and the RIVAL's lane below is untouched (#235
-        // gives the rival the same clock on its own ticket).
+        // ledger cannot drift, and the RIVAL's lane below now says the same
+        // thing (#235 gave the rival the same clock).
         if (newLoop) continue;
         for (let i = 0; i < due; i++) deliverLoad(truck, t);
       } else if (truck.ownerId === rival.i + 1) {
         // AI-02: the rival's lorries DO feed its game — see rivalDeliverLoad.
+        // L1d (#235): …on the shipped loop. Under the new loop the rival earns
+        // on the clock, so its arrivals are animation exactly like the
+        // player's: the lorry still drives, but it mints no token, floats no
+        // "+N" and credits nothing. The ledger above is written either way, so
+        // the arrival count cannot drift.
+        if (newLoop) continue;
         for (let i = 0; i < due; i++) rivalDeliverLoad(truck, t);
       }
     }
@@ -6815,8 +6873,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           // AI-03: the replan no longer resets driving lorries — see
           // planTrucksTrucksMerge just above trucksTick. seenDeliveries is
           // keyed by the stable depot id, so the ledger survives every replan.
-          quarry.setTruckServed(truckCargos(trucks.trucks, t));
-          rivalQuarry.setTruckServed(truckCargos(trucks.trucks, t, "ai"));
+          quarry.setTruckServed(truckServedCargos(t, "you"));
+          rivalQuarry.setTruckServed(truckServedCargos(t, "ai"));
           // a vanished truck must not linger as a ghost on the structures layer
           renderer?.setWorld(world);
         }
@@ -7089,8 +7147,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         trucks.trucks = planTrucksTrucksMerge(trucks.trucks, planTrucks(eco));
         cars.cars = planCars(track, grid, cars.cars, carCount, seed);
         trucksDirty = false;
-        quarry.setTruckServed(truckCargos(trucks.trucks, now));
-        rivalQuarry.setTruckServed(truckCargos(trucks.trucks, now, "ai"));
+        quarry.setTruckServed(truckServedCargos(now, "you"));
+        rivalQuarry.setTruckServed(truckServedCargos(now, "ai"));
       }
       tickTrucks(trucks, dtMs, protests.size > 0 ? new Set(protests.keys()) : undefined);
       tickCars(cars, dtMs, track, grid, seed);
@@ -7140,6 +7198,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     get panKeys() { return [...panKeys]; },
     /** Refresh the reachable set now (spawn tokens for newly reached cargo). */
     refreshQuarry: (now = performance.now()) => quarry.refresh(now),
+    /**
+     * The twin of what every build and demolish does after it commits: rescore
+     * the board, mark the lorries dirty and re-read BOTH seats' reach. A
+     * harness that hands a seat a network by pushing records (the rival's
+     * corridor in #235's fixtures) has no click to trigger it, and
+     * `refreshQuarry` above only ever re-reads the LOCAL seat's.
+     */
+    rescore: () => rescoreNow(),
     /** Story test twin of the player's first successful Oil harvest. */
     firstOilHarvest: () => onFirstOilHarvest(),
     /** Story test twin of the idle wire: one Torvin saying / dad-joke exchange
