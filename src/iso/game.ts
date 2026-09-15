@@ -82,7 +82,7 @@ import {
 import {
   industriesInCatchment, ownerIdOf,
   buildAllComponents, resolveConnection, industryLocks, heldIndustries, lockedIndustryIds,
-  pickBlockadeTarget,
+  pickBlockadeTarget, harvesterYield,
   type EconomyState, type Factory, type Harvester,
 } from "./economy";
 // VP-01: the scoreboard lives in its own module now, because what it counts
@@ -111,9 +111,10 @@ import {
 } from "./plants";
 import {
   CARGO, CARGOES, FACTORY_FOOTPRINT, FACTORY_SPRITE, INDUSTRY_BY_KEY, TRANSPORT,
-  VICTORY, VP_TARGET, UPGRADE_COST,
+  BASE_RATE, VICTORY, VP_TARGET, UPGRADE_COST,
   depotSpriteForCargo, type Cargo, type Portrait,
 } from "./config";
+import { depotYield, distanceFactor, transportFactor } from "./loop";
 import {
   DEPOT_COST, FREE_SETUP_DEPOTS, costCompact, costLabel, priceDepot, shortfallLabel,
 } from "./construction";
@@ -3115,6 +3116,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   // ── economy + AI clocks ────────────────────────────────────────────────
   let lastHarvest = 0, lastAi = 0;
+  /** Fractional new-loop income retained per depot until it reaches one. */
+  const loopCarry = new Map<number, number>();
   /** A1: Security Forces are on duty until this wall time. */
   let securityUntil = 0;
   /** #111: the guest seat's own Security Forces guard (armed by its hire). */
@@ -3136,6 +3139,30 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (phase !== "play") return;
     if (now - lastHarvest < HARVEST_MS) return;
     lastHarvest = now;
+    if (newLoop) {
+      // L1b: the host clocks only the local seat. Connectivity is evaluated
+      // per depot, so removing a road immediately stops that depot's income.
+      const owner = me.id;
+      const components = buildAllComponents(eco.track, ownerIdOf(eco, owner));
+      const locks = industryLocks(eco);
+      for (const depot of eco.harvesters) {
+        if (depot.owner !== owner) continue;
+        const result = harvesterYield(eco, components, locks, depot, now);
+        const cargoes = Object.entries(result.yields) as [Cargo, number][];
+        if (!result.serviced || !cargoes.length) continue;
+        const factor = BASE_RATE * depotYield(depot) * distanceFactor(depot) * transportFactor(depot);
+        const total = cargoes.reduce((sum, [, amount]) => sum + amount, 0) * factor
+          + (loopCarry.get(depot.id) ?? 0);
+        const whole = Math.floor(total);
+        loopCarry.set(depot.id, total - whole);
+        if (whole > 0) {
+          // A depot normally holds one industry/cargo; use the first cargo for
+          // the integer credit and retain any sub-unit remainder per depot.
+          earn(me, { [cargoes[0][0]]: whole } as Purse);
+        }
+      }
+      return;
+    }
     // AI-03: BOTH seats earn through a Processing Plant board now — yours is
     // the one in the HUD, the rival's is the autoplayed one you can open
     // from its topbar button. The rival-only passive trickle this used to
