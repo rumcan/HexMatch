@@ -1068,9 +1068,14 @@ function makeRun(board: Board, res: ResKey, r: number, c: number, token?: Gem) {
   board.grid[r][c + 2]!.res = ALT(res);
 }
 
-/** Connect a harvester to a factory with dirt, the way the pointer path does. */
-async function connectedBoot() {
-  const h = await boot();
+/**
+ * Connect a harvester to a factory with dirt, the way the pointer path does.
+ * `viaUrl` boots the way a player opens the game instead — the URL the caller
+ * pins (L1c's acceptance link is `?loop=new&unlimited=0`), no options at all.
+ */
+async function connectedBoot(opts: { newLoop?: boolean; viaUrl?: string } = {}) {
+  if (opts.viaUrl) window.history.replaceState(null, "", opts.viaUrl);
+  const h = await boot(opts.viaUrl ? {} : { newLoop: opts.newLoop });
   const { buildTile } = await import("../../src/iso/track");
   const c = findSouthCorridor(h.grid);
   expect(c).toBeTruthy();
@@ -1198,6 +1203,166 @@ describe("J1 the quarry is mounted in the iso app", () => {
 
     expect(h.purse.stone).toBe(0);
     expect(h.purse.ore).toBe(1);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// L1c (#234) — matches and lorry arrivals stop paying the purse.
+//
+// The new loop's income is the clock (#233), so the board and the lorries
+// stop being a pay line. Both flag states are asserted against the SAME
+// scenario — off is the shipped loop, and it must be exactly the behaviour
+// the J1 block above locks in (a depot-fed token pays, a lorry
+// arrival stamps a token). What changes with the flag on: nothing is
+// credited, and no "+N cargo" is advertised for cargo nobody got.
+// ══════════════════════════════════════════════════════════════════════════
+describe("L1c (#234) the board and the lorries stop paying the purse", () => {
+  /** A horizontal FIVE of `res` centred on (r,c) — the arcade "+2 random" shape. */
+  function makeFive(board: Board, res: ResKey, r: number, c: number) {
+    for (const cc of [c - 2, c - 1, c, c + 1, c + 2]) board.grid[r][cc]!.res = res;
+    board.grid[r][c - 3]!.res = ALT(res);
+    board.grid[r][c + 3]!.res = ALT(res);
+  }
+
+  /** Everything the floating readout says, as one string. */
+  const readout = () => [...root.querySelectorAll(".harvest-pop")]
+    .map((e) => e.textContent ?? "").join(" · ");
+
+  it("newLoop: a matched token credits no cargo and shows no '+N cargo'", async () => {
+    const { h } = await connectedBoot({ newLoop: true });
+    expect(h.newLoop).toBe(true);
+
+    // the board is still the board: the network tokened the colours it reaches
+    const tokens = h.board.gems().filter((g) => g.tier > 0);
+    expect(tokens.length).toBeGreaterThan(0);
+    const line = h.board.gems().find((g) => g.tier > 0)!;
+    const before = { ...h.purse };
+
+    makeRun(h.board, line.res, freeRow(h.board, line), 4, line);
+    expect(h.board.findGroups().length).toBeGreaterThan(0);
+    await h.board.settle();          // what trySwap runs after a legal swap
+
+    // the gems cleared and the token was spent — the match really happened…
+    expect(h.board.gems().includes(line)).toBe(false);
+    // …and nothing reached the purse: no cargo at all, Gold included (the
+    // ticket leaves the board's coin and its cross/bonus rewards to #224/#227).
+    for (const c of CARGOES) {
+      expect(h.purse[c] ?? 0, `${c} paid by a match`).toBe(before[c] ?? 0);
+    }
+    // and nothing was advertised: no pop body means no "+N"
+    expect(readout()).not.toMatch(/\+\d/);
+  });
+
+  it("newLoop: the arcade bonus pays nothing either and is not advertised", async () => {
+    // A match-5 grants "+2 random" through `onHarvest(..., forged: true)` —
+    // the old loop pays it whether or not a route exists. Under the new loop
+    // the whole board→purse wire is cut, so it changes nothing.
+    const { h } = await connectedBoot({ newLoop: true });
+    const before = { ...h.purse };
+
+    makeFive(h.board, "wood", 4, 3);
+    expect(h.board.findGroups().length).toBeGreaterThan(0);
+    await h.board.settle();
+
+    for (const c of CARGOES) {
+      expect(h.purse[c] ?? 0, `${c} paid by a match-5`).toBe(before[c] ?? 0);
+    }
+    expect(readout()).not.toMatch(/\+\d/);
+  });
+
+  it("newLoop: a lorry arrival mints no token — and the lorry still drives", async () => {
+    const { h, corridor } = await connectedBoot({ newLoop: true });
+    h.finishSetup();                                  // arrivals only count in `play`
+    // Headless harnesses have no rAF, so drive the frame's own replan trigger
+    // — a real demolish + rebuild rescores the network, which marks the lorries
+    // dirty for `truckTick` to plan.
+    const { buildTile } = await import("../../src/iso/track");
+    h.demolish(corridor.hx, corridor.hy + 3);
+    buildTile(h.track, "dirt", corridor.hx, corridor.hy + 3, 1);
+    h.refreshQuarry();
+    h.truckTick(performance.now(), 1000);             // plan the run + one second
+    expect(h.trucksList.length).toBeGreaterThan(0);
+
+    const deliver = vi.spyOn(h.quarry, "deliver");
+    const tokened = () => h.board.gems().filter((g) => g.tier > 0).length;
+    const before = { ...h.purse };
+    const beforeTokens = tokened();
+    const loads = () => h.trucksList.reduce((n, t) => n + t.deliveries, 0);
+    const beforeLoads = loads();
+
+    h.truckTick(performance.now(), 60_000);           // a minute of lorry time
+
+    // the lorries are ANIMATION: they drive out, turn around and drive back —
+    // the arrival counter moved, so the run is intact…
+    expect(loads()).toBeGreaterThan(beforeLoads);
+    // …but an arrival mints no token and credits nothing.
+    expect(deliver).not.toHaveBeenCalled();
+    expect(tokened()).toBe(beforeTokens);
+    for (const c of CARGOES) {
+      expect(h.purse[c] ?? 0, `${c} paid by a lorry`).toBe(before[c] ?? 0);
+    }
+    expect(readout()).not.toMatch(/\+\d/);
+  });
+
+  it("the dev acceptance link ?loop=new&unlimited=0 boots the new loop", async () => {
+    // The ticket's acceptance is a URL, not an option: a dev build reads
+    // `?loop=new` off `location.search` (never a production build, a room or a
+    // story — L1a), and the flag has to reach the quarry from there. Boot with
+    // NO options at all, exactly as `vite dev` does.
+    const { h } = await connectedBoot({ viaUrl: "/?seed=1337&loop=new&unlimited=0" });
+    expect(h.newLoop).toBe(true);
+
+    const line = h.board.gems().find((g) => g.tier > 0)!;
+    const before = { ...h.purse };
+    makeRun(h.board, line.res, freeRow(h.board, line), 4, line);
+    await h.board.settle();
+    for (const c of CARGOES) {
+      expect(h.purse[c] ?? 0, `${c} paid by a match`).toBe(before[c] ?? 0);
+    }
+    expect(readout()).not.toMatch(/\+\d/);
+  });
+
+  // ── the control half: with the flag off, every wire above is the shipped
+  //    loop, unchanged. Same scenario, opposite outcome. ──────────────────
+  it("flag off: the same match still pays, and the readout still shows '+N'", async () => {
+    const { h } = await connectedBoot();
+    expect(h.newLoop).toBe(false);
+    const line = h.board.gems().find((g) => g.tier > 0)!;
+    const before = { ...h.purse };
+
+    makeRun(h.board, line.res, freeRow(h.board, line), 4, line);
+    await h.board.settle();
+
+    const cargo = GEM_TO_CARGO[line.res];
+    expect(h.purse[cargo] ?? 0).toBeGreaterThan(before[cargo] ?? 0);
+    expect(readout()).toMatch(/\+\d/);
+  });
+
+  it("flag off: the same match-5 still pays its '+2 random'", async () => {
+    const { h } = await connectedBoot();
+    const before = { ...h.purse };
+    makeFive(h.board, "wood", 4, 3);
+    await h.board.settle();
+    const paid = CARGOES.reduce((n, c) => n + ((h.purse[c] ?? 0) - (before[c] ?? 0)), 0);
+    expect(paid).toBeGreaterThanOrEqual(2);           // a match-5's +2 always lands
+    expect(readout()).toMatch(/\+\d/);
+  });
+
+  it("flag off: a lorry arrival still mints its token", async () => {
+    const { h, corridor } = await connectedBoot();
+    h.finishSetup();
+    const { buildTile } = await import("../../src/iso/track");
+    h.demolish(corridor.hx, corridor.hy + 3);
+    buildTile(h.track, "dirt", corridor.hx, corridor.hy + 3, 1);
+    h.refreshQuarry();
+    h.truckTick(performance.now(), 1000);
+    expect(h.trucksList.length).toBeGreaterThan(0);
+
+    const deliver = vi.spyOn(h.quarry, "deliver");
+    const beforeLoads = h.trucksList.reduce((n, t) => n + t.deliveries, 0);
+    h.truckTick(performance.now(), 60_000);
+    expect(h.trucksList.reduce((n, t) => n + t.deliveries, 0)).toBeGreaterThan(beforeLoads);
+    expect(deliver).toHaveBeenCalled();
   });
 });
 

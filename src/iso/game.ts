@@ -864,6 +864,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       .map(([c, n]) => `+${n} ${CARGO[c].icon}`).join(" ") + (label ? ` · ${label}` : "");
 
   const quarry: Quarry = createQuarry(eco, "you", {
+    // L1c (#234): under the new loop the board does not pay — connected
+    // Depots tick cargo in on the clock instead. The line is cut INSIDE the
+    // quarry so the board's own gain accumulator, and every "+N cargo" pop
+    // built from it, can never advertise a payout that did not happen. Gems
+    // still clear and cascades still cascade: matching is what sets a Depot's
+    // yield. The RIVAL's seat is untouched (#235 gives it the same clock),
+    // as are combo Gold below and the board's cross/bonus rewards (#227).
+    payCargo: !newLoop,
     onHarvest: (cargo, amount) => {
       earn(me, { [cargo]: amount });
       if (cargo === "oil" && amount > 0) onFirstOilHarvest();
@@ -880,11 +888,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       sfx.play("coin");
       toast(`+${n} Gold from combos 🪙`, "good");
     },
-    onGains: (gains, label) => toast(gainText(gains, label), "good"),
+    // L1c (#234): the board's own chain/cross rewards still accumulate their
+    // "+1"s even though the purse line is cut, so under the new loop the
+    // readouts carry the LABEL only — a "+N cargo" nobody was paid is exactly
+    // what this ticket removes. (The combos/chain feedback stays: the board is
+    // still what sets a Depot's yield.)
+    onGains: (gains, label) => {
+      if (newLoop) { if (label) toast(label, "good"); return; }
+      toast(gainText(gains, label), "good");
+    },
     // A1: the floating readout over the board. `ui` does not exist yet at
     // this point (the HUD is built below), but this closure is only ever
     // called by a match, long after boot.
-    onPopup: (gains, label) => ui.popup(gains, label),
+    onPopup: (gains, label) => ui.popup(newLoop ? {} : gains, label),
     onTokens: (pool) => toast(`Tokens: ${(Object.keys(pool) as ResKey[])
       .map((r) => CARGO[GEM_TO_CARGO[r]].name).join(", ")}`, "info"),
     onChange: () => onBoardChange(),
@@ -5721,6 +5737,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   /**
    * Turn every lorry arrival since the last frame into a delivery: one token
    * of that depot's cargo on the board, one "+N" over the Factory.
+   *
+   * L1c (#234): with the new loop on your seat's arrivals are animation only —
+   * the lorry still drives its route, but it lands no token and no "+N" (the
+   * clock pays the cargo now). See the branch inside.
    */
   function collectDeliveries(t: number) {
     // MP-05: a lorry reaching a factory on a guest's screen is animation, not
@@ -5734,6 +5754,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (truck.deliveries <= seen) continue;
       const due = Math.min(truck.deliveries - seen, MAX_CATCHUP);
       if (truck.ownerId === mine) {
+        // L1c (#234): under the new loop your lorries are ANIMATION — the
+        // frame keeps driving them (they leave, arrive and turn around exactly
+        // as before) but an arrival mints no token and credits nothing: the
+        // clock pays. Their cargoes stay in `seenDeliveries` above so the
+        // ledger cannot drift, and the RIVAL's lane below is untouched (#235
+        // gives the rival the same clock on its own ticket).
+        if (newLoop) continue;
         for (let i = 0; i < due; i++) deliverLoad(truck, t);
       } else if (truck.ownerId === rival.i + 1) {
         // AI-02: the rival's lorries DO feed its game — see rivalDeliverLoad.
