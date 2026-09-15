@@ -204,20 +204,23 @@ describe("#136 loadBuildingLayers installs per sprite, as each one's PNGs land",
     expect(warn.mock.calls.some((c) => String(c[0]).includes("edited by hand")), "the hand edit is called out").toBe(true);
   });
 
-  it("a manifest name the atlas does not know is skipped quietly", async () => {
+  it("a building the sprite table does not know yet is registered and installed", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const served = buildingsManifest();
-    served.sprites.ghost_shed = { footprint: [1, 1], anchor: [32, 48], w: 64, h: 64 };
+    served.sprites.ghost_shed = { footprint: [2, 2], anchor: [32, 48], w: 64, h: 64 };
     const { pngs } = stubNetwork({ manifest: served });
     const atlas = freshAtlas();
+    expect(atlas.get("ghost_shed"), "not in the sheet before the load").toBeUndefined();
 
     await loadBuildingLayers(atlas, "/assets/buildings/");
 
-    // Nothing to override, so nothing is fetched and nothing is installed —
-    // and it is NOT a fallback: no warning, because no art failed.
-    expect(atlas.hasBuilding("ghost_shed")).toBe(false);
-    expect(pngs.filter((f) => spriteOf(f) === "ghost_shed")).toEqual([]);
-    expect(warn.mock.calls.map((c) => String(c[0])), "an unknown sprite is not an art failure").toEqual([]);
+    // New art (like `truck_depot`) needs no sheet cell: its own manifest entry
+    // becomes the def, centre-anchored on the footprint it declares.
+    expect(atlas.hasBuilding("ghost_shed")).toBe(true);
+    expect(pngs.filter((f) => spriteOf(f) === "ghost_shed").sort()).toEqual(
+      ["ghost_shed@0.5x.png", "ghost_shed@1x.png", "ghost_shed@2x.png"]);
+    expect(atlas.get("ghost_shed")).toMatchObject({ footprint: [2, 2], center: true });
+    expect(warn.mock.calls.map((c) => String(c[0])), "registering new art is not an art failure").toEqual([]);
     expect(
       NAMES.filter((n) => !atlas.hasBuilding(n)),
       "the sprites the atlas does know still all install",

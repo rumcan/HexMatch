@@ -339,14 +339,11 @@ export const FACTORY_SPRITE = "factory";
 export const FACTORY_FOOTPRINT: [number, number] = footprintForArt(spriteWidth(FACTORY_SPRITE));
 
 /**
- * PP-12: resource-specific Depot art. Each cargo has its own half-scale TTD
- * outpost (`depot_<cargo>` file cell): food plant for grain, lumber mill for
- * wood (the PP-11 example), copper mine for ore, diamond mine for stone, rig
- * for oil, iron mine for gold. The game picks by the Depot's served cargo.
+ * Depot art: ONE truck depot building for every Depot, whatever it harvests
+ * (like the railway's single platform art). The per-cargo outposts
+ * (`depot_<cargo>`) were retired. Drawn on a 2×2 art area.
  */
-export function depotSpriteForCargo(cargo: Cargo): string {
-  return `depot_${cargo}`;
-}
+export const DEPOT_SPRITE = "truck_depot";
 
 /**
  * PP-12: one town variant per packed TTD house file (43). The church is the

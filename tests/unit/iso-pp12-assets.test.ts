@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import sharp from "sharp";
 import {
   FACTORY_FOOTPRINT, FACTORY_SPRITE, INDUSTRY_BY_KEY, TOWN_HOUSE_VARIANTS,
-  depotSpriteForCargo, footprintForArt, type Cargo,
+  DEPOT_SPRITE, footprintForArt,
 } from "../../src/iso/config";
 import type { Manifest } from "../../src/iso/atlas";
 
@@ -102,13 +102,16 @@ describe("PP-12 gameplay footprints are the art's footprints", () => {
     }
   });
 
-  it("every cargo has its 1×1 depot outpost sprite", () => {
-    const cargos: Cargo[] = ["wood", "stone", "grain", "ore", "oil", "gold"];
-    for (const cargo of cargos) {
-      const name = depotSpriteForCargo(cargo);
-      const m = manifest.sprites[name];
-      expect(m, `manifest is missing depot sprite ${name}`).toBeTruthy();
-      expect(m.footprint, name).toEqual([1, 1]);
+  it("every Depot draws the one truck depot building, on a 2×2 art area", () => {
+    expect(DEPOT_SPRITE).toBe("truck_depot");
+    const layers = JSON.parse(readFileSync("assets/buildings/manifest.json", "utf8")) as {
+      sprites: Record<string, { footprint: [number, number] }>;
+    };
+    expect(layers.sprites[DEPOT_SPRITE], "truck_depot is compiled").toBeTruthy();
+    expect(layers.sprites[DEPOT_SPRITE].footprint).toEqual([2, 2]);
+    // the retired per-cargo outposts are gone from the building layers
+    for (const cargo of ["wood", "stone", "grain", "ore", "oil", "gold"]) {
+      expect(layers.sprites[`depot_${cargo}`], `depot_${cargo}`).toBeUndefined();
     }
   });
 });

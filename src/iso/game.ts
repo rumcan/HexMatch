@@ -112,7 +112,7 @@ import {
 import {
   CARGO, CARGOES, FACTORY_FOOTPRINT, FACTORY_SPRITE, INDUSTRY_BY_KEY, TRANSPORT,
   BASE_RATE, VICTORY, VP_TARGET, UPGRADE_COST, TUNING,
-  depotSpriteForCargo, type Cargo, type Portrait,
+  DEPOT_SPRITE, type Cargo, type Portrait,
 } from "./config";
 import { depotYield, distanceFactor, transportFactor } from "./loop";
 // L4 (#218): the tuning session — the one thing that sets a depot's yield.
@@ -1991,19 +1991,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     world.extra = [
       ...townItems,
       ...factoryItems,
-      // PP-12: resource-specific Depot art — the outpost reads as what it
-      // harvests (a lumber mill at a forest, a rig at an oil field, …). The
-      // first served industry names the cargo; placement always requires one,
-      // so the fallback below only serves foreign snapshots. Ownership still
-      // shows in the inspector, the catchment overlays and the ref payload.
-      ...eco.harvesters.map((h) => {
-        const served = industriesInCatchment(grid, h);
-        const cargo = served.length ? INDUSTRY_BY_KEY[served[0].type].cargo : "grain";
-        return {
-          sprite: depotSpriteForCargo(cargo),
-          tx: h.tx, ty: h.ty, ref: { kind: "harvester", id: h.id, owner: h.owner },
-        };
-      }),
+      // Every Depot is the same truck depot building, whatever it harvests.
+      // Ownership shows in the inspector, the catchment overlays and the ref.
+      ...eco.harvesters.map((h) => ({
+        sprite: DEPOT_SPRITE,
+        tx: h.tx, ty: h.ty, ref: { kind: "harvester", id: h.id, owner: h.owner },
+      })),
       // RAIL-04: the railway's structures are ordinary footprint-anchored
       // sprites in the same static list (`railStructureItems` names them from
       // the manifest, and `syncWorld` is the only writer). A missing PNG just

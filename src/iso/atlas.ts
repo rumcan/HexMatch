@@ -368,8 +368,12 @@ export async function loadBuildingLayers(
   } = await res.json().catch(() => null);
   const names = m?.sprites ? Object.entries(m.sprites) : [];
   await Promise.all(names.map(async ([name, def]) => {
-    const s = atlas.manifest.sprites[name];
-    if (!s) return;                                  // unknown sprite: nothing to override
+    // A building the sprite table does not know yet (new art such as
+    // `truck_depot`) is registered from its own manifest entry.
+    const registered = !atlas.manifest.sprites[name];
+    const s = atlas.manifest.sprites[name] ??= {
+      x: 0, y: 0, w: def.w, h: def.h, footprint: def.footprint, anchor: def.anchor, center: true,
+    };
     const load = (file: string) => fetch(`${baseUrl}${file}`).then((r) => {
       if (!r.ok) throw new Error(`${file} → HTTP ${r.status}`);
       return r.blob();
@@ -395,7 +399,9 @@ export async function loadBuildingLayers(
       if (def.footprint) s.footprint = def.footprint;
     } catch (err) {
       // A fill pass failing leaves the already-installed levels serving the
-      // sprite; only a first-install failure drops it back to the sheet art.
+      // sprite; only a first-install failure drops it back to the sheet art
+      // (or, for a building registered above, removes the def it never used).
+      if (!have && registered) delete atlas.manifest.sprites[name];
       if (!have) console.warn(`[building-layers] ${name}: fell back to the shared sheet`, err);
     }
   }));
