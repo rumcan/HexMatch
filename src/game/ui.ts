@@ -373,9 +373,12 @@ const isPhoneViewport = (): boolean => {
 
 /** Optional per-boot chrome flags (RAIL-05: the railway's four buttons only
  *  exist when the feature flag lets them — the campaign boots without rail
- *  until #179/#181 land). */
+ *  until #179/#181 land). L1a (#232): `newLoop` retires the trade surfaces —
+ *  the Market and Bank tabs and the Black Market panel do not exist while the
+ *  new-loop redesign runs. */
 export interface OriginalUiOptions {
   rail?: boolean;
+  newLoop?: boolean;
 }
 
 export function createOriginalUi(
@@ -387,6 +390,12 @@ export function createOriginalUi(
 ): OriginalUi {
   const root = h("div", "ui-root");
   root.dataset.view = "map";
+  // L1a (#232): the new-loop MVP flag. ON retires the trade surfaces — the
+  // Market and Bank tabs and the Black Market panel simply do not exist (the
+  // same treatment RAIL-05 gives the railway's buttons), because a button the
+  // new economy does not want is a promise the HUD cannot keep. The flag is
+  // the game's call (`?loop=new`, dev-only; never a room or a contract).
+  const newLoop = opts.newLoop === true;
   root.style.setProperty("--gem-move-ms", `${BOARD_ANIMATION_MS.swap}ms`);
   root.style.setProperty("--gem-clear-ms", `${BOARD_ANIMATION_MS.clear}ms`);
   // #162: falls ease under their own wait (swap/clear kept theirs), so the
@@ -625,15 +634,23 @@ export function createOriginalUi(
   tabFeed.onclick = () => setTab("feed");
   const tabPlant = h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.plant}</i><span class="tab-l">Processing Plant</span>`);
   tabPlant.onclick = () => setTab("plant");
-  tabs.append(tabBank, tabMarket, tabPlant, tabFeed);
+  // L1a (#232): with the new loop on, the Market and Bank tabs do not exist —
+  // one strip serves the desktop and the phone sheet alike, so dropping them
+  // here hides them on both. The retired panes stay UNMOUNTED (never merely
+  // class-hidden), so no setTab/paint path can reveal them by accident.
+  const tabDefs: [HTMLElement, "bank" | "market" | "plant" | "feed"][] = newLoop
+    ? [[tabPlant, "plant"], [tabFeed, "feed"]]
+    : [[tabBank, "bank"], [tabMarket, "market"], [tabPlant, "plant"], [tabFeed, "feed"]];
+  for (const [tab, name] of tabDefs) {
+    tab.dataset.tab = name;
+    tabs.appendChild(tab);
+  }
   tp.appendChild(tabs);
-  [tabBank, tabMarket, tabPlant, tabFeed].forEach((tab, i) => {
-    tab.dataset.tab = ["bank", "market", "plant", "feed"][i];
-  });
   const marketPane = h("div", "pane market-pane");
   const bankPane = h("div", "pane bank-pane hidden");
   const feedPane = h("div", "pane feed-pane hidden");
-  tp.appendChild(marketPane); tp.appendChild(bankPane); tp.appendChild(feedPane);
+  if (!newLoop) { tp.appendChild(marketPane); tp.appendChild(bankPane); }
+  tp.appendChild(feedPane);
   tp.appendChild(qp);
   rightAside.appendChild(tp);
   root.appendChild(rightAside);
@@ -1011,7 +1028,9 @@ export function createOriginalUi(
   bankPane.appendChild(h("div", "pane-note",
     `The bank always trades four of one good for one of another. No rival required, no waiting. ${cargoIconHtml("gold")} ${GOLD_RULE}`));
 
-  bankPane.appendChild(sp);
+  // L1a (#232): the Black Market panel lives in the Bank pane; with the new
+  // loop on it is never mounted at all (its buttons exist but sit detached).
+  if (!newLoop) bankPane.appendChild(sp);
 
   function updateTradeButtons() {
     postBtn.disabled = market.live(me).length >= MAX_OFFERS || postGive.value === postWant.value

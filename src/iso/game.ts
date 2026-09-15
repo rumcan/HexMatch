@@ -408,6 +408,14 @@ export interface IsoGameOptions {
    */
   rail?: boolean;
   /**
+   * L1a (#232): force the new-loop feature flag. Absent, the flag is read
+   * from `?loop=new` — DEV builds only, the same guarantee the rail flag
+   * carries — and is otherwise OFF in every mode. The new loop is
+   * sandbox-only for now: requested in a multiplayer room or a story
+   * contract it is ignored and the player is told so.
+   */
+  newLoop?: boolean;
+  /**
    * #186: the rules a HOSTED room plays by — the ★ line, the opening purse and
    * the AI seats. The start screen passes the room's copy; absent (or unreadable)
    * falls back to the session's, and then to the shipped defaults, so a solo
@@ -481,6 +489,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     try { return new URLSearchParams(location.search).get("rail"); } catch { return null; }
   })();
   const railAvailable = opts.rail ?? (import.meta.env.DEV && railParam === "1");
+  // L1a (#232): the new-loop MVP flag — the same contract as the rail flag
+  // above. OFF everywhere by default: `opts.newLoop` turns it on (tests,
+  // harnesses) and `?loop=new` does too, but ONLY in a dev build, so a
+  // production deploy can never ship the redesigned loop (the param read is
+  // dead code there and the bundler strips it, exactly like rail's).
+  const loopParam = (() => {
+    try { return new URLSearchParams(location.search).get("loop"); } catch { return null; }
+  })();
+  const newLoopRequested = opts.newLoop ?? (import.meta.env.DEV && loopParam === "new");
+  // The new loop is sandbox-only for now: a networked room or a story
+  // contract ignores the request and says so — the toast waits until no boot
+  // overlay covers the map (see the frame loop's `loopToastPending`).
+  const newLoop = newLoopRequested && isSolo() && !storyOn;
+  let loopToastPending = newLoopRequested && !newLoop;
   /** The cast member playing the rival: the contract's, else Torvin as ever. */
   const rivalCast = storyChapter ? storyChapter.rival : "torvin";
   /** The player's own cast id, for every line the wire answers in. */
@@ -1094,7 +1116,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // in a hosted game, so the selector is simply not built.
     onSkill: isSolo() ? (key) => setRivalSkill(key) : undefined,
     skill: isSolo() ? skillKey : undefined,
-  }, { rail: railAvailable });
+  }, { rail: railAvailable, newLoop });
   onBoardChange = () => ui.renderBoard();
   root.appendChild(ui.el);
 
@@ -6454,6 +6476,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     let lastFrameT = 0;
     const frame = (t: number) => {
       if (disposed) return;
+      // L1a (#232): the new loop's "sandbox-only" note waits until nothing
+      // covers the map — a boot-time toast would fire under the loading
+      // screen (z 95 over the toast lane's 55), a contract's briefing or the
+      // tour and auto-dismiss unseen.
+      if (loopToastPending && !loading.active && !storyView && !tutorialView) {
+        loopToastPending = false;
+        toast("The new loop is sandbox-only for now.", "info");
+      }
       // RV-01: the lorries move in TILE units per millisecond, so the frame
       // needs a real dt (capped — a background tab must not teleport them).
       const dt = Math.min(100, Math.max(0, t - lastFrameT));
@@ -6557,6 +6587,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   (window as unknown as Record<string, unknown>).__iso = {
     get phase() { return phase; },
     get tool() { return tool; },
+    /** L1a (#232): the new-loop feature flag, read-only — it is a boot fact
+     *  (`opts.newLoop`, or dev-only `?loop=new`; never on in production, in a
+     *  room or in a story contract). */
+    get newLoop() { return newLoop; },
     /** LOAD-01: true while the loading screen covers the map. */
     get loading() { return loading.active; },
     /**
