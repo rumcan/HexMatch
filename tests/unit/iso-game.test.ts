@@ -255,9 +255,17 @@ describe("E11 the game boots", () => {
     // The retired panes are unmounted, not merely class-hidden...
     expect(root.querySelector(".market-pane")).toBeNull();
     expect(root.querySelector(".bank-pane")).toBeNull();
-    // ...and the Black Market panel (which lives in the Bank pane) with them.
-    expect(root.querySelector(".sab-list")).toBeNull();
-    expect(root.textContent).not.toContain("Black Market");
+    // ...but the Black Market comes BACK under L9 (#224): the panel L1a hid
+    // was a Gold shop selling match-3 sabotage, and the converted one is
+    // map-only (Blockade, Protest, Security Forces), which is exactly what
+    // the new loop wants. The Bank pane it used to ride in is gone, so it
+    // hangs in the build column instead.
+    expect(root.querySelector(".sab-list")).toBeTruthy();
+    expect(root.textContent).toContain("Black Market");
+    expect(root.querySelector(".aside.left .sab-list"), "the shop moved to the build column").toBeTruthy();
+    // and it sells only the two MAP cards plus the defence
+    expect([...root.querySelectorAll("[data-black]")].map((b) => (b as HTMLElement).dataset.black))
+      .toEqual(["bandit", "protest", "security"]);
   });
 
   it("L1a (#232): a story contract ignores newLoop and says so", async () => {
@@ -2157,26 +2165,36 @@ describe("TK-008 Blockade buys auto-target the rival (no targeting step)", () =>
 //   • the trade composer never offers Gold, and the market refuses it anyway.
 // ══════════════════════════════════════════════════════════════════════════
 describe("PP-08 gold is reserved for Black Market sabotage", () => {
+  // L9 (#224): the sabotage these two exercise is the Blockade — the card the
+  // Frost Tiles assertions used to ride on is gone with the board cards.
   it("insufficient gold blocks a sabotage and consumes nothing else", async () => {
     const h = await boot();
     h.purse.stone = 12;
     h.purse.gold = 0;
     await settle();
-    const harden = root.querySelector('[data-black="harden"]') as HTMLElement;
-    expect(harden.classList.contains("disabled")).toBe(true);
-    harden.click();
+    const bandit = root.querySelector('[data-black="bandit"]') as HTMLElement;
+    expect(bandit.classList.contains("disabled")).toBe(true);
+    bandit.click();
     await settle();
     expect(h.purse.gold ?? 0).toBe(0);
     expect(h.purse.stone).toBe(12);             // no material was touched
-    expect((root.querySelector(".sab-btn.sb-harden") as HTMLButtonElement).disabled).toBe(true);
+    expect((root.querySelector(".sab-btn.sb-bandit") as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("sabotage with enough gold deducts ONLY gold", async () => {
     const h = await boot();
-    h.purse.gold = 5;
+    const { buildTile } = await import("../../src/iso/track");
+    // A Blockade with nothing to blockade is refunded, not charged (the rule
+    // TK-008 pins), so the rival gets a real corridor first — this test is
+    // about WHICH resource a successful card spends.
+    const c = findSouthCorridor(h.grid)!;
+    h.eco.factories.push({ owner: "ai", ownerId: 2, tx: c.hx, ty: c.fy });
+    h.eco.harvesters.push({ id: 1, owner: "ai", ownerId: 2, tx: c.hx, ty: c.hy });
+    for (let y = c.hy + 1; y <= c.fy; y++) buildTile(h.track, "dirt", c.hx, y, 2);
+    h.purse.gold = SABOTAGE.bandit.gold;
     h.purse.stone = 12;
     await settle();
-    (root.querySelector('[data-black="harden"]') as HTMLElement).click();
+    (root.querySelector('[data-black="bandit"]') as HTMLElement).click();
     await settle();
     expect(h.purse.gold).toBe(0);
     expect(h.purse.stone).toBe(12);             // construction stock untouched
@@ -2694,53 +2712,92 @@ describe("A1 the arcade FX are wired to the HUD", () => {
   });
 });
 
-describe("A1 Black Market sabotage lands on the rival", () => {
-  it("Frost Tiles ice the RIVAL's plant — not the buyer's own board", async () => {
-    const h = await boot();
-    // the sabotage marker is anchored to the rival's Factory, so the rival
-    // needs one: placing YOUR factory seeds the rival's (W8), exactly as a
-    // real setup click does.
-    const spot = findFactorySpot(h.grid)!;
-    expect(h.placeFactory(spot[0], spot[1])).toBe(true);
-    h.purse.gold = 20;                                  // afford any of them
+// ══════════════════════════════════════════════════════════════════════════
+// L9 (#224) — the Black Market is MAP-ONLY sabotage.
+//
+// A1 put three cards into the RIVAL's plant board (Frost Tiles, Iron Girders,
+// Smog Cloud) and a Repair Crew to undo them. All four are gone: the shop now
+// sells the two cards that act on the world and the defence that stops both,
+// and nothing in it can reach a match-3 board. Board obstacles come back as
+// tuning-session obstacles set by difficulty (#225).
+// ══════════════════════════════════════════════════════════════════════════
+describe("L9 (#224) the Black Market is map-only sabotage", () => {
+  it("lists only Blockade, Protest and Security Forces", async () => {
+    await boot();
     await settle();
-    const before = { ...h.purse };
-    const btn = root.querySelector(".sab-btn.sb-harden") as HTMLElement;
-    expect(btn).toBeTruthy();
-    btn.click();
-
-    const now = performance.now();
-    expect(h.rivalPlant.status(now).frozen).toBe(7);     // landed on the rival…
-    expect(h.rivalPlant.health(now)).toBeLessThan(1);    // …and it costs them income
-    // the bug: this used to be 7 on the player's own board
-    expect(h.board.gems().filter((g) => g.hard > 0)).toHaveLength(0);
-    expect(h.purse.gold).toBe(before.gold! - 5);
-    // The rival answers without interrupting play: a temporary private wire,
-    // with the same quote retained in the Feed after the card fades.
-    const wire = root.querySelector("#iso-rival-quip") as HTMLElement;
-    expect(wire.classList.contains("show")).toBe(true);
-    expect(wire.getAttribute("role")).toBe("status");
-    expect(wire.getAttribute("aria-live")).toBe("polite");
-    expect(wire.parentElement?.classList.contains("toasts"), "the wire can overlap a rules toast").toBe(true);
-    expect(wire.querySelector(".rival-quip-text")!.textContent!.length).toBeGreaterThan(10);
-    expect([...root.querySelectorAll(".feed-row")].some((row) =>
-      row.textContent?.includes(wire.querySelector(".rival-quip-text")!.textContent!))).toBe(true);
-    // and the player is told where it went
-    expect(root.querySelector(".iso-float.sabotage")).toBeTruthy();
-    expect(root.querySelector(".iso-float.sabotage")!.textContent).toMatch(/FROZEN/);
+    expect([...root.querySelectorAll("[data-black]")].map((b) => (b as HTMLElement).dataset.black))
+      .toEqual(["bandit", "protest", "security"]);
+    // the retired four have no button at all — not a disabled one
+    for (const dead of ["harden", "block", "fog", "repair"]) {
+      expect(root.querySelector(`[data-black="${dead}"]`), `${dead} is still on sale`).toBeNull();
+    }
+    expect(Object.keys(SABOTAGE)).toEqual(["bandit", "protest"]);
   });
 
-  it("Iron Girders and Smog Cloud do the same, and Repair Crew stays on your own board", async () => {
+  it("cannot touch a match-3 board, whichever retired card is asked for", async () => {
     const h = await boot();
-    h.purse.gold = 30;
+    const spot = findFactorySpot(h.grid)!;
+    expect(h.placeFactory(spot[0], spot[1])).toBe(true);
+    h.purse.gold = 40;                                  // afford anything
     await settle();
-    (root.querySelector(".sab-btn.sb-block") as HTMLElement).click();
-    (root.querySelector(".sab-btn.sb-fog") as HTMLElement).click();
-    const now = performance.now();
-    expect(h.rivalPlant.status(now).girders).toBe(4);
-    expect(h.rivalPlant.status(now).smog).toBe(true);
-    // YOUR board is untouched by all three
+    const gold = h.purse.gold;
+    for (const dead of ["harden", "block", "fog", "repair"]) h.buyBlack(dead);
+    await settle();
+    // neither board is dirtied, and nothing was charged for the refusal
     expect(h.board.gems().filter((g) => g.block || g.hard > 0)).toHaveLength(0);
+    expect(h.board.fogUntil).toBe(0);
+    const now = performance.now();
+    expect(h.rivalPlant.status(now)).toMatchObject({ frozen: 0, girders: 0, smog: false });
+    expect(h.purse.gold).toBe(gold);
+  });
+
+  it("a Blockade stops the rival's income ticks and Torvin answers", async () => {
+    const h = await boot();
+    const { buildTile } = await import("../../src/iso/track");
+    const { playerResources } = await import("../../src/iso/economy");
+    // A rival corridor so it HAS income to stop (the same shape TK-008 uses).
+    const c = findSouthCorridor(h.grid);
+    expect(c).toBeTruthy();
+    const { hx, hy, fy } = c!;
+    h.eco.factories.push({ owner: "ai", ownerId: 2, tx: hx, ty: fy });
+    h.eco.harvesters.push({ id: 1, owner: "ai", ownerId: 2, tx: hx, ty: hy });
+    for (let y = hy + 1; y <= fy; y++) buildTile(h.track, "dirt", hx, y, 2);
+    expect(Object.keys(playerResources(h.eco, "ai", performance.now())).length).toBeGreaterThan(0);
+
+    h.purse.gold = SABOTAGE.bandit.gold;
+    await settle();
+    (root.querySelector(".sab-btn.sb-bandit") as HTMLElement).click();
+    await settle();
+
+    const blocked = h.grid.industries.find((i) => i.banditUntil > performance.now());
+    expect(blocked, "nothing was blockaded").toBeTruthy();
+    const cargo = INDUSTRY_BY_KEY[blocked!.type].cargo;
+    // …its depot stops paying while the blockade stands, and pays again after
+    expect(playerResources(h.eco, "ai", blocked!.banditUntil - 1_000)[cargo]).toBeUndefined();
+    expect(playerResources(h.eco, "ai", blocked!.banditUntil + 1_000)[cargo]).toBeGreaterThan(0);
+    // the rival answers on the private wire, and the map says where it landed
+    const wire = root.querySelector("#iso-rival-quip") as HTMLElement;
+    expect(wire.classList.contains("show")).toBe(true);
+    expect(wire.querySelector(".rival-quip-text")!.textContent!.length).toBeGreaterThan(10);
+    expect((root.querySelector(".toasts") as HTMLElement).textContent ?? "")
+      .toMatch(/stop ticking/i);
+  });
+
+  it("Security Forces turn a Blockade away — and the attacker still pays", async () => {
+    const h = await boot();
+    // The rival hires the guard (seat 1's own purse, through the shared core).
+    h.market.players[1].res.grain = 4;
+    h.market.players[1].res.stone = 2;
+    h.buyBlackFor(1, "security");
+    h.purse.gold = SABOTAGE.bandit.gold;
+    await settle();
+    (root.querySelector(".sab-btn.sb-bandit") as HTMLElement).click();
+    await settle();
+    // charged, but nothing on the map was blockaded
+    expect(h.purse.gold).toBe(0);
+    expect(h.grid.industries.some((i) => i.banditUntil > performance.now())).toBe(false);
+    expect((root.querySelector(".toasts") as HTMLElement).textContent ?? "")
+      .toMatch(/Security Forces turned the Blockade away/i);
   });
 });
 

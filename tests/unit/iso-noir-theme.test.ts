@@ -402,16 +402,25 @@ describe("NOIR the painted set is wired end to end", () => {
   });
 
   it("gives every sabotage its sigil, rule and plate", () => {
-    expect(sabots.length, "SABOTAGE disappeared from the config").toBeGreaterThan(3);
-    expect(sabots).toEqual(["bandit", "harden", "block", "fog", "protest"]);
+    // L9 (#224): the Black Market is MAP-ONLY sabotage — the two cards that
+    // act on the world, plus the defence. Frost Tiles, Iron Girders and Smog
+    // Cloud are gone from the table (board obstacles belong to a tuning
+    // session now, #225), so the sheet must not still be painting plates for
+    // buttons that cannot exist.
+    expect(sabots).toEqual(["bandit", "protest"]);
     for (const key of sabots) {
       expect(existsSync(`src/assets/ui/noir/sigil/${key}.png`), `${key} sigil file`).toBe(true);
       expect(css, `.sab-btn.sb-${key} has no rule`).toMatch(new RegExp(`\\.sab-btn\\.sb-${key}\\s*\\{`));
     }
-    for (const cls of ["secure-btn", "repair-btn"]) {
-      expect(css, `.sab-btn.${cls} has no rule`).toMatch(new RegExp(`\\.sab-btn\\.${cls}\\s*\\{`));
-      expect(existsSync(`src/assets/ui/noir/sigil/${cls === "secure-btn" ? "security" : "repair"}.png`)).toBe(true);
+    expect(css, ".sab-btn.secure-btn has no rule").toMatch(/\.sab-btn\.secure-btn\s*\{/);
+    expect(existsSync("src/assets/ui/noir/sigil/security.png")).toBe(true);
+    // …and no plate survives for a retired card.
+    for (const dead of ["harden", "block", "fog"]) {
+      expect(css, `.sab-btn.sb-${dead} is a plate for a card that no longer exists`)
+        .not.toMatch(new RegExp(`\\.sab-btn\\.sb-${dead}\\s*\\{`));
     }
+    expect(css, ".sab-btn.repair-btn is a plate for a card that no longer exists")
+      .not.toMatch(/\.sab-btn\.repair-btn\s*\{/);
   });
 
   it("presses one cargo token per cargo — a HEX gem, transparent in the corners", async () => {

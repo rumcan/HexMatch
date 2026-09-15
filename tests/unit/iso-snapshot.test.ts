@@ -327,7 +327,10 @@ describe("E10 malformed payloads", () => {
     const old = { ...buildSnapshot(source()), version: 7 };
     // v13 (RAIL-04 / #178): the snapshot gained the `rail` wire — a v12 guest
     // would draw a railway as empty ground, so the gate has to see the bump.
-    expect(SNAPSHOT_VERSION).toBe(13);
+    // v14 (L9 / #224): …and the `blockades` wire, for the same reason — a v13
+    // guest would watch its own depots stop paying with nothing on its map to
+    // say why (industries are seed-derived, so only the expiry travels).
+    expect(SNAPSHOT_VERSION).toBe(14);
     expect(validateSnapshot(old)?.code).toBe("version");
     expect(() => applySnapshot(old)).toThrow(/incompatible version/i);
   });
