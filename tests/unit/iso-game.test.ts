@@ -59,6 +59,8 @@ function stubImage() {
 interface IsoHook {
   phase: string;
   tool: string;
+  /** L1a (#232): the new-loop feature flag, as the game resolved it at boot. */
+  readonly newLoop: boolean;
   vp: { you: number; ai: number };
   /** VP-01: the target, the rates, and what a player's total is made of. */
   vpTarget: number;
@@ -187,7 +189,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-async function boot(opts: { rail?: boolean } = {}) {
+async function boot(opts: { rail?: boolean; newLoop?: boolean; story?: string } = {}) {
   const { startIsoGame } = await import("../../src/iso/game");
   dispose = startIsoGame(root, opts);
   await settle();
@@ -222,6 +224,66 @@ describe("E11 the game boots", () => {
       "select", "dirt", "road", "harvester", "plant",
       "rail", "platform", "raildepot", "railway", "demolish",
     ]);
+  });
+
+  // ── L1a (#232): the new-loop feature flag (MVP switch) ──────────────────
+  it("L1a (#232): newLoop is off by default and the economy chrome is whole", async () => {
+    const h = await boot();
+    expect(h.newLoop).toBe(false);
+    const tabs = [...root.querySelectorAll("[data-tab]")].map(
+      (b) => (b as HTMLElement).dataset.tab);
+    expect(tabs).toEqual(["bank", "market", "plant", "feed"]);
+    expect(root.querySelector(".market-pane")).toBeTruthy();
+    expect(root.querySelector(".bank-pane")).toBeTruthy();
+    expect(root.querySelector(".sab-list")).toBeTruthy();
+    expect(root.textContent).toContain("Black Market");
+  });
+
+  it("L1a (#232): opts.newLoop turns the flag on", async () => {
+    const h = await boot({ newLoop: true });
+    expect(h.newLoop).toBe(true);
+  });
+
+  it("L1a (#232): hides the Market, Bank and Black Market when on", async () => {
+    await boot({ newLoop: true });
+    // The strip keeps the plant and the feed; the retired tabs DO NOT EXIST —
+    // one strip serves the desktop and the phone sheet alike, so a single
+    // absence covers both viewports.
+    const tabs = [...root.querySelectorAll("[data-tab]")].map(
+      (b) => (b as HTMLElement).dataset.tab);
+    expect(tabs).toEqual(["plant", "feed"]);
+    // The retired panes are unmounted, not merely class-hidden...
+    expect(root.querySelector(".market-pane")).toBeNull();
+    expect(root.querySelector(".bank-pane")).toBeNull();
+    // ...and the Black Market panel (which lives in the Bank pane) with them.
+    expect(root.querySelector(".sab-list")).toBeNull();
+    expect(root.textContent).not.toContain("Black Market");
+  });
+
+  it("L1a (#232): a story contract ignores newLoop and says so", async () => {
+    const { chapterById } = await import("../../src/story/chapters");
+    const chapter = chapterById("inheritance")!;
+    const h = await boot({ newLoop: true, story: chapter.id });
+    // The contract plays the shipped loop...
+    expect(h.newLoop).toBe(false);
+    const tabs = [...root.querySelectorAll("[data-tab]")].map(
+      (b) => (b as HTMLElement).dataset.tab);
+    expect(tabs).toEqual(["bank", "market", "plant", "feed"]);
+    // ...and the player hears why once the briefing is out of the way: the
+    // note waits for the overlays (it auto-dismisses 2.4s after it lands, so
+    // firing it under the scene would burn it unseen).
+    expect(root.querySelector(".story-skip")).toBeTruthy();
+    const toastUp = () => [...root.querySelectorAll(".toast")]
+      .some((t) => (t.textContent ?? "").includes("The new loop is sandbox-only for now."));
+    expect(toastUp()).toBe(false);
+    (root.querySelector(".story-skip") as HTMLElement).click();
+    // The stage's exit is a real 260ms crossfade timer (`settle` in
+    // src/story/stage.ts) and the note lands on the first frame after it —
+    // wait real time, then let the frame chain run.
+    await new Promise((r) => setTimeout(r, 400));
+    await settle();
+    expect(root.querySelector(".story-stage")).toBeNull();
+    expect(toastUp()).toBe(true);
   });
 
   it("starts in the factory-placement phase with a real map", async () => {
