@@ -213,6 +213,34 @@ export interface UiState {
    * panel's empty hint.
    */
   rail?: { rows: UiRailRow[]; view: string };
+  /**
+   * L4 (#218): the tuning session the plant board is open for. THREE
+   * meanings, and the difference matters:
+   *   • omitted / `undefined` — not the new loop: the board is the always-on
+   *     processing plant it has always been (this is the shipped game);
+   *   • `null` — the new loop, no session: the board is DOWN. The plate says
+   *     why and the grid is not on screen at all, because on this loop
+   *     match-3 only exists while a Depot is being tuned;
+   *   • a session — the board is up, scoped to that Depot's cargo, with the
+   *     moves left, the running score and the yield it is currently worth.
+   */
+  tuning?: UiTuningSession | null;
+}
+
+/** L4 (#218): one live tuning session, as the HUD needs it. */
+export interface UiTuningSession {
+  /** The cargo the session depot collects (its board is scoped to it). */
+  cargo: Cargo;
+  /** The budget the session opened with. */
+  moves: number;
+  /** Moves not yet spent. */
+  movesLeft: number;
+  /** Gems cleared so far. */
+  score: number;
+  /** The yield this score is currently worth. */
+  yield: number;
+  /** What abandoning pays — the plate states both numbers, never a promise. */
+  abandonYield: number;
 }
 
 export interface UiHooks {
@@ -263,6 +291,15 @@ export interface UiHooks {
    * asked to shrink (a guest vetoes every answer here regardless).
    */
   requestBoardSize?: (w: number, h: number) => boolean;
+  /**
+   * L4 (#218): the tuning plate's two keys. `abandon` is the ✕ that closes a
+   * session without playing it out (paying the default yield); otherwise the
+   * player is FINISHING early, which keeps the score they earned. The game
+   * owns both rules — the chrome only reports which key was pressed — and the
+   * plate is never shown outside a session, so this is the only door out of
+   * one.
+   */
+  onTuningEnd?: (abandon: boolean) => void;
 }
 
 export interface UiRivalryBeat {
@@ -309,6 +346,21 @@ export interface OriginalUi {
   crossCancel: () => void;
   isQuarryOpen: () => boolean;
   isTradeOpen: () => boolean;
+  /**
+   * L4 (#218): bring the tuning board into view — the plant tab on the desktop
+   * (unfolding the right column when it had been put away) or the Economy
+   * sheet on a phone. Called once when a session opens: the board is the thing
+   * the player was just asked to play, and a board behind a folded panel is a
+   * board nobody finds.
+   */
+  openSessionBoard: () => void;
+  /**
+   * L4 (#218): the session is over — put the map back in front of the player.
+   * Desktop: nothing to do (the map never left; the plate and the board fold
+   * away with it). Phone: the Economy sheet handed the screen back to the Map
+   * view, which is what "close the board, return to the map" means there.
+   */
+  closeSessionBoard: () => void;
   showModal: (html: string) => void;
   hideModal: () => void;
   /** GFX-01/SETTINGS-01: raise the same ❔ reference card the top bar opens.
@@ -574,6 +626,36 @@ export function createOriginalUi(
   resetBtn.onclick = () => hooks.onReset();
   qh.appendChild(resetBtn);
   qp.appendChild(qh);
+
+  // ── L4 (#218) — the tuning plate ─────────────────────────────────────────
+  // The board's state, at the top of the plant panel: either the live session
+  // (cargo, moves left, score, the yield it is worth right now, and the two
+  // keys out of it) or, on the new loop with no session up, the one line that
+  // says why there is no board. Painted from `UiState.tuning`; the structure
+  // is built once here and only its text and classes move, so a click can
+  // never be lost to a per-frame rebuild.
+  const tuningPlate = h("div", "tuning-plate hidden");
+  tuningPlate.id = "iso-tuning";
+  const tpHead = h("div", "tp-head");
+  const tpTitle = h("b", "tp-title");
+  const tpMoves = h("span", "tp-moves");
+  tpHead.append(tpTitle, tpMoves);
+  const tpRow = h("div", "tp-row");
+  const tpScore = h("span", "tp-score");
+  const tpYield = h("span", "tp-yield");
+  const tpFinish = h("button", "tp-finish", "Finish");
+  tpFinish.type = "button";
+  tpFinish.title = "Close the session and keep the yield you have earned";
+  const tpAbandon = h("button", "tp-abandon", "✕");
+  tpAbandon.type = "button";
+  tpAbandon.title = "Close without playing it out — the Depot keeps the default yield";
+  tpAbandon.setAttribute("aria-label", "Abandon the tuning session");
+  tpFinish.onclick = () => hooks.onTuningEnd?.(false);
+  tpAbandon.onclick = () => hooks.onTuningEnd?.(true);
+  tpRow.append(tpScore, tpYield, tpFinish, tpAbandon);
+  const tpIdle = h("div", "tp-idle");
+  tuningPlate.append(tpHead, tpRow, tpIdle);
+  qp.appendChild(tuningPlate);
 
   const upbar = h("div", "upbar");
   const upbarFill = h("div", "upbar-fill");
@@ -2522,8 +2604,65 @@ export function createOriginalUi(
     comboBank.classList.toggle("full", count >= need);
   }
 
+  // ── L4 (#218): the tuning plate, and the board's session gate ─────────────
+  /** Yield as the plate prints it: never more than two decimals, and never a
+   *  trailing zero (1.6, 1.62, 2.0) — the same number the depot stores. */
+  const fmtYield = (y: number) => y.toFixed(2).replace(/0$/, "");
+  /** No-session copy. One line, and it names the building that opens one. */
+  const TUNING_IDLE = "No tuning session — build a Depot to raise its yield.";
+  let lastTuningSig = "\u0000";
+  /**
+   * Paint the plate and gate the board.
+   *
+   * `undefined` is NOT the new loop — the shipped always-on plant, untouched.
+   * `null` is the new loop between sessions: the board comes DOWN (the grid
+   * is hidden outright, so there is nothing to swipe at) and the plate says
+   * how to open it. A session puts the board back and counts it down.
+   *
+   * The repaint is gated on a signature like every other per-frame surface
+   * here, so a still session writes nothing.
+   */
+  function paintTuning(t: UiTuningSession | null | undefined) {
+    const sig = t === undefined ? "legacy"
+      : t === null ? "none"
+        : `${t.cargo}:${t.movesLeft}:${t.moves}:${t.score}:${t.yield}`;
+    if (sig === lastTuningSig) return;
+    lastTuningSig = sig;
+    if (t === undefined) {
+      // Not the new loop: no plate, board exactly as it always was.
+      tuningPlate.classList.add("hidden");
+      tuningPlate.classList.remove("idle");
+      qp.classList.remove("tuning-idle");
+      boardWrap.classList.remove("hidden");
+      return;
+    }
+    tuningPlate.classList.remove("hidden");
+    const live = t !== null;
+    tuningPlate.classList.toggle("idle", !live);
+    qp.classList.toggle("tuning-idle", !live);
+    // The board is up for a session and down between them. A session that has
+    // spent its last move stays up until its cascade settles (the game closes
+    // it), so this is never "the board vanished mid-match".
+    boardWrap.classList.toggle("hidden", !live);
+    tpIdle.classList.toggle("hidden", live);
+    tpHead.classList.toggle("hidden", !live);
+    tpRow.classList.toggle("hidden", !live);
+    if (!live) {
+      tpIdle.textContent = TUNING_IDLE;
+      return;
+    }
+    tpTitle.textContent = `Tuning ${CARGO[t.cargo].icon} ${CARGO[t.cargo].name} Depot`;
+    tpMoves.textContent = `${t.movesLeft}/${t.moves} moves`;
+    tpScore.innerHTML = `Score <b>${t.score}</b>`;
+    tpYield.innerHTML = `Yield <b>×${fmtYield(t.yield)}</b>`;
+    tpFinish.disabled = t.movesLeft === 0;
+    tpFinish.title = `Close the session — this Depot then ticks at ×${fmtYield(t.yield)}`
+      + ` (abandoning pays ×${fmtYield(t.abandonYield)})`;
+  }
+
   // ── paint ─────────────────────────────────────────────────────────────────
   function paint(state: UiState) {
+    paintTuning(state.tuning);
     rivalWirePlayerPortrait = state.portrait === "you" ? portraitYou : portraitVex;
     // STORY-01: the contract's rival wears their painted sheet on the dossier
     // card; a sandbox match (no face on the state) keeps the mugshot map.
@@ -2855,6 +2994,9 @@ export function createOriginalUi(
         force: true,
         vpTarget: hudVpTarget,
         freeTrack: hudFreeTrack,
+        // L4 (#218): replaying the tour mid-game must describe the loop THIS
+        // game is running — on the new loop that is the tuning session.
+        newLoop,
         onClose: () => { tourView = null; },
       });
     };
@@ -2913,6 +3055,14 @@ export function createOriginalUi(
     crossCancel,
     isQuarryOpen: () => !qp.classList.contains("hidden"),
     isTradeOpen: () => !marketPane.classList.contains("hidden") || !bankPane.classList.contains("hidden"),
+    openSessionBoard: () => {
+      setTab("plant");
+      if (isPhoneViewport()) setMobileView("trade");
+      else if (railRightCollapsed) { railRightCollapsed = false; paintRails(); }
+    },
+    closeSessionBoard: () => {
+      if (isPhoneViewport() && root.dataset.view === "trade") setMobileView("map");
+    },
     showModal,
     hideModal,
     showHelp: () => helpModal(),

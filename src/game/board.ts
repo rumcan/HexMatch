@@ -1,4 +1,4 @@
-import { BOARD_W, BOARD_H, ResKey, RES_KEYS, randInt, choice, shuffle } from "./config";
+import { BOARD_W, BOARD_H, ResKey, RES_KEYS, rand, randInt, choice, shuffle } from "./config";
 
 export interface Gem {
   id: number;
@@ -167,6 +167,15 @@ export class Board {
   /** Arcade bonus (match-5 / L / chain) — always pays, not network-gated. */
   onBonus: (res: ResKey, amount: number, reason: string) => void = () => {};
   /**
+   * L4 (#218) — one resolved pass CLEARED `n` gems, at cascade depth `chain`.
+   * This is the board's own measure of how well a board is being played, and
+   * the only thing a tuning session scores: the gems a pass took off the
+   * board, not the cargo it paid (that is `onHarvest`, and in the new loop it
+   * is the clock's business). Fired once per pass, after the removals are
+   * applied, so the count is exactly what the grid lost.
+   */
+  onClear: (n: number, chain: number) => void = () => {};
+  /**
    * PP-14: the cross asks the player how to spend its units of blessing — a
    * holy cross pays `HOLY_CROSS_PICKS` and a broken cross `BROKEN_CROSS_PICKS`.
    * Any allocation counts — all of one cargo, splits, one of each, repeats —
@@ -243,8 +252,32 @@ export class Board {
     return { id: this.seq++, res, tier: 0, special: null, hard: 0, block: false, r, c, isNew };
   }
 
+  /**
+   * L4 (#218) — the tuning session's OWN colour. While a session runs, the
+   * board is "scoped to that depot's cargo": roughly `biasWeight` of every
+   * refill is this colour, the rest is drawn uniformly from the pool. It is a
+   * deliberate nudge rather than a single-colour board — the session still
+   * asks you to read the whole grid, and no existing save or seed changes,
+   * because with no session (`biasRes === null`) `randRes` is untouched and
+   * consumes no randomness for the choice at all.
+   *
+   * Gold is guarded by `pool.includes`: a gold depot only drops gold once its
+   * own gold-mine gate is open (PP-09), so a bias can never mint a colour the
+   * board would not otherwise spawn.
+   */
+  biasRes: ResKey | null = null;
+  biasWeight = 0;
+  setBias(res: ResKey | null, weight = 0): void {
+    this.biasRes = res;
+    this.biasWeight = weight;
+  }
+
   private randRes(): ResKey {
-    return choice(this.pool.length ? this.pool : RES_KEYS.slice(0, 4));
+    const pool = this.pool.length ? this.pool : RES_KEYS.slice(0, 4);
+    if (this.biasRes && this.biasWeight > 0 && pool.includes(this.biasRes) && rand() < this.biasWeight) {
+      return this.biasRes;
+    }
+    return choice(pool);
   }
 
   /**
@@ -570,6 +603,7 @@ export class Board {
     // than "MATCH!"), but a deep cascade still gets its chain count.
     const text = why ? (chain > 1 ? `${why} · ${label}` : why) : label;
     this.onFx(chain > 1 ? "combo" : "chain", mid.r, mid.c, text);
+    if (removedCells.length) this.onClear(removedCells.length, chain);
     return crosses;
   }
 
