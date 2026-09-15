@@ -46,7 +46,7 @@
 import { BOARD_H, BOARD_W } from "../game/config";
 import { BANK_RATE } from "../game/trade";
 import {
-  CARGO, CARGOES, TRANSPORT, UPGRADE_COST, VICTORY, type Cargo,
+  CARGO, CARGOES, TRANSPORT, UPGRADE_COST, VICTORY, TUNING, type Cargo,
 } from "./config";
 import { DEPOT_COST, costCompact, costLabel } from "./construction";
 import { PLANT_COST } from "./plants";
@@ -183,6 +183,15 @@ export interface TutorialContext {
   vpTarget: number;
   /** Dirt-road tiles the setup allowance pays for. */
   freeTrack: number;
+  /**
+   * L4 (#218): the game is running the NEW LOOP, where the board is not an
+   * always-on machine that pays cargo: match-3 opens for a bounded TUNING
+   * SESSION when a Depot is built, and its score sets that Depot's yield
+   * level. Three steps re-voice for it (the loop, the board, what the purse
+   * is fed by) — the rest of the tour is the same game either way. Optional:
+   * a harness that omits it gets the shipped copy.
+   */
+  newLoop?: boolean;
 }
 
 /**
@@ -202,6 +211,15 @@ export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
   const allowance = ctx.freeTrack > 0
     ? `, and your setup allowance pays for the first ${ctx.freeTrack} of them`
     : ", and the setup allowance pays for your first tiles";
+  // L4 (#218): the two versions of the board's promise. On the shipped loop a
+  // match pays the purse; on the new loop it TUNES a Depot and the clock pays.
+  const newLoop = ctx.newLoop === true;
+  const loopCaption = newLoop
+    ? "Every connected Depot ticks its cargo in on the clock — the match-3 session that tunes it decides how fast."
+    : "Cargo paid by the board buys the next Depot, the next road and the next plant.";
+  const loopBoardPoint = newLoop
+    ? "Building a <b>Depot</b> opens the plant floor for a short <b>tuning session</b>: a fixed number of match-3 moves set that Depot's <b>yield</b>, and its cargo then ticks in on the clock."
+    : "Inside the plant you play <b>match-3</b>: every delivery stamps a cargo token onto a gem, and matching tokened gems pays the cargo into your purse.";
 
   return [
     {
@@ -221,12 +239,12 @@ export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
           { icon: "📦", label: "Cargo" },
           { icon: "★", label: "Expand" },
         ],
-        caption: "Cargo paid by the board buys the next Depot, the next road and the next plant.",
+        caption: loopCaption,
       },
       points: [
         "A <b>resource node</b> (farm, forest, ore mine, quarry, oil rig) makes cargo. A <b>Depot</b> built within its reach picks that cargo up.",
         "<b>Roads</b> carry it to your <b>Processing Plant</b> — a lorry starts the run the instant the two are connected, and that lorry is the connection made visible.",
-        "Inside the plant you play <b>match-3</b>: every delivery stamps a cargo token onto a gem, and matching tokened gems pays the cargo into your purse.",
+        loopBoardPoint,
         "Purse cargo buys more Depots, more road and more plants — and a rival is doing exactly the same thing on the other side of the island.",
       ],
       tip: `Six cargoes, six gem colours: ${CARGOES.map((c) => `${CARGO[c].icon} ${CARGO[c].name}`).join(" · ")}.`,
@@ -289,7 +307,25 @@ export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
         ? "One finger drags a whole run of tiles; a tap lays a single one. One finger still pans while a tool is held, two pinch-zoom, and the + / − / 🎯 keys sit at the map's right edge."
         : "Left-drag lays a whole run of tiles at once. Middle-drag pans (one finger on touch), the wheel zooms, 🎯 recentres.",
     },
-    {
+    newLoop ? {
+      id: "board",
+      kicker: "STEP 4 · TUNE IT",
+      title: "Match-3 tunes a Depot",
+      lede: "Building a Depot opens the board for a short tuning session — the board is not up otherwise.",
+      figure: {
+        kind: "shot",
+        src: shotBoard,
+        alt: "The Processing Plant board open for a tuning session, with the tuning plate above it",
+        caption: `The plate above the board counts the session's moves and shows the yield your score is worth. Swap two neighbours to line up 3 or more.`,
+      },
+      points: [
+        "A session is <b>bounded</b>: a fixed number of moves, and the plate counts them down. When the last one resolves the board closes and you are back on the map.",
+        `Every gem you clear is <b>score</b>. The score becomes the Depot's <b>yield level</b> — between ×${TUNING.minYield} and ×${TUNING.maxYield} — and a connected Depot ticks its cargo in at exactly that rate.`,
+        "<b>4 in a row</b> doubles the match and leaves a token behind; <b>5 in a row</b> forges a <b>bomb</b> — swap it with any gem to blow that whole colour. Cascades clear far more than their first line, so they are how a session is won.",
+        "Finish lowers the board early and keeps the score you have; ✕ abandons the session and leaves the Depot on the default yield. Neither can lose you anything a fresh Depot had.",
+      ],
+      tip: `🪙 Gold gems only drop while a Depot sits beside a gold mine. Every Depot is tuned once as it is built — one session at a time.`,
+    } : {
       id: "board",
       kicker: "STEP 4 · PROCESS IT",
       title: "Play match-3 in the plant",
@@ -312,7 +348,9 @@ export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
       id: "expand",
       kicker: "STEP 5 · SPEND IT",
       title: "Turn cargo into empire",
-      lede: "Matched cargo lands in your purse — the chips along the bottom of the screen.",
+      lede: newLoop
+        ? "Connected Depots tick cargo into your purse — the chips along the bottom of the screen."
+        : "Matched cargo lands in your purse — the chips along the bottom of the screen.",
       figure: {
         kind: "shot",
         src: shotExpand,
@@ -322,7 +360,9 @@ export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
       points: [
         "That purse is the only money in the game. It buys Depots, roads, plants, Security Forces and Repair Crews — every price is printed on the button before you click it.",
         "<b>Ore is the gate.</b> Dirt Road needs only wood and stone, but paving, plants and the second Depot all want ore, so an Ore Mine is the first real objective.",
-        `<b>Bank</b> trades ${BANK_RATE} of one good for 1 of another with no rival needed; <b>Market</b> posts offers the rival may take; <b>Feed</b> logs every event of the match.`,
+        newLoop
+          ? "<b>Feed</b> logs every event of the match, and the inspector answers a hover with what a tile is and what it is worth."
+          : `<b>Bank</b> trades ${BANK_RATE} of one good for 1 of another with no rival needed; <b>Market</b> posts offers the rival may take; <b>Feed</b> logs every event of the match.`,
         `Another <b>Processing Plant</b> (${plant}) beside another town widens where your Depots may deliver. All your plants share ONE board — a new plant adds reach, not throughput.`,
       ],
       tip: "Black Market cards (Blockade, Frost, Girders, Smog, Protest) cost Gold and land on the rival. A Protest ✊ shuts any public road for 2:00 — every truck stops, including yours.",
@@ -379,7 +419,9 @@ export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
           ? "The <b>chip at the map's lower-left</b> names the tool in your hand and <b>puts it down</b> on a tap — the touch twin of right-click. A tap with <b>Select</b> reads the tile under your finger in the inspector."
           : "<b>Right-click drops the tool you are holding</b> back to the <b>Select</b> pointer — hover it over a resource, town, plant or depot and the inspector says exactly what it is. <b>Q</b> does the same from the keyboard.",
         "Left column: <b>Build</b> — Select, Dirt Road, Road, Depot, Processing Plant, Demolish (half refund) — and the <b>Black Market</b> beneath it.",
-        "Right column: the <b>Bank</b>, <b>Market</b>, <b>Processing Plant</b> and <b>Feed</b> tabs, with the board and the reach strip above them.",
+        newLoop
+          ? "Right column: the <b>Processing Plant</b> and <b>Feed</b> tabs — the board comes up in the first one while a Depot is being tuned."
+          : "Right column: the <b>Bank</b>, <b>Market</b>, <b>Processing Plant</b> and <b>Feed</b> tabs, with the board and the reach strip above them.",
         "<b>Esc</b> cancels an armed card or protest, <b>M</b> mutes, ♻ collapses the board for a fresh neutral one (30 s cooldown), and the top-bar <b>Aa Names</b> switch shows or hides the name tags over the map.",
       ],
       tip: "Nothing at the start is timed — the rival does not move until your Plant and first Depot are down. Replaying this tour from ❔ mid-game does not pause it.",

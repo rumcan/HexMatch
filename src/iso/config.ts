@@ -42,6 +42,40 @@ export const CARGOES: Cargo[] = ["grain", "wood", "ore", "stone", "oil", "gold"]
 /** Baseline cargo credited by one connected depot per economy tick. */
 export const BASE_RATE = 1;
 
+/**
+ * L4 (#218) — THE tuning-session table. One session per depot, opened by
+ * building it, played on the plant board and closed by the budget running out
+ * (or by the player finishing early): the session's score is read off into a
+ * depot YIELD LEVEL between `minYield` and `maxYield`, and `economyTick`
+ * multiplies a connected depot's cargo by exactly that level (L1b).
+ *
+ * Why these numbers:
+ *   • `moves` 10 — a burst you can hold in your head. The board is only up
+ *     during a session (this ticket), so a long session would just be the old
+ *     always-on board with an odometer.
+ *   • `targetScore` 60 cleared gems — a plain 3-match is 3, so a session that
+ *     never cascades lands near half the multiplier and one that reads the
+ *     board (4/5-matches, cascades, bombs) maxes it. The score counts GEMS,
+ *     never cargo: what a match pays the purse is #234/#227's business.
+ *   • `maxYield` 2.5 — same order as the paved-road transport bonus (#216),
+ *     so tuning is a real but not dominant lever next to the network.
+ *   • `cargoBias` — the board spawns "mostly that cargo" (the ticket's words):
+ *     just under half of every refill is the depot's own colour, so its tokens
+ *     and its long matches come up often without the board becoming single
+ *     colour (which would make the session a formality).
+ */
+export const TUNING = {
+  moves: 10,
+  /** Score-0 yield — also what an abandoned session and an untuned depot pay. */
+  minYield: 1,
+  /** Yield at `targetScore` and beyond. */
+  maxYield: 2.5,
+  /** Gems cleared that earn the full multiplier. */
+  targetScore: 60,
+  /** Chance a spawned gem is the session depot's own cargo. */
+  cargoBias: 0.45,
+} as const;
+
 export const CARGO: Record<Cargo, {
   name: string; icon: string; c1: string; c2: string; gem: string;
 }> = {

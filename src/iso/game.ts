@@ -111,10 +111,18 @@ import {
 } from "./plants";
 import {
   CARGO, CARGOES, FACTORY_FOOTPRINT, FACTORY_SPRITE, INDUSTRY_BY_KEY, TRANSPORT,
-  BASE_RATE, VICTORY, VP_TARGET, UPGRADE_COST,
+  BASE_RATE, VICTORY, VP_TARGET, UPGRADE_COST, TUNING,
   depotSpriteForCargo, type Cargo, type Portrait,
 } from "./config";
 import { depotYield, distanceFactor, transportFactor } from "./loop";
+// L4 (#218): the tuning session — the one thing that sets a depot's yield.
+// The rules live in `tuning.ts` (pure, unit-tested); this file is where they
+// meet the board, the depot record and the HUD.
+import {
+  createTuningSession, recordTuningCleared, rivalTuningYield, takeTuningMove,
+  tuningMovesLeft, tuningOver, tuningSessionYield, tuningCargoLabel,
+  TUNING_ABANDON_YIELD, type TuningSession,
+} from "./tuning";
 import {
   DEPOT_COST, FREE_SETUP_DEPOTS, costCompact, costLabel, priceDepot, shortfallLabel,
 } from "./construction";
@@ -124,7 +132,7 @@ import {
   MAP_W, MAP_H, BANDIT_MS, BLOCK_MS, FOG_MS, PROTEST_MS, SABOTAGE, SECURITY,
   RES_KEYS, choice, tileToScreen, type ResKey,
 } from "../game/config";
-import { createQuarry, GEM_TO_CARGO, type Quarry } from "./quarry";
+import { createQuarry, CARGO_TO_GEM, GEM_TO_CARGO, type Quarry } from "./quarry";
 import {
   saveKeyFor, SAVEGAME_VERSION, loadRecentSave, clearSave, trackSave, trackRestored,
   type SaveGamePayload,
@@ -1111,7 +1119,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         net?.sendIntent("build", { do: "swap", r1, c1, r2, c2 });
         return;
       }
-      void quarry.board.trySwap(r1, c1, r2, c2, performance.now());
+      // L4 (#218): the session gate and the move it costs live in
+      // `requestBoardSwap`, shared with the `__iso.swap` twin — one rule, two
+      // doors.
+      requestBoardSwap(r1, c1, r2, c2);
     },
     onReset: () => resetPlant(),
     onBlackAction: (key) => buyBlack(key),
@@ -1210,6 +1221,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       tutorialView = showTutorial(ui.el, {
         vpTarget: winTarget(),
         freeTrack: me.freeTrack,
+        // L4 (#218): the boot tour describes the loop the game is running —
+        // the tuning session on the new loop, the always-on board otherwise.
+        newLoop,
       });
       // Always yield, tour or no tour: the rest of this chain reads `disposed`
       // (declared with the other boot state at the top of this function), and a
@@ -1248,6 +1262,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // MATCH! / COMBO x2 / CHAIN x3!! / MATCH 5, died on the board. This one
   // line is the wire the handover was asking for.
   quarry.board.onFx = (type, r, c, text) => ui.fx(type, r, c, text);
+  // L4 (#218): the tuning session's odometer. Every resolved pass reports the
+  // gems it took off the board; a session score is the sum. Nothing else on
+  // this board listens, and with no session open the counter is not even
+  // looked at — the old loop plays exactly as it did.
+  quarry.board.onClear = (_n, _chain) => {
+    if (tuning) recordTuningCleared(tuning, _n);
+  };
 
   // PP-14: a HOLY CROSS pauses the cascade and asks the player which cargo
   // the blessing should be — the board waits on this hook until the UI's
@@ -2542,6 +2563,151 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return true;
   }
 
+  // ══════════════════════════════════════════════════════════════════════
+  // L4 (#218) — the tuning session: match-3 sets a depot's yield level.
+  //
+  // The new loop's core event, and the only thing that opens the board on it:
+  //
+  //   build a Depot → a bounded session on the plant floor, scoped to that
+  //   Depot's cargo → score → yield ×1…×2.5 stored on the Depot → board down.
+  //
+  // `economyTick` (L1b) reads `depotYield(depot)` every 3 s, so "a better
+  // match visibly raises that Depot's tick rate" is one number flowing from
+  // `tuning.ts` into the clock. The old loop never enters any of this: its
+  // board is always on and keeps paying cargo (#234), so the shipped game is
+  // untouched while the flag is dev-only.
+  // ══════════════════════════════════════════════════════════════════════
+  /** The session in progress — one at a time, and gone when it ends. */
+  let tuning: TuningSession | null = null;
+
+  /**
+   * May the board take this swap, and if so, spend the move.
+   *
+   * The ONE gate both the chrome (`onSwap`) and the `__iso.swap` twin go
+   * through, so a test can never drive the board somewhere a hand cannot. On
+   * the old loop it is the board's own business as it always was; on the new
+   * loop it is three rules, in order:
+   *
+   *   1. a session has to be OPEN — outside one the board is not a game
+   *      surface at all ("the player is never forced to play the board outside
+   *      a tuning session", and never able to);
+   *   2. the swap has to be one the board would actually take — the same
+   *      preconditions `trySwap` checks (adjacency is the chrome's), so
+   *      tapping a girder or a smogged board costs no move;
+   *   3. and then it COSTS one of the session's moves, dud swaps included —
+   *      that is what a bounded match-3 session is.
+   */
+  function requestBoardSwap(r1: number, c1: number, r2: number, c2: number): void {
+    const now = performance.now();
+    if (newLoop) {
+      if (!tuning) {
+        toast("Build a Depot to open a tuning session — the board is only up while one runs.", "info");
+        return;
+      }
+      if (quarry.board.fogUntil > now) return;
+      const g1 = quarry.board.grid[r1]?.[c1], g2 = quarry.board.grid[r2]?.[c2];
+      if (!g1 || !g2 || g1.block || g2.block) return;
+      if (!takeTuningMove(tuning)) return;
+    }
+    void quarry.board.trySwap(r1, c1, r2, c2, now);
+  }
+
+  /**
+   * The cargo a Depot's session is scoped to.
+   *
+   * Read from the industries the Depot actually HOLDS (its catchment minus
+   * what another network claimed first — the same `heldIndustries` the clock
+   * pays it for). A Depot standing on open ground with no road yet holds
+   * nothing, and then its catchment's industries are the honest answer: the
+   * session is about the resource the Depot was built for, not about whether
+   * the player got round to connecting it. Ties go to the bigger producer,
+   * which is the cargo the Depot will earn most of once it IS connected.
+   */
+  function tuningCargoFor(depot: Harvester): Cargo | null {
+    const locks = industryLocks(eco);
+    const held = heldIndustries(eco, depot, locks);
+    const list = held.length ? held : industriesInCatchment(grid, depot);
+    let best: Cargo | null = null, bestOut = -1;
+    for (const ind of list) {
+      const def = INDUSTRY_BY_KEY[ind.type];
+      if (!def) continue;
+      const out = ind.output ?? def.output;
+      if (out > bestOut) { bestOut = out; best = def.cargo; }
+    }
+    return best;
+  }
+
+  /**
+   * Open the tuning session for a Depot. The board is wiped to a fresh neutral
+   * grid (tokens, frost, girders and smog all go — a session is a skill burst
+   * on a clean table, and the rival's sabotage must not be able to rig a
+   * yield), biased toward the Depot's own colour, and the plate takes over.
+   */
+  function openTuningSession(depot: Harvester): void {
+    const cargo = tuningCargoFor(depot);
+    if (!cargo) return;
+    quarry.board.resetNeutral();
+    quarry.board.setBias(CARGO_TO_GEM[cargo], TUNING.cargoBias);
+    tuning = createTuningSession(depot.id, cargo);
+    sfx.play("open");
+    ui.openSessionBoard();
+    toast(
+      `Tuning session — ${tuningCargoLabel(cargo)}: ${TUNING.moves} moves on the plant floor set this Depot's yield.`,
+      "info",
+    );
+  }
+
+  /**
+   * Close the open session.
+   *
+   * `abandon` is the ✕ (or a Depot that was demolished under it): the Depot
+   * keeps the defined default yield, so there is never a stuck half-tuned
+   * depot and never a session with nowhere to go. Without it, the score the
+   * player earned is what lands. Either way the bias comes off the board, the
+   * plate goes back to its idle line and the map (phone: the Map view) is
+   * what the player is left looking at.
+   */
+  function closeTuningSession(abandon: boolean, note?: string): void {
+    const s = tuning;
+    if (!s) return;
+    tuning = null;
+    quarry.board.setBias(null);
+    const depot = eco.harvesters.find((h) => h.id === s.depotId);
+    const level = abandon ? TUNING_ABANDON_YIELD : tuningSessionYield(s);
+    if (depot) {
+      // Stored on the depot record, which is what the L1b clock multiplies by
+      // — and what the snapshot (yield) and the savegame (harvesters) carry.
+      depot.yield = level;
+      const gained = !abandon && level > TUNING_ABANDON_YIELD;
+      toast(
+        note ?? (gained
+          ? `Depot tuned — ${s.score} matched gems, yield ×${level}. It ticks faster from here.`
+          : `Depot tuned — yield ×${level} (the default). A better session raises it.`),
+        gained ? "good" : "info",
+      );
+      ui.feed(`Depot tuned: yield ×${level}`, me.name);
+    } else if (note) {
+      toast(note, "info");
+    }
+    ui.closeSessionBoard();
+    rescoreNow();
+  }
+
+  /**
+   * L4 (#218): the rival's tuning results. It plays no board for these — each
+   * of its depots takes a SIMULATED session off its difficulty preset
+   * (`tuningSkill`), which is the same 0…1 axis a player's score lives on. Run
+   * on every AI turn and on the economy clock, so a depot from a restored save
+   * (or one built before this landed) is never left without a level.
+   */
+  function applyRivalTuning(): void {
+    if (!newLoop) return;
+    const key = skill().key;
+    for (const h of eco.harvesters) {
+      if (h.owner === rival.id && h.yield === undefined) h.yield = rivalTuningYield(key);
+    }
+  }
+
   function placeHarvester(tx: number, ty: number, p: PlayerState): boolean {
     if (!canBuildOn(grid, "dirt", tx, ty)) {
       toast("Can't build there.", "bad");
@@ -2578,6 +2744,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (p.human) flashAt(tx, ty, "Resource already claimed");
       return false;
     }
+    // L4 (#218): one tuning session at a time. The board is open for the
+    // Depot the player is tuning RIGHT NOW, and a second Depot would have no
+    // board to be tuned on (the plate is one session's plate). Refused before
+    // anything is priced or spent, like every other refusal in here — and the
+    // session can always be closed in one click, so this is never a dead end.
+    if (newLoop && tuning) {
+      toast("Finish the tuning session first — one Depot is tuned at a time.", "bad");
+      if (p.human) flashAt(tx, ty, "Finish the tuning session first");
+      return false;
+    }
     // PP-05: priced only now that the site is legal, and spent only when the
     // whole cost is covered. Oil earned in the Processing Plant is in this same
     // purse, so processed Oil builds Depots with no special case.
@@ -2589,6 +2765,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     if (!spend(p, price.cost)) return false;      // guard; `price.affordable` holds
     p.freeDepots = price.freeLeft;
+    // L4 (#218): under the new loop every Depot is BORN at the default yield
+    // and is then tuned. A level is never absent, so a mid-session reload or a
+    // depot the player never got round to tuning still ticks (and still
+    // round-trips the wire/save as a number).
+    if (newLoop) h.yield = TUNING_ABANDON_YIELD;
     // G5: harvesters seed the network; they no longer need existing track.
     eco.harvesters.push(h);
     if (p.human) sfx.play("build");      // SFX-01
@@ -2606,6 +2787,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (storyOn) playAdvisor("gold");
       else playRivalryScene(nextGoldMineScene());
     }
+    // L4 (#218): building the Depot IS opening its tuning session. Opens last,
+    // so the Depot exists (and can be scored/paid for) before the board comes
+    // up for it. Only the LOCAL seat's own build: a guest's Depot arrives as an
+    // intent on the host, and the host has no board of the guest's to open
+    // (newLoop is refused in a room anyway — belt and braces).
+    if (newLoop && p === me && !isGuest()) openTuningSession(h);
     return true;
   }
 
@@ -2765,7 +2952,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     const hi = eco.harvesters.findIndex((h) => h.tx === tx && h.ty === ty && h.owner === p.id);
     if (hi >= 0) {
+      const removed = eco.harvesters[hi];
       eco.harvesters.splice(hi, 1);
+      // L4 (#218): the board was only up for THAT Depot's session. Without
+      // this, demolishing a Depot mid-session would leave the player on a
+      // board with no session behind it and no key out — the stuck state the
+      // ticket calls out.
+      if (tuning?.depotId === removed.id) {
+        closeTuningSession(false, "The tuned Depot was removed — tuning session closed.");
+      }
       if (p.human) sfx.play("demolish");   // SFX-01
       syncWorld(); rescoreNow();
       toast("Depot removed.", "info");
@@ -3171,6 +3366,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (now - lastHarvest < HARVEST_MS) return;
     lastHarvest = now;
     if (newLoop) {
+      // L4 (#218): the rival's depots take their simulated tuning level here,
+      // before anything is clocked — an AI turn assigns its own, and this
+      // catches everything else (a restored save, a depot built before the
+      // redesign). Idempotent: a depot that already has a level is left alone.
+      applyRivalTuning();
       // L1b: the host clocks only the local seat. Connectivity is evaluated
       // per depot, so removing a road immediately stops that depot's income.
       const owner = me.id;
@@ -3223,6 +3423,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // so its offers are posted here exactly as they are in solo.
     if (isSolo() || aiOpponent) rivalMarketOffer(now);
     quarry.tick(now);
+    // L4 (#218): a session whose budget is spent and whose board has stopped
+    // moving closes ITSELF — the yield lands the moment the last cascade
+    // settles, with no modal to dismiss and no way to be stuck holding a
+    // finished session.
+    if (tuning && tuningOver(tuning) && !quarry.board.busy) closeTuningSession(false);
     // AI-03: the rival's own plant plays: same board clock as yours, then
     // one watchable move per skill().moveMs. trySwap refuses politely when
     // the board is busy or smogged, so the clock can keep cadence calmly.
@@ -3747,6 +3952,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (!depotBuild()) break;
       acted = true;
     }
+    // L4 (#218): however many Depots that turn raised, they are all tuned now —
+    // the rival's simulated session result, at its difficulty's skill. No
+    // board, no session, no waiting: the level is on the record before the
+    // economy clock next reads it.
+    applyRivalTuning();
 
     // 3. pave — what the scoreboard pays for, with whatever Ore is spare; and
     //    when the Ore is not spare but the gravel is there, buy it (VP-01)
@@ -3800,6 +4010,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       rival.freeDepots = Math.max(0, rival.freeDepots - retry.freeDepots);
       spend(rival, retry.spent);
       for (const [bx, by] of retry.built) renderer?.invalidateTile(bx, by);
+      // L4 (#218): the retry path raises a Depot too — tune it like any other.
+      applyRivalTuning();
       ui.feed(`Rival expands: a new Depot and ${retry.built.length} road tile${retry.built.length === 1 ? "" : "s"}`, rival.name);
     }
     const paved = rivalPavePass();
@@ -5074,6 +5286,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       portrait,
       // NAMES: the top-bar Names button paints its pressed state from this.
       showNames,
+      // L4 (#218): the board's own state on the new loop. `undefined` (the flag
+      // off) leaves the always-on plant exactly as it ships; `null` takes the
+      // board down between sessions; a session puts it up with its budget, its
+      // score and the yield that score is worth right now.
+      tuning: newLoop
+        ? (tuning
+          ? {
+              cargo: tuning.cargo, moves: tuning.moves, movesLeft: tuningMovesLeft(tuning),
+              score: tuning.score, yield: tuningSessionYield(tuning),
+              abandonYield: TUNING_ABANDON_YIELD,
+            }
+          : null)
+        : undefined,
       // RAIL-04 (#178): the Railway panel's rows — the MODEL is `railPanelRows`
       // in the rail module (which platform has a line, which train is stored,
       // which actions are legal); this only adds the price the button prints.
@@ -5492,7 +5717,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             phase = "play";
             lastHarvest = performance.now();
             lastAi = performance.now();
-            toast("Now connect it to your Factory with a Dirt Road or a paved Road — then match the tokened gems in the Processing Plant.", "info");
+            // L4 (#218): the new loop promises the clock, not the board. The
+            // session toast (from `openTuningSession`) has already told the
+            // player what the board is for; this line is the other half of the
+            // loop — the road that makes the Depot earn.
+            toast(newLoop
+              ? "Now connect it to your Factory with a Dirt Road — a connected Depot ticks its cargo in on the clock."
+              : "Now connect it to your Factory with a Dirt Road or a paved Road — then match the tokened gems in the Processing Plant.", "info");
           }
         } else if (phase === "play") {
           // A bought protest intercepts the click: it stages on a public road
@@ -6807,6 +7038,36 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     grid, track, eco,
     // ── J1: the quarry join, exposed so the boot test can prove the loop ──
     get board() { return quarry.board; },
+    /**
+     * L4 (#218): the tuning session, as the HUD sees it — null when no session
+     * is open (on the new loop that ALSO means the board is down). The game
+     * holds a live record; this hands back a plain snapshot plus the two
+     * derived numbers, so a test reads the same values the plate prints.
+     */
+    get tuning() {
+      if (!tuning) return null;
+      return {
+        depotId: tuning.depotId, cargo: tuning.cargo,
+        moves: tuning.moves, movesLeft: tuningMovesLeft(tuning), used: tuning.used,
+        score: tuning.score, yield: tuningSessionYield(tuning),
+        abandonYield: TUNING_ABANDON_YIELD,
+      };
+    },
+    /**
+     * L4 (#218): the plate's two keys, as twins — `tuningFinish()` closes the
+     * session keeping the score (Finish), `tuningFinish(true)` abandons it
+     * (the ✕). Both are the same call the DOM buttons make, so a test never
+     * has to reach through the chrome to end a session.
+     */
+    tuningFinish: (abandon = false) => { closeTuningSession(abandon); },
+    /** L4 (#218): every depot's yield level, by owner — the number the L1b
+     *  clock multiplies by. `null` = no level stored (an untuned depot). */
+    get depotYields() {
+      return eco.harvesters.map((h) => ({ id: h.id, owner: h.owner, tx: h.tx, ty: h.ty, yield: h.yield ?? null }));
+    },
+    /** L4 (#218): the rival's tuning level sweep, on demand — the same call an
+     *  AI turn makes, for tests that raise a rival depot by hand. */
+    rivalTuning: () => { applyRivalTuning(); },
     get reach() { return quarry.reach; },
     /** AI-03 diagnostics: the rival's own quarry reach — the token gate its
      *  income depends on; empty while its depot↔factory road isn't attached. */
@@ -6891,9 +7152,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     /** The next Gold Mine warning, as `placeHarvester` will play it when the
      *  player stands a Depot beside a Gold Mine (test twin). */
     goldMineWarning: (): RivalryScene => nextGoldMineScene(),
-    /** The e2e twin of clicking two adjacent gems in the Quarry panel. */
-    swap: (r1: number, c1: number, r2: number, c2: number) =>
-      quarry.board.trySwap(r1, c1, r2, c2, performance.now()),
+    /** The e2e twin of clicking two adjacent gems in the Quarry panel — the
+     *  same gate as the chrome's (L4: a session must be open, and a move is
+     *  spent), so a test cannot play a board a player could not. */
+    swap: (r1: number, c1: number, r2: number, c2: number) => requestBoardSwap(r1, c1, r2, c2),
     /** #187: the same seam the chrome's doors use — asking for the pointer
      *  CANCELS (tool, armed drag and placement ghost together), anything else
      *  arms. A test twin that assigned `tool` directly would leave the drag the

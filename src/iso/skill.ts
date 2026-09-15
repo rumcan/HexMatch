@@ -109,6 +109,14 @@ export interface RivalSkill {
    */
   rail: boolean;
   /**
+   * L4 (#218): how well this rival plays a tuning session, on the same 0…1
+   * axis as a player's own score (0 = `TUNING.minYield`, 1 = `maxYield`). It
+   * is a SIMULATED result — the rival opens no board for it — and it is the
+   * same lever for all three presets, so "the hard rival's depots tick faster"
+   * is one number here rather than a special case somewhere in `game.ts`.
+   */
+  tuningSkill: number;
+  /**
    * AI-04: the Victory-Point line the GAME races to while this difficulty is
    * selected — the number in the HUD's "You 2★/5", the king bars' 100%, the
    * rival's own race assessment (`rivalPace`) and the win check. `easy` runs a
@@ -135,6 +143,8 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     urgencyBias: 0.75,
     // RAIL-05: the easy chair keeps to the road — no rail for it to learn.
     rail: false,
+    // L4 (#218): a casual tuning hand — its depots land just above baseline.
+    tuningSkill: 0.35,
     // AI-04: the easy chair is a SHORT race — 5★ instead of the shipped 10★.
     winTarget: 5,
   },
@@ -154,6 +164,8 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     urgencyBias: 1,
     // RAIL-05: normal builds and runs rail lines, one action per turn.
     rail: true,
+    // L4 (#218): the shipped tuning hand — the middle of the multiplier.
+    tuningSkill: 0.62,
     winTarget: VICTORY.target,   // AI-04: the shipped 10★ line, aliased
   },
   hard: {
@@ -172,6 +184,8 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     urgencyBias: 1.4,
     // RAIL-05: hard runs rail as hard as it paves — the spread lever.
     rail: true,
+    // L4 (#218): reads the board — long matches and cascades.
+    tuningSkill: 0.88,
     winTarget: VICTORY.target,   // AI-04: the shipped 10★ line, aliased
   },
 };
