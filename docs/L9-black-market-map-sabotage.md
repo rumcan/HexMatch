@@ -39,6 +39,12 @@ do, the same thing: **the target's income ticks stop**.
   `economyTick` skips those depots. A depot with no road route is never
   protested, and the lorry-holding behaviour in `tickTrucks` is unchanged — the
   visual and the economic effect now agree.
+
+  The skip sits **inside the two-seat loop** L1d (#235) introduced, so it cuts
+  whichever seat owns the protested route: the player can stall the rival's
+  haul road, and the rival's raid can stall the player's. `protestedDepot`
+  resolves the depot owner's own Security guard, so neither seat's immunity
+  leaks to the other.
 * **Security Forces** — checked *before* either effect, for the defender's
   seat. The attacker is charged either way, which is what makes buying the
   guard ahead of a raid worth the materials.
@@ -57,7 +63,10 @@ belongs now that the board is a bounded session.
 
 Combo Gold (`Board.COMBOS_PER_GOLD` → the quarry's `onGold` hook) was minted by
 an always-on board. Under `newLoop` that board is only up during a session, so
-the tap is closed (`payGold: !newLoop` on both quarries) and replaced by:
+the tap is closed (`payGold: !newLoop` on both quarries) and replaced by the
+rule below. This is the half L1d (#235) deferred with "#227 owns Gold": that
+ticket cut the rival's **cargo** line (`payCargo`), this one cuts its **coin**
+line, and the two hooks sit side by side on both seats' quarries.
 
 **a tuning session pays Gold for its score** — `tuningGoldFor(score)` in
 `src/iso/tuning.ts`, bounded by `TUNING.minGold`(1) … `TUNING.maxGold`(3):

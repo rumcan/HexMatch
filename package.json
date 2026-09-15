@@ -14,7 +14,7 @@
     "test": "vitest run --exclude tests/unit/iso-ai-sweep.test.ts --exclude tests/unit/iso-rebalance.test.ts --exclude tests/unit/iso-debug.test.ts",
     "test:watch": "vitest",
     "test:server": "vitest run tests/unit/server.test.ts",
-    "test:slow": "vitest run --testTimeout=60000 tests/unit/iso-ai-sweep.test.ts tests/unit/iso-rebalance.test.ts tests/unit/iso-debug.test.ts",
+    "test:slow": "vitest run --testTimeout=60000 tests/unit/iso-ai-sweep.test.ts tests/unit/iso-rebalance.test.ts tests/unit/iso-debug.test.ts tests/unit/iso-l1d-race.test.ts",
     "test:all": "vitest run",
     "test:e2e": "playwright test",
     "test:e2e:mp": "playwright test --config playwright.multiplayer.config.ts",

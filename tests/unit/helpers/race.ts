@@ -9,7 +9,10 @@
 //   every build turn, in the game's order: plant → aiBuildStep (A* road
 //     planning against BUILD_COSTS + priceDepot) → planUpgrades/executePaves →
 //     banking;
-//   income: playerResources trickle with the PP-07 fractional carry;
+//   income: playerResources trickle with the PP-07 fractional carry — or, with
+//     `newLoop: true` (L1d, #235), the clock income the live game pays both
+//     seats (`loopIncome` below: BASE_RATE × the depot's yield level × the
+//     L2/L3 seams, per connected depot, remainder carried per depot);
 //   trading: the real bankTrade 4:1 bank, aimed at the smaller shortfall
 //     between the next Depot and the next four paves — plus, since AI-01, the
 //     same market offers the live rival posts (chooseRivalOffer over the real
@@ -41,15 +44,21 @@ import {
 import { createRailState, tickTrains, type RailState } from "../../../src/iso/rail";
 import { RIVAL_SKILLS, type RivalSkill, type SkillKey } from "../../../src/iso/skill";
 import {
-  playerResources, type EconomyState, type Factory,
+  buildAllComponents, harvesterYield, industryLocks, ownerIdOf, playerResources,
+  type EconomyState, type Factory,
 } from "../../../src/iso/economy";
+// L1d (#235): the new loop's income rule, imported wholesale — the harness
+// must clock a seat with the SAME seams the live `economyTick` uses, or the
+// race measures an economy nobody ships.
+import { depotYield, distanceFactor, transportFactor } from "../../../src/iso/loop";
+import { rivalTuningYield } from "../../../src/iso/tuning";
 import {
   createScoreState, rescore, vpFor, hasWon,
 } from "../../../src/iso/victory";
 import {
   addPlant, canAffordPlant, chooseAiPlantSpot, PLANT_COST,
 } from "../../../src/iso/plants";
-import { VP_TARGET, CARGOES, type Cargo } from "../../../src/iso/config";
+import { BASE_RATE, VP_TARGET, CARGOES, type Cargo } from "../../../src/iso/config";
 import {
   bankTrade, BANK_RATE, createMarket, postOffer, acceptOffer, tickMarket,
   type Market, type MarketPlayer, type TradeOffer,
@@ -78,6 +87,11 @@ export interface Seat {
   lastHarvest: number;
   lastOffer: number;
   carry: Partial<Record<Cargo, number>>;
+  /**
+   * L1d (#235): the new loop's per-DEPOT fractional carry (the live twin is
+   * `loopCarry` in game.ts). Empty while the flag is off.
+   */
+  loopCarry: Map<number, number>;
   /** ms of the first pave and of the first point of any kind. */
   firstPave: number | null;
   firstPoint: number | null;
@@ -135,6 +149,14 @@ export interface RaceOptions {
   fullWindow?: boolean;
   /** RAIL-05 (#182): [you, ai] railway strategy. Default: both "road". */
   rail?: [RailStrategy, RailStrategy];
+  /**
+   * L1d (#235): run BOTH seats on the new loop's economy — income from the
+   * clock (`BASE_RATE × depotYield × distanceFactor × transportFactor` per
+   * connected depot, fractional remainder carried per depot) and dirt free at
+   * the build step (L2). Default false = the shipped trickle economy, and
+   * every existing number in the calibration docs stays exactly what it was.
+   */
+  newLoop?: boolean;
 }
 
 /**
@@ -196,7 +218,10 @@ const bankBudget = (skill: RivalSkill, pace: RivalPace): number =>
  * plan needed into Ore, that pass sold the Ore back into Wood, and the 4:1
  * round trip vaporized the purse while no plan ever completed.
  */
-function bankForPaves(eco: EconomyState, seat: Seat, track: Track, f: Factory, pace: RivalPace, urgency: number) {
+function bankForPaves(
+  eco: EconomyState, seat: Seat, track: Track, f: Factory, pace: RivalPace,
+  urgency: number, newLoop = false,
+) {
   const ranked = paveCandidates(eco, {
     owner: seat.id, ownerId: seat.ownerId, purse: seat.purse, maxTiles: 4,
   });
@@ -205,7 +230,7 @@ function bankForPaves(eco: EconomyState, seat: Seat, track: Track, f: Factory, p
   for (const t of ranked.slice(0, 4)) need += tileCost(track, "road", t.x, t.y).ore ?? 0;
   const price = need > 0 ? 4 : 0;
   if ((seat.purse.ore ?? 0) >= need || !price) return;
-  seatSkintTarget(eco, seat, track, f, urgency);        // refresh the goals
+  seatSkintTarget(eco, seat, track, f, urgency, newLoop);   // refresh the goals
   const guard = seat.planGoal ?? {};
   let trades = 0;
   while ((seat.purse.ore ?? 0) < need && trades < bankBudget(seat.skill, pace)) {
@@ -226,6 +251,7 @@ function bankForPaves(eco: EconomyState, seat: Seat, track: Track, f: Factory, p
  */
 function seatSkintTarget(
   eco: EconomyState, seat: Seat, track: Track, f: Factory, urgency: number,
+  newLoop = false,
 ): Purse | null {
   // AI-01: through the memoized deep search — a stalled seat re-asks this on
   // every idle retry, and re-routing an unchanged map was most of the
@@ -233,7 +259,7 @@ function seatSkintTarget(
   // shortfall ranking below reads the live purse either way.
   const cands = deepPlanCandidates(eco, f, {
     stock: seat.purse, free: seat.freeTrack, freeDepots: seat.freeDepots,
-    oreUrgency: urgency,
+    oreUrgency: urgency, newLoop,
   });
   const depot = priceDepot(seat.purse, seat.freeDepots).cost;
   let planTarget: Purse | null = null;
@@ -264,8 +290,11 @@ function seatSkintTarget(
  * including VP-01's rule that the bank may be pointed at the SCOREboard (Ore
  * for paves) when that milestone is closer than the next Depot.
  */
-function bankToward(eco: EconomyState, seat: Seat, track: Track, f: Factory, pace: RivalPace, urgency: number) {
-  const target = seatSkintTarget(eco, seat, track, f, urgency);
+function bankToward(
+  eco: EconomyState, seat: Seat, track: Track, f: Factory, pace: RivalPace,
+  urgency: number, newLoop = false,
+) {
+  const target = seatSkintTarget(eco, seat, track, f, urgency, newLoop);
   seat.target = target;      // AI-01: the market's answer policy reads this
   if (!target) return;
   // AI-01: never sell the score. While any pave goal is on the board, Ore
@@ -288,6 +317,41 @@ function bankToward(eco: EconomyState, seat: Seat, track: Track, f: Factory, pac
 }
 
 /**
+ * L1d (#235): one seat's new-loop income — the harness twin of the `newLoop`
+ * branch in game.ts's `economyTick`, seam for seam:
+ *
+ *   • every depot it owns that is CONNECTED (its own components, the same
+ *     `harvesterYield` gate) pays `BASE_RATE × depotYield × distanceFactor ×
+ *     transportFactor ×` the cargo its held industries yield;
+ *   • the sub-unit remainder is carried per depot (`seat.loopCarry`), so a
+ *     0.4/tick Oil Rig still pays over time;
+ *   • a depot's yield level is the SIMULATED tuning result off the seat's own
+ *     difficulty (`rivalTuningYield`) — the live game does that for the rival
+ *     in `applyRivalTuning`, and a harness seat has no board to play either,
+ *     so both seats take the same treatment and the comparison stays fair.
+ */
+function loopIncome(eco: EconomyState, seat: Seat, t: number): void {
+  for (const depot of eco.harvesters) {
+    if (depot.owner !== seat.id) continue;
+    if (depot.yield === undefined) depot.yield = rivalTuningYield(seat.skill.key);
+  }
+  const locks = industryLocks(eco);
+  const components = buildAllComponents(eco.track, ownerIdOf(eco, seat.id));
+  for (const depot of eco.harvesters) {
+    if (depot.owner !== seat.id) continue;
+    const result = harvesterYield(eco, components, locks, depot, t);
+    const cargoes = Object.entries(result.yields) as [Cargo, number][];
+    if (!result.serviced || !cargoes.length) continue;
+    const factor = BASE_RATE * depotYield(depot) * distanceFactor(depot) * transportFactor(depot);
+    const total = cargoes.reduce((sum, [, amount]) => sum + amount, 0) * factor
+      + (seat.loopCarry.get(depot.id) ?? 0);
+    const whole = Math.floor(total);
+    seat.loopCarry.set(depot.id, total - whole);
+    if (whole > 0) seat.purse[cargoes[0][0]] = (seat.purse[cargoes[0][0]] ?? 0) + whole;
+  }
+}
+
+/**
  * Race one seed, both seats driven by the same AI the live game ships. The
  * loop steps one simulated second at a time and breaks on the first seat to
  * 10★; per-difficulty clocks (`buildMs`/`idleMs`) run exactly like the live
@@ -298,6 +362,9 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
   const RACE_MS = (opts.minutes ?? 24) * 60_000;
   const [skillYou, skillAi] = opts.skills ?? ["normal", "normal"];
   const [railYou, railAi] = opts.rail ?? ["road", "road"];
+  // L1d (#235): one flag for BOTH seats — the ticket is parity, so the harness
+  // has no "new loop for me, trickle for him" mode.
+  const newLoop = opts.newLoop === true;
   const grid = generateMap(seed);
   const track = createTrack();
   // AI-01: the live map boots with its towns' ring roads and inter-town
@@ -316,7 +383,7 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
     freeTrack: FREE_SETUP_TRACK,
     freeDepots: FREE_SETUP_DEPOTS,
     lastBuild: -RIVAL_SKILLS[key].buildMs, lastHarvest: -HARVEST_MS,
-    lastOffer: -(RIVAL_SKILLS[key].offerEveryMs || 0), carry: {},
+    lastOffer: -(RIVAL_SKILLS[key].offerEveryMs || 0), carry: {}, loopCarry: new Map(),
     firstPave: null, firstPoint: null, oreOnPaves: 0, paves: 0,
     offersPosted: 0, offersTaken: 0, milestones: [],
     target: null, planGoal: null, paveGoal: null,
@@ -409,7 +476,7 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
           const built = aiBuildStep(eco, factoryFor(seat), {
             stock: seat.purse, purse: seat.purse,
             free: seat.freeTrack, freeDepots: seat.freeDepots, now: t,
-            oreUrgency: urgency,
+            oreUrgency: urgency, newLoop,
           }, nextHarvesterId);
           if (!built) break;
           nextHarvesterId++;
@@ -434,7 +501,7 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
         } else {
           // VP-01: the seat that has gravel and no Ore buys the Ore, even on a
           // turn it also spent building — `rivalBankTowardPave` in game.ts
-          bankForPaves(eco, seat, track, factoryFor(seat), pace, urgency);
+          bankForPaves(eco, seat, track, factoryFor(seat), pace, urgency, newLoop);
         }
         // RAIL-05: the rail action after the road turn — every turn ("mixed",
         // "platforms"), or only when the road did nothing ("exclusive").
@@ -444,7 +511,7 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
         }
 
         if (!acted) {
-          bankToward(eco, seat, track, factoryFor(seat), pace, urgency);
+          bankToward(eco, seat, track, factoryFor(seat), pace, urgency, newLoop);
           // the game retries the whole sequence once a bank unlocked something
           const retry = planUpgrades(eco, {
             owner: seat.id, ownerId: seat.ownerId, purse: seat.purse,
@@ -488,7 +555,7 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
         const other = seat.id === "you" ? "ai" : "you";
         const urgency = rivalPace(vpFor(score, other), vpFor(score, seat.id), VP_TARGET).oreUrgency
           * seat.skill.urgencyBias;
-        const need = seatSkintTarget(eco, seat, track, factoryFor(seat), urgency);
+        const need = seatSkintTarget(eco, seat, track, factoryFor(seat), urgency, newLoop);
         seat.target = need;  // AI-01: cache for the answering policy
         if (need) {
           const idea = chooseRivalOffer(seat.purse, need);
@@ -506,12 +573,15 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
       // ── the harvest clock: trickle income with the fractional carry
       if (t - seat.lastHarvest >= HARVEST_MS) {
         seat.lastHarvest = t;
-        const y = playerResources(eco, seat.id, t);
-        for (const [cargo, v] of Object.entries(y) as [Cargo, number][]) {
-          const acc = (seat.carry[cargo] ?? 0) + Math.max(0, v);
-          const n = Math.floor(acc);
-          seat.carry[cargo] = acc - n;
-          if (n > 0) seat.purse[cargo] = (seat.purse[cargo] ?? 0) + n;
+        if (newLoop) loopIncome(eco, seat, t);
+        else {
+          const y = playerResources(eco, seat.id, t);
+          for (const [cargo, v] of Object.entries(y) as [Cargo, number][]) {
+            const acc = (seat.carry[cargo] ?? 0) + Math.max(0, v);
+            const n = Math.floor(acc);
+            seat.carry[cargo] = acc - n;
+            if (n > 0) seat.purse[cargo] = (seat.purse[cargo] ?? 0) + n;
+          }
         }
       }
     }

@@ -309,6 +309,46 @@ describe("L9 the map cards stop the target's income ticks", () => {
     expect(tickGain(h, now += 10_000), "an unrelated road stops nobody").toBeGreaterThan(0);
   });
 
+  it("stops the RIVAL's clock too, now that both seats earn on it (#235)", async () => {
+    // L1d (#235) landed beside this ticket: the new-loop clock pays BOTH
+    // seats from their own connected depots. A Protest is therefore a card
+    // the player can aim at the rival's INCOME, not just a thing that happens
+    // to them — this pins that the skip lives inside the two-seat loop and
+    // reads the rival's own routes.
+    const h = await boot({ newLoop: true });
+    h.finishSetup();
+    // A rival depot + factory joined by its own road, the mirror of the
+    // player fixture above.
+    const site = depotSite(h.grid)!;
+    h.eco.harvesters.push({ id: 700, owner: "ai", ownerId: 2, tx: site.hx, ty: site.hy });
+    h.eco.factories.push({ owner: "ai", ownerId: 2, tx: site.hx, ty: site.fy, id: 7, townId: null });
+    for (let y = site.hy + 1; y < site.fy; y++) buildTile(h.track, "road", site.hx, y, 2);
+    h.rivalTuning();                       // give it a yield to be multiplied by
+
+    const rival = h.market.players[1];
+    const rivalTotal = () => purseTotal(rival.res);
+    let now = performance.now();
+    let before = rivalTotal();
+    h.econTick(now += 10_000);
+    expect(rivalTotal() - before, "the rival earns on the clock (#235)").toBeGreaterThan(0);
+
+    // The player protests the rival's own haul road.
+    const ty = site.hy + 2;
+    h.track.owner[tIdx(site.hx, ty)] = PUBLIC_OWNER;
+    h.purse.gold = SABOTAGE.protest.gold;
+    h.armProtest();
+    expect(h.placeProtest(site.hx, ty)).toBe(true);
+
+    before = rivalTotal();
+    h.econTick(now += 10_000);
+    expect(rivalTotal() - before, "the rival's depot is held by the crowd").toBe(0);
+
+    // …and it resumes on its own when the crowd goes home.
+    before = rivalTotal();
+    h.econTick(h.protests[0].until + 10_000);
+    expect(rivalTotal() - before).toBeGreaterThan(0);
+  });
+
   it("Security Forces turn BOTH cards away for the guard's duration", async () => {
     const h = await boot({ newLoop: true });
     const { site } = await connectedDepot(h);

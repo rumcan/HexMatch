@@ -196,9 +196,10 @@ export interface QuarryHooks {
    * stays honest and a refused token reports no "lost cargo" either: nothing
    * was owed, so nothing was lost.
    *
-   * Default `true` — the shipped loop, unchanged. The rival's seat keeps it
-   * (#235 gives the rival its own clock); combo Gold (`onGold`) and the
-   * board's cross/bonus rewards are untouched here (#227 re-homes them).
+   * Default `true` — the shipped loop, unchanged. Both seats cut it on the new
+   * loop: #234 for the player, #235 for the rival (whose depots are paid by
+   * the same clock). Combo Gold (`onGold`) and the board's cross/bonus
+   * rewards are untouched here (#227 re-homes them).
    */
   payCargo?: boolean;
   /**
