@@ -39,6 +39,9 @@ export const PORTRAITS: Portrait[] = ["vex", "you"];
 
 export const CARGOES: Cargo[] = ["grain", "wood", "ore", "stone", "oil", "gold"];
 
+/** Baseline cargo credited by one connected depot per economy tick. */
+export const BASE_RATE = 1;
+
 export const CARGO: Record<Cargo, {
   name: string; icon: string; c1: string; c2: string; gem: string;
 }> = {

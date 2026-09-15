@@ -56,6 +56,8 @@ export interface Harvester {
   ownerId: number;
   tx: number;
   ty: number;
+  /** L4 yield level; absent on legacy saves/snapshots means baseline. */
+  yield?: number;
 }
 
 /**
