@@ -21,6 +21,9 @@ import {
   planFactoryPlacement,
   placementReasonText,
 } from "../../src/iso/placement";
+import {
+  depotEntranceTiles, depotFacingAt, depotSites, depotTiles, depotsOverlap,
+} from "../../src/iso/depot";
 
 const grid = (seed = 1337): Grid => generateMap(seed);
 
@@ -82,29 +85,22 @@ describe("PP-03 factory footprint vs town-adjacency band", () => {
 });
 
 describe("PP-03 depot footprint vs catchment reach", () => {
-  it("the reach is the same 4×4 rect the economy scores with, minus the 1×1 footprint tile", () => {
+  it("the footprint is the 2×2 lot and the reach is its entrance — where the road must arrive", () => {
     const g = grid();
-    const tx = 70, ty = 55;
+    // a real site beside the first industry that has one
+    const ind = g.industries.find((i) => depotSites(g, i).length > 0)!;
+    const { tx, ty, facing } = depotSites(g, ind)[0];
     const plan = planDepotPlacement(g, [], tx, ty);
-    const rect = catchmentRect(tx, ty);
-    const expected: [number, number][] = [];
-    for (let y = rect.y0; y <= rect.y1; y++) {
-      for (let x = rect.x0; x <= rect.x1; x++) {
-        if (x === tx && y === ty) continue;
-        if (x >= 0 && y >= 0 && x < g.w && y < g.h) expected.push([x, y]);
-      }
-    }
-    expect(plan.reach).toEqual(expected);
-    expect(depotCatchmentTiles(g, tx, ty)).toEqual(expected);
-    // whatever the validity verdict at this tile, the footprint is that one
-    // 1×1 tile with a consistent per-tile reason
-    expect(plan.footprint).toHaveLength(1);
-    expect(plan.footprint[0].tx).toBe(tx);
-    expect(plan.footprint[0].ty).toBe(ty);
-    expect(plan.footprint[0].ok).toBe(plan.valid);
-    expect(plan.footprint[0].why).toBe(plan.valid ? null : plan.why);
     expect(plan.kind).toBe("depot");
-    expect(DEPOT_FOOTPRINT).toEqual([1, 1]);
+    expect(DEPOT_FOOTPRINT).toEqual([2, 2]);
+    expect(plan.facing).toBe(facing);
+    expect(plan.footprint.map((t) => [t.tx, t.ty])).toEqual(depotTiles(tx, ty));
+    const gates = depotEntranceTiles(tx, ty, facing);
+    expect(plan.reach).toEqual(gates);
+    expect(depotCatchmentTiles(g, tx, ty)).toEqual(gates);
+    // a site with no resource beside it has no entrance to show
+    expect(depotCatchmentTiles(g, 1, 1)).toEqual(depotFacingAt(g, 1, 1).facing
+      ? depotEntranceTiles(1, 1, depotFacingAt(g, 1, 1).facing!) : []);
   });
 
   it("node marks are exactly the served industry's footprint tiles inside the catchment", () => {
@@ -157,23 +153,21 @@ describe("PP-03 plan validity is the placement rule, not a copy", () => {
     expect(compared).toBeGreaterThan(100);
   });
 
-  it("depot plan validity == buildable ground + free tile + industry in catchment", () => {
+  it("depot plan validity == four buildable tiles + no overlap + a resource beside it with an open side", () => {
     const g = grid();
     let compared = 0;
     for (let ty = 6; ty < g.h - 6; ty += 5) {
       for (let tx = 6; tx < g.w - 6; tx += 5) {
         const taken = tx % 2 === 0
-          ? [{ tx: tx + 1, ty }, { tx: tx - 1, ty }]
-          : [];
+          ? [{ tx: tx + 2, ty }, { tx: tx - 3, ty }]
+          : [{ tx: tx + 1, ty: ty + 1 }];
         const plan = planDepotPlacement(g, taken, tx, ty);
-        const fake: Harvester = { id: -1, owner: "", ownerId: 0, tx, ty };
-        // The depot asks the DIRT question, exactly as `placeHarvester` does:
-        // a Depot is ground works, not a paved road, so rough ground is a
-        // legal site (the old oracle said "road", which refuses rough, and
-        // disagreed with the click path on every rough tile near an industry).
-        const expected = canBuildOn(g, "dirt", tx, ty)
-          && !taken.some((h) => h.tx === tx && h.ty === ty)
-          && industriesInCatchment(g, fake).length > 0;
+        // The depot asks the DIRT question for every tile of its lot, exactly
+        // as `placeHarvester` does: a Depot is ground works, not a paved road,
+        // so rough ground is a legal site.
+        const expected = depotTiles(tx, ty).every(([x, y]) => canBuildOn(g, "dirt", x, y))
+          && !taken.some((h) => depotsOverlap(h.tx, h.ty, tx, ty))
+          && depotFacingAt(g, tx, ty).facing !== null;
         expect(plan.valid, `depot @ (${tx},${ty})`).toBe(expected);
         if (!plan.valid) {
           expect(plan.code, `depot @ (${tx},${ty})`).toBeTruthy();

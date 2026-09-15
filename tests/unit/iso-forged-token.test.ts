@@ -47,17 +47,17 @@ const ind = (type: string, tx: number, ty: number): Industry => {
 };
 
 const H = (id: number, owner: string, tx: number, ty: number): Harvester =>
-  ({ id, owner, ownerId: owner === "you" ? 1 : 0, tx, ty });
+  ({ id, owner, ownerId: owner === "you" ? 1 : 0, tx, ty, facing: "top" });
 
-/** Farm at 11,11; depot at 10,10 catches it; factory at 14,10; road 11..14. */
+/** Farm at 11,11; the 2×2 depot at 9,11 opens at the top (gate 10,10); factory at 14,10; road 10..14. */
 function world() {
   const grid = flatGrid([ind("farm", 11, 11)]);
   const track = createTrack();
   const state: EconomyState = {
-    grid, track, harvesters: [H(1, "you", 10, 10)],
+    grid, track, harvesters: [H(1, "you", 9, 11)],
     factories: [{ owner: "you", ownerId: 1, tx: 14, ty: 10 }],
   };
-  const connect = () => { for (let x = 11; x <= 14; x++) buildTile(track, "road", x, 10, 1); };
+  const connect = () => { for (let x = 10; x <= 14; x++) buildTile(track, "road", x, 10, 1); };
   const cut = () => demolishTile(track, "road", 12, 10);
   return { state, track, connect, cut };
 }

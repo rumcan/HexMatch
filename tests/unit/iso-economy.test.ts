@@ -78,30 +78,36 @@ describe("E6 catchment", () => {
   });
 });
 
+// The 2×2 truck Depot at (10,10) opening at the TOP: its gate tiles are the
+// NW edge (9,10),(9,11) and the NE edge (10,9),(11,9) (depot.ts).
 describe("E6 servicing", () => {
-  it("requires adjacency to at least one dirt or road tile", () => {
+  it("requires a dirt or road tile at the gate", () => {
     const t = createTrack();
-    const h = H(0, "p1", 10, 10);
+    const h: Harvester = { ...H(0, "p1", 10, 10), facing: "top" };
     expect(isServiced(t, h)).toBe(false);
-    buildTile(t, "dirt", 11, 10, 1);
+    buildTile(t, "dirt", 9, 10, 1);
     expect(isServiced(t, h)).toBe(true);
   });
 
-  it("accepts road adjacency too, but not a diagonal", () => {
+  it("accepts road at the gate too, but not a diagonal corner or the closed side", () => {
     const t = createTrack();
-    buildTile(t, "road", 11, 11);
-    expect(isServiced(t, H(0, "p1", 10, 10))).toBe(false);
-    buildTile(t, "road", 10, 11, 1);
-    expect(isServiced(t, H(0, "p1", 10, 10))).toBe(true);
+    const h: Harvester = { ...H(0, "p1", 10, 10), facing: "top" };
+    buildTile(t, "road", 9, 9, 1);             // diagonal corner of the lot
+    expect(isServiced(t, h)).toBe(false);
+    buildTile(t, "road", 12, 10, 1);           // against the closed SE side
+    expect(isServiced(t, h)).toBe(false);
+    buildTile(t, "road", 10, 9, 1);            // the NE gate
+    expect(isServiced(t, h)).toBe(true);
   });
 
-  // W2: a RIVAL's line beside your harvester does not service it.
-  it("does not count another player's adjacent track as service", () => {
+  // W2: a RIVAL's line at your gate does not service it.
+  it("does not count another player's track at the gate as service", () => {
     const t = createTrack();
-    buildTile(t, "dirt", 11, 10, 2);            // the rival's dirt
-    expect(isServiced(t, H(0, "p1", 10, 10))).toBe(false);
-    buildTile(t, "dirt", 11, 10, 1);            // own the tile: now serviced
-    expect(isServiced(t, H(0, "p1", 10, 10))).toBe(true);
+    const h: Harvester = { ...H(0, "p1", 10, 10), facing: "top" };
+    buildTile(t, "dirt", 9, 10, 2);             // the rival's dirt
+    expect(isServiced(t, h)).toBe(false);
+    buildTile(t, "dirt", 9, 10, 1);             // own the tile: now serviced
+    expect(isServiced(t, h)).toBe(true);
   });
 });
 
@@ -323,23 +329,27 @@ describe("E6 acceptance", () => {
   // Depot): on a shared farm the test could no longer tell "wrong owner's
   // track" apart from "somebody got there first", because both pay zero.
   it("reaches an industry only over its own track, never the rival's", () => {
+    // farm1 12..15 × 11..14; farm2 17..20 × 13..16 — two separate farms.
     const farm = ind("farm", 12, 11);
-    const grid = flatGrid([farm, ind("farm", 15, 11)]);
+    const grid = flatGrid([farm, ind("farm", 17, 13)]);
     const track = createTrack();
-    // p1's full line: harvester → farm → its factory.
-    run(track, "dirt", 6, 20, 10, 1);
-    const p1Harv = H(1, "p1", 11, 11);
+    // p1's full line along y=10: its Depot's NE gate → its factory.
+    run(track, "dirt", 6, 22, 10, 1);
+    // p1's 2×2 Depot west of farm1 (lot 10..11 × 11..12), opening at the top:
+    // its NE gate (10,10)/(11,10) is on p1's line.
+    const p1Harv: Harvester = { ...H(1, "p1", 10, 11), facing: "top" };
     const state: EconomyState = {
       grid, track,
       harvesters: [p1Harv],
-      factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }],
+      factories: [{ owner: "p1", ownerId: 1, tx: 21, ty: 11 }],
     };
     expect(playerResources(state, "p1", 0).grain).toBeGreaterThan(0);
 
-    // p2 puts a harvester beside the SAME farm, right next to p1's line —
+    // p2 puts a Depot beside farm2 (lot 17..18 × 11..12, farm2 below it, so
+    // it opens at the top) whose NE gate (17,10)/(18,10) is ON p1's line —
     // but p2 has built nothing. The rival's dirt must not count.
-    state.harvesters.push(H(2, "p2", 13, 11));
-    state.factories.push({ owner: "p2", ownerId: 2, tx: 28, ty: 11 });   // K0: ≤31
+    state.harvesters.push({ ...H(2, "p2", 17, 11), facing: "top" });
+    state.factories.push({ owner: "p2", ownerId: 2, tx: 15, ty: 25 });
     expect(playerResources(state, "p2", 0)).toEqual({});
     const score = createScoreState();
     // VP-01: neither of them scores. p1's line is live but pure gravel, p2's
@@ -349,10 +359,9 @@ describe("E6 acceptance", () => {
     expect(vpFor(score, "p1")).toBe(0);
     expect(vpFor(score, "p2")).toBe(0);
 
-    // The moment p2 lays its OWN dirt home, it connects on its own — to the
-    // farm it holds, which is the only one left to hold.
-    run(track, "dirt", 14, 28, 12, 2);
-    run(track, "dirt", 14, 14, 11, 2);   // up from its line to beside the farm
+    // The moment p2 lays its OWN dirt home from its NW gate (16,11) down to
+    // its factory, it connects on its own — to the farm it holds.
+    for (let y = 11; y <= 24; y++) buildTile(track, "dirt", 16, y, 2);
     expect(playerResources(state, "p2", 0).grain).toBeGreaterThan(0);
     // PP-16 from the other side: p1's farm stays p1's, road or no road.
     expect(industryLocks(state).get(farm.id)?.owner).toBe("p1");

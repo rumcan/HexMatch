@@ -29,7 +29,8 @@
 // VP-01 took Victory Points out of this module: a connection is throughput
 // only. The scoreboard reads the tiles (`victory.ts`).
 // ══════════════════════════════════════════════════════════════════════════
-import { roadPath, shoulders, plantShoulders } from "./road-routing";
+import { roadPath, depotShoulders, plantShoulders } from "./road-routing";
+import { depotEntranceTiles, industriesTouchingDepot, type DepotFacing } from "./depot";
 import { MAP_W, MAP_H } from "../game/config";
 import { TRANSPORT, INDUSTRY_BY_KEY, type Cargo } from "./config";
 import type { Grid, Industry } from "./grid";
@@ -54,10 +55,17 @@ export interface Harvester {
   id: number;
   owner: string;
   ownerId: number;
+  /** Footprint origin of the 2×2 lot (its top corner tile). */
   tx: number;
   ty: number;
   /** L4 yield level; absent on legacy saves/snapshots means baseline. */
   yield?: number;
+  /**
+   * Which half of the 2×2 lot is open to roads (`depot.ts`). Set when the
+   * Depot is placed; records written before facings existed derive it from
+   * the map (`depotFacingOf`), and the rules below read absent as "top".
+   */
+  facing?: DepotFacing;
 }
 
 /**
@@ -110,17 +118,13 @@ export const rectContains = (
   r: { x0: number; y0: number; x1: number; y1: number }, x: number, y: number,
 ) => x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1;
 
-/** Every industry whose footprint overlaps the harvester's catchment. */
+/**
+ * Every industry a Depot serves: those whose footprint shares an EDGE with its
+ * 2×2 lot, on any side (`depot.ts`). A truck depot is placed right beside the
+ * resource — there is no catchment box any more.
+ */
 export function industriesInCatchment(grid: Grid, h: Harvester): Industry[] {
-  const r = catchmentRect(h.tx, h.ty);
-  const out: Industry[] = [];
-  for (const ind of grid.industries) {
-    const ix1 = ind.tx + ind.w - 1, iy1 = ind.ty + ind.h - 1;
-    if (ix1 < r.x0 || ind.tx > r.x1) continue;
-    if (iy1 < r.y0 || ind.ty > r.y1) continue;
-    out.push(ind);
-  }
-  return out;
+  return industriesTouchingDepot(grid, h.tx, h.ty).map((t) => t.industry);
 }
 
 /**
@@ -133,8 +137,9 @@ export function industriesInCatchment(grid: Grid, h: Harvester): Industry[] {
  * a legitimate opening, exactly as it would be beside your own road.
  */
 export function isServiced(track: Track, h: Harvester, rail?: RailState | null): boolean {
-  for (const d of DIRS) {
-    const nx = h.tx + DIR[d][0], ny = h.ty + DIR[d][1];
+  // The truck depot's gate: only its ENTRANCE tiles (outside the open edges)
+  // connect it — a road against the closed side does not.
+  for (const [nx, ny] of depotEntranceTiles(h.tx, h.ty, h.facing ?? "top")) {
     if (trackOpenTo(track, h.ownerId, nx, ny)) return true;
     // RAIL-04 (#178): the epic's clause — a running line gives a source THE
     // SAME reachability a basic road connection does. So a rail tile at the
@@ -270,6 +275,19 @@ function adjacentComponents(comp: Int32Array, tx: number, ty: number): Set<numbe
 }
 
 /**
+ * The components a Depot's ENTRANCE tiles carry — the networks its gate opens
+ * onto. (The entrance tiles are track themselves, unlike the lot.)
+ */
+export function depotComponents(comp: Int32Array, h: Harvester): Set<number> {
+  const out = new Set<number>();
+  for (const [x, y] of depotEntranceTiles(h.tx, h.ty, h.facing ?? "top")) {
+    const c = comp[tIdx(x, y)];
+    if (c >= 0) out.add(c);
+  }
+  return out;
+}
+
+/**
  * The component ids both structures sit beside. Structures are not themselves
  * track, so we compare the components adjacent to each of the two tiles.
  *
@@ -349,9 +367,12 @@ export function resolveConnection(
   for (const f of mine) {
     // PP-15: the plant's whole footprint, not its origin tile — the block's
     // edge is where its road frontage is.
-    const shared = sharedComponentsWithTiles(
-      comp.comp, h.tx, h.ty, plantFootprintTiles(f.tx, f.ty),
-    );
+    // The Depot side is its gate (the entrance tiles' own components).
+    const gate = depotComponents(comp.comp, h);
+    const shared = new Set<number>();
+    for (const c of componentsTouchingTiles(comp.comp, plantFootprintTiles(f.tx, f.ty))) {
+      if (gate.has(c)) shared.add(c);
+    }
     if (shared.size === 0) continue;
     for (const c of shared) {
       if (comp.roadComp[c]) {
@@ -363,7 +384,7 @@ export function resolveConnection(
     }
     // pure-gravel component: keep the old dirt tier's shortest-factory tie-break
     const route = roadPath(state.track, h.ownerId,
-      shoulders(state.track, h.ownerId, h.tx, h.ty),
+      depotShoulders(state.track, h.ownerId, h),
       new Set(plantShoulders(state.track, h.ownerId, f.tx, f.ty).map(([x, y]) => tIdx(x, y))));
     if (!route || route.length >= shortest) continue;
     shortest = route.length;

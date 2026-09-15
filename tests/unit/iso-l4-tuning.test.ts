@@ -22,6 +22,7 @@
 // block boots with `newLoop` OFF and plays the always-on board it always was.
 // ══════════════════════════════════════════════════════════════════════════
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { southLotFree } from "./helpers/depot-lot";
 import { WATER, type Grid, type Industry } from "../../src/iso/grid";
 import { MAP_W, MAP_H, INDUSTRY_BY_KEY, TUNING, type Cargo } from "../../src/iso/config";
 import { CARGO_TO_GEM, GEM_TO_CARGO } from "../../src/iso/quarry";
@@ -168,7 +169,7 @@ function depotSite(grid: Grid, skipId?: number): Site | null {
   for (const ind of grid.industries) {
     if (skipId !== undefined && ind.id === skipId) continue;
     for (let x = ind.tx; x < ind.tx + ind.w; x++) {
-      const hx = x, hy = ind.ty + ind.h;
+      const hx = x, hy = ind.ty + ind.h + 1;
       const fy = hy + 6;
       if (hy < 0 || fy >= MAP_H || hx < 0 || hx >= MAP_W) continue;
       let ok = true;
@@ -176,7 +177,7 @@ function depotSite(grid: Grid, skipId?: number): Site | null {
         const i = y * MAP_W + hx;
         if (grid.terrain[i] === WATER || grid.occupancy[i] !== -1) { ok = false; break; }
       }
-      if (ok) return { hx, hy, fy, ind };
+      if (ok && southLotFree(grid, hx, hy)) return { hx, hy, fy, ind };
     }
   }
   return null;
@@ -309,7 +310,7 @@ describe("L4 building a Depot opens its tuning session (newLoop)", () => {
     expect(plate().textContent).toContain("No tuning session");
     expect(boardWrap().classList.contains("hidden")).toBe(true);
 
-    expect(h.placeDepot(site!.hx, site!.hy)).toBe(true);
+    expect(h.placeDepot(site!.hx, site!.hy - 1)).toBe(true);
     await settle();
 
     const cargo = INDUSTRY_BY_KEY[site!.ind.type].cargo;
@@ -331,7 +332,7 @@ describe("L4 building a Depot opens its tuning session (newLoop)", () => {
     expect(text).toMatch(/Yield/);
     // The Depot is born at the default level: a session that never happens
     // still leaves a number on the record (and a rate on the clock).
-    expect(h.depotYields.find((d) => d.tx === site!.hx && d.ty === site!.hy)!.yield).toBe(TUNING_ABANDON_YIELD);
+    expect(h.depotYields.find((d) => d.tx === site!.hx && d.ty === site!.hy - 1)!.yield).toBe(TUNING_ABANDON_YIELD);
   });
 
   it("refuses a second Depot while a session is open, and spends nothing for the refusal", async () => {
@@ -342,16 +343,16 @@ describe("L4 building a Depot opens its tuning session (newLoop)", () => {
     expect(second, "two Depot sites are available on seed 1337").toBeTruthy();
     for (const c of ["wood", "stone", "grain", "ore", "oil"] as const) h.purse[c] = 99;
 
-    expect(h.placeDepot(first.hx, first.hy)).toBe(true);
+    expect(h.placeDepot(first.hx, first.hy - 1)).toBe(true);
     const purseBefore = { ...h.purse };
-    expect(h.placeDepot(second!.hx, second!.hy)).toBe(false);
+    expect(h.placeDepot(second!.hx, second!.hy - 1)).toBe(false);
     expect(h.purse).toEqual(purseBefore);
     expect(h.eco.harvesters).toHaveLength(1);
     expect(h.tuning!.depotId).toBe(h.eco.harvesters[0].id);
 
     // …and once the session is closed, the next Depot is welcome again.
     h.tuningFinish(true);
-    expect(h.placeDepot(second!.hx, second!.hy)).toBe(true);
+    expect(h.placeDepot(second!.hx, second!.hy - 1)).toBe(true);
   });
 
   it("refuses a swap outside a session — the game, not just the hidden board", async () => {
@@ -374,7 +375,7 @@ describe("L4 building a Depot opens its tuning session (newLoop)", () => {
     const h = await boot({ newLoop: true });
     h.finishSetup();
     const site = depotSite(h.grid)!;
-    expect(h.placeDepot(site.hx, site.hy)).toBe(true);
+    expect(h.placeDepot(site.hx, site.hy - 1)).toBe(true);
     await settle();
 
     const mv = h.board.findMove();
@@ -400,7 +401,7 @@ describe("L4 building a Depot opens its tuning session (newLoop)", () => {
     const h = await boot({ newLoop: true });
     h.finishSetup();
     const site = depotSite(h.grid)!;
-    expect(h.placeDepot(site.hx, site.hy)).toBe(true);
+    expect(h.placeDepot(site.hx, site.hy - 1)).toBe(true);
     await settle();
     const depotId = h.tuning!.depotId;
 
@@ -424,7 +425,7 @@ describe("L4 building a Depot opens its tuning session (newLoop)", () => {
     const h = await boot({ newLoop: true });
     h.finishSetup();
     const site = depotSite(h.grid)!;
-    expect(h.placeDepot(site.hx, site.hy)).toBe(true);
+    expect(h.placeDepot(site.hx, site.hy - 1)).toBe(true);
     connect(h, site);
     await settle();
 
@@ -459,7 +460,7 @@ describe("L4 building a Depot opens its tuning session (newLoop)", () => {
     const h = await boot({ newLoop: true });
     h.finishSetup();
     const site = depotSite(h.grid)!;
-    expect(h.placeDepot(site.hx, site.hy)).toBe(true);
+    expect(h.placeDepot(site.hx, site.hy - 1)).toBe(true);
     await settle();
     const depotId = h.tuning!.depotId;
     h.board.onClear(30, 1);                       // a real score, thrown away
@@ -472,7 +473,7 @@ describe("L4 building a Depot opens its tuning session (newLoop)", () => {
     // takes them in order), so the budget really is spent by MOVES.
     const second = depotSite(h.grid, site.ind.id)!;
     for (const c of ["wood", "stone", "grain", "ore", "oil"] as const) h.purse[c] = 99;
-    expect(h.placeDepot(second.hx, second.hy)).toBe(true);
+    expect(h.placeDepot(second.hx, second.hy - 1)).toBe(true);
     await settle();
     expect(h.tuning!.movesLeft).toBe(TUNING.moves);
     const dud = dudSwap(h.board)!;
@@ -489,7 +490,7 @@ describe("L4 building a Depot opens its tuning session (newLoop)", () => {
     const h = await boot({ newLoop: true });
     h.finishSetup();
     const site = depotSite(h.grid)!;
-    expect(h.placeDepot(site.hx, site.hy)).toBe(true);
+    expect(h.placeDepot(site.hx, site.hy - 1)).toBe(true);
     await settle();
     expect(h.tuning).not.toBeNull();
     h.demolish(site.hx, site.hy);
@@ -609,7 +610,7 @@ describe("L4 the level travels, and the shipped loop is untouched", () => {
     const h = await boot({ newLoop: true });
     h.finishSetup();
     const site = depotSite(h.grid)!;
-    expect(h.placeDepot(site.hx, site.hy)).toBe(true);
+    expect(h.placeDepot(site.hx, site.hy - 1)).toBe(true);
     await settle();
     const toasts = root.querySelector(".toasts")!.textContent ?? "";
     expect(toasts).toMatch(/Tuning session/i);

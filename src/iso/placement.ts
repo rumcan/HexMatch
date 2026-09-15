@@ -32,21 +32,25 @@
 // follow the shared geometry instead of growing a second copy elsewhere.
 // ══════════════════════════════════════════════════════════════════════════
 import {
-  FACTORY_FOOTPRINT, DEPOT_SPRITE,
+  FACTORY_FOOTPRINT,
 } from "./config";
+import {
+  DEPOT_SPRITES, depotEntranceTiles, depotFacingAt, depotTiles, depotsOverlap,
+  industriesTouchingDepot, type DepotFacing,
+} from "./depot";
 import {
   GRASS, ROUGH, SAND, TOWN_OCC, type Grid, type Industry, type Town,
 } from "./grid";
 import { buildRefusal, hasTrack, tIdx, type Track } from "./track";
 import {
-  catchmentRect, industriesInCatchment, rectContains, type Harvester,
+  industriesInCatchment, type Harvester,
 } from "./economy";
 
 /** Orthogonal (edge-sharing) neighbour offsets — diagonals never qualify. */
 const DIR4 = [[0, -1], [1, 0], [0, 1], [-1, 0]] as const;
 
-/** A Factory occupies FACTORY_FOOTPRINT; a Depot a 1×1 tile. */
-export const DEPOT_FOOTPRINT: [number, number] = [1, 1];
+/** A Factory occupies FACTORY_FOOTPRINT; a truck Depot a 2×2 lot (depot.ts). */
+export const DEPOT_FOOTPRINT: [number, number] = [2, 2];
 
 export interface PlanFootprintTile {
   tx: number;
@@ -76,6 +80,8 @@ export interface PlacementPlan {
   served: Industry[];
   /** Factory: towns whose tile shares an edge with the footprint. */
   towns: Town[];
+  /** Depot: which half of the lot opens to roads (null when it has no side). */
+  facing?: DepotFacing | null;
 }
 
 const REASON_TEXT: Record<string, string> = {
@@ -88,6 +94,8 @@ const REASON_TEXT: Record<string, string> = {
   "depot-taken": "a Depot is already there",
   "no-industry-in-catchment": "no industry sits inside its 4×4 catchment",
   "industry-taken": "another Depot already holds every industry in reach",
+  "no-industry-beside": "it must sit right beside a resource",
+  "entrance-blocked": "resources on both sides leave no open side for its entrance",
   "not-near-town": "its footprint must share an edge with a town",
 };
 
@@ -190,19 +198,11 @@ export function factoryReachBand(grid: Grid, tx: number, ty: number): [number, n
   return out;
 }
 
-/** The Depot's 4×4 catchment tiles (its own tile excluded — that is the
- *  footprint and is painted solidly). */
+/** The Depot's ENTRANCE tiles — where a road has to arrive — for the lot at
+ *  (tx, ty), or none when the site has no open side. */
 export function depotCatchmentTiles(grid: Grid, tx: number, ty: number): [number, number][] {
-  const r = catchmentRect(tx, ty);
-  const out: [number, number][] = [];
-  for (let y = r.y0; y <= r.y1; y++) {
-    for (let x = r.x0; x <= r.x1; x++) {
-      if (x === tx && y === ty) continue;
-      if (!inGrid(grid, x, y)) continue;
-      out.push([x, y]);
-    }
-  }
-  return out;
+  const { facing } = depotFacingAt(grid, tx, ty);
+  return facing ? depotEntranceTiles(tx, ty, facing).filter(([x, y]) => inGrid(grid, x, y)) : [];
 }
 
 /** The industries the depot's catchment serves — `industriesInCatchment`,
@@ -213,22 +213,23 @@ export function depotServedIndustries(grid: Grid, tx: number, ty: number): Indus
 
 /**
  * The sprite a Depot placed at (tx,ty) would be drawn with — the same truck
- * depot `syncWorld` draws for every standing Depot. The tile arguments stay so
- * callers do not change if depots ever vary by site again.
+ * depot `syncWorld` draws, opening away from the resource beside it.
  */
-export function depotPreviewSprite(_grid: Grid, _tx: number, _ty: number): string {
-  return DEPOT_SPRITE;
+export function depotPreviewSprite(grid: Grid, tx: number, ty: number): string {
+  return DEPOT_SPRITES[depotFacingAt(grid, tx, ty).facing ?? "top"];
 }
 
-/** Every tile of a served industry's footprint that the catchment covers —
- *  the resource nodes that are visibly in reach. */
+/** The tiles of the served industries right against the lot's edges — the
+ *  resource nodes the Depot visibly sits beside. */
 export function depotCatchmentNodeTiles(grid: Grid, tx: number, ty: number): [number, number][] {
-  const r = catchmentRect(tx, ty);
+  const lot = depotTiles(tx, ty);
+  const beside = (x: number, y: number) =>
+    lot.some(([lx, ly]) => Math.abs(lx - x) + Math.abs(ly - y) === 1);
   const out: [number, number][] = [];
-  for (const ind of depotServedIndustries(grid, tx, ty)) {
+  for (const { industry: ind } of industriesTouchingDepot(grid, tx, ty)) {
     for (let y = ind.ty; y < ind.ty + ind.h; y++) {
       for (let x = ind.tx; x < ind.tx + ind.w; x++) {
-        if (rectContains(r, x, y)) out.push([x, y]);
+        if (beside(x, y)) out.push([x, y]);
       }
     }
   }
@@ -311,41 +312,48 @@ export interface DepotPlanOptions {
   factories?: readonly { tx: number; ty: number }[];
 }
 
-/** The full PP-03 placement plan for a Depot hover at (tx,ty). Validity is
- *  exactly `placeHarvester`'s: buildable ground, no existing Depot, at least
- *  one industry in the 4×4 catchment, and (PP-16) at least one of those
- *  industries still unclaimed. */
+/** The full PP-03 placement plan for a 2×2 truck Depot hover at (tx,ty) — its
+ *  top corner tile. Validity is exactly `placeHarvester`'s: all four tiles
+ *  buildable, no overlap with another Depot or a Factory, a resource right
+ *  beside the lot, an open side for the entrance, and (PP-16) at least one of
+ *  the resources beside it still unclaimed. */
 export function planDepotPlacement(
   grid: Grid,
   harvesters: readonly { tx: number; ty: number }[],
   tx: number, ty: number,
   opts: DepotPlanOptions = {},
 ): PlacementPlan {
-  let code: string | null = null;
-  if (!inGrid(grid, tx, ty)) code = "out-of-bounds";
-  else {
-    const refusal = buildRefusal(grid, "dirt", tx, ty);
-    if (refusal !== null) code = refusal;
-    else if (harvesters.some((h) => h.tx === tx && h.ty === ty)) code = "depot-taken";
-    else if (opts.factories && opts.factories.some((f) => tx >= f.tx && tx < f.tx + FACTORY_FOOTPRINT[0] && ty >= f.ty && ty < f.ty + FACTORY_FOOTPRINT[1])) code = "occupied";
-  }
-  const served = inGrid(grid, tx, ty) ? depotServedIndustries(grid, tx, ty) : [];
-  if (code === null && served.length === 0) code = "no-industry-in-catchment";
+  const tiles = depotTiles(tx, ty);
+  const tileWhy = tiles.map(([x, y]) => (inGrid(grid, x, y) ? buildRefusal(grid, "dirt", x, y) : "out-of-bounds"));
+  let code: string | null = tileWhy.find((w) => w !== null) ?? null;
+  if (code === null && harvesters.some((h) => depotsOverlap(h.tx, h.ty, tx, ty))) code = "depot-taken";
+  if (code === null && opts.factories && opts.factories.some((f) =>
+    tx < f.tx + FACTORY_FOOTPRINT[0] && tx + 2 > f.tx && ty < f.ty + FACTORY_FOOTPRINT[1] && ty + 2 > f.ty)) code = "occupied";
+  const { facing, problem } = depotFacingAt(grid, tx, ty);
+  const served = industriesTouchingDepot(grid, tx, ty).map((t) => t.industry);
+  if (code === null && problem === "no-industry") code = "no-industry-beside";
+  else if (code === null && problem === "both-sides") code = "entrance-blocked";
   // PP-16: "next to an industry" is not enough — the industry has to be FREE.
   else if (code === null && opts.locked !== undefined
     && served.every((ind) => opts.locked!.has(ind.id))) code = "industry-taken";
   const ok = code === null;
   return {
     kind: "depot",
-    footprint: inGrid(grid, tx, ty)
-      ? [{ tx, ty, ok, why: ok ? null : placementReasonText(code) }]
-      : [],
-    reach: inGrid(grid, tx, ty) ? depotCatchmentTiles(grid, tx, ty) : [],
-    nodes: inGrid(grid, tx, ty) ? depotCatchmentNodeTiles(grid, tx, ty) : [],
+    // A tile-level refusal (water, a road, an industry under the lot) paints
+    // just the offending tiles red; a site-level one (no resource beside it,
+    // the resource already claimed) marks the whole lot with the site's reason.
+    footprint: tiles
+      .map(([x, y], i) => tileWhy.some((w) => w !== null)
+        ? { tx: x, ty: y, ok: tileWhy[i] === null, why: tileWhy[i] ? placementReasonText(tileWhy[i]) : null }
+        : { tx: x, ty: y, ok, why: ok ? null : placementReasonText(code) })
+      .filter((t) => inGrid(grid, t.tx, t.ty)),
+    reach: depotCatchmentTiles(grid, tx, ty),
+    nodes: depotCatchmentNodeTiles(grid, tx, ty),
     valid: ok,
     why: ok ? null : placementReasonText(code),
     code,
     served,
     towns: [],
+    facing,
   };
 }

@@ -3,6 +3,7 @@ import {
   DIR, DIRS, OPPOSITE, bitsAt, tIdx, inMapT, trackOpenTo, plantFootprintTiles,
   type Track, type TrackKind,
 } from "./track";
+import { depotEntranceTiles, type DepotFacing } from "./depot";
 
 // ── the route finder ──────────────────────────────────────────────────────
 /**
@@ -72,6 +73,16 @@ export const shoulders = (track: Track, owner: number, tx: number, ty: number) =
   }
   return out;
 };
+
+/**
+ * A 2×2 truck Depot's road access: the ENTRANCE tiles outside its open edges
+ * (`depot.ts`) that `owner` may drive on. A road touching the lot's closed
+ * side does not reach it — the gate is on the open side.
+ */
+export const depotShoulders = (
+  track: Track, owner: number, h: { tx: number; ty: number; facing?: DepotFacing },
+): [number, number][] =>
+  depotEntranceTiles(h.tx, h.ty, h.facing ?? "top").filter(([x, y]) => trackOpenTo(track, owner, x, y));
 
 /**
  * PP-15: the road tiles a PLANT's edge touches — every tile 4-adjacent to ANY

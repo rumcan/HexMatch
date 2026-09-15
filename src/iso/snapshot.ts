@@ -98,6 +98,8 @@ export function base64ToBytes(b64: string): Uint8Array {
 // ── wire shape ────────────────────────────────────────────────────────────
 export interface WireHarvester {
   id: number; owner: string; ownerId: number; tx: number; ty: number;
+  /** Which half of the 2×2 truck Depot opens to roads; absent on older hosts. */
+  facing?: "top" | "bottom";
   /**
    * L4 (#218): the depot's YIELD LEVEL — what a tuning session set it to, and
    * the multiplier the L1b clock pays the depot's cargo by. Optional and
@@ -371,6 +373,7 @@ export function buildSnapshot(src: SnapshotSource): Snapshot {
     harvesters: src.harvesters.map((h) => ({
       id: h.id, owner: h.owner, ownerId: h.ownerId, tx: h.tx, ty: h.ty,
       ...(typeof h.yield === "number" ? { yield: h.yield } : {}),
+      ...(h.facing ? { facing: h.facing } : {}),
     })),
     factories: src.factories.map((f) => ({ ...f })),
     players: src.players.map((p) => ({ ...p, res: { ...p.res } })),
@@ -459,6 +462,9 @@ export function validateSnapshot(s: unknown, localSeed?: number): SnapshotError 
   for (const h of o.harvesters as (Partial<WireHarvester> | null)[]) {
     if (h && h.yield !== undefined && (typeof h.yield !== "number" || !Number.isFinite(h.yield))) {
       return new SnapshotError("malformed", "Snapshot carries a malformed depot yield.");
+    }
+    if (h && h.facing !== undefined && h.facing !== "top" && h.facing !== "bottom") {
+      return new SnapshotError("malformed", "Snapshot carries a malformed depot facing.");
     }
   }
   // #137: the seat list itself is optional (an empty world has nobody in it),

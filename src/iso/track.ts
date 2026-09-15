@@ -465,9 +465,13 @@ export function structureTiles(
       if (inMapT(x, y)) out.add(tIdx(x, y));
     }
   }
+  // A truck Depot is a 2×2 lot (`DEPOT_SIZE` in depot.ts — inlined here to
+  // keep track.ts free of an import cycle).
   for (const h of harvesters) {
     if (h.ownerId !== owner) continue;
-    if (inMapT(h.tx, h.ty)) out.add(tIdx(h.tx, h.ty));
+    for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) {
+      if (inMapT(h.tx + dx, h.ty + dy)) out.add(tIdx(h.tx + dx, h.ty + dy));
+    }
   }
   return out;
 }
@@ -496,7 +500,11 @@ export function playerNetwork(
     if (f.ownerId !== owner) continue;
     for (const [x, y] of plantFootprintTiles(f.tx, f.ty)) seed(x, y);
   }
-  for (const h of harvesters) if (h.ownerId === owner) seed(h.tx, h.ty);
+  // …and a truck Depot seeds its whole 2×2 lot, for the same reason.
+  for (const h of harvesters) {
+    if (h.ownerId !== owner) continue;
+    for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) seed(h.tx + dx, h.ty + dy);
+  }
   while (stack.length) {
     const i = stack.pop()!;
     const x = i % MAP_W, y = (i / MAP_W) | 0;

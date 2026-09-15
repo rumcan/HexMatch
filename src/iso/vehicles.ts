@@ -27,7 +27,8 @@
 // not teleport). Positions stay fractional in TILE space; `depth.place`
 // pins a moving sprite's anchor to the fractional tile's diamond centre.
 // ══════════════════════════════════════════════════════════════════════════
-import { plantShoulders, roadPath, shoulders } from "./road-routing";
+import { depotShoulders, plantShoulders, roadPath } from "./road-routing";
+import { lotTileBeside } from "./depot";
 export { roadPath } from "./road-routing";
 import type { DrawItem } from "./depth";
 import type { EconomyState } from "./economy";
@@ -132,11 +133,16 @@ export function roadDeliveryForHarvester(
   // the tier each tile actually carries.
   const route = roadPath(
     eco.track, h.ownerId,
-    shoulders(eco.track, h.ownerId, h.tx, h.ty),
+    depotShoulders(eco.track, h.ownerId, h),
     new Set(plantShoulders(eco.track, h.ownerId, conn.factory.tx, conn.factory.ty)
       .map(([x, y]) => tIdx(x, y))),
   );
   if (!route) return null;
+  // The lorry loads ON the lot: the route starts on the depot tile just inside
+  // the entrance it uses, so it drives in through the gate, stops to load, and
+  // drives back out the same way.
+  const lot = lotTileBeside(h.tx, h.ty, route[0]);
+  if (lot) route.unshift(lot);
   return { route, factory: { tx: conn.factory.tx, ty: conn.factory.ty } };
 }
 

@@ -112,8 +112,9 @@ import {
 import {
   CARGO, CARGOES, FACTORY_FOOTPRINT, FACTORY_SPRITE, INDUSTRY_BY_KEY, TRANSPORT,
   BASE_RATE, VICTORY, VP_TARGET, UPGRADE_COST, TUNING,
-  DEPOT_SPRITE, type Cargo, type Portrait,
+  type Cargo, type Portrait,
 } from "./config";
+import { DEPOT_SPRITES, depotContains, depotFacingOf, depotTiles } from "./depot";
 import { depotYield, distanceFactor, transportFactor } from "./loop";
 // L4 (#218): the tuning session — the one thing that sets a depot's yield.
 // The rules live in `tuning.ts` (pure, unit-tested); this file is where they
@@ -1955,7 +1956,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     for (const f of eco.factories)
       for (const [x, y] of plantFootprintTiles(f.tx, f.ty))
         if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) blocked.add(y * MAP_W + x);
-    for (const h of eco.harvesters) blocked.add(h.ty * MAP_W + h.tx);
+    for (const h of eco.harvesters)
+      for (const [x, y] of depotTiles(h.tx, h.ty))
+        if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) blocked.add(y * MAP_W + x);
     // RAIL-04: a platform or a train depot is a built thing — the trees it
     // stands on are hidden under it, exactly like a plant's footprint.
     for (const s of rail.structures)
@@ -1994,7 +1997,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // Every Depot is the same truck depot building, whatever it harvests.
       // Ownership shows in the inspector, the catchment overlays and the ref.
       ...eco.harvesters.map((h) => ({
-        sprite: DEPOT_SPRITE,
+        sprite: DEPOT_SPRITES[depotFacingOf(grid, h)],
         tx: h.tx, ty: h.ty, ref: { kind: "harvester", id: h.id, owner: h.owner },
       })),
       // RAIL-04: the railway's structures are ordinary footprint-anchored
@@ -2223,7 +2226,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           toast("Can't build there — another Factory stands there.", "bad");
           return false;
         }
-        if (eco.harvesters.some((h) => h.tx === fx && h.ty === fy)) {
+        if (eco.harvesters.some((h) => depotContains(h.tx, h.ty, fx, fy))) {
           toast("Can't build there — a Depot stands there.", "bad");
           return false;
         }
@@ -2702,41 +2705,27 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   }
 
   function placeHarvester(tx: number, ty: number, p: PlayerState): boolean {
-    if (!canBuildOn(grid, "dirt", tx, ty)) {
-      toast("Can't build there.", "bad");
-      if (p.human) flashAt(tx, ty, "Can't build here");
+    // The 2×2 truck Depot: the SAME plan the preview paints and the host
+    // validates — four buildable tiles, no overlap with a Depot or a Factory,
+    // a resource right beside the lot, an open side for the entrance, and
+    // (PP-16) a resource beside it that nobody's road already holds.
+    const plan = planDepotPlacement(grid, eco.harvesters, tx, ty, depotLocks());
+    if (!plan.valid) {
+      const message: Record<string, string> = {
+        "depot-taken": "A depot is already there.",
+        occupied: "Can't build there — something already stands there.",
+        "no-industry-beside": "A depot must sit right beside a resource.",
+        "entrance-blocked": "Resources on both sides — the depot needs one open side for its entrance.",
+        "industry-taken": "That industry is already claimed — only one Depot may hold it.",
+      };
+      toast(message[plan.code ?? ""] ?? "Can't build there.", "bad");
+      if (p.human) flashAt(tx, ty, plan.why ? `Depot: ${plan.why}` : "Can't build here");
       return false;
     }
-    if (eco.harvesters.some((h) => h.tx === tx && h.ty === ty)) {
-      toast("A depot is already there.", "bad");
-      if (p.human) flashAt(tx, ty, "A depot is already here");
-      return false;
-    }
-    // MP-AUDIT: factory footprints block depot previews and commits (consistent with preview)
-    if (eco.factories.some((f) => tx >= f.tx && tx < f.tx + FACTORY_FOOTPRINT[0] && ty >= f.ty && ty < f.ty + FACTORY_FOOTPRINT[1])) {
-      toast("Can't build there — a Factory stands there.", "bad"); return false;
-    }
-    const h: Harvester = { id: allocHarvesterId(), owner: p.id, ownerId: p.i + 1, tx, ty };
-    const served = industriesInCatchment(grid, h);
-    if (!served.length) {
-      toast("A depot needs an industry in its 4×4 catchment.", "bad");
-      // The flash says WHERE, at the spot the player picked: beside a
-      // resource node, inside the 4×4 the Depot would reach.
-      if (p.human) flashAt(tx, ty, "Depot: place beside a resource (4×4)");
-      return false;
-    }
-    // PP-16: one Depot holds one industry, and the first road at the resource
-    // takes it. A Depot standing on open ground with no track beside it claims
-    // nothing (see `industryLocks`), so it can never shut anyone out — but once
-    // a rival's Depot has a road, every industry in its catchment is spoken
-    // for, and a second Depot there would harvest nothing. Refused before
-    // anything is priced or spent, like every other refusal in here.
-    const locks = industryLocks(eco);
-    if (served.every((ind) => locks.has(ind.id))) {
-      toast("That industry is already claimed — only one Depot may hold it.", "bad");
-      if (p.human) flashAt(tx, ty, "Resource already claimed");
-      return false;
-    }
+    const h: Harvester = {
+      id: allocHarvesterId(), owner: p.id, ownerId: p.i + 1, tx, ty, facing: plan.facing ?? "top",
+    };
+    const served = plan.served;
     // L4 (#218): one tuning session at a time. The board is open for the
     // Depot the player is tuning RIGHT NOW, and a second Depot would have no
     // board to be tuned on (the plate is one session's plate). Refused before
@@ -2943,7 +2932,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       toast("Rail lifted.", "info");
       return;
     }
-    const hi = eco.harvesters.findIndex((h) => h.tx === tx && h.ty === ty && h.owner === p.id);
+    // any tile of the 2×2 lot demolishes the Depot standing on it
+    const hi = eco.harvesters.findIndex((h) => depotContains(h.tx, h.ty, tx, ty) && h.owner === p.id);
     if (hi >= 0) {
       const removed = eco.harvesters[hi];
       eco.harvesters.splice(hi, 1);
@@ -4285,7 +4275,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     track.owner.set(applied.track.owner);
     track.upgraded.set(applied.track.upgraded);
     eco.harvesters.length = 0;
-    eco.harvesters.push(...applied.harvesters.map((h) => ({ ...h })));
+    eco.harvesters.push(...applied.harvesters.map((h) => ({ ...h, facing: depotFacingOf(grid, h) })));
     eco.factories.length = 0;
     eco.factories.push(...applied.factories.map((f) => ({ ...f })));
     for (let i = 0; i < players.length; i++) {
@@ -4379,7 +4369,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (msg.tiles) { applyTrackDelta(track, msg.tiles); worldDirty = true; }
     if (msg.harvesters) {
       eco.harvesters.length = 0;
-      eco.harvesters.push(...msg.harvesters.map((h) => ({ ...h })));
+      eco.harvesters.push(...msg.harvesters.map((h) => ({ ...h, facing: depotFacingOf(grid, h) })));
       worldDirty = true;
     }
     if (msg.factories) {
@@ -4979,7 +4969,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // depot is found by tile, so the hover route and the truck agree even when
     // the current tool is not a placement tool (setup phases hover empty tiles
     // and find no depot, so they never double up).
-    const dep = eco.harvesters.find((h) => h.tx === tx && h.ty === ty);
+    const dep = eco.harvesters.find((h) => depotContains(h.tx, h.ty, tx, ty));
     if (dep) items.push(...routeOverlayFor(dep));
     return { items, ghost };
   };
@@ -6104,7 +6094,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     // economy: replace the lists in place — their references are held all
     // over (planTrucks, syncWorld, the AI...)
-    eco.harvesters.length = 0; eco.harvesters.push(...d.eco.harvesters);
+    eco.harvesters.length = 0;
+    eco.harvesters.push(...d.eco.harvesters.map((h) => ({ ...h, facing: depotFacingOf(grid, h) })));
     eco.factories.length = 0; eco.factories.push(...d.eco.factories);
     for (let i = 0; i < players.length && i < d.players.length; i++) {
       Object.assign(players[i].purse, d.players[i].purse);
@@ -7317,7 +7308,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      */
     tileProbe: (kind: TrackKind, tx: number, ty: number) => {
       const why = buildRefusal(grid, kind, tx, ty);
-      const taken = eco.harvesters.some((x) => x.tx === tx && x.ty === ty);
+      const taken = eco.harvesters.some((x) => depotContains(x.tx, x.ty, tx, ty));
       const served = why === null && !taken
         ? industriesInCatchment(grid, { id: -1, owner: "you", ownerId: 0, tx, ty })
         : [];

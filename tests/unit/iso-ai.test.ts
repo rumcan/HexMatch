@@ -187,25 +187,28 @@ describe("E7 scoring", () => {
     expect(scarcity({ grain: 9 }, "grain")).toBeLessThan(scarcity({ grain: 1 }, "grain"));
   });
 
-  it("harvesterSpots hugs the footprint without corners or overlap", () => {
+  it("harvesterSpots are 2×2 lots beside the footprint, never on it or at a corner", () => {
     const farm = ind("farm", 10, 10);      // PP-12: footprint follows the art
     const spots = harvesterSpots(flatGrid([farm]), farm);
-    // the orthogonally-adjacent ring tiles of the w×h footprint, in the
-    // stable y-major order harvesterSpots walks (no diagonal corners).
-    const expected: [number, number][] = [];
-    for (let x = farm.tx; x < farm.tx + farm.w; x++) expected.push([x, farm.ty - 1]);
-    for (let y = farm.ty; y < farm.ty + farm.h; y++) {
-      expected.push([farm.tx - 1, y]);
-      expected.push([farm.tx + farm.w, y]);
-    }
-    for (let x = farm.tx; x < farm.tx + farm.w; x++) expected.push([x, farm.ty + farm.h]);
-    expect(spots).toEqual(expected);
+    expect(spots.length).toBeGreaterThan(0);
+    // directly west, east, above and below the farm are all lots
+    expect(spots).toContainEqual([farm.tx - 2, farm.ty]);
+    expect(spots).toContainEqual([farm.tx + farm.w, farm.ty]);
+    expect(spots).toContainEqual([farm.tx, farm.ty - 2]);
+    expect(spots).toContainEqual([farm.tx, farm.ty + farm.h]);
+    // a lot touching only a diagonal corner is not beside it
+    expect(spots).not.toContainEqual([farm.tx - 2, farm.ty - 2]);
+    const on = (x: number, y: number) =>
+      x >= farm.tx && x < farm.tx + farm.w && y >= farm.ty && y < farm.ty + farm.h;
     for (const [x, y] of spots) {
-      const insideX = x >= farm.tx && x < farm.tx + farm.w;
-      const insideY = y >= farm.ty && y < farm.ty + farm.h;
-      expect(insideX && insideY).toBe(false);
-      expect(insideX || insideY).toBe(true);
+      const lot: [number, number][] = [[x, y], [x + 1, y], [x, y + 1], [x + 1, y + 1]];
+      expect(lot.some(([lx, ly]) => on(lx, ly)), `lot ${x},${y} overlaps the farm`).toBe(false);
+      const beside = lot.some(([lx, ly]) =>
+        on(lx - 1, ly) || on(lx + 1, ly) || on(lx, ly - 1) || on(lx, ly + 1));
+      expect(beside, `lot ${x},${y} does not share an edge with the farm`).toBe(true);
     }
+    // stable order: the same call twice gives the same list
+    expect(harvesterSpots(flatGrid([ind("farm", 10, 10)]), farm)).toEqual(spots);
   });
 
   it("skips harvester spots on water", () => {
@@ -229,12 +232,14 @@ describe("E7 scoring", () => {
 
 describe("E7 planning", () => {
   it("prefers the scarcer cargo when output and distance match", () => {
-    // two identical-output industries equidistant from the factory
-    const farm = ind("farm", 5, 10);       // grain, output 1.0
-    const forest = ind("forest", 5, 0);    // wood,  output 1.0
+    // two identical-output industries mirrored left and right of the factory,
+    // so the nearest 2×2 lot's gate is two tiles away for both
+    const farm = ind("farm", 15, 10);      // grain, output 1.0 — lot (13,10), gate (12,10)
+    const forest = ind("forest", 2, 10);   // wood,  output 1.0 — lot (6,10),  gate (8,10)
     const grid = flatGrid([farm, forest]);
     const s = state(grid);
-    const plan = planCandidates(s, F, { stock: { grain: 8 }, purse: rich });
+    const mid: Factory = { owner: "ai", ownerId: 0, tx: 10, ty: 10 };
+    const plan = planCandidates(s, mid, { stock: { grain: 8 }, purse: rich });
     expect(plan.length).toBeGreaterThan(0);
     // grain is plentiful, so wood should win
     expect(plan[0].industry.type).toBe("forest");
@@ -357,9 +362,10 @@ describe("E7 execution", () => {
   });
 
   it("W3: builds over its free allowance when the purse alone is short", () => {
-    const grid = flatGrid([ind("farm", 12, 5)]);
+    // farm 14..17: the nearest 2×2 lot (12,5) opens at the top, gate (11,5)
+    const grid = flatGrid([ind("farm", 14, 5)]);
     const s = state(grid);
-    // The path from F(5,5) to the harvester spot near the farm is longer
+    // The path from F(5,5) to the Depot gate beside the farm is longer
     // than 5 tiles — 5 stone of dirt is not enough for the whole build...
     const short = bestCandidate(s, F, { stock: {}, purse: { stone: 5 } });
     expect(short).toBeNull();
@@ -479,13 +485,15 @@ describe("W8 plan feasibility", () => {
   });
 
   it("counts only track owned by the AI as servicing (W2)", () => {
+    // oil rig 5..7 × 6..8; the 2×2 lot (5,4) sits right above it and opens at
+    // the TOP — gates NW (4,4),(4,5) and NE (5,3),(6,3).
     const grid = flatGrid([ind("oil_rig", 5, 6)]);
     const s = state(grid);
-    buildTile(s.track, "dirt", 4, 5, 7);       // somebody else's dirt
-    const f = planFeasibility(s, "dirt", { tiles: [[5, 5]], cost: 0 }, 5, 5, 2);
+    buildTile(s.track, "dirt", 4, 5, 7);       // somebody else's dirt, at a gate
+    const f = planFeasibility(s, "dirt", { tiles: [[4, 5]], cost: 0 }, 5, 4, 2, "top");
     expect(f.serviced).toBe(false);
-    buildTile(s.track, "dirt", 6, 5, 2);       // ours
-    expect(planFeasibility(s, "dirt", { tiles: [[5, 5]], cost: 0 }, 5, 5, 2).serviced).toBe(true);
+    buildTile(s.track, "dirt", 6, 3, 2);       // ours, at the other gate
+    expect(planFeasibility(s, "dirt", { tiles: [[4, 5]], cost: 0 }, 5, 4, 2, "top").serviced).toBe(true);
   });
 });
 
@@ -511,7 +519,9 @@ describe("W8 the degenerate candidate no longer wins the ranking", () => {
     const out = aiBuildStep(s, F, { stock: {}, purse: rich }, 1)!;
     expect(out).toBeTruthy();
     expect(out.kind).toBe("dirt");
-    expect(out.built.length).toBeGreaterThan(1);
+    // a 2×2 lot beside the rig can put its gate one tile from the factory, so
+    // a single laid tile is a real build — what matters is it lays something
+    expect(out.built.length).toBeGreaterThan(0);
     expect(out.harvester).toBeTruthy();
     expect(isServiced(s.track, out.harvester!)).toBe(true);
   });
@@ -703,7 +713,9 @@ describe("T4 routing regressions", () => {
   });
 
   it("does not charge stone in the affordability bound for dirt-to-road upgrades", () => {
-    const grid = flatGrid([ind("farm", 15, 5)]), track = createTrack();
+    // farm 15..18 × 6..9 sits just below the trunk's end, so the 2×2 lot west
+    // of it (13,6) opens at the top with its NE gate (13,5)/(14,5) ON the trunk.
+    const grid = flatGrid([ind("farm", 15, 6)]), track = createTrack();
     for (let x = 5; x <= 14; x++) buildTile(track, "dirt", x, 5);
     // `preferPaved` is what VP-01 needs here: the claim under test is that a
     // path riding existing gravel is bound by the UPGRADE price (4 Ore), not by
@@ -716,7 +728,8 @@ describe("T4 routing regressions", () => {
     // the trunk is not in `path.tiles` at all: `networkTiles` seeds the search
     // from the MERGED network, so a rival never re-prices ground it already owns.
     expect(candidate!.cost).toEqual({ ore: UPGRADE_COST.ore });
-    expect(candidate!.path.tiles).toEqual([[14, 5]]);
+    expect(candidate!.path.tiles).toHaveLength(1);
+    expect(hasTrack(track, "dirt", ...candidate!.path.tiles[0])).toBe(true);
   });
 
   it("finds an affordable rival opening beyond the old eight far-corner probes", () => {

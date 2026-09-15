@@ -32,6 +32,7 @@ import {
   OPPOSITE, PUBLIC_OWNER, playerNetwork, trackOwnedBy, tIdx, type Track,
 } from "../../src/iso/track";
 import { isServiced } from "../../src/iso/economy";
+import { depotTiles } from "../../src/iso/depot";
 import { rivalSearchTiles, canReachASpot } from "./helpers/rival-map";
 
 const SEEDS = [1337, 7, 42, 100, 1, 123, 2026, 0];
@@ -341,9 +342,15 @@ describe("PP-10 seedTownRoads (track wiring)", () => {
         for (const [dx, dy] of DIR4) {
           const hx = tx + dx, hy = ty + dy;
           if (buildRefusal(g, "road", hx, hy) !== null) continue;
+          // the 2×2 truck Depot on that side whose GATE opens onto this town road
+          const lot = dx < 0 ? { tx: tx - 2, ty, facing: "bottom" as const }
+            : dy < 0 ? { tx, ty: ty - 2, facing: "bottom" as const }
+              : dx > 0 ? { tx: tx + 1, ty, facing: "top" as const }
+                : { tx, ty: ty + 1, facing: "top" as const };
+          if (depotTiles(lot.tx, lot.ty).some(([x, y]) => buildRefusal(g, "road", x, y) !== null)) continue;
           expect(
-            isServiced(track, { id: 99, owner: "you", ownerId: 1, tx: hx, ty: hy }),
-            `a public town road must service a depot at (${hx},${hy})`,
+            isServiced(track, { id: 99, owner: "you", ownerId: 1, ...lot }),
+            `a public town road must service a depot at (${lot.tx},${lot.ty})`,
           ).toBe(true);
           const net = playerNetwork(track, 1, [{ ownerId: 1, tx: hx, ty: hy }], []);
           expect(

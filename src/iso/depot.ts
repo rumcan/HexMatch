@@ -18,7 +18,7 @@
 // Pure geometry: no track, no economy, no rendering. The economy, placement,
 // the rival and the lorries all ask these functions, so the rules live once.
 // ══════════════════════════════════════════════════════════════════════════
-import { inMapT } from "./track";
+import { canBuildOn, inMapT } from "./track";
 import type { Grid, Industry } from "./grid";
 
 /** The Depot footprint, in tiles. */
@@ -55,6 +55,18 @@ export function depotTiles(tx: number, ty: number): [number, number][] {
 /** True when (x, y) is one of the lot's tiles. */
 export function depotContains(tx: number, ty: number, x: number, y: number): boolean {
   return x >= tx && x < tx + DEPOT_SIZE[0] && y >= ty && y < ty + DEPOT_SIZE[1];
+}
+
+/**
+ * The lot tile orthogonally beside an entrance tile — where a lorry coming in
+ * through that entrance stops to load — or null when (ex, ey) is not beside
+ * the lot.
+ */
+export function lotTileBeside(tx: number, ty: number, [ex, ey]: [number, number]): [number, number] | null {
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+    if (depotContains(tx, ty, ex + dx, ey + dy)) return [ex + dx, ey + dy];
+  }
+  return null;
 }
 
 /** The tiles just OUTSIDE one edge of the lot (on-map only). */
@@ -113,6 +125,44 @@ export function depotFacingAt(
   if (top && bottom) return { facing: null, problem: "both-sides" };
   return { facing: top ? "bottom" : "top", problem: null };
 }
+
+/**
+ * Every 2×2 lot that could serve `ind`: sharing an edge with its footprint,
+ * with a facing (not boxed in by resources on both halves), and on ground a
+ * Depot may stand on. Row-major, so a search over it is deterministic. Other
+ * structures (depots, factories) are the caller's to rule out.
+ */
+export function depotSites(
+  grid: Grid, ind: Industry,
+): { tx: number; ty: number; facing: DepotFacing }[] {
+  const [w, h] = DEPOT_SIZE;
+  const out: { tx: number; ty: number; facing: DepotFacing }[] = [];
+  // PERF: the facing only depends on industries within a tile of the lot, so
+  // look at the neighbours of THIS industry's surroundings once — the rival
+  // calls this for every industry on every turn.
+  const near = {
+    industries: grid.industries.filter((o) =>
+      o.tx <= ind.tx + ind.w + w && o.tx + o.w >= ind.tx - w - 1
+      && o.ty <= ind.ty + ind.h + h && o.ty + o.h >= ind.ty - h - 1),
+  };
+  for (let y = ind.ty - h; y <= ind.ty + ind.h; y++) {
+    for (let x = ind.tx - w; x <= ind.tx + ind.w; x++) {
+      const tiles = depotTiles(x, y);
+      if (tiles.some(([tx, ty]) => !inMapT(tx, ty) || near.industries.some((o) => industryCovers(o, tx, ty)))) continue;
+      const touching = industriesTouchingDepot(near, x, y);
+      if (!touching.some((t) => t.industry.id === ind.id)) continue;
+      const { facing } = depotFacingAt(near, x, y);
+      if (!facing) continue;
+      if (tiles.some(([tx, ty]) => !canBuildOn(grid, "dirt", tx, ty))) continue;
+      out.push({ tx: x, ty: y, facing });
+    }
+  }
+  return out;
+}
+
+/** True when two 2×2 lots overlap. */
+export const depotsOverlap = (ax: number, ay: number, bx: number, by: number): boolean =>
+  Math.abs(ax - bx) < DEPOT_SIZE[0] && Math.abs(ay - by) < DEPOT_SIZE[1];
 
 /** A stored Depot's facing, deriving it for records written before facings existed. */
 export function depotFacingOf(

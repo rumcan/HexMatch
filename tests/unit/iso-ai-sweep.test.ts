@@ -132,7 +132,7 @@ describe("W8 sweep — every candidate returned is executable and viable", () =>
         const eco: EconomyState = { grid, track, harvesters: [], factories: [f] };
         for (let turn = 0; turn < 2; turn++) {
           for (const c of planCandidates(eco, f, rivalOpts())) {
-            const feas = planFeasibility(eco, c.kind, c.path, c.hx, c.hy, f.ownerId);
+            const feas = planFeasibility(eco, c.kind, c.path, c.hx, c.hy, f.ownerId, c.facing);
             expect(feas.viable, `seed ${seed} from ${x},${y} turn ${turn}`).toBe(true);
             expect(
               c.path.tiles.every(([tx, ty]) => canBuildOn(grid, c.kind, tx, ty)),
