@@ -13,12 +13,12 @@
 //   ALL of a player's plants SHARE ONE processing board.
 //
 //   Rationale: a per-plant board would mean the input allocation ("which
-//   plant does this depot's cargo feed?") and sabotage targeting ("which
-//   board does the Smog Cloud land on?") both need a selection UI, and
+//   plant does this depot's cargo feed?") and obstacle targeting ("which
+//   board does a tuning session open?") both need a selection UI, and
 //   selecting a plant would then be able to reroll a board — exactly the
 //   exploit the acceptance criteria forbid. With one shared board there is
 //   nothing to select and nothing to reroll: every connected depot feeds the
-//   same board, sabotage always lands on it, and a new plant adds delivery
+//   same board, every session is dealt on it, and a new plant adds delivery
 //   REACH (more places a depot may connect to), not extra board throughput.
 //
 // Everything here is pure: it reads the grid/economy and answers questions.

@@ -222,7 +222,6 @@ describe("RAIL-04 validation and the delta field", () => {
     const plain = buildPublish(track, new DirtyTiles(), {
       t: 1, seq: 1, harvesters: [], factories: [], players: [],
       setupPhase: false, won: false,
-      rivalSabotage: { frozen: [], girders: [], smogIn: 0 },
     });
     expect(plain.kind).toBe("delta");
     if (plain.kind !== "delta") throw new Error("unreachable");
@@ -237,7 +236,6 @@ describe("RAIL-04 validation and the delta field", () => {
     const wired = buildPublish(track, new DirtyTiles(), {
       t: 2, seq: 2, harvesters: [], factories: [], players: [],
       setupPhase: false, won: false,
-      rivalSabotage: { frozen: [], girders: [], smogIn: 0 },
       rail: wire,
     });
     expect(wired.kind).toBe("delta");

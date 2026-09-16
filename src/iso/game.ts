@@ -130,8 +130,9 @@ import {
 // depot tree / confirms a city upgrade (Addition A's gate).
 import {
   abandonYieldFor, birthYieldFor, createTownSession, createTuningSession, decayYield,
-  difficultyRulesFor, recordTuningCleared, retuneOwed, rivalTuningGold, rivalTuningScore,
-  rivalTuningYield, settleTuningYield, takeTuningMove, townBonusFor, tuningMovesLeft,
+  difficultyRulesFor, obstacleIntroLine, recordTuningCleared, retuneOwed, rivalTuningGold,
+  rivalTuningScore, rivalTuningYield, settleTuningYield,
+  sessionObstacles as sessionObstaclesFor, takeTuningMove, townBonusFor, tuningMovesLeft,
   unlockTierAfterSession, tuningOver, tuningSessionGold, tuningSessionYield,
   tuningCargoLabel, TUNING_ABANDON_YIELD, TUNING_REWARD_SCORE, type TuningSession,
 } from "./tuning";
@@ -140,7 +141,7 @@ import {
   priceDepot, priceTownUpgrade, rungLabel, shortfallLabel,
 } from "./construction";
 import { bankTrade } from "../game/trade";
-import type { CrossKind } from "../game/board";
+import type { BoardObstacles, CrossKind } from "../game/board";
 import {
   MAP_W, MAP_H, BANDIT_MS, PROTEST_MS, SABOTAGE, SECURITY,
   RES_KEYS, tileToScreen, type ResKey,
@@ -152,11 +153,12 @@ import {
   type SaveGamePayload,
 } from "./savegame-runtime";
 import { RES } from "../game/config";
-// L9 (#224): the rival's plant is still a board you can WATCH (AI-03's peek
-// panel) and still travels the wire — but nothing BUYS its frost, girders or
-// smog any more: the Black Market is map-only sabotage now, and board
-// obstacles come back as tuning-session obstacles in #225. Only the wrapper
-// itself is imported here; the timed-sabotage constants are its own business.
+// L10 (#225): the rival's plant is a board you can WATCH (AI-03's peek panel)
+// and nothing else. Its frost/girder/smog cards, the clocks that expired them
+// and the damage model that scaled the rival's income by how wrecked the plant
+// looked are all gone — obstacles belong to a tuning session now, and the
+// rival's yield is docked by them once, in `rivalTuningYield`. One board, one
+// name; the sabotage overlay that used to travel the wire for it went too.
 import { createRivalPlant } from "./rival-plant";
 import { createFloatLayer, type FloatLayer } from "./floats";
 import {
@@ -229,7 +231,7 @@ import {
 } from "./debug";
 import {
   SNAPSHOT_VERSION, applySnapshot, buildSnapshot, joinFromSnapshot,
-  type RivalSabotage, type Snapshot, type WirePlayer,
+  type Snapshot, type WirePlayer,
 } from "./snapshot";
 export { joinFromSnapshot };
 // MP-05: the wire. `session.ts` owns roles/roster/chunked state transfer and
@@ -1023,23 +1025,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   }, undefined);
 
   // AI-03: the RIVAL's Processing Plant board — a real quarry of its own,
-  // played by a clock-driven autoplayer (`skill().moveMs`, below). It pays
-  // the same rules the player's board does: match a token, earn the feed,
-  // clear ice, free girders. `rivalPlant.board` is the body that sabotage
-  // already hits (A1), so buying Frost on the rival now also lands on the
-  // board you can WATCH it play — one economy, one addressable plant.
-  // The board drives the purse through the same hooks the player's own
-  // quarry does; what it must never do is toast the human about the rival's
-  // private matches, so its UI surface says nothing — except when its own
-  // peek panel is open (see `openRivalPlantView` below).
+  // played by a clock-driven autoplayer (`skill().moveMs`, below). It pays the
+  // same rules the player's board does: match a token, earn the feed. The
+  // board drives the purse through the same hooks the player's own quarry
+  // does; what it must never do is toast the human about the rival's private
+  // matches, so its UI surface says nothing — except when its own peek panel
+  // is open (see `openRivalPlantView` below).
   //
   // L1d (#235): on the new loop that purse line is cut for the rival exactly
   // as #234 cut it for the player (`payCargo: false`) — the rival earns on the
   // clock from its connected depots instead, in the same `economyTick` pass.
-  // The board stays ALIVE (the autoplay keeps running) because two things
-  // still need it: it is the plant you can watch from the peek panel, and it
-  // is the body sabotage lands on — ice and girders only clear because
-  // somebody keeps playing. Its combo Gold is untouched (#227 re-homes Gold).
+  // The board stays ALIVE (the autoplay keeps running) because it is the
+  // plant you can watch from the peek panel, and because AI-03 is a thing the
+  // player is meant to be able to sit and watch. Its combo Gold is untouched
+  // (#227 re-homes Gold).
   let rivalQuarry: Quarry;
 
   /** AI-03: the peek panel handle (set when the player opens it). */
@@ -1182,6 +1181,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     lastResetAt = now;
     quarry.board.resetNeutral();
+    // L10 (#225): a reset inside a tuning session re-deals that session's
+    // obstacles — the ♻ collapses the board, not the difficulty. (Outside a
+    // session there is nothing to re-deal, and a fresh board is fresh.)
+    const depot = tuning ? eco.harvesters.find((h) => h.id === tuning!.depotId) : undefined;
+    if (depot) seedSessionObstacles(depot);
     toast("Processing Plant collapsed. Fresh neutral board.", "info");
   }
   // Original HUD (U1). It takes the live board + market + the player purse and
@@ -2803,7 +2807,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    *      a tuning session", and never able to);
    *   2. the swap has to be one the board would actually take — the same
    *      preconditions `trySwap` checks (adjacency is the chrome's), so
-   *      tapping a girder or a smogged board costs no move;
+   *      tapping a girder costs no move;
    *   3. and then it COSTS one of the session's moves, dud swaps included —
    *      that is what a bounded match-3 session is.
    */
@@ -2814,7 +2818,6 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         toast("Build a Depot to open a tuning session — the board is only up while one runs.", "info");
         return;
       }
-      if (quarry.board.fogUntil > now) return;
       const g1 = quarry.board.grid[r1]?.[c1], g2 = quarry.board.grid[r2]?.[c2];
       if (!g1 || !g2 || g1.block || g2.block) return;
       if (!takeTuningMove(tuning)) return;
@@ -2833,10 +2836,39 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   }
 
   /**
+   * L10 (#225) — the obstacles the open session was dealt (what actually
+   * landed, not what the table asked for). The plate and the tests read it, so
+   * the copy that says "3 girders" and the board that holds three are never
+   * two sources of truth.
+   */
+  let sessionObstacles: BoardObstacles | null = null;
+
+  /**
+   * L10 (#225) — deal the difficulty's obstacles onto the session's board.
+   *
+   * The ONE door an obstacle has on to a board: the row the game is running,
+   * thinned by the tier this Depot stands on, placed by the board on the
+   * seeded RNG with the deadlock guard watching every single one.
+   */
+  function seedSessionObstacles(depot: Harvester): BoardObstacles {
+    const plan = sessionObstaclesFor(difficultyRules(), depotTier(depot));
+    const placed = quarry.board.seedObstacles(plan.frost, plan.girders, plan.frostHard);
+    sessionObstacles = placed;
+    return placed;
+  }
+
+  /**
    * Open the tuning session for a Depot. The board is wiped to a fresh neutral
-   * grid (tokens, frost, girders and smog all go — a session is a skill burst
-   * on a clean table, and the rival's sabotage must not be able to rig a
-   * yield), biased toward the Depot's own colour, and the plate takes over.
+   * grid (a session is a skill burst on a clean table), biased toward the
+   * Depot's own colour, seeded with the difficulty's obstacles, and the plate
+   * takes over.
+   *
+   * The obstacles are the L10 half of this: `sessionObstacles(rules, tier)`
+   * reads the row the game is running (Easy none, Normal frost, Hard frost and
+   * girders), the tier thins it for a first Depot, and `Board.seedObstacles`
+   * places them on seeded RNG without ever leaving a board with no legal move.
+   * They are NOT a timer and NOT a purchase — nothing outside a session can
+   * put one on a board, and they leave with the session that brought them.
    */
   function openTuningSession(depot: Harvester, isRematch = false): void {
     const rules = difficultyRules();
@@ -2851,10 +2883,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     quarry.board.resetNeutral();
     quarry.board.setBias(CARGO_TO_GEM[cargo], TUNING.cargoBias);
     tuning = createTuningSession(depot.id, cargo);
+    // The obstacles go on AFTER the fresh fill and BEFORE the plate opens:
+    // they are part of the board the session deals, so the first thing the
+    // player sees is the table as it will be played, not a clean one that
+    // grows ice a beat later.
+    const obstacles = seedSessionObstacles(depot);
     sfx.play("open");
     ui.openSessionBoard();
+    // L10 (#225): the intro names the obstacles in the game's own words — the
+    // player is told why the board is tougher before they spend a move on it.
+    const intro = obstacleIntroLine(skill().label, obstacles);
     toast(
-      `Tuning session — ${tuningCargoLabel(cargo)}: ${TUNING.moves} moves on the plant floor set this Depot's yield`
+      (intro ? `${intro} ` : "")
+      + `Tuning session — ${tuningCargoLabel(cargo)}: ${TUNING.moves} moves on the plant floor set this Depot's yield`
       + (isRematch ? " again." : ".")
       // The closing promise comes from the row, not from the mood of the copy.
       + (rules.yieldNeverDrops ? " It can only go up from here." : " A bad round can cost you."),
@@ -2957,6 +2998,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const played = !abandon && s.score > 0;
     // A town session has no Depot (`depotId` is -1), so this is `undefined`
     // there and the city branch below settles instead.
+    // L10 (#225): the obstacles belong to the SESSION, so they go when it does
+    // — the board the player is left looking at (the map, or the plant plate's
+    // idle line) is never a board with ice on it and no session behind it. In
+    // place, not `resetNeutral`: a cascade the last move started may still be
+    // in the air, and this session's board is not what the next one deals.
+    sessionObstacles = null;
+    quarry.board.clearObstacles();
     const depot = eco.harvesters.find((h) => h.id === s.depotId);
     // L6 (#220): the difficulty sits between the score and the record. The
     // number that lands is `settleTuningYield(prev, score, rules)` — mapped onto
@@ -3220,17 +3268,29 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   function applyRivalTuning(): void {
     if (!newLoop) return;
     const key = skill().key;
+    // L10 (#225): the rival plays no board, so the obstacles its difficulty
+    // puts on one are taken off its simulated session instead — the same table
+    // the player's board is seeded from, read at this Depot's tier. This is
+    // what replaced `rival-plant.ts`'s damage model: the cost of a hard board
+    // is charged once, at the tune, and never melts off on a timer.
+    const rules = difficultyRules();
+    // One flood fill for the rival's whole network, shared by every Depot in
+    // the scan — `depotTier` resolves through it instead of rebuilding the
+    // components per Depot (the L6 cache in `retuneCandidates` does the same
+    // for the player's seat).
+    const comp = buildAllComponents(eco.track, ownerIdOf(eco, rival.id));
     let simulated = false;
     for (const h of eco.harvesters) {
       if (h.owner !== rival.id || h.yield !== undefined) continue;
-      h.yield = rivalTuningYield(key);
+      const tier = depotTier(h, comp);
+      h.yield = rivalTuningYield(key, 0, rules, tier);
       simulated = true;
       // L9 (#224): the simulated session pays the rival the same Gold a
       // played one pays the player, through the same score→Gold curve. This
       // is what keeps its raid table funded once combo Gold stops paying —
       // "Gold still reaches BOTH players at a steady rate without constant
       // matching" is one rule applied twice, not two balance numbers.
-      const coins = rivalTuningGold(key);
+      const coins = rivalTuningGold(key, 0, rules, tier);
       if (coins > 0) earn(rival, { gold: coins });
     }
     // L5 (#219): the rival passes the SAME session gate (#229 L14): a
@@ -4085,9 +4145,6 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // renders the board panel from its own (inert) grid and changes nothing.
     if (isGuest()) return;
     market.tick(now);
-    // A1: ice and girders on the rival's plant expire on their own clock —
-    // nobody is there to clear them.
-    rivalPlant.tick(now);
     if (phase !== "play") return;
     // MP-05: the rival's market policy is solo-only. In a hosted game seat 1 is
     // a person: the host must not post offers on their behalf.
@@ -4102,7 +4159,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (tuning && tuningOver(tuning) && !quarry.board.busy) closeTuningSession(false);
     // AI-03: the rival's own plant plays: same board clock as yours, then
     // one watchable move per skill().moveMs. trySwap refuses politely when
-    // the board is busy or smogged, so the clock can keep cadence calmly.
+    // the board is busy, so the clock can keep cadence calmly.
     rivalQuarry.tick(now);
     // MP: in a hosted game seat 1 is a person who swaps their own board by
     // intent — an autoplaying AI there would be a third player on their board.
@@ -4792,14 +4849,6 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   }));
 
   /**
-   * PP-14b: the Black-Market sabotage on the RIVAL's plant, as it travels the
-   * wire. In a hosted game the rival IS the guest's seat, so the guest applies
-   * this to its own board (see `applyRivalSabotage`). In solo the field is
-   * still built — the same snapshot shape serves both — but nobody reads it.
-   */
-  const rivalSabotageNow = (): RivalSabotage => rivalPlant.board.sabotageState(performance.now());
-
-  /**
    * L9 (#224): the live Blockades, for the wire. Industries are seed-derived
    * and never sent, so only the EXPIRY travels — keyed by the industry id both
    * clients already agree on. Without this a guest whose depots were
@@ -4879,7 +4928,6 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       won: phase === "won",
       players: wirePlayers(),
       t: performance.now(),
-      rivalSabotage: rivalSabotageNow(),
       market: { offers: market.ctx.offers.map((o) => ({ id: o.id, from: o.from, give: o.give, giveN: o.giveN, want: o.want, wantN: o.wantN, born: o.born })), offerSeq: market.ctx.offerSeq },
       protests: protestsWire,
       blockades: blockadesWire(),
@@ -4895,21 +4943,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   /**
    * #117: which board content each of the last delta's carries, per seat.
-   * `Board.save()` embeds remaining sabotage ms, so it differs every call
-   * even when nothing happened — the key projects the parts that ARE the
-   * board (grid, pool, combo bank, mint counter) plus the two sabotage
-   * PRESENCE flags (smog/girders arriving or lifting is a real change; the
-   * countdown between is not, and the receiving board's own clocks handle
-   * it). An unchanged board is OMITTED from the delta: re-sending it would
-   * restore fresh gem ids on the guest and read as a whole-board rebuild.
+   * L10 (#225): `Board.save()` carries no clocks any more (an obstacle has no
+   * expiry to embed), so the key is simply the parts that ARE the board —
+   * grid, pool, combo bank, mint counter. An unchanged board is OMITTED from
+   * the delta: re-sending it would restore fresh gem ids on the guest and read
+   * as a whole-board rebuild.
    */
   let boardSyncKeys: [string, string] | null = null;
   const boardSyncKey = (b: typeof quarry.board): string => {
     const s = b.save() as {
       grid: unknown; pool: unknown; comboCount: unknown; seq: unknown;
-      fogIn: number; blockIn: number;
     };
-    return JSON.stringify([s.grid, s.pool, s.comboCount, s.seq, s.fogIn > 0, s.blockIn > 0]);
+    return JSON.stringify([s.grid, s.pool, s.comboCount, s.seq]);
   };
 
   /**
@@ -4947,7 +4992,6 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       players: wirePlayers(),
       setupPhase: inSetup(),
       won: phase === "won",
-      rivalSabotage: rivalSabotageNow(),
       market: { offers: market.ctx.offers.map((o) => ({ id: o.id, from: o.from, give: o.give, giveN: o.giveN, want: o.want, wantN: o.wantN, born: o.born })), offerSeq: market.ctx.offerSeq },
       protests: protestsWire,
       blockades: blockadesWire(),
@@ -4988,15 +5032,6 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       }
     }
   }
-  /**
-   * GUEST: stamp the host's Black-Market sabotage onto the local plant board.
-   * The board is a spectator view, so only the sabotage overlay is applied —
-   * the gem layout itself is deliberately not synced.
-   */
-  function applyRivalSabotage(sab: RivalSabotage) {
-    quarry.board.applySabotage(sab);
-  }
-
   /**
    * #114: write an authoritative balance INTO a seat's existing purse object.
    * `players[i].purse = toBag(...)` (the old code) minted a fresh object and
@@ -5069,7 +5104,6 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // delta writes, through the same helper, zero allowance included.
       applyPlayerWire(players[i], wire);
     }
-    if (applied.rivalSabotage) applyRivalSabotage(applied.rivalSabotage);
     // MP-AUDIT: market parity
     if (applied.market) {
       market.ctx.offers.length = 0;
@@ -5180,8 +5214,6 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         applyPlayerWire(players[i], wire);
       }
     }
-    // PP-14b: the host's sabotage on this seat's plant, applied as an overlay.
-    if ((msg as any).rivalSabotage) applyRivalSabotage((msg as any).rivalSabotage);
     // MP-AUDIT: market
     if ((msg as any).market) {
       const m = (msg as any).market;
@@ -7319,11 +7351,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       cells.push(row);
     }
     const paint = () => {
-      const st = rivalPlant.status(performance.now());
+      const st = rivalPlant.status();
       const bits: string[] = [];
       if (st.frozen) bits.push(`❄ ${st.frozen} frozen`);
       if (st.girders) bits.push(`🏗 ${st.girders} girders`);
-      if (st.smog) bits.push("☁ smogged");
       statusEl.textContent = bits.length ? " · " + bits.join(" · ") : " · healthy";
       // AI-03: the rival's purse, per cargo — "where is all that gold coming
       // from?" is answered by watching it move against the board above.
@@ -8012,6 +8043,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           : tuningSessionYield(tuning, rules.minYield),
         yieldFloor: rules.minYield,
         abandonYield: town ? TUNING_ABANDON_YIELD : abandonYieldFor(rules),
+        /**
+         * L10 (#225): the obstacles this session OPENED with — what actually
+         * landed on the board, not what the difficulty's table asked for, so
+         * the plate (and a test) can say "3 girders" and mean the three on
+         * the grid. Null only if a session is somehow up with no record.
+         */
+        obstacles: sessionObstacles,
       };
     },
     /**

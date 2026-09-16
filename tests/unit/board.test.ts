@@ -390,23 +390,60 @@ describe("gold gems only fall in from the top — never replace a resource gem",
   });
 });
 
-describe("obstacles", () => {
-  it("smashBlocks removes blocks and thaws frost", () => {
+// ══════════════════════════════════════════════════════════════════════════
+// L10 (#225) — obstacles.
+//
+// They are a tuning session's now: `seedObstacles` lays them down when the
+// session opens, an adjacent match cracks the frost and breaks a girder, and
+// the session's close (`resetNeutral`) takes whatever is left off. There is no
+// timer on one, no way to BUY one, and no Smog: the fog clock, the sabotage
+// overlay and the Repair Crew that undid them are all gone from the board.
+// ══════════════════════════════════════════════════════════════════════════
+describe("L10 the session's obstacles", () => {
+  it("seeds the frost and the girders it was asked for, and reports what landed", () => {
     const b = freshBoard();
-    b.grid[0][0]!.block = true;
-    b.grid[1][1]!.hard = 2;
-    const n = b.smashBlocks();
-    expect(n).toBe(2);
-    expect(b.grid[0][0] === null || b.grid[0][0]!.block === false).toBe(true);
+    const placed = b.seedObstacles(5, 3, 2);
+    expect(placed).toEqual({ frost: 5, girders: 3, frostHard: 2 });
+    expect(b.gems().filter((g) => g.block)).toHaveLength(3);
+    expect(b.gems().filter((g) => g.hard === 2)).toHaveLength(5);
+    // …and the board's own read of itself agrees with what was placed.
+    expect(b.obstacleCounts()).toEqual({ frost: 5, girders: 3, frostHard: 2 });
   });
 
-  it("fog blocks swaps until it expires", async () => {
+  it("places on the seeded RNG — the same seed opens the same board", () => {
+    const cellsOf = (b: Board) =>
+      b.gems().filter((g) => g.block || g.hard > 0).map((g) => `${g.r},${g.c}`).sort();
+    const a = freshBoard();                       // freshBoard() re-seeds 1234
+    a.seedObstacles(4, 2, 1);
     const b = freshBoard();
-    b.fog(1000, 1);
-    const changed = vi.fn();
-    b.onChange = changed;
-    await b.trySwap(0, 0, 0, 1, 500);
-    expect(changed).not.toHaveBeenCalled();
+    b.seedObstacles(4, 2, 1);
+    expect(cellsOf(b)).toEqual(cellsOf(a));
+    // A different seed opens a different board: the placement is random, not
+    // a fixed corner of the grid.
+    setRng(mulberry32(999));
+    const c = new Board();
+    c.seedObstacles(4, 2, 1);
+    expect(cellsOf(c)).not.toEqual(cellsOf(a));
+  });
+
+  it("never opens a board with no legal move — the deadlock guard decides", () => {
+    // Every girder this board can hold: the seed that would take its last
+    // move is put back, so a session can always be played.
+    const b = freshBoard();
+    const placed = b.seedObstacles(0, BOARD_W * BOARD_H, 2);
+    expect(placed.girders).toBeLessThan(BOARD_W * BOARD_H);
+    expect(b.hasMove()).toBe(true);
+    for (let i = 1; i <= 40; i++) {
+      const t = freshBoard();
+      const p = t.seedObstacles(20, 20, 2);
+      expect(t.hasMove(), `seed ${i}: ${p.girders} girders left no move`).toBe(true);
+    }
+  });
+
+  it("is the ONLY way on: a fresh board carries nothing", () => {
+    const b = freshBoard();
+    expect(b.obstacleCounts()).toEqual({ frost: 0, girders: 0, frostHard: 1 });
+    expect(b.gems().some((g) => g.hard > 0 || g.block)).toBe(false);
   });
 });
 
@@ -671,7 +708,7 @@ describe("findMove agrees with the board (AI-03d)", () => {
     b.grid[0][1]!.res = "ore"; b.grid[0][1]!.block = true;
     b.grid[0][2]!.res = "brick";
     b.grid[1][2]!.res = "ore"; b.grid[1][2]!.tier = 1;
-    b.harden(4);
+    b.seedObstacles(4, 0, 2);
     expect(b.findGroups(), "the girder breaks the line the colours promise").toHaveLength(0);
     const { refused, played, pops } = await rivalLoop(b, 6);
     expect(refused, `the rival replayed dead swaps at ${refused.join(" / ")}`).toEqual([]);

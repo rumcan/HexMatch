@@ -876,8 +876,8 @@ html, body, #root {
 /* per-ability artwork — painted cards in src/assets/ui/noir/sigil/
    L9 (#224): the Black Market is map-only, so only the two map cards and the
    defence have plates here. The frost/girder/smog/repair rules went with their
-   buttons; their painted sigils stay on disk for the session obstacles (#225)
-   to reuse rather than being repainted. */
+   buttons; their painted sigils stay on disk for the session obstacles (L10 /
+   #225) to reuse rather than being repainted. */
 .sab-btn.sb-bandit   { --sigil: url("../assets/ui/noir/sigil/bandit.png"); }
 .sab-btn.sb-protest  { --sigil: url("../assets/ui/noir/sigil/protest.png"); }
 .sab-btn.secure-btn  { --sigil: url("../assets/ui/noir/sigil/security.png"); }
@@ -946,7 +946,6 @@ html, body, #root {
   letter-spacing: .6px; font-family: var(--mono);
   border: 1px solid transparent;
 }
-.stat.fog { background: rgba(124, 182, 216, .16); color: #c6e4f4; border-color: rgba(124, 182, 216, .34); }
 .stat.blk { background: rgba(255, 176, 46, .16); color: var(--gold2); border-color: rgba(255, 176, 46, .34); }
 
 /* combo bank — spent casings, each one chambered pays a coin. PP-14b: promoted
@@ -1381,21 +1380,6 @@ html, body, #root {
 }
 .gem.block .icon::before { content: "⛓️"; font-size: 24px; filter: sepia(.4) saturate(.7); }
 
-/* ── fog ────────────────────────────────────────────────────────── */
-.fog-overlay {
-  position: absolute; inset: 5px; z-index: 5; border-radius: var(--r);
-  display: none; place-items: center;
-  font-family: var(--display); font-size: 15px; font-weight: 700;
-  color: #d9e6ee; letter-spacing: 5px; text-transform: uppercase;
-  background:
-    var(--smoke) 0 0 / 600px,
-    rgba(26, 22, 18, .8);
-  background-blend-mode: screen, normal;
-  border: 1px solid rgba(124, 182, 216, .25);
-  cursor: not-allowed;
-  text-shadow: 0 0 14px rgba(0, 0, 0, .9);
-}
-.fog-overlay.show { display: grid; }
 /* ── fx ─────────────────────────────────────────────────────────── */
 .fx { position: absolute; transform: translate(-50%,-50%); pointer-events: none; z-index: 6; }
 .fx-pop {

@@ -1073,10 +1073,10 @@ function mirrorRail(w: Snapshot["rail"]): Snapshot["rail"] | undefined {
 }
 
 /**
- * Mirror a full wire snapshot into the guest's local seat frame. `rivalSabotage`
- * is deliberately left UNMIRRORED: sabotage always targets seat 1 (the host's
- * rival = the guest's own plant), so the guest applies it to its own board
- * as-is — swapping it would put the host's frost on the host's plant.
+ * Mirror a full wire snapshot into the guest's local seat frame: the owner
+ * bytes flip, so seat 0's world becomes seat 1's. (L10 / #225: this used to
+ * leave `rivalSabotage` UNMIRRORED, because sabotage always targeted seat 1
+ * — the guest's own plant. There is no sabotage on the wire any more.)
  */
 export function mirrorSnapshot(snap: Snapshot): Snapshot {
   const owner = base64ToBytes(snap.owner);
