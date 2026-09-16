@@ -595,7 +595,14 @@ export function createOriginalUi(
       const o = document.createElement("option");
       o.value = key;
       o.text = `Difficulty: ${RIVAL_SKILLS[key].label}`;
-      o.title = `${RIVAL_SKILLS[key].blurb} ${RIVAL_SKILLS[key].economyLine}`;
+      // L13 (#228): under the new loop EVERY chair races the loop's own line
+      // (`VICTORY.loop.target`), so the easy preset's "first to 5★" is no
+      // longer true — strip the shipped line out of the blurb rather than
+      // promising a race length the win check will not honour.
+      const blurb = newLoop
+        ? RIVAL_SKILLS[key].blurb.replace(/\s*—?\s*and a short race, first to \d+★\.?/, ".")
+        : RIVAL_SKILLS[key].blurb;
+      o.title = `${blurb} ${RIVAL_SKILLS[key].economyLine}`;
       sel.appendChild(o);
     }
     sel.value = hooks.skill ?? "normal";
@@ -1070,6 +1077,11 @@ export function createOriginalUi(
   // VP-01: the two road buttons tell the truth about points — gravel scores
   // nothing, and the only road action that does is paving over gravel you
   // already laid (which is also the cheaper of the two paved options).
+  // L13 (#228): what the Road button promises. Under the new loop paving pays
+  // nothing (L2 made dirt free; the ★ moved to depot types, rungs and city
+  // tiers), so the line sells the reason Road is still worth laying — it is
+  // the fast transport tier — instead of a quarter-star nobody will be paid.
+  const roadRule = newLoop ? "faster hauling · 0★" : `+${VICTORY.upgrade}★ paving dirt`;
   const TOOLS: { key: UiTool; label: string; sub: string }[] = [
     // The pointer goes first: it is the hand you hold between builds —
     // hover to read what a tile is, click to select it, right-click (or Q)
@@ -1080,7 +1092,12 @@ export function createOriginalUi(
     // L2 (#216): under newLoop dirt is free — the button says so (`costMarkup({})`
     // renders "free"), instead of quoting a price the placement never charges.
     { key: "dirt", label: "Dirt Road", sub: `${costMarkup(newLoop ? {} : TRANSPORT.dirt.cost)} · 0★` },
-    { key: "road", label: "Road", sub: `${costMarkup(TRANSPORT.road.cost)} · +${VICTORY.upgrade}★ paving dirt` },
+    // L13 (#228): paving stopped scoring under the new loop — the ★ come from
+    // depot types, tree rungs and city tiers now. A button that still promised
+    // "+0.25★ paving dirt" would sell the player the one plan the scoreboard
+    // no longer pays for. Road is still worth building (it is the fast
+    // transport tier, `TRANSPORT.road.factor`), so the line says THAT instead.
+    { key: "road", label: "Road", sub: `${costMarkup(TRANSPORT.road.cost)} · ${roadRule}` },
     // PP-05: `depotSub` refreshes the Depot line below as the free-setup
     // allowance burns down.
     { key: "harvester", label: "Depot", sub: depotButtonMarkup(0, { newLoop, tier: 0 }) },

@@ -18,10 +18,26 @@ import portraitYou from "../assets/ui/tycoon_you.png";
 // ledger never depends on a network fetch to show a player their tier.
 import { UNRANKED_KEY, badgeUrlFor } from "../ui/rank-badge";
 
-export type EndingPath = "paving" | "plants" | "balanced";
-export type DecisiveSource = "upgrade" | "plant" | "platform" | null;
+/**
+ * L13 (#228): the new loop's winner is read on its own axes — BREADTH (many
+ * depot types running) against DEPTH (the city and the tree) — so it gets two
+ * paths of its own rather than being forced into "paving" or "plants", which
+ * are the names of two mechanics the new loop does not score.
+ */
+export type EndingPath = "paving" | "plants" | "balanced" | "network" | "industry";
+export type DecisiveSource =
+  | "upgrade" | "plant" | "platform" | "type" | "rung" | "city" | null;
 
 export interface EndingBreakdown {
+  /**
+   * L13 (#228): true when this ledger was scored by the NEW loop's table, so
+   * the rows and the path reading pick themselves off the table that paid
+   * rather than off the numbers. An all-zero new-loop ledger (a seat that
+   * lost before its first type ran) and an all-zero shipped one are otherwise
+   * identical, and inferring printed paved-tile rows for a loop that has no
+   * paved tiles.
+   */
+  loop?: boolean;
   paved: number;
   plants: number;
   /** RAIL-02 (#176): platforms, the railway's contribution to the line. */
@@ -29,6 +45,15 @@ export interface EndingBreakdown {
   pavedVp: number;
   plantVp: number;
   platformVp?: number;
+  /** L13 (#228): distinct depot types running, and what they paid. */
+  types?: number;
+  typeVp?: number;
+  /** L13: depot-tree rungs unlocked, and what they paid. */
+  rungs?: number;
+  rungVp?: number;
+  /** L13: city upgrade tiers confirmed, and what they paid. */
+  city?: number;
+  cityVp?: number;
 }
 
 export interface EndingInput {
@@ -49,7 +74,8 @@ export interface EndingInput {
 }
 
 export interface EndingScoreRow {
-  key: "paving" | "plants";
+  /** L13 (#228): the new loop's rows sit beside the shipped loop's two. */
+  key: "paving" | "plants" | "types" | "rungs" | "city";
   icon: string;
   label: string;
   detail: string;
@@ -93,6 +119,18 @@ const WIN_EPILOGUES: Record<EndingPath, readonly string[]> = {
     "Your empire worked because every mile of road had a purpose and every furnace had cargo waiting. You became the quiet power behind a decade of prosperity, then gave half the company to its workers and disappeared aboard a private train bound west.",
     "Historians later called it the Hexmatch System: build carefully, process relentlessly, and waste nothing. It made you wealthy beyond arithmetic. You spent your final years funding hospitals in every town that had trusted your first trucks, and every one flew its flags at half-mast for you.",
   ],
+  // L13 (#228): the new loop's two shapes — a wide map of running depot types,
+  // or a deep city that made a handful of routes worth more than anyone's many.
+  network: [
+    "You took the whole territory one cargo at a time: grain, timber, stone, ore, oil, and at last gold, every one of them running into your yards on a schedule the competition could not read. They called your route map the most valuable piece of paper in America. You retired to a farmhouse inside your own catchment and listened to the lorries all night, perfectly happy.",
+    "No rival ever matched the spread. While they argued over one rich valley you had quietly put a depot on every kind of ground the island had, and when prices moved against any one cargo the other five carried you. The trade papers named the strategy after you; three generations of your family never worked a day they did not choose to.",
+    "Your empire was a map with nothing left blank on it. Every industry the territory offered ended at a depot with your name on the gate, and the freight kept moving through two wars and a depression. You died at ninety-one, mid-sentence, dictating a route survey for a continent you would not live to cross.",
+  ],
+  industry: [
+    "You did not spread — you deepened. The city grew around your works until the skyline was your balance sheet, and a handful of perfectly tuned routes out-earned entire networks twice their size. Universities taught your depot as a model of efficiency. You endowed the concert hall, married late and happily, and never once moved out of the town that made you.",
+    "While the rivals chased every seam on the map, you rebuilt one city until its throughput was a legend. Freight that used to take a day cleared in an hour. The mayor gave you the keys, the workers gave you their loyalty, and the ledgers gave you more money than either could imagine.",
+    "Your answer was always the same: make what you already have worth more. Tier after tier, the city rose, the base rate climbed, and a network nobody thought big enough won the territory outright. They put your face on the civic seal, and the trucks still run the routes you drew.",
+  ],
 };
 
 const LOSS_EPILOGUES: Record<EndingPath, readonly string[]> = {
@@ -111,6 +149,17 @@ const LOSS_EPILOGUES: Record<EndingPath, readonly string[]> = {
     "Your empire did not collapse in a blaze; it vanished by subtraction. A depot sold here, a contract lost there, a trusted manager crossing the street to the rival. When the last sign came down, even the newspapers treated it as old news.",
     "You had built almost everything except the winning margin. The banks merged your company into the rival's concern and struck your name from the stationery. You lived long enough to watch their trucks use your roads more profitably than you ever had.",
   ],
+  // L13 (#228): losing to breadth, and losing to depth.
+  network: [
+    "They reached every cargo on the island while you were still perfecting two. Each new depot of theirs closed another door you had been counting on, until your survey maps showed a territory entirely spoken for. The receivers were almost apologetic about it.",
+    "The rival's network touched everything and needed nothing. Your best routes kept running and kept not mattering; there was simply no cargo left that only you could move. The company was wound up on a bright, ordinary Thursday.",
+    "You watched them claim one industry after another and told yourself breadth was shallow. The final audit disagreed. Your remaining depots were sold to the concern that had surrounded them, and the new owners kept the roads and changed the signs.",
+  ],
+  industry: [
+    "While you spread yourself across the map, the rival rebuilt one city until every route out of it was worth three of yours. Volume beat reach. Your creditors read the throughput figures, looked at your scattered depots, and stopped returning calls.",
+    "Their city grew tiers you could not afford to answer, and each one made your widest network look like a hobby. The takeover was written up as a case study in patience. You were quoted once, in a footnote, complaining about the base rate.",
+    "You had more depots than they did, right up to the end. They had a city that made theirs worth more. The difference closed over you quietly, and the works that beat you are still the largest employer in the territory.",
+  ],
 };
 
 const TITLES: Record<"victory" | "defeat", Record<EndingPath, string>> = {
@@ -118,11 +167,16 @@ const TITLES: Record<"victory" | "defeat", Record<EndingPath, string>> = {
     paving: "The Asphalt Crown",
     plants: "An Empire of Smoke",
     balanced: "The Complete Empire",
+    // L13 (#228): the new loop's two.
+    network: "Every Cargo on the Island",
+    industry: "The City That Paid for Itself",
   },
   defeat: {
     paving: "The Roads Closed In",
     plants: "The Furnaces Went Dark",
     balanced: "One Star Too Late",
+    network: "Surrounded on Every Side",
+    industry: "Outgrown by One City",
   },
 };
 
@@ -147,6 +201,23 @@ const fmt = (value: number): string => {
  * two is balanced; three-plus is industrial.
  */
 export function endingPathFor(breakdown: EndingBreakdown): EndingPath {
+  // L13 (#228): a new-loop ledger has the loop's own rows and none of the old
+  // ones, so the winner is read on the axes it actually played — breadth (a
+  // wide network of depot types) against depth (the city and the tree).
+  const typeVp = breakdown.typeVp ?? 0;
+  const depthVp = (breakdown.rungVp ?? 0) + (breakdown.cityVp ?? 0);
+  const loopTotal = typeVp + depthVp;
+  const isLoop = breakdown.loop ?? (breakdown.typeVp !== undefined
+    || breakdown.rungVp !== undefined || breakdown.cityVp !== undefined);
+  // A loop ledger that scored nothing at all still reads on the loop's axes:
+  // "balanced" is the honest answer, not the shipped loop's paving verdict.
+  if (isLoop && loopTotal <= 0) return "balanced";
+  if (loopTotal > 0) {
+    const depthShare = depthVp / loopTotal;
+    if (depthShare >= 0.45) return "industry";
+    if (depthShare <= 0.2) return "network";
+    return "balanced";
+  }
   const total = breakdown.pavedVp + breakdown.plantVp;
   if (total <= 0) return "balanced";
   const plantShare = breakdown.plantVp / total;
@@ -163,6 +234,13 @@ function methodText(path: EndingPath, won: boolean): string {
   if (path === "plants") {
     return `${who} won through industrial expansion: a chain of processing plants supplied the stars that broke the race open.`;
   }
+  // L13 (#228): the new loop's two methods.
+  if (path === "network") {
+    return `${who} won on breadth: depot after depot, until nearly every cargo on the island was running into ${won ? "your" : "their"} yards.`;
+  }
+  if (path === "industry") {
+    return `${who} won on depth: a city upgraded tier by tier made a compact network out-earn anything wider.`;
+  }
   return `${who} won with a complete system: paved arteries and new processing plants carried the load together.`;
 }
 
@@ -176,6 +254,16 @@ function decisiveText(source: DecisiveSource, won: boolean): string {
   }
   if (source === "platform") {
     return `${who} final star was the new railway platform opening for business.`;
+  }
+  // L13 (#228): the new loop's three.
+  if (source === "type") {
+    return `${who} final stars came the moment a new kind of cargo started running into the yards.`;
+  }
+  if (source === "rung") {
+    return `${who} last session on the plant floor opened the rung that settled it.`;
+  }
+  if (source === "city") {
+    return `${who} winning margin was the city itself—the newest upgrade lifted every route at once.`;
   }
   return `${who} network crossed the star line and the territory had its answer.`;
 }
@@ -198,6 +286,61 @@ function rivalryCoda(input: EndingInput): string | null {
   return input.difficulty
     ? `The record books marked the contest against a ${input.difficulty.toLowerCase()} rival. They did not record how personal it became.`
     : null;
+}
+
+/**
+ * L13 (#228): the ledger's rows, for whichever ★ table this match was played
+ * under. A new-loop ledger has `typeVp`/`rungVp`/`cityVp` on it and is printed
+ * with the loop's three sources; a shipped-loop one keeps the two rows it
+ * always had. The test for "which loop is this" is the presence of the loop
+ * rows themselves, so no flag has to be threaded down here.
+ */
+export function ledgerRows(b: EndingBreakdown): EndingScoreRow[] {
+  // The flag when the scorer set it; otherwise a hand-built ledger (tests,
+  // previews) is a loop one exactly when it carries the loop's own rows.
+  const isLoop = b.loop ?? (b.typeVp !== undefined || b.rungVp !== undefined || b.cityVp !== undefined);
+  if (isLoop) {
+    const types = b.types ?? 0, rungs = b.rungs ?? 0, city = b.city ?? 0;
+    return [
+      {
+        key: "types",
+        icon: "⬢",
+        label: "Depot types running",
+        detail: `${types} cargo type${types === 1 ? "" : "s"} connected and producing`,
+        vp: b.typeVp ?? 0,
+      },
+      {
+        key: "rungs",
+        icon: "▲",
+        label: "Depot-tree rungs",
+        detail: `${rungs} rung${rungs === 1 ? "" : "s"} unlocked on the plant floor`,
+        vp: b.rungVp ?? 0,
+      },
+      {
+        key: "city",
+        icon: "▰",
+        label: "City upgrades",
+        detail: `${city} tier${city === 1 ? "" : "s"} raising the base rate`,
+        vp: b.cityVp ?? 0,
+      },
+    ];
+  }
+  return [
+    {
+      key: "paving",
+      icon: "◆",
+      label: "Paved network",
+      detail: `${b.paved} tile${b.paved === 1 ? "" : "s"} × 0.25★`,
+      vp: b.pavedVp,
+    },
+    {
+      key: "plants",
+      icon: "▰",
+      label: "Expansion plants",
+      detail: `${b.plants} plant${b.plants === 1 ? "" : "s"} × 1★`,
+      vp: b.plantVp,
+    },
+  ];
 }
 
 /** Build the complete, deterministic intertitle shown when the star line falls. */
@@ -227,22 +370,7 @@ export function buildEnding(input: EndingInput): EndingModel {
     result,
     method: methodText(path, input.playerWon),
     decisive: decisiveText(input.decisiveSource ?? null, input.playerWon),
-    rows: [
-      {
-        key: "paving",
-        icon: "◆",
-        label: "Paved network",
-        detail: `${winnerBreakdown.paved} tile${winnerBreakdown.paved === 1 ? "" : "s"} × 0.25★`,
-        vp: winnerBreakdown.pavedVp,
-      },
-      {
-        key: "plants",
-        icon: "▰",
-        label: "Expansion plants",
-        detail: `${winnerBreakdown.plants} plant${winnerBreakdown.plants === 1 ? "" : "s"} × 1★`,
-        vp: winnerBreakdown.plantVp,
-      },
-    ],
+    rows: ledgerRows(winnerBreakdown),
     playerScore,
     rivalScore,
     rivalName,

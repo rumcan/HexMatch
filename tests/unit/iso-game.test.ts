@@ -65,11 +65,22 @@ interface IsoHook {
   vp: { you: number; ai: number };
   /** VP-01: the target, the rates, and what a player's total is made of. */
   vpTarget: number;
-  vpRates: { upgrade: number; plant: number; platform: number };
+  /** L13 (#228): the shipped loop's rates, or the new loop's three under
+   *  `?loop=new` (the `newLoop` key says which table is being reported). */
+  vpRates: {
+    platform: number;
+    newLoop?: boolean;
+    upgrade?: number; plant?: number;
+    type?: number; rung?: number; city?: number;
+  };
   victoryOf: (who: string) => {
     paved: number; plants: number; pavedVp: number; plantVp: number;
     /** RAIL-02 (#176): the platform line of the same breakdown. */
     platforms: number; platformVp: number;
+    /** L13 (#228): the new loop's three rows on the same breakdown. */
+    loop: boolean;
+    types: number; typeVp: number; rungs: number; rungVp: number;
+    city: number; cityVp: number;
   };
   /** how many of `who`'s tiles carry pave provenance (0 = the score is all plants) */
   pavedTiles: (who: string) => number;
@@ -245,6 +256,60 @@ describe("E11 the game boots", () => {
   it("L1a (#232): opts.newLoop turns the flag on", async () => {
     const h = await boot({ newLoop: true });
     expect(h.newLoop).toBe(true);
+  });
+
+  // ── L13 (#228): the chrome must not sell a ★ source the loop retired ─────
+  it("L13 (#228): the shipped loop keeps its line, its rates and its Road button", async () => {
+    const shipped = await boot();
+    expect(shipped.vpTarget).toBe(VICTORY.target);
+    expect(shipped.vpRates).toEqual({ upgrade: 0.25, plant: 1, platform: 1 });
+    // the shipped loop still sells paving, because the shipped loop still pays
+    expect(root.textContent).toContain(`+${VICTORY.upgrade}★ paving dirt`);
+  });
+
+  it("L13 (#228): the new loop moves the line, the rates and the Road button", async () => {
+    const h = await boot({ newLoop: true });
+    expect(h.vpTarget).toBe(VICTORY.loop.target);
+    expect(h.vpRates).toEqual({
+      newLoop: true,
+      type: VICTORY.loop.type, rung: VICTORY.loop.rung, city: VICTORY.loop.city,
+      platform: 1,
+    });
+    // Paving scores nothing now (L2 made dirt free, L13 stopped paying for the
+    // upgrade), so the Road button may not advertise a quarter-star for it.
+    expect(root.textContent).not.toContain("paving dirt");
+    expect(root.textContent).not.toContain("0.25★");
+    // …and it still tells the player why Road is worth laying.
+    expect(root.textContent).toContain("faster hauling");
+  });
+
+  it("L13 (#228): the difficulty tooltip never promises the shipped short race", async () => {
+    await boot({ newLoop: true });
+    const sel = root.querySelector("#iso-rival-skill") as HTMLSelectElement;
+    expect(sel).toBeTruthy();
+    const titles = [...sel.options].map((o) => o.title);
+    // Every chair races the loop's line, so "first to 5★" is not on offer.
+    expect(titles.some((t) => /first to \d+★/.test(t))).toBe(false);
+    // the rest of each blurb survives — this strips a clause, not the copy
+    expect(titles[0]).toMatch(/patient rival/i);
+    expect(titles[0]).toMatch(/Match-3 still opens/);
+  });
+
+  it("L13 (#228): the ★ tooltip lists the loop's three sources and its line", async () => {
+    const { h } = await connectedBoot({ newLoop: true });
+    h.rescore();
+    const tips = [...root.querySelectorAll("[title]")]
+      .map((e) => (e as HTMLElement).title)
+      .filter((t) => t.includes("★ of "));
+    expect(tips.length).toBeGreaterThan(0);
+    const you = tips.find((t) => /\(you\)/.test(t))!;
+    expect(you).toContain(`of ${VICTORY.loop.target}★`);
+    expect(you).toContain("Depot types running");
+    expect(you).toContain("Depot-tree rungs");
+    expect(you).toContain("City upgrades");
+    // nothing about pavement or plants, which this loop does not pay for
+    expect(you).not.toContain("Paved road tiles");
+    expect(you).not.toContain("Processing plants");
   });
 
   it("L1a (#232): hides the Market, Bank and Black Market when on", async () => {

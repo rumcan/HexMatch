@@ -25,9 +25,13 @@ import {
   type SaveGamePayload,
 } from "./savegame-runtime";
 import { createTrack } from "./track";
-import { createScoreState, rescore, vpFor } from "./victory";
+import { createScoreState, rescore, vpFor, type LoopScoring } from "./victory";
 import { VICTORY } from "./config";
-import type { EconomyState } from "./economy";
+import { generateMap } from "./grid";
+import {
+  buildAllComponents, depotCargo, heldIndustries, industryLocks, isServiced,
+  ownerIdOf, resolveConnection, type EconomyState,
+} from "./economy";
 import { RIVAL_SKILLS, SKILL_STORAGE_KEY, type SkillKey } from "./skill";
 import { chapterById } from "../story/chapters";
 
@@ -59,6 +63,53 @@ function asSkillKey(raw: string): SkillKey {
 }
 
 /**
+ * L13 (#228): the ★ table a save was played under is the one its dossier must
+ * be scored by. A new-loop save (`loop: true`, written by L1e) scores depot
+ * types, rungs and city tiers; a shipped-loop save scores paves and plants.
+ * Reading a new-loop save on the shipped table printed "0★ vs 0★" on the menu
+ * — the loop pays nothing for pavement, and that save has no scored pavement.
+ *
+ * Unlike every other `rescore` caller this one has no live world: the summary
+ * is built from a payload, on a menu, for a game that is not running. The
+ * grid is what the loop's "running" rule needs (catchments decide which
+ * industries a Depot holds), so a new-loop dossier regenerates it from the
+ * save's own seed — `generateMap` is a pure function of that seed, which is
+ * exactly how `applySave` rebuilds the same world. It costs ~300ms, so it is
+ * paid ONLY for a new-loop save, and never for the shipped-loop scan.
+ */
+function loopScoringFor(
+  scratch: EconomyState, d: SaveGamePayload,
+): LoopScoring | undefined {
+  if (d.loop !== true) return undefined;
+  const locks = industryLocks(scratch);
+  const comps = new Map<string, ReturnType<typeof buildAllComponents>>();
+  const compFor = (owner: string) => {
+    let c = comps.get(owner);
+    if (!c) comps.set(owner, c = buildAllComponents(scratch.track, ownerIdOf(scratch, owner)));
+    return c;
+  };
+  return {
+    // The same three clauses as `loopScoring` in game.ts — serviced,
+    // connected to one of the seat's own plants, and holding an industry no
+    // rival claimed first. One rule, so a dossier can never disagree with the
+    // scoreboard the save will show when it is reopened.
+    running: (h) => {
+      if (!isServiced(scratch.track, h, scratch.rail)) return false;
+      if (resolveConnection(scratch, compFor(h.owner), h).kind === null) return false;
+      return heldIndustries(scratch, h, locks).length > 0;
+    },
+    cargoOf: (h) => depotCargo(scratch, h),
+    // The seat records ride the payload (L1e); a save written before they did
+    // reads as a fresh seat, which is what such a save was played with.
+    seats: (d.players ?? []).map((p, i) => ({
+      owner: i === 0 ? "you" : "ai",
+      depotTier: p.depotTier ?? 0,
+      townLevel: p.townLevel ?? 0,
+    })),
+  };
+}
+
+/**
  * Rebuild the two ★ totals from the save's track + structures. VP is derived
  * state (see victory.ts), so the payload never carries it; the rescore here
  * is the exact recompute `applySave` runs, over a track nobody is about to
@@ -68,10 +119,12 @@ function starsFromSave(d: SaveGamePayload): { you: number; rival: number } {
   try {
     const track = createTrack();
     trackRestored(track, d.track);
-    // `grid` is only consulted by catchment/connection code; `rescore` reads
-    // track, factories and harvesters alone, so the grid slot stays empty.
+    // `grid` is only consulted by catchment/connection code. The shipped
+    // loop's table never asks (paves and plants are track/list facts), so it
+    // stays empty there; the new loop's "which industries does this Depot
+    // hold" rule does, so a loop save rebuilds it from its own seed.
     const scratch: EconomyState = {
-      grid: null as never,
+      grid: (d.loop === true ? generateMap(d.seed) : null) as never,
       track,
       harvesters: d.eco.harvesters,
       factories: d.eco.factories,
@@ -82,7 +135,7 @@ function starsFromSave(d: SaveGamePayload): { you: number; rival: number } {
     // the payload's serialised structures list is enough — no rail graph.
     // RAIL-04 wire: the railway sits on the payload's `rail` field and its
     // platforms/depots ride `structures` with a `kind` discriminator.
-    rescore(scratch, score);
+    rescore(scratch, score, undefined, loopScoringFor(scratch, d));
     const platformStars = (owner: string): number =>
       (d.rail?.structures ?? [])
         .filter((p) => p.kind === "platform" && p.owner === owner).length

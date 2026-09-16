@@ -151,6 +151,38 @@ describe("resumableSaves — the shelf", () => {
     });
   });
 
+  // ── L13 (#228): a save is scored by the table it was PLAYED under ────────
+  it("scores a new-loop save on the new loop's table, not on its pavement", () => {
+    // The same world, saved twice. On the shipped loop those 20 paved tiles
+    // are 5★; under `?loop=new` pavement pays nothing at all, and the seat's
+    // rungs and city tiers are what the dossier must count.
+    const shipped = makeSave(now, { world: { youPaved: 20, aiPaved: 0 } });
+    write(shipped.key, shipped.payload);
+    expect(saveForMode(null, now)?.youStars).toBe(5);
+
+    const loop = makeSave(now, { world: { youPaved: 20, aiPaved: 0 } });
+    loop.payload.loop = true;
+    // L1e carries the seat records; two rungs and one city tier is 2×1 + 1×2.
+    loop.payload.players = [
+      { purse: {}, freeTrack: 0, freeDepots: 0, depotTier: 2, townLevel: 1, townBonus: 0.6 },
+      { purse: {}, freeTrack: 0, freeDepots: 0, depotTier: 0, townLevel: 0, townBonus: 0 },
+    ];
+    write(loop.key, loop.payload);
+    const s = saveForMode(null, now);
+    // 2 rungs (2★) + 1 city (2★) = 4★. The 20 paved tiles are worth nothing.
+    expect(s?.youStars).toBe(4);
+    expect(s?.rivalStars).toBe(0);
+  });
+
+  it("reads a new-loop save with no seat records as a fresh seat", () => {
+    // A save written before L1e carried the seat rows: absence is zero, not a
+    // crash and not the shipped loop's pavement score.
+    const { key, payload } = makeSave(now, { world: { youPaved: 20, aiPaved: 20 } });
+    payload.loop = true;
+    write(key, payload);
+    expect(saveForMode(null, now)).toMatchObject({ youStars: 0, rivalStars: 0 });
+  });
+
   it("offers each fresh story slot with the contract name", () => {
     const a = makeSave(now, { chapterId: "inheritance", savedAt: now - HOUR, world: { youPaved: 4, aiPaved: 0 } });
     const b = makeSave(now, { chapterId: "black-gold", savedAt: now - 30 * MIN, world: { youPaved: 0, aiPaved: 28 } });
