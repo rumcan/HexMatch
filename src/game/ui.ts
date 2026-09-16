@@ -223,8 +223,41 @@ export interface UiState {
    *     match-3 only exists while a Depot is being tuned;
    *   • a session — the board is up, scoped to that Depot's cargo, with the
    *     moves left, the running score and the yield it is currently worth.
+   *
+   * L6 (#220) adds `tuningIdle` beside it: what the plate SAYS when the answer
+   * is `null` depends on the difficulty, not on the chrome.
    */
   tuning?: UiTuningSession | null;
+  /**
+   * L6 (#220): what the plant plate says BETWEEN sessions. `tuning === null`
+   * already means "new loop, board down"; this says what the player can do about
+   * it, and it is the difficulty's answer and not the chrome's:
+   *
+   *   • `retune` — the one Depot a re-tune is owed on (weakest first), or null.
+   *     Easy's row (`rematch: "never"`) always answers null, so the plate there
+   *     is the shipped line and not a key that would refuse to work;
+   *   • `economyLine` — the difficulty's own sentence about what happens to a
+   *     yield, so the panel states the rule the top bar was switched to.
+   */
+  tuningIdle?: UiTuningIdle;
+}
+
+/** L6 (#220): the Depot the plate is offering a re-match for. */
+export interface UiRetuneOffer {
+  /** `Harvester.id` — the game re-resolves it; the chrome never holds a record. */
+  depotId: number;
+  /** The Depot's cargo, when it holds an industry (null = open ground). */
+  cargo: Cargo | null;
+  /** The yield it is at NOW — after Hard's decay has been shaving it. */
+  yield: number;
+  /** True when a worse session can lower the level (Hard's row only). */
+  risks: boolean;
+}
+
+/** L6 (#220): the plate between sessions. */
+export interface UiTuningIdle {
+  retune: UiRetuneOffer | null;
+  economyLine?: string;
 }
 
 /** L4 (#218): one live tuning session, as the HUD needs it. */
@@ -300,6 +333,13 @@ export interface UiHooks {
    * one.
    */
   onTuningEnd?: (abandon: boolean) => void;
+  /**
+   * L6 (#220): the plate's Retune key. The chrome never decides whether a
+   * re-match is allowed — it shows the key because `UiState.tuningIdle` said so,
+   * and reports the click. `game.ts` re-checks the rules (credit owed, one
+   * session at a time) because a keyboard caller skips the key.
+   */
+  onTuningRetune?: () => void;
 }
 
 export interface UiRivalryBeat {
@@ -488,15 +528,20 @@ export function createOriginalUi(
   const right = h("div", "top-right");
   // AI-01: how hard the rival plays. A live switch — the next rival turn
   // simply reads the new preset — remembered in localStorage for the next boot.
+  // L6 (#220): the same setting now also carries the player's own economy rules
+  // (decay, the yield floor, whether a Depot can be re-tuned), so the control
+  // says DIFFICULTY and not "Rival" — one knob, one honest name. The id, the
+  // class and the storage key stay as they were: they are plumbing, and #230 is
+  // the sweep that renames them.
   if (hooks.onSkill) {
     const skillWrap = h("label", "rival-skill");
     const sel = h("select", "rival-skill-sel") as HTMLSelectElement;
-    sel.title = "How hard the rival plays (applies immediately)";
+    sel.title = "Difficulty: how hard the rival plays, and what happens to the yield you tune (applies immediately)";
     for (const key of SKILL_KEYS) {
       const o = document.createElement("option");
       o.value = key;
-      o.text = `Rival: ${RIVAL_SKILLS[key].label}`;
-      o.title = RIVAL_SKILLS[key].blurb;
+      o.text = `Difficulty: ${RIVAL_SKILLS[key].label}`;
+      o.title = `${RIVAL_SKILLS[key].blurb} ${RIVAL_SKILLS[key].economyLine}`;
       sel.appendChild(o);
     }
     sel.value = hooks.skill ?? "normal";
@@ -654,6 +699,16 @@ export function createOriginalUi(
   tpAbandon.onclick = () => hooks.onTuningEnd?.(true);
   tpRow.append(tpScore, tpYield, tpFinish, tpAbandon);
   const tpIdle = h("div", "tp-idle");
+  const tpIdleText = h("span", "tp-idle-text");
+  // L6 (#220): the re-match key, beside the line that explains it. Built once
+  // and shown only when the game says a Depot is owed one — on Easy it is never
+  // shown, because Easy's rules row says so (see `paintTuning`).
+  const tpRetune = h("button", "tp-retune", "Retune");
+  tpRetune.type = "button";
+  tpRetune.id = "iso-tuning-retune";
+  tpRetune.dataset.sfx = "select";
+  tpRetune.onclick = () => hooks.onTuningRetune?.();
+  tpIdle.append(tpIdleText, tpRetune);
   tuningPlate.append(tpHead, tpRow, tpIdle);
   qp.appendChild(tuningPlate);
 
@@ -2610,6 +2665,9 @@ export function createOriginalUi(
   const fmtYield = (y: number) => y.toFixed(2).replace(/0$/, "");
   /** No-session copy. One line, and it names the building that opens one. */
   const TUNING_IDLE = "No tuning session — build a Depot to raise its yield.";
+  /** L6 (#220): "Retune ⛏️ Ore Depot (now ×1.12)" for the plate's offer. */
+  const retuneLabel = (r: UiRetuneOffer): string =>
+    `Retune ${r.cargo ? `${CARGO[r.cargo].icon} ${CARGO[r.cargo].name}` : "Depot"} (now ×${fmtYield(r.yield)})`;
   let lastTuningSig = "\u0000";
   /**
    * Paint the plate and gate the board.
@@ -2622,9 +2680,11 @@ export function createOriginalUi(
    * The repaint is gated on a signature like every other per-frame surface
    * here, so a still session writes nothing.
    */
-  function paintTuning(t: UiTuningSession | null | undefined) {
+  function paintTuning(t: UiTuningSession | null | undefined, idle?: UiTuningIdle) {
     const sig = t === undefined ? "legacy"
-      : t === null ? "none"
+      // L6: the idle signature carries the offer, so a Depot cooling into (or
+      // out of) a re-match repaints the plate without a poll of its own.
+      : t === null ? `none:${idle?.retune ? `${idle.retune.depotId}:${idle.retune.yield}` : "-"}`
         : `${t.cargo}:${t.movesLeft}:${t.moves}:${t.score}:${t.yield}`;
     if (sig === lastTuningSig) return;
     lastTuningSig = sig;
@@ -2648,7 +2708,22 @@ export function createOriginalUi(
     tpHead.classList.toggle("hidden", !live);
     tpRow.classList.toggle("hidden", !live);
     if (!live) {
-      tpIdle.textContent = TUNING_IDLE;
+      // L6 (#220): between sessions the plate carries the difficulty's answer.
+      // The re-match key appears when the game says a Depot owes one; Easy's
+      // rules never say it, so Easy keeps the shipped line verbatim (and
+      // `iso-l6-difficulty.test.ts` pins exactly that).
+      const offer = idle?.retune ?? null;
+      tpRetune.classList.toggle("hidden", !offer);
+      tpRetune.disabled = !offer;
+      tpIdleText.textContent = offer
+        ? `Your weakest Depot is at ×${fmtYield(offer.yield)}${
+          offer.risks ? " and cooling — a better session raises it, a poor one costs you." : " — you are owed a re-match."}`
+        : TUNING_IDLE;
+      tpRetune.textContent = offer ? retuneLabel(offer) : "Retune";
+      tpRetune.title = offer
+        ? `Open a tuning session for Depot #${offer.depotId} — ${
+          offer.risks ? "Hard: the new level replaces it, so play it well." : "your yield can only go up."}`
+        : "No re-match is owed on this difficulty";
       return;
     }
     tpTitle.textContent = `Tuning ${CARGO[t.cargo].icon} ${CARGO[t.cargo].name} Depot`;
@@ -2662,7 +2737,7 @@ export function createOriginalUi(
 
   // ── paint ─────────────────────────────────────────────────────────────────
   function paint(state: UiState) {
-    paintTuning(state.tuning);
+    paintTuning(state.tuning, state.tuningIdle);
     rivalWirePlayerPortrait = state.portrait === "you" ? portraitYou : portraitVex;
     // STORY-01: the contract's rival wears their painted sheet on the dossier
     // card; a sandbox match (no face on the state) keeps the mugshot map.

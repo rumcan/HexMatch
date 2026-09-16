@@ -60,6 +60,12 @@ export interface SaveGamePayload {
    *  a world with no railway, which is exactly what they are). */
   rail?: RailWire;
   eco: {
+    // TYPED as the live records, not a hand-picked field list, so every
+    // per-Depot rule state travels with them by construction: L4's `yield`, and
+    // since L6 (#220) the cooled level a Hard game is sitting on plus the
+    // `tuneTier` credit that says whether a re-match is owed. A save written
+    // before either field existed simply reads as "never tuned" — both are
+    // optional on `Harvester`.
     harvesters: EconomyState["harvesters"];
     factories: EconomyState["factories"];
   };

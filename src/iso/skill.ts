@@ -109,6 +109,16 @@ export interface RivalSkill {
    */
   rail: boolean;
   /**
+   * L6 (#220): what this difficulty does to the PLAYER's side of the economy,
+   * in one line. It is copy, not a rule — the numbers it describes are the
+   * flags on this key's row of `DIFFICULTY_RULES` (`config.ts`) — and it lives
+   * here because there is exactly ONE difficulty setting in the game now, so
+   * the picker's card, the top-bar tooltip and the switch toast state both
+   * halves from one row. `iso-l6-difficulty.test.ts` pins the sentence against
+   * the flags, so the promise and the rule cannot drift.
+   */
+  economyLine: string;
+  /**
    * L4 (#218): how well this rival plays a tuning session, on the same 0…1
    * axis as a player's own score (0 = `TUNING.minYield`, 1 = `maxYield`). It
    * is a SIMULATED result — the rival opens no board for it — and it is the
@@ -131,6 +141,8 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     key: "easy",
     label: "Easy",
     blurb: "A patient rival: slower clock, one build at a time, no sabotage — and a short race, first to 5★.",
+    // L6 (#220): Easy is generous, and it never calls you back to the board.
+    economyLine: "Match-3 still opens when you build a Depot, a weak session still lands a decent yield, and nothing you tune ever cools or drops.",
     buildMs: 11_000,
     idleMs: 3_500,
     expandPerTurn: 1,
@@ -152,6 +164,8 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     key: "normal",
     label: "Normal",
     blurb: "The classic rival — the VP-01 tuning the game shipped with.",
+    // L6 (#220): one session per Depot, one more per upgrade, monotone.
+    economyLine: "One tuning session per Depot and one more per upgrade — your yield never drops.",
     buildMs: 6_500,
     idleMs: 1_800,
     expandPerTurn: 2,
@@ -172,6 +186,8 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     key: "hard",
     label: "Hard",
     blurb: "Plays the scoreboard: expands two builds at a time, banks hard, fights back.",
+    // L6 (#220): the only row where the yield is not permanent.
+    economyLine: "A tuned Depot cools off on the clock — re-tune it any time, and a bad session can cost you.",
     buildMs: 4_500,
     idleMs: 1_200,
     expandPerTurn: 3,

@@ -1,6 +1,10 @@
 // ══════════════════════════════════════════════════════════════════════════
 // AI-02 — the start-of-game difficulty prompt.
 //
+// L6 (#220): this is THE difficulty picker. One setting drives the rival's
+// pacing and the player's own economy rules (`DIFFICULTY_RULES`), so the card
+// states both halves and the heading says "difficulty" rather than "rival".
+//
 // The player asked for it verbatim: "make the player select the difficulty
 // at the start of the game". AI-01 put three presets behind a top-bar
 // selector, which is exactly the kind of quietly-correct UI nobody finds
@@ -84,12 +88,14 @@ export function promptForRivalSkill(
     overlay.setAttribute("role", "dialog");
     overlay.setAttribute("aria-label", "Choose your rival's difficulty");
     overlay.innerHTML = `<div class="iso-skill-card">
-      <h2>Choose your rival</h2>
-      <p class="iso-skill-sub">Your opponent plans its own network beside yours —
-         first to the star line wins. How sharp should it be?</p>
+      <h2>Choose your difficulty</h2>
+      <p class="iso-skill-sub">One setting, two halves: how sharp your rival is, and what
+         happens to the yield you tune on the plant floor. Match-3 is part of the loop on all
+         three — difficulty changes the decay, never whether you play.</p>
       <div class="iso-skill-choices"></div>
-      <p class="iso-skill-foot">You can change this any time from the top bar —
-         the game also remembers it for next time.</p>
+      <p class="iso-skill-foot">You can change this any time from the top bar — the rival's
+         clocks, your Depots' decay and the star line all move with it, and the game
+         remembers it for next time.</p>
     </div>`;
     const choices = overlay.querySelector(".iso-skill-choices")!;
     const current = resolveSkillKey(search, storage);
@@ -104,6 +110,10 @@ export function promptForRivalSkill(
       btn.dataset.sfx = "select";
       btn.innerHTML = `<span class="iso-skill-label">${preset.label}</span>
         <span class="iso-skill-blurb">${preset.blurb}</span>
+        // L6 (#220): the economy half of the same row, so picking "Easy" shows
+        // that the board still opens and that a yield is never taken back, and
+        // picking "Hard" shows the cooling before the click.
+        <span class="iso-skill-economy">${preset.economyLine}</span>
         <span class="iso-skill-pace">${CARD_TEXT[key].pace} · ${lineText(key)}</span>`;
       btn.addEventListener("click", () => {
         (opts.onPick ?? rememberSkill)(key);
