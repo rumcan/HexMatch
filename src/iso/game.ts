@@ -1145,8 +1145,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       return focus;
     })();
     const f = factoryOf("you") ?? fallback;
-    cam = centerOnTile(cam, f.tx, f.ty);
-    renderer?.setCamera(cam);
+    commitCamera(centerOnTile(cam, f.tx, f.ty));
   };
 
   /**
@@ -1227,8 +1226,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // step about the middle of the screen, exactly where a thumb-panner's eye
     // already is. Anchored at the viewport centre, like a wheel at centre.
     onZoom: (dir) => {
-      cam = zoomStepAt(cam, dir, cam.vw / 2, cam.vh / 2);
-      renderer?.setCamera(cam);
+      commitCamera(zoomStepAt(cam, dir, cam.vw / 2, cam.vh / 2));
     },
     onSwap: (r1, c1, r2, c2) => {
       // MP-05: guests never mutate their local board. Route the action to the
@@ -1693,6 +1691,46 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   );
 
   let renderer: IsoRenderer | null = null;
+
+  /**
+   * #281: the ONE camera commit — the single way `cam` is ever written.
+   *
+   * Every path that moves the map (the drag gesture, the pinch, WASD, the
+   * wheel, the touch +/−, recenter, resize, the test twins) used to be a bare
+   * `cam = next; renderer?.setCamera(cam)` pair, and that pair is only half a
+   * move: `setCamera` marks the renderer dirty, so the CANVAS lands on the
+   * next animation frame — and the three DOM layers anchored to the live
+   * camera through `tileScreenCss` (the name tags, the A1 floats, the build
+   * flash) waited for their own `frame()` calls near the END of that same
+   * frame. Two consequences, both reported in #281:
+   *
+   *   * anything that presents the map between the write and that frame —
+   *     `paintOverlayNow()` inside a pointer handler is exactly that — shows
+   *     the map at the new camera with the tags still at the old one;
+   *   * a long synchronous task inside the pan (a road/ground chunk-cache
+   *     rebuild, `syncWorld`, `planTrucks` on a big network, the autosave)
+   *     starves the rAF loop, so the tags sit at the pre-pan position for the
+   *     whole stall and then SNAP onto their features when it catches up.
+   *     That is the "drift, then snap back seconds later" in the report.
+   *
+   * So the tags are now moved by the SAME commit the renderer uses: one
+   * function, and no camera write can skip the re-anchor. It is cheap and
+   * idempotent — `labels.frame()` is a no-op while the Names button has the
+   * tags hidden, and the frame loop calls it again next tick for the same
+   * numbers.
+   */
+  function commitCamera(next: Camera) {
+    cam = next;
+    renderer?.setCamera(cam);
+    // The three camera-anchored DOM layers. `now` only reaps expired
+    // floats/flash — the re-anchor itself is time-free — and
+    // `performance.now()` is the same clock `paintOverlayNow` reads.
+    const now = performance.now();
+    floats.frame(now);
+    flashLayer.frame(now);
+    labels.frame();
+  }
+
   /** C5: the atlas instance lives in the async boot; the debug console reads it here. */
   let atlasRef: Atlas | null = null;
   let hover: { tx: number; ty: number; ref: unknown } | null = null;
@@ -6448,7 +6486,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         if (!moved) {
           const out = pointerMove(g, { id: e.pointerId, x, y }, cam);
           g = out.gesture;
-          if (out.cam !== cam) { cam = out.cam; renderer?.setCamera(cam); }
+          if (out.cam !== cam) commitCamera(out.cam);
           if (changed) paintOverlayNow();
           return;
         }
@@ -6498,7 +6536,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (changed) paintOverlayNow();
     const out = pointerMove(g, { id: e.pointerId, x, y }, cam);
     g = out.gesture;
-    if (out.cam !== cam) { cam = out.cam; renderer?.setCamera(cam); }
+    if (out.cam !== cam) commitCamera(out.cam);
   });
 
   // Leaving the map drops the highlight at once. A captured drag keeps its
@@ -6676,8 +6714,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   canvases.overlay.addEventListener("wheel", (e) => {
     e.preventDefault();
     const [x, y] = pos(e as unknown as PointerEvent);
-    cam = zoomStepAt(cam, e.deltaY < 0 ? +1 : -1, x, y);
-    renderer?.setCamera(cam);
+    commitCamera(zoomStepAt(cam, e.deltaY < 0 ? +1 : -1, x, y));
   }, { passive: false });
 
   /**
@@ -6792,8 +6829,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const h = Math.max(1, Math.floor(stage.clientHeight * d));
     for (const c of Object.values(canvases)) { c.width = w; c.height = h; }
     mini.resize(w, h);
-    cam = resizeCamera(cam, w, h);
-    renderer?.setCamera(cam);
+    commitCamera(resizeCamera(cam, w, h));
   };
   const ro = new ResizeObserver(resize);
   ro.observe(stage);
@@ -7824,8 +7860,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         if (panKeys.has("s")) dy -= 1;
         if (dx !== 0 || dy !== 0) {
           const step = (PAN_SPEED * (panShift ? 2 : 1) * dt) / 1000 / cam.zoom;
-          cam = panBy(cam, dx * step, dy * step);
-          renderer.setCamera(cam);
+          commitCamera(panBy(cam, dx * step, dy * step));
         }
       }
 
@@ -7845,11 +7880,27 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // Names button has them hidden).
       labels.frame();
       paintUi(t);
-      raf = requestAnimationFrame(frame);
-
- 
     };
-    raf = requestAnimationFrame(frame);
+
+    /**
+     * #281: the loop re-arms itself from this wrapper rather than from the
+     * tail of `frame`. A throw anywhere in the frame — `overlayFrame`,
+     * `renderer.render`, the paint above — used to skip the trailing
+     * `labels.frame()` AND the `requestAnimationFrame` re-arm, which froze
+     * the map and the tags until some other path restarted the loop: exactly
+     * the "it caught up five seconds later" in the report. Now a bad frame
+     * costs one frame, is logged instead of swallowed, and the next one runs.
+     */
+    const loop = (t: number) => {
+      try {
+        frame(t);
+      } catch (err) {
+        console.error("[iso] frame failed:", err);
+      } finally {
+        if (!disposed) raf = requestAnimationFrame(loop);
+      }
+    };
+    raf = requestAnimationFrame(loop);
   })().catch((err) => {
     // The base atlas is the one gating load: without it the dependent loads
     // never register, so settle them all rather than leave the bar hanging.
@@ -8237,8 +8288,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      * there first, then hover.
      */
     centerOn: (tx: number, ty: number) => {
-      cam = centerOnTile(cam, tx, ty);
-      renderer?.setCamera(cam);
+      commitCamera(centerOnTile(cam, tx, ty));
     },
     /** Story test twin of the player's first successful Oil harvest. */
     firstOilHarvest: () => onFirstOilHarvest(),
@@ -8424,9 +8474,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      * same `zoomAt` the wheel uses, so the atlas swap and clamp still apply).
      */
     lookAt: (tx: number, ty: number, zoom?: number) => {
-      if (zoom === 0.5 || zoom === 1 || zoom === 2) cam = zoomAt(cam, zoom, cam.vw / 2, cam.vh / 2);
-      cam = centerOnTile(cam, tx, ty);
-      renderer?.setCamera(cam);
+      // #281: the zoom step and the recentre are ONE commit, so no camera
+      // write here can slip past the tag re-anchor.
+      const zoomed = (zoom === 0.5 || zoom === 1 || zoom === 2)
+        ? zoomAt(cam, zoom, cam.vw / 2, cam.vh / 2)
+        : cam;
+      commitCamera(centerOnTile(zoomed, tx, ty));
       return { x: cam.x, y: cam.y, zoom: cam.zoom };
     },
     /**
