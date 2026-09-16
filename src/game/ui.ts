@@ -2694,6 +2694,11 @@ export function createOriginalUi(
       tuningPlate.classList.remove("idle");
       qp.classList.remove("tuning-idle");
       boardWrap.classList.remove("hidden");
+      // L6 (#220): the re-match key belongs to a session that does not exist on
+      // this loop, so it is taken out back here rather than left visible under a
+      // hidden plate — `#iso-tuning-retune` is hidden unless the new loop is
+      // running AND a Depot owes a re-tune.
+      tpRetune.classList.add("hidden");
       return;
     }
     tuningPlate.classList.remove("hidden");

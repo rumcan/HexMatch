@@ -142,7 +142,7 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     label: "Easy",
     blurb: "A patient rival: slower clock, one build at a time, no sabotage — and a short race, first to 5★.",
     // L6 (#220): Easy is generous, and it never calls you back to the board.
-    economyLine: "Match-3 still opens when you build a Depot, a weak session still lands a decent yield, and nothing you tune ever cools or drops.",
+    economyLine: "Match-3 still opens when you build a Depot, a weak session still lands a decent yield, and the yield you tune is yours to keep.",
     buildMs: 11_000,
     idleMs: 3_500,
     expandPerTurn: 1,

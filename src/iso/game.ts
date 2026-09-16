@@ -2760,19 +2760,26 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * on every AI turn and on the economy clock, so a depot from a restored save
    * (or one built before this landed) is never left without a level.
    */
-  /** L6: `retuneCandidates`' memo — the key inside the function is why it is safe. */
+  /** L6: `retuneCandidates`' memo — the key inside the scan is why it is safe. */
   let retuneCache: {
     key: string; list: { depot: Harvester; yield: number; tier: number }[];
   } | null = null;
 
   /**
    * L6 (#220): the tier a Depot's link is worth RIGHT NOW — the axis Normal's
-   * re-match credit is counted on. Derived from the world (the same
-   * owner-scoped connection the clock pays it for) and never stored, so a save
-   * cannot claim an upgrade it did not build; see `transportTierOf`.
+   * re-match credit is counted on.
+   *
+   * It resolves over the LIVE track instead of through the inspector's
+   * `componentsFor` cache: that cache is keyed on `netVersion`, and a tier that
+   * lags a world edit by one rescore would make the re-match offer wrong for a
+   * beat every time a road changed. `track.revision` is bumped by every tile
+   * write, so the scan reruns on exactly the moments that can change the answer
+   * — and only the truth of the map decides it, which is also why no save can
+   * claim an upgrade it never built (see `transportTierOf`).
    */
-  function depotTier(depot: Harvester): number {
-    return transportTierOf(resolveConnection(eco, componentsFor(depot.ownerId), depot).kind);
+  function depotTier(depot: Harvester, comp?: Components): number {
+    const c = comp ?? buildAllComponents(eco.track, ownerIdOf(eco, depot.owner));
+    return transportTierOf(resolveConnection(eco, c, depot).kind);
   }
 
   /**
@@ -2781,29 +2788,30 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * One scan, no per-difficulty branches: `retuneOwed` answers "never" for the
    * Easy row without this function knowing which difficulty is on, Hard's
    * low-output Depot rises to the top because the sort is on the live yield
-   * (the cooling pass has been shaving it for the last few minutes), and a
-   * Depot whose session is still up is skipped. The plate reads the head of the
-   * list for its one key and `retuneNow` takes the same list, so the copy and
-   * the action can never point at different Depots.
+   * (the cooling pass has been shaving it for the last few minutes), and a Depot
+   * whose session is still up is skipped. The plate reads the head of the list
+   * for its one key and `retuneNow` takes the same list, so the copy and the
+   * action can never point at different Depots.
    */
   function retuneCandidates(): { depot: Harvester; yield: number; tier: number }[] {
     if (!newLoop) return [];
     const rules = difficultyRules();
-    // Read every frame (the plate paints from it), so it is cached on exactly
-    // the inputs the answer depends on: the difficulty row, the network the
-    // tiers are derived from, whose session is up, and each Depot's stored
-    // level and spent credit. A decay tick changes a level, so the scan reruns
-    // once on that tick and never again while the map is idle — the same
-    // `key`-string trick `vpTipCache` and `routeOverlayFor` use.
-    const key = `${skillKey}|${netVersion}|${tuning?.depotId ?? -1}|`
-      + eco.harvesters.filter((h) => h.owner === me.id)
-        .map((h) => `${h.id}:${h.yield ?? "-"}:${h.tuneTier ?? "-"}`).join(",");
+    // Read every frame (the plate paints from it), so it is cached on precisely
+    // the inputs the answer depends on: the difficulty row, the map the tiers
+    // are derived from, whose session is up, and each Depot's stored level and
+    // spent credit. A decay tick changes a level, so the scan reruns once on
+    // that tick and never again while the map is idle — the same `key`-string
+    // trick `vpTipCache` and `routeOverlayFor` use. One flood pair serves the
+    // whole scan, because every Depot in it belongs to this seat.
+    const mine = eco.harvesters.filter((h) => h.owner === me.id);
+    const key = `${skillKey}|${eco.track.revision}|${tuning?.depotId ?? -1}|`
+      + mine.map((h) => `${h.id}:${h.yield ?? "-"}:${h.tuneTier ?? "-"}`).join(",");
     if (retuneCache?.key === key) return retuneCache.list;
+    const comp = buildAllComponents(eco.track, ownerIdOf(eco, me.id));
     const out: { depot: Harvester; yield: number; tier: number }[] = [];
-    for (const depot of eco.harvesters) {
-      if (depot.owner !== me.id) continue;
+    for (const depot of mine) {
       if (tuning && tuning.depotId === depot.id) continue;
-      const tier = depotTier(depot);
+      const tier = depotTier(depot, comp);
       if (!retuneOwed(rules, { tier, tuneTier: depot.tuneTier })) continue;
       out.push({ depot, yield: depotYield(depot), tier });
     }
@@ -2830,6 +2838,26 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // Hard is the row where saying the number out loud matters: there an
       // empty session is a real loss, and the key says so before the click.
       risks: !difficultyRules().yieldNeverDrops,
+    };
+  }
+
+  /**
+   * What the plant plate paints while it is UP and no session is open — and
+   * `null` when it has something better to say (a live session) or when the
+   * plate is not part of this loop at all. `ui.paint` and `__iso.tuningIdle`
+   * both read this one object, so the difficulty's promise, its floor and its
+   * offer are never two sources of truth, and the UI never forks on a
+   * difficulty: it prints what it is handed.
+   */
+  function tuningIdleInfo(): {
+    idle: true; retune: ReturnType<typeof retuneOffer>; economyLine: string; yieldFloor: number;
+  } | null {
+    if (!newLoop || tuning) return null;
+    return {
+      idle: true,
+      retune: retuneOffer(),
+      economyLine: skill().economyLine,
+      yieldFloor: difficultyRules().minYield,
     };
   }
 
@@ -5488,9 +5516,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // on Easy — that row's `rematch: "never"` is what keeps the shipped line
       // on screen instead of a key that would refuse to work — and null on
       // Normal until a Depot has actually been upgraded.
-      tuningIdle: newLoop
-        ? { retune: retuneOffer(), economyLine: skill().economyLine }
-        : undefined,
+      tuningIdle: tuningIdleInfo() ?? undefined,
       // RAIL-04 (#178): the Railway panel's rows — the MODEL is `railPanelRows`
       // in the rail module (which platform has a line, which train is stored,
       // which actions are legal); this only adds the price the button prints.
@@ -7233,25 +7259,35 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     /**
      * L4 (#218): the tuning session, as the HUD sees it — null when no session
      * is open (on the new loop that ALSO means the board is down). The game
-     * holds a live record; this hands back a plain snapshot plus the two
-     * derived numbers, so a test reads the same values the plate prints.
+     * holds a live record; this hands back a plain snapshot plus the two derived
+     * numbers, so a test reads the same values the plate prints.
      *
-     * L6 (#220): between sessions the new loop answers `{ idle, retune }` rather
-     * than a bare null (the old loop still answers null), and a live session
-     * gains `yieldFloor` — the difficulty's own mapping floor, so a test can see
-     * Easy's generosity without reading the table.
+     * "Null means no session" is the contract, so L6's between-session state
+     * lives on `tuningIdle` instead of making this truthy with nothing open;
+     * what L6 added INSIDE a session (`yieldFloor`, the difficulty's own mapping
+     * floor, and `abandonYield` now read through the row) rides here.
      */
     get tuning() {
+      if (!tuning) return null;
       const rules = difficultyRules();
-      if (!tuning) return newLoop ? { idle: true, retune: retuneOffer() } : null;
       return {
-        depotId: tuning.depotId, cargo: tuning.cargo,
-        moves: tuning.moves, movesLeft: tuningMovesLeft(tuning), used: tuning.used,
-        score: tuning.score, yield: tuningSessionYield(tuning, rules.minYield),
+        depotId: tuning.depotId,
+        cargo: tuning.cargo,
+        moves: tuning.moves,
+        movesLeft: tuningMovesLeft(tuning),
+        used: tuning.used,
+        score: tuning.score,
+        yield: tuningSessionYield(tuning, rules.minYield),
         yieldFloor: rules.minYield,
         abandonYield: abandonYieldFor(rules),
       };
     },
+    /**
+     * L6 (#220): what the plant plate is painting while `tuning` is null — the
+     * economy line the difficulty row promises, its own mapping floor, and the
+     * re-match offer; null off the new loop, where the plate is not up at all.
+     */
+    get tuningIdle() { return tuningIdleInfo(); },
     /**
      * L6 (#220): the difficulty's ECONOMY flags as the game reads them live —
      * the row of `DIFFICULTY_RULES` the clock and the tuning settle are using
