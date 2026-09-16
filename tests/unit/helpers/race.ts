@@ -342,7 +342,7 @@ function loopIncome(eco: EconomyState, seat: Seat, t: number): void {
     const result = harvesterYield(eco, components, locks, depot, t);
     const cargoes = Object.entries(result.yields) as [Cargo, number][];
     if (!result.serviced || !cargoes.length) continue;
-    const factor = BASE_RATE * depotYield(depot) * distanceFactor(depot) * transportFactor(depot);
+    const factor = BASE_RATE * depotYield(depot) * distanceFactor(eco, depot) * transportFactor(depot);
     const total = cargoes.reduce((sum, [, amount]) => sum + amount, 0) * factor
       + (seat.loopCarry.get(depot.id) ?? 0);
     const whole = Math.floor(total);

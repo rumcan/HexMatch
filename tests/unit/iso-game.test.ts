@@ -3707,10 +3707,12 @@ describe("L2 free dirt roads in the live game", () => {
   });
 
   it("transportFactor is 1.0× for road on the L1 clock", async () => {
-    const { transportFactor, distanceFactor, depotYield } = await import("../../src/iso/loop");
+    // L3 (#217): `distanceFactor` now measures the live network
+    // (`distanceFactor(eco, depot)`), so its assertions live in
+    // iso-l3-distance.test.ts; the seams that stayed scalar stay here.
+    const { transportFactor, depotYield } = await import("../../src/iso/loop");
     const depot = { id: 1, owner: "you", ownerId: 1, tx: 0, ty: 0 };
     expect(transportFactor(depot)).toBe(1);
-    expect(distanceFactor(depot)).toBe(1);
     expect(depotYield(depot)).toBe(1);
   });
 });
