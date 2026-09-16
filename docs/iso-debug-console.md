@@ -187,6 +187,18 @@ Turn it on with `__iso.renderLog(true)` in the console, or boot with
 In the standalone `iso-demo` page (`src/iso/demo.ts`, a bare renderer with no
 game console), press **`L`** to toggle the same trace.
 
+### `__iso.treeState()` · `__iso.depotPrice(tx, ty)` · `__iso.buyTownUpgrade()`
+
+L5 (#219), the depot tree and the city upgrade, read the way the game reads
+them. `treeState()` returns the seat's live progression — `depotTier` (rungs
+unlocked), `townLevel`/`townBonus`, the next city `town` quote, and every
+`types[]` row of `DEPOT_TREE` with its `tier`, its `cost` mix and whether it is
+`open` yet. `depotPrice(tx, ty)` is the Build-button quote for THAT tile: the
+type the tile would raise (`depotCargo`), its rung (`locked`), and the `cost`
+the click would charge — the same `priceDepot` the click, the HUD and the rival
+all read, so a console number can never disagree with a built one.
+`buyTownUpgrade()` is the city key's own click, refusals included.
+
 ### `__iso.probe(tx, ty)`
 
 The small one that pays for itself: the game's own verdict for the tile under

@@ -40,7 +40,7 @@
 // answer per difficulty, and each of the three answers is the same code.
 // ══════════════════════════════════════════════════════════════════════════
 import {
-  CARGO, DEFAULT_DIFFICULTY, DIFFICULTY_RULES, TUNING,
+  CARGO, DEFAULT_DIFFICULTY, DEPOT_TIER_MAX, DIFFICULTY_RULES, TUNING,
   type Cargo, type DifficultyKey, type DifficultyRules,
 } from "./config";
 import { RIVAL_SKILLS, type SkillKey } from "./skill";
@@ -209,12 +209,23 @@ export const TUNING_REWARD_SCORE: Record<RewardKind, number> = {
 /**
  * A session in progress. Mutable on purpose — it is one small record with one
  * writer (the game), read by the HUD every frame.
+ *
+ * L5 (#219) gave it a KIND: the L4 session is opened by a Depot and sets that
+ * Depot's yield, and the same bounded session now also confirms a CITY UPGRADE
+ * (`createTownSession`). One table, one budget, one score — the only difference
+ * is what the score lands on when the session closes, so the board, the plate
+ * and the wire stay exactly as L4 built them.
  */
 export interface TuningSession {
-  /** The depot this session will set the yield of (`Harvester.id`). */
+  /** Which L5 (#219) progression the session confirms. */
+  kind: "depot" | "town";
+  /** The depot this session will set the yield of (`Harvester.id`); -1 = the
+   *  town upgrade (see `TOWN_SESSION_ID`). */
   depotId: number;
-  /** The cargo the depot collects — what the board spawns mostly of. */
-  cargo: Cargo;
+  /** The cargo the depot collects — what the board spawns mostly of. `null`
+   *  for a town session: the city is not about one colour (and the board
+   *  stays neutral for it). */
+  cargo: Cargo | null;
   /** Moves the session was opened with. */
   moves: number;
   /** Moves spent so far. */
@@ -223,9 +234,62 @@ export interface TuningSession {
   score: number;
 }
 
+/** L5 (#219): the `depotId` a city-upgrade session carries. */
+export const TOWN_SESSION_ID = -1;
+
 export const createTuningSession = (depotId: number, cargo: Cargo): TuningSession => ({
-  depotId, cargo, moves: TUNING.moves, used: 0, score: 0,
+  kind: "depot", depotId, cargo, moves: TUNING.moves, used: 0, score: 0,
 });
+
+/**
+ * L5 (#219): the session a city upgrade is confirmed with. Same budget, same
+ * score→strength rule; the board is left NEUTRAL (no `cargo`), because the
+ * upgrade benefits every cargo the city already handles.
+ */
+export const createTownSession = (): TuningSession => ({
+  kind: "town", depotId: TOWN_SESSION_ID, cargo: null,
+  moves: TUNING.moves, used: 0, score: 0,
+});
+
+/**
+ * L5 (#219) — THE SESSION GATE, in one function: what finishing a session
+ * unlocks.
+ *
+ * Addition A of the ticket is the Merge Gardens lesson ("the two mechanics only
+ * worked together once progression REQUIRED both"), so the rung of the depot
+ * tree a seat may build on is bought with match-3, not with resources alone: a
+ * seat starts at rung 0 (the two starter cargos) and a session that was really
+ * PLAYED — any score above zero, i.e. at least one cleared gem — opens the next
+ * rung. An abandoned session, or one closed with nothing cleared, changes
+ * nothing; the resources that bought its depot are not returned either, because
+ * the depot stands (only the CITY upgrade refunds, since no building is raised
+ * for it — see `buyTownUpgrade` in game.ts).
+ *
+ * Clamping the mapping per difficulty is L6's business (#220); this keeps the
+ * rule — score > 0 — and the ceiling in one place.
+ */
+export function unlockTierAfterSession(unlocked: number, score: number): number {
+  const current = Math.max(0, Math.min(DEPOT_TIER_MAX, Math.floor(unlocked)));
+  if (!Number.isFinite(score) || score <= 0) return current;
+  return Math.min(DEPOT_TIER_MAX, current + 1);
+}
+
+/**
+ * L5 (#219): the base-rate bonus a city session's score actually sets.
+ *
+ * The table row (`TOWN_UPGRADES[level].bonus`) is the ceiling a perfect session
+ * reaches; a session that merely got a few points confirms the upgrade at a
+ * fraction of it, so "a better score gives a slightly higher base-rate bonus"
+ * is true and visible in the inspector. The 0.4 floor is the honest price of
+ * finishing at all — a session you played gets most of the way there, and the
+ * ceiling still needs a real burst.
+ */
+export function townBonusFor(ceiling: number, score: number): number {
+  const max = Math.max(0, Number.isFinite(ceiling) ? ceiling : 0);
+  if (!Number.isFinite(score) || score <= 0) return 0;
+  const t = Math.min(1, score / TUNING.targetScore);
+  return Math.round(max * (0.4 + 0.6 * t) * 100) / 100;
+}
 
 /** Moves the player has left. 0 = the session is over and will settle. */
 export const tuningMovesLeft = (s: TuningSession): number => Math.max(0, s.moves - s.used);
@@ -293,10 +357,22 @@ export const tuningCargoLabel = (cargo: Cargo): string => `${CARGO[cargo].icon} 
  * would hand the easy chair better Depots for choosing easy, inverting the
  * ladder `iso-skill-calibration` exists to guard.
  */
-export function rivalTuningYield(key: SkillKey, noise = 0): number {
+/**
+ * L5 (#219): the SCORE the rival's simulated session represents, in the same
+ * units a played session scores in. `tuningSkill` is the difficulty's place on
+ * the 0…1 axis, so the score is that axis times `TUNING.targetScore` — which is
+ * exactly what `rivalTuningYield` and `rivalTuningGold` already priced, and
+ * what the tree gate (`unlockTierAfterSession`) and the city upgrade's
+ * `townBonusFor` now read. One simulated session, one number.
+ */
+export function rivalTuningScore(key: SkillKey, noise = 0): number {
   const skill = RIVAL_SKILLS[key]?.tuningSkill ?? RIVAL_SKILLS.normal.tuningSkill;
   const t = Math.min(1, Math.max(0, skill + noise));
-  return clampYield(TUNING.minYield + (TUNING.maxYield - TUNING.minYield) * t);
+  return t * TUNING.targetScore;
+}
+
+export function rivalTuningYield(key: SkillKey, noise = 0): number {
+  return tuningYieldFor(rivalTuningScore(key, noise));
 }
 
 /**
@@ -309,7 +385,5 @@ export function rivalTuningYield(key: SkillKey, noise = 0): number {
  * skill, like the yield.
  */
 export function rivalTuningGold(key: SkillKey, noise = 0): number {
-  const skill = RIVAL_SKILLS[key]?.tuningSkill ?? RIVAL_SKILLS.normal.tuningSkill;
-  const t = Math.min(1, Math.max(0, skill + noise));
-  return tuningGoldFor(t * TUNING.targetScore);
+  return tuningGoldFor(rivalTuningScore(key, noise));
 }

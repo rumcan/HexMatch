@@ -82,6 +82,7 @@ import {
 import {
   industriesInCatchment, ownerIdOf,
   buildAllComponents, resolveConnection, industryLocks, heldIndustries, lockedIndustryIds,
+  depotCargo, isServiced,
   pickBlockadeTarget, harvesterYield, depotPathLength,
   type EconomyState, type Factory, type Harvester,
 } from "./economy";
@@ -110,7 +111,8 @@ import {
   chooseAiPlantSpot, plantRefusal, plantsOf, resolvePlantTarget,
 } from "./plants";
 import {
-  CARGO, CARGOES, FACTORY_FOOTPRINT, FACTORY_SPRITE, INDUSTRY_BY_KEY, TRANSPORT,
+  CARGO, CARGOES, DEPOT_TREE, DEPOT_TREE_ORDER, DEPOT_TIER_MAX, FACTORY_FOOTPRINT, FACTORY_SPRITE,
+  INDUSTRY_BY_KEY, TRANSPORT, TOWN_UPGRADES,
   BASE_RATE, VICTORY, VP_TARGET, UPGRADE_COST, TUNING,
   type Cargo, type Portrait,
 } from "./config";
@@ -124,14 +126,18 @@ import {
 // L4 (#218): the tuning session — the one thing that sets a depot's yield.
 // The rules live in `tuning.ts` (pure, unit-tested); this file is where they
 // meet the board, the depot record and the HUD.
+// L5 (#219): …and where a finished session also opens the next rung of the
+// depot tree / confirms a city upgrade (Addition A's gate).
 import {
-  abandonYieldFor, birthYieldFor, createTuningSession, decayYield, difficultyRulesFor,
-  recordTuningCleared, retuneOwed, rivalTuningGold, rivalTuningYield, settleTuningYield,
-  takeTuningMove, tuningMovesLeft, tuningOver, tuningSessionGold, tuningSessionYield,
+  abandonYieldFor, birthYieldFor, createTownSession, createTuningSession, decayYield,
+  difficultyRulesFor, recordTuningCleared, retuneOwed, rivalTuningGold, rivalTuningScore,
+  rivalTuningYield, settleTuningYield, takeTuningMove, townBonusFor, tuningMovesLeft,
+  unlockTierAfterSession, tuningOver, tuningSessionGold, tuningSessionYield,
   tuningCargoLabel, TUNING_ABANDON_YIELD, TUNING_REWARD_SCORE, type TuningSession,
 } from "./tuning";
 import {
-  DEPOT_COST, FREE_SETUP_DEPOTS, costCompact, costLabel, priceDepot, shortfallLabel,
+  FREE_SETUP_DEPOTS, costCompact, costLabel, depotTypeLabel,
+  priceDepot, priceTownUpgrade, rungLabel, shortfallLabel,
 } from "./construction";
 import { bankTrade } from "../game/trade";
 import type { CrossKind } from "../game/board";
@@ -352,8 +358,27 @@ export interface PlayerState {
    * PP-05: how many more Depots this player may build for free. Every Depot
    * after the allowance runs out pays `DEPOT_COST` (`construction.ts`) — Oil
    * included — and a refused placement leaves the count untouched.
+   *
+   * L5 (#219): the setup allowance is type-blind (the map's own opening, see
+   * `FREE_SETUP_DEPOTS`); the type gate below is what the allowance never
+   * bypasses for a *paid* Depot.
    */
   freeDepots: number;
+  /**
+   * L5 (#219): the rungs of `DEPOT_TREE` this seat has unlocked — 0 at boot,
+   * +1 per tuning session it actually played (`unlockTierAfterSession` in
+   * tuning.ts). A Depot whose type sits above this is refused for
+   * progression, before anything is priced or spent.
+   */
+  depotTier: number;
+  /** L5 (#219): how many city upgrades this seat has bought. */
+  townLevel: number;
+  /**
+   * L5 (#219): the base-rate bonus its city's tuning session set (0 while no
+   * upgrade stands). `economyTick` multiplies every connected Depot's rate by
+   * `1 + townBonus`, so one number scales a whole network.
+   */
+  townBonus: number;
 }
 
 type Phase = "setup-factory" | "setup-harvester" | "play" | "won";
@@ -662,15 +687,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   seedPublicRoads(track, grid);
   const score: ScoreState = createScoreState();
 
+  // L5 (#219): every seat opens at rung 0 of the depot tree (the starter
+  // cargos) with no city upgrade — `depotTier`/`townLevel`/`townBonus` are the
+  // data the tree gate, the clock's base rate and the wire/save all read.
   const players: PlayerState[] = [
-    { i: 0, id: "you", name: "You", colour: "#5aa8ff", purse: toBag(startPurse), human: true, freeTrack: FREE_SETUP_TRACK, freeDepots: FREE_SETUP_DEPOTS },
+    { i: 0, id: "you", name: "You", colour: "#5aa8ff", purse: toBag(startPurse), human: true, freeTrack: FREE_SETUP_TRACK, freeDepots: FREE_SETUP_DEPOTS, depotTier: 0, townLevel: 0, townBonus: 0 },
     // STORY-01: a contract renames and recolours the rival seat — the dossier
     // cards, the scoreboard and the ending ledger all read this name, so the
     // whole HUD introduces whoever the chapter cast.
     // #186: both seats open on the room's purse — the settings are the ROOM's
     // rules, so a Rich game is rich for the guest and for the AI alike, and the
     // two purses can never disagree about what the host chose.
-    { i: 1, id: "ai", name: storyChapter ? CAST[rivalCast].name : "Rival", colour: storyChapter ? CAST[rivalCast].colour : "#ff7a5a", purse: toBag(startPurse), human: false, freeTrack: FREE_SETUP_TRACK, freeDepots: FREE_SETUP_DEPOTS },
+    { i: 1, id: "ai", name: storyChapter ? CAST[rivalCast].name : "Rival", colour: storyChapter ? CAST[rivalCast].colour : "#ff7a5a", purse: toBag(startPurse), human: false, freeTrack: FREE_SETUP_TRACK, freeDepots: FREE_SETUP_DEPOTS, depotTier: 0, townLevel: 0, townBonus: 0 },
   ];
   const me = players[0], rival = players[1];
 
@@ -1239,6 +1267,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // re-match key goes through the rules too rather than a chrome-side guess.
     onTuningEnd: (abandon) => closeTuningSession(abandon),
     onTuningRetune: () => retuneNow(),
+    // L5 (#219): …and the city upgrade's key. Same rule: it calls the game.
+    onTownUpgrade: () => { buyTownUpgrade(); },
     // AI-01: the top-bar difficulty selector. Applies on the NEXT rival tick —
     // the clocks and budgets re-read `skill()` every call, so there is nothing
     // to restart.
@@ -2444,6 +2474,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // PP-05: the probe prices the rival's opening Depot on the same free
       // allowance the human's setup Depot rides on.
       freeDepots: rival.freeDepots,
+      // L5 (#219): …and with the rungs it has unlocked — a rival that has
+      // played no session yet may only open on a starter cargo.
+      depotTier: rival.depotTier,
       // L2 (#216): the probe plans with the loop's cost model (dirt free under newLoop).
       newLoop,
     });
@@ -2743,6 +2776,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   /** The session in progress — one at a time, and gone when it ends. */
   let tuning: TuningSession | null = null;
   /**
+   * L5 (#219): what a city-upgrade session was bought with. Held here (not on
+   * the session) because it is the GAME's ledger: the cost is spent when the
+   * session opens, and an abandoned one gets exactly this back — no building
+   * stands for a city upgrade, so nothing is lost but the time.
+   */
+  let townPaid: Purse | null = null;
+  /**
    * L12 (#227) — the score the running pass has banked since its last popup.
    * Gems (`onClear`) and rewards (`onReward`) add to it while a session is
    * open; the popup the pass ends with shows it and resets it. Declared here
@@ -2783,28 +2823,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   }
 
   /**
-   * The cargo a Depot's session is scoped to.
-   *
-   * Read from the industries the Depot actually HOLDS (its catchment minus
-   * what another network claimed first — the same `heldIndustries` the clock
-   * pays it for). A Depot standing on open ground with no road yet holds
-   * nothing, and then its catchment's industries are the honest answer: the
-   * session is about the resource the Depot was built for, not about whether
-   * the player got round to connecting it. Ties go to the bigger producer,
-   * which is the cargo the Depot will earn most of once it IS connected.
+   * L5 (#219): which cargo (and so which tree TYPE) a Depot built on this
+   * site would be — the shared `depotCargo` rule (`economy.ts`), read off the
+   * industries the Depot would HOLD. Used to PRICE and GATE a placement before
+   * it is committed, and to scope the tuning session once it stands.
    */
   function tuningCargoFor(depot: Harvester): Cargo | null {
-    const locks = industryLocks(eco);
-    const held = heldIndustries(eco, depot, locks);
-    const list = held.length ? held : industriesInCatchment(grid, depot);
-    let best: Cargo | null = null, bestOut = -1;
-    for (const ind of list) {
-      const def = INDUSTRY_BY_KEY[ind.type];
-      if (!def) continue;
-      const out = ind.output ?? def.output;
-      if (out > bestOut) { bestOut = out; best = def.cargo; }
-    }
-    return best;
+    return depotCargo(eco, depot);
   }
 
   /**
@@ -2838,6 +2863,73 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   }
 
   /**
+   * L5 (#219): open the CITY upgrade's tuning session.
+   *
+   * Same budget and board as a Depot's, with two differences that are the
+   * point of the upgrade: the board plays NEUTRAL (no cargo bias — a city
+   * upgrade is about every cargo the city handles, so the session is a plain
+   * skill burst) and the score lands on `player.townBonus`, which
+   * `economyTick` multiplies into every connected Depot.
+   */
+  function openTownSession(): void {
+    quarry.board.resetNeutral();
+    quarry.board.setBias(null);
+    tuning = createTownSession();
+    sfx.play("open");
+    ui.openSessionBoard();
+    toast(
+      `City upgrade — ${TUNING.moves} moves on the plant floor set the base rate for every Depot you have connected.`,
+      "info",
+    );
+  }
+
+  /**
+   * L5 (#219): buy the next city upgrade.
+   *
+   * The three refusals are checked before anything is spent, like every other
+   * purchase here: the loop has to have city upgrades (new loop only), no
+   * other session may be open (one board, one session), and the purse has to
+   * cover the row's full mix. What is bought then is not the bonus — it is the
+   * SESSION: the cost is spent, the board comes up, and only a played session
+   * confirms the upgrade (`closeTuningSession`). Walking away refunds the
+   * whole cost, which is the ticket's "a city upgrade cannot be completed
+   * without finishing its tuning session" made concrete.
+   */
+  function buyTownUpgrade(p: PlayerState = me): boolean {
+    if (!newLoop) {
+      toast("City upgrades are a new-loop building.", "info");
+      return false;
+    }
+    // MP-05: the new loop is solo-only (L1a), so a guest never reaches this —
+    // and if an older build asks anyway, the host owns the economy and this
+    // seat would only spend cargo the host overwrites. Refuse, name why.
+    if (isGuest()) {
+      toast("The host owns the city upgrade in a hosted game.", "info");
+      return false;
+    }
+    if (tuning) {
+      toast("Finish the tuning session first — one session at a time.", "bad");
+      return false;
+    }
+    const price = priceTownUpgrade(p.purse, p.townLevel);
+    if (!price.def) {
+      toast("The city is fully upgraded.", "info");
+      return false;
+    }
+    if (!price.affordable) {
+      toast(
+        `A city upgrade costs ${costLabel(price.cost)} — you need ${shortfallLabel(price.missing, price.cost)}.`,
+        "bad",
+      );
+      return false;
+    }
+    if (!spend(p, price.cost)) return false;      // guard; `price.affordable` holds
+    townPaid = { ...price.cost };
+    openTownSession();
+    return true;
+  }
+
+  /**
    * Close the open session.
    *
    * `abandon` is the ✕ (or a Depot that was demolished under it): the Depot
@@ -2846,12 +2938,25 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * player earned is what lands. Either way the bias comes off the board, the
    * plate goes back to its idle line and the map (phone: the Map view) is
    * what the player is left looking at.
+   *
+   * L5 (#219): the same door closes a city-upgrade session, where "played"
+   * has a second meaning — a session that cleared nothing confirms nothing, so
+   * it is treated exactly like an abandonment and the cost goes back. That is
+   * what makes the gate a gate and not a formality: the upgrade lands only
+   * when the board was really played.
    */
   function closeTuningSession(abandon: boolean, note?: string): void {
     const s = tuning;
     if (!s) return;
     tuning = null;
     quarry.board.setBias(null);
+    // L4/L5: a session that cleared nothing was not "finished" in any sense
+    // the ticket means — every outcome below reads this, not the raw flag. It
+    // is what makes L5's gate a gate (a rung or a city upgrade confirmed by an
+    // empty board is no gate at all).
+    const played = !abandon && s.score > 0;
+    // A town session has no Depot (`depotId` is -1), so this is `undefined`
+    // there and the city branch below settles instead.
     const depot = eco.harvesters.find((h) => h.id === s.depotId);
     // L6 (#220): the difficulty sits between the score and the record. The
     // number that lands is `settleTuningYield(prev, score, rules)` — mapped onto
@@ -2867,18 +2972,72 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // cards are bought with. An abandoned session pays none — the same rule
     // its yield follows, and the same one the coins are read from: the reward
     // is on the SCORE the player played, so a difficulty row that lifts the
-    // yield does not silently lift the purse too.
+    // yield does not silently lift the purse too. It is settled here, above
+    // the branches, because both kinds of session (L5: a Depot's, or the
+    // city's) pay it on the same curve.
     const coins = abandon ? 0 : tuningSessionGold(s);
     if (coins > 0) {
       earn(me, { gold: coins });
       sfx.play("coin");     // SFX-01: the same two coins the combo used to ring
     }
     const paid = coins > 0 ? ` +${coins} ${CARGO.gold.icon}` : "";
+    // L5 (#219): the city upgrade is a different settlement entirely — the
+    // base-rate bonus instead of a Depot's yield, and a full refund when the
+    // session was abandoned (or played for nothing), because no building
+    // stands for it yet.
+    if (s.kind === "town") {
+      const refund = townPaid;
+      townPaid = null;
+      if (!played) {
+        if (refund) earn(me, refund);
+        toast(
+          note ?? (refund
+            ? `City upgrade abandoned — ${costLabel(refund)} returned. The city is unchanged.`
+            : "City upgrade abandoned. The city is unchanged."),
+          "info",
+        );
+        ui.closeSessionBoard();
+        rescoreNow();
+        return;
+      }
+      const row = TOWN_UPGRADES[me.townLevel] ?? TOWN_UPGRADES[TOWN_UPGRADES.length - 1];
+      // L6 (#220) arrives here too, because the ticket asks for it: the score
+      // sets how much of the ceiling lands (`townBonusFor`), and the row's
+      // `yieldNeverDrops` decides whether a poor session may take some of it
+      // BACK. Easy and Normal keep what they have (the city can only improve);
+      // Hard is the row where a badly played upgrade really does cost. Easy's
+      // generosity is the curve itself — any played session already banks the
+      // bottom 40% of the ceiling.
+      const next = townBonusFor(row?.bonus ?? 0, s.score);
+      const bonus = rules.yieldNeverDrops ? Math.max(me.townBonus, next) : next;
+      if (bonus > 0) me.townBonus = bonus;
+      me.townLevel = Math.min(me.townLevel + 1, TOWN_UPGRADES.length);
+      // Gold follows the score here too (L9's one session, one payout), on the
+      // same curve a Depot's session uses.
+      ui.feed(`City upgrade: base rate +${Math.round(bonus * 100)}%${paid} (score ${s.score})`, me.name);
+      toast(
+        `City upgraded — base rate +${Math.round(bonus * 100)}%${paid}. Every connected Depot ticks faster from here.`,
+        bonus > 0 ? "good" : "info",
+      );
+      ui.closeSessionBoard();
+      rescoreNow();
+      return;
+    }
     if (depot) {
       // Stored on the depot record, which is what the L1b clock multiplies by
       // — and what the snapshot (yield + tuneTier) and the savegame (harvesters)
       // carry.
       depot.yield = level;
+      // L5 (#219) — THE SESSION GATE: finishing a session that was actually
+      // PLAYED opens the next rung of the depot tree for the seat that owns
+      // the Depot. The seat, not "me": a depot session only opens for the
+      // local human seat today, but the rule belongs to the record.
+      const seat = players.find((x) => x.id === depot.owner) ?? me;
+      const rungBefore = Math.min(seat.depotTier, DEPOT_TIER_MAX);
+      seat.depotTier = unlockTierAfterSession(rungBefore, played ? s.score : 0);
+      const rung = seat.depotTier > rungBefore
+        ? ` ${rungLabel(seat.depotTier)} — new Depot types are open.`
+        : "";
       // `undefined` here marked "this Depot has never settled a session", which
       // is the one thing the copy below needs to know: a player who has just
       // played their ONE session on Easy must not be told a re-match awaits.
@@ -2899,17 +3058,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         : rules.rematch === "upgrade" ? "Another comes with your next upgrade."
           : "You can re-tune it from the plant panel.";
       toast(
-        note ?? (gained
+        note ?? ((gained
           ? `Depot tuned — ${s.score} score, yield ×${level}.${paid} It ticks faster from here.`
           : lost
             ? `Depot re-tuned badly — yield ×${before} → ×${level}.${paid} and nothing recovers it but a better session. ${after}`
             : `Depot tuned — yield ×${level}${first ? " (the default)." : paid} ${
               first ? "A better session raises it."
                 : rules.yieldNeverDrops ? "Kept: a session never lowers a Depot." : ""
-            } ${after}`),
+            } ${after}`) + rung),
         gained ? "good" : lost ? "bad" : "info",
       );
-      ui.feed(`Depot tuned: yield ×${level}${paid}`, me.name);
+      ui.feed(`Depot tuned: yield ×${level}${paid}${rung}`, me.name);
     } else if (note) {
       toast(note, "info");
     }
@@ -3061,9 +3220,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   function applyRivalTuning(): void {
     if (!newLoop) return;
     const key = skill().key;
+    let simulated = false;
     for (const h of eco.harvesters) {
       if (h.owner !== rival.id || h.yield !== undefined) continue;
       h.yield = rivalTuningYield(key);
+      simulated = true;
       // L9 (#224): the simulated session pays the rival the same Gold a
       // played one pays the player, through the same score→Gold curve. This
       // is what keeps its raid table funded once combo Gold stops paying —
@@ -3071,6 +3232,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // matching" is one rule applied twice, not two balance numbers.
       const coins = rivalTuningGold(key);
       if (coins > 0) earn(rival, { gold: coins });
+    }
+    // L5 (#219): the rival passes the SAME session gate (#229 L14): a
+    // simulated session that tuned a Depot is a session it played, and it
+    // opens the next rung of the tree for the rival. One rung per call — the
+    // turn's own pacing, not the number of Depots that landed in it — so its
+    // progression is bounded by turns exactly as the player's is by sessions.
+    if (simulated) {
+      rival.depotTier = unlockTierAfterSession(rival.depotTier, 1);
     }
   }
 
@@ -3110,10 +3279,32 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // PP-05: priced only now that the site is legal, and spent only when the
     // whole cost is covered. Oil earned in the Processing Plant is in this same
     // purse, so processed Oil builds Depots with no special case.
-    const price = priceDepot(p.purse, p.freeDepots);
+    //
+    // L5 (#219): the price is the TYPE's price — the cargo of the industry this
+    // Depot would hold — and the type also has to sit on a rung the seat has
+    // unlocked. Both refusals happen here, before anything is spent, and each
+    // names its own blocker (money vs progression), exactly like every other
+    // refusal in this function.
+    // L5 (#219): the type this Depot would be — the biggest industry it would
+    // hold, by the same shared `depotCargo` rule that scopes its tuning
+    // session once it stands. `h` is not in `eco.harvesters` yet, so this is a
+    // quote: what the click would buy, not what a rebuilt network would leave
+    // it holding.
+    const cargo = newLoop ? depotCargo(eco, h) : null;
+    const price = priceDepot(p.purse, p.freeDepots, { cargo, tier: p.depotTier, newLoop });
+    if (price.locked && price.type) {
+      const need = price.tier + 1;
+      toast(
+        `A ${price.type.name} needs rung ${need} of the depot tree — ${rungLabel(p.depotTier)}. Tune a Depot to open it.`,
+        "bad",
+      );
+      if (p.human) flashAt(tx, ty, `${price.type.name}: rung ${need} locked`);
+      return false;
+    }
     if (!price.affordable) {
-      toast(`A Depot costs ${costLabel(DEPOT_COST)} — you need ${shortfallLabel(price.missing)}.`, "bad");
-      if (p.human) flashAt(tx, ty, `Needs ${costCompact(DEPOT_COST)}`);
+      const label = depotTypeLabel(price.type);
+      toast(`A ${label} costs ${costLabel(price.cost)} — you need ${shortfallLabel(price.missing, price.cost)}.`, "bad");
+      if (p.human) flashAt(tx, ty, `Needs ${costCompact(price.cost)}`);
       return false;
     }
     if (!spend(p, price.cost)) return false;      // guard; `price.affordable` holds
@@ -3855,7 +4046,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           // L3 (#217): the road distance behind the tick — read off the
           // per-network cache (one BFS per Depot per network change, never
           // per tick), so a far Depot visibly earns less than a near one.
-          const factor = BASE_RATE * depotYield(depot) * distanceInfoFor(depot.id).factor * transportFactor(depot);
+          // L5 (#219): the CITY UPGRADE factor — one multiplier per seat, from
+          // its tuning-confirmed upgrade, applied to every depot it owns (and
+          // on top of the distance/yield/transport chain, so it scales the
+          // whole network rather than one route). 1 while nothing is raised.
+          const factor = BASE_RATE * depotYield(depot) * distanceInfoFor(depot.id).factor
+            * transportFactor(depot) * (1 + Math.max(0, seat.townBonus));
           const total = cargoes.reduce((sum, [, amount]) => sum + amount, 0) * factor
             + (loopCarry.get(depot.id) ?? 0);
           const whole = Math.floor(total);
@@ -4070,6 +4266,42 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   }
 
   /**
+   * L5 (#219): the rival's CITY UPGRADE.
+   *
+   * The new loop's second progression, and the AI has to be able to take it or
+   * "the rival progresses through the tree" would only ever mean Depot types.
+   * Two guards keep it from being a purse sink that starves its own plans, the
+   * same shape the plant step uses:
+   *
+   *   • it must already have a connected Depot for the bonus to multiply;
+   *   • the upgrade must be payable WITHOUT the plan it is working toward —
+   *     the plant rule ("a plant bought with the purse the next Depot needs is
+   *     the measured plant-rush stall") applied to the city.
+   *
+   * The session that confirms it is SIMULATED, exactly like the rival's Depot
+   * tuning (`rivalTuningScore`), so its bonus lands on the same score→strength
+   * curve a played one would — and the difficulty clamp comes for free,
+   * because that curve reads the same axis.
+   */
+  function rivalTownStep(f: Factory, now: number): boolean {
+    if (!newLoop) return false;
+    const price = priceTownUpgrade(rival.purse, rival.townLevel);
+    if (!price.def || !price.affordable) return false;
+    if (!eco.harvesters.some((h) => h.owner === rival.id && isServiced(eco.track, h, eco.rail))) return false;
+    const skint = rivalSkintTarget(f, now);
+    const reserve: Purse = skint && !skint.paving ? skint.goal : {};
+    const covers = (want: Purse): boolean =>
+      (Object.entries(want) as [Cargo, number][]).every(
+        ([k, v]) => (rival.purse[k] ?? 0) - (price.cost[k] ?? 0) >= v);
+    if (!covers(reserve)) return false;
+    if (!spend(rival, price.cost)) return false;
+    const score = rivalTuningScore(skill().key);
+    rival.townLevel = Math.min(rival.townLevel + 1, TOWN_UPGRADES.length);
+    rival.townBonus = townBonusFor(price.def.bonus, score);
+    return true;
+  }
+
+  /**
    * AI-01: the purse the rival is working toward right now — extracted from
    * `rivalBankTowardPlan` so the bank and the MARKET aim at the same shortage
    * (`rivalMarketOffer` asks for exactly what the next bank exchange would
@@ -4093,8 +4325,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       stock: rival.purse,
       free: rival.freeTrack, freeDepots: rival.freeDepots, now,
       newLoop,
+      // L5 (#219): the bank works toward plans its own tree can actually buy.
+      depotTier: rival.depotTier,
     });
-    const depot = priceDepot(rival.purse, rival.freeDepots).cost;
+    const depot = priceDepot(rival.purse, rival.freeDepots, { tier: rival.depotTier, newLoop }).cost;
     let planTarget: Purse | null = null;
     if (cands.length) {
       // Bank toward the plan CLOSEST to affordable — fewest missing units,
@@ -4421,6 +4655,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       stock: rival.purse, purse: rival.purse,
       free: rival.freeTrack, freeDepots: rival.freeDepots, now,
       oreUrgency: urgency, newLoop,
+      // L5 (#219): the tree gate — the planner may only plan a Depot whose
+      // type sits on a rung the rival has opened (a played session each).
+      depotTier: rival.depotTier,
     });
     const depotBuild = (): boolean => {
       const out = aiBuildStep(eco, f, opts(), allocHarvesterId());
@@ -4443,6 +4680,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // board, no session, no waiting: the level is on the record before the
     // economy clock next reads it.
     applyRivalTuning();
+
+    // 2b. the city upgrade (L5, #219) — the tree's other progression, and the
+    //     one that scales every depot the rival owns. After the Depot pass, so
+    //     a turn that just raised one tunes it first; before the pave pass, so
+    //     the scoreboard still gets whatever is left.
+    if (rivalTownStep(f, now)) acted = true;
 
     // 3. pave — what the scoreboard pays for, with whatever Ore is spare; and
     //    when the Ore is not spare but the gravel is there, buy it (VP-01)
@@ -4542,6 +4785,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const wirePlayers = () => players.map((p) => ({
     id: p.id, vp: vpFor(score, p.id), res: { ...p.purse },
     freeTrack: p.freeTrack, freeDepots: p.freeDepots,
+    // L5 (#219): the seat's place in the depot tree and its city upgrade ride
+    // the same record the allowances do — a guest (or a resync) must price the
+    // same next Depot and show the same city as the host.
+    depotTier: p.depotTier, townLevel: p.townLevel, townBonus: p.townBonus,
   }));
 
   /**
@@ -4788,6 +5035,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const ft = wire.freeTrack, fd = wire.freeDepots;
     if (typeof ft === "number" && Number.isFinite(ft)) p.freeTrack = ft;
     if (typeof fd === "number" && Number.isFinite(fd)) p.freeDepots = fd;
+    // L5 (#219): the depot tree + city upgrade. Same contract as the
+    // allowances above: absent leaves the seat alone, `0` is a value.
+    const dt = wire.depotTier, tl = wire.townLevel, tb = wire.townBonus;
+    if (typeof dt === "number" && Number.isFinite(dt)) p.depotTier = Math.max(0, Math.floor(dt));
+    if (typeof tl === "number" && Number.isFinite(tl)) p.townLevel = Math.max(0, Math.floor(tl));
+    if (typeof tb === "number" && Number.isFinite(tb)) p.townBonus = Math.max(0, tb);
   }
 
   /** GUEST: apply a full state (join or resync). Validated first — a version or
@@ -5695,10 +5948,27 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // charge (W1, applied to buildings), so the hint adds the two things the
       // button cannot: the SITE rule a Depot is placed by, and the shortfall
       // when this purse cannot pay for it.
-      const price = priceDepot(me.purse, me.freeDepots);
-      costInfo = price.affordable
-        ? hintLine("place it inside an industry's catchment")
-        : hintLine(`<i>needs ${costMarkup(shortfallOf(DEPOT_COST))}</i>`);
+      //
+      // L5 (#219): on the new loop the price belongs to the TYPE the pointer
+      // is over — its cargo decides the mix and its rung decides whether the
+      // seat may build it at all — so the hint quotes the tile, and names the
+      // progression refusal in its own words when that is the blocker.
+      const cargo = newLoop && hover
+        ? depotCargo(eco, { id: -1, owner: me.id, ownerId: me.i + 1, tx: hover.tx, ty: hover.ty })
+        : null;
+      const price = priceDepot(me.purse, me.freeDepots, { cargo, tier: me.depotTier, newLoop });
+      const label = price.type ? price.type.name : "Depot";
+      if (price.locked && price.type) {
+        costInfo = hintLine(`<i>${label} — rung ${price.tier + 1} locked · ${rungLabel(price.unlocked)}</i>`);
+      } else if (price.affordable) {
+        costInfo = hintLine(
+          newLoop && price.type
+            ? `place it inside an industry's catchment · ${label} ${costCompact(price.cost)}`
+            : "place it inside an industry's catchment",
+        );
+      } else {
+        costInfo = hintLine(`<i>needs ${costMarkup(shortfallOf(price.cost))}</i>`);
+      }
     }
 
     // PP-03: while a Factory or a Depot is being placed, an INVALID hover
@@ -5830,6 +6100,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       vpTarget: winTarget(),
       freeTrack: me.freeTrack,
       freeDepots: me.freeDepots,
+      // L5 (#219): the rung the Depot button quotes its cheapest type from.
+      depotTier: me.depotTier,
       banner,
       // BANNER-ONCE: the stable id behind `banner` (see paintUi) — the ✕
       // dismissal is remembered by this, so a closed line never pops back up
@@ -5854,9 +6126,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       tuning: newLoop
         ? (tuning
           ? {
+              kind: tuning.kind,
               cargo: tuning.cargo, moves: tuning.moves, movesLeft: tuningMovesLeft(tuning),
-              score: tuning.score, yield: tuningSessionYield(tuning, difficultyRules().minYield),
-              abandonYield: abandonYieldFor(difficultyRules()),
+              score: tuning.score,
+              // L5 (#219): the same "what this score is worth" readout, on the
+              // curve the session actually settles on — a Depot's yield (L6:
+              // mapped onto THIS difficulty's floor), or the city's base-rate
+              // bonus (0 while nothing is raised, and the plate prints it as a
+              // percentage).
+              yield: tuning.kind === "town"
+                ? townBonusFor(TOWN_UPGRADES[Math.min(me.townLevel, TOWN_UPGRADES.length - 1)]?.bonus ?? 0, tuning.score)
+                : tuningSessionYield(tuning, difficultyRules().minYield),
+              abandonYield: tuning.kind === "town"
+                ? TUNING_ABANDON_YIELD
+                : abandonYieldFor(difficultyRules()),
             }
           : null)
         : undefined,
@@ -5865,6 +6148,27 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // on screen instead of a key that would refuse to work — and null on
       // Normal until a Depot has actually been upgraded.
       tuningIdle: tuningIdleInfo() ?? undefined,
+      // L5 (#219): the city upgrade's key, priced from the seat's own row of
+      // `TOWN_UPGRADES`. `undefined` on the shipped loop: the key does not
+      // exist there, exactly like the rule.
+      town: newLoop
+        ? (() => {
+            const price = priceTownUpgrade(me.purse, me.townLevel);
+            const row = price.def;
+            return {
+              level: me.townLevel,
+              maxLevel: TOWN_UPGRADES.length,
+              cost: price.cost,
+              affordable: price.affordable && !tuning,
+              bonus: me.townBonus,
+              ceiling: row?.bonus ?? 0,
+              note: price.maxed ? "The city is fully upgraded."
+                : tuning ? "Finish the tuning session first — one session at a time."
+                  : price.affordable ? undefined
+                    : `Needs ${shortfallLabel(price.missing, price.cost)}`,
+            };
+          })()
+        : undefined,
       // RAIL-04 (#178): the Railway panel's rows — the MODEL is `railPanelRows`
       // in the rail module (which platform has a line, which train is stored,
       // which actions are legal); this only adds the price the button prints.
@@ -6668,6 +6972,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       players: players.map((p) => ({
         purse: p.purse as unknown as Record<string, number>,
         freeTrack: p.freeTrack, freeDepots: p.freeDepots,
+        // L5 (#219): a refresh keeps the seat's rung and its city upgrade —
+        // the L1e rule for the allowances, applied to the two numbers the
+        // depot tree and the income clock read.
+        depotTier: p.depotTier, townLevel: p.townLevel, townBonus: p.townBonus,
       })),
       boards: [
         { kind: "you", data: quarry.board.save() },
@@ -6735,6 +7043,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       Object.assign(players[i].purse, d.players[i].purse);
       players[i].freeTrack = d.players[i].freeTrack;
       players[i].freeDepots = d.players[i].freeDepots;
+      // L5 (#219): the rung and the city upgrade come back with the purse —
+      // `typeof … === "number"`, so a pre-#219 save (no fields) leaves the
+      // fresh-seat zeros in place instead of writing NaN.
+      const dt = d.players[i].depotTier, tl = d.players[i].townLevel, tb = d.players[i].townBonus;
+      if (typeof dt === "number" && Number.isFinite(dt)) players[i].depotTier = Math.max(0, Math.floor(dt));
+      if (typeof tl === "number" && Number.isFinite(tl)) players[i].townLevel = Math.max(0, Math.floor(tl));
+      if (typeof tb === "number" && Number.isFinite(tb)) players[i].townBonus = Math.max(0, tb);
     }
     // VP is derived state and is intentionally absent from the save. Rebuild
     // its ledgers now (without UI events), or a restored final screen would say
@@ -7679,17 +7994,24 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      */
     get tuning() {
       if (!tuning) return null;
+      // L5 (#219): a session is one of two kinds now, and its `cargo` is null
+      // on a city one (the board plays neutral) — both travel, so a test (or
+      // the e2e picker) can tell the two apart without guessing.
       const rules = difficultyRules();
+      const town = tuning.kind === "town";
       return {
+        kind: tuning.kind,
         depotId: tuning.depotId,
         cargo: tuning.cargo,
         moves: tuning.moves,
         movesLeft: tuningMovesLeft(tuning),
         used: tuning.used,
         score: tuning.score,
-        yield: tuningSessionYield(tuning, rules.minYield),
+        yield: town
+          ? townBonusFor(TOWN_UPGRADES[Math.min(me.townLevel, TOWN_UPGRADES.length - 1)]?.bonus ?? 0, tuning.score)
+          : tuningSessionYield(tuning, rules.minYield),
         yieldFloor: rules.minYield,
-        abandonYield: abandonYieldFor(rules),
+        abandonYield: town ? TUNING_ABANDON_YIELD : abandonYieldFor(rules),
       };
     },
     /**
@@ -8024,9 +8346,34 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     },
     /** PP-05: the live free-Depot allowance, so a test can watch it burn. */
     get freeDepots() { return me.freeDepots; },
-    /** PP-05: what the next Depot placement will charge THIS purse — the same
-     *  `priceDepot` the click, the HUD and the AI all read. */
-    depotPrice: () => priceDepot(me.purse, me.freeDepots),
+    /**
+     * PP-05: what the next Depot placement will charge THIS purse — the same
+     * `priceDepot` the click, the HUD and the AI all read.
+     *
+     * L5 (#219): pass a tile and the quote is for the TYPE that tile would
+     * build (its rung included) — the same quote the click gets — instead of
+     * the cheapest type the seat can afford.
+     */
+    depotPrice: (tx?: number, ty?: number) => {
+      const cargo = newLoop && tx !== undefined && ty !== undefined
+        ? depotCargo(eco, { id: -1, owner: me.id, ownerId: me.i + 1, tx, ty })
+        : null;
+      return priceDepot(me.purse, me.freeDepots, { cargo, tier: me.depotTier, newLoop });
+    },
+    /** L5 (#219): the seat's place in the depot tree, for tests and the HUD's
+     *  own readouts. Values, not references — nothing here mutates. */
+    treeState: () => ({
+      depotTier: me.depotTier, unlocked: rungLabel(me.depotTier),
+      townLevel: me.townLevel, townBonus: me.townBonus,
+      town: priceTownUpgrade(me.purse, me.townLevel),
+      types: DEPOT_TREE_ORDER.map((c) => ({
+        cargo: c, name: DEPOT_TREE[c].name, tier: DEPOT_TREE[c].tier,
+        cost: { ...DEPOT_TREE[c].cost }, open: DEPOT_TREE[c].tier <= me.depotTier,
+      })),
+    }),
+    /** L5 (#219): the city upgrade's click, as a test twin — the real
+     *  `buyTownUpgrade`, refusals included. */
+    buyTownUpgrade: () => buyTownUpgrade(me),
     /** V4: the e2e/unit twin of the HUD toast, so tests can drive the toast
      *  stack (and its ✕) without playing a whole round. */
     toast: (text: string, kind: Toast["kind"] = "info") => toast(text, kind),
@@ -8082,17 +8429,21 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // corridor picker can never plan a Depot the round would refuse.
       const locks = industryLocks(eco);
       const claimed = served.length > 0 && served.every((x) => locks.has(x.id));
+      // L5 (#219): the Depot's TYPE — the biggest industry this site would
+      // hold — so the readout prices and gates the exact row the click would.
+      const quote: Harvester = { id: -1, owner: me.id, ownerId: me.i + 1, tx, ty };
+      const cargo = newLoop ? depotCargo(eco, quote) : null;
       // PP-05: the probe also reports what the Depot would COST, priced by the
       // same `priceDepot` the click runs — so "is this tile usable" and "can I
       // pay for it" come from one module instead of the e2e tooling guessing.
       // `ok` stays a SITE-legality answer (the corridor picker filters on it
       // during setup, when the allowance covers the Depot); affordability is
       // reported alongside, never folded into it.
-      const price = priceDepot(me.purse, me.freeDepots);
+      const price = priceDepot(me.purse, me.freeDepots, { cargo, tier: me.depotTier, newLoop });
       return {
         build: { ok: why === null, why },
         harvester: {
-          ok: why === null && !taken && served.length > 0 && !claimed,
+          ok: why === null && !taken && served.length > 0 && !claimed && !price.locked,
           why: why ?? (taken ? "harvester-taken"
             : claimed ? "industry-taken"
             : served.length ? null : "no-industry-in-catchment"),
@@ -8102,6 +8453,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           cost: { ...price.cost },
           free: price.free,
           affordable: price.affordable,
+          // L5 (#219): the type, its rung and whether the seat has it open —
+          // a site can be perfectly legal and still refused for progression.
+          type: price.type ? price.type.name : null,
+          tier: price.tier,
+          locked: price.locked,
+          unlocked: price.unlocked,
         },
       };
     },

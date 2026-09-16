@@ -38,8 +38,10 @@ import {
   TUNING_ABANDON_YIELD, tuningSessionYield, tuningYieldFor,
 } from "../../src/iso/tuning";
 import { transportTierOf, TRANSPORT_TIERS } from "../../src/iso/loop";
-import { buildSnapshot, applySnapshot, type SnapshotSource } from "../../src/iso/snapshot";
-import { SAVE_KEY, readSave, type SaveGamePayload } from "../../src/iso/savegame-runtime";
+import { buildSnapshot, applySnapshot, SNAPSHOT_VERSION, type SnapshotSource } from "../../src/iso/snapshot";
+import {
+  SAVE_KEY, SAVEGAME_VERSION, readSave, type SaveGamePayload,
+} from "../../src/iso/savegame-runtime";
 import type { EconomyState, Harvester } from "../../src/iso/economy";
 
 // ── stub the art imports (vite handles these in the browser) ──────────────
@@ -536,7 +538,11 @@ describe("L6 the level and the credit travel", () => {
     // The autosave stores `eco.harvesters` as the live record type, so the cooled
     // level AND the spent credit survive with no field list to keep in sync.
     const payload: Partial<SaveGamePayload> = {
-      v: 1, snapV: 13, savedAt: Date.now(), seed: 1337, skillKey: "hard",
+      // The LIVE versions: `readSave` refuses a save whose map version is not
+      // the running one (v15 moved the seeded map to 4×4 resource lots), so a
+      // stale literal here would test the refusal and nothing else.
+      v: SAVEGAME_VERSION, snapV: SNAPSHOT_VERSION,
+      savedAt: Date.now(), seed: 1337, skillKey: "hard",
       phase: "play", winnerId: null, bandit: {},
       track: { dirt: "", road: "", owner: "", upgraded: "" },
       eco: {
