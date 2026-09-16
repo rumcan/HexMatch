@@ -38,8 +38,9 @@ describe("T1 finished gold-mine grounds and quarry reskin", () => {
       expect(c.layers, `${type} must not compose layers`).toBeUndefined();
       const m = manifest.sprites[type];
       expect(m, `${type} manifest sprite`).toBeTruthy();
-      // the game plays the node on exactly the tiles its art spans
-      expect(INDUSTRY_BY_KEY[type].footprint, type).toEqual(m.footprint);
+      // the game plays every node on the 4×4 lot its building art is authored
+      // on (assets/buildings-src) — no longer on the old atlas cell's width
+      expect(INDUSTRY_BY_KEY[type].footprint, type).toEqual([4, 4]);
     }
   });
 

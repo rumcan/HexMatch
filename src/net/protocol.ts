@@ -193,6 +193,8 @@ export interface DeltaMsg {
   crossPrompt?: Snapshot["crossPrompt"];
   /** MP-AUDIT: winner identity (host publishes, guest mirrors) */
   winner?: Snapshot["winner"];
+  /** RES-FIELDS: ids of the demolished wheat fields / tree blocks (whole list). */
+  clearedFields?: Snapshot["clearedFields"];
   /**
    * MP-05: a one-shot line for the guest ("your action was refused — 2 more
    * Ore"). Rides the next delta, which the relay already forwards; there is no

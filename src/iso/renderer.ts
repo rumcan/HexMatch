@@ -157,6 +157,11 @@ export interface World {
    */
   forests?: Forest[];
   /**
+   * RES-FIELDS: the 2×2 wheat fields / tree blocks still standing beside the
+   * resources (cleared ones are left out). Drawn like a forest block.
+   */
+  fields?: { tx: number; ty: number; sprite: string }[];
+  /**
    * RAIL-03 (#177): the railway layer — the effective rail masks (a structure's
    * internal lane folded in), their owners and `Rail.revision`. Track is
    * GROUND: it is painted into the road cache's chunk rasters, not drawn as
@@ -301,6 +306,12 @@ export function buildDrawList(
         }
       }
       if (clear) out.push({ sprite: f.sprite, tx: f.tx, ty: f.ty, decor: true });
+    }
+  }
+  if (world.fields) {
+    for (const f of world.fields) {
+      if (f.tx + 1 < r.x0 || f.tx > r.x1 || f.ty + 1 < r.y0 || f.ty > r.y1) continue;
+      out.push({ sprite: f.sprite, tx: f.tx, ty: f.ty, decor: true });
     }
   }
   if (world.extra) {

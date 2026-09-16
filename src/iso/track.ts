@@ -23,7 +23,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_W, MAP_H } from "../game/config";
 import { TRANSPORT, UPGRADE_COST, FACTORY_FOOTPRINT, type Cargo } from "./config";
-import { WATER, ROUGH, TOWN_OCC, type Grid } from "./grid";
+import { WATER, ROUGH, TOWN_OCC, FIELD_OCC, type Grid } from "./grid";
 import { CHUNK, chunksX } from "./renderer";
 
 // ── directions ────────────────────────────────────────────────────────────
@@ -355,6 +355,8 @@ export function buildRefusal(
   // checked before the terrain kind, so a town road on rough ground reports
   // "occupied" (the permanent blocker) rather than "rough".
   if (grid.occupancy[i] >= 0 || grid.occupancy[i] === TOWN_OCC) return "occupied";
+  // RES-FIELDS: a wheat field or tree block stands here until demolished.
+  if (grid.occupancy[i] === FIELD_OCC) return "field";
   // The premium paved Road additionally needs flat ground (TRANSPORT.onRough);
   // the basic Dirt Road builds on rough.
   if (terrain === ROUGH && !TRANSPORT[kind].onRough) return "rough";
@@ -465,9 +467,13 @@ export function structureTiles(
       if (inMapT(x, y)) out.add(tIdx(x, y));
     }
   }
+  // A truck Depot is a 2×2 lot (`DEPOT_SIZE` in depot.ts — inlined here to
+  // keep track.ts free of an import cycle).
   for (const h of harvesters) {
     if (h.ownerId !== owner) continue;
-    if (inMapT(h.tx, h.ty)) out.add(tIdx(h.tx, h.ty));
+    for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) {
+      if (inMapT(h.tx + dx, h.ty + dy)) out.add(tIdx(h.tx + dx, h.ty + dy));
+    }
   }
   return out;
 }
@@ -496,7 +502,11 @@ export function playerNetwork(
     if (f.ownerId !== owner) continue;
     for (const [x, y] of plantFootprintTiles(f.tx, f.ty)) seed(x, y);
   }
-  for (const h of harvesters) if (h.ownerId === owner) seed(h.tx, h.ty);
+  // …and a truck Depot seeds its whole 2×2 lot, for the same reason.
+  for (const h of harvesters) {
+    if (h.ownerId !== owner) continue;
+    for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) seed(h.tx + dx, h.ty + dy);
+  }
   while (stack.length) {
     const i = stack.pop()!;
     const x = i % MAP_W, y = (i / MAP_W) | 0;

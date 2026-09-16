@@ -43,26 +43,28 @@ const ind = (type: string, tx: number, ty: number): Industry => {
   };
 };
 
+/** A 2×2 truck Depot; the fixtures below sit it west of the resource, opening NE onto row 10. */
 const H = (id: number, owner: string, tx: number, ty: number): Harvester =>
-  ({ id, owner, ownerId: owner === "you" ? 1 : 0, tx, ty });
+  ({ id, owner, ownerId: owner === "you" ? 1 : 0, tx, ty, facing: "ne" });
 
 const run = (t: Track, kind: "dirt" | "road", x0: number, x1: number, y: number) => {
   for (let x = x0; x <= x1; x++) buildTile(t, kind, x, y, 1);
 };
 
 /**
- * Farm (grain) at 11,11; harvester at 10,10 catches it; the factory sits at
- * 14,10, so road tiles 11..14 on row 10 complete the link. W2: every tile is
- * owned by "you" (ownerId 1) — the link only exists because the track is his.
+ * Farm (grain) at 11,11; the 2×2 Depot at 9,11 stands beside it and opens NE,
+ * so its gate is (9,10)/(10,10); the factory sits at 14,10, so road
+ * tiles 10..14 on row 10 complete the link. W2: every tile is owned by "you"
+ * (ownerId 1) — the link only exists because the track is theirs.
  */
 function world() {
   const grid = flatGrid([ind("farm", 11, 11)]);
   const track = createTrack();
-  const harvester = H(1, "you", 10, 10);
+  const harvester = H(1, "you", 9, 11);
   const state: EconomyState = {
     grid, track, harvesters: [harvester], factories: [{ owner: "you", ownerId: 1, tx: 14, ty: 10 }],
   };
-  const connect = () => run(track, "road", 11, 14, 10);
+  const connect = () => run(track, "road", 10, 14, 10);
   const cut = () => demolishTile(track, "road", 12, 10);
   return { state, harvester, connect, cut, track };
 }
@@ -263,16 +265,16 @@ describe("J1 createQuarry", () => {
     // a far depot waits 2 × route × 300ms per load where a near one waits a
     // fraction of that. What is still asserted here is the measurement the
     // cadence now rests on: the far route really is longer.
-    const near = world();  near.connect();   // factory at 14,10 → depot at 10,10 → 3 tiles of road + shoulders
+    const near = world();  near.connect();   // factory at 14,10 → depot gate at 10,10 → a few tiles of road
     const far = (() => {
       const grid = flatGrid([ind("farm", 11, 11)]);
       const track = createTrack();
-      const harvester = H(1, "you", 10, 10);
+      const harvester = H(1, "you", 9, 11);
       const state: EconomyState = {
         grid, track, harvesters: [harvester],
         factories: [{ owner: "you", ownerId: 1, tx: 30, ty: 10 }],   // far across the map
       };
-      for (let x = 11; x <= 30; x++) buildTile(track, "road", x, 10, 1);
+      for (let x = 10; x <= 30; x++) buildTile(track, "road", x, 10, 1);
       return { state };
     })();
 
@@ -298,17 +300,15 @@ describe("J1 createQuarry", () => {
     const d0 = q.delivery.grain!;
     expect(d0).toBeGreaterThan(0);
 
-    // lay a road that hugs the depot → factory directly (no detour) and a
-    // second depot next to the factory, so the minimum delivery distance drops.
+    // a second depot on the same farm, gated onto the same corridor right next
+    // to the factory, so the minimum delivery distance cannot grow.
     const state2 = {
       ...state,
       harvesters: [
         ...state.harvesters,
-        H(2, "you", 13, 11),            // depot right beside the factory's row
+        { ...H(2, "you", 12, 8), facing: "sw" as const },  // lot 12..13 × 8..9, SW gate on row 10
       ],
     };
-    // extend the corridor straight down to the new depot's shoulder
-    for (let y = 12; y <= 13; y++) buildTile(track, "road", 13, y, 1);
     const q2 = createQuarry(state2, "you");
     neutralise(q2.board);
     q2.refresh(0);
@@ -439,7 +439,7 @@ describe("W5 the combo coin reaches the purse", () => {
     const grid = flatGrid([ind("gold_mine", 11, 11)]);
     const track = createTrack();
     const state: EconomyState = {
-      grid, track, harvesters: [H(1, "you", 10, 10)],
+      grid, track, harvesters: [H(1, "you", 9, 11)],
       factories: [{ owner: "you", ownerId: 1, tx: 14, ty: 10 }],
     };
     const purse: Record<Cargo, number> = {

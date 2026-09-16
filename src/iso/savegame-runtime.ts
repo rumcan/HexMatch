@@ -79,9 +79,12 @@ export interface SaveGamePayload {
    *  earning. Values live in [0, 1); anything else is ignored on restore. */
   loopCarry?: Record<string, number>;
   eco: {
-    /** The depot records, `yield` included — L4's tuning level rides the
-     *  record it belongs to (`Harvester.yield`), so a restored depot keeps the
-     *  rate its session earned instead of dropping back to the baseline. */
+    // TYPED as the live records, not a hand-picked field list, so every
+    // per-Depot rule state travels with them by construction: L4's `yield` (a
+    // restored Depot keeps the rate its session earned instead of dropping back
+    // to the baseline), and since L6 (#220) the cooled level a Hard game is
+    // sitting on plus the `tuneTier` credit that says whether a re-match is
+    // owed. A save written before either field existed reads as "never tuned".
     harvesters: EconomyState["harvesters"];
     factories: EconomyState["factories"];
   };
@@ -95,6 +98,9 @@ export interface SaveGamePayload {
     purse: Record<string, number>; freeTrack: number; freeDepots: number;
     depotTier?: number; townLevel?: number; townBonus?: number;
   }[];
+  /** RES-FIELDS: ids of the wheat fields / tree blocks demolished so far.
+   *  Optional so saves written before fields existed still load. */
+  clearedFields?: number[];
   boards: SavedBoardShape[];
   /** Reserved. The live AI pacing clocks (build/offer/raid) re-start clean
    *  on restore — a few seconds of drift is not worth serialising timers. */
@@ -130,19 +136,16 @@ export const readSave = (key: string = SAVE_KEY): SaveGamePayload | null => {
     const raw = localStorage.getItem(key);
     if (!raw) return null;
     const d = JSON.parse(raw) as SaveGamePayload;
-    // v10 → v14 adds multiplayer wires (market/protests/vehicles/boards), the
-    // repaired beach, the railway and the Blockade wire; older saves stay
-    // loadable because every layer added since is either derivable or reads as
-    // its empty past — a v12 save simply has no railway, which is what it was
-    // played without, and a v13 save carries its blockades in `bandit` (this
-    // file's own field) exactly as it always did. Track bytes and every
-    // existing placement are intact.
+    // v10 → v14 added multiplayer wires (market/protests/vehicles/boards), the
+    // repaired beach, the railway and the Blockade wire, and older saves stayed
+    // loadable because every layer added since was either derivable or read as
+    // its empty past.
     //
-    // L9 (#224): `snapV` is the MP wire version, which this payload borrows
-    // for its track layers; the SAVE's own shape did not change, so bumping
-    // the wire must not orphan a game somebody is in the middle of.
-    const KNOWN_SNAP_V = new Set([SNAPSHOT_VERSION, 10, 11, 12, 13]);
-    if (d.v !== SAVEGAME_VERSION || !KNOWN_SNAP_V.has(d.snapV)) return null;
+    // v15 ends that: the seeded MAP moved (every resource is a 4×4 lot now,
+    // with fields beside the farms and forests), so an older save would stand
+    // its depots, roads and plants on ground that is no longer there. A save
+    // from before the move cannot be repaired, only refused.
+    if (d.v !== SAVEGAME_VERSION || d.snapV !== SNAPSHOT_VERSION) return null;
     if (typeof d.seed !== "number" || !d.track) return null;
     return d;
   } catch { return null; }

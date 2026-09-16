@@ -38,7 +38,7 @@ const AI_BUILD_MS = 9000;
 // ══════════════════════════════════════════════════════════════════════════
 describe("PP-07 one authoritative cost table", () => {
   it("prices every buildable exactly as the ticket proposes", () => {
-    expect(BUILD_COSTS.dirt).toEqual({ wood: 1, stone: 1 });
+    expect(BUILD_COSTS.dirt).toEqual({});        // gravel is free; time is its price
     expect(BUILD_COSTS.road).toEqual({ wood: 1, stone: 1, ore: 4 });
     expect(BUILD_COSTS.upgrade).toEqual({ ore: 4 });
     expect(BUILD_COSTS.depot).toEqual({ wood: 1, stone: 1, grain: 1, oil: 1 });
@@ -92,8 +92,10 @@ describe("PP-07 Catan-style resource roles", () => {
 
   it("gives wood, stone, grain, ore and oil each a useful role", () => {
     // basic infrastructure
-    expect(usedBy("wood")).toEqual(expect.arrayContaining(["dirt", "depot", "plant"]));
-    expect(usedBy("stone")).toEqual(expect.arrayContaining(["dirt", "depot", "plant"]));
+    // gravel is free now, so wood and stone earn their keep on everything a
+    // player BUILDS — the paved road, the depot and the plant
+    expect(usedBy("wood")).toEqual(expect.arrayContaining(["road", "depot", "plant"]));
+    expect(usedBy("stone")).toEqual(expect.arrayContaining(["road", "depot", "plant"]));
     // workforce and expansion
     expect(usedBy("grain")).toEqual(expect.arrayContaining(["depot", "plant"]));
     // industrial investment and better transport

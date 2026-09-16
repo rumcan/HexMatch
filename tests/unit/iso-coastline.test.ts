@@ -52,11 +52,13 @@ describe("continuous coastline", () => {
   });
 
   it.each([
-    [42, "7cff2193234a52a4b8ed3ab0befef34acafc90181b4531ecd394961d3136e914"],
-    [1337, "7356513017f2617ac18b9426b4a6f9574d5b051a88a5d8d8e93fd4b4fec22a58"],
-  ] as const)("preserves v10 save placement for seed %i", (seed, hash) => {
-    // Captured from main 42db9b9 BEFORE the coastline change. Save loading
-    // regenerates these objects, so changing them would move saved buildings.
+    [42, "a95bfd3d67e097123424adc7b1c8da3c6a475a1e50b021ce2a317b6737938939"],
+    [1337, "e2cd07b21c5167c8d317fd3361d2aea26e05c75719ec3e9438fdc3a4ac9fc510"],
+  ] as const)("preserves v14 save placement for seed %i", (seed, hash) => {
+    // Re-captured for snapshot v14, when every resource became a 4×4 lot (the
+    // v10 pins came from main 42db9b9). Save loading regenerates these objects,
+    // so changing them would move saved buildings — bump SNAPSHOT_VERSION when
+    // they have to change again.
     const g = generateMap(seed);
     const digest = createHash("sha256").update(JSON.stringify([
       g.industries, g.towns, g.publicRoads, Array.from(g.occupancy),
@@ -72,11 +74,11 @@ describe("continuous coastline", () => {
     expect(groundContours(g)).toEqual(a);
   });
 
-  it("accepts v10 solo saves and current saves, but not other wire versions", () => {
-    for (const snapV of [9,10,SNAPSHOT_VERSION,SNAPSHOT_VERSION + 1]) {
+  it("accepts only current saves — v14 moved the seeded map (4×4 resources)", () => {
+    for (const snapV of [9,10,12,13,SNAPSHOT_VERSION,SNAPSHOT_VERSION + 1]) {
       const save = {v:SAVEGAME_VERSION,snapV,seed:42,track:{}};
       vi.stubGlobal("localStorage", {getItem: () => JSON.stringify(save)});
-      expect(readSave() !== null).toBe(snapV === 10 || snapV === SNAPSHOT_VERSION);
+      expect(readSave() !== null).toBe(snapV === SNAPSHOT_VERSION);
     }
   });
 });

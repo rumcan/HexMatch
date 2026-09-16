@@ -47,6 +47,13 @@ export interface DrawItem {
   ref?: unknown;
   /** TRAFFIC-02: optional opacity 0..1 for fade in/out at town access points. */
   alpha?: number;
+  /**
+   * Depth-key bump, in key units. One thing uses it: a lorry standing inside
+   * a Depot's 2×2 lot, which has to draw OVER the building it has pulled into
+   * (`truckItems`). It is the smallest lift that clears that one sprite, so
+   * the rest of the scene sorts exactly as it did.
+   */
+  lift?: number;
 }
 
 /** A DrawItem resolved against the atlas: world rect + depth key. */
@@ -148,8 +155,8 @@ export function place(atlas: Atlas, item: DrawItem): Placed | null {
       // below the NEXT tile's ground until it crosses the midpoint, and
       // changes nothing about buildings: their integer keys compare the same
       // against x.5 as they did against x.
-      ? Math.round(px + fw - 1) + Math.round(py + fh - 1) + 0.5
-      : (item.tx + fw - 1) + (item.ty + fh - 1),
+      ? Math.round(px + fw - 1) + Math.round(py + fh - 1) + 0.5 + (item.lift ?? 0)
+      : (item.tx + fw - 1) + (item.ty + fh - 1) + (item.lift ?? 0),
   };
 }
 

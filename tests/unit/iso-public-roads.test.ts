@@ -259,10 +259,16 @@ describe("PP-13 public roads are every player's to drive on", () => {
     const track = createTrack();
     seedTownRoads(track, g);
     seedPublicRoads(track, g);
-    const [, , hx, hy] = spotBesideHighway(g, track);
-    expect(isServiced(track, { id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy })).toBe(true);
+    const [rx, ry, hx, hy] = spotBesideHighway(g, track);
+    // the 2×2 lot on that free tile, turned so its entrance opens onto the
+    // highway tile it stands beside
+    const lot = rx < hx ? { tx: hx, ty: hy, facing: "nw" as const }
+      : ry < hy ? { tx: hx, ty: hy, facing: "ne" as const }
+        : rx > hx ? { tx: hx - 1, ty: hy, facing: "se" as const }
+          : { tx: hx, ty: hy - 1, facing: "sw" as const };
+    expect(isServiced(track, { id: 1, owner: "you", ownerId: 1, ...lot })).toBe(true);
     // the same is true for the rival — the highway belongs to neither
-    expect(isServiced(track, { id: 2, owner: "ai", ownerId: 2, tx: hx, ty: hy })).toBe(true);
+    expect(isServiced(track, { id: 2, owner: "ai", ownerId: 2, ...lot })).toBe(true);
   });
 
   it("links two structures that never laid a tile between them", () => {
@@ -339,7 +345,10 @@ describe("PP-13 public roads are every player's to drive on", () => {
     const [rx, ry, hx, hy] = spotBesideHighway(g, track);
     buildTile(track, "road", hx, hy, 2);           // the rival paves beside you
 
-    const mine = playerNetwork(track, 1, [], [{ ownerId: 1, tx: rx, ty: ry }]);
+    // anchor on a 2×2 Depot lot that covers the highway tile but NOT the
+    // rival's tile beside it (a lot is 2×2 from its origin, so shift it away)
+    const ox = hx === rx + 1 ? rx - 1 : rx, oy = hy === ry + 1 ? ry - 1 : ry;
+    const mine = playerNetwork(track, 1, [], [{ ownerId: 1, tx: ox, ty: oy }]);
     expect(mine.has(tIdx(hx, hy)), "the rival's tile must stay out of my network").toBe(false);
     expect(trackOpenTo(track, 1, hx, hy)).toBe(false);
     expect(trackOpenTo(track, 2, hx, hy)).toBe(true);

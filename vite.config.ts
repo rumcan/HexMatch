@@ -1,5 +1,5 @@
 import path from "path";
-import { execSync } from "node:child_process";
+import { execFile, execSync } from "node:child_process";
 import { cpSync, existsSync } from "node:fs";
 import { fileURLToPath } from "url";
 import tailwindcss from "@tailwindcss/vite";
@@ -105,6 +105,51 @@ function copyBuildingLayers(): Plugin {
 }
 
 /**
+ * DEV ONLY. Recompile a building the moment its master is saved.
+ *
+ * Artists edit `assets/buildings-src/<name>@2x.png`; the game loads the
+ * compiled, trimmed `assets/buildings/<name>@{0.5x,1x,2x}.png` + manifest.
+ * Forgetting `node tools/make-building-pngs.mjs <name>` (or editing the
+ * compiled file instead) left the manifest describing the OLD size, and the
+ * game cropped the new art. This watches the masters (top level only — never
+ * `templates/`), runs the tool for the saved building after a short debounce,
+ * and reloads the page so the new art — at whatever height it now is — shows
+ * straight away. `vite build` is untouched.
+ */
+function watchBuildingSources(): Plugin {
+  return {
+    name: "hexmatch:building-sources",
+    apply: "serve",
+    configureServer(server) {
+      const dir = path.resolve(__dirname, "assets", "buildings-src");
+      if (!existsSync(dir)) return;
+      server.watcher.add(dir);
+      const timers = new Map<string, ReturnType<typeof setTimeout>>();
+      const compile = (file: string) => {
+        const rel = path.relative(dir, file);
+        if (rel.startsWith("..") || rel.includes(path.sep) || !/@2x\.png$/.test(rel)) return;
+        const name = rel.replace(/@2x\.png$/, "");
+        clearTimeout(timers.get(name));
+        timers.set(name, setTimeout(() => {
+          timers.delete(name);
+          execFile(process.execPath, [path.resolve(__dirname, "tools", "make-building-pngs.mjs"), name],
+            { cwd: __dirname }, (err, _stdout, stderr) => {
+              if (err) {
+                server.config.logger.error(`[building-layers] ${name}: ${stderr || err.message}`);
+                return;
+              }
+              server.config.logger.info(`[building-layers] recompiled ${name}`);
+              server.ws.send({ type: "full-reload" });
+            });
+        }, 300));
+      };
+      server.watcher.on("add", compile);
+      server.watcher.on("change", compile);
+    },
+  };
+}
+
+/**
  * The build's short git commit, shown beside the game version at the foot of
  * the main menu (src/ui/version.ts) so a screenshot says exactly which code is
  * running. The RUN.world version itself is assigned at deploy time and read
@@ -136,6 +181,7 @@ export default defineConfig({
     rundotMultiplayerPlugin(devRoomsConfigPath() ? { configPath: devRoomsConfigPath() } : {}),
     devRoomServerOrigin(),
     copyBuildingLayers(),
+    watchBuildingSources(),
   ],
 
   resolve: {

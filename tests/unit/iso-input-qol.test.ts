@@ -18,6 +18,7 @@
 // Same harness as iso-game.test.ts: the real startIsoGame, a stubbed 2D
 // context and image loader, the pinned seed 1337.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { southLotFree } from "./helpers/depot-lot";
 import { WATER } from "../../src/iso/grid";
 import { buildTile } from "../../src/iso/track";
 import { MAP_W, MAP_H, INDUSTRY_BY_KEY } from "../../src/iso/config";
@@ -170,7 +171,7 @@ function findSouthCorridor(
 ): { hx: number; hy: number; fy: number } | null {
   for (const ind of grid.industries) {
     for (let x = ind.tx; x < ind.tx + ind.w; x++) {
-      const hx = x, hy = ind.ty + ind.h;
+      const hx = x, hy = ind.ty + ind.h + 1;
       const fy = hy + len;
       if (hy < 0 || fy >= MAP_H || hx < 0 || hx >= MAP_W) continue;
       let ok = true;
@@ -178,7 +179,7 @@ function findSouthCorridor(
         const i = y * MAP_W + hx;
         if (grid.terrain[i] === WATER || grid.occupancy[i] !== -1) { ok = false; break; }
       }
-      if (ok) return { hx, hy, fy };
+      if (ok && southLotFree(grid, hx, hy)) return { hx, hy, fy };
     }
   }
   return null;
@@ -195,7 +196,7 @@ async function connectedBoot() {
   // The Depot lands through the REAL placement path (the setup click's twin)
   // so the world sync — draw list, name tags, lorry replan — runs over the
   // fixture, exactly as the live game does it.
-  expect(h.placeDepot(hx, hy), "the fixture Depot must be legal on the corridor").toBe(true);
+  expect(h.placeDepot(hx, hy - 1), "the fixture Depot must be legal on the corridor").toBe(true);
   h.refreshQuarry();
   h.finishSetup();
   await settle();

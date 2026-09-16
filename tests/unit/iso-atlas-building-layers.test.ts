@@ -55,6 +55,8 @@ interface Stub {
   fail?: (file: string) => number | undefined;
   /** Serve this instead of the committed manifest. */
   manifest?: BuildingsManifest;
+  /** Real pixel size of a decoded file, by file name (default 8×8). */
+  size?: (file: string) => [number, number] | undefined;
 }
 
 /** Stub `fetch` + `createImageBitmap` against the committed building art. */
@@ -76,7 +78,10 @@ function stubNetwork(stub: Stub = {}): { requested: string[]; pngs: string[] } {
     if (status !== 200) return { ok: false, status, blob: async () => ({}) } as unknown as Response;
     return { ok: true, status, blob: async () => ({ file }) } as unknown as Response;
   });
-  vi.stubGlobal("createImageBitmap", async (blob: unknown) => ({ width: 8, height: 8, blob }));
+  vi.stubGlobal("createImageBitmap", async (blob: { file?: string }) => {
+    const [width, height] = (blob.file && stub.size?.(blob.file)) || [8, 8];
+    return { width, height, blob };
+  });
   return { requested, pngs };
 }
 
@@ -157,20 +162,65 @@ describe("#136 loadBuildingLayers installs per sprite, as each one's PNGs land",
     for (const name of NAMES) expect(tiersOf(atlas, name), `${name} at cap 2`).toEqual([0.5, 1, 2]);
   });
 
-  it("a manifest name the atlas does not know is skipped quietly", async () => {
+  it("the image decides the height: taller art with a stale manifest draws whole, ground kept", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const served = buildingsManifest();
-    served.sprites.ghost_shed = { footprint: [1, 1], anchor: [32, 48], w: 64, h: 64 };
-    const { pngs } = stubNetwork({ manifest: served });
+    const name = "town_center";
+    const old = { ...served.sprites[name], w: 128, h: 70, anchor: [64, 48] as [number, number] };
+    served.sprites[name] = old;
+    // Re-authored 12px taller at 1× (the steeple grew), every zoom recompiled
+    // consistently — but the manifest still describes the old picture.
+    const tall: Record<string, [number, number]> = {
+      [`${name}@0.5x.png`]: [64, 41], [`${name}@1x.png`]: [128, 82], [`${name}@2x.png`]: [256, 164],
+    };
+    stubNetwork({ manifest: served, size: (f) => tall[f] });
     const atlas = freshAtlas();
 
     await loadBuildingLayers(atlas, "/assets/buildings/");
 
-    // Nothing to override, so nothing is fetched and nothing is installed —
-    // and it is NOT a fallback: no warning, because no art failed.
-    expect(atlas.hasBuilding("ghost_shed")).toBe(false);
-    expect(pngs.filter((f) => spriteOf(f) === "ghost_shed")).toEqual([]);
-    expect(warn.mock.calls.map((c) => String(c[0])), "an unknown sprite is not an art failure").toEqual([]);
+    const def = atlas.get(name)!;
+    expect({ w: def.w, h: def.h }, "the whole image is drawn, nothing cropped").toEqual({ w: 128, h: 82 });
+    expect(def.h - def.anchor[1], "the anchor keeps its distance from the bottom").toBe(old.h - old.anchor[1]);
+    expect(def.anchor[0], "and from the centre").toBe(old.anchor[0]);
+    expect(warn.mock.calls.some((c) => String(c[0]).includes(`[building-layers] ${name}`)
+      && String(c[0]).includes("make-building-pngs")), "a stale manifest says how to fix it").toBe(true);
+  });
+
+  it("zoom files out of sync keep the manifest and warn (one tier edited by hand)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const served = buildingsManifest();
+    const name = "town_center";
+    served.sprites[name] = { ...served.sprites[name], w: 128, h: 70, anchor: [64, 48] };
+    // Only the 2× file was replaced by a taller image; 1× and 0.5× are the old art.
+    const mixed: Record<string, [number, number]> = {
+      [`${name}@0.5x.png`]: [64, 35], [`${name}@1x.png`]: [128, 70], [`${name}@2x.png`]: [256, 153],
+    };
+    stubNetwork({ manifest: served, size: (f) => mixed[f] });
+    const atlas = freshAtlas();
+
+    await loadBuildingLayers(atlas, "/assets/buildings/");
+
+    expect({ w: atlas.get(name)!.w, h: atlas.get(name)!.h }).toEqual({ w: 128, h: 70 });
+    expect(warn.mock.calls.some((c) => String(c[0]).includes("edited by hand")), "the hand edit is called out").toBe(true);
+  });
+
+  it("a building the sprite table does not know yet is registered and installed", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const served = buildingsManifest();
+    served.sprites.ghost_shed = { footprint: [2, 2], anchor: [32, 48], w: 64, h: 64 };
+    const { pngs } = stubNetwork({ manifest: served });
+    const atlas = freshAtlas();
+    expect(atlas.get("ghost_shed"), "not in the sheet before the load").toBeUndefined();
+
+    await loadBuildingLayers(atlas, "/assets/buildings/");
+
+    // New art (like `truck_depot`) needs no sheet cell: its own manifest entry
+    // becomes the def, centre-anchored on the footprint it declares.
+    expect(atlas.hasBuilding("ghost_shed")).toBe(true);
+    expect(pngs.filter((f) => spriteOf(f) === "ghost_shed").sort()).toEqual(
+      ["ghost_shed@0.5x.png", "ghost_shed@1x.png", "ghost_shed@2x.png"]);
+    expect(atlas.get("ghost_shed")).toMatchObject({ footprint: [2, 2], center: true });
+    expect(warn.mock.calls.map((c) => String(c[0])), "registering new art is not an art failure").toEqual([]);
     expect(
       NAMES.filter((n) => !atlas.hasBuilding(n)),
       "the sprites the atlas does know still all install",

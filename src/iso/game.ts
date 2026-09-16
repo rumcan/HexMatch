@@ -70,7 +70,7 @@ import { scatterScenery, type DecalImages, type Scenery } from "./scenery";
 import { loadDecalImages, loadScenerySprites } from "./scenery-art";
 import { loadVehicleLayers } from "./vehicle-art";
 import {
-  generateMap, resolveMapSeed, townBuildings, townForSeat, type Grid, type Industry,
+  FIELD_OCC, generateMap, resolveMapSeed, townBuildings, townForSeat, type Grid, type Industry,
 } from "./grid";
 import {
   createTrack, drawBits, previewDrag, commitDrag, canBuildOn, hasTrack,
@@ -114,21 +114,26 @@ import {
   CARGO, CARGOES, DEPOT_TREE, DEPOT_TREE_ORDER, DEPOT_TIER_MAX, FACTORY_FOOTPRINT, FACTORY_SPRITE,
   INDUSTRY_BY_KEY, TRANSPORT, TOWN_UPGRADES,
   BASE_RATE, VICTORY, VP_TARGET, UPGRADE_COST, TUNING,
-  depotSpriteForCargo, type Cargo, type Portrait,
+  type Cargo, type Portrait,
 } from "./config";
-import { depotYield, distanceBandForPath, distanceFactorForPath, transportFactor } from "./loop";
+import {
+  DEFAULT_FACING, DEPOT_FACINGS, DEPOT_SPRITES, depotContains, depotFacingOf, depotFacings,
+  depotTiles, rotateFacing, type DepotFacing,
+} from "./depot";
+import {
+  depotYield, distanceBandForPath, distanceFactorForPath, transportFactor, transportTierOf,
+} from "./loop";
 // L4 (#218): the tuning session — the one thing that sets a depot's yield.
 // The rules live in `tuning.ts` (pure, unit-tested); this file is where they
 // meet the board, the depot record and the HUD.
 // L5 (#219): …and where a finished session also opens the next rung of the
 // depot tree / confirms a city upgrade (Addition A's gate).
 import {
-  createTownSession, createTuningSession, recordTuningCleared,
-  rivalTuningGold, rivalTuningScore, rivalTuningYield, takeTuningMove, townBonusFor,
-  tuningMovesLeft,
-  tuningOver, tuningSessionGold, tuningSessionYield, tuningCargoLabel,
-  unlockTierAfterSession,
-  TUNING_ABANDON_YIELD, TUNING_REWARD_SCORE, type TuningSession,
+  abandonYieldFor, birthYieldFor, createTownSession, createTuningSession, decayYield,
+  difficultyRulesFor, recordTuningCleared, retuneOwed, rivalTuningGold, rivalTuningScore,
+  rivalTuningYield, settleTuningYield, takeTuningMove, townBonusFor, tuningMovesLeft,
+  unlockTierAfterSession, tuningOver, tuningSessionGold, tuningSessionYield,
+  tuningCargoLabel, TUNING_ABANDON_YIELD, TUNING_REWARD_SCORE, type TuningSession,
 } from "./tuning";
 import {
   FREE_SETUP_DEPOTS, costCompact, costLabel, depotTypeLabel,
@@ -138,7 +143,7 @@ import { bankTrade } from "../game/trade";
 import type { CrossKind } from "../game/board";
 import {
   MAP_W, MAP_H, BANDIT_MS, PROTEST_MS, SABOTAGE, SECURITY,
-  RES_KEYS, choice, tileToScreen, type ResKey,
+  RES_KEYS, tileToScreen, type ResKey,
 } from "../game/config";
 import { createQuarry, CARGO_TO_GEM, GEM_TO_CARGO, type Quarry } from "./quarry";
 import {
@@ -314,20 +319,6 @@ const PAVE_MILESTONE_TILES = 4;
  * (grain + ore) are what processing and trade are for.
  */
 export const START_PURSE: Purse = { wood: 12, stone: 12, ore: 0 };
-/**
- * PP-13: what tearing up a DIRT ROAD tile salvages — exactly ONE unit, drawn
- * at random from this list (so: 1 Wood, or 1 Stone).
- *
- * A Dirt Road tile costs `BUILD_COSTS.dirt` = 1 Wood + 1 Stone, so this is a
- * half-refund: re-routing a mistake costs one material per tile instead of
- * two, but demolition is never free and never profitable. The paved Road is
- * excluded on purpose — its price is dominated by 4 Ore and the dirt→road pave
- * exists precisely so a paved Road does not have to be torn up.
- *
- * L2 (#216): the shipped-loop rule only — under `newLoop` dirt is free and
- * salvages nothing (`doDemolish` gates on the flag).
- */
-export const DIRT_DEMOLISH_REFUND: Cargo[] = ["wood", "stone"];
 /**
  * PP-05: re-exported from `construction.ts` (the authoritative cost module) so
  * the whole E8 tuning surface is reachable from this file, the way
@@ -647,6 +638,29 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // it reads `grid.occupancy`/`grid.publicRoads`, both of which `generateMap`
   // has already filled; nothing in `track` affects it.
   const scenery: Scenery = scatterScenery(grid);
+  // RES-FIELDS: the wheat fields / tree blocks beside the resources stand on
+  // the grid as obstacles (FIELD_OCC) until demolished. Their layout is seeded;
+  // only which ones were cleared is state (saved, and sent to a guest).
+  const clearedFields = new Set<number>();
+  const fieldAt = (tx: number, ty: number) => scenery.fields.find((f) =>
+    !clearedFields.has(f.id) && tx >= f.tx && tx < f.tx + 2 && ty >= f.ty && ty < f.ty + 2);
+  const stampFields = () => {
+    for (const f of scenery.fields) {
+      const v = clearedFields.has(f.id) ? -1 : FIELD_OCC;
+      for (let dy = 0; dy < 2; dy++) {
+        for (let dx = 0; dx < 2; dx++) {
+          const i = (f.ty + dy) * MAP_W + f.tx + dx;
+          if (grid.occupancy[i] === -1 || grid.occupancy[i] === FIELD_OCC) grid.occupancy[i] = v;
+        }
+      }
+    }
+  };
+  const setClearedFields = (ids: Iterable<number>) => {
+    clearedFields.clear();
+    for (const id of ids) if (scenery.fields[id]) clearedFields.add(id);
+    stampFields();
+  };
+  stampFields();
   const track: Track = createTrack();
   // RAIL-04 (#178): the railway's own world. #142 is explicit that rail is a
   // SECOND, owner-scoped graph — it never reuses the road tiers, their bytes or
@@ -655,6 +669,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const rail: RailState = createRailState();
   /** RAIL-02: the heading the platform/depot tools place with — R turns it. */
   let railView: RailView = "se";
+  /**
+   * The rotation the Depot tool places in (R turns it). `null` means "whatever
+   * the site opens onto by itself" — the side away from the resource — so a
+   * player who never touches R always gets a sensible entrance.
+   */
+  let depotView: DepotFacing | null = null;
   // PP-10: every town's seed-generated ring road is stamped onto the road
   // layer BEFORE the world exists (world.roadBits is a live reference to
   // track.road), so the first frame already shows settled towns with roads.
@@ -722,13 +742,30 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     try { localStorage.setItem(SKILL_STORAGE_KEY, skillKey); } catch { /* private mode */ }
   }
   const skill = (): RivalSkill => RIVAL_SKILLS[skillKey];
+  /**
+   * L6 (#220): the ECONOMY half of the same choice, read live off the same key.
+   *
+   * One setting, two readers: the rival's pacing presets (`skill()` above) and
+   * the row of `DIFFICULTY_RULES` that decides how a Depot's yield is mapped,
+   * clamped and cooled. Nothing in the economy reads `skillKey` itself — it
+   * reads these flags — which is what makes "all three difficulties share one
+   * economy codepath" true rather than a claim: Easy gets no builder-only fork,
+   * Hard gets no special case in `economyTick`, they get numbers.
+   *
+   * Live, not boot-pinned: flipping the difficulty moves the decay and the
+   * re-match policy on the next tick, exactly as it moves the rival's clocks
+   * and the ★ line (AI-04).
+   */
+  const difficultyRules = () => difficultyRulesFor(skillKey);
   /** The selector + the boot URL both land here; persists for the next boot. */
   const setRivalSkill = (key: SkillKey, announce = true) => {
     if (skillKey === key) return;
     skillKey = key;
     try { localStorage.setItem(SKILL_STORAGE_KEY, key); } catch { /* private mode */ }
     if (announce) {
-      toast(`Rival difficulty: ${skill().label} — ${skill().blurb}`, "info");
+      // L6 (#220): one setting, so the toast states both halves — who you play
+      // against, and what your own Depots do with the yield you tune.
+      toast(`Difficulty: ${skill().label} — ${skill().economyLine}`, "info");
     }
   };
 
@@ -1223,6 +1260,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       void w; void h;
       return true;
     },
+    // L4 (#218) + L6 (#220): the plate's keys. `onTuningEnd` was declared on
+    // UiHooks in #218 but never passed here, so Finish and ✕ were dead buttons
+    // in a live game (the tests drove `__iso.tuningFinish`, which goes straight
+    // to the game). Both doors now call the same two functions, and the new
+    // re-match key goes through the rules too rather than a chrome-side guess.
+    onTuningEnd: (abandon) => closeTuningSession(abandon),
+    onTuningRetune: () => retuneNow(),
+    // L5 (#219): …and the city upgrade's key. Same rule: it calls the game.
+    onTownUpgrade: () => { buyTownUpgrade(); },
     // AI-01: the top-bar difficulty selector. Applies on the NEXT rival tick —
     // the clocks and budgets re-read `skill()` every call, so there is nothing
     // to restart.
@@ -1230,12 +1276,6 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // in a hosted game, so the selector is simply not built.
     onSkill: isSolo() ? (key) => setRivalSkill(key) : undefined,
     skill: isSolo() ? skillKey : undefined,
-    // L4/L5 (#218/#219): the tuning plate's two session keys and the city
-    // upgrade's key. All three are the GAME's rules — the chrome only reports
-    // the click — and the plate is the only door out of a session, so without
-    // these the only way to finish one would be to spend its last move.
-    onTuningEnd: (abandon) => closeTuningSession(abandon),
-    onTownUpgrade: () => { buyTownUpgrade(); },
   }, { rail: railAvailable, newLoop });
   onBoardChange = () => ui.renderBoard();
   root.appendChild(ui.el);
@@ -1411,9 +1451,30 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     fallback([]);
     publishNet(performance.now(), true);
   };
+  /**
+   * The rival's own answer to a cross on ITS board: all of whatever cargo it
+   * is shortest of. No dialog — it is not the player's blessing to allocate.
+   */
+  const rivalCrossPicks = (picks: number): ResKey[] => {
+    const scarcest = (CARGOES as readonly Cargo[])
+      .filter((c) => c !== "gold")
+      .sort((a, b) => (rival.purse[a] ?? 0) - (rival.purse[b] ?? 0)
+        || a.localeCompare(b))[0];
+    return Array.from({ length: picks }, () => CARGO_TO_GEM[scarcest]);
+  };
+
   const __setCrossPrompt = (boardOwner: string, kind: CrossKind, picks: number, resolve: (chosen: ResKey[]) => void) => {
+    // Whose board made the cross decides who answers it. The RIVAL's board
+    // answers itself — its blessing pays ITS purse, so putting that chooser on
+    // the player's screen asked them to allocate the opponent's bonus, out of
+    // nowhere, mid-cascade ("a broken cross randomly triggers on my board").
+    const mine = boardOwner === "you" || boardOwner === players[0].id;
+    if (!mine && (isSolo() || aiOpponent)) {
+      resolve(rivalCrossPicks(picks));
+      return;
+    }
     // In solo, just show locally; in host, track prompt for guest sync
-    // #186: an AI-FILLED seat shows locally too — the seat the host would
+    // #186: an AI-FILLED seat is handled above — the seat the host would
     // otherwise publish this prompt to is a machine, and a prompt nobody can
     // answer would sit until its 30 s expiry instead of being played.
     if (isSolo() || aiOpponent) {
@@ -1517,6 +1578,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     "out-of-bounds": "Off the map",
     water: "Can't build on water",
     occupied: "Tile is occupied",
+    field: "Demolish the field first",
     rough: "Road can't cross rough — use Dirt",
     "not-adjacent": "Drag out from your Factory / Depot",
   };
@@ -1584,6 +1646,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     extra: [],
     trees: scenery.trees,
     forests: scenery.forests,
+    fields: scenery.fields,
     sceneryBlocked: new Set<number>(),
     // RAIL-03 (#177): the railway layer the renderer paints the vector track
     // from — refreshed in `syncWorld`, which is the only place the world
@@ -2060,6 +2123,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const plantCostLabel = () => (Object.entries(PLANT_COST) as [Cargo, number][])
     .map(([k, v]) => `${v} ${CARGO[k].icon}`).join(" ");
 
+  /**
+   * The building a Depot draws: the rotation its entrance opens onto. The
+   * per-building PNGs are a separate load from the sheet (`loadBuildingLayers`),
+   * so until they land — or on a checkout without them — this falls back to the
+   * sheet's own depot cell in the owner's colour, exactly as the lorries fall
+   * back to `truck_goods_*`. The fallback keeps the building pickable (the
+   * inspector, the hover route) instead of leaving a hole in the draw list.
+   */
+  const depotSpriteFor = (h: { tx: number; ty: number; ownerId: number; facing?: DepotFacing }) => {
+    const want = DEPOT_SPRITES[depotFacingOf(grid, h)];
+    if (!atlasRef || atlasRef.has(want)) return want;
+    return h.ownerId === me.i + 1 ? "depot_blue" : "depot_red";
+  };
+
   const syncWorld = () => {
     world.roadBits = drawBits(track, "road");
     world.dirtBits = drawBits(track, "dirt");
@@ -2075,13 +2152,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     for (const f of eco.factories)
       for (const [x, y] of plantFootprintTiles(f.tx, f.ty))
         if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) blocked.add(y * MAP_W + x);
-    for (const h of eco.harvesters) blocked.add(h.ty * MAP_W + h.tx);
+    for (const h of eco.harvesters)
+      for (const [x, y] of depotTiles(h.tx, h.ty))
+        if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) blocked.add(y * MAP_W + x);
     // RAIL-04: a platform or a train depot is a built thing — the trees it
     // stands on are hidden under it, exactly like a plant's footprint.
     for (const s of rail.structures)
       for (const [x, y] of footprintTiles(s))
         if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) blocked.add(y * MAP_W + x);
     world.sceneryBlocked = blocked;
+    world.fields = scenery.fields.filter((f) => !clearedFields.has(f.id));
     // PP-12: one draw item per factory — the single TTD complex, drawn at the
     // footprint origin. The manifest footprint matches FACTORY_FOOTPRINT (both
     // derive from the art), so the anchor lands on the footprint's south
@@ -2111,19 +2191,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     world.extra = [
       ...townItems,
       ...factoryItems,
-      // PP-12: resource-specific Depot art — the outpost reads as what it
-      // harvests (a lumber mill at a forest, a rig at an oil field, …). The
-      // first served industry names the cargo; placement always requires one,
-      // so the fallback below only serves foreign snapshots. Ownership still
-      // shows in the inspector, the catchment overlays and the ref payload.
-      ...eco.harvesters.map((h) => {
-        const served = industriesInCatchment(grid, h);
-        const cargo = served.length ? INDUSTRY_BY_KEY[served[0].type].cargo : "grain";
-        return {
-          sprite: depotSpriteForCargo(cargo),
-          tx: h.tx, ty: h.ty, ref: { kind: "harvester", id: h.id, owner: h.owner },
-        };
-      }),
+      // Every Depot is the same truck depot building, whatever it harvests.
+      // Ownership shows in the inspector, the catchment overlays and the ref.
+      ...eco.harvesters.map((h) => ({
+        sprite: depotSpriteFor(h),
+        tx: h.tx, ty: h.ty, ref: { kind: "harvester", id: h.id, owner: h.owner },
+      })),
       // RAIL-04: the railway's structures are ordinary footprint-anchored
       // sprites in the same static list (`railStructureItems` names them from
       // the manifest, and `syncWorld` is the only writer). A missing PNG just
@@ -2350,7 +2423,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           toast("Can't build there — another Factory stands there.", "bad");
           return false;
         }
-        if (eco.harvesters.some((h) => h.tx === fx && h.ty === fy)) {
+        if (eco.harvesters.some((h) => depotContains(h.tx, h.ty, fx, fy))) {
           toast("Can't build there — a Depot stands there.", "bad");
           return false;
         }
@@ -2765,7 +2838,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * on a clean table, and the rival's sabotage must not be able to rig a
    * yield), biased toward the Depot's own colour, and the plate takes over.
    */
-  function openTuningSession(depot: Harvester): void {
+  function openTuningSession(depot: Harvester, isRematch = false): void {
+    const rules = difficultyRules();
+    // L6 (#220): `matchEnabled` is the ONE flag that can keep this from
+    // happening, and all three rows set it true — "match-3 stays on Easy" is a
+    // fact about the table, not a branch. Honouring it here (and in
+    // `retuneCandidates`) instead of at each caller is what lets a future mode
+    // turn the board off as a data change.
+    if (!rules.matchEnabled) return;
     const cargo = tuningCargoFor(depot);
     if (!cargo) return;
     quarry.board.resetNeutral();
@@ -2774,7 +2854,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     sfx.play("open");
     ui.openSessionBoard();
     toast(
-      `Tuning session — ${tuningCargoLabel(cargo)}: ${TUNING.moves} moves on the plant floor set this Depot's yield.`,
+      `Tuning session — ${tuningCargoLabel(cargo)}: ${TUNING.moves} moves on the plant floor set this Depot's yield`
+      + (isRematch ? " again." : ".")
+      // The closing promise comes from the row, not from the mood of the copy.
+      + (rules.yieldNeverDrops ? " It can only go up from here." : " A bad round can cost you."),
       "info",
     );
   }
@@ -2867,15 +2950,31 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (!s) return;
     tuning = null;
     quarry.board.setBias(null);
-    // A session that cleared nothing was not "finished" in any sense the
-    // ticket means: every outcome below reads this, not the raw flag.
+    // L4/L5: a session that cleared nothing was not "finished" in any sense
+    // the ticket means — every outcome below reads this, not the raw flag. It
+    // is what makes L5's gate a gate (a rung or a city upgrade confirmed by an
+    // empty board is no gate at all).
     const played = !abandon && s.score > 0;
+    // A town session has no Depot (`depotId` is -1), so this is `undefined`
+    // there and the city branch below settles instead.
+    const depot = eco.harvesters.find((h) => h.id === s.depotId);
+    // L6 (#220): the difficulty sits between the score and the record. The
+    // number that lands is `settleTuningYield(prev, score, rules)` — mapped onto
+    // THIS row's floor (Easy's is raised, so an empty session still buys a
+    // decent Depot) and, on `yieldNeverDrops`, the better of the old and new
+    // levels. Hard is the row where a poor re-match really does cost.
+    const rules = difficultyRules();
+    const prev = depot?.yield;
+    const level = settleTuningYield(prev, s.score, rules, { abandon });
     // L9 (#224): the session is also THE Gold source on the new loop. The
     // board's combo coin stopped paying (`payGold: !newLoop`), so the score
     // that sets the yield also banks the coins the Black Market's two map
     // cards are bought with. An abandoned session pays none — the same rule
-    // its yield follows. It is settled here, above the branches, because both
-    // kinds of session pay it on the same curve.
+    // its yield follows, and the same one the coins are read from: the reward
+    // is on the SCORE the player played, so a difficulty row that lifts the
+    // yield does not silently lift the purse too. It is settled here, above
+    // the branches, because both kinds of session (L5: a Depot's, or the
+    // city's) pay it on the same curve.
     const coins = abandon ? 0 : tuningSessionGold(s);
     if (coins > 0) {
       earn(me, { gold: coins });
@@ -2902,7 +3001,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         return;
       }
       const row = TOWN_UPGRADES[me.townLevel] ?? TOWN_UPGRADES[TOWN_UPGRADES.length - 1];
-      const bonus = townBonusFor(row?.bonus ?? 0, s.score);
+      // L6 (#220) arrives here too, because the ticket asks for it: the score
+      // sets how much of the ceiling lands (`townBonusFor`), and the row's
+      // `yieldNeverDrops` decides whether a poor session may take some of it
+      // BACK. Easy and Normal keep what they have (the city can only improve);
+      // Hard is the row where a badly played upgrade really does cost. Easy's
+      // generosity is the curve itself — any played session already banks the
+      // bottom 40% of the ceiling.
+      const next = townBonusFor(row?.bonus ?? 0, s.score);
+      const bonus = rules.yieldNeverDrops ? Math.max(me.townBonus, next) : next;
       if (bonus > 0) me.townBonus = bonus;
       me.townLevel = Math.min(me.townLevel + 1, TOWN_UPGRADES.length);
       // Gold follows the score here too (L9's one session, one payout), on the
@@ -2916,28 +3023,50 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       rescoreNow();
       return;
     }
-    const depot = eco.harvesters.find((h) => h.id === s.depotId);
-    const level = abandon ? TUNING_ABANDON_YIELD : tuningSessionYield(s);
     if (depot) {
       // Stored on the depot record, which is what the L1b clock multiplies by
-      // — and what the snapshot (yield) and the savegame (harvesters) carry.
+      // — and what the snapshot (yield + tuneTier) and the savegame (harvesters)
+      // carry.
       depot.yield = level;
-      const gained = played && level > TUNING_ABANDON_YIELD;
       // L5 (#219) — THE SESSION GATE: finishing a session that was actually
       // PLAYED opens the next rung of the depot tree for the seat that owns
       // the Depot. The seat, not "me": a depot session only opens for the
       // local human seat today, but the rule belongs to the record.
       const seat = players.find((x) => x.id === depot.owner) ?? me;
-      const before = Math.min(seat.depotTier, DEPOT_TIER_MAX);
-      seat.depotTier = unlockTierAfterSession(before, played ? s.score : 0);
-      const rung = seat.depotTier > before
+      const rungBefore = Math.min(seat.depotTier, DEPOT_TIER_MAX);
+      seat.depotTier = unlockTierAfterSession(rungBefore, played ? s.score : 0);
+      const rung = seat.depotTier > rungBefore
         ? ` ${rungLabel(seat.depotTier)} — new Depot types are open.`
         : "";
+      // `undefined` here marked "this Depot has never settled a session", which
+      // is the one thing the copy below needs to know: a player who has just
+      // played their ONE session on Easy must not be told a re-match awaits.
+      const first = depot.tuneTier === undefined;
+      // The credit is spent against the tier the Depot stands on NOW, so an
+      // upgrade it already had when it was tuned cannot pay for a second
+      // session and one it buys later can.
+      depot.tuneTier = depotTier(depot);
+      // Gained/lost are measured against the level the Depot was actually
+      // paying at, which for a never-tuned Depot is the default the old loop
+      // shipped with — that is what makes Easy's raised floor read as a gain on
+      // the very first session, instead of "the default" for a number the
+      // player just played for.
+      const before = prev ?? TUNING_ABANDON_YIELD;
+      const gained = level > before;
+      const lost = level < before;
+      const after = rules.rematch === "never" ? "That is this Depot's one session."
+        : rules.rematch === "upgrade" ? "Another comes with your next upgrade."
+          : "You can re-tune it from the plant panel.";
       toast(
-        note ?? (gained
-          ? `Depot tuned — ${s.score} score, yield ×${level}.${paid} It ticks faster from here.${rung}`
-          : `Depot tuned — yield ×${level} (the default). A better session raises it.`),
-        gained ? "good" : "info",
+        note ?? ((gained
+          ? `Depot tuned — ${s.score} score, yield ×${level}.${paid} It ticks faster from here.`
+          : lost
+            ? `Depot re-tuned badly — yield ×${before} → ×${level}.${paid} and nothing recovers it but a better session. ${after}`
+            : `Depot tuned — yield ×${level}${first ? " (the default)." : paid} ${
+              first ? "A better session raises it."
+                : rules.yieldNeverDrops ? "Kept: a session never lowers a Depot." : ""
+            } ${after}`) + rung),
+        gained ? "good" : lost ? "bad" : "info",
       );
       ui.feed(`Depot tuned: yield ×${level}${paid}${rung}`, me.name);
     } else if (note) {
@@ -2954,6 +3083,140 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * on every AI turn and on the economy clock, so a depot from a restored save
    * (or one built before this landed) is never left without a level.
    */
+  /** L6: `retuneCandidates`' memo — the key inside the scan is why it is safe. */
+  let retuneCache: {
+    key: string; list: { depot: Harvester; yield: number; tier: number }[];
+  } | null = null;
+
+  /**
+   * L6 (#220): the tier a Depot's link is worth RIGHT NOW — the axis Normal's
+   * re-match credit is counted on.
+   *
+   * It resolves over the LIVE track instead of through the inspector's
+   * `componentsFor` cache: that cache is keyed on `netVersion`, and a tier that
+   * lags a world edit by one rescore would make the re-match offer wrong for a
+   * beat every time a road changed. `track.revision` is bumped by every tile
+   * write, so the scan reruns on exactly the moments that can change the answer
+   * — and only the truth of the map decides it, which is also why no save can
+   * claim an upgrade it never built (see `transportTierOf`).
+   */
+  function depotTier(depot: Harvester, comp?: Components): number {
+    const c = comp ?? buildAllComponents(eco.track, ownerIdOf(eco, depot.owner));
+    return transportTierOf(resolveConnection(eco, c, depot).kind);
+  }
+
+  /**
+   * L6 (#220): the player's Depots a re-tune is OWED on, weakest first.
+   *
+   * One scan, no per-difficulty branches: `retuneOwed` answers "never" for the
+   * Easy row without this function knowing which difficulty is on, Hard's
+   * low-output Depot rises to the top because the sort is on the live yield
+   * (the cooling pass has been shaving it for the last few minutes), and a Depot
+   * whose session is still up is skipped. The plate reads the head of the list
+   * for its one key and `retuneNow` takes the same list, so the copy and the
+   * action can never point at different Depots.
+   */
+  function retuneCandidates(): { depot: Harvester; yield: number; tier: number }[] {
+    if (!newLoop) return [];
+    const rules = difficultyRules();
+    // Read every frame (the plate paints from it), so it is cached on precisely
+    // the inputs the answer depends on: the difficulty row, the map the tiers
+    // are derived from, whose session is up, and each Depot's stored level and
+    // spent credit. A decay tick changes a level, so the scan reruns once on
+    // that tick and never again while the map is idle — the same `key`-string
+    // trick `vpTipCache` and `routeOverlayFor` use. One flood pair serves the
+    // whole scan, because every Depot in it belongs to this seat.
+    const mine = eco.harvesters.filter((h) => h.owner === me.id);
+    const key = `${skillKey}|${eco.track.revision}|${tuning?.depotId ?? -1}|`
+      + mine.map((h) => `${h.id}:${h.yield ?? "-"}:${h.tuneTier ?? "-"}`).join(",");
+    if (retuneCache?.key === key) return retuneCache.list;
+    const comp = buildAllComponents(eco.track, ownerIdOf(eco, me.id));
+    const out: { depot: Harvester; yield: number; tier: number }[] = [];
+    for (const depot of mine) {
+      if (tuning && tuning.depotId === depot.id) continue;
+      const tier = depotTier(depot, comp);
+      if (!retuneOwed(rules, { tier, tuneTier: depot.tuneTier })) continue;
+      out.push({ depot, yield: depotYield(depot), tier });
+    }
+    // Weakest first: "a low-output Depot invites a re-match" IS this sort, not a
+    // special case. Ties fall to the older Depot so the offer is stable.
+    const list = out.sort((a, b) => a.yield - b.yield || a.depot.id - b.depot.id);
+    retuneCache = { key, list };
+    return list;
+  }
+
+  /**
+   * The plant plate's single re-match offer — the head of `retuneCandidates`, or
+   * null when there is nothing to offer. Easy always answers null (its row says
+   * `rematch: "never"`), so the plate there keeps the shipped "build a Depot"
+   * line instead of a key that would refuse to work.
+   */
+  function retuneOffer() {
+    const head = retuneCandidates()[0];
+    if (!head) return null;
+    return {
+      depotId: head.depot.id,
+      cargo: tuningCargoFor(head.depot),
+      yield: head.yield,
+      // Hard is the row where saying the number out loud matters: there an
+      // empty session is a real loss, and the key says so before the click.
+      risks: !difficultyRules().yieldNeverDrops,
+    };
+  }
+
+  /**
+   * What the plant plate paints while it is UP and no session is open — and
+   * `null` when it has something better to say (a live session) or when the
+   * plate is not part of this loop at all. `ui.paint` and `__iso.tuningIdle`
+   * both read this one object, so the difficulty's promise, its floor and its
+   * offer are never two sources of truth, and the UI never forks on a
+   * difficulty: it prints what it is handed.
+   */
+  function tuningIdleInfo(): {
+    idle: true; retune: ReturnType<typeof retuneOffer>; economyLine: string; yieldFloor: number;
+  } | null {
+    if (!newLoop || tuning) return null;
+    return {
+      idle: true,
+      retune: retuneOffer(),
+      economyLine: skill().economyLine,
+      yieldFloor: difficultyRules().minYield,
+    };
+  }
+
+  /**
+   * The plate's Retune key (and `__iso.retuneDepot`'s). The rules the key's
+   * visibility already applied are re-checked here, because a keyboard or debug
+   * caller never went through the key: no re-match on Easy, no credit on
+   * Normal, one session at a time on all three.
+   */
+  function retuneNow(depotId?: number): boolean {
+    if (!newLoop) return false;
+    if (tuning) {
+      toast("Finish the tuning session first — one Depot is tuned at a time.", "bad");
+      return false;
+    }
+    const rules = difficultyRules();
+    if (!rules.matchEnabled) {
+      toast("Match-3 is off on this mode.", "info");
+      return false;
+    }
+    if (rules.rematch === "never") {
+      toast(`No re-match on ${skill().label} — the session a Depot is built with is the only one.`, "info");
+      return false;
+    }
+    const list = retuneCandidates();
+    const head = depotId === undefined ? list[0] : list.find((c) => c.depot.id === depotId);
+    if (!head) {
+      toast(rules.rematch === "upgrade"
+        ? "No Depot is due a re-tune — one comes with each upgrade."
+        : "No Depot to re-tune yet — build one first.", "info");
+      return false;
+    }
+    openTuningSession(head.depot, true);
+    return true;
+  }
+
   function applyRivalTuning(): void {
     if (!newLoop) return;
     const key = skill().key;
@@ -2981,41 +3244,28 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   }
 
   function placeHarvester(tx: number, ty: number, p: PlayerState): boolean {
-    if (!canBuildOn(grid, "dirt", tx, ty)) {
-      toast("Can't build there.", "bad");
-      if (p.human) flashAt(tx, ty, "Can't build here");
+    // The 2×2 truck Depot: the SAME plan the preview paints and the host
+    // validates — four buildable tiles, no overlap with a Depot or a Factory,
+    // a resource right beside the lot, an open side for the entrance, and
+    // (PP-16) a resource beside it that nobody's road already holds.
+    const plan = planDepotPlacement(grid, eco.harvesters, tx, ty, depotLocks());
+    if (!plan.valid) {
+      const message: Record<string, string> = {
+        "depot-taken": "A depot is already there.",
+        occupied: "Can't build there — something already stands there.",
+        field: "A field or trees stand there — demolish them first.",
+        "no-industry-beside": "A depot must sit right beside a resource.",
+        "entrance-blocked": "Resources on both sides — the depot needs one open side for its entrance.",
+        "industry-taken": "That industry is already claimed — only one Depot may hold it.",
+      };
+      toast(message[plan.code ?? ""] ?? "Can't build there.", "bad");
+      if (p.human) flashAt(tx, ty, plan.why ? `Depot: ${plan.why}` : "Can't build here");
       return false;
     }
-    if (eco.harvesters.some((h) => h.tx === tx && h.ty === ty)) {
-      toast("A depot is already there.", "bad");
-      if (p.human) flashAt(tx, ty, "A depot is already here");
-      return false;
-    }
-    // MP-AUDIT: factory footprints block depot previews and commits (consistent with preview)
-    if (eco.factories.some((f) => tx >= f.tx && tx < f.tx + FACTORY_FOOTPRINT[0] && ty >= f.ty && ty < f.ty + FACTORY_FOOTPRINT[1])) {
-      toast("Can't build there — a Factory stands there.", "bad"); return false;
-    }
-    const h: Harvester = { id: allocHarvesterId(), owner: p.id, ownerId: p.i + 1, tx, ty };
-    const served = industriesInCatchment(grid, h);
-    if (!served.length) {
-      toast("A depot needs an industry in its 4×4 catchment.", "bad");
-      // The flash says WHERE, at the spot the player picked: beside a
-      // resource node, inside the 4×4 the Depot would reach.
-      if (p.human) flashAt(tx, ty, "Depot: place beside a resource (4×4)");
-      return false;
-    }
-    // PP-16: one Depot holds one industry, and the first road at the resource
-    // takes it. A Depot standing on open ground with no track beside it claims
-    // nothing (see `industryLocks`), so it can never shut anyone out — but once
-    // a rival's Depot has a road, every industry in its catchment is spoken
-    // for, and a second Depot there would harvest nothing. Refused before
-    // anything is priced or spent, like every other refusal in here.
-    const locks = industryLocks(eco);
-    if (served.every((ind) => locks.has(ind.id))) {
-      toast("That industry is already claimed — only one Depot may hold it.", "bad");
-      if (p.human) flashAt(tx, ty, "Resource already claimed");
-      return false;
-    }
+    const h: Harvester = {
+      id: allocHarvesterId(), owner: p.id, ownerId: p.i + 1, tx, ty, facing: plan.facing ?? DEFAULT_FACING,
+    };
+    const served = plan.served;
     // L4 (#218): one tuning session at a time. The board is open for the
     // Depot the player is tuning RIGHT NOW, and a second Depot would have no
     // board to be tuned on (the plate is one session's plate). Refused before
@@ -3063,7 +3313,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // and is then tuned. A level is never absent, so a mid-session reload or a
     // depot the player never got round to tuning still ticks (and still
     // round-trips the wire/save as a number).
-    if (newLoop) h.yield = TUNING_ABANDON_YIELD;
+    // L6 (#220): "born at the default" is now "born at the difficulty's floor" —
+    // Easy raises it to 1.5, Normal and Hard keep the shipped baseline, and it
+    // is the SAME number an abandoned session pays, so a Depot the player never
+    // got round to tuning is exactly as good as one they abandoned on purpose.
+    if (newLoop) h.yield = birthYieldFor(difficultyRules());
     // G5: harvesters seed the network; they no longer need existing track.
     eco.harvesters.push(h);
     if (p.human) sfx.play("build");      // SFX-01
@@ -3244,7 +3498,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       toast("Rail lifted.", "info");
       return;
     }
-    const hi = eco.harvesters.findIndex((h) => h.tx === tx && h.ty === ty && h.owner === p.id);
+    // any tile of the 2×2 lot demolishes the Depot standing on it
+    const hi = eco.harvesters.findIndex((h) => depotContains(h.tx, h.ty, tx, ty) && h.owner === p.id);
     if (hi >= 0) {
       const removed = eco.harvesters[hi];
       eco.harvesters.splice(hi, 1);
@@ -3279,6 +3534,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (p.human) sfx.play("demolish");   // SFX-01
       syncWorld(); rescoreNow();
       toast("Processing plant demolished.", "info");
+      return;
+    }
+    // RES-FIELDS: a wheat field or tree block comes down for free, for
+    // whoever wants the ground — that is how a Depot or a road gets through.
+    const field = fieldAt(tx, ty);
+    if (field) {
+      clearedFields.add(field.id);
+      stampFields();
+      if (p.human) sfx.play("demolish");
+      syncWorld(); rescoreNow();
+      toast(field.sprite === "trees" ? "Trees felled — the ground is clear." : "Wheat field cleared.", "info");
       return;
     }
     let removedKind: TrackKind | null = null;
@@ -3316,15 +3582,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // SFX-01: timber coming apart — a little further away for a single tile
     // of track than for a whole building.
     if (p.human) sfx.play("demolish", removedKind === "dirt" ? undefined : { gain: 0.8 });
-    if (removedKind === "dirt") {
-      if (newLoop) {
-        toast("Dirt Road cleared.", "info");
-      } else {
-        const back = choice(DIRT_DEMOLISH_REFUND);
-        earn(p, { [back]: 1 });
-        toast(`Dirt Road cleared — salvaged 1 ${CARGO[back].icon} ${CARGO[back].name}.`, "good");
-      }
-    }
+    // Dirt costs nothing to lay, so tearing it up salvages nothing — a free
+    // tile that paid out on demolition would mint resources. Re-routing a
+    // mistake is simply free.
+    if (removedKind === "dirt") toast("Dirt Road cleared.", "info");
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
       const x = tx + dx, y = ty + dy;
       if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) renderer?.invalidateTile(x, y);
@@ -3744,12 +4005,31 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // and this branch never runs.
       // Connectivity is evaluated per depot, so removing a road immediately
       // stops that depot's income — on either seat.
+      const rules = difficultyRules();
       const locks = industryLocks(eco);
       for (const seat of [me, rival]) {
         const owner = seat.id;
         const components = buildAllComponents(eco.track, ownerIdOf(eco, owner));
         for (const depot of eco.harvesters) {
           if (depot.owner !== owner) continue;
+          // L6 (#220): the cooling pass, on this same line for every difficulty.
+          // `decayYield` returns null when the row's `decayRate` is 0 (Easy,
+          // Normal) or the Depot has no surplus above its floor left to lose, so
+          // "no decay" and "decaying" are ONE codepath with different numbers —
+          // which is what the acceptance asks a unit test to prove by toggling
+          // the flags on a live game. It runs before the pay, so the level the
+          // HUD printed is the level this tick paid at; it runs on every Depot
+          // the seat owns (a disconnected one cools too, or cutting a road would
+          // freeze a fresh tune); and its result is stored back on the Depot
+          // record, which is what the snapshot and the autosave already carry.
+          // Only the player's Depots cool: `DIFFICULTY_RULES` is the human's
+          // economy axis, and the rival's levels are its `tuningSkill` preset —
+          // letting a difficulty row shave the AI would quietly make Hard an AI
+          // handicap instead of a player challenge (and Easy a buff).
+          if (seat === me) {
+            const cooled = decayYield(depot.yield, rules);
+            if (cooled !== null) depot.yield = cooled;
+          }
           const result = harvesterYield(eco, components, locks, depot, now);
           const cargoes = Object.entries(result.yields) as [Cargo, number][];
           if (!result.serviced || !cargoes.length) continue;
@@ -4609,6 +4889,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       boards: boardsWire,
       crossPrompt,
       winner: winner ? { id: winner.id, source: winningSource } : null,
+      clearedFields: [...clearedFields],
     });
   }
 
@@ -4673,6 +4954,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       trucks: trucksWire,
       cars: carsWire,
       rail: railWire(),
+      clearedFields: [...clearedFields],
       // #117: the field is omitted entirely when neither board changed —
       // `buildPublish` keeps optional fields off the wire when undefined.
       ...(boardsWire.length ? { boards: boardsWire } : {}),
@@ -4776,7 +5058,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     track.owner.set(applied.track.owner);
     track.upgraded.set(applied.track.upgraded);
     eco.harvesters.length = 0;
-    eco.harvesters.push(...applied.harvesters.map((h) => ({ ...h })));
+    setClearedFields(applied.clearedFields);
+    eco.harvesters.push(...applied.harvesters.map((h) => ({ ...h, facing: depotFacingOf(grid, h) })));
     eco.factories.length = 0;
     eco.factories.push(...applied.factories.map((f) => ({ ...f })));
     for (let i = 0; i < players.length; i++) {
@@ -4805,7 +5088,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     applyBlockadesWire(applied.blockades ?? []);
     // vehicles
     if (applied.trucks) {
-      (trucks as any).trucks = applied.trucks.map((t) => ({ ...t, factory: [...t.factory] as [number, number], route: t.route.map((r) => [...r] as [number, number]), segFast: t.segFast ? [...t.segFast] : [] }));
+      (trucks as any).trucks = applied.trucks.map((t) => ({ ...t, depot: truckLot(t.depotId), factory: [...t.factory] as [number, number], route: t.route.map((r) => [...r] as [number, number]), segFast: t.segFast ? [...t.segFast] : [] }));
     }
     if (applied.cars) {
       (cars as any).cars = applied.cars.map((c: any) => ({ ...c, origin: c.origin ? [...c.origin] as [number, number] : null, dest: c.dest ? [...c.dest] as [number, number] : null, route: c.route.map((r: any) => [...r] as [number, number]) }));
@@ -4871,9 +5154,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   function applyNetDelta(msg: DeltaMsg) {
     let worldDirty = false;
     if (msg.tiles) { applyTrackDelta(track, msg.tiles); worldDirty = true; }
+    if (Array.isArray(msg.clearedFields) && msg.clearedFields.length !== clearedFields.size) {
+      setClearedFields(msg.clearedFields.filter((id) => Number.isInteger(id) && id >= 0));
+      worldDirty = true;
+    }
     if (msg.harvesters) {
       eco.harvesters.length = 0;
-      eco.harvesters.push(...msg.harvesters.map((h) => ({ ...h })));
+      eco.harvesters.push(...msg.harvesters.map((h) => ({ ...h, facing: depotFacingOf(grid, h) })));
       worldDirty = true;
     }
     if (msg.factories) {
@@ -4916,7 +5203,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       worldDirty = true;
     }
     if ((msg as any).trucks) {
-      (trucks as any).trucks = (msg as any).trucks.map((t: any) => ({ ...t, factory: [...t.factory] as [number, number], route: t.route.map((r: any) => [...r] as [number, number]), segFast: t.segFast ? [...t.segFast] : [] }));
+      (trucks as any).trucks = (msg as any).trucks.map((t: any) => ({ ...t, depot: truckLot(t.depotId), factory: [...t.factory] as [number, number], route: t.route.map((r: any) => [...r] as [number, number]), segFast: t.segFast ? [...t.segFast] : [] }));
       worldDirty = true;
     }
     if ((msg as any).cars) {
@@ -5359,7 +5646,26 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * about ground and geography (the lock needs the track layer, which it must
    * not reach for).
    */
-  const depotLocks = () => ({ locked: lockedIndustryIds(eco), factories: eco.factories.map((f) => ({ tx: f.tx, ty: f.ty })) });
+  const depotLocks = () => ({ locked: lockedIndustryIds(eco), factories: eco.factories.map((f) => ({ tx: f.tx, ty: f.ty })), facing: depotView });
+
+  /** The lot a wire lorry belongs to — the wire carries only its depot id. */
+  const truckLot = (depotId: number): [number, number] | undefined => {
+    const h = eco.harvesters.find((x) => x.id === depotId);
+    return h ? [h.tx, h.ty] : undefined;
+  };
+
+  /** R: the next rotation the Depot tool will place in. */
+  const rotateDepotView = () => {
+    const site = hover && (tool === "harvester" || phase === "setup-harvester") ? hover : null;
+    const legal = site ? depotFacings(grid, site.tx, site.ty) : [];
+    if (legal.length > 1) {
+      const cur = depotView && legal.includes(depotView) ? depotView : legal[0];
+      depotView = legal[(legal.indexOf(cur) + 1) % legal.length];
+    } else {
+      depotView = rotateFacing(depotView ?? DEFAULT_FACING);
+    }
+    return depotView;
+  };
 
   const factoryPlanForTool = (tx: number, ty: number): PlacementPlan => {
     const plan = planFactoryPlacement(grid, tx, ty, { requireTown: true, track });
@@ -5443,7 +5749,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       pushPlan(items, plan);
       // The outpost art is the cargo's, so the preview shows the mill/rig/mine
       // this site would actually raise (see `depotPreviewSprite`).
-      ghost = { sprite: depotPreviewSprite(grid, tx, ty), tx, ty, valid: plan.valid };
+      ghost = { sprite: depotPreviewSprite(grid, tx, ty, depotView), tx, ty, valid: plan.valid };
     } else if (tool === "platform" || tool === "raildepot") {
       // RAIL-02 (#176): the same overlay contract as every other placement
       // tool — the footprint green or red, and the transparent building
@@ -5483,7 +5789,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // depot is found by tile, so the hover route and the truck agree even when
     // the current tool is not a placement tool (setup phases hover empty tiles
     // and find no depot, so they never double up).
-    const dep = eco.harvesters.find((h) => h.tx === tx && h.ty === ty);
+    const dep = eco.harvesters.find((h) => depotContains(h.tx, h.ty, tx, ty));
     if (dep) items.push(...routeOverlayFor(dep));
     return { items, ghost };
   };
@@ -5824,16 +6130,24 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
               cargo: tuning.cargo, moves: tuning.moves, movesLeft: tuningMovesLeft(tuning),
               score: tuning.score,
               // L5 (#219): the same "what this score is worth" readout, on the
-              // curve the session actually settles on — a Depot's yield, or
-              // the city's base-rate bonus (0 while nothing is raised, and the
-              // plate prints it as a percentage).
+              // curve the session actually settles on — a Depot's yield (L6:
+              // mapped onto THIS difficulty's floor), or the city's base-rate
+              // bonus (0 while nothing is raised, and the plate prints it as a
+              // percentage).
               yield: tuning.kind === "town"
                 ? townBonusFor(TOWN_UPGRADES[Math.min(me.townLevel, TOWN_UPGRADES.length - 1)]?.bonus ?? 0, tuning.score)
-                : tuningSessionYield(tuning),
-              abandonYield: TUNING_ABANDON_YIELD,
+                : tuningSessionYield(tuning, difficultyRules().minYield),
+              abandonYield: tuning.kind === "town"
+                ? TUNING_ABANDON_YIELD
+                : abandonYieldFor(difficultyRules()),
             }
           : null)
         : undefined,
+      // L6 (#220): what the plate says BETWEEN sessions. `retuneOffer()` is null
+      // on Easy — that row's `rematch: "never"` is what keeps the shipped line
+      // on screen instead of a key that would refuse to work — and null on
+      // Normal until a Depot has actually been upgraded.
+      tuningIdle: tuningIdleInfo() ?? undefined,
       // L5 (#219): the city upgrade's key, priced from the seat's own row of
       // `TOWN_UPGRADES`. `undefined` on the shipped loop: the key does not
       // exist there, exactly like the rule.
@@ -5896,6 +6210,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (refusal === "water") toast("Can't build on water.", "bad");
     else if (refusal === "rough") toast("A paved Road can't cross rough ground — use a Dirt Road.", "bad");
     else if (refusal === "occupied") toast("Tile is occupied.", "bad");
+    else if (refusal === "field") toast("A field or trees stand there — demolish them first.", "bad");
     else toast("Can't build there.", "bad");
     // And the 1-second flash AT the tile that refused — the toast
     // is at the edge of the screen, the player's eye is here.
@@ -6364,7 +6679,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // four headings the art and the footprints are authored in, in the same
     // order (`rotateView` is the rail module's, not a second list here).
     if (!isTypingTarget(e) && !e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === "r") {
-      railView = rotateView(railView);
+      // The Depot is placed in four rotations too, and R turns whichever tool
+      // is armed: over a real site it steps through the sides that site can
+      // actually open onto, so a turn never promises an impossible entrance.
+      if (tool === "harvester" || phase === "setup-harvester") rotateDepotView();
+      else railView = rotateView(railView);
       paintOverlayNow();
     }
     // WASD pan — plain keys only (a modified key is a browser/editor
@@ -6649,6 +6968,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       loop: newLoop,
       loopCarry: loopCarryToWire(loopCarry),
       eco: { harvesters: eco.harvesters, factories: eco.factories },
+      clearedFields: [...clearedFields],
       players: players.map((p) => ({
         purse: p.purse as unknown as Record<string, number>,
         freeTrack: p.freeTrack, freeDepots: p.freeDepots,
@@ -6708,7 +7028,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     // economy: replace the lists in place — their references are held all
     // over (planTrucks, syncWorld, the AI...)
-    eco.harvesters.length = 0; eco.harvesters.push(...d.eco.harvesters);
+    setClearedFields(d.clearedFields ?? []);
+    eco.harvesters.length = 0;
+    eco.harvesters.push(...d.eco.harvesters.map((h) => ({ ...h, facing: depotFacingOf(grid, h) })));
     eco.factories.length = 0; eco.factories.push(...d.eco.factories);
     // L1e (#236): the clock's banked remainders come back with their depots,
     // so the first tick after a Continue pays the rate the player was earning
@@ -7657,27 +7979,64 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     grid, track, eco,
     // ── J1: the quarry join, exposed so the boot test can prove the loop ──
     get board() { return quarry.board; },
+    /** The rival seat's board — the one its autoplayer plays. */
+    get rivalBoard() { return rivalQuarry.board; },
     /**
      * L4 (#218): the tuning session, as the HUD sees it — null when no session
      * is open (on the new loop that ALSO means the board is down). The game
-     * holds a live record; this hands back a plain snapshot plus the two
-     * derived numbers, so a test reads the same values the plate prints.
+     * holds a live record; this hands back a plain snapshot plus the two derived
+     * numbers, so a test reads the same values the plate prints.
+     *
+     * "Null means no session" is the contract, so L6's between-session state
+     * lives on `tuningIdle` instead of making this truthy with nothing open;
+     * what L6 added INSIDE a session (`yieldFloor`, the difficulty's own mapping
+     * floor, and `abandonYield` now read through the row) rides here.
      */
     get tuning() {
       if (!tuning) return null;
       // L5 (#219): a session is one of two kinds now, and its `cargo` is null
       // on a city one (the board plays neutral) — both travel, so a test (or
       // the e2e picker) can tell the two apart without guessing.
+      const rules = difficultyRules();
+      const town = tuning.kind === "town";
       return {
         kind: tuning.kind,
-        depotId: tuning.depotId, cargo: tuning.cargo,
-        moves: tuning.moves, movesLeft: tuningMovesLeft(tuning), used: tuning.used,
+        depotId: tuning.depotId,
+        cargo: tuning.cargo,
+        moves: tuning.moves,
+        movesLeft: tuningMovesLeft(tuning),
+        used: tuning.used,
         score: tuning.score,
-        yield: tuning.kind === "town"
+        yield: town
           ? townBonusFor(TOWN_UPGRADES[Math.min(me.townLevel, TOWN_UPGRADES.length - 1)]?.bonus ?? 0, tuning.score)
-          : tuningSessionYield(tuning),
-        abandonYield: TUNING_ABANDON_YIELD,
+          : tuningSessionYield(tuning, rules.minYield),
+        yieldFloor: rules.minYield,
+        abandonYield: town ? TUNING_ABANDON_YIELD : abandonYieldFor(rules),
       };
+    },
+    /**
+     * L6 (#220): what the plant plate is painting while `tuning` is null — the
+     * economy line the difficulty row promises, its own mapping floor, and the
+     * re-match offer; null off the new loop, where the plate is not up at all.
+     */
+    get tuningIdle() { return tuningIdleInfo(); },
+    /**
+     * L6 (#220): the difficulty's ECONOMY flags as the game reads them live —
+     * the row of `DIFFICULTY_RULES` the clock and the tuning settle are using
+     * this tick. Exposed so a test can flip the difficulty and assert the
+     * numbers moved with it, instead of re-deriving them from a label.
+     */
+    get difficulty() {
+      return { key: skillKey, label: skill().label, ...difficultyRules() };
+    },
+    /** L6: the plate's re-match offer on its own (null = nothing owed). */
+    retuneOffer: () => retuneOffer(),
+    /** L6: press the plate's Retune key — the same call the DOM key makes. */
+    retuneDepot: (depotId?: number) => retuneNow(depotId),
+    /** L6: the tier a Depot's link is worth right now (the upgrade axis). */
+    depotTier: (depotId: number) => {
+      const d = eco.harvesters.find((h) => h.id === depotId);
+      return d ? depotTier(d) : null;
     },
     /**
      * L4 (#218): the plate's two keys, as twins — `tuningFinish()` closes the
@@ -7689,7 +8048,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     /** L4 (#218): every depot's yield level, by owner — the number the L1b
      *  clock multiplies by. `null` = no level stored (an untuned depot). */
     get depotYields() {
-      return eco.harvesters.map((h) => ({ id: h.id, owner: h.owner, tx: h.tx, ty: h.ty, yield: h.yield ?? null }));
+      return eco.harvesters.map((h) => ({
+        id: h.id, owner: h.owner, tx: h.tx, ty: h.ty,
+        yield: h.yield ?? null, tuneTier: h.tuneTier ?? null, tier: depotTier(h),
+      }));
     },
     /**
      * L3 (#217): every depot's road distance — the route length in tiles to
@@ -7892,6 +8254,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if ((RAIL_VIEWS as readonly string[]).includes(v)) railView = v as RailView;
       return railView;
     },
+    /** The rotation the Depot tool places in (R in the live game); null = the
+     *  site's own default, the side away from the resource. */
+    get depotView() { return depotView; },
+    setDepotView: (v: string | null) => {
+      depotView = v !== null && (DEPOT_FACINGS as readonly string[]).includes(v)
+        ? v as DepotFacing : null;
+      return depotView;
+    },
+    rotateDepot: () => rotateDepotView(),
     /** The Railway panel's rows, exactly what the UI paints. */
     railPanel: (who: "you" | "ai" = "you") =>
       railPanelRows(rail, who === "ai" ? rival.i + 1 : me.i + 1),
@@ -8049,7 +8420,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      */
     tileProbe: (kind: TrackKind, tx: number, ty: number) => {
       const why = buildRefusal(grid, kind, tx, ty);
-      const taken = eco.harvesters.some((x) => x.tx === tx && x.ty === ty);
+      const taken = eco.harvesters.some((x) => depotContains(x.tx, x.ty, tx, ty));
       const served = why === null && !taken
         ? industriesInCatchment(grid, { id: -1, owner: "you", ownerId: 0, tx, ty })
         : [];
@@ -8126,7 +8497,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      * can assert the path without a sprite path.
      */
     routeForDepot: (tx: number, ty: number) => {
-      const h = eco.harvesters.find((x) => x.tx === tx && x.ty === ty);
+      // any tile of the 2×2 lot names the Depot standing on it
+      const h = eco.harvesters.find((x) => depotContains(x.tx, x.ty, tx, ty));
       if (!h) return null;
       return roadRouteForHarvester(eco, h, buildAllComponents(track, h.ownerId));
     },

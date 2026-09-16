@@ -38,6 +38,14 @@
 //   | 3×3       | 384 × 384  | (192, 288)    | 192 px      | 288 px   |
 //   | 4×4       | 512 × 512  | (256, 384)    | 256 px      | 384 px   |
 //
+//   HEIGHT IS THE ART'S: to make a building taller, grow the canvas UPWARD
+//   (image editor: anchor bottom-centre) and keep the ground diamond on the
+//   bottom edge. The compiled image is trimmed to the art, so the game takes
+//   exactly the height the picture has. Existing buildings keep their
+//   footprint however the canvas grows. Under `npm run dev` saving a master
+//   recompiles it automatically (vite.config.ts, watchBuildingSources).
+//   NEVER edit assets/buildings/* by hand — it is overwritten on compile.
+//
 // COMPILED OUTPUT (TICKET-B2 + B-3.1, ART-1950S):
 //
 //   The shipped PNGs are TRIMMED to the art's tight alpha bounding box
@@ -129,24 +137,34 @@ async function alphaBBox(img, threshold = 8) {
  * to the art's alpha box (TICKET-B-3.1) and resampled with a quality kernel
  * (TICKET-B2).
  */
-async function processBuilding(name, fps) {
+async function processBuilding(name, fps, known = {}, forced = null) {
   const src = join(SRC, `${name}@2x.png`);
   if (!existsSync(src)) throw new Error(`missing ${src}`);
   const meta = await sharp(src).metadata();
   const W = meta.width ?? 0, H = meta.height ?? 0;
 
-  // Template size determines the terrain footprint:
-  // 128x128 -> [1, 1], 256x256 -> [2, 2], 384x384 -> [3, 3], 512x512 -> [4, 4]
+  // Footprint. `--footprint WxH` sets it outright (art re-authored onto a new
+  // footprint). Otherwise a building that is ALREADY compiled keeps its
+  // footprint: the canvas may grow taller (or wider) for more art without
+  // changing how many tiles it stands on — a 2×2 church on a 256×300 canvas is
+  // still 2×2. Only a new building falls back to the square template sizes
+  // (128 → 1×1, 256 → 2×2, 384 → 3×3, 512 → 4×4), then the sheet manifest.
   let fp;
-  if (W === 128 && H === 128) fp = [1, 1];
+  if (forced) fp = forced;
+  else if (known[name]?.footprint) fp = known[name].footprint;
+  else if (W === 128 && H === 128) fp = [1, 1];
   else if (W === 256 && H === 256) fp = [2, 2];
   else if (W === 384 && H === 384) fp = [3, 3];
   else if (W === 512 && H === 512) fp = [4, 4];
   else fp = fps[name] ?? [1, 1];
 
-  const spec = specFor(fp);
-  if (W < spec.S || H < spec.S) {
-    throw new Error(`${name}: canvas must be at least ${spec.S}×${spec.S} at 2× for a ${fp[0]}×${fp[1]} footprint (got ${W}×${H}) — use assets/buildings-src/templates/${fp[0]}x${fp[1]}@2x.png as the base (larger overhang canvases allowed: ground diamond pinned to the canvas bottom)`);
+  // The canvas must hold the footprint's lot: its width is the collar-inset
+  // lot, (w + h − 0.32) × 64 px, and its height at least the ground zone.
+  // Height above that is free — the picture decides how tall it stands.
+  const n = fp[0] + fp[1];
+  const minW = Math.round((n - 0.32) * 64);
+  if (W < minW || H < n * 32) {
+    throw new Error(`${name}: canvas must be at least ${minW} wide and ${n * 32} tall at 2× for a ${fp[0]}×${fp[1]} footprint (got ${W}×${H}) — use assets/buildings-src/templates/${fp[0]}x${fp[1]}@2x.png as the base (ground diamond pinned to the canvas bottom)`);
   }
   if (W > 2048 || H > 2048) {
     throw new Error(`${name}: canvas ${W}×${H} exceeds the 2048px overhang cap — the art is expected to sit near its footprint`);
@@ -236,8 +254,16 @@ if (args.includes("--templates")) {
   process.exit(0);
 }
 
-const names = args.length
-  ? args
+// `--footprint WxH` applies to every name on this run.
+const fpAt = args.indexOf("--footprint");
+const forcedFp = fpAt >= 0 ? (args[fpAt + 1] ?? "").split("x").map(Number) : null;
+if (forcedFp && (forcedFp.length !== 2 || forcedFp.some((v) => !Number.isInteger(v) || v < 1))) {
+  console.error("--footprint expects WxH, e.g. --footprint 4x4");
+  process.exit(1);
+}
+const nameArgs = args.filter((a, i) => !a.startsWith("--") && !(fpAt >= 0 && i === fpAt + 1));
+const names = nameArgs.length
+  ? nameArgs
   : readdirSync(SRC).filter((f) => /@2x\.png$/.test(f)).map((f) => f.replace(/@2x\.png$/, ""));
 if (!names.length) { console.log("nothing to do — drop <name>@2x.png files into assets/buildings-src/"); process.exit(0); }
 
@@ -247,8 +273,9 @@ if (existsSync(manifestPath)) {                     // merge — partial runs ke
   const prev = JSON.parse(readFileSync(manifestPath, "utf8"));
   manifest.sprites = prev.sprites ?? {};
 }
+const known = { ...manifest.sprites };               // footprints before this run
 for (const name of names) {
-  const entry = await processBuilding(name, fps);
+  const entry = await processBuilding(name, fps, known, forcedFp);
   manifest.sprites[name] = { footprint: entry.footprint, anchor: entry.anchor, w: entry.w, h: entry.h, canvas: entry.canvas };
   const t = entry.trim;
   console.log(`${name}: ${entry.footprint[0]}×${entry.footprint[1]} → ${entry.w}×${entry.h} @1× (anchor ${entry.anchor.join(",")}, trimmed ${t.w2}×${t.h2} from canvas ${entry.canvas[0]}×${entry.canvas[1]} at +${t.left},+${t.top})`);

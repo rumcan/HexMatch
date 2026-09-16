@@ -361,13 +361,22 @@ describe("E5 L-shaped Manhattan drag", () => {
 describe("E5 drag-to-build acceptance", () => {
   const rich = { wood: 999, stone: 999, ore: 999 };
 
-  it("dragging across 10 tiles charges exactly 10× the per-tile cost", () => {
+  it("dragging across 10 tiles of gravel charges nothing — dirt is free", () => {
     const grid = flatGrid(), t = createTrack();
     const p = previewDrag(grid, t, "dirt", rich, 5, 5, 14, 5);
     expect(p.tiles).toHaveLength(10);
+    expect(p.cost).toEqual({});
+    expect(p.truncated).toBe(false);
+  });
+
+  it("dragging 10 tiles of PAVED road charges exactly 10× the per-tile cost", () => {
+    const grid = flatGrid(), t = createTrack();
+    const p = previewDrag(grid, t, "road", rich, 5, 5, 14, 5);
+    expect(p.tiles).toHaveLength(10);
     expect(p.cost).toEqual({
-      wood: 10 * TRANSPORT.dirt.cost.wood!,
-      stone: 10 * TRANSPORT.dirt.cost.stone!,
+      wood: 10 * TRANSPORT.road.cost.wood!,
+      stone: 10 * TRANSPORT.road.cost.stone!,
+      ore: 10 * TRANSPORT.road.cost.ore!,
     });
     expect(p.truncated).toBe(false);
   });
@@ -381,25 +390,31 @@ describe("E5 drag-to-build acceptance", () => {
     expect(p.tiles.at(-1)).toEqual([8, 5]);
   });
 
-  it("dragging over existing dirt of the same type is free, no double charge", () => {
+  it("dragging paved road over its own tiles charges only the new ones", () => {
     const grid = flatGrid(), t = createTrack();
-    build(t, "dirt", [[5, 5], [6, 5], [7, 5]]);
-    const p = previewDrag(grid, t, "dirt", rich, 5, 5, 9, 5);
+    build(t, "road", [[5, 5], [6, 5], [7, 5]]);
+    const p = previewDrag(grid, t, "road", rich, 5, 5, 9, 5);
     expect(p.tiles).toHaveLength(5);
-    expect(p.cost).toEqual({ wood: 2, stone: 2 });   // only 8,5 and 9,5 are new
+    // only 8,5 and 9,5 are new ground
+    expect(p.cost).toEqual({
+      wood: 2 * TRANSPORT.road.cost.wood!,
+      stone: 2 * TRANSPORT.road.cost.stone!,
+      ore: 2 * TRANSPORT.road.cost.ore!,
+    });
   });
 
   it("an unaffordable drag previews and builds only the affordable prefix", () => {
+    // gravel can never be unaffordable now, so the rule is pinned on tarmac
     const grid = flatGrid(), t = createTrack();
-    const purse = { wood: 99, stone: 3 };
-    const p = previewDrag(grid, t, "dirt", purse, 5, 5, 14, 5);
+    const purse = { wood: 99, stone: 99, ore: 12 };   // 4 Ore a tile → three tiles
+    const p = previewDrag(grid, t, "road", purse, 5, 5, 14, 5);
     expect(p.tiles).toHaveLength(3);
-    expect(p.cost).toEqual({ wood: 3, stone: 3 });
+    expect(p.cost).toEqual({ wood: 3, stone: 3, ore: 12 });
     expect(p.unaffordable.length).toBeGreaterThan(0);
-    const c = commitDrag(t, "dirt", p);
+    const c = commitDrag(t, "road", p);
     expect(c.built).toHaveLength(3);
-    expect(hasTrack(t, "dirt", 7, 5)).toBe(true);
-    expect(hasTrack(t, "dirt", 8, 5)).toBe(false);
+    expect(hasTrack(t, "road", 7, 5)).toBe(true);
+    expect(hasTrack(t, "road", 8, 5)).toBe(false);
   });
 
   it("commits a contiguous run that autotiles into a straight line", () => {
@@ -425,10 +440,14 @@ describe("E5 drag-to-build acceptance", () => {
 
   it("an L-drag charges for the corner tile exactly once", () => {
     const grid = flatGrid(), t = createTrack();
-    const p = previewDrag(grid, t, "dirt", rich, 5, 5, 8, 8);
+    const p = previewDrag(grid, t, "road", rich, 5, 5, 8, 8);
     expect(p.tiles).toHaveLength(7);            // 4 across + 3 down, corner once
     expect(new Set(p.tiles.map(([x, y]) => `${x},${y}`)).size).toBe(7);
-    expect(p.cost).toEqual({ wood: 7, stone: 7 });
+    expect(p.cost).toEqual({
+      wood: 7 * TRANSPORT.road.cost.wood!,
+      stone: 7 * TRANSPORT.road.cost.stone!,
+      ore: 7 * TRANSPORT.road.cost.ore!,
+    });
   });
 });
 
@@ -572,19 +591,19 @@ describe("W9 the free setup allowance buys dirt, never road", () => {
     expect(paid.free).toBe(0);
   });
 
-  it("dirt still rides the allowance exactly as W1 established", () => {
+  it("dirt needs no allowance at all — it is free with an empty purse", () => {
     const grid = flatGrid(), t = createTrack();
     const free = previewDrag(grid, t, "dirt", { stone: 0, ore: 0 }, 5, 5, 16, 5, true, undefined, 12);
     expect(free.tiles).toHaveLength(12);
     expect(free.cost).toEqual({});
-    expect(free.free).toBe(12);
+    expect(free.free).toBe(0);                   // nothing to cover: gravel is free
 
-    // past the allowance the purse pays, and the preview truncates there
+    // …and the run keeps going past where the allowance used to end
     const grid2 = flatGrid(), t2 = createTrack();
-    const mixed = previewDrag(grid2, t2, "dirt", { wood: 5, stone: 5, ore: 0 }, 5, 5, 21, 5, true, undefined, 12);
-    expect(mixed.tiles).toHaveLength(17);        // 12 free + 5 paid
-    expect(mixed.cost).toEqual({ wood: 5, stone: 5 });
-    expect(mixed.free).toBe(12);
+    const long = previewDrag(grid2, t2, "dirt", {}, 5, 5, 21, 5, true, undefined, 12);
+    expect(long.tiles).toHaveLength(17);
+    expect(long.cost).toEqual({});
+    expect(long.free).toBe(0);
   });
 
   it("a dirt drag over your own track still wastes no allowance", () => {
@@ -592,7 +611,7 @@ describe("W9 the free setup allowance buys dirt, never road", () => {
     build(t, "dirt", [[5, 5], [6, 5], [7, 5]], 1);
     const p = previewDrag(grid, t, "dirt", { stone: 0, ore: 0 }, 5, 5, 9, 5, true, undefined, 12);
     expect(p.tiles).toHaveLength(5);
-    expect(p.free).toBe(2);                      // only the two new tiles
+    expect(p.free).toBe(0);                      // gravel costs nothing to cover
     expect(p.cost).toEqual({});
   });
 });
@@ -606,10 +625,11 @@ describe("L2 free dirt under newLoop", () => {
     expect(tileCost(t, "dirt", 3, 3, true)).toEqual({});
   });
 
-  it("tileCost still charges the table price without the flag (old loop intact)", () => {
+  it("charges nothing for dirt in EITHER loop — the table price is now {}", () => {
     const t = createTrack();
-    expect(tileCost(t, "dirt", 3, 3)).toEqual(TRANSPORT.dirt.cost);
-    expect(tileCost(t, "dirt", 3, 3, false)).toEqual(TRANSPORT.dirt.cost);
+    expect(TRANSPORT.dirt.cost).toEqual({});
+    expect(tileCost(t, "dirt", 3, 3)).toEqual({});
+    expect(tileCost(t, "dirt", 3, 3, false)).toEqual({});
   });
 
   it("the paved tier is unchanged under newLoop: full price new, UPGRADE_COST over gravel", () => {
@@ -639,11 +659,12 @@ describe("L2 free dirt under newLoop", () => {
     expect(res.cost).toEqual({});
   });
 
-  it("the same empty purse previews nothing without the flag once the allowance is gone", () => {
+  it("lays the same line with no allowance left and no flag — gravel is free everywhere", () => {
     const grid = flatGrid(), t = createTrack();
     const p = previewDrag(grid, t, "dirt", {}, 5, 5, 16, 5, true, undefined, 0);
-    expect(p.tiles).toHaveLength(0);
-    expect(p.unaffordable.length).toBeGreaterThan(0);
+    expect(p.tiles).toHaveLength(12);
+    expect(p.cost).toEqual({});
+    expect(p.unaffordable).toHaveLength(0);
   });
 
   it("a paved drag under newLoop still needs ore and still spends no allowance", () => {

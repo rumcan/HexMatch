@@ -20,6 +20,7 @@
 // it through `window.__iso`; canvas is stubbed, so it verifies wiring and
 // economy, not pixels.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { southLotFree } from "./helpers/depot-lot";
 import { WATER } from "../../src/iso/grid";
 import { BOARD_H, MAP_W, MAP_H, type ResKey } from "../../src/game/config";
 import { setRng, mulberry32 } from "../../src/game/config";
@@ -135,14 +136,14 @@ function findSouthCorridor(
   for (const ind of grid.industries) {
     if (type && ind.type !== type) continue;
     for (let x = ind.tx; x < ind.tx + ind.w; x++) {
-      const hx = x, hy = ind.ty + ind.h, fy = hy + len;
+      const hx = x, hy = ind.ty + ind.h + 1, fy = hy + len;
       if (hy < 0 || fy >= MAP_H || hx < 0 || hx >= MAP_W) continue;
       let ok = true;
       for (let y = hy; y <= fy; y++) {
         const i = y * MAP_W + hx;
         if (grid.terrain[i] === WATER || grid.occupancy[i] !== -1) { ok = false; break; }
       }
-      if (ok) return { hx, hy, fy, ind };
+      if (ok && southLotFree(grid, hx, hy)) return { hx, hy, fy, ind };
     }
   }
   return null;
@@ -256,7 +257,7 @@ describe("PP-05 placing a Depot in the live game", () => {
     expect(h.freeDepots).toBe(FREE_SETUP_DEPOTS);
 
     const before = { ...h.purse };
-    expect(h.placeDepot(c!.hx, c!.hy)).toBe(true);
+    expect(h.placeDepot(c!.hx, c!.hy - 1)).toBe(true);
 
     expect(h.harvesters).toHaveLength(1);
     expect(h.freeDepots).toBe(0);
@@ -270,7 +271,7 @@ describe("PP-05 placing a Depot in the live game", () => {
   it("refuses a paid Depot when Oil is short, even with everything else in abundance", async () => {
     const h = await boot();
     const farm = findSouthCorridor(h.grid, 6, "farm")!;
-    expect(h.placeDepot(farm.hx, farm.hy)).toBe(true);      // burns the allowance
+    expect(h.placeDepot(farm.hx, farm.hy - 1)).toBe(true);      // burns the allowance
     const second = findSouthCorridor(h.grid, 6, "quarry")!;
     expect(second.ind.id).not.toBe(farm.ind.id);
 
@@ -280,7 +281,7 @@ describe("PP-05 placing a Depot in the live game", () => {
     const before = { ...h.purse };
     const depots = h.harvesters.length;
 
-    expect(h.placeDepot(second.hx, second.hy)).toBe(false);
+    expect(h.placeDepot(second.hx, second.hy - 1)).toBe(false);
 
     // failed placement consumes NOTHING, and builds nothing
     expect(h.harvesters).toHaveLength(depots);
@@ -290,14 +291,14 @@ describe("PP-05 placing a Depot in the live game", () => {
 
   it("deducts the complete cost exactly once on a successful paid placement", async () => {
     const h = await boot();
-    expect(h.placeDepot(findSouthCorridor(h.grid, 6, "farm")!.hx, findSouthCorridor(h.grid, 6, "farm")!.hy)).toBe(true);
+    expect(h.placeDepot(findSouthCorridor(h.grid, 6, "farm")!.hx, findSouthCorridor(h.grid, 6, "farm")!.hy - 1)).toBe(true);
     const second = findSouthCorridor(h.grid, 6, "quarry")!;
 
     for (const c of CARGOES) if (c !== "oil") h.purse[c] = 5;
     h.purse.oil = 3;
     const before = { ...h.purse };
 
-    expect(h.placeDepot(second.hx, second.hy)).toBe(true);
+    expect(h.placeDepot(second.hx, second.hy - 1)).toBe(true);
 
     expect(h.harvesters).toHaveLength(2);
     for (const [cargo, amount] of Object.entries(DEPOT_COST) as [Cargo, number][]) {
@@ -313,13 +314,13 @@ describe("PP-05 placing a Depot in the live game", () => {
   it("charges nothing when the site itself is illegal, Oil or no Oil", async () => {
     const h = await boot();
     const farm = findSouthCorridor(h.grid, 6, "farm")!;
-    expect(h.placeDepot(farm.hx, farm.hy)).toBe(true);       // allowance spent
+    expect(h.placeDepot(farm.hx, farm.hy - 1)).toBe(true);       // allowance spent
 
     for (const c of CARGOES) h.purse[c] = 50;                // Oil included
     const before = { ...h.purse };
 
     // (a) the tile is already taken
-    expect(h.placeDepot(farm.hx, farm.hy)).toBe(false);
+    expect(h.placeDepot(farm.hx, farm.hy - 1)).toBe(false);
     // (b) a buildable tile with no industry in its 4×4 catchment
     const [bx, by] = await findBarrenTile(h.grid);
     expect(h.placeDepot(bx, by)).toBe(false);
@@ -336,7 +337,7 @@ describe("PP-05 placing a Depot in the live game", () => {
     // the setup Depot goes through the real placement, beside an Oil Rig
     const oil = findSouthCorridor(h.grid, 6, "oil_rig");
     expect(oil, "seed 1337 needs an oil-rig corridor").toBeTruthy();
-    expect(h.placeDepot(oil!.hx, oil!.hy)).toBe(true);
+    expect(h.placeDepot(oil!.hx, oil!.hy - 1)).toBe(true);
     expect(h.freeDepots).toBe(0);
 
     // Factory below it + a road corridor, the way the pointer path builds it
@@ -366,7 +367,7 @@ describe("PP-05 placing a Depot in the live game", () => {
     // …and that Oil builds the next Depot
     const next = findSouthCorridor(h.grid, 6, "quarry")!;
     expect(h.depotPrice().affordable).toBe(true);
-    expect(h.placeDepot(next.hx, next.hy)).toBe(true);
+    expect(h.placeDepot(next.hx, next.hy - 1)).toBe(true);
     expect(h.harvesters).toHaveLength(2);
     expect(h.purse.oil).toBe(oilEarned - (DEPOT_COST.oil ?? 0));
   });
@@ -386,7 +387,7 @@ describe("PP-05 the cost is visible before the click", () => {
     expect(depotBtn().querySelector('small img.cargo-ic[alt="Oil"]')).toBeTruthy();
     expect(depotBtn().classList.contains("disabled")).toBe(false);
 
-    expect(h.placeDepot(findSouthCorridor(h.grid, 6, "farm")!.hx, findSouthCorridor(h.grid, 6, "farm")!.hy)).toBe(true);
+    expect(h.placeDepot(findSouthCorridor(h.grid, 6, "farm")!.hx, findSouthCorridor(h.grid, 6, "farm")!.hy - 1)).toBe(true);
     h.purse.oil = 0;
     await settle();
     // …and once it is spent, the button shows the real price and greys out
@@ -422,7 +423,7 @@ describe("PP-05 the cost is visible before the click", () => {
     // "complete cost before placement" from the other end — the button states
     // the price, the hint states why this click would refuse it.
     const c = findSouthCorridor(h.grid, 6, "farm")!;
-    expect(h.placeDepot(c.hx, c.hy)).toBe(true);
+    expect(h.placeDepot(c.hx, c.hy - 1)).toBe(true);
     h.purse.oil = 0;
     await settle();
     expect(bar.textContent).toMatch(/needs/i);
@@ -431,7 +432,7 @@ describe("PP-05 the cost is visible before the click", () => {
 
   it("reports the same price through the read-only tile probe", async () => {
     const h = await boot();
-    expect(h.placeDepot(findSouthCorridor(h.grid, 6, "farm")!.hx, findSouthCorridor(h.grid, 6, "farm")!.hy)).toBe(true);
+    expect(h.placeDepot(findSouthCorridor(h.grid, 6, "farm")!.hx, findSouthCorridor(h.grid, 6, "farm")!.hy - 1)).toBe(true);
     h.finishSetup();
     h.setTool("harvester");
     await settle();
@@ -541,7 +542,7 @@ describe("PP-05 the rival pays the same Depot cost", () => {
     const { buildTile } = await import("../../src/iso/track");
     // the player's setup, so the clocks run and the rival has room of its own
     const farm = findSouthCorridor(h.grid, 6, "farm")!;
-    expect(h.placeDepot(farm.hx, farm.hy)).toBe(true);
+    expect(h.placeDepot(farm.hx, farm.hy - 1)).toBe(true);
     h.eco.factories.push({ owner: "you", ownerId: 1, tx: farm.hx, ty: farm.fy });
     for (let y = farm.hy + 1; y <= farm.fy; y++) buildTile(h.track, "road", farm.hx, y, 1);
     const quarry = findSouthCorridor(h.grid, 6, "quarry")!;

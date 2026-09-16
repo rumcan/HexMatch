@@ -29,6 +29,7 @@ import {
   type EconomyState, type Harvester,
 } from "../../src/iso/economy";
 import { planDepotPlacement, placementReasonText } from "../../src/iso/placement";
+import { depotEntranceTiles, type DepotFacing } from "../../src/iso/depot";
 
 const REASON_TEXT = { "industry-taken": placementReasonText("industry-taken") };
 
@@ -52,30 +53,36 @@ const ind = (type: string, tx: number, ty: number): Industry => {
   return { id: 0, type, tx, ty, w: def.footprint[0], h: def.footprint[1], output: def.output, banditUntil: 0 };
 };
 
-const H = (id: number, owner: string, tx: number, ty: number): Harvester =>
-  ({ id, owner, ownerId: owner === "p1" ? 1 : 2, tx, ty });
-
 /**
  * A Farm is 4×4 (PP-12: the footprint is the art's), so the block at (12,11)
- * covers 12..15 × 11..14. A Depot must stand on free ground whose 4×4
- * catchment OVERLAPS that block: SITE_A touches it from the west, SITE_B from
- * the east, and neither reaches anything else — which is the whole point of the
- * fixture. The Ore Mine (3×3) far away at (50,50) is the free industry a later
- * Depot may still go and claim.
+ * covers 12..15 × 11..14. A truck Depot is a 2×2 lot sharing an edge with it:
+ * SITE_A (lot 10..11) touches it from the west, so it opens NW; SITE_B
+ * (lot 16..17) from the east, so it opens SE — and neither touches
+ * anything else, which is the whole point of the fixture. The Ore Mine (3×3)
+ * far away at (50,50) is the free industry a later Depot may still claim.
  */
 const FARM: [number, number] = [12, 11];
-const SITE_A: [number, number] = [11, 11];
+const SITE_A: [number, number] = [10, 11];
 const SITE_B: [number, number] = [16, 11];
 const ORE: [number, number] = [50, 50];
-const SITE_ORE: [number, number] = [49, 50];
+const SITE_ORE: [number, number] = [48, 50];
+const FACING: Record<string, DepotFacing> = {
+  [SITE_A.join()]: "nw", [SITE_B.join()]: "se", [SITE_ORE.join()]: "nw",
+};
+
+const H = (id: number, owner: string, tx: number, ty: number): Harvester =>
+  ({ id, owner, ownerId: owner === "p1" ? 1 : 2, tx, ty, facing: FACING[`${tx},${ty}`] ?? "nw" });
 
 const world = (harvesters: Harvester[], track: Track): EconomyState => ({
   grid: flatGrid([ind("farm", ...FARM), ind("ore_mine", ...ORE)]),
   track, harvesters, factories: [],
 });
 
+/** A road tile at the site's first gate tile — the road that services it. */
+const gateOf = (tx: number, ty: number): [number, number] =>
+  depotEntranceTiles(tx, ty, FACING[`${tx},${ty}`] ?? "nw")[0];
 const roadBeside = (t: Track, owner: number, tx: number, ty: number) => {
-  buildTile(t, "dirt", tx, ty - 1, owner);
+  buildTile(t, "dirt", ...gateOf(tx, ty), owner);
   return t;
 };
 
@@ -109,7 +116,7 @@ describe("PP-16 the claim is the road", () => {
     const track = roadBeside(createTrack(), 1, SITE_A[0], SITE_A[1]);
     const state = world([H(1, "p1", ...SITE_A)], track);
     expect(lockedIndustryIds(state)).toEqual(new Set([0]));
-    demolishTile(track, "dirt", SITE_A[0], SITE_A[1] - 1);
+    demolishTile(track, "dirt", ...gateOf(...SITE_A));
     expect(lockedIndustryIds(state).size).toBe(0);
   });
 });
@@ -127,10 +134,12 @@ describe("PP-16 the placement follows the claim", () => {
     expect(plan.code).toBe("industry-taken");
     expect(plan.why).toBe(REASON_TEXT["industry-taken"]);
     expect(plan.why).toMatch(/already holds/);
-    // the refusal is per site, and the footprint tile carries the same sentence
-    expect(plan.footprint).toHaveLength(1);
-    expect(plan.footprint[0].ok).toBe(false);
-    expect(plan.footprint[0].why).toBe(REASON_TEXT["industry-taken"]);
+    // the refusal is per site, and every tile of the 2×2 lot carries the same sentence
+    expect(plan.footprint).toHaveLength(4);
+    for (const t of plan.footprint) {
+      expect(t.ok).toBe(false);
+      expect(t.why).toBe(REASON_TEXT["industry-taken"]);
+    }
   });
 
   it("allows a Depot that claims at least one free industry", () => {
@@ -151,11 +160,11 @@ describe("PP-16 the placement follows the claim", () => {
     expect(plan.valid).toBe(true);
   });
 
-  it("an empty catchment is still the emptier refusal", () => {
+  it("a site with no resource beside it is still the emptier refusal", () => {
     const track = roadBeside(createTrack(), 1, SITE_A[0], SITE_A[1]);
     const state = world([H(1, "p1", ...SITE_A)], track);
     const plan = planDepotPlacement(state.grid, [], 60, 60,
       { locked: lockedIndustryIds(state) });
-    expect(plan.code).toBe("no-industry-in-catchment");
+    expect(plan.code).toBe("no-industry-beside");
   });
 });

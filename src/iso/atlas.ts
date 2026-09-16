@@ -309,6 +309,45 @@ export function buildBuildingMasks(atlas: Atlas): void {
 }
 
 /**
+ * The size a building layer draws at: the IMAGE decides, not the manifest.
+ *
+ * The compiled PNG is trimmed to the art, so its own pixels are the truth. If
+ * every loaded zoom agrees on a 1× size that differs from the manifest (the
+ * art was re-authored taller and the manifest is stale), draw the whole image:
+ * the anchor keeps its distance from the image's BOTTOM (the ground stays put,
+ * extra height goes up) and from its horizontal centre. The manifest alone
+ * would crop the new rows — `zoomRect` samples round(manifest.h × zoom).
+ *
+ * If the zoom files disagree with each other while one still matches the
+ * manifest, a single tier was edited by hand; keep the manifest (consistent
+ * across zooms) and say how to fix it. Sizes within 1px count as equal — the
+ * tool rounds each tier.
+ */
+export function imageSizeFor(
+  name: string,
+  def: { w: number; h: number; anchor: [number, number] },
+  images: ReadonlyMap<number, AtlasImage>,
+): { w: number; h: number; anchor: [number, number] } {
+  const tiers = [...images].map(([z, img]) => ({ w: img.width / z, h: img.height / z }));
+  const keep = { w: def.w, h: def.h, anchor: def.anchor };
+  if (!tiers.length) return keep;
+  const near = (a: number, b: number) => Math.abs(a - b) <= 1;
+  const matches = (t: { w: number; h: number }, u: { w: number; h: number }) => near(t.w, u.w) && near(t.h, u.h);
+  const first = tiers[0];
+  const agree = tiers.every((t) => matches(t, first));
+  const fix = `run: node tools/make-building-pngs.mjs ${name}`;
+  if (agree && !matches(first, def)) {
+    const w = Math.round(first.w), h = Math.round(first.h);
+    console.warn(`[building-layers] ${name}: image is ${w}×${h} but the manifest says ${def.w}×${def.h} — drawing the whole image (${fix})`);
+    return { w, h, anchor: [def.anchor[0] + (w - def.w) / 2, def.anchor[1] + (h - def.h)] };
+  }
+  if (!agree && tiers.some((t) => matches(t, def))) {
+    console.warn(`[building-layers] ${name}: zoom files have different sizes — one was edited by hand (${fix})`);
+  }
+  return keep;
+}
+
+/**
  * Load the per-building PNG layers (assets/buildings/). For every sprite in
  * the buildings manifest the monolith def is overridden: the whole per-zoom
  * image IS the sprite (rect 0,0,w,h at 1×), the anchor is the authoring
@@ -329,8 +368,12 @@ export async function loadBuildingLayers(
   } = await res.json().catch(() => null);
   const names = m?.sprites ? Object.entries(m.sprites) : [];
   await Promise.all(names.map(async ([name, def]) => {
-    const s = atlas.manifest.sprites[name];
-    if (!s) return;                                  // unknown sprite: nothing to override
+    // A building the sprite table does not know yet (new art such as
+    // `truck_depot`) is registered from its own manifest entry.
+    const registered = !atlas.manifest.sprites[name];
+    const s = atlas.manifest.sprites[name] ??= {
+      x: 0, y: 0, w: def.w, h: def.h, footprint: def.footprint, anchor: def.anchor, center: true,
+    };
     const load = (file: string) => fetch(`${baseUrl}${file}`).then((r) => {
       if (!r.ok) throw new Error(`${file} → HTTP ${r.status}`);
       return r.blob();
@@ -349,13 +392,16 @@ export async function loadBuildingLayers(
       const map = have ?? new Map<number, AtlasImage>();
       for (const [z, img] of loaded) map.set(z, img);
       atlas.buildingImages.set(name, map);
-      s.x = 0; s.y = 0; s.w = def.w; s.h = def.h;
-      s.anchor = def.anchor;
+      const size = imageSizeFor(name, def, map);
+      s.x = 0; s.y = 0; s.w = size.w; s.h = size.h;
+      s.anchor = size.anchor;
       s.center = true;
       if (def.footprint) s.footprint = def.footprint;
     } catch (err) {
       // A fill pass failing leaves the already-installed levels serving the
-      // sprite; only a first-install failure drops it back to the sheet art.
+      // sprite; only a first-install failure drops it back to the sheet art
+      // (or, for a building registered above, removes the def it never used).
+      if (!have && registered) delete atlas.manifest.sprites[name];
       if (!have) console.warn(`[building-layers] ${name}: fell back to the shared sheet`, err);
     }
   }));

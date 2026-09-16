@@ -28,6 +28,7 @@
 // stubbed 2D context and image loader, the pinned seed 1337 — so this verifies
 // wiring and layout, not pixels.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { southLotFree } from "./helpers/depot-lot";
 import { readFileSync } from "node:fs";
 import { WATER, factoryTouchesTown } from "../../src/iso/grid";
 import { CARGOES, MAP_W, MAP_H } from "../../src/iso/config";
@@ -155,14 +156,14 @@ function findSouthCorridor(
 ): { hx: number; hy: number; fy: number } | null {
   for (const ind of grid.industries) {
     for (let x = ind.tx; x < ind.tx + ind.w; x++) {
-      const hx = x, hy = ind.ty + ind.h, fy = hy + len;
+      const hx = x, hy = ind.ty + ind.h + 1, fy = hy + len;
       if (hy < 0 || fy >= MAP_H || hx < 0 || hx >= MAP_W) continue;
       let ok = true;
       for (let y = hy; y <= fy; y++) {
         const i = y * MAP_W + hx;
         if (grid.terrain[i] === WATER || grid.occupancy[i] !== -1) { ok = false; break; }
       }
-      if (ok) return { hx, hy, fy };
+      if (ok && southLotFree(grid, hx, hy)) return { hx, hy, fy };
     }
   }
   return null;
@@ -244,7 +245,7 @@ describe("#187 the placement hint is one slim line", () => {
   it("answers a purse that cannot pay with the shortfall — the refusal IS the verdict", async () => {
     const h = await playingBoot();
     const c = findSouthCorridor(h.grid)!;
-    expect(h.placeDepot(c.hx, c.hy)).toBe(true);   // spends the free allowance
+    expect(h.placeDepot(c.hx, c.hy - 1)).toBe(true);   // spends the free allowance
     h.purse.grain = 0; h.purse.wood = 0; h.purse.stone = 0; h.purse.oil = 0;
     h.setTool("harvester");
     await settle();
@@ -495,7 +496,8 @@ describe("#187 the setup phases hide Cancel instead of showing a dead ✕", () =
     // The opening Depot is paid by a real click on the map — that click is
     // what advances the phase, not the placement call alone.
     const c = findSouthCorridor(h.grid)!;
-    const [dx, dy] = h.tileScreenAt(c.hx, c.hy);
+    // the click lands on the 2×2 lot's origin (top) tile
+    const [dx, dy] = h.tileScreenAt(c.hx, c.hy - 1);
     expect(h.pickAt(dx, dy)?.tx, "the site is on screen").toBe(c.hx);
     pointer("pointerdown", dx, dy);
     pointer("pointerup", dx, dy);

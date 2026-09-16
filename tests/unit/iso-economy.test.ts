@@ -78,30 +78,38 @@ describe("E6 catchment", () => {
   });
 });
 
+// The 2×2 truck Depot at (10,10) opening NW: its gate tiles are that edge,
+// (9,10) and (9,11) — every other side is walled (depot.ts).
 describe("E6 servicing", () => {
-  it("requires adjacency to at least one dirt or road tile", () => {
+  it("requires a dirt or road tile at the gate", () => {
     const t = createTrack();
-    const h = H(0, "p1", 10, 10);
+    const h: Harvester = { ...H(0, "p1", 10, 10), facing: "nw" };
     expect(isServiced(t, h)).toBe(false);
-    buildTile(t, "dirt", 11, 10, 1);
+    buildTile(t, "dirt", 9, 10, 1);
     expect(isServiced(t, h)).toBe(true);
   });
 
-  it("accepts road adjacency too, but not a diagonal", () => {
+  it("accepts road at the gate too, but not a diagonal corner or a walled side", () => {
     const t = createTrack();
-    buildTile(t, "road", 11, 11);
-    expect(isServiced(t, H(0, "p1", 10, 10))).toBe(false);
-    buildTile(t, "road", 10, 11, 1);
-    expect(isServiced(t, H(0, "p1", 10, 10))).toBe(true);
+    const h: Harvester = { ...H(0, "p1", 10, 10), facing: "nw" };
+    buildTile(t, "road", 9, 9, 1);             // diagonal corner of the lot
+    expect(isServiced(t, h)).toBe(false);
+    buildTile(t, "road", 12, 10, 1);           // against the walled SE side
+    expect(isServiced(t, h)).toBe(false);
+    buildTile(t, "road", 10, 9, 1);            // against the walled NE side
+    expect(isServiced(t, h)).toBe(false);
+    buildTile(t, "road", 9, 11, 1);            // the other NW gate tile
+    expect(isServiced(t, h)).toBe(true);
   });
 
-  // W2: a RIVAL's line beside your harvester does not service it.
-  it("does not count another player's adjacent track as service", () => {
+  // W2: a RIVAL's line at your gate does not service it.
+  it("does not count another player's track at the gate as service", () => {
     const t = createTrack();
-    buildTile(t, "dirt", 11, 10, 2);            // the rival's dirt
-    expect(isServiced(t, H(0, "p1", 10, 10))).toBe(false);
-    buildTile(t, "dirt", 11, 10, 1);            // own the tile: now serviced
-    expect(isServiced(t, H(0, "p1", 10, 10))).toBe(true);
+    const h: Harvester = { ...H(0, "p1", 10, 10), facing: "nw" };
+    buildTile(t, "dirt", 9, 10, 2);             // the rival's dirt
+    expect(isServiced(t, h)).toBe(false);
+    buildTile(t, "dirt", 9, 10, 1);             // own the tile: now serviced
+    expect(isServiced(t, h)).toBe(true);
   });
 });
 
@@ -204,7 +212,8 @@ describe("E6 acceptance", () => {
     const grid = flatGrid([farm]);
     const track = createTrack();
     run(track, kind, 6, 20, 10, 1);           // p1's trunk line
-    const harv = H(1, "p1", 11, 11);          // below the trunk, beside it
+    // the 2×2 lot west of the farm, opening NE onto the trunk on row 10
+    const harv: Harvester = { ...H(1, "p1", 10, 11), facing: "ne" };
     buildTile(track, kind, 11, 10, 1);        // already part of the run
     const factory: Factory = { owner: "p1", ownerId: 1, tx: 20, ty: 11 };
     const state: EconomyState = {
@@ -308,7 +317,7 @@ describe("E6 acceptance", () => {
     const grid = flatGrid([ind("farm", 12, 11)]);
     const state: EconomyState = {
       grid, track: createTrack(),
-      harvesters: [H(1, "p1", 11, 11)],
+      harvesters: [{ ...H(1, "p1", 10, 11), facing: "ne" }],
       factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }],
     };
     expect(playerResources(state, "p1", 0)).toEqual({});
@@ -323,23 +332,27 @@ describe("E6 acceptance", () => {
   // Depot): on a shared farm the test could no longer tell "wrong owner's
   // track" apart from "somebody got there first", because both pay zero.
   it("reaches an industry only over its own track, never the rival's", () => {
+    // farm1 12..15 × 11..14; farm2 17..20 × 13..16 — two separate farms.
     const farm = ind("farm", 12, 11);
-    const grid = flatGrid([farm, ind("farm", 15, 11)]);
+    const grid = flatGrid([farm, ind("farm", 17, 13)]);
     const track = createTrack();
-    // p1's full line: harvester → farm → its factory.
-    run(track, "dirt", 6, 20, 10, 1);
-    const p1Harv = H(1, "p1", 11, 11);
+    // p1's full line along y=10: its Depot's NE gate → its factory.
+    run(track, "dirt", 6, 22, 10, 1);
+    // p1's 2×2 Depot west of farm1 (lot 10..11 × 11..12), opening at the top:
+    // its NE gate (10,10)/(11,10) is on p1's line.
+    const p1Harv: Harvester = { ...H(1, "p1", 10, 11), facing: "ne" };
     const state: EconomyState = {
       grid, track,
       harvesters: [p1Harv],
-      factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }],
+      factories: [{ owner: "p1", ownerId: 1, tx: 21, ty: 11 }],
     };
     expect(playerResources(state, "p1", 0).grain).toBeGreaterThan(0);
 
-    // p2 puts a harvester beside the SAME farm, right next to p1's line —
-    // but p2 has built nothing. The rival's dirt must not count.
-    state.harvesters.push(H(2, "p2", 13, 11));
-    state.factories.push({ owner: "p2", ownerId: 2, tx: 28, ty: 11 });   // K0: ≤31
+    // p2 puts a Depot beside farm2 (lot 17..18 × 11..12) opening NW, so its
+    // gate is (16,11)/(16,12). p1's line runs right past its NE wall — but a
+    // walled side is not a gate, and the rival's dirt would not count anyway.
+    state.harvesters.push({ ...H(2, "p2", 17, 11), facing: "nw" });
+    state.factories.push({ owner: "p2", ownerId: 2, tx: 15, ty: 25 });
     expect(playerResources(state, "p2", 0)).toEqual({});
     const score = createScoreState();
     // VP-01: neither of them scores. p1's line is live but pure gravel, p2's
@@ -349,10 +362,9 @@ describe("E6 acceptance", () => {
     expect(vpFor(score, "p1")).toBe(0);
     expect(vpFor(score, "p2")).toBe(0);
 
-    // The moment p2 lays its OWN dirt home, it connects on its own — to the
-    // farm it holds, which is the only one left to hold.
-    run(track, "dirt", 14, 28, 12, 2);
-    run(track, "dirt", 14, 14, 11, 2);   // up from its line to beside the farm
+    // The moment p2 lays its OWN dirt home from its NW gate (16,11) down to
+    // its factory, it connects on its own — to the farm it holds.
+    for (let y = 11; y <= 24; y++) buildTile(track, "dirt", 16, y, 2);
     expect(playerResources(state, "p2", 0).grain).toBeGreaterThan(0);
     // PP-16 from the other side: p1's farm stays p1's, road or no road.
     expect(industryLocks(state).get(farm.id)?.owner).toBe("p1");
@@ -365,13 +377,18 @@ describe("E6 acceptance", () => {
   // the other's connection survives.
   it("cutting one player's line leaves the other's connection intact", () => {
     const world = (): EconomyState => {
-      const grid = flatGrid([ind("farm", 12, 11), ind("farm", 15, 11)]);
+      // two 4×4 farms clear of each other: p1's lot sits west of the first,
+      // p2's between them — each holds the farm its own road reaches.
+      const grid = flatGrid([ind("farm", 12, 11), ind("farm", 16, 13)]);
       const track = createTrack();
       run(track, "dirt", 6, 12, 10, 1);   // p1's line (they meet at x=12…)
       run(track, "dirt", 12, 20, 10, 2);  // …which p2 builds last and owns
       return {
         grid, track,
-        harvesters: [H(1, "p1", 11, 11), H(2, "p2", 13, 11)],
+        harvesters: [
+        { ...H(1, "p1", 10, 11), facing: "ne" },     // gates (10,10)/(11,10): p1's
+        { ...H(2, "p2", 16, 11), facing: "ne" },     // gates (16,10)/(17,10): p2's
+      ],
         factories: [
           { owner: "p1", ownerId: 1, tx: 6, ty: 11 },
           { owner: "p2", ownerId: 2, tx: 20, ty: 11 },
@@ -391,7 +408,7 @@ describe("E6 acceptance", () => {
 
     // and vice-versa: p2's demolition cannot reach p1's connection
     state = world();
-    demolishTile(state.track, "dirt", 14, 10);
+    demolishTile(state.track, "dirt", 18, 10);   // between p2's gate and its plant
     expect(playerResources(state, "p2", 0)).toEqual({});
     expect(playerResources(state, "p1", 0).grain).toBeGreaterThan(0);
   });
@@ -402,11 +419,12 @@ describe("E6 road beats dirt", () => {
     const farm = ind("farm", 12, 11);
     const grid = flatGrid([farm]);
     const track = createTrack();
-    run(track, "dirt", 6, 20, 10, 1);
-    run(track, "road", 6, 20, 12, 1);
+    run(track, "dirt", 6, 20, 10, 1);        // the gravel the depot's gate is on
+    run(track, "road", 6, 20, 8, 1);         // a paved row above it…
+    buildTile(track, "road", 6, 9, 1);       // …joined to the gravel at the far end
     const state: EconomyState = {
       grid, track,
-      harvesters: [H(1, "p1", 11, 11)],       // between both lines
+      harvesters: [{ ...H(1, "p1", 10, 11), facing: "ne" }],
       factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }],
     };
     const comp = buildAllComponents(track, 1);
@@ -419,10 +437,11 @@ describe("E6 road beats dirt", () => {
     const grid = flatGrid([ind("farm", 12, 11)]);
     const track = createTrack();
     run(track, "dirt", 6, 20, 10, 1);
-    run(track, "road", 6, 20, 12, 1);
+    run(track, "road", 6, 20, 8, 1);
+    buildTile(track, "road", 6, 9, 1);       // the tile that makes it ONE surface
     const state: EconomyState = {
       grid, track,
-      harvesters: [H(1, "p1", 11, 11)],
+      harvesters: [{ ...H(1, "p1", 10, 11), facing: "ne" }],
       factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }],
     };
     const score = createScoreState();
@@ -433,7 +452,7 @@ describe("E6 road beats dirt", () => {
     expect(playerResources(state, "p1", 0).grain)
       .toBeCloseTo(INDUSTRY_BY_KEY.farm.output * 1.6, 6);
 
-    demolishTile(track, "road", 15, 12);
+    demolishTile(track, "road", 6, 9);              // cut the paved row loose
     expect(rescore(state, score)).toEqual([]);      // still nothing to revoke
     expect(vpFor(score, "p1")).toBe(0);
     expect(playerResources(state, "p1", 0).grain)   // …and the line is back to ×1.0
@@ -446,14 +465,14 @@ describe("E6 road beats dirt", () => {
     run(track, "dirt", 6, 20, 10, 1);
     const state: EconomyState = {
       grid, track,
-      harvesters: [H(1, "p1", 11, 11)],
+      harvesters: [{ ...H(1, "p1", 10, 11), facing: "ne" }],
       factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }],
     };
     const score = createScoreState();
     rescore(state, score);
     expect(vpFor(score, "p1")).toBe(0);                 // the gravel earns nothing
 
-    run(track, "road", 6, 20, 12, 1);                   // 15 fresh tiles, no upgrade
+    run(track, "road", 6, 20, 8, 1);                    // 15 fresh tiles, no upgrade
     run(track, "road", 6, 20, 10, 1);                   // …and the trunk, paved
     const events = rescore(state, score);
     for (const e of events) expect(e).toMatchObject({ source: "upgrade", delta: 0.25 });
@@ -473,7 +492,7 @@ describe("E6 best tier on path across the dirt↔paved seam", () => {
     run(track, "dirt", 6, 13, 10, 1);              // p1's gravel feeder to it
     const state: EconomyState = {
       grid, track,
-      harvesters: [H(1, "p1", 11, 11)],
+      harvesters: [{ ...H(1, "p1", 10, 11), facing: "ne" }],
       factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }],  // beside the highway
     };
     const comp = buildAllComponents(track, 1);
@@ -496,7 +515,7 @@ describe("E6 best tier on path across the dirt↔paved seam", () => {
     run(track, "road", 14, 20, 10, 1);             // p1 paves the far end itself
     const state: EconomyState = {
       grid, track,
-      harvesters: [H(1, "p1", 11, 11)],
+      harvesters: [{ ...H(1, "p1", 10, 11), facing: "ne" }],
       factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }],
     };
     const comp = buildAllComponents(track, 1);
@@ -512,7 +531,7 @@ describe("E6 best tier on path across the dirt↔paved seam", () => {
     run(track, "road", 14, 20, 14, 1);             // paved — but off the route
     const state: EconomyState = {
       grid, track,
-      harvesters: [H(1, "p1", 11, 11)],
+      harvesters: [{ ...H(1, "p1", 10, 11), facing: "ne" }],
       factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }],
     };
     const comp = buildAllComponents(track, 1);
@@ -529,7 +548,7 @@ describe("E6 best tier on path across the dirt↔paved seam", () => {
     run(track, "dirt", 6, 13, 10, 1);
     const state: EconomyState = {
       grid, track,
-      harvesters: [H(1, "p1", 11, 11)],
+      harvesters: [{ ...H(1, "p1", 10, 11), facing: "ne" }],
       factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }],
     };
     const score = createScoreState();
@@ -560,7 +579,10 @@ describe("PP-16 the first Depot with a road holds the industry", () => {
     run(track, "dirt", 12, 20, 10, 2);
     const state: EconomyState = {
       grid, track,
-      harvesters: [H(1, "p1", 11, 11), H(2, "p2", 13, 11)],
+      harvesters: [
+        { ...H(1, "p1", 10, 11), facing: "ne" },     // gates (10,10)/(11,10): p1's
+        { ...H(2, "p2", 16, 11), facing: "ne" },     // gates (16,10)/(17,10): p2's
+      ],
       factories: [{ owner: "p1", ownerId: 1, tx: 6, ty: 11 }, { owner: "p2", ownerId: 2, tx: 20, ty: 11 }],
     };
     return state;
@@ -589,7 +611,7 @@ describe("PP-16 the first Depot with a road holds the industry", () => {
 
   it("a rival with no road at the resource holds nothing", () => {
     const state = twoClaimants();
-    state.harvesters[1] = H(2, "p2", 12, 30);   // move p2 far from any track
+    state.harvesters[1] = H(2, "p2", 12, 30);   // move p2 far from any track (and off the farm)
     expect(lockedIndustryIds(state)).toEqual(new Set([0]));
     expect(industryLocks(state).get(0)?.owner).toBe("p1");
     expect(playerResources(state, "p1", 0).grain)
@@ -617,7 +639,7 @@ describe("E6 scoring hygiene", () => {
     run(track, "dirt", 6, 20, 10, 1);
     const state: EconomyState = {
       grid, track,
-      harvesters: [H(1, "p1", 11, 11)],
+      harvesters: [{ ...H(1, "p1", 10, 11), facing: "ne" }],
       factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }],
     };
     const score = createScoreState();
@@ -640,7 +662,7 @@ describe("E6 scoring hygiene", () => {
     run(track, "road", 6, 20, 10, 1);
     const state: EconomyState = {
       grid, track,
-      harvesters: [H(1, "p1", 11, 11)],
+      harvesters: [{ ...H(1, "p1", 10, 11), facing: "ne" }],
       factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }],
     };
     const score = createScoreState();
@@ -682,7 +704,7 @@ describe("E6 scoring hygiene", () => {
     run(track, "dirt", 6, 20, 10, 1);
     const state: EconomyState = {
       grid, track,
-      harvesters: [H(1, "p1", 11, 11)],
+      harvesters: [{ ...H(1, "p1", 10, 11), facing: "ne" }],
       factories: [{ owner: "p2", ownerId: 2, tx: 20, ty: 11 }],   // rival's only
     };
     const comp = buildAllComponents(track, 1);
@@ -696,7 +718,7 @@ describe("E6 scoring hygiene", () => {
     run(track, "dirt", 6, 20, 10, 1);
     const state: EconomyState = {
       grid, track,
-      harvesters: [H(1, "p1", 11, 11)],
+      harvesters: [{ ...H(1, "p1", 10, 11), facing: "ne" }],
       factories: [{ owner: "p1", ownerId: 1, tx: 20, ty: 11 }],
     };
     const y = harvesterYield(
@@ -719,13 +741,16 @@ describe("TK-008 Blockade auto-targeting", () => {
   /** p2 owns two harvesters on one trunk line: a farm (output 1.0) and an ore
    *  mine (0.8), each in exactly one harvester's catchment — clean split. */
   function rivalState() {
-    const farm = ind("farm", 12, 11);          // output 1.0
-    const ore = ind("ore_mine", 15, 11);       // output 0.8
+    const farm = ind("farm", 12, 11);          // output 1.0 (12..15)
+    const ore = ind("ore_mine", 17, 11);       // output 0.8 (17..20)
     const grid = flatGrid([farm, ore]);
     const track = createTrack();
-    run(track, "dirt", 6, 20, 10, 2);          // p2's trunk line
-    const harvesters = [H(1, "p2", 11, 11), H(2, "p2", 14, 11)];
-    const factories: Factory[] = [{ owner: "p2", ownerId: 2, tx: 20, ty: 11 }];
+    run(track, "dirt", 6, 24, 10, 2);          // p2's trunk line
+    const harvesters: Harvester[] = [
+      { ...H(1, "p2", 10, 11), facing: "ne" },  // west of the farm
+      { ...H(2, "p2", 21, 11), facing: "ne" },  // east of the ore mine
+    ];
+    const factories: Factory[] = [{ owner: "p2", ownerId: 2, tx: 24, ty: 11 }];
     const state: EconomyState = { grid, track, harvesters, factories };
     return { state, grid, farm, ore };
   }

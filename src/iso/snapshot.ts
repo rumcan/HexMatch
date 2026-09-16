@@ -25,6 +25,7 @@ import { generateMap } from "./grid";
 import type { Cargo } from "./config";
 import { createTrack, type Track } from "./track";
 import type { Harvester, Factory } from "./economy";
+import { DEPOT_FACINGS, type DepotFacing } from "./depot";
 
 /**
  * Bump on ANY change to the snapshot shape or to seed-derived generation.
@@ -77,7 +78,12 @@ import type { Harvester, Factory } from "./economy";
 // income stop with nothing on the map to explain it (industries are
 // seed-derived and never sent, so the expiry cannot be inferred). Mixed
 // versions must refuse.
-export const SNAPSHOT_VERSION = 14;
+// v15 (2×2 depots, 4×4 resources, fields): the seeded map itself moved —
+// every resource is a 4×4 lot now, with wheat/tree blocks beside the farms and
+// forests — and a Depot carries the ROTATION its entrance opens onto plus the
+// `clearedFields` the players have demolished. A v14 guest would regenerate a
+// different island from the same seed, so mixed versions must refuse.
+export const SNAPSHOT_VERSION = 15;
 
 export const EXPECTED_TRACK_BYTES = MAP_W * MAP_H;
 
@@ -105,13 +111,27 @@ export function base64ToBytes(b64: string): Uint8Array {
 // ── wire shape ────────────────────────────────────────────────────────────
 export interface WireHarvester {
   id: number; owner: string; ownerId: number; tx: number; ty: number;
+  /** Which EDGE of the 2×2 truck Depot its entrance opens onto (its rotation). */
+  facing?: DepotFacing;
   /**
    * L4 (#218): the depot's YIELD LEVEL — what a tuning session set it to, and
    * the multiplier the L1b clock pays the depot's cargo by. Optional and
    * additive on purpose: a host running the old loop (or an older build) sends
    * no level at all, and every reader treats its absence as the baseline.
+   *
+   * This is also the number L6's DECAY moves: `economyTick` cools the host's
+   * depots and the cooled level is what rides here, so a guest watching a Hard
+   * game sees the same shrinking multiplier the host is being paid for.
    */
   yield?: number;
+  /**
+   * L6 (#220): the transport tier the depot's last tuning session settled on
+   * (`loop.ts`'s `TRANSPORT_TIERS`) — the spent half of Normal's "one match per
+   * depot, one more per upgrade". Per-depot host state, so it travels or a
+   * guest would compute a re-match credit the host never gave. Absent = never
+   * tuned; like `yield`, an old-loop host sends nothing.
+   */
+  tuneTier?: number;
 }
 
 export interface WirePlayer {
@@ -365,6 +385,11 @@ export interface Snapshot {
   crossPrompt?: CrossPromptWire | null;
   /** MP-AUDIT: winner identity */
   winner?: WinnerWire | null;
+  /**
+   * RES-FIELDS: ids of the wheat fields / tree blocks demolished so far. The
+   * fields themselves regenerate from the seed; only their clearing travels.
+   */
+  clearedFields?: number[];
 }
 
 export interface SnapshotSource {
@@ -386,6 +411,7 @@ export interface SnapshotSource {
   boards?: BoardWire[];
   crossPrompt?: CrossPromptWire | null;
   winner?: WinnerWire | null;
+  clearedFields?: number[];
 }
 
 export function buildSnapshot(src: SnapshotSource): Snapshot {
@@ -402,9 +428,13 @@ export function buildSnapshot(src: SnapshotSource): Snapshot {
     // L4 (#218): the yield level rides with the depot it belongs to. A level of
     // `undefined` (the old loop) is left OFF the record rather than sent as a
     // value, so an old-loop snapshot is byte-for-byte what it was.
+    // L6 (#220): `tuneTier` joins it the same way — optional, and left off the
+    // record when absent, so the old loop's bytes do not change.
     harvesters: src.harvesters.map((h) => ({
       id: h.id, owner: h.owner, ownerId: h.ownerId, tx: h.tx, ty: h.ty,
       ...(typeof h.yield === "number" ? { yield: h.yield } : {}),
+      ...(h.facing ? { facing: h.facing } : {}),
+      ...(typeof h.tuneTier === "number" ? { tuneTier: h.tuneTier } : {}),
     })),
     factories: src.factories.map((f) => ({ ...f })),
     players: src.players.map((p) => ({ ...p, res: { ...p.res } })),
@@ -424,6 +454,7 @@ export function buildSnapshot(src: SnapshotSource): Snapshot {
     boards: src.boards ? src.boards.map((b) => ({ owner: b.owner, data: b.data })) : undefined,
     crossPrompt: src.crossPrompt ?? null,
     winner: src.winner ?? null,
+    ...(src.clearedFields?.length ? { clearedFields: [...src.clearedFields] } : {}),
   };
 }
 
@@ -491,9 +522,19 @@ export function validateSnapshot(s: unknown, localSeed?: number): SnapshotError 
   // L4 (#218): a depot's yield level is optional, but a present one has to be
   // a real number — a guest that quietly read `undefined` as 1 while the host
   // clocked ×2.4 is the kind of divergence the wire refuses loudly.
+  // L6 (#220): the same rule for the re-match tier, because a guest that
+  // defaulted a missing `tuneTier` to 0 would offer itself a re-tune the host
+  // has already spent.
   for (const h of o.harvesters as (Partial<WireHarvester> | null)[]) {
     if (h && h.yield !== undefined && (typeof h.yield !== "number" || !Number.isFinite(h.yield))) {
       return new SnapshotError("malformed", "Snapshot carries a malformed depot yield.");
+    }
+    if (h && h.facing !== undefined && !DEPOT_FACINGS.includes(h.facing as DepotFacing)) {
+      return new SnapshotError("malformed", "Snapshot carries a malformed depot facing.");
+    }
+    if (h && h.tuneTier !== undefined
+      && (typeof h.tuneTier !== "number" || !Number.isInteger(h.tuneTier) || h.tuneTier < 0)) {
+      return new SnapshotError("malformed", "Snapshot carries a malformed depot tune tier.");
     }
   }
   // #137: the seat list itself is optional (an empty world has nobody in it),
@@ -557,6 +598,10 @@ export function validateSnapshot(s: unknown, localSeed?: number): SnapshotError 
   if (o.boards !== undefined && o.boards !== null && !Array.isArray(o.boards)) {
     return new SnapshotError("malformed", "Snapshot boards is malformed.");
   }
+  if (o.clearedFields !== undefined && (!Array.isArray(o.clearedFields)
+    || o.clearedFields.some((id) => !Number.isInteger(id) || id < 0))) {
+    return new SnapshotError("malformed", "Snapshot cleared fields are malformed.");
+  }
   // PP-14b: sabotage is optional for tolerance (an old producer might omit it
   // and still be readable), but if present it must be shaped correctly.
   if (o.rivalSabotage !== undefined) {
@@ -606,6 +651,7 @@ export interface AppliedSnapshot {
   boards?: BoardWire[];
   crossPrompt?: CrossPromptWire | null;
   winner?: WinnerWire | null;
+  clearedFields: number[];
 }
 
 /**
@@ -649,6 +695,7 @@ export function applySnapshot(s: unknown, localSeed?: number): AppliedSnapshot {
     boards: (o as Snapshot).boards ? (o as Snapshot).boards!.map((x) => ({ ...x })) : undefined,
     crossPrompt: (o as Snapshot).crossPrompt ?? null,
     winner: (o as Snapshot).winner ?? null,
+    clearedFields: [...(o.clearedFields ?? [])],
   };
 }
 

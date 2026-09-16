@@ -568,6 +568,12 @@ const TOWN_INDUSTRY_SEP = 8;
 const TOWN_TOWN_SEP = 28;
 /** TOWN-1: occupancy sentinel for town tiles (distinct from industry indices ≥ 0). */
 export const TOWN_OCC = -2;
+/**
+ * RES-FIELDS: occupancy sentinel for a standing wheat field or tree block
+ * beside a resource. It blocks building like any other occupant until the
+ * player demolishes it, which puts the tiles back to -1.
+ */
+export const FIELD_OCC = -3;
 
 /**
  * PP-02: how far (Chebyshev) around each town tile we flatten rocky terrain so

@@ -41,7 +41,7 @@ async function waitIsoPhase(page: Page, phase: string | RegExp): Promise<void> {
 function craftedSave(skillKey: string): string {
   return JSON.stringify({
     v: 1,
-    snapV: 12,
+    snapV: 14,
     savedAt: Date.now(),
     seed: 4242,
     skillKey,

@@ -101,8 +101,9 @@ describe("E4 culling + draw list", () => {
       expect(mine[0].sprite, ind.type).toBe(ind.type);
       expect([mine[0].tx, mine[0].ty], ind.type).toEqual([ind.tx, ind.ty]);
       expect(atlas.has(mine[0].sprite)).toBe(true);
-      expect(atlas.get(mine[0].sprite)!.footprint, ind.type).toEqual([ind.w, ind.h]);
+      // every resource stands on its 4×4 lot (the building layer draws it there)
       expect([ind.w, ind.h], ind.type).toEqual(INDUSTRY_BY_KEY[ind.type].footprint);
+      expect([ind.w, ind.h], ind.type).toEqual([4, 4]);
     }
   });
 

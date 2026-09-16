@@ -58,7 +58,8 @@ const pave = (t: ReturnType<typeof createTrack>, owner: number, pts: [number, nu
 const plant = (tx: number, ty: number, ownerId = 1, owner = "you"): Factory =>
   ({ owner, ownerId, tx, ty });
 const depot = (tx: number, ty: number, ownerId = 1, owner = "you"): Harvester =>
-  ({ id: 1, owner, ownerId, tx, ty });
+  // the fixtures below run their spur up to the lot's NW edge
+  ({ id: 1, owner, ownerId, tx, ty, facing: "nw" });
 
 const PLANT: [number, number] = [10, 10];
 const FOOT = plantFootprintTiles(PLANT[0], PLANT[1]);
@@ -192,8 +193,9 @@ describe("PP-15 your own building's ground costs nothing", () => {
 
   it("structureTiles is per owner — a rival's floor is not free ground", () => {
     const mine = structureTiles([plant(...PLANT, 1)], [depot(20, 20, 1)], 1);
-    expect(mine.size).toBe(FOOT.length + 1);           // block + the depot tile
+    expect(mine.size).toBe(FOOT.length + 4);           // block + the 2×2 depot lot
     expect(mine.has(tIdx(20, 20))).toBe(true);
+    expect(mine.has(tIdx(21, 21))).toBe(true);
     expect(structureTiles([plant(...PLANT, 2)], [], 1).size).toBe(0);
   });
 });

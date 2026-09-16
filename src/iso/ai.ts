@@ -52,7 +52,7 @@ import {
   type Cargo,
 } from "./config";
 import { FREE_SETUP_DEPOTS, depotCostFor, priceDepot } from "./construction";
-import { ROUGH, factoryTouchesTown, type Grid, type Industry } from "./grid";
+import { FIELD_OCC, ROUGH, factoryTouchesTown, type Grid, type Industry } from "./grid";
 import {
   DIRS, DIR, tIdx, inMapT, hasTrack, canBuildOn, canAfford, tileCost, addCost,
   buildTile, trackOpenTo, tileAlreadyCarries, freeAllowanceCovers, playerNetwork,
@@ -60,11 +60,15 @@ import {
   type Track, type TrackKind, type Purse,
 } from "./track";
 import {
-  catchmentRect, rectContains, isServiced,
-  buildAllComponents, resolveConnection, sharedComponentsWithTiles,
+  isServiced, industriesInCatchment,
+  buildAllComponents, resolveConnection,
+  componentsTouchingTiles, depotComponents,
   industryLocks, heldIndustries, depotCargo,
   type EconomyState, type Harvester, type Factory,
 } from "./economy";
+import {
+  DEFAULT_FACING, depotEntranceTiles, depotFacings, depotSites, depotsOverlap, type DepotFacing,
+} from "./depot";
 // RAILWAYS (#182): the rival's railway runs through the railway's OWN module —
 // its rules, its costs, its refusals. Nothing rail-shaped is re-derived below;
 // every "may I" answer is a `rail.ts` function the player's click reads too.
@@ -349,9 +353,11 @@ export function catchmentValue(
 
 export interface Candidate {
   industry: Industry;
-  /** Tile the harvester would occupy — adjacent to the industry footprint. */
+  /** Origin of the 2×2 lot the Depot would occupy, beside the industry. */
   hx: number;
   hy: number;
+  /** Which half of the lot opens to roads (away from the industry). */
+  facing: DepotFacing;
   path: Path;
   kind: TrackKind;
   cost: Purse;
@@ -369,25 +375,10 @@ export interface Candidate {
   value: number;
 }
 
-/** Tiles orthogonally adjacent to an industry's footprint, in a stable order. */
+/** The 2×2 truck Depot lots beside an industry (their origins), in a stable
+ *  order — `depotSites`, the placement rule's own geometry. */
 export function harvesterSpots(grid: Grid, ind: Industry): [number, number][] {
-  const out: [number, number][] = [];
-  const seen = new Set<number>();
-  for (let y = ind.ty - 1; y <= ind.ty + ind.h; y++) {
-    for (let x = ind.tx - 1; x <= ind.tx + ind.w; x++) {
-      if (!inMapT(x, y)) continue;
-      const insideX = x >= ind.tx && x < ind.tx + ind.w;
-      const insideY = y >= ind.ty && y < ind.ty + ind.h;
-      if (insideX && insideY) continue;                 // on the footprint
-      if (!insideX && !insideY) continue;               // diagonal corner
-      const i = tIdx(x, y);
-      if (seen.has(i)) continue;
-      if (!canBuildOn(grid, "dirt", x, y)) continue;   // basic road: legal land incl. rough
-      seen.add(i);
-      out.push([x, y]);
-    }
-  }
-  return out;
+  return depotSites(grid, ind).map((s) => [s.tx, s.ty] as [number, number]);
 }
 
 /**
@@ -492,7 +483,7 @@ export interface PlanFeasibility {
   fresh: [number, number][];
   /** Every tile of the path is buildable for `kind`. */
   executable: boolean;
-  /** The harvester at (hx,hy) is serviced once the path is laid. */
+  /** The Depot's entrance is on standing track, or on track the path lays. */
   serviced: boolean;
   /** `executable && serviced` — the turn is real, never a no-op. */
   viable: boolean;
@@ -500,6 +491,7 @@ export interface PlanFeasibility {
 
 export function planFeasibility(
   state: EconomyState, kind: TrackKind, path: Path, hx: number, hy: number, ownerId: number,
+  facing: DepotFacing = DEFAULT_FACING,
 ): PlanFeasibility {
   const { grid, track } = state;
   const fresh: [number, number][] = [];
@@ -512,9 +504,7 @@ export function planFeasibility(
     freshIdx.add(tIdx(x, y));
   }
   let serviced = false;
-  for (const d of DIRS) {
-    const nx = hx + DIR[d][0], ny = hy + DIR[d][1];
-    if (!inMapT(nx, ny)) continue;
+  for (const [nx, ny] of depotEntranceTiles(hx, hy, facing)) {
     // Standing track of EITHER layer that is open to us services the depot
     // (W2 — ours, or a public highway, which is what `isServiced` checks too,
     // so this probe and the rule it predicts can never disagree)…
@@ -631,7 +621,11 @@ export function planCandidates(
 ): Candidate[] {
   const { grid, track } = state;
   const out: Candidate[] = [];
-  const claimed = new Set(state.harvesters.map((h) => tIdx(h.tx, h.ty)));
+  // A new 2×2 lot may not overlap a standing Depot or a Factory.
+  const lotTaken = (x: number, y: number): boolean =>
+    state.harvesters.some((h) => depotsOverlap(h.tx, h.ty, x, y))
+    || state.factories.some((f) =>
+      x < f.tx + FACTORY_FOOTPRINT[0] && x + 2 > f.tx && y < f.ty + FACTORY_FOOTPRINT[1] && y + 2 > f.ty);
   const free = Math.max(0, opts.free ?? 0);
   // PP-16: one claim map for the whole ranking pass — the same map
   // `harvesterYield` pays by and `planDepotPlacement` refuses by, read once
@@ -673,20 +667,28 @@ export function planCandidates(
       // skip industries already covered by one of our own harvesters
       const covered = state.harvesters.some((h) =>
         h.owner === factory.owner
-        && rectContains(catchmentRect(h.tx, h.ty), ind.tx, ind.ty));
+        && industriesInCatchment(grid, h).some((x) => x.id === ind.id));
       if (covered) continue;
       // PP-16: …and any industry somebody's road already holds. A Depot built
       // beside it would claim nothing — the game refuses the placement — so no
       // route is searched for it and no tile is spent reaching it.
       if (locks.has(ind.id)) continue;
 
-      for (const [hx, hy] of harvesterSpots(grid, ind)) {
-        if (claimed.has(tIdx(hx, hy))) continue;
-        // L5 (#219): the TYPE this spot would build, by the same `depotCargo`
+      // Nearest lots to the network first: the search stops at the first
+      // viable site, so the order is what makes that site a cheap one.
+      const sites = depotSites(grid, ind)
+        .map((s) => {
+          const near = nearestSource(sources, s.tx, s.ty);
+          return { ...s, d: near ? Math.abs(near[0] - s.tx) + Math.abs(near[1] - s.ty) : Infinity };
+        })
+        .sort((a, b) => a.d - b.d || a.ty - b.ty || a.tx - b.tx);
+      for (const { tx: hx, ty: hy } of sites) {
+        if (lotTaken(hx, hy)) continue;
+        // L5 (#219): the TYPE this lot would raise, by the same `depotCargo`
         // rule the game prices and gates with (the site's biggest held
         // producer — not necessarily the industry A* aimed at). A locked rung
         // is skipped like a claimed industry: that plan would be refused, and
-        // the next spot or the next industry may still be buildable.
+        // the next lot or the next industry may still be buildable.
         const cargo = newLoop
           ? depotCargo(state, { id: -1, owner: factory.owner, ownerId: factory.ownerId, tx: hx, ty: hy })
           : null;
@@ -698,21 +700,40 @@ export function planCandidates(
         // no second cost table.
         const depotCost = priceDepot(opts.purse, freeDepots, { cargo, tier: depotTier, newLoop }).cost;
         const src = nearestSource(sources, hx, hy);
-        if (!src || !canBuildOn(grid, kindPref, src[0], src[1]) || !canBuildOn(grid, kindPref, hx, hy)) continue;
-        const last = nearestSource(existing, hx, hy)!;
+        if (!src || !canBuildOn(grid, kindPref, src[0], src[1])) continue;
+        // The road has to reach the lot's GATE, and the Depot is built in
+        // whichever ROTATION puts that gate nearest the network — the same
+        // choice the player makes with R, made here by distance.
+        let facing: DepotFacing | null = null;
+        let gate: [number, number] | null = null;
+        let gateDist = Infinity;
+        for (const side of depotFacings(grid, hx, hy)) {
+          const open = depotEntranceTiles(hx, hy, side)
+            .filter(([x, y]) => canBuildOn(grid, kindPref, x, y));
+          if (!open.length) continue;
+          const near = nearestSource(open, src[0], src[1])!;
+          const d = Math.abs(near[0] - src[0]) + Math.abs(near[1] - src[1]);
+          if (d < gateDist) { gateDist = d; facing = side; gate = near; }
+        }
+        if (!facing || !gate) continue;
+        const [gx, gy] = gate;
+        const last = nearestSource(existing, gx, gy)!;
         const minFresh = Math.min(
-          Math.abs(factory.tx - hx) + Math.abs(factory.ty - hy) + 1,
-          Math.abs(last[0] - hx) + Math.abs(last[1] - hy) + (hasTrack(track, kindPref, last[0], last[1]) ? 0 : 1),
+          Math.abs(factory.tx - gx) + Math.abs(factory.ty - gy) + 1,
+          Math.abs(last[0] - gx) + Math.abs(last[1] - gy) + (hasTrack(track, kindPref, last[0], last[1]) ? 0 : 1),
         );
         if (minFresh > maxFresh) continue;
         // W2: route with the AI's own trunk discount, not the player's road.
-        const path = findPath(grid, track, kindPref, src[0], src[1], hx, hy, false, factory.ownerId);
+        const path = findPath(grid, track, kindPref, src[0], src[1], gx, gy, false, factory.ownerId);
         if (!path) continue;
+        // The road stops at the gate: a route that runs across the lot itself
+        // would lay track under the Depot it is building.
+        if (path.tiles.some(([x, y]) => x >= hx && x < hx + 2 && y >= hy && y < hy + 2)) continue;
         // W8: refuse plans `executeCandidate` could not carry out as priced —
-        // paving over rough, or a one-tile "path" that lays track under the
-        // depot and leaves it unserviced. The next spot / the next kind is
-        // tried, so a paved plan that cannot be built falls through to dirt.
-        if (!planFeasibility(state, kindPref, path, hx, hy, factory.ownerId).viable) continue;
+        // paving over rough, or a path that never reaches the gate. The next
+        // spot / the next kind is tried, so a paved plan that cannot be built
+        // falls through to dirt.
+        if (!planFeasibility(state, kindPref, path, hx, hy, factory.ownerId, facing).viable) continue;
 
         // W3: same cost model as the human preview — the allowance covers the
         // first new tiles, the purse pays the rest. W9: …and only for dirt; a
@@ -735,7 +756,7 @@ export function planCandidates(
         // than the one industry A* happened to route to.
         const value = catchmentValue(state, locks, opts.stock, hx, hy, now, opts.oreUrgency ?? 1);
         const score = value / Math.max(0.3, path.cost);
-        out.push({ industry: ind, hx, hy, path, kind: kindPref, cost, depotCost, score, value });
+        out.push({ industry: ind, hx, hy, facing, path, kind: kindPref, cost, depotCost, score, value });
         break;   // one spot per industry is enough — the cheapest we found
       }
     }
@@ -1120,7 +1141,7 @@ export function executeCandidate(
     built.push([x, y]);
   }
   let harvester: Harvester | null = null;
-  const h: Harvester = { id: nextHarvesterId, owner, ownerId, tx: c.hx, ty: c.hy };
+  const h: Harvester = { id: nextHarvesterId, owner, ownerId, tx: c.hx, ty: c.hy, facing: c.facing };
   // PP-05: the Depot itself is charged here, once, and only when the Depot
   // actually lands (`isServiced`). A plan that lays track but places nothing
   // charges no Depot — the same "a refused build consumes nothing" rule the
@@ -1281,10 +1302,10 @@ export function paveCandidates(
       if (f.owner !== opts.owner) continue;
       // PP-15: the plant's whole footprint — a spur that joins the road on the
       // far side of the block is the same live connection.
-      for (const c of sharedComponentsWithTiles(
-        comp.comp, h.tx, h.ty, plantFootprintTiles(f.tx, f.ty),
-      )) {
-        if (comp.roadComp[c] === 0) gravel.add(c);
+      // The Depot side is its gate — the components on its entrance tiles.
+      const gate = depotComponents(comp.comp, h);
+      for (const c of componentsTouchingTiles(comp.comp, plantFootprintTiles(f.tx, f.ty))) {
+        if (gate.has(c) && comp.roadComp[c] === 0) gravel.add(c);
       }
     }
   }
@@ -1531,7 +1552,7 @@ export function railStepCost(
   // The occupancy test is the shared rule's own (`railTileRefusal` reads the
   // same byte the same way), so the ranker can never prefer a tile the rule
   // would refuse.
-  if (grid.occupancy[i] >= 0) return IMPASSABLE;
+  if (grid.occupancy[i] >= 0 || grid.occupancy[i] === FIELD_OCC) return IMPASSABLE;
   if (structureAt(rail, tx, ty)) return IMPASSABLE;
   if (!railTerrainOk(grid, tx, ty)) return IMPASSABLE;
   if ((rail.rail.tile[i] & RAIL_PRESENT) !== 0) {
@@ -1663,7 +1684,7 @@ function endpointSources(
     const [jx, jy] = portJoin(port);
     if (!inMapT(jx, jy)) continue;
     const i = tIdx(jx, jy);
-    if (grid.occupancy[i] >= 0) continue;              // the rule's occupancy read
+    if (grid.occupancy[i] >= 0 || grid.occupancy[i] === FIELD_OCC) continue;   // the rule's occupancy read
     if (structureAt(rail, jx, jy)) continue;
     const ownRail = (rail.rail.tile[i] & RAIL_PRESENT) !== 0 && rail.rail.owner[i] === ownerId;
     if (ownRail || railTerrainOk(grid, jx, jy)) out.push([jx, jy]);
