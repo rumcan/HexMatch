@@ -2,14 +2,19 @@
 // Truck depots — the 2×2 building's geometry.
 //
 // A Depot is a 2×2 lot placed directly beside a resource (an industry footprint
-// sharing an EDGE with the lot). It has one open half: two images exist,
+// sharing an EDGE with the lot). The building is authored in FOUR quarter-turn
+// rotations, one per side of the lot, and the art's name says which side its
+// yard opens onto:
 //
-//   truck_depot_top_entrance     walled on its two BOTTOM edges, open at the TOP
-//   truck_depot_bottom_entrance  loading dock on its two TOP edges, open at the BOTTOM
+//   truck_depot_bottom_entrance_ne   entrance on the NE edge (up-right)
+//   truck_depot_bottom_entrance_se   entrance on the SE edge (down-right)
+//   truck_depot_bottom_entrance_sw   entrance on the SW edge (down-left)
+//   truck_depot_bottom_entrance_nw   entrance on the NW edge (up-left)
 //
-// and the lot always opens AWAY from the resource it serves, so the player can
-// run a road to the open side. Roads connect only on the tiles just outside the
-// open edges (the "entrance"), and lorries drive onto the lot to load.
+// The lot opens AWAY from the resource it serves — by default the side
+// opposite it — and the player may turn it (R) onto any other free side. Roads
+// connect only on the two tiles just outside that one open edge (the
+// "entrance"), and lorries drive onto the lot to load.
 //
 // Grid directions follow track.ts (`DIR`): on screen, NW is up-left (−x),
 // NE is up-right (−y), SE is down-right (+x), SW is down-left (+y). A Depot's
@@ -24,25 +29,42 @@ import type { Grid, Industry } from "./grid";
 /** The Depot footprint, in tiles. */
 export const DEPOT_SIZE: [number, number] = [2, 2];
 
-/** Which half of the lot is open to roads. */
-export type DepotFacing = "top" | "bottom";
-
 /** The four edges of the lot, named by the screen direction they face. */
 export type DepotSide = "nw" | "ne" | "se" | "sw";
 
-/** The art for each facing (assets/buildings/). */
+/** Which edge the lot's entrance opens onto — one of the four rotations. */
+export type DepotFacing = DepotSide;
+
+/** The rotation order R steps through, a quarter turn at a time. */
+export const DEPOT_FACINGS: readonly DepotFacing[] = ["ne", "se", "sw", "nw"];
+
+/** The facing a record with none takes, before the map can be consulted. */
+export const DEFAULT_FACING: DepotFacing = "sw";
+
+/**
+ * The art for each facing (assets/buildings/).
+ *
+ * The two NORTH files are crossed on purpose: the art labelled `_ne` is the
+ * one whose yard opens up-LEFT, which is this grid's NW, and `_nw` opens
+ * up-right. Mapping them straight across put the shed on the road side for
+ * every lot built north of its resource — the building has to stand AGAINST
+ * the resource, with the yard facing the open country the road comes from.
+ */
 export const DEPOT_SPRITES: Readonly<Record<DepotFacing, string>> = {
-  top: "truck_depot_top_entrance",
-  bottom: "truck_depot_bottom_entrance",
+  ne: "truck_depot_bottom_entrance_nw",
+  se: "truck_depot_bottom_entrance_se",
+  sw: "truck_depot_bottom_entrance_sw",
+  nw: "truck_depot_bottom_entrance_ne",
 };
 
-/** The sides each facing leaves open. */
-export const OPEN_SIDES: Readonly<Record<DepotFacing, readonly [DepotSide, DepotSide]>> = {
-  top: ["nw", "ne"],
-  bottom: ["se", "sw"],
+/** The edge across the lot from this one. */
+export const OPPOSITE_SIDE: Readonly<Record<DepotSide, DepotSide>> = {
+  ne: "sw", sw: "ne", se: "nw", nw: "se",
 };
 
-const TOP_SIDES: ReadonlySet<DepotSide> = new Set(["nw", "ne"]);
+/** The next rotation, a quarter turn on. */
+export const rotateFacing = (facing: DepotFacing): DepotFacing =>
+  DEPOT_FACINGS[(DEPOT_FACINGS.indexOf(facing) + 1) % DEPOT_FACINGS.length];
 
 /** The lot's own tiles, row-major. */
 export function depotTiles(tx: number, ty: number): [number, number][] {
@@ -80,10 +102,9 @@ export function depotEdgeTiles(tx: number, ty: number, side: DepotSide): [number
   return out.filter(([x, y]) => inMapT(x, y));
 }
 
-/** The entrance: the tiles outside the two open edges, where roads connect. */
+/** The entrance: the tiles outside the ONE open edge, where roads connect. */
 export function depotEntranceTiles(tx: number, ty: number, facing: DepotFacing): [number, number][] {
-  const [a, b] = OPEN_SIDES[facing];
-  return [...depotEdgeTiles(tx, ty, a), ...depotEdgeTiles(tx, ty, b)];
+  return depotEdgeTiles(tx, ty, facing);
 }
 
 const industryCovers = (ind: Industry, x: number, y: number): boolean =>
@@ -96,7 +117,7 @@ export function industriesTouchingDepot(
   const out: { industry: Industry; sides: Set<DepotSide> }[] = [];
   for (const ind of grid.industries) {
     const sides = new Set<DepotSide>();
-    for (const side of ["nw", "ne", "se", "sw"] as const) {
+    for (const side of DEPOT_FACINGS) {
       if (depotEdgeTiles(tx, ty, side).some(([x, y]) => industryCovers(ind, x, y))) sides.add(side);
     }
     if (sides.size) out.push({ industry: ind, sides });
@@ -105,32 +126,71 @@ export function industriesTouchingDepot(
 }
 
 /** Why a lot at (tx, ty) has no facing, or null when it has one. */
-export type DepotFacingProblem = "no-industry" | "both-sides";
+export type DepotFacingProblem = "no-industry" | "boxed-in";
 
 /**
- * The facing a lot at (tx, ty) takes: it opens AWAY from the resources it
- * touches. Resources on its top edges (NW/NE) → open at the bottom; on its
- * bottom edges (SE/SW) → open at the top. Touching resources on both halves
- * leaves no side for a road, so that site has no facing.
+ * Every rotation a lot at (tx, ty) may be built in, best first: an edge is a
+ * candidate when no resource stands against it and at least one of its
+ * entrance tiles is on the map (a side that opens off the map has nowhere for
+ * a road). The side OPPOSITE the resource leads — that is the one facing open
+ * country — and the rest follow in quarter-turn order, so the list is
+ * deterministic and R walks it the same way every time.
+ */
+export function depotFacings(
+  grid: Pick<Grid, "industries">, tx: number, ty: number,
+): DepotFacing[] {
+  const blocked = new Set<DepotSide>();
+  for (const t of industriesTouchingDepot(grid, tx, ty)) for (const s of t.sides) blocked.add(s);
+  const free = DEPOT_FACINGS.filter((s) =>
+    !blocked.has(s) && depotEdgeTiles(tx, ty, s).length > 0);
+  if (!free.length) return [];
+  // the far side from the resource first, then quarter turns from there
+  const away = [...blocked].map((s) => OPPOSITE_SIDE[s]).find((s) => free.includes(s));
+  if (!away) return free;
+  const out: DepotFacing[] = [away];
+  for (let s = rotateFacing(away); s !== away; s = rotateFacing(s)) {
+    if (free.includes(s)) out.push(s);
+  }
+  return out;
+}
+
+/**
+ * The facing a lot at (tx, ty) takes by default: it opens AWAY from the
+ * resource it touches. A lot with resources against every edge has nowhere to
+ * put its entrance, and a lot touching no resource at all is not a Depot site.
  */
 export function depotFacingAt(
   grid: Pick<Grid, "industries">, tx: number, ty: number,
 ): { facing: DepotFacing | null; problem: DepotFacingProblem | null } {
-  const touching = industriesTouchingDepot(grid, tx, ty);
-  if (!touching.length) return { facing: null, problem: "no-industry" };
-  let top = false, bottom = false;
-  for (const t of touching) for (const s of t.sides) {
-    if (TOP_SIDES.has(s)) top = true; else bottom = true;
+  if (!industriesTouchingDepot(grid, tx, ty).length) {
+    return { facing: null, problem: "no-industry" };
   }
-  if (top && bottom) return { facing: null, problem: "both-sides" };
-  return { facing: top ? "bottom" : "top", problem: null };
+  const facings = depotFacings(grid, tx, ty);
+  if (!facings.length) return { facing: null, problem: "boxed-in" };
+  return { facing: facings[0], problem: null };
+}
+
+/**
+ * The rotation a site will actually be built in when the player has turned the
+ * ghost to `want`: their choice when that side is free here, else this site's
+ * own default. Placement, the preview sprite and the ghost all ask this, so
+ * what the player sees is what gets built.
+ */
+export function depotFacingFor(
+  grid: Pick<Grid, "industries">, tx: number, ty: number, want?: DepotFacing | null,
+): DepotFacing | null {
+  // Not a Depot site at all (no resource beside it) → no entrance to show.
+  const { facing } = depotFacingAt(grid, tx, ty);
+  if (!facing) return null;
+  const facings = depotFacings(grid, tx, ty);
+  return want && facings.includes(want) ? want : facing;
 }
 
 /**
  * Every 2×2 lot that could serve `ind`: sharing an edge with its footprint,
- * with a facing (not boxed in by resources on both halves), and on ground a
- * Depot may stand on. Row-major, so a search over it is deterministic. Other
- * structures (depots, factories) are the caller's to rule out.
+ * with a free side for its entrance, and on ground a Depot may stand on.
+ * Row-major, so a search over it is deterministic. Other structures (depots,
+ * factories) are the caller's to rule out.
  */
 export function depotSites(
   grid: Grid, ind: Industry,
@@ -164,9 +224,9 @@ export function depotSites(
 export const depotsOverlap = (ax: number, ay: number, bx: number, by: number): boolean =>
   Math.abs(ax - bx) < DEPOT_SIZE[0] && Math.abs(ay - by) < DEPOT_SIZE[1];
 
-/** A stored Depot's facing, deriving it for records written before facings existed. */
+/** A stored Depot's facing, deriving it for records written without one. */
 export function depotFacingOf(
   grid: Pick<Grid, "industries">, h: { tx: number; ty: number; facing?: DepotFacing },
 ): DepotFacing {
-  return h.facing ?? depotFacingAt(grid, h.tx, h.ty).facing ?? "top";
+  return h.facing ?? depotFacingAt(grid, h.tx, h.ty).facing ?? DEFAULT_FACING;
 }

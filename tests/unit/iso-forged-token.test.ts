@@ -47,9 +47,9 @@ const ind = (type: string, tx: number, ty: number): Industry => {
 };
 
 const H = (id: number, owner: string, tx: number, ty: number): Harvester =>
-  ({ id, owner, ownerId: owner === "you" ? 1 : 0, tx, ty, facing: "top" });
+  ({ id, owner, ownerId: owner === "you" ? 1 : 0, tx, ty, facing: "ne" });
 
-/** Farm at 11,11; the 2×2 depot at 9,11 opens at the top (gate 10,10); factory at 14,10; road 10..14. */
+/** Farm at 11,11; the 2×2 depot at 9,11 opens NE (gates 9,10 / 10,10); factory at 14,10; road 10..14. */
 function world() {
   const grid = flatGrid([ind("farm", 11, 11)]);
   const track = createTrack();

@@ -58,7 +58,8 @@ const pave = (t: ReturnType<typeof createTrack>, owner: number, pts: [number, nu
 const plant = (tx: number, ty: number, ownerId = 1, owner = "you"): Factory =>
   ({ owner, ownerId, tx, ty });
 const depot = (tx: number, ty: number, ownerId = 1, owner = "you"): Harvester =>
-  ({ id: 1, owner, ownerId, tx, ty });
+  // the fixtures below run their spur up to the lot's NW edge
+  ({ id: 1, owner, ownerId, tx, ty, facing: "nw" });
 
 const PLANT: [number, number] = [10, 10];
 const FOOT = plantFootprintTiles(PLANT[0], PLANT[1]);

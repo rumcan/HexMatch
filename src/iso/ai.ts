@@ -64,7 +64,9 @@ import {
   industryLocks, heldIndustries,
   type EconomyState, type Harvester, type Factory,
 } from "./economy";
-import { depotEntranceTiles, depotSites, depotsOverlap, type DepotFacing } from "./depot";
+import {
+  DEFAULT_FACING, depotEntranceTiles, depotFacings, depotSites, depotsOverlap, type DepotFacing,
+} from "./depot";
 // RAILWAYS (#182): the rival's railway runs through the railway's OWN module —
 // its rules, its costs, its refusals. Nothing rail-shaped is re-derived below;
 // every "may I" answer is a `rail.ts` function the player's click reads too.
@@ -479,7 +481,7 @@ export interface PlanFeasibility {
 
 export function planFeasibility(
   state: EconomyState, kind: TrackKind, path: Path, hx: number, hy: number, ownerId: number,
-  facing: DepotFacing = "top",
+  facing: DepotFacing = DEFAULT_FACING,
 ): PlanFeasibility {
   const { grid, track } = state;
   const fresh: [number, number][] = [];
@@ -658,16 +660,26 @@ export function planCandidates(
           return { ...s, d: near ? Math.abs(near[0] - s.tx) + Math.abs(near[1] - s.ty) : Infinity };
         })
         .sort((a, b) => a.d - b.d || a.ty - b.ty || a.tx - b.tx);
-      for (const { tx: hx, ty: hy, facing } of sites) {
+      for (const { tx: hx, ty: hy } of sites) {
         if (lotTaken(hx, hy)) continue;
         const src = nearestSource(sources, hx, hy);
         if (!src || !canBuildOn(grid, kindPref, src[0], src[1])) continue;
-        // The road has to reach the lot's GATE: route to the entrance tile
-        // nearest the network that this transport kind may be laid on.
-        const gates = depotEntranceTiles(hx, hy, facing)
-          .filter(([x, y]) => canBuildOn(grid, kindPref, x, y));
-        if (!gates.length) continue;
-        const [gx, gy] = nearestSource(gates, src[0], src[1])!;
+        // The road has to reach the lot's GATE, and the Depot is built in
+        // whichever ROTATION puts that gate nearest the network — the same
+        // choice the player makes with R, made here by distance.
+        let facing: DepotFacing | null = null;
+        let gate: [number, number] | null = null;
+        let gateDist = Infinity;
+        for (const side of depotFacings(grid, hx, hy)) {
+          const open = depotEntranceTiles(hx, hy, side)
+            .filter(([x, y]) => canBuildOn(grid, kindPref, x, y));
+          if (!open.length) continue;
+          const near = nearestSource(open, src[0], src[1])!;
+          const d = Math.abs(near[0] - src[0]) + Math.abs(near[1] - src[1]);
+          if (d < gateDist) { gateDist = d; facing = side; gate = near; }
+        }
+        if (!facing || !gate) continue;
+        const [gx, gy] = gate;
         const last = nearestSource(existing, gx, gy)!;
         const minFresh = Math.min(
           Math.abs(factory.tx - gx) + Math.abs(factory.ty - gy) + 1,

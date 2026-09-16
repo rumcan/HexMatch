@@ -872,13 +872,13 @@
       ],
       "anchor": [
         60,
-        34
+        52
       ],
       "w": 120,
-      "h": 64,
+      "h": 84,
       "canvas": [
-        256,
-        256
+        240,
+        180
       ]
     },
     "wheat_field": {
@@ -908,6 +908,70 @@
       ],
       "w": 118,
       "h": 84,
+      "canvas": [
+        240,
+        180
+      ]
+    },
+    "truck_depot_bottom_entrance_sw": {
+      "footprint": [
+        2,
+        2
+      ],
+      "anchor": [
+        60,
+        52
+      ],
+      "w": 120,
+      "h": 84,
+      "canvas": [
+        240,
+        180
+      ]
+    },
+    "truck_depot_bottom_entrance_se": {
+      "footprint": [
+        2,
+        2
+      ],
+      "anchor": [
+        60,
+        46
+      ],
+      "w": 120,
+      "h": 76,
+      "canvas": [
+        240,
+        180
+      ]
+    },
+    "truck_depot_bottom_entrance_nw": {
+      "footprint": [
+        2,
+        2
+      ],
+      "anchor": [
+        60,
+        46
+      ],
+      "w": 120,
+      "h": 78,
+      "canvas": [
+        240,
+        180
+      ]
+    },
+    "truck_depot_bottom_entrance_ne": {
+      "footprint": [
+        2,
+        2
+      ],
+      "anchor": [
+        60,
+        44
+      ],
+      "w": 120,
+      "h": 76,
       "canvas": [
         240,
         180

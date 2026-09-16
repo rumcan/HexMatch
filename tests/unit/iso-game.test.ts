@@ -87,6 +87,8 @@ interface IsoHook {
   eco: import("../../src/iso/economy").EconomyState;
   /** J1: the mounted match-3 board and what the network lets it pay. */
   board: import("../../src/game/board").Board;
+  /** The rival seat's own board (its autoplayer's). */
+  rivalBoard: import("../../src/game/board").Board;
   reach: Record<string, number>;
   quarry: import("../../src/iso/quarry").Quarry;
   market: import("../../src/iso/market").IsoMarket;
@@ -805,7 +807,7 @@ function goldMineDepotSpots(grid: import("../../src/iso/grid").Grid): [number, n
       if (!legal || !southLotFree(grid, hx, hy)) continue;
       // two 2×2 lots side by side must not overlap
       if (spots.some(([sx, sy]) => Math.abs(sx - hx) < 2 && Math.abs(sy - (hy - 1)) < 2)) continue;
-      const served = industriesInCatchment(grid, { id: -1, owner: "you", ownerId: 0, tx: hx, ty: hy - 1, facing: "bottom" as const });
+      const served = industriesInCatchment(grid, { id: -1, owner: "you", ownerId: 0, tx: hx, ty: hy - 1, facing: "sw" as const });
       if (served.some((s) => s.type === "gold_mine")) spots.push([hx, hy - 1]);
     }
   }
@@ -825,7 +827,7 @@ function nonGoldDepotSpot(grid: import("../../src/iso/grid").Grid): [number, num
         if (grid.terrain[i] === WATER || grid.occupancy[i] !== -1) { legal = false; break; }
       }
       if (!legal || !southLotFree(grid, hx, hy)) continue;
-      const served = industriesInCatchment(grid, { id: -1, owner: "you", ownerId: 0, tx: hx, ty: hy - 1, facing: "bottom" as const });
+      const served = industriesInCatchment(grid, { id: -1, owner: "you", ownerId: 0, tx: hx, ty: hy - 1, facing: "sw" as const });
       if (!served.length) continue;
       if (served.some((s) => s.type === "gold_mine")) continue;
       return [hx, hy - 1];
@@ -934,7 +936,7 @@ describe("E11 a full round is playable", () => {
     const { hx, hy, fy } = c!;
 
     h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx, ty: fy });
-    const harv = { id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy - 1, facing: "bottom" as const };
+    const harv = { id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy - 1, facing: "sw" as const };
     h.eco.harvesters.push(harv);
 
     // catchment must actually see the industry
@@ -977,7 +979,7 @@ describe("E11 a full round is playable", () => {
     expect(c).toBeTruthy();
     const { hx, hy, fy } = c!;
     h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx, ty: fy });
-    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy - 1, facing: "bottom" as const });
+    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy - 1, facing: "sw" as const });
     for (let y = hy + 1; y <= fy; y++) buildTile(h.track, "dirt", hx, y, 1);
 
     const before = playerResources(h.eco, "you", 0);
@@ -1084,7 +1086,7 @@ async function connectedBoot(opts: { newLoop?: boolean; viaUrl?: string } = {}) 
   expect(c).toBeTruthy();
   const { hx, hy, fy } = c!;
   h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx, ty: fy });
-  h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy - 1, facing: "bottom" as const });
+  h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy - 1, facing: "sw" as const });
   for (let y = hy + 1; y <= fy; y++) buildTile(h.track, "dirt", hx, y, 1);
   h.refreshQuarry();      // the game runs this on every build and demolish
   return { h, corridor: { hx, hy, fy } };
@@ -1483,7 +1485,7 @@ describe("TOAST-ONCE the win-point popups show once and stay gone", () => {
     expect(c).toBeTruthy();
     const { hx, hy } = c!;
     // One Depot is all the drag needs: the network anchors on its tile.
-    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy - 1, facing: "bottom" as const });
+    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy - 1, facing: "sw" as const });
     h.finishSetup();
     h.setTool("dirt");
     await settle();
@@ -1545,7 +1547,7 @@ describe("W1 the drag charges exactly what it previewed", () => {
     // THROUGH a plant would spend 8 tiles where this test counts 11. The
     // floor itself is pinned by the test below, in its own right.
     h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx + 3, ty: hy + 6 });
-    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy - 1, facing: "bottom" as const });
+    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy - 1, facing: "sw" as const });
     h.finishSetup();
 
     // Burn 11 of the 12 free setup tiles on one drag — the purse is untouched.
@@ -1590,7 +1592,7 @@ describe("W1 the drag charges exactly what it previewed", () => {
     // the Factory block sits IN the drag: its footprint spans the column at
     // y = hy+6..hy+8, so three of the eleven tiles are the building's own floor.
     h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx, ty: hy + 6 });
-    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy - 1, facing: "bottom" as const });
+    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy - 1, facing: "sw" as const });
     h.finishSetup();
 
     const purse0 = { ...h.purse };
@@ -1626,7 +1628,7 @@ describe("W3 the rival actually plays (headless)", () => {
     const c = findSouthCorridor(h.grid, 6, "farm");
     expect(c).toBeTruthy();
     h.eco.factories.push({ owner: "you", ownerId: 1, tx: c!.hx, ty: c!.fy });
-    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: c!.hx, ty: c!.hy - 1, facing: "bottom" as const });
+    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: c!.hx, ty: c!.hy - 1, facing: "sw" as const });
     for (let y = c!.hy + 1; y <= c!.fy; y++) buildTile(h.track, "dirt", c!.hx, y, 1);
     h.finishSetup();
 
@@ -1726,7 +1728,7 @@ describe("W3 the rival actually plays (headless)", () => {
     // id 100, not 1: the game's own harvester counter starts at 1, and the
     // rival's first build takes id 1 — a colliding id would make `rescore`
     // attribute the rival's connection to this harvester's entry.
-    h.eco.harvesters.push({ id: 100, owner: "you", ownerId: 1, tx: c!.hx, ty: c!.hy - 1, facing: "bottom" as const });
+    h.eco.harvesters.push({ id: 100, owner: "you", ownerId: 1, tx: c!.hx, ty: c!.hy - 1, facing: "sw" as const });
     for (let y = c!.hy + 1; y <= c!.fy; y++) buildTile(h.track, "dirt", c!.hx, y, 1);
     h.finishSetup();
 
@@ -1815,7 +1817,7 @@ describe("AI-02 the rival keeps playing for minutes (the live stall)", () => {
     const [fx, fy] = spot!;
     expect(h.placeFactory(fx, fy)).toBe(true);
     // a 2×2 Depot opening at the bottom: its SW gate (fx, fy-3) starts the dirt
-    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: fx, ty: fy - 5, facing: "bottom" });
+    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: fx, ty: fy - 5, facing: "sw" });
     for (let y = fy - 3; y < fy; y++) buildTile(h.track, "dirt", fx, y, 1);
     h.finishSetup();
 
@@ -2031,7 +2033,7 @@ describe("W4 a normal session earns the road", () => {
     expect(c).toBeTruthy();
     const { hx, hy, fy } = c!;
     h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx, ty: fy });
-    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy - 1, facing: "bottom" as const });
+    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy - 1, facing: "sw" as const });
     for (let y = hy + 1; y <= fy; y++) buildTile(h.track, "dirt", hx, y, 1);
     h.finishSetup();
     h.refreshQuarry();
@@ -2113,7 +2115,7 @@ describe("TK-008 Blockade buys auto-target the rival (no targeting step)", () =>
     const { hx, hy, fy, ind } = c!;
     expect(ind).toBeTruthy();
     h.eco.factories.push({ owner: "ai", ownerId: 2, tx: hx, ty: fy });
-    h.eco.harvesters.push({ id: 1, owner: "ai", ownerId: 2, tx: hx, ty: hy - 1, facing: "bottom" as const });
+    h.eco.harvesters.push({ id: 1, owner: "ai", ownerId: 2, tx: hx, ty: hy - 1, facing: "sw" as const });
     for (let y = hy + 1; y <= fy; y++) buildTile(h.track, "dirt", hx, y, 2);
     const now0 = performance.now();
     expect(Object.keys(playerResources(h.eco, "ai", now0)).length).toBeGreaterThan(0);
@@ -2419,7 +2421,7 @@ describe("PP-03 footprint vs reach placement feedback (wired game)", () => {
     const c = findSouthCorridor(h.grid)!;
     const plan = h.placementPlan("depot", c.hx, c.hy - 1);
     expect(plan.valid).toBe(true);
-    expect(plan.facing).toBe("bottom");
+    expect(plan.facing).toBe("sw");
     expect(plan.served.length).toBeGreaterThan(0);
     const items = h.overlayItemsFor(c.hx, c.hy - 1);
     const solid = sorted(items.filter((i) => i.sprite === "highlight")
@@ -2551,15 +2553,15 @@ describe("RV-03 town dirts and the closest truck route", () => {
       && h.grid.occupancy[ny * MAP_W + nx] === -1
       && !h.eco.harvesters.some((d) => d.tx === nx && d.ty === ny);
     // the 2×2 truck Depot on side (dx,dy) of road tile (tx,ty) whose GATE opens
-    // onto that road ("top" opens NW/NE, "bottom" opens SE/SW — depot.ts)
+    // onto that road (the facing IS the side the entrance opens onto — depot.ts)
     const lotFor = (tx: number, ty: number, dx: number, dy: number) =>
-      dx < 0 ? { tx: tx - 2, ty, facing: "bottom" as const }
-        : dy < 0 ? { tx, ty: ty - 2, facing: "bottom" as const }
-          : dx > 0 ? { tx: tx + 1, ty, facing: "top" as const }
-            : { tx, ty: ty + 1, facing: "top" as const };
+      dx < 0 ? { tx: tx - 2, ty, facing: "se" as const }
+        : dy < 0 ? { tx, ty: ty - 2, facing: "sw" as const }
+          : dx > 0 ? { tx: tx + 1, ty, facing: "nw" as const }
+            : { tx, ty: ty + 1, facing: "ne" as const };
     const onLot = (l: { tx: number; ty: number }, x: number, y: number) =>
       x >= l.tx && x < l.tx + 2 && y >= l.ty && y < l.ty + 2;
-    let lot: { tx: number; ty: number; facing: "top" | "bottom" } | null = null;
+    let lot: { tx: number; ty: number; facing: "ne" | "se" | "sw" | "nw" } | null = null;
     let fx = 0, fy = 0;
     for (const t of h.grid.towns) {
       for (const [tx, ty] of t.roads) {
@@ -2620,7 +2622,7 @@ describe("RV-03 town dirts and the closest truck route", () => {
     const { hx, hy, fy } = c!;
     expect(canBuildOn(h.grid, "dirt", hx, hy)).toBe(true);
     h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx, ty: fy });
-    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy - 1, facing: "bottom" as const });
+    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy - 1, facing: "sw" as const });
     h.finishSetup();
 
     // no track yet → the depot has no route and no route overlay
@@ -2717,6 +2719,34 @@ describe("A1 the arcade FX are wired to the HUD", () => {
   });
 });
 
+describe("PP-14 a cross is answered by the board that made it", () => {
+  it("the rival's cross never opens the player's chooser — it picks for itself", async () => {
+    const h = await boot();
+    const before = { ...h.purse };
+    let chosen: string[] | null = null;
+    // the rival's board makes a broken cross: the blessing is ITS bounty, so
+    // nothing may appear on the player's screen and the cascade must roll on
+    h.rivalBoard.onCrossChoice("broken", 3, (picks) => { chosen = picks as string[]; });
+    await settle();
+    expect(chosen, "the rival answered its own cross").not.toBeNull();
+    expect(chosen!).toHaveLength(3);
+    expect(root.querySelector(".cross-pick")).toBeNull();
+    // …and it spent none of the player's purse doing it
+    for (const c of Object.keys(before)) {
+      expect((h.purse as Record<string, number>)[c]).toBe((before as Record<string, number>)[c]);
+    }
+  });
+
+  it("the player's own cross still asks the player", async () => {
+    const h = await boot();
+    let chosen: string[] | null = null;
+    h.board.onCrossChoice("broken", 3, (picks) => { chosen = picks as string[]; });
+    await settle();
+    expect(chosen, "the player's blessing waits for the player").toBeNull();
+    expect(root.querySelector(".cross-pick")).toBeTruthy();
+  });
+});
+
 describe("A1 Black Market sabotage lands on the rival", () => {
   it("Frost Tiles ice the RIVAL's plant — not the buyer's own board", async () => {
     const h = await boot();
@@ -2776,7 +2806,7 @@ describe("A1 a lorry arrival is a delivery", () => {
     expect(c).toBeTruthy();
     const { hx, hy, fy } = c!;
     h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx, ty: fy });
-    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy - 1, facing: "bottom" as const });
+    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy - 1, facing: "sw" as const });
     h.finishSetup();                                  // the delivery clock only runs in play
     // the REAL build path: it rescores, which is what replans the lorries
     expect(h.dragBuild("dirt", hx, hy + 1, hx, fy - 1)).toBeTruthy();
@@ -2955,7 +2985,7 @@ describe("VP-01 the rival plays the score, not just the map", () => {
     const c = findSouthCorridor(h.grid, 6, "ore_mine") ?? findSouthCorridor(h.grid, 6);
     expect(c).toBeTruthy();
     h.eco.factories.push({ owner: "you", ownerId: 1, tx: c!.hx, ty: c!.fy });
-    h.eco.harvesters.push({ id: 100, owner: "you", ownerId: 1, tx: c!.hx, ty: c!.hy - 1, facing: "bottom" as const });
+    h.eco.harvesters.push({ id: 100, owner: "you", ownerId: 1, tx: c!.hx, ty: c!.hy - 1, facing: "sw" as const });
     for (let y = c!.hy + 1; y <= c!.fy; y++) buildTile(h.track, "dirt", c!.hx, y, 1);
     return c!.ind.id;
   }
@@ -3575,7 +3605,7 @@ describe("L2 free dirt roads in the live game", () => {
     const { hx, hy } = c!;
     // PP-15: the Factory stands OFF the drag column, as in the W1 fixture.
     h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx + 3, ty: hy + 6 });
-    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy - 1, facing: "bottom" as const });
+    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy - 1, facing: "sw" as const });
     h.finishSetup();
 
     // Empty the purse completely — road must still be buildable.
@@ -3621,7 +3651,7 @@ describe("L2 free dirt roads in the live game", () => {
     expect(c).toBeTruthy();
     const { hx, hy } = c!;
     h.eco.factories.push({ owner: "you", ownerId: 1, tx: hx + 3, ty: hy + 6 });
-    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy - 1, facing: "bottom" as const });
+    h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy - 1, facing: "sw" as const });
     h.finishSetup();
     for (const k of Object.keys(h.purse)) h.purse[k] = 0;
     const pv = h.dragPreview("road", hx, hy + 1, hx, hy + 3);
@@ -3636,7 +3666,7 @@ describe("L2 free dirt roads in the live game", () => {
     const c = findSouthCorridor(h.grid, 6, "farm");
     expect(c).toBeTruthy();
     h.eco.factories.push({ owner: "you", ownerId: 1, tx: c!.hx, ty: c!.fy });
-    h.eco.harvesters.push({ id: 100, owner: "you", ownerId: 1, tx: c!.hx, ty: c!.hy - 1, facing: "bottom" as const });
+    h.eco.harvesters.push({ id: 100, owner: "you", ownerId: 1, tx: c!.hx, ty: c!.hy - 1, facing: "sw" as const });
     for (let y = c!.hy + 1; y <= c!.fy; y++) buildTile(h.track, "dirt", c!.hx, y, 1);
     h.finishSetup();
 

@@ -25,6 +25,7 @@ import { generateMap } from "./grid";
 import type { Cargo } from "./config";
 import { createTrack, type Track } from "./track";
 import type { Harvester, Factory } from "./economy";
+import { DEPOT_FACINGS, type DepotFacing } from "./depot";
 
 /**
  * Bump on ANY change to the snapshot shape or to seed-derived generation.
@@ -98,8 +99,8 @@ export function base64ToBytes(b64: string): Uint8Array {
 // ── wire shape ────────────────────────────────────────────────────────────
 export interface WireHarvester {
   id: number; owner: string; ownerId: number; tx: number; ty: number;
-  /** Which half of the 2×2 truck Depot opens to roads; absent on older hosts. */
-  facing?: "top" | "bottom";
+  /** Which EDGE of the 2×2 truck Depot its entrance opens onto (its rotation). */
+  facing?: DepotFacing;
   /**
    * L4 (#218): the depot's YIELD LEVEL — what a tuning session set it to, and
    * the multiplier the L1b clock pays the depot's cargo by. Optional and
@@ -470,7 +471,7 @@ export function validateSnapshot(s: unknown, localSeed?: number): SnapshotError 
     if (h && h.yield !== undefined && (typeof h.yield !== "number" || !Number.isFinite(h.yield))) {
       return new SnapshotError("malformed", "Snapshot carries a malformed depot yield.");
     }
-    if (h && h.facing !== undefined && h.facing !== "top" && h.facing !== "bottom") {
+    if (h && h.facing !== undefined && !DEPOT_FACINGS.includes(h.facing as DepotFacing)) {
       return new SnapshotError("malformed", "Snapshot carries a malformed depot facing.");
     }
   }

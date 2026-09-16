@@ -56,8 +56,8 @@ const ind = (type: string, tx: number, ty: number): Industry => {
 /**
  * A Farm is 4×4 (PP-12: the footprint is the art's), so the block at (12,11)
  * covers 12..15 × 11..14. A truck Depot is a 2×2 lot sharing an edge with it:
- * SITE_A (lot 10..11) touches it from the west, so it opens at the TOP; SITE_B
- * (lot 16..17) from the east, so it opens at the BOTTOM — and neither touches
+ * SITE_A (lot 10..11) touches it from the west, so it opens NW; SITE_B
+ * (lot 16..17) from the east, so it opens SE — and neither touches
  * anything else, which is the whole point of the fixture. The Ore Mine (3×3)
  * far away at (50,50) is the free industry a later Depot may still claim.
  */
@@ -67,11 +67,11 @@ const SITE_B: [number, number] = [16, 11];
 const ORE: [number, number] = [50, 50];
 const SITE_ORE: [number, number] = [48, 50];
 const FACING: Record<string, DepotFacing> = {
-  [SITE_A.join()]: "top", [SITE_B.join()]: "bottom", [SITE_ORE.join()]: "top",
+  [SITE_A.join()]: "nw", [SITE_B.join()]: "se", [SITE_ORE.join()]: "nw",
 };
 
 const H = (id: number, owner: string, tx: number, ty: number): Harvester =>
-  ({ id, owner, ownerId: owner === "p1" ? 1 : 2, tx, ty, facing: FACING[`${tx},${ty}`] ?? "top" });
+  ({ id, owner, ownerId: owner === "p1" ? 1 : 2, tx, ty, facing: FACING[`${tx},${ty}`] ?? "nw" });
 
 const world = (harvesters: Harvester[], track: Track): EconomyState => ({
   grid: flatGrid([ind("farm", ...FARM), ind("ore_mine", ...ORE)]),
@@ -80,7 +80,7 @@ const world = (harvesters: Harvester[], track: Track): EconomyState => ({
 
 /** A road tile at the site's first gate tile — the road that services it. */
 const gateOf = (tx: number, ty: number): [number, number] =>
-  depotEntranceTiles(tx, ty, FACING[`${tx},${ty}`] ?? "top")[0];
+  depotEntranceTiles(tx, ty, FACING[`${tx},${ty}`] ?? "nw")[0];
 const roadBeside = (t: Track, owner: number, tx: number, ty: number) => {
   buildTile(t, "dirt", ...gateOf(tx, ty), owner);
   return t;

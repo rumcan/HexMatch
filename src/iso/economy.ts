@@ -30,7 +30,7 @@
 // only. The scoreboard reads the tiles (`victory.ts`).
 // ══════════════════════════════════════════════════════════════════════════
 import { roadPath, depotShoulders, plantShoulders } from "./road-routing";
-import { depotEntranceTiles, industriesTouchingDepot, type DepotFacing } from "./depot";
+import { DEFAULT_FACING, depotEntranceTiles, industriesTouchingDepot, type DepotFacing } from "./depot";
 import { MAP_W, MAP_H } from "../game/config";
 import { TRANSPORT, INDUSTRY_BY_KEY, type Cargo } from "./config";
 import type { Grid, Industry } from "./grid";
@@ -139,7 +139,7 @@ export function industriesInCatchment(grid: Grid, h: Harvester): Industry[] {
 export function isServiced(track: Track, h: Harvester, rail?: RailState | null): boolean {
   // The truck depot's gate: only its ENTRANCE tiles (outside the open edges)
   // connect it — a road against the closed side does not.
-  for (const [nx, ny] of depotEntranceTiles(h.tx, h.ty, h.facing ?? "top")) {
+  for (const [nx, ny] of depotEntranceTiles(h.tx, h.ty, h.facing ?? DEFAULT_FACING)) {
     if (trackOpenTo(track, h.ownerId, nx, ny)) return true;
     // RAIL-04 (#178): the epic's clause — a running line gives a source THE
     // SAME reachability a basic road connection does. So a rail tile at the
@@ -280,7 +280,7 @@ function adjacentComponents(comp: Int32Array, tx: number, ty: number): Set<numbe
  */
 export function depotComponents(comp: Int32Array, h: Harvester): Set<number> {
   const out = new Set<number>();
-  for (const [x, y] of depotEntranceTiles(h.tx, h.ty, h.facing ?? "top")) {
+  for (const [x, y] of depotEntranceTiles(h.tx, h.ty, h.facing ?? DEFAULT_FACING)) {
     const c = comp[tIdx(x, y)];
     if (c >= 0) out.add(c);
   }

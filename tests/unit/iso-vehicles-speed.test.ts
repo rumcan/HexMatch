@@ -30,7 +30,8 @@ function lane(pavedSegs: number): { truck: Truck | undefined; planAgain: () => T
   // upgrade the first `pavedSegs` segments to paved Road
   for (let k = 0; k < pavedSegs; k++) buildTile(track, "road", 10 + k, 10, 1);
   const eco: EconomyState = { grid, track, harvesters: [], factories: [] };
-  const h: Harvester = { id: 1, owner: "you", ownerId: 1, tx: 10, ty: 11 };
+  // the 2×2 lot under the lane opens NE onto it
+  const h: Harvester = { id: 1, owner: "you", ownerId: 1, tx: 10, ty: 11, facing: "ne" };
   eco.harvesters.push(h);
   eco.factories.push({ owner: "you", ownerId: 1, tx: 15, ty: 10 });
   return { truck: planTrucks(eco)[0], planAgain: () => planTrucks(eco) };

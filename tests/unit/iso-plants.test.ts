@@ -165,7 +165,8 @@ describe("PP-06 routing, scoring and yield with several plants", () => {
     const st = state(grid, track);
     addPlant(grid, track, st, "p1", 1, 10, 25);
     addPlant(grid, track, st, "p1", 1, 40, 25);
-    const h: Harvester = { id: 1, owner: "p1", ownerId: 1, tx: 24, ty: 26 };
+    // the lot opens NW onto the road that runs past both plants
+    const h: Harvester = { id: 1, owner: "p1", ownerId: 1, tx: 24, ty: 26, facing: "nw" };
     st.harvesters.push(h);
     run(track, 10, 41, 26, 1);     // one road passing both plants and the depot
     return { grid, track, st, h };

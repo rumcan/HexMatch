@@ -343,10 +343,10 @@ describe("PP-10 seedTownRoads (track wiring)", () => {
           const hx = tx + dx, hy = ty + dy;
           if (buildRefusal(g, "road", hx, hy) !== null) continue;
           // the 2×2 truck Depot on that side whose GATE opens onto this town road
-          const lot = dx < 0 ? { tx: tx - 2, ty, facing: "bottom" as const }
-            : dy < 0 ? { tx, ty: ty - 2, facing: "bottom" as const }
-              : dx > 0 ? { tx: tx + 1, ty, facing: "top" as const }
-                : { tx, ty: ty + 1, facing: "top" as const };
+          const lot = dx < 0 ? { tx: tx - 2, ty, facing: "se" as const }
+            : dy < 0 ? { tx, ty: ty - 2, facing: "sw" as const }
+              : dx > 0 ? { tx: tx + 1, ty, facing: "nw" as const }
+                : { tx, ty: ty + 1, facing: "ne" as const };
           if (depotTiles(lot.tx, lot.ty).some(([x, y]) => buildRefusal(g, "road", x, y) !== null)) continue;
           expect(
             isServiced(track, { id: 99, owner: "you", ownerId: 1, ...lot }),

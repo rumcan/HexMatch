@@ -114,7 +114,10 @@ import {
   BASE_RATE, VICTORY, VP_TARGET, UPGRADE_COST, TUNING,
   type Cargo, type Portrait,
 } from "./config";
-import { DEPOT_SPRITES, depotContains, depotFacingOf, depotTiles } from "./depot";
+import {
+  DEFAULT_FACING, DEPOT_FACINGS, DEPOT_SPRITES, depotContains, depotFacingOf, depotFacings,
+  depotTiles, rotateFacing, type DepotFacing,
+} from "./depot";
 import { depotYield, distanceFactor, transportFactor } from "./loop";
 // L4 (#218): the tuning session — the one thing that sets a depot's yield.
 // The rules live in `tuning.ts` (pure, unit-tested); this file is where they
@@ -632,6 +635,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const rail: RailState = createRailState();
   /** RAIL-02: the heading the platform/depot tools place with — R turns it. */
   let railView: RailView = "se";
+  /**
+   * The rotation the Depot tool places in (R turns it). `null` means "whatever
+   * the site opens onto by itself" — the side away from the resource — so a
+   * player who never touches R always gets a sensible entrance.
+   */
+  let depotView: DepotFacing | null = null;
   // PP-10: every town's seed-generated ring road is stamped onto the road
   // layer BEFORE the world exists (world.roadBits is a live reference to
   // track.road), so the first frame already shows settled towns with roads.
@@ -1328,9 +1337,30 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     fallback([]);
     publishNet(performance.now(), true);
   };
+  /**
+   * The rival's own answer to a cross on ITS board: all of whatever cargo it
+   * is shortest of. No dialog — it is not the player's blessing to allocate.
+   */
+  const rivalCrossPicks = (picks: number): ResKey[] => {
+    const scarcest = (CARGOES as readonly Cargo[])
+      .filter((c) => c !== "gold")
+      .sort((a, b) => (rival.purse[a] ?? 0) - (rival.purse[b] ?? 0)
+        || a.localeCompare(b))[0];
+    return Array.from({ length: picks }, () => CARGO_TO_GEM[scarcest]);
+  };
+
   const __setCrossPrompt = (boardOwner: string, kind: CrossKind, picks: number, resolve: (chosen: ResKey[]) => void) => {
+    // Whose board made the cross decides who answers it. The RIVAL's board
+    // answers itself — its blessing pays ITS purse, so putting that chooser on
+    // the player's screen asked them to allocate the opponent's bonus, out of
+    // nowhere, mid-cascade ("a broken cross randomly triggers on my board").
+    const mine = boardOwner === "you" || boardOwner === players[0].id;
+    if (!mine && (isSolo() || aiOpponent)) {
+      resolve(rivalCrossPicks(picks));
+      return;
+    }
     // In solo, just show locally; in host, track prompt for guest sync
-    // #186: an AI-FILLED seat shows locally too — the seat the host would
+    // #186: an AI-FILLED seat is handled above — the seat the host would
     // otherwise publish this prompt to is a machine, and a prompt nobody can
     // answer would sit until its 30 s expiry instead of being played.
     if (isSolo() || aiOpponent) {
@@ -2750,7 +2780,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       return false;
     }
     const h: Harvester = {
-      id: allocHarvesterId(), owner: p.id, ownerId: p.i + 1, tx, ty, facing: plan.facing ?? "top",
+      id: allocHarvesterId(), owner: p.id, ownerId: p.i + 1, tx, ty, facing: plan.facing ?? DEFAULT_FACING,
     };
     const served = plan.served;
     // L4 (#218): one tuning session at a time. The board is open for the
@@ -4342,7 +4372,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     // vehicles
     if (applied.trucks) {
-      (trucks as any).trucks = applied.trucks.map((t) => ({ ...t, factory: [...t.factory] as [number, number], route: t.route.map((r) => [...r] as [number, number]), segFast: t.segFast ? [...t.segFast] : [] }));
+      (trucks as any).trucks = applied.trucks.map((t) => ({ ...t, depot: truckLot(t.depotId), factory: [...t.factory] as [number, number], route: t.route.map((r) => [...r] as [number, number]), segFast: t.segFast ? [...t.segFast] : [] }));
     }
     if (applied.cars) {
       (cars as any).cars = applied.cars.map((c: any) => ({ ...c, origin: c.origin ? [...c.origin] as [number, number] : null, dest: c.dest ? [...c.dest] as [number, number] : null, route: c.route.map((r: any) => [...r] as [number, number]) }));
@@ -4451,7 +4481,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       worldDirty = true;
     }
     if ((msg as any).trucks) {
-      (trucks as any).trucks = (msg as any).trucks.map((t: any) => ({ ...t, factory: [...t.factory] as [number, number], route: t.route.map((r: any) => [...r] as [number, number]), segFast: t.segFast ? [...t.segFast] : [] }));
+      (trucks as any).trucks = (msg as any).trucks.map((t: any) => ({ ...t, depot: truckLot(t.depotId), factory: [...t.factory] as [number, number], route: t.route.map((r: any) => [...r] as [number, number]), segFast: t.segFast ? [...t.segFast] : [] }));
       worldDirty = true;
     }
     if ((msg as any).cars) {
@@ -4890,7 +4920,26 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * about ground and geography (the lock needs the track layer, which it must
    * not reach for).
    */
-  const depotLocks = () => ({ locked: lockedIndustryIds(eco), factories: eco.factories.map((f) => ({ tx: f.tx, ty: f.ty })) });
+  const depotLocks = () => ({ locked: lockedIndustryIds(eco), factories: eco.factories.map((f) => ({ tx: f.tx, ty: f.ty })), facing: depotView });
+
+  /** The lot a wire lorry belongs to — the wire carries only its depot id. */
+  const truckLot = (depotId: number): [number, number] | undefined => {
+    const h = eco.harvesters.find((x) => x.id === depotId);
+    return h ? [h.tx, h.ty] : undefined;
+  };
+
+  /** R: the next rotation the Depot tool will place in. */
+  const rotateDepotView = () => {
+    const site = hover && (tool === "harvester" || phase === "setup-harvester") ? hover : null;
+    const legal = site ? depotFacings(grid, site.tx, site.ty) : [];
+    if (legal.length > 1) {
+      const cur = depotView && legal.includes(depotView) ? depotView : legal[0];
+      depotView = legal[(legal.indexOf(cur) + 1) % legal.length];
+    } else {
+      depotView = rotateFacing(depotView ?? DEFAULT_FACING);
+    }
+    return depotView;
+  };
 
   const factoryPlanForTool = (tx: number, ty: number): PlacementPlan => {
     const plan = planFactoryPlacement(grid, tx, ty, { requireTown: true, track });
@@ -4974,7 +5023,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       pushPlan(items, plan);
       // The outpost art is the cargo's, so the preview shows the mill/rig/mine
       // this site would actually raise (see `depotPreviewSprite`).
-      ghost = { sprite: depotPreviewSprite(grid, tx, ty), tx, ty, valid: plan.valid };
+      ghost = { sprite: depotPreviewSprite(grid, tx, ty, depotView), tx, ty, valid: plan.valid };
     } else if (tool === "platform" || tool === "raildepot") {
       // RAIL-02 (#176): the same overlay contract as every other placement
       // tool — the footprint green or red, and the transparent building
@@ -5837,7 +5886,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // four headings the art and the footprints are authored in, in the same
     // order (`rotateView` is the rail module's, not a second list here).
     if (!isTypingTarget(e) && !e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === "r") {
-      railView = rotateView(railView);
+      // The Depot is placed in four rotations too, and R turns whichever tool
+      // is armed: over a real site it steps through the sides that site can
+      // actually open onto, so a turn never promises an impossible entrance.
+      if (tool === "harvester" || phase === "setup-harvester") rotateDepotView();
+      else railView = rotateView(railView);
       paintOverlayNow();
     }
     // WASD pan — plain keys only (a modified key is a browser/editor
@@ -7070,6 +7123,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     grid, track, eco,
     // ── J1: the quarry join, exposed so the boot test can prove the loop ──
     get board() { return quarry.board; },
+    /** The rival seat's board — the one its autoplayer plays. */
+    get rivalBoard() { return rivalQuarry.board; },
     /**
      * L4 (#218): the tuning session, as the HUD sees it — null when no session
      * is open (on the new loop that ALSO means the board is down). The game
@@ -7224,6 +7279,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if ((RAIL_VIEWS as readonly string[]).includes(v)) railView = v as RailView;
       return railView;
     },
+    /** The rotation the Depot tool places in (R in the live game); null = the
+     *  site's own default, the side away from the resource. */
+    get depotView() { return depotView; },
+    setDepotView: (v: string | null) => {
+      depotView = v !== null && (DEPOT_FACINGS as readonly string[]).includes(v)
+        ? v as DepotFacing : null;
+      return depotView;
+    },
+    rotateDepot: () => rotateDepotView(),
     /** The Railway panel's rows, exactly what the UI paints. */
     railPanel: (who: "you" | "ai" = "you") =>
       railPanelRows(rail, who === "ai" ? rival.i + 1 : me.i + 1),

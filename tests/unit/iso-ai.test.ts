@@ -458,11 +458,12 @@ describe("W8 plan feasibility", () => {
     const path = findPath(grid, s.track, "dirt", 5, 5, 5, 8, false, 0)!;
     expect(path).toBeTruthy();
     // the same tiles are illegal for road: TRANSPORT.road.onRough === false
-    const road = planFeasibility(s, "road", { tiles: path.tiles, cost: path.cost }, 5, 8, 0);
+    // the lot at (5,8) opens NE, onto the tile the path arrives at
+    const road = planFeasibility(s, "road", { tiles: path.tiles, cost: path.cost }, 5, 8, 0, "ne");
     expect(TRANSPORT.road.onRough).toBe(false);
     expect(road.executable).toBe(false);
     expect(road.viable).toBe(false);
-    const dirt = planFeasibility(s, "dirt", path, 5, 8, 0);
+    const dirt = planFeasibility(s, "dirt", path, 5, 8, 0, "ne");
     expect(dirt.executable).toBe(true);
     expect(dirt.serviced).toBe(true);          // the path's penultimate tile
     expect(dirt.viable).toBe(true);
@@ -475,25 +476,25 @@ describe("W8 plan feasibility", () => {
     const grid = flatGrid([ind("oil_rig", 5, 6)]);
     const s = state(grid);
     const one: [number, number][] = [[5, 5]];  // F's own tile, a harvester spot
-    const f = planFeasibility(s, "dirt", { tiles: one, cost: 0 }, 5, 5, 0);
+    const f = planFeasibility(s, "dirt", { tiles: one, cost: 0 }, 5, 5, 0, "nw");
     expect(f.fresh).toEqual([[5, 5]]);
     expect(f.serviced).toBe(false);
     expect(f.viable).toBe(false);
     // once a neighbour carries our track the same spot IS viable, for free
     buildTile(s.track, "dirt", 4, 5, 0);
-    expect(planFeasibility(s, "dirt", { tiles: one, cost: 0 }, 5, 5, 0).viable).toBe(true);
+    expect(planFeasibility(s, "dirt", { tiles: one, cost: 0 }, 5, 5, 0, "nw").viable).toBe(true);
   });
 
   it("counts only track owned by the AI as servicing (W2)", () => {
-    // oil rig 5..7 × 6..8; the 2×2 lot (5,4) sits right above it and opens at
-    // the TOP — gates NW (4,4),(4,5) and NE (5,3),(6,3).
+    // oil rig 5..7 × 6..8; the 2×2 lot (5,4) sits right above it and opens
+    // NW — gates (4,4) and (4,5).
     const grid = flatGrid([ind("oil_rig", 5, 6)]);
     const s = state(grid);
     buildTile(s.track, "dirt", 4, 5, 7);       // somebody else's dirt, at a gate
-    const f = planFeasibility(s, "dirt", { tiles: [[4, 5]], cost: 0 }, 5, 4, 2, "top");
+    const f = planFeasibility(s, "dirt", { tiles: [[4, 5]], cost: 0 }, 5, 4, 2, "nw");
     expect(f.serviced).toBe(false);
-    buildTile(s.track, "dirt", 6, 3, 2);       // ours, at the other gate
-    expect(planFeasibility(s, "dirt", { tiles: [[4, 5]], cost: 0 }, 5, 4, 2, "top").serviced).toBe(true);
+    buildTile(s.track, "dirt", 4, 4, 2);       // ours, at the other gate
+    expect(planFeasibility(s, "dirt", { tiles: [[4, 5]], cost: 0 }, 5, 4, 2, "nw").serviced).toBe(true);
   });
 });
 
@@ -508,7 +509,7 @@ describe("W8 the degenerate candidate no longer wins the ranking", () => {
     const cands = planCandidates(s, F, { stock: {}, purse: rich });
     expect(cands.length).toBeGreaterThan(0);
     for (const c of cands) {
-      const f = planFeasibility(s, c.kind, c.path, c.hx, c.hy, F.ownerId);
+      const f = planFeasibility(s, c.kind, c.path, c.hx, c.hy, F.ownerId, c.facing);
       expect(f.viable, `${c.kind} to (${c.hx},${c.hy})`).toBe(true);
       const out = executeCandidate(state(s.grid), c, "ai", 0, 1);
       expect(out.built.length > 0 || out.harvester !== null).toBe(true);

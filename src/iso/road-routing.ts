@@ -3,7 +3,7 @@ import {
   DIR, DIRS, OPPOSITE, bitsAt, tIdx, inMapT, trackOpenTo, plantFootprintTiles,
   type Track, type TrackKind,
 } from "./track";
-import { depotEntranceTiles, type DepotFacing } from "./depot";
+import { DEFAULT_FACING, depotEntranceTiles, type DepotFacing } from "./depot";
 
 // ── the route finder ──────────────────────────────────────────────────────
 /**
@@ -82,7 +82,7 @@ export const shoulders = (track: Track, owner: number, tx: number, ty: number) =
 export const depotShoulders = (
   track: Track, owner: number, h: { tx: number; ty: number; facing?: DepotFacing },
 ): [number, number][] =>
-  depotEntranceTiles(h.tx, h.ty, h.facing ?? "top").filter(([x, y]) => trackOpenTo(track, owner, x, y));
+  depotEntranceTiles(h.tx, h.ty, h.facing ?? DEFAULT_FACING).filter(([x, y]) => trackOpenTo(track, owner, x, y));
 
 /**
  * PP-15: the road tiles a PLANT's edge touches — every tile 4-adjacent to ANY

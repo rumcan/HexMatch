@@ -43,17 +43,17 @@ const ind = (type: string, tx: number, ty: number): Industry => {
   };
 };
 
-/** A 2×2 truck Depot; the fixtures below sit it west of the resource, so it opens at the top. */
+/** A 2×2 truck Depot; the fixtures below sit it west of the resource, opening NE onto row 10. */
 const H = (id: number, owner: string, tx: number, ty: number): Harvester =>
-  ({ id, owner, ownerId: owner === "you" ? 1 : 0, tx, ty, facing: "top" });
+  ({ id, owner, ownerId: owner === "you" ? 1 : 0, tx, ty, facing: "ne" });
 
 const run = (t: Track, kind: "dirt" | "road", x0: number, x1: number, y: number) => {
   for (let x = x0; x <= x1; x++) buildTile(t, kind, x, y, 1);
 };
 
 /**
- * Farm (grain) at 11,11; the 2×2 Depot at 9,11 stands beside it and opens at
- * the top, so its NE gate is (9,10)/(10,10); the factory sits at 14,10, so road
+ * Farm (grain) at 11,11; the 2×2 Depot at 9,11 stands beside it and opens NE,
+ * so its gate is (9,10)/(10,10); the factory sits at 14,10, so road
  * tiles 10..14 on row 10 complete the link. W2: every tile is owned by "you"
  * (ownerId 1) — the link only exists because the track is theirs.
  */
@@ -306,7 +306,7 @@ describe("J1 createQuarry", () => {
       ...state,
       harvesters: [
         ...state.harvesters,
-        { ...H(2, "you", 12, 8), facing: "bottom" as const },  // lot 12..13 × 8..9, SW gate on row 10
+        { ...H(2, "you", 12, 8), facing: "sw" as const },  // lot 12..13 × 8..9, SW gate on row 10
       ],
     };
     const q2 = createQuarry(state2, "you");

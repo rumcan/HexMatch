@@ -46,7 +46,7 @@ import {
 import { Atlas, type Manifest } from "../../src/iso/atlas";
 import { HW, HH, TILE_H, TILE_W, tileToScreen } from "../../src/game/config";
 import {
-  TRUCK_SPEED, TRUCK_VIEW, createTruckState, roadPath, roadRouteForHarvester,
+  DEPOT_LOAD_MS, TRUCK_SPEED, TRUCK_VIEW, createTruckState, roadPath, roadRouteForHarvester,
   roadDeliveryForHarvester, planTrucks, tickTrucks, truckBrand, truckItems,
   truckSpriteName, type Truck,
 } from "../../src/iso/vehicles";
@@ -198,18 +198,18 @@ describe("RV-01 planTrucks", () => {
 
   /**
    * A 2×2 truck Depot whose GATE opens onto road tile (rx, ry), with the lot on
-   * the side of the free tile (rx+dx, ry+dy). Gates: facing "top" opens NW/NE,
-   * "bottom" opens SE/SW (depot.ts).
+   * the side of the free tile (rx+dx, ry+dy). The facing IS the side the
+   * entrance opens onto (depot.ts).
    */
   const lotOnto = (rx: number, ry: number, dx: number, dy: number) =>
-    dx < 0 ? { tx: rx - 2, ty: ry, facing: "bottom" as const }
-      : dy < 0 ? { tx: rx, ty: ry - 2, facing: "bottom" as const }
-        : dx > 0 ? { tx: rx + 1, ty: ry, facing: "top" as const }
-          : { tx: rx, ty: ry + 1, facing: "top" as const };
+    dx < 0 ? { tx: rx - 2, ty: ry, facing: "se" as const }
+      : dy < 0 ? { tx: rx, ty: ry - 2, facing: "sw" as const }
+        : dx > 0 ? { tx: rx + 1, ty: ry, facing: "nw" as const }
+          : { tx: rx, ty: ry + 1, facing: "ne" as const };
   const onLot = (lot: { tx: number; ty: number }, [x, y]: [number, number]) =>
     x >= lot.tx && x < lot.tx + 2 && y >= lot.ty && y < lot.ty + 2;
   /** The Depot whose SW gate is (10,10) — the corridor (10,10..12) starts at its gate. */
-  const CORRIDOR_DEPOT = { tx: 9, ty: 8, facing: "bottom" as const };
+  const CORRIDOR_DEPOT = { tx: 9, ty: 8, facing: "sw" as const };
 
   it("drives depot → factory with NO player dirt at all — the highway is the route", () => {
     const g = generateMap(1337);
@@ -275,11 +275,12 @@ describe("RV-01 planTrucks", () => {
     const track = createTrack();
     seedTownRoads(track, g);
     seedPublicRoads(track, g);
-    const { depot, factory } = highwayEnds(g, track);
+    const { depot, factory, dirtA } = highwayEnds(g, track);
+    const lot = lotOnto(dirtA[0], dirtA[1], depot[0] - dirtA[0], depot[1] - dirtA[1]);
 
     const trucks = planTrucks(eco(g, track, [
-      { id: 1, owner: "you", ownerId: 1, tx: depot[0], ty: depot[1] },
-      { id: 2, owner: "ai", ownerId: 2, tx: depot[0], ty: depot[1] },
+      { id: 1, owner: "you", ownerId: 1, ...lot },
+      { id: 2, owner: "ai", ownerId: 2, ...lot },
     ], [
       { owner: "you", ownerId: 1, tx: factory[0], ty: factory[1] },
       { owner: "ai", ownerId: 2, tx: factory[0], ty: factory[1] },
@@ -347,7 +348,7 @@ describe("RV-01 planTrucks", () => {
         for (let x = 0; x < MAP_W; x++) {
           if (g.terrain[idx(x, y)] === WATER || g.occupancy[idx(x, y)] !== -1) continue;
           if (DIR4.every(([dx, dy]) => !trackOpenTo(track, 1, x + dx, y + dy))
-            && depotEntranceTiles(x, y, "bottom").every(([ex, ey]) => !trackOpenTo(track, 1, ex, ey))) {
+            && depotEntranceTiles(x, y, "sw").every(([ex, ey]) => !trackOpenTo(track, 1, ex, ey))) {
             return [x, y];
           }
         }
@@ -357,7 +358,7 @@ describe("RV-01 planTrucks", () => {
     const [dx0, dy0] = dirtless();
     const [fx0, fy0] = dirtless();
     expect(planTrucks(eco(g, track,
-      [{ id: 1, owner: "you", ownerId: 1, tx: dx0, ty: dy0, facing: "bottom" }],
+      [{ id: 1, owner: "you", ownerId: 1, tx: dx0, ty: dy0, facing: "sw" }],
       [{ owner: "you", ownerId: 1, tx: fx0, ty: fy0 }],
     ))).toEqual([]);
 
@@ -387,7 +388,7 @@ describe("RV-01 planTrucks", () => {
     pave(track, 1, [[20, 10], [20, 11], [20, 12]]);
 
     const trucks = planTrucks(eco(g, track, [
-      { id: 7, owner: "you", ownerId: 1, tx: 19, ty: 8, facing: "bottom" },
+      { id: 7, owner: "you", ownerId: 1, tx: 19, ty: 8, facing: "sw" },
       { id: 3, owner: "you", ownerId: 1, ...CORRIDOR_DEPOT },
     ], [
       { owner: "you", ownerId: 1, tx: 10, ty: 13 },
@@ -509,10 +510,48 @@ describe("RV-01 tickTrucks ping-pong", () => {
     state.trucks.push(truck());
     tickTrucks(state, TICK * 2.5);            // to the far end and half back
     expect(state.trucks[0].reverse).toBe(true);
-    tickTrucks(state, TICK * 3);              // back past the depot, out again
+    // 1.5 tiles home, the loading stop, then out again — the stop is time the
+    // lorry spends standing on the lot, so it has to be paid here too.
+    tickTrucks(state, TICK * 1.5 + DEPOT_LOAD_MS + TICK * 0.75);
     expect(state.trucks[0].reverse).toBe(false);
     expect(state.trucks[0].leg + state.trucks[0].t).toBeGreaterThan(0);
     expect(state.trucks[0].leg).toBeLessThan(2);
+  });
+
+  it("stands on the lot for a beat before it turns around", () => {
+    const state = createTruckState();
+    state.trucks.push({ ...truck(), depot: [0, 0] as [number, number] });
+    // out to the factory end and straight back onto the lot
+    tickTrucks(state, TICK * 4);
+    expect(state.trucks[0].reverse).toBe(false);
+    expect(state.trucks[0].leg + state.trucks[0].t).toBe(0);
+    expect(state.trucks[0].waitMs).toBeGreaterThan(0);
+    // most of the stop passes and it is still parked…
+    tickTrucks(state, DEPOT_LOAD_MS - 50);
+    expect(state.trucks[0].leg + state.trucks[0].t).toBe(0);
+    // …then it pulls out
+    tickTrucks(state, 50 + TICK / 2);
+    expect(state.trucks[0].waitMs).toBe(0);
+    expect(state.trucks[0].t).toBeCloseTo(0.5);
+  });
+
+  it("draws over the depot it is standing in, and nowhere else", () => {
+    // The lot is (0,0)-(1,1) and the lorry loads on its WEST tile (0,1) — a
+    // back tile, which is where a 2×2 building would otherwise paint over it.
+    const st = createTruckState();
+    st.trucks.push({
+      ownerId: 1, depotId: 1, factory: [0, 3],
+      route: [[0, 1], [0, 2], [0, 3]], leg: 0, t: 0, reverse: false, deliveries: 0,
+      depot: [0, 0] as [number, number],
+    });
+    const onLot = truckItems(st)[0];
+    expect(onLot.lift ?? 0).toBeGreaterThan(0);
+    const buildingKey = (0 + 1) + (0 + 1);            // the depot's own Tier-1 key
+    expect(Math.round(onLot.fx!) + Math.round(onLot.fy!) + 0.5 + (onLot.lift ?? 0))
+      .toBeGreaterThan(buildingKey);
+    // …and out on the road it is an ordinary lorry again
+    tickTrucks(st, TICK);
+    expect(truckItems(st)[0].lift ?? 0).toBe(0);
   });
 
   it("holds still on a one-tile route and ignores non-positive ticks", () => {
@@ -789,7 +828,7 @@ describe("A1 lorry deliveries", () => {
     expect(st.trucks[0].deliveries).toBe(1);
     drive(st, TICK * 2);                 // back at the depot — no delivery
     expect(st.trucks[0].deliveries).toBe(1);
-    drive(st, TICK * 2 + 1);             // out again
+    drive(st, DEPOT_LOAD_MS + TICK * 2 + 1);   // load, then out again
     expect(st.trucks[0].deliveries).toBe(2);
   });
 
@@ -808,7 +847,7 @@ describe("A1 lorry deliveries", () => {
   it("names the depot it belongs to and the factory it delivers to", () => {
     // The 2×2 Depot whose SW gate is (10,10), at the top of the corridor.
     const state = world(
-      [{ id: 42, owner: "you", ownerId: 1, tx: 9, ty: 8, facing: "bottom" }],
+      [{ id: 42, owner: "you", ownerId: 1, tx: 9, ty: 8, facing: "sw" }],
       [{ owner: "you", ownerId: 1, tx: 10, ty: 13 }],
     );
     // The route alone is not enough to deliver: the arrival has to know WHERE
@@ -831,7 +870,7 @@ describe("new factories reassign depot routes", () => {
     const far: Factory = { owner: "you", ownerId: 1, tx: 29, ty: 11 };
     const near: Factory = { owner: "you", ownerId: 1, tx: 14, ty: 11 };
     const eco: EconomyState = { grid: generateMap(79), track,
-      harvesters: [{ id: 1, owner: "you", ownerId: 1, tx: 10, ty: 11 }], factories: [far] };
+      harvesters: [{ id: 1, owner: "you", ownerId: 1, tx: 10, ty: 11, facing: "ne" }], factories: [far] };
     expect(planTrucks(eco)[0].factory).toEqual([29, 11]);
     eco.factories.push({ ...near, owner: "ai", ownerId: 2 });
     expect(planTrucks(eco)[0].factory).toEqual([29, 11]);

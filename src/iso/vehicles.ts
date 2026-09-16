@@ -28,7 +28,7 @@
 // pins a moving sprite's anchor to the fractional tile's diamond centre.
 // ══════════════════════════════════════════════════════════════════════════
 import { depotShoulders, plantShoulders, roadPath } from "./road-routing";
-import { lotTileBeside } from "./depot";
+import { DEPOT_SIZE, depotContains, lotTileBeside } from "./depot";
 export { roadPath } from "./road-routing";
 import type { DrawItem } from "./depth";
 import type { EconomyState } from "./economy";
@@ -48,6 +48,13 @@ export const TRUCK_SPEED = 1 / 300;
  *  the motivation-to-upgrade the player asked for ("truck should be 2× as
  *  fast on the open road as it is on dirt"). */
 export const TRUCK_ROAD_MULT = 2;
+/**
+ * How long a lorry stands on the depot lot before it turns around: it drives
+ * in through the entrance, stops on the first lot tile to load, and only then
+ * flips and pulls out again. A beat of stillness is what reads as "loading" —
+ * a lorry that bounced off the end looked like it had missed the turn.
+ */
+export const DEPOT_LOAD_MS = 1000;
 
 /** One truck on one route. Position along the route is `leg + t` tiles. */
 export interface Truck {
@@ -69,6 +76,18 @@ export interface Truck {
   t: number;
   /** false = heading depot→factory, true = heading back. */
   reverse: boolean;
+  /**
+   * The Depot lot's origin tile, so the drawing pass can lift the lorry over
+   * the depot building it is standing inside (`truckItems`). Absent on a
+   * record that came off the wire before the game re-attached it.
+   */
+  depot?: [number, number];
+  /**
+   * Milliseconds still to stand at the depot end before pulling out. Counted
+   * down by `tickTrucks` ahead of any movement, so a big frame cannot skip
+   * the stop.
+   */
+  waitMs?: number;
   /** AI-02: per-SEGMENT speed flag — segFast[k] for route[k]→route[k+1] says
    *  the paved multiplier applies. Recomputed with every `planTrucks`, so an
    *  upgraded tile speeds its lorry up from the next dispatch. Old saves /
@@ -172,7 +191,8 @@ export function planTrucks(eco: EconomyState): Truck[] {
       factory: [plan.factory.tx, plan.factory.ty],
       route: plan.route,
       segFast,
-      leg: 0, t: 0, reverse: false, deliveries: 0,
+      depot: [h.tx, h.ty],
+      leg: 0, t: 0, reverse: false, waitMs: 0, deliveries: 0,
     });
   }
   return out;
@@ -209,6 +229,14 @@ export function tickTrucks(state: TruckState, dtMs: number, blocked?: ReadonlySe
     // Frame-capped dt makes this ~1 iteration; tests with a large dt loop at
     // most dt/segment-time.
     while (ms > 1e-9) {
+      // Standing at the depot, loading: the clock runs, the lorry does not.
+      if (truck.waitMs && truck.waitMs > 0) {
+        const use = Math.min(ms, truck.waitMs);
+        truck.waitMs -= use;
+        ms -= use;
+        if (truck.waitMs > 0) break;
+        continue;
+      }
       const k = Math.min(truck.leg, max - 1);
       // A protest holds the lorry BEFORE the blocked tile: it may not enter,
       // but a truck already standing on the boundary (t at the edge) still
@@ -234,7 +262,7 @@ export function tickTrucks(state: TruckState, dtMs: number, blocked?: ReadonlySe
         const need = truck.t / v;
         if (ms < need) { truck.t -= ms * v; ms = 0; continue; }
         ms -= need;
-        if (k === 0) { truck.reverse = false; truck.t = 0; }
+        if (k === 0) { truck.reverse = false; truck.t = 0; truck.waitMs = DEPOT_LOAD_MS; }
         else { truck.leg = k - 1; truck.t = 1; }
       }
     }
@@ -318,7 +346,25 @@ export function truckItems(state: TruckState, atlas?: TruckSpriteSource): DrawIt
       sprite,
       tx: Math.round(fx), ty: Math.round(fy),
       fx, fy,
+      // A lorry loading ON the lot drives INTO the depot's own 2×2 block, and
+      // a 2×2 building keys off its front corner — so on the back tiles the
+      // depot would paint over the lorry parked in its yard. Lift the lorry
+      // just past the building's key while it is inside the lot: the exact
+      // gap, so nothing else on the map changes order.
+      ...(truck.depot ? { lift: depotLift(truck.depot, fx, fy) } : {}),
     });
   }
   return out;
+}
+
+/**
+ * How far a lorry standing inside the lot at `depot` must be lifted to draw
+ * over the depot building — 0 when it is off the lot or already in front.
+ */
+function depotLift([dx, dy]: [number, number], fx: number, fy: number): number {
+  const tx = Math.round(fx), ty = Math.round(fy);
+  if (!depotContains(dx, dy, tx, ty)) return 0;
+  const buildingKey = (dx + DEPOT_SIZE[0] - 1) + (dy + DEPOT_SIZE[1] - 1);
+  const truckKey = tx + ty + 0.5;
+  return Math.max(0, buildingKey - truckKey + 0.25);
 }

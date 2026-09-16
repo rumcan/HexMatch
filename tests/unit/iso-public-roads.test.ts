@@ -259,10 +259,16 @@ describe("PP-13 public roads are every player's to drive on", () => {
     const track = createTrack();
     seedTownRoads(track, g);
     seedPublicRoads(track, g);
-    const [, , hx, hy] = spotBesideHighway(g, track);
-    expect(isServiced(track, { id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy })).toBe(true);
+    const [rx, ry, hx, hy] = spotBesideHighway(g, track);
+    // the 2×2 lot on that free tile, turned so its entrance opens onto the
+    // highway tile it stands beside
+    const lot = rx < hx ? { tx: hx, ty: hy, facing: "nw" as const }
+      : ry < hy ? { tx: hx, ty: hy, facing: "ne" as const }
+        : rx > hx ? { tx: hx - 1, ty: hy, facing: "se" as const }
+          : { tx: hx, ty: hy - 1, facing: "sw" as const };
+    expect(isServiced(track, { id: 1, owner: "you", ownerId: 1, ...lot })).toBe(true);
     // the same is true for the rival — the highway belongs to neither
-    expect(isServiced(track, { id: 2, owner: "ai", ownerId: 2, tx: hx, ty: hy })).toBe(true);
+    expect(isServiced(track, { id: 2, owner: "ai", ownerId: 2, ...lot })).toBe(true);
   });
 
   it("links two structures that never laid a tile between them", () => {

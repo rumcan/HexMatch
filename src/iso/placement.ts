@@ -35,7 +35,8 @@ import {
   FACTORY_FOOTPRINT,
 } from "./config";
 import {
-  DEPOT_SPRITES, depotEntranceTiles, depotFacingAt, depotTiles, depotsOverlap,
+  DEFAULT_FACING, DEPOT_SPRITES, depotEntranceTiles, depotFacingAt, depotFacingFor, depotTiles,
+  depotsOverlap,
   industriesTouchingDepot, type DepotFacing,
 } from "./depot";
 import {
@@ -96,7 +97,7 @@ const REASON_TEXT: Record<string, string> = {
   "no-industry-in-catchment": "no industry sits inside its 4×4 catchment",
   "industry-taken": "another Depot already holds every industry in reach",
   "no-industry-beside": "it must sit right beside a resource",
-  "entrance-blocked": "resources on both sides leave no open side for its entrance",
+  "entrance-blocked": "resources box it in — no side is left for its entrance",
   "not-near-town": "its footprint must share an edge with a town",
 };
 
@@ -201,8 +202,8 @@ export function factoryReachBand(grid: Grid, tx: number, ty: number): [number, n
 
 /** The Depot's ENTRANCE tiles — where a road has to arrive — for the lot at
  *  (tx, ty), or none when the site has no open side. */
-export function depotCatchmentTiles(grid: Grid, tx: number, ty: number): [number, number][] {
-  const { facing } = depotFacingAt(grid, tx, ty);
+export function depotCatchmentTiles(grid: Grid, tx: number, ty: number, want?: DepotFacing | null): [number, number][] {
+  const facing = depotFacingFor(grid, tx, ty, want);
   return facing ? depotEntranceTiles(tx, ty, facing).filter(([x, y]) => inGrid(grid, x, y)) : [];
 }
 
@@ -216,8 +217,8 @@ export function depotServedIndustries(grid: Grid, tx: number, ty: number): Indus
  * The sprite a Depot placed at (tx,ty) would be drawn with — the same truck
  * depot `syncWorld` draws, opening away from the resource beside it.
  */
-export function depotPreviewSprite(grid: Grid, tx: number, ty: number): string {
-  return DEPOT_SPRITES[depotFacingAt(grid, tx, ty).facing ?? "top"];
+export function depotPreviewSprite(grid: Grid, tx: number, ty: number, want?: DepotFacing | null): string {
+  return DEPOT_SPRITES[depotFacingFor(grid, tx, ty, want) ?? DEFAULT_FACING];
 }
 
 /** The tiles of the served industries right against the lot's edges — the
@@ -311,6 +312,12 @@ export interface DepotPlanOptions {
   locked?: ReadonlySet<number>;
   /** MP-AUDIT: factory footprints that block depot placement (opening factories + live buildings) */
   factories?: readonly { tx: number; ty: number }[];
+  /**
+   * The rotation the player has turned the ghost to (R). Honoured when that
+   * side is free at this site; otherwise the site keeps its own default, so a
+   * turned ghost never promises an entrance the lot cannot have.
+   */
+  facing?: DepotFacing | null;
 }
 
 /** The full PP-03 placement plan for a 2×2 truck Depot hover at (tx,ty) — its
@@ -330,10 +337,11 @@ export function planDepotPlacement(
   if (code === null && harvesters.some((h) => depotsOverlap(h.tx, h.ty, tx, ty))) code = "depot-taken";
   if (code === null && opts.factories && opts.factories.some((f) =>
     tx < f.tx + FACTORY_FOOTPRINT[0] && tx + 2 > f.tx && ty < f.ty + FACTORY_FOOTPRINT[1] && ty + 2 > f.ty)) code = "occupied";
-  const { facing, problem } = depotFacingAt(grid, tx, ty);
+  const { problem } = depotFacingAt(grid, tx, ty);
+  const facing = depotFacingFor(grid, tx, ty, opts.facing);
   const served = industriesTouchingDepot(grid, tx, ty).map((t) => t.industry);
   if (code === null && problem === "no-industry") code = "no-industry-beside";
-  else if (code === null && problem === "both-sides") code = "entrance-blocked";
+  else if (code === null && problem === "boxed-in") code = "entrance-blocked";
   // PP-16: "next to an industry" is not enough — the industry has to be FREE.
   else if (code === null && opts.locked !== undefined
     && served.every((ind) => opts.locked!.has(ind.id))) code = "industry-taken";
@@ -348,7 +356,7 @@ export function planDepotPlacement(
         ? { tx: x, ty: y, ok: tileWhy[i] === null, why: tileWhy[i] ? placementReasonText(tileWhy[i]) : null }
         : { tx: x, ty: y, ok, why: ok ? null : placementReasonText(code) })
       .filter((t) => inGrid(grid, t.tx, t.ty)),
-    reach: depotCatchmentTiles(grid, tx, ty),
+    reach: depotCatchmentTiles(grid, tx, ty, opts.facing),
     nodes: depotCatchmentNodeTiles(grid, tx, ty),
     valid: ok,
     why: ok ? null : placementReasonText(code),
