@@ -12,8 +12,8 @@
  * half. Post-MVP (#221 L7) may retune the bands or fit a smooth falloff, and
  * makes the lorries' speed match the rate; the clock reads only this module.
  */
-import type { ConnKind, EconomyState, Harvester } from "./economy";
-import { depotPathLength } from "./economy";
+import type { Components, ConnKind, EconomyState, Harvester } from "./economy";
+import { depotPathLength, resolveConnection } from "./economy";
 import { DISTANCE, TUNING } from "./config";
 import { clampYield } from "./tuning";
 
@@ -42,6 +42,22 @@ export type TransportTier = (typeof TRANSPORT_TIERS)[number];
 /** The upgrade tier a connection kind is worth. 0 = nothing paid for yet. */
 export const transportTierOf = (kind: ConnKind | null | undefined): number =>
   kind === "road" ? TRANSPORT_TIERS.indexOf("paved") : 0;
+
+/**
+ * L6 (#220) / L14 (#229): the tier a DEPOT stands on, derived from the world
+ * rather than stored — see the note above on why that is the whole point.
+ *
+ * One function for every reader, so the player's re-match credit
+ * (`retuneCandidates` in game.ts), the rival's simulated session and the race
+ * harness's seats cannot disagree about what "this Depot got upgraded" means.
+ * The caller passes the components it already built (a scan over a seat's
+ * Depots is one flood fill, never one per Depot).
+ */
+export function depotTransportTier(
+  state: EconomyState, comp: Components, depot: Harvester,
+): number {
+  return transportTierOf(resolveConnection(state, comp, depot).kind);
+}
 
 /**
  * L4 (#218) — the depot's yield level: the one number a tuning session sets

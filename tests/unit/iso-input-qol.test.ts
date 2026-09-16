@@ -556,3 +556,150 @@ describe("INPUT-QOL first road: no popup between the player and the track", () =
     expect(banner.textContent ?? "").not.toMatch(/free track tiles/i);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// #281 — the tags ride the CAMERA, not the paint
+//
+// The report: panning left the name tags glued to the screen while the world
+// slid underneath, and they snapped back onto their features seconds later.
+// The cause was that a camera write was only HALF a move — `cam = next` plus
+// `renderer.setCamera(next)`, which merely marks the canvas dirty — while the
+// DOM tags waited for their own `labels.frame()` at the END of the next
+// animation frame. Anything that presented the map before that frame (the
+// overlay repaint inside a pointer handler), or any long task that starved the
+// loop (a chunk-cache rebuild, syncWorld, planTrucks, the autosave), left the
+// canvas at the new camera and the tags at the old one.
+//
+// These tests therefore FREEZE `requestAnimationFrame` before panning: with no
+// frame available to run, the only thing that can possibly move a tag is the
+// camera commit itself. A tag that is still correct afterwards is a tag that
+// cannot drift, however slow the machine is.
+// ══════════════════════════════════════════════════════════════════════════
+describe("INPUT-QOL #281: name tags follow the camera, frame for frame", () => {
+  /** The dpr `tileScreenCss` divides by — 1 in jsdom, like `clickAt` above. */
+  const DPR = () => Math.min(2, window.devicePixelRatio || 1);
+
+  /** Where labels.ts puts a tag for a tile, in CSS px (it rounds). */
+  const atTile = (h: IsoHook, tx: number, ty: number): [number, number] => {
+    const [sx, sy] = h.tileScreenAt(tx, ty);
+    return [Math.round(sx / DPR()), Math.round(sy / DPR())];
+  };
+
+  /** The CSS px a placed tag currently sits at. */
+  const posOf = (el: HTMLElement): [number, number] =>
+    [parseFloat(el.style.left), parseFloat(el.style.top)];
+
+  /**
+   * The player's Depot tag. Its entry anchors at exactly (tx, ty) — no
+   * footprint centre to derive — so it is the one tag whose tile the hook can
+   * name directly, which is what the acceptance asks to compare against.
+   */
+  function depotTag(h: IsoHook) {
+    const mine = h.harvesters.find((v) => v.owner === "you");
+    expect(mine, "the fixture stands the player's Depot").toBeTruthy();
+    const els = [...root.querySelectorAll<HTMLElement>("#map .iso-label.label-depot")]
+      .filter((el) => el.textContent === "Your Depot");
+    expect(els, "exactly one 'Your Depot' tag").toHaveLength(1);
+    return { tile: mine!, el: els[0] };
+  }
+
+  /** One pointer event on the map canvas, at device-px (sx, sy). */
+  function pointerAt(
+    canvas: HTMLCanvasElement, type: string, sx: number, sy: number,
+    init: PointerEventInit = {},
+  ) {
+    canvas.dispatchEvent(new PointerEvent(type, {
+      clientX: sx / DPR(), clientY: sy / DPR(),
+      pointerId: 1, isPrimary: true, pointerType: "mouse", ...init,
+    }));
+  }
+
+  /** Stop the animation loop dead: no frame may explain what happens next. */
+  function freezeFrames() {
+    window.requestAnimationFrame = (() => 0) as never;
+  }
+
+  it("a real drag pan lands the tag on its tile with NO frame in between", async () => {
+    const { h } = await connectedBoot();
+    const canvas = root.querySelectorAll("canvas.iso-layer")[2] as HTMLCanvasElement;
+    const { tile, el } = depotTag(h);
+    const cam0 = { x: h.camera.x, y: h.camera.y };
+    const before = posOf(el);
+    // At rest the tag is already right — so the assertion after the pan is
+    // about the pan, not about a tag that never moved.
+    expect(before).toEqual(atTile(h, tile.tx, tile.ty));
+
+    freezeFrames();
+
+    // The real gesture path: TK-001's middle-button drag on the map.
+    const [sx, sy] = h.tileScreenAt(Math.floor(MAP_W / 2), Math.floor(MAP_H / 2));
+    pointerAt(canvas, "pointerdown", sx, sy, { button: 1, buttons: 4 });
+    pointerAt(canvas, "pointermove", sx - 40, sy - 25);
+    pointerAt(canvas, "pointermove", sx - 120, sy - 70);
+    pointerAt(canvas, "pointerup", sx - 120, sy - 70, { button: 1 });
+
+    // The pan really moved the camera…
+    expect(h.camera.x === cam0.x && h.camera.y === cam0.y).toBe(false);
+    // …the tag really travelled with it…
+    const after = posOf(el);
+    expect(after).not.toEqual(before);
+    // …and it is EXACTLY on its tile's screen point, with no frame run since.
+    expect(after).toEqual(atTile(h, tile.tx, tile.ty));
+  });
+
+  it("keeps the tag on its tile at every zoom step, through the real wheel", async () => {
+    const { h } = await connectedBoot();
+    const canvas = root.querySelectorAll("canvas.iso-layer")[2] as HTMLCanvasElement;
+    const { tile, el } = depotTag(h);
+    freezeFrames();
+
+    // Three wheel notches cover all three zoom steps (0.5 / 1 / 2) from boot.
+    const zooms = new Set<number>();
+    for (const deltaY of [-100, -100, 100, 100, 100]) {
+      const [wx, wy] = h.tileScreenAt(tile.tx, tile.ty);
+      canvas.dispatchEvent(new WheelEvent("wheel", {
+        clientX: wx / DPR(), clientY: wy / DPR(), deltaY,
+        bubbles: true, cancelable: true,
+      }));
+      zooms.add(h.camera.zoom);
+      // Whatever the zoom, the tag is on its tile — and this is the same
+      // assertion, so it cannot pass by luck at one step only.
+      expect(posOf(el), `zoom ${h.camera.zoom}`).toEqual(atTile(h, tile.tx, tile.ty));
+    }
+    expect(zooms.size, "the wheel stepped through more than one zoom").toBeGreaterThan(1);
+  });
+
+  it("a tag is never left behind when the loop resumes (no snap afterwards)", async () => {
+    const { h } = await connectedBoot();
+    const canvas = root.querySelectorAll("canvas.iso-layer")[2] as HTMLCanvasElement;
+    const { tile, el } = depotTag(h);
+    freezeFrames();
+
+    const [sx, sy] = h.tileScreenAt(Math.floor(MAP_W / 2), Math.floor(MAP_H / 2));
+    pointerAt(canvas, "pointerdown", sx, sy, { button: 1, buttons: 4 });
+    pointerAt(canvas, "pointermove", sx + 90, sy + 60);
+    pointerAt(canvas, "pointerup", sx + 90, sy + 60, { button: 1 });
+    const settled = posOf(el);
+    expect(settled).toEqual(atTile(h, tile.tx, tile.ty));
+
+    // Now let the loop run again: the frame's own `labels.frame()` must land
+    // on the SAME numbers, so there is nothing left to snap back from.
+    window.requestAnimationFrame = ((cb: FrameRequestCallback) =>
+      setTimeout(() => cb(performance.now()), 0) as unknown as number) as never;
+    await settle();
+    expect(posOf(el)).toEqual(settled);
+    expect(posOf(el)).toEqual(atTile(h, tile.tx, tile.ty));
+  });
+
+  it("a WASD pan keeps the tag on its tile while the keys are held", async () => {
+    const { h } = await connectedBoot();
+    const { tile, el } = depotTag(h);
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "d" }));
+    await new Promise((r) => setTimeout(r, 150));   // ~15 frames of pan
+    window.dispatchEvent(new KeyboardEvent("keyup", { key: "d" }));
+    await settle();
+
+    expect(posOf(el)).toEqual(atTile(h, tile.tx, tile.ty));
+  });
+});

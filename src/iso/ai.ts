@@ -49,7 +49,7 @@
 import { MAP_W, MAP_H } from "../game/config";
 import {
   TRANSPORT, UPGRADE_COST, INDUSTRY_BY_KEY, FACTORY_FOOTPRINT, VICTORY, DEPOT_TREE,
-  type Cargo,
+  DEPOT_TREE_ORDER, type Cargo, type DepotTypeDef,
 } from "./config";
 import { FREE_SETUP_DEPOTS, depotCostFor, priceDepot } from "./construction";
 import { FIELD_OCC, ROUGH, factoryTouchesTown, type Grid, type Industry } from "./grid";
@@ -442,6 +442,46 @@ export function nearestSource(
   return best;
 }
 
+/**
+ * L14 (#229) — the nearest network tile a plan may actually START from.
+ *
+ * `nearestSource` is Manhattan-only, and on a real map the closest tile of a
+ * seat's network is regularly unbuildable: a town ring, a public highway
+ * running through a settlement, the rim of an industry's footprint. The planner
+ * used to ask for that tile and DROP THE WHOLE CANDIDATE when it was illegal,
+ * so an industry the seat's own gravel reaches could be written off because the
+ * nearest approach lay on someone's high street — and a boxed-in seat then had
+ * no candidate left anywhere on the board (the L14 race: eight Depots, a rich
+ * purse, and `planCandidates` returning nothing for the rest of the match).
+ *
+ * Walking the distance order until a tile is buildable only ever ADDS
+ * candidates: when the nearest tile is buildable this returns exactly the tile
+ * `nearestSource` would have, tie-break included (the scan is index-ordered, so
+ * the first tile at the winning distance wins).
+ *
+ * The shipped loop does NOT take this path (see the call site), and that is a
+ * measured choice, not a default: it turns out most industries on a grown map
+ * have an illegal nearest approach, so on the shipped loop the old drop was
+ * skipping the A* for most of the board — running it there cost a 12-minute
+ * shipped race 3.5× its wall clock to reach the identical result. The shipped
+ * loop is frozen (L13/L14 replace it) and never needed a farther start; the new
+ * loop's races are where a stranded seat is fatal, and they are _faster_ with
+ * the fix because the seat finishes instead of idling.
+ */
+function nearestBuildableSource(
+  grid: Grid, kind: TrackKind, sources: [number, number][], tx: number, ty: number,
+): [number, number] | null {
+  let best: [number, number] | null = null;
+  let bestD = Infinity;
+  for (const [x, y] of sources) {
+    const d = Math.abs(x - tx) + Math.abs(y - ty);
+    if (d >= bestD) continue;                       // cannot beat what we have
+    if (!canBuildOn(grid, kind, x, y)) continue;    // …and only a legal start counts
+    best = [x, y]; bestD = d;
+  }
+  return best;
+}
+
 // ── W8: is the plan executable, and does it achieve anything? ─────────────
 /**
  * What a candidate's path would ACTUALLY do once `executeCandidate` runs it.
@@ -579,6 +619,17 @@ export interface PlanOptions {
    * prunes them for affordability. Omitted/false = the shipped loop.
    */
   newLoop?: boolean;
+  /**
+   * L14 (#229): the cargoes the seat's NEXT Depot should hold — the tree's own
+   * arithmetic talking (`treeGoal`/`treeWants` below). A candidate whose type
+   * produces one of them scores `WANT_CARGO_BONUS` higher, so a seat that is
+   * short of a cargo expands toward the industry that makes it instead of
+   * spending its purse on another Depot of the cargo it already has. Ignored
+   * on the shipped loop, ignored when empty, and never a FILTER: a plan the
+   * purse can pay is always still offered, or a seat with an unreachable want
+   * would deadlock on its own preference.
+   */
+  wantCargo?: readonly Cargo[];
 }
 
 /**
@@ -597,6 +648,125 @@ function affordableNewTiles(kind: TrackKind, purse: Purse, free: number, newLoop
   }
   return n + (freeAllowanceCovers(kind, newLoop) ? Math.ceil(Math.max(0, free)) : 0);
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+// L14 (#229) — THE TREE GOAL: what the rival's next Depot should hold.
+//
+// The new loop's progression is a TREE (`DEPOT_TREE`), and its prices are
+// MIXES — so a seat can be rich and stuck: a purse full of wood pays for a
+// Farm Depot but not for the Quarry Depot its next rung wants, and a rival that
+// keeps spending wood on more forests never gets there. That is the one way the
+// new loop can strand the AI, and this is the answer to it.
+//
+// `treeGoal` reads the same table the player's Build column reads and answers
+// the two questions a seat has to answer to climb it:
+//
+//   • WHICH type next — the unlocked one whose price the purse is CLOSEST to
+//     paying (fewest missing units, ties by rung then table order). The same
+//     "least shortfall" rule the shipped bank works toward, because it is the
+//     one that is stable: a seat follows one goal to completion instead of
+//     re-picking a new favourite on every tick of income.
+//   • WHAT TO CONNECT to get there — `via`, the cargoes the price is short of
+//     that one of the already-unlocked types produces. A seat short of grain
+//     for its Quarry Depot gets a Farm Depot built first, which is exactly the
+//     loop the player walks by hand.
+//
+// Two deliberate limits:
+//   • GOLD is never a goal. It is the deepest rung and it buys nothing but
+//     Black Market sabotage, so a seat that banks toward it has spent its
+//     tempo on spite. Everything below it is reachable without it.
+//   • When the goal is already affordable `via` is empty and NOTHING is
+//     preferred: the map decides. That is what keeps the opening a property of
+//     the seed (the L5 race's "no single build order wins every seed") rather
+//     than a script this function would quietly impose.
+//
+// Pure, table-driven, and shared by the live turn (`aiNewLoopTurn` in game.ts),
+// the race harness and the tests, so "what the rival wants" has one answer.
+// ══════════════════════════════════════════════════════════════════════════
+export const WANT_CARGO_BONUS = 1.6;
+
+export interface TreeGoalOptions {
+  /** What the seat can spend. */
+  purse: Purse;
+  /** The rungs it has unlocked (`depotTier` in game.ts). Omitted = 0. */
+  tier?: number;
+  /** Cargo actually held, when that differs from the purse. Default: the purse. */
+  stock?: Purse;
+}
+
+export interface TreeGoal {
+  /** The cargo the next Depot should hold. */
+  cargo: Cargo;
+  /** Its row of `DEPOT_TREE` — the price and the rung. */
+  type: DepotTypeDef;
+  /** What that Depot costs (the type's own mix, never the setup allowance's {}). */
+  cost: Purse;
+  /** Units of `cost` the purse is still short of. 0 = buildable right now. */
+  shortfall: number;
+  /** The cargoes `cost` is short of, in `DEPOT_TREE_ORDER` order. */
+  missing: Cargo[];
+  /** Unlocked types that PRODUCE the missing cargoes — what to connect next. */
+  via: Cargo[];
+}
+
+export function treeGoal(opts: TreeGoalOptions): TreeGoal | null {
+  const tier = Math.max(0, Math.floor(opts.tier ?? 0));
+  const purse = opts.stock ?? opts.purse;
+  const ranked = DEPOT_TREE_ORDER
+    .map((cargo) => DEPOT_TREE[cargo])
+    .filter((type) => type.tier <= tier && type.cargo !== "gold")
+    .map((type) => {
+      const cost = { ...type.cost } as Purse;
+      const missing = DEPOT_TREE_ORDER.filter((c) => (cost[c] ?? 0) > (purse[c] ?? 0));
+      const shortfall = missing.reduce((n, c) => n + ((cost[c] ?? 0) - (purse[c] ?? 0)), 0);
+      return { type, cost, missing, shortfall };
+    })
+    .sort((a, b) => a.shortfall - b.shortfall
+      || a.type.tier - b.type.tier
+      || DEPOT_TREE_ORDER.indexOf(a.type.cargo) - DEPOT_TREE_ORDER.indexOf(b.type.cargo));
+  const best = ranked[0];
+  if (!best) return null;
+  const via = best.missing.filter((c) => (DEPOT_TREE[c]?.tier ?? Infinity) <= tier);
+  return { cargo: best.type.cargo, type: best.type, cost: best.cost, shortfall: best.shortfall, missing: best.missing, via };
+}
+
+/**
+ * L14 (#229) — the cargo the SCOREBOARD pays for, while it pays for paving.
+ *
+ * VP-01 made Ore the one cargo that buys points (4 Ore = one paved tile =
+ * 0.25★), and L13/#228 is the ticket that replaces that table with the new
+ * loop's own sources. Until it lands, a seat that never connects an ore mine
+ * cannot score at all — and under the shipped loop the 4:1 bank was exactly how
+ * such a seat bought its way to a point, which L14 retires along with the rest
+ * of the trading surfaces. So the rival's expansion gets one extra want: a seat
+ * with no ore of its own is sent after a mine.
+ *
+ * The guard reads `VICTORY.upgrade` rather than a flag, so the day #228 stops
+ * paying ★ for paves this stops steering on its own. Delete it — and the pave
+ * pass it feeds — together.
+ */
+export function scoreCargoWant(state: EconomyState, owner: string): Cargo | null {
+  if (!(VICTORY.upgrade > 0)) return null;
+  const earns = state.harvesters.some((h) => h.owner === owner && depotCargo(state, h) === "ore");
+  return earns ? null : "ore";
+}
+
+/**
+ * The planner's `wantCargo` for a goal — one rule for the live turn, the
+ * harness and the tests, so three callers cannot drift. Empty when there is
+ * nothing to steer toward: no goal at all, no cargo the goal is short of (see
+ * the note above on why an AFFORDABLE goal must not script the opening), and no
+ * scoreboard want to add.
+ *
+ * `scoreCargo` is the one want that outlives the goal's price: `scoreCargoWant`
+ * above answers it, and `#228` deletes it with the pave pass.
+ */
+export const treeWants = (goal: TreeGoal | null, scoreCargo?: Cargo | null): Cargo[] => {
+  const wants = new Set<Cargo>();
+  if (goal && goal.shortfall > 0) for (const c of goal.via) wants.add(c);
+  if (scoreCargo) wants.add(scoreCargo);
+  return DEPOT_TREE_ORDER.filter((c) => wants.has(c));
+};
 
 /**
  * Score every reachable industry and return the candidates best first.
@@ -645,6 +815,10 @@ export function planCandidates(
   // one price.
   const depotTier = Math.max(0, Math.floor(opts.depotTier ?? 0));
   const freeDepots = Math.max(0, opts.freeDepots ?? 0);
+  // L14 (#229): the cargoes the seat's next Depot should hold (empty on the
+  // shipped loop, and empty under the new loop whenever the tree has nothing
+  // specific to ask for) — a RANKING nudge, never a filter.
+  const want = new Set<Cargo>(opts.wantCargo ?? []);
 
   // VP-01: dirt first. A paved route on virgin ground costs the same ore as
   // gravel now and gravel-then-pave later, and only the pave scores, so the
@@ -699,7 +873,12 @@ export function planCandidates(
         // human click and the HUD use, so there is no rival-only discount and
         // no second cost table.
         const depotCost = priceDepot(opts.purse, freeDepots, { cargo, tier: depotTier, newLoop }).cost;
-        const src = nearestSource(sources, hx, hy);
+        // L14 (#229): under the new loop, the nearest tile the plan can START
+        // from — not merely the nearest (see `nearestBuildableSource` for why
+        // the shipped loop keeps the plain read).
+        const src = newLoop
+          ? nearestBuildableSource(grid, kindPref, sources, hx, hy)
+          : nearestSource(sources, hx, hy);
         if (!src || !canBuildOn(grid, kindPref, src[0], src[1])) continue;
         // The road has to reach the lot's GATE, and the Depot is built in
         // whichever ROTATION puts that gate nearest the network — the same
@@ -755,7 +934,10 @@ export function planCandidates(
         // is what harvests, and on a multi-tile footprint that is usually more
         // than the one industry A* happened to route to.
         const value = catchmentValue(state, locks, opts.stock, hx, hy, now, opts.oreUrgency ?? 1);
-        const score = value / Math.max(0.3, path.cost);
+        // L14 (#229): …and when the tree has asked for a cargo, the type that
+        // produces it outranks an equally good Depot of any other cargo.
+        const wanted = cargo !== null && want.has(cargo);
+        const score = (value / Math.max(0.3, path.cost)) * (wanted ? WANT_CARGO_BONUS : 1);
         out.push({ industry: ind, hx, hy, facing, path, kind: kindPref, cost, depotCost, score, value });
         break;   // one spot per industry is enough — the cheapest we found
       }
@@ -819,6 +1001,15 @@ export interface DeepPlanOptions {
   now?: number;
   /** L2 (#216): the new-loop cost model (dirt free). Part of the cache key. */
   newLoop?: boolean;
+  /**
+   * L14 (#229): the ranking preference (see `PlanOptions.wantCargo`). Part of
+   * the cache key like every other input that re-orders the list — a cached
+   * array ranked for one goal must never be handed to a seat working on
+   * another. The new loop has no bank, so nothing on it needs this cache, but
+   * leaving the field out would be a trap for the next caller rather than a
+   * saving.
+   */
+  wantCargo?: readonly Cargo[];
 }
 
 interface DeepSlot {
@@ -827,6 +1018,7 @@ interface DeepSlot {
   freeDepots: number;
   depotTier: number;
   newLoop: boolean;
+  want: string;
   cands: Candidate[];
 }
 
@@ -873,16 +1065,18 @@ export function deepPlanCandidates(
   const key = `${factory.ownerId}@${factory.tx},${factory.ty}`;
   let slots = deepPlanCache.get(state);
   if (!slots) deepPlanCache.set(state, (slots = new Map()));
+  const want = [...(opts.wantCargo ?? [])].sort().join(",");
   const hit = slots.get(key);
   if (hit && hit.fp === fp && hit.free === free && hit.freeDepots === freeDepots
-    && hit.depotTier === depotTier && hit.newLoop === newLoop) {
+    && hit.depotTier === depotTier && hit.newLoop === newLoop && hit.want === want) {
     return hit.cands;
   }
   const cands = planCandidates(state, factory, {
     stock: opts.stock ?? {}, purse: DEEP_PLAN_PURSE,
     free, freeDepots, depotTier, oreUrgency: opts.oreUrgency, now: opts.now, newLoop,
+    wantCargo: opts.wantCargo,
   });
-  slots.set(key, { fp, free, freeDepots, depotTier, newLoop, cands });
+  slots.set(key, { fp, free, freeDepots, depotTier, newLoop, want, cands });
   return cands;
 }
 

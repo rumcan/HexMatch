@@ -39,7 +39,8 @@ import {
 } from "../../../src/iso/track";
 import {
   aiBuildStep, chooseRivalFactorySpot, planUpgrades, executePaves, paveCandidates,
-  deepPlanCandidates, rivalPace, planRailMove, executeRailMove, type RivalPace,
+  deepPlanCandidates, rivalPace, scoreCargoWant, treeGoal, treeWants,
+  planRailMove, executeRailMove, type RivalPace, type TreeGoal,
 } from "../../../src/iso/ai";
 import { createRailState, tickTrains, type RailState } from "../../../src/iso/rail";
 import { RIVAL_SKILLS, type RivalSkill, type SkillKey } from "../../../src/iso/skill";
@@ -51,15 +52,21 @@ import {
 // L1d (#235): the new loop's income rule, imported wholesale — the harness
 // must clock a seat with the SAME seams the live `economyTick` uses, or the
 // race measures an economy nobody ships.
-import { depotYield, distanceFactor, transportFactor } from "../../../src/iso/loop";
-import { rivalTuningYield } from "../../../src/iso/tuning";
+import { depotTransportTier, depotYield, distanceFactor, transportFactor } from "../../../src/iso/loop";
+import {
+  decayYield, difficultyRulesFor, retuneOwed, rivalTuningScore, rivalTuningYield,
+  settleTuningYield, townBonusFor, unlockTierAfterSession,
+} from "../../../src/iso/tuning";
 import {
   createScoreState, rescore, vpFor, hasWon, type LoopScoring,
 } from "../../../src/iso/victory";
 import {
   addPlant, canAffordPlant, chooseAiPlantSpot, PLANT_COST,
 } from "../../../src/iso/plants";
-import { BASE_RATE, VICTORY, VP_TARGET, CARGOES, type Cargo } from "../../../src/iso/config";
+import {
+  BASE_RATE, VICTORY, VP_TARGET, CARGOES, TOWN_UPGRADES,
+  type Cargo, type DifficultyRules,
+} from "../../../src/iso/config";
 import {
   bankTrade, BANK_RATE, createMarket, postOffer, acceptOffer, tickMarket,
   type Market, type MarketPlayer, type TradeOffer,
@@ -69,11 +76,9 @@ import {
   toBag, chooseRivalOffer, rivalWouldAccept, AI_TRADE_MS, type CargoBag,
 } from "../../../src/iso/market";
 import {
-  START_PURSE, FREE_SETUP_TRACK, HARVEST_MS,
+  START_PURSE, FREE_SETUP_TRACK, HARVEST_MS, RIVAL_REMATCH_DROP,
 } from "../../../src/iso/game";
 import { FREE_SETUP_DEPOTS, priceDepot, priceTownUpgrade } from "../../../src/iso/construction";
-import { TOWN_UPGRADES } from "../../../src/iso/config";
-import { rivalTuningScore, townBonusFor, unlockTierAfterSession } from "../../../src/iso/tuning";
 
 export const STEP_MS = 1_000;
 export const MIN = (ms: number) => `${(ms / 60_000).toFixed(1)}m`;
@@ -113,6 +118,9 @@ export interface Seat {
   /** AI-01: the market activity this seat performed. */
   offersPosted: number;
   offersTaken: number;
+  /** L14 (#229): the re-matches this seat played (see `retunePass`) — the
+   *  harness's read on whether the new loop's answer to decay is happening. */
+  retunes: number;
   /** AI-01: when this seat crossed each headline total (1★, 5★, the win). */
   milestones: { vp: number; at: number }[];
   /** The last purse target `seatSkintTarget` computed for this seat (decision
@@ -358,11 +366,10 @@ function bankToward(
  * every other rival session (`rivalTuningScore`), so the bonus lands on the
  * same score→strength curve the player's board runs.
  */
-function townPass(eco: EconomyState, seat: Seat): boolean {
+function townPass(eco: EconomyState, seat: Seat, reserve: Purse): boolean {
   const price = priceTownUpgrade(seat.purse, seat.townLevel);
   if (!price.def || !price.affordable) return false;
   if (!eco.harvesters.some((h) => h.owner === seat.id && isServiced(eco.track, h, eco.rail))) return false;
-  const reserve: Purse = seat.planGoal ?? {};
   const covers = (want: Purse): boolean =>
     (Object.entries(want) as [Cargo, number][]).every(
       ([k, v]) => (seat.purse[k] ?? 0) - (price.cost[k] ?? 0) >= v);
@@ -374,24 +381,73 @@ function townPass(eco: EconomyState, seat: Seat): boolean {
 }
 
 /**
+ * L14 (#229): the harness twin of the rival's RE-MATCH (`rivalRetuneStep` in
+ * game.ts) — the answer to L6's cooling, read off the seat's OWN difficulty
+ * row (a harness seat carries its own, where the live game has one setting for
+ * the whole match). Same predicate (`retuneOwed`), same session result
+ * (`rivalTuningScore` → `settleTuningYield`), same "a session that would not
+ * improve the Depot is not taken" rule, and the same threshold — imported from
+ * game.ts, because a harness with its own number would measure a rival nobody
+ * ships.
+ */
+function retunePass(eco: EconomyState, seat: Seat): boolean {
+  const rules = difficultyRulesFor(seat.skill.key);
+  if (!rules.matchEnabled) return false;
+  const comp = buildAllComponents(eco.track, seat.ownerId);
+  const due = eco.harvesters
+    .filter((h) => h.owner === seat.id)
+    .map((h) => {
+      const tier = depotTransportTier(eco, comp, h);
+      const level = depotYield(h);
+      const fresh = settleTuningYield(level, rivalTuningScore(seat.skill.key, 0, rules, tier), rules);
+      return { h, tier, level, fresh };
+    })
+    .filter(({ h, tier, level, fresh }) =>
+      fresh > level + 1e-9
+      && retuneOwed(rules, { tier, tuneTier: h.tuneTier })
+      && level <= fresh * (1 - RIVAL_REMATCH_DROP))
+    .sort((a, b) => a.level - b.level || a.h.id - b.h.id);
+  const head = due[0];
+  if (!head) return false;
+  head.h.yield = head.fresh;
+  head.h.tuneTier = head.tier;
+  seat.retunes++;
+  return true;
+}
+
+/**
  * L4 (#218) / L5 (#219): the harness twin of `applyRivalTuning` in game.ts —
  * every Depot this seat owns that has no level yet takes its difficulty's
  * simulated session result, and a session that ran opens the next rung.
  * Returns true when a rung actually moved.
  *
- * L13 (#228): this is called at the BUILD, exactly where the live AI turn
+ * L14 (#229) folds the COOLING pass in on the same line, because the live
+ * `economyTick` shaves both seats' Depots before it pays them.
+ *
+ * L13 (#228): this is also called at the BUILD, exactly where the live AI turn
  * calls `applyRivalTuning()` (right after its depot pass) — not only on the
  * harvest clock. A rung is a ★ now, so a race can end on a depot build, and a
  * Depot raised on the winning turn must already carry the level the live game
  * would have given it in the same turn. Idempotent: a Depot that has a level
- * is left alone, so the harvest clock may still call it as a backstop.
+ * is left alone, so the harvest clock still calls it as a backstop.
  */
 function tuneNewDepots(eco: EconomyState, seat: Seat): boolean {
   let simulated = false;
+  // L14 (#229): the cooling pass, on the same line for every seat — the live
+  // `economyTick` shaves BOTH seats' Depots now that the rival has a re-match
+  // to answer it with, and it runs before the pay so the level the HUD prints
+  // is the level this tick paid at.
+  const rules: DifficultyRules = difficultyRulesFor(seat.skill.key);
+  const tuneComp = buildAllComponents(eco.track, seat.ownerId);
   for (const depot of eco.harvesters) {
     if (depot.owner !== seat.id) continue;
+    const cooled = decayYield(depot.yield, rules);
+    if (cooled !== null) depot.yield = cooled;
     if (depot.yield === undefined) {
       depot.yield = rivalTuningYield(seat.skill.key);
+      // L14: the session settled on the tier the Depot stood on, exactly as
+      // `applyRivalTuning` stamps it — the re-match credit L6 reads.
+      depot.tuneTier = depotTransportTier(eco, tuneComp, depot);
       simulated = true;
     }
   }
@@ -463,7 +519,7 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
     lastBuild: -RIVAL_SKILLS[key].buildMs, lastHarvest: -HARVEST_MS,
     lastOffer: -(RIVAL_SKILLS[key].offerEveryMs || 0), carry: {}, loopCarry: new Map(),
     firstPave: null, firstPoint: null, oreOnPaves: 0, paves: 0,
-    offersPosted: 0, offersTaken: 0, milestones: [],
+    offersPosted: 0, offersTaken: 0, retunes: 0, milestones: [],
     target: null, planGoal: null, paveGoal: null,
     rail: strategy, railActions: 0, railSpent: {}, firstTrain: null,
   });
@@ -563,6 +619,33 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
         const other = seat.id === "you" ? "ai" : "you";
         const pace = rivalPace(vpFor(score, other), vpFor(score, seat.id), raceTarget);
         const urgency = pace.oreUrgency * seat.skill.urgencyBias;
+        // L14 (#229): under `newLoop` the seat plays a different turn — the
+        // tree's goal replaces the scoreboard's urgency as the thing that
+        // steers expansion, the bank and the market are gone, and the reserve
+        // held back for the next Depot comes from `treeGoal` rather than from
+        // the plan-and-pave pair `rivalSkintTarget` used to weigh.
+        const goal: TreeGoal | null = newLoop
+          ? treeGoal({ purse: seat.purse, tier: seat.depotTier })
+          : null;
+        // Shipped loop: no want at all, exactly as `aiTick`'s own `opts()`
+        // passes none — the harness mirrors the turn it measures or it measures
+        // a rival nobody plays.
+        const want = newLoop ? treeWants(goal, scoreCargoWant(eco, seat.id)) : [];
+        /** The goal's price under `newLoop`, the saved plan otherwise. */
+        const reserve: Purse = newLoop
+          ? { ...(goal?.cost ?? {}) }
+          : { ...(seat.planGoal ?? {}) };
+        /** A purse that can pay `want` AND a plant's own price (L14's guard). */
+        const withPlant = (base: Purse): Purse => {
+          const out: Purse = { ...base };
+          for (const [k, v] of Object.entries(PLANT_COST) as [Cargo, number][]) {
+            out[k] = (out[k] ?? 0) + v;
+          }
+          return out;
+        };
+        const covers = (want2: Purse, base: Purse): boolean =>
+          (Object.entries(want2) as [Cargo, number][])
+            .every(([k, v]) => (base[k] ?? 0) >= v);
 
         // RAIL-05: the rail-first seat acts on the railway before anything else
         // and expands its road (plant, depot) only when that did nothing.
@@ -570,7 +653,11 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
         if (railFirstActed) acted = true;
 
         if (!railFirstActed && canAffordPlant(seat.purse)) {
-          const spot = chooseAiPlantSpot(grid, track, eco, seat.id);
+          // L14: under the new loop a plant may not eat the goal's price —
+          // the shipped turn's "never buy the plant with the Depot's purse"
+          // rule, restated for the tree.
+          const allowed = !newLoop || covers(withPlant(reserve), seat.purse);
+          const spot = allowed ? chooseAiPlantSpot(grid, track, eco, seat.id) : null;
           if (spot && pay(seat, PLANT_COST)) {
             addPlant(grid, track, eco, seat.id, seat.ownerId, spot[0], spot[1]);
             acted = true;
@@ -582,9 +669,13 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
           const built = aiBuildStep(eco, factoryFor(seat), {
             stock: seat.purse, purse: seat.purse,
             free: seat.freeTrack, freeDepots: seat.freeDepots, now: t,
-            oreUrgency: urgency, newLoop,
+            // VP-01's urgency is the scoreboard's dial; on the new loop the
+            // tree's goal is what steers the ranking (L14).
+            oreUrgency: newLoop ? undefined : urgency, newLoop,
             // L5 (#219): the rival plans only types its rungs open.
             depotTier: seat.depotTier,
+            // L14: …and prefers the cargo the tree is short of.
+            wantCargo: want.length ? want : undefined,
           }, nextHarvesterId);
           if (!built) break;
           nextHarvesterId++;
@@ -599,8 +690,19 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
         // level its difficulty would have given it.
         if (newLoop) tuneNewDepots(eco, seat);
         // L5 (#219): the city upgrade, in the same slot the live turn puts it
-        // — after the Depot pass, before the pave pass.
-        if (townPass(eco, seat)) acted = true;
+        // — after the Depot pass, before the pave pass. L14: on the new loop
+        // the reserve is the goal scaled by the difficulty's `townReserve`
+        // (the upgrade-timing lever), and a cooled Depot's re-match is the
+        // turn's other spending decision, in the slot the live turn gives it.
+        if (newLoop) {
+          const keep = Math.max(0, seat.skill.townReserve);
+          const townReserve: Purse = {};
+          for (const [k, v] of Object.entries(reserve) as [Cargo, number][]) {
+            townReserve[k] = Math.ceil(v * keep);
+          }
+          if (townPass(eco, seat, townReserve)) acted = true;
+          else if (retunePass(eco, seat)) acted = true;
+        } else if (townPass(eco, seat, reserve)) acted = true;
 
         const plan = planUpgrades(eco, {
           owner: seat.id, ownerId: seat.ownerId, purse: seat.purse,
@@ -615,9 +717,12 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
             seat.oreOnPaves += laid.spent.ore ?? 0;
             acted = true;
           }
-        } else {
+        } else if (!newLoop) {
           // VP-01: the seat that has gravel and no Ore buys the Ore, even on a
-          // turn it also spent building — `rivalBankTowardPave` in game.ts
+          // turn it also spent building — `rivalBankTowardPave` in game.ts.
+          // L14: there is no bank under `newLoop` (the MVP hides it, #226
+          // re-cuts it), so a new-loop seat earns its missing cargo instead —
+          // that is what `wantCargo` above is for.
           bankForPaves(eco, seat, track, factoryFor(seat), pace, urgency, newLoop);
         }
         // RAIL-05: the rail action after the road turn — every turn ("mixed",
@@ -627,7 +732,7 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
           if (railAction(seat, t)) acted = true;
         }
 
-        if (!acted) {
+        if (!acted && !newLoop) {
           bankToward(eco, seat, track, factoryFor(seat), pace, urgency, newLoop);
           // the game retries the whole sequence once a bank unlocked something
           const retry = planUpgrades(eco, {
@@ -667,7 +772,7 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
 
       // ── the market clock: post an offer on the seat's own cadence (the
       //    answering pass runs once per step, after both seats)
-      if (seat.skill.offerEveryMs && t - seat.lastOffer >= seat.skill.offerEveryMs) {
+      if (!newLoop && seat.skill.offerEveryMs && t - seat.lastOffer >= seat.skill.offerEveryMs) {
         seat.lastOffer = t;
         const other = seat.id === "you" ? "ai" : "you";
         const urgency = rivalPace(vpFor(score, other), vpFor(score, seat.id), raceTarget).oreUrgency
@@ -724,7 +829,7 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
     // rich seat structurally extracting the poor seat's scarcest cargo —
     // every "free units" deal it took moved it further from the purse its
     // next Depot needed, and mirrored normal-vs-normal ended 10★–0★.
-    if (t - lastTradeCheck >= AI_TRADE_MS) {
+    if (!newLoop && t - lastTradeCheck >= AI_TRADE_MS) {
       lastTradeCheck = t;
       for (const o of [...market.offers]) {
         const takerSeat = seats.find((s) => s.ownerId - 1 !== o.from);
