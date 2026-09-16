@@ -160,6 +160,13 @@ export interface UiState {
   phase: string;
   tool: UiTool;
   freeTrack: number;
+  /**
+   * L5 (#219): the rungs of the depot tree this seat has UNLOCKED, so the
+   * Depot button can quote the cheapest type that is actually open to it (and
+   * the modebar can say why a locked type is locked). Absent on the shipped
+   * loop — one mix, one rung.
+   */
+  depotTier?: number;
   /** PP-05: Depots left on the free-setup allowance — the Build button reads
    *  "free setup" while it lasts and the full Oil cost afterwards. */
   freeDepots: number;
@@ -225,12 +232,49 @@ export interface UiState {
    *     moves left, the running score and the yield it is currently worth.
    */
   tuning?: UiTuningSession | null;
+  /**
+   * L5 (#219): the city upgrade, as the plate's own key needs it. Omitted on
+   * the shipped loop — the button does not exist there, and neither does the
+   * rule. A present record always paints the key; `note` explains a key that
+   * is off (shortfall, no session left to run, or the city already upgraded).
+   */
+  town?: UiTownState | null;
+}
+
+/**
+ * L5 (#219): one city upgrade, as the HUD needs it — the next row of
+ * `TOWN_UPGRADES`, priced by the game.
+ */
+export interface UiTownState {
+  /** Levels bought so far. */
+  level: number;
+  /** How many rows the table holds (1 in the MVP's one-tier city). */
+  maxLevel: number;
+  /** What the next upgrade costs. Empty when there is nothing left to buy. */
+  cost: Partial<Record<Cargo, number>>;
+  /** The purse covers `cost` — the key's only enabled state. */
+  affordable: boolean;
+  /** The base-rate bonus already banked (0 before the first upgrade). */
+  bonus: number;
+  /** The ceiling a full-marks session would set — what the key promises. */
+  ceiling: number;
+  /** Why the key is off, in one line. */
+  note?: string;
 }
 
 /** L4 (#218): one live tuning session, as the HUD needs it. */
 export interface UiTuningSession {
-  /** The cargo the session depot collects (its board is scoped to it). */
-  cargo: Cargo;
+  /**
+   * L5 (#219): which progression the session confirms — a Depot's yield
+   * ("depot") or the CITY upgrade's base-rate bonus ("town"). The plate's
+   * title says which, because the two read very differently ("what you are
+   * about to earn" vs "what the whole city is about to earn").
+   */
+  kind: "depot" | "town";
+  /** The cargo the session depot collects (its board is scoped to it). `null`
+   *  on a town session: the board plays neutral and the upgrade lifts every
+   *  cargo the city handles. */
+  cargo: Cargo | null;
   /** The budget the session opened with. */
   moves: number;
   /** Moves not yet spent. */
@@ -300,6 +344,11 @@ export interface UiHooks {
    * one.
    */
   onTuningEnd?: (abandon: boolean) => void;
+  /**
+   * L5 (#219): the plate's city key. The game owns the price, the session and
+   * the refusal copy; the chrome only reports the click.
+   */
+  onTownUpgrade?: () => void;
 }
 
 export interface UiRivalryBeat {
@@ -657,7 +706,14 @@ export function createOriginalUi(
   tpAbandon.onclick = () => hooks.onTuningEnd?.(true);
   tpRow.append(tpScore, tpYield, tpFinish, tpAbandon);
   const tpIdle = h("div", "tp-idle");
-  tuningPlate.append(tpHead, tpRow, tpIdle);
+  // L5 (#219): the city upgrade's key sits under the session plate — the new
+  // loop's second thing match-3 buys. It is the same surface as the session
+  // (the plate is "what your economy is worth right now"), so a player who
+  // has just tuned a Depot reads the next thing to do in the same place.
+  const tpCity = h("button", "tp-city hidden", "");
+  tpCity.type = "button";
+  tpCity.onclick = () => hooks.onTownUpgrade?.();
+  tuningPlate.append(tpHead, tpRow, tpIdle, tpCity);
   qp.appendChild(tuningPlate);
 
   const upbar = h("div", "upbar");
@@ -966,7 +1022,7 @@ export function createOriginalUi(
     { key: "road", label: "Road", sub: `${costMarkup(TRANSPORT.road.cost)} · +${VICTORY.upgrade}★ paving dirt` },
     // PP-05: `depotSub` refreshes the Depot line below as the free-setup
     // allowance burns down.
-    { key: "harvester", label: "Depot", sub: depotButtonMarkup(0) },
+    { key: "harvester", label: "Depot", sub: depotButtonMarkup(0, { newLoop, tier: 0 }) },
     // PP-06: another instance of the SAME processing building, raised beside
     // another town.
     { key: "plant", label: "Processing Plant", sub: `${costMarkup(PLANT_COST)} · next to a town` },
@@ -2638,7 +2694,7 @@ export function createOriginalUi(
   function paintTuning(t: UiTuningSession | null | undefined) {
     const sig = t === undefined ? "legacy"
       : t === null ? "none"
-        : `${t.cargo}:${t.movesLeft}:${t.moves}:${t.score}:${t.yield}`;
+        : `${t.kind}:${t.cargo ?? "-"}:${t.movesLeft}:${t.moves}:${t.score}:${t.yield}`;
     if (sig === lastTuningSig) return;
     lastTuningSig = sig;
     if (t === undefined) {
@@ -2664,18 +2720,70 @@ export function createOriginalUi(
       tpIdle.textContent = TUNING_IDLE;
       return;
     }
-    tpTitle.textContent = `Tuning ${CARGO[t.cargo].icon} ${CARGO[t.cargo].name} Depot`;
+    // L5 (#219): a session confirms one of two things — a Depot's yield, or
+    // the city's base-rate bonus for EVERY connected Depot. Same board, same
+    // budget, different promise, so the plate's words say which.
+    const town = t.kind === "town";
+    tpTitle.textContent = town
+      ? "🏙️ Tuning the City"
+      : t.cargo ? `Tuning ${CARGO[t.cargo].icon} ${CARGO[t.cargo].name} Depot` : "Tuning";
     tpMoves.textContent = `${t.movesLeft}/${t.moves} moves`;
     tpScore.innerHTML = `Score <b>${t.score}</b>`;
-    tpYield.innerHTML = `Yield <b>×${fmtYield(t.yield)}</b>`;
+    tpYield.innerHTML = town
+      ? `Base rate <b>+${Math.round(t.yield * 100)}%</b>`
+      : `Yield <b>×${fmtYield(t.yield)}</b>`;
     tpFinish.disabled = t.movesLeft === 0;
-    tpFinish.title = `Close the session — this Depot then ticks at ×${fmtYield(t.yield)}`
-      + ` (abandoning pays ×${fmtYield(t.abandonYield)})`;
+    tpFinish.title = town
+      ? `Close the session — every connected Depot then earns +${Math.round(t.yield * 100)}% base rate`
+        + ` (abandoning refunds the upgrade)`
+      : `Close the session — this Depot then ticks at ×${fmtYield(t.yield)}`
+        + ` (abandoning pays ×${fmtYield(t.abandonYield)})`;
+    tpAbandon.title = town
+      ? "Close without playing it out — the upgrade is refunded and the city is unchanged"
+      : "Close without playing it out — the Depot keeps the default yield";
+  }
+
+  const costSig = (cost: Partial<Record<Cargo, number>>) =>
+    Object.entries(cost).map(([k, v]) => `${k}${v}`).join(",");
+
+  // ── L5 (#219): the city key, painted from `UiState.town` ──────────────────
+  /** Last painted city key, so a still one writes nothing (same rule as the
+   *  plate above). */
+  let lastTownSig = "\u0000";
+  /**
+   * Paint the city upgrade's key.
+   *
+   * `undefined` / `null` = not the new loop (or no city state to show): the
+   * key does not exist. A record always paints it; the game's `note` is the
+   * reason it is off, and the label always states the complete price — the
+   * same "show the cost before the click" rule as the Build column.
+   */
+  function paintTown(t: UiTownState | null | undefined) {
+    const sig = t === undefined || t === null ? "none"
+      : `${t.level}:${t.maxLevel}:${t.affordable}:${t.bonus}:${t.ceiling}:${t.note ?? ""}:${costSig(t.cost)}`;
+    if (sig === lastTownSig) return;
+    lastTownSig = sig;
+    if (!t) { tpCity.classList.add("hidden"); return; }
+    tpCity.classList.remove("hidden");
+    if (t.level >= t.maxLevel) {
+      tpCity.disabled = true;
+      tpCity.classList.add("done");
+      tpCity.innerHTML = `🏙 City upgraded — base rate +${Math.round(t.bonus * 100)}%`;
+      tpCity.title = "The city is at its top level on the new loop.";
+      return;
+    }
+    tpCity.classList.remove("done");
+    tpCity.disabled = !t.affordable;
+    tpCity.innerHTML = `🏙 Upgrade city · ${costMarkup(t.cost)} → base rate +${Math.round(t.ceiling * 100)}%`;
+    tpCity.title = t.affordable
+      ? "Play a tuning session to confirm the upgrade — the score sets how much of the base-rate bonus lands."
+      : (t.note ?? "Save up the materials first.");
   }
 
   // ── paint ─────────────────────────────────────────────────────────────────
   function paint(state: UiState) {
     paintTuning(state.tuning);
+    paintTown(state.town);
     rivalWirePlayerPortrait = state.portrait === "you" ? portraitYou : portraitVex;
     // STORY-01: the contract's rival wears their painted sheet on the dossier
     // card; a sandbox match (no face on the state) keeps the mugshot map.
@@ -2815,7 +2923,7 @@ export function createOriginalUi(
     // (a rebuilt button drops a click mid-gesture, the reason `renderSabotage`
     // is change-gated too). The cost text comes from the same table the
     // placement charges; `disabled` mirrors the affordability the click checks.
-    const sub = depotButtonMarkup(state.freeDepots);   // allowance first, then Oil
+    const sub = depotButtonMarkup(state.freeDepots, { newLoop, tier: state.depotTier ?? 0 });
     if (sub !== lastDepotSub) {
       lastDepotSub = sub;
       if (depotSub) depotSub.innerHTML = sub;

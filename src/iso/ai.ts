@@ -48,9 +48,10 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_W, MAP_H } from "../game/config";
 import {
-  TRANSPORT, UPGRADE_COST, INDUSTRY_BY_KEY, FACTORY_FOOTPRINT, VICTORY, type Cargo,
+  TRANSPORT, UPGRADE_COST, INDUSTRY_BY_KEY, FACTORY_FOOTPRINT, VICTORY, DEPOT_TREE,
+  type Cargo,
 } from "./config";
-import { DEPOT_COST, FREE_SETUP_DEPOTS, priceDepot } from "./construction";
+import { FREE_SETUP_DEPOTS, depotCostFor, priceDepot } from "./construction";
 import { ROUGH, factoryTouchesTown, type Grid, type Industry } from "./grid";
 import {
   DIRS, DIR, tIdx, inMapT, hasTrack, canBuildOn, canAfford, tileCost, addCost,
@@ -61,7 +62,7 @@ import {
 import {
   catchmentRect, rectContains, isServiced,
   buildAllComponents, resolveConnection, sharedComponentsWithTiles,
-  industryLocks, heldIndustries,
+  industryLocks, heldIndustries, depotCargo,
   type EconomyState, type Harvester, type Factory,
 } from "./economy";
 // RAILWAYS (#182): the rival's railway runs through the railway's OWN module —
@@ -354,6 +355,14 @@ export interface Candidate {
   path: Path;
   kind: TrackKind;
   cost: Purse;
+  /**
+   * L5 (#219): what this plan's Depot costs on its own row of `DEPOT_TREE`
+   * (empty while the free-Depot allowance covers it). Priced at plan time by
+   * the same `priceDepot` the click uses, so `executeCandidate` charges
+   * exactly what the plan said and `aiBuildStep` checks the same number.
+   * Absent on the shipped loop — there `DEPOT_COST` is the one mix.
+   */
+  depotCost?: Purse;
   score: number;
   /** VP-01: the yield this Depot switches on, before the route cost divides
    *  it out (`catchmentValue`). Exposed so a test can read WHY a plan won. */
@@ -542,6 +551,15 @@ export interface PlanOptions {
    */
   freeDepots?: number;
   /**
+   * L5 (#219): the rungs of `DEPOT_TREE` the seat has UNLOCKED (its
+   * `depotTier`). A candidate Depot's type — the cargo it would harvest — must
+   * sit at or below this, or the game would refuse the placement and the plan
+   * would have spent its track for nothing. Omitted means 0: a fresh seat,
+   * which may only open on the starter cargos. Ignored on the shipped loop,
+   * where every Depot is the same building.
+   */
+  depotTier?: number;
+  /**
    * VP-01: ask for the OLD paved-first ordering (a Road plan whenever it can be
    * afforded, dirt only as a fallback). Default OFF, and that default is the
    * strategy change: routing a fresh line in `road` pays the same 4 Ore the
@@ -626,10 +644,13 @@ export function planCandidates(
   // L2 (#216): the new-loop cost model — dirt free, allowance inapplicable —
   // shared with the human drag preview, never re-derived.
   const newLoop = opts.newLoop === true;
-  // PP-05: every candidate ends at a NEW Depot, so the Depot's own price is
-  // part of what the plan must afford. Priced by the same `priceDepot` the
-  // human click and the HUD use — one table, one rule, no rival-only discount.
-  const depotCost = priceDepot(opts.purse, opts.freeDepots ?? 0).cost;
+  // L5 (#219): the rungs this seat has UNLOCKED. Under the new loop a Depot's
+  // type is the cargo it would harvest, and a type above this rung is refused
+  // by the game — so the planner must not plan one (that would lay track for a
+  // Depot that cannot be placed). The shipped loop ignores it: one building,
+  // one price.
+  const depotTier = Math.max(0, Math.floor(opts.depotTier ?? 0));
+  const freeDepots = Math.max(0, opts.freeDepots ?? 0);
 
   // VP-01: dirt first. A paved route on virgin ground costs the same ore as
   // gravel now and gravel-then-pave later, and only the pave scores, so the
@@ -661,6 +682,21 @@ export function planCandidates(
 
       for (const [hx, hy] of harvesterSpots(grid, ind)) {
         if (claimed.has(tIdx(hx, hy))) continue;
+        // L5 (#219): the TYPE this spot would build, by the same `depotCargo`
+        // rule the game prices and gates with (the site's biggest held
+        // producer — not necessarily the industry A* aimed at). A locked rung
+        // is skipped like a claimed industry: that plan would be refused, and
+        // the next spot or the next industry may still be buildable.
+        const cargo = newLoop
+          ? depotCargo(state, { id: -1, owner: factory.owner, ownerId: factory.ownerId, tx: hx, ty: hy })
+          : null;
+        if (newLoop && cargo && DEPOT_TREE[cargo].tier > depotTier) continue;
+        // PP-05: every candidate ends at a NEW Depot, so the Depot's own price
+        // is part of what the plan must afford. L5: on the new loop that is
+        // the TYPE's row of `DEPOT_TREE` — priced by the same `priceDepot` the
+        // human click and the HUD use, so there is no rival-only discount and
+        // no second cost table.
+        const depotCost = priceDepot(opts.purse, freeDepots, { cargo, tier: depotTier, newLoop }).cost;
         const src = nearestSource(sources, hx, hy);
         if (!src || !canBuildOn(grid, kindPref, src[0], src[1]) || !canBuildOn(grid, kindPref, hx, hy)) continue;
         const last = nearestSource(existing, hx, hy)!;
@@ -699,7 +735,7 @@ export function planCandidates(
         // than the one industry A* happened to route to.
         const value = catchmentValue(state, locks, opts.stock, hx, hy, now, opts.oreUrgency ?? 1);
         const score = value / Math.max(0.3, path.cost);
-        out.push({ industry: ind, hx, hy, path, kind: kindPref, cost, score, value });
+        out.push({ industry: ind, hx, hy, path, kind: kindPref, cost, depotCost, score, value });
         break;   // one spot per industry is enough — the cheapest we found
       }
     }
@@ -755,6 +791,9 @@ export interface DeepPlanOptions {
   stock?: Purse;
   free?: number;
   freeDepots?: number;
+  /** L5 (#219): the rungs the seat has unlocked — part of the cache key,
+   *  because it changes which industries are candidates at all. */
+  depotTier?: number;
   oreUrgency?: number;
   now?: number;
   /** L2 (#216): the new-loop cost model (dirt free). Part of the cache key. */
@@ -765,6 +804,7 @@ interface DeepSlot {
   fp: number;
   free: number;
   freeDepots: number;
+  depotTier: number;
   newLoop: boolean;
   cands: Candidate[];
 }
@@ -806,20 +846,22 @@ export function deepPlanCandidates(
 ): Candidate[] {
   const free = Math.max(0, opts.free ?? 0);
   const freeDepots = Math.max(0, opts.freeDepots ?? 0);
+  const depotTier = Math.max(0, Math.floor(opts.depotTier ?? 0));
   const newLoop = opts.newLoop === true;
   const fp = deepPlanFingerprint(state);
   const key = `${factory.ownerId}@${factory.tx},${factory.ty}`;
   let slots = deepPlanCache.get(state);
   if (!slots) deepPlanCache.set(state, (slots = new Map()));
   const hit = slots.get(key);
-  if (hit && hit.fp === fp && hit.free === free && hit.freeDepots === freeDepots && hit.newLoop === newLoop) {
+  if (hit && hit.fp === fp && hit.free === free && hit.freeDepots === freeDepots
+    && hit.depotTier === depotTier && hit.newLoop === newLoop) {
     return hit.cands;
   }
   const cands = planCandidates(state, factory, {
     stock: opts.stock ?? {}, purse: DEEP_PLAN_PURSE,
-    free, freeDepots, oreUrgency: opts.oreUrgency, now: opts.now, newLoop,
+    free, freeDepots, depotTier, oreUrgency: opts.oreUrgency, now: opts.now, newLoop,
   });
-  slots.set(key, { fp, free, freeDepots, newLoop, cands });
+  slots.set(key, { fp, free, freeDepots, depotTier, newLoop, cands });
   return cands;
 }
 
@@ -854,6 +896,13 @@ export interface RivalSpotOptions {
   probes?: number;
   /** L2 (#216): the new-loop cost model (dirt free) for the probe plans. */
   newLoop?: boolean;
+  /**
+   * L5 (#219): the rungs the rival has unlocked. Its OPENING probe runs at 0
+   * (a fresh seat opens on a starter cargo), and a mid-game caller passes the
+   * live figure — a rival must not be parked on a lane whose only industry it
+   * could not legally build beside yet.
+   */
+  depotTier?: number;
 }
 
 /**
@@ -997,6 +1046,7 @@ export function chooseRivalFactorySpot(
     const plan = bestCandidate(state, probe, {
       stock: opts.purse, purse: opts.purse, free: opts.free ?? 0,
       freeDepots: opts.freeDepots ?? FREE_SETUP_DEPOTS, newLoop: spotNewLoop,
+      depotTier: Math.max(0, Math.floor(opts.depotTier ?? 0)),
     });
     if (!plan) continue;
     const rich = laneRichness(grid, s.x, s.y);
@@ -1085,7 +1135,12 @@ export function executeCandidate(
     state.harvesters.push(h);
     harvester = h;
     if (freeDepots > 0) depotsUsed = 1;
-    else spent = addCost(spent, DEPOT_COST);
+    // L5 (#219): the Depot charged is the one the PLAN priced — its own row of
+    // `DEPOT_TREE` (`c.depotCost`), not a flat table — so `spent` still equals
+    // exactly what `planCandidates` said this build would cost. A candidate
+    // from a caller that did not price one (the shipped loop, a hand-built
+    // test candidate) falls back to the one mix / the type's row.
+    else spent = addCost(spent, c.depotCost ?? depotCostFor(newLoop ? depotCargo(state, h) : null, newLoop));
   }
   return {
     built, harvester, kind: c.kind, spent,
@@ -1120,10 +1175,11 @@ export function aiBuildStep(
   // cannot cover; this is the belt-and-braces half (same shape as W8's), because
   // `executeCandidate` mutates the map as it goes and a Depot it places for a
   // purse that cannot pay would be a free Depot. `c.cost` is the plan's priced
-  // track total, an upper bound on what `executeCandidate` charges.
-  const depotCost = priceDepot(opts.purse, freeDepots).cost;
+  // track total and, on the new loop, `c.depotCost` the plan's own Depot row
+  // (L5) — both are upper bounds on what `executeCandidate` charges.
+  const fallbackDepotCost = priceDepot(opts.purse, freeDepots, { tier: opts.depotTier, newLoop: opts.newLoop === true }).cost;
   for (const c of planCandidates(state, factory, opts)) {
-    if (!canAfford(opts.purse, addCost(c.cost, depotCost))) continue;
+    if (!canAfford(opts.purse, addCost(c.cost, c.depotCost ?? fallbackDepotCost))) continue;
     const out = executeCandidate(
       state, c, factory.owner, factory.ownerId, nextHarvesterId, opts.free, freeDepots,
       opts.newLoop === true,

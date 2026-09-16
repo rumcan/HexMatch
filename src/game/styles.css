@@ -1056,6 +1056,24 @@ html, body, #root {
   font-size: 10.5px; line-height: 1.45; color: var(--txt-mute);
   font-family: var(--mono);
 }
+/* L5 (#219) — the city key, bolted under the session plate. The plate is
+   "what your economy is worth right now", so the one thing match-3 buys
+   besides a Depot's yield lives on the same surface: the price, the bonus a
+   full session would set, and why it is off when it is. It never shows
+   without the new loop (`paintTown` hides it on the shipped one). */
+.tp-city {
+  display: block; width: 100%; margin-top: 6px; padding: 4px 8px; cursor: pointer;
+  font-family: var(--serif); font-size: 10px; font-weight: 600;
+  letter-spacing: .9px; text-transform: uppercase; text-align: left;
+  color: var(--brass-hi);
+  background: linear-gradient(180deg, rgba(56, 42, 26, .6), rgba(12, 8, 6, .86));
+  border: 1px solid var(--brass-lo);
+  transition: color .15s, border-color .15s, background .15s;
+}
+.tp-city:hover { color: var(--gold2); border-color: var(--brass); background: rgba(98, 68, 24, .5); }
+.tp-city:disabled { cursor: not-allowed; color: var(--txt-mute); border-color: var(--line); background: rgba(255, 255, 255, .03); }
+.tp-city.done { color: var(--gold2); border-color: var(--brass-lo); text-transform: none; letter-spacing: .4px; }
+.tp-city .cost-chip { vertical-align: -2px; }
 
 /* the board is baize inside a brass rail */
 .board-wrap {

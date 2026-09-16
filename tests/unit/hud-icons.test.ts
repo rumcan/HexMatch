@@ -41,6 +41,27 @@ describe("#166 HUD icons", () => {
     expect(depotButtonMarkup(0)).not.toMatch(EMOJI);
   });
 
+  // L5 (#219): the button quotes the cheapest type the seat can build RIGHT
+  // NOW — the tree, not PP-07's one mix — and keeps the shipped loop's copy
+  // byte-for-byte in the mode the flag is off in.
+  it("depotButtonMarkup quotes the tree's cheapest open type on the new loop", () => {
+    const locked = depotButtonMarkup(0, { newLoop: true, tier: 0 });
+    expect(locked).toMatch(/by industry/);
+    expect(locked, "the starter rungs cost no Oil").not.toContain('alt="Oil"');
+    expect(depotButtonMarkup(1, { newLoop: true, tier: 0 }), "the allowance keeps its line")
+      .toMatch(/free setup · then from /);
+
+    // Rung 2 is the deepest rung, and the quote is still a mix, never a
+    // single resource and never heavier than the seat's own rung.
+    const deep = depotButtonMarkup(0, { newLoop: true, tier: 2 });
+    expect(deep).not.toMatch(/free setup/);
+    expect(deep.match(/cost-chip/g)!.length).toBeGreaterThan(0);
+
+    // The shipped loop is untouched: no tier, no new-loop wording.
+    expect(depotButtonMarkup(1, { newLoop: false, tier: 2 })).toBe(depotButtonMarkup(1));
+    expect(depotButtonMarkup(1)).toContain('alt="Oil"');
+  });
+
   it("chrome SVGs are currentColor strokes, no Unicode glyphs", () => {
     for (const [name, svg] of Object.entries(HUD_ICONS)) {
       expect(svg, name).toContain('class="hud-ic"');

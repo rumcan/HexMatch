@@ -139,6 +139,20 @@ export interface WirePlayer {
    */
   freeTrack?: number;
   freeDepots?: number;
+  /**
+   * L5 (#219): the seat's place in the depot TREE — `depotTier` is the rung it
+   * has unlocked (0 at boot, +1 per tuning session really played) and the two
+   * town fields are its city upgrade (`townLevel` bought, `townBonus` the
+   * base-rate multiplier the city session set, applied to every connected
+   * depot). Same additive-optional contract as the allowances above: absent
+   * means "leave the seat alone", `0` is a VALUE (a fresh seat, an un-upgraded
+   * city), and no `SNAPSHOT_VERSION` bump is needed because these ride the
+   * player records that already travel — a reader that does not know them
+   * simply ignores them.
+   */
+  depotTier?: number;
+  townLevel?: number;
+  townBonus?: number;
 }
 
 /**
