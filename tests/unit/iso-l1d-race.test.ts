@@ -98,3 +98,90 @@ describe("L1d (#235) a whole race on the new loop's clock", () => {
     }
   }, 900_000);
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// L5 (#219) — the depot tree, raced.
+//
+// The tree's acceptance block, at race level, on the seeds the ticket names:
+// the rival gets THROUGH the rungs in real play (no deadlock, no cargo the map
+// cannot supply), the opening is the map's choice rather than a fixed script,
+// and NO single build order wins every seed — the two seats open on different
+// cargos on different maps and the winner changes with the map.
+//
+// Heavy by design (five whole simulated matches): it lives in `test:slow`,
+// next to the L1d deadlock detector above. What it prints is the table the PR
+// quotes; what it asserts is only that the runs FINISH, that the tree is
+// climbed, and that the opener is not a constant.
+// ══════════════════════════════════════════════════════════════════════════
+import { depotCargo } from "../../src/iso/economy";
+import { DEPOT_TREE } from "../../src/iso/config";
+
+describe("L5 (#219) the depot tree, raced", () => {
+  const TREE_SEEDS = (process.env.L5_TREE_SEEDS ?? "7,42,79,199,1337").split(",").map(Number);
+  const TREE_MINUTES = Number(process.env.L5_TREE_MINUTES ?? 12);
+  let races: ReturnType<typeof runRace>[] = [];
+
+  /** Every cargo a seat actually raised a Depot for. */
+  const cargosOf = (r: ReturnType<typeof runRace>, id: string) =>
+    r.eco.harvesters.filter((h) => h.owner === id).map((h) => depotCargo(r.eco, h)!);
+
+  beforeAll(() => {
+    races = TREE_SEEDS.map((seed) => runRace(seed, { minutes: TREE_MINUTES, newLoop: true }));
+    for (const r of races) {
+      const winners = r.seats.map((s) => s.id);
+      console.log(`[L5 tree] seed ${r.seed}`, JSON.stringify({
+        winner: r.winner ? `${r.winner.id} at ${MIN(r.winner.at)}` : `none inside ${TREE_MINUTES}m`,
+        seats: r.seats.map((s) => ({
+          seat: s.id, rung: s.depotTier, city: s.townLevel,
+          opened: cargosOf(r, s.id)[0] ?? "—",
+          cargos: [...new Set(cargosOf(r, s.id))],
+        })),
+        orders: winners.length,
+      }));
+    }
+  }, 900_000);
+
+  it("finishes on every seed, with both seats still racing", () => {
+    for (const r of races) {
+      expect(r.winner, `seed ${r.seed}: nobody reached ${VP_TARGET}★ in ${TREE_MINUTES}m — deadlock`)
+        .toBeTruthy();
+      for (const seat of r.seats) {
+        expect(r.vp[seat.id], `seed ${r.seed}/${seat.id} never scored`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("climbs the tree in real play — rungs opened, deeper types built", () => {
+    for (const r of races) {
+      for (const seat of r.seats) {
+        // A seat that never unlocked a rung never tuned a Depot (or never
+        // built one). Both are deadlocks for the tree: the ticket's rival has
+        // to progress through it, not stall on the starter pair.
+        expect(seat.depotTier, `seed ${r.seed}/${seat.id} unlocked no rung`)
+          .toBeGreaterThanOrEqual(1);
+        // …and every Depot it raised sits at or below the rung it holds now:
+        // a rung only ever grows, so a type above the live one could not have
+        // been placed when it was built.
+        for (const cargo of cargosOf(r, seat.id)) {
+          expect(DEPOT_TREE[cargo].tier, `seed ${r.seed}/${seat.id}: built a locked type`)
+            .toBeLessThanOrEqual(seat.depotTier);
+        }
+      }
+      // At least one seat got past the starter pair on every seed — the rungs
+      // really are reachable from what the map + the tree offer.
+      const deep = r.seats.flatMap((s) => cargosOf(r, s.id)).filter((c) => DEPOT_TREE[c].tier > 0);
+      expect(deep.length, `seed ${r.seed}: no seat ever built a rung-1 type`).toBeGreaterThan(0);
+    }
+  });
+
+  it("no single build order wins every seed", () => {
+    // The opening each seat CHOSE (its first real Depot) and the seat that
+    // won are both properties of the map: if either were a constant, the tree
+    // would not be branching — it would be a script.
+    const opened = new Set(races.flatMap((r) => r.seats.map((s) => cargosOf(r, s.id)[0])));
+    expect(opened.size, `every seat on every seed opened on ${[...opened].join("/")} — a script`)
+      .toBeGreaterThanOrEqual(2);
+    const winners = new Set(races.filter((r) => r.winner).map((r) => r.winner!.id));
+    expect(winners.size, "one seat's build order won every single seed").toBeGreaterThanOrEqual(2);
+  });
+});

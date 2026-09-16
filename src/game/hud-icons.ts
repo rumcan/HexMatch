@@ -7,7 +7,7 @@
 // pick up the plate's brass and stay crisp at every button size.
 // ══════════════════════════════════════════════════════════════════════════
 import { CARGO, CARGOES, type Cargo } from "../iso/config";
-import { DEPOT_COST } from "../iso/construction";
+import { DEPOT_COST, cheapestDepotType } from "../iso/construction";
 import { GEM_ART } from "./gem-art";
 import type { Purse } from "../iso/track";
 
@@ -141,8 +141,25 @@ export function costMarkup(cost: Purse): string {
   return parts.length ? parts.join(" ") : "free";
 }
 
-/** Depot Build-button sublabel, with gem badges once the allowance is spent. */
-export function depotButtonMarkup(freeDepots: number): string {
+/**
+ * Depot Build-button sublabel, with gem badges once the allowance is spent.
+ *
+ * L5 (#219): on the new loop a Depot's price depends on the industry the site
+ * stands beside — one row of `DEPOT_TREE` per cargo — so the button quotes the
+ * CHEAPEST type the seat can build RIGHT NOW (its rung included) and says
+ * where the real number comes from: the tile under the pointer, which the
+ * modebar's hint line then spells out in full. The shipped loop keeps PP-07's
+ * single mix, unchanged.
+ */
+export function depotButtonMarkup(
+  freeDepots: number, opts: { newLoop?: boolean; tier?: number } = {},
+): string {
+  if (opts.newLoop === true) {
+    const cheap = cheapestDepotType(Math.max(0, Math.floor(opts.tier ?? 0)), true).cost;
+    return freeDepots > 0
+      ? `free setup · then from ${costMarkup(cheap)}`
+      : `from ${costMarkup(cheap)} · by industry`;
+  }
   return freeDepots > 0
     ? `free setup · then ${costMarkup(DEPOT_COST)}`
     : `${costMarkup(DEPOT_COST)} · on industry`;

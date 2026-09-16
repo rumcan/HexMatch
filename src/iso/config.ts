@@ -204,6 +204,110 @@ export const DIFFICULTY_RULES: Record<DifficultyKey, DifficultyRules> = {
 /** The row the game runs when nothing has chosen a difficulty yet. */
 export const DEFAULT_DIFFICULTY: DifficultyKey = "normal";
 
+// ══════════════════════════════════════════════════════════════════════════
+// L5 (#219) — THE DEPOT TREE: which resource buys the next depot type.
+//
+// Until this ticket every industry's Depot cost the same four-unit mix
+// (`BUILD_COSTS.depot`), so a Depot was a Depot and the only question the map
+// asked was "where is the nearest industry". The tree makes the *type* matter:
+// a Depot harvests the cargo of the industry it stands beside, and that cargo
+// is what the next Depot you want is bought with.
+//
+// The shape, and why it is this shape:
+//
+//   • TIER is the rung: a seat may build a type whose `tier` is at or below
+//     the rungs it has UNLOCKED, and a rung is earned by finishing a tuning
+//     session (L4 — `unlockTierAfterSession` in tuning.ts). Match-3 is part of
+//     the progression gate, not a side activity: a Depot you never tune does
+//     not open the next rung.
+//   • COST is a MIX, and mixes are what keep the opening strategic: grain and
+//     wood are both reachable from `START_PURSE` (12 wood + 12 stone), so a
+//     farm or a forest is always the first paid Depot — whichever the seeded
+//     map put nearest you — and from there several routes lead up. There is no
+//     single forced order (the Catan rule, Addition B).
+//   • The chain still reads as the ticket's example — wood (starter) → stone
+//     costs wood → ore costs stone → oil costs ore → gold costs oil — with the
+//     branching the ticket's Addition B asks for: stone and ore sit on the
+//     SAME rung and are bought with different mixes, and grain (the starter's
+//     other half) is a real input to both.
+//
+// Reachability is a RULE here, not a hope: every type must be payable from
+// some mix of the types reachable before it, and `START_PURSE` must buy the
+// tier-0 pair (the Oil lesson — `tests/unit/iso-l5-depot-tree.test.ts` proves
+// it by walking the table, and the `test:slow` race proves the rival really
+// gets through it). Gold is deliberately the deepest rung and buys nothing but
+// Black Market sabotage, so nothing below it depends on it.
+export interface DepotTypeDef {
+  /** The cargo this depot harvests — its industry's output. */
+  cargo: Cargo;
+  /** Display name, used by the HUD, the toasts and the inspector. */
+  name: string;
+  /**
+   * Rung on the tree (0 = buildable from the start). A seat may build tier T
+   * once it has unlocked T rungs; see `unlockTierAfterSession` in tuning.ts.
+   */
+  tier: number;
+  /** What one Depot costs once the setup allowance is spent. */
+  cost: Partial<Record<Cargo, number>>;
+}
+
+export const DEPOT_TREE: Record<Cargo, DepotTypeDef> = {
+  // Rung 0 — the two cargos `START_PURSE` can always turn into a network. Both
+  // are free with the setup allowance; these prices are what a SECOND one
+  // costs, and they are deliberately cheap: going WIDE has to stay a real plan
+  // (many cheap depots) next to going TALL (unlock rungs, tune harder).
+  grain: { cargo: "grain", name: "Farm Depot",   tier: 0, cost: { wood: 2 } },
+  wood:  { cargo: "wood",  name: "Forest Depot", tier: 0, cost: { stone: 2 } },
+  // Rung 1 — the two mid-game cargos, on ONE rung with different mixes, so
+  // whichever of grain/wood the map gave you, one of them is on the table.
+  stone: { cargo: "stone", name: "Quarry Depot", tier: 1, cost: { grain: 2, wood: 2 } },
+  ore:   { cargo: "ore",   name: "Mine Depot",   tier: 1, cost: { grain: 2, stone: 2 } },
+  // Rung 2 — the deep types. Oil takes the rung-1 pair apart; Gold sits behind
+  // Oil so the deepest rung is a real commitment rather than a shortcut.
+  oil:   { cargo: "oil",   name: "Rig Depot",    tier: 2, cost: { wood: 2, ore: 2 } },
+  gold:  { cargo: "gold",  name: "Gold Depot",   tier: 2, cost: { stone: 2, oil: 2 } },
+};
+
+/** The rungs: 0…2 (three unlockable steps). */
+export const DEPOT_TIER_MAX = 2;
+
+/**
+ * The cargos a map is guaranteed to offer, in the order the tree wants to
+ * read them (the test and the copy both walk this).
+ */
+export const DEPOT_TREE_ORDER: Cargo[] = ["grain", "wood", "stone", "ore", "oil", "gold"];
+
+/**
+ * L5 (#219) — THE CITY (town) UPGRADE table.
+ *
+ * The tree buys new *sources*; this buys throughput on the ones you already
+ * have. One tier ships in the MVP, as the ticket's scope says, but it is a
+ * table: `TOWN_UPGRADES[level]` is the cost of the next level and the
+ * base-rate bonus a perfect session on it is worth, so later tickets add rows
+ * without touching a reader.
+ *
+ * The bonus is a multiplier on `BASE_RATE` for EVERY connected depot the seat
+ * owns (the clock in `economyTick`): ×1.60 at level 1 on a full session, and
+ * the session's score decides how much of it you actually get
+ * (`townBonusFor`, tuning.ts — "the session result can set the upgrade's
+ * strength", clamped later per difficulty by L6).
+ */
+export interface TownUpgradeDef {
+  /** The level this row buys (1-based). */
+  level: number;
+  /** What it costs, paid when the upgrade is bought. */
+  cost: Partial<Record<Cargo, number>>;
+  /** The bonus a full session sets — the ceiling `townBonusFor` scales. */
+  bonus: number;
+}
+
+export const TOWN_UPGRADES: TownUpgradeDef[] = [
+  // 6/4/4 is roughly "a farm, a forest and a quarry worth of ticks" on the
+  // L1/L3 clock — real, but a single lap of the network on a normal map, so
+  // the first upgrade lands about when the second rung does.
+  { level: 1, cost: { wood: 6, stone: 4, grain: 4 }, bonus: 0.6 },
+];
+
 export const CARGO: Record<Cargo, {
   name: string; icon: string; c1: string; c2: string; gem: string;
 }> = {

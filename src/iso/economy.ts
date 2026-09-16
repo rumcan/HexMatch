@@ -503,6 +503,32 @@ export function lockedIndustryIds(state: EconomyState): Set<number> {
   return out;
 }
 
+/**
+ * L5 (#219): the cargo a Depot harvests — its TYPE in the depot tree, and so
+ * which row of `DEPOT_TREE` prices and gates it.
+ *
+ * The biggest producer the Depot HOLDS (catchment minus what another network
+ * reached first — the same `heldIndustries` the clock pays by), with the tie
+ * going to the first in id order. A Depot with no road yet holds nothing, and
+ * then its catchment's industries answer for it: the resource it was built
+ * beside is the resource it is FOR, whether or not the player has connected it
+ * yet. `h` need not be in `state.harvesters` — a caller pricing a placement
+ * passes the candidate and gets the type the click would buy.
+ */
+export function depotCargo(state: EconomyState, h: Harvester): Cargo | null {
+  const held = heldIndustries(state, h, industryLocks(state));
+  const list = held.length ? held : industriesInCatchment(state.grid, h);
+  let best: Cargo | null = null;
+  let bestOut = -1;
+  for (const ind of list) {
+    const def = INDUSTRY_BY_KEY[ind.type];
+    if (!def) continue;
+    const out = ind.output ?? def.output;
+    if (out > bestOut) { bestOut = out; best = def.cargo; }
+  }
+  return best;
+}
+
 export type Yield = Partial<Record<Cargo, number>>;
 
 export interface HarvesterYield {

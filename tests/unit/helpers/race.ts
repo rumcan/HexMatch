@@ -44,7 +44,7 @@ import {
 import { createRailState, tickTrains, type RailState } from "../../../src/iso/rail";
 import { RIVAL_SKILLS, type RivalSkill, type SkillKey } from "../../../src/iso/skill";
 import {
-  buildAllComponents, harvesterYield, industryLocks, ownerIdOf, playerResources,
+  buildAllComponents, harvesterYield, industryLocks, ownerIdOf, playerResources, isServiced,
   type EconomyState, type Factory,
 } from "../../../src/iso/economy";
 // L1d (#235): the new loop's income rule, imported wholesale — the harness
@@ -70,7 +70,9 @@ import {
 import {
   START_PURSE, FREE_SETUP_TRACK, HARVEST_MS,
 } from "../../../src/iso/game";
-import { FREE_SETUP_DEPOTS, priceDepot } from "../../../src/iso/construction";
+import { FREE_SETUP_DEPOTS, priceDepot, priceTownUpgrade } from "../../../src/iso/construction";
+import { TOWN_UPGRADES } from "../../../src/iso/config";
+import { rivalTuningScore, townBonusFor, unlockTierAfterSession } from "../../../src/iso/tuning";
 
 export const STEP_MS = 1_000;
 export const MIN = (ms: number) => `${(ms / 60_000).toFixed(1)}m`;
@@ -83,6 +85,15 @@ export interface Seat {
   purse: CargoBag;
   freeTrack: number;
   freeDepots: number;
+  /**
+   * L5 (#219): the seat's place in the depot tree — the rung it has unlocked
+   * (its `depotTier` in game.ts) and the city upgrade it has bought. The
+   * harness mirrors the live seats here, because the tree gates what
+   * `aiBuildStep` may plan and the town bonus multiplies `loopIncome`.
+   */
+  depotTier: number;
+  townLevel: number;
+  townBonus: number;
   lastBuild: number;
   lastHarvest: number;
   lastOffer: number;
@@ -260,15 +271,21 @@ function seatSkintTarget(
   const cands = deepPlanCandidates(eco, f, {
     stock: seat.purse, free: seat.freeTrack, freeDepots: seat.freeDepots,
     oreUrgency: urgency, newLoop,
+    // L5 (#219): the bank works toward plans this seat's rungs can buy — the
+    // live twin (`rivalBankTowardPlan`) forwards the rival's `depotTier`.
+    depotTier: seat.depotTier,
   });
-  const depot = priceDepot(seat.purse, seat.freeDepots).cost;
+  const fallbackDepot = priceDepot(seat.purse, seat.freeDepots, { tier: seat.depotTier, newLoop }).cost;
   let planTarget: Purse | null = null;
   if (cands.length) {
-    const shortfall = (c: (typeof cands)[number]): number => gap(seat.purse, c.cost) + gap(seat.purse, depot);
+    // L5: the Depot a plan ends at is priced by its OWN row — the candidate
+    // carries it (`c.depotCost`), the same number `aiBuildStep` charges.
+    const priceOf = (c: (typeof cands)[number]) => c.depotCost ?? fallbackDepot;
+    const shortfall = (c: (typeof cands)[number]): number => gap(seat.purse, c.cost) + gap(seat.purse, priceOf(c));
     const chosen = [...cands].sort((a, b) => shortfall(a) - shortfall(b) || b.score - a.score)[0];
     planTarget = {};
     for (const [k, v] of Object.entries(chosen.cost)) planTarget[k as Cargo] = v;
-    for (const [k, v] of Object.entries(depot)) planTarget[k as Cargo] = (planTarget[k as Cargo] ?? 0) + v;
+    for (const [k, v] of Object.entries(priceOf(chosen))) planTarget[k as Cargo] = (planTarget[k as Cargo] ?? 0) + v;
   }
   let paveTarget: Purse | null = null;
   const ranked = paveCandidates(eco, {
@@ -330,11 +347,42 @@ function bankToward(
  *     in `applyRivalTuning`, and a harness seat has no board to play either,
  *     so both seats take the same treatment and the comparison stays fair.
  */
+/**
+ * L5 (#219): the harness twin of the rival's city upgrade (`rivalTownStep` in
+ * game.ts) — pay the next row of `TOWN_UPGRADES` once the seat has a CONNECTED
+ * Depot for the bonus to multiply, and once the plan it is banking toward
+ * still survives the purchase. The session that confirms it is simulated, like
+ * every other rival session (`rivalTuningScore`), so the bonus lands on the
+ * same score→strength curve the player's board runs.
+ */
+function townPass(eco: EconomyState, seat: Seat): boolean {
+  const price = priceTownUpgrade(seat.purse, seat.townLevel);
+  if (!price.def || !price.affordable) return false;
+  if (!eco.harvesters.some((h) => h.owner === seat.id && isServiced(eco.track, h, eco.rail))) return false;
+  const reserve: Purse = seat.planGoal ?? {};
+  const covers = (want: Purse): boolean =>
+    (Object.entries(want) as [Cargo, number][]).every(
+      ([k, v]) => (seat.purse[k] ?? 0) - (price.cost[k] ?? 0) >= v);
+  if (!covers(reserve)) return false;
+  if (!pay(seat, price.cost)) return false;
+  seat.townLevel = Math.min(seat.townLevel + 1, TOWN_UPGRADES.length);
+  seat.townBonus = townBonusFor(price.def.bonus, rivalTuningScore(seat.skill.key));
+  return true;
+}
+
 function loopIncome(eco: EconomyState, seat: Seat, t: number): void {
+  let simulated = false;
   for (const depot of eco.harvesters) {
     if (depot.owner !== seat.id) continue;
-    if (depot.yield === undefined) depot.yield = rivalTuningYield(seat.skill.key);
+    if (depot.yield === undefined) {
+      depot.yield = rivalTuningYield(seat.skill.key);
+      simulated = true;
+    }
   }
+  // L5 (#219): the simulated session IS a session — the live game's
+  // `applyRivalTuning` opens the next rung for it, and the harness does the
+  // same, once per tick at most (the turn's own pacing).
+  if (simulated) seat.depotTier = unlockTierAfterSession(seat.depotTier, rivalTuningScore(seat.skill.key));
   const locks = industryLocks(eco);
   const components = buildAllComponents(eco.track, ownerIdOf(eco, seat.id));
   for (const depot of eco.harvesters) {
@@ -342,7 +390,10 @@ function loopIncome(eco: EconomyState, seat: Seat, t: number): void {
     const result = harvesterYield(eco, components, locks, depot, t);
     const cargoes = Object.entries(result.yields) as [Cargo, number][];
     if (!result.serviced || !cargoes.length) continue;
-    const factor = BASE_RATE * depotYield(depot) * distanceFactor(eco, depot) * transportFactor(depot);
+    // L5 (#219): the city upgrade multiplies every connected depot, exactly as
+    // `economyTick` does — one factor per seat, on top of the yield chain.
+    const factor = BASE_RATE * depotYield(depot) * distanceFactor(eco, depot) * transportFactor(depot)
+      * (1 + Math.max(0, seat.townBonus));
     const total = cargoes.reduce((sum, [, amount]) => sum + amount, 0) * factor
       + (seat.loopCarry.get(depot.id) ?? 0);
     const whole = Math.floor(total);
@@ -382,6 +433,7 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
     purse: toBag(START_PURSE),
     freeTrack: FREE_SETUP_TRACK,
     freeDepots: FREE_SETUP_DEPOTS,
+    depotTier: 0, townLevel: 0, townBonus: 0,
     lastBuild: -RIVAL_SKILLS[key].buildMs, lastHarvest: -HARVEST_MS,
     lastOffer: -(RIVAL_SKILLS[key].offerEveryMs || 0), carry: {}, loopCarry: new Map(),
     firstPave: null, firstPoint: null, oreOnPaves: 0, paves: 0,
@@ -477,6 +529,8 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
             stock: seat.purse, purse: seat.purse,
             free: seat.freeTrack, freeDepots: seat.freeDepots, now: t,
             oreUrgency: urgency, newLoop,
+            // L5 (#219): the rival plans only types its rungs open.
+            depotTier: seat.depotTier,
           }, nextHarvesterId);
           if (!built) break;
           nextHarvesterId++;
@@ -485,6 +539,10 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
           pay(seat, built.spent);
           acted = true;
         }
+        // L5 (#219): the city upgrade, in the same slot the live turn puts it
+        // — after the Depot pass, before the pave pass.
+        if (townPass(eco, seat)) acted = true;
+
         const plan = planUpgrades(eco, {
           owner: seat.id, ownerId: seat.ownerId, purse: seat.purse,
           maxTiles: seat.skill.paveTiles,

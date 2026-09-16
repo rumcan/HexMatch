@@ -88,7 +88,16 @@ export interface SaveGamePayload {
     harvesters: EconomyState["harvesters"];
     factories: EconomyState["factories"];
   };
-  players: { purse: Record<string, number>; freeTrack: number; freeDepots: number }[];
+  /**
+   * L5 (#219): …and the seat's place in the depot TREE. `depotTier` is the
+   * rung it has unlocked, the two town fields its city upgrade. Optional on
+   * the TYPE (an old save simply has none) — the reader treats absence as the
+   * fresh-seat values, which is exactly what such a save was played with.
+   */
+  players: {
+    purse: Record<string, number>; freeTrack: number; freeDepots: number;
+    depotTier?: number; townLevel?: number; townBonus?: number;
+  }[];
   /** RES-FIELDS: ids of the wheat fields / tree blocks demolished so far.
    *  Optional so saves written before fields existed still load. */
   clearedFields?: number[];
