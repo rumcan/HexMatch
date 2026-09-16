@@ -26,6 +26,20 @@
 // ping-pong is exact at any dt (a huge tick folds through the turn, it does
 // not teleport). Positions stay fractional in TILE space; `depth.place`
 // pins a moving sprite's anchor to the fractional tile's diamond centre.
+//
+// L7 (#221) — the pace is the depot's TICK RATE. A lorry planned with a
+// `rateFor` resolver (the new loop) carries its depot's `depotTickRate` and
+// drives at `TRUCK_RATE_SPEED × rate`: a tuned, near depot's lorry visibly
+// outraces an untuned, far one's on the identical route and art. The rate is
+// the throttle now, so the base lorry reads as "this depot ticks" rather than
+// as a race — one gravel-tile per second at reference rate 1 (see
+// `TRUCK_RATE_SPEED`). Without a resolver (the shipped loop, pre-L7 saves, the
+// unit fixtures) lorries keep AI-02's per-segment paved pace exactly.
+//
+// The DIRECTION of that dependency is the point of the ticket: the lorry reads
+// the economy's number and is never read back. Nothing in `economyTick`
+// consults a lorry, so switching every vehicle off (`__iso.setVehicles(false)`)
+// leaves every purse identical — #221's acceptance test asserts exactly that.
 // ══════════════════════════════════════════════════════════════════════════
 import { depotShoulders, plantShoulders, roadPath } from "./road-routing";
 import { DEPOT_SIZE, depotContains, lotTileBeside } from "./depot";
@@ -44,13 +58,24 @@ import {
  * Tiles per millisecond on GRAVEL: one tile every 600 ms. Dirt is free to lay
  * now, so what it costs the player is the lorry's time — half the pace it used
  * to run at, and a quarter of what the same lorry does on tarmac.
+ *
+ * L7 (#221) note: this is the SHIPPED loop's base pace, and its size is that
+ * loop's business — the board is paced off the lorries' travel time
+ * (`deliveryDistances` in quarry.ts), so retuning it here would retune the
+ * shipped economy. The new loop paces its lorries by the Depot's tick rate
+ * instead (`TRUCK_RATE_SPEED` / `Truck.rate` below).
  */
 export const TRUCK_SPEED = 1 / 600;
-/** AI-02: a lorry over PAVED road (`track.road`) moves FOUR times as fast as
- *  one over gravel — so a route is Σ(segment × (paved ? 1/4 : 1)) of its dirt
- *  time, segment by segment. Tarmac keeps the pace it always had (150 ms a
- *  tile); it is the free gravel that slowed to 600 ms, so paving a lane is now
- *  the whole motivation-to-upgrade the free dirt took away. */
+/**
+ * AI-02: a lorry over PAVED road (`track.road`) moves FOUR times as fast as
+ * one over gravel — so a route is Σ(segment × (paved ? 1/4 : 1)) of its dirt
+ * time, segment by segment. Tarmac keeps the pace it always had (150 ms a
+ * tile); it is the free gravel that slowed to 600 ms, so paving a lane is now
+ * the whole motivation-to-upgrade the free dirt took away.
+ *
+ * L7 (#221): the shipped loop's multiplier, and only that one — a paced lorry
+ * carries no per-segment flags to consult (see `truckSpeed`).
+ */
 export const TRUCK_ROAD_MULT = 4;
 /**
  * How long a lorry stands on the depot lot before it turns around: it drives
@@ -59,6 +84,22 @@ export const TRUCK_ROAD_MULT = 4;
  * a lorry that bounced off the end looked like it had missed the turn.
  */
 export const DEPOT_LOAD_MS = 1000;
+/**
+ * L7 (#221): the pace of a NEW-LOOP lorry on a depot whose effective tick rate
+ * is the REFERENCE — `BASE_RATE(1) × yield(1) × near(1.0) × road(1.0)`, i.e.
+ * the plain untuned depot next door. Every new-loop lorry drives at
+ * `TRUCK_RATE_SPEED × rate`, so a far untuned depot (rate 0.5) runs at 1/1200
+ * and a maxed near one (yield 2.5) at 1/240.
+ *
+ * With the tick rate as the throttle, the shipped loop's base pace was too
+ * quick for the map to read — "the truck should feel like the DEPOT, not like a
+ * race" (the report behind #221). One tile per 600 ms is *also* the shipped
+ * gravel pace, which is a coincidence of two rules with different owners and
+ * deliberately NOT an equation: this constant is a reference speed, not a
+ * second copy of `TRUCK_SPEED`. Change either and the other must not follow —
+ * the shipped loop owns its number, the tick rate owns this one.
+ */
+export const TRUCK_RATE_SPEED = 1 / 600;
 
 /** One truck on one route. Position along the route is `leg + t` tiles. */
 export interface Truck {
@@ -92,11 +133,34 @@ export interface Truck {
    * the stop.
    */
   waitMs?: number;
-  /** AI-02: per-SEGMENT speed flag — segFast[k] for route[k]→route[k+1] says
-   *  the paved multiplier applies. Recomputed with every `planTrucks`, so an
-   *  upgraded tile speeds its lorry up from the next dispatch. Old saves /
-   *  pre-AI-02 call sites without it drive at the uniform dirt pace. */
+  /**
+   * AI-02: per-SEGMENT speed flag — segFast[k] for route[k]→route[k+1] says
+   * the paved multiplier applies. Recomputed with every `planTrucks`, so an
+   * upgraded tile speeds its lorry up from the next dispatch. Old saves /
+   * pre-AI-02 call sites without it drive at the uniform dirt pace.
+   *
+   * L7 (#221): the SHIPPED loop's speed model, and only that one. A lorry
+   * planned with a `rate` (see below) carries no per-segment flags at all:
+   * its pace is its depot's tick rate.
+   */
   segFast?: boolean[];
+  /**
+   * L7 (#221): the depot's effective tick rate AT PLAN TIME —
+   * `BASE_RATE × yield × distance × transport` (`depotTickRate` in loop.ts),
+   * the number `economyTick` pays the depot's cargo by. The lorry drives at
+   * `TRUCK_RATE_SPEED × rate`; one number scales the purse and the traffic on
+   * the map.
+   *
+   * It is DERIVED PRESENTATION STATE and never the other way round: the
+   * economy never reads a lorry, so removing every vehicle — the whole truck
+   * list, the ambient cars, the trains — changes no cargo (#221's acceptance
+   * test does exactly that and compares the purses). It is derived from two
+   * things that already travel by themselves (the depot's yield, and the
+   * distance its route measures), so no save or snapshot needs a new field:
+   * a lorry with no rate (the shipped loop, a pre-L7 record, a hand-built
+   * fixture, a restored save) simply drives AI-02's pace instead.
+   */
+  rate?: number;
   /**
    * A1: how many times this lorry has REACHED THE FACTORY END — one delivery
    * each. The game reads it against the count it last saw, so a delivery is
@@ -170,31 +234,60 @@ export function roadDeliveryForHarvester(
 }
 
 /**
+ * L7 (#221): what a planner can be told about the loop it plans for.
+ *
+ * The one option is the depot's effective tick rate — and it is a RESOLVER
+ * rather than a number because only the caller knows how to measure a
+ * distance cheaply: the live game reads its per-network `distanceInfoFor`
+ * cache, a harness runs the BFS (`liveTickRate` in loop.ts takes either path
+ * through `depotTickRate`). This module stays free of both.
+ */
+export interface TruckPlanOptions {
+  /**
+   * Given, every planned lorry carries its depot's rate and drives at
+   * `TRUCK_RATE_SPEED × rate` — the new loop, where the tick rate is the
+   * throttle. Absent, the plan is exactly RV-01/AI-02's: no rate, the shipped
+   * pace, and the per-segment paved flags the shipped loop's board is paced by.
+   */
+  rateFor?: (depot: Harvester) => number;
+}
+
+/**
  * One truck per SERVICED DEPOT (RV-03): every depot with a ROAD connection to
  * its owner's factory gets its own lorry on its own closest route. A truck is
  * bound to its depot — it never switches to another one — but on every network
  * change `planTrucks` is re-run, so each depot's lorry re-routes to whatever
  * is now the closest path. A rail-only connection gets no truck (trains are
  * not this ticket); a depot with no road route at all gets none either.
+ *
+ * L7 (#221): with a `rateFor` resolver the lorry is also given its depot's
+ * tick rate — the plan then carries ONE pace per lorry (its rate), not the
+ * per-segment paved flags, because on the new loop the rate IS the throttle.
+ * Without a resolver nothing changes for the shipped loop.
  */
-export function planTrucks(eco: EconomyState): Truck[] {
+export function planTrucks(eco: EconomyState, opts: TruckPlanOptions = {}): Truck[] {
   const out: Truck[] = [];
   const paved = ([x, y]: [number, number]): boolean => eco.track.road[tIdx(x, y)] !== 0;
   for (const h of eco.harvesters) {
     if (h.ownerId <= 0) continue;
     const plan = roadDeliveryForHarvester(eco, h);
     if (!plan) continue;
-    // AI-02: a segment is fast when either of its tiles is paved; public and
-    // town roads are paved by construction (see track.ts), so driving the
-    // public network also earns the bonus — same rule the economy scores by.
-    const segFast = plan.route.slice(0, -1).map(
-      (a, k) => paved(a) || paved(plan.route[k + 1]));
+    // L7: a rate makes the lorry driven-by-the-clock; a non-finite or
+    // non-positive one is no rate at all rather than a frozen lorry.
+    const rate = opts.rateFor?.(h);
+    const paced = rate !== undefined && Number.isFinite(rate) && rate > 0;
     out.push({
       ownerId: h.ownerId,
       depotId: h.id,
       factory: [plan.factory.tx, plan.factory.ty],
       route: plan.route,
-      segFast,
+      // AI-02: a segment is fast when either of its tiles is paved; public and
+      // town roads are paved by construction (see track.ts), so driving the
+      // public network also earns the bonus — same rule the economy scores by.
+      ...(paced ? { rate } : {
+        segFast: plan.route.slice(0, -1).map(
+          (a, k) => paved(a) || paved(plan.route[k + 1])),
+      }),
       depot: [h.tx, h.ty],
       leg: 0, t: 0, reverse: false, waitMs: 0, deliveries: 0,
     });
@@ -203,6 +296,27 @@ export function planTrucks(eco: EconomyState): Truck[] {
 }
 
 // ── the clock ─────────────────────────────────────────────────────────────
+/**
+ * L7 (#221) — how fast one lorry covers one leg, in tiles per millisecond.
+ *
+ * A lorry carrying its depot's tick rate drives at `TRUCK_RATE_SPEED × rate`,
+ * the SAME speed on every leg: on the new loop the rate is the throttle, and
+ * nothing else moves it. (Paving a lane does not speed its lorry up here — the
+ * paved tier pays the depot through its connection multiplier, which is cargo,
+ * not clock. That is why a paced lorry carries no `segFast` to consult.)
+ *
+ * Everything else — the shipped loop's plan, a lorry from a save or snapshot
+ * written before L7, a hand-built test fixture — drives AI-02's pace:
+ * `TRUCK_SPEED`, doubled on a paved segment.
+ */
+export function truckSpeed(truck: Truck, leg: number): number {
+  const rate = truck.rate;
+  if (rate !== undefined && Number.isFinite(rate) && rate > 0) {
+    return TRUCK_RATE_SPEED * rate;
+  }
+  return TRUCK_SPEED * (truck.segFast?.[leg] ? TRUCK_ROAD_MULT : 1);
+}
+
 /**
  * Advance every truck by `dtMs`, reflecting off both ends of its route so
  * it is always driving — depot → factory → depot. The truck's position is
@@ -221,8 +335,9 @@ export function tickTrucks(state: TruckState, dtMs: number, blocked?: ReadonlySe
   for (const truck of state.trucks) {
     const max = truck.route.length - 1;
     if (max < 1) { truck.leg = 0; truck.t = 0; continue; }
-    const speed = (k: number): number =>
-      TRUCK_SPEED * (truck.segFast?.[k] ? TRUCK_ROAD_MULT : 1);
+    // L7 (#221): the pace comes from `truckSpeed` — the depot's tick rate on
+    // the new loop, AI-02's per-segment paved rule on the shipped one.
+    const speed = (k: number): number => truckSpeed(truck, k);
     // AI-02: integrate SEGMENT BY SEGMENT at each segment's own pace — the
     // triangle-fold over a uniform axis would be exact only when every leg
     // has the same speed. The loop still folds exactly at both ends (a huge

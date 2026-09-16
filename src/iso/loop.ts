@@ -9,12 +9,16 @@
  * L3 (#217): `distanceFactor` is the banded road-distance multiplier — the
  * lorry's own route length (`depotPathLength` in economy.ts) read off
  * `DISTANCE` in config.ts. Near depots tick at the full rate, far ones at
- * half. Post-MVP (#221 L7) may retune the bands or fit a smooth falloff, and
- * makes the lorries' speed match the rate; the clock reads only this module.
+ * half. (Retuning the bands or fitting a smooth falloff is still open, but the
+ * clock reads only this module, so it stays a one-table change.)
+ *
+ * L7 (#221): `depotTickRate` is the whole product above as ONE number, so the
+ * clock that pays a depot and the lorry that drives its route are scaled
+ * identically — the lorry is visual, but its pace is the rate.
  */
 import type { ConnKind, EconomyState, Harvester } from "./economy";
 import { depotPathLength } from "./economy";
-import { DISTANCE, TUNING } from "./config";
+import { BASE_RATE, DISTANCE, TUNING } from "./config";
 import { clampYield } from "./tuning";
 
 /**
@@ -102,4 +106,44 @@ export function distanceFactor(eco: EconomyState, depot: Harvester): number {
 
 export function transportFactor(_depot: Harvester): number {
   return 1;
+}
+
+/**
+ * L7 (#221) — THE depot's effective tick rate: the whole factor the L1b clock
+ * multiplies a connected depot's cargo by,
+ *
+ *   `BASE_RATE × yield × distance × transport`
+ *
+ * — the ticket's `yield × distance × transport` shorthand, with `BASE_RATE`
+ * (the units one tick is worth, 1) making it a rate rather than a bare
+ * multiplier.
+ *
+ * It exists so that "the depot's rate" is ONE number with ONE definition. The
+ * clock reads it with the distance factor it has cached; `vehicles.ts` is
+ * handed the very same number for the depot's lorry, so the pace on the map and
+ * the cargo in the purse are scaled by the same value and cannot drift apart.
+ *
+ * The caller supplies the distance factor — the live game from its per-network
+ * cache (`distanceInfoFor`), the harnesses from `distanceFactor(eco, depot)` —
+ * because measuring it is a BFS and each caller already knows how often it can
+ * afford one.
+ *
+ * Note what is NOT in here: the per-cargo amounts (`harvesterYield`'s industry
+ * output and the connection tier's own multiplier). Those multiply the cargo a
+ * depot delivers, per industry; this is the depot's clock, which is the axis
+ * the redesign's speed rule follows.
+ */
+export function depotTickRate(depot: Harvester, distance: number): number {
+  return BASE_RATE * depotYield(depot) * distance * transportFactor(depot);
+}
+
+/**
+ * L7 (#221): the same rate measured straight off the network — one BFS, the
+ * uncached rule the game's distance cache reproduces and the headless
+ * harnesses (and the tests) can call. `null` distance (no road route) reads as
+ * the full factor, exactly as `distanceFactorForPath` documented: the clock's
+ * `harvesterYield` gate already pays an unconnected depot nothing.
+ */
+export function liveTickRate(eco: EconomyState, depot: Harvester): number {
+  return depotTickRate(depot, distanceFactor(eco, depot));
 }

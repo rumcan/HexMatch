@@ -29,12 +29,19 @@ import {
 } from "./track";
 import type { Grid } from "./grid";
 import type { DrawItem } from "./depth";
-import { TRUCK_SPEED } from "./vehicles";
-
-/** Default traffic volume — a dozen cars feels lived-in. */
+/** Traffic volume: how many cars `CAR_COUNT` puts on the streets at boot. */
 export const CAR_COUNT = 12;
-/** Cars drive at lorry pace: one tile every 300 ms. */
-export const CAR_SPEED = TRUCK_SPEED;
+/**
+ * Cars drive at their own pace: one tile every 300 ms.
+ *
+ * L7 (#221): this used to be `CAR_SPEED = TRUCK_SPEED` — ambient traffic was
+ * coupled to the lorry's constant, so retuning the lorries silently retuned the
+ * scenery. It is deliberately its own number now: the ambient cars are scenery
+ * on a town's streets, the lorries are a depot's output made visible, and the
+ * two have no reason to move together (the lorries' pace is their depot's tick
+ * rate on the new loop — see `TRUCK_RATE_SPEED` in vehicles.ts).
+ */
+export const CAR_SPEED = 1 / 300;
 
 /** How many art slots ship: car1_*, car2_*, car3_* */
 export const CAR_ART_SLOTS = 3;

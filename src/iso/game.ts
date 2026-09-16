@@ -111,7 +111,7 @@ import {
 } from "./plants";
 import {
   CARGO, CARGOES, FACTORY_FOOTPRINT, FACTORY_SPRITE, INDUSTRY_BY_KEY, TRANSPORT,
-  BASE_RATE, VICTORY, VP_TARGET, UPGRADE_COST, TUNING,
+  VICTORY, VP_TARGET, UPGRADE_COST, TUNING,
   type Cargo, type Portrait,
 } from "./config";
 import {
@@ -119,7 +119,7 @@ import {
   depotTiles, rotateFacing, type DepotFacing,
 } from "./depot";
 import {
-  depotYield, distanceBandForPath, distanceFactorForPath, transportFactor, transportTierOf,
+  depotTickRate, depotYield, distanceBandForPath, distanceFactorForPath, transportTierOf,
 } from "./loop";
 // L4 (#218): the tuning session — the one thing that sets a depot's yield.
 // The rules live in `tuning.ts` (pure, unit-tested); this file is where they
@@ -782,6 +782,38 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    *  probe is "how many cars before it hurts", so the dial exists. */
   const cars = createCarState();
   let carCount = CAR_COUNT;
+  /**
+   * L7 (#221): the all-vehicles switch — lorries, ambient cars and trains.
+   *
+   * Off, the frame neither plans, advances nor draws a vehicle (`world.vehicles`
+   * is emptied, so the renderer's per-frame structures pass stops being forced
+   * by `hasAnimation` too), and `__iso.truckTick` — the headless twin of the
+   * frame — stands down with it. On again, the lorries are replanned and the
+   * traffic carries on from where it stood.
+   *
+   * It is a DEBUG/acceptance dial and it is honest about what it switches off:
+   * on the NEW loop the vehicles are animation, so the purses are provably
+   * untouched (#221's acceptance); on the SHIPPED loop the lorries are the token
+   * clock itself (`collectDeliveries`), so an off switch there stops that
+   * income exactly as an empty street would — which is why the acceptance test
+   * drives the new loop.
+   */
+  let vehiclesOn = true;
+  /**
+   * L7 (#221): the map's vehicles as draw items — the lorries, the ambient
+   * cars and the trains in one list for the renderer's single depth-sorted
+   * pass. EMPTY while `vehiclesOn` is off, which is also what stops
+   * `hasAnimation` forcing the structures pass every frame.
+   *
+   * Built in one place and called from all four sites that need it (the frame
+   * plus the three spots a guest rebuilds vehicles from the host's wire), so
+   * the switch cannot be honoured in one and forgotten in another.
+   */
+  const vehicleItems = () => (vehiclesOn
+    ? (carItems(cars as any) as any)
+      .concat(truckItems(trucks as any, atlasRef ?? undefined))
+      .concat(trainItems(rail, atlasRef ?? undefined))
+    : []);
   /** RV-03: monotonically increments on every network change (set in
    *  `rescoreNow`), so the hover route overlay cache can tell when a build or
    *  demolish may have opened a CLOSER route and must re-run `roadPath`. */
@@ -3064,6 +3096,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     for (const h of eco.harvesters) {
       if (h.owner !== rival.id || h.yield !== undefined) continue;
       h.yield = rivalTuningYield(key);
+      // L7 (#221): a rival depot's yield IS its lorry's pace. This loop runs on
+      // every economy tick, so the dirty flag is raised only when a level
+      // actually lands — once per depot, not once per tick — and the next
+      // replan stamps the new rate.
+      trucksDirty = true;
       // L9 (#224): the simulated session pays the rival the same Gold a
       // played one pays the player, through the same score→Gold curve. This
       // is what keeps its raid table funded once combo Gold stops paying —
@@ -3765,6 +3802,22 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     refreshDistanceCache();
     return distanceCache.get(id) ?? { tiles: null, factor: distanceFactorForPath(null) };
   };
+  /**
+   * L7 (#221): the tick rate a Depot's LORRY is paced by — the clock's own
+   * `depotTickRate`, read through the same cached distance the clock pays by.
+   * Handed to `planTrucks` only when `newLoop` is on: the shipped loop's
+   * lorries keep AI-02's per-segment paved pace, because their speed is that
+   * loop's token clock and not this ticket's to move.
+   */
+  const truckRateFor = (depot: Harvester): number =>
+    depotTickRate(depot, distanceInfoFor(depot.id).factor);
+  /**
+   * L7 (#221): the lorry plan both the frame and the headless `truckTick` twin
+   * use. Under `newLoop` every lorry is stamped with its depot's tick rate and
+   * drives at that pace; under the shipped loop the plan is exactly RV-01's.
+   */
+  const planLorries = (): Truck[] =>
+    planTrucks(eco, newLoop ? { rateFor: truckRateFor } : {});
   /** A1: Security Forces are on duty until this wall time. */
   let securityUntil = 0;
   /** #111: the guest seat's own Security Forces guard (armed by its hire). */
@@ -3782,11 +3835,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * The income clock — one call every `HARVEST_MS`, host only, `play` only.
    *
    *   • new loop (L1b/L1d): BOTH seats are paid by their connected depots,
-   *     `BASE_RATE × depotYield × distanceFactor × transportFactor` per depot,
-   *     with the fractional remainder carried in `loopCarry` (the PP-07 rule:
-   *     a sub-1 rate still pays out over time instead of rounding to zero
-   *     forever). Nothing else pays cargo — the boards and the lorries are
-   *     animation (#234, #235).
+   *     `depotTickRate` per depot — `BASE_RATE × yield × distance × transport`
+   *     (L7 (#221) named that product; it is the same number the depot's lorry
+   *     is paced by) — with the fractional remainder carried in `loopCarry`
+   *     (the PP-07 rule: a sub-1 rate still pays out over time instead of
+   *     rounding to zero forever). Nothing else pays cargo — the boards and
+   *     the lorries are animation (#234, #235), and nothing here ever reads a
+   *     lorry back (#221: the vehicles are strictly downstream of this).
    *   • shipped loop: nobody is paid here at all (AI-03 removed the rival's
    *     passive trickle); the clock only re-reads the network so both boards'
    *     token gates follow blockades expiring.
@@ -3855,7 +3910,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           // L3 (#217): the road distance behind the tick — read off the
           // per-network cache (one BFS per Depot per network change, never
           // per tick), so a far Depot visibly earns less than a near one.
-          const factor = BASE_RATE * depotYield(depot) * distanceInfoFor(depot.id).factor * transportFactor(depot);
+          // L7 (#221): and read through `depotTickRate`, the one definition of
+          // `BASE_RATE × yield × distance × transport` — the same call hands
+          // this Depot's lorry its pace, so "the rate" is one number.
+          const factor = depotTickRate(depot, distanceInfoFor(depot.id).factor);
           const total = cargoes.reduce((sum, [, amount]) => sum + amount, 0) * factor
             + (loopCarry.get(depot.id) ?? 0);
           const whole = Math.floor(total);
@@ -4847,9 +4905,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     else clearRail(rail);
     if (applied.cars || applied.rail) {
       // Ensure guest renders vehicles
-      world.vehicles = (carItems(cars as any) as any)
-        .concat(truckItems(trucks as any, atlasRef ?? undefined))
-        .concat(trainItems(rail, atlasRef ?? undefined));
+      world.vehicles = vehicleItems();
     }
     // boards — already in this guest's seat frame. `mirrorSnapshot` renamed the
     // host's "ai" (this guest's seat) to "you" on the way in, so the wire owner
@@ -4955,17 +5011,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     if ((msg as any).cars) {
       (cars as any).cars = (msg as any).cars.map((c: any) => ({ ...c, origin: c.origin ? [...c.origin] as [number, number] : null, dest: c.dest ? [...c.dest] as [number, number] : null, route: c.route.map((r: any) => [...r] as [number, number]) }));
-      world.vehicles = (carItems(cars as any) as any)
-        .concat(truckItems(trucks as any, atlasRef ?? undefined))
-        .concat(trainItems(rail, atlasRef ?? undefined));
+      world.vehicles = vehicleItems();
     }
     // RAIL-04 (#178): a delta's rail field is present on every publish from a
     // host that HAS a railway; absent means "unchanged", so nothing is cleared
     // here (only a full state decides that).
     if ((msg as any).rail && applyRailWire(rail, (msg as any).rail)) {
-      world.vehicles = (carItems(cars as any) as any)
-        .concat(truckItems(trucks as any, atlasRef ?? undefined))
-        .concat(trainItems(rail, atlasRef ?? undefined));
+      world.vehicles = vehicleItems();
       worldDirty = true;
     }
     if ((msg as any).boards) {
@@ -7431,9 +7483,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // state only when `buildPublish` says the delta would not fit (§5).
       publishNet(t);
       // MP-AUDIT: vehicle presentation parity — host simulates, guest renders host vehicles.
+      // L7 (#221): and `vehiclesOn` is the switch that takes every vehicle out
+      // of the picture without touching a single number the economy reads —
+      // no planning, no integration, nothing drawn (see `world.vehicles` below).
       if (!isGuest()) {
-        if (trucksDirty) {
-          trucks.trucks = planTrucksTrucksMerge(trucks.trucks, planTrucks(eco));
+        if (vehiclesOn && trucksDirty) {
+          trucks.trucks = planTrucksTrucksMerge(trucks.trucks, planLorries());
           // TRAFFIC-02: bounded trips — town-derived access nodes, host-only.
           // Retains unaffected trips on road edits (planCars checks revision).
           cars.cars = planCars(track, grid, cars.cars, carCount, seed);
@@ -7446,12 +7501,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           // a vanished truck must not linger as a ghost on the structures layer
           renderer?.setWorld(world);
         }
-        // Protests hold lorries before the blocked tile — the set is rebuilt per
-        // frame only while a protest stands (usually it is undefined: no crowd,
-        // no cost, no behaviour change).
-        tickTrucks(trucks, dt, protests.size > 0 ? new Set(protests.keys()) : undefined);
-        // TRAFFIC-01: the ambient cars roll on the same frame, host/solo only.
-        tickCars(cars, dt, track, grid, seed);
+        if (vehiclesOn) {
+          // Protests hold lorries before the blocked tile — the set is rebuilt per
+          // frame only while a protest stands (usually it is undefined: no crowd,
+          // no cost, no behaviour change).
+          tickTrucks(trucks, dt, protests.size > 0 ? new Set(protests.keys()) : undefined);
+          // TRAFFIC-01: the ambient cars roll on the same frame, host/solo only.
+          tickCars(cars, dt, track, grid, seed);
+        }
       } else {
         // Guest: vehicles are host-authoritative — already synced via snapshot/delta,
         // just ensure world.vehicles reflects the synced state (applied in delta handler)
@@ -7462,7 +7519,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // rail state, so a guest renders the host's trains without a new wire
       // field — while the SERVICE verdict, which is what the economy pays, is
       // the host's alone (`railServicedIndustries` reads the host's state).
-      tickTrains(rail, dt);
+      // L7 (#221): trains are vehicles too — the switch stops them with the rest.
+      if (vehiclesOn) tickTrains(rail, dt);
       collectDeliveries(t);
 
       // WASD camera pan: held keys integrate at a constant world speed per
@@ -7488,9 +7546,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // TRUCK-BRAND: the atlas decides whether a lorry wears a livery — the
       // branded sprites only exist once `loadVehicleLayers` has installed them
       // (see below), and until then every truck draws the legacy goods cell.
-      world.vehicles = carItems(cars)
-        .concat(truckItems(trucks, atlasRef ?? undefined))
-        .concat(trainItems(rail, atlasRef ?? undefined));
+      world.vehicles = vehicleItems();
       const { items, ghost } = overlayFrame();
       renderer!.render(t, items, ghost);
       mini.paint();
@@ -7773,10 +7829,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // MP-05: the twin mirrors the FRAME, so it inherits the frame's guest
       // rule — a guest runs no vehicle movement (§9).
       if (isGuest()) return;
+      // L7 (#221): …and the frame's vehicles switch — with vehicles off the
+      // frame plans nothing, moves nothing and draws nothing, so a headless
+      // probe sees exactly that. (`trucksDirty` is left standing, so turning
+      // them back on replans instead of resuming a stale plan.)
+      if (!vehiclesOn) return;
       // includes the frame's replan step: headless tests have no rAF, and
       // without this branch a dirty world never receives lorries at all.
       if (trucksDirty) {
-        trucks.trucks = planTrucksTrucksMerge(trucks.trucks, planTrucks(eco));
+        trucks.trucks = planTrucksTrucksMerge(trucks.trucks, planLorries());
         cars.cars = planCars(track, grid, cars.cars, carCount, seed);
         trucksDirty = false;
         quarry.setTruckServed(truckServedCargos(now, "you"));
@@ -7811,6 +7872,34 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       renderer?.setWorld(world);
       return cars.cars.map((c) => c.name);
     },
+    /**
+     * L7 (#221): the ALL-vehicles switch — lorries, ambient cars and trains at
+     * once, which is the dial the acceptance test drives ("with vehicles
+     * disabled, income is unchanged"). `setTraffic(0)` above is about ambient
+     * volume only and leaves the lorries alone, so it cannot answer that
+     * question; this can.
+     *
+     * It stops the planning, the integration and the drawing (see `vehiclesOn`),
+     * and on the new loop it provably moves no cargo: the clock never reads a
+     * vehicle. Returns the new state, and both seats may call it — a guest
+     * renders the host's vehicles, so switching them off is presentation.
+     */
+    setVehicles: (on: boolean) => {
+      vehiclesOn = on !== false;
+      // Turning them back on must replan rather than resume a stale plan.
+      trucksDirty = true;
+      // The frame rebuilds this every frame anyway; doing it here means the
+      // switch is observable immediately (a headless probe never waits for
+      // one) and the renderer's structures pass stops being forced at once.
+      world.vehicles = vehicleItems();
+      renderer?.setWorld(world);
+      return vehiclesOn;
+    },
+    /** L7 (#221): read-only twin of the switch above, for probes and specs. */
+    get vehiclesEnabled() { return vehiclesOn; },
+    /** L7 (#221): how many draw items the vehicle list holds right now (lorries
+     *  + ambient cars + trains) — 0 whenever the switch is off. */
+    get vehicleCount() { return world.vehicles?.length ?? 0; },
     quarry, market,
     /** A1: the rival's Processing Plant — where Black Market sabotage lands. */
     rivalPlant,
