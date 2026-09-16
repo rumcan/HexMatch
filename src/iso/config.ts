@@ -43,6 +43,38 @@ export const CARGOES: Cargo[] = ["grain", "wood", "ore", "stone", "oil", "gold"]
 export const BASE_RATE = 1;
 
 /**
+ * L3 (#217) — THE distance table: how far a Depot's road route runs decides
+ * the tick-rate multiplier the L1b clock pays it by.
+ *
+ * The route is the lorry's own road (`depotPathLength` in economy.ts — the
+ * shortest run of road tiles from the Depot's shoulder to the nearest owned
+ * plant's, over the owner's own + public track), counted in TILES, and the
+ * factor is banded so the number the inspector prints and the rate the clock
+ * pays are both stable under small re-routes:
+ *
+ *   ≤ `nearTiles` tiles   `near` — the Depot is next door, full rate;
+ *   ≤ `midTiles` tiles    `mid`  — a real line out, visibly slower;
+ *   beyond that           `far`  — the long haul, half rate.
+ *
+ * Why these numbers: the opening corridor in every fixture (and most real
+ * openings) runs ~6 tiles of road, so `nearTiles` 8 keeps a sensibly-placed
+ * first Depot at the full rate instead of taxing the setup; 20 tiles is a
+ * genuine cross-country line on the 144×144 map, and anything past it is the
+ * kind of reach that should cost throughput. Post-MVP (#221 L7) may retune
+ * the bands or fit a smooth falloff — the clock reads only this table.
+ */
+export const DISTANCE = {
+  /** Route length at or below this is "near" — full rate. */
+  nearTiles: 8,
+  /** Route length above `nearTiles` and at or below this is "mid". Beyond it is "far". */
+  midTiles: 20,
+  /** Tick-rate multiplier per band. */
+  near: 1.0,
+  mid: 0.7,
+  far: 0.5,
+} as const;
+
+/**
  * L4 (#218) — THE tuning-session table. One session per depot, opened by
  * building it, played on the plant board and closed by the budget running out
  * (or by the player finishing early): the session's score is read off into a

@@ -277,7 +277,7 @@ describe("L1d (#235) the rival's connected depots pay it on the clock", () => {
     // Hand it a level, the way a tuning session would: `applyRivalTuning` never
     // re-rolls a depot that already has one, so this is what the clock reads.
     depot.yield = 2;
-    const perTick = reach * BASE_RATE * depotYield(depot) * distanceFactor(depot) * transportFactor(depot);
+    const perTick = reach * BASE_RATE * depotYield(depot) * distanceFactor(h.eco, depot) * transportFactor(depot);
 
     // The player's seat must not move either: the rival's depot pays the rival.
     const meBefore = cargoTotal(h.purse);
@@ -390,18 +390,28 @@ describe("L1d (#235) the rival's connected depots pay it on the clock", () => {
     const depots = () => h.eco.harvesters.filter((d) => d.owner === "ai").length;
 
     let t = 1_000_000;
-    let peakCargo = startCargo;
+    // L3 (#217): the cumulative clock income — sampled around `econTick`
+    // alone, which only ever PAYS (this seat's spending happens in aiTick and
+    // tick), so any rise between the two samples IS clock income, exactly
+    // attributed. The old signal (the purse's NET peak clearing its start)
+    // does not survive the distance factor: the AI's routes run long enough
+    // to tick at the far band's half rate, and its spending keeps pace with
+    // that inside four minutes — while the seat still earns and expands.
+    let clockEarned = 0;
     for (let step = 1; step <= 240; step++) {           // four simulated minutes
       t += 1000;
-      h.econTick(t); h.aiTick(t); h.tick(t); h.truckTick(t);
-      peakCargo = Math.max(peakCargo, cargoTotal(purse));
+      const pre = cargoTotal(purse);
+      h.econTick(t);
+      const post = cargoTotal(purse);
+      if (post > pre) clockEarned += post - pre;
+      h.aiTick(t); h.tick(t); h.truckTick(t);
       // The board's async resolution needs the event loop; a yield every
       // twenty steps is plenty (and keeps the fixture off the wall clock).
       if (step % 20 === 0) await new Promise((r) => setTimeout(r, 0));
     }
 
     // It EARNS on the clock — income arrived, even though the seat also spends.
-    expect(peakCargo - startCargo, "the rival's purse never rose").toBeGreaterThan(0);
+    expect(clockEarned, "the rival earned nothing off the clock").toBeGreaterThan(0);
     // …and it spends it: a depot went up and its network grew. The signature
     // this guards is AI-02's stall — one factory, one road, one depot, forever.
     expect(depots(), "the rival never laid a depot").toBeGreaterThanOrEqual(1);

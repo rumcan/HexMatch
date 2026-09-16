@@ -82,7 +82,7 @@ import {
 import {
   industriesInCatchment, ownerIdOf,
   buildAllComponents, resolveConnection, industryLocks, heldIndustries, lockedIndustryIds,
-  pickBlockadeTarget, harvesterYield,
+  pickBlockadeTarget, harvesterYield, depotPathLength,
   type EconomyState, type Factory, type Harvester,
 } from "./economy";
 // VP-01: the scoreboard lives in its own module now, because what it counts
@@ -114,7 +114,7 @@ import {
   BASE_RATE, VICTORY, VP_TARGET, UPGRADE_COST, TUNING,
   depotSpriteForCargo, type Cargo, type Portrait,
 } from "./config";
-import { depotYield, distanceFactor, transportFactor } from "./loop";
+import { depotYield, distanceBandForPath, distanceFactorForPath, transportFactor } from "./loop";
 // L4 (#218): the tuning session — the one thing that sets a depot's yield.
 // The rules live in `tuning.ts` (pure, unit-tested); this file is where they
 // meet the board, the depot record and the HUD.
@@ -3481,6 +3481,37 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   /** Fractional new-loop income retained per depot (either seat) until it
    *  reaches one whole unit. Depot ids are unique, so one map serves both. */
   const loopCarry = new Map<number, number>();
+  /**
+   * L3 (#217): each Depot's road distance, cached per NETWORK — the route
+   * length in tiles (`depotPathLength`) and the banded factor the clock pays
+   * (`distanceFactorForPath`). Recomputed only when the network moves: the
+   * gate is `netVersion`, which every world change funnels through in
+   * `syncWorld`, so a tick (or a frame's inspector read) is one integer
+   * compare instead of a BFS per Depot. Derived from the track, so — unlike
+   * yield — it needs no wire field and no save field: a guest or a restore
+   * recomputes the same numbers from the same bytes.
+   */
+  const distanceCache = new Map<number, { tiles: number | null; factor: number }>();
+  let distanceNetVersion = -1;
+  function refreshDistanceCache(): void {
+    if (distanceNetVersion === netVersion) return;
+    distanceNetVersion = netVersion;
+    distanceCache.clear();
+    for (const h of eco.harvesters) {
+      const tiles = depotPathLength(eco, h);
+      distanceCache.set(h.id, { tiles, factor: distanceFactorForPath(tiles) });
+    }
+  }
+  /**
+   * L3: this Depot's cached distance — the same numbers the tick multiplies
+   * and the inspector prints. Freshens the cache first, so both read the
+   * network as it stands; the fallback is for an id with no entry, which only
+   * a stale caller can name.
+   */
+  const distanceInfoFor = (id: number): { tiles: number | null; factor: number } => {
+    refreshDistanceCache();
+    return distanceCache.get(id) ?? { tiles: null, factor: distanceFactorForPath(null) };
+  };
   /** A1: Security Forces are on duty until this wall time. */
   let securityUntil = 0;
   /** #111: the guest seat's own Security Forces guard (armed by its hire). */
@@ -3549,7 +3580,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           // industry yields nothing, so its depot falls out at the
           // `cargoes.length` test above.)
           if (protestedDepot(depot, now, components)) continue;
-          const factor = BASE_RATE * depotYield(depot) * distanceFactor(depot) * transportFactor(depot);
+          // L3 (#217): the road distance behind the tick — read off the
+          // per-network cache (one BFS per Depot per network change, never
+          // per tick), so a far Depot visibly earns less than a near one.
+          const factor = BASE_RATE * depotYield(depot) * distanceInfoFor(depot.id).factor * transportFactor(depot);
           const total = cargoes.reduce((sum, [, amount]) => sum + amount, 0) * factor
             + (loopCarry.get(depot.id) ?? 0);
           const whole = Math.floor(total);
@@ -5410,6 +5444,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             `holding ${held} industr${held === 1 ? "y" : "ies"}` +
             (lost > 0 ? ` · ${lost} reached first by another Depot` : "") + `<br>` +
             `link: ${conn.kind ?? "<i>none</i>"} ×${conn.multiplier || 0}`;
+          // L3 (#217): the road distance the new-loop clock pays this Depot
+          // by — the route length in tiles and the banded factor, the same
+          // numbers the tick multiplies. The shipped loop has no distance
+          // rule, so it prints nothing rather than a number that does nothing.
+          if (newLoop) {
+            const d = distanceInfoFor(h.id);
+            const band = distanceBandForPath(d.tiles);
+            info += `<br>` + (d.tiles === null || band === null
+              ? `distance: <i>no route</i>`
+              : `distance: ${d.tiles} tiles · ×${d.factor} (${band})`);
+          }
         }
       } else if (ref && ref.kind === "factory") {
         const owner = (hover?.ref as { owner?: string } | null)?.owner ?? "";
@@ -7335,6 +7380,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     get depotYields() {
       return eco.harvesters.map((h) => ({ id: h.id, owner: h.owner, tx: h.tx, ty: h.ty, yield: h.yield ?? null }));
     },
+    /**
+     * L3 (#217): every depot's road distance — the route length in tiles to
+     * its nearest owned plant (`null` = no road route) and the banded factor
+     * the L1b clock pays it by. Read off the same cache the tick and the
+     * inspector use, so a test asserts the numbers the player is paid and
+     * shown.
+     */
+    get depotDistances() {
+      return eco.harvesters.map((h) => ({ id: h.id, owner: h.owner, ...distanceInfoFor(h.id) }));
+    },
     /** L1e (#236): the income the clock has banked but not yet paid, per
      *  depot — exactly what the save's `loopCarry` carries, so a round-trip
      *  test reads the live map on one side and the payload on the other. */
@@ -7457,6 +7512,23 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      * `refreshQuarry` above only ever re-reads the LOCAL seat's.
      */
     rescore: () => rescoreNow(),
+    /**
+     * L3 (#217): the twin of what every placement commits alongside the
+     * rescore — re-sync the renderer's world from the economy. A harness
+     * that hands a seat a network by pushing records has no click to trigger
+     * it, and hover/pick can only see a depot the renderer knows about.
+     */
+    syncWorld: () => syncWorld(),
+    /**
+     * L3 (#217): center the camera on a tile — the test twin of panning.
+     * Picks only hit sprites the renderer drew, and it draws the visible
+     * range, so a harness reads a far depot the way a player does: pan
+     * there first, then hover.
+     */
+    centerOn: (tx: number, ty: number) => {
+      cam = centerOnTile(cam, tx, ty);
+      renderer?.setCamera(cam);
+    },
     /** Story test twin of the player's first successful Oil harvest. */
     firstOilHarvest: () => onFirstOilHarvest(),
     /** Story test twin of the idle wire: one Torvin saying / dad-joke exchange
