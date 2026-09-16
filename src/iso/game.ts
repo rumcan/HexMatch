@@ -122,7 +122,7 @@ import {
   createTuningSession, recordTuningCleared, rivalTuningGold, rivalTuningYield,
   takeTuningMove, tuningMovesLeft, tuningOver, tuningSessionGold,
   tuningSessionYield, tuningCargoLabel,
-  TUNING_ABANDON_YIELD, type TuningSession,
+  TUNING_ABANDON_YIELD, TUNING_REWARD_SCORE, type TuningSession,
 } from "./tuning";
 import {
   DEPOT_COST, FREE_SETUP_DEPOTS, costCompact, costLabel, priceDepot, shortfallLabel,
@@ -908,6 +908,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // the clock like any other cargo. The combo bank still counts; it just
     // stops minting.
     payGold: !newLoop,
+    // L12 (#227): the new loop's board is token-free to match — nothing
+    // spends tokens there, so none mint: the 20-second spawn clock, the
+    // first-token grant on a newly-reached cargo and lorry deliveries all
+    // sit behind this one flag in quarry.ts.
+    spawnTokens: !newLoop,
     onHarvest: (cargo, amount) => {
       earn(me, { [cargo]: amount });
       if (cargo === "oil" && amount > 0) onFirstOilHarvest();
@@ -936,7 +941,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // A1: the floating readout over the board. `ui` does not exist yet at
     // this point (the HUD is built below), but this closure is only ever
     // called by a match, long after boot.
-    onPopup: (gains, label) => ui.popup(newLoop ? {} : gains, label),
+    // L12 (#227): under the new loop the readout carries the pass's SCORE
+    // (banked by the onClear/onReward wiring below) instead of cargo gains —
+    // the board paid no cargo, and a "+N score" is what the issue replaces
+    // the "+N cargo" popups with. Every new-loop popup flushes the bank, so
+    // each float shows exactly what ITS pass earned.
+    onPopup: (gains, label) => {
+      const score = newLoop ? pendingScore : undefined;
+      pendingScore = 0;
+      ui.popup(newLoop ? {} : gains, label, score);
+    },
     onTokens: (pool) => toast(`Tokens: ${(Object.keys(pool) as ResKey[])
       .map((r) => CARGO[GEM_TO_CARGO[r]].name).join(", ")}`, "info"),
     onChange: () => onBoardChange(),
@@ -1302,9 +1316,31 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // gems it took off the board; a session score is the sum. Nothing else on
   // this board listens, and with no session open the counter is not even
   // looked at — the old loop plays exactly as it did.
-  quarry.board.onClear = (_n, _chain) => {
-    if (tuning) recordTuningCleared(tuning, _n);
+  quarry.board.onClear = (n, _chain) => {
+    if (tuning) {
+      recordTuningCleared(tuning, n);
+      // L12 (#227): bank the gems as the pass's score so the popup the pass
+      // ends with can float what it earned.
+      pendingScore += n;
+    }
   };
+  // L12 (#227) — the board's REWARDS: a cross (holy outscores broken), a big
+  // shape, a banked combo, a cracked frost step and a broken girder each pay
+  // the session's score the value `TUNING_REWARD_SCORE` assigns them, on top
+  // of the gems the pass already cleared. Nothing here can reach a purse — a
+  // score-paying board does not fire the cargo wires at all.
+  quarry.board.onReward = (kind) => {
+    if (!tuning) return;
+    const pts = TUNING_REWARD_SCORE[kind];
+    recordTuningCleared(tuning, pts);
+    pendingScore += pts;
+  };
+  // L12 (#227) — the new loop's board pays SCORE, not cargo. Set at boot, not
+  // per session, so a settle that ever runs outside a session (a test, a save
+  // restored mid-cascade) still cannot reach the purse. The old loop and the
+  // rival's plant keep the shipped cargo behaviour — their boards never
+  // enter score mode.
+  if (newLoop) quarry.board.setPaysScore(true);
 
   // PP-14: a HOLY CROSS pauses the cascade and asks the player which cargo
   // the blessing should be — the board waits on this hook until the UI's
@@ -2628,6 +2664,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // ══════════════════════════════════════════════════════════════════════
   /** The session in progress — one at a time, and gone when it ends. */
   let tuning: TuningSession | null = null;
+  /**
+   * L12 (#227) — the score the running pass has banked since its last popup.
+   * Gems (`onClear`) and rewards (`onReward`) add to it while a session is
+   * open; the popup the pass ends with shows it and resets it. Declared here
+   * (not beside the board wiring) next to the state it belongs to.
+   */
+  let pendingScore = 0;
 
   /**
    * May the board take this swap, and if so, spend the move.
@@ -2741,7 +2784,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const paid = coins > 0 ? ` +${coins} ${CARGO.gold.icon}` : "";
       toast(
         note ?? (gained
-          ? `Depot tuned — ${s.score} matched gems, yield ×${level}.${paid} It ticks faster from here.`
+          ? `Depot tuned — ${s.score} score, yield ×${level}.${paid} It ticks faster from here.`
           : `Depot tuned — yield ×${level} (the default). A better session raises it.`),
         gained ? "good" : "info",
       );

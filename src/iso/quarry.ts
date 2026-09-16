@@ -203,6 +203,17 @@ export interface QuarryHooks {
    */
   payCargo?: boolean;
   /**
+   * L12 (#227): `false` stops the quarry MINTING tokens at all — the new
+   * loop's board is token-free, because in that loop nothing spends tokens
+   * (the purse is the clock's, not the board's). Every mint path is gated:
+   * the first-token grant on a newly-reached cargo (`refresh`), the 20-second
+   * spawn clock (`tick`) and lorry deliveries (`deliver` answers 0, so the
+   * "+N at the Factory" never draws for a load that minted nothing).
+   *
+   * Default `true` — the shipped loop, unchanged, and the rival's plant.
+   */
+  spawnTokens?: boolean;
+  /**
    * A NETWORK token was matched but the line is down: refused, so the player
    * learns. A forged token never arrives here (PP-13) — it always pays.
    */
@@ -278,6 +289,9 @@ export function createQuarry(
   // the same grid the Sabotage cards and the peek panel address). Default
   // stays own-board for the single-player quarry.
   const board = boardArg ?? new Board();
+  // L12 (#227) — see QuarryHooks.spawnTokens. One flag gates every mint path,
+  // so the new loop's board is token-free at every door at once.
+  const tokensOn = hooks.spawnTokens !== false;
   let reach: Partial<Record<Cargo, number>> = {};
   let delivery: Partial<Record<Cargo, number>> = {};
   let lastPool: Partial<Record<ResKey, number>> = {};
@@ -365,10 +379,11 @@ export function createQuarry(
       else if (want === undefined && had !== undefined) lost.push(res);
     }
     if (lost.length && demoteTokens(board, lost)) board.onChange();
-    if (Object.keys(gained).length) {
+    if (tokensOn && Object.keys(gained).length) {
       // A cargo that just BECAME reachable gets its first token immediately — a
       // connection is a reward, not a wait — and then settles into its paced
-      // cadence from here.
+      // cadence from here. (L12: skipped on a token-free board; the pool book
+      // keeping below still runs so `reach` stays honest for the clock.)
       board.spawnTokens(gained);
       hooks.onTokens?.(gained);
     }
@@ -407,7 +422,9 @@ export function createQuarry(
         continue;
       }
       if (now < at) continue;
-      board.spawnTokens({ [res]: pool[res] });
+      // L12: the clock keeps ticking (so a board that grows tokens back does
+      // not wait a full interval), but mints nothing on a token-free board.
+      if (tokensOn) board.spawnTokens({ [res]: pool[res] });
       nextSpawnAt[res] = now + SPAWN_BASE_MS;
     }
   };
@@ -426,6 +443,9 @@ export function createQuarry(
    * colour left to upgrade. The caller must not draw a "+N" for an empty load.
    */
   const deliver = (cargo: Cargo): number => {
+    // L12: a token-free board mints no load, and the caller's "+N at the
+    // Factory" must not promise a gem the board never got.
+    if (!tokensOn) return 0;
     const res = CARGO_TO_GEM[cargo];
     const tier = tokenPool(reach)[res];
     if (tier === undefined) return 0;              // nothing reachable to load

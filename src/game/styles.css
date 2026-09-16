@@ -1736,6 +1736,9 @@ html, body, #root {
   border-radius: 0; padding: 2px 7px;
   display: flex; align-items: center; gap: 3px;
 }
+/* L12 (#227) — the new loop's score readout. Same chip as a cargo gain, but
+   gold: it is a score, not cargo the purse banked. */
+.hp-body .hp-score { color: var(--gold2); }
 @keyframes harv {
   0%   { transform: translate(-50%,-30%) scale(.7); opacity: 0; }
   20%  { transform: translate(-50%,-50%) scale(1.08); opacity: 1; }
