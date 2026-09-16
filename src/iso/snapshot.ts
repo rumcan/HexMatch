@@ -118,8 +118,20 @@ export interface WireHarvester {
    * the multiplier the L1b clock pays the depot's cargo by. Optional and
    * additive on purpose: a host running the old loop (or an older build) sends
    * no level at all, and every reader treats its absence as the baseline.
+   *
+   * This is also the number L6's DECAY moves: `economyTick` cools the host's
+   * depots and the cooled level is what rides here, so a guest watching a Hard
+   * game sees the same shrinking multiplier the host is being paid for.
    */
   yield?: number;
+  /**
+   * L6 (#220): the transport tier the depot's last tuning session settled on
+   * (`loop.ts`'s `TRANSPORT_TIERS`) — the spent half of Normal's "one match per
+   * depot, one more per upgrade". Per-depot host state, so it travels or a
+   * guest would compute a re-match credit the host never gave. Absent = never
+   * tuned; like `yield`, an old-loop host sends nothing.
+   */
+  tuneTier?: number;
 }
 
 export interface WirePlayer {
@@ -402,10 +414,13 @@ export function buildSnapshot(src: SnapshotSource): Snapshot {
     // L4 (#218): the yield level rides with the depot it belongs to. A level of
     // `undefined` (the old loop) is left OFF the record rather than sent as a
     // value, so an old-loop snapshot is byte-for-byte what it was.
+    // L6 (#220): `tuneTier` joins it the same way — optional, and left off the
+    // record when absent, so the old loop's bytes do not change.
     harvesters: src.harvesters.map((h) => ({
       id: h.id, owner: h.owner, ownerId: h.ownerId, tx: h.tx, ty: h.ty,
       ...(typeof h.yield === "number" ? { yield: h.yield } : {}),
       ...(h.facing ? { facing: h.facing } : {}),
+      ...(typeof h.tuneTier === "number" ? { tuneTier: h.tuneTier } : {}),
     })),
     factories: src.factories.map((f) => ({ ...f })),
     players: src.players.map((p) => ({ ...p, res: { ...p.res } })),
@@ -493,12 +508,19 @@ export function validateSnapshot(s: unknown, localSeed?: number): SnapshotError 
   // L4 (#218): a depot's yield level is optional, but a present one has to be
   // a real number — a guest that quietly read `undefined` as 1 while the host
   // clocked ×2.4 is the kind of divergence the wire refuses loudly.
+  // L6 (#220): the same rule for the re-match tier, because a guest that
+  // defaulted a missing `tuneTier` to 0 would offer itself a re-tune the host
+  // has already spent.
   for (const h of o.harvesters as (Partial<WireHarvester> | null)[]) {
     if (h && h.yield !== undefined && (typeof h.yield !== "number" || !Number.isFinite(h.yield))) {
       return new SnapshotError("malformed", "Snapshot carries a malformed depot yield.");
     }
     if (h && h.facing !== undefined && !DEPOT_FACINGS.includes(h.facing as DepotFacing)) {
       return new SnapshotError("malformed", "Snapshot carries a malformed depot facing.");
+    }
+    if (h && h.tuneTier !== undefined
+      && (typeof h.tuneTier !== "number" || !Number.isInteger(h.tuneTier) || h.tuneTier < 0)) {
+      return new SnapshotError("malformed", "Snapshot carries a malformed depot tune tier.");
     }
   }
   // #137: the seat list itself is optional (an empty world has nobody in it),

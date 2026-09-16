@@ -135,6 +135,75 @@ export const TUNING = {
   maxGold: 3,
 } as const;
 
+// ── L6 (#220): difficulty = decay, not whether match-3 exists ─────────────
+/**
+ * The ONE place the three difficulties differ as ECONOMY rules.
+ *
+ * The brief's headline: difficulty changes the *decay*, never whether the tuning
+ * session exists. `matchEnabled` is true on all three rows and stays a flag for
+ * tests and future modes (#225's obstacle variants, a builder-only sandbox); a
+ * difficulty can only move the numbers below. That is what lets the economy have
+ * ONE codepath — `economyTick` and the tuning settle read these flags and branch
+ * on data, never on `if (difficulty === "hard")`.
+ *
+ * Why these numbers, per row:
+ *
+ *   Easy    No decay, and the mapping is generous: `minYield` is raised, so a
+ *           session that clears nothing still lands a Depot at ×1.5 — a weak
+ *           player is never punished for being weak. No re-match is ever
+ *           offered, because the whole point of Easy is that nobody is dragged
+ *           back to the board. (Match-3 STILL opens on a Depot build — that is
+ *           the change from the original brief, and #218's tests pin it.)
+ *   Normal  No decay either, and the yield is *monotone*: every settle is
+ *           clamped to `max(old, new)`, so a session can only ever be an
+ *           improvement. A re-match is owed only when the Depot itself was
+ *           upgraded — the ticket's "set once per depot (at build) and per city
+ *           upgrade", until #219 gives the game real city upgrades.
+ *   Hard    `decayRate > 0`: the tuning cools off, so a well-tuned Depot drifts
+ *           back toward the baseline and a re-match is always open — and a bad
+ *           re-match can lower the yield, because this is the only row with
+ *           `yieldNeverDrops: false`.
+ *
+ * `decayRate` is the fraction of the SURPLUS above `minYield` lost per economy
+ * tick (`HARVEST_MS` = 3 s in `game.ts`), so cooling slows as a Depot approaches
+ * its floor and never crosses it: Hard's 0.017 halves a fresh ×2.5 tune in about
+ * two minutes (40 ticks) and takes a little over seven to reach the baseline.
+ * It is a fraction of the CLOCK, not of the purse: pausing the game pauses the
+ * decay, and a Depot that is not connected still cools (or cutting a road would
+ * freeze a fresh tune).
+ */
+export interface DifficultyRules {
+  /** Does the tuning board EVER open on this difficulty? True on all three. */
+  matchEnabled: boolean;
+  /** The floor a session maps onto — Easy raises it — and the level a cooling
+   *  Depot settles at. Deliberately not a second clamp on the wire: see
+   *  `tuning.ts` for why a stored level is sanitised against `TUNING` instead. */
+  minYield: number;
+  /** Fraction of the yield above `minYield` that cools off per economy tick. */
+  decayRate: number;
+  /** When a Depot may be re-tuned after its build session: `never` (Easy),
+   *  `upgrade` (Normal, one per tier it moves up) or `open` (Hard, any time). */
+  rematch: "never" | "upgrade" | "open";
+  /** Clamp a finished session to `max(old, new)` — the "yield never drops" rule.
+   *  Hard is the row where a poor session is allowed to bite. */
+  yieldNeverDrops: boolean;
+}
+
+export type DifficultyKey = "easy" | "normal" | "hard";
+
+/** The shipped rival-skills keys and these rows are ONE setting (L6). */
+export const DIFFICULTY_RULES: Record<DifficultyKey, DifficultyRules> = {
+  easy:   { matchEnabled: true, minYield: 1.5, decayRate: 0,
+            rematch: "never", yieldNeverDrops: true },
+  normal: { matchEnabled: true, minYield: TUNING.minYield, decayRate: 0,
+            rematch: "upgrade", yieldNeverDrops: true },
+  hard:   { matchEnabled: true, minYield: TUNING.minYield, decayRate: 0.017,
+            rematch: "open", yieldNeverDrops: false },
+};
+
+/** The row the game runs when nothing has chosen a difficulty yet. */
+export const DEFAULT_DIFFICULTY: DifficultyKey = "normal";
+
 export const CARGO: Record<Cargo, {
   name: string; icon: string; c1: string; c2: string; gem: string;
 }> = {
