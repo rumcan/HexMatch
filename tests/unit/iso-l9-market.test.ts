@@ -88,7 +88,7 @@ interface L9Hook {
   placeProtest: (tx: number, ty: number) => boolean;
   protests: { tx: number; ty: number; until: number; owner: string }[];
   protestPending: boolean;
-  rivalPlant: { status(now: number): { frozen: number; girders: number; smog: boolean } };
+  rivalPlant: { status(): { frozen: number; girders: number } };
   setRivalSkill: (key: "easy" | "normal" | "hard") => void;
   rivalRaidNow: (now?: number) => void;
   rivalTuning: () => void;
@@ -235,8 +235,9 @@ describe("L9 the shop sells map sabotage only", () => {
     await settle();
     expect(h.purse.gold, "a refused card charges nothing").toBe(40);
     expect(h.board.gems().filter((g) => g.block || g.hard > 0)).toHaveLength(0);
-    const now = performance.now();
-    expect(h.rivalPlant.status(now)).toMatchObject({ frozen: 0, girders: 0, smog: false });
+    // L10 (#225): the plant reads its own board — and no card can put an
+    // obstacle on any board any more, so "healthy" is the only answer there is.
+    expect(h.rivalPlant.status()).toMatchObject({ frozen: 0, girders: 0 });
   });
 });
 
@@ -483,8 +484,7 @@ describe("L9 the rival raids with the same two cards", () => {
       expect(h.buyBlackFor(1, dead), `${dead} was sold to the rival`).toBe(false);
     }
     expect(rival.res.gold, "a refused raid costs the rival nothing").toBe(30);
-    const now = performance.now();
-    expect(h.rivalPlant.status(now)).toMatchObject({ frozen: 0, girders: 0, smog: false });
+    expect(h.rivalPlant.status()).toMatchObject({ frozen: 0, girders: 0 });
   });
 
   it("charges the rival and blockades a player industry when it plays the Blockade", async () => {

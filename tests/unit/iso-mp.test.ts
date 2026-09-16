@@ -100,15 +100,14 @@ interface MpHook {
   demolish: (tx: number, ty: number) => void;
   trucksList: unknown[];
   truckTick: (now?: number, dtMs?: number) => void;
-  /** PP-14b: the Black Market twin (refuses on a guest, exactly as the click
-   *  path does) and the rival plant it sabotages. */
+  /** The Black Market twin (refuses on a guest, exactly as the click path
+   *  does) and the rival plant board. */
   buyBlack: (key: string) => void;
   rivalPlant: {
-    status: (now: number) => { frozen: number; girders: number; smog: boolean };
+    status: () => { frozen: number; girders: number };
     board: import("../../src/game/board").Board;
   };
-  /** PP-14b: the local plant board — where the guest applies the host's
-   *  sabotage overlay. */
+  /** The local plant board, mirrored from the host's authoritative one. */
   board: import("../../src/game/board").Board;
   /** #116: the Reset twin — exactly what the `.reset-btn` click runs. */
   resetPlant: () => void;
@@ -561,7 +560,7 @@ describe("MP-05 two real games, one room", () => {
     expect(live(guest)[0].banditUntil).toBe(live(host)[0].banditUntil);
     // and the board stayed clean on both sides — no card touches match-3 now
     expect(guest.board.gems().filter((g) => g.hard > 0 || g.block)).toHaveLength(0);
-    expect(guest.rivalPlant.status(performance.now())).toMatchObject({ frozen: 0, girders: 0, smog: false });
+    expect(guest.rivalPlant.status()).toMatchObject({ frozen: 0, girders: 0 });
 
     // A lifted blockade clears on the guest too (absent = none, never stale).
     for (const ind of host.grid.industries) ind.banditUntil = 0;
@@ -904,7 +903,9 @@ describe("audit regressions: two real games, one room", () => {
     pump();
     expect(guest.purse.gold, "a retired card charges nothing").toBe(gold);
     expect(host.board.gems().filter((g) => g.hard > 0 || g.block)).toHaveLength(0);
-    expect(host.board.fogUntil).toBe(0);
+    // L10 (#225): no smog clock to leave behind either — `Board.save()` carries
+    // the grid and nothing else, so a dirty board would show up in the bytes.
+    expect(Object.keys(host.board.save() as Record<string, unknown>)).not.toContain("fogIn");
 
     // ── an unaffordable card charges nothing ──────────────────────────────
     for (const ind of host.grid.industries) ind.banditUntil = 0;   // clean slate
@@ -1214,8 +1215,9 @@ describe("audit regressions: two real games, one room", () => {
     const { host, guest, guestEnd, hostEnd } = await bootPair();
 
     // Give the guest's authoritative board something a reset must clear, and
-    // park a bounty prompt on it.
-    host.rivalPlant.board.harden();
+    // park a bounty prompt on it. L10 (#225): `seedObstacles` is the only way
+    // an obstacle reaches a board now — a session's worth, placed by hand.
+    host.rivalPlant.board.seedObstacles(7, 0, 2);
     const resolveSpy = vi.fn();
     host.rivalPlant.board.onCrossChoice("holy", 6, resolveSpy);
     forcePublish(guest);
@@ -1258,7 +1260,7 @@ describe("audit regressions: two real games, one room", () => {
     expect(JSON.stringify({ ...host.rivalPlant.board.save(), seq: 0 })).toBe(hostBoard);
 
     // The host's own reset still works and never touches the guest's board.
-    host.board.harden();
+    host.board.seedObstacles(7, 0, 2);
     host.resetPlant();
     expect(host.board.gems().some((g) => g.hard > 0)).toBe(false);
     expect(guest.rivalPlant.board.gems().some((g) => g.hard > 0)).toBe(false);
@@ -1299,13 +1301,12 @@ describe("audit regressions: two real games, one room", () => {
     // A REAL change still reaches both views — and even then, surviving gems
     // keep their identities (the restore reuses the sender's ids).
     //
-    // L9 (#224): this used to be a Frost Tiles purchase. The Black Market is
-    // map sabotage only now — no card can dirty a plant board — so the change
-    // is made on the host's authoritative guest-seat board directly. What is
-    // under test here is the DELTA rule (only changed boards ride), not how
-    // the board came to change; the obstacle model that will drive this in
-    // play lands with the tuning-session obstacles (#225).
-    host.rivalPlant.board.harden(7);
+    // L10 (#225): the change is a session's obstacles, placed on the host's
+    // authoritative guest-seat board directly. What is under test here is the
+    // DELTA rule (only changed boards ride), not how the board came to change
+    // — and it is `seedObstacles` that changes it, because that is the one
+    // door an obstacle has on to a board.
+    host.rivalPlant.board.seedObstacles(7, 0, 2);
     forcePublish(guest);
     pump();
     const withBoards = (hostEnd.sent.filter((m) => m.type === "delta") as { boards?: { owner: string }[] }[])

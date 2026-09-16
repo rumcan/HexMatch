@@ -84,6 +84,8 @@ describe("MP-02 protocol version", () => {
     // 16 KiB frame, so join/resync state crosses as N frames. v3 (PP-14b)
     // added `rivalSabotage` (Black-Market sabotage on the guest-seat plant);
     // a v2 peer would drop that state, so mixed-version rooms must refuse.
+    // (L10 / #225 retired the field again — board obstacles are a tuning
+    // session's now — but the number only has to keep a mixed pair apart.)
     // v4 (MP-AUDIT) adds market/protests/vehicles/boards/crossPrompt/winner
     // parity and distinct starting-town reservations.
     // v5 (#111-#117 guest-seat audit) re-types the cross intent with a body,

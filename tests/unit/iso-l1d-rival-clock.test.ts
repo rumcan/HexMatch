@@ -23,7 +23,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { WATER, factoryTouchesTown, type Grid, type Industry } from "../../src/iso/grid";
-import { MAP_W, MAP_H, CARGOES, BASE_RATE, type Cargo } from "../../src/iso/config";
+import { MAP_W, MAP_H, CARGOES, BASE_RATE, DIFFICULTY_RULES, type Cargo } from "../../src/iso/config";
 import { GEM_TO_CARGO } from "../../src/iso/quarry";
 import { buildTile, demolishTile, type Track } from "../../src/iso/track";
 import { depotYield, distanceFactor, transportFactor } from "../../src/iso/loop";
@@ -337,7 +337,12 @@ describe("L1d (#235) the rival's connected depots pay it on the clock", () => {
 
     const before = cargoTotal(rivalPurse(h));
     h.econTick(performance.now() + 10_000);
-    expect(depot.yield).toBe(rivalTuningYield("hard"));
+    // L10 (#225): the level is the simulated session DOCKED by the obstacles
+    // the difficulty puts on a board — the rival plays no session, so frost
+    // and girders come off its score instead of off a grid. (The corridor
+    // below is dirt, so this Depot is still on tier 0: the thinned table.)
+    expect(depot.yield).toBe(rivalTuningYield("hard", 0, DIFFICULTY_RULES.hard, 0));
+    expect(depot.yield!).toBeLessThan(rivalTuningYield("hard"));
     expect(cargoTotal(rivalPurse(h))).toBeGreaterThan(before);
   });
 

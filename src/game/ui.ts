@@ -7,7 +7,7 @@
 //
 //   Left column   BUILD   Rail / Factory / Foundry controls (mapped onto the
 //                         iso Dirt Road / Road / Depot / Demolish tools)
-//   Left column   BLACK MARKET  Blockade, Frost, Girders, Smog, Security,
+//   Left column   BLACK MARKET  Blockade, Protest, Security,
 //                         Repair, Protest — wired to the quarry board +
 //                         industry blockades the iso economy already honours.
 //   Right column  YOUR QUARRY  the 9×9 match-3 board in the original panel,
@@ -492,7 +492,7 @@ const costStr = (cost: Partial<Record<Cargo, number>>) => costMarkup(cost);
  *
  * L9 (#224): Security Forces are the panel's ONLY non-Gold row now — Repair
  * Crew went with the three board cards it existed to undo (nothing can frost,
- * girder or smog a plant any more), so `REPAIR_COST` has no reader here.
+ * girder on a plant any more), so `REPAIR_COST` has no reader here.
  */
 const SECURITY_ISO: Partial<Record<Cargo, number>> = {
   grain: SECURITY.cost?.wheat ?? 0,

@@ -1,4 +1,4 @@
-import { BOARD_W, BOARD_H, ResKey, RES_KEYS, rand, randInt, choice, shuffle } from "./config";
+import { BOARD_W, BOARD_H, ResKey, RES_KEYS, rand, choice, shuffle } from "./config";
 
 export interface Gem {
   id: number;
@@ -23,6 +23,20 @@ export interface Gem {
    * gate refused it and the 4-match reward was silently worthless.
    */
   forged?: boolean;
+}
+
+/**
+ * L10 (#225) — an obstacle count: how much frost and how many girders.
+ *
+ * The board's own shape for it, so `seedObstacles` (what a session opened
+ * with) and `obstacleCounts` (what is standing) are the same three numbers
+ * and the session intro can read either one. `frostHard` is the ice the
+ * frost was laid at: 1 = one adjacent match frees the gem, 2 = two.
+ */
+export interface BoardObstacles {
+  frost: number;
+  girders: number;
+  frostHard: 1 | 2;
 }
 
 const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
@@ -147,8 +161,6 @@ export class Board {
   // Gold is NOT in the base pool at boot — gold gems only drop (join the
   // gravity pool) once a depot sits beside a gold mine. See setGoldEnabled.
   pool: ResKey[] = [...BASE_POOL];
-  fogUntil = 0;
-  blockUntil = 0;
   // combos banked toward the next gold coin (2 combos = 1 coin)
   comboCount = 0;
   static COMBOS_PER_GOLD = 2;
@@ -818,10 +830,13 @@ export class Board {
     this.busy = false;
   }
 
-  /** Internal swap — assumes not busy and not fogged on entry, validates
-   *  adjacency / block again, manages busy flag for its whole lifetime. */
-  private async _doSwap(r1: number, c1: number, r2: number, c2: number, now: number): Promise<boolean> {
-    if (this.fogUntil > now) return false;
+  /** Internal swap — assumes not busy on entry, validates adjacency / block
+   *  again, manages busy flag for its whole lifetime.
+   *
+   *  L10 (#225): `now` is only here for the signature `trySwap` hands it; the
+   *  one thing it used to be read for (a fog clock, and there is no fog) is
+   *  gone. */
+  private async _doSwap(r1: number, c1: number, r2: number, c2: number, _now: number): Promise<boolean> {
     if (Math.abs(r1 - r2) + Math.abs(c1 - c2) !== 1) return false;
     const g1 = this.grid[r1]?.[c1], g2 = this.grid[r2]?.[c2];
     if (!g1 || !g2 || g1.block || g2.block) return false;
@@ -856,7 +871,6 @@ export class Board {
   }
 
   async trySwap(r1: number, c1: number, r2: number, c2: number, now: number) {
-    if (this.fogUntil > now) return;
     if (Math.abs(r1 - r2) + Math.abs(c1 - c2) !== 1) return;
     const g1 = this.grid[r1]?.[c1], g2 = this.grid[r2]?.[c2];
     if (!g1 || !g2 || g1.block || g2.block) return;
@@ -872,14 +886,10 @@ export class Board {
     while (this.moveQueue.length > 0) {
       if (this.busy) break;
       const nxt = this.moveQueue.shift()!;
-      if (this.fogUntil > performance.now()) {
-        this.moveQueue.unshift(nxt);
-        break;
-      }
       await this._doSwap(nxt.r1, nxt.c1, nxt.r2, nxt.c2, nxt.now);
     }
-    // Issue #152: the queue is drained (or parked behind fog) — back to
-    // standard speed for whatever the player does next.
+    // Issue #152: the queue is drained — back to standard speed for whatever
+    // the player does next.
     this.endTurbo();
   }
 
@@ -984,92 +994,97 @@ export class Board {
     }
   }
 
-  harden(n = 7) {
-    const eligible = this.gems().filter((g) => !g.block && !g.special);
-    for (const g of shuffle(eligible).slice(0, n)) { g.hard = 2; this.onFx("crack", g.r, g.c); }
-    this.onChange();
-  }
-
-  dropBlocks(n = 4, ms = 30000, now = performance.now()) {
-    const cols = shuffle(Array.from({ length: this.w }, (_, i) => i)).slice(0, n);
-    for (const c of cols) {
-      const r = 2 + randInt(this.h - 3);
-      const g = this.newGem(this.randRes(), r, c);
+  /**
+   * L10 (#225) — the frost and the girders a tuning session OPENS with.
+   *
+   * An obstacle belongs to a SESSION now, not to a purchase. The difficulty
+   * table in `iso/config.ts` says how many, the session says how long they
+   * last (it ends — see `resetNeutral`), and nothing else in the game can put
+   * one on a board: the Black Market's Frost Tiles, Iron Girders and Smog
+   * Cloud, the Repair Crew that undid them, the sabotage overlay that shipped
+   * them to a guest and the two clocks that expired them are all gone. What
+   * keeps their RULES: a frosted gem still MATCHES — it cracks one step
+   * instead of clearing — and a girder is broken back into an ordinary gem by
+   * a removal beside it, because those are what make an obstacle worth
+   * playing around.
+   *
+   * Two promises, both kept by construction:
+   *
+   *   • SEEDED — the cells are walked in `shuffle` order (the injectable RNG,
+   *     never `Math.random`), so the same seed opens the same board.
+   *   • PLAYABLE — after each single placement `hasMove()` — the very
+   *     predicate the deadlock guard reshuffles on — must still answer true.
+   *     An obstacle that would take the board's last legal move with it is
+   *     put back, so a session can never open on a dead grid however unlucky
+   *     the seed was.
+   *
+   * Returns what actually landed, which is the count the session intro reads:
+   * a crowded board (or a small one) can hold fewer than it was asked for.
+   */
+  seedObstacles(frost = 0, girders = 0, frostHard: 1 | 2 = 2): BoardObstacles {
+    // A bomb stays an escape hatch and an existing obstacle stays what it is —
+    // only a plain gem can be iced or buried.
+    const cells = shuffle(this.gems().filter((g) => !g.block && !g.special && g.hard === 0));
+    const placed: BoardObstacles = { frost: 0, girders: 0, frostHard };
+    let i = 0;
+    const next = (): Gem | null => {
+      while (i < cells.length) {
+        const g = cells[i++];
+        if (!g.block && g.hard === 0) return g;
+      }
+      return null;
+    };
+    for (let n = 0; n < girders; n++) {
+      const g = next();
+      if (!g) break;
       g.block = true;
-      this.grid[r][c] = g;
-      this.onFx("boom", r, c);
+      if (this.hasMove()) placed.girders++;
+      else g.block = false;          // the last legal move is worth more than a girder
     }
-    this.blockUntil = now + ms;
-    this.onChange();
-  }
-
-  fog(ms = 30000, now = performance.now()) { this.fogUntil = now + ms; }
-
-  /**
-   * MP-05: the sabotage overlay the wire ships — where the frost and girders
-   * sit plus the smog clock — WITHOUT the whole sim. A guest's plant board is
-   * a spectator view (its gem layout is never synced), but sabotage the host
-   * bought against it still has to show up, so only the sabotage state travels.
-   */
-  sabotageState(now = performance.now()) {
-    const frozen: { r: number; c: number; hard: number }[] = [];
-    const girders: { r: number; c: number }[] = [];
-    for (const g of this.gems()) {
-      if (g.block) girders.push({ r: g.r, c: g.c });
-      else if (g.hard > 0) frozen.push({ r: g.r, c: g.c, hard: g.hard });
+    for (let n = 0; n < frost; n++) {
+      const g = next();
+      if (!g) break;
+      g.hard = frostHard;
+      if (this.hasMove()) placed.frost++;
+      else g.hard = 0;
     }
-    return { frozen, girders, smogIn: Math.max(0, this.fogUntil - now) };
+    if (placed.frost || placed.girders) this.onChange();
+    return placed;
   }
 
   /**
-   * MP-05: apply a sabotage overlay received from the host onto this board (a
-   * guest's plant panel). Idempotent — clears whatever was there first, then
-   * stamps the received frost/girders and smog clock. Touches ONLY sabotage
-   * state: no matches, no gravity, no purse, no tokens.
+   * L10 (#225) — take the obstacles off WITHOUT touching the board: the frost
+   * thaws and a girder becomes the ordinary gem it was cut from, both in
+   * place, so a closing session leaves no ice behind and never disturbs a
+   * cascade still in the air.
+   *
+   * This is the session's own exit door. Nothing else calls it, and nothing
+   * else needs to: `resetNeutral` (a fresh board, the next session's) is a
+   * superset of it.
    */
-  applySabotage(state: {
-    frozen?: { r: number; c: number; hard?: number }[];
-    girders?: { r: number; c: number }[];
-    smogIn?: number;
-  }): void {
-    const now = performance.now();
-    let changed = false;
-    for (const g of this.gems()) {
-      if (g.hard > 0) { g.hard = 0; changed = true; }
-      if (g.block) { g.block = false; changed = true; }
-    }
-    for (const f of state.frozen ?? []) {
-      const g = this.grid[f.r]?.[f.c];
-      if (!g) continue;
-      if (g.block) { g.block = false; changed = true; }
-      const hard = Math.max(1, Math.min(2, Math.floor(f.hard ?? 2))) as 0 | 1 | 2;
-      if (g.hard !== hard) { g.hard = hard; changed = true; }
-    }
-    for (const b of state.girders ?? []) {
-      const g = this.grid[b.r]?.[b.c];
-      if (!g) continue;
-      if (g.hard > 0) { g.hard = 0; changed = true; }
-      if (!g.block) { g.block = true; changed = true; }
-    }
-    const smogIn = Math.max(0, Number.isFinite(state.smogIn) ? (state.smogIn as number) : 0);
-    this.fogUntil = now + smogIn;
-    if (changed) this.onChange();
-  }
-
-  // Repair crew: remove all iron blocks AND thaw all frost tiles immediately
-  smashBlocks(): number {
+  clearObstacles(): number {
     let n = 0;
-    let removed = false;
-    this.blockUntil = 0;
-    for (let r = 0; r < this.h; r++) for (let c = 0; c < this.w; c++) {
-      const g = this.grid[r][c];
-      if (!g) continue;
-      if (g.block) { g.dead = true; this.grid[r][c] = null; this.onFx("boom", r, c); n++; removed = true; }
-      else if (g.hard > 0) { g.hard = 0; this.onFx("crack", r, c); n++; } // thaw ice
+    for (const g of this.gems()) {
+      if (g.block) { g.block = false; n++; }
+      if (g.hard > 0) { g.hard = 0; n++; }
     }
-    if (removed) this.gravity();
     if (n) this.onChange();
     return n;
+  }
+
+  /**
+   * L10 (#225): what this board is carrying right now — the same three
+   * numbers `seedObstacles` reports, read off the grid. The rival's plant
+   * peek and the wire's board save use the gem flags themselves; this is the
+   * one-line shape a HUD status asks for.
+   */
+  obstacleCounts(): BoardObstacles {
+    let frost = 0, blocked = 0, hard: 1 | 2 = 1;
+    for (const g of this.gems()) {
+      if (g.block) blocked++;
+      else if (g.hard > 0) { frost++; hard = g.hard as 1 | 2; }
+    }
+    return { frost, girders: blocked, frostHard: hard };
   }
 
   /** AI-03: find one swap the board will actually CARRY OUT — the rival's
@@ -1174,7 +1189,6 @@ export class Board {
    * then reads to the UI as "the same gems, changed", not a whole-board
    * replacement. */
   save(): unknown {
-    const now = performance.now();
     return {
       grid: this.grid.map((row) => row.map((g) => g && {
         id: g.id,
@@ -1182,13 +1196,11 @@ export class Board {
         block: g.block, forged: g.forged ? 1 : 0,
       })),
       seq: this.seq, pool: this.pool, comboCount: this.comboCount,
-      fogIn: Math.max(0, this.fogUntil - now), blockIn: Math.max(0, this.blockUntil - now),
     };
   }
 
   restore(d: any): void {
     if (!d?.grid) return;
-    const now = performance.now();
     let maxId = 1;
     this.grid = d.grid.map((row: any[]) => row.map((cell: any, ci: number) => {
       if (!cell) return null;
@@ -1216,25 +1228,18 @@ export class Board {
     this.seq = Math.max(this.seq, maxId + 1);
     if (Array.isArray(d.pool)) this.pool = d.pool;
     if (typeof d.comboCount === "number") this.comboCount = d.comboCount;
-    this.fogUntil = now + (d.fogIn ?? 0);
-    this.blockUntil = now + (d.blockIn ?? 0);
     this.busy = false;
     this.moveQueue = [];
   }
 
-  tickEffects(now: number) {
+  /**
+   * L10 (#225): the deadlock guard, and nothing else — an obstacle has no
+   * clock of its own any more. `now` stays in the signature because the
+   * caller (the quarry's per-frame tick) hands one over.
+   */
+  tickEffects(_now?: number) {
     if (this.busy) return;
-    // clear expired iron blocks
-    if (this.blockUntil && now > this.blockUntil) {
-      this.blockUntil = 0;
-      let removed = false;
-      for (let r = 0; r < this.h; r++) for (let c = 0; c < this.w; c++) {
-        const g = this.grid[r][c];
-        if (g?.block) { g.dead = true; this.grid[r][c] = null; removed = true; }
-      }
-      if (removed) { this.gravity(); this.onChange(); }
-    }
-    // deadlock guard — reshuffle even when no player move triggered a settle
+    // reshuffle even when no player move triggered a settle
     if (!this.busy && !this.hasMove()) this.reshuffle();
   }
 
@@ -1265,11 +1270,10 @@ export class Board {
       if (c < this.w - 1 && test(r, c, r, c + 1)) return true;
       if (r < this.h - 1 && test(r, c, r + 1, c)) return true;
       // bombs always give a "move" — but only while one can actually be
-      // SWAPPED: `trySwap` refuses a blocked cell, and a girder stamped onto a
-      // bomb (MP-05's `applySabotage` blocks whatever gem is already there) is
+      // SWAPPED: `trySwap` refuses a blocked cell, so a bomb under a girder is
       // not a move. Claiming it anyway told the deadlock guard the board was
       // playable when it was not, so the guard never reshuffled and both seats
-      // sat on it until the girder expired. AI-03d: this is the same agreement
+      // sat on it. AI-03d: this is the same agreement
       // `findMove` now keeps — if `hasMove` says yes, `findMove` finds one.
       const g = this.grid[r][c];
       if (g?.special === "bomb" && this.swappable(r, c)) return true;
@@ -1296,7 +1300,8 @@ export class Board {
   resetNeutral() {
     this.busy = true;
     this.moveQueue = [];
-    this.blockUntil = 0; this.fogUntil = 0;
+    // L10 (#225): the session's obstacles die with the session — a fresh
+    // neutral board is the one way an obstacle ever leaves this grid.
     this.initFill();                       // fresh gems, tier 0, no match at start
     this.onChange();
     this.busy = false;

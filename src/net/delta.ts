@@ -141,12 +141,6 @@ export interface PublishFields {
   players: DeltaPlayer[];
   setupPhase: boolean;
   won: boolean;
-  /**
-   * PP-14b: the Black-Market sabotage on the guest-seat plant. Always sent (it
-   * is a handful of positions), so an expiry reads as "now empty" rather than
-   * an extra event.
-   */
-  rivalSabotage: Snapshot["rivalSabotage"];
   /** MP-AUDIT: market parity, protests, vehicle presentation, boards, crossPrompt, winner */
   market?: Snapshot["market"];
   protests?: Snapshot["protests"];
@@ -175,7 +169,7 @@ export interface PublishFields {
  * the guarantee in the type instead of a non-null assertion at every use.
  */
 export type BuiltDeltaMsg = DeltaMsg &
-  Required<Pick<DeltaMsg, "tiles" | "harvesters" | "factories" | "players" | "setupPhase" | "won" | "rivalSabotage">>;
+  Required<Pick<DeltaMsg, "tiles" | "harvesters" | "factories" | "players" | "setupPhase" | "won">>;
 
 export type PublishDecision =
   /** Steady state: send `msg` (it fits — the size guard already passed). */
@@ -211,7 +205,6 @@ export function buildPublish(track: Track, dirty: DirtyTiles, f: PublishFields):
     players: f.players,
     setupPhase: f.setupPhase,
     won: f.won,
-    rivalSabotage: f.rivalSabotage,
     ...(f.market !== undefined ? { market: f.market } : {}),
     ...(f.protests !== undefined ? { protests: f.protests } : {}),
     ...(f.blockades !== undefined ? { blockades: f.blockades } : {}),

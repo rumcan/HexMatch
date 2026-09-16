@@ -367,7 +367,7 @@ export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
           : `<b>Bank</b> trades ${BANK_RATE} of one good for 1 of another with no rival needed; <b>Market</b> posts offers the rival may take; <b>Feed</b> logs every event of the match.`,
         `Another <b>Processing Plant</b> (${plant}) beside another town widens where your Depots may deliver. All your plants share ONE board — a new plant adds reach, not throughput.`,
       ],
-      tip: "Black Market cards (Blockade, Frost, Girders, Smog, Protest) cost Gold and land on the rival. A Protest ✊ shuts any public road for 2:00 — every truck stops, including yours.",
+      tip: "Black Market cards (Blockade, Protest) cost Gold and land on the rival. A Protest ✊ shuts any public road for 2:00 — every truck stops, including yours.",
     },
     {
       id: "victory",

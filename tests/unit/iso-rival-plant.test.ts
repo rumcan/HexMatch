@@ -1,103 +1,118 @@
 // ══════════════════════════════════════════════════════════════════════════
-// A1 — the rival's Processing Plant.
+// A1, as L10 (#225) left it — the rival's Processing Plant.
 //
-// The Black Market bug: Frost Tiles, Iron Girders and Smog Cloud fired into
-// `quarry.board` — the buyer's OWN board. The fix gives the rival a plant and
-// lands the sabotage on it, which is only half a fix: a board nobody scores
-// off is a purchase that changes nothing. So the plant's state scales the
-// rival's trickle income, and every effect expires so an unplayed board is not
-// wrecked forever.
+// The Black Market bug this file was written around is fixed twice over:
+// Frost Tiles, Iron Girders and Smog Cloud first stopped firing into
+// `quarry.board` (the buyer's OWN board) by landing on the rival's plant
+// instead, and then #225 retired the cards altogether. Board obstacles are a
+// difficulty's now — placed when a tuning session opens, gone when it closes —
+// so there is nothing left to buy, nothing to expire and no damage model:
+// the rival's income is never scaled by how wrecked a plant LOOKS.
+//
+// What is left here:
+//
+//   • the plant is a BOARD — AI-03 plays it, the peek panel paints it, and
+//     nothing about it is a clock;
+//   • the obstacle count it reports is the board's own, so a plant with
+//     nothing on it reads clean and two plants never share gems;
+//   • and the rival's yield is the SIMULATED SESSION (L4), docked once by the
+//     obstacles that difficulty would have put on the board — the damage
+//     model's replacement, and the only thing that still costs the rival
+//     anything for playing on a harder difficulty.
 // ══════════════════════════════════════════════════════════════════════════
 import { describe, it, expect, beforeEach } from "vitest";
+import { createRivalPlant } from "../../src/iso/rival-plant";
 import {
-  createRivalPlant, RIVAL_FROST_MS, RIVAL_GIRDER_MS, RIVAL_SMOG_MS,
-  GIRDER_WEIGHT, SMOG_YIELD, MIN_HEALTH,
-} from "../../src/iso/rival-plant";
+  DIFFICULTY_RULES, OBSTACLE_RAMP, type DifficultyRules, type ObstacleRules,
+} from "../../src/iso/config";
+import {
+  obstacleDrag, rivalTuningGold, rivalTuningYield, sessionObstacles,
+} from "../../src/iso/tuning";
 import { BOARD_W, BOARD_H, setRng, mulberry32 } from "../../src/game/config";
+import { SKILL_KEYS } from "../../src/iso/skill";
 
 const CELLS = BOARD_W * BOARD_H;
 
 beforeEach(() => setRng(mulberry32(1234)));
 
 describe("A1 the rival's plant", () => {
-  it("starts healthy — an untouched plant costs the rival nothing", () => {
-    const p = createRivalPlant();
-    expect(p.health(0)).toBe(1);
-    expect(p.status(0)).toEqual({ frozen: 0, girders: 0, smog: false });
-  });
-
-  it("freezes gems on the rival's board, and reports how many actually froze", () => {
-    const p = createRivalPlant();
-    const n = p.frost(0);
-    expect(n).toBe(7);
-    expect(p.status(0).frozen).toBe(7);
-    // the damage is on the RIVAL's board — the player's board is untouched by
-    // construction here (it is not even in this module), so what is asserted
-    // is that the ice is real and countable.
-    expect(p.board.gems().filter((g) => g.hard > 0)).toHaveLength(7);
-  });
-
-  it("drops girders, and smog hangs over the plant for its full duration", () => {
-    const p = createRivalPlant();
-    expect(p.girders(0)).toBe(4);
-    expect(p.status(0).girders).toBe(4);
-
-    p.smog(0);
-    expect(p.status(0).smog).toBe(true);
-    expect(p.status(RIVAL_SMOG_MS - 1).smog).toBe(true);
-    expect(p.status(RIVAL_SMOG_MS).smog).toBe(false);
-  });
-
-  it("scales the rival's income by how wrecked the plant is", () => {
-    const p = createRivalPlant();
-    p.frost(0);                                     // 7 ice
-    const iced = 1 - 7 / CELLS;
-    expect(p.health(0)).toBeCloseTo(iced, 5);
-
-    p.girders(0);                                   // + girders, at girder weight
-    // measured, not assumed: a girder can land on a cell that was already
-    // iced (it replaces that gem), so the two counts are not independent.
-    const wrecked = p.status(0);
-    expect(wrecked.girders).toBe(4);
-    expect(p.health(0)).toBeCloseTo(
-      1 - (wrecked.frozen + wrecked.girders * GIRDER_WEIGHT) / CELLS, 5,
-    );
-
-    const beforeSmog = p.health(0);
-    p.smog(0);
-    expect(p.health(0)).toBeCloseTo(beforeSmog * SMOG_YIELD, 5);
-  });
-
-  it("melts the ice and hauls the girders away on their own clocks", () => {
-    const p = createRivalPlant();
-    p.frost(0);
-    p.girders(0);
-    expect(p.health(0)).toBeLessThan(1);
-
-    p.tick(RIVAL_FROST_MS);                         // ice melts
-    expect(p.status(RIVAL_FROST_MS).frozen).toBe(0);
-    expect(p.status(RIVAL_FROST_MS).girders).toBe(4);   // girders outlast it
-
-    p.tick(RIVAL_GIRDER_MS);                        // girders hauled away
-    expect(p.status(RIVAL_GIRDER_MS).girders).toBe(0);
-    expect(p.health(RIVAL_GIRDER_MS)).toBe(1);      // good as new
-  });
-
-  it("never wrecks a plant past the floor — the rival always earns something", () => {
-    const p = createRivalPlant();
-    // every cell iced over, plus smog: the worst case a buy can produce
-    for (let i = 0; i < 20; i++) p.frost(0, 7);
-    p.smog(0);
-    expect(p.board.gems().filter((g) => g.hard > 0 || g.block).length)
-      .toBeLessThanOrEqual(CELLS);
-    expect(p.health(0)).toBeGreaterThanOrEqual(MIN_HEALTH);
-  });
-
-  it("is a board of its own — sabotage here cannot touch the player's gems", () => {
+  it("is a board of its own — two plants never share gems", () => {
     const a = createRivalPlant();
     const b = createRivalPlant();
-    a.frost(0);
-    expect(a.status(0).frozen).toBe(7);
-    expect(b.status(0).frozen).toBe(0);             // separate plants, separate gems
+    // Separate boards, separate GEM OBJECTS: mint ids restart at 1 per board,
+    // so identity is what proves one plant's gems are not the other's.
+    expect(b.board.gems()).not.toContain(a.board.gems()[0]);
+    a.board.seedObstacles(4, 2, 2);
+    expect(a.status()).toEqual({ frozen: 4, girders: 2 });
+    expect(b.status(), "the other plant is untouched").toEqual({ frozen: 0, girders: 0 });
+  });
+
+  it("starts clean — nothing can put an obstacle on it outside a session", () => {
+    const p = createRivalPlant();
+    expect(p.status()).toEqual({ frozen: 0, girders: 0 });
+    expect(p.board.gems().some((g) => g.hard > 0 || g.block)).toBe(false);
+    // The whole sabotage surface is gone with the cards that fed it: no way to
+    // freeze it, no girders to drop, no smog, no health to scale an income by,
+    // and no clock to tick.
+    for (const dead of ["frost", "girders", "smog", "health", "tick"]) {
+      expect((p as unknown as Record<string, unknown>)[dead], `${dead}() is still here`).toBeUndefined();
+    }
+  });
+
+  it("carries no timestamps — an obstacle has no clock to expire on", () => {
+    const b = createRivalPlant().board;
+    const saved = JSON.stringify(b.save());
+    expect(saved).not.toMatch(/fog|blockIn|smog/i);
+    expect(Object.keys(b.save() as Record<string, unknown>).sort())
+      .toEqual(["comboCount", "grid", "pool", "seq"]);
+  });
+});
+
+describe("L10 the rival's simulated session is docked by the obstacles", () => {
+  it("costs the rival more on a board with obstacles than on a clean one", () => {
+    for (const key of SKILL_KEYS) {
+      // Easy has no obstacles, so its rival's number is L4's, unchanged —
+      // "the rival is not made better for the player choosing easy" (L6).
+      expect(rivalTuningYield(key, 0, DIFFICULTY_RULES.easy))
+        .toBe(rivalTuningYield(key));
+      // Normal (frost) and Hard (frost + girders) both cost it something, and
+      // Hard costs more than Normal.
+      const normal = rivalTuningYield(key, 0, DIFFICULTY_RULES.normal);
+      const hard = rivalTuningYield(key, 0, DIFFICULTY_RULES.hard);
+      expect(normal).toBeLessThan(rivalTuningYield(key));
+      expect(hard).toBeLessThan(normal);
+      // …and it still plays: the dock never takes it below the baseline.
+      expect(hard).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it("docks the Gold the same way — both halves of one simulated session", () => {
+    const raw = rivalTuningGold("hard");
+    const docked = rivalTuningGold("hard", 0, DIFFICULTY_RULES.hard);
+    expect(docked).toBeLessThanOrEqual(raw);
+    expect(docked).toBeGreaterThan(0);
+  });
+
+  it("is a drag on the SCORE, measured on the board the player plays", () => {
+    // The counts are the ones the table hands a session, ramped by tier.
+    const full = sessionObstacles(DIFFICULTY_RULES.hard, 1);
+    const first = sessionObstacles(DIFFICULTY_RULES.hard, 0);
+    expect(full.girders).toBeGreaterThan(first.girders);
+    expect(first.frost).toBe(Math.floor(full.frost * OBSTACLE_RAMP.firstTier));
+    // A girder is worth two frosted gems: it takes its cell out of the board
+    // entirely, where ice is one match away from being an ordinary gem.
+    expect(obstacleDrag({ frost: 0, girders: 1, frostHard: 1 }))
+      .toBeCloseTo(2 * obstacleDrag({ frost: 1, girders: 0, frostHard: 1 }), 6);
+    // …and the whole board iced over still leaves the rival half a session —
+    // a difficulty makes the board harder to read, not unplayable.
+    expect(obstacleDrag({ frost: CELLS, girders: CELLS, frostHard: 2 })).toBeLessThanOrEqual(0.5);
+    expect(obstacleDrag({ frost: 0, girders: 0, frostHard: 1 })).toBe(0);
+  });
+
+  it("never docks a difficulty that puts nothing on the board", () => {
+    const rules: DifficultyRules = { ...DIFFICULTY_RULES.normal, obstacles: { frost: 0, girders: 0, frostHard: 1 } };
+    const empty: ObstacleRules = { frost: 0, girders: 0, frostHard: 1 };
+    expect(sessionObstacles(rules, 1)).toEqual(empty);
+    expect(rivalTuningYield("normal", 0, rules)).toBe(rivalTuningYield("normal"));
   });
 });
