@@ -558,7 +558,7 @@ describe("L4 the level travels, and the shipped loop is untouched", () => {
     // `Harvester[]`, which now carries the level — so nothing can strip it:
     // the slot takes a level, and a save read back is the number that went in.
     const payload: Partial<SaveGamePayload> = {
-      v: 1, snapV: 14, savedAt: Date.now(), seed: 1337, skillKey: "normal",
+      v: 1, snapV: 15, savedAt: Date.now(), seed: 1337, skillKey: "normal",
       phase: "play", winnerId: null, bandit: {},
       track: { dirt: "", road: "", owner: "", upgraded: "" },
       eco: {

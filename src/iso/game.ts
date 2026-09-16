@@ -2081,6 +2081,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const plantCostLabel = () => (Object.entries(PLANT_COST) as [Cargo, number][])
     .map(([k, v]) => `${v} ${CARGO[k].icon}`).join(" ");
 
+  /**
+   * The building a Depot draws: the rotation its entrance opens onto. The
+   * per-building PNGs are a separate load from the sheet (`loadBuildingLayers`),
+   * so until they land — or on a checkout without them — this falls back to the
+   * sheet's own depot cell in the owner's colour, exactly as the lorries fall
+   * back to `truck_goods_*`. The fallback keeps the building pickable (the
+   * inspector, the hover route) instead of leaving a hole in the draw list.
+   */
+  const depotSpriteFor = (h: { tx: number; ty: number; ownerId: number; facing?: DepotFacing }) => {
+    const want = DEPOT_SPRITES[depotFacingOf(grid, h)];
+    if (!atlasRef || atlasRef.has(want)) return want;
+    return h.ownerId === me.i + 1 ? "depot_blue" : "depot_red";
+  };
+
   const syncWorld = () => {
     world.roadBits = drawBits(track, "road");
     world.dirtBits = drawBits(track, "dirt");
@@ -2138,7 +2152,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // Every Depot is the same truck depot building, whatever it harvests.
       // Ownership shows in the inspector, the catchment overlays and the ref.
       ...eco.harvesters.map((h) => ({
-        sprite: DEPOT_SPRITES[depotFacingOf(grid, h)],
+        sprite: depotSpriteFor(h),
         tx: h.tx, ty: h.ty, ref: { kind: "harvester", id: h.id, owner: h.owner },
       })),
       // RAIL-04: the railway's structures are ordinary footprint-anchored
@@ -7876,7 +7890,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      * can assert the path without a sprite path.
      */
     routeForDepot: (tx: number, ty: number) => {
-      const h = eco.harvesters.find((x) => x.tx === tx && x.ty === ty);
+      // any tile of the 2×2 lot names the Depot standing on it
+      const h = eco.harvesters.find((x) => depotContains(x.tx, x.ty, tx, ty));
       if (!h) return null;
       return roadRouteForHarvester(eco, h, buildAllComponents(track, h.ownerId));
     },

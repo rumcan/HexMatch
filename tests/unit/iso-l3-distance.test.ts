@@ -28,6 +28,7 @@ import {
 import { GRASS, WATER, type Grid, type Industry } from "../../src/iso/grid";
 import { MAP_W, MAP_H } from "../../src/game/config";
 import { setRng, mulberry32 } from "../../src/game/config";
+import { southLotFree } from "./helpers/depot-lot";
 
 // ── stub the art imports (vite handles these in the browser) ──────────────
 vi.mock("../../assets/iso-atlas/atlas@0.5x.png", () => ({ default: "a05.png" }));
@@ -49,8 +50,13 @@ function flatGrid(industries: Industry[] = []): Grid {
   } as Grid;
 }
 
+/**
+ * A 2×2 truck Depot standing so its ENTRANCE is the tile (tx, ty + 1) — the
+ * tile every run below starts on. The lot itself is the two rows above that,
+ * and it opens SW, which is the side those runs arrive from (depot.ts).
+ */
 const H = (id: number, owner: string, ownerId: number, tx: number, ty: number): Harvester =>
-  ({ id, owner, ownerId, tx, ty });
+  ({ id, owner, ownerId, tx, ty: ty - 1, facing: "sw" });
 
 /** Lay a straight vertical run of track at x, owned by `owner`. */
 const vrun = (t: Track, x: number, y0: number, y1: number, owner: number) => {
@@ -192,14 +198,15 @@ describe("L3 (#217) depotPathLength", () => {
     const eco: EconomyState = {
       grid: flatGrid(), track, harvesters: [], factories: [],
     };
-    // A depot between two plants: 5 tiles north, 15 south.
+    // One entrance, two plants on the line out of it: the branch at y=25
+    // reaches plant A in 8 tiles, the trunk runs on to plant B in 9.
     const depot = H(1, "you", 1, 20, 20);
     eco.harvesters.push(depot);
-    eco.factories.push({ owner: "you", ownerId: 1, tx: 20, ty: 12, id: 0, townId: null });
+    eco.factories.push({ owner: "you", ownerId: 1, tx: 24, ty: 25, id: 0, townId: null });
     eco.factories.push({ owner: "you", ownerId: 1, tx: 20, ty: 30, id: 1, townId: null });
-    vrun(track, 20, 15, 19, 1);
     vrun(track, 20, 21, 29, 1);
-    expect(depotPathLength(eco, depot)).toBe(5);
+    for (let x = 21; x <= 23; x++) buildTile(track, "dirt", x, 25, 1);
+    expect(depotPathLength(eco, depot)).toBe(8);
   });
 });
 
@@ -340,7 +347,9 @@ function findCorridors(h: DistanceHook, len: number, type: string): Corridor[] {
   for (const ind of h.grid.industries) {
     if (ind.type !== type) continue;
     for (let x = ind.tx; x < ind.tx + ind.w; x++) {
-      const hx = x, hy = ind.ty + ind.h;
+      // `hy` is the lot's FRONT row: the 2×2 Depot stands on (hx, hy-1)…(hx+1, hy)
+      // against the industry's south edge, and its SW gate is the row below.
+      const hx = x, hy = ind.ty + ind.h + 1;
       const fy = hy + len;
       if (hy < 1 || fy + 3 >= MAP_H || hx < 2 || hx + 3 >= MAP_W) continue;
       let ok = true;
@@ -353,6 +362,7 @@ function findCorridors(h: DistanceHook, len: number, type: string): Corridor[] {
         const i = (fy + dy) * MAP_W + (hx + dx);
         if (h.grid.terrain[i] === WATER || h.grid.occupancy[i] !== -1) ok = false;
       }
+      if (ok && !southLotFree(h.grid, hx, hy)) ok = false;   // room for the 2×2 lot
       if (ok) out.push({ hx, hy, fy, len, ind });
     }
   }
@@ -374,7 +384,7 @@ function pickPair(nears: Corridor[], fars: Corridor[]): { near: Corridor; far: C
 /** Push a depot + factory and lay the dirt column joining them (owner 1). */
 function buildCorridor(h: DistanceHook, id: number, factoryId: number, c: Corridor) {
   h.eco.factories.push({ owner: "you", ownerId: 1, tx: c.hx, ty: c.fy, id: factoryId, townId: null });
-  h.eco.harvesters.push({ id, owner: "you", ownerId: 1, tx: c.hx, ty: c.hy });
+  h.eco.harvesters.push({ id, owner: "you", ownerId: 1, tx: c.hx, ty: c.hy - 1, facing: "sw" });
   for (let y = c.hy + 1; y <= c.fy; y++) buildTile(h.track, "dirt", c.hx, y, 1);
 }
 
@@ -409,8 +419,10 @@ describe("L3 (#217) the clock pays near faster than far", () => {
     expect(dNear.factor).toBe(1.0);
     expect(dFar.tiles, "the far run is the visible road, tile for tile").toBe(far.len - 1);
     expect(dFar.factor).toBe(0.5);
-    expect(h.routeForDepot(near.hx, near.hy)?.length).toBe(dNear.tiles);
-    expect(h.routeForDepot(far.hx, far.hy)?.length).toBe(dFar.tiles);
+    // the lorry's route carries one extra tile at the near end: the lot tile
+    // it loads on, inside the Depot's own entrance (vehicles.ts)
+    expect(h.routeForDepot(near.hx, near.hy)?.length).toBe(dNear.tiles + 1);
+    expect(h.routeForDepot(far.hx, far.hy)?.length).toBe(dFar.tiles + 1);
 
     // Same yield level both — the tuning lever is held fixed.
     h.eco.harvesters.find((d) => d.id === 1)!.yield = 2;
