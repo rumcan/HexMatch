@@ -81,6 +81,22 @@ export type FxType = "pop" | "crack" | "up" | "boom" | "bad" | "chain" | "combo"
 export type CrossKind = "holy" | "broken";
 
 /**
+ * L12 (#227) — the kinds of board reward a score-paying board reports.
+ *
+ * The board says WHAT happened — it made this shape, banked a combo, cracked
+ * a frost, broke a girder — and `src/iso/tuning.ts` says what that is worth
+ * in session score. The board itself holds no score values: it is agnostic
+ * to the economy exactly as before, it just reports the event.
+ */
+export type RewardKind =
+  | "holyCross"      // the big cross shape (3×4)
+  | "brokenCross"    // the smaller one (3×3 plus / T)
+  | "shape"          // a match-5 or L-shape (the old loop's "+2 random")
+  | "combo"          // a banked combo (every COMBOS_PER_GOLD cascades)
+  | "frost"          // one step of frost cracked off a gem
+  | "girder";        // a girder broken by an adjacent match
+
+/**
  * PP-14b — how many units of blessing each cross shape pays.
  *   holy cross (3×4, six gems)  → 6 picks
  *   broken holy cross (3×3 plus, or a T) → 3 picks
@@ -137,6 +153,26 @@ export class Board {
   comboCount = 0;
   static COMBOS_PER_GOLD = 2;
 
+  /**
+   * L12 (#227) — this board pays SCORE, not cargo. The new loop's session
+   * board is set to it on boot (`game.ts`), so every settle on it — inside a
+   * session or not — runs the score path:
+   *
+   *   • a cross resolves as it forms — no pause, no resource picker — and
+   *     reports as a reward (the chooser would leak cargo past the clock);
+   *   • a match-5 / L-shape reports a "shape" reward instead of minting
+   *     "+2 random" cargo;
+   *   • 4/5-matches forge no tokens (the session board is token-free);
+   *   • a banked combo reports "combo" instead of paying a Gold coin;
+   *   • a cracked frost step and a broken girder report as rewards.
+   *
+   * It lives on the board instance, not a global, because the old loop and
+   * the rival's plant keep the shipped cargo behaviour on their own boards —
+   * the flag flips nothing for them.
+   */
+  paysScore = false;
+  setPaysScore(on: boolean): void { this.paysScore = on; }
+
   // callbacks (wired by game)
   /**
    * A tokened gem was matched. `forged` is true when the token came from the
@@ -166,6 +202,16 @@ export class Board {
   onCombo: (count: number, needed: number, granted: boolean) => void = () => {};
   /** Arcade bonus (match-5 / L / chain) — always pays, not network-gated. */
   onBonus: (res: ResKey, amount: number, reason: string) => void = () => {};
+  /**
+   * L12 (#227) — a board reward the session scores. Fires INSTEAD of the
+   * cargo path when the board pays score (see `paysScore`): the cross shapes
+   * (no pause, no picker), a match-5 / L-shape, a banked combo, and the
+   * cleared obstacles. The cargo wires (`onBonus`, the forged `onHarvest`,
+   * `onGold`) never run while `paysScore` is set, so a score-paying board
+   * cannot reach a purse at all — the new loop's acceptance criterion, by
+   * construction.
+   */
+  onReward: (kind: RewardKind) => void = () => {};
   /**
    * L4 (#218) — one resolved pass CLEARED `n` gems, at cascade depth `chain`.
    * This is the board's own measure of how well a board is being played, and
@@ -524,10 +570,13 @@ export class Board {
       // tier-1 token behind, 5+ leaves a tier-2 one plus a bomb. These are the
       // board's own reward, and they carry `forged` (see the forge loop below)
       // so the quarry pays them even where no depot reaches that cargo.
-      if (size === 4 && !tokenPresent) forge.push({ r: mid.r, c: mid.c, res: anchor, tier: 1 });
+      // L12 (#227) — a score-paying board forges no tokens (there is no purse
+      // to pay them into), but a 5-match still mints its bomb: the blast is
+      // the session's biggest single shape.
+      if (size === 4 && !tokenPresent && !this.paysScore) forge.push({ r: mid.r, c: mid.c, res: anchor, tier: 1 });
       if (size >= 5) {
         bombs.push({ r: mid.r, c: mid.c, res: anchor });
-        if (!tokenPresent) forge.push({ r: grp[0].r, c: grp[0].c, res: anchor, tier: 2 });
+        if (!tokenPresent && !this.paysScore) forge.push({ r: grp[0].r, c: grp[0].c, res: anchor, tier: 2 });
       }
     }
 
@@ -537,7 +586,13 @@ export class Board {
       const g = this.grid[r][c];
       if (!g) continue;
       if (removeIds.has(g.id)) { g.dead = true; this.onFx("pop", r, c); this.grid[r][c] = null; removedCells.push({ r, c }); }
-      else if (crackIds.has(g.id)) { g.hard = (g.hard - 1) as 0 | 1 | 2; this.onFx("crack", r, c); }
+      else if (crackIds.has(g.id)) {
+        g.hard = (g.hard - 1) as 0 | 1 | 2;
+        this.onFx("crack", r, c);
+        // L12 (#227) — clearing the frost step out of a frozen gem IS the
+        // play on a score-paying board, and it pays for it.
+        if (this.paysScore) this.onReward("frost");
+      }
     }
     // a match adjacent to an iron block breaks it back into a normal gem
     for (const { r, c } of removedCells) {
@@ -545,7 +600,13 @@ export class Board {
         const nr = r + dr, nc = c + dc;
         if (nr < 0 || nr >= this.h || nc < 0 || nc >= this.w) continue;
         const b = this.grid[nr][nc];
-        if (b && b.block) { b.block = false; this.onFx("crack", nr, nc); }
+        if (b && b.block) {
+          b.block = false;
+          this.onFx("crack", nr, nc);
+          // L12 (#227) — a girder broken by this match's removals is a shape
+          // the session scores.
+          if (this.paysScore) this.onReward("girder");
+        }
       }
     }
     for (const f of forge) {
@@ -580,7 +641,16 @@ export class Board {
           : ells.length
             ? "L-SHAPE"
             : null;
-    if (why && why !== "HOLY CROSS" && why !== "BROKEN CROSS") this.grantRandom(2, why, gains);
+    if (why && why !== "HOLY CROSS" && why !== "BROKEN CROSS") {
+      if (this.paysScore) {
+        // L12 (#227) — the big shape's "+2 random cargo" becomes a flat score
+        // reward: the match-5 / L-shape is one of the "big shapes" the issue
+        // calls out, and nothing of it may touch a purse.
+        this.onReward("shape");
+      } else {
+        this.grantRandom(2, why, gains);
+      }
+    }
     // PP-14: the praying angel — one fx per cross, at the centre gem where
     // the two arms overlap. A holy cross fires `cross` (the angel + choir);
     // a broken cross fires `bcross` (a cracked cross, no angel).
@@ -700,6 +770,14 @@ export class Board {
         // random, and every unit is paid as forged (never gated by the
         // network) like the other arcade bonuses.
         for (const x of crosses) {
+          if (this.paysScore) {
+            // L12 (#227) — the cross pays SCORE the instant it forms: no
+            // pause, no resource picker. The chooser was the one cargo path
+            // that sat on the clock, so it simply does not run on a
+            // score-paying board, and a holy cross outscores a broken one.
+            this.onReward(x.kind === "holy" ? "holyCross" : "brokenCross");
+            continue;
+          }
           const picks = x.kind === "broken" ? BROKEN_CROSS_PICKS : HOLY_CROSS_PICKS;
           const reason = x.kind === "broken" ? "BROKEN CROSS" : "HOLY CROSS";
           const chosen = await this.chooseCrossReward(x.kind, picks);
@@ -719,13 +797,23 @@ export class Board {
       await this.wait("fall");
     }
     const label = maxChain > 1 ? `COMBO x${maxChain}` : "";
-    // A1: the readout fires on the LABEL as well as the gains. A tokenless
-    // cascade accumulates an empty `gains`, and gating the popup on that hid
-    // the only feedback such a match had — a two-deep combo of plain gems
-    // cleared, rang up a combo, and told the player nothing at all.
-    if (Object.keys(gains).length || label) this.onPopup(gains, label);
-    // a cascade of two or more counts as a combo; every second one pays a coin
-    if (maxChain >= 2) this.registerCombo();
+    if (this.paysScore) {
+      // L12 (#227) — the readout carries the pass's SCORE instead of cargo
+      // gains, so it fires on the cascade alone: every pass on a score-paying
+      // board is feedback. The combo banks BEFORE the popup so its points
+      // ride the same float as the gems it came from. (The old loop keeps its
+      // exact order: gains-or-label popup first, coin second.)
+      if (maxChain >= 2) this.registerCombo();
+      this.onPopup({}, label);
+    } else {
+      // A1: the readout fires on the LABEL as well as the gains. A tokenless
+      // cascade accumulates an empty `gains`, and gating the popup on that hid
+      // the only feedback such a match had — a two-deep combo of plain gems
+      // cleared, rang up a combo, and told the player nothing at all.
+      if (Object.keys(gains).length || label) this.onPopup(gains, label);
+      // a cascade of two or more counts as a combo; every second one pays a coin
+      if (maxChain >= 2) this.registerCombo();
+    }
     if (!this.hasMove()) await this.reshuffle();
     this.busy = false;
   }
@@ -798,17 +886,33 @@ export class Board {
   async detonate(bomb: Gem, colorRes: ResKey) {
     this.busy = true;
     const gains: Partial<Record<ResKey, number>> = {};
+    let purged = 0;
     bomb.dead = true; this.grid[bomb.r][bomb.c] = null; this.onFx("boom", bomb.r, bomb.c);
     for (let r = 0; r < this.h; r++) for (let c = 0; c < this.w; c++) {
       const g = this.grid[r][c];
       if (!g || g.block || g.res !== colorRes) continue;
-      if (g.hard > 0) { g.hard = (g.hard - 1) as 0 | 1 | 2; this.onFx("crack", r, c); continue; }
+      if (g.hard > 0) {
+        g.hard = (g.hard - 1) as 0 | 1 | 2;
+        this.onFx("crack", r, c);
+        if (this.paysScore) this.onReward("frost");
+        continue;
+      }
       if (g.tier > 0) {
         const paid = this.credited(g.res, g.tier, g.forged === true);
         if (paid > 0) gains[g.res] = (gains[g.res] ?? 0) + paid;
       }
-      g.dead = true; this.grid[r][c] = null; this.onFx("pop", r, c); }
-    if (Object.keys(gains).length) this.onPopup(gains, "COLOUR PURGE");
+      g.dead = true; this.grid[r][c] = null; this.onFx("pop", r, c); purged++;
+    }
+    if (this.paysScore) {
+      // L12 (#227) — a blast is the session's biggest single shape: the gems
+      // it sweeps score (depth 2 — the burst is the second step of the
+      // cascade `settle(2)` carries on with), and the readout shows them
+      // instead of a cargo line.
+      this.onClear(purged, 2);
+      this.onPopup({}, "COLOUR PURGE");
+    } else if (Object.keys(gains).length) {
+      this.onPopup(gains, "COLOUR PURGE");
+    }
     this.onChange();
     await this.wait("bombClear");
     this.gravity();
@@ -824,6 +928,9 @@ export class Board {
   // setGoldEnabled). A tokened gold gem pays gold when matched; a plain one
   // pays nothing.
   spawnTokens(pool: Partial<Record<ResKey, number>>): number {
+    // L12 (#227) — a score-paying board is token-free: with nothing to spend
+    // tokens on in the new loop, lorry deliveries mint nothing here.
+    if (this.paysScore) return 0;
     let minted = 0;
     for (const res of Object.keys(pool) as ResKey[]) {
       const tier = pool[res] as 1 | 2;
@@ -863,7 +970,13 @@ export class Board {
     const need = Board.COMBOS_PER_GOLD;
     if (this.comboCount >= need) {
       this.comboCount -= need;
-      this.onGold(1);
+      if (this.paysScore) {
+        // L12 (#227) — the combo pays SCORE instead of a gold coin: in the new
+        // loop the coin never had anywhere to land.
+        this.onReward("combo");
+      } else {
+        this.onGold(1);
+      }
       this.onCombo(this.comboCount, need, true);
       this.onChange();
     } else {

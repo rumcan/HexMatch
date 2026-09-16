@@ -6,7 +6,10 @@ import {
 } from "../../src/iso/rivalry";
 
 const directions: RivalryDirection[] = ["retort", "attack", "thwarted"];
-const tactics: RivalryTactic[] = ["bandit", "harden", "block", "fog", "protest"];
+// L9 (#224): Torvin's deck follows the Black Market's inventory — the two MAP
+// cards. The frost/girder/smog decks were deleted with the cards they
+// narrated, so a line can never exist for a tactic the rules do not have.
+const tactics: RivalryTactic[] = ["bandit", "protest"];
 
 describe("the rival's deliberately terrible Black Market banter", () => {
   it("gives every Torvin line an immediate player-portrait callout", () => {
@@ -34,7 +37,7 @@ describe("the rival's deliberately terrible Black Market banter", () => {
       .flat(2)
       .map((beat) => beat.text)
       .join(" ");
-    expect(all).toMatch(/Ice to meet you|bingo hall|toll troll|doctor's orders/);
+    expect(all).toMatch(/bingo hall|toll troll|out-districted|folding chair/);
     expect(all).toMatch(/rehearse|not a thing|grandpa|comeback/);
   });
 
@@ -55,10 +58,17 @@ describe("the rival's deliberately terrible Black Market banter", () => {
   });
 
   it("is deterministic and never touches the simulation RNG", () => {
-    expect(rivalLine("retort", "fog", 4, 1337)).toBe(rivalLine("retort", "fog", 4, 1337));
-    expect(rivalryScene("attack", "block", 2, 99))
-      .toBe(rivalryScene("attack", "block", 2, 99));
-    expect(RIVALRY_LINES.retort.fog).toContain(rivalLine("retort", "fog", 4, 1337));
+    expect(rivalLine("retort", "protest", 4, 1337)).toBe(rivalLine("retort", "protest", 4, 1337));
+    expect(rivalryScene("attack", "bandit", 2, 99))
+      .toBe(rivalryScene("attack", "bandit", 2, 99));
+    expect(RIVALRY_LINES.retort.protest).toContain(rivalLine("retort", "protest", 4, 1337));
+  });
+
+  it("keeps a deck for every card the Black Market still sells, and none for the rest", () => {
+    for (const direction of directions) {
+      expect(Object.keys(RIVALRY_SCENES[direction]).sort()).toEqual(["bandit", "protest"]);
+      expect(Object.keys(RIVALRY_LINES[direction]).sort()).toEqual(["bandit", "protest"]);
+    }
   });
 
   it("does not repeat the same line or scene back to back", () => {

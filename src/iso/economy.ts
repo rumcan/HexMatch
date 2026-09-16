@@ -395,6 +395,42 @@ export function resolveConnection(
   return best;
 }
 
+// ── L3 (#217): road distance ──────────────────────────────────────────────
+/**
+ * The Depot's road distance — the SHORTEST run of road tiles from the Depot's
+ * shoulder to the nearest owned plant's, over the owner's own + public track
+ * (`trackOpenTo`) and crossing only mutual bits.
+ *
+ * This is the same graph the components flood and the lorry drives
+ * (`roadDeliveryForHarvester` in vehicles.ts plans over exactly these
+ * shoulders with the same `roadPath`), so the number the inspector prints,
+ * the band the clock pays and the route the truck drives agree — except in
+ * the multi-plant edge case, where the lorry serves `resolveConnection`'s
+ * tier-preferred plant and this measures the NEAREST one (the spec's rule:
+ * "path length in tiles from depot to the nearest owned factory/plant").
+ * One BFS with every owned plant's shoulders as goals, so "nearest" is one
+ * flood, not one per plant.
+ *
+ * Null when the Depot has no road route to any owned plant — unserviced, or
+ * connected to nothing. The clock's `harvesterYield` gate already pays such a
+ * Depot nothing, so the factor built on this is never a second gate.
+ */
+export function depotPathLength(state: EconomyState, h: Harvester): number | null {
+  // the Depot's ENTRANCE is where its road meets the network (depot.ts)
+  const from = depotShoulders(state.track, h.ownerId, h);
+  if (from.length === 0) return null;
+  const goals = new Set<number>();
+  for (const f of state.factories) {
+    if (f.owner !== h.owner) continue;
+    for (const [x, y] of plantShoulders(state.track, h.ownerId, f.tx, f.ty)) {
+      goals.add(tIdx(x, y));
+    }
+  }
+  if (goals.size === 0) return null;
+  const route = roadPath(state.track, h.ownerId, from, goals);
+  return route ? route.length : null;
+}
+
 // ── claims: one Depot, one industry ───────────────────────────────────────
 /**
  * PP-16: which Depot holds which industry.
