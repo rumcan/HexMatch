@@ -295,7 +295,11 @@ export const BUILD_COSTS: Readonly<Record<
   "dirt" | "road" | "upgrade" | "depot" | "plant" | "rail" | "platform" | "trainDepot" | "train",
   Partial<Record<Cargo, number>>
 >> = {
-  dirt: { wood: 1, stone: 1 },
+  // A Dirt Road is FREE: the gravel is the plumbing every game needs, and
+  // charging for it only ever delayed the first connection. What it costs is
+  // TIME — a lorry crawls on gravel and runs four times quicker on tarmac
+  // (`TRUCK_ROAD_MULT` in vehicles.ts), so paving is the upgrade you pay for.
+  dirt: {},
   road: { wood: 1, stone: 1, ore: 4 },
   upgrade: { ore: 4 },
   depot: { wood: 1, stone: 1, grain: 1, oil: 1 },

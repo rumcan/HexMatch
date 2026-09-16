@@ -27,8 +27,9 @@ import { canAfford, createTrack, tileCost } from "../../src/iso/track";
 describe("PP-07 the ticket's suggested first playtest costs", () => {
   it("prices the five purchases exactly as the table proposes", () => {
     // The game is de-railwayed into two road tiers: `dirt` (basic gravel) and
-    // `road` (premium paved). dirt = 1 Wood + 1 Stone; road = + 4 Ore.
-    expect(BUILD_COSTS.dirt).toEqual({ wood: 1, stone: 1 });
+    // `road` (premium paved). Gravel is FREE — what it costs is the lorry's
+    // time — and the paved road is the thing you pay for.
+    expect(BUILD_COSTS.dirt).toEqual({});
     expect(BUILD_COSTS.road).toEqual({ wood: 1, stone: 1, ore: 4 });
     expect(BUILD_COSTS.upgrade).toEqual({ ore: 4 });
     expect(BUILD_COSTS.depot).toEqual({ wood: 1, stone: 1, grain: 1, oil: 1 });

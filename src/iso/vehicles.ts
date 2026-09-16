@@ -40,14 +40,18 @@ import {
   NE, SE, SW, NW, tIdx,
 } from "./track";
 
-/** Tiles per millisecond: one tile every 300 ms — RV-02: doubled. */
-export const TRUCK_SPEED = 1 / 300;
-/** AI-02: a lorry over PAVED road (`track.road`) moves twice as fast as one
- *  over dirt — so a route is Σ(segment × (paved ? 1/2 : 1)) of its dirt time,
- *  segment by segment. Paving a lane halves the round trip's paved share —
- *  the motivation-to-upgrade the player asked for ("truck should be 2× as
- *  fast on the open road as it is on dirt"). */
-export const TRUCK_ROAD_MULT = 2;
+/**
+ * Tiles per millisecond on GRAVEL: one tile every 600 ms. Dirt is free to lay
+ * now, so what it costs the player is the lorry's time — half the pace it used
+ * to run at, and a quarter of what the same lorry does on tarmac.
+ */
+export const TRUCK_SPEED = 1 / 600;
+/** AI-02: a lorry over PAVED road (`track.road`) moves FOUR times as fast as
+ *  one over gravel — so a route is Σ(segment × (paved ? 1/4 : 1)) of its dirt
+ *  time, segment by segment. Tarmac keeps the pace it always had (150 ms a
+ *  tile); it is the free gravel that slowed to 600 ms, so paving a lane is now
+ *  the whole motivation-to-upgrade the free dirt took away. */
+export const TRUCK_ROAD_MULT = 4;
 /**
  * How long a lorry stands on the depot lot before it turns around: it drives
  * in through the entrance, stops on the first lot tile to load, and only then

@@ -135,7 +135,7 @@ import { bankTrade } from "../game/trade";
 import type { CrossKind } from "../game/board";
 import {
   MAP_W, MAP_H, BANDIT_MS, PROTEST_MS, SABOTAGE, SECURITY,
-  RES_KEYS, choice, tileToScreen, type ResKey,
+  RES_KEYS, tileToScreen, type ResKey,
 } from "../game/config";
 import { createQuarry, CARGO_TO_GEM, GEM_TO_CARGO, type Quarry } from "./quarry";
 import {
@@ -311,20 +311,6 @@ const PAVE_MILESTONE_TILES = 4;
  * (grain + ore) are what processing and trade are for.
  */
 export const START_PURSE: Purse = { wood: 12, stone: 12, ore: 0 };
-/**
- * PP-13: what tearing up a DIRT ROAD tile salvages — exactly ONE unit, drawn
- * at random from this list (so: 1 Wood, or 1 Stone).
- *
- * A Dirt Road tile costs `BUILD_COSTS.dirt` = 1 Wood + 1 Stone, so this is a
- * half-refund: re-routing a mistake costs one material per tile instead of
- * two, but demolition is never free and never profitable. The paved Road is
- * excluded on purpose — its price is dominated by 4 Ore and the dirt→road pave
- * exists precisely so a paved Road does not have to be torn up.
- *
- * L2 (#216): the shipped-loop rule only — under `newLoop` dirt is free and
- * salvages nothing (`doDemolish` gates on the flag).
- */
-export const DIRT_DEMOLISH_REFUND: Cargo[] = ["wood", "stone"];
 /**
  * PP-05: re-exported from `construction.ts` (the authoritative cost module) so
  * the whole E8 tuning surface is reachable from this file, the way
@@ -3198,15 +3184,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // SFX-01: timber coming apart — a little further away for a single tile
     // of track than for a whole building.
     if (p.human) sfx.play("demolish", removedKind === "dirt" ? undefined : { gain: 0.8 });
-    if (removedKind === "dirt") {
-      if (newLoop) {
-        toast("Dirt Road cleared.", "info");
-      } else {
-        const back = choice(DIRT_DEMOLISH_REFUND);
-        earn(p, { [back]: 1 });
-        toast(`Dirt Road cleared — salvaged 1 ${CARGO[back].icon} ${CARGO[back].name}.`, "good");
-      }
-    }
+    // Dirt costs nothing to lay, so tearing it up salvages nothing — a free
+    // tile that paid out on demolition would mint resources. Re-routing a
+    // mistake is simply free.
+    if (removedKind === "dirt") toast("Dirt Road cleared.", "info");
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
       const x = tx + dx, y = ty + dy;
       if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) renderer?.invalidateTile(x, y);

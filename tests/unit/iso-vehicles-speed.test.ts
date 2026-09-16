@@ -1,5 +1,5 @@
 // ══════════════════════════════════════════════════════════════════════════
-// AI-02 — per-segment truck speed: paved legs carry a lorry twice as fast as
+// AI-02 - per-segment truck speed: paved legs carry a lorry four times as fast as
 // dirt legs, so a mixed route's round trip is Σ(len × (paved ? 1/2 : 1)),
 // not one uniform fade. The change of pace must:
 //   * plan a segFast flag per route SEGMENT (either endpoint paved);
@@ -19,7 +19,7 @@ import {
   type Truck,
 } from "../../src/iso/vehicles";
 
-const TICK = 1 / TRUCK_SPEED; // ms per tile on dirt (300)
+const TICK = 1 / TRUCK_SPEED; // ms per tile on gravel (600)
 
 /** Straight five-tile east route on free land; one depot+factory at the ends. */
 function lane(pavedSegs: number): { truck: Truck | undefined; planAgain: () => Truck[] } {
@@ -37,7 +37,7 @@ function lane(pavedSegs: number): { truck: Truck | undefined; planAgain: () => T
   return { truck: planTrucks(eco)[0], planAgain: () => planTrucks(eco) };
 }
 
-describe("AI-02 trucks run 2× on paved segments", () => {
+describe("AI-02 trucks run 4× on paved segments", () => {
   it("a paved route's one-way trip takes half the dirt time", () => {
     const state = createTruckState();
     state.trucks.push({
@@ -54,7 +54,7 @@ describe("AI-02 trucks run 2× on paved segments", () => {
     expect(state.trucks[0].reverse).toBe(true);
   });
 
-  it("a mixed route crosses its paved half twice as fast", () => {
+  it("a mixed route crosses its paved half four times as fast", () => {
     const state = createTruckState();
     state.trucks.push({
       ownerId: 1, depotId: 1, factory: [4, 0],
@@ -65,8 +65,8 @@ describe("AI-02 trucks run 2× on paved segments", () => {
     tickTrucks(state, 2 * TICK);             // the two dirt tiles take 2×TICK
     expect(state.trucks[0].leg).toBe(2);
     expect(state.trucks[0].t).toBeCloseTo(0);
-    // the remaining two paved segments take TICK total, not 2×TICK
-    tickTrucks(state, TICK - 1);
+    // the remaining two paved segments take TICK/2 total, not 2×TICK
+    tickTrucks(state, TICK / 2 - 1);
     expect(state.trucks[0].reverse).toBe(false);
     tickTrucks(state, 1);
     expect(state.trucks[0].deliveries).toBe(1);
