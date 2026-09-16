@@ -43,6 +43,38 @@ export const CARGOES: Cargo[] = ["grain", "wood", "ore", "stone", "oil", "gold"]
 export const BASE_RATE = 1;
 
 /**
+ * L3 (#217) — THE distance table: how far a Depot's road route runs decides
+ * the tick-rate multiplier the L1b clock pays it by.
+ *
+ * The route is the lorry's own road (`depotPathLength` in economy.ts — the
+ * shortest run of road tiles from the Depot's shoulder to the nearest owned
+ * plant's, over the owner's own + public track), counted in TILES, and the
+ * factor is banded so the number the inspector prints and the rate the clock
+ * pays are both stable under small re-routes:
+ *
+ *   ≤ `nearTiles` tiles   `near` — the Depot is next door, full rate;
+ *   ≤ `midTiles` tiles    `mid`  — a real line out, visibly slower;
+ *   beyond that           `far`  — the long haul, half rate.
+ *
+ * Why these numbers: the opening corridor in every fixture (and most real
+ * openings) runs ~6 tiles of road, so `nearTiles` 8 keeps a sensibly-placed
+ * first Depot at the full rate instead of taxing the setup; 20 tiles is a
+ * genuine cross-country line on the 144×144 map, and anything past it is the
+ * kind of reach that should cost throughput. Post-MVP (#221 L7) may retune
+ * the bands or fit a smooth falloff — the clock reads only this table.
+ */
+export const DISTANCE = {
+  /** Route length at or below this is "near" — full rate. */
+  nearTiles: 8,
+  /** Route length above `nearTiles` and at or below this is "mid". Beyond it is "far". */
+  midTiles: 20,
+  /** Tick-rate multiplier per band. */
+  near: 1.0,
+  mid: 0.7,
+  far: 0.5,
+} as const;
+
+/**
  * L4 (#218) — THE tuning-session table. One session per depot, opened by
  * building it, played on the plant board and closed by the budget running out
  * (or by the player finishing early): the session's score is read off into a
@@ -74,6 +106,33 @@ export const TUNING = {
   targetScore: 60,
   /** Chance a spawned gem is the session depot's own cargo. */
   cargoBias: 0.45,
+  /**
+   * L9 (#224) — THE new-loop Gold source (and the reason `COMBOS_PER_GOLD`
+   * stops paying under the flag).
+   *
+   * Gold used to be minted by the always-on board: every 2 combos banked a
+   * coin. The new loop's board is only up during a tuning session, so that
+   * wire dries up — and Gold is the only currency the Black Market takes.
+   * The replacement keeps Gold inside the loop's own core event rather than
+   * inventing a second economy: **a tuning session pays Gold for its score**,
+   * so the same burst of matching that sets a Depot's yield also funds the
+   * sabotage the player can aim at the rival's map.
+   *
+   *   score 0 (or an abandoned session)   0 Gold — a session you did not play
+   *   any score at all                    at least `minGold`
+   *   `targetScore` and beyond            `maxGold`
+   *
+   * It reaches BOTH seats: the rival takes a simulated session per depot
+   * (`rivalTuningYield`), and the same simulated score pays it the same Gold
+   * (`rivalTuningGold`), so the raid table stays funded at every difficulty.
+   *
+   * The second, map-side source is unchanged and deliberate: Gold is a cargo,
+   * a Gold Mine is an industry, so a Depot that holds one ticks Gold in on the
+   * clock like any other cargo. Connecting a mine is the *bulk* source; the
+   * session reward is the steady one that needs no map luck.
+   */
+  minGold: 1,
+  maxGold: 3,
 } as const;
 
 // ── L6 (#220): difficulty = decay, not whether match-3 exists ─────────────

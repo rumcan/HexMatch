@@ -70,7 +70,14 @@ import type { Harvester, Factory } from "./economy";
 // layer, its platforms and depots, its lines and its trains. A v12 guest would
 // draw a rival's railway as empty ground and never show a train, so
 // mixed-version rooms must refuse.
-export const SNAPSHOT_VERSION = 13;
+// v14 (L9 / #224): the snapshot gains `blockades` — the per-industry Blockade
+// expiries. The Black Market is map sabotage only now, so a Blockade IS half
+// the shop, and a card whose whole effect is "these depots stop ticking" has
+// to be visible on the seat it was played against: a v13 guest would watch its
+// income stop with nothing on the map to explain it (industries are
+// seed-derived and never sent, so the expiry cannot be inferred). Mixed
+// versions must refuse.
+export const SNAPSHOT_VERSION = 14;
 
 export const EXPECTED_TRACK_BYTES = MAP_W * MAP_H;
 
@@ -175,6 +182,16 @@ export interface MarketWireOffer {
 export interface MarketWire {
   offers: MarketWireOffer[];
   offerSeq: number;
+}
+/**
+ * L9 (#224): one industry's live Blockade. `id` indexes the seed-derived
+ * industry list both clients already generated, and `until` is host wall time
+ * mapped through the same clock the protests use, so the guest's own overlay
+ * and its income readout agree with the host's.
+ */
+export interface BlockadeWire {
+  id: number;
+  until: number;
 }
 export interface ProtestWire {
   x: number;
@@ -333,6 +350,8 @@ export interface Snapshot {
   market?: MarketWire;
   /** MP-AUDIT: protest roadblocks */
   protests?: ProtestWire[];
+  /** L9 (#224): live industry Blockades — the other half of the map shop. */
+  blockades?: BlockadeWire[];
   /** MP-AUDIT: vehicle presentation */
   trucks?: TruckWire[];
   cars?: CarWire[];
@@ -358,6 +377,7 @@ export interface SnapshotSource {
   rivalSabotage?: RivalSabotage;
   market?: MarketWire;
   protests?: ProtestWire[];
+  blockades?: BlockadeWire[];
   trucks?: TruckWire[];
   cars?: CarWire[];
   rail?: RailWire;
@@ -398,6 +418,7 @@ export function buildSnapshot(src: SnapshotSource): Snapshot {
       : { frozen: [], girders: [], smogIn: 0 },
     market: src.market ? { offers: src.market.offers.map((o) => ({ ...o })), offerSeq: src.market.offerSeq } : undefined,
     protests: src.protests ? src.protests.map((p) => ({ ...p })) : undefined,
+    blockades: src.blockades ? src.blockades.map((b) => ({ ...b })) : undefined,
     trucks: src.trucks ? src.trucks.map((t) => ({ ...t, factory: [...t.factory] as [number, number], route: t.route.map((r) => [...r] as [number, number]), segFast: [...t.segFast] })) : undefined,
     cars: src.cars ? src.cars.map((c) => ({ ...c, route: c.route.map((r) => [...r] as [number, number]), segFast: c.segFast ? [...c.segFast] : undefined })) : undefined,
     rail: copyRailWire(src.rail),
@@ -513,6 +534,9 @@ export function validateSnapshot(s: unknown, localSeed?: number): SnapshotError 
   if (o.protests !== undefined && o.protests !== null && !Array.isArray(o.protests)) {
     return new SnapshotError("malformed", "Snapshot protests is malformed.");
   }
+  if (o.blockades !== undefined && o.blockades !== null && !Array.isArray(o.blockades)) {
+    return new SnapshotError("malformed", "Snapshot blockades is malformed.");
+  }
   if (o.trucks !== undefined && o.trucks !== null && !Array.isArray(o.trucks)) {
     return new SnapshotError("malformed", "Snapshot trucks is malformed.");
   }
@@ -583,6 +607,7 @@ export interface AppliedSnapshot {
   rivalSabotage?: RivalSabotage;
   market?: MarketWire;
   protests?: ProtestWire[];
+  blockades?: BlockadeWire[];
   trucks?: TruckWire[];
   cars?: CarWire[];
   rail?: RailWire;
@@ -625,6 +650,7 @@ export function applySnapshot(s: unknown, localSeed?: number): AppliedSnapshot {
       : undefined,
     market: (o as Snapshot).market ? { offers: (o as Snapshot).market!.offers.map((x) => ({ ...x })), offerSeq: (o as Snapshot).market!.offerSeq } : undefined,
     protests: (o as Snapshot).protests ? (o as Snapshot).protests!.map((x) => ({ ...x })) : undefined,
+    blockades: (o as Snapshot).blockades ? (o as Snapshot).blockades!.map((x) => ({ ...x })) : undefined,
     trucks: (o as Snapshot).trucks ? (o as Snapshot).trucks!.map((x) => ({ ...x, factory: [...x.factory] as [number, number], route: x.route.map((r) => [...r] as [number, number]), segFast: [...x.segFast] })) : undefined,
     cars: (o as Snapshot).cars ? (o as Snapshot).cars!.map((x) => ({ ...x, route: x.route.map((r) => [...r] as [number, number]), segFast: x.segFast ? [...x.segFast] : undefined })) : undefined,
     rail: copyRailWire((o as Snapshot).rail),

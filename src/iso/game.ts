@@ -82,7 +82,7 @@ import {
 import {
   industriesInCatchment, ownerIdOf,
   buildAllComponents, resolveConnection, industryLocks, heldIndustries, lockedIndustryIds,
-  pickBlockadeTarget, harvesterYield,
+  pickBlockadeTarget, harvesterYield, depotPathLength,
   type EconomyState, type Factory, type Harvester,
 } from "./economy";
 // VP-01: the scoreboard lives in its own module now, because what it counts
@@ -114,15 +114,15 @@ import {
   BASE_RATE, VICTORY, VP_TARGET, UPGRADE_COST, TUNING,
   depotSpriteForCargo, type Cargo, type Portrait,
 } from "./config";
-import { depotYield, distanceFactor, transportFactor, transportTierOf } from "./loop";
+import { depotYield, distanceBandForPath, distanceFactorForPath, transportFactor, transportTierOf } from "./loop";
 // L4 (#218): the tuning session — the one thing that sets a depot's yield.
 // The rules live in `tuning.ts` (pure, unit-tested); this file is where they
 // meet the board, the depot record and the HUD.
 import {
   abandonYieldFor, birthYieldFor, createTuningSession, decayYield, difficultyRulesFor,
-  recordTuningCleared, retuneOwed, rivalTuningYield, settleTuningYield, takeTuningMove,
-  tuningMovesLeft, tuningOver, tuningSessionYield, tuningCargoLabel,
-  type TuningSession,
+  recordTuningCleared, retuneOwed, rivalTuningGold, rivalTuningYield, settleTuningYield,
+  takeTuningMove, tuningMovesLeft, tuningOver, tuningSessionGold, tuningSessionYield,
+  tuningCargoLabel, TUNING_ABANDON_YIELD, TUNING_REWARD_SCORE, type TuningSession,
 } from "./tuning";
 import {
   DEPOT_COST, FREE_SETUP_DEPOTS, costCompact, costLabel, priceDepot, shortfallLabel,
@@ -130,16 +130,22 @@ import {
 import { bankTrade } from "../game/trade";
 import type { CrossKind } from "../game/board";
 import {
-  MAP_W, MAP_H, BANDIT_MS, BLOCK_MS, FOG_MS, PROTEST_MS, SABOTAGE, SECURITY,
+  MAP_W, MAP_H, BANDIT_MS, PROTEST_MS, SABOTAGE, SECURITY,
   RES_KEYS, choice, tileToScreen, type ResKey,
 } from "../game/config";
 import { createQuarry, CARGO_TO_GEM, GEM_TO_CARGO, type Quarry } from "./quarry";
 import {
   saveKeyFor, SAVEGAME_VERSION, loadRecentSave, clearSave, trackSave, trackRestored,
+  NEW_LOOP_SAVE_TOAST, saveNeedsNewLoop, loopCarryToWire, savedLoopCarry,
   type SaveGamePayload,
 } from "./savegame-runtime";
 import { RES } from "../game/config";
-import { createRivalPlant, plantHealth, RIVAL_FROST_MS, RIVAL_GIRDER_MS, RIVAL_SMOG_MS, type RivalStatus } from "./rival-plant";
+// L9 (#224): the rival's plant is still a board you can WATCH (AI-03's peek
+// panel) and still travels the wire — but nothing BUYS its frost, girders or
+// smog any more: the Black Market is map-only sabotage now, and board
+// obstacles come back as tuning-session obstacles in #225. Only the wrapper
+// itself is imported here; the timed-sabotage constants are its own business.
+import { createRivalPlant } from "./rival-plant";
 import { createFloatLayer, type FloatLayer } from "./floats";
 import {
   createTruckState, planTrucks, tickTrucks, truckItems, roadRouteForHarvester,
@@ -588,7 +594,21 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // seed, the rival's network, phase "play") against the chapter's lower ★
   // line and lost on the first rescore.
   const saveKey = saveKeyFor(storyChapter?.id);
-  const bootSave = savesOff ? null : loadRecentSave(Date.now(), saveKey);
+  const foundSave = savesOff ? null : loadRecentSave(Date.now(), saveKey);
+  /**
+   * L1e (#236): a save the new loop wrote is NOT restored into the shipped one.
+   * Its depots carry tuning yields only the L1b clock pays, so half-restoring
+   * it would hand back a world that looks intact and has stopped earning — the
+   * opposite of what "Continue" promises. The boot therefore treats it as no
+   * save at all (fresh map, no seed of its own, onboarding as normal), KEEPS
+   * the slot untouched — see `saveHeldBack`, which stops this boot's autosave
+   * from writing the fresh world over it — and says how to open it instead of
+   * breaking (the note waits for the overlays, like the flag's own).
+   */
+  const saveHeldBack = foundSave !== null && saveNeedsNewLoop(foundSave, newLoop);
+  const bootSave = saveHeldBack ? null : foundSave;
+  /** The note about that refusal, fired on the first clear frame (below). */
+  let saveToastPending = saveHeldBack;
   // STORY-01: a contract is a PLACE — its map must not move between attempts —
   // so the chapter's seed sits in the chain between an explicit `?seed=`
   // (playtests, saved seeds) and the fresh random one. A resumed save keeps
@@ -895,9 +915,21 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // quarry so the board's own gain accumulator, and every "+N cargo" pop
     // built from it, can never advertise a payout that did not happen. Gems
     // still clear and cascades still cascade: matching is what sets a Depot's
-    // yield. The RIVAL's seat is untouched (#235 gives it the same clock),
-    // as are combo Gold below and the board's cross/bonus rewards (#227).
+    // yield. The RIVAL's seat is cut the same way (#235 gave it the same
+    // clock); combo Gold below and the board's cross/bonus rewards stay
+    // wired on both seats (#227 re-homes them).
     payCargo: !newLoop,
+    // L9 (#224): and the combo coin is not the new loop's Gold source either
+    // — a tuning session's SCORE pays Gold (`tuningGoldFor`, credited in
+    // `closeTuningSession`), and a Depot holding a Gold Mine ticks Gold in on
+    // the clock like any other cargo. The combo bank still counts; it just
+    // stops minting.
+    payGold: !newLoop,
+    // L12 (#227): the new loop's board is token-free to match — nothing
+    // spends tokens there, so none mint: the 20-second spawn clock, the
+    // first-token grant on a newly-reached cargo and lorry deliveries all
+    // sit behind this one flag in quarry.ts.
+    spawnTokens: !newLoop,
     onHarvest: (cargo, amount) => {
       earn(me, { [cargo]: amount });
       if (cargo === "oil" && amount > 0) onFirstOilHarvest();
@@ -926,7 +958,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // A1: the floating readout over the board. `ui` does not exist yet at
     // this point (the HUD is built below), but this closure is only ever
     // called by a match, long after boot.
-    onPopup: (gains, label) => ui.popup(newLoop ? {} : gains, label),
+    // L12 (#227): under the new loop the readout carries the pass's SCORE
+    // (banked by the onClear/onReward wiring below) instead of cargo gains —
+    // the board paid no cargo, and a "+N score" is what the issue replaces
+    // the "+N cargo" popups with. Every new-loop popup flushes the bank, so
+    // each float shows exactly what ITS pass earned.
+    onPopup: (gains, label) => {
+      const score = newLoop ? pendingScore : undefined;
+      pendingScore = 0;
+      ui.popup(newLoop ? {} : gains, label, score);
+    },
     onTokens: (pool) => toast(`Tokens: ${(Object.keys(pool) as ResKey[])
       .map((r) => CARGO[GEM_TO_CARGO[r]].name).join(", ")}`, "info"),
     onChange: () => onBoardChange(),
@@ -942,6 +983,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // quarry does; what it must never do is toast the human about the rival's
   // private matches, so its UI surface says nothing — except when its own
   // peek panel is open (see `openRivalPlantView` below).
+  //
+  // L1d (#235): on the new loop that purse line is cut for the rival exactly
+  // as #234 cut it for the player (`payCargo: false`) — the rival earns on the
+  // clock from its connected depots instead, in the same `economyTick` pass.
+  // The board stays ALIVE (the autoplay keeps running) because two things
+  // still need it: it is the plant you can watch from the peek panel, and it
+  // is the body sabotage lands on — ice and girders only clear because
+  // somebody keeps playing. Its combo Gold is untouched (#227 re-homes Gold).
   let rivalQuarry: Quarry;
 
   /** AI-03: the peek panel handle (set when the player opens it). */
@@ -1291,9 +1340,31 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // gems it took off the board; a session score is the sum. Nothing else on
   // this board listens, and with no session open the counter is not even
   // looked at — the old loop plays exactly as it did.
-  quarry.board.onClear = (_n, _chain) => {
-    if (tuning) recordTuningCleared(tuning, _n);
+  quarry.board.onClear = (n, _chain) => {
+    if (tuning) {
+      recordTuningCleared(tuning, n);
+      // L12 (#227): bank the gems as the pass's score so the popup the pass
+      // ends with can float what it earned.
+      pendingScore += n;
+    }
   };
+  // L12 (#227) — the board's REWARDS: a cross (holy outscores broken), a big
+  // shape, a banked combo, a cracked frost step and a broken girder each pay
+  // the session's score the value `TUNING_REWARD_SCORE` assigns them, on top
+  // of the gems the pass already cleared. Nothing here can reach a purse — a
+  // score-paying board does not fire the cargo wires at all.
+  quarry.board.onReward = (kind) => {
+    if (!tuning) return;
+    const pts = TUNING_REWARD_SCORE[kind];
+    recordTuningCleared(tuning, pts);
+    pendingScore += pts;
+  };
+  // L12 (#227) — the new loop's board pays SCORE, not cargo. Set at boot, not
+  // per session, so a settle that ever runs outside a session (a test, a save
+  // restored mid-cascade) still cannot reach the purse. The old loop and the
+  // rival's plant keep the shipped cargo behaviour — their boards never
+  // enter score mode.
+  if (newLoop) quarry.board.setPaysScore(true);
 
   // PP-14: a HOLY CROSS pauses the cascade and asks the player which cargo
   // the blessing should be — the board waits on this hook until the UI's
@@ -1448,6 +1519,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // watch it work.
   const rivalBoard = rivalPlant.board;
   rivalQuarry = createQuarry(eco, "ai", {
+    // L1d (#235): mirror of #234 for the "ai" seat — a matched token on the
+    // rival's plant clears and cascades, but it credits no cargo. `payCargo`
+    // is cut INSIDE the quarry (not by muting `onHarvest`) so the board's own
+    // gain accumulator can never advertise a "+N cargo" the rival was not
+    // paid, and no "no route — N lost" is raised for cargo nobody owed it.
+    payCargo: !newLoop,
+    // L9 (#224): …and the combo coin goes the same way, which is the half
+    // #235 left to "#227 owns Gold" — this ticket is where that landed. The
+    // rival's depots pay its Gold through their simulated tuning sessions
+    // (`rivalTuningGold`, in `applyRivalTuning`), so both seats' raid tables
+    // are funded by the same rule and neither is minting coins off however
+    // long a cascade happens to run.
+    payGold: !newLoop,
     onHarvest: (cargo, amount) => earn(rival, { [cargo]: amount }),
     onBlocked: () => {},
     onGold: (n) => {
@@ -2604,6 +2688,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // ══════════════════════════════════════════════════════════════════════
   /** The session in progress — one at a time, and gone when it ends. */
   let tuning: TuningSession | null = null;
+  /**
+   * L12 (#227) — the score the running pass has banked since its last popup.
+   * Gems (`onClear`) and rewards (`onReward`) add to it while a session is
+   * open; the popup the pass ends with shows it and resets it. Declared here
+   * (not beside the board wiring) next to the state it belongs to.
+   */
+  let pendingScore = 0;
 
   /**
    * May the board take this swap, and if so, spend the move.
@@ -2716,6 +2807,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const rules = difficultyRules();
     const prev = depot?.yield;
     const level = settleTuningYield(prev, s.score, rules, { abandon });
+    // L9 (#224): the session is also THE Gold source on the new loop. The
+    // board's combo coin stopped paying (`payGold: !newLoop`), so the score
+    // that sets the yield also banks the coins the Black Market's two map
+    // cards are bought with. An abandoned session pays none — the same rule
+    // its yield follows, and the same one the coins are read from: the reward
+    // is on the SCORE the player played, so a difficulty row that lifts the
+    // yield does not silently lift the purse too.
+    const coins = abandon ? 0 : tuningSessionGold(s);
+    if (coins > 0) {
+      earn(me, { gold: coins });
+      sfx.play("coin");     // SFX-01: the same two coins the combo used to ring
+    }
+    const paid = coins > 0 ? ` +${coins} ${CARGO.gold.icon}` : "";
     if (depot) {
       // Stored on the depot record, which is what the L1b clock multiplies by
       // — and what the snapshot (yield + tuneTier) and the savegame (harvesters)
@@ -2729,23 +2833,29 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // upgrade it already had when it was tuned cannot pay for a second
       // session and one it buys later can.
       depot.tuneTier = depotTier(depot);
-      const gained = level > (prev ?? level);
-      const lost = level < (prev ?? level);
+      // Gained/lost are measured against the level the Depot was actually
+      // paying at, which for a never-tuned Depot is the default the old loop
+      // shipped with — that is what makes Easy's raised floor read as a gain on
+      // the very first session, instead of "the default" for a number the
+      // player just played for.
+      const before = prev ?? TUNING_ABANDON_YIELD;
+      const gained = level > before;
+      const lost = level < before;
       const after = rules.rematch === "never" ? "That is this Depot's one session."
         : rules.rematch === "upgrade" ? "Another comes with your next upgrade."
           : "You can re-tune it from the plant panel.";
       toast(
         note ?? (gained
-          ? `Depot tuned — ${s.score} matched gems, yield ×${level}. It ticks faster from here.`
+          ? `Depot tuned — ${s.score} score, yield ×${level}.${paid} It ticks faster from here.`
           : lost
-            ? `Depot re-tuned badly — yield ×${prev} → ×${level}, and nothing recovers it but a better session. ${after}`
-            : `Depot tuned — yield ×${level}${first
-              ? " (the default). A better session raises it."
-              : rules.yieldNeverDrops
-                ? " (kept: a session never lowers a Depot)." : "."} ${after}`),
+            ? `Depot re-tuned badly — yield ×${before} → ×${level}.${paid} and nothing recovers it but a better session. ${after}`
+            : `Depot tuned — yield ×${level}${first ? " (the default)." : paid} ${
+              first ? "A better session raises it."
+                : rules.yieldNeverDrops ? "Kept: a session never lowers a Depot." : ""
+            } ${after}`),
         gained ? "good" : lost ? "bad" : "info",
       );
-      ui.feed(`Depot tuned: yield ×${level}`, me.name);
+      ui.feed(`Depot tuned: yield ×${level}${paid}`, me.name);
     } else if (note) {
       toast(note, "info");
     }
@@ -2898,7 +3008,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (!newLoop) return;
     const key = skill().key;
     for (const h of eco.harvesters) {
-      if (h.owner === rival.id && h.yield === undefined) h.yield = rivalTuningYield(key);
+      if (h.owner !== rival.id || h.yield !== undefined) continue;
+      h.yield = rivalTuningYield(key);
+      // L9 (#224): the simulated session pays the rival the same Gold a
+      // played one pays the player, through the same score→Gold curve. This
+      // is what keeps its raid table funded once combo Gold stops paying —
+      // "Gold still reaches BOTH players at a steady rate without constant
+      // matching" is one rule applied twice, not two balance numbers.
+      const coins = rivalTuningGold(key);
+      if (coins > 0) earn(rival, { gold: coins });
     }
   }
 
@@ -3152,6 +3270,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (hi >= 0) {
       const removed = eco.harvesters[hi];
       eco.harvesters.splice(hi, 1);
+      // L1e (#236): a removed Depot's banked remainder goes with it. No depot
+      // is left to pay it to, and a stale id must not ride the save forever
+      // (or come back as a ghost entry the next restore would carry).
+      loopCarry.delete(removed.id);
       // L4 (#218): the board was only up for THAT Depot's session. Without
       // this, demolishing a Depot mid-session would leave the player on a
       // board with no session behind it and no key out — the stuck state the
@@ -3235,15 +3357,81 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   // ── Protests: the Black Market's roadblock ─────────────────────────────────
   // A protest is a tile + an expiry, bought with Gold and staged on any PUBLIC
-  // road (highways and town streets — `isPublicRoad`). While it stands, every
-  // lorry whose next tile is that one holds where it is (`tickTrucks`'
-  // `blocked` set): nothing re-routes and nothing else changes — the economy
-  // still counts the road as connected, but the deliveries stop arriving, so
-  // the bitten cargo stops minting tokens. It blocks YOUR lorries too.
+  // road (highways and town streets — `isPublicRoad`). Two things happen while
+  // it stands, and they are the same fact told twice:
+  //
+  //   • every lorry whose next tile is that one holds where it is (`tickTrucks`'
+  //     `blocked` set) — the visible half, unchanged;
+  //   • L9 (#224): every DEPOT whose road route (the L3 path the lorry drives)
+  //     crosses the protested tile stops ticking income — the mechanical half.
+  //     Trucks are cosmetic after L7, so "the trucks stop" cannot be the whole
+  //     rule any more: under the clock economy a roadblock has to bite the
+  //     clock, and `protestedDepot` below is where it does.
+  //
+  // It blocks YOUR routes too — that is the card's whole tension.
   interface Protest { tx: number; ty: number; until: number; owner: string }
   const protests = new Map<number, Protest>();
+  /**
+   * L9 (#224): is this depot's route cut by a protest right now?
+   *
+   * The route is the SAME one the lorry drives and the hover overlay paints
+   * (`roadRouteForHarvester`), so "the truck is stuck behind the crowd" and
+   * "this depot is not paying" are one answer, never two. A depot with no road
+   * route (rail-only, or nothing connected) is never protested — there is no
+   * path for a crowd to sit on.
+   *
+   * Security Forces are the defence: a guarded owner's depots keep ticking
+   * through a protest, exactly as they shrug off a Blockade.
+   */
+  function protestedDepot(depot: Harvester, now: number, comp?: Components): boolean {
+    if (!protests.size) return false;
+    const owner = players.find((p) => p.id === depot.owner);
+    if (owner && now < securityOf(owner.id)) return false;
+    const route = roadRouteForHarvester(eco, depot, comp);
+    if (!route) return false;
+    for (const [x, y] of route) {
+      const p = protests.get(tIdx(x, y));
+      if (p && p.until > now) return true;
+    }
+    return false;
+  }
   /** A bought protest waiting for its tile — map clicks stage it, Esc cancels. */
   let pendingProtest = false;
+  /**
+   * L9 (#224): where a Protest bought AGAINST `victim` should stand.
+   *
+   * The rival has no crosshair, so its raid needs the same "one rival, no
+   * targeting step" treatment `pickBlockadeTarget` gives a Blockade: the
+   * public-road tile that the MOST of the victim's paying routes run through
+   * — the crowd that costs it the most ticks. Ties go to the lowest tile
+   * index, so the choice is deterministic on a seed (no RNG at all).
+   *
+   * Null when the victim has no route over a free public road: a protest with
+   * nowhere to bite is not bought (the raid leaves its clock un-stamped and
+   * tries again), so the rival can never burn Gold on an empty gesture.
+   */
+  function pickProtestTarget(victim: string, now: number): [number, number] | null {
+    const counts = new Map<number, number>();
+    const comp = buildAllComponents(eco.track, ownerIdOf(eco, victim));
+    for (const depot of eco.harvesters) {
+      if (depot.owner !== victim) continue;
+      const route = roadRouteForHarvester(eco, depot, comp);
+      if (!route) continue;
+      for (const [x, y] of route) {
+        if (!isPublicRoad(track, x, y)) continue;    // protests go on public roads
+        const i = tIdx(x, y);
+        const standing = protests.get(i);
+        if (standing && standing.until > now) continue;   // one crowd per tile
+        counts.set(i, (counts.get(i) ?? 0) + 1);
+      }
+    }
+    let best = -1, bestN = 0;
+    for (const [i, n] of counts) {
+      if (n > bestN || (n === bestN && best >= 0 && i < best)) { best = i; bestN = n; }
+    }
+    if (best < 0) return null;
+    return [best % MAP_W, (best / MAP_W) | 0];
+  }
   /** Remaining time as the overlay badge and toasts print it: "2:00", "0:07". */
   const fmtProtestLeft = (ms: number): string => {
     const s = Math.max(0, Math.ceil(ms / 1000));
@@ -3294,8 +3482,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     protests.set(tIdx(tx, ty), { tx, ty, until: now + PROTEST_MS, owner: me.id });
     pendingProtest = false;
     floats.add("✊ PROTEST", tx, ty, { cls: "sabotage", now });
-    ui.feed(`You stage a protest on the public road — all trucks stop for ${fmtProtestLeft(PROTEST_MS)}.`);
-    toast(`Protest placed — ALL trucks stop for ${fmtProtestLeft(PROTEST_MS)}, yours included.`, "good");
+    ui.feed(`You stage a protest on the public road — every depot routed through it stops for ${fmtProtestLeft(PROTEST_MS)}.`);
+    toast(`Protest placed — every depot routed through that tile stops ticking for ${fmtProtestLeft(PROTEST_MS)}, yours included.`, "good");
     rivalSpeaks("retort", "protest");
     return true;
   }
@@ -3319,8 +3507,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return n;
   }
 
-  // ── Black Market (U1 wiring over the restored board + industry blockade) ──
-  const REPAIR_ISO_COST: Purse = { wood: 1, stone: 1, grain: 1, ore: 1 };
+  // ── Black Market: MAP-ONLY sabotage (L9 #224) ────────────────────────────
+  // Two cards act on the WORLD — a Blockade on an industry and a Protest on a
+  // public road — and one defence (Security Forces) turns both away. Nothing
+  // in here reaches into a match-3 board any more.
   /**
    * PP-08: Security Forces are defensive, not sabotage, so they no longer cost
    * Gold. `SECURITY.cost` is declared in the legacy ResKey table
@@ -3348,71 +3538,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const armSecurityFor = (p: PlayerState, until: number) => {
     if (p.i === 0) securityUntil = until; else guestSecurityUntil = until;
   };
-  /** The plant board a seat OWNS (host seat = the quarry board, guest seat =
-   *  the rival plant's board). */
-  const boardOfSeat = (id: string): typeof quarry.board =>
-    id === players[0].id ? quarry.board : rivalQuarry.board;
-  const sabotageFloat = (defenderId: string, text: string, now: number) => {
-    const f = factoryOf(defenderId);
-    if (f) floats.add(text, f.tx, f.ty, { cls: "sabotage", now });
-  };
-  /** The sabotage status of ANY seat's plant — the guest seat's wrapper knows
-   *  its own board; the host seat's is counted straight off its board. */
-  const sabotageStatusOf = (id: string, now: number): RivalStatus => {
-    if (id === players[1].id) return rivalPlant.status(now);
-    let frozen = 0, girders = 0;
-    for (const g of quarry.board.gems()) {
-      if (g.block) girders++;
-      else if (g.hard > 0) frozen++;
-    }
-    return { frozen, girders, smog: quarry.board.fogUntil > now };
-  };
   /**
-   * #111: Gold-priced plant sabotage for ANY attacker. Charges exactly once
-   * (an unaffordable card charges nothing), honours the DEFENDER's Security
-   * Forces (paid either way — the rule the solo raid always kept), lands on
-   * the opponent's plant, and publishes so both clients see the effect now.
+   * L9 (#224): every key the Black Market still answers to — the two map
+   * cards (priced in `SABOTAGE`) plus the material-priced defence. Derived
+   * from the table, so retiring a card is a one-line config change and the
+   * UI, the intents and the rival's raid table all follow.
    */
-  function plantSabotage(attacker: PlayerState, key: "harden" | "block" | "fog"): boolean {
-    const now = performance.now();
-    const price = SABOTAGE[key].gold;
-    if ((attacker.purse.gold ?? 0) < price) { toast(`Needs ${price} Gold.`, "bad"); return false; }
-    const defender = otherSeat(attacker);
-    spend(attacker, { gold: price });
-    if (now < securityOf(defender.id)) {
-      toast(`Security Forces turned the ${SABOTAGE[key].name} away.`, "info");
-      return true;
-    }
-    const ms = key === "harden" ? RIVAL_FROST_MS : key === "block" ? RIVAL_GIRDER_MS : RIVAL_SMOG_MS;
-    if (defender.id === players[1].id) {
-      // The guest plant's expiry clocks (frost melt, girder haul-away) are
-      // booked by its wrapper — attacks on it go THROUGH `rivalPlant`, never
-      // at the raw board, or the melt would never be scheduled.
-      if (key === "harden") { const n = rivalPlant.frost(now); sabotageFloat(defender.id, `❄ ${n} FROZEN`, now); }
-      else if (key === "block") { const n = rivalPlant.girders(now); sabotageFloat(defender.id, `🏗 ${n} GIRDERS`, now); }
-      else { rivalPlant.smog(now); sabotageFloat(defender.id, "🌫 SMOG", now); }
-    } else {
-      // The host plant: same timings, applied straight to the board. Girders
-      // expire through the board's own `blockUntil` sweep; frost cracks the
-      // way it always has when the defender matches through it.
-      const board = quarry.board;
-      if (key === "harden") { board.harden(); sabotageFloat(defender.id, `❄ ${sabotageStatusOf(defender.id, now).frozen} FROZEN`, now); }
-      else if (key === "block") { board.dropBlocks(4, RIVAL_GIRDER_MS, now); sabotageFloat(defender.id, `🏗 ${sabotageStatusOf(defender.id, now).girders} GIRDERS`, now); }
-      else { board.fog(RIVAL_SMOG_MS, now); sabotageFloat(defender.id, "🌫 SMOG", now); }
-    }
-    // The defender hears about it when it is a person on this machine…
-    if (defender.id === players[0].id && isMp()) {
-      toast(`${attacker.name} hit your plant with ${SABOTAGE[key].name}!`, "bad");
-    }
-    // …and the attacker gets the priced receipt (under an intent this is the
-    // line the notice echo carries back to the guest's own screen).
-    const dent = Math.round((1 - plantHealth(sabotageStatusOf(defender.id, now))) * 100);
-    toast(`${SABOTAGE[key].name}: its yield is down ${dent}% for ${ms / 1000}s.`, "good");
-    // PP-14b: push immediately so the other browser sees the effect now, not
-    // on the next 200ms heartbeat.
-    if (isMp()) publishNet(now, true);
-    return true;
-  }
+  const BLACK_MARKET_ACTIONS: ReadonlySet<string> = new Set([...Object.keys(SABOTAGE), "security"]);
 
   /**
    * The shared Black-Market core behind every seat's card. Returns whether
@@ -3428,10 +3560,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     };
     if (key === "bandit") {
       if (!spendGold(SABOTAGE.bandit.gold)) return false;
+      // L9 (#224): Security Forces are the defence against BOTH map cards, so
+      // a guarded defender turns the Blockade away at the door. The hire is
+      // paid either way — the rule the solo raid has always kept, and the
+      // reason the guard is worth buying before the raid lands.
+      const defender = otherSeat(actor);
+      if (now < securityOf(defender.id)) {
+        toast(`Security Forces turned the ${SABOTAGE.bandit.name} away.`, "info");
+        if (isMp()) publishNet(now, true);
+        return true;
+      }
       // TK-008: there is exactly ONE rival per seat, so a Blockade needs no
       // targeting step — auto-route it to the industry that costs the OTHER
       // seat the most yield, whoever is buying.
-      const target = pickBlockadeTarget(eco, otherSeat(actor).id, now);
+      const target = pickBlockadeTarget(eco, defender.id, now);
       if (!target) {
         earn(actor, { gold: SABOTAGE.bandit.gold });   // refund; nothing to hit
         toast("No industry to blockade — gold refunded.", "bad");
@@ -3439,7 +3581,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       }
       target.banditUntil = now + BANDIT_MS;
       const def = INDUSTRY_BY_KEY[target.type];
-      toast(`Blockade set on ${def?.name ?? target.type} — the rival can't harvest it for ${BANDIT_MS / 1000}s.`, "good");
+      // L9 (#224): re-worded against the CLOCK economy — a blockade is not
+      // "no one may harvest" any more (nobody harvests by hand), it is "every
+      // depot holding that industry stops ticking", which is exactly what
+      // `harvesterYield`'s `banditUntil` gate does to the income clock.
+      toast(`Blockade set on ${def?.name ?? target.type} — its depots stop ticking for ${BANDIT_MS / 1000}s.`, "good");
+      if (actor.id === players[0].id) {
+        sfx.play("boom", { gain: 0.65 });   // SFX-01
+        rivalSpeaks("retort", "bandit");
+      }
       if (isMp()) publishNet(now, true);
       return true;
     }
@@ -3458,16 +3608,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         return false;
       }
       pendingProtest = true;
-      toast(`Protest ready — click any public road to block ALL trucks for ${fmtProtestLeft(PROTEST_MS)}.`, "info");
-      return true;
-    }
-    if (key === "harden" || key === "block" || key === "fog") {
-      // ── A1: sabotage hits the OPPONENT's plant, not the buyer's ─────────
-      if (!plantSabotage(actor, key)) return false;
-      if (actor.id === players[0].id) {
-        sfx.play("boom", { gain: key === "fog" ? 0.55 : 0.65 });   // SFX-01
-        rivalSpeaks("retort", key);
-      }
+      toast(`Protest ready — click any public road to stop every depot routed through it for ${fmtProtestLeft(PROTEST_MS)}.`, "info");
       return true;
     }
     if (key === "security") {
@@ -3486,26 +3627,28 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (isMp()) publishNet(now, true);
       return true;
     }
-    if (key === "repair") {
-      const affordable = (Object.entries(REPAIR_ISO_COST) as [Cargo, number][])
-        .every(([k, v]) => (actor.purse[k] ?? 0) >= v);
-      if (!affordable) { toast("Not enough materials for Repair Crew.", "bad"); return false; }
-      spend(actor, REPAIR_ISO_COST);
-      // A repair crew fixes the BUYER's own plant — for a guest that is the
-      // host-side seat-1 board, for the host/solo its own quarry board.
-      const n = boardOfSeat(actor.id).smashBlocks();
-      if (n && actor.id === players[0].id) sfx.play("crack");   // SFX-01: ice and girders giving way
-      toast(n ? `Repair Crew cleared ${n} obstacles.` : "Nothing to repair.", n ? "good" : "info");
-      if (n && isMp()) publishNet(now, true);
-      return true;
-    }
-    toast("Not available in this build.", "info");
+    // L9 (#224): every other key is a RETIRED card — the three that reached
+    // into a match-3 board (Frost Tiles, Iron Girders, Smog Cloud) and the
+    // Repair Crew that existed to undo them. Nothing can dirty a plant board
+    // any more, so a crew that clears frost and girders repairs nothing; the
+    // obstacles that replace them (#225) belong to a tuning session, which
+    // ends by itself. A relayed intent for one of these lands here and is
+    // refused without a charge.
+    toast("That card is no longer on the Black Market.", "info");
     return false;
   }
 
   function buyBlack(key: string) {
     if (phase === "won") {
       toast("The final ledger is closed. Start a rematch to settle another score.", "info");
+      return;
+    }
+    // L9 (#224): the shop's whole inventory, in one place — the two MAP cards
+    // and the defence. A retired key (a stale save's macro, an old console
+    // call, a guest on an older build) is refused HERE, so no intent is ever
+    // relayed for a card the rules no longer have.
+    if (!BLACK_MARKET_ACTIONS.has(key)) {
+      toast("That card is no longer on the Black Market.", "info");
       return;
     }
     // MP-AUDIT: the Black Market is relayed — a guest's card sends an intent
@@ -3528,7 +3671,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         }
         pendingProtest = true;
         net?.sendIntent("blackMarket", { key: "protest" });
-        toast(`Protest ready — click any public road to block ALL trucks for ${fmtProtestLeft(PROTEST_MS)}.`, "info");
+        toast(`Protest ready — click any public road to stop every depot routed through it for ${fmtProtestLeft(PROTEST_MS)}.`, "info");
         return;
       }
       net?.sendIntent("blackMarket", { key });
@@ -3540,20 +3683,65 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   // ── economy + AI clocks ────────────────────────────────────────────────
   let lastHarvest = 0, lastAi = 0;
-  /** Fractional new-loop income retained per depot until it reaches one. */
+  /** Fractional new-loop income retained per depot (either seat) until it
+   *  reaches one whole unit. Depot ids are unique, so one map serves both. */
   const loopCarry = new Map<number, number>();
+  /**
+   * L3 (#217): each Depot's road distance, cached per NETWORK — the route
+   * length in tiles (`depotPathLength`) and the banded factor the clock pays
+   * (`distanceFactorForPath`). Recomputed only when the network moves: the
+   * gate is `netVersion`, which every world change funnels through in
+   * `syncWorld`, so a tick (or a frame's inspector read) is one integer
+   * compare instead of a BFS per Depot. Derived from the track, so — unlike
+   * yield — it needs no wire field and no save field: a guest or a restore
+   * recomputes the same numbers from the same bytes.
+   */
+  const distanceCache = new Map<number, { tiles: number | null; factor: number }>();
+  let distanceNetVersion = -1;
+  function refreshDistanceCache(): void {
+    if (distanceNetVersion === netVersion) return;
+    distanceNetVersion = netVersion;
+    distanceCache.clear();
+    for (const h of eco.harvesters) {
+      const tiles = depotPathLength(eco, h);
+      distanceCache.set(h.id, { tiles, factor: distanceFactorForPath(tiles) });
+    }
+  }
+  /**
+   * L3: this Depot's cached distance — the same numbers the tick multiplies
+   * and the inspector prints. Freshens the cache first, so both read the
+   * network as it stands; the fallback is for an id with no entry, which only
+   * a stale caller can name.
+   */
+  const distanceInfoFor = (id: number): { tiles: number | null; factor: number } => {
+    refreshDistanceCache();
+    return distanceCache.get(id) ?? { tiles: null, factor: distanceFactorForPath(null) };
+  };
   /** A1: Security Forces are on duty until this wall time. */
   let securityUntil = 0;
   /** #111: the guest seat's own Security Forces guard (armed by its hire). */
   let guestSecurityUntil = 0;
   /** A1: when the rival last ran a Black Market raid on the player's plant. */
   let lastRaid = 0;
-  /** The sabotage cards `rivalRaid` knows how to aim at the player's plant. */
-  const RAID_ACTIONS = new Set(["harden", "block", "fog"]);
   /**
-   * PP-07: the fractional remainder of the rival's trickle yield, carried
-   * across ticks so sub-1 rates (Oil Rig 0.4/tick, Gold Mine 0.3/tick) still
-   * pay out over time instead of rounding to zero forever.
+   * L9 (#224): the two MAP cards the rival's raid table plays — the same two
+   * the player can buy, at the same prices. `bandit` is `rivalSabotage`'s
+   * (it auto-targets a district and keeps its own Gold reserve), `protest` is
+   * `rivalRaid`'s. The three board cards this set used to hold are gone.
+   */
+  const RAID_ACTIONS = new Set(["bandit", "protest"]);
+  /**
+   * The income clock — one call every `HARVEST_MS`, host only, `play` only.
+   *
+   *   • new loop (L1b/L1d): BOTH seats are paid by their connected depots,
+   *     `BASE_RATE × depotYield × distanceFactor × transportFactor` per depot,
+   *     with the fractional remainder carried in `loopCarry` (the PP-07 rule:
+   *     a sub-1 rate still pays out over time instead of rounding to zero
+   *     forever). Nothing else pays cargo — the boards and the lorries are
+   *     animation (#234, #235).
+   *   • shipped loop: nobody is paid here at all (AI-03 removed the rival's
+   *     passive trickle); the clock only re-reads the network so both boards'
+   *     token gates follow blockades expiring.
    */
   function economyTick(now: number) {
     // MP-05: a guest runs no economy at all — its cargo, purses and VPs arrive
@@ -3569,40 +3757,67 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // catches everything else (a restored save, a depot built before the
       // redesign). Idempotent: a depot that already has a level is left alone.
       applyRivalTuning();
-      // L1b: the host clocks only the local seat. Connectivity is evaluated
-      // per depot, so removing a road immediately stops that depot's income.
+      // L1b: the host clocks the local seat. L1d (#235): and the rival's too —
+      // both seats earn on the clock through the SAME seams, the same
+      // `harvesterYield` connectivity gate and the same per-depot fractional
+      // carry, so "the rival is paid by its own connected depots" needs no
+      // second rule set. `newLoop` is solo-only (L1a), which is exactly the
+      // game where seat 1 is a machine; in a room the host's guest is a person
+      // and this branch never runs.
+      // Connectivity is evaluated per depot, so removing a road immediately
+      // stops that depot's income — on either seat.
       const rules = difficultyRules();
-      const owner = me.id;
-      const components = buildAllComponents(eco.track, ownerIdOf(eco, owner));
       const locks = industryLocks(eco);
-      for (const depot of eco.harvesters) {
-        if (depot.owner !== owner) continue;
-        // L6 (#220): the cooling pass, on this same line for every difficulty.
-        // `decayYield` returns null when the row's `decayRate` is 0 (Easy,
-        // Normal) or the Depot has no surplus above its floor left to lose, so
-        // "no decay" and "decaying" are ONE codepath with different numbers —
-        // which is what the acceptance asks a unit test to prove by toggling
-        // the flags on a live game. It runs before the pay, so the level the HUD
-        // printed is the level this tick paid at; it runs on every Depot the
-        // seat owns (a disconnected one cools too, or cutting a road would
-        // freeze a fresh tune); and its result is stored back on the Depot
-        // record, which is what the snapshot and the autosave already carry.
-        // The rival's cooling is #229's business (L14) — this loop only ever
-        // touches the seat the clock pays.
-        const cooled = decayYield(depot.yield, rules);
-        if (cooled !== null) depot.yield = cooled;
-        const result = harvesterYield(eco, components, locks, depot, now);
-        const cargoes = Object.entries(result.yields) as [Cargo, number][];
-        if (!result.serviced || !cargoes.length) continue;
-        const factor = BASE_RATE * depotYield(depot) * distanceFactor(depot) * transportFactor(depot);
-        const total = cargoes.reduce((sum, [, amount]) => sum + amount, 0) * factor
-          + (loopCarry.get(depot.id) ?? 0);
-        const whole = Math.floor(total);
-        loopCarry.set(depot.id, total - whole);
-        if (whole > 0) {
-          // A depot normally holds one industry/cargo; use the first cargo for
-          // the integer credit and retain any sub-unit remainder per depot.
-          earn(me, { [cargoes[0][0]]: whole } as Purse);
+      for (const seat of [me, rival]) {
+        const owner = seat.id;
+        const components = buildAllComponents(eco.track, ownerIdOf(eco, owner));
+        for (const depot of eco.harvesters) {
+          if (depot.owner !== owner) continue;
+          // L6 (#220): the cooling pass, on this same line for every difficulty.
+          // `decayYield` returns null when the row's `decayRate` is 0 (Easy,
+          // Normal) or the Depot has no surplus above its floor left to lose, so
+          // "no decay" and "decaying" are ONE codepath with different numbers —
+          // which is what the acceptance asks a unit test to prove by toggling
+          // the flags on a live game. It runs before the pay, so the level the
+          // HUD printed is the level this tick paid at; it runs on every Depot
+          // the seat owns (a disconnected one cools too, or cutting a road would
+          // freeze a fresh tune); and its result is stored back on the Depot
+          // record, which is what the snapshot and the autosave already carry.
+          // Only the player's Depots cool: `DIFFICULTY_RULES` is the human's
+          // economy axis, and the rival's levels are its `tuningSkill` preset —
+          // letting a difficulty row shave the AI would quietly make Hard an AI
+          // handicap instead of a player challenge (and Easy a buff).
+          if (seat === me) {
+            const cooled = decayYield(depot.yield, rules);
+            if (cooled !== null) depot.yield = cooled;
+          }
+          const result = harvesterYield(eco, components, locks, depot, now);
+          const cargoes = Object.entries(result.yields) as [Cargo, number][];
+          if (!result.serviced || !cargoes.length) continue;
+          // L9 (#224): a Protest on this depot's route stops its ticks for as
+          // long as the crowd stands — the clock-economy half of the card, and
+          // the same fact the halted lorry shows on the map. It applies to
+          // BOTH seats (#235 clocks them both): the rival's own routes can be
+          // protested by the player, and the player's by the rival's raid,
+          // and `protestedDepot` reads each owner's own Security guard.
+          // (A Blockade is already inside `harvesterYield`: a blockaded
+          // industry yields nothing, so its depot falls out at the
+          // `cargoes.length` test above.)
+          if (protestedDepot(depot, now, components)) continue;
+          // L3 (#217): the road distance behind the tick — read off the
+          // per-network cache (one BFS per Depot per network change, never
+          // per tick), so a far Depot visibly earns less than a near one.
+          const factor = BASE_RATE * depotYield(depot) * distanceInfoFor(depot.id).factor * transportFactor(depot);
+          const total = cargoes.reduce((sum, [, amount]) => sum + amount, 0) * factor
+            + (loopCarry.get(depot.id) ?? 0);
+          const whole = Math.floor(total);
+          loopCarry.set(depot.id, total - whole);
+          if (whole > 0) {
+            // A depot normally holds one industry/cargo; use the first cargo
+            // for the integer credit and retain any sub-unit remainder per
+            // depot (one map serves both seats: depot ids are unique).
+            earn(seat, { [cargoes[0][0]]: whole } as Purse);
+          }
         }
       }
       return;
@@ -3938,34 +4153,35 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const every = skill().raidEveryMs;
     if (!every) return;
     if (now - lastRaid < every) return;
+    // L9 (#224): the raid plays the SAME card the player can buy, at the SAME
+    // price — a Protest on a public road the player's own routes run through.
+    // (The Blockade half of the raid table is `rivalSabotage`, immediately
+    // below: it has its own targeting and its own Gold reserve.) Nothing here
+    // touches a match-3 board any more; the three cards that did are gone.
+    if (!RAID_ACTIONS.has("protest")) return;            // card retired
+    const def = SABOTAGE.protest;
+    if ((rival.purse.gold ?? 0) < def.gold) return;      // no Gold, no raid
+    // A protest with nowhere to stand is not a raid — the clock is left
+    // un-stamped so it tries again next turn rather than burning the window.
+    const spot = pickProtestTarget("you", now);
+    if (!spot) return;
     lastRaid = now;
-    // VP-01: only the cards this function can actually play. `bandit` is
-    // `rivalSabotage`'s business (it targets a district, not the plant) and
-    // `security` is a defender's card — and because the hire is paid before the
-    // effect, a rival holding exactly 5 Gold used to burn it on a `hit` that did
-    // nothing. "Affordable" is not the same question as "playable".
-    const keys = (Object.keys(SABOTAGE) as RivalryTactic[]).filter(
-      (k) => RAID_ACTIONS.has(k) && (rival.purse.gold ?? 0) >= SABOTAGE[k].gold,
-    );
-    if (!keys.length) return;                     // no Gold, no raid
-    const key = choice(keys);
-    const def = SABOTAGE[key];
     spend(rival, { gold: def.gold });             // the hire is paid either way
     if (now < securityUntil) {
       toast(`Security Forces turned the rival's ${def.name} away.`, "info");
-      rivalSpeaks("thwarted", key);
+      rivalSpeaks("thwarted", "protest");
       return;
     }
-    const hit = (text: string) => {
-      const f = factoryOf("you");
-      if (f) floats.add(text, f.tx, f.ty, { cls: "sabotage", now });
-    };
-    if (key === "harden") { quarry.board.harden(); hit("❄ 7 FROZEN"); }
-    else if (key === "block") { quarry.board.dropBlocks(4, BLOCK_MS, now); hit("🏗 4 GIRDERS"); }
-    else if (key === "fog") { quarry.board.fog(FOG_MS, now); hit("🌫 SMOG"); }
-    else return;
-    toast(`The rival hit your plant with ${def.name}!`, "bad");
-    rivalSpeaks("attack", key);
+    const [tx, ty] = spot;
+    protests.set(tIdx(tx, ty), { tx, ty, until: now + PROTEST_MS, owner: rival.id });
+    floats.add("✊ PROTEST", tx, ty, { cls: "sabotage", now });
+    toast(
+      `The rival staged a protest on the public road — every depot routed through it stops for ${fmtProtestLeft(PROTEST_MS)}.`,
+      "bad",
+    );
+    ui.feed(`Rival stages a protest — the road is shut for ${fmtProtestLeft(PROTEST_MS)}`, rival.name);
+    rivalSpeaks("attack", "protest");
+    if (isMp()) publishNet(now, true);
   }
 
   /**
@@ -4051,6 +4267,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   function rivalSabotage(now: number) {
     // AI-01: the easy rival leaves your industries alone (`skill().blockades`).
     if (!skill().blockades) return;
+    if (!RAID_ACTIONS.has("bandit")) return;              // card retired
     const price = SABOTAGE.bandit.gold;
     // VP-01: `RIVAL_GOLD_RESERVE` exists so a rival that blocks and then cannot
     // expand has not traded a point of tempo for none. When the LEADER is one
@@ -4062,10 +4279,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const target = pickBlockadeTarget(eco, "you", now);
     if (!target) return;
     if (!spend(rival, { gold: price })) return;
+    // L9 (#224): the guard covers Blockades too — Security Forces are the one
+    // answer to both map cards, and the rival pays for the attempt either way
+    // (the same rule `rivalRaid` and `buyBlackFor` keep).
+    if (now < securityUntil) {
+      toast(`Security Forces turned the rival's ${SABOTAGE.bandit.name} away.`, "info");
+      rivalSpeaks("thwarted", "bandit");
+      return;
+    }
     target.banditUntil = now + BANDIT_MS;
     const def = INDUSTRY_BY_KEY[target.type];
     floats.add("⛓ BLOCKADED", target.tx, target.ty, { cls: "sabotage", now });
-    toast(`The rival blockaded your ${def?.name ?? target.type} — no harvest there for ${BANDIT_MS / 1000}s.`, "bad");
+    toast(`The rival blockaded your ${def?.name ?? target.type} — its depots stop ticking for ${BANDIT_MS / 1000}s.`, "bad");
     rivalSpeaks("attack", "bandit");
   }
 
@@ -4279,6 +4504,29 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    */
   const rivalSabotageNow = (): RivalSabotage => rivalPlant.board.sabotageState(performance.now());
 
+  /**
+   * L9 (#224): the live Blockades, for the wire. Industries are seed-derived
+   * and never sent, so only the EXPIRY travels — keyed by the industry id both
+   * clients already agree on. Without this a guest whose depots were
+   * blockaded would simply stop earning with nothing on its map to say why
+   * (the Blockade is half the shop now, so that gap is no longer cosmetic).
+   */
+  const blockadesWire = (now = performance.now()) =>
+    grid.industries
+      .filter((ind) => ind.banditUntil > now)
+      .map((ind) => ({ id: ind.id, until: ind.banditUntil }));
+
+  /**
+   * GUEST: adopt the host's Blockade set wholesale. The host is authoritative
+   * (§9), so an industry absent from the list is NOT blockaded — a lifted
+   * blockade has to clear on the guest too, or its map keeps showing a
+   * stoppage the host has already forgotten.
+   */
+  function applyBlockadesWire(list: { id: number; until: number }[]): void {
+    const byId = new Map(list.map((b) => [b.id, b.until]));
+    for (const ind of grid.industries) ind.banditUntil = byId.get(ind.id) ?? 0;
+  }
+
   const inSetup = () => phase === "setup-factory" || phase === "setup-harvester";
 
   /**
@@ -4339,6 +4587,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       rivalSabotage: rivalSabotageNow(),
       market: { offers: market.ctx.offers.map((o) => ({ id: o.id, from: o.from, give: o.give, giveN: o.giveN, want: o.want, wantN: o.wantN, born: o.born })), offerSeq: market.ctx.offerSeq },
       protests: protestsWire,
+      blockades: blockadesWire(),
       trucks: trucksWire,
       cars: carsWire,
       rail: railWire(true),
@@ -4405,6 +4654,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       rivalSabotage: rivalSabotageNow(),
       market: { offers: market.ctx.offers.map((o) => ({ id: o.id, from: o.from, give: o.give, giveN: o.giveN, want: o.want, wantN: o.wantN, born: o.born })), offerSeq: market.ctx.offerSeq },
       protests: protestsWire,
+      blockades: blockadesWire(),
       trucks: trucksWire,
       cars: carsWire,
       rail: railWire(),
@@ -4529,6 +4779,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         protests.set(tIdx(pw.x, pw.y), { tx: pw.x, ty: pw.y, until: pw.until, owner: pw.owner });
       }
     }
+    // L9 (#224): …and the Blockades, the other half of the map shop. A full
+    // state always says what the host's blockades ARE (absent = none).
+    applyBlockadesWire(applied.blockades ?? []);
     // vehicles
     if (applied.trucks) {
       (trucks as any).trucks = applied.trucks.map((t) => ({ ...t, factory: [...t.factory] as [number, number], route: t.route.map((r) => [...r] as [number, number]), segFast: t.segFast ? [...t.segFast] : [] }));
@@ -4633,6 +4886,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       for (const pw of (msg as any).protests) {
         protests.set(tIdx(pw.x, pw.y), { tx: pw.x, ty: pw.y, until: pw.until, owner: pw.owner });
       }
+      worldDirty = true;
+    }
+    // L9 (#224): a delta carries the Blockade set whenever it carries any
+    // world state, so an expiry the host swept is swept here too.
+    if ((msg as any).blockades) {
+      applyBlockadesWire((msg as any).blockades);
       worldDirty = true;
     }
     if ((msg as any).trucks) {
@@ -4868,8 +5127,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           // #111: the SAME Black-Market core a host/solo click runs — one
           // path for spending, eligibility, feedback and effects, so a guest
           // purchase cannot drift from a host purchase. The core targets the
-          // seat OPPOSITE the attacker: a guest's Frost Tiles freeze the
-          // HOST's plant, never the guest's own.
+          // seat OPPOSITE the attacker: a guest's Blockade stops the HOST's
+          // depots, never the guest's own.
+          //
+          // L9 (#224): the core also owns the "that card is retired" refusal,
+          // so an older guest build relaying `harden` / `block` / `fog` /
+          // `repair` is answered rather than obeyed — and charged nothing.
           buyBlackFor(p, key);
         }
       } else {
@@ -5298,7 +5561,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           : "the room is closing their seat…");
     } else if (pendingProtest) {
       bannerKey = "protest-ready";
-      banner = `Protest ready — click a public road to stop ALL trucks for ${fmtProtestLeft(PROTEST_MS)} (Esc cancels)`;
+      banner = `Protest ready — click a public road to stop every depot routed through it for ${fmtProtestLeft(PROTEST_MS)} (Esc cancels)`;
     }
 
     // #187: the placement hint — ONE slim line, and only what the Build button
@@ -5405,6 +5668,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             `holding ${held} industr${held === 1 ? "y" : "ies"}` +
             (lost > 0 ? ` · ${lost} reached first by another Depot` : "") + `<br>` +
             `link: ${conn.kind ?? "<i>none</i>"} ×${conn.multiplier || 0}`;
+          // L3 (#217): the road distance the new-loop clock pays this Depot
+          // by — the route length in tiles and the banded factor, the same
+          // numbers the tick multiplies. The shipped loop has no distance
+          // rule, so it prints nothing rather than a number that does nothing.
+          if (newLoop) {
+            const d = distanceInfoFor(h.id);
+            const band = distanceBandForPath(d.tiles);
+            info += `<br>` + (d.tiles === null || band === null
+              ? `distance: <i>no route</i>`
+              : `distance: ${d.tiles} tiles · ×${d.factor} (${band})`);
+          }
         }
       } else if (ref && ref.kind === "factory") {
         const owner = (hover?.ref as { owner?: string } | null)?.owner ?? "";
@@ -6184,12 +6458,29 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   }
 
   /**
+   * The lorry reservation a board's token clock has to keep its hands off.
+   *
+   * Shipped loop: the cargoes this seat's lorries carry — an arrival mints
+   * their tokens, so the clock must not spawn them too (that was the A1
+   * double-pay). New loop (L1c/L1d, #234/#235): no arrival mints anything on
+   * either seat, so there is nothing to reserve — and if the reservation
+   * stayed, the spawn clock would go quiet for exactly the connected cargoes
+   * and the boards would have no tokens to match. The player's board only ever
+   * comes up for a tuning session (which fills its own plate), but the rival's
+   * plant is the one you can WATCH, and it still banks combo Gold on the
+   * matches its tokens allow (#227 owns Gold) — so its clock keeps feeding it.
+   */
+  const truckServedCargos = (now: number, owner: "you" | "ai"): Cargo[] =>
+    (newLoop ? [] : truckCargos(trucks.trucks, now, owner));
+
+  /**
    * Turn every lorry arrival since the last frame into a delivery: one token
    * of that depot's cargo on the board, one "+N" over the Factory.
    *
    * L1c (#234): with the new loop on your seat's arrivals are animation only —
    * the lorry still drives its route, but it lands no token and no "+N" (the
-   * clock pays the cargo now). See the branch inside.
+   * clock pays the cargo now). L1d (#235) made that BOTH seats: on the new
+   * loop no lorry delivery pays anybody. See the branches inside.
    */
   function collectDeliveries(t: number) {
     // MP-05: a lorry reaching a factory on a guest's screen is animation, not
@@ -6207,12 +6498,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // frame keeps driving them (they leave, arrive and turn around exactly
         // as before) but an arrival mints no token and credits nothing: the
         // clock pays. Their cargoes stay in `seenDeliveries` above so the
-        // ledger cannot drift, and the RIVAL's lane below is untouched (#235
-        // gives the rival the same clock on its own ticket).
+        // ledger cannot drift, and the RIVAL's lane below now says the same
+        // thing (#235 gave the rival the same clock).
         if (newLoop) continue;
         for (let i = 0; i < due; i++) deliverLoad(truck, t);
       } else if (truck.ownerId === rival.i + 1) {
         // AI-02: the rival's lorries DO feed its game — see rivalDeliverLoad.
+        // L1d (#235): …on the shipped loop. Under the new loop the rival earns
+        // on the clock, so its arrivals are animation exactly like the
+        // player's: the lorry still drives, but it mints no token, floats no
+        // "+N" and credits nothing. The ledger above is written either way, so
+        // the arrival count cannot drift.
+        if (newLoop) continue;
         for (let i = 0; i < due; i++) rivalDeliverLoad(truck, t);
       }
     }
@@ -6282,6 +6579,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // RAIL-04 (#178): the railway rides the save — a refresh must not take a
       // built line, its platforms or its train with it.
       rail: railToWire(rail),
+      // L1e (#236): which loop this world earns under, and what its clock had
+      // banked but not yet paid. Depot yield levels ride `eco.harvesters`
+      // below — the record they belong to — so they need no field here.
+      loop: newLoop,
+      loopCarry: loopCarryToWire(loopCarry),
       eco: { harvesters: eco.harvesters, factories: eco.factories },
       players: players.map((p) => ({
         purse: p.purse as unknown as Record<string, number>,
@@ -6302,8 +6604,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   let saveIv = 0;
   let onPageHide: (() => void) | null = null;
 
+  /**
+   * Write the payload now.
+   *
+   * `saveHeldBack` (L1e, #236) joins `savesOff` and `restartArmed` here: a boot
+   * that refused a new-loop save must not overwrite it, or the "open with
+   * ?loop=new" note would point at a world this fresh boot had already
+   * replaced. The player keeps the save they came back for; this session
+   * simply is not the one that owns the slot.
+   */
   function saveNow() {
-    if (disposed || restartArmed || savesOff) return;
+    if (disposed || restartArmed || savesOff || saveHeldBack) return;
     try {
       localStorage.setItem(saveKey, JSON.stringify(collectSave()));
     } catch { /* private mode / quota — saving must never break the game */ }
@@ -6331,6 +6642,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // over (planTrucks, syncWorld, the AI...)
     eco.harvesters.length = 0; eco.harvesters.push(...d.eco.harvesters);
     eco.factories.length = 0; eco.factories.push(...d.eco.factories);
+    // L1e (#236): the clock's banked remainders come back with their depots,
+    // so the first tick after a Continue pays the rate the player was earning
+    // instead of restarting every depot from zero (a visible dip, once, every
+    // reload). Yields ride the harvesters pushed above. An old save has no
+    // `loopCarry`, and this reads as the empty map it always was.
+    loopCarry.clear();
+    for (const [id, rem] of savedLoopCarry(d)) loopCarry.set(id, rem);
     for (let i = 0; i < players.length && i < d.players.length; i++) {
       Object.assign(players[i].purse, d.players[i].purse);
       players[i].freeTrack = d.players[i].freeTrack;
@@ -7004,6 +7322,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         loopToastPending = false;
         toast("The new loop is sandbox-only for now.", "info");
       }
+      // L1e (#236): a save this boot refused for want of the flag says so, on
+      // the same terms as the note above — nothing covering the map, and one
+      // line naming the way back in. The save is still on the shelf (this
+      // boot does not write over it), so the instruction is true when read.
+      if (saveToastPending && !loading.active && !storyView && !tutorialView) {
+        saveToastPending = false;
+        toast(NEW_LOOP_SAVE_TOAST, "info");
+      }
       // RV-01: the lorries move in TILE units per millisecond, so the frame
       // needs a real dt (capped — a background tab must not teleport them).
       const dt = Math.min(100, Math.max(0, t - lastFrameT));
@@ -7033,8 +7359,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           // AI-03: the replan no longer resets driving lorries — see
           // planTrucksTrucksMerge just above trucksTick. seenDeliveries is
           // keyed by the stable depot id, so the ledger survives every replan.
-          quarry.setTruckServed(truckCargos(trucks.trucks, t));
-          rivalQuarry.setTruckServed(truckCargos(trucks.trucks, t, "ai"));
+          quarry.setTruckServed(truckServedCargos(t, "you"));
+          rivalQuarry.setTruckServed(truckServedCargos(t, "ai"));
           // a vanished truck must not linger as a ghost on the structures layer
           renderer?.setWorld(world);
         }
@@ -7321,6 +7647,30 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         yield: h.yield ?? null, tuneTier: h.tuneTier ?? null, tier: depotTier(h),
       }));
     },
+    /**
+     * L3 (#217): every depot's road distance — the route length in tiles to
+     * its nearest owned plant (`null` = no road route) and the banded factor
+     * the L1b clock pays it by. Read off the same cache the tick and the
+     * inspector use, so a test asserts the numbers the player is paid and
+     * shown.
+     */
+    get depotDistances() {
+      return eco.harvesters.map((h) => ({ id: h.id, owner: h.owner, ...distanceInfoFor(h.id) }));
+    },
+    /** L1e (#236): the income the clock has banked but not yet paid, per
+     *  depot — exactly what the save's `loopCarry` carries, so a round-trip
+     *  test reads the live map on one side and the payload on the other. */
+    get loopCarries() {
+      return [...loopCarry.entries()].map(([id, carry]) => ({ id, carry }));
+    },
+    /** L1e (#236): the autosave writer's twin — writes the payload NOW, the
+     *  same call the 5-second interval and `pagehide` make, including its
+     *  refusals (a held-back save is not written, so the slot keeps what it
+     *  had and a test can assert that by reading the raw string). */
+    saveNow: () => { saveNow(); },
+    /** L1e (#236): true when this boot found a new-loop save it could not
+     *  restore and is holding the slot for the boot that can. */
+    get saveHeldBack() { return saveHeldBack; },
     /** L4 (#218): the rival's tuning level sweep, on demand — the same call an
      *  AI turn makes, for tests that raise a rival depot by hand. */
     rivalTuning: () => { applyRivalTuning(); },
@@ -7345,8 +7695,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         trucks.trucks = planTrucksTrucksMerge(trucks.trucks, planTrucks(eco));
         cars.cars = planCars(track, grid, cars.cars, carCount, seed);
         trucksDirty = false;
-        quarry.setTruckServed(truckCargos(trucks.trucks, now));
-        rivalQuarry.setTruckServed(truckCargos(trucks.trucks, now, "ai"));
+        quarry.setTruckServed(truckServedCargos(now, "you"));
+        rivalQuarry.setTruckServed(truckServedCargos(now, "ai"));
       }
       tickTrucks(trucks, dtMs, protests.size > 0 ? new Set(protests.keys()) : undefined);
       tickCars(cars, dtMs, track, grid, seed);
@@ -7384,6 +7734,31 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      *  and prove it crosses the wire (buyBlack refuses on a guest, exactly as
      *  the click path does). */
     buyBlack: (key: string) => buyBlack(key),
+    /**
+     * L9 (#224): the same Black-Market core, run as a NAMED SEAT — the twin a
+     * test needs to arm the rival's Security Forces (or to buy its cards) the
+     * way the shared path does, rather than poking `securityUntil` from
+     * outside. Seat 0 is you, seat 1 the rival/guest; solo/host only, exactly
+     * like every other write twin here.
+     */
+    buyBlackFor: (seat: number, key: string) => {
+      if (isGuest()) return false;
+      const p = players[seat === 1 ? 1 : 0];
+      return buyBlackFor(p, key);
+    },
+    /**
+     * L9 (#224): the rival's raid clock, forced — both halves of its raid
+     * table (`rivalRaid` stages the Protest, `rivalSabotage` sets the
+     * Blockade) run right now instead of on `RAID_EVERY`. The cadence gate is
+     * the only thing skipped; targeting, pricing, the Security check and the
+     * feedback are the live ones a real raid uses.
+     */
+    rivalRaidNow: (now = performance.now()) => {
+      if (isGuest()) return;
+      lastRaid = -Infinity;
+      rivalRaid(now);
+      rivalSabotage(now);
+    },
     /** A1: the map floats currently on screen (deliveries + sabotage marks). */
     floats,
     /** NAMES: the map's name-tag layer (industries, towns, plants, depots). */
@@ -7396,6 +7771,31 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     get panKeys() { return [...panKeys]; },
     /** Refresh the reachable set now (spawn tokens for newly reached cargo). */
     refreshQuarry: (now = performance.now()) => quarry.refresh(now),
+    /**
+     * The twin of what every build and demolish does after it commits: rescore
+     * the board, mark the lorries dirty and re-read BOTH seats' reach. A
+     * harness that hands a seat a network by pushing records (the rival's
+     * corridor in #235's fixtures) has no click to trigger it, and
+     * `refreshQuarry` above only ever re-reads the LOCAL seat's.
+     */
+    rescore: () => rescoreNow(),
+    /**
+     * L3 (#217): the twin of what every placement commits alongside the
+     * rescore — re-sync the renderer's world from the economy. A harness
+     * that hands a seat a network by pushing records has no click to trigger
+     * it, and hover/pick can only see a depot the renderer knows about.
+     */
+    syncWorld: () => syncWorld(),
+    /**
+     * L3 (#217): center the camera on a tile — the test twin of panning.
+     * Picks only hit sprites the renderer drew, and it draws the visible
+     * range, so a harness reads a far depot the way a player does: pan
+     * there first, then hover.
+     */
+    centerOn: (tx: number, ty: number) => {
+      cam = centerOnTile(cam, tx, ty);
+      renderer?.setCamera(cam);
+    },
     /** Story test twin of the player's first successful Oil harvest. */
     firstOilHarvest: () => onFirstOilHarvest(),
     /** Story test twin of the idle wire: one Torvin saying / dad-joke exchange

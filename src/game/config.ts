@@ -81,8 +81,9 @@ export function mulberry32(seed: number) {
 // and the RNG helpers above.
 //
 // NOT live, deliberately kept: the hex-era rule tables below (TileKey/TILES/
-// TILE_BAG, COSTS, SABOTAGE/SECURITY, VP, REPAIR_COST, the hex geometry
-// constants, the sabotage timers). Nothing references them since J2 deleted
+// TILE_BAG, COSTS, VP, REPAIR_COST, the hex geometry constants). SABOTAGE,
+// SECURITY, BANDIT_MS, PROTEST_MS and RAID_EVERY, by contrast, ARE live: the
+// iso Black Market reads them directly (L9 / #224). Nothing references them since J2 deleted
 // `hexmap.ts`/`actions.ts`/`state.ts`. They stay because sabotage is still a
 // settled design decision (`src/iso/config.ts`, decision 5) and re-tabling it
 // from scratch would be worse than carrying the numbers. Prune with a ticket,
@@ -152,22 +153,41 @@ export const COSTS: Record<string, { cost: Partial<Record<ResKey, number>>; vp: 
  * keeps the value honest anyway (10) in case anything else ever reads it.
  */
 export const VP = { target: 10 };
+/**
+ * RETIRED by L9 (#224): the Repair Crew's price. The crew existed to undo the
+ * three board cards; with nothing able to dirty a plant board there is nothing
+ * to repair. Kept (not pruned) on the same terms as the rest of this table —
+ * see the header note — because a "clear your own obstacles" action is a
+ * plausible tuning-session upgrade (#225) and the numbers were play-tested.
+ */
 export const REPAIR_COST: Partial<Record<ResKey, number>> = { wood: 1, brick: 1, wheat: 1, ore: 1 };
 
 /**
- * A1: `target` names WHO the action lands on, and the three board actions now
- * mean it — they used to fire into the buyer's own board. Everything here is
- * aimed at the rival; Repair Crew and Security Forces (below) are the two
- * actions you buy for yourself.
+ * A1: `target` names WHO the action lands on.
+ *
+ * L9 (#224): the Black Market is MAP-ONLY sabotage now. The three cards that
+ * reached into a match-3 board (Frost Tiles, Iron Girders, Smog Cloud) are
+ * gone from the shop, the rival's raid table, the guest intents and the HUD —
+ * frost and girders come back as tuning-session obstacles set by difficulty
+ * (#225), which is where a board obstacle belongs once the board is a bounded
+ * session rather than an always-on machine.
+ *
+ * What is left are the two cards that act on the WORLD, re-defined against the
+ * clock economy (trucks are cosmetic after L7, so "stops the trucks" is no
+ * longer a mechanic — "stops the income ticks" is):
+ *
+ *   bandit  (Blockade)  the targeted industry's depots stop ticking for 45s
+ *   protest (Protest)   depots whose road route crosses the protested tile
+ *                       stop ticking for 2:00 (and their lorries visibly halt)
+ *
+ * Security Forces (below) is the defence against BOTH, and the only other
+ * thing in the panel.
  */
 export const SABOTAGE: Record<string, {
   name: string; gold: number; target: "tile" | "player"; desc: string;
 }> = {
-  bandit: { name: "Blockade",     gold: 5, target: "tile",   desc: "Auto-blockades the rival's busiest industry for 45s — no one may harvest it." },
-  harden: { name: "Frost Tiles",  gold: 5, target: "player", desc: "Freeze 7 gems in the RIVAL's plant — its yield drops until the ice melts (45s)." },
-  block:  { name: "Iron Girders", gold: 9, target: "player", desc: "Drop 4 immovable girders into the RIVAL's plant for 60s." },
-  fog:    { name: "Smog Cloud",   gold: 7, target: "player", desc: "Smog the RIVAL's plant for 30s — no swaps, and half yield while it hangs." },
-  protest: { name: "Protest",     gold: 6, target: "tile",   desc: "Stage a protest on any public road for 2:00 — ALL trucks stop and cannot pass, yours included." },
+  bandit: { name: "Blockade",     gold: 5, target: "tile",   desc: "Auto-blockades the rival's busiest industry for 45s — every depot holding it stops ticking." },
+  protest: { name: "Protest",     gold: 6, target: "tile",   desc: "Stage a protest on any public road for 2:00 — every depot whose route crosses it stops ticking, yours included." },
 };
 
 /**
@@ -176,10 +196,14 @@ export const SABOTAGE: Record<string, {
  * Stone = basic infrastructure). Declared in the legacy ResKey table like
  * REPAIR_COST (`wheat` maps to the grain cargo, `brick` to stone); Gold is
  * reserved for Black Market sabotage and pays for nothing else.
+ *
+ * L9 (#224): the guard covers the two cards that still exist — a Blockade
+ * bought against a guarded player is turned away at the door, and a protest
+ * never stops a guarded player's depots ticking. (Smog no longer exists.)
  */
 export const SECURITY = {
   cost: { wheat: 2, brick: 1 } as Partial<Record<ResKey, number>>,
-  ms: 90000, name: "Security Forces", desc: "Hire guards for 90s — immune to Blockade & Smog Cloud.",
+  ms: 90000, name: "Security Forces", desc: "Hire guards for 90s — immune to Blockade & Protest.",
 };
 export const TAX_EVERY_ROUNDS = 6;
 
@@ -195,5 +219,7 @@ export const BANDIT_MS = 45000;
 /** How long a Black Market protest holds its public road: 2 minutes. */
 export const PROTEST_MS = 120000;
 export const RAID_EVERY = 120000;
-export const FOG_MS = 30000;
-export const BLOCK_MS = 120000;
+// L9 (#224): `FOG_MS` and `BLOCK_MS` retired with the cards they timed (Smog
+// Cloud and Iron Girders). `Board.dropBlocks`/`Board.fog` still take an `ms`
+// argument and keep their own defaults, so the tuning-session obstacles (#225)
+// can choose durations per difficulty rather than inheriting a shop's.

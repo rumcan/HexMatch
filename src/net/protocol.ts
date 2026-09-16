@@ -171,6 +171,13 @@ export interface DeltaMsg {
   market?: Snapshot["market"];
   /** MP-AUDIT: protest roadblocks */
   protests?: Snapshot["protests"];
+  /**
+   * L9 (#224): live industry Blockades (id + expiry). Carried on the delta
+   * like the protests are — the Black Market is map sabotage only now, so a
+   * Blockade is half the shop and the seat it lands on has to SEE it. Not
+   * seat-mirrored: industry ids are global and seed-derived.
+   */
+  blockades?: Snapshot["blockades"];
   /** MP-AUDIT: vehicle presentation (trucks + ambient cars) */
   trucks?: Snapshot["trucks"];
   cars?: Snapshot["cars"];

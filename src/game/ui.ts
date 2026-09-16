@@ -23,7 +23,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import {
   CELL, RES, OFFER_LIFE,
-  SABOTAGE, SECURITY, REPAIR_COST, type ResKey,
+  SABOTAGE, SECURITY, type ResKey,
 } from "./config";
 import { BANK_RATE, MAX_OFFERS } from "./trade";
 // VP-01: the victory numbers come from the iso config, NOT from the legacy
@@ -369,7 +369,11 @@ export interface OriginalUi {
   rivalQuip: (beats: readonly UiRivalryBeat[]) => void;
   toast: (text: string, kind?: "good" | "bad" | "info" | "danger" | "success") => void;
   fx: (type: FxType, r: number, c: number, text?: string) => void;
-  popup: (gains: Partial<Record<ResKey, number>>, label: string) => void;
+  /**
+   * `score` (L12 #227): the new loop's readout — the pass's session SCORE
+   * instead of cargo gains. The old loop never passes it.
+   */
+  popup: (gains: Partial<Record<ResKey, number>>, label: string, score?: number) => void;
   /**
    * PP-14b: the board paused on a cross and is waiting for the player's picks.
    * `kind` names the shape (holy 3×4 → 6 picks, broken 3×3 → 3 picks); show
@@ -426,19 +430,15 @@ const h = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, html?: s
 
 const costStr = (cost: Partial<Record<Cargo, number>>) => costMarkup(cost);
 
-/** Repair Crew numbers are still declared in the old ResKey table — map them. */
-const REPAIR_ISO: Partial<Record<Cargo, number>> = {
-  wood: REPAIR_COST.wood ?? 0,
-  stone: REPAIR_COST.brick ?? 0,
-  grain: REPAIR_COST.wheat ?? 0,
-  ore: REPAIR_COST.ore ?? 0,
-};
-
 /**
  * PP-08: Security Forces are DEFENSIVE, not sabotage, so they were repriced
- * from Gold to materials (`SECURITY.cost`, legacy ResKey table — same shape
- * as REPAIR_COST). `wheat`→grain, `brick`→stone, the same mapping Repair Crew
- * uses. Gold is reserved for Black Market sabotage and pays for nothing else.
+ * from Gold to materials (`SECURITY.cost`, legacy ResKey table).
+ * `wheat`→grain, `brick`→stone. Gold is reserved for Black Market sabotage
+ * and pays for nothing else.
+ *
+ * L9 (#224): Security Forces are the panel's ONLY non-Gold row now — Repair
+ * Crew went with the three board cards it existed to undo (nothing can frost,
+ * girder or smog a plant any more), so `REPAIR_COST` has no reader here.
  */
 const SECURITY_ISO: Partial<Record<Cargo, number>> = {
   grain: SECURITY.cost?.wheat ?? 0,
@@ -644,7 +644,10 @@ export function createOriginalUi(
   const sp = h("div", "panel grow");
   sp.appendChild(h("div", "panel-title", "Black Market"));
   // PP-08: the standing currency rule, stated right where Gold is spent.
-  sp.appendChild(h("div", "pane-note gold-rule", `${cargoIconHtml("gold")} ${GOLD_RULE} Construction and trade never touch it.`));
+  // L9 (#224): …and what the shop actually sells now — map sabotage. Nothing
+  // in this panel reaches a match-3 board any more.
+  sp.appendChild(h("div", "pane-note gold-rule",
+    `${cargoIconHtml("gold")} ${GOLD_RULE} Construction and trade never touch it. Map sabotage only — nothing here touches a plant board.`));
   const sabList = h("div", "sab-list");
   sp.appendChild(sabList);
 
@@ -1084,15 +1087,6 @@ export function createOriginalUi(
     sb.onclick = () => hooks.onBlackAction("security");
     sabList.appendChild(sb);
 
-    const afford = (Object.entries(REPAIR_ISO) as [Cargo, number][])
-      .every(([k, v]) => (me.res[k] ?? 0) >= v);
-    const rb = h("button", "sab-btn repair-btn" + (afford ? "" : " disabled"));
-    rb.innerHTML = `<div class="sab-top"><b>🔧 Repair Crew</b><span class="sab-cost">${costStr(REPAIR_ISO)}</span></div>` +
-      `<div class="sab-desc">Clear all Iron Girders & thaw all Frost tiles instantly.</div>`;
-    rb.disabled = !afford;
-    rb.dataset.black = "repair";
-    rb.onclick = () => hooks.onBlackAction("repair");
-    sabList.appendChild(rb);
   }
 
   // ── market composer ───────────────────────────────────────────────────────
@@ -1167,9 +1161,18 @@ export function createOriginalUi(
   bankPane.appendChild(h("div", "pane-note",
     `The bank always trades four of one good for one of another. No rival required, no waiting. ${cargoIconHtml("gold")} ${GOLD_RULE}`));
 
-  // L1a (#232): the Black Market panel lives in the Bank pane; with the new
-  // loop on it is never mounted at all (its buttons exist but sit detached).
-  if (!newLoop) bankPane.appendChild(sp);
+  // L1a (#232): the Black Market panel lives in the Bank pane.
+  //
+  // L9 (#224): …and the new loop gets it BACK. L1a hid it because a Gold shop
+  // that sold match-3 sabotage made no sense beside a board that was about to
+  // become a bounded session ("converted post-MVP in #224" — this ticket). The
+  // converted shop is map-only — Blockade, Protest, Security Forces — which is
+  // exactly the kind of thing the new loop wants: it acts on the network and
+  // the clock, never on a board. The Bank pane it used to ride in does not
+  // exist under the flag, so it hangs in the BUILD column instead, beside the
+  // other things that act on the map.
+  if (newLoop) left.appendChild(sp);
+  else bankPane.appendChild(sp);
 
   function updateTradeButtons() {
     postBtn.disabled = market.live(me).length >= MAX_OFFERS || postGive.value === postWant.value
@@ -2071,11 +2074,12 @@ export function createOriginalUi(
     pickEl = null;
   }
 
-  function popup(gains: Partial<Record<ResKey, number>>, label: string) {
-    // SFX-01: the chute pays out. Only when something actually landed — an
-    // empty popup is a cascade's COMBO label, which already rang its bell.
+  function popup(gains: Partial<Record<ResKey, number>>, label: string, score?: number) {
+    // SFX-01: the chute pays out. Only when cargo actually landed — an empty
+    // popup is a cascade's COMBO label, which already rang its bell. L12
+    // (#227): a score-only popup stays quiet too; the pass already has its
+    // match sound, and a second chime on every match is the noise.
     if (Object.keys(gains).length) sfx.play("harvest");
-    const e = h("div", "harvest-pop");
     // AUDIT 2026-09-11 — ResKey → Cargo: sheep 🐑 has no purse entry,
     // brick 🧱 has none either. The popup must show the Cargo the purse
     // actually received (sheep→oil 🛢️, brick→stone 🪨, wheat→grain 🌾)
@@ -2085,10 +2089,19 @@ export function createOriginalUi(
       const icon = cargo ? cargoIconHtml(cargo) : RES[k as ResKey].icon;
       return `<span>+${gains[k as ResKey] ?? 0}${icon}</span>`;
     }).join("");
+    // L12 (#227) — the new loop's readout: the pass's SCORE in one number, no
+    // cargo icons to draw wrong. The old "+N cargo" popups are what this
+    // replaces; gains and score never mix in one popup (the new loop has no
+    // gains).
+    const scorePart = score && score > 0 ? `<span class="hp-score">+${score} score</span>` : "";
+    const body = parts || scorePart;
     // A1: no gains means no body — a tokenless cascade still has its COMBO
-    // label, and an empty flex row would float an empty box beside it.
+    // label, and an empty flex row would float an empty box beside it. A
+    // popup with neither label nor body floats nothing at all.
+    if (!label && !body) return;
+    const e = h("div", "harvest-pop");
     e.innerHTML = (label ? `<b class="hp-label">${label}</b>` : "")
-      + (parts ? `<div class="hp-body">${parts}</div>` : "");
+      + (body ? `<div class="hp-body">${body}</div>` : "");
     boardWrap.appendChild(e);
     setTimeout(() => e.remove(), 1600);
   }
@@ -2761,11 +2774,12 @@ export function createOriginalUi(
     const resetText = resetLeft > 0 ? `♻ Reset ${resetLeft}s` : "♻ Reset";
     if (resetBtn.textContent !== resetText) resetBtn.textContent = resetText;
     // PP-08: the panel re-renders when Gold changes OR when the material
-    // affordability of a non-gold action (Security, Repair) flips — otherwise
-    // a purse that only gained/lost materials would show a stale button.
+    // affordability of the one non-gold action (Security Forces) flips —
+    // otherwise a purse that only gained/lost materials would show a stale
+    // button. (L9 #224 retired Repair Crew, the other material row.)
     const matAfford = (cost: Partial<Record<Cargo, number>>) =>
       (Object.entries(cost) as [Cargo, number][]).every(([k, v]) => (me.res[k] ?? 0) >= v);
-    const sabKey = `${me.res.gold ?? 0}:${matAfford(SECURITY_ISO)}:${matAfford(REPAIR_ISO)}`;
+    const sabKey = `${me.res.gold ?? 0}:${matAfford(SECURITY_ISO)}`;
     if (sabKey !== lastSabKey) {
       lastSabKey = sabKey;
       renderSabotage();
@@ -3054,7 +3068,7 @@ export function createOriginalUi(
           <div class="help-col"><h3>The Territory</h3><p>Place <b>Depots</b> beside resource nodes to collect their output, then build <b>Dirt Roads</b> &amp; <b>Roads</b> (paved) to carry it to your Factory. The connection sets the multiplier — ×1.0 on gravel, ×1.6 anywhere a paved tile touches the line — and nothing else.</p>
 <p><h3>How you score (VP-01)</h3><p><b>Dirt Roads score nothing.</b> Points come from <b>upgrading</b>: pave a Dirt Road tile into a Road for <b>+${VICTORY.upgrade}★</b> (it costs only ${costMarkup(UPGRADE_COST)}, since the gravel is already paid for), and raise a <b>processing plant</b> beside another town for <b>+${VICTORY.plant}★</b>. Four paves to the point; <b>${hudVpTarget}★</b> wins. A Road laid on virgin ground scores nothing — the point is for improving what you built. Tear up a paved tile or demolish a plant and the point goes back.</p><p>Your <b>first Depot is free</b>; every Depot after it costs <b>${costMarkup(DEPOT_COST)}</b>, so reaching new industries (or manufacturing in the Processing Plant) is what buys expansion. A Depot you cannot pay for is refused and consumes nothing.</p><p><b>Lorries run 2× faster on paved Roads</b> — paving a lane is both the points and the income (AI-02).</p><p>Move the camera with <b>WASD</b> (Shift holds double speed) or the <b>middle mouse button</b> (wheel zooms, touch drags pan). The left button only places or selects — dragging it never pans. <b>Right-click drops the tool you are holding</b> back to the pointer, and the pointer reads the map: hover a resource, town, plant or depot and the inspector says exactly what it is.</p>${TOUCH_CONTROLS}<p>The top-bar <b>Aa Names</b> switch shows or hides the name tags over the map's features while you pan.</p></div>
           <div class="help-col"><h3>The Processing Plant</h3><p>Where your Factory turns delivered cargo into resources available for construction. Match tokens to process: a colour only pays when your network reaches its industry. Match 4 doubles, match 5 makes a <b>bomb</b>. <b>Gold</b> 🪙 is its own colour — its gems drop only while a depot sits beside a gold mine (and pay once it's connected).</p></div>
-          <div class="help-col"><h3>Gold, Trade & Defence</h3><p>Earn <b>gold</b> from gold-mine access or combos. <b>Gold is reserved for Black Market sabotage</b> — it never buys construction, cannot substitute for missing materials, and is refused by every market exchange. Security Forces and Repair Crew are hired with ordinary materials. A <b>Protest</b> ✊ shuts any public road for 2:00 — every truck stops, including your own.</p></div>
+          <div class="help-col"><h3>Gold, Trade & Defence</h3><p>Earn <b>gold</b> from gold-mine access or combos. <b>Gold is reserved for Black Market sabotage</b> — it never buys construction, cannot substitute for missing materials, and is refused by every market exchange. The Black Market sells <b>map</b> sabotage only: a <b>Blockade</b> ⛓ stops an industry's depots for 45s, and a <b>Protest</b> ✊ shuts any public road for 2:00 — every depot routed through that tile stops earning, including your own. <b>Security Forces</b> are hired with ordinary materials and turn both away.</p></div>
         </div>
         <div class="confirm-row">
           <button class="big-btn ghost" id="tourBtn" data-sfx="open">▶ Replay the tour</button>

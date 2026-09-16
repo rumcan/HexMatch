@@ -9,7 +9,14 @@
 // ══════════════════════════════════════════════════════════════════════════
 
 export type RivalryDirection = "retort" | "attack" | "thwarted";
-export type RivalryTactic = "bandit" | "harden" | "block" | "fog" | "protest";
+/**
+ * L9 (#224): the tactics Torvin can be caught doing — the SAME two cards the
+ * Black Market sells, because the shop and the raid table are one table now.
+ * Frost Tiles, Iron Girders and Smog Cloud went with the board sabotage they
+ * narrated; their decks are deleted rather than orphaned, so a line can never
+ * be written for a card the rules do not have.
+ */
+export type RivalryTactic = "bandit" | "protest";
 export type RivalrySpeaker = "rival" | "you";
 
 export interface RivalryBeat {
@@ -51,48 +58,6 @@ export const RIVALRY_SCENES: SceneDeck = {
         "Thanks for explaining the metaphor. It was in critical condition.",
       ),
     ],
-    harden: [
-      exchange(
-        "Ice to meet you. Ha! Still got it.",
-        "You built an empire and that's the comeback?",
-      ),
-      exchange(
-        "My furnaces run hot. Like me in my courting days.",
-        "Please never connect those ideas again.",
-      ),
-      exchange(
-        "You froze seven gems. Seven! Lucky number for me.",
-        "That is not how freezing works.",
-      ),
-    ],
-    block: [
-      exchange(
-        "I've been girded. Or girdered. The point is, steel fears me.",
-        "Steel doesn't know who you are.",
-      ),
-      exchange(
-        "These girders will make excellent... girders for my next building.",
-        "A devastating display of vocabulary.",
-      ),
-      exchange(
-        "You sent scrap to a man who remembers rationing.",
-        "You also remember when that sounded threatening?",
-      ),
-    ],
-    fog: [
-      exchange(
-        "A little smog never hurt anybody. That's what we used to say.",
-        "Yes. Then everybody started coughing.",
-      ),
-      exchange(
-        "You cannot smoke out an old fox.",
-        "You're in a factory, not a woodland fable.",
-      ),
-      exchange(
-        "I did business in smoke-filled rooms before you were born.",
-        "That explains all of this, honestly.",
-      ),
-    ],
     protest: [
       exchange(
         "I've stared down angrier crowds at the bingo hall.",
@@ -125,50 +90,6 @@ export const RIVALRY_SCENES: SceneDeck = {
         "You chose that nickname for yourself?",
       ),
     ],
-    harden: [
-      conversation(
-        "Ice to meet you.",
-        "You waited your whole life to use that, didn't you?",
-        "Since 1962.",
-        "I believe you.",
-      ),
-      exchange(
-        "Your plant has cold feet. About losing.",
-        "Plants don't have feet, and neither did that joke.",
-      ),
-      exchange(
-        "Seven frozen gems. Call me Jack Frost's accountant.",
-        "Nobody has ever wanted that title.",
-      ),
-    ],
-    block: [
-      exchange(
-        "You've been girdered. It's an industry term.",
-        "No, it absolutely isn't.",
-      ),
-      exchange(
-        "I put the steel in steal your victory.",
-        "That sentence should be recalled for safety.",
-      ),
-      exchange(
-        "Those bars are a metaphor for your limited future.",
-        "You had to explain it, so the metaphor is gone.",
-      ),
-    ],
-    fog: [
-      exchange(
-        "Smoke 'em if you got 'em. I quit, doctor's orders.",
-        "Your threat came with a medical disclaimer.",
-      ),
-      exchange(
-        "Now you see me, now you don't.",
-        "I couldn't see you before. This is a telephone.",
-      ),
-      exchange(
-        "Welcome to the fog of war. Patent pending.",
-        "You cannot patent weather, grandpa.",
-      ),
-    ],
     protest: [
       exchange(
         "The people have spoken. I paid them, but they spoke.",
@@ -193,38 +114,6 @@ export const RIVALRY_SCENES: SceneDeck = {
       exchange(
         "This was a routine surprise inspection.",
         "By a man hiding behind a hedge?",
-      ),
-    ],
-    harden: [
-      exchange(
-        "That frost crew was delivering ice for beverages.",
-        "The crates said ‘INDUSTRIAL SABOTAGE.’",
-      ),
-      exchange(
-        "Your guards ruined a perfectly good winter metaphor.",
-        "They saved us from hearing it. Heroes.",
-      ),
-    ],
-    block: [
-      exchange(
-        "The girders were a gift. Very structural.",
-        "You wrapped them in a ransom note.",
-      ),
-      exchange(
-        "My driver took a wrong turn into your factory.",
-        "Four times, carrying attack girders?",
-      ),
-    ],
-    fog: [
-      conversation(
-        "That smoke was medicinal.",
-        "For whom?",
-        "Me, mostly.",
-        "That tracks.",
-      ),
-      exchange(
-        "Your guards are suspicious of perfectly normal clouds.",
-        "Normal clouds don't arrive in your van.",
       ),
     ],
     protest: [
@@ -399,9 +288,6 @@ export const RIVAL_BANTER: readonly RivalryScene[] = [
 /** The original rival-only view remains useful to copy audits and callers. */
 const linesFor = (direction: RivalryDirection): Record<RivalryTactic, readonly string[]> => ({
   bandit: RIVALRY_SCENES[direction].bandit.map((scene) => scene[0].text),
-  harden: RIVALRY_SCENES[direction].harden.map((scene) => scene[0].text),
-  block: RIVALRY_SCENES[direction].block.map((scene) => scene[0].text),
-  fog: RIVALRY_SCENES[direction].fog.map((scene) => scene[0].text),
   protest: RIVALRY_SCENES[direction].protest.map((scene) => scene[0].text),
 });
 

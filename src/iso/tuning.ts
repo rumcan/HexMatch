@@ -44,6 +44,7 @@ import {
   type Cargo, type DifficultyKey, type DifficultyRules,
 } from "./config";
 import { RIVAL_SKILLS, type SkillKey } from "./skill";
+import type { RewardKind } from "../game/board";
 
 /** Round to the two decimals the HUD prints and the depot stores. */
 export const roundYield = (y: number): number => Math.round(y * 100) / 100;
@@ -163,6 +164,49 @@ export function retuneOwed(
 }
 
 /**
+ * L9 (#224) — the Gold a session's score pays.
+ *
+ * The new loop's replacement for combo Gold (`Board.COMBOS_PER_GOLD`, which
+ * stops paying under the flag): the same burst of matching that sets a Depot's
+ * yield also banks the coins the Black Market's two map cards are bought with.
+ *
+ *   score 0            0 — a session nobody played pays nothing;
+ *   any score          at least `TUNING.minGold`;
+ *   `targetScore`+     `TUNING.maxGold`.
+ *
+ * Whole coins only (Gold is a counted cargo, not a fraction), and monotone in
+ * the score, so a better session is never worth less.
+ */
+export function tuningGoldFor(score: number): number {
+  if (!Number.isFinite(score) || score <= 0) return 0;
+  const t = Math.min(1, score / TUNING.targetScore);
+  return Math.max(TUNING.minGold, Math.round(TUNING.minGold + (TUNING.maxGold - TUNING.minGold) * t));
+}
+
+/**
+ * L12 (#227) — what each board REWARD is worth in session score, on top of
+ * the plain gems the pass already cleared (`onClear` scores those by count).
+ *
+ * The board reports the event, never the value — this table is the single
+ * place the value lives, so tuning a reward's worth is a one-line change and
+ * the "bigger shape pays more" rule the issue asks for is visible in one
+ * glance: a holy cross (the 3×4 shape) outscores a broken cross, both
+ * outscore the smaller shapes, and a combo — a cascade that kept going —
+ * pays on its own.
+ *
+ * Plain gems still score 1 apiece (the board's `onClear` count), so a 3-match
+ * is worth 3; the numbers below are the BONUS a shape or event adds.
+ */
+export const TUNING_REWARD_SCORE: Record<RewardKind, number> = {
+  holyCross: 10,
+  brokenCross: 5,
+  shape: 2,     // a match-5 or L-shape
+  combo: 2,     // a cascade that ran two deep
+  frost: 1,     // one step of frost cracked off a gem
+  girder: 2,    // a girder broken by an adjacent match
+};
+
+/**
  * A session in progress. Mutable on purpose — it is one small record with one
  * writer (the game), read by the HUD every frame.
  */
@@ -199,7 +243,12 @@ export function takeTuningMove(s: TuningSession): boolean {
   return true;
 }
 
-/** Score the gems a resolved pass cleared. */
+/**
+ * Add points to a session's score. L4 called this per CLEARED GEM; L12
+ * (#227) calls it for the bonus value of a board REWARD too (see
+ * `TUNING_REWARD_SCORE`) — either way the session's score is just a number,
+ * and `tuningYieldFor` does not care where it came from.
+ */
 export function recordTuningCleared(s: TuningSession, cleared: number): void {
   if (Number.isFinite(cleared) && cleared > 0) s.score += cleared;
 }
@@ -211,6 +260,9 @@ export function recordTuningCleared(s: TuningSession, cleared: number): void {
  */
 export const tuningSessionYield = (s: TuningSession, floor: number = TUNING.minYield): number =>
   tuningYieldFor(s.score, floor);
+
+/** L9 (#224): the Gold this session pays if it is played out now. */
+export const tuningSessionGold = (s: TuningSession): number => tuningGoldFor(s.score);
 
 /**
  * What ABANDONING pays on the SHIPPED mapping — the defined default a closed or
@@ -245,4 +297,19 @@ export function rivalTuningYield(key: SkillKey, noise = 0): number {
   const skill = RIVAL_SKILLS[key]?.tuningSkill ?? RIVAL_SKILLS.normal.tuningSkill;
   const t = Math.min(1, Math.max(0, skill + noise));
   return clampYield(TUNING.minYield + (TUNING.maxYield - TUNING.minYield) * t);
+}
+
+/**
+ * L9 (#224): the Gold the rival banks per depot it tunes.
+ *
+ * Same axis as `rivalTuningYield` — a simulated session at the difficulty's
+ * `tuningSkill`, priced through the SAME score→Gold curve the player's own
+ * session is paid by (`tuningGoldFor`), so both seats are funded by the same
+ * rule and the raid table never runs dry on one side only. Deterministic per
+ * skill, like the yield.
+ */
+export function rivalTuningGold(key: SkillKey, noise = 0): number {
+  const skill = RIVAL_SKILLS[key]?.tuningSkill ?? RIVAL_SKILLS.normal.tuningSkill;
+  const t = Math.min(1, Math.max(0, skill + noise));
+  return tuningGoldFor(t * TUNING.targetScore);
 }

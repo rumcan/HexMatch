@@ -321,7 +321,7 @@ export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
       points: [
         "A session is <b>bounded</b>: a fixed number of moves, and the plate counts them down. When the last one resolves the board closes and you are back on the map.",
         `Every gem you clear is <b>score</b>. The score becomes the Depot's <b>yield level</b> — between ×${TUNING.minYield} and ×${TUNING.maxYield} — and a connected Depot ticks its cargo in at exactly that rate.`,
-        "<b>4 in a row</b> doubles the match and leaves a token behind; <b>5 in a row</b> forges a <b>bomb</b> — swap it with any gem to blow that whole colour. Cascades clear far more than their first line, so they are how a session is won.",
+        "<b>5 in a row</b> forges a <b>bomb</b> — swap it with any gem to blow that whole colour, and every gem the blast clears is score. Crosses, long matches and combos each bank bonus points on top of their gems, and a cascade clears far more than its first line — reading shapes is how a session is won.",
         "Finish lowers the board early and keeps the score you have; ✕ abandons the session and leaves the Depot on the default yield. Neither can lose you anything a fresh Depot had.",
         "<b>Difficulty</b> changes what a yield does over time, never whether match-3 exists. <b>Easy</b>: one session per Depot, a weak one still lands a decent yield, nothing cools. <b>Normal</b>: one more session with each upgrade, and a yield never drops. <b>Hard</b>: a tuned Depot cools off, and its re-match can lower it.",
         "On Normal and Hard the plate under the board offers <b>Retune</b> for your weakest Depot when one is owed — an invitation, never a drag: outside a session the board stays down on every difficulty.",
