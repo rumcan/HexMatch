@@ -394,7 +394,9 @@ describe("L1d (#235) the rival's connected depots pay it on the clock", () => {
     const rivalTiles = () => [...h.track.owner].filter((o) => o === 2).length;
     const depots = () => h.eco.harvesters.filter((d) => d.owner === "ai").length;
 
-    let t = 1_000_000;
+    // Ahead of the game's own pacing clocks, which `finishSetup` seeds from
+    // the real `performance.now()` — see the note on `t0` below.
+    let t = performance.now() + 1_000_000;
     // L3 (#217): the cumulative clock income — sampled around `econTick`
     // alone, which only ever PAYS (this seat's spending happens in aiTick and
     // tick), so any rise between the two samples IS clock income, exactly
@@ -608,7 +610,13 @@ describe("L1d (#235) the rival's build turn is untouched", () => {
     const rivalTiles = () => [...h.track.owner].filter((o) => o === 2).length;
     expect(rivalTiles()).toBe(0);
 
-    const t0 = 1_000_000;
+    // The simulated clock must start AHEAD of the game's own pacing clocks,
+    // which `finishSetup` seeds from the real `performance.now()`. A fixed
+    // 1_000_000 was ahead of it for a short run and BEHIND it once the worker
+    // had been alive ~17 minutes (a long suite run), at which point no build
+    // or income clock ever came round and the rival did nothing — a latent
+    // flake that only showed up in a full `npm test`, never in isolation.
+    const t0 = performance.now() + 1_000_000;
     for (let i = 0; i < 3; i++) {
       h.aiTick(t0 + i * AI_BUILD_MS);
       h.econTick(t0 + i * AI_BUILD_MS + HARVEST_MS);       // the clock pays between turns
