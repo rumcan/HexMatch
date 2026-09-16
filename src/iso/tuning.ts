@@ -35,16 +35,24 @@
 //   • `retuneOwed(rules, depot)` — whether the plant panel offers a re-match at
 //     all, and whether THIS Depot has earned one.
 //
+// L10 (#225) added the session's OBSTACLES — the frost and the girders the
+// board opens with, read off the same row of `DIFFICULTY_RULES`
+// (`sessionObstacles`), what they cost a simulated score (`obstacleDrag`) and
+// the intro's one in-world sentence (`obstacleIntroLine`). The rules are here
+// with the rest of the session's numbers; the PLACING is the board's, because
+// only the board knows which cell can take one and still leave a legal move.
+//
 // Everything that reads these — the board hooks, the HUD plate, the wire, the
 // clock — goes through this file, so "what a session is worth" has exactly one
 // answer per difficulty, and each of the three answers is the same code.
 // ══════════════════════════════════════════════════════════════════════════
 import {
-  CARGO, DEFAULT_DIFFICULTY, DIFFICULTY_RULES, TUNING,
-  type Cargo, type DifficultyKey, type DifficultyRules,
+  CARGO, DEFAULT_DIFFICULTY, DIFFICULTY_RULES, OBSTACLE_RAMP, TUNING,
+  type Cargo, type DifficultyKey, type DifficultyRules, type ObstacleRules,
 } from "./config";
 import { RIVAL_SKILLS, type SkillKey } from "./skill";
-import type { RewardKind } from "../game/board";
+import { BOARD_H, BOARD_W } from "../game/config";
+import type { BoardObstacles, RewardKind } from "../game/board";
 
 /** Round to the two decimals the HUD prints and the depot stores. */
 export const roundYield = (y: number): number => Math.round(y * 100) / 100;
@@ -161,6 +169,97 @@ export function retuneOwed(
   if (rules.rematch === "never") return false;
   if (rules.rematch === "open") return true;
   return dep.tuneTier !== undefined && dep.tier > dep.tuneTier;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// L10 (#225) — the session's OBSTACLES, as data.
+//
+// Frost tiles and iron girders were Black-Market sabotage: a purchase, a
+// timer, and an overlay that shipped them to the other seat. They are a
+// difficulty's now — placed when a session opens, on the board that session
+// plays, gone when it closes. The three things that follow are the whole of
+// it, and they are all pure:
+//
+//   • `sessionObstacles(rules, tier)` — how many of each the row asks for,
+//     ramped by the tier the Depot stands on;
+//   • `obstacleDrag(plan)` — what those obstacles are worth against a SCORE,
+//     which is how the rival's simulated session is docked for them;
+//   • `obstacleIntroLine(label, plan)` — the session intro's one sentence,
+//     naming them in the game's own world.
+//
+// The board itself does the PLACING (`Board.seedObstacles`): it is the only
+// thing that knows whether a cell can take an obstacle and whether the board
+// still has a legal move afterwards. This module never sees a grid.
+// ══════════════════════════════════════════════════════════════════════════
+
+/**
+ * What a session OPENS with: the difficulty's row, put through the tier ramp.
+ *
+ * The ramp is the L5 half of the ticket ("counts ramp gently with the depot
+ * tier, e.g. the first depot has fewer"): a Depot standing on open ground
+ * (tier 0) gets thinned obstacles, and every tier the player has actually
+ * paid for puts the full row back. Frost is floored, never rounded up, so
+ * "half of a small number" stays small.
+ */
+export function sessionObstacles(rules: DifficultyRules, tier = 0): ObstacleRules {
+  const row = rules.obstacles;
+  if (tier > 0) return { frost: row.frost, frostHard: row.frostHard, girders: row.girders };
+  return {
+    frost: Math.floor(row.frost * OBSTACLE_RAMP.firstTier),
+    frostHard: Math.min(row.frostHard, OBSTACLE_RAMP.firstTierHard) as 1 | 2,
+    girders: Math.floor(row.girders * OBSTACLE_RAMP.firstTier),
+  };
+}
+
+/** The cells an obstacle count is measured against (the shipped 7×8 board). */
+const OBSTACLE_CELLS = BOARD_W * BOARD_H;
+/** A frosted gem costs one cell's worth of play: one match cracks it free. */
+export const FROST_WEIGHT = 1;
+/** A girder costs two — it leaves the cell unmatchable AND un-refillable. */
+export const GIRDER_WEIGHT = 2;
+/** A board can be made harder, never unplayable: the drag is capped. */
+export const MAX_OBSTACLE_DRAG = 0.5;
+
+/**
+ * L10 (#225) — the share of a session's SCORE the obstacles cost.
+ *
+ * The rival plays no board, so the obstacles it would have met are taken off
+ * its simulated session instead of off a grid: a frosted gem is one cracked
+ * step away from being an ordinary gem, a girder takes its cell out of the
+ * board entirely, and both are priced on the same 7×8 board the player's is.
+ */
+export function obstacleDrag(plan: ObstacleRules): number {
+  const wrecked = plan.frost * FROST_WEIGHT + plan.girders * GIRDER_WEIGHT;
+  if (!Number.isFinite(wrecked) || wrecked <= 0) return 0;
+  return Math.min(MAX_OBSTACLE_DRAG, wrecked / OBSTACLE_CELLS);
+}
+
+/**
+ * L10 (#225) — the session intro's obstacle line, or `null` on a difficulty
+ * (and a tier) that opens on a clean board, so the intro simply says nothing
+ * about them on Easy instead of promising obstacles it did not place.
+ *
+ * They are named in the game's WORLD, because a puzzle tile that does not
+ * belong to the story breaks the fiction — the Merge Gardens deconstruction's
+ * lesson: it swapped fruit for books and cameras to fit its mansion, and a
+ * mismatch is what reads as "not a game". Frost and girders were already
+ * industrial — "the rails froze overnight and girders fell on the line" — and
+ * a later obstacle must come from the same world (rubble, an oil slick, rust),
+ * never a generic match-3 blocker. Copy is finalised in L8 (#222); this is the
+ * shape of it.
+ *
+ * The counts are the ones that actually LANDED, so a crowded board that could
+ * only take four girders is not advertised as six.
+ */
+export function obstacleIntroLine(label: string, placed: BoardObstacles): string | null {
+  if (!placed.frost && !placed.girders) return null;
+  const what = placed.girders
+    ? "the rails froze overnight and girders fell on the line"
+    : "the rails froze overnight";
+  const counts: string[] = [];
+  if (placed.frost) counts.push(`${placed.frost} iced`);
+  if (placed.girders) counts.push(`${placed.girders} girder${placed.girders === 1 ? "" : "s"}`);
+  return `${label}: ${what} — ${counts.join(", ")}.`;
 }
 
 /**
@@ -292,10 +391,22 @@ export const tuningCargoLabel = (cargo: Cargo): string => `${CARGO[cargo].icon} 
  * generous Easy floor is the PLAYER's concession. Mapping the rival onto it too
  * would hand the easy chair better Depots for choosing easy, inverting the
  * ladder `iso-skill-calibration` exists to guard.
+ *
+ * L10 (#225): the OBSTACLES are not a concession — they are the board, and the
+ * rival meets the same board the player does. It plays no session, so what it
+ * would have lost to frost and girders is taken off its simulated score as
+ * `obstacleDrag` (pass `rules` and the Depot's `tier` to charge for them;
+ * without them the number is L4's, unchanged, which is what the calibration
+ * sweeps pin). This is what replaced `rival-plant.ts`'s damage model: the
+ * rival's yield is docked by the obstacles it would have faced, once, instead
+ * of by ice and girders melting off a board nobody was watching.
  */
-export function rivalTuningYield(key: SkillKey, noise = 0): number {
+export function rivalTuningYield(
+  key: SkillKey, noise = 0, rules?: DifficultyRules, tier = 0,
+): number {
   const skill = RIVAL_SKILLS[key]?.tuningSkill ?? RIVAL_SKILLS.normal.tuningSkill;
-  const t = Math.min(1, Math.max(0, skill + noise));
+  const drag = rules ? obstacleDrag(sessionObstacles(rules, tier)) : 0;
+  const t = Math.min(1, Math.max(0, (skill + noise) * (1 - drag)));
   return clampYield(TUNING.minYield + (TUNING.maxYield - TUNING.minYield) * t);
 }
 
@@ -306,10 +417,14 @@ export function rivalTuningYield(key: SkillKey, noise = 0): number {
  * `tuningSkill`, priced through the SAME score→Gold curve the player's own
  * session is paid by (`tuningGoldFor`), so both seats are funded by the same
  * rule and the raid table never runs dry on one side only. Deterministic per
- * skill, like the yield.
+ * skill, like the yield, and docked by the same obstacles (L10 / #225) —
+ * the rival's Gold comes out of the session the obstacles made harder.
  */
-export function rivalTuningGold(key: SkillKey, noise = 0): number {
+export function rivalTuningGold(
+  key: SkillKey, noise = 0, rules?: DifficultyRules, tier = 0,
+): number {
   const skill = RIVAL_SKILLS[key]?.tuningSkill ?? RIVAL_SKILLS.normal.tuningSkill;
-  const t = Math.min(1, Math.max(0, skill + noise));
+  const drag = rules ? obstacleDrag(sessionObstacles(rules, tier)) : 0;
+  const t = Math.min(1, Math.max(0, (skill + noise) * (1 - drag)));
   return tuningGoldFor(t * TUNING.targetScore);
 }

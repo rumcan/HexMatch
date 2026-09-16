@@ -219,7 +219,7 @@ export const BANDIT_MS = 45000;
 /** How long a Black Market protest holds its public road: 2 minutes. */
 export const PROTEST_MS = 120000;
 export const RAID_EVERY = 120000;
-// L9 (#224): `FOG_MS` and `BLOCK_MS` retired with the cards they timed (Smog
-// Cloud and Iron Girders). `Board.dropBlocks`/`Board.fog` still take an `ms`
-// argument and keep their own defaults, so the tuning-session obstacles (#225)
-// can choose durations per difficulty rather than inheriting a shop's.
+// L9 (#224) / L10 (#225): `FOG_MS` and `BLOCK_MS` retired with the cards they
+// timed (Smog Cloud and Iron Girders). The board obstacles that replaced them
+// have no duration at all — `Board.seedObstacles` lays them down when a tuning
+// session opens and the session's close takes them off again.

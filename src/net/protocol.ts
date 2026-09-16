@@ -43,7 +43,10 @@ export { readMatchSettings };
  * check turns "waits for state that can never arrive" into the reload message.
  * v3 (PP-14b): the delta/snapshot gained `rivalSabotage` (Black-Market
  * sabotage on the guest-seat plant). A v2 peer would drop that state and show
- * a plant the host already froze, so mixed-version rooms must refuse.
+ * a plant the host already froze, so mixed-version rooms must refuse. (L10 /
+ * #225 retired the field again — board obstacles belong to a tuning session —
+ * but the version numbers only ever have to keep a mixed pair apart, and
+ * dropping a field keeps this pair exactly that.)
  * v4 (MP-AUDIT): the delta/snapshot gain market, vehicle, protest, board and
  * winner fields (market parity, vehicle presentation, cross-choice, host
  * departure). A v3 peer would drop those and desync the guest's purse, roads
@@ -161,12 +164,6 @@ export interface DeltaMsg {
   players?: DeltaPlayer[];
   setupPhase?: boolean;
   won?: boolean;
-  /**
-   * PP-14b: the Black-Market sabotage on the guest-seat plant. Carried on the
-   * steady-state delta (it changes only when a sabotage is bought or expires),
-   * and NOT seat-mirrored — see `RivalSabotage` in snapshot.ts.
-   */
-  rivalSabotage?: Snapshot["rivalSabotage"];
   /** MP-AUDIT: market offers (guest parity) */
   market?: Snapshot["market"];
   /** MP-AUDIT: protest roadblocks */

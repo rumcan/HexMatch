@@ -2751,9 +2751,10 @@ describe("L9 (#224) the Black Market is map-only sabotage", () => {
     await settle();
     // neither board is dirtied, and nothing was charged for the refusal
     expect(h.board.gems().filter((g) => g.block || g.hard > 0)).toHaveLength(0);
-    expect(h.board.fogUntil).toBe(0);
-    const now = performance.now();
-    expect(h.rivalPlant.status(now)).toMatchObject({ frozen: 0, girders: 0, smog: false });
+    // L10 (#225): there is no fog/smog clock left to read at all — an obstacle
+    // has no duration, so the board simply cannot be dirtied.
+    expect(Object.keys(h.board.save() as Record<string, unknown>)).not.toContain("fogIn");
+    expect(h.rivalPlant.status()).toMatchObject({ frozen: 0, girders: 0 });
     expect(h.purse.gold).toBe(gold);
   });
 
@@ -3090,8 +3091,7 @@ describe("VP-01 the rival plays the score, not just the map", () => {
     const h = await boot();
     h.finishSetup();
     const rival = h.market.players[1];
-    const hits = () => h.board.gems().filter((g: { hard: number; block: boolean }) => g.hard > 0 || g.block).length
-      + (h.board.fogUntil > 0 ? 1 : 0) + (h.board.blockUntil > 0 ? 1 : 0);
+    const hits = () => h.board.gems().filter((g: { hard: number; block: boolean }) => g.hard > 0 || g.block).length;
     // Four raid-eligible clocks (one per RAID_EVERY, since a raid per build tick
     // would not be a raid) with enough Gold for the 5-coin cards only. Before
     // the `RAID_ACTIONS` filter the pick list also held `bandit` — a card the

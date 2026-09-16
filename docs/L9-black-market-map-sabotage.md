@@ -124,6 +124,8 @@ does not exist under the flag), beside the other things that act on the map.
 
 Repair Crew's button, its `REPAIR_ISO` cost and the `.sab-btn` plates for the
 retired cards are deleted. The painted sigils stay on disk for #225 to reuse.
+(#225 landed the obstacles on the BOARD rather than back in the shop, so the
+sigils are still unused — see `docs/L10-session-obstacles.md`.)
 
 ## Tests
 

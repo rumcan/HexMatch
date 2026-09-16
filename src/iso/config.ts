@@ -153,16 +153,23 @@ export const TUNING = {
  *           player is never punished for being weak. No re-match is ever
  *           offered, because the whole point of Easy is that nobody is dragged
  *           back to the board. (Match-3 STILL opens on a Depot build — that is
- *           the change from the original brief, and #218's tests pin it.)
+ *           the change from the original brief, and #218's tests pin it.) No
+ *           obstacles: the board is a clean table.
  *   Normal  No decay either, and the yield is *monotone*: every settle is
  *           clamped to `max(old, new)`, so a session can only ever be an
  *           improvement. A re-match is owed only when the Depot itself was
  *           upgraded — the ticket's "set once per depot (at build) and per city
- *           upgrade", until #219 gives the game real city upgrades.
+ *           upgrade", until #219 gives the game real city upgrades. Frost sits
+ *           on the board from the first move (L10 / #225).
  *   Hard    `decayRate > 0`: the tuning cools off, so a well-tuned Depot drifts
  *           back toward the baseline and a re-match is always open — and a bad
  *           re-match can lower the yield, because this is the only row with
- *           `yieldNeverDrops: false`.
+ *           `yieldNeverDrops: false`. Frost AND girders, the ice two matches
+ *           deep (L10 / #225): a board you have to dig yourself out of.
+ *
+ * The obstacles are the difficulty's SECOND axis, and they are deliberately
+ * not a difficulty of their own: they cost moves, not yield, so Easy stays
+ * easy without the board ever being a formality.
  *
  * `decayRate` is the fraction of the SURPLUS above `minYield` lost per economy
  * tick (`HARVEST_MS` = 3 s in `game.ts`), so cooling slows as a Depot approaches
@@ -172,6 +179,47 @@ export const TUNING = {
  * decay, and a Depot that is not connected still cools (or cutting a road would
  * freeze a fresh tune).
  */
+/**
+ * L10 (#225) — the obstacles a tuning session OPENS with, per difficulty.
+ *
+ * Frost is a gem locked in ice (`hard > 0`): it still matches and it still
+ * falls, and instead of clearing it cracks one step per pass — `frostHard: 2`
+ * takes two matches to free the gem, `frostHard: 1` takes one. A girder
+ * (`block`) is a cell taken out of the board entirely — no swap, no match, no
+ * refill through it — and it is broken back into an ordinary gem by a removal
+ * BESIDE it. Both rules are the ones the old Black-Market cards used; what
+ * #225 changed is who places them (this table, at session start) and for how
+ * long (the session — there is no timer on an obstacle any more).
+ *
+ * Counts are absolute, not a share of the board, so a phone's resized board
+ * meets the same NUMBER of obstacles a desktop's does.
+ */
+export interface ObstacleRules {
+  /** Frosted gems the session opens with. 0 = this difficulty has no frost. */
+  frost: number;
+  /** How thick the ice is: 1 = one adjacent match frees the gem, 2 = two. */
+  frostHard: 1 | 2;
+  /** Iron girders the session opens with. 0 = this difficulty has none. */
+  girders: number;
+}
+
+/**
+ * L10 (#225) — how the obstacle table ramps with the Depot's transport tier
+ * (L6's `transportTierOf`, the same axis a re-match credit is counted on).
+ *
+ * The first Depot a player ever tunes stands on open ground — tier 0, nothing
+ * paid for yet — so it meets a thinned board: half the table's count and ice
+ * one match deep. Every tier they have actually paid for restores the full
+ * row. Gentle on purpose: the obstacles are there to make the board harder to
+ * READ, not to make a first session unwinnable.
+ */
+export const OBSTACLE_RAMP = {
+  /** The fraction of the table's counts a tier-0 Depot's session opens with. */
+  firstTier: 0.5,
+  /** Ice on a tier-0 board is one match deep, whatever the row says. */
+  firstTierHard: 1 as 1 | 2,
+} as const;
+
 export interface DifficultyRules {
   /** Does the tuning board EVER open on this difficulty? True on all three. */
   matchEnabled: boolean;
@@ -187,6 +235,12 @@ export interface DifficultyRules {
   /** Clamp a finished session to `max(old, new)` — the "yield never drops" rule.
    *  Hard is the row where a poor session is allowed to bite. */
   yieldNeverDrops: boolean;
+  /**
+   * L10 (#225) — what the session's board looks like when it opens. Easy runs
+   * a clean table; Normal puts ice on it; Hard ices it AND drops girders on
+   * the line. Ramped by the Depot's tier (see `OBSTACLE_RAMP`).
+   */
+  obstacles: ObstacleRules;
 }
 
 export type DifficultyKey = "easy" | "normal" | "hard";
@@ -194,11 +248,14 @@ export type DifficultyKey = "easy" | "normal" | "hard";
 /** The shipped rival-skills keys and these rows are ONE setting (L6). */
 export const DIFFICULTY_RULES: Record<DifficultyKey, DifficultyRules> = {
   easy:   { matchEnabled: true, minYield: 1.5, decayRate: 0,
-            rematch: "never", yieldNeverDrops: true },
+            rematch: "never", yieldNeverDrops: true,
+            obstacles: { frost: 0, frostHard: 1, girders: 0 } },
   normal: { matchEnabled: true, minYield: TUNING.minYield, decayRate: 0,
-            rematch: "upgrade", yieldNeverDrops: true },
+            rematch: "upgrade", yieldNeverDrops: true,
+            obstacles: { frost: 6, frostHard: 1, girders: 0 } },
   hard:   { matchEnabled: true, minYield: TUNING.minYield, decayRate: 0.017,
-            rematch: "open", yieldNeverDrops: false },
+            rematch: "open", yieldNeverDrops: false,
+            obstacles: { frost: 6, frostHard: 2, girders: 3 } },
 };
 
 /** The row the game runs when nothing has chosen a difficulty yet. */

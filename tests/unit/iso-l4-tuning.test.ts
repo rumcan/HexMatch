@@ -23,7 +23,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { WATER, type Grid, type Industry } from "../../src/iso/grid";
-import { MAP_W, MAP_H, INDUSTRY_BY_KEY, TUNING, type Cargo } from "../../src/iso/config";
+import { MAP_W, MAP_H, INDUSTRY_BY_KEY, TUNING, DIFFICULTY_RULES, type Cargo } from "../../src/iso/config";
 import { CARGO_TO_GEM, GEM_TO_CARGO } from "../../src/iso/quarry";
 import { buildTile, createTrack, type Track } from "../../src/iso/track";
 import { setRng, mulberry32 } from "../../src/game/config";
@@ -507,15 +507,20 @@ describe("L4 building a Depot opens its tuning session (newLoop)", () => {
     h.eco.harvesters.push({ id: 99, owner: "ai", ownerId: 2, tx: 20, ty: 20 });
     h.econTick(performance.now() + 10_000);      // the clock tunes it too
 
+    // Easy puts no obstacles on a board, so its number is the plain simulated
+    // session — L6's rule that the rival is NOT handed the player's concession.
     const easy = h.depotYields.find((d) => d.id === 99)!.yield;
+    expect(easy).toBe(rivalTuningYield("easy", 0, DIFFICULTY_RULES.easy, 0));
     expect(easy).toBe(rivalTuningYield("easy"));
 
-    // …and the next Depot, under a harder chair, is tuned harder.
+    // …and the next Depot, under a harder chair, is tuned harder — but docked
+    // by the frost and girders that difficulty puts on a board (L10 / #225).
+    // Both these Depots stand on open ground: tier 0, the thinned table.
     h.setRivalSkill("hard");
     h.eco.harvesters.push({ id: 100, owner: "ai", ownerId: 2, tx: 30, ty: 30 });
     h.rivalTuning();
     const hard = h.depotYields.find((d) => d.id === 100)!.yield;
-    expect(hard).toBe(rivalTuningYield("hard"));
+    expect(hard).toBe(rivalTuningYield("hard", 0, DIFFICULTY_RULES.hard, 0));
     expect(hard!).toBeGreaterThan(easy!);
 
     // An existing level is never re-rolled (set once, never drops).
