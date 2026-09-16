@@ -58,6 +58,19 @@ export interface Harvester {
   ty: number;
   /** L4 yield level; absent on legacy saves/snapshots means baseline. */
   yield?: number;
+  /**
+   * L6 (#220): the transport tier this Depot stood on when its last tuning
+   * session settled (`loop.ts`'s `TRANSPORT_TIERS`). It is what makes Normal's
+   * "one match per depot, one more per upgrade" a comparison instead of a
+   * counter: a Depot whose link has moved ABOVE this tier owes a re-match, and
+   * settling a session re-bases it.
+   *
+   * Optional because absent means "never tuned" — a legacy save, an old
+   * snapshot, or a Depot built before this field existed — and no difficulty
+   * grants a re-match to a Depot that has not had its first session. The tier ITSELF is never stored: it is derived from the track, so a save cannot invent
+   * an upgrade the player never built.
+   */
+  tuneTier?: number;
 }
 
 /**

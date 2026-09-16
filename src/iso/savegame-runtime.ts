@@ -79,9 +79,12 @@ export interface SaveGamePayload {
    *  earning. Values live in [0, 1); anything else is ignored on restore. */
   loopCarry?: Record<string, number>;
   eco: {
-    /** The depot records, `yield` included — L4's tuning level rides the
-     *  record it belongs to (`Harvester.yield`), so a restored depot keeps the
-     *  rate its session earned instead of dropping back to the baseline. */
+    // TYPED as the live records, not a hand-picked field list, so every
+    // per-Depot rule state travels with them by construction: L4's `yield` (a
+    // restored Depot keeps the rate its session earned instead of dropping back
+    // to the baseline), and since L6 (#220) the cooled level a Hard game is
+    // sitting on plus the `tuneTier` credit that says whether a re-match is
+    // owed. A save written before either field existed reads as "never tuned".
     harvesters: EconomyState["harvesters"];
     factories: EconomyState["factories"];
   };
