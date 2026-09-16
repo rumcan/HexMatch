@@ -582,6 +582,58 @@ export const VICTORY = {
    *  (`RIVAL_SKILLS.easy.winTarget` = 5★), and `game.ts` reads the live preset's
    *  number for the win check, the HUD and the rival's race assessment. */
   target: 10,
+
+  // ────────────────────────────────────────────────────────────────────────
+  // L13 (#228) — THE NEW LOOP'S ★ TABLE.
+  //
+  // The three rows above pay for actions the redesigned loop no longer has as
+  // its spine. L2 (#216) made dirt FREE, so `upgrade` — 0.25★ a paved tile,
+  // and 90% of every score on the shipped loop — pays for a road tier the loop
+  // does not require; and L5 (#219) made the CITY the thing a seat upgrades,
+  // which leaves an "extra Processing Plant" scoring 1★ for feeding a board
+  // that is no longer a constant board. Under `newLoop` both pay ZERO (see
+  // `rescore` in victory.ts, which simply stops handing the scorer paves and
+  // plants), and the ★ come from the loop's own actions instead:
+  //
+  //   type   a DEPOT TYPE RUNNING — one per distinct cargo the seat has a
+  //          connected, producing Depot for. This is the BREADTH axis and the
+  //          long pole of the race: a new type needs an industry of that cargo
+  //          near your network, a road out to it, its rung open and its mix
+  //          paid. Revocable, like a pave was: cut the road and the type stops
+  //          running, so the scoreboard stays a live view of the network
+  //          rather than a history of everything ever built.
+  //   rung   a RUNG OF THE DEPOT TREE UNLOCKED (L5's `depotTier`). Cheap and
+  //          monotone — a played tuning session opens one — so it is the
+  //          smallest of the three: it marks progress, it does not carry a
+  //          game. You cannot un-unlock a rung, so this one never revokes.
+  //   city   a CITY UPGRADE TIER bought and confirmed on the board (L5's
+  //          `townLevel`). This is the DEPTH axis: fewer, richer depots and a
+  //          higher base rate instead of more routes. Monotone too.
+  //
+  // Why these numbers. The pool is deliberately BIGGER than the line so no
+  // single source is a toll gate: 6 types (12★) + 2 rungs (2★) + the shipped
+  // city row (2★) = 16★ against a 12★ line. That leaves several honest routes
+  // — six types alone wins; four types with both rungs and the city wins;
+  // five types and the rungs wins — which is the Catan-style "different plans"
+  // the ticket's addition asks for. `rung` is 1★ precisely because it is the
+  // one source a seat gets almost for free; making it 2★ would have handed
+  // every seat a sixth of the line for playing two sessions.
+  //
+  // `target` is the new loop's OWN line and is read only when the flag is on
+  // (`winTarget()` in game.ts). The shipped 10★ above is untouched, so every
+  // VP-01 test, the host settings range (#186) and ranked play keep racing the
+  // number they always did — this ticket's MVP scope is the solo new loop.
+  // ────────────────────────────────────────────────────────────────────────
+  loop: {
+    /** ★ per distinct cargo the seat has a connected, producing Depot for. */
+    type: 2,
+    /** ★ per rung of the depot tree unlocked (L5 `depotTier`). */
+    rung: 1,
+    /** ★ per city upgrade tier bought and confirmed (L5 `townLevel`). */
+    city: 2,
+    /** ★ needed to win under the new loop. */
+    target: 12,
+  },
 } as const;
 
 export const TRANSPORT: Record<"dirt" | "road", TransportDef> = {

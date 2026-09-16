@@ -92,7 +92,7 @@ import {
 import {
   createScoreState, rescore, vpFor, hasWon, fmtVp, paveVp, vpDeltaText,
   victoryBreakdown,
-  type ScoreState, type VpEvent,
+  type ScoreState, type VpEvent, type LoopScoring,
 } from "./victory";
 import {
   aiBuildStep, chooseRivalFactorySpot, deepPlanCandidates, planUpgrades, executePaves,
@@ -790,9 +790,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // STORY-01: a contract races to its OWN ★ line (5★ for the inheritance, the
   // full 8★ for the Chairman), read live like everything else on this dial —
   // the scoreboard, the HUD badge and the win check all ask `winTarget()`.
-  const winTarget = (): number => storyChapter
-    ? storyChapter.target
-    : (isSolo() ? skill().winTarget : settings.winTarget);
+  //
+  // L13 (#228): the new loop scores from an entirely different table
+  // (`VICTORY.loop`), so it races its own line — the shipped 10★ is calibrated
+  // against 0.25★ paves and would be reached by three depot types. `newLoop`
+  // is solo-only and story-free (L1a), so this branch can sit ahead of both
+  // without touching a contract's target or a room's setting.
+  const winTarget = (): number => newLoop
+    ? VICTORY.loop.target
+    : (storyChapter
+      ? storyChapter.target
+      : (isSolo() ? skill().winTarget : settings.winTarget));
 
   const eco: EconomyState = { grid, track, harvesters: [], factories: [], rail };
   let nextHarvesterId = 1;
@@ -2020,8 +2028,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // front door wrote for this seat is now a lie, and only the layer that
     // wrote it can drop it.
     opts.onMatchEnded?.();
-    const playerBreakdown = victoryBreakdown(eco, me.id, railPlatforms());
-    const rivalBreakdown = victoryBreakdown(eco, rival.id, railPlatforms());
+    const playerBreakdown = victoryBreakdown(eco, me.id, railPlatforms(), loopScoring());
+    const rivalBreakdown = victoryBreakdown(eco, rival.id, railPlatforms(), loopScoring());
     const model = buildEnding({
       playerWon: winner.id === me.id,
       playerScore: vpFor(score, me.id),
@@ -2285,16 +2293,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const vpToastSeen = new Set<string>();
   function applyVpEvents(events: VpEvent[], now: number) {
     if (!events.length) return;
-    type Bucket = { n: number; vp: number; spots: [number, number][] };
+    type Bucket = { n: number; vp: number; spots: [number, number][]; cargos: Cargo[] };
     const byOwner = new Map<string, Map<string, Bucket>>();
     for (const e of events) {
       let kinds = byOwner.get(e.owner);
       if (!kinds) byOwner.set(e.owner, kinds = new Map());
       const key = `${e.source}:${e.type}`;
-      const b = kinds.get(key) ?? { n: 0, vp: 0, spots: [] };
+      const b = kinds.get(key) ?? { n: 0, vp: 0, spots: [], cargos: [] };
       b.n++;
       b.vp += e.delta;
       if (b.spots.length < MAX_FLOATS_PER_EVENT) b.spots.push([e.tx, e.ty]);
+      if (e.cargo) b.cargos.push(e.cargo);
       kinds.set(key, b);
     }
     for (const [owner, kinds] of byOwner) {
@@ -2302,13 +2311,26 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       for (const [key, b] of kinds) {
         const [source, type] = key.split(":");
         const gained = type === "awarded";
-        const label = source === "upgrade"
+        // L13 (#228): the new loop's three sources say what they were for —
+        // a ★ that arrives unexplained is the confusion this whole path was
+        // built to avoid, and "a depot type stopped running" is the one
+        // revocation a player can act on.
+        const names = b.cargos.map((c) => CARGO[c].name).join(", ");
+        const label = source === "type"
           ? (gained
-            ? `Paved ${b.n} Dirt Road tile${b.n === 1 ? "" : "s"} · ${vpDeltaText(b.vp)}`
-            : `${b.n} paved tile${b.n === 1 ? "" : "s"} lost · ${vpDeltaText(b.vp)}`)
-          : (gained
-            ? `Processing plant raised · ${vpDeltaText(b.vp)}`
-            : `Processing plant lost · ${vpDeltaText(b.vp)}`);
+            ? `${names || "Depot type"} depots running · ${vpDeltaText(b.vp)}`
+            : `${names || "Depot type"} depots cut off · ${vpDeltaText(b.vp)}`)
+          : source === "rung"
+            ? `Depot-tree rung unlocked · ${vpDeltaText(b.vp)}`
+            : source === "city"
+              ? `City upgraded · ${vpDeltaText(b.vp)}`
+              : source === "upgrade"
+                ? (gained
+                  ? `Paved ${b.n} Dirt Road tile${b.n === 1 ? "" : "s"} · ${vpDeltaText(b.vp)}`
+                  : `${b.n} paved tile${b.n === 1 ? "" : "s"} lost · ${vpDeltaText(b.vp)}`)
+                : (gained
+                  ? `Processing plant raised · ${vpDeltaText(b.vp)}`
+                  : `Processing plant lost · ${vpDeltaText(b.vp)}`);
         if (!mine) continue;          // the rival's line is its own business
         // TOAST-ONCE: the "you just earned" popup is a first-time lesson, not
         // a per-action ticker — once seen it stays gone (closed or not), while
@@ -2346,10 +2368,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           const other = p === players[0] ? players[1] : players[0];
           rankRuntime.claimWin(wireIdOf(p), wireIdOf(other), (performance.now() - rankBootAt) / 1000);
         }
-        const b = victoryBreakdown(eco, p.id, railPlatforms());
-        toast(`${p.name} wins — ${fmtVp(vpFor(score, p.id))}★ `
-          + `(${b.paved} paved tile${b.paved === 1 ? "" : "s"}, ${b.plants} plant${b.plants === 1 ? "" : "s"})`,
-        p.human ? "good" : "bad");
+        const b = victoryBreakdown(eco, p.id, railPlatforms(), loopScoring());
+        // L13 (#228): the winning line names the sources the LIVE table paid.
+        const how = newLoop
+          ? `${b.types} depot type${b.types === 1 ? "" : "s"}, ${b.rungs} rung${b.rungs === 1 ? "" : "s"}, ${b.city} city upgrade${b.city === 1 ? "" : "s"}`
+          : `${b.paved} paved tile${b.paved === 1 ? "" : "s"}, ${b.plants} plant${b.plants === 1 ? "" : "s"}`;
+        toast(`${p.name} wins — ${fmtVp(vpFor(score, p.id))}★ (${how})`,
+          p.human ? "good" : "bad");
         presentEnding(decisive);
         break;
       }
@@ -2370,7 +2395,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // RAIL-02 (#176): platforms are the third scored thing, handed to the
     // scoreboard from the rail state on every rescore — built = awarded,
     // demolished = revoked, both through `applyVpEvents` like everything else.
-    applyVpEvents(rescore(eco, score, railPlatforms()), now);
+    applyVpEvents(rescore(eco, score, railPlatforms(), loopScoring()), now);
     for (const p of players) {
       const stars = Math.floor(vpFor(score, p.id));
       const last = starFed.get(p.id) ?? 0;
@@ -2528,6 +2553,46 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const railPlatforms = () => rail.structures
     .filter((s) => s.kind === "platform")
     .map((s) => ({ id: s.id, ownerId: s.ownerId, owner: s.owner, tx: s.tx, ty: s.ty }));
+
+  /**
+   * L13 (#228) — the new loop's scoring input, or `undefined` on the shipped
+   * loop (where `rescore` keeps paying paves and plants exactly as it always
+   * has). This is the ONE place the ★ table is switched.
+   *
+   * `running` is a NETWORK fact, never a clock one — the rule this whole
+   * scoreboard is built on ("points move on a build, never on a timer"). A
+   * depot type scores when the seat has a Depot of that cargo that is
+   * serviced, connected to one of its own plants, and holding an industry no
+   * rival network claimed first. What it deliberately does NOT read is the
+   * blockade/protest timers: those stop the cargo for a minute and are meant
+   * to hurt income, not to make the star counter flicker on a clock nobody
+   * pressed. (The ticket's "hold a contested industry for N minutes" control
+   * ★ is explicitly post-MVP.)
+   *
+   * Rebuilding the components per call is fine because `rescore` runs on
+   * build and demolish, which is exactly when the answer can have changed.
+   */
+  const loopScoring = (): LoopScoring | undefined => {
+    if (!newLoop) return undefined;
+    const locks = industryLocks(eco);
+    const comps = new Map<string, ReturnType<typeof buildAllComponents>>();
+    const compFor = (owner: string) => {
+      let c = comps.get(owner);
+      if (!c) comps.set(owner, c = buildAllComponents(eco.track, ownerIdOf(eco, owner)));
+      return c;
+    };
+    return {
+      running: (h) => {
+        if (!isServiced(eco.track, h, eco.rail)) return false;
+        if (resolveConnection(eco, compFor(h.owner), h).kind === null) return false;
+        return heldIndustries(eco, h, locks).length > 0;
+      },
+      cargoOf: (h) => depotCargo(eco, h),
+      seats: players.map((p) => ({
+        owner: p.id, depotTier: p.depotTier, townLevel: p.townLevel,
+      })),
+    };
+  };
 
   /** One rail structure's kind, in the wording the player reads. */
   const railKindName = (kind: RailStructure["kind"]) => (kind === "platform" ? "Platform" : "Train depot");
@@ -3265,8 +3330,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return true;
   }
 
-  function applyRivalTuning(): void {
-    if (!newLoop) return;
+  /** L13 (#228): true when this pass opened a rung for the rival (a ★). */
+  function applyRivalTuning(): boolean {
+    if (!newLoop) return false;
     const key = skill().key;
     // L10 (#225): the rival plays no board, so the obstacles its difficulty
     // puts on one are taken off its simulated session instead — the same table
@@ -3298,9 +3364,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // opens the next rung of the tree for the rival. One rung per call — the
     // turn's own pacing, not the number of Depots that landed in it — so its
     // progression is bounded by turns exactly as the player's is by sessions.
+    //
+    // L13 (#228): a rung is worth a ★ now, so the caller is told whether one
+    // moved — every path that opens a rung has to rescore, or the rival's
+    // star would wait for its next build.
     if (simulated) {
+      const before = rival.depotTier;
       rival.depotTier = unlockTierAfterSession(rival.depotTier, 1);
+      return rival.depotTier > before;
     }
+    return false;
   }
 
   function placeHarvester(tx: number, ty: number, p: PlayerState): boolean {
@@ -4055,7 +4128,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // before anything is clocked — an AI turn assigns its own, and this
       // catches everything else (a restored save, a depot built before the
       // redesign). Idempotent: a depot that already has a level is left alone.
-      applyRivalTuning();
+      // L13 (#228): if that opened a rung it opened a ★ with it, and this is
+      // the one caller that is not already inside a build path — so it says
+      // so here rather than leaving the star until the rival's next road.
+      if (applyRivalTuning()) rescoreNow();
       // L1b: the host clocks the local seat. L1d (#235): and the rival's too —
       // both seats earn on the clock through the SAME seams, the same
       // `harvesterYield` connectivity gate and the same per-depot fractional
@@ -5877,11 +5953,23 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const key = `${netVersion}:${total}:${line}:${p.name}:${p.human}`;
       const hit = vpTipCache.get(p.id);
       if (hit && hit.key === key) return hit.tip;
-      const b = victoryBreakdown(eco, p.id, railPlatforms());
+      const b = victoryBreakdown(eco, p.id, railPlatforms(), loopScoring());
+      // L13 (#228): the tooltip is the scoreboard explained, so it lists the
+      // rows the LIVE table pays — the new loop's three sources, or the
+      // shipped loop's two.
+      const rows = newLoop
+        ? [
+          `Depot types running: ${b.types} (${b.cargos.map((c) => CARGO[c].name).join(", ") || "none"}) × ${VICTORY.loop.type}★ = ${fmtVp(b.typeVp)}★`,
+          `Depot-tree rungs: ${b.rungs} × ${VICTORY.loop.rung}★ = ${fmtVp(b.rungVp)}★`,
+          `City upgrades: ${b.city} × ${VICTORY.loop.city}★ = ${fmtVp(b.cityVp)}★`,
+        ]
+        : [
+          `Paved road tiles: ${b.paved} × 0.25★ = ${fmtVp(b.pavedVp)}★`,
+          `Processing plants: ${b.plants + 1} (opening plant is free; ${b.plants} × 1★ = ${fmtVp(b.plantVp)}★)`,
+        ];
       const tip = [
         `${p.name}${p.human ? " (you)" : ""} — ${fmtVp(total)}★ of ${line}★`,
-        `Paved road tiles: ${b.paved} × 0.25★ = ${fmtVp(b.pavedVp)}★`,
-        `Processing plants: ${b.plants + 1} (opening plant is free; ${b.plants} × 1★ = ${fmtVp(b.plantVp)}★)`,
+        ...rows,
         `${fmtVp(Math.max(0, line - total))}★ to win`,
       ].join("\n");
       vpTipCache.set(p.id, { key, tip });
@@ -7086,8 +7174,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // VP is derived state and is intentionally absent from the save. Rebuild
     // its ledgers now (without UI events), or a restored final screen would say
     // 0★ despite showing the winning roads beneath it.
+    // L13 (#228): the new loop's three ledgers are derived state too — a
+    // restore that left `rungs`/`city` behind would re-pay nothing and a
+    // restore that left `types` behind would revoke a type the map still
+    // runs, so all six go before the rebuild.
     score.paved.clear(); score.plants.clear(); score.vp.clear();
-    rescore(eco, score, railPlatforms());
+    score.types.clear(); score.rungs.clear(); score.city.clear();
+    rescore(eco, score, railPlatforms(), loopScoring());
     for (const p of players) starFed.set(p.id, Math.floor(vpFor(score, p.id)));
     phase = d.phase as typeof phase;
     winner = d.winnerId
@@ -7895,11 +7988,26 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     /** VP-01: the target and the two numbers behind a player's total.
      *  AI-04: the target is the difficulty's line (5★ on easy), not a constant. */
     get vpTarget() { return winTarget(); },
-    get vpRates() { return { upgrade: VICTORY.upgrade, plant: VICTORY.plant, platform: PLATFORM_VP }; },
+    /**
+     * L13 (#228): the ★ table the LIVE game is paying, so the twin can never
+     * report rates the scoreboard is not using. On the shipped loop this is
+     * the three rows it always was; under `?loop=new` it is the loop's own
+     * three (`VICTORY.loop`) plus the platform row the rail flag still pays.
+     * `newLoop` says which, so a reader never has to guess from the keys.
+     */
+    get vpRates() {
+      return newLoop
+        ? {
+          newLoop: true,
+          type: VICTORY.loop.type, rung: VICTORY.loop.rung, city: VICTORY.loop.city,
+          platform: PLATFORM_VP,
+        }
+        : { upgrade: VICTORY.upgrade, plant: VICTORY.plant, platform: PLATFORM_VP };
+    },
     // RAIL-02 (#176): the breakdown includes the platform line, read from the
     // rail state like `rescoreNow` does — the twin must not report a total the
     // scoreboard would not.
-    victoryOf: (who: string) => victoryBreakdown(eco, who, railPlatforms()),
+    victoryOf: (who: string) => victoryBreakdown(eco, who, railPlatforms(), loopScoring()),
     /** VP-01: how many of `who`'s tiles carry pave provenance (its score is
      *  this × `VICTORY.upgrade`, plus 1★ a plant). */
     pavedTiles: (who: string) => {

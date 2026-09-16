@@ -43,11 +43,37 @@
 // the player whose `owner` byte it carries, so the map's public highways and
 // town rings (`PUBLIC_OWNER`) — and anything your rival paved — can never land
 // on your total, or vice-versa.
+//
+// ── L13 (#228): the same module, a second table ───────────────────────────
+//
+// Everything above describes the SHIPPED loop, which still ships and still
+// scores exactly as written. The redesigned loop (`newLoop`) pays for its own
+// actions instead, because L2 made dirt free and L5 made the city the thing a
+// seat upgrades — so paving is no longer a purchase worth a point, and an
+// "extra Processing Plant" is no longer a thing the loop builds:
+//
+//   depot type running   +2★   per distinct cargo you have a connected,
+//                              producing Depot for      (breadth, revocable)
+//   depot-tree rung      +1★   per rung unlocked (L5)   (progress, monotone)
+//   city upgrade tier    +2★   per tier confirmed (L5)  (depth, monotone)
+//   First to 12★ wins
+//
+// The switch is the `loop` argument to `rescore`: with it, paves and plants
+// are not collected (so any already on the ledger are revoked once and never
+// awarded again) and the three sources above are. Without it, nothing in this
+// module behaves differently than it did before the ticket — which is what
+// keeps the VP-01 suite meaningful while the redesign is behind its flag.
+//
+// The two properties the shipped table was built around survive the move:
+// **the pool is bigger than the line** (16★ of sources against 12★ to win), so
+// no single source is mandatory and several plans reach the flag; and **the
+// breadth source is revocable**, so the scoreboard stays a live view of the
+// network rather than a history of everything ever built.
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_W, MAP_H } from "../game/config";
 import { PRESENT, PUBLIC_OWNER, type Track } from "./track";
-import { VICTORY } from "./config";
-import type { EconomyState } from "./economy";
+import { VICTORY, type Cargo } from "./config";
+import type { EconomyState, Harvester } from "./economy";
 
 /**
  * The plant id of a player's opening Factory. It is placed during setup for
@@ -56,7 +82,7 @@ import type { EconomyState } from "./economy";
  */
 export const OPENING_PLANT_ID = 0;
 
-export type VpSource = "upgrade" | "plant" | "platform";
+export type VpSource = "upgrade" | "plant" | "platform" | "type" | "rung" | "city";
 export type VpChange = "awarded" | "revoked";
 
 /**
@@ -75,6 +101,11 @@ export interface VpEvent {
   townId?: number | null;
   /** `plant` events: 1-based plant number, for the toast. */
   plantNo?: number;
+  /** L13 (#228) `type` events: which cargo's depot type started (or stopped)
+   *  running, so the toast can name it ("Ore depots running · +2★"). */
+  cargo?: Cargo;
+  /** L13 (#228) `rung`/`city` events: the level that was reached. */
+  level?: number;
 }
 
 /** Where a scored thing is and who it paid. Kept so a removal can be debited
@@ -103,6 +134,18 @@ export interface PlatformLedger {
   id: number;
 }
 
+/**
+ * L13 (#228): a depot TYPE that is running for an owner — the breadth ★. The
+ * tile is the Depot that proves it, so the float lands on the map where the
+ * type actually started paying.
+ */
+export interface TypeLedger {
+  owner: string;
+  cargo: Cargo;
+  tx: number;
+  ty: number;
+}
+
 export interface ScoreState {
   /** tile index → who it scored for. */
   paved: Map<number, PavedLedger>;
@@ -110,12 +153,23 @@ export interface ScoreState {
   plants: Map<string, PlantLedger>;
   /** `${owner}#${platformId}` → the railway platform that scored `platform`★. */
   platforms: Map<string, PlatformLedger>;
+  /**
+   * L13 (#228): `${owner}#${cargo}` → the depot type that is RUNNING for that
+   * owner. Revocable like a pave: the key leaves the map when the last
+   * connected, producing Depot of that cargo is cut off or demolished.
+   */
+  types: Map<string, TypeLedger>;
+  /** L13: per-owner rungs already scored, so a rung pays exactly once. */
+  rungs: Map<string, number>;
+  /** L13: per-owner city tiers already scored. */
+  city: Map<string, number>;
   /** Per-owner VP total. */
   vp: Map<string, number>;
 }
 
 export const createScoreState = (): ScoreState => ({
-  paved: new Map(), plants: new Map(), platforms: new Map(), vp: new Map(),
+  paved: new Map(), plants: new Map(), platforms: new Map(),
+  types: new Map(), rungs: new Map(), city: new Map(), vp: new Map(),
 });
 
 /** VP as the HUD prints it: whole when it is whole, 2dp at most otherwise. */
@@ -189,6 +243,69 @@ export function scoredPlatforms(
   return out;
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// L13 (#228) — the new loop's three ★ sources.
+//
+// Read here, and only here, so "what the scoreboard pays" has one answer per
+// loop. The shipped sources (paves, plants) are not deleted — the old loop
+// still ships and still scores them — they are simply not COLLECTED when
+// `rescore` is given a `loop` input, which is the flag's whole footprint on
+// this module.
+// ══════════════════════════════════════════════════════════════════════════
+
+/**
+ * What a seat's own progression contributes, handed in by the caller because
+ * it lives on the player record rather than on the map (`game.ts`'s
+ * `depotTier` / `townLevel`, the harness's `Seat`).
+ */
+export interface LoopSeatProgress {
+  owner: string;
+  /** L5 rungs unlocked (`depotTier`). */
+  depotTier: number;
+  /** L5 city upgrade tiers bought and confirmed (`townLevel`). */
+  townLevel: number;
+}
+
+/**
+ * The new loop's scoring input. Passing it is what switches `rescore` onto the
+ * L13 table: paves and plants stop being collected, and the three loop sources
+ * start.
+ */
+export interface LoopScoring {
+  /** Is a Depot connected AND producing? The caller supplies the live rule
+   *  (`harvesterYield`'s gate in game.ts / the harness), so this module never
+   *  reimplements connectivity. */
+  running: (h: Harvester) => boolean;
+  /** The cargo a Depot harvests — `depotCargo` (economy.ts). */
+  cargoOf: (h: Harvester) => Cargo | null;
+  /** Per-seat rung/city progress. Seats absent from the list score neither. */
+  seats: readonly LoopSeatProgress[];
+}
+
+/**
+ * L13: every depot TYPE that is running, keyed `${owner}#${cargo}`.
+ *
+ * "Running" is the clock's own gate, not "built": a Depot with no road, a
+ * Depot whose industry another network claimed first, and a Depot standing on
+ * a cut line all fail it, so the breadth ★ is a live view of what the seat is
+ * actually producing. The FIRST depot of a cargo (in id order) carries the
+ * ledger's tile, so the float is stable while the type keeps running.
+ */
+export function runningDepotTypes(
+  state: EconomyState, loop: LoopScoring,
+): Map<string, TypeLedger> {
+  const out = new Map<string, TypeLedger>();
+  for (const h of [...state.harvesters].sort((a, b) => a.id - b.id)) {
+    if (!loop.running(h)) continue;
+    const cargo = loop.cargoOf(h);
+    if (cargo === null) continue;
+    const key = `${h.owner}#${cargo}`;
+    if (out.has(key)) continue;
+    out.set(key, { owner: h.owner, cargo, tx: h.tx, ty: h.ty });
+  }
+  return out;
+}
+
 /** Every scored plant: `${owner}#${id}` → where it stands. */
 export function scoredPlants(state: EconomyState): Map<string, PlantLedger> {
   const out = new Map<string, PlantLedger>();
@@ -210,11 +327,17 @@ export function scoredPlants(state: EconomyState): Map<string, PlantLedger> {
 export function rescore(
   state: EconomyState, score: ScoreState,
   platforms?: readonly { id: number; ownerId: number; owner?: string; tx: number; ty: number }[],
+  loop?: LoopScoring,
 ): VpEvent[] {
   const events: VpEvent[] = [];
   const owners = ownerIdsByNumber(state);
-  const paves = scoredPaves(state.track, owners);
-  const plants = scoredPlants(state);
+  // L13 (#228): under the new loop the two shipped sources are not collected
+  // at all, so every pave and plant already in the ledger is revoked on the
+  // first rescore and nothing is ever awarded for one again. Empty maps rather
+  // than a branch around the diff loops below: the "it disappeared" half of
+  // the diff is exactly the behaviour a retired source needs.
+  const paves = loop ? new Map<number, string>() : scoredPaves(state.track, owners);
+  const plants = loop ? new Map<string, PlantLedger>() : scoredPlants(state);
   // RAIL-02: the platforms are the THIRD scored thing — awarded the moment one
   // stands, revoked the moment it is demolished, exactly like a plant. The
   // ledger is keyed by rail id, so rebuilding on the same industry is a NEW
@@ -292,6 +415,63 @@ export function rescore(
       tx: p.tx, ty: p.ty,
     });
   }
+
+  // ── L13 (#228): the new loop's three sources ─────────────────────────────
+  if (loop) {
+    // BREADTH — a depot type that is running. Awarded and revoked like a pave,
+    // because it is the one loop source the map can take back.
+    const types = runningDepotTypes(state, loop);
+    for (const [key, t] of types) {
+      if (score.types.has(key)) continue;
+      score.types.set(key, t);
+      add(t.owner, VICTORY.loop.type);
+      events.push({
+        source: "type", type: "awarded", owner: t.owner, delta: VICTORY.loop.type,
+        tx: t.tx, ty: t.ty, cargo: t.cargo,
+      });
+    }
+    for (const [key, t] of [...score.types]) {
+      if (types.has(key)) continue;
+      score.types.delete(key);
+      add(t.owner, -VICTORY.loop.type);
+      events.push({
+        source: "type", type: "revoked", owner: t.owner, delta: -VICTORY.loop.type,
+        tx: t.tx, ty: t.ty, cargo: t.cargo,
+      });
+    }
+    // DEPTH — rungs and city tiers. Both are monotone by construction (a rung
+    // cannot be un-unlocked, a bought upgrade is not refunded once confirmed),
+    // so they are scored as a HIGH-WATER MARK rather than diffed: a seat that
+    // somehow reports a lower level keeps the stars it was already paid, which
+    // is what stops a wire hiccup or a restored save from silently deleting
+    // points the player watched arrive.
+    for (const seat of loop.seats) {
+      const paidRungs = score.rungs.get(seat.owner) ?? 0;
+      const rungs = Math.max(paidRungs, Math.max(0, Math.floor(seat.depotTier)));
+      if (rungs > paidRungs) {
+        score.rungs.set(seat.owner, rungs);
+        for (let level = paidRungs + 1; level <= rungs; level++) {
+          add(seat.owner, VICTORY.loop.rung);
+          events.push({
+            source: "rung", type: "awarded", owner: seat.owner, delta: VICTORY.loop.rung,
+            tx: 0, ty: 0, level,
+          });
+        }
+      }
+      const paidCity = score.city.get(seat.owner) ?? 0;
+      const city = Math.max(paidCity, Math.max(0, Math.floor(seat.townLevel)));
+      if (city > paidCity) {
+        score.city.set(seat.owner, city);
+        for (let level = paidCity + 1; level <= city; level++) {
+          add(seat.owner, VICTORY.loop.city);
+          events.push({
+            source: "city", type: "awarded", owner: seat.owner, delta: VICTORY.loop.city,
+            tx: 0, ty: 0, level,
+          });
+        }
+      }
+    }
+  }
   return events;
 }
 
@@ -305,21 +485,51 @@ export const vpFor = (score: ScoreState, owner: string) => score.vp.get(owner) ?
 export function victoryBreakdown(
   state: EconomyState, owner: string,
   platforms?: readonly { id: number; ownerId: number; owner?: string; tx: number; ty: number }[],
+  loop?: LoopScoring,
 ) {
   const owners = ownerIdsByNumber(state);
+  // L13 (#228): the retired sources read as zero under the new loop, exactly
+  // as `rescore` scores them — one rule, so the ledger can never print a row
+  // the scoreboard did not pay.
   let paved = 0;
-  for (const o of scoredPaves(state.track, owners).values()) if (o === owner) paved++;
+  if (!loop) for (const o of scoredPaves(state.track, owners).values()) if (o === owner) paved++;
   let plants = 0;
-  for (const p of scoredPlants(state).values()) if (p.owner === owner) plants++;
+  if (!loop) for (const p of scoredPlants(state).values()) if (p.owner === owner) plants++;
   let rail = 0;
   for (const p of scoredPlatforms(platforms, owners).values()) if (p.owner === owner) rail++;
+  // L13: the new loop's three. `types` is counted off the live network (the
+  // same scan `rescore` awards from); rungs and city come off the seat record.
+  const cargos: Cargo[] = [];
+  if (loop) {
+    for (const t of runningDepotTypes(state, loop).values()) {
+      if (t.owner === owner) cargos.push(t.cargo);
+    }
+  }
+  const seat = loop?.seats.find((s) => s.owner === owner);
+  const rungs = Math.max(0, Math.floor(seat?.depotTier ?? 0));
+  const city = Math.max(0, Math.floor(seat?.townLevel ?? 0));
   return {
+    /**
+     * L13 (#228): WHICH ★ table paid this breakdown. The readers (the ending
+     * ledger, the path reading) must not have to infer it from the numbers —
+     * a new-loop seat that has scored nothing yet has the same all-zero rows
+     * as a shipped-loop seat, and guessing printed the wrong ledger.
+     */
+    loop: loop !== undefined,
     paved,
     plants,
     platforms: rail,
     pavedVp: paveVp(paved),
     plantVp: plants * VICTORY.plant,
     platformVp: rail * VICTORY.platform,
+    /** L13: the distinct cargos this seat has a running depot type for. */
+    cargos,
+    types: cargos.length,
+    typeVp: cargos.length * VICTORY.loop.type,
+    rungs,
+    rungVp: rungs * VICTORY.loop.rung,
+    city,
+    cityVp: city * VICTORY.loop.city,
   };
 }
 

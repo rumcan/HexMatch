@@ -45,6 +45,7 @@ import { createRailState, tickTrains, type RailState } from "../../../src/iso/ra
 import { RIVAL_SKILLS, type RivalSkill, type SkillKey } from "../../../src/iso/skill";
 import {
   buildAllComponents, harvesterYield, industryLocks, ownerIdOf, playerResources, isServiced,
+  depotCargo, heldIndustries, resolveConnection,
   type EconomyState, type Factory,
 } from "../../../src/iso/economy";
 // L1d (#235): the new loop's income rule, imported wholesale — the harness
@@ -53,12 +54,12 @@ import {
 import { depotYield, distanceFactor, transportFactor } from "../../../src/iso/loop";
 import { rivalTuningYield } from "../../../src/iso/tuning";
 import {
-  createScoreState, rescore, vpFor, hasWon,
+  createScoreState, rescore, vpFor, hasWon, type LoopScoring,
 } from "../../../src/iso/victory";
 import {
   addPlant, canAffordPlant, chooseAiPlantSpot, PLANT_COST,
 } from "../../../src/iso/plants";
-import { BASE_RATE, VP_TARGET, CARGOES, type Cargo } from "../../../src/iso/config";
+import { BASE_RATE, VICTORY, VP_TARGET, CARGOES, type Cargo } from "../../../src/iso/config";
 import {
   bankTrade, BANK_RATE, createMarket, postOffer, acceptOffer, tickMarket,
   type Market, type MarketPlayer, type TradeOffer,
@@ -133,6 +134,8 @@ export interface Seat {
 export interface Race {
   seed: number;
   minutes: number;
+  /** L13 (#228): the ★ line this race was run to (12★ under `newLoop`). */
+  target: number;
   eco: EconomyState;
   /** RAIL-05: the railway both seats built. */
   rail: RailState;
@@ -370,7 +373,20 @@ function townPass(eco: EconomyState, seat: Seat): boolean {
   return true;
 }
 
-function loopIncome(eco: EconomyState, seat: Seat, t: number): void {
+/**
+ * L4 (#218) / L5 (#219): the harness twin of `applyRivalTuning` in game.ts —
+ * every Depot this seat owns that has no level yet takes its difficulty's
+ * simulated session result, and a session that ran opens the next rung.
+ * Returns true when a rung actually moved.
+ *
+ * L13 (#228): this is called at the BUILD, exactly where the live AI turn
+ * calls `applyRivalTuning()` (right after its depot pass) — not only on the
+ * harvest clock. A rung is a ★ now, so a race can end on a depot build, and a
+ * Depot raised on the winning turn must already carry the level the live game
+ * would have given it in the same turn. Idempotent: a Depot that has a level
+ * is left alone, so the harvest clock may still call it as a backstop.
+ */
+function tuneNewDepots(eco: EconomyState, seat: Seat): boolean {
   let simulated = false;
   for (const depot of eco.harvesters) {
     if (depot.owner !== seat.id) continue;
@@ -379,10 +395,17 @@ function loopIncome(eco: EconomyState, seat: Seat, t: number): void {
       simulated = true;
     }
   }
+  if (!simulated) return false;
   // L5 (#219): the simulated session IS a session — the live game's
   // `applyRivalTuning` opens the next rung for it, and the harness does the
-  // same, once per tick at most (the turn's own pacing).
-  if (simulated) seat.depotTier = unlockTierAfterSession(seat.depotTier, rivalTuningScore(seat.skill.key));
+  // same, once per call at most (the turn's own pacing).
+  const before = seat.depotTier;
+  seat.depotTier = unlockTierAfterSession(seat.depotTier, rivalTuningScore(seat.skill.key));
+  return seat.depotTier > before;
+}
+
+function loopIncome(eco: EconomyState, seat: Seat, t: number): void {
+  tuneNewDepots(eco, seat);
   const locks = industryLocks(eco);
   const components = buildAllComponents(eco.track, ownerIdOf(eco, seat.id));
   for (const depot of eco.harvesters) {
@@ -416,6 +439,9 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
   // L1d (#235): one flag for BOTH seats — the ticket is parity, so the harness
   // has no "new loop for me, trickle for him" mode.
   const newLoop = opts.newLoop === true;
+  // L13 (#228): the new loop scores from its own table, so it races its own
+  // line (12★) — the shipped 10★ is calibrated against 0.25★ paves.
+  const raceTarget = newLoop ? VICTORY.loop.target : VP_TARGET;
   const grid = generateMap(seed);
   const track = createTrack();
   // AI-01: the live map boots with its towns' ring roads and inter-town
@@ -469,6 +495,34 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
   const platforms = () => rail.structures
     .filter((st) => st.kind === "platform")
     .map((st) => ({ id: st.id, ownerId: st.ownerId, owner: st.owner, tx: st.tx, ty: st.ty }));
+  /**
+   * L13 (#228): the new loop's ★ table, wired exactly as `loopScoring` in
+   * game.ts wires it — same "running" rule (serviced, connected, holding an
+   * industry nobody else claimed) and the same per-seat rung/city rows — so
+   * the harness races the scoreboard the live game ships. `undefined` with the
+   * flag off, which is what keeps every VP-01 and calibration number intact.
+   */
+  const loopScoring = (): LoopScoring | undefined => {
+    if (!newLoop) return undefined;
+    const locks = industryLocks(eco);
+    const comps = new Map<string, ReturnType<typeof buildAllComponents>>();
+    const compFor = (owner: string) => {
+      let c = comps.get(owner);
+      if (!c) comps.set(owner, c = buildAllComponents(eco.track, ownerIdOf(eco, owner)));
+      return c;
+    };
+    return {
+      running: (h) => {
+        if (!isServiced(eco.track, h, eco.rail)) return false;
+        if (resolveConnection(eco, compFor(h.owner), h).kind === null) return false;
+        return heldIndustries(eco, h, locks).length > 0;
+      },
+      cargoOf: (h) => depotCargo(eco, h),
+      seats: seats.map((st) => ({
+        owner: st.id, depotTier: st.depotTier, townLevel: st.townLevel,
+      })),
+    };
+  };
   /** RAIL-05: one rail action, through the live rival's planner and executor. */
   const railAction = (seat: Seat, t: number): boolean => {
     if (seat.rail === "road") return false;
@@ -493,7 +547,7 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
   const trace: Race["trace"] = [];
   let winner: Race["winner"] = null;
 
-  const MILESTONES = [1, 5, VP_TARGET];
+  const MILESTONES = [1, 5, raceTarget];
 
   for (let t = 0; t <= RACE_MS && (opts.fullWindow || !winner); t += STEP_MS) {
     tickTrains(rail, STEP_MS);     // RAIL-05: trains move on the sim clock
@@ -507,7 +561,7 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
         // OTHER seat's total is what a seat reacts to, and BOTH seats run the
         // policy — the only way to measure whether catching up helps at all.
         const other = seat.id === "you" ? "ai" : "you";
-        const pace = rivalPace(vpFor(score, other), vpFor(score, seat.id), VP_TARGET);
+        const pace = rivalPace(vpFor(score, other), vpFor(score, seat.id), raceTarget);
         const urgency = pace.oreUrgency * seat.skill.urgencyBias;
 
         // RAIL-05: the rail-first seat acts on the railway before anything else
@@ -539,6 +593,11 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
           pay(seat, built.spent);
           acted = true;
         }
+        // L4/L5: however many Depots that turn raised, they are all tuned now
+        // — the live AI turn calls `applyRivalTuning()` in exactly this slot,
+        // so a Depot never reaches the scoreboard (or the clock) without the
+        // level its difficulty would have given it.
+        if (newLoop) tuneNewDepots(eco, seat);
         // L5 (#219): the city upgrade, in the same slot the live turn puts it
         // — after the Depot pass, before the pave pass.
         if (townPass(eco, seat)) acted = true;
@@ -590,7 +649,7 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
         // Points move on a build, never on a clock — the rule `game.ts` keeps by
         // rescoring from the build paths only.
         if (acted) {
-          rescore(eco, score, platforms());
+          rescore(eco, score, platforms(), loopScoring());
           const got = vpFor(score, seat.id);
           if (seat.firstPoint === null && got > 0) seat.firstPoint = t;
           for (const m of MILESTONES) {
@@ -598,7 +657,7 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
               seat.milestones.push({ vp: m, at: t });
             }
           }
-          if (!winner && hasWon(score, seat.id)) winner = { id: seat.id, at: t };
+          if (!winner && hasWon(score, seat.id, raceTarget)) winner = { id: seat.id, at: t };
         } else {
           // AI-01: the idle clock is per-difficulty, exactly like the live
           // game — a no-op turn retries in `idleMs`, not a whole `buildMs`.
@@ -611,7 +670,7 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
       if (seat.skill.offerEveryMs && t - seat.lastOffer >= seat.skill.offerEveryMs) {
         seat.lastOffer = t;
         const other = seat.id === "you" ? "ai" : "you";
-        const urgency = rivalPace(vpFor(score, other), vpFor(score, seat.id), VP_TARGET).oreUrgency
+        const urgency = rivalPace(vpFor(score, other), vpFor(score, seat.id), raceTarget).oreUrgency
           * seat.skill.urgencyBias;
         const need = seatSkintTarget(eco, seat, track, factoryFor(seat), urgency, newLoop);
         seat.target = need;  // AI-01: cache for the answering policy
@@ -631,8 +690,20 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
       // ── the harvest clock: trickle income with the fractional carry
       if (t - seat.lastHarvest >= HARVEST_MS) {
         seat.lastHarvest = t;
-        if (newLoop) loopIncome(eco, seat, t);
-        else {
+        if (newLoop) {
+          const rungBefore = seat.depotTier;
+          loopIncome(eco, seat, t);
+          // L13 (#228): a simulated session that opened a rung opened a ★ with
+          // it, and this is not a build path — so the scoreboard is told here,
+          // exactly as `economyTick` does in the live game (`applyRivalTuning`
+          // → `rescoreNow`). Normally the build pass has already tuned the
+          // turn's Depots; this is the backstop for one raised any other way.
+          if (seat.depotTier > rungBefore) {
+            rescore(eco, score, platforms(), loopScoring());
+            if (!winner && hasWon(score, seat.id, raceTarget)) winner = { id: seat.id, at: t };
+          }
+        }
+        if (!newLoop) {
           const y = playerResources(eco, seat.id, t);
           for (const [cargo, v] of Object.entries(y) as [Cargo, number][]) {
             const acc = (seat.carry[cargo] ?? 0) + Math.max(0, v);
@@ -675,6 +746,7 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
   return {
     seed,
     minutes: Math.round(trace.length ? (trace[trace.length - 1].t - trace[0].t) / 60_000 : 0),
+    target: raceTarget,
     eco, rail, seats,
     vp: { you: vpFor(score, "you"), ai: vpFor(score, "ai") },
     trace, winner,

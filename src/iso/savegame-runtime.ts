@@ -50,7 +50,10 @@ export interface SaveGamePayload {
   story?: {
     playerSabotage: number;
     rivalSabotage: number;
-    winningSource: "upgrade" | "plant" | "platform" | null;
+    /** L13 (#228) widened this with the new loop's three ★ sources; a save
+     *  written before them can only carry the shipped three, and an unknown
+     *  string restores as "the line was crossed" rather than failing. */
+    winningSource: "upgrade" | "plant" | "platform" | "type" | "rung" | "city" | null;
     /** Optional because cinematic saves created before conversational oil
      * banter did not track whether its one-off scene had played. */
     oilBanterSeen?: boolean;

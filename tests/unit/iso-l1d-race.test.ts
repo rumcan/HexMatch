@@ -28,7 +28,7 @@
 //   L1D_RACE_SEEDS=1337,7,42,99 npx vitest run tests/unit/iso-l1d-race.test.ts
 // ══════════════════════════════════════════════════════════════════════════
 import { beforeAll, describe, it, expect } from "vitest";
-import { VP_TARGET } from "../../src/iso/config";
+
 import { plantsOf } from "../../src/iso/plants";
 import { runRace, pacePerMinute, MIN } from "./helpers/race";
 
@@ -63,13 +63,15 @@ describe("L1d (#235) a whole race on the new loop's clock", () => {
 
   it("finishes: a seat reaches the line, and the other one was racing", () => {
     for (const r of races) {
-      expect(r.winner, `seed ${r.seed}: no seat reached ${VP_TARGET}★ in ${RACE_MINUTES}m — deadlock`)
+      // L13 (#228): the new loop races its own line (`r.target`, 12★), not the
+      // shipped 10★ — the harness reports which one it ran to.
+      expect(r.winner, `seed ${r.seed}: no seat reached ${r.target}★ in ${RACE_MINUTES}m — deadlock`)
         .toBeTruthy();
-      expect(r.vp[r.winner!.id]).toBeGreaterThanOrEqual(VP_TARGET);
+      expect(r.vp[r.winner!.id]).toBeGreaterThanOrEqual(r.target);
       const trailer = Math.min(r.vp.you, r.vp.ai);
       expect(trailer, `seed ${r.seed}: the loser never scored`).toBeGreaterThan(0);
       expect(trailer, `seed ${r.seed}: the loser stalled out of the race`)
-        .toBeGreaterThanOrEqual(VP_TARGET / 4);
+        .toBeGreaterThanOrEqual(r.target / 4);
     }
   }, 900_000);
 
@@ -143,7 +145,7 @@ describe("L5 (#219) the depot tree, raced", () => {
 
   it("finishes on every seed, with both seats still racing", () => {
     for (const r of races) {
-      expect(r.winner, `seed ${r.seed}: nobody reached ${VP_TARGET}★ in ${TREE_MINUTES}m — deadlock`)
+      expect(r.winner, `seed ${r.seed}: nobody reached ${r.target}★ in ${TREE_MINUTES}m — deadlock`)
         .toBeTruthy();
       for (const seat of r.seats) {
         expect(r.vp[seat.id], `seed ${r.seed}/${seat.id} never scored`).toBeGreaterThan(0);
