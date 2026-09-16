@@ -1,11 +1,13 @@
 // ══════════════════════════════════════════════════════════════════════════
 // AI-01 — rival difficulty: three presets, measured against each other.
 //
-// The opponent the player meets is a POLICY (the turn aiTick takes: plant →
-// depot(s) → pave → bank → market → sabotage) and a set of NUMBERS that pace
-// it. This module owns the numbers, and it is data, not a behavioural fork:
-// every difficulty runs the SAME turn, so "hard" can never cheat — it plans
-// off the same A*, pays the same costs, and never touches the player's purse.
+// The opponent the player meets is a POLICY (the turn `aiTick` takes — plant →
+// depot(s) → pave → bank → market → sabotage on the shipped loop; connect →
+// tune → climb the tree → upgrade the city under `newLoop`) and a set of
+// NUMBERS that pace it. This module owns the numbers, and it is data, not a
+// behavioural fork: every difficulty runs the SAME turn, so "hard" can never
+// cheat — it plans off the same A*, pays the same costs, and never touches the
+// player's purse.
 //
 // How the presets were set, so they do not drift into guesswork: two AI seats
 // race each other head-to-head (tests/unit/iso-skill-calibration.test.ts,
@@ -65,6 +67,26 @@
 //                     plays — which is what "make the easy game 5 win points"
 //                     was asking for.
 //
+// ── L14 (#229): the same table, read by the NEW loop's turn ───────────────
+// Under `newLoop` the rival plays a different turn (`aiNewLoopTurn` in
+// game.ts: connect → tune → climb the tree → upgrade the city), and the levers
+// above re-map onto its decisions instead of the old ones:
+//
+//   buildMs / idleMs      the REACTION clocks, unchanged — how fast it answers
+//                         a tick of income and how soon it retries a turn that
+//                         achieved nothing;
+//   tuningSkill           the SESSION QUALITY: every simulated session it plays
+//                         (build tune, re-match, city upgrade) reads it;
+//   townReserve           the UPGRADE TIMING: how much of the next Depot it
+//                         keeps in hand before buying the city upgrade;
+//   expandPerTurn         still the expansion pressure — Depot plans per turn,
+//                         which on the new loop is how fast it spreads over the
+//                         map on free gravel;
+//   paveTiles / bankBonus / offerEveryMs / urgencyBias / moveMs
+//                         shipped-loop levers. Banking, market offers and the
+//                         watched board are all retired under `newLoop` (L11
+//                         #226, L13 #228), so the new loop reads none of them.
+//
 // ══════════════════════════════════════════════════════════════════════════
 
 import { RAID_EVERY } from "../game/config";
@@ -98,7 +120,13 @@ export interface RivalSkill {
    *  the speed a player watches when they open the rival's plant: a slow
    *  single swap every few seconds, never a cascade bot. */
   moveMs: number;
-  /** Multiplier on the ore urgency rivalPace computes from the scoreboard. */
+  /**
+   * Multiplier on the ore urgency rivalPace computes from the scoreboard. On
+   * the shipped loop this is how hard the rival chases the cargo that buys
+   * points (VP-01: Ore). Under `newLoop` there is no urgency dial — the tree
+   * decides what the rival wants (`treeGoal` in ai.ts) — so this lever is the
+   * shipped loop's alone.
+   */
   urgencyBias: number;
   /**
    * RAIL-05 (#182): the railway lever — does this rival build and run lines at
@@ -124,8 +152,27 @@ export interface RivalSkill {
    * is a SIMULATED result — the rival opens no board for it — and it is the
    * same lever for all three presets, so "the hard rival's depots tick faster"
    * is one number here rather than a special case somewhere in `game.ts`.
+   *
+   * L14 (#229): this is the NEW loop's headline lever, next to the two clocks.
+   * It feeds every session the rival never opens — the build tune, the re-match
+   * and the city upgrade's own session — so one number sets how good the whole
+   * network it raises is.
    */
   tuningSkill: number;
+  /**
+   * L14 (#229): how much of its next Depot the rival insists on still being
+   * able to pay BEFORE it buys the city upgrade — expressed as a multiple of
+   * `treeGoal`'s price. `1` keeps the goal whole (buy the upgrade late, when
+   * the network is comfortable), `0.6` buys it as soon as two thirds of the
+   * goal is in hand (the upgrade's ×1.6 compounds every later tick), and
+   * anything above 1 is a seat that will not touch the city until it is rich.
+   *
+   * This is the "upgrade timing" decision of the new loop and the third lever
+   * a player feels, next to the reaction clocks (`buildMs`/`idleMs`) and the
+   * session quality (`tuningSkill`). Ignored on the shipped loop, where the
+   * upgrade is priced against the next Depot PLAN instead (`rivalSkintTarget`).
+   */
+  townReserve: number;
   /**
    * AI-04: the Victory-Point line the GAME races to while this difficulty is
    * selected — the number in the HUD's "You 2★/5", the king bars' 100%, the
@@ -157,6 +204,9 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     rail: false,
     // L4 (#218): a casual tuning hand — its depots land just above baseline.
     tuningSkill: 0.35,
+    // L14 (#229): a careful steward — the city waits until the next Depot's
+    // whole price (and a quarter more) is in hand.
+    townReserve: 1.25,
     // AI-04: the easy chair is a SHORT race — 5★ instead of the shipped 10★.
     winTarget: 5,
   },
@@ -180,6 +230,8 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     rail: true,
     // L4 (#218): the shipped tuning hand — the middle of the multiplier.
     tuningSkill: 0.62,
+    // L14 (#229): the shipped city timing — the next Depot stays funded.
+    townReserve: 1,
     winTarget: VICTORY.target,   // AI-04: the shipped 10★ line, aliased
   },
   hard: {
@@ -202,6 +254,9 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     rail: true,
     // L4 (#218): reads the board — long matches and cascades.
     tuningSkill: 0.88,
+    // L14 (#229): buys the upgrade early — the ×1.6 is worth more than the
+    // tempo the next Depot loses, and a hard rival is playing a compound game.
+    townReserve: 0.6,
     winTarget: VICTORY.target,   // AI-04: the shipped 10★ line, aliased
   },
 };

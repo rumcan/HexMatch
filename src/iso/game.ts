@@ -96,7 +96,7 @@ import {
 } from "./victory";
 import {
   aiBuildStep, chooseRivalFactorySpot, deepPlanCandidates, planUpgrades, executePaves,
-  paveCandidates, rivalPace, type RivalPace,
+  paveCandidates, rivalPace, scoreCargoWant, treeGoal, treeWants, type RivalPace,
   planRailMove, executeRailMove,
 } from "./ai";
 import {
@@ -121,7 +121,8 @@ import {
   depotTiles, rotateFacing, type DepotFacing,
 } from "./depot";
 import {
-  depotYield, distanceBandForPath, distanceFactorForPath, transportFactor, transportTierOf,
+  depotTransportTier, depotYield, distanceBandForPath, distanceFactorForPath,
+  transportFactor,
 } from "./loop";
 // L4 (#218): the tuning session — the one thing that sets a depot's yield.
 // The rules live in `tuning.ts` (pure, unit-tested); this file is where they
@@ -310,6 +311,19 @@ export const PAN_SPEED = 560;
  * exchange and lost the turn, so it holds this much in reserve.
  */
 export const RIVAL_GOLD_RESERVE = 2;
+/**
+ * L14 (#229): how far a Depot must cool below what a fresh session would set
+ * before the rival spends a turn re-tuning it. One fifth is "visibly worse than
+ * it was" — the point where a player reaches for the Re-tune key — and it keeps
+ * a Hard rival's re-matches to roughly one turn in four instead of every turn.
+ *
+ * A constant rather than a skill lever on purpose: what a difficulty changes is
+ * how fast a yield cools (`DIFFICULTY_RULES`) and how good its sessions are
+ * (`tuningSkill`), not how the seat answers them. Exported because the race
+ * harness mirrors the re-match (`tests/unit/helpers/race.ts`), and a harness
+ * with its own threshold would measure a rival nobody ships.
+ */
+export const RIVAL_REMATCH_DROP = 0.2;
 /** VP-01: how many tiles the rival's banking milestone is worth (see
  *  `paveMilestone`) — 4 paves, 16 Ore, exactly the 1★ a plant costs. */
 const PAVE_MILESTONE_TILES = 4;
@@ -3150,7 +3164,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    */
   function depotTier(depot: Harvester, comp?: Components): number {
     const c = comp ?? buildAllComponents(eco.track, ownerIdOf(eco, depot.owner));
-    return transportTierOf(resolveConnection(eco, c, depot).kind);
+    // L14 (#229): the rule itself lives in `loop.ts` now — the rival's
+    // re-match and the race harness read the same function.
+    return depotTransportTier(eco, c, depot);
   }
 
   /**
@@ -3265,8 +3281,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return true;
   }
 
-  function applyRivalTuning(): void {
-    if (!newLoop) return;
+  function applyRivalTuning(): Set<number> {
+    if (!newLoop) return new Set();
     const key = skill().key;
     // L10 (#225): the rival plays no board, so the obstacles its difficulty
     // puts on one are taken off its simulated session instead — the same table
@@ -3279,11 +3295,26 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // components per Depot (the L6 cache in `retuneCandidates` does the same
     // for the player's seat).
     const comp = buildAllComponents(eco.track, ownerIdOf(eco, rival.id));
+    // L14 (#229): which Depots THIS call levelled. The clock hands it to the
+    // cooling pass, because a level assigned inside a tick must not be cooled
+    // by the same tick — the player's session settles between ticks, and the
+    // rival's simulated one has to land the same way or its every fresh tune
+    // would immediately shed a tick's worth of decay (2.20 → 2.18 on Hard,
+    // measured). A later tick cools it like any other.
+    const tuned = new Set<number>();
     let simulated = false;
     for (const h of eco.harvesters) {
       if (h.owner !== rival.id || h.yield !== undefined) continue;
       const tier = depotTier(h, comp);
       h.yield = rivalTuningYield(key, 0, rules, tier);
+      tuned.add(h.id);
+      // L14 (#229): the tier the session settled on, stamped exactly as a
+      // played session stamps it (`settleSession` above). Without it the L6
+      // re-match credit is UNREADABLE for a rival Depot — `retuneOwed` reads
+      // `tuneTier` against the live tier, and `undefined` is what "never
+      // settled" means — so a Normal rival could never re-tune the Depot it
+      // paved, which is precisely the one the player gets a key for.
+      h.tuneTier = tier;
       simulated = true;
       // L9 (#224): the simulated session pays the rival the same Gold a
       // played one pays the player, through the same score→Gold curve. This
@@ -3301,6 +3332,58 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (simulated) {
       rival.depotTier = unlockTierAfterSession(rival.depotTier, 1);
     }
+    return tuned;
+  }
+
+  /**
+   * L14 (#229) — the rival's RE-MATCH: what a seat does about L6's cooling.
+   *
+   * The player meets decay with the plant plate's Re-tune key, and the key's
+   * rule is one predicate (`retuneOwed`): never on Easy, once per transport
+   * tier a Depot has moved up on Normal, any time on Hard. The rival reads the
+   * SAME predicate and plays the SAME session — simulated, off `tuningSkill`,
+   * settled through `settleTuningYield`, so Normal's "a yield never drops" and
+   * Hard's "a bad session can cost you" apply to it as they do to the player
+   * — and then stamps the tier it settled on, which is what spends the credit.
+   *
+   * The one judgement the player makes by hand and this makes by number: WHEN
+   * a session is worth a turn. On Hard every Depot is permanently due, and a
+   * rival that spent every turn re-tuning would never expand again. So it
+   * re-tunes a Depot that has actually COOLED — `RIVAL_REMATCH_DROP` below
+   * what a fresh session would set it to — which is the same "this one is
+   * worth the key" call the plate's weakest-Depot-first sort invites. A
+   * re-tune always IMPROVES the level (a session that would not is not taken),
+   * so nothing here can shave the rival's own economy.
+   *
+   * Returns true when the re-tune was the turn's action.
+   */
+  function rivalRetuneStep(): boolean {
+    if (!newLoop) return false;
+    const rules = difficultyRules();
+    if (!rules.matchEnabled) return false;
+    const comp = buildAllComponents(eco.track, ownerIdOf(eco, rival.id));
+    const key = skill().key;
+    const due = eco.harvesters
+      .filter((h) => h.owner === rival.id)
+      .map((h) => {
+        const tier = depotTier(h, comp);
+        const level = depotYield(h);
+        const fresh = settleTuningYield(level, rivalTuningScore(key, 0, rules, tier), rules);
+        return { h, tier, level, fresh };
+      })
+      // Lowest-yield Depot first (the plate's own sort), and only one that has
+      // something to gain.
+      .filter(({ h, tier, level, fresh }) =>
+        fresh > level + 1e-9
+        && retuneOwed(rules, { tier, tuneTier: h.tuneTier })
+        && level <= fresh * (1 - RIVAL_REMATCH_DROP))
+      .sort((a, b) => a.level - b.level || a.h.id - b.h.id);
+    const head = due[0];
+    if (!head) return false;
+    head.h.yield = head.fresh;
+    head.h.tuneTier = head.tier;
+    ui.feed(`Rival re-tunes a Depot: yield ×${head.fresh}`, rival.name);
+    return true;
   }
 
   function placeHarvester(tx: number, ty: number, p: PlayerState): boolean {
@@ -4055,7 +4138,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // before anything is clocked — an AI turn assigns its own, and this
       // catches everything else (a restored save, a depot built before the
       // redesign). Idempotent: a depot that already has a level is left alone.
-      applyRivalTuning();
+      const freshlyTuned = applyRivalTuning();
       // L1b: the host clocks the local seat. L1d (#235): and the rival's too —
       // both seats earn on the clock through the SAME seams, the same
       // `harvesterYield` connectivity gate and the same per-depot fractional
@@ -4082,14 +4165,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           // the seat owns (a disconnected one cools too, or cutting a road would
           // freeze a fresh tune); and its result is stored back on the Depot
           // record, which is what the snapshot and the autosave already carry.
-          // Only the player's Depots cool: `DIFFICULTY_RULES` is the human's
-          // economy axis, and the rival's levels are its `tuningSkill` preset —
-          // letting a difficulty row shave the AI would quietly make Hard an AI
-          // handicap instead of a player challenge (and Easy a buff).
-          if (seat === me) {
-            const cooled = decayYield(depot.yield, rules);
-            if (cooled !== null) depot.yield = cooled;
-          }
+          // L14 (#229): BOTH seats cool. L6 wrote this for the player alone —
+          // "letting a difficulty row shave the AI would make Hard an AI
+          // handicap instead of a player challenge" — and that was right while
+          // the rival had no answer to cooling. It has one now: the same
+          // re-match the player's plate offers (`rivalRetuneStep`), on the same
+          // predicate and the same session result. With a reply in hand, decay
+          // is not a handicap, it is the rule — the L14 spec's "on Hard its
+          // yields decay like the player's" — and it is what makes the rival's
+          // Depots cost it a turn to keep at full tilt, exactly as yours do.
+          // Easy is unaffected on both seats: its `decayRate` is 0, and the
+          // generous `minYield` is still the PLAYER's alone (`rivalTuningYield`
+          // never reads it — see the L6 note in tuning.ts).
+          const cooled = freshlyTuned.has(depot.id) ? null : decayYield(depot.yield, rules);
+          if (cooled !== null) depot.yield = cooled;
           const result = harvesterYield(eco, components, locks, depot, now);
           const cargoes = Object.entries(result.yields) as [Cargo, number][];
           if (!result.serviced || !cargoes.length) continue;
@@ -4191,6 +4280,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    *  so every move it offers here is one `trySwap` carries out. */
   let lastRivalMove = 0;
   function rivalAutoplay(now: number) {
+    // L14 (#229): under `newLoop` the rival plays no board. Its plant is a
+    // spectator panel of a system the loop no longer runs (a board pays no
+    // cargo since #234, which is what makes its depots' yield come from the
+    // simulated session instead), so watching it "match" would be watching an
+    // animation with no game behind it. The moveMs lever is the shipped loop's.
+    if (newLoop) return;
     if (now - lastRivalMove < skill().moveMs) return;
     const mv = rivalBoard.findMove((g) => (g.tier ?? 0));
     if (!mv) { lastRivalMove = now; return; }
@@ -4213,6 +4308,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    */
   let lastOfferPost = 0;
   function rivalMarketOffer(now: number) {
+    // L14 (#229): the MVP hides the Market panel under `newLoop` (L1a) and
+    // trading is #226's to re-cut, so a rival posting offers would be trading
+    // through a surface the player cannot open. Off with the loop, not
+    // deleted: the shipped loop's market policy is still the one that ships.
+    if (newLoop) return;
     const every = skill().offerEveryMs;
     if (!every) return;
     if (now - lastOfferPost < every) return;
@@ -4288,6 +4388,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const bankBudget = (pace: RivalPace): number => Math.max(1, pace.bankPerTurn + skill().bankBonus);
 
   function rivalBankTowardPave(f: Factory, now: number): number {
+    // L14 (#229): the MVP hides the Bank under `newLoop`. On the new loop the
+    // rival banks by EARNING the missing cargo (that is what `treeGoal` sends
+    // it to connect next), not by exchanging its surplus at 4:1 through a
+    // panel the player cannot see.
+    if (newLoop) return 0;
     const pace = rivalPaceNow();
     const want = paveMilestone();
     if (!want) return 0;
@@ -4331,22 +4436,33 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * same shape the plant step uses:
    *
    *   • it must already have a connected Depot for the bonus to multiply;
-   *   • the upgrade must be payable WITHOUT the plan it is working toward —
+   *   • the upgrade must be payable WITHOUT the goal it is working toward —
    *     the plant rule ("a plant bought with the purse the next Depot needs is
-   *     the measured plant-rush stall") applied to the city.
+   *     the measured plant-rush stall") applied to the city — with how much of
+   *     that goal it keeps back set by the difficulty (`townReserve`, L14:
+   *     the upgrade-timing lever).
    *
    * The session that confirms it is SIMULATED, exactly like the rival's Depot
    * tuning (`rivalTuningScore`), so its bonus lands on the same score→strength
    * curve a played one would — and the difficulty clamp comes for free,
    * because that curve reads the same axis.
    */
-  function rivalTownStep(f: Factory, now: number): boolean {
+  function rivalTownStep(): boolean {
     if (!newLoop) return false;
     const price = priceTownUpgrade(rival.purse, rival.townLevel);
     if (!price.def || !price.affordable) return false;
     if (!eco.harvesters.some((h) => h.owner === rival.id && isServiced(eco.track, h, eco.rail))) return false;
-    const skint = rivalSkintTarget(f, now);
-    const reserve: Purse = skint && !skint.paving ? skint.goal : {};
+    // L14 (#229): the reserve is the TREE's goal now, scaled by the
+    // difficulty's `townReserve` — the "upgrade timing" lever. The bank's read
+    // of the scoreboard (`rivalSkintTarget`) belonged to the old loop's palace
+    // of plans (a Depot plan AND a pave milestone AND a plant reserve); the new
+    // loop has exactly one thing to save for, and `treeGoal` is it.
+    const goal = treeGoal({ purse: rival.purse, tier: rival.depotTier });
+    const keep = Math.max(0, skill().townReserve);
+    const reserve: Purse = {};
+    for (const [k, v] of Object.entries(goal?.cost ?? {}) as [Cargo, number][]) {
+      reserve[k] = Math.ceil(v * keep);
+    }
     const covers = (want: Purse): boolean =>
       (Object.entries(want) as [Cargo, number][]).every(
         ([k, v]) => (rival.purse[k] ?? 0) - (price.cost[k] ?? 0) >= v);
@@ -4355,6 +4471,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const score = rivalTuningScore(skill().key);
     rival.townLevel = Math.min(rival.townLevel + 1, TOWN_UPGRADES.length);
     rival.townBonus = townBonusFor(price.def.bonus, score);
+    // L14 (#229): say it in the feed, in the same words the player's own
+    // upgrade uses (L5) — the rival climbing the city ladder is one of the
+    // three things this ticket is about, and a ladder nobody can see is a
+    // ladder nobody notices the rival climbing.
+    ui.feed(`Rival upgrades its city: base rate +${Math.round(rival.townBonus * 100)}% (score ${Math.round(score)})`, rival.name);
     return true;
   }
 
@@ -4442,6 +4563,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   };
 
   const rivalBankTowardPlan = (f: Factory, now: number) => {
+    // L14 (#229): the new loop has no bank and no offers — see above.
+    if (newLoop) return;
     const skint = rivalSkintTarget(f, now);
     if (!skint) return;
     const { goal: target, paving } = skint;
@@ -4537,6 +4660,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   /** The rival paves what it can afford, charges itself, and lets `rescoreNow`
    *  price the points. Returns false when there was nothing to pave. */
+  /**
+   * THE ★ SEAM (L14, #229).
+   *
+   * Paving is the last old-loop limb the new-loop turn still moves, and it is
+   * here on purpose: while `VICTORY.upgrade` pays — 4 Ore a tile, `PAVE_MILESTONE_TILES`
+   * to the 1★ a plant costs — paving is the ONLY point a seat can score under
+   * `newLoop` (L13/#228 replaces that table with the tree's rungs and the city's
+   * tiers and is not merged). Both seats pave, so the race still has a winner.
+   *
+   * When #228 lands, delete this function, its one call in `aiNewLoopTurn`, the
+   * pave branch of the shipped turn, and `scoreCargoWant` in ai.ts — the want
+   * that exists only to send a seat with no ore of its own after a mine so it
+   * can buy a point. Nothing else in the new loop reaches for ★.
+   */
   function rivalPavePass(): boolean {
     const plan = planUpgrades(eco, {
       owner: rival.id, ownerId: rival.i + 1, purse: rival.purse,
@@ -4633,6 +4770,174 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     rivalSpeaks("attack", "bandit");
   }
 
+  /**
+   * RAIL-05 (#182): the seat's ONE rail action this turn — planned and
+   * committed through the SAME `rail.ts` rules the player's drag commits
+   * through (`planRailMove` → `executeRailMove` → `buildRail` /
+   * `placePlatform` / …). Easy rivals keep the lever down (`skill().rail`), and
+   * the whole action is inert while the DEV-only `railAvailable` flag is down.
+   *
+   * Shared by both turns (L14, #229: the new loop keeps the railway), so the
+   * two can never disagree about what a rail turn is.
+   */
+  function rivalRailStep(f: Factory, now: number): { acted: boolean; laid: [number, number][] } {
+    const railState = railAvailable && skill().rail ? eco.rail ?? null : null;
+    if (!railState) return { acted: false, laid: [] };
+    const railMove = planRailMove(eco, railState, f, {
+      purse: rival.purse, ownerId: rival.i + 1, useRail: true, scope: "line", now,
+    });
+    if (!railMove || !canPay(rival.purse, railMove.cost)) return { acted: false, laid: [] };
+    const res = executeRailMove(eco, railState, railMove, rival.id, rival.i + 1);
+    if (!res) return { acted: false, laid: [] };
+    if (res.refund) earn(rival, res.refund);
+    else if (Object.keys(res.spent).length) spend(rival, res.spent);
+    ui.feed(`Rival ${res.label}`, rival.name);
+    return { acted: true, laid: railMove.kind === "track" ? res.tiles : [] };
+  }
+
+  /**
+   * RAIL-05: `syncWorld`'s shadow diff repainted the tiles whose OWN rail byte
+   * moved; a track tile's NEIGHBOURS changed shape with it (their rail end-cap
+   * becomes a through-run), so the ±1 neighbourhood goes too — the same
+   * invalidation the player's `commitRailDrag` does.
+   */
+  function invalidateRailLaid(laid: [number, number][]) {
+    for (const [tx, ty] of laid) {
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const x = tx + dx, y = ty + dy;
+        if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) renderer?.invalidateTile(x, y);
+      }
+    }
+  }
+
+  /**
+   * ══════════════════════════════════════════════════════════════════════════
+   * L14 (#229) — ONE rival turn on the NEW loop.
+   *
+   * The same verbs the player has, in the same order, priced through the same
+   * functions:
+   *
+   *   1. CONNECT — `aiBuildStep` with the loop's own cost model (dirt is free,
+   *      L2), so it reaches a fresh industry with gravel and stands a Depot on
+   *      it. The ranking is steered by the TREE, not by the scoreboard:
+   *      `treeGoal`/`treeWants` name the cargoes the next rung's price is short
+   *      of, and the industry that makes one of them outranks the rest. That is
+   *      the whole answer to "never deadlocks in the tree" — a seat short of
+   *      grain for its Quarry Depot goes and earns grain instead of buying a
+   *      fourth forest with the wood it is rich in.
+   *   2. TUNE — `applyRivalTuning` gives every Depot it just raised the
+   *      simulated session result its difficulty plays (L4/L10), which is also
+   *      what opens the next rung (L5's session gate).
+   *   3. SPEND — the city upgrade (L5, timed by `skill().townReserve`) and a
+   *      re-match on a Depot that has actually cooled (L6's decay, the answer
+   *      to it, and the same key the player's plate offers).
+   *
+   * Deliberately NOT here, because the new loop has no such decision — L14's
+   * "no rival code path references removed systems": banking toward a plan
+   * (`rivalBankTowardPlan`), buying the Ore the bank would have bought
+   * (`rivalBankTowardPave`), posting market offers (`rivalMarketOffer`) and
+   * autoplaying its own board (`rivalAutoplay`). Each still exists for the
+   * shipped loop and returns immediately under this flag, so the solver, the
+   * bank, the market and the watched plant board all stay exactly as shipped
+   * for the game that still runs them.
+   *
+   * ONE leftover, on purpose: the pave pass (`rivalPavePass`). Paving is still
+   * the only ★ the game pays a seat (L13/#228 replaces the ★ sources — build
+   * rungs and city tiers — and is not merged yet), so a rival that stopped
+   * paving today would score nothing at all and the race would have no winner.
+   * It is the last old-loop limb in this turn, it is documented as such, and
+   * #228 is where it goes.
+   * ══════════════════════════════════════════════════════════════════════════
+   */
+  function aiNewLoopTurn(f: Factory, now: number): void {
+    let acted = false;
+    // The tree's answer, read once and used by all three verbs below — the
+    // plant guard, the planner's ranking and the city's reserve all work
+    // toward the SAME goal, so one turn cannot pull in two directions.
+    const goal = treeGoal({ purse: rival.purse, tier: rival.depotTier });
+    const want = treeWants(goal, scoreCargoWant(eco, rival.id));
+
+    // ── 1. plant — reach, and (until #228) a ★ ─────────────────────────────
+    // A Processing Plant still earns its 1★ (VICTORY.plant is a live source
+    // for both seats) and it still widens the map a seat can deliver over, so
+    // the rival buys one exactly as the shipped turn does — under the SAME
+    // guard, restated in the new loop's terms: a plant may not eat the purse
+    // the next Depot's price needs. `treeGoal` is that purse.
+    if (canAffordPlant(rival.purse)) {
+      const covers = (want: Purse): boolean =>
+        (Object.entries(want) as [Cargo, number][]).every(
+          ([k, v]) => ((rival.purse[k] ?? 0) as number) >= v);
+      const withPlant = (base: Purse): Purse => {
+        const out: Purse = { ...base };
+        for (const [k, v] of Object.entries(PLANT_COST) as [Cargo, number][]) {
+          out[k] = (out[k] ?? 0) + v;
+        }
+        return out;
+      };
+      // Nothing to save for (no goal left) is a plant, as ever; otherwise the
+      // goal's own price has to survive the purchase.
+      if (!goal || covers(withPlant(goal.cost))) {
+        const spot = chooseAiPlantSpot(grid, track, eco, rival.id);
+        if (spot && placePlant(spot[0], spot[1], rival)) {
+          acted = true;
+          // placePlant rescores immediately; if that was the winning star the
+          // curtain is already up, and nothing may be added after the ledger.
+          if (winner !== null) return;
+        }
+      }
+    }
+
+    // ── 2. depot — the tree's next rung, reached on free gravel ────────────
+    // Same plan, same prices and same tree gate as the shipped turn
+    // (`aiBuildStep` → `planCandidates` → `priceDepot`); the new-loop input is
+    // `wantCargo`. `expandPerTurn` still paces how many it may raise in one
+    // clock, so a hard rival visibly spreads.
+    const depotBuild = (): boolean => {
+      const out = aiBuildStep(eco, f, {
+        stock: rival.purse, purse: rival.purse,
+        free: rival.freeTrack, freeDepots: rival.freeDepots, now,
+        newLoop, depotTier: rival.depotTier, wantCargo: want,
+      }, allocHarvesterId());
+      if (!out) return false;
+      rival.freeTrack = Math.max(0, rival.freeTrack - out.free);
+      rival.freeDepots = Math.max(0, rival.freeDepots - out.freeDepots);
+      spend(rival, out.spent);
+      for (const [bx, by] of out.built) renderer?.invalidateTile(bx, by);
+      ui.feed(`Rival expands: a new Depot and ${out.built.length} road tile${out.built.length === 1 ? "" : "s"}`, rival.name);
+      return true;
+    };
+    for (let n = Math.max(1, skill().expandPerTurn); n > 0; n--) {
+      if (!depotBuild()) break;
+      acted = true;
+    }
+    // 3. tune — the simulated session each new Depot would have been built
+    //    with, on the record before the income clock next reads it.
+    applyRivalTuning();
+
+    // ── 4. spend: the city upgrade, then a re-match on a cooled Depot ──────
+    if (rivalTownStep()) acted = true;
+    else if (rivalRetuneStep()) acted = true;
+
+    // ── 5. pave — the ★ seam #228 removes (see the note above) ─────────────
+    if (rivalPavePass()) acted = true;
+
+    // ── 6. railway (RAIL-05) — shared with the shipped turn ────────────────
+    const rail = rivalRailStep(f, now);
+    if (rail.acted) acted = true;
+
+    if (acted) {
+      syncWorld();
+      invalidateRailLaid(rail.laid);
+      rescoreNow();
+      return;
+    }
+    // Nothing affordable anywhere: the new loop's own answer is to wait for
+    // the clock — there is no bank to trade through and nothing to pave — so
+    // the turn is short and the next one comes on `idleMs`, exactly like the
+    // shipped turn's idle path.
+    lastAi = now - skill().buildMs + skill().idleMs;
+  }
+
   function aiTick(now: number) {
     // MP-05: §9 — "the AI rival is disabled in a hosted game; the guest is the
     // rival". Seat 1 is driven by intents from the relay instead.
@@ -4650,6 +4955,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     rivalSabotage(now);
     const f = factoryOf("ai");
     if (!f) return;
+    // L14 (#229): the new loop plays a different turn — connect, tune, spend —
+    // and it has no bank to fall back on, so it keeps its own shape instead of
+    // threading a dozen `if (newLoop)` branches through the shipped one. The
+    // raid/sabotage clocks above are shared, and so is the railway below.
+    if (newLoop) { aiNewLoopTurn(f, now); return; }
     const pace = rivalPaceNow();      // VP-01: read once, used by three steps
     // AI-01: losing chases Ore harder or softer depending on the preset.
     const urgency = pace.oreUrgency * skill().urgencyBias;
@@ -4742,7 +5052,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     //     one that scales every depot the rival owns. After the Depot pass, so
     //     a turn that just raised one tunes it first; before the pave pass, so
     //     the scoreboard still gets whatever is left.
-    if (rivalTownStep(f, now)) acted = true;
+    if (rivalTownStep()) acted = true;
 
     // 3. pave — what the scoreboard pays for, with whatever Ore is spare; and
     //    when the Ore is not spare but the gravel is there, buy it (VP-01)
@@ -4753,36 +5063,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     //    committed through the SAME `rail.ts` rules the player's drag commits
     //    through (`executeRailMove` → `buildRail` / `placePlatform` / …). Easy
     //    rivals keep the lever down; the flag down means no railway.
-    const railState = railAvailable && skill().rail ? eco.rail ?? null : null;
-    const railMove = railState
-      ? planRailMove(eco, railState, f, {
-        purse: rival.purse, ownerId: rival.i + 1, useRail: true, scope: "line", now,
-      })
-      : null;
-    let railLaid: [number, number][] = [];
-    if (railState && railMove && canPay(rival.purse, railMove.cost)) {
-      const res = executeRailMove(eco, railState, railMove, rival.id, rival.i + 1);
-      if (res) {
-        if (res.refund) earn(rival, res.refund);
-        else if (Object.keys(res.spent).length) spend(rival, res.spent);
-        if (railMove.kind === "track") railLaid = res.tiles;
-        acted = true;
-        ui.feed(`Rival ${res.label}`, rival.name);
-      }
-    }
+    const rail = rivalRailStep(f, now);
+    if (rail.acted) acted = true;
 
     if (acted) {
       syncWorld();
-      // RAIL-05: syncWorld's shadow diff repainted the tiles whose OWN rail
-      // byte moved; a track tile's NEIGHBOURS changed shape with it (their
-      // rail end-cap becomes a through-run), so the ±1 neighbourhood goes too
-      // — the same invalidation the player's `commitRailDrag` does.
-      for (const [tx, ty] of railLaid) {
-        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-          const x = tx + dx, y = ty + dy;
-          if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) renderer?.invalidateTile(x, y);
-        }
-      }
+      invalidateRailLaid(rail.laid);
       rescoreNow();
       return;
     }
