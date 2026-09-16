@@ -165,7 +165,12 @@ function buildId(): string {
 
 // https://vite.dev/config/
 export default defineConfig({
-  base: "/hexmatch/",
+  // RELATIVE, not "/hexmatch/": RUN.world serves each build from its own
+  // version folder (…/1.18.0/index.html), so a root-absolute base sends every
+  // asset request to the domain root and 404s the whole bundle. "./" resolves
+  // beside index.html wherever it is served — the version folder, a Pages
+  // subpath, or the root.
+  base: "./",
   define: { __BUILD_ID__: JSON.stringify(buildId()) },
   // `server` covers `vite dev`; `preview` covers `vite preview` of a built app
   // (the e2e webServer and Arena's sandbox live preview both use it). Vite 7
