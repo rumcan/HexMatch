@@ -175,10 +175,15 @@ describe("L1f the new loop is the default", () => {
     // L5 (#219): a Depot's price is the industry beside it, so the button says
     // where the number comes from rather than quoting one mix.
     expect(toolText("harvester")).toMatch(/from/i);
-    // L11 (#226) / L9 (#224): the strip is Bank / plant / Feed, the Black
-    // Market is map-only and hangs in the build column.
+    // L11 (#226) / L9 (#224): the Black Market is map-only and hangs in the
+    // build column. #299: the strip is Bank / Feed ONLY on this loop — the
+    // Processing Plant left the tab rail for its own session window, so the
+    // third tab is gone and the plant's idle plate rides a small card.
     const tabs = [...root.querySelectorAll("[data-tab]")].map((b) => (b as HTMLElement).dataset.tab);
-    expect(tabs).toEqual(["bank", "plant", "feed"]);
+    expect(tabs).toEqual(["bank", "feed"]);
+    expect(root.querySelector('[data-tab="plant"]')).toBeNull();
+    expect(root.querySelector("#iso-session")).toBeTruthy();
+    expect(root.querySelector("#iso-trade #iso-quarry")).toBeNull();
     expect(root.querySelector(".market-pane")).toBeNull();
     expect(root.querySelector(".aside.left .sab-list")).toBeTruthy();
   });
