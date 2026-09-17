@@ -421,9 +421,12 @@ export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
           ? "The <b>chip at the map's lower-left</b> names the tool in your hand and <b>puts it down</b> on a tap — the touch twin of right-click. A tap with <b>Select</b> reads the tile under your finger in the inspector."
           : "<b>Right-click drops the tool you are holding</b> back to the <b>Select</b> pointer — hover it over a resource, town, plant or depot and the inspector says exactly what it is. <b>Q</b> does the same from the keyboard.",
         "Left column: <b>Build</b> — Select, Dirt Road, Road, Depot, Processing Plant, Demolish (half refund) — and the <b>Black Market</b> beneath it.",
+        // L11 (#226): the Market tab is gone on EVERY loop — the strip is Bank /
+        // Processing Plant / Feed on both, so both branches name the same
+        // three tabs and differ only in where the board lives.
         newLoop
-          ? "Right column: the <b>Processing Plant</b> and <b>Feed</b> tabs — the board comes up in the first one while a Depot is being tuned."
-          : "Right column: the <b>Bank</b>, <b>Market</b>, <b>Processing Plant</b> and <b>Feed</b> tabs, with the board and the reach strip above them.",
+          ? "Right column: the <b>Bank</b>, <b>Processing Plant</b> and <b>Feed</b> tabs — the board comes up in the plant one while a Depot is being tuned."
+          : "Right column: the <b>Bank</b>, <b>Processing Plant</b> and <b>Feed</b> tabs, with the board and the reach strip above them.",
         "<b>Esc</b> cancels an armed card or protest, <b>M</b> mutes, ♻ collapses the board for a fresh neutral one (30 s cooldown), and the top-bar <b>Aa Names</b> switch shows or hides the name tags over the map.",
       ],
       tip: "Nothing at the start is timed — the rival does not move until your Plant and first Depot are down. Replaying this tour from ❔ mid-game does not pause it.",

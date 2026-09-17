@@ -83,8 +83,8 @@ export { readMatchSettings };
  * that will never refill. A v7 peer would drop both and sit on a world that
  * no longer says why nothing is moving — the exact bug the version check
  * exists to refuse rather than half-run.
- * v9 (L11 / #226): the TRADE WIRE shrinks to the bank. The market intent
- * (`action: "market"`, carrying post/cancel/accept/bank) is gone, and the one
+ * v9 (L11 / #226): the TRADE WIRE shrinks to the bank. The trade intent
+ * (`action: "trade"`, carrying post/cancel/accept/bank) is gone, and the one
  * exchange left — the bank — is `action: "bank"`, applied by the host against
  * the guest's own purse under the tier gate (`src/iso/bank.ts`). The
  * snapshot/delta `market` field (live offers) goes with it. A v8 guest's bank
@@ -254,7 +254,9 @@ export const MAX_SNAPSHOT_CHUNKS = 128;
 /** guest → server → host only. Guests never mutate locally. */
 export interface IntentMsg {
   type: "intent";
-  action: "build" | "demolish" | "harvest" | "trade" | "skill" | "bank" | "blackMarket" | "cross" | "vehicle";
+  // L11 (#226): no "trade" — the offer board's intent went with the board,
+  // and the bank rides its own "bank" action (see the v9 note above).
+  action: "build" | "demolish" | "harvest" | "skill" | "bank" | "blackMarket" | "cross" | "vehicle";
   payload: unknown;
 }
 

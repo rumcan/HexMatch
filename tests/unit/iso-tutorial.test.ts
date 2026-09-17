@@ -437,3 +437,25 @@ describe("TUT-01 the ticket's six sentences are all on screen", () => {
     expect(all()).toMatch(/first to .*★ wins/i);
   });
 });
+
+// ── L11 (#226): the tour names the tabs that exist ─────────────────────────
+describe("L11 the desk card names the strip that exists, on both loops", () => {
+  // The Market tab is gone on EVERY loop and the Bank tab stays on both, so
+  // the desk card's "Right column" line must name Bank / Processing Plant /
+  // Feed and never Market — on the shipped copy AND the new-loop copy.
+  const rightColumn = (newLoop: boolean) => {
+    const desk = buildTutorialSteps({ ...CTX, newLoop }).find((s) => s.id === "desk")!;
+    return desk.points.find((p) => p.startsWith("Right column"))!;
+  };
+
+  it.each([false, true])("newLoop=%s: names Bank, Processing Plant and Feed", (newLoop) => {
+    const line = rightColumn(newLoop);
+    expect(line).toMatch(/Bank/);
+    expect(line).toMatch(/Processing Plant/);
+    expect(line).toMatch(/Feed/);
+  });
+
+  it.each([false, true])("newLoop=%s: never names the retired Market tab", (newLoop) => {
+    expect(rightColumn(newLoop)).not.toMatch(/Market/);
+  });
+});

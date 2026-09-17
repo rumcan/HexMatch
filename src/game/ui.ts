@@ -159,6 +159,15 @@ export interface UiPlayer {
 export interface UiState {
   players: UiPlayer[];
   purse: Partial<Record<Cargo, number>>;
+  /**
+   * L16 (#231): the per-resource storage cap the local seat plays under, or
+   * undefined when no cap applies (the shipped loop, and dev mode's unlimited
+   * purse — `?unlimited=0` restores it). Set, the resource bar prints
+   * `amount / cap` and classes any cargo sitting at its cap `.full`: clock
+   * income past the cap is lost, and the bar is where that has to read at a
+   * glance.
+   */
+  storageCap?: number;
   phase: string;
   tool: UiTool;
   freeTrack: number;
@@ -537,9 +546,8 @@ const isPhoneViewport = (): boolean => {
 
 /** Optional per-boot chrome flags (RAIL-05: the railway's four buttons only
  *  exist when the feature flag lets them — the campaign boots without rail
- *  until #179/#181 land). L1a (#232): `newLoop` retires the trade surfaces —
- *  the Market and Bank tabs and the Black Market panel do not exist while the
- *  new-loop redesign runs. */
+ *  until #179/#181 land). L11 (#226): the Market tab is gone on EVERY loop,
+ *  so `newLoop` retires no tab — the Bank stays, tier-gated. */
 export interface OriginalUiOptions {
   rail?: boolean;
   newLoop?: boolean;
@@ -1076,9 +1084,9 @@ export function createOriginalUi(
   let selected: { r: number; c: number } | null = null;
   const feedEntries: { who: string; colour: string; text: string }[] = [];
   // U1: the restored HUD paints on the game's rAF loop. Re-rendering the
-  // Black-Market grid and the offer lists on every frame would detach a button
+  // Black-Market grid on every frame would detach a button
   // between its pointerdown and pointerup, so a real click could be lost.
-  // Render those only when their visible content actually changed.
+  // Render it only when its visible content actually changed (L11 #226 retired the offer lists).
   // V4: banner dismissal state — paint() runs every frame, so the banner is
   // rebuilt only when its content changes and a dismissal stays dismissed.
   // BANNER-ONCE: the dismissal is remembered by the banner's stable id
@@ -1400,7 +1408,7 @@ export function createOriginalUi(
     // leaves a measurable slot once this pane is the visible one.
     // FIT-01: and so does the desktop — the fit clamps on the measured plant
     // column, which has no box while another tab hides it, so a window
-    // resized over Market/Bank/Feed would come back to a stale board.
+    // resized over Bank/Plant/Feed would come back to a stale board.
     // #163: this runs AFTER every pane has swapped (`.hidden` is
     // display:none), so the immediate zoom pass measures the settled sheet;
     // the board-SIZE decision itself is deferred to the next settled frame
@@ -2022,7 +2030,7 @@ export function createOriginalUi(
     const holy = kind === "holy";
     // #185: the plate is the house plate. It wears the shared `.panel`
     // treatment (felt, glass gradient, brass keyline, `--r`) exactly like the
-    // Bank, Market and build panels, and it rides a light dim — the modal
+    // Bank and build panels, and it rides a light dim — the modal
     // sheets' `.modal-back` idea, sized to the board rather than the window.
     // The dim swallows clicks aimed at the board (which is paused anyway) and
     // carries no handler of its own: outside clicks still cannot dismiss it.
@@ -2612,12 +2620,21 @@ export function createOriginalUi(
   /** L8 (#222): per-cargo /s readout beside each chip. */
   const chipRates = new Map<Cargo, HTMLElement>();
   let lastRatesSig = "\u0000";
+  /** L16 (#231): the chip MEDALLION per cargo — the node the `.full` state classes. */
+  const chipEls = new Map<Cargo, HTMLElement>();
   let lastVpHtml = "";
   const kingRows = new Map<number, { row: HTMLElement; cls: string; colour: string; tip: string; html: string }>();
   let lastModebarInfo: string | null = null;
   let lastInspectHtml = "";
 
-  function renderHUD(purse: Partial<Record<Cargo, number>>, players: UiPlayer[], portrait: Portrait, target: number, rates?: Partial<Record<Cargo, number>>) {
+  function renderHUD(
+    purse: Partial<Record<Cargo, number>>,
+    players: UiPlayer[],
+    portrait: Portrait,
+    target: number,
+    rates?: Partial<Record<Cargo, number>>,
+    storageCap?: number,
+  ) {
     // L8 (#222): the income readout — per-second, per resource, on the chip bar
     // itself. A new Depot being connected or a better tune visibly lifts the
     // number before the purse has banked it, so the economy is read where it
@@ -2627,9 +2644,10 @@ export function createOriginalUi(
     if (ratesChanged) lastRatesSig = ratesSig;
     for (const k of CARGOES) {
       let num = chipNums.get(k);
+      let chip = chipEls.get(k);
       let rateEl = chipRates.get(k);
-      if (!num) {
-        const chip = h("div", "chip");
+      if (!num || !chip) {
+        chip = h("div", "chip");
         chip.style.setProperty("--c1", CARGO[k].c1);
         chip.style.setProperty("--c2", CARGO[k].c2);
         chip.innerHTML = `<span class="chip-ic">${cargoIconHtml(k)}</span><span class="chip-n"></span><span class="chip-r hidden"></span>`;
@@ -2640,9 +2658,17 @@ export function createOriginalUi(
         num = chip.querySelector(".chip-n") as HTMLElement;
         rateEl = chip.querySelector(".chip-r") as HTMLElement;
         chipNums.set(k, num);
+        chipEls.set(k, chip);
         chipRates.set(k, rateEl);
       }
-      const text = String(purse[k] ?? 0);
+      // L16 (#231): with a storage cap the chip counts TOWARD something —
+      // "amount / cap" — and a cargo sitting at its cap wears the full state,
+      // because every tick past it is income the clock is dropping. Without a
+      // cap (the shipped loop, dev's unlimited purse) the chip is the bare
+      // amount it always was, byte for byte.
+      const amount = purse[k] ?? 0;
+      const full = storageCap !== undefined && amount >= storageCap;
+      const text = storageCap === undefined ? String(amount) : `${amount}/${storageCap}`;
       if (num.textContent !== text) num.textContent = text;
       if (ratesChanged && rateEl) {
         const r = rates?.[k] ?? 0;
@@ -2655,7 +2681,23 @@ export function createOriginalUi(
         const title = show ? `${r.toFixed(2)}/s from connected Depots` : "";
         if (rateEl.title !== title) rateEl.title = title;
       }
+      // The class and the tooltip flip together, and only on the flip — a
+      // per-frame write would churn the style recalc the retention tests
+      // watch for. Gold keeps its currency rule, with the cap appended.
+      if (chip.classList.contains("full") !== full) {
+        chip.classList.toggle("full", full);
+        if (full) {
+          chip.title = k === "gold"
+            ? `${GOLD_RULE} — storage full`
+            : `Storage full — clock income past ${storageCap} is lost. A city upgrade raises the cap.`;
+        } else if (k === "gold") {
+          chip.title = GOLD_RULE;
+        } else {
+          chip.removeAttribute("title");
+        }
+      }
     }
+
     const meP = players.find((p) => p.human);
     const yourVp = meP?.vp ?? 0;
     // AI-04: the line the difficulty set (5★ on easy), kept for the help modal
@@ -2884,7 +2926,8 @@ export function createOriginalUi(
     if (rivalWire.dataset.speaker === "you") {
       rivalWireFace.style.backgroundImage = `url(${rivalWirePlayerPortrait})`;
     }
-    renderHUD(state.purse, state.players, state.portrait, state.vpTarget ?? VICTORY.target, state.incomeRates);
+    renderHUD(state.purse, state.players, state.portrait, state.vpTarget ?? VICTORY.target, state.incomeRates, state.storageCap);
+
     // PP-14b: the reset button counts its cooldown down and disables while
     // the plant re-arms.
     const resetLeft = Math.ceil((state.resetIn ?? 0) / 1000);

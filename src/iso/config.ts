@@ -348,6 +348,13 @@ export const DEPOT_TREE_ORDER: Cargo[] = ["grain", "wood", "stone", "ore", "oil"
  * the session's score decides how much of it you actually get
  * (`townBonusFor`, tuning.ts — "the session result can set the upgrade's
  * strength", clamped later per difficulty by L6).
+ *
+ * L16 (#231): a row also carries the STORAGE it adds. Every resource has a
+ * per-seat cap (`STORAGE_CAP_BASE` below, plus every bought row's `storage`),
+ * and clock income above the cap is lost — the Merge Gardens pressure point:
+ * with a clock economy and no cap a full purse is a purse with nothing left
+ * to plan for. The upgrade that raises the base rate is the same one that
+ * raises the cap, so "spend or upgrade" is one decision.
  */
 export interface TownUpgradeDef {
   /** The level this row buys (1-based). */
@@ -356,14 +363,39 @@ export interface TownUpgradeDef {
   cost: Partial<Record<Cargo, number>>;
   /** The bonus a full session sets — the ceiling `townBonusFor` scales. */
   bonus: number;
+  /** L16 (#231): how much per-resource storage this level adds to the cap. */
+  storage: number;
 }
 
 export const TOWN_UPGRADES: TownUpgradeDef[] = [
   // 6/4/4 is roughly "a farm, a forest and a quarry worth of ticks" on the
   // L1/L3 clock — real, but a single lap of the network on a normal map, so
   // the first upgrade lands about when the second rung does.
-  { level: 1, cost: { wood: 6, stone: 4, grain: 4 }, bonus: 0.6 },
+  // L16 (#231): +36 storage takes a seat from 24 to 60 per resource — a
+  // network of 3-4 tuned depots can bank a rung-2 mix without wasting ticks,
+  // but the opening (one depot, one cargo) genuinely presses against 24.
+  { level: 1, cost: { wood: 6, stone: 4, grain: 4 }, bonus: 0.6, storage: 36 },
 ];
+
+/**
+ * L16 (#231): the per-resource storage cap a seat with NO city upgrade plays
+ * under — the number `storageCapFor(0)` (construction.ts) starts from.
+ *
+ * The two constraints the ticket puts on it, both checked by
+ * `tests/unit/iso-l16-storage.test.ts`:
+ *
+ *   • it fits `START_PURSE` (12 Wood + 12 Stone — the opening must sit UNDER
+ *     the cap, not on it, or the first wood tick is wasted on turn one);
+ *   • it fits the first tier's prices — the largest single-cargo ask in
+ *     `TOWN_UPGRADES[0].cost` and every rung-0/1 `DEPOT_TREE` mix — so the
+ *     opening can always bank what the first upgrade or the second rung
+ *     costs, and never dead-ends against a cap smaller than a price.
+ *
+ * 24 is the headroom over those asks (a 6-Wood upgrade, a 2+2 mix) that keeps
+ * the early tree comfortable while still making a single untuned depot's
+ * income overflow long before the mid-game.
+ */
+export const STORAGE_CAP_BASE = 24;
 
 export const CARGO: Record<Cargo, {
   name: string; icon: string; c1: string; c2: string; gem: string;
