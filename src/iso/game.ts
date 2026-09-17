@@ -4377,6 +4377,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   // ── economy + AI clocks ────────────────────────────────────────────────
   let lastHarvest = 0, lastAi = 0;
+  /** #297: the rival's simulated tuning session runs until this time (new loop). */
+  let rivalSessionUntil = 0;
   /** Fractional new-loop income retained per depot (either seat) until it
    *  reaches one whole unit. Depot ids are unique, so one map serves both. */
   const loopCarry = new Map<number, number>();
@@ -5197,6 +5199,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * ══════════════════════════════════════════════════════════════════════════
    */
   function aiNewLoopTurn(f: Factory, now: number): void {
+    // #297: the rival is still "playing" its last tuning session. A Depot, a
+    // city upgrade and a re-match each cost the player a real session on the
+    // board, so each costs the rival `sessionMs` of turn time too. Before this
+    // a Normal rival raised two Depots (and opened a rung) every build clock
+    // and reached 12★ in about 35 seconds.
+    if (now < rivalSessionUntil) return;
+    const startSession = () => { rivalSessionUntil = now + skill().sessionMs; };
     let acted = false;
     // #297: ONE city tier per turn, no matter which step buys it. Without
     // this guard the rival could buy a tier at step 0 (cap-first) AND another
@@ -5220,7 +5229,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // the base rate together, converting wasted ticks into income. Off the
     // cap, the shipped order — connect first — stands.
     const townFirst = CARGOES.some((c) => (rival.purse[c] ?? 0) >= storageCapFor(rival.townLevel));
-    if (townFirst && rivalTownStep()) { acted = true; townBoughtThisTurn = true; }
+    if (townFirst && rivalTownStep()) {
+      // #297: a city upgrade is a session — it takes the whole turn.
+      startSession();
+      syncWorld();
+      rescoreNow();
+      return;
+    }
 
     // ── 1. plant — reach, and (until #228) a ★ ─────────────────────────────
     // A Processing Plant still earns its 1★ (VICTORY.plant is a live source
@@ -5271,9 +5286,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       ui.feed(`Rival expands: a new Depot and ${out.built.length} road tile${out.built.length === 1 ? "" : "s"}`, rival.name);
       return true;
     };
-    for (let n = Math.max(1, skill().expandPerTurn); n > 0; n--) {
-      if (!depotBuild()) break;
+    // #297: ONE Depot per turn on the new loop — each one is a tuning
+    // session, and the session clock paces the next.
+    const builtDepot = depotBuild();
+    if (builtDepot) {
       acted = true;
+      startSession();
     }
     // 3. tune — the simulated session each new Depot would have been built
     //    with, on the record before the income clock next reads it.
@@ -5287,8 +5305,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // #297: `townBoughtThisTurn` gates this call — one tier per turn is the
     // pace the ★ table was balanced for. Without the gate a cap-first rival
     // could buy two tiers on the same clock and burst past the win line.
-    if (!townBoughtThisTurn && rivalTownStep()) acted = true;
-    else if (rivalRetuneStep()) acted = true;
+    // #297: …and only on a turn that did not already start a session.
+    if (!builtDepot && !townBoughtThisTurn && (rivalTownStep() || rivalRetuneStep())) {
+      acted = true;
+      startSession();
+    }
 
     // ── 5. pave — the ★ seam #228 removes (see the note above) ─────────────
     if (rivalPavePass()) acted = true;
@@ -7906,6 +7927,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     onBoardChange();
     // pacing clocks start clean — no catch-up bursts after a refresh
     lastHarvest = now; lastAi = now; lastRaid = now;
+    rivalSessionUntil = 0;
     lastRivalMove = now;
     // derive everything else: structures, torii, trucks, banners
     syncWorld();
