@@ -53,7 +53,7 @@ export function isCue(name: string): name is Cue {
 export const CUE_NOTES: Record<Cue, string> = {
   hover: "fingertip on oiled walnut — a control noticed, 16 ms of air",
   click: "a brass key settling — every button, tab and chip",
-  tab: "a drawer sliding one bay — Market / Bank / Plant / Feed, Map / Build / Economy",
+  tab: "a drawer sliding one bay — Bank / Plant / Feed, Map / Build / Economy",
   select: "a soft thud — a gem picked up, a tool armed, a tycoon chosen",
   pick: "the bounty chooser spending one unit; rises a semitone per tap",
   swap: "a soft thud as the gem settles into its new slot — two gems traded",

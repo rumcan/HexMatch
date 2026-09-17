@@ -527,9 +527,8 @@ const isPhoneViewport = (): boolean => {
 
 /** Optional per-boot chrome flags (RAIL-05: the railway's four buttons only
  *  exist when the feature flag lets them — the campaign boots without rail
- *  until #179/#181 land). L1a (#232): `newLoop` retires the trade surfaces —
- *  the Market and Bank tabs and the Black Market panel do not exist while the
- *  new-loop redesign runs. */
+ *  until #179/#181 land). L11 (#226): the Market tab is gone on EVERY loop,
+ *  so `newLoop` retires no tab — the Bank stays, tier-gated. */
 export interface OriginalUiOptions {
   rail?: boolean;
   newLoop?: boolean;
@@ -1059,9 +1058,9 @@ export function createOriginalUi(
   let selected: { r: number; c: number } | null = null;
   const feedEntries: { who: string; colour: string; text: string }[] = [];
   // U1: the restored HUD paints on the game's rAF loop. Re-rendering the
-  // Black-Market grid and the offer lists on every frame would detach a button
+  // Black-Market grid on every frame would detach a button
   // between its pointerdown and pointerup, so a real click could be lost.
-  // Render those only when their visible content actually changed.
+  // Render it only when its visible content actually changed (L11 #226 retired the offer lists).
   // V4: banner dismissal state — paint() runs every frame, so the banner is
   // rebuilt only when its content changes and a dismissal stays dismissed.
   // BANNER-ONCE: the dismissal is remembered by the banner's stable id
@@ -1383,7 +1382,7 @@ export function createOriginalUi(
     // leaves a measurable slot once this pane is the visible one.
     // FIT-01: and so does the desktop — the fit clamps on the measured plant
     // column, which has no box while another tab hides it, so a window
-    // resized over Market/Bank/Feed would come back to a stale board.
+    // resized over Bank/Plant/Feed would come back to a stale board.
     // #163: this runs AFTER every pane has swapped (`.hidden` is
     // display:none), so the immediate zoom pass measures the settled sheet;
     // the board-SIZE decision itself is deferred to the next settled frame
@@ -2005,7 +2004,7 @@ export function createOriginalUi(
     const holy = kind === "holy";
     // #185: the plate is the house plate. It wears the shared `.panel`
     // treatment (felt, glass gradient, brass keyline, `--r`) exactly like the
-    // Bank, Market and build panels, and it rides a light dim — the modal
+    // Bank and build panels, and it rides a light dim — the modal
     // sheets' `.modal-back` idea, sized to the board rather than the window.
     // The dim swallows clicks aimed at the board (which is paused anyway) and
     // carries no handler of its own: outside clicks still cannot dismiss it.

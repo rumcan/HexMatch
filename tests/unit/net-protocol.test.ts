@@ -219,8 +219,10 @@ describe("MP-02 wire round-trip", () => {
   });
 
   it("round-trips every intent action", () => {
+    // L11 (#226): no "trade" — the offer board's intent is gone from the
+    // wire with the board, and the bank rides "bank".
     const actions: IntentMsg["action"][] = [
-      "build", "demolish", "harvest", "trade", "skill", "bank",
+      "build", "demolish", "harvest", "skill", "bank",
     ];
     for (const action of actions) {
       const msg: IntentMsg = { type: "intent", action, payload: { tx: 3, ty: 4 } };

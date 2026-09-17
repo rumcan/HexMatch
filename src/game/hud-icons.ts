@@ -69,15 +69,7 @@ export const ICON_BANK = svg(
   `<path d="M12 8.1v8.2M8.1 12.2h7.8"/>`,
 );
 
-/** Brass balance scale — Market. */
-export const ICON_MARKET = svg(
-  `<path d="M12 4.2v13.4M8.2 19.4h7.6"/>` +
-  `<path d="M12 6.4L5.6 12.2"/>` +
-  `<path d="M12 6.4l6.4 5.8"/>` +
-  `<path d="M5.6 12.2h0"/>` +
-  `<ellipse cx="5.8" cy="14.4" rx="2.7" ry="1.5"/>` +
-  `<ellipse cx="18.2" cy="14.4" rx="2.7" ry="1.5"/>`,
-);
+// L11 (#226): no market icon — the Market tab is gone on every loop.
 
 /** Brick factory + smokestacks — Processing Plant. */
 export const ICON_PLANT = svg(
@@ -113,7 +105,6 @@ export const HUD_ICONS = {
   binoculars: ICON_BINOCULARS,
   gear: ICON_GEAR,
   bank: ICON_BANK,
-  market: ICON_MARKET,
   plant: ICON_PLANT,
   feed: ICON_FEED,
   cross: ICON_CROSS,

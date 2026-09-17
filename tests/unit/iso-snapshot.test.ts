@@ -369,6 +369,21 @@ describe("E10 malformed payloads", () => {
   });
 });
 
+describe("L11 (#226) a retired market field is ignored, not refused", () => {
+  it("validates and applies a snapshot carrying an older host's live offers", () => {
+    // The offer board is gone — its escrow, its expiry clock, its wire
+    // field — but a guest syncing off an older host must still load: the
+    // field has nowhere to land, so it is dropped the way the retired
+    // `rivalSabotage` field is.
+    const legacy = {
+      ...buildSnapshot(source()),
+      market: [{ id: 1, from: "p2", give: "wood", giveN: 4, want: "ore" }],
+    };
+    expect(validateSnapshot(legacy)).toBeNull();
+    expect(() => applySnapshot(legacy)).not.toThrow();
+  });
+});
+
 describe("E10 scale", () => {
   it("handles a fully saturated map without blowing up", () => {
     const src = source();

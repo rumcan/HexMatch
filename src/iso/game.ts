@@ -4918,11 +4918,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * Deliberately NOT here, because the new loop has no such decision — L14's
    * "no rival code path references removed systems": banking toward a plan
    * (`rivalBankTowardPlan`), buying the Ore the bank would have bought
-   * (`rivalBankTowardPave`), posting market offers (`rivalMarketOffer`) and
-   * autoplaying its own board (`rivalAutoplay`). Each still exists for the
-   * shipped loop and returns immediately under this flag, so the solver, the
-   * bank, the market and the watched plant board all stay exactly as shipped
-   * for the game that still runs them.
+   * (`rivalBankTowardPave`) and autoplaying its own board (`rivalAutoplay`).
+   * Each still exists for the shipped loop and returns immediately under this
+   * flag, so the solver, the bank and the watched plant board all stay
+   * exactly as shipped for the game that still runs them. (L11 / #226 took
+   * the market off BOTH loops — there is no `rivalMarketOffer` left to call.)
    *
    * ONE leftover, on purpose: the pave pass (`rivalPavePass`). Paving is still
    * the only ★ the game pays a seat (L13/#228 replaces the ★ sources — build
