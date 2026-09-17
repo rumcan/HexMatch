@@ -585,8 +585,8 @@ export function createOriginalUi(
   // not want — the railway's buttons (`opts.rail`) and L1a's own trade
   // surfaces, of which L11 (#226) leaves the Bank standing: the bank is a real
   // rule on this loop (tier-gated, see `bank.ts`), the offer MARKET was not.
-  // The flag is the game's call (`?loop=new`, dev-only; never a room or a
-  // contract).
+  // The flag is the game's call (L1f #237: ON for every solo sandbox boot,
+  // `?loop=old` for the retired one; never a room or a contract).
   const newLoop = opts.newLoop === true;
   root.style.setProperty("--gem-move-ms", `${BOARD_ANIMATION_MS.swap}ms`);
   root.style.setProperty("--gem-clear-ms", `${BOARD_ANIMATION_MS.clear}ms`);

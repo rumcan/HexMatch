@@ -338,6 +338,20 @@ const PAVE_MILESTONE_TILES = 4;
  * (grain + ore) are what processing and trade are for.
  */
 export const START_PURSE: Purse = { wood: 12, stone: 12, ore: 0 };
+
+/**
+ * L1f (#237): the sentence a player gets the moment their first Depot is down.
+ * The new loop sends them to the road and the clock; the retired loop — one
+ * release away, behind `?loop=old` — still sends them to the board's tokens.
+ *
+ * Exported as a pair because this is exactly the copy the flip turns over, and
+ * it lives on the pointer path (the map click that leaves `setup-harvester`),
+ * which no jsdom harness can reach: the test pins the sentence, the boot's flag
+ * picks it, and the two can never drift apart silently.
+ */
+export const setupDepotToast = (newLoop: boolean): string => newLoop
+  ? "Now connect it to your Factory with a Dirt Road — a connected Depot ticks its cargo in on the clock."
+  : "Now connect it to your Factory with a Dirt Road or a paved Road — then match the tokened gems in the Processing Plant.";
 /**
  * PP-05: re-exported from `construction.ts` (the authoritative cost module) so
  * the whole E8 tuning surface is reachable from this file, the way
@@ -468,11 +482,13 @@ export interface IsoGameOptions {
    */
   rail?: boolean;
   /**
-   * L1a (#232): force the new-loop feature flag. Absent, the flag is read
-   * from `?loop=new` — DEV builds only, the same guarantee the rail flag
-   * carries — and is otherwise OFF in every mode. The new loop is
-   * sandbox-only for now: requested in a multiplayer room or a story
-   * contract it is ignored and the player is told so.
+   * L1a (#232) / L1f (#237): pin the new-loop flag either way. The new loop is
+   * what a sandbox game runs by default now, so this option is how a harness
+   * forces the RETIRED loop (`newLoop: false`) or asks for the new one by name.
+   * The URL says the same two things: `?loop=old` is the one-release escape
+   * hatch, `?loop=new` names the default. Either way the new loop is
+   * sandbox-only: requested in a multiplayer room or a story contract it is
+   * ignored and the player is told so.
    */
   newLoop?: boolean;
   /**
@@ -549,20 +565,30 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     try { return new URLSearchParams(location.search).get("rail"); } catch { return null; }
   })();
   const railAvailable = opts.rail ?? (import.meta.env.DEV && railParam === "1");
-  // L1a (#232): the new-loop MVP flag — the same contract as the rail flag
-  // above. OFF everywhere by default: `opts.newLoop` turns it on (tests,
-  // harnesses) and `?loop=new` does too, but ONLY in a dev build, so a
-  // production deploy can never ship the redesigned loop (the param read is
-  // dead code there and the bundler strips it, exactly like rail's).
+  // L1f (#237): THE NEW LOOP IS THE GAME. L1a (#232) built this flag as the
+  // MVP switch, DEV-only and OFF by default; the MVP shipped behind it and the
+  // playtest signed off, so the default is now ON and the `import.meta.env.DEV`
+  // gate is gone — a production deploy runs the clock loop. Two doors stay:
+  //   • `opts.newLoop` PINS the flag either way (tests, harnesses, playtest
+  //     links), exactly as L1a's contract had it;
+  //   • `?loop=old` is the one-release escape hatch back to the retired loop
+  //     (listing #237: keep it while the old copy can still be quoted), and
+  //     `?loop=new` still means the same thing it always did — it now asks for
+  //     what a bare URL already gives you, so an old playtest link keeps
+  //     working instead of erroring.
   const loopParam = (() => {
     try { return new URLSearchParams(location.search).get("loop"); } catch { return null; }
   })();
-  const newLoopRequested = opts.newLoop ?? (import.meta.env.DEV && loopParam === "new");
-  // The new loop is sandbox-only for now: a networked room or a story
-  // contract ignores the request and says so — the toast waits until no boot
-  // overlay covers the map (see the frame loop's `loopToastPending`).
+  const newLoopRequested = opts.newLoop ?? loopParam !== "old";
+  // The new loop is sandbox-only: a networked room or a story contract ignores
+  // the request and says so — the toast waits until no boot overlay covers the
+  // map (see the frame loop's `loopToastPending`).
   const newLoop = newLoopRequested && isSolo() && !storyOn;
-  let loopToastPending = newLoopRequested && !newLoop;
+  // Only someone who named the loop gets told a room or a contract refused it.
+  // A default boot is not a refusal, it is the game, and every MP/story seat
+  // would otherwise open with an apology for the loop it is correctly on.
+  const newLoopAsked = opts.newLoop === true || loopParam === "new";
+  let loopToastPending = newLoopAsked && !newLoop;
   /** The cast member playing the rival: the contract's, else Torvin as ever. */
   const rivalCast = storyChapter ? storyChapter.rival : "torvin";
   /** The player's own cast id, for every line the wire answers in. */
@@ -2171,9 +2197,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     //   • dev mode's unlimited resources BYPASS the cap for the local seat
     //     (`topUpDevPurse` refills it to 9999 every frame; `?unlimited=0`
     //     turns that off and the cap applies, which is how it is playtested);
-    //   • the shipped loop is untouched — its purse moves through board
-    //     harvests and lorry credits this ticket does not govern, so no cap
-    //     applies while the flag is dev-only (same scope as every L-rule).
+    //   • the RETIRED loop (`?loop=old`, #237) is untouched — its purse moves
+    //     through board harvests and lorry credits this ticket does not
+    //     govern, so no cap applies there (same scope as every L-rule).
     const cap = newLoop && !(devUnlimited && p === me)
       ? storageCapFor(p.townLevel)
       : Number.POSITIVE_INFINITY;
@@ -2893,8 +2919,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // `economyTick` (L1b) reads `depotYield(depot)` every 3 s, so "a better
   // match visibly raises that Depot's tick rate" is one number flowing from
   // `tuning.ts` into the clock. The old loop never enters any of this: its
-  // board is always on and keeps paying cargo (#234), so the shipped game is
-  // untouched while the flag is dev-only.
+  // board is always on and keeps paying cargo (#234), so the escape hatch
+  // (`?loop=old`, #237) is the same game it was before the flip.
   // ══════════════════════════════════════════════════════════════════════
   /** The session in progress — one at a time, and gone when it ends. */
   let tuning: TuningSession | null = null;
@@ -7171,9 +7197,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             // session toast (from `openTuningSession`) has already told the
             // player what the board is for; this line is the other half of the
             // loop — the road that makes the Depot earn.
-            toast(newLoop
-              ? "Now connect it to your Factory with a Dirt Road — a connected Depot ticks its cargo in on the clock."
-              : "Now connect it to your Factory with a Dirt Road or a paved Road — then match the tokened gems in the Processing Plant.", "info");
+            toast(setupDepotToast(newLoop), "info");
           }
         } else if (phase === "play") {
           // A bought protest intercepts the click: it stages on a public road
@@ -8426,9 +8450,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   (window as unknown as Record<string, unknown>).__iso = {
     get phase() { return phase; },
     get tool() { return tool; },
-    /** L1a (#232): the new-loop feature flag, read-only — it is a boot fact
-     *  (`opts.newLoop`, or dev-only `?loop=new`; never on in production, in a
-     *  room or in a story contract). */
+    /** L1a (#232) / L1f (#237): the new-loop flag, read-only — a boot fact
+     *  (`opts.newLoop`, or `?loop=old` / `?loop=new`). ON for every solo
+     *  sandbox game, OFF in a multiplayer room and in a story contract. */
     get newLoop() { return newLoop; },
     /** LOAD-01: true while the loading screen covers the map. */
     get loading() { return loading.active; },

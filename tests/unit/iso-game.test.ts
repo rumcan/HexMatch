@@ -178,7 +178,10 @@ beforeEach(() => {
   // every boot, and on some seeds no industry has a legal south corridor, so
   // `findSouthCorridor` returns null and the whole "full round" block fails —
   // a flake that predates J1. Same seed the e2e suite boots with.
-  window.history.replaceState(null, "", "/?seed=1337");
+  // L1f (#237): the address bar says which loop this harness plays — the
+  // RETIRED one, the loop it was written against. `?loop=old` is the release's
+  // escape hatch; a test that wants the new loop says so (`{ newLoop: true }`).
+  window.history.replaceState(null, "", "/?seed=1337&loop=old");
   // AI-03: NEVER a resume in this harness — boots are fresh games. The
   // previous test's autosave (an earlier game's interval now cleared on
   // dispose, but any 5s window can still have written) must not resurrect
@@ -250,8 +253,26 @@ describe("E11 the game boots", () => {
     ]);
   });
 
-  // ── L1a (#232): the new-loop feature flag (MVP switch) ──────────────────
-  it("L1a (#232): newLoop is off by default and the economy chrome is whole", async () => {
+  // ── L1a (#232) built the switch; L1f (#237) turned it on ────────────────
+  //
+  // The switch is no longer what a test reaches for: the address bar is. This
+  // file's harness boots behind the `?loop=old` hatch (its beforeEach, like the
+  // other retired-loop files), so these two tests say the URL out loud: the
+  // first clears it, which is precisely what a player's fresh game is, and the
+  // whole new-loop acceptance block lives in `iso-l1f-default-loop.test.ts`,
+  // booted with no options and no parameter.
+  it("L1f (#237): with no loop parameter in the address bar the game is on the new loop", async () => {
+    window.history.replaceState(null, "", "/");
+    try {
+      const h = await boot();
+      expect(h.newLoop).toBe(true);
+      expect(h.vpTarget).toBe(VICTORY.loop.target);
+    } finally {
+      window.history.replaceState(null, "", "/?seed=1337&loop=old");
+    }
+  });
+
+  it("L1f (#237): behind the hatch the economy chrome is still the whole one", async () => {
     const h = await boot();
     expect(h.newLoop).toBe(false);
     const tabs = [...root.querySelectorAll("[data-tab]")].map(
@@ -263,13 +284,13 @@ describe("E11 the game boots", () => {
     expect(root.textContent).toContain("Black Market");
   });
 
-  it("L1a (#232): opts.newLoop turns the flag on", async () => {
+  it("L1f (#237): opts.newLoop pins the new loop even behind the hatch", async () => {
     const h = await boot({ newLoop: true });
     expect(h.newLoop).toBe(true);
   });
 
   // ── L13 (#228): the chrome must not sell a ★ source the loop retired ─────
-  it("L13 (#228): the shipped loop keeps its line, its rates and its Road button", async () => {
+  it("L13 (#228): the retired loop keeps its line, its rates and its Road button", async () => {
     const shipped = await boot();
     expect(shipped.vpTarget).toBe(VICTORY.target);
     expect(shipped.vpRates).toEqual({ upgrade: 0.25, plant: 1, platform: 1 });

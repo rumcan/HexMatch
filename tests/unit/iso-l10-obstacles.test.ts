@@ -110,7 +110,10 @@ const freshBoard = (): Board => { setRng(mulberry32(1337)); return new Board(); 
 beforeEach(() => {
   stubCanvas();
   stubImage();
-  window.history.replaceState(null, "", "/?seed=1337");
+  // L1f (#237): the address bar says which loop this harness plays — the
+  // RETIRED one, the loop it was written against. `?loop=old` is the release's
+  // escape hatch; a test that wants the new loop says so (`{ newLoop: true }`).
+  window.history.replaceState(null, "", "/?seed=1337&loop=old");
   localStorage.removeItem(SAVE_KEY);
   localStorage.setItem("hexmatch:rival-skill", "normal");
   localStorage.setItem("hexmatch:tutorial", "never");
