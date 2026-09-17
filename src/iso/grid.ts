@@ -1080,8 +1080,10 @@ export function townBuildings(
   const origins = [...blocks.values()].sort((a, b) => (a[1] - b[1]) || (a[0] - b[0]));
 
   for (const [ox, oy] of origins) {
-    // A village blocks whole-block art: only the centre is multi-tile.
-    const pick = pickTownVariant(ox, oy, houseArt);
+    // The BLOCK pick runs on the FULL list at every non-village tier — that is
+    // where the 2×2 towers, banks and cinemas come from — while the village
+    // picks inside its small-homes list (and never places block art at all).
+    const pick = pickTownVariant(ox, oy, village ? houseArt : TOWN_HOUSE_VARIANTS);
     const [fw, fh] = footprintOf(pick);
     const wholeBlock = !village
       && (fw > 1 || fh > 1)

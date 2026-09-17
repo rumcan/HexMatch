@@ -70,7 +70,9 @@ import { scatterScenery, type DecalImages, type Scenery } from "./scenery";
 import { loadDecalImages, loadScenerySprites } from "./scenery-art";
 import { loadVehicleLayers } from "./vehicle-art";
 import {
-  FIELD_OCC, generateMap, resolveMapSeed, townBuildings, townForSeat, type Grid, type Industry,
+  FIELD_OCC, generateMap, grownTownHouses, resolveMapSeed, seedTownLevels, setTownLevel,
+  TOWN_BLOCK, townBuildings, townForSeat, townGrownRings, townTier,
+  type Grid, type Industry, type Town,
 } from "./grid";
 import {
   createTrack, drawBits, previewDrag, commitDrag, canBuildOn, hasTrack,
@@ -113,7 +115,8 @@ import {
 } from "./plants";
 import {
   CARGO, CARGOES, DEPOT_TREE, DEPOT_TREE_ORDER, DEPOT_TIER_MAX, FACTORY_FOOTPRINT, FACTORY_SPRITE,
-  INDUSTRY_BY_KEY, TRANSPORT, TOWN_UPGRADES,
+  INDUSTRY_BY_KEY, TRANSPORT, TOWN_UPGRADES, TOWN_TIER_LEGACY, TOWN_VISUAL_MAX,
+  townCentreSprite, townTierLabel,
   BASE_RATE, VICTORY, VP_TARGET, UPGRADE_COST, TUNING,
   type Cargo, type Portrait,
 } from "./config";
@@ -699,6 +702,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // having on the map at all. Order matters: a highway tile a town already
   // paved is skipped, so the town keeps its neutral ring.
   seedPublicRoads(track, grid);
+  // L17 (#245): a new-loop game opens with FOUR VILLAGES — small homes, dirt
+  // streets, no sidewalks, lamps, plazas or tall buildings. The seed-derived
+  // map never carries tiers (`Town.level` stays absent = legacy), so this is
+  // the same kind of boot stamp `seedTownRoads` is: a new-loop game assigns
+  // tier 0 and grows the towns as upgrades confirm; the shipped loop, the
+  // rooms and the story never touch `level`, and their towns keep today's
+  // look exactly (the ticket's "flag off: towns look as they do now").
+  // A loaded save overwrites these below (`applySave` restores `towns`).
+  if (newLoop) seedTownLevels(grid, 0);
   const score: ScoreState = createScoreState();
 
   // L5 (#219): every seat opens at rung 0 of the depot tree (the starter
@@ -2087,7 +2099,6 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     for (const s of rail.structures)
       for (const [x, y] of footprintTiles(s))
         if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) blocked.add(y * MAP_W + x);
-    world.sceneryBlocked = blocked;
     world.fields = scenery.fields.filter((f) => !clearedFields.has(f.id));
     // PP-12: one draw item per factory — the single TTD complex, drawn at the
     // footprint origin. The manifest footprint matches FACTORY_FOOTPRINT (both
@@ -2107,14 +2118,36 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // cell's footprint comes from the ATLAS and the per-building PNG layers
     // land after the first sync — `loadBuildingLayers` re-syncs, which is
     // when the towers move off the streets they used to be drawn across.
+    //
+    // L17 (#245): the towns' TIER rides along. Under the new loop a town
+    // draws its tier (village smalls, the bank centre, the grown ring);
+    // everywhere else `TOWN_TIER_LEGACY` keeps today's look byte for byte.
+    // The grown ring is visual-only — it never claims tiles — but it is
+    // still buildings, so its tiles hide the trees under them and skip
+    // ground the player has already built on (every laid track tile, plus
+    // the structures above).
     const footprintOf = (sprite: string): [number, number] =>
       atlasRef?.get(sprite)?.footprint ?? [1, 1];
-    const townItems = grid.towns.flatMap((t) =>
-      townBuildings(t, footprintOf).map((b) => ({
+    const built = new Set<number>(blocked);
+    for (let i = 0; i < track.dirt.length; i++) {
+      if (track.dirt[i] || track.road[i]) built.add(i);
+    }
+    const isBuilt = (tx: number, ty: number): boolean => built.has(tIdx(tx, ty));
+    const townItems = grid.towns.flatMap((t) => {
+      const tier = newLoop ? townTier(t) : TOWN_TIER_LEGACY;
+      if (tier >= 2) {
+        for (const [gx, gy] of grownTownHouses(t, grid, townGrownRings(tier), isBuilt)) {
+          built.add(tIdx(gx, gy));
+          blocked.add(tIdx(gx, gy));
+        }
+      }
+      return townBuildings(t, footprintOf, { tier, grid, blocked: isBuilt }).map((b) => ({
         sprite: b.sprite,
         tx: b.tx, ty: b.ty,
         ref: { kind: "town", id: t.id } as unknown,
-      })));
+      }));
+    });
+    world.sceneryBlocked = blocked;
     world.extra = [
       ...townItems,
       ...factoryItems,
@@ -2883,8 +2916,75 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     );
   }
 
+  // ── L17 (#245): the town on the map grows with the seat ──────────────────
   /**
-   * L5 (#219): open the CITY upgrade's tuning session.
+   * The town this seat's upgrade grows: the one its Factory is registered to
+   * (`Factory.townId`, set at placement — PP-02 requires a Factory to touch a
+   * town, so there is always exactly one while the Factory stands).
+   *
+   * DECIDED, per the ticket's open question "whose town grows": towns are
+   * shared map objects and `townLevel` is per seat, so a seat's upgrade grows
+   * ITS OWN factory's town; if both seats' factories touch the same town it
+   * shows the HIGHER tier (`growTownForSeat` never lowers one). A town stays
+   * grown once grown — demolishing the Factory does not shrink the map — and
+   * a Factory rebuilt beside another town carries the next growth there.
+   */
+  function townOfSeat(p: PlayerState): Town | null {
+    const f = eco.factories.find((x) => x.owner === p.id);
+    return f?.townId != null ? grid.towns[f.townId] ?? null : null;
+  }
+
+  /**
+   * The GROWTH MOMENT: re-lay the town's draw items (`syncWorld` re-derives
+   * the tier's art) and dirty exactly this town's tiles in the renderer's
+   * caches — the road chunks carry the street material, the sidewalks, the
+   * lamps and the block ground; the terrain/structure flags carry the
+   * buildings. No new drawing pass, no per-frame work: one sync plus a
+   * one-shot invalidation over the town's square (its extent plus whatever
+   * the tier's grown rings can reach), which is what the ticket's "no frame
+   * rate drop when a town grows" asks for. The float reuses the map's own
+   * float layer.
+   */
+  function growTownArt(t: Town, now = performance.now()): void {
+    syncWorld();
+    let ext = 0;
+    const note = (x: number, y: number) => {
+      if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) {
+        ext = Math.max(ext, Math.abs(x - t.tx), Math.abs(y - t.ty));
+      }
+    };
+    note(t.tx, t.ty);
+    for (const [hx, hy] of t.houses) note(hx, hy);
+    for (const [rx, ry] of t.roads) note(rx, ry);
+    const R = ext + townGrownRings(Math.max(townTier(t), 1)) * TOWN_BLOCK + 1;
+    for (let y = t.ty - R; y <= t.ty + R; y++) {
+      for (let x = t.tx - R; x <= t.tx + R; x++) {
+        if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) renderer?.invalidateTile(x, y);
+      }
+    }
+    floats.add(`⬆ ${townTierLabel(townTier(t)).toUpperCase()}`, t.tx, t.ty - 1,
+      { cls: "delivery", now });
+  }
+
+  /**
+   * Grow the seat's town to the seat's tier (its `townLevel`, capped by the
+   * map's `TOWN_VISUAL_MAX`). No-op on the shipped loop (towns are set
+   * dressing there), with no Factory registered, or when the tier is already
+   * shown. `fx` off is the restore path: a loaded save re-lays the map
+   * wholesale and must not float or play over the boot.
+   */
+  function growTownForSeat(p: PlayerState, fx = true): Town | null {
+    if (!newLoop) return null;
+    const t = townOfSeat(p);
+    if (!t) return null;
+    const next = Math.max(townTier(t), Math.min(p.townLevel, TOWN_VISUAL_MAX));
+    if (!setTownLevel(t, next)) return null;
+    if (fx) growTownArt(t);
+    return t;
+  }
+
+  /**
+   * L17 (#245): open the CITY upgrade's tuning session.
    *
    * Same budget and board as a Depot's, with two differences that are the
    * point of the upgrade: the board plays NEUTRAL (no cargo bias — a city
@@ -3040,11 +3140,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const bonus = rules.yieldNeverDrops ? Math.max(me.townBonus, next) : next;
       if (bonus > 0) me.townBonus = bonus;
       me.townLevel = Math.min(me.townLevel + 1, TOWN_UPGRADES.length);
+      // L17 (#245): the town on the map takes the step with the seat — the
+      // one the buyer's Factory touches — with the growth moment (art swap,
+      // tile invalidation, float) on top. With no Factory standing there is
+      // nothing to grow yet; the next upgrade will catch the map up.
+      const grown = growTownForSeat(me);
       // Gold follows the score here too (L9's one session, one payout), on the
       // same curve a Depot's session uses.
       ui.feed(`City upgrade: base rate +${Math.round(bonus * 100)}%${paid} (score ${s.score})`, me.name);
       toast(
-        `City upgraded — base rate +${Math.round(bonus * 100)}%${paid}. Every connected Depot ticks faster from here.`,
+        `City upgraded — base rate +${Math.round(bonus * 100)}%${paid}.`
+        + (grown ? ` Your ${townTierLabel(townTier(grown))} grows on the map — click its bank for the next step.` : "")
+        + ` Every connected Depot ticks faster from here.`,
         bonus > 0 ? "good" : "info",
       );
       ui.closeSessionBoard();
@@ -4559,11 +4666,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const score = rivalTuningScore(skill().key);
     rival.townLevel = Math.min(rival.townLevel + 1, TOWN_UPGRADES.length);
     rival.townBonus = townBonusFor(price.def.bonus, score);
+    // L17 (#245): the rival's investment shows on the map too — its town
+    // takes the same growth step, with the same moment, as the player's.
+    const grownRival = growTownForSeat(rival);
     // L14 (#229): say it in the feed, in the same words the player's own
     // upgrade uses (L5) — the rival climbing the city ladder is one of the
     // three things this ticket is about, and a ladder nobody can see is a
     // ladder nobody notices the rival climbing.
     ui.feed(`Rival upgrades its city: base rate +${Math.round(rival.townBonus * 100)}% (score ${Math.round(score)})`, rival.name);
+    if (grownRival) {
+      ui.feed(`The rival's ${townTierLabel(townTier(grownRival))} grows on the map.`, rival.name);
+    }
     return true;
   }
 
@@ -6197,6 +6310,23 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           `plant ${(f?.id ?? 0) + 1} of ${list.length}` +
           (f?.townId != null ? ` · town ${f.townId + 1}` : "") + `<br>` +
           `${served} depot${served === 1 ? "" : "s"} delivering here`;
+      } else if (ref && ref.kind === "town" && newLoop) {
+        // L17 (#245): the town centre answers with what it is and what the
+        // next step costs — the same numbers the HUD key prints, so the map
+        // door and the key can never disagree.
+        const t = grid.towns[(ref as { id?: number }).id ?? -1];
+        if (t) {
+          const tier = Math.max(0, townTier(t));
+          const isBank = townCentreSprite(tier) === "town_bank";
+          const mine = townOfSeat(me)?.id === t.id;
+          const price = mine ? priceTownUpgrade(me.purse, me.townLevel) : null;
+          info = `<b>${isBank ? "Town Bank" : "Town Square"}</b> — a ${townTierLabel(tier)}<br>` +
+            (mine
+              ? (price?.def
+                ? `click to upgrade · ${costLabel(price.cost)}`
+                : `fully upgraded`)
+              : `the town your Factory touches is the one you upgrade`);
+        }
       } else if (hover) {
         // VP-01: a road tile answers with what it is WORTH, which is the rule
         // the whole victory system turns on and the one a player is most likely
@@ -6419,6 +6549,31 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const f = factoryOf(me.id);
     return f ? { ...p, tx: f.tx, ty: f.ty } : p;
   };
+
+  // ── L17 (#245): the town's middle building is the map door to the upgrade ─
+  //
+  // A picked town item is anchored on its art's origin, and the centre is the
+  // one town item placed at the town's centre tile — so a pick at (t.tx, t.ty)
+  // with a town ref IS the centre block, church or bank. A pick with no
+  // `newLoop` never answers (towns are set dressing on the shipped loop), and
+  // a pick with a build tool in the hand belongs to that tool, not the town.
+  const townCentreAt = (p: { tx: number; ty: number; ref: unknown }): Town | null => {
+    if (!newLoop) return null;
+    const ref = p.ref as { kind?: string; id?: number } | null;
+    if (!ref || ref.kind !== "town" || typeof ref.id !== "number") return null;
+    const t = grid.towns[ref.id] ?? null;
+    if (!t || p.tx !== t.tx || p.ty !== t.ty) return null;
+    return t;
+  };
+
+  /** The click on the centre: my town buys the upgrade, a foreign one explains. */
+  function townCentreClick(t: Town): void {
+    if (townOfSeat(me)?.id !== t.id) {
+      toast("That is not your city — the town your Factory touches is the one you upgrade.", "info");
+      return;
+    }
+    buyTownUpgrade(me);
+  }
 
   // ── input ──────────────────────────────────────────────────────────────
   let g: GestureState = createGesture();
@@ -6790,6 +6945,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           } else if (tool === "demolish") {
             if (isGuest()) net?.sendIntent("demolish", { do: "demolish", tx: p.tx, ty: p.ty });
             else doDemolish(p.tx, p.ty);
+          } else if (tool === "select") {
+            // L17 (#245): the town's middle building (church, then bank) is
+            // the click target for the city upgrade — the map door beside the
+            // HUD key. Any other tool keeps its own behaviour above.
+            const town = townCentreAt(p);
+            if (town) townCentreClick(town);
           } else if (tool === "road" || tool === "dirt" || tool === "rail") {
             // A tap with a track tool that got here is a refusal: the legal
             // single-tile build is handled where the drag ends (above).
@@ -7132,6 +7293,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // below — the record they belong to — so they need no field here.
       loop: newLoop,
       loopCarry: loopCarryToWire(loopCarry),
+      // L17 (#245): the towns' tiers ride the save too — a refresh must not
+      // shrink the city the player paid to grow. Written under the new loop
+      // only: elsewhere the tiers are legacy and the field would be noise.
+      towns: newLoop ? grid.towns.map((t) => townTier(t)) : undefined,
       eco: { harvesters: eco.harvesters, factories: eco.factories },
       clearedFields: [...clearedFields],
       players: players.map((p) => ({
@@ -7210,6 +7375,23 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (typeof dt === "number" && Number.isFinite(dt)) players[i].depotTier = Math.max(0, Math.floor(dt));
       if (typeof tl === "number" && Number.isFinite(tl)) players[i].townLevel = Math.max(0, Math.floor(tl));
       if (typeof tb === "number" && Number.isFinite(tb)) players[i].townBonus = Math.max(0, tb);
+    }
+    // L17 (#245): the towns' tiers come back with the seats. The saved array
+    // is the authority when it is there (map order, per `townTier`); a save
+    // from before this ticket has none, and the map is re-derived from the
+    // seats' own `townLevel` instead — the same rule a live upgrade follows —
+    // so a mid-growth save still reloads with the map it was saved from. No
+    // FX here: the boot sync below lays the whole world fresh.
+    if (newLoop) {
+      if (d.towns?.length) {
+        grid.towns.forEach((t, i) => {
+          const v = d.towns?.[i];
+          if (typeof v === "number" && Number.isFinite(v)) setTownLevel(t, v);
+        });
+      } else {
+        growTownForSeat(me, false);
+        growTownForSeat(rival, false);
+      }
     }
     // VP is derived state and is intentionally absent from the save. Rebuild
     // its ledgers now (without UI events), or a restored final screen would say
@@ -8065,6 +8247,37 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         }
       }
       return n;
+    },
+    /**
+     * L17 (#245): the town tiers, for tests and the console — id, level and
+     * label per town, in map order.
+     */
+    get towns() {
+      return grid.towns.map((t) => {
+        const lv = townTier(t);
+        return { id: t.id, level: lv, label: lv >= 0 ? townTierLabel(lv) : "legacy" };
+      });
+    },
+    /**
+     * L17 (#245): the DEBUG HOOK the ticket asks for — build and review the
+     * tier art before (and without) a real city upgrade.
+     *
+     *   `__iso.setTownLevel(townId, level)`  0 village · 1 town (bank) ·
+     *                                        2 city · 3 metropolis
+     *
+     * It applies the tier through the same door a confirmed upgrade uses —
+     * `setTownLevel` plus the growth moment (world re-sync, one-shot tile
+     * invalidation, float) — so what the console shows is what gameplay will
+     * show. It moves NO seat state: `townLevel`/`townBonus` stay where the
+     * economy left them. Returns false (changing nothing) for an unknown
+     * town; the level is clamped, not thrown on.
+     */
+    setTownLevel: (townId: number, level: number) => {
+      const t = grid.towns[Math.floor(townId)];
+      if (!t) return false;
+      const ok = setTownLevel(t, level);
+      if (ok) growTownArt(t);
+      return ok;
     },
     /** VP-01: run the rival's pave pass on demand (the AI turn's third action,
      *  exposed so a test can assert the pave without waiting on the clock).

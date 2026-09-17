@@ -54,6 +54,13 @@ export interface SaveGamePayload {
   rail?: RailWire;
   loop?: boolean;
   loopCarry?: Record<string, number>;
+  /**
+   * L17 (#245): the towns' visual tiers, in map order (`Town.level`, the same
+   * clamp `setTownLevel` applies). Absent from a pre-L17 save — the loader
+   * then re-derives the tiers from the seats' `townLevel`, so a save taken
+   * mid-growth still reloads with the map it was saved from.
+   */
+  towns?: number[];
   eco: {
     harvesters: EconomyState["harvesters"];
     factories: EconomyState["factories"];
