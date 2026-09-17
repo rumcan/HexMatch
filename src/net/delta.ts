@@ -141,7 +141,7 @@ export interface PublishFields {
   players: DeltaPlayer[];
   setupPhase: boolean;
   won: boolean;
-  /** MP-AUDIT: protests, vehicle presentation, boards, crossPrompt, winner */
+  /** MP-AUDIT: protests, vehicle presentation, winner */
   protests?: Snapshot["protests"];
   /** L9 (#224): live industry Blockades — see `DeltaMsg["blockades"]`. */
   blockades?: Snapshot["blockades"];
@@ -149,8 +149,6 @@ export interface PublishFields {
   cars?: Snapshot["cars"];
   /** RAIL-04 (#178): the railway (see `DeltaMsg["rail"]`). */
   rail?: Snapshot["rail"];
-  boards?: Snapshot["boards"];
-  crossPrompt?: Snapshot["crossPrompt"];
   winner?: Snapshot["winner"];
   /** RES-FIELDS: ids of the demolished wheat fields / tree blocks. */
   clearedFields?: Snapshot["clearedFields"];
@@ -209,8 +207,6 @@ export function buildPublish(track: Track, dirty: DirtyTiles, f: PublishFields):
     ...(f.trucks !== undefined ? { trucks: f.trucks } : {}),
     ...(f.cars !== undefined ? { cars: f.cars } : {}),
     ...(f.rail !== undefined ? { rail: f.rail } : {}),
-    ...(f.boards !== undefined ? { boards: f.boards } : {}),
-    ...(f.crossPrompt !== undefined ? { crossPrompt: f.crossPrompt } : {}),
     ...(f.winner !== undefined ? { winner: f.winner } : {}),
     ...(f.clearedFields !== undefined ? { clearedFields: f.clearedFields } : {}),
     ...(f.notice ? { notice: f.notice } : {}),

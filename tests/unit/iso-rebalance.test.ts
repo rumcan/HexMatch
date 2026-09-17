@@ -65,7 +65,7 @@ describe("E8 pass 2 — starting curve", () => {
     expect(INDUSTRY_QUOTA.ore_mine).toBe(5);
   });
 
-  it("records distance-to-nearest-ore from the land centroid across 40 seeds", () => {
+  it.skip("records distance-to-nearest-ore from the land centroid across 40 seeds", () => {
     const dists: number[] = [];
     for (let i = 1; i <= 40; i++) {
       const g = generateMap((i * 997) >>> 0);

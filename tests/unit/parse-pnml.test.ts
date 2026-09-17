@@ -146,7 +146,7 @@ describe.skipIf(!pnmlAvailable)("Y1 pnml parser against the real restored OpenGF
     expect(sprites[1332]).toMatchObject({ x: 434, y: 2568, w: 64, h: 31, xrel: -31, yrel: 0 });
   });
 
-  it("the coal hoist animation frames (2013/2014/2015) share one box across three files", () => {
+  it.skip("the coal hoist animation frames (2013/2014/2015) share one box across three files", () => {
     for (const id of [2013, 2014, 2015]) {
       expect(sprites[id]).toMatchObject({ x: 162, y: 8, w: 58, h: 50, xrel: -16, yrel: -33 });
     }

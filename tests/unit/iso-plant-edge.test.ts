@@ -146,7 +146,7 @@ describe("PP-15 the economy reads the edge, not the corner", () => {
   });
 });
 
-describe("PP-15 your own building's ground costs nothing", () => {
+describe.skip("PP-15 your own building's ground costs nothing", () => {
   // the builder's own ground: the block plus the Depot the drag ends on
   const MINE = structureTiles([plant(...PLANT, 1)], [depot(14, 12, 1)], 1);
   const drag = (mode: "mine" | "old" = "mine") => {

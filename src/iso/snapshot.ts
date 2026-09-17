@@ -87,7 +87,12 @@ import { DEPOT_FACINGS, type DepotFacing } from "./depot";
 // forests — and a Depot carries the ROTATION its entrance opens onto plus the
 // `clearedFields` the players have demolished. A v14 guest would regenerate a
 // different island from the same seed, so mixed versions must refuse.
-export const SNAPSHOT_VERSION = 15;
+// v16 (L15 / #230): the redesign is now the only loop. `boards` (token boards),
+// `crossPrompt` (blessings), `bank` intent and old paving/plant VP are gone
+// from the wire. A v15 guest would try to trade and bless on a host that no
+// longer has those systems, so mixed versions must refuse.
+// v17 (L15 sweep): boards and crossPrompt fully removed from types and wire.
+export const SNAPSHOT_VERSION = 17;
 
 export const EXPECTED_TRACK_BYTES = MAP_W * MAP_H;
 
@@ -225,11 +230,6 @@ export interface CarWire {
   arriveMs?: number;
   lastTripKey?: string | null;
 }
-export interface BoardWire {
-  owner: string;
-  data: unknown;
-}
-
 // ── RAIL-04 (#178): the railway on the wire ───────────────────────────────
 /**
  * One platform or depot, as the wire carries it. `view` and `kind` travel as
@@ -349,10 +349,6 @@ export interface Snapshot {
   cars?: CarWire[];
   /** RAIL-04 (#178): the railway — layer, platforms, depots, lines, trains. */
   rail?: RailWire;
-  /** MP-AUDIT: authoritative boards (compact gem tuples) */
-  boards?: BoardWire[];
-  /** MP-AUDIT: cross-bonus choice prompt */
-  crossPrompt?: CrossPromptWire | null;
   /** MP-AUDIT: winner identity */
   winner?: WinnerWire | null;
   /**
@@ -376,8 +372,6 @@ export interface SnapshotSource {
   trucks?: TruckWire[];
   cars?: CarWire[];
   rail?: RailWire;
-  boards?: BoardWire[];
-  crossPrompt?: CrossPromptWire | null;
   winner?: WinnerWire | null;
   clearedFields?: number[];
 }
@@ -411,8 +405,6 @@ export function buildSnapshot(src: SnapshotSource): Snapshot {
     trucks: src.trucks ? src.trucks.map((t) => ({ ...t, factory: [...t.factory] as [number, number], route: t.route.map((r) => [...r] as [number, number]), segFast: [...t.segFast] })) : undefined,
     cars: src.cars ? src.cars.map((c) => ({ ...c, route: c.route.map((r) => [...r] as [number, number]), segFast: c.segFast ? [...c.segFast] : undefined })) : undefined,
     rail: copyRailWire(src.rail),
-    boards: src.boards ? src.boards.map((b) => ({ owner: b.owner, data: b.data })) : undefined,
-    crossPrompt: src.crossPrompt ?? null,
     winner: src.winner ?? null,
     ...(src.clearedFields?.length ? { clearedFields: [...src.clearedFields] } : {}),
   };
@@ -556,9 +548,6 @@ export function validateSnapshot(s: unknown, localSeed?: number): SnapshotError 
       }
     }
   }
-  if (o.boards !== undefined && o.boards !== null && !Array.isArray(o.boards)) {
-    return new SnapshotError("malformed", "Snapshot boards is malformed.");
-  }
   if (o.clearedFields !== undefined && (!Array.isArray(o.clearedFields)
     || o.clearedFields.some((id) => !Number.isInteger(id) || id < 0))) {
     return new SnapshotError("malformed", "Snapshot cleared fields are malformed.");
@@ -595,8 +584,6 @@ export interface AppliedSnapshot {
   trucks?: TruckWire[];
   cars?: CarWire[];
   rail?: RailWire;
-  boards?: BoardWire[];
-  crossPrompt?: CrossPromptWire | null;
   winner?: WinnerWire | null;
   clearedFields: number[];
 }
@@ -631,8 +618,6 @@ export function applySnapshot(s: unknown, localSeed?: number): AppliedSnapshot {
     trucks: (o as Snapshot).trucks ? (o as Snapshot).trucks!.map((x) => ({ ...x, factory: [...x.factory] as [number, number], route: x.route.map((r) => [...r] as [number, number]), segFast: [...x.segFast] })) : undefined,
     cars: (o as Snapshot).cars ? (o as Snapshot).cars!.map((x) => ({ ...x, route: x.route.map((r) => [...r] as [number, number]), segFast: x.segFast ? [...x.segFast] : undefined })) : undefined,
     rail: copyRailWire((o as Snapshot).rail),
-    boards: (o as Snapshot).boards ? (o as Snapshot).boards!.map((x) => ({ ...x })) : undefined,
-    crossPrompt: (o as Snapshot).crossPrompt ?? null,
     winner: (o as Snapshot).winner ?? null,
     clearedFields: [...(o.clearedFields ?? [])],
   };

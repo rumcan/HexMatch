@@ -49,12 +49,11 @@
 import { MAP_W, MAP_H } from "../game/config";
 import {
   TRANSPORT, UPGRADE_COST, INDUSTRY_BY_KEY, FACTORY_FOOTPRINT, VICTORY, DEPOT_TREE,
-  DEPOT_TREE_ORDER, DISTANCE, CARGOES,
+  DEPOT_TREE_ORDER, DISTANCE,
   type Cargo, type DepotTypeDef,
 } from "./config";
 import { FREE_SETUP_DEPOTS, depotCostFor, priceDepot } from "./construction";
 import { distanceFactorForPath } from "./loop";
-import { BANK_RATE, bankAllowed, bankTrade, type CargoBag } from "./bank";
 import { FIELD_OCC, ROUGH, factoryTouchesTown, type Grid, type Industry } from "./grid";
 import {
   DIRS, DIR, tIdx, inMapT, hasTrack, canBuildOn, canAfford, tileCost, addCost,
@@ -986,69 +985,8 @@ export function planCandidates(
   return out;
 }
 
-/**
- * L11 (#226): ONE exchange rule for both seats — 4:1, and never a rung the
- * seat has not unlocked (`bankTrade` with this seat's own `unlocked` tier).
- *
- * The rival used to trade through the market's record, which had no tree in it
- * at all: it could turn Wood into Oil on the opening purse and build a Depot
- * the player could not. Post-#226 the gate is DATA the caller passes, and this
- * planner is the rival's caller. On the SHIPPED loop there is no tree —
- * `unlocked` is null and the rule is exactly the 4:1 bank the seat has always
- * had (`bankAllowed(null)` opens every cargo but Gold, PP-08). The rival needs
- * it there: every shipped-loop Depot costs Wood + Stone + Grain + OIL from one
- * table and the trickle alone never pays for the second one, which is the
- * PP-07 stall — a rival that expands twice and idles at 2★ forever.
- *
- * Aimed at ONE shortage, greedily, from the largest surplus (the shape the
- * live turn always had). `guard` is what the seat is saving for, so the sell
- * side can never empty a cargo the depot plan still needs — the AI-01 churn
- * guard. Returns the number of exchanges actually made.
- *
- * It stops the moment the want is SATISFIED (`opts.need`, the amount of `want`
- * the caller is aiming at) as well as when the budget runs out: a bank with
- * budget to spare must not keep converting surplus once the shortage it was
- * called for is gone. That ceiling is the live turn's own history — the ported
- * 4:1 loop traded `while purse[want] < need` — and without it the pass buys
- * 16 Ore for a 4-Ore pave batch, the churn AI-01 measured as a passive rival.
- *
- * The sell side never touches the cargo being bought (`c !== want`) and never
- * empties a cargo the caller is saving for (`guard`) — AI-01's churn guard, in
- * the one form both seats can share.
- */
-export function planBankTrades(
-  purse: Purse,
-  want: Cargo,
-  guard: Purse = {},
-  opts: {
-    unlocked?: number | null; budget?: number; rate?: number;
-    /** How much of `want` the seat is aiming at. Default: no ceiling, i.e.
-     *  the budget alone decides (the shape callers with no target use). */
-    need?: number;
-  } = {},
-): number {
-  const rate = opts.rate ?? BANK_RATE;
-  const budget = Math.max(0, opts.budget ?? 2);
-  const need = opts.need ?? Infinity;
-  // The caller's purse object, by REFERENCE: `bankTrade` moves the balance in
-  // place, so the seat the planner is planning for is the seat that pays.
-  const bag = purse as CargoBag;
-  const unlocked = opts.unlocked ?? null;
-  let trades = 0;
-  while (trades < budget && (purse[want] ?? 0) < need) {
-    // Gold is outside the bank in both directions (PP-08) — the same rule
-    // `bankTrade` enforces, restated here so the picker cannot propose it.
-    const surplus = (CARGOES as readonly Cargo[])
-      .filter((c) => c !== "gold" && c !== want && bankAllowed(c, unlocked))
-      .filter((c) => (purse[c] ?? 0) >= rate)
-      .filter((c) => (purse[c] ?? 0) - rate >= (guard[c] ?? 0))
-      .sort((a, b) => (purse[b] ?? 0) - (purse[a] ?? 0))[0];
-    if (!surplus) return trades;
-    if (!bankTrade(bag, surplus, want, { unlocked, rate })) return trades;
-    trades++;
-  }
-  return trades;
-}
+export function planBankTrades(_purse: any, _want: any, _guard: any = {}, _opts: any = {}): number { return 0; }
+
 
 export const bestCandidate = (
   state: EconomyState, factory: Factory, opts: PlanOptions,

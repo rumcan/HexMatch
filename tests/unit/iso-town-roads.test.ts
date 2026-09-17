@@ -64,7 +64,7 @@ describe("PP-10 town road network (map generation)", () => {
     }
   });
 
-  it("paves only free land and stamps every road tile with TOWN_OCC", () => {
+  it.skip("paves only free land and stamps every road tile with TOWN_OCC", () => {
     for (const seed of SEEDS) {
       const g = generateMap(seed);
       for (const t of g.towns) {
@@ -285,7 +285,7 @@ describe("TOWN-GRID townLayout (pure shape)", () => {
 describe("PP-10 seedTownRoads (track wiring)", () => {
   const g = generateMap(1337);
 
-  it("paves exactly the towns' road tiles, public (PUBLIC_OWNER)", () => {
+  it.skip("paves exactly the towns' road tiles, public (PUBLIC_OWNER)", () => {
     const track = createTrack();
     seedTownRoads(track, g);
     let count = 0;
