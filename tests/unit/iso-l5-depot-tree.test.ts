@@ -456,7 +456,18 @@ describe("L5 the gate, live on the map", () => {
     h.econTick(now += 10_000);
     h.econTick(now += 10_000);
     const before = purseTotal(h.purse) - plain;
-    expect(before).toBe(Math.floor(2 * perTick * TUNING.minYield));
+    // The clock pays in whole units per tick and keeps each Depot's fractional
+    // remainder in a per-depot carry (L1d) — so two ticks can legitimately
+    // land a unit ABOVE one aggregate floor of the same total. Replicate the
+    // engine's rounding here; a one-shot floor is the wrong model.
+    let carry = 0;
+    const tickPay = (x: number) => {
+      const t = x + carry;
+      const w = Math.floor(t);
+      carry = t - w;
+      return w;
+    };
+    expect(before).toBe(tickPay(perTick * TUNING.minYield) + tickPay(perTick * TUNING.minYield));
 
     // Buy the city upgrade and play the session out at full marks: the ceiling
     // is the row's bonus, and the SAME two ticks now pay it on top.
@@ -475,7 +486,10 @@ describe("L5 the gate, live on the map", () => {
     h.econTick(now += 10_000);
     const after = purseTotal(h.purse) - mid;
     expect(after, "the upgrade scales every connected Depot").toBeGreaterThan(before);
-    expect(after).toBe(Math.floor(2 * perTick * TUNING.minYield * (1 + bonus)));
+    // The carry rides ACROSS the upgrade too: the leftover fraction of the
+    // last un-upgraded tick is the first upgraded tick's opening carry.
+    const scaled = perTick * TUNING.minYield * (1 + bonus);
+    expect(after).toBe(tickPay(scaled) + tickPay(scaled));
   });
 
   it("carries the rung and the city through the save slot", async () => {

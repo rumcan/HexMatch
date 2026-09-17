@@ -104,8 +104,15 @@ export { readMatchSettings };
  * mixed versions must refuse. SNAPSHOT_VERSION moves to 16 for the same
  * reason: the seed-derived map and the wire shape changed (no boards,
  * no cross prompt, no bank).
+ * v12 (L17 / #245): the BANK intent is back — the owner restored the bank at
+ * 3:1, hosted at the town's middle building (`action: "bank"`, host-validated
+ * against the guest seat's own rungs, exactly as v9 shipped it). A v11 guest
+ * would send an action this build knows but its own UI can't reach, and a v11
+ * host would drop the request in silence, so mixed versions must refuse.
+ * SNAPSHOT_VERSION does NOT move: the bank keeps no state of its own (it moves
+ * the seat's purse, which already rides `players`).
  */
-export const PROTOCOL_VERSION = 11;
+export const PROTOCOL_VERSION = 12;
 
 /**
  * Realtime WS frame cap in bytes. Mirrors the SDK's `MAX_BROADCAST_BYTES`
@@ -257,8 +264,10 @@ export const MAX_SNAPSHOT_CHUNKS = 128;
 /** guest → server → host only. Guests never mutate locally. */
 export interface IntentMsg {
   type: "intent";
-  // L15 sweep: bank and cross intents removed — only build/demolish/harvest/skill/blackMarket/vehicle remain.
-  action: "build" | "demolish" | "harvest" | "skill" | "blackMarket" | "vehicle";
+  // L17 (#245): the bank's `action: "bank"` is back (the owner restored the
+  // bank at 3:1, hosted at the town's middle building). The rest of the L15
+  // sweep stands: no cross, no boards.
+  action: "build" | "demolish" | "harvest" | "skill" | "bank" | "blackMarket" | "vehicle";
   payload: unknown;
 }
 

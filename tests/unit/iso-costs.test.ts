@@ -122,7 +122,7 @@ describe("PP-07 the opening can never deadlock on its own costs", () => {
   it("a missing construction resource is manufacturable — no endless dependency loop", () => {
     // Every construction cargo is a match-3 cargo the Processing Plant can
     // pay (reach + tokens) and a bank-tradeable good, so a player who lacks
-    // one can always earn or 4:1-bank their way into the next purchase.
+    // one can always earn or 3:1-bank their way into the next purchase.
     for (const cargo of Object.keys(BUILD_COSTS.depot)) {
       expect(CARGOES).toContain(cargo);
     }

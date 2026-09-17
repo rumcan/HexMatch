@@ -793,8 +793,20 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
 
         // PP-07 / L11 (#226): nothing affordable at all — bank toward the plan
         // it wants, then take the turn if the trade unlocked it. The live tail
-        // retries `aiBuildStep` exactly here. (New loop: no bank — a seat that
-        // cannot afford anything waits for its clock, as the live turn does.)
+        // retries `aiBuildStep` exactly here. (New loop, L17 #245: bank toward
+        // the tree goal's price — `rivalBankTowardGoal` in game.ts — and take
+        // the turn if any trade landed; otherwise wait for the clock.)
+        if (!acted && newLoop && goal) {
+          const unlocked = seatUnlocked(seat, newLoop);
+          let budget = bankBudget(pace);
+          for (const [cargo, amount] of Object.entries(goal.cost) as [Cargo, number][]) {
+            if (budget <= 0) break;
+            if ((seat.purse[cargo] ?? 0) >= amount) continue;
+            const n = planBankTrades(seat.purse, cargo, goal.cost, { unlocked, budget, need: amount });
+            budget -= n;
+            if (n > 0) acted = true;
+          }
+        }
         if (!acted && !newLoop) {
           bankToward(eco, seat, track, factoryFor(seat), pace, urgency, newLoop);
           const retry = aiBuildStep(eco, factoryFor(seat), {

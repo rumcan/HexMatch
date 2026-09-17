@@ -1310,11 +1310,11 @@ describe("J1 the quarry is mounted in the iso app", () => {
     await settle();
     (panel.querySelector('[data-act="bank"]') as HTMLElement).click();
 
-    expect(h.purse.stone).toBe(0);
+    expect(h.purse.stone).toBe(1);   // 4 − 3: the L17 rate (was 4:1)
     expect(h.purse.ore).toBe(1);
     // W6: bank exchanges log to the feed, rival or no rival.
     expect((root.querySelector("#iso-trade .feed-pane") as HTMLElement).textContent)
-      .toMatch(/bank: 4 stone → 1 ore/i);
+      .toMatch(/bank: 3 stone → 1 ore/i);   // L17 rate
   });
 });
 
@@ -1853,7 +1853,7 @@ describe("W3 the rival actually plays (headless)", () => {
 
     // NO grain granted this time: the paid Depot costs Wood + Stone + Grain +
     // Oil from the one table, and the rival's only income is the ore trickle.
-    // Its escape hatch is the same 4:1 bank the player has — `aiTick` banks
+    // Its escape hatch is the same 3:1 bank the player has — `aiTick` banks
     // toward the plan with the least shortfall whenever nothing is affordable.
     // Oil rides the trickle's fractional carry (0.4/tick ≈ 1 per 7.5 s); the
     // opening Depot is free, so what the bank must manufacture is the Grain
@@ -1862,7 +1862,7 @@ describe("W3 the rival actually plays (headless)", () => {
     expect(rival.grain ?? 0).toBe(0);
 
     // Sixteen build clocks (~144 s) interleaved with the economy clock, the
-    // way the frame loop runs them — enough 4:1 exchanges to cover the Depot.
+    // way the frame loop runs them — enough 3:1 exchanges to cover the Depot.
     // PP-12: the wall budget below was 60 s, not 30 s. The rival's play is
     // identical on the re-arted map (same builds, same bank, Depot #2 on the
     // same build clock), but A* planning over the shuffled industry layout
@@ -1875,7 +1875,7 @@ describe("W3 the rival actually plays (headless)", () => {
     // routes around ~3× more TOWN_OCC tiles and this scenario's helper-picked
     // factory/corridor spots land farther apart (62 s of the 68 s is the
     // bigger towns alone; the inter-town highways add the other 6 s). Every
-    // assertion below still holds unchanged — the rival expands, banks 4:1 and
+    // assertion below still holds unchanged — the rival expands, banks 3:1 and
     // buys Depot #2 — this budget is wall-clock headroom, not a behaviour.
     const t0 = 1_000_000;
     for (let i = 0; i < 16; i++) {
@@ -1896,7 +1896,7 @@ describe("W3 the rival actually plays (headless)", () => {
     const dc = depots();
     if (dc < 2) console.warn(`[test] W3 banks: only ${dc} depots after 16 builds (expected 2) — map-luck/A* variance`);
     expect(dc).toBeGreaterThanOrEqual(1);
-    // The bank did the work: ore went 4:1, and grain arrived without a grant.
+    // The bank did the work: ore went 3:1, and grain arrived without a grant.
     expect(rival.grain ?? 0).toBeGreaterThanOrEqual(0);
     expect(rival.oil).toBeLessThan(5);
     for (const c of CARGOES) expect(rival[c], `${c} negative`).toBeGreaterThanOrEqual(0);
@@ -2361,7 +2361,7 @@ describe("PP-08 gold is reserved for Black Market sabotage", () => {
 });
 
 describe("W6 the bank is the one exchange left", () => {
-  it("the Bank tab opens the panel, and a 4:1 exchange moves the purse and the feed", async () => {
+  it("the Bank tab opens the panel, and a 3:1 exchange moves the purse and the feed", async () => {
     const h = await boot();
     const panel = root.querySelector("#iso-trade") as HTMLElement;
     expect(panel).toBeTruthy();
@@ -2375,7 +2375,7 @@ describe("W6 the bank is the one exchange left", () => {
     (panel.querySelector('[data-f="bank-want"]') as HTMLSelectElement).value = "ore";
     await settle();
     (panel.querySelector('[data-act="bank"]') as HTMLElement).click();
-    expect(h.purse.stone).toBe(0);
+    expect(h.purse.stone).toBe(1);   // 4 − 3: the L17 rate (was 4:1)
     expect(h.purse.ore).toBe(1);
   });
 

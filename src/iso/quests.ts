@@ -221,7 +221,7 @@ export const QUESTS: readonly QuestRecipe[] = [
   {
     kind: "city-tier",
     strategy: "city",
-    // Nothing to ask once the city is maxed (one tier ships today, but the
+    // Nothing to ask once the city is maxed (L17 ships three tiers; the
     // table reads TOWN_UPGRADES rather than a count).
     offers: (v) => (v.townLevel >= v.townLevels ? [] : [{
       id: `city-${v.townLevel + 1}`,
