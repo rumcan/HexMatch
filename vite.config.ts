@@ -164,13 +164,28 @@ function buildId(): string {
 }
 
 // https://vite.dev/config/
-export default defineConfig({
-  // RELATIVE, not "/hexmatch/": RUN.world serves each build from its own
-  // version folder (…/1.18.0/index.html), so a root-absolute base sends every
-  // asset request to the domain root and 404s the whole bundle. "./" resolves
-  // beside index.html wherever it is served — the version folder, a Pages
-  // subpath, or the root.
-  base: "./",
+export default defineConfig(({ command }) => ({
+  // BUILD and SERVE need different bases, so the answer depends on the command:
+  //
+  //  - `vite build` (the RUN.world deploy) is served from its own version
+  //    folder (…/1.18.0/index.html), so it needs the RELATIVE "./" base — a
+  //    root-absolute "/hexmatch/" asked for /hexmatch/assets/* at the domain
+  //    root and 404'd every script and stylesheet, the game not loading at
+  //    all (the "Fix the live build" commit that introduced "./").
+  //
+  //  - `vite dev` / `vite preview` (both e2e suites, the sandbox live
+  //    preview, local multiplayer testing) serve the app under the
+  //    /hexmatch/ base that every spec, the local-testing docs and
+  //    playwright.config.ts's comment ("the app is served under base
+  //    /hexmatch/") are written against. A flat "./" made preview serve the
+  //    build at the server root, so /hexmatch/ became an SPA-fallback zone:
+  //    the HTML loaded but every /hexmatch/assets/*.js bundle 404'd and the
+  //    game never booted — the whole e2e suite red since that commit.
+  //
+  // The game itself is base-agnostic: runtime asset URLs are built off
+  // `import.meta.env.BASE_URL` (game.ts) and the build's references are
+  // relative, so a relative build served under /hexmatch/ resolves correctly.
+  base: command === "build" ? "./" : "/hexmatch/",
   define: { __BUILD_ID__: JSON.stringify(buildId()) },
   // `server` covers `vite dev`; `preview` covers `vite preview` of a built app
   // (the e2e webServer and Arena's sandbox live preview both use it). Vite 7
@@ -194,4 +209,4 @@ export default defineConfig({
       "@": path.resolve(__dirname, "src"),
     },
   },
-});
+}));
