@@ -2993,12 +2993,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     ui.openSessionBoard();
     // L10 (#225): the intro names the obstacles in the game's own words — the
     // player is told why the board is tougher before they spend a move on it.
+    // L8 (#222): the session framing text when the board opens — the spec's
+    // verbatim line, so a new player can infer connect→tune→earn without
+    // instruction, and every resource gain traces to a visible cause.
     const intro = obstacleIntroLine(skill().label, obstacles);
+    const cargoName = tuningCargoLabel(cargo);
+    // Keep "Tuning session" for the existing intro test, and lead with the
+    // L8 legibility line the spec asks be verbatim.
     toast(
-      (intro ? `${intro} ` : "")
-      + `Tuning session — ${tuningCargoLabel(cargo)}: ${TUNING.moves} moves on the plant floor set this Depot's yield`
-      + (isRematch ? " again." : ".")
-      // The closing promise comes from the row, not from the mood of the copy.
+      `Tuning session — Match to set your ${cargoName} Depot's output — ${TUNING.moves} moves on the plant floor.`
+      + (intro ? ` ${intro}` : "")
+      + (isRematch ? " Re-tuning this Depot." : "")
       + (rules.yieldNeverDrops ? " It can only go up from here." : " A bad round can cost you."),
       "info",
     );
@@ -3019,8 +3024,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     tuning = createTownSession();
     sfx.play("open");
     ui.openSessionBoard();
+    // L8 (#222): town session framing mirrors the depot's — match sets the rate
     toast(
-      `City upgrade — ${TUNING.moves} moves on the plant floor set the base rate for every Depot you have connected.`,
+      `Match to set your city's base rate — ${TUNING.moves} moves. Every connected Depot ticks faster from here.`,
       "info",
     );
   }
@@ -6414,6 +6420,47 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             info += `<br>` + (d.tiles === null || band === null
               ? `distance: <i>no route</i>`
               : `distance: ${d.tiles} tiles · ×${d.factor} (${band})`);
+            // L8 (#222): the yield the session set, the tick it pays, and the
+            // transport tier — every number the clock multiplies, so the depot's
+            // income reads as a visible cause before the purse banks it.
+            const y = depotYield(h);
+            const tTier = depotTransportTier(eco, componentsFor(h.ownerId), h);
+            const tLabel = tTier === 0 ? "dirt" : "paved";
+            const tFactor = transportFactor(h);
+            info += `<br>yield: ×${y.toFixed(2).replace(/0$/, "")} · transport: ${tLabel} ×${tFactor}`;
+            // Tick rate: only when the depot is serviced (connected + unblocked)
+            // — otherwise the line would promise income a disconnected depot
+            // does not pay, which is the ledger lie #220 closed.
+            const locksForRate = industryLocks(eco);
+            const compForRate = componentsFor(h.ownerId);
+            const serviced = isServiced(eco.track, h, eco.rail);
+            if (serviced) {
+              const cargo = tuningCargoFor(h);
+              // Recompute the per-tick cargo the same way economyTick does:
+              // raw output × yield × distance × transport × city bonus, carried
+              // through BASE_RATE. The cargo's own output (harvesterYield) is
+              // the base the factor scales, so a high-output industry at
+              // distance reads correctly, and the city bonus visibly lifts it.
+              const raw = cargo ? (harvesterYield(eco, compForRate, locksForRate, h, now).yields[cargo] ?? 0) : 0;
+              const base = raw || 1;
+              const seatForBonus = players.find((pp) => pp.id === h.owner);
+              const bonus = Math.max(0, seatForBonus?.townBonus ?? 0);
+              const factor = y * d.factor * tFactor * (1 + bonus);
+              const perTick = BASE_RATE * factor * base;
+              const perSec = perTick * (1000 / HARVEST_MS);
+              const cargoIcon = cargo ? `${CARGO[cargo].icon} ${CARGO[cargo].name}` : "cargo";
+              const protestNow = protestedDepot(h, now, compForRate);
+              info += `<br>rate: ${perTick.toFixed(2).replace(/\.0$/, "")}/tick · ${perSec.toFixed(1).replace(/\.0$/, "")}/s ${cargoIcon}`;
+              if (protestNow) info += ` · <i>protest — stopped</i>`;
+            } else {
+              info += `<br>rate: <i>no route — not ticking</i>`;
+            }
+            // L8 (#222): decay line on Hard, so a cooling depot is legible
+            // before the number has dropped — the rule the difficulty chose.
+            const dRate = difficultyRules().decayRate;
+            if (dRate > 0) {
+              info += `<br>decay: ${(dRate * 100).toFixed(1)}%/tick above ×${difficultyRules().minYield.toFixed(2).replace(/0$/, "")}`;
+            }
           }
         }
       } else if (ref && ref.kind === "factory") {
@@ -6476,6 +6523,82 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       ui.setReach(quarry.reach);
     }
 
+    // L8 (#222): the objective line — one line that always says the current goal
+    // on the new loop, and the live per-second income per cargo for the
+    // chip bar, so a build or a better tune visibly lifts a number before
+    // the purse has banked it. Both are pure views of the game state the
+    // tick already owns, never a second source of truth.
+    let objective: string | null = null;
+    let objectiveKey: string | null = null;
+    let incomeRates: Partial<Record<Cargo, number>> | undefined = undefined;
+    if (newLoop) {
+      // --- objective ---
+      if (phase === "setup-factory") {
+        objective = "Place your Factory beside a town — it anchors your whole network.";
+        objectiveKey = "setup-factory";
+      } else if (phase === "setup-harvester") {
+        objective = "Place your first Depot inside an industry's catchment — roads come next.";
+        objectiveKey = "setup-harvester";
+      } else if (tuning) {
+        if (tuning.kind === "town") {
+          objective = `Match to set your city's base rate — ${tuningMovesLeft(tuning)}/${tuning.moves} moves left.`;
+          objectiveKey = `tuning-town-${tuning.depotId}`;
+        } else {
+          const cl = tuning.cargo ? `${CARGO[tuning.cargo].name} ` : "";
+          objective = `Match to set your ${cl}Depot's output — ${tuningMovesLeft(tuning)}/${tuning.moves} moves to raise its yield.`;
+          objectiveKey = `tuning-depot-${tuning.depotId}`;
+        }
+      } else {
+        const myDepots = eco.harvesters.filter((hh) => hh.owner === me.id);
+        const connected = myDepots.filter((hh) => isServiced(eco.track, hh, eco.rail)).length;
+        const offer = retuneOffer();
+        if (myDepots.length === 0) {
+          objective = "Build a Depot to open a tuning session — match sets its yield.";
+          objectiveKey = "need-depot";
+        } else if (connected === 0) {
+          objective = "Connect a Depot to your Factory with a road — then it ticks every 3s.";
+          objectiveKey = "need-road";
+        } else if (offer) {
+          const cn = offer.cargo ? `${CARGO[offer.cargo].name} ` : "";
+          objective = `Your weakest ${cn}Depot invites a re-tune — open it from the plant panel.`;
+          objectiveKey = `retune-${offer.depotId}`;
+        } else if (me.townLevel < TOWN_UPGRADES.length) {
+          objective = "Earn, pave and tune — upgrade your city or add a Depot to grow faster.";
+          objectiveKey = "grow";
+        } else {
+          objective = `Reach ${winTarget()}★ to win — tune, connect and upgrade for more.`;
+          objectiveKey = "win";
+        }
+      }
+      // --- income rates ---
+      // The same clock the tick pays, summed per cargo per second, so the
+      // chip bar reads as a live rate. Aggregated per cargo because that is
+      // what the purse shows; the total per depot is what the inspector names.
+      const rates: Partial<Record<Cargo, number>> = {};
+      if (phase === "play") {
+        const compMe = buildAllComponents(eco.track, ownerIdOf(eco, me.id));
+        const locksMe = industryLocks(eco);
+        for (const depot of eco.harvesters) {
+          if (depot.owner !== me.id) continue;
+          const res = harvesterYield(eco, compMe, locksMe, depot, now);
+          if (!res.serviced) continue;
+          if (protestedDepot(depot, now, compMe)) continue;
+          const cargos = Object.entries(res.yields) as [Cargo, number][];
+          if (!cargos.length) continue;
+          const d = distanceInfoFor(depot.id);
+          const factor = BASE_RATE * depotYield(depot) * d.factor * transportFactor(depot) * (1 + Math.max(0, me.townBonus));
+          for (const [cargo, amount] of cargos) {
+            const perTick = amount * factor;
+            const perSec = perTick * (1000 / HARVEST_MS);
+            rates[cargo] = (rates[cargo] ?? 0) + perSec;
+          }
+        }
+      }
+      // Only publish when at least one cargo ticks; otherwise the bar stays
+      // quiet rather than showing 0.0/s on every chip before the first road.
+      if (Object.keys(rates).length) incomeRates = rates;
+    }
+
     ui.paint({
       players: players.map((p) => ({
         id: p.id, name: p.name, colour: p.colour, vp: vpFor(score, p.id), human: p.human,
@@ -6502,6 +6625,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       costInfo,
       inspect: info || null,
       inspectTone: infoTone,
+      // L8 (#222): the loop made legible
+      objective,
+      objectiveKey,
+      incomeRates,
       reach: quarry.reach,
       // PP-14b: the 30s reset cooldown, so the button can count it down.
       // #116: per seat — a guest counts down ITS OWN clock (its cooldown
