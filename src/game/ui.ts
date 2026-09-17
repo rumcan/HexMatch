@@ -570,13 +570,7 @@ export function createOriginalUi(
 ): OriginalUi {
   const root = h("div", "ui-root");
   root.dataset.view = "map";
-  // L1a (#232): the new-loop MVP flag. ON retires what the new economy does
-  // not want — the railway's buttons (`opts.rail`) and L1a's own trade
-  // surfaces. L11 (#226) kept the Bank, L15 (#230) removes it — the new loop
-  // has no trading surfaces at all.
-  // The flag is the game's call (L1f #237: ON for every solo sandbox boot,
-  // `?loop=old` for the retired one; never a room or a contract).
-  const newLoop = opts.newLoop === true;
+  // L15 (#230): the new loop is the only loop — no trading surfaces.
   root.style.setProperty("--gem-move-ms", `${BOARD_ANIMATION_MS.swap}ms`);
   root.style.setProperty("--gem-clear-ms", `${BOARD_ANIMATION_MS.clear}ms`);
   // #162: falls ease under their own wait (swap/clear kept theirs), so the
