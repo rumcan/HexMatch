@@ -42,7 +42,7 @@ import { buildSnapshot, applySnapshot, SNAPSHOT_VERSION, type SnapshotSource } f
 import {
   SAVE_KEY, SAVEGAME_VERSION, readSave, type SaveGamePayload,
 } from "../../src/iso/savegame-runtime";
-import type { EconomyState, Harvester } from "../../src/iso/economy";
+import { depotCargo, type EconomyState, type Harvester } from "../../src/iso/economy";
 
 // ── stub the art imports (vite handles these in the browser) ──────────────
 vi.mock("../../assets/iso-atlas/atlas@0.5x.png", () => ({ default: "a05.png" }));
@@ -191,9 +191,6 @@ function ticks(h: DifficultyHook, from: number, n: number): number {
   for (let i = 1; i <= n; i++) h.econTick(from + i * 3_000);
   return from + n * 3_000;
 }
-
-const purseTotal = (p: Record<string, number>): number =>
-  (["wood", "stone", "grain", "ore", "oil", "gold"] as const).reduce((n, c) => n + (p[c] ?? 0), 0);
 
 const rules = (key: DifficultyKey): DifficultyRules => DIFFICULTY_RULES[key];
 const levelOf = (h: DifficultyHook, id: number): number | null =>
@@ -442,10 +439,23 @@ describe("L6 one live game, three rows", () => {
     // Income at the fresh level, then the same Depot after the clock has been
     // shaving it. Same loop, same factors, same purse — the only thing that
     // moved is the yield the row says is not permanent.
+    // L16 (#231): the storage cap drops income above it, so a window that
+    // lets the store fill measures the cap, not the yield (this Depot fills
+    // its 24-grain store inside 18 ticks and a second 20-tick window would
+    // earn nothing at all). The store is spent down before every tick — the
+    // spending a real player does across a match, tick-sized — and the window
+    // sums what each tick pays into the freed headroom, so what it measures
+    // is exactly the per-tick pay the yield sets.
     const paid = (n: number, from: number): [number, number] => {
-      const before = purseTotal(h.purse);
-      const end = ticks(h, from, n);
-      return [purseTotal(h.purse) - before, end];
+      const cargo = depotCargo(h.eco, recOf(h, id)) ?? "grain";
+      let sum = 0;
+      let now = from;
+      for (let i = 0; i < n; i++) {
+        h.purse[cargo] = 0;
+        h.econTick(now += 3_000);
+        sum += h.purse[cargo] ?? 0;
+      }
+      return [sum, now];
     };
     const t0 = performance.now();
     const [fresh, t1] = paid(20, t0);

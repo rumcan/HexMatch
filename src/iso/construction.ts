@@ -46,7 +46,7 @@
 // not picked a site yet) it prices PP-07's single mix exactly as before.
 // ══════════════════════════════════════════════════════════════════════════
 import {
-  BUILD_COSTS, CARGO, CARGOES, DEPOT_TREE, DEPOT_TIER_MAX, TOWN_UPGRADES,
+  BUILD_COSTS, CARGO, CARGOES, DEPOT_TREE, DEPOT_TIER_MAX, STORAGE_CAP_BASE, TOWN_UPGRADES,
   type Cargo, type DepotTypeDef, type TownUpgradeDef,
 } from "./config";
 import { type Purse } from "./track";
@@ -213,6 +213,25 @@ export function priceTownUpgrade(purse: Purse, level: number): TownUpgradePrice 
   const cost: Purse = { ...def.cost };
   const missing: Cargo[] = CARGOES.filter((c) => (cost[c] ?? 0) > (purse[c] ?? 0));
   return { def, cost, affordable: missing.length === 0, missing, level, maxed: false };
+}
+
+/**
+ * L16 (#231): the per-resource storage cap a seat plays under —
+ * `STORAGE_CAP_BASE` plus the `storage` of every city level it has bought.
+ *
+ * The same table walk `priceTownUpgrade` runs, on the same rows, so the cost,
+ * the base-rate bonus and the cap a level buys can never disagree. Pure and
+ * level-driven: the cap is DERIVED from `townLevel` (the wire and save field
+ * `TOWN_UPGRADES` already rides), never stored separately, so a snapshot, a
+ * save and a live seat all read the same number with no new field to carry.
+ * `level` above the table's top clamps to "every row bought".
+ */
+export function storageCapFor(level: number): number {
+  let cap = STORAGE_CAP_BASE;
+  const rows = TOWN_UPGRADES;
+  const top = Math.min(Math.max(0, Math.floor(level)), rows.length);
+  for (let i = 0; i < top; i++) cap += rows[i].storage;
+  return cap;
 }
 
 /** Cargoes in the fixed display order, dropping zero/negative entries. */
