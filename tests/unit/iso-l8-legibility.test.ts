@@ -29,6 +29,10 @@ import {
   depotReadout, fmtMult, fmtRate, incomeRates, objectiveLine, perSecond, tickFactor, tickRate,
   RATE_EPSILON, type ObjectiveView, type RateRow,
 } from "../../src/iso/readouts";
+import {
+  FOREMAN_NAME, GUIDE_NAME, QUESTS, QUEST_REWARDS, questDone, questOffers, questReward,
+  questText, selectQuests, speakerFor, speakerName, type QuestView,
+} from "../../src/iso/quests";
 import type { EconomyState } from "../../src/iso/economy";
 
 // ── stub the art imports (vite handles these in the browser) ──────────────
@@ -88,6 +92,18 @@ interface LegibilityHook {
   tuningFinish: (abandon?: boolean) => void;
   setRivalSkill: (key: "easy" | "normal" | "hard") => void;
   centerOn: (tx: number, ty: number) => void;
+  victoryOf: (who: string) => unknown;
+  treeState: () => unknown;
+  readonly vpTarget: number;
+  readonly quests: {
+    hidden: boolean;
+    offers: { id: string; strategy: string; speaker: string; text: string; progress: string;
+      need: number; have: number; done: boolean; reward: string }[];
+    paid: string[];
+    spent: string[];
+  };
+  questPay: (id?: string) => { id: string; reward: string } | null;
+  questAction: (id: string, action: "dismiss" | "hide" | "show") => void;
   tileScreenAt: (tx: number, ty: number) => [number, number];
   pickAt: (sx: number, sy: number) => { tx: number; ty: number } | null;
 }
@@ -126,7 +142,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-async function boot(opts: { newLoop?: boolean } = {}) {
+async function boot(opts: { newLoop?: boolean; story?: boolean | string } = {}) {
   const { startIsoGame } = await import("../../src/iso/game");
   dispose = startIsoGame(root, opts);
   await settle();
@@ -146,6 +162,10 @@ const chipRate = (cargo: Cargo): string | null => {
   if (!el || el.classList.contains("hidden")) return null;
   return el.textContent ?? "";
 };
+
+/** Every toast currently on screen, space-joined (the feed's own text). */
+const toastText = (): string =>
+  [...root.querySelectorAll(".toast")].map((t) => t.textContent ?? "").join(" | ");
 
 const dpr = () => Math.min(2, window.devicePixelRatio || 1);
 const overlayCanvas = () => root.querySelectorAll("canvas.iso-layer")[2] as HTMLCanvasElement;
@@ -201,6 +221,241 @@ const purseTotal = (p: Record<string, number>): number =>
 // ══════════════════════════════════════════════════════════════════════════
 // 1. THE OBJECTIVE LINE — one line, always the current goal
 // ══════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════
+// 5. THE QUESTS — optional by construction, and voiced
+//
+// The ticket's addition, and every acceptance it carries: 2–3 at once, one
+// per strategy, generated from this map (different games offer different
+// plans), small rewards defined by the table, dismissible, compact — and the
+// line that matters most, "ignoring every quest must still allow winning":
+// nothing in the win rule, the depot tree or a price reads the panel.
+// ══════════════════════════════════════════════════════════════════════════
+describe("L8 the quest table, as a rule", () => {
+  const view = (over: Partial<QuestView> = {}): QuestView => ({
+    unclaimed: { ore: 2, wood: 1, stone: 1, oil: 1, grain: 1, gold: 1 },
+    rivalCargoes: ["wood"],
+    depotCount: 2,
+    connected: 1,
+    tunedDepots: 1,
+    bestYield: 2,
+    cargoesRunning: ["ore"],
+    townLevel: 0,
+    townLevels: 5,
+    ...over,
+  });
+
+  it("offers 2–3 at once, never two of the same strategy", () => {
+    const pool = questOffers(view());
+    expect(pool.length).toBeGreaterThanOrEqual(5);
+    const picked = selectQuests(pool, mulberry32(7));
+    expect(picked.length).toBeGreaterThanOrEqual(2);
+    expect(picked.length).toBeLessThanOrEqual(3);
+    expect(new Set(picked.map((q) => q.strategy)).size).toBe(picked.length);
+    // A second ask for the same panel can only add FRESH strategies.
+    const more = selectQuests(pool, mulberry32(9), {
+      max: 3 - picked.length,
+      exclude: picked.map((q) => q.id),
+      avoid: picked.map((q) => q.strategy),
+    });
+    for (const q of more) expect(picked.some((p) => p.strategy === q.strategy)).toBe(false);
+  });
+
+  it("is generated from the map: a different map offers different plans", () => {
+    const thin = selectQuests(questOffers(view({ unclaimed: { ore: 1 } })), mulberry32(3));
+    const rich = selectQuests(questOffers(view({ unclaimed: { ore: 2, oil: 1, wood: 3 } })), mulberry32(3));
+    expect(thin.map((q) => q.id).join("|")).not.toBe(rich.map((q) => q.id).join("|"));
+    // A claim quest always names a cargo that is actually unclaimed.
+    for (const q of [...thin, ...rich]) {
+      if (q.kind === "claim-cargo") expect(["ore", "oil", "wood"]).toContain(q.cargo);
+    }
+    // The contested cargo leads (the rival is already on wood).
+    expect(questOffers(view()).find((q) => q.kind === "claim-cargo")?.cargo).toBe("wood");
+    // The depth plan's bar rises once the seat has shown it can clear ×2.
+    expect(questOffers(view({ bestYield: 2 })).find((q) => q.kind === "tune-depot")?.threshold).toBe(2.5);
+    expect(questOffers(view({ bestYield: 1 })).find((q) => q.kind === "tune-depot")?.threshold).toBe(2);
+  });
+
+  it("asks nothing already done, and honours exclude/avoid", () => {
+    const pool = questOffers(view());
+    const first = selectQuests(pool, mulberry32(1));
+    expect(first.length).toBeGreaterThan(0);
+    const again = selectQuests(pool, mulberry32(1), { exclude: [first[0].id] });
+    expect(again.some((q) => q.id === first[0].id)).toBe(false);
+    // The network plan is never a done deal the moment it is offered…
+    const link = questOffers(view({ connected: 3 })).find((q) => q.kind === "connect-depots")!;
+    expect(questDone(link, view({ connected: 3 }))).toBe(false);
+    expect(questDone(link, view({ connected: 4 }))).toBe(true);
+    // …and the claim plan completes on the cargo it names.
+    const claim = questOffers(view()).find((q) => q.kind === "claim-cargo")!;
+    expect(questDone(claim, view({ cargoesRunning: ["wood"] }))).toBe(true);
+    expect(questDone(claim, view({ cargoesRunning: ["ore"] }))).toBe(false);
+  });
+
+  it("rewards are small, defined by QUEST_REWARDS, and never ★", () => {
+    for (const recipe of QUESTS) {
+      for (const def of recipe.offers(view())) {
+        const reward = questReward(def);
+        expect(QUEST_REWARDS[def.reward]).toBe(reward);
+        const units = Object.values(reward.purse).reduce((a, b) => a + (b ?? 0), 0);
+        // A quest can never pay enough to skip a rung on its own: the
+        // cheapest Depot rung costs 6+ units. Small, as #228 defines it.
+        expect(units).toBeLessThanOrEqual(2);
+        // #228 owns the scoreboard; a quest must not move the win line.
+        expect(Object.keys(reward.purse)).not.toContain("vp");
+        expect(reward.label).toMatch(/\d+ /);
+      }
+    }
+  });
+
+  it("speaks in the match's voice: the rival pushes, the guide teaches, the sandbox has a foreman", () => {
+    expect(speakerFor("claim", false)).toBe("foreman");
+    expect(speakerFor("city", false)).toBe("foreman");
+    expect(speakerFor("claim", true)).toBe("rival");
+    expect(speakerFor("link", true)).toBe("rival");
+    expect(speakerFor("city", true)).toBe("guide");
+    expect(speakerName("foreman")).toBe(FOREMAN_NAME);
+    expect(speakerName("guide")).toBe(GUIDE_NAME);
+    expect(speakerName("rival", "Torvin")).toBe("Torvin");
+    // Per-speaker text is real, and the two voices differ.
+    for (const q of questOffers(view())) {
+      expect(questText(q, "rival")).not.toBe(questText(q, "foreman"));
+      expect(questText(q, "foreman").length).toBeGreaterThan(20);
+    }
+  });
+});
+
+describe("L8 the quest panel on a live game", () => {
+  it("offers 2–3 plans, one per strategy, each dismissible, and hides on request", async () => {
+    const h = await boot({ newLoop: true });
+    h.finishSetup();
+    await settle();
+    const el = root.querySelector("#iso-quests") as HTMLElement;
+    expect(el, "the quest panel is mounted").toBeTruthy();
+    expect(el.classList.contains("hidden")).toBe(false);
+    expect(h.quests.offers.length).toBeGreaterThanOrEqual(2);
+    expect(h.quests.offers.length).toBeLessThanOrEqual(3);
+    expect(new Set(h.quests.offers.map((q) => q.strategy)).size).toBe(h.quests.offers.length);
+
+    // Collapsed it is ONE slim line — the #187 rule — and the list is shut.
+    expect((el.querySelector(".quests-list") as HTMLElement).classList.contains("hidden")).toBe(true);
+    expect(el.textContent).toContain("Quests");
+    // …but the offers are already built (so expanding is instant), in the
+    // sandbox's own voice, with progress and reward on every row.
+    expect(h.quests.offers.every((q) => q.speaker === "foreman")).toBe(true);
+    expect(h.quests.offers[0].text).toMatch(/Depot|Depots|city|road/i);
+    expect(h.quests.offers[0].progress).toMatch(/\d+\/\d+|×/);
+    expect(h.quests.offers[0].reward).toMatch(/\d+ /);
+    const rows = el.querySelectorAll("li.quest");
+    expect(rows.length).toBe(h.quests.offers.length);
+    expect(el.textContent).toContain(FOREMAN_NAME);
+
+    // Every row carries its own ✕ — dismissing one retires it for good.
+    const first = h.quests.offers[0];
+    const row = [...rows].find((r) => (r as HTMLElement).dataset.quest === first.id) as HTMLElement;
+    expect(row).toBeTruthy();
+    const before = h.quests.offers.length;
+    (row.querySelector(".q-x") as HTMLButtonElement).click();
+    await settle();
+    expect(h.quests.offers.some((q) => q.id === first.id)).toBe(false);
+    expect(h.quests.spent).toContain(first.id);
+    // A dismissal is the player's answer: no refill behind their back.
+    expect(h.quests.offers.length).toBe(before - 1);
+
+    // …but the map moving on earns a fresh plan (a new Depot on the ground).
+    const site = depotSite(h.grid)!;
+    expect(h.placeDepot(site.hx, site.hy - 1)).toBe(true);
+    await settle();
+    expect(h.quests.offers.length).toBe(before);
+
+    // The head opens the list…
+    const head = el.querySelector(".quests-head") as HTMLButtonElement;
+    head.click();
+    await settle();
+    expect((el.querySelector(".quests-list") as HTMLElement).classList.contains("hidden")).toBe(false);
+    expect(h.quests.hidden).toBe(false);
+    // …the list's own Hide is the player's choice, remembered, reversible.
+    (el.querySelector(".q-hide") as HTMLButtonElement).click();
+    await settle();
+    expect(h.quests.hidden).toBe(true);
+    expect(el.classList.contains("shut")).toBe(true);
+    expect(el.classList.contains("hidden")).toBe(false);        // a flag, not gone
+    head.click();
+    await settle();
+    expect(h.quests.hidden).toBe(false);
+    expect(el.classList.contains("shut")).toBe(false);
+  });
+
+  it("pays a completed quest once, in cargo — and says so", async () => {
+    const h = await boot({ newLoop: true });
+    h.finishSetup();
+    await settle();
+    // The payout path is the frame's own (`payQuest`); the twin drives it for
+    // a probe that cannot wait for the road this map would need.
+    const offer = h.quests.offers[0];
+    const before = purseTotal(h.purse);
+    const paid = h.questPay(offer.id);
+    expect(paid?.id).toBe(offer.id);
+    expect(purseTotal(h.purse)).toBeGreaterThan(before);
+    expect(h.quests.paid).toContain(offer.id);
+    expect(h.quests.offers.some((q) => q.id === offer.id)).toBe(false);
+    // Once: the id is the proof, and a second ask is null.
+    expect(h.questPay(offer.id)).toBe(null);
+    expect(h.quests.spent).toContain(offer.id);
+    await settle();
+    expect(toastText()).toMatch(/Quest complete/);
+  });
+
+  it("never touches what the win rule, the depot tree or a price reads", async () => {
+    const h = await boot({ newLoop: true });
+    h.finishSetup();
+    await settle();
+    const victory = JSON.stringify(h.victoryOf("you"));
+    const tree = JSON.stringify(h.treeState());
+    const target = h.vpTarget;
+    expect(h.quests.offers.length).toBeGreaterThan(0);
+
+    // Ignore them all: dismiss every offer, hide the panel, let the game run.
+    for (const q of h.quests.offers) h.questAction(q.id, "dismiss");
+    h.questAction("", "hide");
+    await settle();
+    expect(h.quests.hidden).toBe(true);
+    expect(h.quests.offers.length).toBe(0);
+    expect(h.quests.paid.length).toBe(0);
+
+    // The ★ ledger, the depot tree and the race line are all unmoved: no quest
+    // is a gate, and none of them paid a star.
+    expect(JSON.stringify(h.victoryOf("you"))).toBe(victory);
+    expect(JSON.stringify(h.treeState())).toBe(tree);
+    expect(h.vpTarget).toBe(target);
+    // The loop still tells the player what to do — the panel is not the goal.
+    expect(h.objective.text).toBeTruthy();
+  });
+
+  it("stays off the shipped loop — and off a story contract, which plays it", async () => {
+    // STORY-01: a contract casts its rival and plays the SHIPPED loop (L1a
+    // pins `newLoop` false there), so its quest panel is a panel that never
+    // mounts. The cast voices are real, and unit-tested at rule level above —
+    // the moment a contract runs the new loop, `speakerFor(def, true)` is
+    // what will voice it (the rival pushes, the guide teaches).
+    const { chapterById } = await import("../../src/story/chapters");
+    const chapter = chapterById("inheritance")!;
+    const story = await boot({ newLoop: true, story: chapter.id });
+    story.finishSetup();
+    await settle();
+    expect(story.newLoop).toBe(false);
+    expect(story.quests.offers.length).toBe(0);
+    expect((root.querySelector("#iso-quests") as HTMLElement).classList.contains("hidden")).toBe(true);
+    dispose?.();
+    dispose = undefined;
+
+    const old = await boot({ newLoop: false });
+    old.finishSetup();
+    await settle();
+    expect(old.quests.offers.length).toBe(0);
+    expect((root.querySelector("#iso-quests") as HTMLElement).classList.contains("hidden")).toBe(true);
+  });
+});
+
 describe("L8 the objective line, as a rule", () => {
   const base: ObjectiveView = {
     phase: "play",

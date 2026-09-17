@@ -132,6 +132,16 @@ import {
 import {
   depotReadout, incomeRates as loopIncomeRates, objectiveLine, type RateRow,
 } from "./readouts";
+// L8 (#222): the OPTIONAL quests — suggestions voiced by the match's cast,
+// generated from this map and this seat, never a requirement. The rules are
+// pure (`quests.ts`); this file owns which ones are on offer, what pays them,
+// and the player's own "hide" / "dismiss" choices.
+import {
+  questDone, questHave, questOffers as questOffersFor, questProgressText, questReward,
+  questText, selectQuests, speakerFor, speakerName, typesRunning,
+  QUEST_OFFER_MAX, type QuestDef, type QuestSpeaker, type QuestView,
+} from "./quests";
+import { mulberry32 } from "../game/config";
 // L4 (#218): the tuning session — the one thing that sets a depot's yield.
 // The rules live in `tuning.ts` (pure, unit-tested); this file is where they
 // meet the board, the depot record and the HUD.
@@ -1244,6 +1254,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // re-match key goes through the rules too rather than a chrome-side guess.
     onTuningEnd: (abandon) => closeTuningSession(abandon),
     onTuningRetune: () => retuneNow(),
+    // L8 (#222): the quest panel's own choices — a dismissed offer and a
+    // hidden panel are the player's, and both ride the save.
+    onQuestAction: (id, action) => questAction(id, action),
     // L5 (#219): …and the city upgrade's key. Same rule: it calls the game.
     onTownUpgrade: () => { buyTownUpgrade(); },
     // AI-01: the top-bar difficulty selector. Applies on the NEXT rival tick —
@@ -2050,6 +2063,169 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       p.purse[k] = Math.max(held, Math.min(cap, held + v));
     }
   };
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // L8 (#222) — the optional quests, wired.
+  //
+  // The rules live in `quests.ts` (pure, unit-tested); this is the half that
+  // knows about the live map, the purses and the player's own choices. The
+  // contract with the rest of the game is deliberately thin: a quest reads the
+  // world to see whether it is done, and writes exactly one thing when it is —
+  // `earn(me, reward)`. No tier, no rung, no upgrade, no ★ and no win check
+  // ever asks whether a quest exists.
+  // ══════════════════════════════════════════════════════════════════════════
+  /** Which voice speaks for a strategy in THIS match. */
+  const questSpeakerFor = (def: QuestDef): QuestSpeaker => speakerFor(def.strategy, storyOn);
+  const questSpeakerName = (speaker: QuestSpeaker): string =>
+    speakerName(speaker, storyOn ? CAST[rivalCast].name : null);
+
+  /**
+   * The map and the seat, as the quest table asks for them: what is still
+   * unclaimed (and by which cargo), what the rival already runs, what this
+   * seat's Depots do. Derived every frame, never stored — a quest's progress
+   * is a question about the world, not a counter.
+   */
+  function questViewNow(): QuestView {
+    const locks = industryLocks(eco);
+    const unclaimed: Partial<Record<Cargo, number>> = {};
+    for (const ind of grid.industries) {
+      if (locks.has(ind.id)) continue;
+      const def = INDUSTRY_BY_KEY[ind.type];
+      if (!def) continue;
+      unclaimed[def.cargo] = (unclaimed[def.cargo] ?? 0) + 1;
+    }
+    const cargosOf = (owner: string, onlyServiced: boolean): Cargo[] => {
+      const out: Cargo[] = [];
+      for (const h of eco.harvesters) {
+        if (h.owner !== owner) continue;
+        if (onlyServiced && !isServiced(eco.track, h, eco.rail)) continue;
+        const cargo = depotCargo(eco, h);
+        if (cargo) out.push(cargo);
+      }
+      return out;
+    };
+    const mine = eco.harvesters.filter((h) => h.owner === me.id);
+    const connected = mine.filter((h) => isServiced(eco.track, h, eco.rail)).length;
+    const yields = mine.map((h) => h.yield ?? 0);
+    return {
+      unclaimed,
+      rivalCargoes: cargosOf(rival.id, true),
+      depotCount: mine.length,
+      connected,
+      tunedDepots: mine.filter((h) => h.yield !== undefined).length,
+      bestYield: yields.length ? Math.max(...yields) : 0,
+      cargoesRunning: cargosOf(me.id, true),
+      townLevel: me.townLevel,
+      townLevels: TOWN_UPGRADES.length,
+    };
+  }
+
+  /** What the panel and the reward both read — one derivation per frame. */
+  const questView = (): QuestView => questViewCache ?? (questViewCache = questViewNow());
+
+  /**
+   * Pay a completed quest: the reward into the local purse, the toast in the
+   * speaker's name, the id into `paid`/`spent` so it can never be collected
+   * twice (the save carries both sets). One implementation, used by the frame
+   * and by the debug twin — the rule can never fork.
+   */
+  function payQuest(def: QuestDef): boolean {
+    if (questPaid.has(def.id)) return false;
+    questPaid.add(def.id);
+    questSpent.add(def.id);
+    const reward = questReward(def);
+    earn(me, reward.purse);
+    const speaker = questSpeakerFor(def);
+    toast(`Quest complete — ${questSpeakerName(speaker)}: +${reward.label}`, "good");
+    quests = quests.filter((q) => q.id !== def.id);
+    return true;
+  }
+
+  /**
+   * The quest clock: retire what the map has moved past, pay what is done
+   * (once), and keep 2–3 suggestions on the panel. Runs once a frame beside
+   * the economy tick; `phase !== "play"` leaves the panel empty, so the setup
+   * debt, the ending and a guest seat see none of it.
+   */
+  function syncQuests(): void {
+    if (!newLoop || phase !== "play" || isGuest()) {
+      if (quests.length) quests = [];
+      questViewCache = null;
+      return;
+    }
+    const view = questViewNow();
+    questViewCache = view;
+
+    // A restored panel comes back as it was saved (see `questPendingOffers`).
+    if (questPendingOffers) {
+      const pool = questOffersFor(view);
+      const byId = new Map(pool.map((q) => [q.id, q]));
+      quests = [
+        ...quests,
+        ...questPendingOffers
+          .map((id) => byId.get(id))
+          .filter((q): q is QuestDef => q !== undefined),
+      ];
+      questPendingOffers = null;
+    }
+
+    // A reward lands exactly once — the id is the proof, and it rides the
+    // save, so a reload cannot collect it twice.
+    let paid = 0;
+    for (const def of [...quests]) {
+      if (!questDone(def, view) || !payQuest(def)) continue;
+      paid++;
+    }
+
+    // Retire the impossible: a claim quest whose last unclaimed industry went
+    // to the rival (and which this seat does not run) can never be finished, so
+    // it comes off the panel rather than sitting there as a reproach.
+    for (const def of [...quests]) {
+      if (def.kind !== "claim-cargo" || !def.cargo) continue;
+      if (view.cargoesRunning.includes(def.cargo)) continue;
+      if ((view.unclaimed[def.cargo] ?? 0) > 0) continue;
+      questSpent.add(def.id);
+      quests = quests.filter((q) => q.id !== def.id);
+    }
+
+    // ── when to draw again ────────────────────────────────────────────────
+    // The panel fills once, and then only when the SEAT has actually moved:
+    // a new Depot, a new cargo on the clock, a rung, a city tier — or when a
+    // quest was just paid (a completion earns the next suggestion). A
+    // DISMISSAL is the player's answer and refills nothing: the row goes away
+    // and stays away until the situation changes, which is what makes "hide"
+    // and "dismiss" honest rather than a whack-a-mole.
+    const world = `${view.depotCount}:${view.connected}:${typesRunning(view.cargoesRunning)}`
+      + `:${view.townLevel}:${me.depotTier}`;
+    const first = questWorld === null;
+    const moved = !first && world !== questWorld;
+    questWorld = world;
+
+    if (quests.length >= QUEST_OFFER_MAX) return;
+    if (!(first || moved || paid > 0)) return;
+    const next = selectQuests(questOffersFor(view), questRng, {
+      max: QUEST_OFFER_MAX - quests.length,
+      exclude: questSpent,
+      avoid: quests.map((q) => q.strategy),
+    });
+    if (next.length) quests = [...quests, ...next];
+  }
+
+  /** The quest panel's own slice of the save (ids + the player's choices). */
+  const questsSave = () => ({
+    offers: quests.map((q) => q.id),
+    spent: [...questSpent],
+    paid: [...questPaid],
+    hidden: questsHidden,
+  });
+
+  /** The player's ✕ on a single offer, and the panel's Hide / reopen. */
+  function questAction(id: string, action: "dismiss" | "hide" | "show"): void {
+    if (action === "hide") { questsHidden = true; return; }
+    if (action === "show") { questsHidden = false; return; }
+    questSpent.add(id);
+    quests = quests.filter((q) => q.id !== id);
+  }
 
   const factoryOf = (id: string) => eco.factories.find((f) => f.owner === id) ?? null;
 
@@ -4059,6 +4235,46 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   /** Fractional new-loop income retained per depot (either seat) until it
    *  reaches one whole unit. Depot ids are unique, so one map serves both. */
   const loopCarry = new Map<number, number>();
+
+  // ── L8 (#222): the optional quests ──────────────────────────────────────
+  /**
+   * The offers on the panel right now (2–3, one per strategy). Refilled the
+   * frame after one completes or is dismissed.
+   */
+  let quests: QuestDef[] = [];
+  /**
+   * Ids the player is DONE with: paid out, dismissed, or retired because the
+   * map moved past them. One set for all three, because the rule they share
+   * is the same one — never offer this quest again in this game — and it is
+   * what rides the save (with the paid set) so a reload cannot re-earn a
+   * reward.
+   */
+  const questSpent = new Set<string>();
+  /** The rewards actually paid — the "once" half of a small reward. */
+  const questPaid = new Set<string>();
+  /** The player's own choice: the panel shrinks to a flag they can reopen. */
+  let questsHidden = false;
+  /** The seeded picker — never `Math.random`, so a seed offers the same plan. */
+  const questRng = mulberry32((seed ^ 0x5f3759df) >>> 0);
+  /**
+   * The view the last frame derived — the panel's progress strings and the
+   * pay/completion test both read THIS, so the chrome and the reward can never
+   * disagree about what the player has done.
+   */
+  let questViewCache: QuestView | null = null;
+  /**
+   * A restored panel's offer ids, waiting for the next `syncQuests` to resolve
+   * them against the freshly-derived pool. A save keeps the panel it had, and
+   * the defs themselves need not travel: the tables are data and the map is
+   * the same seed.
+   */
+  let questPendingOffers: string[] | null = null;
+  /**
+   * What the seat looked like when the panel last drew — depots, links, cargo
+   * types, city, rung. The panel redraws when this MOVES (and on a payout), so
+   * dismissing a quest cannot be undone by the next frame.
+   */
+  let questWorld: string | null = null;
   /**
    * L3 (#217): each Depot's road distance, cached per NETWORK — the route
    * length in tiles (`depotPathLength`) and the banded factor the clock pays
@@ -6415,6 +6631,25 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       objective,
       objectiveKey,
       incomeRates,
+      // …and the optional quests: what a character suggests, in their voice,
+      // with the progress and the reward the game has already computed. The
+      // panel is empty on the retired loop, on a guest seat and once the match
+      // is won.
+      quests: newLoop && phase !== "won"
+        ? {
+            hidden: questsHidden,
+            items: quests.map((def) => {
+              const speaker = questSpeakerFor(def);
+              return {
+                id: def.id,
+                who: questSpeakerName(speaker),
+                text: questText(def, speaker),
+                progress: questProgressText(def, questView()),
+                reward: questReward(def).label,
+              };
+            }),
+          }
+        : null,
       reach: quarry.reach,
       // PP-14b: the 30s reset cooldown, so the button can count it down.
       // #116: per seat — a guest counts down ITS OWN clock (its cooldown
@@ -7270,6 +7505,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // below — the record they belong to — so they need no field here.
       loop: newLoop,
       loopCarry: loopCarryToWire(loopCarry),
+      // L8 (#222): the quest panel's own small state — the offers on screen,
+      // what has been paid, what the player retired, and whether they put the
+      // panel away. The DEFS are re-derived from the map on the next boot (the
+      // tables are data), so only the ids and the choices travel.
+      quests: newLoop ? questsSave() : undefined,
       eco: { harvesters: eco.harvesters, factories: eco.factories },
       clearedFields: [...clearedFields],
       players: players.map((p) => ({
@@ -7337,6 +7577,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // `loopCarry`, and this reads as the empty map it always was.
     loopCarry.clear();
     for (const [id, rem] of savedLoopCarry(d)) loopCarry.set(id, rem);
+    // L8 (#222): the quest panel's own state, restored the same way — the
+    // player's choices come back and the offers themselves are resolved by the
+    // next `syncQuests`, off the map the save just rebuilt.
+    questPendingOffers = d.quests?.offers ?? null;
+    questSpent.clear();
+    for (const id of d.quests?.spent ?? []) questSpent.add(id);
+    questPaid.clear();
+    for (const id of d.quests?.paid ?? []) questPaid.add(id);
+    questsHidden = d.quests?.hidden === true;
+    quests = [];
+    questWorld = null;   // the next frame draws the restored panel afresh
     for (let i = 0; i < players.length && i < d.players.length; i++) {
       Object.assign(players[i].purse, d.players[i].purse);
       players[i].freeTrack = d.players[i].freeTrack;
@@ -8025,6 +8276,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       lastFrameT = t;
       topUpDevPurse();
       economyTick(t);
+      // L8 (#222): the optional quests — pay what is done, keep 2–3 on the
+      // panel. Runs beside the clock it pays against, and before the paint
+      // that reads the view it derives.
+      syncQuests();
       quarryTick(t);
       aiTick(t);
       // Rivalry idle wire: a Torvin saying / dad joke every so often, mid-game.
@@ -8150,6 +8405,42 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      */
     get objective() { return { key: objectiveKey, text: objective }; },
     get incomeRates() { return incomeRates ?? {}; },
+    /**
+     * L8 (#222): the optional quests as the HUD is being handed them — the
+     * offers (id, strategy, progress, reward), what the player dismissed or
+     * completed, and whether the panel is hidden. A probe reads the panel's
+     * own state here rather than parsing the chrome.
+     */
+    get quests() {
+      const view = questViewCache ?? questViewNow();
+      return {
+        hidden: questsHidden,
+        offers: quests.map((def) => ({
+          id: def.id,
+          strategy: def.strategy,
+          speaker: questSpeakerFor(def),
+          text: questText(def, questSpeakerFor(def)),
+          progress: questProgressText(def, view),
+          need: def.need,
+          have: questHave(def, view),
+          done: questDone(def, view),
+          reward: questReward(def).label,
+        })),
+        paid: [...questPaid],
+        spent: [...questSpent],
+      };
+    },
+    /** L8 (#222): the panel's own two verbs, the same calls its keys make —
+     *  the ✕ retires one offer, Hide/Show puts the panel away and back. */
+    questAction: (id: string, action: "dismiss" | "hide" | "show") => questAction(id, action),
+    /** L8 (#222): complete a quest by hand — the test twin for the panel's
+     *  payout path (the same `earn` + toast the frame runs). */
+    questPay: (id?: string) => {
+      const def = quests.find((q) => (!id || q.id === id) && !questPaid.has(q.id));
+      if (!def) return null;
+      const reward = questReward(def);
+      return payQuest(def) ? { id: def.id, reward: reward.label } : null;
+    },
     /** LOAD-01: true while the loading screen covers the map. */
     get loading() { return loading.active; },
     /**
