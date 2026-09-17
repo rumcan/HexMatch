@@ -2288,6 +2288,83 @@ html, body, #root {
   .objective { max-width: calc(100vw - 24px); white-space: normal; font-size: 11px; padding: 6px 12px; }
 }
 
+/* ── L8 (#222): the optional quests ────────────────────────────────────────
+   Under the objective, in the same lane and the same brass-on-iron family —
+   but deliberately quieter, and never in the way: collapsed it is ONE slim
+   line (the #187 rule), the list only opens when the player opens it, and
+   every row can be dismissed and the panel hidden. It sits below the
+   objective card (104px + a one-line card) so the two never overlap, and
+   under it in z-order so a banner still wins the lane. */
+.quests {
+  position: fixed; top: 148px; left: 50%; transform: translateX(-50%); z-index: 43;
+  width: min(420px, calc(100vw - 24px)); display: flex; flex-direction: column; gap: 4px;
+  pointer-events: auto;
+}
+.quests.hidden { display: none; }
+.quests-head {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 5px 12px; border-radius: var(--r); cursor: pointer; text-align: left;
+  font: 600 11px/1.2 var(--sans); letter-spacing: .3px; color: #f2e6c8;
+  background: linear-gradient(180deg, rgba(26, 18, 10, .9), rgba(12, 8, 4, .92));
+  border: 1px solid var(--brass-lo); border-left: 3px solid var(--brass-lo);
+  box-shadow: inset 0 1px 0 rgba(242, 220, 166, .1), 0 6px 16px rgba(0,0,0,.45);
+}
+.quests-head:hover { border-left-color: var(--brass); color: #fff6dd; }
+.quests-head .q-flag { color: var(--brass); font-size: 12px; }
+.quests-head .q-count {
+  font: 700 10px/1 var(--mono, ui-monospace, monospace);
+  padding: 2px 6px; border-radius: 8px; color: #201507;
+  background: linear-gradient(180deg, var(--brass), #8a6a33);
+}
+.quests-head .q-caret { margin-left: auto; opacity: .8; }
+.quests.shut .quests-head { width: auto; padding: 5px 9px; }
+.quests.shut .q-title, .quests.shut .q-count, .quests.shut .q-caret { display: none; }
+.quests-list {
+  list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px;
+  max-height: min(46vh, 340px); overflow-y: auto; overscroll-behavior: contain;
+}
+.quests-list.hidden { display: none; }
+.quest {
+  padding: 6px 9px 7px; border-radius: var(--r);
+  background: linear-gradient(180deg, rgba(26, 18, 10, .92), rgba(10, 7, 4, .94));
+  border: 1px solid rgba(150, 118, 66, .5);
+  box-shadow: 0 6px 16px rgba(0,0,0,.4);
+}
+.quest .q-who {
+  font: 700 10px/1.3 var(--sans); letter-spacing: .4px; color: var(--brass);
+  text-transform: uppercase;
+}
+.quest .q-text { font: 500 11.5px/1.35 var(--sans); color: #ecdfc2; }
+.quest .q-meta { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.quest .q-prog, .quest .q-reward {
+  font: 600 10px/1 var(--mono, ui-monospace, monospace); font-variant-numeric: tabular-nums;
+}
+.quest .q-prog { color: #c8e6b8; }
+.quest .q-reward { color: #e8cf9a; }
+.quests-foot { display: flex; justify-content: flex-end; }
+.q-hide {
+  padding: 3px 9px; border-radius: 2px; cursor: pointer;
+  font: 600 10px/1.2 var(--sans); letter-spacing: .3px;
+  color: #d9c9a3; background: rgba(12, 8, 4, .8); border: 1px solid var(--brass-lo);
+}
+.q-hide:hover { color: #fff6dd; border-color: var(--brass); }
+.q-x {
+  margin-left: auto; width: 20px; height: 20px; border-radius: 2px; cursor: pointer;
+  font: 600 10px/1 var(--sans); color: #d9c9a3;
+  background: rgba(12, 8, 4, .7); border: 1px solid var(--brass-lo);
+}
+.q-x:hover { color: #fff6dd; border-color: var(--brass); }
+/* On a phone the top lane is precious (the objective wraps to two lines
+   there), so the panel drops to just above the bottom bar instead — the same
+   patch of screen the held-tool chip clears. */
+@media (max-width: 760px) {
+  .quests {
+    top: auto; bottom: calc(max(52px, var(--resbar-h, 52px)) + 8px);
+    left: 8px; right: 8px; width: auto; transform: none;
+  }
+  .quests-list { max-height: 34vh; }
+}
+
 /* ── modals — the framed plaque on the back-room wall ─────────── */
 .modal-root { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; }
 .modal-back {
