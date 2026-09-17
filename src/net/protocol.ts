@@ -97,8 +97,15 @@ export { readMatchSettings };
  * bump there would refuse every existing single-player save — the opposite of
  * this ticket's "old saves still load" line (`savegame-runtime.ts` reads a
  * save's `snapV` against that constant).
+ * v10 (L15 / #230): the redesign is now the only loop. `bank` and `cross`
+ * intents, `boards` (token boards), `crossPrompt` (blessings) and the old
+ * paving/plant VP are gone from the wire. A v9 guest would try to trade,
+ * bless and match tokens on a host that no longer has those systems, so
+ * mixed versions must refuse. SNAPSHOT_VERSION moves to 16 for the same
+ * reason: the seed-derived map and the wire shape changed (no boards,
+ * no cross prompt, no bank).
  */
-export const PROTOCOL_VERSION = 9;
+export const PROTOCOL_VERSION = 11;
 
 /**
  * Realtime WS frame cap in bytes. Mirrors the SDK's `MAX_BROADCAST_BYTES`
@@ -196,10 +203,6 @@ export interface DeltaMsg {
    * means "unchanged" on a delta, and "no railway at all" on a full snapshot.
    */
   rail?: Snapshot["rail"];
-  /** MP-AUDIT: authoritative boards for both seats (compact gem tuples) */
-  boards?: Snapshot["boards"];
-  /** MP-AUDIT: cross-bonus choice prompt */
-  crossPrompt?: Snapshot["crossPrompt"];
   /** MP-AUDIT: winner identity (host publishes, guest mirrors) */
   winner?: Snapshot["winner"];
   /** RES-FIELDS: ids of the demolished wheat fields / tree blocks (whole list). */
@@ -254,9 +257,8 @@ export const MAX_SNAPSHOT_CHUNKS = 128;
 /** guest → server → host only. Guests never mutate locally. */
 export interface IntentMsg {
   type: "intent";
-  // L11 (#226): no "trade" — the offer board's intent went with the board,
-  // and the bank rides its own "bank" action (see the v9 note above).
-  action: "build" | "demolish" | "harvest" | "skill" | "bank" | "blackMarket" | "cross" | "vehicle";
+  // L15 sweep: bank and cross intents removed — only build/demolish/harvest/skill/blackMarket/vehicle remain.
+  action: "build" | "demolish" | "harvest" | "skill" | "blackMarket" | "vehicle";
   payload: unknown;
 }
 

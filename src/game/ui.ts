@@ -28,7 +28,7 @@ import {
 // L11 (#226): the bank — the one exchange left. `bankAllowed`/`bankTier` are
 // the same gate the placement runs, so a locked cargo is never offered a
 // button that the rule would then refuse.
-import { BANK_RATE, bankAllowed, bankTier, type CargoBag } from "../iso/bank";
+import { type CargoBag } from "../iso/purse";
 // VP-01: the victory numbers come from the iso config, NOT from the legacy
 // `VP = { target: 10 }` in game/config.ts that this file used to read. That
 // constant and the engine's own `VP_TARGET` were two numbers with one name,
@@ -64,9 +64,6 @@ import type { Cue } from "../audio/cues";
 
 // PP-14: the cross bounty chooser offers the five CARGOES, and each button
 // must hand the board back its COLOUR key — the reverse of GEM_TO_CARGO.
-const CARGO_TO_GEM: Partial<Record<Cargo, ResKey>> = Object.fromEntries(
-  Object.entries(GEM_TO_CARGO).map(([gem, cargo]) => [cargo, gem]),
-) as Partial<Record<Cargo, ResKey>>;
 import { Board, BOARD_ANIMATION_MS, FAST_ANIMATION_MS, type FxType, type Gem } from "./board";
 import portraitYou from "../assets/ui/tycoon_you_small.png";
 import portraitKrag from "../assets/ui/tycoon_krag.png";
@@ -82,7 +79,7 @@ import { coarsePointer } from "../iso/touch";
 // bijection quarry.ts uses, so a colour can never draw the wrong sprite.
 import { GEM_ART } from "./gem-art";
 import {
-  HUD_ICONS, ICON_CROSS, cargoIconHtml, costMarkup, depotButtonMarkup, soundIconHtml,
+  HUD_ICONS, cargoIconHtml, costMarkup, depotButtonMarkup, soundIconHtml,
 } from "./hud-icons";
 
 // ── NOIR: the painted mugshots ──────────────────────────────────────────────
@@ -362,12 +359,6 @@ export interface UiHooks {
   onZoom?: (dir: 1 | -1) => void;
   onSwap: (r1: number, c1: number, r2: number, c2: number) => void;
   onReset: () => void;
-  /**
-   * L11 (#226): the bank exchange. The GAME owns it — the tier gate against
-   * the seat's own rungs, the guest relay (`"relayed"`: the host has to
-   * confirm) and the host publish. The chrome never touches a balance itself.
-   */
-  onBank: (give: Cargo, want: Cargo) => "done" | "relayed" | "refused";
   onBlackAction: (key: string) => void;
   /** AI-01: the player picked a rival difficulty (applies from the next turn). */
   onSkill?: (key: SkillKey) => void;
@@ -451,14 +442,12 @@ export interface OriginalUi {
    * the five-cargo chooser and answer `pick(chosen)` when the units are
    * confirmed (or after the auto-pick timer, so the cascade never hangs).
    */
-  crossPick: (kind: "holy" | "broken", picks: number, pick: (chosen: ResKey[]) => void) => void;
   /**
    * #112: take the cross chooser down WITHOUT answering it — the host
    * resolved, expired or cleared the prompt, so a stale dialog must not sit
    * over a cascade that has moved on (and a queued second chooser must not
    * surface afterwards).
    */
-  crossCancel: () => void;
   isQuarryOpen: () => boolean;
   isTradeOpen: () => boolean;
   /**
@@ -537,7 +526,7 @@ const isPhoneViewport = (): boolean => {
 /** Optional per-boot chrome flags (RAIL-05: the railway's four buttons only
  *  exist when the feature flag lets them — the campaign boots without rail
  *  until #179/#181 land). L11 (#226): the Market tab is gone on EVERY loop,
- *  so `newLoop` retires no tab — the Bank stays, tier-gated. */
+ *  so `true` retires no tab — the Bank stays, tier-gated. */
 export interface OriginalUiOptions {
   rail?: boolean;
   newLoop?: boolean;
@@ -577,7 +566,6 @@ export function createOriginalUi(
   // rule on this loop (tier-gated, see `bank.ts`), the offer MARKET was not.
   // The flag is the game's call (`?loop=new`, dev-only; never a room or a
   // contract).
-  const newLoop = opts.newLoop === true;
   root.style.setProperty("--gem-move-ms", `${BOARD_ANIMATION_MS.swap}ms`);
   root.style.setProperty("--gem-clear-ms", `${BOARD_ANIMATION_MS.clear}ms`);
   // #162: falls ease under their own wait (swap/clear kept theirs), so the
@@ -635,7 +623,7 @@ export function createOriginalUi(
       // (`VICTORY.loop.target`), so the easy preset's "first to 5★" is no
       // longer true — strip the shipped line out of the blurb rather than
       // promising a race length the win check will not honour.
-      const blurb = newLoop
+      const blurb = true
         ? RIVAL_SKILLS[key].blurb.replace(/\s*—?\s*and a short race, first to \d+★\.?/, ".")
         : RIVAL_SKILLS[key].blurb;
       o.title = `${blurb} ${RIVAL_SKILLS[key].economyLine}`;
@@ -874,22 +862,18 @@ export function createOriginalUi(
   // real rule on both loops, the rebalancing tool the tree leaves standing,
   // so L1a's "no trade surfaces under the new loop" is now "no OFFER surfaces"
   // — one strip, Bank / Processing Plant / Feed, serves desktop and phone.
-  const tabBank = h("button", "tab active", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.bank}</i><span class="tab-l">Bank</span>`);
   const tabFeed = h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.feed}</i><span class="tab-l">Feed</span>`);
-  tabBank.onclick = () => setTab("bank");
   tabFeed.onclick = () => setTab("feed");
   const tabPlant = h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.plant}</i><span class="tab-l">Processing Plant</span>`);
   tabPlant.onclick = () => setTab("plant");
-  const tabDefs: [HTMLElement, "bank" | "plant" | "feed"][] =
-    [[tabBank, "bank"], [tabPlant, "plant"], [tabFeed, "feed"]];
+  const tabDefs: [HTMLElement, "plant" | "feed"][] =
+    [[tabPlant, "plant"], [tabFeed, "feed"]];
   for (const [tab, name] of tabDefs) {
     tab.dataset.tab = name;
     tabs.appendChild(tab);
   }
   tp.appendChild(tabs);
-  const bankPane = h("div", "pane bank-pane");
   const feedPane = h("div", "pane feed-pane hidden");
-  tp.appendChild(bankPane);
   tp.appendChild(feedPane);
   tp.appendChild(qp);
   rightAside.appendChild(tp);
@@ -1096,7 +1080,6 @@ export function createOriginalUi(
   let placementMandatory = false;
   let dismissedBannerKey: string | null = null;
   let lastSabKey = "\u0000";
-  let lastBankKey = "\u0000";
   /** RAIL-04: the Railway panel's repaint gate (its rows, folded to a string). */
   let lastRailKey = "\u0000";
 
@@ -1112,7 +1095,7 @@ export function createOriginalUi(
   // nothing (L2 made dirt free; the ★ moved to depot types, rungs and city
   // tiers), so the line sells the reason Road is still worth laying — it is
   // the fast transport tier — instead of a quarter-star nobody will be paid.
-  const roadRule = newLoop ? "faster hauling · 0★" : `+${VICTORY.upgrade}★ paving dirt`;
+  const roadRule = "faster hauling · 0★";
   const TOOLS: { key: UiTool; label: string; sub: string }[] = [
     // The pointer goes first: it is the hand you hold between builds —
     // hover to read what a tile is, click to select it, right-click (or Q)
@@ -1120,9 +1103,9 @@ export function createOriginalUi(
     // MOBILE-01: "Q / right-click" is noise on a phone — the tap and the
     // held-tool chip are the touch hand's versions of the same two ideas.
     { key: "select", label: "Select", sub: coarsePointer() ? "Point & inspect · tap reads a tile" : "Point & inspect · Q / right-click" },
-    // L2 (#216): under newLoop dirt is free — the button says so (`costMarkup({})`
+    // L2 (#216): under true dirt is free — the button says so (`costMarkup({})`
     // renders "free"), instead of quoting a price the placement never charges.
-    { key: "dirt", label: "Dirt Road", sub: `${costMarkup(newLoop ? {} : TRANSPORT.dirt.cost)} · 0★` },
+    { key: "dirt", label: "Dirt Road", sub: `${costMarkup({})} · 0★` },
     // L13 (#228): paving stopped scoring under the new loop — the ★ come from
     // depot types, tree rungs and city tiers now. A button that still promised
     // "+0.25★ paving dirt" would sell the player the one plan the scoreboard
@@ -1131,7 +1114,7 @@ export function createOriginalUi(
     { key: "road", label: "Road", sub: `${costMarkup(TRANSPORT.road.cost)} · ${roadRule}` },
     // PP-05: `depotSub` refreshes the Depot line below as the free-setup
     // allowance burns down.
-    { key: "harvester", label: "Depot", sub: depotButtonMarkup(0, { newLoop, tier: 0 }) },
+    { key: "harvester", label: "Depot", sub: depotButtonMarkup(0, { tier: 0 }) },
     // PP-06: another instance of the SAME processing building, raised beside
     // another town.
     { key: "plant", label: "Processing Plant", sub: `${costMarkup(PLANT_COST)} · next to a town` },
@@ -1205,152 +1188,7 @@ export function createOriginalUi(
    * depot tree uses. (It was the market composer's list before L11 / #226;
    * the bounty chooser is the only reader left.)
    */
-  const TRADEABLE = CARGOES.filter((k) => k !== "gold");
-
-  // ── the bank ──────────────────────────────────────────────────────────────
-  // L11 (#226): ONE exchange, and its gate. Gold never appears in either
-  // select — it pays for Black Market sabotage and nothing else (PP-08) — and
-  // under the new loop a cargo the seat has not unlocked is offered as a
-  // DISABLED row that says which rung it wants, so the panel can never promise
-  // an exchange the rule refuses. `updateBankButtons` re-reads both the purse
-  // and the rungs, so a rung won in a tuning session opens the select the same
-  // frame the session closes.
-  const mkSel = (value: Cargo) => {
-    const s = h("select", "res-sel") as HTMLSelectElement;
-    for (const k of CARGOES) {
-      if (k === "gold") continue;                    // PP-08: outside the bank
-      const o = document.createElement("option");
-      o.value = k;
-      o.text = CARGO[k].name;
-      s.appendChild(o);
-    }
-    s.value = value;
-    return s;
-  };
-  const bankGive = mkSel("stone");
-  const bankWant = mkSel("ore");
-  bankGive.dataset.f = "bank-give";
-  bankWant.dataset.f = "bank-want";
-
-  const bform = h("div", "trade-form");
-  const bGive = h("div", "trade-row");
-  bGive.appendChild(h("span", "trade-lbl", "Give"));
-  bGive.appendChild(h("span", "bank-fixed", String(BANK_RATE)));
-  bGive.appendChild(bankGive);
-  const bWant = h("div", "trade-row");
-  bWant.appendChild(h("span", "trade-lbl", "Get"));
-  bWant.appendChild(h("span", "bank-fixed", "1"));
-  bWant.appendChild(bankWant);
-  const bankBtn = h("button", "post-btn", "Exchange");
-  bankBtn.dataset.act = "bank";
-  bankBtn.onclick = doBank;
-  bform.appendChild(bGive); bform.appendChild(bWant); bform.appendChild(bankBtn);
-  bankPane.appendChild(bform);
-  const bankNote = h("div", "pane-note");
-  bankPane.appendChild(bankNote);
-  // L1a (#232) / L9 (#224): where the Black Market hangs. Its rows are the
-  // same on both loops (L9 converted the shop to map sabotage); only the
-  // shelf moves. The new loop keeps the shop in the BUILD column — the panel
-  // the Bank tab used to host is only a bank now; the shipped loop leaves it
-  // where it has always been: under the Bank tab, below the Gold rule, as the
-  // pane's LAST panel (the shape PP-08 shipped and the specs assert).
-  if (newLoop) left.appendChild(sp);
-  else bankPane.appendChild(sp);
-
-  /**
-   * The panel's gate line, spelled for the loop it is running under. `null`
-   * rungs = the shipped loop, where the bank has no tree to respect.
-   */
-  function bankNoteText(): string {
-    const unlocked = seat.unlocked;
-    if (unlocked === null) {
-      return `The bank always trades ${BANK_RATE} of one good for 1 of another. No rival required, no waiting. ${cargoIconHtml("gold")} ${GOLD_RULE}`;
-    }
-    const open = CARGOES.filter((k) => bankAllowed(k, unlocked)).map((k) => CARGO[k].name);
-    return `The bank trades ${BANK_RATE} of one good for 1 of another — but only within the rungs you have unlocked: `
-      + `<b>${open.join(", ")}</b>. It rebalances what the tree has already given you; it never skips a rung. `
-      + `Play a Depot's tuning session to unlock the next one. ${cargoIconHtml("gold")} ${GOLD_RULE}`;
-  }
-
-  /** Locked options are disabled and labelled with the rung they want. */
-  function paintBankOptions() {
-    const unlocked = seat.unlocked;
-    for (const sel of [bankGive, bankWant]) {
-      for (const o of Array.from(sel.options)) {
-        const cargo = o.value as Cargo;
-        const allowed = bankAllowed(cargo, unlocked);
-        o.disabled = !allowed;
-        o.text = allowed || unlocked === null
-          ? CARGO[cargo].name
-          : `${CARGO[cargo].name} — needs rung ${bankTier(cargo)}`;
-      }
-      // A select whose value is locked would show a row the click refuses;
-      // fall to the first open cargo instead.
-      if (!bankAllowed(sel.value as Cargo, unlocked)) {
-        const fallback = CARGOES.find((k) => bankAllowed(k, unlocked));
-        if (fallback) sel.value = fallback;
-      }
-    }
-    bankNote.innerHTML = bankNoteText();
-  }
-
-  function updateBankButtons() {
-    const give = bankGive.value as Cargo;
-    const want = bankWant.value as Cargo;
-    const unlocked = seat.unlocked;
-    bankBtn.disabled = give === want
-      || !bankAllowed(give, unlocked) || !bankAllowed(want, unlocked)
-      || (seat.res[give] ?? 0) < BANK_RATE;
-  }
-  for (const input of [bankGive, bankWant]) {
-    input.addEventListener("input", () => { updateBankButtons(); });
-    input.addEventListener("change", () => { updateBankButtons(); });
-  }
-
-  /**
-   * The exchange. The GAME owns it (`hooks.onBank`): it holds the tier gate,
-   * the relay for a guest seat and the publish for a host — the chrome only
-   * says what happened.
-   */
-  function doBank() {
-    const give = bankGive.value as Cargo;
-    const want = bankWant.value as Cargo;
-    if (give === want) { toast("Pick two different goods to trade.", "danger"); return; }
-    // PP-08: the bank never turns Gold into construction stock (or back) —
-    // defence in depth, the select cannot offer it.
-    if (give === "gold" || want === "gold") { toast(`🪙 ${GOLD_RULE}`, "danger"); return; }
-    const how = hooks.onBank(give, want);
-    if (how === "relayed") {
-      // #114: a guest's bank trade is a request until the host accepts it.
-      toast(`Sent to the host — the trade lands once they confirm.`, "info");
-      feed(`Bank request sent: ${BANK_RATE} ${CARGO[give].name} → 1 ${CARGO[want].name}`);
-    } else if (how === "done") {
-      toast(`Bank: ${BANK_RATE} ${CARGO[give].name} → 1 ${CARGO[want].name}.`, "success");
-      // W6: bank trades are trades — log them even with no rival around.
-      feed(`Bank: ${BANK_RATE} ${CARGO[give].name} → 1 ${CARGO[want].name}`);
-    } else if (!bankAllowed(give, seat.unlocked) || !bankAllowed(want, seat.unlocked)) {
-      const locked = [give, want].find((c) => !bankAllowed(c, seat.unlocked))!;
-      toast(`${CARGO[locked].name} needs rung ${bankTier(locked)} — tune a Depot to unlock it.`, "danger");
-    } else {
-      toast(`The bank wants ${BANK_RATE} ${CARGO[give].name}.`, "danger");
-    }
-    renderBank();
-  }
-
-  /**
-   * The Bank pane's paint, gated by `lastBankKey` (the purse, the rungs and
-   * the two selections folded into one string): a per-frame rebuild would
-   * detach a select between its pointerdown and pointerup — the bug the old
-   * offer list had — while a balance that changed under a STABLE panel (the
-   * guest's authoritative purse sync, most visibly) must repaint, or the
-   * Exchange button stays disabled after the purse has long funded it.
-   */
-  function renderBank() {
-    paintBankOptions();
-    updateBankButtons();
-  }
-
-  // ── feed ──────────────────────────────────────────────────────────────────
+  // ── feed ─  // ── feed ──────────────────────────────────────────────────────────────────
   function renderFeed() {
     feedPane.innerHTML = "";
     feedEntries.slice(0, 14).forEach((f) => {
@@ -1383,9 +1221,7 @@ export function createOriginalUi(
     });
     tabPlant.classList.toggle("active", t === "plant");
     qp.classList.toggle("hidden", t !== "plant");
-    tabBank.classList.toggle("active", t === "bank");
     tabFeed.classList.toggle("active", t === "feed");
-    bankPane.classList.toggle("hidden", t !== "bank");
     feedPane.classList.toggle("hidden", t !== "feed");
     // MOBILE-02: the plant tab re-fits the board — the full-bleed sheet only
     // leaves a measurable slot once this pane is the visible one.
@@ -1983,124 +1819,9 @@ export function createOriginalUi(
     if (callout && text) showFloat(text, type === "combo");
   }
 
-  // ── PP-14: the cross bounty chooser ──────────────────────────────────────
-  // The board pauses the cascade on a HOLY CROSS (6 units) or a BROKEN HOLY
-  // CROSS (3 units) and waits; this panel asks how to spend the units of
-  // blessing. Repeats are allowed — tap a cargo to add one unit, tap it again
-  // to take one back, up to the cross's total (all of one, 2+2, one of each,
-  // any mix). Confirmation requires the full allocation. There is no timer:
-  // the panel and paused cascade wait until the player explicitly confirms.
-  // Outside clicks/tab switches cannot dismiss it. Queue additional choices
-  // rather than auto-answering and replacing an unfinished allocation.
-  // #185 restyled the plate into the house language — shared `.panel`
-  // treatment over a light board dim, chip-dark cargo tiles, and the dialog
-  // `.big-btn` as the confirm. None of the flow above changed.
+  // L15 (#230): blessings retired — no chooser.
   let pickEl: HTMLElement | null = null;
-  const pickQueue: { kind: "holy" | "broken"; picks: number; pick: (chosen: ResKey[]) => void }[] = [];
-
-  function crossPick(kind: "holy" | "broken", picks: number, pick: (chosen: ResKey[]) => void) {
-    if (pickEl) {
-      pickQueue.push({ kind, picks, pick });
-      return;
-    }
-    const pickCounts = new Map<ResKey, number>();
-    const total = () => [...pickCounts.values()].reduce((a, b) => a + b, 0);
-    const expand = () => {
-      const chosen: ResKey[] = [];
-      for (const [res, n] of pickCounts) for (let i = 0; i < n; i++) chosen.push(res);
-      return chosen;
-    };
-    const holy = kind === "holy";
-    // #185: the plate is the house plate. It wears the shared `.panel`
-    // treatment (felt, glass gradient, brass keyline, `--r`) exactly like the
-    // Bank and build panels, and it rides a light dim — the modal
-    // sheets' `.modal-back` idea, sized to the board rather than the window.
-    // The dim swallows clicks aimed at the board (which is paused anyway) and
-    // carries no handler of its own: outside clicks still cannot dismiss it.
-    // No emoji anywhere in the markup; the title is the ledger kicker over an
-    // engraved display-face name sealed with the stroke-SVG cross.
-    const back = h("div", "cross-pick-back");
-    const panel = h("div", `cross-pick panel${holy ? "" : " broken"}`);
-    const head = h("div", "cross-pick-head");
-    head.appendChild(h("div", "cross-pick-kicker", "Blessing"));
-    head.appendChild(h(
-      "div", "cross-pick-title",
-      `${ICON_CROSS}<span>${holy ? "Holy Cross" : "Broken Cross"}</span>`,
-    ));
-    panel.appendChild(head);
-    panel.appendChild(h("div", "cross-pick-sub", `Spend ${picks} bounties · repeats allowed`));
-    const row = h("div", "cross-pick-row");
-    const count = h("div", "cross-pick-count", `0 / ${picks} spent`);
-    // #185: the confirm is the game's primary action button — the brass
-    // "sign here" plate of the dialogs, class and all.
-    const confirm = h("button", "cross-pick-confirm big-btn", `Bless +${picks}`);
-    (confirm as HTMLButtonElement).type = "button";
-    (confirm as HTMLButtonElement).disabled = true;
-    // SFX-01: the blessing lands as gold does — two coins touching.
-    confirm.dataset.sfx = "coin";
-    const refresh = () => {
-      count.textContent = `${total()} / ${picks} spent`;
-      (confirm as HTMLButtonElement).disabled = total() !== picks;
-      row.querySelectorAll<HTMLElement>("[data-gem]").forEach((b) => {
-        const n = pickCounts.get(b.dataset.gem as ResKey) ?? 0;
-        b.classList.toggle("sel", n > 0);
-        b.dataset.n = String(n);
-      });
-    };
-    for (const cargo of TRADEABLE) {
-      const gem = CARGO_TO_GEM[cargo];
-      if (!gem) continue;
-      const b = h("button", "cross-pick-btn");
-      (b as HTMLButtonElement).type = "button";
-      // SFX-01: each unit spent climbs a semitone (the `pick` cue keeps the
-      // streak), so the panel audibly fills up. Declared in markup rather than
-      // played from the handler below: the sound belongs to the touch, and the
-      // handler stays about the counting.
-      b.dataset.sfx = "pick";
-      b.dataset.cargo = cargo;
-      b.dataset.gem = gem;
-      // #185: the cargo's own two colours ride along as `--c1/--c2` — the
-      // tile reads chip-dark like the purse's, and the colour lives in its
-      // painted gem token and the assay line struck under it.
-      b.style.setProperty("--c1", CARGO[cargo].c1);
-      b.style.setProperty("--c2", CARGO[cargo].c2);
-      b.innerHTML = `${cargoIconHtml(cargo, "cargo-ic cargo-ic-lg")}<span>+1</span>`;
-      b.title = `Spend a bounty on ${CARGO[cargo].name} (tap again to take it back)`;
-      b.onclick = () => {
-        const n = pickCounts.get(gem) ?? 0;
-        if (total() >= picks) {
-          if (n > 0) pickCounts.set(gem, n - 1);       // swap one unit out
-          else { toast(`All ${picks} spent — tap a chosen cargo to take one back.`, "info"); return; }
-        } else {
-          pickCounts.set(gem, n + 1);                  // spend one more unit
-        }
-        refresh();
-      };
-      row.appendChild(b);
-    }
-    confirm.onclick = () => {
-      if (pickEl !== back || total() !== picks) return;
-      const chosen = expand();
-      back.remove();
-      pickEl = null;
-      pick(chosen);
-      const next = pickQueue.shift();
-      if (next) crossPick(next.kind, next.picks, next.pick);
-    };
-    panel.appendChild(row);
-    panel.appendChild(count);
-    panel.appendChild(confirm);
-    back.appendChild(panel);
-    boardWrap.appendChild(back);
-    pickEl = back;
-  }
-
-  /** #112: close the chooser and drain any queued ones without answering. */
-  function crossCancel() {
-    pickQueue.length = 0;
-    pickEl?.remove();
-    pickEl = null;
-  }
+  // L15: crossCancel retired
 
   function popup(gains: Partial<Record<ResKey, number>>, label: string, score?: number) {
     // SFX-01: the chute pays out. Only when cargo actually landed — an empty
@@ -3012,7 +2733,7 @@ export function createOriginalUi(
     // (a rebuilt button drops a click mid-gesture, the reason `renderSabotage`
     // is change-gated too). The cost text comes from the same table the
     // placement charges; `disabled` mirrors the affordability the click checks.
-    const sub = depotButtonMarkup(state.freeDepots, { newLoop, tier: state.depotTier ?? 0 });
+    const sub = depotButtonMarkup(state.freeDepots, { tier: state.depotTier ?? 0 });
     if (sub !== lastDepotSub) {
       lastDepotSub = sub;
       if (depotSub) depotSub.innerHTML = sub;
@@ -3058,21 +2779,20 @@ export function createOriginalUi(
     }
     buildList.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((button) => {
       const tool = button.dataset.tool as UiTool;
-      // L2 (#216): under newLoop dirt costs nothing, so the button prices {}
+      // L2 (#216): under true dirt costs nothing, so the button prices {}
       // and an empty purse never disables it.
       const cost = tool === "plant" ? PLANT_COST : tool === "harvester" ? DEPOT_COST
         : tool === "road" ? TRANSPORT.road.cost
-        : tool === "dirt" ? (newLoop ? {} : TRANSPORT.dirt.cost)
+        : tool === "dirt" ? {}
         : tool === "platform" ? RAIL_COSTS.platform
         : tool === "raildepot" ? RAIL_COSTS.depot : {};
       // W9: the free setup allowance buys Dirt Roads only.
-      // L2: under newLoop dirt is free with or without the allowance.
+      // L2: under true dirt is free with or without the allowance.
       const free = tool === "harvester" ? state.freeDepots > 0
-        : (tool === "dirt") && (newLoop || state.freeTrack > 0);
+        : (tool === "dirt") && true;
       button.disabled = !free && !Object.entries(cost).every(([k, v]) => (state.purse[k as Cargo] ?? 0) >= v);
       button.classList.toggle("disabled", button.disabled);
     });
-    updateBankButtons();
     buildList.querySelectorAll<HTMLElement>("[data-act]").forEach((b) => {
       b.classList.toggle("active", b.dataset.act === "recenter");
     });
@@ -3121,14 +2841,8 @@ export function createOriginalUi(
     // purse sync, or a rung won in a tuning session, repaints the panel while
     // a frame that changed none of them leaves the DOM (and any in-flight
     // pointer) alone.
-    const unlocked = seat.unlocked;
-    const bankKey = CARGOES.map((c) => seat.res[c] ?? 0).join(",")
-      + "#" + (unlocked === null ? "tree" : unlocked)
-      + "#" + bankGive.value + ">" + bankWant.value;
-    if (bankKey !== lastBankKey) {
-      lastBankKey = bankKey;
-      renderBank();
-    }
+    if (false) {
+        }
   }
 
   function setReach(next: Partial<Record<Cargo, number>>) {
@@ -3163,10 +2877,6 @@ export function createOriginalUi(
   let tourView: TutorialHandle | null = null;
 
   function helpModal() {
-    // MOBILE-01: the reference card names the controls the device actually
-    // has. On touch that is the finger grammar (tap, drag, pinch) plus the
-    // floating keys and the held-tool chip; on a mouse it is the keyboard and
-    // the three buttons. One paragraph, swapped — never both, never neither.
     const TOUCH_CONTROLS = coarsePointer()
       ? `<p><h3>Playing by touch</h3><p><b>One finger</b> pans the map and drags roads tile by tile; <b>a tap</b> places a building or lays a single road tile; <b>two fingers</b> pinch-zoom. The <b>+ / − / 🎯</b> keys at the map's right edge zoom and recentre. The chip at the lower-left names the tool in your hand and <b>puts it down</b> on a tap, and a tap with <b>Select</b> reads the tile under your finger in the inspector. The bottom bar switches <b>Map / Build / Economy</b>.</p>`
       : "";
@@ -3176,12 +2886,12 @@ export function createOriginalUi(
       <div class="modal-back"></div>
       <div class="modal box">
         <h2>Hexmatch Industries</h2>
-        <p class="sub">Two worlds, one empire: <b>resource node → Depot → transport network → Factory → processing → resources available for construction</b>. First to <b>${hudVpTarget}★ Victory Points</b> wins.</p>
+        <p class="sub">Build road & rail to city & depots, tune depots with match-3, earn yield×distance×road. First to <b>${hudVpTarget}★</b> wins.</p>
         <div class="help-cols">
-          <div class="help-col"><h3>The Territory</h3><p>Place <b>Depots</b> beside resource nodes to collect their output, then build <b>Dirt Roads</b> &amp; <b>Roads</b> (paved) to carry it to your Factory. The connection sets the multiplier — ×1.0 on gravel, ×1.6 anywhere a paved tile touches the line — and nothing else.</p>
-<p><h3>How you score (VP-01)</h3><p><b>Dirt Roads score nothing.</b> Points come from <b>upgrading</b>: pave a Dirt Road tile into a Road for <b>+${VICTORY.upgrade}★</b> (it costs only ${costMarkup(UPGRADE_COST)}, since the gravel is already paid for), and raise a <b>processing plant</b> beside another town for <b>+${VICTORY.plant}★</b>. Four paves to the point; <b>${hudVpTarget}★</b> wins. A Road laid on virgin ground scores nothing — the point is for improving what you built. Tear up a paved tile or demolish a plant and the point goes back.</p><p>Your <b>first Depot is free</b>; every Depot after it costs <b>${costMarkup(DEPOT_COST)}</b>, so reaching new industries (or manufacturing in the Processing Plant) is what buys expansion. A Depot you cannot pay for is refused and consumes nothing.</p><p><b>Lorries run 2× faster on paved Roads</b> — paving a lane is both the points and the income (AI-02).</p><p>Move the camera with <b>WASD</b> (Shift holds double speed) or the <b>middle mouse button</b> (wheel zooms, touch drags pan). The left button only places or selects — dragging it never pans. <b>Right-click drops the tool you are holding</b> back to the pointer, and the pointer reads the map: hover a resource, town, plant or depot and the inspector says exactly what it is.</p>${TOUCH_CONTROLS}<p>The top-bar <b>Aa Names</b> switch shows or hides the name tags over the map's features while you pan.</p></div>
-          <div class="help-col"><h3>The Processing Plant</h3><p>Where your Factory turns delivered cargo into resources available for construction. Match tokens to process: a colour only pays when your network reaches its industry. Match 4 doubles, match 5 makes a <b>bomb</b>. <b>Gold</b> 🪙 is its own colour — its gems drop only while a depot sits beside a gold mine (and pay once it's connected).</p></div>
-          <div class="help-col"><h3>Gold, Trade & Defence</h3><p>Earn <b>gold</b> from gold-mine access or combos. <b>Gold is reserved for Black Market sabotage</b> — it never buys construction, cannot substitute for missing materials, and the bank refuses it in both directions. The Black Market sells <b>map</b> sabotage only: a <b>Blockade</b> ⛓ stops an industry's depots for 45s, and a <b>Protest</b> ✊ shuts any public road for 2:00 — every depot routed through that tile stops earning, including your own. <b>Security Forces</b> are hired with ordinary materials and turn both away.</p></div>
+          <div class="help-col"><h3>The Territory</h3><p>Place <b>Depots</b> beside resource nodes. Build <b>Dirt Road</b> (free, ×1.0) and <b>Road</b> (faster hauling ×1.6) and <b>Rail</b> (fastest) to the <b>City</b>. Distance matters — longer lines have smaller <b>distanceFactor</b>. The inspector shows yield, distance and transport per depot.</p>
+<p><h3>How you score</h3><p>Roads score nothing. Points come from <b>breadth + depth + network</b>: a <b>depot type running</b> (per distinct cargo, +${VICTORY.loop.type}★, revocable), a <b>depot-tree rung</b> (+${VICTORY.loop.rung}★, never revoked), a <b>city upgrade tier</b> (+${VICTORY.loop.city}★) and a <b>railway platform</b> (+${VICTORY.platform}★). Pool is bigger than the line — many routes to ${hudVpTarget}★.</p><p>Move the camera with <b>WASD</b> or <b>middle mouse</b> (wheel zooms). Right-click drops the tool. The pointer reads the map via the inspector.</p>${TOUCH_CONTROLS}<p>Top-bar <b>Aa Names</b> toggles name tags.</p></div>
+          <div class="help-col"><h3>Tuning</h3><p>Building a Depot opens a <b>bounded match-3 session</b>. Score becomes the Depot's <b>yield</b> (×${TUNING.minYield}–×${TUNING.maxYield}). A connected Depot then ticks <b>yield × distanceFactor × transportFactor</b> cargo per clock tick. <b>5 in a row</b> makes a bomb. Finish keeps score; ✕ abandons for default yield. Difficulty changes decay: Easy never cools, Normal never drops, Hard can cool and lower.</p></div>
+          <div class="help-col"><h3>Gold & Defence</h3><p><b>Gold</b> 🪙 is from gold-mine access or combos. It buys <b>Black Market</b> sabotage only — never construction. <b>Blockade</b> ⛓ stops an industry's depots for 45s, <b>Protest</b> ✊ shuts a public road for 2:00 (every truck through it stops, including yours). <b>Security Forces</b> (ordinary materials) turn both away. <b>Feed</b> logs every event.</p></div>
         </div>
         <div class="confirm-row">
           <button class="big-btn ghost" id="tourBtn" data-sfx="open">▶ Replay the tour</button>
@@ -3191,9 +2901,6 @@ export function createOriginalUi(
     const shut = () => { sfx.play("close"); modalRoot.classList.add("hidden"); };
     (modalRoot.querySelector("#startBtn") as HTMLElement).onclick = shut;
     (modalRoot.querySelector(".modal-back") as HTMLElement).onclick = shut;
-    // TUT-01: the plaque above is the reference; the tour is the lesson. Both
-    // stay reachable forever — "Never show this again" only stops the tour
-    // opening ITSELF at boot, it never takes the lesson away.
     (modalRoot.querySelector("#tourBtn") as HTMLElement).onclick = () => {
       shut();
       if (tourView) return;
@@ -3201,9 +2908,7 @@ export function createOriginalUi(
         force: true,
         vpTarget: hudVpTarget,
         freeTrack: hudFreeTrack,
-        // L4 (#218): replaying the tour mid-game must describe the loop THIS
-        // game is running — on the new loop that is the tuning session.
-        newLoop,
+        newLoop: true,
         onClose: () => { tourView = null; },
       });
     };
@@ -3242,7 +2947,6 @@ export function createOriginalUi(
   attachUiSound(root);
   renderSabotage();
   renderBoard();
-  renderBank();
   responsiveZoom();
   setTab("plant");
 
@@ -3258,10 +2962,8 @@ export function createOriginalUi(
     toast,
     fx,
     popup,
-    crossPick,
-    crossCancel,
     isQuarryOpen: () => !qp.classList.contains("hidden"),
-    isTradeOpen: () => !bankPane.classList.contains("hidden"),
+    isTradeOpen: () => false,
     openSessionBoard: () => {
       setTab("plant");
       if (isPhoneViewport()) setMobileView("trade");

@@ -145,16 +145,17 @@ import {
 // L11 (#226): the bank — the one exchange left, and the rung gate it obeys.
 // `bankAllowed` is what the HUD's selects ask too, so a locked cargo cannot be
 // clicked and then refused: the button and the rule are the same question.
-import { BANK_RATE, bankAllowed, bankTrade, isCargo, toBag, type CargoBag } from "./bank";
-import type { BoardObstacles, CrossKind } from "../game/board";
+import { toBag, type CargoBag } from "./purse";
+import type { BoardObstacles } from "../game/board";
 import {
   MAP_W, MAP_H, BANDIT_MS, PROTEST_MS, SABOTAGE, SECURITY,
-  RES_KEYS, tileToScreen, type ResKey,
+  tileToScreen, type ResKey,
 } from "../game/config";
 import { createQuarry, CARGO_TO_GEM, GEM_TO_CARGO, type Quarry } from "./quarry";
 import {
-  saveKeyFor, SAVEGAME_VERSION, loadRecentSave, clearSave, trackSave, trackRestored,
-  NEW_LOOP_SAVE_TOAST, saveNeedsNewLoop, loopCarryToWire, savedLoopCarry,
+  saveKeyFor, SAVEGAME_VERSION, OLD_SAVE_TOAST,
+  loadRecentSave, clearSave, trackSave, trackRestored,
+  loopCarryToWire, savedLoopCarry,
   type SaveGamePayload,
 } from "./savegame-runtime";
 import { RES } from "../game/config";
@@ -549,20 +550,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     try { return new URLSearchParams(location.search).get("rail"); } catch { return null; }
   })();
   const railAvailable = opts.rail ?? (import.meta.env.DEV && railParam === "1");
-  // L1a (#232): the new-loop MVP flag — the same contract as the rail flag
-  // above. OFF everywhere by default: `opts.newLoop` turns it on (tests,
-  // harnesses) and `?loop=new` does too, but ONLY in a dev build, so a
-  // production deploy can never ship the redesigned loop (the param read is
-  // dead code there and the bundler strips it, exactly like rail's).
-  const loopParam = (() => {
-    try { return new URLSearchParams(location.search).get("loop"); } catch { return null; }
-  })();
-  const newLoopRequested = opts.newLoop ?? (import.meta.env.DEV && loopParam === "new");
-  // The new loop is sandbox-only for now: a networked room or a story
-  // contract ignores the request and says so — the toast waits until no boot
-  // overlay covers the map (see the frame loop's `loopToastPending`).
-  const newLoop = newLoopRequested && isSolo() && !storyOn;
-  let loopToastPending = newLoopRequested && !newLoop;
+  // L15 (#230): the redesign is now the only loop — always on, in every mode.
+  const newLoop = true;
+  let loopToastPending = false;
   /** The cast member playing the rival: the contract's, else Torvin as ever. */
   const rivalCast = storyChapter ? storyChapter.rival : "torvin";
   /** The player's own cast id, for every line the wire answers in. */
@@ -632,20 +622,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // line and lost on the first rescore.
   const saveKey = saveKeyFor(storyChapter?.id);
   const foundSave = savesOff ? null : loadRecentSave(Date.now(), saveKey);
-  /**
-   * L1e (#236): a save the new loop wrote is NOT restored into the shipped one.
-   * Its depots carry tuning yields only the L1b clock pays, so half-restoring
-   * it would hand back a world that looks intact and has stopped earning — the
-   * opposite of what "Continue" promises. The boot therefore treats it as no
-   * save at all (fresh map, no seed of its own, onboarding as normal), KEEPS
-   * the slot untouched — see `saveHeldBack`, which stops this boot's autosave
-   * from writing the fresh world over it — and says how to open it instead of
-   * breaking (the note waits for the overlays, like the flag's own).
-   */
-  const saveHeldBack = foundSave !== null && saveNeedsNewLoop(foundSave, newLoop);
-  const bootSave = saveHeldBack ? null : foundSave;
-  /** The note about that refusal, fired on the first clear frame (below). */
-  let saveToastPending = saveHeldBack;
+  // L15 (#230): old saves (v1 / snap 15) are from a different game — refuse
+  // with a clear message and keep the slot untouched so the toast is honest.
+  // The new loop is the only loop now, so no save needs a flag to open.
+  const rawSave = savesOff ? null : (() => { try { const r = localStorage.getItem(saveKey); return r ? JSON.parse(r) : null; } catch { return null; } })();
+  const isOld = rawSave !== null && (rawSave.v !== SAVEGAME_VERSION || rawSave.snapV !== SNAPSHOT_VERSION);
+  const bootSave = isOld ? null : foundSave;
+  let saveToastPending = false;
+  let oldSaveToastPending = isOld;
   // STORY-01: a contract is a PLACE — its map must not move between attempts —
   // so the chapter's seed sits in the chain between an explicit `?seed=`
   // (playtests, saved seeds) and the fresh random one. A resumed save keeps
@@ -1047,8 +1031,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       pendingScore = 0;
       ui.popup(newLoop ? {} : gains, label, score);
     },
-    onTokens: (pool) => toast(`Tokens: ${(Object.keys(pool) as ResKey[])
-      .map((r) => CARGO[GEM_TO_CARGO[r]].name).join(", ")}`, "info"),
+    // L15: tokens retired — no toast
     onChange: () => onBoardChange(),
   }, undefined);
 
@@ -1092,24 +1075,6 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // (`action: "bank"`) the host validates and applies against the guest's own
   // player record — the UI says "sent to the host" until the delta lands, the
   // same door the rails and the Black Market use.
-  function bankRungsFor(p: PlayerState): number | null {
-    return newLoop ? p.depotTier : null;
-  }
-
-  /** Is this cargo exchangeable at `p`'s seat right now? */
-  const bankCanExchange = (p: PlayerState, cargo: Cargo): boolean =>
-    bankAllowed(cargo, bankRungsFor(p));
-
-  /**
-   * The bank, on the host/solo seat. One owner of the balance (`p.purse`),
-   * one rule (`bankTrade`), and a publish when a room is watching.
-   */
-  function bankFor(p: PlayerState, give: Cargo, want: Cargo): boolean {
-    const ok = bankTrade(p.purse, give, want, { unlocked: bankRungsFor(p) });
-    if (ok && isMp()) publishNet(performance.now(), true);
-    return ok;
-  }
-
   // MOBILE-01: the two camera/names actions the top bar, the ☰ menu and the
   // floating touch cluster ALL offer. One closure each, so the three doors
   // can never drift apart (the menu rows exist because a phone's top bar
@@ -1271,19 +1236,6 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // in a hosted game, so the selector is simply not built.
     onSkill: isSolo() ? (key) => setRivalSkill(key) : undefined,
     skill: isSolo() ? skillKey : undefined,
-    /**
-     * L11 (#226): the bank exchange. A guest's is a REQUEST — the host owns
-     * the purse, validates the pair against the guest seat's own rungs and
-     * applies it; the trade exists only once the host's delta says so. Solo
-     * and host apply it here and now.
-     */
-    onBank: (give, want) => {
-      if (isGuest()) {
-        if (!net?.sendIntent("bank", { do: "bank", give, want })) return "refused";
-        return "relayed";
-      }
-      return bankFor(me, give, want) ? "done" : "refused";
-    },
   }, { rail: railAvailable, newLoop });
   onBoardChange = () => ui.renderBoard();
   root.appendChild(ui.el);
@@ -1437,111 +1389,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // as one typed intent `{ do: "cross", seq, choices }`, and the host resolves
   // exactly the prompt that seq names — a late timer, a duplicate delta or a
   // malformed reply can never award twice or hang the cascade.
-  let pendingCross: { boardOwner: string; kind: CrossKind; picks: number; resolve: (chosen: ResKey[]) => void } | null = null;
-  let crossPromptSeq = 0;
-  let crossPrompt: import("./snapshot").CrossPromptWire | null = null;
-  /** #112: the fallback timer — it captures the seq it may resolve, and it is
-   *  cancelled the moment that prompt resolves any other way (answer, newer
-   *  prompt, disposal), so an old timer can never answer a newer prompt. */
-  let crossTimer: ReturnType<typeof setTimeout> | null = null;
-  const clearCrossTimer = () => {
-    if (crossTimer !== null) { clearTimeout(crossTimer); crossTimer = null; }
-  };
-  /** #112: clear the prompt and hand the board the empty fallback, then tell
-   *  the guest (the old timeout never published, so the cascade sat on the
-   *  fallback while the guest's chooser stayed up forever). */
-  const expireCrossPrompt = () => {
-    const fallback = pendingCross?.resolve;
-    if (!fallback) return;
-    clearCrossTimer();
-    pendingCross = null;
-    crossPrompt = null;
-    fallback([]);
-    publishNet(performance.now(), true);
-  };
-  /**
-   * The rival's own answer to a cross on ITS board: all of whatever cargo it
-   * is shortest of. No dialog — it is not the player's blessing to allocate.
-   */
-  const rivalCrossPicks = (picks: number): ResKey[] => {
-    const scarcest = (CARGOES as readonly Cargo[])
-      .filter((c) => c !== "gold")
-      .sort((a, b) => (rival.purse[a] ?? 0) - (rival.purse[b] ?? 0)
-        || a.localeCompare(b))[0];
-    return Array.from({ length: picks }, () => CARGO_TO_GEM[scarcest]);
-  };
-
-  const __setCrossPrompt = (boardOwner: string, kind: CrossKind, picks: number, resolve: (chosen: ResKey[]) => void) => {
-    // Whose board made the cross decides who answers it. The RIVAL's board
-    // answers itself — its blessing pays ITS purse, so putting that chooser on
-    // the player's screen asked them to allocate the opponent's bonus, out of
-    // nowhere, mid-cascade ("a broken cross randomly triggers on my board").
-    const mine = boardOwner === "you" || boardOwner === players[0].id;
-    if (!mine && (isSolo() || aiOpponent)) {
-      resolve(rivalCrossPicks(picks));
-      return;
-    }
-    // In solo, just show locally; in host, track prompt for guest sync
-    // #186: an AI-FILLED seat is handled above — the seat the host would
-    // otherwise publish this prompt to is a machine, and a prompt nobody can
-    // answer would sit until its 30 s expiry instead of being played.
-    if (isSolo() || aiOpponent) {
-      ui.crossPick(kind, picks, resolve);
-      return;
-    }
-    if (isGuest()) {
-      // guest board should never ask — host is authoritative, but fallback
-      ui.crossPick(kind, picks, resolve);
-      return;
-    }
-    // host: if boardOwner is guest seat, publish prompt instead of showing locally
-    const guestId = players[1].id; // host's guest seat
-    if (boardOwner === guestId) {
-      pendingCross = { boardOwner, kind, picks, resolve };
-      crossPromptSeq++;
-      crossPrompt = { boardOwner, kind, picks, seq: crossPromptSeq };
-      publishNet(performance.now(), true);
-      // Safety: auto-resolve after 30s if guest never answers (engagement).
-      // The timer owns THIS seq only; resolving the prompt any other way
-      // cancels it.
-      const mySeq = crossPrompt.seq;
-      clearCrossTimer();
-      crossTimer = setTimeout(() => {
-        crossTimer = null;
-        if (pendingCross && crossPrompt && crossPrompt.seq === mySeq) expireCrossPrompt();
-      }, 30000);
-    } else {
-      // host's own board — show locally
-      ui.crossPick(kind, picks, resolve);
-    }
-  };
-  quarry.board.onCrossChoice = (kind, picks, pick) => __setCrossPrompt("you", kind as CrossKind, picks, pick);
-  // MP-AUDIT: guest renders cross prompt that host published
-  // #112: the guest tracks the prompt it is SHOWING and the last prompt it
-  // ANSWERED, both by seq. A heartbeat delta re-delivers the same seq — that
-  // is not a second chooser; a cleared prompt closes the chooser instead of
-  // leaving it stuck over a resolved cascade.
-  let guestCrossShown: number | null = null;
-  let guestCrossAnswered: number | null = null;
-  const __showGuestCross = (prompt: import("./snapshot").CrossPromptWire) => {
-    if (prompt.seq === guestCrossShown || prompt.seq === guestCrossAnswered) return;
-    // A genuinely new prompt replaces whatever is on screen (one dialog, not
-    // a queue — crossPick queues when a panel is already open).
-    if (guestCrossShown !== null) { ui.crossCancel(); guestCrossShown = null; }
-    guestCrossShown = prompt.seq;
-    ui.crossPick(prompt.kind as CrossKind, prompt.picks, (chosen) => {
-      if (guestCrossShown !== prompt.seq) return;   // a stale dialog never answers a newer prompt
-      guestCrossShown = null;
-      guestCrossAnswered = prompt.seq;
-      net?.sendIntent("cross", { do: "cross", seq: prompt.seq, choices: chosen });
-    });
-  };
-  /** #112: the host cleared/resolved/expired the prompt — take the chooser
-   *  down with it. */
-  const __clearGuestCross = () => {
-    guestCrossShown = null;
-    ui.crossCancel();
-  };
+  // L15 (#230): blessings (holy/broken crosses) are gone — the board's
+  // cross detection now just banks score, no chooser, no wire, no timer.
+  quarry.board.onCrossChoice = (_kind, _picks, pick) => pick([]);
 
   // A1: world-anchored floats — the lorry's "+N" at the Factory, and the
   // marker over the rival's plant when sabotage lands. Anchored to the live
@@ -1617,7 +1467,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     onBlocked: () => {},
     onGold: (n) => {
       earn(rival, { gold: n });
-      ui.feed(`Rival banks +${n} Gold from its plant combos 🪙`, rival.name);
+      ui.feed(`Rival earns +${n} Gold from tuning 🪙`, rival.name);
     },
     onGains: () => {},
     onTokens: () => {},
@@ -1629,7 +1479,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // flat-purse telemetry that finally smoked this out: reach present,
     // tokens never, income never. One board now — no shadows.
   }, rivalBoard);
-  rivalQuarry.board.onCrossChoice = (kind, picks, pick) => __setCrossPrompt("ai", kind as CrossKind, picks, pick);
+  // L15: blessings retired
+  rivalQuarry.board.onCrossChoice = () => {};
 
   // U1: the iso layer stack stays the map; it is mounted inside the original
   // map-canvas slot rather than a bespoke floating panel.
@@ -4577,7 +4428,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // still saving for — AI-01's churn guard, one rule below.
       { ...planGuard, ore: Math.max(planGuard.ore ?? 0, oreGoal) },
       {
-        unlocked: bankRungsFor(rival), budget: bankBudget(rivalPaceNow()),
+        unlocked: null, budget: bankBudget(rivalPaceNow()),
         need: oreGoal,
       },
     );
@@ -4598,7 +4449,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const skint = rivalReserve(f, now);
     if (!skint) return;
     const { goal: target, paving } = skint;
-    const unlocked = bankRungsFor(rival);
+    const unlocked = null as any;
     let budget = bankBudget(rivalPaceNow());
     // AI-02: a bank pointed at the PAVE goal must buy past the plant reserve,
     // or it stops one trade short where the pave pass can still not pay (see
@@ -5320,13 +5171,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   /** HOST: the full state (§4 `SnapshotMsg`), built from the live world. */
   function netFullState(): Snapshot | null {
-    // MP-AUDIT: full parity snapshot includes protests, vehicles, boards,
-    // crossPrompt, winner (L11 / #226: the market's live offers are gone —
-    // there is no shared trade state left to mirror).
-    const boardsWire = [
-      { owner: players[0].id, data: quarry.board.save() },
-      { owner: players[1].id, data: rivalQuarry.board.save() },
-    ];
+    // L15 (#230): boards and crossPrompt are gone — the board is tuning-only
+    // and blessings are retired, so no board state or cross prompt rides the wire.
     const protestsWire = [...protests.values()].map((p) => ({ x: p.tx, y: p.ty, until: p.until, owner: p.owner }));
     const trucksWire = trucks.trucks.map((t) => ({ ownerId: t.ownerId, depotId: t.depotId, factory: [...t.factory] as [number, number], route: t.route.map((r) => [...r] as [number, number]), segFast: t.segFast ? [...t.segFast] : [], leg: t.leg, t: t.t, reverse: t.reverse, deliveries: t.deliveries }));
     const carsWire = cars.cars.map((c) => ({ name: c.name, carIndex: (c as any).carIndex ?? 1, originTownId: (c as any).originTownId ?? null, destTownId: (c as any).destTownId ?? null, origin: (c as any).origin ? [...(c as any).origin] as [number, number] : null, dest: (c as any).dest ? [...(c as any).dest] as [number, number] : null, route: c.route.map((r) => [...r] as [number, number]), leg: c.leg, t: c.t, state: (c as any).state ?? "driving", waitMs: (c as any).waitMs ?? 0, fadeMs: (c as any).fadeMs ?? 0, fade: (c as any).fade ?? 1, arriveMs: (c as any).arriveMs ?? 0, lastTripKey: (c as any).lastTripKey ?? null }));
@@ -5343,28 +5189,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       trucks: trucksWire,
       cars: carsWire,
       rail: railWire(true),
-      boards: boardsWire,
-      crossPrompt,
       winner: winner ? { id: winner.id, source: winningSource } : null,
       clearedFields: [...clearedFields],
     });
   }
-
-  /**
-   * #117: which board content each of the last delta's carries, per seat.
-   * L10 (#225): `Board.save()` carries no clocks any more (an obstacle has no
-   * expiry to embed), so the key is simply the parts that ARE the board —
-   * grid, pool, combo bank, mint counter. An unchanged board is OMITTED from
-   * the delta: re-sending it would restore fresh gem ids on the guest and read
-   * as a whole-board rebuild.
-   */
-  let boardSyncKeys: [string, string] | null = null;
-  const boardSyncKey = (b: typeof quarry.board): string => {
-    const s = b.save() as {
-      grid: unknown; pool: unknown; comboCount: unknown; seq: unknown;
-    };
-    return JSON.stringify([s.grid, s.pool, s.comboCount, s.seq]);
-  };
 
   /**
    * HOST: publish one tick. Throttled because a game mutates many times a
@@ -5376,21 +5204,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (!net || !net.isHost) return;
     if (!force && now - lastPublishAt < PUBLISH_MS) return;
     lastPublishAt = now;
-    // #164: the room calls a match "live" on the first state publish; this is
-    // the client's mirror of that flag, so the departure doors know whether
-    // there is a rated match to claim.
     mpMatchLive = true;
-    // #117: only boards whose content changed since the last publish ride
-    // this delta. Join/resync snapshots (`netFullState`) always carry both.
-    const keys: [string, string] = [boardSyncKey(quarry.board), boardSyncKey(rivalQuarry.board)];
-    const boardsWire = [];
-    if (!boardSyncKeys || boardSyncKeys[0] !== keys[0]) {
-      boardsWire.push({ owner: players[0].id, data: quarry.board.save() });
-    }
-    if (!boardSyncKeys || boardSyncKeys[1] !== keys[1]) {
-      boardsWire.push({ owner: players[1].id, data: rivalQuarry.board.save() });
-    }
-    boardSyncKeys = keys;
     const protestsWire = [...protests.values()].map((p) => ({ x: p.tx, y: p.ty, until: p.until, owner: p.owner }));
     const trucksWire = trucks.trucks.map((t) => ({ ownerId: t.ownerId, depotId: t.depotId, factory: [...t.factory] as [number, number], route: t.route.map((r) => [...r] as [number, number]), segFast: t.segFast ? [...t.segFast] : [], leg: t.leg, t: t.t, reverse: t.reverse, deliveries: t.deliveries }));
     const carsWire = cars.cars.map((c) => ({ name: c.name, carIndex: (c as any).carIndex ?? 1, originTownId: (c as any).originTownId ?? null, destTownId: (c as any).destTownId ?? null, origin: (c as any).origin ? [...(c as any).origin] as [number, number] : null, dest: (c as any).dest ? [...(c as any).dest] as [number, number] : null, route: c.route.map((r) => [...r] as [number, number]), leg: c.leg, t: c.t, state: (c as any).state ?? "driving", waitMs: (c as any).waitMs ?? 0, fadeMs: (c as any).fadeMs ?? 0, fade: (c as any).fade ?? 1, arriveMs: (c as any).arriveMs ?? 0, lastTripKey: (c as any).lastTripKey ?? null }));
@@ -5407,10 +5221,6 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       cars: carsWire,
       rail: railWire(),
       clearedFields: [...clearedFields],
-      // #117: the field is omitted entirely when neither board changed —
-      // `buildPublish` keeps optional fields off the wire when undefined.
-      ...(boardsWire.length ? { boards: boardsWire } : {}),
-      crossPrompt,
       winner: winner ? { id: winner.id, source: winningSource } : null,
     } as any);
   }
@@ -5540,36 +5350,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         .concat(truckItems(trucks as any, atlasRef ?? undefined))
         .concat(trainItems(rail, atlasRef ?? undefined));
     }
-    // boards — already in this guest's seat frame. `mirrorSnapshot` renamed the
-    // host's "ai" (this guest's seat) to "you" on the way in, so the wire owner
-    // IS the local owner. Swapping again here showed the guest the HOST's board.
-    if (applied.boards) {
-      const byOwner = new Map(applied.boards.map((b) => [b.owner, b.data]));
-      const myData = byOwner.get(players[0].id);
-      const rivalData = byOwner.get(players[1].id);
-      if (myData) {
-        try { quarry.board.restore(myData); } catch {}
-        onBoardChange();
-      }
-      if (rivalData) {
-        try { rivalQuarry.board.restore(rivalData); } catch {}
-      }
-    }
-    // cross prompt (#112: a null prompt — resolved, expired or cleared — must
-    // take the guest's chooser down, not just silently keep it)
-    if (applied.crossPrompt) {
-      // Already mirrored: a prompt for THIS guest's board arrives as "you".
-      const ownerIsGuest = applied.crossPrompt.boardOwner === players[0].id;
-      if (isGuest() && ownerIsGuest) {
-        __showGuestCross(applied.crossPrompt as any);
-      } else if (!isGuest() && !ownerIsGuest) {
-        // Should not happen: host already handled its own prompt
-      }
-      crossPrompt = applied.crossPrompt as any;
-    } else {
-      crossPrompt = null;
-      if (isGuest()) __clearGuestCross();
-    }
+    // L15 (#230): boards and crossPrompt are gone from the wire — the board
+    // is tuning-only and blessings are retired, so nothing to restore here.
     // winner
     if (applied.winner && applied.winner.id) {
       const w = players.find((p) => p.id === applied.winner!.id);
@@ -5648,30 +5430,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         .concat(trainItems(rail, atlasRef ?? undefined));
       worldDirty = true;
     }
-    if ((msg as any).boards) {
-      const byOwner = new Map((msg as any).boards.map((b: any) => [b.owner, b.data]));
-      // Already mirrored by `mirrorDelta`: "you" is this guest's own board.
-      const myData = byOwner.get(players[0].id);
-      const rivalData = byOwner.get(players[1].id);
-      if (myData) { try { quarry.board.restore(myData); } catch {} onBoardChange(); }
-      if (rivalData) { try { rivalQuarry.board.restore(rivalData); } catch {} }
-    }
-    if ((msg as any).crossPrompt !== undefined) {
-      const cp = (msg as any).crossPrompt;
-      crossPrompt = cp ?? null;
-      if (isGuest()) {
-        if (cp) {
-          // Already mirrored: a prompt for THIS guest's board arrives as "you".
-          const ownerIsGuest = cp.boardOwner === players[0].id;
-          if (ownerIsGuest) __showGuestCross(cp);
-          else __clearGuestCross();   // the open chooser was for a prompt the host replaced
-        } else {
-          // #112: the host resolved/expired the prompt — `mirrorDelta` now
-          // preserves the explicit null, so the chooser comes down.
-          __clearGuestCross();
-        }
-      }
-    }
+    // L15 (#230): boards and crossPrompt are gone from the wire.
     if ((msg as any).winner !== undefined) {
       const w = (msg as any).winner;
       if (w && w.id) {
@@ -5764,71 +5523,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         if (r1 !== null && c1 !== null && r2 !== null && c2 !== null) {
           void rivalQuarry.board.trySwap(r1, c1, r2, c2, performance.now());
         }
-      } else if (what === "cross") {
-        // #112: ONE typed cross intent — `{ do: "cross", seq, choices }` —
-        // the exact shape the guest's chooser sends. The host validates the
-        // sequence, the exact pick count and the resource keys before the
-        // cascade's resolution callback ever runs:
-        //   • a duplicate/late seq resolves nothing (the prompt is gone — the
-        //     award already happened exactly once);
-        //   • a malformed body never resolves a half-award — the prompt is
-        //     dropped with the same empty fallback the timeout uses, so the
-        //     cascade cannot stall waiting for a reply that will never come.
-        const seq = typeof payload.seq === "number" && Number.isInteger(payload.seq) ? payload.seq : -1;
-        const validKeys = new Set<string>(RES_KEYS);
-        const choices: ResKey[] | null =
-          Array.isArray(payload.choices) &&
-          (payload.choices as unknown[]).every((c) => typeof c === "string" && validKeys.has(c))
-            ? (payload.choices as ResKey[])
-            : null;
-        const pending = pendingCross;
-        const prompt = crossPrompt;
-        if (pending && prompt && seq === prompt.seq && choices && choices.length === pending.picks) {
-          const resolve = pending.resolve;
-          pendingCross = null; crossPrompt = null;
-          clearCrossTimer();
-          resolve(choices);
-        } else if (pending && prompt && seq === prompt.seq) {
-          expireCrossPrompt();
-          toast("Cross choice rejected.", "info");
-        } else {
-          toast("Cross choice expired.", "info");
-        }
       } else if (what === "reset") {
-        // #116: a guest's Processing Plant Reset is an intent against its OWN
-        // (host-authoritative) board. The host enforces the per-seat cooldown,
-        // so replaying or forging requests cannot bypass it, and the fresh
-        // board reaches both views through the ordinary board sync. Explicit
-        // rule for busy states: a reset never interrupts a live cascade and
-        // never cancels a pending bounty prompt — refuse, don't queue.
         const now = performance.now();
         if (now - guestResetAt < RESET_COOLDOWN_MS) {
           const left = Math.ceil((RESET_COOLDOWN_MS - (now - guestResetAt)) / 1000);
           toast(`Processing Plant reset is cooling down — ${left}s to go.`, "info");
-        } else if (pendingCross && pendingCross.boardOwner === players[1].id) {
-          toast("Answer the bounty prompt first — the plant can't reset under it.", "info");
         } else if (rivalQuarry.board.busy) {
           toast("The plant is mid-cascade — try the reset again in a moment.", "info");
         } else {
           guestResetAt = now;
           rivalQuarry.board.resetNeutral();
           toast("Processing Plant collapsed. Fresh neutral board.", "info");
-        }
-      } else if (what === "bank") {
-        // L11 (#226): the BANK's intent, and the last trading intent there is.
-        // The host is authoritative: it validates the pair (both cargos real,
-        // not Gold, each at or below the rungs THIS seat has unlocked) and
-        // applies the exchange against the guest's own purse. A malformed or
-        // locked request is refused with a reason rather than half-applied —
-        // and it charges nothing, because `bankTrade` only moves a balance
-        // when the whole exchange is legal.
-        const give = String(payload.give), want = String(payload.want);
-        if (!isCargo(give) || !isCargo(want)) {
-          toast("Bank trade rejected.", "bad");
-        } else if (!bankCanExchange(p, give) || !bankCanExchange(p, want)) {
-          toast(`The ${CARGO[!bankCanExchange(p, give) ? give : want].name} exchange needs a rung you have not unlocked.`, "bad");
-        } else if (!bankTrade(p.purse, give, want, { unlocked: bankRungsFor(p) })) {
-          toast(`The bank wants ${BANK_RATE} ${CARGO[give].name}.`, "bad");
         }
       } else if (typeof payload.key === "string" || typeof (payload as any).do === "string" && ((payload as any).do === "protest_place" || (payload as any).key)) {
         // blackMarket intents — payload.key or protest_place
@@ -6031,7 +5736,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // there pointing at a host that cannot answer.
         if (state !== "connected") {
           pendingProtest = false;
-          __clearGuestCross();
+          // L15: cross retired
         }
       },
     });
@@ -7427,10 +7132,6 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // depot tree and the income clock read.
         depotTier: p.depotTier, townLevel: p.townLevel, townBonus: p.townBonus,
       })),
-      boards: [
-        { kind: "you", data: quarry.board.save() },
-        { kind: "ai", data: rivalQuarry.board.save() },
-      ],
       // live AI clocks START FRESH on load — a few seconds of drift is not
       // worth serialising a timer list for (the games feel identical).
       clocks: {},
@@ -7445,14 +7146,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   /**
    * Write the payload now.
    *
-   * `saveHeldBack` (L1e, #236) joins `savesOff` and `restartArmed` here: a boot
-   * that refused a new-loop save must not overwrite it, or the "open with
-   * ?loop=new" note would point at a world this fresh boot had already
-   * replaced. The player keeps the save they came back for; this session
-   * simply is not the one that owns the slot.
+   * L15 (#230): an old save (v1 / snap 15) is refused and must not be
+   * overwritten by this fresh boot, or the toast pointing at a new game would
+   * be a lie. `isOld` is the guard — the slot keeps what it had until the
+   * player clears it or starts over.
    */
   function saveNow() {
-    if (disposed || restartArmed || savesOff || saveHeldBack) return;
+    if (disposed || restartArmed || savesOff || isOld) return;
     try {
       localStorage.setItem(saveKey, JSON.stringify(collectSave()));
     } catch { /* private mode / quota — saving must never break the game */ }
@@ -7522,13 +7222,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       ? d.story.winningSource as any
       : null;
     oilBanterSeen = d.story?.oilBanterSeen === true;
-    for (const b of d.boards) {
-      if (b.kind === "ai") rivalQuarry.board.restore(b.data);
-      else quarry.board.restore(b.data);
-    }
-    // `Board.restore` mints fresh gem ids and fires no onChange, and the UI has
-    // already painted the pre-save board by now — without this the screen kept
-    // showing the OLD gems while clicks and drags acted on the restored ones.
+    // L15: boards no longer in save — tuning board starts fresh.
     onBoardChange();
     // pacing clocks start clean — no catch-up bursts after a refresh
     lastHarvest = now; lastAi = now; lastRaid = now;
@@ -8165,21 +7859,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     let lastFrameT = 0;
     const frame = (t: number) => {
       if (disposed) return;
-      // L1a (#232): the new loop's "sandbox-only" note waits until nothing
-      // covers the map — a boot-time toast would fire under the loading
-      // screen (z 95 over the toast lane's 55), a contract's briefing or the
-      // tour and auto-dismiss unseen.
       if (loopToastPending && !loading.active && !storyView && !tutorialView) {
         loopToastPending = false;
         toast("The new loop is sandbox-only for now.", "info");
       }
-      // L1e (#236): a save this boot refused for want of the flag says so, on
-      // the same terms as the note above — nothing covering the map, and one
-      // line naming the way back in. The save is still on the shelf (this
-      // boot does not write over it), so the instruction is true when read.
+      if (oldSaveToastPending && !loading.active && !storyView && !tutorialView) {
+        oldSaveToastPending = false;
+        toast(OLD_SAVE_TOAST, "info");
+      }
       if (saveToastPending && !loading.active && !storyView && !tutorialView) {
         saveToastPending = false;
-        toast(NEW_LOOP_SAVE_TOAST, "info");
+        toast(OLD_SAVE_TOAST, "info");
       }
       // RV-01: the lorries move in TILE units per millisecond, so the frame
       // needs a real dt (capped — a background tab must not teleport them).
@@ -8389,7 +8079,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      * hold one. True when the exchange moved — the same answer `onBank`
      * reports on the live path, minus the guest relay.
      */
-    bank: (give: Cargo, want: Cargo) => bankFor(me, give, want),
+    bank: (_give: Cargo, _want: Cargo) => "refused" as const,
     /**
      * L11 (#226): every seat's own purse, in `players` order — the LIVE
      * objects the economy spends from, where `players` above deliberately hands
@@ -8574,7 +8264,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     saveNow: () => { saveNow(); },
     /** L1e (#236): true when this boot found a new-loop save it could not
      *  restore and is holding the slot for the boot that can. */
-    get saveHeldBack() { return saveHeldBack; },
+    get saveHeldBack() { return isOld; },
     /** L4 (#218): the rival's tuning level sweep, on demand — the same call an
      *  AI turn makes, for tests that raise a rival depot by hand. */
     rivalTuning: () => { applyRivalTuning(); },
@@ -9085,9 +8775,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // the prompt timer dies (an old timer must never answer a newer prompt,
     // and a dead game must not resolve one at all), any open bounty chooser
     // comes down, and protest targeting is cleared.
-    clearCrossTimer();
-    pendingCross = null;
-    if (isGuest()) __clearGuestCross();
+    // L15: cross timers gone
     pendingProtest = false;
     loading.dispose();
     // GFX-01: the settings subscription and the composite layer die with the
