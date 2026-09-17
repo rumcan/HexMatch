@@ -70,14 +70,16 @@ export function mulberry32(seed: number) {
 
 // ══════════════════════════════════════════════════════════════════════════
 // X1 recovery — classic match-3 board and trading constants. The E11 cutover
-// deleted the board-era code wholesale; the map-agnostic `board.ts` and
-// `trade.ts` (plus their tests) were restored, and J1 wired them into the iso
-// game: `src/iso/quarry.ts` maps the six gem colours onto the six cargoes and
-// gates the harvest on the road/rail network, `src/iso/market.ts` drives the
-// trading rules over the player purses.
+// deleted the board-era code wholesale; the map-agnostic `board.ts` (plus its
+// tests) was restored, and J1 wired it into the iso game: `src/iso/quarry.ts`
+// maps the six gem colours onto the six cargoes and gates the harvest on the
+// road/rail network. The trading half of that recovery (`trade.ts`, then the
+// `iso/market.ts` offer board over it) was retired by L11 (#226): the bank —
+// `src/iso/bank.ts`, gated to the rungs a seat has unlocked — is the only
+// exchange left.
 //
 // Live surface: ResKey/RES_KEYS/RES (colours + panel copy), BOARD_W/BOARD_H
-// (the quarry grid), UPGRADE_EVERY (token clock), OFFER_LIFE (market expiry)
+// (the quarry grid), UPGRADE_EVERY (token clock)
 // and the RNG helpers above.
 //
 // NOT live, deliberately kept: the hex-era rule tables below (TileKey/TILES/
@@ -210,7 +212,6 @@ export const TAX_EVERY_ROUNDS = 6;
 export const BOARD_W = 7, BOARD_H = 8;
 export const CELL = 80;
 export const UPGRADE_EVERY = 20000;
-export const OFFER_LIFE = 40000;
 export const HEX_SIZE = 100;
 export const PLOT = 220;
 export const MAP_COLS = 6;

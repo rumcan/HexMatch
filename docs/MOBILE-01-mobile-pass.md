@@ -39,7 +39,7 @@ holds. Unit-pinned in `tests/unit/iso-camera.test.ts` ("MOBILE-01" blocks).
 ## 3. HUD and layout at phone sizes
 
 * `--safe-top` / `--topbar-h` custom properties now drive the top bar and
-  **every** fixed top that hangs off it (`.aside`, `.offer-tray`, `.toasts`,
+  **every** fixed top that hangs off it (`.aside`, `.toasts`,
   the ☰ popover, the rival peek), so a notched phone moves the whole stack
   together instead of shearing it. `--banner-h` (painted by `ui.ts`) lifts
   sheets and toasts clear of a story banner.

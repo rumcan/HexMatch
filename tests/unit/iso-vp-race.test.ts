@@ -76,7 +76,6 @@ describe("VP-01 the race to ten", () => {
         firstPave: s.firstPave === null ? "—" : MIN(s.firstPave),
         paves: s.paves,
         oreOnPaves: s.oreOnPaves,
-        offers: `+${s.offersPosted}/${s.offersTaken}`,
         vp: r.vp[s.id],
         // the tail of the state that explains a stall, printed rather than
         // asserted: a seat stops scoring for a reason, and it is nearly always

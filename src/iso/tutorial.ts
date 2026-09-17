@@ -44,7 +44,7 @@
 // it at any time without touching the preference.
 // ══════════════════════════════════════════════════════════════════════════
 import { BOARD_H, BOARD_W } from "../game/config";
-import { BANK_RATE } from "../game/trade";
+import { BANK_RATE } from "./bank";
 import {
   CARGO, CARGOES, TRANSPORT, UPGRADE_COST, VICTORY, TUNING, type Cargo,
 } from "./config";
@@ -357,14 +357,14 @@ export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
         kind: "shot",
         src: shotExpand,
         alt: "The purse chips along the bottom of the screen and the Bank tab open on the right",
-        caption: "Your purse runs along the bottom; the Bank tab trades four of one good for one of another.",
+        caption: "Your purse runs along the bottom; the Bank tab trades four of one good for one of another — within the rungs you have unlocked.",
       },
       points: [
         "That purse is the only money in the game. It buys Depots, roads, plants, Security Forces and Repair Crews — every price is printed on the button before you click it.",
         "<b>Ore is the gate.</b> Dirt Road needs only wood and stone, but paving, plants and the second Depot all want ore, so an Ore Mine is the first real objective.",
         newLoop
           ? "<b>Feed</b> logs every event of the match, and the inspector answers a hover with what a tile is and what it is worth."
-          : `<b>Bank</b> trades ${BANK_RATE} of one good for 1 of another with no rival needed; <b>Market</b> posts offers the rival may take; <b>Feed</b> logs every event of the match.`,
+          : `<b>Bank</b> trades ${BANK_RATE} of one good for 1 of another with no rival needed — it can rebalance what your rungs have unlocked, never skip a rung; <b>Feed</b> logs every event of the match.`,
         `Another <b>Processing Plant</b> (${plant}) beside another town widens where your Depots may deliver. All your plants share ONE board — a new plant adds reach, not throughput.`,
       ],
       tip: "Black Market cards (Blockade, Protest) cost Gold and land on the rival. A Protest ✊ shuts any public road for 2:00 — every truck stops, including yours.",

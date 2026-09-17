@@ -49,9 +49,12 @@
 import { MAP_W, MAP_H } from "../game/config";
 import {
   TRANSPORT, UPGRADE_COST, INDUSTRY_BY_KEY, FACTORY_FOOTPRINT, VICTORY, DEPOT_TREE,
-  DEPOT_TREE_ORDER, type Cargo, type DepotTypeDef,
+  DEPOT_TREE_ORDER, DISTANCE, CARGOES,
+  type Cargo, type DepotTypeDef,
 } from "./config";
 import { FREE_SETUP_DEPOTS, depotCostFor, priceDepot } from "./construction";
+import { distanceFactorForPath } from "./loop";
+import { BANK_RATE, bankAllowed, bankTrade, type CargoBag } from "./bank";
 import { FIELD_OCC, ROUGH, factoryTouchesTown, type Grid, type Industry } from "./grid";
 import {
   DIRS, DIR, tIdx, inMapT, hasTrack, canBuildOn, canAfford, tileCost, addCost,
@@ -933,12 +936,39 @@ export function planCandidates(
         // VP-01: value the DEPOT, not the industry — the tile's 4×4 catchment
         // is what harvests, and on a multi-tile footprint that is usually more
         // than the one industry A* happened to route to.
+        //
+        // L3 (#217) / L11 (#226): keep the planner in the seat's OWN lane.
+        //
+        // Two discounts, and both are needed. `distanceFactorForPath` is what
+        // the CLOCK pays a route of this length (the economy's own rule), so
+        // the ranking prices the pay the plan will actually earn. The lane
+        // falloff is the planner's finer version of the same curve: the bands
+        // are coarse (everything past `midTiles` is the one `far` number, so a
+        // 55-tile plan and a 130-tile plan look identical), and a route that
+        // rides the public highways is nearly free to BUILD (`path.cost`
+        // charges the trunk 0.3, or nothing when it is already someone's
+        // track), so nothing else in `score` separates "next door to my
+        // Factory" from "the far side of the map". Without that separation the
+        // two seats rank the same global list and simply race for the same
+        // industry — whoever acts first takes it. The race harness stalled a
+        // seat at 0★ on seed 7 exactly that way: its two free ore mines were
+        // claimed by the other seat's turn while the three it could reach were
+        // outranked by the same far-first list, leaving it with no ore, no
+        // plants and no paves for the rest of the match. With the lane term
+        // each seat prefers its own neighbourhood — the thing
+        // `chooseRivalFactorySpot`'s lane richness already promises at boot.
+        //
+        // The shipped loop's cargo comes off the plant board and is NOT
+        // distance-scaled, so both discounts are new-loop only.
         const value = catchmentValue(state, locks, opts.stock, hx, hy, now, opts.oreUrgency ?? 1);
         // L14 (#229): …and when the tree has asked for a cargo, the type that
         // produces it outranks an equally good Depot of any other cargo.
         const wanted = cargo !== null && want.has(cargo);
-        const score = (value / Math.max(0.3, path.cost)) * (wanted ? WANT_CARGO_BONUS : 1);
-        out.push({ industry: ind, hx, hy, facing, path, kind: kindPref, cost, depotCost, score, value });
+        const reach = Math.abs(factory.tx - gx) + Math.abs(factory.ty - gy);
+        const lane = 1 / (1 + reach / (2 * DISTANCE.midTiles));
+        const worth = newLoop ? value * distanceFactorForPath(path.tiles.length) * lane : value;
+        const score = (worth / Math.max(0.3, path.cost)) * (wanted ? WANT_CARGO_BONUS : 1);
+        out.push({ industry: ind, hx, hy, facing, path, kind: kindPref, cost, depotCost, score, value: worth });
         break;   // one spot per industry is enough — the cheapest we found
       }
     }
@@ -956,6 +986,70 @@ export function planCandidates(
   return out;
 }
 
+/**
+ * L11 (#226): ONE exchange rule for both seats — 4:1, and never a rung the
+ * seat has not unlocked (`bankTrade` with this seat's own `unlocked` tier).
+ *
+ * The rival used to trade through the market's record, which had no tree in it
+ * at all: it could turn Wood into Oil on the opening purse and build a Depot
+ * the player could not. Post-#226 the gate is DATA the caller passes, and this
+ * planner is the rival's caller. On the SHIPPED loop there is no tree —
+ * `unlocked` is null and the rule is exactly the 4:1 bank the seat has always
+ * had (`bankAllowed(null)` opens every cargo but Gold, PP-08). The rival needs
+ * it there: every shipped-loop Depot costs Wood + Stone + Grain + OIL from one
+ * table and the trickle alone never pays for the second one, which is the
+ * PP-07 stall — a rival that expands twice and idles at 2★ forever.
+ *
+ * Aimed at ONE shortage, greedily, from the largest surplus (the shape the
+ * live turn always had). `guard` is what the seat is saving for, so the sell
+ * side can never empty a cargo the depot plan still needs — the AI-01 churn
+ * guard. Returns the number of exchanges actually made.
+ *
+ * It stops the moment the want is SATISFIED (`opts.need`, the amount of `want`
+ * the caller is aiming at) as well as when the budget runs out: a bank with
+ * budget to spare must not keep converting surplus once the shortage it was
+ * called for is gone. That ceiling is the live turn's own history — the ported
+ * 4:1 loop traded `while purse[want] < need` — and without it the pass buys
+ * 16 Ore for a 4-Ore pave batch, the churn AI-01 measured as a passive rival.
+ *
+ * The sell side never touches the cargo being bought (`c !== want`) and never
+ * empties a cargo the caller is saving for (`guard`) — AI-01's churn guard, in
+ * the one form both seats can share.
+ */
+export function planBankTrades(
+  purse: Purse,
+  want: Cargo,
+  guard: Purse = {},
+  opts: {
+    unlocked?: number | null; budget?: number; rate?: number;
+    /** How much of `want` the seat is aiming at. Default: no ceiling, i.e.
+     *  the budget alone decides (the shape callers with no target use). */
+    need?: number;
+  } = {},
+): number {
+  const rate = opts.rate ?? BANK_RATE;
+  const budget = Math.max(0, opts.budget ?? 2);
+  const need = opts.need ?? Infinity;
+  // The caller's purse object, by REFERENCE: `bankTrade` moves the balance in
+  // place, so the seat the planner is planning for is the seat that pays.
+  const bag = purse as CargoBag;
+  const unlocked = opts.unlocked ?? null;
+  let trades = 0;
+  while (trades < budget && (purse[want] ?? 0) < need) {
+    // Gold is outside the bank in both directions (PP-08) — the same rule
+    // `bankTrade` enforces, restated here so the picker cannot propose it.
+    const surplus = (CARGOES as readonly Cargo[])
+      .filter((c) => c !== "gold" && c !== want && bankAllowed(c, unlocked))
+      .filter((c) => (purse[c] ?? 0) >= rate)
+      .filter((c) => (purse[c] ?? 0) - rate >= (guard[c] ?? 0))
+      .sort((a, b) => (purse[b] ?? 0) - (purse[a] ?? 0))[0];
+    if (!surplus) return trades;
+    if (!bankTrade(bag, surplus, want, { unlocked, rate })) return trades;
+    trades++;
+  }
+  return trades;
+}
+
 export const bestCandidate = (
   state: EconomyState, factory: Factory, opts: PlanOptions,
 ): Candidate | null => planCandidates(state, factory, opts)[0] ?? null;
@@ -965,7 +1059,7 @@ export const bestCandidate = (
  * `planCandidates` under a hypothetical bottomless purse, with the answer
  * cached against the world it was computed from.
  *
- * The bank's stall turn and the market offer both ask the same question —
+ * The stall turn's planner and the reserve reader both ask the same question —
  * "what would the rival build next if money were no object" — and it is an
  * expensive one: with affordability lifted, NOTHING prunes the search, so
  * every industry × every depot spot costs a real A* (~0.2 s on the 144×144
@@ -978,8 +1072,8 @@ export const bestCandidate = (
  * world (`track` + `harvesters` + the factory's seat) and of the free
  * allowances. The inputs that still vary call to call — `stock` (scarcity),
  * `oreUrgency`, `now` (blockades) — only feed `catchmentValue`, i.e. they
- * re-ORDER the list, and the two callers (`rivalSkintTarget` in game.ts and
- * its twin in the race harness) rank by shortfall themselves with the score
+ * re-ORDER the list, and the callers (`rivalPlanReserve` in game.ts and its
+ * twin in the race harness) rank by shortfall themselves with the score
  * only as a tiebreak. A one-build-old tiebreak is an honest price for making
  * the stall turn free. Callers that need the true ranking call
  * `planCandidates` directly.
@@ -1048,7 +1142,7 @@ function deepPlanFingerprint(state: EconomyState): number {
 }
 
 /**
- * The bank/market twin of `planCandidates`: same default tier order, the
+ * The affordability-lifted twin of `planCandidates`: same default tier order, the
  * same cost model, bottomless affordability, and the result shared by every
  * seat of one economy until the world moves. Returns the CACHED array —
  * callers must treat it (and its Candidate objects) as read-only; clone
@@ -1124,7 +1218,7 @@ export interface RivalSpotOptions {
  * AI-01: the cargos a mid-game lane is judged by — everything construction
  * spends besides Wood (which every forest prints) and Gold (which buys
  * nothing built of track). A lane is richer the more of these it can
- * eventually harvest without the 4:1 bank.
+ * eventually harvest without trading for the cargo it lacks.
  */
 const LANE_CARGOS: ReadonlySet<Cargo> = new Set(["stone", "grain", "oil", "ore"]);
 
@@ -1236,7 +1330,7 @@ export function chooseRivalFactorySpot(
   // showed what happens when it is all that is asked: a far corner whose only
   // nearby cargo is WOOD opens fine — two free forest Depots, a real plan —
   // and then starves: Depots past the free one need Stone/Grain/Oil, every
-  // Ore for paving has to come through the 4:1 bank, and the seat is still
+  // Ore for paving has to come from an Ore Mine the lane can reach, and it is
   // passing 0★ at twenty minutes. Distance-ranked alone, the search handed
   // the rival the FARTHEST such corner by construction. The probe below
   // therefore asks a second question of every spot and lets the answer do
@@ -1245,7 +1339,7 @@ export function chooseRivalFactorySpot(
   // routing, so it is free — and the search commits to the RICHEST probed
   // lane (distance breaks ties, like before). A wood-only corner keeps an
   // honest answer of 0 and loses to any lane a mid-game can actually be
-  // built out of: the bank can bridge one missing cargo, it cannot bridge
+  // built out of: one reachable cargo can bridge a gap, it cannot bridge
   // them all. Bounded probes keep a pathological map from stalling the
   // boot; the ranked fallback below preserves today's behaviour there.
   const tries = Math.max(1, opts.probes ?? 24);
@@ -1603,18 +1697,12 @@ export interface RivalPace {
   /** Behind by a whole plant's worth of points: stop investing in income. */
   sprint: boolean;
   /**
-   * Exchanges the 4:1 bank may make in one turn (2 is the player's rhythm, and
-   * the rival's cruise rate). Doubling THIS is what sprinting means: the same
-   * milestone, reached in half the turns.
-   *
-   * The milestone itself is deliberately NOT enlarged. An earlier version aimed
-   * a sprinting rival at eight tiles (32 Ore) instead of four (16), on the theory
-   * that a losing seat should swing bigger; on seed 99 of the 5-seed race that
-   * produced the worst possible result — 0★ for the whole game, because a poor
-   * seat cannot assemble 32 Ore, so it sold four stacks a turn toward a target it
-   * could never reach and stopped affording the economy it needed to reach it.
-   * A plan has to be short enough to finish. `planUpgrades` still paves all eight
-   * tiles at once when the Ore happens to be there.
+   * L11 (#226): exchanges the BANK may make in one turn (2 is the player's own
+   * rhythm and the rival's cruise rate). Doubling THIS is what sprinting means
+   * — the same milestone, reached in half the turns — and the gate that keeps
+   * it honest lives in `bank.ts`, not here: every exchange is checked against
+   * the seat's unlocked rungs (and Gold is outside it in both directions,
+   * PP-08).
    */
   bankPerTurn: number;
   /**
@@ -1634,7 +1722,7 @@ export interface RivalPace {
 }
 
 /**
- * The rival's read of the scoreboard, and the four numbers that follow from it.
+ * The rival's read of the scoreboard, and the three numbers that follow from it.
  *
  * Pure, and deliberately so: it takes two totals and the target, never the
  * board, so it can be argued about in a test table instead of inferred from a

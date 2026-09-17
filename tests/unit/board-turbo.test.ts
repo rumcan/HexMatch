@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Board, BOARD_ANIMATION_MS, FAST_ANIMATION_MS } from "../../src/game/board";
 import { createOriginalUi } from "../../src/game/ui";
-import { createIsoMarket, emptyBag } from "../../src/iso/market";
+import { emptyBag } from "../../src/iso/bank";
 import { mulberry32, setRng } from "../../src/game/config";
 
 /** Checkerboard: no accidental matches; every painted match is deliberate. */
@@ -110,9 +110,10 @@ describe("issue #152 — turbo catch-up while moves are queued", () => {
 describe("issue #152 — fading remnants in the DOM", () => {
   function uiFixture() {
     const board = boardFixture();
-    const market = createIsoMarket([{ i: 0, id: "you", name: "You", human: true, purse: emptyBag() }]);
-    const ui = createOriginalUi(board, market, market.players[0], {
-      onTool: vi.fn(), onRecenter: vi.fn(), onSwap: vi.fn(), onReset: vi.fn(), onBlackAction: vi.fn(),
+    const seat = { id: "you", name: "You", res: emptyBag(), unlocked: null };
+    const ui = createOriginalUi(board, seat, {
+      onTool: vi.fn(), onRecenter: vi.fn(), onSwap: vi.fn(), onReset: vi.fn(),
+      onBank: vi.fn(() => "done" as const), onBlackAction: vi.fn(),
     });
     document.body.append(ui.el);
     board.onChange = ui.renderBoard;

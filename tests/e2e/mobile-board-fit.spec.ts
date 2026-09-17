@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { bootBudget, isPhoneProject } from "./boot";
 
 // ══════════════════════════════════════════════════════════════════════════
-// #163 — on a phone, switching Processing Plant → Bank (or Market/Feed) and
+// #163 — on a phone, switching Processing Plant → Bank (or Feed) and
 // back must NOT grow the match-3 board. The old fit measured the plant slot
 // mid tab-switch, when the outgoing pane still shared the flex space: the
 // box came back full-width-but-a-sliver-tall, the cell dropped to its 30px
@@ -88,9 +88,10 @@ test("phone: tab round-trips never resize the board and it keeps filling the slo
     return b ? Math.max(b.gridW - b.slotW, b.gridH - b.slotH) : 999;
   }, { timeout: 2000 }).toBeLessThanOrEqual(2);
 
-  // Plant → Bank / Market / Feed → Plant, twice each — the heart of #163.
+  // Plant → Bank / Feed → Plant, twice each — the heart of #163.
+  // (L11 / #226 dropped the Market tab from the strip on every loop.)
   for (let round = 0; round < 2; round++) {
-    for (const tab of ["bank", "market", "feed"] as const) {
+    for (const tab of ["bank", "feed"] as const) {
       await page.locator(`.tab[data-tab="${tab}"]`).click();
       await page.waitForTimeout(120);
       await page.locator('.tab[data-tab="plant"]').click();

@@ -71,7 +71,11 @@ interface IsoHook {
   eco: import("../../src/iso/economy").EconomyState;
   board: import("../../src/game/board").Board;
   reach: Record<string, number>;
-  market: import("../../src/iso/market").IsoMarket;
+  /**
+   * L11 (#226): every seat's LIVE purse, in `players` order — the offer board
+   * used to hand these out (`market.players[i].res`).
+   */
+  purses: Record<string, number>[];
   refreshQuarry: (now?: number) => unknown;
   setTool: (t: string) => void;
   aiTick: (now?: number) => void;
@@ -549,8 +553,8 @@ describe("PP-05 the rival pays the same Depot cost", () => {
     h.eco.factories.push({ owner: "ai", ownerId: 2, tx: quarry.hx, ty: quarry.fy });
     h.finishSetup();
 
-    const rival = h.market.players[1];
-    expect(rival.res.oil ?? 0).toBe(0);
+    const rival = h.purses[1];
+    expect(rival.oil ?? 0).toBe(0);
     const t0 = 1_000_000;
     for (let i = 0; i < 4; i++) h.aiTick(t0 + i * 9000);
 
@@ -558,7 +562,7 @@ describe("PP-05 the rival pays the same Depot cost", () => {
     // exactly one Depot: the free opening one. The other three turns are
     // refused because Oil costs Oil — not silently built for free.
     expect(rivalDepots).toHaveLength(1);
-    expect(rival.res.oil ?? 0).toBe(0);
+    expect(rival.oil ?? 0).toBe(0);
     expect([...h.track.owner].some((o) => o === 2)).toBe(true);
   }, 15_000);
 });

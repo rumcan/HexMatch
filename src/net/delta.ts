@@ -141,8 +141,7 @@ export interface PublishFields {
   players: DeltaPlayer[];
   setupPhase: boolean;
   won: boolean;
-  /** MP-AUDIT: market parity, protests, vehicle presentation, boards, crossPrompt, winner */
-  market?: Snapshot["market"];
+  /** MP-AUDIT: protests, vehicle presentation, boards, crossPrompt, winner */
   protests?: Snapshot["protests"];
   /** L9 (#224): live industry Blockades — see `DeltaMsg["blockades"]`. */
   blockades?: Snapshot["blockades"];
@@ -205,7 +204,6 @@ export function buildPublish(track: Track, dirty: DirtyTiles, f: PublishFields):
     players: f.players,
     setupPhase: f.setupPhase,
     won: f.won,
-    ...(f.market !== undefined ? { market: f.market } : {}),
     ...(f.protests !== undefined ? { protests: f.protests } : {}),
     ...(f.blockades !== undefined ? { blockades: f.blockades } : {}),
     ...(f.trucks !== undefined ? { trucks: f.trucks } : {}),

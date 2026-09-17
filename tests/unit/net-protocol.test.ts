@@ -79,7 +79,7 @@ function wire<T extends HexProtocol>(msg: T): T {
 }
 
 describe("MP-02 protocol version", () => {
-  it("is a positive integer, and 7 since #186 added the room's match settings", () => {
+  it("is a positive integer, and 9 since L11 / #226 shrank the trade wire", () => {
     // v2 (MP-05) added `snapshot-chunk`: a full state is ~110 KiB against a
     // 16 KiB frame, so join/resync state crosses as N frames. v3 (PP-14b)
     // added `rivalSabotage` (Black-Market sabotage on the guest-seat plant);
@@ -104,7 +104,10 @@ describe("MP-02 protocol version", () => {
     // it would sit on a dark, silent board through a reconnect and never free
     // a stranded opponent — the two seats would disagree about whether the
     // match is recoverable, which is what the version gate is for.
-    expect(PROTOCOL_VERSION).toBe(8);
+    // v9 (L11 / #226) drops the market intent and the snapshot/delta `market`
+    // field (live offers): the bank is the only exchange left, and a v8 peer
+    // would still be posting and taking offers the host no longer reads.
+    expect(PROTOCOL_VERSION).toBe(9);
     expect(Number.isInteger(PROTOCOL_VERSION)).toBe(true);
     expect(PROTOCOL_VERSION).toBeGreaterThan(0);
   });
@@ -216,7 +219,9 @@ describe("MP-02 wire round-trip", () => {
   });
 
   it("round-trips every intent action", () => {
-    const actions: IntentMsg["action"][] = ["build", "demolish", "harvest", "trade", "skill"];
+    const actions: IntentMsg["action"][] = [
+      "build", "demolish", "harvest", "trade", "skill", "bank",
+    ];
     for (const action of actions) {
       const msg: IntentMsg = { type: "intent", action, payload: { tx: 3, ty: 4 } };
       expect(wire(msg)).toEqual(msg);

@@ -769,17 +769,14 @@ describe("VP-01 the rival reads the scoreboard", () => {
     expect(rivalPace(3.5, 2.5, 10).sprint).toBe(true);    // the GAP counts, not the totals
     expect(rivalPace(2, 4, 10)).toEqual(cruise);            // winning → keep compounding income
     const pace = rivalPace(1, 0, 10);
-    expect(pace.bankPerTurn).toBeGreaterThan(cruise.bankPerTurn); // more trades a turn
-    expect(pace.oreUrgency).toBeGreaterThan(cruise.oreUrgency);  // …and it chases ore mines
-    // …and NOTHING else. In particular the goal does not grow: an earlier
-    // version let a sprinting rival point its bank at eight tiles (32 Ore)
-    // instead of four, and on seed 99 of the 5-seed race that seat scored 0★ for
-    // the entire game — it sold four stacks a turn toward a milestone it could
-    // never reach and stopped affording the economy that would have carried it
-    // there. A plan has to be short enough to finish. The policy's whole surface
-    // is asserted here so that enlarging it is a decision, not an accident
-    // (`planUpgrades` still paves all eight tiles in one go when the Ore is
-    // already in the purse, which is the half of the idea that survived).
+    expect(pace.oreUrgency).toBeGreaterThan(cruise.oreUrgency);  // it chases ore mines
+    // L11 (#226): the sprint doubles the BANK's per-turn exchanges, and that is
+    // the whole of it — the policy is "sprint, bank harder, chase ore, deny",
+    // and enlarging the table must be a decision. The bank itself is the one
+    // exchange that survived the ticket, and it is gated: the exchanges are
+    // only legal within the rungs this seat has unlocked (`bank.ts`), which is
+    // what keeps the pace lever from being a shortcut around L5's tree.
+    expect(pace.bankPerTurn).toBeGreaterThan(cruise.bankPerTurn);
     expect(Object.keys(pace).sort()).toEqual(["bankPerTurn", "deny", "oreUrgency", "sprint"]);
   });
 

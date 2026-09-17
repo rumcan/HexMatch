@@ -17,8 +17,8 @@
 //     PP-08 tightens that to a hard rule: Gold is reserved for Black Market
 //     sabotage and pays for NOTHING else. Security Forces (defensive, not
 //     sabotage) were repriced to materials (game/config.ts SECURITY.cost),
-//     and the market refuses gold in every exchange — bank and offers, both
-//     directions (`trade.ts` blocked set, wired in iso/market.ts).
+//     and the bank refuses gold in every exchange, both directions
+//     (`src/iso/bank.ts` — the offer board L11 / #226 retired was the other).
 // ══════════════════════════════════════════════════════════════════════════
 import { TILE_W, TILE_H, MAP_W, MAP_H, HW, HH } from "../game/config";
 import manifestJson from "../../assets/iso-atlas/manifest.json";

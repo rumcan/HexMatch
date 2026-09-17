@@ -9,7 +9,7 @@
 // (`src/game/board.ts`) is mounted as the Quarry panel, and its harvest is
 // gated by the same reachable-cargo set `economy.ts` already computes for
 // scoring. Cargo has ONE owner — the player purse. The board owns gems, the
-// market owns live offers (escrow), and neither keeps a balance. The old
+// board owns gems, and neither keeps a balance. The old
 // dispatcher was deliberately NOT revived — J2 deleted `hexmap.ts`,
 // `actions.ts` and `state.ts` once this file proved the iso grid feeds the
 // board, so `src/game/` is now board + trade + constants and nothing else.
@@ -95,7 +95,8 @@ import {
   type ScoreState, type VpEvent, type LoopScoring,
 } from "./victory";
 import {
-  aiBuildStep, chooseRivalFactorySpot, deepPlanCandidates, planUpgrades, executePaves,
+  aiBuildStep, chooseRivalFactorySpot, deepPlanCandidates, planBankTrades,
+  planUpgrades, executePaves,
   paveCandidates, rivalPace, scoreCargoWant, treeGoal, treeWants, type RivalPace,
   planRailMove, executeRailMove,
 } from "./ai";
@@ -141,7 +142,10 @@ import {
   FREE_SETUP_DEPOTS, costCompact, costLabel, depotTypeLabel,
   priceDepot, priceTownUpgrade, rungLabel, shortfallLabel,
 } from "./construction";
-import { bankTrade } from "../game/trade";
+// L11 (#226): the bank — the one exchange left, and the rung gate it obeys.
+// `bankAllowed` is what the HUD's selects ask too, so a locked cargo cannot be
+// clicked and then refused: the button and the rule are the same question.
+import { BANK_RATE, bankAllowed, bankTrade, isCargo, toBag, type CargoBag } from "./bank";
 import type { BoardObstacles, CrossKind } from "../game/board";
 import {
   MAP_W, MAP_H, BANDIT_MS, PROTEST_MS, SABOTAGE, SECURITY,
@@ -184,7 +188,6 @@ import {
   type RailState, type RailView, type RailStructure,
 } from "./rail";
 import { loadRailwaySprites } from "./rail-art";
-import { createIsoMarket, toBag, chooseRivalOffer, type CargoBag, type IsoMarket } from "./market";
 import { createOriginalUi, RAIL_TOOL_KEYS, type OriginalUi } from "../game/ui";
 import { HUD_ICONS, cargoIconHtml, costMarkup } from "../game/hud-icons";
 // SFX-01: the UI sound layer. Everything the player DOES on the map (a road
@@ -360,7 +363,8 @@ export type Tool =
   | "rail" | "platform" | "raildepot" | "railway";
 
 export interface PlayerState {
-  /** Stable market index — offers are routed by it (`trade.ts`). */
+  /** Stable seat index — the wire, the save and the HUD all address a seat by
+   *  it (L11 / #226: it used to route trade offers; those are gone). */
   i: number;
   id: string;
   name: string;
@@ -732,8 +736,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   // ── AI-01: how hard the rival plays ────────────────────────────────────────
   // One variable, read lively everywhere the rival's pacing shows up: the
-  // build/idle clocks, expansion-per-turn, the pave batch, the bank budget,
-  // the market cadence and the sabotage switches. Because the turn itself is
+  // build/idle clocks, expansion-per-turn, the pave batch, the raid cadence
+  // and the sabotage switches. Because the turn itself is
   // shared code, flipping the difficulty mid-match (the top-bar selector runs
   // `setRivalSkill`) just changes the numbers the NEXT tick reads — no replay,
   // no reload, and nothing in the ledger to migrate.
@@ -970,9 +974,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // two-portrait wire exists; no board can pay oil during synchronous boot.
   let onFirstOilHarvest: () => void = () => {};
 
-  // ── J1: quarry + market + the restored UI ────────────────────────────────
-  // Cargo has exactly one owner (the purse above). The board owns gems and the
-  // market owns live offers; the gate between board and purse is `quarry.ts`.
+  // ── J1: quarry + the restored UI ─────────────────────────────────────────
+  // Cargo has exactly one owner (the purse above). The board owns gems; the
+  // gate between board and purse is `quarry.ts`. L11 (#226) removed the offer
+  // board that used to sit between the two, so the bank is the only exchange
+  // left and the purse is the only place a balance lives.
   // U1: the board and trading tabs are rendered by the recovered `ui.ts`
   // chrome, not by the old floating J1 panels.
   let onBoardChange: () => void = () => {};
@@ -1071,82 +1077,38 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const getRivalView = (): RivalBoardView | null => rivalBoardView;
   const paintRivalView = () => getRivalView()?.paint();
 
-  // W6: the rival's answers and expirations are trade events — surface them
-  // in the Feed so "the rival answered my offer" is visible, not silent.
-  const market: IsoMarket = createIsoMarket(players.map((p) => ({
-    i: p.i, id: p.id, name: p.name,
-    // #113: in a hosted game BOTH seats are people. Seat 1's `human:false` is
-    // the solo-AI marker; copied into the market it taught `market.tick` to
-    // run the solo AI-acceptance policy on the human guest — auto-spending
-    // another player's inventory on offers they never accepted. A networked
-    // market is all-human: offers only leave the board by expiry, cancellation
-    // or a validated acceptance intent.
-    // #186: …unless the host filled that seat with a machine, in which case the
-    // seat IS an AI and the AI-acceptance policy is exactly what should run on
-    // it — there is no person there to accept anything.
-    human: isMp() ? !aiOpponent || p !== rival : p.human,
-    purse: p.purse,
-  })), {
-    onOfferClosed: (o, how) => {
-      const body = `${o.giveN} ${CARGO[o.give].name} → ${o.wantN} ${CARGO[o.want].name}`;
-      // AI-01: offers flow in both directions now (the rival posts too), so
-      // the line has to say WHOSE offer left the board, and how.
-      if (o.from === players.find((p) => p.human)?.i) {
-        if (how === "accepted") ui.feed(`Rival took your offer: ${body}`, rival.name);
-        else ui.feed(`Your offer expired — escrow refunded (${body})`);
-      } else if (how === "accepted") ui.feed(`You took the rival's offer: ${body}`);
-      else ui.feed(`Rival's offer expired (${body})`, rival.name);
-    },
-  });
-  const meTrader = market.players[0];
+  // ── L11 (#226): the bank, and nothing else ───────────────────────────────
+  // The offer board is gone — with it the escrow, the expiry clock, the
+  // rival's answer/post policy, the four guest intents and the snapshot
+  // fields that carried it. What is left is the bank, and the bank may not
+  // skip a rung: under the new loop a seat can only exchange cargos whose
+  // `DEPOT_TREE` row is at or below the rungs it has unlocked (`bank.ts`),
+  // which is the same gate `priceDepot` applies to a build. The shipped loop
+  // has no tree, so its bank keeps the rule it always had (everything but
+  // Gold). Gold is outside both (PP-08): it pays for Black Market sabotage
+  // and for nothing else.
+  //
+  // MP-parity: the host owns the purse. A guest's exchange is a REQUEST
+  // (`action: "bank"`) the host validates and applies against the guest's own
+  // player record — the UI says "sent to the host" until the delta lands, the
+  // same door the rails and the Black Market use.
+  function bankRungsFor(p: PlayerState): number | null {
+    return newLoop ? p.depotTier : null;
+  }
 
-  // MP-AUDIT: market parity — host is authoritative, guest relays via intents.
-  // Escrow, pursey and offer list are synced via snapshot/delta; guest mutators
-  // become intents so host can apply them against the guest's player record.
-  const __origPost = market.post.bind(market);
-  const __origCancel = market.cancel.bind(market);
-  const __origAccept = market.accept.bind(market);
-  const __origBank = market.bank.bind(market);
-  const mpMarketSend = (payload: Record<string, unknown>): boolean => {
-    if (!isMp()) return false;
-    if (isGuest()) {
-      // #114: a relay is a REQUEST, not a trade. The UI reads `relayPending`
-      // and says "sent — waiting for the host" instead of declaring success
-      // (and the trade only exists once the host's delta says so).
-      market.relayPending = true;
-      net?.sendIntent("market", payload);
-      return true;
-    }
-    return false;
-  };
-  market.post = ((p: any, give: any, giveN: any, want: any, wantN: any) => {
-    market.relayPending = false;
-    if (mpMarketSend({ do: "post", give, giveN, want, wantN })) return true;
-    const ok = __origPost(p, give, giveN, want, wantN);
+  /** Is this cargo exchangeable at `p`'s seat right now? */
+  const bankCanExchange = (p: PlayerState, cargo: Cargo): boolean =>
+    bankAllowed(cargo, bankRungsFor(p));
+
+  /**
+   * The bank, on the host/solo seat. One owner of the balance (`p.purse`),
+   * one rule (`bankTrade`), and a publish when a room is watching.
+   */
+  function bankFor(p: PlayerState, give: Cargo, want: Cargo): boolean {
+    const ok = bankTrade(p.purse, give, want, { unlocked: bankRungsFor(p) });
     if (ok && isMp()) publishNet(performance.now(), true);
     return ok;
-  }) as typeof market.post;
-  market.cancel = ((p: any, id: any) => {
-    market.relayPending = false;
-    if (mpMarketSend({ do: "cancel", id })) return true;
-    const ok = __origCancel(p, id);
-    if (ok && isMp()) publishNet(performance.now(), true);
-    return ok;
-  }) as typeof market.cancel;
-  market.accept = ((p: any, id: any) => {
-    market.relayPending = false;
-    if (mpMarketSend({ do: "accept", id })) return true;
-    const ok = __origAccept(p, id);
-    if (ok && isMp()) publishNet(performance.now(), true);
-    return ok;
-  }) as typeof market.accept;
-  market.bank = ((p: any, give: any, want: any) => {
-    market.relayPending = false;
-    if (mpMarketSend({ do: "bank", give, want })) return true;
-    const ok = __origBank(p, give, want);
-    if (ok && isMp()) publishNet(performance.now(), true);
-    return ok;
-  }) as typeof market.bank;
+  }
 
   // MOBILE-01: the two camera/names actions the top bar, the ☰ menu and the
   // floating touch cluster ALL offer. One closure each, so the three doors
@@ -1209,9 +1171,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (depot) seedSessionObstacles(depot);
     toast("Processing Plant collapsed. Fresh neutral board.", "info");
   }
-  // Original HUD (U1). It takes the live board + market + the player purse and
+  // Original HUD (U1). It takes the live board and the player's own seat and
   // wires the BUILD / BLACK MARKET / QUARRY / chips chrome to them.
-  ui = createOriginalUi(quarry.board, market, meTrader, {
+  ui = createOriginalUi(quarry.board, {
+    // L11 (#226): the chrome's view of the LOCAL seat. `res` is the live purse
+    // object the game mutates and `unlocked` reads the rungs off the seat's own
+    // record every paint, so a rung won mid-session opens the bank the same
+    // frame (and no copy of either can go stale).
+    id: me.id,
+    get name() { return me.name; },
+    res: me.purse,
+    get unlocked() { return newLoop ? me.depotTier : null; },
+  }, {
     // #187: every door the chrome has out of a placement — the hint's ✕, the
     // touch chip, a re-tap of the armed Build button — asks for the pointer,
     // and asking for the pointer IS the cancel: `cancelPlacement` takes the
@@ -1300,6 +1271,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // in a hosted game, so the selector is simply not built.
     onSkill: isSolo() ? (key) => setRivalSkill(key) : undefined,
     skill: isSolo() ? skillKey : undefined,
+    /**
+     * L11 (#226): the bank exchange. A guest's is a REQUEST — the host owns
+     * the purse, validates the pair against the guest seat's own rungs and
+     * applies it; the trade exists only once the host's delta says so. Solo
+     * and host apply it here and now.
+     */
+    onBank: (give, want) => {
+      if (isGuest()) {
+        if (!net?.sendIntent("bank", { do: "bank", give, want })) return "refused";
+        return "relayed";
+      }
+      return bankFor(me, give, want) ? "done" : "refused";
+    },
   }, { rail: railAvailable, newLoop });
   onBoardChange = () => ui.renderBoard();
   root.appendChild(ui.el);
@@ -4352,19 +4336,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     rivalQuarry.refresh(now);
   }
 
-  /** Per frame: board effects, the token spawn, and the market clock. */
+  /** Per frame: board effects, the token spawn and the autoplay clocks. */
   function quarryTick(now: number) {
-    // MP-05: on a guest this whole family is host-owned — the boards, the
-    // market and the sabotage clocks all live where the sim lives. The guest
-    // renders the board panel from its own (inert) grid and changes nothing.
+    // MP-05: on a guest this whole family is host-owned — the boards and the
+    // sabotage clocks all live where the sim lives. The guest renders the
+    // board panel from its own (inert) grid and changes nothing.
     if (isGuest()) return;
-    market.tick(now);
     if (phase !== "play") return;
-    // MP-05: the rival's market policy is solo-only. In a hosted game seat 1 is
-    // a person: the host must not post offers on their behalf.
-    // #186: an AI-FILLED seat is the exception — the host is that seat's player,
-    // so its offers are posted here exactly as they are in solo.
-    if (isSolo() || aiOpponent) rivalMarketOffer(now);
     quarry.tick(now);
     // L4 (#218): a session whose budget is spent and whose board has stopped
     // moving closes ITSELF — the yield lands the moment the last cascade
@@ -4419,54 +4397,6 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   }
 
   /**
-   * AI-01: the rival POSTS to the market every so often, rather than only
-   * answering your offers (the market.tick side) and banking 4:1 (the aiTick
-   * side). Its offer is the bank's target spoken out loud — surplus it has
-   * above its own plan for a scarce cargo the plan is short of, at a rate
-   * (4-for-2) that beats the bank for both parties. It never escrows what the
-   * plan still needs, never touches Gold, and the offer tray the player's
-   * own posts already use is where it lands — so taking it is one click.
-   *
-   * The cadence is a skill lever; the easy rival posts less often, and the
-   * whole action is deliberately the LEAST important thing the rival does:
-   * roads and paves win the race, the market just greases them.
-   */
-  let lastOfferPost = 0;
-  function rivalMarketOffer(now: number) {
-    // L14 (#229): the MVP hides the Market panel under `newLoop` (L1a) and
-    // trading is #226's to re-cut, so a rival posting offers would be trading
-    // through a surface the player cannot open. Off with the loop, not
-    // deleted: the shipped loop's market policy is still the one that ships.
-    if (newLoop) return;
-    const every = skill().offerEveryMs;
-    if (!every) return;
-    if (now - lastOfferPost < every) return;
-    lastOfferPost = now;
-    const f = factoryOf("ai");
-    if (!f) return;
-    const need = rivalSkintTarget(f, now);
-    if (!need) return;
-    const idea = chooseRivalOffer(rival.purse, need.goal);
-    if (!idea) return;
-    const trader = market.players[rival.i];
-    if (market.post(trader, idea.give, idea.giveN, idea.want, idea.wantN)) {
-      ui.feed(`Rival offers ${idea.giveN} ${CARGO[idea.give].name} → ` +
-        `${idea.wantN} ${CARGO[idea.want].name} — take it from the Market tab`, rival.name);
-    }
-  }
-
-  /**
-   * PP-07: the rival resolves missing construction materials the same way
-   * the player can — the 4:1 bank. Its only income is the trickle, and NO
-   * trickle cargo pays for everything a second Depot costs (Grain + Oil +
-   * Wood + Stone from the one table, plus the track leg to reach it):
-   * without this the AI deadlocks on its first paid expansion, the exact
-   * endless-dependency loop the ticket forbids. Two exchanges per build
-   * clock, giving from the cargo it holds most; Gold is never touched
-   * (PP-08). The target is the FULL price of the plan it wants — the
-   * track leg and the Depot together — so it never trades away a cargo
-   * that plan still needs.
-   */
   /**
    * VP-01: what the rival believes about the race, right now. Read from the
    * derived scoreboard rather than cached on the turn, because these functions
@@ -4476,16 +4406,67 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const rivalPaceNow = (): RivalPace =>
     rivalPace(vpFor(score, "you"), vpFor(score, "ai"), winTarget());
 
-  /** VP-01: the OTHER milestone the bank can be pointed at — the pavement the
-   *  rival can ALMOST afford. Ore comes out of one industry type, so a rival
-   *  that never reached a mine has no route to the scoreboard at all, and a
-   *  route it cannot fund is not a plan. This lets the 4:1 bank buy INTO the
-   *  victory condition instead of only into the next Depot. */
-  const paveMilestone = (): Purse | null => {
-    // The batch size is a constant and NOT a pace lever, which is the measured
-    // lesson recorded on `rivalPace`: a milestone is only a plan if the purse can
-    // reach it. 4 tiles is 1★, the same unit as a plant, and the largest step a
-    // rival with no Ore can realistically take inside its own income.
+  /**
+   * L11 (#226): WHAT THE RIVAL IS SAVING FOR — a read, not a trade.
+   *
+   * These two questions were the rival's BANK's: it traded 4:1 toward whichever
+   * need was nearer (`rivalBankTowardPave` / `rivalBankTowardPlan` below), and
+   * the plant step and the city upgrade guarded against spending that plan
+   * away. The readers are pure planner walks over the same candidates the build
+   * step uses — they own no purse and move nothing — and L11 keeps them BECAUSE
+   * the bank stays: it is the one exchange left, now gated by the tree
+   * (`bank.ts`), so every pass that trades has to know what the rest of the
+   * turn is saving for.
+   *
+   * The two needs, in the order `rivalReserve` weighs them:
+   *   • the Depot plan closest to affordable (fewest missing units, ties by
+   *     the planner's own score) — priced with the track leg it needs;
+   *   • the next pave batch, 4 tiles of `paveCandidates` — 1★, the same unit
+   *     as a plant, and the largest step a rival with no Ore can realistically
+   *     take inside its own income;
+   * and the winner is whichever is nearer (fewer units missing), with the
+   * scoreboard outranking the build queue on a tie — VP-01's rule.
+   */
+  const rivalPlanReserve = (f: Factory, now: number): Purse | null => {
+    // Price with a HYPOTHETICAL deep purse: `planCandidates` drops plans the
+    // purse cannot finish, and the plan to save for is exactly one of those.
+    // AI-01: this goes through `deepPlanCandidates`, which holds the pricey
+    // affordability-lifted search against a world fingerprint — a stalled
+    // rival re-asks the question every idle tick (~2.5 s), and re-routing an
+    // unchanged map was a ~0.2 s hitch each time. Scarcity ranking still reads
+    // the REAL stock (order-only, so the cache is safe); only affordability is
+    // lifted.
+    const cands = deepPlanCandidates(eco, f, {
+      stock: rival.purse,
+      free: rival.freeTrack, freeDepots: rival.freeDepots, now,
+      newLoop,
+      // L5 (#219): the reserve works toward plans its own tree can actually buy.
+      depotTier: rival.depotTier,
+    });
+    const depot = priceDepot(rival.purse, rival.freeDepots, { tier: rival.depotTier, newLoop }).cost;
+    if (!cands.length) return null;
+    const shortfall = (c: (typeof cands)[number]): number => {
+      let missing = 0;
+      for (const [k, v] of Object.entries(c.cost)) {
+        missing += Math.max(0, v - (rival.purse[k as Cargo] ?? 0));
+      }
+      for (const [k, v] of Object.entries(depot)) {
+        missing += Math.max(0, v - (rival.purse[k as Cargo] ?? 0));
+      }
+      return missing;
+    };
+    const chosen = [...cands].sort(
+      (a, b) => shortfall(a) - shortfall(b) || b.score - a.score,
+    )[0];
+    const out: Purse = {};
+    for (const [k, v] of Object.entries(chosen.cost)) out[k as Cargo] = v;
+    for (const [k, v] of Object.entries(depot)) out[k as Cargo] = (out[k as Cargo] ?? 0) + v;
+    return out;
+  };
+
+  /** The next 4-tile pave batch's Ore — what a plant or a city upgrade must
+   *  leave behind (see `rivalPlanReserve`). */
+  const rivalPaveReserve = (): Purse | null => {
     const ranked = paveCandidates(eco, {
       owner: rival.id, ownerId: rival.i + 1, purse: rival.purse,
       maxTiles: PAVE_MILESTONE_TILES,
@@ -4496,61 +4477,155 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return ore > 0 ? { ore } : null;
   };
 
+  /** AI-02: the Ore the pave pass may actually spend — the purse less the
+   *  Plant reserve `rivalPavePass` keeps through `planUpgrades`' keepOre.
+   *  Every affordability question about paving reads this, so a seat that can
+   *  only pave by eating the plant's Ore is not treated as if it could. */
+  const spendableOre = (): number =>
+    Math.max(0, (rival.purse.ore ?? 0) - (rivalPlantWanted() ? (PLANT_COST.ore ?? 0) : 0));
+
+  /**
+   * AI-01: the bank's per-turn exchange budget. The SCOREBOARD sets the cruise
+   * rate (2 is the player's own rhythm); a SPRINTING seat doubles it, which is
+   * what sprinting means — the same milestone, reached in half the turns. The
+   * milestone itself is deliberately NOT enlarged: an earlier version aimed a
+   * sprinting rival at eight tiles (32 Ore) instead of four (16) and produced
+   * the worst possible result on seed 99 of the 5-seed race — 0★ for the whole
+   * game, because a poor seat cannot assemble 32 Ore, so it sold four stacks a
+   * turn toward a target it could never reach and stopped affording the economy
+   * it needed to reach it. A plan has to be short enough to finish;
+   * `planUpgrades` still paves all eight tiles at once when the Ore is there.
+   */
+  const bankBudget = (pace: RivalPace): number => Math.max(1, pace.bankPerTurn);
+
+  /**
+   * L11 (#226): THE RIVAL'S BANK — the same 4:1, the same gate and the same
+   * planner the player's Exchange runs through (`planBankTrades` → `bankTrade`,
+   * with the new loop passing this seat's own `depotTier` as `unlocked`).
+   *
+   * The ticket's third acceptance line is "the rival still progresses without
+   * trading", and on the SHIPPED loop it cannot: `DEPOT_COST` is Wood + Stone +
+   * Grain + OIL from one table, the trickle pays a fraction of a cargo at a
+   * time, and no plan is reachable by waiting — the PP-07 stall, a rival that
+   * expands twice and idles at 2★ for the rest of the match. The bank bridges
+   * what the purse is short of, exactly as it did before the ticket; what the
+   * ticket changed is the GATE. Under the tree the rival may only exchange
+   * cargos whose rung it has unlocked — the rule the player's panel applies —
+   * so no seat can buy its way around L5 (#219).
+   */
   /**
    * VP-01: one bank aimed at the SCOREBOARD rather than at the next Depot.
    *
    * `rivalBankTowardPlan` only runs on an idle turn — and a rival with Wood to
-   * burn is never idle: it would rather lay its fortieth gravel tile than buy the
-   * Ore that turns thirty of them into points. That is exactly how it stalled a
-   * measured race at 6.5★ owning 27 un-paved tiles (seed 2024,
+   * burn is never idle: it would rather lay its fortieth gravel tile than buy
+   * the Ore that turns thirty of them into points. That is exactly how it
+   * stalled a measured race at 6.5★ owning 27 un-paved tiles (seed 2024,
    * `tests/unit/iso-vp-race.test.ts`): busy every turn, pointless every turn.
    * So the rival converts into Ore whenever it has gravel it wants to pave and
    * cannot afford to — and never sells a cargo the Depot plan still needs, so
    * this cannot starve the build step it is competing with.
    */
-  /** AI-01: the bank's per-turn exchange budget = the scoreboard's pace plus
-   *  the difficulty's appetite, never below one trade. */
-  const bankBudget = (pace: RivalPace): number => Math.max(1, pace.bankPerTurn + skill().bankBonus);
-
   function rivalBankTowardPave(f: Factory, now: number): number {
-    // L14 (#229): the MVP hides the Bank under `newLoop`. On the new loop the
-    // rival banks by EARNING the missing cargo (that is what `treeGoal` sends
-    // it to connect next), not by exchanging its surplus at 4:1 through a
-    // panel the player cannot see.
+    // L11 (#226) / L14 (#229): under `newLoop` the rival banks by EARNING the
+    // missing cargo — `treeGoal`/`treeWants` steer its connects — so it never
+    // exchanges surplus at 4:1 here. The shipped loop is where its bank lives.
     if (newLoop) return 0;
-    const pace = rivalPaceNow();
-    const want = paveMilestone();
+    const want = rivalPaveReserve();
     if (!want) return 0;
-    const price = UPGRADE_COST.ore ?? 4;
     const need = want.ore ?? 0;
-    // AI-02: judge the goal by what the PAVE PASS may spend, not the raw
-    // purse — `planUpgrades` keeps a Plant's Ore aside whenever a plant is
-    // wanted, so a seat holding exactly `need` Ore (less the plant reserve)
-    // cannot pave, yet every affordability check said it could. That pairing
-    // was the live deadlock the player saw: one depot, one road, paved 2 of
-    // 3, and banks that never traded a single unit while Wood piled up at
-    // 32/min. (Headless repro: zz-live, 25 minutes of a seed-1337 rival.)
+    // AI-02: judge the goal by what the PAVE PASS may spend, not the raw purse
+    // — `planUpgrades` keeps a Plant's Ore aside whenever a plant is wanted, so
+    // a seat holding exactly `need` Ore (less the plant reserve) cannot pave,
+    // yet every affordability check said it could. That pairing was the live
+    // deadlock the player saw: one depot, one road, paved 2 of 3, and banks
+    // that never traded a single unit while Wood piled up at 32/min. (Headless
+    // repro: zz-live, 25 minutes of a seed-1337 rival.)
     if (spendableOre() >= need) return 0;                  // it can already pay
     // AI-01: guard the WHOLE depot plan, not just `priceDepot`. The AI-vs-AI
     // race caught the thinner guard feeding the churn this function is part
     // of: it sold the track cargo its own depot plan needed down to the
-    // depot's bare price, `rivalBankTowardPlan` bought it back at 4:1 the
-    // same turn, and the pair vaporized the purse round-robin instead of
-    // ever affording the plan.
-    const planGuard = rivalPlanTarget(f, now) ?? {};
-    const trader = { res: rival.purse };
-    let trades = 0;
-    while (spendableOre() < need && trades < bankBudget(pace)) {
-      const surplus = (CARGOES as Cargo[])
-        .filter((c) => c !== "gold" && c !== "ore" && (rival.purse[c] ?? 0) >= price)
-        .filter((c) => (rival.purse[c] ?? 0) - price >= (planGuard[c] ?? 0))
-        .sort((a, b) => (rival.purse[b] ?? 0) - (rival.purse[a] ?? 0))[0];
-      if (!surplus) return trades;
-      if (!bankTrade(trader, surplus, "ore")) return trades;
-      trades++;
-    }
-    return trades;
+    // depot's bare price, `rivalBankTowardPlan` bought it back at 4:1 the same
+    // turn, and the pair vaporized the purse round-robin instead of ever
+    // affording the plan.
+    const planGuard = rivalPlanReserve(f, now) ?? {};
+    // The Ore the bank must reach is the paved Ore PLUS the plant reserve,
+    // because that is the number `spendableOre` already deducted.
+    const oreGoal = need + (rivalPlantWanted() ? (PLANT_COST.ore ?? 0) : 0);
+    return planBankTrades(
+      rival.purse,
+      "ore",
+      // The whole plan is guarded (not just its Ore): the sell side of an
+      // exchange must never empty a cargo the Depot the rival is building is
+      // still saving for — AI-01's churn guard, one rule below.
+      { ...planGuard, ore: Math.max(planGuard.ore ?? 0, oreGoal) },
+      {
+        unlocked: bankRungsFor(rival), budget: bankBudget(rivalPaceNow()),
+        need: oreGoal,
+      },
+    );
   }
+
+  /**
+   * PP-07: the rival's idle-turn bank, aimed at the plan it cannot afford.
+   *
+   * Its only income is the trickle, and NO trickle cargo pays for everything a
+   * Depot costs (the table's Wood + Stone + Grain + Oil, plus the track leg to
+   * reach it): without this the AI deadlocks on its first paid expansion, the
+   * exact endless-dependency loop the ticket forbids. It runs on a turn where
+   * nothing else happened, gives from the cargo it holds most, never touches
+   * Gold (PP-08), and leaves the rest of the plan's cargo alone — the target IS
+   * the full price of the plan it wants, the track leg and the Depot together.
+   */
+  const rivalBankTowardPlan = (f: Factory, now: number) => {
+    const skint = rivalReserve(f, now);
+    if (!skint) return;
+    const { goal: target, paving } = skint;
+    const unlocked = bankRungsFor(rival);
+    let budget = bankBudget(rivalPaceNow());
+    // AI-02: a bank pointed at the PAVE goal must buy past the plant reserve,
+    // or it stops one trade short where the pave pass can still not pay (see
+    // `spendableOre`); a bank pointed at the depot plan uses raw numbers.
+    const oreNeed = paving
+      ? (target.ore ?? 0) + (rivalPlantWanted() ? (PLANT_COST.ore ?? 0) : 0)
+      : (target.ore ?? 0);
+    for (const [cargo, amount] of Object.entries(target) as [Cargo, number][]) {
+      if (budget <= 0) break;
+      const need = cargo === "ore" ? oreNeed : amount;
+      if ((rival.purse[cargo] ?? 0) >= need) continue;
+      // The guard keeps every OTHER cargo the plan is saving for — the AI-01
+      // churn guard, and the reason one pass cannot starve the other.
+      budget -= planBankTrades(
+        rival.purse,
+        cargo,
+        { ...target, [cargo]: Math.max(target[cargo] ?? 0, need) },
+        { unlocked, budget, need },
+      );
+    }
+  };
+
+  /**
+   * The need the rival is working toward right now: the Depot plan, unless the
+   * pave batch is fewer units away — then the scoreboard. `paving` says which
+   * side won, which is what the plant step's guard reads (a pave goal must be
+   * guarded past the plant reserve, a Depot plan in raw numbers).
+   */
+  const rivalReserve = (f: Factory, now: number): { goal: Purse; paving: boolean } | null => {
+    const planTarget = rivalPlanReserve(f, now);
+    const gapTo = (p: Purse | null, oreAvail: number): number => {
+      if (!p) return Infinity;
+      let missing = 0;
+      for (const [k, v] of Object.entries(p) as [Cargo, number][]) {
+        const have = k === "ore" ? oreAvail : (rival.purse[k] ?? 0);
+        missing += Math.max(0, v - have);
+      }
+      return missing;
+    };
+    const paveTarget = rivalPaveReserve();
+    if (paveTarget && gapTo(paveTarget, spendableOre()) < gapTo(planTarget, rival.purse.ore ?? 0)) {
+      return { goal: paveTarget, paving: true };
+    }
+    return planTarget ? { goal: planTarget, paving: false } : null;
+  };
 
   /**
    * L5 (#219): the rival's CITY UPGRADE.
@@ -4577,11 +4652,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const price = priceTownUpgrade(rival.purse, rival.townLevel);
     if (!price.def || !price.affordable) return false;
     if (!eco.harvesters.some((h) => h.owner === rival.id && isServiced(eco.track, h, eco.rail))) return false;
-    // L14 (#229): the reserve is the TREE's goal now, scaled by the
-    // difficulty's `townReserve` — the "upgrade timing" lever. The bank's read
-    // of the scoreboard (`rivalSkintTarget`) belonged to the old loop's palace
-    // of plans (a Depot plan AND a pave milestone AND a plant reserve); the new
-    // loop has exactly one thing to save for, and `treeGoal` is it.
+    // L11 (#226) / L14 (#229): the reserve is the TREE's goal, scaled by the
+    // difficulty's `townReserve` — the "upgrade timing" lever. The new loop has
+    // exactly one thing to save for, and `treeGoal` is it; the shipped loop's
+    // palace of plans (a Depot plan AND a pave milestone AND a plant reserve)
+    // is the bank's own reader (`rivalReserve`), and this step is newLoop-only.
     const goal = treeGoal({ purse: rival.purse, tier: rival.depotTier });
     const keep = Math.max(0, skill().townReserve);
     const reserve: Purse = {};
@@ -4605,124 +4680,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   }
 
   /**
-   * AI-01: the purse the rival is working toward right now — extracted from
-   * `rivalBankTowardPlan` so the bank and the MARKET aim at the same shortage
-   * (`rivalMarketOffer` asks for exactly what the next bank exchange would
-   * buy). The rule, unchanged: the depot plan closest to affordable (fewest
-   * missing units, ties by the planner's score), unless the pave milestone is
-   * fewer trades away — the scoreboard outranks the build queue.
-   */
-  /** AI-01: the depot-plan half of `rivalSkintTarget`, factored out so the
-   *  pave bank can guard it (the two banking passes must never sell what
-   *  the other is saving for). */
-  const rivalPlanTarget = (f: Factory, now: number): Purse | null => {
-    // Price with a HYPOTHETICAL deep purse: `planCandidates` drops plans the
-    // purse cannot finish, and the plan to bank toward is exactly one of
-    // those. AI-01: this goes through `deepPlanCandidates`, which holds the
-    // pricey affordability-lifted search against a world fingerprint — a
-    // stalled rival re-asks the question every idle tick (~2.5 s), and
-    // re-routing an unchanged map was a ~0.2 s hitch each time. Scarcity
-    // ranking still reads the REAL stock (order-only, so the cache is safe);
-    // only affordability is lifted.
-    const cands = deepPlanCandidates(eco, f, {
-      stock: rival.purse,
-      free: rival.freeTrack, freeDepots: rival.freeDepots, now,
-      newLoop,
-      // L5 (#219): the bank works toward plans its own tree can actually buy.
-      depotTier: rival.depotTier,
-    });
-    const depot = priceDepot(rival.purse, rival.freeDepots, { tier: rival.depotTier, newLoop }).cost;
-    let planTarget: Purse | null = null;
-    if (cands.length) {
-      // Bank toward the plan CLOSEST to affordable — fewest missing units,
-      // ties broken by the planner's own score. The top-scored candidate can
-      // swing with every trickle of income; "least shortfall" is stable, so
-      // the rival works one plan to completion instead of chasing a moving
-      // target (and re-rolling its bank trades forever).
-      const shortfall = (c: (typeof cands)[number]): number => {
-        let missing = 0;
-        for (const [k, v] of Object.entries(c.cost)) {
-          missing += Math.max(0, v - (rival.purse[k as Cargo] ?? 0));
-        }
-        for (const [k, v] of Object.entries(depot)) {
-          missing += Math.max(0, v - (rival.purse[k as Cargo] ?? 0));
-        }
-        return missing;
-      };
-      const chosen = [...cands].sort(
-        (a, b) => shortfall(a) - shortfall(b) || b.score - a.score,
-      )[0];
-      planTarget = {};
-      for (const [k, v] of Object.entries(chosen.cost)) planTarget[k as Cargo] = v;
-      for (const [k, v] of Object.entries(depot)) planTarget[k as Cargo] = (planTarget[k as Cargo] ?? 0) + v;
-    }
-    return planTarget;
-  };
 
-  /** AI-02: the Ore the pave pass may actually spend — the purse less the
-   *  Plant reserve `rivalPavePass` keeps through `planUpgrades`' keepOre.
-   *  Shared by the three spots below that, before AI-02, each measured
-   *  affordability against the raw purse and, together, deadlocked. */
-  const spendableOre = (): number =>
-    Math.max(0, (rival.purse.ore ?? 0) - (rivalPlantWanted() ? (PLANT_COST.ore ?? 0) : 0));
-
-  const rivalSkintTarget = (f: Factory, now: number): { goal: Purse; paving: boolean } | null => {
-    const planTarget = rivalPlanTarget(f, now);
-    const gap = (p: Purse | null, oreAvail: number): number => {
-      if (!p) return Infinity;
-      let missing = 0;
-      for (const [k, v] of Object.entries(p) as [Cargo, number][]) {
-        const have = k === "ore" ? oreAvail : (rival.purse[k] ?? 0);
-        missing += Math.max(0, v - have);
-      }
-      return missing;
-    };
-    const paveTarget = paveMilestone();   // 4 tiles: the smallest step that scores
-    // AI-02: the pave goal's "have" is the spendable Ore (plant reserve
-    // deducted); the depot plan's banks spend the full purse. Tell the bank
-    // WHICH side won — a pave goal must buy Ore past the plant reserve.
-    if (paveTarget && gap(paveTarget, spendableOre()) < gap(planTarget, rival.purse.ore ?? 0)) {
-      return { goal: paveTarget, paving: true };
-    }
-    return planTarget ? { goal: planTarget, paving: false } : null;
-  };
-
-  const rivalBankTowardPlan = (f: Factory, now: number) => {
-    // L14 (#229): the new loop has no bank and no offers — see above.
-    if (newLoop) return;
-    const skint = rivalSkintTarget(f, now);
-    if (!skint) return;
-    const { goal: target, paving } = skint;
-    const trader = { res: rival.purse };
-    const budget = bankBudget(rivalPaceNow());
-    // AI-02: a bank pointed at the PAVE goal must buy past the plant reserve,
-    // or it stops one trade short where the pave pass can still not pay (see
-    // `spendableOre`); a bank pointed at the depot plan uses raw numbers.
-    const oreNeed = paving
-      ? (target.ore ?? 0) + (rivalPlantWanted() ? (PLANT_COST.ore ?? 0) : 0)
-      : (target.ore ?? 0);
-    let trades = 0;
-    for (const [cargo, want] of Object.entries(target) as [Cargo, number][]) {
-      if (trades >= budget) break;
-      const need = cargo === "ore" ? oreNeed : want;
-      while ((rival.purse[cargo] ?? 0) < need && trades < budget) {
-        // AI-01: never sell ORE while a pave milestone is on the board — ore
-        // is the score, and selling it here while `rivalBankTowardPave` buys
-        // it back there is the 4:1 churn the race harness caught.
-        const paving = paveMilestone() !== null;
-        const surplus = (CARGOES as Cargo[])
-          .filter((c) => c !== "gold" && c !== cargo && (rival.purse[c] ?? 0) >= 4)
-          .filter((c) => c !== "ore" || !paving)
-          .filter((c) => (target[c] ?? 0) <= (rival.purse[c] ?? 0) - 4)
-          .sort((a, b) => (rival.purse[b] ?? 0) - (rival.purse[a] ?? 0))[0];
-        if (!surplus) break;
-        bankTrade(trader, surplus, cargo);
-        trades++;
-      }
-    }
-  };
-
-  /**
    * A1: the rival buys back.
    *
    * Sabotage now lands on the rival's plant, which is correct — and which
@@ -5102,7 +5060,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // eligible, so one spare Ore and a full purse is a plant.
     let plantNow = false;
     if (canAffordPlant(rival.purse)) {
-      const target = rivalSkintTarget(f, now);
+      const target = rivalReserve(f, now);
       const covers = (want: Purse): boolean =>
         (Object.entries(want) as [Cargo, number][]).every(
           ([k, v]) => ((rival.purse[k] ?? 0) as number) >= v);
@@ -5180,7 +5138,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (rivalTownStep()) acted = true;
 
     // 3. pave — what the scoreboard pays for, with whatever Ore is spare; and
-    //    when the Ore is not spare but the gravel is there, buy it (VP-01)
+    //    when the Ore is not spare but the gravel is there, buy it (VP-01),
+    //    through the same gated bank the plan tail uses.
     if (rivalPavePass()) acted = true;
     else rivalBankTowardPave(f, now);
 
@@ -5197,9 +5156,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       rescoreNow();
       return;
     }
-    // PP-07: nothing affordable at all — bank toward the plan it wants, then
-    // take the turn if the trade unlocked it. Retry in one harvest tick, not
-    // one build clock.
+    // PP-07 / L11 (#226): nothing affordable at all — bank toward the plan it
+    // wants (through the tree gate), then take the turn if the trade unlocked
+    // it. Retry in one harvest tick, not one build clock.
     rivalBankTowardPlan(f, now);
     const retry = aiBuildStep(eco, f, opts(), allocHarvesterId());
     if (retry) {
@@ -5209,13 +5168,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       for (const [bx, by] of retry.built) renderer?.invalidateTile(bx, by);
       // L4 (#218): the retry path raises a Depot too — tune it like any other.
       applyRivalTuning();
-      ui.feed(`Rival expands: a new Depot and ${retry.built.length} road tile${retry.built.length === 1 ? "" : "s"}`, rival.name);
-    }
-    const paved = rivalPavePass();
-    if (retry || paved) {
       syncWorld();
       rescoreNow();
-      lastAi = now - skill().buildMs + skill().idleMs;    // something happened: soon again
       return;
     }
     lastAi = now - skill().buildMs + skill().idleMs;      // idle: wake up after the next income tick
@@ -5323,7 +5277,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   /** HOST: the full state (§4 `SnapshotMsg`), built from the live world. */
   function netFullState(): Snapshot | null {
-    // MP-AUDIT: full parity snapshot includes market, protests, vehicles, boards, crossPrompt, winner
+    // MP-AUDIT: full parity snapshot includes protests, vehicles, boards,
+    // crossPrompt, winner (L11 / #226: the market's live offers are gone —
+    // there is no shared trade state left to mirror).
     const boardsWire = [
       { owner: players[0].id, data: quarry.board.save() },
       { owner: players[1].id, data: rivalQuarry.board.save() },
@@ -5339,7 +5295,6 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       won: phase === "won",
       players: wirePlayers(),
       t: performance.now(),
-      market: { offers: market.ctx.offers.map((o) => ({ id: o.id, from: o.from, give: o.give, giveN: o.giveN, want: o.want, wantN: o.wantN, born: o.born })), offerSeq: market.ctx.offerSeq },
       protests: protestsWire,
       blockades: blockadesWire(),
       trucks: trucksWire,
@@ -5403,7 +5358,6 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       players: wirePlayers(),
       setupPhase: inSetup(),
       won: phase === "won",
-      market: { offers: market.ctx.offers.map((o) => ({ id: o.id, from: o.from, give: o.give, giveN: o.giveN, want: o.want, wantN: o.wantN, born: o.born })), offerSeq: market.ctx.offerSeq },
       protests: protestsWire,
       blockades: blockadesWire(),
       trucks: trucksWire,
@@ -5446,11 +5400,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   /**
    * #114: write an authoritative balance INTO a seat's existing purse object.
    * `players[i].purse = toBag(...)` (the old code) minted a fresh object and
-   * left every earlier capture pointing at the stale one — the market's
-   * `players[i].res`, the HUD's trade panel and the affordability buttons all
-   * kept showing (and pricing from) the opening balance long after the host
-   * had moved the real one. The purse object is created ONCE per seat and
-   * shared by reference with `createIsoMarket`, so updates go through it.
+   * left every earlier capture pointing at the stale one — the HUD's purse
+   * readouts and every affordability button kept showing (and pricing from)
+   * the opening balance long after the host had moved the real one. The purse
+   * object is created ONCE per seat and handed to the HUD by reference
+   * (`UiSeat.res`), so updates go through it.
    */
   function applyPurseWire(p: PlayerState, res: Partial<Record<Cargo, number>>) {
     Object.assign(p.purse, toBag(res));
@@ -5514,12 +5468,6 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // #137: the purse AND both setup allowances — the same seat record a
       // delta writes, through the same helper, zero allowance included.
       applyPlayerWire(players[i], wire);
-    }
-    // MP-AUDIT: market parity
-    if (applied.market) {
-      market.ctx.offers.length = 0;
-      (market.ctx.offers as any).push(...applied.market.offers.map((o) => ({ ...o })) as any);
-      (market.ctx as any).offerSeq = applied.market.offerSeq;
     }
     // protests
     if (applied.protests) {
@@ -5624,13 +5572,6 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // restore different economy state for one seat.
         applyPlayerWire(players[i], wire);
       }
-    }
-    // MP-AUDIT: market
-    if ((msg as any).market) {
-      const m = (msg as any).market;
-      market.ctx.offers.length = 0;
-      market.ctx.offers.push(...m.offers.map((o: any) => ({ ...o })));
-      (market.ctx as any).offerSeq = m.offerSeq;
     }
     if ((msg as any).protests) {
       protests.clear();
@@ -5830,23 +5771,21 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           rivalQuarry.board.resetNeutral();
           toast("Processing Plant collapsed. Fresh neutral board.", "info");
         }
-      } else if (what === "post" || what === "cancel" || what === "accept" || what === "bank") {
-        // market intents (guest's p is index 1)
-        const trader = market.players[p.i];
-        const mwhat = payload.do as string;
-        if (mwhat === "post") {
-          const give = String(payload.give) as any, want = String(payload.want) as any;
-          const giveN = Number(payload.giveN) || 0, wantN = Number(payload.wantN) || 0;
-          if (!(market.post as any)(trader, give, giveN, want, wantN)) toast("Market post rejected.", "bad");
-        } else if (mwhat === "cancel") {
-          const id = Number(payload.id);
-          if (!(market.cancel as any)(trader, id)) toast("Market cancel rejected.", "bad");
-        } else if (mwhat === "accept") {
-          const id = Number(payload.id);
-          if (!(market.accept as any)(trader, id)) toast("Market accept rejected.", "bad");
-        } else if (mwhat === "bank") {
-          const give = String(payload.give) as any, want = String(payload.want) as any;
-          if (!(market.bank as any)(trader, give, want)) toast("Bank trade rejected.", "bad");
+      } else if (what === "bank") {
+        // L11 (#226): the BANK's intent, and the last trading intent there is.
+        // The host is authoritative: it validates the pair (both cargos real,
+        // not Gold, each at or below the rungs THIS seat has unlocked) and
+        // applies the exchange against the guest's own purse. A malformed or
+        // locked request is refused with a reason rather than half-applied —
+        // and it charges nothing, because `bankTrade` only moves a balance
+        // when the whole exchange is legal.
+        const give = String(payload.give), want = String(payload.want);
+        if (!isCargo(give) || !isCargo(want)) {
+          toast("Bank trade rejected.", "bad");
+        } else if (!bankCanExchange(p, give) || !bankCanExchange(p, want)) {
+          toast(`The ${CARGO[!bankCanExchange(p, give) ? give : want].name} exchange needs a rung you have not unlocked.`, "bad");
+        } else if (!bankTrade(p.purse, give, want, { unlocked: bankRungsFor(p) })) {
+          toast(`The bank wants ${BANK_RATE} ${CARGO[give].name}.`, "bad");
         }
       } else if (typeof payload.key === "string" || typeof (payload as any).do === "string" && ((payload as any).do === "protest_place" || (payload as any).key)) {
         // blackMarket intents — payload.key or protest_place
@@ -5902,7 +5841,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             }
           } else toast("That action is not available in multiplayer yet.", "info");
         } else if (what) {
-          // market intents that arrived as build type fallback
+          // A typed body with no coordinates and no branch above it: an
+          // intent this build does not know (a retired one from an older
+          // guest, most likely). Refuse it out loud rather than silently.
           toast("That action is not available in multiplayer yet.", "info");
         }
       }
@@ -5951,10 +5892,6 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             ? (entry.slot === 0 ? players[0] : players[1])
             : (entry.slot === 0 ? players[1] : players[0]);
           if (entry.username) local.name = entry.username;
-          // #114: the trade UI (offer tray "Take …'s offer", the scoreboard)
-          // reads names from the market's own player list — keep the two
-          // rosters in step whenever the room tells us who anyone is.
-          market.players[local.i].name = local.name;
         }
         if (info.role !== roleHint) {
           toast(info.role === "host"
@@ -7535,7 +7472,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     onBoardChange();
     // pacing clocks start clean — no catch-up bursts after a refresh
     lastHarvest = now; lastAi = now; lastRaid = now;
-    lastOfferPost = now; lastRivalMove = now;
+    lastRivalMove = now;
     // derive everything else: structures, torii, trucks, banners
     syncWorld();
     trucksDirty = true;
@@ -8377,12 +8314,6 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (ok) { syncWorld(); rescoreNow(); }
       return ok;
     },
-    /** VP-01: the "buy the Ore my paving wants" bank on its own, returning the
-     *  number of exchanges made (0 means a guard refused: nothing paveable, the
-     *  price already covered, or no cargo it could sell without starving the
-     *  Depot plan). `aiTick` calls exactly this on a turn the pave pass was
-     *  price-blocked, so the count is the rule under test without a clock. */
-    rivalBank: () => rivalBankTowardPave(factoryOf("ai")!, performance.now()),
     /** VP-01: the rival's read of the scoreboard and the four numbers that
      *  follow from it — exposed so a playtest (or a test) can ask WHY a turn
      *  was spent the way it was without re-deriving the policy. */
@@ -8391,15 +8322,22 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      *  the same call the top-bar selector makes. */
     get rivalSkill() { return skill(); },
     setRivalSkill: (key: SkillKey) => setRivalSkill(key, false),
-    /** AI-01: run the rival's market-offer check on demand (cadence-gated),
-     *  the test twin of the per-frame clock call. Returns true when an offer
-     *  was actually posted. */
-    rivalOffer: (now = performance.now()) => {
-      const before = market.ctx.offers.length;
-      rivalMarketOffer(now);
-      return market.ctx.offers.length > before;
-    },
     get purse() { return me.purse; },
+    /**
+     * L11 (#226): the bank's click path, exposed so a test can aim the LOCAL
+     * seat at a locked rung without going through a select that refuses to
+     * hold one. True when the exchange moved — the same answer `onBank`
+     * reports on the live path, minus the guest relay.
+     */
+    bank: (give: Cargo, want: Cargo) => bankFor(me, give, want),
+    /**
+     * L11 (#226): every seat's own purse, in `players` order — the LIVE
+     * objects the economy spends from, where `players` above deliberately hands
+     * out copies. The offer board used to expose this by reference
+     * (`market.players[i].res`, #114); with the board gone the seats' bags are
+     * the only thing a test fixture needs to seed, so they hang here.
+     */
+    get purses() { return players.map((p) => p.purse); },
     /**
      * #186: the seats, as the game holds them — id, name, whether a person is
      * on it, its purse and its ★. The two-seat purse check ("host and guest
@@ -8627,7 +8565,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       renderer?.setWorld(world);
       return cars.cars.map((c) => c.name);
     },
-    quarry, market,
+    quarry,
     /** A1: the rival's Processing Plant — where Black Market sabotage lands. */
     rivalPlant,
     /** PP-14b: the Black Market twin, exposed so the MP test can buy sabotage
@@ -9057,8 +8995,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       lastHarvest = performance.now();
       lastAi = performance.now();
     },
-    /** W6: the per-frame board+market clock, with an injectable now — the
-     *  twin the Feed assertions drive (the rival answers inside market.tick). */
+    /** W6: the per-frame board clock, with an injectable now — the twin the
+     *  Feed assertions drive (the combat/autoplay cadence lives in it). */
     tick: (now = performance.now()) => quarryTick(now),
     // C5: the visual-debug console — dumpTile / dumpAt / dumpBuilding /
     // dumpNetwork / overlay / config / probe. Spread only when the gate is on,

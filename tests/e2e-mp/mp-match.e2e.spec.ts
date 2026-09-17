@@ -1,8 +1,8 @@
 import { test, expect, type Browser } from "@playwright/test";
 import {
-  attachLogs, clickReset, contestedDepotSite, expectBooted, expectPurse, expectToast, fundDepots,
-  ownUsername, pairUp, placeDepot, planValid, playSetup, postOffer, readState, setPurse, setRivalRes,
-  startMatch, takeNewestOffer, tileOccupants, tray, type PlanSite,
+  attachLogs, bankExchange, clickReset, contestedDepotSite, expectBooted, expectPurse, expectToast,
+  fundDepots, pairUp, placeDepot, planValid, playSetup, readState, setPurse, setRivalRes,
+  startMatch, tileOccupants, type PlanSite,
 } from "./mp-harness";
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -13,8 +13,9 @@ import {
 // the consequence off the OTHER seat's own world — through the sidecar, the
 // production adapter and the room bundle, with no mock in the path.
 //
-//   * market   — the host's offer, taken from the guest's tray, moves both
-//                purses by exactly the trade and nothing else.
+//   * bank     — the guest's Exchange reaches the host as an INTENT, and the
+//                host's answer moves both purses by exactly the rate and
+//                nothing else (the offer board's replacement, L11 / #226).
 //   * reset    — a guest's board-local action re-rolls ITS board, reaches the
 //                host as the host's copy of that board, and leaves the host's
 //                own board untouched.
@@ -33,52 +34,49 @@ async function matchedPair(browser: Browser) {
   return pair;
 }
 
-test("a guest takes the host's offer from the tray and both purses move by the trade", async ({ browser }, testInfo) => {
+test("a guest's Exchange reaches the host and both purses move at the bank's rate", async ({ browser }, testInfo) => {
   const pair = await matchedPair(browser);
   const { host, guest } = pair;
   try {
-    // The host posts 2 stone for 2 ore. The offer is only takeable if the
-    // GUEST has the ore, and only payable if the HOST has the stone, so both
-    // sides of the trade are funded before the click. (`setRivalRes` writes
-    // the host's authoritative copy of the guest's bag — the same object its
-    // intent is settled against.)
-    await host.page.evaluate(setPurse, { cargo: "stone", amount: 10 });
-    await host.page.evaluate(setRivalRes, { cargo: "ore", amount: 5 });
-    const posted = await host.page.evaluate(postOffer, { give: "stone", giveN: 2, want: "ore", wantN: 2 });
-    expect(posted, "the host's own market took the offer").toBe(true);
+    // L11 (#226): the offer board is gone; the BANK is the one exchange left,
+    // and it may not skip a rung of L5's tree. This pair trades rung-0 stock
+    // (4 Wood → 1 Grain), so the gate lets it through on both seats. The host
+    // funds its AUTHORITATIVE copy of the guest's bag first — `setRivalRes`
+    // writes the very object the guest's intent is settled against.
+    await host.page.evaluate(setPurse, { cargo: "wood", amount: 12 });
+    await host.page.evaluate(setRivalRes, { cargo: "wood", amount: 12 });
+    // The guest's own world learns of it through the host's delta, so its
+    // Exchange is affordable when it is pressed.
+    await expectPurse(guest, "wood", 12);
+    const before = await readState(host);
+    const guestWood = before.rivalPurse.wood ?? 0;
+    const guestGrain = before.rivalPurse.grain ?? 0;
+    const hostWood = before.purse.wood ?? 0;
+    const hostGrain = before.purse.grain ?? 0;
 
-    // The guest's world learns of it, and the tray says so — with the POSTER'S
-    // name on it (#114: names come from the room, not from a placeholder).
-    await expect.poll(async () => (await tray(guest)).offers, { message: "the guest's tray shows the offer" }).toBe(1);
-    const shown = await tray(guest);
-    expect(shown.visible, "the offer tray is on screen (≥1321px wide)").toBe(true);
-    expect(shown.text.toUpperCase(), "the tray names the seat that posted")
-      .toContain((await ownUsername(host)).toUpperCase());
-    await expect.poll(async () => (await tray(guest)).takeEnabled, {
-      message: "the guest can afford the take (its own bag arrives with the host's delta)",
-    }).toBe(true);
+    // Press Exchange on the GUEST's Bank pane. A guest's press is a REQUEST:
+    // it changes nothing locally until the host's answer arrives.
+    await bankExchange(guest, "wood", "grain");
 
-    // Take, through the same button a player presses.
-    await takeNewestOffer(guest);
+    // The host validates it against the GUEST seat's own record and applies
+    // the rate there: 4 Wood → 1 Grain, and nothing else.
+    await expect.poll(async () => (await readState(host)).rivalPurse.wood,
+      { message: "the host's view of the guest's wood" }).toBe(guestWood - 4);
+    await expect.poll(async () => (await readState(host)).rivalPurse.grain,
+      { message: "the host's view of the guest's grain" }).toBe(guestGrain + 1);
+    // The HOST's own bag is untouched by the guest's exchange.
+    const after = await readState(host);
+    expect(after.purse.wood, "the host's own wood").toBe(hostWood);
+    expect(after.purse.grain, "the host's own grain").toBe(hostGrain);
 
-    // The trade is the ONLY change: the host pays the escrowed stone and
-    // receives the ore; the guest pays ore and receives stone.
-    await expect.poll(async () => (await readState(host)).offers.length, { message: "the offer left the board" }).toBe(0);
-    await expectPurse(host, "stone", 8);
-    await expectPurse(host, "ore", 2);
-    await expectPurse(guest, "ore", 3);
-    await expectPurse(guest, "stone", 14);
-    // Wood was never part of the offer and never moved on either seat.
-    expect((await readState(host)).purse.wood).toBe(12);
-    expect((await readState(guest)).purse.wood).toBe(12);
+    // …and the guest's own purse follows that answer, to the digit.
+    await expectPurse(guest, "wood", guestWood - 4);
+    await expectPurse(guest, "grain", guestGrain + 1);
 
-    // And the two worlds agree about both purses: the host's copy of the
-    // guest's bag is the guest's bag, and vice versa.
-    const after = await Promise.all([readState(host), readState(guest)]);
-    expect(after[0].rivalPurse.ore, "the host's view of the guest's ore").toBe(after[1].purse.ore);
-    expect(after[0].rivalPurse.stone, "the host's view of the guest's stone").toBe(after[1].purse.stone);
-    expect(after[1].rivalPurse.stone, "the guest's view of the host's stone").toBe(after[0].purse.stone);
-    expect(after[1].rivalPurse.ore, "the guest's view of the host's ore").toBe(after[0].purse.ore);
+    // Both worlds agree about the guest's bag: the host's copy is the guest's.
+    const guestSeen = await readState(guest);
+    expect(after.rivalPurse.wood, "the host's view of the guest's wood").toBe(guestSeen.purse.wood);
+    expect(after.rivalPurse.grain, "the host's view of the guest's grain").toBe(guestSeen.purse.grain);
   } finally {
     await attachLogs(testInfo, host, guest);
     await host.ctx.close();

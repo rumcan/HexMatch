@@ -32,7 +32,6 @@ import { setRng, mulberry32, type ResKey } from "../../src/game/config";
 import { AI_BUILD_MS, HARVEST_MS } from "../../src/iso/game";
 import type { Harvester, EconomyState } from "../../src/iso/economy";
 import type { Board, Gem } from "../../src/game/board";
-import type { IsoMarket } from "../../src/iso/market";
 import type { RivalPlant } from "../../src/iso/rival-plant";
 
 // ── stub the art imports (vite handles these in the browser) ──────────────
@@ -79,8 +78,11 @@ interface RivalClockHook {
   eco: EconomyState;
   /** The local seat's purse (live object). */
   purse: Record<string, number>;
-  /** The market's traders: `players[1].res` IS the rival's live purse. */
-  market: IsoMarket;
+  /**
+   * L11 (#226): each seat's LIVE purse, in `players` order. The offer board
+   * used to expose the rival's by reference (`market.players[1].res`).
+   */
+  purses: Record<string, number>[];
   /** AI-03: the rival's plant — the board its autoplay plays and sabotage hits. */
   rivalPlant: RivalPlant;
   /** What the rival's network reaches, per cargo (its own token gate). */
@@ -91,7 +93,7 @@ interface RivalClockHook {
   econTick: (now?: number) => void;
   /** The rival's build turn. */
   aiTick: (now?: number) => void;
-  /** The per-frame board/market clock (drives the rival's plant + autoplay). */
+  /** The per-frame board clock (drives the rival's plant + autoplay). */
   tick: (now?: number) => void;
   /** The lorry integrator: plans on a dirty world, moves, then collects arrivals. */
   truckTick: (now?: number, dtMs?: number) => void;
@@ -196,8 +198,8 @@ function rivalCorridor(h: RivalClockHook, len = 6, type?: string): Corridor {
 const rivalDepot = (h: RivalClockHook): Harvester =>
   h.eco.harvesters.find((d) => d.owner === "ai")!;
 
-/** The rival's live purse — the same record its market trader holds. */
-const rivalPurse = (h: RivalClockHook): Record<string, number> => h.market.players[1].res;
+/** The rival's live purse — the record the game's own economy spends from. */
+const rivalPurse = (h: RivalClockHook): Record<string, number> => h.purses[1];
 
 /** Every cargo but Gold: what a depot clock or a cargo match can move. */
 const cargoTotal = (p: Record<string, number>): number =>

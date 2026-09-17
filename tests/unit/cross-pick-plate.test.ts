@@ -14,7 +14,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { Board } from "../../src/game/board";
 import { createOriginalUi } from "../../src/game/ui";
-import { createIsoMarket, emptyBag } from "../../src/iso/market";
+import { emptyBag } from "../../src/iso/bank";
 import { mulberry32, setRng } from "../../src/game/config";
 
 const css = readFileSync("src/game/styles.css", "utf8");
@@ -25,9 +25,10 @@ const EMOJI = /[\u{1F000}-\u{1FAFF}\u{2700}-\u{27BF}\u{2B00}-\u{2BFF}]/u;
 function uiWithPick(kind: "holy" | "broken", picks: number) {
   setRng(mulberry32(1234));
   const board = new Board();
-  const market = createIsoMarket([{ i: 0, id: "you", name: "You", human: true, purse: emptyBag() }]);
-  const ui = createOriginalUi(board, market, market.players[0], {
-    onTool: vi.fn(), onRecenter: vi.fn(), onSwap: vi.fn(), onReset: vi.fn(), onBlackAction: vi.fn(),
+  const seat = { id: "you", name: "You", res: emptyBag(), unlocked: null };
+  const ui = createOriginalUi(board, seat, {
+    onTool: vi.fn(), onRecenter: vi.fn(), onSwap: vi.fn(), onReset: vi.fn(),
+    onBank: vi.fn(() => "done" as const), onBlackAction: vi.fn(),
   });
   document.body.append(ui.el);
   ui.crossPick(kind, picks, vi.fn());
