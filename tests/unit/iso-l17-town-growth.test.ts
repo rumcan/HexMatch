@@ -2,20 +2,19 @@
 // L17 (#245) — towns grow visually: village → town → city.
 //
 // Every town starts a new-loop game as a VILLAGE: small 1×1 homes around the
-// church, dirt streets, no sidewalks, lamps or paved yards. The first upgrade
-// makes it a TOWN — the centre becomes the bank, the full building mix of
-// today's towns comes in, the streets pave. A further upgrade grows the
-// FOOTPRINT (visual-only). `__iso.setTownLevel` drives it for art review.
+// church. Streets remain paved with sidewalks at every town tier, while a
+// further upgrade grows the FOOTPRINT (visual-only). `__iso.setTownLevel`
+// drives it for art review.
 //
 // What this file pins, all in the pure modules:
 //
 //   • the tier art — village smalls only + town_center; tier 1 swaps the
 //     centre for town_bank and restores today's mix; tier 2+ adds the grown
 //     ring on free land only; LEGACY (no tier) is byte-for-byte today's look;
-//   • the street look — a village's roads render as DIRT with no sidewalks,
-//     lamps or paved block ground; every other tier renders exactly today's
-//     town. The BYTES stay paved at every tier: paving rules are the town's
-//     at every tier (ownership, routing, truck speed), only the look changes;
+//   • the street look — every town tier renders continuous PAVED roads with
+//     sidewalks, lamps and paved block ground. The BYTES stay unchanged at
+//     every tier: paving rules are the town's at every tier (ownership,
+//     routing, truck speed), only the building look changes;
 //   • THE TICKET'S RULE — no gameplay changes with town tier: occupancy,
 //     factory placement, plant adjacency, catchments and the public-road
 //     network are byte-identical at tier 0 and at the top tier;
@@ -159,28 +158,32 @@ function roadWorld(): { world: RoadWorld; roads: [number, number][] } {
 }
 
 describe("L17 street look per tier", () => {
-  it("a village's streets draw as DIRT, with no sidewalks or lamps", () => {
+  it("a village's streets are paved, joined, and have sidewalks", () => {
     const { world, roads } = roadWorld();
     seedTownLevels(grid, 0);                       // the new loop's boot state
     const [rx, ry] = roads[0];
     const tiles = roadTilesIn(world, rx, ry, rx, ry);
     expect(tiles.length).toBe(1);
-    expect(tiles[0].material).toBe("dirt");
-    expect(tiles[0].sidewalk).toBe(false);
-    // The block yards stay grass: no paving quads anywhere in the town.
-    expect(townGroundQuadsIn(world, town.tx - 12, town.ty - 12, town.tx + 12, town.ty + 12))
-      .toEqual([]);
-  });
-
-  it("tier 1+ paves: today's streetscape comes back", () => {
-    const { world, roads } = roadWorld();
-    seedTownLevels(grid, 1);
-    const [rx, ry] = roads[0];
-    const tiles = roadTilesIn(world, rx, ry, rx, ry);
     expect(tiles[0].material).toBe("paved");
     expect(tiles[0].sidewalk).toBe(true);
+    // Block paving is present from game start, so no grass wedges show between
+    // the road tiles.
     expect(townGroundQuadsIn(world, town.tx - 12, town.ty - 12, town.tx + 12, town.ty + 12)
       .length).toBeGreaterThan(0);
+  });
+
+  it("upgrading preserves the same paved streetscape", () => {
+    const { world, roads } = roadWorld();
+    const [rx, ry] = roads[0];
+    const looks = [0, 1, TOWN_VISUAL_MAX].map((level) => {
+      seedTownLevels(grid, level);
+      const tile = roadTilesIn(world, rx, ry, rx, ry)[0];
+      return [tile.material, tile.sidewalk, townGroundQuadsIn(
+        world, town.tx - 12, town.ty - 12, town.tx + 12, town.ty + 12,
+      ).length] as const;
+    });
+    expect(looks[0]).toEqual(looks[1]);
+    expect(looks[1]).toEqual(looks[2]);
   });
 
   it("the BYTES never change — paving rules are the town's at every tier", () => {

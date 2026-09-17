@@ -864,9 +864,9 @@ export function seedTownLevels(grid: Grid, level = 0): void {
 
 /**
  * L17 (#245): one byte per tile — 1 where the tile belongs to a VILLAGE
- * (tier 0). This is the ONE question the road painter asks about tiers:
- * a village's streets draw as dirt, with no sidewalks, no lamps and no paved
- * block ground, while every other tier — legacy included — draws today's town.
+ * (tier 0). This is an art-tier marker for village building decisions. Road
+ * rendering deliberately does NOT use it: every town tier keeps paved streets,
+ * sidewalks, lamps and block ground so roads stay continuous at game start.
  *
  * Cached per grid against `townTierRevision`, exactly like `townGroundBytes`:
  * a tier change is a rare, explicit event (`setTownLevel` bumps the revision),

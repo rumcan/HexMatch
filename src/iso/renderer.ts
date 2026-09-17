@@ -642,6 +642,16 @@ export class IsoRenderer {
     invalidateGroundContours(this.world.grid);
     this.groundChunkCache.clear();
     this.roadCache.clear("all");
+    // #303: building / vehicle / railway layers land AFTER the first frame and
+    // mutate both the sprite defs and the images `imageForSprite` returns. The
+    // placement ghost cache keys only (sprite, zoom, verdict), so a tinted
+    // copy built from the OpenGFX sheet cell before the PNG arrived would
+    // keep painting forever — and because valid/invalid are separate keys, a
+    // player who hovered a refused lot first would keep the legacy art on
+    // every refused hover while a legal one showed the new building. Drop the
+    // cache whenever the world/art is fully invalidated so the next ghost is
+    // rebuilt from whatever is loaded now.
+    this.overlayArt.clearCache();
     this.structuresDirty = true;
     this.terrainDirty = true;
   }
@@ -1330,13 +1340,13 @@ export class IsoRenderer {
   /** Draw one placed sprite; false when its image is not loaded. */
   private blit(ctx: Ctx2D, p: Placed, timeMs: number): boolean {
     const z = this.cam.zoom;
-    // GFX-01: under a quality cap the LOADED art may be a coarser zoom than
-    // the camera's. The source rect comes from the sampled level, the
-    // destination rect from the camera level — the nearest-neighbour upscale
-    // (smoothing is off on both sprite contexts) is the whole look of
-    // Medium/Low, and at High `atlasZoomFor(z) === z` so the two rects are
-    // identical and nothing scales, exactly as the 1×/0.5×/2× design intended.
-    const az = this.atlas.atlasZoomFor(z);
+    // GFX-01 / #303: the LOADED art may be a coarser zoom than the camera's
+    // (quality cap), and a per-building PNG may only have a subset of tiers
+    // mid-fill. `sampleZoomFor` picks the tier whose pixels we actually have
+    // — never the OpenGFX sheet once a building PNG owns the sprite. Source
+    // rect from that tier, destination rect from the camera level; at High
+    // with every tier loaded the two match and nothing scales.
+    const az = this.atlas.sampleZoomFor(p.sprite, z);
     // W-series: roads blit from the ROADS atlas, buildings from the BUILDINGS
     // atlas (separate PNG layer atlases, identical rect layout); anything
     // else falls back to the monolithic image (layer sets unloaded).

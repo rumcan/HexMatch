@@ -423,6 +423,85 @@ describe("vector overlay: the ghost building", () => {
     po.paint(rec.ctx, cam(), atlas(), emptyScene(), ghost, 0, make);
     expect(built).toBe(3);
   });
+
+  it("#303: valid and invalid ghosts sample the same art source", () => {
+    // The Factory ghost used to flip between OpenGFX sheet art (invalid) and
+    // the building PNG (valid) because the cache and the sample path could
+    // disagree once layers landed mid-hover. Both verdicts must draw from the
+    // same imageForSprite result — only the tint changes.
+    const a = atlas();
+    const png = { width: 170, height: 110, tag: "factory-png" };
+    const sheet = { width: 2048, height: 2048, tag: "opengfx-sheet" };
+    a.images.set(1, sheet);
+    a.layerImages.set("buildings", new Map([[1, sheet]]));
+    a.buildingImages.set(FACTORY_SPRITE, new Map([[1, png]]));
+    // Mutate the def to the building-layer size (what loadBuildingLayers does).
+    const def = a.get(FACTORY_SPRITE)!;
+    def.x = 0; def.y = 0; def.w = 170; def.h = 110; def.center = true;
+
+    const sources: unknown[] = [];
+    const run = (valid: boolean) => {
+      const po = new PlacementOverlay();
+      const surfaces: ReturnType<typeof fakeSurface>[] = [];
+      po.paint(recorder().ctx, cam(), a, emptyScene(),
+        { sprite: FACTORY_SPRITE, tx: 20, ty: 20, valid }, 0,
+        (w, h) => {
+          const s = fakeSurface(w, h);
+          surfaces.push(s);
+          return s as never;
+        });
+      // The surface's first drawImage is the sprite sample — its source image.
+      const sample = surfaces[0]?.rec.of("drawImage")[0]?.args[0];
+      sources.push(sample);
+      return surfaces[0];
+    };
+    const ok = run(true);
+    const bad = run(false);
+    expect(sources[0]).toBe(png);
+    expect(sources[1]).toBe(png);
+    expect(sources[0]).not.toBe(sheet);
+    // both verdicts built a tinted surface (same size — same art)
+    expect(ok!.width).toBe(bad!.width);
+    expect(ok!.height).toBe(bad!.height);
+  });
+
+  it("#303: a late-landing building PNG forces the ghost cache to rebuild", () => {
+    // Mirrors the boot race: ghost built from the sheet, then building layers
+    // land. Without clearCache the (sprite|zoom|verdict) key still hits the
+    // OpenGFX tint; invalidateAll → clearCache drops it so the next paint
+    // samples the PNG.
+    const a = atlas();
+    const sheet = { width: 2048, height: 2048, tag: "opengfx-sheet" };
+    const png = { width: 170, height: 110, tag: "factory-png" };
+    a.images.set(1, sheet);
+    a.layerImages.set("buildings", new Map([[1, sheet]]));
+
+    const po = new PlacementOverlay();
+    const paintOnce = () => {
+      const surfaces: ReturnType<typeof fakeSurface>[] = [];
+      po.paint(recorder().ctx, cam(), a, emptyScene(), ghost, 0,
+        (w, h) => { const s = fakeSurface(w, h); surfaces.push(s); return s as never; });
+      const sample = surfaces[0]?.rec.of("drawImage")[0]?.args[0];
+      return { built: surfaces.length, sample };
+    };
+    const first = paintOnce();
+    expect(first.built).toBe(1);
+    expect(first.sample).toBe(sheet);               // pre-layers: sheet is fine
+
+    // Layers land (same mutation loadBuildingLayers performs).
+    a.buildingImages.set(FACTORY_SPRITE, new Map([[1, png]]));
+    const def = a.get(FACTORY_SPRITE)!;
+    def.x = 0; def.y = 0; def.w = 170; def.h = 110; def.center = true;
+
+    // Cache still holds the sheet tint — no new surface is built.
+    const stale = paintOnce();
+    expect(stale.built, "stale cache must not rebuild").toBe(0);
+
+    po.clearCache();                                // what invalidateAll does
+    const fresh = paintOnce();
+    expect(fresh.built).toBe(1);
+    expect(fresh.sample).toBe(png);
+  });
 });
 
 // ── reduced motion ──────────────────────────────────────────────────────────
