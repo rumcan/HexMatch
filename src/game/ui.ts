@@ -159,6 +159,15 @@ export interface UiPlayer {
 export interface UiState {
   players: UiPlayer[];
   purse: Partial<Record<Cargo, number>>;
+  /**
+   * L16 (#231): the per-resource storage cap the local seat plays under, or
+   * undefined when no cap applies (the shipped loop, and dev mode's unlimited
+   * purse — `?unlimited=0` restores it). Set, the resource bar prints
+   * `amount / cap` and classes any cargo sitting at its cap `.full`: clock
+   * income past the cap is lost, and the bar is where that has to read at a
+   * glance.
+   */
+  storageCap?: number;
   phase: string;
   tool: UiTool;
   freeTrack: number;
@@ -2591,16 +2600,25 @@ export function createOriginalUi(
   // actually changed is written. Replacing them per frame churned the DOM and
   // could swallow a hover or click landing between two frames.
   const chipNums = new Map<Cargo, HTMLElement>();
+  /** L16 (#231): the chip MEDALLION per cargo — the node the `.full` state classes. */
+  const chipEls = new Map<Cargo, HTMLElement>();
   let lastVpHtml = "";
   const kingRows = new Map<number, { row: HTMLElement; cls: string; colour: string; tip: string; html: string }>();
   let lastModebarInfo: string | null = null;
   let lastInspectHtml = "";
 
-  function renderHUD(purse: Partial<Record<Cargo, number>>, players: UiPlayer[], portrait: Portrait, target: number) {
+  function renderHUD(
+    purse: Partial<Record<Cargo, number>>,
+    players: UiPlayer[],
+    portrait: Portrait,
+    target: number,
+    storageCap?: number,
+  ) {
     for (const k of CARGOES) {
       let num = chipNums.get(k);
-      if (!num) {
-        const chip = h("div", "chip");
+      let chip = chipEls.get(k);
+      if (!num || !chip) {
+        chip = h("div", "chip");
         chip.style.setProperty("--c1", CARGO[k].c1);
         chip.style.setProperty("--c2", CARGO[k].c2);
         chip.innerHTML = `<span class="chip-ic">${cargoIconHtml(k)}</span><span class="chip-n"></span>`;
@@ -2610,9 +2628,32 @@ export function createOriginalUi(
         chips.appendChild(chip);
         num = chip.querySelector(".chip-n") as HTMLElement;
         chipNums.set(k, num);
+        chipEls.set(k, chip);
       }
-      const text = String(purse[k] ?? 0);
+      // L16 (#231): with a storage cap the chip counts TOWARD something —
+      // "amount / cap" — and a cargo sitting at its cap wears the full state,
+      // because every tick past it is income the clock is dropping. Without a
+      // cap (the shipped loop, dev's unlimited purse) the chip is the bare
+      // amount it always was, byte for byte.
+      const amount = purse[k] ?? 0;
+      const full = storageCap !== undefined && amount >= storageCap;
+      const text = storageCap === undefined ? String(amount) : `${amount}/${storageCap}`;
       if (num.textContent !== text) num.textContent = text;
+      // The class and the tooltip flip together, and only on the flip — a
+      // per-frame write would churn the style recalc the retention tests
+      // watch for. Gold keeps its currency rule, with the cap appended.
+      if (chip.classList.contains("full") !== full) {
+        chip.classList.toggle("full", full);
+        if (full) {
+          chip.title = k === "gold"
+            ? `${GOLD_RULE} — storage full`
+            : `Storage full — clock income past ${storageCap} is lost. A city upgrade raises the cap.`;
+        } else if (k === "gold") {
+          chip.title = GOLD_RULE;
+        } else {
+          chip.removeAttribute("title");
+        }
+      }
     }
     const meP = players.find((p) => p.human);
     const yourVp = meP?.vp ?? 0;
@@ -2842,7 +2883,7 @@ export function createOriginalUi(
     if (rivalWire.dataset.speaker === "you") {
       rivalWireFace.style.backgroundImage = `url(${rivalWirePlayerPortrait})`;
     }
-    renderHUD(state.purse, state.players, state.portrait, state.vpTarget ?? VICTORY.target);
+    renderHUD(state.purse, state.players, state.portrait, state.vpTarget ?? VICTORY.target, state.storageCap);
     // PP-14b: the reset button counts its cooldown down and disables while
     // the plant re-arms.
     const resetLeft = Math.ceil((state.resetIn ?? 0) / 1000);

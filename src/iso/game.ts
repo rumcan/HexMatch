@@ -140,7 +140,7 @@ import {
 } from "./tuning";
 import {
   FREE_SETUP_DEPOTS, costCompact, costLabel, depotTypeLabel,
-  priceDepot, priceTownUpgrade, rungLabel, shortfallLabel,
+  priceDepot, priceTownUpgrade, rungLabel, shortfallLabel, storageCapFor,
 } from "./construction";
 // L11 (#226): the bank — the one exchange left, and the rung gate it obeys.
 // `bankAllowed` is what the HUD's selects ask too, so a locked cargo cannot be
@@ -2160,8 +2160,26 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return true;
   };
   const earn = (p: PlayerState, gain: Purse) => {
+    // L16 (#231): the storage cap. On the new loop every cargo has a cap
+    // derived from the seat's city level (`storageCapFor`), and income above
+    // it is LOST — never stored, never spend-blocked: `spend` below and every
+    // affordability check read the same purse they always did. Three shape
+    // rules, all load-bearing:
+    //   • the cap never LOWERS a balance — `Math.max` keeps a purse already
+    //     above the cap (dev mode's 9999 floor, a rich start purse) exactly
+    //     where it is. The cap gates income, it never confiscates;
+    //   • dev mode's unlimited resources BYPASS the cap for the local seat
+    //     (`topUpDevPurse` refills it to 9999 every frame; `?unlimited=0`
+    //     turns that off and the cap applies, which is how it is playtested);
+    //   • the shipped loop is untouched — its purse moves through board
+    //     harvests and lorry credits this ticket does not govern, so no cap
+    //     applies while the flag is dev-only (same scope as every L-rule).
+    const cap = newLoop && !(devUnlimited && p === me)
+      ? storageCapFor(p.townLevel)
+      : Number.POSITIVE_INFINITY;
     for (const [k, v] of Object.entries(gain) as [Cargo, number][]) {
-      p.purse[k] = (p.purse[k] ?? 0) + v;
+      const held = p.purse[k] ?? 0;
+      p.purse[k] = Math.max(held, Math.min(cap, held + v));
     }
   };
 
@@ -4666,7 +4684,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const covers = (want: Purse): boolean =>
       (Object.entries(want) as [Cargo, number][]).every(
         ([k, v]) => (rival.purse[k] ?? 0) - (price.cost[k] ?? 0) >= v);
-    if (!covers(reserve)) return false;
+    // L16 (#231): the cap's vote on the reserve. The reserve guards income
+    // that is still COMING; a cargo the upgrade costs that already sits at
+    // the seat's storage cap is income being LOST every tick, and none of it
+    // can be banked — so at the cap, waiting is strictly worse than buying
+    // and the reserve is skipped. (The shipped caps sit well above their
+    // reserves, so today this only fires on the tightest openings; it is the
+    // rule the later, tighter rows of `TOWN_UPGRADES` will need.)
+    const wasting = (Object.keys(price.cost) as Cargo[]).some((c) =>
+      (rival.purse[c] ?? 0) >= storageCapFor(rival.townLevel));
+    if (!wasting && !covers(reserve)) return false;
     if (!spend(rival, price.cost)) return false;
     const score = rivalTuningScore(skill().key);
     rival.townLevel = Math.min(rival.townLevel + 1, TOWN_UPGRADES.length);
@@ -4940,6 +4967,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const goal = treeGoal({ purse: rival.purse, tier: rival.depotTier });
     const want = treeWants(goal, scoreCargoWant(eco, rival.id));
 
+    // ── 0. city upgrade FIRST at the cap (L16, #231) ───────────────────────
+    // A purse pressed against its storage cap is losing income on every
+    // tick, and the depot pass below spends GREEDILY — it can eat the very
+    // mix the upgrade costs and leave the seat capped for another whole
+    // turn. When the rival is at its cap and the next city upgrade is
+    // buyable (price, reserve and all — `rivalTownStep` checks every gate),
+    // the upgrade is hoisted above the depot pass: it raises the cap and
+    // the base rate together, converting wasted ticks into income. Off the
+    // cap, the shipped order — connect first — stands.
+    const townFirst = CARGOES.some((c) => (rival.purse[c] ?? 0) >= storageCapFor(rival.townLevel));
+    if (townFirst && rivalTownStep()) acted = true;
+
     // ── 1. plant — reach, and (until #228) a ★ ─────────────────────────────
     // A Processing Plant still earns its 1★ (VICTORY.plant is a live source
     // for both seats) and it still widens the map a seat can deliver over, so
@@ -4998,6 +5037,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     applyRivalTuning();
 
     // ── 4. spend: the city upgrade, then a re-match on a cooled Depot ──────
+    // L16 (#231): at the cap the upgrade ran BEFORE the depot pass (see
+    // `townFirst` above); this second call is a no-op then — the row is
+    // bought or maxed — but it keeps the call site ONE door for every turn,
+    // so a multi-row future cannot grow a second code path.
     if (rivalTownStep()) acted = true;
     else if (rivalRetuneStep()) acted = true;
 
@@ -6414,6 +6457,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             info += `<br>` + (d.tiles === null || band === null
               ? `distance: <i>no route</i>`
               : `distance: ${d.tiles} tiles · ×${d.factor} (${band})`);
+            // L16 (#231): the storage cap's read on this Depot. A connected
+            // Depot whose cargo sits AT its owner's cap is being paid nothing
+            // for every tick — the income is lost, not stored — and the
+            // inspector is where the ticket says that has to be legible, in
+            // the same card that prints the rate. Both seats: your own wasted
+            // output and the rival's read the same rule.
+            const cargo = tuningCargoFor(h);
+            const seat = h.owner === me.id ? me : rival;
+            if (cargo && conn.kind && (seat.purse[cargo] ?? 0) >= storageCapFor(seat.townLevel)) {
+              info += `<br>⚠ <b>storage full</b> — this Depot's ${CARGO[cargo].name} output is being wasted`;
+            }
           }
         }
       } else if (ref && ref.kind === "factory") {
@@ -6482,6 +6536,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         vpTip: vpTooltip(p),
       })),
       purse: me.purse,
+      // L16 (#231): the storage cap the resource bar prints its "amount / cap"
+      // readout against — derived from the seat's city level, so the bar and
+      // the clock can never disagree. Undefined when no cap applies: the
+      // shipped loop, and dev mode's unlimited purse (the cap is bypassed
+      // there; `?unlimited=0` brings it back for real-economy playtests).
+      storageCap: newLoop && !devUnlimited ? storageCapFor(me.townLevel) : undefined,
       phase,
       tool: tool as any,
       // STORY-01: the contract's rival wears their painted sheet on the
@@ -8348,6 +8408,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       return players.map((p) => ({
         i: p.i, id: p.id, name: p.name, human: p.human,
         purse: { ...p.purse }, vp: vpFor(score, p.id),
+        // L5/L16: the seat's place in the tree and the city ladder, and the
+        // storage cap that ladder implies — the numbers the wire and the save
+        // already carry, exposed so a test can read them on BOTH seats (the
+        // rival's cap pressure is the L16 acceptance's third line).
+        depotTier: p.depotTier, townLevel: p.townLevel, townBonus: p.townBonus,
+        storageCap: storageCapFor(p.townLevel),
       }));
     },
     /** #186: the rules this match booted with, and whether a machine holds the
@@ -8805,6 +8871,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     /** L5 (#219): the city upgrade's click, as a test twin — the real
      *  `buyTownUpgrade`, refusals included. */
     buyTownUpgrade: () => buyTownUpgrade(me),
+    /**
+     * L16 (#231): the storage cap the seat plays under, straight off the same
+     * `storageCapFor` the clock's `earn` clamps and the resource bar's
+     * "amount / cap" read — `null` when no cap applies (the shipped loop).
+     * The twin the cap's own tests read, so they assert the number the rules
+     * use rather than re-deriving it from the table.
+     */
+    storageCap: (who: "you" | "ai" = "you") =>
+      newLoop ? storageCapFor(who === "ai" ? rival.townLevel : me.townLevel) : null,
     /** V4: the e2e/unit twin of the HUD toast, so tests can drive the toast
      *  stack (and its ✕) without playing a whole round. */
     toast: (text: string, kind: Toast["kind"] = "info") => toast(text, kind),

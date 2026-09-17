@@ -81,7 +81,7 @@ import { toBag, type CargoBag } from "../../../src/iso/bank";
 import {
   START_PURSE, FREE_SETUP_TRACK, HARVEST_MS, RIVAL_REMATCH_DROP,
 } from "../../../src/iso/game";
-import { FREE_SETUP_DEPOTS, priceDepot, priceTownUpgrade } from "../../../src/iso/construction";
+import { FREE_SETUP_DEPOTS, priceDepot, priceTownUpgrade, storageCapFor } from "../../../src/iso/construction";
 
 export const STEP_MS = 1_000;
 export const MIN = (ms: number) => `${(ms / 60_000).toFixed(1)}m`;
@@ -387,21 +387,35 @@ function spendableOre(eco: EconomyState, seat: Seat): number {
  *     so both seats take the same treatment and the comparison stays fair.
  */
 /**
+ * L16 (#231): is this seat pressed against its storage cap on any cargo? The
+ * live turn's `townFirst` read, mirrored — the cap makes "bank it" strictly
+ * worse than "spend it", so the race has to play the same preference or it
+ * would measure a rival the game does not ship.
+ */
+const atStorageCap = (seat: Seat): boolean =>
+  CARGOES.some((c) => (seat.purse[c] ?? 0) >= storageCapFor(seat.townLevel));
+
+/**
  * L5 (#219): the harness twin of the rival's city upgrade (`rivalTownStep` in
  * game.ts) — pay the next row of `TOWN_UPGRADES` once the seat has a CONNECTED
  * Depot for the bonus to multiply, and once the plan it is banking toward
  * still survives the purchase. The session that confirms it is simulated, like
  * every other rival session (`rivalTuningScore`), so the bonus lands on the
  * same score→strength curve the player's board runs.
+ *
+ * L16 (#231): `capped` says the race runs under the storage cap (the new
+ * loop), and at the cap the reserve is SKIPPED — the income it waits for is
+ * being lost every tick, so buying is strictly better than banking. The live
+ * `rivalTownStep` holds the same rule.
  */
-function townPass(eco: EconomyState, seat: Seat, reserve: Purse): boolean {
+function townPass(eco: EconomyState, seat: Seat, reserve: Purse, capped = false): boolean {
   const price = priceTownUpgrade(seat.purse, seat.townLevel);
   if (!price.def || !price.affordable) return false;
   if (!eco.harvesters.some((h) => h.owner === seat.id && isServiced(eco.track, h, eco.rail))) return false;
   const covers = (want: Purse): boolean =>
     (Object.entries(want) as [Cargo, number][]).every(
       ([k, v]) => (seat.purse[k] ?? 0) - (price.cost[k] ?? 0) >= v);
-  if (!covers(reserve)) return false;
+  if (!(capped && atStorageCap(seat)) && !covers(reserve)) return false;
   if (!pay(seat, price.cost)) return false;
   seat.townLevel = Math.min(seat.townLevel + 1, TOWN_UPGRADES.length);
   seat.townBonus = townBonusFor(price.def.bonus, rivalTuningScore(seat.skill.key));
@@ -505,7 +519,16 @@ function loopIncome(eco: EconomyState, seat: Seat, t: number): void {
       + (seat.loopCarry.get(depot.id) ?? 0);
     const whole = Math.floor(total);
     seat.loopCarry.set(depot.id, total - whole);
-    if (whole > 0) seat.purse[cargoes[0][0]] = (seat.purse[cargoes[0][0]] ?? 0) + whole;
+    if (whole > 0) {
+      // L16 (#231): the storage cap — the harness twin of `earn` in game.ts,
+      // so the race measures the capped rival the ticket's third acceptance
+      // line is about. Income above the cap is lost; a balance already above
+      // it (a scaled opening purse) is never lowered.
+      const cap = storageCapFor(seat.townLevel);
+      const c = cargoes[0][0];
+      const held = seat.purse[c] ?? 0;
+      seat.purse[c] = Math.max(held, Math.min(cap, held + whole));
+    }
   }
 }
 
@@ -669,6 +692,20 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
           (Object.entries(want2) as [Cargo, number][])
             .every(([k, v]) => (base[k] ?? 0) >= v);
 
+        /** L5/L16: the reserve the city pass guards the tree goal with. */
+        const townReserve: Purse = {};
+        if (newLoop) {
+          const keep = Math.max(0, seat.skill.townReserve);
+          for (const [k, v] of Object.entries(reserve) as [Cargo, number][]) {
+            townReserve[k] = Math.ceil(v * keep);
+          }
+        }
+        // L16 (#231): at the storage cap the city upgrade runs BEFORE the
+        // Depot pass — the live turn's `townFirst` hoist, mirrored: a greedy
+        // Depot pass can eat the upgrade's mix and leave the seat capped and
+        // losing income for another whole turn.
+        if (newLoop && atStorageCap(seat) && townPass(eco, seat, townReserve, true)) acted = true;
+
         // RAIL-05: the rail-first seat acts on the railway before anything else
         // and expands its road (plant, depot) only when that did nothing.
         const railFirstActed = seat.rail === "railFirst" && railAction(seat, t);
@@ -716,13 +753,11 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
         // the reserve is the goal scaled by the difficulty's `townReserve`
         // (the upgrade-timing lever), and a cooled Depot's re-match is the
         // turn's other spending decision, in the slot the live turn gives it.
+        // L16 (#231): at the cap the hoisted call above already ran this
+        // turn — this second call is a no-op then (the row is bought or
+        // maxed), kept so the slot stays ONE door for every turn.
         if (newLoop) {
-          const keep = Math.max(0, seat.skill.townReserve);
-          const townReserve: Purse = {};
-          for (const [k, v] of Object.entries(reserve) as [Cargo, number][]) {
-            townReserve[k] = Math.ceil(v * keep);
-          }
-          if (townPass(eco, seat, townReserve)) acted = true;
+          if (townPass(eco, seat, townReserve, true)) acted = true;
           else if (retunePass(eco, seat)) acted = true;
         } else if (townPass(eco, seat, reserve)) acted = true;
 
