@@ -9,8 +9,13 @@
  * L3 (#217): `distanceFactor` is the banded road-distance multiplier — the
  * lorry's own route length (`depotPathLength` in economy.ts) read off
  * `DISTANCE` in config.ts. Near depots tick at the full rate, far ones at
- * half. Post-MVP (#221 L7) may retune the bands or fit a smooth falloff, and
- * makes the lorries' speed match the rate; the clock reads only this module.
+ * half.
+ *
+ * L7 (#221): the lorries scale their speed by the same product the clock
+ * pays (`depotRate` = yield × distance × transport), so a busy depot looks
+ * busy and a far, poorly-tuned one crawls. The bands themselves stay; a
+ * smooth falloff can still replace the steps later. The clock and the
+ * lorries both read only this module.
  */
 import type { Components, ConnKind, EconomyState, Harvester } from "./economy";
 import { depotPathLength, resolveConnection } from "./economy";
@@ -118,4 +123,19 @@ export function distanceFactor(eco: EconomyState, depot: Harvester): number {
 
 export function transportFactor(_depot: Harvester): number {
   return 1;
+}
+
+/**
+ * L7 (#221): the depot's effective tick-rate product — `yield × distance ×
+ * transport` — the same three seams the clock multiplies (without `BASE_RATE`
+ * and the city bonus). Lorries scale their speed by this number so the map
+ * shows the rate the clock already owns. Vehicles hold no economic state:
+ * dropping them must not change income.
+ *
+ * `distance` is the already-banded factor (`distanceFactor` / the per-network
+ * cache in game.ts). Passing it in keeps the planner and the frame from each
+ * paying a second BFS.
+ */
+export function depotRate(depot: Harvester, distance: number): number {
+  return depotYield(depot) * distance * transportFactor(depot);
 }

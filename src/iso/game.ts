@@ -122,7 +122,7 @@ import {
   depotTiles, rotateFacing, type DepotFacing,
 } from "./depot";
 import {
-  depotTransportTier, depotYield, distanceBandForPath, distanceFactorForPath,
+  depotRate, depotTransportTier, depotYield, distanceBandForPath, distanceFactorForPath,
   transportFactor,
 } from "./loop";
 // L4 (#218): the tuning session — the one thing that sets a depot's yield.
@@ -817,13 +817,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const eco: EconomyState = { grid, track, harvesters: [], factories: [], rail };
   let nextHarvesterId = 1;
   /**
-   * RV-01: road traffic. One lorry per player once a Depot reaches a Factory
-   * by road — over private track AND the public highways (PP-13). Replanned
-   * only when the economy changes (every build/demolish funnels through
-   * `rescoreNow`); the frame loop just advances and draws them.
+   * RV-01 / L7 (#221): road traffic. One lorry per SERVICED DEPOT once it
+   * reaches a Factory by road — over private track AND the public highways
+   * (PP-13). Replanned only when the economy changes (every build/demolish
+   * funnels through `rescoreNow`); the frame loop just advances and draws
+   * them. Disconnecting a depot drops its lorry. Vehicles hold no economic
+   * state — `lorriesEnabled` is the debug gate that proves it.
    */
   const trucks = createTruckState();
   let trucksDirty = true;
+  /** L7 (#221): debug gate — `__iso.setLorries(false)` (or `setVehicles(false)`)
+   *  clears the depot lorries without touching the clock. Default on. */
+  let lorriesEnabled = true;
   /** TRAFFIC-01: ambient cars — a few simple cars driving the streets and
    *  roads, host/solo-local presentation only (a guest runs no vehicle
    *  movement, same rule as the lorries). Replanned on the same network-
@@ -7706,9 +7711,50 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           && JSON.stringify(t2.segFast) === JSON.stringify(old.segFast)) {
         // trucks integrate with dt, so position is the whole migration state
         t2.leg = old.leg; t2.t = old.t; t2.reverse = old.reverse;
+        t2.waitMs = old.waitMs;
       }
+      // L7: rateMult always comes from `next` (the live yield × distance ×
+      // transport). A replan after a tune or a decay must pick up the new
+      // pace even when the route itself did not move.
       return t2;
     });
+  }
+
+  /** L7 (#221): restamp every lorry's pace from the live clock seams.
+   *  Yield decays and a finished session both move the rate without a
+   *  network change, so this cannot wait for `trucksDirty`. Distance is
+   *  the per-network cache — no extra BFS. */
+  function refreshTruckRates(): void {
+    if (trucks.trucks.length === 0) return;
+    const byId = new Map(eco.harvesters.map((h) => [h.id, h]));
+    for (const t of trucks.trucks) {
+      const h = byId.get(t.depotId);
+      if (!h) continue;
+      t.rateMult = depotRate(h, distanceInfoFor(h.id).factor);
+    }
+  }
+
+  /** Plan the depot lorries, or the empty list when the debug gate is off. */
+  function plannedLorries(): Truck[] {
+    return lorriesEnabled ? planTrucks(eco) : [];
+  }
+
+  /** L7 (#221): `__iso.setLorries` / `setVehicles` — see the hook below. */
+  function setLorriesGate(on: boolean): boolean {
+    if (isGuest()) return lorriesEnabled;
+    const next = !!on;
+    if (next === lorriesEnabled) return lorriesEnabled;
+    lorriesEnabled = next;
+    if (!lorriesEnabled) {
+      trucks.trucks = [];
+      trucksDirty = false;
+    } else {
+      trucks.trucks = planTrucksTrucksMerge(trucks.trucks, planTrucks(eco));
+      trucksDirty = false;
+      refreshTruckRates();
+    }
+    renderer?.setWorld(world);
+    return lorriesEnabled;
   }
 
   (async () => {
@@ -7902,7 +7948,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // MP-AUDIT: vehicle presentation parity — host simulates, guest renders host vehicles.
       if (!isGuest()) {
         if (trucksDirty) {
-          trucks.trucks = planTrucksTrucksMerge(trucks.trucks, planTrucks(eco));
+          trucks.trucks = planTrucksTrucksMerge(trucks.trucks, plannedLorries());
           // TRAFFIC-02: bounded trips — town-derived access nodes, host-only.
           // Retains unaffected trips on road edits (planCars checks revision).
           cars.cars = planCars(track, grid, cars.cars, carCount, seed);
@@ -7915,6 +7961,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           // a vanished truck must not linger as a ghost on the structures layer
           renderer?.setWorld(world);
         }
+        // L7: restamp pace from the live yield/distance/transport so a decay
+        // or a finished session is visible on the next frame, not the next
+        // build. Cheap: one multiply per lorry, cached distance.
+        refreshTruckRates();
         // Protests hold lorries before the blocked tile — the set is rebuilt per
         // frame only while a protest stands (usually it is undefined: no crowd,
         // no cost, no behaviour change).
@@ -8296,12 +8346,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // includes the frame's replan step: headless tests have no rAF, and
       // without this branch a dirty world never receives lorries at all.
       if (trucksDirty) {
-        trucks.trucks = planTrucksTrucksMerge(trucks.trucks, planTrucks(eco));
+        trucks.trucks = planTrucksTrucksMerge(trucks.trucks, plannedLorries());
         cars.cars = planCars(track, grid, cars.cars, carCount, seed);
         trucksDirty = false;
         quarry.setTruckServed(truckServedCargos(now, "you"));
         rivalQuarry.setTruckServed(truckServedCargos(now, "ai"));
       }
+      refreshTruckRates();
       tickTrucks(trucks, dtMs, protests.size > 0 ? new Set(protests.keys()) : undefined);
       tickCars(cars, dtMs, track, grid, seed);
       collectDeliveries(now);
@@ -8323,7 +8374,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     },
     /** TRAFFIC-01 perf dial: set the ambient-traffic volume (0 clears the
      *  streets, 3 is the default "a few"). Replans from the live road
-     *  surface immediately — no build needed to feel the cost. */
+     *  surface immediately — no build needed to feel the cost.
+     *
+     *  L7 (#221): this is CARS only. Depot lorries have their own gate
+     *  (`setLorries` / `setVehicles`) so a perf probe can silence the town
+     *  without hiding the trucks that show a connection. */
     setTraffic: (count: number) => {
       if (isGuest()) return [];
       carCount = Math.max(0, Math.min(64, Math.trunc(count) || 0));
@@ -8331,6 +8386,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       renderer?.setWorld(world);
       return cars.cars.map((c) => c.name);
     },
+    /**
+     * L7 (#221): debug gate for depot lorries. `false` clears every truck
+     * immediately and stops planning new ones; income is unchanged because
+     * vehicles hold no economic state. The ticket's "vehicles disabled"
+     * acceptance (`setTraffic(0)` or a new flag) lands here — cars stay on
+     * `setTraffic`, lorries on this.
+     *
+     * `setVehicles` is the same function under the ticket's name.
+     */
+    setLorries: setLorriesGate,
+    setVehicles: setLorriesGate,
+    get lorriesEnabled() { return lorriesEnabled; },
     quarry,
     /** A1: the rival's Processing Plant — where Black Market sabotage lands. */
     rivalPlant,
