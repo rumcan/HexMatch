@@ -664,13 +664,18 @@ export const VICTORY = {
   //          higher base rate instead of more routes. Monotone too.
   //
   // Why these numbers. The pool is deliberately BIGGER than the line so no
-  // single source is a toll gate: 6 types (12★) + 2 rungs (2★) + the shipped
-  // city row (2★) = 16★ against a 12★ line. That leaves several honest routes
-  // — six types alone wins; four types with both rungs and the city wins;
-  // five types and the rungs wins — which is the Catan-style "different plans"
-  // the ticket's addition asks for. `rung` is 1★ precisely because it is the
-  // one source a seat gets almost for free; making it 2★ would have handed
-  // every seat a sixth of the line for playing two sessions.
+  // single source is a toll gate: 6 types (12★) + 2 rungs (2★) + 3 city
+  // tiers (3★, #297's 1★ each) = 17★ against a 12★ line. No single source
+  // carries most of the win line — types at 12★ is the full breadth axis
+  // (six connected depots), city at 3★ is a quarter of the line and rungs
+  // at 2★ are the progress marker they were always meant to be.
+  //
+  // #297: city was 2★ per tier (L17's three rows at 2★ = 6★, half the win
+  // line), and the rival could buy two tiers in one turn (cap-first at step 0
+  // and post-depot at step 4 of `aiNewLoopTurn`), bursting 4★ of city plus
+  // depot types in a single clock. The fix is both halves: one tier per turn
+  // (`townBoughtThisTurn` in game.ts) and 1★ per tier here, so no single turn
+  // can carry the rival past the line the player is still racing toward.
   //
   // `target` is the new loop's OWN line and is read only when the flag is on
   // (`winTarget()` in game.ts). The shipped 10★ above is untouched, so every
@@ -682,8 +687,10 @@ export const VICTORY = {
     type: 2,
     /** ★ per rung of the depot tree unlocked (L5 `depotTier`). */
     rung: 1,
-    /** ★ per city upgrade tier bought and confirmed (L5 `townLevel`). */
-    city: 2,
+    /** ★ per city upgrade tier bought and confirmed (L5 `townLevel`).
+     *  #297: 1★ per tier (was 2★). Three tiers at 1★ = 3★, a quarter of the
+     *  12★ line — no single source carries most of the win condition. */
+    city: 1,
     /** ★ needed to win under the new loop. */
     target: 12,
   },

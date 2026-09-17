@@ -5198,6 +5198,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    */
   function aiNewLoopTurn(f: Factory, now: number): void {
     let acted = false;
+    // #297: ONE city tier per turn, no matter which step buys it. Without
+    // this guard the rival could buy a tier at step 0 (cap-first) AND another
+    // at step 4 (post-depot), bursting 4★ of city in a single turn and
+    // sprinting to the win line before the player could answer. The flag is
+    // set by whichever step lands the tier first and read by the other.
+    let townBoughtThisTurn = false;
     // The tree's answer, read once and used by all three verbs below — the
     // plant guard, the planner's ranking and the city's reserve all work
     // toward the SAME goal, so one turn cannot pull in two directions.
@@ -5214,7 +5220,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // the base rate together, converting wasted ticks into income. Off the
     // cap, the shipped order — connect first — stands.
     const townFirst = CARGOES.some((c) => (rival.purse[c] ?? 0) >= storageCapFor(rival.townLevel));
-    if (townFirst && rivalTownStep()) acted = true;
+    if (townFirst && rivalTownStep()) { acted = true; townBoughtThisTurn = true; }
 
     // ── 1. plant — reach, and (until #228) a ★ ─────────────────────────────
     // A Processing Plant still earns its 1★ (VICTORY.plant is a live source
@@ -5278,7 +5284,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // `townFirst` above); this second call is a no-op then — the row is
     // bought or maxed — but it keeps the call site ONE door for every turn,
     // so a multi-row future cannot grow a second code path.
-    if (rivalTownStep()) acted = true;
+    // #297: `townBoughtThisTurn` gates this call — one tier per turn is the
+    // pace the ★ table was balanced for. Without the gate a cap-first rival
+    // could buy two tiers on the same clock and burst past the win line.
+    if (!townBoughtThisTurn && rivalTownStep()) acted = true;
     else if (rivalRetuneStep()) acted = true;
 
     // ── 5. pave — the ★ seam #228 removes (see the note above) ─────────────

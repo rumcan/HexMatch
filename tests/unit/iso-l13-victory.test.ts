@@ -31,7 +31,7 @@ import {
 import { buildEnding, endingPathFor, ledgerRows, type EndingBreakdown } from "../../src/iso/ending";
 import { createTrack, buildTile, tIdx } from "../../src/iso/track";
 import { addPlant } from "../../src/iso/plants";
-import { VICTORY, DEPOT_TREE, type Cargo } from "../../src/iso/config";
+import { VICTORY, DEPOT_TREE, TOWN_UPGRADES, type Cargo } from "../../src/iso/config";
 import { MAP_W, MAP_H } from "../../src/game/config";
 import { GRASS, TOWN_OCC, type Grid, type Industry, type Town } from "../../src/iso/grid";
 import type { EconomyState, Factory, Harvester } from "../../src/iso/economy";
@@ -149,14 +149,17 @@ describe("L13 (#228) the new loop's ★ table", () => {
 
   it("offers more ★ than the line needs, so no single source is mandatory", () => {
     const cargos = Object.keys(DEPOT_TREE).length;
+    const cityTiers = TOWN_UPGRADES.length;
     const pool = cargos * VICTORY.loop.type
-      + 2 * VICTORY.loop.rung          // DEPOT_TIER_MAX rungs are unlockable
-      + 1 * VICTORY.loop.city;         // the shipped city row
+      + 2 * VICTORY.loop.rung              // DEPOT_TIER_MAX rungs are unlockable
+      + cityTiers * VICTORY.loop.city;     // L17 (#245): three city tiers now
     expect(pool).toBeGreaterThan(VICTORY.loop.target);
     // …and no single source can reach the line alone EXCEPT breadth, which is
-    // the long pole by design (six types is the whole map).
+    // the long pole by design (six types is the whole map). #297: the full
+    // city pool (all tiers) must also stay below the line — a seat that can
+    // reach 12★ from city upgrades alone has no reason to build a network.
     expect(2 * VICTORY.loop.rung).toBeLessThan(VICTORY.loop.target);
-    expect(1 * VICTORY.loop.city).toBeLessThan(VICTORY.loop.target);
+    expect(cityTiers * VICTORY.loop.city).toBeLessThan(VICTORY.loop.target);
   });
 
   it("leaves the shipped table exactly as VP-01 set it", () => {
@@ -337,8 +340,10 @@ describe("L13 several routes reach the line", () => {
   it("lets breadth, depth and a mixed plan all reach it", () => {
     // WIDE: types alone.
     expect(reach(6, 0, 0)).toBeGreaterThanOrEqual(line);
-    // TALL: fewer types, both rungs and the city.
-    expect(reach(4, 2, 1)).toBeGreaterThanOrEqual(line);
+    // TALL: fewer types, both rungs and two city tiers (#297: at 1★/tier,
+    // the depth plan needs more tiers to reach the line — that is the point,
+    // city is no longer half the win condition).
+    expect(reach(4, 2, 2)).toBeGreaterThanOrEqual(line);
     // MIXED: five types and the rungs, no city at all.
     expect(reach(5, 2, 0)).toBeGreaterThanOrEqual(line);
   });
@@ -346,13 +351,15 @@ describe("L13 several routes reach the line", () => {
   it("makes no single source required — each plan omits one entirely", () => {
     expect(reach(6, 0, 0)).toBeGreaterThanOrEqual(line);   // no rungs, no city
     expect(reach(5, 2, 0)).toBeGreaterThanOrEqual(line);   // no city
-    expect(reach(4, 2, 1)).toBeGreaterThanOrEqual(line);   // fewest types
+    expect(reach(4, 2, 2)).toBeGreaterThanOrEqual(line);   // fewest types
   });
 
   it("does not hand the line to a seat that only opened rungs and the city", () => {
     // Depth without a network must NOT win on its own — the loop is about
     // running cargo, and a seat with no depot type running has no economy.
-    expect(reach(0, 2, 1)).toBeLessThan(line);
+    // #297: even the FULL depth pool (2 rungs + 3 city tiers = 5★) cannot
+    // reach 12★ alone.
+    expect(reach(0, 2, 3)).toBeLessThan(line);
   });
 
   it("hasWon races the new line", () => {
