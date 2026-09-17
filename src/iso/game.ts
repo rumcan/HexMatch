@@ -6626,8 +6626,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       costInfo,
       inspect: info || null,
       inspectTone: infoTone,
-      // L8 (#222): the loop made legible — the objective line and the live
-      // per-cargo income, painted by ui.ts beside the banner and the chips.
+      // L8 (#222): the loop made legible — the objective line, the live
+      // per-cargo income and the optional quests, painted by ui.ts beside the
+      // banner and the chips.
       objective,
       objectiveKey,
       incomeRates,

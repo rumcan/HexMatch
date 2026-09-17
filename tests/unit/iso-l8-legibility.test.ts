@@ -302,7 +302,7 @@ describe("L8 the quest table, as a rule", () => {
         expect(units).toBeLessThanOrEqual(2);
         // #228 owns the scoreboard; a quest must not move the win line.
         expect(Object.keys(reward.purse)).not.toContain("vp");
-        expect(reward.label).toMatch(/\d+ /);
+        expect(reward.label).toMatch(/\d+\S* (Ore|Stone|Grain|Oil|Gold)/);
       }
     }
   });
@@ -344,7 +344,7 @@ describe("L8 the quest panel on a live game", () => {
     expect(h.quests.offers.every((q) => q.speaker === "foreman")).toBe(true);
     expect(h.quests.offers[0].text).toMatch(/Depot|Depots|city|road/i);
     expect(h.quests.offers[0].progress).toMatch(/\d+\/\d+|×/);
-    expect(h.quests.offers[0].reward).toMatch(/\d+ /);
+    expect(h.quests.offers[0].reward).toMatch(/\d+\S* (Ore|Stone|Grain|Oil|Gold)/);
     const rows = el.querySelectorAll("li.quest");
     expect(rows.length).toBe(h.quests.offers.length);
     expect(el.textContent).toContain(FOREMAN_NAME);
@@ -429,6 +429,38 @@ describe("L8 the quest panel on a live game", () => {
     expect(h.vpTarget).toBe(target);
     // The loop still tells the player what to do — the panel is not the goal.
     expect(h.objective.text).toBeTruthy();
+  });
+
+  it("rides the save: the panel's offers, payouts and choices come back", async () => {
+    const h = await boot({ newLoop: true });
+    h.finishSetup();
+    await settle();
+    const first = h.quests.offers[0];
+    h.questAction(first.id, "dismiss");           // a retired offer
+    h.questPay(h.quests.offers[0].id);            // a paid one
+    h.questAction("", "hide");                    // and the player's hide
+    await settle();
+    h.saveNow();
+    const raw = JSON.parse(localStorage.getItem("hexmatch:save")!) as {
+      quests?: { offers?: string[]; spent?: string[]; paid?: string[]; hidden?: boolean };
+    };
+    expect(raw.quests, "the panel's state rides the save").toBeTruthy();
+    expect(raw.quests!.spent).toContain(first.id);
+    expect(raw.quests!.hidden).toBe(true);
+    expect(raw.quests!.paid!.length).toBe(1);
+
+    // A reload is a Continue: the offers resolve against the restored map, the
+    // retired id stays retired, the payout stays paid and the hide stays hidden.
+    dispose?.();
+    dispose = undefined;
+    const back = await boot({ newLoop: true });
+    await settle();
+    expect(back.phase, "the save was restored, not a fresh game").toBe("play");
+    expect(back.quests.hidden).toBe(true);
+    expect(back.quests.spent).toContain(first.id);
+    expect(back.quests.paid.length).toBe(1);
+    expect(back.quests.offers.some((q) => q.id === first.id)).toBe(false);
+    expect(back.quests.offers.length).toBeGreaterThanOrEqual(1);
   });
 
   it("stays off the shipped loop — and off a story contract, which plays it", async () => {

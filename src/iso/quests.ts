@@ -1,7 +1,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 // L8 (#222) — optional quests, voiced by the match's cast.
 //
-// The Merge Gardens deconstruction gave the loop one more job: tell the player
+// Merge Gardens' deconstruction gave the loop one more job: tell the player
 // what they COULD do next, in a character's voice. HexMatch is a repeatable
 // Catan-style strategy game, so a quest here is a SUGGESTION and never a
 // requirement:
@@ -28,9 +28,11 @@
 // contract), or the sandbox's neutral foreman. Which one speaks is
 // `speakerFor()`: a story contract is voiced by its cast through
 // `src/story/cast.ts` + `advisor.ts`; the sandbox has no cast, so the foreman
-// talks the player through the same offers.
+// talks the player through the same offers. (Today a contract plays the
+// shipped loop, where this whole panel is off — the voices are here so the
+// moment a contract runs the new loop, it speaks in character.)
 // ══════════════════════════════════════════════════════════════════════════
-import { CARGO, CARGOES, type Cargo } from "./config";
+import { CARGO, CARGOES, INDUSTRY_BY_KEY, type Cargo } from "./config";
 import type { Purse } from "./track";
 
 /** The plans a quest can push: claim ground, connect it, tune it, grow the
@@ -44,7 +46,7 @@ export type QuestSpeaker = "rival" | "guide" | "foreman";
 
 export type QuestKind = "claim-cargo" | "connect-depots" | "tune-depot" | "city-tier" | "run-types";
 
-export type QuestRewardId = "ore-2" | "wood-stone-2" | "grain-2" | "oil-1" | "gold-1";
+export type QuestRewardId = "ore-2" | "stone-2" | "grain-2" | "oil-1" | "gold-1";
 
 /** The sandbox foreman. No art, no sheet: a name and a voice, on purpose —
  *  the cast belongs to the campaign, and the sandbox is not a campaign. */
@@ -55,25 +57,26 @@ export const GUIDE_NAME = "Mabel Quill";
 export interface QuestReward {
   id: QuestRewardId;
   purse: Purse;
-  /** What the chip prints, e.g. "2 ⛏️ Ore". */
+  /** What the chip prints, e.g. "2⛏️ Ore" — the HUD's own price grammar. */
   label: string;
 }
 
-const rewardLabel = (purse: Purse): string =>
-  (Object.entries(purse) as [Cargo, number][])
-    .map(([c, n]) => `${n} ${CARGO[c].icon} ${CARGO[c].name}`)
-    .join(" · ");
-
-const reward = (id: QuestRewardId, purse: Purse): QuestReward => ({ id, purse, label: rewardLabel(purse) });
+const reward = (id: QuestRewardId, purse: Purse): QuestReward => ({
+  id,
+  purse,
+  // "2⛏️ Ore" — the count and the icon the price grammar uses, then the name.
+  label: (Object.entries(purse) as [Cargo, number][])
+    .map(([c, n]) => `${n}${CARGO[c].icon} ${CARGO[c].name}`).join(" + "),
+});
 
 /**
- * The reward table — SMALL and once-per-quest by construction. L13 (#228)
+ * The reward table — SMALL and once-per-quest by construction. #228 (L13)
  * owns these values ("small, optional, capped"); the shapes below are one
  * cargo each, never enough to skip a rung or a city tier on their own.
  */
 export const QUEST_REWARDS: Record<QuestRewardId, QuestReward> = {
   "ore-2": reward("ore-2", { ore: 2 }),
-  "wood-stone-2": reward("wood-stone-2", { stone: 2 }),
+  "stone-2": reward("stone-2", { stone: 2 }),
   "grain-2": reward("grain-2", { grain: 2 }),
   "oil-1": reward("oil-1", { oil: 1 }),
   "gold-1": reward("gold-1", { gold: 1 }),
@@ -118,9 +121,13 @@ export interface QuestDef {
 export interface QuestRecipe {
   kind: QuestKind;
   strategy: QuestStrategy;
-  /** Every concrete offer this recipe supports right now (often one). */
-  offers: (v: QuestView) => QuestDef[];
+  /** Every concrete offer this recipe supports right now (often one, one per
+   *  cargo for a claim, and none at all when the map cannot support it). */
+  offers: (v: QuestView) => QuestOption[];
 }
+
+/** What a recipe builds — the def minus the two fields the table owns. */
+export type QuestOption = Omit<QuestDef, "kind" | "strategy">;
 
 /** How many quests are offered at once. The ticket says 2–3. */
 export const QUEST_OFFER_MAX = 3;
@@ -133,38 +140,39 @@ export const typesRunning = (cargos: readonly Cargo[]): number => new Set(cargos
 
 // ══════════════════════════════════════════════════════════════════════════
 // THE TABLE — one recipe per strategy. Everything a quest says or wants lives
-// here; the module below only ranks, offers and pays them.
+// here; the helpers below only rank, offer and score them.
 // ══════════════════════════════════════════════════════════════════════════
 export const QUESTS: readonly QuestRecipe[] = [
   {
     kind: "claim-cargo",
     strategy: "claim",
+    // One option per cargo still unclaimed, contested ground first (the cargo
+    // the rival already runs), then CARGOES order — deterministic on a given
+    // map, different between maps.
     offers: (v) => (Object.keys(v.unclaimed) as Cargo[])
-      // Contested cargoes first (the rival runs one already), then CARGOES
-      // order — deterministic on a given map, different between maps.
       .filter((c) => (v.unclaimed[c] ?? 0) > 0)
       .sort((a, b) => {
         const ra = v.rivalCargoes.includes(a) ? 0 : 1;
         const rb = v.rivalCargoes.includes(b) ? 0 : 1;
         return ra - rb || CARGOES.indexOf(a) - CARGOES.indexOf(b);
       })
+      .slice(0, 3)
       .map((cargo) => {
         const contested = v.rivalCargoes.includes(cargo);
+        const name = cargoName(cargo);
         return {
           id: `claim-${cargo}`,
-          kind: "claim-cargo" as const,
-          strategy: "claim" as const,
           cargo,
           need: 1,
-          reward: "ore-2" as const,
+          reward: cargo === "stone" ? "stone-2" as QuestRewardId : "ore-2" as QuestRewardId,
           text: {
             rival: contested
-              ? `My crews are already surveying that ${cargoName(cargo)}. Put a Depot in its catchment before I finish, if you can.`
-              : `There is ${cargoName(cargo)} on this map nobody has claimed. One Depot in its catchment and it is yours — I would have said the same thing last week.`,
-            guide: `Boss, ${cargoName(cargo)} is still unclaimed on the map. The first Depot in an industry's catchment holds it — I would rather that Depot was ours.`,
+              ? `My crews are already working that ${name}. Put a Depot in its catchment before I finish, if you can.`
+              : `There is ${name} on this map nobody has claimed. One Depot in its catchment and it is yours — I would have said the same thing last week.`,
+            guide: `Boss, ${name} is still unclaimed on the map. The first Depot in an industry's catchment holds it — I would rather that Depot was ours.`,
             foreman: contested
-              ? `The rival's lorries are already working that ${cargoName(cargo)}, boss. One Depot in its catchment and it's ours instead.`
-              : `There's ${cargoName(cargo)} sitting unclaimed. One Depot in its catchment and it pays us, not nobody.`,
+              ? `The rival's lorries are already working that ${name}, boss. One Depot in its catchment and it's ours instead.`
+              : `There's ${name} sitting unclaimed. One Depot in its catchment and it pays us, not nobody.`,
           },
         };
       }),
@@ -173,17 +181,14 @@ export const QUESTS: readonly QuestRecipe[] = [
     kind: "connect-depots",
     strategy: "link",
     // "Connect three depots" — the network plan. The ask grows with what the
-    // seat already runs, so the quest is never already-done the moment it is
-    // offered, and two Depots is reachable from a fresh map.
+    // seat already runs, so it is never already-done the moment it is offered.
     offers: (v) => {
       const need = Math.min(4, Math.max(2, v.connected + 1));
       return [{
         id: `link-${need}`,
-        kind: "connect-depots" as const,
-        strategy: "link" as const,
         cargo: null,
         need,
-        reward: "wood-stone-2" as const,
+        reward: "stone-2" as QuestRewardId,
         text: {
           rival: `One road is a hobby. Run ${need} Depots on the clock at once and I will believe you have a company.`,
           guide: `Two lines make a business, boss: put ${need} Depots on the clock at the same time and the clock does the rest.`,
@@ -195,19 +200,16 @@ export const QUESTS: readonly QuestRecipe[] = [
   {
     kind: "tune-depot",
     strategy: "tune",
-    // The depth plan: a matched Depot at or above a level. The bar rises once
-    // the seat has already shown it can clear ×2, so the offer keeps meaning
-    // something instead of repeating itself.
+    // The depth plan: one Depot at or above a yield. The bar rises once the
+    // seat has shown it can clear ×2, so the offer keeps meaning something.
     offers: (v) => {
       const threshold = v.bestYield >= 2 ? 2.5 : 2;
       return [{
         id: `tune-${threshold}`,
-        kind: "tune-depot" as const,
-        strategy: "tune" as const,
         cargo: null,
         need: 1,
         threshold,
-        reward: "oil-1" as const,
+        reward: "oil-1" as QuestRewardId,
         text: {
           rival: `Your Depots tick like a clock that needs winding. Match one past ×${threshold} and I might notice.`,
           guide: `A better match is a better payslip, boss — tune one Depot up past ×${threshold} and the whole line earns more.`,
@@ -219,13 +221,13 @@ export const QUESTS: readonly QuestRecipe[] = [
   {
     kind: "city-tier",
     strategy: "city",
+    // Nothing to ask once the city is maxed (one tier ships today, but the
+    // table reads TOWN_UPGRADES rather than a count).
     offers: (v) => (v.townLevel >= v.townLevels ? [] : [{
       id: `city-${v.townLevel + 1}`,
-      kind: "city-tier" as const,
-      strategy: "city" as const,
       cargo: null,
-      need: v.townLevel + 1,
-      reward: "grain-2" as const,
+      need: 1,
+      reward: "grain-2" as QuestRewardId,
       text: {
         rival: `Still one town hall and a handshake, I see. Raise your city a tier — then we can talk as equals.`,
         guide: `The city sets the pace for every Depot you run, boss. Raise it a tier and every connected line ticks faster.`,
@@ -240,11 +242,9 @@ export const QUESTS: readonly QuestRecipe[] = [
       const need = Math.min(4, Math.max(2, typesRunning(v.cargoesRunning) + 1));
       return [{
         id: `breadth-${need}`,
-        kind: "run-types" as const,
-        strategy: "breadth" as const,
         cargo: null,
         need,
-        reward: "gold-1" as const,
+        reward: "gold-1" as QuestRewardId,
         text: {
           rival: `One cargo. One trick. Run ${need} types at once or stay a footnote in my ledger.`,
           guide: `${need} different cargoes on the clock at once, boss — breadth is what the ★ line pays for, and it is what survives a bad map.`,
@@ -257,14 +257,14 @@ export const QUESTS: readonly QuestRecipe[] = [
 
 /** Every quest this map and seat support right now, in table order. */
 export function questOffers(v: QuestView): QuestDef[] {
-  return QUESTS.flatMap((r) => r.offers(v));
+  return QUESTS.flatMap((r) => r.offers(v).map((o) => ({ ...o, kind: r.kind, strategy: r.strategy })));
 }
 
 // ── the offer set: 2–3 at once, never two of the same strategy ────────────
 export interface SelectQuestsOptions {
   /** Up to this many (default 3). */
   max?: number;
-  /** Ids to skip — the active, dismissed and already-paid quests. */
+  /** Ids to skip — the dismissed and already-paid ones. */
   exclude?: Iterable<string>;
   /** Strategies already on the panel: prefer something else. */
   avoid?: Iterable<QuestStrategy>;
@@ -272,9 +272,9 @@ export interface SelectQuestsOptions {
 
 /**
  * Pick the offers: a deterministic shuffle of the candidates, then one per
- * strategy, up to `max`. One per strategy is the whole point ("quests offer
+ * strategy up to `max`. One per strategy is the whole point ("quests offer
  * different strategies at the same time" is an acceptance line), so the
- * shuffle only decides WHICH breadth/depth/network variant leads.
+ * shuffle only decides WHICH claim/breadth/network variant leads.
  *
  * `rng` is the game's seeded one (`mulberry32`), never `Math.random` — the
  * same seed offers the same quests, and a re-offer after a completion is
@@ -286,8 +286,7 @@ export function selectQuests(
   const max = Math.max(1, opts.max ?? QUEST_OFFER_MAX);
   const excluded = new Set(opts.exclude ?? []);
   const avoid = new Set(opts.avoid ?? []);
-  const candidates = pool.filter((q) => !excluded.has(q.id));
-  const shuffled = [...candidates];
+  const shuffled = pool.filter((q) => !excluded.has(q.id));
   for (let i = shuffled.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
@@ -303,14 +302,6 @@ export function selectQuests(
     seen.add(q.strategy);
     picked.push(q);
   }
-  // Fewer strategies than the panel holds: top up with the rest rather than
-  // showing one quest where the ticket asks for 2–3.
-  if (picked.length < Math.min(max, QUEST_OFFER_MIN)) {
-    for (const q of order) {
-      if (picked.length >= Math.min(max, QUEST_OFFER_MIN)) break;
-      if (!picked.includes(q)) picked.push(q);
-    }
-  }
   return picked;
 }
 
@@ -323,7 +314,7 @@ export function questHave(def: QuestDef, v: QuestView): number {
     case "connect-depots":
       return v.connected;
     case "tune-depot":
-      return v.bestYield >= (def.threshold ?? 2) ? 1 : 0;
+      return v.tunedDepots > 0 && v.bestYield >= (def.threshold ?? 2) ? 1 : 0;
     case "city-tier":
       return v.townLevel;
     case "run-types":
@@ -343,13 +334,12 @@ export const questText = (def: QuestDef, speaker: QuestSpeaker): string => def.t
 
 /**
  * Which voice speaks for a strategy. In a contract the rival pushes the
- * aggressive lines (claims, networks, a jab at the city) while the guide
- * carries the how-to ones; the sandbox has only the foreman, and he carries
- * all five.
+ * aggressive lines (a claim, the network) while the guide carries the how-to
+ * ones; the sandbox has only the foreman, and he carries all five.
  */
 export const speakerFor = (strategy: QuestStrategy, story: boolean): QuestSpeaker => {
   if (!story) return "foreman";
-  return strategy === "claim" || strategy === "link" || strategy === "breadth" ? "rival" : "guide";
+  return strategy === "claim" || strategy === "link" ? "rival" : "guide";
 };
 
 /** The name to print beside a quest line. */
@@ -360,18 +350,19 @@ export const speakerName = (speaker: QuestSpeaker, rivalName?: string | null): s
 };
 
 /**
- * The progress line the panel prints ("1/3", "×2.4 of ×2"). Kept pure so the
- * chrome never recomputes the rule it is showing.
+ * The progress the panel prints — "1/3", or the yield a tune quest is asking
+ * for ("×1.8 of ×2"). Kept pure so the chrome never re-derives the rule it is
+ * showing, and so the same text can be asserted from a probe.
  */
 export function questProgressText(def: QuestDef, v: QuestView): string {
-  const have = questHave(def, v);
-  if (def.kind === "tune-depot") return `best ${fmt2(v.bestYield)} · need ${fmt2(def.threshold ?? 2)}`;
-  return `${Math.min(have, def.need)}/${def.need}`;
+  if (def.kind === "tune-depot") return `×${v.bestYield.toFixed(1)} of ×${def.threshold ?? 2}`;
+  return `${Math.min(questHave(def, v), def.need)}/${def.need}`;
 }
 
-const fmt2 = (n: number): string => `×${Number(n.toFixed(2))}`;
+/** One line for the feed/toast: "Foreman Pike: 2 Depots ticking at once…". */
+export const questLine = (def: QuestDef, speaker: QuestSpeaker, rivalName?: string | null): string =>
+  `${speakerName(speaker, rivalName)}: ${questText(def, speaker)}`;
 
-/** A quest's one-line summary for the Feed/toast: "2 ★-free lines" — the
- *  panel reuses the text, so this stays tiny. */
-export const questLine = (def: QuestDef, speaker: QuestSpeaker): string =>
-  `${speakerName(speaker)}: ${questText(def, speaker)}`;
+/** Every cargo an industry of this key produces — the claim rule's one read. */
+export const cargoOfIndustry = (type: string): Cargo | null =>
+  INDUSTRY_BY_KEY[type]?.cargo ?? null;

@@ -2405,10 +2405,10 @@ export function createOriginalUi(
    * so the player can put the whole thing away — and the game remembers both,
    * because "ignoring the quests" has to survive a repaint.
    */
-  function renderQuests(panel: UiQuestPanel | null): void {
+  function renderQuests(panel: UiQuestPanel | null, bannerUp = false): void {
     questsPanel = panel;
     const items = panel?.items ?? [];
-    const live = !!panel && items.length > 0;
+    const live = !!panel && items.length > 0 && !bannerUp;
     questsEl.classList.toggle("hidden", !live);
     if (!live || !panel) {
       questsSig = null;
@@ -2858,7 +2858,10 @@ export function createOriginalUi(
     // L8 (#222): the optional quests, under the objective line — the same lane,
     // the same promise ("here is what to do next"), a different voice: a
     // character suggesting, never the game requiring.
-    renderQuests(state.quests ?? null);
+    // While a banner is up (a protest countdown, a disconnect, the ending) the
+    // lane belongs to it: the panel steps aside and comes back with the banner
+    // gone, keeping the player's own open/hidden choice.
+    renderQuests(state.quests ?? null, !!state.banner);
     const toolState = state.tool;
     // While the opening Depot is owed, every other build is locked out (the
     // game refuses them too) — greyed so the menu never promises a plant.
