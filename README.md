@@ -70,13 +70,25 @@ The isometric canvas-2d game is the only boot path (`/`). The hex + three.js
 path (`?legacy=1`) was deleted in E11. e2e specs boot the default route with
 real DOM, real rendering and no mocking.
 
+**The loop a sandbox game plays** (L1f, #237) is the clock loop, and it needs no
+URL parameter: build a Depot beside an industry, tune it with a short match-3
+session, and every connected Depot ticks its cargo in on the clock — the cargo
+buys the next rung of the depot tree and the next city upgrade. `?loop=old`
+opens the retired match-pays loop and is kept for exactly one release (the same
+two words as `startIsoGame({ newLoop: false })`); `?loop=new` still resolves, it
+just asks for what a bare URL already gives you. Multiplayer rooms and story
+contracts stay on the retired loop until their own post-MVP tickets land, and a
+seat that asks for the new loop there is told so.
+
 ## Onboarding
 
 A first game opens with the **starting tour** (`src/iso/tutorial.ts`): eight
-stepped cards that walk the whole loop — raise the Processing Plant beside a
-town, build a Depot inside an industry's catchment, drag roads between them,
-play the match-3 board the lorries feed, spend the cargo it pays, and take ★ by
-paving your own dirt and by raising more plants. *Never show this again* is the
+stepped cards that walk the whole loop the game actually plays — raise the
+Processing Plant beside a town, build a Depot inside an industry's catchment,
+join them with free dirt roads, tune that Depot with a short match-3 session,
+spend the cargo its clock ticks in, and take ★ from depot types, tree rungs and
+city upgrades. (`?loop=old` re-voices the tour for the retired loop: same eight
+cards, the board and the ★ told the old way.) *Never show this again* is the
 one exit that persists (`hexmatch:tutorial` in localStorage); skipping only
 closes the card for the session, the ❔ in the top bar replays the tour at any
 time and re-tells the full rules beside it, and `?tutorial=0` keeps it out of

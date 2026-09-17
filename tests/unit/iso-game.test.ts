@@ -178,7 +178,10 @@ beforeEach(() => {
   // every boot, and on some seeds no industry has a legal south corridor, so
   // `findSouthCorridor` returns null and the whole "full round" block fails —
   // a flake that predates J1. Same seed the e2e suite boots with.
-  window.history.replaceState(null, "", "/?seed=1337");
+  // L1f (#237): the address bar says which loop this harness plays — the
+  // RETIRED one, the loop it was written against. `?loop=old` is the release's
+  // escape hatch; a test that wants the new loop says so (`{ newLoop: true }`).
+  window.history.replaceState(null, "", "/?seed=1337&loop=old");
   // AI-03: NEVER a resume in this harness — boots are fresh games. The
   // previous test's autosave (an earlier game's interval now cleared on
   // dispose, but any 5s window can still have written) must not resurrect
@@ -250,8 +253,26 @@ describe("E11 the game boots", () => {
     ]);
   });
 
-  // ── L1a (#232): the new-loop feature flag (MVP switch) ──────────────────
-  it.skip("L1a (#232): newLoop is off by default and the economy chrome is whole", async () => {
+  // ── L1a (#232) built the switch; L1f (#237) turned it on ────────────────
+  //
+  // The switch is no longer what a test reaches for: the address bar is. This
+  // file's harness boots behind the `?loop=old` hatch (its beforeEach, like the
+  // other retired-loop files), so these two tests say the URL out loud: the
+  // first clears it, which is precisely what a player's fresh game is, and the
+  // whole new-loop acceptance block lives in `iso-l1f-default-loop.test.ts`,
+  // booted with no options and no parameter.
+  it("L1f (#237): with no loop parameter in the address bar the game is on the new loop", async () => {
+    window.history.replaceState(null, "", "/");
+    try {
+      const h = await boot();
+      expect(h.newLoop).toBe(true);
+      expect(h.vpTarget).toBe(VICTORY.loop.target);
+    } finally {
+      window.history.replaceState(null, "", "/?seed=1337&loop=old");
+    }
+  });
+
+  it("L1f (#237): behind the hatch the economy chrome is still the whole one", async () => {
     const h = await boot();
     expect(h.newLoop).toBe(false);
     const tabs = [...root.querySelectorAll("[data-tab]")].map(
@@ -263,13 +284,13 @@ describe("E11 the game boots", () => {
     expect(root.textContent).toContain("Black Market");
   });
 
-  it("L1a (#232): opts.newLoop turns the flag on", async () => {
+  it("L1f (#237): opts.newLoop pins the new loop even behind the hatch", async () => {
     const h = await boot({ newLoop: true });
     expect(h.newLoop).toBe(true);
   });
 
   // ── L13 (#228): the chrome must not sell a ★ source the loop retired ─────
-  it.skip("L13 (#228): the shipped loop keeps its line, its rates and its Road button", async () => {
+  it("L13 (#228): the retired loop keeps its line, its rates and its Road button", async () => {
     const shipped = await boot();
     expect(shipped.vpTarget).toBe(VICTORY.target);
     expect(shipped.vpRates).toEqual({ upgrade: 0.25, plant: 1, platform: 1 });
@@ -322,7 +343,7 @@ describe("E11 the game boots", () => {
     expect(you).not.toContain("Processing plants");
   });
 
-  it.skip("L1a (#232) / L11 (#226): retires the retired surfaces — the MARKET tab and none else", async () => {
+  it("L1a (#232) / L11 (#226): retires the retired surfaces — the MARKET tab and none else", async () => {
     await boot({ newLoop: true });
     // L11 (#226): the strip is the same three tabs on both loops. The OFFER
     // board is gone everywhere (that was the bypass), while the Bank STAYS —
@@ -346,7 +367,7 @@ describe("E11 the game boots", () => {
       .toEqual(["bandit", "protest", "security"]);
   });
 
-  it.skip("L1a (#232): a story contract ignores newLoop and says so", async () => {
+  it("L1a (#232): a story contract ignores newLoop and says so", async () => {
     const { chapterById } = await import("../../src/story/chapters");
     const chapter = chapterById("inheritance")!;
     const h = await boot({ newLoop: true, story: chapter.id });
@@ -401,7 +422,7 @@ describe("E11 the game boots", () => {
   // (This test exists because its ABSENCE is how a dropped menuBtn listener
   // shipped to manual testing: the sheet, the store and the popover painted
   // green in jsdom without anyone ever clicking the button that raises them.)
-  it.skip("the ☰ menu opens, carries its rows, and closes again", async () => {
+  it("the ☰ menu opens, carries its rows, and closes again", async () => {
     await boot();
     const btn = root.querySelector("#iso-menu-btn") as HTMLButtonElement;
     const pop = root.querySelector("#iso-topmenu") as HTMLElement;
@@ -510,14 +531,14 @@ describe("the live game resolves into a cinematic ending", () => {
   describe("AI-04 the difficulty sets the win line", () => {
     const vpBadge = () => (root.querySelector("#iso-vp") as HTMLElement).textContent ?? "";
 
-    it.skip("boots easy on a 5★ race — the hook and the HUD badge agree", async () => {
+    it("boots easy on a 5★ race — the hook and the HUD badge agree", async () => {
       localStorage.setItem("hexmatch:rival-skill", "easy");
       const h = await boot();
       expect(h.vpTarget).toBe(5);
       expect(vpBadge()).toContain("You 0/5");
     });
 
-    it.skip("keeps the shipped line on normal and moves it with the selector", async () => {
+    it("keeps the shipped line on normal and moves it with the selector", async () => {
       const h = await boot();          // beforeEach pins `normal`
       expect(h.vpTarget).toBe(VICTORY.target);
       expect(vpBadge()).toContain(`You 0/${VICTORY.target}`);
@@ -527,7 +548,7 @@ describe("the live game resolves into a cinematic ending", () => {
       expect(vpBadge()).toContain("You 0/5");
     });
 
-    it.skip("wins an easy game at 5★ — the 20 paves that are only half a 10★ race", async () => {
+    it("wins an easy game at 5★ — the 20 paves that are only half a 10★ race", async () => {
       localStorage.setItem("hexmatch:rival-skill", "easy");
       const h = await finishFor(1, 20);
       expect(h.vpTarget).toBe(5);
@@ -539,7 +560,7 @@ describe("the live game resolves into a cinematic ending", () => {
       expect(ending.textContent).toContain("20 tiles × 0.25★");
     });
 
-    it.skip("does not shorten the race on the other chairs: 20 paves stay mid-game", async () => {
+    it("does not shorten the race on the other chairs: 20 paves stay mid-game", async () => {
       const h = await finishFor(1, 20);
       expect(h.vp.you).toBe(5);
       expect(h.phase).toBe("play");
@@ -547,7 +568,7 @@ describe("the live game resolves into a cinematic ending", () => {
     });
   });
 
-  it.skip("opens the point-aware victory screen with fireworks when the player crosses 10★", async () => {
+  it("opens the point-aware victory screen with fireworks when the player crosses 10★", async () => {
     const h = await finishFor(1);
     expect(h.phase).toBe("won");
     const ending = root.querySelector("#iso-ending") as HTMLElement;
@@ -558,7 +579,7 @@ describe("the live game resolves into a cinematic ending", () => {
     expect(ending.textContent).toContain("The years that followed");
   });
 
-  it.skip("recognises an expansion-led win and names the new plant as the decisive star", async () => {
+  it("recognises an expansion-led win and names the new plant as the decisive star", async () => {
     const h = await finishFor(1, 28, 3);
     expect(h.phase).toBe("won");
     const ending = root.querySelector("#iso-ending") as HTMLElement;
@@ -569,7 +590,7 @@ describe("the live game resolves into a cinematic ending", () => {
     expect(ending.textContent).toContain("3 plants × 1★");
   });
 
-  it.skip("opens the grim, firework-free defeat screen when the rival crosses 10★", async () => {
+  it("opens the grim, firework-free defeat screen when the rival crosses 10★", async () => {
     const h = await finishFor(2);
     expect(h.phase).toBe("won");
     const ending = root.querySelector("#iso-ending") as HTMLElement;
@@ -581,7 +602,7 @@ describe("the live game resolves into a cinematic ending", () => {
     expect(ending.textContent).toContain("40 tiles × 0.25★");
   });
 
-  it.skip("persists and restores the decisive source and rivalry-coloured epilogue", async () => {
+  it("persists and restores the decisive source and rivalry-coloured epilogue", async () => {
     delete (window as unknown as Record<string, unknown>).__ISO_DISABLE_SAVE;
     await finishFor(1);
     await Promise.resolve(); // presentEnding writes the completed match here
@@ -633,7 +654,7 @@ describe("the live game resolves into a cinematic ending", () => {
 });
 
 describe("STORY-01 fix: a contract never resumes the sandbox save", () => {
-  it.skip("boots the chapter fresh even when a sandbox game with a rival past its ★ line is saved", async () => {
+  it("boots the chapter fresh even when a sandbox game with a rival past its ★ line is saved", async () => {
     delete (window as unknown as Record<string, unknown>).__ISO_DISABLE_SAVE;
     const rt = await import("../../src/iso/savegame-runtime");
     const { startIsoGame } = await import("../../src/iso/game");
@@ -746,7 +767,7 @@ describe("the two-portrait rivalry conversation", () => {
 });
 
 describe("the Gold Mine warning (a young man's game)", () => {
-  it.skip("warns the moment the player stands a Depot beside a Gold Mine", async () => {
+  it("warns the moment the player stands a Depot beside a Gold Mine", async () => {
     const h = await boot();
     const gold = findSouthCorridor(h.grid, 6, "gold_mine");
     expect(gold, "seed 1337 keeps a Gold Mine with a legal south corridor").toBeTruthy();
@@ -765,7 +786,7 @@ describe("the Gold Mine warning (a young man's game)", () => {
     expect(root.textContent).toMatch(/Black Market/i);
   });
 
-  it.skip("hears a DIFFERENT warning for a second gold Depot", async () => {
+  it("hears a DIFFERENT warning for a second gold Depot", async () => {
     const h = await boot();
     // Give the player the materials for a PAID second Depot so the rotation is
     // exercised the way a real game would use it.
@@ -1098,7 +1119,7 @@ describe("E11 a full round is playable", () => {
 });
 
 describe("E11 free setup builds cannot be revoked (K1 regression)", () => {
-  it.skip("keeps the free-track allowance as data, not a phase inference", async () => {
+  it("keeps the free-track allowance as data, not a phase inference", async () => {
     const h = await boot();
     // The K1 bug was a once-per-second affordability sweep clawing back a free
     // build. Here the allowance lives on the player record, so a player with
@@ -1209,7 +1230,7 @@ describe("J1 the quarry is mounted in the iso app", () => {
     expect(first.classList.contains("sel")).toBe(true);
   });
 
-  it.skip("matching a connected industry's token harvests exactly its cargo", async () => {
+  it("matching a connected industry's token harvests exactly its cargo", async () => {
     const { h } = await connectedBoot();
 
     // the network tokened every cargo it reaches, and only those colours
@@ -1256,7 +1277,7 @@ describe("J1 the quarry is mounted in the iso app", () => {
     expect(h.purse[dead]).toBe(before);
   });
 
-  it.skip("cutting the line stops the harvest — tokens go dark at once", async () => {
+  it("cutting the line stops the harvest — tokens go dark at once", async () => {
     const { h, corridor } = await connectedBoot();
     const tokens = h.board.gems().filter((g) => g.tier > 0);
     expect(tokens.length).toBeGreaterThan(0);
@@ -1277,7 +1298,7 @@ describe("J1 the quarry is mounted in the iso app", () => {
     expect(h.purse[cargo]).toBe(before);
   });
 
-  it.skip("surfaces trading, and a bank trade moves cargo in the same purse", async () => {
+  it("surfaces trading, and a bank trade moves cargo in the same purse", async () => {
     const h = await boot();
     (root.querySelector('[data-tab="bank"]') as HTMLElement).click();
     const panel = root.querySelector("#iso-trade") as HTMLElement;
@@ -1363,7 +1384,7 @@ describe("L1c (#234) the board and the lorries stop paying the purse", () => {
     expect(readout()).not.toMatch(/\+\d/);
   });
 
-  it.skip("newLoop: a lorry arrival mints no token — and the lorry still drives", async () => {
+  it("newLoop: a lorry arrival mints no token — and the lorry still drives", async () => {
     const { h, corridor } = await connectedBoot({ newLoop: true });
     h.finishSetup();                                  // arrivals only count in `play`
     // Headless harnesses have no rAF, so drive the frame's own replan trigger
@@ -1421,7 +1442,7 @@ describe("L1c (#234) the board and the lorries stop paying the purse", () => {
 
   // ── the control half: with the flag off, every wire above is the shipped
   //    loop, unchanged. Same scenario, opposite outcome. ──────────────────
-  it.skip("flag off: the same match still pays, and the readout still shows '+N'", async () => {
+  it("flag off: the same match still pays, and the readout still shows '+N'", async () => {
     const { h } = await connectedBoot();
     expect(h.newLoop).toBe(false);
     const line = h.board.gems().find((g) => g.tier > 0)!;
@@ -1435,7 +1456,7 @@ describe("L1c (#234) the board and the lorries stop paying the purse", () => {
     expect(readout()).toMatch(/\+\d/);
   });
 
-  it.skip("flag off: the same match-5 still pays its '+2 random'", async () => {
+  it("flag off: the same match-5 still pays its '+2 random'", async () => {
     const { h } = await connectedBoot();
     const before = { ...h.purse };
     makeFive(h.board, "wood", 4, 3);
@@ -1445,7 +1466,7 @@ describe("L1c (#234) the board and the lorries stop paying the purse", () => {
     expect(readout()).toMatch(/\+\d/);
   });
 
-  it.skip("flag off: a lorry arrival still mints its token", async () => {
+  it("flag off: a lorry arrival still mints its token", async () => {
     const { h, corridor } = await connectedBoot();
     h.finishSetup();
     const { buildTile } = await import("../../src/iso/track");
@@ -1533,7 +1554,7 @@ describe("V4 toasts and the banner close", () => {
 describe("TOAST-ONCE the win-point popups show once and stay gone", () => {
   const toastText = () => (root.querySelector(".toasts") as HTMLElement).textContent ?? "";
 
-  it.skip("paving dirt toasts the ★ value on the first pass only; the map float keeps marking every point", async () => {
+  it("paving dirt toasts the ★ value on the first pass only; the map float keeps marking every point", async () => {
     const { h, corridor: { hx, hy, fy } } = await connectedBoot();
     h.finishSetup();
     h.purse.ore = 40;
@@ -1571,7 +1592,7 @@ describe("TOAST-ONCE the win-point popups show once and stay gone", () => {
     expect(floats.some((t) => t.includes("+0.25★"))).toBe(true);
   }, 15_000);
 
-  it.skip("no free-track or dirt-value hint banner while laying the first road", async () => {
+  it("no free-track or dirt-value hint banner while laying the first road", async () => {
     const h = await boot();
     const c = findSouthCorridor(h.grid, 6);
     expect(c).toBeTruthy();
@@ -1623,11 +1644,10 @@ describe("V5 gems draw the restored sprite art", () => {
 // ones that seed grows — deterministic, no flakes.
 // ══════════════════════════════════════════════════════════════════════════
 import { AI_BUILD_MS, HARVEST_MS } from "../../src/iso/game";
-const BANK_RATE = 4;
-const bankAllowed = () => true;
+import { bankAllowed, BANK_RATE } from "../../src/iso/bank";
 
 describe("W1 the drag charges exactly what it previewed", () => {
-  it.skip("an unaffordable drag builds the affordable prefix; nothing goes negative", async () => {
+  it("an unaffordable drag builds the affordable prefix; nothing goes negative", async () => {
     const h = await boot();
     const { hasTrack } = await import("../../src/iso/track");
     // a clear south column of 15 tiles (harvester + 14 dirt tiles) below an
@@ -1675,7 +1695,7 @@ describe("W1 the drag charges exactly what it previewed", () => {
     for (const c of CARGOES) expect(h.purse[c] ?? 0, `${c} went negative`).toBeGreaterThanOrEqual(0);
   });
 
-  it.skip("a drag across your own Plant pays for neither the tile nor the allowance", async () => {
+  it("a drag across your own Plant pays for neither the tile nor the allowance", async () => {
     const h = await boot();
     const { hasTrack } = await import("../../src/iso/track");
     const { FACTORY_FOOTPRINT } = await import("../../src/iso/config");
@@ -1711,7 +1731,7 @@ describe("W1 the drag charges exactly what it previewed", () => {
 });
 
 describe("W3 the rival actually plays (headless)", () => {
-  it.skip("N aiTicks grow the rival's track, connect an industry, and move its cargo", async () => {
+  it("N aiTicks grow the rival's track, connect an industry, and move its cargo", async () => {
     const h = await boot();
     const { buildTile } = await import("../../src/iso/track");
     // minimal player setup (the AI clocks only run in `play`). T4: wire the
@@ -1812,7 +1832,7 @@ describe("W3 the rival actually plays (headless)", () => {
     // changed.
   }, 30_000);
 
-  it.skip("banks toward a paid Depot when its board income alone won't yet cover it (PP-07)", async () => {
+  it("banks toward a paid Depot when its board income alone won't yet cover it (PP-07)", async () => {
     const h = await boot();
     const { buildTile } = await import("../../src/iso/track");
     const c = findSouthCorridor(h.grid, 6, "farm");
@@ -1892,7 +1912,7 @@ describe("AI-02 the rival keeps playing for minutes (the live stall)", () => {
   // 766 Wood hoarded at +32/min). The fix measures every pave goal against
   // SPENDABLE Ore. This test is that night pinned in code: no gifts, no
   // grants, the same opponent the user met, minutes of its own clocks.
-  it.skip("expands, paves, and never hoards, under its own income alone", async () => {
+  it("expands, paves, and never hoards, under its own income alone", async () => {
     const h = await boot();
     const { buildTile } = await import("../../src/iso/track");
     const { WATER, factoryTouchesTown } = await import("../../src/iso/grid");
@@ -2012,7 +2032,7 @@ describe("W8 the rival is placed where it can build — and builds", () => {
     expect(Math.abs(rival!.tx - fx) + Math.abs(rival!.ty - fy)).toBeGreaterThan(10);
   }, 10_000);
 
-  it.skip("four aiTicks from that real placement build track, a harvester, and VP", async () => {
+  it("four aiTicks from that real placement build track, a harvester, and VP", async () => {
     const h = await boot();
     const spot = findFactorySpot(h.grid);
     expect(spot).toBeTruthy();
@@ -2046,8 +2066,8 @@ describe("W8 the rival is placed where it can build — and builds", () => {
   }, 10_000);
 });
 
-describe.skip("W9 the free setup allowance buys dirt, not road", () => {
-  it.skip("a road drag with 12 free tiles and no ore lays nothing and burns no allowance", async () => {
+describe("W9 the free setup allowance buys dirt, not road", () => {
+  it("a road drag with 12 free tiles and no ore lays nothing and burns no allowance", async () => {
     const h = await boot();
     const { canBuildOn, hasTrack } = await import("../../src/iso/track");
     // five consecutive road-legal tiles to drag along (road needs flat ground).
@@ -2117,7 +2137,7 @@ describe.skip("W9 the free setup allowance buys dirt, not road", () => {
 });
 
 describe("W4 a normal session earns the road", () => {
-  it.skip("dirt → ore mine → harvest ore → the road tile is affordable", async () => {
+  it("dirt → ore mine → harvest ore → the road tile is affordable", async () => {
     const h = await boot();
     const { buildTile, hasTrack, canAfford } = await import("../../src/iso/track");
     // an ore mine with a clean south corridor, found on the live grid (MT-2
@@ -2164,7 +2184,7 @@ describe("W4 a normal session earns the road", () => {
 });
 
 describe("W5 combos pay gold into the purse", () => {
-  it.skip("2 combos = 1 gold, the chip shows it, and the Black Market opens up", async () => {
+  it("2 combos = 1 gold, the chip shows it, and the Black Market opens up", async () => {
     const h = await boot();
     expect(h.purse.gold ?? 0).toBe(0);
 
@@ -2196,7 +2216,7 @@ describe("W5 combos pay gold into the purse", () => {
 // blockades the industry that costs the rival the most yield.
 // ══════════════════════════════════════════════════════════════════════════
 describe("TK-008 Blockade buys auto-target the rival (no targeting step)", () => {
-  it.skip("spends the gold and blockades the rival's yielding industry in one click", async () => {
+  it("spends the gold and blockades the rival's yielding industry in one click", async () => {
     const h = await boot();
     const { buildTile } = await import("../../src/iso/track");
     const { playerResources } = await import("../../src/iso/economy");
@@ -2255,10 +2275,10 @@ describe("TK-008 Blockade buys auto-target the rival (no targeting step)", () =>
 //     so every non-sabotage action completes without Gold;
 //   • the bank never offers Gold, and its gate refuses it at every rung (PP-08).
 // ══════════════════════════════════════════════════════════════════════════
-describe.skip("PP-08 gold is reserved for Black Market sabotage", () => {
+describe("PP-08 gold is reserved for Black Market sabotage", () => {
   // L9 (#224): the sabotage these two exercise is the Blockade — the card the
   // Frost Tiles assertions used to ride on is gone with the board cards.
-  it.skip("insufficient gold blocks a sabotage and consumes nothing else", async () => {
+  it("insufficient gold blocks a sabotage and consumes nothing else", async () => {
     const h = await boot();
     h.purse.stone = 12;
     h.purse.gold = 0;
@@ -2272,7 +2292,7 @@ describe.skip("PP-08 gold is reserved for Black Market sabotage", () => {
     expect((root.querySelector(".sab-btn.sb-bandit") as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it.skip("sabotage with enough gold deducts ONLY gold", async () => {
+  it("sabotage with enough gold deducts ONLY gold", async () => {
     const h = await boot();
     const { buildTile } = await import("../../src/iso/track");
     // A Blockade with nothing to blockade is refunded, not charged (the rule
@@ -2291,7 +2311,7 @@ describe.skip("PP-08 gold is reserved for Black Market sabotage", () => {
     expect(h.purse.stone).toBe(12);             // construction stock untouched
   });
 
-  it.skip("Security Forces are hired with materials — Gold stays in the purse", async () => {
+  it("Security Forces are hired with materials — Gold stays in the purse", async () => {
     const h = await boot();
     h.purse.gold = 6;             // the OLD price, deliberately affordable
     h.purse.grain = 2;
@@ -2309,7 +2329,7 @@ describe.skip("PP-08 gold is reserved for Black Market sabotage", () => {
     expect(h.purse.gold).toBe(6);               // gold was NOT the price
   });
 
-  it.skip("Security Forces without materials are refused and consume nothing", async () => {
+  it("Security Forces without materials are refused and consume nothing", async () => {
     const h = await boot();
     h.purse.gold = 6;
     h.purse.grain = 1;            // short of the 2 grain the hire needs
@@ -2324,7 +2344,7 @@ describe.skip("PP-08 gold is reserved for Black Market sabotage", () => {
     expect(h.purse.gold).toBe(6);               // nothing was consumed at all
   });
 
-  it.skip("the bank never offers gold, and its gate refuses it at every rung", async () => {
+  it("the bank never offers gold, and its gate refuses it at every rung", async () => {
     const h = await boot();
     (root.querySelector('[data-tab="bank"]') as HTMLElement).click();
     const panel = root.querySelector("#iso-trade") as HTMLElement;
@@ -2340,8 +2360,8 @@ describe.skip("PP-08 gold is reserved for Black Market sabotage", () => {
   });
 });
 
-describe.skip("W6 the bank is the one exchange left", () => {
-  it.skip("the Bank tab opens the panel, and a 4:1 exchange moves the purse and the feed", async () => {
+describe("W6 the bank is the one exchange left", () => {
+  it("the Bank tab opens the panel, and a 4:1 exchange moves the purse and the feed", async () => {
     const h = await boot();
     const panel = root.querySelector("#iso-trade") as HTMLElement;
     expect(panel).toBeTruthy();
@@ -2359,7 +2379,7 @@ describe.skip("W6 the bank is the one exchange left", () => {
     expect(h.purse.ore).toBe(1);
   });
 
-  it.skip("under the new loop the bank refuses a rung the seat has not unlocked", async () => {
+  it("under the new loop the bank refuses a rung the seat has not unlocked", async () => {
     // L11 (#226), acceptance 1: the bank can rebalance what the tree has given
     // you, never skip a rung. Rung 0 opens Grain and Wood; Stone and Ore are
     // rung 1, Oil rung 2, Gold never (PP-08).
@@ -2452,7 +2472,7 @@ describe("PP-01 terminology: Processing Plant + Depot", () => {
     expect(nav?.textContent).toContain("Economy");
   });
 
-  it.skip("explains the loop in the help and keeps the stone node's Quarry name", async () => {
+  it("explains the loop in the help and keeps the stone node's Quarry name", async () => {
     await boot();
     // the stone-producing resource node keeps its existing name
     expect(INDUSTRY_BY_KEY["quarry"].name).toBe("Quarry");
@@ -2573,7 +2593,7 @@ describe("PP-13 dirt demolition refunds", () => {
     throw new Error("no free tile for a dirt");
   }
 
-  it.skip("hands back exactly 1 Wood or 1 Stone — never both, never nothing", async () => {
+  it("hands back exactly 1 Wood or 1 Stone — never both, never nothing", async () => {
     const h = await boot();
     const [tx, ty] = await ownRoadTile(h);
     const { hasTrack } = await import("../../src/iso/track");
@@ -2595,7 +2615,7 @@ describe("PP-13 dirt demolition refunds", () => {
     expect((h.purse.wood ?? 0) - w1).toBe(0);
   }, 20_000);
 
-  it.skip("pays nothing for a paved Road, and refunds one material for a Dirt Road", async () => {
+  it("pays nothing for a paved Road, and refunds one material for a Dirt Road", async () => {
     const h = await boot();
     const { buildTile, hasTrack } = await import("../../src/iso/track");
     // Paving a Road CLEARS the Dirt Road beneath it (a tile holds one tier),
@@ -2809,7 +2829,7 @@ describe("A1 the arcade FX are wired to the HUD", () => {
     await p;
   });
 
-  it.skip("the floating harvest readout draws what was actually harvested", async () => {
+  it("the floating harvest readout draws what was actually harvested", async () => {
     const { h } = await connectedBoot();
     const tok = h.board.gems().find((g) => g.tier > 0)!;
     makeRun(h.board, tok.res, freeRow(h.board, tok), 4, tok);
@@ -2825,8 +2845,8 @@ describe("A1 the arcade FX are wired to the HUD", () => {
   });
 });
 
-describe.skip("PP-14 a cross is answered by the board that made it", () => {
-  it.skip("the rival's cross never opens the player's chooser — it picks for itself", async () => {
+describe("PP-14 a cross is answered by the board that made it", () => {
+  it("the rival's cross never opens the player's chooser — it picks for itself", async () => {
     const h = await boot();
     const before = { ...h.purse };
     let chosen: string[] | null = null;
@@ -2843,7 +2863,7 @@ describe.skip("PP-14 a cross is answered by the board that made it", () => {
     }
   });
 
-  it.skip("the player's own cross still asks the player", async () => {
+  it("the player's own cross still asks the player", async () => {
     const h = await boot();
     let chosen: string[] | null = null;
     h.board.onCrossChoice("broken", 3, (picks) => { chosen = picks as string[]; });
@@ -2862,8 +2882,8 @@ describe.skip("PP-14 a cross is answered by the board that made it", () => {
 // and nothing in it can reach a match-3 board. Board obstacles come back as
 // tuning-session obstacles set by difficulty (#225).
 // ══════════════════════════════════════════════════════════════════════════
-describe.skip("L9 (#224) the Black Market is map-only sabotage", () => {
-  it.skip("lists only Blockade, Protest and Security Forces", async () => {
+describe("L9 (#224) the Black Market is map-only sabotage", () => {
+  it("lists only Blockade, Protest and Security Forces", async () => {
     await boot();
     await settle();
     expect([...root.querySelectorAll("[data-black]")].map((b) => (b as HTMLElement).dataset.black))
@@ -2893,7 +2913,7 @@ describe.skip("L9 (#224) the Black Market is map-only sabotage", () => {
     expect(h.purse.gold).toBe(gold);
   });
 
-  it.skip("a Blockade stops the rival's income ticks and Torvin answers", async () => {
+  it("a Blockade stops the rival's income ticks and Torvin answers", async () => {
     const h = await boot();
     const { buildTile } = await import("../../src/iso/track");
     const { playerResources } = await import("../../src/iso/economy");
@@ -2925,7 +2945,7 @@ describe.skip("L9 (#224) the Black Market is map-only sabotage", () => {
       .toMatch(/stop ticking/i);
   });
 
-  it.skip("Security Forces turn a Blockade away — and the attacker still pays", async () => {
+  it("Security Forces turn a Blockade away — and the attacker still pays", async () => {
     const h = await boot();
     // The rival hires the guard (seat 1's own purse, through the shared core).
     h.purses[1].grain = 4;
@@ -2943,8 +2963,8 @@ describe.skip("L9 (#224) the Black Market is map-only sabotage", () => {
   });
 });
 
-describe.skip("A1 a lorry arrival is a delivery", () => {
-  it.skip("mints a token on a gem and pops +N over the Factory, in the same moment", async () => {
+describe("A1 a lorry arrival is a delivery", () => {
+  it("mints a token on a gem and pops +N over the Factory, in the same moment", async () => {
     const h = await boot();
     // the shortest corridor that still connects: depot → 2 dirt tiles → factory.
     // A short route keeps the wait real but small (TRUCK_SPEED is 1 tile / 300ms).
@@ -2999,7 +3019,7 @@ describe("economy window and affordability", () => {
     expect(root.querySelector('[data-tool="demolish"] small')?.textContent).toBe("Refund 50%");
   });
 
-  it.skip("keeps one pane visible and nests Black Market beneath the bank", async () => {
+  it("keeps one pane visible and nests Black Market beneath the bank", async () => {
     await boot();
     expect(root.querySelectorAll('[data-panel]')).toHaveLength(0);
     for (const tab of ["bank", "plant", "feed"]) {
@@ -3048,7 +3068,7 @@ describe("VP-01 the rival plays the score, not just the map", () => {
     return c!.ind.id;
   }
 
-  it.skip("sprints when it is a point behind — and trades only at the gated bank", async () => {
+  it("sprints when it is a point behind — and trades only at the gated bank", async () => {
     const h = await boot();
     const bt = buildTile;
     const spot = findFactorySpotNear(h.grid, "ore_mine", -1, heldIndustryIds(h.eco));
@@ -3106,7 +3126,7 @@ describe("VP-01 the rival plays the score, not just the map", () => {
     expect(h.grid.industries[targetId].banditUntil ?? 0).toBe(0);
   });
 
-  it.skip("spends the last of its Gold to deny a player one point from winning", async () => {
+  it("spends the last of its Gold to deny a player one point from winning", async () => {
     const h = await boot();
     const targetId = connectedPlayer(h);
     // The rival needs a plant of its own for this test to mean anything: its
@@ -3175,7 +3195,7 @@ describe("VP-01 the rival plays the score, not just the map", () => {
 // PP-14b also covers the broken holy cross: 3×3, THREE picks, a `bcross` fx
 // with no angel and no choir.
 // ══════════════════════════════════════════════════════════════════════════
-describe.skip("PP-14 the holy cross", () => {
+describe("PP-14 the holy cross", () => {
   /** A fake AudioContext that counts the oscillators the choir would play. */
   function stubAudio() {
     class Param {
@@ -3233,7 +3253,7 @@ describe.skip("PP-14 the holy cross", () => {
     b.grid[4][3]!.res = "wheat";
   }
 
-  it.skip("pops the angel, offers the six-unit bounty chooser, and pays exactly the spent allocation", async () => {
+  it("pops the angel, offers the six-unit bounty chooser, and pays exactly the spent allocation", async () => {
     const h = await boot();
     const started = stubAudio();
     const before = ["wood", "stone", "oil"].map((c) => [c, h.purse[c as keyof typeof h.purse] ?? 0] as const);
@@ -3293,7 +3313,7 @@ describe.skip("PP-14 the holy cross", () => {
     await p;
   });
 
-  it.skip("a broken cross pops a cracked ✝ (no angel, no choir) and pays three units", async () => {
+  it("a broken cross pops a cracked ✝ (no angel, no choir) and pays three units", async () => {
     const h = await boot();
     const started = stubAudio();
     const before = ["wood", "stone"].map((c) => [c, h.purse[c as keyof typeof h.purse] ?? 0] as const);
@@ -3417,7 +3437,7 @@ describe("pointer responsiveness", () => {
 // story equivalent.
 // ═════════════════════════════════════════════════════════════════════════
 describe("CONTINUE-01 (#191): Continue the campaign clears the contract save", () => {
-  it.skip("filing a contract removes its slot when the ledger returns to the campaign", async () => {
+  it("filing a contract removes its slot when the ledger returns to the campaign", async () => {
     delete (window as unknown as Record<string, unknown>).__ISO_DISABLE_SAVE;
     const rt = await import("../../src/iso/savegame-runtime");
     const { startIsoGame } = await import("../../src/iso/game");
@@ -3581,7 +3601,7 @@ describe("RL-4 (#178) the railway in the real game", () => {
     expect(h.railTiles("you")).toBe(0);
   });
 
-  it.skip("scores exactly one Victory Point for a platform, and revokes it on demolish", async () => {
+  it("scores exactly one Victory Point for a platform, and revokes it on demolish", async () => {
     const h = await boot({ rail: true });
     h.finishSetup();
     rich(h);
@@ -3711,7 +3731,7 @@ describe("L2 free dirt roads in the live game", () => {
     expect(h.purse).toEqual(before);
   });
 
-  it.skip("the paved tier still needs ore under newLoop", async () => {
+  it("the paved tier still needs ore under newLoop", async () => {
     const h = await boot({ newLoop: true });
     const c = findSouthCorridor(h.grid, 6);
     expect(c).toBeTruthy();

@@ -197,6 +197,16 @@ export interface UiState {
   /** PP-03: tones the inspector when it is a placement verdict (e.g. the red
    *  "can't go here — …" reason for an invalid Factory/Depot hover). */
   inspectTone?: "good" | "bad" | null;
+  /** L8 (#222): objective line — what the player should do next. Omitted on
+   *  the shipped loop. The banner keeps protest/disconnect/won; the objective
+   *  is the game telling the player the loop. */
+  objective?: string | null;
+  /** L8 (#222): banner vs objective stability key for objective dismissal. */
+  objectiveKey?: string | null;
+  /** L8 (#222): per-second income per cargo — the build/match delta, so the
+   *  chip bar reads as a live rate and not a static purse. Omitted on the
+   *  shipped loop. */
+  incomeRates?: Partial<Record<Cargo, number>>;
   reach: Partial<Record<Cargo, number>>;
   /** PP-14b: ms left on the Processing Plant reset cooldown (0 = ready). */
   resetIn: number;
@@ -562,10 +572,11 @@ export function createOriginalUi(
   root.dataset.view = "map";
   // L1a (#232): the new-loop MVP flag. ON retires what the new economy does
   // not want — the railway's buttons (`opts.rail`) and L1a's own trade
-  // surfaces, of which L11 (#226) leaves the Bank standing: the bank is a real
-  // rule on this loop (tier-gated, see `bank.ts`), the offer MARKET was not.
-  // The flag is the game's call (`?loop=new`, dev-only; never a room or a
-  // contract).
+  // surfaces. L11 (#226) kept the Bank, L15 (#230) removes it — the new loop
+  // has no trading surfaces at all.
+  // The flag is the game's call (L1f #237: ON for every solo sandbox boot,
+  // `?loop=old` for the retired one; never a room or a contract).
+  const newLoop = opts.newLoop === true;
   root.style.setProperty("--gem-move-ms", `${BOARD_ANIMATION_MS.swap}ms`);
   root.style.setProperty("--gem-clear-ms", `${BOARD_ANIMATION_MS.clear}ms`);
   // #162: falls ease under their own wait (swap/clear kept theirs), so the
@@ -993,6 +1004,13 @@ export function createOriginalUi(
   const banner = h("div", "banner hidden");
   banner.id = "iso-banner";
   root.appendChild(banner);
+  // L8 (#222): the objective line — one line that always says the current goal
+  // on the new loop. It sits below the top bar like the banner, but it is not
+  // the banner: it is the loop made legible (connect→tune→earn→spend) and it
+  // hides only when a banner with higher priority owns the lane.
+  const objectiveEl = h("div", "objective hidden");
+  objectiveEl.id = "iso-objective";
+  root.appendChild(objectiveEl);
   const modalRoot = h("div", "modal-root hidden");
   root.appendChild(modalRoot);
   // MOBILE-01: the touch-only floating cluster. A phone has no wheel and no
@@ -1200,8 +1218,8 @@ export function createOriginalUi(
   }
 
   // ── tabs / mobile ─────────────────────────────────────────────────────────
-  let currentTab: "bank" | "plant" | "feed" | null = null;
-  function setTab(t: "bank" | "plant" | "feed") {
+  let currentTab: "plant" | "feed" | null = null;
+  function setTab(t: "plant" | "feed") {
     // PP-14b: a pending cross bounty lives inside the plant panel — switching
     // away would hide it mid-pick and the cascade would sit unseen until the
     // timer answers for the player. Stay put instead.
@@ -2321,6 +2339,9 @@ export function createOriginalUi(
   // actually changed is written. Replacing them per frame churned the DOM and
   // could swallow a hover or click landing between two frames.
   const chipNums = new Map<Cargo, HTMLElement>();
+  /** L8 (#222): per-cargo /s readout beside each chip. */
+  const chipRates = new Map<Cargo, HTMLElement>();
+  let lastRatesSig = "\u0000";
   /** L16 (#231): the chip MEDALLION per cargo — the node the `.full` state classes. */
   const chipEls = new Map<Cargo, HTMLElement>();
   let lastVpHtml = "";
@@ -2333,23 +2354,34 @@ export function createOriginalUi(
     players: UiPlayer[],
     portrait: Portrait,
     target: number,
+    rates?: Partial<Record<Cargo, number>>,
     storageCap?: number,
   ) {
+    // L8 (#222): the income readout — per-second, per resource, on the chip bar
+    // itself. A new Depot being connected or a better tune visibly lifts the
+    // number before the purse has banked it, so the economy is read where it
+    // is earned.
+    const ratesSig = CARGOES.map((c) => String(rates?.[c] ?? "-")).join(",");
+    const ratesChanged = ratesSig !== lastRatesSig;
+    if (ratesChanged) lastRatesSig = ratesSig;
     for (const k of CARGOES) {
       let num = chipNums.get(k);
       let chip = chipEls.get(k);
+      let rateEl = chipRates.get(k);
       if (!num || !chip) {
         chip = h("div", "chip");
         chip.style.setProperty("--c1", CARGO[k].c1);
         chip.style.setProperty("--c2", CARGO[k].c2);
-        chip.innerHTML = `<span class="chip-ic">${cargoIconHtml(k)}</span><span class="chip-n"></span>`;
+        chip.innerHTML = `<span class="chip-ic">${cargoIconHtml(k)}</span><span class="chip-n"></span><span class="chip-r hidden"></span>`;
         // PP-08: the Gold chip states what the currency is for, so a player
         // holding coins never mistakes them for construction stock.
         if (k === "gold") chip.title = GOLD_RULE;
         chips.appendChild(chip);
         num = chip.querySelector(".chip-n") as HTMLElement;
+        rateEl = chip.querySelector(".chip-r") as HTMLElement;
         chipNums.set(k, num);
         chipEls.set(k, chip);
+        chipRates.set(k, rateEl);
       }
       // L16 (#231): with a storage cap the chip counts TOWARD something —
       // "amount / cap" — and a cargo sitting at its cap wears the full state,
@@ -2360,6 +2392,17 @@ export function createOriginalUi(
       const full = storageCap !== undefined && amount >= storageCap;
       const text = storageCap === undefined ? String(amount) : `${amount}/${storageCap}`;
       if (num.textContent !== text) num.textContent = text;
+      if (ratesChanged && rateEl) {
+        const r = rates?.[k] ?? 0;
+        // Show at most one decimal, hide when the cargo is not ticking (0/s).
+        const show = Math.abs(r) >= 0.05;
+        const txt = show ? `+${r.toFixed(1).replace(/\.0$/, "")}/s` : "";
+        if (rateEl.textContent !== txt) rateEl.textContent = txt;
+        rateEl.classList.toggle("hidden", !show);
+        // Title keeps the precise number for hover.
+        const title = show ? `${r.toFixed(2)}/s from connected Depots` : "";
+        if (rateEl.title !== title) rateEl.title = title;
+      }
       // The class and the tooltip flip together, and only on the flip — a
       // per-frame write would churn the style recalc the retention tests
       // watch for. Gold keeps its currency rule, with the cap appended.
@@ -2376,6 +2419,7 @@ export function createOriginalUi(
         }
       }
     }
+
     const meP = players.find((p) => p.human);
     const yourVp = meP?.vp ?? 0;
     // AI-04: the line the difficulty set (5★ on easy), kept for the help modal
@@ -2604,7 +2648,8 @@ export function createOriginalUi(
     if (rivalWire.dataset.speaker === "you") {
       rivalWireFace.style.backgroundImage = `url(${rivalWirePlayerPortrait})`;
     }
-    renderHUD(state.purse, state.players, state.portrait, state.vpTarget ?? VICTORY.target, state.storageCap);
+    renderHUD(state.purse, state.players, state.portrait, state.vpTarget ?? VICTORY.target, state.incomeRates, state.storageCap);
+
     // PP-14b: the reset button counts its cooldown down and disables while
     // the plant re-arms.
     const resetLeft = Math.ceil((state.resetIn ?? 0) / 1000);
@@ -2666,6 +2711,23 @@ export function createOriginalUi(
       }
     }
     banner.classList.toggle("hidden", !state.banner || dismissedBannerKey === state.bannerKey);
+    // L8 (#222): the objective line, always visible on the new loop when no
+    // higher-priority banner owns the lane. It is the one-line answer to
+    // "what do I do next" that the spec asks be always legible.
+    {
+      const obj = state.objective ?? null;
+      const objKey = state.objectiveKey ?? null;
+      // Objective hides when a real banner is up — the protest countdown or the
+      // disconnect sheet is more urgent than the loop reminder.
+      const show = !!obj && !state.banner;
+      objectiveEl.textContent = obj ?? "";
+      if (objKey) objectiveEl.dataset.key = objKey;
+      objectiveEl.classList.toggle("hidden", !show);
+      // Banner height var must count the objective when banner itself is hidden,
+      // otherwise the Build sheet would slide under the objective line on a
+      // phone exactly as it used to slide under a banner.
+      // Handled below: bannerH reads the VISIBLE top lane (banner || objective).
+    }
     const toolState = state.tool;
     // While the opening Depot is owed, every other build is locked out (the
     // game refuses them too) — greyed so the menu never promises a plant.
@@ -2719,7 +2781,10 @@ export function createOriginalUi(
     // is exactly where the banner is posted — so the posted sheet covered the
     // first row of the Build list. Publish the banner's live height and let
     // the mobile sheet top edge sit below it (styles.css reads --banner-h).
-    const bannerH = banner.classList.contains("hidden") ? 0 : banner.offsetHeight;
+    // L8 (#222): the objective shares that lane, so its height counts when it
+    // is the visible one.
+    const bannerH = !banner.classList.contains("hidden") ? banner.offsetHeight
+      : !objectiveEl.classList.contains("hidden") ? objectiveEl.offsetHeight : 0;
     if (bannerH !== lastBannerH) {
       lastBannerH = bannerH;
       root.style.setProperty("--banner-h", `${bannerH}px`);
