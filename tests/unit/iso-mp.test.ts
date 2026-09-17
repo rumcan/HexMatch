@@ -27,8 +27,8 @@ import {
   type HexProtocol, type SnapshotChunkMsg, type WelcomeMsg,
 } from "../../src/net/protocol";
 import type { HexRoom } from "../../src/net/transport";
-import { MAP_W, MAP_H, mulberry32, setRng, OFFER_LIFE, SABOTAGE } from "../../src/game/config";
-import { FACTORY_FOOTPRINT } from "../../src/iso/config";
+import { MAP_W, MAP_H, mulberry32, setRng, SABOTAGE } from "../../src/game/config";
+import { FACTORY_FOOTPRINT, type Cargo } from "../../src/iso/config";
 import { DEPOT_COST } from "../../src/iso/construction";
 import { depotButtonMarkup } from "../../src/game/hud-icons";
 import type { Factory, Harvester } from "../../src/iso/economy";
@@ -111,8 +111,13 @@ interface MpHook {
   board: import("../../src/game/board").Board;
   /** #116: the Reset twin — exactly what the `.reset-btn` click runs. */
   resetPlant: () => void;
-  /** MP-AUDIT/#113/#114: the market record both seats trade through. */
-  market: import("../../src/iso/market").IsoMarket;
+  /** L11 (#226): the bank's click path on the LOCAL seat — the host applies
+   *  it here and now, a guest relays the request (#113's rule, minus the
+   *  board that used to hold the escrow). */
+  bank: (give: Cargo, want: Cargo) => boolean;
+  /** L11 (#226): every seat's LIVE bag, in `players` order — the references
+   *  #114's identity rule is asserted against (the market used to hold them). */
+  purses: Record<string, number>[];
   /** #115: the protest twins (the card and the map click) and their state. */
   armProtest: () => void;
   placeProtest: (tx: number, ty: number) => boolean;
@@ -877,7 +882,7 @@ describe("audit regressions: two real games, one room", () => {
     playOpening(host, guest);
 
     // Fund the guest's seat on the host (its authoritative purse).
-    host.market.players[1].res.gold = 100;
+    host.purses[1].gold = 100;
     forcePublish(guest);
     pump();
 
@@ -909,7 +914,7 @@ describe("audit regressions: two real games, one room", () => {
 
     // ── an unaffordable card charges nothing ──────────────────────────────
     for (const ind of host.grid.industries) ind.banditUntil = 0;   // clean slate
-    host.market.players[1].res.gold = 0;
+    host.purses[1].gold = 0;
     forcePublish(guest);
     pump();
     gold = guest.purse.gold ?? 0;
@@ -1002,144 +1007,126 @@ describe("audit regressions: two real games, one room", () => {
     expect(guestCrossPanel()).toBeNull();
   });
 
-  it("the market never spends a human guest's cargo without an acceptance intent (#113)", async () => {
-    const { host, guest, guestEnd } = await bootPair();
+  it("the bank never spends a human guest's cargo without an intent (#113)", async () => {
+    const { host, guest, hostEnd, guestEnd } = await bootPair();
 
-    // The host funds both ends of a 2 Stone → 2 Ore trade.
-    host.purse.stone = 10;
-    host.market.players[1].res.ore = 10;
+    // The HOST's own exchange moves its own bag and nobody else's.
+    const hostBag = host.purses[0];
+    const guestBag = host.purses[1];
+    hostBag.wood = 12;
+    const hostGrain = hostBag.grain;
+    const guestWood = guestBag.wood;
+    const guestGrain = guestBag.grain;
+    expect(host.bank("wood", "grain")).toBe(true);
+    expect(hostBag.wood).toBe(8);
+    expect(hostBag.grain).toBe(hostGrain + 1);
+    expect(guestBag.wood).toBe(guestWood);
+    expect(guestBag.grain).toBe(guestGrain);
+
+    // Fund the guest's authoritative bag and publish it. Rung 0 is the only
+    // stock a fresh seat may exchange (the tree's gate), so it trades Wood.
+    host.purses[1].wood = 10;
     forcePublish(guest);
     pump();
-    // The guest posts one too (relayed as an intent) — the reverse direction.
-    expect(guest.market.post(guest.market.players[0], "stone", 1, "ore", 1)).toBe(true);
+    const guestSeat = host.purses[1];
+    expect(guest.purse.wood).toBe(10);
+
+    // The guest's own Exchange, through its HUD (the real click path).
+    const give = roots[1].querySelector<HTMLSelectElement>('[data-f="bank-give"]')!;
+    const want = roots[1].querySelector<HTMLSelectElement>('[data-f="bank-want"]')!;
+    const btn = roots[1].querySelector<HTMLButtonElement>('[data-act="bank"]')!;
+    give.value = "wood";
+    want.value = "grain";
+    give.dispatchEvent(new Event("input"));
+    want.dispatchEvent(new Event("input"));
+    expect(btn.disabled).toBe(false);
+    const localGive = guest.purse.wood;
+    const localGet = guest.purse.grain;
+    const remoteGive = guestSeat.wood;
+    const remoteGet = guestSeat.grain;
+    btn.click();
+
+    // The click only REQUESTS: the intent is what left the guest, and neither
+    // bag has moved — the host has not confirmed anything yet.
+    expect(guestEnd.sent[guestEnd.sent.length - 1]).toMatchObject({
+      type: "intent", action: "bank",
+      payload: { do: "bank", give: "wood", want: "grain" },
+    });
+    expect(guest.purse.wood).toBe(localGive);
+    expect(guest.purse.grain).toBe(localGet);
+    expect(guestSeat.wood).toBe(remoteGive);
+    expect(guestSeat.grain).toBe(remoteGet);
+
+    // The host validates and applies it against the GUEST seat's own record…
     pump();
+    expect(guestSeat.wood).toBe(remoteGive - 4);
+    expect(guestSeat.grain).toBe(remoteGet + 1);
+    // …and the delta lands back in the guest's own bag.
+    expect(guest.purse.wood).toBe(localGive - 4);
+    expect(guest.purse.grain).toBe(localGet + 1);
 
-    // The host posts 2 Stone → 2 Ore; the guest takes NO action.
-    expect(host.market.post(host.market.players[0], "stone", 2, "ore", 2)).toBe(true);
-    const offerId = host.market.ctx.offers.find((o) => o.from === 0)?.id;
-    expect(offerId).toBeDefined();
-    const guestOre = host.market.players[1].res.ore;
-    const hostStone = host.market.players[0].res.stone;
-
-    // Advance the host's board/market clock well past the AI trade cadence.
-    host.tick(performance.now() + 6_000);
-    host.tick(performance.now() + 12_000);
-
-    // The offer is still pending and the guest's ore is untouched.
-    expect(host.market.ctx.offers.some((o) => o.id === offerId)).toBe(true);
-    expect(host.market.players[1].res.ore).toBe(guestOre);
-    expect(host.market.players[0].res.stone).toBe(hostStone);
-
-    // The reverse direction too: a guest-posted offer is never auto-taken
-    // for the host seat (both seats are people).
-    const guestOffer = host.market.ctx.offers.find((o) => o.from === 1);
-    expect(guestOffer).toBeDefined();
-    const hostOre = host.market.players[0].res.ore;
-    host.tick(performance.now() + 18_000);
-    expect(host.market.ctx.offers.some((o) => o.id === guestOffer!.id)).toBe(true);
-    expect(host.market.players[0].res.ore).toBe(hostOre);
-
-    // …and a validated acceptance intent is still exactly what moves cargo.
-    const oreBefore = host.market.players[1].res.ore;
-    const stoneBefore = host.market.players[1].res.stone;
-    guest.market.accept(guest.market.players[0], offerId!);
-    const lastSent = guestEnd.sent[guestEnd.sent.length - 1];
-    expect(lastSent).toMatchObject({ type: "intent", action: "market", payload: { do: "accept", id: offerId } });
-    pump();
-    expect(host.market.ctx.offers.some((o) => o.id === offerId)).toBe(false);
-    expect(host.market.players[1].res.ore).toBe(oreBefore - 2);
-    expect(host.market.players[1].res.stone).toBe(stoneBefore + 2);
-
-    // Expiry still works in multiplayer and refunds the escrow.
-    const poster = host.market.players[0];
-    const escrowed = poster.res.stone;
-    host.market.post(poster, "stone", 2, "ore", 2);
-    expect(poster.res.stone).toBe(escrowed - 2);
-    host.tick(performance.now() + OFFER_LIFE + 1_000);
-    expect(host.market.ctx.offers).toHaveLength(0);
-    expect(poster.res.stone).toBe(escrowed);
+    // A request the HUD cannot even offer is refused WHOLE: Gold is outside the
+    // bank (PP-08), so the exchange never half-applies (the select cannot hold
+    // Gold, so this is the only door that could ask for it — the wire).
+    const forgedWood = guestSeat.wood;
+    const forgedGold = guestSeat.gold;
+    hostEnd.deliver({
+      type: "intent", action: "bank",
+      payload: { do: "bank", give: "wood", want: "gold" },
+    } as never);
+    expect(guestSeat.wood).toBe(forgedWood);
+    expect(guestSeat.gold).toBe(forgedGold);
   });
 
-  it("guest market and HUD balances follow authoritative purse updates (#114)", async () => {
-    const { host, guest, hostEnd } = await bootPair();
+  it("guest balances follow authoritative purse updates, in place (#114)", async () => {
+    const { host, guest } = await bootPair();
 
-    // The opening FULL-state path: the guest's purse and its market player
-    // are the SAME object, so a snapshot balance is visible to both.
-    expect(guest.market.players[0].res).toBe(guest.purse);
+    // The opening FULL-state path lands in the guest's ONE purse object — the
+    // same reference the HUD paints and prices from.
+    const bag = guest.purse;
+    expect(bag.stone).toBe(host.purses[1].stone);
 
     // The host zeroes the guest's authoritative Stone and publishes.
-    host.market.players[1].res.stone = 0;
+    host.purses[1].stone = 0;
     forcePublish(guest);
     pump();
-    expect(guest.purse.stone).toBe(0);
-    expect(guest.market.players[0].res.stone).toBe(0);
-    expect(guest.market.players[0].res).toBe(guest.purse);
+    expect(guest.purse).toBe(bag);      // no re-allocation: the same bag, moved
+    expect(bag.stone).toBe(0);
 
     // Increase again over the DELTA path — agreement both directions.
-    host.market.players[1].res.stone = 7;
+    host.purses[1].stone = 7;
     forcePublish(guest);
     pump();
-    expect(guest.purse.stone).toBe(7);
-    expect(guest.market.players[0].res.stone).toBe(7);
+    expect(guest.purse).toBe(bag);
+    expect(bag.stone).toBe(7);
 
-    // Roster names reach the market's own player list (the offer tray reads
-    // them), on both seats.
-    expect(host.market.players[1].name).toBe("Bo");
-    expect(guest.market.players[1].name).toBe("Ada");
-
-    // A host offer prices from the live inventory: with 0 ore the guest's
-    // Take button is disabled; funding the purse enables it.
-    host.purse.wood = 10;
-    host.market.post(host.market.players[0], "wood", 2, "ore", 2);
-    forcePublish(guest);
-    pump();
-    await settle();                        // a painted frame re-renders the tray
-    const trayBtn = () => roots[1].querySelector(".tray-offer button.mini") as HTMLButtonElement;
-    expect(trayBtn()).not.toBeNull();
-    expect(trayBtn().disabled).toBe(true);
-    host.market.players[1].res.ore = 5;
-    forcePublish(guest);
-    pump();
-    await settle();
-    expect(trayBtn().disabled).toBe(false);
-
-    // A valid guest acceptance reaches the host and moves the real cargo…
-    const guestSeat = host.market.players[1];
-    const oreBefore = guestSeat.res.ore;
-    const woodBefore = guestSeat.res.wood;
-    trayBtn().click();
-    // …but the click itself only REQUESTS — no premature success line, and
-    // nothing moves until the host accepts the intent.
-    expect(guestSeat.res.ore).toBe(oreBefore);
-    pump();
-    expect(host.market.ctx.offers).toHaveLength(0);
-    expect(guestSeat.res.ore).toBe(oreBefore - 2);
-    expect(guestSeat.res.wood).toBe(woodBefore + 2);
-
-    expect(guest.market.players[0].res).toBe(guest.purse);
+    // The room's roster reaches each client's own seat list (the HUD labels
+    // the seats from it) — both usernames, on both sides.
+    expect(host.players.map((p) => p.name).sort()).toEqual(["Ada", "Bo"]);
+    expect(guest.players.map((p) => p.name).sort()).toEqual(["Ada", "Bo"]);
   });
 
-  it("the FULL-state path (resync) keeps purse identity too (#114)", async () => {
+  it("the FULL-state path (resync) fills the same purse object (#114)", async () => {
     const { host, guest, hostEnd } = await bootPair();
     // The host zeroes the guest's authoritative stone, then the guest asks
     // for a resync: the reply is a FULL snapshot, which must land in the
-    // same purse object the market (and HUD) already hold.
-    host.market.players[1].res.stone = 0;
+    // same purse object the HUD (and every affordability price) already hold.
+    const bag = guest.purse;
+    host.purses[1].stone = 0;
     // Full state is ask-throttled to one per 300ms wall clock (the welcome's
     // opening snapshot shares the window) — a genuine later resync waits it out.
     await new Promise((r) => setTimeout(r, 320));
     hostEnd.deliver({ type: "resync" });
     pump();
-    expect(guest.purse.stone).toBe(0);
-    expect(guest.market.players[0].res.stone).toBe(0);
-    expect(guest.market.players[0].res).toBe(guest.purse);
+    expect(guest.purse).toBe(bag);
+    expect(bag.stone).toBe(0);
   });
 
   it("a guest can arm a protest and place it on a public road (#115)", async () => {
     const { host, guest, guestEnd } = await bootPair();
 
     // Fund the guest's seat; find one public road and one non-road tile.
-    host.market.players[1].res.gold = 50;
+    host.purses[1].gold = 50;
     forcePublish(guest);
     pump();
     let road: [number, number] | null = null;
@@ -1189,7 +1176,7 @@ describe("audit regressions: two real games, one room", () => {
     pump();
 
     // Insufficient funds refuse the arm locally and charge nothing.
-    host.market.players[1].res.gold = 0;
+    host.purses[1].gold = 0;
     forcePublish(guest);
     pump();
     const gold = guest.purse.gold ?? 0;
@@ -1199,7 +1186,7 @@ describe("audit regressions: two real games, one room", () => {
 
     // Duplicate placement clicks after success do not double-charge: the
     // second valid click on an occupied road refuses on the host.
-    host.market.players[1].res.gold = 50;
+    host.purses[1].gold = 50;
     forcePublish(guest);
     pump();
     const goldBefore = guest.purse.gold ?? 0;

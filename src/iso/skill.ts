@@ -2,12 +2,13 @@
 // AI-01 — rival difficulty: three presets, measured against each other.
 //
 // The opponent the player meets is a POLICY (the turn `aiTick` takes — plant →
-// depot(s) → pave → bank → market → sabotage on the shipped loop; connect →
-// tune → climb the tree → upgrade the city under `newLoop`) and a set of
-// NUMBERS that pace it. This module owns the numbers, and it is data, not a
-// behavioural fork: every difficulty runs the SAME turn, so "hard" can never
-// cheat — it plans off the same A*, pays the same costs, and never touches the
-// player's purse.
+// depot(s) → pave → bank → sabotage on the shipped loop; connect → tune →
+// climb the tree → upgrade the city under `newLoop`) and a set of NUMBERS that
+// pace it. This module owns the numbers, and it is data, not a behavioural
+// fork: every difficulty runs the SAME turn, so "hard" can never cheat — it
+// plans off the same A*, pays the same costs, and never touches the player's
+// purse. (L11 / #226 removed the market from that turn; the bank it kept is
+// the same pass both seats run, gated to the seat's own rungs.)
 //
 // How the presets were set, so they do not drift into guesswork: two AI seats
 // race each other head-to-head (tests/unit/iso-skill-calibration.test.ts,
@@ -20,12 +21,15 @@
 //             opponent that still plays the victory condition (expands,
 //             paves, scores);
 //   • normal — the shipped rival's tuning: reaches the 10★ line in 15.8m on
-//             the 1337 lane, on bank income alone like the shipped rival —
-//             well inside any session;
+//             the 1337 lane (the number PR #282 measured; L11 / #226 removed
+//             the rival's market, and the bank it keeps is gated to the
+//             seat's own rungs, so the harness in
+//             tests/unit/iso-l1d-race.test.ts re-measures it) — well inside
+//             any session;
 //   • hard  — reaches the line no later than normal, and never trails easy
 //             pooled over both chairs on any measured seed.
 // Why the ladder reads flat: the 10★ line lands mid-opening, where the
-// calibration sim's bank-only seats are income-capped and every preset
+// calibration sim's clock-fed seats are income-capped and every preset
 // moves together (all three 1337 mirrors cross on the same tick). The sim
 // guards against an INVERTED ladder, not a photo finish; the difference a
 // player feels is the clocks below, the raid cadence, and Blockades.
@@ -48,15 +52,18 @@
 //                     is spreading across the map" — the single most visible
 //                     difference between the presets;
 //   paveTiles         the planUpgrades batch cap (was 8);
-//   bankBonus         added to rivalPace().bankPerTurn (floored at 1) — how
-//                     hard the 4:1 bank works toward the plan it cannot yet
-//                     afford;
 //   urgencyBias       multiplier on the ore urgency the scoreboard read
 //                     produces, so a hard rival chases Ore Mines harder when
 //                     it falls behind;
-//   offerEveryMs      how often the rival POSTS a market offer (the market is
-//                     a nicety, not the strategy — see ai.ts's CARGO_VALUE for
-//                     what actually wins);
+//   (L11 / #226 retired TWO entries from this list. `offerEveryMs` paced the
+//   offer board, which is gone. `bankBonus` was the bank's difficulty term
+//   (`rivalPace().bankPerTurn + bankBonus`), and in the bank-only economy it
+//   was the wrong lever: the rival's budget is a RATE, so a bonus buys the
+//   richer lane more than the poorer one and the presets stopped being legible
+//   against each other — VP-01's game-shape floor caught it first (the winner
+//   crossed 10★ with the loser on 1.25★ of its 2.5★ floor on the measured
+//   seed, `tests/unit/iso-vp-race.test.ts`). The bank's budget is the pace's
+//   own `bankPerTurn` (2 cruise / 4 sprint) on every preset now.)
 //   raidEveryMs       Black Market raid cadence (0 = never: the easy rival
 //                     leaves your plant alone);
 //   blockades         whether it buys industry Blockades against you;
@@ -82,10 +89,12 @@
 //   expandPerTurn         still the expansion pressure — Depot plans per turn,
 //                         which on the new loop is how fast it spreads over the
 //                         map on free gravel;
-//   paveTiles / bankBonus / offerEveryMs / urgencyBias / moveMs
-//                         shipped-loop levers. Banking, market offers and the
-//                         watched board are all retired under `newLoop` (L11
-//                         #226, L13 #228), so the new loop reads none of them.
+//   paveTiles / urgencyBias / moveMs
+//                         shipped-loop levers. Market offers and the watched
+//                         board are retired outright (L11 #226 removed the
+//                         board; L14 #229 grew the new loop its own income), so
+//                         the new loop reads none of them. L11 also retired
+//                         `bankBonus` — see the note above.
 //
 // ══════════════════════════════════════════════════════════════════════════
 
@@ -108,10 +117,6 @@ export interface RivalSkill {
   expandPerTurn: number;
   /** Cap on tiles one pave pass lays (planUpgrades maxTiles). */
   paveTiles: number;
-  /** Added to pace.bankPerTurn on every banking decision (min 1). */
-  bankBonus: number;
-  /** Milliseconds between the rival's market offer posts. 0 = never. */
-  offerEveryMs: number;
   /** Milliseconds between Black Market raids on the player's plant. 0 = never. */
   raidEveryMs: number;
   /** Whether the rival buys industry Blockades. */
@@ -194,8 +199,6 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     idleMs: 3_500,
     expandPerTurn: 1,
     paveTiles: 4,
-    bankBonus: 0,
-    offerEveryMs: 75_000,
     raidEveryMs: 0,
     blockades: false,
     moveMs: 4_200,
@@ -220,8 +223,6 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     idleMs: 1_800,
     expandPerTurn: 2,
     paveTiles: 10,
-    bankBonus: 2,
-    offerEveryMs: 50_000,
     raidEveryMs: RAID_EVERY,   // the classic 2-minute raid clock
     blockades: true,
     moveMs: 2_600,
@@ -237,15 +238,13 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
   hard: {
     key: "hard",
     label: "Hard",
-    blurb: "Plays the scoreboard: expands two builds at a time, banks hard, fights back.",
+    blurb: "Plays the scoreboard: expands three builds at a time, paves hard, fights back.",
     // L6 (#220): the only row where the yield is not permanent.
     economyLine: "A tuned Depot cools off on the clock — re-tune it any time, and a bad session can cost you.",
     buildMs: 4_500,
     idleMs: 1_200,
     expandPerTurn: 3,
     paveTiles: 16,
-    bankBonus: 2,
-    offerEveryMs: 35_000,
     raidEveryMs: 90_000,
     blockades: true,
     moveMs: 1_800,

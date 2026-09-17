@@ -76,7 +76,12 @@ interface L9Hook {
   eco: import("../../src/iso/economy").EconomyState;
   board: Board;
   purse: Record<string, number>;
-  market: { players: { id: string; res: Record<string, number> }[] };
+  /**
+   * L11 (#226): every seat's LIVE purse, in `players` order. The offer board
+   * used to hand these out (`market.players[i].res`); the rival's is the
+   * record its own economy spends from, so a test can bank it by hand.
+   */
+  purses: Record<string, number>[];
   finishSetup: () => void;
   placeDepot: (tx: number, ty: number) => boolean;
   econTick: (now?: number) => void;
@@ -326,8 +331,8 @@ describe("L9 the map cards stop the target's income ticks", () => {
     for (let y = site.hy + 1; y < site.fy; y++) buildTile(h.track, "road", site.hx, y, 2);
     h.rivalTuning();                       // give it a yield to be multiplied by
 
-    const rival = h.market.players[1];
-    const rivalTotal = () => purseTotal(rival.res);
+    const rival = h.purses[1];
+    const rivalTotal = () => purseTotal(rival);
     let now = performance.now();
     let before = rivalTotal();
     h.econTick(now += 10_000);
@@ -457,10 +462,10 @@ describe("L9 Gold reaches both seats without constant matching", () => {
     h.finishSetup();
     const site = depotSite(h.grid)!;
     h.eco.harvesters.push({ id: 900, owner: "ai", ownerId: 2, tx: site.hx, ty: site.hy });
-    const rival = h.market.players[1];
-    const before = rival.res.gold ?? 0;
+    const rival = h.purses[1];
+    const before = rival.gold ?? 0;
     h.rivalTuning();
-    expect((rival.res.gold ?? 0) - before, "the rival banks its own session")
+    expect((rival.gold ?? 0) - before, "the rival banks its own session")
       .toBe(rivalTuningGold("normal"));
     // and the level really was set (the same sweep, one pass)
     expect(h.depotYields.find((d) => d.id === 900)!.yield).not.toBeNull();
@@ -478,22 +483,22 @@ describe("L9 the rival raids with the same two cards", () => {
     expect(SABOTAGE.protest.gold).toBe(6);
     // it cannot play a card that no longer exists: seat 1 through the shared
     // core refuses a retired key without charging
-    const rival = h.market.players[1];
-    rival.res.gold = 30;
+    const rival = h.purses[1];
+    rival.gold = 30;
     for (const dead of ["harden", "block", "fog", "repair"]) {
       expect(h.buyBlackFor(1, dead), `${dead} was sold to the rival`).toBe(false);
     }
-    expect(rival.res.gold, "a refused raid costs the rival nothing").toBe(30);
+    expect(rival.gold, "a refused raid costs the rival nothing").toBe(30);
     expect(h.rivalPlant.status()).toMatchObject({ frozen: 0, girders: 0 });
   });
 
   it("charges the rival and blockades a player industry when it plays the Blockade", async () => {
     const h = await boot({ newLoop: true });
     await connectedDepot(h);
-    const rival = h.market.players[1];
-    rival.res.gold = SABOTAGE.bandit.gold;
+    const rival = h.purses[1];
+    rival.gold = SABOTAGE.bandit.gold;
     expect(h.buyBlackFor(1, "bandit")).toBe(true);
-    expect(rival.res.gold).toBe(0);
+    expect(rival.gold).toBe(0);
     const now = performance.now();
     const hit = h.grid.industries.filter((i) => i.banditUntil > now);
     expect(hit.length, "the raid landed on exactly one industry").toBe(1);
@@ -506,10 +511,10 @@ describe("L9 the rival raids with the same two cards", () => {
     // the route is the player's own road; a raid stages on public road, so the
     // corridor is made public the way a town road would be
     for (let y = site.hy + 1; y < site.fy; y++) h.track.owner[tIdx(site.hx, y)] = PUBLIC_OWNER;
-    const rival = h.market.players[1];
-    rival.res.gold = SABOTAGE.protest.gold;          // exactly one raid's worth
+    const rival = h.purses[1];
+    rival.gold = SABOTAGE.protest.gold;          // exactly one raid's worth
     h.rivalRaidNow();
-    expect(rival.res.gold, "the raid pays the shop price").toBe(0);
+    expect(rival.gold, "the raid pays the shop price").toBe(0);
     expect(h.protests.length).toBe(1);
     const p = h.protests[0];
     expect(p.until).toBeGreaterThan(performance.now());
@@ -522,10 +527,10 @@ describe("L9 the rival raids with the same two cards", () => {
   it("skips a raid it cannot place rather than burning the Gold", async () => {
     const h = await boot({ newLoop: true });
     h.finishSetup();
-    const rival = h.market.players[1];
-    rival.res.gold = 30;
+    const rival = h.purses[1];
+    rival.gold = 30;
     h.rivalRaidNow();                                 // no public roads, no depots
     expect(h.protests).toHaveLength(0);
-    expect(rival.res.gold, "nothing to hit is not a purchase").toBe(30);
+    expect(rival.gold, "nothing to hit is not a purchase").toBe(30);
   });
 });

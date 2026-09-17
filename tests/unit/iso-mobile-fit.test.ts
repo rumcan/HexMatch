@@ -28,7 +28,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Board } from "../../src/game/board";
 import { createOriginalUi, type OriginalUi } from "../../src/game/ui";
-import { createIsoMarket, emptyBag } from "../../src/iso/market";
+import { emptyBag } from "../../src/iso/bank";
 import { mulberry32, setRng, BOARD_W, BOARD_H, CELL } from "../../src/game/config";
 
 const PHONE = { w: 390, h: 844 };
@@ -56,10 +56,10 @@ async function settle(ms = 40) {
 function mount(size: (w: number, h: number) => boolean = vi.fn(() => true)) {
   setRng(mulberry32(7));
   const board = new Board();
-  const market = createIsoMarket([{ i: 0, id: "you", name: "You", human: true, purse: emptyBag() }]);
-  const ui = createOriginalUi(board, market, market.players[0], {
+  const seat = { id: "you", name: "You", res: emptyBag(), unlocked: null };
+  const ui = createOriginalUi(board, seat, {
     onTool: vi.fn(), onRecenter: vi.fn(), onSwap: vi.fn(), onReset: vi.fn(),
-    onBlackAction: vi.fn(),
+    onBank: vi.fn(() => "done" as const), onBlackAction: vi.fn(),
     requestBoardSize: size,
   });
   // #188: the REAL wiring. `src/iso/quarry.ts` sets `board.onChange` to its
@@ -70,7 +70,7 @@ function mount(size: (w: number, h: number) => boolean = vi.fn(() => true)) {
   // lives or dies by.
   board.onChange = () => ui.renderBoard();
   document.body.append(ui.el);
-  return { board, ui, market, ask: size as ReturnType<typeof vi.fn> };
+  return { board, ui, ask: size as ReturnType<typeof vi.fn> };
 }
 
 /** Open the economy sheet on the phone and wait for its settled fit. */
@@ -80,7 +80,7 @@ async function openTrade(ui: OriginalUi) {
 }
 
 /** Tap an economy tab inside the trade sheet. */
-function tapTab(ui: OriginalUi, tab: "bank" | "market" | "plant" | "feed") {
+function tapTab(ui: OriginalUi, tab: "bank" | "plant" | "feed") {
   (ui.el.querySelector(`.tab[data-tab="${tab}"]`) as HTMLElement).click();
 }
 
@@ -231,7 +231,7 @@ describe("MOBILE-02 phone fit", () => {
 });
 
 describe("#163 tab switches never resize the board", () => {
-  it("Plant → Bank/Market/Feed → Plant round-trips, repeated, keep the one settled size", async () => {
+  it("Plant → Bank/Feed → Plant round-trips, repeated, keep the one settled size", async () => {
     setViewport(PHONE.w, PHONE.h);
     const { board, ui, ask } = mount(vi.fn(() => true));
     stubSlotBox(ui, 374, 600);
@@ -245,7 +245,7 @@ describe("#163 tab switches never resize the board", () => {
     // again — and above all never ask for the 11-column board the mid-switch
     // box produced.
     for (let round = 0; round < 10; round++) {
-      for (const away of ["bank", "market", "feed"] as const) {
+      for (const away of ["bank", "feed"] as const) {
         tapTab(ui, away);
         await settle();
         tapTab(ui, "plant");

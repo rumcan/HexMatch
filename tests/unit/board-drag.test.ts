@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Board } from "../../src/game/board";
 import { CELL } from "../../src/game/config";
 import { createOriginalUi } from "../../src/game/ui";
-import { createIsoMarket, emptyBag } from "../../src/iso/market";
+import { emptyBag } from "../../src/iso/bank";
 import { mulberry32, setRng } from "../../src/game/config";
 
 function uiFixture() {
@@ -15,12 +15,12 @@ function uiFixture() {
   // No blockers anywhere: every neighbour of a drag origin is swappable
   // unless a test chains one deliberately.
   for (const g of board.gems()) { g.block = false; g.special = null; }
-  const market = createIsoMarket([{ i: 0, id: "you", name: "You", human: true, purse: emptyBag() }]);
+  const seat = { id: "you", name: "You", res: emptyBag(), unlocked: null };
   const hooks = {
     onTool: vi.fn(), onRecenter: vi.fn(), onSwap: vi.fn(),
-    onReset: vi.fn(), onBlackAction: vi.fn(),
+    onReset: vi.fn(), onBank: vi.fn(() => "done" as const), onBlackAction: vi.fn(),
   };
-  const ui = createOriginalUi(board, market, market.players[0], hooks);
+  const ui = createOriginalUi(board, seat, hooks);
   document.body.append(ui.el);
   board.onChange = ui.renderBoard;
   const grid = ui.el.querySelector("#iso-gems") as HTMLElement;

@@ -21,7 +21,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { Board } from "../../src/game/board";
 import { createOriginalUi, type OriginalUi } from "../../src/game/ui";
-import { createIsoMarket, emptyBag } from "../../src/iso/market";
+import { emptyBag } from "../../src/iso/bank";
 import { mulberry32, setRng, CELL, BOARD_W, BOARD_H } from "../../src/game/config";
 
 const DESK = { w: 1280, h: 800 };
@@ -51,10 +51,10 @@ function stubColumnBox(ui: OriginalUi, asideH: number, chromeH: number) {
 function mount() {
   setRng(mulberry32(7));
   const board = new Board();
-  const market = createIsoMarket([{ i: 0, id: "you", name: "You", human: true, purse: emptyBag() }]);
-  const ui = createOriginalUi(board, market, market.players[0], {
+  const seat = { id: "you", name: "You", res: emptyBag(), unlocked: null };
+  const ui = createOriginalUi(board, seat, {
     onTool: vi.fn(), onRecenter: vi.fn(), onSwap: vi.fn(), onReset: vi.fn(),
-    onBlackAction: vi.fn(),
+    onBank: vi.fn(() => "done" as const), onBlackAction: vi.fn(),
   });
   document.body.append(ui.el);
   return { board, ui };
@@ -130,8 +130,8 @@ describe("FIT-01 the board never paints behind the resource footer", () => {
     const { ui } = mount();
     setViewport(1280, 768);
     stubColumnBox(ui, 648, 380);
-    // Market owns the column now: the fit must not read it as plant chrome.
-    (ui.el.querySelector('[data-tab="market"]') as HTMLElement).click();
+    // Feed owns the column now: the fit must not read it as plant chrome.
+    (ui.el.querySelector('[data-tab="feed"]') as HTMLElement).click();
     window.dispatchEvent(new Event("resize"));
     const wrap = ui.el.querySelector("#iso-quarry .board-wrap:last-child") as HTMLElement;
     expect(wrap.dataset.zoom).toBe("0.8");    // the band heuristic, untouched
@@ -141,8 +141,8 @@ describe("FIT-01 the board never paints behind the resource footer", () => {
     const { ui } = mount();
     setViewport(1280, 768);
     const { wrap } = stubColumnBox(ui, 648, 380);
-    // resize while Market is up (fit skips the hidden plant column)…
-    (ui.el.querySelector('[data-tab="market"]') as HTMLElement).click();
+    // resize while Feed is up (fit skips the hidden plant column)…
+    (ui.el.querySelector('[data-tab="feed"]') as HTMLElement).click();
     window.dispatchEvent(new Event("resize"));
     expect(wrap.dataset.zoom).toBe("0.8");
     // …then Plant again: the tab re-runs the fit with the plant column live.

@@ -179,19 +179,6 @@ export interface WirePlayer {
   townBonus?: number;
 }
 
-export interface MarketWireOffer {
-  id: number;
-  from: number;
-  give: string;
-  giveN: number;
-  want: string;
-  wantN: number;
-  born: number;
-}
-export interface MarketWire {
-  offers: MarketWireOffer[];
-  offerSeq: number;
-}
 /**
  * L9 (#224): one industry's live Blockade. `id` indexes the seed-derived
  * industry list both clients already generated, and `until` is host wall time
@@ -353,8 +340,6 @@ export interface Snapshot {
   harvesters: WireHarvester[];
   factories: Factory[];
   players: WirePlayer[];
-  /** MP-AUDIT: market parity — live offers */
-  market?: MarketWire;
   /** MP-AUDIT: protest roadblocks */
   protests?: ProtestWire[];
   /** L9 (#224): live industry Blockades — the other half of the map shop. */
@@ -386,7 +371,6 @@ export interface SnapshotSource {
   won: boolean;
   players: WirePlayer[];
   t?: number;
-  market?: MarketWire;
   protests?: ProtestWire[];
   blockades?: BlockadeWire[];
   trucks?: TruckWire[];
@@ -422,7 +406,6 @@ export function buildSnapshot(src: SnapshotSource): Snapshot {
     })),
     factories: src.factories.map((f) => ({ ...f })),
     players: src.players.map((p) => ({ ...p, res: { ...p.res } })),
-    market: src.market ? { offers: src.market.offers.map((o) => ({ ...o })), offerSeq: src.market.offerSeq } : undefined,
     protests: src.protests ? src.protests.map((p) => ({ ...p })) : undefined,
     blockades: src.blockades ? src.blockades.map((b) => ({ ...b })) : undefined,
     trucks: src.trucks ? src.trucks.map((t) => ({ ...t, factory: [...t.factory] as [number, number], route: t.route.map((r) => [...r] as [number, number]), segFast: [...t.segFast] })) : undefined,
@@ -534,13 +517,14 @@ export function validateSnapshot(s: unknown, localSeed?: number): SnapshotError 
       }
     }
   }
+  // L11 (#226): a `market` field from an older host is IGNORED, not refused.
+  // The offers it carries have nowhere to land any more (the trade UI, the
+  // escrow and the rival's answering policy are gone), and a guest that had
+  // to reload mid-match over a field this build cannot use would be a worse
+  // failure than dropping it — the same treatment the retired `rivalSabotage`
+  // field gets.
+  //
   // MP-AUDIT: new optional fields are validated only when present
-  if (o.market !== undefined && o.market !== null) {
-    const m = o.market as Partial<MarketWire>;
-    if (!m || typeof m !== "object" || !Array.isArray((m as MarketWire).offers) || typeof (m as MarketWire).offerSeq !== "number") {
-      return new SnapshotError("malformed", "Snapshot market is malformed.");
-    }
-  }
   if (o.protests !== undefined && o.protests !== null && !Array.isArray(o.protests)) {
     return new SnapshotError("malformed", "Snapshot protests is malformed.");
   }
@@ -606,7 +590,6 @@ export interface AppliedSnapshot {
   setupPhase: boolean;
   won: boolean;
   t: number;
-  market?: MarketWire;
   protests?: ProtestWire[];
   blockades?: BlockadeWire[];
   trucks?: TruckWire[];
@@ -643,7 +626,6 @@ export function applySnapshot(s: unknown, localSeed?: number): AppliedSnapshot {
     setupPhase: !!o.setupPhase,
     won: !!o.won,
     t: o.t ?? 0,
-    market: (o as Snapshot).market ? { offers: (o as Snapshot).market!.offers.map((x) => ({ ...x })), offerSeq: (o as Snapshot).market!.offerSeq } : undefined,
     protests: (o as Snapshot).protests ? (o as Snapshot).protests!.map((x) => ({ ...x })) : undefined,
     blockades: (o as Snapshot).blockades ? (o as Snapshot).blockades!.map((x) => ({ ...x })) : undefined,
     trucks: (o as Snapshot).trucks ? (o as Snapshot).trucks!.map((x) => ({ ...x, factory: [...x.factory] as [number, number], route: x.route.map((r) => [...r] as [number, number]), segFast: [...x.segFast] })) : undefined,

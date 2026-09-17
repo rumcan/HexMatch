@@ -270,7 +270,11 @@ test.describe("iso game boots on the default route", () => {
     await expect(root.locator("#iso-quarry")).toBeVisible();
     await expect(root.locator("#iso-quarry .gem")).toHaveCount(BOARD_W * BOARD_H);
     await expect(root.locator('[data-tab="plant"]')).toHaveCount(1);
-    await expect(root.locator('[data-tab="market"]')).toHaveCount(1);
+    // L11 (#226): the Market tab is gone on EVERY loop — the offer board was
+    // the other way around L5's resource tree. One strip serves the desktop
+    // and the phone sheet: Bank / Processing Plant / Feed.
+    await expect(root.locator('[data-tab="market"]')).toHaveCount(0);
+    await expect(root.locator("#iso-trade .tabs [data-tab]")).toHaveCount(3);
     const firstGem = root.locator('.gem[data-r="0"][data-c="0"]');
     await expect(firstGem).toHaveAttribute("data-res", /^(wood|brick|sheep|wheat|ore|gold)$/);
     await firstGem.click();
@@ -659,7 +663,7 @@ test("consolidated economy tabs and disabled purchases", async ({ page }) => {
     await page.locator('.mnav-btn[data-view="trade"]').click();
   }
   await expect(page.locator('[data-panel]')).toHaveCount(0);
-  for (const tab of ["bank", "market", "plant", "feed"]) {
+  for (const tab of ["bank", "plant", "feed"]) {
     await page.locator(`[data-tab="${tab}"]`).click();
     await expect(page.locator('#iso-trade > .pane:not(.hidden), #iso-trade > #iso-quarry:not(.hidden)')).toHaveCount(1);
     await expect(page.locator(`[data-tab="${tab}"]`)).toBeInViewport();

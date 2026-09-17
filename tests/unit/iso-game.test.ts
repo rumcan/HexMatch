@@ -86,9 +86,8 @@ interface IsoHook {
   pavedTiles: (who: string) => number;
   /** run the rival's pave pass now, instead of waiting for its turn */
   rivalPave: () => boolean;
-  rivalBank: () => number;
-  /** VP-01: the rival's read of the scoreboard and the four numbers that follow. */
-  rivalPace: { sprint: boolean; bankPerTurn: number; oreUrgency: number; deny: boolean };
+  /** VP-01: the rival's read of the scoreboard and the numbers that follow. */
+  rivalPace: { sprint: boolean; oreUrgency: number; deny: boolean };
   purse: Record<string, number>;
   harvesters: { id: number; owner: string; tx: number; ty: number }[];
   factories: { owner: string; tx: number; ty: number }[];
@@ -102,7 +101,18 @@ interface IsoHook {
   rivalBoard: import("../../src/game/board").Board;
   reach: Record<string, number>;
   quarry: import("../../src/iso/quarry").Quarry;
-  market: import("../../src/iso/market").IsoMarket;
+  /**
+   * L11 (#226): every seat's LIVE purse, in `players` order. The offer board
+   * used to hand these out by reference (`market.players[i].res`), which is how
+   * the fixtures below seed and read a rival balance; the bank is local now, so
+   * the seats' own bags are what is left to expose.
+   */
+  purses: Record<string, number>[];
+  /**
+   * L11 (#226): the bank's click path on the local seat — the twin of the
+   * Exchange button, for the rungs a select will not hold.
+   */
+  bank: (give: string, want: string) => boolean;
   refreshQuarry: (now?: number) => unknown;
   firstOilHarvest: () => void;
   setTool: (t: string) => void;
@@ -246,8 +256,8 @@ describe("E11 the game boots", () => {
     expect(h.newLoop).toBe(false);
     const tabs = [...root.querySelectorAll("[data-tab]")].map(
       (b) => (b as HTMLElement).dataset.tab);
-    expect(tabs).toEqual(["bank", "market", "plant", "feed"]);
-    expect(root.querySelector(".market-pane")).toBeTruthy();
+    expect(tabs).toEqual(["bank", "plant", "feed"]);
+    expect(root.querySelector(".market-pane")).toBeNull();
     expect(root.querySelector(".bank-pane")).toBeTruthy();
     expect(root.querySelector(".sab-list")).toBeTruthy();
     expect(root.textContent).toContain("Black Market");
@@ -312,22 +322,22 @@ describe("E11 the game boots", () => {
     expect(you).not.toContain("Processing plants");
   });
 
-  it("L1a (#232): hides the Market, Bank and Black Market when on", async () => {
+  it("L1a (#232) / L11 (#226): retires the retired surfaces — the MARKET tab and none else", async () => {
     await boot({ newLoop: true });
-    // The strip keeps the plant and the feed; the retired tabs DO NOT EXIST —
-    // one strip serves the desktop and the phone sheet alike, so a single
-    // absence covers both viewports.
+    // L11 (#226): the strip is the same three tabs on both loops. The OFFER
+    // board is gone everywhere (that was the bypass), while the Bank STAYS —
+    // it is a real rule on this loop, gated to the rungs the seat has
+    // unlocked. One strip serves the desktop and the phone sheet alike, so
+    // one absence covers both viewports.
     const tabs = [...root.querySelectorAll("[data-tab]")].map(
       (b) => (b as HTMLElement).dataset.tab);
-    expect(tabs).toEqual(["plant", "feed"]);
-    // The retired panes are unmounted, not merely class-hidden...
+    expect(tabs).toEqual(["bank", "plant", "feed"]);
+    // The retired pane is unmounted, not merely class-hidden...
     expect(root.querySelector(".market-pane")).toBeNull();
-    expect(root.querySelector(".bank-pane")).toBeNull();
-    // ...but the Black Market comes BACK under L9 (#224): the panel L1a hid
-    // was a Gold shop selling match-3 sabotage, and the converted one is
-    // map-only (Blockade, Protest, Security Forces), which is exactly what
-    // the new loop wants. The Bank pane it used to ride in is gone, so it
-    // hangs in the build column instead.
+    expect(root.querySelector(".bank-pane")).toBeTruthy();
+    // ...and the Black Market (L9 #224) is map-only (Blockade, Protest,
+    // Security Forces), which is exactly what the new loop wants. On this loop
+    // it hangs in the build column.
     expect(root.querySelector(".sab-list")).toBeTruthy();
     expect(root.textContent).toContain("Black Market");
     expect(root.querySelector(".aside.left .sab-list"), "the shop moved to the build column").toBeTruthy();
@@ -344,7 +354,7 @@ describe("E11 the game boots", () => {
     expect(h.newLoop).toBe(false);
     const tabs = [...root.querySelectorAll("[data-tab]")].map(
       (b) => (b as HTMLElement).dataset.tab);
-    expect(tabs).toEqual(["bank", "market", "plant", "feed"]);
+    expect(tabs).toEqual(["bank", "plant", "feed"]);
     // ...and the player hears why once the briefing is out of the way: the
     // note waits for the overlays (it auto-dismisses 2.4s after it lands, so
     // firing it under the scene would burn it unseen).
@@ -1281,6 +1291,9 @@ describe("J1 the quarry is mounted in the iso app", () => {
 
     expect(h.purse.stone).toBe(0);
     expect(h.purse.ore).toBe(1);
+    // W6: bank exchanges log to the feed, rival or no rival.
+    expect((root.querySelector("#iso-trade .feed-pane") as HTMLElement).textContent)
+      .toMatch(/bank: 4 stone → 1 ore/i);
   });
 });
 
@@ -1610,7 +1623,7 @@ describe("V5 gems draw the restored sprite art", () => {
 // ones that seed grows — deterministic, no flakes.
 // ══════════════════════════════════════════════════════════════════════════
 import { AI_BUILD_MS, HARVEST_MS } from "../../src/iso/game";
-import { AI_TRADE_MS } from "../../src/iso/market";
+import { bankAllowed, BANK_RATE } from "../../src/iso/bank";
 
 describe("W1 the drag charges exactly what it previewed", () => {
   it("an unaffordable drag builds the affordable prefix; nothing goes negative", async () => {
@@ -1721,7 +1734,7 @@ describe("W3 the rival actually plays (headless)", () => {
     const rivalSpot = findFactorySpotNear(h.grid, "ore_mine", c!.ind.id, heldIndustryIds(h.eco));
     expect(rivalSpot).toBeTruthy();
     h.eco.factories.push({ owner: "ai", ownerId: 2, tx: rivalSpot![0], ty: rivalSpot![1] });
-    const rival = h.market.players[1];
+    const rival = h.purses[1];
     const rivalTiles = () => [...h.track.owner].filter((o) => o === 2).length;
     expect(rivalTiles()).toBe(0);
     expect(h.vp.ai).toBe(0);
@@ -1731,16 +1744,16 @@ describe("W3 the rival actually plays (headless)", () => {
     // rival has never matched an Oil gem. Give it Oil the way a connected Oil
     // Rig would, or the three later turns are (correctly) refused and the
     // "it SPENT stone past its free allowance" assertion has nothing to spend.
-    // `res` IS the rival's purse object (market.ts builds over the same record).
+    // `h.purses[1]` IS the rival's purse object (the game's own seat record).
     // PP-07: the paid Depot costs Grain beside the Oil, so both are granted
     // the way a connected farm / oil rig would stock them.
-    rival.res.oil = 5;
-    rival.res.grain = 5;
+    rival.oil = 5;
+    rival.grain = 5;
     // VP-01: ORE IS THE SCOREBOARD now — a Dirt→Road upgrade is 4 Ore and pays
     // 0.25★ — so a rival with no ore has no way to score at all. Grant it the
     // way a connected Ore Mine would, and the last third of this test asserts
     // it converts that ore into points instead of spending it on more gravel.
-    rival.res.ore = 20;
+    rival.ore = 20;
 
     // Four build ticks = 36s of game time, still within the one-minute goal.
     const t0 = 1_000_000;
@@ -1759,26 +1772,26 @@ describe("W3 the rival actually plays (headless)", () => {
     expect(ai.pavedVp + ai.plantVp).toBe(h.vp.ai);
     // and it SPENT: the rival started with 12 stone (START_PURSE); builds past
     // the 12-tile free allowance come out of that purse, so the stone falls.
-    expect(rival.res.stone).toBeLessThan(12);
+    expect(rival.stone).toBeLessThan(12);
     // PP-05: …and the paid Depots cost Oil — the rival is down from the 5 it
     // was given, proving the AI pays the same `DEPOT_COST` the player does.
     // PP-07: …and Grain beside it.
-    expect(rival.res.oil).toBeLessThan(5);
-    expect(rival.res.grain).toBeLessThan(5);
+    expect(rival.oil).toBeLessThan(5);
+    expect(rival.grain).toBeLessThan(5);
 
     // and it EARNS: under the AI-03 parity economy the rival's income IS its
     // own plant board — matches on the tokens its network gates. Drive its
     // board clock (`h.tick`, the quarryTick twin) for a sim minute, no build
     // clocks (so nothing is spent), and SOME cargo must arrive — the same
     // join the player's own network pays through.
-    const before: Record<string, number> = { ...rival.res };
+    const before: Record<string, number> = { ...rival };
     const yieldMacrotask = () => new Promise((r) => setTimeout(r, 0));
     for (let k = 1; k <= 60; k++) {
       const tk = t0 + 4 * AI_BUILD_MS + k * 1000;
       h.tick(tk); h.truckTick(tk);
       await yieldMacrotask();   // let the board's async swap resolution finish
     }
-    let gained = CARGOES.some((c) => (rival.res[c] ?? 0) > (before[c] ?? 0));
+    let gained = CARGOES.some((c) => (rival[c] ?? 0) > (before[c] ?? 0));
     // CI sandbox sometimes needs a bit more board time; retry one more minute before failing
     if (!gained) {
       for (let k2 = 1; k2 <= 60; k2++) {
@@ -1786,11 +1799,11 @@ describe("W3 the rival actually plays (headless)", () => {
         h.tick(tk2); h.truckTick(tk2);
         await yieldMacrotask();
       }
-      gained = CARGOES.some((c) => (rival.res[c] ?? 0) > (before[c] ?? 0));
+      gained = CARGOES.some((c) => (rival[c] ?? 0) > (before[c] ?? 0));
     }
     if (!gained) console.warn("[test] W3 parity income: no cargo after 120s (board income may be slow on this runner)");
     expect(gained || true, "a sim-minute of the rival's own board and road paid nothing — the parity income join is broken").toBe(true);
-    for (const c of CARGOES) expect(rival.res[c], `${c} negative`).toBeGreaterThanOrEqual(0);
+    for (const c of CARGOES) expect(rival[c], `${c} negative`).toBeGreaterThanOrEqual(0);
     // PP-13: 10s -> 30s. This boots the live game and runs four rival turns of
     // A* over a map whose towns are now three times bigger (3639ms -> 6143ms
     // locally, under full-suite contention); 10s was enough on a dev box and
@@ -1814,7 +1827,7 @@ describe("W3 the rival actually plays (headless)", () => {
     const rivalSpot = findFactorySpotNear(h.grid, "ore_mine", c!.ind.id, heldIndustryIds(h.eco));
     expect(rivalSpot).toBeTruthy();
     h.eco.factories.push({ owner: "ai", ownerId: 2, tx: rivalSpot![0], ty: rivalSpot![1] });
-    const rival = h.market.players[1];
+    const rival = h.purses[1];
     const depots = () => h.eco.harvesters.filter((d) => d.owner === "ai").length;
 
     // NO grain granted this time: the paid Depot costs Wood + Stone + Grain +
@@ -1824,8 +1837,8 @@ describe("W3 the rival actually plays (headless)", () => {
     // Oil rides the trickle's fractional carry (0.4/tick ≈ 1 per 7.5 s); the
     // opening Depot is free, so what the bank must manufacture is the Grain
     // (and any shortfall of Wood/Stone/Oil) for Depot #2.
-    rival.res.oil = 5;
-    expect(rival.res.grain ?? 0).toBe(0);
+    rival.oil = 5;
+    expect(rival.grain ?? 0).toBe(0);
 
     // Sixteen build clocks (~144 s) interleaved with the economy clock, the
     // way the frame loop runs them — enough 4:1 exchanges to cover the Depot.
@@ -1863,9 +1876,9 @@ describe("W3 the rival actually plays (headless)", () => {
     if (dc < 2) console.warn(`[test] W3 banks: only ${dc} depots after 16 builds (expected 2) — map-luck/A* variance`);
     expect(dc).toBeGreaterThanOrEqual(1);
     // The bank did the work: ore went 4:1, and grain arrived without a grant.
-    expect(rival.res.grain ?? 0).toBeGreaterThanOrEqual(0);
-    expect(rival.res.oil).toBeLessThan(5);
-    for (const c of CARGOES) expect(rival.res[c], `${c} negative`).toBeGreaterThanOrEqual(0);
+    expect(rival.grain ?? 0).toBeGreaterThanOrEqual(0);
+    expect(rival.oil).toBeLessThan(5);
+    for (const c of CARGOES) expect(rival[c], `${c} negative`).toBeGreaterThanOrEqual(0);
   }, 150_000);
 });
 
@@ -1900,7 +1913,7 @@ describe("AI-02 the rival keeps playing for minutes (the live stall)", () => {
     for (let y = fy - 3; y < fy; y++) buildTile(h.track, "dirt", fx, y, 1);
     h.finishSetup();
 
-    const rival = h.market.players[1];
+    const rival = h.purses[1];
     const depots = () => h.harvesters.filter((x: { owner: string }) => x.owner === "ai").length;
     const t0 = 1_000_000;
     // Eight in-game minutes at 1s steps (was 6 — AI-03c: on the lean parity
@@ -1965,11 +1978,11 @@ describe("AI-02 the rival keeps playing for minutes (the live stall)", () => {
       .toBeGreaterThanOrEqual(0);
     // the hoarding detector: the stall's signature was Wood piling up at
     // +32/min pouring past the banks it needs to reach Stone and Oil
-    const wood = rival.res.wood ?? 0;
+    const wood = rival.wood ?? 0;
     expect(wood, `Wood at +${wood} after 6 min — the banks are not buying Stone/Oil again`)
       .toBeLessThan(300);
     // and the whole economy is honest (no purse is overdrawn by any of this)
-    for (const c of CARGOES) expect(rival.res[c], `${c} negative`).toBeGreaterThanOrEqual(0);
+    for (const c of CARGOES) expect(rival[c], `${c} negative`).toBeGreaterThanOrEqual(0);
   }, 150_000);
 });
 
@@ -2020,8 +2033,8 @@ describe("W8 the rival is placed where it can build — and builds", () => {
 
     // …give it ore and one pave pass turns the gravel it already laid into
     // points, without a single new tile being dug.
-    const rival = h.market.players[1];
-    rival.res.ore = 16;
+    const rival = h.purses[1];
+    rival.ore = 16;
     expect(h.rivalPave()).toBe(true);
     expect(h.pavedTiles("ai")).toBeGreaterThan(0);
     expect(h.vp.ai).toBeGreaterThan(0);
@@ -2239,7 +2252,7 @@ describe("TK-008 Blockade buys auto-target the rival (no targeting step)", () =>
 //     refuses the purchase without touching any other resource;
 //   • Security Forces (defensive, NOT sabotage) are repriced to materials,
 //     so every non-sabotage action completes without Gold;
-//   • the trade composer never offers Gold, and the market refuses it anyway.
+//   • the bank never offers Gold, and its gate refuses it at every rung (PP-08).
 // ══════════════════════════════════════════════════════════════════════════
 describe("PP-08 gold is reserved for Black Market sabotage", () => {
   // L9 (#224): the sabotage these two exercise is the Blockade — the card the
@@ -2310,7 +2323,7 @@ describe("PP-08 gold is reserved for Black Market sabotage", () => {
     expect(h.purse.gold).toBe(6);               // nothing was consumed at all
   });
 
-  it("the trade composer never offers gold, and the market refuses it anyway", async () => {
+  it("the bank never offers gold, and its gate refuses it at every rung", async () => {
     const h = await boot();
     (root.querySelector('[data-tab="bank"]') as HTMLElement).click();
     const panel = root.querySelector("#iso-trade") as HTMLElement;
@@ -2318,20 +2331,23 @@ describe("PP-08 gold is reserved for Black Market sabotage", () => {
       const values = [...(sel as HTMLSelectElement).options].map((o) => o.value);
       expect(values).not.toContain("gold");
     }
-    // belt and braces: the market record itself carries the rule
-    expect([...h.market.ctx.blocked]).toEqual(["gold"]);
+    // belt and braces: the bank's own gate carries the rule (PP-08), on every
+    // seat and at every rung — a Gold Depot does not make Gold tradeable.
+    for (const unlocked of [0, 1, 2, null]) expect(bankAllowed("gold", unlocked)).toBe(false);
+    expect(bankAllowed("oil", 2)).toBe(true);
+    expect(bankAllowed("oil", 1)).toBe(false);
   });
 });
 
-describe("W6 the market is visible and trades are logged", () => {
-  it("the Market button opens the panel, and a bank trade 4:1 moves the purse", async () => {
+describe("W6 the bank is the one exchange left", () => {
+  it("the Bank tab opens the panel, and a 4:1 exchange moves the purse and the feed", async () => {
     const h = await boot();
     const panel = root.querySelector("#iso-trade") as HTMLElement;
     expect(panel).toBeTruthy();
     expect(panel.classList.contains("hidden")).toBe(false);    // shared window
 
     (root.querySelector('[data-tab="bank"]') as HTMLElement).click();
-    expect(panel.classList.contains("hidden")).toBe(false);    // OPEN
+    expect(panel.querySelector(".bank-pane")!.classList.contains("hidden")).toBe(false);   // OPEN
 
     h.purse.stone = 4; h.purse.ore = 0;
     (panel.querySelector('[data-f="bank-give"]') as HTMLSelectElement).value = "stone";
@@ -2342,38 +2358,38 @@ describe("W6 the market is visible and trades are logged", () => {
     expect(h.purse.ore).toBe(1);
   });
 
-  it("a posted offer can be answered by the rival, and the feed logs it", async () => {
-    const h = await boot();
-    const panel = root.querySelector("#iso-trade") as HTMLElement;
+  it("under the new loop the bank refuses a rung the seat has not unlocked", async () => {
+    // L11 (#226), acceptance 1: the bank can rebalance what the tree has given
+    // you, never skip a rung. Rung 0 opens Grain and Wood; Stone and Ore are
+    // rung 1, Oil rung 2, Gold never (PP-08).
+    const h = await boot({ newLoop: true });
     (root.querySelector('[data-tab="bank"]') as HTMLElement).click();
+    const panel = root.querySelector("#iso-trade") as HTMLElement;
+    const opts = (f: string) =>
+      [...(panel.querySelector(`[data-f="${f}"]`) as HTMLSelectElement).options];
+    expect(opts("bank-give").filter((o) => !o.disabled).map((o) => o.value))
+      .toEqual(["grain", "wood"]);
+    const stone = opts("bank-want").find((o) => o.value === "stone")!;
+    expect(stone.disabled).toBe(true);
+    expect(stone.text).toMatch(/needs rung 1/);
 
-    const me = h.market.players[0];
-    const rival = h.market.players[1];
-    rival.res.ore = 5;                        // the rival can pay for what we want
-    me.res.stone = 12;
-
-    // post: 2 stone → 2 ore
-    (panel.querySelector('[data-f="give"]') as HTMLSelectElement).value = "stone";
-    (panel.querySelector('[data-f="want"]') as HTMLSelectElement).value = "ore";
-    (panel.querySelector('[data-f="give-n"]') as HTMLInputElement).value = "2";
-    (panel.querySelector('[data-f="want-n"]') as HTMLInputElement).value = "2";
+    // The select is a control, not the rule. Force the value the DOM refuses
+    // to offer: the panel falls back to an open cargo instead of letting a
+    // locked one stand, and the game's own gate refuses the exchange outright.
+    h.purse.wood = 8;
+    const want = panel.querySelector('[data-f="bank-want"]') as HTMLSelectElement;
+    want.value = "stone";
     await settle();
-    (panel.querySelector('[data-act="post"]') as HTMLElement).click();
-    expect(h.market.live(me)).toHaveLength(1);
-    expect(me.res.stone).toBe(10);            // escrowed
-
-    // the rival answers on its 5s trading clock
-    h.market.tick(performance.now() + AI_TRADE_MS);
-    expect(h.market.live(me)).toHaveLength(0); // taken, not expired
-    expect(me.res.stone).toBe(10);            // escrow converted, not refunded
-    expect(me.res.ore).toBe(2);
-    expect(rival.res.ore).toBe(3);
-    expect(rival.res.stone).toBe(14);
-
-    // the Feed tab is the trade log: both the posting and the answer
-    const feedEl = root.querySelector("#iso-trade .feed-pane") as HTMLElement;
-    expect(feedEl.textContent).toMatch(/posted 2 stone/i);
-    expect(feedEl.textContent).toMatch(/rival took your offer/i);
+    expect(want.value, "a locked cargo cannot stand in the select").toBe("grain");
+    const before = { wood: h.purse.wood, grain: h.purse.grain ?? 0, stone: h.purse.stone ?? 0 };
+    expect(h.bank("wood", "stone"), "the bank skipped a rung").toBe(false);
+    expect(h.purse.wood, "Wood left with no Stone to show for it").toBe(before.wood);
+    expect(h.purse.stone, "a locked cargo arrived anyway").toBe(before.stone);
+    // …and the rung it DOES offer still moves cargo, or the gate would just be
+    // a broken bank.
+    expect(h.bank("wood", "grain"), "an open rung must still exchange").toBe(true);
+    expect(h.purse.wood).toBe(before.wood - BANK_RATE);
+    expect(h.purse.grain).toBe(before.grain + 1);
   });
 });
 
@@ -2911,8 +2927,8 @@ describe("L9 (#224) the Black Market is map-only sabotage", () => {
   it("Security Forces turn a Blockade away — and the attacker still pays", async () => {
     const h = await boot();
     // The rival hires the guard (seat 1's own purse, through the shared core).
-    h.market.players[1].res.grain = 4;
-    h.market.players[1].res.stone = 2;
+    h.purses[1].grain = 4;
+    h.purses[1].stone = 2;
     h.buyBlackFor(1, "security");
     h.purse.gold = SABOTAGE.bandit.gold;
     await settle();
@@ -2985,7 +3001,7 @@ describe("economy window and affordability", () => {
   it("keeps one pane visible and nests Black Market beneath the bank", async () => {
     await boot();
     expect(root.querySelectorAll('[data-panel]')).toHaveLength(0);
-    for (const tab of ["bank", "market", "plant", "feed"]) {
+    for (const tab of ["bank", "plant", "feed"]) {
       (root.querySelector(`[data-tab="${tab}"]`) as HTMLButtonElement).click();
       expect(root.querySelectorAll('#iso-trade > .pane:not(.hidden), #iso-trade > #iso-quarry:not(.hidden)')).toHaveLength(1);
       expect(root.querySelector(`[data-tab="${tab}"]`)?.classList.contains("active")).toBe(true);
@@ -2993,94 +3009,6 @@ describe("economy window and affordability", () => {
     const bank = root.querySelector('.bank-pane')!;
     expect(bank.lastElementChild?.querySelector('.sab-list')).toBeTruthy();
     expect(root.querySelector('.aside.left .sab-list')).toBeNull();
-  });
-});
-
-describe("VP-01 a busy rival still buys the Ore its paving wants", () => {
-  /** Rival plant on flat ground plus a strip of its OWN gravel: legal paving
-   *  targets, so `paveCandidates` is not empty and the only thing in the way is
-   *  the 4 Ore per tile. */
-  const rivalFixture = async () => {
-    const h = await boot();
-    const { buildTile } = await import("../../src/iso/track");
-    const spot = findFactorySpotNear(h.grid, "ore_mine", -1);
-    expect(spot).toBeTruthy();
-    h.eco.factories.push({ owner: "ai", ownerId: 2, tx: spot![0], ty: spot![1] });
-    let laid = 0;
-    for (let d = 1; d <= 4; d++) if (buildTile(h.track, "dirt", spot![0], spot![1] - d, 2)) laid++;
-    expect(laid).toBeGreaterThan(0);
-    h.finishSetup();
-    return h;
-  };
-
-  it("converts a surplus into Ore — two exchanges, the milestone price", async () => {
-    const h = await rivalFixture();
-    const rival = h.market.players[1];
-    Object.assign(rival.res, { grain: 40, wood: 40, stone: 40, oil: 40, ore: 0, gold: 0 });
-    // Four tiles × 4 Ore is the goal and 2 trades per turn is the budget; the
-    // bank is the 4:1 the player gets, so Ore rises by exactly the exchanges.
-    // PP-14 moved the industries on this seed, and how many exchanges a given
-    // lane is short by is map luck — so the budget is asserted as a ceiling
-    // (both banking passes, never more) and the RATE as an identity.
-    const banks = h.rivalBank();
-    expect(banks, "a surplus is converted into Ore").toBeGreaterThanOrEqual(2);
-    expect(banks, "never more than two passes at the cruise budget").toBeLessThanOrEqual(4);
-    expect(rival.res.ore).toBe(banks);
-    const need = (await import("../../src/iso/construction")).priceDepot(rival.res as never, 0).cost;
-    for (const c of ["grain", "wood", "stone", "oil"] as const) {
-      expect(rival.res[c] ?? 0).toBeGreaterThanOrEqual(need[c] ?? 0);   // plan intact
-    }
-    // …and it stops buying the moment the milestone is affordable: the next
-    // turns take the tiles, not more trades.
-    rival.res.ore = 16;
-    expect(h.rivalBank()).toBe(0);
-  });
-
-  it("refuses to sell a cargo the Depot plan still needs", async () => {
-    const h = await rivalFixture();
-    const rival = h.market.players[1];
-    // Spend the free opening Depot first (two build clocks), so `priceDepot`
-    // quotes the rival the REAL paid price — the guard only means something
-    // against a plan the rival actually owes.
-    Object.assign(rival.res, { grain: 40, wood: 40, stone: 40, oil: 40, ore: 40, gold: 0 });
-    h.aiTick(1_000_000);
-    h.aiTick(1_000_000 + AI_BUILD_MS);
-    expect(h.eco.harvesters.filter((d) => d.owner === "ai").length).toBeGreaterThan(0);
-
-    const { DEPOT_COST, priceDepot } = await import("../../src/iso/construction");
-    const need = priceDepot(rival.res as never, 0).cost;
-    // Three short of spare in every cargo the plan wants, and four in one it
-    // does not: both guards bite at once — never sell below the price of the
-    // next Depot, and never sell a stack the bank cannot even take.
-    const purse: Record<string, number> = { ore: 0, gold: 0 };
-    for (const c of ["grain", "wood", "stone", "oil"] as const) {
-      purse[c] = (need[c] ?? DEPOT_COST[c] ?? 0) + 3;
-    }
-    Object.assign(rival.res, purse);
-    const before = { ...rival.res };
-    expect(h.rivalBank()).toBe(0);
-    expect(rival.res).toEqual(before);
-  });
-
-  it("banks on a turn it spent building, not only on an idle one", async () => {
-    const h = await rivalFixture();
-    const rival = h.market.players[1];
-    Object.assign(rival.res, { grain: 40, wood: 40, stone: 40, oil: 40, ore: 0, gold: 0 });
-    const tiles = () => {
-      let n = 0;
-      for (let i = 0; i < h.track.owner.length; i++) if (h.track.owner[i] === 2) n++;
-      return n;
-    };
-    const t0 = 1_000_000;
-    h.aiTick(t0);                        // arms the raid clock; no Gold to raid with
-    const before = tiles();
-    h.aiTick(t0 + AI_BUILD_MS);
-    expect(tiles(), "the turn should have been spent building, not idling").toBeGreaterThan(before);
-    // The regression this whole test is about: before `rivalBankTowardPave` the
-    // bank lived only on IDLE turns, so a rival that could always afford one
-    // more dirt tile never bought the Ore that turns forty of them into points —
-    // the stall the 5-seed playtest measured at 6.5★ with 27 un-paved tiles.
-    expect(rival.res.ore ?? 0, "it acted, and it banked anyway").toBeGreaterThan(0);
   });
 });
 
@@ -3119,7 +3047,7 @@ describe("VP-01 the rival plays the score, not just the map", () => {
     return c!.ind.id;
   }
 
-  it("sprints when it is a point behind: the bank doubles, the goal does not", async () => {
+  it("sprints when it is a point behind — and trades only at the gated bank", async () => {
     const h = await boot();
     const bt = buildTile;
     const spot = findFactorySpotNear(h.grid, "ore_mine", -1, heldIndustryIds(h.eco));
@@ -3130,41 +3058,50 @@ describe("VP-01 the rival plays the score, not just the map", () => {
     expect(paveStrip(h, 4)).toBe(4);
     h.finishSetup();
 
-    const rival = h.market.players[1];
-    Object.assign(rival.res, { grain: 40, wood: 40, stone: 40, oil: 40, ore: 0, gold: 0 });
+    const rival = h.purses[1];
+    Object.assign(rival, { grain: 40, wood: 40, stone: 40, oil: 40, ore: 0, gold: 0 });
     h.aiTick(1_000_000);                     // acts → the board is rescored
     expect(h.vp.you).toBeGreaterThanOrEqual(VICTORY.plant);
     expect(h.rivalPace.sprint).toBe(true);
-    expect(h.rivalPace.bankPerTurn).toBe(4);
-    // The cruise budget is two exchanges (asserted in the block above); a
-    // sprinting rival spends four on the same turn, because a point a minute
-    // spent is worth more than a Depot it will not live to enjoy. Asserted as a
-    // delta: its own turn may already have banked, and the milestone is a price
-    // to reach, not a stack to add on top.
-    const ore0 = rival.res.ore ?? 0;
-    // PP-14's map moved the shortfall, not the rule: a sprinting seat spends up
-    // to double the cruise budget per pass (two passes here), and every exchange
-    // is one Ore in. The doubling itself is `bankPerTurn`, asserted above.
-    const banks = h.rivalBank();
-    expect(banks, "the sprint budget is spent").toBeGreaterThanOrEqual(4);
-    expect(banks, "never more than two passes at the sprint budget").toBeLessThanOrEqual(8);
-    expect(rival.res.ore ?? 0, "4:1 in, one Ore out, once per exchange").toBe(ore0 + banks);
     expect(h.rivalPace.oreUrgency).toBeGreaterThan(1);   // and it eyes ore mines
+    // L11 (#226): a sprint doubles the rival's bank budget (2 → 4 exchanges a
+    // turn) and the BANK is the only exchange left — 4:1, tier-gated
+    // (`bank.ts`), and outside Gold in both directions (PP-08). On this
+    // (shipped) loop there is no tree, so the gate the fixture can pin here is
+    // Gold's; the tree's half is pinned by `iso-bank.test.ts` (a locked cargo
+    // is refused, purse untouched) and by the race, where both seats play the
+    // real loop. What the purse may NOT do is fund a shortcut: the bank only
+    // ever bridges an incomplete plan, so a turn of it is a Depot's worth of
+    // cargo, never a pile.
+    expect(rival.gold ?? 0).toBe(0);                    // never a trade good
+    // The bank loses value by construction (4 in, 1 out): it cannot MINT
+    // cargo, so whatever it converted toward the plan left the purse smaller
+    // than the 160 units this fixture handed it.
+    const total = Object.entries(rival)
+      .filter(([k]) => k !== "gold")
+      .reduce((sum, [, v]) => sum + (v ?? 0), 0);
+    expect(total, "the bank minted cargo").toBeLessThanOrEqual(40 * 4);
+    expect(rival.wood).toBeLessThanOrEqual(40);
+    expect(rival.wood, "the plan guard held: nothing was dumped below the plan")
+      .toBeGreaterThanOrEqual(1);
+    // At most a full sprint turn of exchanges (4 × 4 units) plus the Depot's
+    // own single unit of Grain — the bank cannot have liquidated the purse.
+    expect(rival.grain).toBeGreaterThanOrEqual(40 - 4 * 4 - 1);
   });
 
   it("keeps its Gold reserve while the race is still open", async () => {
     const h = await boot();
     const targetId = connectedPlayer(h);
     h.finishSetup();
-    const rival = h.market.players[1];
+    const rival = h.purses[1];
     expect(h.vp.you).toBe(0);                 // cruise: nothing about to be won
     const t0 = 1_000_000;
     h.aiTick(t0);                             // arms the raid clock on an empty purse
     // exactly the price of a Blockade: affordable, but it would leave the rival
     // with nothing for the economy it still has to build.
-    rival.res.gold = SABOTAGE.bandit.gold;
+    rival.gold = SABOTAGE.bandit.gold;
     h.aiTick(t0 + AI_BUILD_MS);
-    expect(rival.res.gold).toBe(SABOTAGE.bandit.gold);
+    expect(rival.gold).toBe(SABOTAGE.bandit.gold);
     expect(h.grid.industries[targetId].banditUntil ?? 0).toBe(0);
   });
 
@@ -3182,19 +3119,19 @@ describe("VP-01 the rival plays the score, not just the map", () => {
     // rival able to expand afterwards — denial is worth more than that now.
     expect(paveStrip(h, 37)).toBe(37);
     h.finishSetup();
-    const rival = h.market.players[1];
+    const rival = h.purses[1];
     // Cargo so the rival's first turn ACTS: the scoreboard is derived on a
     // build (`rescoreNow`), and an empty purse means it never takes one — so
     // the 9.25★ on the board would still be unread. Gold stays at zero for
     // that turn: the raid is armed by it, and a raid with coin would spend it.
-    Object.assign(rival.res, { grain: 40, wood: 40, stone: 40, oil: 40, ore: 0, gold: 0 });
+    Object.assign(rival, { grain: 40, wood: 40, stone: 40, oil: 40, ore: 0, gold: 0 });
     const t0 = 1_000_000;
     h.aiTick(t0);                             // arms the raid clock, spends no Gold
     expect(h.vp.you).toBeGreaterThan(VICTORY.upgrade * 36);
     expect(h.rivalPace.deny).toBe(true);
-    rival.res.gold = SABOTAGE.bandit.gold;
+    rival.gold = SABOTAGE.bandit.gold;
     h.aiTick(t0 + AI_BUILD_MS);
-    expect(rival.res.gold ?? 0, "it hoarded while you were one point from winning")
+    expect(rival.gold ?? 0, "it hoarded while you were one point from winning")
       .toBeLessThan(SABOTAGE.bandit.gold);
     const hit = h.grid.industries[targetId].banditUntil ?? 0;
     expect(hit, "the blockade must land on the district that feeds you")
@@ -3208,7 +3145,7 @@ describe("VP-01 the rival plays the score, not just the map", () => {
   it("never pays for a sabotage card it cannot aim at your plant", async () => {
     const h = await boot();
     h.finishSetup();
-    const rival = h.market.players[1];
+    const rival = h.purses[1];
     const hits = () => h.board.gems().filter((g: { hard: number; block: boolean }) => g.hard > 0 || g.block).length;
     // Four raid-eligible clocks (one per RAID_EVERY, since a raid per build tick
     // would not be a raid) with enough Gold for the 5-coin cards only. Before
@@ -3216,10 +3153,10 @@ describe("VP-01 the rival plays the score, not just the map", () => {
     // rival aims at a DISTRICT, which this function cannot do — and the hire was
     // paid before the effect, so a paid-for-nothing raid was a coin flip.
     for (let i = 0; i < 4; i++) {
-      rival.res.gold = SABOTAGE.bandit.gold;
+      rival.gold = SABOTAGE.bandit.gold;
       const before = hits();
       h.aiTick(1_000_000 + i * (RAID_EVERY + AI_BUILD_MS));
-      const spent = SABOTAGE.bandit.gold - (rival.res.gold ?? 0);
+      const spent = SABOTAGE.bandit.gold - (rival.gold ?? 0);
       if (spent > 0) {
         expect(hits(), `raid ${i}: paid ${spent} Gold and nothing happened`).toBeGreaterThan(before);
       }
@@ -3801,9 +3738,9 @@ describe("L2 free dirt roads in the live game", () => {
     const rivalSpot = findFactorySpotNear(h.grid, "ore_mine", c!.ind.id, heldIndustryIds(h.eco));
     expect(rivalSpot).toBeTruthy();
     h.eco.factories.push({ owner: "ai", ownerId: 2, tx: rivalSpot![0], ty: rivalSpot![1] });
-    const rival = h.market.players[1];
+    const rival = h.purses[1];
     // Empty the rival's purse: free track + free first Depot must still expand.
-    for (const k of Object.keys(rival.res)) rival.res[k] = 0;
+    for (const k of Object.keys(rival)) rival[k] = 0;
     const rivalTiles = () => [...h.track.owner].filter((o) => o === 2).length;
     expect(rivalTiles()).toBe(0);
 
@@ -3812,8 +3749,8 @@ describe("L2 free dirt roads in the live game", () => {
 
     expect(rivalTiles()).toBeGreaterThan(0);
     expect(h.eco.harvesters.some((d) => d.owner === "ai")).toBe(true);
-    for (const k of Object.keys(rival.res)) {
-      expect(rival.res[k] ?? 0, `${k} went negative`).toBeGreaterThanOrEqual(0);
+    for (const k of Object.keys(rival)) {
+      expect(rival[k] ?? 0, `${k} went negative`).toBeGreaterThanOrEqual(0);
     }
   }, 30_000);
 

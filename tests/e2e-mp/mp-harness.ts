@@ -32,9 +32,9 @@ export const MP_URL = `${MP_ORIGIN}${MP_BASE}?quality=low`;
 /**
  * The window both seats run in. `openSide` makes its OWN contexts (the project
  * `use.viewport` only reaches the runner's built-in fixtures), so the width
- * matters here for real: the offer tray — the market's "Take" button — is
- * `display: none` under 1320px (styles.css), and a spec that cannot see the
- * tray cannot take an offer.
+ * matters here for real: the desktop economy strip (Bank / Processing Plant /
+ * Feed) and the two asides only sit side-by-side at this width (styles.css),
+ * and a spec that cannot see the Bank tab cannot press Exchange.
  */
 export const MP_VIEWPORT = { width: 1440, height: 900 } as const;
 
@@ -58,7 +58,7 @@ export const MP_REATTACH_MS = 240_000;
  * Press one control, the way a player does.
  *
  * Both the React lobby and the canvas HUD re-render on a live clock (the
- * roster, the offer countdown, every arriving delta), so an element can be
+ * roster, every arriving delta), so an element can be
  * created, measured and replaced inside the window Playwright's actionability
  * check needs to see it "stable". When the pointer path cannot settle, this
  * falls back to dispatching the click on the SAME element — the app's own
@@ -378,10 +378,9 @@ export interface MpState {
   factories: [string, number, number][];
   harvesters: [string, number, number][];
   purse: Record<string, number>;
-  /** The OTHER seat's purse, as this side's world holds it (the market's own
-   *  bag for that seat — the host's authority, mirrored to the guest). */
+  /** The OTHER seat's purse, as this side's world holds it (the host's
+   *  authoritative bag for that seat, mirrored to the guest). */
   rivalPurse: Record<string, number>;
-  offers: [number, string, number, string, number][];
   names: string[];
   toasts: string[];
   modal: string;
@@ -407,8 +406,7 @@ export function mpState(): MpState {
     factories: h.factories.map((f: any) => [f.owner, f.tx, f.ty]),
     harvesters: h.harvesters.map((x: any) => [x.owner, x.tx, x.ty]),
     purse: { ...h.purse },
-    rivalPurse: { ...h.market.players[1].res },
-    offers: h.market.ctx.offers.map((o: any) => [o.from, o.give, o.giveN, o.want, o.wantN]),
+    rivalPurse: { ...h.purses[1] },
     names: Array.from(document.querySelectorAll(".king-name")).map((el) => (el.textContent ?? "").trim()),
     toasts: Array.from(document.querySelectorAll(".toast-msg")).map((el) => (el.textContent ?? "").trim()),
     modal: modalRoot && !modalRoot.classList.contains("hidden") ? (modalRoot.textContent ?? "").trim() : "",
@@ -572,7 +570,7 @@ export function dragPreview(drag: { kind: "dirt" | "road"; ax: number; ay: numbe
   return !!h.dragPreview(drag.kind, drag.ax, drag.ay, drag.bx, drag.by, true);
 }
 
-/** The seat's own purse — the live object the market escrows against. */
+/** The seat's own purse — the live object the bank spends from. */
 export function setPurse(edit: { cargo: string; amount: number }): void {
   const h = (window as unknown as { __iso: any }).__iso;
   h.purse[edit.cargo] = edit.amount;
@@ -581,26 +579,31 @@ export function setPurse(edit: { cargo: string; amount: number }): void {
 /** The OTHER seat's authoritative resources, from this (host) side. */
 export function setRivalRes(edit: { cargo: string; amount: number }): void {
   const h = (window as unknown as { __iso: any }).__iso;
-  h.market.players[1].res[edit.cargo] = edit.amount;
+  h.purses[1][edit.cargo] = edit.amount;
 }
 
-/** Host: post an offer from the local seat (the same call the composer runs). */
-export interface OfferArgs { give: string; giveN: number; want: string; wantN: number }
-
-export function postOffer(offer: OfferArgs): boolean {
-  const h = (window as unknown as { __iso: any }).__iso;
-  return h.market.post(h.market.players[0], offer.give, offer.giveN, offer.want, offer.wantN) as boolean;
-}
-
-/** Guest: accept the rival's newest open offer — exactly what the tray's
- *  "Take" button runs (the button itself is re-rendered every frame, so a
- *  spec that clicked the DOM node would race the renderer; this calls the same
- *  handler with the same arguments). */
-export function acceptNewestOffer(): boolean {
-  const h = (window as unknown as { __iso: any }).__iso;
-  const offers = h.market.ctx.offers.filter((o: any) => o.from !== h.market.players[0].i);
-  if (!offers.length) return false;
-  return h.market.accept(h.market.players[0], offers[offers.length - 1].id) as boolean;
+/**
+ * L11 (#226): ONE exchange is left — the BANK — and this is the pair of picks
+ * plus the Exchange button a player presses, run in the page (self-contained:
+ * Playwright ships this source into the browser). A guest's press only sends
+ * the intent; the host validates it against that seat's own rungs and owns the
+ * balance. Returns false when the panel or a control is missing.
+ */
+export function pressExchange(sel: { give: string; want: string }): boolean {
+  const root = document.querySelector(".ui-root") as HTMLElement | null;
+  if (!root) return false;
+  root.querySelector<HTMLButtonElement>('.tab[data-tab="bank"]')?.click();
+  const give = root.querySelector<HTMLSelectElement>('[data-f="bank-give"]');
+  const want = root.querySelector<HTMLSelectElement>('[data-f="bank-want"]');
+  const btn = root.querySelector<HTMLButtonElement>('[data-act="bank"]');
+  if (!give || !want || !btn) return false;
+  give.value = sel.give;
+  want.value = sel.want;
+  give.dispatchEvent(new Event("input"));
+  want.dispatchEvent(new Event("input"));
+  if (btn.disabled) return false;
+  btn.click();
+  return true;
 }
 
 /** The twin of the ♻ Reset button (its click path, on every seat). */
@@ -628,21 +631,6 @@ export function tileOccupants(site: { tx: number; ty: number }): { depots: strin
   };
 }
 
-/** The rival's offer tray — the market's "Take" button, as a player sees it. */
-export interface TrayState { visible: boolean; offers: number; takeEnabled: boolean; text: string }
-
-export function trayState(): TrayState {
-  const el = document.querySelector(".offer-tray") as HTMLElement | null;
-  const btn = document.querySelector(".offer-tray .tray-offer button.mini") as HTMLButtonElement | null;
-  return {
-    visible: !!el && getComputedStyle(el).display !== "none" && !el.classList.contains("hidden"),
-    offers: document.querySelectorAll(".offer-tray .tray-offer").length,
-    takeEnabled: !!btn && !btn.disabled,
-    text: (el?.textContent ?? "").replace(/\s+/g, " ").trim(),
-  };
-}
-
-
 // ══════════════════════════════════════════════════════════════════════════
 // Page-level helpers: the ones that click real DOM or wait on live state.
 // ══════════════════════════════════════════════════════════════════════════
@@ -655,30 +643,18 @@ export async function expectPurse(side: Side, cargo: string, amount: number): Pr
   }).toBe(amount);
 }
 
-/** The market's Take button, pressed. The tray re-renders with the offer's
- *  countdown (and on every delta), so the button node is replaced under a
- *  pointer-driven click: Playwright's actionability check would re-resolve the
- *  node forever and the click would never fire. Pressing the live button in the
- *  page runs the SAME handler the button runs — the tray's own click — without
- *  racing the renderer for the node. */
-export async function takeNewestOffer(side: Side): Promise<void> {
-  const pressed = await side.page.evaluate(() => {
-    const button = document.querySelector(".offer-tray .tray-offer button.mini") as HTMLButtonElement | null;
-    if (!button || button.disabled) return false;
-    button.click();
-    return true;
-  });
-  expect(pressed, `${side.name}: the tray's Take button was pressed`).toBe(true);
+/** The Bank panel's Exchange button, pressed the way a player presses it.
+ *  `pressExchange` runs IN the page so the click lands on the live node: the
+ *  HUD re-renders every frame, and an actionability-checked click would race
+ *  the renderer for the button. */
+export async function bankExchange(side: Side, give: string, want: string): Promise<void> {
+  const pressed = await side.page.evaluate(pressExchange, { give, want });
+  expect(pressed, `${side.name}: the bank's Exchange button was pressed`).toBe(true);
 }
 
 /** The ♻ Reset button, clicked the way a player clicks it. */
 export async function clickReset(side: Side): Promise<void> {
   await press(side.page.locator(".reset-btn"), "the ♻ Reset button");
-}
-
-/** The tray as a player sees it, read from the DOM. */
-export async function tray(side: Side): Promise<TrayState> {
-  return await side.page.evaluate(trayState);
 }
 
 /** A tile a Depot may stand on for BOTH seats — the setup for the

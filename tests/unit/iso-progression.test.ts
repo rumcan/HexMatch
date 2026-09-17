@@ -47,11 +47,10 @@ import {
   PLANT_COST, addPlant, canAffordPlant, chooseAiPlantSpot, plantsOf,
 } from "../../src/iso/plants";
 import { CARGOES, FACTORY_FOOTPRINT, type Cargo } from "../../src/iso/config";
-import { bankTrade } from "../../src/game/trade";
+import { bankTrade, toBag, type CargoBag } from "../../src/iso/bank";
 import {
   START_PURSE, FREE_SETUP_TRACK, HARVEST_MS, AI_BUILD_MS,
 } from "../../src/iso/game";
-import { toBag, type CargoBag } from "../../src/iso/market";
 
 /**
  * The Factory site a competent human picks: beside an industry near the land
@@ -127,9 +126,6 @@ function simulate(seed: number): Result {
   let freeDepots = FREE_SETUP_DEPOTS;
   let nextHarvesterId = 1;
   const score = createScoreState();
-  // PP-08: gold never trades — the bank refuses it in both directions.
-  const GOLD_BLOCKED: ReadonlySet<Cargo> = new Set(["gold"]);
-  const me = { i: 0, res: purse };
 
   // A HUMAN chooses the opening Factory site — the rival heuristic
   // (`chooseRivalFactorySpot`) deliberately maximizes distance from the
@@ -237,7 +233,9 @@ function simulate(seed: number): Result {
           .filter((c) => purse[c] > (target[c] ?? 0))
           .sort((a, b) => purse[b] - purse[a])[0];
         if (!surplus) break;
-        bankTrade(me, surplus, cargo, undefined, GOLD_BLOCKED);
+        // L11 (#226): the bank's own gate (PP-08 included) — the player this
+        // sim models is on the shipped loop, so no rung data is passed.
+        bankTrade(purse, surplus, cargo);
         trades++;
       }
     }

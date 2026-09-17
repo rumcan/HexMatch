@@ -188,7 +188,7 @@ What that command starts, and why:
 |---|---|
 | `vite dev` on `5173` | the only server that starts the room sidecar and injects `window.__RUNDOT_MULTIPLAYER_DEV_SERVER__` (§6). A previewed build would answer with the offline mock, and two mocked rooms prove nothing about the room lifecycle. |
 | the room sidecar on `9001` | running `src/rooms/HexmatchRoom.ts` under `rundot/realtime.e2e.config.json` — the same room as production, with the **suite's own `reconnectTimeout`** (the shipped 60s). The file exists so the grace the departure specs wait on is pinned in the repo instead of inherited silently; `RUNDOT_DEV_ROOMS_CONFIG` selects it (see `vite.config.ts` → `devRoomsConfigPath`). |
-| `playwright.multiplayer.config.ts` | the suite's own config: `tests/e2e-mp/`, one worker (two seats share one room), 1440×900 (the offer tray is hidden under 1320px), traces/video on failure. |
+| `playwright.multiplayer.config.ts` | the suite's own config: `tests/e2e-mp/`, one worker (two seats share one room), 1440×900 (the desktop economy strip and both asides only lay out side-by-side above this width), traces/video on failure. |
 
 The suite never reuses a dev server it did not start (`reuseExistingServer:
 false`): one left over from a manual session runs whatever rooms file it was
