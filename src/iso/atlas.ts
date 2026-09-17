@@ -137,11 +137,40 @@ export class Atlas {
     return z < this.detailCap ? z : this.detailCap;
   }
 
+  /**
+   * The zoom whose PIXELS to sample for `name` at camera zoom `z`.
+   *
+   * Same as `atlasZoomFor` for sheet/monolith sprites. For a sprite with
+   * per-building PNGs installed, never fall through to the shared sheet —
+   * that sheet still holds the OpenGFX cell, and a mid-load miss (the 2×
+   * tier still fetching after 1× landed, a quality raise filling a level)
+   * would briefly (or, via the ghost cache, permanently) draw the legacy
+   * art. Prefer the nearest available building tier at or below the wanted
+   * zoom; only reach above it when nothing coarser is loaded.
+   */
+  sampleZoomFor(name: string, z: number): number {
+    const want = this.atlasZoomFor(z);
+    const byZoom = this.buildingImages.get(name);
+    if (!byZoom || byZoom.size === 0) return want;
+    if (byZoom.has(want)) return want;
+    let under: number | null = null;
+    let over = Infinity;
+    for (const bz of byZoom.keys()) {
+      if (bz <= want) { if (under === null || bz > under) under = bz; }
+      else if (bz < over) over = bz;
+    }
+    return under ?? (Number.isFinite(over) ? over : want);
+  }
+
   /** Image to blit `name` from at zoom `z` (per-building PNG when available). */
   imageForSprite(name: string, z: number): AtlasImage | undefined {
-    const az = this.atlasZoomFor(z);
+    const az = this.sampleZoomFor(name, z);
     const building = this.buildingImages.get(name)?.get(az);
     if (building) return building;
+    // Building PNGs own this sprite: a miss at every tier is "not ready
+    // yet", not "use the OpenGFX sheet cell". The blit / ghost path reports
+    // undrawn until a tier lands — never a legacy stand-in.
+    if (this.buildingImages.has(name)) return undefined;
     const layer = this.layerOfSprite(name);
     if (layer) {
       const img = this.layerImages.get(layer)?.get(az);
