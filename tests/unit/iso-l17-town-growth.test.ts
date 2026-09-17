@@ -253,7 +253,10 @@ describe("L17 upgrade table + tier names", () => {
     expect(TOWN_UPGRADES.length).toBe(3);
     for (let i = 0; i < TOWN_UPGRADES.length; i++) {
       expect(TOWN_UPGRADES[i].level).toBe(i + 1);
-      expect(TOWN_UPGRADES[i].bonus).toBe(0.5);
+      // The ceilings STACK: row N is worth +50% × N total (0.5 / 1.0 / 1.5),
+      // because the settlement replaces `townBonus` with the bought row's
+      // number — the owner's "each upgrade adds 50% to the yields".
+      expect(TOWN_UPGRADES[i].bonus).toBe(0.5 * (i + 1));
       expect(TOWN_UPGRADES[i].storage).toBeGreaterThan(0);
     }
     // The opening still fits under the base cap (L16's rule the rows ride).

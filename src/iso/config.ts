@@ -380,16 +380,19 @@ export const TOWN_UPGRADES: TownUpgradeDef[] = [
   // L16 (#231): +36 storage takes a seat from 24 to 60 per resource — a
   // network of 3-4 tuned depots can bank a rung-2 mix without wasting ticks,
   // but the opening (one depot, one cargo) genuinely presses against 24.
-  // L17 (#245): the ceiling is +50% per row (was +60% on the single MVP row),
-  // the owner's "each upgrade adds 50% to the yields, stacking".
+  // L17 (#245): the ceiling is +50% (was +60% on the single MVP row), the
+  // owner's "each upgrade adds 50% to the yields, stacking".
   { level: 1, cost: { wood: 6, stone: 4, grain: 4 }, bonus: 0.5, storage: 36 },
   // L17 (#245): the second and third growth steps. Each asks for the rung the
   // seat is presumably working by then (rung 1 for the second, rung 2 for the
-  // third) and keeps the same +50% ceiling, so the table stays a straight
-  // ladder: pay, play the session, bank up to +50% more — and watch the town
-  // on the map take the next step with it.
-  { level: 2, cost: { stone: 8, grain: 8, ore: 6 }, bonus: 0.5, storage: 48 },
-  { level: 3, cost: { ore: 10, oil: 8 }, bonus: 0.5, storage: 60 },
+  // third). The `bonus` column is the CUMULATIVE ceiling the seat plays
+  // under once that row is bought — 0.5 / 1.0 / 1.5 — because the settlement
+  // REPLACES `townBonus` with the bought row's number (`closeTuningSession`),
+  // so "each upgrade adds 50%" means each row's ceiling is +50% × its level.
+  // Pay, play the session, bank up to half again as much — and watch the
+  // town on the map take the next step with it.
+  { level: 2, cost: { stone: 8, grain: 8, ore: 6 }, bonus: 1.0, storage: 48 },
+  { level: 3, cost: { ore: 10, oil: 8 }, bonus: 1.5, storage: 60 },
 ];
 
 /**
