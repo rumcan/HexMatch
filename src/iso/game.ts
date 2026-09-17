@@ -5294,11 +5294,33 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       rescoreNow();
       return;
     }
-    // Nothing affordable anywhere: the new loop's own answer is to wait for
-    // the clock — there is no bank to trade through and nothing to pave — so
-    // the turn is short and the next one comes on `idleMs`, exactly like the
-    // shipped turn's idle path.
+    // L17 (#245): nothing affordable — before waiting on the clock, trade
+    // toward the tree's goal at the bank, through the same gate and planner as
+    // the player (its own rungs, `bankPerTurn` trades at most). This is the
+    // way out when the other seat holds every industry of a cargo it needs.
+    if (goal && rivalBankTowardGoal(goal.cost)) {
+      syncWorld();
+      rescoreNow();
+      return;
+    }
+    // Still nothing: wait for the clock, and the next turn comes on `idleMs`,
+    // exactly like the shipped turn's idle path.
     lastAi = now - skill().buildMs + skill().idleMs;
+  }
+
+  /** L17 (#245): one bank pass toward a price; true when any trade landed. */
+  function rivalBankTowardGoal(cost: Purse): boolean {
+    const unlocked = bankRungsFor(rival);
+    let budget = bankBudget(rivalPaceNow());
+    let traded = 0;
+    for (const [cargo, amount] of Object.entries(cost) as [Cargo, number][]) {
+      if (budget <= 0) break;
+      if ((rival.purse[cargo] ?? 0) >= amount) continue;
+      const n = planBankTrades(rival.purse, cargo, cost, { unlocked, budget, need: amount });
+      budget -= n;
+      traded += n;
+    }
+    return traded > 0;
   }
 
   function aiTick(now: number) {
@@ -7008,7 +7030,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       toast("That is not your city — the town your Factory touches is the one you upgrade.", "info");
       return;
     }
-    buyTownUpgrade(me);
+    // The centre is also the bank's door (#245): if the upgrade can't be
+    // bought yet, open the exchange so the player can trade toward it.
+    if (!buyTownUpgrade(me)) ui.openBank();
   }
 
   // ── input ──────────────────────────────────────────────────────────────

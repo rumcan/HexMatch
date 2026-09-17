@@ -146,3 +146,21 @@ describe("L11 (#226) — the rung gate", () => {
     expect(bankTrade(explicit, "wood", "oil", { unlocked: null })).toBe(true);
   });
 });
+
+describe("L17 (#245) — the bank is the way out of a blocked cargo", () => {
+  it("a seat with no grain industry still pays for a rung-1 Mine Depot", async () => {
+    const { planBankTrades } = await import("../../src/iso/ai");
+    const { DEPOT_TREE } = await import("../../src/iso/config");
+    // Rung 1 unlocked, every grain industry held by the other seat: no grain
+    // income at all, only the wood/stone the opening gave it.
+    const purse = toBag({ wood: 12, stone: 6 });
+    const cost = DEPOT_TREE.ore.cost;
+    const need = cost.grain ?? 0;
+    expect(need).toBeGreaterThan(0);
+    const traded = planBankTrades(purse, "grain", cost, { unlocked: 1, budget: 10, need });
+    expect(traded).toBe(need);
+    for (const [cargo, amount] of Object.entries(cost)) {
+      expect(purse[cargo as keyof CargoBag]).toBeGreaterThanOrEqual(amount as number);
+    }
+  });
+});
