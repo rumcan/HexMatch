@@ -125,6 +125,13 @@ import {
   depotTransportTier, depotYield, distanceBandForPath, distanceFactorForPath,
   transportFactor,
 } from "./loop";
+// L8 (#222): the loop made legible — the objective line and the income
+// readouts, as pure rules. game.ts feeds them the same numbers `economyTick`
+// multiplies; ui.ts paints them. (ui.ts has carried the objective element and
+// the chip rate since #287 — this is the wiring that fills them.)
+import {
+  depotReadout, incomeRates as loopIncomeRates, objectiveLine, type RateRow,
+} from "./readouts";
 // L4 (#218): the tuning session — the one thing that sets a depot's yield.
 // The rules live in `tuning.ts` (pure, unit-tested); this file is where they
 // meet the board, the depot record and the HUD.
@@ -5970,6 +5977,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return overlayPlanAt(hover.tx, hover.ty);
   };
 
+  /**
+   * L8 (#222): the two readouts the HUD is handed every frame — the objective
+   * line ("what do I do next") and the live per-cargo income the chip bar
+   * prints. Held here rather than inside `paintUi` so the debug twin can hand
+   * a test exactly what the last frame painted, without reading the DOM.
+   */
+  let objective: string | null = null;
+  let objectiveKey: string | null = null;
+  let incomeRates: Partial<Record<Cargo, number>> | undefined;
+
   function paintUi(now: number) {
     // AI-03: what your ★ total is MADE OF, surfaced as the native hover
     // tooltip over each player's name in the header ("I want to see what I
@@ -6172,14 +6189,46 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             info += `<br>` + (d.tiles === null || band === null
               ? `distance: <i>no route</i>`
               : `distance: ${d.tiles} tiles · ×${d.factor} (${band})`);
+            // L8 (#222): the rest of the ledger the clock multiplies — the
+            // yield the last session SET, the transport tier, and the tick's
+            // own rate (per tick and per second). Every number comes off the
+            // same seams `economyTick` reads, so the card can never promise
+            // income the clock will not pay: a Depot with no route or a
+            // protest on it says so instead of printing a rate.
+            const comp = componentsFor(h.ownerId);
+            const res = harvesterYield(eco, comp, industryLocks(eco), h, now);
+            const cargo = tuningCargoFor(h);
+            const seat = h.owner === me.id ? me : rival;
+            const readout = depotReadout({
+              yieldLevel: depotYield(h),
+              // The tier the upgrade is COUNTED in (L6's re-tune credit): a
+              // free dirt road is the same tier as no road at all, and paving
+              // is what "this Depot got upgraded" means.
+              transportLabel: depotTransportTier(eco, comp, h) === 0 ? "dirt" : "paved",
+              transportFactor: transportFactor(h),
+              distanceTiles: d.tiles,
+              distanceFactor: d.factor,
+              distanceBand: band,
+              cargo,
+              amount: cargo ? (res.yields[cargo] ?? 0) : 0,
+              serviced: res.serviced && res.connection.kind !== null,
+              stopped: protestedDepot(h, now, comp),
+              townBonus: Math.max(0, seat.townBonus),
+              // L6 (#220): decay is the difficulty's axis — the line prints the
+              // row's own cooling and floor, and nothing at all when the row
+              // has no decay (Easy, Normal).
+              decayRate: difficultyRules().decayRate,
+              minYield: difficultyRules().minYield,
+              tickMs: HARVEST_MS,
+            });
+            info += `<br>${readout.yieldLine}<br>${readout.rateLine}`;
+            if (readout.decayLine) info += `<br>${readout.decayLine}`;
             // L16 (#231): the storage cap's read on this Depot. A connected
             // Depot whose cargo sits AT its owner's cap is being paid nothing
             // for every tick — the income is lost, not stored — and the
             // inspector is where the ticket says that has to be legible, in
             // the same card that prints the rate. Both seats: your own wasted
             // output and the rival's read the same rule.
-            const cargo = tuningCargoFor(h);
-            const seat = h.owner === me.id ? me : rival;
             if (cargo && conn.kind && (seat.purse[cargo] ?? 0) >= storageCapFor(seat.townLevel)) {
               info += `<br>⚠ <b>storage full</b> — this Depot's ${CARGO[cargo].name} output is being wasted`;
             }
@@ -6245,6 +6294,90 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       ui.setReach(quarry.reach);
     }
 
+    // ══════════════════════════════════════════════════════════════════════
+    // L8 (#222): the loop made legible.
+    //
+    // One objective line that always states the current goal, and the live
+    // per-second income per cargo, so a new connection or a better tune
+    // visibly lifts a number BEFORE the purse has banked it. Both are pure
+    // views of the state the tick already owns (see readouts.ts) — never a
+    // second source of truth.
+    //
+    // Only the new loop gets them: on the shipped loop there is no clock and
+    // no tuning session, and an objective line over that game would be a
+    // promise the rules do not keep.
+    // ══════════════════════════════════════════════════════════════════════
+    objective = null;
+    objectiveKey = null;
+    incomeRates = undefined;
+    if (newLoop) {
+      const myDepots = eco.harvesters.filter((hh) => hh.owner === me.id);
+      const connected = myDepots.filter((hh) => isServiced(eco.track, hh, eco.rail));
+      const offer = retuneOffer();
+      // The tree's next step, NAMED: the cheapest type on a rung this seat has
+      // not opened, offered only while its mix is already in the purse.
+      // Earning the mix is the `grow` line's job; this line names the unlock.
+      const nextType = (Object.values(DEPOT_TREE) as { cargo: Cargo; name: string; tier: number }[])
+        .filter((t) => t.tier > me.depotTier)
+        .sort((a, b) => a.tier - b.tier)[0] ?? null;
+      const nextPrice = nextType
+        ? priceDepot(me.purse, me.freeDepots, { cargo: nextType.cargo, tier: me.depotTier, newLoop })
+        : null;
+      const obj = objectiveLine({
+        phase,
+        tuning: tuning
+          ? {
+              kind: tuning.kind,
+              cargo: tuning.cargo,
+              movesLeft: tuningMovesLeft(tuning),
+              moves: tuning.moves,
+            }
+          : null,
+        depotCount: myDepots.length,
+        connectedCount: connected.length,
+        retune: offer ? { cargo: offer.cargo } : null,
+        townLevel: me.townLevel,
+        townLevelCount: TOWN_UPGRADES.length,
+        nextRung: nextType && nextPrice?.affordable
+          ? { name: nextType.name, tier: nextType.tier }
+          : null,
+        winTarget: winTarget(),
+      });
+      objective = obj.text;
+      objectiveKey = obj.key;
+
+      // The chip bar's rates: the same rows the inspector prices, summed per
+      // cargo per second. One flood fill for the seat (`componentsFor`, cached
+      // per network version) and one `harvesterYield` per Depot — the same
+      // calls the clock makes, so the rate on the chip is the rate the tick
+      // will pay, protests and all.
+      const rows: RateRow[] = [];
+      if (phase === "play") {
+        const comp = componentsFor(ownerIdOf(eco, me.id));
+        const locks = industryLocks(eco);
+        for (const h of myDepots) {
+          const res = harvesterYield(eco, comp, locks, h, now);
+          if (!res.serviced || res.connection.kind === null) continue;
+          if (protestedDepot(h, now, comp)) continue;
+          const d = distanceInfoFor(h.id);
+          for (const [cargo, amount] of Object.entries(res.yields) as [Cargo, number][]) {
+            rows.push({
+              cargo,
+              amount,
+              yieldLevel: depotYield(h),
+              distanceFactor: d.factor,
+              transportFactor: transportFactor(h),
+              townBonus: Math.max(0, me.townBonus),
+            });
+          }
+        }
+      }
+      const rates = loopIncomeRates(rows, HARVEST_MS);
+      // No rows, no readout: the bar stays quiet rather than printing 0/s on
+      // every chip before the first road (the chip's own visibility rule).
+      incomeRates = Object.keys(rates).length ? rates : undefined;
+    }
+
     ui.paint({
       players: players.map((p) => ({
         id: p.id, name: p.name, colour: p.colour, vp: vpFor(score, p.id), human: p.human,
@@ -6277,6 +6410,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       costInfo,
       inspect: info || null,
       inspectTone: infoTone,
+      // L8 (#222): the loop made legible — the objective line and the live
+      // per-cargo income, painted by ui.ts beside the banner and the chips.
+      objective,
+      objectiveKey,
+      incomeRates,
       reach: quarry.reach,
       // PP-14b: the 30s reset cooldown, so the button can count it down.
       // #116: per seat — a guest counts down ITS OWN clock (its cooldown
@@ -8003,6 +8141,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      *  (`opts.newLoop`, or dev-only `?loop=new`; never on in production, in a
      *  room or in a story contract). */
     get newLoop() { return newLoop; },
+    /**
+     * L8 (#222): the readouts the last frame handed the HUD — the objective
+     * line (its stability `key` and its text) and the per-cargo income per
+     * second. `__iso.objective.text` is what a player reads under the top bar;
+     * `__iso.incomeRates` is what the chips print. Exposed so a probe can pin
+     * the numbers the chrome paints without parsing the DOM.
+     */
+    get objective() { return { key: objectiveKey, text: objective }; },
+    get incomeRates() { return incomeRates ?? {}; },
     /** LOAD-01: true while the loading screen covers the map. */
     get loading() { return loading.active; },
     /**
