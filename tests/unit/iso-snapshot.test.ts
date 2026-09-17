@@ -332,7 +332,7 @@ describe("E10 malformed payloads", () => {
     // say why (industries are seed-derived, so only the expiry travels).
     // v15: the map a seed generates moved (4×4 resources, fields) and a Depot
     // carries its rotation — a v14 guest would build a different island.
-    expect(SNAPSHOT_VERSION).toBe(15);
+    expect(SNAPSHOT_VERSION).toBe(17);
     expect(validateSnapshot(old)?.code).toBe("version");
     expect(() => applySnapshot(old)).toThrow(/incompatible version/i);
   });
