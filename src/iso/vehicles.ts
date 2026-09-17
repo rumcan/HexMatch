@@ -36,6 +36,7 @@ import {
   buildAllComponents, isServiced, resolveConnection, type Components,
   type Harvester,
 } from "./economy";
+import { depotRate, distanceFactor } from "./loop";
 import {
   NE, SE, SW, NW, tIdx,
 } from "./track";
@@ -97,6 +98,14 @@ export interface Truck {
    *  upgraded tile speeds its lorry up from the next dispatch. Old saves /
    *  pre-AI-02 call sites without it drive at the uniform dirt pace. */
   segFast?: boolean[];
+  /**
+   * L7 (#221): the depot's effective tick-rate product (`yield × distance ×
+   * transport`) stamped onto the lorry. `tickTrucks` multiplies `TRUCK_SPEED`
+   * by this, so a busy depot's lorry looks busy and a far, poorly-tuned one
+   * crawls. Derived presentation — not economic state. Absent / non-positive
+   * (old saves, hand-built test trucks) drives at 1, the pre-L7 pace.
+   */
+  rateMult?: number;
   /**
    * A1: how many times this lorry has REACHED THE FACTORY END — one delivery
    * each. The game reads it against the count it last saw, so a delivery is
@@ -196,6 +205,7 @@ export function planTrucks(eco: EconomyState): Truck[] {
       route: plan.route,
       segFast,
       depot: [h.tx, h.ty],
+      rateMult: depotRate(h, distanceFactor(eco, h)),
       leg: 0, t: 0, reverse: false, waitMs: 0, deliveries: 0,
     });
   }
@@ -216,13 +226,20 @@ export function planTrucks(eco: EconomyState): Truck[] {
  * the truck changes (in particular no delivery is counted for a road it never
  * finished), so a hold is purely lost time, which is the sabotage.
  */
+/** L7 (#221): the live rate scale. Absent / non-positive → 1 (pre-L7 pace). */
+export function truckRateMultOf(truck: Truck): number {
+  const r = truck.rateMult;
+  return typeof r === "number" && Number.isFinite(r) && r > 0 ? r : 1;
+}
+
 export function tickTrucks(state: TruckState, dtMs: number, blocked?: ReadonlySet<number>): void {
   if (dtMs <= 0) return;
   for (const truck of state.trucks) {
     const max = truck.route.length - 1;
     if (max < 1) { truck.leg = 0; truck.t = 0; continue; }
+    const rate = truckRateMultOf(truck);
     const speed = (k: number): number =>
-      TRUCK_SPEED * (truck.segFast?.[k] ? TRUCK_ROAD_MULT : 1);
+      TRUCK_SPEED * rate * (truck.segFast?.[k] ? TRUCK_ROAD_MULT : 1);
     // AI-02: integrate SEGMENT BY SEGMENT at each segment's own pace — the
     // triangle-fold over a uniform axis would be exact only when every leg
     // has the same speed. The loop still folds exactly at both ends (a huge
