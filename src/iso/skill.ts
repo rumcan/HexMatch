@@ -179,6 +179,15 @@ export interface RivalSkill {
    */
   townReserve: number;
   /**
+   * #297: how long one simulated tuning session keeps the rival busy on the
+   * new loop, in ms. A Depot, a city upgrade and a re-match are each a session
+   * for the player — ten real moves on the board — and the rival used to get
+   * them free and instant, raising two Depots and a rung every build clock
+   * (a Normal rival reached 12★ in ~35 s). The rival now waits this long after
+   * each one, so its pace is bounded by sessions exactly as the player's is.
+   */
+  sessionMs: number;
+  /**
    * AI-04: the Victory-Point line the GAME races to while this difficulty is
    * selected — the number in the HUD's "You 2★/5", the king bars' 100%, the
    * rival's own race assessment (`rivalPace`) and the win check. `easy` runs a
@@ -210,6 +219,7 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     // L14 (#229): a careful steward — the city waits until the next Depot's
     // whole price (and a quarter more) is in hand.
     townReserve: 1.25,
+    sessionMs: 110_000,
     // AI-04: the easy chair is a SHORT race — 5★ instead of the shipped 10★.
     winTarget: 5,
   },
@@ -233,6 +243,7 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     tuningSkill: 0.62,
     // L14 (#229): the shipped city timing — the next Depot stays funded.
     townReserve: 1,
+    sessionMs: 80_000,
     winTarget: VICTORY.target,   // AI-04: the shipped 10★ line, aliased
   },
   hard: {
@@ -256,6 +267,7 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     // L14 (#229): buys the upgrade early — the ×1.6 is worth more than the
     // tempo the next Depot loses, and a hard rival is playing a compound game.
     townReserve: 0.6,
+    sessionMs: 55_000,
     winTarget: VICTORY.target,   // AI-04: the shipped 10★ line, aliased
   },
 };
