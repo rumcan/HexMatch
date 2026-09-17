@@ -1016,12 +1016,12 @@ describe("audit regressions: two real games, one room", () => {
     // The HOST's own exchange moves its own bag and nobody else's.
     const hostBag = host.purses[0];
     const guestBag = host.purses[1];
-    hostBag.wood = 12;
+    hostBag.wood = 9;   // 3:1: exactly one trade's worth (L17 #245)
     const hostGrain = hostBag.grain;
     const guestWood = guestBag.wood;
     const guestGrain = guestBag.grain;
     expect(host.bank("wood", "grain")).toBe(true);
-    expect(hostBag.wood).toBe(8);
+    expect(hostBag.wood).toBe(9 - 3);
     expect(hostBag.grain).toBe(hostGrain + 1);
     expect(guestBag.wood).toBe(guestWood);
     expect(guestBag.grain).toBe(guestGrain);
@@ -1062,10 +1062,10 @@ describe("audit regressions: two real games, one room", () => {
 
     // The host validates and applies it against the GUEST seat's own record…
     pump();
-    expect(guestSeat.wood).toBe(remoteGive - 4);
+    expect(guestSeat.wood).toBe(remoteGive - 3);
     expect(guestSeat.grain).toBe(remoteGet + 1);
     // …and the delta lands back in the guest's own bag.
-    expect(guest.purse.wood).toBe(localGive - 4);
+    expect(guest.purse.wood).toBe(localGive - 3);
     expect(guest.purse.grain).toBe(localGet + 1);
 
     // A request the HUD cannot even offer is refused WHOLE: Gold is outside the

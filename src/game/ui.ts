@@ -28,6 +28,11 @@ import {
 // L11 (#226): the bank — the one exchange left. `bankAllowed`/`bankTier` are
 // the same gate the placement runs, so a locked cargo is never offered a
 // button that the rule would then refuse.
+// L11 (#226), restored by L17 (#245): the bank — the one exchange, back at the
+// town's middle building, at 3:1. `bankAllowed`/`bankTier` are the same gate
+// the game runs, so a locked cargo is never offered a button the rule would
+// then refuse.
+import { BANK_RATE, bankAllowed, bankTier } from "../iso/bank";
 import { type CargoBag } from "../iso/purse";
 // VP-01: the victory numbers come from the iso config, NOT from the legacy
 // `VP = { target: 10 }` in game/config.ts that this file used to read. That
@@ -369,6 +374,13 @@ export interface UiHooks {
   onZoom?: (dir: 1 | -1) => void;
   onSwap: (r1: number, c1: number, r2: number, c2: number) => void;
   onReset: () => void;
+  /**
+   * L11 (#226), restored by L17 (#245): the bank exchange. The GAME owns it —
+   * the tier gate against the seat's own rungs, the guest relay (`"relayed"`:
+   * the host has to confirm) and the host publish. The chrome never touches a
+   * balance itself.
+   */
+  onBank: (give: Cargo, want: Cargo) => "done" | "relayed" | "refused";
   onBlackAction: (key: string) => void;
   /** AI-01: the player picked a rival difficulty (applies from the next turn). */
   onSkill?: (key: SkillKey) => void;
@@ -468,6 +480,13 @@ export interface OriginalUi {
    * board nobody finds.
    */
   openSessionBoard: () => void;
+  /**
+   * L17 (#245): bring the BANK into view — the map door to it is the town's
+   * middle building, which is what you click to upgrade the city and to
+   * trade. Desktop: the Bank tab (unfolding the right column when it had
+   * been put away). Phone: the Economy sheet, same as a session board.
+   */
+  openBank: () => void;
   /**
    * L4 (#218): the session is over — put the map back in front of the player.
    * Desktop: nothing to do (the map never left; the plate and the board fold
@@ -867,18 +886,22 @@ export function createOriginalUi(
   // real rule on both loops, the rebalancing tool the tree leaves standing,
   // so L1a's "no trade surfaces under the new loop" is now "no OFFER surfaces"
   // — one strip, Bank / Processing Plant / Feed, serves desktop and phone.
+  const tabBank = h("button", "tab active", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.bank}</i><span class="tab-l">Bank</span>`);
   const tabFeed = h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.feed}</i><span class="tab-l">Feed</span>`);
+  tabBank.onclick = () => setTab("bank");
   tabFeed.onclick = () => setTab("feed");
   const tabPlant = h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.plant}</i><span class="tab-l">Processing Plant</span>`);
   tabPlant.onclick = () => setTab("plant");
-  const tabDefs: [HTMLElement, "plant" | "feed"][] =
-    [[tabPlant, "plant"], [tabFeed, "feed"]];
+  const tabDefs: [HTMLElement, "bank" | "plant" | "feed"][] =
+    [[tabBank, "bank"], [tabPlant, "plant"], [tabFeed, "feed"]];
   for (const [tab, name] of tabDefs) {
     tab.dataset.tab = name;
     tabs.appendChild(tab);
   }
   tp.appendChild(tabs);
+  const bankPane = h("div", "pane bank-pane");
   const feedPane = h("div", "pane feed-pane hidden");
+  tp.appendChild(bankPane);
   tp.appendChild(feedPane);
   tp.appendChild(qp);
   rightAside.appendChild(tp);
@@ -1194,6 +1217,157 @@ export function createOriginalUi(
 
   }
 
+  // ── the bank ──────────────────────────────────────────────────────────────
+  // L11 (#226), restored by L17 (#245): ONE exchange, and its gate. Gold never
+  // appears in either select — it pays for Black Market sabotage and nothing
+  // else (PP-08) — and under the new loop a cargo the seat has not unlocked is
+  // offered as a DISABLED row that says which rung it wants, so the panel can
+  // never promise an exchange the rule refuses. `updateBankButtons` re-reads
+  // both the purse and the rungs, so a rung won in a tuning session opens the
+  // select the same frame the session closes.
+  const mkSel = (value: Cargo) => {
+    const sel = h("select", "res-sel") as HTMLSelectElement;
+    for (const k of CARGOES) {
+      if (k === "gold") continue;                    // PP-08: outside the bank
+      const o = document.createElement("option");
+      o.value = k;
+      o.text = CARGO[k].name;
+      sel.appendChild(o);
+    }
+    sel.value = value;
+    return sel;
+  };
+  const bankGive = mkSel("stone");
+  const bankWant = mkSel("ore");
+  bankGive.dataset.f = "bank-give";
+  bankWant.dataset.f = "bank-want";
+
+  const bform = h("div", "trade-form");
+  const bGive = h("div", "trade-row");
+  bGive.appendChild(h("span", "trade-lbl", "Give"));
+  bGive.appendChild(h("span", "bank-fixed", String(BANK_RATE)));
+  bGive.appendChild(bankGive);
+  const bWant = h("div", "trade-row");
+  bWant.appendChild(h("span", "trade-lbl", "Get"));
+  bWant.appendChild(h("span", "bank-fixed", "1"));
+  bWant.appendChild(bankWant);
+  const bankBtn = h("button", "post-btn", "Exchange");
+  bankBtn.dataset.act = "bank";
+  bankBtn.onclick = doBank;
+  bform.appendChild(bGive); bform.appendChild(bWant); bform.appendChild(bankBtn);
+  bankPane.appendChild(bform);
+  const bankNote = h("div", "pane-note");
+  bankPane.appendChild(bankNote);
+  // L1a (#232) / L9 (#224) / L17 (#245): where the Black Market hangs. Its
+  // rows are the same on both loops; only the shelf moves. The new loop keeps
+  // the shop in the BUILD column — the Bank tab hosts only the bank (and, on
+  // the map, the town's middle building is the door to it); the shipped loop
+  // leaves the shop where it has always been: under the Bank tab, below the
+  // Gold rule, as the pane's LAST panel (the shape PP-08 shipped and the
+  // specs assert).
+  if (opts.newLoop === true) left.appendChild(sp);
+  else bankPane.appendChild(sp);
+
+  /**
+   * The panel's gate line, spelled for the loop it is running under. `null`
+   * rungs = the shipped loop, where the bank has no tree to respect.
+   */
+  function bankNoteText(): string {
+    const unlocked = seat.unlocked;
+    if (unlocked === null) {
+      return `The bank always trades ${BANK_RATE} of one good for 1 of another. No rival required, no waiting. ${cargoIconHtml("gold")} ${GOLD_RULE}`;
+    }
+    const open = CARGOES.filter((k) => bankAllowed(k, unlocked)).map((k) => CARGO[k].name);
+    return `The bank trades ${BANK_RATE} of one good for 1 of another — but only within the rungs you have unlocked: `
+      + `<b>${open.join(", ")}</b>. It rebalances what the tree has already given you; it never skips a rung. `
+      + `Play a Depot's tuning session to unlock the next one. ${cargoIconHtml("gold")} ${GOLD_RULE}`;
+  }
+
+  /** Locked options are disabled and labelled with the rung they want. */
+  function paintBankOptions() {
+    const unlocked = seat.unlocked;
+    for (const sel of [bankGive, bankWant]) {
+      for (const o of Array.from(sel.options)) {
+        const cargo = o.value as Cargo;
+        const allowed = bankAllowed(cargo, unlocked);
+        o.disabled = !allowed;
+        o.text = allowed || unlocked === null
+          ? CARGO[cargo].name
+          : `${CARGO[cargo].name} — needs rung ${bankTier(cargo)}`;
+      }
+      // A select whose value is locked would show a row the click refuses;
+      // fall to the first open cargo instead.
+      if (!bankAllowed(sel.value as Cargo, unlocked)) {
+        const fallback = CARGOES.find((k) => bankAllowed(k, unlocked));
+        if (fallback) sel.value = fallback;
+      }
+    }
+    bankNote.innerHTML = bankNoteText();
+  }
+
+  function updateBankButtons() {
+    const give = bankGive.value as Cargo;
+    const want = bankWant.value as Cargo;
+    const unlocked = seat.unlocked;
+    bankBtn.disabled = give === want
+      || !bankAllowed(give, unlocked) || !bankAllowed(want, unlocked)
+      || (seat.res[give] ?? 0) < BANK_RATE;
+  }
+  for (const input of [bankGive, bankWant]) {
+    input.addEventListener("input", () => { updateBankButtons(); });
+    input.addEventListener("change", () => { updateBankButtons(); });
+  }
+
+  /**
+   * The exchange. The GAME owns it (`hooks.onBank`): it holds the tier gate,
+   * the relay for a guest seat and the publish for a host — the chrome only
+   * says what happened.
+   */
+  function doBank() {
+    const give = bankGive.value as Cargo;
+    const want = bankWant.value as Cargo;
+    if (give === want) { toast("Pick two different goods to trade.", "danger"); return; }
+    // PP-08: the bank never turns Gold into construction stock (or back) —
+    // defence in depth, the select cannot offer it.
+    if (give === "gold" || want === "gold") { toast(`🪙 ${GOLD_RULE}`, "danger"); return; }
+    const how = hooks.onBank(give, want);
+    if (how === "relayed") {
+      // #114: a guest's bank trade is a request until the host accepts it.
+      toast(`Sent to the host — the trade lands once they confirm.`, "info");
+      feed(`Bank request sent: ${BANK_RATE} ${CARGO[give].name} → 1 ${CARGO[want].name}`);
+    } else if (how === "done") {
+      toast(`Bank: ${BANK_RATE} ${CARGO[give].name} → 1 ${CARGO[want].name}.`, "success");
+      // W6: bank trades are trades — log them even with no rival around.
+      feed(`Bank: ${BANK_RATE} ${CARGO[give].name} → 1 ${CARGO[want].name}`);
+    } else if (!bankAllowed(give, seat.unlocked) || !bankAllowed(want, seat.unlocked)) {
+      const locked = [give, want].find((c) => !bankAllowed(c, seat.unlocked))!;
+      toast(`${CARGO[locked].name} needs rung ${bankTier(locked)} — tune a Depot to unlock it.`, "danger");
+    } else {
+      toast(`The bank wants ${BANK_RATE} ${CARGO[give].name}.`, "danger");
+    }
+    renderBank();
+  }
+
+  /**
+   * The Bank pane's paint, gated by `lastBankKey` (the purse, the rungs and
+   * the two selections folded into one string): a per-frame rebuild would
+   * detach a select between its pointerdown and pointerup — the bug the old
+   * offer list had — while a balance that changed under a STABLE panel (the
+   * guest's authoritative purse sync, most visibly) must repaint, or the
+   * Exchange button stays disabled after the purse has long funded it.
+   */
+  let lastBankKey = "\u0000";
+  function renderBank() {
+    const unlocked = seat.unlocked;
+    const bankKey = CARGOES.map((c) => seat.res[c] ?? 0).join(",")
+      + "#" + (unlocked === null ? "tree" : unlocked)
+      + "#" + bankGive.value + ">" + bankWant.value;
+    if (bankKey === lastBankKey) return;
+    lastBankKey = bankKey;
+    paintBankOptions();
+    updateBankButtons();
+  }
+
   /**
    * PP-08: Gold is never a trade good and never a construction stock, so it is
    * not a cross-bounty choice either — the bounty pays in the five cargos the
@@ -1212,8 +1386,8 @@ export function createOriginalUi(
   }
 
   // ── tabs / mobile ─────────────────────────────────────────────────────────
-  let currentTab: "plant" | "feed" | null = null;
-  function setTab(t: "plant" | "feed") {
+  let currentTab: "bank" | "plant" | "feed" | null = null;
+  function setTab(t: "bank" | "plant" | "feed") {
     // PP-14b: a pending cross bounty lives inside the plant panel — switching
     // away would hide it mid-pick and the cascade would sit unseen until the
     // timer answers for the player. Stay put instead.
@@ -1233,6 +1407,8 @@ export function createOriginalUi(
     });
     tabPlant.classList.toggle("active", t === "plant");
     qp.classList.toggle("hidden", t !== "plant");
+    tabBank.classList.toggle("active", t === "bank");
+    bankPane.classList.toggle("hidden", t !== "bank");
     tabFeed.classList.toggle("active", t === "feed");
     feedPane.classList.toggle("hidden", t !== "feed");
     // MOBILE-02: the plant tab re-fits the board — the full-bleed sheet only
@@ -2900,8 +3076,7 @@ export function createOriginalUi(
     // purse sync, or a rung won in a tuning session, repaints the panel while
     // a frame that changed none of them leaves the DOM (and any in-flight
     // pointer) alone.
-    if (false) {
-        }
+    renderBank();
   }
 
   function setReach(next: Partial<Record<Cargo, number>>) {
@@ -3005,6 +3180,7 @@ export function createOriginalUi(
   // boot it.
   attachUiSound(root);
   renderSabotage();
+  renderBank();
   renderBoard();
   responsiveZoom();
   setTab("plant");
@@ -3022,9 +3198,14 @@ export function createOriginalUi(
     fx,
     popup,
     isQuarryOpen: () => !qp.classList.contains("hidden"),
-    isTradeOpen: () => false,
+    isTradeOpen: () => !bankPane.classList.contains("hidden"),
     openSessionBoard: () => {
       setTab("plant");
+      if (isPhoneViewport()) setMobileView("trade");
+      else if (railRightCollapsed) { railRightCollapsed = false; paintRails(); }
+    },
+    openBank: () => {
+      setTab("bank");
       if (isPhoneViewport()) setMobileView("trade");
       else if (railRightCollapsed) { railRightCollapsed = false; paintRails(); }
     },

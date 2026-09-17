@@ -148,6 +148,8 @@ import {
 // L11 (#226): the bank — the one exchange left, and the rung gate it obeys.
 // `bankAllowed` is what the HUD's selects ask too, so a locked cargo cannot be
 // clicked and then refused: the button and the rule are the same question.
+// L17 (#245): the bank is BACK at the town's middle building, at 3:1.
+import { BANK_RATE, bankAllowed, bankTier, bankTrade, isCargo } from "./bank";
 import { toBag, type CargoBag } from "./purse";
 import type { BoardObstacles } from "../game/board";
 import {
@@ -1097,6 +1099,24 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // (`action: "bank"`) the host validates and applies against the guest's own
   // player record — the UI says "sent to the host" until the delta lands, the
   // same door the rails and the Black Market use.
+  function bankRungsFor(p: PlayerState): number | null {
+    return newLoop ? p.depotTier : null;
+  }
+
+  /** Is this cargo exchangeable at `p`'s seat right now? */
+  const bankCanExchange = (p: PlayerState, cargo: Cargo): boolean =>
+    bankAllowed(cargo, bankRungsFor(p));
+
+  /**
+   * The bank, on the host/solo seat. One owner of the balance (`p.purse`),
+   * one rule (`bankTrade`), and a publish when a room is watching.
+   */
+  function bankFor(p: PlayerState, give: Cargo, want: Cargo): boolean {
+    const ok = bankTrade(p.purse, give, want, { unlocked: bankRungsFor(p) });
+    if (ok && isMp()) publishNet(performance.now(), true);
+    return ok;
+  }
+
   // MOBILE-01: the two camera/names actions the top bar, the ☰ menu and the
   // floating touch cluster ALL offer. One closure each, so the three doors
   // can never drift apart (the menu rows exist because a phone's top bar
@@ -1251,6 +1271,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     onTuningRetune: () => retuneNow(),
     // L5 (#219): …and the city upgrade's key. Same rule: it calls the game.
     onTownUpgrade: () => { buyTownUpgrade(); },
+    /**
+     * L11 (#226), restored by L17 (#245): the bank exchange. A guest's is a
+     * REQUEST — the host owns the purse, validates the pair against the guest
+     * seat's own rungs and applies it; the trade exists only once the host's
+     * delta says so. Solo and host apply it here and now.
+     */
+    onBank: (give, want) => {
+      if (isGuest()) {
+        if (!net?.sendIntent("bank", { do: "bank", give, want })) return "refused";
+        return "relayed";
+      }
+      return bankFor(me, give, want) ? "done" : "refused";
+    },
     // AI-01: the top-bar difficulty selector. Applies on the NEXT rival tick —
     // the clocks and budgets re-read `skill()` every call, so there is nothing
     // to restart.
@@ -4545,7 +4578,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // still saving for — AI-01's churn guard, one rule below.
       { ...planGuard, ore: Math.max(planGuard.ore ?? 0, oreGoal) },
       {
-        unlocked: null, budget: bankBudget(rivalPaceNow()),
+        // L17 (#245): the bank is back — the rival gates on its own rungs.
+        unlocked: bankRungsFor(rival), budget: bankBudget(rivalPaceNow()),
         need: oreGoal,
       },
     );
@@ -4566,7 +4600,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const skint = rivalReserve(f, now);
     if (!skint) return;
     const { goal: target, paving } = skint;
-    const unlocked = null as any;
+    // L17 (#245): the bank is back — the rival gates on its own rungs.
+    const unlocked = bankRungsFor(rival);
     let budget = bankBudget(rivalPaceNow());
     // AI-02: a bank pointed at the PAVE goal must buy past the plant reserve,
     // or it stops one trade short where the pave pass can still not pay (see
@@ -5657,6 +5692,28 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           guestResetAt = now;
           rivalQuarry.board.resetNeutral();
           toast("Processing Plant collapsed. Fresh neutral board.", "info");
+        }
+      } else if (what === "bank") {
+        // L11 (#226), restored by L17 (#245): a guest's bank trade is a
+        // REQUEST. The host re-runs the whole rule against the GUEST's own
+        // seat — a well-formed pair, the rungs the guest has unlocked, the
+        // guest's balance — and applies it to the guest's purse; the forced
+        // publish below is what lands the delta back on the guest. One path
+        // with solo/host, so a relayed trade cannot drift from a local one.
+        const give = isCargo(payload.give as string) ? payload.give as Cargo : null;
+        const want = isCargo(payload.want as string) ? payload.want as Cargo : null;
+        if (give === null || want === null || give === want
+          || give === "gold" || want === "gold") {
+          echoed.push("The bank can't read that trade.");
+        } else if (!bankCanExchange(p, give) || !bankCanExchange(p, want)) {
+          echoed.push(bankAllowed(give, bankRungsFor(p)) && bankAllowed(want, bankRungsFor(p))
+            ? `The bank wants ${BANK_RATE} ${CARGO[give].name}.`
+            : `${CARGO[[give, want].find((c) => !bankAllowed(c, bankRungsFor(p)))!].name} needs rung ${bankTier([give, want].find((c) => !bankAllowed(c, bankRungsFor(p)))!)} — tune a Depot to unlock it.`);
+        } else if ((p.purse[give] ?? 0) < BANK_RATE) {
+          echoed.push(`The bank wants ${BANK_RATE} ${CARGO[give].name}.`);
+        } else {
+          bankTrade(p.purse, give, want, { unlocked: bankRungsFor(p) });
+          toast(`Bank: ${BANK_RATE} ${CARGO[give].name} → 1 ${CARGO[want].name}.`, "good");
         }
       } else if (typeof payload.key === "string" || typeof (payload as any).do === "string" && ((payload as any).do === "protest_place" || (payload as any).key)) {
         // blackMarket intents — payload.key or protest_place
@@ -8302,7 +8359,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      * hold one. True when the exchange moved — the same answer `onBank`
      * reports on the live path, minus the guest relay.
      */
-    bank: (_give: Cargo, _want: Cargo) => "refused" as const,
+    bank: (give: Cargo, want: Cargo) => bankFor(me, give, want),
     /**
      * L11 (#226): every seat's own purse, in `players` order — the LIVE
      * objects the economy spends from, where `players` above deliberately hands

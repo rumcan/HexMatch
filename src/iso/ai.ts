@@ -49,11 +49,13 @@
 import { MAP_W, MAP_H } from "../game/config";
 import {
   TRANSPORT, UPGRADE_COST, INDUSTRY_BY_KEY, FACTORY_FOOTPRINT, VICTORY, DEPOT_TREE,
-  DEPOT_TREE_ORDER, DISTANCE,
+  DEPOT_TREE_ORDER, DISTANCE, CARGOES,
   type Cargo, type DepotTypeDef,
 } from "./config";
 import { FREE_SETUP_DEPOTS, depotCostFor, priceDepot } from "./construction";
 import { distanceFactorForPath } from "./loop";
+// L17 (#245): the bank is back (3:1) — the rival's planner is real again.
+import { BANK_RATE, bankAllowed, bankTrade, type CargoBag } from "./bank";
 import { FIELD_OCC, ROUGH, factoryTouchesTown, type Grid, type Industry } from "./grid";
 import {
   DIRS, DIR, tIdx, inMapT, hasTrack, canBuildOn, canAfford, tileCost, addCost,
@@ -985,7 +987,67 @@ export function planCandidates(
   return out;
 }
 
-export function planBankTrades(_purse: any, _want: any, _guard: any = {}, _opts: any = {}): number { return 0; }
+/**
+ * L11 (#226): ONE exchange rule for both seats — the bank's rate
+ * (`BANK_RATE`, 3:1 since L17 / #245), and never a rung the seat has not
+ * unlocked (`bankTrade` with this seat's own `unlocked` tier).
+ *
+ * L17 (#245) restores the planner L15 stubbed: the bank is back at the town's
+ * middle building, so the rival banks through the same function and gate, on
+ * a per-turn budget (`opts.budget`) so it cannot drain its purse.
+ *
+ * The gate is DATA the caller passes. On the SHIPPED loop there is no tree —
+ * `unlocked` is null and the rule is exactly the bank the seat has always had
+ * (`bankAllowed(null)` opens every cargo but Gold, PP-08). The new loop
+ * passes the seat's `depotTier`, the same number `priceDepot` gates a build
+ * with.
+ *
+ * Aimed at ONE shortage, greedily, from the largest surplus (the shape the
+ * live turn always had). `guard` is what the seat is saving for, so the sell
+ * side can never empty a cargo the depot plan still needs — the AI-01 churn
+ * guard. Returns the number of exchanges actually made.
+ *
+ * It stops the moment the want is SATISFIED (`opts.need`) as well as when the
+ * budget runs out: a bank with budget to spare must not keep converting
+ * surplus once the shortage it was called for is gone.
+ *
+ * The sell side never touches the cargo being bought (`c !== want`) and never
+ * empties a cargo the caller is saving for (`guard`) — AI-01's churn guard, in
+ * the one form both seats can share.
+ */
+export function planBankTrades(
+  purse: Purse,
+  want: Cargo,
+  guard: Purse = {},
+  opts: {
+    unlocked?: number | null; budget?: number; rate?: number;
+    /** How much of `want` the seat is aiming at. Default: no ceiling, i.e.
+     *  the budget alone decides (the shape callers with no target use). */
+    need?: number;
+  } = {},
+): number {
+  const rate = opts.rate ?? BANK_RATE;
+  const budget = Math.max(0, opts.budget ?? 2);
+  const need = opts.need ?? Infinity;
+  // The caller's purse object, by REFERENCE: `bankTrade` moves the balance in
+  // place, so the seat the planner is planning for is the seat that pays.
+  const bag = purse as CargoBag;
+  const unlocked = opts.unlocked ?? null;
+  let trades = 0;
+  while (trades < budget && (purse[want] ?? 0) < need) {
+    // Gold is outside the bank in both directions (PP-08) — the same rule
+    // `bankTrade` enforces, restated here so the picker cannot propose it.
+    const surplus = (CARGOES as readonly Cargo[])
+      .filter((c) => c !== "gold" && c !== want && bankAllowed(c, unlocked))
+      .filter((c) => (purse[c] ?? 0) >= rate)
+      .filter((c) => (purse[c] ?? 0) - rate >= (guard[c] ?? 0))
+      .sort((a, b) => (purse[b] ?? 0) - (purse[a] ?? 0))[0];
+    if (!surplus) return trades;
+    if (!bankTrade(bag, surplus, want, { unlocked, rate })) return trades;
+    trades++;
+  }
+  return trades;
+}
 
 
 export const bestCandidate = (

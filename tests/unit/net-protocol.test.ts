@@ -107,7 +107,7 @@ describe("MP-02 protocol version", () => {
     // v9 (L11 / #226) drops the market intent and the snapshot/delta `market`
     // field (live offers): the bank is the only exchange left, and a v8 peer
     // would still be posting and taking offers the host no longer reads.
-    expect(PROTOCOL_VERSION).toBe(11);
+    expect(PROTOCOL_VERSION).toBe(12);
     expect(Number.isInteger(PROTOCOL_VERSION)).toBe(true);
     expect(PROTOCOL_VERSION).toBeGreaterThan(0);
   });
