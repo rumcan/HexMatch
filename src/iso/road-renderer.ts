@@ -38,7 +38,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { HW, HH, MAP_W, MAP_H, ZOOM_STEPS } from "../game/config";
 import type { Camera } from "./camera";
-import { isTownTile, townGroundBytes, type Grid } from "./grid";
+import { isTownTile, townGroundBytes, townVillageBytes, type Grid } from "./grid";
 import {
   ROAD_WIDTH, SHOULDER_WIDTH, SIDEWALK_WIDTH,
   hasRoad, paintFigures, roadTile, sidewalkJoints, sidewalkPaths, streetLampSpots, townGroundQuad,
@@ -376,14 +376,22 @@ export function roadTilesIn(
 ): RoadTile[] {
   const out: RoadTile[] = [];
   const paved = (x: number, y: number) => isPaved(world, x, y);
+  // L17 (#245): a VILLAGE's streets draw as dirt. The bytes stay paved —
+  // paving is the town's at every tier for ownership, routing and truck
+  // speed, exactly as the ticket recommends ("change only the look") — but a
+  // tile of a tier-0 town renders with the dirt material, which also turns
+  // its sidewalks and lamps off (`sidewalk` needs a paved street) and keeps
+  // the dirt→paved blend where a village lane meets the asphalt highway.
+  const village = world.grid ? townVillageBytes(world.grid) : null;
   for (let ty = ty0; ty <= ty1; ty++) {
     for (let tx = tx0; tx <= tx1; tx++) {
       const road = cellAt(world.roadBits, tx, ty);
       const dirt = cellAt(world.dirtBits, tx, ty);
       const town = isTownStreet(world, tx, ty);
+      const rural = town && cellAt(village ?? undefined, tx, ty) === 1;
       // A tile carries at most one tier; paved wins if both bytes are set,
       // matching the simulation's "paving replaces dirt" rule.
-      if (hasRoad(road)) out.push(roadTile(tx, ty, road, "paved", paved, town));
+      if (hasRoad(road)) out.push(roadTile(tx, ty, road, rural ? "dirt" : "paved", paved, town));
       else if (hasRoad(dirt)) out.push(roadTile(tx, ty, dirt, "dirt", paved, town));
     }
   }
@@ -404,11 +412,15 @@ export function townGroundQuadsIn(
 ): GroundPoint[][] {
   const blocks = world.grid ? townGroundBytes(world.grid) : null;
   if (!blocks) return [];
+  // L17 (#245): a village has no paved block ground — its yards stay grass
+  // until the town's streets are paved (tier 1+).
+  const village = world.grid ? townVillageBytes(world.grid) : null;
   const street = (x: number, y: number) => hasRoad(cellAt(world.roadBits, x, y));
   const out: GroundPoint[][] = [];
   for (let ty = ty0; ty <= ty1; ty++) {
     for (let tx = tx0; tx <= tx1; tx++) {
       if (!cellAt(blocks, tx, ty)) continue;
+      if (cellAt(village ?? undefined, tx, ty) === 1) continue;
       out.push(townGroundQuad(tx, ty, street));
     }
   }
