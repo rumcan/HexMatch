@@ -650,15 +650,17 @@ export class PlacementOverlay {
    * still reads — chimneys, roofs, wheels — while the whole thing takes the
    * verdict's hue.
    *
-   * GFX-01: the key carries the SAMPLED zoom as well as the camera's, so a
-   * quality change at runtime (which calls `clearCache()`) and a zoom change
-   * both rebuild the surface instead of serving a stale texel density.
+   * GFX-01 / #303: the key carries the SAMPLED zoom (the tier `sampleZoomFor`
+   * actually picks — building PNG when installed, never a sheet fallback) as
+   * well as the camera's, so a quality change, a late-landing building layer
+   * (`clearCache()` from the renderer) and a zoom change all rebuild the
+   * surface instead of serving stale OpenGFX texels or the wrong density.
    */
   private ghostArt(
     atlas: Atlas, sprite: string, z: number, valid: boolean,
     makeSurface: (w: number, h: number) => Surface | null,
   ): GhostArt | null {
-    const az = atlas.atlasZoomFor(z);
+    const az = atlas.sampleZoomFor(sprite, z);
     const key = `${sprite}|${z}|${az}|${valid ? "ok" : "bad"}`;
     if (this.ghosts.has(key)) return this.ghosts.get(key) ?? null;
     const built = this.buildGhostArt(atlas, sprite, z, az, valid, makeSurface);
@@ -674,6 +676,9 @@ export class PlacementOverlay {
     const img = atlas.imageForSprite(sprite, z);
     if (!def || !img) return null;
     // The packer rounds both position and size per zoom; never scale a 1× rect.
+    // `az` is the tier the IMAGE actually came from (see sampleZoomFor), so a
+    // building PNG sampled at 1× while the camera is at 2× still crops the
+    // whole image — not a 2× sheet rect off a 1× bitmap.
     const src = atlas.zoomFrameRect(def, 0, az);
     const dst = az === z ? src : atlas.zoomFrameRect(def, 0, z);
     if (src.w < 1 || src.h < 1) return null;

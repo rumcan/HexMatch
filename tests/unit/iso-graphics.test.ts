@@ -218,6 +218,26 @@ describe("GFX-01 atlas detail cap", () => {
     expect(a.imageForSprite("farm", 2)).toEqual(stubImage("png@0.5"));
   });
 
+  it("#303: a building PNG never falls through to the OpenGFX sheet", () => {
+    const a = makeAtlas();
+    a.detailCap = 2;
+    a.layerImages.set("buildings", new Map([
+      [0.5, stubImage("sheet@0.5")],
+      [1, stubImage("sheet@1")],
+      [2, stubImage("sheet@2")],
+    ]));
+    // Only the 1× building PNG has landed (mid-fill / quality raise). The
+    // camera is at 2× — sampleZoomFor must stretch the PNG, never the sheet.
+    a.buildingImages.set("farm", new Map([[1, stubImage("png@1")]]));
+    expect(a.sampleZoomFor("farm", 2)).toBe(1);
+    expect(a.imageForSprite("farm", 2)).toEqual(stubImage("png@1"));
+    expect(a.imageForSprite("farm", 0.5)).toEqual(stubImage("png@1"));
+    // An empty entry (registered, nothing decoded yet) draws nothing — the
+    // sheet still holds OpenGFX and must not stand in.
+    a.buildingImages.set("farm", new Map());
+    expect(a.imageForSprite("farm", 1)).toBeUndefined();
+  });
+
   it("pruneDetail frees exactly the levels above the cap, in every store", () => {
     const a = makeAtlas();
     expect(a.image(1)).toBeTruthy();
