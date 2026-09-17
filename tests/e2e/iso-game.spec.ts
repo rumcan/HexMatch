@@ -28,7 +28,12 @@ import {
  *  the one whose corridor keeps the NW shape the pinned steps below were
  *  written against. See the E14 swept pairs in
  *  tests/unit/iso-corridor-picker.test.ts. */
-const ISO_URL = "/hexmatch/?seed=199";
+// L1f (#237): the new loop is the default now, and this spec is the RETIRED
+// loop's gameplay harness — board tokens paying cargo, the +0.25★ paving line,
+// the 10★ race, the lorry that mints a token on arrival. `?loop=old` is the
+// escape hatch it needs to keep meaning what it says; the default boot is
+// played for real in `iso-loop-default.spec.ts`.
+const ISO_URL = "/hexmatch/?seed=199&loop=old";
 
 /** Boot a solo game past the menu and onto the map, via the shared
  *  `bootSoloIso` (issue #135). The spec-specific half lives here:

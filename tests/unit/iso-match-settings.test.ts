@@ -1,4 +1,8 @@
 // @vitest-environment jsdom
+// @vitest-environment-options {"url": "http://localhost/?loop=old"}
+// L1f (#237): the new loop is the sandbox default now — this harness reads the
+// RETIRED loop, so every boot in it asks for the one-release `?loop=old` hatch
+// (a test that means the other loop says so itself: `{ newLoop: true }`).
 //
 // #186 — custom match settings, end to end through the REAL game.
 //
@@ -140,7 +144,10 @@ let disposers: (() => void)[] = [];
 beforeEach(() => {
   stubCanvas();
   stubImage();
-  window.history.replaceState(null, "", `/?seed=${SEED}`);
+  // L1f (#237): the address bar says which loop this harness plays — the
+  // RETIRED one, the loop it was written against. `?loop=old` is the release's
+  // escape hatch; a test that wants the new loop says so (`{ newLoop: true }`).
+  window.history.replaceState(null, "", `/?seed=${SEED}&loop=old`);
   localStorage.clear();
   localStorage.setItem("hexmatch:rival-skill", "normal");
   localStorage.setItem("hexmatch:tutorial", "never");

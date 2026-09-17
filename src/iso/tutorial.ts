@@ -46,7 +46,8 @@
 import { BOARD_H, BOARD_W } from "../game/config";
 import { BANK_RATE } from "./bank";
 import {
-  CARGO, CARGOES, TRANSPORT, UPGRADE_COST, VICTORY, TUNING, type Cargo,
+  CARGO, CARGOES, DEPOT_TREE, TRANSPORT, UPGRADE_COST, VICTORY, TUNING,
+  TOWN_UPGRADES, type Cargo,
 } from "./config";
 import { DEPOT_COST, costCompact, costLabel } from "./construction";
 import { PLANT_COST } from "./plants";
@@ -282,7 +283,12 @@ export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
       points: [
         "A Depot needs an industry inside its <b>4×4 catchment</b> — hover shows the tiles it would take, and the inspector says why a spot is refused.",
         "<b>One Depot holds each industry.</b> The first Depot to get a road there keeps it, so a rival who connects first locks that node for the rest of the match.",
-        `Your <b>first Depot is free</b>. Every Depot after it costs ${costLabel(DEPOT_COST)}, and one you cannot pay for is refused without spending anything.`,
+        newLoop
+          // L5 (#219): a Depot's price is the industry beside it, so the tour
+          // quotes the cheapest rung-0 type and says where the real number
+          // comes from — the same rule `depotButtonLabel` speaks in the HUD.
+          ? `Your <b>first Depot is free</b>. After it the price is the industry you stand on — a Farm Depot is ${costLabel(DEPOT_TREE.grain.cost)}, a Forest Depot ${costLabel(DEPOT_TREE.wood.cost)} — and one you cannot pay for is refused without spending anything.`
+          : `Your <b>first Depot is free</b>. Every Depot after it costs ${costLabel(DEPOT_COST)}, and one you cannot pay for is refused without spending anything.`,
       ],
       tip: "A Depot on open ground with no road claims nothing at all — it can never lock a node away from you by accident.",
     },
@@ -297,7 +303,16 @@ export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
         alt: "A short dirt road joining the Depot to the Plant, with a lorry hauling ore along it",
         caption: "One continuous run is all it takes: the lorry starts hauling the moment the Depot and the Plant are joined.",
       },
-      points: [
+      points: newLoop ? [
+        // L2 (#216): on this loop the setup allowance buys NOTHING (dirt is
+        // free outright, `freeAllowanceCovers`), so the shipped line's
+        // countdown would promise a banner that never moves. Same sentence's
+        // subject, told from the rule that actually runs.
+        `<b>Dirt Road</b> is <b>free</b>, tile after tile — the road that joins a Depot to your Plant is never the thing you cannot afford.`,
+        "A <b>lorry</b> starts the run the moment the Depot and the Plant are joined: it is the connection made visible. The clock is what pays — no road, no connection, no income. The road is the whole machine.",
+        "Town ring roads and the map's public highways carry your traffic too, so a route does not have to be entirely your own gravel.",
+        `<b>Paved Road</b> is ${road} and carries its lane at <b>×${TRANSPORT.road.throughput}</b>; paving over dirt you already laid costs only ${pave}. It buys throughput, never ★ — on this loop the points come from the company you build.`,
+      ] : [
         `<b>Dirt Road</b> is ${dirt} a tile${allowance} — the banner counts them down as you drag.`,
         "A <b>lorry</b> drives the route as soon as the Depot reaches the Plant. No lorry, no deliveries, no tokens: the road is the whole machine.",
         "Town ring roads and the map's public highways carry your traffic too, so a route does not have to be entirely your own gravel.",
@@ -361,7 +376,11 @@ export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
       },
       points: [
         "That purse is the only money in the game. It buys Depots, roads, plants, Security Forces and Repair Crews — every price is printed on the button before you click it.",
-        "<b>Ore is the gate.</b> Dirt Road needs only wood and stone, but paving, plants and the second Depot all want ore, so an Ore Mine is the first real objective.",
+        newLoop
+          // L2 (#216) + L5 (#219): nothing about a road can price you out now;
+          // what gates a seat is the rung its next Depot type stands on.
+          ? `<b>The tree is the gate.</b> Dirt is free, so roads never block a plan — the next rung does. A Quarry Depot wants ${costCompact(DEPOT_TREE.stone.cost)} and a Mine Depot ${costCompact(DEPOT_TREE.ore.cost)}, and a rung opens only when a tuning session is finished.`
+          : "<b>Ore is the gate.</b> Dirt Road needs only wood and stone, but paving, plants and the second Depot all want ore, so an Ore Mine is the first real objective.",
         newLoop
           ? "<b>Feed</b> logs every event of the match, and the inspector answers a hover with what a tile is and what it is worth."
           : `<b>Bank</b> trades ${BANK_RATE} of one good for 1 of another with no rival needed — it can rebalance what your rungs have unlocked, never skip a rung; <b>Feed</b> logs every event of the match.`,
@@ -369,7 +388,50 @@ export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
       ],
       tip: "Black Market cards (Blockade, Protest) cost Gold and land on the rival. A Protest ✊ shuts any public road for 2:00 — every truck stops, including yours.",
     },
-    {
+    // L13 (#228) moved the ★ ledger on the new loop: paving pays nothing (L2
+    // made dirt free) and an extra plant buys reach, not points. What scores is
+    // the company — the cargos you actually run, the rungs you unlocked and the
+    // city you upgraded — so the tour reads THAT table here, from the same
+    // `VICTORY.loop` the rescorer pays from.
+    newLoop ? {
+      id: "victory",
+      kicker: "STEP 6 · WIN IT",
+      title: "How Victory Points are earned",
+      lede: "There are exactly three sources of ★, and all of them are the company you build — not the ground you paved.",
+      figure: {
+        kind: "ledger",
+        rows: [
+          {
+            icon: "🛖", label: "Run a new Depot type", vp: `+${star(VICTORY.loop.type)}`,
+            detail: "once per distinct cargo a connected Depot is producing",
+          },
+          {
+            icon: "▲", label: "Unlock the next rung of the Depot tree", vp: `+${star(VICTORY.loop.rung)}`,
+            detail: "a finished tuning session banks it",
+          },
+          {
+            icon: "🏙", label: "Upgrade a city", vp: `+${star(VICTORY.loop.city)}`,
+            detail: `${costCompact(TOWN_UPGRADES[0].cost)} and a session — it raises the tick rate and the storage cap`,
+          },
+          {
+            icon: "·", label: "Dirt Road, and paving it", vp: "0★", dim: true,
+            detail: "free gravel and faster lorries — plumbing, not points",
+          },
+          {
+            icon: "·", label: "Another Processing Plant", vp: "0★", dim: true,
+            detail: `${plant} buys reach on this loop, not ★`,
+          },
+        ],
+        total: { label: `First to ${star(ctx.vpTarget)} wins the match`, vp: `${star(ctx.vpTarget)}` },
+      },
+      points: [
+        `Six <b>Depot types</b>, six cargos: the first of each is worth <b>+${star(VICTORY.loop.type)}</b>, so breadth pays — three cargos running is already half the line.`,
+        `Going <b>tall</b> pays too: each rung of the tree is <b>+${star(VICTORY.loop.rung)}</b> and each city upgrade <b>+${star(VICTORY.loop.city)}</b>, and both make the clock you already own tick harder.`,
+        "Demolishing a Depot, losing its road, or selling the upgrade <b>takes the point back</b> — a broken network is a lost lead, not a free re-route.",
+        `<b>First to ${star(ctx.vpTarget)} wins</b>, and the match ends the moment either seat crosses it. Your ★ plaque is top-right; hover a name in the header for the exact breakdown, row by row, yours and the rival's.`,
+      ],
+      tip: `The line is the loop's own (${star(VICTORY.loop.target)}) on every difficulty — the 🤖 switch changes how hard the rival plays and what a tuned yield does over time, not the finish.`,
+    } : {
       id: "victory",
       kicker: "STEP 6 · WIN IT",
       title: "How Victory Points are earned",
@@ -585,6 +647,13 @@ export function showTutorial(host: HTMLElement, opts: TutorialOptions = {}): Tut
   const ctx: TutorialContext = {
     vpTarget: opts.vpTarget ?? VICTORY.target,
     freeTrack: opts.freeTrack ?? 0,
+    // L1f (#237): this line was the tour's only missing wire — `newLoop` was
+    // read off `TutorialOptions` by every caller (game.ts's boot and the ❔
+    // replay both pass it) and dropped here, so the boot tour ALWAYS recited
+    // the retired loop's copy, tuning session included. With the flag now on
+    // by default that is the promise the player is actually handed, so the
+    // context carries it.
+    newLoop: opts.newLoop,
   };
   const steps = buildTutorialSteps(ctx);
   let index = 0;

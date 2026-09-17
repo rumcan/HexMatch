@@ -1,4 +1,8 @@
 // @vitest-environment jsdom
+// @vitest-environment-options {"url": "http://localhost/?loop=old"}
+// L1f (#237): the new loop is the sandbox default now — this harness reads the
+// RETIRED loop, so every boot in it asks for the one-release `?loop=old` hatch
+// (a test that means the other loop says so itself: `{ newLoop: true }`).
 //
 // TOWN-GRID — towns get a simple STREET GRID at map generation: every
 // TOWN_BLOCK-th column and row is a street and the cells between them are
@@ -401,7 +405,10 @@ describe("PP-10 game boot stamps the town roads", () => {
       set src(_v: string) { queueMicrotask(() => this.onload?.()); }
     }
     (globalThis as Record<string, unknown>).Image = FakeImage;
-    window.history.replaceState(null, "", "/?seed=1337");
+    // L1f (#237): the address bar says which loop this harness plays — the
+    // RETIRED one, the loop it was written against. `?loop=old` is the release's
+    // escape hatch; a test that wants the new loop says so (`{ newLoop: true }`).
+    window.history.replaceState(null, "", "/?seed=1337&loop=old");
   // AI-02: a remembered difficulty keeps the start-of-game picker out of
   // the DOM — these tests boot the game, not its onboarding (the picker
   // itself is covered in iso-skill-picker.test.ts).

@@ -25,7 +25,10 @@ import { bootBudget, isPhoneProject } from "./boot";
 // later read must match it exactly.
 // ══════════════════════════════════════════════════════════════════════════
 
-const ISO_URL = "/hexmatch/?seed=199";
+// L1f (#237): the board is DOWN between tuning sessions on the new loop, and
+// this spec measures the always-on board's fit and its creep — so it asks for
+// the loop that has one (`?loop=old`, the retirement hatch).
+const ISO_URL = "/hexmatch/?seed=199&loop=old";
 
 async function bootIso(page: import("@playwright/test").Page) {
   await page.addInitScript(() => {

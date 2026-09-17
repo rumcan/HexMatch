@@ -81,7 +81,10 @@ beforeEach(() => {
   }
   (globalThis as Record<string, unknown>).Image = FakeImage;
   giveTheStageAViewport();
-  window.history.replaceState(null, "", "/?seed=1337");
+  // L1f (#237): the address bar says which loop this harness plays — the
+  // RETIRED one, the loop it was written against. `?loop=old` is the release's
+  // escape hatch; a test that wants the new loop says so (`{ newLoop: true }`).
+  window.history.replaceState(null, "", "/?seed=1337&loop=old");
   // AI-02: a remembered difficulty keeps the start-of-game picker out of
   // the DOM — these tests boot the game, not its onboarding (the picker
   // itself is covered in iso-skill-picker.test.ts).

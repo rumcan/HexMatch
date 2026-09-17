@@ -52,7 +52,13 @@ const readSave = (page: import("@playwright/test").Page) =>
  * fresh game by construction; without it, a second boot is a RESUME.
  */
 async function boot(page: import("@playwright/test").Page, extra = "", opts: { fresh?: boolean } = {}) {
-  await page.goto(`${BASE}?seed=79${extra}`);
+  // L1f (#237): this spec walks the tour of the RETIRED loop — a 4-row ★
+  // ledger ending on 10★/5★ and the roads card counting down the 12 free
+  // tiles. The new loop re-voices those same steps (its ledger pays ★ for
+  // depot types, rungs and city upgrades to 12★), and that tour is walked in
+  // `iso-loop-default.spec.ts`; `?loop=old` is what keeps THESE assertions
+  // about the copy the escape hatch still shows.
+  await page.goto(`${BASE}?seed=79&loop=old${extra}`);
   if (opts.fresh) {
     await page.evaluate((k) => localStorage.removeItem(k), SAVE_KEY);
     expect(await hasSave(page)).toBe(false);

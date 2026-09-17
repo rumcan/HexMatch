@@ -22,7 +22,10 @@ const BASE = "/hexmatch/";
  *  picker writing it. */
 async function bootIso(page: import("@playwright/test").Page, extra = "") {
   await bootSoloIso(page, {
-    url: `${BASE}?seed=79${extra}`,
+    // L1f (#237): under the new loop every chair races the loop's own 12★
+    // line (L13), so the difficulty's short race this spec pins belongs to the
+    // retired loop — `?loop=old` keeps the assertion honest.
+    url: `${BASE}?seed=79&loop=old${extra}`,
     remembered: { "hexmatch:tutorial": "never" },
   });
 }
