@@ -6936,6 +6936,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         ? (tuning
           ? {
               kind: tuning.kind,
+              // #299: the session window names the job it is doing — the
+              // cargo in the title, the exact Depot in its tooltip.
+              depotId: tuning.depotId,
               cargo: tuning.cargo, moves: tuning.moves, movesLeft: tuningMovesLeft(tuning),
               score: tuning.score,
               // L5 (#219): the same "what this score is worth" readout, on the
