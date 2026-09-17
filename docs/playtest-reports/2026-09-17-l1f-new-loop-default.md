@@ -145,6 +145,14 @@ out of the hatch for the duration of the test and puts it back:
 * *"with no loop parameter in the address bar the game is on the new loop"*;
 * *"behind the hatch the economy chrome is still the whole one"*.
 
+* **Whole unit suite, branch vs `main`:** 135 files, 1,457+ tests, and the
+  branch's failure set is a SUBSET of `main`'s — 21 failures here, 21 there, the
+  same names (measured in this sandbox; the box has two cores, so the number that
+  matters is *which* tests, not how many passed). No new failure needed a
+  loosened assertion: `iso-victory.test.ts`'s paving-cost test looked new (it is
+  outside the 31-file list the pins were bisected against) and was checked on
+  `main` in a worktree at `9efd770` — it fails there too, identically.
+
 * Playwright, `desktop-chromium` in CI (`npm run test:e2e`, which builds first —
   so it is the production bundle, not a dev-server one, that is being proven):
   the browser path this sandbox cannot run (no Chromium download available here),
@@ -163,6 +171,11 @@ out of the hatch for the duration of the test and puts it back:
     geometry. Pinning them keeps them honest instead of loosening them.
 
 ## Known leftovers (deliberately not in this PR)
+* **The repo's CI is red at the base.** Every one of the last five pushes to
+  `main` failed all three jobs (`test`, `e2e`, `e2e-multiplayer`), and the 21
+  failures above are #200's territory — reported here rather than folded into
+  this PR, per the rule that a failure which also fails on `main` gets a link and
+  not a fix. This PR's own `ci` run should show the same set, no more.
 
 * **The ❔ help-modal plaque** (`src/game/ui.ts`, `helpModal()`) still describes the
   retired loop — "pave a Dirt Road tile into a Road for +0.25★", "Match tokens
