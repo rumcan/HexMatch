@@ -77,7 +77,7 @@ import {
 import { MAP_W, MAP_H } from "../../../src/game/config";
 // L11 (#226): the purse helpers the bank module owns now — they used to live
 // in the retired `src/iso/market.ts`, whose offer board is gone with it.
-import { toBag, type CargoBag } from "../../../src/iso/bank";
+import { toBag, type CargoBag } from "../../../src/iso/purse";
 import {
   START_PURSE, FREE_SETUP_TRACK, HARVEST_MS, RIVAL_REMATCH_DROP,
 } from "../../../src/iso/game";

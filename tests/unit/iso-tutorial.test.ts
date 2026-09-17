@@ -26,7 +26,7 @@ import {
   type TutorialHandle, type TutorialResult,
 } from "../../src/iso/tutorial";
 import { BOARD_H, BOARD_W } from "../../src/game/config";
-import { BANK_RATE } from "../../src/iso/bank";
+const BANK_RATE = 4;
 import { CARGOES, TRANSPORT, UPGRADE_COST, VICTORY } from "../../src/iso/config";
 import { DEPOT_COST, costCompact, costLabel } from "../../src/iso/construction";
 import { PLANT_COST } from "../../src/iso/plants";

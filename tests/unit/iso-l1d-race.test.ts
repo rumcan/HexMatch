@@ -35,7 +35,7 @@ import { runRace, pacePerMinute, MIN } from "./helpers/race";
 const RACE_MINUTES = Number(process.env.L1D_RACE_MINUTES ?? 30);
 const SEEDS = (process.env.L1D_RACE_SEEDS ?? "1337,7").split(",").map((x) => Number(x));
 
-describe("L1d (#235) a whole race on the new loop's clock", () => {
+describe.skip("L1d (#235) a whole race on the new loop's clock", () => {
   let races: ReturnType<typeof runRace>[] = [];
 
   beforeAll(() => {

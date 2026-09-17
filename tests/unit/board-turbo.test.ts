@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Board, BOARD_ANIMATION_MS, FAST_ANIMATION_MS } from "../../src/game/board";
 import { createOriginalUi } from "../../src/game/ui";
-import { emptyBag } from "../../src/iso/bank";
+import { emptyBag } from "../../src/iso/purse";
 import { mulberry32, setRng } from "../../src/game/config";
 
 /** Checkerboard: no accidental matches; every painted match is deliberate. */

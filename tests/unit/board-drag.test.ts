@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Board } from "../../src/game/board";
 import { CELL } from "../../src/game/config";
 import { createOriginalUi } from "../../src/game/ui";
-import { emptyBag } from "../../src/iso/bank";
+import { emptyBag } from "../../src/iso/purse";
 import { mulberry32, setRng } from "../../src/game/config";
 
 function uiFixture() {

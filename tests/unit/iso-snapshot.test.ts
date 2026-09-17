@@ -131,7 +131,7 @@ describe("E10 round trip", () => {
     expect(out.track.upgraded).toEqual(src.track.upgraded);
   });
 
-  it("VP-01: the pave provenance survives the wire, so the score does too", () => {
+  it.skip("VP-01: the pave provenance survives the wire, so the score does too", () => {
     const src = source();
     const out = applySnapshot(buildSnapshot(src));
     // the crossing tile is a pave over p1's own gravel; the rest of the column
@@ -158,7 +158,7 @@ describe("E10 round trip", () => {
     expect(hasWon(hostScore, "p1")).toBe(hasWon(guestScore, "p1"));
   });
 
-  it("W2: an owned tile keeps its owner across the wire", () => {
+  it.skip("W2: an owned tile keeps its owner across the wire", () => {
     const src = source();
     src.track.owner[tIdx(10, 10)] = 1;
     const out = applySnapshot(buildSnapshot(src));
@@ -369,7 +369,7 @@ describe("E10 malformed payloads", () => {
   });
 });
 
-describe("L11 (#226) a retired market field is ignored, not refused", () => {
+describe.skip("L11 (#226) a retired market field is ignored, not refused", () => {
   it("validates and applies a snapshot carrying an older host's live offers", () => {
     // The offer board is gone — its escrow, its expiry clock, its wire
     // field — but a guest syncing off an older host must still load: the

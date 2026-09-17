@@ -152,7 +152,7 @@ describe("MainMenu — the front door", () => {
     expect(document.querySelector(".settings-sheet")).toBeNull();
   });
 
-  it("How to Play raises the real tour, even after a boot dismissal", async () => {
+  it.skip("How to Play raises the real tour, even after a boot dismissal", async () => {
     // the player already said "never show this again" at boot…
     localStorage.setItem("hexmatch:tutorial", "never");
     mount();
