@@ -158,6 +158,29 @@ export interface UiPlayer {
   vpTip?: string;
 }
 
+/** L8 (#222): one optional quest, as the chrome prints it. The game owns the
+ *  rule behind every string here (`progress` is computed by quests.ts); the
+ *  chrome only paints. */
+export interface UiQuestItem {
+  /** Stable id — the handle "dismiss this one" travels back on. */
+  id: string;
+  /** Who is speaking (the contract's rival, the guide, the sandbox foreman). */
+  who: string;
+  /** The offer, in their voice. */
+  text: string;
+  /** How far along the player is ("2/3", "best ×2.4 · need ×2"). */
+  progress: string;
+  /** What completing it pays ("2 ⛏️ Ore"). */
+  reward: string;
+}
+
+/** L8 (#222): the quest panel's state. `hidden` is the player's own choice
+ *  (the panel shrinks to a flag they can click back open). */
+export interface UiQuestPanel {
+  hidden: boolean;
+  items: UiQuestItem[];
+}
+
 export interface UiState {
   players: UiPlayer[];
   purse: Partial<Record<Cargo, number>>;
@@ -212,6 +235,15 @@ export interface UiState {
    *  chip bar reads as a live rate and not a static purse. Omitted on the
    *  shipped loop. */
   incomeRates?: Partial<Record<Cargo, number>>;
+  /**
+   * L8 (#222): the OPTIONAL quests — suggestions voiced by the match's cast,
+   * never a requirement. `null`/omitted when there are none to show (the
+   * retired loop, a guest, a finished match). Collapsed the chrome prints one
+   * slim line; opened it lists the offers, each dismissible, and the whole
+   * panel hides — ignoring every quest is a legal way to play, and the chrome
+   * has to make that obvious rather than nag.
+   */
+  quests?: UiQuestPanel | null;
   reach: Partial<Record<Cargo, number>>;
   /** PP-14b: ms left on the Processing Plant reset cooldown (0 = ready). */
   resetIn: number;
@@ -412,6 +444,13 @@ export interface UiHooks {
    * one.
    */
   onTuningEnd?: (abandon: boolean) => void;
+  /**
+   * L8 (#222): what the player did with the quest panel. `dismiss` retires one
+   * offer for the rest of the game; `hide`/`show` put the whole panel away and
+   * bring it back. The game owns both (they ride the save with the paid set),
+   * and NOTHING in the rules reads them — the panel is the player's own.
+   */
+  onQuestAction?: (id: string, action: "dismiss" | "hide" | "show") => void;
   /**
    * L6 (#220): the plate's Retune key. The chrome never decides whether a
    * re-match is allowed — it shows the key because `UiState.tuningIdle` said so,
@@ -1028,6 +1067,25 @@ export function createOriginalUi(
   const objectiveEl = h("div", "objective hidden");
   objectiveEl.id = "iso-objective";
   root.appendChild(objectiveEl);
+  // L8 (#222): the optional quests — the objective line's siblings, and its
+  // opposite in tone: the objective says what the LOOP needs next, a quest
+  // suggests what a character would like. One slim line while it is collapsed
+  // (the #187 rule: never two lines of chrome over the map), the offers when
+  // the player opens it, a ✕ on every row and a Hide for the panel, because
+  // the one thing this chrome must never look like is a to-do list that has to
+  // be finished.
+  const questsEl = h("div", "quests hidden");
+  questsEl.id = "iso-quests";
+  const questsHead = h("button", "quests-head") as HTMLButtonElement;
+  questsHead.type = "button";
+  questsHead.innerHTML = `<span class="q-flag" aria-hidden="true">⚑</span>`
+    + `<span class="q-title">Quests</span>`
+    + `<span class="q-count"></span>`
+    + `<span class="q-caret" aria-hidden="true">▸</span>`;
+  const questsCount = questsHead.querySelector(".q-count") as HTMLElement;
+  const questsList = h("ul", "quests-list hidden");
+  questsEl.append(questsHead, questsList);
+  root.appendChild(questsEl);
   const modalRoot = h("div", "modal-root hidden");
   root.appendChild(modalRoot);
   // MOBILE-01: the touch-only floating cluster. A phone has no wheel and no
@@ -2509,6 +2567,81 @@ export function createOriginalUi(
   // actually changed is written. Replacing them per frame churned the DOM and
   // could swallow a hover or click landing between two frames.
   const chipNums = new Map<Cargo, HTMLElement>();
+  // ── L8 (#222): the optional quest panel ──────────────────────────────────
+  /** UI-local: the player opened the list (the game owns only "hidden"). */
+  let questsOpen = false;
+  /** The last list painted — rows are rebuilt only when their text changes. */
+  let questsSig: string | null = null;
+  /** The last panel the game handed us, so a click can repaint at once. */
+  let questsPanel: UiQuestPanel | null = null;
+
+  /**
+   * Paint the quest panel: one slim line while it is shut, the offers when the
+   * player opened it. Every row carries its own ✕ and the list carries a Hide,
+   * so the player can put the whole thing away — and the game remembers both,
+   * because "ignoring the quests" has to survive a repaint.
+   */
+  function renderQuests(panel: UiQuestPanel | null, bannerUp = false): void {
+    questsPanel = panel;
+    const items = panel?.items ?? [];
+    const live = !!panel && items.length > 0 && !bannerUp;
+    questsEl.classList.toggle("hidden", !live);
+    if (!live || !panel) {
+      questsSig = null;
+      return;
+    }
+    const shut = panel.hidden;
+    // A banner owns the top lane while it is up: the list stays shut, the one
+    // line stays (the banner is the more urgent thing on that patch of screen).
+    const open = !shut && questsOpen;
+    questsEl.classList.toggle("shut", shut);
+    questsList.classList.toggle("hidden", !open);
+    questsHead.setAttribute("aria-expanded", String(open));
+    questsHead.setAttribute("aria-label", shut ? "Show quests"
+      : open ? "Collapse the quest list" : "Expand the quest list");
+    questsHead.title = shut
+      ? "Quests hidden — click to show them again"
+      : "Optional quests — suggestions, never requirements";
+    const count = String(items.length);
+    if (questsCount.textContent !== count) questsCount.textContent = count;
+    const sig = items.map((i) => `${i.id}|${i.who}|${i.text}|${i.progress}|${i.reward}`).join("\u0001");
+    if (sig === questsSig) return;
+    questsSig = sig;
+    questsList.innerHTML = "";
+    for (const item of items) {
+      const li = h("li", "quest") as HTMLLIElement;
+      li.dataset.quest = item.id;
+      const meta = h("div", "q-meta");
+      const x = h("button", "q-x", "✕") as HTMLButtonElement;
+      x.type = "button";
+      x.setAttribute("aria-label", `Dismiss the quest from ${item.who}`);
+      x.onclick = (ev) => { ev.stopPropagation(); hooks.onQuestAction?.(item.id, "dismiss"); };
+      meta.append(h("span", "q-prog", item.progress), h("span", "q-reward", item.reward), x);
+      li.append(h("div", "q-who", item.who), h("div", "q-text", item.text), meta);
+      questsList.appendChild(li);
+    }
+    const foot = h("li", "quests-foot");
+    const hide = h("button", "q-hide", "Hide quests") as HTMLButtonElement;
+    hide.type = "button";
+    hide.onclick = (ev) => { ev.stopPropagation(); questsOpen = false; hooks.onQuestAction?.("", "hide"); };
+    foot.appendChild(hide);
+    questsList.appendChild(foot);
+  }
+
+  questsHead.onclick = () => {
+    const panel = questsPanel;
+    if (!panel) return;
+    // Shut by the game's flag: the click is the way back, and the game is the
+    // one that remembers it reopened.
+    if (panel.hidden) {
+      questsOpen = true;
+      hooks.onQuestAction?.("", "show");
+      return;
+    }
+    questsOpen = !questsOpen;
+    renderQuests(panel);
+  };
+
   /** L8 (#222): per-cargo /s readout beside each chip. */
   const chipRates = new Map<Cargo, HTMLElement>();
   let lastRatesSig = "\u0000";
@@ -2898,6 +3031,13 @@ export function createOriginalUi(
       // phone exactly as it used to slide under a banner.
       // Handled below: bannerH reads the VISIBLE top lane (banner || objective).
     }
+    // L8 (#222): the optional quests, under the objective line — the same lane,
+    // the same promise ("here is what to do next"), a different voice: a
+    // character suggesting, never the game requiring.
+    // While a banner is up (a protest countdown, a disconnect, the ending) the
+    // lane belongs to it: the panel steps aside and comes back with the banner
+    // gone, keeping the player's own open/hidden choice.
+    renderQuests(state.quests ?? null, !!state.banner);
     const toolState = state.tool;
     // While the opening Depot is owed, every other build is locked out (the
     // game refuses them too) — greyed so the menu never promises a plant.

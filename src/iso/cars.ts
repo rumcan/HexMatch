@@ -29,12 +29,19 @@ import {
 } from "./track";
 import type { Grid } from "./grid";
 import type { DrawItem } from "./depth";
-import { TRUCK_SPEED } from "./vehicles";
 
 /** Default traffic volume — a dozen cars feels lived-in. */
 export const CAR_COUNT = 12;
-/** Cars drive at lorry pace: one tile every 300 ms. */
-export const CAR_SPEED = TRUCK_SPEED;
+/**
+ * Tiles per millisecond: one tile every 600 ms.
+ *
+ * L7 (#221): this is a STANDALONE constant, not the depot-lorry pace. Depot
+ * lorries scale their pace by the clock rate (`yield × distance × transport`);
+ * ambient traffic must not follow, or a well-tuned farm would also send the
+ * town's cars flying. The numeric value matches today's gravel lorry so the
+ * streets look the same as they did before the rates were wired in.
+ */
+export const CAR_SPEED = 1 / 600;
 
 /** How many art slots ship: car1_*, car2_*, car3_* */
 export const CAR_ART_SLOTS = 3;

@@ -60,8 +60,11 @@ export const BASE_RATE = 1;
  * openings) runs ~6 tiles of road, so `nearTiles` 8 keeps a sensibly-placed
  * first Depot at the full rate instead of taxing the setup; 20 tiles is a
  * genuine cross-country line on the 144×144 map, and anything past it is the
- * kind of reach that should cost throughput. Post-MVP (#221 L7) may retune
- * the bands or fit a smooth falloff — the clock reads only this table.
+ * kind of reach that should cost throughput. L7 (#221) left the bands as-is:
+ * the lorries now scale their speed by this same table (via `depotRate` in
+ * loop.ts), so retuning it would retune both the clock and the traffic. A
+ * smooth falloff can still replace the steps later; the clock and the
+ * lorries both read only this table.
  */
 export const DISTANCE = {
   /** Route length at or below this is "near" — full rate. */
