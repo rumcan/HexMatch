@@ -378,6 +378,9 @@ export interface UiTuningSession {
   yield: number;
   /** What abandoning pays — the plate states both numbers, never a promise. */
   abandonYield: number;
+  /** #301: whether the board is currently animating a cascade — Finish and
+   *  Abandon are disabled only while this is true, not when moves run out. */
+  busy?: boolean;
 }
 
 export interface UiHooks {
@@ -838,12 +841,71 @@ export function createOriginalUi(
   const tpFinish = h("button", "tp-finish", "Finish");
   tpFinish.type = "button";
   tpFinish.title = "Close the session and keep the yield you have earned";
-  const tpAbandon = h("button", "tp-abandon", "✕");
+  // #301: abandon is now explicitly labelled — it must never be mistaken for a
+  // plain close. The old \"✕\" looked like \"dismiss\" and threw away the score.
+  const tpAbandon = h("button", "tp-abandon", "Abandon — default yield");
   tpAbandon.type = "button";
-  tpAbandon.title = "Close without playing it out — the Depot keeps the default yield";
-  tpAbandon.setAttribute("aria-label", "Abandon the tuning session");
+  tpAbandon.title = "Abandon — close without playing it out. The Depot keeps the default yield";
+  tpAbandon.setAttribute("aria-label", "Abandon the tuning session — keeps default yield");
+  // #301: keep the live session for the confirm gate — abandon with a score
+  // asks first, because it discards what Finish would keep.
+  let liveTuning: UiTuningSession | null = null;
+  // Two-step confirm: first click arms, second click confirms within 4s.
+  // This avoids `window.confirm` which is blocked in the hosted sandbox
+  // (answered false with no dialog) and would make abandon impossible.
+  let abandonConfirmUntil = 0;
+  let abandonConfirmScore = -1;
   tpFinish.onclick = () => hooks.onTuningEnd?.(false);
-  tpAbandon.onclick = () => hooks.onTuningEnd?.(true);
+  tpAbandon.onclick = () => {
+    const t = liveTuning;
+    const now = Date.now();
+    if (t && t.score > 0) {
+      if (abandonConfirmUntil < now || abandonConfirmScore !== t.score) {
+        // First click — arm confirm
+        abandonConfirmUntil = now + 4000;
+        abandonConfirmScore = t.score;
+        const fy = (y: number) => y.toFixed(2).replace(/0$/, "");
+        const earned = `×${fy(t.yield)}`;
+        const def = `×${fy(t.abandonYield)}`;
+        tpAbandon.textContent = `Confirm abandon? ${earned} → ${def}`;
+        tpAbandon.title = `Click again to confirm abandoning — you scored ${t.score} for ${earned}, abandoning keeps only ${def}`;
+        // Auto-reset after window
+        window.setTimeout(() => {
+          if (Date.now() >= abandonConfirmUntil) {
+            tpAbandon.textContent = "Abandon — default yield";
+            const cur = liveTuning;
+            if (cur) {
+              const fy2 = (y: number) => y.toFixed(2).replace(/0$/, "");
+              tpAbandon.title = `Abandon — close without playing it out. The Depot keeps the default yield ×${fy2(cur.abandonYield)}`;
+            }
+          }
+        }, 4100);
+        // Also try native confirm as extra gate where it works — if user cancels, stay armed
+        // but don't abandon yet. In sandboxed hosts this returns false immediately,
+        // so we stay in the armed state and second click will abandon.
+        try {
+          const fy3 = (y: number) => y.toFixed(2).replace(/0$/, "");
+          const msg = `Abandon tuning session? You scored ${t.score} for ×${fy3(t.yield)} — abandoning keeps only ×${fy3(t.abandonYield)}.`;
+          if (window.confirm(msg)) {
+            // User confirmed via dialog — proceed immediately
+            abandonConfirmUntil = 0;
+            tpAbandon.textContent = "Abandon — default yield";
+            hooks.onTuningEnd?.(true);
+            return;
+          }
+          // If confirm returned false, we keep the armed state for second click
+          return;
+        } catch {
+          // confirm not available — keep armed state
+          return;
+        }
+      }
+      // Second click within window — confirm
+      abandonConfirmUntil = 0;
+      tpAbandon.textContent = "Abandon — default yield";
+    }
+    hooks.onTuningEnd?.(true);
+  };
   tpRow.append(tpScore, tpYield, tpFinish, tpAbandon);
   const tpIdle = h("div", "tp-idle");
   const tpIdleText = h("span", "tp-idle-text");
@@ -2830,12 +2892,18 @@ export function createOriginalUi(
       // L5: a LIVE session's signature carries its KIND as well — a city
       // session has no cargo, and the two promises read very differently, so
       // switching between them must repaint.
+      // #301: busy is part of the sig — Finish is disabled only while the
+      // board animates, not when moves run out, so a cascade must repaint.
       : t === null ? `none:${idle?.retune ? `${idle.retune.depotId}:${idle.retune.yield}` : "-"}`
-        : `${t.kind}:${t.cargo ?? "-"}:${t.movesLeft}:${t.moves}:${t.score}:${t.yield}`;
+        : `${t.kind}:${t.cargo ?? "-"}:${t.movesLeft}:${t.moves}:${t.score}:${t.yield}:${t.busy ? 1 : 0}`;
     if (sig === lastTuningSig) return;
     lastTuningSig = sig;
     if (t === undefined) {
       // Not the new loop: no plate, board exactly as it always was.
+      liveTuning = null;
+      abandonConfirmUntil = 0;
+      abandonConfirmScore = -1;
+      tpAbandon.textContent = "Abandon — default yield";
       tuningPlate.classList.add("hidden");
       tuningPlate.classList.remove("idle");
       qp.classList.remove("tuning-idle");
@@ -2859,6 +2927,10 @@ export function createOriginalUi(
     tpHead.classList.toggle("hidden", !live);
     tpRow.classList.toggle("hidden", !live);
     if (!live) {
+      liveTuning = null;
+      abandonConfirmUntil = 0;
+      abandonConfirmScore = -1;
+      tpAbandon.textContent = "Abandon — default yield";
       // L6 (#220): between sessions the plate carries the difficulty's answer.
       // The re-match key appears when the game says a Depot owes one; Easy's
       // rules never say it, so Easy keeps the shipped line verbatim (and
@@ -2884,20 +2956,43 @@ export function createOriginalUi(
     tpTitle.textContent = town
       ? "🏙️ Tuning the City"
       : t.cargo ? `Tuning ${CARGO[t.cargo].icon} ${CARGO[t.cargo].name} Depot` : "Tuning";
+    // Keep the live session for the abandon confirm gate above.
+    liveTuning = t;
     tpMoves.textContent = `${t.movesLeft}/${t.moves} moves`;
     tpScore.innerHTML = `Score <b>${t.score}</b>`;
     tpYield.innerHTML = town
       ? `Base rate <b>+${Math.round(t.yield * 100)}%</b>`
       : `Yield <b>×${fmtYield(t.yield)}</b>`;
-    tpFinish.disabled = t.movesLeft === 0;
-    tpFinish.title = town
-      ? `Close the session — every connected Depot then earns +${Math.round(t.yield * 100)}% base rate`
-        + ` (abandoning refunds the upgrade)`
-      : `Close the session — this Depot then ticks at ×${fmtYield(t.yield)}`
-        + ` (abandoning pays ×${fmtYield(t.abandonYield)})`;
-    tpAbandon.title = town
-      ? "Close without playing it out — the upgrade is refunded and the city is unchanged"
-      : "Close without playing it out — the Depot keeps the default yield";
+    // #301: Finish is enabled when moves are 0 — it is the ONLY highlighted
+    // action then. It is disabled only while the board is animating.
+    const busy = !!t.busy;
+    tpFinish.disabled = busy;
+    tpAbandon.disabled = busy;
+    tpFinish.classList.toggle("primary", t.movesLeft === 0);
+    tpFinish.title = busy
+      ? "Board animating — wait for the cascade to settle"
+      : town
+        ? `Close the session — every connected Depot then earns +${Math.round(t.yield * 100)}% base rate`
+          + ` (abandoning refunds the upgrade)`
+        : `Close the session — this Depot then ticks at ×${fmtYield(t.yield)}`
+          + ` (abandoning pays ×${fmtYield(t.abandonYield)})`;
+    tpAbandon.title = busy
+      ? "Board animating — wait for the cascade to settle"
+      : town
+        ? "Abandon — close without playing it out. The upgrade is refunded and the city is unchanged"
+        : `Abandon — close without playing it out. The Depot keeps the default yield ×${fmtYield(t.abandonYield)}`;
+    // #301: keep abandon label honest — if confirm window expired or score is 0,
+    // show the default label, not a stale "Confirm abandon?" from a previous score.
+    const now = Date.now();
+    if (t.score === 0 || abandonConfirmScore !== t.score || abandonConfirmUntil < now) {
+      if (abandonConfirmUntil !== 0 || tpAbandon.textContent?.startsWith("Confirm")) {
+        tpAbandon.textContent = "Abandon — default yield";
+      }
+      if (abandonConfirmUntil < now) {
+        abandonConfirmUntil = 0;
+        abandonConfirmScore = -1;
+      }
+    }
   }
 
   const costSig = (cost: Partial<Record<Cargo, number>>) =>

@@ -6895,6 +6895,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
               abandonYield: tuning.kind === "town"
                 ? TUNING_ABANDON_YIELD
                 : abandonYieldFor(difficultyRules()),
+              // #301: whether the board is mid-cascade — Finish is disabled
+              // only while this is true, not when moves run out.
+              busy: quarry.board.busy,
             }
           : null)
         : undefined,

@@ -1068,6 +1068,17 @@ html, body, #root {
 }
 .tp-finish:hover { color: var(--gold2); border-color: var(--brass); background: rgba(98, 68, 24, .5); }
 .tp-finish:disabled { color: var(--txt-mute); cursor: not-allowed; border-color: var(--line); background: rgba(255, 255, 255, .03); }
+/* #301: when moves are spent, Finish is the primary highlighted action. */
+.tp-finish.primary {
+  color: var(--gold2);
+  border-color: var(--gold);
+  background: linear-gradient(180deg, rgba(98, 68, 24, .7), rgba(40, 26, 10, .9));
+  box-shadow: 0 0 0 1px rgba(242, 220, 166, .18), inset 0 1px 0 rgba(242, 220, 166, .18);
+}
+.tp-finish.primary:hover {
+  border-color: var(--gold2);
+  background: linear-gradient(180deg, rgba(120, 84, 30, .8), rgba(50, 32, 12, .92));
+}
 .tp-abandon {
   padding: 3px 8px; cursor: pointer; line-height: 1;
   font-size: 11px; color: var(--txt-mute);
@@ -1075,6 +1086,7 @@ html, body, #root {
   transition: color .15s, border-color .15s, background .15s;
 }
 .tp-abandon:hover { color: var(--danger2); border-color: rgba(226, 112, 79, .6); background: rgba(120, 40, 26, .5); }
+.tp-abandon:disabled { color: var(--txt-mute); cursor: not-allowed; border-color: var(--line); background: rgba(255, 255, 255, .03); opacity: .6; }
 .tp-idle {
   display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
   font-size: 10.5px; line-height: 1.45; color: var(--txt-mute);
