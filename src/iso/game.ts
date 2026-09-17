@@ -721,13 +721,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // having on the map at all. Order matters: a highway tile a town already
   // paved is skipped, so the town keeps its neutral ring.
   seedPublicRoads(track, grid);
-  // L17 (#245): a new-loop game opens with FOUR VILLAGES — small homes, dirt
-  // streets, no sidewalks, lamps, plazas or tall buildings. The seed-derived
-  // map never carries tiers (`Town.level` stays absent = legacy), so this is
-  // the same kind of boot stamp `seedTownRoads` is: a new-loop game assigns
-  // tier 0 and grows the towns as upgrades confirm; the shipped loop, the
-  // rooms and the story never touch `level`, and their towns keep today's
-  // look exactly (the ticket's "flag off: towns look as they do now").
+  // L17 (#245): a new-loop game opens with FOUR VILLAGES — small homes and
+  // simple footprints, while their streets are already paved with sidewalks,
+  // lamps and block ground. The seed-derived map never carries tiers
+  // (`Town.level` stays absent = legacy), so this is the same kind of boot
+  // stamp `seedTownRoads` is: a new-loop game assigns tier 0 and grows the
+  // towns as upgrades confirm; the shipped loop, the rooms and the story
+  // never touch `level`, and their towns keep today's streetscape.
   // A loaded save overwrites these below (`applySave` restores `towns`).
   if (newLoop) seedTownLevels(grid, 0);
   const score: ScoreState = createScoreState();

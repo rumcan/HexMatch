@@ -803,8 +803,8 @@ export function townHouseSprite(tx: number, ty: number): string {
 /**
  * The tiers a town VISUALLY grows through under the new loop:
  *
- *   0  village   — small 1×1 homes around the church, dirt streets, no
- *                  sidewalks, lamps or paved yards;
+ *   0  village   — small 1×1 homes around the church; streets remain paved
+ *                  with sidewalks, lamps and paved yards;
  *   1  town      — the full building mix of today's towns, and the centre
  *                  becomes the bank (this is what you click to upgrade);
  *   2  city      — the footprint grows one block-ring outward;
