@@ -2,12 +2,10 @@
 // No tokens, no bank, no blessings, no board sabotage. The loop is:
 // build road/rail to city/depot, match-3 when building depot sets yield,
 // resources tick via yield×distance×road/rail, spend on depot tree + city upgrades.
-import { BOARD_H, BOARD_W } from "../game/config";
 import {
-  CARGO, CARGOES, TRANSPORT, VICTORY, TUNING, type Cargo,
+  CARGO, CARGOES, TRANSPORT, VICTORY, TUNING,
 } from "./config";
 import { DEPOT_COST, costCompact, costLabel } from "./construction";
-import { PLANT_COST } from "./plants";
 import { fmtVp } from "./victory";
 import { coarsePointer } from "./touch";
 import { sfx } from "../audio/sfx";
@@ -42,7 +40,7 @@ export function setTutorialDismissed(
   } catch { }
 }
 
-export interface BoardCell { cargo: Cargo | null; hit?: boolean }
+export interface BoardCell { cargo: import("./config").Cargo | null; hit?: boolean }
 export interface TutorialFigureChain { kind: "chain"; nodes: { icon: string; label: string }[]; caption: string }
 export interface TutorialFigureShot { kind: "shot"; src: string; alt: string; caption: string }
 export interface TutorialFigureBoard { kind: "board"; cells: BoardCell[][]; caption: string }
@@ -68,8 +66,7 @@ export interface TutorialContext {
 export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
   const coarse = coarsePointer();
   const dirt = costCompact(TRANSPORT.dirt.cost);
-  const road = costCompact(TRANSPORT.road.cost);
-  const plant = costCompact(PLANT_COST);
+
   const star = (n: number) => `${fmtVp(n)}★`;
   const allowance = ctx.freeTrack > 0
     ? `, and your setup allowance pays for the first ${ctx.freeTrack} of them`
@@ -244,9 +241,13 @@ export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
   ];
 }
 
+export type TutorialCloseReason = "finished" | "dismissed" | "never";
+export type TutorialResult = { reason: TutorialCloseReason };
 export interface TutorialHandle {
   el: HTMLElement;
-  close: () => void;
+  promise: Promise<TutorialResult>;
+  close: (reason?: TutorialCloseReason) => void;
+  destroy: () => void;
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text?: string): HTMLElementTagNameMap[K] {
@@ -345,23 +346,27 @@ export function showTutorial(
     next.textContent = idx === steps.length - 1 ? "Start Production →" : "Next →";
   };
 
-  const close = () => {
+  let resolve!: (r: TutorialResult) => void;
+  const promise = new Promise<TutorialResult>((res) => { resolve = res; });
+  const close = (reason: TutorialCloseReason = "dismissed") => {
     overlay.remove();
     opts.onClose?.();
     sfx.play("close");
+    resolve({ reason });
   };
+  const destroy = () => close("dismissed");
 
   prev.onclick = () => { if (idx > 0) { idx--; render(); sfx.play("open"); } };
   next.onclick = () => {
     if (idx < steps.length - 1) { idx++; render(); sfx.play("open"); }
-    else close();
+    else close("finished");
   };
-  closeBtn.onclick = close;
-  never.onclick = () => { setTutorialDismissed(true); close(); };
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  closeBtn.onclick = () => close();
+  never.onclick = () => { setTutorialDismissed(true); close("never"); };
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close("dismissed"); });
 
   render();
   root.appendChild(overlay);
   sfx.play("open");
-  return { el: overlay, close };
+  return { el: overlay, promise, close, destroy };
 }

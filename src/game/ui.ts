@@ -34,7 +34,7 @@ import { type CargoBag } from "../iso/purse";
 // constant and the engine's own `VP_TARGET` were two numbers with one name,
 // and the HUD was already showing "/10" while the game was winning at 12 — the
 // scoreboard now has exactly one source, `VICTORY` in src/iso/config.ts.
-import { CARGO, CARGOES, TRANSPORT, VICTORY, UPGRADE_COST, type Cargo, type Portrait } from "../iso/config";
+import { CARGO, CARGOES, TRANSPORT, VICTORY, TUNING, type Cargo, type Portrait } from "../iso/config";
 import { DEPOT_COST } from "../iso/construction";
 import { PLANT_COST } from "../iso/plants";
 import { GEM_TO_CARGO } from "../iso/quarry";
