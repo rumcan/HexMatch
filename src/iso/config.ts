@@ -338,16 +338,22 @@ export const DEPOT_TREE_ORDER: Cargo[] = ["grain", "wood", "stone", "ore", "oil"
  * L5 (#219) — THE CITY (town) UPGRADE table.
  *
  * The tree buys new *sources*; this buys throughput on the ones you already
- * have. One tier ships in the MVP, as the ticket's scope says, but it is a
- * table: `TOWN_UPGRADES[level]` is the cost of the next level and the
- * base-rate bonus a perfect session on it is worth, so later tickets add rows
- * without touching a reader.
+ * have. `TOWN_UPGRADES[level]` is the cost of the next level and the base-rate
+ * bonus a perfect session on it is worth.
+ *
+ * L17 (#245): THREE rows now, one per growth step of the town on the map —
+ * every row is worth the same +50% ceiling (the owner's "each upgrade adds
+ * 50% to yields, stacking per upgrade"). The tuning session still scales how
+ * much of that ceiling lands (`townBonusFor`, tuning.ts — "the session result
+ * can set the upgrade's strength", clamped per difficulty by L6): what changed
+ * is the ceiling per row, not the curve that reads it. The seat's `townLevel`
+ * is also the town's VISUAL growth: level 0 is a village, the first upgrade
+ * makes it a town (the centre becomes the bank), the later upgrades grow its
+ * footprint (see `Town.level` in grid.ts).
  *
  * The bonus is a multiplier on `BASE_RATE` for EVERY connected depot the seat
- * owns (the clock in `economyTick`): ×1.60 at level 1 on a full session, and
- * the session's score decides how much of it you actually get
- * (`townBonusFor`, tuning.ts — "the session result can set the upgrade's
- * strength", clamped later per difficulty by L6).
+ * owns (the clock in `economyTick`), and the session's score decides how much
+ * of it you actually get (`townBonusFor`, tuning.ts).
  *
  * L16 (#231): a row also carries the STORAGE it adds. Every resource has a
  * per-seat cap (`STORAGE_CAP_BASE` below, plus every bought row's `storage`),
@@ -374,7 +380,16 @@ export const TOWN_UPGRADES: TownUpgradeDef[] = [
   // L16 (#231): +36 storage takes a seat from 24 to 60 per resource — a
   // network of 3-4 tuned depots can bank a rung-2 mix without wasting ticks,
   // but the opening (one depot, one cargo) genuinely presses against 24.
-  { level: 1, cost: { wood: 6, stone: 4, grain: 4 }, bonus: 0.6, storage: 36 },
+  // L17 (#245): the ceiling is +50% per row (was +60% on the single MVP row),
+  // the owner's "each upgrade adds 50% to the yields, stacking".
+  { level: 1, cost: { wood: 6, stone: 4, grain: 4 }, bonus: 0.5, storage: 36 },
+  // L17 (#245): the second and third growth steps. Each asks for the rung the
+  // seat is presumably working by then (rung 1 for the second, rung 2 for the
+  // third) and keeps the same +50% ceiling, so the table stays a straight
+  // ladder: pay, play the session, bank up to +50% more — and watch the town
+  // on the map take the next step with it.
+  { level: 2, cost: { stone: 8, grain: 8, ore: 6 }, bonus: 0.5, storage: 48 },
+  { level: 3, cost: { ore: 10, oil: 8 }, bonus: 0.5, storage: 60 },
 ];
 
 /**
@@ -776,4 +791,59 @@ export function pickTownVariant(tx: number, ty: number, variants: readonly strin
  *  occasional tall block — no weighting needed. */
 export function townHouseSprite(tx: number, ty: number): string {
   return pickTownVariant(tx, ty, TOWN_HOUSE_VARIANTS);
+}
+
+// ── L17 (#245): town tiers — what a town draws at each growth step ─────────
+/**
+ * The tiers a town VISUALLY grows through under the new loop:
+ *
+ *   0  village   — small 1×1 homes around the church, dirt streets, no
+ *                  sidewalks, lamps or paved yards;
+ *   1  town      — the full building mix of today's towns, and the centre
+ *                  becomes the bank (this is what you click to upgrade);
+ *   2  city      — the footprint grows one block-ring outward;
+ *   3  metropolis — a second ring. `TOWN_VISUAL_MAX` caps the look; the
+ *                  economy (`townLevel`) can climb past it and simply stops
+ *                  growing the map.
+ *
+ * A town with NO level (`Town.level` absent, `TOWN_TIER_LEGACY`) draws exactly
+ * what towns always drew — that is the shipped loop, the rooms and the story
+ * contracts, and every synthetic grid in the tests.
+ */
+export const TOWN_TIER_LEGACY = -1;
+/** The highest tier the map can show (`setTownLevel` clamps to it). */
+export const TOWN_VISUAL_MAX = 3;
+
+/** What each tier is called, in the inspector and the growth toast. */
+export function townTierLabel(tier: number): string {
+  return ["village", "town", "city", "metropolis"][Math.max(0, Math.min(TOWN_VISUAL_MAX, tier))] ?? "village";
+}
+
+/**
+ * L17 (#245): the VILLAGE (tier 0) cells — small single homes only, per the
+ * ticket: `town_cottage_*`, `town_small_house_*`, `town_small_flat_*`,
+ * `town_house_arctic_1x1_5`, `town_house_swiss`, `town_shop_small` and the
+ * fountain. Every one is an authored 1×1 cell, so a village never raises a
+ * tall or multi-tile building however the atlas is asked.
+ *
+ * The pick is the same `tileHash` (`pickTownVariant`) within THIS list, so a
+ * tile only changes art when its town's tier changes — deterministic and
+ * multiplayer-safe, exactly like the full list above.
+ */
+export const TOWN_VILLAGE_VARIANTS = [
+  "town_cottage_arctic_1x1_1", "town_house_arctic_1x1_5", "town_small_house_1x1_1",
+  "town_small_house_arctic_1x1_2", "town_small_flat_1x1_1", "town_small_flat_1x1_2",
+  "town_cottage_old_small_a", "town_cottage_old_small", "town_cottage_old_small_2",
+  "town_shop_small", "town_house_swiss", "town_fountain_1x1",
+] as const;
+
+/**
+ * L17 (#245): the MIDDLE building per tier. A village keeps the church
+ * (`town_center`); from the first upgrade on, the centre is the BANK
+ * (`town_bank`, per the owner's direction) — the same 2×2 block origin, so
+ * the swap is one sprite and nothing else on the map moves. The bank is where
+ * the city upgrade is bought: click it.
+ */
+export function townCentreSprite(tier: number): string {
+  return tier >= 1 ? "town_bank" : "town_center";
 }

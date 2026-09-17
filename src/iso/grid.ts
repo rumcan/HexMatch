@@ -14,7 +14,8 @@
 import { fillCoastalHoles } from "./coastline";
 import {
   MAP_W, MAP_H, mulberry32, INDUSTRIES, INDUSTRY_QUOTA, INDUSTRY_BY_KEY, FACTORY_FOOTPRINT,
-  TOWN_HOUSE_VARIANTS, pickTownVariant,
+  TOWN_HOUSE_VARIANTS, TOWN_VILLAGE_VARIANTS, TOWN_TIER_LEGACY, TOWN_VISUAL_MAX,
+  townCentreSprite, pickTownVariant,
 } from "./config";
 
 export const GRASS = 0;
@@ -49,14 +50,33 @@ export interface Town {
   tx: number;             // center tile
   ty: number;
   houses: [number, number][];  // list of house tile positions
-  /** PP-10: the town's simple ring road — the perimeter of the house
-   *  bounding box expanded by one tile, kept on free land only. The tiles
-   *  are stamped TOWN_OCC in `occupancy` (a town's roads belong to the
-   *  town, exactly like its houses: nobody may build on them), and the game
-   *  copies them onto the track layer at boot (`seedTownRoads` in track.ts).
-   *  A pure function of the houses plus the terrain/occupancy at placement
-   *  time, so the map stays deterministic under the seed. */
+  /**
+   * PP-10: the town's simple ring road — the perimeter of the house
+   * bounding box expanded by one tile, kept on free land only. The tiles
+   * are stamped TOWN_OCC in `occupancy` (a town's roads belong to the
+   * town, exactly like its houses: nobody may build on them), and the game
+   * copies them onto the track layer at boot (`seedTownRoads` in track.ts).
+   * A pure function of the houses plus the terrain/occupancy at placement
+   * time, so the map stays deterministic under the seed. */
   roads: [number, number][];
+  /**
+   * L17 (#245): the town's VISUAL tier — how far it has grown on the map.
+   *
+   * 0 is a village, 1 a town (the centre becomes the bank), 2+ grows the
+   * footprint (`TOWN_VISUAL_MAX` caps the look). It is DISPLAY state only:
+   * nothing in placement, catchments, routing or the economy reads it (that
+   * is the ticket's "no gameplay rule changes with town tier", pinned by the
+   * L17 unit test), so the grown art must never claim tiles.
+   *
+   * Absent means LEGACY (`TOWN_TIER_LEGACY`): draw exactly what towns always
+   * drew. `generateMap` never sets it — the map stays a pure function of the
+   * seed, byte-identical for every client — and the game assigns it where
+   * track bytes are stamped at boot (`seedTownRoads`' pattern): 0 under the
+   * new loop, the seat's `townLevel` as upgrades confirm, the save's `towns`
+   * on a restore. The shipped loop, the rooms and the story never touch it,
+   * so their towns keep today's look unchanged.
+   */
+  level?: number;
 }
 
 export interface Grid {
@@ -810,6 +830,129 @@ export function townLayout(
 /** TOWN-GRID: one piece of town art and the tile its footprint starts on. */
 export interface TownBuilding { sprite: string; tx: number; ty: number }
 
+// ── L17 (#245): town tiers ───────────────────────────────────────────────────
+/** Bumped every time a town's tier changes, so derived caches can version. */
+let townTierRev = 1;
+
+/** The revision `townVillageBytes`' cache is keyed on. */
+export const townTierRevision = (): number => townTierRev;
+
+/** The town's visual tier; absent = `TOWN_TIER_LEGACY` (today's look). */
+export const townTier = (t: Town): number => t.level ?? TOWN_TIER_LEGACY;
+
+/**
+ * L17 (#245): set a town's visual tier (clamped to 0…`TOWN_VISUAL_MAX`).
+ * Returns false (and changes nothing) when the tier is unchanged — the caller
+ * then skips the whole growth dance (world sync, cache invalidation, FX).
+ */
+export function setTownLevel(t: Town, level: number): boolean {
+  const v = Math.max(0, Math.min(TOWN_VISUAL_MAX, Math.floor(level)));
+  if (!Number.isFinite(v) || townTier(t) === v) return false;
+  t.level = v;
+  townTierRev++;
+  return true;
+}
+
+/**
+ * L17 (#245): every town starts at `level` (the new loop seeds 0 — villages).
+ * The `seedTownRoads` pattern: the map stays seed-derived and legacy; the game
+ * stamps the boot-time visual state where it stamps the boot-time track.
+ */
+export function seedTownLevels(grid: Grid, level = 0): void {
+  for (const t of grid.towns) setTownLevel(t, level);
+}
+
+/**
+ * L17 (#245): one byte per tile — 1 where the tile belongs to a VILLAGE
+ * (tier 0). This is the ONE question the road painter asks about tiers:
+ * a village's streets draw as dirt, with no sidewalks, no lamps and no paved
+ * block ground, while every other tier — legacy included — draws today's town.
+ *
+ * Cached per grid against `townTierRevision`, exactly like `townGroundBytes`:
+ * a tier change is a rare, explicit event (`setTownLevel` bumps the revision),
+ * so the cache rebuilds only then and never per frame.
+ */
+const townVillageCache = new WeakMap<Grid, { rev: number; bytes: Uint8Array | null }>();
+
+export function townVillageBytes(grid: Grid): Uint8Array | null {
+  const hit = townVillageCache.get(grid);
+  if (hit && hit.rev === townTierRev) return hit.bytes;
+  let bytes: Uint8Array | null = null;
+  if (grid.towns.length) {
+    bytes = new Uint8Array(grid.w * grid.h);
+    for (const town of grid.towns) {
+      if (townTier(town) !== 0) continue;
+      for (const [tx, ty] of town.houses) {
+        if (tx >= 0 && ty >= 0 && tx < grid.w && ty < grid.h) bytes[ty * grid.w + tx] = 1;
+      }
+      if (town.tx >= 0 && town.ty >= 0 && town.tx < grid.w && town.ty < grid.h) {
+        bytes[town.ty * grid.w + town.tx] = 1;
+      }
+      for (const [tx, ty] of town.roads ?? []) {
+        if (tx >= 0 && ty >= 0 && tx < grid.w && ty < grid.h) bytes[ty * grid.w + tx] = 1;
+      }
+    }
+  }
+  townVillageCache.set(grid, { rev: townTierRev, bytes });
+  return bytes;
+}
+
+/** L17 (#245): how many block-rings a tier's footprint grows, from tier 2 up. */
+export const townGrownRings = (tier: number): number =>
+  Math.max(0, Math.min(TOWN_VISUAL_MAX, tier) - 1);
+
+/**
+ * L17 (#245): the GROWN RING — the house tiles a town's bigger footprint adds,
+ * `rings` block-rings (TOWN_BLOCK each) beyond its built extent.
+ *
+ * DELIBERATELY VISUAL ONLY. The tiles are NOT stamped `TOWN_OCC`, are NOT
+ * added to `houses` and never reach placement, catchments, routing or the
+ * economy — that is the ticket's "no gameplay rule changes with town tier".
+ * They are also not stored: the ring is derived on demand from the town plus
+ * the live occupancy, so a tile the player has already built on (or that
+ * carries road, or sank into the sea) is simply skipped, and a later
+ * demolition shows the grown street healing over it. Deterministic for a
+ * given map state, which is all the art needs.
+ *
+ * `blocked` is the caller's "a building stands here" test (the track bytes and
+ * the harvester/factory/rail footprints live outside the grid); the grid's own
+ * answers — bounds, water, occupancy, the town's own tiles, the inter-town
+ * highway — are checked here.
+ */
+export function grownTownHouses(
+  t: Town, grid: Grid, rings: number,
+  blocked?: (tx: number, ty: number) => boolean,
+): [number, number][] {
+  if (rings <= 0 || !grid.towns.includes(t)) return [];
+  const own = new Set<number>();
+  let extent = 0;
+  const note = (tx: number, ty: number) => {
+    own.add(idx(tx, ty));
+    extent = Math.max(extent, Math.abs(tx - t.tx), Math.abs(ty - t.ty));
+  };
+  note(t.tx, t.ty);
+  for (const [hx, hy] of t.houses) note(hx, hy);
+  for (const [rx, ry] of t.roads ?? []) note(rx, ry);
+
+  // The inter-town highway is free land the town must not build over.
+  const highway = new Set<number>();
+  for (const [px, py] of grid.publicRoads ?? []) highway.add(idx(px, py));
+
+  const maxR = extent + rings * TOWN_BLOCK;
+  const out: [number, number][] = [];
+  for (let ty = t.ty - maxR; ty <= t.ty + maxR; ty++) {
+    for (let tx = t.tx - maxR; tx <= t.tx + maxR; tx++) {
+      if (!inBounds(tx, ty)) continue;
+      const i = idx(tx, ty);
+      if (own.has(i) || highway.has(i)) continue;
+      if (grid.terrain[i] === WATER || grid.occupancy[i] !== -1) continue;
+      if (blocked?.(tx, ty)) continue;
+      out.push([tx, ty]);
+    }
+  }
+  return out;
+}
+
 /**
  * TOWN-GRID: the town's DRAW ITEMS — art placed on whole house BLOCKS, never
  * one item per tile.
@@ -846,21 +989,59 @@ export interface TownBuilding { sprite: string; tx: number; ty: number }
  * layers load every town cell is 1×1 in the monolith manifest and this
  * degrades to the per-tile layout the sheet art expects.
  *
- * Deterministic: a pure function of the town, so the same settlement always
- * draws the same buildings.
+ * L17 (#245): `opts.tier` grows the town.
+ *
+ *   • LEGACY (absent, `TOWN_TIER_LEGACY`) — today's look, byte for byte: the
+ *     church in the middle, the full variant list, every call shape this
+ *     function ever had keeps its output. Every test and reader that does not
+ *     know about tiers gets exactly what it always got.
+ *   • VILLAGE (0) — the same block algorithm, but the pick runs inside
+ *     `TOWN_VILLAGE_VARIANTS` (small 1×1 homes only) and no multi-tile block
+ *     art is placed except the centre itself: the church stays.
+ *   • TOWN and up (1+) — the full list again, and the centre is the bank
+ *     (`townCentreSprite`), the building the city upgrade is bought from.
+ *   • CITY and up (2+) — `grownTownHouses` adds the ring beyond the town's
+ *     built extent; the ring tiles draw as single houses from the full 1×1
+ *     list. VISUAL ONLY — the ring never claims tiles.
+ *
+ * Deterministic: a pure function of the town, the options and the atlas, so
+ * the same settlement always draws the same buildings.
  */
+export interface TownBuildingsOptions {
+  /** The visual tier; absent = `TOWN_TIER_LEGACY` (today's look). */
+  tier?: number;
+  /** The map, for the grown ring's occupancy and terrain reads (tier 2+). */
+  grid?: Grid;
+  /** The grown ring skips these tiles too (player-built ground). */
+  blocked?: (tx: number, ty: number) => boolean;
+}
+
 export function townBuildings(
   t: Town,
   footprintOf: (sprite: string) => [number, number],
+  opts: TownBuildingsOptions = {},
 ): TownBuilding[] {
+  const tier = opts.tier ?? TOWN_TIER_LEGACY;
+  const village = tier === 0;
   const BLOCK = TOWN_BLOCK - 1;                 // tiles per block, per axis
-  const singles = TOWN_HOUSE_VARIANTS.filter((v) => {
+  const full = TOWN_HOUSE_VARIANTS.filter((v) => {
     const [fw, fh] = footprintOf(v);
     return fw === 1 && fh === 1;
   });
   // Nothing 1×1 authored at all (the sheet-art path has no footprints > 1):
   // fall back to the whole list rather than drawing an empty town.
-  const tileArt: readonly string[] = singles.length ? singles : TOWN_HOUSE_VARIANTS;
+  const tileArt: readonly string[] = full.length ? full : TOWN_HOUSE_VARIANTS;
+  // The village's small homes: the ticket's list, filtered to 1×1 like every
+  // other pick, so re-arting a cottage wide can never smuggle it into a
+  // single tile. A village never draws anything else.
+  const villageArt: readonly string[] =
+    TOWN_VILLAGE_VARIANTS.filter((v) => {
+      const [fw, fh] = footprintOf(v);
+      return fw === 1 && fh === 1;
+    });
+  const houseArt: readonly string[] = village
+    ? (villageArt.length ? villageArt : tileArt)
+    : tileArt;
 
   const houses = new Set<number>();
   for (const [hx, hy] of t.houses) houses.add(idx(hx, hy));
@@ -879,10 +1060,11 @@ export function townBuildings(
     for (const [x, y] of span(ox, oy, fw, fh)) used.add(idx(x, y));
   };
 
-  // The church, on the centre block. The grid phase is anchored on the centre
-  // (`townLayout`), so (tx, ty) is always a block ORIGIN and the 2×2 church
-  // lands on the block, not across the crossroads next to it.
-  place("town_center", t.tx, t.ty);
+  // The centre building — the village church, then the bank (L17). The grid
+  // phase is anchored on the centre (`townLayout`), so (tx, ty) is always a
+  // block ORIGIN and the 2×2 centre lands on the block, not across the
+  // crossroads next to it.
+  place(townCentreSprite(tier), t.tx, t.ty);
 
   // The blocks the houses fall in. Block origins share the centre's phase, so
   // flooring the offset by TOWN_BLOCK gives the origin for negative offsets
@@ -898,9 +1080,11 @@ export function townBuildings(
   const origins = [...blocks.values()].sort((a, b) => (a[1] - b[1]) || (a[0] - b[0]));
 
   for (const [ox, oy] of origins) {
-    const pick = pickTownVariant(ox, oy, TOWN_HOUSE_VARIANTS);
+    // A village blocks whole-block art: only the centre is multi-tile.
+    const pick = pickTownVariant(ox, oy, houseArt);
     const [fw, fh] = footprintOf(pick);
-    const wholeBlock = (fw > 1 || fh > 1)
+    const wholeBlock = !village
+      && (fw > 1 || fh > 1)
       && fw <= BLOCK && fh <= BLOCK
       && span(ox, oy, fw, fh).every(([x, y]) => houses.has(idx(x, y)) && !used.has(idx(x, y)));
     if (wholeBlock) { place(pick, ox, oy); continue; }
@@ -908,6 +1092,20 @@ export function townBuildings(
     for (const [x, y] of span(ox, oy, BLOCK, BLOCK)) {
       const i = idx(x, y);
       if (!houses.has(i) || used.has(i)) continue;
+      place(pickTownVariant(x, y, houseArt), x, y);
+    }
+  }
+
+  // The grown ring (tier 2+): the new districts beyond the old street plan.
+  // Laid last, so a ring tile can never steal art from the original blocks,
+  // and always as singles — the ring's depth is whole blocks, but it borders
+  // the old streets and the town's clipped edges, so per-tile placement keeps
+  // the "no art on a tile that is not this town's" guarantee for free.
+  if (tier >= 2 && opts.grid) {
+    const rings = townGrownRings(tier);
+    for (const [x, y] of grownTownHouses(t, opts.grid, rings, opts.blocked)) {
+      const i = idx(x, y);
+      if (used.has(i)) continue;
       place(pickTownVariant(x, y, tileArt), x, y);
     }
   }
