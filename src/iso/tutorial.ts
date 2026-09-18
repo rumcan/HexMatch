@@ -228,7 +228,12 @@ export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
         kind: "shot",
         src: shotDesk,
         alt: "Black Market, Feed, and inspector",
-        caption: "Right column: Processing Plant and Feed tabs — the board comes up in the plant one while a Depot is being tuned.",
+        // #299: on the new loop the plant is no longer a tab — the session
+        // owns its own window over the map, and the rail keeps Bank, Feed
+        // and the plant's idle card. The retired loop keeps the old strip.
+        caption: ctx.newLoop === false
+          ? "Right column: Processing Plant and Feed tabs — the board comes up in the plant one while a Depot is being tuned."
+          : "Right column: Bank and Feed tabs over the plant's idle card — while a Depot is being tuned, the board comes up in its own session window over the map.",
       },
       points: [
         "<b>Gold</b> 🪙 is earned from gold-mine access or combos. It buys Black Market sabotage only — never construction.",
