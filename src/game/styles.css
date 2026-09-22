@@ -5157,3 +5157,9 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .depot-card-row { margin: 6px 0 8px; font-size: 13px; }
 .depot-card-acts { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .depot-card-acts .post-btn small { display: block; opacity: .8; font-size: 10.5px; }
+
+/* Owner call (2026-09): the in-game banter (the rival wire — the rival's lines
+   and your replies) is HIDDEN for now: it was covering the tuning plate and
+   the HUD. The speech still runs and is logged to the Feed; only the bubble
+   is gone. Delete this rule to bring it back. */
+#iso-rival-quip { display: none !important; }
