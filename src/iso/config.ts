@@ -341,8 +341,8 @@ export const BATTLE_RULES: BattleRules = {
   extraTurnOnCascade: 2,
   turnLimit: 20,
   turnMs: 30000,
-  challengeGold: 4,
-  declineGold: 3,
+  challengeGold: 12,   // ×3 (2026-09)
+  declineGold: 9,
   challengeIndustryCooldownMs: 180_000,
   challengePlayerCooldownMs: 90_000,
 };
@@ -497,7 +497,7 @@ export interface DepotTypeDef {
  * kept as the record of what it cost then).
  */
 export const DEPOT_RUNG_GATE = false;
-const DEPOT_FLAT_COST = (): Partial<Record<Cargo, number>> => ({ grain: 1, wood: 1, stone: 1, ore: 1, oil: 1 });
+const DEPOT_FLAT_COST = (): Partial<Record<Cargo, number>> => ({ grain: 3, wood: 3, stone: 3, ore: 3, oil: 3 });
 
 export const DEPOT_TREE: Record<Cargo, DepotTypeDef> = {
   // Rung 0 — the two cargos `START_PURSE` can always turn into a network. Both
@@ -573,7 +573,7 @@ export const TOWN_UPGRADES: TownUpgradeDef[] = [
   // but the opening (one depot, one cargo) genuinely presses against 24.
   // L17 (#245): the ceiling is +50% (was +60% on the single MVP row), the
   // owner's "each upgrade adds 50% to the yields, stacking".
-  { level: 1, cost: { wood: 6, stone: 4, grain: 4 }, bonus: 0.5, storage: 36 },
+  { level: 1, cost: { wood: 18, stone: 12, grain: 12 }, bonus: 0.5, storage: 36 },   // ×3 (2026-09)
   // L17 (#245): the second and third growth steps. Each asks for the rung the
   // seat is presumably working by then (rung 1 for the second, rung 2 for the
   // third). The `bonus` column is the CUMULATIVE ceiling the seat plays
@@ -582,8 +582,8 @@ export const TOWN_UPGRADES: TownUpgradeDef[] = [
   // so "each upgrade adds 50%" means each row's ceiling is +50% × its level.
   // Pay, play the session, bank up to half again as much — and watch the
   // town on the map take the next step with it.
-  { level: 2, cost: { stone: 8, grain: 8, ore: 6 }, bonus: 1.0, storage: 48 },
-  { level: 3, cost: { ore: 10, oil: 8 }, bonus: 1.5, storage: 60 },
+  { level: 2, cost: { stone: 24, grain: 24, ore: 18 }, bonus: 1.0, storage: 48 },
+  { level: 3, cost: { ore: 30, oil: 24 }, bonus: 1.5, storage: 60 },
 ];
 
 /**
@@ -771,15 +771,16 @@ export const BUILD_COSTS: Readonly<Record<
   // TIME — a lorry crawls on gravel and runs four times quicker on tarmac
   // (`TRUCK_ROAD_MULT` in vehicles.ts), so paving is the upgrade you pay for.
   dirt: {},
-  road: { wood: 1, stone: 1, ore: 4 },
-  upgrade: { ore: 4 },
+  // Owner balancing pass (2026-09): every price in the game ×3. Dirt stays free.
+  road: { wood: 3, stone: 3, ore: 12 },
+  upgrade: { ore: 12 },
   // One of every cargo but gold — about half a processing plant (owner, 2026-09).
-  depot: { grain: 1, wood: 1, stone: 1, ore: 1, oil: 1 },
-  plant: { wood: 2, stone: 2, grain: 2, ore: 3 },
-  rail: { stone: 1 },
-  platform: { wood: 4, stone: 4, ore: 12, oil: 2 },
-  trainDepot: { wood: 3, stone: 3, ore: 4, oil: 2 },
-  train: { ore: 4, oil: 2 },
+  depot: { grain: 3, wood: 3, stone: 3, ore: 3, oil: 3 },
+  plant: { wood: 6, stone: 6, grain: 6, ore: 9 },
+  rail: { stone: 3 },
+  platform: { wood: 12, stone: 12, ore: 36, oil: 6 },
+  trainDepot: { wood: 9, stone: 9, ore: 12, oil: 6 },
+  train: { ore: 12, oil: 6 },
 };
 
 // ── VP-01: the victory table ──────────────────────────────────────────────
@@ -871,11 +872,21 @@ export const VICTORY = {
   // VP-01 test, the host settings range (#186) and ranked play keep racing the
   // number they always did — this ticket's MVP scope is the solo new loop.
   // ────────────────────────────────────────────────────────────────────────
+  // Owner balancing pass (2026-09) — the table the owner plays:
+  //   type   1★ per DEPOT running (connected and producing) — every Depot,
+  //          not one per cargo. Revocable: cut its road and it stops paying.
+  //   route  1★ per Depot whose route to your plant is FULLY PAVED Road.
+  //          Revocable too (demolish a paved tile and the route stops paying).
+  //   city   1★ per city upgrade tier (unchanged).
+  //   rung   0 — the depot tree's rung gate is off, so rungs pay nothing.
+  // Railways are out of the game, so platforms pay nothing on this loop.
   loop: {
-    /** ★ per distinct cargo the seat has a connected, producing Depot for. */
-    type: 2,
-    /** ★ per rung of the depot tree unlocked (L5 `depotTier`). */
-    rung: 1,
+    /** ★ per Depot running (connected, producing) — owner call, 2026-09. */
+    type: 1,
+    /** ★ per Depot whose route to the plant is fully paved (2026-09). */
+    route: 1,
+    /** ★ per rung of the depot tree unlocked — retired (0) with the gate. */
+    rung: 0,
     /** ★ per city upgrade tier bought and confirmed (L5 `townLevel`).
      *  #297: 1★ per tier (was 2★). Three tiers at 1★ = 3★, a quarter of the
      *  12★ line — no single source carries most of the win condition. */
