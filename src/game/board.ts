@@ -95,6 +95,30 @@ export type FxType = "pop" | "crack" | "up" | "boom" | "bad" | "chain" | "combo"
 export type CrossKind = "holy" | "broken";
 
 /**
+ * B1 (#246) — one resolved pass, seen by the battle engine.
+ *
+ * The board reports WHAT left the grid this pass, per colour, and how big the
+ * shapes were — everything `src/game/battle.ts` needs to pay mana, deal damage
+ * and grant extra turns without re-deriving the cascade. The solo game never
+ * sets `onPass`, so nothing about it changes there.
+ *
+ *   cleared  gems that left the grid (a frosted gem that only CRACKED is not
+ *            cleared; a girder broken beside a match is not either).
+ *   biggest  the longest matched run in the pass (0 on a pure bomb blast).
+ *   shaped   a special shape fired (match-5 / L / holy or broken cross).
+ *   chain    the pass's cascade depth (1 = the swap's own match; a detonation
+ *            reports its blast as 1 and its follow-on settle starts at 2).
+ *   purged   > 0 when a bomb detonated: how many gems its blast swept.
+ */
+export interface PassReport {
+  cleared: Partial<Record<ResKey, number>>;
+  biggest: number;
+  shaped: boolean;
+  chain: number;
+  purged: number;
+}
+
+/**
  * L12 (#227) — the kinds of board reward a score-paying board reports.
  *
  * The board says WHAT happened — it made this shape, banked a combo, cracked
@@ -152,6 +176,16 @@ export class Board {
   grid: (Gem | null)[][] = [];
   seq = 1;
   busy = false;
+  /**
+   * B1 (#246) — animation pacing knob, one per board so headless callers (the
+   * battle engine, bot-vs-bot sims) never sit on a timer. `1` is the shipped
+   * pace — every `BOARD_ANIMATION_MS` wait runs in full and the solo game
+   * behaves exactly as before. `0` collapses every wait to nothing: the board
+   * resolves its cascades on microtasks alone, which is what "headless: no
+   * timers" means for a wrapped battle board. A battle screen that wants the
+   * gems to visibly fall sets it back to 1 on its own board instance.
+   */
+  waitScale = 1;
   /** Queued swaps while animations run — fast play enqueues the next move
    *  instead of refusing it. Capped to avoid runaway, drained in order. */
   private moveQueue: { r1: number; c1: number; r2: number; c2: number; now: number }[] = [];
@@ -233,6 +267,13 @@ export class Board {
    * applied, so the count is exactly what the grid lost.
    */
   onClear: (n: number, chain: number) => void = () => {};
+  /**
+   * B1 (#246) — the per-pass report the battle engine settles turns from
+   * (see `PassReport`). Fired once per resolved pass, after the removals are
+   * applied, and once per bomb blast in `detonate`. A no-op on every board
+   * that has no battle behind it.
+   */
+  onPass: (info: PassReport) => void = () => {};
   /**
    * PP-14: the cross asks the player how to spend its units of blessing — a
    * holy cross pays `HOLY_CROSS_PICKS` and a broken cross `BROKEN_CROSS_PICKS`.
@@ -594,10 +635,17 @@ export class Board {
 
     // apply
     const removedCells: { r: number; c: number }[] = [];
+    // B1 (#246): what this pass actually took off the grid, per colour — the
+    // battle engine's mana bookkeeping. Counted here (not in the group loop
+    // above) so overlapping runs (crosses) cannot double-count one gem.
+    const cleared: Partial<Record<ResKey, number>> = {};
     for (let r = 0; r < this.h; r++) for (let c = 0; c < this.w; c++) {
       const g = this.grid[r][c];
       if (!g) continue;
-      if (removeIds.has(g.id)) { g.dead = true; this.onFx("pop", r, c); this.grid[r][c] = null; removedCells.push({ r, c }); }
+      if (removeIds.has(g.id)) {
+        g.dead = true; this.onFx("pop", r, c); this.grid[r][c] = null; removedCells.push({ r, c });
+        cleared[g.res] = (cleared[g.res] ?? 0) + 1;
+      }
       else if (crackIds.has(g.id)) {
         g.hard = (g.hard - 1) as 0 | 1 | 2;
         this.onFx("crack", r, c);
@@ -686,6 +734,14 @@ export class Board {
     const text = why ? (chain > 1 ? `${why} · ${label}` : why) : label;
     this.onFx(chain > 1 ? "combo" : "chain", mid.r, mid.c, text);
     if (removedCells.length) this.onClear(removedCells.length, chain);
+    // B1 (#246) — the battle engine's per-pass report (see `PassReport`).
+    this.onPass({
+      cleared,
+      biggest: groups.reduce((m, g) => Math.max(m, g.length), 0),
+      shaped: why !== null,
+      chain,
+      purged: 0,
+    });
     return crosses;
   }
 
@@ -752,10 +808,13 @@ export class Board {
     return on;
   }
 
-  /** Every animation pause goes through here so turbo can shorten it. */
+  /** Every animation pause goes through here so turbo can shorten it.
+   *  B1 (#246): `waitScale <= 0` (headless battle boards) skips the timer
+   *  entirely — the wait resolves on the same microtask. */
   private async wait(key: AnimationKey): Promise<void> {
+    if (this.waitScale <= 0) return;
     const on = this.syncTurbo();
-    await sleep(on ? FAST_ANIMATION_MS[key] : BOARD_ANIMATION_MS[key]);
+    await sleep((on ? FAST_ANIMATION_MS[key] : BOARD_ANIMATION_MS[key]) * this.waitScale);
   }
 
   /** Called when the board goes idle: turbo is over whatever the queue says. */
@@ -923,6 +982,10 @@ export class Board {
     } else if (Object.keys(gains).length) {
       this.onPopup(gains, "COLOUR PURGE");
     }
+    // B1 (#246) — the blast itself is the damage event: `purged` tells the
+    // battle engine how many gems the detonation swept (the follow-on settle
+    // reports its own passes, which give mana as usual).
+    this.onPass({ cleared: {}, biggest: 0, shaped: false, chain: 1, purged });
     this.onChange();
     await this.wait("bombClear");
     this.gravity();
@@ -1292,7 +1355,7 @@ export class Board {
     }
     this.onFx("bad", 0, 0);
     this.onChange();
-    await sleep(BOARD_ANIMATION_MS.shuffle);
+    await this.wait("shuffle");
     this.busy = false;
   }
 

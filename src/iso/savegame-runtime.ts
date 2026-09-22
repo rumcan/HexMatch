@@ -50,6 +50,19 @@ export interface SaveGamePayload {
   };
   bandit: Record<number, number>;
   protests?: { x: number; y: number; left: number; owner: string }[];
+  /**
+   * B5 (#250): the map's battle layer — the industries a conquest took
+   * (`industryId → holder harvester id`) and the cooldown clocks as ms LEFT
+   * (the `protests.left` rule). Absent from a pre-B5 save — the loader then
+   * reads an un-fought map, which is exactly what that save was.
+   */
+  battle?: {
+    locks: [number, number][];
+    readyAt: [string, number][];
+    playerReadyAt: [string, number][];
+    rivalDueIn: number;
+    battles: number;
+  };
   track: { dirt: string; road: string; owner: string; upgraded: string };
   rail?: RailWire;
   loop?: boolean;

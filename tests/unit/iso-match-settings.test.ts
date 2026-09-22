@@ -349,9 +349,15 @@ describe("#186 an AI seat is simulated on the host", () => {
 
     // …and then it PLAYS. The turn is the shipped `aiTick`, so a depot or a
     // paved tile appearing under owner 2 is the machine moving, on the host.
+    // The synthetic clock must run on the SAME axis `finishSetup` armed the
+    // throttle with (`performance.now()`): driving `aiTick` with times from
+    // zero leaves every tick behind `lastAi` the moment the worker is more
+    // than a few synthetic seconds old — green in a young worker, a silent
+    // standstill in a full-suite run (the #200 flake family).
+    const t0 = performance.now();
     let acted = false;
     for (let step = 1; step <= 40 && !acted; step++) {
-      host.aiTick(step * 12_000);
+      host.aiTick(t0 + step * 12_000);
       acted = host.harvesters.some((d) => d.ownerId === 2)
         || countOwned(host, 2) > 0;
     }
@@ -374,7 +380,11 @@ describe("#186 an AI seat is simulated on the host", () => {
     const spot = findFactorySpot(host);
     host.placeFactory(spot![0], spot![1]);
     host.finishSetup();
-    for (let step = 1; step <= 20; step++) host.aiTick(step * 12_000);
+    // Same clock discipline as the test above: run on `performance.now()`'s
+    // axis so the ticks actually reach the AI's throttle — this is a negative
+    // assertion that must survive the AI being ABLE to move.
+    const t0 = performance.now();
+    for (let step = 1; step <= 20; step++) host.aiTick(t0 + step * 12_000);
     expect(host.harvesters.some((d) => d.ownerId === 2)).toBe(false);
     expect(countOwned(host, 2)).toBe(0);
   });

@@ -111,8 +111,14 @@ export { readMatchSettings };
  * host would drop the request in silence, so mixed versions must refuse.
  * SNAPSHOT_VERSION does NOT move: the bank keeps no state of its own (it moves
  * the seat's purse, which already rides `players`).
+ * v13 (B6 / #251): the `battle` intent (`do: "challenge" | "accept" |
+ * "decline" | "swap" | "ability"`) — host-authoritative match-3 battles. The
+ * snapshot carries `battle.engine` (seed + move log + full save for rejoin).
+ * A v12 guest cannot send battle intents and a v12 host would drop them in
+ * silence while its guest waits on a battle screen, so mixed versions must
+ * refuse.
  */
-export const PROTOCOL_VERSION = 12;
+export const PROTOCOL_VERSION = 13;
 
 /**
  * Realtime WS frame cap in bytes. Mirrors the SDK's `MAX_BROADCAST_BYTES`
@@ -267,7 +273,7 @@ export interface IntentMsg {
   // L17 (#245): the bank's `action: "bank"` is back (the owner restored the
   // bank at 3:1, hosted at the town's middle building). The rest of the L15
   // sweep stands: no cross, no boards.
-  action: "build" | "demolish" | "harvest" | "skill" | "bank" | "blackMarket" | "vehicle";
+  action: "build" | "demolish" | "harvest" | "skill" | "bank" | "blackMarket" | "vehicle" | "battle";
   payload: unknown;
 }
 

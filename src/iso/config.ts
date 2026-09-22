@@ -265,6 +265,179 @@ export const DIFFICULTY_RULES: Record<DifficultyKey, DifficultyRules> = {
 export const DEFAULT_DIFFICULTY: DifficultyKey = "normal";
 
 // ══════════════════════════════════════════════════════════════════════════
+// Phase 2 — Match-3 Battles (B1 / #246): the rules table.
+//
+// The battle engine (`src/game/battle.ts`) is rules-DRIVEN: it never hard-codes
+// a number. This table is the whole balance surface — B7 tunes it here and
+// nowhere else. Puzzle Quest's shape is the reference: two players take turns
+// on ONE shared board; matching gems charges the turn player's mana in that
+// gem's cargo; damage gems (the board's bombs — "dynamite") hurt the opponent;
+// a big match or a cascade grants an extra turn; first to zero health loses.
+//
+// The engine is deterministic (seeded RNG, move list replayable) so the same
+// seed + the same moves reproduce the same battle — multiplayer and replays
+// depend on it.
+// ══════════════════════════════════════════════════════════════════════════
+export interface BattleRules {
+  /** Both seats open at this much health. First to 0 loses. */
+  startHealth: number;
+  /** Per-cargo mana ceiling — what one colour can bank for abilities (B3). */
+  manaCap: number;
+  /** Mana gained per matched gem of that gem's cargo. */
+  manaPerGem: number;
+  /**
+   * Damage per gem a detonated bomb ("dynamite") sweeps. The bomb is the
+   * battle's damage gem: matching ordinary gems feeds mana, blowing a bomb
+   * feeds damage — `purged × damagePerGem` to the opponent, all at once.
+   */
+  damagePerGem: number;
+  /** A matched run of this length or more grants an extra turn (the "4+"). */
+  extraTurnMinMatch: number;
+  /** A special shape (match-5 / L / T / cross) grants an extra turn. */
+  extraTurnOnShape: boolean;
+  /** A cascade of at least this many passes grants an extra turn (0 = never). */
+  extraTurnOnCascade: number;
+  /**
+   * Hard stop so a battle always ends: after this many resolved swaps in
+   * total, the higher health wins (equal health = a draw — `winner` stays
+   * null and `over` is set).
+   */
+  turnLimit: number;
+  /**
+   * B2 (#247) — the turn timer, in ms. The battle screen shows it as a bar
+   * over the active seat; B6 (#251) makes the HOST enforce it (a timed-out
+   * turn passes).
+   */
+  turnMs: number;
+  /**
+   * B5 (#250) — the challenge bill in Gold: what a fight for a contested
+   * industry costs its caller (sabotage fights are paid by the attacker's
+   * hire, which is spent win or lose).
+   */
+  challengeGold: number;
+  /** B5 — decline: the challenger takes the prize, but pays this on top. */
+  declineGold: number;
+  /** B5 — this long between two challenges OF ONE industry by one player. */
+  challengeIndustryCooldownMs: number;
+  /** B5 — this long between any two challenges BY ONE player. */
+  challengePlayerCooldownMs: number;
+}
+
+/**
+ * The shipped table. Provisional until B7 (#252) tunes it against bot-vs-bot
+ * simulations; the shape (a bomb hurts more than a match helps) is deliberate.
+ */
+export const BATTLE_RULES: BattleRules = {
+  startHealth: 30,
+  manaCap: 12,
+  manaPerGem: 1,
+  damagePerGem: 1,
+  extraTurnMinMatch: 4,
+  extraTurnOnShape: true,
+  extraTurnOnCascade: 2,
+  turnLimit: 20,
+  turnMs: 30000,
+  challengeGold: 4,
+  declineGold: 3,
+  challengeIndustryCooldownMs: 180_000,
+  challengePlayerCooldownMs: 90_000,
+};
+
+// ══════════════════════════════════════════════════════════════════════════
+// B3 (#248) — BATTLE ABILITIES: industrial spells paid in cargo mana.
+//
+// The old Black Market board cards (Frost Tiles, Iron Girders, Smog Cloud)
+// lost their home when #224 cleared the market; battles are their new one.
+// The board already carries their RULES (L10 / #225): a frosted gem (`hard`)
+// cracks one step instead of clearing, and a girder (`block`) is broken back
+// into an ordinary gem by a removal beside it — `Board.seedObstacles` drops
+// both, seeded and deadlock-guarded.
+//
+// This table is the whole balance surface (B7 tunes here): mana cost per
+// cargo, cooldown, effect payload. Casting costs the caster's TURN unless a
+// row says `costsTurn: false`, and every row may gate on MAP OWNERSHIP —
+// `requires` is a cargo whose depot the caster must hold (B5 fills each
+// seat's `depots` from the live economy), which is what ties battle strategy
+// to the network a tycoon built between fights.
+// ══════════════════════════════════════════════════════════════════════════
+
+export type AbilityId = "girders" | "frost" | "smog" | "dynamite" | "repair" | "bribe";
+
+export interface BattleAbilityDef {
+  id: AbilityId;
+  name: string;
+  desc: string;
+  /** Mana paid per cargo on cast (the HUD cost chips read this). */
+  cost: Partial<Record<Cargo, number>>;
+  /**
+   * Cooldown in the CASTER's turns: ready again on the caster's `cooldown`-th
+   * turn after casting (1 = the very next turn of theirs). Ticks at each
+   * turn start, extra turns included.
+   */
+  cooldown: number;
+  /**
+   * Casting spends the turn (default). `false` = the table says otherwise:
+   * the ability resolves as a free action and the caster still swaps.
+   */
+  costsTurn?: boolean;
+  /** Map gate: hold a depot of this cargo or the ability stays locked. */
+  requires?: Cargo;
+  // ── effect payload (each ability reads only its own fields) ─────────────
+  /** Iron Girders: girder obstacles dropped on the shared board. */
+  girders?: number;
+  /** Frost: gems frozen at `frostHard` (1 = one crack, 2 = two). */
+  frostGems?: number;
+  frostHard?: 1 | 2;
+  /** Smog: the opponent's next N matches bank half mana. */
+  matches?: number;
+  /** Dynamite: flat damage to the opponent (bomb purges stay damagePerGem). */
+  damage?: number;
+  /** Repair Crew: flat heal (capped at startHealth). */
+  heal?: number;
+  /** Gold Bribe: mana moved per cargo from the opponent. */
+  stealPerCargo?: number;
+}
+
+export const BATTLE_ABILITIES: Record<AbilityId, BattleAbilityDef> = {
+  girders: {
+    id: "girders", name: "Iron Girders",
+    desc: "Drop 3 girders on the board — blocked cells spoil the opponent's plans.",
+    cost: { stone: 3, ore: 3 }, cooldown: 3, requires: "stone", girders: 3,
+  },
+  frost: {
+    id: "frost", name: "Frost",
+    desc: "Freeze 4 gems — a frozen gem cracks one step instead of clearing.",
+    cost: { grain: 3, wood: 3 }, cooldown: 3, requires: "grain",
+    frostGems: 4, frostHard: 2,
+  },
+  smog: {
+    id: "smog", name: "Smog",
+    desc: "The opponent's next match banks half mana.",
+    cost: { oil: 4 }, cooldown: 2, requires: "oil", matches: 1,
+  },
+  dynamite: {
+    id: "dynamite", name: "Dynamite",
+    desc: "Deal 4 direct damage to the opponent.",
+    cost: { ore: 2, oil: 2 }, cooldown: 2, requires: "ore", damage: 4,
+  },
+  repair: {
+    id: "repair", name: "Repair Crew",
+    desc: "Restore 6 health.",
+    cost: { wood: 2, stone: 2 }, cooldown: 3, requires: "wood", heal: 6,
+  },
+  bribe: {
+    id: "bribe", name: "Gold Bribe",
+    desc: "Steal 2 mana of each cargo from the opponent — without spending your turn.",
+    cost: { gold: 3 }, cooldown: 2, requires: "gold", stealPerCargo: 2,
+    costsTurn: false,
+  },
+};
+
+/** Stable cast/UI order. */
+export const BATTLE_ABILITY_ORDER: AbilityId[] =
+  ["girders", "frost", "smog", "dynamite", "repair", "bribe"];
+
+// ══════════════════════════════════════════════════════════════════════════
 // L5 (#219) — THE DEPOT TREE: which resource buys the next depot type.
 //
 // Until this ticket every industry's Depot cost the same four-unit mix

@@ -113,6 +113,13 @@ export interface EconomyState {
    * rule below reads as "no railway" rather than throwing.
    */
   rail?: RailState;
+  /**
+   * B5 (#250): the map's ONLY stored ownership — the industries a battle
+   * CONQUERED (`industryId → holder harvester id`). First-come stays derived
+   * everywhere else; a conquest stands until the next successful challenge.
+   * Serialized with the economy (saves + the MP wire — the host owns it).
+   */
+  battleLocks?: Map<number, number>;
 }
 
 // ── catchment ─────────────────────────────────────────────────────────────
@@ -477,6 +484,16 @@ export function industryLocks(state: EconomyState): Map<number, Harvester> {
     if (!isServiced(state.track, h, state.rail)) continue;
     for (const ind of industriesInCatchment(state.grid, h)) {
       if (!locks.has(ind.id)) locks.set(ind.id, h);
+    }
+  }
+  // B5 (#250): a battle CONQUEST beats first-come — the winner's depot draws
+  // the industry and the loser's stops, until the next successful challenge
+  // flips it again. If the conqueror's depot is gone (demolished), the
+  // conquest lapses and the derived map stands.
+  if (state.battleLocks?.size) {
+    for (const [indId, harvesterId] of state.battleLocks) {
+      const h = state.harvesters.find((x) => x.id === harvesterId);
+      if (h) locks.set(indId, h);
     }
   }
   return locks;

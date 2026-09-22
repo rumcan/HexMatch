@@ -26,6 +26,8 @@ import type { Cargo } from "./config";
 import { createTrack, type Track } from "./track";
 import type { Harvester, Factory } from "./economy";
 import { DEPOT_FACINGS, type DepotFacing } from "./depot";
+// B6 (#251): the live MP duel's wire shape (seed + move log + full save).
+import type { DuelWire } from "../game/battle-mp";
 
 /**
  * Bump on ANY change to the snapshot shape or to seed-derived generation.
@@ -200,6 +202,30 @@ export interface ProtestWire {
   until: number;
   owner: string;
 }
+/**
+ * B5 (#250): the map's battle layer — the industries a conquest took
+ * (`industryId → holder harvester id`) and the cooldown clocks (absolute on
+ * the shared publish clock, the `protests` rule). The host owns it; a guest
+ * that has not seen the field reads an un-fought map.
+ */
+export interface BattleWire {
+  locks: [number, number][];
+  readyAt: [string, number][];
+  playerReadyAt: [string, number][];
+  rivalReadyAt: number;
+  battles: number;
+  /**
+   * B6 (#251): the live MP duel — seed + move list (the deterministic sync)
+   * plus the full `Battle.save()` (rejoin restores the exact battle). The
+   * host owns it; absent = no duel is running.
+   */
+  engine?: DuelWire;
+  /**
+   * B6 (#251): an open MP challenge waiting on the other seat's answer —
+   * `challenger` is a HOST-frame seat id ("you" = host, "ai" = guest).
+   */
+  offer?: { industryId: number; challenger: string; until: number };
+}
 export interface TruckWire {
   ownerId: number;
   depotId: number;
@@ -342,6 +368,8 @@ export interface Snapshot {
   players: WirePlayer[];
   /** MP-AUDIT: protest roadblocks */
   protests?: ProtestWire[];
+  /** B5 (#250): the map's battle layer — conquests + cooldown clocks. */
+  battle?: BattleWire;
   /** L9 (#224): live industry Blockades — the other half of the map shop. */
   blockades?: BlockadeWire[];
   /** MP-AUDIT: vehicle presentation */
@@ -368,12 +396,29 @@ export interface SnapshotSource {
   players: WirePlayer[];
   t?: number;
   protests?: ProtestWire[];
+  battle?: BattleWire;
   blockades?: BlockadeWire[];
   trucks?: TruckWire[];
   cars?: CarWire[];
   rail?: RailWire;
   winner?: WinnerWire | null;
   clearedFields?: number[];
+}
+
+/** Copy the duel for the wire (`saved` is a fresh `Battle.save()` each call). */
+function copyDuelWire(w: DuelWire): DuelWire {
+  return {
+    seed: w.seed,
+    rules: { ...w.rules },
+    moves: w.moves.map((m) => ({ ...m })),
+    saved: w.saved,
+    turnDeadline: w.turnDeadline,
+    timeouts: [w.timeouts[0], w.timeouts[1]],
+    seatGone: [w.seatGone[0], w.seatGone[1]],
+    over: w.over,
+    winner: w.winner,
+    stake: w.stake,
+  };
 }
 
 export function buildSnapshot(src: SnapshotSource): Snapshot {
@@ -401,6 +446,17 @@ export function buildSnapshot(src: SnapshotSource): Snapshot {
     factories: src.factories.map((f) => ({ ...f })),
     players: src.players.map((p) => ({ ...p, res: { ...p.res } })),
     protests: src.protests ? src.protests.map((p) => ({ ...p })) : undefined,
+    battle: src.battle
+      ? {
+        locks: src.battle.locks.map((l) => [...l] as [number, number]),
+        readyAt: src.battle.readyAt.map((r) => [...r] as [string, number]),
+        playerReadyAt: src.battle.playerReadyAt.map((r) => [...r] as [string, number]),
+        rivalReadyAt: src.battle.rivalReadyAt,
+        battles: src.battle.battles,
+        engine: src.battle.engine ? copyDuelWire(src.battle.engine) : undefined,
+        offer: src.battle.offer ? { ...src.battle.offer } : undefined,
+      }
+      : undefined,
     blockades: src.blockades ? src.blockades.map((b) => ({ ...b })) : undefined,
     trucks: src.trucks ? src.trucks.map((t) => ({ ...t, factory: [...t.factory] as [number, number], route: t.route.map((r) => [...r] as [number, number]), segFast: [...t.segFast] })) : undefined,
     cars: src.cars ? src.cars.map((c) => ({ ...c, route: c.route.map((r) => [...r] as [number, number]), segFast: c.segFast ? [...c.segFast] : undefined })) : undefined,
@@ -520,6 +576,18 @@ export function validateSnapshot(s: unknown, localSeed?: number): SnapshotError 
   if (o.protests !== undefined && o.protests !== null && !Array.isArray(o.protests)) {
     return new SnapshotError("malformed", "Snapshot protests is malformed.");
   }
+  // B5 (#250): the battle layer — optional like the rest of the map cards.
+  if (o.battle !== undefined && o.battle !== null) {
+    const b = o.battle as Partial<BattleWire>;
+    if (!Array.isArray(b.locks) || !Array.isArray(b.readyAt) || !Array.isArray(b.playerReadyAt)) {
+      return new SnapshotError("malformed", "Snapshot battle is malformed.");
+    }
+    const e = b.engine as Partial<DuelWire> | undefined;
+    if (e !== undefined && e !== null && (typeof e.seed !== "number" || !Array.isArray(e.moves)
+      || !e.rules || typeof e.rules !== "object" || !Array.isArray(e.timeouts) || !Array.isArray(e.seatGone))) {
+      return new SnapshotError("malformed", "Snapshot battle engine is malformed.");
+    }
+  }
   if (o.blockades !== undefined && o.blockades !== null && !Array.isArray(o.blockades)) {
     return new SnapshotError("malformed", "Snapshot blockades is malformed.");
   }
@@ -580,6 +648,7 @@ export interface AppliedSnapshot {
   won: boolean;
   t: number;
   protests?: ProtestWire[];
+  battle?: BattleWire;
   blockades?: BlockadeWire[];
   trucks?: TruckWire[];
   cars?: CarWire[];
@@ -614,6 +683,18 @@ export function applySnapshot(s: unknown, localSeed?: number): AppliedSnapshot {
     won: !!o.won,
     t: o.t ?? 0,
     protests: (o as Snapshot).protests ? (o as Snapshot).protests!.map((x) => ({ ...x })) : undefined,
+    battle: (o as Snapshot).battle
+      ? {
+        locks: (o as Snapshot).battle!.locks.map((l) => [...l] as [number, number]),
+        readyAt: (o as Snapshot).battle!.readyAt.map((r) => [...r] as [string, number]),
+        playerReadyAt: (o as Snapshot).battle!.playerReadyAt.map((r) => [...r] as [string, number]),
+        rivalReadyAt: (o as Snapshot).battle!.rivalReadyAt,
+        battles: (o as Snapshot).battle!.battles,
+        // B6 (#251): the live duel + open offer survive validation (rejoin).
+        engine: (o as Snapshot).battle!.engine ? copyDuelWire((o as Snapshot).battle!.engine!) : undefined,
+        offer: (o as Snapshot).battle!.offer ? { ...(o as Snapshot).battle!.offer! } : undefined,
+      }
+      : undefined,
     blockades: (o as Snapshot).blockades ? (o as Snapshot).blockades!.map((x) => ({ ...x })) : undefined,
     trucks: (o as Snapshot).trucks ? (o as Snapshot).trucks!.map((x) => ({ ...x, factory: [...x.factory] as [number, number], route: x.route.map((r) => [...r] as [number, number]), segFast: [...x.segFast] })) : undefined,
     cars: (o as Snapshot).cars ? (o as Snapshot).cars!.map((x) => ({ ...x, route: x.route.map((r) => [...r] as [number, number]), segFast: x.segFast ? [...x.segFast] : undefined })) : undefined,
