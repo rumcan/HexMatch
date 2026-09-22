@@ -32,7 +32,8 @@ describe("PP-07 the ticket's suggested first playtest costs", () => {
     expect(BUILD_COSTS.dirt).toEqual({});
     expect(BUILD_COSTS.road).toEqual({ wood: 1, stone: 1, ore: 4 });
     expect(BUILD_COSTS.upgrade).toEqual({ ore: 4 });
-    expect(BUILD_COSTS.depot).toEqual({ wood: 1, stone: 1, grain: 1, oil: 1 });
+    // Owner call (2026-09): one of every cargo but gold.
+    expect(BUILD_COSTS.depot).toEqual({ grain: 1, wood: 1, stone: 1, ore: 1, oil: 1 });
     expect(BUILD_COSTS.plant).toEqual({ wood: 2, stone: 2, grain: 2, ore: 3 });
   });
 
@@ -78,8 +79,8 @@ describe("PP-07 one table feeds every consumer", () => {
   it("priceDepot names exactly the cargoes the purse is short of", () => {
     const p = priceDepot({ wood: 1, stone: 1 }, 0);
     expect(p.affordable).toBe(false);
-    expect(p.missing).toEqual(["grain", "oil"]);   // CARGOES order
-    expect(priceDepot({ wood: 1, stone: 1, grain: 1, oil: 1 }, 0).affordable).toBe(true);
+    expect(p.missing).toEqual(["grain", "ore", "oil"]);   // CARGOES order
+    expect(priceDepot({ wood: 1, stone: 1, grain: 1, ore: 1, oil: 1 }, 0).affordable).toBe(true);
     // the free allowance makes an EMPTY purse affordable — the opening works
     expect(priceDepot({}, FREE_SETUP_DEPOTS).affordable).toBe(true);
   });

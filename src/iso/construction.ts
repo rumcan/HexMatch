@@ -46,7 +46,7 @@
 // not picked a site yet) it prices PP-07's single mix exactly as before.
 // ══════════════════════════════════════════════════════════════════════════
 import {
-  BUILD_COSTS, CARGO, CARGOES, DEPOT_TREE, DEPOT_TIER_MAX, STORAGE_CAP_BASE, TOWN_UPGRADES,
+  BUILD_COSTS, CARGO, CARGOES, DEPOT_TREE, DEPOT_RUNG_GATE, DEPOT_TIER_MAX, STORAGE_CAP_BASE, TOWN_UPGRADES,
   type Cargo, type DepotTypeDef, type TownUpgradeDef,
 } from "./config";
 import { type Purse } from "./track";
@@ -77,7 +77,7 @@ export const depotTierFor = (cargo: Cargo | null | undefined): number =>
 export function cheapestDepotType(unlocked: number, newLoop = false): DepotTypeDef {
   if (!newLoop) return DEPOT_TREE.grain;
   const open = (Object.values(DEPOT_TREE) as DepotTypeDef[])
-    .filter((t) => t.tier <= unlocked);
+    .filter((t) => !DEPOT_RUNG_GATE || t.tier <= unlocked);
   const pool = open.length ? open : [DEPOT_TREE.grain];
   return pool.reduce((best, t) => {
     const a = Object.values(t.cost).reduce((n, v) => n + v, 0);
@@ -166,7 +166,7 @@ export function priceDepot(
   const type = newLoop ? (cargo ? DEPOT_TREE[cargo] : cheapestDepotType(unlocked, true)) : null;
   const table = type ? type.cost : DEPOT_COST;
   const tier = type ? type.tier : 0;
-  const locked = type !== null && tier > unlocked;
+  const locked = DEPOT_RUNG_GATE && type !== null && tier > unlocked;
   const left = Math.max(0, Math.floor(freeDepots));
   const free = left > 0;
   const cost: Purse = free ? {} : { ...table };

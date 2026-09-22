@@ -41,7 +41,8 @@ describe("PP-07 one authoritative cost table", () => {
     expect(BUILD_COSTS.dirt).toEqual({});        // gravel is free; time is its price
     expect(BUILD_COSTS.road).toEqual({ wood: 1, stone: 1, ore: 4 });
     expect(BUILD_COSTS.upgrade).toEqual({ ore: 4 });
-    expect(BUILD_COSTS.depot).toEqual({ wood: 1, stone: 1, grain: 1, oil: 1 });
+    // Owner call (2026-09): one of every cargo but gold.
+    expect(BUILD_COSTS.depot).toEqual({ grain: 1, wood: 1, stone: 1, ore: 1, oil: 1 });
     expect(BUILD_COSTS.plant).toEqual({ wood: 2, stone: 2, grain: 2, ore: 3 });
     // RAIL-01/RAIL-04 (#175/#178): the railway. A rail tile is deliberately
     // the cheapest thing on the map (stone only, no wood); the platform is the
