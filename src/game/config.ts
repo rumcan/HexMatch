@@ -47,6 +47,9 @@ export const inMap = (tx: number, ty: number) =>
 // fully reproducible (deterministic map, AI timing, board fill — ticket #3).
 let _rng: () => number = Math.random;
 export function setRng(fn: () => number) { _rng = fn; }
+/** B1 (#246) — read the installed RNG, so a caller that swaps its own stream
+ *  in (the battle engine) can put the previous one back afterwards. */
+export function getRng(): () => number { return _rng; }
 export const rand = (n = 1) => _rng() * n;
 export const randInt = (n: number) => Math.floor(_rng() * n);
 export const choice = <T,>(arr: T[]): T => arr[randInt(arr.length)];

@@ -43,6 +43,22 @@ import protestArt from "../../assets/protest.png";
 // fallback colours rather than leaving them out.
 import asphaltTex from "../../assets/roads/asphalt.webp";
 import dirtTex from "../../assets/roads/dirt.webp";
+// B2 (#247): the battle screen — a full-screen 1v1 over the map. The debug
+// console's `startBattle` opens one against a placeholder opponent; B5 wires
+// the map's challenge/sabotage doors into the same entry point.
+import { startBattleScreen, type BattleScreenHandle } from "../game/battle-screen";
+import { chooseBattleMove } from "./battle-ai";
+// B5 (#250): the map's battle layer — challenges, conquests, fight-offs and
+// the cooldowns that pace them (pure bookkeeping in battle-map.ts).
+import {
+  createChallengeState, canChallenge, markChallenge, markRivalChallenge,
+  rivalChallengeDue, declineTakesPrize, settleMapBattle,
+  type ChallengeState, type PendingFightOff, type MapBattleStake,
+} from "./battle-map";
+import { BATTLE_RULES } from "./config";
+import portraitYou from "../assets/ui/tycoon_you_small.png";
+import portraitVex from "../assets/ui/tycoon_vex_small.png";
+
 
 import {
   Atlas, buildMasks, buildBuildingMasks, loadBuildingLayers,
@@ -171,6 +187,7 @@ import { toBag, type CargoBag } from "./purse";
 import type { BoardObstacles } from "../game/board";
 import {
   MAP_W, MAP_H, BANDIT_MS, PROTEST_MS, SABOTAGE, SECURITY,
+  rand,
   tileToScreen, type ResKey,
 } from "../game/config";
 import { createQuarry, CARGO_TO_GEM, GEM_TO_CARGO, type Quarry } from "./quarry";
@@ -4245,6 +4262,235 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * the card resolved (charged, or legitimately refused without a charge);
    * its feedback is toasts, so an intent echoes exactly what a click said.
    */
+  /**
+   * B5 (#250) — battles on the map. The pure rules live in `battle-map.ts`;
+   * this block is the game wiring: the Gold, the screens, the economy pause
+   * (the three tick entry points bail on `battleScreen`) and the settle hook.
+   * The state rides the wire + saves with the economy — the host owns it (MP
+   * battle intents are B6, #251; `isMp()` keeps fight-offs solo-only for now).
+   */
+  const challengeState: ChallengeState = createChallengeState();
+  let pendingFightOff: PendingFightOff | null = null;
+  let pendingChallenge: {
+    industryId: number;
+    challengerHarvesterId: number;
+    holderHarvesterId: number;
+    offerUntil: number;
+  } | null = null;
+  let mapStake: MapBattleStake | null = null;
+
+  /** The seat's castable cargoes — its depots' harvests (B3's ability gate). */
+  const mapDepotCargos = (ownerId: number): Cargo[] => {
+    const out = new Set<Cargo>();
+    for (const hd of eco.harvesters) {
+      if (hd.ownerId !== ownerId) continue;
+      const c = depotCargo(eco, hd);
+      if (c) out.add(c);
+    }
+    return [...out];
+  };
+
+  /**
+   * Open a map battle (seat 0 = the player) against the live skill's battle
+   * policy and settle the stake when the screen closes. The economy is paused
+   * for both seats while the screen is up (the tick entry points bail).
+   */
+  function openMapBattle(stake: MapBattleStake, seed: number, stakeText: string): void {
+    mapStake = stake;
+    const screen = startBattleScreen(seed, [
+      { id: me.id, name: me.name, portrait: portraitYou, depots: mapDepotCargos(me.i + 1) },
+      { id: rival.id, name: rival.name, portrait: portraitVex, depots: mapDepotCargos(2 - me.i) },
+    ], {
+      stake: stakeText,
+      // B4 (#249): the rival fights its live skill's line — watchable.
+      opponentMove: (b) => chooseBattleMove(b, skill().key),
+      onClose: (result) => {
+        battleScreen = null;
+        const s = mapStake;
+        mapStake = null;
+        if (!s) return;
+        // `result.winner` is the SEAT (0 = the player, the contender list's
+        // first entry). `settleMapBattle` speaks for the challenger (industry
+        // stakes) or the defender (fight-offs).
+        const iWon = result.winner === 0;
+        const won = !result.over ? null
+          : s.kind === "industry"
+            ? (s.challengerId === me.id ? iWon : !iWon)
+            : iWon;
+        const verdict = settleMapBattle(eco, s, won);
+        if (verdict === "conquest") toast("The industry is yours — your depots draw from it now.", "good");
+        else if (verdict === "held") toast("They held the industry.", "bad");
+        else if (verdict === "draw") toast("A draw — the map stands.", "info");
+        else if (verdict === "cancelled") toast("You fought it off — their Gold stays spent either way.", "good");
+        else if (verdict === "lands" && s.kind === "fightoff") landFightOff(s.pending, performance.now());
+      },
+    });
+    battleScreen = screen;
+  }
+
+  /**
+   * B5: call a fight for a contested industry. The bill and both cooldowns
+   * arm at the call (the fight counts whether or not it is declined).
+   */
+  function challengeIndustry(indId: number): boolean {
+    const now = performance.now();
+    if (battleScreen || mapStake || pendingFightOff || pendingChallenge) {
+      toast("One fight at a time.", "bad");
+      return false;
+    }
+    const chk = canChallenge(eco, challengeState, now, me.id, indId, BATTLE_RULES, me.purse.gold ?? 0);
+    if (!chk.ok) {
+      const why: Record<string, string> = {
+        "not-contested": "That industry is not contested — one of your serviced depots must reach it.",
+        "held-by-you": "Your depot already draws that one.",
+        gold: `A challenge costs ${BATTLE_RULES.challengeGold} Gold.`,
+        cooldown: "You have just fought — the cooldown paces the wars.",
+        "industry-cooldown": "That industry has seen enough fighting for now.",
+      };
+      toast(why[chk.reason] ?? "Not now.", "bad");
+      return false;
+    }
+    spend(me, { gold: BATTLE_RULES.challengeGold });
+    markChallenge(challengeState, now, me.id, indId, BATTLE_RULES);
+    const def = INDUSTRY_BY_KEY[chk.industry.type];
+    openMapBattle(
+      {
+        kind: "industry", industryId: indId,
+        challengerId: me.id,
+        challengerHarvesterId: chk.mine.id, holderHarvesterId: chk.holder.id,
+      },
+      (rand(4294967296) >>> 0),
+      `${def?.name ?? "the industry"}`,
+    );
+    return true;
+  }
+
+  /** B5: the rival calls a fight — the player may take it or fold. */
+  function maybeRivalChallenge(now: number): void {
+    if (phase === "won" || inSetup()) return;
+    if (battleScreen || mapStake || pendingFightOff || pendingChallenge) return;
+    if (!rivalChallengeDue(challengeState, now)) return;
+    for (const ind of grid.industries) {
+      const chk = canChallenge(
+        eco, challengeState, now, rival.id, ind.id, BATTLE_RULES, rival.purse.gold ?? 0,
+      );
+      if (!chk.ok) continue;
+      spend(rival, { gold: BATTLE_RULES.challengeGold });
+      markChallenge(challengeState, now, rival.id, ind.id, BATTLE_RULES);
+      markRivalChallenge(challengeState, now, skill().key);
+      const def = INDUSTRY_BY_KEY[ind.type];
+      pendingChallenge = {
+        industryId: ind.id,
+        challengerHarvesterId: chk.mine.id,
+        holderHarvesterId: chk.holder.id,
+        offerUntil: now + BATTLE_RULES.turnMs,
+      };
+      toast(`The rival challenges you for the ${def?.name ?? "industry"}! Fight? (__iso.acceptChallenge / __iso.declineChallenge)`, "bad");
+      rivalSpeaks("attack", "bandit");
+      return;
+    }
+  }
+
+  /** B5: accept the rival's challenge and fight it (seat 0 defends). */
+  function acceptChallenge(): boolean {
+    const p = pendingChallenge;
+    if (!p || battleScreen) return false;
+    pendingChallenge = null;
+    const def = INDUSTRY_BY_KEY[grid.industries[p.industryId]?.type ?? ""];
+    openMapBattle(
+      {
+        kind: "industry", industryId: p.industryId,
+        challengerId: rival.id,
+        challengerHarvesterId: p.challengerHarvesterId, holderHarvesterId: p.holderHarvesterId,
+      },
+      (rand(4294967296) >>> 0),
+      `defending ${def?.name ?? "the industry"}`,
+    );
+    return true;
+  }
+
+  /**
+   * B5: fold — the challenger takes the prize and pays `declineGold` on top
+   * (the cost of a fight nobody had). Silence is a fold (the offer expires).
+   */
+  function declineChallenge(): void {
+    const p = pendingChallenge;
+    if (!p) return;
+    pendingChallenge = null;
+    spend(rival, { gold: BATTLE_RULES.declineGold });
+    declineTakesPrize(eco, p.industryId, p.challengerHarvesterId);
+    toast(`You folded — the rival takes the industry and pays ${BATTLE_RULES.declineGold} Gold for the privilege.`, "bad");
+  }
+
+  /**
+   * B5: a bought Blockade/Protest at the gates — the player may fight it off
+   * instead of eating it. Returns whether the sabotage was HELD at the door
+   * (the caller then skips its apply; the attacker's Gold is already spent).
+   */
+  function offerFightOff(
+    kind: "blockade" | "protest",
+    attackerId: string,
+    industryId: number | undefined,
+    tile: [number, number] | undefined,
+    until: number,
+  ): boolean {
+    if (isMp()) return false;                    // MP fights are B6 (#251)
+    if (battleScreen || mapStake || pendingFightOff || pendingChallenge) return false;
+    pendingFightOff = {
+      kind, attackerId, industryId,
+      tile: tile ? tIdx(tile[0], tile[1]) : undefined,
+      until,
+      offerUntil: performance.now() + BATTLE_RULES.turnMs,
+    };
+    toast(`A ${kind === "blockade" ? "Blockade" : "Protest"} is at your gates — FIGHT IT OFF? (__iso.fightOff)`, "bad");
+    ui.feed(`A ${kind} is coming — fight it off (__iso.fightOff) or let it land (__iso.declineFightOff).`);
+    return true;
+  }
+
+  /** The fight-off was refused (or timed out): the sabotage lands as bought. */
+  function landFightOff(p: PendingFightOff, now: number): void {
+    if (p.kind === "blockade" && p.industryId !== undefined) {
+      const target = grid.industries[p.industryId];
+      if (target) {
+        target.banditUntil = p.until;
+        const def = INDUSTRY_BY_KEY[target.type];
+        floats.add("⛓ BLOCKADED", target.tx, target.ty, { cls: "sabotage", now });
+        toast(`The Blockade landed on ${def?.name ?? "the industry"} — its depots stop ticking.`, "bad");
+      }
+    } else if (p.kind === "protest" && p.tile !== undefined) {
+      const tx = p.tile % MAP_W, ty = (p.tile / MAP_W) | 0;
+      protests.set(tIdx(tx, ty), { tx, ty, until: p.until, owner: p.attackerId });
+      floats.add("✊ PROTEST", tx, ty, { cls: "sabotage", now });
+      toast("The protest landed — the road is shut.", "bad");
+    }
+  }
+
+  /** B5: fight it off — win cancels the sabotage, lose and it lands. */
+  function fightOff(): boolean {
+    const p = pendingFightOff;
+    if (!p || battleScreen) return false;
+    pendingFightOff = null;
+    openMapBattle(
+      { kind: "fightoff", pending: p },
+      (rand(4294967296) >>> 0),
+      `fighting off the ${p.kind}`,
+    );
+    return true;
+  }
+
+  function declineFightOff(): void {
+    const p = pendingFightOff;
+    if (!p) return;
+    pendingFightOff = null;
+    landFightOff(p, performance.now());
+  }
+
+  /** Offer expiry: silence is a fold for both doors. */
+  function b5OffersTick(now: number): void {
+    if (pendingChallenge && now >= pendingChallenge.offerUntil) declineChallenge();
+    if (pendingFightOff && now >= pendingFightOff.offerUntil) declineFightOff();
+  }
+
   function buyBlackFor(actor: PlayerState, key: string): boolean {
     const now = performance.now();
     const spendGold = (n: number) => {
@@ -4272,6 +4518,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         earn(actor, { gold: SABOTAGE.bandit.gold });   // refund; nothing to hit
         toast("No industry to blockade — gold refunded.", "bad");
         return false;
+      }
+      // B5 (#250): a Blockade landing on the LOCAL player with no Security up
+      // can be FOUGHT OFF — held at the door instead of applied (the hire is
+      // already spent, win or lose). MP keeps the old instant apply (B6).
+      if (defender.id === players[0].id
+        && offerFightOff("blockade", actor.id, target.id, undefined, now + BANDIT_MS)) {
+        return true;
       }
       target.banditUntil = now + BANDIT_MS;
       const def = INDUSTRY_BY_KEY[target.type];
@@ -4480,6 +4733,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    *     token gates follow blockades expiring.
    */
   function economyTick(now: number) {
+    // B5 (#250): the economy clock stops for BOTH seats while a battle is up —
+    // the fight is the whole world until it settles.
+    if (battleScreen) return;
     // MP-05: a guest runs no economy at all — its cargo, purses and VPs arrive
     // in deltas. Harvest ticks here would credit purses the host overwrites and
     // spawn tokens on a board the guest does not own.
@@ -4984,6 +5240,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       return;
     }
     const [tx, ty] = spot;
+    // B5 (#250): the player may FIGHT OFF a Protest at the gates (solo).
+    if (offerFightOff("protest", rival.id, undefined, [tx, ty], now + PROTEST_MS)) {
+      rivalSpeaks("attack", "protest");
+      return;
+    }
     protests.set(tIdx(tx, ty), { tx, ty, until: now + PROTEST_MS, owner: rival.id });
     floats.add("✊ PROTEST", tx, ty, { cls: "sabotage", now });
     toast(
@@ -5112,6 +5373,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       rivalSpeaks("thwarted", "bandit");
       return;
     }
+    // B5 (#250): the player may FIGHT OFF a Blockade at the gates (solo; the
+    // hire above is already spent either way).
+    if (offerFightOff("blockade", rival.id, target.id, undefined, now + BANDIT_MS)) return;
     target.banditUntil = now + BANDIT_MS;
     const def = INDUSTRY_BY_KEY[target.type];
     floats.add("⛓ BLOCKADED", target.tx, target.ty, { cls: "sabotage", now });
@@ -5354,6 +5618,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   }
 
   function aiTick(now: number) {
+    // B5 (#250): no AI action and no economy churn during a battle; the two
+    // offer doors (rival challenges, fight-offs) expire here too.
+    if (battleScreen) return;
+    b5OffersTick(now);
+    maybeRivalChallenge(now);
     // MP-05: §9 — "the AI rival is disabled in a hosted game; the guest is the
     // rival". Seat 1 is driven by intents from the relay instead.
     // #186: …unless the host filled that seat itself, which is the one hosted
@@ -5607,6 +5876,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return wire;
   }
 
+  /** B5 (#250): the map's battle layer on the wire — conquests + cooldown
+   *  clocks (absolute on the shared publish clock, the `protests` rule). */
+  function battleWire(): NonNullable<Snapshot["battle"]> {
+    return {
+      locks: [...(eco.battleLocks ?? [])],
+      readyAt: [...challengeState.readyAt],
+      playerReadyAt: [...challengeState.playerReadyAt],
+      rivalReadyAt: challengeState.rivalReadyAt,
+      battles: challengeState.battles,
+    };
+  }
+
   /** HOST: the full state (§4 `SnapshotMsg`), built from the live world. */
   function netFullState(): Snapshot | null {
     // L15 (#230): boards and crossPrompt are gone — the board is tuning-only
@@ -5623,6 +5904,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       players: wirePlayers(),
       t: performance.now(),
       protests: protestsWire,
+      battle: battleWire(),
       blockades: blockadesWire(),
       trucks: trucksWire,
       cars: carsWire,
@@ -5654,6 +5936,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       setupPhase: inSetup(),
       won: phase === "won",
       protests: protestsWire,
+      battle: battleWire(),
       blockades: blockadesWire(),
       trucks: trucksWire,
       cars: carsWire,
@@ -5767,6 +6050,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         protests.set(tIdx(pw.x, pw.y), { tx: pw.x, ty: pw.y, until: pw.until, owner: pw.owner });
       }
     }
+    // B5 (#250): the battle layer — a full state always says what the host's
+    // conquests and cooldowns ARE (absent = none, the rail rule).
+    if (applied.battle) {
+      eco.battleLocks = new Map(applied.battle.locks);
+      challengeState.readyAt = new Map(applied.battle.readyAt);
+      challengeState.playerReadyAt = new Map(applied.battle.playerReadyAt);
+      challengeState.rivalReadyAt = applied.battle.rivalReadyAt;
+      challengeState.battles = applied.battle.battles;
+    } else {
+      eco.battleLocks = new Map();
+      challengeState.readyAt = new Map();
+      challengeState.playerReadyAt = new Map();
+    }
     // L9 (#224): …and the Blockades, the other half of the map shop. A full
     // state always says what the host's blockades ARE (absent = none).
     applyBlockadesWire(applied.blockades ?? []);
@@ -5841,6 +6137,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       for (const pw of (msg as any).protests) {
         protests.set(tIdx(pw.x, pw.y), { tx: pw.x, ty: pw.y, until: pw.until, owner: pw.owner });
       }
+      worldDirty = true;
+    }
+    // B5 (#250): the battle layer rides the delta like the rest of the map.
+    if ((msg as any).battle) {
+      const bw = (msg as any).battle;
+      eco.battleLocks = new Map(bw.locks ?? []);
+      challengeState.readyAt = new Map(bw.readyAt ?? []);
+      challengeState.playerReadyAt = new Map(bw.playerReadyAt ?? []);
+      challengeState.rivalReadyAt = bw.rivalReadyAt ?? 0;
+      challengeState.battles = bw.battles ?? 0;
       worldDirty = true;
     }
     // L9 (#224): a delta carries the Blockade set whenever it carries any
@@ -7685,6 +7991,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * loop no lorry delivery pays anybody. See the branches inside.
    */
   function collectDeliveries(t: number) {
+    // B5 (#250): deliveries are economy clock too — paused during a battle.
+    if (battleScreen) return;
     // MP-05: a lorry reaching a factory on a guest's screen is animation, not
     // income — the host owns both seats' boards and their payouts.
     if (isGuest()) return;
@@ -7777,6 +8085,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       protests: [...protests.values()].map((p) => ({
         x: p.tx, y: p.ty, left: Math.max(0, p.until - now), owner: p.owner,
       })),
+      // B5 (#250): the map's battle layer — conquests (`locks`), the cooldown
+      // clocks (ms LEFT, the `protests.left` rule) and the playtest note's
+      // battle count.
+      battle: {
+        locks: [...(eco.battleLocks ?? [])],
+        readyAt: [...challengeState.readyAt].map(([k, v]) => [k, Math.max(0, v - now)] as [string, number]),
+        playerReadyAt: [...challengeState.playerReadyAt].map(([k, v]) => [k, Math.max(0, v - now)] as [string, number]),
+        rivalDueIn: Math.max(0, challengeState.rivalReadyAt - now),
+        battles: challengeState.battles,
+      },
       track: trackSave(track),
       // RAIL-04 (#178): the railway rides the save — a refresh must not take a
       // built line, its platforms or its train with it.
@@ -7849,6 +8167,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     for (const p of d.protests ?? []) {
       protests.set(tIdx(p.x, p.y), { tx: p.x, ty: p.y, until: now + p.left, owner: p.owner });
     }
+    // B5 (#250): the battle layer comes back too — conquests and the cooldown
+    // clocks re-based onto this session's `performance.now()` (the protests'
+    // rule). An old save reads as an un-fought map.
+    eco.battleLocks = new Map(d.battle?.locks ?? []);
+    challengeState.readyAt = new Map((d.battle?.readyAt ?? []).map(([k, v]) => [k, now + v]));
+    challengeState.playerReadyAt = new Map((d.battle?.playerReadyAt ?? []).map(([k, v]) => [k, now + v]));
+    challengeState.rivalReadyAt = now + (d.battle?.rivalDueIn ?? 0);
+    challengeState.battles = d.battle?.battles ?? 0;
     // economy: replace the lists in place — their references are held all
     // over (planTrucks, syncWorld, the AI...)
     setClearedFields(d.clearedFields ?? []);
@@ -7970,6 +8296,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    *  destructive door must not stack a second plate over the first. */
   let confirmView: ConfirmSheetHandle | null = null;
   let menuTeardown: (() => void) | null = null;
+  /** B2 (#247): at most one battle screen over the map (`__iso.startBattle`). */
+  let battleScreen: BattleScreenHandle | null = null;
   if (topRight) {
     const peek = document.createElement("button");
     peek.type = "button"; peek.id = "iso-rival-peek";
@@ -9607,6 +9935,66 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     /** W6: the per-frame board clock, with an injectable now — the twin the
      *  Feed assertions drive (the combat/autoplay cadence lives in it). */
     tick: (now = performance.now()) => quarryTick(now),
+    /**
+     * B2 (#247): open the battle screen over the map against a placeholder
+     * opponent (seeded random legal swaps). `__iso.startBattle(42)` — play it
+     * out to the result screen and Continue lands back on the map with no
+     * leftover state. Returns the screen handle (`.destroy()` force-closes)
+     * with the engine on `.battle` for probes.
+     */
+    startBattle: (seed = 7) => {
+      // B3 (#248): the ability gates read the LIVE economy — a seat may cast
+      // only what its depots harvest (B5 runs real challenges the same way).
+      const depotCargos = (ownerId: number): Cargo[] => {
+        const out = new Set<Cargo>();
+        for (const hd of eco.harvesters) {
+          if (hd.ownerId !== ownerId) continue;
+          const c = depotCargo(eco, hd);
+          if (c) out.add(c);
+        }
+        return [...out];
+      };
+      const screen = startBattleScreen(seed, [
+        { id: me.id, name: me.name, portrait: portraitYou, depots: depotCargos(me.i + 1) },
+        { id: rival.id, name: rival.name, portrait: portraitVex, depots: depotCargos(2 - me.i) },
+      ], {
+        stake: "a skirmish over the yards",
+        // B4 (#249): the rival is the live skill's battle policy — swaps and
+        // spells, paced by the screen's think-time so the move is watchable.
+        opponentMove: (b) => chooseBattleMove(b, skill().key),
+        onClose: () => { battleScreen = null; },
+      });
+      battleScreen = screen;
+      return screen;
+    },
+    /**
+     * B5 (#250): the map's battle doors — the playtest + e2e surface.
+     * `challengeIndustry(id)` calls a fight over a contested industry (the
+     * bill and cooldowns arm at the call); the rival's own challenges arrive
+     * as `pendingChallenge` and resolve through accept/decline; a Blockade or
+     * Protest at the gates arrives as `pendingFightOff` and resolves through
+     * fightOff/declineFightOff. The economy clock is paused while the battle
+     * screen is up (the tick entry points bail on `battleScreen`).
+     */
+    challengeIndustry: (indId: number) => challengeIndustry(indId),
+    acceptChallenge: () => acceptChallenge(),
+    declineChallenge: () => declineChallenge(),
+    fightOff: () => fightOff(),
+    declineFightOff: () => declineFightOff(),
+    get pendingChallenge() { return pendingChallenge; },
+    get pendingFightOff() { return pendingFightOff; },
+    /** The cooldown/counter probe (the playtest note reads `battles`). */
+    get challengeState() {
+      return {
+        battles: challengeState.battles,
+        rivalReadyAt: challengeState.rivalReadyAt,
+        readyAt: [...challengeState.readyAt],
+        playerReadyAt: [...challengeState.playerReadyAt],
+        battleLocks: [...(eco.battleLocks ?? [])],
+      };
+    },
+    /** B2: the live battle screen, or null. */
+    get battleScreen() { return battleScreen; },
     // C5: the visual-debug console — dumpTile / dumpAt / dumpBuilding /
     // dumpNetwork / overlay / config / probe. Spread only when the gate is on,
     // so a production build exposes nothing (see src/iso/debug.ts).
@@ -9636,6 +10024,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // cancelled — its timer must not fire into a disposed game.
     leftSheet?.destroy();
     leftSheet = null;
+    // B2 (#247): an open battle screen dies with the game — never orphaned
+    // over a dead map.
+    battleScreen?.destroy();
+    battleScreen = null;
     leaveAfterVerdict = false;
     if (leaveAfterVerdictTimer) window.clearTimeout(leaveAfterVerdictTimer);
     leaveAfterVerdictTimer = 0;
