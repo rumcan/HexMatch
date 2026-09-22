@@ -118,6 +118,9 @@ interface MpHook {
   /** L11 (#226): every seat's LIVE bag, in `players` order — the references
    *  #114's identity rule is asserted against (the market used to hold them). */
   purses: Record<string, number>[];
+  /** TRADE: the live offer book as this client sees it (own seat = 0). */
+  offers: { id: number; from: 0 | 1; give: string; giveN: number; want: string; wantN: number }[];
+  acceptOffer: (id: number) => string;
   /** #115: the protest twins (the card and the map click) and their state. */
   armProtest: () => void;
   placeProtest: (tx: number, ty: number) => boolean;
@@ -1008,6 +1011,52 @@ describe("audit regressions: two real games, one room", () => {
     expect(resolveSpy).toHaveBeenNthCalledWith(2, []);
     // The host cleared the stale prompt; the guest's chooser came down with it.
     expect(guestCrossPanel()).toBeNull();
+  });
+
+  it("TRADE (v14): a guest posts through its Market tab, the host validates, and a take swaps both bags", async () => {
+    const { host, guest, hostEnd, guestEnd } = await bootPair();
+    const hostBag = host.purses[0], guestSeat = host.purses[1];
+    guestSeat.wood = 10; guestSeat.ore = 0;
+    hostBag.ore = 5; hostBag.wood = 0;
+    forcePublish(guest);
+    pump();
+    expect(guest.purse.wood).toBe(10);
+
+    // The guest's own Market tab — the real click path.
+    const pane = roots[1].querySelector<HTMLElement>(".market-pane")!;
+    const set = (f: string, v: string) => { pane.querySelector<HTMLInputElement>(`[data-f="${f}"]`)!.value = v; };
+    set("offer-give", "wood"); set("offer-give-n", "4"); set("offer-want", "ore"); set("offer-want-n", "2");
+    pane.querySelector<HTMLButtonElement>('[data-act="offer-post"]')!.click();
+    // A REQUEST: the intent left, nothing moved yet.
+    expect(guestEnd.sent[guestEnd.sent.length - 1]).toMatchObject({
+      type: "intent", action: "trade",
+      payload: { do: "post", give: "wood", giveN: 4, want: "ore", wantN: 2 },
+    });
+    expect(guestSeat.wood).toBe(10);
+
+    // The host applies it against the GUEST seat (escrow), and both sides see
+    // the book — the guest in its own frame (its offer is seat 0 there).
+    pump();
+    expect(guestSeat.wood).toBe(6);
+    expect(host.offers).toHaveLength(1);
+    expect(host.offers[0]).toMatchObject({ from: 1, give: "wood", giveN: 4 });
+    expect(guest.purse.wood).toBe(6);
+    expect(guest.offers).toHaveLength(1);
+    expect(guest.offers[0]).toMatchObject({ from: 0, give: "wood", giveN: 4 });
+
+    // The host takes it: it pays 2 ore, receives the 4 wood in escrow.
+    // (the host's own door — the same path its Take button runs)
+    expect(host.acceptOffer(host.offers[0].id)).toBe("done");
+    pump();
+    expect(hostBag).toMatchObject({ ore: 3, wood: 4 });
+    expect(guestSeat).toMatchObject({ ore: 2, wood: 6 });
+    expect(guest.purse).toMatchObject({ ore: 2, wood: 6 });
+    expect(host.offers).toHaveLength(0);
+    expect(guest.offers).toHaveLength(0);
+
+    // Forged wire: the guest cannot offer Gold, nor take its own offer.
+    hostEnd.deliver({ type: "intent", action: "trade", payload: { do: "post", give: "gold", giveN: 1, want: "ore", wantN: 1 } } as never);
+    expect(host.offers).toHaveLength(0);
   });
 
   it.skip("the bank never spends a human guest's cargo without an intent (#113)", async () => {

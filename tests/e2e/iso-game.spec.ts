@@ -668,7 +668,7 @@ test("consolidated economy tabs and disabled purchases", async ({ page }) => {
     await page.locator('.mnav-btn[data-view="trade"]').click();
   }
   await expect(page.locator('[data-panel]')).toHaveCount(0);
-  for (const tab of ["bank", "black", "plant", "feed"]) {
+  for (const tab of ["bank", "market", "black", "plant", "feed"]) {
     await page.locator(`[data-tab="${tab}"]`).click();
     await expect(page.locator('#iso-trade > .pane:not(.hidden), #iso-trade > #iso-quarry:not(.hidden)')).toHaveCount(1);
     await expect(page.locator(`[data-tab="${tab}"]`)).toBeInViewport();

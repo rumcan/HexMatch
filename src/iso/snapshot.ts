@@ -28,6 +28,7 @@ import type { Harvester, Factory } from "./economy";
 import { DEPOT_FACINGS, type DepotFacing } from "./depot";
 // B6 (#251): the live MP duel's wire shape (seed + move log + full save).
 import type { DuelWire } from "../game/battle-mp";
+import type { OfferWire } from "./offers";
 
 /**
  * Bump on ANY change to the snapshot shape or to seed-derived generation.
@@ -370,6 +371,8 @@ export interface Snapshot {
   protests?: ProtestWire[];
   /** B5 (#250): the map's battle layer — conquests + cooldown clocks. */
   battle?: BattleWire;
+  /** TRADE (v14): the live offer book, host frame, ms left per offer. */
+  offers?: OfferWire[];
   /** L9 (#224): live industry Blockades — the other half of the map shop. */
   blockades?: BlockadeWire[];
   /** MP-AUDIT: vehicle presentation */
@@ -397,6 +400,8 @@ export interface SnapshotSource {
   t?: number;
   protests?: ProtestWire[];
   battle?: BattleWire;
+  /** TRADE (v14): the live offer book, host frame, ms left per offer. */
+  offers?: OfferWire[];
   blockades?: BlockadeWire[];
   trucks?: TruckWire[];
   cars?: CarWire[];
@@ -463,6 +468,7 @@ export function buildSnapshot(src: SnapshotSource): Snapshot {
     rail: copyRailWire(src.rail),
     winner: src.winner ?? null,
     ...(src.clearedFields?.length ? { clearedFields: [...src.clearedFields] } : {}),
+    ...(src.offers ? { offers: src.offers.map((o) => ({ ...o })) } : {}),
   };
 }
 
@@ -616,6 +622,9 @@ export function validateSnapshot(s: unknown, localSeed?: number): SnapshotError 
       }
     }
   }
+  if (o.offers !== undefined && o.offers !== null && !Array.isArray(o.offers)) {
+    return new SnapshotError("malformed", "Snapshot offers is malformed.");
+  }
   if (o.clearedFields !== undefined && (!Array.isArray(o.clearedFields)
     || o.clearedFields.some((id) => !Number.isInteger(id) || id < 0))) {
     return new SnapshotError("malformed", "Snapshot cleared fields are malformed.");
@@ -649,6 +658,8 @@ export interface AppliedSnapshot {
   t: number;
   protests?: ProtestWire[];
   battle?: BattleWire;
+  /** TRADE (v14): the live offer book, host frame, ms left per offer. */
+  offers?: OfferWire[];
   blockades?: BlockadeWire[];
   trucks?: TruckWire[];
   cars?: CarWire[];
@@ -701,6 +712,7 @@ export function applySnapshot(s: unknown, localSeed?: number): AppliedSnapshot {
     rail: copyRailWire((o as Snapshot).rail),
     winner: (o as Snapshot).winner ?? null,
     clearedFields: [...(o.clearedFields ?? [])],
+    offers: Array.isArray((o as Snapshot).offers) ? (o as Snapshot).offers!.map((x) => ({ ...x })) : undefined,
   };
 }
 

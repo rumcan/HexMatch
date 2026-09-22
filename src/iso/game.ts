@@ -190,6 +190,13 @@ import {
 // clicked and then refused: the button and the rule are the same question.
 // L17 (#245): the bank is BACK at the town's middle building, at 3:1.
 import { BANK_RATE, bankAllowed, bankTier, bankTrade, isCargo } from "./bank";
+// TRADE (owner call, 2026-09): the offer board is back beside the bank.
+import {
+  createOfferBook, postOffer, acceptOffer, cancelOffer, expireOffers, liveOffers,
+  rivalWouldAccept, chooseRivalOffer, offersToWire, offersFromWire,
+  OFFER_REFUSAL_TEXT, RIVAL_TRADE_MS,
+  type Offer, type OfferRefusal, type Seat,
+} from "./offers";
 import { toBag, type CargoBag } from "./purse";
 import type { BoardObstacles } from "../game/board";
 import {
@@ -1346,6 +1353,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       }
       return bankFor(me, give, want) ? "done" : "refused";
     },
+    // TRADE (owner call, 2026-09): the Market tab's three doors.
+    onOfferPost: (give, giveN, want, wantN) => tradeRequest("post", { give, giveN, want, wantN }),
+    onOfferAccept: (id) => tradeRequest("accept", { id }),
+    onOfferCancel: (id) => tradeRequest("cancel", { id }),
     // AI-01: the top-bar difficulty selector. Applies on the NEXT rival tick —
     // the clocks and budgets re-read `skill()` every call, so there is nothing
     // to restart.
@@ -6315,6 +6326,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       rail: railWire(true),
       winner: winner ? { id: winner.id, source: winningSource } : null,
       clearedFields: [...clearedFields],
+      offers: offersToWire(offerBook, performance.now()),
     });
   }
 
@@ -6347,6 +6359,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       rail: railWire(),
       clearedFields: [...clearedFields],
       winner: winner ? { id: winner.id, source: winningSource } : null,
+      offers: offersToWire(offerBook, now),
     } as any);
   }
 
@@ -6354,6 +6367,111 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    *  applied state, because the other seat's structures arrive at their own
    *  pace. */
   let guestOpened = false;
+
+  // ── TRADE: the offer board (owner call, 2026-09) ─────────────────────────
+  // The host (or the solo game) owns the book; purses are the seats' own.
+  // A guest sends `trade` intents and reads the book off the wire. Seats are
+  // HOST-frame indices (0 = host / solo player, 1 = guest / rival).
+  const offerBook = createOfferBook();
+  /** GUEST: the host's book, mirrored into this seat's frame. */
+  let guestOffers: Offer[] = [];
+  let lastRivalTrade = 0;
+  const seatPurses = (): [PlayerState["purse"], PlayerState["purse"]] => [players[0].purse, players[1].purse];
+  const offerLine = (o: Offer) => `${o.giveN} ${CARGO[o.give].name} for ${o.wantN} ${CARGO[o.want].name}`;
+
+  /** The book as THIS client sees it (own seat = 0). */
+  const visibleOffers = (): Offer[] => (isGuest() ? guestOffers : offerBook.offers);
+
+  /** Host/solo: a seat posts. Returns the refusal, or null on success. */
+  function tradePost(seat: Seat, give: Cargo, giveN: number, want: Cargo, wantN: number): OfferRefusal | null {
+    const r = postOffer(offerBook, players[seat].purse, seat, give, giveN, want, wantN, performance.now());
+    if (typeof r === "string") return r;
+    ui.feed(`${players[seat].name} offered ${offerLine(r)}.`);
+    if (isMp()) publishNet(performance.now(), true);
+    return null;
+  }
+
+  /** Host/solo: a seat takes another seat's offer. */
+  function tradeAccept(seat: Seat, id: number): OfferRefusal | null {
+    const r = acceptOffer(offerBook, seatPurses(), seat, id);
+    if (typeof r === "string") return r;
+    const poster = players[r.from], taker = players[seat];
+    ui.feed(`${taker.name} took ${poster.name}'s offer: ${offerLine(r)}.`);
+    if (r.from === 0 && seat !== 0) toast(`${taker.name} took your offer: ${offerLine(r)}.`, "good");
+    if (isMp()) publishNet(performance.now(), true);
+    return null;
+  }
+
+  /** Host/solo: a seat withdraws its own offer (escrow refunded). */
+  function tradeCancel(seat: Seat, id: number): OfferRefusal | null {
+    const r = cancelOffer(offerBook, players[seat].purse, seat, id);
+    if (typeof r === "string") return r;
+    if (isMp()) publishNet(performance.now(), true);
+    return null;
+  }
+
+  /**
+   * Host/solo, every frame: expire stale offers (refunding escrow) and, when
+   * seat 1 is a machine, let it answer the player's offers and post its own
+   * toward the Depot it is saving for.
+   */
+  function tradeTick(now: number): void {
+    if (isGuest()) return;
+    const gone = expireOffers(offerBook, seatPurses(), now);
+    for (const o of gone) {
+      if (o.from === 0) ui.feed(`Your offer expired (${offerLine(o)}) — escrow refunded.`);
+    }
+    if (gone.length && isMp()) publishNet(now, true);
+    const machine = isSolo() || aiOpponent;
+    if (!machine || phase !== "play" || battleScreen) return;
+    if (now - lastRivalTrade < RIVAL_TRADE_MS) return;
+    lastRivalTrade = now;
+    const need = (treeGoal({ purse: rival.purse, tier: rival.depotTier })?.cost ?? {}) as Record<string, number>;
+    for (const o of [...offerBook.offers]) {
+      if (o.from !== 0) continue;
+      if (rivalWouldAccept(rival.purse, o, need)) tradeAccept(1, o.id);
+    }
+    if (liveOffers(offerBook, 1).length === 0) {
+      const idea = chooseRivalOffer(rival.purse, need);
+      if (idea) tradePost(1, idea.give, idea.giveN, idea.want, idea.wantN);
+    }
+  }
+
+  /** The chrome's doors. A guest's are requests; the host's delta confirms. */
+  function tradeRequest(
+    what: "post" | "accept" | "cancel",
+    args: { give?: Cargo; giveN?: number; want?: Cargo; wantN?: number; id?: number },
+  ): "done" | "relayed" | string {
+    if (isGuest()) {
+      return net?.sendIntent("trade", { do: what, ...args }) ? "relayed" : "Not connected.";
+    }
+    const r = what === "post"
+      ? tradePost(0, args.give!, args.giveN!, args.want!, args.wantN!)
+      : what === "accept" ? tradeAccept(0, args.id!) : tradeCancel(0, args.id!);
+    return r ? OFFER_REFUSAL_TEXT[r] : "done";
+  }
+
+  /** HOST: a guest's `trade` intent, validated against the guest's seat. */
+  function applyTradeIntent(payload: Record<string, unknown>, echoed: string[]): void {
+    const num = (v: unknown) => (typeof v === "number" && Number.isInteger(v) ? v : -1);
+    const cargo = (v: unknown): Cargo | null => (isCargo(v as string) ? v as Cargo : null);
+    let r: OfferRefusal | null = null;
+    if (payload.do === "post") {
+      const give = cargo(payload.give), want = cargo(payload.want);
+      if (!give || !want) { echoed.push("The market can't read that offer."); return; }
+      r = tradePost(1, give, num(payload.giveN), want, num(payload.wantN));
+    } else if (payload.do === "accept") r = tradeAccept(1, num(payload.id));
+    else if (payload.do === "cancel") r = tradeCancel(1, num(payload.id));
+    else { echoed.push("That trade action is not available."); return; }
+    if (r) echoed.push(OFFER_REFUSAL_TEXT[r]);
+  }
+
+  /** A save keeps escrow in the purse: an open offer is refunded on reload. */
+  const purseWithEscrow = (seat: Seat): Record<string, number> => {
+    const out = { ...(players[seat].purse as Record<string, number>) };
+    for (const o of offerBook.offers) if (o.from === seat) out[o.give] = (out[o.give] ?? 0) + o.giveN;
+    return out;
+  };
 
   /**
    * GUEST: the opening phases are per-seat and derived from APPLIED state —
@@ -6456,6 +6574,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     // B5 (#250): the battle layer — a full state always says what the host's
     // conquests and cooldowns ARE (absent = none, the rail rule).
+    // TRADE: a full state always says what the book IS (absent = empty).
+    guestOffers = offersFromWire(applied.offers ?? [], true, performance.now());
     if (applied.battle) {
       eco.battleLocks = new Map(applied.battle.locks);
       challengeState.readyAt = new Map(applied.battle.readyAt);
@@ -6545,6 +6665,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       worldDirty = true;
     }
     // B5 (#250): the battle layer rides the delta like the rest of the map.
+    if ((msg as any).offers) guestOffers = offersFromWire((msg as any).offers, true, performance.now());
     if ((msg as any).battle) {
       const bw = (msg as any).battle;
       eco.battleLocks = new Map(bw.locks ?? []);
@@ -6613,7 +6734,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // locally — so a refusal has to reach them as surely as an action does.
     try {
       const what = payload.do;
-      if (msg.action === "battle") {
+      if (msg.action === "trade") {
+        applyTradeIntent(payload, echoed);
+      } else if (msg.action === "battle") {
         // B6 (#251): checked FIRST — `do: "swap"` also names a build intent.
         applyBattleIntent(payload, echoed);
       } else if (what === "track") {
@@ -7660,6 +7783,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // L5 (#219): the city upgrade's key, priced from the seat's own row of
       // `TOWN_UPGRADES`. `undefined` on the shipped loop: the key does not
       // exist there, exactly like the rule.
+      // TRADE: the offer book, in this client's own seat frame.
+      offers: { list: visibleOffers(), now: performance.now(), rival: rival.name },
       town: newLoop
         ? (() => {
             const price = priceTownUpgrade(me.purse, me.townLevel);
@@ -8529,7 +8654,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       eco: { harvesters: eco.harvesters, factories: eco.factories },
       clearedFields: [...clearedFields],
       players: players.map((p) => ({
-        purse: p.purse as unknown as Record<string, number>,
+        // TRADE: escrow rides home in the purse — an open offer is refunded
+        // on reload rather than lost (the book itself is not saved).
+        purse: purseWithEscrow(p.i as Seat),
         freeTrack: p.freeTrack, freeDepots: p.freeDepots,
         // L5 (#219): a refresh keeps the seat's rung and its city upgrade —
         // the L1e rule for the allowances, applied to the two numbers the
@@ -9376,6 +9503,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (protests.size > 0) expireProtests(t);
       // B6 (#251): the host's duel clock — offers, turn timer, disconnect grace.
       duelTick(t);
+      // TRADE: offer expiry + the machine rival's answers/posts (host/solo).
+      tradeTick(t);
       // MP-05: the host's heartbeat — one small delta per `PUBLISH_MS`, full
       // state only when `buildPublish` says the delta would not fit (§5).
       publishNet(t);
@@ -10335,6 +10464,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     protestTick: (now = performance.now()) => expireProtests(now),
     /** W3: the e2e/unit twin of the AI build clock, with an injectable now. */
     aiTick: (now = performance.now()) => aiTick(now),
+    /** TRADE: one pass of offer expiry + the machine rival's answers/posts. */
+    tradeTick: (now = performance.now()) => tradeTick(now),
+    /** TRADE: the live offer book as this client sees it (own seat = 0). */
+    get offers() { return visibleOffers().map((o) => ({ ...o })); },
+    /** TRADE: the Take / Post / Cancel doors, exactly as the Market tab runs them. */
+    acceptOffer: (id: number) => tradeRequest("accept", { id }),
+    postOffer: (give: Cargo, giveN: number, want: Cargo, wantN: number) =>
+      tradeRequest("post", { give, giveN, want, wantN }),
+    cancelOffer: (id: number) => tradeRequest("cancel", { id }),
     /** The per-frame harvest clock (the rival's passive income lives here). */
     econTick: (now = performance.now()) => economyTick(now),
     /**

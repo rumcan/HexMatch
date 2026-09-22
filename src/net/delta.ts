@@ -153,6 +153,14 @@ export interface PublishFields {
   /** RES-FIELDS: ids of the demolished wheat fields / tree blocks. */
   clearedFields?: Snapshot["clearedFields"];
   /**
+   * B5/B6: the battle layer (conquests, cooldowns, the live MP duel) and
+   * TRADE: the offer book. Both must ride EVERY delta, not only full states —
+   * a guest mid-duel replays the host's move log from here, and an offer
+   * posted or taken between snapshots would otherwise never reach it.
+   */
+  battle?: Snapshot["battle"];
+  offers?: Snapshot["offers"];
+  /**
    * MP-05: a one-shot line for the guest (a refused intent, usually). Carried
    * by the next delta rather than by a message of its own — the relay already
    * forwards deltas, and §4 has no host→guest side channel.
@@ -209,6 +217,8 @@ export function buildPublish(track: Track, dirty: DirtyTiles, f: PublishFields):
     ...(f.rail !== undefined ? { rail: f.rail } : {}),
     ...(f.winner !== undefined ? { winner: f.winner } : {}),
     ...(f.clearedFields !== undefined ? { clearedFields: f.clearedFields } : {}),
+    ...(f.battle !== undefined ? { battle: f.battle } : {}),
+    ...(f.offers !== undefined ? { offers: f.offers } : {}),
     ...(f.notice ? { notice: f.notice } : {}),
   };
   const bytes = deltaBytes(msg);
