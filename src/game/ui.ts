@@ -2663,7 +2663,30 @@ export function createOriginalUi(
     // desktop too while the window owns the screen). Unmeasured (jsdom, or a
     // window mid-transition) keeps the band heuristic, so the numbers tests
     // pin on survive.
-    if (sessionMode && sessionWin && !sessionWin.classList.contains("hidden")) {
+    if (sessionMode && sessionWin && !sessionWin.classList.contains("hidden") && !phone && sessionFrame) {
+      // Desktop: the frame is `fit-content` — it is as big as what it holds —
+      // so the slot's box is the BOARD's box at the zoom it already has.
+      // Clamping to that box shrank the board a little on every pass (the
+      // pad came off each time) and the slot's ResizeObserver kept asking
+      // again, until the board sat at the 0.3 floor. Measure the room the
+      // frame is ALLOWED instead (its CSS caps, minus the chrome around the
+      // slot), which does not depend on the board's current size — so the
+      // same window always gives the same zoom.
+      const chromeH = sessionFrame.offsetHeight - boardSlot.offsetHeight;
+      if (sessionFrame.offsetHeight > 100 && chromeH >= 0) {
+        const cs = getComputedStyle(sessionFrame);
+        const padX = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+        const maxW = Math.min(window.innerWidth * 0.96, 760) - padX;
+        const maxH = window.innerHeight * 0.94 - chromeH;
+        z = Math.max(0.3, Math.min(
+          (maxW - PHONE_SLOT_PAD_W) / (CELL * board.w),
+          (maxH - PHONE_SLOT_PAD_H) / (CELL * board.h),
+          1,
+        ));
+      }
+    } else if (sessionMode && sessionWin && !sessionWin.classList.contains("hidden")) {
+      // Phone: the frame is stretched full-bleed (styles.css), so the slot
+      // flexes to the screen and its box really is the room.
       const winW = boardSlot.clientWidth, winH = boardSlot.clientHeight;
       if (winW > 100 && winH > 100) {
         z = Math.max(0.3, Math.min(
