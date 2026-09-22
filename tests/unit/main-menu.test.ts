@@ -10,6 +10,7 @@
 // who dismissed it at boot (force: true), because asking for the rules by
 // name is not "first visit".
 import { act, createElement } from "react";
+import { STORY_MODE_ENABLED } from "../../src/story/flag";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import MainMenu from "../../src/ui/MainMenu";
@@ -76,8 +77,10 @@ describe("MainMenu — the front door", () => {
     for (const door of [/^Play/, /^Settings/, /^How to Play/]) {
       expect(button(door)).toBeTruthy();
     }
+    // Story mode is hidden (src/story/flag.ts): no campaign line at all.
+    if (!STORY_MODE_ENABLED) expect(host.querySelector(".menu-campaign")).toBeNull();
     // a first visit has filed nothing and seen no reel
-    expect(host.querySelector(".menu-campaign")!.textContent)
+    else expect(host.querySelector(".menu-campaign")!.textContent)
       .toMatch(/no contracts filed/i);
   });
 
@@ -165,7 +168,7 @@ describe("MainMenu — the front door", () => {
     expect(host2!.contains(document.querySelector("#iso-tutorial"))).toBe(true);
   });
 
-  it("reports filed contracts from saved campaign progress", () => {
+  it.skipIf(!STORY_MODE_ENABLED)("reports filed contracts from saved campaign progress", () => {
     localStorage.setItem("hexmatch:story", JSON.stringify({
       unlocked: 2,
       introSeen: true,
@@ -203,7 +206,7 @@ describe("MainMenu — Continue (#191)", () => {
     expect(onPlay).not.toHaveBeenCalled();
   });
 
-  it("continues the freshest slot and names a contract for a story save", () => {
+  it.skipIf(!STORY_MODE_ENABLED)("continues the freshest slot and names a contract for a story save", () => {
     // an older sandbox slot…
     writeSave(saveKeyFor(null), { savedAt: Date.now() - 5 * 3600_000 });
     // …loses the door to a newer contract slot
@@ -218,6 +221,17 @@ describe("MainMenu — Continue (#191)", () => {
     expect(cont.textContent).toMatch(/saved 10 min ago/);
     act(() => { cont.click(); });
     expect(onContinue).toHaveBeenCalledWith("black-gold");
+  });
+
+  it.skipIf(STORY_MODE_ENABLED)("with Story mode hidden, a newer contract save never hides the sandbox Continue", () => {
+    writeSave(saveKeyFor(null), { savedAt: Date.now() - 5 * 3600_000 });
+    writeSave(saveKeyFor("black-gold"), { savedAt: Date.now() - 10 * 60_000, skillKey: "normal" });
+    const onContinue = vi.fn();
+    mount(vi.fn(), onContinue);
+    const cont = button(/^Continue/);
+    expect(cont.textContent).not.toMatch(/Black Gold/);
+    act(() => { cont.click(); });
+    expect(onContinue).toHaveBeenCalledWith(null);
   });
 
   it("stays quiet about saves when no onContinue handler is supplied", () => {

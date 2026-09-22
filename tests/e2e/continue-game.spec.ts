@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { STORY_MODE_ENABLED } from "../../src/story/flag";
 import { bootBudget } from "./boot";
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -127,6 +128,7 @@ test.describe("Continue door (#191)", () => {
   });
 
   test("a contract's Start-over door clears just that save into a fresh briefing", async ({ page }) => {
+    test.skip(!STORY_MODE_ENABLED, "Story mode is hidden (STORY_MODE_ENABLED = false)");
     await page.addInitScript(([k, v]) => localStorage.setItem(k, v), [CONTRACT_KEY, craftedSave("easy")]);
     await page.addInitScript(() => localStorage.setItem("hexmatch:story", JSON.stringify({
       unlocked: 1, introSeen: true, advisor: true, results: {},

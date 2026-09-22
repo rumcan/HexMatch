@@ -77,6 +77,7 @@ import {
 import { CHAPTERS, EMPLOYER, currentJobTitle, type StoryChapter } from "../story/chapters";
 import { CAST, faceOf } from "../story/cast";
 import { loadStoryProgress, pinnedChapter, type StoryProgress } from "../story/progress";
+import { STORY_MODE_ENABLED } from "../story/flag";
 
 /** RANK-01: the ladder panel's data, as `rankStore().loadLadder()` returns it. */
 type LadderView = {
@@ -1034,8 +1035,10 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
               Continue<small>{describeSave(sandboxSave)}</small>
             </button>
           ) : null}
-          <button className={sandboxSave ? "" : "start-primary"} data-sfx="open" onClick={() => { setProgress(loadStoryProgress()); setState("story"); }}>Story Mode <small>the Foundry Syndicate campaign</small></button>
-          <button data-sfx="open" onClick={beginAiNew}>Play vs AI <small>{sandboxSave ? "start a new game" : "sandbox · no login"}</small></button>
+          {STORY_MODE_ENABLED ? (
+            <button className={sandboxSave ? "" : "start-primary"} data-sfx="open" onClick={() => { setProgress(loadStoryProgress()); setState("story"); }}>Story Mode <small>the Foundry Syndicate campaign</small></button>
+          ) : null}
+          <button className={sandboxSave || STORY_MODE_ENABLED ? "" : "start-primary"} data-sfx="open" onClick={beginAiNew}>Play vs AI <small>{sandboxSave ? "start a new game" : "sandbox · no login"}</small></button>
           <p className="start-actions-label">Multiplayer</p>
           <button disabled={busy} onClick={() => void beginMatch()}>Auto Matchmaking <small>ranked · a rated stranger</small></button>
           <div className="start-actions-pair">

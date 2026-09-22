@@ -26,10 +26,11 @@ import { FREE_SETUP_TRACK } from "../iso/game";
 import { RIVAL_SKILLS, resolveSkillKey } from "../iso/skill";
 import { loadStoryProgress } from "../story/progress";
 import { CHAPTERS, EMPLOYER, currentJobTitle } from "../story/chapters";
+import { STORY_MODE_ENABLED } from "../story/flag";
 // CONTINUE-01 (#191): the front door names the save it can resume. Read once
 // per mount — returning from a match mounts the menu afresh, so a slot just
 // written or cleared is always re-read.
-import { describeSave, mostRecentSave, type SoloSaveSummary } from "../iso/save-summary";
+import { describeSave, mostRecentSave, saveForMode, type SoloSaveSummary } from "../iso/save-summary";
 import { currentVersionLabel } from "./version";
 import { rankStore } from "../net/rankstore";
 import { badgeUrlFor } from "./rank-badge";
@@ -95,7 +96,10 @@ export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
   // CONTINUE-01 (#191): the freshest resumable solo save, if any — it gets
   // the gold door, and Play drops to a plain door beneath it. A fresh player
   // sees no Continue button and Play keeps the primary styling it always had.
-  const resume: SoloSaveSummary | null = onContinue ? mostRecentSave() : null;
+  // Story mode hidden: only the sandbox slot is offered (a campaign save stays
+  // on disk, untouched, for when the flag comes back).
+  const resume: SoloSaveSummary | null = !onContinue ? null
+    : STORY_MODE_ENABLED ? mostRecentSave() : saveForMode(null);
 
   // ── leaderboard (top 10) — fetched once per mount, same ladder the
   //    StartScreen's RANK-01 panel reads, but limited to 10 so the front
@@ -136,9 +140,11 @@ export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
         <span className="menu-emblem" aria-hidden="true" />
         <p className="start-kicker">EST. 1949 · THE ISLAND RUNS ON WHOEVER MOVES IT FIRST</p>
         <h1 className="menu-title">Hexmatch Industries</h1>
-        <p className="menu-sub">The Foundry Syndicate · a campaign in five contracts</p>
-        {/* BACK TO WORK: the player's job, and it grows with the campaign. */}
-        <p className="menu-sub menu-job">Your job: {currentJobTitle(progress.results)}, {EMPLOYER}</p>
+        {STORY_MODE_ENABLED ? (<>
+          <p className="menu-sub">The Foundry Syndicate · a campaign in five contracts</p>
+          {/* BACK TO WORK: the player's job, and it grows with the campaign. */}
+          <p className="menu-sub menu-job">Your job: {currentJobTitle(progress.results)}, {EMPLOYER}</p>
+        </>) : null}
         <nav className="menu-actions" aria-label="Main menu">
           {resume ? (
             <button type="button" className="menu-btn primary" data-sfx="open"
@@ -148,7 +154,7 @@ export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
             </button>
           ) : null}
           <button type="button" className={`menu-btn${resume ? "" : " primary"}`} data-sfx="open" onClick={onPlay}>
-            Play<span className="mb-tag">{resume ? "start a new game" : "campaign · sandbox · rooms"}</span>
+            Play<span className="mb-tag">{resume ? "start a new game" : STORY_MODE_ENABLED ? "campaign · sandbox · rooms" : "sandbox · rooms"}</span>
           </button>
           <button type="button" className="menu-btn" data-sfx="click" onClick={() => setSettings(true)}>
             Settings<span className="mb-tag">graphics · miniature · performance · sound</span>
@@ -157,13 +163,13 @@ export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
             How to Play<span className="mb-tag">eight cards, one loop</span>
           </button>
         </nav>
-        <p className="menu-campaign">
+        {STORY_MODE_ENABLED ? <p className="menu-campaign">
           {filed > 0
             ? `Campaign: ${filed} of ${CHAPTERS.length} contracts filed · ${progress.unlocked} open`
             : progress.introSeen
               ? "The reel is watched. The first contract is open."
               : "No contracts filed. The first one is open."}
-        </p>
+        </p> : null}
       </div>
       <section className="menu-leaderboard" aria-label="The Ladder — Top 10" data-testid="main-menu-leaderboard">
         <p className="start-kicker">THE LADDER</p>
