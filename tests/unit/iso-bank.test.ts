@@ -28,7 +28,7 @@ import {
   BANK_RATE, SABOTAGE_ONLY, bankAllowed, bankTier, bankTrade, emptyBag, isCargo, toBag,
   type CargoBag,
 } from "../../src/iso/bank";
-import { CARGOES, DEPOT_TREE, DEPOT_TREE_ORDER, type Cargo } from "../../src/iso/config";
+import { CARGOES, DEPOT_TREE, DEPOT_TREE_ORDER, DEPOT_RUNG_GATE, type Cargo } from "../../src/iso/config";
 
 const bag = (over: Partial<Record<Cargo, number>> = {}): CargoBag => toBag(over);
 
@@ -93,7 +93,8 @@ describe("L11 (#226) — the rung gate", () => {
     for (const c of CARGOES) expect(bankTier(c)).toBe(DEPOT_TREE[c].tier);
   });
 
-  it("opens rung by rung: grain/wood, then stone/ore, then oil", () => {
+  // the bank's rung gate follows DEPOT_RUNG_GATE (off by owner call, 2026-09)
+  it.skipIf(!DEPOT_RUNG_GATE)("opens rung by rung: grain/wood, then stone/ore, then oil", () => {
     expect(open(0)).toEqual(["grain", "wood"]);
     expect(open(1)).toEqual(["grain", "wood", "stone", "ore"]);
     expect(open(2)).toEqual(["grain", "wood", "stone", "ore", "oil"]);
@@ -103,7 +104,8 @@ describe("L11 (#226) — the rung gate", () => {
     expect(open(-1)).toEqual(["grain", "wood"]);
   });
 
-  it("the bypass the ticket closed: no rung bought with Wood can arrive", () => {
+  // the bank's rung gate follows DEPOT_RUNG_GATE (off by owner call, 2026-09)
+  it.skipIf(!DEPOT_RUNG_GATE)("the bypass the ticket closed: no rung bought with Wood can arrive", () => {
     // A seat at rung 0 with a mountain of Wood, and what it may NOT buy with it.
     for (const locked of ["stone", "ore", "oil"] as Cargo[]) {
       const purse = bag({ wood: 400 });
@@ -120,7 +122,8 @@ describe("L11 (#226) — the rung gate", () => {
     expect(purse.grain).toBe(1);
   });
 
-  it("a rung-1 seat still cannot reach Oil, and a rung-2 seat can", () => {
+  // the bank's rung gate follows DEPOT_RUNG_GATE (off by owner call, 2026-09)
+  it.skipIf(!DEPOT_RUNG_GATE)("a rung-1 seat still cannot reach Oil, and a rung-2 seat can", () => {
     const one = bag({ ore: 4 });
     expect(bankTrade(one, "ore", "oil", { unlocked: 1 })).toBe(false);
     expect(one.oil).toBe(0);
@@ -148,7 +151,8 @@ describe("L11 (#226) — the rung gate", () => {
 });
 
 describe("L17 (#245) — the bank is the way out of a blocked cargo", () => {
-  it("a seat with no grain industry still pays for a rung-1 Mine Depot", async () => {
+  // the bank's rung gate follows DEPOT_RUNG_GATE (off by owner call, 2026-09)
+  it.skipIf(!DEPOT_RUNG_GATE)("a seat with no grain industry still pays for a rung-1 Mine Depot", async () => {
     const { planBankTrades } = await import("../../src/iso/ai");
     const { DEPOT_TREE } = await import("../../src/iso/config");
     // Rung 1 unlocked, every grain industry held by the other seat: no grain

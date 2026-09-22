@@ -35,6 +35,7 @@
 // the way `iso-l5-depot-tree.test.ts` and `iso-l1d-rival-clock.test.ts` do.
 // ══════════════════════════════════════════════════════════════════════════
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { DEPOT_RUNG_GATE } from "../../src/iso/config";
 import { WATER, type Grid, type Industry } from "../../src/iso/grid";
 import {
   CARGOES, DEPOT_TREE, DEPOT_TREE_ORDER, INDUSTRY_BY_KEY, MAP_W, MAP_H,
@@ -304,7 +305,9 @@ describe("L16 (#231) the cap, as data", () => {
     }
   });
 
-  it("the depot tree is completable from START_PURSE with the starting cap", () => {
+  // Owner call (2026-09): with the rung gate off a Depot needs every cargo, so
+  // the walk goes through the bank (pinned in iso-l5-depot-tree instead).
+  it.skipIf(!DEPOT_RUNG_GATE)("the depot tree is completable from START_PURSE with the starting cap", () => {
     // The acceptance walk. Balances are bounded by `storageCapFor(0)` the
     // whole way: each Depot pays its mix (the first rides the setup
     // allowance, exactly as the live `freeDepots` data does), then banks its
@@ -401,6 +404,8 @@ describe("L16 (#231) income stops at the cap — and the upgrade raises it", () 
     expect(second, "seed 1337 has a second corridor off a forest").toBeTruthy();
     const mix = DEPOT_TREE.wood.cost;
     h.purse.stone = 500;                   // far over the cap, and the mix's cargo
+    // …and the rest of the mix (every Depot needs one of each cargo now).
+    for (const [c, n] of Object.entries(mix)) if (c !== "stone") (h.purse as Record<string, number>)[c] = Math.max((h.purse as Record<string, number>)[c] ?? 0, n ?? 0);
     expect(h.placeDepot(second.hx, second.hy)).toBe(true);
     await settle();
     h.tuningFinish(true);

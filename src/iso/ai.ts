@@ -49,7 +49,7 @@
 import { MAP_W, MAP_H } from "../game/config";
 import {
   TRANSPORT, UPGRADE_COST, INDUSTRY_BY_KEY, FACTORY_FOOTPRINT, VICTORY, DEPOT_TREE,
-  DEPOT_TREE_ORDER, DISTANCE, CARGOES,
+  DEPOT_TREE_ORDER, DEPOT_RUNG_GATE, DISTANCE, CARGOES,
   type Cargo, type DepotTypeDef,
 } from "./config";
 import { FREE_SETUP_DEPOTS, depotCostFor, priceDepot } from "./construction";
@@ -718,7 +718,7 @@ export function treeGoal(opts: TreeGoalOptions): TreeGoal | null {
   const purse = opts.stock ?? opts.purse;
   const ranked = DEPOT_TREE_ORDER
     .map((cargo) => DEPOT_TREE[cargo])
-    .filter((type) => type.tier <= tier && type.cargo !== "gold")
+    .filter((type) => (!DEPOT_RUNG_GATE || type.tier <= tier) && type.cargo !== "gold")
     .map((type) => {
       const cost = { ...type.cost } as Purse;
       const missing = DEPOT_TREE_ORDER.filter((c) => (cost[c] ?? 0) > (purse[c] ?? 0));
@@ -870,7 +870,7 @@ export function planCandidates(
         const cargo = newLoop
           ? depotCargo(state, { id: -1, owner: factory.owner, ownerId: factory.ownerId, tx: hx, ty: hy })
           : null;
-        if (newLoop && cargo && DEPOT_TREE[cargo].tier > depotTier) continue;
+        if (DEPOT_RUNG_GATE && newLoop && cargo && DEPOT_TREE[cargo].tier > depotTier) continue;
         // PP-05: every candidate ends at a NEW Depot, so the Depot's own price
         // is part of what the plan must afford. L5: on the new loop that is
         // the TYPE's row of `DEPOT_TREE` — priced by the same `priceDepot` the

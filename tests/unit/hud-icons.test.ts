@@ -2,6 +2,7 @@
 //
 // #166 — HUD chrome uses painted gem tokens + stroke SVGs, not OS emoji.
 import { describe, expect, it } from "vitest";
+import { DEPOT_RUNG_GATE } from "../../src/iso/config";
 import { CARGO, CARGOES, type Cargo } from "../../src/iso/config";
 import { DEPOT_COST } from "../../src/iso/construction";
 import { GEM_ART } from "../../src/game/gem-art";
@@ -47,7 +48,9 @@ describe("#166 HUD icons", () => {
   it("depotButtonMarkup quotes the tree's cheapest open type on the new loop", () => {
     const locked = depotButtonMarkup(0, { newLoop: true, tier: 0 });
     expect(locked).toMatch(/by industry/);
-    expect(locked, "the starter rungs cost no Oil").not.toContain('alt="Oil"');
+    // With the rung gate off (owner call, 2026-09) every Depot costs one of each cargo but gold.
+    if (DEPOT_RUNG_GATE) expect(locked, "the starter rungs cost no Oil").not.toContain('alt="Oil"');
+    else expect(locked).toContain('alt="Oil"');
     expect(depotButtonMarkup(1, { newLoop: true, tier: 0 }), "the allowance keeps its line")
       .toMatch(/free setup · then from /);
 

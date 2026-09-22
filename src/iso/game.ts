@@ -137,7 +137,7 @@ import {
   chooseAiPlantSpot, plantRefusal, plantsOf, resolvePlantTarget,
 } from "./plants";
 import {
-  CARGO, CARGOES, DEPOT_TREE, DEPOT_TREE_ORDER, DEPOT_TIER_MAX, FACTORY_FOOTPRINT, FACTORY_SPRITE,
+  CARGO, CARGOES, DEPOT_TREE, DEPOT_TREE_ORDER, DEPOT_RUNG_GATE, DEPOT_TIER_MAX, FACTORY_FOOTPRINT, FACTORY_SPRITE,
   INDUSTRY_BY_KEY, TRANSPORT, TOWN_UPGRADES, TOWN_TIER_LEGACY, TOWN_VISUAL_MAX,
   townCentreSprite, townTierLabel,
   BASE_RATE, VICTORY, VP_TARGET, UPGRADE_COST, TUNING,
@@ -5855,6 +5855,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // plant guard, the planner's ranking and the city's reserve all work
     // toward the SAME goal, so one turn cannot pull in two directions.
     const goal = treeGoal({ purse: rival.purse, tier: rival.depotTier });
+    // Owner call (2026-09): with the rung gate off every Depot costs one of
+    // each cargo, so no single industry pays for the next one. The bank is how
+    // the mix gets made — trade toward it FIRST, then build in the same turn,
+    // instead of only banking when a turn found nothing else to do (that
+    // trickle never caught up, and the rival stalled).
+    if (!DEPOT_RUNG_GATE && goal && goal.missing.length > 0) rivalBankTowardGoal(goal.cost);
     const want = treeWants(goal, scoreCargoWant(eco, rival.id));
 
     // ── 0. city upgrade FIRST at the cap (L16, #231) ───────────────────────
@@ -7490,7 +7496,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // not opened, offered only while its mix is already in the purse.
       // Earning the mix is the `grow` line's job; this line names the unlock.
       const nextType = (Object.values(DEPOT_TREE) as { cargo: Cargo; name: string; tier: number }[])
-        .filter((t) => t.tier > me.depotTier)
+        .filter((t) => DEPOT_RUNG_GATE && t.tier > me.depotTier)
         .sort((a, b) => a.tier - b.tier)[0] ?? null;
       const nextPrice = nextType
         ? priceDepot(me.purse, me.freeDepots, { cargo: nextType.cargo, tier: me.depotTier, newLoop })
@@ -10136,7 +10142,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       town: priceTownUpgrade(me.purse, me.townLevel),
       types: DEPOT_TREE_ORDER.map((c) => ({
         cargo: c, name: DEPOT_TREE[c].name, tier: DEPOT_TREE[c].tier,
-        cost: { ...DEPOT_TREE[c].cost }, open: DEPOT_TREE[c].tier <= me.depotTier,
+        cost: { ...DEPOT_TREE[c].cost }, open: !DEPOT_RUNG_GATE || DEPOT_TREE[c].tier <= me.depotTier,
       })),
     }),
     /** L5 (#219): the city upgrade's click, as a test twin — the real

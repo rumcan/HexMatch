@@ -259,7 +259,8 @@ describe("E7 planning", () => {
     // PP-05/PP-07: the Depot's own cost (1 grain + 1 oil alongside wood/stone)
     // is covered, so the Depot is affordable and the transport choice stays
     // the thing under test.
-    const plan = planCandidates(state(grid), F, { stock: {}, purse: { wood: 50, stone: 50, grain: 1, oil: 1 } });
+    // (2026-09: a Depot also takes 1 ore — still far short of a road tile's 4.)
+    const plan = planCandidates(state(grid), F, { stock: {}, purse: { wood: 50, stone: 50, grain: 1, ore: 1, oil: 1 } });
     expect(plan.length).toBeGreaterThan(0);
     expect(plan.every((c) => c.kind === "dirt")).toBe(true);
     expect(TRANSPORT.road.cost.ore).toBeGreaterThan(0);

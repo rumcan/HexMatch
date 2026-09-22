@@ -8,6 +8,7 @@
 // this verifies wiring and game logic, not pixels. Pixel correctness is what
 // the committed-reference-PNG fixture is for, and that still needs a browser.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { DEPOT_RUNG_GATE } from "../../src/iso/config";
 import { southLotFree } from "./helpers/depot-lot";
 import { WATER, GRASS, ROUGH, SAND, factoryTouchesTown } from "../../src/iso/grid";
 import { SABOTAGE, RAID_EVERY, BANDIT_MS } from "../../src/game/config";
@@ -807,7 +808,7 @@ describe("the Gold Mine warning (a young man's game)", () => {
     const h = await boot();
     // Give the player the materials for a PAID second Depot so the rotation is
     // exercised the way a real game would use it.
-    h.purse.wood = 99; h.purse.stone = 99; h.purse.grain = 99; h.purse.oil = 99;
+    h.purse.wood = 99; h.purse.stone = 99; h.purse.grain = 99; h.purse.ore = 99; h.purse.oil = 99;
     const spots = goldMineDepotSpots(h.grid);
     expect(spots.length, "two legal gold-mine Depot sites").toBeGreaterThanOrEqual(2);
 
@@ -2382,7 +2383,8 @@ describe("PP-08 gold is reserved for Black Market sabotage", () => {
     // seat and at every rung — a Gold Depot does not make Gold tradeable.
     for (const unlocked of [0, 1, 2, null]) expect(bankAllowed("gold", unlocked)).toBe(false);
     expect(bankAllowed("oil", 2)).toBe(true);
-    expect(bankAllowed("oil", 1)).toBe(false);
+    // the rung half of the gate follows DEPOT_RUNG_GATE (off by owner call, 2026-09)
+    expect(bankAllowed("oil", 1)).toBe(!DEPOT_RUNG_GATE);
   });
 });
 
@@ -2405,7 +2407,7 @@ describe("W6 the bank is the one exchange left", () => {
     expect(h.purse.ore).toBe(1);
   });
 
-  it("under the new loop the bank refuses a rung the seat has not unlocked", async () => {
+  it.skipIf(!DEPOT_RUNG_GATE)("under the new loop the bank refuses a rung the seat has not unlocked", async () => {
     // L11 (#226), acceptance 1: the bank can rebalance what the tree has given
     // you, never skip a rung. Rung 0 opens Grain and Wood; Stone and Ore are
     // rung 1, Oil rung 2, Gold never (PP-08).

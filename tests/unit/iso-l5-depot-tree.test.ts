@@ -33,7 +33,8 @@ import {
 import { cheapestDepotType, priceDepot, priceTownUpgrade } from "../../src/iso/construction";
 import { depotCargo } from "../../src/iso/economy";
 import { townBonusFor, unlockTierAfterSession } from "../../src/iso/tuning";
-import { TUNING } from "../../src/iso/config";
+import { TUNING, DEPOT_RUNG_GATE, BUILD_COSTS, DEPOT_TREE_ORDER as ORDER, DEPOT_TREE as TREE } from "../../src/iso/config";
+import { bankAllowed, BANK_RATE } from "../../src/iso/bank";
 import { START_PURSE } from "../../src/iso/game";
 import { buildTile, createTrack, type Track } from "../../src/iso/track";
 import { chooseRivalFactorySpot, planCandidates } from "../../src/iso/ai";
@@ -204,7 +205,7 @@ function connect(h: TreeHook, site: Site) {
 
 // ══════════════════════════════════════════════════════════════════════════
 describe("L5 the tree, as data (config.ts)", () => {
-  it("is total: every cargo has a row, a name, a mix and a rung inside the cap", () => {
+  it.skipIf(!DEPOT_RUNG_GATE)("is total: every cargo has a row, a name, a mix and a rung inside the cap", () => {
     expect(DEPOT_TREE_ORDER).toHaveLength(Object.keys(DEPOT_TREE).length);
     for (const cargo of DEPOT_TREE_ORDER) {
       const row = DEPOT_TREE[cargo];
@@ -226,7 +227,7 @@ describe("L5 the tree, as data (config.ts)", () => {
     for (let t = 0; t <= DEPOT_TIER_MAX; t++) expect(tiers.has(t), `rung ${t} has a type`).toBe(true);
   });
 
-  it("opens on more than one mix — the Catan opening (Addition B)", () => {
+  it.skipIf(!DEPOT_RUNG_GATE)("opens on more than one mix — the Catan opening (Addition B)", () => {
     // The starter row(s): buildable with the boot purse and no session at all.
     const openAtBoot = DEPOT_TREE_ORDER.filter(
       (c) => priceDepot(START_PURSE, 0, { cargo: c, tier: 0, newLoop: true }).affordable
@@ -251,7 +252,7 @@ describe("L5 the tree, as data (config.ts)", () => {
     expect(priceDepot(START_PURSE, 0, { cargo: "gold", tier: 0, newLoop: false }).locked).toBe(false);
   });
 
-  it("gates by rung, and the gate is the only thing standing between the mixes", () => {
+  it.skipIf(!DEPOT_RUNG_GATE)("gates by rung, and the gate is the only thing standing between the mixes", () => {
     const locked = priceDepot(START_PURSE, 0, { cargo: "ore", tier: 0, newLoop: true });
     expect(locked.locked).toBe(true);
     expect(locked.tier).toBe(DEPOT_TREE.ore.tier);
@@ -266,7 +267,7 @@ describe("L5 the tree, as data (config.ts)", () => {
     expect(free.cost).toEqual({});
   });
 
-  it("is completable from START_PURSE — the Oil lesson", () => {
+  it.skipIf(!DEPOT_RUNG_GATE)("is completable from START_PURSE — the Oil lesson", () => {
     // Walk the tree the way a seat plays it: a round is one build (whatever
     // the open rungs and the purse cover), the income that build produces (a
     // deliberately WEAK model — one unit per built Depot per round, i.e. one
@@ -310,7 +311,7 @@ describe("L5 the tree, as data (config.ts)", () => {
     expect(rounds).toBeLessThan(30);
   });
 
-  it("keeps the deepest rung optional: no type is required to score", () => {
+  it.skipIf(!DEPOT_RUNG_GATE)("keeps the deepest rung optional: no type is required to score", () => {
     // Gold is the pure-sabotage cargo — nothing in the tree costs it, and the
     // ★ table names no Depot type at all, so no rung is mandatory for winning.
     for (const cargo of DEPOT_TREE_ORDER) {
@@ -362,8 +363,41 @@ describe("L5 the tree, as data (config.ts)", () => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
+// Owner call (2026-09): the rung gate is OFF and every Depot costs one of each
+// cargo but gold (about half a processing plant). The ladder tests above skip
+// while `DEPOT_RUNG_GATE` is false; these pin the rule that replaced them.
+describe.skipIf(DEPOT_RUNG_GATE)("flat Depot price, no rung gate", () => {
+  it("every type costs one of each cargo but gold — the same as BUILD_COSTS.depot", () => {
+    for (const c of ORDER) {
+      expect(TREE[c].cost, c).toEqual({ grain: 1, wood: 1, stone: 1, ore: 1, oil: 1 });
+    }
+    expect(BUILD_COSTS.depot).toEqual({ grain: 1, wood: 1, stone: 1, ore: 1, oil: 1 });
+  });
+
+  it("any type is buildable on a rung-0 seat (nothing is locked)", () => {
+    for (const c of ORDER) {
+      expect(priceDepot({}, 0, { cargo: c, tier: 0, newLoop: true }).locked, c).toBe(false);
+    }
+  });
+
+  it("a fresh seat can pay for a Depot through the 3:1 bank — no soft-lock", () => {
+    const purse: Record<string, number> = { ...START_PURSE };
+    const cost = TREE.grain.cost as Record<string, number>;
+    for (const [c, n] of Object.entries(cost)) {
+      expect(bankAllowed(c as never, 0), `rung-0 bank trades ${c}`).toBe(true);
+      while ((purse[c] ?? 0) < n) {
+        const give = (["wood", "stone"] as const).find((g) => (purse[g] ?? 0) - (cost[g] ?? 0) >= BANK_RATE);
+        expect(give, `something to trade for ${c}`).toBeTruthy();
+        purse[give!] -= BANK_RATE;
+        purse[c] = (purse[c] ?? 0) + 1;
+      }
+    }
+    expect(priceDepot(purse, 0, { cargo: "grain", tier: 0, newLoop: true }).affordable).toBe(true);
+  });
+});
+
 describe("L5 the gate, live on the map", () => {
-  it("refuses a type above the seat's rung, and spends nothing doing it", async () => {
+  it.skipIf(!DEPOT_RUNG_GATE)("refuses a type above the seat's rung, and spends nothing doing it", async () => {
     const h = await boot({ newLoop: true });
     h.finishSetup();
     expect(h.treeState().depotTier).toBe(0);
@@ -385,7 +419,7 @@ describe("L5 the gate, live on the map", () => {
     expect(tiered.types.find((t) => t.cargo === "grain")!.open).toBe(true);
   });
 
-  it("opens the next rung only for a session that was really played", async () => {
+  it.skipIf(!DEPOT_RUNG_GATE)("opens the next rung only for a session that was really played", async () => {
     const h = await boot({ newLoop: true });
     h.finishSetup();
     const first = depotSite(h.grid, "grain")!;
@@ -608,7 +642,7 @@ describe("L5 Addition B — the map decides the opening", () => {
     }
   }, 900_000);
 
-  it("offers more than one opening on every seed", () => {
+  it.skipIf(!DEPOT_RUNG_GATE)("offers more than one opening on every seed", () => {
     for (const { seed, opens } of table) {
       for (const open of opens) {
         expect(open.alternatives.length, `seed ${seed}/${open.seat}: only ${open.cargo} is open`)

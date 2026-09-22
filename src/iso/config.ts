@@ -484,21 +484,32 @@ export interface DepotTypeDef {
   cost: Partial<Record<Cargo, number>>;
 }
 
+/**
+ * Owner call (2026-09): every Depot type costs the same — one of each cargo
+ * but gold (`BUILD_COSTS.depot`), about half a processing plant — and the
+ * rung gate is OFF, so any industry can take a Depot from the start. The
+ * tiers stay: they still set how hard a Depot's tuning session is. Flip
+ * `DEPOT_RUNG_GATE` to bring the ladder back (the per-type mixes below are
+ * kept as the record of what it cost then).
+ */
+export const DEPOT_RUNG_GATE = false;
+const DEPOT_FLAT_COST = (): Partial<Record<Cargo, number>> => ({ grain: 1, wood: 1, stone: 1, ore: 1, oil: 1 });
+
 export const DEPOT_TREE: Record<Cargo, DepotTypeDef> = {
   // Rung 0 — the two cargos `START_PURSE` can always turn into a network. Both
   // are free with the setup allowance; these prices are what a SECOND one
   // costs, and they are deliberately cheap: going WIDE has to stay a real plan
   // (many cheap depots) next to going TALL (unlock rungs, tune harder).
-  grain: { cargo: "grain", name: "Farm Depot",   tier: 0, cost: { wood: 2 } },
-  wood:  { cargo: "wood",  name: "Forest Depot", tier: 0, cost: { stone: 2 } },
+  grain: { cargo: "grain", name: "Farm Depot",   tier: 0, cost: DEPOT_FLAT_COST() }, // was { wood: 2 },
+  wood:  { cargo: "wood",  name: "Forest Depot", tier: 0, cost: DEPOT_FLAT_COST() }, // was { stone: 2 },
   // Rung 1 — the two mid-game cargos, on ONE rung with different mixes, so
   // whichever of grain/wood the map gave you, one of them is on the table.
-  stone: { cargo: "stone", name: "Quarry Depot", tier: 1, cost: { grain: 2, wood: 2 } },
-  ore:   { cargo: "ore",   name: "Mine Depot",   tier: 1, cost: { grain: 2, stone: 2 } },
+  stone: { cargo: "stone", name: "Quarry Depot", tier: 1, cost: DEPOT_FLAT_COST() }, // was { grain: 2, wood: 2 },
+  ore:   { cargo: "ore",   name: "Mine Depot",   tier: 1, cost: DEPOT_FLAT_COST() }, // was { grain: 2, stone: 2 },
   // Rung 2 — the deep types. Oil takes the rung-1 pair apart; Gold sits behind
   // Oil so the deepest rung is a real commitment rather than a shortcut.
-  oil:   { cargo: "oil",   name: "Rig Depot",    tier: 2, cost: { wood: 2, ore: 2 } },
-  gold:  { cargo: "gold",  name: "Gold Depot",   tier: 2, cost: { stone: 2, oil: 2 } },
+  oil:   { cargo: "oil",   name: "Rig Depot",    tier: 2, cost: DEPOT_FLAT_COST() }, // was { wood: 2, ore: 2 },
+  gold:  { cargo: "gold",  name: "Gold Depot",   tier: 2, cost: DEPOT_FLAT_COST() }, // was { stone: 2, oil: 2 },
 };
 
 /** The rungs: 0…2 (three unlockable steps). */
@@ -758,7 +769,8 @@ export const BUILD_COSTS: Readonly<Record<
   dirt: {},
   road: { wood: 1, stone: 1, ore: 4 },
   upgrade: { ore: 4 },
-  depot: { wood: 1, stone: 1, grain: 1, oil: 1 },
+  // One of every cargo but gold — about half a processing plant (owner, 2026-09).
+  depot: { grain: 1, wood: 1, stone: 1, ore: 1, oil: 1 },
   plant: { wood: 2, stone: 2, grain: 2, ore: 3 },
   rail: { stone: 1 },
   platform: { wood: 4, stone: 4, ore: 12, oil: 2 },

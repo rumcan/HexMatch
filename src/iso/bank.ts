@@ -25,7 +25,7 @@
 // a copy of it. One owner, one rule, every caller (`game.ts` for the click,
 // the host's intent validation and the HUD's affordability line).
 // ══════════════════════════════════════════════════════════════════════════
-import { CARGOES, DEPOT_TREE, type Cargo } from "./config";
+import { CARGOES, DEPOT_TREE, DEPOT_RUNG_GATE, type Cargo } from "./config";
 
 /** A purse with every cargo key present — the shape the bank arithmetic needs. */
 export type CargoBag = Record<Cargo, number>;
@@ -60,7 +60,9 @@ export const bankTier = (cargo: Cargo): number => DEPOT_TREE[cargo].tier;
  */
 export function bankAllowed(cargo: Cargo, unlocked: number | null): boolean {
   if (SABOTAGE_ONLY.includes(cargo)) return false;
-  if (unlocked === null) return true;
+  // The rung gate is off (DEPOT_RUNG_GATE): with every Depot needing ore and
+  // oil, a rung-0 bank that could not make them would soft-lock the opening.
+  if (unlocked === null || !DEPOT_RUNG_GATE) return true;
   return bankTier(cargo) <= Math.max(0, Math.floor(unlocked));
 }
 
