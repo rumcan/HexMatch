@@ -94,6 +94,8 @@ interface RivalClockHook {
   readonly rivalSkill: { key: "easy" | "normal" | "hard" };
   pavedTiles: (who: string) => number;
   vp: { you: number; ai: number };
+  /** Both seats' rung/city ladders — the burst test reads the rival's. */
+  players: { depotTier: number; townLevel: number }[];
 }
 
 const hook = () => (window as unknown as { __iso: RivalClockHook }).__iso;
@@ -140,8 +142,29 @@ async function boot(opts: { newLoop?: boolean } = {}) {
   return hook();
 }
 
-/** Seconds until the rival wins (or `null` within `limitS`). */
-async function secondsToRivalWin(seed: number, diff: "easy" | "normal" | "hard", limitS: number) {
+interface RivalPaceTrace {
+  /** Seconds until the rival wins (or `null` within `limitS`). */
+  wonAt: number | null;
+  /** Largest single-second jump in the rival's ★ — the burst #297 reports. */
+  maxVpDelta: number;
+  /** Largest single-second jump in the rival's city level (one tier per turn). */
+  maxTownDelta: number;
+}
+
+/**
+ * Drive a full game headlessly and trace the rival's ★ and city level.
+ *
+ * #297's burst caps, derived from the turn's structure (one second holds at
+ * most one rival turn: `buildMs` is 4.5s+ on every preset):
+ *   • ΔVP ≤ 4 — one depot type (2★) + one rung (1★) + one city tier (1★) is
+ *     everything a single new-loop turn can score. The economy tick opens no
+ *     rung without an untuned depot, and the turn tunes what it builds — so
+ *     anything above 4 in one second is two tiers, two depots, or a collapsed
+ *     session gate.
+ *   • Δtown ≤ 1 — one city tier per turn, the pace the ★ table was balanced
+ *     for (`townBoughtThisTurn` in `aiNewLoopTurn`).
+ */
+async function traceRivalWin(seed: number, diff: "easy" | "normal" | "hard", limitS: number): Promise<RivalPaceTrace> {
   window.history.replaceState(null, "", `/?seed=${seed}`);
   setRng(mulberry32(seed));
   localStorage.setItem("hexmatch:rival-skill", diff);
@@ -159,27 +182,53 @@ async function secondsToRivalWin(seed: number, diff: "easy" | "normal" | "hard",
   h.setRivalSkill(diff);
   h.finishSetup();
   const t0 = performance.now();
+  let lastVp = 0, lastTown = 0, maxVpDelta = 0, maxTownDelta = 0;
   for (let s = 0; s <= limitS; s++) {
     h.econTick(t0 + s * 1000);
     h.aiTick(t0 + s * 1000);
-    if (h.phase === "won") return s;
+    const vp = h.vp.ai;
+    const town = h.players[1]?.townLevel ?? 0;
+    maxVpDelta = Math.max(maxVpDelta, vp - lastVp);
+    maxTownDelta = Math.max(maxTownDelta, town - lastTown);
+    lastVp = vp;
+    lastTown = town;
+    if (h.phase === "won") return { wonAt: s, maxVpDelta, maxTownDelta };
   }
-  return null;
+  return { wonAt: null, maxVpDelta, maxTownDelta };
+}
+
+/** The burst caps hold on every run, win or time-boxed. */
+function expectNoBurst(t: RivalPaceTrace, seed: number, diff: string) {
+  expect(t.maxVpDelta, `seed ${seed}/${diff}: rival jumped +${t.maxVpDelta}★ in one second`).toBeLessThanOrEqual(4);
+  expect(t.maxTownDelta, `seed ${seed}/${diff}: rival bought ${t.maxTownDelta} city tiers in one second`).toBeLessThanOrEqual(1);
 }
 
 describe("#297 the rival's pace on the new loop", () => {
   it("a Normal rival cannot win inside five minutes", async () => {
-    const won = await secondsToRivalWin(1337, "normal", 5 * 60);
-    expect(won, `Normal rival won after ${won}s`).toBeNull();
+    const t = await traceRivalWin(1337, "normal", 5 * 60);
+    expect(t.wonAt, `Normal rival won after ${t.wonAt}s`).toBeNull();
+    expectNoBurst(t, 1337, "normal");
   }, 120_000);
 
   it("a Hard rival cannot win inside three minutes", async () => {
-    const won = await secondsToRivalWin(1337, "hard", 3 * 60);
-    expect(won, `Hard rival won after ${won}s`).toBeNull();
+    const t = await traceRivalWin(1337, "hard", 3 * 60);
+    expect(t.wonAt, `Hard rival won after ${t.wonAt}s`).toBeNull();
+    expectNoBurst(t, 1337, "hard");
   }, 120_000);
 
   it("the rival still gets there: a Hard rival wins within fifteen minutes", async () => {
-    const won = await secondsToRivalWin(1337, "hard", 15 * 60);
-    expect(won).not.toBeNull();
+    const t = await traceRivalWin(1337, "hard", 15 * 60);
+    expect(t.wonAt).not.toBeNull();
+    expectNoBurst(t, 1337, "hard");
+  }, 180_000);
+
+  // One `it` per seed: each boots a fresh game (the file's beforeEach clears
+  // the autosave slot, so a second boot in the same test would restore the
+  // first game instead of starting a new one).
+  it.for([7, 42])("no burst on seed %s: a Hard win takes minutes with no single-turn jump", async (seed) => {
+    const t = await traceRivalWin(seed, "hard", 12 * 60);
+    expect(t.wonAt, `seed ${seed}: Hard rival never won`).not.toBeNull();
+    expect(t.wonAt!, `seed ${seed}: Hard rival won after ${t.wonAt}s`).toBeGreaterThan(3 * 60);
+    expectNoBurst(t, seed, "hard");
   }, 180_000);
 });

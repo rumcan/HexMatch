@@ -5128,20 +5128,24 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    *
    * Shared by both turns (L14, #229: the new loop keeps the railway), so the
    * two can never disagree about what a rail turn is.
+   *
+   * #297: `platform` reports whether the move RAISED A PLATFORM — the one rail
+   * action that scores (+1★ in both loops). The new-loop turn paces it on the
+   * session clock like every other scoring action.
    */
-  function rivalRailStep(f: Factory, now: number): { acted: boolean; laid: [number, number][] } {
+  function rivalRailStep(f: Factory, now: number): { acted: boolean; laid: [number, number][]; platform: boolean } {
     const railState = railAvailable && skill().rail ? eco.rail ?? null : null;
-    if (!railState) return { acted: false, laid: [] };
+    if (!railState) return { acted: false, laid: [], platform: false };
     const railMove = planRailMove(eco, railState, f, {
       purse: rival.purse, ownerId: rival.i + 1, useRail: true, scope: "line", now,
     });
-    if (!railMove || !canPay(rival.purse, railMove.cost)) return { acted: false, laid: [] };
+    if (!railMove || !canPay(rival.purse, railMove.cost)) return { acted: false, laid: [], platform: false };
     const res = executeRailMove(eco, railState, railMove, rival.id, rival.i + 1);
-    if (!res) return { acted: false, laid: [] };
+    if (!res) return { acted: false, laid: [], platform: false };
     if (res.refund) earn(rival, res.refund);
     else if (Object.keys(res.spent).length) spend(rival, res.spent);
     ui.feed(`Rival ${res.label}`, rival.name);
-    return { acted: true, laid: railMove.kind === "track" ? res.tiles : [] };
+    return { acted: true, laid: railMove.kind === "track" ? res.tiles : [], platform: railMove.kind === "platform" };
   }
 
   /**
@@ -5230,6 +5234,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // cap, the shipped order — connect first — stands.
     const townFirst = CARGOES.some((c) => (rival.purse[c] ?? 0) >= storageCapFor(rival.townLevel));
     if (townFirst && rivalTownStep()) {
+      // #297: …and the tier this turn bought. The early return below is what
+      // keeps step 4 from buying a second one today; the flag is what keeps
+      // it bought-once if that return ever goes away.
+      townBoughtThisTurn = true;
       // #297: a city upgrade is a session — it takes the whole turn.
       startSession();
       syncWorld();
@@ -5306,7 +5314,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // pace the ★ table was balanced for. Without the gate a cap-first rival
     // could buy two tiers on the same clock and burst past the win line.
     // #297: …and only on a turn that did not already start a session.
-    if (!builtDepot && !townBoughtThisTurn && (rivalTownStep() || rivalRetuneStep())) {
+    // The two verbs are spelled out (instead of `town() || retune()`) so the
+    // flag records WHICH one landed: a tier bought here counts against the
+    // one-tier-per-turn pace exactly like a cap-first tier does.
+    let spentSession = false;
+    if (!builtDepot && !townBoughtThisTurn) {
+      if (rivalTownStep()) {
+        townBoughtThisTurn = true;
+        spentSession = true;
+      } else if (rivalRetuneStep()) {
+        spentSession = true;
+      }
+    }
+    if (spentSession) {
       acted = true;
       startSession();
     }
@@ -5317,6 +5337,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // ── 6. railway (RAIL-05) — shared with the shipped turn ────────────────
     const rail = rivalRailStep(f, now);
     if (rail.acted) acted = true;
+    // #297: a platform is a ★, so it is a session like any other scoring
+    // action — without this a rich rival would raise one every build clock
+    // (the rail flag is dev-only today, but the pace must hold when it ships).
+    if (rail.platform) startSession();
 
     if (acted) {
       syncWorld();
