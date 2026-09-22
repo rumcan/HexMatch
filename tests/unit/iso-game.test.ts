@@ -126,6 +126,9 @@ interface IsoHook {
   /** PP-13: the twin of a demolish click (dirt salvage, public-dirt refusal). */
   demolish: (tx: number, ty: number) => void;
   aiTick: (now?: number) => void;
+  tradeTick: (now?: number) => void;
+  offers: { id: number; from: 0 | 1; give: string; giveN: number; want: string; wantN: number }[];
+  purses: Record<string, number>[];
   econTick: (now?: number) => void;
   tick: (now?: number) => void;
   /** PERF-01: the renderer diagnostics (debug console, on in dev builds). */
@@ -278,8 +281,10 @@ describe("E11 the game boots", () => {
     expect(h.newLoop).toBe(false);
     const tabs = [...root.querySelectorAll("[data-tab]")].map(
       (b) => (b as HTMLElement).dataset.tab);
-    expect(tabs).toEqual(["bank", "plant", "feed"]);
-    expect(root.querySelector(".market-pane")).toBeNull();
+    // 2026-09: Market (the offer board, restored) and Black Market have
+    // their own tabs next to Bank.
+    expect(tabs).toEqual(["bank", "market", "black", "plant", "feed"]);
+    expect(root.querySelector(".market-pane")).toBeTruthy();
     expect(root.querySelector(".bank-pane")).toBeTruthy();
     expect(root.querySelector(".sab-list")).toBeTruthy();
     expect(root.textContent).toContain("Black Market");
@@ -358,19 +363,19 @@ describe("E11 the game boots", () => {
     // idle plate rides a small card, not a tab. (The retired loop's strip,
     // Bank / Processing Plant / Feed, is pinned by the story-contract case
     // below, which boots the old game.)
-    expect(tabs).toEqual(["bank", "feed"]);
+    // 2026-09: the offer board is back (Market) and the shop has its own tab.
+    expect(tabs).toEqual(["bank", "market", "black", "feed"]);
     expect(root.querySelector('[data-tab="plant"]')).toBeNull();
     expect(root.querySelector("#iso-session")).toBeTruthy();
     expect(root.querySelector("#iso-trade #iso-quarry")).toBeNull();
-    // The retired pane is unmounted, not merely class-hidden...
-    expect(root.querySelector(".market-pane")).toBeNull();
+    expect(root.querySelector(".market-pane")).toBeTruthy();
     expect(root.querySelector(".bank-pane")).toBeTruthy();
     // ...and the Black Market (L9 #224) is map-only (Blockade, Protest,
     // Security Forces), which is exactly what the new loop wants. On this loop
     // it hangs in the build column.
     expect(root.querySelector(".sab-list")).toBeTruthy();
     expect(root.textContent).toContain("Black Market");
-    expect(root.querySelector(".aside.left .sab-list"), "the shop moved to the build column").toBeTruthy();
+    expect(root.querySelector(".black-pane .sab-list"), "the shop has its own tab").toBeTruthy();
     // and it sells only the two MAP cards plus the defence
     expect([...root.querySelectorAll("[data-black]")].map((b) => (b as HTMLElement).dataset.black))
       .toEqual(["bandit", "protest", "security"]);
@@ -384,7 +389,7 @@ describe("E11 the game boots", () => {
     expect(h.newLoop).toBe(false);
     const tabs = [...root.querySelectorAll("[data-tab]")].map(
       (b) => (b as HTMLElement).dataset.tab);
-    expect(tabs).toEqual(["bank", "plant", "feed"]);
+    expect(tabs).toEqual(["bank", "market", "black", "plant", "feed"]);
     // ...and the player hears why once the briefing is out of the way: the
     // note waits for the overlays (it auto-dismisses 2.4s after it lands, so
     // firing it under the scene would burn it unseen).
@@ -2388,6 +2393,47 @@ describe("PP-08 gold is reserved for Black Market sabotage", () => {
   });
 });
 
+describe("TRADE the offer board is back beside the bank (2026-09)", () => {
+  it("post from the Market tab escrows; the rival takes a fair deal; the goods swap", async () => {
+    const h = await boot();
+    h.finishSetup();
+    h.purse.wood = 10; h.purse.ore = 0;
+    h.purses[1].ore = 8;
+    (root.querySelector('[data-tab="market"]') as HTMLElement).click();
+    const pane = root.querySelector(".market-pane") as HTMLElement;
+    expect(pane.classList.contains("hidden")).toBe(false);
+    const set = (f: string, v: string) => { (pane.querySelector(`[data-f="${f}"]`) as HTMLInputElement).value = v; };
+    set("offer-give", "wood"); set("offer-give-n", "3"); set("offer-want", "ore"); set("offer-want-n", "2");
+    (pane.querySelector('[data-act="offer-post"]') as HTMLElement).click();
+    expect(h.purse.wood, "the give is escrowed at once").toBe(7);
+    expect(h.offers).toHaveLength(1);
+    // the rival answers on its own clock (5s): one pass well past it
+    h.tradeTick(performance.now() + 6_000);
+    expect(h.offers.filter((o) => o.from === 0), "the rival took it").toHaveLength(0);
+    expect(h.purse.ore).toBe(2);
+    expect(h.purses[1].ore).toBe(6);
+    expect(h.purses[1].wood).toBeGreaterThanOrEqual(3);
+  });
+
+  it("an unanswered offer expires and refunds; Gold is never offered", async () => {
+    const h = await boot();
+    h.finishSetup();
+    h.purse.wood = 10;
+    h.purses[1].ore = 0;                         // the rival cannot pay
+    (root.querySelector('[data-tab="market"]') as HTMLElement).click();
+    const pane = root.querySelector(".market-pane") as HTMLElement;
+    for (const sel of [...pane.querySelectorAll("select")]) {
+      expect([...(sel as HTMLSelectElement).options].map((o) => o.value)).not.toContain("gold");
+    }
+    (pane.querySelector('[data-f="offer-give-n"]') as HTMLInputElement).value = "4";
+    (pane.querySelector('[data-act="offer-post"]') as HTMLElement).click();
+    expect(h.purse.wood).toBe(6);
+    h.tradeTick(performance.now() + 41_000);
+    expect(h.offers.filter((o) => o.from === 0)).toHaveLength(0);
+    expect(h.purse.wood, "escrow refunded on expiry").toBe(10);
+  });
+});
+
 describe("W6 the bank is the one exchange left", () => {
   it("the Bank tab opens the panel, and a 3:1 exchange moves the purse and the feed", async () => {
     const h = await boot();
@@ -3020,16 +3066,16 @@ describe("economy window and affordability", () => {
     expect(root.querySelector('[data-tool="demolish"] small')?.textContent).toBe("Refund 50%");
   });
 
-  it("keeps one pane visible and nests Black Market beneath the bank", async () => {
+  it("keeps one pane visible, with Market and Black Market as their own tabs", async () => {
     await boot();
     expect(root.querySelectorAll('[data-panel]')).toHaveLength(0);
-    for (const tab of ["bank", "plant", "feed"]) {
+    for (const tab of ["bank", "market", "black", "plant", "feed"]) {
       (root.querySelector(`[data-tab="${tab}"]`) as HTMLButtonElement).click();
       expect(root.querySelectorAll('#iso-trade > .pane:not(.hidden), #iso-trade > #iso-quarry:not(.hidden)')).toHaveLength(1);
       expect(root.querySelector(`[data-tab="${tab}"]`)?.classList.contains("active")).toBe(true);
     }
-    const bank = root.querySelector('.bank-pane')!;
-    expect(bank.lastElementChild?.querySelector('.sab-list')).toBeTruthy();
+    expect(root.querySelector('.black-pane .sab-list')).toBeTruthy();
+    expect(root.querySelector('.bank-pane .sab-list')).toBeNull();
     expect(root.querySelector('.aside.left .sab-list')).toBeNull();
   });
 });

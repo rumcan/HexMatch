@@ -117,8 +117,13 @@ export { readMatchSettings };
  * A v12 guest cannot send battle intents and a v12 host would drop them in
  * silence while its guest waits on a battle screen, so mixed versions must
  * refuse.
+ * v14 (owner call, 2026-09): the offer board is back — the `trade` intent
+ * (`do: "post" | "accept" | "cancel"`) and the snapshot/delta `offers` book
+ * (host frame, ms-left). A v13 peer can neither post nor see offers, and a
+ * v13 host would drop a v14 guest's trades in silence, so mixed versions must
+ * refuse.
  */
-export const PROTOCOL_VERSION = 13;
+export const PROTOCOL_VERSION = 14;
 
 /**
  * Realtime WS frame cap in bytes. Mirrors the SDK's `MAX_BROADCAST_BYTES`
@@ -220,6 +225,9 @@ export interface DeltaMsg {
   winner?: Snapshot["winner"];
   /** RES-FIELDS: ids of the demolished wheat fields / tree blocks (whole list). */
   clearedFields?: Snapshot["clearedFields"];
+  /** B6 + TRADE: the battle layer and the offer book ride every delta. */
+  battle?: Snapshot["battle"];
+  offers?: Snapshot["offers"];
   /**
    * MP-05: a one-shot line for the guest ("your action was refused — 2 more
    * Ore"). Rides the next delta, which the relay already forwards; there is no
@@ -273,7 +281,7 @@ export interface IntentMsg {
   // L17 (#245): the bank's `action: "bank"` is back (the owner restored the
   // bank at 3:1, hosted at the town's middle building). The rest of the L15
   // sweep stands: no cross, no boards.
-  action: "build" | "demolish" | "harvest" | "skill" | "bank" | "blackMarket" | "vehicle" | "battle";
+  action: "build" | "demolish" | "harvest" | "skill" | "bank" | "blackMarket" | "vehicle" | "battle" | "trade";
   payload: unknown;
 }
 

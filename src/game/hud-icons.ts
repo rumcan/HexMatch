@@ -103,6 +103,12 @@ export const ICON_MARKET = svg(
   `<circle cx="12" cy="16.5" r="3"/>`,
 );
 
+/** The Market tab: two arrows passing — goods for goods. */
+export const ICON_TRADE = svg(
+  `<path d="M4 8h13"/><path d="M14 5l3 3-3 3"/>` +
+  `<path d="M20 16H7"/><path d="M10 13l-3 3 3 3"/>`,
+);
+
 export const HUD_ICONS = {
   soundOn: ICON_SOUND_ON,
   soundOff: ICON_SOUND_OFF,
@@ -112,6 +118,7 @@ export const HUD_ICONS = {
   gear: ICON_GEAR,
   bank: ICON_BANK,
   market: ICON_MARKET,
+  trade: ICON_TRADE,
   plant: ICON_PLANT,
   feed: ICON_FEED,
   cross: ICON_CROSS,

@@ -33,6 +33,7 @@ import {
 // the game runs, so a locked cargo is never offered a button the rule would
 // then refuse.
 import { BANK_RATE, bankAllowed, bankTier } from "../iso/bank";
+import { MAX_OFFERS, offerSecondsLeft, type Offer } from "../iso/offers";
 import { type CargoBag } from "../iso/purse";
 // VP-01: the victory numbers come from the iso config, NOT from the legacy
 // `VP = { target: 10 }` in game/config.ts that this file used to read. That
@@ -116,7 +117,7 @@ const portraitFor = (p: UiPlayer, index: number): string =>
  * and Q does the same from the keyboard.
  */
 /** The right rail's tabs. */
-type TabName = "bank" | "black" | "plant" | "feed";
+type TabName = "market" | "bank" | "black" | "plant" | "feed";
 
 export type UiTool =
   | "select" | "dirt" | "road" | "harvester" | "plant" | "demolish"
@@ -317,6 +318,11 @@ export interface UiState {
    * and a Depot it is owed a re-match on.
    */
   town?: UiTownState | null;
+  /**
+   * TRADE: the live offer book in THIS client's seat frame (`from` 0 = mine),
+   * the clock the countdowns read, and whose offers the others are.
+   */
+  offers?: { list: Offer[]; now: number; rival: string };
 }
 
 /** L6 (#220): the Depot the plate is offering a re-match for. */
@@ -426,6 +432,14 @@ export interface UiHooks {
    * balance itself.
    */
   onBank: (give: Cargo, want: Cargo) => "done" | "relayed" | "refused";
+  /**
+   * TRADE (owner call, 2026-09): the offer board's doors. Each answers
+   * "done" (applied here), "relayed" (a guest's request — the host's delta
+   * confirms it) or the refusal in words.
+   */
+  onOfferPost?: (give: Cargo, giveN: number, want: Cargo, wantN: number) => string;
+  onOfferAccept?: (id: number) => string;
+  onOfferCancel?: (id: number) => string;
   onBlackAction: (key: string) => void;
   /** AI-01: the player picked a rival difficulty (applies from the next turn). */
   onSkill?: (key: SkillKey) => void;
@@ -1010,6 +1024,9 @@ export function createOriginalUi(
   const tabFeed = h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.feed}</i><span class="tab-l">Feed</span>`);
   // The Black Market has its own tab, right next to Bank (owner call, 2026-09).
   const tabBlack = h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.market}</i><span class="tab-l">Black Market</span>`);
+  // TRADE (owner call, 2026-09): offers between the players, next to Bank.
+  const tabMarket = h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.trade}</i><span class="tab-l">Market</span>`);
+  tabMarket.onclick = () => setTab("market");
   tabBlack.onclick = () => setTab("black");
   tabBank.onclick = () => setTab("bank");
   tabFeed.onclick = () => setTab("feed");
@@ -1020,8 +1037,8 @@ export function createOriginalUi(
     : h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.plant}</i><span class="tab-l">Processing Plant</span>`);
   if (tabPlant) tabPlant.onclick = () => setTab("plant");
   const tabDefs: [HTMLElement, TabName][] = sessionMode
-    ? [[tabBank, "bank"], [tabBlack, "black"], [tabFeed, "feed"]]
-    : [[tabBank, "bank"], [tabBlack, "black"], [tabPlant!, "plant"], [tabFeed, "feed"]];
+    ? [[tabBank, "bank"], [tabMarket, "market"], [tabBlack, "black"], [tabFeed, "feed"]]
+    : [[tabBank, "bank"], [tabMarket, "market"], [tabBlack, "black"], [tabPlant!, "plant"], [tabFeed, "feed"]];
   for (const [tab, name] of tabDefs) {
     tab.dataset.tab = name;
     tabs.appendChild(tab);
@@ -1030,7 +1047,9 @@ export function createOriginalUi(
   const bankPane = h("div", "pane bank-pane");
   const feedPane = h("div", "pane feed-pane hidden");
   const blackPane = h("div", "pane black-pane hidden");
+  const marketPane = h("div", "pane market-pane hidden");
   tp.appendChild(bankPane);
+  tp.appendChild(marketPane);
   tp.appendChild(blackPane);
   tp.appendChild(feedPane);
   /**
@@ -1639,6 +1658,8 @@ export function createOriginalUi(
     }
     tabBank.classList.toggle("active", t === "bank");
     bankPane.classList.toggle("hidden", t !== "bank");
+    tabMarket.classList.toggle("active", t === "market");
+    marketPane.classList.toggle("hidden", t !== "market");
     tabBlack.classList.toggle("active", t === "black");
     blackPane.classList.toggle("hidden", t !== "black");
     tabFeed.classList.toggle("active", t === "feed");
@@ -3230,6 +3251,123 @@ export function createOriginalUi(
    * reason it is off, and the label always states the complete price — the
    * same "show the cost before the click" rule as the Build column.
    */
+  // ── TRADE: the Market pane (owner call, 2026-09) ────────────────────────
+  // Post "give N of X for M of Y" (escrowed at once), take the other
+  // seat's offers, withdraw your own. Gold never appears — it is the Black
+  // Market's money (PP-08). The GAME owns the rules (`hooks.onOffer*`); this
+  // only draws the book it is handed and says what came back.
+  const TRADE_GOODS = CARGOES.filter((k) => k !== "gold");
+  const escHtml = (t: string) => t.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+  const mkTradeSel = (value: Cargo) => {
+    const sel = h("select", "res-sel") as HTMLSelectElement;
+    for (const k of TRADE_GOODS) {
+      const o = document.createElement("option");
+      o.value = k; o.text = CARGO[k].name;
+      sel.appendChild(o);
+    }
+    sel.value = value;
+    return sel;
+  };
+  const mkTradeNum = (v: number) => {
+    const n = h("input", "res-num") as HTMLInputElement;
+    n.type = "number"; n.min = "1"; n.max = "99"; n.value = String(v);
+    return n;
+  };
+  const offerGive = mkTradeSel("wood"), offerWant = mkTradeSel("ore");
+  const offerGiveN = mkTradeNum(2), offerWantN = mkTradeNum(1);
+  offerGive.dataset.f = "offer-give"; offerWant.dataset.f = "offer-want";
+  offerGiveN.dataset.f = "offer-give-n"; offerWantN.dataset.f = "offer-want-n";
+  const offerForm = h("div", "trade-form");
+  const offerGiveRow = h("div", "trade-row");
+  offerGiveRow.append(h("span", "trade-lbl", "Give"), offerGiveN, offerGive);
+  const offerWantRow = h("div", "trade-row");
+  offerWantRow.append(h("span", "trade-lbl", "Want"), offerWantN, offerWant);
+  const offerPostBtn = h("button", "post-btn", "Post offer") as HTMLButtonElement;
+  offerPostBtn.dataset.act = "offer-post";
+  offerPostBtn.onclick = () => {
+    const give = offerGive.value as Cargo, want = offerWant.value as Cargo;
+    const giveN = Math.floor(Number(offerGiveN.value)), wantN = Math.floor(Number(offerWantN.value));
+    const r = hooks.onOfferPost?.(give, giveN, want, wantN) ?? "Trading is not available here.";
+    if (r === "done") toast(`Offer posted: ${giveN} ${CARGO[give].name} for ${wantN} ${CARGO[want].name}.`, "info");
+    else if (r === "relayed") toast("Offer sent — it is live once the host confirms.", "info");
+    else toast(r, "danger");
+    lastMarketSig = "";
+  };
+  offerForm.append(offerGiveRow, offerWantRow, offerPostBtn);
+  marketPane.appendChild(offerForm);
+  marketPane.appendChild(h("div", "pane-note",
+    `Your goods are held in escrow while an offer is up, and come back if it expires (40s) or you cancel. `
+    + `${cargoIconHtml("gold")} ${GOLD_RULE}`));
+  const theirsHead = h("div", "mine-head");
+  const theirsList = h("div", "offer-list theirs");
+  const mineHeadEl = h("div", "mine-head");
+  const mineListEl = h("div", "offer-list mine");
+  marketPane.append(theirsHead, theirsList, mineHeadEl, mineListEl);
+  let lastMarketSig = "";
+
+  const offerCard = (o: Offer, now: number, mine: boolean, rivalName: string): HTMLElement => {
+    const card = h("div", "offer");
+    card.style.setProperty("--pc", mine ? "#5aa8ff" : "#ff7a5a");
+    card.innerHTML = `
+      <div class="offer-who"><b style="color:inherit">${mine ? "You" : escHtml(rivalName)}</b><span class="offer-t">${offerSecondsLeft(o, now)}s</span></div>
+      <div class="offer-body"><span class="give">${o.giveN}${cargoIconHtml(o.give)}</span><span class="arrow">➜</span><span class="want">${o.wantN}${cargoIconHtml(o.want)}</span></div>`;
+    const act = h("div", "offer-act");
+    if (mine) {
+      const b = h("button", "mini danger", "Cancel") as HTMLButtonElement;
+      b.dataset.offerCancel = String(o.id);
+      b.onclick = () => {
+        const r = hooks.onOfferCancel?.(o.id) ?? "";
+        if (r === "done") toast("Offer withdrawn — escrow refunded.", "info");
+        else if (r === "relayed") toast("Withdraw sent — waiting for the host.", "info");
+        else if (r) toast(r, "danger");
+        lastMarketSig = "";
+      };
+      act.appendChild(b);
+    } else {
+      // They give `give` and want `want` from you: you pay `wantN` of `want`.
+      const can = (seat.res[o.want] ?? 0) >= o.wantN;
+      const b = h("button", "mini" + (can ? "" : " disabled"), "Take") as HTMLButtonElement;
+      b.disabled = !can;
+      b.title = can ? `You pay ${o.wantN} ${CARGO[o.want].name} and get ${o.giveN} ${CARGO[o.give].name}.`
+        : `You need ${o.wantN} ${CARGO[o.want].name}.`;
+      b.dataset.offerTake = String(o.id);
+      b.onclick = () => {
+        const r = hooks.onOfferAccept?.(o.id) ?? "";
+        if (r === "done") toast(`Deal: ${o.wantN} ${CARGO[o.want].name} for ${o.giveN} ${CARGO[o.give].name}.`, "success");
+        else if (r === "relayed") toast("Accept sent — waiting for the host.", "info");
+        else if (r) toast(r, "danger");
+        lastMarketSig = "";
+      };
+      act.appendChild(b);
+    }
+    card.appendChild(act);
+    return card;
+  };
+
+  /** Repaint the Market pane when the book (or a countdown second) changed. */
+  function paintMarket(offers: UiState["offers"]): void {
+    const has = !!offers && !!(hooks.onOfferPost);
+    tabMarket.classList.toggle("hidden", !has);
+    if (!offers) return;
+    const now = offers.now;
+    const mine = offers.list.filter((o) => o.from === 0);
+    const theirs = offers.list.filter((o) => o.from !== 0);
+    const sig = offers.list.map((o) => `${o.id}:${offerSecondsLeft(o, now)}`).join(",")
+      + `|${TRADE_GOODS.map((k) => seat.res[k] ?? 0).join(",")}`;
+    if (sig === lastMarketSig) return;
+    lastMarketSig = sig;
+    theirsHead.innerHTML = `<span>${escHtml(offers.rival)}'s offers</span>`;
+    theirsList.innerHTML = "";
+    if (!theirs.length) theirsList.appendChild(h("div", "empty", "Nothing on offer right now."));
+    for (const o of theirs) theirsList.appendChild(offerCard(o, now, false, offers.rival));
+    mineHeadEl.innerHTML = `<span>Your offers</span><span class="slot-count${mine.length >= MAX_OFFERS ? " full" : ""}">${mine.length}/${MAX_OFFERS}</span>`;
+    mineListEl.innerHTML = "";
+    if (!mine.length) mineListEl.appendChild(h("div", "empty", "No offers posted."));
+    for (const o of mine) mineListEl.appendChild(offerCard(o, now, true, offers.rival));
+    offerPostBtn.disabled = mine.length >= MAX_OFFERS;
+    offerPostBtn.textContent = mine.length >= MAX_OFFERS ? "Cancel an offer first" : "Post offer";
+  }
+
   /** The build column's city button — the same state the tuning plate reads. */
   function paintCityBtn(t: UiTownState | null | undefined): void {
     if (!cityBtn) return;
@@ -3276,6 +3414,7 @@ export function createOriginalUi(
   function paint(state: UiState) {
     paintTuning(state.tuning, state.tuningIdle);
     paintTown(state.town);
+    paintMarket(state.offers);
     rivalWirePlayerPortrait = state.portrait === "you" ? portraitYou : portraitVex;
     // STORY-01: the contract's rival wears their painted sheet on the dossier
     // card; a sandbox match (no face on the state) keeps the mugshot map.
