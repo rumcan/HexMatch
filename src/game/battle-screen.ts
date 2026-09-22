@@ -69,6 +69,16 @@ export interface BattleScreenOptions {
   opponentMove?: (battle: Battle) => BattleMove | null | Promise<BattleMove | null>;
   /** How long the opponent "thinks" first. Default 900ms. */
   opponentDelayMs?: number;
+  /**
+   * B6 (#251) — a multiplayer duel. Present = the opponent's moves arrive
+   * from OUTSIDE (the host's authority / the guest's replay, via
+   * `runExternal`), so no policy is scheduled. `submit` present = the local
+   * hand does not play either: its moves go to the host, and the board only
+   * moves when the host's log comes back (the guest).
+   */
+  remote?: { submit?: (move: BattleMove) => void };
+  /** B6: a LOCAL move landed on this engine (the host publishes on it). */
+  onLocalMove?: (move: BattleMove) => void;
   onClose: (result: BattleScreenResult) => void;
 }
 
@@ -78,6 +88,13 @@ export interface BattleScreenHandle {
   battle: Battle;
   /** Take the screen down now (an explicit close button / host order). */
   destroy(): void;
+  /**
+   * B6 (#251): run moves that did not come from the local hand (a validated
+   * guest move on the host, the host's log replayed on the guest, a timed-out
+   * turn's auto-play, a forfeit), then repaint turn / HUD / result from the
+   * engine. The engine is the truth; the screen only follows it.
+   */
+  runExternal<T>(fn: () => Promise<T> | T): Promise<T>;
 }
 
 const h = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, html?: string): HTMLElementTagNameMap[K] => {
@@ -478,11 +495,14 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
   let busy = false;
   const commit = async (from: Cell, to: Cell) => {
     if (busy || inputLocked || battle.state.over) return;
-    busy = true;
     selected = null;
     renderSelection();
+    const move: BattleMove = { t: "swap", r1: from.r, c1: from.c, r2: to.r, c2: to.c };
+    if (opts.remote?.submit) { submitRemote(move); return; }
+    busy = true;
     const out = await battle.playSwap(from.r, from.c, to.r, to.c, Date.now());
     busy = false;
+    if (out.ok) opts.onLocalMove?.(move);
     afterOutcome(out);
   };
 
@@ -647,9 +667,13 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
    * `over: false` so the caller can tell "played out" from "torn down".
    */
   let finalResult: BattleScreenResult | null = null;
+  let resultShown = false;
+  /** Moves the screen has painted — `runExternal` restarts the clock on growth. */
+  let seenMoves = battle.moves.length;
 
   const afterOutcome = (out: TurnOutcome) => {
     if (destroyed) return;
+    seenMoves = battle.moves.length;
     paintTurn();
     restartTimer();
     if (out.damage > 0) showFloat(`−${out.damage} 💥`, true);
@@ -673,6 +697,7 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
 
   const afterAbility = (out: AbilityOutcome) => {
     if (destroyed) return;
+    seenMoves = battle.moves.length;
     paintTurn();
     restartTimer();
     showFloat(`${abilityName(out.id).toUpperCase()}!`, true);
@@ -697,17 +722,57 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
     if (battle.state.turn !== mySeat) return;
     const id = btn.dataset.ability ?? "";
     if (!battle.canUse(id).ok) { paintAbilities(); return; }
+    if (opts.remote?.submit) { submitRemote({ t: "ability", id, seat: mySeat }); return; }
     busy = true;
     void battle.useAbility(id).then((out) => {
       busy = false;
       if (destroyed) return;
-      if (out.ok) afterAbility(out);
-      else paintAbilities();
+      if (out.ok) {
+        opts.onLocalMove?.({ t: "ability", id, seat: mySeat });
+        afterAbility(out);
+      } else paintAbilities();
     });
   });
 
+  // ── B6 (#251) — the remote seat ──────────────────────────────────────────
+  /** The guest's move is in flight: input stays locked until the host's log
+   *  grows past `awaitingAt` (runExternal) or the host stays silent (refused). */
+  let awaitingAt = -1;
+  let awaitTimer = 0;
+  const submitRemote = (move: BattleMove) => {
+    lockInput(true);
+    awaitingAt = battle.moves.length;
+    window.clearTimeout(awaitTimer);
+    awaitTimer = window.setTimeout(() => {
+      if (destroyed || battle.moves.length > awaitingAt) return;
+      awaitingAt = -1;                      // refused: the turn is still ours
+      lockInput(battle.state.over || battle.state.turn !== mySeat);
+    }, 3000);
+    opts.remote!.submit!(move);
+  };
+
+  const runExternal = async <T,>(fn: () => Promise<T> | T): Promise<T> => {
+    try {
+      return await fn();
+    } finally {
+      if (!destroyed) {
+        if (battle.moves.length !== seenMoves) {
+          seenMoves = battle.moves.length;
+          restartTimer();
+          awaitingAt = -1;
+          window.clearTimeout(awaitTimer);
+        }
+        paintTurn();
+        if (battle.state.over) {
+          if (!resultShown) window.setTimeout(showResult, 700);
+        } else if (awaitingAt < 0) lockInput(battle.state.turn !== mySeat);
+      }
+    }
+  };
+
   const scheduleOpponent = () => {
     lockInput(true);
+    if (opts.remote) return;                // B6: the far seat moves via runExternal
     window.clearTimeout(oppTimer);
     // B4: the delay is the rival's "think time" — short and human-paced so
     // the player can follow the move (the acceptance playtest note).
@@ -741,6 +806,9 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
   };
 
   const showResult = () => {
+    if (destroyed || resultShown) return;
+    resultShown = true;
+    lockInput(true);
     const w = battle.state.winner;
     const verdict: BattleScreenResult["verdict"] =
       w === null ? "draw" : w === mySeat ? "win" : "lose";
@@ -777,6 +845,7 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
     if (destroyed) return;
     destroyed = true;
     window.clearTimeout(oppTimer);
+    window.clearTimeout(awaitTimer);
     window.clearInterval(timerHandle);
     window.removeEventListener("pointerup", commitDrag);
     window.removeEventListener("pointercancel", cancelDragEvent);
@@ -789,7 +858,7 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
     onClose(finalResult ?? { winner: null, over: false, verdict: "draw" });
   }
 
-  return { root, battle, destroy };
+  return { root, battle, destroy, runExternal };
 }
 
 /**
@@ -816,6 +885,11 @@ export function startBattleScreen(
     seat: opts.seat,
     stake: opts.stake,
     opponentSwap: opts.opponentSwap,
+    // B4 (#249) review fix: the rival's policy was dropped here, so every map
+    // battle and `__iso.startBattle` fought a random-swap bot, not the skill.
+    opponentMove: opts.opponentMove,
+    remote: opts.remote,
+    onLocalMove: opts.onLocalMove,
     opponentDelayMs: opts.opponentDelayMs,
     onClose: opts.onClose ?? (() => {}),
   });

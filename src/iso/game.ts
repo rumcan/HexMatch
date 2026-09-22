@@ -46,7 +46,14 @@ import dirtTex from "../../assets/roads/dirt.webp";
 // B2 (#247): the battle screen — a full-screen 1v1 over the map. The debug
 // console's `startBattle` opens one against a placeholder opponent; B5 wires
 // the map's challenge/sabotage doors into the same entry point.
-import { startBattleScreen, type BattleScreenHandle } from "../game/battle-screen";
+import { startBattleScreen, openBattleScreen, type BattleScreenHandle } from "../game/battle-screen";
+// B6 (#251): host-authoritative MP duels — validation, clock, forfeit, wire.
+import {
+  createDuel, applyPlayerMove, noteHumanMove, duelToWire, duelFromWire,
+  duelClockTick, duelPresence, duelGraceTick, endByForfeit,
+  type Duel, type DuelWire,
+} from "../game/battle-mp";
+import type { BattleMove, BattleSeat } from "../game/battle";
 import { chooseBattleMove } from "./battle-ai";
 // B5 (#250): the map's battle layer — challenges, conquests, fight-offs and
 // the cooldowns that pace them (pure bookkeeping in battle-map.ts).
@@ -4334,7 +4341,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    */
   function challengeIndustry(indId: number): boolean {
     const now = performance.now();
-    if (battleScreen || mapStake || pendingFightOff || pendingChallenge) {
+    // B6 (#251): a guest's challenge is the host's to validate and bill.
+    if (isGuest()) {
+      if (battleScreen) { toast("One fight at a time.", "bad"); return false; }
+      return net?.sendIntent("battle", { do: "challenge", industry: indId }) ?? false;
+    }
+    if (battleScreen || mapStake || pendingFightOff || pendingChallenge || mpOffer || duel) {
       toast("One fight at a time.", "bad");
       return false;
     }
@@ -4353,6 +4365,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     spend(me, { gold: BATTLE_RULES.challengeGold });
     markChallenge(challengeState, now, me.id, indId, BATTLE_RULES);
     const def = INDUSTRY_BY_KEY[chk.industry.type];
+    if (humanDuels()) {
+      // B6: the far seat is a person — they answer before anyone fights.
+      mpOffer = {
+        industryId: indId, challengerId: me.id,
+        challengerHarvesterId: chk.mine.id, holderHarvesterId: chk.holder.id,
+        offerUntil: now + BATTLE_RULES.turnMs * 2,
+      };
+      toast(`Challenge sent for the ${def?.name ?? "industry"} — waiting for ${rival.name}.`, "info");
+      publishNet(now, true);
+      return true;
+    }
     openMapBattle(
       {
         kind: "industry", industryId: indId,
@@ -4393,6 +4416,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   /** B5: accept the rival's challenge and fight it (seat 0 defends). */
   function acceptChallenge(): boolean {
+    // B6 (#251): an MP offer — the guest answers by intent, the host directly.
+    if (isGuest()) {
+      if (!guestOffer || guestOffer.challenger !== "you") return false;
+      return net?.sendIntent("battle", { do: "accept" }) ?? false;
+    }
+    if (mpOffer) {
+      if (mpOffer.challengerId === me.id) return false;   // your own challenge
+      return startDuel();
+    }
     const p = pendingChallenge;
     if (!p || battleScreen) return false;
     pendingChallenge = null;
@@ -4414,6 +4446,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * (the cost of a fight nobody had). Silence is a fold (the offer expires).
    */
   function declineChallenge(): void {
+    if (isGuest()) {
+      if (guestOffer && guestOffer.challenger === "you") net?.sendIntent("battle", { do: "decline" });
+      return;
+    }
+    if (mpOffer) {
+      if (mpOffer.challengerId !== me.id) declineMpOffer();
+      return;
+    }
     const p = pendingChallenge;
     if (!p) return;
     pendingChallenge = null;
@@ -4489,6 +4529,322 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   function b5OffersTick(now: number): void {
     if (pendingChallenge && now >= pendingChallenge.offerUntil) declineChallenge();
     if (pendingFightOff && now >= pendingFightOff.offerUntil) declineFightOff();
+  }
+
+  // ── B6 (#251) — multiplayer battles (host-authoritative turns) ─────────────
+  // The HOST runs the engine (`battle-mp.ts`) and validates every move; the
+  // guest submits intents and replays the host's move log on its own copy of
+  // the deterministic engine (seed + moves), or restores the full save on a
+  // rejoin / a log it cannot extend. Seat 0 = the host ("you"), seat 1 = the
+  // guest ("ai"): the engine stays in the HOST frame on both machines and the
+  // guest's screen simply plays seat 1. Fight-offs stay solo (`offerFightOff`).
+
+  /** A person sits on seat 1 (not the host's own AI). */
+  const humanDuels = () => isMp() && !aiOpponent;
+  /** HOST: the challenge waiting on an answer (on the wire as `offer`). */
+  let mpOffer: {
+    industryId: number; challengerId: string;
+    challengerHarvesterId: number; holderHarvesterId: number; offerUntil: number;
+  } | null = null;
+  /** HOST: the live duel (its `battle` IS the host screen's engine). */
+  let duel: Duel | null = null;
+  let duelStakeText = "";
+  let duelSettled = false;
+  let duelBusy = false;
+  /** HOST: the room's seat hold for a dropped guest (`opponentDisconnected`). */
+  let duelGraceMs = 0;
+  /** HOST: rules for the next duel (the `offerDuel` debug door's override). */
+  let nextDuelRules: typeof BATTLE_RULES | null = null;
+  /** HOST: the last duel's final wire, kept so a guest still sees the end. */
+  let lastDuelWire: DuelWire | null = null;
+  /** GUEST: the host's open offer, and which duels this client has done. */
+  let guestOffer: NonNullable<Snapshot["battle"]>["offer"] | null = null;
+  let guestOfferSeen = "";
+  let guestDuelSeed: number | null = null;
+  const guestDuelsClosed = new Set<number>();
+  let guestReplaying = false;
+
+  /** Both seats in the HOST frame, named from this client's point of view. */
+  const duelContenders = () => {
+    const g = isGuest();
+    return [
+      { id: "you", name: g ? rival.name : me.name, portrait: g ? portraitVex : portraitYou, depots: mapDepotCargos(g ? 2 : 1) },
+      { id: "ai", name: g ? me.name : rival.name, portrait: g ? portraitYou : portraitVex, depots: mapDepotCargos(g ? 1 : 2) },
+    ] as [
+      { id: string; name: string; portrait: string | null; depots: Cargo[] },
+      { id: string; name: string; portrait: string | null; depots: Cargo[] },
+    ];
+  };
+
+  /** The timeout auto-play's shuffle — the game's seeded stream. */
+  const duelRng = () => rand(1_000_000_000) / 1_000_000_000;
+
+  /** HOST: an accepted offer becomes a duel — seat 0 host, seat 1 guest. */
+  function startDuel(): boolean {
+    const o = mpOffer;
+    if (!o || duel || battleScreen) return false;
+    mpOffer = null;
+    const now = performance.now();
+    const seed = rand(4294967296) >>> 0;
+    const players = duelContenders();
+    const d = createDuel(seed, nextDuelRules ?? BATTLE_RULES, [players[0], players[1]], now);
+    nextDuelRules = null;
+    duel = d;
+    duelSettled = false;
+    // industryId < 0 = a friendly (the debug door): nothing on the map moves.
+    mapStake = o.industryId < 0 ? null : {
+      kind: "industry", industryId: o.industryId, challengerId: o.challengerId,
+      challengerHarvesterId: o.challengerHarvesterId, holderHarvesterId: o.holderHarvesterId,
+    };
+    duelStakeText = o.industryId < 0 ? "a friendly"
+      : INDUSTRY_BY_KEY[grid.industries[o.industryId]?.type ?? ""]?.name ?? "the industry";
+    battleScreen = openBattleScreen({
+      battle: d.battle,
+      contenders: players,
+      seat: 0,
+      stake: duelStakeText,
+      remote: {},
+      onLocalMove: () => {
+        noteHumanMove(d, 0, performance.now());
+        afterDuelMove();
+      },
+      onClose: () => {
+        battleScreen = null;
+        if (duel === d) {
+          if (!d.battle.state.over) endByForfeit(d, 1);   // torn down mid-fight
+          settleDuel();
+          duel = null;
+        }
+        publishNet(performance.now(), true);
+      },
+    });
+    publishNet(now, true);
+    return true;
+  }
+
+  /** HOST: after any move — settle a finished duel, ship the log now. */
+  function afterDuelMove(): void {
+    if (duel?.battle.state.over) settleDuel();
+    publishNet(performance.now(), true);
+  }
+
+  /** HOST: the stake settles once, the moment the duel ends. */
+  function settleDuel(): void {
+    const d = duel;
+    if (!d || duelSettled) return;
+    duelSettled = true;
+    lastDuelWire = { ...duelToWire(d), stake: duelStakeText };
+    const s = mapStake;
+    mapStake = null;
+    const w = d.battle.state.winner;
+    if (!s || s.kind !== "industry") {
+      toast(w === null ? "A draw." : w === 0 ? `You beat ${rival.name}.` : `${rival.name} wins the battle.`, "info");
+      return;
+    }
+    const won = w === null ? null : (w === 0 ? me.id : rival.id) === s.challengerId;
+    const verdict = settleMapBattle(eco, s, won);
+    if (verdict === "draw") toast("A draw — the map stands.", "info");
+    else if (w === 0) toast(`You beat ${rival.name} — the field is yours.`, "good");
+    else toast(`${rival.name} wins the battle.`, "bad");
+  }
+
+  /** HOST: the challenged seat folded (or let the offer run out). */
+  function declineMpOffer(): void {
+    const o = mpOffer;
+    if (!o) return;
+    mpOffer = null;
+    const mine = o.challengerId === me.id;
+    nextDuelRules = null;
+    if (o.industryId >= 0) {
+      spend(mine ? me : rival, { gold: BATTLE_RULES.declineGold });
+      declineTakesPrize(eco, o.industryId, o.challengerHarvesterId);
+    }
+    toast(mine
+      ? `${rival.name} folded — the industry is yours (−${BATTLE_RULES.declineGold} Gold).`
+      : `You folded — ${rival.name} takes the industry.`, mine ? "good" : "bad");
+    publishNet(performance.now(), true);
+  }
+
+  /** HOST: a guest's `battle` intent. Every refusal is echoed. */
+  function applyBattleIntent(payload: Record<string, unknown>, echoed: string[]): void {
+    const what = payload.do;
+    const now = performance.now();
+    if (what === "challenge") {
+      const indId = typeof payload.industry === "number" && Number.isInteger(payload.industry) ? payload.industry : -1;
+      if (battleScreen || mapStake || mpOffer || duel) { echoed.push("One fight at a time."); return; }
+      const chk = canChallenge(eco, challengeState, now, rival.id, indId, BATTLE_RULES, rival.purse.gold ?? 0);
+      if (!chk.ok) { echoed.push(`Challenge refused (${chk.reason}).`); return; }
+      spend(rival, { gold: BATTLE_RULES.challengeGold });
+      markChallenge(challengeState, now, rival.id, indId, BATTLE_RULES);
+      mpOffer = {
+        industryId: indId, challengerId: rival.id,
+        challengerHarvesterId: chk.mine.id, holderHarvesterId: chk.holder.id,
+        offerUntil: now + BATTLE_RULES.turnMs * 2,
+      };
+      const def = INDUSTRY_BY_KEY[chk.industry.type];
+      toast(`${rival.name} challenges you for the ${def?.name ?? "industry"}! Fight? (__iso.acceptChallenge / __iso.declineChallenge)`, "bad");
+      return;
+    }
+    if (what === "accept" || what === "decline") {
+      if (!mpOffer || mpOffer.challengerId !== me.id) { echoed.push("There is no challenge to answer."); return; }
+      if (what === "accept") startDuel();
+      else declineMpOffer();
+      return;
+    }
+    if (what === "swap" || what === "ability") {
+      const d = duel, screen = battleScreen;
+      if (!d || !screen) { echoed.push("There is no battle running."); return; }
+      const n = (v: unknown) => (typeof v === "number" && Number.isInteger(v) ? v : -1);
+      const move: BattleMove = what === "swap"
+        ? { t: "swap", r1: n(payload.r1), c1: n(payload.c1), r2: n(payload.r2), c2: n(payload.c2) }
+        : { t: "ability", id: String(payload.id ?? ""), seat: 1 };
+      // The engine validates (turn, legality, mana) before it mutates; the
+      // outcome ships once the cascade has resolved.
+      void screen.runExternal(() => applyPlayerMove(d, rival.id, move, performance.now())).then((res) => {
+        if (res.ok) {
+          noteHumanMove(d, 1, performance.now());
+          afterDuelMove();
+        } else {
+          net?.setNotice(`Move refused (${res.reason}).`);
+          publishNet(performance.now(), true);
+        }
+      });
+      return;
+    }
+    echoed.push("That battle action is not available.");
+  }
+
+  /** HOST, every frame: offer expiry, the turn clock, the disconnect grace. */
+  function duelTick(now: number): void {
+    if (isGuest() || !humanDuels()) return;
+    if (mpOffer && now >= mpOffer.offerUntil) declineMpOffer();
+    const d = duel, screen = battleScreen;
+    if (!d || !screen || duelSettled || duelBusy) return;
+    if (duelGraceTick(d, now, duelGraceMs) !== null) {
+      toast(`${rival.name} did not come back — the battle is forfeit.`, "info");
+      void screen.runExternal(() => undefined).then(afterDuelMove);
+      return;
+    }
+    if (now < d.turnDeadline && !d.seatGone[0] && !d.seatGone[1]) return;
+    duelBusy = true;
+    void screen.runExternal(() => duelClockTick(d, now, duelRng)).then((r) => {
+      duelBusy = false;
+      if (r.auto) afterDuelMove();
+    });
+  }
+
+  /** HOST: the room's presence news, as the duel sees it. */
+  function duelPeer(state: "gone" | "back" | "left", graceMs = 0): void {
+    if (state === "gone") duelGraceMs = graceMs;
+    const d = duel;
+    if (!d || duelSettled) return;
+    const now = performance.now();
+    if (state === "left") {
+      endByForfeit(d, 0);
+      void battleScreen?.runExternal(() => undefined).then(afterDuelMove);
+      return;
+    }
+    duelPresence(d, 1, state === "back", now);
+    publishNet(now, true);
+  }
+
+  /** HOST: the battle layer's MP half on the wire. */
+  function duelWireOut(): Pick<NonNullable<Snapshot["battle"]>, "engine" | "offer"> {
+    return {
+      engine: duel && !duelSettled ? { ...duelToWire(duel), stake: duelStakeText } : lastDuelWire ?? undefined,
+      offer: mpOffer
+        ? { industryId: mpOffer.industryId, challenger: mpOffer.challengerId, until: mpOffer.offerUntil }
+        : undefined,
+    };
+  }
+
+  /** GUEST: the host's offer + duel, applied (snapshot or delta). */
+  function guestApplyDuel(bw: NonNullable<Snapshot["battle"]>): void {
+    if (!isGuest()) return;
+    guestOffer = bw.offer ?? null;
+    if (guestOffer && guestOffer.challenger === "you") {
+      const key = `${guestOffer.industryId}@${guestOffer.until}`;
+      if (key !== guestOfferSeen) {
+        guestOfferSeen = key;
+        const def = INDUSTRY_BY_KEY[grid.industries[guestOffer.industryId]?.type ?? ""];
+        const what = guestOffer.industryId < 0 ? "to a friendly battle" : `for the ${def?.name ?? "industry"}`;
+        toast(`${rival.name} challenges you ${what}! Fight? (__iso.acceptChallenge / __iso.declineChallenge)`, "bad");
+      }
+    }
+    const e = bw.engine;
+    if (!e || guestDuelsClosed.has(e.seed)) return;
+    if (guestDuelSeed !== e.seed || !battleScreen) {
+      if (e.over) { guestDuelsClosed.add(e.seed); return; }   // ended unseen
+      guestOpenDuel(e);
+      return;
+    }
+    void guestCatchUp(e);
+  }
+
+  /** GUEST: open (or re-open, on rejoin/divergence) the duel from the full save. */
+  function guestOpenDuel(e: DuelWire): void {
+    const seed = e.seed;
+    const old = battleScreen;
+    guestDuelSeed = null;                     // the old screen's close is not a finish
+    battleScreen = null;
+    old?.destroy();
+    guestDuelSeed = seed;
+    const players = duelContenders();
+    const d = duelFromWire(e, [players[0], players[1]]);
+    const screen = openBattleScreen({
+      battle: d.battle,
+      contenders: players,
+      seat: 1,
+      stake: e.stake,
+      remote: {
+        submit: (m) => {
+          net?.sendIntent("battle", m.t === "swap"
+            ? { do: "swap", r1: m.r1, c1: m.c1, r2: m.r2, c2: m.c2 }
+            : { do: "ability", id: m.id });
+        },
+      },
+      onClose: () => {
+        if (battleScreen === screen) battleScreen = null;
+        if (guestDuelSeed === seed) { guestDuelsClosed.add(seed); guestDuelSeed = null; }
+      },
+    });
+    battleScreen = screen;
+    if (e.over) void screen.runExternal(() => copyVerdict(d.battle, e));
+  }
+
+  /** A forfeit ends the duel with no move — the wire's verdict says so. */
+  const copyVerdict = (b: Duel["battle"], e: DuelWire): void => {
+    if (!e.over) return;
+    const st = b.state as { over: boolean; winner: BattleSeat | null };
+    st.over = true;
+    st.winner = e.winner ?? null;
+  };
+
+  /** GUEST: replay the host's moves this engine has not seen yet. */
+  async function guestCatchUp(e: DuelWire): Promise<void> {
+    const screen = battleScreen;
+    if (!screen || guestReplaying) return;
+    const b = screen.battle;
+    // The host's log must EXTEND ours; anything else and the full save wins.
+    const same = b.moves.length <= e.moves.length
+      && b.moves.every((m, i) => JSON.stringify(m) === JSON.stringify(e.moves[i]));
+    if (!same) { guestOpenDuel(e); return; }
+    if (b.moves.length === e.moves.length && (!e.over || b.state.over)) return;
+    guestReplaying = true;
+    try {
+      await screen.runExternal(async () => {
+        for (let i = b.moves.length; i < e.moves.length; i++) {
+          const m = e.moves[i];
+          const out = m.t === "swap"
+            ? await b.playSwap(m.r1, m.c1, m.r2, m.c2, Date.now())
+            : await b.useAbility(m.id);
+          if (!out.ok) break;                 // busy — the next delta retries
+        }
+        if (b.moves.length === e.moves.length) copyVerdict(b, e);
+      });
+    } finally {
+      guestReplaying = false;
+    }
   }
 
   function buyBlackFor(actor: PlayerState, key: string): boolean {
@@ -5622,7 +5978,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // offer doors (rival challenges, fight-offs) expire here too.
     if (battleScreen) return;
     b5OffersTick(now);
-    maybeRivalChallenge(now);
+    // B6 review fix: the rival's challenge clock is the AI's — in a hosted game
+    // with a person on seat 1 it would spend THEIR Gold on fights they never
+    // called (and every guest ran it against its local copy of the host).
+    if (isSolo() || aiOpponent) maybeRivalChallenge(now);
     // MP-05: §9 — "the AI rival is disabled in a hosted game; the guest is the
     // rival". Seat 1 is driven by intents from the relay instead.
     // #186: …unless the host filled that seat itself, which is the one hosted
@@ -5885,6 +6244,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       playerReadyAt: [...challengeState.playerReadyAt],
       rivalReadyAt: challengeState.rivalReadyAt,
       battles: challengeState.battles,
+      ...duelWireOut(),
     };
   }
 
@@ -6058,6 +6418,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       challengeState.playerReadyAt = new Map(applied.battle.playerReadyAt);
       challengeState.rivalReadyAt = applied.battle.rivalReadyAt;
       challengeState.battles = applied.battle.battles;
+      guestApplyDuel(applied.battle);
     } else {
       eco.battleLocks = new Map();
       challengeState.readyAt = new Map();
@@ -6147,6 +6508,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       challengeState.playerReadyAt = new Map(bw.playerReadyAt ?? []);
       challengeState.rivalReadyAt = bw.rivalReadyAt ?? 0;
       challengeState.battles = bw.battles ?? 0;
+      guestApplyDuel(bw);
       worldDirty = true;
     }
     // L9 (#224): a delta carries the Blockade set whenever it carries any
@@ -6207,7 +6569,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // locally — so a refusal has to reach them as surely as an action does.
     try {
       const what = payload.do;
-      if (what === "track") {
+      if (msg.action === "battle") {
+        // B6 (#251): checked FIRST — `do: "swap"` also names a build intent.
+        applyBattleIntent(payload, echoed);
+      } else if (what === "track") {
         const ax = int(payload.ax), ay = int(payload.ay);
         const bx = int(payload.bx), by = int(payload.by);
         if (ax !== null && ay !== null && bx !== null && by !== null) {
@@ -6448,6 +6813,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         });
       },
       opponentLeft: (username) => {
+        duelPeer("left");
         // #121/#164: the far seat emptied. The board is still standing, so
         // this is a decision, not a dead end — and never a bare sentence
         // with no doors. The sheet spells out the rating consequence on
@@ -6475,6 +6841,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // play continues underneath; a return clears it, and an eviction hands
       // over to the "opponent left" sheet above.
       opponentDisconnected: (username, graceMs) => {
+        duelPeer("gone", graceMs);
         mpPeerAwayName = username || rival.name || "Opponent";
         mpPeerAwayUntil = performance.now() + Math.max(graceMs, 0);
         mpDisconnectEpisode++;
@@ -6482,6 +6849,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           + `${Math.round(Math.max(graceMs, 0) / 1000)}s…`, "info");
       },
       opponentReconnected: (username) => {
+        duelPeer("back");
         mpPeerAwayUntil = 0;
         toast(`${escText(username || mpPeerAwayName || "Opponent")} is back — the match resumes.`, "good");
         // The seat may have emptied and refilled (eviction, then a fresh
@@ -8961,6 +9329,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // rest of the Black Market), so the sweep is a no-op on a guest — it
       // runs unguarded rather than splitting the heartbeat below.
       if (protests.size > 0) expireProtests(t);
+      // B6 (#251): the host's duel clock — offers, turn timer, disconnect grace.
+      duelTick(t);
       // MP-05: the host's heartbeat — one small delta per `PUBLISH_MS`, full
       // state only when `buildPublish` says the delta would not fit (§5).
       publishNet(t);
@@ -9995,6 +10365,36 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     },
     /** B2: the live battle screen, or null. */
     get battleScreen() { return battleScreen; },
+    /**
+     * B6 (#251): the host offers the guest a FRIENDLY duel (no stake — no
+     * contested industry needed), optionally on shorter rules. The playtest +
+     * `tests/e2e-mp` door; the guest answers with acceptChallenge/decline.
+     */
+    offerDuel: (rules: Partial<typeof BATTLE_RULES> = {}) => {
+      if (isGuest() || !humanDuels() || mpOffer || duel || battleScreen) return false;
+      nextDuelRules = { ...BATTLE_RULES, ...rules };
+      mpOffer = {
+        industryId: -1, challengerId: me.id,
+        challengerHarvesterId: -1, holderHarvesterId: -1,
+        offerUntil: performance.now() + BATTLE_RULES.turnMs * 2,
+      };
+      publishNet(performance.now(), true);
+      return true;
+    },
+    /** B6 (#251): the MP duel probe — offer, log length, board fingerprint. */
+    get mpBattle() {
+      const b = battleScreen?.battle;
+      return {
+        offer: isGuest() ? guestOffer : duelWireOut().offer ?? null,
+        seat: isGuest() ? 1 : 0,
+        moves: b ? b.moves.length : 0,
+        turn: b ? b.state.turn : null,
+        over: b ? b.state.over : null,
+        winner: b ? b.state.winner : null,
+        board: b ? b.board.grid.map((row) => row.map((g) => (g ? `${g.res}${g.block ? "#" : ""}` : "_")).join("")).join("/") : null,
+        health: b ? b.state.players.map((p) => p.health) : null,
+      };
+    },
     // C5: the visual-debug console — dumpTile / dumpAt / dumpBuilding /
     // dumpNetwork / overlay / config / probe. Spread only when the gate is on,
     // so a production build exposes nothing (see src/iso/debug.ts).

@@ -138,6 +138,12 @@ export interface DuelWire {
   turnDeadline: number;
   timeouts: [number, number];
   seatGone: [boolean, boolean];
+  /** The verdict — a forfeit ends the duel with no move, so the log alone
+   *  cannot say it; the guest copies these onto its replayed engine. */
+  over?: boolean;
+  winner?: BattleSeat | null;
+  /** What is at stake, in words (the guest's result card). */
+  stake?: string;
 }
 
 export function duelToWire(d: Duel): DuelWire {
@@ -149,6 +155,8 @@ export function duelToWire(d: Duel): DuelWire {
     turnDeadline: d.turnDeadline,
     timeouts: [d.timeouts[0], d.timeouts[1]],
     seatGone: [d.seatGone[0], d.seatGone[1]],
+    over: d.battle.state.over,
+    winner: d.battle.state.winner,
   };
 }
 
@@ -213,6 +221,12 @@ export async function duelClockTick(
   rng: () => number = Math.random,
 ): Promise<{ winner: BattleSeat | null; auto: boolean }> {
   if (!d || d.battle.state.over) return { winner: null, auto: false };
+  // A disconnect PAUSES the duel (the spec): nobody's clock runs while a
+  // seat is gone — the grace sweep decides that one.
+  if (d.seatGone[0] || d.seatGone[1]) {
+    d.turnDeadline = now + d.rules.turnMs;
+    return { winner: null, auto: false };
+  }
   if (now < d.turnDeadline) return { winner: null, auto: false };
   const stalled = d.battle.turn;
   const res = await autoPlayFor(d, now, rng);
@@ -241,12 +255,19 @@ export function duelPresence(
   d.goneSince[seat] = now;
 }
 
-/** The grace sweep — call every tick. Winner when someone just won by forfeit. */
-export function duelGraceTick(d: Duel | null, now: number): BattleSeat | null {
+/**
+ * The grace sweep — call every tick. Winner when someone just won by forfeit.
+ * `graceMs` is the room's own seat hold when the game knows it (a refresh
+ * re-boots the island, which can outlast the default — forfeiting a player
+ * the room is still holding a seat for would be a lie).
+ */
+export function duelGraceTick(
+  d: Duel | null, now: number, graceMs: number = DISCONNECT_GRACE_MS,
+): BattleSeat | null {
   if (!d || d.battle.state.over) return null;
   for (const s of [0, 1] as BattleSeat[]) {
     if (!d.seatGone[s]) continue;
-    if (now - d.goneSince[s] >= DISCONNECT_GRACE_MS) {
+    if (now - d.goneSince[s] >= Math.max(graceMs, DISCONNECT_GRACE_MS)) {
       return endByForfeit(d, s === 0 ? 1 : 0);
     }
   }

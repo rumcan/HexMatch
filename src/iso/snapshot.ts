@@ -220,6 +220,11 @@ export interface BattleWire {
    * host owns it; absent = no duel is running.
    */
   engine?: DuelWire;
+  /**
+   * B6 (#251): an open MP challenge waiting on the other seat's answer —
+   * `challenger` is a HOST-frame seat id ("you" = host, "ai" = guest).
+   */
+  offer?: { industryId: number; challenger: string; until: number };
 }
 export interface TruckWire {
   ownerId: number;
@@ -410,6 +415,9 @@ function copyDuelWire(w: DuelWire): DuelWire {
     turnDeadline: w.turnDeadline,
     timeouts: [w.timeouts[0], w.timeouts[1]],
     seatGone: [w.seatGone[0], w.seatGone[1]],
+    over: w.over,
+    winner: w.winner,
+    stake: w.stake,
   };
 }
 
@@ -446,6 +454,7 @@ export function buildSnapshot(src: SnapshotSource): Snapshot {
         rivalReadyAt: src.battle.rivalReadyAt,
         battles: src.battle.battles,
         engine: src.battle.engine ? copyDuelWire(src.battle.engine) : undefined,
+        offer: src.battle.offer ? { ...src.battle.offer } : undefined,
       }
       : undefined,
     blockades: src.blockades ? src.blockades.map((b) => ({ ...b })) : undefined,
@@ -573,6 +582,11 @@ export function validateSnapshot(s: unknown, localSeed?: number): SnapshotError 
     if (!Array.isArray(b.locks) || !Array.isArray(b.readyAt) || !Array.isArray(b.playerReadyAt)) {
       return new SnapshotError("malformed", "Snapshot battle is malformed.");
     }
+    const e = b.engine as Partial<DuelWire> | undefined;
+    if (e !== undefined && e !== null && (typeof e.seed !== "number" || !Array.isArray(e.moves)
+      || !e.rules || typeof e.rules !== "object" || !Array.isArray(e.timeouts) || !Array.isArray(e.seatGone))) {
+      return new SnapshotError("malformed", "Snapshot battle engine is malformed.");
+    }
   }
   if (o.blockades !== undefined && o.blockades !== null && !Array.isArray(o.blockades)) {
     return new SnapshotError("malformed", "Snapshot blockades is malformed.");
@@ -676,6 +690,9 @@ export function applySnapshot(s: unknown, localSeed?: number): AppliedSnapshot {
         playerReadyAt: (o as Snapshot).battle!.playerReadyAt.map((r) => [...r] as [string, number]),
         rivalReadyAt: (o as Snapshot).battle!.rivalReadyAt,
         battles: (o as Snapshot).battle!.battles,
+        // B6 (#251): the live duel + open offer survive validation (rejoin).
+        engine: (o as Snapshot).battle!.engine ? copyDuelWire((o as Snapshot).battle!.engine!) : undefined,
+        offer: (o as Snapshot).battle!.offer ? { ...(o as Snapshot).battle!.offer! } : undefined,
       }
       : undefined,
     blockades: (o as Snapshot).blockades ? (o as Snapshot).blockades!.map((x) => ({ ...x })) : undefined,
