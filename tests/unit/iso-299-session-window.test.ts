@@ -148,10 +148,14 @@ afterEach(() => {
 });
 
 describe("#299 the session window on the new loop", () => {
-  it("has no Plant tab: the rail strip is Bank and Feed, nothing else", async () => {
+  it("has no Plant tab: the rail strip is Bank, Black Market and Feed", async () => {
     await boot({ newLoop: true });
     const tabs = [...root.querySelectorAll<HTMLElement>("[data-tab]")].map((b) => b.dataset.tab);
-    expect(tabs).toEqual(["bank", "feed"]);
+    expect(tabs).toEqual(["bank", "black", "feed"]);
+    // The city upgrade has its own build button, right under Processing Plant.
+    const city = root.querySelector<HTMLButtonElement>('[data-act="city-upgrade"]');
+    expect(city, "the Upgrade city button exists").toBeTruthy();
+    expect(city!.previousElementSibling?.getAttribute("data-tool")).toBe("plant");
     // …and the plant panel is not a pane of the rail — the tab strip has no
     // plant button to open and `#iso-quarry` lives inside the window.
     expect(root.querySelector("#iso-trade #iso-quarry")).toBeNull();
@@ -279,7 +283,7 @@ describe("#299 the retired loop keeps its rail plant", () => {
     // The strip is what it was; the plant panel is its pane; no window was
     // even built, so nothing can open over the map on this loop.
     const tabs = [...root.querySelectorAll<HTMLElement>("[data-tab]")].map((b) => b.dataset.tab);
-    expect(tabs).toEqual(["bank", "plant", "feed"]);
+    expect(tabs).toEqual(["bank", "black", "plant", "feed"]);
     expect(root.querySelector("#iso-trade #iso-quarry")).toBeTruthy();
     expect(win()).toBeNull();
     expect(plantCard()).toBeNull();
