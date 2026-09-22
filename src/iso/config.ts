@@ -92,8 +92,10 @@ export const DISTANCE = {
  *     never cascades lands near half the multiplier and one that reads the
  *     board (4/5-matches, cascades, bombs) maxes it. The score counts GEMS,
  *     never cargo: what a match pays the purse is #234/#227's business.
- *   • `maxYield` 2.5 — same order as the paved-road transport bonus (#216),
- *     so tuning is a real but not dominant lever next to the network.
+ *   • `maxYield` 2.5 — the yield AT `targetScore`, not a ceiling. Owner call
+ *     (2026-09): the better you play the higher it goes, so a session past
+ *     the target keeps paying at the same rate (+1.5× per 60 gems). Only a
+ *     sanity bound (`yieldSanityMax`) remains, for corrupt wire/save values.
  *   • `cargoBias` — the board spawns "mostly that cargo" (the ticket's words):
  *     just under half of every refill is the depot's own colour, so its tokens
  *     and its long matches come up often without the board becoming single
@@ -103,8 +105,10 @@ export const TUNING = {
   moves: 10,
   /** Score-0 yield — also what an abandoned session and an untuned depot pay. */
   minYield: 1,
-  /** Yield at `targetScore` and beyond. */
+  /** Yield AT `targetScore` — the slope's anchor, not a cap (see above). */
   maxYield: 2.5,
+  /** Not a game rule: rejects corrupt wire/save values. No session gets near it. */
+  yieldSanityMax: 50,
   /** Gems cleared that earn the full multiplier. */
   targetScore: 60,
   /** Chance a spawned gem is the session depot's own cargo. */

@@ -249,18 +249,23 @@ describe("L4 the session, as a rule (tuning.ts)", () => {
     expect(s.score).toBe(8);
   });
 
-  it("maps score to yield between the table's bounds, monotonically", () => {
+  it("maps score to yield monotonically, with no ceiling past the target (owner call, 2026-09)", () => {
     expect(tuningYieldFor(0)).toBe(TUNING.minYield);
     expect(tuningYieldFor(-5)).toBe(TUNING.minYield);
     expect(tuningYieldFor(Number.NaN)).toBe(TUNING.minYield);
     expect(tuningYieldFor(TUNING.targetScore)).toBe(TUNING.maxYield);
-    expect(tuningYieldFor(TUNING.targetScore * 10)).toBe(TUNING.maxYield);
+    // past the target it keeps paying at the same slope — the better you play,
+    // the higher it goes (the old ×2.5 ceiling is gone)
+    const slope = (TUNING.maxYield - TUNING.minYield) / TUNING.targetScore;
+    expect(tuningYieldFor(TUNING.targetScore * 2)).toBeCloseTo(TUNING.maxYield + slope * TUNING.targetScore, 2);
+    expect(tuningYieldFor(TUNING.targetScore * 2)).toBeGreaterThan(tuningYieldFor(TUNING.targetScore));
+    // only the sanity bound (corrupt values) stops it
+    expect(tuningYieldFor(1e9)).toBe(TUNING.yieldSanityMax);
     let last = -Infinity;
-    for (let score = 0; score <= TUNING.targetScore; score += 3) {
+    for (let score = 0; score <= TUNING.targetScore * 3; score += 3) {
       const y = tuningYieldFor(score);
-      expect(y).toBeGreaterThanOrEqual(last);
+      expect(y).toBeGreaterThan(last);
       expect(y).toBeGreaterThanOrEqual(TUNING.minYield);
-      expect(y).toBeLessThanOrEqual(TUNING.maxYield);
       last = y;
     }
     // and a session that clears something is worth more than an empty one
@@ -272,7 +277,8 @@ describe("L4 the session, as a rule (tuning.ts)", () => {
     // an untuned depot (no level stored) runs at exactly the abandon yield
     expect(depotYield({ id: 1, owner: "you", ownerId: 1, tx: 0, ty: 0 })).toBe(TUNING_ABANDON_YIELD);
     // and a stored level is clamped, whatever a save or a wire hands over
-    expect(depotYield({ id: 1, owner: "you", ownerId: 1, tx: 0, ty: 0, yield: 99 })).toBe(TUNING.maxYield);
+    expect(depotYield({ id: 1, owner: "you", ownerId: 1, tx: 0, ty: 0, yield: 4.2 })).toBe(4.2);   // a great session stands
+    expect(depotYield({ id: 1, owner: "you", ownerId: 1, tx: 0, ty: 0, yield: 999 })).toBe(TUNING.yieldSanityMax);
     expect(depotYield({ id: 1, owner: "you", ownerId: 1, tx: 0, ty: 0, yield: 0 })).toBe(TUNING.minYield);
   });
 
