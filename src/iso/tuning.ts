@@ -16,9 +16,10 @@
 //   • `takeTuningMove` / `recordTuningCleared` — the only two things that
 //     happen to a session: a move is spent, and the gems that move cleared are
 //     scored;
-//   • `tuningYieldFor(score, floor)` — the ONE mapping from score to yield,
-//     clamped to [floor, maxYield] and rounded to two decimals so the number the
-//     HUD shows and the number stored on the depot are the same number;
+//   • `tuningYieldFor(score, floor)` — the ONE mapping from score to yield:
+//     linear from `floor` through `maxYield` at `targetScore` and ON past it
+//     (no ceiling — owner call, 2026-09), rounded to two decimals so the number
+//     the HUD shows and the number stored on the depot are the same number;
 //   • `rivalTuningYield(skill)` — the rival's simulated session result, so it
 //     needs no visible board (AI-03's autoplay stays a thing you can WATCH;
 //     it is no longer how its depots get their yield).
@@ -59,7 +60,7 @@ export const roundYield = (y: number): number => Math.round(y * 100) / 100;
 
 /** Clamp any yield (a wire value, a save, a hand-edited test) into range. */
 export const clampYield = (y: number): number =>
-  roundYield(Math.min(TUNING.maxYield, Math.max(TUNING.minYield, Number.isFinite(y) ? y : TUNING.minYield)));
+  roundYield(Math.min(TUNING.yieldSanityMax, Math.max(TUNING.minYield, Number.isFinite(y) ? y : TUNING.minYield)));
 
 // ══════════════════════════════════════════════════════════════════════════
 // L6 (#220) — the difficulty, as the numbers a session is played under.
@@ -78,9 +79,11 @@ export const difficultyRulesFor = (key: DifficultyKey): DifficultyRules =>
   DIFFICULTY_RULES[key] ?? DIFFICULTY_RULES[DEFAULT_DIFFICULTY];
 
 /**
- * The yield a score earns. Linear between `floor` (score 0 — the baseline an
- * untuned depot runs at, so abandoning a session is never a penalty) and
- * `maxYield` at `TUNING.targetScore` and beyond.
+ * The yield a score earns. Linear from `floor` (score 0 — the baseline an
+ * untuned depot runs at, so abandoning a session is never a penalty) through
+ * `maxYield` at `TUNING.targetScore`, and it KEEPS CLIMBING past the target at
+ * the same slope: the better the session, the higher the yield (owner call,
+ * 2026-09 — the old ×2.5 ceiling is gone).
  *
  * `floor` is the difficulty's `minYield` (L6): Easy lifts it to 1.5 so a weak
  * session still gives a decent Depot, while Normal and Hard keep the shipped
@@ -89,7 +92,7 @@ export const difficultyRulesFor = (key: DifficultyKey): DifficultyRules =>
  */
 export function tuningYieldFor(score: number, floor: number = TUNING.minYield): number {
   if (!Number.isFinite(score) || score <= 0) return clampYield(floor);
-  const t = Math.min(1, score / TUNING.targetScore);
+  const t = score / TUNING.targetScore;
   return clampYield(floor + (TUNING.maxYield - floor) * t);
 }
 

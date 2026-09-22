@@ -194,7 +194,7 @@ export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
       },
       points: [
         "A session is <b>bounded</b>: a fixed number of moves. When the last one resolves the board closes.",
-        `Every gem you clear is <b>score</b>. The score becomes the Depot's <b>yield level</b> — between ×${TUNING.minYield} and ×${TUNING.maxYield} — and a connected Depot ticks its cargo at exactly that rate.`,
+        `Every gem you clear is <b>score</b>. The score becomes the Depot's <b>yield level</b> — ×${TUNING.minYield} at zero, ×${TUNING.maxYield} at ${TUNING.targetScore} gems, and higher the more you clear (no ceiling) — and a connected Depot ticks its cargo at exactly that rate.`,
         "<b>5 in a row</b> forges a <b>bomb</b> — swap it to blow that whole colour. Combos and cascades bank bonus points.",
         "Finish keeps the score you have; ✕ abandons and leaves the Depot on the default yield.",
         "<b>Difficulty</b> changes what a yield does over time. <b>Easy</b>: one session per Depot, weak still lands decent, nothing cools. <b>Normal</b>: one more session with each upgrade, yield never drops. <b>Hard</b>: tuned Depot cools, re-match can lower it.",

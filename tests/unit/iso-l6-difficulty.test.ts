@@ -284,7 +284,8 @@ describe("L6 the rules, pure", () => {
     // The clamp is deliberately NOT the difficulty's: a level arriving from
     // another game is sanitised against the shipped range, never rewritten.
     expect(clampYield(0.2)).toBe(TUNING.minYield);
-    expect(clampYield(99)).toBe(TUNING.maxYield);
+    expect(clampYield(4.2)).toBe(4.2);                      // no gameplay ceiling (2026-09)
+    expect(clampYield(99)).toBe(TUNING.yieldSanityMax);    // only the sanity bound
   });
 
   it("settles so Easy and Normal can only climb, and Hard can lose", () => {
