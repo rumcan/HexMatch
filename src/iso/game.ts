@@ -107,7 +107,7 @@ import {
 import {
   industriesInCatchment, ownerIdOf,
   buildAllComponents, resolveConnection, industryLocks, heldIndustries, lockedIndustryIds,
-  depotCargo, isServiced,
+  depotCargo, depotRoutePaved, isServiced,
   pickBlockadeTarget, harvesterYield, depotPathLength,
   type EconomyState, type Factory, type Harvester,
 } from "./economy";
@@ -615,7 +615,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const railParam = (() => {
     try { return new URLSearchParams(location.search).get("rail"); } catch { return null; }
   })();
-  const railAvailable = opts.rail ?? (import.meta.env.DEV && railParam === "1");
+  // Owner call (2026-09): railways don't exist yet — no URL switch turns them
+  // on in any build. The code stays for later; only tests (`opts.rail`) reach it.
+  void railParam;
+  const railAvailable = opts.rail ?? false;
   const loopParam = (() => {
     try { return new URLSearchParams(location.search).get("loop"); } catch { return null; }
   })();
@@ -2541,8 +2544,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         const names = b.cargos.map((c) => CARGO[c].name).join(", ");
         const label = source === "type"
           ? (gained
-            ? `${names || "Depot type"} depots running · ${vpDeltaText(b.vp)}`
-            : `${names || "Depot type"} depots cut off · ${vpDeltaText(b.vp)}`)
+            ? `${names || "A"} Depot running · ${vpDeltaText(b.vp)}`
+            : `${names || "A"} Depot cut off · ${vpDeltaText(b.vp)}`)
+          : source === "route"
+            ? (gained
+              ? `Route fully paved · ${vpDeltaText(b.vp)}`
+              : `Paved route broken · ${vpDeltaText(b.vp)}`)
           : source === "rung"
             ? `Depot-tree rung unlocked · ${vpDeltaText(b.vp)}`
             : source === "city"
@@ -2811,6 +2818,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         return heldIndustries(eco, h, locks).length > 0;
       },
       cargoOf: (h) => depotCargo(eco, h),
+      // 2026-09: 1★ per Depot whose route to the plant is fully paved.
+      routePaved: (h) => depotRoutePaved(eco, h),
       seats: players.map((p) => ({
         owner: p.id, depotTier: p.depotTier, townLevel: p.townLevel,
       })),
@@ -7290,8 +7299,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // shipped loop's two.
       const rows = newLoop
         ? [
-          `Depot types running: ${b.types} (${b.cargos.map((c) => CARGO[c].name).join(", ") || "none"}) × ${VICTORY.loop.type}★ = ${fmtVp(b.typeVp)}★`,
-          `Depot-tree rungs: ${b.rungs} × ${VICTORY.loop.rung}★ = ${fmtVp(b.rungVp)}★`,
+          `Depots running: ${b.types} × ${VICTORY.loop.type}★ = ${fmtVp(b.typeVp)}★`,
+          `Fully paved routes: ${b.routes} × ${VICTORY.loop.route}★ = ${fmtVp(b.routeVp)}★`,
           `City upgrades: ${b.city} × ${VICTORY.loop.city}★ = ${fmtVp(b.cityVp)}★`,
         ]
         : [
@@ -9702,7 +9711,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       return newLoop
         ? {
           newLoop: true,
-          type: VICTORY.loop.type, rung: VICTORY.loop.rung, city: VICTORY.loop.city,
+          type: VICTORY.loop.type, route: VICTORY.loop.route, rung: VICTORY.loop.rung, city: VICTORY.loop.city,
           platform: PLATFORM_VP,
         }
         : { upgrade: VICTORY.upgrade, plant: VICTORY.plant, platform: PLATFORM_VP };

@@ -35,7 +35,7 @@ import { VICTORY, DEPOT_TREE, TOWN_UPGRADES, type Cargo } from "../../src/iso/co
 import { MAP_W, MAP_H } from "../../src/game/config";
 import { GRASS, TOWN_OCC, type Grid, type Industry, type Town } from "../../src/iso/grid";
 import type { EconomyState, Factory, Harvester } from "../../src/iso/economy";
-import { depotCargo, heldIndustries, industryLocks, isServiced, resolveConnection, buildAllComponents, ownerIdOf } from "../../src/iso/economy";
+import { depotCargo, depotRoutePaved, heldIndustries, industryLocks, isServiced, resolveConnection, buildAllComponents, ownerIdOf } from "../../src/iso/economy";
 
 const YOU = 1, RIVAL = 2;
 
@@ -87,6 +87,7 @@ function loopFor(eco: EconomyState, seats: LoopSeatProgress[]): LoopScoring {
       return heldIndustries(eco, h, locks).length > 0;
     },
     cargoOf: (h) => depotCargo(eco, h),
+    routePaved: (h) => depotRoutePaved(eco, h),
     seats,
   };
 }
@@ -230,6 +231,63 @@ describe("L13 nothing awards ★ for a removed mechanic", () => {
     expect(vpFor(score, "you")).toBe(0);
     expect(events.filter((e) => e.source === "upgrade" && e.type === "revoked")).toHaveLength(4);
     expect(score.paved.size).toBe(0);
+  });
+});
+
+/** Pave every tile of the world's road network (dirt → Road, in place). */
+function paveAll(w: ReturnType<typeof worldWith>, ownerId = YOU): void {
+  for (let i = 0; i < w.track.dirt.length; i++) {
+    if (w.track.dirt[i] === 0) continue;
+    buildTile(w.track, "road", i % MAP_W, Math.floor(i / MAP_W), ownerId);
+  }
+}
+
+describe("2026-09 the owner's ★ table: depots, paved routes, city tiers", () => {
+  it("pays 1★ per Depot running — every Depot, not one per cargo", () => {
+    const w = worldWith(["forest", "forest", "farm"]);
+    const score = createScoreState();
+    rescore(w.eco, score, undefined, loopFor(w.eco, [seat("you")]));
+    expect(VICTORY.loop.type).toBe(1);
+    expect(vpFor(score, "you")).toBe(3);
+  });
+
+  it("pays 1★ more per Depot whose route is fully paved — gravel pays nothing extra", () => {
+    const w = worldWith(["forest", "farm"]);
+    const score = createScoreState();
+    const loop = () => loopFor(w.eco, [seat("you")]);
+    rescore(w.eco, score, undefined, loop());
+    expect(vpFor(score, "you"), "gravel routes: the depots only").toBe(2);
+    paveAll(w);
+    const ev = rescore(w.eco, score, undefined, loop());
+    expect(VICTORY.loop.route).toBe(1);
+    expect(vpFor(score, "you"), "both routes paved end to end").toBe(4);
+    expect(ev.filter((e) => e.source === "route" && e.type === "awarded")).toHaveLength(2);
+    expect(victoryBreakdown(w.eco, "you", undefined, loop())).toMatchObject({ types: 2, routes: 2, routeVp: 2 });
+  });
+
+  it("revokes a route's ★ when one tile of it goes back to gravel", () => {
+    const w = worldWith(["forest"]);
+    paveAll(w);
+    const score = createScoreState();
+    const loop = () => loopFor(w.eco, [seat("you")]);
+    rescore(w.eco, score, undefined, loop());
+    expect(vpFor(score, "you")).toBe(2);
+    const [x, y] = spurTiles(w.harvesters[0])[1];
+    // one tile back to gravel (same connection bits, gravel layer instead of road)
+    const i = tIdx(x, y);
+    w.track.dirt[i] = w.track.road[i];
+    w.track.road[i] = 0;
+    const ev = rescore(w.eco, score, undefined, loop());
+    expect(vpFor(score, "you")).toBe(1);
+    expect(ev.some((e) => e.source === "route" && e.type === "revoked")).toBe(true);
+  });
+
+  it("scores no rungs and no railway platforms", () => {
+    const w = worldWith(["forest"]);
+    const score = createScoreState();
+    rescore(w.eco, score, [{ id: 1, ownerId: YOU, owner: "you", tx: 0, ty: 0 }], loopFor(w.eco, [seat("you", 2, 1)]));
+    // 1 depot + 1 city tier; the two rungs and the platform pay nothing
+    expect(vpFor(score, "you")).toBe(VICTORY.loop.type + VICTORY.loop.city);
   });
 });
 

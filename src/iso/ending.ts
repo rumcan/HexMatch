@@ -26,7 +26,7 @@ import { UNRANKED_KEY, badgeUrlFor } from "../ui/rank-badge";
  */
 export type EndingPath = "paving" | "plants" | "balanced" | "network" | "industry";
 export type DecisiveSource =
-  | "upgrade" | "plant" | "platform" | "type" | "rung" | "city" | null;
+  | "upgrade" | "plant" | "platform" | "type" | "rung" | "city" | "route" | null;
 
 export interface EndingBreakdown {
   /**
@@ -54,6 +54,9 @@ export interface EndingBreakdown {
   /** L13: city upgrade tiers confirmed, and what they paid. */
   city?: number;
   cityVp?: number;
+  /** 2026-09: Depots with a fully paved route, and what they paid. */
+  routes?: number;
+  routeVp?: number;
 }
 
 export interface EndingInput {
@@ -75,7 +78,7 @@ export interface EndingInput {
 
 export interface EndingScoreRow {
   /** L13 (#228): the new loop's rows sit beside the shipped loop's two. */
-  key: "paving" | "plants" | "types" | "rungs" | "city";
+  key: "paving" | "plants" | "types" | "rungs" | "routes" | "city";
   icon: string;
   label: string;
   detail: string;
@@ -205,7 +208,8 @@ export function endingPathFor(breakdown: EndingBreakdown): EndingPath {
   // ones, so the winner is read on the axes it actually played — breadth (a
   // wide network of depot types) against depth (the city and the tree).
   const typeVp = breakdown.typeVp ?? 0;
-  const depthVp = (breakdown.rungVp ?? 0) + (breakdown.cityVp ?? 0);
+  // 2026-09: paved routes are depth too — fewer Depots, better roads.
+  const depthVp = (breakdown.rungVp ?? 0) + (breakdown.cityVp ?? 0) + (breakdown.routeVp ?? 0);
   const loopTotal = typeVp + depthVp;
   const isLoop = breakdown.loop ?? (breakdown.typeVp !== undefined
     || breakdown.rungVp !== undefined || breakdown.cityVp !== undefined);
@@ -259,6 +263,9 @@ function decisiveText(source: DecisiveSource, won: boolean): string {
   if (source === "type") {
     return `${who} final stars came the moment a new kind of cargo started running into the yards.`;
   }
+  if (source === "route") {
+    return `${who} final star was a route paved end to end — the last stretch of gravel gone.`;
+  }
   if (source === "rung") {
     return `${who} last session on the plant floor opened the rung that settled it.`;
   }
@@ -300,21 +307,22 @@ export function ledgerRows(b: EndingBreakdown): EndingScoreRow[] {
   // previews) is a loop one exactly when it carries the loop's own rows.
   const isLoop = b.loop ?? (b.typeVp !== undefined || b.rungVp !== undefined || b.cityVp !== undefined);
   if (isLoop) {
-    const types = b.types ?? 0, rungs = b.rungs ?? 0, city = b.city ?? 0;
+    const types = b.types ?? 0, city = b.city ?? 0, routes = b.routes ?? 0;
+    // 2026-09 (owner's table): depots, paved routes, city tiers.
     return [
       {
         key: "types",
         icon: "⬢",
-        label: "Depot types running",
-        detail: `${types} cargo type${types === 1 ? "" : "s"} connected and producing`,
+        label: "Depots running",
+        detail: `${types} Depot${types === 1 ? "" : "s"} connected and producing`,
         vp: b.typeVp ?? 0,
       },
       {
-        key: "rungs",
-        icon: "▲",
-        label: "Depot-tree rungs",
-        detail: `${rungs} rung${rungs === 1 ? "" : "s"} unlocked on the plant floor`,
-        vp: b.rungVp ?? 0,
+        key: "routes",
+        icon: "═",
+        label: "Fully paved routes",
+        detail: `${routes} Depot route${routes === 1 ? "" : "s"} paved end to end`,
+        vp: b.routeVp ?? 0,
       },
       {
         key: "city",

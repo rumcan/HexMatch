@@ -451,6 +451,31 @@ export function depotPathLength(state: EconomyState, h: Harvester): number | nul
   return route ? route.length : null;
 }
 
+/**
+ * 2026-09 (owner's ★ table): is this Depot's route to its nearest owned plant
+ * FULLY PAVED — every tile on the road path a paved Road, no gravel? The same
+ * search `depotPathLength` runs (entrance to plant shoulders), so the route
+ * that is scored is the route the clock already measures. False with no route.
+ */
+export function depotRoutePaved(state: EconomyState, h: Harvester): boolean {
+  const from = depotShoulders(state.track, h.ownerId, h);
+  if (from.length === 0) return false;
+  const goals = new Set<number>();
+  for (const f of state.factories) {
+    if (f.owner !== h.owner) continue;
+    for (const [x, y] of plantShoulders(state.track, h.ownerId, f.tx, f.ty)) goals.add(tIdx(x, y));
+  }
+  if (goals.size === 0) return false;
+  const route = roadPath(state.track, h.ownerId, from, goals);
+  if (!route || route.length === 0) return false;
+  // Paving clears the gravel bit and sets the road bit (track.ts `buildTile`);
+  // public/town roads are road too. A tile still carrying gravel is not paved.
+  return route.every(([x, y]) => {
+    const i = tIdx(x, y);
+    return state.track.road[i] !== 0 && state.track.dirt[i] === 0;
+  });
+}
+
 // ── claims: one Depot, one industry ───────────────────────────────────────
 /**
  * PP-16: which Depot holds which industry.

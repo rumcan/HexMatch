@@ -191,8 +191,9 @@ export const REPAIR_COST: Partial<Record<ResKey, number>> = { wood: 1, brick: 1,
 export const SABOTAGE: Record<string, {
   name: string; gold: number; target: "tile" | "player"; desc: string;
 }> = {
-  bandit: { name: "Blockade",     gold: 5, target: "tile",   desc: "Auto-blockades the rival's busiest industry for 45s — every depot holding it stops ticking." },
-  protest: { name: "Protest",     gold: 6, target: "tile",   desc: "Stage a protest on any public road for 2:00 — every depot whose route crosses it stops ticking, yours included." },
+  // ×3 (owner balancing pass, 2026-09)
+  bandit: { name: "Blockade",     gold: 15, target: "tile",   desc: "Auto-blockades the rival's busiest industry for 45s — every depot holding it stops ticking." },
+  protest: { name: "Protest",     gold: 18, target: "tile",   desc: "Stage a protest on any public road for 2:00 — every depot whose route crosses it stops ticking, yours included." },
 };
 
 /**
@@ -207,7 +208,7 @@ export const SABOTAGE: Record<string, {
  * never stops a guarded player's depots ticking. (Smog no longer exists.)
  */
 export const SECURITY = {
-  cost: { wheat: 2, brick: 1 } as Partial<Record<ResKey, number>>,
+  cost: { wheat: 6, brick: 3 } as Partial<Record<ResKey, number>>,   // ×3 (2026-09)
   ms: 90000, name: "Security Forces", desc: "Hire guards for 90s — immune to Blockade & Protest.",
 };
 export const TAX_EVERY_ROUNDS = 6;

@@ -82,7 +82,7 @@ import type { EconomyState, Harvester } from "./economy";
  */
 export const OPENING_PLANT_ID = 0;
 
-export type VpSource = "upgrade" | "plant" | "platform" | "type" | "rung" | "city";
+export type VpSource = "upgrade" | "plant" | "platform" | "type" | "rung" | "city" | "route";
 export type VpChange = "awarded" | "revoked";
 
 /**
@@ -161,6 +161,8 @@ export interface ScoreState {
   types: Map<string, TypeLedger>;
   /** L13: per-owner rungs already scored, so a rung pays exactly once. */
   rungs: Map<string, number>;
+  /** 2026-09: `${owner}#${depotId}` → a Depot whose route is fully paved. */
+  routes: Map<string, TypeLedger>;
   /** L13: per-owner city tiers already scored. */
   city: Map<string, number>;
   /** Per-owner VP total. */
@@ -169,7 +171,7 @@ export interface ScoreState {
 
 export const createScoreState = (): ScoreState => ({
   paved: new Map(), plants: new Map(), platforms: new Map(),
-  types: new Map(), rungs: new Map(), city: new Map(), vp: new Map(),
+  types: new Map(), rungs: new Map(), routes: new Map(), city: new Map(), vp: new Map(),
 });
 
 /** VP as the HUD prints it: whole when it is whole, 2dp at most otherwise. */
@@ -280,6 +282,12 @@ export interface LoopScoring {
   cargoOf: (h: Harvester) => Cargo | null;
   /** Per-seat rung/city progress. Seats absent from the list score neither. */
   seats: readonly LoopSeatProgress[];
+  /**
+   * 2026-09: is this running Depot's route to its plant FULLY PAVED Road?
+   * Supplied by the caller (`depotRoutePaved` in economy.ts). Absent = no
+   * route ★ (a caller that predates the rule).
+   */
+  routePaved?: (h: Harvester) => boolean;
 }
 
 /**
@@ -299,9 +307,24 @@ export function runningDepotTypes(
     if (!loop.running(h)) continue;
     const cargo = loop.cargoOf(h);
     if (cargo === null) continue;
-    const key = `${h.owner}#${cargo}`;
-    if (out.has(key)) continue;
+    // 2026-09: one ★ per running DEPOT (was one per distinct cargo).
+    const key = `${h.owner}#${h.id}`;
     out.set(key, { owner: h.owner, cargo, tx: h.tx, ty: h.ty });
+  }
+  return out;
+}
+
+/** 2026-09: every running Depot whose route to its plant is fully paved. */
+export function pavedRoutes(
+  state: EconomyState, loop: LoopScoring,
+): Map<string, TypeLedger> {
+  const out = new Map<string, TypeLedger>();
+  if (!loop.routePaved) return out;
+  for (const h of [...state.harvesters].sort((a, b) => a.id - b.id)) {
+    if (!loop.running(h) || !loop.routePaved(h)) continue;
+    const cargo = loop.cargoOf(h);
+    if (cargo === null) continue;
+    out.set(`${h.owner}#${h.id}`, { owner: h.owner, cargo, tx: h.tx, ty: h.ty });
   }
   return out;
 }
@@ -342,7 +365,8 @@ export function rescore(
   // stands, revoked the moment it is demolished, exactly like a plant. The
   // ledger is keyed by rail id, so rebuilding on the same industry is a NEW
   // point rather than a re-award the old ledger would swallow.
-  const platformLedger = scoredPlatforms(platforms, owners);
+  // 2026-09: railways are out of the game — the new loop scores no platforms.
+  const platformLedger = loop ? new Map<string, PlatformLedger>() : scoredPlatforms(platforms, owners);
   const add = (owner: string, delta: number) =>
     score.vp.set(owner, (score.vp.get(owner) ?? 0) + delta);
 
@@ -439,6 +463,29 @@ export function rescore(
         tx: t.tx, ty: t.ty, cargo: t.cargo,
       });
     }
+    // ROUTES (2026-09) — a Depot whose road to the plant is fully paved.
+    // Revocable like a running Depot: break the pavement and it stops paying.
+    if (VICTORY.loop.route > 0) {
+      const routes = pavedRoutes(state, loop);
+      for (const [key, t] of routes) {
+        if (score.routes.has(key)) continue;
+        score.routes.set(key, t);
+        add(t.owner, VICTORY.loop.route);
+        events.push({
+          source: "route", type: "awarded", owner: t.owner, delta: VICTORY.loop.route,
+          tx: t.tx, ty: t.ty, cargo: t.cargo,
+        });
+      }
+      for (const [key, t] of [...score.routes]) {
+        if (routes.has(key)) continue;
+        score.routes.delete(key);
+        add(t.owner, -VICTORY.loop.route);
+        events.push({
+          source: "route", type: "revoked", owner: t.owner, delta: -VICTORY.loop.route,
+          tx: t.tx, ty: t.ty, cargo: t.cargo,
+        });
+      }
+    }
     // DEPTH — rungs and city tiers. Both are monotone by construction (a rung
     // cannot be un-unlocked, a bought upgrade is not refunded once confirmed),
     // so they are scored as a HIGH-WATER MARK rather than diffed: a seat that
@@ -448,7 +495,7 @@ export function rescore(
     for (const seat of loop.seats) {
       const paidRungs = score.rungs.get(seat.owner) ?? 0;
       const rungs = Math.max(paidRungs, Math.max(0, Math.floor(seat.depotTier)));
-      if (rungs > paidRungs) {
+      if (rungs > paidRungs && VICTORY.loop.rung > 0) {
         score.rungs.set(seat.owner, rungs);
         for (let level = paidRungs + 1; level <= rungs; level++) {
           add(seat.owner, VICTORY.loop.rung);
@@ -496,7 +543,7 @@ export function victoryBreakdown(
   let plants = 0;
   if (!loop) for (const p of scoredPlants(state).values()) if (p.owner === owner) plants++;
   let rail = 0;
-  for (const p of scoredPlatforms(platforms, owners).values()) if (p.owner === owner) rail++;
+  if (!loop) for (const p of scoredPlatforms(platforms, owners).values()) if (p.owner === owner) rail++;
   // L13: the new loop's three. `types` is counted off the live network (the
   // same scan `rescore` awards from); rungs and city come off the seat record.
   const cargos: Cargo[] = [];
@@ -505,6 +552,8 @@ export function victoryBreakdown(
       if (t.owner === owner) cargos.push(t.cargo);
     }
   }
+  let routes = 0;
+  if (loop) for (const r of pavedRoutes(state, loop).values()) if (r.owner === owner) routes++;
   const seat = loop?.seats.find((s) => s.owner === owner);
   const rungs = Math.max(0, Math.floor(seat?.depotTier ?? 0));
   const city = Math.max(0, Math.floor(seat?.townLevel ?? 0));
@@ -528,6 +577,9 @@ export function victoryBreakdown(
     typeVp: cargos.length * VICTORY.loop.type,
     rungs,
     rungVp: rungs * VICTORY.loop.rung,
+    /** 2026-09: Depots whose route to the plant is fully paved. */
+    routes,
+    routeVp: routes * VICTORY.loop.route,
     city,
     cityVp: city * VICTORY.loop.city,
   };
