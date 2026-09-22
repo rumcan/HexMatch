@@ -17,6 +17,7 @@
 // pixel check — every action visible without scrolling at 1920x1080,
 // 1432x936 and 1366x768 — lives in tests/e2e/start-menu-layout.spec.ts.
 import { act, createElement } from "react";
+import { STORY_MODE_ENABLED } from "../../src/story/flag";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
@@ -101,8 +102,9 @@ describe("#184 two-column mode menu", () => {
   it("lists every primary action on the right; the rank picker waits for the search", async () => {
     await renderModes();
     const labels = buttonLabels(container.querySelector(".start-actions")!);
+    // Story mode is hidden for now (src/story/flag.ts) — its door comes and goes with the flag.
+    expect(labels.some((l) => l.startsWith("Story Mode"))).toBe(STORY_MODE_ENABLED);
     for (const action of [
-      "Story Mode",
       "Play vs AI",
       "Host a game",
       "Join with a code",
@@ -127,7 +129,7 @@ describe("#184 two-column mode menu", () => {
   it("puts each mode's detail on its own line under the label", async () => {
     await renderModes();
     const story = [...container.querySelectorAll(".start-actions button")]
-      .find((b) => (b.textContent ?? "").startsWith("Story Mode"))!;
+      .find((b) => (b.textContent ?? "").startsWith("Play vs AI"))!;
     expect(story.querySelector("small")?.textContent).toBeTruthy();
     const css = stylesCss();
     expect(css).toMatch(/\.start-panel\.start-modes \.start-actions button\s*\{[^}]*flex-direction:\s*column/s);
@@ -141,7 +143,7 @@ describe("#184 two-column mode menu", () => {
       order.findIndex((l) => l.includes("Anne Hextall")),
       order.findIndex((l) => l.includes("James Hextall")),
     );
-    const firstAction = order.findIndex((l) => l.startsWith("Story Mode"));
+    const firstAction = order.findIndex((l) => l.startsWith(STORY_MODE_ENABLED ? "Story Mode" : "Play vs AI"));
     expect(lastPortrait).toBeGreaterThanOrEqual(0);
     expect(firstAction).toBeGreaterThan(lastPortrait);
   });

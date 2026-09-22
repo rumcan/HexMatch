@@ -97,6 +97,12 @@ export const ICON_FEED = svg(
   `<path d="M8 11.4h8M8 14h8M8 16.5h5.2"/>`,
 );
 
+/** The Black Market tab: a coin behind a half-drawn curtain. */
+export const ICON_MARKET = svg(
+  `<path d="M4 5h16"/><path d="M5 5c0 6 2 9 5 10"/><path d="M19 5c0 6-2 9-5 10"/>` +
+  `<circle cx="12" cy="16.5" r="3"/>`,
+);
+
 export const HUD_ICONS = {
   soundOn: ICON_SOUND_ON,
   soundOff: ICON_SOUND_OFF,
@@ -105,6 +111,7 @@ export const HUD_ICONS = {
   binoculars: ICON_BINOCULARS,
   gear: ICON_GEAR,
   bank: ICON_BANK,
+  market: ICON_MARKET,
   plant: ICON_PLANT,
   feed: ICON_FEED,
   cross: ICON_CROSS,

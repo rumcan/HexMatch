@@ -16,6 +16,7 @@ import {
   introSuppressed, loadStoryProgress, markIntroSeen, pinnedChapter,
 } from "./story/progress";
 import { chapterById } from "./story/chapters";
+import { STORY_MODE_ENABLED } from "./story/flag";
 // RANK-01 (#147): the rating store is built HERE, once per page, and handed to
 // the game. `iso/game.ts` may not import it — `rankstore.ts` reaches the RUN SDK
 // and `window` at load — and a single instance is also what keeps one match's
@@ -91,7 +92,7 @@ export default function App() {
   // (with `?storyintro=0`) over the reel, and records nothing: the campaign
   // record only ever moves through a finished match.
   useEffect(() => {
-    const pin = pinnedChapter();
+    const pin = STORY_MODE_ENABLED ? pinnedChapter() : null;
     if (!pin || !chapterById(pin)) return;
     begin({ mode: "story", chapter: pin, portrait: "vex" });
   }, []); // boot-only: a playtest link is read once, like every other boot flag

@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { STORY_MODE_ENABLED } from "../../src/story/flag";
 
 // ══════════════════════════════════════════════════════════════════════════
 // Issue #184 — the desktop mode menu fits without scrolling.
@@ -25,14 +26,15 @@ const SIZES = [
 
 /** Every control the ticket names, in the DOM order they must keep. */
 const ACTIONS = [
-  "Story Mode",
+  // Story mode is hidden for now (src/story/flag.ts).
+  ...(STORY_MODE_ENABLED ? ["Story Mode"] : []),
   "Play vs AI",
   "Auto Matchmaking",
   "Host a game",
   "Join with a code",
   "The ladder",
   "Back to the menu",
-] as const;
+];
 
 async function openModeScreen(page: Page): Promise<void> {
   await page.goto(BASE);
