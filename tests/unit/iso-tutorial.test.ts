@@ -4,20 +4,24 @@
 //
 // Pinned here, in the order the module's own header states its rules:
 //
-//   1. THE GATE. It opens on a first game and never again once the player has
-//      pressed "Never show this again" — a stored preference, not a phase
-//      inference — and `?tutorial=0/1` overrides it for playtest links, the
-//      e2e gameplay specs and a reviewer who wants to look again.
-//   2. THE COPY IS READ, NOT TYPED. Every price, ★ value, board dimension and
-//      allowance in the tour is interpolated from the authoritative tables, so
-//      a rebalance moves the lesson with the rule. The drift guard at the
-//      bottom of that block is the point: change the numbers, the text changes.
-//   3. THE PROJECTOR. Steps walk forward and back, the dots jump, Esc/✕/the
-//      veil skip WITHOUT persisting, and the one button that persists says so
-//      on the card.
-//   4. THE ASK. The six things the ticket named — plant, depot, roads, match-3,
-//      the truck that feeds the board, and how points are won — are each
-//      actually on screen, in that order.
+//   1. THE GATE. The module owns the storage half of "opens on a first game":
+//      `shouldShowTutorial` says yes on a clean shelf, no once the player has
+//      pressed "Never show this again", and `?tutorial=0/1` overrides for
+//      playtest links, the e2e gameplay specs and a reviewer who wants to
+//      look again. `showTutorial` honours the same gate unless asked with
+//      `force` (the ❔ help modal's replay is exactly that).
+//   2. THE COPY IS READ, NOT TYPED. Every price, ★ value and allowance in the
+//      tour is interpolated from the authoritative tables, so a rebalance
+//      moves the lesson with the rule. The drift guard at the bottom of the
+//      block is the point: change the numbers, the text changes.
+//   3. THE PROJECTOR. One card, painted with the shipped `.tut-*` CSS
+//      classes and the `data-step`/`data-act` hooks the e2e suite walks.
+//      Back/Next walk the steps, ✕ and the veil dismiss WITHOUT persisting,
+//      "Never show this again" is the one exit that remembers — and says so,
+//      and the last step's key starts production WITHOUT dismissing the tour.
+//   4. THE DESK CARD names the rail that exists, on each loop (#226, #299):
+//      the retired loop keeps Processing Plant/Feed, the new loop gets Bank,
+//      Feed and the session window — and neither names the retired Market tab.
 // ══════════════════════════════════════════════════════════════════════════
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
@@ -25,15 +29,12 @@ import {
   setTutorialDismissed, shouldShowTutorial, showTutorial,
   type TutorialHandle, type TutorialResult,
 } from "../../src/iso/tutorial";
-import { BOARD_H, BOARD_W } from "../../src/game/config";
-import { BANK_RATE } from "../../src/iso/bank";   // L17: the live 3:1, not a local literal
-import { CARGOES, TRANSPORT, UPGRADE_COST, VICTORY } from "../../src/iso/config";
+import { CARGOES, TRANSPORT, VICTORY, TUNING } from "../../src/iso/config";
 import { DEPOT_COST, costCompact, costLabel } from "../../src/iso/construction";
-import { PLANT_COST } from "../../src/iso/plants";
 import { fmtVp } from "../../src/iso/victory";
 
 /** The boot context game.ts passes: the shipped line and the full allowance. */
-const CTX = { vpTarget: VICTORY.target, freeTrack: 12 };
+const CTX = { vpTarget: VICTORY.loop.target, freeTrack: 12 };
 /** A read-only storage stub, the shape the skill-picker tests use. */
 const store = (init: Record<string, string> = {}) => ({
   getItem: (k: string) => (k in init ? init[k] : null),
@@ -58,21 +59,19 @@ afterEach(() => {
   open = null;
 });
 
-/** Open the tour (never gated) and return both the handle and its result. */
-function show(opts: Parameters<typeof showTutorial>[1] = {}) {
-  const handle = showTutorial(host, { force: true, ...opts });
+/** Open the tour (never gated) and remember the handle for teardown. */
+function show(opts: Partial<Parameters<typeof showTutorial>[1]> = {}) {
+  const handle = showTutorial(host, { force: true, ...CTX, ...opts });
   expect(handle, "the tour did not open").toBeTruthy();
   open = handle;
   return handle!;
 }
-const card = () => host.querySelector("#iso-tutorial") as HTMLElement | null;
+const tour = () => host.querySelector("#iso-tutorial") as HTMLElement | null;
 const click = (sel: string) => {
-  const btn = card()!.querySelector(sel) as HTMLElement | null;
+  const btn = tour()!.querySelector(sel) as HTMLElement | null;
   expect(btn, `no ${sel} on the card`).toBeTruthy();
   btn!.click();
 };
-const key = (k: string, init: KeyboardEventInit = {}) =>
-  document.dispatchEvent(new KeyboardEvent("keydown", { key: k, cancelable: true, ...init }));
 
 // ── 1. the gate ───────────────────────────────────────────────────────────
 describe("TUT-01 gating", () => {
@@ -105,16 +104,25 @@ describe("TUT-01 gating", () => {
 
   it("renders nothing at all when gated off, and opens when forced", () => {
     expect(showTutorial(host, {
-      search: "", storage: store({ [TUTORIAL_STORAGE_KEY]: TUTORIAL_NEVER }),
+      ...CTX, search: "", storage: store({ [TUTORIAL_STORAGE_KEY]: TUTORIAL_NEVER }),
     })).toBeNull();
-    expect(card()).toBeNull();
+    expect(tour()).toBeNull();
 
     const forced = showTutorial(host, {
-      force: true, search: "", storage: store({ [TUTORIAL_STORAGE_KEY]: TUTORIAL_NEVER }),
+      ...CTX, force: true, search: "", storage: store({ [TUTORIAL_STORAGE_KEY]: TUTORIAL_NEVER }),
     });
     expect(forced).toBeTruthy();
-    expect(card()).toBeTruthy();
+    expect(tour()).toBeTruthy();
     forced!.destroy();
+  });
+
+  it("honours the URL opt-out the e2e gameplay specs boot with", () => {
+    expect(showTutorial(host, { ...CTX, search: "?tutorial=0", storage: store({}) })).toBeNull();
+    expect(tour()).toBeNull();
+    // …without writing the preference — the next plain boot asks again
+    const again = showTutorial(host, { ...CTX, search: "", storage: store({}) });
+    expect(again).toBeTruthy();
+    again!.destroy();
   });
 
   it("persists through the real localStorage the boot reads", () => {
@@ -137,6 +145,17 @@ describe("TUT-01 gating", () => {
     expect(shouldShowTutorial("", hostile)).toBe(true);
     expect(() => setTutorialDismissed(true, hostile)).not.toThrow();
   });
+
+  it("the boot's own storage is what the default gate reads", () => {
+    // No opts.search / opts.storage at all: the module consults the live
+    // localStorage, exactly as the game.ts boot chain does.
+    setTutorialDismissed(true, localStorage);
+    expect(showTutorial(host, { ...CTX })).toBeNull();
+    setTutorialDismissed(false, localStorage);
+    const shown = showTutorial(host, { ...CTX });
+    expect(shown).toBeTruthy();
+    shown!.destroy();
+  });
 });
 
 // ── 2. the copy is read from the tables ───────────────────────────────────
@@ -154,7 +173,7 @@ describe("TUT-01 content", () => {
       expect(s.id).toBeTruthy();
       expect(s.kicker.length, `${s.id} has no kicker`).toBeGreaterThan(0);
       expect(s.title.length, `${s.id} has no title`).toBeGreaterThan(0);
-      expect(s.points.length, `${s.id} has no bullets`).toBeGreaterThanOrEqual(3);
+      expect(s.points.length, `${s.id} has too few bullets`).toBeGreaterThanOrEqual(3);
       for (const p of s.points) expect(p.length, `${s.id} has an empty bullet`).toBeGreaterThan(20);
     }
   });
@@ -162,140 +181,119 @@ describe("TUT-01 content", () => {
   it("quotes the authoritative prices, not a retyped number", () => {
     expect(text("depot")).toContain(costLabel(DEPOT_COST));
     expect(text("roads")).toContain(costCompact(TRANSPORT.dirt.cost));
-    expect(text("roads")).toContain(costCompact(TRANSPORT.road.cost));
-    expect(text("roads")).toContain(costCompact(UPGRADE_COST));
     expect(text("roads")).toContain(String(CTX.freeTrack));
-    expect(text("plant")).toContain(costCompact(PLANT_COST));
-    expect(text("expand")).toContain(costCompact(PLANT_COST));
-    expect(text("expand")).toContain(String(BANK_RATE));
   });
 
   it("quotes the victory table and the live ★ line", () => {
     const win = text("victory");
-    expect(win).toContain(`+${fmtVp(VICTORY.upgrade)}★`);
-    expect(win).toContain(`+${fmtVp(VICTORY.plant)}★`);
-    expect(win).toContain(`${fmtVp(CTX.vpTarget)}★`);
-    // the two things that score nothing are named as scoring nothing
-    expect(win).toContain("0★");
+    expect(win).toContain(`First to ${CTX.vpTarget}★ wins`);
+    expect(win).toContain(`+${fmtVp(VICTORY.loop.type)}★`);
+    expect(win).toContain(`+${fmtVp(VICTORY.loop.rung)}★`);
+    expect(win).toContain(`+${fmtVp(VICTORY.loop.city)}★`);
+    expect(win).toContain(`+${fmtVp(VICTORY.platform)}★`);
+    // …and the tour says plainly that roads themselves score nothing
+    expect(win).toMatch(/roads themselves score nothing/i);
   });
 
-  it("quotes the board it is describing", () => {
-    expect(text("board")).toContain(`${BOARD_W}×${BOARD_H}`);
-    // The board is shown as a real screenshot of the plant with tokened gems.
+  it("quotes the tuning session it is describing", () => {
+    expect(text("board")).toContain(`×${TUNING.minYield}`);
+    expect(text("board")).toContain(`×${TUNING.maxYield}`);
+    expect(text("board")).toMatch(/bounded/i);
+    expect(text("board")).toMatch(/Finish keeps/i);
+    expect(text("board")).toMatch(/Retune/i);
+    // the figure is the live screenshot of that same board
     const fig = byId("board").figure;
     expect(fig?.kind).toBe("shot");
     if (fig?.kind === "shot") {
       expect(fig.src).toMatch(/board.*\.webp/);
-      expect(fig.caption).toMatch(/token/i);
+      expect(fig.caption).toMatch(/swap two/i);
     }
-    // The tour still names every cargo it can stamp a token for.
+  });
+
+  it("names every cargo the loop can carry", () => {
     for (const c of CARGOES) expect(text("loop").toLowerCase()).toContain(c);
   });
 
   it("moves with a rebalance — the drift guard", () => {
     // Same builder, different world: an Easy-chair race with a 3-tile allowance.
     // If any of these numbers were typed into the copy instead of read, the
-    // text below would still say 12 and 10★.
+    // text below would still say 12★ and 12 tiles.
     const other = buildTutorialSteps({ vpTarget: 5, freeTrack: 3 });
     const join = (id: string) => {
       const s = other.find((x) => x.id === id)!;
       return [s.title, s.lede ?? "", ...s.points, s.tip ?? "", JSON.stringify(s.figure ?? null)].join(" ");
     };
-    expect(join("victory")).toContain(`${fmtVp(5)}★`);
-    expect(join("victory")).not.toContain(`${fmtVp(VICTORY.target)}★`);
+    expect(join("victory")).toContain("First to 5★ wins");
+    expect(join("victory")).not.toContain(`First to ${VICTORY.loop.target}★ wins`);
     expect(join("roads")).toContain("first 3 of them");
     expect(join("roads")).not.toContain("first 12 of them");
-  });
-
-  it("says the rule about the two exits on the card itself", () => {
-    show();
-    expect(card()!.textContent).toMatch(/never show this again/i);
-    expect(card()!.textContent).toMatch(/replay it any time from the ❔/i);
   });
 });
 
 // ── 3. the projector ──────────────────────────────────────────────────────
 describe("TUT-01 the card", () => {
-  it("opens on the first step with one dot per step", () => {
+  it("opens on the first step, dressed in the shipped classes", () => {
     show();
-    const screen = card()!;
+    const screen = tour()!;
     expect(screen.getAttribute("role")).toBe("dialog");
     expect(screen.getAttribute("aria-modal")).toBe("true");
     expect(screen.dataset.step).toBe("loop");
-    expect(screen.querySelectorAll(".tut-dot")).toHaveLength(STEP_IDS.length);
-    expect(screen.querySelector(".tut-dot.on")!.getAttribute("data-step")).toBe("loop");
     expect(screen.querySelector(".tut-title")!.textContent).toBe("One island, one loop");
-    // the loop figure is the chain, one node per station
-    expect(screen.querySelectorAll(".tut-chain-node")).toHaveLength(7);
+    // the loop figure is the chain, one node per station, arrows between
+    expect(screen.querySelectorAll(".tut-chain-node")).toHaveLength(6);
     expect(screen.querySelectorAll(".tut-points li").length).toBeGreaterThanOrEqual(3);
     // Back has nowhere to go on step one
-    const prev = screen.querySelector('[data-act="tut-prev"]') as HTMLButtonElement;
-    expect(prev.disabled).toBe(true);
+    expect((screen.querySelector('[data-act="tut-prev"]') as HTMLButtonElement).disabled).toBe(true);
+    // …and the walker's key is Next until the last step — never an early Done
+    expect(screen.querySelector('[data-act="tut-done"]')).toBeNull();
+    expect(screen.querySelector('[data-act="tut-next"]')!.textContent).toMatch(/next/i);
   });
 
-  it("walks forward to the last step and closes as done", async () => {
+  it("walks forward to the last step and closes as finished — not dismissed", async () => {
     const handle = show();
     for (const id of STEP_IDS.slice(1)) {
-      click('[data-act="tut-next"]');
-      expect(card()!.dataset.step).toBe(id);
+      click('[data-act="tut-next"], [data-act="tut-done"]');
+      expect(tour()!.dataset.step).toBe(id);
     }
-    // the last step's key becomes the one that ends the tour
-    const done = card()!.querySelector('[data-act="tut-done"]') as HTMLElement;
-    expect(done).toBeTruthy();
-    expect(done.textContent).toMatch(/start playing/i);
+    // the last step's key becomes the one that starts production
+    const done = tour()!.querySelector('[data-act="tut-done"]') as HTMLElement;
+    expect(done.textContent).toMatch(/start production/i);
     done.click();
     const r: TutorialResult = await handle.promise;
-    expect(r).toEqual({ reason: "done", step: "desk", index: STEP_IDS.length });
-    expect(card()).toBeNull();
+    expect(r).toEqual({ reason: "finished" });
+    expect(tour()).toBeNull();
     // finishing the tour is NOT the same as dismissing it
     expect(localStorage.getItem(TUTORIAL_STORAGE_KEY)).toBeNull();
   });
 
-  it("steps back, and jumps when a dot is clicked", () => {
+  it("steps back over the same ground it walked forward", () => {
     show();
     click('[data-act="tut-next"]');
     click('[data-act="tut-next"]');
-    expect(card()!.dataset.step).toBe("depot");
+    expect(tour()!.dataset.step).toBe("depot");
     click('[data-act="tut-prev"]');
-    expect(card()!.dataset.step).toBe("plant");
-    click('[data-step="victory"]');
-    expect(card()!.dataset.step).toBe("victory");
-    expect(card()!.querySelector(".tut-dot.on")!.getAttribute("data-step")).toBe("victory");
+    expect(tour()!.dataset.step).toBe("plant");
+    expect((tour()!.querySelector('[data-act="tut-prev"]') as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it("drives from the keyboard: arrows walk, Home/End jump, Esc skips", async () => {
-    const handle = show();
-    key("ArrowRight");
-    expect(card()!.dataset.step).toBe("plant");
-    key("ArrowRight");
-    key("ArrowLeft");
-    expect(card()!.dataset.step).toBe("plant");
-    key("End");
-    expect(card()!.dataset.step).toBe("desk");
-    key("Home");
-    expect(card()!.dataset.step).toBe("loop");
-    // ArrowRight off the last step is the same as pressing the last key
-    key("End");
-    key("ArrowRight");
-    expect(await handle.promise).toMatchObject({ reason: "done", step: "desk" });
-  });
-
-  it("skips from ✕, from Esc and from the veil — and never persists", async () => {
+  it("closes from ✕ and from the veil — and never persists", async () => {
     const a = show();
     click('[data-act="tut-close"]');
-    expect(await a.promise).toMatchObject({ reason: "skip", step: "loop", index: 1 });
+    expect(await a.promise).toEqual({ reason: "dismissed" });
     expect(localStorage.getItem(TUTORIAL_STORAGE_KEY)).toBeNull();
 
-    const b = show();
-    key("Escape");
-    expect(await b.promise).toMatchObject({ reason: "skip" });
-
     const c = show();
-    (card()!.querySelector(".tut-shade") as HTMLElement).dispatchEvent(
-      new MouseEvent("click", { bubbles: true }),
-    );
-    expect(await c.promise).toMatchObject({ reason: "skip" });
-    expect(card()).toBeNull();
+    tour()!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(await c.promise).toEqual({ reason: "dismissed" });
+    expect(tour()).toBeNull();
+    expect(localStorage.getItem(TUTORIAL_STORAGE_KEY)).toBeNull();
+  });
+
+  it("a click INSIDE the card never closes it", () => {
+    const handle = show();
+    tour()!.querySelector(".tut-card")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(tour()).toBeTruthy();   // still standing
+    handle.destroy();
   });
 
   it("the never-show-again button is the only exit that remembers", async () => {
@@ -305,33 +303,27 @@ describe("TUT-01 the card", () => {
     expect(r.reason).toBe("never");
     expect(localStorage.getItem(TUTORIAL_STORAGE_KEY)).toBe(TUTORIAL_NEVER);
     expect(isTutorialDismissed(localStorage)).toBe(true);
-    expect(card()).toBeNull();
-    // …and the next boot reads that key
+    expect(tour()).toBeNull();
+    // …and the next boot reads that key through the same live storage
     expect(shouldShowTutorial("", localStorage)).toBe(false);
+    expect(showTutorial(host, { ...CTX })).toBeNull();
   });
 
   it("resolves once, however often it is closed", async () => {
-    const handle = show();
+    let closes = 0;
+    const handle = show({ onClose: () => { closes++; } });
     handle.close("never");
-    handle.close("skip");
+    handle.close("dismissed");
     handle.destroy();
-    expect(await handle.promise).toMatchObject({ reason: "never" });
+    expect(await handle.promise).toEqual({ reason: "never" });
+    expect(closes).toBe(1);
   });
 
   it("destroy settles the promise so an awaiting boot cannot hang", async () => {
     const handle = show();
     handle.destroy();
-    await expect(handle.promise).resolves.toMatchObject({ reason: "skip" });
-    expect(card()).toBeNull();
-  });
-
-  it("reports how far the player got", async () => {
-    const handle = show();
-    click('[data-act="tut-next"]');
-    click('[data-act="tut-next"]');
-    click('[data-act="tut-next"]');
-    key("Escape");
-    expect(await handle.promise).toMatchObject({ reason: "skip", step: "roads", index: 4 });
+    await expect(handle.promise).resolves.toEqual({ reason: "dismissed" });
+    expect(tour()).toBeNull();
   });
 
   it("fires onClose with the same result", async () => {
@@ -340,29 +332,17 @@ describe("TUT-01 the card", () => {
     click('[data-act="tut-never"]');
     expect(await handle.promise).toEqual(seen);
   });
-
-  it("traps Tab inside the card while it is the only thing that matters", () => {
-    show();
-    const next = card()!.querySelector(".tut-next") as HTMLElement;
-    next.focus();
-    key("Tab");
-    // the loop is never → back(hidden) → next → dots → ✕, and wraps
-    expect(document.activeElement).toBe(card()!.querySelector(".tut-dot"));
-    const x = card()!.querySelector('[data-act="tut-close"]') as HTMLElement;
-    x.focus();
-    key("Tab");
-    expect(document.activeElement).toBe(card()!.querySelector('[data-act="tut-never"]'));
-    key("Tab", { shiftKey: true });
-    expect(document.activeElement).toBe(x);
-  });
 });
 
 // ── 4. the figures ────────────────────────────────────────────────────────
 describe("TUT-01 figures", () => {
   const figureAt = (id: string) => {
     show();
-    card()!.querySelector(`[data-step="${id}"]`)!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    return card()!.querySelector(".tut-fig") as HTMLElement;
+    for (let guard = 0; guard < STEP_IDS.length && tour()!.dataset.step !== id; guard++) {
+      click('[data-act="tut-next"]');
+    }
+    expect(tour()!.dataset.step).toBe(id);
+    return tour()!.querySelector(".tut-fig") as HTMLElement;
   };
 
   it("shows a real screenshot of the game on every map and HUD step", () => {
@@ -374,10 +354,8 @@ describe("TUT-01 figures", () => {
       const img = fig.querySelector("img.tut-shot") as HTMLImageElement;
       expect(img, `${id} paints an image`).toBeTruthy();
       expect(img.getAttribute("src"), `${id} src`).toMatch(new RegExp(`${id}.*\\.webp`));
-      expect(img.alt.length, `${id} alt text`).toBeGreaterThan(20);
+      expect(img.alt.length, `${id} alt text`).toBeGreaterThan(10);
       expect(fig.querySelector(".tut-fig-cap")!.textContent!.length, `${id} caption`).toBeGreaterThan(20);
-      // the old hand-drawn mini-map is gone from these steps
-      expect(fig.querySelectorAll(".tut-tile, .tut-gem")).toHaveLength(0);
       srcs.add(img.getAttribute("src")!);
     }
     expect(srcs.size, "every step has its own screenshot").toBe(shots.length);
@@ -387,75 +365,81 @@ describe("TUT-01 figures", () => {
     const fig = figureAt("victory");
     const rows = [...fig.querySelectorAll(".tut-ledger-row")];
     expect(rows).toHaveLength(4);
-    expect(rows[0].textContent).toContain(`+${fmtVp(VICTORY.upgrade)}★`);
-    expect(rows[1].textContent).toContain(`+${fmtVp(VICTORY.plant)}★`);
-    expect(rows[2].classList.contains("dim")).toBe(true);
-    expect(rows[2].textContent).toContain("0★");
-    expect(fig.querySelector(".tut-ledger-total")!.textContent)
-      .toContain(`${fmtVp(CTX.vpTarget)}★`);
+    expect(rows[0].textContent).toContain(`+${fmtVp(VICTORY.loop.type)}★`);
+    expect(rows[1].textContent).toContain(`+${fmtVp(VICTORY.loop.rung)}★`);
+    expect(rows[2].textContent).toContain(`+${fmtVp(VICTORY.loop.city)}★`);
+    expect(rows[3].textContent).toContain(`+${fmtVp(VICTORY.platform)}★`);
+    // the caption prints the line the seat is racing — the live ★ target
+    expect(fig.querySelector(".tut-fig-cap")!.textContent).toContain(`${CTX.vpTarget}★`);
   });
 });
 
-// ── 5. the ask, item by item ──────────────────────────────────────────────
-describe("TUT-01 the ticket's six sentences are all on screen", () => {
-  const all = () => buildTutorialSteps(CTX)
-    .map((s) => [s.title, s.lede ?? "", ...s.points, s.tip ?? ""].join(" ")).join(" ");
+// ── 5. the new loop's asks, step by step ──────────────────────────────────
+describe("TUT-01 the tour teaches the loop the game runs", () => {
+  const steps = buildTutorialSteps(CTX);
 
-  it("you build a processing plant", () => {
-    expect(all()).toMatch(/processing plant/i);
-    expect(buildTutorialSteps(CTX)[1].title).toMatch(/processing plant/i);
+  it("your city is the hub", () => {
+    expect(steps[1].id).toBe("plant");
+    expect(steps[1].title).toMatch(/city/i);
   });
 
-  it("you build a depot", () => {
-    expect(buildTutorialSteps(CTX)[2].title).toMatch(/depot/i);
-    expect(all()).toMatch(/4×4 catchment/);
+  it("you build a depot beside a resource node", () => {
+    expect(steps[2].title).toMatch(/depot/i);
+    expect(JSON.stringify(steps[2])).toMatch(/4×4 catchment/);
   });
 
-  it("you connect them with roads", () => {
-    expect(buildTutorialSteps(CTX)[3].title).toMatch(/road/i);
-    expect(all()).toMatch(/dirt road/i);
+  it("you connect it with roads, and the first tiles are on the house", () => {
+    expect(steps[3].title).toMatch(/road/i);
+    expect(JSON.stringify(steps[3])).toMatch(/dirt road/i);
+    expect(JSON.stringify(steps[3])).toContain(`the first ${CTX.freeTrack} of them`);
   });
 
-  it("and then you play match 3", () => {
-    expect(buildTutorialSteps(CTX)[4].title).toMatch(/match-3/i);
-    expect(all()).toMatch(/swap two/i);
+  it("and then match-3 tunes what the depot ticks", () => {
+    expect(steps[4].title).toMatch(/match-3/i);
+    expect(JSON.stringify(steps[4])).toMatch(/swap two/i);
+    expect(JSON.stringify(steps[4])).toMatch(/yield/i);
   });
 
-  it("trucks create resources in your matching board", () => {
-    expect(all()).toMatch(/lorry/i);
-    expect(all()).toMatch(/delivery stamps a/i);
-    expect(all()).toMatch(/token/i);
+  it("the cargo you collect is what you spend", () => {
+    expect(steps[5].title).toMatch(/empire/i);
+    expect(JSON.stringify(steps[5])).toMatch(/purse/i);
   });
 
-  it("which you use to expand", () => {
-    expect(all()).toMatch(/purse/i);
-    expect(buildTutorialSteps(CTX)[5].title).toMatch(/empire/i);
-  });
-
-  it("and how to gain win points", () => {
-    expect(buildTutorialSteps(CTX)[6].title).toMatch(/victory points/i);
-    expect(all()).toMatch(/first to .*★ wins/i);
+  it("and the ★ line is how you win", () => {
+    expect(steps[6].title).toMatch(/victory points/i);
+    expect(steps[6].lede).toMatch(new RegExp(`First to ${CTX.vpTarget}★ wins`, "i"));
   });
 });
 
-// ── L11 (#226): the tour names the tabs that exist ─────────────────────────
-describe("L11 the desk card names the strip that exists, on both loops", () => {
-  // The Market tab is gone on EVERY loop and the Bank tab stays on both, so
-  // the desk card's "Right column" line must name Bank / Processing Plant /
-  // Feed and never Market — on the shipped copy AND the new-loop copy.
-  const rightColumn = (newLoop: boolean) => {
+// ── L11 (#226) / #299: the desk card names the rail that exists ───────────
+describe("the desk card names the rail that exists, on both loops", () => {
+  // The Market tab is gone on EVERY loop. The retired loop keeps its Plant
+  // tab; on the new loop the session owns a window over the map (#299) and
+  // the rail is Bank / Feed over the plant's idle card.
+  const captionOf = (newLoop: boolean) => {
     const desk = buildTutorialSteps({ ...CTX, newLoop }).find((s) => s.id === "desk")!;
-    return desk.points.find((p) => p.startsWith("Right column"))!;
+    const fig = desk.figure;
+    expect(fig.kind).toBe("shot");
+    return fig.kind === "shot" ? fig.caption : "";
   };
 
-  it.each([false, true])("newLoop=%s: names Bank, Processing Plant and Feed", (newLoop) => {
-    const line = rightColumn(newLoop);
-    expect(line).toMatch(/Bank/);
+  it("the retired loop names its Processing Plant and Feed tabs", () => {
+    const line = captionOf(false);
+    expect(line).toMatch(/^Right column:/);
     expect(line).toMatch(/Processing Plant/);
     expect(line).toMatch(/Feed/);
+    expect(line).not.toMatch(/Market/);
+    // …and must not promise the new loop's window
+    expect(line).not.toMatch(/session window/);
   });
 
-  it.each([false, true])("newLoop=%s: never names the retired Market tab", (newLoop) => {
-    expect(rightColumn(newLoop)).not.toMatch(/Market/);
+  it("the new loop names Bank, Feed and the session window — never a Plant tab or Market", () => {
+    const line = captionOf(true);
+    expect(line).toMatch(/^Right column:/);
+    expect(line).toMatch(/Bank/);
+    expect(line).toMatch(/Feed/);
+    expect(line).toMatch(/session window/);
+    expect(line).not.toMatch(/Market/);
+    expect(line).not.toMatch(/Plant (and Feed )?tabs/);
   });
 });

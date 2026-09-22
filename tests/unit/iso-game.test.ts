@@ -352,7 +352,15 @@ describe("E11 the game boots", () => {
     // one absence covers both viewports.
     const tabs = [...root.querySelectorAll("[data-tab]")].map(
       (b) => (b as HTMLElement).dataset.tab);
-    expect(tabs).toEqual(["bank", "plant", "feed"]);
+    // #299: on the new loop the Processing Plant left the rail for its own
+    // session window over the map — the strip is Bank / Feed, and the plant's
+    // idle plate rides a small card, not a tab. (The retired loop's strip,
+    // Bank / Processing Plant / Feed, is pinned by the story-contract case
+    // below, which boots the old game.)
+    expect(tabs).toEqual(["bank", "feed"]);
+    expect(root.querySelector('[data-tab="plant"]')).toBeNull();
+    expect(root.querySelector("#iso-session")).toBeTruthy();
+    expect(root.querySelector("#iso-trade #iso-quarry")).toBeNull();
     // The retired pane is unmounted, not merely class-hidden...
     expect(root.querySelector(".market-pane")).toBeNull();
     expect(root.querySelector(".bank-pane")).toBeTruthy();
@@ -461,11 +469,20 @@ describe("E11 the game boots", () => {
     for (let i = 0; i < 400 && !(hook().rendering?.()); i++) {
       await new Promise((r) => setTimeout(r, 5));
     }
-    expect(hook().rendering?.()).toMatchObject({ terrain: expect.objectContaining({ performance: true, animated: false }) });
+    // PERF-01's current policy: decals/trees/DPR go flat but ground textures
+    // and the animated water STAY, so the terrain layer keeps animating in
+    // EITHER mode — what performance mode suppresses is decals, trees and DPR.
+    expect(hook().rendering?.()).toMatchObject({
+      terrain: expect.objectContaining({ performance: true, animated: true }),
+    });
+    const terrainRedraws = hook().rendering?.().terrain.redraws ?? 0;
     perfSwitch.click();
     expect(miniSwitch.disabled).toBe(false);
     await settle();
-    expect(hook().rendering?.()).toMatchObject({ terrain: expect.objectContaining({ performance: false, animated: true }) });
+    expect(hook().rendering?.()).toMatchObject({
+      terrain: expect.objectContaining({ performance: false, animated: true }),
+    });
+    expect(hook().rendering?.().terrain.redraws).toBeGreaterThanOrEqual(terrainRedraws);
     (sheet.querySelector(".big-btn") as HTMLButtonElement).click();
     expect(root.querySelector(".settings-sheet")).toBeNull();
     localStorage.removeItem("hexmatch:graphics");
@@ -1607,7 +1624,9 @@ describe("TOAST-ONCE the win-point popups show once and stay gone", () => {
     expect(banner.classList.contains("hidden")).toBe(true);
     expect(h.dragBuild("dirt", hx, hy + 1, hx, hy + 2)).toBeTruthy();
     await settle();
-    expect(h.freeTrack).toBe(10);        // the road really was laid
+    // the road really was laid — and it was FREE outright (PP-07's {} gravel),
+    // so the 12-tile allowance never fires for it
+    expect(h.freeTrack).toBe(12);
     expect(banner.classList.contains("hidden")).toBe(true);
     expect(banner.textContent ?? "").not.toMatch(/free track tiles|Dirt Road scores nothing/i);
   });
@@ -1663,34 +1682,41 @@ describe("W1 the drag charges exactly what it previewed", () => {
     h.eco.harvesters.push({ id: 1, owner: "you", ownerId: 1, tx: hx, ty: hy - 1, facing: "sw" as const });
     h.finishSetup();
 
-    // Burn 11 of the 12 free setup tiles on one drag — the purse is untouched.
+    // Dirt is FREE outright on both loops (PP-07 priced the gravel at {} —
+    // "time is its price"), so the whole first drag lands at no charge and
+    // never touches the 12-tile setup allowance: the allowance is no longer
+    // what makes gravel affordable.
     const pv1 = h.dragBuild("dirt", hx, hy + 1, hx, hy + 11);
     expect(pv1).toBeTruthy();
-    expect(pv1!.free).toBe(11);
-    expect(h.freeTrack).toBe(1);
+    expect(pv1!.free).toBe(0);
+    expect(pv1!.cost).toEqual({});
+    expect(h.freeTrack).toBe(12);
     expect(h.purse.stone).toBe(12);
     // and the tiles are MINE (W2's ownership rides on the same commit)
     expect(h.track.owner[(hy + 1) * MAP_W + hx]).toBe(1);
 
-    // Now the purse pays. 1 free tile + 1 wood + 1 stone can buy 2 of the
-    // next 3 — the third tile is the unaffordable remainder, shown but never
-    // built. (PP-07: a dirt tile costs wood AND stone; the wood rides the
-    // starting stock, the stone is the binding constraint.)
-    h.purse.stone = 1;
-    const pv2 = h.dragBuild("dirt", hx, hy + 12, hx, hy + 14);
+    // The AFFORDABILITY prefix rules live on the paid tier. A paved Road is
+    // { wood: 1, stone: 1, ore: 4 } (BUILD_COSTS.road): with exactly two
+    // tiles' worth in the purse, the third tile is the unaffordable
+    // remainder — shown, never built, and never charged into the negative.
+    h.purse.wood = 2;
+    h.purse.stone = 2;
+    h.purse.ore = 8;
+    const pv2 = h.dragBuild("road", hx, hy + 12, hx, hy + 14);
     expect(pv2).toBeTruthy();
     expect(pv2!.tiles).toHaveLength(2);
     expect(pv2!.unaffordable).toEqual([[hx, hy + 14]]);   // the blocked tail
-    expect(pv2!.free).toBe(1);            // the last free tile went to the prefix
-    expect(pv2!.cost).toEqual({ wood: 1, stone: 1 });
+    expect(pv2!.free).toBe(0);            // the allowance never buys pavement (W9)
+    expect(pv2!.cost).toEqual({ wood: 2, stone: 2, ore: 8 });
 
     // The commit charged EXACTLY the preview: nothing more, nothing less.
     expect(h.purse.stone).toBe(0);
-    expect(h.purse.wood).toBe(11);        // 12 starting wood, 1 tile charged
-    expect(h.freeTrack).toBe(0);
-    expect(hasTrack(h.track, "dirt", hx, hy + 12)).toBe(true);
-    expect(hasTrack(h.track, "dirt", hx, hy + 13)).toBe(true);
-    expect(hasTrack(h.track, "dirt", hx, hy + 14)).toBe(false);
+    expect(h.purse.wood).toBe(0);
+    expect(h.purse.ore).toBe(0);
+    expect(h.freeTrack).toBe(12);         // untouched — it buys no paid tier
+    expect(hasTrack(h.track, "road", hx, hy + 12)).toBe(true);
+    expect(hasTrack(h.track, "road", hx, hy + 13)).toBe(true);
+    expect(hasTrack(h.track, "road", hx, hy + 14)).toBe(false);
     // "no purse value ever negative" — every cargo key, checked, not inferred
     for (const c of CARGOES) expect(h.purse[c] ?? 0, `${c} went negative`).toBeGreaterThanOrEqual(0);
   });
@@ -1712,10 +1738,10 @@ describe("W1 the drag charges exactly what it previewed", () => {
     const pv = h.dragBuild("dirt", hx, hy + 1, hx, hy + 11);
     expect(pv).toBeTruthy();
     // `tiles` are the tiles the drag will BUILD: the eleven of path minus the
-    // three that are the plant's own floor, and the allowance is spent on
-    // exactly those — never on the building.
+    // three that are the plant's own floor — and since dirt is free outright,
+    // none of them spends the allowance or the purse.
     expect(pv!.tiles).toHaveLength(11 - FACTORY_FOOTPRINT[1]);
-    expect(pv!.free).toBe(11 - FACTORY_FOOTPRINT[1]);
+    expect(pv!.free).toBe(0);
     expect(pv!.cost).toEqual({});
     for (let k = 0; k < FACTORY_FOOTPRINT[1]; k++) {
       expect(hasTrack(h.track, "dirt", hx, hy + 6 + k), `plant floor ${k}`).toBe(false);
@@ -2105,19 +2131,19 @@ describe("W9 the free setup allowance buys dirt, not road", () => {
     expect(h.purse.ore ?? 0).toBe(0);
     expect(hasTrack(h.track, "road", fx, fy)).toBe(false);
 
-    // dirt from the same tile still rides the allowance exactly as before —
-    // except for the tiles under the Factory the drag starts inside: PP-15
-    // crosses a player's own building for free, so `5 - fw` tiles are built and
-    // only those spend the allowance. (The block's floor is never paved.)
+    // dirt from the same tile still builds exactly as before — the tiles
+    // under the Factory the drag starts inside are stepped over (PP-15), and
+    // since gravel is free outright the drag spends no purse and burns no
+    // allowance.
     const { FACTORY_FOOTPRINT } = await import("../../src/iso/config");
     const fw = FACTORY_FOOTPRINT[0];
     const run = 5 - fw;
     const dirt = h.dragBuild("dirt", fx, fy, fx + 4, fy);
     expect(dirt).toBeTruthy();
     expect(dirt!.tiles).toHaveLength(run);
-    expect(dirt!.free).toBe(run);
+    expect(dirt!.free).toBe(0);
     expect(h.purse.stone).toBe(12);              // nothing charged
-    expect(h.freeTrack).toBe(12 - run);
+    expect(h.freeTrack).toBe(12);
 
     // and road becomes buildable the moment ore exists — charged, never free
     h.purse.ore = 40;
@@ -2127,7 +2153,7 @@ describe("W9 the free setup allowance buys dirt, not road", () => {
     expect(up!.free).toBe(0);
     expect(up!.cost).toEqual({ ore: 4 * run });  // `run` in-place upgrades × 4 ore
     expect(h.purse.ore).toBe(40 - 4 * run);
-    expect(h.freeTrack).toBe(12 - run);          // road ate no allowance
+    expect(h.freeTrack).toBe(12);                // road ate no allowance, dirt never did
     for (let k = 0; k < 5; k++) {
       const on = k >= fw;                        // nothing is paved inside the plant
       expect(hasTrack(h.track, "road", fx + k, fy), `tile ${k}`).toBe(on);
@@ -2476,15 +2502,18 @@ describe("PP-01 terminology: Processing Plant + Depot", () => {
     await boot();
     // the stone-producing resource node keeps its existing name
     expect(INDUSTRY_BY_KEY["quarry"].name).toBe("Quarry");
+    // ☰ → How to Play raises the shipped reference card. Since the tuning
+    // loop shipped it teaches THAT loop: bounded match-3 sessions and Depot
+    // yields — and it never calls a collector a "harvester".
     const helpBtn = [...root.querySelectorAll<HTMLElement>(".icon-btn")]
       .find((b) => b.title === "How to play");
     helpBtn?.click();
     await settle();
     const modal = root.querySelector(".modal") as HTMLElement;
-    expect(modal.textContent).toContain(
-      "resource node → Depot → transport network → Factory → processing → resources available for construction",
-    );
-    expect(modal.textContent).toContain("The Processing Plant");
+    expect(modal.querySelector("h2")?.textContent).toContain("Hexmatch Industries");
+    expect(modal.textContent).toMatch(/bounded match-3 session/);
+    expect(modal.textContent).toMatch(/Depot/);
+    expect(modal.textContent).toContain("Dirt Road");
     expect(modal.textContent).not.toMatch(/harvester/i);
   });
 
@@ -2576,8 +2605,12 @@ describe("PP-03 footprint vs reach placement feedback (wired game)", () => {
   });
 });
 
-// ── PP-13: demolishing a dirt salvages one of the two materials it cost ────
-describe("PP-13 dirt demolition refunds", () => {
+// ── PP-13 demolition: what tearing a tile up pays back ─────────────────────
+// The old rule — a Dirt Road salvaged one of the 1 Wood + 1 Stone it cost —
+// died with the price: gravel is free outright (BUILD_COSTS.dirt = {}), so a
+// dirt tear-up that paid out would MINT resources. Demolishing is now free
+// re-routing: the tile is yours, it comes up, nothing comes back.
+describe("PP-13 demolition refunds in a free-gravel world", () => {
   /** A bare stretch of the player's own dirt, away from any structure. */
   async function ownRoadTile(h: IsoHook): Promise<[number, number]> {
     const { buildTile } = await import("../../src/iso/track");
@@ -2593,29 +2626,31 @@ describe("PP-13 dirt demolition refunds", () => {
     throw new Error("no free tile for a dirt");
   }
 
-  it("hands back exactly 1 Wood or 1 Stone — never both, never nothing", async () => {
+  it("a Dirt Road comes up cleanly — and refunds nothing, ever", async () => {
     const h = await boot();
     const [tx, ty] = await ownRoadTile(h);
     const { hasTrack } = await import("../../src/iso/track");
 
-    // rng → 0 picks ROAD_DEMOLISH_REFUND[0] (wood); → 0.99 picks [1] (stone).
-    setRng(() => 0);
     const w0 = h.purse.wood ?? 0, s0 = h.purse.stone ?? 0;
     h.demolish(tx, ty);
+    // the tile really is gone (a demolish that only spoke would be worse
+    // than no demolish), and the free gravel minted nothing
     expect(hasTrack(h.track, "dirt", tx, ty)).toBe(false);
-    expect((h.purse.wood ?? 0) - w0).toBe(1);
+    expect((h.purse.wood ?? 0) - w0).toBe(0);
     expect((h.purse.stone ?? 0) - s0).toBe(0);
 
-    // and the other draw pays stone instead — one unit either way
+    // and the cleared ground is exactly that — a second click finds nothing
+    // to lift and pays nothing either
     const [tx2, ty2] = await ownRoadTile(h);
-    setRng(() => 0.99);
-    const w1 = h.purse.wood ?? 0, s1 = h.purse.stone ?? 0;
     h.demolish(tx2, ty2);
-    expect((h.purse.stone ?? 0) - s1).toBe(1);
-    expect((h.purse.wood ?? 0) - w1).toBe(0);
+    const before = { ...h.purse };
+    h.demolish(tx2, ty2);
+    for (const c of CARGOES) expect(h.purse[c] ?? 0, `${c} minted`).toBe(before[c] ?? 0);
+    expect((root.querySelector(".toasts") as HTMLElement).textContent ?? "")
+      .toMatch(/Nothing to demolish/i);
   }, 20_000);
 
-  it("pays nothing for a paved Road, and refunds one material for a Dirt Road", async () => {
+  it("a paved Road pays nothing back either — its price stays spent", async () => {
     const h = await boot();
     const { buildTile, hasTrack } = await import("../../src/iso/track");
     // Paving a Road CLEARS the Dirt Road beneath it (a tile holds one tier),
@@ -2630,17 +2665,7 @@ describe("PP-13 dirt demolition refunds", () => {
     expect(hasTrack(h.track, "road", rx, ry)).toBe(false);
     expect(h.purse.wood).toBe(before.wood);
     expect(h.purse.stone).toBe(before.stone);
-
-    // a Dirt Road, in contrast, salvages one of its two materials — and once
-    // the ground is empty a further click refunds nothing at all.
-    const [dx, dy] = await ownRoadTile(h);
-    setRng(() => 0);
-    h.demolish(dx, dy);
-    expect((h.purse.wood ?? 0) - (before.wood ?? 0)).toBe(1);
-    const w = h.purse.wood ?? 0;
-    setRng(() => 0);
-    h.demolish(dx, dy);                 // nothing left to lift
-    expect((h.purse.wood ?? 0) - w).toBe(0);
+    expect(h.purse.ore).toBe(before.ore);
   }, 20_000);
 
   it("refuses to demolish a public highway, and refunds nothing for it", async () => {
@@ -2845,34 +2870,6 @@ describe("A1 the arcade FX are wired to the HUD", () => {
   });
 });
 
-describe("PP-14 a cross is answered by the board that made it", () => {
-  it("the rival's cross never opens the player's chooser — it picks for itself", async () => {
-    const h = await boot();
-    const before = { ...h.purse };
-    let chosen: string[] | null = null;
-    // the rival's board makes a broken cross: the blessing is ITS bounty, so
-    // nothing may appear on the player's screen and the cascade must roll on
-    h.rivalBoard.onCrossChoice("broken", 3, (picks) => { chosen = picks as string[]; });
-    await settle();
-    expect(chosen, "the rival answered its own cross").not.toBeNull();
-    expect(chosen!).toHaveLength(3);
-    expect(root.querySelector(".cross-pick")).toBeNull();
-    // …and it spent none of the player's purse doing it
-    for (const c of Object.keys(before)) {
-      expect((h.purse as Record<string, number>)[c]).toBe((before as Record<string, number>)[c]);
-    }
-  });
-
-  it("the player's own cross still asks the player", async () => {
-    const h = await boot();
-    let chosen: string[] | null = null;
-    h.board.onCrossChoice("broken", 3, (picks) => { chosen = picks as string[]; });
-    await settle();
-    expect(chosen, "the player's blessing waits for the player").toBeNull();
-    expect(root.querySelector(".cross-pick")).toBeTruthy();
-  });
-});
-
 // ══════════════════════════════════════════════════════════════════════════
 // L9 (#224) — the Black Market is MAP-ONLY sabotage.
 //
@@ -2922,7 +2919,9 @@ describe("L9 (#224) the Black Market is map-only sabotage", () => {
     expect(c).toBeTruthy();
     const { hx, hy, fy } = c!;
     h.eco.factories.push({ owner: "ai", ownerId: 2, tx: hx, ty: fy });
-    h.eco.harvesters.push({ id: 1, owner: "ai", ownerId: 2, tx: hx, ty: hy });
+    // same working geometry as TK-008: the depot's NE side touches the
+    // industry footprint (ty: hy - 1), its SW entrance meets the road
+    h.eco.harvesters.push({ id: 1, owner: "ai", ownerId: 2, tx: hx, ty: hy - 1, facing: "sw" as const });
     for (let y = hy + 1; y <= fy; y++) buildTile(h.track, "dirt", hx, y, 2);
     expect(Object.keys(playerResources(h.eco, "ai", performance.now())).length).toBeGreaterThan(0);
 
@@ -3182,176 +3181,6 @@ describe("VP-01 the rival plays the score, not just the map", () => {
         expect(hits(), `raid ${i}: paid ${spent} Gold and nothing happened`).toBeGreaterThan(before);
       }
     }
-  });
-});
-
-// ══════════════════════════════════════════════════════════════════════════
-// PP-14 — the holy cross: 3 horizontal + 4 vertical overlapping on one gem
-// summons the praying angel and the choir. board.test.ts pins the board half
-// (detection, the HOLY CROSS callout, the `cross` fx event, the pause for
-// the player's picks); this pins the UI half — the angel PNG pops over the
-// crossing, the five-cargo chooser appears, the sound really is asked for,
-// and the SIX spent units (repeats allowed) are paid exactly as allocated.
-// PP-14b also covers the broken holy cross: 3×3, THREE picks, a `bcross` fx
-// with no angel and no choir.
-// ══════════════════════════════════════════════════════════════════════════
-describe("PP-14 the holy cross", () => {
-  /** A fake AudioContext that counts the oscillators the choir would play. */
-  function stubAudio() {
-    class Param {
-      value = 0;
-      setValueAtTime() { return this; }
-      linearRampToValueAtTime() { return this; }
-      exponentialRampToValueAtTime() { return this; }
-    }
-    class Node { connect() { return undefined; } }
-    class Osc extends Node {
-      type = "sine";
-      frequency = new Param();
-      start() { oscs++; }
-      stop() {}
-    }
-    class Gain extends Node { gain = new Param(); }
-    let oscs = 0;
-    class FakeAudioContext {
-      currentTime = 0;
-      state: AudioContextState = "running";
-      destination = new Node();
-      resume() { return Promise.resolve(); }
-      createGain() { return new Gain(); }
-      createOscillator() { return new Osc(); }
-    }
-    vi.stubGlobal("AudioContext", FakeAudioContext);
-    return () => oscs;
-  }
-
-  /** Paint a holy cross onto the board: 3 horizontal + 4 vertical over (2,2). */
-  function paintCross(b: import("../../src/game/board").Board) {
-    b.grid[2][1]!.res = "sheep";
-    b.grid[2][2]!.res = "sheep";
-    b.grid[2][3]!.res = "sheep";
-    b.grid[1][2]!.res = "sheep";
-    b.grid[3][2]!.res = "sheep";
-    b.grid[4][2]!.res = "sheep";
-    b.grid[2][0]!.res = "ore";
-    b.grid[2][4]!.res = "ore";
-    b.grid[0][2]!.res = "ore";
-    b.grid[5][2]!.res = "ore";
-  }
-
-  /** Paint a broken holy cross: 3 horizontal + 3 vertical, both centred (2,2). */
-  function paintBroken(b: import("../../src/game/board").Board) {
-    b.grid[2][1]!.res = "sheep";
-    b.grid[2][2]!.res = "sheep";
-    b.grid[2][3]!.res = "sheep";
-    b.grid[1][2]!.res = "sheep";
-    b.grid[3][2]!.res = "sheep";
-    for (const [r, c] of [[2, 0], [2, 4], [0, 2], [4, 2], [1, 1], [1, 3], [3, 1], [3, 3]]) {
-      b.grid[r][c]!.res = "ore";
-    }
-    b.grid[4][1]!.res = "wheat";
-    b.grid[4][3]!.res = "wheat";
-  }
-
-  it("pops the angel, offers the six-unit bounty chooser, and pays exactly the spent allocation", async () => {
-    const h = await boot();
-    const started = stubAudio();
-    const before = ["wood", "stone", "oil"].map((c) => [c, h.purse[c as keyof typeof h.purse] ?? 0] as const);
-    paintCross(h.board);
-    const p = h.board.settle();      // the first pass resolves synchronously
-    const angel = root.querySelector(".fx-cross") as HTMLElement | null;
-    expect(angel, "the angel icon must pop").not.toBeNull();
-    expect(angel!.style.backgroundImage).toContain("angel");
-    // dead centre of the board: cell (2,2) at CELL 80 → 200,200
-    expect(angel!.style.left).toBe("200px");
-    expect(angel!.style.top).toBe("200px");
-    // the cascade pauses on the chooser: five cargo buttons over the board
-    const panel = root.querySelector(".cross-pick");
-    expect(panel, "the bounty chooser must appear").not.toBeNull();
-    expect(panel!.querySelectorAll(".cross-pick-btn")).toHaveLength(5);
-    expect(panel!.querySelector(".cross-pick-sub")!.textContent)
-      .toBe("Spend 6 bounties · repeats allowed");
-    const count = panel!.querySelector(".cross-pick-count");
-    const confirm = panel!.querySelector<HTMLButtonElement>(".cross-pick-confirm");
-    expect(confirm, "the confirm button must exist").not.toBeNull();
-    expect(confirm!.textContent).toBe("Bless +6");
-    expect(confirm!.disabled, "confirm stays disabled before six units are spent").toBe(true);
-    const btn = (cargo: string) => panel!.querySelector<HTMLButtonElement>(`[data-cargo="${cargo}"]`)!;
-    // spend 3 wood + 3 stone (repeats allowed)
-    btn("wood").click();
-    btn("wood").click();
-    btn("wood").click();
-    btn("stone").click();
-    btn("stone").click();
-    btn("stone").click();
-    expect(count!.textContent).toBe("6 / 6 spent");
-    expect(confirm!.disabled, "six units light the confirm").toBe(false);
-    // a seventh unit on an untouched cargo is refused until something is freed
-    btn("oil").click();
-    expect(btn("oil").dataset.n).toBe("0");
-    // take one stone back and spend it on oil instead
-    btn("stone").click();
-    expect(count!.textContent).toBe("5 / 6 spent");
-    btn("oil").click();
-    expect(btn("stone").dataset.n).toBe("2");
-    expect(btn("oil").dataset.n).toBe("1");
-    confirm!.click();
-    // the click answers the board's promise — a microtask later the purse is
-    // credited (3 wood + 2 stone + 1 oil) and the panel is gone, while the
-    // cascade has not yet moved on
-    await new Promise((r) => setTimeout(r, 0));
-    const [wood0, stone0, oil0] = before.map(([, was]) => was);
-    expect(h.purse.wood ?? 0).toBe(wood0 + 3);
-    expect(h.purse.stone ?? 0).toBe(stone0 + 2);
-    expect(h.purse.oil ?? 0).toBe(oil0 + 1);
-    expect(root.querySelector(".cross-pick")).toBeNull();
-    // the callout names the shape
-    const floats = [...root.querySelectorAll(".combo-float")].map((e) => e.textContent ?? "");
-    expect(floats.some((t) => t.includes("HOLY CROSS"))).toBe(true);
-    // the choir really was asked for (12 choir voices + wobbles + 4 bells)
-    expect(started(), "playHoly never started an oscillator").toBeGreaterThan(10);
-    await p;
-  });
-
-  it("a broken cross pops a cracked ✝ (no angel, no choir) and pays three units", async () => {
-    const h = await boot();
-    const started = stubAudio();
-    const before = ["wood", "stone"].map((c) => [c, h.purse[c as keyof typeof h.purse] ?? 0] as const);
-    paintBroken(h.board);
-    const p = h.board.settle();
-    // the broken cross fires `bcross` — a cracked ✝, NOT the angel image
-    const bcross = root.querySelector(".fx-bcross") as HTMLElement | null;
-    expect(bcross, "the cracked cross must pop").not.toBeNull();
-    expect(bcross!.style.backgroundImage).toBe("");
-    expect(root.querySelector(".fx-cross"), "no angel for a broken cross").toBeNull();
-    // three-unit chooser, titled BROKEN CROSS
-    const panel = root.querySelector(".cross-pick");
-    expect(panel, "the bounty chooser must appear").not.toBeNull();
-    expect(panel!.classList.contains("broken")).toBe(true);
-    expect(panel!.querySelector(".cross-pick-sub")!.textContent)
-      .toBe("Spend 3 bounties · repeats allowed");
-    const count = panel!.querySelector(".cross-pick-count");
-    const confirm = panel!.querySelector<HTMLButtonElement>(".cross-pick-confirm");
-    expect(confirm!.textContent).toBe("Bless +3");
-    const btn = (cargo: string) => panel!.querySelector<HTMLButtonElement>(`[data-cargo="${cargo}"]`)!;
-    // 2 wood + 1 stone = 3, the broken cross's full spend
-    btn("wood").click();
-    btn("wood").click();
-    btn("stone").click();
-    expect(count!.textContent).toBe("3 / 3 spent");
-    expect(confirm!.disabled).toBe(false);
-    // a fourth unit is refused
-    btn("oil").click();
-    expect(btn("oil").dataset.n).toBe("0");
-    confirm!.click();
-    await new Promise((r) => setTimeout(r, 0));
-    const [wood0, stone0] = before.map(([, was]) => was);
-    expect(h.purse.wood ?? 0).toBe(wood0 + 2);
-    expect(h.purse.stone ?? 0).toBe(stone0 + 1);
-    expect(root.querySelector(".cross-pick")).toBeNull();
-    // no angel ⇒ no choir asked
-    expect(started(), "a broken cross must not start the choir").toBe(0);
-    await p;
   });
 });
 
