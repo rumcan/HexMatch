@@ -13,6 +13,7 @@
 // transport is mocked exactly as in start-screen.test.ts — none of these
 // paths touch the wire, but the module imports it at load time.
 import { act, createElement } from "react";
+import { STORY_MODE_ENABLED } from "../../src/story/flag";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -157,7 +158,8 @@ describe("mode screen — Continue vs a new Play vs AI", () => {
   });
 });
 
-describe("campaign screen — Continue cards and Start over", () => {
+// Story mode is hidden for now (src/story/flag.ts): no door into the campaign screen.
+describe.skipIf(!STORY_MODE_ENABLED)("campaign screen — Continue cards and Start over", () => {
   async function openCampaign(): Promise<void> {
     await render();
     await click(findButton(/^Story Mode/));

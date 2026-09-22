@@ -1,4 +1,8 @@
 import { test, expect } from "@playwright/test";
+import { STORY_MODE_ENABLED } from "../../src/story/flag";
+
+// Story mode is hidden for now (src/story/flag.ts) — the campaign has no door.
+test.skip(!STORY_MODE_ENABLED, "Story mode is hidden (STORY_MODE_ENABLED = false)");
 import type { Page } from "@playwright/test";
 import { bootBudget } from "./boot";
 
