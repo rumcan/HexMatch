@@ -8,6 +8,10 @@ This file tracks tests that are **quarantined** on `main` — they are `it.skip`
 |---|---|---|---|---|---|
 | _none — `main` is green as of #205 + #200 remediation_ | — | — | — | — | — |
 
+## Notes
+
+- 2026-09-22: `tests/unit/iso-match-settings.test.ts > #186 an AI seat is simulated on the host` (#186) is **load-flaky**: it polls `host.aiTick(...)` through a two-browser pump and has failed once (2026-09-22) under full-suite heap pressure while passing in isolation and in a clean full run. Not quarantined — no assertion change; tracked as a test-infra flake under [#200](https://github.com/rumcan/HexMatch/issues/200). If it recurs on CI, quarantine with a link there rather than loosening the polling expectations.
+
 ## How to quarantine
 
 In the test file:

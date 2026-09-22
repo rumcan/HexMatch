@@ -63,12 +63,84 @@ test("a bare production boot is on the new loop", async ({ page }) => {
   // always-on board was the retired loop's whole shape of the game.
   expect(await page.evaluate(() => document
     .querySelector("#iso-quarry .board-slot .board-wrap")?.classList.contains("hidden"))).toBe(true);
+  // #299: the plant is not a tab on this loop either — the strip is Bank and
+  // Feed, and the plant panel itself lives inside the session window, which
+  // waits closed for the first Depot.
+  await expect(page.locator('#iso-trade [data-tab="plant"]')).toHaveCount(0);
+  await expect(page.locator("#iso-session")).toBeHidden();
+  await expect(page.locator("#iso-session #iso-quarry")).toHaveCount(1);
+  // The ♻ Reset and the combo bank ride the panel — hidden while it is.
+  await expect(page.locator(".reset-btn")).toBeHidden();
+  await expect(page.locator(".combo-bank")).toBeHidden();
 
   // L2 (#216) + L13: gravel is free, and paving is sold as the fast lane, not
   // as a quarter-star the scoreboard no longer pays.
   await expect(page.locator('[data-tool="dirt"]')).toContainText(/free/i);
   await expect(page.locator('[data-tool="road"]')).toContainText("faster hauling");
   await expect(page.locator('[data-tool="road"]')).not.toContainText("paving dirt");
+
+  expect(errors).toEqual([]);
+});
+
+test("#299: placing a Depot opens the session window over the map", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(String(e)));
+  await page.addInitScript(() => {
+    localStorage.setItem("hexmatch:rival-skill", "normal");
+    localStorage.setItem("hexmatch:tutorial", "never");
+  });
+  await bootFresh(page, "?seed=1337");
+
+  // The setup is played out by the twins and the opening Depot placed by the
+  // game's own legality rules — the same route `iso-l8-legibility.spec.ts`
+  // walks. What this spec watches is WHERE the session appears.
+  const placed = await page.evaluate(() => {
+    const h = (window as any).__iso;
+    h.finishSetup();
+    const W = h.grid.w, H = h.grid.h;
+    for (const ind of h.grid.industries) {
+      for (let dy = 0; dy <= 4; dy++) {
+        for (let dx = -2; dx <= ind.w + 1; dx++) {
+          const tx = ind.tx + dx, ty = ind.ty + ind.h + dy;
+          if (tx < 0 || ty < 0 || tx >= W || ty >= H) continue;
+          if (!h.tileProbe("dirt", tx, ty).harvester.ok) continue;
+          if (h.placeDepot(tx, ty)) return true;
+        }
+      }
+    }
+    return false;
+  });
+  expect(placed, "the map offers at least one legal Depot lot").toBe(true);
+
+  // The window stands up over the map with everything the ticket asks it to
+  // carry: a title naming the Depot, moves left, score and yield, and the
+  // two doors — Finish and Abandon (#301's labels).
+  const win = page.locator("#iso-session");
+  await expect(win).toBeVisible();
+  await expect(win.locator(".tp-title")).toContainText(/Tuning .* Depot/);
+  await expect(win.locator(".tp-moves")).toContainText("moves");
+  await expect(win.locator(".tp-score")).toContainText("Score");
+  await expect(win.locator(".tp-yield")).toContainText("Yield");
+  await expect(win.locator(".tp-finish")).toBeVisible();
+  await expect(win.locator(".tp-abandon")).toBeVisible();
+  await expect(win.locator(".board-slot .gem").first()).toBeVisible();
+  // Inside an active session the reset / combo chrome is allowed on screen.
+  await expect(win.locator(".reset-btn")).toBeVisible();
+  await expect(win.locator(".combo-bank")).toBeVisible();
+
+  // The map behind it is BLOCKED: inert, so neither a click nor a keyboard
+  // walk reaches it until the window closes.
+  expect(await page.evaluate(() => (document.querySelector("#map") as HTMLElement).inert)).toBe(true);
+
+  // Abandon (nothing scored, so #301's confirm does not arm) puts the map
+  // back and takes the window — and the board — down.
+  await win.locator(".tp-abandon").click();
+  await expect(win).toBeHidden();
+  expect(await page.evaluate(() => (document.querySelector("#map") as HTMLElement).inert)).toBe(false);
+  await expect(page.locator(".reset-btn")).toBeHidden();
+  // Between sessions the plate lives in the rail's plant card, saying how to
+  // open the next one.
+  await expect(page.locator("#iso-plant")).toContainText(/No tuning session|re-match/);
 
   expect(errors).toEqual([]);
 });
@@ -86,6 +158,11 @@ test("?loop=old still opens the retired loop, board and all", async ({ page }) =
   expect(await page.evaluate(() => document
     .querySelector("#iso-quarry .board-slot .board-wrap")?.classList.contains("hidden"))).toBe(false);
   await expect(page.locator('[data-tool="road"]')).toContainText("paving dirt");
+  // #299 moved the PROCESSING PLANT out of the rail on the new loop only —
+  // the retired loop's always-on board keeps its tab and its docked panel.
+  await expect(page.locator('#iso-trade [data-tab="plant"]')).toHaveCount(1);
+  await expect(page.locator("#iso-trade #iso-quarry")).toBeVisible();
+  await expect(page.locator("#iso-session")).toHaveCount(0);
 });
 
 test("the tour a first-time player meets teaches the tuning session", async ({ page }) => {

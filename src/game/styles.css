@@ -1126,6 +1126,72 @@ html, body, #root {
 .tp-retune:hover { color: var(--gold2); border-color: var(--brass); background: rgba(98, 68, 24, .5); }
 .tp-retune:disabled { color: var(--txt-mute); cursor: not-allowed; border-color: var(--line); background: rgba(255, 255, 255, .03); }
 
+/* ── #299 — the session window ─────────────────────────────────────
+   The tuning session is the MAIN SCREEN while it runs: a centred plate on
+   a dimmed map, not a tab in the right rail. The backdrop swallows the
+   gestures aimed at the map (ui.ts additionally puts the map, both rails
+   and the phone nav `inert`), so the only doors out of a session are the
+   plate's own Finish and Abandon — and the title says which Depot (or the
+   city) the board is being played for. The plant panel itself is born
+   inside this frame; between sessions `paintTuning` carries its plate back
+   to the rail card (`.plant-card`) and the window waits shut for the next
+   Depot. On a phone the window IS the screen — the full-bleed regime the
+   trade sheet used to own for the board (see the media pair at the end). */
+.session-window { position: fixed; inset: 0; z-index: 52; display: grid; place-items: center; }
+.session-back {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(60% 55% at 50% 46%, rgba(4, 3, 2, .58), rgba(4, 3, 2, .92) 82%),
+    rgba(4, 3, 2, .86);
+}
+.session-frame {
+  position: relative; z-index: 1;
+  display: flex; flex-direction: column;
+  width: fit-content; max-width: min(96vw, 760px);
+  max-height: min(94vh, 94dvh);
+  padding: 10px 12px;
+  box-shadow:
+    0 30px 80px rgba(0, 0, 0, .78),
+    0 0 70px -18px rgba(255, 176, 46, .28),
+    inset 0 1px 0 rgba(242, 220, 166, .16);
+  filter: saturate(1.02);
+}
+.session-frame > #iso-quarry {
+  display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0;
+  margin: 0; padding: 0; border: 0; background: none;
+  box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+/* The plate's title line IS this window's header — the panel's own "Your
+   Processing Plant" banner would only restate it, and the retired loop's
+   furniture (the upgrade bar, the token reach strip) has nothing to say
+   about a bounded session. */
+.session-frame .quarry-head .panel-title { display: none; }
+.session-frame .iso-reach, .session-frame .upbar { display: none; }
+.session-frame .quarry-head { margin-bottom: 2px; }
+.session-frame .tuning-plate { margin: 4px 0 7px; padding: 8px 10px; }
+.session-frame .tp-title { font-size: 13px; }
+.session-frame .tp-moves { font-size: 12px; }
+.session-frame .tp-row { flex-wrap: wrap; gap: 10px; margin-top: 6px; }
+.session-frame .tp-score b, .session-frame .tp-yield b { font-size: 13px; }
+.session-frame .tp-finish { padding: 5px 16px; font-size: 11px; }
+.session-frame .tp-abandon { padding: 5px 12px; font-size: 10.5px; }
+/* the idle line, the Retune key and the city key are BETWEEN-sessions
+   affordances — a session running means the window is up, so none of them
+   exists here. The window's board answers to the slot rule below, the same
+   box the phone fit measures. */
+.session-frame .tp-city { display: none; }
+.session-frame .board-slot {
+  display: flex; flex: 1 1 auto; min-height: 0;
+  align-items: center; justify-content: center;
+  overflow: hidden;
+}
+
+/* the rail's plant card: the plate's idle half between sessions — the one
+   line saying how to open a session, the difficulty's re-match key and the
+   city key. It is only built on the new loop. */
+.plant-card { margin-top: 8px; flex: 0 0 auto; }
+.plant-card .tuning-plate { margin: 2px 0 0; }
+
 /* the board is baize inside a brass rail */
 .board-wrap {
   position: relative; padding: 5px;
@@ -3376,6 +3442,9 @@ html, body, #root {
 /* foot — the preference on the left, the stepper in the middle, the keys right */
 .tut-foot { flex: 0 0 auto; display: flex; align-items: center; gap: 12px;
   padding-top: 10px; border-top: 1px solid var(--line); }
+/* the simple projector has no dots row — this spacer fills their flex slot
+   so "Never" stays left and Back/Next stay right */
+.tut-spacer { flex: 1 1 auto; }
 .tut-never { flex: 0 0 auto; padding: 8px 11px; cursor: pointer;
   font-family: var(--serif); font-size: 10px; font-weight: 600; line-height: 1.2;
   letter-spacing: 1.2px; text-transform: uppercase; color: var(--txt-dim);
@@ -4832,4 +4901,34 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   /* the floating footer is shorter sideways — the sheet pays it accordingly */
   .ui-root[data-view="trade"] #iso-quarry { padding-bottom: calc(76px + env(safe-area-inset-bottom, 0px)); }
   .ui-root[data-view="trade"] #iso-trade > .pane { padding-bottom: calc(82px + env(safe-area-inset-bottom, 0px)); }
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   #299 — on a phone the SESSION WINDOW is the screen. The same media pair
+   the JS fit uses (so the chrome and the grow logic never disagree about
+   which layout is live), the same full-bleed treatment the trade sheet gave
+   the board: no plate border, no radius, the safe areas paid, and the felt
+   rail flexing to fill everything the controls leave. The unscoped
+   `#iso-quarry .quarry-head` compaction above already shrinks the combo /
+   reset cluster here, because it targets the panel, not the sheet.
+   ══════════════════════════════════════════════════════════════════════ */
+@media (max-width: 760px), (max-width: 900px) and (orientation: landscape) and (max-height: 500px) {
+  .session-window { place-items: stretch; }
+  .session-frame {
+    width: auto; max-width: none; max-height: none;
+    border: 0; border-radius: 0; box-shadow: none; filter: none;
+    background: linear-gradient(180deg, rgba(24, 17, 11, .97), rgba(9, 6, 4, .98));
+    padding: calc(var(--safe-top) + 8px) 8px calc(10px + env(safe-area-inset-bottom, 0px));
+  }
+  .session-frame .board-slot .board-wrap {
+    width: 100%; height: 100%;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: calc(var(--r) - 2px);
+  }
+  .session-frame .tuning-plate { padding: 6px 8px; }
+  .session-frame .tp-title { font-size: 11.5px; }
+  /* the rail's plant card rides the phone economy sheet's margins */
+  .ui-root[data-view="trade"] .aside.right > .plant-card {
+    margin: 6px 8px 0; padding: 7px 9px;
+  }
 }

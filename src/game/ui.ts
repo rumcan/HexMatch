@@ -364,6 +364,13 @@ export interface UiTuningSession {
    * about to earn" vs "what the whole city is about to earn").
    */
   kind: "depot" | "town";
+  /**
+   * #299: which record the session settles — the Depot's `Harvester.id`, or
+   * `TOWN_SESSION_ID` (-1) for the city. The window's title names the cargo
+   * and its tooltip names the lot, so two Depots of one cargo never read
+   * identical.
+   */
+  depotId?: number;
   /** The cargo the session depot collects (its board is scoped to it). `null`
    *  on a town session: the board plays neutral and the upgrade lifts every
    *  cargo the city handles. */
@@ -808,6 +815,15 @@ export function createOriginalUi(
   const rightAside = h("aside", "aside right iso-panel");
   // RAIL-01: same contract as the build column — the key names its panel.
   rightAside.id = "iso-aside-right";
+  // #299 — on the new loop the Processing Plant is NOT a tab. The tuning
+  // session is its own window over the map: a centred plate on a blocking
+  // backdrop, opened when a Depot is placed (and for a city upgrade), closed
+  // when it settles. The rail keeps Bank and Feed, plus the plant's idle
+  // plate — the one line that says how to open a session, the Retune key and
+  // the city key — in a small card under the tabs. The retired loop (`opts.newLoop`
+  // off: story, a hosted match, `?loop=old`) has no sessions at all, so its
+  // always-on board stays in the rail exactly as it shipped.
+  const sessionMode = opts.newLoop === true;
   const qp = h("div", "panel");
   qp.id = "iso-quarry";
   const qh = h("div", "quarry-head");
@@ -991,10 +1007,15 @@ export function createOriginalUi(
   const tabFeed = h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.feed}</i><span class="tab-l">Feed</span>`);
   tabBank.onclick = () => setTab("bank");
   tabFeed.onclick = () => setTab("feed");
-  const tabPlant = h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.plant}</i><span class="tab-l">Processing Plant</span>`);
-  tabPlant.onclick = () => setTab("plant");
-  const tabDefs: [HTMLElement, "bank" | "plant" | "feed"][] =
-    [[tabBank, "bank"], [tabPlant, "plant"], [tabFeed, "feed"]];
+  // #299: the Plant tab only exists where the plant is a pane at all — the
+  // retired loop. On the new loop the session moved out of the rail and into
+  // its own window, so the strip is Bank / Feed and nothing else.
+  const tabPlant = sessionMode ? null
+    : h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.plant}</i><span class="tab-l">Processing Plant</span>`);
+  if (tabPlant) tabPlant.onclick = () => setTab("plant");
+  const tabDefs: [HTMLElement, "bank" | "plant" | "feed"][] = sessionMode
+    ? [[tabBank, "bank"], [tabFeed, "feed"]]
+    : [[tabBank, "bank"], [tabPlant!, "plant"], [tabFeed, "feed"]];
   for (const [tab, name] of tabDefs) {
     tab.dataset.tab = name;
     tabs.appendChild(tab);
@@ -1004,9 +1025,59 @@ export function createOriginalUi(
   const feedPane = h("div", "pane feed-pane hidden");
   tp.appendChild(bankPane);
   tp.appendChild(feedPane);
-  tp.appendChild(qp);
-  rightAside.appendChild(tp);
-  root.appendChild(rightAside);
+  /**
+   * #299 — the session window. The plant panel (`qp`) is built the same way
+   * on both loops; what changes is its HOST. On the new loop it is born
+   * inside a centred, modal plate over the map — `#iso-session` — which the
+   * game opens when a Depot (or a city upgrade) raises a tuning session and
+   * closes when the session settles. While it runs, the backdrop swallows
+   * every map gesture and the rails/map go `inert`: the session is the main
+   * screen. On a phone the window is the screen (see styles.css — the same
+   * full-bleed regime the trade sheet used to own the board). On the retired
+   * loop `qp` stays a pane of the rail's tab strip, exactly as it shipped.
+   */
+  let sessionWin: HTMLElement | null = null;
+  let sessionFrame: HTMLElement | null = null;
+  let plantCard: HTMLElement | null = null;
+  if (sessionMode) {
+    const win = h("div", "session-window hidden");
+    win.id = "iso-session";
+    win.setAttribute("role", "dialog");
+    win.setAttribute("aria-modal", "true");
+    win.setAttribute("aria-label", "Tuning session");
+    const back = h("div", "session-back");
+    // Closing a session is the plate's two doors, never a stray click: the
+    // backdrop refuses its own press and says what will end it.
+    back.onclick = () => {
+      toast("The plant floor is mid-session — Finish keeps your yield, Abandon closes it.", "info");
+    };
+    const frame = h("div", "session-frame panel");
+    frame.tabIndex = -1;
+    qp.classList.add("hidden");   // the window opens on a session; see setSessionWindow
+    frame.appendChild(qp);
+    win.append(back, frame);
+    sessionWin = win;
+    sessionFrame = frame;
+    // Between sessions the board is down and the plate lives in this rail
+    // card — the strip's small print: how to open one, the Retune key, the
+    // city key. `paintTuning` moves the plate between the two hosts as the
+    // session comes and goes.
+    const card = h("div", "panel plant-card");
+    card.id = "iso-plant";
+    card.appendChild(h("div", "panel-title", "Plant"));
+    card.appendChild(tuningPlate);
+    plantCard = card;
+    rightAside.appendChild(tp);
+    rightAside.appendChild(card);
+    // The window is mounted OUTSIDE the rails so the backdrop covers them:
+    // a running session owns the screen, top to bottom.
+    root.appendChild(rightAside);
+    root.appendChild(win);
+  } else {
+    tp.appendChild(qp);
+    rightAside.appendChild(tp);
+    root.appendChild(rightAside);
+  }
 
   // ── RAIL-01 — the desktop collapse keys ─────────────────────────────────
   // The map is the game; the two fixed columns are instruments hung over it,
@@ -1032,7 +1103,10 @@ export function createOriginalUi(
   railLeftBtn.setAttribute("aria-controls", "iso-aside-left");
   railRightBtn.setAttribute("aria-controls", "iso-aside-right");
   railLeftBtn.setAttribute("aria-label", "Toggle the Build menu panel");
-  railRightBtn.setAttribute("aria-label", "Toggle the Processing Plant panel");
+  // #299: on the new loop the right column is the Bank & Feed rail — the
+  // Processing Plant left it for the session window.
+  railRightBtn.setAttribute("aria-label",
+    sessionMode ? "Toggle the Bank & Feed rail" : "Toggle the Processing Plant panel");
   left.appendChild(railLeftBtn);
   rightAside.appendChild(railRightBtn);
   /** One writer for both keys: attribute, ARIA state, chevron and title all
@@ -1049,7 +1123,9 @@ export function createOriginalUi(
     railLeftBtn.textContent = railLeftCollapsed ? "▸" : "◂";
     railRightBtn.textContent = railRightCollapsed ? "◂" : "▸";
     railLeftBtn.title = railLeftCollapsed ? "Expand the Build menu" : "Collapse the Build menu";
-    railRightBtn.title = railRightCollapsed ? "Expand the Processing Plant panel" : "Collapse the Processing Plant panel";
+    railRightBtn.title = sessionMode
+      ? (railRightCollapsed ? "Expand the Bank & Feed rail" : "Collapse the Bank & Feed rail")
+      : (railRightCollapsed ? "Expand the Processing Plant panel" : "Collapse the Processing Plant panel");
     // The drawer cue follows the ACT of this click, so the dataset (read by
     // the sound delegation) is set for the state the click is ABOUT to enter.
     railLeftBtn.dataset.sfx = railLeftCollapsed ? "close" : "open";
@@ -1061,6 +1137,9 @@ export function createOriginalUi(
     // them from focus, pointer and AT traversal, and undoes itself on unfold.
     bp.inert = railLeftCollapsed;
     tp.inert = railRightCollapsed;
+    // #299: the plant card is rail content too — it leaves the tab order
+    // with the column, same rule as the trade panel beside it.
+    if (plantCard) plantCard.inert = railRightCollapsed;
   }
   railLeftBtn.onclick = () => {
     if (isPhoneViewport()) return;
@@ -1250,7 +1329,11 @@ export function createOriginalUi(
   // nothing (L2 made dirt free; the ★ moved to depot types, rungs and city
   // tiers), so the line sells the reason Road is still worth laying — it is
   // the fast transport tier — instead of a quarter-star nobody will be paid.
-  const roadRule = "faster hauling · 0★";
+  // The retired loop (`?loop=old`, story, multiplayer) still PAYS its paving
+  // ★ (VP-01), so its button must keep promising it — the rule is the loop's,
+  // and the chrome forks on `opts.newLoop` exactly like the rail strip does.
+  const newLoopChrome = opts.newLoop === true;
+  const roadRule = newLoopChrome ? "faster hauling · 0★" : `+${VICTORY.upgrade}★ paving dirt`;
   const TOOLS: { key: UiTool; label: string; sub: string }[] = [
     // The pointer goes first: it is the hand you hold between builds —
     // hover to read what a tile is, click to select it, right-click (or Q)
@@ -1268,8 +1351,10 @@ export function createOriginalUi(
     // transport tier, `TRANSPORT.road.factor`), so the line says THAT instead.
     { key: "road", label: "Road", sub: `${costMarkup(TRANSPORT.road.cost)} · ${roadRule}` },
     // PP-05: `depotSub` refreshes the Depot line below as the free-setup
-    // allowance burns down.
-    { key: "harvester", label: "Depot", sub: depotButtonMarkup(0, { tier: 0 }) },
+    // allowance burns down. L5 (#219): on the new loop the price is the
+    // industry's own mix, so the line says "from …" rather than quoting the
+    // retired loop's single mix.
+    { key: "harvester", label: "Depot", sub: depotButtonMarkup(0, { newLoop: newLoopChrome, tier: 0 }) },
     // PP-06: another instance of the SAME processing building, raised beside
     // another town.
     { key: "plant", label: "Processing Plant", sub: `${costMarkup(PLANT_COST)} · next to a town` },
@@ -1510,8 +1595,9 @@ export function createOriginalUi(
   function setTab(t: "bank" | "plant" | "feed") {
     // PP-14b: a pending cross bounty lives inside the plant panel — switching
     // away would hide it mid-pick and the cascade would sit unseen until the
-    // timer answers for the player. Stay put instead.
-    if (pickEl && t !== "plant") {
+    // timer answers for the player. Stay put instead. #299: on the new loop
+    // the plant is not a tab at all, so any switch would hide the bounty.
+    if (pickEl && (t !== "plant" || sessionMode)) {
       toast("Answer the cross bounty first.", "info");
       return;
     }
@@ -1525,8 +1611,13 @@ export function createOriginalUi(
     tabs.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((tab) => {
       tab.setAttribute("aria-pressed", String(tab.dataset.tab === t));
     });
-    tabPlant.classList.toggle("active", t === "plant");
-    qp.classList.toggle("hidden", t !== "plant");
+    // #299: the plant pane only answers to the tab strip while it IS a pane.
+    // On the new loop its visibility is the session window's business
+    // (`setSessionWindow`), and there is no plant tab to light up.
+    if (!sessionMode) {
+      tabPlant!.classList.toggle("active", t === "plant");
+      qp.classList.toggle("hidden", t !== "plant");
+    }
     tabBank.classList.toggle("active", t === "bank");
     bankPane.classList.toggle("hidden", t !== "bank");
     tabFeed.classList.toggle("active", t === "feed");
@@ -2413,9 +2504,13 @@ export function createOriginalUi(
   /** The deferred, settled half of the phone fit. */
   function settlePhoneFit() {
     fitFrameQueued = false;
-    if (isPhoneViewport()
-      && root.dataset.view === "trade"
-      && !qp.classList.contains("hidden")) {
+    // #299: on the new loop the board's settled-fit runs from the SESSION
+    // WINDOW's slot, not from the economy sheet (the plant is no longer a
+    // tab there); the retired loop keeps the trade-sheet gate unchanged.
+    const plantUp = sessionMode
+      ? !qp.classList.contains("hidden")
+      : root.dataset.view === "trade" && !qp.classList.contains("hidden");
+    if (isPhoneViewport() && plantUp) {
       const slotW = boardSlot.clientWidth;
       const slotH = boardSlot.clientHeight;
       if (slotW > 100 && slotH > 100) {
@@ -2526,7 +2621,11 @@ export function createOriginalUi(
       // (jsdom, another tab hiding the plant pane) on the band heuristic.
       const asideH = rightAside.clientHeight;
       const colH = tp.scrollHeight;
-      if (asideH > 100 && colH > 100 && !qp.classList.contains("hidden")) {
+      // #299: the rail column only hosts the board on the retired loop — on
+      // the new one the plant lives in the session window, and the column's
+      // box says nothing about the board's room. The window measures itself
+      // (below) instead.
+      if (asideH > 100 && colH > 100 && !qp.classList.contains("hidden") && !sessionMode) {
         const boxH = CELL * board.h + 10;                    // the board box at zoom 1
         const zNow = Number(wrap.style.zoom || "1") || 1;    // the zoom colH was laid out at
         const boxNow = Math.ceil(boxH * zNow);
@@ -2535,6 +2634,23 @@ export function createOriginalUi(
           const room = asideH - chromeH - 2;                 // 2px: the column breathes
           z = Math.max(0.4, Math.min(z, room / boxH));
         }
+      }
+    }
+    // #299: with the session window up, the board's room is the WINDOW's, not
+    // the column's — the frame caps its height in CSS, the slot flexes, and
+    // this pass closes whatever pixels remain (the phone rule, applied to the
+    // desktop too while the window owns the screen). Unmeasured (jsdom, or a
+    // window mid-transition) keeps the band heuristic, so the numbers tests
+    // pin on survive.
+    if (sessionMode && sessionWin && !sessionWin.classList.contains("hidden")) {
+      const winW = boardSlot.clientWidth, winH = boardSlot.clientHeight;
+      if (winW > 100 && winH > 100) {
+        z = Math.max(0.3, Math.min(
+          z,
+          (winW - PHONE_SLOT_PAD_W) / (CELL * board.w),
+          (winH - PHONE_SLOT_PAD_H) / (CELL * board.h),
+          1,
+        ));
       }
     }
     wrap.style.zoom = String(z);
@@ -2875,6 +2991,53 @@ export function createOriginalUi(
     `Retune ${r.cargo ? `${CARGO[r.cargo].icon} ${CARGO[r.cargo].name}` : "Depot"} (now ×${fmtYield(r.yield)})`;
   let lastTuningSig = "\u0000";
   /**
+   * #299 — the ONE writer that opens or closes the session window (new loop
+   * only; on the retired loop `sessionWin` is null and this is never called).
+   * Opening moves the tuning plate INTO the window and the map, the rails and
+   * the phone nav go inert behind the backdrop — the session is the main
+   * screen while it runs, and the player leaves it through the plate's own
+   * Finish / Abandon keys, never around it. Closing does the reverse: the
+   * plate rides back to the rail card, the board goes down, the map wakes.
+   *
+   * Idempotent by design: the game's `openSessionBoard`/`closeSessionBoard`
+   * calls and `paintTuning`'s per-frame reconciliation both route here, and
+   * a pass that would change nothing writes nothing.
+   */
+  function setSessionWindow(open: boolean): void {
+    if (!sessionWin) return;
+    const wasOpen = !sessionWin.classList.contains("hidden");
+    if (wasOpen === open) return;
+    sessionWin.classList.toggle("hidden", !open);
+    // The plant pane's own visibility mirrors the window — `isQuarryOpen`,
+    // the phone fit and the rail-fit guard all read it, and on this loop it
+    // means exactly "the board is up".
+    qp.classList.toggle("hidden", !open);
+    // The rail card shows the plant only while it holds it: between sessions.
+    plantCard!.classList.toggle("hidden", open);
+    root.dataset.session = open ? "1" : "0";
+    // One plate, two hosts: the window during a session, the rail card when
+    // the session is over. Moving it is safe — every paint writes through
+    // these same node references — but it must land where it was built:
+    // right under the plant head, ABOVE the board, so it rides in ahead of
+    // the (window-hidden) upgrade bar rather than trailing after the slot.
+    if (open) qp.insertBefore(tuningPlate, upbar);
+    else plantCard!.appendChild(tuningPlate);
+    // The lock: map, rails and nav stop answering input while the window is
+    // up — inert takes the pointer events, the tab order and AT traversal,
+    // and the backdrop over the rest swallows the presses aimed at them.
+    mapHost.inert = open;
+    left.inert = open;
+    rightAside.inert = open;
+    mobileNav.inert = open;
+    if (!open) sfx.play("close");
+    if (open) sessionFrame!.focus({ preventScroll: true });
+    // The board re-fits to its new box: measured in the open window (the
+    // phone grow-fit and the desktop window clamp both key off it), and back
+    // to the plain column once the window comes down.
+    responsiveZoom();
+  }
+
+  /**
    * Paint the plate and gate the board.
    *
    * `undefined` is NOT the new loop — the shipped always-on plant, untouched.
@@ -2917,6 +3080,12 @@ export function createOriginalUi(
     }
     tuningPlate.classList.remove("hidden");
     const live = t !== null;
+    // #299: on this loop the session IS the window — an open session stands
+    // it up over the map (plate and board riding with it), and the idle
+    // signal puts the plate back in the rail card and takes the window down.
+    // `setSessionWindow` no-ops when the state already matches, so this and
+    // the game's explicit open/close calls can never fight.
+    if (sessionMode) setSessionWindow(live);
     tuningPlate.classList.toggle("idle", !live);
     qp.classList.toggle("tuning-idle", !live);
     // The board is up for a session and down between them. A session that has
@@ -2956,6 +3125,13 @@ export function createOriginalUi(
     tpTitle.textContent = town
       ? "🏙️ Tuning the City"
       : t.cargo ? `Tuning ${CARGO[t.cargo].icon} ${CARGO[t.cargo].name} Depot` : "Tuning";
+    // #299: the window's title says WHICH job the session is for — the plate
+    // already names the cargo, the tooltip pins the exact Depot on the map.
+    tpTitle.title = town
+      ? "A city-upgrade session: the score lifts the base rate of every connected Depot"
+      : Number.isFinite(t.depotId) && (t.depotId ?? -1) >= 0
+        ? `Harvester Depot #${t.depotId} — the lot the Depot stands on is the one this score tunes`
+        : "The Depot that was just placed";
     // Keep the live session for the abandon confirm gate above.
     liveTuning = t;
     tpMoves.textContent = `${t.movesLeft}/${t.moves} moves`;
@@ -3203,7 +3379,7 @@ export function createOriginalUi(
     // (a rebuilt button drops a click mid-gesture, the reason `renderSabotage`
     // is change-gated too). The cost text comes from the same table the
     // placement charges; `disabled` mirrors the affordability the click checks.
-    const sub = depotButtonMarkup(state.freeDepots, { tier: state.depotTier ?? 0 });
+    const sub = depotButtonMarkup(state.freeDepots, { newLoop: newLoopChrome, tier: state.depotTier ?? 0 });
     if (sub !== lastDepotSub) {
       lastDepotSub = sub;
       if (depotSub) depotSub.innerHTML = sub;
@@ -3377,7 +3553,7 @@ export function createOriginalUi(
         force: true,
         vpTarget: hudVpTarget,
         freeTrack: hudFreeTrack,
-        newLoop: true,
+        newLoop: newLoopChrome,
         onClose: () => { tourView = null; },
       });
     };
@@ -3418,7 +3594,9 @@ export function createOriginalUi(
   renderBank();
   renderBoard();
   responsiveZoom();
-  setTab("plant");
+  // #299: the boot pane. The retired loop opens on its always-on plant; on
+  // the new loop the plant has no tab to open — the rail starts on the Bank.
+  setTab(sessionMode ? "bank" : "plant");
 
   return {
     el: root,
@@ -3435,16 +3613,24 @@ export function createOriginalUi(
     isQuarryOpen: () => !qp.classList.contains("hidden"),
     isTradeOpen: () => !bankPane.classList.contains("hidden"),
     openSessionBoard: () => {
+      // #299: the session comes UP as its own window over the map. The phone
+      // no longer needs the trade sheet — the window is full-bleed there —
+      // and the rail needs no unfolding: the board is no longer in it.
+      if (sessionMode) { setSessionWindow(true); return; }
       setTab("plant");
       if (isPhoneViewport()) setMobileView("trade");
       else if (railRightCollapsed) { railRightCollapsed = false; paintRails(); }
     },
     openBank: () => {
+      // #299: with a session running the window already owns the screen and
+      // the rail is inert — the game's refusal toast is the answer here.
+      if (sessionMode && sessionWin && !sessionWin.classList.contains("hidden")) return;
       setTab("bank");
       if (isPhoneViewport()) setMobileView("trade");
       else if (railRightCollapsed) { railRightCollapsed = false; paintRails(); }
     },
     closeSessionBoard: () => {
+      if (sessionMode) { setSessionWindow(false); return; }
       if (isPhoneViewport() && root.dataset.view === "trade") setMobileView("map");
     },
     showModal,
