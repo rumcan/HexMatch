@@ -1329,7 +1329,11 @@ export function createOriginalUi(
   // nothing (L2 made dirt free; the ★ moved to depot types, rungs and city
   // tiers), so the line sells the reason Road is still worth laying — it is
   // the fast transport tier — instead of a quarter-star nobody will be paid.
-  const roadRule = "faster hauling · 0★";
+  // The retired loop (`?loop=old`, story, multiplayer) still PAYS its paving
+  // ★ (VP-01), so its button must keep promising it — the rule is the loop's,
+  // and the chrome forks on `opts.newLoop` exactly like the rail strip does.
+  const newLoopChrome = opts.newLoop === true;
+  const roadRule = newLoopChrome ? "faster hauling · 0★" : `+${VICTORY.upgrade}★ paving dirt`;
   const TOOLS: { key: UiTool; label: string; sub: string }[] = [
     // The pointer goes first: it is the hand you hold between builds —
     // hover to read what a tile is, click to select it, right-click (or Q)
@@ -1347,8 +1351,10 @@ export function createOriginalUi(
     // transport tier, `TRANSPORT.road.factor`), so the line says THAT instead.
     { key: "road", label: "Road", sub: `${costMarkup(TRANSPORT.road.cost)} · ${roadRule}` },
     // PP-05: `depotSub` refreshes the Depot line below as the free-setup
-    // allowance burns down.
-    { key: "harvester", label: "Depot", sub: depotButtonMarkup(0, { tier: 0 }) },
+    // allowance burns down. L5 (#219): on the new loop the price is the
+    // industry's own mix, so the line says "from …" rather than quoting the
+    // retired loop's single mix.
+    { key: "harvester", label: "Depot", sub: depotButtonMarkup(0, { newLoop: newLoopChrome, tier: 0 }) },
     // PP-06: another instance of the SAME processing building, raised beside
     // another town.
     { key: "plant", label: "Processing Plant", sub: `${costMarkup(PLANT_COST)} · next to a town` },
@@ -3373,7 +3379,7 @@ export function createOriginalUi(
     // (a rebuilt button drops a click mid-gesture, the reason `renderSabotage`
     // is change-gated too). The cost text comes from the same table the
     // placement charges; `disabled` mirrors the affordability the click checks.
-    const sub = depotButtonMarkup(state.freeDepots, { tier: state.depotTier ?? 0 });
+    const sub = depotButtonMarkup(state.freeDepots, { newLoop: newLoopChrome, tier: state.depotTier ?? 0 });
     if (sub !== lastDepotSub) {
       lastDepotSub = sub;
       if (depotSub) depotSub.innerHTML = sub;
@@ -3547,7 +3553,7 @@ export function createOriginalUi(
         force: true,
         vpTarget: hudVpTarget,
         freeTrack: hudFreeTrack,
-        newLoop: true,
+        newLoop: newLoopChrome,
         onClose: () => { tourView = null; },
       });
     };

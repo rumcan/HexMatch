@@ -3442,6 +3442,9 @@ html, body, #root {
 /* foot — the preference on the left, the stepper in the middle, the keys right */
 .tut-foot { flex: 0 0 auto; display: flex; align-items: center; gap: 12px;
   padding-top: 10px; border-top: 1px solid var(--line); }
+/* the simple projector has no dots row — this spacer fills their flex slot
+   so "Never" stays left and Back/Next stay right */
+.tut-spacer { flex: 1 1 auto; }
 .tut-never { flex: 0 0 auto; padding: 8px 11px; cursor: pointer;
   font-family: var(--serif); font-size: 10px; font-weight: 600; line-height: 1.2;
   letter-spacing: 1.2px; text-transform: uppercase; color: var(--txt-dim);

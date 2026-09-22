@@ -525,6 +525,19 @@ export interface IsoGameOptions {
   onMatchEnded?: () => void;
 }
 
+/**
+ * L4 (#218) / L1f (#237): the sentence a placed setup Depot ends with. ONE
+ * pair, exported, and the boot's own flag picks it — the new loop promises
+ * the clock (a connected Depot ticks its cargo in on the clock), the retired
+ * loop still sends the player to the always-on board's tokened gems. The
+ * map-click path passes `newLoop` and nothing else.
+ */
+export function setupDepotToast(newLoop: boolean): string {
+  return newLoop
+    ? "Now connect it to your Factory with a Dirt Road — a connected Depot ticks its cargo in on the clock."
+    : "Now connect it to your Factory with a Dirt Road or a paved Road — then match the tokened gems in the Processing Plant.";
+}
+
 export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // ── DOM ────────────────────────────────────────────────────────────────
   // U1: the recovered UI owns the chrome. It is created once the trading
@@ -1382,14 +1395,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // The two numbers the tour cannot read for itself: the ★ line belongs to
       // the live difficulty, and the free dirt tiles are DATA on the player
       // record. Passing them keeps the copy honest without importing game.ts
-      // into tutorial.ts (which would be a cycle).
-      tutorialView = showTutorial(ui.el, {
+      // into tutorial.ts (which would be a cycle). The tour itself is the NEW
+      // loop's (L15 #230 wrote it for the tuning session — its "the board is
+      // not up otherwise" would lie on the retired loop), so a `?loop=old`
+      // boot or a story contract stands no tour at all; the briefing and the
+      // difficulty prompt carry those players instead.
+      tutorialView = newLoop ? showTutorial(ui.el, {
         vpTarget: winTarget(),
         freeTrack: me.freeTrack,
-        // L4 (#218): the boot tour describes the loop the game is running —
-        // the tuning session on the new loop, the always-on board otherwise.
         newLoop,
-      });
+      }) : null;
       // Always yield, tour or no tour: the rest of this chain reads `disposed`
       // (declared with the other boot state at the top of this function), and a
       // microtask is the earliest point at which reading it is meaningful.
@@ -1559,8 +1574,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // flat-purse telemetry that finally smoked this out: reach present,
     // tokens never, income never. One board now — no shadows.
   }, rivalBoard);
-  // L15: blessings retired
-  rivalQuarry.board.onCrossChoice = () => {};
+  // L15: blessings retired — and the hook must still ANSWER: the cascade
+  // pauses on a cross until the hook calls `pick` (board.ts `settle`), so a
+  // never-resolving handler would freeze the rival's board mid-swap the first
+  // time a cross rolled. Answer empty like the player's board — no chooser,
+  // the random top-up runs, the cascade rolls on.
+  rivalQuarry.board.onCrossChoice = (_kind, _picks, pick) => pick([]);
 
   // U1: the iso layer stack stays the map; it is mounted inside the original
   // map-canvas slot rather than a bespoke floating panel.
@@ -4027,19 +4046,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (p.human) flashAt(tx, ty, publicRoad ? "Public road — can't tear up" : "Nothing to demolish");
       return;
     }
-    // PP-13: tearing up a DIRT ROAD salvages one of the two materials it cost
-    // (`BUILD_COSTS.dirt` is 1 Wood + 1 Stone). WHICH one comes back is the
-    // random part, so demolition is a partial refund rather than free
-    // re-routing. The paved Road pays nothing back: its price is dominated by
-    // 4 Ore, and the dirt→road pave is what upgrades are for.
-    // L2 (#216): under newLoop dirt is free, so it salvages nothing — a free
-    // tile must not mint resources. Tearing it up is free re-routing.
+    // Demolition refunds. A paved Road pays nothing back: its price is
+    // dominated by 4 Ore, and the dirt→road pave is what upgrades are for.
+    // L2 (#216) and PP-07 made dirt free outright (BUILD_COSTS.dirt = {}),
+    // so tearing it up salvages nothing on EITHER loop — a free tile must
+    // not mint resources. Tearing it up is free re-routing.
     // SFX-01: timber coming apart — a little further away for a single tile
     // of track than for a whole building.
     if (p.human) sfx.play("demolish", removedKind === "dirt" ? undefined : { gain: 0.8 });
-    // Dirt costs nothing to lay, so tearing it up salvages nothing — a free
-    // tile that paid out on demolition would mint resources. Re-routing a
-    // mistake is simply free.
     if (removedKind === "dirt") toast("Dirt Road cleared.", "info");
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
       const x = tx + dx, y = ty + dy;
@@ -7434,9 +7448,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             // session toast (from `openTuningSession`) has already told the
             // player what the board is for; this line is the other half of the
             // loop — the road that makes the Depot earn.
-            toast(newLoop
-              ? "Now connect it to your Factory with a Dirt Road — a connected Depot ticks its cargo in on the clock."
-              : "Now connect it to your Factory with a Dirt Road or a paved Road — then match the tokened gems in the Processing Plant.", "info");
+            toast(setupDepotToast(newLoop), "info");
           }
         } else if (phase === "play") {
           // A bought protest intercepts the click: it stages on a public road

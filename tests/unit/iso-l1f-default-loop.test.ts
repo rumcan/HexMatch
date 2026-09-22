@@ -13,8 +13,9 @@
 //   • `?loop=new` still resolves — it names the default instead of unlocking a
 //     hidden one, so an old playtest link keeps working;
 //   • the opening copy describes the loop that is actually running: the setup
-//     toast speaks the clock, the How to Play tour speaks the tuning session,
-//     and the escape hatch keeps the old sentences for the old game;
+//     toast speaks the clock, and the How to Play tour — written for the new
+//     loop (L15 #230) — opens there and stands nowhere else, so the retired
+//     loop is never told "the board is not up otherwise";
 //   • a story contract still plays the retired loop, and a boot that never
 //     asked for the new one is not told about a refusal it did not request.
 //
@@ -256,13 +257,22 @@ describe("L1f the opening copy speaks the loop the game runs", () => {
     expect(card.textContent).not.toMatch(/stamps a cargo token/i);
   });
 
-  it("the escape hatch's tour keeps the old loop's sentences", async () => {
+  it("the escape hatch stands no boot tour — the tour belongs to the loop it describes", async () => {
+    // L15 (#230) wrote the tour for the new loop ("the board is not up
+    // otherwise", the tuning session, the Bank/Feed rail). On `?loop=old`
+    // every one of those sentences would lie, so the retired game boots
+    // straight to the difficulty prompt instead — and the player's "never"
+    // preference is not touched by a card that never stood.
     await bootUrl("/?seed=1337&loop=old");
-    await expect.poll(() => root.querySelector("#iso-tutorial"), { timeout: 5000, interval: 25 })
-      .toBeTruthy();
-    const card = root.querySelector("#iso-tutorial") as HTMLElement;
-    expect(card.textContent).toMatch(/stamps a cargo token/i);
-    expect(card.textContent).not.toMatch(/tuning session/i);
+    await settle();
+    await new Promise((r) => setTimeout(r, 300));
+    await settle();
+    expect(root.querySelector("#iso-tutorial")).toBeNull();
+    expect(localStorage.getItem("hexmatch:tutorial")).toBeNull();
+    expect(hook().newLoop).toBe(false);
+    // …and the always-on board — the thing the tour would have lied about —
+    // really is up.
+    expect(boardWrap().classList.contains("hidden")).toBe(false);
   });
 });
 

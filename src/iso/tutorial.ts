@@ -2,6 +2,14 @@
 // No tokens, no bank, no blessings, no board sabotage. The loop is:
 // build road/rail to city/depot, match-3 when building depot sets yield,
 // resources tick via yield×distance×road/rail, spend on depot tree + city upgrades.
+//
+// THE GATE: the tour opens on a first solo game with no save (game.ts owns
+// the save/seat half of that) and never again once the player has pressed
+// "Never show this again" — this module owns the storage half
+// (`shouldShowTutorial`), with `?tutorial=0/1` overriding for playtests.
+// The projector paints the card with the shipped `.tut-*` CSS classes and
+// walks it with Back/Next plus one persistent exit; the figure copy is read
+// from the authoritative tables, never retyped.
 import {
   CARGO, CARGOES, TRANSPORT, VICTORY, TUNING,
 } from "./config";
@@ -38,6 +46,24 @@ export function setTutorialDismissed(
     if (never) storage.setItem(TUTORIAL_STORAGE_KEY, TUTORIAL_NEVER);
     else storage.removeItem(TUTORIAL_STORAGE_KEY);
   } catch { }
+}
+
+// ── the gate ──────────────────────────────────────────────────────────────
+// `?tutorial=0` sits a boot out (e2e gameplay specs, playtest links);
+// `?tutorial=1` asks again even over "never" (a reviewer, a screenshot).
+// Anything else defers to the stored preference.
+const OFF_VALUES = new Set(["0", "off", "never", "no"]);
+const ON_VALUES = new Set(["1", "on", "yes"]);
+
+export function shouldShowTutorial(
+  search: string = typeof location !== "undefined" ? location.search : "",
+  storage: TutorialStorage | null = liveStorage(),
+): boolean {
+  const raw = search.startsWith("?") ? search.slice(1) : search;
+  const flag = (new URLSearchParams(raw).get("tutorial") ?? "").trim().toLowerCase();
+  if (OFF_VALUES.has(flag)) return false;
+  if (ON_VALUES.has(flag)) return true;
+  return !isTutorialDismissed(storage);
 }
 
 export interface BoardCell { cargo: import("./config").Cargo | null; hit?: boolean }
@@ -262,102 +288,162 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text?: s
   return n;
 }
 
+export interface ShowTutorialOptions {
+  /** Skip the gate — the ❔ help modal's replay does this on purpose. */
+  force?: boolean;
+  vpTarget: number;
+  freeTrack: number;
+  /** The loop the booted game runs — the desk card names its rail. */
+  newLoop?: boolean;
+  /** Gate overrides for tests/playtests; defaults read the live boot. */
+  search?: string;
+  storage?: TutorialStorage | null;
+  onClose?: (result: TutorialResult) => void;
+}
+
 export function showTutorial(
   root: HTMLElement,
-  opts: { force?: boolean; vpTarget: number; freeTrack: number; newLoop?: boolean; onClose?: () => void } = { vpTarget: 12, freeTrack: 0 },
+  opts: ShowTutorialOptions = { vpTarget: 12, freeTrack: 0 },
 ): TutorialHandle | null {
-  const steps = buildTutorialSteps({ vpTarget: opts.vpTarget, freeTrack: opts.freeTrack, newLoop: true });
+  const search = opts.search ?? (typeof location !== "undefined" ? location.search : "");
+  const storage = opts.storage === undefined ? liveStorage() : opts.storage;
+  // THE GATE (rule 1 of the module header): a remembered "never" or an
+  // explicit `?tutorial=0` means no card at all — the caller (game.ts boot,
+  // the help modal) renders nothing and hands on to the difficulty prompt.
+  if (!opts.force && !shouldShowTutorial(search, storage)) return null;
+
+  const steps = buildTutorialSteps({ vpTarget: opts.vpTarget, freeTrack: opts.freeTrack, newLoop: opts.newLoop });
   let idx = 0;
-  const overlay = el("div", "tutorial-overlay");
-  const card = el("div", "tutorial-card");
+
+  // The projector emits the classes the shipped CSS styles (`#iso-tutorial`
+  // and the `.tut-*` block in src/game/styles.css) — the plate, the ledger
+  // paper, the blueprint figure — and carries the `data-step`/`data-act`
+  // hooks the unit and e2e suites walk it by.
+  const overlay = el("div", "");
+  overlay.id = "iso-tutorial";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+
+  const card = el("div", "tut-card");
+  const head = el("div", "tut-head");
+  const closeBtn = el("button", "tut-x", "✕") as HTMLButtonElement;
+  closeBtn.type = "button";
+  closeBtn.setAttribute("aria-label", "Close the tour");
+  closeBtn.dataset.act = "tut-close";
+  const kickerEl = el("p", "tut-kicker");
+  const titleEl = el("h2", "tut-title");
+  head.append(closeBtn, kickerEl, titleEl);
+
+  const body = el("div", "tut-body");
+  const ledeEl = el("p", "tut-lede");
+  const figureEl = el("div", "");
+  const pointsEl = el("ul", "tut-points");
+  const tipEl = el("div", "tut-tip");
+  body.append(ledeEl, figureEl, pointsEl, tipEl);
+
+  const foot = el("div", "tut-foot");
+  const never = el("button", "tut-never", "Never show this again") as HTMLButtonElement;
+  never.type = "button";
+  never.dataset.act = "tut-never";
+  const spacer = el("span", "tut-spacer");
+  const nav = el("div", "tut-nav");
+  const prev = el("button", "big-btn ghost", "← Back") as HTMLButtonElement;
+  prev.type = "button";
+  prev.dataset.act = "tut-prev";
+  const next = el("button", "big-btn", "Next →") as HTMLButtonElement;
+  next.type = "button";
+  next.dataset.act = "tut-next";
+  nav.append(prev, next);
+  foot.append(never, spacer, nav);
+
+  card.append(head, body, foot);
   overlay.appendChild(card);
-  const kickerEl = el("div", "tutorial-kicker");
-  const titleEl = el("h2", "tutorial-title");
-  const ledeEl = el("p", "tutorial-lede");
-  const figureEl = el("div", "tutorial-figure");
-  const pointsEl = el("ul", "tutorial-points");
-  const tipEl = el("div", "tutorial-tip");
-  const nav = el("div", "tutorial-nav");
-  const prev = el("button", "tutorial-btn ghost", "← Back");
-  const next = el("button", "tutorial-btn", "Next →");
-  const closeBtn = el("button", "tutorial-btn ghost", "✕ Close");
-  const never = el("button", "tutorial-btn ghost", "Never show again");
-  nav.append(prev, next, closeBtn, never);
-  card.append(kickerEl, titleEl, ledeEl, figureEl, pointsEl, tipEl, nav);
+
+  const caption = (text: string) => el("div", "tut-fig-cap", text);
+
+  const renderFigure = (fig: TutorialFigure) => {
+    figureEl.className = `tut-fig tut-fig-${fig.kind}`;
+    figureEl.innerHTML = "";
+    if (fig.kind === "chain") {
+      const chain = el("div", "tut-chain");
+      fig.nodes.forEach((n, i) => {
+        const node = el("div", "tut-chain-node");
+        node.innerHTML = `<i class="tut-chain-ic">${n.icon}</i><b>${n.label}</b>`;
+        chain.appendChild(node);
+        if (i < fig.nodes.length - 1) chain.appendChild(el("i", "tut-chain-arrow", "→"));
+      });
+      figureEl.append(chain, caption(fig.caption));
+    } else if (fig.kind === "shot") {
+      const img = el("img", "tut-shot") as HTMLImageElement;
+      img.src = fig.src;
+      img.alt = fig.alt;
+      figureEl.append(img, caption(fig.caption));
+    } else if (fig.kind === "board") {
+      const board = el("div", "tut-board");
+      const cols = Math.max(1, ...fig.cells.map((r) => r.length));
+      board.style.setProperty("--tut-cols", String(cols));
+      for (const row of fig.cells) {
+        for (const cell of row) {
+          const c = el("span", "tut-gem");
+          if (!cell.cargo) {
+            c.classList.add("tut-gem-empty");
+          } else {
+            const art = (GEM_ART as Record<string, string | undefined>)[cell.cargo] ?? null;
+            if (art) c.style.backgroundImage = `url("${art}")`;
+            else c.textContent = CARGO[cell.cargo].icon;
+            if (cell.hit) c.classList.add("tut-gem-hit");
+          }
+          board.appendChild(c);
+        }
+      }
+      figureEl.append(board, caption(fig.caption));
+    } else if (fig.kind === "ledger") {
+      const ledger = el("div", "tut-ledger");
+      for (const row of fig.rows) {
+        const r = el("div", "tut-ledger-row");
+        r.innerHTML =
+          `<span class="tut-ledger-ic">${row.icon}</span>` +
+          `<span class="tut-ledger-copy"><b>${row.label}</b></span>` +
+          `<span class="tut-ledger-vp">${row.vp}</span>`;
+        ledger.appendChild(r);
+      }
+      figureEl.append(ledger, caption(fig.caption));
+    }
+  };
 
   const render = () => {
     const s = steps[idx];
+    overlay.dataset.step = s.id;
     kickerEl.textContent = s.kicker;
     titleEl.textContent = s.title;
     ledeEl.innerHTML = s.lede;
-    figureEl.innerHTML = "";
-    if (s.figure.kind === "chain") {
-      const chain = el("div", "tutorial-chain");
-      for (const n of s.figure.nodes) {
-        const node = el("div", "tutorial-chain-node");
-        node.innerHTML = `<span>${n.icon}</span><small>${n.label}</small>`;
-        chain.appendChild(node);
-      }
-      const cap = el("div", "tutorial-caption", s.figure.caption);
-      figureEl.append(chain, cap);
-    } else if (s.figure.kind === "shot") {
-      const img = el("img", "tutorial-shot") as HTMLImageElement;
-      img.src = s.figure.src;
-      img.alt = s.figure.alt;
-      const cap = el("div", "tutorial-caption", s.figure.caption);
-      figureEl.append(img, cap);
-    } else if (s.figure.kind === "board") {
-      const board = el("div", "tutorial-board");
-      for (const row of s.figure.cells) {
-        const r = el("div", "tutorial-board-row");
-        for (const cell of row) {
-          const c = el("div", "tutorial-gem");
-          if (cell.cargo) {
-            const art = (GEM_ART as any)[cell.cargo] ?? null;
-            if (art) {
-              const img = el("img", "tutorial-gem-art") as HTMLImageElement;
-              img.src = art;
-              img.alt = cell.cargo;
-              c.appendChild(img);
-            } else {
-              c.textContent = CARGO[cell.cargo].icon;
-            }
-          }
-          if (cell.hit) c.classList.add("hit");
-          r.appendChild(c);
-        }
-        board.appendChild(r);
-      }
-      const cap = el("div", "tutorial-caption", s.figure.caption);
-      figureEl.append(board, cap);
-    } else if (s.figure.kind === "ledger") {
-      const ledger = el("div", "tutorial-ledger");
-      for (const row of s.figure.rows) {
-        const r = el("div", "tutorial-ledger-row");
-        r.innerHTML = `<span>${row.icon}</span><span>${row.label}</span><b>${row.vp}</b>`;
-        ledger.appendChild(r);
-      }
-      const cap = el("div", "tutorial-caption", s.figure.caption);
-      figureEl.append(ledger, cap);
-    }
+    renderFigure(s.figure);
     pointsEl.innerHTML = "";
     for (const p of s.points) {
-      const li = el("li", "tutorial-point");
+      const li = el("li", "");
       li.innerHTML = p;
       pointsEl.appendChild(li);
     }
     tipEl.textContent = s.tip;
-    prev.style.display = idx === 0 ? "none" : "";
-    next.textContent = idx === steps.length - 1 ? "Start Production →" : "Next →";
+    // Back has nowhere to go on step one; the last step's key is the one
+    // that ends the tour (and finishing is NOT dismissing).
+    prev.disabled = idx === 0;
+    const last = idx === steps.length - 1;
+    next.dataset.act = last ? "tut-done" : "tut-next";
+    next.textContent = last ? "Start Production →" : "Next →";
   };
 
   let resolve!: (r: TutorialResult) => void;
   const promise = new Promise<TutorialResult>((res) => { resolve = res; });
+  let closed = false;
   const close = (reason: TutorialCloseReason = "dismissed") => {
+    if (closed) return;   // the promise settles once, however many doors slam
+    closed = true;
     overlay.remove();
-    opts.onClose?.();
+    const result: TutorialResult = { reason };
+    opts.onClose?.(result);
     sfx.play("close");
-    resolve({ reason });
+    resolve(result);
   };
   const destroy = () => close("dismissed");
 
@@ -367,7 +453,7 @@ export function showTutorial(
     else close("finished");
   };
   closeBtn.onclick = () => close();
-  never.onclick = () => { setTutorialDismissed(true); close("never"); };
+  never.onclick = () => { setTutorialDismissed(true, storage); close("never"); };
   overlay.addEventListener("click", (e) => { if (e.target === overlay) close("dismissed"); });
 
   render();
