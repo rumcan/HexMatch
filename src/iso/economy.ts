@@ -60,6 +60,8 @@ export interface Harvester {
   ty: number;
   /** L4 yield level; absent on legacy saves/snapshots means baseline. */
   yield?: number;
+  /** 2026-09: the Depot's LEVEL (1–3), which caps its yield. Absent = 1. */
+  level?: number;
   /**
    * Which EDGE of the 2×2 lot its entrance opens onto — the rotation it was
    * built in (`depot.ts`). Set when the Depot is placed; records written

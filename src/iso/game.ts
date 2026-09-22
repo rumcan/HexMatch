@@ -137,7 +137,7 @@ import {
   chooseAiPlantSpot, plantRefusal, plantsOf, resolvePlantTarget,
 } from "./plants";
 import {
-  CARGO, CARGOES, DEPOT_TREE, DEPOT_TREE_ORDER, DEPOT_RUNG_GATE, DEPOT_TIER_MAX, FACTORY_FOOTPRINT, FACTORY_SPRITE,
+  CARGO, CARGOES, DEPOT_TREE, DEPOT_TREE_ORDER, DEPOT_RUNG_GATE, DEPOT_LEVELS, depotYieldCap, DEPOT_TIER_MAX, FACTORY_FOOTPRINT, FACTORY_SPRITE,
   INDUSTRY_BY_KEY, TRANSPORT, TOWN_UPGRADES, TOWN_TIER_LEGACY, TOWN_VISUAL_MAX,
   townCentreSprite, townTierLabel,
   BASE_RATE, VICTORY, VP_TARGET, UPGRADE_COST, TUNING,
@@ -176,13 +176,13 @@ import { mulberry32 } from "../game/config";
 import {
   abandonYieldFor, birthYieldFor, createTownSession, createTuningSession, decayYield,
   difficultyRulesFor, obstacleIntroLine, recordTuningCleared, retuneOwed, rivalTuningGold,
-  rivalTuningScore, rivalTuningYield, settleTuningYield,
+  rivalTuningScore, rivalTuningYield, settleTuningYield, overshootGold,
   sessionObstacles as sessionObstaclesFor, takeTuningMove, townBonusFor, tuningMovesLeft,
   unlockTierAfterSession, tuningOver, tuningSessionGold, tuningSessionYield,
   tuningCargoLabel, TUNING_ABANDON_YIELD, TUNING_REWARD_SCORE, type TuningSession,
 } from "./tuning";
 import {
-  FREE_SETUP_DEPOTS, costCompact, costLabel, depotTypeLabel,
+  FREE_SETUP_DEPOTS, costCompact, costLabel, depotTypeLabel, DEPOT_UPGRADE_COST, DEPOT_RETUNE_COST,
   priceDepot, priceTownUpgrade, rungLabel, shortfallLabel, storageCapFor,
 } from "./construction";
 // L11 (#226): the bank — the one exchange left, and the rung gate it obeys.
@@ -2546,6 +2546,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           ? (gained
             ? `${names || "A"} Depot running · ${vpDeltaText(b.vp)}`
             : `${names || "A"} Depot cut off · ${vpDeltaText(b.vp)}`)
+          : source === "level"
+            ? (gained ? `Depot at top level · ${vpDeltaText(b.vp)}` : `Top-level Depot lost · ${vpDeltaText(b.vp)}`)
           : source === "route"
             ? (gained
               ? `Route fully paved · ${vpDeltaText(b.vp)}`
@@ -3377,7 +3379,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // levels. Hard is the row where a poor re-match really does cost.
     const rules = difficultyRules();
     const prev = depot?.yield;
-    const level = settleTuningYield(prev, s.score, rules, { abandon });
+    // 2026-09: a Depot's LEVEL caps what its session can set (L1 ×2, L2 ×4,
+    // L3 ×6); the score played past the cap pays Gold instead.
+    const cap = s.kind === "depot" ? depotYieldCap(depot?.level) : undefined;
+    const level = settleTuningYield(prev, s.score, rules, { abandon, cap });
+    const overGold = abandon || cap === undefined ? 0 : overshootGold(s.score, rules, cap);
     // L9 (#224): the session is also THE Gold source on the new loop. The
     // board's combo coin stopped paying (`payGold: !newLoop`), so the score
     // that sets the yield also banks the coins the Black Market's two map
@@ -3387,7 +3393,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // yield does not silently lift the purse too. It is settled here, above
     // the branches, because both kinds of session (L5: a Depot's, or the
     // city's) pay it on the same curve.
-    const coins = abandon ? 0 : tuningSessionGold(s);
+    const coins = (abandon ? 0 : tuningSessionGold(s)) + overGold;
     if (coins > 0) {
       earn(me, { gold: coins });
       sfx.play("coin");     // SFX-01: the same two coins the combo used to ring
@@ -3634,9 +3640,58 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         : "No Depot to re-tune yet — build one first.", "info");
       return false;
     }
+    // 2026-09: a retune is open any time, and costs half a Depot.
+    if (!spend(me, DEPOT_RETUNE_COST)) {
+      toast(`A retune costs ${costLabel(DEPOT_RETUNE_COST)}.`, "bad");
+      return false;
+    }
     openTuningSession(head.depot, true);
     return true;
   }
+
+  /**
+   * 2026-09: upgrade one of MY Depots a level (cap L1 ×2 → L2 ×4 → L3 ×6).
+   * Costs what building a Depot costs, and opens a tuning session at once so
+   * the new headroom can be played into straight away (like the city).
+   */
+  function upgradeDepot(depotId: number): boolean {
+    if (!newLoop) return false;
+    const d = eco.harvesters.find((h) => h.id === depotId && h.owner === me.id);
+    if (!d) return false;
+    if (tuning) { toast("Finish the tuning session first.", "bad"); return false; }
+    const lvl = d.level ?? 1;
+    if (lvl >= DEPOT_LEVELS.max) { toast("That Depot is already at the top level.", "info"); return false; }
+    if (!spend(me, DEPOT_UPGRADE_COST)) {
+      toast(`A Depot upgrade costs ${costLabel(DEPOT_UPGRADE_COST)}.`, "bad");
+      return false;
+    }
+    d.level = lvl + 1;
+    toast(`Depot upgraded to level ${d.level} — its yield cap is now ×${depotYieldCap(d.level)}. Tune it up!`, "good");
+    ui.feed(`Depot upgraded to level ${d.level} (cap ×${depotYieldCap(d.level)})`, me.name);
+    rescoreNow();
+    openTuningSession(d, true);
+    return true;
+  }
+
+  /** 2026-09: the Depot card a click on one of my Depots opens. */
+  function depotCardFor(d: Harvester): void {
+    const lvl = d.level ?? 1;
+    ui.showDepotCard({
+      title: `${(() => { const c = depotCargo(eco, d); return c ? DEPOT_TREE[c].name : "Depot"; })()} · level ${lvl}`,
+      yieldNow: depotYield(d),
+      cap: depotYieldCap(lvl),
+      nextCap: lvl < DEPOT_LEVELS.max ? depotYieldCap(lvl + 1) : null,
+      upgradeCost: costLabel(DEPOT_UPGRADE_COST),
+      retuneCost: costLabel(DEPOT_RETUNE_COST),
+      busy: !!tuning,
+      onUpgrade: () => upgradeDepot(d.id),
+      onRetune: () => retuneNow(d.id),
+    });
+  }
+  /** My Depot whose 2×2 lot covers this tile, if any. */
+  const myDepotAt = (tx: number, ty: number): Harvester | null =>
+    eco.harvesters.find((h) => h.owner === me.id
+      && tx >= h.tx && tx <= h.tx + 1 && ty >= h.ty && ty <= h.ty + 1) ?? null;
 
   /**
    * L14 (#229) returns WHICH Depots this pass levelled (the cooling pass must
@@ -3675,7 +3730,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     for (const h of eco.harvesters) {
       if (h.owner !== rival.id || h.yield !== undefined) continue;
       const tier = depotTier(h, comp);
-      h.yield = rivalTuningYield(key, 0, rules, tier);
+      h.yield = Math.min(depotYieldCap(h.level), rivalTuningYield(key, 0, rules, tier));
       tuned.add(h.id);
       // L14 (#229): the tier the session settled on, stamped exactly as a
       // played session stamps it (`settleSession` above). Without it the L6
@@ -8297,6 +8352,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             // HUD key. Any other tool keeps its own behaviour above.
             const town = townCentreAt(p);
             if (town) townCentreClick(town);
+            else if (newLoop) {
+              // 2026-09: a click on one of my Depots opens its card
+              // (level, yield vs cap, Upgrade, Retune).
+              const d = myDepotAt(p.tx, p.ty);
+              if (d) depotCardFor(d);
+            }
           } else if (tool === "road" || tool === "dirt" || tool === "rail") {
             // A tap with a track tool that got here is a refusal: the legal
             // single-tile build is handled where the drag ends (above).
@@ -9929,6 +9990,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     retuneOffer: () => retuneOffer(),
     /** L6: press the plate's Retune key — the same call the DOM key makes. */
     retuneDepot: (depotId?: number) => retuneNow(depotId),
+    /** 2026-09: the Depot card's Upgrade door, as a test twin. */
+    upgradeDepot: (depotId: number) => upgradeDepot(depotId),
     /** L6: the tier a Depot's link is worth right now (the upgrade axis). */
     depotTier: (depotId: number) => {
       const d = eco.harvesters.find((h) => h.id === depotId);

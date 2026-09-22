@@ -72,7 +72,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_W, MAP_H } from "../game/config";
 import { PRESENT, PUBLIC_OWNER, type Track } from "./track";
-import { VICTORY, type Cargo } from "./config";
+import { VICTORY, DEPOT_LEVELS, type Cargo } from "./config";
 import type { EconomyState, Harvester } from "./economy";
 
 /**
@@ -82,7 +82,7 @@ import type { EconomyState, Harvester } from "./economy";
  */
 export const OPENING_PLANT_ID = 0;
 
-export type VpSource = "upgrade" | "plant" | "platform" | "type" | "rung" | "city" | "route";
+export type VpSource = "upgrade" | "plant" | "platform" | "type" | "rung" | "city" | "route" | "level";
 export type VpChange = "awarded" | "revoked";
 
 /**
@@ -163,6 +163,8 @@ export interface ScoreState {
   rungs: Map<string, number>;
   /** 2026-09: `${owner}#${depotId}` → a Depot whose route is fully paved. */
   routes: Map<string, TypeLedger>;
+  /** 2026-09: `${owner}#${depotId}` → a Depot at the top level. */
+  levels: Map<string, TypeLedger>;
   /** L13: per-owner city tiers already scored. */
   city: Map<string, number>;
   /** Per-owner VP total. */
@@ -171,7 +173,7 @@ export interface ScoreState {
 
 export const createScoreState = (): ScoreState => ({
   paved: new Map(), plants: new Map(), platforms: new Map(),
-  types: new Map(), rungs: new Map(), routes: new Map(), city: new Map(), vp: new Map(),
+  types: new Map(), rungs: new Map(), routes: new Map(), levels: new Map(), city: new Map(), vp: new Map(),
 });
 
 /** VP as the HUD prints it: whole when it is whole, 2dp at most otherwise. */
@@ -484,6 +486,27 @@ export function rescore(
           source: "route", type: "revoked", owner: t.owner, delta: -VICTORY.loop.route,
           tx: t.tx, ty: t.ty, cargo: t.cargo,
         });
+      }
+    }
+    // TOP-LEVEL DEPOTS (2026-09) — 1★ per Depot upgraded to the max level.
+    // Revoked if the Depot is demolished.
+    if (VICTORY.loop.maxDepot > 0) {
+      const top = new Map<string, TypeLedger>();
+      for (const h of state.harvesters) {
+        if ((h.level ?? 1) < DEPOT_LEVELS.max) continue;
+        top.set(`${h.owner}#${h.id}`, { owner: h.owner, cargo: loop.cargoOf(h) ?? "grain", tx: h.tx, ty: h.ty });
+      }
+      for (const [key, t] of top) {
+        if (score.levels.has(key)) continue;
+        score.levels.set(key, t);
+        add(t.owner, VICTORY.loop.maxDepot);
+        events.push({ source: "level", type: "awarded", owner: t.owner, delta: VICTORY.loop.maxDepot, tx: t.tx, ty: t.ty, level: DEPOT_LEVELS.max });
+      }
+      for (const [key, t] of [...score.levels]) {
+        if (top.has(key)) continue;
+        score.levels.delete(key);
+        add(t.owner, -VICTORY.loop.maxDepot);
+        events.push({ source: "level", type: "revoked", owner: t.owner, delta: -VICTORY.loop.maxDepot, tx: t.tx, ty: t.ty });
       }
     }
     // DEPTH — rungs and city tiers. Both are monotone by construction (a rung

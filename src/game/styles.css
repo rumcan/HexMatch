@@ -5148,3 +5148,12 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
     margin: 6px 8px 0; padding: 7px 9px;
   }
 }
+
+/* 2026-09: the Depot card — a click on one of your Depots. */
+.depot-card {
+  position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%);
+  z-index: 40; min-width: 280px; max-width: min(92vw, 420px); padding: 10px 12px;
+}
+.depot-card-row { margin: 6px 0 8px; font-size: 13px; }
+.depot-card-acts { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.depot-card-acts .post-btn small { display: block; opacity: .8; font-size: 10.5px; }

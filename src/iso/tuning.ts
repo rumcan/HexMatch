@@ -49,7 +49,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import {
   CARGO, DEFAULT_DIFFICULTY, DEPOT_TIER_MAX, DIFFICULTY_RULES, OBSTACLE_RAMP, TUNING,
-  type Cargo, type DifficultyKey, type DifficultyRules, type ObstacleRules,
+  type Cargo, type DifficultyKey, type DifficultyRules, type ObstacleRules, DEPOT_LEVELS,
 } from "./config";
 import { RIVAL_SKILLS, type SkillKey } from "./skill";
 import { BOARD_H, BOARD_W } from "../game/config";
@@ -113,11 +113,23 @@ export const birthYieldFor = (rules: DifficultyRules): number => clampYield(rule
  */
 export function settleTuningYield(
   prev: number | undefined, score: number, rules: DifficultyRules,
-  opts: { abandon?: boolean } = {},
+  opts: { abandon?: boolean; cap?: number } = {},
 ): number {
   const base = prev ?? rules.minYield;
-  const next = opts.abandon ? abandonYieldFor(rules) : tuningYieldFor(score, rules.minYield);
+  let next = opts.abandon ? abandonYieldFor(rules) : tuningYieldFor(score, rules.minYield);
+  // 2026-09: the Depot's level caps what a session can set (L1 ×2 …).
+  if (opts.cap !== undefined) next = Math.min(next, opts.cap);
   return roundYield(rules.yieldNeverDrops ? Math.max(base, next) : next);
+}
+
+/**
+ * 2026-09: the Gold a session pays for the score it played PAST the Depot's
+ * cap — 1 per `DEPOT_LEVELS.goldPerOvershoot` of yield over it.
+ */
+export function overshootGold(score: number, rules: DifficultyRules, cap: number): number {
+  const raw = tuningYieldFor(score, rules.minYield);
+  if (raw <= cap) return 0;
+  return Math.floor((raw - cap) / DEPOT_LEVELS.goldPerOvershoot + 1e-9);
 }
 
 /**
