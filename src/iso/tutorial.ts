@@ -225,13 +225,14 @@ export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
       id: "victory",
       kicker: "STEP 6 · WIN IT",
       title: "How Victory Points are earned",
-      lede: `First to ${ctx.vpTarget}★ wins. Three sources pay:`,
+      lede: `First to ${ctx.vpTarget}★ wins. Four sources pay:`,
       figure: {
         kind: "ledger",
         rows: [
           { icon: "🔷", label: "A Depot running", vp: `+${star(VICTORY.loop.type)}` },
           { icon: "🛣️", label: "A Depot route fully paved", vp: `+${star(VICTORY.loop.route)}` },
           { icon: "🏙️", label: "A city upgrade tier", vp: `+${star(VICTORY.loop.city)}` },
+          { icon: "⭐", label: "A Depot upgraded to level 3", vp: `+${star(VICTORY.loop.maxDepot)}` },
         ],
         caption: `More depots, better roads, a bigger city — ${ctx.vpTarget}★. Different plans win.`,
       },
@@ -239,6 +240,7 @@ export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
         `Every <b>Depot</b> that is connected and producing pays ${star(VICTORY.loop.type)} — cut its road and it stops paying.`,
         `A Depot's <b>route</b> to your plant pays ${star(VICTORY.loop.route)} more once every tile of it is paved Road (no gravel left).`,
         `A <b>city tier</b> is a city upgrade — ${star(VICTORY.loop.city)} each, never revoked.`,
+        `Click a Depot to <b>upgrade</b> it: its yield cap goes ×2 → ×4 → ×6, and level 3 pays ${star(VICTORY.loop.maxDepot)}. Score past the cap pays Gold.`,
       ],
       tip: `Roads themselves score nothing — they make your depots tick faster. Dirt is free, Road is faster hauling.`,
     },

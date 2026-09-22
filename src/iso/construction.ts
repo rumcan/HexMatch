@@ -56,6 +56,13 @@ export { BUILD_COSTS };
 /** The shipped loop's one-size Depot price (PP-07's 1/1/1/1 mix). */
 export const DEPOT_COST: Purse = BUILD_COSTS.depot;
 
+/** 2026-09: a Depot LEVEL upgrade costs what building a Depot costs. */
+export const DEPOT_UPGRADE_COST: Purse = { ...BUILD_COSTS.depot };
+/** 2026-09: a retune costs half a Depot, each cargo rounded up. */
+export const DEPOT_RETUNE_COST: Purse = Object.fromEntries(
+  Object.entries(BUILD_COSTS.depot).map(([c, n]) => [c, Math.ceil((n ?? 0) / 2)]),
+) as Purse;
+
 /**
  * L5 (#219): the depot TYPE an industry's cargo builds — the tree row for a
  * cargo. Every cargo has one, so a caller that knows the industry always knows

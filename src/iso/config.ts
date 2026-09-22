@@ -254,14 +254,17 @@ export type DifficultyKey = "easy" | "normal" | "hard";
 
 /** The shipped rival-skills keys and these rows are ONE setting (L6). */
 export const DIFFICULTY_RULES: Record<DifficultyKey, DifficultyRules> = {
+  // Owner call (2026-09): yields never drop (no decay on any row) and a
+  // Depot can be retuned any time, for a price (`DEPOT_LEVELS.retuneCost`).
+  // The rows still differ by the floor and the board's obstacles.
   easy:   { matchEnabled: true, minYield: 1.5, decayRate: 0,
-            rematch: "never", yieldNeverDrops: true,
+            rematch: "open", yieldNeverDrops: true,
             obstacles: { frost: 0, frostHard: 1, girders: 0 } },
   normal: { matchEnabled: true, minYield: TUNING.minYield, decayRate: 0,
-            rematch: "upgrade", yieldNeverDrops: true,
+            rematch: "open", yieldNeverDrops: true,
             obstacles: { frost: 6, frostHard: 1, girders: 0 } },
-  hard:   { matchEnabled: true, minYield: TUNING.minYield, decayRate: 0.017,
-            rematch: "open", yieldNeverDrops: false,
+  hard:   { matchEnabled: true, minYield: TUNING.minYield, decayRate: 0,
+            rematch: "open", yieldNeverDrops: true,
             obstacles: { frost: 6, frostHard: 2, girders: 3 } },
 };
 
@@ -497,6 +500,24 @@ export interface DepotTypeDef {
  * kept as the record of what it cost then).
  */
 export const DEPOT_RUNG_GATE = false;
+
+/**
+ * Owner call (2026-09) — DEPOT LEVELS. A Depot's tuning yield is capped by its
+ * level: L1 ×2, L2 ×4, L3 ×6 (the max, for now). Upgrading a Depot costs what
+ * building one does and opens a tuning session at once (like the city). A
+ * session's score past the cap pays Gold instead — 1 per `goldPerOvershoot`
+ * of yield over it. Retuning any time costs half a Depot (rounded up).
+ * A Depot at the top level is worth `VICTORY.loop.maxDepot` ★.
+ */
+export const DEPOT_LEVELS = {
+  caps: [2, 4, 6] as readonly number[],
+  max: 3,
+  goldPerOvershoot: 0.5,
+} as const;
+
+/** The yield cap for a Depot level (absent = level 1). */
+export const depotYieldCap = (level: number | undefined): number =>
+  DEPOT_LEVELS.caps[Math.min(DEPOT_LEVELS.max, Math.max(1, Math.floor(level ?? 1))) - 1];
 const DEPOT_FLAT_COST = (): Partial<Record<Cargo, number>> => ({ grain: 3, wood: 3, stone: 3, ore: 3, oil: 3 });
 
 export const DEPOT_TREE: Record<Cargo, DepotTypeDef> = {
@@ -885,6 +906,8 @@ export const VICTORY = {
     type: 1,
     /** ★ per Depot whose route to the plant is fully paved (2026-09). */
     route: 1,
+    /** ★ per Depot upgraded to the top level (`DEPOT_LEVELS.max`) — 2026-09. */
+    maxDepot: 1,
     /** ★ per rung of the depot tree unlocked — retired (0) with the gate. */
     rung: 0,
     /** ★ per city upgrade tier bought and confirmed (L5 `townLevel`).

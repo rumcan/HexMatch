@@ -26,7 +26,7 @@ import { UNRANKED_KEY, badgeUrlFor } from "../ui/rank-badge";
  */
 export type EndingPath = "paving" | "plants" | "balanced" | "network" | "industry";
 export type DecisiveSource =
-  | "upgrade" | "plant" | "platform" | "type" | "rung" | "city" | "route" | null;
+  | "upgrade" | "plant" | "platform" | "type" | "rung" | "city" | "route" | "level" | null;
 
 export interface EndingBreakdown {
   /**
@@ -262,6 +262,9 @@ function decisiveText(source: DecisiveSource, won: boolean): string {
   // L13 (#228): the new loop's three.
   if (source === "type") {
     return `${who} final stars came the moment a new kind of cargo started running into the yards.`;
+  }
+  if (source === "level") {
+    return `${who} final star was a Depot upgraded to the top level.`;
   }
   if (source === "route") {
     return `${who} final star was a route paved end to end — the last stretch of gravel gone.`;
