@@ -4,8 +4,10 @@ import { MAP_W, MAP_H, INDUSTRY_QUOTA, TRANSPORT, UPGRADE_COST, VP_TARGET } from
 
 // Mirrored from src/iso/game.ts — do not import the boot module (it pulls
 // atlas PNGs and the DOM). Pass 1 pinned these; pass 2 measures against them.
-// PP-07 retuned the purse: a dirt tile costs Wood + Stone now, so the opening
-// grants both (12 paid tiles — the same E8 curve), still with no ore.
+// PP-07 retuned the opening: a Dirt Road is FREE on both loops (its "price"
+// is laid time, and the retired loop's cost now rides the 12-tile setup
+// allowance), so the opening purse stands at 12 wood + 12 stone and no ore —
+// paving is what the ore gate protects.
 const START_PURSE = { wood: 12, stone: 12, ore: 0 };
 const FREE_SETUP_TRACK = 12;
 const HARVEST_MS = 3000;
@@ -52,8 +54,10 @@ describe("E8 pass 2 — starting curve", () => {
     expect(TRANSPORT.road.cost.ore).toBe(4);
     expect(TRANSPORT.road.cost.stone).toBe(1);
     expect(TRANSPORT.road.cost.wood).toBe(1);
-    expect(TRANSPORT.dirt.cost.stone).toBe(1);
-    expect(TRANSPORT.dirt.cost.wood).toBe(1);
+    // asphalt needs an ore mine's output; gravel needs nothing but the time
+    // it takes to drag it — PP-07's truth, already pinned in
+    // iso-pp07-costs.test.ts (`TRANSPORT.dirt.cost === BUILD_COSTS.dirt === {}`)
+    expect(TRANSPORT.dirt.cost).toEqual({});
     expect(UPGRADE_COST.ore).toBe(4);  // dirt→road pays the difference only
     expect(TRANSPORT.dirt.onRough).toBe(true);
     expect(TRANSPORT.road.onRough).toBe(false);
