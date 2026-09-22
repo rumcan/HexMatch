@@ -668,13 +668,15 @@ test("consolidated economy tabs and disabled purchases", async ({ page }) => {
     await page.locator('.mnav-btn[data-view="trade"]').click();
   }
   await expect(page.locator('[data-panel]')).toHaveCount(0);
-  for (const tab of ["bank", "plant", "feed"]) {
+  for (const tab of ["bank", "black", "plant", "feed"]) {
     await page.locator(`[data-tab="${tab}"]`).click();
     await expect(page.locator('#iso-trade > .pane:not(.hidden), #iso-trade > #iso-quarry:not(.hidden)')).toHaveCount(1);
     await expect(page.locator(`[data-tab="${tab}"]`)).toBeInViewport();
   }
+  // The Black Market has its own tab next to Bank (owner call, 2026-09).
+  await page.locator('[data-tab="black"]').click();
+  await expect(page.locator('.black-pane .sab-list')).toBeVisible();
   await page.locator('[data-tab="bank"]').click();
-  await expect(page.locator('.bank-pane .sab-list')).toBeVisible();
   await page.evaluate(() => {
     const game = (window as unknown as { __iso: { purse: Record<string, number> } }).__iso;
     for (const key of Object.keys(game.purse)) game.purse[key] = 0;

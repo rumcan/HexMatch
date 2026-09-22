@@ -787,6 +787,11 @@ html, body, #root {
   --sigil: none;
   border-left: 2px solid rgba(200, 161, 58, .55);
 }
+/* The city upgrade, under the Processing Plant: no emblem in the noir sheet
+   yet, so a brass rule marks it like the railway group; greyed until the
+   materials are in the purse. */
+.build-btn.bg-city { --sigil: none; border-left: 2px solid rgba(200, 161, 58, .85); }
+.build-btn.bg-city:disabled { opacity: .55; cursor: not-allowed; }
 
 /* ── RAIL-04: the Railway panel ────────────────────────────────────────────
    One row per platform, depot and train; each row carries the actions the

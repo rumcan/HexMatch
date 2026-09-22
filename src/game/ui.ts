@@ -115,6 +115,9 @@ const portraitFor = (p: UiPlayer, index: number): string =>
  * "read the map" hand). Right-click on the map drops any tool back to it,
  * and Q does the same from the keyboard.
  */
+/** The right rail's tabs. */
+type TabName = "bank" | "black" | "plant" | "feed";
+
 export type UiTool =
   | "select" | "dirt" | "road" | "harvester" | "plant" | "demolish"
   // RAIL-04 (#178): the railway's tools. `rail` drags track, `platform` and
@@ -1005,6 +1008,9 @@ export function createOriginalUi(
   // — one strip, Bank / Processing Plant / Feed, serves desktop and phone.
   const tabBank = h("button", "tab active", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.bank}</i><span class="tab-l">Bank</span>`);
   const tabFeed = h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.feed}</i><span class="tab-l">Feed</span>`);
+  // The Black Market has its own tab, right next to Bank (owner call, 2026-09).
+  const tabBlack = h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.market}</i><span class="tab-l">Black Market</span>`);
+  tabBlack.onclick = () => setTab("black");
   tabBank.onclick = () => setTab("bank");
   tabFeed.onclick = () => setTab("feed");
   // #299: the Plant tab only exists where the plant is a pane at all — the
@@ -1013,9 +1019,9 @@ export function createOriginalUi(
   const tabPlant = sessionMode ? null
     : h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.plant}</i><span class="tab-l">Processing Plant</span>`);
   if (tabPlant) tabPlant.onclick = () => setTab("plant");
-  const tabDefs: [HTMLElement, "bank" | "plant" | "feed"][] = sessionMode
-    ? [[tabBank, "bank"], [tabFeed, "feed"]]
-    : [[tabBank, "bank"], [tabPlant!, "plant"], [tabFeed, "feed"]];
+  const tabDefs: [HTMLElement, TabName][] = sessionMode
+    ? [[tabBank, "bank"], [tabBlack, "black"], [tabFeed, "feed"]]
+    : [[tabBank, "bank"], [tabBlack, "black"], [tabPlant!, "plant"], [tabFeed, "feed"]];
   for (const [tab, name] of tabDefs) {
     tab.dataset.tab = name;
     tabs.appendChild(tab);
@@ -1023,7 +1029,9 @@ export function createOriginalUi(
   tp.appendChild(tabs);
   const bankPane = h("div", "pane bank-pane");
   const feedPane = h("div", "pane feed-pane hidden");
+  const blackPane = h("div", "pane black-pane hidden");
   tp.appendChild(bankPane);
+  tp.appendChild(blackPane);
   tp.appendChild(feedPane);
   /**
    * #299 — the session window. The plant panel (`qp`) is built the same way
@@ -1374,6 +1382,7 @@ export function createOriginalUi(
     ? TOOLS.filter((t) => !RAIL_TOOL_KEYS.has(t.key))
     : TOOLS;
   let depotSub: HTMLElement | null = null;
+  let cityBtn: HTMLButtonElement | null = null;
   let lastDepotSub = "\u0000";
   for (const t of visibleTools) {
     // V5: each tool gets its own banner artwork class (bg-dirt / bg-road /
@@ -1392,6 +1401,16 @@ export function createOriginalUi(
     };
     if (t.key === "harvester") depotSub = b.querySelector("small");
     buildList.appendChild(b);
+    // The city upgrade sits right under the Processing Plant — the other thing
+    // a town is for. Same action as clicking your town's centre on the map;
+    // `paintTown` keeps its price, bonus and state current.
+    if (t.key === "plant") {
+      cityBtn = h("button", "build-btn bg-city hidden");
+      cityBtn.dataset.act = "city-upgrade";
+      cityBtn.innerHTML = `<div class="bb-mid"><b>Upgrade city</b><small></small></div>`;
+      cityBtn.onclick = () => hooks.onTownUpgrade?.();
+      buildList.appendChild(cityBtn);
+    }
   }
   // ── Black Market ──────────────────────────────────────────────────────────
   function renderSabotage() {
@@ -1470,8 +1489,8 @@ export function createOriginalUi(
   // leaves the shop where it has always been: under the Bank tab, below the
   // Gold rule, as the pane's LAST panel (the shape PP-08 shipped and the
   // specs assert).
-  if (opts.newLoop === true) left.appendChild(sp);
-  else bankPane.appendChild(sp);
+  // Owner call (2026-09): on both loops the shop is its own tab, next to Bank.
+  blackPane.appendChild(sp);
 
   /**
    * The panel's gate line, spelled for the loop it is running under. `null`
@@ -1591,8 +1610,8 @@ export function createOriginalUi(
   }
 
   // ── tabs / mobile ─────────────────────────────────────────────────────────
-  let currentTab: "bank" | "plant" | "feed" | null = null;
-  function setTab(t: "bank" | "plant" | "feed") {
+  let currentTab: TabName | null = null;
+  function setTab(t: TabName) {
     // PP-14b: a pending cross bounty lives inside the plant panel — switching
     // away would hide it mid-pick and the cascade would sit unseen until the
     // timer answers for the player. Stay put instead. #299: on the new loop
@@ -1620,6 +1639,8 @@ export function createOriginalUi(
     }
     tabBank.classList.toggle("active", t === "bank");
     bankPane.classList.toggle("hidden", t !== "bank");
+    tabBlack.classList.toggle("active", t === "black");
+    blackPane.classList.toggle("hidden", t !== "black");
     tabFeed.classList.toggle("active", t === "feed");
     feedPane.classList.toggle("hidden", t !== "feed");
     // MOBILE-02: the plant tab re-fits the board — the full-bleed sheet only
@@ -3186,11 +3207,31 @@ export function createOriginalUi(
    * reason it is off, and the label always states the complete price — the
    * same "show the cost before the click" rule as the Build column.
    */
+  /** The build column's city button — the same state the tuning plate reads. */
+  function paintCityBtn(t: UiTownState | null | undefined): void {
+    if (!cityBtn) return;
+    const sub = cityBtn.querySelector("small") as HTMLElement;
+    if (!t) { cityBtn.classList.add("hidden"); return; }
+    cityBtn.classList.remove("hidden");
+    if (t.level >= t.maxLevel) {
+      cityBtn.disabled = true;
+      sub.innerHTML = `Top level · base rate +${Math.round(t.bonus * 100)}%`;
+      cityBtn.title = "Your city is at its top level.";
+      return;
+    }
+    cityBtn.disabled = !t.affordable;
+    sub.innerHTML = `${costMarkup(t.cost)} · level ${t.level + 1} · up to +${Math.round(t.ceiling * 100)}% base rate`;
+    cityBtn.title = t.affordable
+      ? "Upgrade your city (or click your town's centre on the map). A short tuning session sets how much of the bonus lands."
+      : (t.note ?? "Save up the materials first — the Bank can trade toward it.");
+  }
+
   function paintTown(t: UiTownState | null | undefined) {
     const sig = t === undefined || t === null ? "none"
       : `${t.level}:${t.maxLevel}:${t.affordable}:${t.bonus}:${t.ceiling}:${t.note ?? ""}:${costSig(t.cost)}`;
     if (sig === lastTownSig) return;
     lastTownSig = sig;
+    paintCityBtn(t);
     if (!t) { tpCity.classList.add("hidden"); return; }
     tpCity.classList.remove("hidden");
     if (t.level >= t.maxLevel) {
