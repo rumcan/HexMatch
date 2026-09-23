@@ -40,7 +40,7 @@ import { type CargoBag } from "../iso/purse";
 // constant and the engine's own `VP_TARGET` were two numbers with one name,
 // and the HUD was already showing "/10" while the game was winning at 12 — the
 // scoreboard now has exactly one source, `VICTORY` in src/iso/config.ts.
-import { CARGO, CARGOES, TRANSPORT, VICTORY, TUNING, type Cargo, type Portrait } from "../iso/config";
+import { CARGO, CARGOES, TRANSPORT, VICTORY, TUNING, type Cargo, type Portrait , DEPOT_RUNG_GATE} from "../iso/config";
 import { DEPOT_COST } from "../iso/construction";
 import { PLANT_COST } from "../iso/plants";
 import { GEM_TO_CARGO } from "../iso/quarry";
@@ -835,6 +835,18 @@ export function createOriginalUi(
   chips.id = "iso-res";
   footer.appendChild(chips);
   root.appendChild(footer);
+  // Mobile pass (2026-09): publish how much of the screen's bottom the
+  // resource bar (plus anything under it, e.g. the phone nav) takes, LIVE —
+  // the bar wraps to two rows on a phone as its chips fill in, and the
+  // one-off `--resbar-h` read happened before the chips existed. The floating
+  // tool chip, the map buttons and the Economy sheet clear it with this.
+  const publishResbarGap = () => {
+    const r = footer.getBoundingClientRect();
+    if (r.height <= 0) return;
+    root.style.setProperty("--resbar-gap", `${Math.max(0, Math.round(window.innerHeight - r.top))}px`);
+  };
+  if (typeof ResizeObserver === "function") new ResizeObserver(publishResbarGap).observe(footer);
+  window.addEventListener("resize", publishResbarGap);
 
   // ── left: BUILD ────────────────────────────────────────────
   const left = h("aside", "aside left iso-panel");
@@ -1562,7 +1574,8 @@ export function createOriginalUi(
    */
   function bankNoteText(): string {
     const unlocked = seat.unlocked;
-    if (unlocked === null) {
+    // 2026-09: the rung gate is off — the bank trades every good but Gold.
+    if (unlocked === null || !DEPOT_RUNG_GATE) {
       return `The bank always trades ${BANK_RATE} of one good for 1 of another. No rival required, no waiting. ${cargoIconHtml("gold")} ${GOLD_RULE}`;
     }
     const open = CARGOES.filter((k) => bankAllowed(k, unlocked)).map((k) => CARGO[k].name);

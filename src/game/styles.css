@@ -4882,9 +4882,10 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   .king-av { width: 20px; height: 20px; font-size: 10px; }
   .king-vp { font-size: 10.5px; }
   .rival-skill { padding: 1px 3px; gap: 2px; }
-  .rival-skill-sel { height: 22px; font-size: 10px; padding: 0 3px; letter-spacing: .2px; }
+  .rival-skill-sel { height: 32px; font-size: 11px; padding: 0 4px; letter-spacing: .2px; }
   .vp-badge { font-size: 11px; padding: 1px 7px; letter-spacing: .4px; }
-  .icon-btn { width: 27px; height: 27px; font-size: 12px; }
+  /* mobile pass (2026-09): thumb-sized top-bar buttons (was 27px) */
+  .icon-btn { width: 38px; height: 38px; font-size: 14px; }
   .iso-topmenu .tm-close { width: 30px; height: 30px; font-size: 13px; }
   .names-btn { min-width: 27px; padding: 0 4px; }
   .fab, .recenter-btn { width: 38px; height: 38px; font-size: 16px; }
@@ -5178,3 +5179,19 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   50% { box-shadow: 0 0 0 4px rgba(255, 176, 46, .75); }
 }
 @media (prefers-reduced-motion: reduce) { .coach-pulse { animation: none; outline: 2px solid rgba(255, 176, 46, .8); } }
+
+/* ── mobile pass (2026-09) ─────────────────────────────────────────────── */
+/* The objective / coach line lives on the MAP. Over the Build or Economy
+   sheet it covered the sheet header and the Bank's Exchange button. */
+.ui-root[data-phone="1"]:not([data-view="map"]) .objective { display: none; }
+@media (max-width: 760px), (max-width: 900px) and (orientation: landscape) and (max-height: 500px) {
+  /* The zoom / recenter buttons covered the resource bar's last chip. */
+  .fabs { bottom: calc(var(--resbar-gap, 130px) + 8px); }
+  /* The armed-tool chip sat on top of the (often two-row) resource bar. */
+  .toolchip { bottom: calc(var(--resbar-gap, 130px) + 8px); }
+  /* The Economy sheet's last card (the plant card) hid behind the resource
+     bar and the bottom nav. */
+  .ui-root[data-view="trade"] .aside.right {
+    padding-bottom: calc(var(--resbar-gap, 130px) + 8px);
+  }
+}
