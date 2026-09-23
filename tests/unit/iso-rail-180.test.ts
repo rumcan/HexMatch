@@ -45,9 +45,11 @@ const lay = (grid: Grid, track: Track, state: RailState, ownerId: number, tiles:
 
 // Same geometry as iso-rail.test.ts buildLine — known to succeed on empty grid
 function buildLine(state: RailState, grid: Grid, track: Track, ox: number, oy: number, ownerId = 1, plantId = 0) {
-  const source = placePlatform(state, "you", ownerId, ox, oy, "se" as RailView, { kind: "industry", id: 0, tiles: [] });
-  const dest = placePlatform(state, "you", ownerId, ox + 10, oy, "se" as RailView, { kind: "plant", id: plantId, tiles: [] });
-  lay(grid, track, state, ownerId, row(oy, ox + 3, ox + 9));
+  // Platforms sit one tile above the track row (view sw: their stopping track is
+  // at y+1), so the row itself is ordinary rail laid end to end.
+  const source = placePlatform(state, "you", ownerId, ox, oy - 1, "sw" as RailView, { kind: "industry", id: 0, tiles: [] });
+  const dest = placePlatform(state, "you", ownerId, ox + 10, oy - 1, "sw" as RailView, { kind: "plant", id: plantId, tiles: [] });
+  lay(grid, track, state, ownerId, row(oy, ox, ox + 12));
   // The depot spur joins the main line as a WYE (two 45° diagonals): a train
   // cannot take the 90° of a plain T junction.
   lay(grid, track, state, ownerId, [[ox + 5, oy], [ox + 6, oy + 1], [ox + 7, oy]]);
@@ -122,10 +124,10 @@ describe("#180 railServesIndustry — active train that has reached source", () 
     const grid = flatGrid();
     const track = createTrack();
     const state = createRailState();
-    const source = placePlatform(state, "you", 1, 5, 5, "se" as RailView, { kind: "industry", id: 0, tiles: [] });
-    const dest = placePlatform(state, "you", 1, 15, 5, "se" as RailView, { kind: "plant", id: 0, tiles: [] });
-    lay(grid, track, state, 1, row(5, 8, 12));
-    lay(grid, track, state, 1, row(5, 16, 18));
+    const source = placePlatform(state, "you", 1, 5, 4, "sw" as RailView, { kind: "industry", id: 0, tiles: [] });
+    const dest = placePlatform(state, "you", 1, 15, 4, "sw" as RailView, { kind: "plant", id: 0, tiles: [] });
+    lay(grid, track, state, 1, row(5, 5, 12));
+    lay(grid, track, state, 1, row(5, 15, 18));
     const fail = assignLine(state, 1, source.id, dest.id);
     expect(fail.ok).toBe(false);
     lay(grid, track, state, 1, row(5, 13, 15));

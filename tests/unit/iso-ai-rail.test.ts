@@ -20,7 +20,7 @@ import {
 } from "../../src/iso/ai";
 import {
   createRailState, tickTrains, autoTrains, demolishRail, buildRail, createLine, buyTrain,
-  structuresOf, railComponents, stopTile, trainOccupies, laneTiles, trainAtHome,
+  structuresOf, railComponents, stopTile, trainOccupies, laneTiles, platformTrack, trainAtHome,
   placePlatform, demolishStructure,
   type RailState,
 } from "../../src/iso/rail";
@@ -120,7 +120,8 @@ describe("RAIL-05 a broken line is repaired, never recalled into a loop", () => 
     drive(w);
     const plant = platformOf(w.rail, "plant");
     const ind = platformOf(w.rail, "industry");
-    const lanes = new Set(w.rail.structures.flatMap((s) => laneTiles(s).map(([x, y]) => tIdx(x, y))));
+    const lanes = new Set(w.rail.structures.flatMap((s) =>
+      [...laneTiles(s), ...(s.kind === "platform" ? platformTrack(s) : [])].map(([x, y]) => tIdx(x, y))));
     // Cut ONE track tile that really separates the two platforms.
     let cut: [number, number] | null = null;
     for (let i = 0; i < w.rail.rail.tile.length && !cut; i++) {

@@ -21,7 +21,7 @@ import {
   anchorCandidates, resolveAnchor, platformRefusal, placePlatform, overlaps,
   depotRefusal, placeDepot, depotExit, laneTiles, stopTile, railPorts, footprintFor, rotateView,
   railComponents, railPath, ownerRailTiles,
-  lineRefusal, assignLine, autoTrains, octPath, diagLinked, octantOf, turnOk, carPlacements, carOffsets, consistOf, OCT_NAMES, type Train, createLine, renameLine, buyTrain, startLine, LINE_NAME_MAX, planLeg, tickTrains, trainTile, trainOccupies, demolishStructure,
+  lineRefusal, assignLine, autoTrains, platformTrack, octPath, diagLinked, octantOf, turnOk, carPlacements, carOffsets, consistOf, OCT_NAMES, type Train, createLine, renameLine, buyTrain, startLine, LINE_NAME_MAX, planLeg, tickTrains, trainTile, trainOccupies, demolishStructure,
   recallTrain, sellTrain, stopLine, depotReaching, trainAtHome, trainBasedAt,
   railServesIndustry, railServicedIndustries, platformVp, railPanelRows,
   railStructureItems, trainItems, pointAt, polyline, routeLength,
@@ -86,9 +86,11 @@ function plantPlatform(state: RailState, grid: Grid, tx: number, ty: number, vie
  * own train; a connector between them is what the merge rule refuses.
  */
 function buildLine(state: RailState, grid: Grid, track: Track, ox: number, oy: number, ownerId = 1) {
-  const source = placePlatform(state, "you", ownerId, ox, oy, "se", { kind: "industry", id: 0, tiles: [] });
-  const dest = placePlatform(state, "you", ownerId, ox + 10, oy, "se", { kind: "plant", id: 0, tiles: [] });
-  lay(grid, track, state, ownerId, row(oy, ox + 3, ox + 9));
+  // Platforms sit one tile above the track row (view sw: their stopping track is
+  // at y+1), so the row itself is ordinary rail laid end to end.
+  const source = placePlatform(state, "you", ownerId, ox, oy - 1, "sw", { kind: "industry", id: 0, tiles: [] });
+  const dest = placePlatform(state, "you", ownerId, ox + 10, oy - 1, "sw", { kind: "plant", id: 0, tiles: [] });
+  lay(grid, track, state, ownerId, row(oy, ox, ox + 12));
   // The depot spur joins the main line as a WYE (two 45° diagonals): a train
   // cannot take the 90° of a plain T junction.
   lay(grid, track, state, ownerId, [[ox + 5, oy], [ox + 6, oy + 1], [ox + 7, oy]]);
@@ -292,18 +294,19 @@ describe("RAIL-01 costs and scoring", () => {
 
 describe("RAIL-02 platforms and anchors", () => {
   it("rotates footprints in quarter turns", () => {
-    expect(PLATFORM_FOOTPRINT.ne).toEqual([2, 3]);
-    expect(PLATFORM_FOOTPRINT.se).toEqual([3, 2]);
+    // Playtest (2026-09): one tile deep, three long, no track of its own.
+    expect(PLATFORM_FOOTPRINT.ne).toEqual([3, 1]);
+    expect(PLATFORM_FOOTPRINT.se).toEqual([1, 3]);
     expect(rotateView("ne")).toBe("se");
     expect(rotateView("se", 3)).toBe("ne");
-    expect(footprintFor("platform", "nw")).toEqual([3, 2]);
+    expect(footprintFor("platform", "nw")).toEqual([1, 3]);
     expect(footprintFor("depot", "ne")).toEqual(DEPOT_FOOTPRINT);
     expect(RAIL_VIEWS).toHaveLength(4);
   });
 
   it("anchors within Manhattan 3, and only to an industry or an owned plant", () => {
     const grid = flatGrid([industry("farm", 10, 4)]);
-    // Footprint 3×2 at (7,3): the industry begins at (10,4), one tile east.
+    // Footprint 1×3 at (7,3): the industry begins at (10,4), three tiles east.
     const near = anchorCandidates(grid, [], 1, 7, 3, "se");
     expect(near).toHaveLength(1);
     expect(near[0]).toMatchObject({ kind: "industry", id: 0, label: "Farm" });
@@ -312,9 +315,9 @@ describe("RAIL-02 platforms and anchors", () => {
     expect(anchorCandidates(grid, [], 1, 30, 30, "se")).toHaveLength(0);
     expect(platformRefusal(grid, [], [], 1, 30, 30, "se")).toBe("no-anchor");
     // A rival's plant is not an anchor; your own is.
-    const theirs = [plant(12, 4, 2)];
+    const theirs = [plant(9, 6, 2)];
     expect(anchorCandidates(grid, theirs, 1, 7, 3, "se")).toHaveLength(1);
-    const mine = [plant(12, 4, 1)];
+    const mine = [plant(9, 6, 1)];
     const withPlant = anchorCandidates(grid, mine, 1, 7, 3, "se");
     expect(withPlant.map((c) => c.kind).sort()).toEqual(["industry", "plant"]);
   });
@@ -330,9 +333,9 @@ describe("RAIL-02 platforms and anchors", () => {
     expect(platformRefusal(grid, state.structures, [], 1, 7, 3, "se")).toBe("overlap");
     // The 3×3 farm at (10,4) is the anchor both times, so a second footprint
     // within reach of it is refused even though it is clear of the first.
-    expect(platformRefusal(grid, state.structures, [], 1, 7, 5, "se")).toBe("anchor-taken");
+    expect(platformRefusal(grid, state.structures, [], 1, 10, 1, "sw")).toBe("anchor-taken");
     // A different anchor (an owned plant) is still legal at the same spot.
-    const plants = [plant(11, 5, 1, 0)];
+    const plants = [plant(9, 6, 1, 0)];
     const resolved = resolveAnchor(grid, plants, 1, 7, 3, "se", { kind: "plant", id: 0, tiles: [] });
     expect(resolved).toMatchObject({ kind: "plant", id: 0 });
   });
@@ -343,18 +346,23 @@ describe("RAIL-02 platforms and anchors", () => {
     state.structures.push({ id: 99, kind: "depot", ownerId: 1, owner: "you", tx: 7, ty: 3, w: 2, h: 2, view: "se" });
     expect(platformRefusal(grid, state.structures, [], 1, 7, 3, "se")).toBe("overlap");
     expect(overlaps({ tx: 0, ty: 0, w: 2, h: 2 }, 1, 1, 2, 2)).toBe(true);
-    expect(platformRefusal(grid, [], [], 1, MAP_W - 1, MAP_H - 3, "se")).toBe("off-map");
+    expect(platformRefusal(grid, [], [], 1, MAP_W - 1, MAP_H - 2, "se")).toBe("off-map");
+    // The stopping track would run off the map: refused too.
+    expect(platformRefusal(grid, [], [], 1, MAP_W - 1, 5, "se")).toBe("track-blocked");
   });
 
-  it("gives a platform a 3-tile lane with two outward ports", () => {
-    const s: RailStructure = { id: 1, kind: "platform", ownerId: 1, owner: "you", tx: 8, ty: 3, w: 3, h: 2, view: "se" };
-    expect(laneTiles(s)).toEqual([[8, 3], [9, 3], [10, 3]]);
-    expect(stopTile(s)).toEqual([9, 3]);
+  it("gives a platform three stopping tiles of track beside it, with two outward ends", () => {
+    const s: RailStructure = { id: 1, kind: "platform", ownerId: 1, owner: "you", tx: 8, ty: 3, w: 1, h: 3, view: "se" };
+    expect(laneTiles(s)).toEqual([]);                          // no internal track
+    expect(platformTrack(s)).toEqual([[9, 3], [9, 4], [9, 5]]); // along its se side
+    expect(stopTile(s)).toEqual([9, 4]);
     const ports = railPorts(s);
-    expect(ports[0]).toEqual({ tx: 8, ty: 3, dir: 0b1000 });   // NW, the lane's far end
-    expect(ports[1]).toEqual({ tx: 10, ty: 3, dir: 0b0010 });  // SE, the near end
-    const vertical: RailStructure = { ...s, tx: 3, ty: 8, w: 2, h: 3, view: "ne" };
-    expect(laneTiles(vertical)).toEqual([[3, 8], [3, 9], [3, 10]]);
+    expect(ports[0]).toEqual({ tx: 9, ty: 3, dir: 0b0001 });   // NE end
+    expect(ports[1]).toEqual({ tx: 9, ty: 5, dir: 0b0100 });   // SW end
+    const across: RailStructure = { ...s, tx: 3, ty: 8, w: 3, h: 1, view: "sw" };
+    expect(platformTrack(across)).toEqual([[3, 9], [4, 9], [5, 9]]);
+    expect(platformTrack({ ...s, view: "nw" })).toEqual([[7, 3], [7, 4], [7, 5]]);
+    expect(platformTrack({ ...across, view: "ne" })).toEqual([[3, 7], [4, 7], [5, 7]]);
   });
 });
 
@@ -405,7 +413,7 @@ describe("RAIL-04 one train per connected owner component", () => {
 
   it("routes from the depot exit to a platform lane", () => {
     const { state, a } = twoLines();
-    const route = railPath(state, 1, [[13, 5]], new Set(laneTiles(a.source).map(([x, y]) => tIdx(x, y))));
+    const route = railPath(state, 1, [[13, 5]], new Set(platformTrack(a.source).map(([x, y]) => tIdx(x, y))));
     expect(route).not.toBeNull();
     expect(route?.[0]).toEqual([13, 5]);
     expect(route?.[route.length - 1]).toEqual([9, 3]);
@@ -735,7 +743,7 @@ describe("the Railway panel's model", () => {
       route: [[10, 10], [11, 10], [12, 10]], dist: 1.5, planRevision: 0, dwellMs: 0, dirBit: 0b0010, resold: false,
     });
     const moving = trainItems(state);
-    expect(moving.map((i) => i.sprite).sort()).toEqual(["car-box_se", "car-loco_se", "car-tank_se", "car-tender_se"]);
+    expect(moving.map((i) => i.sprite).sort()).toEqual(["car-box_se", "car-flat_se", "car-loco_se", "car-tank_se", "car-tender_se"]);
     for (const item of moving) expect(typeof item.fx).toBe("number");
     // With no atlas installed, art that does not exist is skipped, not faked.
     const stub = { has: (n: string) => n.startsWith("car-loco") };

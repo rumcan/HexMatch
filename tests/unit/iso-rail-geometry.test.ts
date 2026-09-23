@@ -286,7 +286,9 @@ describe("RAIL-03 platform and depot lanes", () => {
 
   it("runs the internal track along the lane axis, on all four rotations", () => {
     for (const view of RAIL_VIEWS) {
-      for (const kind of ["platform", "depot"] as const) {
+      // Playtest (2026-09): a platform has no internal lane any more — its train
+      // stops on ordinary rail beside it — so only the depot has one.
+      for (const kind of ["depot"] as const) {
         const { state, s } = withJoins(view as RailView, kind);
         const layer = railDrawLayer(state);
         const lane = laneTiles(s);
@@ -305,7 +307,7 @@ describe("RAIL-03 platform and depot lanes", () => {
   });
 
   it("hands the renderer effective bytes: lanes folded in, owners, revision", () => {
-    const { state, s } = withJoins("se", "platform");
+    const { state, s } = withJoins("se", "depot");
     const layer = railDrawLayer(state);
     expect(layer.revision).toBe(state.rail.revision);
     // The lane is track the renderer can see, even though the LAYER has no
@@ -317,14 +319,17 @@ describe("RAIL-03 platform and depot lanes", () => {
       expect(layer.owner[y * MAP_W + x]).toBe(1);
     }
     // A player-built tile arrives with its own bits and owner.
-    const [jx, jy] = [s.tx - 1, s.ty];
+    const p0 = railPorts(s)[0];
+    const [jx, jy] = [p0.tx + DIR[p0.dir][0], p0.ty + DIR[p0.dir][1]];
     expect(layer.tile[jy * MAP_W + jx] & PRESENT).toBe(PRESENT);
     expect(layer.owner[jy * MAP_W + jx]).toBe(1);
   });
 
   it("joins the lane to the player's rail at every port — steel through, no stop", () => {
     for (const view of RAIL_VIEWS) {
-      for (const kind of ["platform", "depot"] as const) {
+      // Playtest (2026-09): a platform has no internal lane any more — its train
+      // stops on ordinary rail beside it — so only the depot has one.
+      for (const kind of ["depot"] as const) {
         const { state, s } = withJoins(view as RailView, kind);
         const layer = railDrawLayer(state);
         for (const port of railPorts(s)) {
