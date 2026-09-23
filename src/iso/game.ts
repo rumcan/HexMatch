@@ -1675,7 +1675,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const myTown = townForSeat(grid, seatForCamera);
       if (myTown) return { tx: myTown.tx, ty: myTown.ty };
     }
-    return grid.industries[0] ?? { tx: MAP_W / 2, ty: MAP_H / 2 };
+    const ind = grid.industries[0];
+    // Mobile pass (2026-09): the coached first game opens on a TOWN — its
+    // first instruction is "place your Factory next to a town", and a phone
+    // screen that shows only a farm leaves nothing to aim at.
+    if (opts.firstRun && ind && grid.towns.length) {
+      const near = [...grid.towns].sort((a, b) =>
+        Math.hypot(a.tx - ind.tx, a.ty - ind.ty) - Math.hypot(b.tx - ind.tx, b.ty - ind.ty))[0];
+      return { tx: near.tx, ty: near.ty };
+    }
+    return ind ?? { tx: MAP_W / 2, ty: MAP_H / 2 };
   })();
   // PERF-01: ONE effective dpr for the whole game — the browser's
   // devicePixelRatio capped by the live render policy (performance mode
