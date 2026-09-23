@@ -154,6 +154,7 @@ export default function App() {
     const cleanup = choice.mode === "ai"
       ? startIsoGame(ref.current, {
         role: "solo", portrait: choice.portrait, onQuitToMenu: quitToMenu,
+        conquest: choice.conquest === true,
         // run.world feedback: the very first game is coached, not toured.
         firstRun,
       })

@@ -110,7 +110,10 @@
   --display: "Cinzel", "Trajan Pro", "Palatino Linotype", "Book Antiqua", Georgia, serif;
   --serif: "Barlow Condensed", "Haettenschweiler", "Arial Narrow", "Segoe UI", system-ui, sans-serif;
   --sans: "Barlow Semi Condensed", "Segoe UI", system-ui, -apple-system, sans-serif;
-  --mono: "Special Elite", "Courier New", "Nimbus Mono PS", monospace;
+  /* Owner call (2026-09): the typewriter face (Special Elite) was hard to read.
+     Notes, prices and ledger text use the plain UI sans now; the variable name
+     stays so all 66 uses follow. Digits are tabular so columns still align. */
+  --mono: "Barlow Semi Condensed", "Segoe UI", system-ui, -apple-system, sans-serif;
 
   --r: 3px;             /* a hair of bevel; nothing here is a pill */
   --pad: 9px;
@@ -5268,3 +5271,14 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .tab { letter-spacing: .8px; font-size: 10.5px; white-space: nowrap; padding-left: 3px; padding-right: 3px; }
 .tab .tab-l { overflow: hidden; text-overflow: ellipsis; }
 .battle-turns { font-family: var(--serif, serif); font-size: 11px; color: var(--ink2, #c9b890); letter-spacing: .5px; }
+/* 2026-09: city-pick mode — the town halls you can upgrade glow */
+.label-upgrade {
+  background: linear-gradient(180deg, #ffd479, #e0a02a) !important; color: #1a1208 !important;
+  font-weight: 700; border: 1px solid #fff0c0 !important;
+  box-shadow: 0 0 0 3px rgba(255, 196, 64, .45), 0 0 18px rgba(255, 176, 46, .9) !important;
+  animation: coach-pulse 1.4s ease-in-out infinite;
+}
+
+/* 2026-09: the ex-typewriter text keeps its figures in columns */
+.pane-note, .cost-chip, .chip, .offer, .battle-mana-num, .tp-moves { font-variant-numeric: tabular-nums; }
+.pane-note { font-size: 12.5px; line-height: 1.45; }

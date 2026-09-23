@@ -727,8 +727,10 @@ export const INDUSTRY_BY_KEY: Record<string, IndustryDef> = Object.fromEntries(
 );
 
 // Placement quota per industry type (E3): every cargo must be present.
+// Owner call (2026-09): two of each resource and one gold mine — scarce sites
+// make monopolies (and so the #322 battles) a real part of a game.
 export const INDUSTRY_QUOTA: Record<string, number> = {
-  farm: 5, forest: 6, ore_mine: 5, quarry: 4, oil_rig: 3, gold_mine: 2,
+  farm: 2, forest: 2, ore_mine: 2, quarry: 2, oil_rig: 2, gold_mine: 1,
 };
 
 // ── Road vs rail (the core scoring split) ─────────────────────────────────
