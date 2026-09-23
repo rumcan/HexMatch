@@ -1467,7 +1467,7 @@ export function createOriginalUi(
     // (`RAIL_COSTS`) and the point from the same constant the scoreboard pays
     // (`VICTORY.platform`, aliased in rail.ts as PLATFORM_VP).
     { key: "rail", label: "Rail", sub: `${costMarkup(RAIL_COSTS.rail)} a tile · 0★` },
-    { key: "platform", label: "Platform", sub: `${costMarkup(RAIL_COSTS.platform)} · +${VICTORY.platform}★` },
+    { key: "platform", label: "Platform", sub: `${costMarkup(RAIL_COSTS.platform)} · +${VICTORY.platform}★ · track beside it included · R turns` },
     { key: "railway", label: "Railway", sub: "Lines · trains run on their own" },
     { key: "demolish", label: "Demolish", sub: "Refund 50%" },
   ];

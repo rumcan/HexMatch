@@ -239,7 +239,7 @@ import {
   createRailState, railPreview, buildRail, demolishRail, structureAt, hasRail, railDrawLayer,
   placePlatform, placeDepot, platformRefusal, depotRefusal, resolveAnchor,
   RAIL_COSTS, RAIL_REFUSAL_TEXT, footprintTiles,
-  railStructureItems, trainItems, autoTrains, assignLine, renameLine, buyTrain, startLine, recallTrain, sellTrain, tickTrains,
+  railStructureItems, trainItems, autoTrains, layPlatformTrack, assignLine, renameLine, buyTrain, startLine, recallTrain, sellTrain, tickTrains,
   rotateView, trainOccupies, trainBasedAt, railPanelRows, canPay, costEntries, resaleValue, demolishStructure, PLATFORM_VP,
   footprintFor, depotExit, RAIL_VIEWS, trainTile, ownerRailTiles as ownerRailTilesOf,
   railToWire, applyRailWire, clearRail, railLayerPatch, copyRailLayer,
@@ -2921,6 +2921,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const anchor = resolveAnchor(grid, railPlants(), ownerId, tx, ty, railView);
     if (!spend(p, RAIL_COSTS.platform)) return false;
     const built = placePlatform(rail, p.id, ownerId, tx, ty, railView, anchor);
+    layPlatformTrack(grid, track, rail, built);
     if (p.human) sfx.play("build");
     syncWorld();
     rescoreNow();       // RAIL-02: the platform's ★ rides the same rescore

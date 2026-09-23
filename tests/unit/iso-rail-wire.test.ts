@@ -47,9 +47,9 @@ function running() {
   const grid = flatGrid();
   const track = createTrack();
   const state = createRailState();
-  const source = placePlatform(state, "you", 1, 7, 3, "se", { kind: "industry", id: 0, tiles: [] });
-  const dest = placePlatform(state, "you", 1, 17, 3, "se", { kind: "plant", id: 0, tiles: [] });
-  buildRail(grid, track, state, 1, row(3, 10, 16));
+  const source = placePlatform(state, "you", 1, 7, 2, "sw", { kind: "industry", id: 0, tiles: [] });
+  const dest = placePlatform(state, "you", 1, 17, 2, "sw", { kind: "plant", id: 0, tiles: [] });
+  buildRail(grid, track, state, 1, row(3, 7, 19));
   buildRail(grid, track, state, 1, [[12, 3], [13, 4], [14, 3]]);   // a wye: no 90° T
   const depot = placeDepot(state, "you", 1, 13, 5, "ne");
   const plan = assignLine(state, 1, source.id, dest.id);

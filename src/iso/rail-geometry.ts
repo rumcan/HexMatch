@@ -138,18 +138,18 @@ export function levelCrossing(roadMask: number, railMask: number): boolean {
  * module builds. 0.32 is the platform's figure; it is within a fifth of a
  * screen pixel of the depot's at 1×.
  */
-export const RAIL_GAUGE = 0.32;
+export const RAIL_GAUGE = 0.24;   // owner call (2026-09): track 25% smaller (was 0.32)
 /** One rail's width. Also the art's figure (0.07 across). */
-export const RAIL_WIDTH = 0.07;
+export const RAIL_WIDTH = 0.0525;   // owner call (2026-09): track 25% smaller (was 0.07)
 /**
  * The dark "web" drawn under the rail head, so a 0.07-wide steel line reads as
  * a rail rather than as a painted stripe on the ballast. Not a separate object:
  * the head is stroked on top of it, concentric.
  */
-export const RAIL_WEB_WIDTH = 0.11;
+export const RAIL_WEB_WIDTH = 0.0825;   // owner call (2026-09): track 25% smaller (was 0.11)
 /** Sleeper (tie) dimensions. The art's lane draws 0.48 × 0.09. */
-export const TIE_LENGTH = 0.48;
-export const TIE_WIDTH = 0.09;
+export const TIE_LENGTH = 0.36;   // owner call (2026-09): track 25% smaller (was 0.48)
+export const TIE_WIDTH = 0.0675;   // owner call (2026-09): track 25% smaller (was 0.09)
 /**
  * Sleeper pitch on the absolute lattice. 0.23 in the art's platform lane; 0.25
  * here because 0.25 divides the half-tile exactly, so the half-integer ports are
@@ -158,13 +158,13 @@ export const TIE_WIDTH = 0.09;
  */
 export const TIE_SPACING = 0.25;
 /** The ballast bed, under the sleepers. */
-export const RAIL_BED_WIDTH = 0.62;
+export const RAIL_BED_WIDTH = 0.465;   // owner call (2026-09): track 25% smaller (was 0.62)
 /** The soft edge under the bed, on each side (the roads' shoulder, in miniature). */
-export const RAIL_BED_SHOULDER = 0.06;
+export const RAIL_BED_SHOULDER = 0.045;   // owner call (2026-09): track 25% smaller (was 0.06)
 /** A dead end's buffer stop: a beam across the rails, inset from the port. */
 export const RAIL_STOP_INSET = 0.1;
-export const RAIL_STOP_WIDTH = 0.1;
-export const RAIL_STOP_LENGTH = 0.54;
+export const RAIL_STOP_WIDTH = 0.075;   // owner call (2026-09): track 25% smaller (was 0.1)
+export const RAIL_STOP_LENGTH = 0.405;   // owner call (2026-09): track 25% smaller (was 0.54)
 /** A lone stub's piece of track, centred on its tile. */
 export const RAIL_STUB_LENGTH = 0.5;
 /** Crossing boards: how many, and the gap between them. */

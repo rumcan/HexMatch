@@ -83,7 +83,7 @@ import {
   depotRefusal, placeDepot, depotExit, stopTile, railPorts,
   structureAt, structuresOf, railComponents, ownerRailTiles,
   footprintTiles, trainsOf, assignLine, recallTrain, sellTrain, trainAtHome,
-  OCT_STEPS, octantOf, turnOk, effectiveMask,
+  OCT_STEPS, octantOf, turnOk, layPlatformTrack,
   type RailState, type RailView, type RailAnchor, type RailStructure, type RailRefusal,
 } from "./rail";
 
@@ -1862,14 +1862,13 @@ const railHeuristic = (ax: number, ay: number, bx: number, by: number) => {
  * touches it (the turn rule then leaves the first step free).
  */
 function laneHeadingInto(rail: RailState, ownerId: number, x: number, y: number): number {
-  for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]] as const) {
-    const nx = x + dx, ny = y + dy;
-    const s = structureAt(rail, nx, ny);
-    if (!s || s.ownerId !== ownerId) continue;
-    const toward = octantOf(x - nx, y - ny);
-    // The lane's port must point at (x,y): its effective mask carries the bit.
-    const d = x - nx === 1 ? 2 : x - nx === -1 ? 8 : y - ny === 1 ? 4 : 1;   // SE, NW, SW, NE
-    if (effectiveMask(rail, nx, ny) & d) return toward;
+  // A platform's "ports" are the two ends of its stopping track: a line that
+  // joins one carries on in the track's own direction.
+  for (const s of structuresOf(rail, ownerId, "platform")) {
+    for (const port of railPorts(s)) {
+      const [jx, jy] = portJoin(port);
+      if (jx === x && jy === y) return octantOf(DIR[port.dir][0], DIR[port.dir][1]);
+    }
   }
   return -1;
 }
@@ -2465,6 +2464,7 @@ export function executeRailMove(
         return null;
       }
       const s = placePlatform(rail, owner, ownerId, move.tx, move.ty, move.view, move.anchor);
+      layPlatformTrack(grid, track, rail, s);
       return {
         spent: { ...RAIL_COSTS.platform }, tiles: footprintTiles(s),
         label: "raises a rail platform (+1★)",

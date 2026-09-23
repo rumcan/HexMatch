@@ -23,9 +23,10 @@ SHEETS = {
     "train_ne-sw.png": ("sw", "se", ["loco", "tender", "box", "flat", "tank", "box2"]),
     "train_sw-ne.png": ("nw", "ne", ["loco", "tender", "box", "tank", "flat", "box2"]),
 }
-BOX_LEN = 0.8          # a boxcar is 0.8 railway tiles long (the pitch unit)
-WIDTH_T = 0.42         # car width, tiles
-ROOF_PX = 11           # roof height above the footprint at 1x
+SIZE = 0.75            # owner call (2026-09): trains 25% smaller than first cut
+BOX_LEN = 0.8 * SIZE   # a boxcar's length in railway tiles (the pitch unit)
+WIDTH_T = 0.42 * SIZE  # car width, tiles
+ROOF_PX = 11 * SIZE    # roof height above the footprint at 1x
 HW, HH = 32, 16
 
 def reading_order(boxes):

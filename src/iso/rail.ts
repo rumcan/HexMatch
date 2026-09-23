@@ -100,7 +100,10 @@ export const VIEW_OF_BIT: Record<number, RailView> = { [NE]: "ne", [SE]: "se", [
 
 /** Platform footprints by heading: the lane along NE/SW is 2 wide × 3 deep. */
 export const PLATFORM_FOOTPRINT: Record<RailView, [number, number]> = {
-  ne: [2, 3], sw: [2, 3], se: [3, 2], nw: [3, 2],
+  // Playtest (2026-09): the platform is one tile deep and three long, with NO
+  // track of its own. Its view names the side its track runs along: se/nw
+  // lie along y (track at x+1 / x-1), sw/ne along x (track at y+1 / y-1).
+  se: [1, 3], nw: [1, 3], sw: [3, 1], ne: [3, 1],
 };
 export const DEPOT_FOOTPRINT: [number, number] = [2, 2];
 
@@ -165,15 +168,13 @@ export const WAGON_OFFSET = LOCO_LEN / 2 + COUPLE_GAP + WAGON_LEN / 2;
  */
 export type CarKind = "loco" | "tender" | "box" | "tank" | "flat";
 export const CAR_LEN: Record<CarKind, number> = {
-  loco: 1.149, tender: 0.525, box: 0.8, tank: 0.742, flat: 0.686,
+  // 25% smaller than the first cut (owner call, 2026-09): boxcar = 0.6 tiles.
+  loco: 0.861, tender: 0.394, box: 0.6, tank: 0.556, flat: 0.515,
 };
 /** Buffer-to-buffer gap between two coupled cars, tiles. */
 export const CAR_GAP = 0.03;
-const WAGON_SETS: CarKind[][] = [["box", "box"], ["tank", "tank"], ["flat", "box"], ["box", "tank"]];
-
-/** The cars of a train, locomotive first. */
-export const consistOf = (t: Train): CarKind[] =>
-  ["loco", "tender", ...WAGON_SETS[Math.abs(t.id) % WAGON_SETS.length]];
+/** The cars of a train, locomotive first: every wagon kind, the oil tanker included. */
+export const consistOf = (_t: Train): CarKind[] => ["loco", "tender", "box", "tank", "flat"];
 
 /** Distance from the locomotive's centre (the train's position) to each car's centre. */
 export function carOffsets(cars: CarKind[]): number[] {
@@ -434,6 +435,9 @@ export const structuresOf = (state: RailState, ownerId: number, kind?: RailKind)
  * included in the structure's price.
  */
 export function laneTiles(s: RailStructure): [number, number][] {
+  // A platform has no internal track any more: its train stops on ordinary
+  // rail laid beside it (`platformTrack`).
+  if (s.kind === "platform") return [];
   const out: [number, number][] = [];
   const uAxis = s.view === "se" || s.view === "nw";
   if (uAxis) {
@@ -446,9 +450,33 @@ export function laneTiles(s: RailStructure): [number, number][] {
   return out;
 }
 
-/** The tile a train stops at: the middle of the lane. */
+/**
+ * Playtest (2026-09): the three tiles of ordinary rail a platform's train
+ * stands on — the row along the platform's track side, in axis order. They are
+ * laid for free with the platform (`layPlatformTrack`) and are player rail
+ * like any other: demolishable, and joined by the player's own drags.
+ */
+export function platformTrack(s: RailStructure): [number, number][] {
+  const out: [number, number][] = [];
+  if (s.view === "se" || s.view === "nw") {
+    const x = s.view === "se" ? s.tx + s.w : s.tx - 1;
+    for (let y = 0; y < s.h; y++) out.push([x, s.ty + y]);
+  } else {
+    const y = s.view === "sw" ? s.ty + s.h : s.ty - 1;
+    for (let x = 0; x < s.w; x++) out.push([s.tx + x, y]);
+  }
+  return out;
+}
+
+/** The track tiles a platform would get at this placement (before it exists). */
+export const platformTrackAt = (tx: number, ty: number, view: RailView): [number, number][] => {
+  const [w, h] = PLATFORM_FOOTPRINT[view];
+  return platformTrack({ id: 0, kind: "platform", ownerId: 0, owner: "", tx, ty, w, h, view, anchor: null });
+};
+
+/** The tile a train stops at: the middle of the lane (a platform: of its track). */
 export function stopTile(s: RailStructure): [number, number] {
-  const lane = laneTiles(s);
+  const lane = s.kind === "platform" ? platformTrack(s) : laneTiles(s);
   return lane[(lane.length - 1) >> 1];
 }
 
@@ -465,7 +493,7 @@ export interface RailPort {
  * face back at it.
  */
 export function railPorts(s: RailStructure): RailPort[] {
-  const lane = laneTiles(s);
+  const lane = s.kind === "platform" ? platformTrack(s) : laneTiles(s);
   const a = lane[0];
   const b = lane[lane.length - 1];
   const dx = b[0] - a[0], dy = b[1] - a[1];
@@ -689,7 +717,7 @@ export type RailRefusal =
   | "ok" | "off-map" | "water" | "occupied" | "road-parallel" | "crossing-curve"
   | "foreign-rail" | "component-conflict" | "no-anchor" | "anchor-taken"
   | "no-network" | "exit-blocked" | "overlap" | "anchor-range" | "train-in-way"
-  | "not-yours" | "missing";
+  | "not-yours" | "missing" | "track-blocked";
 
 export const RAIL_REFUSAL_TEXT: Record<RailRefusal, string> = {
   ok: "",
@@ -709,6 +737,7 @@ export const RAIL_REFUSAL_TEXT: Record<RailRefusal, string> = {
   "train-in-way": "A train is standing there.",
   "not-yours": "That isn't yours.",
   missing: "That is not there.",
+  "track-blocked": "The platform's track side is blocked — turn it (R) or move it.",
 };
 
 // ── placement: rail tiles ─────────────────────────────────────────────────
@@ -1090,6 +1119,12 @@ export function platformRefusal(
     if (grid.occupancy[tIdx(tx + x, ty + y)] >= 0 || grid.occupancy[tIdx(tx + x, ty + y)] === FIELD_OCC) return "occupied";
   }
   if (structures.some((s) => overlaps(s, tx, ty, w, h))) return "overlap";
+  // The track side must be free to lay the three stopping tiles on.
+  for (const [x, y] of platformTrackAt(tx, ty, view)) {
+    if (!railTerrainOk(grid, x, y)) return "track-blocked";
+    if (grid.occupancy[tIdx(x, y)] >= 0 || grid.occupancy[tIdx(x, y)] === FIELD_OCC) return "track-blocked";
+    if (structures.some((s) => overlaps(s, x, y, 1, 1))) return "track-blocked";
+  }
   const candidates = anchorCandidates(grid, factories, ownerId, tx, ty, view);
   if (!candidates.length) return "no-anchor";
   const chosen = anchor
@@ -1125,6 +1160,16 @@ export function placePlatform(
   state.structures.push(s);
   autotileRail(state, laneTiles(s));
   return s;
+}
+
+/**
+ * Lay a new platform's three stopping tiles as ordinary rail, free (they are
+ * part of the platform's price). Tiles a rule refuses (a road, say) are left
+ * for the player to sort out.
+ */
+export function layPlatformTrack(grid: Grid, track: Track, state: RailState, s: RailStructure): void {
+  const row = platformTrack(s);
+  buildRail(grid, track, state, s.ownerId, row);
 }
 
 // ── placement: depots ─────────────────────────────────────────────────────
@@ -1489,7 +1534,7 @@ export function lineRefusal(state: RailState, ownerId: number, sourceId: number,
 export function depotReaching(state: RailState, ownerId: number, platformId: number): RailStructure | null {
   const platform = structureById(state, platformId);
   if (!platform) return null;
-  const goals = new Set(laneTiles(platform).map(([x, y]) => tIdx(x, y)));
+  const goals = new Set(platformTrack(platform).map(([x, y]) => tIdx(x, y)));
   for (const depot of structuresOf(state, ownerId, "depot")) {
     const exit = depotExit(depot);
     if (railPath(state, ownerId, [[exit.tx, exit.ty]], goals)) return depot;
@@ -1517,7 +1562,7 @@ function depotReachesPlatform(
 ): boolean {
   const platform = structureById(state, platformId);
   if (!platform) return false;
-  const goals = new Set(laneTiles(platform).map(([x, y]) => tIdx(x, y)));
+  const goals = new Set(platformTrack(platform).map(([x, y]) => tIdx(x, y)));
   const exit = depotExit(depot);
   return !!railPath(state, ownerId, [[exit.tx, exit.ty]], goals);
 }
