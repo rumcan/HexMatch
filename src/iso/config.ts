@@ -298,6 +298,8 @@ export interface BattleRules {
    * feeds damage — `purged × damagePerGem` to the opponent, all at once.
    */
   damagePerGem: number;
+  /** Playtest (2026-09): damage per MATCHED gem (bomb blasts use `damagePerGem`). */
+  matchDamagePerGem?: number;
   /** A matched run of this length or more grants an extra turn (the "4+"). */
   extraTurnMinMatch: number;
   /** A special shape (match-5 / L / T / cross) grants an extra turn. */
@@ -339,6 +341,7 @@ export const BATTLE_RULES: BattleRules = {
   manaCap: 12,
   manaPerGem: 1,
   damagePerGem: 1,
+  matchDamagePerGem: 1,
   extraTurnMinMatch: 4,
   extraTurnOnShape: true,
   extraTurnOnCascade: 2,

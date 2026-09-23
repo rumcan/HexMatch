@@ -398,7 +398,7 @@ describe.skip("#187 Cancel ✕ disarms the tool instead of hiding a class", () =
     expect(inspect.textContent!.length).toBeGreaterThan(0);
   });
 
-  it("Esc, Q, the right button and a re-tap of the armed button each do the same", async () => {
+  it("Esc, Q, the right button and the Select button each put the tool down", async () => {
     const h = await playingBoot();
     const c = findSouthCorridor(h.grid)!;
     const [sx, sy] = h.tileScreenAt(c.hx, c.hy);
@@ -407,7 +407,6 @@ describe.skip("#187 Cancel ✕ disarms the tool instead of hiding a class", () =
       ["Esc", () => key("Escape")],
       ["Q", () => key("q")],
       ["right-click", () => { pointer("pointerdown", sx, sy, 2); pointer("pointerup", sx, sy, 2); }],
-      ["re-tap", () => buildBtn("harvester").click()],
       ["Select button", () => buildBtn("select").click()],
     ];
     for (const [name, fire] of doors) {
@@ -551,7 +550,9 @@ describe("#187 on a phone the map keeps the screen while placing", () => {
     expect(chip.querySelector(".tc-hint")!.textContent).toBe("");
   });
 
-  it("a re-tap of the armed Build button cancels there too", async () => {
+  // Playtest (2026-09): a re-tap ARMS, never toggles off (the game arms Dirt
+  // Road after setup, so a toggle turned "pick Dirt Road" into "put it down").
+  it("a re-tap of the armed Build button keeps the tool armed", async () => {
     viewport(390, 780);
     const h = await playingBoot();
     rich(h);                                       // a paved Road costs Ore
@@ -564,8 +565,6 @@ describe("#187 on a phone the map keeps the screen while placing", () => {
     (root.querySelector('.mnav-btn[data-view="build"]') as HTMLElement).click();
     expect(uiRoot().dataset.view, "reopening the sheet is the player's call").toBe("build");
     buildBtn("road").click();                      // the armed button, again
-    expect(h.tool).toBe("select");
-    await settle();
-    expect(uiRoot().dataset.view, "and the sheet stays open — a toggle is not a trap").toBe("build");
+    expect(h.tool).toBe("road");
   });
 });

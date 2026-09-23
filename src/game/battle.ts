@@ -85,6 +85,12 @@ export interface BattleState {
    * that seat's turn starts). Keys are `AbilityId`s.
    */
   cooldowns: [{ [id: string]: number }, { [id: string]: number }];
+  /**
+   * Playtest (2026-09): the seat that cast Frost / Iron Girders. Those
+   * obstacles hamper the OPPONENT only — they are cleared the moment the turn
+   * comes back to this seat. null = none standing.
+   */
+  obstaclesBy?: BattleSeat | null;
 }
 
 /** One entry in the replayable move log. B3 adds `{ t: "ability", … }`. */
@@ -275,6 +281,7 @@ export function createBattle(opts: BattleOptions): Battle {
     over: false,
     smog: [0, 0],
     cooldowns: [{}, {}],
+    obstaclesBy: null,
   };
 
   const moves: BattleMove[] = [];
@@ -298,6 +305,12 @@ export function createBattle(opts: BattleOptions): Battle {
     opp.extraTurn = false;
     if (!extraTurn) state.turn = 1 - mover as BattleSeat;
     state.turns++;
+    // Playtest (2026-09): the caster's obstacles lift when their turn returns
+    // — on a shared board they must never block the one who cast them.
+    if (state.obstaclesBy != null && state.turn === state.obstaclesBy) {
+      board.clearObstacles();
+      state.obstaclesBy = null;
+    }
     // A turn STARTS for `next`, so its cooldowns tick one — extra turns are
     // turns of yours too (a big cascade brings your girders back sooner).
     const cds = state.cooldowns[state.turn];
@@ -342,9 +355,18 @@ export function createBattle(opts: BattleOptions): Battle {
       }
     }
 
-    // damage — every gem a bomb's blast purged hits the opponent
+    // damage — every gem a bomb's blast purged hits the opponent, and
+    // (playtest 2026-09) every MATCHED gem does too, like Puzzle Quest's
+    // skulls: health has to move in an ordinary battle, not only on a bomb.
     const purged = passes.reduce((s, p) => s + p.purged, 0);
-    const damage = purged * rules.damagePerGem;
+    let matched = 0;
+    // Only true MATCH passes count (a blast pass has `biggest` 0 and its
+    // gems are already paid through `purged`).
+    for (const pass of passes) {
+      if (pass.biggest <= 0) continue;
+      for (const n of Object.values(pass.cleared)) matched += n ?? 0;
+    }
+    const damage = purged * rules.damagePerGem + matched * (rules.matchDamagePerGem ?? 0);
     if (damage > 0) opp.health = Math.max(0, opp.health - damage);
 
     // extra turn — a 4+ run, a special shape, or a real cascade of 2+ match
@@ -448,9 +470,11 @@ export function createBattle(opts: BattleOptions): Battle {
     const stolen: Partial<Record<Cargo, number>> = {};
     if (def.id === "girders") {
       girders = (await withRng(async () => board.seedObstacles(0, def.girders ?? 0))).girders;
+      state.obstaclesBy = seat;
     } else if (def.id === "frost") {
       frozen = (await withRng(async () =>
         board.seedObstacles(def.frostGems ?? 0, 0, def.frostHard ?? 2))).frost;
+      state.obstaclesBy = seat;
     } else if (def.id === "smog") {
       const oppSeat = 1 - seat as BattleSeat;
       state.smog[oppSeat] += def.matches ?? 1;
@@ -511,6 +535,7 @@ export function createBattle(opts: BattleOptions): Battle {
           over: state.over,
           smog: [...state.smog] as [number, number],
           cooldowns: [{ ...state.cooldowns[0] }, { ...state.cooldowns[1] }],
+          obstaclesBy: state.obstaclesBy ?? null,
         },
         moves: moves.map((m) => ({ ...m })),
         board: board.save(),
@@ -547,6 +572,7 @@ export function createBattle(opts: BattleOptions): Battle {
         state.winner = st.winner ?? null;
         state.over = st.over ?? false;
         state.smog = [st.smog?.[0] ?? 0, st.smog?.[1] ?? 0];
+        state.obstaclesBy = st.obstaclesBy ?? null;
         state.cooldowns = [
           { ...(st.cooldowns?.[0] ?? {}) },
           { ...(st.cooldowns?.[1] ?? {}) },
