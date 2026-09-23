@@ -83,9 +83,47 @@ def targets(h, boxart):
     s = (BOX_LEN + WIDTH_T) * HW / boxart.width
     return s, s, 0.66
 
+def bottom_profile(im):
+    """(xs, ys): the lowest solid pixel of every column — the wheel line."""
+    a = np.array(im)[:, :, 3] > 96
+    xs, ys = [], []
+    for x in range(a.shape[1]):
+        col = np.where(a[:, x])[0]
+        if len(col):
+            xs.append(x); ys.append(col[-1])
+    return np.array(xs, float), np.array(ys, float)
+
+
+def square_to_track(im, target):
+    """Shear a three-quarter car vertically so its wheel line climbs at the
+    game's 2:1 slope (`target` = dy/dx on screen). Verticals stay vertical.
+    The owner's sheets are drawn flatter than the tiles (~0.2 instead of 0.5),
+    which is what made a train on those tracks look skewed off its rails."""
+    xs, ys = bottom_profile(im)
+    lo, hi = np.percentile(xs, 12), np.percentile(xs, 88)
+    m = (xs >= lo) & (xs <= hi)
+    slope = np.polyfit(xs[m], ys[m], 1)[0]
+    k = float(np.clip(target - slope, -0.45, 0.45))
+    w, h = im.size
+    extra = int(abs(k) * w) + 2
+    off = extra if k < 0 else 0
+    # output (X, Y) <- input (X, Y - k*X - off)... Y = y + k*x + off
+    out = im.transform((w, h + extra), Image.AFFINE, (1, 0, 0, -k, 1, -off), resample=Image.BICUBIC)
+    bb = out.split()[3].point(lambda v: 255 if v > 24 else 0).getbbox()
+    return out.crop(bb), slope, k
+
+
+# The track's screen slope for each three-quarter sheet (before mirroring):
+# the nw sheet's cars run down-right, the sw sheet's up-right.
+TRACK_SLOPE = {"nw": 0.5, "sw": -0.5}
+
 made = 0
 for sheet, (h, mh, _) in SHEETS.items():
     cars = cut(sheet)
+    if h in TRACK_SLOPE:
+        for kind in list(cars):
+            cars[kind], was, k = square_to_track(cars[kind], TRACK_SLOPE[h])
+            print(f"{sheet} {kind}: slope {was:+.2f} -> sheared {k:+.2f}")
     sx, sy, ay = targets(h, cars["box"])
     for heading, flip in ((h, False), (mh, True)):
         if heading is None: continue
@@ -99,13 +137,27 @@ for sheet, (h, mh, _) in SHEETS.items():
             ox, oy = (W2 - w2) // 2, (H2 - h2) // 2
             canvas.alpha_composite(img, (ox, oy))
             name = f"car-{kind}_{heading}"
+            # Seat the car on the rails: a three-quarter car's ground point is
+            # its wheel line at the middle of the car, not a fixed fraction of
+            # the picture (the picture's height includes the roof).
+            anchor_y = round((oy + h2 * ay) / 2)
+            if heading in ("ne", "nw", "se", "sw"):
+                # Fit the near-side wheel line and read it at the car's middle;
+                # the track's centre runs half a car-width BEHIND those wheels
+                # (~2.5 px at 1x on these diagonals), so lift by that much.
+                cx_, cy_ = bottom_profile(canvas)
+                lo, hi = np.percentile(cx_, 12), np.percentile(cx_, 88)
+                keep = (cx_ >= lo) & (cx_ <= hi)
+                fit = np.polyfit(cx_[keep], cy_[keep], 1)
+                wheel_mid = fit[0] * (W2 / 2) + fit[1]
+                anchor_y = round((wheel_mid - WIDTH_T * HH * 2 / 2 * 2 ** 0.5) / 2)
             for z, tag in ((2, "2x"), (1, "1x"), (0.5, "0.5x")):
                 out = canvas if z == 2 else canvas.resize((W2 * z // 2 if z == 1 else W2 // 4, H2 // 2 if z == 1 else H2 // 4), Image.LANCZOS)
                 out.save(f"{OUT}/{name}@{tag}.png")
             man["sprites"][name] = {
                 "name": name, "kind": "car", "car": kind, "view": heading,
                 "w": W2 // 2, "h": H2 // 2,
-                "anchor": [W2 // 4, round((oy + h2 * ay) / 2)],
+                "anchor": [W2 // 4, anchor_y],
                 "footprint": [1, 1], "moving": True, "box2x": [W2, H2],
                 "lenTiles": lens[kind], "widthTiles": WIDTH_T,
                 "note": f"{kind} heading {heading}; owner-supplied art ({sheet}{', mirrored' if flip else ''}), cut by tools.",
