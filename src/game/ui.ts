@@ -1468,7 +1468,7 @@ export function createOriginalUi(
     // (`VICTORY.platform`, aliased in rail.ts as PLATFORM_VP).
     { key: "rail", label: "Rail", sub: `${costMarkup(RAIL_COSTS.rail)} a tile · 0★` },
     { key: "platform", label: "Platform", sub: `${costMarkup(RAIL_COSTS.platform)} · +${VICTORY.platform}★` },
-    { key: "railway", label: "Railway", sub: "Lines · trains · assign & sell" },
+    { key: "railway", label: "Railway", sub: "Lines · trains run on their own" },
     { key: "demolish", label: "Demolish", sub: "Refund 50%" },
   ];
   // RAIL-05 (#182): with the flag down the four railway buttons do not exist

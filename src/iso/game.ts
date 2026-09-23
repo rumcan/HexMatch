@@ -631,10 +631,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const railParam = (() => {
     try { return new URLSearchParams(location.search).get("rail"); } catch { return null; }
   })();
-  // Owner call (2026-09): railways don't exist yet — no URL switch turns them
-  // on in any build. The code stays for later; only tests (`opts.rail`) reach it.
-  void railParam;
-  const railAvailable = opts.rail ?? false;
+  // Owner call (2026-09): railways are back in the build menu for playtesting
+  // (Rail, Platform, Railway panel — trains spawn on their own, no depot).
+  // `?rail=0` hides them again; `opts.rail` still wins for tests.
+  const railAvailable = opts.rail ?? railParam !== "0";
   const loopParam = (() => {
     try { return new URLSearchParams(location.search).get("loop"); } catch { return null; }
   })();

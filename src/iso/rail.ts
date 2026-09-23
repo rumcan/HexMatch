@@ -1989,7 +1989,9 @@ export function railPanelRows(state: RailState, ownerId: number): RailPanelRow[]
       kind: "platform",
       label: `Platform (${s.view}) · ${anchor}`,
       detail: line ? `line: ${line.name}` : `${PLATFORM_VP}★ · not on a line`,
-      actions: line ? [] : (partnerId !== undefined ? ["assign"] : []),
+      // Playtest (2026-09): trains spawn on their own (`autoTrains`), so a
+      // platform offers nothing to click — connecting it by rail is the action.
+      actions: [],
       partnerId,
     });
   }
@@ -2037,7 +2039,7 @@ export function railPanelRows(state: RailState, ownerId: number): RailPanelRow[]
       // A blocked train stopped on its depot exit is home (see `trainAtHome`)
       // and offers its 50% sale rather than a recall that can never route.
       // #179: a train parked in its shed on a line can be started as well as sold.
-      actions: trainAtHome(state, t)
+      actions: t.depotId === 0 ? [] : trainAtHome(state, t)
         ? (t.status === "stored" && line ? ["start", "sell"] : ["sell"])
         : ["recall"],
     });
