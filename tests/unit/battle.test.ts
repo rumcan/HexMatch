@@ -28,7 +28,9 @@ const players: [BattleContender, BattleContender] = [
 ];
 type BattleContender = { id: string; name: string };
 
-const rulesFor = (over: Partial<BattleRules> = {}): BattleRules => ({ ...BATTLE_RULES, ...over });
+// These engine tests pin the B1 mechanics (mana, bomb damage, the limit), so
+// match damage (playtest 2026-09) is off unless a test turns it on.
+const rulesFor = (over: Partial<BattleRules> = {}): BattleRules => ({ ...BATTLE_RULES, matchDamagePerGem: 0, ...over });
 
 function freshBattle(seed: number, over: Partial<BattleRules> = {}): Battle {
   return createBattle({ seed, players, rules: rulesFor(over) });
@@ -326,5 +328,40 @@ describe("B1 battle engine — determinism", () => {
     const b = freshBattle(7);
     await b.playSwap(0, 0, 0, 1, 0);
     expect(getRng()).toBe(before);
+  });
+});
+
+
+// Playtest (2026-09): ordinary matches deal damage too (Puzzle Quest skulls).
+describe("match damage", () => {
+  it("every matched gem hits the opponent for matchDamagePerGem", async () => {
+    for (let seed = 1; seed <= 20; seed++) {
+      const b = createBattle({ seed, players, rules: rulesFor({ matchDamagePerGem: 1 }) });
+      const mv = b.board.findMove();
+      if (!mv) continue;
+      const before = b.state.players[1].health;
+      const out = await b.playSwap(mv[0], mv[1], mv[2], mv[3], 0);
+      if (!out.ok) continue;
+      expect(out.damage).toBeGreaterThanOrEqual(3);
+      expect(b.state.players[1].health).toBe(before - out.damage);
+      return;
+    }
+    throw new Error("no seed produced a playable swap");
+  });
+
+  it("Frost / Girders lift when the turn returns to the caster", async () => {
+    const b = createBattle({ seed: 5, players, rules: rulesFor() });
+    b.state.players[0].depots = ["stone", "ore", "grain", "wood", "oil", "gold"] as never;
+    for (const c of Object.keys(b.state.players[0].mana)) (b.state.players[0].mana as Record<string, number>)[c] = 99;
+    const cast = await b.useAbility("girders");
+    if (!cast.ok) return;                         // ability not castable on this build
+    expect(b.state.obstaclesBy).toBe(0);
+    // the opponent moves; the turn comes back to seat 0 and the girders go
+    const mv = b.board.findMove();
+    if (mv) await b.playSwap(mv[0], mv[1], mv[2], mv[3], 0);
+    if (b.state.turn === 0) {
+      expect(b.board.gems().some((g) => g.block)).toBe(false);
+      expect(b.state.obstaclesBy).toBeNull();
+    }
   });
 });

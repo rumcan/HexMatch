@@ -241,7 +241,8 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
   mid.innerHTML = `
     <div class="battle-vs">VS</div>
     <div class="battle-turn" data-turn="you">YOUR TURN</div>
-    <div class="battle-timer"><div class="battle-timer-fill"></div></div>`;
+    <div class="battle-timer"><div class="battle-timer-fill"></div></div>
+    <div class="battle-turns"></div>`;
   const side1 = h("div", `battle-side s-${oppSeat}`);
   side1.innerHTML = sideHtml(opts.contenders[oppSeat]);
   card.append(side0, center, side1);
@@ -308,6 +309,15 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
   let timerHandle = 0;
   let timerStart = 0;
   const paintTurn = () => {
+    // Playtest (2026-09): the turn limit is part of the rules, so it is on
+    // screen — at the limit the higher health wins.
+    const turnsEl = mid.querySelector(".battle-turns") as HTMLElement | null;
+    if (turnsEl) {
+      const left = Math.max(0, rules.turnLimit - battle.state.turns);
+      turnsEl.textContent = battle.state.over ? ""
+        : `Turn ${Math.min(battle.state.turns + 1, rules.turnLimit)} / ${rules.turnLimit}`
+          + (left <= 3 ? " — at the limit, higher health wins" : "");
+    }
     const mine = battle.state.turn === mySeat;
     turnEl.textContent = battle.state.over ? "BATTLE OVER"
       : mine ? "YOUR TURN" : `${opp.name.toUpperCase()}'S TURN`;
@@ -846,6 +856,12 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
       verdict === "win" ? `${me.name} takes it — ${opp.name} is beaten back.`
       : verdict === "lose" ? `${opp.name} wins the field this time.`
       : "Both sides hold.";
+    // Playtest (2026-09): say WHY when the turn limit, not a knockout, decided it.
+    const [p0, p1] = battle.state.players;
+    if (p0.health > 0 && p1.health > 0 && battle.state.turns >= rules.turnLimit) {
+      summary.textContent = `Turn limit reached (${rules.turnLimit}) — ${
+        verdict === "draw" ? "health was level" : "the higher health wins"} (${me.health} vs ${opp.health}).`;
+    }
     const cons = verdict === "win" ? opts.consequence?.win
       : verdict === "lose" ? opts.consequence?.lose : opts.consequence?.draw;
     (result.querySelector(".battle-consequence") as HTMLElement).textContent = cons ?? "";

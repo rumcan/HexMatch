@@ -24,7 +24,9 @@ const fresh = (seed: number): Battle =>
       { id: "a", name: "A", depots: ALL },
       { id: "b", name: "B", depots: ALL },
     ],
-    rules: BATTLE_RULES,
+    // The policy tests pin ability choice; match damage (playtest 2026-09)
+    // would make any swap lethal at 3 health, so it is off here.
+    rules: { ...BATTLE_RULES, matchDamagePerGem: 0 },
   });
 
 const playOut = (b: Battle, mv: RivalMove) =>

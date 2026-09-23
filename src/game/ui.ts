@@ -1415,7 +1415,6 @@ export function createOriginalUi(
    * or cancels, and the hint's ✕ is only offered when cancelling is a move the
    * game actually has.
    */
-  let armedTool: UiTool | null = null;
   let placementMandatory = false;
   let dismissedBannerKey: string | null = null;
   let lastSabKey = "\u0000";
@@ -1488,13 +1487,13 @@ export function createOriginalUi(
     b.dataset.tool = t.key;
     b.innerHTML = `<div class="bb-mid"><b>${t.label}</b><small>${t.sub}</small></div>`;
     b.onclick = () => {
-      // #187: the button is its own toggle — a re-tap of the tool already in
-      // the hand puts it down, the same gesture as the hint's ✕, Esc and the
-      // right button, so the Build sheet is never a one-way door. Not while
-      // the phase OWES a placement (the opening Factory/Depot): there is
-      // nothing to cancel then, and the tap simply keeps the tool armed.
-      if (t.key !== "select" && t.key === armedTool && !placementMandatory) hooks.onTool("select");
-      else hooks.onTool(t.key);
+      // Playtest (2026-09): a tap ARMS the tool, always. It used to toggle a
+      // re-tapped tool off (#187) — and the game arms Dirt Road for you after
+      // setup, so "pick Dirt Road, drag" silently put the tool DOWN and the
+      // drag built nothing. Putting a tool down is the chip's ✕, Esc, the
+      // right button or Select — never a second tap on the same button.
+      void placementMandatory;
+      hooks.onTool(t.key);
     };
     if (t.key === "harvester") depotSub = b.querySelector("small");
     buildList.appendChild(b);
@@ -3728,7 +3727,6 @@ export function createOriginalUi(
     // the hint's ✕, Esc and the right button — except while the phase still
     // OWES a placement (the opening Factory, the opening Depot), where there
     // is nothing to cancel and a ✕ would be a dead button.
-    armedTool = toolState;
     placementMandatory = state.phase === "setup-factory" || state.phase === "setup-harvester";
     // MOBILE-01: the held-tool chip. A touch hand has no right-click and no Q,
     // so while anything but the pointer is in the hand the chip names it and

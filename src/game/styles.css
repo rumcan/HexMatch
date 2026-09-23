@@ -5267,3 +5267,4 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 /* five tabs in one strip: one line each */
 .tab { letter-spacing: .8px; font-size: 10.5px; white-space: nowrap; padding-left: 3px; padding-right: 3px; }
 .tab .tab-l { overflow: hidden; text-overflow: ellipsis; }
+.battle-turns { font-family: var(--serif, serif); font-size: 11px; color: var(--ink2, #c9b890); letter-spacing: .5px; }
