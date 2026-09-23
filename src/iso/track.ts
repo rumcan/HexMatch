@@ -346,6 +346,7 @@ export const mergedBitsAt = (t: Track, tx: number, ty: number): number =>
  */
 export function buildRefusal(
   grid: Grid, kind: TrackKind, tx: number, ty: number, network?: Set<number>,
+  crossing?: "x" | "y",
 ): string | null {
   if (!inMapT(tx, ty)) return "out-of-bounds";
   const i = tIdx(tx, ty);
@@ -357,6 +358,15 @@ export function buildRefusal(
   if (grid.occupancy[i] >= 0 || grid.occupancy[i] === TOWN_OCC) return "occupied";
   // RES-FIELDS: a wheat field or tree block stands here until demolished.
   if (grid.occupancy[i] === FIELD_OCC) return "field";
+  // Playtest (2026-09): the railway and the Depots are built things. A road
+  // never runs along a rail line or over a platform or a Depot lot; it may only
+  // CROSS a straight rail at a right angle (`crossing` is the axis the road
+  // runs along through this tile — only a drag knows it).
+  const built = grid.builtAt?.(tx, ty) ?? null;
+  if (built === "platform" || built === "depot") return "occupied";
+  if (built === "rail") return "rail";
+  if (built === "rail-x" && crossing !== "y") return "rail";
+  if (built === "rail-y" && crossing !== "x") return "rail";
   // The premium paved Road additionally needs flat ground (TRANSPORT.onRough);
   // the basic Dirt Road builds on rough.
   if (terrain === ROUGH && !TRANSPORT[kind].onRough) return "rough";
@@ -377,8 +387,21 @@ export function buildRefusal(
  */
 export function canBuildOn(
   grid: Grid, kind: TrackKind, tx: number, ty: number, network?: Set<number>,
+  crossing?: "x" | "y",
 ): boolean {
-  return buildRefusal(grid, kind, tx, ty, network) === null;
+  return buildRefusal(grid, kind, tx, ty, network, crossing) === null;
+}
+
+/**
+ * The axis a drag runs along THROUGH tile `i` of `path` — both of its steps
+ * on the same axis — or undefined for a bend or an end. Only a straight pass
+ * may cross a rail line.
+ */
+function passAxis(path: [number, number][], i: number): "x" | "y" | undefined {
+  const a = path[i - 1], b = path[i], c = path[i + 1];
+  if (!a || !c) return undefined;
+  const ax1 = a[0] !== b[0] ? "x" : "y", ax2 = c[0] !== b[0] ? "x" : "y";
+  return ax1 === ax2 ? ax1 : undefined;
 }
 
 /** Who owns the track at (tx,ty)? 0 = no track owner. */
@@ -836,7 +859,10 @@ export function previewDrag(
 
   for (let i = 0; i < path.length; i++) {
     const [x, y] = path[i];
-    if (!canBuildOn(grid, kind, x, y, growing)) { truncated = true; break; }
+    // PP-15 (below): the builder's own building is stepped over — checked
+    // first, because a Depot lot is "built" ground (`Grid.builtAt`).
+    if (structures !== undefined && structures.has(tIdx(x, y))) continue;
+    if (!canBuildOn(grid, kind, x, y, growing, passAxis(path, i))) { truncated = true; break; }
     // PP-15: a tile the builder's OWN building stands on is stepped over — it
     // is neither built nor charged, and it consumes none of the free allowance.
     // The path may run under the plant to reach the ground beyond (that is a

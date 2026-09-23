@@ -100,7 +100,18 @@ export interface Grid {
   publicRoads?: [number, number][];
   occupancy: Int16Array;      // per tile: industry list index or -1 (towns use -2)
   seed: number;
+  /**
+   * Playtest (2026-09): what the RUNNING GAME has built on a tile that the map
+   * itself does not stamp in `occupancy` — the railway and the truck Depots.
+   * Set by the game; absent in tests and tools, where nothing is built.
+   *   "rail-x"/"rail-y": a straight rail tile along x / along y (a road may
+   *   cross it at a right angle); "rail": any other rail tile; "platform": a
+   *   rail structure; "depot": a truck Depot's 2×2 lot.
+   */
+  builtAt?: (tx: number, ty: number) => GridBuilt | null;
 }
+
+export type GridBuilt = "rail" | "rail-x" | "rail-y" | "platform" | "depot";
 
 function makeTerrain(rng: () => number): Uint8Array {
   const t = new Uint8Array(MAP_W * MAP_H).fill(GRASS);

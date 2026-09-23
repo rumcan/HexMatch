@@ -781,6 +781,7 @@ export function railTileRefusal(
   // plant, a platform, or a train standing on it.
   if (grid.occupancy[tIdx(tx, ty)] >= 0 || grid.occupancy[tIdx(tx, ty)] === FIELD_OCC) return "occupied";
   if (structureAt(state, tx, ty)) return "occupied";
+  if (grid.builtAt?.(tx, ty) === "depot") return "occupied";
   if (trainOccupies(state, tx, ty)) return "train-in-way";
   const owner = state.rail.owner[tIdx(tx, ty)];
   if ((state.rail.tile[tIdx(tx, ty)] & RAIL_PRESENT) && owner !== ownerId) return "foreign-rail";
@@ -1117,6 +1118,9 @@ export function platformRefusal(
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
     if (!railTerrainOk(grid, tx + x, ty + y)) return "water";
     if (grid.occupancy[tIdx(tx + x, ty + y)] >= 0 || grid.occupancy[tIdx(tx + x, ty + y)] === FIELD_OCC) return "occupied";
+    // Nothing else built there: a Depot lot, or anyone's rail.
+    const b = grid.builtAt?.(tx + x, ty + y);
+    if (b === "depot" || b === "rail" || b === "rail-x" || b === "rail-y") return "occupied";
   }
   if (structures.some((s) => overlaps(s, tx, ty, w, h))) return "overlap";
   // The track side must be free to lay the three stopping tiles on.
@@ -1124,6 +1128,7 @@ export function platformRefusal(
     if (!railTerrainOk(grid, x, y)) return "track-blocked";
     if (grid.occupancy[tIdx(x, y)] >= 0 || grid.occupancy[tIdx(x, y)] === FIELD_OCC) return "track-blocked";
     if (structures.some((s) => overlaps(s, x, y, 1, 1))) return "track-blocked";
+    if (grid.builtAt?.(x, y) === "depot") return "track-blocked";
   }
   const candidates = anchorCandidates(grid, factories, ownerId, tx, ty, view);
   if (!candidates.length) return "no-anchor";
@@ -1874,10 +1879,17 @@ export function autoTrains(state: RailState, ownerId: number): boolean {
   let changed = false;
   const comp = railComponents(state, ownerId);
   const compOf = (s: RailStructure): number => comp.get(tIdx(...stopTile(s))) ?? 0;
+  const drivable = (a: RailStructure, b: RailStructure): [number, number][] | null =>
+    railPath(state, ownerId, [stopTile(a)], new Set([tIdx(...stopTile(b))]));
   for (const line of state.lines.filter((l) => l.ownerId === ownerId)) {
     const src = structureById(state, line.source), dst = structureById(state, line.dest);
-    if (src && dst && compOf(src) !== 0 && compOf(src) === compOf(dst)) continue;
+    const joined = !!src && !!dst && compOf(src) !== 0 && compOf(src) === compOf(dst);
+    // A train that is stuck because its line cannot be DRIVEN (a 90° bend on
+    // the way) goes too, and comes back the moment the track is fixed.
+    const stuck = state.trains.some((t) => t.lineId === line.id && t.status === "blocked");
+    if (joined && !(stuck && !drivable(src!, dst!))) continue;
     state.lines.splice(state.lines.indexOf(line), 1);
+    for (const t of state.trains.filter((x) => x.lineId === line.id)) state.trails?.delete(t.id);
     state.trains = state.trains.filter((t) => t.lineId !== line.id);
     changed = true;
   }
@@ -1887,16 +1899,36 @@ export function autoTrains(state: RailState, ownerId: number): boolean {
     if (state.lines.some((l) => l.source === src.id)) continue;
     const home = compOf(src);
     if (!home) continue;
-    const dst = plats.find((p) => p.anchor?.kind === "plant" && compOf(p) === home);
-    if (!dst) continue;
+    // Only a line a train can actually DRIVE gets a train (the component says
+    // the rails touch; the route also honours the 45° rule).
+    let dst: RailStructure | undefined;
+    let route: [number, number][] | null = null;
+    for (const p of plats) {
+      if (p.anchor?.kind !== "plant" || compOf(p) !== home) continue;
+      route = drivable(src, p);
+      if (route && route.length > 1) { dst = p; break; }
+    }
+    if (!dst || !route) continue;
     const made = createLine(state, ownerId, src.id, dst.id);
     if (!made.ok || !made.line) continue;
-    const [tx, ty] = stopTile(src);
-    state.trains.push({
+    const train: Train = {
       id: state.seq++, ownerId, lineId: made.line.id, depotId: 0,
-      status: "stored", target: "dest", route: [[tx, ty]], dist: 0,
-      planRevision: -1, dwellMs: 0, dirBit: 0, resold: false,
-    });
+      status: "moving", target: "dest", route, dist: 0,
+      planRevision: state.rail.revision, dwellMs: 0,
+      dirBit: dirBitBetween(route[0], route[1]), resold: false,
+    };
+    state.trains.push(train);
+    // The train starts already PULLED OUT of the platform: the locomotive a
+    // train's length along the route, every car behind it on real track — never
+    // five cars stacked on the stop tile (the platform's track dead-ends
+    // behind it, so there is no room to lay them out backwards).
+    const cum = polyline(route);
+    const lead = Math.min(trainLength(train) - CAR_LEN.loco / 2, cum[cum.length - 1] - 0.01);
+    const trail = trailOf(state, train);
+    trail.length = 0;
+    trail.push([route[0][0], route[0][1]]);
+    recordTrail(state, train, cum, 0, lead);
+    train.dist = lead;
     changed = true;
   }
   return changed;
