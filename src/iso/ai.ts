@@ -82,7 +82,8 @@ import {
   platformRefusal, resolveAnchor, placePlatform,
   depotRefusal, placeDepot, depotExit, stopTile, railPorts,
   structureAt, structuresOf, railComponents, ownerRailTiles,
-  footprintTiles, trainsOf, assignLine, recallTrain, sellTrain, depotReaching, trainAtHome,
+  footprintTiles, trainsOf, assignLine, recallTrain, sellTrain, trainAtHome,
+  OCT_STEPS, octantOf, turnOk, effectiveMask,
   type RailState, type RailView, type RailAnchor, type RailStructure, type RailRefusal,
 } from "./rail";
 
@@ -1849,9 +1850,29 @@ export function railStepCost(
   return grid.terrain[i] === ROUGH ? COST_ROUGH : COST_FLAT;
 }
 
-/** Rail's own admissible heuristic: the cheapest step costs `RAIL_OWN_COST`. */
-const railHeuristic = (ax: number, ay: number, bx: number, by: number) =>
-  (Math.abs(ax - bx) + Math.abs(ay - by)) * RAIL_OWN_COST;
+/** Rail's own admissible heuristic: octile distance at the cheapest step cost. */
+const railHeuristic = (ax: number, ay: number, bx: number, by: number) => {
+  const dx = Math.abs(ax - bx), dy = Math.abs(ay - by);
+  return (Math.max(dx, dy) + (Math.SQRT2 - 1) * Math.min(dx, dy)) * RAIL_OWN_COST;
+};
+
+/**
+ * The heading a train has when it steps off a structure lane onto (x,y): the
+ * direction from the lane tile whose port faces (x,y), or -1 when no lane
+ * touches it (the turn rule then leaves the first step free).
+ */
+function laneHeadingInto(rail: RailState, ownerId: number, x: number, y: number): number {
+  for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]] as const) {
+    const nx = x + dx, ny = y + dy;
+    const s = structureAt(rail, nx, ny);
+    if (!s || s.ownerId !== ownerId) continue;
+    const toward = octantOf(x - nx, y - ny);
+    // The lane's port must point at (x,y): its effective mask carries the bit.
+    const d = x - nx === 1 ? 2 : x - nx === -1 ? 8 : y - ny === 1 ? 4 : 1;   // SE, NW, SW, NE
+    if (effectiveMask(rail, nx, ny) & d) return toward;
+  }
+  return -1;
+}
 
 /**
  * A* from (ax,ay) to (bx,by) for a NEW rail drag. Same shape and same
@@ -1865,13 +1886,22 @@ export function planRailRoute(
   ax: number, ay: number, bx: number, by: number,
 ): [number, number][] | null {
   if (!inMapT(ax, ay) || !inMapT(bx, by)) return null;
-  const start = tIdx(ax, ay), goal = tIdx(bx, by);
+  const goal = tIdx(bx, by);
   if (railStepCost(grid, track, rail, ownerId, ax, ay) === IMPASSABLE) return null;
   if (railStepCost(grid, track, rail, ownerId, bx, by) === IMPASSABLE) return null;
   // The search box: the endpoints plus a margin of detour room.
   const cx = (ax + bx) >> 1, cy = (ay + by) >> 1;
   const box = (Math.abs(ax - bx) + Math.abs(ay - by)) / 2 + 14;
   const inBox = (x: number, y: number) => Math.abs(x - cx) <= box && Math.abs(y - cy) <= box;
+  // Playtest (2026-09): the search state is (tile, heading) over EIGHT moves,
+  // and a step may turn at most 45° — the rival lays track a train can drive.
+  // Key = tile·9 + heading (8 = none yet). A start or goal beside a platform
+  // lane carries the lane's heading, so the line meets the lane without a 90°.
+  const startOct = laneHeadingInto(rail, ownerId, ax, ay);
+  const goalLane = laneHeadingInto(rail, ownerId, bx, by);
+  const goalOut = goalLane < 0 ? -1 : (goalLane + 4) % 8;   // the step from the goal into the lane
+  const start = tIdx(ax, ay) * 9 + (startOct < 0 ? 8 : startOct);
+  const hasRoad = (x: number, y: number) => roadAt(track, x, y) !== 0;
 
   const gScore = new Map<number, number>([[start, 0]]);
   const cameFrom = new Map<number, number>();
@@ -1892,26 +1922,35 @@ export function planRailRoute(
       break;
     }
     if (cur === -1) break;
-    if (cur === goal) {
+    const tile = Math.floor(cur / 9), oct = cur % 9;
+    if (tile === goal && (goalOut < 0 || oct === 8 || turnOk(oct, goalOut))) {
       const tiles: [number, number][] = [];
       let n: number | undefined = cur;
       while (n !== undefined) {
-        tiles.push([n % MAP_W, (n / MAP_W) | 0]);
+        const t = Math.floor(n / 9);
+        tiles.push([t % MAP_W, (t / MAP_W) | 0]);
         n = cameFrom.get(n);
       }
       tiles.reverse();
       return tiles;
     }
     closed.add(cur);
-    const cxn = cur % MAP_W, cyn = (cur / MAP_W) | 0;
-    for (const d of DIRS) {
-      const nx = cxn + DIR[d][0], ny = cyn + DIR[d][1];
+    const cxn = tile % MAP_W, cyn = (tile / MAP_W) | 0;
+    for (let o = 0; o < 8; o++) {
+      if (oct !== 8 && !turnOk(oct, o)) continue;
+      const [sx, sy] = OCT_STEPS[o];
+      const diag = sx !== 0 && sy !== 0;
+      const nx = cxn + sx, ny = cyn + sy;
       if (!inMapT(nx, ny) || !inBox(nx, ny)) continue;
-      const ni = tIdx(nx, ny);
+      // A level crossing is straight across: no diagonal on or off a road
+      // tile, and no turn on one.
+      if (diag && (hasRoad(cxn, cyn) || hasRoad(nx, ny))) continue;
+      if (hasRoad(cxn, cyn) && oct !== 8 && o !== oct) continue;
+      const ni = tIdx(nx, ny) * 9 + o;
       if (closed.has(ni)) continue;
       const c = railStepCost(grid, track, rail, ownerId, nx, ny);
       if (!isFinite(c)) continue;
-      const tentative = (gScore.get(cur) ?? Infinity) + c;
+      const tentative = (gScore.get(cur) ?? Infinity) + (diag ? c * Math.SQRT2 : c);
       if (tentative >= (gScore.get(ni) ?? Infinity)) continue;
       cameFrom.set(ni, cur);
       gScore.set(ni, tentative);
@@ -1989,7 +2028,8 @@ function endpointSources(
 }
 
 /** Is this owner's component already holding a train (the one-train rule)? */
-function componentBusy(rail: RailState, ownerId: number, depot: RailStructure): boolean {
+/** Kept for when trains can be bought again (depots return). */
+export function componentBusy(rail: RailState, ownerId: number, depot: RailStructure): boolean {
   const comp = railComponents(rail, ownerId);
   const ex = depotExit(depot);
   const home = comp.get(tIdx(ex.tx, ex.ty)) ?? 0;
@@ -2258,16 +2298,10 @@ export function planRailMove(
       }
       return null;   // broken and unconnectable: the recall/sell above drains it
     }
-    const depot = depotReaching(rail, ownerId, indPlat.id);
-    if (!depot) {
-      const move = planDepotSpot(state, rail, ownerId);
-      if (move) return move;
-      return null;   // track with nowhere for the shed: wait
-    }
-    if (!componentBusy(rail, ownerId, depot)) {
-      return { kind: "train", sourceId: indPlat.id, destId: plantPlat.id, cost: { ...RAIL_COSTS.train } };
-    }
-    return null;     // the line is running
+    // Playtest (2026-09): no depot and no train to buy — a connected
+    // industry→plant pair gets its train automatically (`autoTrains`), for the
+    // rival exactly as for the player. The line is done.
+    return null;
   }
 
   // 3. A new line — or the missing half of one.
@@ -2377,7 +2411,8 @@ const DEPOT_EXIT_GEOM: Record<RailView, { face: number; du: number; dv: number }
  * the first `depotRefusal`-legal spot wins. The refusal is the shared rule:
  * legal ground, no overlap, and an exit that joins the network.
  */
-function planDepotSpot(state: EconomyState, rail: RailState, ownerId: number): RailMove | null {
+/** Kept for when depots return (players buy trains). */
+export function planDepotSpot(state: EconomyState, rail: RailState, ownerId: number): RailMove | null {
   const { grid } = state;
   const plats = structuresOf(rail, ownerId, "platform");
   if (!plats.length) return null;

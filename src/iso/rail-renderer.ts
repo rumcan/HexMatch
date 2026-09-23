@@ -37,7 +37,7 @@ import { MAP_W, MAP_H } from "../game/config";
 import { detailTierFor, type DetailTier } from "./detail-tiers";
 import {
   RAIL_BED_SHOULDER, RAIL_BED_WIDTH, RAIL_WEB_WIDTH, RAIL_WIDTH, TIE_WIDTH,
-  railTile, type GroundPoint, type RailTile,
+  railTile, DIAG_N, DIAG_E, DIAG_S, DIAG_W, type GroundPoint, type RailTile,
 } from "./rail-geometry";
 
 type Ctx2D = CanvasRenderingContext2D;
@@ -45,6 +45,8 @@ type Ctx2D = CanvasRenderingContext2D;
 /** The rail layer's PRESENT bit — the same one `track.ts` and `rail.ts` use. */
 const PRESENT = 0b10000;
 const BITS = 0b1111;
+/** The diagonal link bits (`RAIL_DE`/`RAIL_DS` in rail.ts), re-declared like PRESENT. */
+const DE = 32, DS = 64;
 
 /**
  * The rail layer as the renderer reads it: the EFFECTIVE masks (a structure's
@@ -163,7 +165,16 @@ export function railTilesIn(
     for (let tx = tx0; tx <= tx1; tx++) {
       const cell = cellAt(layer.tile, tx, ty);
       if ((cell & PRESENT) === 0) continue;
-      out.push(railTile(tx, ty, cell, maskAt, roadMaskAt(world, tx, ty)));
+      // Playtest (2026-09): the tile's diagonal arms. A link is stored on the
+      // smaller-x tile, so the west and north arms are read off the neighbour;
+      // both ends must be rail.
+      const on = (x: number, y: number) => (cellAt(layer.tile, x, y) & PRESENT) !== 0;
+      let diag = 0;
+      if ((cellAt(layer.tile, tx - 1, ty - 1) & DS) && on(tx - 1, ty - 1)) diag |= DIAG_N;
+      if ((cell & DE) && on(tx + 1, ty - 1)) diag |= DIAG_E;
+      if ((cell & DS) && on(tx + 1, ty + 1)) diag |= DIAG_S;
+      if ((cellAt(layer.tile, tx - 1, ty + 1) & DE) && on(tx - 1, ty + 1)) diag |= DIAG_W;
+      out.push(railTile(tx, ty, cell, maskAt, roadMaskAt(world, tx, ty), diag));
     }
   }
   return out;

@@ -21,7 +21,7 @@ import {
   anchorCandidates, resolveAnchor, platformRefusal, placePlatform, overlaps,
   depotRefusal, placeDepot, depotExit, laneTiles, stopTile, railPorts, footprintFor, rotateView,
   railComponents, railPath, ownerRailTiles,
-  lineRefusal, assignLine, autoTrains, createLine, renameLine, buyTrain, startLine, LINE_NAME_MAX, planLeg, tickTrains, trainTile, trainOccupies, demolishStructure,
+  lineRefusal, assignLine, autoTrains, octPath, diagLinked, octantOf, turnOk, carPlacements, carOffsets, consistOf, OCT_NAMES, type Train, createLine, renameLine, buyTrain, startLine, LINE_NAME_MAX, planLeg, tickTrains, trainTile, trainOccupies, demolishStructure,
   recallTrain, sellTrain, stopLine, depotReaching, trainAtHome, trainBasedAt,
   railServesIndustry, railServicedIndustries, platformVp, railPanelRows,
   railStructureItems, trainItems, pointAt, polyline, routeLength,
@@ -89,7 +89,9 @@ function buildLine(state: RailState, grid: Grid, track: Track, ox: number, oy: n
   const source = placePlatform(state, "you", ownerId, ox, oy, "se", { kind: "industry", id: 0, tiles: [] });
   const dest = placePlatform(state, "you", ownerId, ox + 10, oy, "se", { kind: "plant", id: 0, tiles: [] });
   lay(grid, track, state, ownerId, row(oy, ox + 3, ox + 9));
-  lay(grid, track, state, ownerId, [[ox + 6, oy + 1]]);
+  // The depot spur joins the main line as a WYE (two 45° diagonals): a train
+  // cannot take the 90° of a plain T junction.
+  lay(grid, track, state, ownerId, [[ox + 5, oy], [ox + 6, oy + 1], [ox + 7, oy]]);
   const depot = placeDepot(state, "you", ownerId, ox + 6, oy + 2, "ne");
   return { source, dest, depot };
 }
@@ -689,8 +691,8 @@ describe("RAIL service: the economy's view of a running line", () => {
     expect(railServicedIndustries(state, 1)).toEqual(new Set([0]));
     // The rival's seat is served by nothing here.
     expect(railServesIndustry(state, 2, 0)).toBe(false);
-    // Cut the line and the service is gone with it.
-    demolishRail(state, 10, 3);
+    // Cut the line and the service is gone with it (clear of the consist).
+    demolishRail(state, 15, 3);
     expect(railServesIndustry(state, 1, 0)).toBe(false);
   });
 });
@@ -726,17 +728,18 @@ describe("the Railway panel's model", () => {
     const depot = placeDepot(state, "you", 1, 13, 5, "ne");
     expect(railStructureItems(state).find((i) => i.tx === 13)?.sprite).toBe("train-depot_ne");
     void depot;
-    // A train with a route emits a locomotive and a wagon, both fractional.
+    // A train with a route emits one item per car — locomotive, tender and
+    // two wagons — all fractional.
     state.trains.push({
       id: 99, ownerId: 1, lineId: 1, depotId: depot.id, status: "moving", target: "source",
       route: [[10, 10], [11, 10], [12, 10]], dist: 1.5, planRevision: 0, dwellMs: 0, dirBit: 0b0010, resold: false,
     });
     const moving = trainItems(state);
-    expect(moving.map((i) => i.sprite).sort()).toEqual(["locomotive_se", "wagon_se"]);
+    expect(moving.map((i) => i.sprite).sort()).toEqual(["car-box_se", "car-loco_se", "car-tank_se", "car-tender_se"]);
     for (const item of moving) expect(typeof item.fx).toBe("number");
     // With no atlas installed, art that does not exist is skipped, not faked.
-    const stub = { has: (n: string) => n.startsWith("locomotive") };
-    expect(trainItems(state, stub).map((i) => i.sprite)).toEqual(["locomotive_se"]);
+    const stub = { has: (n: string) => n.startsWith("car-loco") };
+    expect(trainItems(state, stub).map((i) => i.sprite)).toEqual(["car-loco_se"]);
   });
 });
 
@@ -819,7 +822,7 @@ describe("#179 line and train management", () => {
     const line = createLine(state, 1, source.id, dest.id).line!;
     expect(buyTrain(state, 1, depot.id, line.id).ok).toBe(true);
     // A second depot on the SAME network: a stub under the line, a shed below it.
-    expect(lay(grid, track, state, 1, [[11, 4]]).ok).toBe(true);
+    expect(lay(grid, track, state, 1, [[10, 3], [11, 4], [12, 3]]).ok).toBe(true);   // a wye
     const second = placeDepot(state, "you", 1, 11, 5, "ne");
     const other = createLine(state, 1, source.id, dest.id).line!;
     const refused = buyTrain(state, 1, second.id, other.id);
@@ -862,5 +865,93 @@ describe("#179 line and train management", () => {
     expect(parked.find((r) => r.kind === "train")?.actions).toEqual(["start", "sell"]);
     expect(startLine(state, 1, line.id)).toBe(true);
     expect(railPanelRows(state, 1).find((r) => r.kind === "train")?.actions).toEqual(["recall"]);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// Playtest (2026-09): diagonal track, the 45° turn rule, trains made of cars.
+// ══════════════════════════════════════════════════════════════════════════
+describe("diagonal rail and the 45° rule", () => {
+  it("draws an octilinear drag: straight, then diagonal, one 45° bend", () => {
+    expect(octPath(0, 0, 5, 2)).toEqual([[0, 0], [1, 0], [2, 0], [3, 0], [4, 1], [5, 2]]);
+    expect(octPath(0, 0, 5, 2, false)).toEqual([[0, 0], [1, 1], [2, 2], [3, 2], [4, 2], [5, 2]]);
+    expect(octPath(3, 3, 0, 0)).toEqual([[3, 3], [2, 2], [1, 1], [0, 0]]);    // pure screen-up
+  });
+
+  it("links a diagonal drag tile to tile, and a train drives it", () => {
+    const grid = flatGrid();
+    const track = createTrack();
+    const state = createRailState();
+    lay(grid, track, state, 1, [[10, 10], [11, 9], [12, 8], [13, 7]]);       // screen east
+    expect(diagLinked(state.rail, 10, 10, 11, 9)).toBe(true);
+    expect(diagLinked(state.rail, 11, 9, 12, 8)).toBe(true);
+    expect(railPath(state, 1, [[10, 10]], new Set([tIdx(13, 7)]))).toHaveLength(4);
+    // Demolishing the middle cuts the link on both sides.
+    demolishRail(state, 11, 9);
+    expect(diagLinked(state.rail, 10, 10, 11, 9)).toBe(false);
+    expect(railPath(state, 1, [[10, 10]], new Set([tIdx(13, 7)]))).toBeNull();
+  });
+
+  it("refuses a 90° corner and takes a 45° one", () => {
+    const grid = flatGrid();
+    const track = createTrack();
+    const state = createRailState();
+    // An L: east along row 10, then south down column 15 — a 90° corner.
+    lay(grid, track, state, 1, [...row(10, 10, 15), ...col(15, 11, 14)]);
+    expect(railPath(state, 1, [[10, 10]], new Set([tIdx(15, 14)]))).toBeNull();
+    // The same two legs joined by a diagonal (two 45° bends) are drivable.
+    const s2 = createRailState();
+    lay(grid, track, s2, 1, [...row(10, 10, 14), [15, 11], ...col(16, 12, 14)]);
+    const route = railPath(s2, 1, [[10, 10]], new Set([tIdx(16, 14)]));
+    expect(route).not.toBeNull();
+    for (let i = 2; i < route!.length; i++) {
+      const a = octantOf(route![i - 1][0] - route![i - 2][0], route![i - 1][1] - route![i - 2][1]);
+      const b = octantOf(route![i][0] - route![i - 1][0], route![i][1] - route![i - 1][1]);
+      expect(turnOk(a, b)).toBe(true);
+    }
+  });
+
+  it("never joins a diagonal to the rail it merely passes beside", () => {
+    const grid = flatGrid();
+    const track = createTrack();
+    const state = createRailState();
+    lay(grid, track, state, 1, row(10, 10, 16));                               // a straight
+    lay(grid, track, state, 1, [[10, 11], [11, 12], [12, 13]]);                // a diagonal starting beside it
+    // (10,11) sits right under (10,10): no side join, so no stub and no shortcut.
+    expect(effectiveMask(state, 10, 11) & 0b1111).toBe(0);
+    expect(effectiveMask(state, 10, 10) & 0b0100).toBe(0);                    // no SW stub
+    // A drag that STARTS on the straight's end does join it (explicitly).
+    lay(grid, track, state, 1, [[16, 10], [17, 11], [18, 12]]);
+    expect(diagLinked(state.rail, 16, 10, 17, 11)).toBe(true);
+    expect(railPath(state, 1, [[12, 10]], new Set([tIdx(18, 12)]))).not.toBeNull();
+  });
+
+  it("lays the cars of a train one behind the other around a bend", () => {
+    const grid = flatGrid();
+    const track = createTrack();
+    const state = createRailState();
+    lay(grid, track, state, 1, [...row(10, 10, 14), [15, 11], [16, 12], [17, 13]]);
+    const train: Train = {
+      id: 4, ownerId: 1, lineId: 1, depotId: 0, status: "moving", target: "dest",
+      route: [[10, 10], [11, 10], [12, 10], [13, 10], [14, 10], [15, 11], [16, 12], [17, 13]],
+      dist: 0, planRevision: state.rail.revision, dwellMs: 0, dirBit: 0, resold: false,
+    };
+    state.trains.push(train);
+    state.lines.push({ id: 1, ownerId: 1, name: "L", source: 0, dest: 0 });
+    // Drive the head past the bend (no platforms: stop the clock short of the end).
+    for (let i = 0; i < 40 && train.dist < 6.3; i++) tickTrains(state, 40);
+    const cars = carPlacements(state, train);
+    expect(cars.map((c) => c.kind)).toEqual(consistOf(train));
+    // Every car is on the track polyline, spaced by its coupling offset.
+    const offs = carOffsets(consistOf(train));
+    for (let i = 1; i < cars.length; i++) {
+      const gap = Math.hypot(cars[i].fx - cars[i - 1].fx, cars[i].fy - cars[i - 1].fy);
+      expect(gap).toBeLessThanOrEqual(offs[i] - offs[i - 1] + 1e-6);   // a chord never beats the arc
+      expect(gap).toBeGreaterThan((offs[i] - offs[i - 1]) * 0.8);
+    }
+    // The locomotive is on the diagonal (screen south) while the last car is
+    // still on the straight (grid south-east).
+    expect(OCT_NAMES[cars[0].oct]).toBe("s");
+    expect(OCT_NAMES[cars[cars.length - 1].oct]).toBe("se");
   });
 });

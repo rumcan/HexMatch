@@ -21,294 +21,6 @@
     }
   },
   "sprites": {
-    "locomotive_ne": {
-      "name": "locomotive_ne",
-      "kind": "locomotive",
-      "view": "ne",
-      "w": 58,
-      "h": 62,
-      "anchor": [
-        27,
-        45
-      ],
-      "footprint": [
-        1,
-        1
-      ],
-      "moving": true,
-      "box2x": [
-        116,
-        124
-      ],
-      "alpha": {
-        "coverage": 0.7052,
-        "corners": [
-          0,
-          0,
-          0,
-          0
-        ]
-      },
-      "note": "locomotive ne; original procedural art (tools/make-railway-art.mjs).",
-      "lenTiles": 1.16,
-      "widthTiles": 0.42,
-      "coupler": {
-        "front": 0.63,
-        "rear": -0.63
-      }
-    },
-    "locomotive_se": {
-      "name": "locomotive_se",
-      "kind": "locomotive",
-      "view": "se",
-      "w": 58,
-      "h": 70,
-      "anchor": [
-        27,
-        52
-      ],
-      "footprint": [
-        1,
-        1
-      ],
-      "moving": true,
-      "box2x": [
-        116,
-        140
-      ],
-      "alpha": {
-        "coverage": 0.6153,
-        "corners": [
-          0,
-          0,
-          0,
-          0
-        ]
-      },
-      "note": "locomotive se; original procedural art (tools/make-railway-art.mjs).",
-      "lenTiles": 1.16,
-      "widthTiles": 0.42,
-      "coupler": {
-        "front": 0.63,
-        "rear": -0.63
-      }
-    },
-    "locomotive_sw": {
-      "name": "locomotive_sw",
-      "kind": "locomotive",
-      "view": "sw",
-      "w": 58,
-      "h": 70,
-      "anchor": [
-        30,
-        52
-      ],
-      "footprint": [
-        1,
-        1
-      ],
-      "moving": true,
-      "box2x": [
-        116,
-        140
-      ],
-      "alpha": {
-        "coverage": 0.6153,
-        "corners": [
-          0,
-          0,
-          0,
-          0
-        ]
-      },
-      "note": "locomotive sw; original procedural art (tools/make-railway-art.mjs).",
-      "lenTiles": 1.16,
-      "widthTiles": 0.42,
-      "coupler": {
-        "front": 0.63,
-        "rear": -0.63
-      }
-    },
-    "locomotive_nw": {
-      "name": "locomotive_nw",
-      "kind": "locomotive",
-      "view": "nw",
-      "w": 58,
-      "h": 62,
-      "anchor": [
-        30,
-        45
-      ],
-      "footprint": [
-        1,
-        1
-      ],
-      "moving": true,
-      "box2x": [
-        116,
-        124
-      ],
-      "alpha": {
-        "coverage": 0.7052,
-        "corners": [
-          0,
-          0,
-          0,
-          0
-        ]
-      },
-      "note": "locomotive nw; original procedural art (tools/make-railway-art.mjs).",
-      "lenTiles": 1.16,
-      "widthTiles": 0.42,
-      "coupler": {
-        "front": 0.63,
-        "rear": -0.63
-      }
-    },
-    "wagon_ne": {
-      "name": "wagon_ne",
-      "kind": "wagon",
-      "view": "ne",
-      "w": 46,
-      "h": 56,
-      "anchor": [
-        23,
-        40
-      ],
-      "footprint": [
-        1,
-        1
-      ],
-      "moving": true,
-      "box2x": [
-        92,
-        112
-      ],
-      "alpha": {
-        "coverage": 0.7372,
-        "corners": [
-          0,
-          0,
-          0,
-          0
-        ]
-      },
-      "note": "wagon ne; original procedural art (tools/make-railway-art.mjs).",
-      "lenTiles": 0.98,
-      "widthTiles": 0.42,
-      "coupler": {
-        "front": 0.54,
-        "rear": -0.54
-      }
-    },
-    "wagon_se": {
-      "name": "wagon_se",
-      "kind": "wagon",
-      "view": "se",
-      "w": 46,
-      "h": 56,
-      "anchor": [
-        23,
-        41
-      ],
-      "footprint": [
-        1,
-        1
-      ],
-      "moving": true,
-      "box2x": [
-        92,
-        112
-      ],
-      "alpha": {
-        "coverage": 0.738,
-        "corners": [
-          0,
-          0,
-          0,
-          0
-        ]
-      },
-      "note": "wagon se; original procedural art (tools/make-railway-art.mjs).",
-      "lenTiles": 0.98,
-      "widthTiles": 0.42,
-      "coupler": {
-        "front": 0.54,
-        "rear": -0.54
-      }
-    },
-    "wagon_sw": {
-      "name": "wagon_sw",
-      "kind": "wagon",
-      "view": "sw",
-      "w": 46,
-      "h": 56,
-      "anchor": [
-        23,
-        41
-      ],
-      "footprint": [
-        1,
-        1
-      ],
-      "moving": true,
-      "box2x": [
-        92,
-        112
-      ],
-      "alpha": {
-        "coverage": 0.738,
-        "corners": [
-          0,
-          0,
-          0,
-          0
-        ]
-      },
-      "note": "wagon sw; original procedural art (tools/make-railway-art.mjs).",
-      "lenTiles": 0.98,
-      "widthTiles": 0.42,
-      "coupler": {
-        "front": 0.54,
-        "rear": -0.54
-      }
-    },
-    "wagon_nw": {
-      "name": "wagon_nw",
-      "kind": "wagon",
-      "view": "nw",
-      "w": 46,
-      "h": 56,
-      "anchor": [
-        23,
-        40
-      ],
-      "footprint": [
-        1,
-        1
-      ],
-      "moving": true,
-      "box2x": [
-        92,
-        112
-      ],
-      "alpha": {
-        "coverage": 0.7368,
-        "corners": [
-          0,
-          0,
-          0,
-          0
-        ]
-      },
-      "note": "wagon nw; original procedural art (tools/make-railway-art.mjs).",
-      "lenTiles": 0.98,
-      "widthTiles": 0.42,
-      "coupler": {
-        "front": 0.54,
-        "rear": -0.54
-      }
-    },
     "platform_ne": {
       "name": "platform_ne",
       "kind": "platform",
@@ -548,6 +260,966 @@
         ]
       },
       "note": "train-depot nw; original procedural art (tools/make-railway-art.mjs)."
+    },
+    "car-loco_e": {
+      "name": "car-loco_e",
+      "kind": "car",
+      "car": "loco",
+      "view": "e",
+      "w": 54,
+      "h": 28,
+      "anchor": [
+        27,
+        21
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        108,
+        56
+      ],
+      "lenTiles": 1.149,
+      "widthTiles": 0.42,
+      "note": "loco heading e; owner-supplied art (train_e-w.png), cut by tools."
+    },
+    "car-tender_e": {
+      "name": "car-tender_e",
+      "kind": "car",
+      "car": "tender",
+      "view": "e",
+      "w": 26,
+      "h": 24,
+      "anchor": [
+        13,
+        18
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        52,
+        48
+      ],
+      "lenTiles": 0.525,
+      "widthTiles": 0.42,
+      "note": "tender heading e; owner-supplied art (train_e-w.png), cut by tools."
+    },
+    "car-box_e": {
+      "name": "car-box_e",
+      "kind": "car",
+      "car": "box",
+      "view": "e",
+      "w": 38,
+      "h": 26,
+      "anchor": [
+        19,
+        20
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        76,
+        52
+      ],
+      "lenTiles": 0.8,
+      "widthTiles": 0.42,
+      "note": "box heading e; owner-supplied art (train_e-w.png), cut by tools."
+    },
+    "car-tank_e": {
+      "name": "car-tank_e",
+      "kind": "car",
+      "car": "tank",
+      "view": "e",
+      "w": 36,
+      "h": 26,
+      "anchor": [
+        18,
+        20
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        72,
+        52
+      ],
+      "lenTiles": 0.742,
+      "widthTiles": 0.42,
+      "note": "tank heading e; owner-supplied art (train_e-w.png), cut by tools."
+    },
+    "car-flat_e": {
+      "name": "car-flat_e",
+      "kind": "car",
+      "car": "flat",
+      "view": "e",
+      "w": 34,
+      "h": 24,
+      "anchor": [
+        17,
+        18
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        68,
+        48
+      ],
+      "lenTiles": 0.686,
+      "widthTiles": 0.42,
+      "note": "flat heading e; owner-supplied art (train_e-w.png), cut by tools."
+    },
+    "car-loco_w": {
+      "name": "car-loco_w",
+      "kind": "car",
+      "car": "loco",
+      "view": "w",
+      "w": 54,
+      "h": 28,
+      "anchor": [
+        27,
+        21
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        108,
+        56
+      ],
+      "lenTiles": 1.149,
+      "widthTiles": 0.42,
+      "note": "loco heading w; owner-supplied art (train_e-w.png, mirrored), cut by tools."
+    },
+    "car-tender_w": {
+      "name": "car-tender_w",
+      "kind": "car",
+      "car": "tender",
+      "view": "w",
+      "w": 26,
+      "h": 24,
+      "anchor": [
+        13,
+        18
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        52,
+        48
+      ],
+      "lenTiles": 0.525,
+      "widthTiles": 0.42,
+      "note": "tender heading w; owner-supplied art (train_e-w.png, mirrored), cut by tools."
+    },
+    "car-box_w": {
+      "name": "car-box_w",
+      "kind": "car",
+      "car": "box",
+      "view": "w",
+      "w": 38,
+      "h": 26,
+      "anchor": [
+        19,
+        20
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        76,
+        52
+      ],
+      "lenTiles": 0.8,
+      "widthTiles": 0.42,
+      "note": "box heading w; owner-supplied art (train_e-w.png, mirrored), cut by tools."
+    },
+    "car-tank_w": {
+      "name": "car-tank_w",
+      "kind": "car",
+      "car": "tank",
+      "view": "w",
+      "w": 36,
+      "h": 26,
+      "anchor": [
+        18,
+        20
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        72,
+        52
+      ],
+      "lenTiles": 0.742,
+      "widthTiles": 0.42,
+      "note": "tank heading w; owner-supplied art (train_e-w.png, mirrored), cut by tools."
+    },
+    "car-flat_w": {
+      "name": "car-flat_w",
+      "kind": "car",
+      "car": "flat",
+      "view": "w",
+      "w": 34,
+      "h": 24,
+      "anchor": [
+        17,
+        18
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        68,
+        48
+      ],
+      "lenTiles": 0.686,
+      "widthTiles": 0.42,
+      "note": "flat heading w; owner-supplied art (train_e-w.png, mirrored), cut by tools."
+    },
+    "car-loco_s": {
+      "name": "car-loco_s",
+      "kind": "car",
+      "car": "loco",
+      "view": "s",
+      "w": 22,
+      "h": 36,
+      "anchor": [
+        11,
+        24
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        44,
+        72
+      ],
+      "lenTiles": 1.149,
+      "widthTiles": 0.42,
+      "note": "loco heading s; owner-supplied art (train_N-S.png), cut by tools."
+    },
+    "car-tender_s": {
+      "name": "car-tender_s",
+      "kind": "car",
+      "car": "tender",
+      "view": "s",
+      "w": 20,
+      "h": 28,
+      "anchor": [
+        10,
+        18
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        40,
+        56
+      ],
+      "lenTiles": 0.525,
+      "widthTiles": 0.42,
+      "note": "tender heading s; owner-supplied art (train_N-S.png), cut by tools."
+    },
+    "car-box_s": {
+      "name": "car-box_s",
+      "kind": "car",
+      "car": "box",
+      "view": "s",
+      "w": 22,
+      "h": 32,
+      "anchor": [
+        11,
+        21
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        44,
+        64
+      ],
+      "lenTiles": 0.8,
+      "widthTiles": 0.42,
+      "note": "box heading s; owner-supplied art (train_N-S.png), cut by tools."
+    },
+    "car-tank_s": {
+      "name": "car-tank_s",
+      "kind": "car",
+      "car": "tank",
+      "view": "s",
+      "w": 22,
+      "h": 30,
+      "anchor": [
+        11,
+        20
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        44,
+        60
+      ],
+      "lenTiles": 0.742,
+      "widthTiles": 0.42,
+      "note": "tank heading s; owner-supplied art (train_N-S.png), cut by tools."
+    },
+    "car-flat_s": {
+      "name": "car-flat_s",
+      "kind": "car",
+      "car": "flat",
+      "view": "s",
+      "w": 20,
+      "h": 26,
+      "anchor": [
+        10,
+        17
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        40,
+        52
+      ],
+      "lenTiles": 0.686,
+      "widthTiles": 0.42,
+      "note": "flat heading s; owner-supplied art (train_N-S.png), cut by tools."
+    },
+    "car-loco_n": {
+      "name": "car-loco_n",
+      "kind": "car",
+      "car": "loco",
+      "view": "n",
+      "w": 20,
+      "h": 32,
+      "anchor": [
+        10,
+        21
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        40,
+        64
+      ],
+      "lenTiles": 1.149,
+      "widthTiles": 0.42,
+      "note": "loco heading n; owner-supplied art (train_S-N.png), cut by tools."
+    },
+    "car-tender_n": {
+      "name": "car-tender_n",
+      "kind": "car",
+      "car": "tender",
+      "view": "n",
+      "w": 20,
+      "h": 30,
+      "anchor": [
+        10,
+        20
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        40,
+        60
+      ],
+      "lenTiles": 0.525,
+      "widthTiles": 0.42,
+      "note": "tender heading n; owner-supplied art (train_S-N.png), cut by tools."
+    },
+    "car-box_n": {
+      "name": "car-box_n",
+      "kind": "car",
+      "car": "box",
+      "view": "n",
+      "w": 22,
+      "h": 32,
+      "anchor": [
+        11,
+        21
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        44,
+        64
+      ],
+      "lenTiles": 0.8,
+      "widthTiles": 0.42,
+      "note": "box heading n; owner-supplied art (train_S-N.png), cut by tools."
+    },
+    "car-tank_n": {
+      "name": "car-tank_n",
+      "kind": "car",
+      "car": "tank",
+      "view": "n",
+      "w": 20,
+      "h": 30,
+      "anchor": [
+        10,
+        20
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        40,
+        60
+      ],
+      "lenTiles": 0.742,
+      "widthTiles": 0.42,
+      "note": "tank heading n; owner-supplied art (train_S-N.png), cut by tools."
+    },
+    "car-flat_n": {
+      "name": "car-flat_n",
+      "kind": "car",
+      "car": "flat",
+      "view": "n",
+      "w": 20,
+      "h": 28,
+      "anchor": [
+        10,
+        19
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        40,
+        56
+      ],
+      "lenTiles": 0.686,
+      "widthTiles": 0.42,
+      "note": "flat heading n; owner-supplied art (train_S-N.png), cut by tools."
+    },
+    "car-loco_sw": {
+      "name": "car-loco_sw",
+      "kind": "car",
+      "car": "loco",
+      "view": "sw",
+      "w": 48,
+      "h": 34,
+      "anchor": [
+        24,
+        22
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        96,
+        68
+      ],
+      "lenTiles": 1.149,
+      "widthTiles": 0.42,
+      "note": "loco heading sw; owner-supplied art (train_ne-sw.png), cut by tools."
+    },
+    "car-tender_sw": {
+      "name": "car-tender_sw",
+      "kind": "car",
+      "car": "tender",
+      "view": "sw",
+      "w": 34,
+      "h": 26,
+      "anchor": [
+        17,
+        17
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        68,
+        52
+      ],
+      "lenTiles": 0.525,
+      "widthTiles": 0.42,
+      "note": "tender heading sw; owner-supplied art (train_ne-sw.png), cut by tools."
+    },
+    "car-box_sw": {
+      "name": "car-box_sw",
+      "kind": "car",
+      "car": "box",
+      "view": "sw",
+      "w": 42,
+      "h": 32,
+      "anchor": [
+        21,
+        21
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        84,
+        64
+      ],
+      "lenTiles": 0.8,
+      "widthTiles": 0.42,
+      "note": "box heading sw; owner-supplied art (train_ne-sw.png), cut by tools."
+    },
+    "car-tank_sw": {
+      "name": "car-tank_sw",
+      "kind": "car",
+      "car": "tank",
+      "view": "sw",
+      "w": 40,
+      "h": 28,
+      "anchor": [
+        20,
+        18
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        80,
+        56
+      ],
+      "lenTiles": 0.742,
+      "widthTiles": 0.42,
+      "note": "tank heading sw; owner-supplied art (train_ne-sw.png), cut by tools."
+    },
+    "car-flat_sw": {
+      "name": "car-flat_sw",
+      "kind": "car",
+      "car": "flat",
+      "view": "sw",
+      "w": 46,
+      "h": 30,
+      "anchor": [
+        23,
+        19
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        92,
+        60
+      ],
+      "lenTiles": 0.686,
+      "widthTiles": 0.42,
+      "note": "flat heading sw; owner-supplied art (train_ne-sw.png), cut by tools."
+    },
+    "car-loco_se": {
+      "name": "car-loco_se",
+      "kind": "car",
+      "car": "loco",
+      "view": "se",
+      "w": 48,
+      "h": 34,
+      "anchor": [
+        24,
+        22
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        96,
+        68
+      ],
+      "lenTiles": 1.149,
+      "widthTiles": 0.42,
+      "note": "loco heading se; owner-supplied art (train_ne-sw.png, mirrored), cut by tools."
+    },
+    "car-tender_se": {
+      "name": "car-tender_se",
+      "kind": "car",
+      "car": "tender",
+      "view": "se",
+      "w": 34,
+      "h": 26,
+      "anchor": [
+        17,
+        17
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        68,
+        52
+      ],
+      "lenTiles": 0.525,
+      "widthTiles": 0.42,
+      "note": "tender heading se; owner-supplied art (train_ne-sw.png, mirrored), cut by tools."
+    },
+    "car-box_se": {
+      "name": "car-box_se",
+      "kind": "car",
+      "car": "box",
+      "view": "se",
+      "w": 42,
+      "h": 32,
+      "anchor": [
+        21,
+        21
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        84,
+        64
+      ],
+      "lenTiles": 0.8,
+      "widthTiles": 0.42,
+      "note": "box heading se; owner-supplied art (train_ne-sw.png, mirrored), cut by tools."
+    },
+    "car-tank_se": {
+      "name": "car-tank_se",
+      "kind": "car",
+      "car": "tank",
+      "view": "se",
+      "w": 40,
+      "h": 28,
+      "anchor": [
+        20,
+        18
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        80,
+        56
+      ],
+      "lenTiles": 0.742,
+      "widthTiles": 0.42,
+      "note": "tank heading se; owner-supplied art (train_ne-sw.png, mirrored), cut by tools."
+    },
+    "car-flat_se": {
+      "name": "car-flat_se",
+      "kind": "car",
+      "car": "flat",
+      "view": "se",
+      "w": 46,
+      "h": 30,
+      "anchor": [
+        23,
+        19
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        92,
+        60
+      ],
+      "lenTiles": 0.686,
+      "widthTiles": 0.42,
+      "note": "flat heading se; owner-supplied art (train_ne-sw.png, mirrored), cut by tools."
+    },
+    "car-loco_nw": {
+      "name": "car-loco_nw",
+      "kind": "car",
+      "car": "loco",
+      "view": "nw",
+      "w": 50,
+      "h": 32,
+      "anchor": [
+        25,
+        20
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        100,
+        64
+      ],
+      "lenTiles": 1.149,
+      "widthTiles": 0.42,
+      "note": "loco heading nw; owner-supplied art (train_sw-ne.png), cut by tools."
+    },
+    "car-tender_nw": {
+      "name": "car-tender_nw",
+      "kind": "car",
+      "car": "tender",
+      "view": "nw",
+      "w": 32,
+      "h": 28,
+      "anchor": [
+        16,
+        18
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        64,
+        56
+      ],
+      "lenTiles": 0.525,
+      "widthTiles": 0.42,
+      "note": "tender heading nw; owner-supplied art (train_sw-ne.png), cut by tools."
+    },
+    "car-box_nw": {
+      "name": "car-box_nw",
+      "kind": "car",
+      "car": "box",
+      "view": "nw",
+      "w": 42,
+      "h": 32,
+      "anchor": [
+        21,
+        21
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        84,
+        64
+      ],
+      "lenTiles": 0.8,
+      "widthTiles": 0.42,
+      "note": "box heading nw; owner-supplied art (train_sw-ne.png), cut by tools."
+    },
+    "car-tank_nw": {
+      "name": "car-tank_nw",
+      "kind": "car",
+      "car": "tank",
+      "view": "nw",
+      "w": 42,
+      "h": 28,
+      "anchor": [
+        21,
+        18
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        84,
+        56
+      ],
+      "lenTiles": 0.742,
+      "widthTiles": 0.42,
+      "note": "tank heading nw; owner-supplied art (train_sw-ne.png), cut by tools."
+    },
+    "car-flat_nw": {
+      "name": "car-flat_nw",
+      "kind": "car",
+      "car": "flat",
+      "view": "nw",
+      "w": 42,
+      "h": 28,
+      "anchor": [
+        21,
+        18
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        84,
+        56
+      ],
+      "lenTiles": 0.686,
+      "widthTiles": 0.42,
+      "note": "flat heading nw; owner-supplied art (train_sw-ne.png), cut by tools."
+    },
+    "car-loco_ne": {
+      "name": "car-loco_ne",
+      "kind": "car",
+      "car": "loco",
+      "view": "ne",
+      "w": 50,
+      "h": 32,
+      "anchor": [
+        25,
+        20
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        100,
+        64
+      ],
+      "lenTiles": 1.149,
+      "widthTiles": 0.42,
+      "note": "loco heading ne; owner-supplied art (train_sw-ne.png, mirrored), cut by tools."
+    },
+    "car-tender_ne": {
+      "name": "car-tender_ne",
+      "kind": "car",
+      "car": "tender",
+      "view": "ne",
+      "w": 32,
+      "h": 28,
+      "anchor": [
+        16,
+        18
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        64,
+        56
+      ],
+      "lenTiles": 0.525,
+      "widthTiles": 0.42,
+      "note": "tender heading ne; owner-supplied art (train_sw-ne.png, mirrored), cut by tools."
+    },
+    "car-box_ne": {
+      "name": "car-box_ne",
+      "kind": "car",
+      "car": "box",
+      "view": "ne",
+      "w": 42,
+      "h": 32,
+      "anchor": [
+        21,
+        21
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        84,
+        64
+      ],
+      "lenTiles": 0.8,
+      "widthTiles": 0.42,
+      "note": "box heading ne; owner-supplied art (train_sw-ne.png, mirrored), cut by tools."
+    },
+    "car-tank_ne": {
+      "name": "car-tank_ne",
+      "kind": "car",
+      "car": "tank",
+      "view": "ne",
+      "w": 42,
+      "h": 28,
+      "anchor": [
+        21,
+        18
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        84,
+        56
+      ],
+      "lenTiles": 0.742,
+      "widthTiles": 0.42,
+      "note": "tank heading ne; owner-supplied art (train_sw-ne.png, mirrored), cut by tools."
+    },
+    "car-flat_ne": {
+      "name": "car-flat_ne",
+      "kind": "car",
+      "car": "flat",
+      "view": "ne",
+      "w": 42,
+      "h": 28,
+      "anchor": [
+        21,
+        18
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        84,
+        56
+      ],
+      "lenTiles": 0.686,
+      "widthTiles": 0.42,
+      "note": "flat heading ne; owner-supplied art (train_sw-ne.png, mirrored), cut by tools."
     }
   }
 }

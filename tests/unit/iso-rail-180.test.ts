@@ -48,7 +48,9 @@ function buildLine(state: RailState, grid: Grid, track: Track, ox: number, oy: n
   const source = placePlatform(state, "you", ownerId, ox, oy, "se" as RailView, { kind: "industry", id: 0, tiles: [] });
   const dest = placePlatform(state, "you", ownerId, ox + 10, oy, "se" as RailView, { kind: "plant", id: plantId, tiles: [] });
   lay(grid, track, state, ownerId, row(oy, ox + 3, ox + 9));
-  lay(grid, track, state, ownerId, [[ox + 6, oy + 1]]);
+  // The depot spur joins the main line as a WYE (two 45° diagonals): a train
+  // cannot take the 90° of a plain T junction.
+  lay(grid, track, state, ownerId, [[ox + 5, oy], [ox + 6, oy + 1], [ox + 7, oy]]);
   const depot = placeDepot(state, "you", ownerId, ox + 6, oy + 2, "ne" as RailView);
   return { source, dest, depot };
 }
@@ -107,10 +109,10 @@ describe("#180 railServesIndustry — active train that has reached source", () 
     const plan = assignLine(state, 1, source.id, dest.id);
     tickUntil(state, () => plan.train!.status === "dwelling");
     expect(railServesIndustry(state, 1, 0)).toBe(true);
-    demolishRail(state, 10, 3);
+    demolishRail(state, 15, 3);   // clear of the (now longer) consist
     tickTrains(state, 50);
     expect(railServesIndustry(state, 1, 0)).toBe(false);
-    lay(grid, track, state, 1, [[10, 3]]);
+    lay(grid, track, state, 1, [[15, 3]]);
     tickTrains(state, 50);
     tickUntil(state, () => plan.train!.status === "moving" || plan.train!.status === "dwelling");
     expect(railServesIndustry(state, 1, 0)).toBe(true);
@@ -129,7 +131,7 @@ describe("#180 railServesIndustry — active train that has reached source", () 
     lay(grid, track, state, 1, row(5, 13, 15));
     const fail2 = assignLine(state, 1, source.id, dest.id);
     expect(fail2.ok).toBe(false);
-    lay(grid, track, state, 1, [[10, 6]]);
+    lay(grid, track, state, 1, [[9, 5], [10, 6], [11, 5]]);   // a wye: no 90° T
     placeDepot(state, "you", 1, 10, 7, "ne" as RailView);
     const ok = assignLine(state, 1, source.id, dest.id);
     expect(ok.ok).toBe(true);
@@ -264,7 +266,7 @@ describe("#180 railServesIndustry — active train that has reached source", () 
     tickUntil(state, () => plan.train!.status === "dwelling");
     const rev = state.rail.revision;
     expect(railServesIndustry(state, 1, 0)).toBe(true);
-    demolishRail(state, 10, 3);
+    demolishRail(state, 15, 3);   // clear of the (now longer) consist
     expect(state.rail.revision).toBeGreaterThan(rev);
     tickTrains(state, 50);
     expect(railServesIndustry(state, 1, 0)).toBe(false);

@@ -254,7 +254,7 @@ const railCalls = (spy: { mock: { calls: unknown[][] } }) =>
   spy.mock.calls.filter((c) => c[2] === "rail").map((c) => [c[0], c[1], c[2], c[3]]);
 
 const trainX = (world: World): number | undefined =>
-  [...(world.vehicles ?? [])].reverse().find((i) => i.sprite.startsWith("locomotive"))?.fx;
+  [...(world.vehicles ?? [])].reverse().find((i) => i.sprite.startsWith("car-loco"))?.fx;
 
 describe("RAIL-03 the renderer diffs the railway by revision", () => {
   afterEach(() => { vi.restoreAllMocks(); });
@@ -340,9 +340,9 @@ describe("RAIL-03 the renderer diffs the railway by revision", () => {
     // pass, which is why no sprite can ever be drawn under it.
     expect(renderer.drawOrder.every((p) => !p.sprite.startsWith("rail_"))).toBe(true);
     // The structures and the train are, and the train rides at its fractional
-    // position — one item for the locomotive, one for the wagon behind it.
+    // position — one item per car: locomotive, tender and wagons.
     expect(renderer.drawOrder.map((p) => p.sprite)).toEqual(
-      expect.arrayContaining([`platform_${platform.view}`, `train-depot_${depot.view}`, "locomotive_se", "wagon_se"]));
+      expect.arrayContaining([`platform_${platform.view}`, `train-depot_${depot.view}`, "car-loco_se", "car-tender_se"]));
     expect(trainX(world)).toBeCloseTo(73.5, 6);
 
     const spy = vi.spyOn(RoadCache.prototype, "invalidateTile");
@@ -368,6 +368,6 @@ describe("RAIL-03 the renderer diffs the railway by revision", () => {
     world.rail = railDrawLayer(state);
     renderer.setWorld(world);
     expect(railCalls(spy)).toHaveLength(0);
-    expect(renderer.drawOrder.find((p) => p.sprite === "locomotive_se")?.fx).toBe(moved);
+    expect(renderer.drawOrder.find((p) => p.sprite === "car-loco_se")?.fx).toBe(moved);
   });
 });
