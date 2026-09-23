@@ -5282,3 +5282,31 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 /* 2026-09: the ex-typewriter text keeps its figures in columns */
 .pane-note, .cost-chip, .chip, .offer, .battle-mana-num, .tp-moves { font-variant-numeric: tabular-nums; }
 .pane-note { font-size: 12.5px; line-height: 1.45; }
+
+/* ── 2026-09: the main menu fits the screen — no scrolling ─────────────── */
+/* Wide: the menu card and the Ladder side by side. */
+@media (min-width: 980px) {
+  .start-screen.menu {
+    flex-direction: row; justify-content: center; align-items: center; gap: 24px;
+    overflow: hidden;
+  }
+  .start-screen.menu > .menu-card,
+  .start-screen.menu > .menu-leaderboard { margin: 0; max-height: calc(100dvh - 48px); }
+  .start-screen.menu > .menu-leaderboard { width: min(420px, 38vw); overflow: hidden; }
+}
+/* Narrow / short: the Ladder lives under Play (the mode screen's "The
+   ladder"), so the front door is just the card, sized to fit. */
+@media (max-width: 979px) {
+  .start-screen.menu { overflow: hidden; justify-content: center; padding: 12px; }
+  .start-screen.menu > .menu-leaderboard { display: none; }
+  .start-screen.menu > .menu-card { margin: auto 0; padding: 26px 20px 20px; }
+}
+@media (max-height: 820px) {
+  .start-screen.menu > .menu-card { padding-top: 18px; padding-bottom: 16px; }
+  .start-screen.menu .menu-emblem,
+  .start-screen.menu .menu-card > .start-kicker { display: none; }
+  .start-screen.menu .menu-title { font-size: clamp(26px, 5.2vh, 44px); margin: 4px 0 10px; }
+  .start-screen.menu .menu-actions { gap: 8px; }
+  .start-screen.menu .menu-btn { padding-top: 9px; padding-bottom: 9px; }
+  .start-screen.menu .menu-campaign { margin-top: 8px; }
+}

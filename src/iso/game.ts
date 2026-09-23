@@ -710,7 +710,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // A networked match NEVER touches the local save: the room owns the match,
   // and a save written mid-game would resurrect as a solo world on the next
   // boot (and, on the guest, restore a map the host never generated).
-  const savesOff = isMp() || !!(window as unknown as Record<string, unknown>).__ISO_DISABLE_SAVE;
+  // `?fresh=1` (owner testing, 2026-09): a first-time player's view — no save
+  // is loaded and none is written, so the real slots are left untouched.
+  const freshLink = (() => { try { return new URLSearchParams(location.search).get("fresh") === "1"; } catch { return false; } })();
+  const savesOff = isMp() || freshLink || !!(window as unknown as Record<string, unknown>).__ISO_DISABLE_SAVE;
   // STORY-01 fix: each mode has its own save slot — the sandbox's, or this
   // contract's. A contract that read the sandbox save resumed that world (its
   // seed, the rival's network, phase "play") against the chapter's lower ★

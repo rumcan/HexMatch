@@ -39,8 +39,13 @@ import { mostRecentSave } from "./iso/save-summary";
  * stands normally from the second launch, and ☰ → Quit to main menu).
  */
 export const ONBOARDED_KEY = "hexmatch:onboarded";
+/** `?fresh=1`: play as a brand-new player — saves are neither read nor written. */
+export const isFreshLink = (): boolean => {
+  try { return new URLSearchParams(location.search).get("fresh") === "1"; } catch { return false; }
+};
 function isFirstLaunch(): boolean {
   try {
+    if (isFreshLink()) return true;
     if (localStorage.getItem(ONBOARDED_KEY)) return false;
     // A player with a save is not new, whatever the flag says.
     if (mostRecentSave()) return false;
@@ -128,7 +133,7 @@ export default function App() {
   // it into "Leave room" wording with a confirm of its own.
   // The first game has started — every later boot is a normal one.
   useEffect(() => {
-    if (firstRun) try { localStorage.setItem(ONBOARDED_KEY, "1"); } catch { /* private mode */ }
+    if (firstRun && !isFreshLink()) try { localStorage.setItem(ONBOARDED_KEY, "1"); } catch { /* private mode */ }
   }, [firstRun]);
   const quitToMenu = () => {
     setChoice(null);
