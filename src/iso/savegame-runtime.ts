@@ -62,6 +62,8 @@ export interface SaveGamePayload {
     playerReadyAt: [string, number][];
     rivalDueIn: number;
     battles: number;
+    siteRights?: [number, { rights: string[]; streak: { playerId: string; wins: number } | null }][];
+    townHolds?: [number, { holder: string; wins: number; locked: boolean }][];
   };
   track: { dirt: string; road: string; owner: string; upgraded: string };
   rail?: RailWire;

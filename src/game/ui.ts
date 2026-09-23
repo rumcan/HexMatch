@@ -132,6 +132,28 @@ export interface DepotCardInfo {
   onRetune: () => boolean;
 }
 
+/**
+ * #322: one bottom-centre action card at a time (the Depot card, an industry
+ * Challenge, a Fight/Decline offer). Optional `until` paints a countdown.
+ */
+export interface ActionCardAction {
+  label: string;
+  /** HTML allowed for a cost line (`<small>12 Gold</small>`). */
+  html?: string;
+  primary?: boolean;
+  disabled?: boolean;
+  title?: string;
+  onClick: () => void;
+}
+
+export interface ActionCardInfo {
+  title: string;
+  lines: string[];
+  actions: ActionCardAction[];
+  /** Absolute `performance.now()` deadline — paints mm:ss until then. */
+  until?: number;
+}
+
 type TabName = "market" | "bank" | "black" | "plant" | "feed";
 
 export type UiTool =
@@ -530,6 +552,10 @@ export interface OriginalUi {
   paint: (state: UiState) => void;
   /** 2026-09: the Depot card (level, yield vs cap, Upgrade, Retune). */
   showDepotCard: (o: DepotCardInfo) => void;
+  /** #322: generic bottom-centre action card — one at a time. */
+  showActionCard: (o: ActionCardInfo) => void;
+  /** #322: take the action card down (stale offer, resolved elsewhere). */
+  closeActionCard: () => void;
   feed: (text: string, who?: string) => void;
   /** A brief, non-modal exchange beside the HUD. The portrait switches with
    *  each speaker; game.ts also records every beat in the Feed for later. */
@@ -3427,35 +3453,83 @@ export function createOriginalUi(
       : (t.note ?? "Save up the materials first.");
   }
 
-  // ── 2026-09: the Depot card ─────────────────────────────────────────────
+  // ── 2026-09 / #322: one bottom-centre action card ───────────────────────
   let depotCard: HTMLElement | null = null;
-  function showDepotCard(o: DepotCardInfo): void {
+  let actionCardRaf = 0;
+  function closeActionCard(): void {
+    if (actionCardRaf) { cancelAnimationFrame(actionCardRaf); actionCardRaf = 0; }
     depotCard?.remove();
+    depotCard = null;
+  }
+  function showActionCard(o: ActionCardInfo): void {
+    closeActionCard();
     const card = h("div", "panel depot-card");
     card.setAttribute("role", "dialog");
-    card.setAttribute("aria-label", "Depot");
-    const full = o.yieldNow >= o.cap;
-    card.innerHTML = `
-      <div class="panel-title">${o.title}</div>
-      <div class="depot-card-row">Yield <b>×${o.yieldNow}</b> of cap <b>×${o.cap}</b>${full ? " — full; score past it pays Gold" : ""}</div>`;
+    card.setAttribute("aria-label", o.title);
+    const title = h("div", "panel-title", o.title);
+    card.appendChild(title);
+    for (const line of o.lines) {
+      card.appendChild(h("div", "depot-card-row", line));
+    }
+    let countEl: HTMLElement | null = null;
+    if (o.until != null) {
+      countEl = h("div", "depot-card-count");
+      card.appendChild(countEl);
+    }
     const acts = h("div", "depot-card-acts");
-    const up = h("button", "post-btn", o.nextCap === null
-      ? "Top level"
-      : `Upgrade → cap ×${o.nextCap} <small>${o.upgradeCost}</small>`) as HTMLButtonElement;
-    up.dataset.act = "depot-upgrade";
-    up.disabled = o.busy || o.nextCap === null;
-    up.onclick = () => { if (o.onUpgrade()) close(); };
-    const re = h("button", "post-btn", `Retune <small>${o.retuneCost}</small>`) as HTMLButtonElement;
-    re.dataset.act = "depot-retune";
-    re.disabled = o.busy;
-    re.onclick = () => { if (o.onRetune()) close(); };
-    const x = h("button", "mini", "Close") as HTMLButtonElement;
-    x.onclick = () => close();
-    acts.append(up, re, x);
+    for (const a of o.actions) {
+      const b = h("button", a.primary === false ? "mini" : "post-btn") as HTMLButtonElement;
+      b.innerHTML = a.html ?? a.label;
+      b.disabled = !!a.disabled;
+      if (a.title) b.title = a.title;
+      b.onclick = () => a.onClick();
+      acts.appendChild(b);
+    }
     card.appendChild(acts);
-    function close() { card.remove(); if (depotCard === card) depotCard = null; }
     root.appendChild(card);
     depotCard = card;
+    if (o.until != null && countEl) {
+      const paintCount = () => {
+        if (depotCard !== card) return;
+        const left = Math.max(0, o.until! - performance.now());
+        const s = Math.ceil(left / 1000);
+        countEl!.textContent = s > 0
+          ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`
+          : "0:00";
+        if (left > 0) actionCardRaf = requestAnimationFrame(paintCount);
+      };
+      paintCount();
+    }
+  }
+  function showDepotCard(o: DepotCardInfo): void {
+    const full = o.yieldNow >= o.cap;
+    showActionCard({
+      title: o.title,
+      lines: [
+        `Yield <b>×${o.yieldNow}</b> of cap <b>×${o.cap}</b>${full ? " — full; score past it pays Gold" : ""}`,
+      ],
+      actions: [
+        {
+          label: o.nextCap === null ? "Top level" : `Upgrade → cap ×${o.nextCap}`,
+          html: o.nextCap === null
+            ? "Top level"
+            : `Upgrade → cap ×${o.nextCap} <small>${o.upgradeCost}</small>`,
+          disabled: o.busy || o.nextCap === null,
+          onClick: () => { if (o.onUpgrade()) closeActionCard(); },
+        },
+        {
+          label: "Retune",
+          html: `Retune <small>${o.retuneCost}</small>`,
+          disabled: o.busy,
+          onClick: () => { if (o.onRetune()) closeActionCard(); },
+        },
+        {
+          label: "Close",
+          primary: false,
+          onClick: () => closeActionCard(),
+        },
+      ],
+    });
   }
 
   // ── paint ─────────────────────────────────────────────────────────────────
@@ -3787,7 +3861,7 @@ export function createOriginalUi(
           <div class="help-col"><h3>The Territory</h3><p>Place <b>Depots</b> beside resource nodes. Build <b>Dirt Road</b> (free, ×1.0) and <b>Road</b> (faster hauling ×1.6) and <b>Rail</b> (fastest) to the <b>City</b>. Distance matters — longer lines have smaller <b>distanceFactor</b>. The inspector shows yield, distance and transport per depot.</p>
 <p><h3>How you score</h3><p>Points come from three things: every <b>Depot running</b> (connected and producing, +${VICTORY.loop.type}★, lost if its road is cut), every Depot <b>route fully paved</b> to your plant (+${VICTORY.loop.route}★, lost if a tile goes back to gravel) every <b>city upgrade tier</b> (+${VICTORY.loop.city}★) and every Depot <b>upgraded to level 3</b> (+${VICTORY.loop.maxDepot}★). Click a Depot to upgrade (yield cap ×2 → ×4 → ×6) or retune it. First to ${hudVpTarget}★ wins.</p><p>Move the camera with <b>WASD</b> or <b>middle mouse</b> (wheel zooms). Right-click drops the tool. The pointer reads the map via the inspector.</p>${TOUCH_CONTROLS}<p>Top-bar <b>Aa Names</b> toggles name tags.</p></div>
           <div class="help-col"><h3>Tuning</h3><p>Building a Depot opens a <b>bounded match-3 session</b>. Score becomes the Depot's <b>yield</b> — ×${TUNING.minYield} at zero, ×${TUNING.maxYield} at ${TUNING.targetScore} gems, and <b>no ceiling</b>: the more you clear, the higher it goes. A connected Depot then ticks <b>yield × distanceFactor × transportFactor</b> cargo per clock tick. <b>5 in a row</b> makes a bomb. Finish keeps score; ✕ abandons for default yield. Difficulty changes decay: Easy never cools, Normal never drops, Hard can cool and lower.</p></div>
-          <div class="help-col"><h3>Gold & Defence</h3><p><b>Gold</b> 🪙 is from gold-mine access or combos. It buys <b>Black Market</b> sabotage only — never construction. <b>Blockade</b> ⛓ stops an industry's depots for 45s, <b>Protest</b> ✊ shuts a public road for 2:00 (every truck through it stops, including yours). <b>Security Forces</b> (ordinary materials) turn both away. <b>Feed</b> logs every event.</p></div>
+          <div class="help-col"><h3>Gold & Defence</h3><p><b>Gold</b> 🪙 is from gold-mine access or combos. It buys <b>Black Market</b> sabotage and <b>Challenges</b> (12 Gold) — never construction. Click an industry with Select to Challenge once a cargo is a monopoly (or every town is taken). First win shares the site; a second consecutive win closes the loser's Depot. Decline is a forfeit. <b>Blockade</b> ⛓ stops an industry's depots for 45s, <b>Protest</b> ✊ shuts a public road for 2:00 (every truck through it stops, including yours). <b>Security Forces</b> (ordinary materials) turn both away. <b>Feed</b> logs every event.</p></div>
         </div>
         <div class="confirm-row">
           <button class="big-btn ghost" id="tourBtn" data-sfx="open">▶ Replay the tour</button>
@@ -3857,6 +3931,8 @@ export function createOriginalUi(
     setCombo,
     paint,
     showDepotCard,
+    showActionCard,
+    closeActionCard,
     feed,
     rivalQuip,
     toast,
