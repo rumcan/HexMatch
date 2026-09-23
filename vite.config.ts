@@ -183,7 +183,12 @@ export default defineConfig({
     tailwindcss(),
     // The sidecar's rooms file: the shipped one unless a dev/e2e run overrides
     // it (see `devRoomsConfigPath`).
-    rundotMultiplayerPlugin(devRoomsConfigPath() ? { configPath: devRoomsConfigPath() } : {}),
+    // `RUNDOT_DEV_ROOM_PORT` moves the local room server off 9001, so a second
+    // dev server (another checkout, a worktree) can run beside the first.
+    rundotMultiplayerPlugin({
+      ...(devRoomsConfigPath() ? { configPath: devRoomsConfigPath() } : {}),
+      ...(process.env.RUNDOT_DEV_ROOM_PORT ? { devPort: Number(process.env.RUNDOT_DEV_ROOM_PORT) } : {}),
+    }),
     devRoomServerOrigin(),
     copyBuildingLayers(),
     watchBuildingSources(),

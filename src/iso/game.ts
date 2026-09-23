@@ -110,7 +110,7 @@ import {
   industriesInCatchment, ownerIdOf,
   buildAllComponents, resolveConnection, industryLocks, heldIndustries,
   lockedIndustryIdsFor,
-  depotCargo, depotRoutePaved, isServiced,
+  depotCargo, depotRoutePaved, isServiced, isRailDepot,
   pickBlockadeTarget, harvesterYield, depotPathLength,
   type EconomyState, type Factory, type Harvester,
 } from "./economy";
@@ -239,7 +239,7 @@ import {
   createRailState, railPreview, buildRail, demolishRail, structureAt, hasRail, railDrawLayer,
   placePlatform, placeDepot, platformRefusal, depotRefusal, resolveAnchor,
   RAIL_COSTS, RAIL_REFUSAL_TEXT, footprintTiles,
-  railStructureItems, trainItems, autoTrains, layPlatformTrack, assignLine, renameLine, buyTrain, startLine, recallTrain, sellTrain, tickTrains,
+  railStructureItems, trainItems, autoTrains, layPlatformTrack, platformTrackAt, assignLine, renameLine, buyTrain, startLine, recallTrain, sellTrain, tickTrains,
   rotateView, trainOccupies, trainBasedAt, railPanelRows, canPay, costEntries, resaleValue, demolishStructure, PLATFORM_VP,
   footprintFor, depotExit, RAIL_VIEWS, trainTile, ownerRailTiles as ownerRailTilesOf,
   railToWire, applyRailWire, clearRail, railLayerPatch, copyRailLayer,
@@ -2411,7 +2411,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     for (const f of eco.factories)
       for (const [x, y] of plantFootprintTiles(f.tx, f.ty))
         if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) blocked.add(y * MAP_W + x);
-    for (const h of eco.harvesters)
+    for (const h of eco.harvesters.filter((x) => !isRailDepot(x)))
       for (const [x, y] of depotTiles(h.tx, h.ty))
         if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) blocked.add(y * MAP_W + x);
     // RAIL-04: a platform or a train depot is a built thing — the trees it
@@ -2474,7 +2474,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       ...factoryItems,
       // Every Depot is the same truck depot building, whatever it harvests.
       // Ownership shows in the inspector, the catchment overlays and the ref.
-      ...eco.harvesters.map((h) => ({
+      ...eco.harvesters.filter((h) => !isRailDepot(h)).map((h) => ({
         sprite: depotSpriteFor(h),
         tx: h.tx, ty: h.ty, ref: { kind: "harvester", id: h.id, owner: h.owner },
         ...(h.closed ? { alpha: 0.4 } : {}),
@@ -2527,7 +2527,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     for (const hv of eco.harvesters) {
       entries.push({
         key: `depot-${hv.id}`,
-        name: hv.owner === me.id ? "Your Depot" : "Rival Depot",
+        name: isRailDepot(hv)
+          ? (hv.owner === me.id ? "Your Platform" : "Rival Platform")
+          : (hv.owner === me.id ? "Your Depot" : "Rival Depot"),
         tx: hv.tx, ty: hv.ty,
         cls: "label-depot",
       });
@@ -2919,16 +2921,55 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       return false;
     }
     const anchor = resolveAnchor(grid, railPlants(), ownerId, tx, ty, railView);
+    // A platform at an industry IS a Depot — one tuning session at a time.
+    if (anchor?.kind === "industry" && newLoop && tuning && p === me) {
+      toast("Finish the tuning session first — one Depot is tuned at a time.", "bad");
+      if (p.human) flashAt(tx, ty, "Finish the tuning session first");
+      return false;
+    }
     if (!spend(p, RAIL_COSTS.platform)) return false;
     const built = placePlatform(rail, p.id, ownerId, tx, ty, railView, anchor);
     layPlatformTrack(grid, track, rail, built);
+    const depot = adoptPlatformDepot(built, p);
     if (p.human) sfx.play("build");
     syncWorld();
     rescoreNow();       // RAIL-02: the platform's ★ rides the same rescore
     if (p.human) {
-      toast(`Platform built — +${PLATFORM_VP}★. Run rail from it to a depot to start a line.`, "good");
+      toast(depot
+        ? "Platform built at the industry — tune its yield, then run rail to your plant's platform."
+        : "Plant platform built — run rail to it from an industry platform.", "good");
     }
+    if (depot && newLoop && p === me && !isGuest()) openTuningSession(depot);
     return !!built;
+  }
+
+  /**
+   * Playtest (2026-09): a platform at an industry works exactly like a Depot.
+   * It gets the Depot record the economy, the tuning session, levels and ★
+   * all read — serviced by its train instead of a road (`isRailDepot`). A plant
+   * platform is the other end of the line and holds nothing.
+   */
+  function adoptPlatformDepot(s: RailStructure, p: PlayerState): Harvester | null {
+    if (s.kind !== "platform" || s.anchor?.kind !== "industry") return null;
+    const h: Harvester = {
+      id: allocHarvesterId(), owner: p.id, ownerId: p.i + 1, tx: s.tx, ty: s.ty,
+      platformId: s.id, railIndustryId: s.anchor.id,
+    };
+    if (newLoop) h.yield = birthYieldFor(difficultyRules());
+    eco.harvesters.push(h);
+    return h;
+  }
+
+  /** The platform is gone: so is the Depot record it stood for. */
+  function dropPlatformDepot(platformId: number): void {
+    const hi = eco.harvesters.findIndex((h) => h.platformId === platformId);
+    if (hi < 0) return;
+    const removed = eco.harvesters[hi];
+    eco.harvesters.splice(hi, 1);
+    loopCarry.delete(removed.id);
+    if (tuning?.depotId === removed.id) {
+      closeTuningSession(false, "The tuned platform was removed — tuning session closed.");
+    }
   }
 
   /**
@@ -3885,9 +3926,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     });
   }
   /** My Depot whose 2×2 lot covers this tile, if any. */
-  const myDepotAt = (tx: number, ty: number): Harvester | null =>
-    eco.harvesters.find((h) => h.owner === me.id
-      && tx >= h.tx && tx <= h.tx + 1 && ty >= h.ty && ty <= h.ty + 1) ?? null;
+  const myDepotAt = (tx: number, ty: number): Harvester | null => {
+    // A platform-Depot is clicked on its platform (any of its three tiles).
+    const onPlatform = structureAt(rail, tx, ty);
+    return eco.harvesters.find((h) => h.owner === me.id && (isRailDepot(h)
+      ? onPlatform?.id === h.platformId
+      : tx >= h.tx && tx <= h.tx + 1 && ty >= h.ty && ty <= h.ty + 1)) ?? null;
+  };
 
   /**
    * L14 (#229) returns WHICH Depots this pass levelled (the cooling pass must
@@ -4243,6 +4288,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // platform's ★ goes with it (`rescoreNow` below revokes it).
       const refund = resaleValue(cost);
       if (Object.keys(refund).length) earn(p, refund);
+      dropPlatformDepot(rs.id);
       if (p.human) sfx.play("demolish");
       // demolishStructure has already dropped any line that lost a platform —
       // and a depot can no longer come down under its train (that refusal is
@@ -4273,7 +4319,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       return;
     }
     // any tile of the 2×2 lot demolishes the Depot standing on it
-    const hi = eco.harvesters.findIndex((h) => depotContains(h.tx, h.ty, tx, ty) && h.owner === p.id);
+    const hi = eco.harvesters.findIndex((h) => !isRailDepot(h) && depotContains(h.tx, h.ty, tx, ty) && h.owner === p.id);
     if (hi >= 0) {
       const removed = eco.harvesters[hi];
       eco.harvesters.splice(hi, 1);
@@ -6488,6 +6534,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (!res) return { acted: false, laid: [], platform: false };
     if (res.refund) earn(rival, res.refund);
     else if (Object.keys(res.spent).length) spend(rival, res.spent);
+    if (railMove.kind === "platform") {
+      const s = railState.structures[railState.structures.length - 1];
+      if (s && s.ownerId === rival.i + 1) adoptPlatformDepot(s, rival);
+    }
     ui.feed(`Rival ${res.label}`, rival.name);
     return { acted: true, laid: railMove.kind === "track" ? res.tiles : [], platform: railMove.kind === "platform" };
   }
@@ -7912,6 +7962,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       for (let dy = 0; dy < fh; dy++) for (let dx = 0; dx < fw; dx++) {
         const x = tx + dx, y = ty + dy;
         if (x < MAP_W && y < MAP_H) items.push({ sprite: ok ? "highlight" : "highlight_bad", tx: x, ty: y });
+      }
+      if (kind === "platform") {
+        // Playtest (2026-09): the side its track goes — the three stopping
+        // tiles laid with it, banded, and the middle one (where the train
+        // stops) tagged. R turns the platform AND swaps the side.
+        const row = platformTrackAt(tx, ty, railView);
+        for (const [x, y] of row) {
+          if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) items.push({ sprite: "highlight_soft", tx: x, ty: y });
+        }
+        const mid = row[1];
+        if (mid) items.push({ sprite: "node_mark", tx: mid[0], ty: mid[1] });
       }
       if (kind === "depot") {
         // Where the train will come out: the declared exit, marked so the

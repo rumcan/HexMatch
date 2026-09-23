@@ -41,7 +41,7 @@ import {
 // RAIL-04 (#178): the railway is a SOURCE of throughput, not a second economy.
 // `railOpenTo` / `railServicedIndustries` are the rail module's own rules; this
 // module only asks them the same question it asks the road tar.
-import { railOpenTo, railServicedIndustries, type RailState } from "./rail";
+import { railOpenTo, railPath, railServesIndustry, railServicedIndustries, stopTile, type RailState } from "./rail";
 
 /** Catchment is a 4×4 rectangle centred on the harvester tile. */
 export const CATCHMENT = 4;
@@ -86,7 +86,20 @@ export interface Harvester {
    * scores no ★. Re-opens only if the owner challenges the industry and wins.
    */
   closed?: boolean;
+  /**
+   * Playtest (2026-09): a RAIL platform works exactly like a Depot — it is
+   * one, serviced by its train instead of a road. Set on the Depot record a
+   * platform at an industry creates: the rail structure it stands for, and
+   * the industry it holds. Its catchment is that one industry, it is serviced
+   * while the line's train runs, and it delivers at the Dirt tier. Tuning,
+   * yield, levels and ★ are the Depot's own rules, unchanged.
+   */
+  platformId?: number;
+  railIndustryId?: number;
 }
+
+/** True for the Depot record a rail platform stands for. */
+export const isRailDepot = (h: Harvester): boolean => h.platformId !== undefined;
 
 /**
  * A processing site (the "Factory"/Processing Plant building).
@@ -184,6 +197,7 @@ export const rectContains = (
  * resource — there is no catchment box any more.
  */
 export function industriesInCatchment(grid: Grid, h: Harvester): Industry[] {
+  if (isRailDepot(h)) return grid.industries.filter((i) => i.id === h.railIndustryId);
   return industriesTouchingDepot(grid, h.tx, h.ty).map((t) => t.industry);
 }
 
@@ -197,6 +211,9 @@ export function industriesInCatchment(grid: Grid, h: Harvester): Industry[] {
  * a legitimate opening, exactly as it would be beside your own road.
  */
 export function isServiced(track: Track, h: Harvester, rail?: RailState | null): boolean {
+  // A platform-Depot is serviced while its line's train is running.
+  if (isRailDepot(h)) return !!rail && h.railIndustryId !== undefined
+    && railServesIndustry(rail, h.ownerId, h.railIndustryId);
   // The truck depot's gate: only its ENTRANCE tiles (outside the open edges)
   // connect it — a road against the closed side does not.
   for (const [nx, ny] of depotEntranceTiles(h.tx, h.ty, h.facing ?? DEFAULT_FACING)) {
@@ -422,6 +439,11 @@ export function resolveConnection(
   state: EconomyState, comp: Components, h: Harvester,
 ): Connection {
   const mine = state.factories.filter((f) => f.owner === h.owner && !f.closed);
+  // A platform-Depot's train carries to the owner's plant platform: the
+  // railway's one tier, which is the Dirt Road's (#142).
+  if (isRailDepot(h)) {
+    return mine.length ? { kind: "dirt", multiplier: TRANSPORT.dirt.throughput, factory: mine[0] } : NO_CONNECTION;
+  }
   let best: Connection = NO_CONNECTION;
   let shortest = Infinity;
   for (const f of mine) {
@@ -476,6 +498,17 @@ export function resolveConnection(
  * Depot nothing, so the factor built on this is never a second gate.
  */
 export function depotPathLength(state: EconomyState, h: Harvester): number | null {
+  // A platform-Depot's distance is its line's: rail tiles from its platform
+  // to the plant platform the train runs to.
+  if (isRailDepot(h)) {
+    const rail = state.rail;
+    const line = rail?.lines.find((l) => l.source === h.platformId && l.ownerId === h.ownerId);
+    const src = line && rail!.structures.find((s) => s.id === line.source);
+    const dst = line && rail!.structures.find((s) => s.id === line.dest);
+    if (!rail || !src || !dst) return null;
+    const route = railPath(rail, h.ownerId, [stopTile(src)], new Set([tIdx(...stopTile(dst))]));
+    return route ? route.length - 1 : null;
+  }
   // the Depot's ENTRANCE is where its road meets the network (depot.ts)
   const from = depotShoulders(state.track, h.ownerId, h);
   if (from.length === 0) return null;

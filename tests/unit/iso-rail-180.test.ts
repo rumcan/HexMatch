@@ -310,3 +310,28 @@ describe("#180 railServesIndustry — active train that has reached source", () 
     expect(y.gold).toBeCloseTo(INDUSTRY_BY_KEY.gold_mine.output * TRANSPORT.dirt.throughput, 6);
   });
 });
+
+// Playtest (2026-09): a platform at an industry works exactly like a Depot.
+describe("a platform-Depot is a Depot serviced by its train", () => {
+  it("holds its one industry, is serviced only while the line runs, and connects at the Dirt tier", async () => {
+    const eco = await import("../../src/iso/economy");
+    const grid = flatGrid();
+    const track = createTrack();
+    const state = createRailState();
+    const { source, dest } = buildLine(state, grid, track, 7, 3);
+    const h = {
+      id: 77, owner: "you", ownerId: 1, tx: source.tx, ty: source.ty,
+      platformId: source.id, railIndustryId: 0,
+    };
+    expect(eco.isRailDepot(h)).toBe(true);
+    const e = { grid: flatGrid([ind("farm", 12, 11)]), track, harvesters: [h], factories: [{ owner: "you", ownerId: 1, tx: 20, ty: 11 }], rail: state };
+    expect(eco.isServiced(track, h, state)).toBe(false);          // no train yet
+    const plan = assignLine(state, 1, source.id, dest.id);
+    tickUntil(state, () => plan.train!.status === "dwelling");
+    expect(eco.isServiced(track, h, state)).toBe(true);           // the train runs
+    expect(eco.industriesInCatchment(e.grid, h).map((i) => i.id)).toEqual([0]);
+    const conn = eco.resolveConnection(e as never, { comp: new Int32Array(0) } as never, h);
+    expect(conn.kind).toBe("dirt");
+    expect(eco.depotPathLength(e as never, h)).toBeGreaterThan(0);  // its rail distance
+  });
+});

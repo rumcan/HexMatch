@@ -123,6 +123,9 @@ export function base64ToBytes(b64: string): Uint8Array {
 // ── wire shape ────────────────────────────────────────────────────────────
 export interface WireHarvester {
   id: number; owner: string; ownerId: number; tx: number; ty: number;
+  /** Playtest (2026-09): set on the Depot record a rail platform stands for. */
+  platformId?: number;
+  railIndustryId?: number;
   /** Which EDGE of the 2×2 truck Depot its entrance opens onto (its rotation). */
   facing?: DepotFacing;
   /**
@@ -460,6 +463,9 @@ export function buildSnapshot(src: SnapshotSource): Snapshot {
       ...(h.facing ? { facing: h.facing } : {}),
       ...(typeof h.tuneTier === "number" ? { tuneTier: h.tuneTier } : {}),
       ...(h.closed ? { closed: true } : {}),
+      // Playtest (2026-09): a platform's Depot record says which platform and
+      // industry it stands for (absent on every road Depot).
+      ...(typeof h.platformId === "number" ? { platformId: h.platformId, railIndustryId: h.railIndustryId } : {}),
     })),
     factories: src.factories.map((f) => ({ ...f })),
     players: src.players.map((p) => ({ ...p, res: { ...p.res } })),
