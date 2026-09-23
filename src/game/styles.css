@@ -5310,3 +5310,15 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   .start-screen.menu .menu-btn { padding-top: 9px; padding-bottom: 9px; }
   .start-screen.menu .menu-campaign { margin-top: 8px; }
 }
+
+/* ── 2026-09 (owner): a smaller, evenly spaced main menu ──────────────── */
+.start-screen.menu > .menu-card { width: min(400px, 100%); padding: 22px 24px 20px; }
+.start-screen.menu .menu-emblem { width: 52px; height: 52px; margin: 0 auto 8px; }
+.start-screen.menu .menu-card > .start-kicker { margin: 0 0 8px; font-size: 10px; letter-spacing: 2px; line-height: 1.35; }
+.start-screen.menu .menu-title { font-size: clamp(24px, 5vw, 32px); margin: 0 0 18px; }
+.start-screen.menu .menu-sub { margin: -8px auto 16px; }
+.start-screen.menu .menu-actions { gap: 8px; }
+.start-screen.menu .menu-btn { min-height: 0; padding: 9px 14px 10px; font-size: 13px; letter-spacing: 2.2px; }
+.start-screen.menu .mb-tag { font-size: 10.5px; margin-top: 2px; }
+.start-screen.menu .menu-campaign { margin-top: 12px; }
+.start-screen.menu > .menu-leaderboard { padding: 12px 14px; }
