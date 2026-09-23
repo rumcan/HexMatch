@@ -37,6 +37,8 @@ const ACTIONS = [
 ];
 
 async function openModeScreen(page: Page): Promise<void> {
+  // run.world feedback: a first launch skips the menu — this spec measures it.
+  await page.addInitScript(() => localStorage.setItem("hexmatch:onboarded", "1"));
   await page.goto(BASE);
   await page.locator(".menu-btn.primary").click();
   await expect(page.locator('main[aria-label="Hexmatch start screen"]')).toBeVisible();

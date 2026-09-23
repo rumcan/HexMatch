@@ -30,13 +30,37 @@ import { isDefaultMatchSettings } from "./net/match-settings";
 // that mounts a networked match knows when that memo stops being true — a
 // quit to menu or a decided match — so the drop is wired here, not in game.ts.
 import { writeActiveMatch } from "./net/transport";
+import { mostRecentSave } from "./iso/save-summary";
+
+/**
+ * run.world feedback (2026-09): the first launch skips the menu and the mode
+ * screen and drops the player straight into a solo game, where the coach
+ * teaches the loop one step at a time. Mode choices come after (the menu
+ * stands normally from the second launch, and ☰ → Quit to main menu).
+ */
+export const ONBOARDED_KEY = "hexmatch:onboarded";
+function isFirstLaunch(): boolean {
+  try {
+    if (localStorage.getItem(ONBOARDED_KEY)) return false;
+    // A player with a save is not new, whatever the flag says.
+    if (mostRecentSave()) return false;
+    // Links that ask for something specific (a room, a contract, a seed) are
+    // not a first launch either.
+    const q = new URLSearchParams(location.search);
+    for (const k of ["room", "chapter", "seed", "join"]) if (q.has(k)) return false;
+    return true;
+  } catch { return false; }
+}
 
 /**
  * Multiplayer is opt-in: keeping the start screen outside the game means the
  * AI match remains playable without an account or a realtime connection.
  */
 export default function App() {
-  const [choice, setChoice] = useState<StartChoice | null>(null);
+  const [firstRun] = useState(isFirstLaunch);
+  const [choice, setChoice] = useState<StartChoice | null>(
+    firstRun ? { mode: "ai", portrait: "vex" } : null,
+  );
   /** STORY-01: the front door stands until Play is pressed (or a playtest
    *  link pins a contract, which walks straight past it). */
   const [atMenu, setAtMenu] = useState(true);
@@ -102,6 +126,10 @@ export default function App() {
   // is left alone; Play resumes what the pagehide autosave keeps), and stand
   // the front door back up. Rooms use the same door, and `startIsoGame` turns
   // it into "Leave room" wording with a confirm of its own.
+  // The first game has started — every later boot is a normal one.
+  useEffect(() => {
+    if (firstRun) try { localStorage.setItem(ONBOARDED_KEY, "1"); } catch { /* private mode */ }
+  }, [firstRun]);
   const quitToMenu = () => {
     setChoice(null);
     setBackToCampaign(false);
@@ -124,7 +152,11 @@ export default function App() {
   useEffect(() => {
     if (!choice || !ref.current) return;
     const cleanup = choice.mode === "ai"
-      ? startIsoGame(ref.current, { role: "solo", portrait: choice.portrait, onQuitToMenu: quitToMenu })
+      ? startIsoGame(ref.current, {
+        role: "solo", portrait: choice.portrait, onQuitToMenu: quitToMenu,
+        // run.world feedback: the very first game is coached, not toured.
+        firstRun,
+      })
       : choice.mode === "story"
         // STORY-01: the contract rides in on the options — rival, voice, ★
         // line, seed and the three scenes — and the ledger's third door

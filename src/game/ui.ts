@@ -550,6 +550,8 @@ export interface OriginalUi {
   setReach: (reach: Partial<Record<Cargo, number>>) => void;
   setCombo: (count: number, need: number) => void;
   paint: (state: UiState) => void;
+  /** run.world feedback: coach the first game one step at a time. */
+  setCoach: (on: boolean) => void;
   /** 2026-09: the Depot card (level, yield vs cap, Upgrade, Retune). */
   showDepotCard: (o: DepotCardInfo) => void;
   /** #322: generic bottom-centre action card — one at a time. */
@@ -3532,6 +3534,45 @@ export function createOriginalUi(
     });
   }
 
+  // ── run.world feedback (2026-09): the first-game coach ──────────────────
+  // One instruction at a time, on the objective line, with the control it
+  // needs pulsing; it advances when the player DOES the step (the objective
+  // key moves on), and bows out once the first Depot is earning.
+  const COACH_STEPS: Record<string, { n: number; text: string; pulse?: string }> = {
+    "setup-factory": { n: 1, text: "Tap the map next to a town to place your Factory." },
+    "setup-harvester": { n: 2, text: "Now tap beside an industry (farm, forest, mine…) to place a Depot." },
+    "tuning-depot": { n: 3, text: "Match 3 gems! Your score sets how much this Depot produces." },
+    "need-depot": { n: 2, text: "Tap Depot, then tap beside an industry to place it.", pulse: '[data-tool="harvester"]' },
+    "need-road": { n: 4, text: "Pick Dirt Road and drag from your Depot to your Factory.", pulse: '[data-tool="dirt"]' },
+  };
+  const COACH_TOTAL = 4;
+  let coachOn = false;
+  let coachDoneTimer = 0;
+  let coachPulsed: Element | null = null;
+  function setCoach(on: boolean): void { coachOn = on; if (!on) pulseCoach(null); }
+  function pulseCoach(sel: string | null): void {
+    const el = sel ? root.querySelector(sel) : null;
+    if (el === coachPulsed) return;
+    coachPulsed?.classList.remove("coach-pulse");
+    el?.classList.add("coach-pulse");
+    coachPulsed = el;
+  }
+  /** The coach's line for this objective, or null when not coaching. */
+  function coachStep(key: string | null): string | null {
+    if (!coachOn) return null;
+    const step = key ? COACH_STEPS[key] : undefined;
+    if (step) {
+      pulseCoach(step.pulse ?? null);
+      return `Step ${step.n}/${COACH_TOTAL} · ${step.text}`;
+    }
+    // Past the steps: the loop is running. One closing line, then bow out.
+    pulseCoach(null);
+    if (!coachDoneTimer) {
+      coachDoneTimer = window.setTimeout(() => { coachOn = false; }, 9000);
+    }
+    return "You're producing! Earn ★ from Depots, fully paved routes and city upgrades. Tap ❔ any time for help.";
+  }
+
   // ── paint ─────────────────────────────────────────────────────────────────
   function paint(state: UiState) {
     paintTuning(state.tuning, state.tuningIdle);
@@ -3619,7 +3660,9 @@ export function createOriginalUi(
       // Objective hides when a real banner is up — the protest countdown or the
       // disconnect sheet is more urgent than the loop reminder.
       const show = !!obj && !state.banner;
-      objectiveEl.textContent = obj ?? "";
+      const coached = coachStep(objKey);
+      objectiveEl.textContent = coached ?? obj ?? "";
+      objectiveEl.classList.toggle("coach", coached !== null);
       if (objKey) objectiveEl.dataset.key = objKey;
       objectiveEl.classList.toggle("hidden", !show);
       // Banner height var must count the objective when banner itself is hidden,
@@ -3930,6 +3973,7 @@ export function createOriginalUi(
     setReach,
     setCombo,
     paint,
+    setCoach,
     showDepotCard,
     showActionCard,
     closeActionCard,
