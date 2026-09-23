@@ -7,7 +7,7 @@
     2
   ],
   "generatedBy": "tools/make-railway-art.mjs",
-  "license": "Repository LICENSE (original art, procedurally generated — no third-party assets)",
+  "license": "Repository LICENSE (original art, procedurally generated \u00e2\u20ac\u201d no third-party assets)",
   "meta": {
     "note": "Per-sprite PNG layers for the railway (epic #142). The defs are complete geometry (rect 0,0,w,h at 1x, origin anchor, footprint, moving) so src/iso/rail-art.ts can install them straight into the atlas table the renderer reads. A missing file leaves the vector fallback.",
     "palette": {
@@ -313,10 +313,10 @@
       "name": "platform_ne",
       "kind": "platform",
       "view": "ne",
-      "w": 162,
-      "h": 118,
+      "w": 160,
+      "h": 116,
       "anchor": [
-        64,
+        58,
         116
       ],
       "footprint": [
@@ -325,11 +325,11 @@
       ],
       "moving": false,
       "box2x": [
-        324,
-        236
+        320,
+        232
       ],
       "alpha": {
-        "coverage": 0.4714,
+        "coverage": 0.4973,
         "corners": [
           0,
           0,
@@ -337,17 +337,17 @@
           0
         ]
       },
-      "note": "platform ne; original procedural art (tools/make-railway-art.mjs)."
+      "note": "platform ne; owner-supplied art (assets/railway/source/platforms-source.webp), cut by tools."
     },
     "platform_se": {
       "name": "platform_se",
       "kind": "platform",
       "view": "se",
-      "w": 162,
-      "h": 110,
+      "w": 160,
+      "h": 116,
       "anchor": [
-        97,
-        109
+        98,
+        116
       ],
       "footprint": [
         3,
@@ -355,11 +355,11 @@
       ],
       "moving": false,
       "box2x": [
-        324,
-        220
+        320,
+        232
       ],
       "alpha": {
-        "coverage": 0.5067,
+        "coverage": 0.5083,
         "corners": [
           0,
           0,
@@ -367,17 +367,17 @@
           0
         ]
       },
-      "note": "platform se; original procedural art (tools/make-railway-art.mjs)."
+      "note": "platform se; owner-supplied art (assets/railway/source/platforms-source.webp), cut by tools."
     },
     "platform_sw": {
       "name": "platform_sw",
       "kind": "platform",
       "view": "sw",
-      "w": 162,
-      "h": 132,
+      "w": 160,
+      "h": 128,
       "anchor": [
-        65,
-        132
+        64,
+        128
       ],
       "footprint": [
         2,
@@ -385,11 +385,11 @@
       ],
       "moving": false,
       "box2x": [
-        324,
-        264
+        320,
+        256
       ],
       "alpha": {
-        "coverage": 0.5208,
+        "coverage": 0.5494,
         "corners": [
           0,
           0,
@@ -397,17 +397,17 @@
           0
         ]
       },
-      "note": "platform sw; original procedural art (tools/make-railway-art.mjs)."
+      "note": "platform sw; owner-supplied art (assets/railway/source/platforms-source.webp), cut by tools."
     },
     "platform_nw": {
       "name": "platform_nw",
       "kind": "platform",
       "view": "nw",
-      "w": 162,
-      "h": 132,
+      "w": 160,
+      "h": 128,
       "anchor": [
         96,
-        132
+        128
       ],
       "footprint": [
         3,
@@ -415,11 +415,11 @@
       ],
       "moving": false,
       "box2x": [
-        324,
-        264
+        320,
+        256
       ],
       "alpha": {
-        "coverage": 0.5164,
+        "coverage": 0.5495,
         "corners": [
           0,
           0,
@@ -427,7 +427,7 @@
           0
         ]
       },
-      "note": "platform nw; original procedural art (tools/make-railway-art.mjs)."
+      "note": "platform nw; owner-supplied art (assets/railway/source/platforms-source.webp), cut by tools."
     },
     "train-depot_ne": {
       "name": "train-depot_ne",

@@ -21,7 +21,7 @@ import {
   anchorCandidates, resolveAnchor, platformRefusal, placePlatform, overlaps,
   depotRefusal, placeDepot, depotExit, laneTiles, stopTile, railPorts, footprintFor, rotateView,
   railComponents, railPath, ownerRailTiles,
-  lineRefusal, assignLine, createLine, renameLine, buyTrain, startLine, LINE_NAME_MAX, planLeg, tickTrains, trainTile, trainOccupies, demolishStructure,
+  lineRefusal, assignLine, autoTrains, createLine, renameLine, buyTrain, startLine, LINE_NAME_MAX, planLeg, tickTrains, trainTile, trainOccupies, demolishStructure,
   recallTrain, sellTrain, stopLine, depotReaching, trainAtHome, trainBasedAt,
   railServesIndustry, railServicedIndustries, platformVp, railPanelRows,
   railStructureItems, trainItems, pointAt, polyline, routeLength,
@@ -421,6 +421,18 @@ describe("RAIL-04 one train per connected owner component", () => {
     const { state, a } = twoLines();
     expect(depotReaching(state, 1, a.source.id)?.kind).toBe("depot");
     expect(depotReaching(state, 2, a.source.id)).toBeNull();
+  });
+
+  it("spawns a train automatically on each connected industry→plant pair, no depot", () => {
+    const { state, a, b } = twoLines();
+    expect(autoTrains(state, 1)).toBe(true);
+    expect(state.trains).toHaveLength(2);
+    expect(state.trains.every((t) => t.depotId === 0)).toBe(true);
+    expect(autoTrains(state, 1)).toBe(false);          // idempotent
+    tickTrains(state, 60_000);
+    expect(state.trains.some((t) => t.status === "moving" || t.status === "dwelling")).toBe(true);
+    expect(railServesIndustry(state, 1, a.source.anchor!.id)).toBe(true);
+    void b;
   });
 
   it("refuses a second train on the same component, and allows one on another", () => {

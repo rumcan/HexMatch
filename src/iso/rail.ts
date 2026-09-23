@@ -1346,11 +1346,14 @@ export function assignLine(
 export function planLeg(state: RailState, train: Train): boolean {
   const line = state.lines.find((l) => l.id === train.lineId);
   const depot = depotOfTrain(state, train);
-  if (!line || !depot) {
+  // Playtest (2026-09): trains spawn on their line like lorries — no depot.
+  // A depot-less train starts from its source platform and never heads "home".
+  if (!line || (!depot && train.depotId !== 0)) {
     train.status = "blocked";
     train.blockedWhy = "Line or depot gone";
     return false;
   }
+  if (!depot && train.target === "depot") train.target = "source";
   const source = structureById(state, line.source);
   const dest = structureById(state, line.dest);
   if (!source || !dest) {
@@ -1362,13 +1365,13 @@ export function planLeg(state: RailState, train: Train): boolean {
 
   // Where the train actually IS: its own tile when that is still its rail, else
   // the depot exit (a freshly bought train sitting in the shed).
-  const exit = depotExit(depot);
+  const exit = depot ? depotExit(depot) : { tx: stopTile(source)[0], ty: stopTile(source)[1] };
   const wasRolling = train.status === "moving" || train.status === "departing" || train.status === "returning";
   const oldRoute = train.route;
   const oldDist = train.dist;
   const here: [number, number] = oldRoute.length ? trainTile(train) : [exit.tx, exit.ty];
   const start: [number, number] = railDrivable(state, train.ownerId, here[0], here[1]) ? here : [exit.tx, exit.ty];
-  const targetStruct = train.target === "depot" ? depot : train.target === "source" ? source : dest;
+  const targetStruct = train.target === "depot" ? depot! : train.target === "source" ? source : dest;
   // The leg ends at ONE tile — the middle of a platform's lane, or the depot's
   // shed door — so a train parks inside the platform instead of on its port.
   const stop: [number, number] = train.target === "depot" ? [exit.tx, exit.ty] : stopTile(targetStruct);
@@ -1394,7 +1397,8 @@ export function planLeg(state: RailState, train: Train): boolean {
   train.dist = resume;
   train.planRevision = state.rail.revision;
   train.blockedWhy = undefined;
-  train.status = train.target === "depot" ? "returning" : train.target === "source" ? "departing" : "moving";
+  // A depot-less (automatic) train is never "departing": it starts on its line.
+  train.status = train.target === "depot" ? "returning" : train.target === "source" && depot ? "departing" : "moving";
   return true;
 }
 
@@ -1469,6 +1473,46 @@ export function tickTrains(state: RailState, dtMs: number): void {
   }
 }
 
+/**
+ * Playtest (2026-09): trains are automatic, exactly like the lorries. Every
+ * industry platform of the owner that rail connects to one of the owner's
+ * plant platforms gets a line and a train (free, no depot), starting at the
+ * source platform. Lines whose platforms are gone, or no longer connected,
+ * are dropped with their train. Returns true when anything changed.
+ * (The Train Depot comes back when players can buy trains.)
+ */
+export function autoTrains(state: RailState, ownerId: number): boolean {
+  let changed = false;
+  const comp = railComponents(state, ownerId);
+  const compOf = (s: RailStructure): number => comp.get(tIdx(...stopTile(s))) ?? 0;
+  for (const line of state.lines.filter((l) => l.ownerId === ownerId)) {
+    const src = structureById(state, line.source), dst = structureById(state, line.dest);
+    if (src && dst && compOf(src) !== 0 && compOf(src) === compOf(dst)) continue;
+    state.lines.splice(state.lines.indexOf(line), 1);
+    state.trains = state.trains.filter((t) => t.lineId !== line.id);
+    changed = true;
+  }
+  const plats = structuresOf(state, ownerId, "platform");
+  for (const src of plats) {
+    if (src.anchor?.kind !== "industry") continue;
+    if (state.lines.some((l) => l.source === src.id)) continue;
+    const home = compOf(src);
+    if (!home) continue;
+    const dst = plats.find((p) => p.anchor?.kind === "plant" && compOf(p) === home);
+    if (!dst) continue;
+    const made = createLine(state, ownerId, src.id, dst.id);
+    if (!made.ok || !made.line) continue;
+    const [tx, ty] = stopTile(src);
+    state.trains.push({
+      id: state.seq++, ownerId, lineId: made.line.id, depotId: 0,
+      status: "stored", target: "source", route: [[tx, ty]], dist: 0,
+      planRevision: -1, dwellMs: 0, dirBit: 0, resold: false,
+    });
+    changed = true;
+  }
+  return changed;
+}
+
 /** Send a train home: `returning` first, and it stays there until re-assigned. */
 export function recallTrain(state: RailState, train: Train): boolean {
   if (train.status === "stored") return false;
@@ -1535,9 +1579,9 @@ export function railServesIndustry(state: RailState, ownerId: number, industryId
     const train = state.trains.find((t) => t.lineId === line.id && t.ownerId === ownerId);
     if (!train || train.status === "stored" || train.status === "blocked" || train.status === "departing") continue;
     const depot = depotOfTrain(state, train);
-    if (!depot) continue;
+    if (!depot && train.depotId !== 0) continue;
     const comp = railComponents(state, ownerId);
-    const home = depotComponent(comp, depot);
+    const home = depot ? depotComponent(comp, depot) : (comp.get(tIdx(...stopTile(source))) ?? 0);
     if (!home) continue;
     const a = comp.get(tIdx(...stopTile(source))) ?? 0;
     const b = comp.get(tIdx(...stopTile(dest))) ?? 0;
@@ -1905,6 +1949,5 @@ export function clearRail(state: RailState): boolean {
 export const RAIL_TOOLS = [
   { key: "rail", label: "Railway Track", cost: RAIL_COSTS.rail },
   { key: "platform", label: "Rail Platform", cost: RAIL_COSTS.platform },
-  { key: "raildepot", label: "Train Depot", cost: RAIL_COSTS.depot },
 ] as const;
 export type RailToolKey = typeof RAIL_TOOLS[number]["key"];
