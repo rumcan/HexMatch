@@ -4458,7 +4458,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const verdict = settleMapBattle(eco, stake, won);
     if (verdict === "closed" && stake.kind === "town") {
       const loserId = won ? (stake.holderId ?? null) : stake.challengerId;
-      if (loserId) revokeCityStars(score, loserId, 0);
+      if (loserId) {
+        // Lose the city: its tiers AND their bonus go with it. Revoking the ★
+        // alone was undone by the next rescore (city ★ is a high-water mark of
+        // `townLevel`), so the level itself has to drop too.
+        const loser = players.find((x) => x.id === loserId);
+        if (loser) { loser.townLevel = 0; loser.townBonus = 0; }
+        revokeCityStars(score, loserId, 0);
+      }
     }
     if (stake.kind === "town") {
       const hold = eco.townHolds?.get(stake.townId);
@@ -4478,6 +4485,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (sale.kind === "city") {
       if (p.townLevel <= 0) return 0;
       p.townLevel--;
+      // A sold tier takes its ★ with it (city ★ is otherwise a high-water mark).
+      revokeCityStars(score, p.id, p.townLevel);
     }
     const gold = applySale(eco, p.id, sale, track, p.i + 1);
     if (gold <= 0) {
