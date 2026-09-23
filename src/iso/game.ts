@@ -183,7 +183,7 @@ import {
   rivalTuningScore, rivalTuningYield, settleTuningYield, overshootGold,
   sessionObstacles as sessionObstaclesFor, takeTuningMove, townBonusFor, tuningMovesLeft,
   unlockTierAfterSession, tuningOver, tuningSessionGold, tuningSessionYield,
-  tuningCargoLabel, TUNING_ABANDON_YIELD, TUNING_REWARD_SCORE, type TuningSession,
+  TUNING_ABANDON_YIELD, TUNING_REWARD_SCORE, type TuningSession,
 } from "./tuning";
 import {
   FREE_SETUP_DEPOTS, costCompact, costLabel, depotTypeLabel, DEPOT_UPGRADE_COST, DEPOT_RETUNE_COST,
@@ -2781,7 +2781,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // nobody on the other end of the wire to click for it.
       phase = "setup-harvester";
       syncWorld();
-      toast("Factory placed. Now place your first depot beside an industry.", "info");
+      // Owner (2026-09): the objective line says the next step — no toast repeats it.
       publishNet(performance.now(), true);
       return true;
     }
@@ -2813,7 +2813,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     phase = "setup-harvester";
     syncWorld();
-    toast("Factory placed. Now place your first depot beside an industry.", "info");
+    // Owner (2026-09): the objective line says the next step — no toast repeats it.
     return true;
   }
 
@@ -3257,14 +3257,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // L10 (#225): the intro names the obstacles in the game's own words — the
     // player is told why the board is tougher before they spend a move on it.
     const intro = obstacleIntroLine(skill().label, obstacles);
-    toast(
-      (intro ? `${intro} ` : "")
-      + `Tuning session — ${tuningCargoLabel(cargo)}: ${TUNING.moves} moves on the plant floor set this Depot's yield`
-      + (isRematch ? " again." : ".")
-      // The closing promise comes from the row, not from the mood of the copy.
-      + (rules.yieldNeverDrops ? " It can only go up from here." : " A bad round can cost you."),
-      "info",
-    );
+    // Owner (2026-09): the session window's plate already says moves, score
+    // and yield; only a board with obstacles gets a line of its own.
+    if (intro) toast(intro, "info");
+    void isRematch; void rules;
   }
 
   // ── L17 (#245): the town on the map grows with the seat ──────────────────
@@ -7204,7 +7200,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       lastAi = performance.now();
       if (!guestOpened) {
         guestOpened = true;
-        toast("Both seats are open — connect your depot to your Factory.", "info");
+        // Owner (2026-09): the objective line carries the next step.
       }
     }
   }
@@ -9073,7 +9069,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             // session toast (from `openTuningSession`) has already told the
             // player what the board is for; this line is the other half of the
             // loop — the road that makes the Depot earn.
-            toast(setupDepotToast(newLoop), "info");
+            // Owner (2026-09): the objective line carries "road it in" now.
+            void setupDepotToast;
           }
         } else if (phase === "play") {
           // A bought protest intercepts the click: it stages on a public road
