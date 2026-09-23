@@ -3645,6 +3645,15 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .start-actions button, .start-panel button { min-height: 44px; padding: 9px 16px; border: 1px solid var(--line, #594b3b); color: var(--txt, #efe4d0); background: rgba(255,255,255,.04); cursor: pointer; font: 600 12px var(--sans, sans-serif); letter-spacing: 1px; }
 .start-actions button:hover, .start-panel button:hover { border-color: var(--gold, #c98731); background: rgba(255,166,43,.1); }
 .start-actions .start-primary, .start-panel .start-primary { color: #1b130b; border-color: var(--gold2, #e9a83e); background: var(--gold2, #e9a83e); }
+/* Playtest (2026-09): the generic start-button hover above painted a dark wash
+   over the bright gold primary, leaving dark text on dark. A bright button
+   brightens on hover instead, and keeps its dark label. */
+.start-actions .start-primary:hover, .start-panel .start-primary:hover,
+.start-actions .start-primary:focus-visible, .start-panel .start-primary:focus-visible {
+  color: #1b130b; border-color: #ffd47e;
+  background: linear-gradient(180deg, #ffd47e, #e9a83e 60%, #d19434);
+  box-shadow: 0 0 0 1px rgba(255, 212, 126, .45), 0 0 18px -4px rgba(255, 176, 46, .7);
+}
 .start-primary small { margin-left: 8px; opacity: .7; font-weight: 400; }
 /* CONTINUE-01 (#191): the resume door carries its dossier on a second line
    instead of the inline small every other start button uses. */
