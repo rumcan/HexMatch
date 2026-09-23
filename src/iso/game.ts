@@ -149,6 +149,7 @@ import {
 import {
   DEFAULT_FACING, DEPOT_FACINGS, DEPOT_SPRITES, depotContains, depotFacingOf, depotFacings,
   depotTiles, rotateFacing, type DepotFacing,
+  industriesTouchingDepot,
 } from "./depot";
 import {
   depotRate, depotTransportTier, depotYield, distanceBandForPath, distanceFactorForPath,
@@ -2690,7 +2691,27 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * The "already has one" guard is new with the split: a guest could otherwise
    * send the intent twice and open with two free Factories (each is plant #0).
    */
+  /**
+   * Playtest (2026-09): a town where the OTHER player has an open plant is
+   * theirs — you may not build a Factory or plant beside it unless you have
+   * won that town in battle (#322's shared city). Returns the refusal, or null.
+   */
+  function townBlockedFor(p: PlayerState, tx: number, ty: number): string | null {
+    const t = adjacentTown(grid, tx, ty);
+    if (!t) return null;
+    const theirs = eco.factories.find((f) => f.owner !== p.id && !f.closed && f.townId === t.id);
+    if (!theirs) return null;
+    if (eco.townHolds?.get(t.id)?.holder === p.id) return null;
+    const who = players.find((x) => x.id === theirs.owner)?.name ?? "The rival";
+    return `${who} holds that town — win it in a battle to build there.`;
+  }
+
   function placeFactoryFor(p: PlayerState, tx: number, ty: number): boolean {
+    const blocked = townBlockedFor(p, tx, ty);
+    if (blocked) {
+      if (p.human) { toast(blocked, "bad"); flashAt(tx, ty, "Rival's town"); }
+      return false;
+    }
     const plan = planFactoryPlacement(grid, tx, ty, { requireTown: true, track });
     if (!plan.valid) {
       toast(plan.code === "not-near-town"
@@ -3962,6 +3983,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * path — a refused placement can never take resources.
    */
   function placePlant(tx: number, ty: number, p: PlayerState): boolean {
+    const blocked = townBlockedFor(p, tx, ty);
+    if (blocked) {
+      if (p.human) { toast(blocked, "bad"); flashAt(tx, ty, "Rival's town"); }
+      return false;
+    }
     const why = plantRefusal(grid, track, eco, tx, ty);
     if (why !== null) {
       if (p.human) {
@@ -4574,6 +4600,51 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * policy and settle the stake when the screen closes. The economy is paused
    * for both seats while the screen is up (the tick entry points bail).
    */
+  /**
+   * Playtest (2026-09): one short line per verdict, from MY side, saying what
+   * the fight does on the map — shown on the result card.
+   */
+  function battleConsequence(stake: MapBattleStake): { win: string; lose: string; draw: string } {
+    const draw = "Nothing changes on the map.";
+    if (stake.kind === "fightoff") {
+      const what = stake.pending.kind === "blockade" ? "Blockade" : "Protest";
+      return { win: `The ${what} is cancelled.`, lose: `The ${what} lands as bought.`, draw };
+    }
+    const iChallenge = stake.challengerId === me.id;
+    if (stake.kind === "industry") {
+      const ind = grid.industries[stake.industryId];
+      const name = INDUSTRY_BY_KEY[ind?.type ?? ""]?.name ?? "the industry";
+      const streak = eco.siteRights?.get(stake.industryId)?.streak;
+      const next = streak?.playerId === stake.challengerId ? streak.wins + 1 : 1;
+      const challengerClosed = eco.harvesters.some((h) => h.owner === stake.challengerId && h.closed
+        && industriesTouchingDepot(grid, h.tx, h.ty).some((e) => e.industry.id === stake.industryId));
+      if (challengerClosed) {
+        return iChallenge
+          ? { win: `Your Depot at the ${name} reopens.`, lose: `Your Depot at the ${name} stays closed.`, draw }
+          : { win: `Their Depot at the ${name} stays closed.`, lose: `Their Depot at the ${name} reopens.`, draw };
+      }
+      if (next >= 2) {
+        return iChallenge
+          ? { win: `Their Depot at the ${name} closes — it is yours alone.`, lose: `They hold the ${name}.`, draw }
+          : { win: `You hold the ${name}.`, lose: `Your Depot at the ${name} closes.`, draw };
+      }
+      return iChallenge
+        ? { win: `You can now build your own Depot at the ${name} — you both draw from it.`, lose: `They hold the ${name}.`, draw }
+        : { win: `You hold the ${name}.`, lose: `They can now build their own Depot at the ${name} too.`, draw };
+    }
+    const town = townName(stake.townId);
+    const hold = eco.townHolds?.get(stake.townId);
+    const next = hold?.holder === stake.challengerId ? hold.wins + 1 : 1;
+    if (next >= 2) {
+      return iChallenge
+        ? { win: `Their plant at ${town} closes and they lose its city ★.`, lose: `They hold ${town}.`, draw }
+        : { win: `You hold ${town}.`, lose: `Your plant at ${town} closes and you lose its city ★.`, draw };
+    }
+    return iChallenge
+      ? { win: `You both operate out of ${town} now — its upgrades lock.`, lose: `They hold ${town}.`, draw }
+      : { win: `You hold ${town}.`, lose: `They operate out of ${town} too now — its upgrades lock.`, draw };
+  }
+
   function openMapBattle(stake: MapBattleStake, seed: number, stakeText: string): void {
     mapStake = stake;
     const screen = startBattleScreen(seed, [
@@ -4581,6 +4652,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       { id: rival.id, name: rival.name, portrait: portraitVex, depots: mapDepotCargos(2 - me.i) },
     ], {
       stake: stakeText,
+      consequence: battleConsequence(stake),
       // B4 (#249): the rival fights its live skill's line — watchable.
       opponentMove: (b) => chooseBattleMove(b, skill().key),
       onClose: (result) => {
@@ -6496,6 +6568,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // B5 (#250): no AI action and no economy churn during a battle; the two
     // offer doors (rival challenges, fight-offs) expire here too.
     if (battleScreen) return;
+    // Playtest (2026-09): nor while YOUR tuning session is open. The session
+    // is modal (you cannot lay the road that would claim the industry), and
+    // the rival used that window to build beside a Depot you had just placed.
+    // Solo only: in a hosted game the other seat is a person.
+    if (tuning && (isSolo() || aiOpponent)) return;
     b5OffersTick(now);
     // B6 review fix: the rival's challenge clock is the AI's — in a hosted game
     // with a person on seat 1 it would spend THEIR Gold on fights they never
@@ -8453,7 +8530,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const mine = townOfSeat(me)?.id === t.id;
     const canClaim = hold && hold.holder === me.id && !hold.locked;
     const lines = [
-      `Held by: ${hold ? seatName(hold.holder) : (mine ? "You" : "Unclaimed")}`,
+      // Playtest (2026-09): a town is held by whoever has an OPEN plant
+      // beside it — not only by a battle's winner (that read "Unclaimed").
+      `Held by: ${(() => {
+        const owners = [...new Set(eco.factories
+          .filter((f) => !f.closed && f.townId === t.id).map((f) => f.owner))];
+        if (owners.length) return owners.map(seatName).join(" & ");
+        if (hold) return seatName(hold.holder);
+        return mine ? "You" : "Unclaimed";
+      })()}`,
       hold?.locked ? "Upgrades locked until won again." : "",
     ].filter(Boolean);
     showBattleCard(`town:${t.id}`, {

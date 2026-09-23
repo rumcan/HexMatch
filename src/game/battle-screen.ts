@@ -59,6 +59,11 @@ export interface BattleScreenOptions {
   seat?: BattleSeat;
   /** The result screen's stake line ("what was at stake"). */
   stake?: string;
+  /**
+   * Playtest (2026-09): what happens on the MAP for each verdict, in one short
+   * line on the result card ("You can now build a Depot at the Farm").
+   */
+  consequence?: { win?: string; lose?: string; draw?: string };
   /** B4 plugs the rival policy in here. Default: a seeded random legal swap. */
   opponentSwap?: (battle: Battle) => [number, number, number, number] | null;
   /**
@@ -224,7 +229,12 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
       </div>
     </div>`;
 
-  const top = h("div", "battle-top");
+  // Playtest (2026-09): Puzzle-Quest layout — you on the left, the shared
+  // board in the middle, the rival on the right; the card is one screen tall
+  // and never scrolls (the board scales to the centre column's box). On a
+  // phone the grid areas fold into a compact strip on top (styles.css).
+  card.classList.add("battle-pq");
+  const center = h("div", "battle-center");
   const side0 = h("div", `battle-side s-${mySeat} mine`);
   side0.innerHTML = sideHtml(opts.contenders[mySeat]);
   const mid = h("div", "battle-mid");
@@ -234,13 +244,13 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
     <div class="battle-timer"><div class="battle-timer-fill"></div></div>`;
   const side1 = h("div", `battle-side s-${oppSeat}`);
   side1.innerHTML = sideHtml(opts.contenders[oppSeat]);
-  top.append(side0, mid, side1);
-  card.appendChild(top);
+  card.append(side0, center, side1);
+  center.appendChild(mid);
 
   const boardWrap = h("div", "board-wrap battle-board");
   const grid = h("div", "grid");
   boardWrap.appendChild(grid);
-  card.appendChild(boardWrap);
+  center.appendChild(boardWrap);
 
   // B3 (#248) — the ability buttons (the row B2 kept hidden until now).
   const abilityRow = h("div", "battle-abilities");
@@ -260,7 +270,7 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
   card.appendChild(abilityRow);
 
   const foot = h("div", "battle-foot", "<span class=\"battle-hint\"></span>");
-  card.appendChild(foot);
+  center.appendChild(foot);
 
   const result = h("div", "battle-result hidden");
   card.appendChild(result);
@@ -365,14 +375,21 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
   grid.style.setProperty("--gem", (CELL - 6) + "px");
 
   const fitBoard = () => {
+    // The centre column's own box, minus the turn line and the hint: the
+    // board fills what is left and never pushes the card into a scroll.
+    const cw = center.clientWidth, ch = center.clientHeight;
     const pad = 24;
-    const availW = Math.max(160, window.innerWidth - pad * 2);
-    const availH = Math.max(160, window.innerHeight - 300);
+    const availW = cw > 100 ? cw - 14 : Math.max(160, window.innerWidth - pad * 2);
+    const availH = ch > 100 ? ch - mid.offsetHeight - foot.offsetHeight - 22 : Math.max(160, window.innerHeight - 300);
     const bw = CELL * battle.board.w, bh = CELL * battle.board.h;
     const k = Math.min(1, availW / bw, availH / bh);
     grid.style.transformOrigin = "top left";
     grid.style.transform = k < 1 ? `scale(${k})` : "";
     boardWrap.style.width = k < 1 ? `${bw * k + 10}px` : "";
+    // The scaled grid keeps its layout box; size the frame to what is SHOWN
+    // so the card never overflows (it used to cut the last row off).
+    boardWrap.style.height = k < 1 ? `${bh * k + 10}px` : "";
+    boardWrap.style.overflow = "hidden";
   };
 
   const reduceMotion = typeof matchMedia === "function"
@@ -656,6 +673,8 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
   window.addEventListener("pointerup", commitDrag);
   window.addEventListener("pointercancel", cancelDragEvent);
   window.addEventListener("resize", fitBoard);
+  const centerObserver = typeof ResizeObserver === "function" ? new ResizeObserver(() => fitBoard()) : null;
+  centerObserver?.observe(center);
 
   // ── the turn loop ────────────────────────────────────────────────────────
   let oppTimer = 0;
@@ -819,6 +838,7 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
           verdict === "win" ? "VICTORY" : verdict === "lose" ? "DEFEAT" : "DRAW"}</h2>
         <p class="battle-stake">${opts.stake ? `At stake: ${opts.stake}` : ""}</p>
         <p class="battle-summary"></p>
+        <p class="battle-consequence"></p>
         <button type="button" class="btn battle-continue">Continue</button>
       </div>`;
     const summary = result.querySelector(".battle-summary") as HTMLElement;
@@ -826,6 +846,9 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
       verdict === "win" ? `${me.name} takes it — ${opp.name} is beaten back.`
       : verdict === "lose" ? `${opp.name} wins the field this time.`
       : "Both sides hold.";
+    const cons = verdict === "win" ? opts.consequence?.win
+      : verdict === "lose" ? opts.consequence?.lose : opts.consequence?.draw;
+    (result.querySelector(".battle-consequence") as HTMLElement).textContent = cons ?? "";
     (result.querySelector(".battle-continue") as HTMLButtonElement).onclick = () => {
       finalResult = { winner: w, over: true, verdict };
       destroy();
@@ -850,6 +873,7 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
     window.removeEventListener("pointerup", commitDrag);
     window.removeEventListener("pointercancel", cancelDragEvent);
     window.removeEventListener("resize", fitBoard);
+    centerObserver?.disconnect();
     battle.board.onChange = () => {};
     battle.board.onFx = () => {};
     gemEls.clear();
@@ -884,6 +908,7 @@ export function startBattleScreen(
     contenders,
     seat: opts.seat,
     stake: opts.stake,
+    consequence: opts.consequence,
     opponentSwap: opts.opponentSwap,
     // B4 (#249) review fix: the rival's policy was dropped here, so every map
     // battle and `__iso.startBattle` fought a random-swap bot, not the skill.

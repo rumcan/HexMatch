@@ -283,7 +283,7 @@ describe("E11 the game boots", () => {
       (b) => (b as HTMLElement).dataset.tab);
     // 2026-09: Market (the offer board, restored) and Black Market have
     // their own tabs next to Bank.
-    expect(tabs).toEqual(["bank", "market", "black", "plant", "feed"]);
+    expect(tabs).toEqual(["bank", "market", "black", "plant", "feed", "quests"]);
     expect(root.querySelector(".market-pane")).toBeTruthy();
     expect(root.querySelector(".bank-pane")).toBeTruthy();
     expect(root.querySelector(".sab-list")).toBeTruthy();
@@ -364,7 +364,7 @@ describe("E11 the game boots", () => {
     // Bank / Processing Plant / Feed, is pinned by the story-contract case
     // below, which boots the old game.)
     // 2026-09: the offer board is back (Market) and the shop has its own tab.
-    expect(tabs).toEqual(["bank", "market", "black", "feed"]);
+    expect(tabs).toEqual(["bank", "market", "black", "feed", "quests"]);
     expect(root.querySelector('[data-tab="plant"]')).toBeNull();
     expect(root.querySelector("#iso-session")).toBeTruthy();
     expect(root.querySelector("#iso-trade #iso-quarry")).toBeNull();
@@ -389,7 +389,7 @@ describe("E11 the game boots", () => {
     expect(h.newLoop).toBe(false);
     const tabs = [...root.querySelectorAll("[data-tab]")].map(
       (b) => (b as HTMLElement).dataset.tab);
-    expect(tabs).toEqual(["bank", "market", "black", "plant", "feed"]);
+    expect(tabs).toEqual(["bank", "market", "black", "plant", "feed", "quests"]);
     // ...and the player hears why once the briefing is out of the way: the
     // note waits for the overlays (it auto-dismisses 2.4s after it lands, so
     // firing it under the scene would burn it unseen).
@@ -3069,7 +3069,7 @@ describe("economy window and affordability", () => {
   it("keeps one pane visible, with Market and Black Market as their own tabs", async () => {
     await boot();
     expect(root.querySelectorAll('[data-panel]')).toHaveLength(0);
-    for (const tab of ["bank", "market", "black", "plant", "feed"]) {
+    for (const tab of ["bank", "market", "black", "plant", "feed", "quests"]) {
       (root.querySelector(`[data-tab="${tab}"]`) as HTMLButtonElement).click();
       expect(root.querySelectorAll('#iso-trade > .pane:not(.hidden), #iso-trade > #iso-quarry:not(.hidden)')).toHaveLength(1);
       expect(root.querySelector(`[data-tab="${tab}"]`)?.classList.contains("active")).toBe(true);

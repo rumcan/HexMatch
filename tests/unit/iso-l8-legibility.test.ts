@@ -336,9 +336,16 @@ describe("L8 the quest panel on a live game", () => {
     expect(h.quests.offers.length).toBeLessThanOrEqual(3);
     expect(new Set(h.quests.offers.map((q) => q.strategy)).size).toBe(h.quests.offers.length);
 
-    // Collapsed it is ONE slim line — the #187 rule — and the list is shut.
-    expect((el.querySelector(".quests-list") as HTMLElement).classList.contains("hidden")).toBe(true);
-    expect(el.textContent).toContain("Quests");
+    // Playtest (2026-09): the quests live in their own tab after Feed, the
+    // list always open there, and a badge counts the ones not yet looked at.
+    expect(el.closest(".quests-pane"), "the panel sits in the Quests tab").toBeTruthy();
+    expect((el.querySelector(".quests-list") as HTMLElement).classList.contains("hidden")).toBe(false);
+    const badge = root.querySelector('[data-tab="quests"] .tab-badge') as HTMLElement;
+    expect(badge.classList.contains("hidden")).toBe(false);
+    expect(badge.textContent).toBe(String(h.quests.offers.length));
+    (root.querySelector('[data-tab="quests"]') as HTMLElement).click();
+    await settle();
+    expect(badge.classList.contains("hidden"), "opening the tab marks them seen").toBe(true);
     // …but the offers are already built (so expanding is instant), in the
     // sandbox's own voice, with progress and reward on every row.
     expect(h.quests.offers.every((q) => q.speaker === "foreman")).toBe(true);
@@ -367,22 +374,6 @@ describe("L8 the quest panel on a live game", () => {
     await settle();
     expect(h.quests.offers.length).toBe(before);
 
-    // The head opens the list…
-    const head = el.querySelector(".quests-head") as HTMLButtonElement;
-    head.click();
-    await settle();
-    expect((el.querySelector(".quests-list") as HTMLElement).classList.contains("hidden")).toBe(false);
-    expect(h.quests.hidden).toBe(false);
-    // …the list's own Hide is the player's choice, remembered, reversible.
-    (el.querySelector(".q-hide") as HTMLButtonElement).click();
-    await settle();
-    expect(h.quests.hidden).toBe(true);
-    expect(el.classList.contains("shut")).toBe(true);
-    expect(el.classList.contains("hidden")).toBe(false);        // a flag, not gone
-    head.click();
-    await settle();
-    expect(h.quests.hidden).toBe(false);
-    expect(el.classList.contains("shut")).toBe(false);
   });
 
   it("pays a completed quest once, in cargo — and says so", async () => {

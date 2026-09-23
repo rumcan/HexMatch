@@ -154,7 +154,7 @@ export interface ActionCardInfo {
   until?: number;
 }
 
-type TabName = "market" | "bank" | "black" | "plant" | "feed";
+type TabName = "market" | "bank" | "black" | "plant" | "feed" | "quests";
 
 export type UiTool =
   | "select" | "dirt" | "road" | "harvester" | "plant" | "demolish"
@@ -1087,6 +1087,12 @@ export function createOriginalUi(
   tabBlack.onclick = () => setTab("black");
   tabBank.onclick = () => setTab("bank");
   tabFeed.onclick = () => setTab("feed");
+  // Playtest (2026-09): the optional quests live in their own tab after Feed
+  // (they floated over the map and got in the way). A badge counts the
+  // quests the player has not looked at yet; they are never required.
+  const tabQuests = h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.quests}</i><span class="tab-l">Quests</span><span class="tab-badge hidden"></span>`);
+  tabQuests.onclick = () => setTab("quests");
+  const questsBadge = tabQuests.querySelector(".tab-badge") as HTMLElement;
   // #299: the Plant tab only exists where the plant is a pane at all — the
   // retired loop. On the new loop the session moved out of the rail and into
   // its own window, so the strip is Bank / Feed and nothing else.
@@ -1094,8 +1100,8 @@ export function createOriginalUi(
     : h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.plant}</i><span class="tab-l">Processing Plant</span>`);
   if (tabPlant) tabPlant.onclick = () => setTab("plant");
   const tabDefs: [HTMLElement, TabName][] = sessionMode
-    ? [[tabBank, "bank"], [tabMarket, "market"], [tabBlack, "black"], [tabFeed, "feed"]]
-    : [[tabBank, "bank"], [tabMarket, "market"], [tabBlack, "black"], [tabPlant!, "plant"], [tabFeed, "feed"]];
+    ? [[tabBank, "bank"], [tabMarket, "market"], [tabBlack, "black"], [tabFeed, "feed"], [tabQuests, "quests"]]
+    : [[tabBank, "bank"], [tabMarket, "market"], [tabBlack, "black"], [tabPlant!, "plant"], [tabFeed, "feed"], [tabQuests, "quests"]];
   for (const [tab, name] of tabDefs) {
     tab.dataset.tab = name;
     tabs.appendChild(tab);
@@ -1103,12 +1109,14 @@ export function createOriginalUi(
   tp.appendChild(tabs);
   const bankPane = h("div", "pane bank-pane");
   const feedPane = h("div", "pane feed-pane hidden");
+  const questsPane = h("div", "pane quests-pane hidden");
   const blackPane = h("div", "pane black-pane hidden");
   const marketPane = h("div", "pane market-pane hidden");
   tp.appendChild(bankPane);
   tp.appendChild(marketPane);
   tp.appendChild(blackPane);
   tp.appendChild(feedPane);
+  tp.appendChild(questsPane);
   /**
    * #299 — the session window. The plant panel (`qp`) is built the same way
    * on both loops; what changes is its HOST. On the new loop it is born
@@ -1310,7 +1318,20 @@ export function createOriginalUi(
   const questsCount = questsHead.querySelector(".q-count") as HTMLElement;
   const questsList = h("ul", "quests-list hidden");
   questsEl.append(questsHead, questsList);
-  root.appendChild(questsEl);
+  // Playtest (2026-09): the panel lives in the Quests tab, not over the map.
+  questsPane.appendChild(questsEl);
+  questsHead.classList.add("hidden");
+  /** Quest ids the player has seen (the Quests tab was open while listed). */
+  const questsSeen = new Set<string>();
+  function markQuestsSeen(): void {
+    for (const i of questsPanel?.items ?? []) questsSeen.add(i.id);
+    paintQuestsBadge();
+  }
+  function paintQuestsBadge(): void {
+    const unseen = (questsPanel?.items ?? []).filter((i) => !questsSeen.has(i.id)).length;
+    questsBadge.textContent = unseen ? String(unseen) : "";
+    questsBadge.classList.toggle("hidden", unseen === 0);
+  }
   const modalRoot = h("div", "modal-root hidden");
   root.appendChild(modalRoot);
   // MOBILE-01: the touch-only floating cluster. A phone has no wheel and no
@@ -1722,6 +1743,9 @@ export function createOriginalUi(
     blackPane.classList.toggle("hidden", t !== "black");
     tabFeed.classList.toggle("active", t === "feed");
     feedPane.classList.toggle("hidden", t !== "feed");
+    tabQuests.classList.toggle("active", t === "quests");
+    questsPane.classList.toggle("hidden", t !== "quests");
+    if (t === "quests") markQuestsSeen();
     // MOBILE-02: the plant tab re-fits the board — the full-bleed sheet only
     // leaves a measurable slot once this pane is the visible one.
     // FIT-01: and so does the desktop — the fit clamps on the measured plant
@@ -2885,16 +2909,22 @@ export function createOriginalUi(
   function renderQuests(panel: UiQuestPanel | null, bannerUp = false): void {
     questsPanel = panel;
     const items = panel?.items ?? [];
-    const live = !!panel && items.length > 0 && !bannerUp;
+    void bannerUp;
+    const live = !!panel && items.length > 0;
     questsEl.classList.toggle("hidden", !live);
+    if (tabQuests.classList.contains("active")) markQuestsSeen();
+    else paintQuestsBadge();
     if (!live || !panel) {
       questsSig = null;
+      if (!live) questsPane.dataset.empty = "1";
       return;
     }
-    const shut = panel.hidden;
-    // A banner owns the top lane while it is up: the list stays shut, the one
-    // line stays (the banner is the more urgent thing on that patch of screen).
-    const open = !shut && questsOpen;
+    delete questsPane.dataset.empty;
+    // In the tab the list is always open; "Hide quests" is gone with the
+    // floating panel (the tab is where they wait).
+    const shut = false;
+    const open = true;
+    void questsOpen;
     questsEl.classList.toggle("shut", shut);
     questsList.classList.toggle("hidden", !open);
     questsHead.setAttribute("aria-expanded", String(open));
@@ -2921,12 +2951,7 @@ export function createOriginalUi(
       li.append(h("div", "q-who", item.who), h("div", "q-text", item.text), meta);
       questsList.appendChild(li);
     }
-    const foot = h("li", "quests-foot");
-    const hide = h("button", "q-hide", "Hide quests") as HTMLButtonElement;
-    hide.type = "button";
-    hide.onclick = (ev) => { ev.stopPropagation(); questsOpen = false; hooks.onQuestAction?.("", "hide"); };
-    foot.appendChild(hide);
-    questsList.appendChild(foot);
+    questsList.appendChild(h("li", "quests-foot", "Optional — suggestions, never requirements."));
   }
 
   questsHead.onclick = () => {

@@ -5195,3 +5195,75 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
     padding-bottom: calc(var(--resbar-gap, 130px) + 8px);
   }
 }
+
+/* ── playtest (2026-09): quests in their own tab; tab icons aligned ────── */
+.quests-pane .quests {
+  position: static; transform: none; width: auto; padding: 8px 6px; z-index: auto;
+}
+.quests-pane .quests-list { max-height: none; overflow: visible; }
+.quests-pane[data-empty]::before {
+  content: "No quests right now."; display: block; padding: 12px 8px; color: var(--txt-dim); font-size: 12px;
+}
+.quests-foot { color: var(--txt-dim); font-size: 11px; padding: 6px 2px; list-style: none; }
+/* icon + label on one centred line, whatever the glyph or font */
+.tab { display: inline-flex; align-items: center; justify-content: center; gap: 5px; position: relative; }
+.tab .tab-ic { flex: 0 0 auto; width: 14px; height: 14px; }
+.tab .tab-ic .hud-ic, .tab .tab-ic svg { width: 14px; height: 14px; display: block; }
+.tab-badge {
+  position: absolute; top: 2px; right: 4px; min-width: 15px; height: 15px; padding: 0 4px;
+  border-radius: 999px; background: var(--gold2, #ffb02e); color: #1a1208;
+  font: 700 10px/15px var(--sans); letter-spacing: 0; text-align: center;
+}
+.tab-badge.hidden { display: none; }
+
+/* ── playtest (2026-09): Puzzle-Quest battle layout, no scrolling ───────── */
+.battle-card.battle-pq {
+  display: grid;
+  grid-template-columns: minmax(170px, 230px) minmax(0, 1fr) minmax(170px, 230px);
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas: "left center right" "abil center right";
+  gap: 12px; align-items: stretch;
+  max-width: 1180px; width: 100%;
+  height: calc(100dvh - 24px); max-height: calc(100dvh - 24px);
+  overflow: hidden;
+}
+.battle-pq > .battle-side.mine { grid-area: left; }
+.battle-pq > .battle-side:not(.mine) { grid-area: right; align-self: start; }
+.battle-pq > .battle-center {
+  grid-area: center; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column; align-items: center; gap: 8px; overflow: hidden;
+}
+.battle-pq > .battle-abilities {
+  grid-area: abil; align-self: start; min-height: 0; overflow: hidden;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 5px;
+}
+.battle-pq > .battle-abilities .battle-ability { min-width: 0; width: 100%; padding: 5px 4px; }
+.battle-pq .battle-ability .ba-name { font-size: 11px; }
+.battle-pq .battle-ability .ba-reason { font-size: 9.5px; line-height: 1.15; }
+/* a side is a tall panel: portrait over name, health, mana */
+.battle-pq .battle-side { flex-direction: column; align-items: stretch; text-align: center; }
+.battle-pq .battle-portrait { width: 96px; height: 96px; align-self: center; }
+.battle-pq .battle-mana { flex-direction: column; gap: 3px; }
+.battle-pq .battle-center .battle-board { align-self: center; }
+.battle-consequence {
+  margin: 6px 0 2px; font-family: var(--serif, serif); font-size: 14px; color: var(--gold2);
+}
+.battle-consequence:empty { display: none; }
+/* Phone: both players in a compact strip on top, board in the middle,
+   abilities in rows below — still one screen, no scrolling. */
+@media (max-width: 760px), (max-height: 520px) {
+  .battle-card.battle-pq {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-areas: "left right" "center center" "abil abil";
+    gap: 6px; height: 100dvh; max-height: 100dvh;
+  }
+  .battle-pq .battle-side { flex-direction: row; align-items: center; text-align: left; }
+  .battle-pq .battle-portrait { width: 40px; height: 40px; }
+  .battle-pq .battle-mana { flex-direction: row; flex-wrap: wrap; }
+  .battle-pq > .battle-abilities { grid-template-columns: repeat(3, 1fr); }
+  .battle-pq .battle-ability .ba-reason { display: none; }
+}
+/* five tabs in one strip: one line each */
+.tab { letter-spacing: .8px; font-size: 10.5px; white-space: nowrap; padding-left: 3px; padding-right: 3px; }
+.tab .tab-l { overflow: hidden; text-overflow: ellipsis; }

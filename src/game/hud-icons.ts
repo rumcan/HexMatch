@@ -109,6 +109,11 @@ export const ICON_TRADE = svg(
   `<path d="M20 16H7"/><path d="M10 13l-3 3 3 3"/>`,
 );
 
+/** The Quests tab: a pennant on a pole. */
+export const ICON_QUESTS = svg(
+  `<path d="M6 21V4"/><path d="M6 4h11l-3 4 3 4H6"/>`,
+);
+
 export const HUD_ICONS = {
   soundOn: ICON_SOUND_ON,
   soundOff: ICON_SOUND_OFF,
@@ -121,6 +126,7 @@ export const HUD_ICONS = {
   trade: ICON_TRADE,
   plant: ICON_PLANT,
   feed: ICON_FEED,
+  quests: ICON_QUESTS,
   cross: ICON_CROSS,
 } as const;
 
