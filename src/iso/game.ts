@@ -239,7 +239,7 @@ import {
   createRailState, railPreview, buildRail, demolishRail, structureAt, hasRail, railDrawLayer,
   placePlatform, placeDepot, platformRefusal, depotRefusal, resolveAnchor,
   RAIL_COSTS, RAIL_REFUSAL_TEXT, footprintTiles,
-  railStructureItems, trainItems, assignLine, renameLine, buyTrain, startLine, recallTrain, sellTrain, tickTrains,
+  railStructureItems, trainItems, autoTrains, assignLine, renameLine, buyTrain, startLine, recallTrain, sellTrain, tickTrains,
   rotateView, trainOccupies, trainBasedAt, railPanelRows, canPay, costEntries, resaleValue, demolishStructure, PLATFORM_VP,
   footprintFor, depotExit, RAIL_VIEWS, trainTile, ownerRailTiles as ownerRailTilesOf,
   railToWire, applyRailWire, clearRail, railLayerPatch, copyRailLayer,
@@ -9160,7 +9160,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // it is, RAIL-04's four included.
     const map: Record<string, Tool> = {
       "q": "select", "1": "dirt", "2": "road", "3": "harvester", "4": "plant",
-      "5": "demolish", "6": "rail", "7": "platform", "8": "raildepot", "9": "railway",
+      "5": "demolish", "6": "rail", "7": "platform", "9": "railway",
     };
     if (!isTypingTarget(e) && map[e.key]) {
       if (map[e.key] === "select") cancelPlacement();
@@ -10134,6 +10134,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   }
 
   /** Plan the depot lorries, or the empty list when the debug gate is off. */
+  /** The rail signature `autoTrains` last ran against (see the frame). */
+  let autoTrainSig = "";
   function plannedLorries(): Truck[] {
     return lorriesEnabled ? planTrucks(eco) : [];
   }
@@ -10395,6 +10397,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // rail state, so a guest renders the host's trains without a new wire
       // field — while the SERVICE verdict, which is what the economy pays, is
       // the host's alone (`railServicedIndustries` reads the host's state).
+      // Playtest (2026-09): trains are automatic like the lorries — the host
+      // gives every connected industry→plant platform pair a line and a train
+      // whenever the rail network or its platforms change (no depot, no buy).
+      if (!isGuest()) {
+        const sig = `${rail.rail.revision}:${rail.structures.map((s) => s.id).join(",")}`;
+        if (sig !== autoTrainSig) {
+          autoTrainSig = sig;
+          let moved = false;
+          for (const p of [me, rival]) moved = autoTrains(rail, p.i + 1) || moved;
+          if (moved) { syncWorld(); rescoreNow(); }
+        }
+      }
       tickTrains(rail, dt);
       collectDeliveries(t);
 
