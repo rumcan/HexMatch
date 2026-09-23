@@ -704,7 +704,7 @@ describe("the Railway panel's model", () => {
     const state = createRailState();
     const { source, dest } = buildLine(state, grid, track, 7, 3);
     const before = railPanelRows(state, 1);
-    expect(before.find((r) => r.id === source.id)?.actions).toEqual(["assign"]);
+    expect(before.find((r) => r.id === source.id)?.actions).toEqual([]);   // trains spawn on their own: nothing to assign
     expect(before.find((r) => r.id === source.id)?.partnerId).toBe(dest.id);
     expect(before.find((r) => r.kind === "depot")?.detail).toBe("no train");
     const plan = assignLine(state, 1, source.id, dest.id);
