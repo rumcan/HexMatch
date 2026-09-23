@@ -621,3 +621,26 @@ export function victoryBreakdown(
  */
 export const hasWon = (score: ScoreState, owner: string, target: number = VICTORY.target): boolean =>
   vpFor(score, owner) >= target;
+
+/**
+ * #322: city ★ is otherwise a high-water mark. A lost town fight must
+ * explicitly debit the stars the closed plant / lost city was paying.
+ */
+export function revokeCityStars(score: ScoreState, owner: string, nextLevel: number): VpEvent[] {
+  const paid = score.city.get(owner) ?? 0;
+  const next = Math.max(0, Math.floor(nextLevel));
+  if (next >= paid || VICTORY.loop.city <= 0) {
+    if (next < paid) score.city.set(owner, next);
+    return [];
+  }
+  const events: VpEvent[] = [];
+  for (let level = paid; level > next; level--) {
+    score.vp.set(owner, (score.vp.get(owner) ?? 0) - VICTORY.loop.city);
+    events.push({
+      source: "city", type: "revoked", owner, delta: -VICTORY.loop.city,
+      tx: 0, ty: 0, level,
+    });
+  }
+  score.city.set(owner, next);
+  return events;
+}

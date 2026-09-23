@@ -175,9 +175,13 @@ export function resolvePlantTarget(
   return best;
 }
 
-/** Every plant a player owns (the starting Factory is plant #0). */
+/** Every plant a player owns (the starting Factory is plant #0). Closed plants stay in the list so identity is stable, but they no longer score or route. */
 export const plantsOf = (state: EconomyState, owner: string): Factory[] =>
   state.factories.filter((f) => f.owner === owner);
+
+/** Open plants only — a closed plant is shaded and does not occupy a town for the AI. */
+export const openPlantsOf = (state: EconomyState, owner: string): Factory[] =>
+  plantsOf(state, owner).filter((f) => !f.closed);
 
 /** The next stable plant id for this player (starting Factory included). */
 export const nextPlantId = (state: EconomyState, owner: string): number =>
@@ -263,9 +267,19 @@ const nearFootprint = (ind: Industry, tx: number, ty: number, reach: number): bo
 export function chooseAiPlantSpot(
   grid: Grid, track: Track, state: EconomyState, owner: string,
 ): [number, number] | null {
-  const mine = plantsOf(state, owner);
-  if (!mine.length) return null;
+  const mine = openPlantsOf(state, owner);
+  if (!mine.length && !plantsOf(state, owner).length) return null;
+  // Own OPEN plants occupy a town. Opponent towns (and towns this seat won
+  // but has not planted at) stay available — #322 dual-operate after a first
+  // town win, and a closed plant frees its town for a re-plant.
   const used = new Set(mine.map((f) => f.townId).filter((t) => t != null));
+  // Prefer a town this seat has already won / shares.
+  const preferred = new Set<number>();
+  if (state.townHolds) {
+    for (const [id, hold] of state.townHolds) {
+      if (hold.holder === owner || hold.wins >= 1) preferred.add(id);
+    }
+  }
   const wanted = uncoveredIndustries(grid, state, owner);
   const network: [number, number][] = [
     ...mine.map((f) => [f.tx, f.ty] as [number, number]),
@@ -299,7 +313,8 @@ export function chooseAiPlantSpot(
           const d = manhattan(tx, ty);
           // 10 per industry in reach, 1 per tile of detour: reach dominates,
           // distance only breaks ties between equally productive sites.
-          const score = reach * 10 - d;
+          const prefer = adjacentTown(grid, tx, ty) && preferred.has(adjacentTown(grid, tx, ty)!.id) ? 50 : 0;
+          const score = reach * 10 - d + prefer;
           if (score > bestScore || (score === bestScore && (d < bestD
             || (d === bestD && key < (best ? best[1] * grid.w + best[0] : Infinity))))) {
             bestScore = score; bestD = d; best = [tx, ty];

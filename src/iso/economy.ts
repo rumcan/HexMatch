@@ -81,6 +81,11 @@ export interface Harvester {
    * an upgrade the player never built.
    */
   tuneTier?: number;
+  /**
+   * #322: a lost territorial fight closed this Depot — shaded, pays nothing,
+   * scores no ★. Re-opens only if the owner challenges the industry and wins.
+   */
+  closed?: boolean;
 }
 
 /**
@@ -101,6 +106,32 @@ export interface Factory {
   id?: number;
   /** PP-06: the town this plant was raised beside (null = unknown/legacy). */
   townId?: number | null;
+  /**
+   * #322: a lost town fight closed this plant — shaded, scores no city ★,
+   * and depots cannot route through it. Re-opens if the owner re-wins the town.
+   */
+  closed?: boolean;
+}
+
+/**
+ * #322: who may draw from / build a Depot at an industry after a territorial
+ * fight. `rights` is the seats that share the output; `streak` is consecutive
+ * wins by the same challenger (2 closes the loser's Depot).
+ */
+export interface SiteRights {
+  rights: string[];
+  streak: { playerId: string; wins: number } | null;
+}
+
+/**
+ * #322: the territorial hold on a town. `holder` is the current streak owner,
+ * `wins` the consecutive wins, `locked` means the city cannot upgrade until
+ * it is won again.
+ */
+export interface TownHold {
+  holder: string;
+  wins: number;
+  locked: boolean;
 }
 
 export interface EconomyState {
@@ -122,6 +153,13 @@ export interface EconomyState {
    * Serialized with the economy (saves + the MP wire — the host owns it).
    */
   battleLocks?: Map<number, number>;
+  /**
+   * #322: shared industry rights after a first territorial win — both seats
+   * may draw, and the winner may build a Depot past `industry-taken`.
+   */
+  siteRights?: Map<number, SiteRights>;
+  /** #322: town fights — shared city after the first win, lock, streak. */
+  townHolds?: Map<number, TownHold>;
 }
 
 // ── catchment ─────────────────────────────────────────────────────────────
@@ -383,7 +421,7 @@ export const NO_CONNECTION: Connection = {
 export function resolveConnection(
   state: EconomyState, comp: Components, h: Harvester,
 ): Connection {
-  const mine = state.factories.filter((f) => f.owner === h.owner);
+  const mine = state.factories.filter((f) => f.owner === h.owner && !f.closed);
   let best: Connection = NO_CONNECTION;
   let shortest = Infinity;
   for (const f of mine) {
@@ -443,7 +481,7 @@ export function depotPathLength(state: EconomyState, h: Harvester): number | nul
   if (from.length === 0) return null;
   const goals = new Set<number>();
   for (const f of state.factories) {
-    if (f.owner !== h.owner) continue;
+    if (f.owner !== h.owner || f.closed) continue;
     for (const [x, y] of plantShoulders(state.track, h.ownerId, f.tx, f.ty)) {
       goals.add(tIdx(x, y));
     }
@@ -464,7 +502,7 @@ export function depotRoutePaved(state: EconomyState, h: Harvester): boolean {
   if (from.length === 0) return false;
   const goals = new Set<number>();
   for (const f of state.factories) {
-    if (f.owner !== h.owner) continue;
+    if (f.owner !== h.owner || f.closed) continue;
     for (const [x, y] of plantShoulders(state.track, h.ownerId, f.tx, f.ty)) goals.add(tIdx(x, y));
   }
   if (goals.size === 0) return false;
@@ -508,6 +546,7 @@ export function depotRoutePaved(state: EconomyState, h: Harvester): boolean {
 export function industryLocks(state: EconomyState): Map<number, Harvester> {
   const locks = new Map<number, Harvester>();
   for (const h of state.harvesters) {
+    if (h.closed) continue;
     if (!isServiced(state.track, h, state.rail)) continue;
     for (const ind of industriesInCatchment(state.grid, h)) {
       if (!locks.has(ind.id)) locks.set(ind.id, h);
@@ -531,10 +570,15 @@ export function industryLocks(state: EconomyState): Map<number, Harvester> {
 export function heldIndustries(
   state: EconomyState, h: Harvester, locks: Map<number, Harvester>,
 ): Industry[] {
+  if (h.closed) return [];
   const out: Industry[] = [];
   for (const ind of industriesInCatchment(state.grid, h)) {
     const holder = locks.get(ind.id);
-    if (holder === undefined || holder.id === h.id) out.push(ind);
+    if (holder === undefined || holder.id === h.id) { out.push(ind); continue; }
+    // #322: a first territorial win shares the industry — both seats draw
+    // their own output from their own Depot.
+    const rights = state.siteRights?.get(ind.id)?.rights;
+    if (rights?.includes(h.owner)) out.push(ind);
   }
   return out;
 }
@@ -544,6 +588,20 @@ export function heldIndustries(
 export function lockedIndustryIds(state: EconomyState): Set<number> {
   const out = new Set<number>();
   for (const id of industryLocks(state).keys()) out.add(id);
+  return out;
+}
+
+/**
+ * #322: industries the given seat may NOT place a Depot beside. Shared
+ * `siteRights` drop the ids this player already has rights to, so a first
+ * territorial win lets the winner build past `industry-taken`.
+ */
+export function lockedIndustryIdsFor(state: EconomyState, playerId: string): Set<number> {
+  const out = lockedIndustryIds(state);
+  if (!state.siteRights) return out;
+  for (const [id, rec] of state.siteRights) {
+    if (rec.rights.includes(playerId)) out.delete(id);
+  }
   return out;
 }
 

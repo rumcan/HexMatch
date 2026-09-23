@@ -144,6 +144,8 @@ export interface WireHarvester {
    * tuned; like `yield`, an old-loop host sends nothing.
    */
   tuneTier?: number;
+  /** #322: a closed Depot is shaded and pays nothing. Optional — absent = open. */
+  closed?: boolean;
 }
 
 export interface WirePlayer {
@@ -225,7 +227,17 @@ export interface BattleWire {
    * B6 (#251): an open MP challenge waiting on the other seat's answer —
    * `challenger` is a HOST-frame seat id ("you" = host, "ai" = guest).
    */
-  offer?: { industryId: number; challenger: string; until: number };
+  offer?: {
+    industryId?: number;
+    townId?: number;
+    kind?: "industry" | "town";
+    challenger: string;
+    until: number;
+  };
+  /** #322: shared industry rights after a first territorial win. */
+  siteRights?: [number, { rights: string[]; streak: { playerId: string; wins: number } | null }][];
+  /** #322: town fights — holder, consecutive wins, upgrade lock. */
+  townHolds?: [number, { holder: string; wins: number; locked: boolean }][];
 }
 export interface TruckWire {
   ownerId: number;
@@ -447,6 +459,7 @@ export function buildSnapshot(src: SnapshotSource): Snapshot {
       ...(typeof h.yield === "number" ? { yield: h.yield } : {}),
       ...(h.facing ? { facing: h.facing } : {}),
       ...(typeof h.tuneTier === "number" ? { tuneTier: h.tuneTier } : {}),
+      ...(h.closed ? { closed: true } : {}),
     })),
     factories: src.factories.map((f) => ({ ...f })),
     players: src.players.map((p) => ({ ...p, res: { ...p.res } })),
@@ -460,6 +473,8 @@ export function buildSnapshot(src: SnapshotSource): Snapshot {
         battles: src.battle.battles,
         engine: src.battle.engine ? copyDuelWire(src.battle.engine) : undefined,
         offer: src.battle.offer ? { ...src.battle.offer } : undefined,
+        siteRights: src.battle.siteRights?.map((r) => [r[0], { rights: [...r[1].rights], streak: r[1].streak ? { ...r[1].streak } : null }] as [number, { rights: string[]; streak: { playerId: string; wins: number } | null }]),
+        townHolds: src.battle.townHolds?.map((r) => [r[0], { ...r[1] }] as [number, { holder: string; wins: number; locked: boolean }]),
       }
       : undefined,
     blockades: src.blockades ? src.blockades.map((b) => ({ ...b })) : undefined,
@@ -704,6 +719,8 @@ export function applySnapshot(s: unknown, localSeed?: number): AppliedSnapshot {
         // B6 (#251): the live duel + open offer survive validation (rejoin).
         engine: (o as Snapshot).battle!.engine ? copyDuelWire((o as Snapshot).battle!.engine!) : undefined,
         offer: (o as Snapshot).battle!.offer ? { ...(o as Snapshot).battle!.offer! } : undefined,
+        siteRights: (o as Snapshot).battle!.siteRights?.map((r) => [r[0], { rights: [...r[1].rights], streak: r[1].streak ? { ...r[1].streak } : null }] as [number, { rights: string[]; streak: { playerId: string; wins: number } | null }]),
+        townHolds: (o as Snapshot).battle!.townHolds?.map((r) => [r[0], { ...r[1] }] as [number, { holder: string; wins: number; locked: boolean }]),
       }
       : undefined,
     blockades: (o as Snapshot).blockades ? (o as Snapshot).blockades!.map((x) => ({ ...x })) : undefined,

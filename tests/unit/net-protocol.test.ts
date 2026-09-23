@@ -109,7 +109,8 @@ describe("MP-02 protocol version", () => {
     // would still be posting and taking offers the host no longer reads.
     // v13 (B6 / #251) adds the battle intent; v14 brings the offer board back
     // (the `trade` intent + the `offers` book) — a v13 peer cannot trade.
-    expect(PROTOCOL_VERSION).toBe(14);
+    // v15 (#322) grows battle challenges with town/sell/downgrade.
+    expect(PROTOCOL_VERSION).toBe(15);
     expect(Number.isInteger(PROTOCOL_VERSION)).toBe(true);
     expect(PROTOCOL_VERSION).toBeGreaterThan(0);
   });

@@ -346,9 +346,25 @@ export const BATTLE_RULES: BattleRules = {
   turnMs: 30000,
   challengeGold: 12,   // ×3 (2026-09)
   declineGold: 9,
-  challengeIndustryCooldownMs: 180_000,
-  challengePlayerCooldownMs: 90_000,
+  /** Retired: one player cooldown paces every fight (issue #322). Kept so older readers still type-check. */
+  challengeIndustryCooldownMs: 0,
+  /** #322: one 2-minute player cooldown (was 90s plus a 180s per-industry clock). */
+  challengePlayerCooldownMs: 120_000,
 };
+
+/**
+ * #322 — Comeback sales. A seat whose last plant has closed may sell assets
+ * for Gold to fund a challenge. Cheapest first: 5 paved tiles, then a Depot,
+ * then a city tier, then a plant.
+ */
+export const BATTLE_SALE = {
+  depot: 3,
+  plant: 5,
+  city: 4,
+  /** 5 paved tiles sell for 1 Gold. */
+  pavedTiles: 5,
+  pavedGold: 1,
+} as const;
 
 // ══════════════════════════════════════════════════════════════════════════
 // B3 (#248) — BATTLE ABILITIES: industrial spells paid in cargo mana.

@@ -122,8 +122,13 @@ export { readMatchSettings };
  * (host frame, ms-left). A v13 peer can neither post nor see offers, and a
  * v13 host would drop a v14 guest's trades in silence, so mixed versions must
  * refuse.
+ * v15 (#322): the `battle` intent grows `{ industry } | { town }` challenges
+ * plus `do: "sell" | "downgrade"` (comeback sales / city claim). The
+ * snapshot's `battle.offer` carries `kind` / `townId`, and `siteRights` /
+ * `townHolds` ride the wire. A v14 peer would drop those and desync the map,
+ * so mixed versions must refuse.
  */
-export const PROTOCOL_VERSION = 14;
+export const PROTOCOL_VERSION = 15;
 
 /**
  * Realtime WS frame cap in bytes. Mirrors the SDK's `MAX_BROADCAST_BYTES`

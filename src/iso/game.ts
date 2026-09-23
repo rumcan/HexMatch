@@ -58,9 +58,11 @@ import { chooseBattleMove } from "./battle-ai";
 // B5 (#250): the map's battle layer — challenges, conquests, fight-offs and
 // the cooldowns that pace them (pure bookkeeping in battle-map.ts).
 import {
-  createChallengeState, canChallenge, markChallenge, markRivalChallenge,
-  rivalChallengeDue, declineTakesPrize, settleMapBattle,
-  type ChallengeState, type PendingFightOff, type MapBattleStake,
+  createChallengeState, canChallenge, canChallengeTown, markChallenge, markRivalChallenge,
+  rivalChallengeDue, settleMapBattle, unlockTownHold,
+  pickRivalChallengeTarget, challengeRefusalText, isComeback, hasOpenPlant,
+  cheapestSale, applySale, listSales,
+  type ChallengeState, type PendingFightOff, type MapBattleStake, type SaleOption,
 } from "./battle-map";
 import { BATTLE_RULES } from "./config";
 import portraitYou from "../assets/ui/tycoon_you_small.png";
@@ -106,7 +108,8 @@ import {
 } from "./track";
 import {
   industriesInCatchment, ownerIdOf,
-  buildAllComponents, resolveConnection, industryLocks, heldIndustries, lockedIndustryIds,
+  buildAllComponents, resolveConnection, industryLocks, heldIndustries,
+  lockedIndustryIdsFor,
   depotCargo, depotRoutePaved, isServiced,
   pickBlockadeTarget, harvesterYield, depotPathLength,
   type EconomyState, type Factory, type Harvester,
@@ -116,7 +119,7 @@ import {
 // has UPGRADED" — a different question about a different part of the state.
 import {
   createScoreState, rescore, vpFor, hasWon, fmtVp, paveVp, vpDeltaText,
-  victoryBreakdown,
+  victoryBreakdown, revokeCityStars,
   type ScoreState, type VpEvent, type LoopScoring,
 } from "./victory";
 import {
@@ -2387,6 +2390,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       tx: f.tx,
       ty: f.ty,
       ref: { kind: "factory", owner: f.owner },
+      ...(f.closed ? { alpha: 0.4 } : {}),
     }));
     // TOWN-1 / TOWN-GRID: the town draw items — art on whole house BLOCKS.
     //
@@ -2434,6 +2438,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       ...eco.harvesters.map((h) => ({
         sprite: depotSpriteFor(h),
         tx: h.tx, ty: h.ty, ref: { kind: "harvester", id: h.id, owner: h.owner },
+        ...(h.closed ? { alpha: 0.4 } : {}),
       })),
       // RAIL-04: the railway's structures are ordinary footprint-anchored
       // sprites in the same static list (`railStructureItems` names them from
@@ -2815,6 +2820,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     };
     return {
       running: (h) => {
+        if (h.closed) return false;
         if (!isServiced(eco.track, h, eco.rail)) return false;
         if (resolveConnection(eco, compFor(h.owner), h).kind === null) return false;
         return heldIndustries(eco, h, locks).length > 0;
@@ -3317,6 +3323,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (tuning) {
       toast("Finish the tuning session first — one session at a time.", "bad");
       return false;
+    }
+    {
+      const t = townOfSeat(p);
+      const hold = t ? eco.townHolds?.get(t.id) : undefined;
+      if (hold?.locked) {
+        toast("This city is locked until you win it again.", "bad");
+        return false;
+      }
     }
     const price = priceTownUpgrade(p.purse, p.townLevel);
     if (!price.def) {
@@ -3821,7 +3835,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // validates — four buildable tiles, no overlap with a Depot or a Factory,
     // a resource right beside the lot, an open side for the entrance, and
     // (PP-16) a resource beside it that nobody's road already holds.
-    const plan = planDepotPlacement(grid, eco.harvesters, tx, ty, depotLocks());
+    const plan = planDepotPlacement(grid, eco.harvesters, tx, ty, depotLocksFor(p.id));
     if (!plan.valid) {
       const message: Record<string, string> = {
         "depot-taken": "A depot is already there.",
@@ -4368,12 +4382,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const challengeState: ChallengeState = createChallengeState();
   let pendingFightOff: PendingFightOff | null = null;
   let pendingChallenge: {
-    industryId: number;
+    kind: "industry" | "town";
+    industryId?: number;
+    townId?: number;
+    challengerId: string;
+    holderId: string | null;
     challengerHarvesterId: number;
     holderHarvesterId: number;
     offerUntil: number;
   } | null = null;
   let mapStake: MapBattleStake | null = null;
+  /** The action-card currently shown for a battle offer (so stale ones close). */
+  let battleCardKey = "";
 
   /** The seat's castable cargoes — its depots' harvests (B3's ability gate). */
   const mapDepotCargos = (ownerId: number): Cargo[] => {
@@ -4385,6 +4405,147 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     return [...out];
   };
+
+  const hid = (h: { id: number } | null | undefined): number => h?.id ?? -1;
+  const seatName = (id: string | null | undefined): string =>
+    id === me.id ? "You" : id === rival.id ? rival.name : (id ?? "Unclaimed");
+  const industryName = (id: number | undefined): string =>
+    INDUSTRY_BY_KEY[grid.industries[id ?? -1]?.type ?? ""]?.name ?? "the industry";
+  const townName = (id: number | undefined): string =>
+    id == null ? "the city" : `Town ${id + 1}`;
+  const pavedCountOf = (p: PlayerState): number => {
+    let n = 0;
+    for (let i = 0; i < track.road.length; i++) {
+      if (track.owner[i] === p.i + 1 && track.road[i]) n++;
+    }
+    return n;
+  };
+
+  function closeBattleCard(): void {
+    if (!battleCardKey) return;
+    battleCardKey = "";
+    ui.closeActionCard();
+  }
+
+  function showBattleCard(key: string, info: Parameters<OriginalUi["showActionCard"]>[0]): void {
+    if (battleCardKey === key) return;
+    battleCardKey = key;
+    ui.showActionCard(info);
+  }
+
+  function announceVerdict(stake: MapBattleStake, verdict: ReturnType<typeof settleMapBattle>, playerWon: boolean | null): void {
+    if (stake.kind === "fightoff") {
+      if (verdict === "cancelled") toast("You fought it off — their Gold stays spent either way.", "good");
+      return;
+    }
+    const what = stake.kind === "town" ? "city" : "industry";
+    if (verdict === "draw") { toast("A draw — the map stands.", "info"); return; }
+    const mine = playerWon === true;
+    if (verdict === "rights" || verdict === "shared") {
+      toast(mine ? `First win — you both operate this ${what}.` : `They share the ${what} now.`, mine ? "good" : "info");
+    } else if (verdict === "closed") {
+      toast(mine ? `Second win — their ${stake.kind === "town" ? "plant" : "depot"} closes.` : `They closed your ${stake.kind === "town" ? "plant" : "depot"}.`, mine ? "good" : "bad");
+    } else if (verdict === "reopened") {
+      toast(mine ? "Reopened — you operate it again." : "They reopened their site.", mine ? "good" : "info");
+    } else if (verdict === "conquest") {
+      toast(mine ? `The ${what} is yours.` : `They take the ${what}.`, mine ? "good" : "bad");
+    } else if (verdict === "held") {
+      toast(mine ? `You held the ${what}.` : `They held the ${what}.`, mine ? "good" : "bad");
+    }
+  }
+
+  function finishStake(stake: MapBattleStake, won: boolean | null): ReturnType<typeof settleMapBattle> {
+    const verdict = settleMapBattle(eco, stake, won);
+    if (verdict === "closed" && stake.kind === "town") {
+      const loserId = won ? (stake.holderId ?? null) : stake.challengerId;
+      if (loserId) {
+        // Lose the city: its tiers AND their bonus go with it. Revoking the ★
+        // alone was undone by the next rescore (city ★ is a high-water mark of
+        // `townLevel`), so the level itself has to drop too.
+        const loser = players.find((x) => x.id === loserId);
+        if (loser) { loser.townLevel = 0; loser.townBonus = 0; }
+        revokeCityStars(score, loserId, 0);
+      }
+    }
+    if (stake.kind === "town") {
+      const hold = eco.townHolds?.get(stake.townId);
+      if (hold && hold.wins >= 2) unlockTownHold(eco, stake.townId);
+    }
+    const playerIsChallenger = stake.kind === "fightoff" ? true : stake.challengerId === me.id;
+    const playerWon = won === null ? null : (playerIsChallenger ? won : !won);
+    announceVerdict(stake, verdict, playerWon);
+    syncWorld();
+    rescoreNow();
+    maybeComebackLoss(me);
+    maybeComebackLoss(rival);
+    return verdict;
+  }
+
+  function applySeatSale(p: PlayerState, sale: SaleOption): number {
+    if (sale.kind === "city") {
+      if (p.townLevel <= 0) return 0;
+      p.townLevel--;
+      // A sold tier takes its ★ with it (city ★ is otherwise a high-water mark).
+      revokeCityStars(score, p.id, p.townLevel);
+    }
+    const gold = applySale(eco, p.id, sale, track, p.i + 1);
+    if (gold <= 0) {
+      if (sale.kind === "city") p.townLevel++;
+      return 0;
+    }
+    p.purse.gold = (p.purse.gold ?? 0) + gold;
+    syncWorld();
+    rescoreNow();
+    return gold;
+  }
+
+  function sellAsset(p: PlayerState, sale: SaleOption | null = cheapestSale(eco, p.id, pavedCountOf(p), p.townLevel)): boolean {
+    if (isGuest() && p === me) {
+      if (!sale) return false;
+      return net?.sendIntent("battle", { do: "sell", kind: sale.kind, id: sale.id ?? null }) ?? false;
+    }
+    if (!sale) { toast("Nothing left to sell.", "bad"); return false; }
+    const gold = applySeatSale(p, sale);
+    if (gold <= 0) { toast("That sale is gone.", "bad"); return false; }
+    toast(`Sold ${sale.kind} for ${gold} Gold.`, p === me ? "good" : "info");
+    if (p === me) closeBattleCard();
+    return true;
+  }
+
+  function downgradeCity(p: PlayerState): boolean {
+    if (isGuest() && p === me) return net?.sendIntent("battle", { do: "downgrade" }) ?? false;
+    const t = townOfSeat(p);
+    if (!t) { toast("You have no city to claim.", "bad"); return false; }
+    const hold = eco.townHolds?.get(t.id);
+    if (!hold || hold.holder !== p.id) { toast("You do not hold that city.", "bad"); return false; }
+    if (hold.locked) { toast("Win the city again before you can claim it.", "bad"); return false; }
+    p.townLevel = 0;
+    revokeCityStars(score, p.id, 0);
+    toast("City claimed — tiers restart.", p === me ? "info" : "info");
+    rescoreNow();
+    return true;
+  }
+
+  function maybeComebackLoss(p: PlayerState): void {
+    if (phase === "won" || inSetup() || isGuest()) return;
+    if (hasOpenPlant(eco, p.id)) return;
+    if (!isComeback(eco, p.id)) return;
+    if ((p.purse.gold ?? 0) >= BATTLE_RULES.challengeGold) return;
+    if (cheapestSale(eco, p.id, pavedCountOf(p), p.townLevel)) return;
+    const other = otherSeat(p);
+    phase = "won";
+    winner = other;
+    winningSource = null;
+    if (rankRuntime && !isGuest()) {
+      rankRuntime.claimWin(wireIdOf(other), wireIdOf(p), (performance.now() - rankBootAt) / 1000);
+    }
+    toast(`${p.name} has nothing left to sell — ${other.name} wins.`, other.human ? "good" : "bad");
+    presentEnding(null);
+  }
+
+  function fightBusy(): boolean {
+    return !!(battleScreen || mapStake || pendingFightOff || pendingChallenge || mpOffer || duel);
+  }
 
   /**
    * Open a map battle (seat 0 = the player) against the live skill's battle
@@ -4425,51 +4586,45 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   }
 
   /**
-   * B5: call a fight for a contested industry. The bill and both cooldowns
-   * arm at the call (the fight counts whether or not it is declined).
+   * #322: call a fight for an industry. The bill and the player cooldown arm
+   * at the call. Decline is a forfeit — the challenger wins.
    */
   function challengeIndustry(indId: number): boolean {
     const now = performance.now();
-    // B6 (#251): a guest's challenge is the host's to validate and bill.
     if (isGuest()) {
       if (battleScreen) { toast("One fight at a time.", "bad"); return false; }
       return net?.sendIntent("battle", { do: "challenge", industry: indId }) ?? false;
     }
-    if (battleScreen || mapStake || pendingFightOff || pendingChallenge || mpOffer || duel) {
+    if (fightBusy()) {
       toast("One fight at a time.", "bad");
       return false;
     }
     const chk = canChallenge(eco, challengeState, now, me.id, indId, BATTLE_RULES, me.purse.gold ?? 0);
     if (!chk.ok) {
-      const why: Record<string, string> = {
-        "not-contested": "That industry is not contested — one of your serviced depots must reach it.",
-        "held-by-you": "Your depot already draws that one.",
-        gold: `A challenge costs ${BATTLE_RULES.challengeGold} Gold.`,
-        cooldown: "You have just fought — the cooldown paces the wars.",
-        "industry-cooldown": "That industry has seen enough fighting for now.",
-      };
-      toast(why[chk.reason] ?? "Not now.", "bad");
+      toast(challengeRefusalText(chk.reason, BATTLE_RULES.challengeGold), "bad");
       return false;
     }
     spend(me, { gold: BATTLE_RULES.challengeGold });
     markChallenge(challengeState, now, me.id, indId, BATTLE_RULES);
     const def = INDUSTRY_BY_KEY[chk.industry.type];
+    const holderId = chk.holder?.owner ?? null;
     if (humanDuels()) {
-      // B6: the far seat is a person — they answer before anyone fights.
       mpOffer = {
-        industryId: indId, challengerId: me.id,
-        challengerHarvesterId: chk.mine.id, holderHarvesterId: chk.holder.id,
+        kind: "industry", industryId: indId, townId: undefined,
+        challengerId: me.id, holderId,
+        challengerHarvesterId: hid(chk.mine), holderHarvesterId: hid(chk.holder),
         offerUntil: now + BATTLE_RULES.turnMs * 2,
       };
       toast(`Challenge sent for the ${def?.name ?? "industry"} — waiting for ${rival.name}.`, "info");
+      syncBattleCard();
       publishNet(now, true);
       return true;
     }
     openMapBattle(
       {
         kind: "industry", industryId: indId,
-        challengerId: me.id,
-        challengerHarvesterId: chk.mine.id, holderHarvesterId: chk.holder.id,
+        challengerId: me.id, holderId,
+        challengerHarvesterId: hid(chk.mine), holderHarvesterId: hid(chk.holder),
       },
       (rand(4294967296) >>> 0),
       `${def?.name ?? "the industry"}`,
@@ -4477,62 +4632,131 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return true;
   }
 
-  /** B5: the rival calls a fight — the player may take it or fold. */
-  function maybeRivalChallenge(now: number): void {
-    if (phase === "won" || inSetup()) return;
-    if (battleScreen || mapStake || pendingFightOff || pendingChallenge) return;
-    if (!rivalChallengeDue(challengeState, now)) return;
-    for (const ind of grid.industries) {
-      const chk = canChallenge(
-        eco, challengeState, now, rival.id, ind.id, BATTLE_RULES, rival.purse.gold ?? 0,
-      );
-      if (!chk.ok) continue;
-      spend(rival, { gold: BATTLE_RULES.challengeGold });
-      markChallenge(challengeState, now, rival.id, ind.id, BATTLE_RULES);
-      markRivalChallenge(challengeState, now, skill().key);
-      const def = INDUSTRY_BY_KEY[ind.type];
-      pendingChallenge = {
-        industryId: ind.id,
-        challengerHarvesterId: chk.mine.id,
-        holderHarvesterId: chk.holder.id,
-        offerUntil: now + BATTLE_RULES.turnMs,
-      };
-      toast(`The rival challenges you for the ${def?.name ?? "industry"}! Fight? (__iso.acceptChallenge / __iso.declineChallenge)`, "bad");
-      rivalSpeaks("attack", "bandit");
-      return;
+  function challengeTown(townId: number): boolean {
+    const now = performance.now();
+    if (isGuest()) {
+      if (battleScreen) { toast("One fight at a time.", "bad"); return false; }
+      return net?.sendIntent("battle", { do: "challenge", town: townId }) ?? false;
     }
+    if (fightBusy()) {
+      toast("One fight at a time.", "bad");
+      return false;
+    }
+    const chk = canChallengeTown(eco, challengeState, now, me.id, townId, BATTLE_RULES, me.purse.gold ?? 0);
+    if (!chk.ok) {
+      toast(challengeRefusalText(chk.reason, BATTLE_RULES.challengeGold), "bad");
+      return false;
+    }
+    spend(me, { gold: BATTLE_RULES.challengeGold });
+    markChallenge(challengeState, now, me.id, townId, BATTLE_RULES);
+    const holderId = eco.townHolds?.get(townId)?.holder
+      ?? eco.factories.find((f) => !f.closed && f.townId === townId && f.owner !== me.id)?.owner
+      ?? null;
+    if (humanDuels()) {
+      mpOffer = {
+        kind: "town", industryId: -1, townId,
+        challengerId: me.id, holderId,
+        challengerHarvesterId: -1, holderHarvesterId: -1,
+        offerUntil: now + BATTLE_RULES.turnMs * 2,
+      };
+      toast(`Challenge sent for ${townName(townId)} — waiting for ${rival.name}.`, "info");
+      syncBattleCard();
+      publishNet(now, true);
+      return true;
+    }
+    openMapBattle(
+      { kind: "town", townId, challengerId: me.id, holderId },
+      (rand(4294967296) >>> 0),
+      townName(townId),
+    );
+    return true;
   }
 
-  /** B5: accept the rival's challenge and fight it (seat 0 defends). */
+  /** #322: the rival calls a fight — the player may take it or fold. */
+  function maybeRivalChallenge(now: number): void {
+    if (phase === "won" || inSetup()) return;
+    if (fightBusy()) return;
+    if (!rivalChallengeDue(challengeState, now)) return;
+    if (isComeback(eco, rival.id) && (rival.purse.gold ?? 0) < BATTLE_RULES.challengeGold) {
+      const sale = cheapestSale(eco, rival.id, pavedCountOf(rival), rival.townLevel);
+      if (sale) { sellAsset(rival, sale); return; }
+      maybeComebackLoss(rival);
+      return;
+    }
+    const target = pickRivalChallengeTarget(
+      eco, challengeState, now, rival.id, me.id, BATTLE_RULES, rival.purse.gold ?? 0,
+    );
+    if (!target) return;
+    if (target.kind === "town") {
+      const holderId = eco.townHolds?.get(target.id)?.holder
+        ?? eco.factories.find((f) => !f.closed && f.townId === target.id && f.owner !== rival.id)?.owner
+        ?? me.id;
+      spend(rival, { gold: BATTLE_RULES.challengeGold });
+      markChallenge(challengeState, now, rival.id, target.id, BATTLE_RULES);
+      markRivalChallenge(challengeState, now, skill().key);
+      pendingChallenge = {
+        kind: "town", townId: target.id, challengerId: rival.id, holderId,
+        challengerHarvesterId: -1, holderHarvesterId: -1,
+        offerUntil: now + BATTLE_RULES.turnMs,
+      };
+      toast(`${rival.name} challenges you for ${townName(target.id)}!`, "bad");
+    } else {
+      const chk = canChallenge(eco, challengeState, now, rival.id, target.id, BATTLE_RULES, rival.purse.gold ?? 0);
+      if (!chk.ok) return;
+      spend(rival, { gold: BATTLE_RULES.challengeGold });
+      markChallenge(challengeState, now, rival.id, target.id, BATTLE_RULES);
+      markRivalChallenge(challengeState, now, skill().key);
+      pendingChallenge = {
+        kind: "industry", industryId: target.id, challengerId: rival.id,
+        holderId: chk.holder?.owner ?? me.id,
+        challengerHarvesterId: hid(chk.mine),
+        holderHarvesterId: hid(chk.holder),
+        offerUntil: now + BATTLE_RULES.turnMs,
+      };
+      toast(`${rival.name} challenges you for the ${industryName(target.id)}!`, "bad");
+    }
+    syncBattleCard();
+    rivalSpeaks("attack", "bandit");
+  }
+
+  /** Accept the rival's (or MP) challenge and fight it. */
   function acceptChallenge(): boolean {
-    // B6 (#251): an MP offer — the guest answers by intent, the host directly.
     if (isGuest()) {
       if (!guestOffer || guestOffer.challenger !== "you") return false;
       return net?.sendIntent("battle", { do: "accept" }) ?? false;
     }
     if (mpOffer) {
-      if (mpOffer.challengerId === me.id) return false;   // your own challenge
+      if (mpOffer.challengerId === me.id) return false;
+      closeBattleCard();
       return startDuel();
     }
     const p = pendingChallenge;
     if (!p || battleScreen) return false;
     pendingChallenge = null;
-    const def = INDUSTRY_BY_KEY[grid.industries[p.industryId]?.type ?? ""];
+    closeBattleCard();
+    if (p.kind === "town") {
+      openMapBattle(
+        { kind: "town", townId: p.townId ?? 0, challengerId: p.challengerId, holderId: p.holderId },
+        (rand(4294967296) >>> 0),
+        `defending ${townName(p.townId)}`,
+      );
+      return true;
+    }
     openMapBattle(
       {
-        kind: "industry", industryId: p.industryId,
-        challengerId: rival.id,
+        kind: "industry", industryId: p.industryId ?? 0,
+        challengerId: p.challengerId, holderId: p.holderId,
         challengerHarvesterId: p.challengerHarvesterId, holderHarvesterId: p.holderHarvesterId,
       },
       (rand(4294967296) >>> 0),
-      `defending ${def?.name ?? "the industry"}`,
+      `defending ${industryName(p.industryId)}`,
     );
     return true;
   }
 
   /**
-   * B5: fold — the challenger takes the prize and pays `declineGold` on top
-   * (the cost of a fight nobody had). Silence is a fold (the offer expires).
+   * Fold — decline is a forfeit. The challenger wins the fight (no extra Gold).
+   * Silence is a fold (the offer expires).
    */
   function declineChallenge(): void {
     if (isGuest()) {
@@ -4546,9 +4770,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const p = pendingChallenge;
     if (!p) return;
     pendingChallenge = null;
-    spend(rival, { gold: BATTLE_RULES.declineGold });
-    declineTakesPrize(eco, p.industryId, p.challengerHarvesterId);
-    toast(`You folded — the rival takes the industry and pays ${BATTLE_RULES.declineGold} Gold for the privilege.`, "bad");
+    closeBattleCard();
+    if (p.kind === "town") {
+      finishStake({ kind: "town", townId: p.townId ?? 0, challengerId: p.challengerId, holderId: p.holderId }, true);
+    } else {
+      finishStake({
+        kind: "industry", industryId: p.industryId ?? 0,
+        challengerId: p.challengerId, holderId: p.holderId,
+        challengerHarvesterId: p.challengerHarvesterId, holderHarvesterId: p.holderHarvesterId,
+      }, true);
+    }
   }
 
   /**
@@ -4571,8 +4802,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       until,
       offerUntil: performance.now() + BATTLE_RULES.turnMs,
     };
-    toast(`A ${kind === "blockade" ? "Blockade" : "Protest"} is at your gates — FIGHT IT OFF? (__iso.fightOff)`, "bad");
-    ui.feed(`A ${kind} is coming — fight it off (__iso.fightOff) or let it land (__iso.declineFightOff).`);
+    toast(`A ${kind === "blockade" ? "Blockade" : "Protest"} is at your gates.`, "bad");
+    ui.feed(`A ${kind} is coming — fight it off or let it land.`);
+    syncBattleCard();
     return true;
   }
 
@@ -4599,6 +4831,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const p = pendingFightOff;
     if (!p || battleScreen) return false;
     pendingFightOff = null;
+    closeBattleCard();
     openMapBattle(
       { kind: "fightoff", pending: p },
       (rand(4294967296) >>> 0),
@@ -4611,6 +4844,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const p = pendingFightOff;
     if (!p) return;
     pendingFightOff = null;
+    closeBattleCard();
     landFightOff(p, performance.now());
   }
 
@@ -4618,6 +4852,96 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   function b5OffersTick(now: number): void {
     if (pendingChallenge && now >= pendingChallenge.offerUntil) declineChallenge();
     if (pendingFightOff && now >= pendingFightOff.offerUntil) declineFightOff();
+    syncBattleCard();
+  }
+
+  /** One Fight/Decline/Waiting card for the live offer; stale cards close. */
+  function syncBattleCard(): void {
+    if (pendingFightOff) {
+      const p = pendingFightOff;
+      const key = `fightoff:${p.kind}:${p.offerUntil}`;
+      showBattleCard(key, {
+        title: p.kind === "blockade" ? "Blockade" : "Protest",
+        lines: [`A ${p.kind} is at your gates.`],
+        until: p.offerUntil,
+        actions: [
+          { label: "Fight it off", onClick: () => { fightOff(); } },
+          { label: "Let it land", primary: false, onClick: () => { declineFightOff(); } },
+        ],
+      });
+      return;
+    }
+    if (pendingChallenge) {
+      const p = pendingChallenge;
+      const name = p.kind === "town" ? townName(p.townId) : industryName(p.industryId);
+      const key = `pending:${p.kind}:${p.industryId ?? p.townId}:${p.offerUntil}`;
+      showBattleCard(key, {
+        title: "Challenge",
+        lines: [`${rival.name} challenges you for ${name}. Decline forfeits.`],
+        until: p.offerUntil,
+        actions: [
+          { label: "Fight", onClick: () => { acceptChallenge(); } },
+          { label: "Decline", primary: false, onClick: () => { declineChallenge(); } },
+        ],
+      });
+      return;
+    }
+    if (mpOffer) {
+      const o = mpOffer;
+      const name = o.kind === "town" ? townName(o.townId) : industryName(o.industryId >= 0 ? o.industryId : undefined);
+      if (o.challengerId === me.id) {
+        const key = `wait:${o.kind}:${o.industryId}:${o.townId}:${o.offerUntil}`;
+        showBattleCard(key, {
+          title: "Waiting",
+          lines: [`Waiting for ${rival.name} to answer the challenge for ${name}.`],
+          until: o.offerUntil,
+          actions: [{ label: "Close", primary: false, onClick: () => closeBattleCard() }],
+        });
+      } else {
+        const key = `mp:${o.kind}:${o.industryId}:${o.townId}:${o.offerUntil}`;
+        showBattleCard(key, {
+          title: "Challenge",
+          lines: [`${rival.name} challenges you for ${name}. Decline forfeits.`],
+          until: o.offerUntil,
+          actions: [
+            { label: "Fight", onClick: () => { acceptChallenge(); } },
+            { label: "Decline", primary: false, onClick: () => { declineChallenge(); } },
+          ],
+        });
+      }
+      return;
+    }
+    if (isGuest() && guestOffer) {
+      const o = guestOffer;
+      const kind = o.kind ?? (o.townId != null ? "town" : "industry");
+      const name = kind === "town" ? townName(o.townId) : industryName(o.industryId);
+      if (o.challenger === "you") {
+        const key = `guest:${kind}:${o.industryId}:${o.townId}:${o.until}`;
+        showBattleCard(key, {
+          title: "Challenge",
+          lines: [`${rival.name} challenges you for ${name}. Decline forfeits.`],
+          until: o.until,
+          actions: [
+            { label: "Fight", onClick: () => { acceptChallenge(); } },
+            { label: "Decline", primary: false, onClick: () => { declineChallenge(); } },
+          ],
+        });
+      } else {
+        const key = `guest-wait:${kind}:${o.until}`;
+        showBattleCard(key, {
+          title: "Waiting",
+          lines: [`Waiting for ${rival.name} to answer.`],
+          until: o.until,
+          actions: [{ label: "Close", primary: false, onClick: () => closeBattleCard() }],
+        });
+      }
+      return;
+    }
+    if (battleCardKey.startsWith("pending:") || battleCardKey.startsWith("fightoff:")
+      || battleCardKey.startsWith("mp:") || battleCardKey.startsWith("wait:")
+      || battleCardKey.startsWith("guest")) {
+      closeBattleCard();
+    }
   }
 
   // ── B6 (#251) — multiplayer battles (host-authoritative turns) ─────────────
@@ -4632,8 +4956,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const humanDuels = () => isMp() && !aiOpponent;
   /** HOST: the challenge waiting on an answer (on the wire as `offer`). */
   let mpOffer: {
-    industryId: number; challengerId: string;
-    challengerHarvesterId: number; holderHarvesterId: number; offerUntil: number;
+    kind: "industry" | "town";
+    industryId: number;
+    townId?: number;
+    challengerId: string;
+    holderId: string | null;
+    challengerHarvesterId: number;
+    holderHarvesterId: number;
+    offerUntil: number;
   } | null = null;
   /** HOST: the live duel (its `battle` IS the host screen's engine). */
   let duel: Duel | null = null;
@@ -4680,13 +5010,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     nextDuelRules = null;
     duel = d;
     duelSettled = false;
-    // industryId < 0 = a friendly (the debug door): nothing on the map moves.
-    mapStake = o.industryId < 0 ? null : {
-      kind: "industry", industryId: o.industryId, challengerId: o.challengerId,
-      challengerHarvesterId: o.challengerHarvesterId, holderHarvesterId: o.holderHarvesterId,
-    };
-    duelStakeText = o.industryId < 0 ? "a friendly"
-      : INDUSTRY_BY_KEY[grid.industries[o.industryId]?.type ?? ""]?.name ?? "the industry";
+    // industryId < 0 and no town = a friendly (the debug door): nothing on the map moves.
+    mapStake = o.kind === "town"
+      ? { kind: "town", townId: o.townId ?? 0, challengerId: o.challengerId, holderId: o.holderId }
+      : o.industryId < 0 ? null : {
+        kind: "industry", industryId: o.industryId, challengerId: o.challengerId, holderId: o.holderId,
+        challengerHarvesterId: o.challengerHarvesterId, holderHarvesterId: o.holderHarvesterId,
+      };
+    duelStakeText = o.kind === "town" ? townName(o.townId)
+      : o.industryId < 0 ? "a friendly"
+        : industryName(o.industryId);
     battleScreen = openBattleScreen({
       battle: d.battle,
       contenders: players,
@@ -4726,15 +5059,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const s = mapStake;
     mapStake = null;
     const w = d.battle.state.winner;
-    if (!s || s.kind !== "industry") {
+    if (!s || (s.kind !== "industry" && s.kind !== "town")) {
       toast(w === null ? "A draw." : w === 0 ? `You beat ${rival.name}.` : `${rival.name} wins the battle.`, "info");
       return;
     }
     const won = w === null ? null : (w === 0 ? me.id : rival.id) === s.challengerId;
-    const verdict = settleMapBattle(eco, s, won);
-    if (verdict === "draw") toast("A draw — the map stands.", "info");
-    else if (w === 0) toast(`You beat ${rival.name} — the field is yours.`, "good");
-    else toast(`${rival.name} wins the battle.`, "bad");
+    finishStake(s, won);
   }
 
   /** HOST: the challenged seat folded (or let the offer run out). */
@@ -4742,15 +5072,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const o = mpOffer;
     if (!o) return;
     mpOffer = null;
-    const mine = o.challengerId === me.id;
+    closeBattleCard();
     nextDuelRules = null;
-    if (o.industryId >= 0) {
-      spend(mine ? me : rival, { gold: BATTLE_RULES.declineGold });
-      declineTakesPrize(eco, o.industryId, o.challengerHarvesterId);
+    if (o.kind === "town") {
+      finishStake({ kind: "town", townId: o.townId ?? 0, challengerId: o.challengerId, holderId: o.holderId }, true);
+    } else if (o.industryId >= 0) {
+      finishStake({
+        kind: "industry", industryId: o.industryId, challengerId: o.challengerId, holderId: o.holderId,
+        challengerHarvesterId: o.challengerHarvesterId, holderHarvesterId: o.holderHarvesterId,
+      }, true);
+    } else {
+      toast(o.challengerId === me.id ? `${rival.name} declined.` : `You declined.`, "info");
     }
-    toast(mine
-      ? `${rival.name} folded — the industry is yours (−${BATTLE_RULES.declineGold} Gold).`
-      : `You folded — ${rival.name} takes the industry.`, mine ? "good" : "bad");
     publishNet(performance.now(), true);
   }
 
@@ -4759,19 +5092,51 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const what = payload.do;
     const now = performance.now();
     if (what === "challenge") {
-      const indId = typeof payload.industry === "number" && Number.isInteger(payload.industry) ? payload.industry : -1;
       if (battleScreen || mapStake || mpOffer || duel) { echoed.push("One fight at a time."); return; }
+      const townId = typeof payload.town === "number" && Number.isInteger(payload.town) ? payload.town : -1;
+      const indId = typeof payload.industry === "number" && Number.isInteger(payload.industry) ? payload.industry : -1;
+      if (townId >= 0) {
+        const chk = canChallengeTown(eco, challengeState, now, rival.id, townId, BATTLE_RULES, rival.purse.gold ?? 0);
+        if (!chk.ok) { echoed.push(`Challenge refused (${chk.reason}).`); return; }
+        spend(rival, { gold: BATTLE_RULES.challengeGold });
+        markChallenge(challengeState, now, rival.id, townId, BATTLE_RULES);
+        const holderId = eco.townHolds?.get(townId)?.holder
+          ?? eco.factories.find((f) => !f.closed && f.townId === townId && f.owner !== rival.id)?.owner
+          ?? me.id;
+        mpOffer = {
+          kind: "town", industryId: -1, townId, challengerId: rival.id, holderId,
+          challengerHarvesterId: -1, holderHarvesterId: -1,
+          offerUntil: now + BATTLE_RULES.turnMs * 2,
+        };
+        toast(`${rival.name} challenges you for ${townName(townId)}!`, "bad");
+        syncBattleCard();
+        return;
+      }
       const chk = canChallenge(eco, challengeState, now, rival.id, indId, BATTLE_RULES, rival.purse.gold ?? 0);
       if (!chk.ok) { echoed.push(`Challenge refused (${chk.reason}).`); return; }
       spend(rival, { gold: BATTLE_RULES.challengeGold });
       markChallenge(challengeState, now, rival.id, indId, BATTLE_RULES);
       mpOffer = {
-        industryId: indId, challengerId: rival.id,
-        challengerHarvesterId: chk.mine.id, holderHarvesterId: chk.holder.id,
+        kind: "industry", industryId: indId, challengerId: rival.id,
+        holderId: chk.holder?.owner ?? null,
+        challengerHarvesterId: hid(chk.mine), holderHarvesterId: hid(chk.holder),
         offerUntil: now + BATTLE_RULES.turnMs * 2,
       };
-      const def = INDUSTRY_BY_KEY[chk.industry.type];
-      toast(`${rival.name} challenges you for the ${def?.name ?? "industry"}! Fight? (__iso.acceptChallenge / __iso.declineChallenge)`, "bad");
+      toast(`${rival.name} challenges you for the ${industryName(indId)}!`, "bad");
+      syncBattleCard();
+      return;
+    }
+    if (what === "sell") {
+      const kind = payload.kind === "pave" || payload.kind === "depot" || payload.kind === "city" || payload.kind === "plant"
+        ? payload.kind : null;
+      if (!kind) { echoed.push("That sale is not available."); return; }
+      const id = typeof payload.id === "number" ? payload.id : undefined;
+      const sale: SaleOption = { kind, gold: 0, id };
+      if (!sellAsset(rival, sale)) echoed.push("That sale is gone.");
+      return;
+    }
+    if (what === "downgrade") {
+      if (!downgradeCity(rival)) echoed.push("You cannot claim that city yet.");
       return;
     }
     if (what === "accept" || what === "decline") {
@@ -4842,7 +5207,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return {
       engine: duel && !duelSettled ? { ...duelToWire(duel), stake: duelStakeText } : lastDuelWire ?? undefined,
       offer: mpOffer
-        ? { industryId: mpOffer.industryId, challenger: mpOffer.challengerId, until: mpOffer.offerUntil }
+        ? {
+          kind: mpOffer.kind,
+          industryId: mpOffer.kind === "industry" ? mpOffer.industryId : undefined,
+          townId: mpOffer.kind === "town" ? mpOffer.townId : undefined,
+          challenger: mpOffer.challengerId,
+          until: mpOffer.offerUntil,
+        }
         : undefined,
     };
   }
@@ -4852,13 +5223,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (!isGuest()) return;
     guestOffer = bw.offer ?? null;
     if (guestOffer && guestOffer.challenger === "you") {
-      const key = `${guestOffer.industryId}@${guestOffer.until}`;
+      const key = `${guestOffer.kind ?? "industry"}:${guestOffer.industryId}@${guestOffer.townId}@${guestOffer.until}`;
       if (key !== guestOfferSeen) {
         guestOfferSeen = key;
-        const def = INDUSTRY_BY_KEY[grid.industries[guestOffer.industryId]?.type ?? ""];
-        const what = guestOffer.industryId < 0 ? "to a friendly battle" : `for the ${def?.name ?? "industry"}`;
-        toast(`${rival.name} challenges you ${what}! Fight? (__iso.acceptChallenge / __iso.declineChallenge)`, "bad");
+        const kind = guestOffer.kind ?? (guestOffer.townId != null ? "town" : "industry");
+        const what = kind === "town"
+          ? `for ${townName(guestOffer.townId)}`
+          : (guestOffer.industryId ?? 0) < 0
+            ? "to a friendly battle"
+            : `for the ${industryName(guestOffer.industryId)}`;
+        toast(`${rival.name} challenges you ${what}!`, "bad");
+        syncBattleCard();
       }
+    } else if (!guestOffer && battleCardKey.startsWith("guest")) {
+      closeBattleCard();
     }
     const e = bw.engine;
     if (!e || guestDuelsClosed.has(e.seed)) return;
@@ -6101,6 +6479,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // with a person on seat 1 it would spend THEIR Gold on fights they never
     // called (and every guest ran it against its local copy of the host).
     if (isSolo() || aiOpponent) maybeRivalChallenge(now);
+    maybeComebackLoss(me);
+    if (!isGuest()) maybeComebackLoss(rival);
     // MP-05: §9 — "the AI rival is disabled in a hosted game; the guest is the
     // rival". Seat 1 is driven by intents from the relay instead.
     // #186: …unless the host filled that seat itself, which is the one hosted
@@ -6363,6 +6743,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       playerReadyAt: [...challengeState.playerReadyAt],
       rivalReadyAt: challengeState.rivalReadyAt,
       battles: challengeState.battles,
+      siteRights: eco.siteRights
+        ? [...eco.siteRights].map(([id, r]) => [id, { rights: [...r.rights], streak: r.streak ? { ...r.streak } : null }] as [number, { rights: string[]; streak: { playerId: string; wins: number } | null }])
+        : undefined,
+      townHolds: eco.townHolds
+        ? [...eco.townHolds].map(([id, h]) => [id, { ...h }] as [number, { holder: string; wins: number; locked: boolean }])
+        : undefined,
       ...duelWireOut(),
     };
   }
@@ -6737,6 +7123,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       challengeState.playerReadyAt = new Map(bw.playerReadyAt ?? []);
       challengeState.rivalReadyAt = bw.rivalReadyAt ?? 0;
       challengeState.battles = bw.battles ?? 0;
+      if (bw.siteRights) eco.siteRights = new Map(bw.siteRights.map(([id, r]: [number, { rights: string[]; streak: { playerId: string; wins: number } | null }]) => [id, { rights: [...r.rights], streak: r.streak ? { ...r.streak } : null }]));
+      if (bw.townHolds) eco.townHolds = new Map(bw.townHolds.map(([id, h]: [number, { holder: string; wins: number; locked: boolean }]) => [id, { ...h }]));
       guestApplyDuel(bw);
       worldDirty = true;
     }
@@ -7139,7 +7527,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * about ground and geography (the lock needs the track layer, which it must
    * not reach for).
    */
-  const depotLocks = () => ({ locked: lockedIndustryIds(eco), factories: eco.factories.map((f) => ({ tx: f.tx, ty: f.ty })), facing: depotView });
+  const depotLocksFor = (playerId: string) => ({
+    locked: lockedIndustryIdsFor(eco, playerId),
+    factories: eco.factories.map((f) => ({ tx: f.tx, ty: f.ty })),
+    facing: depotView,
+  });
+  const depotLocks = () => depotLocksFor(me.id);
 
   /** The lot a wire lorry belongs to — the wire carries only its depot id. */
   const truckLot = (depotId: number): [number, number] | undefined => {
@@ -7970,12 +8363,97 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   /** The click on the centre: my town buys the upgrade, a foreign one explains. */
   function townCentreClick(t: Town): void {
     if (townOfSeat(me)?.id !== t.id) {
-      toast("That is not your city — the town your Factory touches is the one you upgrade.", "info");
+      showTownCard(t);
+      return;
+    }
+    const hold = eco.townHolds?.get(t.id);
+    if (hold && !hold.locked && hold.holder === me.id) {
+      showTownCard(t);
       return;
     }
     // The centre is also the bank's door (#245): if the upgrade can't be
     // bought yet, open the exchange so the player can trade toward it.
     if (!buyTownUpgrade(me)) ui.openBank();
+  }
+
+  const industryAt = (p: { tx: number; ty: number }): (typeof grid.industries)[number] | null => {
+    if (p.tx < 0 || p.ty < 0 || p.tx >= MAP_W || p.ty >= MAP_H) return null;
+    const occ = grid.occupancy[tIdx(p.tx, p.ty)];
+    if (occ < 0) return null;
+    return grid.industries[occ] ?? null;
+  };
+
+  function showIndustryCard(ind: typeof grid.industries[number]): void {
+    const now = performance.now();
+    const def = INDUSTRY_BY_KEY[ind.type];
+    const locks = industryLocks(eco);
+    const holder = locks.get(ind.id);
+    const rights = eco.siteRights?.get(ind.id);
+    const chk = canChallenge(eco, challengeState, now, me.id, ind.id, BATTLE_RULES, me.purse.gold ?? 0);
+    const busy = fightBusy();
+    const reason = busy ? "busy" as const : (chk.ok ? null : chk.reason);
+    const lines = [
+      `Cargo: ${def ? CARGO[def.cargo].name : "—"}`,
+      `Held by: ${seatName(holder?.owner ?? null)}`,
+    ];
+    if (rights?.rights.length) {
+      lines.push(`Rights: ${rights.rights.map((id) => seatName(id)).join(", ")}`);
+    }
+    const sales = isComeback(eco, me.id) ? listSales(eco, me.id, pavedCountOf(me), me.townLevel) : [];
+    showBattleCard(`industry:${ind.id}`, {
+      title: def?.name ?? "Industry",
+      lines,
+      actions: [
+        {
+          label: "Challenge",
+          html: `Challenge <small>${BATTLE_RULES.challengeGold} Gold</small>`,
+          disabled: !!reason,
+          title: reason ? challengeRefusalText(reason, BATTLE_RULES.challengeGold) : undefined,
+          onClick: () => { if (challengeIndustry(ind.id)) closeBattleCard(); },
+        },
+        ...sales.slice(0, 2).map((s) => ({
+          label: `Sell ${s.kind}`,
+          html: `Sell ${s.kind} <small>+${s.gold} Gold</small>`,
+          primary: false as const,
+          onClick: () => { sellAsset(me, s); },
+        })),
+        { label: "Close", primary: false, onClick: () => closeBattleCard() },
+      ],
+    });
+  }
+
+  function showTownCard(t: Town): void {
+    const now = performance.now();
+    const hold = eco.townHolds?.get(t.id);
+    const chk = canChallengeTown(eco, challengeState, now, me.id, t.id, BATTLE_RULES, me.purse.gold ?? 0);
+    const busy = fightBusy();
+    const reason = busy ? "busy" as const : (chk.ok ? null : chk.reason);
+    const mine = townOfSeat(me)?.id === t.id;
+    const canClaim = hold && hold.holder === me.id && !hold.locked;
+    const lines = [
+      `Held by: ${hold ? seatName(hold.holder) : (mine ? "You" : "Unclaimed")}`,
+      hold?.locked ? "Upgrades locked until won again." : "",
+    ].filter(Boolean);
+    showBattleCard(`town:${t.id}`, {
+      title: townName(t.id),
+      lines,
+      actions: [
+        {
+          label: "Challenge",
+          html: `Challenge <small>${BATTLE_RULES.challengeGold} Gold</small>`,
+          disabled: !!reason,
+          title: reason ? challengeRefusalText(reason, BATTLE_RULES.challengeGold) : undefined,
+          onClick: () => { if (challengeTown(t.id)) closeBattleCard(); },
+        },
+        ...(canClaim ? [{
+          label: "Claim city",
+          html: "Claim city — tiers restart",
+          primary: false as const,
+          onClick: () => { if (downgradeCity(me)) closeBattleCard(); },
+        }] : []),
+        { label: "Close", primary: false, onClick: () => closeBattleCard() },
+      ],
+    });
   }
 
   // ── input ──────────────────────────────────────────────────────────────
@@ -8353,10 +8831,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             const town = townCentreAt(p);
             if (town) townCentreClick(town);
             else if (newLoop) {
-              // 2026-09: a click on one of my Depots opens its card
-              // (level, yield vs cap, Upgrade, Retune).
-              const d = myDepotAt(p.tx, p.ty);
-              if (d) depotCardFor(d);
+              const ind = industryAt(p);
+              if (ind) showIndustryCard(ind);
+              else {
+                // 2026-09: a click on one of my Depots opens its card
+                // (level, yield vs cap, Upgrade, Retune).
+                const d = myDepotAt(p.tx, p.ty);
+                if (d) depotCardFor(d);
+              }
             }
           } else if (tool === "road" || tool === "dirt" || tool === "rail") {
             // A tap with a track tool that got here is a refusal: the legal
@@ -8785,6 +9267,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     challengeState.playerReadyAt = new Map((d.battle?.playerReadyAt ?? []).map(([k, v]) => [k, now + v]));
     challengeState.rivalReadyAt = now + (d.battle?.rivalDueIn ?? 0);
     challengeState.battles = d.battle?.battles ?? 0;
+    eco.siteRights = d.battle?.siteRights
+      ? new Map(d.battle.siteRights.map(([id, r]) => [id, { rights: [...r.rights], streak: r.streak ? { ...r.streak } : null }]))
+      : new Map();
+    eco.townHolds = d.battle?.townHolds
+      ? new Map(d.battle.townHolds.map(([id, h]) => [id, { ...h }]))
+      : new Map();
     // economy: replace the lists in place — their references are held all
     // over (planTrucks, syncWorld, the AI...)
     setClearedFields(d.clearedFields ?? []);
@@ -10602,10 +11090,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      * screen is up (the tick entry points bail on `battleScreen`).
      */
     challengeIndustry: (indId: number) => challengeIndustry(indId),
+    challengeTown: (townId: number) => challengeTown(townId),
     acceptChallenge: () => acceptChallenge(),
     declineChallenge: () => declineChallenge(),
     fightOff: () => fightOff(),
     declineFightOff: () => declineFightOff(),
+    sellAsset: (kind?: SaleOption["kind"], id?: number) =>
+      sellAsset(me, kind ? { kind, gold: 0, id } : cheapestSale(eco, me.id, pavedCountOf(me), me.townLevel)),
+    downgradeCity: () => downgradeCity(me),
     get pendingChallenge() { return pendingChallenge; },
     get pendingFightOff() { return pendingFightOff; },
     /** The cooldown/counter probe (the playtest note reads `battles`). */
@@ -10629,7 +11121,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (isGuest() || !humanDuels() || mpOffer || duel || battleScreen) return false;
       nextDuelRules = { ...BATTLE_RULES, ...rules };
       mpOffer = {
-        industryId: -1, challengerId: me.id,
+        kind: "industry", industryId: -1, challengerId: me.id, holderId: null,
         challengerHarvesterId: -1, holderHarvesterId: -1,
         offerUntil: performance.now() + BATTLE_RULES.turnMs * 2,
       };
