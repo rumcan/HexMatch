@@ -90,6 +90,20 @@ const DIR_VEC: Record<number, GroundPoint> = {
   [NE]: [0, -1], [SE]: [1, 0], [SW]: [0, 1], [NW]: [-1, 0],
 };
 
+/**
+ * Playtest (2026-09): a tile's DIAGONAL arms, one bit each, toward the corner
+ * it shares with its diagonal neighbour — screen north (tx,ty), east
+ * (tx+1,ty), south (tx+1,ty+1) and west (tx,ty+1). Both neighbours meet at
+ * that corner point exactly, which is the port contract for a diagonal.
+ */
+export const DIAG_N = 1, DIAG_E = 2, DIAG_S = 4, DIAG_W = 8;
+const DIAG_CORNER: Record<number, GroundPoint> = {
+  [DIAG_N]: [0, 0], [DIAG_E]: [1, 0], [DIAG_S]: [1, 1], [DIAG_W]: [0, 1],
+};
+const diagCorner = (tx: number, ty: number, bit: number): GroundPoint =>
+  [tx + DIAG_CORNER[bit][0], ty + DIAG_CORNER[bit][1]];
+const DIAG_BITS = [DIAG_N, DIAG_E, DIAG_S, DIAG_W];
+
 /** The rail mask of a rail byte — the low nibble, PRESENT bit excluded. */
 export const railMaskOf = (cell: number): number => maskOf(cell);
 
@@ -234,14 +248,28 @@ export function offsetPath(points: GroundPoint[], offset: number): GroundPoint[]
  * short STUB across the tile centre — rail can be laid as a lone tile, and a
  * stub must still look like a piece of track rather than like nothing at all.
  */
-export function railRuns(tx: number, ty: number, mask: number): GroundPoint[][] {
+export function railRuns(tx: number, ty: number, mask: number, diag = 0): GroundPoint[][] {
   const bits = mask & 0b1111;
-  if (bits === 0) {
-    const c = tileCentre(tx, ty);
+  const c = tileCentre(tx, ty);
+  if (bits === 0 && diag === 0) {
     return [[[c[0] - RAIL_STUB_LENGTH / 2, c[1]], [c[0] + RAIL_STUB_LENGTH / 2, c[1]]]];
   }
-  return roadFigures(tx, ty, bits).map((f) => f.points);
+  if (diag === 0) return roadFigures(tx, ty, bits).map((f) => f.points);
+  // With diagonals: exactly two arms are ONE run through the centre (a 45°
+  // bend or a straight diagonal mitres properly); more arms are the
+  // orthogonal figures plus one centre-to-corner arm per diagonal.
+  const ends: GroundPoint[] = [];
+  for (const d of ROAD_DIRS) if (bits & d) ends.push(portPoint(tx, ty, d as Dir));
+  for (const d of DIAG_BITS) if (diag & d) ends.push(diagCorner(tx, ty, d));
+  if (ends.length === 2) return [[ends[0], c, ends[1]]];
+  const runs = bits ? roadFigures(tx, ty, bits).map((f) => f.points) : [];
+  for (const d of DIAG_BITS) if (diag & d) runs.push([c, diagCorner(tx, ty, d)]);
+  return runs;
 }
+
+/** Sleeper step along u on a diagonal leg: 1/6 divides the half-tile, so the
+ *  centre and the corner are lattice points (spacing ≈ 0.236 along the track). */
+const DIAG_TIE_DU = 1 / 6;
 
 /**
  * The sleepers of a run: on the ABSOLUTE lattice of the axis each leg runs
@@ -260,7 +288,20 @@ export function latticeTies(points: GroundPoint[]): GroundPoint[][] {
     const a = points[i], b = points[i + 1];
     const alongU = Math.abs(b[1] - a[1]) < 1e-9;
     const alongV = Math.abs(b[0] - a[0]) < 1e-9;
-    if (!alongU && !alongV) continue;              // runs are axis-aligned by construction
+    if (!alongU && !alongV) {
+      // A diagonal leg: the lattice runs on u, half-open (lo, hi] as below.
+      const du = b[0] - a[0], dv = b[1] - a[1];
+      if (Math.abs(Math.abs(du) - Math.abs(dv)) > 1e-9) continue;
+      const n = legNormal(a, b);
+      const hx = (n[0] * TIE_LENGTH) / 2, hy = (n[1] * TIE_LENGTH) / 2;
+      const lo = Math.min(a[0], b[0]), hi = Math.max(a[0], b[0]);
+      for (let k = Math.floor(lo / DIAG_TIE_DU + 1e-9) + 1; k * DIAG_TIE_DU <= hi + 1e-9; k++) {
+        const u = k * DIAG_TIE_DU;
+        const v = a[1] + (u - a[0]) * (dv / du);
+        out.push([[u - hx, v - hy], [u + hx, v + hy]]);
+      }
+      continue;
+    }
     const axis = alongU ? 0 : 1;                   // the coordinate the lattice runs on
     const lo = Math.min(a[axis], b[axis]), hi = Math.max(a[axis], b[axis]);
     const n = legNormal(a, b);
@@ -341,10 +382,11 @@ export function railTile(
   cell: number,
   railAt: (tx: number, ty: number) => number,
   roadMask = 0,
+  diag = 0,
 ): RailTile {
   const mask = cell & 0b1111;
-  const crossing = levelCrossing(roadMask, mask);
-  const runs = railRuns(tx, ty, mask);
+  const crossing = diag === 0 && levelCrossing(roadMask, mask);
+  const runs = railRuns(tx, ty, mask, diag);
   const bed: GroundPoint[][] = [];
   const rails: GroundPoint[][] = [];
   const ties: GroundPoint[][] = [];
@@ -360,7 +402,7 @@ export function railTile(
   const planks = crossing ? crossingPlanks(tx, ty, mask) : null;
 
   const stops: GroundPoint[][] = [];
-  if (mask === 0) {
+  if (mask === 0 && diag === 0) {
     // A lone stub ends at both ends.
     const c = tileCentre(tx, ty);
     const half = RAIL_STUB_LENGTH / 2;
@@ -373,7 +415,19 @@ export function railTile(
     // runs from its centre toward its only neighbour. Cap the centre end,
     // inset along that run so the beam sits fully on the steel. Do not cap
     // the centre of a T: its branch joins the through run there.
-    if ((mask & (mask - 1)) === 0) {
+    if (diag !== 0) {
+      // A lone diagonal arm ends at the centre: cap it there.
+      if (mask === 0 && (diag & (diag - 1)) === 0) {
+        const c = tileCentre(tx, ty);
+        const k = diagCorner(tx, ty, diag);
+        const len = Math.hypot(k[0] - c[0], k[1] - c[1]);
+        const toward: GroundPoint = [(k[0] - c[0]) / len, (k[1] - c[1]) / len];
+        stops.push(beamAt(
+          [c[0] + toward[0] * RAIL_STOP_INSET, c[1] + toward[1] * RAIL_STOP_INSET],
+          toward, RAIL_STOP_LENGTH, RAIL_STOP_WIDTH,
+        ));
+      }
+    } else if ((mask & (mask - 1)) === 0) {
       const c = tileCentre(tx, ty);
       const toward = DIR_VEC[mask];
       stops.push(beamAt(

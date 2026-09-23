@@ -19,7 +19,7 @@ import {
   planRailMove, executeRailMove, railStepCost, validateRailDrag, type RailMove,
 } from "../../src/iso/ai";
 import {
-  createRailState, tickTrains, demolishRail, buildRail, createLine, buyTrain,
+  createRailState, tickTrains, autoTrains, demolishRail, buildRail, createLine, buyTrain,
   structuresOf, railComponents, stopTile, trainOccupies, laneTiles, trainAtHome,
   placePlatform, demolishStructure,
   type RailState,
@@ -90,25 +90,27 @@ const platformOf = (rail: RailState, kind: "industry" | "plant") =>
   structuresOf(rail, OWNER, "platform").find((p) => p.anchor?.kind === kind)!;
 
 describe("RAIL-05 the rival builds a line through the shared rules", () => {
-  it("builds platforms, then track, then a depot, then ONE train — and then waits", () => {
+  it("builds platforms, then track — no depot, no train to buy — and then waits", () => {
     const w = world();
     const { kinds, next } = drive(w);
     expect(kinds[0]).toBe("platform");
     const first = (k: RailMove["kind"]) => kinds.indexOf(k);
     expect(kinds.filter((k) => k === "platform")).toHaveLength(2);
     expect(first("track")).toBeGreaterThan(kinds.lastIndexOf("platform"));
-    expect(first("depot")).toBeGreaterThan(first("track"));
-    expect(first("train")).toBeGreaterThan(first("depot"));
-    expect(kinds.filter((k) => k === "train")).toHaveLength(1);
+    // Playtest (2026-09): the depot is gone and trains spawn on their own.
+    expect(first("depot")).toBe(-1);
+    expect(first("train")).toBe(-1);
     // The line is complete, so the planner has nothing left to do.
     expect(next).toBeNull();
     expect(platformOf(w.rail, "plant")).toBeTruthy();
     expect(platformOf(w.rail, "industry")).toBeTruthy();
+    // The track the rival laid is DRIVABLE (no 90° bend): the automatic
+    // train runs it.
+    expect(autoTrains(w.rail, OWNER)).toBe(true);
     expect(w.rail.lines).toHaveLength(1);
     expect(w.rail.trains).toHaveLength(1);
-    // …and the train actually runs.
     for (let i = 0; i < 60; i++) tickTrains(w.rail, 1_000);
-    expect(["departing", "moving", "dwelling"]).toContain(w.rail.trains[0].status);
+    expect(["moving", "dwelling"]).toContain(w.rail.trains[0].status);
   });
 });
 
@@ -143,7 +145,9 @@ describe("RAIL-05 a broken line is repaired, never recalled into a loop", () => 
     expect(comp.get(tIdx(...stopTile(plant)))).toBe(comp.get(tIdx(...stopTile(ind))));
   });
 
-  it("sells an orphaned train that is home, and never recalls a moving orphan", () => {
+  // Playtest (2026-09): the rival no longer buys trains (they spawn on their
+  // own), so it has no bought train to sell. Back when depots return.
+  it.skip("sells an orphaned train that is home, and never recalls a moving orphan", () => {
     // Home: a stored train whose line is gone is sold for the one-time 50%.
     const home = world();
     const { next } = drive(home, "train");

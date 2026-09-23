@@ -43,7 +43,7 @@ import { MAP_W } from "../game/config";
 import { BUILD_COSTS, CARGOES, INDUSTRY_BY_KEY, VICTORY, type Cargo } from "./config";
 import {
   NE, SE, SW, NW, DIRS, DIR, OPPOSITE, PRESENT, tIdx, inMapT, plantFootprintTiles,
-  addCost, lPath, type DragPreview, type Purse, type Track,
+  addCost, type DragPreview, type Purse, type Track,
 } from "./track";
 import { FIELD_OCC, GRASS, ROUGH, SAND, idx, type Grid } from "./grid";
 import { TRUCK_SPEED } from "./vehicles";
@@ -53,6 +53,43 @@ import { base64ToBytes, bytesToBase64, type RailTileWire, type RailWire, type Tr
 // ── bits ──────────────────────────────────────────────────────────────────
 export const RAIL_PRESENT = PRESENT;
 export const RAIL_BITS = 0b1111;
+/**
+ * Playtest (2026-09): DIAGONAL track — screen up/down and left/right — so a
+ * line can turn in 45° steps (a train cannot take a 90° bend). A diagonal link
+ * is stored ONCE, on the tile with the smaller x: `RAIL_DE` joins (x+1, y-1)
+ * (screen east) and `RAIL_DS` joins (x+1, y+1) (screen south). The other two
+ * diagonals of a tile are read from its neighbours. The four orthogonal bits
+ * and `RAIL_PRESENT` are unchanged, so every road-shaped rule still reads
+ * `RAIL_BITS` exactly as before.
+ */
+export const RAIL_DE = 32;
+export const RAIL_DS = 64;
+export const RAIL_DIAG = RAIL_DE | RAIL_DS;
+
+/**
+ * The eight headings, as grid steps, in turning order (45° apart). Index =
+ * "octant". Two consecutive steps of a route may differ by at most one octant.
+ */
+export const OCT_STEPS: readonly [number, number][] = [
+  [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1],
+];
+/** Screen-compass name of each octant (the car sprites' headings). */
+export const OCT_NAMES = ["e", "se", "s", "sw", "w", "nw", "n", "ne"] as const;
+export type CarHeading = typeof OCT_NAMES[number];
+
+/** The octant of a grid step (signs only), or -1 for no step. */
+export function octantOf(dx: number, dy: number): number {
+  const sx = Math.sign(dx), sy = Math.sign(dy);
+  for (let i = 0; i < 8; i++) if (OCT_STEPS[i][0] === sx && OCT_STEPS[i][1] === sy) return i;
+  return -1;
+}
+
+/** May a train go from heading `a` to heading `b`? Straight on or one 45° step. */
+export const turnOk = (a: number, b: number): boolean => {
+  if (a < 0 || b < 0) return true;
+  const d = Math.abs(a - b) % 8;
+  return Math.min(d, 8 - d) <= 1;
+};
 
 /** The four quarter-turns a platform or a depot may be built in. */
 export const RAIL_VIEWS = ["ne", "se", "sw", "nw"] as const;
@@ -120,6 +157,42 @@ export const COUPLE_GAP = 0.12;
 /** Centre-to-centre distance from the locomotive to its wagon. */
 export const WAGON_OFFSET = LOCO_LEN / 2 + COUPLE_GAP + WAGON_LEN / 2;
 
+/**
+ * Playtest (2026-09): a train is a CONSIST of separate cars — locomotive,
+ * tender and wagons — each laid on the track behind the one before, so it
+ * follows a bend car by car. Lengths in tiles, measured from the owner's art
+ * (the side view, boxcar = 0.8 tiles; `assets/railway/manifest.json`).
+ */
+export type CarKind = "loco" | "tender" | "box" | "tank" | "flat";
+export const CAR_LEN: Record<CarKind, number> = {
+  loco: 1.149, tender: 0.525, box: 0.8, tank: 0.742, flat: 0.686,
+};
+/** Buffer-to-buffer gap between two coupled cars, tiles. */
+export const CAR_GAP = 0.03;
+const WAGON_SETS: CarKind[][] = [["box", "box"], ["tank", "tank"], ["flat", "box"], ["box", "tank"]];
+
+/** The cars of a train, locomotive first. */
+export const consistOf = (t: Train): CarKind[] =>
+  ["loco", "tender", ...WAGON_SETS[Math.abs(t.id) % WAGON_SETS.length]];
+
+/** Distance from the locomotive's centre (the train's position) to each car's centre. */
+export function carOffsets(cars: CarKind[]): number[] {
+  const out: number[] = [];
+  let s = 0;
+  for (let i = 0; i < cars.length; i++) {
+    if (i > 0) s += CAR_LEN[cars[i - 1]] / 2 + CAR_GAP + CAR_LEN[cars[i]] / 2;
+    out.push(s);
+  }
+  return out;
+}
+
+/** Front of the locomotive to the back of the last car. */
+export const trainLength = (t: Train): number => {
+  const cars = consistOf(t);
+  const off = carOffsets(cars);
+  return off[off.length - 1] + CAR_LEN[cars[cars.length - 1]] / 2 + CAR_LEN.loco / 2;
+};
+
 /** `floor(rate × each resource)` — the one refund rule, for rail and trains. */
 export function resaleValue(cost: Purse, rate = RESALE_RATE): Purse {
   const out: Purse = {};
@@ -180,6 +253,55 @@ export const railBitsAt = (rail: Rail, tx: number, ty: number): number =>
 export const railOpenTo = (rail: Rail, ownerId: number, tx: number, ty: number): boolean =>
   inMapT(tx, ty) && (rail.tile[tIdx(tx, ty)] & RAIL_PRESENT) !== 0
   && rail.owner[tIdx(tx, ty)] === ownerId;
+
+/** Are (ax,ay) and (bx,by) diagonal neighbours? */
+export const isDiagStep = (ax: number, ay: number, bx: number, by: number): boolean =>
+  Math.abs(ax - bx) === 1 && Math.abs(ay - by) === 1;
+
+/** The tile and bit that store the diagonal link between two diagonal neighbours. */
+function diagSlot(ax: number, ay: number, bx: number, by: number): { i: number; bit: number } {
+  const [lx, ly, hy] = ax < bx ? [ax, ay, by] : [bx, by, ay];
+  return { i: tIdx(lx, ly), bit: hy < ly ? RAIL_DE : RAIL_DS };
+}
+
+/** Is there a diagonal rail link between these two diagonal neighbours? */
+export function diagLinked(rail: Rail, ax: number, ay: number, bx: number, by: number): boolean {
+  if (!isDiagStep(ax, ay, bx, by) || !inMapT(ax, ay) || !inMapT(bx, by)) return false;
+  if (!(rail.tile[tIdx(ax, ay)] & RAIL_PRESENT) || !(rail.tile[tIdx(bx, by)] & RAIL_PRESENT)) return false;
+  const { i, bit } = diagSlot(ax, ay, bx, by);
+  return (rail.tile[i] & bit) !== 0;
+}
+
+/** The diagonal neighbours a tile is linked to. */
+export function diagNeighbours(rail: Rail, x: number, y: number): [number, number][] {
+  const out: [number, number][] = [];
+  for (const [dx, dy] of [[1, -1], [1, 1], [-1, 1], [-1, -1]] as const) {
+    if (diagLinked(rail, x, y, x + dx, y + dy)) out.push([x + dx, y + dy]);
+  }
+  return out;
+}
+
+/**
+ * The octilinear drag: a straight run and a diagonal run joined at ONE 45°
+ * bend, so a single drag never draws a corner a train cannot take.
+ * `straightFirst` picks which half leads (the old L-drag's toggle).
+ */
+export function octPath(
+  ax: number, ay: number, bx: number, by: number, straightFirst = true,
+): [number, number][] {
+  const dx = bx - ax, dy = by - ay;
+  const sx = Math.sign(dx), sy = Math.sign(dy);
+  const n = Math.min(Math.abs(dx), Math.abs(dy));
+  const rest = Math.max(Math.abs(dx), Math.abs(dy)) - n;
+  const st: [number, number] = Math.abs(dx) >= Math.abs(dy) ? [sx, 0] : [0, sy];
+  const out: [number, number][] = [[ax, ay]];
+  let x = ax, y = ay;
+  const walk = (k: number, s: [number, number]) => {
+    for (let i = 0; i < k; i++) { x += s[0]; y += s[1]; out.push([x, y]); }
+  };
+  if (straightFirst) { walk(rest, st); walk(n, [sx, sy]); } else { walk(n, [sx, sy]); walk(rest, st); }
+  return out;
+}
 
 // ── ground rules ──────────────────────────────────────────────────────────
 /**
@@ -267,6 +389,13 @@ export interface RailState {
   trains: Train[];
   /** Monotonic id allocator across structures, lines and trains. */
   seq: number;
+  /**
+   * Playtest (2026-09): where each train's head has been, head first, in
+   * tile coordinates — the cars are laid along it, so a train bends round a
+   * corner car by car. Local to each seat (never on the wire): every seat runs
+   * `tickTrains`, and a joining guest's trains grow their trail as they move.
+   */
+  trails?: Map<number, [number, number][]>;
 }
 
 export const createRailState = (): RailState => ({
@@ -275,6 +404,7 @@ export const createRailState = (): RailState => ({
   lines: [],
   trains: [],
   seq: 1,
+  trails: new Map(),
 });
 
 export const footprintFor = (kind: RailKind, view: RailView): [number, number] =>
@@ -475,12 +605,7 @@ export function railComponents(state: RailState, ownerId: number): Map<number, n
     for (let head = 0; head < queue.length; head++) {
       const cur = queue[head];
       const x = cur % MAP_W, y = (cur / MAP_W) | 0;
-      const mask = effectiveMask(state, x, y);
-      for (const d of DIRS) {
-        if (!(mask & d)) continue;
-        const nx = x + DIR[d][0], ny = y + DIR[d][1];
-        if (effectiveOwner(state, nx, ny) !== ownerId) continue;
-        if (!(effectiveMask(state, nx, ny) & OPPOSITE[d])) continue;
+      for (const [nx, ny] of railNeighbours(state, ownerId, x, y, false)) {
         const ni = tIdx(nx, ny);
         if (comp.has(ni)) continue;
         comp.set(ni, next);
@@ -499,40 +624,64 @@ export function railComponents(state: RailState, ownerId: number): Map<number, n
  */
 export function railPath(
   state: RailState, ownerId: number,
-  from: [number, number][], goals: Set<number>,
+  from: [number, number][], goals: Set<number>, startOct = -1,
 ): [number, number][] | null {
   if (!goals.size || !from.length) return null;
+  // Playtest (2026-09): the search state is (tile, heading) — a train turns at
+  // most 45° per tile, so a 90° corner is not a way through. Key = tile·9 +
+  // heading (8 = "no heading yet", a start tile).
   const parent = new Map<number, number>();
   const queue: number[] = [];
   for (const [x, y] of from) {
     if (!railDrivable(state, ownerId, x, y)) continue;
-    const i = tIdx(x, y);
-    if (parent.has(i)) continue;
-    parent.set(i, -1);
-    queue.push(i);
+    const k = tIdx(x, y) * 9 + (startOct >= 0 ? startOct : 8);
+    if (parent.has(k)) continue;
+    parent.set(k, -1);
+    queue.push(k);
   }
   for (let head = 0; head < queue.length; head++) {
-    const cur = queue[head];
+    const key = queue[head];
+    const cur = Math.floor(key / 9), oct = key % 9;
     if (goals.has(cur)) {
       const path: number[] = [];
-      for (let i = cur; i !== -1; i = parent.get(i) as number) path.push(i);
+      for (let k = key; k !== -1; k = parent.get(k) as number) path.push(Math.floor(k / 9));
       path.reverse();
       return path.map((i) => [i % MAP_W, (i / MAP_W) | 0] as [number, number]);
     }
     const x = cur % MAP_W, y = (cur / MAP_W) | 0;
-    const mask = effectiveMask(state, x, y);
-    for (const d of DIRS) {
-      if (!(mask & d)) continue;
-      const nx = x + DIR[d][0], ny = y + DIR[d][1];
-      if (!railDrivable(state, ownerId, nx, ny)) continue;
-      if (!(effectiveMask(state, nx, ny) & OPPOSITE[d])) continue;
-      const ni = tIdx(nx, ny);
-      if (parent.has(ni)) continue;
-      parent.set(ni, cur);
-      queue.push(ni);
+    for (const [nx, ny] of railNeighbours(state, ownerId, x, y)) {
+      const o = octantOf(nx - x, ny - y);
+      if (oct !== 8 && !turnOk(oct, o)) continue;
+      const nk = tIdx(nx, ny) * 9 + o;
+      if (parent.has(nk)) continue;
+      parent.set(nk, key);
+      queue.push(nk);
     }
   }
   return null;
+}
+
+/**
+ * Every tile `ownerId`'s rail steps to from (x,y): the mutually-facing
+ * orthogonal bits (lanes included) and the diagonal links. `drive` also asks
+ * that a train may stand there (the component flood only needs ownership).
+ */
+export function railNeighbours(
+  state: RailState, ownerId: number, x: number, y: number, drive = true,
+): [number, number][] {
+  const out: [number, number][] = [];
+  const mask = effectiveMask(state, x, y);
+  for (const d of DIRS) {
+    if (!(mask & d)) continue;
+    const nx = x + DIR[d][0], ny = y + DIR[d][1];
+    if (drive ? !railDrivable(state, ownerId, nx, ny) : effectiveOwner(state, nx, ny) !== ownerId) continue;
+    if (!(effectiveMask(state, nx, ny) & OPPOSITE[d])) continue;
+    out.push([nx, ny]);
+  }
+  for (const [nx, ny] of diagNeighbours(state.rail, x, y)) {
+    if (drive ? railDrivable(state, ownerId, nx, ny) : effectiveOwner(state, nx, ny) === ownerId) out.push([nx, ny]);
+  }
+  return out;
 }
 
 // ── refusals: one vocabulary for the preview, the click, the rival, the host ─
@@ -622,7 +771,10 @@ export function railTileRefusal(
 
 function writeRailTile(state: RailState, ownerId: number, tx: number, ty: number): void {
   const i = tIdx(tx, ty);
-  state.rail.tile[i] = RAIL_PRESENT;
+  // Your own tile keeps the links it had (diagonal AND orthogonal) — a drag
+  // over your own line never unhooks it.
+  const keep = state.rail.owner[i] === ownerId ? state.rail.tile[i] & (RAIL_DIAG | RAIL_BITS) : 0;
+  state.rail.tile[i] = RAIL_PRESENT | keep;
   state.rail.owner[i] = ownerId;
 }
 
@@ -649,7 +801,9 @@ function sameOwnerRail(state: RailState, ownerId: number, x: number, y: number):
  * "only the tile plus its neighbours" discipline `track.ts` uses, so a drag of
  * twenty tiles is twenty small writes and never a map scan.
  */
-export function autotileRail(state: RailState, tiles: [number, number][]): void {
+export function autotileRail(
+  state: RailState, tiles: [number, number][], plannedDiag?: ReadonlySet<number>,
+): void {
   const touched = new Set<number>();
   for (const [x, y] of tiles) {
     touched.add(tIdx(x, y));
@@ -658,14 +812,29 @@ export function autotileRail(state: RailState, tiles: [number, number][]): void 
       if (inMapT(nx, ny)) touched.add(tIdx(nx, ny));
     }
   }
+  // Playtest (2026-09): two tiles side by side join on their own ONLY when
+  // neither is part of a diagonal. A diagonal line passes right beside other
+  // rail at every step, and joining it there would draw 90° stubs and open
+  // shortcuts nobody laid — so those tiles join where the drag joined them
+  // (the bits `buildRail` writes and this keeps while the neighbour stands).
+  const onDiag = (x: number, y: number) =>
+    inMapT(x, y) && (state.rail.tile[tIdx(x, y)] & RAIL_PRESENT) !== 0
+    && (plannedDiag?.has(tIdx(x, y)) || diagNeighbours(state.rail, x, y).length > 0);
   for (const i of touched) {
     if (!(state.rail.tile[i] & RAIL_PRESENT)) continue;
     const x = i % MAP_W, y = (i / MAP_W) | 0;
+    const old = state.rail.tile[i];
+    const here = onDiag(x, y);
     let mask = 0;
     for (const d of DIRS) {
-      if (sameOwnerRail(state, state.rail.owner[i], x + DIR[d][0], y + DIR[d][1])) mask |= d;
+      const nx = x + DIR[d][0], ny = y + DIR[d][1];
+      if (!sameOwnerRail(state, state.rail.owner[i], nx, ny)) continue;
+      // …or when the join carries a straight line on (either tile already runs
+      // that way), which is how a re-laid tile rejoins the line it was cut from.
+      const straightOn = (old & OPPOSITE[d]) !== 0 || (state.rail.tile[tIdx(nx, ny)] & d) !== 0;
+      if ((old & d) || structureAt(state, nx, ny) || straightOn || (!here && !onDiag(nx, ny))) mask |= d;
     }
-    state.rail.tile[i] = mask | RAIL_PRESENT;
+    state.rail.tile[i] = mask | RAIL_PRESENT | (old & RAIL_DIAG);
   }
   state.rail.revision++;
 }
@@ -697,9 +866,19 @@ export function buildRail(
   const guardMerge = trainsOf(state, ownerId).length > 1;
   // The whole gesture is the "final shape" a crossing is judged against.
   const planned = new Set(tiles.map(([x, y]) => tIdx(x, y)));
+  // The drag's tiles that will carry a diagonal link, known up front so the
+  // first tile of a diagonal never joins its side neighbours on its own.
+  const plannedDiag = new Set<number>();
+  for (let n = 1; n < tiles.length; n++) {
+    if (!isDiagStep(tiles[n - 1][0], tiles[n - 1][1], tiles[n][0], tiles[n][1])) continue;
+    plannedDiag.add(tIdx(tiles[n - 1][0], tiles[n - 1][1]));
+    plannedDiag.add(tIdx(tiles[n][0], tiles[n][1]));
+  }
   let charged = 0;
-  for (const [tx, ty] of tiles) {
-    const why = railTileRefusal(grid, track, state, ownerId, tx, ty, planned);
+  for (let n = 0; n < tiles.length; n++) {
+    const [tx, ty] = tiles[n];
+    const why = diagOverRoad(track, tiles, n) ? "crossing-curve"
+      : railTileRefusal(grid, track, state, ownerId, tx, ty, planned);
     if (why !== "ok") return { ok: built.length > 0, why, cost: railCost(charged), built };
     // Rail you already own is stepped over for free — a drag that redraws part
     // of an existing line (or crosses its own track at a junction) pays only
@@ -710,7 +889,22 @@ export function buildRail(
     const beforeTile = state.rail.tile[tIdx(tx, ty)];
     const beforeOwner = state.rail.owner[tIdx(tx, ty)];
     writeRailTile(state, ownerId, tx, ty);
-    autotileRail(state, [[tx, ty]]);
+    // A diagonal step from the previous tile of the drag is a diagonal link.
+    const prev = n > 0 ? tiles[n - 1] : null;
+    const link = prev && built.length > 0 && isDiagStep(prev[0], prev[1], tx, ty)
+      ? diagSlot(prev[0], prev[1], tx, ty) : null;
+    const beforeLink = link ? state.rail.tile[link.i] : 0;
+    if (link) state.rail.tile[link.i] |= link.bit;
+    // An orthogonal step of the drag is an explicit join too (it must hold
+    // even where one end sits on a diagonal).
+    const ortho = prev && built.length > 0 && Math.abs(prev[0] - tx) + Math.abs(prev[1] - ty) === 1
+      ? DIRS.find((d) => prev[0] + DIR[d][0] === tx && prev[1] + DIR[d][1] === ty) : undefined;
+    const beforePrev = prev ? state.rail.tile[tIdx(prev[0], prev[1])] : 0;
+    if (ortho !== undefined && prev) {
+      state.rail.tile[tIdx(prev[0], prev[1])] |= ortho;
+      state.rail.tile[tIdx(tx, ty)] |= OPPOSITE[ortho];
+    }
+    autotileRail(state, [[tx, ty]], plannedDiag);
     if (!guardMerge) { built.push([tx, ty]); continue; }
     const comp = railComponents(state, ownerId);
     const here = comp.get(tIdx(tx, ty)) ?? 0;
@@ -724,6 +918,8 @@ export function buildRail(
     if (trainsHere.length > 1) {
       // Restore exactly what stood here before (a merge can be attempted over a
       // tile that was already rail), then recompute the neighbourhood's bits.
+      if (link) state.rail.tile[link.i] = beforeLink;
+      if (ortho !== undefined && prev) state.rail.tile[tIdx(prev[0], prev[1])] = beforePrev;
       state.rail.tile[tIdx(tx, ty)] = beforeTile;
       state.rail.owner[tIdx(tx, ty)] = beforeOwner;
       autotileRail(state, [[tx, ty]]);
@@ -734,6 +930,14 @@ export function buildRail(
   // `charged`, not `built.length`: a drag that redraws rail you already own
   // lays tiles but pays for none of them.
   return { ok: built.length > 0, why: "ok", cost: railCost(charged), built };
+}
+
+/** Would tile `n` of a drag carry a diagonal link while standing on a road? */
+function diagOverRoad(track: Track, tiles: [number, number][], n: number): boolean {
+  const [x, y] = tiles[n];
+  if (roadAt(track, x, y) === 0) return false;
+  const p = tiles[n - 1], q = tiles[n + 1];
+  return (!!p && isDiagStep(p[0], p[1], x, y)) || (!!q && isDiagStep(x, y, q[0], q[1]));
 }
 
 /** Tear up one rail tile: bits recomputed, nothing else on the map touched. */
@@ -763,7 +967,7 @@ export function railPreview(
   grid: Grid, track: Track, state: RailState, ownerId: number, purse: Purse,
   ax: number, ay: number, bx: number, by: number, xFirst = true,
 ): RailPreviewResult {
-  const path = lPath(ax, ay, bx, by, xFirst);
+  const path = octPath(ax, ay, bx, by, xFirst);
   const planned = new Set(path.map(([x, y]) => tIdx(x, y)));
   const tiles: [number, number][] = [];
   const unaffordable: [number, number][] = [];
@@ -774,6 +978,7 @@ export function railPreview(
     const [x, y] = path[i];
     const already = (state.rail.tile[tIdx(x, y)] & RAIL_PRESENT) !== 0
       && state.rail.owner[tIdx(x, y)] === ownerId;
+    if (diagOverRoad(track, path, i)) { why = "crossing-curve"; truncated = true; break; }
     if (!already) {
       const refusal = railTileRefusal(grid, track, state, ownerId, x, y, planned);
       if (refusal !== "ok") { why = refusal; truncated = true; break; }
@@ -800,6 +1005,8 @@ export function demolishRail(state: RailState, tx: number, ty: number): boolean 
   if (trainOccupies(state, tx, ty)) return false;
   state.rail.tile[tIdx(tx, ty)] = 0;
   state.rail.owner[tIdx(tx, ty)] = 0;
+  if (inMapT(tx - 1, ty + 1)) state.rail.tile[tIdx(tx - 1, ty + 1)] &= ~RAIL_DE;
+  if (inMapT(tx - 1, ty - 1)) state.rail.tile[tIdx(tx - 1, ty - 1)] &= ~RAIL_DS;
   autotileRail(state, [[tx, ty]]);
   return true;
 }
@@ -1092,6 +1299,125 @@ export function pointAt(route: [number, number][], dist: number, cum?: number[])
   return { fx: a[0] + (b[0] - a[0]) * t, fy: a[1] + (b[1] - a[1]) * t, dirBit: dirBitBetween(a, b) };
 }
 
+/** A train's trail (created on first use). */
+export function trailOf(state: RailState, t: Train): [number, number][] {
+  if (!state.trails) state.trails = new Map();
+  let tr = state.trails.get(t.id);
+  if (!tr) { tr = []; state.trails.set(t.id, tr); }
+  return tr;
+}
+
+/** The point `s` tiles back along a head-first trail (clamped to its ends). */
+export function walkTrail(trail: [number, number][], s: number): [number, number] {
+  if (!trail.length) return [0, 0];
+  if (s <= 0) return trail[0];
+  let left = s;
+  for (let i = 1; i < trail.length; i++) {
+    const a = trail[i - 1], b = trail[i];
+    const seg = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (seg >= left && seg > 0) {
+      const k = left / seg;
+      return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k];
+    }
+    left -= seg;
+  }
+  return trail[trail.length - 1];
+}
+
+/** Octant (0..7) nearest to a grid direction vector, or -1 for none. */
+export function octantNear(dx: number, dy: number): number {
+  if (Math.hypot(dx, dy) < 1e-6) return -1;
+  const a = Math.atan2(dy, dx) * 180 / Math.PI;       // (1,-1) is -45°
+  return (((Math.round((a + 45) / 45)) % 8) + 8) % 8;
+}
+
+/** Heading of the leg the head is on, from the route (the fallback heading). */
+function routeOctant(t: Train): number {
+  const r = t.route;
+  if (r.length < 2) return 1;
+  const cum = polyline(r);
+  let i = 1;
+  while (i < r.length - 1 && cum[i] < t.dist) i++;
+  const o = octantOf(r[i][0] - r[i - 1][0], r[i][1] - r[i - 1][1]);
+  return o < 0 ? 1 : o;
+}
+
+/** Where each car of a train stands, and which way it faces. */
+export interface CarPlacement { kind: CarKind; fx: number; fy: number; oct: number }
+export function carPlacements(state: RailState, t: Train): CarPlacement[] {
+  if (!t.route.length) return [];
+  const head = pointAt(t.route, t.dist);
+  const trail = trailOf(state, t);
+  const pts: [number, number][] = trail.length && Math.hypot(trail[0][0] - head.fx, trail[0][1] - head.fy) < 1e-6
+    ? trail : [[head.fx, head.fy], ...trail];
+  const cars = consistOf(t);
+  const offs = carOffsets(cars);
+  const fallback = routeOctant(t);
+  return cars.map((kind, i) => {
+    const [fx, fy] = walkTrail(pts, offs[i]);
+    const half = CAR_LEN[kind] * 0.4;
+    const front = walkTrail(pts, Math.max(0, offs[i] - half));
+    const rear = walkTrail(pts, offs[i] + half);
+    const o = octantNear(front[0] - rear[0], front[1] - rear[1]);
+    return { kind, fx, fy, oct: o < 0 ? fallback : o };
+  });
+}
+
+/**
+ * Record the head's progress along `route` from distance `a` to `b` onto the
+ * trail — every route vertex passed, then the head — and trim what no car
+ * can reach any more.
+ */
+function recordTrail(state: RailState, t: Train, cum: number[], a: number, b: number): void {
+  const trail = trailOf(state, t);
+  const push = (p: [number, number]) => {
+    const h = trail[0];
+    if (h && Math.hypot(h[0] - p[0], h[1] - p[1]) < 1e-6) return;
+    trail.unshift(p);
+  };
+  for (let i = 0; i < t.route.length; i++) {
+    if (cum[i] > a + 1e-9 && cum[i] < b - 1e-9) push([t.route[i][0], t.route[i][1]]);
+  }
+  const p = pointAt(t.route, b, cum);
+  push([p.fx, p.fy]);
+  const keep = trainLength(t) + 1;
+  let s = 0;
+  for (let i = 1; i < trail.length; i++) {
+    s += Math.hypot(trail[i][0] - trail[i - 1][0], trail[i][1] - trail[i - 1][1]);
+    if (s > keep) { trail.length = i + 1; break; }
+  }
+}
+
+/**
+ * Turn a train round at a platform: the car at the far end becomes the front.
+ * The trail is reversed from the tail back to the head (so the cars stay where
+ * they stood), and the new leg starts from the tail's tile, heading away from
+ * the platform. Returns that start and heading, or null when the trail is too
+ * short to matter (the head's own tile, any heading).
+ */
+function turnRound(state: RailState, t: Train): { tile: [number, number]; oct: number } | null {
+  const trail = trailOf(state, t);
+  if (trail.length < 2) return null;
+  const len = trainLength(t) - CAR_LEN.loco / 2 - CAR_LEN[consistOf(t).slice(-1)[0]] / 2;
+  // The first WHOLE-TILE vertex at or past the last car: a train starts a leg
+  // from a tile, never from a corner between tiles.
+  let s = 0, k = trail.length - 1;
+  for (let i = 1; i < trail.length; i++) {
+    s += Math.hypot(trail[i][0] - trail[i - 1][0], trail[i][1] - trail[i - 1][1]);
+    const p = trail[i];
+    if (s >= len - 1e-6 && Number.isInteger(p[0]) && Number.isInteger(p[1])) { k = i; break; }
+  }
+  let end = trail[k];
+  while (k > 0 && !(Number.isInteger(end[0]) && Number.isInteger(end[1]))) end = trail[--k];
+  if (k === 0) return null;
+  const prev = trail[k - 1];
+  const oct = octantNear(end[0] - prev[0], end[1] - prev[1]);
+  const flipped = trail.slice(0, k + 1).reverse();
+  trail.length = 0;
+  trail.push(...flipped);
+  return { tile: [end[0], end[1]], oct };
+}
+
 /** The tile a train's locomotive actually stands on. */
 export const trainTile = (t: Train): [number, number] => {
   const p = pointAt(t.route, t.dist);
@@ -1101,11 +1427,8 @@ export const trainTile = (t: Train): [number, number] => {
 /** Does a train physically occupy this tile — locomotive or wagon? */
 export function trainOccupies(state: RailState, tx: number, ty: number): Train | null {
   for (const t of state.trains) {
-    if (!t.route.length) continue;
-    const cum = polyline(t.route);
-    for (const back of [0, WAGON_OFFSET]) {
-      const p = pointAt(t.route, t.dist - back, cum);
-      if (Math.round(p.fx) === tx && Math.round(p.fy) === ty) return t;
+    for (const c of carPlacements(state, t)) {
+      if (Math.round(c.fx) === tx && Math.round(c.fy) === ty) return t;
     }
   }
   return null;
@@ -1343,7 +1666,9 @@ export function assignLine(
  * where it is — never teleported, never deleted — and it tries again the next
  * time the revision moves, which is the "stop safely on broken routes" clause.
  */
-export function planLeg(state: RailState, train: Train): boolean {
+export function planLeg(
+  state: RailState, train: Train, from?: { tile: [number, number]; oct: number } | null,
+): boolean {
   const line = state.lines.find((l) => l.id === train.lineId);
   const depot = depotOfTrain(state, train);
   // Playtest (2026-09): trains spawn on their line like lorries — no depot.
@@ -1369,16 +1694,31 @@ export function planLeg(state: RailState, train: Train): boolean {
   const wasRolling = train.status === "moving" || train.status === "departing" || train.status === "returning";
   const oldRoute = train.route;
   const oldDist = train.dist;
-  const here: [number, number] = oldRoute.length ? trainTile(train) : [exit.tx, exit.ty];
+  // Where the head IS, as a tile the rail passes through: the route vertex the
+  // train last left (a train between two tiles of a diagonal is on a corner,
+  // and rounding a corner lands on a tile the rail does not touch).
+  let here: [number, number] = [exit.tx, exit.ty];
+  let startOct = -1;
+  if (from) { here = from.tile; startOct = from.oct; }
+  else if (oldRoute.length) {
+    const cum = polyline(oldRoute);
+    let i = 0;
+    while (i < oldRoute.length - 1 && cum[i + 1] <= oldDist + 1e-9) i++;
+    here = oldRoute[i];
+    if (i > 0) startOct = octantOf(oldRoute[i][0] - oldRoute[i - 1][0], oldRoute[i][1] - oldRoute[i - 1][1]);
+  }
   const start: [number, number] = railDrivable(state, train.ownerId, here[0], here[1]) ? here : [exit.tx, exit.ty];
   const targetStruct = train.target === "depot" ? depot! : train.target === "source" ? source : dest;
   // The leg ends at ONE tile — the middle of a platform's lane, or the depot's
   // shed door — so a train parks inside the platform instead of on its port.
   const stop: [number, number] = train.target === "depot" ? [exit.tx, exit.ty] : stopTile(targetStruct);
-  const route = railPath(state, train.ownerId, [start], new Set([tIdx(stop[0], stop[1])]));
+  const goal = new Set([tIdx(stop[0], stop[1])]);
+  const route = railPath(state, train.ownerId, [start], goal, startOct)
+    ?? railPath(state, train.ownerId, [start], goal);
   if (!route) {
     train.status = "blocked";
-    train.blockedWhy = train.target === "depot" ? "No route back to the depot" : "No route to the platform";
+    train.blockedWhy = train.target === "depot" ? "No route back to the depot"
+      : "No route to the platform (a train cannot take a 90° bend)";
     train.planRevision = state.rail.revision;
     return false;
   }
@@ -1388,11 +1728,12 @@ export function planLeg(state: RailState, train: Train): boolean {
   // ordinary case — a player building somewhere else on the network — the new
   // route is the same and the train does not visibly move at all.
   let resume = 0;
-  if (wasRolling && oldRoute.length > 1 && route.length > 1) {
+  if (wasRolling && !from && oldRoute.length > 1 && route.length > 1) {
     const p = pointAt(oldRoute, oldDist);
     const dx = route[1][0] - route[0][0], dy = route[1][1] - route[0][1];
-    const along = (p.fx - route[0][0]) * dx + (p.fy - route[0][1]) * dy;
-    resume = Math.max(0, Math.min(0.9, along));
+    const seg = Math.hypot(dx, dy) || 1;
+    const along = ((p.fx - route[0][0]) * dx + (p.fy - route[0][1]) * dy) / seg;
+    resume = Math.max(0, Math.min(0.9 * seg, along));
   }
   train.dist = resume;
   train.planRevision = state.rail.revision;
@@ -1444,8 +1785,9 @@ export function tickTrains(state: RailState, dtMs: number): void {
         ms -= train.dwellMs;
         train.dwellMs = 0;
         // The dwell is over: reverse at the platform and run to the other stop.
+        // The train turns round where it stands — its last car leads out.
         train.target = train.target === "source" ? "dest" : "source";
-        if (!planLeg(state, train)) break;
+        if (!planLeg(state, train, turnRound(state, train))) break;
         continue;
       }
       const cum = polyline(train.route);
@@ -1453,11 +1795,13 @@ export function tickTrains(state: RailState, dtMs: number): void {
       const remaining = total - train.dist;
       const step = RAIL_SPEED * ms;
       if (step < remaining) {
+        recordTrail(state, train, cum, train.dist, train.dist + step);
         train.dist += step;
         train.dirBit = pointAt(train.route, train.dist, cum).dirBit;
         ms = 0;
         break;
       }
+      recordTrail(state, train, cum, train.dist, total);
       train.dist = total;
       train.dirBit = pointAt(train.route, total, cum).dirBit;
       ms -= remaining / RAIL_SPEED;
@@ -1505,7 +1849,7 @@ export function autoTrains(state: RailState, ownerId: number): boolean {
     const [tx, ty] = stopTile(src);
     state.trains.push({
       id: state.seq++, ownerId, lineId: made.line.id, depotId: 0,
-      status: "stored", target: "source", route: [[tx, ty]], dist: 0,
+      status: "stored", target: "dest", route: [[tx, ty]], dist: 0,
       planRevision: -1, dwellMs: 0, dirBit: 0, resold: false,
     });
     changed = true;
@@ -1745,14 +2089,10 @@ export function railStructureItems(state: RailState): DrawItem[] {
 export function trainItems(state: RailState, atlas?: RailSpriteSource): DrawItem[] {
   const out: DrawItem[] = [];
   for (const train of state.trains) {
-    if (!train.route.length) continue;
-    const cum = polyline(train.route);
-    const loco = pointAt(train.route, train.dist, cum);
-    const wagon = pointAt(train.route, train.dist - WAGON_OFFSET, cum);
-    for (const [kind, p] of [["locomotive", loco], ["wagon", wagon]] as const) {
-      const name = `${kind}_${VIEW_NAME[p.dirBit] ?? "se"}`;
+    for (const c of carPlacements(state, train)) {
+      const name = `car-${c.kind}_${OCT_NAMES[c.oct]}`;
       if (atlas && !atlas.has(name)) continue;
-      out.push({ sprite: name, tx: Math.round(p.fx), ty: Math.round(p.fy), fx: p.fx, fy: p.fy });
+      out.push({ sprite: name, tx: Math.round(c.fx), ty: Math.round(c.fy), fx: c.fx, fy: c.fy });
     }
   }
   return out;
@@ -1941,6 +2281,7 @@ export function clearRail(state: RailState): boolean {
   state.structures.length = 0;
   state.lines.length = 0;
   state.trains.length = 0;
+  state.trails?.clear();
   state.seq = 1;
   return true;
 }
