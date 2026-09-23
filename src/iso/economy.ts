@@ -580,7 +580,10 @@ export function industryLocks(state: EconomyState): Map<number, Harvester> {
   const locks = new Map<number, Harvester>();
   for (const h of state.harvesters) {
     if (h.closed) continue;
-    if (!isServiced(state.track, h, state.rail)) continue;
+    // A platform claims its industry the moment it stands — its line may take
+    // a while to lay, and nobody may slip a Depot in meanwhile. A road Depot
+    // still claims only once its road is in.
+    if (!isRailDepot(h) && !isServiced(state.track, h, state.rail)) continue;
     for (const ind of industriesInCatchment(state.grid, h)) {
       if (!locks.has(ind.id)) locks.set(ind.id, h);
     }

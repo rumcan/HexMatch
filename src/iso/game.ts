@@ -239,7 +239,7 @@ import {
   createRailState, railPreview, buildRail, demolishRail, structureAt, hasRail, railDrawLayer,
   placePlatform, placeDepot, platformRefusal, depotRefusal, resolveAnchor,
   RAIL_COSTS, RAIL_REFUSAL_TEXT, footprintTiles,
-  railStructureItems, trainItems, autoTrains, layPlatformTrack, platformTrackAt, assignLine, renameLine, buyTrain, startLine, recallTrain, sellTrain, tickTrains,
+  railStructureItems, trainItems, autoTrains, layPlatformTrack, platformTrackAt, RAIL_DIAG, assignLine, renameLine, buyTrain, startLine, recallTrain, sellTrain, tickTrains,
   rotateView, trainOccupies, trainBasedAt, railPanelRows, canPay, costEntries, resaleValue, demolishStructure, PLATFORM_VP,
   footprintFor, depotExit, RAIL_VIEWS, trainTile, ownerRailTiles as ownerRailTilesOf,
   railToWire, applyRailWire, clearRail, railLayerPatch, copyRailLayer,
@@ -914,6 +914,21 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       : (isSolo() ? skill().winTarget : settings.winTarget));
 
   const eco: EconomyState = { grid, track, harvesters: [], factories: [], rail };
+  // Playtest (2026-09): the map learns what the game built on it that
+  // `occupancy` does not record — rail, platforms and truck Depot lots — so a
+  // road never runs along a rail line, and nothing is built over a platform or
+  // a Depot (for either seat: the rival's planner reads the same grid).
+  grid.builtAt = (x, y) => {
+    if (structureAt(rail, x, y)) return "platform";
+    if (hasRail(rail.rail, x, y)) {
+      const m = rail.rail.tile[tIdx(x, y)];
+      if (m & RAIL_DIAG) return "rail";
+      const bits = m & 0b1111;
+      return bits === 0b1010 ? "rail-x" : bits === 0b0101 ? "rail-y" : "rail";
+    }
+    if (eco.harvesters.some((h) => !isRailDepot(h) && depotContains(h.tx, h.ty, x, y))) return "depot";
+    return null;
+  };
   let nextHarvesterId = 1;
   /**
    * RV-01 / L7 (#221): road traffic. One lorry per SERVICED DEPOT once it
@@ -2419,6 +2434,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     for (const s of rail.structures)
       for (const [x, y] of footprintTiles(s))
         if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) blocked.add(y * MAP_W + x);
+    // Playtest (2026-09): track is laid over the trees, never under them — a
+    // rail tile clears its tree the way a road does.
+    for (let i = 0; i < rail.rail.tile.length; i++) {
+      if (hasRail(rail.rail, i % MAP_W, (i / MAP_W) | 0)) blocked.add(i);
+    }
     world.fields = scenery.fields.filter((f) => !clearedFields.has(f.id));
     // PP-12: one draw item per factory — the single TTD complex, drawn at the
     // footprint origin. The manifest footprint matches FACTORY_FOOTPRINT (both
@@ -9222,7 +9242,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // it is, RAIL-04's four included.
     const map: Record<string, Tool> = {
       "q": "select", "1": "dirt", "2": "road", "3": "harvester", "4": "plant",
-      "5": "demolish", "6": "rail", "7": "platform", "9": "railway",
+      "5": "demolish", "6": "rail", "7": "platform",
     };
     if (!isTypingTarget(e) && map[e.key]) {
       if (map[e.key] === "select") cancelPlacement();
