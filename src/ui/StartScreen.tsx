@@ -87,7 +87,7 @@ type LadderView = {
 } | null;
 
 export type StartChoice =
-  | { mode: "ai"; portrait: Portrait }
+  | { mode: "ai"; portrait: Portrait; conquest?: boolean }
   | { mode: "story"; chapter: string; portrait: Portrait }
   | { mode: "story-intro"; portrait: Portrait }
   | {
@@ -953,7 +953,7 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
    * is what stops the old match silently reattaching. The save's own door is
    * the Continue button rendered above this one.
    */
-  const beginAiNew = useCallback(() => {
+  const beginAiNew = useCallback((conquest = false) => {
     if (sandboxSave) {
       setPendingNew({
         title: "Start a new game vs the AI?",
@@ -961,12 +961,12 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
         confirmLabel: "Start new game",
         act: () => {
           discardSoloSave(null);
-          onStart({ mode: "ai", portrait });
+          onStart({ mode: "ai", portrait, conquest });
         },
       });
       return;
     }
-    onStart({ mode: "ai", portrait });
+    onStart({ mode: "ai", portrait, conquest });
   }, [onStart, portrait, sandboxSave]);
 
   /** A contract card resumes when a save exists; this sibling starts the
@@ -1038,7 +1038,9 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
           {STORY_MODE_ENABLED ? (
             <button className={sandboxSave ? "" : "start-primary"} data-sfx="open" onClick={() => { setProgress(loadStoryProgress()); setState("story"); }}>Story Mode <small>the Foundry Syndicate campaign</small></button>
           ) : null}
-          <button className={sandboxSave || STORY_MODE_ENABLED ? "" : "start-primary"} data-sfx="open" onClick={beginAiNew}>Play vs AI <small>{sandboxSave ? "start a new game" : "sandbox · no login"}</small></button>
+          <button className={sandboxSave || STORY_MODE_ENABLED ? "" : "start-primary"} data-sfx="open" onClick={() => beginAiNew(false)}>Play vs AI <small>{sandboxSave ? "start a new game" : "sandbox · no login"}</small></button>
+          {/* 2026-09: play until the rival cannot go on — no ★ line. */}
+          <button data-sfx="open" onClick={() => beginAiNew(true)}>Play vs AI — Conquest <small>no ★ line · win when the rival is bankrupt</small></button>
           <p className="start-actions-label">Multiplayer</p>
           <button disabled={busy} onClick={() => void beginMatch()}>Auto Matchmaking <small>ranked · a rated stranger</small></button>
           <div className="start-actions-pair">
@@ -1250,7 +1252,7 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
     );
   }
   if (state === "error") return (
-    <main className="start-screen"><div className="start-panel lobby"><p className="start-kicker">MATCH UNAVAILABLE</p><h1>Could not join</h1><p className="lobby-error">{error}</p><div className="lobby-actions"><button onClick={backToChoose}>Back</button><button className="start-primary" onClick={beginAiNew}>Play vs AI</button></div></div></main>
+    <main className="start-screen"><div className="start-panel lobby"><p className="start-kicker">MATCH UNAVAILABLE</p><h1>Could not join</h1><p className="lobby-error">{error}</p><div className="lobby-actions"><button onClick={backToChoose}>Back</button><button className="start-primary" onClick={() => beginAiNew(false)}>Play vs AI</button></div></div></main>
   );
 
   const hosting = state === "host";

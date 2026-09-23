@@ -97,6 +97,10 @@ export interface SaveGamePayload {
     depotTier?: number; townLevel?: number; townBonus?: number;
   }[];
   clearedFields?: number[];
+  /** 2026-09: conquest mode — no ★ line, play until a player is bankrupt. */
+  conquest?: boolean;
+  /** 2026-09: per-city tiers — [townId, owner, level, bonus]. */
+  cities?: [number, string, number, number][];
   clocks: Record<string, number>;
 }
 

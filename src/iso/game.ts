@@ -556,6 +556,12 @@ export interface IsoGameOptions {
    */
   firstRun?: boolean;
   /**
+   * Owner call (2026-09): CONQUEST — no ★ line; the game ends only when a
+   * player cannot go on (no open plant, no Gold for a challenge, nothing left
+   * to sell). A resumed save keeps whatever mode it was saved in.
+   */
+  conquest?: boolean;
+  /**
    * #164: the match was DECIDED — the ledger is standing, or a departure was
    * claimed. The React layer uses this to drop the "match in progress" memo
    * (`writeActiveMatch(null)` in `src/net/transport.ts`): a finished match is
@@ -896,6 +902,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // against 0.25★ paves and would be reached by three depot types. `newLoop`
   // is solo-only and story-free (L1a), so this branch can sit ahead of both
   // without touching a contract's target or a room's setting.
+  let conquest = opts.conquest === true;
+  let lastConquestCheck = 0;
   const winTarget = (): number => newLoop
     ? VICTORY.loop.target
     : (storyChapter
@@ -1559,6 +1567,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const floats: FloatLayer = createFloatLayer(ui.mapHost, tileScreenCss);
   const labels: LabelLayer = createLabelLayer(ui.mapHost, tileScreenCss);
   labels.setEnabled(showNames);
+  // 2026-09: the glowing "⬆ Upgrade" markers over my cities' town halls in
+  // city-pick mode — always on, whatever the Names toggle says.
+  const upgradeMarkers: LabelLayer = createLabelLayer(ui.mapHost, tileScreenCss);
+  upgradeMarkers.setEnabled(true);
   const flashLayer: FloatLayer = createFloatLayer(ui.mapHost, tileScreenCss);
   /**
    * The 1-second on-map flash: when a build is REFUSED, say it at the spot
@@ -1749,6 +1761,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     floats.frame(now);
     flashLayer.frame(now);
     labels.frame();
+    upgradeMarkers.frame();
   }
 
   /** C5: the atlas instance lives in the async boot; the debug console reads it here. */
@@ -2613,7 +2626,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // whether the last fraction came from pavement or a new plant.
     if (phase === "play") {
       for (const p of players) {
-        if (!hasWon(score, p.id, winTarget())) continue;
+        if (conquest || !hasWon(score, p.id, winTarget())) continue;
         const decisive = [...events].reverse().find(
           (e) => e.owner === p.id && e.type === "awarded",
         )?.source ?? null;
@@ -3264,6 +3277,78 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * grown once grown — demolishing the Factory does not shrink the map — and
    * a Factory rebuilt beside another town carries the next growth there.
    */
+  // ── Owner call (2026-09): every city you hold upgrades on its own ──────
+  // `cityTiers` is the truth (town id → owner, tier, bonus). The seat's
+  // `townLevel` / `townBonus` stay as TOTALS (sum of tiers / best bonus) so
+  // the ★ table, storage cap, HUD and saves keep reading what they always did;
+  // income uses each Depot's OWN city bonus (the town of the plant it feeds).
+  const cityTiers = new Map<number, { owner: string; level: number; bonus: number }>();
+  /** Towns where `p` has an open plant — the cities `p` may upgrade. */
+  function citiesOf(p: PlayerState): Town[] {
+    const ids = new Set<number>();
+    for (const f of eco.factories) {
+      if (f.owner === p.id && !f.closed && f.townId != null) ids.add(f.townId);
+    }
+    return [...ids].map((id) => grid.towns[id]).filter((t): t is Town => !!t);
+  }
+  /** A pre-2026-09 seat's single tier lands on its first city once. */
+  function migrateSeatCity(p: PlayerState): void {
+    if (p.townLevel <= 0) return;
+    if ([...cityTiers.values()].some((c) => c.owner === p.id)) return;
+    const t = townOfSeat(p);
+    if (t) cityTiers.set(t.id, { owner: p.id, level: p.townLevel, bonus: p.townBonus });
+  }
+  function cityOf(t: Town, p: PlayerState): { owner: string; level: number; bonus: number } {
+    migrateSeatCity(p);
+    const c = cityTiers.get(t.id);
+    return c && c.owner === p.id ? c : { owner: p.id, level: 0, bonus: 0 };
+  }
+  /** Recompute the seat totals from its cities. */
+  function syncSeatCities(p: PlayerState): void {
+    let level = 0, bonus = 0;
+    for (const c of cityTiers.values()) {
+      if (c.owner !== p.id) continue;
+      level += c.level; bonus = Math.max(bonus, c.bonus);
+    }
+    p.townLevel = level;
+    p.townBonus = bonus;
+  }
+  /** The city bonus a Depot's income gets: its delivering plant's town. */
+  function cityBonusFor(ownerId: string, factory: { townId?: number | null } | null | undefined): number {
+    const id = factory?.townId;
+    if (id == null) return 0;
+    const c = cityTiers.get(id);
+    return c && c.owner === ownerId ? Math.max(0, c.bonus) : 0;
+  }
+  /** Does this seat run per-city tiers yet? (Legacy seats keep one bonus.) */
+  const hasCities = (p: PlayerState): boolean =>
+    [...cityTiers.values()].some((c) => c.owner === p.id);
+  /** Cities `p` could upgrade right now (held, unlocked, not maxed). */
+  function upgradableCities(p: PlayerState): Town[] {
+    return citiesOf(p).filter((t) => !eco.townHolds?.get(t.id)?.locked
+      && cityOf(t, p).level < TOWN_UPGRADES.length);
+  }
+  /** The city the open town session is upgrading. */
+  let townTarget: number | null = null;
+  /** Pick mode: the town halls of my upgradable cities glow until one is tapped. */
+  let cityPick = false;
+  let cityPickTimer = 0;
+  function setCityPick(on: boolean): void {
+    cityPick = on;
+    window.clearTimeout(cityPickTimer);
+    if (on) cityPickTimer = window.setTimeout(() => setCityPick(false), 20_000);
+    syncUpgradeMarkers();
+  }
+  function syncUpgradeMarkers(): void {
+    const entries: LabelEntry[] = cityPick
+      ? upgradableCities(me).map((t) => ({
+        key: `up-${t.id}`, name: `⬆ Upgrade · L${cityOf(t, me).level + 1}`,
+        tx: t.tx + 0.5, ty: t.ty + 0.5, cls: "label-upgrade",
+      }))
+      : [];
+    upgradeMarkers?.sync(entries);
+  }
+
   function townOfSeat(p: PlayerState): Town | null {
     const f = eco.factories.find((x) => x.owner === p.id);
     return f?.townId != null ? grid.towns[f.townId] ?? null : null;
@@ -3308,6 +3393,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * shown. `fx` off is the restore path: a loaded save re-lays the map
    * wholesale and must not float or play over the boot.
    */
+  /** 2026-09: grow THIS city's art to its own tier. */
+  function growCity(t: Town, p: PlayerState, fx = true): Town | null {
+    if (!newLoop) return null;
+    const next = Math.max(townTier(t), Math.min(cityOf(t, p).level, TOWN_VISUAL_MAX));
+    if (!setTownLevel(t, next)) return null;
+    if (fx) growTownArt(t);
+    return t;
+  }
+
   function growTownForSeat(p: PlayerState, fx = true): Town | null {
     if (!newLoop) return null;
     const t = townOfSeat(p);
@@ -3351,7 +3445,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * whole cost, which is the ticket's "a city upgrade cannot be completed
    * without finishing its tuning session" made concrete.
    */
-  function buyTownUpgrade(p: PlayerState = me): boolean {
+  function buyTownUpgrade(p: PlayerState = me, townId?: number): boolean {
     if (!newLoop) {
       toast("City upgrades are a new-loop building.", "info");
       return false;
@@ -3367,15 +3461,48 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       toast("Finish the tuning session first — one session at a time.", "bad");
       return false;
     }
-    {
-      const t = townOfSeat(p);
-      const hold = t ? eco.townHolds?.get(t.id) : undefined;
-      if (hold?.locked) {
-        toast("This city is locked until you win it again.", "bad");
+    // 2026-09: which city? A tapped town hall names it; otherwise one
+    // upgradable city is it, and several light up for the player to pick.
+    let target: Town | null = townId !== undefined ? grid.towns[townId] ?? null : null;
+    if (!target) {
+      const list = upgradableCities(p);
+      // A seat with no city at all (no plant beside a town yet) keeps the old
+      // seat-level upgrade, so nothing that worked before stops working.
+      if (list.length === 0 && citiesOf(p).length === 0) return buyTownUpgradeSeat(p);
+      if (list.length === 0) {
+        const mine = citiesOf(p);
+        toast(mine.length === 0 ? "You need a plant beside a town to have a city."
+          : mine.some((t) => eco.townHolds?.get(t.id)?.locked) ? "Your cities are locked until you win them again."
+            : "Your cities are fully upgraded.", "info");
         return false;
       }
+      if (list.length > 1 && p === me) {
+        setCityPick(true);
+        toast("Tap the glowing town hall of the city to upgrade.", "info");
+        return false;
+      }
+      target = list[0];
     }
-    const price = priceTownUpgrade(p.purse, p.townLevel);
+    if (!citiesOf(p).some((t) => t.id === target!.id)) {
+      toast("That is not your city — you need an open plant beside it.", "info");
+      return false;
+    }
+    if (eco.townHolds?.get(target.id)?.locked) {
+      toast("This city is locked until you win it again.", "bad");
+      return false;
+    }
+    setCityPick(false);
+    const city = cityOf(target, p);
+    return buyTownUpgradeFor(p, city.level, target.id);
+  }
+
+  /** The seat-level upgrade (no city yet) — the pre-2026-09 behaviour. */
+  function buyTownUpgradeSeat(p: PlayerState): boolean {
+    return buyTownUpgradeFor(p, p.townLevel, null);
+  }
+
+  function buyTownUpgradeFor(p: PlayerState, level: number, townId: number | null): boolean {
+    const price = priceTownUpgrade(p.purse, level);
     if (!price.def) {
       toast("The city is fully upgraded.", "info");
       return false;
@@ -3389,6 +3516,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     if (!spend(p, price.cost)) return false;      // guard; `price.affordable` holds
     townPaid = { ...price.cost };
+    townTarget = townId;
     openTownSession();
     return true;
   }
@@ -3475,7 +3603,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         rescoreNow();
         return;
       }
-      const row = TOWN_UPGRADES[me.townLevel] ?? TOWN_UPGRADES[TOWN_UPGRADES.length - 1];
+      const targetTown = grid.towns[townTarget ?? townOfSeat(me)?.id ?? -1] ?? null;
+      townTarget = null;
+      const city = targetTown ? cityOf(targetTown, me) : { owner: me.id, level: me.townLevel, bonus: me.townBonus };
+      const row = TOWN_UPGRADES[city.level] ?? TOWN_UPGRADES[TOWN_UPGRADES.length - 1];
       // L6 (#220) arrives here too, because the ticket asks for it: the score
       // sets how much of the ceiling lands (`townBonusFor`), and the row's
       // `yieldNeverDrops` decides whether a poor session may take some of it
@@ -3484,14 +3615,22 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // generosity is the curve itself — any played session already banks the
       // bottom 40% of the ceiling.
       const next = townBonusFor(row?.bonus ?? 0, s.score);
-      const bonus = rules.yieldNeverDrops ? Math.max(me.townBonus, next) : next;
-      if (bonus > 0) me.townBonus = bonus;
-      me.townLevel = Math.min(me.townLevel + 1, TOWN_UPGRADES.length);
+      const bonus = rules.yieldNeverDrops ? Math.max(city.bonus, next) : next;
+      if (targetTown) {
+        cityTiers.set(targetTown.id, {
+          owner: me.id, level: Math.min(city.level + 1, TOWN_UPGRADES.length),
+          bonus: bonus > 0 ? bonus : city.bonus,
+        });
+        syncSeatCities(me);
+      } else {
+        if (bonus > 0) me.townBonus = bonus;
+        me.townLevel = Math.min(me.townLevel + 1, TOWN_UPGRADES.length);
+      }
       // L17 (#245): the town on the map takes the step with the seat — the
       // one the buyer's Factory touches — with the growth moment (art swap,
       // tile invalidation, float) on top. With no Factory standing there is
       // nothing to grow yet; the next upgrade will catch the map up.
-      const grown = growTownForSeat(me);
+      const grown = targetTown ? growCity(targetTown, me) : growTownForSeat(me);
       // Gold follows the score here too (L9's one session, one payout), on the
       // same curve a Depot's session uses.
       ui.feed(`City upgrade: base rate +${Math.round(bonus * 100)}%${paid} (score ${s.score})`, me.name);
@@ -4511,8 +4650,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // alone was undone by the next rescore (city ★ is a high-water mark of
         // `townLevel`), so the level itself has to drop too.
         const loser = players.find((x) => x.id === loserId);
-        if (loser) { loser.townLevel = 0; loser.townBonus = 0; }
-        revokeCityStars(score, loserId, 0);
+        if (loser) {
+          const c = cityTiers.get(stake.townId);
+          if (c && c.owner === loser.id) cityTiers.delete(stake.townId);
+          else if (!c) migrateSeatCity(loser);
+          syncSeatCities(loser);
+          revokeCityStars(score, loserId, loser.townLevel);
+        }
       }
     }
     if (stake.kind === "town") {
@@ -4532,7 +4676,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   function applySeatSale(p: PlayerState, sale: SaleOption): number {
     if (sale.kind === "city") {
       if (p.townLevel <= 0) return 0;
-      p.townLevel--;
+      migrateSeatCity(p);
+      const top = [...cityTiers.entries()].filter(([, c]) => c.owner === p.id && c.level > 0)
+        .sort((a, b) => b[1].level - a[1].level)[0];
+      if (top) top[1].level--;
+      syncSeatCities(p);
       // A sold tier takes its ★ with it (city ★ is otherwise a high-water mark).
       revokeCityStars(score, p.id, p.townLevel);
     }
@@ -4560,15 +4708,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return true;
   }
 
-  function downgradeCity(p: PlayerState): boolean {
+  function downgradeCity(p: PlayerState, townId?: number): boolean {
     if (isGuest() && p === me) return net?.sendIntent("battle", { do: "downgrade" }) ?? false;
-    const t = townOfSeat(p);
+    const t = townId !== undefined ? grid.towns[townId] ?? null : townOfSeat(p);
     if (!t) { toast("You have no city to claim.", "bad"); return false; }
     const hold = eco.townHolds?.get(t.id);
     if (!hold || hold.holder !== p.id) { toast("You do not hold that city.", "bad"); return false; }
     if (hold.locked) { toast("Win the city again before you can claim it.", "bad"); return false; }
-    p.townLevel = 0;
-    revokeCityStars(score, p.id, 0);
+    cityTiers.set(t.id, { owner: p.id, level: 0, bonus: 0 });
+    syncSeatCities(p);
+    revokeCityStars(score, p.id, p.townLevel);
     toast("City claimed — tiers restart.", p === me ? "info" : "info");
     rescoreNow();
     return true;
@@ -5731,7 +5880,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           // on top of the distance/yield/transport chain, so it scales the
           // whole network rather than one route). 1 while nothing is raised.
           const factor = BASE_RATE * depotYield(depot) * distanceInfoFor(depot.id).factor
-            * transportFactor(depot) * (1 + Math.max(0, seat.townBonus));
+            * transportFactor(depot) * (1 + (hasCities(seat)
+              ? cityBonusFor(seat.id, result.connection?.factory) : Math.max(0, seat.townBonus)));
           const total = cargoes.reduce((sum, [, amount]) => sum + amount, 0) * factor
             + (loopCarry.get(depot.id) ?? 0);
           const whole = Math.floor(total);
@@ -6073,7 +6223,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    */
   function rivalTownStep(): boolean {
     if (!newLoop) return false;
-    const price = priceTownUpgrade(rival.purse, rival.townLevel);
+    const rivalCity = upgradableCities(rival).sort((a, b) => cityOf(a, rival).level - cityOf(b, rival).level)[0]
+      ?? null;
+    // No city yet (no plant beside a town): the seat-level upgrade, as before.
+    if (!rivalCity && citiesOf(rival).length > 0) return false;
+    const price = priceTownUpgrade(rival.purse, rivalCity ? cityOf(rivalCity, rival).level : rival.townLevel);
     if (!price.def || !price.affordable) return false;
     if (!eco.harvesters.some((h) => h.owner === rival.id && isServiced(eco.track, h, eco.rail))) return false;
     // L11 (#226) / L14 (#229): the reserve is the TREE's goal, scaled by the
@@ -6102,11 +6256,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (!wasting && !covers(reserve)) return false;
     if (!spend(rival, price.cost)) return false;
     const score = rivalTuningScore(skill().key);
-    rival.townLevel = Math.min(rival.townLevel + 1, TOWN_UPGRADES.length);
-    rival.townBonus = townBonusFor(price.def.bonus, score);
+    if (!rivalCity) {
+      rival.townLevel = Math.min(rival.townLevel + 1, TOWN_UPGRADES.length);
+      rival.townBonus = townBonusFor(price.def.bonus, score);
+    } else {
+      const c = cityOf(rivalCity, rival);
+      cityTiers.set(rivalCity.id, {
+        owner: rival.id, level: Math.min(c.level + 1, TOWN_UPGRADES.length),
+        bonus: Math.max(c.bonus, townBonusFor(price.def.bonus, score)),
+      });
+      syncSeatCities(rival);
+    }
     // L17 (#245): the rival's investment shows on the map too — its town
     // takes the same growth step, with the same moment, as the player's.
-    const grownRival = growTownForSeat(rival);
+    const grownRival = rivalCity ? growCity(rivalCity, rival) : growTownForSeat(rival);
     // L14 (#229): say it in the feed, in the same words the player's own
     // upgrade uses (L5) — the rival climbing the city ladder is one of the
     // three things this ticket is about, and a ladder nobody can see is a
@@ -8254,7 +8417,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       ...(storyOn ? { rivalFace: faceOf(rivalCast, "calm") } : {}),
       // AI-04: the race length the HUD should print — 5★ on easy, the shipped
       // line elsewhere. The badge ("You 2★/5") and the king bars' 100% read it.
-      vpTarget: winTarget(),
+      vpTarget: conquest ? 0 : winTarget(),   // 0 = Conquest (no ★ line)
       freeTrack: me.freeTrack,
       freeDepots: me.freeDepots,
       // L5 (#219): the rung the Depot button quotes its cheapest type from.
@@ -8343,10 +8506,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       offers: { list: visibleOffers(), now: performance.now(), rival: rival.name },
       town: newLoop
         ? (() => {
-            const price = priceTownUpgrade(me.purse, me.townLevel);
+            const ups = upgradableCities(me);
+            const lvl = ups.length ? Math.min(...ups.map((t) => cityOf(t, me).level)) : me.townLevel;
+            const price = priceTownUpgrade(me.purse, ups.length ? lvl : TOWN_UPGRADES.length);
             const row = price.def;
             return {
-              level: me.townLevel,
+              level: ups.length ? lvl : TOWN_UPGRADES.length,
               maxLevel: TOWN_UPGRADES.length,
               cost: price.cost,
               affordable: price.affordable && !tuning,
@@ -8461,7 +8626,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   /** The click on the centre: my town buys the upgrade, a foreign one explains. */
   function townCentreClick(t: Town): void {
-    if (townOfSeat(me)?.id !== t.id) {
+    // 2026-09: any city I hold upgrades from its own town hall.
+    const mineHere = citiesOf(me).some((c) => c.id === t.id);
+    if (cityPick && mineHere) { buyTownUpgrade(me, t.id); return; }
+    if (!mineHere) {
       showTownCard(t);
       return;
     }
@@ -8472,7 +8640,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     // The centre is also the bank's door (#245): if the upgrade can't be
     // bought yet, open the exchange so the player can trade toward it.
-    if (!buyTownUpgrade(me)) ui.openBank();
+    if (!buyTownUpgrade(me, t.id)) ui.openBank();
   }
 
   const industryAt = (p: { tx: number; ty: number }): (typeof grid.industries)[number] | null => {
@@ -8556,7 +8724,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           label: "Claim city",
           html: "Claim city — tiers restart",
           primary: false as const,
-          onClick: () => { if (downgradeCity(me)) closeBattleCard(); },
+          onClick: () => { if (downgradeCity(me, t.id)) closeBattleCard(); },
         }] : []),
         { label: "Close", primary: false, onClick: () => closeBattleCard() },
       ],
@@ -9312,6 +9480,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       quests: newLoop ? questsSave() : undefined,
       eco: { harvesters: eco.harvesters, factories: eco.factories },
       clearedFields: [...clearedFields],
+      // 2026-09: every city's own tier.
+      conquest,
+      cities: [...cityTiers.entries()].map(([id, c]) => [id, c.owner, c.level, c.bonus] as [number, string, number, number]),
       players: players.map((p) => ({
         // TRADE: escrow rides home in the purse — an open offer is refunded
         // on reload rather than lost (the book itself is not saved).
@@ -9415,6 +9586,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (typeof dt === "number" && Number.isFinite(dt)) players[i].depotTier = Math.max(0, Math.floor(dt));
       if (typeof tl === "number" && Number.isFinite(tl)) players[i].townLevel = Math.max(0, Math.floor(tl));
       if (typeof tb === "number" && Number.isFinite(tb)) players[i].townBonus = Math.max(0, tb);
+    }
+    conquest = (d as { conquest?: boolean }).conquest === true || conquest;
+    // 2026-09: per-city tiers (older saves migrate lazily from the seat's).
+    cityTiers.clear();
+    for (const row of (d as { cities?: [number, string, number, number][] }).cities ?? []) {
+      if (Array.isArray(row) && typeof row[0] === "number") {
+        cityTiers.set(row[0], { owner: String(row[1]), level: Math.max(0, row[2] | 0), bonus: Math.max(0, Number(row[3]) || 0) });
+      }
     }
     // L17 (#245): the towns' tiers come back with the seats. The saved array
     // is the authority when it is there (map order, per `townTier`); a save
@@ -10170,6 +10349,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       duelTick(t);
       // TRADE: offer expiry + the machine rival's answers/posts (host/solo).
       tradeTick(t);
+      // Conquest (2026-09): the only way a game ends is a player who cannot
+      // go on — checked every few seconds, not only after a battle.
+      if (conquest && t - lastConquestCheck > 3000) {
+        lastConquestCheck = t;
+        maybeComebackLoss(me);
+        maybeComebackLoss(rival);
+      }
       // MP-05: the host's heartbeat — one small delta per `PUBLISH_MS`, full
       // state only when `buildPublish` says the delta would not fit (§5).
       publishNet(t);
@@ -10244,6 +10430,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // NAMES: re-anchor the name tags to the live camera (no-op while the
       // Names button has them hidden).
       labels.frame();
+    upgradeMarkers.frame();
       paintUi(t);
     };
 
@@ -11306,6 +11493,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     storyView = null;
     floats.clear();
     labels.clear();
+    upgradeMarkers.clear();
     flashLayer.clear();
     cancelAnimationFrame(raf);
     ro.disconnect();

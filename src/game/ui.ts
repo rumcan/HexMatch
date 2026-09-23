@@ -3055,7 +3055,7 @@ export function createOriginalUi(
     hudVpTarget = target;
     // The original badge is just a star counter; keeping "You" in it lets the
     // boot/e2e assertions stay unambiguous for the single-player build.
-    const vpHtml = `<span class="vp-star">★</span> You ${fmtVp(yourVp)}<span class="vp-tot">/${target}</span>`;
+    const vpHtml = `<span class="vp-star">★</span> You ${fmtVp(yourVp)}<span class="vp-tot">${target > 0 ? `/${target}` : " · Conquest"}</span>`;
     if (vpHtml !== lastVpHtml) {
       vp.innerHTML = vpHtml; lastVpHtml = vpHtml;
       // MOBILE-02: the SCORE is the milestone worth breaking a phone's view
