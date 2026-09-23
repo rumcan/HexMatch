@@ -142,7 +142,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-async function boot(opts: { newLoop?: boolean; story?: boolean | string } = {}) {
+async function boot(opts: { newLoop?: boolean; story?: boolean | string; firstRun?: boolean } = {}) {
   const { startIsoGame } = await import("../../src/iso/game");
   dispose = startIsoGame(root, opts);
   await settle();
@@ -745,5 +745,23 @@ describe("L8 the live HUD on the new loop", () => {
     await settle();
     const hard = await inspectDepotAt(h, site.hx, site.hy);
     expect(hard).toMatch(/decay: [\d.]+%\/tick above ×[\d.]+/);
+  });
+});
+
+
+// run.world feedback (2026-09): the first game is coached one step at a time.
+describe("first-run coach", () => {
+  it("skips the tour and coaches step 1", async () => {
+    await boot({ newLoop: true, firstRun: true });
+    for (let i = 0; i < 4; i++) await settle();
+    expect(root.querySelector("#iso-tutorial"), "no tour on the first game").toBeNull();
+    expect(objectiveEl().classList.contains("coach")).toBe(true);
+    expect(objectiveText()).toMatch(/^Step 1\/4/);
+  });
+
+  it("a normal boot has no coach", async () => {
+    await boot({ newLoop: true });
+    for (let i = 0; i < 4; i++) await settle();
+    expect(objectiveEl().classList.contains("coach")).toBe(false);
   });
 });

@@ -146,6 +146,8 @@ export async function openSide(browser: Browser, name: string): Promise<Side> {
   await page.addInitScript(() => {
     localStorage.setItem("hexmatch:rival-skill", "normal");
     localStorage.setItem("hexmatch:tutorial", "never");
+    // run.world feedback: a first launch skips the menu — these specs use it.
+    localStorage.setItem("hexmatch:onboarded", "1");
   });
   // The transport seam: record every WebSocket the page opens, so a spec can
   // drop the room link exactly as a network failure does. Installed before any

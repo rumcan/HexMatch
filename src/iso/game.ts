@@ -549,6 +549,12 @@ export interface IsoGameOptions {
    */
   onQuitToMenu?: () => void;
   /**
+   * run.world feedback (2026-09): the player's very first game. No tour, no
+   * difficulty prompt (Normal, changeable in the top bar) — the coach teaches
+   * the loop one step at a time instead.
+   */
+  firstRun?: boolean;
+  /**
    * #164: the match was DECIDED — the ledger is standing, or a departure was
    * claimed. The React layer uses this to drop the "match in progress" memo
    * (`writeActiveMatch(null)` in `src/net/transport.ts`): a finished match is
@@ -1441,7 +1447,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // not up otherwise" would lie on the retired loop), so a `?loop=old`
       // boot or a story contract stands no tour at all; the briefing and the
       // difficulty prompt carry those players instead.
-      tutorialView = newLoop ? showTutorial(ui.el, {
+      tutorialView = newLoop && !opts.firstRun ? showTutorial(ui.el, {
         vpTarget: winTarget(),
         freeTrack: me.freeTrack,
         newLoop,
@@ -1460,7 +1466,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // `setRivalSkill`, persists for the next boot, and syncs the top-bar
       // selector the `onSkill` hook would otherwise own. A contract skips the
       // question: the chapter cast the rival, and re-asking would un-cast it.
-      if (!storyChapter) {
+      if (opts.firstRun && newLoop) {
+        // First game: Normal, no question asked; the coach takes over.
+        setRivalSkill("normal");
+        try { localStorage.setItem(SKILL_STORAGE_KEY, "normal"); } catch { /* private mode */ }
+        const sel = ui.el.querySelector<HTMLSelectElement>("#iso-rival-skill");
+        if (sel) sel.value = "normal";
+        ui.setCoach(true);
+      } else if (!storyChapter) {
         await promptForRivalSkill(ui.el, {
           onPick: (key) => {
             setRivalSkill(key);
