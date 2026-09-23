@@ -191,6 +191,7 @@ export function planTrucks(eco: EconomyState): Truck[] {
   const paved = ([x, y]: [number, number]): boolean => eco.track.road[tIdx(x, y)] !== 0;
   for (const h of eco.harvesters) {
     if (h.ownerId <= 0) continue;
+    if (h.platformId !== undefined) continue;     // a platform's freight goes by train
     const plan = roadDeliveryForHarvester(eco, h);
     if (!plan) continue;
     // AI-02: a segment is fast when either of its tiles is paved; public and
