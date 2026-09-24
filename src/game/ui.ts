@@ -344,6 +344,14 @@ export interface UiState {
    */
   tuningIdle?: UiTuningIdle;
   /**
+   * #300: the RESULTS pop-up over the session window — set once the session
+   * has ENDED (its budget spent and the board settled, or Finish pressed) and
+   * cleared when Confirm settles it. `null`/omitted = no pop-up. The session
+   * (`tuning`) stays up underneath until then: the window, its plate and the
+   * final board sit dimmed behind the card, and the board takes no more moves.
+   */
+  tuningResult?: UiTuningResult | null;
+  /**
    * L5 (#219): the city upgrade, as the plate's own key needs it. Omitted on
    * the shipped loop — the button does not exist there, and neither does the
    * rule. A present record always paints the key; `note` explains a key that
@@ -436,6 +444,51 @@ export interface UiTuningSession {
   busy?: boolean;
 }
 
+/**
+ * #300 — what an ENDED tuning session is worth, as the results pop-up paints
+ * it. The game freezes this record when the session ends and its Confirm
+ * applies the same record, so `to` on the card is exactly the number that
+ * lands; the chrome only counts it up.
+ */
+export interface UiTuningResult {
+  /** New per ended session — the pop-up restarts its count-up when it changes. */
+  id: number;
+  /** What the session confirms: a Depot's yield, or the city's base rate (L5). */
+  kind: "depot" | "town";
+  /** The Depot's cargo; null on a city session. */
+  cargo: Cargo | null;
+  /** A platform at an industry — the rail's Depot. Only the wording changes. */
+  platform?: boolean;
+  /** How it ended: the budget ran out, or Finish was pressed with moves left. */
+  reason: "out-of-moves" | "finished";
+  /** The final score — the count-up's target. */
+  score: number;
+  /** The rating off `TUNING_STARS` (config.ts); 0 = nothing cleared. */
+  stars: 0 | 1 | 2 | 3;
+  /** The score each star asks for, in table order — they light as the count passes. */
+  starScores: readonly number[];
+  /** The verdict word for `stars` (the table's `label`); empty for none. */
+  verdict: string;
+  /** Where the yield count starts: the Depot's level (or the city's bonus) before. */
+  from: number;
+  /** EXACTLY what Confirm applies: the Depot's yield, or the city's bonus (0.42 = +42%). */
+  to: number;
+  /** Depot: its level's cap, when the curve's number ran past it (the rest pays Gold). */
+  cap?: number;
+  capped?: boolean;
+  /** Depot: the never-drops rule kept the old, higher level. */
+  kept?: boolean;
+  /** City: an empty session confirms nothing — the upgrade's price is refunded. */
+  refund?: boolean;
+  /** The Gold the settle pays: the score's own plus any overshoot. */
+  gold: number;
+  /** Depot: the part of `gold` paid for the score played past the cap. */
+  overGold?: number;
+  /** Moves left when it ended, and the budget — the "moves to spare" line. */
+  movesLeft: number;
+  moves: number;
+}
+
 export interface UiHooks {
   onTool: (tool: UiTool) => void;
   /**
@@ -508,6 +561,12 @@ export interface UiHooks {
    * one.
    */
   onTuningEnd?: (abandon: boolean) => void;
+  /**
+   * #300: the results pop-up's one key. The game applies the result it froze
+   * when the session ended — the same record the pop-up is painting — and
+   * closes the session; the chrome only reports the press.
+   */
+  onTuningConfirm?: () => void;
   /**
    * L8 (#222): what the player did with the quest panel. `dismiss` retires one
    * offer for the rest of the game; `hide`/`show` put the whole panel away and
@@ -930,7 +989,9 @@ export function createOriginalUi(
   const tpYield = h("span", "tp-yield");
   const tpFinish = h("button", "tp-finish", "Finish");
   tpFinish.type = "button";
-  tpFinish.title = "Close the session and keep the yield you have earned";
+  // #300: Finish ends the session into its results pop-up; that pop-up's
+  // Confirm is what applies the yield.
+  tpFinish.title = "End the session and see your result — Confirm keeps the yield you have earned";
   // #301: abandon is now explicitly labelled — it must never be mistaken for a
   // plain close. The old \"✕\" looked like \"dismiss\" and threw away the score.
   const tpAbandon = h("button", "tp-abandon", "Abandon — default yield");
@@ -1118,6 +1179,76 @@ export function createOriginalUi(
   tp.appendChild(feedPane);
   tp.appendChild(questsPane);
   /**
+   * #300 — the RESULTS pop-up a tuning session ends on. Once the session has
+   * ENDED (its budget spent and the board settled, or Finish pressed) the
+   * game freezes what it is worth and this card takes over the session
+   * window: the heading says how it ended, the score counts up from 0, then
+   * the yield it sets (×N for a Depot, +N% base rate for the city), and 1–3
+   * stars light off `TUNING_STARS` as the count passes their bars. It PAINTS
+   * the game's frozen record and nothing else — its one Confirm key asks the
+   * game to apply that same record — so the number it counts up to is the
+   * number that lands. Mounted in the session frame (the new loop only),
+   * over the plate and the dimmed final board, which go `inert` under it.
+   */
+  const srPanel = h("div", "session-results hidden");
+  srPanel.id = "iso-tuning-results";
+  srPanel.setAttribute("role", "dialog");
+  srPanel.setAttribute("aria-modal", "true");
+  srPanel.setAttribute("aria-labelledby", "iso-sr-head");
+  srPanel.setAttribute("aria-describedby", "iso-sr-summary");
+  const srCard = h("div", "sr-card");
+  const srKicker = h("div", "sr-kicker");
+  const srHead = h("h2", "sr-head");
+  srHead.id = "iso-sr-head";
+  const srMoves = h("div", "sr-moves");
+  const srStars = h("div", "sr-stars");
+  srStars.setAttribute("role", "img");
+  const srStar = [1, 2, 3].map((n) => {
+    const star = h("span", "sr-star", "★");
+    star.dataset.n = String(n);
+    star.setAttribute("aria-hidden", "true");
+    return star;
+  });
+  srStars.append(...srStar);
+  const srVerdict = h("div", "sr-verdict");
+  const srRows = h("div", "sr-rows");
+  const srScoreRow = h("div", "sr-row sr-row-score");
+  const srScore = h("b", "sr-num sr-score", "0");
+  srScoreRow.append(h("span", "sr-k", "Score"), srScore);
+  const srYieldRow = h("div", "sr-row sr-row-yield");
+  const srYieldK = h("span", "sr-k", "Yield");
+  const srYieldFrom = h("span", "sr-from");
+  const srYield = h("b", "sr-num sr-yield");
+  srYieldRow.append(srYieldK, srYieldFrom, srYield);
+  const srGoldRow = h("div", "sr-row sr-row-gold");
+  const srGold = h("b", "sr-num sr-gold");
+  srGoldRow.append(h("span", "sr-k", "Gold"), srGold);
+  srRows.append(srScoreRow, srYieldRow, srGoldRow);
+  const srNote = h("div", "sr-note");
+  // What a screen reader hears when the card takes focus: the FINAL numbers,
+  // not a count-up read digit by digit.
+  const srSummary = h("p", "sr-summary");
+  srSummary.id = "iso-sr-summary";
+  srSummary.hidden = true;
+  const srConfirm = h("button", "sr-confirm", "Confirm");
+  srConfirm.type = "button";
+  srConfirm.onclick = () => hooks.onTuningConfirm?.();
+  srCard.append(srKicker, srHead, srMoves, srStars, srVerdict, srRows, srNote, srConfirm, srSummary);
+  srPanel.appendChild(srCard);
+  /** #300: whether the card is up, and which result it is counting (its id). */
+  let srShown = false;
+  let srShownId = -1;
+  let srLive: UiTuningResult | null = null;
+  /** #300: the count-up's frame handle, its start, and how many stars are lit. */
+  let srRaf = 0;
+  let srT0 = 0;
+  let srLit = 0;
+  // A press on the card (not the key) skips the count-up to its end — a
+  // player who has read enough never waits on the animation to decide.
+  srCard.addEventListener("click", (e) => {
+    if (e.target !== srConfirm) finishTuningCount();
+  });
+  /**
    * #299 — the session window. The plant panel (`qp`) is built the same way
    * on both loops; what changes is its HOST. On the new loop it is born
    * inside a centred, modal plate over the map — `#iso-session` — which the
@@ -1141,12 +1272,16 @@ export function createOriginalUi(
     // Closing a session is the plate's two doors, never a stray click: the
     // backdrop refuses its own press and says what will end it.
     back.onclick = () => {
-      toast("The plant floor is mid-session — Finish keeps your yield, Abandon closes it.", "info");
+      toast(srShown
+        ? "The session is over — Confirm applies the result."
+        : "The plant floor is mid-session — Finish keeps your yield, Abandon closes it.", "info");
     };
     const frame = h("div", "session-frame panel");
     frame.tabIndex = -1;
     qp.classList.add("hidden");   // the window opens on a session; see setSessionWindow
     frame.appendChild(qp);
+    // #300: the results card rides in the same frame, over the plant panel.
+    frame.appendChild(srPanel);
     win.append(back, frame);
     sessionWin = win;
     sessionFrame = frame;
@@ -3174,12 +3309,176 @@ export function createOriginalUi(
     left.inert = open;
     rightAside.inert = open;
     mobileNav.inert = open;
+    // #300: the results card lives and dies with its session's window.
+    if (!open) hideTuningResult();
     if (!open) sfx.play("close");
     if (open) sessionFrame!.focus({ preventScroll: true });
     // The board re-fits to its new box: measured in the open window (the
     // phone grow-fit and the desktop window clamp both key off it), and back
     // to the plain column once the window comes down.
     responsiveZoom();
+  }
+
+  // ── #300 — the results pop-up's paint and count-up ──────────────────────
+  /** The count-up's clock: the score first, a beat, then the yield it sets. */
+  const SR_SCORE_MS = 1100;
+  const SR_GAP_MS = 150;
+  const SR_YIELD_MS = 650;
+  const srEase = (p: number) => 1 - (1 - p) ** 3;
+  /** A Depot's yield as the plate prints it (×1.75); the city's as a rate (+42%). */
+  const srFmt = (r: UiTuningResult, v: number) =>
+    r.kind === "town" ? `+${Math.round(v * 100)}%` : `×${fmtYield(v)}`;
+  /** How many stars a score shown mid-count has passed — never past the result's own. */
+  const srStarsAt = (r: UiTuningResult, score: number) =>
+    Math.min(r.stars, r.starScores.filter((bar) => score >= bar).length);
+
+  /**
+   * Paint the results pop-up. `null`/`undefined` takes it down; a result it
+   * is not already showing (a new `id`) puts it up and starts the count-up
+   * over. The HUD paints every frame, so the same result never restarts it.
+   */
+  function paintTuningResult(r: UiTuningResult | null | undefined): void {
+    if (!sessionMode) return;
+    if (!r) {
+      if (srShown) hideTuningResult();
+      return;
+    }
+    if (srShown && r.id === srShownId) return;
+    showTuningResult(r);
+  }
+
+  function showTuningResult(r: UiTuningResult): void {
+    srShown = true;
+    srShownId = r.id;
+    srLive = r;
+    const depot = r.kind === "depot";
+    const cargo = r.cargo ? `${CARGO[r.cargo].icon} ${CARGO[r.cargo].name} ` : "";
+    srKicker.textContent = depot ? `${cargo}${r.platform ? "Platform" : "Depot"}` : "🏙️ The City";
+    srHead.textContent = r.reason === "out-of-moves" ? "Out of moves" : "Session complete";
+    srMoves.textContent = r.reason === "out-of-moves" || r.movesLeft <= 0
+      ? `All ${r.moves} moves played`
+      : `Finished with ${r.movesLeft} of ${r.moves} moves to spare`;
+    srYieldK.textContent = depot ? "Yield" : "Base rate";
+    const moved = r.to !== r.from;
+    srYieldFrom.textContent = moved ? `${srFmt(r, r.from)} →` : "";
+    srYieldFrom.classList.toggle("hidden", !moved);
+    srStars.setAttribute("aria-label", `${r.stars} of 3 stars`);
+    srStar.forEach((star, i) => {
+      const bar = r.starScores[i];
+      star.title = bar === undefined ? "" : `${i + 1}★ from score ${bar}`;
+    });
+    const next = r.starScores.find((bar) => bar > r.score);
+    srVerdict.textContent = r.stars === 0
+      ? "No stars — nothing was cleared"
+      : `${r.verdict}${next !== undefined ? ` · next ★ at score ${next}` : ""}`;
+    // The notes say WHY the number is what it is, whenever the curve alone
+    // would not explain it: the level cap, the never-drops clamp, Hard's
+    // replace-it rule, an empty session, the city's refund.
+    const notes: string[] = [];
+    if (depot) {
+      if (r.score <= 0) {
+        notes.push(r.to < r.from
+          ? `Nothing cleared — on this difficulty the yield drops to ${srFmt(r, r.to)}.`
+          : `Nothing cleared — the yield stays at ${srFmt(r, r.to)}.`);
+      } else if (r.kept) {
+        notes.push(`Kept ${srFmt(r, r.to)} — a session never lowers a Depot.`);
+      } else if (r.to < r.from) {
+        notes.push(`Below its old ${srFmt(r, r.from)} — on this difficulty the new level replaces it.`);
+      }
+      if (r.capped && r.cap !== undefined) {
+        notes.push(`Capped at ×${fmtYield(r.cap)} by the Depot's level${
+          r.overGold ? ` — the score past it pays +${r.overGold} ${CARGO.gold.icon}` : ""}. Upgrade the Depot to raise the cap.`);
+      }
+    } else if (r.refund) {
+      notes.push("Nothing cleared — the upgrade is refunded and the city is unchanged.");
+    } else {
+      notes.push("Every connected Depot ticks faster from here.");
+    }
+    srNote.textContent = notes.join(" ");
+    srNote.classList.toggle("hidden", notes.length === 0);
+    srGold.textContent = `+${r.gold} ${CARGO.gold.icon}`;
+    srGoldRow.classList.toggle("hidden", r.gold <= 0);
+    srSummary.textContent = `${srHead.textContent}. Score ${r.score}. ${depot ? "Yield" : "Base rate"} ${
+      srFmt(r, r.to)}. ${r.stars} of 3 stars${r.verdict ? ` — ${r.verdict}` : ""}.${
+      r.gold > 0 ? ` Plus ${r.gold} Gold.` : ""}`;
+    // The FINAL numbers ride on the card from the first frame — a test (or a
+    // stylesheet) never has to wait out the count-up to read the result.
+    srPanel.dataset.reason = r.reason;
+    srPanel.dataset.score = String(r.score);
+    srPanel.dataset.yield = String(r.to);
+    srPanel.dataset.stars = String(r.stars);
+    srPanel.classList.toggle("town", !depot);
+    srPanel.classList.remove("hidden", "done");
+    srPanel.classList.add("counting");
+    // The plate and the final board stay in view, dimmed — and out of reach.
+    qp.inert = true;
+    srLit = -1;
+    cancelAnimationFrame(srRaf);
+    srRaf = 0;
+    const reduce = typeof matchMedia === "function"
+      && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduce) {
+      finishTuningCount();
+    } else {
+      srT0 = performance.now();
+      paintTuningCount(0);
+      srRaf = requestAnimationFrame(stepTuningCount);
+    }
+    srConfirm.focus({ preventScroll: true });
+    sfx.play("open");
+  }
+
+  function hideTuningResult(): void {
+    if (srRaf) cancelAnimationFrame(srRaf);
+    srRaf = 0;
+    srShown = false;
+    srShownId = -1;
+    srLive = null;
+    srPanel.classList.add("hidden");
+    srPanel.classList.remove("counting", "done");
+    qp.inert = false;
+  }
+
+  function stepTuningCount(now: number): void {
+    srRaf = 0;
+    if (!srLive) return;
+    const t = now - srT0;
+    if (t >= SR_SCORE_MS + SR_GAP_MS + SR_YIELD_MS) {
+      finishTuningCount();
+      return;
+    }
+    paintTuningCount(t);
+    srRaf = requestAnimationFrame(stepTuningCount);
+  }
+
+  /** One frame of the count-up, `t` ms in: the score, the stars it has passed, then the yield. */
+  function paintTuningCount(t: number): void {
+    const r = srLive;
+    if (!r) return;
+    const score = Math.round(r.score * srEase(Math.min(1, t / SR_SCORE_MS)));
+    srScore.textContent = String(score);
+    lightTuningStars(srStarsAt(r, score));
+    const p = Math.max(0, Math.min(1, (t - SR_SCORE_MS - SR_GAP_MS) / SR_YIELD_MS));
+    srYield.textContent = srFmt(r, r.from + (r.to - r.from) * srEase(p));
+  }
+
+  /** Land the count-up on the result itself — its end, a skip, or reduced motion. */
+  function finishTuningCount(): void {
+    const r = srLive;
+    if (!r) return;
+    if (srRaf) cancelAnimationFrame(srRaf);
+    srRaf = 0;
+    srScore.textContent = String(r.score);
+    srYield.textContent = srFmt(r, r.to);
+    lightTuningStars(r.stars);
+    srPanel.classList.remove("counting");
+    srPanel.classList.add("done");
+  }
+
+  function lightTuningStars(n: number): void {
+    if (n === srLit) return;
+    srLit = n;
+    srStar.forEach((star, i) => star.classList.toggle("lit", i < n));
   }
 
   /**
@@ -3234,8 +3533,9 @@ export function createOriginalUi(
     tuningPlate.classList.toggle("idle", !live);
     qp.classList.toggle("tuning-idle", !live);
     // The board is up for a session and down between them. A session that has
-    // spent its last move stays up until its cascade settles (the game closes
-    // it), so this is never "the board vanished mid-match".
+    // spent its last move stays up until its cascade settles (the game then
+    // ends it into the results pop-up, #300, and closes it on Confirm), so
+    // this is never "the board vanished mid-match".
     boardWrap.classList.toggle("hidden", !live);
     tpIdle.classList.toggle("hidden", live);
     tpHead.classList.toggle("hidden", !live);
@@ -3611,6 +3911,9 @@ export function createOriginalUi(
   // ── paint ─────────────────────────────────────────────────────────────────
   function paint(state: UiState) {
     paintTuning(state.tuning, state.tuningIdle);
+    // #300: after the plate — the window it rides in is stood up (or taken
+    // down) by `paintTuning` first.
+    paintTuningResult(state.tuningResult);
     paintTown(state.town);
     paintMarket(state.offers);
     rivalWirePlayerPortrait = state.portrait === "you" ? portraitYou : portraitVex;
