@@ -1,0 +1,12 @@
+{
+  "_note": "Declared footprints for building art (F1) \u2014 the authority for NEW art. A name maps to its footprint as a bare [w, h] (footRoom 0) or {footprint, footRoom}; e.g. \"windmill\": {\"footprint\": [1, 3], \"footRoom\": 24}. Anything absent here (and from the compiled + sheet manifests) only compiles when its canvas is one of the legacy squares (128/256/384/512\u00b2) \u2014 otherwise the compiler fails and names this file. Keys starting with _ are notes.",
+  "_example": {
+    "windmill": {
+      "footprint": [
+        1,
+        3
+      ],
+      "footRoom": 24
+    }
+  }
+}

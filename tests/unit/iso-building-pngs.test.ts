@@ -23,6 +23,7 @@ interface BuildingEntry {
   anchor: [number, number];
   w: number;
   h: number;
+  footRoom?: number; // F1: 2× px below the south vertex (absent == 0)
 }
 
 interface BuildingsManifest {
@@ -100,7 +101,7 @@ describe("ART-1950S compiled building PNGs", () => {
         const n = e.footprint[0] + e.footprint[1];
         const srcMeta = await sharp(src).metadata();
         const ax2 = srcMeta.width! / 2;                    // canvas anchor (see tool)
-        const ay2 = srcMeta.height! - (e.footprint[0] + e.footprint[1]) * 16;
+        const ay2 = srcMeta.height! - (e.footRoom ?? 0) - (e.footprint[0] + e.footprint[1]) * 16;
         expect(e.anchor[0]).toBeCloseTo((ax2 - left) / 2, 1);
         expect(e.anchor[1]).toBeCloseTo((ay2 - top) / 2, 1);
         // the canvas holds the collar-inset lot; its height is the art's own

@@ -71,14 +71,22 @@ Every asset is an RGBA 32-bit transparent PNG, authoring resolution **2×**:
 | Footprint | Canvas Size (2×) | Anchor Point `(ax, ay)` | Ground Zone Height | Max Height Above Anchor | Target Assets |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **1×1** | **128 × 128 px** | `(64, 96)` | 64 px (bottom) | 96 px | Depots (`depot_*`), `town_center`, town houses (43) |
+| **1×2 / 2×1** | **192 × 192 px** | `(96, 144)` | 96 px (bottom) | 144 px | Non-square buildings (F1/F5) |
+| **2×2** | **256 × 256 px** | `(128, 192)` | 128 px (bottom) | 192 px | Town buildings on 2×2 blocks |
+| **1×3 / 3×1** | **256 × 256 px** | `(128, 192)` | 128 px (bottom) | 192 px | Non-square buildings (F1/F5); rail platforms use 1×3/3×1 too (own cutter) |
 | **3×3** | **384 × 384 px** | `(192, 288)` | 192 px (bottom) | 288 px | `factory`, `ore_mine`, `quarry`, `oil_rig` |
+| **4×2 / 2×4** | **384 × 384 px** | `(192, 288)` | 192 px (bottom) | 288 px | Non-square buildings (F1/F5) |
 | **4×4** | **512 × 512 px** | `(256, 384)` | 256 px (bottom) | 384 px | `farm`, `forest`, `gold_mine` |
+
+Formulas: canvas `(w+h)×64`, anchor `((w+h)×32, (w+h)×48)`, ground zone `(w+h)×32`, max rise `(w+h)×48` — all at 2×. A 1×3 and a 2×2 share the 256² canvas (a 4×2 and a 3×3 share 384²), so the footprint is DECLARED in `assets/buildings-src/footprints.json`, never inferred from canvas size.
 
 - **Anchor:** The pixel that sits directly on the footprint diamond's center on the game map.
 - **Ground Zone:** The bottom diamond spanned by the footprint. Art ground outlines (foundations, soil, gravel, paths) must sit within this diamond.
-- **Templates:** Base template files with marked ground diamond and anchor cross exist in `assets/buildings-src/templates/<w>x<h>@2x.png`.
+- **Templates:** Base template files with marked ground diamond and anchor cross exist in `assets/buildings-src/templates/<w>x<h>@2x.png` (generate any with `node tools/make-building-pngs.mjs --templates WxH`).
 - **Output Path:** `assets/buildings-src/<sprite_name>@2x.png`.
 - **Compiler:** `node tools/make-building-pngs.mjs <sprite_name>` (generates `1x`, `0.5x` and updates `assets/buildings/manifest.json`).
+- **Foot room (F1):** details in FRONT of the building (steps, lawn/fence edge) live below the footprint's south vertex: declare `{"<name>": {"footprint": [w, h], "footRoom": N}}` (2× px, default 0) and grow the canvas DOWNWARD by N so the vertex sits at H − N (`fit-building-art.mjs --foot N` does this). To make a building taller, grow the canvas UPWARD ONLY (anchor bottom-centre). Only use footRoom for details in front of the building.
+- **Scale figure (F1):** every template draws a person silhouette (12 px tall), a door guide (8×16 px) and dashed storey lines (every 28 px) at the footprint's south corner, so doors, windows and storeys share one size on every building. Calibration (all at 2×): door slabs measured on the shipped 1950s masters — `town_center` 12×24, `town_house_c` 18×20, `town_flats_grey` ~14×18, `town_flats_2` ~7×16, `town_house_swiss` 8×14, `town_house_modern` 8×12, `town_flats` side door 6×12 — median 8 wide × 16 tall; person 12 and storey 28 are the redo-guide midpoints (§2.1: human 10–14 px, storey 24–32 px). Grand civic entrances (church, tenement double doors) run taller than the 16 px standard — the guide pins the common house door, not the exception.
 
 ---
 
