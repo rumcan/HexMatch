@@ -12,6 +12,9 @@
 //
 //   __iso.dumpTile(tx, ty)      terrain cell, sprite, anchor, screen position,
 //                               and what pick() says about it
+//   __iso.shapes(tx, ty)        F2 (#272): place one of every non-square
+//                               footprint shape side by side for visual
+//                               depth/shadow/pick review (`"clear"` removes)
 //   __iso.dumpAt(x, y)          which tile a SCREEN point resolves to (both the
 //                               flat pick and the stage-2 sprite pick)
 //   __iso.dumpBuilding(tx, ty)  every structure on the tile and the gap between
@@ -31,7 +34,7 @@
 // Docs: docs/iso-debug-console.md.
 // ══════════════════════════════════════════════════════════════════════════
 import { HH, HW, MAP_W, MAP_H, TILE_H, tileToScreen } from "../game/config";
-import { screenToWorld, visibleTileRange, worldToScreen, type Camera } from "./camera";
+import { screenToTileAt, screenToWorld, visibleTileRange, worldToScreen, type Camera } from "./camera";
 import { flatPick, terrainSprite, type IsoRenderer } from "./renderer";
 import { WATER, ROUGH, industryAt, type Grid } from "./grid";
 import {
@@ -40,7 +43,7 @@ import {
   type Track, type TrackKind,
 } from "./track";
 import { catchmentRect, industriesInCatchment, type EconomyState } from "./economy";
-import type { Atlas, SpriteDef } from "./atlas";
+import { maskFromRGBA, type Atlas, type AtlasImage, type SpriteDef } from "./atlas";
 import type { Placed } from "./depth";
 
 export type DebugOverlayName = "anchor" | "network" | "pick";
@@ -102,6 +105,104 @@ const r = (n: number): number => Math.round(n * 100) / 100;
 const TERRAIN_NAME = ["grass", "water", "rough"] as const;
 const terrainName = (v: number) => TERRAIN_NAME[v] ?? `#${v}`;
 
+// ── F2 (#272) — the non-square shape gallery ─────────────────────────────────
+// A debug view that drops one synthetic building of EVERY supported footprint
+// shape side by side on the map, drawn through the REAL pipeline (world.extra →
+// buildDrawList → place → depthSort → shadows → pickSprite), so draw order,
+// shadow diamonds and hover picking can be reviewed at zoom 0.5 / 1 / 2 without
+// waiting for #273's real art. Pure geometry here so the layout and defs are
+// unit-testable; the raster side lives in the `shapes` command below.
+
+/** One placed gallery shape: name, footprint and footprint-origin tile. */
+export interface ShapeSlot {
+  name: string;
+  footprint: [number, number];
+  tx: number;
+  ty: number;
+}
+
+/**
+ * The shapes F2 must support: every w≠h combination of lengths up to 4 (the
+ * six of the spec plus the 1×4 / 4×1 pair the ticket names), and a 2×2 square
+ * as the "no change for existing square buildings" control.
+ */
+export const SHAPE_GALLERY_FOOTPRINTS: ReadonlyArray<[number, number]> = [
+  [2, 2], [1, 2], [2, 1], [1, 3], [3, 1], [4, 2], [2, 4], [1, 4], [4, 1],
+];
+
+/**
+ * Lay the gallery out along ONE row starting at (tx, ty): each shape advances
+ * by its width plus one empty column, so neighbouring shadows and pick masks
+ * can be reviewed against grass as well as against each other. The row is
+ * deliberately long and thin — the 3×1 / 4×1 pieces beside the 1×3 / 1×4
+ * pieces are exactly the "long thin footprints next to each other" case.
+ */
+export function shapeGalleryLayout(tx: number, ty: number): ShapeSlot[] {
+  const out: ShapeSlot[] = [];
+  let x = tx;
+  for (const [fw, fh] of SHAPE_GALLERY_FOOTPRINTS) {
+    out.push({ name: `shape_${fw}x${fh}`, footprint: [fw, fh], tx: x, ty });
+    x += fw + 1;
+  }
+  return out;
+}
+
+/** Headroom (world px) of the synthetic building box standing on its plate. */
+const shapeArtUp = (fw: number, fh: number): number => Math.round((fw + fh) * HH * 0.9) + 24;
+
+/**
+ * The synthetic sprite def for one gallery shape: a `def.center` box standing
+ * on a footprint-sized ground plate — art is the footprint diamond's bbox plus
+ * the tower's headroom, anchored on the footprint bbox centre exactly like the
+ * per-building PNGs (`loadBuildingLayers`' authoring convention).
+ */
+export function shapeGalleryDef(footprint: [number, number]): SpriteDef {
+  const [fw, fh] = footprint;
+  const w = (fw + fh) * HW;
+  const up = shapeArtUp(fw, fh);
+  const h = (fw + fh) * HH + up;
+  return {
+    x: 0, y: 0, w, h,
+    footprint: [fw, fh],
+    anchor: [w / 2, up + (fw + fh) * HH / 2],
+    center: true,
+  };
+}
+
+/**
+ * Paint one gallery shape in 1× units: a footprint-sized ground plate (the
+ * w×h footprint's diamond, centred on the anchor) with a small box standing on
+ * it, a hue per shape, and a magenta dot on the anchor so a screenshot can
+ * verify placement at a glance. The plate is opaque — the built pick mask IS
+ * the footprint silhouette, so hover picking is reviewable against it.
+ */
+function paintShapeArt(
+  c: CanvasRenderingContext2D, footprint: [number, number], def: SpriteDef,
+): void {
+  const [fw, fh] = footprint;
+  const [ax, ay] = def.anchor;
+  const rx = (fw + fh) * HW / 2, ry = (fw + fh) * HH / 2;
+  const hue = (fw * 47 + fh * 83) % 360;
+  c.fillStyle = `hsla(${hue}, 55%, 52%, 0.85)`;
+  c.strokeStyle = `hsla(${hue}, 60%, 22%, 1)`;
+  c.lineWidth = 2;
+  c.beginPath();
+  c.moveTo(ax, ay - ry);
+  c.lineTo(ax + rx, ay);
+  c.lineTo(ax, ay + ry);
+  c.lineTo(ax - rx, ay);
+  c.closePath();
+  c.fill();
+  c.stroke();
+  const up = shapeArtUp(fw, fh);
+  const bw = Math.min((fw + fh) * HW * 0.34, 52), bh = up - 8;
+  c.fillStyle = `hsla(${hue}, 62%, 68%, 1)`;
+  c.fillRect(ax - bw / 2, ay - bh, bw, bh);
+  c.strokeRect(ax - bw / 2, ay - bh, bw, bh);
+  c.fillStyle = "#ff5af0";
+  c.fillRect(ax - 1.5, ay - 1.5, 3, 3);
+}
+
 /** The manifest entry for a sprite, trimmed to what a geometry report needs. */
 function cellOf(atlas: Atlas | null, name: string) {
   const def: SpriteDef | undefined = atlas?.get(name);
@@ -138,12 +239,24 @@ export function createIsoDebug(ctx: DebugContext) {
   const topVertex = (tx: number, ty: number): [number, number] =>
     tileToScreen(tx, ty);
 
-  /** World position where a sprite's anchor lands: the SOUTH corner (bottom
-   *  vertex) of its footprint diamond — drawOrigin places the declared anchor
-   *  pixel at tileToScreen(tx + fw - 1, ty + fh - 1) + (HW, TILE_H). */
-  const footCorner = (tx: number, ty: number, fw = 1, fh = 1): [number, number] => {
+  /** World position where a sprite's anchor lands — the exact point
+   *  `depth.drawOrigin` places the declared anchor pixel on.
+   *
+   *  K4: the default (sheet) branch lands on the footprint's SOUTH corner (the
+   *  bottom vertex of the S tile's diamond) — `tileToScreen(tx + fw - 1,
+   *  ty + fh - 1) + (0, TILE_H)`. This used to add `HW` too, which is half a
+   *  tile EAST of the south vertex and exactly the offset `drawOrigin` removed
+   *  when the ground-plane roads landed (see its docstring): the mark sat
+   *  beside the anchor it claimed to report. F2 (#272): a `def.center` sprite
+   *  (building layers) lands its anchor on the footprint bbox CENTRE instead —
+   *  "back off the east lean" for non-square footprints — so the report is
+   *  footprint-aware (`centre` selects the branch). */
+  const footCorner = (tx: number, ty: number, fw = 1, fh = 1, centre = false): [number, number] => {
     const [sx, sy] = tileToScreen(tx + fw - 1, ty + fh - 1);
-    return [sx + HW, sy + TILE_H];
+    if (centre) {
+      return [sx - (fw - fh) * (HW / 2), sy + TILE_H - (fw + fh) * (HH / 2)];
+    }
+    return [sx, sy + TILE_H];
   };
 
   const screenOf = (tx: number, ty: number): [number, number] => {
@@ -274,7 +387,7 @@ export function createIsoDebug(ctx: DebugContext) {
     const [swx, swy] = topVertex(tx, ty);
     const items = hits.map((p) => {
       const [fw, fh] = p.def.footprint;
-      const [fx, fy] = footCorner(p.tx, p.ty, fw, fh);
+      const [fx, fy] = footCorner(p.tx, p.ty, fw, fh, !!p.def.center);
       const footWorldY = p.wy + p.def.anchor[1];
       const [, footScreenY] = worldToScreen(ctx.camera, fx, footWorldY);
       const pds = worldToScreen(ctx.camera, p.wx, p.wy);
@@ -426,7 +539,7 @@ export function createIsoDebug(ctx: DebugContext) {
       c.fillStyle = "#7cff5a";
       c.font = `${Math.max(9, Math.round(9 * z))}px monospace`;
       for (const p of ctx.renderer.drawOrder) {
-        const [fx, fy] = footCorner(p.tx, p.ty, p.def.footprint[0], p.def.footprint[1]);
+        const [fx, fy] = footCorner(p.tx, p.ty, p.def.footprint[0], p.def.footprint[1], !!p.def.center);
         const footY = p.wy + p.def.anchor[1];
         const [sx, sy] = worldToScreen(cam, fx, footY);
         c.beginPath();
@@ -570,6 +683,89 @@ export function createIsoDebug(ctx: DebugContext) {
         occupied: ctx.grid.occupancy[tIdx(tx, ty)] ?? -1,
       };
       console.log("[iso] probe", out);
+      return out;
+    },
+
+    /**
+     * `__iso.shapes(tx?, ty?)` — F2 (#272): one synthetic building of EVERY
+     * supported footprint shape, side by side on one row, drawn through the
+     * real pipeline (world.extra → depth sort → shadows → picking). The art is
+     * generated here (plate = the footprint diamond, plus a box standing on
+     * it), so the plate's silhouette is the footprint and hover picking can be
+     * reviewed against it at zoom 0.5 / 1 / 2. `__iso.shapes("clear")` takes
+     * them out again. Note: `syncWorld` rebuilds `world.extra` on any build or
+     * demolish — re-run this after changing the map.
+     */
+    shapes: (where?: [number, number] | "clear") => {
+      const renderer = ctx.renderer;
+      const atlas = ctx.atlas;
+      if (!renderer || !atlas) {
+        const out = { error: "no renderer/atlas yet" };
+        console.log("[iso] shapes", out);
+        return out;
+      }
+      // Always clear first, so re-running never stacks a second row.
+      const isShapeItem = (e: { ref?: unknown }) =>
+        (e.ref as { kind?: string } | null | undefined)?.kind === "shapeDebug";
+      renderer.world.extra = (renderer.world.extra ?? []).filter((e) => !isShapeItem(e));
+      const names = SHAPE_GALLERY_FOOTPRINTS.map(([fw, fh]) => `shape_${fw}x${fh}`);
+      if (where === "clear") {
+        for (const name of names) {
+          delete atlas.manifest.sprites[name];
+          atlas.buildingImages.delete(name);
+        }
+        renderer.recomputePad();
+        renderer.invalidateAll();
+        const out = { cleared: true };
+        console.log("[iso] shapes", out);
+        return out;
+      }
+      if (typeof document === "undefined") {
+        const out = { error: "shapes() needs a browser canvas" };
+        console.log("[iso] shapes", out);
+        return out;
+      }
+      const cam = ctx.camera;
+      const [ax, ay] = where ?? screenToTileAt(cam, cam.vw / 2, cam.vh / 2);
+      const layout = shapeGalleryLayout(ax - 15, ay);
+      for (const slot of layout) {
+        const def = shapeGalleryDef(slot.footprint);
+        atlas.manifest.sprites[slot.name] = def;
+        const byZoom = new Map<number, AtlasImage>();
+        let pixels: Uint8ClampedArray | null = null;
+        for (const z of [0.5, 1, 2]) {
+          const w = Math.round(def.w * z), h = Math.round(def.h * z);
+          const cv = document.createElement("canvas");
+          cv.width = w; cv.height = h;
+          const c2 = cv.getContext("2d");
+          if (!c2) break;
+          c2.scale(z, z);
+          paintShapeArt(c2, slot.footprint, def);
+          byZoom.set(z, cv as unknown as AtlasImage);
+          if (z === 1) pixels = c2.getImageData(0, 0, w, h).data;
+        }
+        atlas.buildingImages.set(slot.name, byZoom);
+        if (pixels) atlas.setMask(slot.name, maskFromRGBA(pixels, def.w, def.h, 8, 1));
+        renderer.world.extra!.push({
+          sprite: slot.name, tx: slot.tx, ty: slot.ty,
+          ref: { kind: "shapeDebug", shape: slot.name } as unknown,
+        });
+      }
+      renderer.recomputePad();
+      renderer.invalidateAll();
+      // Recentre the camera on the row so the gallery is in frame at once.
+      const last = layout[layout.length - 1];
+      const [lx, ly] = tileToScreen(last.tx + last.footprint[0] - 1, last.ty + last.footprint[1] - 1);
+      const [fx0, fy0] = tileToScreen(layout[0].tx, layout[0].ty);
+      const cx = (fx0 + lx) / 2, cy = (fy0 + ly) / 2 + TILE_H;
+      cam.x = cam.vw / 2 - cx * cam.zoom;
+      cam.y = cam.vh / 2 - cy * cam.zoom;
+      const out = {
+        slots: layout.map((s) => ({ name: s.name, footprint: s.footprint, tx: s.tx, ty: s.ty })),
+        camera: { zoom: cam.zoom, x: r(cam.x), y: r(cam.y) },
+        note: "drawn via world.extra — re-run __iso.shapes() after any build/demolish (syncWorld rebuilds the list)",
+      };
+      console.log("[iso] shapes", out);
       return out;
     },
   };
