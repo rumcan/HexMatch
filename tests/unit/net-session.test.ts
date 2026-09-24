@@ -28,11 +28,13 @@ import {
 import {
   PROTOCOL_VERSION,
   VERSION_MISMATCH_MESSAGE,
+  type ChatMsg,
   type DeltaMsg,
   type HexProtocol,
   type ResultMsg,
   type WelcomeMsg,
 } from "../../src/net/protocol";
+import { CHAT_MAX_LEN } from "../../src/net/chat";
 import type { ConnectionState, HexRoom } from "../../src/net/transport";
 import { DEFAULT_MATCH_SETTINGS, type MatchSettings } from "../../src/net/match-settings";
 import { applyTrackDelta } from "../../src/net/delta";
@@ -1266,6 +1268,93 @@ describe("#186 the room's settings on a session", () => {
     // A later welcome (a seat joining) is not a reset of the rules.
     guest.deliver(welcome(5), true);
     expect(session.settings).toEqual(RULES);
+    session.dispose();
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// C1 (#255) — chat on a session
+//
+// The RULES are tested twice over already (`net-chat.test.ts` for the guard,
+// `net-room.test.ts` for the relay). What this block pins is the WIRING, which
+// is this file's subject: the session is the only thing that puts a line on the
+// room and the only thing that lets one reach the game — and a chat line never
+// becomes an intent, a delta or anything else the world can feel.
+// ══════════════════════════════════════════════════════════════════════════
+describe("C1 (#255) chat on a session", () => {
+  it("puts a line on the room and hands the other end to the `chat` hook", () => {
+    const session = new NetSession({ room: asRoom(host), role: "host" });
+    const seen: ChatMsg[] = [];
+    session.attach({ chat: (m) => seen.push(m) });
+    host.deliver(welcome(7));                    // the room names the seats
+    expect(session.sendChat("hello")).toEqual({
+      ok: true,
+      msg: { type: "chat", from: "Ada", text: "hello", t: expect.any(Number) },
+    });
+    expect(host.frames("chat")).toHaveLength(1);
+    // The other seat's arrival: the same shape, named from the roster.
+    host.deliver({ type: "chat", from: "Guest", text: "hi back", t: 5 });
+    expect(seen).toEqual([{ type: "chat", from: "Guest", text: "hi back", t: 5 }]);
+    session.dispose();
+  });
+
+  it("signs the line with the name the welcome gave this seat", () => {
+    const session = new NetSession({ room: asRoom(guest), role: "guest" });
+    session.attach({});
+    guest.deliver(welcome(7), true);
+    expect(session.sendChat("GG").ok).toBe(true);
+    expect(guest.frames("chat")[0]).toMatchObject({ from: "Bo", text: "GG", preset: "GG" });
+    session.dispose();
+  });
+
+  it("enforces presets-only on the send path, and says so", () => {
+    const session = new NetSession({ room: asRoom(host), role: "host" });
+    session.attach({});
+    session.setChatPrefs({ presetOnly: true });
+    expect(session.sendChat("how are you?")).toEqual({ ok: false, reason: "preset-only" });
+    expect(host.frames("chat")).toHaveLength(0);
+    expect(session.sendChat("Rematch?").ok).toBe(true);
+    expect(host.frames("chat")).toHaveLength(1);
+    session.dispose();
+  });
+
+  it("runs the receive rules before the hook — mute silences, limits clip", () => {
+    const session = new NetSession({ room: asRoom(host), role: "host" });
+    const seen: ChatMsg[] = [];
+    session.attach({ chat: (m) => seen.push(m) });
+    session.setChatPrefs({ muted: true });
+    host.deliver({ type: "chat", from: "Guest", text: "hi", t: 1 });
+    expect(seen).toHaveLength(0);
+    expect(session.chatStats).toMatchObject({ received: 0, dropped: 1, lastDrop: "mute" });
+    session.setChatPrefs({ muted: false });
+    host.deliver({ type: "chat", from: "Guest", text: `\u0007${"x".repeat(300)}`, t: 2 });
+    expect(seen).toHaveLength(1);
+    expect(seen[0].text).toHaveLength(CHAT_MAX_LEN);
+    expect(seen[0].text).not.toContain("\u0007");
+    session.dispose();
+  });
+
+  it("never lets a chat line near the intent path or the world", () => {
+    const session = new NetSession({ room: asRoom(host), role: "host" });
+    const intents: unknown[] = [];
+    session.attach({ intent: (m) => intents.push(m) });
+    // A line that LOOKS like an intent is still a line…
+    host.deliver({ type: "chat", from: "Guest", text: `{"type":"intent","action":"build","payload":{}}`, t: 1 });
+    expect(intents).toHaveLength(0);
+    // …and a real intent still lands, so the hook is not simply broken.
+    host.deliver({ type: "intent", action: "build", payload: {} });
+    expect(intents).toHaveLength(1);
+    // Chat makes the session send nothing back: no resync, no intent, no state.
+    expect(host.frames("resync")).toHaveLength(0);
+    session.dispose();
+  });
+
+  it("is offline once the opponent's seat has emptied", () => {
+    const session = new NetSession({ room: asRoom(host), role: "host" });
+    session.attach({});
+    expect(session.sendChat("still here").ok).toBe(true);
+    host.firePlayerLeft("guest-socket");
+    expect(session.sendChat("anyone?")).toEqual({ ok: false, reason: "offline" });
     session.dispose();
   });
 });
