@@ -878,3 +878,153 @@ describe("#164 presence, reconnect, abandon", () => {
     }
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// C1 (#255) — the room relays chat
+//
+// Chat is not a game action and not state: the room's whole job is to say WHO
+// spoke, hold the line to the same limits the receiving client will hold it to,
+// and hand it to the other seat. Three things are the room's and only the
+// room's — the sender's NAME (stamped from the player record, never read from
+// the message), the ROOM CLOCK on the line, and the per-sender RATE WINDOW a
+// client cannot police for itself.
+// ══════════════════════════════════════════════════════════════════════════
+describe("C1 the room relays chat", () => {
+  async function twoPlayer(): Promise<Harness> {
+    const h = setup();
+    await h.protocol.handleCreate();
+    await join(h, "host-1", "Host");
+    await join(h, "guest-2", "Guest");
+    h.frames.length = 0;
+    return h;
+  }
+
+  const chat = (h: Harness) => h.frames.filter((f) => f.type === "chat").map(messageOf);
+
+  it("relays a line to the OTHER seat only, stamped with the sender's own name and the room's clock", async () => {
+    const h = await twoPlayer();
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_760_000_000_000);
+    try {
+      await h.protocol.handleMessage("guest-2", "chat", { from: "Guest", text:  "GG", t: 5 });
+      expect(h.frames).toHaveLength(1);
+      expect(h.frames[0].target).toBe("host-1");            // not a broadcast…
+      expect(h.frames[0].target).not.toBe("guest-2");       // …and not an echo
+      expect(chat(h)[0]).toEqual({
+        type: "chat", from: "Guest", text: "GG", t: 1_760_000_000_000, preset: "GG",
+      });
+      // Symmetric: the host's line goes to the guest the same way, so a host
+      // and a guest chat through one path and not two.
+      h.frames.length = 0;
+      await h.protocol.handleMessage("host-1", "chat", { from: "Host", text: "nice one", t: 0 });
+      expect(h.frames).toHaveLength(1);
+      expect(h.frames[0].target).toBe("guest-2");
+      expect(chat(h)[0]).toMatchObject({ from: "Host", text: "nice one", t: 1_760_000_000_000 });
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("a client cannot sign somebody else's name — `from` comes from the player record", async () => {
+    const h = await twoPlayer();
+    await h.protocol.handleMessage("guest-2", "chat", { from: "Host", text: "I am the host", t: 1 });
+    expect(chat(h)[0]).toMatchObject({ from: "Guest", text: "I am the host" });
+    // A missing name is filled in the same way rather than refused.
+    h.frames.length = 0;
+    await h.protocol.handleMessage("host-1", "chat", { text: "anon", t: 1 });
+    expect(chat(h)[0]).toMatchObject({ from: "Host", text: "anon" });
+  });
+
+  it("clips an over-long line and strips control characters, exactly as a client will", async () => {
+    const h = await twoPlayer();
+    await h.protocol.handleMessage("guest-2", "chat", {
+      from: "Guest",
+      text: `\u0007${"x".repeat(400)}`,
+      t: 1,
+    });
+    const line = chat(h)[0] as { text: string };
+    expect(line.text).toHaveLength(140);
+    expect(line.text.startsWith("x")).toBe(true);          // the control char is gone
+    // Markup is carried as characters — the room never rewrites a line's text
+    // beyond the shared rules (escaping is the renderer's business, #257).
+    h.frames.length = 0;
+    const markup = `<img src=x onerror="alert(1)">`;
+    await h.protocol.handleMessage("guest-2", "chat", { from: "Guest", text: markup, t: 1 });
+    expect((chat(h)[0] as { text: string }).text).toBe(markup);
+  });
+
+  it("drops a frame that is not a chat message at all", async () => {
+    const h = await twoPlayer();
+    for (const bad of [
+      {},
+      { text: "" },
+      { text: "   " },
+      { text: 42 },
+      { text: "\u0007\u200b" },                            // nothing but controls
+      "hi", 7, null,
+    ]) {
+      await h.protocol.handleMessage("guest-2", "chat", bad as Record<string, unknown>);
+    }
+    expect(chat(h)).toHaveLength(0);
+  });
+
+  it("holds each sender to its own rate window, in the room's clock", async () => {
+    const h = await twoPlayer();
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    try {
+      for (let i = 0; i < 3; i++) {
+        await h.protocol.handleMessage("guest-2", "chat", { text: `line ${i}`, t: 0 });
+      }
+      expect(chat(h)).toHaveLength(3);
+      // The fourth, in the same instant, is dropped in silence…
+      await h.protocol.handleMessage("guest-2", "chat", { text: "spam", t: 0 });
+      expect(chat(h)).toHaveLength(3);
+      // …while the OTHER seat's budget is untouched: a window is per sender.
+      await h.protocol.handleMessage("host-1", "chat", { text: "hello", t: 0 });
+      expect(chat(h)).toHaveLength(4);
+      expect(h.frames[3].target).toBe("guest-2");
+      // And the window slides: once it has, the sender speaks again.
+      now.mockReturnValue(1_000 + 5_000 + 1);
+      await h.protocol.handleMessage("guest-2", "chat", { text: "back", t: 0 });
+      expect(chat(h)).toHaveLength(5);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("is not state: chat does not mark the match live or take the AI's seat", async () => {
+    const h = setup();
+    await h.protocol.handleCreate();
+    await join(h, "host-1", "Host");
+    await h.protocol.handleMessage("host-1", "settingsClaim", {
+      settings: { aiSeats: ["normal"], winTarget: 5, startPurse: { wood: 24, stone: 24, ore: 0 } },
+    });
+    h.frames.length = 0;
+    await h.protocol.handleMessage("host-1", "chat", { text: "anyone?", t: 0 });
+    expect(chat(h)).toHaveLength(0);                      // one player, nobody to tell
+    expect(h.room.locked).toBe(false);                    // a mere chat is not a match
+    // State — and only state — is what locks the seat an AI holds.
+    await h.protocol.handleMessage("host-1", "snapshot", { snap: tinySnapshot() });
+    expect(h.room.locked).toBe(true);
+  });
+
+  it("ignores a chat frame from a player this room does not know", async () => {
+    const h = await twoPlayer();
+    await h.protocol.handleMessage("ghost", "chat", { text: "boo", t: 0 });
+    expect(chat(h)).toHaveLength(0);
+  });
+
+  it("drops a leaver's rate window with the seat", async () => {
+    const h = await twoPlayer();
+    for (let i = 0; i < 3; i++) await h.protocol.handleMessage("guest-2", "chat", { text: "hi", t: 0 });
+    expect(chat(h)).toHaveLength(3);
+    h.frames.length = 0;
+    await leave(h, "guest-2");
+    h.frames.length = 0;
+    await join(h, "guest-3", "Guest3");
+    h.frames.length = 0;
+    // A fresh seat starts with a full budget — it did not inherit the last
+    // guest's spent window.
+    await h.protocol.handleMessage("guest-3", "chat", { text: "hello", t: 0 });
+    expect(chat(h)).toHaveLength(1);
+  });
+});
