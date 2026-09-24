@@ -1058,18 +1058,38 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * The chat lines this client has seen, in order — its own sends and the
    * peer's arrivals alike, so a panel can show one conversation.
    *
-   * THERE IS NO PANEL YET (that is #257). The wire, its safety rules and the
-   * debug hook are this ticket's whole visible half, deliberately: the rules
-   * can be play-tested on a real pair of browsers before any UI exists to hide
-   * behind. `__iso.chat()` is how a probe reads this.
+   * C2 (#257) put the panel on this log: every line that lands here is also
+   * handed to the chrome (`ui.chatLine`), with the speaker's own name and
+   * colour so the panel never has to guess whose seat a frame came from.
+   * `__iso.chat()` reads the same log, which is what lets a probe assert on a
+   * conversation the UI is showing.
    */
   const chatLog: ChatMsg[] = [];
   /** Bound the log: a match can run for hours and nothing prunes it otherwise. */
   const CHAT_LOG_MAX = 50;
 
-  function pushChat(msg: ChatMsg): void {
+  /**
+   * One line into the log and onto the panel. `role` is the LOCAL seat's
+   * answer to "who said this" — mine, or the other seat's — because a wire name
+   * is the room's, not a role: the panel needs both the name (from the frame)
+   * and the seat (from here) to colour the line the way every other surface
+   * colours a player.
+   */
+  function pushChat(msg: ChatMsg, role: "you" | "peer" = "peer"): void {
     chatLog.push(msg);
     if (chatLog.length > CHAT_LOG_MAX) chatLog.splice(0, chatLog.length - CHAT_LOG_MAX);
+    const speaker = role === "you" ? players[0] : players[1];
+    ui?.chatLine({ role, who: msg.from, colour: speaker?.colour ?? "", text: msg.text });
+  }
+
+  /**
+   * C2 (#257): a NOTICE from the room itself — the far seat dropping, coming
+   * back, or emptying for good. It belongs in the conversation, not only in a
+   * toast that is gone in two seconds: "why did nobody answer me" is answered by
+   * the line above it.
+   */
+  function chatNotice(text: string): void {
+    ui?.chatLine({ role: "system", who: "", colour: "", text });
   }
 
   /** TUT-01: the boot tour, while it is open. Held so `dispose` can take its
@@ -1434,7 +1454,44 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // in a hosted game, so the selector is simply not built.
     onSkill: isSolo() ? (key) => setRivalSkill(key) : undefined,
     skill: isSolo() ? skillKey : undefined,
-  }, { rail: railAvailable, newLoop });
+  }, {
+    rail: railAvailable,
+    newLoop,
+    /**
+     * C2 (#257): the chat panel, and the whole of its gate.
+     *
+     * A config is passed ONLY when this client is in a room — solo, a story
+     * contract and `?loop=old` pass nothing, which is the ticket's "multiplayer
+     * only (hidden in solo / vs AI)" read as a construction-time fact rather
+     * than a visibility flag: no other seat, no panel, no dead controls.
+     *
+     * Everything with a rule behind it is the session's (`sendChat` is the
+     * same call `__iso.sendChat` makes, and the guard inside it applies the
+     * length cap, the word filter, presets-only and the rate window to every
+     * line this panel offers): the chrome asks and reports.
+     */
+    chat: net ? {
+      presets: CHAT_PRESETS,
+      maxLength: CHAT_MAX_LEN,
+      getPrefs: () => net!.chatPrefs,
+      setPrefs: (patch) => { net!.setChatPrefs(patch); },
+      send: (text) => {
+        // The wire's own verb, so the panel and `__iso.sendChat` cannot drift:
+        // a line that goes out is logged as MINE (it comes back through the
+        // guard's door, already filtered and stamped), a refusal is described.
+        const res = net!.sendChat(text);
+        if (res.ok) pushChat(res.msg, "you");
+        return res.ok ? { ok: true as const } : { ok: false as const, reason: res.reason };
+      },
+      // The far seat's name once the roster has one; before that (and for a
+      // host whose seat no human took) the header says there is nobody there.
+      peerName: () => {
+        const info = net?.info ?? null;
+        if (!info || info.roster.length < 2) return null;
+        return players[1].name || null;
+      },
+    } : undefined,
+  });
   onBoardChange = () => ui.renderBoard();
   root.appendChild(ui.el);
 
@@ -8010,6 +8067,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // A decided match is already showing its ledger; the far seat
         // emptying now is just teardown (dispose() frees it), not a
         // departure to answer. Say nothing over the ending.
+        // C2 (#257): the conversation says it too. A toast is gone in two
+        // seconds; the last line of a chat log that just went quiet is where a
+        // player looks to find out why.
+        chatNotice(`${who} left the room.`);
         if (endingShown || leftSheet) return;
         toast(`${escText(who)} left the room.`, "bad");
         openLeftSheet({
@@ -8030,13 +8091,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         mpPeerAwayName = username || rival.name || "Opponent";
         mpPeerAwayUntil = performance.now() + Math.max(graceMs, 0);
         mpDisconnectEpisode++;
+        const grace = Math.round(Math.max(graceMs, 0) / 1000);
+        chatNotice(`${mpPeerAwayName} disconnected — holding their seat for ${grace}s…`);
         toast(`${escText(mpPeerAwayName)} disconnected — holding their seat for `
-          + `${Math.round(Math.max(graceMs, 0) / 1000)}s…`, "info");
+          + `${grace}s…`, "info");
       },
       opponentReconnected: (username) => {
         duelPeer("back");
         mpPeerAwayUntil = 0;
-        toast(`${escText(username || mpPeerAwayName || "Opponent")} is back — the match resumes.`, "good");
+        const back = username || mpPeerAwayName || "Opponent";
+        chatNotice(`${back} is back — the match resumes.`);
+        toast(`${escText(back)} is back — the match resumes.`, "good");
         // The seat may have emptied and refilled (eviction, then a fresh
         // join): a standing departure sheet is now a lie — take it down, and
         // call off a Leave that was waiting on a verdict that will not come.
@@ -11861,7 +11926,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     sendChat: (text: string) => {
       if (!net) return { ok: false as const, reason: "offline" as const };
       const res = net.sendChat(text);
-      if (res.ok) pushChat(res.msg);
+      // C2 (#257): this line is MINE, and the panel says so — the same door the
+      // composer uses, so a console send shows up in the conversation exactly
+      // as a typed one does.
+      if (res.ok) pushChat(res.msg, "you");
       return res;
     },
     /**
