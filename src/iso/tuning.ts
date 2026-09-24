@@ -48,7 +48,7 @@
 // answer per difficulty, and each of the three answers is the same code.
 // ══════════════════════════════════════════════════════════════════════════
 import {
-  CARGO, DEFAULT_DIFFICULTY, DEPOT_TIER_MAX, DIFFICULTY_RULES, OBSTACLE_RAMP, TUNING,
+  CARGO, DEFAULT_DIFFICULTY, DEPOT_TIER_MAX, DIFFICULTY_RULES, OBSTACLE_RAMP, TUNING, TUNING_STARS,
   type Cargo, type DifficultyKey, type DifficultyRules, type ObstacleRules, DEPOT_LEVELS,
 } from "./config";
 import { RIVAL_SKILLS, type SkillKey } from "./skill";
@@ -441,6 +441,105 @@ export const tuningSessionYield = (s: TuningSession, floor: number = TUNING.minY
 
 /** L9 (#224): the Gold this session pays if it is played out now. */
 export const tuningSessionGold = (s: TuningSession): number => tuningGoldFor(s.score);
+
+// ══════════════════════════════════════════════════════════════════════════
+// #300 — the RESULTS a session ends on: its stars, and its outcome.
+//
+// When a session ends (the budget spent and the board settled, or Finish
+// pressed) the game freezes what it is worth, the results pop-up counts it
+// up, and its one Confirm key applies it. Both halves are here and pure:
+//
+//   • `tuningStarScores` / `tuningStarsFor` — the rating, read off the ONE
+//     table (`TUNING_STARS`, config.ts), whose rows are points on the curve
+//     `tuningYieldFor` draws;
+//   • `depotSessionOutcome` — everything a Depot's settle does to the numbers
+//     (the curve, the Depot's cap, the never-drops rule, the Gold), computed
+//     with the SAME functions the settle has always used, so the yield the
+//     card shows is the yield the Depot gets.
+// ══════════════════════════════════════════════════════════════════════════
+
+/** #300: a session's rating. 0 = nothing cleared (no star at all). */
+export type TuningStars = 0 | 1 | 2 | 3;
+
+/**
+ * #300: the score each row of `TUNING_STARS` asks for, in table order — the
+ * row's point on the curve times `TUNING.targetScore` (the curve is linear
+ * from score 0 to `targetScore`). Never below 1: the bottom of the curve is
+ * score 0, and a session that cleared nothing earns no star.
+ */
+export function tuningStarScores(): number[] {
+  return TUNING_STARS.map((row) => Math.max(1, Math.ceil(row.curve * TUNING.targetScore - 1e-9)));
+}
+
+/** #300: how many stars a score earns — the highest row of `TUNING_STARS` it reaches. */
+export function tuningStarsFor(score: number): TuningStars {
+  if (!Number.isFinite(score) || score <= 0) return 0;
+  const bars = tuningStarScores();
+  let stars: TuningStars = 0;
+  TUNING_STARS.forEach((row, i) => { if (score >= bars[i]) stars = Math.max(stars, row.stars) as TuningStars; });
+  return stars;
+}
+
+/** #300: the verdict word for a rating (`TUNING_STARS[].label`); empty for none. */
+export function tuningStarLabel(stars: number): string {
+  return TUNING_STARS.find((row) => row.stars === stars)?.label ?? "";
+}
+
+/** #300: what a Depot's session settles to — see `depotSessionOutcome`. */
+export interface TuningOutcome {
+  /** The session's score. */
+  score: number;
+  /** Its rating (`tuningStarsFor`) — 0 for an abandon, which is never rated. */
+  stars: TuningStars;
+  /** The level the Depot was paying at before — the count-up starts here. */
+  from: number;
+  /** What the curve pays for the score on this floor, before the Depot's cap. */
+  raw: number;
+  /** EXACTLY what the Depot is set to (`settleTuningYield`). */
+  yield: number;
+  /** The Depot's level cap, when there is one. */
+  cap?: number;
+  /** The curve's number was over the cap (the rest is paid as Gold). */
+  capped: boolean;
+  /** The Depot kept its old, higher level (the rules' never-drops clamp). */
+  kept: boolean;
+  /** All the Gold the settle pays: the score's own plus the overshoot. */
+  gold: number;
+  /** The part of `gold` paid for the score played past the cap. */
+  overshootGold: number;
+}
+
+/**
+ * #300 — a Depot session's whole settlement, as numbers: the curve, capped
+ * by the Depot's level (2026-09), clamped by `yieldNeverDrops` (L6), and the
+ * Gold (L9 plus the overshoot). Pure, and built from the functions the settle
+ * already used — `settleTuningYield`, `overshootGold`, `tuningGoldFor` — so
+ * the pop-up that shows `yield` and the Confirm that applies it can never be
+ * two answers. An abandon pays the difficulty's default and no Gold.
+ */
+export function depotSessionOutcome(
+  score: number, prev: number | undefined, rules: DifficultyRules,
+  opts: { cap?: number; abandon?: boolean } = {},
+): TuningOutcome {
+  const abandon = opts.abandon === true;
+  const s = Number.isFinite(score) && score > 0 ? score : 0;
+  const raw = abandon ? abandonYieldFor(rules) : tuningYieldFor(s, rules.minYield);
+  const set = settleTuningYield(prev, s, rules, { abandon, cap: opts.cap });
+  const earned = roundYield(opts.cap !== undefined ? Math.min(raw, opts.cap) : raw);
+  const over = abandon || opts.cap === undefined ? 0 : overshootGold(s, rules, opts.cap);
+  return {
+    score: s,
+    stars: abandon ? 0 : tuningStarsFor(s),
+    from: roundYield(prev ?? rules.minYield),
+    raw,
+    yield: set,
+    cap: opts.cap,
+    capped: !abandon && opts.cap !== undefined && raw > opts.cap,
+    kept: set > earned,
+    gold: (abandon ? 0 : tuningGoldFor(s)) + over,
+    overshootGold: over,
+  };
+}
 
 /**
  * What ABANDONING pays on the SHIPPED mapping — the defined default a closed or

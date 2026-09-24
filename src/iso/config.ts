@@ -142,6 +142,49 @@ export const TUNING = {
   maxGold: 3,
 } as const;
 
+/** #300: one row of `TUNING_STARS`. */
+export interface TuningStarRow {
+  /** The rating this row awards. */
+  stars: 1 | 2 | 3;
+  /**
+   * WHERE on the score→yield curve the star is earned: the share (0…1) of the
+   * climb from the floor (score 0) to `TUNING.maxYield` (score
+   * `TUNING.targetScore`). The curve is linear (`tuningYieldFor`), so the score
+   * the row asks for is `curve × TUNING.targetScore` (`tuningStarScores` in
+   * tuning.ts). A share, not a yield, so the bar is the same on every
+   * difficulty: Easy's raised floor lifts the yield a star is worth, not the
+   * score it takes.
+   */
+  curve: number;
+  /** The results pop-up's one-word verdict for this rating. */
+  label: string;
+}
+
+/**
+ * #300 — THE star table: how the results pop-up a tuning session ends on
+ * rates it, one to three stars.
+ *
+ * Derived from the score→yield curve rather than invented beside it, so the
+ * stars and the yield can never disagree about what a good session is:
+ *
+ *   ★      any cleared gem — the session lifted the yield off its floor
+ *   ★★     half the climb — score 30: ×1.75 on Normal, ×2 on Easy
+ *   ★★★    the whole climb — score 60, `TUNING.maxYield`: a max-yield session
+ *
+ * A session that cleared nothing earns NO star — the same line the rest of
+ * the game draws (`closeTuningSession`'s `played`: an empty session opens no
+ * rung and confirms no city upgrade). The rows are in rising order and this
+ * is the only place the thresholds live: `tuningStarsFor` (tuning.ts) reads
+ * them, the pop-up lights its stars off them, and the city's session is rated
+ * on the same table (its `townBonusFor` climbs to the full ceiling at the same
+ * `targetScore`).
+ */
+export const TUNING_STARS: readonly TuningStarRow[] = [
+  { stars: 1, curve: 0, label: "Tuned" },
+  { stars: 2, curve: 0.5, label: "Well tuned" },
+  { stars: 3, curve: 1, label: "Max yield" },
+];
+
 // ── L6 (#220): difficulty = decay, not whether match-3 exists ─────────────
 /**
  * The ONE place the three difficulties differ as ECONOMY rules.
