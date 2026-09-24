@@ -341,3 +341,63 @@ describe("town-click plant placement", () => {
     expect(plantRefusal(grid, track, st, 60, 60)).toBe("occupied");
   });
 });
+
+describe("#298 town buildings are obstacles, streets are not", () => {
+  it("a street is not a house, and a grown-ring origin claims no tiles", async () => {
+    const { townHouseAt, townObstacleTiles } = await import("../../src/iso/grid");
+    const t = town(0, 20, 20, 3, [[20, 21], [21, 21]]);
+    const grid = flatGrid([t]);
+    expect(townHouseAt(grid, 20, 20)).toBe(true);
+    expect(townHouseAt(grid, 21, 20)).toBe(true);
+    expect(townHouseAt(grid, 20, 21)).toBe(false);
+    expect(townHouseAt(grid, 21, 21)).toBe(false);
+    const claimed = townObstacleTiles(t, [
+      // 2×1 turned once becomes 1×2, spilling onto the street at (20, 21).
+      { tx: 20, ty: 20, w: 2, h: 1, rot: 1 },
+      { tx: 30, ty: 30, w: 1, h: 1 },
+    ], (x, y) => x === 30 && y === 30);
+    const has = (x: number, y: number) => claimed.some(([cx, cy]) => cx === x && cy === y);
+    expect(has(20, 20)).toBe(true);
+    expect(has(20, 21)).toBe(true);
+    expect(has(21, 21)).toBe(false);
+    expect(has(30, 30)).toBe(false);
+  });
+
+  it("rail crosses a town street and refuses a house, a platform and a rail depot", async () => {
+    const { townObstacleTiles } = await import("../../src/iso/grid");
+    const { createRailState, railTileRefusal, platformRefusal, depotRefusal } = await import("../../src/iso/rail");
+    const { previewDrag } = await import("../../src/iso/track");
+    const t = town(0, 20, 20, 3, [[21, 21]]);
+    const grid = flatGrid([t]);
+    const claimed = townObstacleTiles(t, [{ tx: 20, ty: 20, w: 1, h: 1 }]);
+    const set = new Set(claimed.map(([x, y]) => tIdx(x, y)));
+    grid.builtAt = (x, y) => set.has(tIdx(x, y)) ? "plant" : null;
+    const rail = createRailState();
+    const track = createTrack();
+    expect(railTileRefusal(grid, track, rail, 1, 21, 21)).toBe("ok");
+    expect(railTileRefusal(grid, track, rail, 1, 20, 20)).toBe("occupied");
+    expect(platformRefusal(grid, [], [], 1, 20, 20, "se")).toBe("occupied");
+    expect(depotRefusal(grid, rail, 1, 20, 20, "se")).toBe("occupied");
+    // Rail may still run along the street. A road may not enter the house row.
+    const { railPreview } = await import("../../src/iso/rail");
+    const alongStreet = railPreview(grid, track, rail, 1, { stone: 99 }, 19, 21, 23, 21);
+    expect(alongStreet.truncated).toBe(false);
+    expect(alongStreet.blocked).toEqual([]);
+    expect(alongStreet.tiles).toContainEqual([21, 21]);
+    const throughHouse = previewDrag(grid, track, "dirt", { stone: 99 }, 21, 18, 21, 22);
+    expect(throughHouse.truncated).toBe(true);
+    expect(throughHouse.blocked).toContainEqual([21, 20]);
+    expect(throughHouse.tiles).not.toContainEqual([21, 20]);
+  });
+
+  it("the rival's rail planner treats a plant tile as impassable", async () => {
+    const { railStepCost, IMPASSABLE } = await import("../../src/iso/ai");
+    const { createRailState } = await import("../../src/iso/rail");
+    const grid = flatGrid();
+    grid.builtAt = (x, y) => (x === 12 && y === 12) ? "plant" : null;
+    const rail = createRailState();
+    const track = createTrack();
+    expect(railStepCost(grid, track, rail, 2, 12, 12)).toBe(IMPASSABLE);
+    expect(railStepCost(grid, track, rail, 2, 13, 12)).toBeLessThan(IMPASSABLE);
+  });
+});

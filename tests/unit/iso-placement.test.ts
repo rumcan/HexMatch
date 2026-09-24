@@ -266,3 +266,55 @@ describe("PP-17 a Factory never stands on a road", () => {
     }
   });
 });
+
+describe("#298 depot placement refuses a plant in every rotation and facing", () => {
+  function flat(): Grid {
+    return {
+      w: MAP_W, h: MAP_H,
+      terrain: new Uint8Array(MAP_W * MAP_H).fill(GRASS),
+      industries: [],
+      towns: [],
+      occupancy: new Int16Array(MAP_W * MAP_H).fill(-1),
+      seed: 1,
+    };
+  }
+
+  it("every quarter-turn blocks a depot lot on the stamp, for every facing, and the edge lot does not", async () => {
+    const { footprintTilesAt, rotatedSpan } = await import("../../src/iso/grid");
+    const { DEPOT_FACINGS } = await import("../../src/iso/depot");
+    for (const rot of [0, 1, 2, 3]) {
+      const g = flat();
+      const plant = footprintTilesAt(10, 10, 1, 3, rot);
+      const set = new Set(plant.map(([x, y]) => tIdx(x, y)));
+      g.builtAt = (x, y) => set.has(tIdx(x, y)) ? "plant" : null;
+      for (const facing of DEPOT_FACINGS) {
+        const on = planDepotPlacement(g, [], 10, 10, { facing });
+        expect(on.valid, `rot ${rot} facing ${facing}`).toBe(false);
+        expect(on.code, `rot ${rot} facing ${facing}`).toBe("occupied");
+      }
+      const [fw, fh] = rotatedSpan(1, 3, rot);
+      // A 2×2 just past the stamp, sharing no tile with it.
+      const ex = 10 + fw, ey = 10;
+      const edge = planDepotPlacement(g, [], ex, ey);
+      expect(edge.code, `rot ${rot} edge lot`).not.toBe("occupied");
+      expect(edge.footprint.every((t) => t.ok || edge.code !== "occupied")).toBe(true);
+      for (const tile of edge.footprint) {
+        expect(set.has(tIdx(tile.tx, tile.ty)), `rot ${rot} edge overlaps`).toBe(false);
+      }
+    }
+  });
+
+  it("the factories option refuses a rotated footprint even when builtAt is unset", async () => {
+    const g = flat();
+    const on = planDepotPlacement(g, [], 11, 10, {
+      factories: [{ tx: 10, ty: 10, w: 1, h: 3, rot: 1 }],
+    });
+    expect(on.valid).toBe(false);
+    expect(on.code).toBe("occupied");
+    // rot 1 of a 1×3 is three tiles along x at y = 10. y = 11 is the edge.
+    const edge = planDepotPlacement(g, [], 10, 11, {
+      factories: [{ tx: 10, ty: 10, w: 1, h: 3, rot: 1 }],
+    });
+    expect(edge.code).not.toBe("occupied");
+  });
+});
