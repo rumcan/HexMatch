@@ -47,6 +47,45 @@ export const MAX_WAIT_MS = 30_000;
 /** Matches the `.iso-loading-out` transition in styles.css. */
 export const FADE_MS = 380;
 
+// ══════════════════════════════════════════════════════════════════════════
+// #302 — the reveal gate: the sim clocks start when the game is SHOWN.
+//
+// The loading screen above answers "is the art ready"; the frame loop needs
+// "may the sim run", which is a sticky latch, not a level: once the game has
+// been revealed the clocks never stop again, whatever later settles. The
+// game arms it every frame with `loading.ready || !loading.active` — ready
+// on the normal path, "no overlay" before `show()` ever mounts one (the
+// tour and the difficulty prompt sit over a live map, as they always have)
+// and after the MAX_WAIT_MS backstop lifts it (a truly hung request must
+// never freeze the sim behind a dismissed bar).
+//
+// Pure on purpose: no DOM, no timers, so the latch itself pins in a unit
+// test without booting the game (tests/unit/iso-302-preload.test.ts).
+// ══════════════════════════════════════════════════════════════════════════
+
+export interface RevealGate {
+  /** True once the gate has flipped — sticky for the life of the game. */
+  readonly live: boolean;
+  /**
+   * Offer the frame's reveal condition. Returns true exactly once, on the
+   * call that flips the gate, so the frame loop can re-base its pacing
+   * clocks onto the reveal instant there and only there.
+   */
+  arm(revealed: boolean): boolean;
+}
+
+export function createRevealGate(): RevealGate {
+  let live = false;
+  return {
+    get live() { return live; },
+    arm(revealed: boolean) {
+      if (live || !revealed) return false;
+      live = true;
+      return true;
+    },
+  };
+}
+
 export function createLoadingScreen(host: HTMLElement, tasks: readonly LoadingTask[]): LoadingScreen {
   const settled = new Set<string>();
   const known = new Set(tasks.map((t) => t.id));
