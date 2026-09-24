@@ -344,6 +344,14 @@ describe("C2 (#257) the chat panel", () => {
       // key ON the map (the root), not one that started inside the panel.
       key(root(), "w");
       expect(seen).toEqual(["w"]);
+
+      // …and so is a key pressed with the collapsed BAR still under the focus
+      // (a click on the head leaves it there): shutting the conversation hands
+      // the keyboard back at once, rather than after a click on the map.
+      headEl().click();                                   // open…
+      headEl().click();                                   // …and shut again
+      key(headEl(), "w");
+      expect(seen).toEqual(["w", "w"]);
     } finally {
       window.removeEventListener("keydown", onGameKey);
     }

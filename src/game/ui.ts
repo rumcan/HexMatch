@@ -1795,10 +1795,14 @@ export function createOriginalUi(
       paintChatBadge();
       paintChatPrefs();
       chatLog.scrollTop = chatLog.scrollHeight;
-      // Typing is what an open panel is for. On a phone this raises the soft
-      // keyboard over the sheet — which the ✕, Esc and a tap on the map all
-      // put away again, so the map is never lost to it.
-      chatInput.focus();
+      // Typing is what an open panel is for — on a desktop, where the keyboard
+      // is already there and cannot cover anything. A PHONE opens the sheet
+      // WITHOUT raising the soft keyboard: the first thing a player does with
+      // an unread badge is read what was said, and a keyboard that covers the
+      // log is a keyboard they have to put away first. Tapping the field (or a
+      // preset) brings it up, and Esc, the bar itself or a tap on the map puts
+      // the sheet — and the map under the thumb — back.
+      if (!isPhoneViewport()) chatInput.focus();
     } else {
       chatInput.blur();
       setChatNote(null);
@@ -1837,10 +1841,17 @@ export function createOriginalUi(
   // not the browser deigns to imply a submit from it.
   chatForm.onsubmit = (e) => { e.preventDefault(); sendChatNow(); };
   chatDock.addEventListener("keydown", (e) => {
-    // Keys that start in the chat belong to the chat. The game's own hotkey
-    // handler already ignores a typing target, and this covers the rest: a
-    // panel whose controls have the focus must never pan the camera, arm a
-    // tool or rotate a platform out from under the sentence being typed.
+    // Keys that start in the chat belong to the chat — WHILE the chat is up.
+    // The game's own hotkey handler already ignores a typing target, and this
+    // covers the rest: a panel whose controls have the focus must never pan the
+    // camera, arm a tool or rotate a platform out from under the sentence
+    // being typed.
+    //
+    // Shut, the panel gives the keyboard straight back. Nothing in the dock can
+    // hold the focus then except the head itself, and a player who has just
+    // closed the conversation must get WASD back on the very next press — not
+    // after a click on the map to take the focus off the bar.
+    if (!chatOpen) return;
     e.stopPropagation();
     if (e.key === "Enter") { e.preventDefault(); sendChatNow(); return; }
     if (e.key === "Escape") {

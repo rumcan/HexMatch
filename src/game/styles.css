@@ -5458,7 +5458,10 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   left: 320px;
   right: calc(var(--board-px, 496px) + 40px);
   width: auto; max-width: 320px;
-  bottom: calc(max(52px, var(--resbar-h, 52px)) + 8px);
+  /* One lane above the placement hint pill (.modebar): the pill is centred at
+     the same bottom edge and is up the whole time a tool is in the hand, so
+     the two would otherwise fight over the middle of the map every drag. */
+  bottom: calc(max(52px, var(--resbar-h, 52px)) + 48px);
   z-index: 44;
   display: flex; flex-direction: column;
   border: 1px solid var(--brass-lo);
@@ -5580,11 +5583,14 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
    the map puts the sheet — and the map under the player's thumb — back. */
 .chat-scrim { display: none; }
 .ui-root[data-phone="1"] .chat-scrim:not(.hidden) {
-  display: block; position: fixed; inset: 0; z-index: 43;
+  /* Above the floating cluster (45): the sheet is a place the player is, so
+     one tap anywhere — a FAB included — puts it away. */
+  display: block; position: fixed; inset: 0; z-index: 45;
   background: rgba(4, 3, 2, .5);
 }
 .ui-root[data-phone="1"] .chat-dock {
   left: 10px; right: auto; width: auto; max-width: calc(100vw - 20px);
+  z-index: 46;
   bottom: calc(152px + env(safe-area-inset-bottom, 0px));
   border-radius: 999px;
 }
