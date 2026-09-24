@@ -22,9 +22,17 @@
 //      canvas bottom), so the compiled art lands pixel-for-pixel where the
 //      sheet art did.
 //
+//   FOOT ROOM (F1 Addition A): `--foot N` grows the canvas DOWNWARD by N
+//   (2× px, snapped up to a multiple of 4) so details in front of the
+//   building (steps, lawn/fence edge) have somewhere to live: the south
+//   vertex lands at H − N instead of H, and the printed footprints.json
+//   snippet declares the matching footRoom. Only use it for details in
+//   front of the building — to make a building taller, grow the canvas
+//   UPWARD (the art's top is never moved by this flag).
+//
 // Usage:
 //   node tools/fit-building-art.mjs <sprite-name> <raw-art.png> [--out <file>]
-//                                     [--scale-ref width|height] [--dry]
+//                                     [--scale-ref width|height] [--foot N] [--dry]
 //
 // Prints the placement numbers (canvas, anchor, offsets) for audit logs.
 // ══════════════════════════════════════════════════════════════════════════
@@ -46,7 +54,7 @@ const flag = (k, d) => {
   return i >= 0 ? args[i + 1] : d;
 };
 if (!name || !rawPath || args.includes("--help") || args.includes("-h")) {
-  console.log("usage: node tools/fit-building-art.mjs <sprite-name> <raw-art.png> [--scale-ref width|height] [--scale-mult N] [--margin N] [--dry]");
+  console.log("usage: node tools/fit-building-art.mjs <sprite-name> <raw-art.png> [--scale-ref width|height] [--scale-mult N] [--margin N] [--foot N] [--dry]");
   process.exit(1);
 }
 const scaleRef = flag("--scale-ref", "width"); // width | height
@@ -57,6 +65,12 @@ const MARGIN = Number(flag("--margin", "8"));  // canvas breathing room, 2× px
 // art that reads too small. Verify with tools/overlay-building-template.mjs.
 const SCALE_MULT = Number(flag("--scale-mult", "1"));
 const dry = args.includes("--dry");
+// --foot N: foot room below the south vertex (2× px, snapped up to /4).
+const FOOT_RAW = Number(flag("--foot", "0"));
+if (!Number.isInteger(FOOT_RAW) || FOOT_RAW < 0 || FOOT_RAW > 512) {
+  console.error("--foot expects an integer 0–512 (2× px below the south vertex)");
+  process.exit(1);
+}
 
 const snap4 = (v) => Math.ceil(v / 4) * 4;
 
@@ -175,10 +189,16 @@ const artH = Math.max(1, Math.round(artBox.height * scale));
 //    the reference's ground line, centred — so TALLER art grows upward
 //    (chimneys) instead of sinking through the ground.
 const W = snap4(Math.max(spec.S, artW + MARGIN * 2));
-const H = snap4(Math.max(spec.S, artH + (refAnchor.y - refBox.top - refBox.height) + MARGIN));
-// ref bbox top-left position on the canvas, then bottom-align + centre:
+const H0 = snap4(Math.max(spec.S, artH + (refAnchor.y - refBox.top - refBox.height) + MARGIN));
+// --foot: grow the canvas DOWNWARD (the art's top never moves, so the south
+// vertex lands at H − FOOT instead of H). Both terms are /4-snapped, so the
+// vertex stays exact.
+const FOOT = snap4(FOOT_RAW);
+const H = H0 + FOOT;
+// ref bbox top-left position on the canvas, then bottom-align + centre
+// against the vertex row (H − FOOT):
 const bx = W / 2 - refAnchor.x + refBox.left;
-const by = H - refAnchor.y + refBox.top;
+const by = (H - FOOT) - refAnchor.y + refBox.top;
 const dx = Math.round(bx + (refBox.width - artW) / 2);
 const dy = Math.round(by + refBox.height - artH);
 
@@ -197,6 +217,8 @@ console.log(JSON.stringify({
   name, raw: rawPath, keyed,
   ref: { w: def.w * 2, h: def.h * 2, bbox: [refBox.left, refBox.top, refBox.width, refBox.height], anchor: [refAnchor.x, refAnchor.y] },
   art: { bbox: [artBox.left, artBox.top, artBox.width, artBox.height], scaled: [artW, artH], scale: +scale.toFixed(4), scaleMult: SCALE_MULT, placed: [dx, dy] },
-  canvas: { W, H, baseS: spec.S, anchor: [W / 2, H - (def.footprint[0] + def.footprint[1]) * 16] },
+  canvas: { W, H, baseS: spec.S, anchor: [W / 2, H - FOOT - (def.footprint[0] + def.footprint[1]) * 16], vertex: [W / 2, H - FOOT] },
+  foot: FOOT,
+  declare: FOOT ? { [name]: { footprint: def.footprint, footRoom: FOOT } } : "(footRoom 0 — no declaration needed)",
   out: dry ? "(dry run)" : out,
 }, null, 2));
