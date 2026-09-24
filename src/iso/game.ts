@@ -945,7 +945,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // mid-function) is an obstacle before the next `syncWorld`. The live
     // footprint is the square `FACTORY_FOOTPRINT`; a non-square stamp uses the
     // same `tileInFootprint` helper, which swaps axes on an odd quarter-turn.
-    if (eco.factories.some((f) => tileInFootprint(
+    //
+    // The retired `?loop=old` hatch is the exception, and only when the boot
+    // did not opt into the live loop. W8 asks `canBuildOn` whether a Factory
+    // that is already down still sits on road-legal ground — flat, off water,
+    // off a town. That question is about the tile. A `{ newLoop: true }` boot
+    // (and every default / room / story boot) still reports the footprint as
+    // a plant, so the other seat cannot pave it.
+    if ((opts.newLoop === true || loopParam !== "old") && eco.factories.some((f) => tileInFootprint(
       x, y, f.tx, f.ty, FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1],
     ))) return "plant";
     if (townPlantReady) {

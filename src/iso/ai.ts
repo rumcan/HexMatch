@@ -433,6 +433,23 @@ export function networkTiles(track: Track, kind: TrackKind, factory: Factory): [
 }
 
 /**
+ * True when (x, y) is unbuildable only because a plant stands on it. Water,
+ * rough (for a paved road), a town street or an industry stay refused — a
+ * factory parked in a water enclave must not grow a road from the far side
+ * of that water (W8: nothing can be built from there).
+ */
+function blockedOnlyByPlant(grid: Grid, kind: TrackKind, x: number, y: number): boolean {
+  if (grid.builtAt?.(x, y) !== "plant") return false;
+  const saved = grid.builtAt;
+  grid.builtAt = (tx, ty) => (tx === x && ty === y) ? null : (saved?.(tx, ty) ?? null);
+  try {
+    return canBuildOn(grid, kind, x, y);
+  } finally {
+    grid.builtAt = saved;
+  }
+}
+
+/**
  * #298: with no track yet the only network source is the plant floor, which
  * `builtAt` reports as unbuildable. The player's drag steps over that floor
  * (PP-15); the rival must not pave it either. Depart from the buildable tile
@@ -916,10 +933,15 @@ export function planCandidates(
           : nearestSource(sources, hx, hy);
         // #298: no track yet means the only source is the plant floor. It is
         // not a road. Leave from the edge instead of paving it or dropping
-        // the plan. Any real track tile in `sources` keeps the old answer.
-        if ((!src || !canBuildOn(grid, kindPref, src[0], src[1]))
+        // the plan — but only when the floor is legal ground with a plant on
+        // it. A water enclave (W8's (0,0) corner) is not that: departing from
+        // a shoulder outside the water would build a network the plant can
+        // never join. Any real track tile in `sources` keeps the old answer.
+        if (src && !canBuildOn(grid, kindPref, src[0], src[1])
           && sources.every(([x, y]) => plantFootprintTiles(factory.tx, factory.ty)
-            .some(([px, py]) => px === x && py === y))) {
+            .some(([px, py]) => px === x && py === y))
+          && sources.every(([x, y]) => canBuildOn(grid, kindPref, x, y)
+            || blockedOnlyByPlant(grid, kindPref, x, y))) {
           src = departBesidePlant(grid, kindPref, factory, hx, hy);
         }
         if (!src || !canBuildOn(grid, kindPref, src[0], src[1])) continue;
