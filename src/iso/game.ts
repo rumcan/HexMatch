@@ -97,6 +97,7 @@ import { loadVehicleLayers } from "./vehicle-art";
 import {
   FIELD_OCC, generateMap, grownTownHouses, resolveMapSeed, seedTownLevels, setTownLevel,
   TOWN_BLOCK, townBuildings, townForSeat, townGrownRings, townTier,
+  tileInFootprint, townHouseAt, townObstacleTiles,
   type Grid, type Industry, type Town,
 } from "./grid";
 import {
@@ -237,7 +238,7 @@ import {
 // and every cost in `rail.ts`/`config.ts`: this file is the one place those
 // rules are APPLIED (tools, clicks, the panel, the frame), never re-derived.
 import {
-  createRailState, railPreview, buildRail, demolishRail, structureAt, hasRail, railDrawLayer,
+  createRailState, railPreview, buildRail, demolishRail, structureAt, hasRail, railDrawLayer, railTileRefusal,
   placePlatform, placeDepot, platformRefusal, depotRefusal, resolveAnchor,
   RAIL_COSTS, RAIL_REFUSAL_TEXT, footprintTiles,
   railStructureItems, trainItems, autoTrains, layPlatformTrack, platformTrackAt, RAIL_DIAG, assignLine, renameLine, buyTrain, startLine, recallTrain, sellTrain, tickTrains,
@@ -922,10 +923,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       : (isSolo() ? skill().winTarget : settings.winTarget));
 
   const eco: EconomyState = { grid, track, harvesters: [], factories: [], rail };
-  // Playtest (2026-09): the map learns what the game built on it that
-  // `occupancy` does not record — rail, platforms and truck Depot lots — so a
-  // road never runs along a rail line, and nothing is built over a platform or
-  // a Depot (for either seat: the rival's planner reads the same grid).
+  // Playtest (2026-09) / #298: the map learns what the game built on it that
+  // `occupancy` does not record — rail, platforms, truck Depot lots, and
+  // processing plants / town buildings — so a road never runs along a rail
+  // line, and nothing is built over a platform, a Depot, the other seat's
+  // plant or a town building (the rival's planner reads the same grid).
+  // Town-building tiles are rebuilt in `syncWorld` from the same layout the
+  // map draws. Until that first sync, house tiles (not streets) stand in.
+  let townPlantTiles = new Set<number>();
+  let townPlantReady = false;
   grid.builtAt = (x, y) => {
     if (structureAt(rail, x, y)) return "platform";
     if (hasRail(rail.rail, x, y)) {
@@ -935,8 +941,22 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       return bits === 0b1010 ? "rail-x" : bits === 0b0101 ? "rail-y" : "rail";
     }
     if (eco.harvesters.some((h) => !isRailDepot(h) && depotContains(h.tx, h.ty, x, y))) return "depot";
+    // Plants are scanned live: a push into `eco.factories` (a test, a restore
+    // mid-function) is an obstacle before the next `syncWorld`. The live
+    // footprint is the square `FACTORY_FOOTPRINT`; a non-square stamp uses the
+    // same `tileInFootprint` helper, which swaps axes on an odd quarter-turn.
+    if (eco.factories.some((f) => tileInFootprint(
+      x, y, f.tx, f.ty, FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1],
+    ))) return "plant";
+    if (townPlantReady) {
+      if (townPlantTiles.has(tIdx(x, y))) return "plant";
+    } else if (townHouseAt(grid, x, y)) return "plant";
     return null;
   };
+  /** PP-15: the local seat may START a road drag on its own plant or depot.
+   *  `canBuildOn` refuses those tiles (#298); the drag steps over them. */
+  const ownFloor = (tx: number, ty: number) =>
+    structureTiles(eco.factories, eco.harvesters, me.i + 1).has(tIdx(tx, ty));
   let nextHarvesterId = 1;
   /**
    * RV-01 / L7 (#221): road traffic. One lorry per SERVICED DEPOT once it
@@ -2533,20 +2553,38 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (track.dirt[i] || track.road[i]) built.add(i);
     }
     const isBuilt = (tx: number, ty: number): boolean => built.has(tIdx(tx, ty));
+    // #298: town buildings (not streets, not the L17 grown ring) are obstacles
+    // for the other seat's roads, for rail, and for depot placement. Rebuilt
+    // here so the footprints match the art `townBuildings` just laid — a 2×2
+    // tower claims both of its tiles, in whatever rotation the atlas gives it.
+    townPlantTiles = new Set();
     const townItems = grid.towns.flatMap((t) => {
       const tier = newLoop ? townTier(t) : TOWN_TIER_LEGACY;
+      const ring = new Set<number>();
       if (tier >= 2) {
         for (const [gx, gy] of grownTownHouses(t, grid, townGrownRings(tier), isBuilt)) {
-          built.add(tIdx(gx, gy));
-          blocked.add(tIdx(gx, gy));
+          const gi = tIdx(gx, gy);
+          built.add(gi);
+          blocked.add(gi);
+          ring.add(gi);
         }
       }
-      return townBuildings(t, footprintOf, { tier, grid, blocked: isBuilt }).map((b) => ({
+      const laid = townBuildings(t, footprintOf, { tier, grid, blocked: isBuilt });
+      for (const [x, y] of townObstacleTiles(
+        t,
+        laid.map((b) => {
+          const [w, h] = footprintOf(b.sprite);
+          return { tx: b.tx, ty: b.ty, w, h };
+        }),
+        (x, y) => ring.has(tIdx(x, y)),
+      )) townPlantTiles.add(tIdx(x, y));
+      return laid.map((b) => ({
         sprite: b.sprite,
         tx: b.tx, ty: b.ty,
         ref: { kind: "town", id: t.id } as unknown,
       }));
     });
+    townPlantReady = true;
     world.sceneryBlocked = blocked;
     world.extra = [
       ...townItems,
@@ -8250,6 +8288,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const plan = factoryPlanForTool(tx, ty);
       pushPlan(items, plan);
       ghost = { sprite: FACTORY_SPRITE, tx, ty, valid: plan.valid };
+    } else if (tool === "rail") {
+      // #298: a hover on a plant or a town building is red, same refusal the drag will hit.
+      const why = railTileRefusal(grid, track, rail, me.i + 1, tx, ty);
+      items.push({ sprite: why === "ok" ? "highlight" : "highlight_bad", tx, ty });
+    } else if (tool === "dirt" || tool === "road") {
+      // Own plant stays a legal drag start (PP-15); everyone else's building is red.
+      const ok = canBuildOn(grid, tool, tx, ty) || ownFloor(tx, ty);
+      items.push({ sprite: ok ? "highlight" : "highlight_bad", tx, ty });
     } else {
       items.push({ sprite: "highlight", tx, ty });
     }
@@ -8268,6 +8314,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const overlayFrame = (): OverlayFrame => {
     if (preview) {
       const items: OverlayItem[] = preview.tiles.map(([x, y]) => ({ sprite: "highlight", tx: x, ty: y }));
+      // #298: the tiles the drag ran into and refused — painted red, not built.
+      for (const [x, y] of preview.blocked ?? []) {
+        items.push({ sprite: "highlight_bad", tx: x, ty: y });
+      }
       // VP-01: a paved drag over your own gravel is the only road action that
       // scores, so the preview rings the tiles it actually upgrades. Read from
       // the same `tileCost` question the drag was priced with, so what is
@@ -8899,7 +8949,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     kind: TrackKind, ax: number, ay: number, bx: number, by: number, xFirst: boolean,
   ): DragPreview | null => {
     if (phase !== "play") return null;
-    if (!canBuildOn(grid, kind, ax, ay)) return null;
+    // Own plant / depot floor is a legal START (PP-15 steps over it). A rival
+    // plant is not — `canBuildOn` refuses `builtAt` "plant".
+    if (!canBuildOn(grid, kind, ax, ay) && !ownFloor(ax, ay)) return null;
     const pv = previewDrag(grid, track, kind, me.purse, ax, ay, bx, by, xFirst, undefined,
       me.freeTrack, structureTiles(eco.factories, eco.harvesters, me.i + 1), newLoop);
     if (pv.tiles.length === 0) return null;
@@ -9114,7 +9166,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // RAIL-04: the rail drag arms anywhere — like a road drag, it has no
       // network-adjacency seed requirement (the tiles it lays are judged one by
       // one, and the drag stops at the first tile that refuses).
-      const canStart = tool === "rail" || canBuildOn(grid, tool as TrackKind, p.tx, p.ty);
+      const canStart = tool === "rail"
+        || canBuildOn(grid, tool as TrackKind, p.tx, p.ty)
+        || ownFloor(p.tx, p.ty);
       if (canStart) {
         drag = { ax: p.tx, ay: p.ty };
         dragLive = false;
@@ -11701,7 +11755,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      */
     dragPreview: (kind: TrackKind, ax: number, ay: number, bx: number, by: number, xFirst = true): DragPreview | null => {
       if (phase !== "play") return null;
-      if (!canBuildOn(grid, kind, ax, ay)) return null;
+      if (!canBuildOn(grid, kind, ax, ay) && !ownFloor(ax, ay)) return null;
       return previewDrag(grid, track, kind, me.purse, ax, ay, bx, by, xFirst, undefined, me.freeTrack,
         structureTiles(eco.factories, eco.harvesters, me.i + 1), newLoop);
     },
