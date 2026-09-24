@@ -11,7 +11,7 @@ import { bootSoloIso } from "./boot";
 // AI-vs-AI race suite's claim (tests/unit/iso-skill-calibration.test.ts).
 // ══════════════════════════════════════════════════════════════════════════
 
-const BASE = "/hexmatch/";
+const BASE = "/";
 
 /** Boot a solo game past the menu via the shared `bootSoloIso` (issue #135);
  *  `extra` appends the spec's own query (e.g. `&rival=hard`). The spec-specific

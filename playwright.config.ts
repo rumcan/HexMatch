@@ -1,8 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
 
 // Headless e2e against the real built game served by `vite preview` (#3/#4).
-// The app is served under base "/hexmatch/", so every URL includes that prefix.
-const BASE = "/hexmatch/";
+// The app is served under base "/", so every URL includes that prefix.
+const BASE = "/";
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -12,6 +12,11 @@ export default defineConfig({
   reporter: [["list"], ["html", { open: "never" }]],
   use: {
     baseURL: `http://localhost:4173${BASE}`,
+    // #324 sends a brand-new browser straight into a coached first game,
+    // skipping the menu every spec clicks through. Specs start as a player
+    // who has been here before; a spec that tests the first launch clears it
+    // with `test.use({ storageState: { cookies: [], origins: [] } })`.
+    storageState: "tests/e2e/onboarded.storage.json",
     trace: "on-first-retry",
     launchOptions: {
       // Network-restricted environments (sandboxes, air-gapped CI) cannot
@@ -74,7 +79,7 @@ export default defineConfig({
   ],
   webServer: {
     command: "npm run build && npm run preview -- --port 4173 --strictPort",
-    url: "http://localhost:4173/hexmatch/",
+    url: "http://localhost:4173/",
     reuseExistingServer: !process.env.CI,
     timeout: 120000,
   },

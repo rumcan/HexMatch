@@ -20,7 +20,7 @@ import { bootSoloIso, bootBudget } from "./boot";
 // The built app is served at the preview ROOT, not under a subpath: vite.config
 // pins `base: "./"` so the bundle resolves beside index.html wherever RUN.world
 // mounts it (…/1.18.0/index.html). The suite's older specs still prefix
-// "/hexmatch/" — under this config those URLs hit the SPA fallback and the
+// "/" — under this config those URLs hit the SPA fallback and the
 // module requests 404, which is why this spec boots the root it is served from.
 const BASE = "/";
 

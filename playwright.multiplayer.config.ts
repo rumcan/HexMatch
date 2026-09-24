@@ -27,7 +27,7 @@ import { defineConfig, devices } from "@playwright/test";
 // real `src/rooms/HexmatchRoom.ts` compiled and run by the sidecar.
 // ══════════════════════════════════════════════════════════════════════════
 
-export const MP_BASE = "/hexmatch/";
+export const MP_BASE = "/";
 /** The dev server the suite starts (and the harness points its two contexts at).
  *  `PW_MP_PORT` exists for the one case that needs it: proving the suite fails
  *  when the room it expects is not there (a black hole on the sidecar's port,
