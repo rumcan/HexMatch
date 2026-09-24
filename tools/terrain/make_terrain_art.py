@@ -91,7 +91,7 @@ def make_sand(rng):
     """A pale, muted beach — warm beige, not orange — with wind ripples (an
     integer number of waves across the tile, warped by noise so they meander),
     damp darker patches, fine grain and a few shell and pebble specks."""
-    light, dry, damp = rgb("#d8c9a6"), rgb("#c6b289"), rgb("#a8946c")
+    light, dry, damp = rgb("#c9b48b"), rgb("#b7a078"), rgb("#9a8660")
     patches = periodic_noise(N, 1, 5, rng, beta=1.3) * 0.5 + 0.5
     base = lerp(light, dry, patches)
     y, x = np.mgrid[0:N, 0:N] / N
