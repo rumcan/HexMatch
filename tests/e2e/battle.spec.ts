@@ -11,7 +11,7 @@ import { bootSoloIso } from "./boot";
 // clicked through the same gem buttons a hand would press — no rules bypass.
 // ══════════════════════════════════════════════════════════════════════════
 
-const ISO_URL = "/hexmatch/?seed=199";
+const ISO_URL = "/?seed=199";
 
 async function bootIso(page: import("@playwright/test").Page) {
   await bootSoloIso(page, {

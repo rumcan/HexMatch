@@ -1,0 +1,2 @@
+# Node scripts start with a shebang; a CRLF after it breaks vitest imports on Windows.
+*.mjs text eol=lf

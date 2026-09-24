@@ -72,11 +72,11 @@ test.describe("Continue door (#191)", () => {
   });
 
   test("a match left via Quit is resumed from Continue, not from Play", async ({ page }) => {
-    await page.goto("/hexmatch/");
+    await page.goto("/");
     // fresh machine: no Continue door, Play stays gold
     await expect(page.getByRole("button", { name: /^Continue/ })).toHaveCount(0);
     await page.locator(".menu-btn.primary").click();
-    await page.getByRole("button", { name: /Play vs AI/ }).click();
+    await page.getByRole("button", { name: /^Play vs AI(?! — Conquest)/ }).click();
     await waitIsoPhase(page, "setup-factory");
     // the 5-second autosave puts the match on the shelf
     await page.waitForFunction(
@@ -105,14 +105,14 @@ test.describe("Continue door (#191)", () => {
 
   test("Play vs AI asks before replacing the save, and only confirming starts new", async ({ page }) => {
     await page.addInitScript(([k, v]) => localStorage.setItem(k, v), [SAVE_KEY, craftedSave("normal")]);
-    await page.goto("/hexmatch/");
+    await page.goto("/");
 
     // into the mode screen (Play is no longer gold on the front door)
     await page.getByRole("button", { name: /^Play/ }).click();
     await expect(page.getByRole("button", { name: /^Continue/ })).toContainText(/vs AI \(Normal\)/);
 
     // first attempt: the painted ask, then cancel — the shelf survives
-    await page.getByRole("button", { name: /Play vs AI/ }).click();
+    await page.getByRole("button", { name: /^Play vs AI(?! — Conquest)/ }).click();
     const plate = page.locator(".confirm-sheet");
     await expect(plate).toBeVisible();
     await expect(plate).toContainText(/Start a new game/);
@@ -121,7 +121,7 @@ test.describe("Continue door (#191)", () => {
     expect(await page.evaluate((k) => localStorage.getItem(k) !== null, SAVE_KEY)).toBe(true);
 
     // second attempt: confirm — slot cleared, a genuinely NEW boot begins
-    await page.getByRole("button", { name: /Play vs AI/ }).click();
+    await page.getByRole("button", { name: /^Play vs AI(?! — Conquest)/ }).click();
     await plate.getByRole("button", { name: /Start new game/ }).click();
     await waitIsoPhase(page, "setup-factory");
     await expect(page.locator(".toast", { hasText: /restored from your save/ })).toHaveCount(0);
@@ -133,7 +133,7 @@ test.describe("Continue door (#191)", () => {
     await page.addInitScript(() => localStorage.setItem("hexmatch:story", JSON.stringify({
       unlocked: 1, introSeen: true, advisor: true, results: {},
     })));
-    await page.goto("/hexmatch/");
+    await page.goto("/");
     // the story save makes CONTINUE the gold door — Play is reached by name
     await page.getByRole("button", { name: /^Play/ }).click();
     await page.getByRole("button", { name: /Story Mode/ }).click();

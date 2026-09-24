@@ -33,7 +33,7 @@ import {
 // the 10★ race, the lorry that mints a token on arrival. `?loop=old` is the
 // escape hatch it needs to keep meaning what it says; the default boot is
 // played for real in `iso-loop-default.spec.ts`.
-const ISO_URL = "/hexmatch/?seed=199&loop=old";
+const ISO_URL = "/?seed=199&loop=old";
 
 /** Boot a solo game past the menu and onto the map, via the shared
  *  `bootSoloIso` (issue #135). The spec-specific half lives here:

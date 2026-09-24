@@ -203,12 +203,12 @@ async function bootIso(page: Page, search = "?seed=79"): Promise<void> {
     localStorage.setItem("hexmatch:rival-skill", "normal");
     localStorage.setItem("hexmatch:tutorial", "never");
   });
-  await page.goto(`/hexmatch/${search}`);
+  await page.goto(`/${search}`);
   // The start screen is the app's default route — the iso game only mounts
   // once a mode is chosen. "Play vs AI" boots solo play; the ?seed in the URL
   // still pins the map (resolveMapSeed reads location.search).
   await page.locator(".menu-btn.primary").click();
-  await page.getByRole("button", { name: /Play vs AI/ }).click();
+  await page.getByRole("button", { name: /^Play vs AI(?! — Conquest)/ }).click();
   await page.waitForFunction(() => {
     const h = (window as unknown as { __iso?: { phase: string; grid?: { industries: unknown[] } } }).__iso;
     return !!h && h.phase === "setup-factory" && !!h.grid && h.grid.industries.length > 0;

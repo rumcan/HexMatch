@@ -61,7 +61,7 @@ const terrainColourCount = (page: Page) => page.evaluate(() => {
 });
 
 const bootIso = (page: Page, extra = "") => bootSoloIso(page, {
-  url: `/hexmatch/?seed=${SEED}${extra}&iso-debug=1`,
+  url: `/?seed=${SEED}${extra}&iso-debug=1`,
   remembered: REMEMBERED,
 });
 
@@ -174,9 +174,9 @@ test.describe("PERF-01 performance mode", () => {
     await bootIso(page, "&performance=1");
     expect((await terrainState(page)).terrain.performance).toBe(true);
     // same seed, NO performance flag: the choice must come from storage
-    await page.goto(`/hexmatch/?seed=${SEED}&iso-debug=1`);
+    await page.goto(`/?seed=${SEED}&iso-debug=1`);
     await page.locator(".menu-btn.primary").click();
-    await page.getByRole("button", { name: /Play vs AI/ }).click();
+    await page.getByRole("button", { name: /^Play vs AI(?! — Conquest)/ }).click();
     await page.waitForFunction(() => {
       const h = (window as unknown as {
         __iso?: { phase: string; loading: boolean; grid?: { industries: unknown[] } };

@@ -25,7 +25,7 @@ import { bootBudget } from "./boot";
 // second navigation happening to be a new game.
 // ══════════════════════════════════════════════════════════════════════════
 
-const BASE = "/hexmatch/";
+const BASE = "/";
 const TOUR = "#iso-tutorial";
 const STEP_IDS = ["loop", "plant", "depot", "roads", "board", "expand", "victory", "desk"];
 
@@ -72,7 +72,7 @@ async function boot(page: import("@playwright/test").Page, extra = "", opts: { f
   } else {
     // STORY-01 menu: the mode screen stands behind the front door — Play first
     await page.locator(".menu-btn.primary").click();
-    await page.getByRole("button", { name: /Play vs AI/ }).click();
+    await page.getByRole("button", { name: /^Play vs AI(?! — Conquest)/ }).click();
   }
   await page.waitForFunction(() => {
     const h = (window as unknown as { __iso?: { phase: string } }).__iso;

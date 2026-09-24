@@ -25,7 +25,7 @@ export const bootBudget = (): number => {
 // Issue #135 — the solo boot, in one place, right beside the budget it waits
 // on.
 //
-// `/hexmatch/` is the MAIN MENU (STORY-01) — it mounts no game until Play →
+// `/` is the MAIN MENU (STORY-01) — it mounts no game until Play →
 // Play vs AI is clicked. Specs that `goto` and then wait for `window.__iso`
 // now hang on a hook that never exists; the menu walk belongs to the boot.
 // Inlining it into one shared helper means a moved or renamed menu control
@@ -59,7 +59,7 @@ export async function bootSoloIso(
   await page.goto(opts.url);
   // The front door, then the mode screen — the same two clicks a player makes.
   await page.locator(".menu-btn.primary").click();
-  await page.getByRole("button", { name: /Play vs AI/ }).click();
+  await page.getByRole("button", { name: /^Play vs AI(?! — Conquest)/ }).click();
   await page.waitForFunction(() => {
     const h = (window as unknown as {
       __iso?: { phase: string; loading: boolean; grid?: { industries: unknown[] } };

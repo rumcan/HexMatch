@@ -15,7 +15,7 @@ import { STORY_MODE_ENABLED } from "../../src/story/flag";
 // doubles as the PR's before/after evidence.
 // ══════════════════════════════════════════════════════════════════════════
 
-const BASE = "/hexmatch/";
+const BASE = "/";
 
 /** The acceptance sizes from the ticket, widest first. */
 const SIZES = [

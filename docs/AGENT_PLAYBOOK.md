@@ -29,7 +29,8 @@ platform at an industry works like a Depot); ignore any "railways are off /
 DEV-only" line. "Don't touch the renderer" is lifted where the prompt says so.
 
 SETUP
-  git fetch origin && git switch -c <branch> origin/main && npm ci
+  git fetch origin && npm ci   (stay on the branch your arena session is pinned to;
+  rebase it on origin/main before you start)
 
 TESTING — BINDING (docs/AGENT_PLAYBOOK.md §2)
   • NEVER run: npm test, npm run test:all, npm run test:slow, npm run test:e2e*,
@@ -135,7 +136,7 @@ slopes; battle balance last because every economy change above moves it.
 
 ## 5. Ticket prompts
 
-Each block goes UNDER the preamble (§1). Branch names are suggestions.
+Each block goes UNDER the preamble (§1). Branch names are suggestions: on arena.ai use the branch your session is pinned to (arena/…) — work on another branch is not linked to the session.
 
 ### #302 — Preload behind the loading screen  (wave 1)
 ```text
