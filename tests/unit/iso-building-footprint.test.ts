@@ -147,3 +147,91 @@ describe("ISSUE-144: per-building art fits its reserved footprint", () => {
     });
   }
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// F2 (#272) — the shadow path follows the REAL footprint, w≠h included.
+//
+// The cast shadow is the footprint's own diamond (building-shadow.ts), so for
+// a non-square building it must be a non-square-aware diamond: concentric
+// with where `drawOrigin` places a centre-anchored building, sized to the w×h
+// tile union, and stamped per (w, h) — a 4×2 must never borrow a 2×4's stamp.
+// ══════════════════════════════════════════════════════════════════════════
+import {
+  shadowCentre, shadowRadii, castsShadow, ShadowStamps,
+  SHADOW_DX, SHADOW_DY, SHADOW_GROW,
+} from "../../src/iso/building-shadow";
+import { drawOrigin, place, type DrawItem, type Placed } from "../../src/iso/depth";
+import { Atlas, type Manifest, type SpriteDef } from "../../src/iso/atlas";
+
+const HW2 = 32, HH2 = 16, TILE_H2 = 32;   // 1× tile geometry (src/game/config.ts)
+
+const F2_FOOTPRINTS: [number, number][] = [[1, 2], [2, 1], [1, 3], [3, 1], [4, 2], [2, 4], [1, 4], [4, 1], [2, 2]];
+
+const f2Def = ([fw, fh]: [number, number]): SpriteDef => {
+  const w = (fw + fh) * HW2, up = Math.round((fw + fh) * HH2 * 0.9) + 24;
+  return {
+    x: 0, y: 0, w, h: (fw + fh) * HH2 + up,
+    footprint: [fw, fh],
+    anchor: [w / 2, up + (fw + fh) * HH2 / 2],
+    center: true,
+  };
+};
+
+describe("F2 (#272) — shadows follow the real footprint", () => {
+  it("the shadow sits on the footprint centre the art is placed on, offset up-right", () => {
+    for (const fp of F2_FOOTPRINTS) {
+      const def = f2Def(fp);
+      const [ox, oy] = drawOrigin(def, 5, 5);
+      const [scx, scy] = shadowCentre(def, 5, 5);
+      expect(scx - (ox + def.anchor[0]), `${fp} dx`).toBeCloseTo(SHADOW_DX, 5);
+      expect(scy - (oy + def.anchor[1]), `${fp} dy`).toBeCloseTo(SHADOW_DY, 5);
+    }
+  });
+
+  it("the shadow diamond is the grown w×h footprint diamond (asymmetric shapes differ)", () => {
+    for (const [fw, fh] of F2_FOOTPRINTS) {
+      const [rx, ry] = shadowRadii(fw, fh);
+      // half-extents of the tile-union diamond corner-to-corner: (w+h)·HW × (w+h)·HH
+      expect(rx - SHADOW_GROW, `${fw}×${fh} rx`).toBeCloseTo((fw + fh) * HW2 / 2, 5);
+      expect(ry - SHADOW_GROW / 2, `${fw}×${fh} ry`).toBeCloseTo((fw + fh) * HH2 / 2, 5);
+    }
+    // a 4×2 and a 2×4 share the radii but NOT the centre lean (checked above),
+    // and a 1×3 is a strictly smaller diamond than a 4×2
+    expect(shadowRadii(1, 3)[0]).toBeLessThan(shadowRadii(4, 2)[0]);
+  });
+
+  it("stamps are keyed per footprint: 1×3 and 3×1 never share, 4×2 ≠ 2×4", () => {
+    const stamps = new ShadowStamps();
+    const made: { key: string; w: number; h: number }[] = [];
+    const makeSurface = (w: number, h: number) => {
+      made.push({ key: `${made.length}`, w, h });
+      return { getContext: () => ({
+        filter: "none", fillStyle: "", beginPath() {}, moveTo() {}, lineTo() {},
+        closePath() {}, fill() {},
+      }) } as unknown as HTMLCanvasElement;
+    };
+    const a = stamps.stamp(1, 3, 1, makeSurface);
+    const b = stamps.stamp(3, 1, 1, makeSurface);
+    const c = stamps.stamp(4, 2, 1, makeSurface);
+    const d = stamps.stamp(2, 4, 1, makeSurface);
+    expect([a, b, c, d].every(Boolean)).toBe(true);
+    expect(stamps.size, "four distinct keys").toBe(4);
+    // cached hit is the SAME stamp object per key
+    expect(stamps.stamp(1, 3, 1, makeSurface)).toBe(a);
+    // 1×3 and 3×1 have equal radii (symmetric diamond) — same pixel box —
+    // but 4×2 vs 2×4 are equal too: the guarantee under test is that each
+    // (w,h) pair has its OWN cache entry and zooms key apart as well
+    expect(stamps.stamp(1, 3, 2, makeSurface)).not.toBe(a);
+    expect(stamps.size).toBe(5);
+  });
+
+  it("only free-placed standing buildings cast: not decor, not moving cars, not sheet sprites", () => {
+    const def = f2Def([2, 4]);
+    const base = { tx: 1, ty: 1 } as const;
+    const standing = { ...base, def, sprite: "x", wx: 0, wy: 0, w: 1, h: 1, key: 0 } as Placed;
+    expect(castsShadow(standing)).toBe(true);
+    expect(castsShadow({ ...standing, decor: true })).toBe(false);
+    expect(castsShadow({ ...standing, fx: 1.2, fy: 1.2 })).toBe(false);
+    expect(castsShadow({ ...standing, def: { ...def, center: undefined } })).toBe(false);
+  });
+});
