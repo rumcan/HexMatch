@@ -8064,13 +8064,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // away cannot strand a win the room has not filed yet.
         const who = username || "Your opponent";
         mpPeerAwayUntil = 0; // the countdown is over — the seat has emptied
+        // C2 (#257): the conversation records it either way. A toast is gone in
+        // two seconds; the last line of a chat log that just went quiet is
+        // where a player looks to find out why, and the ending does not change
+        // that.
+        chatNotice(`${who} left the room.`);
         // A decided match is already showing its ledger; the far seat
         // emptying now is just teardown (dispose() frees it), not a
         // departure to answer. Say nothing over the ending.
-        // C2 (#257): the conversation says it too. A toast is gone in two
-        // seconds; the last line of a chat log that just went quiet is where a
-        // player looks to find out why.
-        chatNotice(`${who} left the room.`);
         if (endingShown || leftSheet) return;
         toast(`${escText(who)} left the room.`, "bad");
         openLeftSheet({
