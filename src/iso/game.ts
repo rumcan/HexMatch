@@ -248,6 +248,8 @@ import {
 import { loadRailwaySprites } from "./rail-art";
 import { createOriginalUi, RAIL_TOOL_KEYS, type OriginalUi } from "../game/ui";
 import { HUD_ICONS, cargoIconHtml, costMarkup } from "../game/hud-icons";
+// #302: the six board-gem tokens, pre-decoded behind the loading screen.
+import { GEM_ART } from "../game/gem-art";
 // SFX-01: the UI sound layer. Everything the player DOES on the map (a road
 // laid, a building raised, a demolition, a star earned, the final ledger) gets
 // one cue from here; the chrome's own clicks and hovers are handled once, by
@@ -256,7 +258,7 @@ import { sfx } from "../audio/sfx";
 // AI-02: the start-of-game difficulty prompt (see skill-picker.ts for the
 // "when do we ask" contract: only when nothing has chosen yet).
 import { promptForRivalSkill } from "./skill-picker";
-import { createLoadingScreen } from "./loading-screen";
+import { createLoadingScreen, createRevealGate } from "./loading-screen";
 // TUT-01: the starting tour — one stepped card that walks the whole loop
 // (plant → depot → road → board → expand → points) before the first click.
 import { showTutorial, type TutorialHandle } from "./tutorial";
@@ -1413,14 +1415,40 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // difficulty pick are free loading time — so a slow reader usually walks
   // straight into the map. It follows the prompts rather than stacking on them.
   const loading = createLoadingScreen(ui.el, [
+    // #302: the map is generated synchronously at boot (above), so this step
+    // is already done — it is listed so the bar's checklist names every real
+    // step the first frame needs, and settled the moment the boot tracks it.
+    { id: "map", label: "Charting the island" },
     { id: "atlas", label: "Surveying the island" },
     { id: "layers", label: "Grading the terrain" },
     { id: "buildings", label: "Raising the buildings" },
     { id: "scenery", label: "Planting the trees" },
     { id: "vehicles", label: "Fuelling the lorries" },
+    // #302: RAIL-03's track() call names this id, but the LOAD-01 list never
+    // declared it — an unknown id settles into the void, so the railway art
+    // was the one layer the bar never actually waited on. Declared exactly
+    // when it is tracked (rail on), so the bar cannot hang on a job nobody
+    // started either.
+    ...(railAvailable ? [{ id: "railway", label: "Laying the rails" }] : []),
     { id: "roads", label: "Mixing the asphalt" },
     { id: "protest", label: "Painting the placards" },
+    { id: "fonts", label: "Setting the type" },
+    { id: "gems", label: "Polishing the gems" },
+    // The last step is local, not a fetch: the first rendered frame, settled
+    // from the frame loop itself once a frame has actually painted.
+    { id: "frame", label: "Raising the curtain" },
   ]);
+  // #302: the reveal gate (src/iso/loading-screen.ts) — the economy, rival,
+  // board and vehicle clocks start when the game is SHOWN, not when the
+  // first frame renders behind the overlay. A resumed game (phase "play"
+  // straight from the save) would otherwise earn income and move the rival
+  // while the player still stares at the bar.
+  const reveal = createRevealGate();
+  // The "frame" step's promise — resolved from the frame loop once the first
+  // frame has run (painted or thrown: settled, not succeeded, like every
+  // other step).
+  let resolveFirstFrame: (() => void) | null = null;
+  const firstFrame = new Promise<void>((res) => { resolveFirstFrame = res; });
   // #186: a hosted game says its rules out loud on the way in — the ★ line and
   // the purse are the host's choices, and a guest who never opened the settings
   // panel should still hear them before the map lands.
@@ -10039,6 +10067,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const img = new Image();
     img.onload = () => res(img); img.onerror = rej; img.src = src;
   });
+  /** #302: `document.fonts.ready`, hardened — a boot without a FontFaceSet
+   *  (headless, old engine) treats type as ready rather than hanging the bar. */
+  const fontsReady = (): Promise<void> => {
+    try {
+      const fonts = typeof document === "undefined" ? undefined : document.fonts;
+      if (!fonts || typeof fonts.ready?.then !== "function") return Promise.resolve();
+      return fonts.ready.then(() => undefined, () => undefined);
+    } catch {
+      return Promise.resolve();
+    }
+  };
 
   /* ══ GFX-01 — pixel-detail loading ══════════════════════════════════════
    * The three shipped detail levels live in tables here so the SAME loader
@@ -10241,6 +10280,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   }
 
   (async () => {
+    // #302: the steps LOAD-01 never tracked. The map is sync-done (see the
+    // task list); fonts resolve when the vendored woff2 the chrome paints
+    // with are ready; the six gem tokens pre-decode so the board's first
+    // paint finds them in the image cache instead of flashing gradients;
+    // the frame step resolves from the loop below. (Audio needs no step:
+    // the engine only arms on a real gesture, so nothing plays at start.)
+    void loading.track("map", Promise.resolve());
+    void loading.track("fonts", fontsReady());
+    void loading.track("gems", Promise.all(
+      Object.values(GEM_ART).map((src) => load(src).then(() => undefined, () => undefined)),
+    ));
+    void loading.track("frame", firstFrame);
     // GFX-01: only the detail levels the quality preset permits are fetched
     // at boot — `medium` never pays for the 2× sheets, `low` decodes nothing
     // finer than 0.5×. The URL imports still resolve (they are build-time
@@ -10415,27 +10466,40 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const dt = Math.min(100, Math.max(0, t - lastFrameT));
       lastFrameT = t;
       topUpDevPurse();
-      economyTick(t);
+      // #302: the reveal gate — nothing guarded by `sim` below earns, builds,
+      // moves or expires until the game is SHOWN (every tracked load settled
+      // and the first frame painted, or no loading overlay standing at all —
+      // see createRevealGate). Rendering, the camera, floats and the HUD keep
+      // painting behind the bar, so the reveal lands on a live frame. The
+      // re-base keeps a slow load from banking a harvest or buying the rival
+      // a head start: every pacing clock restarts from the reveal instant,
+      // the same "start clean" rule a restore uses.
+      if (reveal.arm(loading.ready || !loading.active)) {
+        lastHarvest = t; lastAi = t; lastRaid = t;
+        lastRivalMove = t; lastRivalTrade = t; lastConquestCheck = t;
+      }
+      const sim = reveal.live;
+      if (sim) economyTick(t);
       // L8 (#222): the optional quests — pay what is done, keep 2–3 on the
       // panel. Runs beside the clock it pays against, and before the paint
       // that reads the view it derives.
       syncQuests();
-      quarryTick(t);
-      aiTick(t);
+      if (sim) quarryTick(t);
+      if (sim) aiTick(t);
       // Rivalry idle wire: a Torvin saying / dad joke every so often, mid-game.
-      rivalChitChat(t);
-      advisorTick(t);
+      if (sim) rivalChitChat(t);
+      if (sim) advisorTick(t);
       // MP-05: protests are solo/host-only (buyBlack refuses guests, like the
       // rest of the Black Market), so the sweep is a no-op on a guest — it
       // runs unguarded rather than splitting the heartbeat below.
-      if (protests.size > 0) expireProtests(t);
+      if (sim && protests.size > 0) expireProtests(t);
       // B6 (#251): the host's duel clock — offers, turn timer, disconnect grace.
-      duelTick(t);
+      if (sim) duelTick(t);
       // TRADE: offer expiry + the machine rival's answers/posts (host/solo).
-      tradeTick(t);
+      if (sim) tradeTick(t);
       // Conquest (2026-09): the only way a game ends is a player who cannot
       // go on — checked every few seconds, not only after a battle.
-      if (conquest && t - lastConquestCheck > 3000) {
+      if (sim && conquest && t - lastConquestCheck > 3000) {
         lastConquestCheck = t;
         maybeComebackLoss(me);
         maybeComebackLoss(rival);
@@ -10444,7 +10508,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // state only when `buildPublish` says the delta would not fit (§5).
       publishNet(t);
       // MP-AUDIT: vehicle presentation parity — host simulates, guest renders host vehicles.
-      if (!isGuest()) {
+      // #302: frozen behind the loading screen with the rest of the sim.
+      if (sim && !isGuest()) {
         if (trucksDirty) {
           trucks.trucks = planTrucksTrucksMerge(trucks.trucks, plannedLorries());
           // TRAFFIC-02: bounded trips — town-derived access nodes, host-only.
@@ -10482,7 +10547,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // Playtest (2026-09): trains are automatic like the lorries — the host
       // gives every connected industry→plant platform pair a line and a train
       // whenever the rail network or its platforms change (no depot, no buy).
-      if (!isGuest()) {
+      // #302: like the lorries — no new trains until the reveal.
+      if (sim && !isGuest()) {
         const sig = `${rail.rail.revision}:${rail.structures.map((s) => s.id).join(",")}`;
         if (sig !== autoTrainSig) {
           autoTrainSig = sig;
@@ -10491,8 +10557,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           if (moved) { syncWorld(); rescoreNow(); }
         }
       }
-      tickTrains(rail, dt);
-      collectDeliveries(t);
+      // #302: trains and deliveries are sim too — a resumed game must not roll
+      // its lorries into the Factory while the bar is still up.
+      if (sim) tickTrains(rail, dt);
+      if (sim) collectDeliveries(t);
 
       // WASD camera pan: held keys integrate at a constant world speed per
       // frame (dt-capped like the lorries), ÷zoom so the map glides at the
@@ -10545,6 +10613,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       } catch (err) {
         console.error("[iso] frame failed:", err);
       } finally {
+        // #302: the first frame — painted or thrown — settles the "frame"
+        // step, which is what lets the loading screen lift onto a live map.
+        if (resolveFirstFrame) { resolveFirstFrame(); resolveFirstFrame = null; }
         if (!disposed) raf = requestAnimationFrame(loop);
       }
     };
@@ -10612,13 +10683,22 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     /** LOAD-01: true while the loading screen covers the map. */
     get loading() { return loading.active; },
     /**
+     * #302: true once the sim clocks are running — the reveal gate has seen
+     * the game SHOWN (every tracked load settled, or no loading overlay
+     * standing) and the economy/rival/board/vehicle ticks are live. A probe
+     * for "clocks don't start before reveal" reads THIS, not the purse: it
+     * flips on the reveal frame itself, before any clocked payout could land.
+     */
+    get clocksLive() { return reveal.live; },
+    /**
      * #136: the boot art loads' SETTLE state — the question `loading` above
      * cannot answer. `loading` reports the OVERLAY, which is false before
      * `show()` ever mounts it (everything can settle first) and true through
      * its fade-out, so "the overlay is down" is not "the art finished".
-     * `ready` is that: every task handed to `loading.track()` — "atlas",
-     * "layers", "buildings", "scenery", "vehicles", "roads", "protest" — has
-     * settled. An asset-completeness assertion waits on THIS, because
+     * `ready` is that: every task handed to `loading.track()` — "map",
+     * "atlas", "layers", "buildings", "scenery", "vehicles", "railway" (rail
+     * on), "roads", "protest", "fonts", "gems", "frame" — has settled. An
+     * asset-completeness assertion waits on THIS, because
      * `loadBuildingLayers` installs each sprite as its own parallel image
      * loads land: a non-empty `buildingImages` is a start signal, not an end
      * one. `done`/`total` are the failure message when it never settles (and
