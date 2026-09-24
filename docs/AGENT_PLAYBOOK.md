@@ -103,7 +103,7 @@ one. "Hot files" are the ones two tickets must not both rewrite at once.
 | **0** | Lead: ticket housekeeping (§6) | GitHub only | — |
 | **1** | #302 Preload behind the loading screen | `loading-screen.ts`, boot in `game.ts` | — |
 | 1 | #300 Tuning results pop-up | `ui.ts` session board, `tuning.ts` | — |
-| 1 | ART-1 Ocean & beach refresh | `assets/ground`, `tools/` | — |
+| 1 | #343 ART-1 Ocean & beach refresh | `assets/ground`, `tools/` | — |
 | 1 | #271 F1 Building templates & tool | `tools/` only | — |
 | 1 | #255 C1 Chat protocol | `src/net/*` | — |
 | **2** | #298 Nothing built through factories/town buildings | `track.ts`, `placement.ts`, `grid.ts` `builtAt` | — |
@@ -169,9 +169,9 @@ Targeted tests: tests/unit/iso-l4-tuning.test.ts, tests/unit/iso-299-session-win
 tests/unit/iso-301-finish.test.ts, + a new unit test for the star thresholds.
 ```
 
-### ART-1 — Ocean & beach refresh  (wave 1, art; no GitHub ticket yet — lead creates it)
+### #343 ART-1 — Ocean & beach refresh  (wave 1, art)
 ```text
-Ticket: ART-1 (the lead gives you the issue number). Branch: art/ocean-beach.
+Ticket #343 (ART-1). Branch: art/343-ocean-beach.
 Goal: a better-looking sea and beach. Follow docs/ART_PIPELINE.md (sections
 2–6). Make 2–3 candidates for each:
   • sea: rundot generate image (texture template, reference assets/ground/grass.png;
@@ -426,17 +426,11 @@ background, with a 10-minute cap.
 
 ---
 
-## 6. Wave 0 — housekeeping the lead does first
+## 6. Wave 0 — housekeeping (done 2026-09-24)
 
-- Close as done: #223 (every L/B sub-ticket is closed), #299 (#311),
-  #142 and #179 (railway design replaced; the live design is in #181's new text).
-- Close as stale: #297 (rival pacing fixed in #309/#310; the economy and ★
-  table were redone since).
-- Check #296 (ring roads exist since PP-10) with the owner before closing.
-- #210 (branch protection) — owner's call.
-- Rewrite #181 with the text in §5; mark #259/#262/#264/#265 as done for rail
-  and fold the road part into ROADS-45 if the owner wants angled roads.
-- Create the ART-1 ticket and put its number into the ART-1 prompt.
+- Closed as done: #223, #299. Closed as superseded: #142, #179. Closed as stale: #297.
+- #181 rewritten to the current rail design. ART-1 created as #343.
+- Still open for the owner: #296 (ring roads exist since PP-10 — close?), #210 (branch protection), angled roads (wave 9) yes/no.
 
 ## 7. The lead's merge loop (per PR)
 
