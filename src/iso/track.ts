@@ -358,12 +358,15 @@ export function buildRefusal(
   if (grid.occupancy[i] >= 0 || grid.occupancy[i] === TOWN_OCC) return "occupied";
   // RES-FIELDS: a wheat field or tree block stands here until demolished.
   if (grid.occupancy[i] === FIELD_OCC) return "field";
-  // Playtest (2026-09): the railway and the Depots are built things. A road
-  // never runs along a rail line or over a platform or a Depot lot; it may only
+  // Playtest (2026-09) / #298: the railway, the Depots, and plants / town
+  // buildings are built things. A road never runs along a rail line or over a
+  // platform, a Depot lot, a processing plant or a town building; it may only
   // CROSS a straight rail at a right angle (`crossing` is the axis the road
-  // runs along through this tile — only a drag knows it).
+  // runs along through this tile — only a drag knows it). The owner's own
+  // plant is stepped over earlier, by `previewDrag`'s `structures` skip
+  // (PP-15) — this refusal is what stops the OTHER seat paving the floor.
   const built = grid.builtAt?.(tx, ty) ?? null;
-  if (built === "platform" || built === "depot") return "occupied";
+  if (built === "platform" || built === "depot" || built === "plant") return "occupied";
   if (built === "rail") return "rail";
   if (built === "rail-x" && crossing !== "y") return "rail";
   if (built === "rail-y" && crossing !== "x") return "rail";
@@ -806,6 +809,12 @@ export interface DragPreview {
   free: number;
   /** Tiles previewed but unaffordable — drawn red, not built. */
   unaffordable: [number, number][];
+  /**
+   * #298: tiles the drag ran into that an obstacle refuses (a plant, a town
+   * building, water, …). Drawn red, not built. The owner's own plant is absent
+   * — PP-15 steps over it before this list is collected.
+   */
+  blocked: [number, number][];
   /** True when an obstacle cut the path short. */
   truncated: boolean;
 }
@@ -844,6 +853,7 @@ export function previewDrag(
   const path = lPath(ax, ay, bx, by, xFirst);
   const tiles: [number, number][] = [];
   const unaffordable: [number, number][] = [];
+  const blocked: [number, number][] = [];
   let cost: Purse = {};
   let truncated = false;
   // VP-01: count of tiles this drag would PAVE over gravel (all of them are
@@ -856,13 +866,25 @@ export function previewDrag(
   const allowance = freeAllowanceCovers(kind, newLoop) ? Math.max(0, freeTiles) : 0;
   let freeLeft = allowance;
   const growing = network ? new Set(network) : undefined;
+  // The obstacle run the drag dies on — the building (or the water) it ran
+  // into, not the free tiles beyond it. Painted red by the overlay.
+  const noteObstacle = (from: number) => {
+    truncated = true;
+    for (let j = from; j < path.length; j++) {
+      const [bx, by] = path[j];
+      if (canBuildOn(grid, kind, bx, by, growing, passAxis(path, j))) break;
+      blocked.push([bx, by]);
+    }
+  };
 
   for (let i = 0; i < path.length; i++) {
     const [x, y] = path[i];
     // PP-15 (below): the builder's own building is stepped over — checked
-    // first, because a Depot lot is "built" ground (`Grid.builtAt`).
+    // first, because a Depot lot (and, #298, a plant) is "built" ground
+    // (`Grid.builtAt`). The OTHER seat's plant is not in `structures`, so it
+    // falls through to the refusal below and the drag stops.
     if (structures !== undefined && structures.has(tIdx(x, y))) continue;
-    if (!canBuildOn(grid, kind, x, y, growing, passAxis(path, i))) { truncated = true; break; }
+    if (!canBuildOn(grid, kind, x, y, growing, passAxis(path, i))) { noteObstacle(i); break; }
     // PP-15: a tile the builder's OWN building stands on is stepped over — it
     // is neither built nor charged, and it consumes none of the free allowance.
     // The path may run under the plant to reach the ground beyond (that is a
@@ -896,7 +918,7 @@ export function previewDrag(
     if (!canAfford(purse, next)) {
       for (let j = i; j < path.length; j++) {
         const [ux, uy] = path[j];
-        if (!canBuildOn(grid, kind, ux, uy, growing)) { truncated = true; break; }
+        if (!canBuildOn(grid, kind, ux, uy, growing)) { noteObstacle(j); break; }
         unaffordable.push([ux, uy]);
       }
       break;
@@ -906,7 +928,7 @@ export function previewDrag(
     if (paves) upgrades++;
     growing?.add(tIdx(x, y));
   }
-  return { tiles, cost, upgrades, free: allowance - freeLeft, unaffordable, truncated };
+  return { tiles, cost, upgrades, free: allowance - freeLeft, unaffordable, blocked, truncated };
 }
 
 export interface CommitResult {

@@ -777,11 +777,14 @@ export function railTileRefusal(
 ): RailRefusal {
   if (!inMapT(tx, ty)) return "off-map";
   if (!railTerrainOk(grid, tx, ty)) return "water";
-  // Anything built on the tile blocks rail: a town, an industry, a depot, a
-  // plant, a platform, or a train standing on it.
+  // Anything built on the tile blocks rail: an industry, a field, a depot, a
+  // plant / town building (#298, `builtAt` "plant" — every rotation), a
+  // platform, or a train standing on it. Town STREETS are not in that set:
+  // they stay crossable like any other straight road.
   if (grid.occupancy[tIdx(tx, ty)] >= 0 || grid.occupancy[tIdx(tx, ty)] === FIELD_OCC) return "occupied";
   if (structureAt(state, tx, ty)) return "occupied";
-  if (grid.builtAt?.(tx, ty) === "depot") return "occupied";
+  const built = grid.builtAt?.(tx, ty);
+  if (built === "depot" || built === "plant" || built === "platform") return "occupied";
   if (trainOccupies(state, tx, ty)) return "train-in-way";
   const owner = state.rail.owner[tIdx(tx, ty)];
   if ((state.rail.tile[tIdx(tx, ty)] & RAIL_PRESENT) && owner !== ownerId) return "foreign-rail";
@@ -1001,24 +1004,46 @@ export function railPreview(
   const planned = new Set(path.map(([x, y]) => tIdx(x, y)));
   const tiles: [number, number][] = [];
   const unaffordable: [number, number][] = [];
+  const blocked: [number, number][] = [];
   let cost: Purse = {};
   let why: RailRefusal | null = null;
   let truncated = false;
+  const noteObstacle = (from: number, firstWhy: RailRefusal) => {
+    why = firstWhy;
+    truncated = true;
+    for (let j = from; j < path.length; j++) {
+      const [bx, by] = path[j];
+      if (railTileRefusal(grid, track, state, ownerId, bx, by, planned) === "ok") break;
+      blocked.push([bx, by]);
+    }
+  };
   for (let i = 0; i < path.length; i++) {
     const [x, y] = path[i];
     const already = (state.rail.tile[tIdx(x, y)] & RAIL_PRESENT) !== 0
       && state.rail.owner[tIdx(x, y)] === ownerId;
-    if (diagOverRoad(track, path, i)) { why = "crossing-curve"; truncated = true; break; }
+    if (diagOverRoad(track, path, i)) { noteObstacle(i, "crossing-curve"); break; }
     if (!already) {
       const refusal = railTileRefusal(grid, track, state, ownerId, x, y, planned);
-      if (refusal !== "ok") { why = refusal; truncated = true; break; }
+      if (refusal !== "ok") { noteObstacle(i, refusal); break; }
       const next = addCost(cost, RAIL_COSTS.rail);
       if (!canPay(purse, next)) {
         // Everything from here on is what the purse cannot reach: the overlay
         // paints it as "not this drag", exactly like the road preview.
         for (let j = i; j < path.length; j++) {
           const [ux, uy] = path[j];
-          if (railTileRefusal(grid, track, state, ownerId, ux, uy, planned) !== "ok") { truncated = true; break; }
+          const tail = railTileRefusal(grid, track, state, ownerId, ux, uy, planned);
+          // The purse already stopped the drag; the obstacle only paints the
+          // tiles it claims. Don't invent a refusal the affordable prefix
+          // didn't hit.
+          if (tail !== "ok") {
+            truncated = true;
+            for (let k = j; k < path.length; k++) {
+              const [bx, by] = path[k];
+              if (railTileRefusal(grid, track, state, ownerId, bx, by, planned) === "ok") break;
+              blocked.push([bx, by]);
+            }
+            break;
+          }
           unaffordable.push([ux, uy]);
         }
         break;
@@ -1027,7 +1052,7 @@ export function railPreview(
     }
     tiles.push([x, y]);
   }
-  return { tiles, cost, upgrades: 0, free: 0, unaffordable, truncated, why };
+  return { tiles, cost, upgrades: 0, free: 0, unaffordable, blocked, truncated, why };
 }
 
 export function demolishRail(state: RailState, tx: number, ty: number): boolean {
@@ -1118,9 +1143,10 @@ export function platformRefusal(
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
     if (!railTerrainOk(grid, tx + x, ty + y)) return "water";
     if (grid.occupancy[tIdx(tx + x, ty + y)] >= 0 || grid.occupancy[tIdx(tx + x, ty + y)] === FIELD_OCC) return "occupied";
-    // Nothing else built there: a Depot lot, or anyone's rail.
+    // Nothing else built there: a Depot lot, a plant / town building, or anyone's rail.
     const b = grid.builtAt?.(tx + x, ty + y);
-    if (b === "depot" || b === "rail" || b === "rail-x" || b === "rail-y") return "occupied";
+    if (b === "depot" || b === "plant" || b === "platform"
+      || b === "rail" || b === "rail-x" || b === "rail-y") return "occupied";
   }
   if (structures.some((s) => overlaps(s, tx, ty, w, h))) return "overlap";
   // The track side must be free to lay the three stopping tiles on.
@@ -1128,7 +1154,8 @@ export function platformRefusal(
     if (!railTerrainOk(grid, x, y)) return "track-blocked";
     if (grid.occupancy[tIdx(x, y)] >= 0 || grid.occupancy[tIdx(x, y)] === FIELD_OCC) return "track-blocked";
     if (structures.some((s) => overlaps(s, x, y, 1, 1))) return "track-blocked";
-    if (grid.builtAt?.(x, y) === "depot") return "track-blocked";
+    const side = grid.builtAt?.(x, y);
+    if (side === "depot" || side === "plant" || side === "platform") return "track-blocked";
   }
   const candidates = anchorCandidates(grid, factories, ownerId, tx, ty, view);
   if (!candidates.length) return "no-anchor";
@@ -1193,6 +1220,11 @@ export function depotRefusal(
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
     if (!railTerrainOk(grid, tx + x, ty + y)) return "water";
     if (grid.occupancy[tIdx(tx + x, ty + y)] >= 0 || grid.occupancy[tIdx(tx + x, ty + y)] === FIELD_OCC) return "occupied";
+    // #298: a rail depot does not stand on a plant, a town building, a truck
+    // Depot lot, or rail that is already there.
+    const b = grid.builtAt?.(tx + x, ty + y);
+    if (b === "depot" || b === "plant" || b === "platform"
+      || b === "rail" || b === "rail-x" || b === "rail-y") return "occupied";
   }
   if (state.structures.some((s) => overlaps(s, tx, ty, w, h))) return "overlap";
   const probe: RailStructure = { id: -1, kind: "depot", ownerId, owner: "", tx, ty, w, h, view };
@@ -1206,7 +1238,9 @@ export function depotRefusal(
   if (railOpenTo(state.rail, ownerId, nx, ny)) return "ok";
   // Nothing to join: is the tile even capable of carrying rail?
   if (!inMapT(nx, ny) || !railTerrainOk(grid, nx, ny)) return "exit-blocked";
+  const exitBuilt = grid.builtAt?.(nx, ny);
   const blocked = grid.occupancy[tIdx(nx, ny)] >= 0 || grid.occupancy[tIdx(nx, ny)] === FIELD_OCC || structureAt(state, nx, ny) !== null
+    || exitBuilt === "depot" || exitBuilt === "plant" || exitBuilt === "platform"
     || (hasRail(state.rail, nx, ny) && state.rail.owner[tIdx(nx, ny)] !== ownerId);
   return blocked ? "exit-blocked" : "no-network";
 }
