@@ -12,8 +12,9 @@
 //     the new loop never able to: the board is down between sessions and the
 //     swap path refuses (the game, not merely the stylesheet);
 //   • closing or abandoning a session leaves a defined default yield, and no
-//     state can be stuck: a spent budget closes itself, a demolished Depot
-//     takes its session with it;
+//     state can be stuck: a spent budget ends the session by itself (#300:
+//     into the results pop-up its Confirm settles), a demolished Depot takes
+//     its session with it;
 //   • the rival gets a simulated result off its difficulty (no board), the
 //     level travels on the wire and in a save, and the opening copy (setup
 //     toast + tour) describes the loop the game is actually running.
@@ -101,6 +102,9 @@ interface TuningHook {
     score: number; yield: number; abandonYield: number;
   } | null;
   tuningFinish: (abandon?: boolean) => void;
+  /** #300: the results pop-up an ENDED session waits on, and its Confirm key. */
+  readonly tuningResult: { score: number; to: number } | null;
+  tuningConfirm: () => void;
 }
 
 const hook = () => (window as unknown as { __iso: TuningHook }).__iso;
@@ -477,8 +481,9 @@ describe("L4 building a Depot opens its tuning session (newLoop)", () => {
     expect(h.tuning).toBeNull();
     expect(h.depotYields.find((d) => d.id === depotId)!.yield).toBe(TUNING_ABANDON_YIELD);
 
-    // No stuck state: a session whose budget is spent closes on the game's own
-    // clock, with no key to press. Ten swaps are queued at once (the board
+    // No stuck state: a session whose budget is spent ENDS on the game's own
+    // clock, with no key to press — #300: into its results pop-up, whose one
+    // Confirm key then settles it. Ten swaps are queued at once (the board
     // takes them in order), so the budget really is spent by MOVES.
     const second = depotSite(h.grid, site.ind.id)!;
     for (const c of ["wood", "stone", "grain", "ore", "oil"] as const) h.purse[c] = 99;
@@ -489,8 +494,11 @@ describe("L4 building a Depot opens its tuning session (newLoop)", () => {
     for (let i = 0; i < TUNING.moves; i++) h.swap(...dud);
     expect(h.tuning!.movesLeft).toBe(0);
     await boardIdle(h);
-    for (let i = 0; i < 60 && h.tuning; i++) { h.tick(); await new Promise((r) => setTimeout(r, 20)); }
-    expect(h.tuning, "the spent session closed itself").toBeNull();
+    for (let i = 0; i < 60 && !h.tuningResult; i++) { h.tick(); await new Promise((r) => setTimeout(r, 20)); }
+    expect(h.tuningResult, "the spent session ended itself").not.toBeNull();
+    h.tuningConfirm();
+    await settle();
+    expect(h.tuning, "…and its Confirm closed it").toBeNull();
     expect(h.depotYields.find((d) => d.id === h.eco.harvesters.at(-1)!.id)!.yield).not.toBeNull();
     expect(boardWrap().classList.contains("hidden")).toBe(true);
   });

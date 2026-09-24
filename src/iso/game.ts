@@ -179,11 +179,12 @@ import { mulberry32 } from "../game/config";
 // depot tree / confirms a city upgrade (Addition A's gate).
 import {
   abandonYieldFor, birthYieldFor, createTownSession, createTuningSession, decayYield,
-  difficultyRulesFor, obstacleIntroLine, recordTuningCleared, retuneOwed, rivalTuningGold,
-  rivalTuningScore, rivalTuningYield, settleTuningYield, overshootGold,
+  depotSessionOutcome, difficultyRulesFor, obstacleIntroLine, recordTuningCleared, retuneOwed,
+  rivalTuningGold, rivalTuningScore, rivalTuningYield, settleTuningYield,
   sessionObstacles as sessionObstaclesFor, takeTuningMove, townBonusFor, tuningMovesLeft,
   unlockTierAfterSession, tuningOver, tuningSessionGold, tuningSessionYield,
-  TUNING_ABANDON_YIELD, TUNING_REWARD_SCORE, type TuningSession,
+  tuningStarLabel, tuningStarScores, tuningStarsFor,
+  TUNING_ABANDON_YIELD, TUNING_REWARD_SCORE, type TuningOutcome, type TuningSession, type TuningStars,
 } from "./tuning";
 import {
   FREE_SETUP_DEPOTS, costCompact, costLabel, depotTypeLabel, DEPOT_UPGRADE_COST, DEPOT_RETUNE_COST,
@@ -282,7 +283,7 @@ import { createStoryDirector } from "../story/voices";
 import { advisorBeats, type AdvisorEvent } from "../story/advisor";
 import { advisorEnabled, recordChapterResult } from "../story/progress";
 import { showScene, type SceneHandle } from "../story/stage";
-import type { UiRivalryBeat } from "../game/ui";
+import type { UiRivalryBeat, UiTuningResult } from "../game/ui";
 import {
   OIL_DRILLING_SCENE, createBanterDirector, createGoldMineDirector, createRivalDirector,
   type RivalryDirection, type RivalryScene, type RivalryTactic,
@@ -1372,7 +1373,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // in a live game (the tests drove `__iso.tuningFinish`, which goes straight
     // to the game). Both doors now call the same two functions, and the new
     // re-match key goes through the rules too rather than a chrome-side guess.
-    onTuningEnd: (abandon) => closeTuningSession(abandon),
+    // #300: Finish ENDS the session into its results pop-up (the one running
+    // out of moves opens); ✕ still abandons straight onto the map, no pop-up.
+    onTuningEnd: (abandon) => (abandon ? closeTuningSession(true) : requestTuningFinish()),
+    // #300: the pop-up's Confirm — applies the result it shows, exactly.
+    onTuningConfirm: () => confirmTuningResult(),
     onTuningRetune: () => retuneNow(),
     // L8 (#222): the quest panel's own choices — a dismissed offer and a
     // hidden panel are the player's, and both ride the save.
@@ -1528,7 +1533,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // this board listens, and with no session open the counter is not even
   // looked at — the old loop plays exactly as it did.
   quarry.board.onClear = (n, _chain) => {
-    if (tuning) {
+    // #300: an ended session's score is FROZEN — the results pop-up shows it
+    // and Confirm applies it, so nothing may add to it behind the card.
+    if (tuning && !tuningResult) {
       recordTuningCleared(tuning, n);
       // L12 (#227): bank the gems as the pass's score so the popup the pass
       // ends with can float what it earned.
@@ -1541,7 +1548,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // of the gems the pass already cleared. Nothing here can reach a purse — a
   // score-paying board does not fire the cargo wires at all.
   quarry.board.onReward = (kind) => {
-    if (!tuning) return;
+    if (!tuning || tuningResult) return;
     const pts = TUNING_REWARD_SCORE[kind];
     recordTuningCleared(tuning, pts);
     pendingScore += pts;
@@ -3206,6 +3213,26 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   /** The session in progress — one at a time, and gone when it ends. */
   let tuning: TuningSession | null = null;
   /**
+   * #300 — the RESULT an ended session is waiting on. A session ENDS when its
+   * budget is spent and the board has settled, or when Finish is pressed; its
+   * settlement is frozen here at that moment, the results pop-up counts it up
+   * over the session window, and Confirm applies this very record
+   * (`closeTuningSession`). While it is set the session is still the one
+   * session (every "one at a time" rule keeps reading `tuning`), but its
+   * board takes no more moves and its score no more points.
+   */
+  let tuningResult: SessionSettlement | null = null;
+  /** #300: the pop-up's copy of `tuningResult`, built once when it froze. */
+  let tuningResultUi: UiTuningResult | null = null;
+  /**
+   * #300: Finish was pressed while the board was mid-cascade. The session
+   * stops taking moves at once and ends the moment the board settles, so the
+   * cascade the last move started still lands on the score it is rated by.
+   */
+  let tuningEndAsked = false;
+  /** #300: settlement ids — the pop-up restarts its count-up on a new one. */
+  let settleSeq = 0;
+  /**
    * L5 (#219): what a city-upgrade session was bought with. Held here (not on
    * the session) because it is the GAME's ledger: the cost is spent when the
    * session opens, and an abandoned one gets exactly this back — no building
@@ -3244,6 +3271,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         toast("Build a Depot to open a tuning session — the board is only up while one runs.", "info");
         return;
       }
+      // #300: an ENDED session is only waiting on its Confirm — its board
+      // (dimmed under the results pop-up) takes no more swaps, and a swap
+      // refused here costs no move.
+      if (tuningResult || tuningEndAsked) return;
       const g1 = quarry.board.grid[r1]?.[c1], g2 = quarry.board.grid[r2]?.[c2];
       if (!g1 || !g2 || g1.block || g2.block) return;
       if (!takeTuningMove(tuning)) return;
@@ -3583,6 +3614,163 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   }
 
   /**
+   * #300 — a session's SETTLEMENT: every number closing it will write,
+   * computed once. When a session ends into the results pop-up this is frozen
+   * (`tuningResult`) and the card counts it up; its Confirm then applies this
+   * same record field for field, so the yield on the card is the yield the
+   * Depot gets. An abandon (and the settle-now twin) builds one on the spot
+   * through the same function — one settle, whichever door closed it.
+   */
+  interface SessionSettlement {
+    /** One per settlement: the pop-up keys its count-up on it. */
+    id: number;
+    kind: TuningSession["kind"];
+    abandon: boolean;
+    /** L4/L5's "played": not abandoned, and something was cleared. */
+    played: boolean;
+    /** How the session ended — the pop-up's heading. */
+    reason: "out-of-moves" | "finished";
+    score: number;
+    stars: TuningStars;
+    /** All the Gold it pays: the score's own, plus a Depot's overshoot. */
+    coins: number;
+    /** Depot: its level before, as stored (undefined = none stored). */
+    prev: number | undefined;
+    /** Depot: the outcome — `outcome.yield` is what the record is set to. */
+    outcome: TuningOutcome | null;
+    /** City: the town it upgrades (null = the pre-city seat upgrade). */
+    townId: number | null;
+    /** City: the tier and bonus before, and the bonus it sets. */
+    cityLevel: number;
+    cityBonus: number;
+    bonus: number;
+  }
+
+  /**
+   * #300: settle a session — READ ONLY. Every rule the close has always
+   * applied is here, unchanged, and nothing is written:
+   *
+   *   • L6 (#220): the difficulty sits between the score and the record — the
+   *     score maps onto THIS row's floor (Easy's is raised) and, on
+   *     `yieldNeverDrops`, the better of the old and new levels lands;
+   *   • 2026-09: a Depot's LEVEL caps what its session can set (L1 ×2, L2 ×4,
+   *     L3 ×6), and the score played past the cap pays Gold instead;
+   *   • L9 (#224): the session is THE Gold source on the new loop — its score
+   *     pays coins on the same curve for both kinds of session, and an
+   *     abandoned one pays none, so a difficulty row that lifts the yield does
+   *     not silently lift the purse too;
+   *   • L5 (#219): a city session sets how much of its row's ceiling lands
+   *     (`townBonusFor`), clamped by the same `yieldNeverDrops`.
+   */
+  function settleSession(
+    s: TuningSession, abandon: boolean, reason: SessionSettlement["reason"] = "finished",
+  ): SessionSettlement {
+    const rules = difficultyRules();
+    // L4/L5: a session that cleared nothing was not "finished" in any sense
+    // the tickets mean — every outcome reads this, not the raw flag. It is
+    // what makes L5's gate a gate (a rung or a city upgrade confirmed by an
+    // empty board is no gate at all).
+    const played = !abandon && s.score > 0;
+    const base: SessionSettlement = {
+      id: ++settleSeq, kind: s.kind, abandon, played, reason, score: s.score,
+      stars: abandon ? 0 : tuningStarsFor(s.score), coins: 0,
+      prev: undefined, outcome: null, townId: null, cityLevel: 0, cityBonus: 0, bonus: 0,
+    };
+    if (s.kind === "town") {
+      // An abandon is never shown, and the refund below is all it does.
+      if (abandon) return base;
+      const coins = tuningSessionGold(s);
+      const targetTown = grid.towns[townTarget ?? townOfSeat(me)?.id ?? -1] ?? null;
+      const city = targetTown ? cityOf(targetTown, me) : { owner: me.id, level: me.townLevel, bonus: me.townBonus };
+      const at = { townId: targetTown?.id ?? null, cityLevel: city.level, cityBonus: city.bonus };
+      // An empty session confirms nothing: the city keeps the bonus it has —
+      // the number the pop-up shows as unchanged (and the upgrade is refunded).
+      if (!played) return { ...base, ...at, coins, bonus: city.bonus };
+      const row = TOWN_UPGRADES[city.level] ?? TOWN_UPGRADES[TOWN_UPGRADES.length - 1];
+      // Easy and Normal keep what they have (the city can only improve); Hard
+      // is the row where a badly played upgrade really does cost. Easy's
+      // generosity is the curve itself — any played session already banks
+      // the bottom 40% of the ceiling.
+      const next = townBonusFor(row?.bonus ?? 0, s.score);
+      const bonus = rules.yieldNeverDrops ? Math.max(city.bonus, next) : next;
+      return { ...base, ...at, coins, bonus };
+    }
+    // A Depot demolished under its session is simply not found: the settle
+    // still prices the score (the Gold is paid), and there is no record to set.
+    const depot = eco.harvesters.find((h) => h.id === s.depotId);
+    const prev = depot?.yield;
+    const outcome = depotSessionOutcome(s.score, prev, rules, { abandon, cap: depotYieldCap(depot?.level) });
+    return { ...base, coins: outcome.gold, prev, outcome };
+  }
+
+  /** #300: the pop-up's copy of a frozen settlement (built once, when it froze). */
+  function resultUiOf(r: SessionSettlement, s: TuningSession): UiTuningResult {
+    const base = {
+      id: r.id, kind: r.kind, cargo: s.cargo, reason: r.reason, score: r.score, stars: r.stars,
+      starScores: tuningStarScores(), verdict: tuningStarLabel(r.stars), gold: r.coins,
+      movesLeft: tuningMovesLeft(s), moves: s.moves,
+    };
+    if (r.kind === "town") {
+      // Exactly what the city branch of the close writes: the new bonus when
+      // the session was played (never 0 then), the old one when it was not.
+      return {
+        ...base, from: r.cityBonus,
+        to: r.played && r.bonus > 0 ? r.bonus : r.cityBonus, refund: !r.played,
+      };
+    }
+    const o = r.outcome!;
+    const depot = eco.harvesters.find((h) => h.id === s.depotId);
+    return {
+      ...base, platform: !!depot && isRailDepot(depot),
+      from: o.from, to: o.yield, cap: o.cap, capped: o.capped, kept: o.kept, overGold: o.overshootGold,
+    };
+  }
+
+  /**
+   * #300 — END the session: freeze its settlement and hand the screen to the
+   * results pop-up. The session stays open underneath (the window, the plate,
+   * the final board) until Confirm applies exactly what the card shows.
+   *
+   * Two things end a session: its budget running out once the board has
+   * settled (`quarryTick`), and Finish (`requestTuningFinish`). A Finish that
+   * arrives mid-cascade is remembered instead of cutting the cascade short —
+   * the board stops taking moves at once, and the session ends the moment the
+   * last pass lands, so the score the stars rate is the whole score.
+   * Returns true when the results are up.
+   */
+  function endTuningSession(): boolean {
+    const s = tuning;
+    if (!s) return false;
+    if (tuningResult) return true;
+    if (quarry.board.busy) {
+      tuningEndAsked = true;
+      return false;
+    }
+    tuningEndAsked = false;
+    tuningResult = settleSession(s, false, tuningOver(s) ? "out-of-moves" : "finished");
+    tuningResultUi = resultUiOf(tuningResult, s);
+    return true;
+  }
+
+  /**
+   * #300: the plate's Finish key. With moves left or none, it ends the session
+   * into its results pop-up (the same pop-up running out of moves opens); with
+   * the pop-up already up it is that pop-up's Confirm — Finish has always
+   * meant "keep what I earned".
+   */
+  function requestTuningFinish(): void {
+    if (!tuning) return;
+    if (tuningResult) { confirmTuningResult(); return; }
+    endTuningSession();
+  }
+
+  /** #300: the results pop-up's Confirm — settle exactly the frozen result. */
+  function confirmTuningResult(): void {
+    if (!tuning || !tuningResult) return;
+    closeTuningSession(false);
+  }
+
+  /**
    * Close the open session.
    *
    * `abandon` is the ✕ (or a Depot that was demolished under it): the Depot
@@ -3597,17 +3785,23 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * it is treated exactly like an abandonment and the cost goes back. That is
    * what makes the gate a gate and not a formality: the upgrade lands only
    * when the board was really played.
+   *
+   * #300: this is also where the results pop-up's Confirm lands. A result the
+   * pop-up is showing is applied EXACTLY as shown — Confirm, the settle-now
+   * twin (`__iso.tuningFinish`) and a Depot demolished under the card all use
+   * the frozen settlement; only an abandon throws it away. With no pop-up up
+   * the session is settled here and now, by the same `settleSession`.
    */
   function closeTuningSession(abandon: boolean, note?: string): void {
     const s = tuning;
     if (!s) return;
+    const r = !abandon && tuningResult ? tuningResult : settleSession(s, abandon);
+    tuningResult = null;
+    tuningResultUi = null;
+    tuningEndAsked = false;
     tuning = null;
     quarry.board.setBias(null);
-    // L4/L5: a session that cleared nothing was not "finished" in any sense
-    // the ticket means — every outcome below reads this, not the raw flag. It
-    // is what makes L5's gate a gate (a rung or a city upgrade confirmed by an
-    // empty board is no gate at all).
-    const played = !abandon && s.score > 0;
+    const played = r.played;
     // A town session has no Depot (`depotId` is -1), so this is `undefined`
     // there and the city branch below settles instead.
     // L10 (#225): the obstacles belong to the SESSION, so they go when it does
@@ -3618,28 +3812,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     sessionObstacles = null;
     quarry.board.clearObstacles();
     const depot = eco.harvesters.find((h) => h.id === s.depotId);
-    // L6 (#220): the difficulty sits between the score and the record. The
-    // number that lands is `settleTuningYield(prev, score, rules)` — mapped onto
-    // THIS row's floor (Easy's is raised, so an empty session still buys a
-    // decent Depot) and, on `yieldNeverDrops`, the better of the old and new
-    // levels. Hard is the row where a poor re-match really does cost.
     const rules = difficultyRules();
-    const prev = depot?.yield;
-    // 2026-09: a Depot's LEVEL caps what its session can set (L1 ×2, L2 ×4,
-    // L3 ×6); the score played past the cap pays Gold instead.
-    const cap = s.kind === "depot" ? depotYieldCap(depot?.level) : undefined;
-    const level = settleTuningYield(prev, s.score, rules, { abandon, cap });
-    const overGold = abandon || cap === undefined ? 0 : overshootGold(s.score, rules, cap);
-    // L9 (#224): the session is also THE Gold source on the new loop. The
-    // board's combo coin stopped paying (`payGold: !newLoop`), so the score
-    // that sets the yield also banks the coins the Black Market's two map
-    // cards are bought with. An abandoned session pays none — the same rule
-    // its yield follows, and the same one the coins are read from: the reward
-    // is on the SCORE the player played, so a difficulty row that lifts the
-    // yield does not silently lift the purse too. It is settled here, above
-    // the branches, because both kinds of session (L5: a Depot's, or the
-    // city's) pay it on the same curve.
-    const coins = (abandon ? 0 : tuningSessionGold(s)) + overGold;
+    // L9 (#224): the session is also THE Gold source on the new loop (the
+    // board's combo coin stopped paying, `payGold: !newLoop`). Paid here,
+    // above the branches, because both kinds of session (L5: a Depot's, or
+    // the city's) pay it on the same curve — `settleSession` priced it, and
+    // the results pop-up showed exactly this sum.
+    const coins = r.coins;
     if (coins > 0) {
       earn(me, { gold: coins });
       sfx.play("coin");     // SFX-01: the same two coins the combo used to ring
@@ -3664,28 +3843,23 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         rescoreNow();
         return;
       }
-      const targetTown = grid.towns[townTarget ?? townOfSeat(me)?.id ?? -1] ?? null;
+      const targetTown = r.townId === null ? null : grid.towns.find((t) => t.id === r.townId) ?? null;
       townTarget = null;
-      const city = targetTown ? cityOf(targetTown, me) : { owner: me.id, level: me.townLevel, bonus: me.townBonus };
-      const row = TOWN_UPGRADES[city.level] ?? TOWN_UPGRADES[TOWN_UPGRADES.length - 1];
       // L6 (#220) arrives here too, because the ticket asks for it: the score
       // sets how much of the ceiling lands (`townBonusFor`), and the row's
       // `yieldNeverDrops` decides whether a poor session may take some of it
-      // BACK. Easy and Normal keep what they have (the city can only improve);
-      // Hard is the row where a badly played upgrade really does cost. Easy's
-      // generosity is the curve itself — any played session already banks the
-      // bottom 40% of the ceiling.
-      const next = townBonusFor(row?.bonus ?? 0, s.score);
-      const bonus = rules.yieldNeverDrops ? Math.max(city.bonus, next) : next;
+      // BACK. Both were settled in `settleSession` — this is the bonus the
+      // results pop-up showed.
+      const bonus = r.bonus;
       if (targetTown) {
         cityTiers.set(targetTown.id, {
-          owner: me.id, level: Math.min(city.level + 1, TOWN_UPGRADES.length),
-          bonus: bonus > 0 ? bonus : city.bonus,
+          owner: me.id, level: Math.min(r.cityLevel + 1, TOWN_UPGRADES.length),
+          bonus: bonus > 0 ? bonus : r.cityBonus,
         });
         syncSeatCities(me);
       } else {
         if (bonus > 0) me.townBonus = bonus;
-        me.townLevel = Math.min(me.townLevel + 1, TOWN_UPGRADES.length);
+        me.townLevel = Math.min(r.cityLevel + 1, TOWN_UPGRADES.length);
       }
       // L17 (#245): the town on the map takes the step with the seat — the
       // one the buyer's Factory touches — with the growth moment (art swap,
@@ -3705,7 +3879,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       rescoreNow();
       return;
     }
-    if (depot) {
+    if (depot && r.outcome) {
+      // The settlement's numbers (`settleSession`): the level the Depot was
+      // paying at, and the level that lands — the results pop-up's `to`.
+      const prev = r.prev;
+      const level = r.outcome.yield;
       // Stored on the depot record, which is what the L1b clock multiplies by
       // — and what the snapshot (yield + tuneTier) and the savegame (harvesters)
       // carry.
@@ -5983,10 +6161,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (phase !== "play") return;
     quarry.tick(now);
     // L4 (#218): a session whose budget is spent and whose board has stopped
-    // moving closes ITSELF — the yield lands the moment the last cascade
-    // settles, with no modal to dismiss and no way to be stuck holding a
-    // finished session.
-    if (tuning && tuningOver(tuning) && !quarry.board.busy) closeTuningSession(false);
+    // moving ends ITSELF — the moment the last cascade settles, never
+    // mid-cascade, and with no way to be stuck holding a finished session.
+    // #300: it ends into the RESULTS pop-up (score, yield, stars) rather than
+    // straight onto the map; the yield lands on its one Confirm key. A Finish
+    // pressed mid-cascade (`tuningEndAsked`) ends here on the same settle.
+    if (tuning && !tuningResult && !quarry.board.busy && (tuningEndAsked || tuningOver(tuning))) {
+      endTuningSession();
+    }
     // AI-03: the rival's own plant plays: same board clock as yours, then
     // one watchable move per skill().moveMs. trySwap refuses politely when
     // the board is busy, so the clock can keep cadence calmly.
@@ -8575,6 +8757,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             }
           : null)
         : undefined,
+      // #300: the results pop-up — the frozen settlement of a session that has
+      // ENDED, up until its Confirm applies it (null = no pop-up).
+      tuningResult: newLoop ? tuningResultUi : undefined,
       // L6 (#220): what the plate says BETWEEN sessions. `retuneOffer()` is null
       // on Easy — that row's `rematch: "never"` is what keeps the shipped line
       // on screen instead of a key that would refuse to work — and null on
@@ -10877,11 +11062,30 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     },
     /**
      * L4 (#218): the plate's two keys, as twins — `tuningFinish()` closes the
-     * session keeping the score (Finish), `tuningFinish(true)` abandons it
-     * (the ✕). Both are the same call the DOM buttons make, so a test never
-     * has to reach through the chrome to end a session.
+     * session keeping the score, `tuningFinish(true)` abandons it (the ✕).
+     * A test never has to reach through the chrome to end a session.
+     *
+     * #300: `tuningFinish()` is the SETTLE-NOW door: it closes at once on the
+     * same settlement the pop-up would show — and with the results pop-up up,
+     * it applies exactly that frozen result (it is Confirm). The chrome's
+     * Finish key ends the session INTO the pop-up instead: that is
+     * `tuningEnd()` below, and the pop-up's key is `tuningConfirm()`.
      */
     tuningFinish: (abandon = false) => { closeTuningSession(abandon); },
+    /** #300: the plate's Finish key — end the session into its results pop-up. */
+    tuningEnd: () => { requestTuningFinish(); },
+    /** #300: the results pop-up's Confirm — applies exactly the result shown. */
+    tuningConfirm: () => { confirmTuningResult(); },
+    /**
+     * #300: the results pop-up's record — what an ENDED session is worth and
+     * exactly what Confirm will apply (`to`). `null` while no session has
+     * ended (or once Confirm has applied it).
+     */
+    get tuningResult() {
+      return tuningResultUi ? { ...tuningResultUi, starScores: [...tuningResultUi.starScores] } : null;
+    },
+    /** #300: a Finish is waiting for the board to settle before it ends the session. */
+    get tuningEndAsked() { return tuningEndAsked; },
     /** L4 (#218): every depot's yield level, by owner — the number the L1b
      *  clock multiplies by. `null` = no level stored (an untuned depot). */
     get depotYields() {
