@@ -58,6 +58,7 @@ import {
   isHexProtocol,
   validateWelcome,
   type AssembledSnapshot,
+  type ChatMsg,
   type DeltaMsg,
   type HexProtocol,
   type IntentMsg,
@@ -77,6 +78,17 @@ import {
   readMatchSettings,
 } from "./match-settings";
 import { applyTrackDelta, buildPublish, type PublishFields } from "./delta";
+// C1 (#255): the chat rules. A runtime import (unlike everything else here) and
+// a safe one: `chat.ts` is pure — no SDK, no DOM, no game code — so the client
+// bundle and the room's server bundle both get the same rules and nothing else.
+import {
+  ChatGuard,
+  loadChatPrefs,
+  saveChatPrefs,
+  type ChatPrefs,
+  type ChatSendResult,
+  type ChatStats,
+} from "./chat";
 import {
   rankBoardFrom,
   type RankBoard,
@@ -217,6 +229,19 @@ export interface NetHooks {
    * and state flow has already restarted by the time this fires.
    */
   opponentReconnected?: (username: string | null) => void;
+  /**
+   * C1 (#255): a chat line from the other seat, already through every receive
+   * rule — length-capped by the reader, control and format characters
+   * stripped, the word filter applied, inside the receive rate window, and not
+   * from a peer this client has muted (a muted line never reaches this hook).
+   *
+   * The text is TEXT and only text. It is not a command, not markup and not an
+   * intent: whatever renders it must show the characters (`textContent`, or
+   * `escapeChatHtml` for a renderer that builds markup). Nothing else in this
+   * session ever sees a chat message — the world and the economy are not on
+   * this path at all.
+   */
+  chat?: (msg: ChatMsg) => void;
 }
 
 export interface NetSessionOptions {
@@ -298,6 +323,13 @@ export class NetSession {
    * means for a room nobody customised.
    */
   private settingsValue: MatchSettings = defaultMatchSettings();
+  /**
+   * C1 (#255): this client's chat policy — mute, presets-only, the word filter
+   * and BOTH rate windows (send and receive). Read from localStorage at
+   * construction, so a mute survives a reload, and owned here rather than by
+   * the game so `receive()` can refuse a line before any hook sees it.
+   */
+  private readonly chatGuard = new ChatGuard(loadChatPrefs());
   /** This session's join nonce — what authorises its rating publications. */
   private readonly token: string = makeJoinToken();
   /** #121: `dispose()` releases the room exactly once, however often it runs. */
@@ -346,6 +378,25 @@ export class NetSession {
   /** #186: the room's rules, whole. Never null — defaults until told. */
   get settings(): MatchSettings {
     return this.settingsValue;
+  }
+  // ── C1 (#255): chat ─────────────────────────────────────────────────────
+  /** This client's chat preferences (mute / presets-only). */
+  get chatPrefs(): ChatPrefs {
+    return this.chatGuard.prefs;
+  }
+  /** Apply a chat preference patch, persist it, and return what now stands. */
+  setChatPrefs(patch: Partial<ChatPrefs>): ChatPrefs {
+    const next = this.chatGuard.setPrefs(patch);
+    saveChatPrefs(next);
+    return next;
+  }
+  /** Replace the word filter's list (the shipped one is `DEFAULT_CHAT_BLOCKLIST`). */
+  setChatBlocklist(words: readonly string[]): void {
+    this.chatGuard.setBlocklist(words);
+  }
+  /** Sent / received / dropped counters — what a probe reads instead of a panel. */
+  get chatStats(): ChatStats {
+    return this.chatGuard.stats;
   }
   /** RANK-01: this session's join nonce (see `PlayerRatingMsg.joinToken`). */
   get joinToken(): string {
@@ -546,6 +597,52 @@ export class NetSession {
     if (!this.isGuest || this.halted || this.peerGone) return false;
     this.room.send({ type: "intent", action, payload } satisfies IntentMsg);
     return true;
+  }
+
+  // ── C1 (#255): chat ─────────────────────────────────────────────────────
+  /**
+   * Say one line to the other seat. Symmetric — the HOST speaks it exactly as
+   * the guest does, because chat is not a game action and there is no economy
+   * on this path for the host to arbitrate.
+   *
+   * The rules are the guard's (`src/net/chat.ts`) and they run HERE, before
+   * anything is sent: what is not allowed to be said never reaches the wire,
+   * and the frame that does is the guarded one. A refusal says why (empty,
+   * presets-only, rate, offline) so the caller — the panel in #257, the debug
+   * hook today — can tell the player; a message that goes out is also handed
+   * back, so a caller can log exactly what it sent.
+   */
+  sendChat(text: string): ChatSendResult {
+    if (this.halted || this.disposed || this.peerGone) return { ok: false, reason: "offline" };
+    const res = this.chatGuard.compose(text, this.chatName(), Date.now());
+    if (!res.ok) return res;
+    this.room.send(res.msg);
+    return res;
+  }
+
+  /**
+   * The name the other seat knows us by — the room's own roster entry, because
+   * that is the name the room will stamp on the frame anyway. Before the
+   * welcome (or in a harness that never greets) it is the neutral "You", never
+   * the local seat words the roster will replace.
+   */
+  private chatName(): string {
+    return this.infoValue?.roster.find((e) => e.id === this.room.playerId)?.username || "You";
+  }
+
+  /**
+   * C1 (#255): one inbound chat line. The guard decides whether it may be seen
+   * at all (`accept`); what survives is handed to the game's `chat` hook. A
+   * line that does not is dropped in silence — a peer cannot be told to try
+   * again, and an answer would only leak this client's settings.
+   *
+   * Nothing here touches the intent path, the queue or the world: a chat
+   * message is not a game action, and the type system already says so.
+   */
+  private onChat(raw: ChatMsg): void {
+    const msg = this.chatGuard.accept(raw);
+    if (!msg) return;
+    this.hooks.chat?.(msg);
   }
 
   /**
@@ -863,6 +960,12 @@ export class NetSession {
         return;
       case "settings":
         this.onSettings(raw.settings);
+        return;
+      case "chat":
+        // C1 (#255): relayed by the room, not applied by the host — and the
+        // peerGone gate above keeps chat out of the parked-session allowlist
+        // for the same reason deltas are: there is no seat to hear from.
+        this.onChat(raw);
         return;
       case "resync":
         if (this.isHost) this.publishFullState("guest resync");

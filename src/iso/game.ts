@@ -305,7 +305,12 @@ export { joinFromSnapshot };
 // place that knows all three AND the game rules.
 import { NetSession, type NetRole } from "../net/session";
 import { applyTrackDelta } from "../net/delta";
-import { HOST_LEFT_REASON, type DeltaMsg, type IntentMsg } from "../net/protocol";
+import { HOST_LEFT_REASON, type ChatMsg, type DeltaMsg, type IntentMsg } from "../net/protocol";
+// C1 (#255): the chat rules' shipped constants — the game knows the presets it
+// shows and (for `__iso.chat`) the caps it can print, nothing more. Every rule
+// lives in `../net/chat` and is applied by the session; there is no chat LOGIC
+// in this file on purpose (the panel is #257).
+import { CHAT_MAX_LEN, CHAT_PRESETS } from "../net/chat";
 // #186: the room's match settings — the ★ line, the opening purse and the AI
 // seats a hosted game plays by. Pure data with a strict reader, so a hand-built
 // `IsoGameOptions` (a test harness, a playtest link) is normalised exactly like
@@ -1048,6 +1053,25 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * match to claim, and the doors must not offer one.
    */
   let mpMatchLive = false;
+  // ── C1 (#255): chat ─────────────────────────────────────────────────────
+  /**
+   * The chat lines this client has seen, in order — its own sends and the
+   * peer's arrivals alike, so a panel can show one conversation.
+   *
+   * THERE IS NO PANEL YET (that is #257). The wire, its safety rules and the
+   * debug hook are this ticket's whole visible half, deliberately: the rules
+   * can be play-tested on a real pair of browsers before any UI exists to hide
+   * behind. `__iso.chat()` is how a probe reads this.
+   */
+  const chatLog: ChatMsg[] = [];
+  /** Bound the log: a match can run for hours and nothing prunes it otherwise. */
+  const CHAT_LOG_MAX = 50;
+
+  function pushChat(msg: ChatMsg): void {
+    chatLog.push(msg);
+    if (chatLog.length > CHAT_LOG_MAX) chatLog.splice(0, chatLog.length - CHAT_LOG_MAX);
+  }
+
   /** TUT-01: the boot tour, while it is open. Held so `dispose` can take its
    *  document keydown listener with it — the same reason `endingView` is. */
   let tutorialView: TutorialHandle | null = null;
@@ -8022,6 +8046,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           window.clearTimeout(leaveAfterVerdictTimer);
         }
       },
+      // C1 (#255): a chat line from the other seat, already through the
+      // session's receive rules (length, control characters, word filter, rate
+      // window, mute). It lands in the log and nowhere else — chat is not a
+      // game action, so it cannot reach the world even by accident.
+      chat: (msg) => pushChat(msg),
       status: (state) => {
         // A reconnect is exactly when a guest must re-pull state; the session
         // already asks, this just tells the player not to panic.
@@ -11814,6 +11843,54 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         winner: b ? b.state.winner : null,
         board: b ? b.board.grid.map((row) => row.map((g) => (g ? `${g.res}${g.block ? "#" : ""}` : "_")).join("")).join("/") : null,
         health: b ? b.state.players.map((p) => p.health) : null,
+      };
+    },
+    // ── C1 (#255): chat ───────────────────────────────────────────────────
+    /**
+     * Say one line to the other seat — the ticket's debug hook, and for now the
+     * ONLY way a human can chat (the panel is #257).
+     *
+     * Returns what happened, never a bare boolean: `{ ok: true, msg }` with the
+     * exact frame that went out (from the session's guard — already cleaned,
+     * filtered and stamped), or `{ ok: false, reason }` where the reason is
+     * `"empty" | "preset-only" | "rate" | "offline"`. A solo game is
+     * `"offline"`, which is also what a test harness that never joined a room
+     * should see. A successful send lands in `__iso.chat().log`, so a single
+     * client can read its own side of the conversation.
+     */
+    sendChat: (text: string) => {
+      if (!net) return { ok: false as const, reason: "offline" as const };
+      const res = net.sendChat(text);
+      if (res.ok) pushChat(res.msg);
+      return res;
+    },
+    /**
+     * The chat state, plus the switches a panel (#257) will own. With no
+     * argument it reads; with a patch it applies first, so
+     * `__iso.chat({ muted: true })` both toggles and reports.
+     *
+     *   muted      — the opponent's lines stop reaching the log (mine still go)
+     *   presetOnly — free text off, both directions: the four presets remain
+     *   blocklist  — replace the word filter's list (the shipped one is mild by
+     *                design; this is the configuration seam)
+     *
+     * `stats` is what a probe reads instead of a UI: how many lines went out,
+     * how many arrived, and how many were dropped — with the last reason — so
+     * "the spam was refused" is an assertion rather than a guess.
+     */
+    chat: (patch?: { muted?: boolean; presetOnly?: boolean; blocklist?: readonly string[] }) => {
+      if (patch && (patch.muted !== undefined || patch.presetOnly !== undefined)) {
+        net?.setChatPrefs({ muted: patch.muted, presetOnly: patch.presetOnly });
+      }
+      if (patch?.blocklist) net?.setChatBlocklist(patch.blocklist);
+      return {
+        connected: net !== null,
+        muted: net?.chatPrefs.muted ?? false,
+        presetOnly: net?.chatPrefs.presetOnly ?? false,
+        maxLength: CHAT_MAX_LEN,
+        presets: [...CHAT_PRESETS],
+        stats: net?.chatStats ?? { sent: 0, received: 0, dropped: 0, lastDrop: null },
+        log: chatLog.map((m) => ({ ...m })),
       };
     },
     // C5: the visual-debug console — dumpTile / dumpAt / dumpBuilding /

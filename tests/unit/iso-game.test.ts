@@ -163,6 +163,19 @@ interface IsoHook {
   railSell: (trainId: number, who?: "you" | "ai") => boolean;
   railTick: (dtMs?: number) => number;
   railTiles: (who?: "you" | "ai") => number;
+  // ── C1 (#255): chat ─────────────────────────────────────────────────────
+  /** The ticket's debug hook: say one line, or hear why not (#257 makes the panel). */
+  sendChat: (text: string) => import("../../src/net/chat").ChatSendResult;
+  /** The chat state (preferences, presets, counters, the log) and its switches. */
+  chat: (patch?: { muted?: boolean; presetOnly?: boolean; blocklist?: readonly string[] }) => {
+    connected: boolean;
+    muted: boolean;
+    presetOnly: boolean;
+    maxLength: number;
+    presets: readonly string[];
+    stats: import("../../src/net/chat").ChatStats;
+    log: import("../../src/net/protocol").ChatMsg[];
+  };
 }
 
 const hook = () => (window as unknown as { __iso: IsoHook }).__iso;
@@ -423,6 +436,27 @@ describe("E11 the game boots", () => {
     const banner = root.querySelector("#iso-banner") as HTMLElement;
     expect(banner.classList.contains("hidden")).toBe(true);
     expect(banner.textContent ?? "").not.toMatch(/place your factory/i);
+  });
+
+  it("C1 (#255): the chat hook exists, is offline solo, and reports every rule it will enforce", async () => {
+    const h = await boot();
+    // A solo game has no room to speak into, and says so rather than throwing.
+    expect(h.sendChat("GG")).toEqual({ ok: false, reason: "offline" });
+    const chat = h.chat();
+    expect(chat).toMatchObject({
+      connected: false,
+      muted: false,
+      presetOnly: false,
+      maxLength: 140,
+      stats: { sent: 0, received: 0, dropped: 0, lastDrop: null },
+      log: [],
+    });
+    expect([...chat.presets]).toEqual(["GG", "Nice route!", "Oops", "Rematch?"]);
+    // The switches belong to the SESSION (they gate its send/receive rules), so
+    // with no room a patch is an inert report — never a crash, and never a
+    // preference that silently goes nowhere.
+    expect(h.chat({ muted: true, presetOnly: true })).toMatchObject({ muted: false, presetOnly: false });
+    expect(h.chat({ blocklist: ["beetroot"] }).connected).toBe(false);
   });
 
   it("cleans up after itself", async () => {

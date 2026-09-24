@@ -127,8 +127,17 @@ export { readMatchSettings };
  * snapshot's `battle.offer` carries `kind` / `townId`, and `siteRights` /
  * `townHolds` ride the wire. A v14 peer would drop those and desync the map,
  * so mixed versions must refuse.
+ * v16 (C1 / #255): the room carries CHAT — the `chat` message above, relayed
+ * between the seats rather than applied by the host. Chat is not world state
+ * and not an action: it never enters the snapshot, the delta or a save, and
+ * SNAPSHOT_VERSION deliberately does NOT move with this bump. What the version
+ * gate is for here is the SHARED MEANING of a line: the receive rules (the
+ * length cap, the word filter, mute, presets-only) only hold if both ends mean
+ * the same thing by "a chat message", and a v15 peer would drop every `chat`
+ * frame in silence — a feature missing on one seat only, which is exactly the
+ * kind of quiet difference this number refuses rather than half-runs.
  */
-export const PROTOCOL_VERSION = 15;
+export const PROTOCOL_VERSION = 16;
 
 /**
  * Realtime WS frame cap in bytes. Mirrors the SDK's `MAX_BROADCAST_BYTES`
@@ -484,6 +493,45 @@ export interface AbandonMsg {
   type: "abandon";
 }
 
+// ── C1 (#255): chat ───────────────────────────────────────────────────────
+
+/**
+ * One line of chat, from one seat to the other, through the room.
+ *
+ * NOT an intent, and deliberately so: chat is not a game action, it never goes
+ * through the host's economy path, and no part of it can reach the world. The
+ * room RELAYS it (validating the shape, the length and its own per-sender rate
+ * window on the way through) instead of the host applying it — which is also
+ * why both seats speak it symmetrically rather than the guest sending it up.
+ *
+ * Field by field, and what a sender is NOT trusted for:
+ *
+ *   `from`  the name shown beside the line. The room overwrites it with its own
+ *           record for the sender (`Player.username`), so a client cannot sign
+ *           somebody else's name; a reader still cleans it (`sanitizeChatName`),
+ *           because the receive path cannot assume it came from this build.
+ *   `text`  the line itself, already sanitised by the sender: one line, no
+ *           control or format characters, at most `CHAT_MAX_LEN` code points
+ *           (`src/net/chat.ts`). It is TEXT and only text — a reader renders it
+ *           as characters (`escapeChatHtml` / `textContent`), never as markup,
+ *           never as a URL, never as a command. A receiver runs the same
+ *           cleaning again: an arriving line is already too late to refuse.
+ *   `t`     ms since epoch. The room stamps it with its own clock, so the two
+ *           seats order by one time source rather than by whatever a client's
+ *           machine believed; display only, never a decision.
+ *   `preset` present only for a shipped quick phrase (`CHAT_PRESETS`), and
+ *           DERIVED from `text` by every reader — a forged tag on free text is
+ *           discarded, and a preset that arrives tagged as another is
+ *           re-tagged for what it says.
+ */
+export interface ChatMsg {
+  type: "chat";
+  from: string;
+  text: string;
+  t: number;
+  preset?: string;
+}
+
 export type HexProtocol =
   | WelcomeMsg
   | SnapshotMsg
@@ -499,6 +547,7 @@ export type HexProtocol =
   | SettingsMsg
   | PeerStatusMsg
   | AbandonMsg
+  | ChatMsg
   | RejectMsg;
 
 /** Every `type` tag in the union — the discriminator RUN switches on. */
@@ -517,6 +566,7 @@ export const HEX_MESSAGE_TYPES = [
   "settings",
   "peerStatus",
   "abandon",
+  "chat",
   "reject",
 ] as const;
 
@@ -666,6 +716,7 @@ export function isHexProtocol(msg: unknown): msg is HexProtocol {
     t === "settings" ||
     t === "peerStatus" ||
     t === "abandon" ||
+    t === "chat" ||
     t === "reject"
   );
 }

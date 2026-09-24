@@ -23,6 +23,7 @@ import {
   readRankBoard,
   validateWelcome,
   isHexProtocol,
+  type ChatMsg,
   type DeltaMsg,
   type HexProtocol,
   type IntentMsg,
@@ -110,7 +111,12 @@ describe("MP-02 protocol version", () => {
     // v13 (B6 / #251) adds the battle intent; v14 brings the offer board back
     // (the `trade` intent + the `offers` book) — a v13 peer cannot trade.
     // v15 (#322) grows battle challenges with town/sell/downgrade.
-    expect(PROTOCOL_VERSION).toBe(15);
+    // v16 (C1 / #255) adds `chat`: the room relays it between the seats (it is
+    // not an intent and never touches the world), and both ends share the
+    // receive rules — length, word filter, mute, presets-only. A v15 peer drops
+    // every chat frame, so one seat would chat into silence; SNAPSHOT_VERSION
+    // deliberately does NOT move, because chat carries no world state.
+    expect(PROTOCOL_VERSION).toBe(16);
     expect(Number.isInteger(PROTOCOL_VERSION)).toBe(true);
     expect(PROTOCOL_VERSION).toBeGreaterThan(0);
   });
@@ -122,7 +128,7 @@ describe("MP-02 protocol version", () => {
   it("lists every discriminator in the union", () => {
     expect([...HEX_MESSAGE_TYPES].sort()).toEqual(
       [
-        "abandon", "delta", "intent", "peerStatus", "playerRating",
+        "abandon", "chat", "delta", "intent", "peerStatus", "playerRating",
         "ratingUpdate", "reject", "result", "resultClaim", "resync",
         "settings", "settingsClaim", "snapshot", "snapshot-chunk", "welcome",
       ],
@@ -241,6 +247,35 @@ describe("MP-02 wire round-trip", () => {
     expect(wire(reject)).toEqual(reject);
     expect(isHexProtocol(wire(resync))).toBe(true);
     expect(isHexProtocol(wire(reject))).toBe(true);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// C1 (#255) — chat on the wire
+//
+// The RULES live in `src/net/chat.ts` and are unit-tested in `net-chat.test.ts`
+// (and again on the room's side in `net-room.test.ts`). What belongs here is
+// only the part the union can promise: a chat line is a legal message whose
+// four fields survive JSON, and its `preset` tag is optional.
+// ══════════════════════════════════════════════════════════════════════════
+describe("C1 chat on the wire", () => {
+  it("round-trips a chat line, preset tag included", () => {
+    const preset: ChatMsg = { type: "chat", from: "Ada", text: "GG", t: 1_760_000_000_000, preset: "GG" };
+    const free: ChatMsg = { type: "chat", from: "Bo", text: "nice one", t: 1_760_000_001_000 };
+    for (const msg of [preset, free]) {
+      expect(wire(msg)).toEqual(msg);
+      expect(isHexProtocol(wire(msg))).toBe(true);
+    }
+    // The tag is optional, and absent is the free-text case — never `null`.
+    expect("preset" in free).toBe(false);
+  });
+
+  it("is a message the open-union readers see, like every other type", () => {
+    // Nothing validates a chat BODY here: `readChatMsg` (chat.ts) is the one
+    // reader, and it refuses a bodyless frame. The union only says the tag is
+    // legal — which is what a v16 gate is for.
+    expect(isHexProtocol({ type: "chat" })).toBe(true);
+    expect(HEX_MESSAGE_TYPES).toContain("chat");
   });
 });
 

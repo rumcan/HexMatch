@@ -7,6 +7,10 @@
 //
 //   guest intent/resync  →  forward to the host ONLY (sendTo hostId)
 //   host snapshot/delta  →  broadcast to all guests
+//   chat (either seat)   →  relay to the OTHER seat, stamped with the sender's
+//                           own name and time and held to a per-sender rate
+//                           window (C1 / #255 — chat is not a game action, so
+//                           it never goes through the host's economy path)
 //   guest-forged state   →  DROPPED. `sender.id !== hostId` is the one piece
 //                           of real authority the relay keeps — do not drop it.
 //
@@ -60,7 +64,11 @@
 // "finish the game" the opponent-left dialog promises.
 // ══════════════════════════════════════════════════════════════════════════
 import { GameRoom, type GameMessage, type LeaveReason, type Player } from "@series-inc/rundot-game-sdk/mp-server";
-import { HOST_LEFT_REASON, PROTOCOL_VERSION, readMatchSettings, readRankWire, type HexProtocol, type MatchSettings, type PlayerRatingMsg, type RankWire, type ResultClaimMsg, type ResultMsg, type SettingsClaimMsg, type Slot } from "../net/protocol";
+import { HOST_LEFT_REASON, PROTOCOL_VERSION, readMatchSettings, readRankWire, type ChatMsg, type HexProtocol, type MatchSettings, type PlayerRatingMsg, type RankWire, type ResultClaimMsg, type ResultMsg, type SettingsClaimMsg, type Slot } from "../net/protocol";
+// C1 (#255): the chat rules — the same pure module the CLIENT uses, so the two
+// ends cannot drift about what a line is allowed to be. `chat.ts` imports no
+// SDK and no game code, which is what lets the room bundle carry it.
+import { CHAT_RATE_MAX, CHAT_RATE_WINDOW_MS, ChatLimiter, readChatMsg } from "../net/chat";
 
 /** Sent when the host is gone — no host, no truth, say so plainly. The
  *  string lives in the protocol so the client can recognise it without
@@ -134,6 +142,17 @@ export default class HexmatchRoom extends GameRoom<HexProtocol> {
   private readonly everJoined = new Set<string>();
   /** #164: the last `connected` value the presence poll saw, per member. */
   private readonly presence = new Map<string, boolean>();
+  /**
+   * C1 (#255): one chat rate window per sender, in the room's own clock.
+   *
+   * The client enforces the same budget before it sends anything, but a client
+   * is exactly the thing that cannot be trusted to police itself — a modified
+   * (or simply older) build could send a frame per frame. The relay's window is
+   * the one that actually holds: over budget is dropped in silence, like a
+   * guest-forged snapshot, because there is nothing a flooding client could
+   * usefully be told.
+   */
+  private readonly chatLimits = new Map<string, ChatLimiter>();
 
   onCreate() {
     // The seed is minted here, exactly as server.js did at room creation.
@@ -203,6 +222,10 @@ export default class HexmatchRoom extends GameRoom<HexProtocol> {
     }
     if (p.type === "settingsClaim") {
       this.onSettingsClaim(msg.sender, p);
+      return;
+    }
+    if (p.type === "chat") {
+      this.onChat(msg.sender, p);
       return;
     }
     if (p.type === "abandon") {
@@ -339,6 +362,10 @@ export default class HexmatchRoom extends GameRoom<HexProtocol> {
     // game); for now every departure is final.
     this.slots.delete(player.id);
     this.presence.delete(player.id);
+    // C1 (#255): the seat's chat budget goes with the seat — a rejoiner starts
+    // with a clean window, and a room that churns seats cannot accumulate
+    // windows for players nobody can reach.
+    this.chatLimits.delete(player.id);
     if (player.id === this.hostId) {
       // No host, no truth. Tell the guest plainly rather than stranding them.
       this.hostId = null;
@@ -386,6 +413,9 @@ export default class HexmatchRoom extends GameRoom<HexProtocol> {
     // against players nobody can reach.
     for (const name of this.forfeitTimers.values()) this.clock.clear(name);
     this.forfeitTimers.clear();
+    // C1 (#255): chat windows are per-seat state like any other — a disposed
+    // room keeps nothing.
+    this.chatLimits.clear();
   }
 
   // ── RANK-01: the rating board and the filed result ──────────────────────
@@ -482,6 +512,51 @@ export default class HexmatchRoom extends GameRoom<HexProtocol> {
     // A seat that emptied while an AI was filed frees it again: the next
     // joiner is welcome to take the seat the AI was holding.
     if (!this.aiSeatFiled) this.unlock();
+  }
+
+  // ── C1 (#255): chat ─────────────────────────────────────────────────────
+
+  /**
+   * One chat line arrives. Chat is not a game action — no intent, no economy
+   * path, no state — so the room does exactly what a relay should with it: say
+   * who spoke, hold the line inside the limits, and pass it on.
+   *
+   * Three rules, the same shapes as the ones above:
+   *
+   *   - the SENDER owns the name. `from` is stamped from the room's own player
+   *     record, never read from the message body, so a client cannot type as
+   *     somebody else; `t` is the room's clock for the same reason — one time
+   *     source orders both seats' lines and no client can backdate itself.
+   *   - the LINE is clipped by `readChatMsg`, the same reader the receiving
+   *     client runs, so "what the room accepts" and "what a peer will accept"
+   *     are one definition rather than two that can drift. A frame with no
+   *     text, or one that is not a chat message at all, is dropped.
+   *   - the BUDGET is the sender's own window (see `chatLimits`), spent here in
+   *     the room's clock.
+   *
+   * The relay goes to the OTHER seats only. A line is something said TO
+   * somebody: the speaker's own client made it and keeps it, so echoing it
+   * back would only be a second copy to de-duplicate — and a client that
+   * trusted the echo would double every line it sent.
+   */
+  private onChat(sender: Player, msg: ChatMsg): void {
+    const line = readChatMsg({ ...msg, from: sender.username });
+    if (!line) return;
+    if (!this.chatLimitFor(sender.id).allow()) return;
+    const out: ChatMsg = { ...line, from: sender.username, t: Date.now() };
+    for (const id of this.players.keys()) {
+      if (id !== sender.id) this.sendTo(id, out);
+    }
+  }
+
+  /** A sender's rate window, created on first use and dropped when they leave. */
+  private chatLimitFor(playerId: string): ChatLimiter {
+    let limiter = this.chatLimits.get(playerId);
+    if (!limiter) {
+      limiter = new ChatLimiter(CHAT_RATE_MAX, CHAT_RATE_WINDOW_MS);
+      this.chatLimits.set(playerId, limiter);
+    }
+    return limiter;
   }
 
   /**
