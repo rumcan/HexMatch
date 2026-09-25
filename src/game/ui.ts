@@ -1104,6 +1104,12 @@ export function createOriginalUi(
 
   root.appendChild(left);
 
+  // UI Space Age: the bottom-right dock — the Plant card and the battle /
+  // action pop-ups stack here, clear of the centred drawer.
+  const brDock = h("div", "br-dock");
+  brDock.id = "iso-br-dock";
+  root.appendChild(brDock);
+
   // ── right: shared economy window ────────────────────────────
   const rightAside = h("aside", "aside right iso-panel");
   // RAIL-01: same contract as the build column — the key names its panel.
@@ -1455,7 +1461,7 @@ export function createOriginalUi(
     card.appendChild(tuningPlate);
     plantCard = card;
     rightAside.appendChild(tp);
-    rightAside.appendChild(card);
+    brDock.appendChild(card);
     // The window is mounted OUTSIDE the rails so the backdrop covers them:
     // a running session owns the screen, top to bottom.
     root.appendChild(rightAside);
@@ -1538,7 +1544,7 @@ export function createOriginalUi(
     if (!sessionMode) qp.inert = railRightCollapsed;
     // #299: the plant card is rail content too — it leaves the tab order
     // with the column, same rule as the trade panel beside it.
-    if (plantCard) plantCard.inert = railRightCollapsed;
+    // (the plant card now lives in the bottom-right dock, never folded)
   }
   railLeftBtn.onclick = () => {
     if (isPhoneViewport()) return;
@@ -2245,7 +2251,7 @@ export function createOriginalUi(
     const unlocked = seat.unlocked;
     // 2026-09: the rung gate is off — the bank trades every good but Gold.
     if (unlocked === null || !DEPOT_RUNG_GATE) {
-      return `The bank always trades ${BANK_RATE} of one good for 1 of another. No rival required, no waiting. ${cargoIconHtml("gold")} ${GOLD_RULE}`;
+      return `The bank always trades ${BANK_RATE} of one good for 1 of another. No rival required, no waiting. <span class="note-inline">${cargoIconHtml("gold")} ${GOLD_RULE}</span>`;
     }
     const open = CARGOES.filter((k) => bankAllowed(k, unlocked)).map((k) => CARGO[k].name);
     return `The bank trades ${BANK_RATE} of one good for 1 of another — but only within the rungs you have unlocked: `
@@ -4353,7 +4359,7 @@ export function createOriginalUi(
       acts.appendChild(b);
     }
     card.appendChild(acts);
-    root.appendChild(card);
+    brDock.appendChild(card);
     depotCard = card;
     if (o.until != null && countEl) {
       const paintCount = () => {

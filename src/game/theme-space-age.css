@@ -283,3 +283,25 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
   border: 0 !important; border-left: 3px solid var(--sa-line-hi) !important;
 }
 .feed-row * { color: inherit; }
+
+/* bottom-right dock: Plant card + battle/action pop-ups */
+.br-dock {
+  position: fixed; right: 8px; bottom: 8px; z-index: 36;
+  width: min(340px, calc(100vw - 16px));
+  display: flex; flex-direction: column-reverse; gap: 8px;
+  pointer-events: none;
+}
+.br-dock > * { pointer-events: auto; }
+.br-dock .plant-card, .br-dock .depot-card {
+  position: static; transform: none; left: auto; bottom: auto; width: auto; margin: 0;
+  background: var(--sa-panel); border: 1px solid var(--sa-ink); border-top: 3px solid var(--sa-orange);
+  padding: 10px 12px;
+}
+.br-dock .plant-card.hidden, .br-dock .depot-card.hidden { display: none; }
+@media (max-width: 760px) { .br-dock { bottom: calc(var(--resbar-gap, 60px) + 8px); } }
+/* inline cargo icons in notes */
+.pane-note .cargo-ic, .note-inline .cargo-ic { display: inline-block; width: 14px; height: 14px; vertical-align: -2px; margin: 0 2px; }
+@media (min-width: 761px) {
+  /* keep the centred drawer clear of the bottom-right dock */
+  .aside.right { width: clamp(420px, calc(100vw - 2 * (340px + 20px)), 720px); }
+}
