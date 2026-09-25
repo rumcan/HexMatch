@@ -50,6 +50,11 @@ import {
   bridgeCostFor, bridgeDeckAt, planBridges, sideJoinAt, type BridgePlan,
 } from "./bridges";
 import { TRUCK_SPEED } from "./vehicles";
+// E4 (#268): the slope rules — the local step, the drag's ramp/diagonal shape,
+// the flat-footprint rule for platforms and depots, and the uphill speed factor.
+import {
+  footprintFlatTiles, railDragSlopeRefusals, railJoinSlopeRefusal, uphillFactor,
+} from "./slopes";
 import type { DrawItem } from "./depth";
 import { base64ToBytes, bytesToBase64, type RailTileWire, type RailWire, type TrainWire } from "./snapshot";
 
@@ -734,7 +739,14 @@ export type RailRefusal =
   | "no-network" | "exit-blocked" | "overlap" | "anchor-range" | "train-in-way"
   | "not-yours" | "missing" | "track-blocked"
   /** R2 (#266): the tile would hang a side connection on a standing rail bridge. */
-  | "bridge-junction";
+  | "bridge-junction"
+  /** E4 (#268): the step climbs more than `SLOPES.railMaxStep`, or a level
+   *  change sits closer than `SLOPES.railRampRun` tiles to another one. */
+  | "too-steep"
+  /** E4 (#268): a diagonal link across a level change — a corner a train cannot take. */
+  | "slope-diagonal"
+  /** E4 (#268): a platform's / a rail depot's footprint straddles a level change. */
+  | "not-flat";
 
 export const RAIL_REFUSAL_TEXT: Record<RailRefusal, string> = {
   ok: "",
@@ -756,6 +768,9 @@ export const RAIL_REFUSAL_TEXT: Record<RailRefusal, string> = {
   missing: "That is not there.",
   "track-blocked": "The platform's track side is blocked — turn it (R) or move it.",
   "bridge-junction": "A bridge stays straight — no track can join its side.",
+  "too-steep": "Too steep for rail — a climb needs 3 tiles of run.",
+  "slope-diagonal": "Rail may not run diagonally across a slope.",
+  "not-flat": "A flat footprint: the whole site must sit on one level.",
 };
 
 // ── placement: rail tiles ─────────────────────────────────────────────────
@@ -840,6 +855,15 @@ export function railTileRefusal(
     if (road === finalMask) return "road-parallel";
     if (!isStraight(finalMask) || !crossingOk(track, tx, ty, finalMask)) return "crossing-curve";
   }
+  // E4 (#268): the slope step to every tile this one would JOIN — a planned
+  // tile of the same drag, or the owner's standing rail (the same connection
+  // model `prospectiveMask` uses). The drag's own SHAPE rules (the ramp run and
+  // diagonals on a slope) are a property of the gesture, not of a tile, and are
+  // judged by `railDragSlopeRefusals` in the preview, `buildRail` and the
+  // rival's `validateRailDrag`.
+  const steep = railJoinSlopeRefusal(grid, tx, ty, (x, y) =>
+    inMapT(x, y) && (!!planned?.has(tIdx(x, y)) || sameOwnerRail(state, ownerId, x, y)));
+  if (steep) return steep;
   return "ok";
 }
 
@@ -944,6 +968,10 @@ export function buildRail(
   // as part of a straight crossing with both banks inside this same drag.
   const bridgePlan = railBridgePlan(grid, track, state, ownerId, tiles, planned);
   const bridgeTiles = bridgePlan.deckTiles;      // TILE indices — see `BridgePlan`
+  // E4 (#268): the drag's slope SHAPE — the ramp run and the no-diagonal-on-a-
+  // slope rule. Like the bridge plan it is a property of the whole gesture, and
+  // a deck (bridge) is exempt because its approach is the bridge's own ramp.
+  const slopeWhy = railDragSlopeRefusals(grid, tiles, bridgeTiles);
   // The drag's tiles that will carry a diagonal link, known up front so the
   // first tile of a diagonal never joins its side neighbours on its own.
   const plannedDiag = new Set<number>();
@@ -956,8 +984,9 @@ export function buildRail(
   let decks = 0;
   for (let n = 0; n < tiles.length; n++) {
     const [tx, ty] = tiles[n];
-    const why = diagOverRoad(track, tiles, n) ? "crossing-curve"
-      : railTileRefusal(grid, track, state, ownerId, tx, ty, planned, bridgeTiles);
+    const why = slopeWhy.get(n)
+      ?? (diagOverRoad(track, tiles, n) ? "crossing-curve"
+        : railTileRefusal(grid, track, state, ownerId, tx, ty, planned, bridgeTiles));
     if (why !== "ok") return { ok: built.length > 0, why, cost: railCostOf(charged, decks), built };
     // Rail you already own is stepped over for free — a drag that redraws part
     // of an existing line (or crosses its own track at a junction) pays only
@@ -1075,6 +1104,9 @@ export function railPreview(
   // R2 (#266): the drag's crossing — the deck tiles, and the price each buys.
   const bridgePlan = railBridgePlan(grid, track, state, ownerId, path, planned);
   const bridgeTiles = bridgePlan.deckTiles;      // TILE indices — see `BridgePlan`
+  // E4 (#268): the drag's slope shape, judged once for the whole gesture (see
+  // `railDragSlopeRefusals`) — the ramp run and the no-diagonal-on-a-slope rule.
+  const slopeWhy = railDragSlopeRefusals(grid, path, bridgeTiles);
   const tiles: [number, number][] = [];
   const unaffordable: [number, number][] = [];
   const blocked: [number, number][] = [];
@@ -1095,6 +1127,8 @@ export function railPreview(
     const [x, y] = path[i];
     const already = (state.rail.tile[tIdx(x, y)] & RAIL_PRESENT) !== 0
       && state.rail.owner[tIdx(x, y)] === ownerId;
+    const shape = slopeWhy.get(i);
+    if (shape) { noteObstacle(i, shape); break; }
     if (diagOverRoad(track, path, i)) { noteObstacle(i, "crossing-curve"); break; }
     if (!already) {
       const refusal = railTileRefusal(grid, track, state, ownerId, x, y, planned, bridgeTiles);
@@ -1236,6 +1270,10 @@ export function platformRefusal(
     if (side === "depot" || side === "plant" || side === "platform" || side === "bridge"
       || side === "dam") return "track-blocked";
   }
+  // E4 (#268): a platform's 1×3 (or 3×1) needs level ground — the art is drawn
+  // on one plane and its lane sits at the footprint's own height.
+  const off = footprintFlatTiles(grid, footprintTiles({ tx, ty, w, h }));
+  if (off) return "not-flat";
   const candidates = anchorCandidates(grid, factories, ownerId, tx, ty, view);
   if (!candidates.length) return "no-anchor";
   const chosen = anchor
@@ -1306,6 +1344,8 @@ export function depotRefusal(
       || b === "rail" || b === "rail-x" || b === "rail-y") return "occupied";
   }
   if (state.structures.some((s) => overlaps(s, tx, ty, w, h))) return "overlap";
+  // E4 (#268): the 2×2 shed needs level ground, like every other footprint.
+  if (footprintFlatTiles(grid, footprintTiles({ tx, ty, w, h }))) return "not-flat";
   const probe: RailStructure = { id: -1, kind: "depot", ownerId, owner: "", tx, ty, w, h, view };
   const exit = depotExit(probe);
   // The exit tile itself may already be the owner's rail (a depot straddling the
@@ -1460,6 +1500,17 @@ export function pointAt(route: [number, number][], dist: number, cum?: number[])
     return { fx: a[0], fy: a[1], dirBit: dirBitBetween(prev, a) };
   }
   return { fx: a[0] + (b[0] - a[0]) * t, fy: a[1] + (b[1] - a[1]) * t, dirBit: dirBitBetween(a, b) };
+}
+
+/**
+ * The index of the route segment `dist` lies on — the same scan `pointAt` runs,
+ * so the segment whose grade prices the train's speed is the segment the head
+ * is actually drawn on.
+ */
+function segmentAt(route: [number, number][], dist: number, cum: number[]): number {
+  let i = 1;
+  while (i < cum.length - 1 && cum[i] < dist) i++;
+  return Math.min(i, route.length - 1);
 }
 
 /** A train's trail (created on first use). */
@@ -1918,8 +1969,12 @@ export function planLeg(
  * dt crosses as many tiles as it should, and arrival is exact: the train is
  * clamped to its stop tile and starts its dwell rather than overshooting by a
  * frame's worth of distance.
+ *
+ * E4 (#268): `grid` is optional and buys ONE thing — the uphill grade. With a
+ * grid, a train climbing a slope moves at `uphillFactor` of `RAIL_SPEED`; with
+ * none (a hand-built test state, a flat map) it moves exactly as it always did.
  */
-export function tickTrains(state: RailState, dtMs: number): void {
+export function tickTrains(state: RailState, dtMs: number, grid?: Grid): void {
   if (dtMs <= 0) return;
   for (const train of state.trains) {
     // A train that is out on the line replans the moment the graph moves under
@@ -1956,7 +2011,16 @@ export function tickTrains(state: RailState, dtMs: number): void {
       const cum = polyline(train.route);
       const total = cum[cum.length - 1] ?? 0;
       const remaining = total - train.dist;
-      const step = RAIL_SPEED * ms;
+      // E4 (#268): the locomotive's own pace for the segment it is ON: a climb
+      // costs speed (`1 / (1 + uphillSlow × levels climbed)`), the flat and the
+      // downhill run at `RAIL_SPEED`. Positions stay geometric tile distances —
+      // only the clock the head advances by changes, so the wagons, the trail
+      // and the cornering are the same maths they always were.
+      const seg = train.route.length > 1 ? segmentAt(train.route, train.dist, cum) : -1;
+      const speed = grid && seg > 0
+        ? RAIL_SPEED * uphillFactor(grid, train.route[seg - 1], train.route[seg])
+        : RAIL_SPEED;
+      const step = speed * ms;
       if (step < remaining) {
         recordTrail(state, train, cum, train.dist, train.dist + step);
         train.dist += step;
@@ -1967,7 +2031,7 @@ export function tickTrains(state: RailState, dtMs: number): void {
       recordTrail(state, train, cum, train.dist, total);
       train.dist = total;
       train.dirBit = pointAt(train.route, total, cum).dirBit;
-      ms -= remaining / RAIL_SPEED;
+      ms -= remaining / speed;
       if (train.target === "depot") {
         train.status = "stored";
         train.route = [];

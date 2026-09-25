@@ -28,6 +28,8 @@ import { CHUNK, chunksX } from "./renderer";
 import {
   BRIDGE_COST, bridgeDeckAt, planBridges, sideJoinAt, type BridgePlan,
 } from "./bridges";
+// E4 (#268): the slope rules — the step the drag walked and the flanks it joins.
+import { roadJoinSlopeRefusal, roadStepRefusal } from "./slopes";
 
 // ── directions ────────────────────────────────────────────────────────────
 export const NE = 1, SE = 2, SW = 4, NW = 8;
@@ -345,7 +347,7 @@ export const mergedBitsAt = (t: Track, tx: number, ty: number): number =>
  *
  * Returns null when `kind` may be laid at (tx,ty) (within `network`, when one
  * is given), else the reason tag: "out-of-bounds" | "water" | "occupied" |
- * "field" | "rail" | "bridge-junction" | "rough" | "not-adjacent".
+ * "field" | "rail" | "bridge-junction" | "too-steep" | "rough" | "not-adjacent".
  *
  * `track` (optional) is the layer itself, and it buys the ONE rule the tile
  * alone cannot answer: R2 (#266) — a tile that would hang a side connection on
@@ -353,10 +355,17 @@ export const mergedBitsAt = (t: Track, tx: number, ty: number): number =>
  * straight and stations, spurs and junctions may never stand on it. Callers
  * that pass no track (a read-only probe, a synthetic grid) keep the pre-#266
  * answer exactly.
+ *
+ * `from` (optional) is the tile the drag CAME FROM, and it buys E4 (#268)'s
+ * slope rule: a road may climb at most one level per tile, so the step
+ * `from → (tx,ty)` is refused (`"too-steep"`) when it climbs further. A caller
+ * that passes no `from` — a one-tile probe, a hover, a building footprint —
+ * keeps the pre-#268 answer, exactly like the other optional rules; the drag
+ * preview, the rival's A* and the plan validators all pass it.
  */
 export function buildRefusal(
   grid: Grid, kind: TrackKind, tx: number, ty: number, network?: Set<number>,
-  crossing?: "x" | "y", track?: Track,
+  crossing?: "x" | "y", track?: Track, from?: readonly [number, number],
 ): string | null {
   if (!inMapT(tx, ty)) return "out-of-bounds";
   const i = tIdx(tx, ty);
@@ -399,6 +408,12 @@ export function buildRefusal(
     (x, y) => bridgeDeckAt(grid, x, y, (b, c) => mergedPresent(track, b, c)),
     (x, y) => mergedBitsAt(track, x, y),
   )) return "bridge-junction";
+  // E4 (#268): the slope rule — the step the drag walked, plus every neighbour
+  // the autotiler would join this tile to (a flank step the drag never walks).
+  // Both are no-ops on a flat map.
+  const steep = roadStepRefusal(grid, from, [tx, ty])
+    ?? (track ? roadJoinSlopeRefusal(grid, tx, ty, (x, y) => mergedPresent(track, x, y)) : null);
+  if (steep) return steep;
   // The premium paved Road additionally needs flat ground (TRANSPORT.onRough);
   // the basic Dirt Road builds on rough.
   if (terrain === ROUGH && !TRANSPORT[kind].onRough) return "rough";
@@ -419,9 +434,9 @@ export function buildRefusal(
  */
 export function canBuildOn(
   grid: Grid, kind: TrackKind, tx: number, ty: number, network?: Set<number>,
-  crossing?: "x" | "y", track?: Track,
+  crossing?: "x" | "y", track?: Track, from?: readonly [number, number],
 ): boolean {
-  return buildRefusal(grid, kind, tx, ty, network, crossing, track) === null;
+  return buildRefusal(grid, kind, tx, ty, network, crossing, track, from) === null;
 }
 
 /**
@@ -935,7 +950,9 @@ export function previewDrag(
     for (let j = from; j < path.length; j++) {
       const [bx, by] = path[j];
       if (bridgePlan.runs.has(j)) break;            // a legal crossing: it is not the obstacle
-      if (canBuildOn(grid, kind, bx, by, growing, passAxis(path, j), t)) break;
+      // E4 (#268): the same `from` the drag's own step test uses, so the
+      // painted obstacle is the tile the drag would actually refuse.
+      if (canBuildOn(grid, kind, bx, by, growing, passAxis(path, j), t, path[j - 1])) break;
       blocked.push([bx, by]);
     }
   };
@@ -951,7 +968,10 @@ export function previewDrag(
     // bridge plan is what makes it legal, and it is only legal as part of the
     // crossing it was planned with.
     const deck = bridgePlan.runs.get(i);
-    if (!canBuildOn(grid, kind, x, y, growing, passAxis(path, i), t) && !deck) {
+    // E4 (#268): the drag knows the tile it came from, so the one-level road
+    // rule is enforced on the step — a steeper step truncates the drag exactly
+    // like an unaffordable tile does, and the prefix stands.
+    if (!canBuildOn(grid, kind, x, y, growing, passAxis(path, i), t, path[i - 1]) && !deck) {
       noteObstacle(i); break;
     }
     // PP-15: a tile the builder's OWN building stands on is stepped over — it
@@ -974,7 +994,7 @@ export function previewDrag(
         for (let j = i; j < path.length; j++) {
           const [ux, uy] = path[j];
           if (!bridgePlan.runs.has(j)
-            && !canBuildOn(grid, kind, ux, uy, growing, undefined, t)) { noteObstacle(j); break; }
+            && !canBuildOn(grid, kind, ux, uy, growing, undefined, t, path[j - 1])) { noteObstacle(j); break; }
           unaffordable.push([ux, uy]);
         }
         break;
