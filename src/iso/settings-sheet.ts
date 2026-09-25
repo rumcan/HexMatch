@@ -43,7 +43,7 @@ import { radio } from "../audio/radio";
 const MINIATURE_NOTE = "Tilt-shift — a sharp band across the middle, the rest softly blurred, colours popped. The island reads as a tiny model.";
 const MINIATURE_UNAVAILABLE = "Unavailable while Performance mode is on.";
 /** MUSIC-1 (#377): the Radio row's copy, live — what off actually does. */
-const RADIO_NOTE = "SEGA Radio, in the little player at the top right. Off stops the stream and releases the connection.";
+const RADIO_NOTE = "SomaFM Secret Agent, in the little player at the top right. Off stops the stream and releases the connection.";
 const RADIO_OFF_NOTE = "Off — the stream is stopped and the player is disconnected. Your volume is remembered.";
 
 export interface SettingsSheetHandle {

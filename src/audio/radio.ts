@@ -2,7 +2,7 @@
 // MUSIC-1 (#377) — the mini radio in the corner.
 //
 // One `<audio>` element, one station URL, one small pill in the very top-right
-// of the HUD. The owner supplies the stream (RADIO_STREAM_URL is EMPTY until
+// of the HUD. The owner supplies the stream (RADIO_STREAM_URL; was EMPTY until
 // they do), so the module is written for the SHIPPED state — an empty or dead
 // URL reads "Radio offline" and never throws, never blocks, never delays the
 // game. Everything else is the ordinary browser rules:
@@ -30,14 +30,13 @@
 // ══════════════════════════════════════════════════════════════════════════
 
 /**
- * The station. EMPTY on purpose: the owner supplies the URL (and the invoice
- * for the music) and the code must already behave without it — an empty URL is
- * the "Radio offline" state, not a crash and not a spinner that never ends.
+ * The station: SomaFM "Secret Agent" (1960s spy / lounge — fits the era).
+ * An empty or dead URL is still the "Radio offline" state, never a crash.
  */
-export const RADIO_STREAM_URL = "";
+export const RADIO_STREAM_URL = "https://ice1.somafm.com/secretagent-128-mp3";
 
 /** What the pill says when there is no now-playing metadata to say. */
-export const RADIO_STATION_NAME = "SEGA Radio";
+export const RADIO_STATION_NAME = "SomaFM Secret Agent";
 
 /** Where the on/off, show/hide and volume choices live. Beside `hexmatch:voice`. */
 export const RADIO_STORAGE_KEY = "hexmatch:radio";

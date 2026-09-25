@@ -236,7 +236,7 @@ describe("MUSIC-1 state machine", () => {
 describe("MUSIC-1 an empty or dead stream", () => {
   it("ships the two constants the owner fills in, and an empty URL is offline", () => {
     expect(typeof RADIO_STREAM_URL).toBe("string");
-    expect(RADIO_STATION_NAME).toBe("SEGA Radio");
+    expect(RADIO_STATION_NAME).toBe("SomaFM Secret Agent");
     // The shipped constant is empty on purpose (the owner supplies the URL) —
     // and if a build has one, this test simply stops asserting the empty case.
     if (!hasStream(RADIO_STREAM_URL)) {
