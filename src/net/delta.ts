@@ -149,6 +149,8 @@ export interface PublishFields {
   cars?: Snapshot["cars"];
   /** RAIL-04 (#178): the railway (see `DeltaMsg["rail"]`). */
   rail?: Snapshot["rail"];
+  /** R3 (#270): the standing dams (see `DeltaMsg["dams"]`). */
+  dams?: Snapshot["dams"];
   winner?: Snapshot["winner"];
   /** RES-FIELDS: ids of the demolished wheat fields / tree blocks. */
   clearedFields?: Snapshot["clearedFields"];
@@ -215,6 +217,7 @@ export function buildPublish(track: Track, dirty: DirtyTiles, f: PublishFields):
     ...(f.trucks !== undefined ? { trucks: f.trucks } : {}),
     ...(f.cars !== undefined ? { cars: f.cars } : {}),
     ...(f.rail !== undefined ? { rail: f.rail } : {}),
+    ...(f.dams !== undefined ? { dams: f.dams } : {}),
     ...(f.winner !== undefined ? { winner: f.winner } : {}),
     ...(f.clearedFields !== undefined ? { clearedFields: f.clearedFields } : {}),
     ...(f.battle !== undefined ? { battle: f.battle } : {}),

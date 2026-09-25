@@ -130,6 +130,17 @@ import {
   victoryBreakdown, revokeCityStars,
   type ScoreState, type VpEvent, type LoopScoring,
 } from "./victory";
+// R3 (#270): the hydro dam — its site rule, its footprint, its bonus and its
+// wire shape all live in `dams.ts`; this file is where a dam is BUILT
+// (the tool, the click, the cost), DEMOLISHED (the usual 50% refund),
+// REPORTED (`builtAt`), PAID (the clock-income factor) and SHOWN (the
+// inspector, the chip rates, the map).
+import {
+  DAM_BONUS, DAM_COST, DAM_RANGE, DAM_REFUSAL_TEXT, DAM_SIDES, SIDES,
+  damBonusAtTiles, damCityBonusAt, damContains, damDrawOrigin, damFootprint,
+  damRefusal, damRiverAt, damSitesFor, damsFromWire, damsToWire,
+  type Dam, type DamSide,
+} from "./dams";
 import {
   aiBuildStep, chooseRivalFactorySpot, deepPlanCandidates, planBankTrades,
   planUpgrades, executePaves,
@@ -255,6 +266,7 @@ import {
   type RailState, type RailView, type RailStructure,
 } from "./rail";
 import { loadRailwaySprites } from "./rail-art";
+import { loadRiverSprites } from "./rivers-art";
 import { createOriginalUi, RAIL_TOOL_KEYS, type OriginalUi } from "../game/ui";
 import { HUD_ICONS, cargoIconHtml, costMarkup } from "../game/hud-icons";
 // #302: the six board-gem tokens, pre-decoded behind the loading screen.
@@ -434,7 +446,10 @@ export type Tool =
   // RAIL-04 (#178): the railway's four verbs. `rail` is a drag (tiles),
   // `platform` and `raildepot` are one-click placements in the current
   // heading, and `railway` is the panel — lines, trains and their actions.
-  | "rail" | "platform" | "raildepot" | "railway";
+  | "rail" | "platform" | "raildepot" | "railway"
+  // R3 (#270): the hydro dam — a one-click placement on a river tile, with
+  // R rotating which bank the footprint leans onto.
+  | "dam";
 
 export interface PlayerState {
   /** Stable seat index — the wire, the save and the HUD all address a seat by
@@ -806,6 +821,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const rail: RailState = createRailState();
   /** RAIL-02: the heading the platform/depot tools place with — R turns it. */
   let railView: RailView = "se";
+  /**
+   * R3 (#270): the bank the Dam tool leans onto — R cycles it. The river's
+   * axis fixes the footprint (1×2 or 2×1); the side is the one free choice,
+   * and `damSideAtSite` folds it to the axis's first side when the held side
+   * runs along the river rather than across it, so a click always builds the
+   * footprint the site allows.
+   */
+  let damSide: DamSide = "s";
   /** F3 (#274): quarter-turns the factory/plant ghost is rotated — R turns it. 0..3, legacy absent=0. */
   let factoryView = 0;
   /**
@@ -950,7 +973,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       ? storyChapter.target
       : (isSolo() ? skill().winTarget : settings.winTarget));
 
-  const eco: EconomyState = { grid, track, harvesters: [], factories: [], rail };
+  // R3 (#270): the standing dams live on the economy state — the clock reads
+  // their bonus off it in `economyTick`, and the save/snapshot carry it as
+  // its own field (the sites themselves are seed-derived river water).
+  const eco: EconomyState = { grid, track, harvesters: [], factories: [], rail, dams: [] };
   // Playtest (2026-09) / #298: the map learns what the game built on it that
   // `occupancy` does not record — rail, platforms, truck Depot lots, and
   // processing plants / town buildings — so a road never runs along a rail
@@ -961,6 +987,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   let townPlantTiles = new Set<number>();
   let townPlantReady = false;
   grid.builtAt = (x, y) => {
+    // R3 (#270): the DAM stands on its river tile and the bank it leans
+    // onto — checked before the bridge derivation, because a deck laid over
+    // the dam's water would otherwise read "bridge" (track on water) and the
+    // dam's own tag would hide under it. A standing dam is a structure the
+    // way a platform is one, so every builder that keeps off structures
+    // (roads, rail, the other seat's depots) reads this one tag for it.
+    if (eco.dams.some((d) => damContains(d, x, y))) return "dam";
     // R2 (#266): TRACK ON WATER IS A BRIDGE DECK. Checked first, because the
     // bytes that prove it are the road/rail layers this map already has: the
     // tile's terrain says water, and either layer says something is standing
@@ -1521,6 +1554,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     skill: isSolo() ? skillKey : undefined,
   }, {
     rail: railAvailable,
+    // R3 (#270): the Dam button is a rivers-plus-new-loop feature — the two
+    // flags its placement rule gates on (no dam-able water without rivers,
+    // and the bonus multiplies a clock-income factor that only the new loop
+    // pays). The button hides where the rules could never say "ok".
+    dams: riversOn && newLoop,
     newLoop,
     /**
      * C2 (#257): the chat panel, and the whole of its gate.
@@ -2755,6 +2793,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // the manifest, and `syncWorld` is the only writer). A missing PNG just
       // means the sprite name is unknown to the atlas and nothing is drawn.
       ...railStructureItems(rail),
+      // R3 (#270): the hydro dams — the same non-gating contract. `dam_y`
+      // spans a river along x (the 1×2 footprint), `dam_x` a river along y
+      // (the 2×1), each anchored on its footprint's south vertex by the
+      // atlas def the river-art loader writes (no `center`, like the
+      // platform). The ref names the owner, for the hover inspector.
+      ...eco.dams.map((d) => {
+        const [ox, oy] = damDrawOrigin(d);
+        return {
+          sprite: d.axis === "x" ? "dam_y" : "dam_x",
+          tx: ox, ty: oy,
+          ref: { kind: "dam", id: d.id, owner: d.owner },
+        };
+      }),
     ];
     // Every world change funnels through here (builds, demolition, loads,
     // guest snapshots and deltas), so it retires the network-derived caches
@@ -3293,6 +3344,131 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   /** The rail drag's price, in the same voice as every other price label. */
   const railCostLabel = (cost: Purse): string =>
     costEntries(cost).map(([cargo, n]) => `${n} ${CARGO[cargo].name}`).join(" + ");
+
+  // ── R3 (#270): the hydro dam ─────────────────────────────────────────────
+  let nextDamId = 1;
+
+  /**
+   * The side `placeDam` will actually use at site (wx,wy): the held `damSide`
+   * when it is ACROSS the river's axis there, else the axis's first side
+   * (north for a river along x, east for one along y). The river's axis is
+   * the map's — the tool cannot rotate a dam onto a bend or a wide channel.
+   */
+  const damSideAtSite = (wx: number, wy: number, held: DamSide): DamSide => {
+    const river = damRiverAt(grid, wx, wy);
+    if ("why" in river) return held;
+    return SIDES[river.axis].includes(held) ? held : SIDES[river.axis][0];
+  };
+
+  /**
+   * The tiles a dam's bonus is measured from for this Depot — its 2×2 lot,
+   * or, a platform-Depot, the platform it stands on. The bonus is a
+   * Manhattan distance from the dam's SITE (its river tile) to the NEAREST
+   * of these, so a platform at the far end of its three-tile footprint is
+   * reached by its near tile, exactly as a truck Depot is.
+   */
+  function depotBonusTiles(h: Harvester): [number, number][] {
+    if (isRailDepot(h)) {
+      const s = rail.structures.find((st) => st.id === h.platformId);
+      if (s) return footprintTiles(s);
+      return [[h.tx, h.ty]];
+    }
+    return [[h.tx, h.ty], [h.tx + 1, h.ty], [h.tx, h.ty + 1], [h.tx + 1, h.ty + 1]];
+  }
+
+  /**
+   * The two halves of the dam's factor for this seat's Depot — the DEPOT term
+   * (0 or `DAM_BONUS`) and the CITY term (0 or `DAM_BONUS`, added to the
+   * factor's city bonus when the seat's city stands in range of its dam).
+   * The same numbers `economyTick` pays, the inspector prints and the chip
+   * rates fold in — one read, no drift.
+   */
+  function damFactorsFor(
+    seat: PlayerState, h: Harvester,
+    factory: { townId?: number | null } | null | undefined,
+  ): { dam: number; damCity: number } {
+    const town = factory?.townId != null ? grid.towns[factory.townId] ?? null : null;
+    return {
+      dam: damBonusAtTiles(eco.dams, seat.i + 1, depotBonusTiles(h)),
+      damCity: damCityBonusAt(eco.dams, seat.i + 1, town),
+    };
+  }
+
+  /**
+   * R3 (#270): build a hydro dam at river tile (wx,wy). Same shape as the
+   * other one-click placements — the shared refusal first, then the price,
+   * then the build, then the usual sync + rescore beats so every cache
+   * (components, routes, the score, the overlay) re-reads the world.
+   */
+  function placeDam(wx: number, wy: number, p: PlayerState, held: DamSide = damSide): boolean {
+    const ownerId = p.i + 1;
+    const river = damRiverAt(grid, wx, wy);
+    if ("why" in river) {
+      if (p.human) {
+        toast(DAM_REFUSAL_TEXT[river.why], "bad");
+        flashAt(wx, wy, "No dam here");
+      }
+      return false;
+    }
+    // The side the SEAT drew is the side the host validates and builds with —
+    // one refusal, one dam (the platform heading's rule, #181).
+    const side = damSideAtSite(wx, wy, held);
+    const why = damRefusal(grid, eco.dams, ownerId, wx, wy, side);
+    if (why !== "ok") {
+      if (p.human) {
+        toast(DAM_REFUSAL_TEXT[why], "bad");
+        flashAt(wx, wy, why === "site-taken" ? "A dam already stands here"
+          : why === "crossed" ? "A bridge crosses here" : "Can't build here");
+      }
+      return false;
+    }
+    if (!canPay(p.purse, DAM_COST)) {
+      if (p.human) {
+        toast(`Not enough materials — a dam costs ${costLabel(DAM_COST)}.`, "bad");
+        flashAt(wx, wy, "Not enough materials");
+      }
+      return false;
+    }
+    if (!spend(p, DAM_COST)) return false;
+    const dam: Dam = { id: nextDamId++, owner: p.id, ownerId, wx, wy, axis: river.axis, side };
+    eco.dams.push(dam);
+    if (p.human) sfx.play("build");
+    syncWorld();
+    rescoreNow();
+    if (p.human) {
+      toast(`Hydro dam built — +${Math.round(DAM_BONUS * 100)}% output for Depots and the city within ${DAM_RANGE} tiles.`, "good");
+    }
+    return true;
+  }
+
+  /** The dam standing at (tx,ty) — either of its two tiles — or null. */
+  const damAtTile = (tx: number, ty: number): Dam | null =>
+    eco.dams.find((d) => damContains(d, tx, ty)) ?? null;
+
+  /**
+   * R3 (#270): the dam comes down through the same Demolish tool as every
+   * other structure, with the usual floor(50%) refund. Returns true when a
+   * dam was removed. The site is free again — the river was never gone.
+   */
+  function demolishDam(tx: number, ty: number, p: PlayerState = me): boolean {
+    const d = damAtTile(tx, ty);
+    if (!d) return false;
+    if (d.owner !== p.id) {
+      toast("That dam isn't yours.", "bad");
+      if (p.human) flashAt(tx, ty, "Not yours to remove");
+      return false;
+    }
+    const gone = eco.dams.findIndex((x) => x.id === d.id);
+    if (gone < 0) return false;
+    eco.dams.splice(gone, 1);
+    const refund = resaleValue(DAM_COST);
+    if (Object.keys(refund).length) earn(p, refund);
+    if (p.human) sfx.play("demolish");
+    syncWorld();
+    rescoreNow();
+    toast(`Hydro dam removed${Object.keys(refund).length ? ` — ${costLabel(refund)} salvaged` : ""}.`, "info");
+    return true;
+  }
 
   /**
    * RAIL-04 (#178): commit a rail drag. The tiles and the price come from
@@ -4372,6 +4548,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   /** 2026-09: the Depot card a click on one of my Depots opens. */
   function depotCardFor(d: Harvester): void {
     const lvl = d.level ?? 1;
+    // R3 (#270): the dam's bonus, when a dam of mine reaches this Depot —
+    // the card prints it beside the yield the clock pays, the same line the
+    // hover inspector's readout prints.
+    const conn = resolveConnection(eco, componentsFor(d.ownerId), d);
+    const damC = damFactorsFor(d.owner === me.id ? me : rival, d, conn?.factory);
     ui.showDepotCard({
       title: `${(() => { const c = depotCargo(eco, d); return c ? DEPOT_TREE[c].name : "Depot"; })()} · level ${lvl}`,
       yieldNow: depotYield(d),
@@ -4380,6 +4561,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       upgradeCost: costLabel(DEPOT_UPGRADE_COST),
       retuneCost: costLabel(DEPOT_RETUNE_COST),
       busy: !!tuning,
+      damLine: damC.dam > 0 ? `dam: ×${1 + damC.dam} — hydro dam nearby` : null,
       onUpgrade: () => upgradeDepot(d.id),
       onRetune: () => retuneNow(d.id),
     });
@@ -4716,6 +4898,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * "one cost model, one rule" invariant extended to the guest's actions.
    */
   function doDemolish(tx: number, ty: number, p: PlayerState = me) {
+    // ── R3 (#270): the dam comes down like any other structure ────────────
+    // Either footprint tile (the river tile or the bank) removes it, with
+    // the same owner gate as every other build and the floor(50%) refund.
+    const dd = damAtTile(tx, ty);
+    if (dd) {
+      if (dd.owner !== p.id) {
+        toast("That dam isn't yours.", "bad");
+        if (p.human) flashAt(tx, ty, "Not yours to remove");
+        return;
+      }
+      demolishDam(tx, ty, p);
+      return;
+    }
     // ── RAIL-04 (#178): the railway comes down through this same tool ───────
     // A platform or a train depot first (its footprint tiles are what a player
     // clicks), then a rail tile. Both are owner-scoped like the road tiers, and
@@ -6385,9 +6580,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           // its tuning-confirmed upgrade, applied to every depot it owns (and
           // on top of the distance/yield/transport chain, so it scales the
           // whole network rather than one route). 1 while nothing is raised.
+          // R3 (#270): the dam's two halves, off the SAME read the inspector
+          // and the chip rates print — the depot term multiplies the factor
+          // (×1.25 when one of the seat's dams reaches this Depot), and the
+          // city term adds to the factor's city bonus (the seat's city within
+          // range of its dam lifts every Depot that feeds it).
+          const damF = damFactorsFor(seat, depot, result.connection?.factory);
           const factor = BASE_RATE * depotYield(depot) * distanceInfoFor(depot.id).factor
-            * transportFactor(depot) * (1 + (hasCities(seat)
-              ? cityBonusFor(seat.id, result.connection?.factory) : Math.max(0, seat.townBonus)));
+            * transportFactor(depot) * (1 + damF.dam)
+            * (1 + (hasCities(seat)
+              ? cityBonusFor(seat.id, result.connection?.factory) + damF.damCity
+              : Math.max(0, seat.townBonus) + damF.damCity));
           const total = cargoes.reduce((sum, [, amount]) => sum + amount, 0) * factor
             + (loopCarry.get(depot.id) ?? 0);
           const whole = Math.floor(total);
@@ -7061,6 +7264,47 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * #228 is where it goes.
    * ══════════════════════════════════════════════════════════════════════════
    */
+  /**
+   * R3 (#270): the rival values dam sites the way it values the rest of the
+   * map. A site is worth its price when it reaches at least one of the rival's
+   * OWN income sources — a Depot (its lot tiles) or one of its cities — within
+   * `DAM_RANGE`, AND the rival can pay for it. One dam per turn, the best site
+   * by (sources reached, then row-major position). No-op with the rivers
+   * option off: no river, no site, ever. Returns whether a dam was built.
+   */
+  function rivalDamStep(): boolean {
+    if (!riversOn || !newLoop) return false;
+    if (!canPay(rival.purse, DAM_COST)) return false;
+    const owner = rival.i + 1;
+    const sites = damSitesFor(grid);
+    if (!sites.length) return false;
+    const depots = eco.harvesters.filter((h) => h.ownerId === owner);
+    const cities = citiesOf(rival);
+    let best: { wx: number; wy: number; side: DamSide; score: number; key: number } | null = null;
+    for (const s of sites) {
+      // A side whose bank the site rule actually accepts. The bonus is
+      // measured from the SITE (its river tile), so any legal side serves —
+      // but a site with no clear bank at all is not buildable and scores
+      // nothing, so the rival never "wants" a dam it cannot stand.
+      let side: DamSide | null = null;
+      for (const cand of s.sides) {
+        if (damRefusal(grid, eco.dams, owner, s.wx, s.wy, cand) === "ok") { side = cand; break; }
+      }
+      if (!side) continue;
+      let score = 0;
+      for (const h of depots) {
+        if (depotBonusTiles(h).some(([tx, ty]) => Math.abs(s.wx - tx) + Math.abs(s.wy - ty) <= DAM_RANGE)) score++;
+      }
+      if (cities.some((t) => Math.abs(s.wx - t.tx) + Math.abs(s.wy - t.ty) <= DAM_RANGE)) score++;
+      if (score < 1) continue;
+      const key = s.wy * MAP_W + s.wx;
+      if (!best || score > best.score || (score === best.score && key < best.key))
+        best = { wx: s.wx, wy: s.wy, side, score, key };
+    }
+    if (!best) return false;
+    return placeDam(best.wx, best.wy, rival, best.side);
+  }
+
   function aiNewLoopTurn(f: Factory, now: number): void {
     // #297: the rival is still "playing" its last tuning session. A Depot, a
     // city upgrade and a re-match each cost the player a real session on the
@@ -7207,6 +7451,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // action — without this a rich rival would raise one every build clock
     // (the rail flag is dev-only today, but the pace must hold when it ships).
     if (rail.platform) startSession();
+
+    // ── 7. dam (R3, #270) — a hydro dam on a site that reaches the rival ───
+    // Infrastructure, not a ★: it takes no session (the pave step's rule) and
+    // runs on every turn, so it stands the moment the mix can pay for it.
+    if (rivalDamStep()) acted = true;
 
     if (acted) {
       syncWorld();
@@ -7556,6 +7805,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       trucks: trucksWire,
       cars: carsWire,
       rail: railWire(true),
+      // R3 (#270): the dams ride the snapshot — the guest's map shows the
+      // standing structures and their bonuses.
+      dams: damsToWire(eco.dams),
       winner: winner ? { id: winner.id, source: winningSource } : null,
       clearedFields: [...clearedFields],
       offers: offersToWire(offerBook, performance.now()),
@@ -7589,6 +7841,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       trucks: trucksWire,
       cars: carsWire,
       rail: railWire(),
+      // R3 (#270): the dams ride every delta whole (the harvesters rule, not
+      // the rail "absent = unchanged" rule) — a demolished dam is mirrored the
+      // same tick. `damsToWire` returns undefined for an empty list, so pin
+      // it to an array: an absent `dams` on a delta must mean "unchanged".
+      dams: damsToWire(eco.dams) ?? [],
       clearedFields: [...clearedFields],
       winner: winner ? { id: winner.id, source: winningSource } : null,
       offers: offersToWire(offerBook, now),
@@ -7835,6 +8092,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // reading belongs to a delta), so a stale local railway is cleared.
     if (applied.rail) applyRailWire(rail, applied.rail);
     else clearRail(rail);
+    // R3 (#270): the dams — a full state ALWAYS says what the host's dams ARE
+    // (absent = none, the rail rule). `applySnapshot` already validated the
+    // rows; `damsFromWire` re-narrows the wire strings to the game types.
+    eco.dams = damsFromWire(applied.dams);
     if (applied.cars || applied.rail) {
       // Ensure guest renders vehicles
       world.vehicles = (carItems(cars as any) as any)
@@ -7935,6 +8196,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         .concat(trainItems(rail, atlasRef ?? undefined));
       worldDirty = true;
     }
+    // R3 (#270): the dams ride the delta whole, so a present field ALWAYS
+    // says what the host's dams ARE — an empty list is a demolition to
+    // mirror, an absent field is "unchanged". `damsFromWire` re-narrows.
+    if (Array.isArray((msg as any).dams)) {
+      eco.dams = damsFromWire((msg as any).dams);
+      worldDirty = true;
+    }
     // L15 (#230): boards and crossPrompt are gone from the wire.
     if ((msg as any).winner !== undefined) {
       const w = (msg as any).winner;
@@ -7985,6 +8253,24 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             { railAt: (x, y) => hasRail(rail.rail, x, y) });
           if (pv.tiles.length === 0) toast("Can't build there.", "bad");
           else commitTrackDrag(p, pv, kind);
+        }
+      } else if (what === "dam") {
+        // R3 (#270): a guest's dam build. The host runs the SAME site rule,
+        // the SAME charge and the SAME build against the guest's seat — the
+        // side the guest DREW is the side built (#181's heading rule). The
+        // refusal must ECHO (a guest seat toasts no one on the host) and the
+        // forced publish below is what lands the new dam on the guest.
+        const tx = int(payload.tx), ty = int(payload.ty);
+        const side = (DAM_SIDES as readonly string[]).includes(String(payload.side))
+          ? payload.side as DamSide : "s";
+        if (tx !== null && ty !== null) {
+          const river = damRiverAt(grid, tx, ty);
+          const why = "why" in river ? river.why
+            : damRefusal(grid, eco.dams, p.i + 1, tx, ty, damSideAtSite(tx, ty, side));
+          if (why !== "ok") echoed.push(DAM_REFUSAL_TEXT[why]);
+          else if (!canPay(p.purse, DAM_COST))
+            echoed.push(`Not enough materials — a dam costs ${costLabel(DAM_COST)}.`);
+          else placeDam(tx, ty, p, side);
         }
       } else if (!railAvailable && (what === "rail" || what === "platform" || what === "raildepot" || what === "railact")) {
         // RAIL-05 (#182): with the flag down the railway does not exist on this
@@ -8489,6 +8775,28 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         sprite: `${kind === "platform" ? "platform" : "train-depot"}_${railView}`,
         tx, ty, valid: ok,
       };
+    } else if (tool === "dam") {
+      // R3 (#270): the ghost is the footprint the click would build — the
+      // river tile and the bank the held side leans onto (folds to the
+      // axis's first side when it runs along the river), green when the site
+      // says ok, red on the refusal the click will voice. The ghost sprite is
+      // the one the world draws once built (`dam_y` spans a river along x,
+      // `dam_x` a river along y).
+      const river = damRiverAt(grid, tx, ty);
+      if ("why" in river) {
+        items.push({ sprite: "highlight_bad", tx, ty });
+      } else {
+        const side = damSideAtSite(tx, ty, damSide);
+        const why = damRefusal(grid, eco.dams, me.i + 1, tx, ty, side);
+        const ok = why === "ok";
+        for (const [x, y] of damFootprint({ wx: tx, wy: ty, side })) {
+          if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) {
+            items.push({ sprite: ok ? "highlight" : "highlight_bad", tx: x, ty: y });
+          }
+        }
+        const [ox, oy] = damDrawOrigin({ wx: tx, wy: ty, axis: river.axis });
+        ghost = { sprite: river.axis === "x" ? "dam_y" : "dam_x", tx: ox, ty: oy, valid: ok };
+      }
     } else if (tool === "plant") {
       // AI-03c: the mid-game plant preview paints from the same folded plan
       // the test twin and the click share — no more green footprints over a
@@ -8781,6 +9089,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             const res = harvesterYield(eco, comp, industryLocks(eco), h, now);
             const cargo = tuningCargoFor(h);
             const seat = h.owner === me.id ? me : rival;
+            // R3 (#270): the dam's two halves, off the same read the clock
+            // pays — the depot term as its own line, the city term folded
+            // into the factor's city bonus the way the tick folds it.
+            const damH = damFactorsFor(seat, h, res.connection?.factory);
             const readout = depotReadout({
               yieldLevel: depotYield(h),
               // The tier the upgrade is COUNTED in (L6's re-tune credit): a
@@ -8795,7 +9107,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
               amount: cargo ? (res.yields[cargo] ?? 0) : 0,
               serviced: res.serviced && res.connection.kind !== null,
               stopped: protestedDepot(h, now, comp),
-              townBonus: Math.max(0, seat.townBonus),
+              townBonus: Math.max(0, seat.townBonus) + damH.damCity,
+              damBonus: damH.dam,
               // L6 (#220): decay is the difficulty's axis — the line prints the
               // row's own cooling and floor, and nothing at all when the row
               // has no decay (Easy, Normal).
@@ -8804,6 +9117,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
               tickMs: HARVEST_MS,
             });
             info += `<br>${readout.yieldLine}<br>${readout.rateLine}`;
+            if (readout.damLine) info += `<br>${readout.damLine}`;
             if (readout.decayLine) info += `<br>${readout.decayLine}`;
             // L16 (#231): the storage cap's read on this Depot. A connected
             // Depot whose cargo sits AT its owner's cap is being paid nothing
@@ -8844,6 +9158,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
                 ? `click to upgrade · ${costLabel(price.cost)}`
                 : `fully upgraded`)
               : `the town your Factory touches is the one you upgrade`);
+        }
+      } else if (ref && ref.kind === "dam") {
+        // R3 (#270): the dam answers with what it IS and what it PAYS — the
+        // same two numbers the clock and the Depot cards read, so the map and
+        // the ledger never disagree about the bonus.
+        const d = eco.dams.find((x) => x.id === (ref as { id?: number }).id);
+        if (d) {
+          info = `<b>Hydro Dam</b> (${d.owner === me.id ? "yours" : "rival's"})<br>` +
+            `+${Math.round(DAM_BONUS * 100)}% output for Depots within ${DAM_RANGE} tiles` +
+            (d.owner === me.id
+              ? `<br>and for your city when it stands in range`
+              : `<br>the rival's bonus — contest the river before they dam it`);
         }
       } else if (hover) {
         // VP-01: a road tile answers with what it is WORTH, which is the rule
@@ -8959,6 +9285,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           if (!res.serviced || res.connection.kind === null) continue;
           if (protestedDepot(h, now, comp)) continue;
           const d = distanceInfoFor(h.id);
+          // R3 (#270): the dam's halves, the same read the clock pays — the
+          // depot term as its own factor, the city term folded into the
+          // factor's city bonus, so the chip rate and the tick cannot drift.
+          const damR = damFactorsFor(me, h, res.connection?.factory);
           for (const [cargo, amount] of Object.entries(res.yields) as [Cargo, number][]) {
             rows.push({
               cargo,
@@ -8966,7 +9296,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
               yieldLevel: depotYield(h),
               distanceFactor: d.factor,
               transportFactor: transportFactor(h),
-              townBonus: Math.max(0, me.townBonus),
+              townBonus: Math.max(0, me.townBonus) + damR.damCity,
+              damBonus: damR.dam,
             });
           }
         }
@@ -9463,6 +9794,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       toast("Rail is not available in this mode.", "info");
       return;
     }
+    // R3 (#270): the dam is a rivers-plus-new-loop tool. Without the rivers
+    // map option there is no dam-able water, and without the new loop there
+    // is no clock-income factor for the bonus to multiply — so a hotkey that
+    // arms it in that mode would summon a build the rules always refuse.
+    if (t === "dam" && !(riversOn && newLoop)) {
+      toast("Dams need a river map (rivers on) and the new economy loop.", "info");
+      return;
+    }
     // The opening Depot is owed: every click in this phase places it, so any
     // other build tool would light up and then silently build a Depot instead.
     if (phase === "setup-harvester" && t !== "harvester") {
@@ -9694,6 +10033,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
               net?.sendIntent("build", { do: tool === "platform" ? "platform" : "raildepot", tx: p.tx, ty: p.ty, view: railView });
             } else if (tool === "platform") placeRailPlatform(p.tx, p.ty, me);
             else placeRailDepot(p.tx, p.ty, me);
+          } else if (tool === "dam") {
+            // R3 (#270): the hydro dam, on a guest an intent like every other
+            // build — the host runs the same `damRefusal` against the guest's
+            // seat. The side is the guest's own (its R), sent with the intent.
+            if (isGuest()) {
+              net?.sendIntent("build", { do: "dam", tx: p.tx, ty: p.ty, side: damSide });
+            } else placeDam(p.tx, p.ty, me);
           } else if (tool === "railway") {
             // The panel tool builds nothing on the map: the panel is the UI's,
             // and a click here is a no-op with a hint rather than a refusal.
@@ -9762,7 +10108,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // it is, RAIL-04's four included.
     const map: Record<string, Tool> = {
       "q": "select", "1": "dirt", "2": "road", "3": "harvester", "4": "plant",
-      "5": "demolish", "6": "rail", "7": "platform",
+      "5": "demolish", "6": "rail", "7": "platform", "8": "dam",
     };
     if (!isTypingTarget(e) && map[e.key]) {
       if (map[e.key] === "select") cancelPlacement();
@@ -9772,12 +10118,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // four headings the art and the footprints are authored in, in the same
     // order (`rotateView` is the rail module's, not a second list here).
     // F3 (#274): R also rotates factory/plant ghost (factoryView), never both at once.
+    // R3 (#270): and the dam's bank side (damSide) — the river's axis fixes
+    // the footprint, the side is the choice.
     if (!isTypingTarget(e) && !e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === "r") {
       // The Depot is placed in four rotations too, and R turns whichever tool
       // is armed: over a real site it steps through the sides that site can
       // actually open onto, so a turn never promises an impossible entrance.
       if (tool === "harvester" || phase === "setup-harvester") rotateDepotView();
       else if (tool === "plant" || phase === "setup-factory") rotateFactoryView();
+      else if (tool === "dam") damSide = DAM_SIDES[(DAM_SIDES.indexOf(damSide) + 1) % DAM_SIDES.length];
       else railView = rotateView(railView);
       paintOverlayNow();
     }
@@ -10068,6 +10417,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // RAIL-04 (#178): the railway rides the save — a refresh must not take a
       // built line, its platforms or its train with it.
       rail: railToWire(rail),
+      // R3 (#270): the standing dams ride the save in the snapshot's own wire
+      // shape (the map re-derives the river, so only the owner and the bank
+      // the footprint leans on travel).
+      dams: damsToWire(eco.dams),
       // L1e (#236): which loop this world earns under, and what its clock had
       // banked but not yet paid. Depot yield levels ride `eco.harvesters`
       // below — the record they belong to — so they need no field here.
@@ -10132,6 +10485,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // ★ ledger the restore rebuilds already knows about the platforms.
     if (d.rail) applyRailWire(rail, d.rail);
     else clearRail(rail);
+    // R3 (#270): the dams come back the same way — one owner per site, the
+    // bank from the wire row. `damsFromWire` validates row by row, so a stale
+    // or foreign row is dropped rather than standing a phantom dam.
+    eco.dams = damsFromWire(d.dams);
     const now = performance.now();
     for (const [k, rem] of Object.entries(d.bandit)) {
       const ind = grid.industries.find((x) => x.id === Number(k));
@@ -10650,6 +11007,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           // lorries (eager glob, per-zoom, non-gating), so a quality change
           // fills the levels the new cap asks for and never re-fetches.
           loadRailwaySprites(a, cap),
+          // R3 (#270): the dam's two sprites — the same non-gating contract,
+          // and only when the game can actually build one.
+          ...(riversOn && newLoop ? [loadRiverSprites(a, cap)] : []),
         ]);
       } catch (err) {
         console.warn("[gfx] detail levels failed to load; keeping the current preset", err);
@@ -10898,6 +11258,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       renderer?.invalidateAll();
     }).catch((err) => {
       console.warn("[railway] art failed to load:", err);
+    }));
+
+    // R3 (#270): the dam art rides the boot beside the railway — the same
+    // non-gating contract (a missing folder leaves the map standing), and it
+    // only loads where a dam can actually stand: the rivers map option on
+    // AND the new loop, the two flags the tool and the bonus gate on.
+    if (riversOn && newLoop) void loading.track("rivers", loadRiverSprites(atlas, cap0).then((n) => {
+      if (disposed || !n) return;
+      syncWorld();
+      renderer?.recomputePad();
+      renderer?.invalidateAll();
+    }).catch((err) => {
+      console.warn("[rivers] art failed to load:", err);
     }));
 
     void loading.track("buildings", loadBuildingLayers(atlas, buildingsBase, cap0).then((n) => {
@@ -12047,6 +12420,21 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     demolish: (tx: number, ty: number) => {
       if (isGuest()) { net?.sendIntent("demolish", { do: "demolish", tx, ty }); return; }
       doDemolish(tx, ty);
+    },
+    /**
+     * R3 (#270): the standing dams, as a copy — the probe's read of who owns
+     * which site and onto which bank each footprint leans.
+     */
+    get dams() { return eco.dams.map((d) => ({ ...d })); },
+    /**
+     * R3 (#270): the test twin of a Dam-tool click for the LOCAL seat — the
+     * same `placeDam` the pointer handler runs (site rule, charge, build,
+     * sync, rescore), with the side the test drew. Returns whether a dam was
+     * built. A guest seat sends the build intent, exactly the click does.
+     */
+    placeDamAt: (tx: number, ty: number, side?: DamSide) => {
+      if (isGuest()) { net?.sendIntent("build", { do: "dam", tx, ty, side: side ?? damSide }); return true; }
+      return placeDam(tx, ty, me, side ?? damSide);
     },
     /** The Black Market twin of buying a Protest: arms it (or cancels). */
     armProtest: () => buyBlack("protest"),

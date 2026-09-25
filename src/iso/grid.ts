@@ -147,9 +147,15 @@ export interface MapGenOptions {
  * It is derived, not stored: nothing else in the game can put track on water,
  * so "water + track" IS a bridge (see `bridges.ts`), and one entry in this
  * union is all the other builders need to keep off it.
+ *
+ * R3 (#270): `"dam"` is a hydro dam's FOOTPRINT — its river tile and the bank
+ * tile it leans onto (`dams.ts`). A dam is a standing structure the way a
+ * Depot or a platform is one, so roads and rail refuse its tiles the same
+ * way they refuse theirs, and the bank — dry land the map would otherwise
+ * pave over — is protected by this tag.
  */
 export type GridBuilt =
-  | "rail" | "rail-x" | "rail-y" | "platform" | "depot" | "plant" | "bridge";
+  | "rail" | "rail-x" | "rail-y" | "platform" | "depot" | "plant" | "bridge" | "dam";
 
 /**
  * #298: a footprint after `quarterTurns` clockwise quarter-turns. The anchor

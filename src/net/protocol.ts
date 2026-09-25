@@ -235,6 +235,14 @@ export interface DeltaMsg {
    * means "unchanged" on a delta, and "no railway at all" on a full snapshot.
    */
   rail?: Snapshot["rail"];
+  /**
+   * R3 (#270): the standing hydro dams, in the snapshot's own wire shape. The
+   * host sends the WHOLE list every delta (the `harvesters`/`factories` rule,
+   * not the rail "absent = unchanged" rule) so a demolished dam is mirrored
+   * the same tick — the list is tiny (one owner per river site) and a stale
+   * bonus line on the guest would read as a bug.
+   */
+  dams?: Snapshot["dams"];
   /** MP-AUDIT: winner identity (host publishes, guest mirrors) */
   winner?: Snapshot["winner"];
   /** RES-FIELDS: ids of the demolished wheat fields / tree blocks (whole list). */

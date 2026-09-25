@@ -48,6 +48,13 @@ export interface TickRateInput {
   transportFactor: number;
   /** The seat's city-upgrade multiplier (0 = nothing raised). */
   townBonus: number;
+  /**
+   * R3 (#270): the dam bonus — 0, or `DAM_BONUS` when the seat's own dam
+   * reaches this Depot (`dams.ts`). Multiplied like the city term, beside it,
+   * so the readout prints the factor the clock pays. Absent = no dam, which
+   * a pre-dam caller (a legacy harness) keeps byte-for-byte.
+   */
+  damBonus?: number;
 }
 
 /**
@@ -58,6 +65,7 @@ export interface TickRateInput {
  */
 export function tickFactor(v: Omit<TickRateInput, "amount">): number {
   return BASE_RATE * v.yieldLevel * v.distanceFactor * v.transportFactor
+    * (1 + Math.max(0, v.damBonus ?? 0))
     * (1 + Math.max(0, v.townBonus));
 }
 
@@ -209,6 +217,8 @@ export interface DepotReadoutInput {
   /** A Protest stands on this Depot's route — it is not ticking right now. */
   stopped: boolean;
   townBonus: number;
+  /** R3 (#270): the dam bonus reaching this Depot (0 or `DAM_BONUS`). */
+  damBonus?: number;
   /** The difficulty's cooling, as a fraction of the level per tick (0 = none). */
   decayRate: number;
   /** The floor the cooling stops at (the difficulty's `minYield`). */
@@ -225,6 +235,8 @@ export interface DepotReadout {
   rateLine: string;
   /** "decay: 4%/tick above ×1" — null on rows with no cooling. */
   decayLine: string | null;
+  /** "dam: ×1.25 — hydro dam nearby" — null when no dam reaches the Depot. */
+  damLine: string | null;
 }
 
 /**
@@ -243,6 +255,7 @@ export function depotReadout(v: DepotReadoutInput): DepotReadout {
       distanceFactor: v.distanceFactor,
       transportFactor: v.transportFactor,
       townBonus: v.townBonus,
+      damBonus: v.damBonus,
     },
     v.tickMs,
   );
@@ -258,5 +271,11 @@ export function depotReadout(v: DepotReadoutInput): DepotReadout {
   const decayLine = v.decayRate > 0
     ? `decay: ${fmtRate(v.decayRate * 100, 1)}%/tick above ${fmtMult(v.minYield)}`
     : null;
-  return { perTick: rate.perTick, perSecond: rate.perSecond, yieldLine, rateLine, decayLine };
+  // R3 (#270): the dam's line prints only when the bonus is live for THIS
+  // Depot — the same gate the clock applies — so a Depot out of range of
+  // every dam promises nothing its tick will not pay.
+  const damLine = (v.damBonus ?? 0) > 0
+    ? `dam: ${fmtMult(1 + v.damBonus!)} — hydro dam nearby`
+    : null;
+  return { perTick: rate.perTick, perSecond: rate.perSecond, yieldLine, rateLine, decayLine, damLine };
 }

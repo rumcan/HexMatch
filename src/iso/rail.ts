@@ -821,7 +821,9 @@ export function railTileRefusal(
     // R2 (#266): a deck is built ground — except for the very drag that is
     // bridging there (a re-laid crossing over your own deck reads it back).
     if (!bridges?.has(tIdx(tx, ty))) return "occupied";
-  } else if (built === "depot" || built === "plant" || built === "platform") {
+  } else if (built === "depot" || built === "plant" || built === "platform" || built === "dam") {
+    // R3 (#270): a dam's bank tile is standing ground like a platform's, and
+    // its water tile answers "water" above before this is ever reached.
     return "occupied";
   }
   if (trainOccupies(state, tx, ty)) return "train-in-way";
@@ -1219,8 +1221,9 @@ export function platformRefusal(
     if (!railTerrainOk(grid, tx + x, ty + y)) return "water";
     if (grid.occupancy[tIdx(tx + x, ty + y)] >= 0 || grid.occupancy[tIdx(tx + x, ty + y)] === FIELD_OCC) return "occupied";
     // Nothing else built there: a Depot lot, a plant / town building, or anyone's rail.
+    // R3 (#270): a dam's footprint is standing ground too.
     const b = grid.builtAt?.(tx + x, ty + y);
-    if (b === "depot" || b === "plant" || b === "platform" || b === "bridge"
+    if (b === "depot" || b === "plant" || b === "platform" || b === "bridge" || b === "dam"
       || b === "rail" || b === "rail-x" || b === "rail-y") return "occupied";
   }
   if (structures.some((s) => overlaps(s, tx, ty, w, h))) return "overlap";
@@ -1230,7 +1233,8 @@ export function platformRefusal(
     if (grid.occupancy[tIdx(x, y)] >= 0 || grid.occupancy[tIdx(x, y)] === FIELD_OCC) return "track-blocked";
     if (structures.some((s) => overlaps(s, x, y, 1, 1))) return "track-blocked";
     const side = grid.builtAt?.(x, y);
-    if (side === "depot" || side === "plant" || side === "platform" || side === "bridge") return "track-blocked";
+    if (side === "depot" || side === "plant" || side === "platform" || side === "bridge"
+      || side === "dam") return "track-blocked";
   }
   const candidates = anchorCandidates(grid, factories, ownerId, tx, ty, view);
   if (!candidates.length) return "no-anchor";

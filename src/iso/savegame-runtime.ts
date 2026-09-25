@@ -27,6 +27,7 @@ import type { EconomyState } from "./economy";
 import {
   SNAPSHOT_VERSION, bytesToBase64, base64ToBytes, type RailWire,
 } from "./snapshot";
+import type { DamWire } from "./dams";
 
 export const SAVE_KEY = "hexmatch:save";
 export const SAVEGAME_VERSION = 3;
@@ -67,6 +68,13 @@ export interface SaveGamePayload {
   };
   track: { dirt: string; road: string; owner: string; upgraded: string };
   rail?: RailWire;
+  /**
+   * R3 (#270): the standing hydro dams, in the snapshot's own wire shape
+   * (the map regenerates the sites from the seed; ownership + bank lean
+   * travel). Absent from a pre-dam save — the loader reads an undammed map,
+   * which is exactly the map that save was taken from.
+   */
+  dams?: DamWire[];
   loop?: boolean;
   loopCarry?: Record<string, number>;
   /**
