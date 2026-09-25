@@ -55,7 +55,7 @@ import {
 import { FREE_SETUP_DEPOTS, depotCostFor, priceDepot } from "./construction";
 import { distanceFactorForPath } from "./loop";
 // E4 (#268): the slope rules and costs — the same ones the drag enforces.
-import { climbLevels, railDragSlopeRefusals, roadStepRefusal, routeDistance } from "./slopes";
+import { climbLevels, roadStepRefusal, routeDistance } from "./slopes";
 // L17 (#245): the bank is back (3:1) — the rival's planner is real again.
 import { BANK_RATE, bankAllowed, bankTrade, type CargoBag } from "./bank";
 import {
@@ -86,7 +86,7 @@ import {
 // every "may I" answer is a `rail.ts` function the player's click reads too.
 import {
   RAIL_COSTS, RAIL_PRESENT, RAIL_VIEWS, footprintFor,
-  railCostOf, railTerrainOk, roadAt, railTileRefusal, railBridgePlan, buildRail,
+  railCostOf, railTerrainOk, roadAt, railBridgePlan, buildRail,
   railJoinTurnOk, previewRailBuild,
   platformRefusal, resolveAnchor, placePlatform,
   depotRefusal, placeDepot, depotExit, stopTile, railPorts,
@@ -2270,17 +2270,10 @@ export function validateRailDrag(
   // function the player's preview and `buildRail` read — a plan that walks
   // into the water is refused here even when its tiles look legal one by one.
   const bridgeTiles = railBridgePlan(grid, track, rail, ownerId, tiles, planned).deckTiles;
-  // E4 (#268): the drag's slope SHAPE too — the ramp run and the no-diagonal-
-  // on-a-slope rule, judged by the same function the player's preview and
-  // `buildRail` read, so a planned drag can never be one the game refuses.
-  const slopeWhy = railDragSlopeRefusals(grid, tiles, bridgeTiles);
+  // The probe above enforces slopes, crossings, turn shape, joins and train
+  // component guards. Count distinct fresh tiles only after it accepts all.
   let fresh = 0, bridges = 0;
-  for (let n = 0; n < tiles.length; n++) {
-    const [x, y] = tiles[n];
-    const why = slopeWhy.get(n)
-      ?? railTileRefusal(grid, track, rail, ownerId, x, y, planned, bridgeTiles);
-    if (why !== "ok") return { ok: false, fresh: 0, bridges: 0, why };
-    const i = tIdx(x, y);
+  for (const i of planned) {
     if ((rail.rail.tile[i] & RAIL_PRESENT) === 0 || rail.rail.owner[i] !== ownerId) {
       fresh++;
       if (bridgeTiles.has(i)) bridges++;

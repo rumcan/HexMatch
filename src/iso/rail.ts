@@ -1020,7 +1020,12 @@ function proposeRailAutolinks(
 export function autotileRail(state: RailState, tiles: [number, number][]): void {
   const edit = railEdit(state, tiles);
   proposeRailAutolinks(state, tiles);
-  if (edit.tooSharp()) edit.rollback();
+  if (edit.tooSharp()) {
+    edit.rollback();
+    // The caller may already have added/removed a structure or tile. Its
+    // graph change still invalidates routes even though these links refused.
+    state.rail.revision++;
+  }
 }
 
 export interface RailBuildResult {
@@ -1042,6 +1047,27 @@ export interface RailBuildResult {
  * place where a merge can happen.
  */
 export function buildRail(
+  grid: Grid, track: Track, state: RailState, ownerId: number, tiles: [number, number][],
+): RailBuildResult {
+  // A refused diagonal tail no longer suppresses auto-links on the last
+  // accepted tile. Re-evaluate a shortened gesture in its OWN shape, just as
+  // game.ts will build preview.tiles. Each retry strictly shortens the prefix.
+  const original = { tile: state.rail.tile.slice(), owner: state.rail.owner.slice(),
+    revision: state.rail.revision };
+  let candidate = tiles, why: RailRefusal = "ok";
+  for (;;) {
+    const result = buildRailAttempt(grid, track, state, ownerId, candidate);
+    if (result.why === "ok") return { ...result, why };
+    why = result.why;
+    if (!result.built.length) return result;
+    state.rail.tile.set(original.tile);
+    state.rail.owner.set(original.owner);
+    state.rail.revision = original.revision;
+    candidate = result.built;
+  }
+}
+
+function buildRailAttempt(
   grid: Grid, track: Track, state: RailState, ownerId: number, tiles: [number, number][],
 ): RailBuildResult {
   const built: [number, number][] = [];
@@ -1251,6 +1277,18 @@ export function railPreview(
       if (bridgeTiles.has(tIdx(x, y))) decks++;
     }
     tiles.push([x, y]);
+  }
+  // Affordability can also cut off a planned diagonal (or a bridge). The
+  // preview must quote the prefix that the click can actually commit.
+  if (unaffordable.length && tiles.length) {
+    const prefix = previewRailBuild(grid, track, state, ownerId, tiles);
+    if (prefix.built.length < tiles.length) {
+      noteObstacle(prefix.built.length, prefix.why);
+      tiles.splice(prefix.built.length);
+      cost = prefix.cost;
+      decks = tiles.filter(([x, y]) => bridgeTiles.has(tIdx(x, y))
+        && !railOpenTo(state.rail, ownerId, x, y)).length;
+    }
   }
   return { tiles, cost, upgrades: 0, free: 0, bridges: decks, unaffordable, blocked, truncated, why };
 }
@@ -2020,7 +2058,9 @@ export function planLeg(
   const stop: [number, number] = train.target === "depot" ? [exit.tx, exit.ty] : stopTile(targetStruct);
   const goal = new Set([tIdx(stop[0], stop[1])]);
   const route = railPath(state, train.ownerId, [start], goal, startOct)
-    ?? railPath(state, train.ownerId, [start], goal);
+    // Reversal is legal (recall / a platform departure), but dropping the
+    // heading entirely let a train resume right on a legacy 90° corner.
+    ?? railPath(state, train.ownerId, [start], goal, startOct < 0 ? -1 : (startOct + 4) % 8);
   if (!route) {
     train.status = "blocked";
     train.blockedWhy = train.target === "depot" ? "No route back to the depot"
@@ -2595,15 +2635,15 @@ export function applyRailWire(state: RailState, wire: RailWire | null | undefine
   state.trains.length = 0;
   for (const t of Array.isArray(wire.trains) ? wire.trains : []) {
     if (!t || typeof t.id !== "number") continue;
+    const route = (Array.isArray(t.route) ? t.route : (prevRoutes.get(t.id) ?? []))
+      .map((r) => [...r] as [number, number]);
     state.trains.push({
       id: t.id, ownerId: t.ownerId, lineId: t.lineId, depotId: t.depotId,
       status: asStatus(t.status), target: asTarget(t.target),
-      route: Array.isArray(t.route)
-        ? t.route.map((r) => [...r] as [number, number])
-        : (prevRoutes.get(t.id) ?? []).map((r) => [...r] as [number, number]),
+      route,
       dist: t.dist,
       // #401: preserve legacy track, but never resume a saved sharp route.
-      planRevision: t.route?.some((p, i, route) => i >= 2 && !turnOk(
+      planRevision: route.some((p, i, route) => i >= 2 && !turnOk(
         octantOf(route[i - 1][0] - route[i - 2][0], route[i - 1][1] - route[i - 2][1]),
         octantOf(p[0] - route[i - 1][0], p[1] - route[i - 1][1]),
       )) ? -1 : t.planRevision,
