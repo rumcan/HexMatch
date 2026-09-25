@@ -237,8 +237,10 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
 .aside.left, .aside.left > .panel, .aside.left .build-list { background: var(--sa-panel) !important; border-radius: 0; box-shadow: none; }
 .aside.left .build-btn { background: var(--sa-panel) !important; background-image: none !important; }
 .aside.left .build-btn:hover { background: var(--sa-panel-2) !important; }
-.aside.left .build-btn.active { background: var(--sa-orange) !important; color: var(--sa-on-orange); border-color: var(--sa-orange); }
-.aside.left .build-btn.active .bb-mid b { color: var(--sa-on-orange); }
+@media (min-width: 761px) {
+  .ui-root:not([data-phone="1"]) .aside.left .build-btn.active { background: var(--sa-orange) !important; color: var(--sa-on-orange); border-color: var(--sa-orange); }
+  .ui-root:not([data-phone="1"]) .aside.left .build-btn.active .bb-mid b { color: var(--sa-on-orange); }
+}
 
 /* the drawer's tabs share the strip's full width */
 @media (min-width: 761px) {
@@ -421,8 +423,8 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
 .build-btn.active .bb-mid small { color: var(--sa-bone-dim) !important; }
 @media (min-width: 761px) {
   /* the desktop rail keeps the solid orange tile (icon + one word reads fine) */
-  .aside.left .build-btn.active { background: var(--sa-orange) !important; border-left: 0 !important; color: var(--sa-on-orange) !important; }
-  .aside.left .build-btn.active .bb-mid b { color: var(--sa-on-orange) !important; }
+  .ui-root:not([data-phone="1"]) .aside.left .build-btn.active { background: var(--sa-orange) !important; border-left: 0 !important; color: var(--sa-on-orange) !important; }
+  .ui-root:not([data-phone="1"]) .aside.left .build-btn.active .bb-mid b { color: var(--sa-on-orange) !important; }
 }
 .build-btn .bb-mid small { color: var(--sa-bone-dim); }
 
@@ -472,3 +474,14 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
   .topbar .vp-badge::after { content: attr(data-target); font-size: 12px; color: var(--sa-bone-dim); }
   .topbar .radio-pill { width: 36px; height: 36px; }
 }
+
+/* phone / tablet Build sheet: the rail's line icon, right-aligned in a square box */
+.ui-root[data-phone="1"] .build-btn { display: flex !important; flex-direction: row !important; align-items: center; gap: 12px; padding: 10px 12px 10px 14px !important; }
+.ui-root[data-phone="1"] .build-btn .bb-mid { order: 1; flex: 1; }
+.ui-root[data-phone="1"] .build-btn .bb-ico {
+  display: grid !important; place-items: center; order: 2; flex: 0 0 44px; width: 44px; height: 44px;
+  background: var(--sa-panel-2); border: 1px solid var(--sa-line-hi); color: var(--sa-bone);
+}
+.ui-root[data-phone="1"] .build-btn .bb-ico .tool-ico { width: 24px; height: 24px; }
+.ui-root[data-phone="1"] .build-btn.active .bb-ico { background: var(--sa-orange); border-color: var(--sa-orange); color: var(--sa-on-orange); }
+.ui-root[data-phone="1"] .build-btn { --sigil: none !important; }
