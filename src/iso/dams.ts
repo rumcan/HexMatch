@@ -31,6 +31,7 @@ import { MAP_W, MAP_H } from "../game/config";
 import { BUILD_COSTS, type Cargo } from "./config";
 import { TOWN_OCC, WATER, type Grid } from "./grid";
 import { bridgeWaterAt } from "./bridges";
+import { footprintFlatTiles } from "./slopes";
 
 export type Purse = Partial<Record<Cargo, number>>;
 
@@ -157,7 +158,10 @@ export function damSpan(d: Pick<Dam, "axis">): [number, number] {
  */
 export type DamRefusal =
   | "not-river" | "no-section" | "bend" | "wide"
-  | "site-taken" | "crossed" | "bad-side" | "bank-blocked";
+  | "site-taken" | "crossed" | "bad-side" | "bank-blocked"
+  /** E4 (#268): the footprint's LAND tiles straddle a level change (a dam's
+   *  river tile is water and is exempt — see slopes.ts). */
+  | "not-flat";
 
 export const DAM_REFUSAL_TEXT: Record<DamRefusal, string> = {
   "not-river": "A dam spans a river — that is open water.",
@@ -168,6 +172,7 @@ export const DAM_REFUSAL_TEXT: Record<DamRefusal, string> = {
   "crossed": "A bridge already crosses the water there.",
   "bad-side": "The dam has to lean onto the bank across the river.",
   "bank-blocked": "The bank is not clear for the dam's footing.",
+  "not-flat": "The dam's bank needs flat ground.",
 };
 
 const inMapD = (x: number, y: number): boolean => x >= 0 && y >= 0 && x < MAP_W && y < MAP_H;
@@ -236,6 +241,10 @@ export function damRefusal(
   if (grid.builtAt?.(x, y) === "bridge") return "crossed";
   const [bx, by] = damBank({ wx: x, wy: y, side });
   if (!bankTileUsable(grid, bx, by)) return "bank-blocked";
+  // E4 (#268): the footprint that stands is the river tile plus the bank — and
+  // only the LAND half is graded (the river tile is water), so a dam over a
+  // river whose bank sits a level above the water is still legal.
+  if (footprintFlatTiles(grid, damFootprint({ wx: x, wy: y, side }))) return "not-flat";
   return "ok";
 }
 

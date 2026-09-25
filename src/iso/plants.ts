@@ -28,6 +28,7 @@ import { BUILD_COSTS, FACTORY_FOOTPRINT, type Cargo } from "./config";
 import { catchmentRect, rectContains } from "./economy";
 import { FIELD_OCC, TOWN_OCC, WATER, idx, inBounds, rotatedSpan, type Grid, type Town } from "./grid";
 import { hasTrack, type Purse, type Track } from "./track";
+import { footprintFlatTiles } from "./slopes";
 import type { EconomyState, Factory } from "./economy";
 import type { Industry } from "./grid";
 
@@ -45,6 +46,7 @@ export type PlantRefusal =
   | "occupied"       // industry footprint or town tile
   | "building"       // another plant or a depot already stands there
   | "track"          // your own road/rail is in the way
+  | "not-flat"       // E4 (#268): the footprint straddles a level change
   | "no-town";       // the footprint touches no town edge-on
 
 export const PLANT_REFUSAL_TEXT: Record<PlantRefusal, string> = {
@@ -53,6 +55,7 @@ export const PLANT_REFUSAL_TEXT: Record<PlantRefusal, string> = {
   occupied: "That ground is taken by an industry or town.",
   building: "Another building already stands there.",
   track: "Clear your track off those tiles first.",
+  "not-flat": "A processing plant needs flat ground — its footprint must sit on one level.",
   "no-town": "A processing plant must be built next to a town.",
 };
 
@@ -129,6 +132,9 @@ export function plantRefusal(
     if (buildingAt(state, x, y)) return "building";
     if (hasTrack(track, "road", x, y) || hasTrack(track, "dirt", x, y)) return "track";
   }
+  // E4 (#268): a processing plant's footprint (and the Factory's) needs level
+  // ground — see slopes.ts. Water is ignored, so this stays a land rule.
+  if (footprintFlatTiles(grid, footprintTiles(tx, ty, rot))) return "not-flat";
   return adjacentTown(grid, tx, ty, rot) ? null : "no-town";
 }
 
