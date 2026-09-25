@@ -96,11 +96,13 @@ import { createLabelLayer, type LabelEntry, type LabelLayer } from "./labels";
 import { coarsePointer } from "./touch";
 import { IsoRenderer, type World } from "./renderer";
 import { DEFAULT_ROAD_STYLE } from "./road-renderer";
+// R2 (#266): the bridge rules' wording, for the refusals the drag can hit.
+import { BRIDGE_REFUSAL_TEXT } from "./bridges";
 import { scatterScenery, type DecalImages, type Scenery } from "./scenery";
 import { loadDecalImages, loadScenerySprites } from "./scenery-art";
 import { loadVehicleLayers } from "./vehicle-art";
 import {
-  FIELD_OCC, generateMap, heightAt, grownTownHouses, resolveMapSeed, seedTownLevels, setTownLevel,
+  FIELD_OCC, WATER, generateMap, heightAt, grownTownHouses, resolveMapSeed, seedTownLevels, setTownLevel,
   TOWN_BLOCK, townBuildings, townForSeat, townGrownRings, townTier,
   tileInFootprint, townHouseAt, townObstacleTiles, rotatedSpan,
   type Grid, type Industry, type Town,
@@ -959,6 +961,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   let townPlantTiles = new Set<number>();
   let townPlantReady = false;
   grid.builtAt = (x, y) => {
+    // R2 (#266): TRACK ON WATER IS A BRIDGE DECK. Checked first, because the
+    // bytes that prove it are the road/rail layers this map already has: the
+    // tile's terrain says water, and either layer says something is standing
+    // there. Reported before the rail branches so a rail bridge reads
+    // "bridge", not "rail" — everything that must keep off a deck (a platform,
+    // a depot, the rival's road drag) reads this one tag.
+    if (grid.terrain[tIdx(x, y)] === WATER
+      && (hasRail(rail.rail, x, y) || hasTrack(track, "road", x, y) || hasTrack(track, "dirt", x, y))) {
+      return "bridge";
+    }
     if (structureAt(rail, x, y)) return "platform";
     if (hasRail(rail.rail, x, y)) {
       const m = rail.rail.tile[tIdx(x, y)];
@@ -1788,6 +1800,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     field: "Demolish the field first",
     rough: "Road can't cross rough — use Dirt",
     "not-adjacent": "Drag out from your Factory / Depot",
+    // R2 (#266): a bridge is straight, so a spur beside a deck is refused —
+    // and this is the tile the drag stopped on.
+    "bridge-junction": "No junctions on a bridge",
   };
 
   // A1: the rival owns a Processing Plant now, so Black Market sabotage has
@@ -7965,7 +7980,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           const kind: TrackKind = payload.kind === "road" ? "road" : "dirt";
           const pv = previewDrag(grid, track, kind, p.purse, ax, ay, bx, by,
             payload.xFirst !== false, undefined, p.freeTrack,
-            structureTiles(eco.factories, eco.harvesters, p.i + 1), newLoop);
+            structureTiles(eco.factories, eco.harvesters, p.i + 1), newLoop,
+            // R2 (#266): a deck is never shared, so the rail layer rides along.
+            { railAt: (x, y) => hasRail(rail.rail, x, y) });
           if (pv.tiles.length === 0) toast("Can't build there.", "bad");
           else commitTrackDrag(p, pv, kind);
         }
@@ -9125,10 +9142,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // No network argument, exactly like the drag preview beside it: main's
     // "roads anywhere" dropped the adjacency requirement, so adjacency can
     // no longer be the reason a tile refuses.
-    const refusal = buildRefusal(grid, kind, tx, ty);
+    // R2 (#266): the layer comes along so the bridge-junction rule can answer —
+    // a tile that would hang a side connection on a standing deck.
+    const refusal = buildRefusal(grid, kind, tx, ty, undefined, undefined, track);
     if (refusal === null) return;
-    if (refusal === "water") toast("Can't build on water.", "bad");
-    else if (refusal === "rough") toast("A paved Road can't cross rough ground — use a Dirt Road.", "bad");
+    if (refusal === "water") {
+      // A river is water a bridge could have crossed; the sea and the lakes
+      // never are. Say which one refused, so "why not" is answered on the spot.
+      toast(grid.rivers?.[tIdx(tx, ty)]
+        ? "That river is too wide (or too bent) to bridge here."
+        : "Can't build on water.", "bad");
+    } else if (refusal === "bridge-junction") {
+      toast(BRIDGE_REFUSAL_TEXT.junction, "bad");
+    } else if (refusal === "rough") toast("A paved Road can't cross rough ground — use a Dirt Road.", "bad");
     else if (refusal === "occupied") toast("Tile is occupied.", "bad");
     else if (refusal === "field") toast("A field or trees stand there — demolish them first.", "bad");
     else toast("Can't build there.", "bad");
@@ -9145,7 +9171,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // plant is not — `canBuildOn` refuses `builtAt` "plant".
     if (!canBuildOn(grid, kind, ax, ay) && !ownFloor(ax, ay)) return null;
     const pv = previewDrag(grid, track, kind, me.purse, ax, ay, bx, by, xFirst, undefined,
-      me.freeTrack, structureTiles(eco.factories, eco.harvesters, me.i + 1), newLoop);
+      me.freeTrack, structureTiles(eco.factories, eco.harvesters, me.i + 1), newLoop,
+      // R2 (#266): the drag sees the railway, because a deck is never shared —
+      // a road may not span water the railway already bridges.
+      { railAt: (x, y) => hasRail(rail.rail, x, y) });
     if (pv.tiles.length === 0) return null;
     if (isGuest()) {
       net?.sendIntent("build", { do: "track", kind, ax, ay, bx, by, xFirst });
@@ -9500,7 +9529,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           // L2: the drag prices with the loop's cost model (dirt free under newLoop).
           preview = previewDrag(grid, track, kind, me.purse,
             drag.ax, drag.ay, p.tx, p.ty, true, undefined, me.freeTrack,
-            structureTiles(eco.factories, eco.harvesters, me.i + 1), newLoop);
+            structureTiles(eco.factories, eco.harvesters, me.i + 1), newLoop,
+            // R2 (#266): see `requestTrackBuild` — never a deck over rail.
+            { railAt: (x, y) => hasRail(rail.rail, x, y) });
           previewKey = key;
           changed = true;
         }
@@ -12005,7 +12036,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (phase !== "play") return null;
       if (!canBuildOn(grid, kind, ax, ay) && !ownFloor(ax, ay)) return null;
       return previewDrag(grid, track, kind, me.purse, ax, ay, bx, by, xFirst, undefined, me.freeTrack,
-        structureTiles(eco.factories, eco.harvesters, me.i + 1), newLoop);
+        structureTiles(eco.factories, eco.harvesters, me.i + 1), newLoop,
+        { railAt: (x, y) => hasRail(rail.rail, x, y) });
     },
     /**
      * PP-13: the e2e/unit twin of a demolish click — the same `doDemolish`

@@ -39,6 +39,8 @@ import {
   RAIL_BED_SHOULDER, RAIL_BED_WIDTH, RAIL_WEB_WIDTH, RAIL_WIDTH, TIE_WIDTH,
   railTile, DIAG_N, DIAG_E, DIAG_S, DIAG_W, type GroundPoint, type RailTile,
 } from "./rail-geometry";
+import { WATER, type Grid } from "./grid";
+import { deckAxis, paintBridgeDecks, paintBridgeRailings, type BridgeDeck } from "./bridge-renderer";
 
 type Ctx2D = CanvasRenderingContext2D;
 
@@ -70,6 +72,38 @@ export interface RailWorld {
   rail?: RailLayer;
   roadBits?: Uint8Array;
   dirtBits?: Uint8Array;
+  /**
+   * R2 (#266): the map, for the one question a rail tile's own bytes cannot
+   * answer — is this tile WATER? Track on water is a bridge deck, and that is
+   * what the painter draws a deck for. Optional, and deliberately so: a world
+   * without a map draws the track it always drew, exactly as `RoadWorld.grid`
+   * is optional for town streets.
+   */
+  grid?: Grid;
+}
+
+/**
+ * R2 (#266): every rail BRIDGE DECK in a range — rail tiles standing on water.
+ * Same derivation as `roadBridgeDecksIn` (track on water IS a bridge, so no new
+ * byte or wire field is needed) and the same axis rule (`deckAxis`).
+ */
+export function railBridgeDecksIn(
+  world: RailWorld, tx0: number, ty0: number, tx1: number, ty1: number,
+): BridgeDeck[] {
+  const grid = world.grid, layer = world.rail;
+  if (!grid || !layer?.tile) return [];
+  const isWater = (x: number, y: number): boolean =>
+    x >= 0 && y >= 0 && x < MAP_W && y < MAP_H && grid.terrain[y * MAP_W + x] === WATER;
+  const out: BridgeDeck[] = [];
+  for (let ty = ty0; ty <= ty1; ty++) {
+    for (let tx = tx0; tx <= tx1; tx++) {
+      const cell = cellAt(layer.tile, tx, ty);
+      if ((cell & PRESENT) === 0) continue;
+      if (!isWater(tx, ty)) continue;
+      out.push({ tx, ty, axis: deckAxis(cell, isWater, tx, ty) });
+    }
+  }
+  return out;
 }
 
 /** The railway's palette. Values are the art's own (see the generator's PALETTE). */
@@ -202,8 +236,14 @@ export function paintRailTiles(
   tiles: readonly RailTile[],
   detail: RailDetail,
   style: RailStyle = DEFAULT_RAIL_STYLE,
+  /**
+   * R2 (#266): the chunk's rail bridge decks. Painted under the bed (a deck is
+   * what the ballast lies on) with the railings last, over the steel — see
+   * `bridge-renderer.ts`.
+   */
+  decks: readonly BridgeDeck[] = [],
 ): void {
-  if (!tiles.length) return;
+  if (!tiles.length && !decks.length) return;
   ctx.save();
   // Butt caps: every arm ends exactly ON the port, where the neighbouring
   // tile's arm begins, so two tiles' steel is butt-jointed with no round cap
@@ -212,6 +252,9 @@ export function paintRailTiles(
   // tile centre, a junction's crossing arms) stay round.
   ctx.lineCap = "butt";
   ctx.lineJoin = "round";
+
+  // 0. R2 (#266) The deck, under everything the railway paints on it.
+  paintBridgeDecks(ctx, decks);
 
   // 1. The ballast bed, with a soft edge under it — the roads' shoulder in
   //    miniature, so the bed sits in the grass rather than on top of it.
@@ -264,6 +307,10 @@ export function paintRailTiles(
   ctx.beginPath();
   for (const t of tiles) for (const stop of t.stops) traceQuad(ctx, stop);
   ctx.fill();
+
+  // 6. R2 (#266) …and the deck's kerbs and railings, over the steel: a rail
+  //    bridge's fence stands between the train and the water.
+  paintBridgeRailings(ctx, decks);
 
   ctx.restore();
 }
