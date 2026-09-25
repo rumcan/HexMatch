@@ -22,6 +22,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { TILE_W, TILE_H, MAP_W, MAP_H, HW, HH } from "../game/config";
 import manifestJson from "../../assets/iso-atlas/manifest.json";
+import buildingsManifestJson from "../../assets/buildings/manifest.json";
 import type { Manifest } from "./atlas";
 
 export { TILE_W, TILE_H, MAP_W, MAP_H, HW, HH };
@@ -827,8 +828,31 @@ function spriteWidth(name: string): number {
  */
 export const RESOURCE_FOOTPRINT: [number, number] = [4, 4];
 
+/**
+ * F4 (#275): the per-building manifest (assets/buildings/manifest.json) is the
+ * FOOTPRINT AUTHORITY for the buildings the game places — industries, the
+ * Factory, the Depot, and the town shapes. The game derives every footprint
+ * from it instead of hard-coding a shape, so re-arting a building re-flows
+ * placement the same way `footprintForArt` does for the monolith atlas.
+ * The map generator reads these at generation time (option `shapes`), and
+ * every rule that asks "adjacent to the footprint" reads the industry's own
+ * `w`/`h` — never a literal 4×4 — so a non-square lot keeps working.
+ */
+const buildingSprites = (
+  buildingsManifestJson as unknown as { sprites: Record<string, { footprint?: [number, number] }>}
+).sprites;
+
+/** The manifest-declared footprint of a per-building sprite, or null. */
+export function buildingFootprint(name: string): [number, number] | null {
+  const fp = buildingSprites[name]?.footprint;
+  return fp ? [fp[0], fp[1]] : null;
+}
+
 function industryDef(key: string, name: string, cargo: Cargo, output: number): IndustryDef {
-  return { key, name, cargo, footprint: [...RESOURCE_FOOTPRINT], output };
+  // F4: the footprint comes from the per-building manifest (all resource lots
+  // are authored there); the 4×4 constant is only the fallback for a name the
+  // manifest does not list.
+  return { key, name, cargo, footprint: buildingFootprint(key) ?? [...RESOURCE_FOOTPRINT], output };
 }
 
 export const INDUSTRIES: IndustryDef[] = [
@@ -1135,14 +1159,38 @@ export const VP_TARGET = VICTORY.target;
 export const FACTORY_SPRITE = "factory";
 
 /**
- * PP-12: the Factory footprint is DERIVED from its sprite's packed width via
- * `footprintForArt` — the image dictates the tiles it occupies (currently
- * 3×3 for the 224px TTD factory). Every consumer (placement, plants, grid,
- * AI, game) reads this constant, so re-arting the factory re-flows the rules
- * with no code change. tests/unit/iso-pp12-assets.test.ts pins that this
- * equals the manifest's own footprint for the sprite.
+ * PP-12: the Factory footprint is DERIVED from its sprite — the image dictates
+ * the tiles it occupies (currently 3×3 for the 224px TTD factory). Every
+ * consumer (placement, plants, grid, AI, game) reads this constant, so
+ * re-arting the factory re-flows the rules with no code change.
+ * tests/unit/iso-pp12-assets.test.ts pins that this equals the manifest's own
+ * footprint for the sprite.
+ *
+ * F4 (#275): the per-building manifest is the source (its `factory` entry
+ * carries the footprint), with the old packed-width derivation as fallback.
  */
-export const FACTORY_FOOTPRINT: [number, number] = footprintForArt(spriteWidth(FACTORY_SPRITE));
+export const FACTORY_FOOTPRINT: [number, number] =
+  buildingFootprint(FACTORY_SPRITE) ?? footprintForArt(spriteWidth(FACTORY_SPRITE));
+
+/**
+ * F4 (#275): the shapes option's FACTORY — the long `factory_2x4` art from
+ * #273, footprint read from the same manifest (2×4; #274's rotation turns it
+ * into the 4×2). `FACTORY_FOOTPRINT` (the 3×3 legacy complex) stays the
+ * default and the option-OFF footprint, so every existing map, save and test
+ * is untouched until the option is switched on.
+ */
+export const FACTORY_SPRITE_SHAPES = "factory_2x4";
+export const FACTORY_FOOTPRINT_SHAPES: [number, number] =
+  buildingFootprint(FACTORY_SPRITE_SHAPES) ?? FACTORY_FOOTPRINT;
+
+/** The Factory footprint a map runs with: shapes option on → the 2×4 art. */
+export const factoryFootprintFor = (shapes: boolean): [number, number] =>
+  shapes ? [...FACTORY_FOOTPRINT_SHAPES] : [...FACTORY_FOOTPRINT];
+
+/** The Factory sprite a map draws, in the given #274 rotation. */
+export const factorySpriteFor = (shapes: boolean, quarterTurns = 0): string =>
+  !shapes ? FACTORY_SPRITE
+    : (((quarterTurns % 4) + 4) % 4) % 2 === 1 ? `${FACTORY_SPRITE_SHAPES}_r` : FACTORY_SPRITE_SHAPES;
 
 /**
  * Depot art: ONE truck depot building for every Depot, whatever it harvests
@@ -1171,6 +1219,21 @@ export const TOWN_HOUSE_VARIANTS = [
   "town_cottage_tall", "town_offices_tall", "town_flats_townhouse_tall",
 ] as const;
 
+/**
+ * F4 (#275): the NON-SQUARE town buildings (#273's art). They only ever draw
+ * under the `shapes` map option, on blocks the generator merged for them
+ * (`mergeTownBlocks` in grid.ts) — a plain 2×2 block cannot hold a 1×3 or a
+ * 2×4. The `_r` names are the same drawings turned to the other axis (#274),
+ * shipped as their own art, so the list holds both orientations of a pair.
+ * Kept OUT of `TOWN_HOUSE_VARIANTS` on purpose: option-OFF towns must keep
+ * picking from exactly today's list.
+ */
+export const TOWN_SHAPE_VARIANTS = [
+  "terrace_1x2", "terrace_1x2_r",
+  "shops_1x3", "shops_1x3_r",
+  "store_2x4", "store_2x4_r",
+] as const;
+
 /** Spatial hash of a tile, used to pick town art.
  *  A hash rather than `(x + y) % n`, which bands a settlement into diagonal
  *  stripes; deterministic, so a re-render always puts the same building on
@@ -1191,6 +1254,16 @@ function tileHash(tx: number, ty: number): number {
  */
 export function pickTownVariant(tx: number, ty: number, variants: readonly string[]): string {
   return variants[tileHash(tx, ty) % variants.length];
+}
+
+/**
+ * F4 (#275): a deterministic index in `[0, n)` keyed on a tile — the same
+ * spatial hash `pickTownVariant` uses, for picks that are not sprite lists
+ * (e.g. where inside a merged block a long building anchors). Never random:
+ * a re-render always makes the same choice.
+ */
+export function hashPick(tx: number, ty: number, n: number): number {
+  return n > 0 ? tileHash(tx, ty) % n : 0;
 }
 
 /** The atlas cell a town tile draws, chosen from every variant.

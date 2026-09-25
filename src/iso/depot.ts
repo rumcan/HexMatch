@@ -24,10 +24,15 @@
 // the rival and the lorries all ask these functions, so the rules live once.
 // ══════════════════════════════════════════════════════════════════════════
 import { canBuildOn, inMapT } from "./track";
+import { buildingFootprint, DEPOT_SPRITE } from "./config";
 import type { Grid, Industry } from "./grid";
 
-/** The Depot footprint, in tiles. */
-export const DEPOT_SIZE: [number, number] = [2, 2];
+/**
+ * The Depot footprint, in tiles. F4 (#275): read from the per-building
+ * manifest (`truck_depot`), the footprint authority — the value is still the
+ * 2×2 lot it always was, but re-arting the depot re-flows the geometry.
+ */
+export const DEPOT_SIZE: [number, number] = buildingFootprint(DEPOT_SPRITE) ?? [2, 2];
 
 /** The four edges of the lot, named by the screen direction they face. */
 export type DepotSide = "nw" | "ne" | "se" | "sw";

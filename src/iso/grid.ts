@@ -14,8 +14,10 @@
 import { fillCoastalHoles } from "./coastline";
 import {
   MAP_W, MAP_H, mulberry32, INDUSTRIES, INDUSTRY_QUOTA, INDUSTRY_BY_KEY, FACTORY_FOOTPRINT,
-  TOWN_HOUSE_VARIANTS, TOWN_VILLAGE_VARIANTS, TOWN_TIER_LEGACY, TOWN_VISUAL_MAX,
-  townCentreSprite, pickTownVariant,
+  factoryFootprintFor,
+  TOWN_HOUSE_VARIANTS, TOWN_VILLAGE_VARIANTS, TOWN_SHAPE_VARIANTS,
+  TOWN_TIER_LEGACY, TOWN_VISUAL_MAX,
+  townCentreSprite, pickTownVariant, hashPick,
 } from "./config";
 
 export const GRASS = 0;
@@ -120,6 +122,17 @@ export interface Grid {
   /** Seed-derived elevation levels. Option-off maps contain all zeroes. */
   height?: Uint8Array;
   /**
+   * F4 (#275): the Factory footprint THIS MAP plays with — the long
+   * `factory_2x4` span under the `shapes` option, absent on every legacy /
+   * option-OFF map (all rules then fall back to `FACTORY_FOOTPRINT`). Lives
+   * on the grid because the map is what carries the option: every factory
+   * rule that holds a grid reads it here, so the placement preview, the click
+   * handler, the rival's search and `builtAt` can never disagree about the
+   * footprint. Multiplayer regenerates from the seed alone (shapes are solo),
+   * so both seats always see the same value.
+   */
+  factoryFootprint?: [number, number];
+  /**
    * R1 (#260): the river layer. One byte per tile, non-zero where a generated
    * river flows. River tiles are ALSO `WATER` in `terrain` (so every gameplay
    * check — build refusal, rail terrain, placement — treats them as water);
@@ -137,6 +150,14 @@ export interface MapGenOptions {
   rivers?: boolean;
   /** Generate the seed-derived height map. OFF (default) keeps old maps flat. */
   elevation?: boolean;
+  /**
+   * F4 (#275): use the new non-square shapes. Towns merge pairs of blocks
+   * along a street so 1×3/3×1 and 2×4/4×2 buildings fit (#273's art), and the
+   * Factory stands on its long `factory_2x4` footprint. OFF (default) keeps
+   * every seed byte-identical to today's generator — no RNG draw changes, no
+   * tile moves.
+   */
+  shapes?: boolean;
 }
 
 /**
@@ -1137,6 +1158,99 @@ export function townLayout(
   return { houses, roads: roads.filter(([rx, ry]) => keep.has(idx(rx, ry))) };
 }
 
+/**
+ * F4 (#275): the MERGED BLOCKS that let a town hold the long shapes.
+ *
+ * A town block is `TOWN_BLOCK - 1` = 2 tiles square, so nothing wider than
+ * 2×2 fits one. Under the `shapes` option the generator merges pairs of
+ * blocks that sit either side of one street segment: the segment's two tiles
+ * stop being street and become house ground, and the two blocks plus the
+ * ground between them are one 5×2 (or 2×5) superblock the art places a
+ * 1×3/3×1 or 2×4/4×2 building on (`townBuildings`, shapes path).
+ *
+ * Streets stay intact. A segment between two blocks always runs between two
+ * street intersections (the perpendicular lanes one block-period away on
+ * either side), so removing it leaves the street network connected — nothing
+ * is walled off, no fragment is sealed. The merge is therefore invisible to
+ * every rule that walks the streets: the inter-town highway still routes
+ * through the town, and the lanes still reach the map edge.
+ *
+ * Deterministic per town: candidate pairs are visited in row-major block
+ * order, each feasible pair draws ONCE from the seeded stream, and a block
+ * already in a merge is never offered again. OFF by default — `placeTowns`
+ * only calls this with the option on, so option-OFF seeds draw nothing here
+ * and stay byte-identical.
+ */
+export function mergeTownBlocks(
+  cx: number, cy: number,
+  houses: [number, number][], roads: [number, number][],
+  rng: () => number,
+  chance = 0.25,
+): { houses: [number, number][]; roads: [number, number][] } {
+  const BLOCK = TOWN_BLOCK - 1;
+  const houseSet = new Set(houses.map(([x, y]) => idx(x, y)));
+  const roadSet = new Set(roads.map(([x, y]) => idx(x, y)));
+  const isHouse = (x: number, y: number) => inBounds(x, y) && houseSet.has(idx(x, y));
+  const isRoad = (x: number, y: number) => inBounds(x, y) && roadSet.has(idx(x, y));
+
+  // Block origins share the centre's phase (townLayout's grid is anchored on
+  // it). Collected from the houses so only built blocks are candidates.
+  const blockOrigin = (v: number, centre: number) =>
+    centre + Math.floor((v - centre) / TOWN_BLOCK) * TOWN_BLOCK;
+  const origins: [number, number][] = [];
+  {
+    const seen = new Set<number>();
+    for (const [hx, hy] of houses) {
+      const ox = blockOrigin(hx, cx), oy = blockOrigin(hy, cy);
+      const i = idx(ox, oy);
+      if (seen.has(i)) continue;
+      seen.add(i);
+      origins.push([ox, oy]);
+    }
+    origins.sort((a, b) => (a[1] - b[1]) || (a[0] - b[0]));
+  }
+
+  /** Every tile of the block at (ox, oy) is a house of this town. */
+  const fullBlock = (ox: number, oy: number): boolean => {
+    for (let dy = 0; dy < BLOCK; dy++) {
+      for (let dx = 0; dx < BLOCK; dx++) if (!isHouse(ox + dx, oy + dy)) return false;
+    }
+    return true;
+  };
+
+  const consumed = new Set<number>();
+  const toHouse: [number, number][] = [];
+  for (const [ox, oy] of origins) {
+    if (consumed.has(idx(ox, oy))) continue;
+    // Horizontal pair: the block across the lane at x = ox + BLOCK.
+    const rx = ox + TOWN_BLOCK;
+    if (fullBlock(ox, oy) && fullBlock(rx, oy)
+      && isRoad(ox + BLOCK, oy) && isRoad(ox + BLOCK, oy + 1)) {
+      if (rng() < chance) {
+        consumed.add(idx(ox, oy)); consumed.add(idx(rx, oy));
+        toHouse.push([ox + BLOCK, oy], [ox + BLOCK, oy + 1]);
+        continue;
+      }
+    }
+    // Vertical pair: the block across the lane at y = oy + BLOCK.
+    const by = oy + TOWN_BLOCK;
+    if (fullBlock(ox, oy) && fullBlock(ox, by)
+      && isRoad(ox, oy + BLOCK) && isRoad(ox + 1, oy + BLOCK)) {
+      if (rng() < chance) {
+        consumed.add(idx(ox, oy)); consumed.add(idx(ox, by));
+        toHouse.push([ox, oy + BLOCK], [ox + 1, oy + BLOCK]);
+      }
+    }
+  }
+  if (!toHouse.length) return { houses, roads };
+
+  const moved = new Set(toHouse.map(([x, y]) => idx(x, y)));
+  return {
+    houses: [...houses, ...toHouse],
+    roads: roads.filter(([x, y]) => !moved.has(idx(x, y))),
+  };
+}
+
 /** TOWN-GRID: one piece of town art and the tile its footprint starts on. */
 export interface TownBuilding { sprite: string; tx: number; ty: number }
 
@@ -1324,6 +1438,13 @@ export interface TownBuildingsOptions {
   grid?: Grid;
   /** The grown ring skips these tiles too (player-built ground). */
   blocked?: (tx: number, ty: number) => boolean;
+  /**
+   * F4 (#275): the map was generated with the `shapes` option — place the
+   * long #273 buildings on the blocks `mergeTownBlocks` joined (tier 1+ and
+   * LEGACY; a village still draws only its small homes). Absent/OFF keeps
+   * exactly today's layout.
+   */
+  shapes?: boolean;
 }
 
 export function townBuildings(
@@ -1333,6 +1454,9 @@ export function townBuildings(
 ): TownBuilding[] {
   const tier = opts.tier ?? TOWN_TIER_LEGACY;
   const village = tier === 0;
+  // F4: the shapes path — long buildings on merged blocks. Villages keep the
+  // small-homes look, and a town without the option keeps today's layout.
+  if (opts.shapes === true && !village) return townBuildingsShapes(t, footprintOf, opts);
   const BLOCK = TOWN_BLOCK - 1;                 // tiles per block, per axis
   const full = TOWN_HOUSE_VARIANTS.filter((v) => {
     const [fw, fh] = footprintOf(v);
@@ -1413,6 +1537,160 @@ export function townBuildings(
   // and always as singles — the ring's depth is whole blocks, but it borders
   // the old streets and the town's clipped edges, so per-tile placement keeps
   // the "no art on a tile that is not this town's" guarantee for free.
+  if (tier >= 2 && opts.grid) {
+    const rings = townGrownRings(tier);
+    for (const [x, y] of grownTownHouses(t, opts.grid, rings, opts.blocked)) {
+      const i = idx(x, y);
+      if (used.has(i)) continue;
+      place(pickTownVariant(x, y, tileArt), x, y);
+    }
+  }
+  return out;
+}
+
+/**
+ * F4 (#275): the DRAW ITEMS of a shapes-option town — the same guarantees as
+ * `townBuildings` (every house tile built on, nothing over a street, no
+ * overlaps, deterministic) plus the long #273 buildings:
+ *
+ *   • the superblocks `mergeTownBlocks` joined are detected from the house
+ *     tiles — the former street segment between the two blocks is house
+ *     ground now, and that is the only way a street-lane tile can be a house
+ *     — and each takes ONE long building (2×4/4×2, 1×3/3×1 or a terrace),
+ *     anchored deterministically somewhere inside it;
+ *   • ordinary blocks draw today's mix plus the 1×2/2×1 terraces, which fit
+ *     a single block and leave its other tiles to single houses;
+ *   • whatever a long building does not cover fills with single houses, so a
+ *     merged street segment can never show as an unbuilt gap either.
+ *
+ * The grown ring (tier 2+) appends exactly as in the legacy path.
+ */
+function townBuildingsShapes(
+  t: Town,
+  footprintOf: (sprite: string) => [number, number],
+  opts: TownBuildingsOptions,
+): TownBuilding[] {
+  const tier = opts.tier ?? TOWN_TIER_LEGACY;
+  const BLOCK = TOWN_BLOCK - 1;
+  const full = TOWN_HOUSE_VARIANTS.filter((v) => {
+    const [fw, fh] = footprintOf(v);
+    return fw === 1 && fh === 1;
+  });
+  const tileArt: readonly string[] = full.length ? full : TOWN_HOUSE_VARIANTS;
+
+  const houses = new Set<number>();
+  for (const [hx, hy] of t.houses) houses.add(idx(hx, hy));
+  const used = new Set<number>();
+  const out: TownBuilding[] = [];
+
+  const span = (ox: number, oy: number, fw: number, fh: number): [number, number][] => {
+    const tiles: [number, number][] = [];
+    for (let dy = 0; dy < fh; dy++) for (let dx = 0; dx < fw; dx++) tiles.push([ox + dx, oy + dy]);
+    return tiles;
+  };
+  const place = (sprite: string, ox: number, oy: number) => {
+    const [fw, fh] = footprintOf(sprite);
+    out.push({ sprite, tx: ox, ty: oy });
+    for (const [x, y] of span(ox, oy, fw, fh)) used.add(idx(x, y));
+  };
+  /** Single houses on every free house tile of the list, one per tile. */
+  const fillSingles = (tiles: [number, number][]) => {
+    for (const [x, y] of tiles) {
+      const i = idx(x, y);
+      if (!houses.has(i) || used.has(i)) continue;
+      place(pickTownVariant(x, y, tileArt), x, y);
+    }
+  };
+
+  // The centre first, exactly like the legacy path.
+  place(townCentreSprite(tier), t.tx, t.ty);
+
+  const blockOrigin = (v: number, centre: number) =>
+    centre + Math.floor((v - centre) / TOWN_BLOCK) * TOWN_BLOCK;
+  const blocks = new Map<number, [number, number]>();
+  for (const [hx, hy] of t.houses) {
+    const ox = blockOrigin(hx, t.tx), oy = blockOrigin(hy, t.ty);
+    blocks.set(idx(ox, oy), [ox, oy]);
+  }
+  const origins = [...blocks.values()].sort((a, b) => (a[1] - b[1]) || (a[0] - b[0]));
+  const fullBlock = (ox: number, oy: number): boolean =>
+    span(ox, oy, BLOCK, BLOCK).every(([x, y]) => houses.has(idx(x, y)));
+
+  // ── the merged superblocks (the segment tile turned house is the marker) ──
+  interface Super { ox: number; oy: number; w: number; h: number; dir: "h" | "v" }
+  const supers: Super[] = [];
+  const superOrigin = new Set<number>();
+  for (const [ox, oy] of origins) {
+    if (superOrigin.has(idx(ox, oy))) continue;
+    const rx = ox + TOWN_BLOCK;
+    if (fullBlock(ox, oy) && fullBlock(rx, oy)
+      && houses.has(idx(ox + BLOCK, oy)) && houses.has(idx(ox + BLOCK, oy + 1))) {
+      supers.push({ ox, oy, w: 2 * BLOCK + 1, h: BLOCK, dir: "h" });
+      superOrigin.add(idx(ox, oy)); superOrigin.add(idx(rx, oy));
+      continue;
+    }
+    const by = oy + TOWN_BLOCK;
+    if (fullBlock(ox, oy) && fullBlock(ox, by)
+      && houses.has(idx(ox, oy + BLOCK)) && houses.has(idx(ox + 1, oy + BLOCK))) {
+      supers.push({ ox, oy, w: BLOCK, h: 2 * BLOCK + 1, dir: "v" });
+      superOrigin.add(idx(ox, oy)); superOrigin.add(idx(ox, by));
+    }
+  }
+
+  for (const s of supers) {
+    // The long shapes whose footprint fits this superblock, long side along
+    // the merge. The pick and the anchor are hash-keyed on the origin, so a
+    // town always draws the same layout.
+    const pool = TOWN_SHAPE_VARIANTS.filter((v) => {
+      const [fw, fh] = footprintOf(v);
+      return fw <= s.w && fh <= s.h && (s.dir === "h" ? fw > fh : fh > fw);
+    });
+    if (pool.length) {
+      const pick = pool[hashPick(s.ox, s.oy, pool.length)];
+      const [fw, fh] = footprintOf(pick);
+      const offs: [number, number][] = [];
+      for (let dy = 0; dy <= s.h - fh; dy++) {
+        for (let dx = 0; dx <= s.w - fw; dx++) offs.push([dx, dy]);
+      }
+      // Salted so the anchor does not correlate with the sprite pick; walked
+      // cyclically from the pick until a footprint lands on free house tiles
+      // (the centre building may hold part of a merged block).
+      const first = hashPick(s.ox + 7, s.oy + 11, offs.length);
+      for (let k = 0; k < offs.length; k++) {
+        const [dx, dy] = offs[(first + k) % offs.length];
+        const tiles = span(s.ox + dx, s.oy + dy, fw, fh);
+        if (tiles.every(([x, y]) => houses.has(idx(x, y)) && !used.has(idx(x, y)))) {
+          place(pick, s.ox + dx, s.oy + dy);
+          break;
+        }
+      }
+    }
+    fillSingles(span(s.ox, s.oy, s.w, s.h));
+  }
+
+  // ── ordinary blocks: today's mix plus the block-sized terraces ──
+  const blockPool: readonly string[] = [
+    ...TOWN_HOUSE_VARIANTS,
+    ...TOWN_SHAPE_VARIANTS.filter((v) => {
+      const [fw, fh] = footprintOf(v);
+      return (fw > 1 || fh > 1) && fw <= BLOCK && fh <= BLOCK;
+    }),
+  ];
+  for (const [ox, oy] of origins) {
+    if (superOrigin.has(idx(ox, oy))) continue;
+    const pick = pickTownVariant(ox, oy, blockPool);
+    const [fw, fh] = footprintOf(pick);
+    const fits = (fw > 1 || fh > 1) && fw <= BLOCK && fh <= BLOCK
+      && span(ox, oy, fw, fh).every(([x, y]) => houses.has(idx(x, y)) && !used.has(idx(x, y)));
+    if (fits) {
+      place(pick, ox, oy);
+      fillSingles(span(ox, oy, BLOCK, BLOCK));
+      continue;
+    }
+    fillSingles(span(ox, oy, BLOCK, BLOCK));
+  }
+
+  // The grown ring, exactly as the legacy path lays it.
   if (tier >= 2 && opts.grid) {
     const rings = townGrownRings(tier);
     for (const [x, y] of grownTownHouses(t, opts.grid, rings, opts.blocked)) {
@@ -1586,6 +1864,7 @@ export function publicRoadTiles(
 
 function placeTowns(
   terrain: Uint8Array, occ: Int16Array, industries: Industry[], rng: () => number,
+  shapes = false,
 ): Town[] {
   const towns: Town[] = [];
 
@@ -1722,13 +2001,20 @@ function placeTowns(
         // nor streets can overlap an industry or an earlier town (both are
         // already stamped in `occ`).
         const span = TOWN_SPAN_MIN + Math.floor(rng() * (TOWN_SPAN_MAX - TOWN_SPAN_MIN + 1));
-        const { houses, roads } = townLayout(
+        let { houses, roads } = townLayout(
           cx, cy, span, terrain, occ,
           // Houses keep the industry buffer; streets do not, exactly as the
           // ring-and-fill layout behaved — a street may run up to an
           // industry's edge, a house may not.
           (hx, hy) => industrySep(hx, hy) >= TOWN_INDUSTRY_SEP,
         );
+        // F4 (#275): the shapes option merges some block pairs along a street
+        // so the long town buildings have ground to stand on. Runs only with
+        // the option on — an option-OFF town draws nothing from the stream
+        // here and stays byte-identical. The merged tiles are house ground,
+        // so every later check (house minimum, reachability, enclaves, the
+        // occupancy stamp) sees the final layout.
+        if (shapes) ({ houses, roads } = mergeTownBlocks(cx, cy, houses, roads, rng));
         if (houses.length < TOWN_HOUSES_MIN) continue;
 
         // Reachability check: the PROPOSED TOWN tiles must not strand any
@@ -1884,7 +2170,7 @@ export function generateMap(seed: number, opts: MapGenOptions = {}): Grid {
   // TOWN-1: towns are placed AFTER industries (sequencing), using the same
   // seeded RNG so the map stays deterministic. Town tiles are stamped with
   // TOWN_OCC in the occupancy array so roads/other structures route around.
-  const towns = placeTowns(terrain, occ, list, rng);
+  const towns = placeTowns(terrain, occ, list, rng, opts.shapes === true);
   // PP-13: highways between the towns, derived from the towns that were
   // actually placed. No RNG draws, so the seeded stream the rest of the map
   // depends on is untouched — and the highway is a pure function of the seed.
@@ -1906,10 +2192,15 @@ export function generateMap(seed: number, opts: MapGenOptions = {}): Grid {
   // Industries sit ≥8 tiles from any town tile (TOWN_INDUSTRY_SEP), so this
   // never touches an industry footprint, and determinism is preserved (the
   // map is still a pure function of `seed`).
+  // F4 (#275): the ring follows the Factory the map actually plays with —
+  // the long shapes footprint is one tile longer than the legacy complex,
+  // so its town-adjacent sites keep the flat-ground guarantee too. An
+  // option-OFF map runs with the legacy constant, byte for byte.
+  const factoryRing = Math.max(...factoryFootprintFor(opts.shapes === true));
   for (const t of towns) {
     for (const [hx, hy] of [...t.houses, ...t.roads]) {
-      for (let dy = -TOWN_FACTORY_RING; dy <= TOWN_FACTORY_RING; dy++) {
-        for (let dx = -TOWN_FACTORY_RING; dx <= TOWN_FACTORY_RING; dx++) {
+      for (let dy = -factoryRing; dy <= factoryRing; dy++) {
+        for (let dx = -factoryRing; dx <= factoryRing; dx++) {
           const x = hx + dx, y = hy + dy;
           if (!inBounds(x, y)) continue;
           const i = idx(x, y);
@@ -1958,6 +2249,9 @@ export function generateMap(seed: number, opts: MapGenOptions = {}): Grid {
   return {
     w: MAP_W, h: MAP_H, terrain, height, industries: list, towns, publicRoads, occupancy: occ, seed: s,
     rivers: riverMask,
+    // F4 (#275): shapes maps play with the long Factory footprint. OFF maps
+    // carry nothing, so every consumer keeps the legacy constant.
+    factoryFootprint: opts.shapes ? factoryFootprintFor(true) : undefined,
   };
 }
 
@@ -2033,6 +2327,14 @@ export function townGroundBytes(grid: Grid): Uint8Array | null {
 export const industryHasTile = (ind: Industry, tx: number, ty: number) =>
   tx >= ind.tx && tx < ind.tx + ind.w && ty >= ind.ty && ty < ind.ty + ind.h;
 
+/**
+ * F4 (#275): the Factory footprint a map plays with. Legacy / option-OFF maps
+ * carry no `factoryFootprint` and fall back to the constant, so every rule
+ * that reads this behaves exactly as before until the shapes option sets one.
+ */
+export const factoryFootprintOf = (grid: Pick<Grid, "factoryFootprint">): [number, number] =>
+  grid.factoryFootprint ?? FACTORY_FOOTPRINT;
+
 export const industryKey = (ind: Industry) => INDUSTRY_BY_KEY[ind.type];
 
 // ── PP-02: Factory placement must be next to a town ────────────────────────
@@ -2053,8 +2355,12 @@ export const isTownTile = (g: Grid, tx: number, ty: number): boolean =>
  * houses — both are TOWN_OCC town tiles — which is what keeps every generated
  * town able to host a Factory after PP-10 ring roads surround its houses.
  */
-export function factoryTouchesTown(grid: Grid, tx: number, ty: number, rot = 0): boolean {
-  const [fw, fh] = rotatedSpan(FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1], rot);
+export function factoryTouchesTown(
+  grid: Grid, tx: number, ty: number, rot = 0,
+  footprint?: readonly [number, number],
+): boolean {
+  const fp = footprint ?? factoryFootprintOf(grid);
+  const [fw, fh] = rotatedSpan(fp[0], fp[1], rot);
   for (let dy = 0; dy < fh; dy++) {
     for (let dx = 0; dx < fw; dx++) {
       const x = tx + dx, y = ty + dy;
@@ -2085,8 +2391,12 @@ export interface FactoryPlacement {
  * (`placeFactory` in `game.ts`) and the AI's factory search use this, so the
  * AI cannot bypass town adjacency through a fallback placement.
  */
-export function canPlaceFactory(grid: Grid, tx: number, ty: number, rot = 0): FactoryPlacement {
-  const [fw, fh] = rotatedSpan(FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1], rot);
+export function canPlaceFactory(
+  grid: Grid, tx: number, ty: number, rot = 0,
+  footprint?: readonly [number, number],
+): FactoryPlacement {
+  const fp = footprint ?? factoryFootprintOf(grid);
+  const [fw, fh] = rotatedSpan(fp[0], fp[1], rot);
   for (let dy = 0; dy < fh; dy++) {
     for (let dx = 0; dx < fw; dx++) {
       const x = tx + dx, y = ty + dy;
@@ -2101,7 +2411,7 @@ export function canPlaceFactory(grid: Grid, tx: number, ty: number, rot = 0): Fa
       }
     }
   }
-  if (!factoryTouchesTown(grid, tx, ty, rot)) {
+  if (!factoryTouchesTown(grid, tx, ty, rot, footprint)) {
     return {
       ok: false,
       reason: "The Factory must be next to a town — at least one of its tiles must share an edge with a town tile.",
@@ -2117,7 +2427,10 @@ export function canPlaceFactory(grid: Grid, tx: number, ty: number, rot = 0): Fa
  * without wire traffic. Camera, Recenter and opening placement use the local
  * seat's reservation.
  */
-export function startingTownReservations(grid: Grid): [Town, Town] | null {
+export function startingTownReservations(
+  grid: Grid,
+  footprint: readonly [number, number] = factoryFootprintOf(grid),
+): [Town, Town] | null {
   // Collect eligible towns: at least one factory site touching the town
   // that is buildable, and a depot site within 12 tiles of that factory
   // that is dirt-buildable and has an industry in catchment.
@@ -2133,19 +2446,19 @@ export function startingTownReservations(grid: Grid): [Town, Town] | null {
     }
     if (!isFinite(minX)) continue;
     // Expand by factory footprint + adjacency
-    const pad = Math.max(...FACTORY_FOOTPRINT) + 2;
+    const pad = Math.max(...footprint) + 2;
     outer: for (let y = minY - pad; y <= maxY + pad; y++) {
       for (let x = minX - pad; x <= maxX + pad; x++) {
         let okFactory = false;
         let touchesThis = false;
         for (const rot of [0, 1]) {
-          const fac = canPlaceFactory(grid, x, y, rot);
+          const fac = canPlaceFactory(grid, x, y, rot, footprint);
           if (!fac.ok) continue;
-          if (!factoryTouchesTown(grid, x, y, rot)) continue;
+          if (!factoryTouchesTown(grid, x, y, rot, footprint)) continue;
           okFactory = true;
           // Must be touching THIS town, not just any town
           // Check if any footprint tile touches this town's tiles
-          const [fw, fh] = rotatedSpan(FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1], rot);
+          const [fw, fh] = rotatedSpan(footprint[0], footprint[1], rot);
           for (let dy = 0; dy < fh && !touchesThis; dy++) {
             for (let dx = 0; dx < fw && !touchesThis; dx++) {
               const fx = x+dx, fy = y+dy;
@@ -2215,8 +2528,11 @@ export function startingTownReservations(grid: Grid): [Town, Town] | null {
 }
 
 /** Seat → reserved town (0=host,1=guest) */
-export function townForSeat(grid: Grid, seat: 0 | 1): Town | null {
-  const pair = startingTownReservations(grid);
+export function townForSeat(
+  grid: Grid, seat: 0 | 1,
+  footprint: readonly [number, number] = factoryFootprintOf(grid),
+): Town | null {
+  const pair = startingTownReservations(grid, footprint);
   if (!pair) return grid.towns[seat] ?? grid.towns[0] ?? null;
   return pair[seat] ?? null;
 }

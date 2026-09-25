@@ -162,7 +162,8 @@ import {
   chooseAiPlantSpot, plantRefusal, plantsOf, resolvePlantTarget,
 } from "./plants";
 import {
-  CARGO, CARGOES, DEPOT_TREE, DEPOT_TREE_ORDER, DEPOT_RUNG_GATE, DEPOT_LEVELS, depotYieldCap, DEPOT_TIER_MAX, FACTORY_FOOTPRINT, FACTORY_SPRITE,
+  CARGO, CARGOES, DEPOT_TREE, DEPOT_TREE_ORDER, DEPOT_RUNG_GATE, DEPOT_LEVELS, depotYieldCap, DEPOT_TIER_MAX,
+  factoryFootprintFor, factorySpriteFor,
   INDUSTRY_BY_KEY, TRANSPORT, TOWN_UPGRADES, TOWN_TIER_LEGACY, TOWN_VISUAL_MAX,
   townCentreSprite, townTierLabel,
   BASE_RATE, VICTORY, VP_TARGET, UPGRADE_COST, TUNING,
@@ -576,6 +577,14 @@ export interface IsoGameOptions {
   /** E1 (#261): force seed-derived elevation; absent reads `?elevation=1`. */
   elevation?: boolean;
   /**
+   * F4 (#275): force the shapes map option (long town buildings on merged
+   * blocks, the long Factory footprint). Absent, it is read from `?shapes=1`
+   * and applies to solo (non-story) boots only — like rivers, the option
+   * changes what the seed generates, and a networked room regenerates the map
+   * from the seed alone, so shapes are not on the wire yet.
+   */
+  shapes?: boolean;
+  /**
    * L1a (#232): force the new-loop feature flag. Absent, the flag is read
    * from `?loop=new` — DEV builds only, the same guarantee the rail flag
    * carries — and is otherwise OFF in every mode. The new loop is
@@ -789,11 +798,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const riversOn = (opts.rivers ?? riversParam === "1") && isSolo() && !storyOn;
   const elevationParam = (() => { try { return new URLSearchParams(location.search).get("elevation"); } catch { return null; } })();
   const elevationOn = (opts.elevation ?? elevationParam === "1") && isSolo() && !storyOn;
+  // F4 (#275): the shapes map option. OFF by default so every existing seed,
+  // save and room keeps today's map byte for byte; `?shapes=1` (or
+  // `opts.shapes`) turns it on for a solo sandbox boot only — a networked
+  // room regenerates from the seed alone and shapes are not on the wire yet.
+  const shapesParam = (() => { try { return new URLSearchParams(location.search).get("shapes"); } catch { return null; } })();
+  const shapesOn = (opts.shapes ?? shapesParam === "1") && isSolo() && !storyOn;
   const freshLink = (() => { try { return new URLSearchParams(location.search).get("fresh") === "1"; } catch { return false; } })();
   // A rivers boot never reads or writes the save slot: resuming a rivers map
   // without the flag would regenerate a different (riverless) terrain under
-  // the saved network, so rivers play is a fresh sandbox each time.
-  const savesOff = isMp() || freshLink || riversOn || !!(window as unknown as Record<string, unknown>).__ISO_DISABLE_SAVE;
+  // the saved network, so rivers play is a fresh sandbox each time. Shapes
+  // change the generated map the same way, so they get the same treatment.
+  const savesOff = isMp() || freshLink || riversOn || shapesOn || !!(window as unknown as Record<string, unknown>).__ISO_DISABLE_SAVE;
   // STORY-01 fix: each mode has its own save slot — the sandbox's, or this
   // contract's. A contract that read the sandbox save resumed that world (its
   // seed, the rival's network, phase "play") against the chapter's lower ★
@@ -813,7 +829,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // (playtests, saved seeds) and the fresh random one. A resumed save keeps
   // carrying its own seed, as always.
   const seed = opts.seed ?? bootSave?.seed ?? storyChapter?.seed ?? resolveMapSeed();
-  const grid: Grid = generateMap(seed, { rivers: riversOn, elevation: elevationOn });
+  const grid: Grid = generateMap(seed, { rivers: riversOn, elevation: elevationOn, shapes: shapesOn });
+  // F4 (#275): the Factory this map plays with. Shapes maps carry the long
+  // `factory_2x4` span on the grid; every legacy map falls back to the
+  // constant. Drawn from the grid (not re-derived) so the boot, the rules and
+  // the renderer can never disagree about the footprint.
+  const factoryFp = factoryFootprintFor(shapesOn);
   // SCENERY: decals + clumped trees, a pure function of the seed (so a guest
   // regenerates exactly the host's woodland from the seed alone — scenery is
   // never on the wire). Computed before the towns stamp their roads because
@@ -1054,7 +1075,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // (and every default / room / story boot) still reports the footprint as
     // a plant, so the other seat cannot pave it.
     if ((opts.newLoop === true || loopParam !== "old") && eco.factories.some((f) => tileInFootprint(
-      x, y, f.tx, f.ty, FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1], f.rot ?? 0,
+      x, y, f.tx, f.ty, factoryFp[0], factoryFp[1], f.rot ?? 0,
     ))) return "plant";
     if (townPlantReady) {
       if (townPlantTiles.has(tIdx(x, y))) return "plant";
@@ -1064,7 +1085,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   /** PP-15: the local seat may START a road drag on its own plant or depot.
    *  `canBuildOn` refuses those tiles (#298); the drag steps over them. */
   const ownFloor = (tx: number, ty: number) =>
-    structureTiles(eco.factories, eco.harvesters, me.i + 1).has(tIdx(tx, ty));
+    structureTiles(eco.factories, eco.harvesters, me.i + 1, factoryFp).has(tIdx(tx, ty));
   let nextHarvesterId = 1;
   /**
    * RV-01 / L7 (#221): road traffic. One lorry per SERVICED DEPOT once it
@@ -2750,7 +2771,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // F3: footprint uses rot.
     const blocked = new Set<number>();
     for (const f of eco.factories)
-      for (const [x, y] of plantFootprintTiles(f.tx, f.ty, f.rot ?? 0))
+      for (const [x, y] of plantFootprintTiles(f.tx, f.ty, f.rot ?? 0, factoryFp))
         if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) blocked.add(y * MAP_W + x);
     for (const h of eco.harvesters.filter((x) => !isRailDepot(x)))
       for (const [x, y] of depotTiles(h.tx, h.ty))
@@ -2767,12 +2788,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     world.fields = scenery.fields.filter((f) => !clearedFields.has(f.id));
     // PP-12: one draw item per factory — the single TTD complex, drawn at the
-    // footprint origin. The manifest footprint matches FACTORY_FOOTPRINT (both
-    // derive from the art), so the anchor lands on the footprint's south
+    // footprint origin. The manifest footprint matches the map's Factory span
+    // (both derive from the art), so the anchor lands on the footprint's south
     // corner exactly like any other multi-tile building.
-    // F3: art swaps to _r when rotated.
+    // F3: art swaps to _r when rotated. F4: shapes maps draw the long
+    // `factory_2x4` complex instead of the legacy square one.
     const factoryItems = eco.factories.map((f) => ({
-      sprite: (f.rot ?? 0) & 1 ? `${FACTORY_SPRITE}_r` : FACTORY_SPRITE,
+      sprite: factorySpriteFor(shapesOn, f.rot ?? 0),
       tx: f.tx,
       ty: f.ty,
       ref: { kind: "factory", owner: f.owner },
@@ -2817,7 +2839,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           ring.add(gi);
         }
       }
-      const laid = townBuildings(t, footprintOf, { tier, grid, blocked: isBuilt });
+      const laid = townBuildings(t, footprintOf, { tier, grid, blocked: isBuilt, shapes: shapesOn });
       for (const [x, y] of townObstacleTiles(
         t,
         laid.map((b) => {
@@ -2913,11 +2935,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       });
     }
     for (const f of eco.factories) {
+      const [lfw, lfh] = rotatedSpan(factoryFp[0], factoryFp[1], f.rot ?? 0);
       entries.push({
         key: `plant-${f.owner}-${f.id}`,
         name: f.owner === me.id ? "Your Plant" : "Rival's Plant",
-        tx: f.tx + FACTORY_FOOTPRINT[0] / 2,
-        ty: f.ty + FACTORY_FOOTPRINT[1] / 2,
+        tx: f.tx + lfw / 2,
+        ty: f.ty + lfh / 2,
         cls: "label-plant",
       });
     }
@@ -3153,7 +3176,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // Factory footprints must not overlap live buildings (opening factories also check live buildings)
       for (const [fx, fy] of plan.footprint.map((f) => [f.tx, f.ty] as [number, number])) {
         if (eco.factories.some((f) => {
-          const [fw, fh] = rotatedSpan(FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1], f.rot ?? 0);
+          const [fw, fh] = rotatedSpan(factoryFp[0], factoryFp[1], f.rot ?? 0);
           return fx >= f.tx && fx < f.tx + fw && fy >= f.ty && fy < f.ty + fh;
         })) {
           toast("Can't build there — another Factory stands there.", "bad");
@@ -3257,7 +3280,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * about `eco.factories` through the same fields.
    */
   const railPlants = () => eco.factories.map((f) => ({
-    owner: f.owner, ownerId: f.ownerId, tx: f.tx, ty: f.ty, id: f.id ?? 0,
+    owner: f.owner, ownerId: f.ownerId, tx: f.tx, ty: f.ty, id: f.id ?? 0, rot: f.rot ?? 0,
   }));
 
   /** The owner's platforms, as the scoreboard reads them. */
@@ -5092,8 +5115,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // PP-06: a plant is demolishable like any other building — but never the
     // last one, or the player would have nowhere to deliver.
     const pi = eco.factories.findIndex((f) => f.owner === p.id
-      && tx >= f.tx && tx < f.tx + FACTORY_FOOTPRINT[0]
-      && ty >= f.ty && ty < f.ty + FACTORY_FOOTPRINT[1]);
+      && tileInFootprint(tx, ty, f.tx, f.ty, factoryFp[0], factoryFp[1], f.rot ?? 0));
     if (pi >= 0) {
       if (plantsOf(eco, p.id).length <= 1) {
         toast("You can't demolish your only processing plant.", "bad");
@@ -8389,7 +8411,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           const kind: TrackKind = payload.kind === "road" ? "road" : "dirt";
           const pv = previewDrag(grid, track, kind, p.purse, ax, ay, bx, by,
             payload.xFirst !== false, undefined, p.freeTrack,
-            structureTiles(eco.factories, eco.harvesters, p.i + 1), newLoop,
+            structureTiles(eco.factories, eco.harvesters, p.i + 1, factoryFp), newLoop,
             // R2 (#266): a deck is never shared, so the rail layer rides along.
             { railAt: (x, y) => hasRail(rail.rail, x, y) });
           if (pv.tiles.length === 0) toast("Can't build there.", "bad");
@@ -8868,7 +8890,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const overlayPlanAt = (tx: number, ty: number): OverlayFrame => {
     const items: OverlayItem[] = [];
     let ghost: GhostSpec | null = null;
-    const factoryGhostSprite = (rot: number) => (rot & 1) ? `${FACTORY_SPRITE}_r` : FACTORY_SPRITE;
+    const factoryGhostSprite = (rot: number) => factorySpriteFor(shapesOn, rot);
     if (phase === "setup-factory") {
       // PP-02: the preview enforces the same town-adjacency rule as the click.
       const plan = planFactoryPlacement(grid, tx, ty, { requireTown: true, track, rot: factoryView });
@@ -9281,8 +9303,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         const owner = (hover?.ref as { owner?: string } | null)?.owner ?? "";
         const list = plantsOf(eco, owner);
         const f = list.find((x) => hover
-          && hover.tx >= x.tx && hover.tx < x.tx + FACTORY_FOOTPRINT[0]
-          && hover.ty >= x.ty && hover.ty < x.ty + FACTORY_FOOTPRINT[1]);
+          && tileInFootprint(hover.tx, hover.ty, x.tx, x.ty, factoryFp[0], factoryFp[1], x.rot ?? 0));
         const served = eco.harvesters.filter((h) => h.owner === owner
           && resolveConnection(eco, componentsFor(h.ownerId), h).factory === f).length;
         info = `<b>Processing Plant</b> (${owner === "you" ? "yours" : "rival"})<br>` +
@@ -9650,7 +9671,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // plant is not — `canBuildOn` refuses `builtAt` "plant".
     if (!canBuildOn(grid, kind, ax, ay) && !ownFloor(ax, ay)) return null;
     const pv = previewDrag(grid, track, kind, me.purse, ax, ay, bx, by, xFirst, undefined,
-      me.freeTrack, structureTiles(eco.factories, eco.harvesters, me.i + 1), newLoop,
+      me.freeTrack, structureTiles(eco.factories, eco.harvesters, me.i + 1, factoryFp), newLoop,
       // R2 (#266): the drag sees the railway, because a deck is never shared —
       // a road may not span water the railway already bridges.
       { railAt: (x, y) => hasRail(rail.rail, x, y) });
@@ -10025,7 +10046,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           // L2: the drag prices with the loop's cost model (dirt free under newLoop).
           preview = previewDrag(grid, track, kind, me.purse,
             drag.ax, drag.ay, p.tx, p.ty, true, undefined, me.freeTrack,
-            structureTiles(eco.factories, eco.harvesters, me.i + 1), newLoop,
+            structureTiles(eco.factories, eco.harvesters, me.i + 1, factoryFp), newLoop,
             // R2 (#266): see `requestTrackBuild` — never a deck over rail.
             { railAt: (x, y) => hasRail(rail.rail, x, y) });
           previewKey = key;
@@ -12628,7 +12649,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (phase !== "play") return null;
       if (!canBuildOn(grid, kind, ax, ay) && !ownFloor(ax, ay)) return null;
       return previewDrag(grid, track, kind, me.purse, ax, ay, bx, by, xFirst, undefined, me.freeTrack,
-        structureTiles(eco.factories, eco.harvesters, me.i + 1), newLoop,
+        structureTiles(eco.factories, eco.harvesters, me.i + 1, factoryFp), newLoop,
         { railAt: (x, y) => hasRail(rail.rail, x, y) });
     },
     /**

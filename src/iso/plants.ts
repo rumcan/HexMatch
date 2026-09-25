@@ -26,7 +26,10 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { BUILD_COSTS, FACTORY_FOOTPRINT, type Cargo } from "./config";
 import { catchmentRect, rectContains } from "./economy";
-import { FIELD_OCC, TOWN_OCC, WATER, idx, inBounds, rotatedSpan, type Grid, type Town } from "./grid";
+import {
+  FIELD_OCC, TOWN_OCC, WATER, factoryFootprintOf, idx, inBounds, rotatedSpan,
+  type Grid, type Town,
+} from "./grid";
 import { hasTrack, type Purse, type Track } from "./track";
 import { footprintFlatTiles } from "./slopes";
 import type { EconomyState, Factory } from "./economy";
@@ -59,9 +62,16 @@ export const PLANT_REFUSAL_TEXT: Record<PlantRefusal, string> = {
   "no-town": "A processing plant must be built next to a town.",
 };
 
-/** Every tile of the Factory footprint anchored at (tx,ty), rotated. */
-export function footprintTiles(tx: number, ty: number, rot = 0): [number, number][] {
-  const [fw, fh] = rotatedSpan(FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1], rot);
+/**
+ * Every tile of the Factory footprint anchored at (tx,ty), rotated.
+ * F4 (#275): `footprint` defaults to the legacy constant — the shapes option
+ * passes the map's long factory footprint.
+ */
+export function footprintTiles(
+  tx: number, ty: number, rot = 0,
+  footprint: readonly [number, number] = FACTORY_FOOTPRINT,
+): [number, number][] {
+  const [fw, fh] = rotatedSpan(footprint[0], footprint[1], rot);
   const out: [number, number][] = [];
   for (let dy = 0; dy < fh; dy++) {
     for (let dx = 0; dx < fw; dx++) out.push([tx + dx, ty + dy]);
@@ -86,10 +96,14 @@ const townHasTile = (t: Town, tx: number, ty: number) =>
  * `factoryTouchesTown` in grid.ts). Ties (two towns touching one footprint)
  * resolve to the lowest town id so the answer is deterministic.
  */
-export function adjacentTown(grid: Grid, tx: number, ty: number, rot = 0): Town | null {
+export function adjacentTown(
+  grid: Grid, tx: number, ty: number, rot = 0,
+  footprint?: readonly [number, number],
+): Town | null {
+  const fp = footprint ?? factoryFootprintOf(grid);
   const EDGES: [number, number][] = [[0, -1], [1, 0], [0, 1], [-1, 0]];
   let best: Town | null = null;
-  for (const [fx, fy] of footprintTiles(tx, ty, rot)) {
+  for (const [fx, fy] of footprintTiles(tx, ty, rot, fp)) {
     for (const [dx, dy] of EDGES) {
       const nx = fx + dx, ny = fy + dy;
       // A "town tile" is one the map actually stamped TOWN_OCC — a house, the
@@ -108,8 +122,9 @@ export function adjacentTown(grid: Grid, tx: number, ty: number, rot = 0): Town 
 
 /** Does any existing plant/depot of ANY player stand on this tile? F3: uses rotated footprint. */
 export function buildingAt(state: EconomyState, tx: number, ty: number): boolean {
+  const fp = factoryFootprintOf(state.grid);
   for (const f of state.factories) {
-    const [fw, fh] = rotatedSpan(FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1], f.rot ?? 0);
+    const [fw, fh] = rotatedSpan(fp[0], fp[1], f.rot ?? 0);
     if (tx >= f.tx && tx < f.tx + fw && ty >= f.ty && ty < f.ty + fh) return true;
   }
   return state.harvesters.some((h) => h.tx === tx && h.ty === ty);
@@ -123,8 +138,10 @@ export function buildingAt(state: EconomyState, tx: number, ty: number): boolean
  */
 export function plantRefusal(
   grid: Grid, track: Track, state: EconomyState, tx: number, ty: number, rot = 0,
+  footprint?: readonly [number, number],
 ): PlantRefusal | null {
-  for (const [x, y] of footprintTiles(tx, ty, rot)) {
+  const fp = footprint ?? factoryFootprintOf(grid);
+  for (const [x, y] of footprintTiles(tx, ty, rot, fp)) {
     if (!inBounds(x, y)) return "out-of-bounds";
     const i = idx(x, y);
     if (grid.terrain[i] === WATER) return "water";
@@ -134,13 +151,14 @@ export function plantRefusal(
   }
   // E4 (#268): a processing plant's footprint (and the Factory's) needs level
   // ground — see slopes.ts. Water is ignored, so this stays a land rule.
-  if (footprintFlatTiles(grid, footprintTiles(tx, ty, rot))) return "not-flat";
-  return adjacentTown(grid, tx, ty, rot) ? null : "no-town";
+  if (footprintFlatTiles(grid, footprintTiles(tx, ty, rot, fp))) return "not-flat";
+  return adjacentTown(grid, tx, ty, rot, fp) ? null : "no-town";
 }
 
 export const canPlacePlant = (
   grid: Grid, track: Track, state: EconomyState, tx: number, ty: number, rot = 0,
-): boolean => plantRefusal(grid, track, state, tx, ty, rot) === null;
+  footprint?: readonly [number, number],
+): boolean => plantRefusal(grid, track, state, tx, ty, rot, footprint) === null;
 
 /**
  * A town click means "build beside this town", not "bulldoze this house".
@@ -156,6 +174,7 @@ export function resolvePlantTarget(
   const town = grid.towns.find((t) => townHasTile(t, tx, ty));
   if (!town) return null;
   const rots = rot === undefined ? [0, 1] : [rot];
+  const fp = factoryFootprintOf(grid);
   let best: [number, number] | null = null;
   let bestDistance = Infinity;
   const seen = new Set<string>();
@@ -163,7 +182,7 @@ export function resolvePlantTarget(
   // origin in this range. Enumerate the boundary, not the entire map.
   for (const [hx, hy] of [[town.tx, town.ty], ...town.houses, ...(town.roads ?? [])]) {
     for (const r of rots) {
-      const [fw, fh] = rotatedSpan(FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1], r);
+      const [fw, fh] = rotatedSpan(fp[0], fp[1], r);
       for (let dy = -fh; dy <= 1; dy++) {
         for (let dx = -fw; dx <= 1; dx++) {
           const x = hx + dx, y = hy + dy;
@@ -211,7 +230,7 @@ export function addPlant(
   owner: string, ownerId: number, tx: number, ty: number, rot = 0,
 ): Factory | null {
   if (!canPlacePlant(grid, track, state, tx, ty, rot)) return null;
-  const town = adjacentTown(grid, tx, ty, rot);
+  const town = adjacentTown(grid, tx, ty, rot, factoryFootprintOf(grid));
   const plant: Factory = {
     owner, ownerId, tx, ty,
     id: nextPlantId(state, owner),
@@ -251,8 +270,11 @@ function uncoveredIndustries(grid: Grid, state: EconomyState, owner: string): In
   return grid.industries.filter((ind) => !covered.has(ind.id));
 }
 
-const nearFootprint = (ind: Industry, tx: number, ty: number, reach: number, rot = 0): boolean => {
-  const [fw, fh] = rotatedSpan(FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1], rot);
+const nearFootprint = (
+  ind: Industry, tx: number, ty: number, reach: number, rot = 0,
+  footprint: readonly [number, number] = FACTORY_FOOTPRINT,
+): boolean => {
+  const [fw, fh] = rotatedSpan(footprint[0], footprint[1], rot);
   const x1 = tx + fw - 1, y1 = ty + fh - 1;
   // distance from the industry's footprint box to the plant's footprint box
   const dx = Math.max(ind.tx - x1, tx - (ind.tx + ind.w - 1), 0);
@@ -282,6 +304,11 @@ const nearFootprint = (ind: Industry, tx: number, ty: number, reach: number, rot
 export function chooseAiPlantSpot(
   grid: Grid, track: Track, state: EconomyState, owner: string,
 ): [number, number, number] | null {
+  const fp = factoryFootprintOf(grid);
+  // The scan must reach far enough out from a house to see a legal footprint
+  // of THIS map's size: the long shapes lot stands one tile further out than
+  // the legacy complex. Derived from the footprint, so re-arting re-flows.
+  const fpMax = Math.max(fp[0], fp[1]);
   const mine = openPlantsOf(state, owner);
   if (!mine.length && !plantsOf(state, owner).length) return null;
   // Own OPEN plants occupy a town. Opponent towns (and towns this seat won
@@ -318,19 +345,19 @@ export function chooseAiPlantSpot(
       // to see them; `canPlacePlant` is the one rule that decides.
       // F3: try both orientations, keep original generous -3..2 range so ring-adjacent sites are seen.
       for (const rot of [0, 1]) {
-        for (let dy = -3; dy <= 2; dy++) {
-          for (let dx = -3; dx <= 2; dx++) {
+        for (let dy = -fpMax; dy <= 2; dy++) {
+          for (let dx = -fpMax; dx <= 2; dx++) {
             const tx = hx + dx, ty = hy + dy;
             const key = `${tx},${ty},${rot}`;
             if (seen.has(key)) continue;
             seen.add(key);
-            if (!canPlacePlant(grid, track, state, tx, ty, rot)) continue;
+            if (!canPlacePlant(grid, track, state, tx, ty, rot, fp)) continue;
             let reach = 0;
-            for (const ind of wanted) if (nearFootprint(ind, tx, ty, PLANT_REACH, rot)) reach++;
+            for (const ind of wanted) if (nearFootprint(ind, tx, ty, PLANT_REACH, rot, fp)) reach++;
             const d = manhattan(tx, ty);
             // 10 per industry in reach, 1 per tile of detour: reach dominates,
             // distance only breaks ties between equally productive sites.
-            const at = adjacentTown(grid, tx, ty, rot);
+            const at = adjacentTown(grid, tx, ty, rot, fp);
             const prefer = at && preferred.has(at.id) ? 50 : 0;
             const score = reach * 10 - d + prefer;
             const flatKey = ty * grid.w + tx;

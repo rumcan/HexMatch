@@ -503,8 +503,11 @@ export const trackOpenTo = (t: Track, owner: number, tx: number, ty: number): bo
  * and `drawOrigin` measures the footprint from the origin towards +x/+y. A
  * Depot is 1×1, so its origin tile IS its footprint.
  */
-export function plantFootprintTiles(tx: number, ty: number, rot = 0): [number, number][] {
-  const [fw, fh] = rotatedSpan(FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1], rot);
+export function plantFootprintTiles(
+  tx: number, ty: number, rot = 0,
+  footprint: readonly [number, number] = FACTORY_FOOTPRINT,
+): [number, number][] {
+  const [fw, fh] = rotatedSpan(footprint[0], footprint[1], rot);
   const out: [number, number][] = [];
   for (let y = 0; y < fh; y++) for (let x = 0; x < fw; x++) out.push([tx + x, ty + y]);
   return out;
@@ -529,11 +532,14 @@ export function structureTiles(
   factories: { ownerId: number; tx: number; ty: number; rot?: number }[],
   harvesters: { ownerId: number; tx: number; ty: number }[],
   owner: number,
+  // F4 (#275): the map's Factory span — the shapes option's long footprint
+  // where the grid carries one, the legacy square otherwise.
+  footprint: readonly [number, number] = FACTORY_FOOTPRINT,
 ): Set<number> {
   const out = new Set<number>();
   for (const f of factories) {
     if (f.ownerId !== owner) continue;
-    for (const [x, y] of plantFootprintTiles(f.tx, f.ty, (f as any).rot ?? 0)) {
+    for (const [x, y] of plantFootprintTiles(f.tx, f.ty, (f as any).rot ?? 0, footprint)) {
       if (inMapT(x, y)) out.add(tIdx(x, y));
     }
   }
@@ -553,6 +559,8 @@ export function playerNetwork(
   owner: number,
   factories: { ownerId: number; tx: number; ty: number; rot?: number }[],
   harvesters: { ownerId: number; tx: number; ty: number }[],
+  // F4 (#275): the map's Factory span, as in `structureTiles`.
+  footprint: readonly [number, number] = FACTORY_FOOTPRINT,
 ): Set<number> {
   const seen = new Set<number>();
   const stack: number[] = [];
@@ -570,7 +578,7 @@ export function playerNetwork(
   // ground while the back corner was not.
   for (const f of factories) {
     if (f.ownerId !== owner) continue;
-    for (const [x, y] of plantFootprintTiles(f.tx, f.ty, (f as any).rot ?? 0)) seed(x, y);
+    for (const [x, y] of plantFootprintTiles(f.tx, f.ty, (f as any).rot ?? 0, footprint)) seed(x, y);
   }
   // …and a truck Depot seeds its whole 2×2 lot, for the same reason.
   for (const h of harvesters) {

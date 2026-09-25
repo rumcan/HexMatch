@@ -36,7 +36,7 @@
 import { HH, HW, MAP_W, MAP_H, TILE_H, tileToScreen } from "../game/config";
 import { screenToTileAt, screenToWorld, visibleTileRange, worldToScreen, type Camera } from "./camera";
 import { flatPick, terrainSprite, type IsoRenderer } from "./renderer";
-import { WATER, ROUGH, industryAt, type Grid } from "./grid";
+import { WATER, ROUGH, industryAt, factoryFootprintOf, type Grid } from "./grid";
 import {
   bitsAt, buildRefusal, hasTrack, isPublicRoad, isUpgradedRoad, ownerAt, playerNetwork,
   PRESENT, tIdx,
@@ -436,7 +436,7 @@ export function createIsoDebug(ctx: DebugContext) {
       console.log("[iso] dumpNetwork: unknown player", player);
       return { error: `unknown player "${player}" — try one of: ${known}` };
     }
-    const net = playerNetwork(ctx.track, owner, ctx.eco.factories, ctx.eco.harvesters);
+    const net = playerNetwork(ctx.track, owner, ctx.eco.factories, ctx.eco.harvesters, factoryFootprintOf(ctx.grid));
     const tiles = [...net].sort((a, b) => a - b).map((i) => [i % MAP_W, (i / MAP_W) | 0] as [number, number]);
     const dirt = tiles.filter(([x, y]) => hasTrack(ctx.track, "dirt", x, y)).length;
     const road = tiles.filter(([x, y]) => hasTrack(ctx.track, "road", x, y)).length;
@@ -524,7 +524,7 @@ export function createIsoDebug(ctx: DebugContext) {
       const you = ctx.ownerOf("you"), ai = ctx.ownerOf("ai");
       for (const [owner, colour] of [[you, "rgba(80,220,120,0.45)"], [ai, "rgba(255,110,80,0.45)"]] as const) {
         if (owner === null) continue;
-        const net = playerNetwork(ctx.track, owner, ctx.eco.factories, ctx.eco.harvesters);
+        const net = playerNetwork(ctx.track, owner, ctx.eco.factories, ctx.eco.harvesters, factoryFootprintOf(ctx.grid));
         c.fillStyle = colour;
         for (const i of net) {
           const [tx, ty] = [i % MAP_W, (i / MAP_W) | 0];

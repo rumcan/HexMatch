@@ -45,7 +45,7 @@ import {
   NE, SE, SW, NW, DIRS, DIR, OPPOSITE, PRESENT, tIdx, inMapT, plantFootprintTiles,
   addCost, mergedPresent, type DragPreview, type Purse, type Track,
 } from "./track";
-import { FIELD_OCC, GRASS, ROUGH, SAND, idx, type Grid } from "./grid";
+import { FIELD_OCC, GRASS, ROUGH, SAND, factoryFootprintOf, idx, type Grid } from "./grid";
 import {
   bridgeCostFor, bridgeDeckAt, planBridges, sideJoinAt, type BridgePlan,
 } from "./bridges";
@@ -1195,10 +1195,13 @@ export interface AnchorCandidate {
  */
 export function anchorCandidates(
   grid: Grid,
-  factories: { ownerId: number; tx: number; ty: number; id?: number }[],
+  factories: { ownerId: number; tx: number; ty: number; id?: number; rot?: number }[],
   ownerId: number, tx: number, ty: number, view: RailView,
 ): AnchorCandidate[] {
   const [w, h] = PLATFORM_FOOTPRINT[view];
+  // F4 (#275): the plant block this map plays with — the shapes option's long
+  // footprint where the grid carries one, the legacy square otherwise.
+  const fp = factoryFootprintOf(grid);
   const mine: [number, number][] = [];
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) mine.push([tx + x, ty + y]);
   const dist = (tiles: [number, number][]): number => {
@@ -1221,7 +1224,7 @@ export function anchorCandidates(
   }
   for (const f of factories) {
     if (f.ownerId !== ownerId) continue;                 // owned plants only
-    const tiles = plantFootprintTiles(f.tx, f.ty);
+    const tiles = plantFootprintTiles(f.tx, f.ty, f.rot ?? 0, fp);
     const d = dist(tiles);
     if (d > ANCHOR_RANGE) continue;
     out.push({ kind: "plant", id: f.id ?? 0, tiles, label: "Processing Plant", distance: d });
@@ -1244,7 +1247,7 @@ export function overlaps(
  */
 export function platformRefusal(
   grid: Grid, structures: RailStructure[],
-  factories: { ownerId: number; tx: number; ty: number; id?: number }[],
+  factories: { ownerId: number; tx: number; ty: number; id?: number; rot?: number }[],
   ownerId: number, tx: number, ty: number, view: RailView,
   anchor?: RailAnchor | null,
 ): RailRefusal {
@@ -1288,7 +1291,7 @@ export function platformRefusal(
 
 /** The anchor a placement will actually record, given an explicit preference. */
 export function resolveAnchor(
-  grid: Grid, factories: { ownerId: number; tx: number; ty: number; id?: number }[],
+  grid: Grid, factories: { ownerId: number; tx: number; ty: number; id?: number; rot?: number }[],
   ownerId: number, tx: number, ty: number, view: RailView, prefer?: RailAnchor | null,
 ): RailAnchor | null {
   const candidates = anchorCandidates(grid, factories, ownerId, tx, ty, view);
