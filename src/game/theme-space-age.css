@@ -174,3 +174,52 @@
   /* hint pill and toasts ride above the drawer */
   .modebar { bottom: calc(var(--drawer-h, 36px) + 10px); }
 }
+
+/* ── P8: buttons, dialogs, toasts, coach ─────────────────────────── */
+.post-btn, .big-btn, .bank-btn, .menu-btn.primary, .start-primary, .ending-button, .tax-btn {
+  background: var(--sa-lemon); color: var(--sa-on-lemon);
+  border: 0; border-radius: 0; box-shadow: none; text-shadow: none;
+  font-family: var(--display); font-weight: 600; letter-spacing: .12em; text-transform: uppercase;
+}
+.post-btn:hover, .big-btn:hover, .bank-btn:hover, .menu-btn.primary:hover, .start-primary:hover, .ending-button:hover, .tax-btn:hover {
+  background: #f7e27a; color: var(--sa-on-lemon);
+}
+.post-btn:disabled, .big-btn:disabled, .bank-btn:disabled, .post-btn.disabled { background: var(--sa-line); color: var(--sa-bone-mute); }
+.menu-btn, .reset-btn, .tm-item {
+  background: var(--sa-panel-2); color: var(--sa-bone);
+  border: 1px solid var(--sa-line-hi); border-radius: 0; box-shadow: none;
+  font-family: var(--display); letter-spacing: .1em;
+}
+.menu-btn:hover, .reset-btn:hover { background: var(--sa-line); border-color: var(--sa-bone-dim); }
+.modal.box, .session-frame, .sr-card, .battle-card, .settings-sheet .modal.box, .iso-topmenu {
+  background: var(--sa-panel); border: 1px solid var(--sa-ink); border-top: 3px solid var(--sa-orange);
+  border-radius: 0; box-shadow: none;
+}
+.modal h2, .panel-title { font-family: var(--display); font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--sa-bone); }
+.modal h2::before, .panel-title::before { display: none; }
+.toast { background: var(--sa-panel); color: var(--sa-bone); border: 0; border-left: 3px solid var(--sa-aqua); border-radius: 0; box-shadow: none; }
+.toast.success { border-left-color: var(--sa-green); }
+.toast.danger { border-left-color: var(--sa-red); }
+.toast.info { border-left-color: var(--sa-aqua); }
+.banner, .banner.narrated {
+  background: var(--sa-ink); color: var(--sa-bone);
+  border: 0; border-left: 3px solid var(--sa-lemon); border-radius: 0; box-shadow: none;
+}
+.banner b { color: var(--sa-lemon); }
+input, select, textarea { border-radius: 0; }
+select, input[type="number"], input[type="text"] { background: var(--sa-ink); color: var(--sa-bone); border: 1px solid var(--sa-line-hi); }
+
+/* ── P9: front door (main menu + mode screen) ────────────────────── */
+.start-screen::before { background: var(--room); animation: none; filter: none; }
+.start-screen::after, .menu-embers { display: none; }
+.start-screen { background: var(--sa-ink); }
+.menu-card, .start-panel {
+  background: var(--sa-panel); border: 1px solid var(--sa-ink); border-top: 3px solid var(--sa-orange);
+  border-radius: 0; box-shadow: none;
+}
+.menu-emblem { display: none; }
+.menu-title { font-family: var(--display); font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--sa-bone); }
+.start-kicker { color: var(--sa-orange); font-family: var(--display); letter-spacing: .16em; }
+.menu-btn .mb-tag { font-family: var(--sans); color: var(--sa-bone-dim); letter-spacing: 0; text-transform: none; }
+.menu-btn.primary .mb-tag, .start-primary small { color: var(--sa-on-lemon); opacity: .8; }
+.menu-leaderboard { background: var(--sa-panel); border: 1px solid var(--sa-ink); border-radius: 0; box-shadow: none; }
