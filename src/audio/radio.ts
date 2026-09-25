@@ -713,6 +713,10 @@ export interface RadioWidget {
  * Nothing here throws: a state that cannot be painted simply does not paint.
  */
 export function mountRadioWidget(host: HTMLElement, r: Radio = radio): RadioWidget {
+  // One pill per dock: a game that mounts twice (a re-boot over the same host)
+  // replaces its player rather than stacking a second one on top of it.
+  for (const stale of Array.from(host.querySelectorAll(".radio-pill"))) stale.remove();
+
   const pill = document.createElement("div");
   pill.className = "radio-pill";
   pill.id = "iso-radio";

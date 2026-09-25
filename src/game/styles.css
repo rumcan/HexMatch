@@ -5951,6 +5951,11 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
     );
     right: calc(8px + env(safe-area-inset-right, 0px));
   }
+  /* A phone sheet (Build / Economy) owns the whole screen and its own top-right
+     corner — the same rule the minimap plate and the folded chat pill keep. The
+     round key steps out of the way there; the Map view brings it straight back,
+     and the ☰ settings sheet can still turn the radio off from inside a sheet. */
+  .ui-root[data-phone="1"]:not([data-view="map"]) .radio-dock { display: none; }
   /* One round key: the row (text, volume) folds away… */
   .radio-pill { gap: 0; padding: 0; border: 0; background: none; box-shadow: none; }
   .radio-pill .radio-now, .radio-pill .radio-vol, .radio-pill .radio-slider { display: none; }

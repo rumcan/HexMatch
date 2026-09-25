@@ -19,9 +19,11 @@
 //      hidden when "Show radio player" is off, inert when Radio is off.
 // ══════════════════════════════════════════════════════════════════════════
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   DUCK_FADE_MS, DUCK_RATIO, DEFAULT_RADIO_VOLUME, RADIO_DEFAULTS,
-  RADIO_OFFLINE_TEXT, RADIO_RETRY_CAP_MS, RADIO_RETRY_MS, RADIO_STATION_NAME,
+  RADIO_LONGPRESS_MS, RADIO_OFFLINE_TEXT, RADIO_PEEK_MS, RADIO_RETRY_CAP_MS,
+  RADIO_RETRY_MS, RADIO_STATION_NAME, RADIO_STREAM_URL,
   RADIO_STORAGE_KEY, backoffDelayMs, createRadio, effectiveRadioVolume,
   hasStream, mountRadioWidget, radioBusy, radioGlyph, radioInit, radioReduce,
   radioText, readRadioSettings, writeRadioSettings,
@@ -232,8 +234,17 @@ describe("MUSIC-1 state machine", () => {
 // ══ 2. an empty / dead stream ══════════════════════════════════════════════
 
 describe("MUSIC-1 an empty or dead stream", () => {
+  it("ships the two constants the owner fills in, and an empty URL is offline", () => {
+    expect(typeof RADIO_STREAM_URL).toBe("string");
+    expect(RADIO_STATION_NAME).toBe("SEGA Radio");
+    // The shipped constant is empty on purpose (the owner supplies the URL) —
+    // and if a build has one, this test simply stops asserting the empty case.
+    if (!hasStream(RADIO_STREAM_URL)) {
+      expect(go(radioInit(true), "play", RADIO_STREAM_URL).status).toBe("offline");
+    }
+  });
+
   it("ships with an empty URL and treats it as offline, not as a crash", () => {
-    // The shipped constant is empty on purpose (the owner supplies the URL).
     expect(hasStream("")).toBe(false);
     expect(hasStream("   ")).toBe(false);
     expect(hasStream("https://radio.test/live.mp3")).toBe(true);
@@ -560,7 +571,68 @@ describe("MUSIC-1 settings persistence", () => {
   });
 });
 
-// ══ 6. the pill ════════════════════════════════════════════════════════════
+// ══ 6. the corner, as the stylesheet states it ═════════════════════════════
+// The pill's PLACE is CSS (like the minimap's plate), so jsdom cannot lay it
+// out — but the three decisions the ticket makes about that place are text, and
+// this is where a later refactor would break them silently: the very top-right,
+// the lane under the top bar, and the phone's collapse to one round key.
+
+describe("MUSIC-1 the corner", () => {
+  const css = readFileSync("src/game/styles.css", "utf8");
+  /** The radio's own section of the sheet: its heading to the next section. */
+  const section = css.slice(
+    css.indexOf("MUSIC-1 (#377) — the mini radio"),
+    css.indexOf("M2 (#256): Sabotage Event Window"),
+  );
+  /** The first `{ … }` body written for `selector` as a whole compound. */
+  function body(selector: string, from = section): string {
+    const esc = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const m = new RegExp(`(^|[},\\s])${esc}(?=[\\s,{])`, "m").exec(from);
+    if (!m) return "";
+    const open = from.indexOf("{", m.index);
+    return open < 0 ? "" : from.slice(open + 1, from.indexOf("}", open));
+  }
+
+  it("is a section of the stylesheet at all (the pill is not styled from TS)", () => {
+    expect(section.length).toBeGreaterThan(500);
+  });
+
+  it("pins the dock to the very top-right, one lane under the top bar", () => {
+    const dock = body(".radio-dock");
+    expect(dock).toContain("position: fixed");
+    expect(dock).toContain("right:");
+    // The bar's own height is the variable the bar is built from, so the pill
+    // can never sit ON it or slide under a notched phone's inset.
+    expect(dock).toContain("top: calc(var(--topbar-h) + var(--safe-top) + 8px)");
+    // …and only the pill takes pointers: the dock is place, not a click target.
+    expect(dock).toContain("pointer-events: none");
+    expect(body(".radio-pill")).toContain("pointer-events: auto");
+    // The panels the player opens in this corner (the rival's stakeout, the ☰
+    // popover) are allowed to cover the pill; it never covers them.
+    expect(Number(dock.match(/z-index:\s*(\d+)/)?.[1])).toBeLessThan(40);
+  });
+
+  it("collapses to one round key on a phone, under the banner lane", () => {
+    const phone = section.slice(section.indexOf("@media (max-width: 760px)"));
+    // It waits under whichever of the banner / objective cards is posted…
+    expect(phone).toContain("--banner-h");
+    // …hides its row (text + volume)…
+    expect(body(".radio-pill .radio-now", phone)).toContain("display: none");
+    // …brings the text back on a long press…
+    expect(phone).toContain('.radio-pill[data-peek="1"] .radio-now');
+    // …keeps a thumb-sized key…
+    expect(body(".radio-play", phone)).toMatch(/width:\s*40px/);
+    // …and steps out of the way of a phone sheet (Build / Economy).
+    expect(phone).toContain('.ui-root[data-phone="1"]:not([data-view="map"]) .radio-dock { display: none; }');
+  });
+
+  it("respects prefers-reduced-motion for the spinner and the fade", () => {
+    const reduced = section.slice(section.indexOf("@media (prefers-reduced-motion: reduce)"));
+    expect(body(".radio-spin", reduced)).toContain("animation: none");
+  });
+});
+
+// ══ 7. the pill ════════════════════════════════════════════════════════════
 
 describe("MUSIC-1 the pill", () => {
   function mount(over: Parameters<typeof harness>[0] = {}) {
@@ -666,10 +738,18 @@ describe("MUSIC-1 the pill", () => {
     const { pill, widget } = mount();
     widget.playButton.dispatchEvent(new Event("pointerdown"));
     expect(pill.dataset.peek).toBeUndefined();
-    vi.advanceTimersByTime(450);
+    vi.advanceTimersByTime(RADIO_LONGPRESS_MS);
     expect(pill.dataset.peek).toBe("1");
-    vi.advanceTimersByTime(1_800);
+    vi.advanceTimersByTime(RADIO_PEEK_MS);
     expect(pill.dataset.peek).toBe("0");
+  });
+
+  it("replaces a previous pill instead of stacking a second one in the dock", () => {
+    const { host, r } = mount();
+    const again = mountRadioWidget(host, r);
+    expect(host.querySelectorAll(".radio-pill").length).toBe(1);
+    expect(host.firstElementChild).toBe(again.el);
+    again.destroy();
   });
 
   it("tears itself down: the pill leaves the DOM and the painter is dropped", () => {
