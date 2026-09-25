@@ -642,7 +642,11 @@ export class IsoRenderer {
   get cullPadValue(): number { return this.pad; }
 
   // ── invalidation ────────────────────────────────────────────────────────
+  /** Terrain-GL: told about every ground tile the 2D caches drop. */
+  onTileInvalidated: ((tx: number, ty: number) => void) | null = null;
+
   invalidateTile(tx: number, ty: number) {
+    this.onTileInvalidated?.(tx, ty);
     for (const z of this.atlas.images.keys()) {
       this.groundChunkCache.delete(`${z}:${chunkIndexOf(tx, ty)}`);
     }
@@ -1146,7 +1150,15 @@ export class IsoRenderer {
   private islandSurf: HTMLCanvasElement | OffscreenCanvas | null = null;
   private islandKey = "";
 
+  /** Terrain-GL (docs/TERRAIN_GL.md): the ground is drawn by the WebGL2
+   *  layer underneath, so the 2D terrain pass only clears. */
+  externalGround = false;
+
   drawTerrain(timeMs = 0, rebuildIsland = true) {
+    if (this.externalGround) {
+      this.ctxT.clearRect(0, 0, this.cam.vw, this.cam.vh);
+      return;
+    }
     // PERF-01 new policy: performance mode keeps textured ground and animated
     // water — the flat path is no longer entered by the toggle. It is retained
     // for tests/debug, but drawTerrain always takes the textured path now.
