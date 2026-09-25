@@ -367,3 +367,13 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
   .br-dock .plant-card { display: none !important; }
   .br-dock { left: 8px; right: 72px; width: auto; bottom: calc(var(--resbar-gap, 120px) + 8px); }
 }
+
+/* ladder: centred in the space right of the menu column */
+.start-screen.menu > .menu-leaderboard {
+  left: min(400px, 100vw); right: 0; width: auto; max-width: 440px; margin-inline: auto;
+  text-align: center;
+}
+.start-screen.menu > .menu-leaderboard .start-kicker,
+.start-screen.menu > .menu-leaderboard .menu-leaderboard-title,
+.start-screen.menu > .menu-leaderboard .menu-leaderboard-sub,
+.start-screen.menu > .menu-leaderboard .ladder-note { text-align: center; }
