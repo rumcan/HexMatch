@@ -22,6 +22,9 @@ import { HW, HH, TILE_H, tileToScreen } from "../game/config";
 import { GRASS, SAND, WATER, type Grid } from "./grid";
 import type { AtlasImage } from "./atlas";
 import { traceCoast, type CoastPoint } from "./coastline";
+import {
+  LEVEL_PX, elevationActive, elevatedWorld, slopeShade, tileCorners,
+} from "./elevation";
 
 export const GROUND_TEX_SIZE = 512;
 
@@ -60,6 +63,269 @@ export function tileDiamondWorld(tx: number, ty: number): [number, number][] {
     [x, y + TILE_H],           // S (bottom vertex)
     [x - HW, y + HH],          // W
   ];
+}
+
+// ── E2 (#267): raised tiles ────────────────────────────────────────────────
+/**
+ * The tile's diamond corners raised onto the terrain, N/E/S/W, in world space.
+ *
+ * The lift is a pure screen-Y term (`−height × LEVEL_PX`), exactly the term the
+ * road/rail painters' drape reproduces in the ground plane, so the ground and
+ * everything lying on it agree to the pixel. With the `elevation` option off
+ * every corner height is 0 and this is `tileDiamondWorld`.
+ */
+export function tileDiamondRaised(grid: Grid, tx: number, ty: number): [number, number][] {
+  const corners = tileCorners(grid, tx, ty);
+  return tileDiamondWorld(tx, ty)
+    .map(([x, y], i) => [x, y - corners[i] * LEVEL_PX] as [number, number]);
+}
+
+/**
+ * One tile's TOP FACE, as world-space polygons: a single quad when the face is
+ * flat or a plain slope, four triangles when it is a saddle.
+ *
+ * The split matters because the surface the roads drape on is bilinear inside a
+ * tile (see `surfaceHeight`), and a bilinear patch is not the flat quad its four
+ * corners span when the corners alternate high/low. Drawing those ~7% of tiles
+ * as four triangles through the face's centre keeps the painted ground and the
+ * draped track on the same surface, and costs one extra vertex each.
+ */
+export function tileTopFaces(
+  grid: Grid, tx: number, ty: number,
+  corners: readonly [number, number, number, number] = tileCorners(grid, tx, ty),
+): [number, number][][] {
+  const pts = tileDiamondRaised(grid, tx, ty);
+  if (corners[0] + corners[2] === corners[1] + corners[3]) return [pts];
+  const [x, y] = tileToScreen(tx, ty);
+  const centre: [number, number] = [
+    x, y + HH - ((corners[0] + corners[1] + corners[2] + corners[3]) / 4) * LEVEL_PX,
+  ];
+  return [
+    [pts[0], pts[1], centre], [pts[1], pts[2], centre],
+    [pts[2], pts[3], centre], [pts[3], pts[0], centre],
+  ];
+}
+
+/**
+ * How many buckets the slope shading is quantised into. The shade is a smooth
+ * number; the PAINT is one translucent fill per bucket, so quantising is what
+ * keeps a chunk's hillshade to a handful of fills instead of one per tile.
+ * 1/16th of the full range is far below what the eye separates on ground.
+ */
+export const SHADE_BUCKETS = 16;
+/** Translucent ink laid over a lit face, per unit of `slopeShade`. */
+export const SHADE_LIGHT_GAIN = 1.6;
+/** …and over a face in shadow. Shadow reads stronger than highlight at equal alpha. */
+export const SHADE_DARK_GAIN = 1.2;
+/** The sun's warm highlight and the cool shadow it casts. */
+export const SHADE_LIGHT = "#fff6dc";
+export const SHADE_DARK = "#16240f";
+
+/** One world-space segment: a pair of projected points, as the strokes take. */
+export type GroundSegment = [[number, number], [number, number]];
+
+/** Quantise a shade to its bucket; 0 is the neutral band, which is not painted. */
+export const shadeBucket = (shade: number): number =>
+  Math.round(shade * SHADE_BUCKETS) / SHADE_BUCKETS;
+
+/** Everything one chunk of raised ground needs, gathered in a single walk. */
+interface ElevatedGroundBatch {
+  /** Top faces of SAND tiles, projected. */
+  sand: [number, number][][];
+  /** Top faces of every other land tile, projected. */
+  grass: [number, number][][];
+  /** Lit faces, by shade bucket, projected. */
+  lit: Map<number, [number, number][][]>;
+  /** Shaded faces, by shade bucket (a POSITIVE alpha), projected. */
+  shaded: Map<number, [number, number][][]>;
+  /** The beach's inland seam: edges a grass tile shares with a sand tile. */
+  seam: GroundSegment[];
+  /** The waterline: edges a land tile shares with sea or river water. */
+  waterline: GroundSegment[];
+  /** Every land tile's raised diamond — the performance mode's build grid. */
+  diamonds: [number, number][][];
+}
+
+/** The diamond edge shared with each 4-neighbour, as corner indices (N,E,S,W). */
+const TILE_EDGE: readonly (readonly [number, number])[] = [
+  [0, 3],   // W (−1, 0)
+  [0, 1],   // N (0, −1)
+  [1, 2],   // E (+1, 0)
+  [3, 2],   // S (0, +1)
+];
+const TILE_DIRS: readonly (readonly [number, number])[] = [[-1, 0], [0, -1], [1, 0], [0, 1]];
+
+/**
+ * Walk one tile range (ringed by one tile, so the padded clip is covered) and
+ * collect the raised ground's faces, shades and edges.
+ *
+ * ONE walk for both ground styles: the textured island and the performance
+ * mode's flat paints differ only in what they do with the batch, never in the
+ * geometry — which is the property that keeps the two looking like the same
+ * island, elevated or not.
+ */
+function collectElevatedGround(
+  grid: Grid, tx0: number, ty0: number, tx1: number, ty1: number,
+  project: GroundProject,
+): ElevatedGroundBatch {
+  const batch: ElevatedGroundBatch = {
+    sand: [], grass: [], lit: new Map(), shaded: new Map(),
+    seam: [], waterline: [], diamonds: [],
+  };
+  const bucket = (map: Map<number, [number, number][][]>, key: number) => {
+    let list = map.get(key);
+    if (!list) { list = []; map.set(key, list); }
+    return list;
+  };
+  for (let ty = ty0 - 1; ty <= ty1 + 1; ty++) {
+    if (ty < 0 || ty >= grid.h) continue;
+    for (let tx = tx0 - 1; tx <= tx1 + 1; tx++) {
+      if (tx < 0 || tx >= grid.w) continue;
+      const terrain = grid.terrain[ty * grid.w + tx];
+      if (terrain === WATER) continue;   // sea and river show the animated water
+      const corners = tileCorners(grid, tx, ty);
+      const diamond = tileDiamondRaised(grid, tx, ty);
+      const faces = tileTopFaces(grid, tx, ty, corners)
+        .map((face) => face.map(([x, y]) => project(x, y)));
+      (terrain === SAND ? batch.sand : batch.grass).push(...faces);
+      batch.diamonds.push(diamond.map(([x, y]) => project(x, y)));
+
+      // Hillshade: one translucent fill per bucket, over the finished ground.
+      const shade = shadeBucket(slopeShade(corners));
+      if (shade > 0) bucket(batch.lit, shade).push(...faces);
+      else if (shade < 0) bucket(batch.shaded, -shade).push(...faces);
+
+      // Edges, from the RAISED corners so they follow the surface exactly.
+      for (let d = 0; d < 4; d++) {
+        const nx = tx + TILE_DIRS[d][0], ny = ty + TILE_DIRS[d][1];
+        if (nx < 0 || ny < 0 || nx >= grid.w || ny >= grid.h) continue;
+        const n = grid.terrain[ny * grid.w + nx];
+        const [a, b] = TILE_EDGE[d];
+        const edge: GroundSegment = [project(...diamond[a]), project(...diamond[b])];
+        if (n === WATER) batch.waterline.push(edge);
+        else if (terrain !== SAND && n === SAND) batch.seam.push(edge);
+      }
+    }
+  }
+  return batch;
+}
+
+/** The two projected points that fix the paint's world scale (pattern widths). */
+function paintScale(project: GroundProject): number {
+  const [px, py] = project(0, 0), [qx, qy] = project(1, 0);
+  return Math.hypot(qx - px, qy - py);
+}
+
+/** Stroke a batch of world-space segments, already projected. */
+function strokeSegments(
+  ctx: CanvasRenderingContext2D, segments: GroundSegment[],
+  stroke: string | CanvasPattern, width: number, alpha = 1,
+): void {
+  if (!segments.length) return;
+  ctx.save();
+  ctx.beginPath();
+  for (const [[ax, ay], [bx, by]] of segments) { ctx.moveTo(ax, ay); ctx.lineTo(bx, by); }
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = width;
+  ctx.globalAlpha = alpha;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.stroke();
+  ctx.restore();
+}
+
+/**
+ * E2 (#267): the raised ground of a tile range, painted through `project`.
+ *
+ * The flat island is ONE pair of traced contours (`groundContours`); a raised
+ * island cannot be, because a contour is a boundary and the terrain's interior
+ * now has height in it. So this paints per TILE — top faces batched by material
+ * into two fills, hillshade into a handful more, the beach seam and the
+ * waterline into two strokes — and keeps every property the flat paint has:
+ *
+ *   • the patterns are still world-anchored (the caller sets their transforms),
+ *     so adjacent tiles read as one continuous meadow;
+ *   • faces are batched into one path per material, so shared edges are
+ *     traversed in opposite directions and a fill leaves no interior hairline;
+ *   • the range is ringed by one tile and clipped to the padded, LIFTED rect of
+ *     the caller's own range, which is what seals the chunk joins;
+ *   • water tiles are skipped, so the animated ocean shows through them, and
+ *     because a corner touching water is level 0 the land ramps down to exactly
+ *     the waterline the foam is stroked on (see `elevation.ts`).
+ */
+export function paintElevatedGroundTiles(
+  ctx: CanvasRenderingContext2D,
+  grid: Grid,
+  tx0: number, ty0: number, tx1: number, ty1: number,
+  patterns: { grass: string | CanvasPattern; sand: string | CanvasPattern },
+  project: GroundProject = identityProject,
+): void {
+  const pad = .04;
+  ctx.save();
+  // The clip follows the terrain: a raised chunk's own tiles leave the flat
+  // rectangle they would have occupied, so clipping to that would shave the top
+  // off every hill on a chunk boundary.
+  const clip: [number, number][] = [
+    [tx0 - pad, ty0 - pad], [tx1 + 1 + pad, ty0 - pad],
+    [tx1 + 1 + pad, ty1 + 1 + pad], [tx0 - pad, ty1 + 1 + pad],
+  ].map(([u, v]) => project(...elevatedWorld(grid, u, v)));
+  pathPolygons(ctx, [clip]);
+  ctx.clip();
+
+  const batch = collectElevatedGround(grid, tx0, ty0, tx1, ty1, project);
+  const scale = paintScale(project);
+  const [px, py] = project(0, 0);
+
+  // Sand under the beach tiles, grass over the rest — the same two materials
+  // the flat island is painted with, in the same order.
+  pathPolygons(ctx, batch.sand);
+  ctx.fillStyle = patterns.sand;
+  ctx.fill();
+  pathPolygons(ctx, batch.grass);
+  ctx.fillStyle = patterns.grass;
+  ctx.fill();
+
+  // The beach's inland seam, feathered exactly like the flat paint feathers its
+  // inland contour: three strokes of the real grass texture, widening and
+  // fading, so the sand does not stop in a knife edge.
+  ctx.save();
+  ctx.beginPath();
+  for (const [[ax, ay], [bx, by]] of batch.seam) { ctx.moveTo(ax, ay); ctx.lineTo(bx, by); }
+  ctx.strokeStyle = patterns.grass;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  for (const [width, alpha] of [[7, .12], [4, .2], [2, .28]] as const) {
+    ctx.lineWidth = width * scale;
+    ctx.globalAlpha = alpha;
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // Slope shading, over the material: the sun from the north-west lifts the
+  // faces that turn to it and drops the ones that turn away. This is what makes
+  // a hill read at 0.5× zoom, where the outline alone is a few pixels.
+  for (const [shade, faces] of batch.lit) {
+    ctx.globalAlpha = Math.min(1, shade * SHADE_LIGHT_GAIN);
+    ctx.fillStyle = SHADE_LIGHT;
+    pathPolygons(ctx, faces);
+    ctx.fill();
+  }
+  for (const [shade, faces] of batch.shaded) {
+    ctx.globalAlpha = Math.min(1, shade * SHADE_DARK_GAIN);
+    ctx.fillStyle = SHADE_DARK;
+    pathPolygons(ctx, faces);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // The waterline: a soft dark foot where the ground meets the sea or a river,
+  // which is the cliff/side shading a raised coast needs — the land beside
+  // water always ramps down to it, so this is the edge the slope ends on.
+  strokeSegments(ctx, batch.waterline, "rgba(28, 44, 34, 0.42)", 2.4 * scale);
+  strokeSegments(ctx, batch.waterline, "rgba(12, 22, 18, 0.30)", 1 * scale);
+
+  paintRiverWater(ctx, grid, tx0, ty0, tx1, ty1, project, px, py, scale);
+  ctx.restore();
 }
 
 /** Scale a polygon toward its centroid by factor `s` (sand inset). */
@@ -118,6 +384,13 @@ export function paintGroundTiles(
   patterns: { grass: string | CanvasPattern; sand: string | CanvasPattern },
   project: GroundProject = identityProject,
 ): void {
+  // E2 (#267): with the `elevation` option ON the island is a surface, not a
+  // plane, and is painted per tile. With it off — every map that is not asking
+  // for elevation, which is every map today — the code below runs untouched.
+  if (elevationActive(grid)) {
+    paintElevatedGroundTiles(ctx, grid, tx0, ty0, tx1, ty1, patterns, project);
+    return;
+  }
   const coast = groundContours(grid);
   // Clip the SAME world contours into each cache surface. The tiny overlap
   // seals antialiased chunk joins; it never changes the outer coastline.
@@ -176,7 +449,13 @@ function paintRiverWater(
   for (let ty = ty0; ty <= ty1; ty++) {
     for (let tx = tx0; tx <= tx1; tx++) {
       if (!river[ty * grid.w + tx]) continue;
-      const corners = tileDiamondWorld(tx, ty).map(([x, y]) => project(x, y));
+      // E2 (#267): raised corners, so a river on a map with elevation is drawn
+      // from the same lattice the land beside it is. A river tile itself sits at
+      // level 0 (`makeElevation` pins water and river tiles there), so its own
+      // diamond is unmoved — and the shared edge with its bank is level 0 on
+      // BOTH sides, which is what keeps the bank stroke welded to the shore
+      // that slopes down to it.
+      const corners = tileDiamondRaised(grid, tx, ty).map(([x, y]) => project(x, y));
       diamonds.push(corners);
       // Shared edge with each land 4-neighbour: W(-1,0)=T–W, N(0,-1)=T–E,
       // E(+1,0)=E–S, S(0,1)=W–S (corners N,E,S,W = indices 0..3).
@@ -269,6 +548,14 @@ export function paintFlatGroundTiles(
   colors: FlatGroundColors,
   project: GroundProject = identityProject,
 ): void {
+  // E2 (#267): the same dispatch the textured ground makes. The flat paint is
+  // not on the draw path today (PERF-01 keeps the textured terrain), but it is
+  // reachable from tests and from any future "no textures" mode, and an island
+  // that goes flat-grey on a hill would be a hole in the feature.
+  if (elevationActive(grid)) {
+    paintElevatedFlatGroundTiles(ctx, grid, tx0, ty0, tx1, ty1, colors, project);
+    return;
+  }
   const coast = groundContours(grid);
   // The same tiny padded clip the textured ground uses: it seals
   // antialiased chunk joins without changing the outer coastline.
@@ -323,6 +610,79 @@ export function paintFlatGroundTiles(
   ctx.restore();
 }
 
+/**
+ * E2 (#267): the raised PERFORMANCE-mode ground — the same batch of raised
+ * faces the textured paint gathers, in flat colours.
+ *
+ * The build grid rides the surface too: it is stroked from the raised diamonds
+ * rather than the flat ones, clipped to the land exactly as the flat paint
+ * clips its grid, so a mode switch moves the terrain's shape and its shading
+ * and nothing else.
+ */
+export function paintElevatedFlatGroundTiles(
+  ctx: CanvasRenderingContext2D,
+  grid: Grid,
+  tx0: number, ty0: number, tx1: number, ty1: number,
+  colors: FlatGroundColors,
+  project: GroundProject = identityProject,
+): void {
+  const pad = .04;
+  ctx.save();
+  const clip: [number, number][] = [[tx0 - pad, ty0 - pad], [tx1 + 1 + pad, ty0 - pad],
+    [tx1 + 1 + pad, ty1 + 1 + pad], [tx0 - pad, ty1 + 1 + pad]]
+    .map(([u, v]) => project(...elevatedWorld(grid, u, v)));
+  pathPolygons(ctx, [clip]);
+  ctx.clip();
+
+  const batch = collectElevatedGround(grid, tx0, ty0, tx1, ty1, project);
+  pathPolygons(ctx, batch.sand);
+  ctx.fillStyle = colors.sand;
+  ctx.fill();
+  pathPolygons(ctx, batch.grass);
+  ctx.fillStyle = colors.grass;
+  ctx.fill();
+
+  // Rivers: one flat fill over the raised diamonds (which are level 0).
+  if (grid.rivers) {
+    const diamonds: [number, number][][] = [];
+    for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++) {
+      if (!grid.rivers[ty * grid.w + tx]) continue;
+      diamonds.push(tileDiamondRaised(grid, tx, ty).map(([x, y]) => project(x, y)));
+    }
+    if (diamonds.length) {
+      pathPolygons(ctx, diamonds);
+      ctx.fillStyle = colors.river ?? PERF_FLAT.river;
+      ctx.fill();
+    }
+  }
+
+  for (const [shade, faces] of batch.lit) {
+    ctx.globalAlpha = Math.min(1, shade * SHADE_LIGHT_GAIN);
+    ctx.fillStyle = SHADE_LIGHT;
+    pathPolygons(ctx, faces);
+    ctx.fill();
+  }
+  for (const [shade, faces] of batch.shaded) {
+    ctx.globalAlpha = Math.min(1, shade * SHADE_DARK_GAIN);
+    ctx.fillStyle = SHADE_DARK;
+    pathPolygons(ctx, faces);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.save();
+  pathPolygons(ctx, [...batch.sand, ...batch.grass]);
+  ctx.clip();
+  pathPolygons(ctx, batch.diamonds);
+  ctx.strokeStyle = colors.grid;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.restore();
+
+  strokeSegments(ctx, batch.waterline, "rgba(28, 44, 34, 0.42)", 2.4 * paintScale(project));
+  ctx.restore();
+}
+
 export interface GroundContours {
   land: CoastPoint[][];
   inland: CoastPoint[][];
@@ -360,6 +720,10 @@ export function paintShore(
   ctx: CanvasRenderingContext2D, grid: Grid, t: number, zoom: number,
   project: GroundProject = identityProject,
 ): void {
+  // E2 (#267): the surf needs NO lift. A corner that touches water is level 0
+  // by the lattice's own rule (see `elevation.ts`), so the coastline this
+  // contour traces is exactly where the raised ground meets the sea — the foam
+  // keeps sitting on the waterline while the land behind it climbs.
   ctx.save();
   // R1 (#260): surf follows the OUTER coast only (rivers read as land for this
   // contour), so the broad ocean shelf bands never swallow a narrow river.
