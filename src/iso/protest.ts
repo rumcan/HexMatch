@@ -3,14 +3,20 @@
 //
 // Active Black Market sabotages appear as live event markers on the minimap
 // with the attacker's colour and a countdown ring. Clicking a marker opens
-// a small event window showing a static illustration of that sabotage type,
-// who did it, the target, live time remaining, and a "Go there" button that
-// pans the camera. When the sabotage ends, both the marker and the window
-// disappear.
+// a small event window showing an illustration of that sabotage type, who did
+// it, the target, live time remaining, and a "Go there" button that pans the
+// camera. When the sabotage ends, both the marker and the window disappear.
+//
+// M3 (#258) — the window MOVES. The illustration slot stacks a canvas over the
+// still (`sabotage-anim.ts`): a picket line for a protest, a card game for a
+// blockade. The canvas is made the first time a window is opened, the frames
+// ride the game's own loop (`update(t)` → `imageSlot.tick`), and
+// `prefers-reduced-motion` leaves the still image alone.
 // ══════════════════════════════════════════════════════════════════════════
 import { BANDIT_MS, PROTEST_MS } from "../game/config";
 import { INDUSTRY_BY_KEY } from "./config";
 import { MINIMAP_PALETTE, type MinimapMarker } from "./minimap";
+import { createSabotageOverlay, type SabotageOverlay } from "./sabotage-anim";
 import blockadeImg from "../assets/sabotage/blockade.png";
 import protestImg from "../assets/sabotage/protest.png";
 
@@ -164,13 +170,26 @@ export const SABOTAGE_IMAGES: Record<string, string> = {
 export interface SabotageImageSlot {
   readonly element: HTMLElement;
   readonly img: HTMLImageElement;
+  /** The overlay canvas (#258), or null until a window has been opened with motion allowed. */
+  readonly canvas: HTMLCanvasElement | null;
+  /** True while the overlay is painting frames (open AND motion allowed). */
+  readonly animating: boolean;
+  /** Overlay frames painted since the slot was made — the debug "is it on?" count. */
+  readonly frames: number;
   setKind(kind: string): void;
+  /** The event window opened; makes the canvas on first use. */
+  start(): void;
+  /** The event window closed: the overlay blanks and stops costing anything. */
+  stop(): void;
+  /** One animation frame, on the game's clock (the window's `update(t)`). */
+  tick(now: number): void;
   destroy(): void;
 }
 
 /**
- * Creates the illustration container for the event window. Encapsulated as
- * a component so #258 can replace or augment it with animation.
+ * Creates the illustration container for the event window: the still PNG, and
+ * over it (#258) the animation canvas. Encapsulated as a component so the rest
+ * of the code never has to know which of the two is showing.
  */
 export function createSabotageImageSlot(initialKind?: string): SabotageImageSlot {
   const element = document.createElement("div");
@@ -179,11 +198,16 @@ export function createSabotageImageSlot(initialKind?: string): SabotageImageSlot
   img.className = "sabotage-illustration";
   element.appendChild(img);
 
+  // #258: the overlay. Created eagerly (it is a data object with no canvas and
+  // no context in it), but the canvas itself only on the first `start()`.
+  const overlay: SabotageOverlay = createSabotageOverlay({ host: element });
+
   const setKind = (kind: string) => {
     const src = SABOTAGE_IMAGES[kind] ?? protestImg;
     img.src = src;
     img.alt = `${kind} sabotage illustration`;
     element.dataset.kind = kind;
+    overlay.setKind(kind);
   };
 
   if (initialKind) setKind(initialKind);
@@ -191,8 +215,15 @@ export function createSabotageImageSlot(initialKind?: string): SabotageImageSlot
   return {
     element,
     img,
+    get canvas() { return overlay.canvas; },
+    get animating() { return overlay.running; },
+    get frames() { return overlay.frames; },
     setKind,
+    start: () => overlay.start(),
+    stop: () => overlay.stop(),
+    tick: (now: number) => overlay.tick(now),
     destroy() {
+      overlay.destroy();
       element.remove();
     },
   };
@@ -210,6 +241,10 @@ export interface SabotageEventWindow {
   readonly element: HTMLElement;
   readonly isOpen: boolean;
   readonly currentEvent: SabotageEvent | null;
+  /** #258: true while the illustration's overlay is really painting frames. */
+  readonly animating: boolean;
+  /** #258: frames painted so far — the debug answer to "is the animation on?". */
+  readonly frames: number;
   open(event: SabotageEvent): void;
   update(now: number, activeEvents?: readonly SabotageEvent[]): void;
   close(): void;
@@ -314,6 +349,7 @@ export function createSabotageEventWindow(opts: SabotageEventWindowOptions): Sab
     isOpen = false;
     currentEvent = null;
     container.classList.add("hidden");
+    imageSlot.stop();                     // #258: the overlay blanks, the frame costs nothing
     opts.onClose?.();
   };
 
@@ -336,9 +372,16 @@ export function createSabotageEventWindow(opts: SabotageEventWindowOptions): Sab
     const rem = Math.max(0, event.until - performance.now());
     timeVal.textContent = fmtSabotageCountdown(rem);
     container.classList.remove("hidden");
+    // #258: every open (re)starts the loop on the game's clock. Only here — a
+    // window that has never been opened never makes a canvas, let alone a frame.
+    imageSlot.start();
   };
 
   const update = (now: number, activeEvents?: readonly SabotageEvent[]) => {
+    // #258: the animation rides the game's frame, before the early-outs below —
+    // the window is the only thing that decides whether there is anything to
+    // paint, and its `start()`/`stop()` are already in `open()`/`close()`.
+    imageSlot.tick(now);
     if (!isOpen || !currentEvent) return;
     if (now >= currentEvent.until) {
       close();
@@ -363,6 +406,8 @@ export function createSabotageEventWindow(opts: SabotageEventWindowOptions): Sab
     get element() { return container; },
     get isOpen() { return isOpen; },
     get currentEvent() { return currentEvent; },
+    get animating() { return imageSlot.animating; },
+    get frames() { return imageSlot.frames; },
     open,
     update,
     close,

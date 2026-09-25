@@ -5719,6 +5719,7 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   color: var(--ink, #fff); background: rgba(255, 255, 255, 0.1);
 }
 .sabotage-image-slot {
+  position: relative;                 /* #258: the animation canvas stacks on the still */
   width: 100%; aspect-ratio: 16 / 9;
   border-radius: calc(var(--r) - 2px);
   overflow: hidden; background: #14100c;
@@ -5727,6 +5728,31 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 }
 .sabotage-illustration {
   width: 100%; height: 100%; object-fit: cover; display: block;
+}
+/* ── M3 (#258): the animation layer ──────────────────────────────────────
+   One canvas over the still illustration, painted by src/iso/sabotage-anim.ts
+   on the game's own frame clock. It is the LAST child, so it draws over the
+   PNG; pointer-events: none keeps the drag/click rules of the window intact.
+   The controller never starts it under prefers-reduced-motion (and the query
+   below is the belt to that braces: a still is what a reduced-motion player
+   asks for), and it removes the canvas with the slot. */
+.sabotage-anim-overlay {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  display: block; pointer-events: none;
+}
+/* The window itself moves: a small "papers dropped on the desk" entrance that
+   replays on every open, because `hidden` takes the element out of the layout
+   and a displayed-again element restarts its animation. */
+.sabotage-event-window { animation: sabotage-window-in .42s cubic-bezier(.2, 1.4, .35, 1) both; }
+@keyframes sabotage-window-in {
+  0%   { transform: translateY(12px) scale(.94) rotate(-1.4deg); opacity: 0; }
+  55%  { transform: translateY(-3px) scale(1.015) rotate(.6deg); opacity: 1; }
+  100% { transform: translateY(0) scale(1) rotate(0deg); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sabotage-event-window { animation: none; }
+  .sabotage-anim-overlay { display: none; }
 }
 .sabotage-details {
   font-size: 11px; line-height: 1.4; margin-bottom: 8px;
