@@ -16,8 +16,10 @@
 //     rivers built the way `tests/unit/iso-bridges.test.ts` builds them (a
 //     WATER stripe with `Grid.rivers` set): one narrow river gives exactly the
 //     expected sites; wide water, the sea, a pond and a river mouth give none.
-//   • REFUSALS  every reason `damRefusal` can give, including E4's (#268)
-//     "not-flat" read of the footprint — whose water half is exempt.
+//   • REFUSALS  every reason `damRefusal` can give, plus E4's (#268) flat
+//     footprint read — whose WATER half is exempt, which is what leaves the
+//     "not-flat" reason unreachable for a two-tile footprint (pinned below as
+//     the shipped behaviour, and reported in the PR).
 //   • ECONOMY   damBonusAtTiles / damCityBonusAt: in range yes, out of range
 //     no, and never stacked past the cap.
 //   • WIRE      damsToWire ↔ damsFromWire, and what empty/null reads as.
@@ -359,6 +361,8 @@ describe("R3 (#270) the refusals", () => {
   });
 
   it("words every refusal, and every wording says what is wrong", () => {
+    // The whole `DamRefusal` vocabulary: not-river, no-section, bend, wide,
+    // site-taken, crossed, bad-side, bank-blocked, not-flat.
     const keys = Object.keys(DAM_REFUSAL_TEXT);
     expect(keys.length).toBe(9);
     for (const k of keys) expect(DAM_REFUSAL_TEXT[k as keyof typeof DAM_REFUSAL_TEXT].length)
@@ -368,9 +372,10 @@ describe("R3 (#270) the refusals", () => {
     expect(DAM_REFUSAL_TEXT["not-flat"]).toMatch(/flat/i);
   });
 
-  it("E4 (#268): the water half is exempt, so a bank a level up still dam's", () => {
+  it("E4 (#268): the water half is exempt, so a bank a level up still dams", () => {
     // A river cut into a plateau: the water is level 0, both banks level 1 —
-    // 51 of the 52 river banks on seed 1337 look like this (see slopes.ts).
+    // the ordinary case, per slopes.ts (51 of the 52 river-bank tiles it
+    // measured on seed 1337 are level 1).
     const grid = riverAlongY();
     grid.height = new Uint8Array(MAP_W * MAP_H);
     for (let y = 5; y <= 9; y++) {
