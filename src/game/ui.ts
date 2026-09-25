@@ -21,6 +21,7 @@
 // it takes the live iso primitives (`board`, the local seat, the player purse)
 // and renders the same chrome from them.
 // ══════════════════════════════════════════════════════════════════════════
+import { toolIconSvg } from "../ui/icons";
 import {
   CELL, RES,
   SABOTAGE, SECURITY, type ResKey,
@@ -2090,6 +2091,27 @@ export function createOriginalUi(
   const visibleTools = TOOLS.filter((t) =>
     (opts.rail !== false || !RAIL_TOOL_KEYS.has(t.key))
     && (opts.dams !== false || t.key !== "dam"));
+  // UI Space Age (P5): the rail shows icon + name; the full name and the
+  // live price (the button's own <small>, read at show time) ride in one
+  // shared card beside the rail on hover / keyboard focus.
+  const toolCard = h("div", "tool-card hidden");
+  toolCard.setAttribute("role", "tooltip");
+  root.appendChild(toolCard);
+  const showToolCard = (b: HTMLElement) => {
+    const name = b.querySelector(".bb-mid b")?.innerHTML ?? "";
+    const sub = b.querySelector(".bb-mid small")?.innerHTML ?? "";
+    toolCard.innerHTML = `<b>${name}</b>${sub ? `<small>${sub}</small>` : ""}`;
+    const r = b.getBoundingClientRect();
+    toolCard.style.top = `${Math.round(r.top)}px`;
+    toolCard.classList.remove("hidden");
+  };
+  const hideToolCard = () => toolCard.classList.add("hidden");
+  function wireToolCard(b: HTMLElement) {
+    b.addEventListener("pointerenter", () => { if (!isPhoneViewport()) showToolCard(b); });
+    b.addEventListener("focus", () => { if (!isPhoneViewport()) showToolCard(b); });
+    b.addEventListener("pointerleave", hideToolCard);
+    b.addEventListener("blur", hideToolCard);
+  }
   let depotSub: HTMLElement | null = null;
   let cityBtn: HTMLButtonElement | null = null;
   let lastDepotSub = "\u0000";
@@ -2098,7 +2120,8 @@ export function createOriginalUi(
     // bg-harvester / bg-demolish) — they all shared bg-rail before.
     const b = h("button", "build-btn bg-" + t.key);
     b.dataset.tool = t.key;
-    b.innerHTML = `<div class="bb-mid"><b>${t.label}</b><small>${t.sub}</small></div>`;
+    b.innerHTML = `<span class="bb-ico">${toolIconSvg(t.key)}</span><div class="bb-mid"><b>${t.label}</b><small>${t.sub}</small></div>`;
+    wireToolCard(b);
     b.onclick = () => {
       // Playtest (2026-09): a tap ARMS the tool, always. It used to toggle a
       // re-tapped tool off (#187) — and the game arms Dirt Road for you after
@@ -2116,7 +2139,8 @@ export function createOriginalUi(
     if (t.key === "plant") {
       cityBtn = h("button", "build-btn bg-city hidden");
       cityBtn.dataset.act = "city-upgrade";
-      cityBtn.innerHTML = `<div class="bb-mid"><b>Upgrade city</b><small></small></div>`;
+      cityBtn.innerHTML = `<span class="bb-ico">${toolIconSvg("city")}</span><div class="bb-mid"><b>Upgrade city</b><small></small></div>`;
+      wireToolCard(cityBtn);
       cityBtn.onclick = () => hooks.onTownUpgrade?.();
       buildList.appendChild(cityBtn);
     }

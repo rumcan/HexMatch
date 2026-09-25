@@ -73,3 +73,55 @@
 .tm-game .rival-skill { flex: 1; }
 .iso-topmenu { background: var(--sa-panel); border: 1px solid var(--sa-ink); border-top: 3px solid var(--sa-orange); }
 .tm-item:hover { background: var(--sa-panel-2); }
+
+/* ── P5: left tool rail (desktop) ────────────────────────────────── */
+@media (min-width: 761px) {
+  .aside.left {
+    left: 0; top: calc(var(--topbar-h) + var(--safe-top) + 3px); bottom: 0;
+    width: var(--rail-w); overflow-x: hidden;
+    background: var(--sa-panel); border-right: 1px solid var(--sa-ink);
+  }
+  .aside.left > .panel { background: none; border: 0; padding: 0; }
+  .aside.left .panel-title { display: none; }
+  .aside.left .build-list { display: flex; flex-direction: column; gap: 0; }
+  .aside.left .build-btn {
+    flex-direction: column; justify-content: center; gap: 3px;
+    min-height: 58px; padding: 6px 2px; text-align: center;
+    background: none; border: 0; border-bottom: 1px solid var(--sa-line);
+    color: var(--sa-bone-dim);
+  }
+  .aside.left .build-btn:hover { background: var(--sa-panel-2); color: var(--sa-bone); }
+  .aside.left .build-btn.active, .aside.left .build-btn[aria-pressed="true"], .aside.left .build-btn.on {
+    background: var(--sa-orange); color: var(--sa-on-orange);
+  }
+  .aside.left .build-btn.disabled, .aside.left .build-btn:disabled { opacity: .45; }
+  .aside.left .bb-ico { display: block; line-height: 0; }
+  .aside.left .bb-mid { align-items: center; gap: 0; }
+  .aside.left .bb-mid b {
+    font-family: var(--sans); font-weight: 500; font-size: 11px; letter-spacing: 0;
+    text-transform: none; line-height: 1.15; color: inherit;
+  }
+  .aside.left .bb-mid small { display: none; }
+  .aside.left .rail-toggle-left { display: none; }
+  .ui-root[data-rail-left="1"] .aside.left { transform: none; }
+  /* the Railway panel (while a rail tool is held) floats beside the rail */
+  .aside.left .rail-panel {
+    position: fixed; left: calc(var(--rail-w) + 6px); top: calc(var(--topbar-h) + var(--safe-top) + 10px);
+    width: 300px; max-height: 60vh; overflow-y: auto; z-index: 31;
+    background: var(--sa-panel); border: 1px solid var(--sa-ink); border-left: 3px solid var(--sa-orange);
+  }
+}
+.bb-ico { display: none; }
+@media (min-width: 761px) { .aside.left .bb-ico { display: block; } }
+.tool-ico { display: block; margin: 0 auto; }
+.tool-card {
+  position: fixed; z-index: 41; left: calc(var(--rail-w) + 6px);
+  min-width: 170px; max-width: 280px; padding: 8px 12px;
+  background: var(--sa-bone); color: var(--sa-ink);
+  border-left: 3px solid var(--sa-orange);
+  font-family: var(--sans); font-size: 12px; line-height: 1.35;
+  pointer-events: none;
+}
+.tool-card b { display: block; font-family: var(--display); font-weight: 600; letter-spacing: .12em; text-transform: uppercase; font-size: 11px; }
+.tool-card small { display: block; color: #3a3f42; font-size: 12px; }
+.tool-card.hidden { display: none; }
