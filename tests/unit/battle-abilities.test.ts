@@ -11,13 +11,44 @@
 // like the B1 suites. `useAbility` always casts for the CURRENT player, so
 // the choreography minds whose turn it is.
 // ══════════════════════════════════════════════════════════════════════════
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createBattle, type Battle, type BattleSeat } from "../../src/game/battle";
 import {
   BATTLE_ABILITIES, BATTLE_ABILITY_ORDER, BATTLE_RULES, type Cargo,
 } from "../../src/iso/config";
 
 const ALL_DEPOTS: Cargo[] = ["grain", "wood", "ore", "stone", "oil", "gold"];
+
+// B7 (#252) tuned the shipped numbers (docs/battle-balance.md) and pins them
+// in battle-balance.test.ts. These tests pin the B3 MECHANICS — cost paid,
+// effect landed, cooldown armed, turn spent or kept — so, like battle.test's
+// `rulesFor` (B1 mechanics, match damage off), they run on the B3 table the
+// choreography below was written against: every row as B3 shipped it, and
+// no second-seat health bonus.
+const B3_RULES = { ...BATTLE_RULES, secondSeatHealth: 0 };
+const B3_ROWS = {
+  girders: { cost: { stone: 3, ore: 3 }, cooldown: 3, girders: 3, costsTurn: true },
+  frost: { cost: { grain: 3, wood: 3 }, cooldown: 3, frostGems: 4, frostHard: 2, costsTurn: true },
+  smog: { cost: { oil: 4 }, cooldown: 2, matches: 1, costsTurn: true },
+  dynamite: { cost: { ore: 2, oil: 2 }, cooldown: 2, damage: 4, costsTurn: true },
+  repair: { cost: { wood: 2, stone: 2 }, cooldown: 3, heal: 6, costsTurn: true },
+  bribe: { cost: { gold: 3 }, cooldown: 2, stealPerCargo: 2, costsTurn: false },
+} as const;
+let shipped: string;
+beforeEach(() => {
+  shipped = JSON.stringify(BATTLE_ABILITIES);
+  for (const [id, row] of Object.entries(B3_ROWS)) {
+    Object.assign(BATTLE_ABILITIES[id as keyof typeof B3_ROWS], JSON.parse(JSON.stringify(row)));
+  }
+});
+afterEach(() => {
+  const back = JSON.parse(shipped) as typeof BATTLE_ABILITIES;
+  for (const id of BATTLE_ABILITY_ORDER) {
+    const live = BATTLE_ABILITIES[id] as unknown as Record<string, unknown>;
+    for (const k of Object.keys(live)) delete live[k];
+    Object.assign(live, back[id]);
+  }
+});
 
 function freshBattle(
   seed = 3,
@@ -29,7 +60,7 @@ function freshBattle(
       { id: "you", name: "You", depots: depots[0] },
       { id: "rival", name: "Vex", depots: depots[1] },
     ],
-    rules: BATTLE_RULES,
+    rules: B3_RULES,
   });
 }
 
@@ -246,7 +277,7 @@ describe("B3 battle abilities — cost, effect, cooldown", () => {
         { id: "you", name: "You", depots: ALL_DEPOTS },
         { id: "rival", name: "Vex", depots: ALL_DEPOTS },
       ],
-      rules: { ...BATTLE_RULES, turnLimit: 6 },
+      rules: { ...B3_RULES, turnLimit: 6 },
     });
     const casted = ["girders", "frost", "smog", "dynamite", "repair"] as const;
     let i = 0;

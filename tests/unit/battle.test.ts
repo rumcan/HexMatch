@@ -16,11 +16,11 @@
 // Fixtures paint over a seeded board like `board.test.ts` does (hands on
 // `grid[r][c].res`), so every scenario is a known shape before the swap.
 // ══════════════════════════════════════════════════════════════════════════
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, onTestFinished } from "vitest";
 import { createBattle, type Battle, type BattleMove } from "../../src/game/battle";
 import type { PassReport } from "../../src/game/board";
 import type { ResKey } from "../../src/game/config";
-import { BATTLE_RULES, type BattleRules } from "../../src/iso/config";
+import { BATTLE_ABILITIES, BATTLE_RULES, type BattleRules } from "../../src/iso/config";
 
 const players: [BattleContender, BattleContender] = [
   { id: "you", name: "You" },
@@ -29,8 +29,10 @@ const players: [BattleContender, BattleContender] = [
 type BattleContender = { id: string; name: string };
 
 // These engine tests pin the B1 mechanics (mana, bomb damage, the limit), so
-// match damage (playtest 2026-09) is off unless a test turns it on.
-const rulesFor = (over: Partial<BattleRules> = {}): BattleRules => ({ ...BATTLE_RULES, matchDamagePerGem: 0, ...over });
+// match damage (playtest 2026-09) is off unless a test turns it on — and so
+// is B7's second-seat health bonus (#252; pinned in battle-balance.test.ts).
+const rulesFor = (over: Partial<BattleRules> = {}): BattleRules =>
+  ({ ...BATTLE_RULES, matchDamagePerGem: 0, secondSeatHealth: 0, ...over });
 
 function freshBattle(seed: number, over: Partial<BattleRules> = {}): Battle {
   return createBattle({ seed, players, rules: rulesFor(over) });
@@ -350,6 +352,12 @@ describe("match damage", () => {
   });
 
   it("Frost / Girders lift when the turn returns to the caster", async () => {
+    // B7 (#252) made Girders a free action whose girders drop when the turn
+    // passes (battle-balance.test.ts pins that); this pins the turn-costing
+    // row, which the table can still say — so the row says it here.
+    const wasFree = BATTLE_ABILITIES.girders.costsTurn;
+    BATTLE_ABILITIES.girders.costsTurn = true;
+    onTestFinished(() => { BATTLE_ABILITIES.girders.costsTurn = wasFree; });
     const b = createBattle({ seed: 5, players, rules: rulesFor() });
     b.state.players[0].depots = ["stone", "ore", "grain", "wood", "oil", "gold"] as never;
     for (const c of Object.keys(b.state.players[0].mana)) (b.state.players[0].mana as Record<string, number>)[c] = 99;
