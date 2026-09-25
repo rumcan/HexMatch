@@ -227,3 +227,67 @@ describe("#136 loadBuildingLayers installs per sprite, as each one's PNGs land",
     ).toEqual([]);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// F2 (#272) — building layers keep w≠h footprints, and picking follows the
+// real art silhouette on them. A non-square manifest entry must survive the
+// `loadBuildingLayers` override (footprint intact, centre-anchored), and the
+// alpha mask that `buildBuildingMasks` builds from the PNG must gate the pick
+// at the right pixels of a wide/tall art box.
+// ══════════════════════════════════════════════════════════════════════════
+import { maskFromRGBA, imageSizeFor, type AtlasImage } from "../../src/iso/atlas";
+import { pickSprite, place, type Placed } from "../../src/iso/depth";
+
+describe("F2 (#272) — non-square footprints through building layers", () => {
+  it("w≠h footprints survive the install and drive the depth key", async () => {
+    const served = buildingsManifest();
+    served.sprites.shape_col = { footprint: [1, 3], anchor: [32, 52], w: 64, h: 64 };
+    served.sprites.shape_slab = { footprint: [4, 2], anchor: [64, 40], w: 128, h: 48 };
+    stubNetwork({ manifest: served });
+    const atlas = freshAtlas();
+    expect(atlas.get("shape_col")).toBeUndefined();   // new art, no sheet cell
+
+    await loadBuildingLayers(atlas, "/assets/buildings/");
+
+    expect(atlas.get("shape_col")).toMatchObject({ footprint: [1, 3], center: true });
+    expect(atlas.get("shape_slab")).toMatchObject({ footprint: [4, 2], center: true });
+    // the depth key is the footprint's MAX corner, not the origin's tile sum
+    const col = place(atlas, { sprite: "shape_col", tx: 4, ty: 5 }) as Placed;
+    const slab = place(atlas, { sprite: "shape_slab", tx: 4, ty: 5 }) as Placed;
+    expect(col.key).toBe(4 + (5 + 2));
+    expect(slab.key).toBe((4 + 3) + (5 + 1));
+  });
+
+  it("taller art on a w≠h def keeps the anchor's distance from the bottom and centre", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const def = { w: 128, h: 48, anchor: [64, 40] as [number, number], footprint: [4, 2] as [number, number] };
+    const images = new Map<number, AtlasImage>([[1, { width: 128, height: 60 }]]);
+    const size = imageSizeFor("shape_slab", def, images);
+    expect({ w: size.w, h: size.h }).toEqual({ w: 128, h: 60 });
+    expect(size.anchor[0], "horizontal centre").toBe(64);
+    expect(size.anchor[1], "bottom distance kept").toBe(40 + 12);
+  });
+
+  it("the pick mask follows the art silhouette on a non-square box (and at mask scale)", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const served = buildingsManifest();
+    served.sprites.shape_row = { footprint: [3, 1], anchor: [32, 36], w: 96, h: 48 };
+    stubNetwork({ manifest: served, size: (f) => (f.startsWith("shape_row") ? [96, 48] : undefined) });
+    const atlas = freshAtlas();
+    await loadBuildingLayers(atlas, "/assets/buildings/");
+    const def = atlas.get("shape_row")!;
+    // what buildBuildingMasks would build from the PNG: opaque left half only
+    const rgba = new Uint8ClampedArray(def.w * def.h * 4);
+    for (let y = 0; y < def.h; y++) for (let x = 0; x < def.w / 2; x++) {
+      rgba[(y * def.w + x) * 4 + 3] = 255;
+    }
+    atlas.setMask("shape_row", maskFromRGBA(rgba, def.w, def.h, 8, 1));
+    const p = place(atlas, { sprite: "shape_row", tx: 2, ty: 2 }) as Placed;
+    // left half (art-local x < w/2) hits — that is the footprint-plate side
+    expect(atlas.opaqueAt("shape_row", 4, 4)).toBe(true);
+    expect(pickSprite(atlas, [p], p.wx + 4, p.wy + 4)).toBe(p);
+    // right half is transparent → the pick falls through to the tile below
+    expect(atlas.opaqueAt("shape_row", def.w - 4, 4)).toBe(false);
+    expect(pickSprite(atlas, [p], p.wx + def.w - 4, p.wy + 4)).toBeNull();
+  });
+});

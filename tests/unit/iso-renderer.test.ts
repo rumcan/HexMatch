@@ -293,3 +293,49 @@ describe("B-3.2 cull pad follows late sprite mutations", () => {
     expect(wide.x0).toBeLessThan(base.x0);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// F2 (#272) — culling must be footprint-correct for w≠h up to length 4.
+//
+// The pad is "largest footprint plus sprite height"; a 4×2 or a 1×4 def must
+// push `maxFoot` to 4 exactly like the square 4×4 does — and `buildDrawList`
+// keeps an industry while ANY tile of its footprint is in range, whichever
+// axis the long side lies on.
+// ══════════════════════════════════════════════════════════════════════════
+describe("F2 (#272) — culling for non-square footprints", () => {
+  it("cullPad follows w≠h defs up to length 4 (maxFoot is the LONG side)", () => {
+    const m: Manifest = JSON.parse(JSON.stringify(manifest));
+    // synthetic long thin buildings, taller than any sheet sprite
+    m.sprites.f2_col = { x: 0, y: 0, w: 96, h: 64, footprint: [1, 4], anchor: [48, 60], center: true };
+    m.sprites.f2_row = { x: 0, y: 0, w: 96, h: 64, footprint: [4, 1], anchor: [48, 60], center: true };
+    m.sprites.f2_slab = { x: 0, y: 0, w: 128, h: 64, footprint: [4, 2], anchor: [64, 60], center: true };
+    const pad = cullPad(new Atlas(m));
+    const sprites = Object.values(m.sprites);
+    const maxFoot = Math.max(...sprites.map((s) => Math.max(s.footprint[0], s.footprint[1])));
+    const maxH = Math.max(...sprites.map((s) => s.h));
+    expect(maxFoot).toBe(4);   // 1×4 / 4×1 / 4×2 reach 4 on the long side
+    expect(pad).toBe(maxFoot + Math.ceil(maxH / 16));
+    // and the formula is enough for a 4-tile footprint: the far corner of an
+    // off-screen origin is within `maxFoot` tiles of the range it pokes into
+    expect(pad).toBeGreaterThanOrEqual(4 + 3);
+  });
+
+  it("keeps a long thin industry while its footprint still overlaps the range (both axes)", () => {
+    const grid2 = JSON.parse(JSON.stringify({ ...grid, industries: [] })) as typeof grid;
+    // 4×2 slab at (20,20)-(23,21) and a 1×4 column at (30,20)-(30,23)
+    const slab = { ...grid.industries[0], id: 1, type: "farm", tx: 20, ty: 20, w: 4, h: 2 };
+    const col = { ...grid.industries[0], id: 2, type: "forest", tx: 30, ty: 20, w: 1, h: 4 };
+    const g = { ...grid2, industries: [slab, col] } as unknown as typeof grid;
+    const world: World = { grid: g };
+    // only the slab's far corner column is in range → the slab still draws
+    expect(buildDrawList(world, { x0: 23, y0: 20, x1: 23, y1: 21 }).some((d) => d.ref === slab)).toBe(true);
+    expect(buildDrawList(world, { x0: 23, y0: 20, x1: 23, y1: 21 }).some((d) => d.ref === col)).toBe(false);
+    // only the column's far end row is in range → the column still draws
+    expect(buildDrawList(world, { x0: 30, y0: 23, x1: 31, y1: 23 }).some((d) => d.ref === col)).toBe(true);
+    expect(buildDrawList(world, { x0: 30, y0: 23, x1: 31, y1: 23 }).some((d) => d.ref === slab)).toBe(false);
+    // a range touching neither drops both
+    const near = buildDrawList(world, { x0: 24, y0: 22, x1: 29, y1: 22 });
+    expect(near.some((d) => d.ref === slab)).toBe(false);
+    expect(near.some((d) => d.ref === col)).toBe(false);
+  });
+});
