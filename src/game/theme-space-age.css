@@ -348,3 +348,22 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
   .start-screen.menu > .menu-leaderboard { display: none; }
   .start-screen.menu > .menu-foot { left: 22px; }
 }
+
+/* ── phone ──────────────────────────────────────────────────────── */
+.fab, .toolchip, .mnav button, .ui-root button { border-radius: 0 !important; }
+.fab {
+  background: var(--sa-panel) !important; color: var(--sa-bone) !important;
+  border: 1px solid var(--sa-ink) !important; box-shadow: none !important;
+}
+.toolchip { background: var(--sa-panel) !important; color: var(--sa-bone) !important; border: 1px solid var(--sa-orange) !important; box-shadow: none !important; }
+.mnav { background: var(--sa-ink) !important; border-top: 3px solid var(--sa-orange) !important; box-shadow: none !important; }
+.mnav button { background: transparent !important; color: var(--sa-bone-dim) !important; border: 0 !important; }
+.mnav button[aria-current="page"], .mnav button.active, .mnav button[aria-pressed="true"] { background: var(--sa-bone) !important; color: var(--sa-ink) !important; }
+@media (max-width: 760px) {
+  .resbar { background: var(--sa-panel) !important; border-top: 1px solid var(--sa-ink) !important; }
+  .topbar .logo { display: none; }
+  .topbar { gap: 6px; padding-left: 8px; padding-right: 8px; }
+  /* the Plant card lives in the Economy sheet on a phone; the dock keeps only pop-ups */
+  .br-dock .plant-card { display: none !important; }
+  .br-dock { left: 8px; right: 72px; width: auto; bottom: calc(var(--resbar-gap, 120px) + 8px); }
+}
