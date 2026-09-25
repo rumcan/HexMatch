@@ -198,7 +198,6 @@ describe("M3 (#258) sabotage overlay frames", () => {
   });
 
   it("blockade: bandits sat at the crate deal cards across it, under a swinging lamp", () => {
-    const P = SABOTAGE_ANIM_PERIOD_MS.blockade;
     const kinds = sample("blockade");
     const figures = sabotageOverlayFrame("blockade", 0).filter((op) => op.kind === "figure");
     expect(figures).toHaveLength(3);
