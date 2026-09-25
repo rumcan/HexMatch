@@ -670,6 +670,14 @@ export interface OriginalUi {
    *  The ☰ menu's "How to Play" row routes through here so one modal serves
    *  both keys (and `window.__iso` can open it from the console). */
   showHelp: () => void;
+  /**
+   * C2 (#257): one line for the chat panel — mine, the other seat's, or a
+   * notice the room itself produced (an opponent dropping and coming back).
+   *
+   * A no-op in a game with no chat: a solo boot passes no `chat` config, so
+   * the panel is not built and there is nothing to write into.
+   */
+  chatLine: (line: UiChatLine) => void;
 }
 
 // ── gem face helper ─────────────────────────────────────────────────────────
@@ -729,6 +737,12 @@ const isPhoneViewport = (): boolean => {
 export interface OriginalUiOptions {
   rail?: boolean;
   newLoop?: boolean;
+  /**
+   * C2 (#257): the chat panel. Present only in a hosted game — a solo boot
+   * (and `?loop=old`) passes nothing, which is exactly "solo games show no
+   * chat panel": there is no other seat, so there is no panel to show.
+   */
+  chat?: UiChatConfig;
 }
 
 /**
@@ -749,6 +763,62 @@ export interface UiSeat {
    * Bank pane's own select labels price from.
    */
   unlocked: number | null;
+}
+
+// ── C2 (#257): the chat panel ──────────────────────────────────────────────
+/**
+ * One line for the chat panel. The panel renders TEXT and only text: a name is
+ * a label and a message is its own characters, so a line that says
+ * `<img src=x onerror=…>` appears on screen as exactly those characters. (The
+ * escaping helpers live in `src/net/chat.ts`; this chrome needs none of them,
+ * because it never builds markup out of anything a player typed.)
+ */
+export interface UiChatLine {
+  /** Who spoke: my seat, the other seat, or the room itself (a notice). */
+  role: "you" | "peer" | "system";
+  /** The speaker's name ("" on a system notice). */
+  who: string;
+  /** The speaker's player colour; a system notice uses the chrome's. */
+  colour: string;
+  text: string;
+}
+
+/** The panel's two switches (C1's `ChatPrefs`, spelled for the HUD). */
+export interface UiChatPrefs {
+  /** Mute the opponent: their lines stop arriving (mine still go out). */
+  muted: boolean;
+  /** Free text off, both directions — the four presets remain. */
+  presetOnly: boolean;
+}
+
+/**
+ * What the chrome needs from the game to run a chat panel.
+ *
+ * ABSENT MEANS NO PANEL: a solo game has no other seat to talk to, so the
+ * chrome does not invent one. Every rule with a stake in it — the length cap,
+ * presets-only, the rate window, the word filter, whether there is anyone in
+ * the far seat at all — lives in `src/net/chat.ts` and is applied by the
+ * session; the panel asks, and reports what comes back. That is why `send`
+ * answers with a verdict instead of a boolean: the panel's whole job on a
+ * refusal is to say which one it was.
+ */
+export interface UiChatConfig {
+  /** Quick phrases, canonical spellings — one button each. */
+  presets: readonly string[];
+  /** Longest line the input accepts (`CHAT_MAX_LEN`). */
+  maxLength: number;
+  /** The live preferences (read every frame; never cached across matches). */
+  getPrefs: () => UiChatPrefs;
+  /** Apply a preference patch; the game persists it. */
+  setPrefs: (patch: Partial<UiChatPrefs>) => void;
+  /** Say one line. A refusal names why: `empty` | `preset-only` | `rate` | `offline`. */
+  send: (text: string) => { ok: boolean; reason?: string };
+  /**
+   * The other seat's display name, or null while nobody is sitting in it —
+   * which is a state a host can be in for a whole match, so the header says
+   * so rather than printing a name the room never sent.
+   */
+  peerName: () => string | null;
 }
 
 export function createOriginalUi(
@@ -1505,6 +1575,292 @@ export function createOriginalUi(
   toolChip.title = "Put this tool back to the pointer";
   toolChip.onclick = () => hooks.onTool("select");
   root.appendChild(toolChip);
+
+  // ── C2 (#257): the chat panel ─────────────────────────────────────────────
+  //
+  // The other seat is a person in a hosted game, and a match with no way to
+  // say "nice route" is two solitaires side by side. The panel is ONE element
+  // with two states, because a phone and a desktop want the same pair of ideas
+  // and only their bodies differ:
+  //
+  //   closed — a slim bar on the desktop (the head, always on screen, with an
+  //            unread badge and a 🔔-quiet tone when a line lands), and a pill
+  //            button on a phone;
+  //   open   — the log, the four presets, the composer and the two switches,
+  //            dropping over the map on the desktop and rising as a compact
+  //            bottom sheet on a phone (styles.css decides which, off the same
+  //            `data-phone` the rest of the phone regime reads — so the sheet
+  //            and the layout can never disagree about which one is live).
+  //
+  // Built ONLY when the game handed a `chat` config. A solo boot passes none:
+  // no other seat, no panel, no dead controls — and `chatLine` is a no-op
+  // rather than a write into an element that is not there.
+  const chatCfg = opts.chat ?? null;
+  /** How many lines the panel keeps on screen — the ticket's "last ~20". */
+  const CHAT_SHOW_MAX = 20;
+  /** What a refusal says back. `empty` is deliberately silent: a stray Enter
+   *  on an empty box is not something to be told off for. */
+  const CHAT_REFUSAL: Record<string, string> = {
+    "rate": "Slow down a moment — three lines every five seconds.",
+    "preset-only": "Presets only — use one of the four buttons.",
+    "offline": "Nobody in the other seat to hear it.",
+    "empty": "",
+  };
+  const chatDock = h("section", "chat-dock");
+  chatDock.id = "iso-chat";
+  const chatHead = h("button", "chat-head");
+  chatHead.id = "iso-chat-toggle";
+  chatHead.type = "button";
+  chatHead.setAttribute("aria-controls", "iso-chat-body");
+  // Collapsed on boot, and the attribute says so before the first click.
+  chatHead.setAttribute("aria-expanded", "false");
+  chatHead.innerHTML = `<span class="chat-ico" aria-hidden="true">💬</span>`
+    + `<b class="chat-title">Chat</b>`;
+  const chatPeer = h("span", "chat-peer");
+  chatPeer.id = "iso-chat-peer";
+  const chatBadge = h("span", "chat-badge hidden");
+  chatBadge.id = "iso-chat-badge";
+  chatHead.append(chatPeer, chatBadge, h("span", "chat-caret", "▾"));
+  const chatBody = h("div", "chat-body hidden");
+  chatBody.id = "iso-chat-body";
+  const chatLog = h("div", "chat-log");
+  chatLog.id = "iso-chat-log";
+  // A live log: a screen reader announces arriving lines without stealing the
+  // focus of whatever the player is doing on the map.
+  chatLog.setAttribute("role", "log");
+  chatLog.setAttribute("aria-live", "polite");
+  chatLog.setAttribute("aria-relevant", "additions");
+  const chatPresets = h("div", "chat-presets");
+  chatPresets.id = "iso-chat-presets";
+  for (const phrase of chatCfg?.presets ?? []) {
+    const b = h("button", "chat-preset");
+    b.type = "button";
+    // TEXT, not markup: the preset is a shipped phrase, but it goes in through
+    // the same door every other chat string uses.
+    b.textContent = phrase;
+    b.dataset.preset = phrase;
+    b.title = `Say “${phrase}”`;
+    // A phrase is the START of a conversation, not the end of one: a preset
+    // that went out hands the composer back, so the next thing typed is a
+    // message and not a camera pan.
+    b.onclick = () => { if (sayChat(phrase)) chatInput.focus(); };
+    chatPresets.appendChild(b);
+  }
+  const chatForm = h("form", "chat-compose") as HTMLFormElement;
+  chatForm.id = "iso-chat-form";
+  const chatInput = h("input", "chat-input") as HTMLInputElement;
+  chatInput.id = "iso-chat-input";
+  chatInput.type = "text";
+  chatInput.autocomplete = "off";
+  chatInput.setAttribute("aria-label", "Chat message");
+  chatInput.placeholder = "Say something…";
+  chatInput.maxLength = chatCfg?.maxLength ?? 140;
+  const chatSend = h("button", "chat-send", "Send");
+  chatSend.id = "iso-chat-send";
+  chatSend.type = "submit";
+  chatForm.append(chatInput, chatSend);
+  const chatNote = h("div", "chat-note hidden");
+  chatNote.id = "iso-chat-note";
+  const chatTools = h("div", "chat-tools");
+  const chatMute = h("button", "chat-tool");
+  chatMute.id = "iso-chat-mute";
+  chatMute.type = "button";
+  chatMute.onclick = () => {
+    if (!chatCfg) return;
+    chatCfg.setPrefs({ muted: !chatCfg.getPrefs().muted });
+    paintChatPrefs();
+  };
+  const chatPresetOnly = h("button", "chat-tool");
+  chatPresetOnly.id = "iso-chat-presets-only";
+  chatPresetOnly.type = "button";
+  chatPresetOnly.onclick = () => {
+    if (!chatCfg) return;
+    chatCfg.setPrefs({ presetOnly: !chatCfg.getPrefs().presetOnly });
+    paintChatPrefs();
+  };
+  chatTools.append(chatMute, chatPresetOnly);
+  chatBody.append(chatLog, chatPresets, chatForm, chatTools, chatNote);
+  chatDock.append(chatHead, chatBody);
+  // The phone sheet's outside: a tap anywhere on the map puts it away. Hidden
+  // on the desktop (styles.css), where the panel is a dock and the map is
+  // already usable beside it.
+  const chatScrim = h("div", "chat-scrim hidden");
+  chatScrim.id = "iso-chat-scrim";
+  chatScrim.onclick = () => setChatOpen(false);
+  // A game with no chat config gets NO panel — not a hidden one, not an empty
+  // one. Solo is not "chat switched off"; it is a game with no other seat in
+  // it, and the DOM says exactly that. (Everything below is still safe to
+  // call: the guards are the config, not the element.)
+  if (chatCfg) {
+    root.appendChild(chatDock);
+    root.appendChild(chatScrim);
+  }
+  // The panel is collapsed on boot: the map is the game, and a match opens on
+  // it.
+  let chatOpen = false;
+  let chatUnread = 0;
+  /** The last preferences painted, so a per-frame read never touches the DOM. */
+  let lastChatPrefsKey = "\u0000";
+  let lastChatPeer = "\u0000";
+  let chatNoteTimer = 0;
+
+  function setChatNote(text: string | null): void {
+    if (chatNoteTimer) { window.clearTimeout(chatNoteTimer); chatNoteTimer = 0; }
+    if (!text) {
+      chatNote.classList.add("hidden");
+      chatNote.textContent = "";
+      return;
+    }
+    chatNote.textContent = text;
+    chatNote.classList.remove("hidden");
+    // It is a hint, not a status line: the panel cleans up after itself even
+    // if the player never touches it again.
+    chatNoteTimer = window.setTimeout(() => { chatNote.classList.add("hidden"); }, 4000);
+  }
+
+  function paintChatBadge(): void {
+    if (chatUnread > 0) {
+      chatBadge.textContent = chatUnread > 9 ? "9+" : String(chatUnread);
+      chatBadge.classList.remove("hidden");
+    } else {
+      chatBadge.classList.add("hidden");
+    }
+    // The count is in the control's own name, so the badge is never only a
+    // colour — a screen reader hears "Chat, 2 new messages".
+    chatHead.setAttribute("aria-label",
+      chatUnread > 0 ? `Chat — ${chatUnread} new ${chatUnread === 1 ? "message" : "messages"}` : "Chat");
+  }
+
+  function appendChatRow(line: UiChatLine): void {
+    const row = h("div", "chat-row");
+    row.dataset.role = line.role;
+    if (line.role === "system") {
+      // The room's own voice: one line of prose, no name, no colour.
+      row.textContent = line.text;
+    } else {
+      const who = h("b", "chat-who");
+      who.textContent = line.who || (line.role === "you" ? "You" : "Opponent");
+      if (line.colour) who.style.color = line.colour;
+      const said = h("span", "chat-text");
+      said.textContent = line.text;
+      row.append(who, said);
+    }
+    chatLog.appendChild(row);
+    while (chatLog.childElementCount > CHAT_SHOW_MAX) chatLog.firstElementChild?.remove();
+    if (chatOpen) chatLog.scrollTop = chatLog.scrollHeight;
+  }
+
+  function paintChatPrefs(): void {
+    if (!chatCfg) return;
+    const prefs = chatCfg.getPrefs();
+    lastChatPrefsKey = `${prefs.muted ? 1 : 0}:${prefs.presetOnly ? 1 : 0}`;
+    chatMute.textContent = prefs.muted ? "Unmute opponent" : "Mute opponent";
+    chatMute.title = prefs.muted
+      ? "Muted — the other seat's lines are dropped before they reach the screen. Yours still go out."
+      : "Hide the other seat's lines. Yours still go out.";
+    chatMute.setAttribute("aria-pressed", String(prefs.muted));
+    chatMute.classList.toggle("on", prefs.muted);
+    chatPresetOnly.textContent = "Presets only";
+    chatPresetOnly.title = prefs.presetOnly
+      ? "Free text is off, both ways — the four presets are the conversation."
+      : "Turn free text off, both ways: the four preset buttons remain.";
+    chatPresetOnly.setAttribute("aria-pressed", String(prefs.presetOnly));
+    chatPresetOnly.classList.toggle("on", prefs.presetOnly);
+    // Presets-only disables the composer rather than letting a player type a
+    // line the guard would refuse: the rule is still the guard's, this is only
+    // the chrome not pretending the box is usable.
+    chatInput.disabled = prefs.presetOnly;
+    chatSend.disabled = prefs.presetOnly;
+    chatInput.placeholder = prefs.presetOnly ? "Presets only — use a button" : "Say something…";
+  }
+
+  function paintChatPeer(name: string | null): void {
+    const label = name ? `· ${name}` : "· nobody yet";
+    if (label === lastChatPeer) return;
+    lastChatPeer = label;
+    // TEXT again: a room username is another player's string.
+    chatPeer.textContent = label;
+    chatPeer.classList.toggle("empty", !name);
+  }
+
+  function setChatOpen(on: boolean): void {
+    if (on === chatOpen) return;
+    chatOpen = on;
+    chatDock.classList.toggle("open", on);
+    chatHead.setAttribute("aria-expanded", String(on));
+    chatBody.classList.toggle("hidden", !on);
+    chatScrim.classList.toggle("hidden", !on);
+    if (on) {
+      chatUnread = 0;
+      paintChatBadge();
+      paintChatPrefs();
+      chatLog.scrollTop = chatLog.scrollHeight;
+      // Typing is what an open panel is for — on a desktop, where the keyboard
+      // is already there and cannot cover anything. A PHONE opens the sheet
+      // WITHOUT raising the soft keyboard: the first thing a player does with
+      // an unread badge is read what was said, and a keyboard that covers the
+      // log is a keyboard they have to put away first. Tapping the field (or a
+      // preset) brings it up, and Esc, the bar itself or a tap on the map puts
+      // the sheet — and the map under the thumb — back.
+      if (!isPhoneViewport()) chatInput.focus();
+    } else {
+      chatInput.blur();
+      setChatNote(null);
+    }
+  }
+
+  /**
+   * Send one line, through the game (which is where the guard, the rate window
+   * and the wire live), and answer for the result. The panel never says a line
+   * itself: a line that went out comes back through `chatLine` with the filtered
+   * text that actually crossed, so what is on screen is what the other seat got.
+   */
+  function sayChat(text: string): boolean {
+    if (!chatCfg) return false;
+    const res = chatCfg.send(text);
+    if (res.ok) {
+      setChatNote(null);
+      chatInput.value = "";
+      return true;
+    }
+    const why = res.reason ? CHAT_REFUSAL[res.reason] ?? "" : "";
+    setChatNote(why || null);
+    return false;
+  }
+
+  /** The composer's Send/Enter: an empty box is simply nothing to do. */
+  function sendChatNow(): void {
+    if (!chatCfg) return;
+    if (!chatInput.value.trim()) { setChatNote(null); return; }
+    if (sayChat(chatInput.value)) chatInput.focus();
+  }
+
+  chatHead.onclick = () => setChatOpen(!chatOpen);
+  // The form's own submit is the phone keyboard's Go key; Enter is handled on
+  // the keydown below because a keyboard's Enter is the same gesture whether or
+  // not the browser deigns to imply a submit from it.
+  chatForm.onsubmit = (e) => { e.preventDefault(); sendChatNow(); };
+  chatDock.addEventListener("keydown", (e) => {
+    // Keys that start in the chat belong to the chat — WHILE the chat is up.
+    // The game's own hotkey handler already ignores a typing target, and this
+    // covers the rest: a panel whose controls have the focus must never pan the
+    // camera, arm a tool or rotate a platform out from under the sentence
+    // being typed.
+    //
+    // Shut, the panel gives the keyboard straight back. Nothing in the dock can
+    // hold the focus then except the head itself, and a player who has just
+    // closed the conversation must get WASD back on the very next press — not
+    // after a click on the map to take the focus off the bar.
+    if (!chatOpen) return;
+    e.stopPropagation();
+    if (e.key === "Enter") { e.preventDefault(); sendChatNow(); return; }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      // Esc closes the panel and stops there — it must not double as "put the
+      // tool down" on the same key press.
+      setChatOpen(false);
+    }
+  });
 
   // ── mobile bottom nav ─────────────────────────────────────────────────────
   const mobileNav = h("nav", "mnav");
@@ -4080,6 +4436,17 @@ export function createOriginalUi(
     const namesOn = state.showNames ?? true;
     namesBtn.setAttribute("aria-pressed", String(namesOn));
     namesBtn.classList.toggle("active", namesOn);
+    // C2 (#257): the chat panel's live half — the two switches and the other
+    // seat's name. `paint` runs every frame, so both reads are cheap and both
+    // writes are gated on a key: a peer renamed by the roster, a preference
+    // flipped from the console (`__iso.chat({ muted: true })`) or from the ☰
+    // settings all land without rebuilding a row under the pointer.
+    if (chatCfg) {
+      const prefs = chatCfg.getPrefs();
+      const prefsKey = `${prefs.muted ? 1 : 0}:${prefs.presetOnly ? 1 : 0}`;
+      if (prefsKey !== lastChatPrefsKey) paintChatPrefs();
+      paintChatPeer(chatCfg.peerName());
+    }
     // PP-05: keep the Depot's price line honest without rebuilding the button
     // (a rebuilt button drops a click mid-gesture, the reason `renderSabotage`
     // is change-gated too). The cost text comes from the same table the
@@ -4299,6 +4666,12 @@ export function createOriginalUi(
   renderBank();
   renderBoard();
   responsiveZoom();
+  // C2 (#257): the chat panel's own first paint — the switches, the badge and
+  // the other seat's name. A solo chrome has no config and every one of these
+  // is a no-op.
+  paintChatBadge();
+  paintChatPrefs();
+  paintChatPeer(chatCfg?.peerName() ?? null);
   // #299: the boot pane. The retired loop opens on its always-on plant; on
   // the new loop the plant has no tab to open — the rail starts on the Bank.
   setTab(sessionMode ? "bank" : "plant");
@@ -4345,5 +4718,23 @@ export function createOriginalUi(
     showModal,
     hideModal,
     showHelp: () => helpModal(),
+    /**
+     * C2 (#257): one line into the panel. Mine, the other seat's and the
+     * room's notices all come through this one door, and the door is closed in
+     * a game with no chat — a solo boot has no panel and nothing to write into.
+     */
+    chatLine: (line: UiChatLine) => {
+      if (!chatCfg) return;
+      appendChatRow(line);
+      // A line that lands while the panel is closed is worth knowing about:
+      // the badge counts it, and it gets a quiet telegraph tick (the sfx layer
+      // is what decides whether anything is actually heard — a muted game, an
+      // unarmed context and a silent phone are all "no sound" there, not here).
+      if (line.role !== "you" && !chatOpen) {
+        chatUnread++;
+        paintChatBadge();
+        sfx.play("wire", { gain: 0.5 });
+      }
+    },
   };
 }
