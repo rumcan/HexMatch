@@ -942,7 +942,7 @@ export function createOriginalUi(
 
   // ── top bar ──────────────────────────────────────────────────────────────
   const top = h("header", "topbar");
-  top.appendChild(h("div", "logo", `<span class="logo-mark" aria-hidden="true"></span> HEXMATCH <em>INDUSTRIES</em>`));
+  top.appendChild(h("div", "logo", `HEXMATCH <em class="logo-script">Industries</em>`));
   const kingdoms = h("div", "kingdoms");
   top.appendChild(kingdoms);
   const right = h("div", "top-right");
@@ -1045,6 +1045,14 @@ export function createOriginalUi(
   chips.id = "iso-res";
   footer.appendChild(chips);
   root.appendChild(footer);
+  // UI Space Age (P4): on desktop the purse rides in the top bar (after the
+  // logo); a phone keeps its bottom bar. Re-homed on every viewport change.
+  const placeChips = () => {
+    const want = isPhoneViewport() ? footer : top;
+    if (chips.parentElement === want) return;
+    if (want === top) top.insertBefore(chips, kingdoms); else footer.appendChild(chips);
+  };
+  placeChips();
   // Mobile pass (2026-09): publish how much of the screen's bottom the
   // resource bar (plus anything under it, e.g. the phone nav) takes, LIVE —
   // the bar wraps to two rows on a phone as its chips fill in, and the
@@ -3303,7 +3311,10 @@ export function createOriginalUi(
     // is already being handled, and publish it; styles.css puts both columns
     // on max(52px, --resbar-h). jsdom lays nothing out (0) and keeps the
     // stylesheet's 52px fallback, so every pinned number below survives.
-    const resbarH = footer.offsetHeight;
+    placeChips();
+    // UI Space Age: on desktop the footer is gone; the bottom lane is the
+    // drawer's tab strip (--dock-h, 36px).
+    const resbarH = phone ? footer.offsetHeight : 36;
     if (resbarH > 0) root.style.setProperty("--resbar-h", `${resbarH}px`);
     // RAIL-01: a collapse is a desktop affordance — crossing into the phone
     // regime hands the panels back to the sheets, unfolded.

@@ -590,7 +590,7 @@ html, body, #root {
    --resbar-h on every resize; max() keeps the historic 52px wherever the
    bar measures no taller than that (jsdom, which lays nothing out, keeps
    the fallback and with it every number pinned below). */
-.aside { position: fixed; top: calc(var(--topbar-h) + var(--safe-top) + 8px); bottom: max(52px, var(--resbar-h, 52px)); z-index: 30; display: flex; flex-direction: column; }
+.aside { position: fixed; top: calc(var(--topbar-h) + var(--safe-top) + 8px); bottom: var(--resbar-h, 52px); z-index: 30; display: flex; flex-direction: column; }
 .aside.left { left: 10px; width: 300px; overflow-y: auto; }
 /* FIT-01: the plant column now FITS its box (ui.ts clamps the board zoom to
    the measured room), so the clip here is a safety net, not a layout tool:
@@ -2348,7 +2348,7 @@ html, body, #root {
 .modebar {
   position: fixed; z-index: 50;
   left: 50%; transform: translateX(-50%);
-  bottom: calc(max(52px, var(--resbar-h, 52px)) + 8px);
+  bottom: calc(var(--resbar-h, 52px) + 8px);
   display: flex; align-items: center; gap: 8px;
   width: max-content; max-width: min(560px, calc(100vw - 24px));
   height: 32px; padding: 0 6px 0 12px;
@@ -2529,7 +2529,7 @@ html, body, #root {
    patch of screen the held-tool chip clears. */
 @media (max-width: 760px) {
   .quests {
-    top: auto; bottom: calc(max(52px, var(--resbar-h, 52px)) + 8px);
+    top: auto; bottom: calc(var(--resbar-h, 52px) + 8px);
     left: 8px; right: 8px; width: auto; transform: none;
   }
   .quests-list { max-height: 34vh; }
@@ -5403,7 +5403,7 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
    caption sits above the resource bar, where a line can be read and skipped. */
 .voice-sub {
   position: fixed; z-index: 54; left: 50%;
-  bottom: calc(max(52px, var(--resbar-h, 52px)) + 12px);
+  bottom: calc(var(--resbar-h, 52px) + 12px);
   transform: translateX(-50%);
   width: min(480px, calc(100vw - 24px));
   display: flex; align-items: center; gap: 10px;
@@ -5626,7 +5626,7 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   /* One lane above the placement hint pill (.modebar): the pill is centred at
      the same bottom edge and is up the whole time a tool is in the hand, so
      the two would otherwise fight over the middle of the map every drag. */
-  bottom: calc(max(52px, var(--resbar-h, 52px)) + 48px);
+  bottom: calc(var(--resbar-h, 52px) + 48px);
   z-index: 44;
   display: flex; flex-direction: column;
   border: 1px solid var(--brass-lo);
@@ -5784,7 +5784,7 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .minimap-dock {
   position: fixed; z-index: 37;
   left: 320px;
-  bottom: calc(max(52px, var(--resbar-h, 52px)) + 48px);
+  bottom: calc(var(--resbar-h, 52px) + 48px);
   width: clamp(188px, 15vw, 276px);
   padding: 4px;
   border-radius: var(--r);
@@ -5974,7 +5974,7 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .sabotage-event-window {
   position: fixed; z-index: 38;
   left: 320px;
-  bottom: calc(max(52px, var(--resbar-h, 52px)) + 48px + 140px);
+  bottom: calc(var(--resbar-h, 52px) + 48px + 140px);
   width: clamp(210px, 16vw, 276px);
   padding: 8px 10px;
   border-radius: 0;

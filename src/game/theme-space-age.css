@@ -43,3 +43,33 @@
   /* layout */
   --topbar-h: 44px; --rail-w: 72px; --dock-h: 36px; --drawer-h: 0px;
 }
+
+/* ── P4: top bar ─────────────────────────────────────────────────── */
+.topbar {
+  background: var(--sa-panel);
+  background-blend-mode: normal;
+  border-bottom: 3px solid var(--sa-orange);
+  gap: 12px;
+}
+.logo { font-family: var(--display); font-weight: 600; font-size: 14px; letter-spacing: .14em; color: var(--sa-bone); gap: 6px; }
+.logo .logo-script {
+  font-family: var(--script); font-style: normal; font-weight: 400;
+  font-size: 21px; letter-spacing: 0; text-transform: none; color: var(--sa-orange);
+  margin-left: -2px; line-height: 1;
+}
+.logo-mark { display: none; }
+.topbar .chipbar { flex-wrap: nowrap; gap: 4px; justify-content: flex-start; overflow: hidden; }
+.topbar .chip { background: var(--sa-panel-2); border: 0; padding: 2px 8px 2px 4px; height: 28px; }
+.topbar .chip:hover { background: var(--sa-line); }
+.topbar .chip .chip-ic .cargo-ic { width: 18px; height: 18px; }
+.ui-root:not([data-phone="1"]) .resbar { display: none; }
+/* the camera and names keys moved into ☰ (the nodes stay for scripts/tests) */
+.topbar [data-act="recenter"], .topbar #iso-names { display: none; }
+.icon-btn { background: transparent; border: 1px solid transparent; color: var(--sa-bone-dim); }
+.icon-btn:hover, .icon-btn[aria-expanded="true"] { background: var(--sa-panel-2); border-color: var(--sa-line-hi); color: var(--sa-bone); }
+.vp-badge { background: var(--sa-panel-2); border: 0; color: var(--sa-lemon); font-family: var(--display); }
+/* ☰ menu: the Game row (difficulty + sound) */
+.tm-game { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--sa-line); }
+.tm-game .rival-skill { flex: 1; }
+.iso-topmenu { background: var(--sa-panel); border: 1px solid var(--sa-ink); border-top: 3px solid var(--sa-orange); }
+.tm-item:hover { background: var(--sa-panel-2); }
