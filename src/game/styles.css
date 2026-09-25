@@ -5605,3 +5605,61 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 }
 .ui-root[data-phone="1"] .chat-dock.open .chat-log { max-height: 32vh; }
 .ui-root[data-phone="1"]:not([data-view="map"]) .chat-dock:not(.open) { display: none; }
+/* ══ M1 (#254) — the minimap plate ═════════════════════════════════════
+   One small plate over the map's lower-left corner: just clear of the BUILD
+   column (or of its folded sliver), and lifted above the placement-hint lane
+   (.modebar: the resource bar + 8px, 32px tall) so the two never stack at any
+   width. The canvas inside is src/iso/minimap.ts's; this sheet only places the
+   plate and decides when it shows —
+     desktop   shown; data-open="0" (the fab, on a touch desktop) folds it
+     phone     folded until the fab sets data-open="1"
+     not map   folded (the phone's Build / Economy sheets)
+   Deliberately NOT an .iso-panel: the e2e corridor measures its clear band
+   between those two columns, and this plate only floats over its corner. */
+.minimap-dock {
+  position: fixed; z-index: 37;
+  left: 320px;
+  bottom: calc(max(52px, var(--resbar-h, 52px)) + 48px);
+  width: clamp(188px, 15vw, 276px);
+  padding: 4px;
+  border-radius: var(--r);
+  background: rgba(10, 7, 5, .9);
+  border: 1px solid var(--brass-lo);
+  box-shadow: inset 0 1px 0 rgba(242, 220, 166, .18), 0 8px 22px rgba(0, 0, 0, .55);
+  transition: left .25s ease;   /* rides the BUILD column's fold (RAIL-01) */
+}
+.minimap-canvas {
+  display: block; width: 100%; height: auto; aspect-ratio: 2 / 1;
+  cursor: pointer; touch-action: none;
+  -webkit-user-select: none; user-select: none;
+}
+.minimap-canvas.grab { cursor: grab; }
+.minimap-canvas.dragging { cursor: grabbing; }
+.ui-root[data-rail-left="1"] .minimap-dock { left: 48px; }
+@media (max-width: 1180px) { .minimap-dock { left: 282px; } }
+@media (max-width: 900px) {
+  .minimap-dock, .ui-root[data-rail-left="1"] .minimap-dock { left: 10px; }
+}
+/* Phone: bottom-left, one lane above the held-tool chip, clear of the fab
+   column on the right. */
+@media (max-width: 760px), (max-width: 900px) and (orientation: landscape) and (max-height: 500px) {
+  .minimap-dock, .ui-root[data-rail-left="1"] .minimap-dock {
+    left: 10px;
+    bottom: calc(var(--resbar-gap, 130px) + 48px);
+    width: min(260px, calc(100vw - 86px));
+    transition: none;
+  }
+}
+/* A landscape phone is short: a size down keeps the plate under a third of
+   the height, below the objective line. */
+@media (max-width: 900px) and (orientation: landscape) and (max-height: 500px) {
+  .minimap-dock, .ui-root[data-rail-left="1"] .minimap-dock { width: 216px; }
+}
+.minimap-dock[data-open="0"] { display: none; }
+.ui-root[data-phone="1"] .minimap-dock:not([data-open="1"]) { display: none; }
+.ui-root:not([data-view="map"]) .minimap-dock { display: none; }
+/* the key lights while the plate is up */
+.fab.minimap-toggle[aria-pressed="true"] {
+  border-color: var(--brass);
+  box-shadow: 0 4px 16px rgba(0,0,0,.45), inset 0 1px 0 rgba(242, 220, 166, .2), 0 0 14px -3px rgba(255, 176, 46, .55);
+}

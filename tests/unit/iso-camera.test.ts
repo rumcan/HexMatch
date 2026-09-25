@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   createCamera, worldToScreen, screenToWorld, screenToTileAt, tileToScreenAt,
-  stepZoom, zoomAt, zoomStepAt, clampCamera, panBy, centerOnTile, centerOnMap,
+  stepZoom, zoomAt, zoomStepAt, clampCamera, panBy, centerOnTile, centerOnMap, centerOnWorld,
   resizeCamera, visibleTileRange, createGesture, pointerDown, pointerMove, pointerUp,
   mapWorldBounds, bootZoomFor, tapSlop, tileCssAt,
 } from "../../src/iso/camera";
@@ -85,6 +85,27 @@ describe("E4 camera — clamping", () => {
     const c = centerOnTile(createCamera(800, 600), 24, 24);
     const [wx, wy] = tileToScreen(24, 24);
     expect(worldToScreen(c, wx, wy)).toEqual([400, 300]);
+  });
+
+  // M1 (#254): the minimap centres the view on a WORLD point (a click can land
+  // between tiles). The tile helper is now that same call, so the two can
+  // never drift apart — including at every zoom and through the clamp.
+  it("M1 centerOnWorld centres any world point, and centerOnTile is exactly it", () => {
+    for (const zoom of [0.5, 1, 2] as const) {
+      const cam = { ...createCamera(1280, 720), zoom };
+      const c = centerOnWorld(cam, 321.5, 1234.25);
+      expect(worldToScreen(c, 321.5, 1234.25)).toEqual([640, 360]);
+      expect(c.zoom).toBe(zoom);
+      expect([c.vw, c.vh]).toEqual([1280, 720]);
+      for (const [tx, ty] of [[24, 24], [0, 0], [MAP_W - 1, MAP_H - 1], [70.5, 12.25]]) {
+        const [wx, wy] = tileToScreen(tx, ty);
+        expect(centerOnTile(cam, tx, ty), `${zoom}× (${tx},${ty})`).toEqual(centerOnWorld(cam, wx, wy));
+      }
+    }
+    // A point far off the island clamps like any other camera write.
+    const far = centerOnWorld(createCamera(800, 600), 1e6, -1e6);
+    expect(clampCamera(far)).toEqual(far);
+    expect(far).toEqual(clampCamera({ ...createCamera(800, 600), x: 400 - 1e6, y: 300 + 1e6 }));
   });
 
   it("resize keeps the same world point centred, including high-DPI boot", () => {

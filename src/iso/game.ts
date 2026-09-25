@@ -80,6 +80,7 @@ import {
   renderPolicy, type Quality, type RenderPolicy,
 } from "./graphics";
 import { createTiltShiftPass } from "./miniature";
+import { createMinimap, minimapSceneOf, type MinimapMarker } from "./minimap";
 import { loadGroundTextures } from "./ground";
 import {
   createCamera, centerOnTile, resizeCamera, zoomStepAt, zoomAt, tileToScreenAt,
@@ -1924,6 +1925,24 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     labels.frame();
     upgradeMarkers.frame();
   }
+
+  // M1 (#254): the minimap — its own module (src/iso/minimap.ts) on the HUD's
+  // plate. It reads the world by reference and redraws each layer only when
+  // its key moves (terrain: this map; network: netVersion + rail.revision;
+  // view: the camera), and it moves the camera through `commitCamera`, like
+  // every other camera write. #256 hangs its sabotage markers on
+  // `minimap.setMarkers` / `minimap.onMarker` / `minimap.goTo`.
+  const minimap = createMinimap(ui.minimapHost, {
+    ground: { terrain: grid.terrain, trees: scenery.trees, forests: scenery.forests },
+    camera: () => cam,
+    commit: (next) => commitCamera(next),
+    scene: () => minimapSceneOf({
+      grid, track, eco, rail,
+      drawRail: world.rail, fields: world.fields, cleared: world.sceneryBlocked,
+    }),
+    // Seat colours by owner id — the same blue/red split the depots wear.
+    ownerColour: (id) => players[id - 1]?.colour,
+  });
 
   /** C5: the atlas instance lives in the async boot; the debug console reads it here. */
   let atlasRef: Atlas | null = null;
@@ -10937,6 +10956,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       labels.frame();
     upgradeMarkers.frame();
       paintUi(t);
+      // M1 (#254): last in the frame. With the camera still and the network
+      // unchanged this is a key compare; hidden, it returns at once. It
+      // catches its own errors, so it can never cost the map a frame.
+      minimap.frame(netVersion, rail.rail.revision);
     };
 
     /**
@@ -11702,6 +11725,21 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      */
     get camera() { return cam; },
     /**
+     * M1 (#254): the minimap for probes — whether the plate is laid out, its
+     * per-layer redraw counts (the "terrain once, network on change, view on
+     * camera change" evidence) and the marker hook #256 builds on, so its
+     * look can be tried from the console before any sabotage feeds it.
+     */
+    get minimap() {
+      return {
+        visible: minimap.visible,
+        stats: { ...minimap.stats },
+        markers: minimap.markers,
+        setMarkers: (list: readonly MinimapMarker[]) => minimap.setMarkers(list),
+        goTo: (tx: number, ty: number) => minimap.goTo(tx, ty),
+      };
+    },
+    /**
      * E14: what a pointer event at a CANVAS point (device px, the same space
      * `pos()` hands the click handlers) resolves to — literally
      * the two-stage hit-test plus the own-factory anchor normalisation a
@@ -12043,6 +12081,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // match's state).
     gfxUnsub();
     mini.destroy();
+    minimap.destroy();
     // SETTINGS-01: the ☰ menu's document listeners die with the game, and an
     // open sheet is destroyed rather than orphaned over a dead board.
     menuTeardown?.();

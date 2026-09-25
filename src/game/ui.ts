@@ -605,6 +605,13 @@ export interface OriginalUi {
   el: HTMLElement;
   /** Where the iso canvas layer stack is mounted (the original map canvas slot). */
   mapHost: HTMLElement;
+  /**
+   * M1 (#254): where the minimap mounts — a plate over the map's lower-left
+   * corner. `src/iso/minimap.ts` owns everything inside it; the chrome owns
+   * only the plate's place and when it shows (styles.css `.minimap-dock`)
+   * and the fab that folds it on phones (`data-open`).
+   */
+  minimapHost: HTMLElement;
   renderBoard: () => void;
   setReach: (reach: Partial<Record<Cargo, number>>) => void;
   setCombo: (count: number, need: number) => void;
@@ -729,6 +736,13 @@ const isPhoneViewport = (): boolean => {
   const w = window.innerWidth, h = window.innerHeight;
   return w <= 760 || (w <= 900 && h <= 500);
 };
+
+/** M1 (#254): the minimap key — the island's diamond with the view's frame on
+ *  it. A stroke SVG in currentColor, like every HUD key (#166). */
+const ICON_MINIMAP =
+  `<svg class="hud-ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" `
+  + `stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">`
+  + `<path d="M12 5l10 7-10 7-10-7z"/><rect x="8.5" y="9.5" width="7" height="5" rx=".5"/></svg>`;
 
 /** Optional per-boot chrome flags (RAIL-05: the railway's four buttons only
  *  exist when the feature flag lets them — the campaign boots without rail
@@ -861,6 +875,29 @@ export function createOriginalUi(
   mapHost.id = "map";
   root.appendChild(mapHost);
   root.appendChild(h("div", "vignette"));
+
+  // ── M1 (#254): the minimap's plate and its phone key ───────────────────
+  // The chrome owns the plate's PLACE (styles.css `.minimap-dock`) and
+  // whether it shows; src/iso/minimap.ts mounts the canvas inside. Desktop
+  // shows it; the phone regime keeps it folded until the fab opens it.
+  // `data-open` is the player's explicit choice ("1"/"0") and absent means
+  // the regime's default, so a rotation or a resize never overrides a tap.
+  // The key joins the touch cluster below (`.fabs`); it is made here so the
+  // regime pass (`paintZoom`) can keep its pressed state truthful.
+  const minimapHost = h("div", "minimap-dock");
+  root.appendChild(minimapHost);
+  const minimapBtn = h("button", "fab minimap-toggle", ICON_MINIMAP);
+  minimapBtn.type = "button";
+  minimapBtn.title = "Minimap";
+  minimapBtn.setAttribute("aria-label", "Minimap");
+  const minimapShown = (): boolean =>
+    (minimapHost.dataset.open ? minimapHost.dataset.open === "1" : !isPhoneViewport());
+  const syncMinimapKey = () => minimapBtn.setAttribute("aria-pressed", String(minimapShown()));
+  minimapBtn.onclick = () => {
+    minimapHost.dataset.open = minimapShown() ? "0" : "1";
+    syncMinimapKey();
+  };
+  syncMinimapKey();
 
   // ── top bar ──────────────────────────────────────────────────────────────
   const top = h("header", "topbar");
@@ -1557,7 +1594,9 @@ export function createOriginalUi(
   const recenterBtn = h("button", "recenter-btn", HUD_ICONS.reticle);
   recenterBtn.title = "Recenter map";
   recenterBtn.onclick = () => hooks.onRecenter();
-  fabs.append(zoomInBtn, zoomOutBtn, recenterBtn);
+  // M1 (#254): the minimap key heads the column, so the zoom keys and the
+  // recentre stay exactly where a thumb already knows them.
+  fabs.append(minimapBtn, zoomInBtn, zoomOutBtn, recenterBtn);
   root.appendChild(fabs);
   // The held tool, named and droppable, while it is not the pointer. Desktop
   // keeps right-click/Q and the slim hint pill; this chip is the touch hand's
@@ -3192,6 +3231,8 @@ export function createOriginalUi(
     // RAIL-01: a collapse is a desktop affordance — crossing into the phone
     // regime hands the panels back to the sheets, unfolded.
     railSyncViewport();
+    // M1 (#254): the minimap's default follows the regime; its key says so.
+    syncMinimapKey();
     const wrap = boardWrap;
     let z = 1;
     if (phone) {
@@ -4679,6 +4720,7 @@ export function createOriginalUi(
   return {
     el: root,
     mapHost,
+    minimapHost,
     renderBoard,
     setReach,
     setCombo,
