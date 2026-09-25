@@ -5847,6 +5847,144 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   box-shadow: 0 4px 16px rgba(0,0,0,.45), inset 0 1px 0 rgba(242, 220, 166, .2), 0 0 14px -3px rgba(255, 176, 46, .55);
 }
 
+/* MUSIC-1 (#377): the dock is a flex item at the very end of the top bar's
+   right cluster (ui.ts mounts it there), not a floating layer. */
+.topbar .radio-dock {
+  position: static; top: auto; right: auto; z-index: auto;
+  order: 99; margin-left: 6px; display: flex; align-items: center;
+}
+/* ══ MUSIC-1 (#377) — the mini radio ═══════════════════════════════════
+   One compact pill in the very top-right of the game interface, and one round
+   ▶/⏸ key on a phone.
+
+   The DOCK owns the place (the chrome's job, like `.minimap-dock`): the fixed
+   corner, the z-index, and the two lanes the player must never sit in — the
+   top bar (whose height IS the `--topbar-h` variable the bar is built from) and
+   the banner/objective lane (`--banner-h`, published by ui.ts whenever a posted
+   sheet or the objective line is up). The PILL owns the look and the controls
+   (`src/audio/radio.ts` builds it): transport, station / now-playing, volume.
+
+   Desktop: one lane under the top bar, in the map's free right-hand strip —
+   clear of the centred objective card, of the chat dock and the minimap (both
+   bottom-left), of the resource bar and of the fabs. The rival's stakeout panel
+   and the ☰ popover are allowed to cover it while they are open (they are
+   things the player just asked for); the loading screen (z-95) and the modals
+   (z-60) cover it the same way.
+
+   Phone:   the lane is full-width there, so the pill waits UNDER whichever of
+   the two is posted — a posted banner starts at the top bar, the objective line
+   at its own fixed 104px — and collapses to the single round key (the text
+   comes back on a long press; the volume lives in Settings, where the phone
+   already has a slider for it). */
+.radio-dock {
+  /* 39: above the map, the inspector (35), the minimap plate (37) and the
+     resource bar (38) — BELOW the top bar (40) and below the two panels that
+     live in this very corner when the player opens them: the rival's stakeout
+     (`#iso-rival-view`, 40) and the ☰ popover (55). A panel the player just
+     opened is allowed to sit over the pill; the pill never sits over them. */
+  position: fixed; z-index: 39;
+  top: calc(var(--topbar-h) + var(--safe-top) + 8px);
+  right: calc(10px + env(safe-area-inset-right, 0px));
+  pointer-events: none;      /* the dock is place; only the pill is a control */
+}
+.radio-pill {
+  position: relative;
+  pointer-events: auto;
+  display: flex; align-items: center; gap: 6px;
+  max-width: min(300px, calc(100vw - 96px));
+  padding: 3px 4px 3px 3px;
+  border: 1px solid var(--brass-lo); border-radius: 999px;
+  background: linear-gradient(180deg, rgba(30, 22, 14, .94), rgba(10, 7, 5, .95));
+  box-shadow: inset 0 1px 0 rgba(242, 220, 166, .14), 0 8px 22px rgba(0, 0, 0, .55);
+  color: var(--txt);
+  font-family: var(--mono); font-size: 11px;
+}
+.radio-pill[hidden] { display: none; }
+.radio-pill[data-show="0"] { display: none; }
+/* Radio OFF: the pill stays (its switch says so) but reads as inert. */
+.radio-pill[data-enabled="0"] { opacity: .45; filter: grayscale(.5); }
+.radio-play, .radio-vol {
+  flex: 0 0 auto; display: grid; place-items: center;
+  width: 24px; height: 24px; padding: 0;
+  border: 1px solid var(--brass-lo); border-radius: 50%;
+  background: linear-gradient(180deg, rgba(56, 42, 26, .7), rgba(12, 9, 6, .9));
+  color: var(--gold2); font-size: 9px; line-height: 1; cursor: pointer;
+  transition: color .15s, border-color .15s, box-shadow .15s;
+}
+.radio-play { font-size: 10px; }
+.radio-play:hover, .radio-vol:hover { color: var(--brass-hi); border-color: var(--brass); }
+.radio-play:focus-visible, .radio-vol:focus-visible, .radio-vol-range:focus-visible {
+  outline: 2px solid var(--brass); outline-offset: 1px;
+}
+.radio-play[aria-pressed="true"] {
+  color: #fff3d6; border-color: var(--brass);
+  box-shadow: 0 0 12px -3px var(--gold-glow);
+}
+.radio-pill[data-state="offline"] .radio-play { color: var(--txt-dim); }
+.radio-now {
+  flex: 1 1 auto; min-width: 0; max-width: 168px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--gold2); letter-spacing: .4px;
+}
+.radio-pill[data-state="offline"] .radio-now { color: var(--txt-dim); font-style: italic; }
+/* the spinner — a plain ring, so the player adds no art to the build */
+.radio-spin {
+  display: none; width: 11px; height: 11px; border-radius: 50%;
+  border: 1.5px solid rgba(242, 220, 166, .25); border-top-color: var(--gold2);
+  animation: radio-spin .9s linear infinite;
+}
+.radio-pill[data-state="loading"] .radio-glyph { display: none; }
+.radio-pill[data-state="loading"] .radio-spin { display: block; }
+@keyframes radio-spin { to { transform: rotate(360deg); } }
+/* the volume popover — one small slider under the pill */
+.radio-slider {
+  position: absolute; top: calc(100% + 6px); right: 0;
+  padding: 6px 9px; border-radius: var(--r);
+  border: 1px solid var(--brass-lo);
+  background: linear-gradient(180deg, rgba(30, 22, 14, .97), rgba(9, 6, 4, .98));
+  box-shadow: 0 10px 24px rgba(0, 0, 0, .6);
+}
+.radio-slider.hidden { display: none; }
+.radio-vol-range { display: block; width: 104px; accent-color: var(--brass, #c9a15b); cursor: pointer; }
+
+@media (max-width: 760px), (max-width: 900px) and (orientation: landscape) and (max-height: 500px) {
+  .radio-dock {
+    /* The banner/objective lane is full-width on a phone, so sit UNDER it: a
+       posted banner starts at the top bar, the objective at its fixed 104px. */
+    top: max(
+      calc(var(--topbar-h) + var(--safe-top) + 6px + var(--banner-h, 0px)),
+      calc(104px + var(--banner-h, 0px))
+    );
+    right: calc(8px + env(safe-area-inset-right, 0px));
+  }
+  /* A phone sheet (Build / Economy) owns the whole screen and its own top-right
+     corner — the same rule the minimap plate and the folded chat pill keep. The
+     round key steps out of the way there; the Map view brings it straight back,
+     and the ☰ settings sheet can still turn the radio off from inside a sheet. */
+  .ui-root[data-phone="1"]:not([data-view="map"]) .radio-dock { display: none; }
+  /* One round key: the row (text, volume) folds away… */
+  .radio-pill { gap: 0; padding: 0; border: 0; background: none; box-shadow: none; }
+  .radio-pill .radio-now, .radio-pill .radio-vol, .radio-pill .radio-slider { display: none; }
+  /* …and the text comes back on a long press (radio.ts sets data-peek). */
+  .radio-pill[data-peek="1"] .radio-now {
+    display: block; position: absolute; top: calc(100% + 6px); right: 0;
+    max-width: 62vw; padding: 5px 9px; border-radius: var(--r);
+    border: 1px solid var(--brass-lo); background: rgba(12, 8, 5, .96);
+    color: var(--gold2);
+  }
+  .radio-play {
+    width: 40px; height: 40px; font-size: 14px;
+    background: linear-gradient(180deg, rgba(56, 42, 26, .82), rgba(12, 9, 6, .92));
+    box-shadow: inset 0 1px 0 rgba(242, 220, 166, .2), 0 6px 18px rgba(0, 0, 0, .55);
+  }
+  .radio-spin { width: 15px; height: 15px; border-width: 2px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .radio-pill, .radio-play, .radio-vol { transition: none; }
+  /* A still ring is still a "something is happening" mark. */
+  .radio-spin { animation: none; opacity: .55; }
+}
+
 /* ── M2 (#256): Sabotage Event Window ───────────────────────────────
    A small event window (not a full modal) for minimap sabotage markers.
    Shows a static illustration for that sabotage type, who did it, the target,

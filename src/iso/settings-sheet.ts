@@ -34,11 +34,17 @@ import {
 import { registerSoundPainter, sfx } from "../audio/sfx";
 // VO-1: voice has its own mute and volume, and still bows to the Sound switch.
 import { registerVoicePainter, voice } from "../game/voice";
+// MUSIC-1 (#377): the radio's own switch, its own volume, and the switch that
+// hides the player. Same storage shape as the voice pair right above it.
+import { radio } from "../audio/radio";
 
 /** The miniature row's copy, live: the full description, or the reason it is
  *  unreachable while performance mode stands (PERF-01). */
 const MINIATURE_NOTE = "Tilt-shift — a sharp band across the middle, the rest softly blurred, colours popped. The island reads as a tiny model.";
 const MINIATURE_UNAVAILABLE = "Unavailable while Performance mode is on.";
+/** MUSIC-1 (#377): the Radio row's copy, live — what off actually does. */
+const RADIO_NOTE = "SomaFM Secret Agent, in the little player at the top right. Off stops the stream and releases the connection.";
+const RADIO_OFF_NOTE = "Off — the stream is stopped and the player is disconnected. Your volume is remembered.";
 
 export interface SettingsSheetHandle {
   readonly el: HTMLElement;
@@ -83,6 +89,17 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
           <button type="button" class="gfx-switch" role="switch" aria-label="Voice" data-gfx="voice" data-sfx="click">ON</button>
         </div>
       </div>
+      <div class="gfx-row">
+        <div class="gfx-copy"><h3>Radio</h3><p class="gfx-radio-note">${RADIO_NOTE}</p></div>
+        <div class="gfx-voice-controls">
+          <input type="range" class="gfx-voice-vol" min="0" max="1" step="0.05" value="0.5" data-gfx="radio-volume" aria-label="Radio volume" />
+          <button type="button" class="gfx-switch" role="switch" aria-label="Radio" data-gfx="radio" data-sfx="click">ON</button>
+        </div>
+      </div>
+      <div class="gfx-row">
+        <div class="gfx-copy"><h3>Show radio player</h3><p>Hide the player in the top-right corner. The music keeps playing.</p></div>
+        <button type="button" class="gfx-switch" role="switch" aria-label="Show radio player" data-gfx="radio-show" data-sfx="click">ON</button>
+      </div>
       <div class="confirm-row">
         <button type="button" class="big-btn" data-gfx-close data-sfx="close">Done</button>
       </div>
@@ -99,6 +116,10 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
   const voiceBtn = root.querySelector("[data-gfx=\"voice\"]") as HTMLButtonElement;
   const voiceVol = root.querySelector("[data-gfx=\"voice-volume\"]") as HTMLInputElement;
   const voiceNote = root.querySelector(".gfx-voice-note") as HTMLElement;
+  const radioBtn = root.querySelector("[data-gfx=\"radio\"]") as HTMLButtonElement;
+  const radioVol = root.querySelector("[data-gfx=\"radio-volume\"]") as HTMLInputElement;
+  const radioShow = root.querySelector("[data-gfx=\"radio-show\"]") as HTMLButtonElement;
+  const radioNote = root.querySelector(".gfx-radio-note") as HTMLElement;
 
   for (const q of QUALITY_KEYS) {
     const b = document.createElement("button");
@@ -116,6 +137,11 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
   soundBtn.onclick = () => { sfx.setEnabled(!sfx.isEnabled()); };
   voiceBtn.onclick = () => { voice.setEnabled(!voice.enabled); };
   voiceVol.oninput = () => { voice.setVolume(Number(voiceVol.value)); };
+  // MUSIC-1 (#377): the same three shapes for the radio — a switch that stops
+  // and disconnects, a switch that only hides the player, and its own volume.
+  radioBtn.onclick = () => { radio.setEnabled(!radio.settings.enabled); };
+  radioVol.oninput = () => { radio.setVolume(Number(radioVol.value)); };
+  radioShow.onclick = () => { radio.setShow(!radio.settings.show); };
 
   const paint = (g: GraphicsSettings) => {
     note.textContent = QUALITY_NOTE[g.quality];
@@ -155,6 +181,20 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
     if (document.activeElement !== voiceVol) voiceVol.value = String(s.volume);
     voiceVol.setAttribute("aria-valuenow", String(Math.round(s.volume * 100) / 100));
   });
+  // MUSIC-1 (#377): the radio's two switches and its volume, painted from the
+  // SAME store the pill and the top-bar player read — so a change here, a tap
+  // on the pill, or `__iso.radio(...)` in the console all land as one state.
+  const unsubRadio = radio.register((s) => {
+    radioBtn.textContent = s.enabled ? "ON" : "OFF";
+    radioBtn.classList.toggle("on", s.enabled);
+    radioBtn.setAttribute("aria-checked", String(s.enabled));
+    radioShow.textContent = s.show ? "ON" : "OFF";
+    radioShow.classList.toggle("on", s.show);
+    radioShow.setAttribute("aria-checked", String(s.show));
+    if (document.activeElement !== radioVol) radioVol.value = String(s.volume);
+    radioVol.setAttribute("aria-valuenow", String(Math.round(s.volume * 100) / 100));
+    radioNote.textContent = s.enabled ? RADIO_NOTE : RADIO_OFF_NOTE;
+  });
   paint(currentGraphics());
 
   const close = () => {
@@ -163,6 +203,7 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
     unsubGfx();
     unsubSound();
     unsubVoice();
+    unsubRadio();
     document.removeEventListener("keydown", onKey, true);
     root.remove();
     resolveClosed();

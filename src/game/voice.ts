@@ -90,6 +90,12 @@ export interface VoiceDirector {
   attach(sink: VoiceSink | null): void;
   detach(): void;
   register(painter: (settings: VoiceSettings) => void): () => void;
+  /**
+   * MUSIC-1 (#377): a tiny start/end hook. The listener gets the line when it
+   * starts speaking and `null` when it is over (finished, skipped, stopped or
+   * interrupted) — the radio hangs its ducking off this. Returns the off switch.
+   */
+  onLine(listener: (line: VoiceLine | null) => void): () => void;
   stop(): void;
   readonly queueIds: readonly string[];
   readonly playingId: string | null;
@@ -248,6 +254,8 @@ export function createVoice(deps: VoiceDeps = {}): VoiceDirector {
   let cancelHold: (() => void) | null = null;
   let abortResolve: (() => void) | null = null;
   const idleWaiters: Array<() => void> = [];
+  /** MUSIC-1 (#377): who wants to know when a line starts and ends. */
+  const lineWatchers = new Set<(line: VoiceLine | null) => void>();
 
   function delay(ms: number): Promise<void> {
     if (deps.delay) return deps.delay(ms);
@@ -296,10 +304,24 @@ export function createVoice(deps: VoiceDeps = {}): VoiceDirector {
     }
   }
 
+  /**
+   * MUSIC-1 (#377): the ONE place `playing` changes, so a watcher fires on
+   * every real start and stop — a finished line, a skipped narrator, an
+   * interrupted queue. The radio hangs off this to duck under a line; a
+   * watcher that throws is not allowed to stop the queue.
+   */
+  function setPlaying(line: VoiceLine | null): void {
+    if (playing === line) return;
+    playing = line;
+    for (const w of lineWatchers) {
+      try { w(line); } catch { /* a bad watcher must not gag the narrator */ }
+    }
+  }
+
   function interrupt(): void {
     epoch++;
     busy = false;
-    playing = null;
+    setPlaying(null);
     silence();
     try { cancelHold?.(); } catch { /* garnish */ }
     try { abortResolve?.(); } catch { /* garnish */ }
@@ -345,7 +367,7 @@ export function createVoice(deps: VoiceDeps = {}): VoiceDirector {
     void run(token).catch(() => {
       if (token === epoch) {
         busy = false;
-        playing = null;
+        setPlaying(null);
         settleIdle();
       }
     });
@@ -356,7 +378,7 @@ export function createVoice(deps: VoiceDeps = {}): VoiceDirector {
       while (token === epoch && queue.length) {
         const line = queue.shift()!;
         if (token !== epoch) break;
-        playing = line;
+        setPlaying(line);
         try { sink?.show(line); } catch { /* a detached bubble is not a crash */ }
         if (token !== epoch) break;
 
@@ -397,11 +419,11 @@ export function createVoice(deps: VoiceDeps = {}): VoiceDirector {
         if (playback?.failed) missing++;
         if (currentPlayback === playback) currentPlayback = null;
         if (token !== epoch) break;
-        playing = null;
+        setPlaying(null);
       }
     } finally {
       if (token === epoch) {
-        playing = null;
+        setPlaying(null);
         busy = false;
         try { if (!queue.length) sink?.hide(); } catch { /* garnish */ }
         if (queue.length) kick();
@@ -486,6 +508,10 @@ export function createVoice(deps: VoiceDeps = {}): VoiceDirector {
       try { painter(snapshot()); } catch { /* garnish */ }
       return () => { painters.delete(painter); };
     },
+    onLine(listener) {
+      lineWatchers.add(listener);
+      return () => { lineWatchers.delete(listener); };
+    },
     stop() {
       queue.length = 0;
       interrupt();
@@ -538,6 +564,15 @@ export const voice: VoiceDirector = createVoice();
 
 export function registerVoicePainter(painter: (settings: VoiceSettings) => void): () => void {
   return voice.register(painter);
+}
+
+/**
+ * MUSIC-1 (#377): subscribe to the singleton's "a line started / a line ended"
+ * beat. This is the whole radio↔voice contract: `line !== null` → duck,
+ * `line === null` → restore. Nothing else in voice.ts changed for it.
+ */
+export function onVoiceLine(listener: (line: VoiceLine | null) => void): () => void {
+  return voice.onLine(listener);
 }
 
 export function setVoiceEnabled(on: boolean): void { voice.setEnabled(on); }
