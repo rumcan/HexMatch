@@ -199,9 +199,14 @@ export function paintBuildingShadows(
       saved = true;
     }
     const [wx, wy] = shadowCentre(p.def, p.tx, p.ty);
+    // E3 (#269): the shadow is ground, so it lifts onto the terrain WITH the
+    // building by the same `elev` `place()` baked in — a cast shadow must ride
+    // up the hill with its caster, not stay on the flat projection below it.
+    // 0 on a flat map, so the option-off path is byte-for-byte unchanged.
+    const elev = p.elev ?? 0;
     ctx.drawImage(
       st.surface as unknown as CanvasImageSource,
-      Math.round((wx + st.ox) * z + cam.x), Math.round((wy + st.oy) * z + cam.y),
+      Math.round((wx + st.ox) * z + cam.x), Math.round((wy + st.oy - elev) * z + cam.y),
     );
     n++;
   }

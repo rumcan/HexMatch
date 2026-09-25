@@ -18,6 +18,8 @@
 // the flat pick whenever it hits.
 // ══════════════════════════════════════════════════════════════════════════
 import { HW, HH, TILE_H, tileToScreen } from "../game/config";
+import type { Grid } from "./grid";
+import { LEVEL_PX, elevationActive, surfaceHeight, worldToGround } from "./elevation";
 import type { Atlas, SpriteDef } from "./atlas";
 
 /** One thing to draw: a sprite placed at a footprint origin. */
@@ -65,6 +67,13 @@ export interface Placed extends DrawItem {
   w: number;              // frame width
   h: number;
   key: number;            // Tier-1 depth key
+  /**
+   * E3 (#269): how many world pixels this sprite was lifted onto the terrain
+   * by (`wy` is already the LIFTED position). 0 on a flat map. The building
+   * shadow reads it so its cast shape rides up the hill with the building
+   * instead of staying on the flat projection underneath it.
+   */
+  elev?: number;
 }
 
 /**
@@ -131,7 +140,7 @@ export function drawOriginMoving(def: SpriteDef, fx: number, fy: number): [numbe
 export const isMoving = (item: DrawItem): boolean =>
   item.fx !== undefined && item.fy !== undefined;
 
-export function place(atlas: Atlas, item: DrawItem): Placed | null {
+export function place(atlas: Atlas, item: DrawItem, grid?: Grid | null): Placed | null {
   const def = atlas.get(item.sprite);
   if (!def) return null;
   const [fw, fh] = def.footprint;
@@ -140,24 +149,48 @@ export function place(atlas: Atlas, item: DrawItem): Placed | null {
   // the real position. Both feed the same span math downstream.
   const px = moving ? item.fx! : item.tx;
   const py = moving ? item.fy! : item.ty;
-  const [wx, wy] = moving
+  const [wx, wyFlat] = moving
     ? drawOriginMoving(def, px, py)
     : drawOrigin(def, item.tx, item.ty);
   const w = def.w / (def.frames ?? 1);
-  return {
-    ...item, def, wx, wy, w, h: def.h,
-    key: moving
-      // nearest lattice point + half-step bias: a moving sprite must never
-      // TIE with the integer key of the ground sprite it straddles — a tie
-      // plus tier1Compare's ascending-height tie-break let a road tile paint
-      // OVER the lorry for most of every leg (the RV-02 flash). +0.5 keeps
-      // the truck strictly above the tile it is on/leaving, still strictly
-      // below the NEXT tile's ground until it crosses the midpoint, and
-      // changes nothing about buildings: their integer keys compare the same
-      // against x.5 as they did against x.
-      ? Math.round(px + fw - 1) + Math.round(py + fh - 1) + 0.5 + (item.lift ?? 0)
-      : (item.tx + fw - 1) + (item.ty + fh - 1) + (item.lift ?? 0),
-  };
+  let key = moving
+    // nearest lattice point + half-step bias: a moving sprite must never
+    // TIE with the integer key of the ground sprite it straddles — a tie
+    // plus tier1Compare's ascending-height tie-break let a road tile paint
+    // OVER the lorry for most of every leg (the RV-02 flash). +0.5 keeps
+    // the truck strictly above the tile it is on/leaving, still strictly
+    // below the NEXT tile's ground until it crosses the midpoint, and
+    // changes nothing about buildings: their integer keys compare the same
+    // against x.5 as they did against x.
+    ? Math.round(px + fw - 1) + Math.round(py + fh - 1) + 0.5 + (item.lift ?? 0)
+    : (item.tx + fw - 1) + (item.ty + fh - 1) + (item.lift ?? 0);
+  // E3 (#269): lift the sprite onto the terrain. The anchor pixel is lifted by
+  // the surface height at the tile it stands on, so the whole sprite rides up
+  // the hill with its base. Identity when the map is flat, so the no-grid /
+  // option-off path is byte-for-byte what it was.
+  let wy = wyFlat;
+  let elev = 0;
+  if (grid && elevationActive(grid)) {
+    // The anchor's flat world point → ground units. A MOVING sprite's anchor is
+    // already a tile CENTRE (fx+0.5, fy+0.5), so it reads the surface exactly
+    // there and a car climbs the draped track corner for corner. A STATIC
+    // sprite's anchor is the footprint's SOUTH VERTEX — a corner shared with
+    // the tile below — so it is snapped to the containing tile's CENTRE: a
+    // building on a flat level-L footprint beside a lower tile must lift by L,
+    // never by the shared corner's min (which would sink it into the hill).
+    // (Sampled from the footprint's own S tile, not by flooring the anchor:
+    // sprites anchored exactly ON the south vertex would floor to the tile
+    // outside the footprint.)
+    const [gu, gv] = worldToGround(wx + def.anchor[0], wyFlat + def.anchor[1]);
+    const su = moving ? gu : item.tx + fw - 0.5;
+    const sv = moving ? gv : item.ty + fh - 0.5;
+    elev = surfaceHeight(grid, su, sv) * LEVEL_PX;
+    // The depth key is NOT changed: things standing on the terrain still
+    // occlude by ground position, and dropping a raised sprite's key let a
+    // lower object BEHIND it paint over it.
+    wy = wyFlat - elev;
+  }
+  return { ...item, def, wx, wy, w, h: def.h, key, elev };
 }
 
 // ── Tier 1 ────────────────────────────────────────────────────────────────

@@ -50,7 +50,7 @@ import {
 } from "./ground";
 import { ShadowStamps, paintBuildingShadows } from "./building-shadow";
 import {
-  LEVEL_PX, elevationActive, elevationLiftPx, surfaceHeight, worldToGround,
+  LEVEL_PX, elevationActive, elevationLiftPx, surfaceHeight, worldToGround, pickTile,
 } from "./elevation";
 import {
   FOREST_FOOTPRINT, TREE_SPRITES, paintDecals,
@@ -1274,7 +1274,7 @@ export class IsoRenderer {
       const singleTrees = !this.perfMode;
       const items = buildDrawList(this.world, r, { roads: !textured, vehicles: false, sceneryDensity, singleTrees });
       this.staticItemCount = items.length;
-      this.staticPlaced = items.map((i) => place(this.atlas, i)).filter((p): p is Placed => p !== null);
+      this.staticPlaced = items.map((i) => place(this.atlas, i, this.world.grid)).filter((p): p is Placed => p !== null);
       this.staticRange = rangeKey;
       full = true;
     }
@@ -1283,7 +1283,7 @@ export class IsoRenderer {
     for (const v of this.world.vehicles ?? []) {
       if (v.tx < r.x0 - 4 || v.tx > r.x1 + 4 || v.ty < r.y0 - 4 || v.ty > r.y1 + 4) continue;
       itemCount++;
-      const p = place(this.atlas, v);
+      const p = place(this.atlas, v, this.world.grid);
       if (p) placed.push(p);
     }
     this.hadVehicles = (this.world.vehicles?.length ?? 0) > 0;
@@ -1401,10 +1401,13 @@ export class IsoRenderer {
       ? sceneFromItems(items)
       : { scene: null, rest: items };
     if (scene) {
+      // E3 (#269): the overlay lifts its footprint corners and ghost onto the
+      // terrain through the live grid (flat map → the identity, unchanged).
+      this.overlayArt.grid = this.world.grid;
       this.overlayArt.paint(ctx, cam, this.atlas, scene, ghost, timeMs, makeSurface);
     }
     this.overlayBlits = rest.length;
-    const placed = rest.map((i) => place(this.atlas, i)).filter(Boolean) as Placed[];
+    const placed = rest.map((i) => place(this.atlas, i, this.world.grid)).filter(Boolean) as Placed[];
     for (const p of depthSort(placed).order) this.blit(ctx, p, timeMs);
     // C5: the debug marks are drawn last so they sit above every preview glow.
     if (this.debugPainter) this.debugPainter(ctx, cam);
@@ -1515,7 +1518,10 @@ export class IsoRenderer {
     tx: number; ty: number; sprite: Placed | null; ref: unknown;
   } {
     const [wx, wy] = screenToWorld(this.cam, screenX, screenY);
-    const flat = flatPick(wx, wy);
+    // E3 (#269): stage 1 resolves the tile the cursor SEES — height included, so
+    // a raised tile in front of a lower one is the one picked. `pickTile` is the
+    // exact flat pick on a flat map, so the option-off path is unchanged.
+    const flat = pickTile(this.world.grid, wx, wy);
     if (!this.lastOrder.length) this.drawStructures(0);
     const hit = pickSprite(this.atlas, this.lastOrder, wx, wy);
     if (hit) return { tx: hit.tx, ty: hit.ty, sprite: hit, ref: hit.ref };
