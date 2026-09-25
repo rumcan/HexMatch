@@ -40,7 +40,10 @@ import {
   railTile, DIAG_N, DIAG_E, DIAG_S, DIAG_W, type GroundPoint, type RailTile,
 } from "./rail-geometry";
 import { WATER, type Grid } from "./grid";
-import { deckAxis, paintBridgeDecks, paintBridgeRailings, type BridgeDeck } from "./bridge-renderer";
+import {
+  DEFAULT_BRIDGE_STYLE, deckAxis, paintBridgeDecks, paintBridgeRailings, type BridgeDeck,
+} from "./bridge-renderer";
+import { FLAT_DRAPER, type Draper } from "./elevation";
 
 type Ctx2D = CanvasRenderingContext2D;
 
@@ -214,16 +217,30 @@ export function railTilesIn(
   return out;
 }
 
-/** Trace a polyline into the CURRENT path (the caller owns `beginPath`). */
-function traceInto(ctx: Ctx2D, points: readonly (readonly [number, number])[]): void {
-  ctx.moveTo(points[0][0], points[0][1]);
-  for (let i = 1; i < points.length; i++) ctx.lineTo(points[i][0], points[i][1]);
+/**
+ * Trace a polyline into the CURRENT path (the caller owns `beginPath`).
+ *
+ * E2 (#267): through the draper, like every road pass — the identity unless the
+ * map carries heights, and a lift onto the terrain when it does. Sleepers, the
+ * two rails, the ballast bed, the crossing boards and the buffer stops are all
+ * ground-plane figures, so one seam here drapes the whole railway, the 45°
+ * diagonal legs included (they are just runs with a corner for a port).
+ */
+function traceInto(
+  ctx: Ctx2D, points: readonly (readonly [number, number])[], elev: Draper = FLAT_DRAPER,
+): void {
+  const pts = elev.path(points);
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
 }
 
 /** Trace a closed quad into the CURRENT path. */
-function traceQuad(ctx: Ctx2D, quad: readonly (readonly [number, number])[]): void {
-  ctx.moveTo(quad[0][0], quad[0][1]);
-  for (let i = 1; i < quad.length; i++) ctx.lineTo(quad[i][0], quad[i][1]);
+function traceQuad(
+  ctx: Ctx2D, quad: readonly (readonly [number, number])[], elev: Draper = FLAT_DRAPER,
+): void {
+  const pts = elev.path(quad);
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
   ctx.closePath();
 }
 
@@ -242,6 +259,13 @@ export function paintRailTiles(
    * `bridge-renderer.ts`.
    */
   decks: readonly BridgeDeck[] = [],
+  /**
+   * E2 (#267): the elevation draper. The railway rides the same cached chunk
+   * raster as the roads, so it is draped by the same object and lands on the
+   * same surface — a level crossing stays level because BOTH layers were lifted
+   * by the same function of the ground point.
+   */
+  elev: Draper = FLAT_DRAPER,
 ): void {
   if (!tiles.length && !decks.length) return;
   ctx.save();
@@ -254,7 +278,7 @@ export function paintRailTiles(
   ctx.lineJoin = "round";
 
   // 0. R2 (#266) The deck, under everything the railway paints on it.
-  paintBridgeDecks(ctx, decks);
+  paintBridgeDecks(ctx, decks, DEFAULT_BRIDGE_STYLE, elev);
 
   // 1. The ballast bed, with a soft edge under it — the roads' shoulder in
   //    miniature, so the bed sits in the grass rather than on top of it.
@@ -263,14 +287,14 @@ export function paintRailTiles(
     ctx.globalAlpha = 0.45;
     ctx.lineWidth = RAIL_BED_WIDTH + RAIL_BED_SHOULDER * 2;
     ctx.beginPath();
-    for (const t of tiles) for (const run of t.bed) traceInto(ctx, run);
+    for (const t of tiles) for (const run of t.bed) traceInto(ctx, run, elev);
     ctx.stroke();
 
     ctx.globalAlpha = 1;
     ctx.strokeStyle = style.bed;
     ctx.lineWidth = RAIL_BED_WIDTH;
     ctx.beginPath();
-    for (const t of tiles) for (const run of t.bed) traceInto(ctx, run);
+    for (const t of tiles) for (const run of t.bed) traceInto(ctx, run, elev);
     ctx.stroke();
   }
 
@@ -279,7 +303,7 @@ export function paintRailTiles(
   //    without moving any of them.
   ctx.fillStyle = style.plank;
   ctx.beginPath();
-  for (const t of tiles) for (const board of planksFor(t, detail)) traceQuad(ctx, board);
+  for (const t of tiles) for (const board of planksFor(t, detail)) traceQuad(ctx, board, elev);
   ctx.fill();
 
   // 3. Sleepers, in their own pass over the bed. Striding by index walks the
@@ -288,7 +312,7 @@ export function paintRailTiles(
   ctx.strokeStyle = style.tie;
   ctx.lineWidth = TIE_WIDTH;
   ctx.beginPath();
-  for (const t of tiles) for (const tie of tiesFor(t, detail)) traceInto(ctx, tie);
+  for (const t of tiles) for (const tie of tiesFor(t, detail)) traceInto(ctx, tie, elev);
   ctx.stroke();
 
   // 4. The steel: a dark web first, the polished head concentric on top of it.
@@ -298,19 +322,19 @@ export function paintRailTiles(
     ctx.strokeStyle = colour;
     ctx.lineWidth = width;
     ctx.beginPath();
-    for (const t of tiles) for (const rail of t.rails) traceInto(ctx, rail);
+    for (const t of tiles) for (const rail of t.rails) traceInto(ctx, rail, elev);
     ctx.stroke();
   }
 
   // 5. Buffer stops, last: the beam sits ON the rails it ends.
   ctx.fillStyle = style.stop;
   ctx.beginPath();
-  for (const t of tiles) for (const stop of t.stops) traceQuad(ctx, stop);
+  for (const t of tiles) for (const stop of t.stops) traceQuad(ctx, stop, elev);
   ctx.fill();
 
   // 6. R2 (#266) …and the deck's kerbs and railings, over the steel: a rail
   //    bridge's fence stands between the train and the water.
-  paintBridgeRailings(ctx, decks);
+  paintBridgeRailings(ctx, decks, DEFAULT_BRIDGE_STYLE, elev);
 
   ctx.restore();
 }

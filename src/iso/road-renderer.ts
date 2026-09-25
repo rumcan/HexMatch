@@ -49,8 +49,9 @@ import {
   type RailDetail, type RailLayer, type RailStyle,
 } from "./rail-renderer";
 import {
-  deckAxis, paintBridgeDecks, paintBridgeRailings, type BridgeDeck,
+  DEFAULT_BRIDGE_STYLE, deckAxis, paintBridgeDecks, paintBridgeRailings, type BridgeDeck,
 } from "./bridge-renderer";
+import { FLAT_DRAPER, draperFor, elevationLiftPx, type Draper } from "./elevation";
 
 type Ctx2D = CanvasRenderingContext2D;
 
@@ -304,12 +305,21 @@ const GUTTER = 64;
 export const screenToGround = (x: number, y: number): GroundPoint =>
   [x / (2 * HW) + y / (2 * HH), y / (2 * HH) - x / (2 * HW)];
 
-/** The tile range whose geometry can touch a projected-world rectangle. */
+/**
+ * The tile range whose geometry can touch a projected-world rectangle.
+ *
+ * `liftPx` (E2 #267) is the elevation headroom: raised ground is drawn ABOVE
+ * its flat position, so a tile sitting below the rectangle can still paint
+ * into it. Extending the rectangle's bottom edge by the lift is what keeps a
+ * chunk from rasterising a road whose far end belongs to a tile it never
+ * looked at — the reason a chunk boundary cannot cut a road on a hill.
+ */
 export function tilesForRect(
-  x0: number, y0: number, x1: number, y1: number,
+  x0: number, y0: number, x1: number, y1: number, liftPx = 0,
 ): { tx0: number; ty0: number; tx1: number; ty1: number } {
+  const by1 = y1 + liftPx;
   let u0 = Infinity, v0 = Infinity, u1 = -Infinity, v1 = -Infinity;
-  for (const [x, y] of [[x0, y0], [x1, y0], [x0, y1], [x1, y1]] as const) {
+  for (const [x, y] of [[x0, y0], [x1, y0], [x0, by1], [x1, by1]] as const) {
     const [u, v] = screenToGround(x, y);
     if (u < u0) u0 = u;
     if (u > u1) u1 = u;
@@ -467,8 +477,14 @@ export function townGroundQuadsIn(
  * single stroke call is one rasterisation of the whole lot, which is what
  * keeps a street of sidewalks as cheap as a single stroke of asphalt.
  */
-function traceInto(ctx: Ctx2D, fig: RoadFigure): void {
-  const pts = fig.points;
+/**
+ * E2 (#267): every path a painter traces goes through the draper, which is the
+ * identity (`FLAT_DRAPER`) unless the map has elevation. One seam for the whole
+ * module: the passes below keep stroking in ground units, under the one affine
+ * transform, with their widths and joins exactly as they were.
+ */
+function traceInto(ctx: Ctx2D, fig: RoadFigure, elev: Draper = FLAT_DRAPER): void {
+  const pts = elev.path(fig.points);
   if (pts.length === 1) {
     // A pad: a zero-length segment with a round cap strokes a disc of exactly
     // the road's width, which is the shape we want and needs no special case.
@@ -481,9 +497,9 @@ function traceInto(ctx: Ctx2D, fig: RoadFigure): void {
 }
 
 /** Trace one figure into a path of its own. */
-function trace(ctx: Ctx2D, fig: RoadFigure): void {
+function trace(ctx: Ctx2D, fig: RoadFigure, elev: Draper = FLAT_DRAPER): void {
   ctx.beginPath();
-  traceInto(ctx, fig);
+  traceInto(ctx, fig, elev);
 }
 
 /**
@@ -553,14 +569,18 @@ type RoadFills = Record<"paved" | "dirt", string | CanvasPattern>;
  * other three sit on — and because the kerbs have to be painted over the band
  * the paving reaches under them, not beside it.
  */
-function paintTownGround(ctx: Ctx2D, quads: GroundPoint[][], fill: string | CanvasPattern): void {
+function paintTownGround(
+  ctx: Ctx2D, quads: GroundPoint[][], fill: string | CanvasPattern,
+  elev: Draper = FLAT_DRAPER,
+): void {
   if (!quads.length) return;
   ctx.save();
   ctx.lineJoin = "miter";
   ctx.beginPath();
   for (const quad of quads) {
-    ctx.moveTo(quad[0][0], quad[0][1]);
-    for (let i = 1; i < quad.length; i++) ctx.lineTo(quad[i][0], quad[i][1]);
+    const pts = elev.path(quad);
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
     ctx.closePath();
   }
   ctx.fillStyle = fill;
@@ -585,7 +605,7 @@ function paintTownGround(ctx: Ctx2D, quads: GroundPoint[][], fill: string | Canv
  * no sidewalk at all, which is what the town's limits look like. ROUND joins,
  * so a bend's outer arc has no seam down its inside.
  */
-function paintSidewalks(ctx: Ctx2D, tiles: RoadTile[]): void {
+function paintSidewalks(ctx: Ctx2D, tiles: RoadTile[], elev: Draper = FLAT_DRAPER): void {
   const streets = tiles.filter((t) => t.sidewalk);
   if (!streets.length) return;
 
@@ -608,7 +628,7 @@ function paintSidewalks(ctx: Ctx2D, tiles: RoadTile[]): void {
     ctx.strokeStyle = colour;
     ctx.lineWidth = width;
     ctx.beginPath();
-    for (const path of paths) traceInto(ctx, path);
+    for (const path of paths) traceInto(ctx, path, elev);
     ctx.stroke();
   }
   // The joints, over the finished ribbon: a run of slabs, not a painted line.
@@ -617,7 +637,7 @@ function paintSidewalks(ctx: Ctx2D, tiles: RoadTile[]): void {
   ctx.lineWidth = JOINT_WIDTH;
   ctx.lineCap = "butt";
   ctx.beginPath();
-  for (const joint of joints) traceInto(ctx, joint);
+  for (const joint of joints) traceInto(ctx, joint, elev);
   ctx.stroke();
   ctx.globalAlpha = 1;
   ctx.restore();
@@ -636,11 +656,18 @@ function paintSidewalks(ctx: Ctx2D, tiles: RoadTile[]): void {
  * it is planted in: its head can legitimately hang over the next tile's
  * asphalt, and the asphalt was painted several passes ago.
  */
-function paintStreetLamps(ctx: Ctx2D, tiles: RoadTile[]): void {
+function paintStreetLamps(ctx: Ctx2D, tiles: RoadTile[], elev: Draper = FLAT_DRAPER): void {
   const spots: GroundPoint[] = [];
   for (const t of tiles) {
     if (!t.sidewalk) continue;
-    for (const spot of streetLampSpots(t.tx, t.ty, t.mask)) spots.push(spot);
+    // E2 (#267): the post is planted on the DRAPEd spot and its head is built
+    // from there with the same screen-pixel offsets, so a lamp stands on the
+    // pavement however the street slopes, and still rises straight up the
+    // screen by exactly LAMP_POST_H pixels.
+    for (const spot of streetLampSpots(t.tx, t.ty, t.mask)) {
+      const [u, v] = elev.point(spot[0], spot[1]);
+      spots.push([u, v]);
+    }
   }
   if (!spots.length) return;
 
@@ -744,6 +771,14 @@ export function paintRoadTiles(
    * this pass is byte-identical to the one that shipped before bridges.
    */
   decks: readonly BridgeDeck[] = [],
+  /**
+   * E2 (#267): the elevation draper — the identity unless the map carries
+   * heights, in which case every point this pass traces is lifted onto the
+   * terrain before it is projected (see `elevation.ts` for why that is a shift
+   * of the ground plane and not of the transform). A road on a hill therefore
+   * tilts with the hill instead of floating over it or sinking into it.
+   */
+  elev: Draper = FLAT_DRAPER,
 ): void {
   // Patterns are created against THIS context; a material with no texture
   // falls through to its flat colour, which is a complete look, not a hole.
@@ -757,12 +792,12 @@ export function paintRoadTiles(
   ctx.lineJoin = "round";
 
   // 0. R2 (#266) Bridge decks, under everything: the water texture has to go.
-  paintBridgeDecks(ctx, decks);
+  paintBridgeDecks(ctx, decks, DEFAULT_BRIDGE_STYLE, elev);
 
   // 0b. #159 Town ground: the paved yards the houses stand on, under everything
   //    a road paints. Absent a `town` material the passes below still draw the
   //    streets; only the blocks between them stay grass.
-  if (townFill) paintTownGround(ctx, townGround, townFill);
+  if (townFill) paintTownGround(ctx, townGround, townFill, elev);
 
   // 1. Shoulders — ground disturbed at the road's edge, NOT an outline. Drawn
   //    semi-transparent so it darkens whatever it happens to lie on (grass, a
@@ -773,7 +808,7 @@ export function paintRoadTiles(
   for (const t of tiles) {
     ctx.strokeStyle = style[t.material].shoulder;
     ctx.lineWidth = ROAD_WIDTH[t.material] + SHOULDER_WIDTH * 2;
-    for (const f of t.figures) { trace(ctx, f); ctx.stroke(); }
+    for (const f of t.figures) { trace(ctx, f, elev); ctx.stroke(); }
   }
   ctx.globalAlpha = 1;
 
@@ -787,13 +822,13 @@ export function paintRoadTiles(
   //     per-tile special case and no gap. Where two ribbons cross each other
   //     they overprint — which is the corner apron of an intersection, and is
   //     the shape a corner-kerb is supposed to have anyway.
-  paintSidewalks(ctx, tiles);
+  paintSidewalks(ctx, tiles, elev);
 
   // 2. The opaque material core.
   for (const t of tiles) {
     ctx.strokeStyle = fills[t.material];
     ctx.lineWidth = ROAD_WIDTH[t.material];
-    for (const f of t.figures) { trace(ctx, f); ctx.stroke(); }
+    for (const f of t.figures) { trace(ctx, f, elev); ctx.stroke(); }
   }
 
   // 2b. Shade the road ACROSS its width: dark at both edges, lifting towards
@@ -827,7 +862,7 @@ export function paintRoadTiles(
         // it strokes nothing at all, so it keeps its plain core rather than
         // gaining a cross-road arc it has no sides to justify.
         if (f.points.length < 2) continue;
-        trace(ctx, f); ctx.stroke();
+        trace(ctx, f, elev); ctx.stroke();
       }
     }
   }
@@ -845,12 +880,17 @@ export function paintRoadTiles(
       // a·asphalt + (1-a)·dirt at every point and opaque throughout — fading
       // both materials towards transparency instead would open a window onto
       // the grass along every dirt-to-paved seam.
+      // E2 (#267): the blend follows the draped arm, and its gradient runs
+      // between the DRAPED ends — a gradient anchored on the flat points would
+      // ramp across a hillside at the wrong angle.
+      const blend = elev.path([tr.from, tr.to]);
       ctx.beginPath();
-      ctx.moveTo(tr.from[0], tr.from[1]);
-      ctx.lineTo(tr.to[0], tr.to[1]);
+      ctx.moveTo(blend[0][0], blend[0][1]);
+      for (let i = 1; i < blend.length; i++) ctx.lineTo(blend[i][0], blend[i][1]);
       ctx.strokeStyle = fills.paved;
       ctx.stroke();
-      const g = ctx.createLinearGradient(tr.from[0], tr.from[1], tr.to[0], tr.to[1]);
+      const from = blend[0], to = blend[blend.length - 1];
+      const g = ctx.createLinearGradient(from[0], from[1], to[0], to[1]);
       g.addColorStop(0, withAlpha(style.dirt.flat, 0));
       g.addColorStop(1, style.dirt.flat);
       ctx.strokeStyle = g;
@@ -867,8 +907,11 @@ export function paintRoadTiles(
     if (t.material !== "paved") continue;
     for (const f of paintFigures(t.tx, t.ty, t.mask)) {
       ctx.setLineDash([DASH_ON, DASH_OFF]);
+      // The dash phase stays anchored on the FLAT figure: the lattice it is
+      // pinned to is a property of the world's tile grid, and a slope changes a
+      // run's projected length by a fraction of a dash at most.
       ctx.lineDashOffset = dashOffsetFor(f);
-      trace(ctx, f);
+      trace(ctx, f, elev);
       ctx.stroke();
     }
   }
@@ -877,12 +920,12 @@ export function paintRoadTiles(
   // 5. #159 Street lamps, on top of everything else on the ground: see
   //    `paintStreetLamps` for why they cannot go down with their sidewalks.
   //    Markings stay under a lamp, exactly as paint on asphalt does.
-  paintStreetLamps(ctx, tiles);
+  paintStreetLamps(ctx, tiles, elev);
 
   // 6. R2 (#266) The decks' kerbs and railings, last of all: a bridge's fence
   //    stands OVER its surface, and over the lamps of any street that happens
   //    to end at the bank.
-  paintBridgeRailings(ctx, decks);
+  paintBridgeRailings(ctx, decks, DEFAULT_BRIDGE_STYLE, elev);
   ctx.restore();
 }
 
@@ -1051,7 +1094,15 @@ export class RoadCache {
     const px = ox - GUTTER, py = oy - GUTTER;
     const w = Math.ceil((ROAD_CHUNK_W + GUTTER * 2) * zoom);
     const h = Math.ceil((ROAD_CHUNK_H + GUTTER * 2) * zoom);
-    const range = tilesForRect(px, py, px + ROAD_CHUNK_W + GUTTER * 2, py + ROAD_CHUNK_H + GUTTER * 2);
+    // E2 (#267): the draper is a pure function of the map's height lattice, so
+    // it is baked into the raster exactly like the rail's detail tier — no
+    // per-frame work, and the flat path keeps the identity draper and the tile
+    // range it has always evaluated.
+    const elev = draperFor(world.grid);
+    const lift = elevationLiftPx(world.grid);
+    const range = tilesForRect(
+      px, py, px + ROAD_CHUNK_W + GUTTER * 2, py + ROAD_CHUNK_H + GUTTER * 2, lift,
+    );
     // In the sprite road mode the atlas cells draw the roads, so this raster
     // carries the railway and nothing else.
     const tiles = this.railOnly ? [] : roadTilesIn(world, range.tx0, range.ty0, range.tx1, range.ty1);
@@ -1083,10 +1134,10 @@ export class RoadCache {
       // Ground coordinates → this surface's device pixels. The gutter origin
       // is folded in here; the camera is NOT — that belongs to the blit.
       ctx.setTransform(HW * zoom, HH * zoom, -HW * zoom, HH * zoom, -px * zoom, -py * zoom);
-      paintRoadTiles(ctx, tiles, style, townGround, roadDecks);
+      paintRoadTiles(ctx, tiles, style, townGround, roadDecks, elev);
       // …and the track OVER the finished road: that is what a level crossing
       // is, and why the road pass above has to stay exactly as it was.
-      paintRailTiles(ctx, rail, this.railDetail, this.railStyle, railDecks);
+      paintRailTiles(ctx, rail, this.railDetail, this.railStyle, railDecks, elev);
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       // Soften the vectors by a pixel so roads and rails sit with the pixel
       // artwork instead of looking razor-cut. ONE filtered copy of the finished
