@@ -108,11 +108,13 @@ export function promptForRivalSkill(
       // SFX-01: choosing a rival is a pick, not a click — the same small glass
       // ping the board's gems and the start screen's tycoons use.
       btn.dataset.sfx = "select";
+      // L6 (#220): the economy half of the same row, so picking "Easy" shows
+      // that the board still opens and that a yield is never taken back, and
+      // picking "Hard" shows the cooling before the click.
+      // This note is not copy. It has to stay outside the template literal —
+      // innerHTML paints whatever sits between the backticks (#383).
       btn.innerHTML = `<span class="iso-skill-label">${preset.label}</span>
         <span class="iso-skill-blurb">${preset.blurb}</span>
-        // L6 (#220): the economy half of the same row, so picking "Easy" shows
-        // that the board still opens and that a yield is never taken back, and
-        // picking "Hard" shows the cooling before the click.
         <span class="iso-skill-economy">${preset.economyLine}</span>
         <span class="iso-skill-pace">${CARD_TEXT[key].pace} · ${lineText(key)}</span>`;
       btn.addEventListener("click", () => {
