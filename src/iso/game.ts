@@ -1863,6 +1863,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     occupied: "Ground is taken",
     building: "A building is here",
     track: "Clear the track first",
+    // E4 (#268): the plant's footprint has to sit on one level.
+    "not-flat": "Needs flat ground",
     "no-town": "Plant must touch a town",
   };
   const TRACK_FLASH_TEXT: Record<string, string> = {
@@ -1872,6 +1874,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     field: "Demolish the field first",
     rough: "Road can't cross rough — use Dirt",
     "not-adjacent": "Drag out from your Factory / Depot",
+    // E4 (#268): the road's slope rule — one level per tile.
+    "too-steep": "Too steep — one level per tile",
     // R2 (#266): a bridge is straight, so a spur beside a deck is refused —
     // and this is the tile the drag stopped on.
     "bridge-junction": "No junctions on a bridge",
@@ -4762,6 +4766,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         "no-industry-beside": "A depot must sit right beside a resource.",
         "entrance-blocked": "Resources on both sides — the depot needs one open side for its entrance.",
         "industry-taken": "That industry is already claimed — only one Depot may hold it.",
+        // E4 (#268): the lot has to sit on one level.
+        "not-flat": "A depot needs flat ground — its 2×2 lot must sit on one level.",
       };
       toast(message[plan.code ?? ""] ?? "Can't build there.", "bad");
       if (p.human) flashAt(tx, ty, plan.why ? `Depot: ${plan.why}` : "Can't build here");
@@ -9162,9 +9168,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           if (newLoop) {
             const d = distanceInfoFor(h.id);
             const band = distanceBandForPath(d.tiles);
+            // E4 (#268): on an elevation map the number the clock measures is
+            // the route's tiles PLUS its climb (`depotPathLength`), so it can
+            // be fractional — print it to one decimal there, and byte for byte
+            // as it always was on the flat (where it is a whole number).
             info += `<br>` + (d.tiles === null || band === null
               ? `distance: <i>no route</i>`
-              : `distance: ${d.tiles} tiles · ×${d.factor} (${band})`);
+              : `distance: ${Number.isInteger(d.tiles) ? d.tiles : d.tiles.toFixed(1)} tiles · ×${d.factor} (${band})`);
             // L8 (#222): the rest of the ledger the clock multiplies — the
             // yield the last session SET, the transport tier, and the tick's
             // own rate (per tick and per second). Every number comes off the
@@ -9572,6 +9582,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     } else if (refusal === "bridge-junction") {
       toast(BRIDGE_REFUSAL_TEXT.junction, "bad");
     } else if (refusal === "rough") toast("A paved Road can't cross rough ground — use a Dirt Road.", "bad");
+    else if (refusal === "too-steep") toast("That is too steep — a road climbs at most one level per tile.", "bad");
     else if (refusal === "occupied") toast("Tile is occupied.", "bad");
     else if (refusal === "field") toast("A field or trees stand there — demolish them first.", "bad");
     else toast("Can't build there.", "bad");
@@ -11531,7 +11542,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       }
       // #302: trains and deliveries are sim too — a resumed game must not roll
       // its lorries into the Factory while the bar is still up.
-      if (sim) tickTrains(rail, dt);
+      // E4 (#268): the grid rides along so a train climbing a slope loses
+      // speed the way a lorry does.
+      if (sim) tickTrains(rail, dt, grid);
       if (sim) collectDeliveries(t);
 
       // WASD camera pan: held keys integrate at a constant world speed per
@@ -12270,7 +12283,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     railRename: (lineId: number, name: string, who: "you" | "ai" = "you") =>
       railRename(lineId, name, who === "ai" ? rival : me),
     /** Advance the trains by hand — the headless twin of the frame's tick. */
-    railTick: (dtMs = 1000) => { tickTrains(rail, dtMs); return rail.trains.length; },
+    railTick: (dtMs = 1000) => { tickTrains(rail, dtMs, grid); return rail.trains.length; },
     /** How many tiles of this seat's rail the layer holds. */
     railTiles: (who: "you" | "ai" = "you") =>
       ownerRailTilesOf(rail, who === "ai" ? rival.i + 1 : me.i + 1).length,
