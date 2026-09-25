@@ -10932,7 +10932,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // MON-1 (#367): the Store — the same panel the front door raises, over
     // the game root, one instance at a time. An unreachable store paints a
     // sentence and closes like any other sheet; it never blocks the match.
-    menuItem("Store", "unlockables · RUN Bits", () => {
+    // Owner call (2026-09-25): the Store is dev-only until the RUN store
+    // items exist (much later).
+    if (import.meta.env.DEV) menuItem("Store", "unlockables · RUN Bits", () => {
       if (storeView) return;
       const view = showStorePanel(ui.el);
       storeView = view;
