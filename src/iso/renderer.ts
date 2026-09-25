@@ -50,6 +50,9 @@ import {
 } from "./ground";
 import { ShadowStamps, paintBuildingShadows } from "./building-shadow";
 import {
+  LEVEL_PX, elevationActive, elevationLiftPx, surfaceHeight, worldToGround,
+} from "./elevation";
+import {
   FOREST_FOOTPRINT, TREE_SPRITES, paintDecals,
   type Decal, type DecalImages, type Forest, type Scenery,
 } from "./scenery";
@@ -95,18 +98,30 @@ export const chunkIndexOf = (tx: number, ty: number) =>
  * off every eastern chunk edge — dark wedges at 8-tile intervals against the
  * `#0b1a26` stage background. Pad by a full tile on both axes.
  */
-export function chunkSurfaceSize(z: number): { w: number; h: number } {
+export function chunkSurfaceSize(z: number, lift = 0): { w: number; h: number } {
   return {
     w: Math.ceil((2 * CHUNK * HW + TILE_W) * z),
-    h: Math.ceil((2 * CHUNK * HH + TILE_H * 2) * z),
+    // E2 (#267): `lift` is the headroom a raised chunk needs ABOVE its flat
+    // projection — the map's highest level × LEVEL_PX when the `elevation`
+    // option is on, and 0 otherwise, which leaves the surface exactly the size
+    // it has always been.
+    h: Math.ceil((2 * CHUNK * HH + TILE_H * 2 + lift) * z),
   };
 }
 
-/** World-space top-left of a chunk's cache surface. */
-export function chunkWorldOrigin(cx: number, cy: number): [number, number] {
+/**
+ * World-space top-left of a chunk's cache surface.
+ *
+ * `lift` (E2 #267) moves the origin UP by the elevation headroom, so the
+ * surface's extra rows sit above the flat projection: the paint projects into
+ * them and the blit lands them on the same world point, and neither caller has
+ * to know the terrain is raised. With `lift = 0` — every map without the
+ * elevation option — this is the origin the renderer has always used.
+ */
+export function chunkWorldOrigin(cx: number, cy: number, lift = 0): [number, number] {
   const x0 = cx * CHUNK, y0 = cy * CHUNK;
   const ox = (x0 - (y0 + CHUNK - 1)) * HW - HW;
-  const oy = (x0 + y0) * HH;
+  const oy = (x0 + y0) * HH - lift;
   return [ox, oy];
 }
 
@@ -640,6 +655,9 @@ export class IsoRenderer {
 
   invalidateAll() {
     invalidateGroundContours(this.world.grid);
+    // E2 (#267): the decal lift groups are a function of (decals, heights).
+    this.decalGroups = null;
+    this.decalGroupsFor = null;
     this.groundChunkCache.clear();
     this.roadCache.clear("all");
     // #303: building / vehicle / railway layers land AFTER the first frame and
@@ -907,7 +925,41 @@ export class IsoRenderer {
    */
   setDecals(scenery: Scenery | null): void {
     this.decals = scenery?.decals ?? null;
+    this.decalGroups = null;
+    this.decalGroupsFor = null;
     this.terrainDirty = true;
+  }
+
+  /**
+   * E2 (#267): the decals, bucketed by the lift they need. Cached against the
+   * decal list's identity — the list is seed-derived and installed once per
+   * map, so this walk happens once per map, not once per island rebuild.
+   *
+   * Half-level buckets: fine enough that no decal sits more than a couple of
+   * pixels from the surface it lies on (a decal is a soft smudge, not a
+   * sprite), coarse enough that the paint stays a handful of calls.
+   */
+  private decalGroups: { lift: number; decals: Decal[] }[] | null = null;
+  private decalGroupsFor: Decal[] | null = null;
+
+  private decalLiftGroups(): { lift: number; decals: Decal[] }[] {
+    const decals = this.decals;
+    if (!decals) return [];
+    if (this.decalGroups && this.decalGroupsFor === decals) return this.decalGroups;
+    const grid = this.world.grid;
+    const byLift = new Map<number, Decal[]>();
+    for (const d of decals) {
+      let lift = 0;
+      if (elevationActive(grid)) {
+        const [u, v] = worldToGround(d.wx, d.wy);
+        lift = Math.round(surfaceHeight(grid, u, v) * 2) * (LEVEL_PX / 2);
+      }
+      const list = byLift.get(lift);
+      if (list) list.push(d); else byLift.set(lift, [d]);
+    }
+    this.decalGroups = [...byLift.entries()].map(([lift, list]) => ({ lift, decals: list }));
+    this.decalGroupsFor = decals;
+    return this.decalGroups;
   }
 
   /**
@@ -926,6 +978,18 @@ export class IsoRenderer {
     return `${z}:${cy * chunksX + cx}`;
   }
 
+  /**
+   * E2 (#267): how many world pixels of headroom the ground chunks need above
+   * the flat projection — the map's highest elevation level × LEVEL_PX, or 0
+   * when the `elevation` option is off (the lattice is cached per grid, so
+   * this is a map lookup, not a scan).
+   *
+   * The SAME number goes into the surface's size, its world origin and every
+   * blit of it, which is what keeps a raised chunk from being clipped at its
+   * top edge or landing a hill's height away from where it belongs.
+   */
+  private groundLiftPx(): number { return elevationLiftPx(this.world.grid); }
+
   // ── ground chunks ────────────────────────────────────────────────────────
   /**
    * The STATIC ground of one 8×8 chunk (grass fill + beach ring), painted
@@ -941,14 +1005,18 @@ export class IsoRenderer {
     const hit = this.groundChunkCache.get(key);
     if (hit) return hit;
 
-    const { w: W, h: H } = chunkSurfaceSize(z);
+    // E2 (#267): the elevation headroom — 0 unless the map has heights, in
+    // which case the surface grows upward and its origin moves with it, so the
+    // blit below lands the raised ground on the world point it belongs to.
+    const lift = this.groundLiftPx();
+    const { w: W, h: H } = chunkSurfaceSize(z, lift);
     const surf = typeof OffscreenCanvas !== "undefined"
       ? new OffscreenCanvas(W, H)
       : Object.assign(document.createElement("canvas"), { width: W, height: H });
     const ctx = (surf as HTMLCanvasElement).getContext("2d") as Ctx2D;
     ctx.imageSmoothingEnabled = true;   // the pattern fill downsamples
 
-    const [ox, oy] = chunkWorldOrigin(cx, cy);
+    const [ox, oy] = chunkWorldOrigin(cx, cy, lift);
     if (this.ground) {
       // World-anchored pattern phase: texture (0,0) must land at the screen
       // position of world (0,0) — offset by the chunk origin mod the tile
@@ -961,10 +1029,15 @@ export class IsoRenderer {
       // tier; only the pattern's stretch does (`groundTexScale`).
       const P = GROUND_TEX_SIZE * z * LAND_SCALE;
       const phase = (v: number) => ((-v * z) % P + P) % P;
+      // E2 (#267): `oy` carries the elevation headroom, which is a property of
+      // the cache surface and not of the world — anchoring the pattern on it
+      // would slide the whole meadow down a hill's height. The flat origin is
+      // `oy + lift`, so the texture stays world-anchored exactly as before.
+      const phaseY = oy + lift;
       const s = this.groundTexScale;
       const setPat = (p: CanvasPattern, k: number) => {
         const m = makeMatrix();
-        m.translateSelf(phase(ox), phase(oy));
+        m.translateSelf(phase(ox), phase(phaseY));
         m.scaleSelf(z * k * s, z * k * s);
         p.setTransform(m);
       };
@@ -1005,12 +1078,13 @@ export class IsoRenderer {
     const hit = this.groundChunkCache.get(key);
     if (hit) return hit;
 
-    const { w: W, h: H } = chunkSurfaceSize(z);
+    const lift = this.groundLiftPx();
+    const { w: W, h: H } = chunkSurfaceSize(z, lift);
     const surf = typeof OffscreenCanvas !== "undefined"
       ? new OffscreenCanvas(W, H)
       : Object.assign(document.createElement("canvas"), { width: W, height: H });
     const ctx = (surf as HTMLCanvasElement).getContext("2d") as Ctx2D;
-    const [ox, oy] = chunkWorldOrigin(cx, cy);
+    const [ox, oy] = chunkWorldOrigin(cx, cy, lift);
     paintFlatGroundTiles(
       ctx, this.world.grid,
       cx * CHUNK, cy * CHUNK, (cx + 1) * CHUNK - 1, (cy + 1) * CHUNK - 1,
@@ -1037,6 +1111,7 @@ export class IsoRenderer {
     ctx.fillStyle = PERF_FLAT.water;
     ctx.fillRect(0, 0, cam.vw, cam.vh);
     // 2. The island: cached flat chunks over it.
+    const lift = this.groundLiftPx();
     const r = visibleTileRange(cam, this.pad);
     const cx0 = (r.x0 / CHUNK) | 0, cx1 = (r.x1 / CHUNK) | 0;
     const cy0 = (r.y0 / CHUNK) | 0, cy1 = (r.y1 / CHUNK) | 0;
@@ -1045,7 +1120,7 @@ export class IsoRenderer {
       for (let cx = cx0; cx <= cx1; cx++) {
         const surf = this.flatGroundChunk(cx, cy);
         if (!surf) continue;
-        const [ox, oy] = chunkWorldOrigin(cx, cy);
+        const [ox, oy] = chunkWorldOrigin(cx, cy, lift);
         const [sx, sy] = worldToScreen(cam, ox, oy);
         ctx.drawImage(surf as unknown as CanvasImageSource, Math.floor(sx), Math.floor(sy));
         blits++;
@@ -1101,6 +1176,7 @@ export class IsoRenderer {
     //    when something other than time changed; the ambient tick pastes it.
     // PERF-01: performance mode hides the decals (grass details).
     const r = visibleTileRange(cam, this.pad);
+    const lift = this.groundLiftPx();
     let blits = 0;
     let decals = 0;
     const paintIsland = (target: Ctx2D) => {
@@ -1110,15 +1186,27 @@ export class IsoRenderer {
         for (let cx = cx0; cx <= cx1; cx++) {
           const surf = this.groundFillChunk(cx, cy);
           if (!surf) continue;
-          const [ox, oy] = chunkWorldOrigin(cx, cy);
+          const [ox, oy] = chunkWorldOrigin(cx, cy, lift);
           const [sx, sy] = worldToScreen(cam, ox, oy);
           target.drawImage(surf as unknown as CanvasImageSource, Math.floor(sx), Math.floor(sy));
           blits++;
           if (this.logRender) this.trace("ground-blit", { chunk: [cx, cy], origin: [ox, oy], screen: [Math.floor(sx), Math.floor(sy)], z });
         }
       }
-      if (this.decals && this.decalImages && !this.perfMode)
-        decals = paintDecals(target, cam, this.decals, this.decalImages, r);
+      if (this.decals && this.decalImages && !this.perfMode) {
+        // E2 (#267): a decal is GROUND — a dirt scrape or a patch of grass
+        // variation lying on the surface — so it rides the terrain with it.
+        // The decals are grouped by the level they sit on (built once per decal
+        // list) and each group is painted through a camera lifted by that
+        // level: the same screen-Y term the ground and the roads use, so a
+        // scrape lands on the slope it was scattered onto instead of floating a
+        // hill's height below it. One group with no lift when the option is off,
+        // which is the single call this always made.
+        for (const g of this.decalLiftGroups()) {
+          const gcam = g.lift === 0 ? cam : { ...cam, y: cam.y - g.lift * cam.zoom };
+          decals += paintDecals(target, gcam, g.decals, this.decalImages, r);
+        }
+      }
     };
     const key = `${cam.x},${cam.y},${z},${cam.vw},${cam.vh},${this.perfMode}`;
     // Whole pixels: a canvas truncates its size, so comparing against a
